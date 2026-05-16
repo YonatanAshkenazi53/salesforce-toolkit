@@ -4667,6 +4667,82 @@ async function refreshProfileDiff(profileId) {
 window.refreshProfileDiff = refreshProfileDiff;
 
 // ════════════════════════════════════════════════════════════════
+// SNAPSHOT LAYER (Phase 2) — org_snapshots[orgUrl][objectType]
+// ════════════════════════════════════════════════════════════════
+// captureOrgSnapshot delegates to the service worker (which hashes via
+// crypto.subtle). loadSnapshots reads chrome.storage.local.
+// diffSnapshots is a pure compare that powers the Org Map drift overlay
+// without any network calls — snapshots are the cached truth.
+
+// Drift overlay color thresholds — ≥99% green / 90–99% yellow / 70–89% orange / <70% red.
+const SNAPSHOT_DRIFT_THRESHOLDS = [
+  { min: 0.99, color: 'green',  label: 'in sync'    },
+  { min: 0.90, color: 'yellow', label: 'minor drift'},
+  { min: 0.70, color: 'orange', label: 'major drift'},
+  { min: 0,    color: 'red',    label: 'severe drift'}
+];
+
+function snapshotDriftColor(matchRatio) {
+  for (const t of SNAPSHOT_DRIFT_THRESHOLDS) {
+    if (matchRatio >= t.min) return t;
+  }
+  return SNAPSHOT_DRIFT_THRESHOLDS[SNAPSHOT_DRIFT_THRESHOLDS.length - 1];
+}
+
+async function loadSnapshots() {
+  const data = await chrome.storage.local.get('org_snapshots');
+  return data.org_snapshots || {};
+}
+
+async function getSnapshot(orgUrl, objectType) {
+  const all = await loadSnapshots();
+  return all[orgUrl]?.[objectType] || null;
+}
+
+async function captureOrgSnapshot(orgUrl, sid, objectType, matchField, compareFields) {
+  return sendBg({
+    type:          'SF_CAPTURE_SNAPSHOT',
+    orgUrl, sid,
+    objectType,
+    matchField:    matchField    || 'Name',
+    compareFields: compareFields || []
+  });
+}
+
+// Diff two snapshots of the same object captured on different orgs.
+// Returns counts + a matchRatio used by the drift overlay color picker.
+// Pure function — no I/O, no storage reads.
+function diffSnapshots(snapA, snapB) {
+  if (!snapA || !snapB) {
+    return { error: 'snapshot missing for one or both orgs' };
+  }
+  // If compareFields differ between the two sides we can detect presence
+  // but not drift — hashes won't be comparable. Callers should re-capture.
+  const fieldsMatch =
+    JSON.stringify(snapA.compareFields || []) ===
+    JSON.stringify(snapB.compareFields || []);
+
+  const a = snapA.records || {};
+  const b = snapB.records || {};
+  let identical = 0, drift = 0, missingInB = 0, onlyInB = 0;
+
+  for (const k of Object.keys(a)) {
+    if (!(k in b)) { missingInB++; continue; }
+    if (fieldsMatch && a[k].hash === b[k].hash) identical++;
+    else drift++;
+  }
+  for (const k of Object.keys(b)) {
+    if (!(k in a)) onlyInB++;
+  }
+
+  const overlap = identical + drift;
+  const total   = overlap + missingInB;  // denominator = A's universe
+  const matchRatio = total > 0 ? identical / total : 1;
+
+  return { identical, drift, missingInB, onlyInB, matchRatio, fieldsMatch };
+}
+
+// ════════════════════════════════════════════════════════════════
 // TRANSFER
 // ════════════════════════════════════════════════════════════════
 // Build a flat list of every session/credentialed org we can talk to right now.
@@ -5564,6 +5640,10 @@ function renderSchedule() {
           </select>
         </div>
       </div>
+      <label class="ds-sched-snapshot-opt" title="After each scheduled run, fingerprint both orgs so the Org Map drift overlay reflects real state without re-querying live">
+        <input type="checkbox" id="dsSchedSnapshot" checked>
+        <span>📸 Refresh org snapshots after each run — powers the drift overlay on the Org Map</span>
+      </label>
       <button class="ds-btn ds-btn-primary" id="dsSchedSaveBtn">📅 Enable Schedule</button>
     </div>
     <div id="dsSchedMsg"></div>` : ''}
@@ -5599,11 +5679,14 @@ function renderSchedule() {
       return;
     }
 
+    const snapshotOpt = eid('dsSchedSnapshot')?.checked ?? true;
+
     profile.schedule = {
-      enabled:         true,
-      sourceOrg:       srcOrg.url,
-      targetOrg:       tgtOrg.url,
-      intervalMinutes: interval
+      enabled:               true,
+      sourceOrg:             srcOrg.url,
+      targetOrg:             tgtOrg.url,
+      intervalMinutes:       interval,
+      refreshSnapshotAfter:  snapshotOpt
     };
     profile.updatedAt = new Date().toISOString();
 
