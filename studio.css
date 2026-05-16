@@ -1781,6 +1781,18 @@ html, body {
 .ds-sched-new-row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
 .ds-sched-new-row .ds-field-group { min-width: 180px; }
 
+.ds-sched-snapshot-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+  font-size: 12.5px;
+  color: var(--subtext);
+  cursor: pointer;
+  user-select: none;
+}
+.ds-sched-snapshot-opt input[type="checkbox"] { margin: 0; cursor: pointer; }
+
 /* ── History ─────────────────────────────────────────────────── */
 .ds-history-list { display: flex; flex-direction: column; gap: 10px; max-width: 920px; }
 

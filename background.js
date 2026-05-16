@@ -57,6 +57,29 @@ async function handleSyncAlarm(profileId) {
     history.push({ id: `run_${Date.now()}`, ...result, scheduledRun: true });
     if (history.length > 100) history.splice(0, history.length - 100);
     await chrome.storage.local.set({ sftk_history: history });
+
+    // Phase 2 — opt-in snapshot refresh on both orgs after a successful run.
+    // Skipped on full failure (no records moved → no fresh state to capture).
+    // For each unique objectType in the profile tree we capture a snapshot on
+    // src AND tgt; root uses profile.scanConfig, children default to Name.
+    if (profile.schedule?.refreshSnapshotAfter && result.status !== 'failed') {
+      try {
+        const objectTypes = [...collectProfileObjectTypes(profile.tree)];
+        const rootType    = profile.tree?.objectType || profile.tree?.childSObject;
+        const rootMatch   = profile.scanConfig?.matchField    || 'Name';
+        const rootCmp     = profile.scanConfig?.compareFields || [];
+        for (const t of objectTypes) {
+          const mf  = (t === rootType) ? rootMatch : 'Name';
+          const cmp = (t === rootType) ? rootCmp   : [];
+          // Sequential — Salesforce throttles us anyway and snapshot capture
+          // on a 50k-row object can be heavy; don't paralleize.
+          await captureSnapshot(srcSession.orgUrl, srcSession.sid, t, mf, cmp).catch(() => {});
+          await captureSnapshot(tgtSession.orgUrl, tgtSession.sid, t, mf, cmp).catch(() => {});
+        }
+      } catch (e) {
+        console.warn('[SFTK] Post-transfer snapshot refresh failed:', e?.message || e);
+      }
+    }
   } catch (e) {
     console.error('[SFTK] Scheduled sync error:', e);
   }
@@ -672,9 +695,122 @@ async function dispatchMessage(message) {
     case 'SF_RELATIONSHIP_QUERY':
       return sfRelationshipQuery(orgUrl, sid, message.rootObject, message.rootWhere,
         message.childRels, message.limit);
+    case 'SF_CAPTURE_SNAPSHOT':
+      return captureSnapshot(orgUrl, sid, message.objectType, message.matchField, message.compareFields);
     default:
       throw new Error(`Unknown message type: ${type}`);
   }
+}
+
+// ── Org snapshot capture (Phase 2) ────────────────────────────────────────
+// Builds a fingerprint of every record in `objectType` keyed by matchField,
+// with a short hash over the configured compareFields so two orgs holding
+// the same logical record produce the same hash. Persisted under
+// org_snapshots[orgUrl][objectType] in chrome.storage.local so the Org Map
+// drift overlay can compare any two orgs without re-querying live.
+//
+// Caps:
+//   MAX_RECORDS_PER_OBJECT — beyond this we set truncated:true and stop.
+//   MAX_TOTAL_BYTES        — soft cap across all snapshots; oldest evicted first.
+const SNAPSHOT_MAX_RECORDS_PER_OBJECT = 50000;
+const SNAPSHOT_MAX_TOTAL_BYTES        = 8 * 1024 * 1024;
+
+async function captureSnapshot(orgUrl, sid, objectType, matchField, compareFields) {
+  const mf       = matchField || 'Name';
+  const cmp      = [...(compareFields || [])].filter(Boolean).sort();
+  const selectF  = [...new Set(['Id', mf, ...cmp])];
+  const soql     = `SELECT ${selectF.join(',')} FROM ${objectType}`;
+
+  const res = await sfQueryAll(orgUrl, sid, soql, false);
+  const records = res.records || [];
+
+  const truncated = records.length > SNAPSHOT_MAX_RECORDS_PER_OBJECT;
+  const slice     = truncated ? records.slice(0, SNAPSHOT_MAX_RECORDS_PER_OBJECT) : records;
+
+  const capturedAt = new Date().toISOString();
+  const recordMap  = {};
+  for (const r of slice) {
+    const k = r[mf];
+    if (k == null || k === '') continue;
+    const matchKey = String(k);
+    const hash     = await hashRecord(r, cmp);
+    // First key wins — Salesforce permits duplicate Names; we don't try to
+    // resolve ambiguity here, just be deterministic.
+    if (!(matchKey in recordMap)) {
+      recordMap[matchKey] = { id: r.Id, hash, lastSeen: capturedAt };
+    }
+  }
+
+  const snapshot = {
+    schemaVersion: 1,
+    matchField:    mf,
+    compareFields: cmp,
+    capturedAt,
+    recordCount:   Object.keys(recordMap).length,
+    truncated,
+    records:       recordMap
+  };
+
+  // Persist + soft-cap eviction. Evicts oldest capturedAt entries until the
+  // serialized blob fits MAX_TOTAL_BYTES. We never evict the snapshot we
+  // just wrote — it's the freshest by definition.
+  const data = await chrome.storage.local.get('org_snapshots');
+  const all  = data.org_snapshots || {};
+  if (!all[orgUrl]) all[orgUrl] = {};
+  all[orgUrl][objectType] = snapshot;
+
+  let serialized = JSON.stringify(all);
+  if (serialized.length > SNAPSHOT_MAX_TOTAL_BYTES) {
+    const entries = [];
+    for (const [u, objs] of Object.entries(all)) {
+      for (const [t, snap] of Object.entries(objs)) {
+        if (u === orgUrl && t === objectType) continue;  // protect freshest
+        entries.push({ url: u, type: t, capturedAt: snap.capturedAt });
+      }
+    }
+    entries.sort((a, b) => a.capturedAt.localeCompare(b.capturedAt));  // oldest first
+    while (serialized.length > SNAPSHOT_MAX_TOTAL_BYTES && entries.length) {
+      const ev = entries.shift();
+      delete all[ev.url][ev.type];
+      if (Object.keys(all[ev.url]).length === 0) delete all[ev.url];
+      serialized = JSON.stringify(all);
+    }
+  }
+
+  await chrome.storage.local.set({ org_snapshots: all });
+  return { recordCount: snapshot.recordCount, truncated, capturedAt };
+}
+
+// SHA-256 over normalized compareField values, first 12 hex chars (48 bits).
+// Deterministic across orgs: same field values → same hash.
+async function hashRecord(record, sortedCompareFields) {
+  const SEP   = '';  // Unit Separator — never appears in business data
+  const parts = sortedCompareFields.map(f => normalizeFieldValue(record[f]));
+  const buf   = await crypto.subtle.digest('SHA-256',
+    new TextEncoder().encode(parts.join(SEP)));
+  const arr   = Array.from(new Uint8Array(buf)).slice(0, 6);
+  return arr.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function normalizeFieldValue(v) {
+  if (v == null || v === '')   return '␀';                  // null sentinel
+  if (typeof v === 'boolean')  return v ? 'true' : 'false';
+  if (typeof v === 'number')   return String(v);
+  if (typeof v === 'string') {
+    // Strip milliseconds from ISO datetimes — Salesforce often drops them
+    // and cross-org diffs would falsely flag every record otherwise.
+    return v.replace(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.\d{3}/, '$1');
+  }
+  return JSON.stringify(v);
+}
+
+// Walk a profile tree, return the unique objectTypes inside it.
+function collectProfileObjectTypes(node, set = new Set()) {
+  if (!node) return set;
+  const t = node.objectType || node.childSObject;
+  if (t) set.add(t);
+  (node.children || []).forEach(c => collectProfileObjectTypes(c, set));
+  return set;
 }
 
 async function sfFetch(url, options, retries = 1) {
