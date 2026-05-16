@@ -1,0 +1,875 @@
+================================================================================
+  SALESFORCE TOOLKIT — DATA STUDIO
+  Project Brief & Current State
+  Last updated: 2026-05-08  (QA pass completed — 6 bugs fixed)
+================================================================================
+
+This document is a complete context brief for AI assistants (Claude, Gemini, etc.)
+working on the Data Studio component of the Salesforce Toolkit Chrome Extension.
+Read this before asking about or modifying any part of the Data Studio.
+
+────────────────────────────────────────────────────────────────────────────────
+1. THE BIG IDEA
+────────────────────────────────────────────────────────────────────────────────
+
+Salesforce admins constantly need to move data between orgs — from a production
+org to a sandbox for testing, or from one client org to another. Today they have
+two bad options:
+  (a) Do it manually — tedious, error-prone, falls apart with related records
+  (b) Buy Gearset, Copado, or similar — expensive enterprise tools, overkill for
+      most admins, require DevOps expertise and Connected App setup
+
+Data Studio is a third option: a smart, visual, free-to-run (extension-based)
+data transfer tool that lives in Chrome, speaks directly to Salesforce's REST API
+using the session the admin already has open, and handles the hard parts
+automatically:
+  - Following relationships between objects (Account → Contact → Case → Task)
+  - Remapping record IDs from source to target org
+  - Batching inserts via the Collections API (200 records per call)
+  - Scheduling recurring syncs in the background
+  - Showing exactly what will be transferred before it runs
+
+The product vision is Gearset-level data deployment power, but accessible to
+any admin with Chrome and a browser session — no Connected App, no CLI, no
+DevOps knowledge required.
+
+────────────────────────────────────────────────────────────────────────────────
+2. WHAT IS AN "ORG MAP"?
+────────────────────────────────────────────────────────────────────────────────
+
+An Org Map is the visual representation of a single Salesforce org's data
+relationships as chosen by the user. It is the core concept of the Profile
+Builder.
+
+Think of it like this: every Salesforce org has hundreds of objects (Account,
+Contact, Opportunity, Case, etc.) connected by relationships. An Org Map is the
+subset of those relationships that the user cares about for a specific transfer —
+drawn as a tree.
+
+Example Org Map:
+  Account  (WHERE: Name LIKE 'Acme%')
+  ├── Contacts  (relationship: Contacts, via AccountId)
+  │     (WHERE: IsDeleted = false)
+  ├── Opportunities  (relationship: Opportunities, via AccountId)
+  │     ├── OpportunityLineItems  (relationship: OpportunityLineItems, via OpportunityId)
+  └── Cases  (relationship: Cases, via AccountId)
+        └── CaseComments  (relationship: CaseComments, via ParentId)
+
+This Org Map defines:
+  - Which objects to pull (root + all children)
+  - What filter to apply at each level (WHERE clauses)
+  - Which relationship field connects parent to child (so IDs get remapped)
+
+When a transfer runs, Data Studio walks the Org Map top-to-bottom, fetches
+records at each level from the SOURCE org, creates them in the TARGET org, and
+builds an ID map (source ID → target ID) to fix all the foreign key references.
+
+One Org Map is stored inside a "Profile". A Profile is a named, saveable
+Org Map + optional transfer settings (source org, target org, schedule).
+
+────────────────────────────────────────────────────────────────────────────────
+3. WHERE DATA STUDIO LIVES
+────────────────────────────────────────────────────────────────────────────────
+
+The extension is a Chrome Extension (Manifest V3) located at:
+  C:\Users\yonas\OneDrive\Desktop\Saleforce Toolkit\
+
+Key files for Data Studio specifically:
+  studio.html    — Full-page Chrome tab shell (opened from popup)
+  studio.js      — All Data Studio logic (Org Map, Profiles, Transfer engine UI)
+  studio.css     — Data Studio styles (SLDS light theme)
+  background.js  — Service worker: all Salesforce API calls + transfer engine
+                   (the actual executeProfileTransfer function lives here)
+
+Supporting files (shared with main popup):
+  debug-logger.js  — Global debug log system (window.SFToolkitDebug)
+  manifest.json    — MV3 manifest; studio.html is in web_accessible_resources
+
+The Data Studio opens as a full Chrome tab (not a popup). The user clicks the
+"🌐 Data" button in the extension popup, which calls:
+  chrome.tabs.create({ url: chrome.runtime.getURL('studio.html') })
+
+────────────────────────────────────────────────────────────────────────────────
+4. HOW SESSION / AUTH WORKS (CRITICAL — NO OAUTH)
+────────────────────────────────────────────────────────────────────────────────
+
+Data Studio does NOT use OAuth, Connected Apps, or any stored credentials.
+
+It reads the Salesforce session cookie (`sid`) directly from Chrome using the
+chrome.cookies API (which bypasses HttpOnly restrictions for the extension).
+This works because the admin already has Salesforce open in another tab.
+
+Flow:
+  1. Extension calls chrome.cookies.get({ url: orgUrl, name: 'sid' })
+  2. Gets the live session token
+  3. Uses it as Authorization: Bearer {sid} in all API calls to that org
+  4. Works for any org the admin has open — prod, sandbox, scratch, any instance
+
+To use multiple orgs simultaneously:
+  - background.js tracks all open Salesforce tabs via chrome.tabs.query
+  - GET_ALL_SF_SESSIONS message returns all currently detected org sessions
+  - Studio lets user pick source org + target org from these detected sessions
+
+This is why "connecting an org" means simply: open it in Chrome. The extension
+detects it automatically. This is by design — zero setup for the user.
+
+Org labels (friendly names) are stored locally in chrome.storage.local under
+the key `sftk_orgs` as: { orgUrl → { label, firstSeen, lastSeen } }
+
+────────────────────────────────────────────────────────────────────────────────
+5. THE DATA STUDIO VIEWS
+────────────────────────────────────────────────────────────────────────────────
+
+The studio has a left sidebar nav with these views:
+
+  OVERVIEW section:
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ 🌐 Org Map (overview)                                                   │
+  │   Grid of all detected orgs — online/offline status dot, last seen,     │
+  │   transfer history summary, active schedule chips.                      │
+  │   Each org card has a "📋 Transfer" button to jump to a transfer run.   │
+  │   NOTE: This "Org Map" view (the overview grid) is DIFFERENT from an    │
+  │   individual "Org Map" (a profile's data tree). Same name, two uses.    │
+  │   The overview grid shows ALL orgs; a profile's Org Map shows one       │
+  │   org's object relationship tree.                                       │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ 🔌 Connected Orgs                                                       │
+  │   Gearset-style panel showing all known orgs with their status.         │
+  │   "Refresh from open tabs" re-scans Chrome for Salesforce sessions.     │
+  │   Admins can rename orgs (give them friendly labels) and remove         │
+  │   offline orgs they no longer need.                                     │
+  │   Has "Add Org" guide modal explaining the 3-step cookie-based flow.    │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+  DATA section:
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ 📦 Profiles                                                             │
+  │   List of saved transfer profiles (each profile contains one Org Map).  │
+  │   Shows name, object count, last run status, schedule badge.            │
+  │   Actions: ▶ Run | ✏ Edit | ⧉ Clone | 🗑 Delete                        │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ 🚀 Transfer                                                             │
+  │   Run a profile between two orgs.                                       │
+  │   Select profile + source org + target org.                             │
+  │   "👁 Preview Counts" — queries source org to count records per node.   │
+  │   "▶ Run Transfer" — executes the full transfer with live progress log. │
+  │   Log shows each object: records fetched → created → errors.            │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ 📅 Schedule                                                             │
+  │   Automate transfers to run on a timer (every 15m, 30m, 1h, 6h, etc.)  │
+  │   Uses chrome.alarms API — runs even when the popup is closed.          │
+  │   Each alarm fires in the background service worker (background.js).    │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ 📜 History                                                              │
+  │   Log of all past transfer runs, newest first.                          │
+  │   Shows: status (success/error/partial), profile name, org pair,        │
+  │   records created per object, any errors (expandable).                  │
+  │   Max 100 entries, trimmed on write.                                    │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+────────────────────────────────────────────────────────────────────────────────
+6. THE PROFILE BUILDER (Org Map Editor)
+────────────────────────────────────────────────────────────────────────────────
+
+This is the main feature of Data Studio. It lets the admin define an Org Map
+visually — no SOQL knowledge required.
+
+How it works:
+  1. Admin types a root object (e.g. "Account") and clicks "Set Root"
+  2. The builder shows an Account node with a WHERE input
+  3. Background calls Salesforce describe API to get Account's child relationships
+  4. Admin sees a "+ Add child relationship" section listing all children:
+       - Contacts (via AccountId)
+       - Opportunities (via AccountId)
+       - Cases (via AccountId)
+       - ... (dozens of system relationships are filtered out)
+  5. Admin clicks "+" next to "Contacts" — a Contact node appears as a child
+  6. Admin can add a WHERE clause to Contacts (e.g. "IsDeleted = false")
+  7. Admin clicks 👁 Preview → Data Studio counts matching records in the source org
+  8. Admin repeats — adding Opportunity, then OpportunityLineItem under Opportunity
+  9. This builds the full Org Map tree
+  10. Admin saves the profile with a name
+
+Visual design of the tree:
+  - Root node: left border in Salesforce brand blue (#0176D3)
+  - Level 1 children: lighter blue left border (#7EC8F8)
+  - Level 2 children: even lighter (#B3D9FF)
+  - Level 3+: near-white blue (#D4EBFF)
+  - Each node shows: object icon (🏢 Account, 👤 Contact, etc.), object name,
+    relationship name badge (monospace pill), field badge ("via AccountId"),
+    record count badge (green pill after preview), WHERE input
+  - Children indented with a gradient blue vertical connection line
+
+SOQL Preview pane (below the tree):
+  - Updates live as the admin builds the tree
+  - Shows the actual SOQL that will run at each level
+  - Direct children are shown as native Salesforce relationship subqueries:
+      SELECT Id,
+          (SELECT Id FROM Contacts WHERE IsDeleted = false),
+          (SELECT Id FROM Opportunities)
+      FROM Account
+      WHERE Name LIKE 'Acme%'
+  - Grandchildren and deeper are shown as separate labeled query blocks
+    (because Salesforce only supports 1 level of subquery natively)
+  - Keywords highlighted navy, object names highlighted blue, values brown
+
+Data stored per node:
+  { objectType, where, children, relationshipName, field, childSObject }
+  (no _meta — that's stripped before saving; _meta is runtime only)
+
+────────────────────────────────────────────────────────────────────────────────
+7. THE TRANSFER ENGINE (background.js)
+────────────────────────────────────────────────────────────────────────────────
+
+Function: executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid)
+
+This is the core engine. It runs in the background service worker (so it
+survives popup closes). Here's exactly what it does:
+
+Step 1 — Flatten the Org Map tree into an ordered list
+  flattenTree() does a depth-first traversal, so parents always come before
+  their children. Each entry: { node, parentNode, parentField }
+
+Step 2 — Process nodes in order
+  For each node:
+    a) Build WHERE clause:
+       - Root node: use the node's own WHERE clause (if any)
+       - Child nodes: use "parentField IN ('tgtId1','tgtId2',...)"
+         where tgtIds are the target-org IDs of the PARENT node's records
+         (looked up via the idMap and nodeSourceIds tracking)
+    b) Query records from source org (SELECT Id, [all fields] FROM Object WHERE ...)
+    c) Strip read-only fields (Id, CreatedDate, LastModifiedDate, etc.)
+    d) Remap lookup fields that point to already-transferred objects
+       (using idMap: sourceId → targetId)
+    e) Resolve RecordType by DeveloperName (cross-org safe)
+    f) POST to target org via Collections API (200 records/batch, allOrNone:false)
+    g) Build idMap entries: sourceId → targetId for every created record
+    h) Store this node's source IDs in nodeSourceIds (used by children in step 2a)
+
+Critical design: nodeSourceIds
+  Problem solved: In a 3-level tree (Account → Contact → Task), when processing
+  Tasks we need to filter by "AccountId IN (targetContactIds)" — NOT by all IDs
+  in the idMap (which would include Account IDs too).
+  Solution: nodeSourceIds is a Map<node, string[]> that stores each node's
+  source record IDs separately. Children only look up their direct parent's
+  entry, never the global idMap values.
+
+Step 3 — Return summary
+  { status, startedAt, finishedAt, summary: { ObjectName: { fetched, created, errors } } }
+  This is saved to sftk_history in chrome.storage.local.
+
+API used:
+  - Query: GET /services/data/v62.0/query/?q=SELECT...
+  - Describe: GET /services/data/v62.0/sobjects/{Object}/describe/
+  - Create: POST /services/data/v62.0/composite/sobjects (Collections API)
+  - Batch size: 200 records per Collections API call
+  - allOrNone: false (partial success is OK, errors are logged per record)
+
+────────────────────────────────────────────────────────────────────────────────
+8. DEBUGGING
+────────────────────────────────────────────────────────────────────────────────
+
+The extension has a built-in debug system. Here's how to use it:
+
+IN THE POPUP:
+  Click "🐛 Debug" button in the top-right header.
+  Button turns red when active.
+  A debug log panel appears showing all API calls, responses, and errors in
+  real time. Includes Copy and Export buttons.
+
+IN DATA STUDIO (studio.html):
+  The same debug-logger.js is loaded first in studio.html.
+  Open Chrome DevTools on the studio tab (F12) → Console tab.
+  Debug log entries are also written to console when debug mode is on.
+
+IN BACKGROUND.JS (service worker):
+  Go to: chrome://extensions → find "Salesforce Toolkit" → click "Service Worker"
+  This opens DevTools for the background service worker.
+  All console.log() calls from background.js appear here.
+  This is where you debug the actual transfer engine, API calls, and alarm fires.
+
+COMMON DEBUG STEPS:
+  Problem: Transfer creates 0 records
+    → Check Service Worker console for API errors
+    → Check if source session is valid (re-open the source org in Chrome)
+    → Check if WHERE clause syntax is valid SOQL
+    → Check if read-only fields are being stripped correctly
+
+  Problem: Child records have wrong parent IDs
+    → Check nodeSourceIds logic in executeProfileTransfer
+    → Log the idMap contents after each node is processed
+    → Verify parentField matches the actual Salesforce field name
+
+  Problem: Org not detected
+    → Make sure the org is open in a Chrome tab (not just bookmarked)
+    → Click "Refresh from open tabs" in Connected Orgs panel
+    → Check Service Worker console for getSfSession errors
+    → Verify the org URL format matches (must be https://orgname.my.salesforce.com)
+
+  Problem: Studio UI not updating
+    → All state lives in JS memory (_profiles, _history, etc.)
+    → Reload the studio tab to reset state (F5)
+    → Check chrome.storage.local via: chrome://extensions → Service Worker →
+      Application tab → Storage
+
+STORAGE DEBUGGING:
+  All persistent data is in chrome.storage.local:
+  Key: sftk_profiles  → Array of Profile objects (Org Maps)
+  Key: sftk_history   → Array of run results
+  Key: sftk_orgs      → Object: orgUrl → { label, firstSeen, lastSeen }
+
+  To inspect:
+  chrome://extensions → Salesforce Toolkit → Service Worker → Application →
+  Local Storage → chrome-extension://[id]/
+
+  Or run in Service Worker console:
+    chrome.storage.local.get(null, r => console.log(JSON.stringify(r, null, 2)))
+
+  To clear all data (nuclear reset):
+    chrome.storage.local.clear()
+
+────────────────────────────────────────────────────────────────────────────────
+9. CURRENT STATE — WHAT'S BUILT AND WORKING
+────────────────────────────────────────────────────────────────────────────────
+
+✅ COMPLETE AND WORKING:
+
+  Core Extension:
+    - Chrome MV3 extension shell (manifest, popup, background service worker)
+    - Session detection via chrome.cookies (no OAuth, no setup)
+    - Multi-org support (multiple Salesforce tabs detected simultaneously)
+    - Debug mode (built-in log panel, debug-logger.js singleton)
+
+  Data Studio — Architecture:
+    - Full-page studio tab (studio.html / studio.js / studio.css)
+    - SLDS light theme (Salesforce blue, white cards, navy header)
+    - Cat mascot "kitty" branding (CSS-only cat that bobs, blinks, and wags its tail
+      — reusing the existing robot CSS class names but completely restyled as a cat)
+    - Left sidebar nav with section titles
+
+  Data Studio — Views:
+    - Overview (Org Map grid) — org cards with status dots, sync history, schedule chips
+    - Connected Orgs panel — refresh from tabs, rename orgs, remove offline orgs,
+      "Add Org" guide modal explaining cookie-based detection
+    - Profiles list — name, object count, last run, schedule badge, action buttons
+    - Profile Builder (Org Map editor):
+        - Root object picker
+        - Visual card-based recursive tree renderer (depth-colored borders)
+        - Object type icons (🏢 Account, 👤 Contact, 💼 Opportunity, etc.)
+        - Relationship name badge + field badge on each child node
+        - WHERE clause inputs (always visible)
+        - Record count preview (👁 Preview button calls source org COUNT())
+        - Lazy-load child relationships via Salesforce describe API (cached)
+        - Expand/collapse nodes
+        - Add child relationship (filterable list from describe)
+        - Remove child node
+        - SOQL Preview pane — live syntax-highlighted SOQL showing exactly
+          what queries will run (subqueries for level-1 children, separate
+          labeled blocks for deeper levels)
+    - Transfer view — profile + source + target selectors, count preview, run button,
+      live progress log, result saved to history
+    - Schedule view — create/view/disable per-profile schedules (chrome.alarms)
+    - History view — sorted log, per-object chips, error details, clear all
+
+  Transfer Engine (background.js):
+    - executeProfileTransfer — full implementation
+    - flattenTree (depth-first, parent-before-child ordering)
+    - nodeSourceIds tracking (CRITICAL: prevents ID leakage in 3+ level trees)
+    - Collections API batching (200 records/batch, allOrNone:false)
+    - ID remapping (idMap: sourceId → targetId)
+    - RecordType resolution by DeveloperName (cross-org safe)
+    - Read-only field stripping before insert
+    - Scheduled sync via chrome.alarms (background service worker)
+
+  Popup Features (not Data Studio, but same extension):
+    - Flow Delete / Backup / Restore with progress robot/cat animation
+    - Subflow dependency tree
+    - Conflict scanner
+    - Lightning Pages (list, org-default detection, "who sees what", clone)
+    - User Permission Copy
+    - License Manager
+    - Flow Access permissions (FlowDefinitionView-based)
+    - Field Cleaner (scan deps, fix flows, delete field)
+    - Record Copy (simple version — not the full Studio transfer engine)
+
+────────────────────────────────────────────────────────────────────────────────
+10. WHAT IS NOT YET BUILT
+────────────────────────────────────────────────────────────────────────────────
+
+🔲 NOT YET BUILT — IN PRIORITY ORDER:
+
+  1. OPTIMIZED FETCH (background.js)
+     Current: root and each child queried as separate API calls
+     Planned: Use Salesforce native relationship queries to fetch root + level-1
+     children in ONE API call:
+       SELECT Id, (SELECT Id, Name FROM Contacts), (SELECT Id FROM Cases)
+       FROM Account WHERE ...
+     This would halve the number of API calls for 2-level trees.
+     Deeper levels still need separate queries (Salesforce limitation).
+
+  2. FIELD MAPPING UI
+     Currently all fields are copied as-is (minus read-only ones).
+     Planned: Let user define field-level overrides:
+       - Ignore certain fields (don't copy them)
+       - Map one field to a different field name in the target org
+       - Set a constant value for a field in the target
+     This is needed for orgs with different custom field names or picklist values.
+
+  3. UPSERT MODE (External ID)
+     Currently always INSERT (creates new records, never updates).
+     Planned: If the target org has records that were previously copied (identified
+     by an External ID field), UPDATE them instead of creating duplicates.
+     Would store a mapping table in the profile: { externalIdField per object }
+
+  4. DRY RUN MODE
+     Run through the entire transfer logic but don't actually write to the target.
+     Just report what WOULD be created/updated. Useful for validation.
+
+  5. ERROR RECOVERY
+     Currently if a node partially fails (some records error, some succeed),
+     the run continues. But there's no way to retry just the failed records.
+     Planned: Store failed records and allow "Retry Failed" from History.
+
+  6. PREMIUM WEB PLATFORM (Major future milestone)
+     The long-term vision is a standalone SaaS web app:
+       - Google OAuth login (no password, register with Google account)
+       - TOTP-based MFA (mandatory, non-optional)
+       - Premium feature gating (Stripe subscriptions)
+       - Multi-tenant accounts with Salesforce Connected App per org
+       - Web-based version of the Studio (not Chrome extension)
+       - Server-side transfer engine (no browser needed for scheduled syncs)
+       - Tech stack: Next.js + Supabase + Stripe + Google Cloud Run
+     This is a FUTURE milestone. The Chrome extension is the MVP.
+
+────────────────────────────────────────────────────────────────────────────────
+11. KEY TECHNICAL CONSTRAINTS TO KNOW
+────────────────────────────────────────────────────────────────────────────────
+
+  Salesforce API limits that affect the design:
+    - Collections API: max 200 records per batch, allOrNone per batch
+    - Subquery depth: max 1 level (can't do grandchild in same SOQL)
+    - SOQL IN clause: max 10,000 IDs per query (chunking needed for large sets)
+    - Describe cache: we cache per session in memory (not chrome.storage)
+    - Field permissions: if target org user doesn't have access to a field,
+      the Collections API will error on that field (need to strip it)
+
+  Chrome Extension MV3 constraints:
+    - Service worker can be killed between events (not a persistent background page)
+    - All state that must survive a sleep must be in chrome.storage.local
+    - Transfer runs in real time triggered by a message from the studio tab
+      (the studio tab staying open keeps the service worker alive during transfer)
+    - Alarms work across service worker sleeps — they re-wake the worker
+
+  Session constraints:
+    - If the admin logs out of Salesforce in Chrome, the sid cookie is gone
+    - Studio will show the org as "offline" until they log back in
+    - There's no token refresh — it's just a live browser session
+
+────────────────────────────────────────────────────────────────────────────────
+12. FILE MAP — WHAT'S IN WHAT FILE
+────────────────────────────────────────────────────────────────────────────────
+
+  background.js
+    getSfSession(orgUrl)            — reads sid cookie for a specific org
+    getAllSfSessions()              — scans all open SF tabs for sessions
+    sfQuery(orgUrl, sid, soql)     — executes a SOQL query
+    sfDescribe(orgUrl, sid, obj)   — describes an object's fields + relationships
+    sfCollectionsCreate(...)       — POST /composite/sobjects (batch insert)
+    executeProfileTransfer(...)    — the full transfer engine
+    flattenTree(node, parent, fld) — depth-first flatten
+    chrome.alarms listener         — fires scheduled syncs
+
+  studio.js
+    renderView(view)               — main router for sidebar nav clicks
+    renderOrgMap()                 — the overview grid of org cards
+    renderOrgsPanel()              — Connected Orgs management panel
+    showAddOrgHelp()               — "how to connect an org" modal
+    renderProfiles()               — profile list view
+    openProfileBuilder(profile)    — opens the Org Map editor
+    renderBuilder()                — renders the full builder UI
+    renderTreeNode(node,path,      — recursive visual tree node renderer
+                  isRoot,depth)
+    buildNestedSOQL(node, depth)   — generates syntax-highlighted SOQL HTML
+    refreshSOQLPreview()           — updates the SOQL pane from current tree
+    refreshTree()                  — re-renders tree + SOQL pane
+    wireTreeEvents()               — attaches all tree click/input handlers
+    getNodeByPath(root, pathStr)   — navigates to a node by dot-path string
+    addChild(...)                  — adds a child relationship to a node
+    removeNode(pathStr)            — removes a child node
+    loadNodeRels(node, path)       — lazy-loads describe for a node
+    renderTransfer()               — Transfer view
+    renderSchedule()               — Schedule view
+    renderHistory()                — History view
+    executeProfileTransfer()       — sends message to background.js to run
+
+  studio.css
+    SLDS light theme variables     — --brand, --header-bg, --bg, --card, etc.
+    .ds-tree-node--root/child-*    — depth-colored left border system
+    .ds-tree-node-card             — white card wrapper per node
+    .ds-tree-rel-badge             — relationship name pill (monospace, blue bg)
+    .ds-soql-pane                  — SOQL preview box
+    .ds-soql-kw/obj/sub/val        — syntax highlight color classes
+    Cat mascot styles              — .robot-* class names restyled as a cat
+
+  styles.css (popup)
+    Same SLDS theme for the popup window
+    Cat mascot CSS animations:
+      tailSwish (antenna → tail wag)
+      catBlink (eyes blink every 4 seconds)
+      whiskerTwitch (periodic whisker animation)
+      catBob (head bob during transfers)
+      pawWiggle (logo animation)
+
+────────────────────────────────────────────────────────────────────────────────
+13. HOW IT ALL WORKS TECHNICALLY — END TO END
+────────────────────────────────────────────────────────────────────────────────
+
+This section explains the full technical flow from user action to data appearing
+in the target org. Read this to understand any part of the system.
+
+── A. EXTENSION STARTUP ────────────────────────────────────────────────────────
+
+When the user opens the extension popup (popup.html):
+  1. popup.js runs. Its first action is to ask background.js for the current
+     Salesforce session: chrome.runtime.sendMessage({ type: 'GET_SF_SESSION' })
+  2. background.js → getSfSession() runs in the service worker:
+       a. Queries chrome.tabs for all tabs matching SF URL globs
+       b. Picks the best tab: exact hostname match to active tab URL > any .my.salesforce.com > any SF URL
+       c. Tries several cookie URL candidates to get the 'sid' HttpOnly cookie
+       d. Falls back to chrome.cookies.getAll({ name: 'sid' }) scan across all domains
+       e. Returns { orgUrl, sid } — the API base URL and the session token
+  3. popup.js stores orgUrl + sid, then renders the home page
+  4. All subsequent API calls go through background.js with those credentials
+
+When the user opens Data Studio (clicks "🌐 Data"):
+  1. popup.js calls chrome.tabs.create({ url: chrome.runtime.getURL('studio.html') })
+  2. studio.html opens as a new full Chrome tab
+  3. studio.js DOMContentLoaded fires:
+       a. Loads all data from chrome.storage.local (profiles, history, orgs)
+       b. Calls GET_SF_SESSION to detect current org (for the topbar chip)
+       c. Calls GET_ALL_SF_SESSIONS to find ALL open SF orgs (for selectors)
+       d. Saves all detected orgs to sftk_orgs in storage
+       e. Wires sidebar nav buttons
+       f. Renders the Org Map overview (default view)
+
+── B. ORG DETECTION (HOW WE FIND ORGS WITHOUT OAUTH) ──────────────────────────
+
+This is the most important architectural decision. No OAuth. No Connected App.
+No passwords. No setup.
+
+The Salesforce session cookie 'sid' is an HttpOnly cookie, meaning JavaScript
+on a web page CANNOT read it. But Chrome extensions with the "cookies" permission
+CAN read any cookie on any domain they have host_permissions for.
+
+So the flow is:
+  chrome.cookies.get({ url: 'https://myorg.my.salesforce.com', name: 'sid' })
+  → Returns { value: '00D...' }  (the Bearer token)
+
+This token is exactly what you'd get from OAuth. It's the same token Salesforce's
+own Lightning components use. It expires naturally when the user logs out.
+
+The extension reads this token and uses it as:
+  Authorization: Bearer 00D...
+in every Salesforce REST API call.
+
+Key edge cases handled:
+  - .salesforce-setup.com tabs: API origin is rewritten to .salesforce.com
+  - .lightning.force.com tabs: API origin is rewritten to .my.salesforce.com
+  - Cookie domain scoping: tries multiple subdomain variations (e.g. the cookie
+    might be scoped to .develop.my.salesforce.com not the full hostname)
+  - Multiple orgs open: getAllSfSessions() deduplicates by orgUrl using seenOrgs Set
+
+── C. API CALL ARCHITECTURE ────────────────────────────────────────────────────
+
+All Salesforce API calls are made in background.js (the service worker), not in
+popup.js or studio.js. This is because:
+  1. The service worker has persistent network access
+  2. Separates concerns: UI code just sends messages, background handles HTTP
+  3. 30-second timeout + 1 retry on 500 errors (sfFetch)
+  4. Automatic session refresh on 401 (handleMessage catches SESSION_EXPIRED,
+     re-reads the cookie, retries the request once)
+
+Message flow:
+  studio.js:    sendBg({ type: 'SF_QUERY', orgUrl, sid, query, tooling: false })
+  background.js: chrome.runtime.onMessage → handleMessage → dispatchMessage → sfQuery()
+  sfQuery():    fetch(`${orgUrl}/services/data/v62.0/query?q=...`, { headers: { Authorization: Bearer sid } })
+  → Returns JSON directly to the caller
+
+API functions in background.js:
+  sfQuery()         — single SOQL query, first page only
+  sfQueryAll()      — SOQL with auto-pagination via nextRecordsUrl (ALL records)
+  sfRestGet()       — any REST GET by path
+  sfPost()          — REST POST
+  sfPatch()         — REST PATCH (update)
+  sfDelete()        — REST DELETE
+  sfCollectionsCreate() — POST /composite/sobjects (batch insert 200/call)
+  sfMetadataDeploy()    — multipart deploy + polling (for Lightning Page clone)
+  sfCreateFlow()        — Tooling API flow creation
+
+── D. THE TRANSFER ENGINE — STEP BY STEP ───────────────────────────────────────
+
+This is the most complex part. Called as:
+  executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid)
+
+Profile contains a tree (the Org Map). Example:
+  Account (WHERE: Name LIKE 'Acme%')
+    └── Contact (field: AccountId)
+          └── Task (field: WhoId)
+
+Step 1 — Flatten the tree:
+  flattenTree() returns:
+  [
+    { node: Account,  parentNode: null,    parentField: null      },
+    { node: Contact,  parentNode: Account, parentField: 'AccountId' },
+    { node: Task,     parentNode: Contact, parentField: 'WhoId'    }
+  ]
+  Depth-first order guarantees every parent is processed before its children.
+
+Step 2 — For each node in order:
+
+  2a. Describe the object to get its field list
+      GET /sobjects/Account/describe → list of fields with { name, type, createable, accessible }
+      buildCopyFields() filters to: accessible fields that are createable OR reference type
+      (excluding system fields: Id, CreatedDate, OwnerId, etc.)
+
+  2b. Fetch source records — two paths:
+
+      ROOT NODE (Account):
+        SOQL: SELECT Id, Name, Phone, ... FROM Account WHERE Name LIKE 'Acme%' ORDER BY Id
+        sfQueryAll() paginates automatically via nextRecordsUrl until done = true
+        No record limit — ALL matching records are fetched
+
+      CHILD NODE (Contact):
+        Get parent's source IDs: nodeSourceIds.get(Account_node) = ['001A...', '001B...']
+        Map to target IDs via idMap: ['003X...', '003Y...']
+        If 0 target IDs: SKIP — no contacts fetched (would query ALL contacts otherwise)
+        Chunk 200 parent IDs at a time:
+          SOQL: SELECT Id, FirstName, LastName, AccountId, ...
+                FROM Contact
+                WHERE AccountId IN ('003X...','003Y...')
+                ORDER BY Id
+        sfQueryAll() paginates each chunk
+        Deduplicate records across chunks (same contact can't match two parents, but safety)
+
+  2c. Store source IDs for this node:
+      nodeSourceIds.set(Contact_node, ['003source1', '003source2', ...])
+      (These will be used when processing Task — Task.WhoId IN (target Contact IDs))
+
+  2d. Resolve RecordTypes cross-org:
+      Source: SELECT Id, DeveloperName FROM RecordType WHERE Id IN (...)
+      Target: SELECT Id, DeveloperName FROM RecordType WHERE SObjectType = 'Contact'
+      Build rtMap: source RT Id → target RT Id (matched by DeveloperName)
+      If no match found: RecordType is dropped from the payload (uses org default)
+
+  2e. Build insert payloads:
+      For each source record:
+        - Skip: Id, CreatedDate, LastModifiedDate, SystemModstamp, CreatedById,
+                LastModifiedById, IsDeleted, OwnerId (running user gets ownership)
+        - RecordTypeId: map via rtMap
+        - Reference fields (type='reference'): map via idMap (source ID → target ID)
+          This is how AccountId on Contact gets remapped from the source Account ID
+          to the newly-created target Account ID
+        - All other createable fields: copied as-is
+
+  2f. Batch create in target org:
+      POST /composite/sobjects with 200 records per call, allOrNone: false
+      On success: idMap[sourceId] = targetId (for child reference remapping)
+      On failure: error logged, count incremented (other records in batch still succeed)
+
+  2g. Error handling:
+      If describe/query/insert throws: nodeSourceIds.set(node, []) to prevent
+      children from querying with an empty (or broken) parent ID list
+
+Step 3 — Return summary:
+  { profileId, profileName, startedAt, completedAt, sourceOrg, targetOrg,
+    status: 'success' | 'partial' | 'failed',
+    summary: { Account: { created: 5, failed: 0 }, Contact: { created: 12, failed: 1 } },
+    errors: ['Contact: Duplicate value...'] }
+  Saved to sftk_history in chrome.storage.local
+
+── E. THE PROFILE BUILDER UI ───────────────────────────────────────────────────
+
+The builder is a recursive HTML renderer. State is kept in _editingProfile (in JS
+memory, not persisted until Save is clicked).
+
+Each tree node has a _meta object (runtime only, stripped before storage):
+  { count: null|number, expanded: bool, loading: bool, relsLoaded: bool, availableRels: [] }
+
+renderTreeNode(node, path, isRoot, depth):
+  - Generates HTML for one node and all its children recursively
+  - path is a dot-separated string like '0.1' meaning "first child's second child"
+    (root = '', first child = '0', etc.)
+  - Depth determines the left-border color class
+
+wireTreeEvents():
+  - Attaches event listeners to every interactive element in the tree
+  - Called after every refreshTree() because innerHTML replaces the DOM
+
+getNodeByPath(root, pathStr):
+  - Navigates the tree to find a node by its path string
+  - '0.1.2' → root.children[0].children[1].children[2]
+
+loadNodeRels(node):
+  - Calls describe on the node's object type
+  - Filters out noisy system relationships (ActivityHistories, Shares, etc.)
+  - Stores result in node._meta.availableRels
+  - Triggers refreshTree() so the "Add child" list appears
+
+refreshSOQLPreview():
+  - Reads _editingProfile.tree
+  - Calls buildNestedSOQL(tree) to generate syntax-highlighted HTML
+  - Injects into #dsSOQLPane
+
+buildNestedSOQL(node, depth):
+  - Root + level-1 children: expressed as native SF relationship subqueries
+    SELECT Id, (SELECT Id FROM Contacts WHERE ...) FROM Account WHERE ...
+  - Deeper levels: separate annotated SELECT blocks with "separate query" labels
+
+── F. SCHEDULED SYNCS ──────────────────────────────────────────────────────────
+
+When a schedule is enabled:
+  1. Studio sends DS_SCHEDULE_SET to background.js
+  2. background.js: chrome.alarms.create('sftk_sync_{profileId}', { periodInMinutes })
+  3. Chrome fires the alarm repeatedly even when extension popup is closed
+  4. chrome.alarms.onAlarm listener in background.js fires:
+       a. Read profile from sftk_profiles
+       b. getSfSession(profile.schedule.sourceOrg) — re-reads the live cookie
+       c. getAllSfSessions() → find target session
+       d. executeProfileTransfer(...) — full transfer
+       e. Append result to sftk_history
+
+── G. STORAGE LAYOUT ──────────────────────────────────────────────────────────
+
+All persistence is in chrome.storage.local (not localStorage — available in
+service workers and accessible from all extension contexts).
+
+sftk_profiles: [
+  {
+    id: 'prof_1234_abcd',
+    name: 'Account + Contacts',
+    createdAt: '2026-05-01T...',
+    updatedAt: '2026-05-08T...',
+    tree: {
+      objectType: 'Account',
+      where: "Name LIKE 'Acme%'",
+      children: [
+        {
+          relationshipName: 'Contacts',
+          childSObject: 'Contact',
+          field: 'AccountId',
+          where: null,
+          children: []
+        }
+      ]
+    },
+    schedule: {  // optional — only if scheduled
+      enabled: true,
+      sourceOrg: 'https://prod.my.salesforce.com',
+      targetOrg: 'https://sandbox.my.salesforce.com',
+      intervalMinutes: 60
+    }
+  }
+]
+
+sftk_history: [
+  {
+    id: 'run_1234_abcd',
+    profileId: 'prof_1234_abcd',
+    profileName: 'Account + Contacts',
+    status: 'success',
+    startedAt: '2026-05-08T10:00:00Z',
+    completedAt: '2026-05-08T10:00:45Z',
+    sourceOrg: 'https://prod.my.salesforce.com',
+    targetOrg: 'https://sandbox.my.salesforce.com',
+    summary: { Account: { created: 5, failed: 0 }, Contact: { created: 12, failed: 0 } },
+    errors: [],
+    scheduledRun: false
+  }
+]
+
+sftk_orgs: {
+  'https://prod.my.salesforce.com': { label: 'Production', firstSeen: '...', lastSeen: '...' },
+  'https://sandbox.my.salesforce.com': { label: 'QA Sandbox', firstSeen: '...', lastSeen: '...' }
+}
+
+────────────────────────────────────────────────────────────────────────────────
+14. QA PASS — BUGS FOUND AND FIXED (2026-05-08)
+────────────────────────────────────────────────────────────────────────────────
+
+A full code review of background.js and studio.js was performed. The following
+bugs were identified and fixed:
+
+BUG 1 — CRITICAL: LIMIT 2000 silently capping all transfers
+  File: background.js, executeProfileTransfer()
+  Problem: The SOQL query had "LIMIT 2000" appended, but sfQueryAll() was being
+    called to paginate results. Salesforce interprets LIMIT as a hard cap and
+    returns done:true after 2000 rows, so sfQueryAll() never paginates. Any
+    transfer with more than 2000 root records was silently truncated.
+  Fix: Removed LIMIT clause. sfQueryAll() now paginates via nextRecordsUrl until
+    Salesforce reports done:true naturally. Added ORDER BY Id for deterministic
+    pagination (prevents page shifts if records change mid-query).
+
+BUG 2 — HIGH: Unfiltered child query when parent had 0 successful inserts
+  File: background.js, executeProfileTransfer()
+  Problem: When a parent node had 0 records fetched OR all parent inserts failed,
+    parentTgtIds was an empty string. The guard `if (parentTgtIds)` was false, so
+    the child node's WHERE clause was built WITHOUT the parent filter. This caused
+    the child query to run as "SELECT ... FROM Contact" with no constraint, fetching
+    ALL contacts in the org — wasting API calls and producing records with null
+    parent references.
+  Fix: Explicit check `if (parentTgtIds.length === 0) { skip; continue; }` before
+    building the child query. A skipped node sets nodeSourceIds to [] so its own
+    children are also skipped recursively.
+
+BUG 3 — HIGH: No chunking of parent IN clause for large data sets
+  File: background.js, executeProfileTransfer()
+  Problem: All parent target IDs were joined into a single SQL IN clause:
+    WHERE AccountId IN ('id1','id2',...,'id5000')
+    Salesforce doesn't document an official IN clause limit but rejects very large
+    lists in practice. With thousands of parent records, child queries would fail.
+  Fix: Parent IDs are now chunked into groups of 200. Each chunk runs as a separate
+    sfQueryAll() call. Results are merged and deduplicated by Id.
+
+BUG 4 — MEDIUM: Dead code in renderTransfer
+  File: studio.js, renderTransfer()
+  Problem: A `sessOptions` arrow function was defined but never called anywhere.
+    The actual <select> option HTML was built inline using allSess.map(). The dead
+    function confused the code and wasted a closure.
+  Fix: Removed the sessOptions function entirely.
+
+BUG 5 — MEDIUM: OwnerId queried from source but always discarded in payload
+  File: background.js, buildCopyFields() and payload building loop
+  Problem: buildCopyFields() did not include OwnerId in its SKIP set, so OwnerId
+    was always queried in the SELECT. But the payload building loop at line 120
+    explicitly skipped OwnerId (correct — the source owner ID won't exist in the
+    target org). This wasted one field slot in every SELECT query.
+  Fix: Added OwnerId to the SKIP set in buildCopyFields() so it's never queried.
+    The payload loop skip for OwnerId is kept as a safety net.
+
+BUG 6 — MEDIUM: buildCopyFields returned 'Id' inside the filtered array
+  File: background.js, buildCopyFields()
+  Problem: The original code had `f.name === 'Id' || (...)` in the filter, meaning
+    Id was included in the returned array via the filter itself. But Id was also in
+    the explicit skip check `!SKIP.has(f.name)` inconsistently. Id should always be
+    first and explicit.
+  Fix: Refactored to `return ['Id', ...describe.fields.filter(f => accessible &&
+    !SKIP.has(f.name) && (createable || reference)).map(f => f.name)]`. Id is now
+    always first and not duplicated by the filter.
+
+────────────────────────────────────────────────────────────────────────────────
+15. KNOWN LIMITATIONS (NOT BUGS — BY DESIGN OR DEFERRED)
+────────────────────────────────────────────────────────────────────────────────
+
+  - Max ~2000 RECORDS PER BATCH in Collections API call (Salesforce limit, we handle it)
+  - SOQL IN clause: chunked at 200 IDs per query (conservative but safe)
+  - OwnerId: always defaults to the running user in target org (cannot map users cross-org)
+  - External IDs: no upsert mode yet — always INSERT, never UPDATE existing records
+  - Field access: if target org user lacks access to a field, that record will error
+  - RecordType: if a RecordType's DeveloperName doesn't exist in target, it's dropped
+  - Polymorphic lookups (WhatId, WhoId on Task/Event): mapped if the referenced type
+    was transferred, otherwise dropped
+  - No dry-run mode: transfers are real — test with a sandbox first
+
+================================================================================
+END OF BRIEF
+================================================================================
