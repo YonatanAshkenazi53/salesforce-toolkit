@@ -1793,6 +1793,48 @@ html, body {
 }
 .ds-sched-snapshot-opt input[type="checkbox"] { margin: 0; cursor: pointer; }
 
+/* ── Drift overlay (Phase 2) — Org Map edge detail panel ─────── */
+.ds-drift-table-hdr {
+  margin-top: 10px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--subtext);
+  letter-spacing: .4px;
+  text-transform: uppercase;
+}
+.ds-drift-table {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.ds-drift-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: rgba(125, 125, 125, 0.06);
+  border-left: 3px solid #9ca3af;
+}
+.ds-drift-row-obj  { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-drift-row-pct  { font-weight: 700; min-width: 36px; text-align: right; }
+.ds-drift-row-meta { color: var(--subtext); font-size: 9.5px; }
+.ds-drift-row-state{ color: var(--subtext); font-size: 9.5px; font-style: italic; }
+.ds-drift-row-green  { border-left-color: #16a34a; }
+.ds-drift-row-green  .ds-drift-row-pct { color: #16a34a; }
+.ds-drift-row-yellow { border-left-color: #ca8a04; }
+.ds-drift-row-yellow .ds-drift-row-pct { color: #ca8a04; }
+.ds-drift-row-orange { border-left-color: #ea580c; }
+.ds-drift-row-orange .ds-drift-row-pct { color: #ea580c; }
+.ds-drift-row-red    { border-left-color: #dc2626; }
+.ds-drift-row-red    .ds-drift-row-pct { color: #dc2626; }
+.ds-drift-row-empty  { border-left-color: #6b7280; opacity: 0.7; }
+.ds-drift-row-warn   { border-left-color: #ea580c; background: rgba(234, 88, 12, 0.08); }
+
 /* ── History ─────────────────────────────────────────────────── */
 .ds-history-list { display: flex; flex-direction: column; gap: 10px; max-width: 920px; }
 
