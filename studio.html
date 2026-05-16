@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Salesforce Data Studio</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="studio.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- Top bar -->
+    <div class="ds-topbar">
+      <div class="ds-brand">
+        <button class="ds-back-btn" id="dsBackToToolkit" title="Back to Salesforce Toolkit">‹ Toolkit</button>
+        <span class="ds-logo">🐱</span>
+        <span class="ds-brand-name">Salesforce Data Studio</span>
+      </div>
+      <div class="ds-topbar-center">
+        <button class="ds-trust-badge" id="dsSecurityBtn">
+          <span class="ds-trust-lock">🔒</span>
+          <span class="ds-trust-text">Local only — no data leaves your browser</span>
+          <span class="ds-trust-arrow">›</span>
+        </button>
+      </div>
+      <div class="ds-topbar-right">
+        <button class="ds-cmd-topbar-hint" id="dsCmdPaletteBtn" title="Open command palette">
+          <kbd>Ctrl</kbd><kbd>K</kbd>
+          <span>Quick nav</span>
+        </button>
+        <button class="ds-dark-toggle" id="dsDarkToggle" title="Switch to dark mode">🌙</button>
+        <button id="dbgBtn" class="dbg-btn" title="Debug Log — off">🐛 Debug</button>
+      </div>
+    </div>
+
+    <!-- Body: sidebar + main -->
+    <div class="ds-body">
+
+      <nav class="ds-nav">
+        <div class="ds-nav-section-title">Overview</div>
+        <button class="ds-nav-btn active" data-view="map">
+          <span class="ds-nav-icon">🌐</span>
+          <span class="ds-nav-label">
+            <span class="ds-nav-name">Org Map</span>
+            <span class="ds-nav-desc">All orgs at a glance</span>
+          </span>
+        </button>
+        <button class="ds-nav-btn" data-view="orgs">
+          <span class="ds-nav-icon">🔌</span>
+          <span class="ds-nav-label">
+            <span class="ds-nav-name">Connected Orgs</span>
+            <span class="ds-nav-desc">Manage connections</span>
+          </span>
+        </button>
+
+        <div class="ds-nav-section-title">Data</div>
+        <button class="ds-nav-btn" data-view="profiles">
+          <span class="ds-nav-icon">📦</span>
+          <span class="ds-nav-label">
+            <span class="ds-nav-name">Data Deployment</span>
+            <span class="ds-nav-desc">Profiles + run transfer</span>
+          </span>
+        </button>
+        <button class="ds-nav-btn" data-view="schedule">
+          <span class="ds-nav-icon">📅</span>
+          <span class="ds-nav-label">
+            <span class="ds-nav-name">Schedule</span>
+            <span class="ds-nav-desc">Automate transfers</span>
+          </span>
+        </button>
+        <button class="ds-nav-btn" data-view="history">
+          <span class="ds-nav-icon">📜</span>
+          <span class="ds-nav-label">
+            <span class="ds-nav-name">History</span>
+            <span class="ds-nav-desc">Past transfer runs</span>
+          </span>
+        </button>
+
+        <div class="ds-nav-section-title">Inspect</div>
+        <button class="ds-nav-btn" data-view="scans">
+          <span class="ds-nav-icon">🔍</span>
+          <span class="ds-nav-label">
+            <span class="ds-nav-name">Scan Map</span>
+            <span class="ds-nav-desc">Compare record counts</span>
+          </span>
+        </button>
+        <button class="ds-nav-btn" data-view="readiness">
+          <span class="ds-nav-icon">🛡</span>
+          <span class="ds-nav-label">
+            <span class="ds-nav-name">Deploy Readiness</span>
+            <span class="ds-nav-desc">Schema compatibility</span>
+          </span>
+        </button>
+        <button class="ds-nav-btn" data-view="schema">
+          <span class="ds-nav-icon">🕸</span>
+          <span class="ds-nav-label">
+            <span class="ds-nav-name">Schema View</span>
+            <span class="ds-nav-desc">Flow &amp; object graph</span>
+          </span>
+        </button>
+
+        <!-- Nav footer -->
+        <div class="ds-nav-footer">
+          <span class="ds-nav-footer-text">Read-only by default</span>
+          <span class="ds-nav-footer-dot">·</span>
+          <span class="ds-nav-footer-text">Open source</span>
+        </div>
+      </nav>
+
+      <main class="ds-main" id="dsMain">
+        <div class="ds-init-loading">
+          <div class="lp-robot-loading">
+            <div class="lp-rcat">
+              <div class="lp-rcat-ears"><div class="lp-rcat-ear"></div><div class="lp-rcat-ear"></div></div>
+              <div class="lp-rcat-head"><div class="lp-rcat-eye"></div><div class="lp-rcat-eye"></div></div>
+            </div>
+            <div class="lp-robot-msg">Initializing Data Studio…</div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+  </div>
+
+  <!-- Modal overlay -->
+  <div id="dsModal" class="ds-modal-overlay" style="display:none">
+    <div id="dsModalBox" class="ds-modal-box"></div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="dsToastContainer" class="ds-toast-container"></div>
+
+  <!-- Trusted Types policy MUST load first — it monkey-patches innerHTML
+       et al. so every subsequent script's HTML assignment is sanitized. -->
+  <script src="trusted-types-policy.js"></script>
+  <script src="debug-logger.js"></script>
+  <script src="onboarding.js"></script>
+  <script src="crypto-vault.js"></script>
+  <script src="debug-modal.js"></script>
+  <script src="studio.js"></script>
+</body>
+</html>
