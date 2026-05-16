@@ -454,6 +454,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'cloneProfile':          window.cloneProfile?.(arg); break;
       case 'deleteProfile':         window.deleteProfile?.(arg); break;
       case 'refreshDiff':           window.refreshProfileDiff?.(arg); break;
+      case 'snapshotProfile':       window.snapshotProfileNow?.(arg); break;
+      case 'showDriftRecords': {
+        const [pid, t] = (arg || '').split('|');
+        const p = _profiles.find(x => x.id === pid);
+        if (p && t) showDriftRecordsModal(p, t);
+        break;
+      }
       case 'disableSchedule':       window.disableSchedule?.(arg); break;
       case 'runScanNow':            window.runScanNow?.(arg); break;
       case 'viewScanResult':        window.viewScanResult?.(arg); break;
@@ -1932,10 +1939,12 @@ function showScheduleEdgeDetail(profileId, orgs) {
     const total = d.identical + d.drift + d.missingInB;
     const pct   = total > 0 ? Math.round(d.identical / total * 100) : 100;
     const band  = snapshotDriftColor(total > 0 ? d.identical / total : 1);
-    return `<div class="ds-drift-row ds-drift-row-${band.color}">
+    const hasNonIdentical = (d.drift + d.missingInB + d.onlyInB) > 0;
+    return `<div class="ds-drift-row ds-drift-row-${band.color} ${hasNonIdentical ? 'ds-drift-row-clickable' : ''}"
+        ${hasNonIdentical ? `data-dsaction="showDriftRecords" data-arg="${esc(profileId)}|${esc(t)}" title="Click to see specific drifting records"` : ''}>
       <span class="ds-drift-row-obj">${esc(t)}</span>
       <span class="ds-drift-row-pct">${pct}%</span>
-      <span class="ds-drift-row-meta">${d.identical} ✓ · ${d.drift} drift · ${d.missingInB} missing</span>
+      <span class="ds-drift-row-meta">${d.identical} ✓ · ${d.drift} drift · ${d.missingInB} missing${d.onlyInB ? ` · ${d.onlyInB} extra` : ''}</span>
     </div>`;
   }).join('');
 
@@ -2602,6 +2611,9 @@ function profileCard(p) {
         <button class="ds-btn ds-btn-sm" data-dsaction="refreshDiff" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
           title="Query both orgs and compute what's missing / changed / in sync — gives you live state instead of relying on past run history">🔍 Refresh diff</button>
+        <button class="ds-btn ds-btn-sm" data-dsaction="snapshotProfile" data-arg="${p.id}"
+          ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
+          title="Capture fingerprints of every record in every object of this profile tree, on both source and target orgs. Powers the Org Map drift overlay without re-querying live.">📸 Snapshot</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="editProfile" data-arg="${p.id}">✏ Edit</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="cloneProfile" data-arg="${p.id}">⧉ Clone</button>
         <button class="ds-btn ds-btn-sm ds-btn-danger" data-dsaction="deleteProfile" data-arg="${p.id}">🗑</button>
@@ -4840,6 +4852,141 @@ function aggregateProfileDrift(profile) {
     identical, drift, missingInB
   };
 }
+
+// Drill-down: show the actual drifting matchKeys for one object in a profile.
+// Reads from _snapshotsCache only — no network, no extra query. Caps the
+// rendered list to keep huge drift sets snappy.
+function showDriftRecordsModal(profile, objectType) {
+  if (!profile?.schedule) return;
+  const a = _snapshotsCache[profile.schedule.sourceOrg]?.[objectType];
+  const b = _snapshotsCache[profile.schedule.targetOrg]?.[objectType];
+  if (!a || !b) {
+    return showToast(`Need snapshots on both orgs first for ${objectType}. Click 📸 Refresh snapshots.`, 'error', 5000);
+  }
+  const aRec = a.records || {};
+  const bRec = b.records || {};
+
+  // Build the three buckets — pure cached work, no I/O.
+  const drift      = [];  // in both, hash differs
+  const missingInB = [];  // in src not tgt
+  const onlyInB    = [];  // in tgt not src
+  for (const [k, av] of Object.entries(aRec)) {
+    if (!(k in bRec)) missingInB.push({ matchKey: k, srcId: av.id });
+    else if (av.hash !== bRec[k].hash) {
+      drift.push({ matchKey: k, srcId: av.id, tgtId: bRec[k].id, srcHash: av.hash, tgtHash: bRec[k].hash });
+    }
+  }
+  for (const [k, bv] of Object.entries(bRec)) {
+    if (!(k in aRec)) onlyInB.push({ matchKey: k, tgtId: bv.id });
+  }
+
+  const CAP    = 100;
+  const srcUrl = profile.schedule.sourceOrg;
+  const tgtUrl = profile.schedule.targetOrg;
+  // Build links that open the record directly in the right org's Lightning UI.
+  const recLink = (orgUrl, id) => `${orgUrl.replace(/\/$/, '')}/lightning/r/${objectType}/${id}/view`;
+
+  const driftHtml = drift.length ? `
+    <div class="ds-drift-modal-section-hdr">⚠ Drift — same record, different field values (${drift.length}${drift.length > CAP ? ` · showing ${CAP}` : ''})</div>
+    <div class="ds-drift-modal-list">
+      ${drift.slice(0, CAP).map(r => `
+        <div class="ds-drift-modal-row">
+          <span class="ds-drift-modal-key">${esc(r.matchKey)}</span>
+          <a href="${esc(recLink(srcUrl, r.srcId))}" target="_blank" rel="noopener" class="ds-drift-modal-link" title="Open in source org">${esc(r.srcId)} ↗</a>
+          <span class="ds-drift-modal-hash" title="Source hash">${esc(r.srcHash)}</span>
+          <span class="ds-drift-modal-vs">≠</span>
+          <span class="ds-drift-modal-hash" title="Target hash">${esc(r.tgtHash)}</span>
+          <a href="${esc(recLink(tgtUrl, r.tgtId))}" target="_blank" rel="noopener" class="ds-drift-modal-link" title="Open in target org">${esc(r.tgtId)} ↗</a>
+        </div>`).join('')}
+    </div>` : '';
+
+  const missingHtml = missingInB.length ? `
+    <div class="ds-drift-modal-section-hdr">📤 Missing in target — present in source only (${missingInB.length}${missingInB.length > CAP ? ` · showing ${CAP}` : ''})</div>
+    <div class="ds-drift-modal-list">
+      ${missingInB.slice(0, CAP).map(r => `
+        <div class="ds-drift-modal-row">
+          <span class="ds-drift-modal-key">${esc(r.matchKey)}</span>
+          <a href="${esc(recLink(srcUrl, r.srcId))}" target="_blank" rel="noopener" class="ds-drift-modal-link">${esc(r.srcId)} ↗</a>
+        </div>`).join('')}
+    </div>` : '';
+
+  const extrasHtml = onlyInB.length ? `
+    <div class="ds-drift-modal-section-hdr">📥 Only in target — present in target only (${onlyInB.length}${onlyInB.length > CAP ? ` · showing ${CAP}` : ''})</div>
+    <div class="ds-drift-modal-list">
+      ${onlyInB.slice(0, CAP).map(r => `
+        <div class="ds-drift-modal-row">
+          <span class="ds-drift-modal-key">${esc(r.matchKey)}</span>
+          <a href="${esc(recLink(tgtUrl, r.tgtId))}" target="_blank" rel="noopener" class="ds-drift-modal-link">${esc(r.tgtId)} ↗</a>
+        </div>`).join('')}
+    </div>` : '';
+
+  const emptyHtml = (!drift.length && !missingInB.length && !onlyInB.length) ? `
+    <div class="ds-drift-modal-empty">
+      <div style="font-size:32px;margin-bottom:8px">✅</div>
+      <div style="font-weight:600">Fully in sync for ${esc(objectType)}</div>
+      <div style="font-size:11px;color:var(--subtext);margin-top:6px">${a.recordCount} records match across source and target.</div>
+    </div>` : '';
+
+  showModal(`
+    <div class="ds-modal-header">
+      🔍 Drift detail — <strong>${esc(objectType)}</strong>
+      <button class="ds-btn ds-btn-xs" data-dsaction="closeModal" style="margin-left:auto">✕</button>
+    </div>
+    <div class="ds-modal-body ds-drift-modal-body">
+      <div class="ds-drift-modal-orgs">
+        <strong>${esc(orgLabel(srcUrl))}</strong>
+        <span style="color:var(--subtext)">vs</span>
+        <strong>${esc(orgLabel(tgtUrl))}</strong>
+        <span style="margin-left:auto;font-size:11px;color:var(--subtext)">matchField: <code>${esc(a.matchField)}</code> · compareFields: <code>${esc((a.compareFields||[]).join(', ') || '(none)')}</code></span>
+      </div>
+      ${emptyHtml}
+      ${driftHtml}
+      ${missingHtml}
+      ${extrasHtml}
+      ${(drift.length > CAP || missingInB.length > CAP || onlyInB.length > CAP) ? `
+        <div class="ds-drift-modal-truncated">Some lists capped at ${CAP} rows. Snapshot was ${a.truncated || b.truncated ? 'itself truncated at 50k records — ' : ''}use a tighter WHERE filter on the profile to narrow the comparison.</div>` : ''}
+    </div>
+  `);
+}
+
+// Manual "📸 Snapshot" for a single PROFILE — captures snapshots for every
+// objectType in the profile's tree, on both sourceOrg and targetOrg. Uses
+// profile.scanConfig for the root object, defaults to Name for children.
+window.snapshotProfileNow = async function(profileId) {
+  const p = _profiles.find(x => x.id === profileId);
+  if (!p)              return showToast('Profile not found', 'error', 3000);
+  if (!p.sourceOrg || !p.targetOrg) {
+    return showToast('Profile has no source/target orgs — set them in Edit first', 'error', 4000);
+  }
+  const allSess = _buildAllSessions();
+  const srcSess = _resolveSession(p.sourceOrg, allSess);
+  const tgtSess = _resolveSession(p.targetOrg, allSess);
+  if (!srcSess?.sid) return showToast(`No active session for source org (${orgLabel(p.sourceOrg)}) — open it in Chrome first`, 'error', 5000);
+  if (!tgtSess?.sid) return showToast(`No active session for target org (${orgLabel(p.targetOrg)}) — open it in Chrome first`, 'error', 5000);
+
+  const types    = [...collectTreeObjects(p.tree)];
+  const rootType = p.tree?.objectType || p.tree?.childSObject;
+  if (!types.length) return showToast('Profile has no objects', 'error', 3000);
+
+  showToast(`📸 Capturing ${types.length} object(s) × 2 orgs…`, 'info', 2500);
+  let ok = 0, fail = 0;
+  for (const t of types) {
+    const mf  = (t === rootType) ? (p.scanConfig?.matchField    || 'Name') : 'Name';
+    const cmp = (t === rootType) ? (p.scanConfig?.compareFields || [])     : [];
+    try {
+      const a = await captureOrgSnapshot(srcSess.orgUrl, srcSess.sid, t, mf, cmp);
+      if (a?.error) fail++; else ok++;
+    } catch (_) { fail++; }
+    try {
+      const b = await captureOrgSnapshot(tgtSess.orgUrl, tgtSess.sid, t, mf, cmp);
+      if (b?.error) fail++; else ok++;
+    } catch (_) { fail++; }
+  }
+  await refreshSnapshotsCache();
+  if (_currentView === 'map')      drawMapEdges(allMapOrgs());
+  if (_currentView === 'profiles') renderProfiles();
+  showToast(`Snapshots captured — ${ok} ok${fail ? `, ${fail} failed` : ''}`, fail ? 'error' : 'success', 4000);
+};
 
 // Manual "📸 Snapshot now" for a single org — captures snapshots for every
 // object in every profile that touches this org (as src OR tgt). Uses each
