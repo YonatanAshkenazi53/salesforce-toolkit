@@ -82,6 +82,11 @@ let _transferConflict     = 'skip';  // Feature 6 — conflict resolution: 'skip
 // Cleared whenever the selected profile changes.
 let _transferNodeFilters  = {};
 
+// Phase 2 — Org Map drift overlay
+// Cached on view enter so drawMapEdges/drawMapNodes can stay synchronous.
+// Refresh via refreshSnapshotsCache() before any draw that depends on snapshots.
+let _snapshotsCache = {};
+
 // ── DOM helpers ───────────────────────────────────────────────
 const esc = s => String(s ?? '')
   .replace(/&/g,'&amp;').replace(/</g,'&lt;')
@@ -435,6 +440,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'startTransferFromOrg':  window.startTransferFromOrg?.(arg); break;
       case 'reconnectOrg':          window.reconnectOrg?.(arg); break;
       case 'removeStoredOrg':       window.removeStoredOrg?.(arg); break;
+      case 'snapshotNow':           window.snapshotOrgNow?.(arg); break;
       // deleteConnection removed in Architecture A (manual connections no longer rendered)
       case 'scheduleFromOrg': {
         // Open the schedule wizard with this org pre-selected as source
@@ -1461,9 +1467,12 @@ function ensurePositions(orgs) {
   }
 }
 
-function renderOrgMap() {
+async function renderOrgMap() {
   const orgs = allMapOrgs();
   ensurePositions(orgs);
+  // Pull the freshest snapshots into _snapshotsCache so the drift overlay
+  // on schedule edges can render synchronously below.
+  await refreshSnapshotsCache();
 
   const main = eid('dsMain');
   if (!main) return;
@@ -1804,6 +1813,9 @@ function drawMapEdges(orgs) {
     })
     .filter(Boolean);
 
+  // Drift palette — matches snapshotDriftColor labels.
+  const DRIFT_FILLS = { green: '#16a34a', yellow: '#ca8a04', orange: '#ea580c', red: '#dc2626' };
+
   const schedHtml = schedEdges.map(({ profile, srcOrg, tgtOrg, lastRun }, i) => {
     // Center the edge — manual connections were removed in Architecture A,
     // so there's nothing on the same lane to dodge.
@@ -1815,6 +1827,33 @@ function drawMapEdges(orgs) {
     const lastRunText  = lastRun ? timeAgo(lastRun.startedAt) : 'never run';
     const lastRunColor = lastRun?.status === 'success' ? '#2E844A' : lastRun ? '#EA001E' : '#AEAEAC';
     const mid = e.midY - 18;
+
+    // ── Phase 2: drift chip ───────────────────────────────────────────
+    // Aggregate match ratio across every objectType in the profile tree
+    // where both orgs have a snapshot. matchRatio===null → no data yet.
+    const drift = aggregateProfileDrift(profile);
+    let chipFill, chipText, chipTitle;
+    if (drift.matchRatio == null) {
+      chipFill  = '#6b7280';
+      chipText  = '📸 no snapshot yet';
+      chipTitle = drift.totalObjects
+        ? `${drift.totalObjects} object(s) in profile · run a transfer or click 📸 Snapshot now on either org to build the diff`
+        : 'profile has no objects to snapshot';
+    } else if (drift.schemaMismatch) {
+      chipFill  = DRIFT_FILLS.orange;
+      chipText  = '⚠ schema drift';
+      chipTitle = 'compareFields differ between the two snapshots — re-capture both with the same scanConfig';
+    } else {
+      const pct  = Math.round(drift.matchRatio * 100);
+      const band = snapshotDriftColor(drift.matchRatio);
+      chipFill  = DRIFT_FILLS[band.color];
+      chipText  = `${band.color === 'green' ? '🟢' : band.color === 'yellow' ? '🟡' : band.color === 'orange' ? '🟠' : '🔴'} ${pct}% match`;
+      chipTitle = `${drift.identical} identical · ${drift.drift} drift · ${drift.missingInB} missing in target · across ${drift.objectsCovered}/${drift.totalObjects} object(s)`;
+    }
+    // Chip width: ~7px per char + padding. Centered around midX. Sits BELOW the last-run line.
+    const chipWidth  = Math.max(70, chipText.length * 6.6 + 16);
+    const chipX      = e.midX - chipWidth / 2;
+    const chipY      = mid + 30;
 
     return `<g class="ds-map-edge ds-sched-edge" data-sched-id="${profile.id}">
       <!-- Animated dashed path -->
@@ -1828,6 +1867,14 @@ function drawMapEdges(orgs) {
         font-family="system-ui,sans-serif" pointer-events="none" opacity="0.75">every ${esc(ivLbl)}</text>
       <text x="${e.midX}" y="${mid+23}" font-size="9" fill="${lastRunColor}" text-anchor="middle"
         font-family="system-ui,sans-serif" pointer-events="none" opacity="0.85">${esc(lastRunText)}</text>
+      <!-- Drift chip -->
+      <g class="ds-drift-chip" pointer-events="none">
+        <title>${esc(chipTitle)}</title>
+        <rect x="${chipX}" y="${chipY}" width="${chipWidth}" height="16" rx="8" ry="8"
+          fill="${chipFill}" opacity="0.95"/>
+        <text x="${e.midX}" y="${chipY + 11}" font-size="9.5" fill="#ffffff" text-anchor="middle"
+          font-family="system-ui,sans-serif" font-weight="600">${esc(chipText)}</text>
+      </g>
       <!-- Transparent wide hit path for easy clicking -->
       <path d="${e.d}" fill="none" stroke="transparent" stroke-width="20"
         style="cursor:pointer" data-sched-click="${profile.id}"/>
@@ -1862,6 +1909,36 @@ function showScheduleEdgeDetail(profileId, orgs) {
   const detail = eid('dsMapDetail');
   if (!detail) return;
   detail.style.display = '';
+
+  // Per-object drift table — pulls from _snapshotsCache, no I/O.
+  const treeTypes = [...collectTreeObjects(profile.tree)];
+  const srcSnaps  = _snapshotsCache[profile.schedule.sourceOrg] || {};
+  const tgtSnaps  = _snapshotsCache[profile.schedule.targetOrg] || {};
+  const driftRows = treeTypes.map(t => {
+    const a = srcSnaps[t], b = tgtSnaps[t];
+    if (!a || !b) {
+      return `<div class="ds-drift-row ds-drift-row-empty">
+        <span class="ds-drift-row-obj">${esc(t)}</span>
+        <span class="ds-drift-row-state">📸 no snapshot</span>
+      </div>`;
+    }
+    const d = diffSnapshots(a, b);
+    if (d.error || !d.fieldsMatch) {
+      return `<div class="ds-drift-row ds-drift-row-warn">
+        <span class="ds-drift-row-obj">${esc(t)}</span>
+        <span class="ds-drift-row-state">⚠ ${esc(d.error || 'schema drift')}</span>
+      </div>`;
+    }
+    const total = d.identical + d.drift + d.missingInB;
+    const pct   = total > 0 ? Math.round(d.identical / total * 100) : 100;
+    const band  = snapshotDriftColor(total > 0 ? d.identical / total : 1);
+    return `<div class="ds-drift-row ds-drift-row-${band.color}">
+      <span class="ds-drift-row-obj">${esc(t)}</span>
+      <span class="ds-drift-row-pct">${pct}%</span>
+      <span class="ds-drift-row-meta">${d.identical} ✓ · ${d.drift} drift · ${d.missingInB} missing</span>
+    </div>`;
+  }).join('');
+
   detail.innerHTML = `
     <div class="ds-map-detail-hdr">
       <span>📅</span>
@@ -1872,7 +1949,11 @@ function showScheduleEdgeDetail(profileId, orgs) {
       <div style="font-size:11px;margin-bottom:6px">
         <strong>${esc(srcLabel)}</strong> → <strong>${esc(tgtLabel)}</strong>
       </div>
-      <div style="font-size:11px;color:var(--subtext)">Runs ${esc(ivLbl)} · <span style="color:#27ae60">● active</span></div>
+      <div style="font-size:11px;color:var(--subtext)">Runs ${esc(ivLbl)} · <span style="color:#27ae60">● active</span>${profile.schedule.refreshSnapshotAfter ? ' · 📸 snapshot after each run' : ''}</div>
+
+      <div class="ds-drift-table-hdr">Drift by object</div>
+      <div class="ds-drift-table">${driftRows || '<div style="font-size:11px;color:var(--subtext)">No objects in profile tree</div>'}</div>
+
       ${lastRuns.length ? `
         <div style="margin-top:8px;font-size:11px;font-weight:600;color:var(--subtext)">Recent runs</div>
         ${lastRuns.map(h => {
@@ -1886,8 +1967,19 @@ function showScheduleEdgeDetail(profileId, orgs) {
     </div>
     <div class="ds-map-detail-actions">
       <button class="ds-btn ds-btn-xs ds-btn-danger" id="dsMapSchedDisable">⏹ Disable</button>
+      <button class="ds-btn ds-btn-xs" id="dsMapSchedSnap" title="Capture fresh snapshots on both orgs for every object in this profile tree, then redraw">📸 Refresh snapshots</button>
       <button class="ds-btn ds-btn-xs ds-btn-primary" id="dsMapSchedGo">📅 Schedule tab</button>
     </div>`;
+
+  eid('dsMapSchedSnap')?.addEventListener('click', async () => {
+    const orgsNow = allMapOrgs();
+    const srcOrg  = orgsNow.find(o => o.url === profile.schedule.sourceOrg);
+    const tgtOrg  = orgsNow.find(o => o.url === profile.schedule.targetOrg);
+    if (srcOrg) await window.snapshotOrgNow(srcOrg.id);
+    if (tgtOrg) await window.snapshotOrgNow(tgtOrg.id);
+    // Re-render the detail panel with fresh data
+    showScheduleEdgeDetail(profileId, orgsNow);
+  });
 
   eid('dsMapSchedDisable')?.addEventListener('click', async () => {
     window.disableSchedule?.(profileId);
@@ -2053,6 +2145,8 @@ function selectNode(orgId, orgs) {
       <button class="ds-btn ds-btn-xs ds-btn-primary"
         data-dsaction="startTransferFromOrg" data-arg="${orgId}">🚀 Transfer</button>
       <button class="ds-btn ds-btn-xs" data-dsaction="scheduleFromOrg" data-arg="${orgId}">📅 Schedule</button>
+      <button class="ds-btn ds-btn-xs" data-dsaction="snapshotNow" data-arg="${orgId}"
+        title="Capture a fingerprint of every record (per object) on this org. Used by the drift overlay to compare against other orgs without re-querying live.">📸 Snapshot now</button>
       ${!online && !org.auto ? `<button class="ds-btn ds-btn-xs" data-dsaction="reconnectOrg" data-arg="${orgId}">🔄 Reconnect</button>` : ''}
       ${!org.auto ? `<button class="ds-btn ds-btn-xs ds-btn-danger" data-dsaction="removeStoredOrg" data-arg="${orgId}">🗑</button>` : ''}
     </div>`;
@@ -4708,6 +4802,100 @@ async function captureOrgSnapshot(orgUrl, sid, objectType, matchField, compareFi
     compareFields: compareFields || []
   });
 }
+
+async function refreshSnapshotsCache() {
+  _snapshotsCache = await loadSnapshots();
+  return _snapshotsCache;
+}
+
+// Aggregate drift for a scheduled profile — walks every object in the profile
+// tree, looks up snapshots on src + tgt from cache, returns a combined ratio.
+// Returns matchRatio: null if no objects have both-side snapshots yet.
+function aggregateProfileDrift(profile) {
+  if (!profile?.schedule) return { matchRatio: null, objectsCovered: 0, totalObjects: 0 };
+  const types     = [...collectTreeObjects(profile.tree)];
+  const srcSnaps  = _snapshotsCache[profile.schedule.sourceOrg] || {};
+  const tgtSnaps  = _snapshotsCache[profile.schedule.targetOrg] || {};
+  let identical = 0, drift = 0, missingInB = 0;
+  let objectsCovered = 0;
+  let schemaMismatch = false;
+
+  for (const t of types) {
+    const a = srcSnaps[t], b = tgtSnaps[t];
+    if (!a || !b) continue;
+    const d = diffSnapshots(a, b);
+    if (d.error) continue;
+    if (!d.fieldsMatch) schemaMismatch = true;
+    objectsCovered++;
+    identical  += d.identical;
+    drift      += d.drift;
+    missingInB += d.missingInB;
+  }
+  const denom = identical + drift + missingInB;
+  return {
+    matchRatio: denom > 0 ? identical / denom : null,
+    objectsCovered,
+    totalObjects: types.length,
+    schemaMismatch,
+    identical, drift, missingInB
+  };
+}
+
+// Manual "📸 Snapshot now" for a single org — captures snapshots for every
+// object in every profile that touches this org (as src OR tgt). Uses each
+// profile's scanConfig for the root object, defaults to Name for children.
+window.snapshotOrgNow = async function(orgId) {
+  const orgs = allMapOrgs();
+  const org  = orgs.find(o => o.id === orgId);
+  if (!org) return;
+  const sess = _allSessions.find(s => s.orgUrl === org.url)
+            || (org.url === _orgUrl ? { orgUrl: _orgUrl, sid: _sid } : null)
+            || (_storedOrgs.find(s => s.url === org.url && s.sid) ? { orgUrl: org.url, sid: _storedOrgs.find(s => s.url === org.url).sid } : null);
+  if (!sess?.sid) {
+    showToast(`Open ${orgLabel(org.url)} in Chrome first (no active session)`, 'error', 4000);
+    return;
+  }
+
+  // Find every object type involved in any profile that touches this org.
+  // Match the per-object matchField/compareFields used when the same object
+  // appears as a profile root — so this snapshot stays comparable.
+  const objectSpecs = new Map();  // objType → { matchField, compareFields }
+  for (const p of _profiles) {
+    if (p.schedule?.sourceOrg !== org.url && p.schedule?.targetOrg !== org.url
+        && p.sourceOrg !== org.url && p.targetOrg !== org.url) continue;
+    const rootType = p.tree?.objectType || p.tree?.childSObject;
+    const types = [...collectTreeObjects(p.tree)];
+    for (const t of types) {
+      if (objectSpecs.has(t)) continue;
+      if (t === rootType) {
+        objectSpecs.set(t, {
+          matchField:    p.scanConfig?.matchField    || 'Name',
+          compareFields: p.scanConfig?.compareFields || []
+        });
+      } else {
+        objectSpecs.set(t, { matchField: 'Name', compareFields: [] });
+      }
+    }
+  }
+  if (!objectSpecs.size) {
+    showToast(`No profiles touch ${orgLabel(org.url)} — create one first to define objects to snapshot`, 'info', 5000);
+    return;
+  }
+
+  showToast(`📸 Capturing ${objectSpecs.size} object snapshot(s) on ${orgLabel(org.url)}…`, 'info', 2500);
+  let ok = 0, fail = 0;
+  for (const [t, spec] of objectSpecs) {
+    try {
+      const r = await captureOrgSnapshot(sess.orgUrl, sess.sid, t, spec.matchField, spec.compareFields);
+      if (r?.error) fail++; else ok++;
+    } catch (_) { fail++; }
+  }
+  await refreshSnapshotsCache();
+  if (_currentView === 'map') {
+    drawMapEdges(allMapOrgs());
+  }
+  showToast(`Snapshots captured — ${ok} ok${fail ? `, ${fail} failed` : ''}`, fail ? 'error' : 'success', 4000);
+};
 
 // Diff two snapshots of the same object captured on different orgs.
 // Returns counts + a matchRatio used by the drift overlay color picker.
