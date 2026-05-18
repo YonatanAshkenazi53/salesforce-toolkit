@@ -716,8 +716,50 @@ const SNAPSHOT_MAX_RECORDS_PER_OBJECT = 50000;
 const SNAPSHOT_MAX_TOTAL_BYTES        = 8 * 1024 * 1024;
 
 async function captureSnapshot(orgUrl, sid, objectType, matchField, compareFields) {
-  const mf       = matchField || 'Name';
-  const cmp      = [...(compareFields || [])].filter(Boolean).sort();
+  let mf  = matchField || 'Name';
+  let cmp = [...(compareFields || [])].filter(Boolean).sort();
+
+  // ── Validate matchField + compareFields against the object's describe ─────
+  // Salesforce objects don't all have a Name field. ReturnOrder uses
+  // ReturnOrderNumber. Case uses CaseNumber. Task uses Subject. Junction
+  // objects often have no name-like field at all. Pre-validating is faster
+  // than catching the 400 and retrying, and lets us drop compareFields the
+  // org doesn't expose without aborting the whole snapshot.
+  let describe = null;
+  try {
+    describe = await sfRestGet(orgUrl, sid,
+      `services/data/${API_VERSION}/sobjects/${objectType}/describe`);
+  } catch (e) {
+    throw new Error(`Snapshot ${objectType}: describe failed (${e?.message || e}). Object may not exist on this org or user lacks FLS.`);
+  }
+  const fieldNames = new Set((describe?.fields || []).map(f => f.name));
+  if (!fieldNames.size) {
+    throw new Error(`Snapshot ${objectType}: describe returned no fields. Object may not exist on this org or user lacks FLS.`);
+  }
+
+  // If the requested matchField doesn't exist, fall back to the describe's
+  // flagged nameField (e.g. ReturnOrderNumber, CaseNumber). If THAT doesn't
+  // exist either, give up — there's no stable identifier to key records by.
+  if (!fieldNames.has(mf)) {
+    const nameFld = (describe.fields || []).find(f => f.nameField === true);
+    if (nameFld?.name) {
+      mf = nameFld.name;
+    } else {
+      throw new Error(`Snapshot ${objectType}: no "${matchField || 'Name'}" field and no nameField in describe — can't fingerprint records on this object.`);
+    }
+  }
+
+  // Drop compareFields the target org doesn't expose. This can happen with
+  // managed-package fields, FLS differences, or schema drift between orgs.
+  // We surface the dropped list so the caller can see why a field's drift
+  // signal disappeared.
+  const droppedCompare = [];
+  cmp = cmp.filter(f => {
+    if (fieldNames.has(f)) return true;
+    droppedCompare.push(f);
+    return false;
+  });
+
   const selectF  = [...new Set(['Id', mf, ...cmp])];
   const soql     = `SELECT ${selectF.join(',')} FROM ${objectType}`;
 
@@ -778,7 +820,14 @@ async function captureSnapshot(orgUrl, sid, objectType, matchField, compareField
   }
 
   await chrome.storage.local.set({ org_snapshots: all });
-  return { recordCount: snapshot.recordCount, truncated, capturedAt };
+  return {
+    recordCount: snapshot.recordCount,
+    truncated,
+    capturedAt,
+    matchField:      mf,                         // may differ from requested if we fell back
+    droppedCompareFields: droppedCompare,        // empty array unless target org lacked some compare fields
+    matchFieldFellBack: mf !== (matchField || 'Name')
+  };
 }
 
 // SHA-256 over normalized compareField values, first 12 hex chars (48 bits).

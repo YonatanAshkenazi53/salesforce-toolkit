@@ -4969,24 +4969,56 @@ window.snapshotProfileNow = async function(profileId) {
   if (!types.length) return showToast('Profile has no objects', 'error', 3000);
 
   showToast(`📸 Capturing ${types.length} object(s) × 2 orgs…`, 'info', 2500);
-  let ok = 0, fail = 0;
+  let ok = 0;
+  const failures   = [];   // [{ objectType, side, error }]
+  const adjusted   = [];   // [{ objectType, side, fellBack, dropped }]
   for (const t of types) {
     const mf  = (t === rootType) ? (p.scanConfig?.matchField    || 'Name') : 'Name';
     const cmp = (t === rootType) ? (p.scanConfig?.compareFields || [])     : [];
-    try {
-      const a = await captureOrgSnapshot(srcSess.orgUrl, srcSess.sid, t, mf, cmp);
-      if (a?.error) fail++; else ok++;
-    } catch (_) { fail++; }
-    try {
-      const b = await captureOrgSnapshot(tgtSess.orgUrl, tgtSess.sid, t, mf, cmp);
-      if (b?.error) fail++; else ok++;
-    } catch (_) { fail++; }
+    for (const [side, sess] of [['source', srcSess], ['target', tgtSess]]) {
+      try {
+        const r = await captureOrgSnapshot(sess.orgUrl, sess.sid, t, mf, cmp);
+        if (r?.error) {
+          failures.push({ objectType: t, side, error: r.error });
+        } else {
+          ok++;
+          if (r?.matchFieldFellBack || (r?.droppedCompareFields || []).length) {
+            adjusted.push({ objectType: t, side, fellBack: r.matchFieldFellBack, dropped: r.droppedCompareFields || [] });
+          }
+        }
+      } catch (e) {
+        failures.push({ objectType: t, side, error: e?.message || String(e) });
+      }
+    }
   }
   await refreshSnapshotsCache();
   if (_currentView === 'map')      drawMapEdges(allMapOrgs());
   if (_currentView === 'profiles') renderProfiles();
-  showToast(`Snapshots captured — ${ok} ok${fail ? `, ${fail} failed` : ''}`, fail ? 'error' : 'success', 4000);
+  reportSnapshotResult(ok, failures, adjusted);
 };
+
+// Build a clear, actionable toast from snapshot batch results. Used by both
+// snapshotProfileNow and snapshotOrgNow so the warning surface is consistent.
+function reportSnapshotResult(ok, failures, adjusted) {
+  if (failures.length === 0 && adjusted.length === 0) {
+    showToast(`📸 Snapshots captured — ${ok} ok`, 'success', 3500);
+    return;
+  }
+  const lines = [`📸 Snapshots — ${ok} ok, ${failures.length} failed`];
+  if (failures.length) {
+    const sample = failures.slice(0, 3).map(f => `${f.objectType} (${f.side}): ${(f.error || '').replace(/^Snapshot \S+: /, '').slice(0, 80)}`);
+    lines.push(...sample);
+    if (failures.length > 3) lines.push(`…and ${failures.length - 3} more`);
+  }
+  if (adjusted.length) {
+    const fellBackList = [...new Set(adjusted.filter(a => a.fellBack).map(a => a.objectType))];
+    const droppedSet   = new Set();
+    for (const a of adjusted) (a.dropped || []).forEach(d => droppedSet.add(d));
+    if (fellBackList.length) lines.push(`ℹ matchField auto-corrected for: ${fellBackList.slice(0, 4).join(', ')}${fellBackList.length > 4 ? `, +${fellBackList.length - 4}` : ''}`);
+    if (droppedSet.size)     lines.push(`ℹ dropped fields not present on target: ${[...droppedSet].slice(0, 4).join(', ')}${droppedSet.size > 4 ? `, +${droppedSet.size - 4}` : ''}`);
+  }
+  showToast(lines.join('\n'), failures.length ? 'error' : 'info', 8000);
+}
 
 // Manual "📸 Snapshot now" for a single org — captures snapshots for every
 // object in every profile that touches this org (as src OR tgt). Uses each
@@ -5030,18 +5062,27 @@ window.snapshotOrgNow = async function(orgId) {
   }
 
   showToast(`📸 Capturing ${objectSpecs.size} object snapshot(s) on ${orgLabel(org.url)}…`, 'info', 2500);
-  let ok = 0, fail = 0;
+  let ok = 0;
+  const failures = [];
+  const adjusted = [];
   for (const [t, spec] of objectSpecs) {
     try {
       const r = await captureOrgSnapshot(sess.orgUrl, sess.sid, t, spec.matchField, spec.compareFields);
-      if (r?.error) fail++; else ok++;
-    } catch (_) { fail++; }
+      if (r?.error) {
+        failures.push({ objectType: t, side: 'this org', error: r.error });
+      } else {
+        ok++;
+        if (r?.matchFieldFellBack || (r?.droppedCompareFields || []).length) {
+          adjusted.push({ objectType: t, side: 'this org', fellBack: r.matchFieldFellBack, dropped: r.droppedCompareFields || [] });
+        }
+      }
+    } catch (e) {
+      failures.push({ objectType: t, side: 'this org', error: e?.message || String(e) });
+    }
   }
   await refreshSnapshotsCache();
-  if (_currentView === 'map') {
-    drawMapEdges(allMapOrgs());
-  }
-  showToast(`Snapshots captured — ${ok} ok${fail ? `, ${fail} failed` : ''}`, fail ? 'error' : 'success', 4000);
+  if (_currentView === 'map') drawMapEdges(allMapOrgs());
+  reportSnapshotResult(ok, failures, adjusted);
 };
 
 // Diff two snapshots of the same object captured on different orgs.
