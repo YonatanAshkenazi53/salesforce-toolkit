@@ -2785,22 +2785,12 @@ function renderBuilder() {
         </div>
       </div>
 
-      <!-- Diff config — drives the "what's already in target?" signal.
-           The match field is the cross-org record identity (since Salesforce
-           Ids don't match across orgs). Compare fields, if any, are checked
-           for value equality to detect drift between source and target. -->
-      <div class="ds-builder-diff-row">
-        <div class="ds-builder-diff-col">
-          <label class="ds-lbl">Match field <span class="ds-builder-org-hint">— used to identify the SAME record across orgs</span></label>
-          <input id="dsProfileMatchField" class="ds-input" placeholder="Name"
-            value="${esc(p.scanConfig?.matchField || 'Name')}">
-        </div>
-        <div class="ds-builder-diff-col">
-          <label class="ds-lbl">Compare fields <span class="ds-builder-org-hint">— comma-separated; differences mark a record as "drift"</span></label>
-          <input id="dsProfileCompareFields" class="ds-input" placeholder="e.g. Email, Phone, Title"
-            value="${esc((p.scanConfig?.compareFields || []).join(', '))}">
-        </div>
-      </div>
+      <!-- Diff config is now DERIVED, not configured here.
+           Match field defaults to Name and auto-falls-back to the object's
+           describe-flagged nameField (e.g. ReturnOrderNumber, CaseNumber)
+           when Name doesn't exist. Compare fields are taken from the root
+           node's Field Mapping — the user already declared which fields
+           matter when they mapped them, no need to ask again. -->
 
       <div class="ds-section-title">Object Tree</div>
 
@@ -2846,17 +2836,10 @@ function renderBuilder() {
   eid('dsProfileSrcOrg')?.addEventListener('change', e => { _editingProfile.sourceOrg = e.target.value || ''; });
   eid('dsProfileTgtOrg')?.addEventListener('change', e => { _editingProfile.targetOrg = e.target.value || ''; });
 
-  // Diff-config inputs — match field + comma-separated compare fields.
-  // Updates the in-memory profile; commit happens on builder Save.
-  eid('dsProfileMatchField')?.addEventListener('change', e => {
-    if (!_editingProfile.scanConfig) _editingProfile.scanConfig = {};
-    _editingProfile.scanConfig.matchField = e.target.value.trim() || 'Name';
-  });
-  eid('dsProfileCompareFields')?.addEventListener('change', e => {
-    if (!_editingProfile.scanConfig) _editingProfile.scanConfig = {};
-    _editingProfile.scanConfig.compareFields = e.target.value
-      .split(',').map(s => s.trim()).filter(Boolean);
-  });
+  // Diff config is no longer exposed as inputs — see deriveScanConfig() below.
+  // The user configures field interest exactly once, via the Field Mapping
+  // modal on the root node. Match field is auto-derived (defaults to Name
+  // with describe-based fallback).
 
   if (p.tree) {
     wireTreeEvents();
@@ -4632,6 +4615,39 @@ async function saveProfile() {
 }
 
 // ════════════════════════════════════════════════════════════════
+// SCAN CONFIG DERIVATION
+// ════════════════════════════════════════════════════════════════
+// Profiles used to have explicit matchField + compareFields inputs in
+// the Profile Builder. That was redundant — users already declare which
+// fields matter when they configure the Field Mapping modal on the root
+// node. This helper derives scanConfig at runtime so callers don't need
+// to read profile.scanConfig directly.
+//
+//   matchField     ← profile.scanConfig.matchField (legacy backwards-compat)
+//                    or 'Name' (with describe-based fallback at use time)
+//   compareFields  ← keys of node.fieldMappings that map to a non-null target
+//                    or profile.scanConfig.compareFields (legacy backwards-compat)
+//                    or []  (presence-only diff)
+//
+// Backward compat: if a profile has the old scanConfig values set explicitly,
+// they still take effect — we don't want to silently change behavior for
+// existing profiles that had custom config.
+function deriveScanConfig(profile, node) {
+  const legacyMatch   = profile?.scanConfig?.matchField;
+  const legacyCompare = (profile?.scanConfig?.compareFields || []).filter(Boolean);
+
+  const mappings = node?.fieldMappings || {};
+  const fromMappings = Object.keys(mappings).filter(k =>
+    mappings[k] !== null && mappings[k] !== ''
+  );
+
+  return {
+    matchField:    legacyMatch || 'Name',
+    compareFields: fromMappings.length ? fromMappings : legacyCompare
+  };
+}
+
+// ════════════════════════════════════════════════════════════════
 // LIVE DIFF SCAN — the source of truth for "what's in each org"
 // ════════════════════════════════════════════════════════════════
 // Queries source AND target for the profile's root object, indexes both
@@ -4651,9 +4667,10 @@ async function runDiffScan(profile) {
   const objType = profile.tree?.objectType || profile.tree?.childSObject;
   if (!objType)                  return { error: 'profile has no root object' };
 
-  const matchField    = profile.scanConfig?.matchField || 'Name';
-  const compareFields = (profile.scanConfig?.compareFields || []).filter(Boolean);
-  const where         = (profile.tree?.where || '').trim();
+  const derived = deriveScanConfig(profile, profile.tree);
+  let matchField    = derived.matchField;
+  let compareFields = derived.compareFields;
+  const where       = (profile.tree?.where || '').trim();
 
   // Resolve sessions for both orgs. They must be reachable (open in Chrome
   // OR stored as credentialed orgs) — otherwise the scan can't query target.
@@ -4662,6 +4679,22 @@ async function runDiffScan(profile) {
   const tgtSess = _resolveSession(profile.targetOrg, allSess);
   if (!srcSess?.sid) return { error: `source org session not active — open ${orgLabel(profile.sourceOrg)} in a tab` };
   if (!tgtSess?.sid) return { error: `target org session not active — open ${orgLabel(profile.targetOrg)} in a tab` };
+
+  // Validate matchField via describe — fall back to the object's nameField
+  // (e.g. ReturnOrderNumber, CaseNumber) when Name doesn't exist. Also drop
+  // compareFields the source org doesn't expose so the SELECT doesn't 400.
+  try {
+    const srcDesc  = await describe(objType, srcSess.orgUrl, srcSess.sid);
+    const srcNames = new Set((srcDesc?.fields || []).map(f => f.name));
+    if (!srcNames.has(matchField)) {
+      const nameFld = (srcDesc?.fields || []).find(f => f.nameField === true);
+      if (nameFld?.name) matchField = nameFld.name;
+    }
+    compareFields = compareFields.filter(f => srcNames.has(f));
+  } catch (_) {
+    // Describe failed — push through with the original values and let the
+    // SOQL surface a clearer error if it 400s.
+  }
 
   // SOQL — Id + matchField + each compareField. Dedup to avoid `SELECT
   // Id, Id, Name, Name` when matchField is also a compareField.
@@ -4972,9 +5005,13 @@ window.snapshotProfileNow = async function(profileId) {
   let ok = 0;
   const failures   = [];   // [{ objectType, side, error }]
   const adjusted   = [];   // [{ objectType, side, fellBack, dropped }]
+  const rootDerived = deriveScanConfig(p, p.tree);
   for (const t of types) {
-    const mf  = (t === rootType) ? (p.scanConfig?.matchField    || 'Name') : 'Name';
-    const cmp = (t === rootType) ? (p.scanConfig?.compareFields || [])     : [];
+    // Root uses the derived scanConfig (matchField default + compareFields
+    // from field mappings). Children fall back to Name (auto-corrected
+    // server-side if Name doesn't exist on that object).
+    const mf  = (t === rootType) ? rootDerived.matchField    : 'Name';
+    const cmp = (t === rootType) ? rootDerived.compareFields : [];
     for (const [side, sess] of [['source', srcSess], ['target', tgtSess]]) {
       try {
         const r = await captureOrgSnapshot(sess.orgUrl, sess.sid, t, mf, cmp);
@@ -5044,13 +5081,11 @@ window.snapshotOrgNow = async function(orgId) {
         && p.sourceOrg !== org.url && p.targetOrg !== org.url) continue;
     const rootType = p.tree?.objectType || p.tree?.childSObject;
     const types = [...collectTreeObjects(p.tree)];
+    const rootDerived = deriveScanConfig(p, p.tree);
     for (const t of types) {
       if (objectSpecs.has(t)) continue;
       if (t === rootType) {
-        objectSpecs.set(t, {
-          matchField:    p.scanConfig?.matchField    || 'Name',
-          compareFields: p.scanConfig?.compareFields || []
-        });
+        objectSpecs.set(t, rootDerived);
       } else {
         objectSpecs.set(t, { matchField: 'Name', compareFields: [] });
       }
