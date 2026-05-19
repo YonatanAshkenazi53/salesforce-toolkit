@@ -1270,6 +1270,22 @@ html, body {
   color: var(--brand-dark);
   white-space: nowrap;
 }
+/* Per-org match field selectors (src ↔ tgt) in the Pick Records modal */
+.ds-rec-mf-col {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.ds-rec-mf-col .ds-select-sm,
+.ds-rec-mf-col .ds-input-sm { flex: 1; min-width: 0; }
+.ds-rec-mf-arrow {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--brand-dark);
+  padding: 0 2px;
+}
 .ds-select-sm {
   font-size: 12px;
   padding: 4px 8px;
