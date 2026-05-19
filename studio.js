@@ -4101,9 +4101,39 @@ async function openRecordPickerModal(pathStr) {
     });
 
   // ── Step 2: pick initial display field ────────────────────────
-  // Use the last field the user chose for this object (stored in _meta), or best guess
+  // Priority: persisted node.matchField (cross-org identity, lives forever) >
+  // transient session pick (_meta._recDisplayField) > best-guess (first
+  // candidate, usually Name).
   const defaultField = candidateFields[0]?.name || null;
-  let displayField   = node._meta._recDisplayField || defaultField;
+  let displayField   = node.matchField || node._meta._recDisplayField || defaultField;
+
+  // ── Step 2b: load TARGET describe so the "Match on target" dropdown can
+  // be populated. Best effort — if the target session is unavailable, we
+  // fall back to a free-text input so the user can still declare the
+  // target-side field name manually.
+  const allSess  = _buildAllSessions();
+  const tgtSess  = _editingProfile?.targetOrg ? _resolveSession(_editingProfile.targetOrg, allSess) : null;
+  let tgtCandidates = null;   // null = unavailable (target session missing)
+  if (tgtSess?.sid) {
+    try {
+      const tgtDesc = await describe(objType, tgtSess.orgUrl, tgtSess.sid);
+      if (tgtDesc?.fields?.length) {
+        tgtCandidates = (tgtDesc.fields || [])
+          .filter(f => STRING_TYPES.has(f.type) && !f.deprecatedAndHidden && f.name !== 'Id')
+          .map(f => ({ name: f.name, label: f.label || f.name }))
+          .sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name));
+      }
+    } catch (_) { /* target describe failed — leave tgtCandidates null */ }
+  }
+
+  // Target match field — priority: persisted > field mapping for current
+  // displayField > same name as source (auto-corrected at runtime).
+  function deriveTgtMatchDefault(srcField) {
+    if (node.matchFieldTgt)                                                                return node.matchFieldTgt;
+    if (node.fieldMappings?.[srcField] && node.fieldMappings[srcField] !== null)           return node.fieldMappings[srcField];
+    return srcField;
+  }
+  let tgtMatchField = deriveTgtMatchDefault(displayField);
 
   // ── Step 3: query helper — fetches records using current displayField ─
   let records = [];
@@ -4193,15 +4223,30 @@ async function openRecordPickerModal(pathStr) {
       <div class="ds-modal-header">🎯 Pick Records — <strong>${esc(objType)}</strong></div>
       <div class="ds-modal-body ds-picker-body">
 
-        <!-- Display field selector -->
+        <!-- Match field selectors — drive what's displayed AND how records
+             match across orgs (Salesforce IDs differ between orgs, so a
+             non-Id field needs to be the cross-org identity). Per-org because
+             a field called "Name" on source might be "Full_Name__c" on target. -->
         <div class="ds-rec-display-row">
-          <span class="ds-rec-display-lbl">Show field:</span>
-          ${candidateFields.length
-            ? `<select id="dsRecDisplayField" class="ds-select ds-select-sm">
-                <option value="Id">Id (always unique)</option>
-                ${fieldOptions()}
-               </select>`
-            : `<span class="ds-subtext">No string fields found — showing Id only</span>`}
+          <div class="ds-rec-mf-col">
+            <span class="ds-rec-display-lbl">Match on source:</span>
+            ${candidateFields.length
+              ? `<select id="dsRecDisplayField" class="ds-select ds-select-sm">
+                  <option value="Id">Id (always unique)</option>
+                  ${fieldOptions()}
+                 </select>`
+              : `<span class="ds-subtext">No string fields found — showing Id only</span>`}
+          </div>
+          <span class="ds-rec-mf-arrow">↔</span>
+          <div class="ds-rec-mf-col">
+            <span class="ds-rec-display-lbl">Match on target:</span>
+            ${tgtCandidates && tgtCandidates.length
+              ? `<select id="dsRecTgtMatchField" class="ds-select ds-select-sm" title="The field on the TARGET org whose value identifies the same logical record as the source-side field. Leave matching source if names are the same on both orgs.">
+                  <option value="Id" ${tgtMatchField === 'Id' ? 'selected' : ''}>Id (always unique)</option>
+                  ${tgtCandidates.map(f => `<option value="${esc(f.name)}" ${tgtMatchField === f.name ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})</option>`).join('')}
+                 </select>`
+              : `<input id="dsRecTgtMatchField" class="ds-input ds-input-sm" value="${esc(tgtMatchField)}" placeholder="${esc(displayField)}" title="Target session unavailable — type the target-side field API name manually. Open the target org in a Chrome tab to get a dropdown.">`}
+          </div>
         </div>
 
         ${queryError ? `<div class="ds-error-banner" style="margin-bottom:8px">${esc(queryError)}</div>` : ''}
@@ -4270,14 +4315,30 @@ async function openRecordPickerModal(pathStr) {
   function wireModal(filter = '') {
     const note = () => { const el = eid('dsRecNote'); if (el) el.innerHTML = noteHtml(); };
 
-    // Display field change → re-query and re-render
+    // Source-side match field change → persist as node.matchField, re-query, re-render.
+    // Also auto-update tgtMatchField if the user hasn't explicitly set one yet,
+    // since the most common case is "same name on both sides".
     eid('dsRecDisplayField')?.addEventListener('change', async e => {
       displayField = e.target.value;
       node._meta._recDisplayField = displayField;
+      node.matchField             = displayField;  // persisted: cross-org identity (src side)
+      // If the user hasn't explicitly picked a target match field, follow the source choice
+      if (!node.matchFieldTgt || node.matchFieldTgt === '') {
+        tgtMatchField = deriveTgtMatchDefault(displayField);
+      }
       const box = eid('dsModalBox');
       if (box) box.innerHTML = `<div class="ds-modal-body" style="text-align:center;padding:40px;color:var(--subtext)">Loading…</div>`;
       await fetchRecords();
       if (box) { box.innerHTML = renderModal(''); wireModal(''); }
+    });
+
+    // Target-side match field change → persist as node.matchFieldTgt.
+    // Both dropdown (with session) and free-text input (without) share this handler.
+    const tgtMfEl = eid('dsRecTgtMatchField');
+    tgtMfEl?.addEventListener('change', e => {
+      const v = (e.target.value || '').trim();
+      tgtMatchField        = v || displayField;       // empty → mirror source
+      node.matchFieldTgt   = v || null;               // null = "use source-side name on target too"
     });
 
     eid('dsRecSearch')?.addEventListener('input', e => {
@@ -4641,8 +4702,22 @@ function deriveScanConfig(profile, node) {
     mappings[k] !== null && mappings[k] !== ''
   );
 
+  // Source-side matchField — picked via "Match on source" in Pick Records,
+  // persisted as node.matchField. Falls back to legacy profile.scanConfig
+  // (no Pick Records visit yet) then 'Name' (auto-corrected at use time).
+  const matchField = node?.matchField || legacyMatch || 'Name';
+
+  // Target-side matchField — picked via "Match on target" in Pick Records,
+  // persisted as node.matchFieldTgt. Defaults to the field mapping for the
+  // source matchField (so a Name→Full_Name__c mapping auto-pairs identity
+  // without a second config step). If neither, mirrors the source field
+  // name and lets runtime auto-correct via target's describe.
+  const matchFieldTgt = node?.matchFieldTgt
+    || (mappings[matchField] && mappings[matchField] !== null ? mappings[matchField] : matchField);
+
   return {
-    matchField:    legacyMatch || 'Name',
+    matchField,
+    matchFieldTgt,
     compareFields: fromMappings.length ? fromMappings : legacyCompare
   };
 }
@@ -4668,8 +4743,15 @@ async function runDiffScan(profile) {
   if (!objType)                  return { error: 'profile has no root object' };
 
   const derived = deriveScanConfig(profile, profile.tree);
-  let matchField    = derived.matchField;
-  let compareFields = derived.compareFields;
+  let srcMatchField  = derived.matchField;
+  let tgtMatchField  = derived.matchFieldTgt;
+  let srcCompare     = derived.compareFields;
+  let tgtCompare     = derived.compareFields.map(f => {
+    // Per-side compareField names: a source field with a mapping uses the
+    // mapped target name; unmapped fields assume same name on target.
+    const fm = profile.tree?.fieldMappings || {};
+    return (fm[f] && fm[f] !== null) ? fm[f] : f;
+  });
   const where       = (profile.tree?.where || '').trim();
 
   // Resolve sessions for both orgs. They must be reachable (open in Chrome
@@ -4680,32 +4762,37 @@ async function runDiffScan(profile) {
   if (!srcSess?.sid) return { error: `source org session not active — open ${orgLabel(profile.sourceOrg)} in a tab` };
   if (!tgtSess?.sid) return { error: `target org session not active — open ${orgLabel(profile.targetOrg)} in a tab` };
 
-  // Validate matchField via describe — fall back to the object's nameField
-  // (e.g. ReturnOrderNumber, CaseNumber) when Name doesn't exist. Also drop
-  // compareFields the source org doesn't expose so the SELECT doesn't 400.
-  try {
-    const srcDesc  = await describe(objType, srcSess.orgUrl, srcSess.sid);
-    const srcNames = new Set((srcDesc?.fields || []).map(f => f.name));
-    if (!srcNames.has(matchField)) {
-      const nameFld = (srcDesc?.fields || []).find(f => f.nameField === true);
-      if (nameFld?.name) matchField = nameFld.name;
-    }
-    compareFields = compareFields.filter(f => srcNames.has(f));
-  } catch (_) {
-    // Describe failed — push through with the original values and let the
-    // SOQL surface a clearer error if it 400s.
+  // Validate matchField + compareFields against EACH side's describe. A
+  // source-side field that doesn't exist on target needs to be dropped
+  // (or fall back) on the target query only — not on source. Same for
+  // matchField: Name might exist on source but the target object uses
+  // ReturnOrderNumber.
+  async function validateAgainstOrg(sess, mf, cmp) {
+    try {
+      const d  = await describe(objType, sess.orgUrl, sess.sid);
+      const names = new Set((d?.fields || []).map(f => f.name));
+      if (names.size && !names.has(mf)) {
+        const nameFld = (d.fields || []).find(f => f.nameField === true);
+        if (nameFld?.name) mf = nameFld.name;
+      }
+      if (names.size) cmp = cmp.filter(f => names.has(f));
+    } catch (_) { /* push through */ }
+    return { mf, cmp };
   }
+  ({ mf: srcMatchField, cmp: srcCompare } = await validateAgainstOrg(srcSess, srcMatchField, srcCompare));
+  ({ mf: tgtMatchField, cmp: tgtCompare } = await validateAgainstOrg(tgtSess, tgtMatchField, tgtCompare));
 
-  // SOQL — Id + matchField + each compareField. Dedup to avoid `SELECT
-  // Id, Id, Name, Name` when matchField is also a compareField.
-  const fieldList = [...new Set(['Id', matchField, ...compareFields])].filter(Boolean).join(',');
-  const soql = `SELECT ${fieldList} FROM ${objType}${where ? ' WHERE ' + where : ''}`;
+  // Per-org SOQL — different field name on each side is the whole point.
+  const srcFieldList = [...new Set(['Id', srcMatchField, ...srcCompare])].filter(Boolean).join(',');
+  const tgtFieldList = [...new Set(['Id', tgtMatchField, ...tgtCompare])].filter(Boolean).join(',');
+  const srcSoql = `SELECT ${srcFieldList} FROM ${objType}${where ? ' WHERE ' + where : ''}`;
+  const tgtSoql = `SELECT ${tgtFieldList} FROM ${objType}${where ? ' WHERE ' + where : ''}`;
 
   let srcRes, tgtRes;
   try {
     [srcRes, tgtRes] = await Promise.all([
-      sendBg({ type: 'SF_QUERY_ALL', orgUrl: srcSess.orgUrl, sid: srcSess.sid, tooling: false, query: soql }),
-      sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, query: soql })
+      sendBg({ type: 'SF_QUERY_ALL', orgUrl: srcSess.orgUrl, sid: srcSess.sid, tooling: false, query: srcSoql }),
+      sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, query: tgtSoql })
     ]);
   } catch (e) {
     return { error: `scan failed: ${e?.message || e}` };
@@ -4713,16 +4800,19 @@ async function runDiffScan(profile) {
   if (srcRes?.error) return { error: `source query failed: ${srcRes.error}` };
   if (tgtRes?.error) return { error: `target query failed: ${tgtRes.error}` };
 
-  // Index by matchField. Coerce to string so "123" (number) and "123"
+  // Index each side by its own matchField — KEYS are the values themselves,
+  // which match across orgs even when the field names that hold them differ
+  // (Name="Andy Young" on source, Full_Name__c="Andy Young" on target both
+  // key to "Andy Young"). Coerce to string so "123" (number) and "123"
   // (text) cross-org don't accidentally land in different buckets.
   const srcByKey = new Map();
   for (const r of (srcRes.records || [])) {
-    const k = r[matchField];
+    const k = r[srcMatchField];
     if (k != null && k !== '') srcByKey.set(String(k), r);
   }
   const tgtByKey = new Map();
   for (const r of (tgtRes.records || [])) {
-    const k = r[matchField];
+    const k = r[tgtMatchField];
     if (k != null && k !== '') tgtByKey.set(String(k), r);
   }
 
@@ -4731,15 +4821,18 @@ async function runDiffScan(profile) {
   const changed         = []; // present in both, compareFields differ → "drift"
   const identical       = []; // present in both, all compareFields match → "in sync"
 
+  // Pair-aligned compare: srcCompare and tgtCompare are same-length lists
+  // where index i on each side refers to the same logical field. Filter
+  // both side-by-side so a field dropped on one side is dropped on both.
+  const pairLength = Math.min(srcCompare.length, tgtCompare.length);
   for (const [k, sr] of srcByKey) {
     const tr = tgtByKey.get(k);
     if (!tr) {
       missingInTarget.push({ matchKey: k, sourceId: sr.Id });
     } else {
-      // If no compareFields configured, presence alone means identical.
       let differs = false;
-      for (const f of compareFields) {
-        if (String(sr[f] ?? '') !== String(tr[f] ?? '')) { differs = true; break; }
+      for (let i = 0; i < pairLength; i++) {
+        if (String(sr[srcCompare[i]] ?? '') !== String(tr[tgtCompare[i]] ?? '')) { differs = true; break; }
       }
       if (differs) changed.push({ matchKey: k, sourceId: sr.Id, targetId: tr.Id });
       else         identical.push({ matchKey: k, sourceId: sr.Id, targetId: tr.Id });
@@ -4758,8 +4851,10 @@ async function runDiffScan(profile) {
     // current sourceOrg/targetOrg don't match these, the scan is stale.
     sourceOrg:     profile.sourceOrg,
     targetOrg:     profile.targetOrg,
-    matchField,
-    compareFields,
+    matchField:    srcMatchField,
+    matchFieldTgt: tgtMatchField,
+    compareFields: srcCompare,
+    compareFieldsTgt: tgtCompare,
     sourceCount:   srcByKey.size,
     targetCount:   tgtByKey.size,
     // Caps to keep chrome.storage payload reasonable on big orgs. The
@@ -5006,13 +5101,21 @@ window.snapshotProfileNow = async function(profileId) {
   const failures   = [];   // [{ objectType, side, error }]
   const adjusted   = [];   // [{ objectType, side, fellBack, dropped }]
   const rootDerived = deriveScanConfig(p, p.tree);
+  // Per-side compareFields for root: source-side names + their target-side
+  // counterparts via fieldMappings. Children mirror Name on both sides.
+  const fm = p.tree?.fieldMappings || {};
+  const rootCmpTgt = rootDerived.compareFields.map(f => (fm[f] && fm[f] !== null) ? fm[f] : f);
   for (const t of types) {
-    // Root uses the derived scanConfig (matchField default + compareFields
-    // from field mappings). Children fall back to Name (auto-corrected
-    // server-side if Name doesn't exist on that object).
-    const mf  = (t === rootType) ? rootDerived.matchField    : 'Name';
-    const cmp = (t === rootType) ? rootDerived.compareFields : [];
-    for (const [side, sess] of [['source', srcSess], ['target', tgtSess]]) {
+    // Root uses the user-configured per-side identity; children default to
+    // Name (auto-corrected server-side if Name doesn't exist on that object).
+    const mfSrc  = (t === rootType) ? rootDerived.matchField    : 'Name';
+    const mfTgt  = (t === rootType) ? rootDerived.matchFieldTgt : 'Name';
+    const cmpSrc = (t === rootType) ? rootDerived.compareFields : [];
+    const cmpTgt = (t === rootType) ? rootCmpTgt                : [];
+    for (const [side, sess, mf, cmp] of [
+      ['source', srcSess, mfSrc, cmpSrc],
+      ['target', tgtSess, mfTgt, cmpTgt]
+    ]) {
       try {
         const r = await captureOrgSnapshot(sess.orgUrl, sess.sid, t, mf, cmp);
         if (r?.error) {
@@ -5082,10 +5185,19 @@ window.snapshotOrgNow = async function(orgId) {
     const rootType = p.tree?.objectType || p.tree?.childSObject;
     const types = [...collectTreeObjects(p.tree)];
     const rootDerived = deriveScanConfig(p, p.tree);
+    // Decide which "side" this org represents in THIS profile. If the org
+    // is both src and tgt for different profiles, the first match wins
+    // (objectSpecs.has check below dedupes).
+    const isSrc = p.schedule?.sourceOrg === org.url || p.sourceOrg === org.url;
+    const fm    = p.tree?.fieldMappings || {};
+    const rootMatch = isSrc ? rootDerived.matchField : rootDerived.matchFieldTgt;
+    const rootCmp   = isSrc
+      ? rootDerived.compareFields
+      : rootDerived.compareFields.map(f => (fm[f] && fm[f] !== null) ? fm[f] : f);
     for (const t of types) {
       if (objectSpecs.has(t)) continue;
       if (t === rootType) {
-        objectSpecs.set(t, rootDerived);
+        objectSpecs.set(t, { matchField: rootMatch, compareFields: rootCmp });
       } else {
         objectSpecs.set(t, { matchField: 'Name', compareFields: [] });
       }

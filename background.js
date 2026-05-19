@@ -66,15 +66,27 @@ async function handleSyncAlarm(profileId) {
       try {
         const objectTypes = [...collectProfileObjectTypes(profile.tree)];
         const rootType    = profile.tree?.objectType || profile.tree?.childSObject;
-        const rootMatch   = profile.scanConfig?.matchField    || 'Name';
-        const rootCmp     = profile.scanConfig?.compareFields || [];
+        const rootNode    = profile.tree || {};
+        const fm          = rootNode.fieldMappings || {};
+        // Per-side matchField + compareFields — same logic as studio.js
+        // deriveScanConfig. Source and target may use different field names
+        // for the same logical identity (Name on src, Full_Name__c on tgt).
+        const rootMatchSrc = rootNode.matchField    || profile.scanConfig?.matchField    || 'Name';
+        const rootMatchTgt = rootNode.matchFieldTgt
+          || ((fm[rootMatchSrc] && fm[rootMatchSrc] !== null) ? fm[rootMatchSrc] : rootMatchSrc);
+        const mappedCmp    = Object.keys(fm).filter(k => fm[k] !== null && fm[k] !== '');
+        const rootCmpSrc   = mappedCmp.length ? mappedCmp : (profile.scanConfig?.compareFields || []);
+        const rootCmpTgt   = rootCmpSrc.map(f => (fm[f] && fm[f] !== null) ? fm[f] : f);
+
         for (const t of objectTypes) {
-          const mf  = (t === rootType) ? rootMatch : 'Name';
-          const cmp = (t === rootType) ? rootCmp   : [];
+          const mfSrc  = (t === rootType) ? rootMatchSrc : 'Name';
+          const mfTgt  = (t === rootType) ? rootMatchTgt : 'Name';
+          const cmpSrc = (t === rootType) ? rootCmpSrc   : [];
+          const cmpTgt = (t === rootType) ? rootCmpTgt   : [];
           // Sequential — Salesforce throttles us anyway and snapshot capture
-          // on a 50k-row object can be heavy; don't paralleize.
-          await captureSnapshot(srcSession.orgUrl, srcSession.sid, t, mf, cmp).catch(() => {});
-          await captureSnapshot(tgtSession.orgUrl, tgtSession.sid, t, mf, cmp).catch(() => {});
+          // on a 50k-row object can be heavy; don't parallelize.
+          await captureSnapshot(srcSession.orgUrl, srcSession.sid, t, mfSrc, cmpSrc).catch(() => {});
+          await captureSnapshot(tgtSession.orgUrl, tgtSession.sid, t, mfTgt, cmpTgt).catch(() => {});
         }
       } catch (e) {
         console.warn('[SFTK] Post-transfer snapshot refresh failed:', e?.message || e);
