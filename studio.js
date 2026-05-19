@@ -5117,14 +5117,16 @@ function showDriftRecordsModal(profile, objectType) {
   const driftHtml = drift.length ? `
     <div class="ds-drift-modal-section-hdr">⚠ Drift — same record, different field values (${drift.length}${drift.length > CAP ? ` · showing ${CAP}` : ''})</div>
     <div class="ds-drift-modal-list">
-      ${drift.slice(0, CAP).map(r => `
-        <div class="ds-drift-modal-row">
-          <span class="ds-drift-modal-key">${esc(r.matchKey)}</span>
-          <a href="${esc(recLink(srcUrl, r.srcId))}" target="_blank" rel="noopener" class="ds-drift-modal-link" title="Open in source org">${esc(r.srcId)} ↗</a>
-          <span class="ds-drift-modal-hash" title="Source hash">${esc(r.srcHash)}</span>
-          <span class="ds-drift-modal-vs">≠</span>
-          <span class="ds-drift-modal-hash" title="Target hash">${esc(r.tgtHash)}</span>
-          <a href="${esc(recLink(tgtUrl, r.tgtId))}" target="_blank" rel="noopener" class="ds-drift-modal-link" title="Open in target org">${esc(r.tgtId)} ↗</a>
+      ${drift.slice(0, CAP).map((r, i) => `
+        <div class="ds-drift-modal-row ds-drift-modal-row-drift" data-drift-idx="${i}">
+          <div class="ds-drift-modal-row-summary" title="Click to see field-by-field comparison">
+            <span class="ds-drift-modal-expand-icon">▸</span>
+            <span class="ds-drift-modal-key">${esc(r.matchKey)}</span>
+            <a href="${esc(recLink(srcUrl, r.srcId))}" target="_blank" rel="noopener" class="ds-drift-modal-link" title="Open in source org">${esc(r.srcId)} ↗</a>
+            <span class="ds-drift-modal-vs">≠</span>
+            <a href="${esc(recLink(tgtUrl, r.tgtId))}" target="_blank" rel="noopener" class="ds-drift-modal-link" title="Open in target org">${esc(r.tgtId)} ↗</a>
+          </div>
+          <div class="ds-drift-modal-row-expand" style="display:none"></div>
         </div>`).join('')}
     </div>` : '';
 
@@ -5175,6 +5177,116 @@ function showDriftRecordsModal(profile, objectType) {
         <div class="ds-drift-modal-truncated">Some lists capped at ${CAP} rows. Snapshot was ${a.truncated || b.truncated ? 'itself truncated at 50k records — ' : ''}use a tighter WHERE filter on the profile to narrow the comparison.</div>` : ''}
     </div>
   `);
+
+  // ── Drift row expand-on-click (Phase 2.5) ─────────────────────────────
+  // Each drift row is clickable; clicking fetches the actual field values
+  // from both orgs (one record on each side) and renders a side-by-side
+  // compare table inline. Hash mismatch alone is opaque; this gives the
+  // user the actual "which field changed" answer.
+  const srcCompareFields = a.compareFields || [];
+  const tgtCompareFields = b.compareFields || [];
+  document.querySelectorAll('.ds-drift-modal-row-drift').forEach(rowEl => {
+    const summary = rowEl.querySelector('.ds-drift-modal-row-summary');
+    if (!summary) return;
+    summary.addEventListener('click', async (ev) => {
+      // Don't expand when the user is clicking a record-link arrow
+      if (ev.target.closest('a')) return;
+      const idx = parseInt(rowEl.dataset.driftIdx || '-1', 10);
+      const r   = drift[idx];
+      if (!r) return;
+      const expand = rowEl.querySelector('.ds-drift-modal-row-expand');
+      const icon   = rowEl.querySelector('.ds-drift-modal-expand-icon');
+      // Toggle if already loaded
+      if (expand.dataset.loaded === '1') {
+        const willShow = expand.style.display === 'none';
+        expand.style.display = willShow ? 'block' : 'none';
+        if (icon) icon.textContent = willShow ? '▾' : '▸';
+        return;
+      }
+      expand.style.display = 'block';
+      if (icon) icon.textContent = '▾';
+      expand.innerHTML = `<div class="ds-drift-compare-loading">Loading field values…</div>`;
+      const result = await fetchDriftRowDetail(profile, objectType,
+        r.srcId, r.tgtId, srcCompareFields, tgtCompareFields);
+      if (result.error) {
+        expand.innerHTML = `<div class="ds-drift-compare-err">⚠ ${esc(result.error)}</div>`;
+        return;
+      }
+      expand.innerHTML = renderDriftCompareTable(
+        result.srcRec, result.tgtRec, srcCompareFields, tgtCompareFields);
+      expand.dataset.loaded = '1';
+    });
+  });
+}
+
+// Fetch one record from each org with its compareFields. Pure on-demand —
+// snapshots store hashes only (compact), so when the user wants to see
+// which specific field differs, we go to the live orgs for the values.
+async function fetchDriftRowDetail(profile, objectType, srcId, tgtId, srcFields, tgtFields) {
+  const allSess = _buildAllSessions();
+  const srcSess = _resolveSession(profile.schedule?.sourceOrg || profile.sourceOrg, allSess);
+  const tgtSess = _resolveSession(profile.schedule?.targetOrg || profile.targetOrg, allSess);
+  if (!srcSess?.sid || !tgtSess?.sid) {
+    return { error: 'Open both orgs in a Chrome tab to fetch live field values for the diff.' };
+  }
+  const srcSelect = ['Id', ...srcFields].filter(Boolean).join(',') || 'Id';
+  const tgtSelect = ['Id', ...tgtFields].filter(Boolean).join(',') || 'Id';
+  try {
+    const [s, t] = await Promise.all([
+      sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+        query: `SELECT ${srcSelect} FROM ${objectType} WHERE Id = '${srcId}'` }),
+      sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+        query: `SELECT ${tgtSelect} FROM ${objectType} WHERE Id = '${tgtId}'` })
+    ]);
+    if (s?.error) return { error: `Source query failed: ${s.error}` };
+    if (t?.error) return { error: `Target query failed: ${t.error}` };
+    return { srcRec: s.records?.[0] || null, tgtRec: t.records?.[0] || null };
+  } catch (e) {
+    return { error: e?.message || String(e) };
+  }
+}
+
+// Side-by-side compareField table — highlights rows whose values differ.
+// srcFields[i] pairs with tgtFields[i] (pair-aligned, same as snapshot
+// captureOrgSnapshot writes them).
+function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields) {
+  if (!srcRec || !tgtRec) {
+    return `<div class="ds-drift-compare-err">⚠ Record not found on one or both orgs — may have been deleted since the snapshot was captured. Click 🔄 Refresh state to update.</div>`;
+  }
+  const pairs = [];
+  const len = Math.min(srcFields.length, tgtFields.length);
+  for (let i = 0; i < len; i++) {
+    const sf = srcFields[i], tf = tgtFields[i];
+    const sv = srcRec[sf], tv = tgtRec[tf];
+    const sStr = (sv == null || sv === '') ? '∅' : String(sv);
+    const tStr = (tv == null || tv === '') ? '∅' : String(tv);
+    pairs.push({ srcField: sf, tgtField: tf, srcVal: sStr, tgtVal: tStr, differs: sStr !== tStr });
+  }
+  const diffCount = pairs.filter(p => p.differs).length;
+  if (!pairs.length) {
+    return `<div class="ds-drift-compare-empty">No compareFields configured for this profile — can't show field-by-field diff. Add fields to the Field Mapping on the root node to enable.</div>`;
+  }
+  return `
+    <div class="ds-drift-compare">
+      <div class="ds-drift-compare-hdr">${diffCount} of ${pairs.length} field${pairs.length !== 1 ? 's' : ''} differ${diffCount === 1 ? 's' : ''}</div>
+      <div class="ds-drift-compare-table">
+        <div class="ds-drift-compare-row ds-drift-compare-row-hdr">
+          <span class="ds-drift-compare-field">Field</span>
+          <span class="ds-drift-compare-val">Source</span>
+          <span class="ds-drift-compare-val">Target</span>
+        </div>
+        ${pairs.map(p => `
+          <div class="ds-drift-compare-row${p.differs ? ' ds-drift-compare-row-diff' : ''}">
+            <span class="ds-drift-compare-field" title="${p.srcField !== p.tgtField ? esc(p.srcField + ' → ' + p.tgtField) : esc(p.srcField)}">
+              ${esc(p.srcField)}${p.srcField !== p.tgtField ? `<span class="ds-drift-compare-rename"> → ${esc(p.tgtField)}</span>` : ''}
+            </span>
+            <span class="ds-drift-compare-val">${esc(p.srcVal)}</span>
+            <span class="ds-drift-compare-val">${esc(p.tgtVal)}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
 }
 
 // Manual "📸 Snapshot" for a single PROFILE — captures snapshots for every

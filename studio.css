@@ -1920,6 +1920,66 @@ html, body {
   padding: 32px 16px;
 }
 
+/* Phase 2.5 — clickable drift rows + inline expand for field-by-field compare */
+.ds-drift-modal-row-drift { flex-direction: column; align-items: stretch; padding: 0; }
+.ds-drift-modal-row-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.ds-drift-modal-row-summary:hover { background: rgba(125, 125, 125, 0.12); }
+.ds-drift-modal-expand-icon { font-size: 10px; color: var(--subtext); width: 10px; flex-shrink: 0; }
+.ds-drift-modal-row-expand {
+  padding: 4px 6px 10px;
+  border-top: 1px dashed var(--border);
+  margin-top: 2px;
+}
+.ds-drift-compare-loading { font-size: 11px; color: var(--subtext); padding: 8px; font-style: italic; }
+.ds-drift-compare-err     { font-size: 11px; color: #b45309; background: rgba(234, 88, 12, 0.08); padding: 8px 10px; border-radius: 4px; border-left: 3px solid #ea580c; }
+.ds-drift-compare-empty   { font-size: 11px; color: var(--subtext); padding: 8px; }
+.ds-drift-compare-hdr {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.ds-drift-compare-table {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+}
+.ds-drift-compare-row {
+  display: grid;
+  grid-template-columns: 180px 1fr 1fr;
+  gap: 6px;
+  padding: 3px 6px;
+  background: rgba(125, 125, 125, 0.04);
+  border-radius: 3px;
+}
+.ds-drift-compare-row-hdr {
+  background: rgba(125, 125, 125, 0.12);
+  font-weight: 700;
+  font-family: inherit;
+  font-size: 10px;
+  color: var(--subtext);
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+.ds-drift-compare-row-diff {
+  background: rgba(234, 88, 12, 0.12);
+  border-left: 3px solid #ea580c;
+  padding-left: 4px;
+}
+.ds-drift-compare-row-diff .ds-drift-compare-val { font-weight: 600; }
+.ds-drift-compare-field { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-drift-compare-rename { color: var(--subtext); font-weight: 400; font-size: 10px; }
+.ds-drift-compare-val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ── History ─────────────────────────────────────────────────── */
 .ds-history-list { display: flex; flex-direction: column; gap: 10px; max-width: 920px; }
 
