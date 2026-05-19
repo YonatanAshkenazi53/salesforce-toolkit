@@ -481,6 +481,10 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // summary so the Pick-Records modal can badge already-deployed
       // records and avoid the "did this go through?" guesswork.
       const transferredSourceIds = [];
+      // Mirror for failures — drives the "↻ Retry failed (N)" button on
+      // History rows. Each entry carries the source ID + first error msg
+      // so the UI can show what went wrong per row.
+      const failedSourceIds = [];        // [{ id, error }]
       let reqMissingDiagPushed = false; // emit the payload-keys diag only once per node
       for (let i = 0; i < payloads.length; i += 200) {
         const chunk = payloads.slice(i, i + 200).map(p => ({
@@ -497,6 +501,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             fail++;
             const msg = (result.errors || []).map(e => e.message).join('; ');
             errors.push(`${objType}: ${msg}`);
+            failedSourceIds.push({ id: recs[i + j].Id, error: msg });
             // When a record fails with "Required fields are missing" the user
             // almost always thinks "but my mapping IS correct" — log once which
             // fields actually went out, so the mismatch is obvious.
@@ -560,6 +565,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // to badge already-deployed records.
       if (transferredSourceIds.length) {
         summary[objType].transferredSourceIds = transferredSourceIds.slice(0, 2000);
+      }
+      // Failed source IDs — drives the "↻ Retry failed" button on History
+      // rows. Cap at 2000 entries; each is { id, error } so the UI can show
+      // both the record reference and what went wrong.
+      if (failedSourceIds.length) {
+        summary[objType].failedSourceIds = failedSourceIds.slice(0, 2000);
       }
       if (skippedForTarget.size) {
         // Non-fatal: surfaced in the result so the UI can show what was skipped,
