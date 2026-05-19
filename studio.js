@@ -453,6 +453,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'editProfile':           window.editProfile?.(arg); break;
       case 'cloneProfile':          window.cloneProfile?.(arg); break;
       case 'deleteProfile':         window.deleteProfile?.(arg); break;
+      case 'refreshState':          window.refreshProfileState?.(arg); break;
+      // Legacy dispatcher cases retained for buttons in older sessions / cached
+      // markup; the new card has a single Refresh state button instead.
       case 'refreshDiff':           window.refreshProfileDiff?.(arg); break;
       case 'snapshotProfile':       window.snapshotProfileNow?.(arg); break;
       case 'retryFailed':           window.retryFailedRun?.(arg); break;
@@ -2590,7 +2593,7 @@ function profileCard(p) {
          <span class="ds-diff-stale" title="${esc(diff.runAt)}">scanned ${timeAgo(diff.runAt)}</span>
        </div>`
     : `<div class="ds-profile-card-diff ds-profile-card-diff-empty">
-         <span class="ds-diff-empty-hint">${diff ? 'Diff is stale (orgs changed) — click 🔍 Refresh diff' : 'No diff run yet — click 🔍 Refresh diff to compare orgs'}</span>
+         <span class="ds-diff-empty-hint">${diff ? 'State is stale (orgs changed) — click 🔄 Refresh state' : 'No state captured yet — click 🔄 Refresh state to compare orgs'}</span>
        </div>`;
 
   return `
@@ -2609,12 +2612,9 @@ function profileCard(p) {
       <div class="ds-profile-card-actions">
         <button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="runProfile" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs in Edit first"'}>▶ Run</button>
-        <button class="ds-btn ds-btn-sm" data-dsaction="refreshDiff" data-arg="${p.id}"
+        <button class="ds-btn ds-btn-sm" data-dsaction="refreshState" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
-          title="Query both orgs and compute what's missing / changed / in sync — gives you live state instead of relying on past run history">🔍 Refresh diff</button>
-        <button class="ds-btn ds-btn-sm" data-dsaction="snapshotProfile" data-arg="${p.id}"
-          ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
-          title="Capture fingerprints of every record in every object of this profile tree, on both source and target orgs. Powers the Org Map drift overlay without re-querying live.">📸 Snapshot</button>
+          title="Query both orgs to refresh what's missing / changed / in sync, AND capture fingerprints of every object in the tree (drives the Org Map drift overlay). Replaces the old Refresh diff + Snapshot buttons.">🔄 Refresh state</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="editProfile" data-arg="${p.id}">✏ Edit</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="cloneProfile" data-arg="${p.id}">⧉ Clone</button>
         <button class="ds-btn ds-btn-sm ds-btn-danger" data-dsaction="deleteProfile" data-arg="${p.id}">🗑</button>
@@ -4929,6 +4929,33 @@ async function refreshProfileDiff(profileId) {
 }
 window.refreshProfileDiff = refreshProfileDiff;
 
+// Bundled "Refresh state" — combines the diff scan (drives Pick Records
+// badges + profile card chips) with full snapshot capture (drives Org Map
+// drift overlay). One user action, both data sources stay coherent.
+//
+// Order: diff first (it's fast — ~2 queries, instant feedback in the toast)
+// then snapshots (slower — 2×N queries). Snapshot failures don't roll back
+// the diff result.
+window.refreshProfileState = async function(profileId) {
+  const profile = _profiles.find(p => p.id === profileId);
+  if (!profile) {
+    showToast('Profile not found', 'error', 3000);
+    return;
+  }
+  // Diff first — fast feedback. refreshProfileDiff already toasts its own
+  // counts; we suppress its toast here by saving/restoring showToast? No,
+  // simpler: let it toast, then we follow up with the snapshot result.
+  const diffRes = await refreshProfileDiff(profileId);
+  if (diffRes?.error) {
+    // Diff failed → don't bother with snapshots, the orgs are unreachable.
+    return diffRes;
+  }
+  // Snapshots — slower, but the diff toast is already on screen so the user
+  // knows refresh is in progress. snapshotProfileNow toasts its own result
+  // (success or with adjustments/failures).
+  await window.snapshotProfileNow(profileId);
+};
+
 // Open the Run Transfer page pre-filtered to ONLY the failed source IDs
 // from a previous run. Walks the run's summary, builds per-node recordIds
 // overrides via _transferNodeFilters, sets _transferProfile, then renders
@@ -6081,15 +6108,15 @@ async function runTransfer() {
   });
   await storageSaveHistory();
 
-  // After ANY transfer that wrote records, the diff is stale. Re-scan in
-  // the background so the next picker open (or card render) reflects the
-  // new target state. Fire-and-forget — failures are non-fatal and surface
-  // as toasts. Only triggers when at least one record was created (not on
-  // pure-failed runs where we already know nothing changed in target).
+  // After ANY transfer that wrote records, both the profile diff AND the
+  // org snapshots are stale. Re-refresh both in the background so the next
+  // picker open / profile card render / Org Map view reflects the new state.
+  // Fire-and-forget — failures surface as toasts. Only triggers when at
+  // least one record was created (skip on pure-failed runs).
   if (_transferProfile?.id && !_transferDryRun) {
     const totalCreated = Object.values(result.summary || {}).reduce((n, s) => n + (s.created || 0), 0);
     if (totalCreated > 0) {
-      refreshProfileDiff(_transferProfile.id).catch(() => { /* surfaced via toast */ });
+      window.refreshProfileState?.(_transferProfile.id);
     }
   }
 
