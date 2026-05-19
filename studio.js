@@ -5282,8 +5282,10 @@ async function fetchDriftRowDetail(profile, objectType, srcId, tgtId, srcFields,
   if (!srcSess?.sid || !tgtSess?.sid) {
     return { error: 'Open both orgs in a Chrome tab to fetch live field values for the diff.' };
   }
-  const srcSelect = ['Id', ...srcFields].filter(Boolean).join(',') || 'Id';
-  const tgtSelect = ['Id', ...tgtFields].filter(Boolean).join(',') || 'Id';
+  // Dedupe — if Id is already in compareFields the SOQL would 400 with
+  // "duplicate field selected: Id". Same pattern runDiffScan uses.
+  const srcSelect = [...new Set(['Id', ...srcFields])].filter(Boolean).join(',') || 'Id';
+  const tgtSelect = [...new Set(['Id', ...tgtFields])].filter(Boolean).join(',') || 'Id';
   try {
     const [s, t] = await Promise.all([
       sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid,
