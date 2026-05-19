@@ -4160,10 +4160,19 @@ async function openRecordPickerModal(pathStr) {
   const idsMissingInTarget = new Set();  // source-only — need to deploy
   const idsInSync          = new Set();  // present in both, no drift
   const idsDrift           = new Set();  // present in both, fields differ
+  // Drift→target-Id map so the click-to-expand can fetch from BOTH orgs.
+  // Source Id alone (idsDrift) isn't enough — we need the matching target Id
+  // to query the target record's compareField values.
+  const driftTargetId      = new Map();  // sourceId → { targetId, matchKey }
   if (scanFresh) {
     for (const r of (liveScan.missingInTarget || [])) if (r.sourceId) idsMissingInTarget.add(r.sourceId);
     for (const r of (liveScan.identical       || [])) if (r.sourceId) idsInSync.add(r.sourceId);
-    for (const r of (liveScan.changed         || [])) if (r.sourceId) idsDrift.add(r.sourceId);
+    for (const r of (liveScan.changed         || [])) {
+      if (r.sourceId) {
+        idsDrift.add(r.sourceId);
+        if (r.targetId) driftTargetId.set(r.sourceId, { targetId: r.targetId, matchKey: r.matchKey });
+      }
+    }
   }
   // Legacy history-derived "deployed" set — only used when no live scan
   // exists yet. Once the user clicks 🔍 Refresh diff, this is superseded.
@@ -4299,13 +4308,15 @@ async function openRecordPickerModal(pathStr) {
                 const sub   = displayField && r[displayField] ? r.Id : '';
                 // Live-scan state takes priority over history when available
                 let rowCls = '', badgeHtml = '';
+                const isDrift = scanFresh && idsDrift.has(r.Id);
                 if (scanFresh) {
                   if (idsMissingInTarget.has(r.Id)) {
                     rowCls = ' ds-pick-row-missing';
                     badgeHtml = '<span class="ds-pick-state-badge ds-diff-missing" title="Not present in the target org — will be inserted if you transfer this record">🔴 missing in target</span>';
-                  } else if (idsDrift.has(r.Id)) {
+                  } else if (isDrift) {
                     rowCls = ' ds-pick-row-drift';
-                    badgeHtml = '<span class="ds-pick-state-badge ds-diff-drift" title="Present in target but at least one compare field differs from source">🟡 drift</span>';
+                    // Drift badge is clickable — opens inline compare table below
+                    badgeHtml = `<span class="ds-pick-state-badge ds-diff-drift ds-pick-drift-clickable" data-drift-id="${esc(r.Id)}" title="Click to see field-by-field comparison">🟡 drift ▸</span>`;
                   } else if (idsInSync.has(r.Id)) {
                     rowCls = ' ds-pick-row-deployed';
                     badgeHtml = '<span class="ds-pick-state-badge ds-diff-sync" title="Present in target and all compare fields match — no action needed">🟢 in sync</span>';
@@ -4314,12 +4325,15 @@ async function openRecordPickerModal(pathStr) {
                   rowCls = ' ds-pick-row-deployed';
                   badgeHtml = '<span class="ds-pick-deployed-badge" title="This record was successfully transferred to the target org in a previous run">✓ deployed</span>';
                 }
-                return `<label class="ds-pick-row${rowCls}">
-                  <input type="checkbox" value="${esc(r.Id)}" ${selected.has(r.Id) ? 'checked' : ''}>
-                  <span class="ds-pick-label">${esc(label)}</span>
-                  ${badgeHtml}
-                  ${sub ? `<span class="ds-pick-api ds-pick-id">${esc(sub)}</span>` : ''}
-                </label>`;
+                return `<div class="ds-pick-row-container">
+                  <label class="ds-pick-row${rowCls}">
+                    <input type="checkbox" value="${esc(r.Id)}" ${selected.has(r.Id) ? 'checked' : ''}>
+                    <span class="ds-pick-label">${esc(label)}</span>
+                    ${badgeHtml}
+                    ${sub ? `<span class="ds-pick-api ds-pick-id">${esc(sub)}</span>` : ''}
+                  </label>
+                  ${isDrift ? `<div class="ds-pick-row-expand" data-expand-for="${esc(r.Id)}" style="display:none"></div>` : ''}
+                </div>`;
               }).join('')}
         </div>
         ${records.length >= 200 ? `<div class="ds-picker-limit">Showing first 200 — use WHERE filter to narrow results.</div>` : ''}
@@ -4405,6 +4419,45 @@ async function openRecordPickerModal(pathStr) {
       cb.addEventListener('change', () => {
         if (cb.checked) selected.add(cb.value); else selected.delete(cb.value);
         note();
+      });
+    });
+
+    // Drift-badge click → fetch the specific record from both orgs and show
+    // a field-by-field compare table inline below the row. Click again to
+    // collapse. Stops the click from propagating up to the <label> so the
+    // checkbox doesn't toggle just because the user wanted to see what's
+    // drifting.
+    eid('dsRecList')?.querySelectorAll('.ds-pick-drift-clickable').forEach(badge => {
+      badge.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const recId = badge.dataset.driftId;
+        if (!recId) return;
+        const driftInfo = driftTargetId.get(recId);
+        if (!driftInfo?.targetId) {
+          showToast('No target Id recorded for this drift entry — run 🔄 Refresh state to repopulate', 'error', 4500);
+          return;
+        }
+        const expand = document.querySelector(`.ds-pick-row-expand[data-expand-for="${recId}"]`);
+        if (!expand) return;
+        // Toggle if already loaded
+        if (expand.dataset.loaded === '1') {
+          expand.style.display = expand.style.display === 'none' ? 'block' : 'none';
+          return;
+        }
+        expand.style.display = 'block';
+        expand.innerHTML = `<div class="ds-drift-compare-loading">Loading field values…</div>`;
+        const srcFields = (liveScan?.compareFields    || []);
+        const tgtFields = (liveScan?.compareFieldsTgt || liveScan?.compareFields || []);
+        const result = await fetchDriftRowDetail(
+          _editingProfile, objType, recId, driftInfo.targetId, srcFields, tgtFields);
+        if (result.error) {
+          expand.innerHTML = `<div class="ds-drift-compare-err">⚠ ${esc(result.error)}</div>`;
+          return;
+        }
+        expand.innerHTML = renderDriftCompareTable(
+          result.srcRec, result.tgtRec, srcFields, tgtFields);
+        expand.dataset.loaded = '1';
       });
     });
 
