@@ -3602,9 +3602,15 @@ async function openFieldMappingModal(pathStr) {
   async function loadFields(orgUrl, orgSid) {
     const desc = await describe(objType, orgUrl, orgSid);
     if (!desc) return null;
-    const ALWAYS = new Set(['Id', 'Name']);
+    // Id is never createable and never copyable — Salesforce assigns it on
+    // insert. Don't list it in the Field Mapping modal at all; if it's in
+    // fieldMappings it pollutes compareFields and breaks SOQL SELECT clauses
+    // ("duplicate field selected: Id"). Name kept in ALWAYS so it still
+    // appears on objects where the primary name field isn't strictly
+    // createable (e.g. Case → CaseNumber would otherwise hide).
+    const ALWAYS = new Set(['Name']);
     return (desc.fields || [])
-      .filter(f => f.createable || ALWAYS.has(f.name))
+      .filter(f => f.name !== 'Id' && (f.createable || ALWAYS.has(f.name)))
       .map(f => ({ name: f.name, label: f.label || f.name, type: f.type }))
       .sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name));
   }
@@ -4780,8 +4786,17 @@ function deriveScanConfig(profile, node) {
   const legacyCompare = (profile?.scanConfig?.compareFields || []).filter(Boolean);
 
   const mappings = node?.fieldMappings || {};
+  // Strip system identity fields from compareFields. Id, CreatedDate, etc.
+  // aren't copyable — if they leak into fieldMappings (from legacy profiles
+  // or aggressive Auto-Map), they break SOQL with "duplicate field selected"
+  // and pollute drift comparison since Ids ALWAYS differ across orgs.
+  const SYSTEM_NEVER_COMPARE = new Set([
+    'Id', 'CreatedDate', 'CreatedById', 'LastModifiedDate', 'LastModifiedById',
+    'SystemModstamp', 'LastActivityDate', 'LastViewedDate', 'LastReferencedDate',
+    'IsDeleted', 'MasterRecordId', 'IsArchived'
+  ]);
   const fromMappings = Object.keys(mappings).filter(k =>
-    mappings[k] !== null && mappings[k] !== ''
+    mappings[k] !== null && mappings[k] !== '' && !SYSTEM_NEVER_COMPARE.has(k)
   );
 
   // Source-side matchField — picked via "Match on source" in Pick Records,
