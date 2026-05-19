@@ -455,6 +455,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'deleteProfile':         window.deleteProfile?.(arg); break;
       case 'refreshDiff':           window.refreshProfileDiff?.(arg); break;
       case 'snapshotProfile':       window.snapshotProfileNow?.(arg); break;
+      case 'retryFailed':           window.retryFailedRun?.(arg); break;
       case 'showDriftRecords': {
         const [pid, t] = (arg || '').split('|');
         const p = _profiles.find(x => x.id === pid);
@@ -4177,7 +4178,8 @@ async function openRecordPickerModal(pathStr) {
       }
     }
   }
-  let hideDeployed = false;   // user-toggleable filter — hides in-sync rows
+  let hideDeployed   = false;   // user-toggleable filter — hides in-sync rows
+  let showOnlyTodo   = false;   // user-toggleable filter — shows ONLY missing+drift rows (Phase 2.5)
 
   async function fetchRecords() {
     const fld  = displayField && displayField !== 'Id' ? displayField : null;
@@ -4217,6 +4219,16 @@ async function openRecordPickerModal(pathStr) {
     const hideSet = scanFresh ? idsInSync : deployedIds;
     if (hideDeployed && hideSet.size) {
       list = list.filter(r => !hideSet.has(r.Id));
+    }
+    // "Show only needs-deploy" filter — inverse of Hide in-sync. Shows ONLY
+    // records badged missing-in-target or drift. Only meaningful with a fresh
+    // live diff; without one, falls back to "anything not previously deployed".
+    if (showOnlyTodo) {
+      if (scanFresh) {
+        list = list.filter(r => idsMissingInTarget.has(r.Id) || idsDrift.has(r.Id));
+      } else {
+        list = list.filter(r => !deployedIds.has(r.Id));
+      }
     }
 
     return `
@@ -4261,6 +4273,12 @@ async function openRecordPickerModal(pathStr) {
               <input type="checkbox" id="dsRecHideDeployed" ${hideDeployed ? 'checked' : ''}>
               <span>${scanFresh ? 'Hide in-sync' : 'Hide already deployed'}</span>
               <span class="ds-pick-deployed-count">${scanFresh ? idsInSync.size : deployedIds.size}</span>
+            </label>` : ''}
+          ${scanFresh && (idsMissingInTarget.size || idsDrift.size) ? `
+            <label class="ds-pick-toggle" title="Show only records that need to be deployed — missing in target OR present-but-drifted. Hides everything that's already in sync.">
+              <input type="checkbox" id="dsRecShowOnlyTodo" ${showOnlyTodo ? 'checked' : ''}>
+              <span>Only needs-deploy</span>
+              <span class="ds-pick-deployed-count ds-pick-todo-count">${idsMissingInTarget.size + idsDrift.size}</span>
             </label>` : ''}
         </div>
 
@@ -4368,6 +4386,17 @@ async function openRecordPickerModal(pathStr) {
     // rows removed so the user only sees "still to transfer".
     eid('dsRecHideDeployed')?.addEventListener('change', e => {
       hideDeployed = e.target.checked;
+      // Mutually exclusive with "Only needs-deploy" — they conflict
+      if (hideDeployed && showOnlyTodo) showOnlyTodo = false;
+      const box = eid('dsModalBox');
+      if (box) { box.innerHTML = renderModal(filter); wireModal(filter); }
+    });
+    // Show only records that need to be deployed (missing or drift). Inverse
+    // of Hide in-sync — picks them by inclusion instead of exclusion. Useful
+    // for "select what to transfer" in one click.
+    eid('dsRecShowOnlyTodo')?.addEventListener('change', e => {
+      showOnlyTodo = e.target.checked;
+      if (showOnlyTodo && hideDeployed) hideDeployed = false;
       const box = eid('dsModalBox');
       if (box) { box.innerHTML = renderModal(filter); wireModal(filter); }
     });
@@ -4899,6 +4928,50 @@ async function refreshProfileDiff(profileId) {
   return res;
 }
 window.refreshProfileDiff = refreshProfileDiff;
+
+// Open the Run Transfer page pre-filtered to ONLY the failed source IDs
+// from a previous run. Walks the run's summary, builds per-node recordIds
+// overrides via _transferNodeFilters, sets _transferProfile, then renders
+// the transfer view. The user just clicks ▶ Run to retry.
+window.retryFailedRun = function(runId) {
+  const run = _history.find(h => h.id === runId);
+  if (!run) return showToast('Run not found', 'error', 3000);
+  const profile = _profiles.find(p => p.id === run.profileId);
+  if (!profile) return showToast('Profile no longer exists — cannot retry', 'error', 4000);
+
+  // Build a map of objectType → [failedIds]
+  const failedByObj = {};
+  for (const [obj, s] of Object.entries(run.summary || {})) {
+    const ids = (s.failedSourceIds || []).map(f => typeof f === 'string' ? f : f.id).filter(Boolean);
+    if (ids.length) failedByObj[obj] = ids;
+  }
+  if (!Object.keys(failedByObj).length) {
+    return showToast('No failed records recorded for this run — nothing to retry', 'info', 4000);
+  }
+
+  // Walk the tree, find each node whose objectType has failures, and seed
+  // a transferNodeFilter with the failed IDs for that exact tree path.
+  const filters = {};
+  function walk(node, path) {
+    if (!node) return;
+    const t = node.objectType || node.childSObject;
+    const pathKey = path.join('.');
+    if (t && failedByObj[t]) {
+      filters[pathKey] = { recordIds: failedByObj[t] };
+    }
+    (node.children || []).forEach((c, i) => walk(c, [...path, i]));
+  }
+  walk(profile.tree, []);
+
+  // Seed the transfer page state, then navigate.
+  _transferProfile      = profile;
+  _transferNodeFilters  = filters;
+  document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('[data-view="profiles"]')?.classList.add('active');
+  _currentView = 'profiles';
+  renderTransfer();
+  showToast(`Retry queued — ${Object.values(failedByObj).reduce((n,a)=>n+a.length,0)} record(s) across ${Object.keys(failedByObj).length} object(s). Click ▶ Run to retry.`, 'info', 5000);
+};
 
 // ════════════════════════════════════════════════════════════════
 // SNAPSHOT LAYER (Phase 2) — org_snapshots[orgUrl][objectType]
@@ -6256,7 +6329,20 @@ function renderHistory() {
       <button class="ds-btn ds-btn-danger ds-btn-sm" id="dsClearHistory">🗑 Clear All</button>
     </div>
     <div class="ds-history-list">
-      ${sorted.map(run => `
+      ${sorted.map(run => {
+        // Aggregate failed source IDs across all objects in this run.
+        // The retry button only appears when we actually have IDs to retry.
+        const failedByObj = {};
+        let totalFailed = 0;
+        for (const [obj, s] of Object.entries(run.summary || {})) {
+          const failedIds = (s.failedSourceIds || []).map(f => typeof f === 'string' ? f : f.id).filter(Boolean);
+          if (failedIds.length) {
+            failedByObj[obj] = failedIds;
+            totalFailed += failedIds.length;
+          }
+        }
+        const retryable = totalFailed > 0 && run.profileId && _profiles.some(p => p.id === run.profileId);
+        return `
         <div class="ds-history-card">
           <div class="ds-history-card-header">
             <span class="ds-run-status-badge ds-run-status-${run.status}">
@@ -6265,6 +6351,8 @@ function renderHistory() {
             <span class="ds-history-profile-name">${esc(run.profileName || 'Unknown profile')}</span>
             ${run.scheduledRun ? '<span class="ds-chip">📅 scheduled</span>' : ''}
             <span class="ds-history-time">${timeAgo(run.startedAt)}</span>
+            ${retryable ? `<button class="ds-btn ds-btn-xs ds-btn-primary" data-dsaction="retryFailed" data-arg="${esc(run.id)}"
+              title="Re-run this profile transferring ONLY the ${totalFailed} record(s) that failed before. Skips records that already succeeded so you don't double-create.">↻ Retry failed (${totalFailed})</button>` : ''}
           </div>
           <div class="ds-history-orgs">
             ${esc(orgLabel(run.sourceOrg || ''))} → ${esc(orgLabel(run.targetOrg || ''))}
@@ -6279,7 +6367,8 @@ function renderHistory() {
               <summary>${run.errors.length} error${run.errors.length!==1?'s':''}</summary>
               ${run.errors.map(e => `<div class="ds-history-err-row">❌ ${esc(e)}</div>`).join('')}
             </details>` : ''}
-        </div>`).join('')}
+        </div>`;
+      }).join('')}
     </div>
   `);
 

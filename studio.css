@@ -1224,6 +1224,9 @@ html, body {
   background: #d1fae5; color: #065f46;
   border-radius: 9px;
 }
+/* "Only needs-deploy" count badge — orange to distinguish from green in-sync */
+.ds-pick-deployed-count.ds-pick-todo-count { background: #fed7aa; color: #9a3412; }
+.ds-dark .ds-pick-deployed-count.ds-pick-todo-count { background: #431407; color: #fdba74; }
 /* Dark mode */
 .ds-dark .ds-pick-row-deployed { background: #0a2218; }
 .ds-dark .ds-pick-row-deployed:hover { background: #0f3024; }
