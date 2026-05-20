@@ -2403,7 +2403,12 @@ body {
 .adbg-detail-inner {
   flex: 1; min-height: 0;
   display: flex; flex-direction: column; gap: 10px;
-  padding: 14px 16px; overflow: hidden;
+  padding: 14px 16px;
+  /* Whole-panel scroll. Was overflow:hidden, which crushed the log-view to
+     nothing whenever the (flex-shrink:0) ANALYSIS section was expanded — the
+     user couldn't see or scroll the full log. Now the panel scrolls as one
+     and the log-view keeps a usable min-height (below). */
+  overflow-y: auto;
 }
 
 /* Detail header — compact, fixed at top */
@@ -2671,8 +2676,11 @@ body {
 }
 .adbg-log-toggle:hover { color: var(--text); border-color: var(--subtext); }
 .adbg-log-view {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 auto;
+  /* Never collapse below a usable height — even when ANALYSIS is expanded
+     above it and the panel as a whole scrolls. In fullscreen-log mode the
+     flex-grow takes over and fills the panel. */
+  min-height: 320px;
   overflow: auto;
   background: #1e1e2e;
   border: 1px solid var(--border);
