@@ -1759,6 +1759,88 @@ const FieldCleaner = (() => {
     },
   };
 
+  // Shared field-reference test (matches _xiRenderTree's inner isRef) — used
+  // by the selective-removal collector so block numbering stays aligned.
+  function _xiIsRef(val) {
+    const fl = (_selField?.api || '').toLowerCase();
+    const objLc = (_selObj?.api || '').toLowerCase();
+    if (!val || !fl) return false;
+    const v = String(val).toLowerCase().replace(/^\{!/, '').replace(/\}$/, '').trim();
+    return v === fl || v === `${objLc}.${fl}` || v === `$record.${fl}` ||
+           v === `$record__prior.${fl}` || v.endsWith('.' + fl);
+  }
+
+  // Collect deletable blocks in the SAME post-order _xiRenderTree numbers the
+  // checkboxes. Each entry records how to detach the node from its parent.
+  // out[i] corresponds to checkbox data-idx="i".
+  function _collectDeletableNodes(obj, tag, isDeletable, out, container) {
+    if (obj === null || obj === undefined) return;
+    if (typeof obj !== 'object') {
+      if (isDeletable && isDeletable(tag, obj, _xiIsRef)) out.push({ container, node: obj });
+      return;
+    }
+    if (Array.isArray(obj)) {
+      for (const item of obj) _collectDeletableNodes(item, tag, isDeletable, out, obj);
+      return;
+    }
+    for (const [k, v] of Object.entries(obj)) {
+      if (v === null || v === undefined) continue;
+      if (Array.isArray(v)) {
+        for (const item of v) _collectDeletableNodes(item, k, isDeletable, out, v);
+      } else {
+        _collectDeletableNodes(v, k, isDeletable, out, { obj, key: k });
+      }
+    }
+    if (isDeletable && isDeletable(tag, obj, _xiIsRef)) out.push({ container, node: obj });
+  }
+
+  // Remove only the deletable blocks whose index is in selSet. Reverse order
+  // so a selected parent (higher index) is removed after its children; live
+  // indexOf survives array shifts. Returns the count removed.
+  function _removeSelectedFlowBlocks(metadata, selSet) {
+    const out = [];
+    _collectDeletableNodes(metadata, 'Flow', _XI_IS_DELETABLE.Flow, out, null);
+    let removed = 0;
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (!selSet.has(i)) continue;
+      const { container, node } = out[i];
+      if (Array.isArray(container)) {
+        const idx = container.indexOf(node);
+        if (idx >= 0) { container.splice(idx, 1); removed++; }
+      } else if (container && container.obj) {
+        delete container.obj[container.key]; removed++;
+      }
+    }
+    return removed;
+  }
+
+  // Like fixFlow, but removes only the user-selected blocks (from the XML
+  // inspector checkboxes) instead of every reference, then deploys.
+  async function fixFlowSelective(flowId, flowName, selSet) {
+    const flowRes = await bg({
+      type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: 'Flow', id: flowId
+    });
+    if (flowRes.error) throw new Error(`Could not read "${flowName}": ${flowRes.error}`);
+    const fullName = flowRes.FullName;
+    const metadata = flowRes.Metadata;
+    if (!fullName || !metadata) throw new Error(`"${flowName}" returned no metadata.`);
+
+    const removed = _removeSelectedFlowBlocks(metadata, selSet);
+    if (removed === 0) throw new Error('No blocks were selected to remove.');
+
+    delete metadata.fullName;
+    const flowApiName = fullName.replace(/-\d+$/, '');
+    const deployRes = await deployFlowViaMetadataApi(flowApiName, metadata);
+    if (!deployRes || !deployRes.success) {
+      const e = new Error(
+        `Removed ${removed} block(s) but couldn't deploy "${flowName}" ` +
+        `(${deployRes?.error || 'deploy failed'}). Open in Flow Builder to finish by hand.`
+      );
+      if (_orgUrl) e.setupUrl = `${_orgUrl.replace(/\/$/, '')}/builder_platform_interaction/flowBuilder.app?flowId=${flowId}`;
+      throw e;
+    }
+  }
+
   // Toggle the XML inspector panel open/closed for a dependency item.
   async function toggleXmlInspector(type, componentId, componentName, fieldId) {
     const panel    = eid(`fcXml_${componentId}`);
@@ -1801,7 +1883,11 @@ const FieldCleaner = (() => {
         // Render Metadata JSON as pretty XML with deletion block markers
         const meta = res.Metadata;
         if (!meta) throw new Error('No Metadata returned by the API.');
-        ({ html: bodyHtml, count: refCount, delCount } = _xiRenderTree(meta, type, 0, isDeletableFn));
+        // Flows render with per-block checkboxes so the user can trim only
+        // the blocks they choose. Other types keep the all-or-nothing fix.
+        const selectable = type === 'Flow';
+        ({ html: bodyHtml, count: refCount, delCount } =
+          _xiRenderTree(meta, type, 0, isDeletableFn, { idx: 0 }, selectable));
         bodyHtml = `<pre class="fc-xml-pre"><code>${bodyHtml}</code></pre>`;
       }
 
@@ -1820,11 +1906,14 @@ const FieldCleaner = (() => {
           <span class="fc-xml-hdr-name">${esc(componentName)}</span>
           <span class="fc-xml-badge ${badgeCls}">${badgeTxt}</span>
           <span class="fc-xml-hdr-actions">
-            ${fixable && refCount
-              ? `<button class="btn btn-secondary btn-sm fc-fix-btn fc-xml-fix"
-                         data-id="${esc(componentId)}" data-name="${esc(componentName)}"
-                         data-type="${esc(type)}">✂ Remove</button>`
-              : ''}
+            ${fixable && refCount && type === 'Flow'
+              ? `<button class="btn btn-secondary btn-sm fc-xml-fix-sel"
+                         data-id="${esc(componentId)}" data-name="${esc(componentName)}">✂ Remove selected (${delCount})</button>`
+              : fixable && refCount
+                ? `<button class="btn btn-secondary btn-sm fc-fix-btn fc-xml-fix"
+                           data-id="${esc(componentId)}" data-name="${esc(componentName)}"
+                           data-type="${esc(type)}">✂ Remove</button>`
+                : ''}
             <button class="fc-xml-close" data-panelid="${esc(componentId)}">✕</button>
           </span>
         </div>
@@ -1837,12 +1926,42 @@ const FieldCleaner = (() => {
         if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open');
       });
 
-      // Wire "Remove" button inside panel (closes panel then runs the normal fix)
+      // Non-flow types: "Remove" runs the all-or-nothing fix.
       panel.querySelector('.fc-xml-fix')?.addEventListener('click', () => {
         panel.style.display = 'none';
         if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open');
         fixOne(type, componentId, componentName, fieldId);
       });
+
+      // Flows: "Remove selected" trims only the checked blocks, then deploys.
+      // Keep the button label's count in sync as the user ticks/unticks.
+      const selBtn = panel.querySelector('.fc-xml-fix-sel');
+      if (selBtn) {
+        const syncCount = () => {
+          const n = panel.querySelectorAll('.xi-del-check:checked').length;
+          selBtn.textContent = `✂ Remove selected (${n})`;
+          selBtn.disabled = n === 0;
+        };
+        panel.querySelectorAll('.xi-del-check').forEach(cb =>
+          cb.addEventListener('change', syncCount));
+        selBtn.addEventListener('click', async () => {
+          const selSet = new Set(
+            [...panel.querySelectorAll('.xi-del-check:checked')]
+              .map(cb => parseInt(cb.dataset.idx, 10))
+          );
+          if (!selSet.size) return;
+          selBtn.disabled = true; selBtn.textContent = '⏳ Removing…';
+          try {
+            await fixFlowSelective(componentId, componentName, selSet);
+            panel.style.display = 'none';
+            if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open');
+            markFixed(componentId, '✅ Done');
+          } catch (e) {
+            selBtn.disabled = false; syncCount();
+            appendInlineError(componentId, e.message, e.setupUrl, '↗ Open in Flow Builder');
+          }
+        });
+      }
 
       // Add prev/next navigation for field references
       if (refCount > 0) _addXmlNavigation(panel);
@@ -1860,10 +1979,16 @@ const FieldCleaner = (() => {
   //   count    = number of field-ref occurrences highlighted
   //   delCount = number of XML blocks marked for deletion
   // isDeletable(tag, obj, isRef) → boolean — type-specific deletion matcher
-  function _xiRenderTree(obj, tag, depth, isDeletable) {
+  function _xiRenderTree(obj, tag, depth, isDeletable, ctx, selectable) {
     if (depth > 28 || obj === null || obj === undefined) {
       return { html: '', count: 0, delCount: 0 };
     }
+    ctx = ctx || { idx: 0 };
+    // Checkbox prefix for a deletable block — lets the user pick which blocks
+    // to trim. Numbered in post-order so the index matches the remover.
+    const delCheck = () => selectable
+      ? `<input type="checkbox" class="xi-del-check" data-idx="${ctx.idx++}" checked title="Remove this block">`
+      : '';
 
     const pad   = '  '.repeat(depth);
     const fl    = (_selField?.api || '').toLowerCase();
@@ -1895,7 +2020,7 @@ const FieldCleaner = (() => {
       // Scalar nodes (e.g. individual queriedFields strings) can also be deletable
       if (hit && isDeletable && isDeletable(tag, obj, isRef)) {
         return {
-          html:     `<span class="xi-del-block">${line}</span>`,
+          html:     `<span class="xi-del-block">${delCheck()}${line}</span>`,
           count:    1,
           delCount: 1,
         };
@@ -1907,7 +2032,7 @@ const FieldCleaner = (() => {
     if (Array.isArray(obj)) {
       let html = '', count = 0, delCount = 0;
       for (const item of obj) {
-        const r = _xiRenderTree(item, tag, depth, isDeletable);
+        const r = _xiRenderTree(item, tag, depth, isDeletable, ctx, selectable);
         html += r.html; count += r.count; delCount += r.delCount;
       }
       return { html, count, delCount };
@@ -1919,11 +2044,11 @@ const FieldCleaner = (() => {
       if (v === null || v === undefined) continue;
       if (Array.isArray(v)) {
         for (const item of v) {
-          const r = _xiRenderTree(item, k, depth + 1, isDeletable);
+          const r = _xiRenderTree(item, k, depth + 1, isDeletable, ctx, selectable);
           innerHtml += r.html; innerCount += r.count; innerDel += r.delCount;
         }
       } else {
-        const r = _xiRenderTree(v, k, depth + 1, isDeletable);
+        const r = _xiRenderTree(v, k, depth + 1, isDeletable, ctx, selectable);
         innerHtml += r.html; innerCount += r.count; innerDel += r.delCount;
       }
     }
@@ -1932,7 +2057,7 @@ const FieldCleaner = (() => {
     const delThis   = isDeletable && isDeletable(tag, obj, isRef);
     if (delThis) {
       return {
-        html:     `<span class="xi-del-block">${blockHtml}</span>`,
+        html:     `<span class="xi-del-block">${delCheck()}${blockHtml}</span>`,
         count:    innerCount,
         delCount: innerDel + 1,
       };
