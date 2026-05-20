@@ -4495,6 +4495,13 @@ body {
   margin-left: -4px;
   border-radius: 0 2px 2px 0;
 }
+/* Per-block "trim this?" checkbox in the flow XML inspector */
+.xi-del-check {
+  margin: 0 6px 0 0;
+  vertical-align: middle;
+  cursor: pointer;
+  accent-color: #c23934;
+}
 
 /* Deletion hint text between panel header and code */
 .fc-xml-hint {
