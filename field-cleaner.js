@@ -850,13 +850,31 @@ const FieldCleaner = (() => {
       throw err;
     }
 
+    // Clean the metadata before creating a new version. A flow read via the
+    // Tooling API carries status:'Active' (it's the live version) and can
+    // include an internal `fullName`. POSTing those back makes Salesforce
+    // reject the create with "The fullName: <name> for Flow version is not
+    // unique" — it thinks you're recreating the existing active version.
+    // Create the new version as Draft (we activate it explicitly below).
+    delete metadata.fullName;
+    metadata.status = 'Draft';
+
     // Save as a new Draft version (Tooling API creates this as Inactive).
     const saveRes = await bg({
       type: 'SF_CREATE_FLOW', orgUrl: _orgUrl, sid: _sid,
       fullName: fullName.replace(/-\d+$/, ''),   // strip version suffix → e.g. My_Flow-3 → My_Flow
       metadata
     });
-    if (saveRes.error) throw new Error(`Could not save new version of "${flowName}": ${saveRes.error}`);
+    if (saveRes.error) {
+      const notUnique = /not unique/i.test(saveRes.error);
+      const e = new Error(notUnique
+        ? `Couldn't save a new version of "${flowName}" — Salesforce rejected it as a duplicate ` +
+          `(${saveRes.error}). This usually means an identical version already exists. ` +
+          `Open in Flow Builder to remove the field reference by hand.`
+        : `Could not save new version of "${flowName}": ${saveRes.error}`);
+      if (_orgUrl) e.setupUrl = `${_orgUrl.replace(/\/$/, '')}/builder_platform_interaction/flowBuilder.app?flowId=${flowId}`;
+      throw e;
+    }
 
     // Fetch the new version's DefinitionId + VersionNumber so we can activate it.
     const verRes = await bg({
