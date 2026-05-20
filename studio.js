@@ -3880,31 +3880,13 @@ async function refreshProfileDiff(profileId) {
 }
 window.refreshProfileDiff = refreshProfileDiff;
 
-// Bundled "Refresh state" — combines the diff scan (drives Pick Records
-// badges + profile card chips) with full snapshot capture (drives Org Map
-// drift overlay). One user action, both data sources stay coherent.
-//
-// Order: diff first (it's fast — ~2 queries, instant feedback in the toast)
-// then snapshots (slower — 2×N queries). Snapshot failures don't roll back
-// the diff result.
+// "Refresh state" — now just the diff scan (drives Pick Records badges +
+// profile card chips + Reconcile columns). The snapshot capture that this
+// used to bundle was removed along with the Org Map drift overlay (its only
+// consumer). Kept as a thin alias so the profile-card button and the
+// post-transfer auto-refresh keep working without changes.
 window.refreshProfileState = async function(profileId) {
-  const profile = _profiles.find(p => p.id === profileId);
-  if (!profile) {
-    showToast('Profile not found', 'error', 3000);
-    return;
-  }
-  // Diff first — fast feedback. refreshProfileDiff already toasts its own
-  // counts; we suppress its toast here by saving/restoring showToast? No,
-  // simpler: let it toast, then we follow up with the snapshot result.
-  const diffRes = await refreshProfileDiff(profileId);
-  if (diffRes?.error) {
-    // Diff failed → don't bother with snapshots, the orgs are unreachable.
-    return diffRes;
-  }
-  // Snapshots — slower, but the diff toast is already on screen so the user
-  // knows refresh is in progress. snapshotProfileNow toasts its own result
-  // (success or with adjustments/failures).
-  await window.snapshotProfileNow(profileId);
+  return refreshProfileDiff(profileId);
 };
 
 // Open the Run Transfer page pre-filtered to ONLY the failed source IDs
