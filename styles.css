@@ -2461,6 +2461,21 @@ body {
   flex: 1; min-height: 0;
   display: flex; flex-direction: column;
 }
+/* Clickable title bar to minimize/expand the log section */
+.adbg-log-title-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  font-weight: 700; font-size: 13px;
+  cursor: pointer; user-select: none;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.adbg-log-title-bar:hover { background: var(--hover); }
+.adbg-log-caret { font-size: 11px; color: var(--subtext); width: 12px; }
+/* Collapsed: hide the search header + the log view, keep just the bar */
+.adbg-logsec-collapsed { flex: 0 0 auto; }
+.adbg-logsec-collapsed > .adbg-log-hdr,
+.adbg-logsec-collapsed > .adbg-log-view { display: none; }
 .adbg-det-meta {
   display: flex; gap: 10px;
   font-size: 11px; color: var(--subtext); margin-bottom: 4px;
