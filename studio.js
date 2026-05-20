@@ -35,7 +35,7 @@
 let _orgUrl      = null;
 let _sid         = null;
 let _allSessions = [];
-let _currentView = 'map';
+let _currentView = 'orgs';
 let _profiles    = [];
 let _history     = [];
 let _orgs        = {};
@@ -518,33 +518,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Home starts without sidebar — apply class before first render
-  document.querySelector('.ds-body')?.classList.add('ds-home');
-
-  // Brand name = home button (collapse sidebar, go back to org map)
+  // Brand name = home button → Connected Orgs (the landing view).
   document.querySelector('.ds-brand')?.addEventListener('click', () => {
     document.querySelectorAll('.ds-nav-btn').forEach(b =>
-      b.classList.toggle('active', b.dataset.view === 'map'));
-    _currentView = 'map';
-    renderView('map');
+      b.classList.toggle('active', b.dataset.view === 'orgs'));
+    _currentView = 'orgs';
+    renderView('orgs');
   });
 
-  // First-run: if no orgs known, show welcome instead of empty map
-  const isFirstRun = !_orgUrl && !_allSessions.length && !_storedOrgs.length
+  // First-run: if no orgs known, show welcome instead of an empty list.
+  const isFirstRun = !_orgUrl && !_allSessions.length
     && !Object.keys(_orgs).length;
   if (isFirstRun) {
     renderWelcome();
   } else {
-    renderView('map');
+    renderView('orgs');
   }
-
-  // Feature 8: Show drift badge on initial load if persisted scan results have drift
-  // Must run after first render so the nav DOM exists
-  updateScanDriftBadge();
-
-  // If the credential vault is locked, offer to unlock it now so stored
-  // org passwords are available this session.
-  maybeUnlockVault();
 
   // First-run guided tour — shown once, ever
   maybeRunStudioTour();
@@ -1092,19 +1081,19 @@ function renderWelcome() {
       </div>
 
       <div class="ds-welcome-grid">
-        <div class="ds-welcome-card" data-gotoview="map">
-          <div class="ds-welcome-card-icon">🌐</div>
-          <div class="ds-welcome-card-title">Org Map</div>
-          <div class="ds-welcome-card-desc">See all your connected Salesforce orgs in one visual view. Drag and link them.</div>
+        <div class="ds-welcome-card" data-gotoview="orgs">
+          <div class="ds-welcome-card-icon">🔌</div>
+          <div class="ds-welcome-card-title">Connected Orgs</div>
+          <div class="ds-welcome-card-desc">See every Salesforce org you have open in Chrome. The starting point for transfers and reconcile.</div>
           <span class="ds-welcome-card-badge ds-badge-read">Read-only</span>
-          ${activityBadge('map')}
+          ${activityBadge('orgs')}
         </div>
-        <div class="ds-welcome-card" data-gotoview="schema">
-          <div class="ds-welcome-card-icon">🕸</div>
-          <div class="ds-welcome-card-title">Schema View</div>
-          <div class="ds-welcome-card-desc">Visualize how objects relate to each other and which flows run on them.</div>
-          <span class="ds-welcome-card-badge ds-badge-read">Read-only</span>
-          ${activityBadge('schema')}
+        <div class="ds-welcome-card" data-gotoview="profiles">
+          <div class="ds-welcome-card-icon">📦</div>
+          <div class="ds-welcome-card-title">Data Deployment</div>
+          <div class="ds-welcome-card-desc">Define deployment profiles (objects, orgs, mappings) and run transfers or reconcile between orgs.</div>
+          <span class="ds-welcome-card-badge ds-badge-write">Writes records</span>
+          ${activityBadge('transfer')}
         </div>
         <div class="ds-welcome-card" data-gotoview="readiness">
           <div class="ds-welcome-card-icon">🛡</div>
@@ -1113,25 +1102,18 @@ function renderWelcome() {
           <span class="ds-welcome-card-badge ds-badge-read">Read-only</span>
           ${activityBadge('readiness')}
         </div>
-        <div class="ds-welcome-card" data-gotoview="scans">
-          <div class="ds-welcome-card-icon">🔍</div>
-          <div class="ds-welcome-card-title">Scan Map</div>
-          <div class="ds-welcome-card-desc">Schedule record count comparisons across orgs and get alerted on drift.</div>
+        <div class="ds-welcome-card" data-gotoview="schema">
+          <div class="ds-welcome-card-icon">🕸</div>
+          <div class="ds-welcome-card-title">Schema View</div>
+          <div class="ds-welcome-card-desc">Visualize how objects relate to each other and which flows run on them.</div>
           <span class="ds-welcome-card-badge ds-badge-read">Read-only</span>
-          ${activityBadge('scans')}
-        </div>
-        <div class="ds-welcome-card" data-gotoview="profiles">
-          <div class="ds-welcome-card-icon">📦</div>
-          <div class="ds-welcome-card-title">Data Deployment</div>
-          <div class="ds-welcome-card-desc">Define deployment profiles (objects, orgs, mappings) and run transfers between orgs.</div>
-          <span class="ds-welcome-card-badge ds-badge-write">Writes records</span>
-          ${activityBadge('transfer')}
+          ${activityBadge('schema')}
         </div>
       </div>
 
       <div class="ds-welcome-trust">
         <span class="ds-welcome-trust-icon">🔒</span>
-        <span>All operations run <strong>locally in your browser</strong>. No data is ever sent to external servers. Scan, Schema View, and Deploy Readiness are completely read-only.</span>
+        <span>All operations run <strong>locally in your browser</strong>. No data is ever sent to external servers. Schema View and Deploy Readiness are completely read-only.</span>
         <span class="ds-welcome-trust-link" id="dsWelcomeSecBtn">Security details →</span>
       </div>
     </div>
@@ -1155,40 +1137,18 @@ function renderWelcome() {
 function renderView(view) {
   _describeCache = {};   // clear per-view to stay fresh
   _refFieldCache = {};   // clear lookup field cache on view switch (may have stale org data)
-  // Reset map interaction state when leaving the map
-  if (_currentView === 'map' && view !== 'map') {
-    _mapState.selectedNode = null;
-  }
 
-  // Home (map) = full-width, no sidebar.
-  // Every other view = sidebar visible.
-  const body = document.querySelector('.ds-body');
-  if (body) body.classList.toggle('ds-home', view === 'map');
-
-  // Reset #dsMain inline styles that renderOrgMap sets (overflow:hidden,
-  // padding:0 — needed for the full-bleed SVG canvas). These are inline so
-  // they override the .ds-main stylesheet rule and PERSIST across view
-  // switches; without this reset, every view visited AFTER the Org Map
-  // inherits overflow:hidden and can't scroll (the Profile Builder felt
-  // "stuck" once the object tree grew past the viewport). The map re-applies
-  // them in renderOrgMap.
-  const mainEl = eid('dsMain');
-  if (mainEl && view !== 'map') {
-    mainEl.style.overflow = '';
-    mainEl.style.padding  = '';
-  }
+  // Sidebar is always visible now (the full-width Org Map home was removed).
+  document.querySelector('.ds-body')?.classList.remove('ds-home');
 
   // Record activity for the welcome screen tiles
   recordActivity(view);
 
   switch (view) {
-    case 'map':      renderOrgMap();     break;
     case 'orgs':     renderOrgsPanel();  break;
     case 'profiles': renderProfiles();   break;
     case 'transfer': renderTransfer();   break;
-    case 'schedule': renderSchedule();   break;
     case 'history':  renderHistory();    break;
-    case 'scans':     renderScanMap();      break;
     case 'readiness': renderReadiness();   break;
     case 'schema':    renderSchemaView();  break;
     case 'reconcile': renderReconcile();   break;
@@ -1199,14 +1159,14 @@ function renderView(view) {
 // CONNECTED ORGS PANEL (Gearset / SF CLI style)
 // ════════════════════════════════════════════════════════════════
 function renderOrgsPanel() {
-  // Include stored SOAP orgs so they always show even when not open in a tab
-  const storedUrls = _storedOrgs.map(o => o.url).filter(Boolean);
+  // Orgs are detected purely from open Salesforce browser tabs now —
+  // credential-based stored orgs were removed. We still remember orgs seen
+  // before (in _orgs) so they show as "not open" with their last-seen time.
   const allOrgUrls = [
     ...new Set([
       ..._allSessions.map(s => s.orgUrl),
       ...(_orgUrl ? [_orgUrl] : []),
-      ...Object.keys(_orgs),
-      ...storedUrls
+      ...Object.keys(_orgs)
     ])
   ].filter(Boolean);
 
@@ -1218,8 +1178,6 @@ function renderOrgsPanel() {
     const host       = (() => { try { return new URL(url).hostname; } catch { return url; } })();
     const lastSeen   = timeAgo(orgData.lastSeen);
     const syncCount  = _history.filter(h => h.sourceOrg === url || h.targetOrg === url).length;
-    const storedOrg  = _storedOrgs.find(o => o.url === url);
-    const hasCreds   = !!(storedOrg?.username);
 
     return `
       <div class="ds-org-row ${isCurrent ? 'ds-org-row--active' : ''}">
@@ -1228,13 +1186,10 @@ function renderOrgsPanel() {
           <div class="ds-org-row-label">
             ${esc(label)}
             ${isCurrent ? '<span class="ds-org-badge-current" style="margin-left:6px">current tab</span>' : ''}
-            ${hasCreds ? `<span style="margin-left:6px;font-size:10px;background:#F0F9FF;border:1px solid #BAE6FD;
-              border-radius:4px;padding:1px 5px;color:#0369A1">🔐 credentials</span>` : ''}
           </div>
           <div class="ds-org-row-url">${esc(host)}</div>
           <div class="ds-org-row-meta">
-            ${hasCreds ? `${esc(storedOrg.username)} · ` : ''}Last seen ${lastSeen}
-            · ${syncCount} transfer${syncCount !== 1 ? 's' : ''} logged
+            Last seen ${lastSeen} · ${syncCount} transfer${syncCount !== 1 ? 's' : ''} logged
           </div>
         </div>
         <div class="ds-org-row-status ${isOnline ? 'ds-org-row-status--online' : 'ds-org-row-status--offline'}">
@@ -1244,10 +1199,7 @@ function renderOrgsPanel() {
           <button class="ds-btn ds-btn-sm" data-dsaction="editOrgLabel" data-arg="${esc(url)}">✏ Rename</button>
           ${isOnline
             ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="startTransferFrom" data-arg="${esc(url)}">🚀 Transfer</button>`
-            : hasCreds
-              ? `<button class="ds-btn ds-btn-sm" data-dsaction="reconnectOrgFromPanel" data-arg="${esc(storedOrg.id)}">🔄 Reconnect</button>
-                 <button class="ds-btn ds-btn-sm ds-btn-danger" data-dsaction="removeOrg" data-arg="${esc(url)}">✕</button>`
-              : `<button class="ds-btn ds-btn-sm ds-btn-danger" data-dsaction="removeOrg" data-arg="${esc(url)}">✕</button>`}
+            : `<button class="ds-btn ds-btn-sm ds-btn-danger" data-dsaction="removeOrg" data-arg="${esc(url)}">✕</button>`}
         </div>
       </div>`;
   }).join('');
@@ -1258,19 +1210,13 @@ function renderOrgsPanel() {
         <h2 class="ds-view-title">🔌 Connected Orgs</h2>
         <div class="ds-view-subtitle">${allOrgUrls.length} org${allOrgUrls.length !== 1 ? 's' : ''} known · ${_allSessions.length} currently open in Chrome</div>
       </div>
-      <button class="ds-btn ds-btn-primary" id="dsAddOrgBtn">+ Add Org</button>
+      <button class="ds-btn ds-btn-primary" id="dsRefreshOrgsBtn">🔄 Refresh from open tabs</button>
     </div>
 
     <div style="background:#E8F4FD;border:1px solid #C5DBF0;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#014486;max-width:820px">
       <strong>💡 How it works:</strong> The Studio auto-detects any Salesforce org you have open in a Chrome tab.
-      Open an org in Chrome, then click <em>Refresh</em> below to add it. No Connected App or passwords required —
-      your existing browser session is used securely.
-    </div>
-
-    <div style="display:flex;gap:8px;margin-bottom:16px;max-width:820px;flex-wrap:wrap">
-      <button class="ds-btn ds-btn-primary" id="dsRefreshOrgsBtn">🔄 Refresh from open tabs</button>
-      <button class="ds-btn ds-btn-primary" id="dsConnectCredsBtn">🔐 Connect with Credentials</button>
-      <button class="ds-btn" data-dsaction="showAddOrgHelp">📖 Help</button>
+      Open an org in Chrome, then click <em>Refresh from open tabs</em> to add it. No Connected App or passwords —
+      your existing browser session is used securely. Transfers and reconcile run against orgs that are open in a tab.
     </div>
 
     ${!allOrgUrls.length ? `
@@ -1284,8 +1230,6 @@ function renderOrgsPanel() {
       </div>`}
   `);
 
-  eid('dsAddOrgBtn')?.addEventListener('click', showAddOrgHelp);
-  eid('dsConnectCredsBtn')?.addEventListener('click', showAddOrgModal);
   eid('dsRefreshOrgsBtn')?.addEventListener('click', async () => {
     const btn = eid('dsRefreshOrgsBtn');
     if (btn) { btn.disabled = true; btn.textContent = '🔄 Refreshing…'; }
