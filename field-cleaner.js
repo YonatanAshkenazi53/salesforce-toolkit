@@ -850,61 +850,20 @@ const FieldCleaner = (() => {
       throw err;
     }
 
-    // Clean the metadata before creating a new version. A flow read via the
-    // Tooling API carries status:'Active' (it's the live version) and can
-    // include an internal `fullName`. POSTing those back makes Salesforce
-    // reject the create with "The fullName: <name> for Flow version is not
-    // unique" — it thinks you're recreating the existing active version.
-    // Create the new version as Draft (we activate it explicitly below).
+    // Deploy the fixed flow via the Metadata API. This creates a NEW version
+    // and activates it in one step — and unlike the Tooling API `Flow` create,
+    // it works for record-triggered flows (which reject the Tooling create
+    // with "fullName ... for Flow version is not unique"). Strip Tooling-only
+    // descriptors first so the XML validates.
     delete metadata.fullName;
-    metadata.status = 'Draft';
-
-    // Save as a new Draft version (Tooling API creates this as Inactive).
-    const saveRes = await bg({
-      type: 'SF_CREATE_FLOW', orgUrl: _orgUrl, sid: _sid,
-      fullName: fullName.replace(/-\d+$/, ''),   // strip version suffix → e.g. My_Flow-3 → My_Flow
-      metadata
-    });
-    if (saveRes.error) {
-      const notUnique = /not unique/i.test(saveRes.error);
-      const e = new Error(notUnique
-        ? `Couldn't save a new version of "${flowName}" — Salesforce rejected it as a duplicate ` +
-          `(${saveRes.error}). This usually means an identical version already exists. ` +
-          `Open in Flow Builder to remove the field reference by hand.`
-        : `Could not save new version of "${flowName}": ${saveRes.error}`);
+    const flowApiName = fullName.replace(/-\d+$/, '');   // My_Flow-3 → My_Flow
+    const deployRes = await deployFlowViaMetadataApi(flowApiName, metadata);
+    if (!deployRes || !deployRes.success) {
+      const e = new Error(
+        `Couldn't deploy the fixed "${flowName}" (${deployRes?.error || 'deploy failed'}). ` +
+        `Open in Flow Builder to remove the field reference by hand.`
+      );
       if (_orgUrl) e.setupUrl = `${_orgUrl.replace(/\/$/, '')}/builder_platform_interaction/flowBuilder.app?flowId=${flowId}`;
-      throw e;
-    }
-
-    // Fetch the new version's DefinitionId + VersionNumber so we can activate it.
-    const verRes = await bg({
-      type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
-      query: `SELECT DefinitionId, VersionNumber FROM Flow WHERE Id = '${saveRes.id}'`
-    });
-    if (verRes.error || !verRes.records?.length) {
-      const e = new Error(
-        `Created a new version of "${flowName}" but couldn't read it back to ` +
-        `activate. Open in Flow Builder to activate it manually.`
-      );
-      if (_orgUrl) e.setupUrl = `${_orgUrl.replace(/\/$/, '')}/builder_platform_interaction/flowBuilder.app?flowId=${saveRes.id}`;
-      throw e;
-    }
-    const definitionId  = verRes.records[0].DefinitionId;
-    const versionNumber = verRes.records[0].VersionNumber;
-
-    // PATCH FlowDefinition.activeVersionNumber → makes the new version Active
-    // and the old one Obsolete. This is the standard Tooling API activation path.
-    const actRes = await bg({
-      type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
-      path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${definitionId}`,
-      body: { Metadata: { activeVersionNumber: versionNumber } }
-    });
-    if (actRes.error) {
-      const e = new Error(
-        `New version of "${flowName}" was saved but couldn't be auto-activated ` +
-        `(${actRes.error}). Open in Flow Builder to activate it manually.`
-      );
-      if (_orgUrl) e.setupUrl = `${_orgUrl.replace(/\/$/, '')}/builder_platform_interaction/flowBuilder.app?flowId=${saveRes.id}`;
       throw e;
     }
   }
@@ -1374,6 +1333,63 @@ const FieldCleaner = (() => {
       return second && second.error ? second : first;
     }
     return first;
+  }
+
+  // ── Flow deploy via Metadata API ───────────────────────────────────────
+  // The Tooling API `Flow` create won't reliably add a new version to many
+  // flows (esp. record-triggered) — it rejects with "fullName ... for Flow
+  // version is not unique". The Metadata API zip-deploy is the method that
+  // actually works: it creates a new version and (with status=Active)
+  // activates it, the same path mature tooling uses.
+  function buildFlowXml(metadata) {
+    const lines = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<Flow xmlns="http://soap.sforce.com/2006/04/metadata">'
+    ];
+    // Alphabetical walk (reuses the layout serializer's array/object/skip
+    // handling). apiVersion is rendered with one decimal so Salesforce
+    // accepts it ("62" would be rejected where "62.0" is expected).
+    const keys = Object.keys(metadata).filter(k => !_LX_SKIP.has(k)).sort();
+    for (const key of keys) {
+      if (key === 'apiVersion' && metadata.apiVersion != null) {
+        lines.push(`    <apiVersion>${Number(metadata.apiVersion).toFixed(1)}</apiVersion>`);
+        continue;
+      }
+      lines.push(..._lxValueToLines(key, metadata[key], '    '));
+    }
+    lines.push('</Flow>');
+    return lines.join('\n');
+  }
+
+  function buildFlowPackageXml(fullName) {
+    return [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<Package xmlns="http://soap.sforce.com/2006/04/metadata">',
+      '    <types>',
+      `        <members>${_lxEsc(fullName)}</members>`,
+      '        <name>Flow</name>',
+      '    </types>',
+      '    <version>62.0</version>',
+      '</Package>'
+    ].join('\n');
+  }
+
+  function buildFlowZip(fullName, metadata) {
+    const enc = new TextEncoder();
+    return _lxBuildStoredZip([
+      { name: 'package.xml',              data: enc.encode(buildFlowPackageXml(fullName)) },
+      { name: `flows/${fullName}.flow`,   data: enc.encode(buildFlowXml(metadata)) }
+    ]);
+  }
+
+  // Deploy the modified flow. status:'Active' makes the deploy create a new
+  // version AND activate it (the old version becomes Obsolete) in one step.
+  async function deployFlowViaMetadataApi(fullName, metadata) {
+    metadata.status = 'Active';
+    return bg({
+      type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid,
+      zipBase64: buildFlowZip(fullName, metadata)
+    });
   }
 
   async function fixLayout(componentId, componentName) {
