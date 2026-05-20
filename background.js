@@ -701,6 +701,8 @@ async function dispatchMessage(message) {
       return sfCollectionsCreate(orgUrl, sid, message.records);
     case 'SF_COLLECTIONS_DELETE':
       return sfCollectionsDelete(orgUrl, sid, message.ids);
+    case 'SF_HARD_DELETE':
+      return sfHardDelete(orgUrl, sid, message.ids);
     case 'SF_COLLECTIONS_UPDATE':
       return sfCollectionsUpdate(orgUrl, sid, message.records);
     case 'SF_EXECUTE_PROFILE_TRANSFER':
@@ -1457,6 +1459,67 @@ async function sfCollectionsDelete(orgUrl, sid, ids) {
     if (Array.isArray(parsed)) results.push(...parsed);
   }
   return results;
+}
+
+// ---------------------------------------------------------------
+// Hard delete = regular delete (→ Recycle Bin) followed by SOAP
+// emptyRecycleBin to purge permanently. The REST composite API has no
+// direct hard-delete param, so we chain the two. emptyRecycleBin only
+// acts on records already in the bin, hence the ordering.
+// Returns { deleteResults[], purgedOk, purgeErrors[] }.
+// ---------------------------------------------------------------
+async function sfHardDelete(orgUrl, sid, ids) {
+  const delResults = await sfCollectionsDelete(orgUrl, sid, ids);
+  // Only purge the ones that actually made it to the bin.
+  const deletedOk = (delResults || []).filter(r => r.success).map(r => r.id);
+  const purge = await sfEmptyRecycleBin(orgUrl, sid, deletedOk);
+  return { deleteResults: delResults, purgedOk: purge.ok, purgeErrors: purge.errors };
+}
+
+// SOAP emptyRecycleBin — permanently purges up to 200 IDs/call from the
+// org's Recycle Bin. Uses the partner SOAP endpoint with the session id in
+// the header (same sid that authorizes REST works here). Needs the running
+// user to have delete access; "Bulk API Hard Delete" perm is NOT required
+// for emptyRecycleBin (that's only for the Bulk API hardDelete operation).
+async function sfEmptyRecycleBin(orgUrl, sid, ids) {
+  const idList = (ids || []).filter(Boolean);
+  if (!idList.length) return { ok: 0, errors: [] };
+  const ver     = API_VERSION.replace(/^v/, '');
+  const soapUrl = `${orgUrl}/services/Soap/u/${ver}`;
+  let ok = 0; const errors = [];
+  for (let i = 0; i < idList.length; i += 200) {
+    const chunk  = idList.slice(i, i + 200);
+    const idsXml = chunk.map(id => `<urn:ids>${id}</urn:ids>`).join('');
+    const envelope =
+      `<?xml version="1.0" encoding="utf-8"?>` +
+      `<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:partner.soap.sforce.com">` +
+      `<soapenv:Header><urn:SessionHeader><urn:sessionId>${sid}</urn:sessionId></urn:SessionHeader></soapenv:Header>` +
+      `<soapenv:Body><urn:emptyRecycleBin>${idsXml}</urn:emptyRecycleBin></soapenv:Body></soapenv:Envelope>`;
+    let text = '';
+    try {
+      const res = await sfFetch(soapUrl, {
+        method:  'POST',
+        headers: { 'Content-Type': 'text/xml; charset=UTF-8', 'SOAPAction': 'emptyRecycleBin' },
+        body:    envelope
+      });
+      text = await res.text();
+    } catch (e) {
+      errors.push(`emptyRecycleBin request failed: ${e?.message || e}`);
+      continue;
+    }
+    // SOAP fault → whole chunk failed
+    const fault = text.match(/<faultstring>([^<]+)<\/faultstring>/)?.[1];
+    if (fault) { errors.push(fault); continue; }
+    // Each <result> has <success>true|false</success>; count successes,
+    // collect any error messages.
+    ok += (text.match(/<success>true<\/success>/g) || []).length;
+    const errMatches = text.match(/<errors>[\s\S]*?<\/errors>/g) || [];
+    for (const em of errMatches) {
+      const msg = em.match(/<message>([^<]+)<\/message>/)?.[1];
+      if (msg) errors.push(msg);
+    }
+  }
+  return { ok, errors };
 }
 
 // ---------------------------------------------------------------

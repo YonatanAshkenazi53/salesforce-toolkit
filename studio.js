@@ -6358,6 +6358,10 @@ window.openReconcile = function(profileId) {
 // where it makes sense. Reset when the profile changes.
 let _recSel = { push: new Set(), overwrite: new Set(), del: new Set() };
 let _recLastProfileId = null;
+// Delete mode for the reconcile "In target only" column.
+//   'recycle' — DELETE → Recycle Bin (recoverable 15 days)
+//   'hard'    — DELETE then SOAP emptyRecycleBin (permanent)
+let _recDeleteMode = 'recycle';
 
 async function renderReconcile() {
   const p = _reconcileProfile;
@@ -6470,6 +6474,13 @@ async function renderReconcile() {
 
     <div class="ds-rec-action-bar">
       <div class="ds-rec-action-summary" id="dsRecSummary"></div>
+      <label class="ds-rec-delmode" title="Recycle Bin: deleted records recoverable for 15 days. Hard delete: permanently purged, not recoverable.">
+        <span>Delete mode:</span>
+        <select id="dsRecDeleteMode" class="ds-select ds-select-sm">
+          <option value="recycle" ${_recDeleteMode === 'recycle' ? 'selected' : ''}>🗑 Recycle Bin (recoverable)</option>
+          <option value="hard" ${_recDeleteMode === 'hard' ? 'selected' : ''}>🔥 Hard delete (permanent)</option>
+        </select>
+      </label>
       <div class="ds-rec-action-btns">
         <button class="ds-btn" id="dsRecCancelBtn">Cancel</button>
         <button class="ds-btn ds-btn-primary ds-btn-lg" id="dsRecRunBtn">▶ Run reconcile</button>
@@ -6542,6 +6553,7 @@ async function renderReconcile() {
     _recSel = { push: new Set(), overwrite: new Set(), del: new Set() };
     renderReconcile();
   });
+  eid('dsRecDeleteMode')?.addEventListener('change', e => { _recDeleteMode = e.target.value; });
   eid('dsRecRunBtn')?.addEventListener('click', () => runReconcile(p, objType, { missing, drift, extras }));
 }
 
@@ -6554,18 +6566,23 @@ async function runReconcile(profile, objType, buckets) {
   const delIds  = [..._recSel.del];
   if (!pushIds.length && !ovwIds.length && !delIds.length) return;
 
-  // Confirm destructive deletes before doing anything.
+  // Confirm destructive deletes before doing anything. Wording adapts to the
+  // delete mode — hard delete gets a stronger warning since it's unrecoverable.
+  const isHard = _recDeleteMode === 'hard';
   if (delIds.length) {
     const ok = await new Promise(resolve => {
       showModal(`
-        <div class="ds-modal-header">⚠ Confirm delete</div>
+        <div class="ds-modal-header">${isHard ? '🔥 Confirm HARD delete' : '⚠ Confirm delete'}</div>
         <div class="ds-modal-body">
-          You're about to <strong>permanently delete ${delIds.length} ${esc(objType)} record(s)</strong> from
-          <strong>${esc(orgLabel(profile.targetOrg))}</strong>. This cannot be undone from here.
+          You're about to delete <strong>${delIds.length} ${esc(objType)} record(s)</strong> from
+          <strong>${esc(orgLabel(profile.targetOrg))}</strong>.
+          ${isHard
+            ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:4px;font-size:12px;color:#991b1b">🔥 <strong>Hard delete is permanent</strong> — records are purged from the Recycle Bin and <strong>cannot be recovered</strong>.</div>`
+            : `<div style="margin-top:10px;padding:10px 12px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:4px;font-size:12px;color:#92400e">🗑 Records go to the <strong>Recycle Bin</strong> — recoverable for 15 days from Salesforce.</div>`}
         </div>
         <div class="ds-modal-footer">
           <button class="ds-btn" id="dsRecDelCancel">Cancel</button>
-          <button class="ds-btn ds-btn-danger" id="dsRecDelOk">Delete ${delIds.length} record(s)</button>
+          <button class="ds-btn ds-btn-danger" id="dsRecDelOk">${isHard ? '🔥 Hard delete' : '🗑 Delete'} ${delIds.length} record(s)</button>
         </div>`);
       eid('dsRecDelCancel')?.addEventListener('click', () => { closeModal(); resolve(false); });
       eid('dsRecDelOk')?.addEventListener('click', () => { closeModal(); resolve(true); });
@@ -6593,15 +6610,26 @@ async function runReconcile(profile, objType, buckets) {
     return;
   }
 
-  // ── 1. Delete extras ─────────────────────────────────────────────────
+  // ── 1. Delete extras (regular → Recycle Bin, or hard → purge) ────────
   if (delIds.length) {
-    log('🗑', `Deleting ${delIds.length} record(s) from target…`);
-    try {
-      const res = await sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds });
-      const ok = (res || []).filter(r => r.success).length;
-      const fail = (res || []).length - ok;
-      log(fail ? '⚠' : '✅', `Deleted ${ok}${fail ? `, ${fail} failed` : ''}`, fail ? 'ds-prog-err' : '');
-    } catch (e) { log('❌', `Delete failed: ${e?.message || e}`, 'ds-prog-err'); }
+    if (isHard) {
+      log('🔥', `Hard-deleting ${delIds.length} record(s) from target…`);
+      try {
+        const res = await sendBg({ type: 'SF_HARD_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds });
+        const delOk   = (res.deleteResults || []).filter(r => r.success).length;
+        const delFail = (res.deleteResults || []).length - delOk;
+        log(delFail ? '⚠' : '✅', `Deleted ${delOk}${delFail ? `, ${delFail} failed` : ''} → purged ${res.purgedOk || 0} from Recycle Bin`, delFail ? 'ds-prog-err' : '');
+        (res.purgeErrors || []).slice(0, 3).forEach(e => log('  ⚠', `purge: ${e}`, 'ds-prog-warn'));
+      } catch (e) { log('❌', `Hard delete failed: ${e?.message || e}`, 'ds-prog-err'); }
+    } else {
+      log('🗑', `Deleting ${delIds.length} record(s) from target (→ Recycle Bin)…`);
+      try {
+        const res = await sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds });
+        const ok = (res || []).filter(r => r.success).length;
+        const fail = (res || []).length - ok;
+        log(fail ? '⚠' : '✅', `Deleted ${ok}${fail ? `, ${fail} failed` : ''}`, fail ? 'ds-prog-err' : '');
+      } catch (e) { log('❌', `Delete failed: ${e?.message || e}`, 'ds-prog-err'); }
+    }
   }
 
   // ── 2. Push missing (insert) — reuse the transfer engine, root only ──
