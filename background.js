@@ -279,11 +279,25 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // so the UI can show what went wrong per row.
       const failedSourceIds = [];        // [{ id, error }]
       let reqMissingDiagPushed = false; // emit the payload-keys diag only once per node
+      // Upsert mode (v1): applies to the ROOT object only, keyed by an
+      // external-Id field. When on, existing target records (matched on that
+      // field) are UPDATED instead of duplicated; new ones are inserted.
+      const useUpsert   = !!(profile.upsert?.field) && node === profile.tree;
+      const upsertField = useUpsert ? profile.upsert.field : null;
       for (let i = 0; i < payloads.length; i += 200) {
-        const chunk = payloads.slice(i, i + 200).map(p => ({
-          attributes: { type: objType }, ...p
-        }));
-        const res     = await sfCollectionsCreate(tgtOrgUrl, tgtSid, chunk);
+        const chunk = payloads.slice(i, i + 200).map((p, k) => {
+          const rec = { attributes: { type: objType }, ...p };
+          // The external-Id value must be present for Salesforce to match on
+          // upsert — inject it from the source record if the mapping dropped it.
+          if (useUpsert && upsertField) {
+            const v = recs[i + k]?.[upsertField];
+            if (v != null) rec[upsertField] = v;
+          }
+          return rec;
+        });
+        const res     = useUpsert
+          ? await sfCollectionsUpsert(tgtOrgUrl, tgtSid, objType, upsertField, chunk)
+          : await sfCollectionsCreate(tgtOrgUrl, tgtSid, chunk);
         const results = Array.isArray(res) ? res : [];
         results.forEach((result, j) => {
           if (result.success) {
@@ -973,6 +987,23 @@ async function sfRelationshipQuery(orgUrl, sid, rootObject, rootWhere, childRels
   return { parentCount, childCounts };
 }
 
+
+// ---------------------------------------------------------------
+// SObject Collections API — bulk UPSERT up to 200 records, matched on an
+// external-Id field. PATCH /composite/sobjects/{SObject}/{extIdField}.
+// Salesforce updates existing matches and inserts the rest. Each record must
+// carry the external-Id field value. Returns UpsertResult[] { id, success,
+// created, errors[] }.
+async function sfCollectionsUpsert(orgUrl, sid, objectType, extIdField, records) {
+  const url = `${orgUrl}/services/data/${API_VERSION}/composite/sobjects/${objectType}/${extIdField}`;
+  const bodyStr = JSON.stringify({ allOrNone: false, records });
+  const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url, {
+    method: 'PATCH',
+    body: bodyStr
+  });
+  if (!ok) throw new Error(sfErrorMsg(status, body, url));
+  return JSON.parse(body);  // array of UpsertResult objects
+}
 
 // ---------------------------------------------------------------
 // SObject Collections API — bulk create up to 200 records of the same type.

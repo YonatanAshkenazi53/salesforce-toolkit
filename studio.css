@@ -1821,6 +1821,12 @@ html, body {
   padding: 1px 7px;
   border-radius: 9px;
 }
+.ds-rec-col-sub {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 400;
+  opacity: 0.8;
+}
 .ds-rec-col-actions {
   display: flex;
   gap: 6px;
