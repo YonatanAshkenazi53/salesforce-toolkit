@@ -1170,8 +1170,9 @@ const ApexDebugger = (() => {
           </div>
         </div>
 
-        <!-- Embedded analysis — collapsible; collapsed shows compact chips -->
-        <details class="adbg-analysis" open>
+        <!-- Embedded analysis — collapsible; collapsed by default so the log
+             gets the screen. Collapsed state still shows the compact chips. -->
+        <details class="adbg-analysis">
           <summary class="adbg-analysis-sum">
             <span class="adbg-analysis-title">📊 Analysis</span>
             <span class="adbg-analysis-chips">${analysisChips}</span>
@@ -1287,11 +1288,16 @@ const ApexDebugger = (() => {
           </div><!-- /adbg-analysis-body -->
         </details>
 
-        <!-- Log content — fills the whole remaining right side -->
-        <div class="adbg-logsec">
-          <div class="adbg-sec-hdr adbg-log-hdr">
+        <!-- Log content — fills the whole remaining right side. Collapsible
+             via the title bar so the user can minimize it (and expand the
+             analysis) when they want. -->
+        <div class="adbg-logsec" id="adbgLogsec">
+          <div class="adbg-log-title-bar" id="adbgLogToggle" title="Click to minimize / expand the log">
+            <span class="adbg-log-caret">▾</span>
             📜 Log Content
             <span class="adbg-cnt-badge">${(p.stats?.lines || 0).toLocaleString()} lines</span>
+          </div>
+          <div class="adbg-sec-hdr adbg-log-hdr">
             <input type="number" id="adbgLogGoto" class="adbg-log-goto" placeholder="Go to line #" min="1">
 
             <!-- Notepad++-style search row: query + options + match nav -->
@@ -1347,10 +1353,42 @@ const ApexDebugger = (() => {
       const detail = document.getElementById('adbgDetail');
       if (!detail) return;
       const isFull = detail.classList.toggle('adbg-detail-fulllog');
-      e.currentTarget.textContent = isFull ? '⛶ Exit fullscreen' : '⛶ Fullscreen log';
+      e.currentTarget.textContent = isFull ? '⛶ Exit fullscreen (Esc)' : '⛶ Fullscreen log';
       e.currentTarget.title = isFull
-        ? 'Restore the trace summary panel'
+        ? 'Restore the trace summary panel — or press Esc'
         : 'Hide the trace summary panel — give the log viewer the entire screen';
+      // In fullscreen, the log view should never be collapsed, and the
+      // search box gets focus so the user can start typing immediately.
+      if (isFull) {
+        document.getElementById('adbgLogsec')?.classList.remove('adbg-logsec-collapsed');
+        setTimeout(() => document.getElementById('adbgLogSearch')?.focus(), 0);
+      }
+    });
+
+    // Esc exits fullscreen-log mode (comfortable code search: enter
+    // fullscreen, search/scroll, hit Esc to return). Registered once per
+    // detail render; harmless if fullscreen isn't active.
+    if (!window._adbgEscBound) {
+      window._adbgEscBound = true;
+      document.addEventListener('keydown', ev => {
+        if (ev.key !== 'Escape') return;
+        const d = document.getElementById('adbgDetail');
+        if (d?.classList.contains('adbg-detail-fulllog')) {
+          d.classList.remove('adbg-detail-fulllog');
+          const btn = document.getElementById('adbgFullLogBtn');
+          if (btn) { btn.textContent = '⛶ Fullscreen log'; btn.title = 'Hide the trace summary panel — give the log viewer the entire screen'; }
+        }
+      });
+    }
+
+    // Log section minimize / expand — click the title bar to collapse the
+    // search + log view down to just the bar, freeing space for Analysis.
+    document.getElementById('adbgLogToggle')?.addEventListener('click', () => {
+      const sec = document.getElementById('adbgLogsec');
+      if (!sec) return;
+      const collapsed = sec.classList.toggle('adbg-logsec-collapsed');
+      const caret = sec.querySelector('.adbg-log-caret');
+      if (caret) caret.textContent = collapsed ? '▸' : '▾';
     });
 
     // ── Log viewer: chunked scroll-load + filter + goto ──
