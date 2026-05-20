@@ -1788,6 +1788,84 @@ html, body {
 .ds-prog-warn { color: var(--warning); background: #FFFBEB; font-weight: 600; }
 .ds-prog-icon { flex-shrink: 0; }
 .ds-done-row { padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg); }
+.ds-prog-hdr { padding: 10px 16px; font-weight: 700; font-size: 12px; color: var(--subtext); border-bottom: 1px solid var(--border); }
+
+/* ── Reconcile (Phase 3A) ────────────────────────────────────── */
+.ds-rec-cols {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin: 14px 0;
+}
+.ds-rec-col {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ds-rec-col-hdr {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 8px 8px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ds-rec-col-count {
+  margin-left: auto;
+  font-size: 11px;
+  background: rgba(0,0,0,.12);
+  padding: 1px 7px;
+  border-radius: 9px;
+}
+.ds-rec-col-actions {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-light);
+}
+.ds-rec-col-list {
+  max-height: min(50vh, 460px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.ds-rec-col-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border-light);
+  cursor: pointer;
+}
+.ds-rec-col-row:hover { background: var(--brand-bg); }
+.ds-rec-col-row input[type=checkbox] { flex-shrink: 0; accent-color: var(--brand); }
+.ds-rec-col-key { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-rec-drift-link { font-size: 10.5px; color: var(--brand); cursor: pointer; flex-shrink: 0; }
+.ds-rec-drift-link:hover { text-decoration: underline; }
+.ds-rec-drift-expand {
+  padding: 6px 12px 8px 30px;
+  background: rgba(254, 243, 199, 0.4);
+  border-bottom: 1px solid var(--border-light);
+}
+.ds-rec-col-empty { padding: 14px 12px; font-size: 11px; color: var(--subtext); font-style: italic; text-align: center; }
+.ds-rec-insync-note { font-size: 12px; color: var(--subtext); margin: 4px 2px 16px; }
+.ds-rec-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  position: sticky;
+  bottom: 0;
+}
+.ds-rec-action-summary { flex: 1; font-size: 12.5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ds-rec-action-btns { display: flex; gap: 8px; }
 
 /* ── Schedule ────────────────────────────────────────────────── */
 .ds-sched-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; max-width: 820px; }

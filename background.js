@@ -699,6 +699,10 @@ async function dispatchMessage(message) {
       return getAllSfSessions();
     case 'SF_COLLECTIONS_CREATE':
       return sfCollectionsCreate(orgUrl, sid, message.records);
+    case 'SF_COLLECTIONS_DELETE':
+      return sfCollectionsDelete(orgUrl, sid, message.ids);
+    case 'SF_COLLECTIONS_UPDATE':
+      return sfCollectionsUpdate(orgUrl, sid, message.records);
     case 'SF_EXECUTE_PROFILE_TRANSFER':
       return executeProfileTransfer(
         message.profile,
@@ -1431,6 +1435,53 @@ async function sfCollectionsCreate(orgUrl, sid, records) {
   });
   if (!ok) throw new Error(sfErrorMsg(status, body, url));
   return JSON.parse(body);  // array of SaveResult objects
+}
+
+// ---------------------------------------------------------------
+// SObject Collections API — bulk DELETE up to 200 records by Id.
+// Used by the Reconcile view to remove "extras" (records present in target
+// but not in source). allOrNone:false so partial failures don't roll back
+// the whole batch. Returns array of { id, success, errors[] } per record.
+// ---------------------------------------------------------------
+async function sfCollectionsDelete(orgUrl, sid, ids) {
+  const idList = (ids || []).filter(Boolean);
+  if (!idList.length) return [];
+  const results = [];
+  // The DELETE composite endpoint takes ids as a query param, max 200/call.
+  for (let i = 0; i < idList.length; i += 200) {
+    const chunk = idList.slice(i, i + 200);
+    const url = `${orgUrl}/services/data/${API_VERSION}/composite/sobjects?ids=${encodeURIComponent(chunk.join(','))}&allOrNone=false`;
+    const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url, { method: 'DELETE' });
+    if (!ok) throw new Error(sfErrorMsg(status, body, url));
+    const parsed = JSON.parse(body);
+    if (Array.isArray(parsed)) results.push(...parsed);
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------
+// SObject Collections API — bulk UPDATE up to 200 records.
+// Each record must carry its target Id + attributes:{type}. Used by the
+// Reconcile view to push source values onto drifted target records.
+// allOrNone:false. Returns array of SaveResult { id, success, errors[] }.
+// ---------------------------------------------------------------
+async function sfCollectionsUpdate(orgUrl, sid, records) {
+  const recs = (records || []).filter(r => r && r.Id);
+  if (!recs.length) return [];
+  const results = [];
+  for (let i = 0; i < recs.length; i += 200) {
+    const chunk = recs.slice(i, i + 200);
+    const url = `${orgUrl}/services/data/${API_VERSION}/composite/sobjects`;
+    const bodyStr = JSON.stringify({ allOrNone: false, records: chunk });
+    const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url, {
+      method: 'PATCH',
+      body: bodyStr
+    });
+    if (!ok) throw new Error(sfErrorMsg(status, body, url));
+    const parsed = JSON.parse(body);
+    if (Array.isArray(parsed)) results.push(...parsed);
+  }
+  return results;
 }
 
 // ---------------------------------------------------------------
