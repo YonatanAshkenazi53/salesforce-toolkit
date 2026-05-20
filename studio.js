@@ -1165,6 +1165,19 @@ function renderView(view) {
   const body = document.querySelector('.ds-body');
   if (body) body.classList.toggle('ds-home', view === 'map');
 
+  // Reset #dsMain inline styles that renderOrgMap sets (overflow:hidden,
+  // padding:0 — needed for the full-bleed SVG canvas). These are inline so
+  // they override the .ds-main stylesheet rule and PERSIST across view
+  // switches; without this reset, every view visited AFTER the Org Map
+  // inherits overflow:hidden and can't scroll (the Profile Builder felt
+  // "stuck" once the object tree grew past the viewport). The map re-applies
+  // them in renderOrgMap.
+  const mainEl = eid('dsMain');
+  if (mainEl && view !== 'map') {
+    mainEl.style.overflow = '';
+    mainEl.style.padding  = '';
+  }
+
   // Record activity for the welcome screen tiles
   recordActivity(view);
 
