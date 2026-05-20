@@ -56,7 +56,11 @@ let _transferProfile      = null;
 let _transferSrc          = null;
 let _transferTgt          = null;
 let _transferDryRun       = false;   // Feature 5 — dry run
-let _transferConflict     = 'skip';  // Feature 6 — conflict resolution: 'skip' | 'overwrite'
+// Write mode — 'insert' (always create) or 'upsert' (match on an external-Id
+// field, update existing target records instead of duplicating). Upsert
+// applies to the ROOT object of the profile (v1).
+let _transferWriteMode    = 'insert';
+let _transferUpsertField  = '';
 // Per-run record filter overrides — pathKey → { where, recordIds }.
 // These override the saved profile for a single run without mutating it.
 // Cleared whenever the selected profile changes.
@@ -3731,11 +3735,16 @@ async function renderTransfer() {
           </label>
         </div>
         <div class="ds-transfer-option">
-          <label class="ds-transfer-option-label" for="dsTrConflict">On existing record:</label>
-          <select id="dsTrConflict" class="ds-select ds-select-sm" style="width:auto">
-            <option value="skip" ${_transferConflict === 'skip' ? 'selected' : ''}>Skip</option>
-            <option value="overwrite" ${_transferConflict === 'overwrite' ? 'selected' : ''}>Overwrite</option>
+          <label class="ds-transfer-option-label" for="dsTrWriteMode">Write mode:</label>
+          <select id="dsTrWriteMode" class="ds-select ds-select-sm" style="width:auto">
+            <option value="insert" ${_transferWriteMode === 'insert' ? 'selected' : ''}>Insert (always create)</option>
+            <option value="upsert" ${_transferWriteMode === 'upsert' ? 'selected' : ''}>Upsert (update if exists)</option>
           </select>
+          <input id="dsTrUpsertField" class="ds-input ds-input-sm"
+            style="width:200px;${_transferWriteMode === 'upsert' ? '' : 'display:none'}"
+            placeholder="External ID field (e.g. External_Id__c)"
+            title="The external-Id field on the ROOT object used to match existing target records. Insert if no match, update if matched."
+            value="${esc(_transferUpsertField)}">
         </div>
       </div>
 
@@ -3780,7 +3789,12 @@ async function renderTransfer() {
       btn.className = btn.className.replace('ds-btn-primary-outline','') + ' ds-btn-primary';
     }
   });
-  eid('dsTrConflict')?.addEventListener('change', e => { _transferConflict = e.target.value; });
+  eid('dsTrWriteMode')?.addEventListener('change', e => {
+    _transferWriteMode = e.target.value;
+    const fld = eid('dsTrUpsertField');
+    if (fld) fld.style.display = _transferWriteMode === 'upsert' ? '' : 'none';
+  });
+  eid('dsTrUpsertField')?.addEventListener('input', e => { _transferUpsertField = e.target.value.trim(); });
   eid('dsGoToProfiles')?.addEventListener('click', () => {
     document.querySelectorAll('.ds-nav-btn').forEach(b =>
       b.classList.toggle('active', b.dataset.view === 'profiles'));
@@ -3895,6 +3909,12 @@ function buildTransferProfile() {
     (node.children || []).forEach((c, i) => patch(c, [...path, i]));
   }
   patch(clone.tree, []);
+  // Upsert config (root object only, v1) — attach when the user picked
+  // Upsert mode and gave an external-Id field. executeProfileTransfer reads
+  // profile.upsert.field and uses the Collections upsert endpoint for root.
+  if (_transferWriteMode === 'upsert' && _transferUpsertField) {
+    clone.upsert = { field: _transferUpsertField };
+  }
   return clone;
 }
 
@@ -4280,16 +4300,24 @@ async function runTransfer() {
     return;
   }
 
-  logRow('📤', `Starting transfer of profile "${_transferProfile.name}"…`);
+  // Guard: Upsert mode needs an external-Id field to match on.
+  if (_transferWriteMode === 'upsert' && !_transferUpsertField) {
+    logRow('❌', 'Upsert mode is selected but no External ID field was entered. Enter the field name or switch to Insert.', 'ds-prog-err');
+    showToast('Enter an External ID field for Upsert mode', 'error', 5000);
+    if (btn) btn.disabled = false;
+    return;
+  }
+
+  const modeLabel = _transferWriteMode === 'upsert' ? `upsert on ${_transferUpsertField}` : 'insert';
+  logRow('📤', `Starting transfer of profile "${_transferProfile.name}" (${modeLabel})…`);
 
   const result = await sendBg({
     type:             'SF_EXECUTE_PROFILE_TRANSFER',
-    profile:          buildTransferProfile(),   // patched clone with run-time filter overrides
+    profile:          buildTransferProfile(),   // patched clone — incl. upsert config if set
     srcOrgUrl:        _transferSrc.orgUrl,
     srcSid:           _transferSrc.sid,
     tgtOrgUrl:        _transferTgt.orgUrl,
-    tgtSid:           _transferTgt.sid,
-    conflictStrategy: _transferConflict   // Feature 6
+    tgtSid:           _transferTgt.sid
   });
 
   if (result.error) {
@@ -4489,7 +4517,10 @@ async function renderReconcile() {
     drift.forEach(r => r.sourceId && _recSel.overwrite.add(r.sourceId));
   }
 
-  function colHtml(title, badgeClass, icon, items, kind) {
+  // dml = the plain Salesforce operation this column performs (Insert/Update/
+  // Delete). subtitle = the diff state that put records here. Leading with the
+  // DML verb so it's obvious what ▶ Run reconcile will actually do.
+  function colHtml(dml, subtitle, badgeClass, icon, items, kind) {
     const rows = items.length ? items.map(r => {
       const id = kind === 'del' ? r.targetId : r.sourceId;
       const sel = _recSel[kind].has(id);
@@ -4503,7 +4534,8 @@ async function renderReconcile() {
     return `
       <div class="ds-rec-col">
         <div class="ds-rec-col-hdr ${badgeClass}">
-          ${icon} ${title} <span class="ds-rec-col-count">${items.length}</span>
+          ${icon} <strong>${dml} ${items.length}</strong>
+          <span class="ds-rec-col-sub">${subtitle}</span>
         </div>
         <div class="ds-rec-col-actions">
           <button class="ds-btn ds-btn-xs" data-rec-all="${kind}">✓ All</button>
@@ -4523,9 +4555,9 @@ async function renderReconcile() {
     </div>
 
     <div class="ds-rec-cols">
-      ${colHtml('In source only', 'ds-diff-missing', '🔴', missing, 'push')}
-      ${colHtml('Drift', 'ds-diff-drift', '🟡', drift, 'overwrite')}
-      ${colHtml('In target only', 'ds-diff-extra', '🔵', extras, 'del')}
+      ${colHtml('Insert', 'in source only', 'ds-diff-missing', '🔴', missing, 'push')}
+      ${colHtml('Update', 'drifted — values differ', 'ds-diff-drift', '🟡', drift, 'overwrite')}
+      ${colHtml('Delete', 'in target only', 'ds-diff-extra', '🔵', extras, 'del')}
     </div>
 
     <div class="ds-rec-insync-note">🟢 ${inSync.length} record(s) already in sync — no action needed.</div>
@@ -4552,9 +4584,9 @@ async function renderReconcile() {
     const el = eid('dsRecSummary');
     if (!el) return;
     const parts = [];
-    if (_recSel.push.size)      parts.push(`<span class="ds-diff-chip ds-diff-missing">${_recSel.push.size} push</span>`);
-    if (_recSel.overwrite.size) parts.push(`<span class="ds-diff-chip ds-diff-drift">${_recSel.overwrite.size} overwrite</span>`);
-    if (_recSel.del.size)       parts.push(`<span class="ds-diff-chip ds-diff-extra">${_recSel.del.size} delete</span>`);
+    if (_recSel.push.size)      parts.push(`<span class="ds-diff-chip ds-diff-missing">Insert ${_recSel.push.size}</span>`);
+    if (_recSel.overwrite.size) parts.push(`<span class="ds-diff-chip ds-diff-drift">Update ${_recSel.overwrite.size}</span>`);
+    if (_recSel.del.size)       parts.push(`<span class="ds-diff-chip ds-diff-extra">Delete ${_recSel.del.size}</span>`);
     el.innerHTML = parts.length ? `Actions: ${parts.join(' ')}` : '<span style="color:var(--subtext)">Nothing selected</span>';
     const runBtn = eid('dsRecRunBtn');
     if (runBtn) runBtn.disabled = !parts.length;
