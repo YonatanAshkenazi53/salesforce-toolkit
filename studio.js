@@ -87,6 +87,10 @@ let _transferNodeFilters  = {};
 // Refresh via refreshSnapshotsCache() before any draw that depends on snapshots.
 let _snapshotsCache = {};
 
+// Phase 3A — Reconcile view. The profile currently being reconciled (root
+// object only in v1). Selection state lives in the render closure.
+let _reconcileProfile = null;
+
 // ── DOM helpers ───────────────────────────────────────────────
 const esc = s => String(s ?? '')
   .replace(/&/g,'&amp;').replace(/</g,'&lt;')
@@ -454,6 +458,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'cloneProfile':          window.cloneProfile?.(arg); break;
       case 'deleteProfile':         window.deleteProfile?.(arg); break;
       case 'refreshState':          window.refreshProfileState?.(arg); break;
+      case 'openReconcile':         window.openReconcile?.(arg); break;
       // Legacy dispatcher cases retained for buttons in older sessions / cached
       // markup; the new card has a single Refresh state button instead.
       case 'refreshDiff':           window.refreshProfileDiff?.(arg); break;
@@ -1173,6 +1178,7 @@ function renderView(view) {
     case 'scans':     renderScanMap();      break;
     case 'readiness': renderReadiness();   break;
     case 'schema':    renderSchemaView();  break;
+    case 'reconcile': renderReconcile();   break;
   }
 }
 
@@ -2615,6 +2621,9 @@ function profileCard(p) {
         <button class="ds-btn ds-btn-sm" data-dsaction="refreshState" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
           title="Query both orgs to refresh what's missing / changed / in sync, AND capture fingerprints of every object in the tree (drives the Org Map drift overlay). Replaces the old Refresh diff + Snapshot buttons.">🔄 Refresh state</button>
+        <button class="ds-btn ds-btn-sm" data-dsaction="openReconcile" data-arg="${p.id}"
+          ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
+          title="Open the Reconcile view — review what's missing / drifted / extra across both orgs and push or delete in one screen.">⚖ Reconcile</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="editProfile" data-arg="${p.id}">✏ Edit</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="cloneProfile" data-arg="${p.id}">⧉ Clone</button>
         <button class="ds-btn ds-btn-sm ds-btn-danger" data-dsaction="deleteProfile" data-arg="${p.id}">🗑</button>
@@ -6325,6 +6334,365 @@ async function runTransfer() {
   }
 
   if (btn) btn.disabled = false;
+}
+
+// ════════════════════════════════════════════════════════════════
+// RECONCILE (Phase 3A) — one screen to review + fix sync state
+// ════════════════════════════════════════════════════════════════
+// Three columns from profile.lastScan:
+//   missing in target → push (insert)
+//   drift             → push source values (overwrite) or skip
+//   only in target    → delete from target
+// Root object only in v1. Bulk actions execute in one Run with a
+// confirmation modal before any destructive delete.
+
+window.openReconcile = function(profileId) {
+  _reconcileProfile = _profiles.find(p => p.id === profileId) || null;
+  document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('[data-view="profiles"]')?.classList.add('active');
+  _currentView = 'reconcile';
+  renderReconcile();
+};
+
+// Module-scope selection sets so re-renders (after an action) preserve picks
+// where it makes sense. Reset when the profile changes.
+let _recSel = { push: new Set(), overwrite: new Set(), del: new Set() };
+let _recLastProfileId = null;
+
+async function renderReconcile() {
+  const p = _reconcileProfile;
+  if (!p) { renderProfiles(); return; }
+
+  // Reset selection when switching to a different profile.
+  if (_recLastProfileId !== p.id) {
+    _recSel = { push: new Set(), overwrite: new Set(), del: new Set() };
+    _recLastProfileId = p.id;
+  }
+
+  const objType = p.tree?.objectType || p.tree?.childSObject || '?';
+  const scan    = p.lastScan;
+  const scanFresh = !!(
+    scan && scan.status === 'success' &&
+    (!scan.sourceOrg || scan.sourceOrg === p.sourceOrg) &&
+    (!scan.targetOrg || scan.targetOrg === p.targetOrg)
+  );
+
+  // Header with back link + refresh.
+  const headerHtml = `
+    <div class="ds-view-header">
+      <div class="ds-view-title-wrap">
+        <button class="ds-back-link" id="dsRecBackBtn" title="Back to Data Deployment">‹ Back to deployments</button>
+        <h2 class="ds-view-title">⚖ Reconcile — <span style="color:var(--brand)">${esc(objType)}</span></h2>
+        <div class="ds-view-subtitle">${esc(orgLabel(p.sourceOrg || ''))} → ${esc(orgLabel(p.targetOrg || ''))}${scanFresh ? ` · scanned ${esc(timeAgo(scan.runAt))}` : ''}</div>
+      </div>
+      <button class="ds-btn ds-btn-sm" id="dsRecRefreshBtn">🔄 Refresh state</button>
+    </div>`;
+
+  if (!p.sourceOrg || !p.targetOrg) {
+    setMain(`${headerHtml}
+      <div class="ds-empty-page">
+        <div class="ds-empty-icon">⚖</div>
+        <div class="ds-empty-title">Set source and target orgs first</div>
+        <div class="ds-empty-sub">Reconcile needs both orgs configured. Open the profile in <strong>✏ Edit</strong> to set them.</div>
+      </div>`);
+    eid('dsRecBackBtn')?.addEventListener('click', renderProfiles);
+    return;
+  }
+
+  if (!scanFresh) {
+    setMain(`${headerHtml}
+      <div class="ds-empty-page">
+        <div class="ds-empty-icon">🔄</div>
+        <div class="ds-empty-title">${scan ? 'State is stale (orgs changed since last scan)' : 'No state captured yet'}</div>
+        <div class="ds-empty-sub">Click <strong>🔄 Refresh state</strong> to compare the two orgs, then reconcile.</div>
+        <div class="ds-empty-actions"><button class="ds-btn ds-btn-primary" id="dsRecRefreshBtn2">🔄 Refresh state</button></div>
+      </div>`);
+    eid('dsRecBackBtn')?.addEventListener('click', renderProfiles);
+    const doRefresh = async () => { await window.refreshProfileState(p.id); _reconcileProfile = _profiles.find(x => x.id === p.id); renderReconcile(); };
+    eid('dsRecRefreshBtn')?.addEventListener('click', doRefresh);
+    eid('dsRecRefreshBtn2')?.addEventListener('click', doRefresh);
+    return;
+  }
+
+  const missing = scan.missingInTarget || [];   // {matchKey, sourceId}
+  const drift   = scan.changed || [];           // {matchKey, sourceId, targetId}
+  const extras  = scan.onlyInTarget || [];      // {matchKey, targetId}
+  const inSync  = scan.identical || [];
+
+  // Default-select all missing + all drift for push (the common intent:
+  // bring target up to match source). Extras default UNCHECKED — deletion
+  // is destructive, opt-in only. Only seed defaults on first load.
+  if (!_recSel.push.size && !_recSel.overwrite.size && !_recSel.del.size) {
+    missing.forEach(r => r.sourceId && _recSel.push.add(r.sourceId));
+    drift.forEach(r => r.sourceId && _recSel.overwrite.add(r.sourceId));
+  }
+
+  function colHtml(title, badgeClass, icon, items, kind) {
+    const rows = items.length ? items.map(r => {
+      const id = kind === 'del' ? r.targetId : r.sourceId;
+      const sel = _recSel[kind].has(id);
+      return `<label class="ds-rec-col-row">
+        <input type="checkbox" data-rec-kind="${kind}" data-rec-id="${esc(id)}" ${sel ? 'checked' : ''}>
+        <span class="ds-rec-col-key">${esc(r.matchKey)}</span>
+        ${kind === 'overwrite' ? `<span class="ds-rec-drift-link" data-rec-drift="${esc(r.sourceId)}|${esc(r.targetId)}" title="See which fields differ">▸ fields</span>` : ''}
+      </label>
+      ${kind === 'overwrite' ? `<div class="ds-rec-drift-expand" data-drift-expand="${esc(r.sourceId)}" style="display:none"></div>` : ''}`;
+    }).join('') : `<div class="ds-rec-col-empty">none</div>`;
+    return `
+      <div class="ds-rec-col">
+        <div class="ds-rec-col-hdr ${badgeClass}">
+          ${icon} ${title} <span class="ds-rec-col-count">${items.length}</span>
+        </div>
+        <div class="ds-rec-col-actions">
+          <button class="ds-btn ds-btn-xs" data-rec-all="${kind}">✓ All</button>
+          <button class="ds-btn ds-btn-xs" data-rec-none="${kind}">✗ None</button>
+        </div>
+        <div class="ds-rec-col-list">${rows}</div>
+      </div>`;
+  }
+
+  setMain(`${headerHtml}
+    <div class="ds-op-banner ds-op-banner-write">
+      <span class="ds-op-banner-icon">⚖</span>
+      <div class="ds-op-banner-body">
+        <div class="ds-op-banner-title">Reconcile writes to the target org</div>
+        <div class="ds-op-banner-desc">Push inserts/updates records in <strong>${esc(orgLabel(p.targetOrg))}</strong>. Delete permanently removes target records. Source org is never modified. Review your selections before running.</div>
+      </div>
+    </div>
+
+    <div class="ds-rec-cols">
+      ${colHtml('In source only', 'ds-diff-missing', '🔴', missing, 'push')}
+      ${colHtml('Drift', 'ds-diff-drift', '🟡', drift, 'overwrite')}
+      ${colHtml('In target only', 'ds-diff-extra', '🔵', extras, 'del')}
+    </div>
+
+    <div class="ds-rec-insync-note">🟢 ${inSync.length} record(s) already in sync — no action needed.</div>
+
+    <div class="ds-rec-action-bar">
+      <div class="ds-rec-action-summary" id="dsRecSummary"></div>
+      <div class="ds-rec-action-btns">
+        <button class="ds-btn" id="dsRecCancelBtn">Cancel</button>
+        <button class="ds-btn ds-btn-primary ds-btn-lg" id="dsRecRunBtn">▶ Run reconcile</button>
+      </div>
+    </div>
+
+    <div id="dsRecProgress"></div>
+  `);
+
+  function updateSummary() {
+    const el = eid('dsRecSummary');
+    if (!el) return;
+    const parts = [];
+    if (_recSel.push.size)      parts.push(`<span class="ds-diff-chip ds-diff-missing">${_recSel.push.size} push</span>`);
+    if (_recSel.overwrite.size) parts.push(`<span class="ds-diff-chip ds-diff-drift">${_recSel.overwrite.size} overwrite</span>`);
+    if (_recSel.del.size)       parts.push(`<span class="ds-diff-chip ds-diff-extra">${_recSel.del.size} delete</span>`);
+    el.innerHTML = parts.length ? `Actions: ${parts.join(' ')}` : '<span style="color:var(--subtext)">Nothing selected</span>';
+    const runBtn = eid('dsRecRunBtn');
+    if (runBtn) runBtn.disabled = !parts.length;
+  }
+  updateSummary();
+
+  // Wire checkboxes
+  document.querySelectorAll('[data-rec-kind]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const kind = cb.dataset.recKind, id = cb.dataset.recId;
+      if (cb.checked) _recSel[kind].add(id); else _recSel[kind].delete(id);
+      updateSummary();
+    });
+  });
+  // All / None per column
+  document.querySelectorAll('[data-rec-all]').forEach(btn => btn.addEventListener('click', () => {
+    const kind = btn.dataset.recAll;
+    document.querySelectorAll(`[data-rec-kind="${kind}"]`).forEach(cb => { cb.checked = true; _recSel[kind].add(cb.dataset.recId); });
+    updateSummary();
+  }));
+  document.querySelectorAll('[data-rec-none]').forEach(btn => btn.addEventListener('click', () => {
+    const kind = btn.dataset.recNone;
+    document.querySelectorAll(`[data-rec-kind="${kind}"]`).forEach(cb => { cb.checked = false; _recSel[kind].delete(cb.dataset.recId); });
+    updateSummary();
+  }));
+  // Drift "fields" expander — reuse fetchDriftRowDetail + renderDriftCompareTable
+  document.querySelectorAll('[data-rec-drift]').forEach(link => {
+    link.addEventListener('click', async (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      const [srcId, tgtId] = (link.dataset.recDrift || '').split('|');
+      const expand = document.querySelector(`.ds-rec-drift-expand[data-drift-expand="${srcId}"]`);
+      if (!expand) return;
+      if (expand.dataset.loaded === '1') {
+        expand.style.display = expand.style.display === 'none' ? 'block' : 'none';
+        return;
+      }
+      expand.style.display = 'block';
+      expand.innerHTML = `<div class="ds-drift-compare-loading">Loading…</div>`;
+      const srcFields = scan.compareFields || [];
+      const tgtFields = scan.compareFieldsTgt || scan.compareFields || [];
+      const res = await fetchDriftRowDetail(p, objType, srcId, tgtId, srcFields, tgtFields);
+      expand.innerHTML = res.error
+        ? `<div class="ds-drift-compare-err">⚠ ${esc(res.error)}</div>`
+        : renderDriftCompareTable(res.srcRec, res.tgtRec, srcFields, tgtFields);
+      expand.dataset.loaded = '1';
+    });
+  });
+
+  eid('dsRecBackBtn')?.addEventListener('click', renderProfiles);
+  eid('dsRecCancelBtn')?.addEventListener('click', renderProfiles);
+  eid('dsRecRefreshBtn')?.addEventListener('click', async () => {
+    await window.refreshProfileState(p.id);
+    _reconcileProfile = _profiles.find(x => x.id === p.id);
+    _recSel = { push: new Set(), overwrite: new Set(), del: new Set() };
+    renderReconcile();
+  });
+  eid('dsRecRunBtn')?.addEventListener('click', () => runReconcile(p, objType, { missing, drift, extras }));
+}
+
+// Execute the selected reconcile actions. Deletes require a confirmation
+// modal (destructive). Push reuses the transfer engine (root-only profile
+// clone). Overwrite uses SF_COLLECTIONS_UPDATE.
+async function runReconcile(profile, objType, buckets) {
+  const pushIds = [..._recSel.push];
+  const ovwIds  = [..._recSel.overwrite];
+  const delIds  = [..._recSel.del];
+  if (!pushIds.length && !ovwIds.length && !delIds.length) return;
+
+  // Confirm destructive deletes before doing anything.
+  if (delIds.length) {
+    const ok = await new Promise(resolve => {
+      showModal(`
+        <div class="ds-modal-header">⚠ Confirm delete</div>
+        <div class="ds-modal-body">
+          You're about to <strong>permanently delete ${delIds.length} ${esc(objType)} record(s)</strong> from
+          <strong>${esc(orgLabel(profile.targetOrg))}</strong>. This cannot be undone from here.
+        </div>
+        <div class="ds-modal-footer">
+          <button class="ds-btn" id="dsRecDelCancel">Cancel</button>
+          <button class="ds-btn ds-btn-danger" id="dsRecDelOk">Delete ${delIds.length} record(s)</button>
+        </div>`);
+      eid('dsRecDelCancel')?.addEventListener('click', () => { closeModal(); resolve(false); });
+      eid('dsRecDelOk')?.addEventListener('click', () => { closeModal(); resolve(true); });
+    });
+    if (!ok) return;
+  }
+
+  const prog = eid('dsRecProgress');
+  const log = (icon, msg, cls = '') => {
+    if (!prog) return;
+    const row = document.createElement('div');
+    row.className = `ds-prog-row ${cls}`;
+    row.textContent = `${icon} ${msg}`;
+    prog.appendChild(row);
+  };
+  if (prog) prog.innerHTML = '<div class="ds-prog-hdr">Reconcile progress</div>';
+  const runBtn = eid('dsRecRunBtn'); if (runBtn) runBtn.disabled = true;
+
+  const allSess = _buildAllSessions();
+  const srcSess = _resolveSession(profile.sourceOrg, allSess);
+  const tgtSess = _resolveSession(profile.targetOrg, allSess);
+  if (!srcSess?.sid || !tgtSess?.sid) {
+    log('❌', 'Source or target org session not active — open both in Chrome tabs.', 'ds-prog-err');
+    if (runBtn) runBtn.disabled = false;
+    return;
+  }
+
+  // ── 1. Delete extras ─────────────────────────────────────────────────
+  if (delIds.length) {
+    log('🗑', `Deleting ${delIds.length} record(s) from target…`);
+    try {
+      const res = await sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds });
+      const ok = (res || []).filter(r => r.success).length;
+      const fail = (res || []).length - ok;
+      log(fail ? '⚠' : '✅', `Deleted ${ok}${fail ? `, ${fail} failed` : ''}`, fail ? 'ds-prog-err' : '');
+    } catch (e) { log('❌', `Delete failed: ${e?.message || e}`, 'ds-prog-err'); }
+  }
+
+  // ── 2. Push missing (insert) — reuse the transfer engine, root only ──
+  if (pushIds.length) {
+    log('⬆', `Pushing ${pushIds.length} missing record(s) to target…`);
+    try {
+      const pushProfile = JSON.parse(JSON.stringify(profile));
+      pushProfile.tree.recordIds = pushIds;
+      pushProfile.tree.children  = [];   // root only in v1
+      const res = await sendBg({
+        type: 'SF_EXECUTE_PROFILE_TRANSFER',
+        profile: pushProfile,
+        srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
+        tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid
+      });
+      const s = res.summary?.[objType] || {};
+      log(s.failed ? '⚠' : '✅', `Pushed ${s.created || 0}${s.failed ? `, ${s.failed} failed` : ''}`, s.failed ? 'ds-prog-err' : '');
+      (res.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
+    } catch (e) { log('❌', `Push failed: ${e?.message || e}`, 'ds-prog-err'); }
+  }
+
+  // ── 3. Overwrite drift (update target with source values) ────────────
+  if (ovwIds.length) {
+    log('✏', `Overwriting ${ovwIds.length} drifted record(s) in target…`);
+    try {
+      const result = await reconcileOverwrite(profile, objType, ovwIds, buckets.drift, srcSess, tgtSess);
+      log(result.failed ? '⚠' : '✅', `Overwrote ${result.ok}${result.failed ? `, ${result.failed} failed` : ''}`, result.failed ? 'ds-prog-err' : '');
+      (result.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
+    } catch (e) { log('❌', `Overwrite failed: ${e?.message || e}`, 'ds-prog-err'); }
+  }
+
+  log('✅', 'Reconcile complete — refreshing state…');
+  // Refresh diff + snapshots so the columns reflect the new reality.
+  await window.refreshProfileState(profile.id);
+  _reconcileProfile = _profiles.find(x => x.id === profile.id);
+  _recSel = { push: new Set(), overwrite: new Set(), del: new Set() };
+  showToast('Reconcile complete', 'success', 3500);
+  renderReconcile();
+}
+
+// Overwrite drifted target records with source values. Fetches the source
+// records' mapped fields, builds PATCH payloads keyed by the TARGET Id, and
+// sends via SF_COLLECTIONS_UPDATE. Honors fieldMappings (src→tgt rename) and
+// skips system/non-writable fields. Returns { ok, failed, errors }.
+async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcSess, tgtSess) {
+  // Map sourceId → targetId from the drift bucket.
+  const srcToTgt = new Map();
+  for (const r of driftBucket) { if (r.sourceId && r.targetId) srcToTgt.set(r.sourceId, r.targetId); }
+
+  const node = profile.tree;
+  const fm   = node.fieldMappings || {};
+  // Source fields to read = the mapped source field names (those that map to
+  // a non-null target). Drop system fields.
+  const SYS = new Set(['Id','CreatedDate','CreatedById','LastModifiedDate','LastModifiedById','SystemModstamp','IsDeleted']);
+  const srcFields = Object.keys(fm).filter(k => fm[k] !== null && fm[k] !== '' && !SYS.has(k));
+  if (!srcFields.length) {
+    return { ok: 0, failed: sourceIds.length, errors: ['No mapped fields to overwrite — configure Field Mapping on the root node.'] };
+  }
+
+  // Fetch source records in chunks.
+  const idList = sourceIds.filter(id => srcToTgt.has(id));
+  const srcRecs = [];
+  for (let i = 0; i < idList.length; i += 200) {
+    const chunk = idList.slice(i, i + 200);
+    const soql = `SELECT ${[...new Set(['Id', ...srcFields])].join(',')} FROM ${objType} WHERE Id IN (${chunk.map(id => `'${id}'`).join(',')})`;
+    const res  = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid, query: soql });
+    if (res?.error) return { ok: 0, failed: idList.length, errors: [`Source read failed: ${res.error}`] };
+    srcRecs.push(...(res.records || []));
+  }
+
+  // Build PATCH payloads keyed by target Id.
+  const payloads = srcRecs.map(sr => {
+    const tgtId = srcToTgt.get(sr.Id);
+    const p = { attributes: { type: objType }, Id: tgtId };
+    for (const sf of srcFields) {
+      const tf = fm[sf];
+      const v  = sr[sf];
+      if (v == null) continue;
+      p[tf] = v;
+    }
+    return p;
+  }).filter(p => p.Id);
+
+  const res = await sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: payloads });
+  const arr = Array.isArray(res) ? res : [];
+  const ok = arr.filter(r => r.success).length;
+  const errors = [];
+  for (const r of arr) {
+    if (!r.success) errors.push(`${objType}: ${(r.errors || []).map(e => e.message).join('; ')}`);
+  }
+  return { ok, failed: arr.length - ok, errors };
 }
 
 // ════════════════════════════════════════════════════════════════
