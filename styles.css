@@ -2370,6 +2370,76 @@ body {
   background: #ef4444; color: #fff;
   border-radius: 3px; padding: 1px 4px;
 }
+/* Cross-log search "hit" badge on the log row + matching-line snippet. */
+.adbg-badge-xhit {
+  font-size: 9px; font-weight: 700;
+  background: #fde68a; color: #92400e;
+  border: 1px solid #f59e0b;
+  border-radius: 3px; padding: 1px 5px;
+}
+.adbg-row-xhit { background: rgba(253, 224, 71, 0.10); }
+.adbg-row-xhit.adbg-row-sel { background: rgba(253, 224, 71, 0.22); }
+.adbg-row-hit {
+  display: flex; align-items: baseline; gap: 6px;
+  margin-top: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; color: var(--text);
+  background: var(--card, #fff);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  overflow: hidden;
+}
+.adbg-row-hit-ln {
+  font-weight: 700; color: var(--subtext);
+  flex-shrink: 0;
+}
+.adbg-row-hit-txt {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.adbg-row-hit-mark {
+  background: #fde68a; color: #92400e;
+  border-radius: 2px; padding: 0 2px;
+  font-weight: 700;
+}
+.adbg-row-hit-more {
+  font-size: 10px; color: var(--subtext);
+  background: var(--bg); padding: 0 4px; border-radius: 3px;
+  flex-shrink: 0;
+}
+
+/* Cross-log search input in the list bar */
+.adbg-xsearch-wrap {
+  position: relative;
+  display: flex; align-items: center;
+  min-width: 180px;
+}
+.adbg-xsearch-input {
+  width: 100%;
+  padding: 4px 22px 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--card, #fff);
+  color: var(--text);
+}
+.adbg-xsearch-input:focus {
+  outline: none;
+  border-color: var(--brand, #0176D3);
+  box-shadow: 0 0 0 2px rgba(1,118,211,.18);
+}
+.adbg-xsearch-clear {
+  position: absolute; right: 4px; top: 50%;
+  transform: translateY(-50%);
+  background: none; border: none;
+  cursor: pointer;
+  color: var(--subtext);
+  font-size: 14px; line-height: 1;
+  padding: 0 4px;
+}
+.adbg-xsearch-clear:hover { color: var(--text); }
+.adbg-xsearch-busy { background: #fbbf24 !important; color: #78350f !important; }
 
 /* Per-row delete button */
 .adbg-row-del {
@@ -2444,6 +2514,9 @@ body {
    Analysis section and log viewer below. */
 .adbg-det-hdr-collapsed > .adbg-det-hdr-body { display: none; }
 .adbg-det-hdr-collapsed { padding-bottom: 0; }
+/* When the header is collapsed via .adbg-detail-min on the inner wrapper,
+   also hide the Analysis section so the log content gets the entire panel. */
+.adbg-detail-min > .adbg-analysis { display: none; }
 
 /* ── Embedded analysis (collapsible) ── */
 .adbg-analysis {
