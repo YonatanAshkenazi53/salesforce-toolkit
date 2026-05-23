@@ -5197,11 +5197,23 @@ async function _ocCompareOneObject(objName, srcSess, tgtSess) {
   const isUnqueryable = msg =>
     typeof msg === 'string' &&
     /does not support query|not supported|INVALID_TYPE/i.test(msg);
-  if (srcRes?.error && isUnqueryable(srcRes.error)) {
-    return { skipped: true, reason: 'Not queryable in source.' };
+  // Soft-skip the canonical "implementation restriction" objects too —
+  // ContentDocumentLink / IdeaComment / etc. force a WHERE filter on a
+  // specific Id and don't allow a blanket SELECT. Org Compare can't pass
+  // those filters without per-object config, so we mark them skipped
+  // rather than scolding the user with a red row.
+  const isFilterRequired = msg =>
+    typeof msg === 'string' &&
+    /Implementation restriction|requires a filter by|must filter using/i.test(msg);
+  if (srcRes?.error && (isUnqueryable(srcRes.error) || isFilterRequired(srcRes.error))) {
+    return { skipped: true, reason: isFilterRequired(srcRes.error)
+      ? 'Requires a WHERE filter — cannot be compared org-wide.'
+      : 'Not queryable in source.' };
   }
-  if (tgtRes?.error && isUnqueryable(tgtRes.error)) {
-    return { skipped: true, reason: 'Not queryable in target.' };
+  if (tgtRes?.error && (isUnqueryable(tgtRes.error) || isFilterRequired(tgtRes.error))) {
+    return { skipped: true, reason: isFilterRequired(tgtRes.error)
+      ? 'Requires a WHERE filter — cannot be compared org-wide.'
+      : 'Not queryable in target.' };
   }
   if (srcRes?.error) return { error: `source: ${srcRes.error}` };
   if (tgtRes?.error) return { error: `target: ${tgtRes.error}` };
