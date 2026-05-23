@@ -1865,6 +1865,8 @@ html, body {
 .ds-oc-row-mf { font-size: 10px; color: var(--subtext); margin-left: 6px; font-family: ui-monospace, monospace; }
 .ds-oc-pending { color: var(--subtext); font-style: italic; }
 .ds-oc-err { color: #b45309; background: rgba(234, 88, 12, 0.08); }
+.ds-oc-skipped { opacity: 0.6; }
+.ds-oc-skip { color: var(--subtext); font-style: italic; font-size: 12px; }
 
 /* ── Reconcile (Phase 3A) ────────────────────────────────────── */
 .ds-rec-cols {
