@@ -4724,6 +4724,14 @@ async function runReconcile(profile, objType, buckets) {
     return;
   }
 
+  // Per-action counters — captured into a History entry at the end so the
+  // History view can show what was actually inserted/updated/deleted, not
+  // just "errors". Hard-delete tracks the bin-purge count separately.
+  const startedAt = new Date().toISOString();
+  const counts = { inserted: 0, updated: 0, deleted: 0, purged: 0,
+                   insertedFailed: 0, updatedFailed: 0, deletedFailed: 0 };
+  const allErrors = [];
+
   // ── 1. Delete extras (regular → Recycle Bin, or hard → purge) ────────
   if (delIds.length) {
     if (isHard) {
@@ -4732,17 +4740,27 @@ async function runReconcile(profile, objType, buckets) {
         const res = await sendBg({ type: 'SF_HARD_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds });
         const delOk   = (res.deleteResults || []).filter(r => r.success).length;
         const delFail = (res.deleteResults || []).length - delOk;
+        counts.deleted += delOk; counts.deletedFailed += delFail; counts.purged += (res.purgedOk || 0);
         log(delFail ? '⚠' : '✅', `Deleted ${delOk}${delFail ? `, ${delFail} failed` : ''} → purged ${res.purgedOk || 0} from Recycle Bin`, delFail ? 'ds-prog-err' : '');
-        (res.purgeErrors || []).slice(0, 3).forEach(e => log('  ⚠', `purge: ${e}`, 'ds-prog-warn'));
-      } catch (e) { log('❌', `Hard delete failed: ${e?.message || e}`, 'ds-prog-err'); }
+        (res.purgeErrors || []).slice(0, 3).forEach(e => { allErrors.push(`purge: ${e}`); log('  ⚠', `purge: ${e}`, 'ds-prog-warn'); });
+        (res.deleteResults || []).filter(r => !r.success).slice(0, 5).forEach(r => {
+          const m = (r.errors || []).map(x => x.message).join('; ');
+          if (m) allErrors.push(`delete ${r.id || ''}: ${m}`);
+        });
+      } catch (e) { allErrors.push(`Hard delete failed: ${e?.message || e}`); log('❌', `Hard delete failed: ${e?.message || e}`, 'ds-prog-err'); }
     } else {
       log('🗑', `Deleting ${delIds.length} record(s) from target (→ Recycle Bin)…`);
       try {
         const res = await sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds });
         const ok = (res || []).filter(r => r.success).length;
         const fail = (res || []).length - ok;
+        counts.deleted += ok; counts.deletedFailed += fail;
         log(fail ? '⚠' : '✅', `Deleted ${ok}${fail ? `, ${fail} failed` : ''}`, fail ? 'ds-prog-err' : '');
-      } catch (e) { log('❌', `Delete failed: ${e?.message || e}`, 'ds-prog-err'); }
+        (res || []).filter(r => !r.success).slice(0, 5).forEach(r => {
+          const m = (r.errors || []).map(x => x.message).join('; ');
+          if (m) allErrors.push(`delete ${r.id || ''}: ${m}`);
+        });
+      } catch (e) { allErrors.push(`Delete failed: ${e?.message || e}`); log('❌', `Delete failed: ${e?.message || e}`, 'ds-prog-err'); }
     }
   }
 
@@ -4760,27 +4778,62 @@ async function runReconcile(profile, objType, buckets) {
         tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid
       });
       const s = res.summary?.[objType] || {};
-      log(s.failed ? '⚠' : '✅', `Pushed ${s.created || 0}${s.failed ? `, ${s.failed} failed` : ''}`, s.failed ? 'ds-prog-err' : '');
+      counts.inserted += (s.created || 0); counts.insertedFailed += (s.failed || 0);
+      log(s.failed ? '⚠' : '✅', `Inserted ${s.created || 0}${s.failed ? `, ${s.failed} failed` : ''}`, s.failed ? 'ds-prog-err' : '');
+      (res.errors || []).forEach(e => allErrors.push(`insert: ${e}`));
       (res.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
-    } catch (e) { log('❌', `Push failed: ${e?.message || e}`, 'ds-prog-err'); }
+    } catch (e) { allErrors.push(`Push failed: ${e?.message || e}`); log('❌', `Push failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
 
   // ── 3. Overwrite drift (update target with source values) ────────────
   if (ovwIds.length) {
-    log('✏', `Overwriting ${ovwIds.length} drifted record(s) in target…`);
+    log('✏', `Updating ${ovwIds.length} drifted record(s) in target…`);
     try {
       const result = await reconcileOverwrite(profile, objType, ovwIds, buckets.drift, srcSess, tgtSess);
-      log(result.failed ? '⚠' : '✅', `Overwrote ${result.ok}${result.failed ? `, ${result.failed} failed` : ''}`, result.failed ? 'ds-prog-err' : '');
+      counts.updated += (result.ok || 0); counts.updatedFailed += (result.failed || 0);
+      log(result.failed ? '⚠' : '✅', `Updated ${result.ok}${result.failed ? `, ${result.failed} failed` : ''}`, result.failed ? 'ds-prog-err' : '');
+      (result.errors || []).forEach(e => allErrors.push(`update: ${e}`));
       (result.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
-    } catch (e) { log('❌', `Overwrite failed: ${e?.message || e}`, 'ds-prog-err'); }
+    } catch (e) { allErrors.push(`Overwrite failed: ${e?.message || e}`); log('❌', `Overwrite failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
 
-  log('✅', 'Reconcile complete — refreshing state…');
+  // ── 4. Save to History so the run is visible later ───────────────────
+  const totalOk   = counts.inserted + counts.updated + counts.deleted;
+  const totalFail = counts.insertedFailed + counts.updatedFailed + counts.deletedFailed;
+  const status   = totalFail === 0 ? 'success' : (totalOk > 0 ? 'partial' : 'failed');
+  _history.push({
+    id:           genId('run'),
+    kind:         'reconcile',
+    profileId:    profile.id,
+    profileName:  profile.name,
+    sourceOrg:    profile.sourceOrg,
+    targetOrg:    profile.targetOrg,
+    srcOrgUrl:    profile.sourceOrg,
+    tgtOrgUrl:    profile.targetOrg,
+    startedAt,
+    completedAt:  new Date().toISOString(),
+    status,
+    summary: {
+      [objType]: {
+        inserted: counts.inserted, insertedFailed: counts.insertedFailed,
+        updated:  counts.updated,  updatedFailed:  counts.updatedFailed,
+        deleted:  counts.deleted,  deletedFailed:  counts.deletedFailed,
+        purged:   counts.purged,
+        deleteMode: _recDeleteMode
+      }
+    },
+    errors: allErrors.slice(0, 50)
+  });
+  await storageSaveHistory();
+
+  log('✅', `Reconcile complete — refreshing state…`);
   // Refresh diff + snapshots so the columns reflect the new reality.
   await window.refreshProfileState(profile.id);
   _reconcileProfile = _profiles.find(x => x.id === profile.id);
   _recSel = { push: new Set(), overwrite: new Set(), del: new Set() };
-  showToast('Reconcile complete', 'success', 3500);
+  const toastMsg = `Reconcile: ${counts.inserted} inserted · ${counts.updated} updated · ${counts.deleted} deleted` +
+    (totalFail ? ` · ${totalFail} failed` : '');
+  showToast(toastMsg, totalFail ? 'warning' : 'success', 4500);
   renderReconcile();
 }
 
@@ -4887,11 +4940,27 @@ function renderHistory() {
           </div>
           <div class="ds-history-orgs">
             ${esc(orgLabel(run.sourceOrg || ''))} → ${esc(orgLabel(run.targetOrg || ''))}
+            ${run.kind === 'reconcile' ? '<span class="ds-chip" style="margin-left:6px">⚖ reconcile</span>' : ''}
           </div>
           <div class="ds-history-summary">
-            ${Object.entries(run.summary || {}).map(([obj, s]) =>
-              `<span class="ds-summary-chip">${esc(obj)}: ${s.created || 0}↑${s.failed ? ' '+s.failed+'✗' : ''}</span>`
-            ).join('')}
+            ${Object.entries(run.summary || {}).map(([obj, s]) => {
+              // Reconcile runs carry explicit per-DML counts (inserted/updated/
+              // deleted). Transfer runs carry the legacy created/failed pair.
+              // Show whichever set is populated so success detail is visible.
+              const isRec = run.kind === 'reconcile' ||
+                            s.inserted != null || s.updated != null || s.deleted != null;
+              if (isRec) {
+                const parts = [];
+                if (s.inserted) parts.push(`<span class="ds-rec-tag ds-rec-tag-ins">${s.inserted} inserted</span>`);
+                if (s.updated)  parts.push(`<span class="ds-rec-tag ds-rec-tag-upd">${s.updated} updated</span>`);
+                if (s.deleted)  parts.push(`<span class="ds-rec-tag ds-rec-tag-del">${s.deleted} deleted${s.deleteMode === 'hard' ? ' (hard)' : ''}</span>`);
+                const failTot = (s.insertedFailed || 0) + (s.updatedFailed || 0) + (s.deletedFailed || 0);
+                if (failTot)    parts.push(`<span class="ds-rec-tag ds-rec-tag-fail">${failTot} failed</span>`);
+                if (!parts.length) parts.push('<span class="ds-rec-tag">no changes</span>');
+                return `<span class="ds-summary-chip"><strong>${esc(obj)}</strong> · ${parts.join(' ')}</span>`;
+              }
+              return `<span class="ds-summary-chip">${esc(obj)}: ${s.created || 0}↑${s.failed ? ' '+s.failed+'✗' : ''}</span>`;
+            }).join('')}
           </div>
           ${(run.errors || []).length ? `
             <details class="ds-history-errors">
