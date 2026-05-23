@@ -5152,35 +5152,66 @@ async function runOrgCompare() {
 // since Org Compare has no per-object field config — drift is the
 // Reconcile view's job, fed by a Profile.
 async function _ocCompareOneObject(objName, srcSess, tgtSess) {
-  // Pick matchField via describe (Name → nameField fallback).
-  let matchField = 'Name';
+  // Pick matchField via describe. Preference order:
+  //   1. nameField=true marker (handles Title/DeveloperName/etc as the
+  //      object's natural label),
+  //   2. an explicit 'Name' field,
+  //   3. fall back to Id-only mode.
+  // We also gate on the describe's own `queryable` flag — the global
+  // describeGlobal often reports queryable=true for Share/utility objects
+  // that actually 400 on SELECT, but the per-object describe is reliable.
+  let matchField = null;       // null → Id-only key mode
+  let queryable  = true;
   try {
     const d = await sendBg({
       type: 'SF_REST_GET', orgUrl: srcSess.orgUrl, sid: srcSess.sid,
       path: `services/data/v62.0/sobjects/${objName}/describe`
     });
-    const names = new Set((d?.fields || []).map(f => f.name));
-    if (!names.has('Name')) {
-      const nf = (d?.fields || []).find(f => f.nameField === true);
-      if (nf?.name) matchField = nf.name;
-      else if (names.has('Id')) matchField = 'Id'; // last resort
-    }
-  } catch (_) {/* push through */}
+    if (d && d.queryable === false) queryable = false;
+    const fields = d?.fields || [];
+    const nf = fields.find(f => f.nameField === true);
+    if (nf?.name) matchField = nf.name;
+    else if (fields.some(f => f.name === 'Name')) matchField = 'Name';
+  } catch (_) {/* push through with matchField = null */}
 
-  const soql = `SELECT Id, ${matchField} FROM ${objName}`;
+  if (!queryable) {
+    return { skipped: true, reason: 'Object is not queryable.' };
+  }
+
+  // Build SOQL — when matchField is null/Id, ask for Id alone (no
+  // `SELECT Id, Id` which Salesforce rejects as duplicate column).
+  const useIdOnly = !matchField || matchField === 'Id';
+  const soql = useIdOnly
+    ? `SELECT Id FROM ${objName}`
+    : `SELECT Id, ${matchField} FROM ${objName}`;
+  const effectiveKey = useIdOnly ? 'Id' : matchField;
+
   const [srcRes, tgtRes] = await Promise.all([
     sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid, query: soql }),
     sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, query: soql })
   ]);
+
+  // Soft-skip the canonical "this sObject doesn't accept SOQL" failure —
+  // it isn't actionable for the user and would otherwise dominate the
+  // results table with red rows for internal Share/Localization objects.
+  const isUnqueryable = msg =>
+    typeof msg === 'string' &&
+    /does not support query|not supported|INVALID_TYPE/i.test(msg);
+  if (srcRes?.error && isUnqueryable(srcRes.error)) {
+    return { skipped: true, reason: 'Not queryable in source.' };
+  }
+  if (tgtRes?.error && isUnqueryable(tgtRes.error)) {
+    return { skipped: true, reason: 'Not queryable in target.' };
+  }
   if (srcRes?.error) return { error: `source: ${srcRes.error}` };
   if (tgtRes?.error) return { error: `target: ${tgtRes.error}` };
 
   const srcByKey = new Map(), tgtByKey = new Map();
   for (const r of (srcRes.records || [])) {
-    const k = r[matchField]; if (k != null && k !== '') srcByKey.set(String(k), r);
+    const k = r[effectiveKey]; if (k != null && k !== '') srcByKey.set(String(k), r);
   }
   for (const r of (tgtRes.records || [])) {
-    const k = r[matchField]; if (k != null && k !== '') tgtByKey.set(String(k), r);
+    const k = r[effectiveKey]; if (k != null && k !== '') tgtByKey.set(String(k), r);
   }
   let matched = 0, missing = 0, extras = 0;
   for (const k of srcByKey.keys()) (tgtByKey.has(k) ? matched++ : missing++);
@@ -5191,7 +5222,7 @@ async function _ocCompareOneObject(objName, srcSess, tgtSess) {
     srcCount:   srcByKey.size,
     tgtCount:   tgtByKey.size,
     matched, missing, extras,
-    matchField,
+    matchField: effectiveKey,
     matchPct:   pct
   };
 }
@@ -5202,12 +5233,14 @@ function _ocRenderResults() {
   const rows = _orgCompareState.results || [];
   if (!rows.length) { el.innerHTML = ''; return; }
 
-  // Sort: worst match% first (lowest), errors at top, pending at bottom.
-  const done = rows.filter(r => r.status !== 'pending' && !r.error)
+  // Sort: errors at top, worst-match next, skipped (not-queryable internal
+  // sObjects) grouped after the real results, pending at bottom.
+  const done = rows.filter(r => r.status !== 'pending' && !r.error && !r.skipped)
     .sort((a, b) => (a.matchPct || 0) - (b.matchPct || 0));
   const errs = rows.filter(r => r.error);
+  const skip = rows.filter(r => r.skipped);
   const pend = rows.filter(r => r.status === 'pending');
-  const ordered = [...errs, ...done, ...pend];
+  const ordered = [...errs, ...done, ...skip, ...pend];
 
   const colorFor = pct => pct >= 99 ? 'ds-oc-green'
                        : pct >= 90 ? 'ds-oc-yellow'
@@ -5223,7 +5256,8 @@ function _ocRenderResults() {
       </tr></thead>
       <tbody>${ordered.map(r => {
         if (r.status === 'pending') return `<tr><td>${esc(r.name)}</td><td colspan="7" class="ds-oc-pending">⏳ comparing…</td></tr>`;
-        if (r.error) return `<tr><td>${esc(r.name)}</td><td colspan="7" class="ds-oc-err">⚠ ${esc(r.error)}</td></tr>`;
+        if (r.error)   return `<tr><td>${esc(r.name)}</td><td colspan="7" class="ds-oc-err">⚠ ${esc(r.error)}</td></tr>`;
+        if (r.skipped) return `<tr class="ds-oc-skipped"><td>${esc(r.name)}</td><td colspan="7" class="ds-oc-skip">— ${esc(r.reason || 'Skipped.')}</td></tr>`;
         return `<tr class="ds-oc-row ${colorFor(r.matchPct)}">
           <td>${esc(r.name)} <span class="ds-oc-row-mf">by ${esc(r.matchField)}</span></td>
           <td>${r.srcCount.toLocaleString()}</td>
