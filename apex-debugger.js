@@ -379,6 +379,14 @@ const ApexDebugger = (() => {
   let _bodyCache   = {};    // logId → parsed result
   let _newIds      = new Set(); // Ids that arrived since last render
 
+  // Cross-log search — populated by _searchAcrossLogs. Each value is the
+  // first few matching lines so we can show a snippet under the row.
+  let _xSearchQuery   = '';
+  let _xSearchHits    = new Map();  // logId → [{ ln, text }]
+  let _xSearchRunning = false;
+  let _xSearchCancel  = false;
+  let _xRawCache      = {};         // logId → raw body string (caches HTTP fetch)
+
   let _pollTimer   = null;
   let _cdTimer     = null;  // countdown timer
   let _lastPoll    = null;  // ISO timestamp of last poll
@@ -471,6 +479,12 @@ const ApexDebugger = (() => {
           <span class="adbg-log-count" id="adbgLogCount">Loading…</span>
           <span class="adbg-live-dot" id="adbgLiveDot" title="Live — polling for new logs" style="display:none"></span>
           <div style="flex:1"></div>
+          <div class="adbg-xsearch-wrap" title="Search across every log body — marks logs that contain the keyword">
+            <input type="text" id="adbgXSearch" class="adbg-xsearch-input"
+              placeholder="🔍 Search across all logs…" autocomplete="off">
+            <button id="adbgXSearchClear" class="adbg-xsearch-clear" title="Clear search" style="display:none">✕</button>
+          </div>
+          <button id="adbgXSearchBtn" class="btn btn-secondary btn-sm" title="Search every log body for this keyword">🔍 Search</button>
           <button id="adbgRefreshBtn" class="btn btn-secondary btn-sm" title="Refresh log list">🔄</button>
           <button id="adbgDelSelBtn"  class="btn btn-danger btn-sm" disabled>Delete Selected</button>
           <button id="adbgDelAllBtn"  class="btn btn-danger btn-sm">🗑 Delete All</button>
@@ -559,6 +573,20 @@ const ApexDebugger = (() => {
     });
     document.getElementById('adbgDelSelBtn').addEventListener('click', _deleteSelected);
     document.getElementById('adbgDelAllBtn').addEventListener('click', _deleteAll);
+
+    // ── Cross-log search ──
+    const xInp = document.getElementById('adbgXSearch');
+    const xBtn = document.getElementById('adbgXSearchBtn');
+    const xClr = document.getElementById('adbgXSearchClear');
+    xInp?.addEventListener('input', () => {
+      xClr.style.display = xInp.value ? '' : 'none';
+    });
+    xInp?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); _searchAcrossLogs(xInp.value.trim()); }
+      else if (e.key === 'Escape') { _clearXSearch(); }
+    });
+    xBtn?.addEventListener('click', () => _searchAcrossLogs(xInp.value.trim()));
+    xClr?.addEventListener('click', _clearXSearch);
   }
 
   // ── User search dropdown ──────────────────────────────────
@@ -840,7 +868,16 @@ const ApexDebugger = (() => {
       </div>`;
       return;
     }
-    listEl.innerHTML = _logs.map(log => {
+    // If a cross-log search is active, filter to matching logs first so
+    // non-matches drop out of the list entirely (clearer than "everything
+    // is grey except matches"). Logs that haven't been scanned yet still
+    // appear during the in-progress phase.
+    const xActive  = !!_xSearchQuery;
+    const visible = xActive
+      ? _logs.filter(l => _xSearchHits.has(l.Id) || (_xSearchRunning && !(l.Id in _xRawCache) && !_bodyCache[l.Id]))
+      : _logs;
+
+    listEl.innerHTML = visible.map(log => {
       const isNew  = _newIds.has(log.Id);
       const isSel  = log.Id === _selLogId;
       const isCk   = _checked.has(log.Id);
@@ -854,8 +891,23 @@ const ApexDebugger = (() => {
       const cached = _bodyCache[log.Id];
       const hasLoop = cached?.recursions?.length > 0;
       const hasFault = Object.values(cached?.flows || {}).some(f => f.faulted);
+      const xHits = _xSearchHits.get(log.Id);
 
-      return `<div class="adbg-log-row${isSel ? ' adbg-row-sel' : ''}${isNew ? ' adbg-row-new' : ''}" data-id="${log.Id}">
+      // First matching line snippet — shown under the op when cross-log
+      // search is active. We highlight the matched keyword inside the line.
+      let xSnippet = '';
+      if (xHits?.length) {
+        const re = new RegExp(_xSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig');
+        const h = xHits[0];
+        const safe = _esc(h.text).replace(re, m => `<mark class="adbg-row-hit-mark">${_esc(m)}</mark>`);
+        xSnippet = `<div class="adbg-row-hit" title="${_esc(h.text)}">
+          <span class="adbg-row-hit-ln">L${h.ln}</span>
+          <span class="adbg-row-hit-txt">${safe}</span>
+          ${xHits.length > 1 ? `<span class="adbg-row-hit-more">+${xHits.length - 1}</span>` : ''}
+        </div>`;
+      }
+
+      return `<div class="adbg-log-row${isSel ? ' adbg-row-sel' : ''}${isNew ? ' adbg-row-new' : ''}${xHits ? ' adbg-row-xhit' : ''}" data-id="${log.Id}">
         <label class="adbg-row-ck" onclick="event.stopPropagation()">
           <input type="checkbox" class="adbg-cb" data-id="${log.Id}" ${isCk ? 'checked' : ''}>
         </label>
@@ -863,6 +915,7 @@ const ApexDebugger = (() => {
           <div class="adbg-row-top">
             <span class="adbg-row-time">${time}</span>
             ${isNew     ? '<span class="adbg-badge-new">NEW</span>'  : ''}
+            ${xHits     ? `<span class="adbg-badge-xhit" title="${xHits.length} matching line${xHits.length === 1 ? '' : 's'}">🔍 ${xHits.length}</span>` : ''}
             ${hasLoop   ? '<span class="adbg-badge-loop">🔄 LOOP</span>' : ''}
             ${hasFault  ? '<span class="adbg-badge-fault">⚠ FAULT</span>' : ''}
             <span class="adbg-row-size">${kb}</span>
@@ -872,10 +925,19 @@ const ApexDebugger = (() => {
           ${!_selUser && user ? `<div class="adbg-row-user">${_esc(user)}</div>` : ''}
           ${log.Status && log.Status !== 'Success'
               ? `<div class="adbg-row-fail">${_esc(log.Status)}</div>` : ''}
+          ${xSnippet}
         </div>
         <button class="adbg-row-del" data-id="${log.Id}" title="Delete this log">🗑</button>
       </div>`;
     }).join('');
+
+    // Cross-log-search empty state — show only when search finished with 0 hits
+    if (xActive && !_xSearchRunning && !_xSearchHits.size) {
+      listEl.innerHTML = `<div class="adbg-list-ph">
+        No logs match <strong>"${_esc(_xSearchQuery)}"</strong>.<br>
+        <small>Clear the search or try a different keyword.</small>
+      </div>`;
+    }
 
     // Row → open detail
     listEl.querySelectorAll('.adbg-log-row').forEach(row => {
@@ -903,6 +965,104 @@ const ApexDebugger = (() => {
     if (!btn) return;
     btn.disabled    = _checked.size === 0;
     btn.textContent = _checked.size > 0 ? `Delete (${_checked.size})` : 'Delete Selected';
+  }
+
+  // ── Cross-log search ──────────────────────────────────────
+  // Fetches every log body (with concurrency) and marks rows whose body
+  // contains the keyword. Hits are kept in _xSearchHits → the list
+  // renderer adds a "🔍 N" badge and a snippet of the first matching line.
+  // Subsequent searches reuse _xRawCache so we don't re-download bodies.
+  async function _searchAcrossLogs(query) {
+    query = (query || '').trim();
+    if (!query) { _clearXSearch(); return; }
+    if (_xSearchRunning) { _xSearchCancel = true; return; }
+    if (!_logs.length)   { return; }
+
+    _xSearchQuery   = query;
+    _xSearchHits    = new Map();
+    _xSearchCancel  = false;
+    _xSearchRunning = true;
+
+    const btn = document.getElementById('adbgXSearchBtn');
+    const cnt = document.getElementById('adbgLogCount');
+    if (btn) { btn.textContent = '✕ Cancel'; btn.classList.add('adbg-xsearch-busy'); }
+
+    _renderLogList(); // clear previous marks immediately
+
+    const total = _logs.length;
+    const ql    = query.toLowerCase();
+    let done = 0, idx = 0;
+    const CONC = 4;
+
+    const updateProgress = () => {
+      if (cnt) cnt.textContent = `Searching ${done}/${total} — ${_xSearchHits.size} match${_xSearchHits.size === 1 ? '' : 'es'}`;
+    };
+    updateProgress();
+
+    async function worker() {
+      while (!_xSearchCancel && idx < total) {
+        const my = idx++;
+        const log = _logs[my];
+        if (!log) break;
+        let raw = _xRawCache[log.Id] ?? _bodyCache[log.Id]?.raw;
+        if (raw == null) {
+          const res = await _bg({
+            type: 'SF_REST_GET_TEXT',
+            path: `${TAPI}/sobjects/ApexLog/${log.Id}/Body`
+          });
+          if (!res.error && typeof res.text === 'string') {
+            raw = res.text;
+          }
+        }
+        // Always record completion in _xRawCache so the visibility filter
+        // can tell "scanned (and didn't match)" apart from "not scanned yet".
+        // An empty string is a fine sentinel for "no body / fetch failed".
+        if (!(log.Id in _xRawCache)) _xRawCache[log.Id] = raw || '';
+        if (raw && !_xSearchCancel) {
+          const lines = raw.split('\n');
+          const hits = [];
+          for (let i = 0; i < lines.length && hits.length < 5; i++) {
+            if (lines[i].toLowerCase().includes(ql)) {
+              hits.push({ ln: i + 1, text: lines[i].length > 240 ? lines[i].slice(0, 240) + '…' : lines[i] });
+            }
+          }
+          if (hits.length) _xSearchHits.set(log.Id, hits);
+        }
+        done++;
+        // Re-render every few completions so the user sees marks appear live
+        if (done % 3 === 0 || done === total) {
+          updateProgress();
+          _renderLogList();
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: CONC }, worker));
+
+    _xSearchRunning = false;
+    if (btn) { btn.textContent = '🔍 Search'; btn.classList.remove('adbg-xsearch-busy'); }
+    // If the user cleared the search mid-run, _clearXSearch already restored
+    // the count message — don't overwrite it.
+    if (_xSearchQuery !== query) return;
+    _renderLogList();
+    if (cnt) {
+      if (_xSearchCancel) {
+        cnt.textContent = `Cancelled — ${_xSearchHits.size} match${_xSearchHits.size === 1 ? '' : 'es'} (${done}/${total} scanned)`;
+      } else {
+        cnt.textContent = `${_xSearchHits.size} of ${total} log${total === 1 ? '' : 's'} match "${query}"`;
+      }
+    }
+  }
+
+  function _clearXSearch() {
+    _xSearchQuery = '';
+    _xSearchHits  = new Map();
+    _xSearchCancel = _xSearchRunning;  // signal in-flight workers to stop
+    const inp = document.getElementById('adbgXSearch');
+    const clr = document.getElementById('adbgXSearchClear');
+    if (inp) inp.value = '';
+    if (clr) clr.style.display = 'none';
+    _renderLogList();
+    _updateCount();
   }
 
   // ── Open log → parse + render detail ─────────────────────
@@ -1350,6 +1510,18 @@ const ApexDebugger = (() => {
     document.getElementById('adbgDlReportBtn')?.addEventListener('click', () => _downloadReport(p));
     document.getElementById('adbgNewTabBtn')?.addEventListener('click', e => _openLogInNewTab(p, e.currentTarget));
 
+    // If a cross-log search is active, pre-fill the in-log search box and run
+    // it so the user can immediately step through the matches in this log.
+    if (_xSearchQuery) {
+      const inp = document.getElementById('adbgLogSearch');
+      if (inp) {
+        inp.value = _xSearchQuery;
+        // Defer to after our event wiring at the bottom of _renderDetail
+        // hooks the input → that wiring uses 140ms debounce, so just dispatch.
+        setTimeout(() => inp.dispatchEvent(new Event('input', { bubbles: true })), 0);
+      }
+    }
+
     // Collapse / Expand all <details> sections in the trace detail panel.
     // Useful when ANALYSIS is open with lots of children and you just want to
     // skim the log content. Toggles between "all open" and "all closed".
@@ -1412,13 +1584,22 @@ const ApexDebugger = (() => {
     });
 
     // Detail header minimize / expand — click the title bar to collapse the
-    // meta/op/user/entry-point/buttons block down to a single bar so the
-    // analysis + log content get more space. The bar still shows op + time
-    // + duration + any failure status so you keep the key context at a glance.
+    // entire upper section (meta + op + user + entry-point + buttons AND
+    // the Analysis section), leaving just the title bar + the log content.
+    // The bar still shows op + time + duration + status so you keep the key
+    // context at a glance. Re-click to restore everything.
     document.getElementById('adbgDetHdrToggle')?.addEventListener('click', () => {
       const hdr = document.getElementById('adbgDetHdr');
+      const inner = hdr?.closest('.adbg-detail-inner');
       if (!hdr) return;
       const collapsed = hdr.classList.toggle('adbg-det-hdr-collapsed');
+      // Mirror the state on the inner wrapper so we can also hide the
+      // analysis section (which is a sibling of the header, not a child).
+      inner?.classList.toggle('adbg-detail-min', collapsed);
+      // Close the <details class="adbg-analysis"> if it's currently open
+      // (so re-expanding doesn't reveal a half-open state).
+      const analysis = inner?.querySelector('.adbg-analysis');
+      if (analysis && collapsed) analysis.open = false;
       const caret = hdr.querySelector('.adbg-det-hdr-caret');
       if (caret) caret.textContent = collapsed ? '▸' : '▾';
     });
