@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Apex Log — Salesforce Toolkit</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="apex-log-viewer.css">
+</head>
+<body class="alv-body">
+  <div class="alv-shell">
+
+    <!-- Top bar -->
+    <div class="alv-topbar">
+      <div class="alv-brand">
+        <span class="alv-logo">📜</span>
+        <span class="alv-title" id="alvTitle">Apex Log</span>
+        <span class="alv-meta" id="alvMeta"></span>
+      </div>
+      <div class="alv-actions">
+        <button class="btn btn-primary btn-sm"   id="alvCopyReportBtn">📋 Copy Report</button>
+        <button class="btn btn-secondary btn-sm" id="alvDlReportBtn">📄 Download Report</button>
+        <button class="btn btn-secondary btn-sm" id="alvDlRawBtn">⬇ Raw Log</button>
+      </div>
+    </div>
+
+    <!-- Search + filter row -->
+    <div class="alv-controls">
+      <input type="number" id="alvLogGoto" class="adbg-log-goto" placeholder="Go to line #" min="1">
+
+      <div class="adbg-log-search-row alv-search-row">
+        <input type="text" id="alvLogSearch" class="adbg-log-search"
+          placeholder="Find in log (Ctrl+F)… use ⏎ next, ⇧⏎ prev" autocomplete="off">
+        <label class="adbg-log-search-opt" title="Case-sensitive match">
+          <input type="checkbox" id="alvLogCase"> Aa
+        </label>
+        <label class="adbg-log-search-opt" title="Regular expression — interpret query as regex">
+          <input type="checkbox" id="alvLogRegex"> .*
+        </label>
+        <label class="adbg-log-search-opt" title="Whole word only">
+          <input type="checkbox" id="alvLogWord"> W
+        </label>
+        <span class="adbg-log-search-count" id="alvLogSearchCount" title="Match navigation">—</span>
+        <button class="adbg-log-search-btn" id="alvLogSearchPrev" title="Previous match (Shift+Enter)">↑</button>
+        <button class="adbg-log-search-btn" id="alvLogSearchNext" title="Next match (Enter)">↓</button>
+      </div>
+
+      <input type="text" id="alvLogFilter" class="adbg-log-filter" placeholder="Filter to matching lines only…">
+    </div>
+
+    <!-- Log view — fills the rest of the viewport -->
+    <div class="adbg-log-view alv-log-view" id="alvLogView">
+      <div class="adbg-detail-none">Loading log…</div>
+    </div>
+
+  </div>
+
+  <script src="trusted-types-policy.js"></script>
+  <script src="apex-log-viewer.js"></script>
+</body>
+</html>
