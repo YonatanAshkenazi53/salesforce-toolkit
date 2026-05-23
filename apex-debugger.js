@@ -1152,29 +1152,40 @@ const ApexDebugger = (() => {
     detail.innerHTML = `
       <div class="adbg-detail-inner">
 
-        <!-- Compact header -->
-        <div class="adbg-det-hdr">
-          <div class="adbg-det-meta">
-            ${timeStr ? `<span>${timeStr}</span>` : ''}
-            ${kb !== '—' ? `<span>${kb}</span>` : ''}
-            ${dur        ? `<span>${dur}</span>` : ''}
+        <!-- Compact header — click the title bar to minimize/expand. -->
+        <div class="adbg-det-hdr" id="adbgDetHdr">
+          <div class="adbg-det-hdr-bar" id="adbgDetHdrToggle"
+            title="Click to minimize / expand the header">
+            <span class="adbg-det-hdr-caret">▾</span>
+            <span class="adbg-det-hdr-bar-title">${_esc(log.Operation || log.Request || log.Application || 'Unknown operation')}</span>
+            ${timeStr ? `<span class="adbg-det-hdr-bar-meta">${timeStr}</span>` : ''}
+            ${dur ? `<span class="adbg-det-hdr-bar-meta">${dur}</span>` : ''}
             ${log.Status && log.Status !== 'Success'
                 ? `<span class="adbg-pill-fail">${_esc(log.Status)}</span>` : ''}
           </div>
-          <div class="adbg-det-op">${_esc(log.Operation || log.Request || log.Application || 'Unknown operation')}</div>
-          ${!_selUser && log.LogUser?.Name
-              ? `<div class="adbg-det-user">👤 ${_esc(log.LogUser.Name)}</div>` : ''}
-          ${p.entryPoint ? `<div class="adbg-det-entry">▶ Entry point: <code>${_esc(p.entryPoint)}</code></div>` : ''}
-          <div class="adbg-det-actions">
-            <button class="btn btn-primary btn-sm"   id="adbgCopyReportBtn">📋 Copy Report</button>
-            <button class="btn btn-secondary btn-sm" id="adbgDlReportBtn">📄 Download Report</button>
-            <button class="btn btn-secondary btn-sm" id="adbgDlBtn">⬇ Raw Log</button>
-            <button class="btn btn-secondary btn-sm" id="adbgCollapseAllBtn"
-              title="Collapse all expandable sections in this view">↕ Collapse all</button>
-            <button class="btn btn-secondary btn-sm" id="adbgFullLogBtn"
-              title="Hide the trace summary panel — give the log viewer the entire screen">⛶ Fullscreen log</button>
-            <button class="btn btn-secondary btn-sm" id="adbgNewTabBtn"
-              title="Open this log in a new browser tab with all search/filter/goto controls">⤢ Open in new tab</button>
+          <div class="adbg-det-hdr-body">
+            <div class="adbg-det-meta">
+              ${timeStr ? `<span>${timeStr}</span>` : ''}
+              ${kb !== '—' ? `<span>${kb}</span>` : ''}
+              ${dur        ? `<span>${dur}</span>` : ''}
+              ${log.Status && log.Status !== 'Success'
+                  ? `<span class="adbg-pill-fail">${_esc(log.Status)}</span>` : ''}
+            </div>
+            <div class="adbg-det-op">${_esc(log.Operation || log.Request || log.Application || 'Unknown operation')}</div>
+            ${!_selUser && log.LogUser?.Name
+                ? `<div class="adbg-det-user">👤 ${_esc(log.LogUser.Name)}</div>` : ''}
+            ${p.entryPoint ? `<div class="adbg-det-entry">▶ Entry point: <code>${_esc(p.entryPoint)}</code></div>` : ''}
+            <div class="adbg-det-actions">
+              <button class="btn btn-primary btn-sm"   id="adbgCopyReportBtn">📋 Copy Report</button>
+              <button class="btn btn-secondary btn-sm" id="adbgDlReportBtn">📄 Download Report</button>
+              <button class="btn btn-secondary btn-sm" id="adbgDlBtn">⬇ Raw Log</button>
+              <button class="btn btn-secondary btn-sm" id="adbgCollapseAllBtn"
+                title="Collapse all expandable sections in this view">↕ Collapse all</button>
+              <button class="btn btn-secondary btn-sm" id="adbgFullLogBtn"
+                title="Hide the trace summary panel — give the log viewer the entire screen">⛶ Fullscreen log</button>
+              <button class="btn btn-secondary btn-sm" id="adbgNewTabBtn"
+                title="Open this log in a new browser tab with all search/filter/goto controls">⤢ Open in new tab</button>
+            </div>
           </div>
         </div>
 
@@ -1397,6 +1408,18 @@ const ApexDebugger = (() => {
       if (!sec) return;
       const collapsed = sec.classList.toggle('adbg-logsec-collapsed');
       const caret = sec.querySelector('.adbg-log-caret');
+      if (caret) caret.textContent = collapsed ? '▸' : '▾';
+    });
+
+    // Detail header minimize / expand — click the title bar to collapse the
+    // meta/op/user/entry-point/buttons block down to a single bar so the
+    // analysis + log content get more space. The bar still shows op + time
+    // + duration + any failure status so you keep the key context at a glance.
+    document.getElementById('adbgDetHdrToggle')?.addEventListener('click', () => {
+      const hdr = document.getElementById('adbgDetHdr');
+      if (!hdr) return;
+      const collapsed = hdr.classList.toggle('adbg-det-hdr-collapsed');
+      const caret = hdr.querySelector('.adbg-det-hdr-caret');
       if (caret) caret.textContent = collapsed ? '▸' : '▾';
     });
 
