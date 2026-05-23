@@ -2417,6 +2417,33 @@ body {
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
 }
+/* Click-to-minimize title bar — visible only when the header is collapsed
+   (and as a thin top strip so the click target is obvious when expanded). */
+.adbg-det-hdr-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 4px;
+  cursor: pointer; user-select: none;
+  font-weight: 700; font-size: 13px;
+  border-radius: 4px;
+}
+.adbg-det-hdr-bar:hover { background: var(--hover, rgba(0,0,0,0.04)); }
+.adbg-det-hdr-caret { font-size: 11px; color: var(--subtext); width: 12px; flex-shrink: 0; }
+.adbg-det-hdr-bar-title {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.adbg-det-hdr-bar-meta {
+  font-size: 11px; font-weight: 500; color: var(--subtext);
+  flex-shrink: 0;
+}
+.adbg-det-hdr-body {
+  display: block;
+  padding-top: 4px;
+}
+/* Collapsed: hide the body, keep the bar — frees vertical space for the
+   Analysis section and log viewer below. */
+.adbg-det-hdr-collapsed > .adbg-det-hdr-body { display: none; }
+.adbg-det-hdr-collapsed { padding-bottom: 0; }
 
 /* ── Embedded analysis (collapsible) ── */
 .adbg-analysis {
@@ -2632,8 +2659,14 @@ body {
   flex: 1; min-height: 0;
 }
 /* Inside the header in fullscreen, hide everything except the action row
-   (so the timestamp/URL/entry-point block don't reappear). */
-.adbg-detail-fulllog .adbg-det-hdr > *:not(.adbg-det-actions) {
+   (so the timestamp/URL/entry-point block don't reappear). The actions
+   are nested inside .adbg-det-hdr-body so we keep that container visible
+   and hide its other children — and hide the click-to-minimize bar too. */
+.adbg-detail-fulllog .adbg-det-hdr > .adbg-det-hdr-bar { display: none; }
+.adbg-detail-fulllog .adbg-det-hdr > .adbg-det-hdr-body {
+  display: block;
+}
+.adbg-detail-fulllog .adbg-det-hdr-body > *:not(.adbg-det-actions) {
   display: none;
 }
 .adbg-detail-fulllog .adbg-det-hdr {
