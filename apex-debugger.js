@@ -1173,6 +1173,8 @@ const ApexDebugger = (() => {
               title="Collapse all expandable sections in this view">↕ Collapse all</button>
             <button class="btn btn-secondary btn-sm" id="adbgFullLogBtn"
               title="Hide the trace summary panel — give the log viewer the entire screen">⛶ Fullscreen log</button>
+            <button class="btn btn-secondary btn-sm" id="adbgNewTabBtn"
+              title="Open this log in a new browser tab with all search/filter/goto controls">⤢ Open in new tab</button>
           </div>
         </div>
 
@@ -1335,6 +1337,7 @@ const ApexDebugger = (() => {
     document.getElementById('adbgDlBtn')?.addEventListener('click', () => _downloadRaw(p.id));
     document.getElementById('adbgCopyReportBtn')?.addEventListener('click', e => _copyReport(p, e.currentTarget));
     document.getElementById('adbgDlReportBtn')?.addEventListener('click', () => _downloadReport(p));
+    document.getElementById('adbgNewTabBtn')?.addEventListener('click', e => _openLogInNewTab(p, e.currentTarget));
 
     // Collapse / Expand all <details> sections in the trace detail panel.
     // Useful when ANALYSIS is open with lots of children and you just want to
@@ -2090,6 +2093,41 @@ const ApexDebugger = (() => {
     });
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  // ── Open this log in a standalone new-tab viewer ──────────
+  // Stashes the parsed log payload in chrome.storage.local under a one-shot
+  // key, then opens apex-log-viewer.html?key=… in a new tab. The standalone
+  // page reads + deletes the key on load, giving the user a real fullscreen
+  // log experience (whole viewport, no popup chrome) with the same search /
+  // filter / goto controls as the inline panel.
+  async function _openLogInNewTab(p, btn) {
+    const orig = btn?.textContent;
+    if (btn) { btn.disabled = true; btn.textContent = '… opening'; }
+    try {
+      let raw = p.raw;
+      // p.raw is set by _renderDetail but defensive: refetch if missing.
+      if (!raw) {
+        const res = await _bg({ type: 'SF_REST_GET_TEXT', path: `${TAPI}/sobjects/ApexLog/${p.id}/Body` });
+        if (res.error) throw new Error(res.error);
+        raw = res.text || '';
+      }
+      const key = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      const storeKey = 'apex_log_viewer_' + key;
+      const payload = {
+        raw,
+        report:   _buildReport(p),
+        fileName: `apex-${(p.id || 'log').slice(0, 8)}`,
+        meta: p.meta || {},
+      };
+      await chrome.storage.local.set({ [storeKey]: payload });
+      const url = chrome.runtime.getURL(`apex-log-viewer.html?key=${encodeURIComponent(key)}`);
+      await chrome.tabs.create({ url });
+    } catch (err) {
+      alert('Could not open log in new tab: ' + (err.message || err));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = orig || '⤢ Open in new tab'; }
+    }
   }
 
   // ── Helpers ───────────────────────────────────────────────

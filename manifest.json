@@ -19,7 +19,9 @@
         "dependency-map.js", "conflict-scanner.js", "apex-debugger.js",
         "lightning-pages.js", "user-copy.js", "license-manager.js",
         "flow-permissions.js", "field-cleaner.js", "record-copy.js",
-        "studio.html", "studio.css", "studio.js"
+        "studio.html", "studio.css", "studio.js",
+        "apex-log-viewer.html", "apex-log-viewer.css", "apex-log-viewer.js",
+        "trusted-types-policy.js"
       ],
       "matches": ["<all_urls>"]
     }
