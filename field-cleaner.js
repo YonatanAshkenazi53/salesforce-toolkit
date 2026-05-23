@@ -822,6 +822,38 @@ const FieldCleaner = (() => {
     }
   }
 
+  // Show a "partial fix" status on a flow item — N references removed, M
+  // remain. We do NOT remove the .fc-fix-btn here, so checkEnableDelete
+  // still sees an unresolved fix and keeps the Delete Field button disabled.
+  function _markFlowPartial(componentId, removed, remaining) {
+    const item = eid(`fcItem_${componentId}`);
+    if (!item) return;
+    // Drop any prior partial-status banner so we don't stack them on repeat fixes.
+    item.querySelector('.fc-item-partial')?.remove();
+    const banner = document.createElement('div');
+    banner.className = 'fc-item-partial';
+    banner.textContent =
+      `⚠ Partial fix: removed ${removed} reference${removed === 1 ? '' : 's'}, ` +
+      `${remaining} remain. The flow still references the field — finish the trim ` +
+      `or remove the rest in Flow Builder before deleting.`;
+    item.appendChild(banner);
+    item.classList.add('fc-item-warn');
+  }
+
+  // Re-fetch + re-render the XML inspector panel for a dependency. Used
+  // after a partial flow fix so the user sees the post-deploy state with
+  // only the remaining refs still checkable.
+  async function _refreshXmlInspector(type, componentId, componentName, fieldId) {
+    const panel = eid(`fcXml_${componentId}`);
+    if (!panel) return;
+    // Trick toggleXmlInspector into treating the panel as closed so it
+    // re-renders rather than just toggling it off.
+    panel.style.display = 'none';
+    const inspBtn = document.querySelector(`.fc-inspect-btn[data-id="${componentId}"]`);
+    if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open');
+    await toggleXmlInspector(type, componentId, componentName, fieldId);
+  }
+
   // ── Flow fix logic ─────────────────────────────────────────
   async function fixFlow(flowId, flowName) {
     // Read full flow metadata
@@ -1937,9 +1969,23 @@ const FieldCleaner = (() => {
       // Keep the button label's count in sync as the user ticks/unticks.
       const selBtn = panel.querySelector('.fc-xml-fix-sel');
       if (selBtn) {
+        // Snapshot how many deletable blocks the panel was rendered with —
+        // we compare against the user's selection size after deploy so we
+        // can distinguish a FULL fix (all refs removed) from a PARTIAL fix
+        // (some refs left behind). A partial fix must NOT mark the item as
+        // done, because the flow still references the field.
+        const totalDeletable = delCount;
         const syncCount = () => {
           const n = panel.querySelectorAll('.xi-del-check:checked').length;
-          selBtn.textContent = `✂ Remove selected (${n})`;
+          // Make the label clearly say "partial" when the user has unticked
+          // some boxes — so it's obvious that clicking won't fully resolve.
+          if (n === 0) {
+            selBtn.textContent = '✂ Remove selected (0)';
+          } else if (n < totalDeletable) {
+            selBtn.textContent = `✂ Remove ${n} of ${totalDeletable} (partial)`;
+          } else {
+            selBtn.textContent = `✂ Remove selected (${n})`;
+          }
           selBtn.disabled = n === 0;
         };
         panel.querySelectorAll('.xi-del-check').forEach(cb =>
@@ -1950,12 +1996,22 @@ const FieldCleaner = (() => {
               .map(cb => parseInt(cb.dataset.idx, 10))
           );
           if (!selSet.size) return;
+          const isPartial = selSet.size < totalDeletable;
           selBtn.disabled = true; selBtn.textContent = '⏳ Removing…';
           try {
             await fixFlowSelective(componentId, componentName, selSet);
-            panel.style.display = 'none';
-            if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open');
-            markFixed(componentId, '✅ Done');
+            if (isPartial) {
+              // Don't mark the dependency as resolved — the flow still
+              // references the field. Show an inline warning, re-render
+              // the inspector against the freshly-deployed metadata so the
+              // user can see what's left and trim more if desired.
+              _markFlowPartial(componentId, selSet.size, totalDeletable - selSet.size);
+              await _refreshXmlInspector(type, componentId, componentName, fieldId);
+            } else {
+              panel.style.display = 'none';
+              if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open');
+              markFixed(componentId, '✅ Done');
+            }
           } catch (e) {
             selBtn.disabled = false; syncCount();
             appendInlineError(componentId, e.message, e.setupUrl, '↗ Open in Flow Builder');
