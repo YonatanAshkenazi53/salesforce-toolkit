@@ -1790,6 +1790,82 @@ html, body {
 .ds-done-row { padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg); }
 .ds-prog-hdr { padding: 10px 16px; font-weight: 700; font-size: 12px; color: var(--subtext); border-bottom: 1px solid var(--border); }
 
+/* ── Org Compare ──────────────────────────────────────────────── */
+.ds-oc-config {
+  display: flex; align-items: flex-end; gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  flex-wrap: wrap;
+}
+.ds-oc-objects-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  max-width: 1200px;
+}
+.ds-oc-objects-sum { cursor: pointer; user-select: none; padding: 4px 0; }
+.ds-oc-sub { color: var(--subtext); font-size: 11px; margin-left: 8px; font-weight: 400; }
+.ds-oc-empty { padding: 12px; color: var(--subtext); font-size: 12px; }
+.ds-oc-list-actions {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 0; border-bottom: 1px solid var(--border-light);
+  margin-bottom: 8px;
+}
+.ds-oc-rows {
+  max-height: 320px; overflow-y: auto;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 2px 12px;
+}
+.ds-oc-obj-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 6px; border-radius: 3px;
+  font-size: 12px; cursor: pointer;
+}
+.ds-oc-obj-row:hover { background: var(--brand-bg); }
+.ds-oc-obj-row input { margin: 0; }
+.ds-oc-obj-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-oc-obj-api { font-size: 10px; color: var(--subtext); font-family: ui-monospace, monospace; }
+.ds-oc-obj-tag {
+  font-size: 9px; padding: 1px 5px; border-radius: 8px;
+  background: #DBEAFE; color: #1E40AF; font-weight: 600;
+}
+.ds-oc-obj-custom { background: rgba(125, 125, 220, 0.04); }
+
+.ds-oc-table {
+  width: 100%; max-width: 1200px;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 12px;
+}
+.ds-oc-table th {
+  text-align: left; padding: 8px 12px;
+  font-size: 11px; text-transform: uppercase;
+  color: var(--subtext); letter-spacing: .4px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.ds-oc-table td {
+  padding: 8px 12px; font-size: 12.5px;
+  border-bottom: 1px solid var(--border-light);
+}
+.ds-oc-row {
+  border-left: 4px solid transparent;
+}
+.ds-oc-row.ds-oc-green  { border-left-color: #16a34a; }
+.ds-oc-row.ds-oc-yellow { border-left-color: #ca8a04; background: rgba(254, 243, 199, 0.18); }
+.ds-oc-row.ds-oc-orange { border-left-color: #ea580c; background: rgba(254, 215, 170, 0.22); }
+.ds-oc-row.ds-oc-red    { border-left-color: #dc2626; background: rgba(254, 226, 226, 0.30); }
+.ds-oc-row .ds-oc-pct strong { font-size: 14px; }
+.ds-oc-row-mf { font-size: 10px; color: var(--subtext); margin-left: 6px; font-family: ui-monospace, monospace; }
+.ds-oc-pending { color: var(--subtext); font-style: italic; }
+.ds-oc-err { color: #b45309; background: rgba(234, 88, 12, 0.08); }
+
 /* ── Reconcile (Phase 3A) ────────────────────────────────────── */
 .ds-rec-cols {
   display: grid;
