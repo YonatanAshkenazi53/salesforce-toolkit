@@ -769,11 +769,12 @@ const ApexDebugger = (() => {
 
   async function _pollForNew() {
     if (!_lastPoll) { _loadLogs(); return; }
-    const uid = _traceUser?.Id;
     const ts  = _lastPoll;
-    const where = uid
-      ? `WHERE LogUserId='${uid}' AND CreatedDate > ${ts}`
-      : `WHERE CreatedDate > ${ts}`;
+    // Show ALL new logs in the org (no user filter on the list view; the
+    // user picker is for setting trace flags, not for filtering the list).
+    // StartTime is ApexLog's canonical creation timestamp — the Tooling
+    // endpoint rejects CreatedDate filters on ApexLog with HTTP 400.
+    const where = `WHERE StartTime > ${ts}`;
     const res = await _bg({
       type: 'SF_QUERY', tooling: true,
       query: _logQuery(where) + ' LIMIT 50'
@@ -800,7 +801,9 @@ const ApexDebugger = (() => {
     if (!listEl) return;
     listEl.innerHTML = '<div class="adbg-list-ph">' + sftkCatSm('Loading…') + '</div>';
 
-    const where = _selUser ? `WHERE LogUserId='${_selUser.Id}'` : '';
+    // List view shows ALL logs in the org. The user picker drives trace-flag
+    // management (Start Trace), not log filtering.
+    const where = '';
     const res = await _bg({
       type: 'SF_QUERY', tooling: true,
       query: _logQuery(where) + ` LIMIT ${MAX_LOGS}`

@@ -2117,6 +2117,19 @@ html, body {
   border-radius: 10px;
   color: var(--text);
 }
+/* Per-DML breakdown inside a reconcile run's history chip */
+.ds-rec-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9px;
+  margin-left: 4px;
+}
+.ds-rec-tag-ins  { background: #DBEAFE; color: #1E40AF; }      /* inserted */
+.ds-rec-tag-upd  { background: #FEF3C7; color: #92400E; }      /* updated  */
+.ds-rec-tag-del  { background: #FEE2E2; color: #991B1B; }      /* deleted  */
+.ds-rec-tag-fail { background: #FEE2E2; color: #991B1B; border: 1px solid #FCA5A5; }
 
 .ds-history-errors summary {
   cursor: pointer;
