@@ -778,7 +778,9 @@ const ApexDebugger = (() => {
       type: 'SF_QUERY', tooling: true,
       query: _logQuery(where) + ' LIMIT 50'
     });
-    _lastPoll = new Date().toISOString();
+    // SOQL DateTime literals reject the millisecond suffix (.NNNZ) — Salesforce
+    // returns HTTP 400 if we pass it. Drop the fraction before storing.
+    _lastPoll = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
     if (res.error || !res.records?.length) return;
     const existing = new Set(_logs.map(l => l.Id));
     res.records.forEach(l => {
@@ -803,7 +805,8 @@ const ApexDebugger = (() => {
       type: 'SF_QUERY', tooling: true,
       query: _logQuery(where) + ` LIMIT ${MAX_LOGS}`
     });
-    _lastPoll = new Date().toISOString();
+    // Strip the .NNN fraction — SOQL DateTime literals reject milliseconds.
+    _lastPoll = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
 
     if (res.error) {
       listEl.innerHTML = `<div class="adbg-list-ph adbg-list-err">⚠ ${_esc(res.error)}</div>`;
