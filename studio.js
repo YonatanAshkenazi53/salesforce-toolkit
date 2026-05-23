@@ -814,6 +814,7 @@ function renderView(view) {
     case 'readiness': renderReadiness();   break;
     case 'schema':    renderSchemaView();  break;
     case 'reconcile': renderReconcile();   break;
+    case 'compare':   renderOrgCompare(); break;
   }
 }
 
@@ -3497,7 +3498,13 @@ async function runDiffScan(profile) {
 // profile, persist, refresh whatever UI is open. Returns the result object
 // so the caller can show a toast / error / counts inline.
 async function refreshProfileDiff(profileId) {
-  const profile = _profiles.find(p => p.id === profileId);
+  // Ephemeral profiles (from Org Compare → Reconcile) aren't in _profiles —
+  // fall back to the in-memory _reconcileProfile so the refresh button inside
+  // Reconcile still works on them. ephemeral profiles skip the storage save.
+  let profile = _profiles.find(p => p.id === profileId);
+  if (!profile && _reconcileProfile && _reconcileProfile.id === profileId) {
+    profile = _reconcileProfile;
+  }
   if (!profile) return null;
   const res = await runDiffScan(profile);
   if (res?.error) {
@@ -3506,7 +3513,7 @@ async function refreshProfileDiff(profileId) {
   }
   profile.lastScan  = res;
   profile.updatedAt = new Date().toISOString();
-  await storageSaveProfiles();
+  if (!profile.ephemeral) await storageSaveProfiles();
 
   // Keep the in-memory transfer profile aligned, mirroring commitEditingProfile.
   if (_transferProfile && _transferProfile.id === profile.id) _transferProfile = profile;
@@ -4888,6 +4895,379 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     if (!r.success) errors.push(`${objType}: ${(r.errors || []).map(e => e.message).join('; ')}`);
   }
   return { ok, failed: arr.length - ok, errors };
+}
+
+// ════════════════════════════════════════════════════════════════
+// ORG COMPARE (org-wide data diff across many objects)
+// ════════════════════════════════════════════════════════════════
+// Pick a source + target org from open Chrome tabs, pick which objects to
+// compare, then run a parallel diff across all of them. Result is a
+// scorecard table sorted by worst drift first. Click a row → opens
+// Reconcile scoped to that object via an ephemeral profile.
+
+// Curated standard objects worth comparing by default. Customs (suffix __c)
+// are auto-added. Audit/junk objects are NOT included by default; user can
+// always tick them in the picker.
+const _OC_KEY_STANDARDS = [
+  'Account', 'Contact', 'Lead', 'Opportunity', 'OpportunityLineItem',
+  'Case', 'CaseComment', 'Campaign', 'CampaignMember',
+  'Product2', 'Pricebook2', 'PricebookEntry', 'Quote', 'QuoteLineItem',
+  'Order', 'OrderItem', 'Asset', 'Contract', 'ContractLineItem',
+  'Task', 'Event'
+];
+
+let _orgCompareState = {
+  srcOrgUrl:        '',
+  tgtOrgUrl:        '',
+  availableObjects: null,   // [{ name, label, custom }] from describeGlobal
+  selectedObjects:  null,   // Set<string> — null = use default
+  results:          null,   // [{ name, srcCount, tgtCount, matched, missing, extras, matchField, error? }]
+  running:          false,
+  lastRunAt:        null,
+};
+
+async function renderOrgCompare() {
+  const allSess = _buildAllSessions();
+  if (!_orgCompareState.srcOrgUrl && _orgUrl) _orgCompareState.srcOrgUrl = _orgUrl;
+
+  const orgOptions = allSess.map(s =>
+    `<option value="${esc(s.orgUrl)}">${esc(s.label || orgLabel(s.orgUrl))}</option>`
+  ).join('');
+
+  setMain(`
+    <div class="ds-view-header">
+      <div class="ds-view-title-wrap">
+        <h2 class="ds-view-title">🔍 Org Compare</h2>
+        <div class="ds-view-subtitle">Diff record counts across many objects between two orgs — find drift at a glance</div>
+      </div>
+    </div>
+
+    <div style="background:#E8F4FD;border:1px solid #C5DBF0;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#014486;max-width:920px">
+      <strong>Read-only.</strong> Org Compare queries record counts and which records exist in each org (matched by Name / nameField).
+      Click any row in the result table to open <strong>Reconcile</strong> scoped to that object — that's where you can actually insert/update/delete.
+    </div>
+
+    <div class="ds-oc-config">
+      <div class="ds-field-group">
+        <label class="ds-lbl">Source org</label>
+        <select id="dsOCSrc" class="ds-select">
+          <option value="">— Select source —</option>${orgOptions}
+        </select>
+      </div>
+      <span class="ds-transfer-arrow" style="margin-top:22px">→</span>
+      <div class="ds-field-group">
+        <label class="ds-lbl">Target org</label>
+        <select id="dsOCTgt" class="ds-select">
+          <option value="">— Select target —</option>${orgOptions}
+        </select>
+      </div>
+      <button class="ds-btn ds-btn-primary ds-btn-lg" id="dsOCRun" disabled style="margin-top:18px">▶ Compare</button>
+    </div>
+
+    <details id="dsOCObjects" class="ds-oc-objects-panel" style="margin:14px 0">
+      <summary class="ds-oc-objects-sum"><strong>Objects to compare</strong>
+        <span class="ds-oc-sub" id="dsOCObjCount">— choose orgs first —</span>
+      </summary>
+      <div id="dsOCObjList" class="ds-oc-obj-list"></div>
+    </details>
+
+    <div id="dsOCResults"></div>
+  `);
+
+  // Restore prior org choices
+  const srcSel = eid('dsOCSrc'), tgtSel = eid('dsOCTgt');
+  if (srcSel && _orgCompareState.srcOrgUrl) srcSel.value = _orgCompareState.srcOrgUrl;
+  if (tgtSel && _orgCompareState.tgtOrgUrl) tgtSel.value = _orgCompareState.tgtOrgUrl;
+
+  function updateRunBtn() {
+    const btn = eid('dsOCRun');
+    if (!btn) return;
+    const s = srcSel?.value, t = tgtSel?.value;
+    btn.disabled = !s || !t || s === t || _orgCompareState.running;
+  }
+  updateRunBtn();
+
+  srcSel?.addEventListener('change', () => {
+    _orgCompareState.srcOrgUrl = srcSel.value;
+    _orgCompareState.availableObjects = null;
+    _orgCompareState.selectedObjects = null;
+    _ocRefreshObjectList();
+    updateRunBtn();
+  });
+  tgtSel?.addEventListener('change', () => {
+    _orgCompareState.tgtOrgUrl = tgtSel.value;
+    updateRunBtn();
+  });
+
+  eid('dsOCRun')?.addEventListener('click', runOrgCompare);
+
+  // Load the object list if we already have a source picked.
+  if (_orgCompareState.srcOrgUrl) _ocRefreshObjectList();
+
+  // Re-render any prior results
+  if (_orgCompareState.results) _ocRenderResults();
+}
+
+// Discover queryable objects on the source org (describeGlobal) and render
+// the multi-select. Defaults: every __c + curated standards (_OC_KEY_STANDARDS).
+async function _ocRefreshObjectList() {
+  const listEl = eid('dsOCObjList');
+  const countEl = eid('dsOCObjCount');
+  if (!listEl) return;
+  if (!_orgCompareState.srcOrgUrl) {
+    listEl.innerHTML = '<div class="ds-oc-empty">Pick a source org to load its object list.</div>';
+    if (countEl) countEl.textContent = '— choose orgs first —';
+    return;
+  }
+  const sess = _buildAllSessions().find(s => s.orgUrl === _orgCompareState.srcOrgUrl);
+  if (!sess?.sid) {
+    listEl.innerHTML = '<div class="ds-oc-empty">Source org not active — open it in Chrome.</div>';
+    return;
+  }
+
+  if (!_orgCompareState.availableObjects) {
+    listEl.innerHTML = '<div class="ds-oc-empty">Loading object list…</div>';
+    try {
+      const res = await sendBg({
+        type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid,
+        path: `services/data/${'v62.0'}/sobjects`
+      });
+      const objs = (res?.sobjects || [])
+        .filter(o => o.queryable && o.createable && !o.deprecatedAndHidden)
+        .map(o => ({ name: o.name, label: o.label || o.name, custom: !!o.custom }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+      _orgCompareState.availableObjects = objs;
+    } catch (e) {
+      listEl.innerHTML = `<div class="ds-oc-empty">Failed to load objects: ${esc(e?.message || e)}</div>`;
+      return;
+    }
+  }
+
+  // Seed defaults on first load: every __c + curated key standards.
+  if (!_orgCompareState.selectedObjects) {
+    const defaults = new Set(_OC_KEY_STANDARDS);
+    for (const o of _orgCompareState.availableObjects) if (o.custom) defaults.add(o.name);
+    _orgCompareState.selectedObjects = defaults;
+  }
+
+  const sel = _orgCompareState.selectedObjects;
+  const rows = _orgCompareState.availableObjects.map(o => `
+    <label class="ds-oc-obj-row${o.custom ? ' ds-oc-obj-custom' : ''}">
+      <input type="checkbox" data-oc-obj="${esc(o.name)}" ${sel.has(o.name) ? 'checked' : ''}>
+      <span class="ds-oc-obj-name">${esc(o.label)}</span>
+      <span class="ds-oc-obj-api">${esc(o.name)}</span>
+      ${o.custom ? '<span class="ds-oc-obj-tag">custom</span>' : ''}
+    </label>`).join('');
+
+  listEl.innerHTML = `
+    <div class="ds-oc-list-actions">
+      <button class="ds-btn ds-btn-xs" id="dsOCSelAll">✓ All</button>
+      <button class="ds-btn ds-btn-xs" id="dsOCSelNone">✗ None</button>
+      <button class="ds-btn ds-btn-xs" id="dsOCSelDefault">↺ Default (customs + key standards)</button>
+      <input type="text" id="dsOCFilter" class="ds-input ds-input-sm" placeholder="Filter…" style="margin-left:auto;width:180px">
+    </div>
+    <div class="ds-oc-rows">${rows}</div>`;
+
+  function syncCount() {
+    if (countEl) countEl.textContent = `${sel.size} of ${_orgCompareState.availableObjects.length} selected`;
+  }
+  syncCount();
+  listEl.querySelectorAll('[data-oc-obj]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) sel.add(cb.dataset.ocObj); else sel.delete(cb.dataset.ocObj);
+      syncCount();
+    });
+  });
+  eid('dsOCSelAll')?.addEventListener('click', () => {
+    _orgCompareState.availableObjects.forEach(o => sel.add(o.name));
+    _ocRefreshObjectList();
+  });
+  eid('dsOCSelNone')?.addEventListener('click', () => {
+    sel.clear(); _ocRefreshObjectList();
+  });
+  eid('dsOCSelDefault')?.addEventListener('click', () => {
+    sel.clear();
+    for (const n of _OC_KEY_STANDARDS) sel.add(n);
+    for (const o of _orgCompareState.availableObjects) if (o.custom) sel.add(o.name);
+    _ocRefreshObjectList();
+  });
+  eid('dsOCFilter')?.addEventListener('input', e => {
+    const q = e.target.value.toLowerCase();
+    listEl.querySelectorAll('.ds-oc-obj-row').forEach(row => {
+      const text = row.textContent.toLowerCase();
+      row.style.display = text.includes(q) ? '' : 'none';
+    });
+  });
+}
+
+async function runOrgCompare() {
+  const s = _orgCompareState.srcOrgUrl, t = _orgCompareState.tgtOrgUrl;
+  const allSess = _buildAllSessions();
+  const src = allSess.find(x => x.orgUrl === s);
+  const tgt = allSess.find(x => x.orgUrl === t);
+  if (!src?.sid || !tgt?.sid) {
+    showToast('Both orgs must be open in Chrome', 'error', 4000);
+    return;
+  }
+  const toRun = [...(_orgCompareState.selectedObjects || [])];
+  if (!toRun.length) {
+    showToast('Pick at least one object to compare', 'error', 3500);
+    return;
+  }
+
+  _orgCompareState.running = true;
+  _orgCompareState.results = toRun.map(name => ({ name, status: 'pending' }));
+  _ocRenderResults();
+  const btn = eid('dsOCRun');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Comparing…'; }
+
+  // Concurrency: 4 objects at a time to keep the popup responsive while
+  // moving fast. Each compare does describe (cached) + 2 SOQL queries.
+  const CONC = 4;
+  let cursor = 0;
+  async function worker() {
+    while (cursor < toRun.length) {
+      const idx = cursor++;
+      const objName = toRun[idx];
+      try {
+        const r = await _ocCompareOneObject(objName, src, tgt);
+        _orgCompareState.results[idx] = { name: objName, ...r };
+      } catch (e) {
+        _orgCompareState.results[idx] = { name: objName, error: e?.message || String(e) };
+      }
+      _ocRenderResults();
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONC, toRun.length) }, worker));
+
+  _orgCompareState.running = false;
+  _orgCompareState.lastRunAt = new Date().toISOString();
+  if (btn) { btn.disabled = false; btn.textContent = '▶ Compare'; }
+  _ocRenderResults();
+  showToast(`Org Compare complete — ${toRun.length} object(s)`, 'success', 3500);
+}
+
+// Compare ONE object: describe (to pick matchField), parallel SOQL on both
+// orgs, index by matchField value, count buckets. Presence-only (no drift)
+// since Org Compare has no per-object field config — drift is the
+// Reconcile view's job, fed by a Profile.
+async function _ocCompareOneObject(objName, srcSess, tgtSess) {
+  // Pick matchField via describe (Name → nameField fallback).
+  let matchField = 'Name';
+  try {
+    const d = await sendBg({
+      type: 'SF_REST_GET', orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+      path: `services/data/v62.0/sobjects/${objName}/describe`
+    });
+    const names = new Set((d?.fields || []).map(f => f.name));
+    if (!names.has('Name')) {
+      const nf = (d?.fields || []).find(f => f.nameField === true);
+      if (nf?.name) matchField = nf.name;
+      else if (names.has('Id')) matchField = 'Id'; // last resort
+    }
+  } catch (_) {/* push through */}
+
+  const soql = `SELECT Id, ${matchField} FROM ${objName}`;
+  const [srcRes, tgtRes] = await Promise.all([
+    sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid, query: soql }),
+    sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, query: soql })
+  ]);
+  if (srcRes?.error) return { error: `source: ${srcRes.error}` };
+  if (tgtRes?.error) return { error: `target: ${tgtRes.error}` };
+
+  const srcByKey = new Map(), tgtByKey = new Map();
+  for (const r of (srcRes.records || [])) {
+    const k = r[matchField]; if (k != null && k !== '') srcByKey.set(String(k), r);
+  }
+  for (const r of (tgtRes.records || [])) {
+    const k = r[matchField]; if (k != null && k !== '') tgtByKey.set(String(k), r);
+  }
+  let matched = 0, missing = 0, extras = 0;
+  for (const k of srcByKey.keys()) (tgtByKey.has(k) ? matched++ : missing++);
+  for (const k of tgtByKey.keys()) if (!srcByKey.has(k)) extras++;
+  const denom = matched + missing;
+  const pct = denom > 0 ? Math.round(matched / denom * 100) : (extras === 0 ? 100 : 0);
+  return {
+    srcCount:   srcByKey.size,
+    tgtCount:   tgtByKey.size,
+    matched, missing, extras,
+    matchField,
+    matchPct:   pct
+  };
+}
+
+function _ocRenderResults() {
+  const el = eid('dsOCResults');
+  if (!el) return;
+  const rows = _orgCompareState.results || [];
+  if (!rows.length) { el.innerHTML = ''; return; }
+
+  // Sort: worst match% first (lowest), errors at top, pending at bottom.
+  const done = rows.filter(r => r.status !== 'pending' && !r.error)
+    .sort((a, b) => (a.matchPct || 0) - (b.matchPct || 0));
+  const errs = rows.filter(r => r.error);
+  const pend = rows.filter(r => r.status === 'pending');
+  const ordered = [...errs, ...done, ...pend];
+
+  const colorFor = pct => pct >= 99 ? 'ds-oc-green'
+                       : pct >= 90 ? 'ds-oc-yellow'
+                       : pct >= 70 ? 'ds-oc-orange'
+                       :             'ds-oc-red';
+
+  el.innerHTML = `
+    <table class="ds-oc-table">
+      <thead><tr>
+        <th>Object</th><th>Source</th><th>Target</th>
+        <th>Matched</th><th>Missing in target</th><th>Only in target</th>
+        <th>% match</th><th></th>
+      </tr></thead>
+      <tbody>${ordered.map(r => {
+        if (r.status === 'pending') return `<tr><td>${esc(r.name)}</td><td colspan="7" class="ds-oc-pending">⏳ comparing…</td></tr>`;
+        if (r.error) return `<tr><td>${esc(r.name)}</td><td colspan="7" class="ds-oc-err">⚠ ${esc(r.error)}</td></tr>`;
+        return `<tr class="ds-oc-row ${colorFor(r.matchPct)}">
+          <td>${esc(r.name)} <span class="ds-oc-row-mf">by ${esc(r.matchField)}</span></td>
+          <td>${r.srcCount.toLocaleString()}</td>
+          <td>${r.tgtCount.toLocaleString()}</td>
+          <td>${r.matched.toLocaleString()}</td>
+          <td>${r.missing ? `<strong>${r.missing.toLocaleString()}</strong>` : '0'}</td>
+          <td>${r.extras  ? `<strong>${r.extras.toLocaleString()}</strong>`  : '0'}</td>
+          <td class="ds-oc-pct"><strong>${r.matchPct}%</strong></td>
+          <td><button class="ds-btn ds-btn-xs ds-btn-primary" data-oc-reconcile="${esc(r.name)}">⚖ Reconcile</button></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+
+  // Wire row reconcile buttons — build an ephemeral profile and open Reconcile.
+  el.querySelectorAll('[data-oc-reconcile]').forEach(btn => {
+    btn.addEventListener('click', () => _ocOpenReconcile(btn.dataset.ocReconcile));
+  });
+}
+
+// Open Reconcile scoped to one object — build an ephemeral, unsaved profile
+// so the user can act on the diff right away without going through the
+// Profile Builder. Pre-runs the diff scan so the columns are populated
+// the moment the view opens.
+async function _ocOpenReconcile(objName) {
+  const ephemeral = {
+    id:         `oc_${Date.now()}_${objName}`,
+    name:       `Org Compare · ${objName}`,
+    sourceOrg:  _orgCompareState.srcOrgUrl,
+    targetOrg:  _orgCompareState.tgtOrgUrl,
+    tree:       { objectType: objName, where: '', children: [], fieldMappings: {} },
+    ephemeral:  true   // marker so refreshProfileDiff skips persistence
+  };
+  showToast(`Loading diff for ${objName}…`, 'info', 2500);
+  const res = await runDiffScan(ephemeral);
+  if (res?.error) {
+    showToast(`Diff scan failed: ${res.error}`, 'error', 5000);
+    return;
+  }
+  ephemeral.lastScan = res;
+  _reconcileProfile = ephemeral;
+  _currentView = 'reconcile';
+  document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('[data-view="compare"]')?.classList.add('active');
+  renderReconcile();
 }
 
 // ════════════════════════════════════════════════════════════════
