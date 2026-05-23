@@ -86,6 +86,21 @@ function sendBg(msg) {
   );
 }
 
+// Field types that count as "string-displayable" — used by the Pick Records
+// modal + Transfer record-filter modal to pick which fields to show.
+// Hoisted to module scope so the same set is shared instead of duplicated.
+const STRING_TYPES = new Set([
+  'string', 'email', 'phone', 'url', 'textarea', 'picklist', 'id', 'reference', 'autonumber'
+]);
+
+// SOQL string-literal — wraps the value in single quotes and escapes
+// embedded backslashes + single quotes so values like O'Brien or paths
+// don't break the query. Use whenever a Salesforce-record value flows
+// into a SOQL `WHERE field = '…'` or `IN ('…')` clause.
+function soqlStrLit(v) {
+  return "'" + String(v == null ? '' : v).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
+}
+
 // ── Session error detection & recovery ────────────────────────
 // Match any string that Salesforce or the background script uses for a stale SID.
 function isSessionError(errStr) {
@@ -183,6 +198,14 @@ async function storageLoad() {
   _orgs         = d.sftk_orgs       || {};
   _darkMode     = d.ds_dark_mode    || false;
   _activityLog  = d.ds_activity_log || {};
+
+  // One-time purge of storage keys orphaned by the feature trim
+  // (credential vault, schedule, scan map, snapshots, manual connections).
+  // Harmless if absent; fire-and-forget so it doesn't slow first paint.
+  chrome.storage.local.remove([
+    'ds_stored_orgs', 'ds_connections', 'ds_scans', 'ds_scan_results',
+    'org_snapshots',  'sftk_debug_enabled_legacy'
+  ]).catch(() => {});
 }
 
 
@@ -2595,7 +2618,6 @@ async function openRecordPickerModal(pathStr) {
 
   // Candidate "display" fields: string/text fields that are readable
   // Prefer Name, then common key fields, then any string field
-  const STRING_TYPES = new Set(['string', 'email', 'phone', 'url', 'textarea', 'picklist', 'id', 'reference', 'autonumber']);
   const candidateFields = (desc?.fields || [])
     .filter(f => STRING_TYPES.has(f.type) && !f.deprecatedAndHidden && f.name !== 'Id')
     .map(f => ({ name: f.name, label: f.label || f.name }))
@@ -3021,7 +3043,6 @@ async function openTransferRecordFilterModal(pathKey, objType) {
     path: `services/data/v62.0/sobjects/${objType}/describe`
   });
 
-  const STRING_TYPES = new Set(['string','email','phone','url','textarea','picklist','id','reference','autonumber']);
   const candidateFields = (desc.error ? [] : (desc.fields || []))
     .filter(f => STRING_TYPES.has(f.type) && !f.deprecatedAndHidden && f.name !== 'Id')
     .map(f => ({ name: f.name, label: f.label || f.name }))
@@ -4259,7 +4280,10 @@ async function runTransfer() {
           if (!anchorValues.length) continue;
 
           // Match against target
-          const valList = anchorValues.map(v => `'${String(v).replace(/'/g, "\\'")}'`).join(',');
+          // Use soqlStrLit so values like O'Brien (or anything containing
+          // a backslash) are safely escaped — the old inline escape only
+          // handled single quotes, leaving backslashes to corrupt the query.
+          const valList = anchorValues.map(soqlStrLit).join(',');
           const tgtLookup = await sendBg({
             type: 'SF_QUERY', tooling: false,
             orgUrl: _transferTgt.orgUrl, sid: _transferTgt.sid,
