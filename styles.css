@@ -4509,6 +4509,15 @@ body {
 .fc-item-btns { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .fc-item-ok    { font-size: 11px; color: #2e7d32; }
 .fc-item-fixed { opacity: .65; }
+.fc-item-warn  { background: rgba(245, 158, 11, 0.08); border-left: 3px solid #f59e0b; padding-left: 8px; }
+.fc-item-partial {
+  font-size: 11px; color: #92400e;
+  margin-top: 3px;
+  padding: 4px 8px;
+  background: rgba(245, 158, 11, 0.12);
+  border-radius: 4px;
+  line-height: 1.4;
+}
 .fc-item-err   {
   font-size: 11px; color: var(--danger); margin-top: 3px;
   padding: 3px 6px; background: rgba(194,57,52,.08); border-radius: 4px;
