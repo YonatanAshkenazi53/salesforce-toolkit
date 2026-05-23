@@ -2593,15 +2593,43 @@ body {
 }
 
 /* Fullscreen-log mode — when the user clicks ⛶ Fullscreen log we add this
-   class to .adbg-detail. CSS hides every direct child of .adbg-detail-inner
-   EXCEPT the action toolbar (so they can exit fullscreen) and the log
-   content section. The log section then expands to fill the freed space. */
+   class to .adbg-detail. The detail panel is yanked out of layout flow
+   and pinned to the viewport so it covers the sidebar, topbar, and
+   everything else. Inside, CSS hides every direct child of
+   .adbg-detail-inner EXCEPT the action toolbar (so they can exit
+   fullscreen) and the log content section. */
+.adbg-detail-fulllog {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 99999 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  background: var(--card, #fff);
+  box-shadow: none !important;
+}
+.adbg-detail-fulllog .adbg-detail-inner {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  padding: 10px 14px;
+  box-sizing: border-box;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
 .adbg-detail-fulllog .adbg-detail-inner > * {
   display: none;
 }
 .adbg-detail-fulllog .adbg-detail-inner > .adbg-det-hdr,
 .adbg-detail-fulllog .adbg-detail-inner > .adbg-logsec {
   display: flex;
+}
+.adbg-detail-fulllog .adbg-detail-inner > .adbg-logsec {
+  flex: 1; min-height: 0;
 }
 /* Inside the header in fullscreen, hide everything except the action row
    (so the timestamp/URL/entry-point block don't reappear). */
@@ -2613,6 +2641,11 @@ body {
   padding: 4px 0 6px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 0;
+  flex-shrink: 0;
+}
+/* Let the log view itself actually grow to fill the freed space. */
+.adbg-detail-fulllog .adbg-log-view {
+  flex: 1; min-height: 0; max-height: none !important;
 }
 
 /* Notepad++-style search row inside the log header. Lays out: search input,
