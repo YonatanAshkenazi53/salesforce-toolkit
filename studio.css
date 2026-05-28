@@ -1799,6 +1799,26 @@ html, body {
   padding: 14px 16px;
   flex-wrap: wrap;
 }
+/* Match-strategy selector block — sits just below the org pickers.
+   Strategy dropdown + (conditional) custom field input + a one-line hint
+   that explains what the chosen strategy actually does. */
+.ds-oc-strategy {
+  display: flex; align-items: flex-end; gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.ds-oc-strategy-hint {
+  flex: 1 1 280px;
+  font-size: 11px;
+  color: var(--subtext);
+  font-style: italic;
+  line-height: 1.5;
+  padding-bottom: 6px;
+}
 .ds-oc-objects-panel {
   background: var(--surface);
   border: 1px solid var(--border);
