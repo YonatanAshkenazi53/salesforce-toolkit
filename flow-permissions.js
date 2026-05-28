@@ -171,12 +171,12 @@ const FlowPermissions = (() => {
       // Id is needed for SetupEntityAccess.SetupEntityId and the RunInMode PATCH.
       // (RunInMode is not universally available; override is auto-applied on assign.)
       //
-      // Query all active FlowDefinitions at once and join client-side by DeveloperName
-      // to avoid a large IN (...) clause that could hit SOQL length limits.
+      // Query EVERY FlowDefinition (no ActiveVersionId filter — we still want
+      // permission management on inactive ones) so the client-side join by
+      // DeveloperName resolves as many flows as possible.
       const fdRes = await sendBg({
         type: 'SF_QUERY_ALL', tooling: true, orgUrl: _orgUrl, sid: _sid,
-        query: `SELECT Id, DeveloperName
-                FROM FlowDefinition WHERE ActiveVersionId != null`
+        query: `SELECT Id, DeveloperName FROM FlowDefinition`
       });
       // Build a lookup: DeveloperName → { id, runInMode }
       const runInModeMap = {};
@@ -187,11 +187,21 @@ const FlowPermissions = (() => {
       }
 
       // ── Step 3: Build normalised _flows array ─────────────────────────────
+      // CRITICAL: only the real FlowDefinition.Id is valid as a SetupEntityId
+      // or as the PATCH path segment. DurableId from FlowDefinitionView is a
+      // SYNTHETIC string — for managed-package flows (cms_orch__*, etc.) it
+      // looks like the API name (e.g. "cms_orch__CMS_ReviseContent"), and
+      // Salesforce will interpret that as an external-Id field lookup → 404.
+      // So: no fallback. If we couldn't resolve a flow to its FlowDefinition
+      // row, drop it from the assignable list — managed-package / read-only
+      // flows can't get SetupEntityAccess granted to them anyway.
+      const unresolved = [];
       _flows = assignable
         .map(r => {
           const fd = runInModeMap[r.ApiName];
+          if (!fd?.id) { unresolved.push(r.ApiName); return null; }
           return {
-            Id:            fd?.id || r.DurableId,  // FlowDefinition.Id (falls back to DurableId)
+            Id:            fd.id,                       // real FlowDefinition.Id
             MasterLabel:   r.Label,
             DeveloperName: r.ApiName,
             ProcessType:   r.ProcessType,
@@ -199,7 +209,12 @@ const FlowPermissions = (() => {
             RunInMode:     fd?.runInMode ?? null
           };
         })
-        .filter(r => r.Id);  // drop any that couldn't be resolved
+        .filter(Boolean);
+      if (unresolved.length && window.SFToolkitDebug?.enabled) {
+        window.SFToolkitDebug.log('flow-perms', 'info',
+          `${unresolved.length} flow(s) skipped — no matching FlowDefinition row (likely managed-package): ` +
+          unresolved.slice(0, 5).join(', ') + (unresolved.length > 5 ? ', …' : ''));
+      }
 
       // ── Step 4: Permission sets + existing access map ─────────────────────
       const [psRes, accessRes] = await Promise.all([
@@ -497,11 +512,24 @@ const FlowPermissions = (() => {
     const errors    = [];
     const successes = [];
 
+    // Salesforce record Ids are 15 or 18 char base-62 strings. Anything else
+    // in the URL path gets reinterpreted as an external-Id field lookup, which
+    // produces a 404 with the cryptic message "Provided external ID field
+    // does not exist or is not accessible: <value>". Catch bad Ids up front
+    // so the failure is obvious in the UI instead.
+    const SF_ID_RE = /^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$/;
+
     for (let i = 0; i < flows.length; i++) {
       const f = flows[i];
       if (summary) summary.textContent = `[${i + 1}/${flows.length}] ${f.MasterLabel}…`;
 
       try {
+        if (!f.Id || !SF_ID_RE.test(f.Id)) {
+          throw new Error(
+            `Can't assign permissions — no FlowDefinition record found for "${f.DeveloperName}". ` +
+            `This usually means the flow is from a managed package and is read-only.`);
+        }
+
         // ── Step 1: Enable override if not already set ──────
         if (!f.RunInMode || f.RunInMode === 'DefaultMode') {
           const pr = await sendBg({
