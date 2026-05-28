@@ -1147,6 +1147,33 @@ const ApexDebugger = (() => {
            `</div>`;
   }
 
+  // ── Log font-size ─────────────────────────────────────────
+  const LOG_FONT_MIN = 9, LOG_FONT_MAX = 26, LOG_FONT_DEFAULT = 12;
+  const LOG_FONT_KEY = 'adbg_log_font_px';
+  function _getLogFontSize() {
+    const v = parseInt(localStorage.getItem(LOG_FONT_KEY), 10);
+    return (v >= LOG_FONT_MIN && v <= LOG_FONT_MAX) ? v : LOG_FONT_DEFAULT;
+  }
+  // Apply the stored (or given) size to the log view. Line height tracks the
+  // font so big text stays readable. Returns the size applied.
+  function _applyLogFontSize(px) {
+    const size = px != null ? px : _getLogFontSize();
+    const view = document.getElementById('adbgLogView');
+    if (view) {
+      view.style.fontSize   = size + 'px';
+      view.style.lineHeight = (size + 6) + 'px';
+    }
+    return size;
+  }
+  // delta: -1 smaller, +1 larger, 0 reset to default. Persists + applies.
+  function _bumpLogFont(delta) {
+    const next = delta === 0
+      ? LOG_FONT_DEFAULT
+      : Math.max(LOG_FONT_MIN, Math.min(LOG_FONT_MAX, _getLogFontSize() + delta));
+    localStorage.setItem(LOG_FONT_KEY, String(next));
+    _applyLogFontSize(next);
+  }
+
   // Initial render — sets up state and returns the first chunk only.
   function _renderLogLines(raw) {
     if (!raw) { _logViewState = null; return '<div class="adbg-detail-none">Log body is empty.</div>'; }
@@ -1471,6 +1498,13 @@ const ApexDebugger = (() => {
             <span class="adbg-log-caret">▾</span>
             📜 Log Content
             <span class="adbg-cnt-badge">${(p.stats?.lines || 0).toLocaleString()} lines</span>
+            <!-- Font-size controls. Click target stops propagation so it
+                 doesn't toggle the collapse when adjusting text size. -->
+            <span class="adbg-log-fontctl" onclick="event.stopPropagation()">
+              <button class="adbg-log-font-btn" id="adbgLogFontDown" title="Smaller text">A−</button>
+              <button class="adbg-log-font-btn" id="adbgLogFontReset" title="Reset text size">A</button>
+              <button class="adbg-log-font-btn" id="adbgLogFontUp" title="Larger text">A+</button>
+            </span>
           </div>
           <div class="adbg-sec-hdr adbg-log-hdr">
             <input type="number" id="adbgLogGoto" class="adbg-log-goto" placeholder="Go to line #" min="1">
@@ -1578,6 +1612,14 @@ const ApexDebugger = (() => {
       const caret = sec.querySelector('.adbg-log-caret');
       if (caret) caret.textContent = collapsed ? '▸' : '▾';
     });
+
+    // ── Log font-size controls ──────────────────────────────
+    // Lets the user scale the log text (esp. handy in fullscreen). The
+    // chosen size persists across logs + sessions via localStorage.
+    _applyLogFontSize();   // apply the stored size to the freshly-rendered view
+    document.getElementById('adbgLogFontDown') ?.addEventListener('click', () => _bumpLogFont(-1));
+    document.getElementById('adbgLogFontUp')   ?.addEventListener('click', () => _bumpLogFont(+1));
+    document.getElementById('adbgLogFontReset')?.addEventListener('click', () => _bumpLogFont(0));
 
     // Detail header minimize / expand — click the title bar to collapse the
     // entire upper section (meta + op + user + entry-point + buttons AND
