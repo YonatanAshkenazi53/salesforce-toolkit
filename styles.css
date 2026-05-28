@@ -2500,6 +2500,7 @@ body {
 .adbg-det-hdr-caret { font-size: 11px; color: var(--subtext); width: 12px; flex-shrink: 0; }
 .adbg-det-hdr-bar-title {
   flex: 1; min-width: 0;
+  font-size: 14px;           /* now the panel's sole title — read as a heading */
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .adbg-det-hdr-bar-meta {
