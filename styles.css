@@ -3034,8 +3034,6 @@ body {
 .fp-item-api  { font-size: 11px; color: var(--subtext); }
 .fp-item-sel .fp-item-meta,
 .fp-item-sel .fp-item-api  { color: var(--brand); }
-.fp-ov-icon   { font-size: 12px; line-height: 1; }
-.fp-ov-off    { opacity: 0.45; }
 .fp-ps-badge {
   background: var(--brand-bg);
   border: 1px solid #C5DBF0;
@@ -3066,7 +3064,6 @@ body {
 .fp-item-sel .fp-ft-badge { filter: brightness(0.97); }
 
 .fp-empty { padding: 20px 12px; text-align: center; color: var(--subtext); font-size: 12px; }
-.fp-warn-inline { color: #d97706; font-size: 11px; }
 
 /* Legacy row style (kept for compat) */
 .fp-row {

@@ -2,11 +2,19 @@
 /* ============================================================
    Flow Permissions — bulk-assign Screen Flows to Permission Sets
    ============================================================
-   Two-step Salesforce API workflow:
-     1. Enable override on FlowDefinition (runInMode = SystemModeWithSharing)
-        so the flow can be found under "Edit Access" / permission sets.
-     2. Create SetupEntityAccess records (SetupEntityType='Flow',
-        SetupEntityId=FlowDefinition.Id, ParentId=PermissionSet.Id).
+   Grants "Flow Access" (the permission to run a flow) by creating
+   SetupEntityAccess records:
+     SetupEntityType = 'Flow'
+     SetupEntityId   = FlowDefinition.Id
+     ParentId        = PermissionSet.Id
+
+   We resolve each assignable flow (from FlowDefinitionView) to its real
+   FlowDefinition.Id via a DeveloperName join; flows with no FlowDefinition
+   row (managed-package / read-only) are skipped — they can't be granted.
+
+   NOTE: we do NOT modify runInMode. That's a Flow-builder setting (how a
+   flow runs — system vs user context), not an access grant, and it isn't a
+   valid property of FlowDefinition.Metadata in the Tooling API.
 
    Compatible flow types: Screen Flows only (ProcessType = 'Flow').
    ============================================================ */
@@ -168,8 +176,9 @@ const FlowPermissions = (() => {
       );
 
       // ── Step 2: FlowDefinition (Tooling) — Id ────────────────────────────
-      // Id is needed for SetupEntityAccess.SetupEntityId and the RunInMode PATCH.
-      // (RunInMode is not universally available; override is auto-applied on assign.)
+      // Id is the only thing we need from FlowDefinition: it's the
+      // SetupEntityAccess.SetupEntityId used to grant the flow to a
+      // permission set.
       //
       // Query EVERY FlowDefinition (no ActiveVersionId filter — we still want
       // permission management on inactive ones) so the client-side join by
@@ -178,35 +187,32 @@ const FlowPermissions = (() => {
         type: 'SF_QUERY_ALL', tooling: true, orgUrl: _orgUrl, sid: _sid,
         query: `SELECT Id, DeveloperName FROM FlowDefinition`
       });
-      // Build a lookup: DeveloperName → { id, runInMode }
-      const runInModeMap = {};
+      // Build a lookup: DeveloperName → FlowDefinition.Id
+      const fdIdByName = {};
       if (!fdRes.error && fdRes.records) {
-        for (const r of fdRes.records) {
-          runInModeMap[r.DeveloperName] = { id: r.Id, runInMode: null };
-        }
+        for (const r of fdRes.records) fdIdByName[r.DeveloperName] = r.Id;
       }
 
       // ── Step 3: Build normalised _flows array ─────────────────────────────
-      // CRITICAL: only the real FlowDefinition.Id is valid as a SetupEntityId
-      // or as the PATCH path segment. DurableId from FlowDefinitionView is a
-      // SYNTHETIC string — for managed-package flows (cms_orch__*, etc.) it
-      // looks like the API name (e.g. "cms_orch__CMS_ReviseContent"), and
-      // Salesforce will interpret that as an external-Id field lookup → 404.
-      // So: no fallback. If we couldn't resolve a flow to its FlowDefinition
-      // row, drop it from the assignable list — managed-package / read-only
-      // flows can't get SetupEntityAccess granted to them anyway.
+      // CRITICAL: only the real FlowDefinition.Id is valid as a SetupEntityId.
+      // DurableId from FlowDefinitionView is a SYNTHETIC string — for
+      // managed-package flows (cms_orch__*, etc.) it looks like the API name
+      // (e.g. "cms_orch__CMS_ReviseContent"), and Salesforce will interpret
+      // that as an external-Id field lookup → 404. So: no fallback. If we
+      // couldn't resolve a flow to its FlowDefinition row, drop it from the
+      // assignable list — managed-package / read-only flows can't get
+      // SetupEntityAccess granted to them anyway.
       const unresolved = [];
       _flows = assignable
         .map(r => {
-          const fd = runInModeMap[r.ApiName];
-          if (!fd?.id) { unresolved.push(r.ApiName); return null; }
+          const fdId = fdIdByName[r.ApiName];
+          if (!fdId) { unresolved.push(r.ApiName); return null; }
           return {
-            Id:            fd.id,                       // real FlowDefinition.Id
+            Id:            fdId,                        // real FlowDefinition.Id
             MasterLabel:   r.Label,
             DeveloperName: r.ApiName,
             ProcessType:   r.ProcessType,
-            TriggerType:   r.TriggerType || null,
-            RunInMode:     fd?.runInMode ?? null
+            TriggerType:   r.TriggerType || null
           };
         })
         .filter(Boolean);
@@ -351,15 +357,11 @@ const FlowPermissions = (() => {
     }
 
     list.innerHTML = filtered.map(f => {
-      const sel         = _selFlows.has(f.Id);
-      const hasOverride = f.RunInMode && f.RunInMode !== 'DefaultMode';
-      const assigned    = _accessMap[f.Id] || [];
-      const psBadge     = assigned.length > 0
+      const sel      = _selFlows.has(f.Id);
+      const assigned = _accessMap[f.Id] || [];
+      const psBadge  = assigned.length > 0
         ? `<span class="fp-ps-badge" title="${assigned.map(a => esc(a.label)).join(', ')}">${assigned.length} PS</span>`
         : '';
-      const ovIcon = hasOverride
-        ? `<span class="fp-ov-icon fp-ov-on" title="Override already enabled">🔓</span>`
-        : `<span class="fp-ov-icon fp-ov-off" title="Override not enabled — will be auto-enabled when assigned">⚠️</span>`;
 
       const ft = flowTypeInfo(f);
       const ftBadge = `<span class="fp-ft-badge ${ft.cls}" title="Flow type: ${esc(ft.label)}">${esc(ft.label)}</span>`;
@@ -368,7 +370,7 @@ const FlowPermissions = (() => {
         <label class="fp-item${sel ? ' fp-item-sel' : ''}" title="${esc(f.DeveloperName || '')}">
           <input type="checkbox" class="fp-cb fp-flow-cb" data-id="${esc(f.Id)}"${sel ? ' checked' : ''}>
           <span class="fp-item-name">${esc(f.MasterLabel || f.DeveloperName || f.Id)}</span>
-          <span class="fp-item-meta">${ftBadge}${ovIcon}${psBadge}</span>
+          <span class="fp-item-meta">${ftBadge}${psBadge}</span>
         </label>`;
     }).join('');
 
@@ -455,32 +457,16 @@ const FlowPermissions = (() => {
     const permSets = _permSets.filter(p => _selPS.has(p.Id));
     if (!flows.length || !permSets.length) return;
 
-    const needOverride = flows.filter(f => !f.RunInMode || f.RunInMode === 'DefaultMode');
-
-    const confirmed = await showConfirmModal(flows, permSets, needOverride);
+    const confirmed = await showConfirmModal(flows, permSets);
     if (!confirmed) return;
 
     await doAssign(flows, permSets);
   }
 
-  function showConfirmModal(flows, permSets, needOverride) {
+  function showConfirmModal(flows, permSets) {
     return new Promise(resolve => {
-      const flowList = flows.map(f => {
-        const warn = (!f.RunInMode || f.RunInMode === 'DefaultMode')
-          ? ' <span class="fp-warn-inline">⚠️ needs override</span>' : '';
-        return `<li>${esc(f.MasterLabel)}${warn}</li>`;
-      }).join('');
-
-      const psList = permSets.map(p => `<li>${esc(p.Label)}</li>`).join('');
-
-      const overNote = needOverride.length > 0
-        ? `<div class="fp-confirm-note">
-             ⚠️ <strong>${needOverride.length} flow${needOverride.length !== 1 ? 's' : ''}</strong>
-             will have "Override" auto-enabled (<em>SystemModeWithSharing</em>).
-             This is required before permission set assignment. Review in
-             Setup › Flows › Edit Access after assigning.
-           </div>`
-        : '';
+      const flowList = flows.map(f => `<li>${esc(f.MasterLabel)}</li>`).join('');
+      const psList   = permSets.map(p => `<li>${esc(p.Label)}</li>`).join('');
 
       showModal(`
         <div class="modal-header" style="color:var(--draft-color)">
@@ -488,7 +474,7 @@ const FlowPermissions = (() => {
           <h2>Confirm Assignment</h2>
         </div>
         <div class="modal-body">
-          ${overNote}
+          <p style="margin:0 0 8px;font-size:12px">Grant <strong>Flow Access</strong> (permission to run these flows) to the selected permission sets:</p>
           <p style="margin:8px 0 3px;font-weight:700;font-size:12px">Flows (${flows.length}):</p>
           <ul class="modal-list" style="max-height:90px;overflow-y:auto;font-size:11px">${flowList}</ul>
           <p style="margin:8px 0 3px;font-weight:700;font-size:12px">Permission sets (${permSets.length}):</p>
@@ -530,18 +516,14 @@ const FlowPermissions = (() => {
             `This usually means the flow is from a managed package and is read-only.`);
         }
 
-        // ── Step 1: Enable override if not already set ──────
-        if (!f.RunInMode || f.RunInMode === 'DefaultMode') {
-          const pr = await sendBg({
-            type: 'SF_PATCH',
-            orgUrl: _orgUrl, sid: _sid,
-            path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${f.Id}`,
-            body: { Metadata: { runInMode: 'SystemModeWithSharing' } }
-          });
-          if (pr.error) throw new Error(`Override enable failed: ${pr.error}`);
-        }
-
-        // ── Step 2: Create SetupEntityAccess for each PS ───
+        // Grant the flow to each permission set via SetupEntityAccess —
+        // that IS the "Flow Access" permission (who can run the flow).
+        // NOTE: we deliberately do NOT touch runInMode here. runInMode is
+        // a Flow-builder setting (how the flow runs — system vs user
+        // context), not an access grant, and it isn't even a valid
+        // property of FlowDefinition.Metadata in the Tooling API — PATCHing
+        // it returns HTTP 400 "Cannot deserialize complexvalue from
+        // VALUE_STRING". It also blocked the real grant below from running.
         const existingPS = new Set((_accessMap[f.Id] || []).map(a => a.permSetId));
         for (const ps of permSets) {
           if (existingPS.has(ps.Id)) continue;  // already assigned
@@ -562,7 +544,7 @@ const FlowPermissions = (() => {
 
     if (btn) btn.textContent = '🔑 Assign';
 
-    // Reload data to reflect updated override flags + PS counts
+    // Reload data to reflect updated PS-assignment counts
     await loadData();
 
     // Show result
