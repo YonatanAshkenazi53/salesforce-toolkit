@@ -5092,6 +5092,14 @@ let _orgCompareState = {
   results:          null,   // [{ name, srcCount, tgtCount, matched, missing, extras, matchField, error? }]
   running:          false,
   lastRunAt:        null,
+  // Match strategy — how Org Compare keys records across orgs:
+  //   'auto'   = nameField → Name → Id-only (legacy default)
+  //   'extid'  = externalId=true field per object (Salesforce's intended
+  //              cross-org identity); fall back to 'auto' if none exists
+  //   'custom' = user-supplied field name (e.g. 'External_Ref__c'); fall
+  //              back to 'auto' if absent on a given object
+  matchStrategy:    'auto',
+  customMatchField: '',
 };
 
 async function renderOrgCompare() {
@@ -5111,7 +5119,8 @@ async function renderOrgCompare() {
     </div>
 
     <div style="background:#E8F4FD;border:1px solid #C5DBF0;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#014486;max-width:920px">
-      <strong>Read-only.</strong> Org Compare queries record counts and which records exist in each org (matched by Name / nameField).
+      <strong>Read-only.</strong> Org Compare queries record counts and which records exist in each org.
+      Pick a match strategy below — <strong>External Id</strong> is the most reliable across orgs, <strong>Name</strong> is the loose default.
       Click any row in the result table to open <strong>Reconcile</strong> scoped to that object — that's where you can actually insert/update/delete.
     </div>
 
@@ -5130,6 +5139,26 @@ async function renderOrgCompare() {
         </select>
       </div>
       <button class="ds-btn ds-btn-primary ds-btn-lg" id="dsOCRun" disabled style="margin-top:18px">▶ Compare</button>
+    </div>
+
+    <!-- Match strategy — how records are keyed across orgs. -->
+    <div class="ds-oc-strategy">
+      <div class="ds-field-group">
+        <label class="ds-lbl" title="How to decide if two records in different orgs represent the same thing">Match by</label>
+        <select id="dsOCStrategy" class="ds-select">
+          <option value="auto"   ${_orgCompareState.matchStrategy === 'auto'   ? 'selected' : ''}>Auto (Name / nameField) — loose</option>
+          <option value="extid"  ${_orgCompareState.matchStrategy === 'extid'  ? 'selected' : ''}>External Id (auto-detect per object) — reliable</option>
+          <option value="custom" ${_orgCompareState.matchStrategy === 'custom' ? 'selected' : ''}>Custom field name…</option>
+        </select>
+      </div>
+      <div class="ds-field-group" id="dsOCCustomWrap"
+        style="${_orgCompareState.matchStrategy === 'custom' ? '' : 'display:none'}">
+        <label class="ds-lbl" title="Field API name tried on every selected object. Falls back to Auto if the field doesn't exist there.">Custom field API name</label>
+        <input type="text" id="dsOCCustomField" class="ds-input"
+          placeholder="e.g. External_Ref__c"
+          value="${esc(_orgCompareState.customMatchField || '')}">
+      </div>
+      <div class="ds-oc-strategy-hint" id="dsOCStrategyHint"></div>
     </div>
 
     <details id="dsOCObjects" class="ds-oc-objects-panel" style="margin:14px 0">
@@ -5165,6 +5194,32 @@ async function renderOrgCompare() {
   tgtSel?.addEventListener('change', () => {
     _orgCompareState.tgtOrgUrl = tgtSel.value;
     updateRunBtn();
+  });
+
+  // Match strategy + custom field input
+  const stratSel  = eid('dsOCStrategy');
+  const customWrp = eid('dsOCCustomWrap');
+  const customInp = eid('dsOCCustomField');
+  const hintEl    = eid('dsOCStrategyHint');
+  function paintStrategyHint() {
+    if (!hintEl) return;
+    const s = _orgCompareState.matchStrategy;
+    if (s === 'auto') {
+      hintEl.textContent = 'Loose: two records with the same Name are treated as the same record. Works for most standard objects but can false-match common names.';
+    } else if (s === 'extid') {
+      hintEl.textContent = 'For each object, Org Compare picks the first field marked External Id in describe. Objects with no external Id fall back to Auto so you still get a row.';
+    } else {
+      hintEl.textContent = 'Tries the field name you typed (case-sensitive API name) on every selected object. Objects that don\'t have it fall back to Auto.';
+    }
+  }
+  paintStrategyHint();
+  stratSel?.addEventListener('change', () => {
+    _orgCompareState.matchStrategy = stratSel.value;
+    if (customWrp) customWrp.style.display = stratSel.value === 'custom' ? '' : 'none';
+    paintStrategyHint();
+  });
+  customInp?.addEventListener('input', () => {
+    _orgCompareState.customMatchField = customInp.value.trim();
   });
 
   eid('dsOCRun')?.addEventListener('click', runOrgCompare);
@@ -5320,14 +5375,13 @@ async function runOrgCompare() {
 // since Org Compare has no per-object field config — drift is the
 // Reconcile view's job, fed by a Profile.
 async function _ocCompareOneObject(objName, srcSess, tgtSess) {
-  // Pick matchField via describe. Preference order:
-  //   1. nameField=true marker (handles Title/DeveloperName/etc as the
-  //      object's natural label),
-  //   2. an explicit 'Name' field,
-  //   3. fall back to Id-only mode.
-  // We also gate on the describe's own `queryable` flag — the global
+  // Pick matchField via describe. The match strategy is read from
+  // _orgCompareState — see the matchStrategy state field for the three
+  // options. We also gate on the describe's own `queryable` flag —
   // describeGlobal often reports queryable=true for Share/utility objects
   // that actually 400 on SELECT, but the per-object describe is reliable.
+  const strategy   = _orgCompareState.matchStrategy   || 'auto';
+  const customName = (_orgCompareState.customMatchField || '').trim();
   let matchField = null;       // null → Id-only key mode
   let queryable  = true;
   try {
@@ -5337,9 +5391,29 @@ async function _ocCompareOneObject(objName, srcSess, tgtSess) {
     });
     if (d && d.queryable === false) queryable = false;
     const fields = d?.fields || [];
-    const nf = fields.find(f => f.nameField === true);
-    if (nf?.name) matchField = nf.name;
-    else if (fields.some(f => f.name === 'Name')) matchField = 'Name';
+
+    // Strategy: External Id. Prefer the first field with externalId=true.
+    // If multiple, prefer one also marked idLookup (Salesforce's "this
+    // can be used as the key in upsert/cross-org match" marker).
+    if (strategy === 'extid') {
+      const extIds = fields.filter(f => f.externalId === true);
+      const idLook = extIds.find(f => f.idLookup === true);
+      if (idLook?.name) matchField = idLook.name;
+      else if (extIds[0]?.name) matchField = extIds[0].name;
+    }
+
+    // Strategy: Custom field name — only honors it if the field actually
+    // exists on this sObject. Otherwise fall through to Auto below.
+    if (strategy === 'custom' && customName) {
+      if (fields.some(f => f.name === customName)) matchField = customName;
+    }
+
+    // Auto (and fallback for any strategy that didn't pick): nameField → Name.
+    if (!matchField) {
+      const nf = fields.find(f => f.nameField === true);
+      if (nf?.name) matchField = nf.name;
+      else if (fields.some(f => f.name === 'Name')) matchField = 'Name';
+    }
   } catch (_) {/* push through with matchField = null */}
 
   if (!queryable) {
