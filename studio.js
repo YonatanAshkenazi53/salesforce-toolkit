@@ -4473,7 +4473,14 @@ window.openReconcile = function(profileId) {
 
 // Module-scope selection sets so re-renders (after an action) preserve picks
 // where it makes sense. Reset when the profile changes.
-let _recSel = { push: new Set(), overwrite: new Set(), del: new Set() };
+// Reconcile selection state. Buckets:
+//   push      — sourceIds, insert into target ("in source only")
+//   overwrite — sourceIds, update target  ("drift")
+//   pull      — targetIds, insert into source ("in target only", Phase 3B)
+//   del       — targetIds, delete from target ("in target only")
+// pull and del are mutually exclusive per target row — picking one
+// auto-clears the other so a record never gets pulled AND deleted.
+let _recSel = { push: new Set(), overwrite: new Set(), del: new Set(), pull: new Set() };
 let _recLastProfileId = null;
 // Delete mode for the reconcile "In target only" column.
 //   'recycle' — DELETE → Recycle Bin (recoverable 15 days)
@@ -4486,7 +4493,7 @@ async function renderReconcile() {
 
   // Reset selection when switching to a different profile.
   if (_recLastProfileId !== p.id) {
-    _recSel = { push: new Set(), overwrite: new Set(), del: new Set() };
+    _recSel = { push: new Set(), overwrite: new Set(), del: new Set(), pull: new Set() };
     _recLastProfileId = p.id;
   }
 
@@ -4543,9 +4550,10 @@ async function renderReconcile() {
   // Default-select all missing + all drift for push (the common intent:
   // bring target up to match source). Extras default UNCHECKED — deletion
   // is destructive, opt-in only. Only seed defaults on first load.
-  if (!_recSel.push.size && !_recSel.overwrite.size && !_recSel.del.size) {
+  if (!_recSel.push.size && !_recSel.overwrite.size && !_recSel.del.size && !_recSel.pull.size) {
     missing.forEach(r => r.sourceId && _recSel.push.add(r.sourceId));
     drift.forEach(r => r.sourceId && _recSel.overwrite.add(r.sourceId));
+    // Pull + Delete left empty — both touch real data, opt-in only.
   }
 
   // dml = the plain Salesforce operation this column performs (Insert/Update/
@@ -4576,19 +4584,63 @@ async function renderReconcile() {
       </div>`;
   }
 
+  // "In target only" column gets per-row action picker: Skip / ← Pull /
+  // 🗑 Delete (mutually exclusive). Phase 3B — bidirectional reconcile.
+  // The whole column header doesn't say "Delete" anymore because rows can
+  // go either way, so we split the count by what's currently selected.
+  function extrasColHtml(items) {
+    const empty = !items.length;
+    const rows = empty ? `<div class="ds-rec-col-empty">none</div>` : items.map(r => {
+      const tgtId = r.targetId;
+      const isPull = _recSel.pull.has(tgtId);
+      const isDel  = _recSel.del.has(tgtId);
+      return `<div class="ds-rec-col-row ds-rec-row-extra">
+        <span class="ds-rec-extra-actions">
+          <button class="ds-rec-extra-btn ${isPull ? 'ds-rec-extra-on-pull' : ''}"
+                  data-rec-extra="pull" data-rec-id="${esc(tgtId)}"
+                  title="Pull this record into the source org">← Pull</button>
+          <button class="ds-rec-extra-btn ${isDel ? 'ds-rec-extra-on-del' : ''}"
+                  data-rec-extra="del" data-rec-id="${esc(tgtId)}"
+                  title="Delete this record from the target org">🗑 Delete</button>
+        </span>
+        <span class="ds-rec-col-key">${esc(r.matchKey)}</span>
+      </div>`;
+    }).join('');
+    const pullCount = items.filter(r => _recSel.pull.has(r.targetId)).length;
+    const delCount  = items.filter(r => _recSel.del.has(r.targetId)).length;
+    return `
+      <div class="ds-rec-col">
+        <div class="ds-rec-col-hdr ds-diff-extra">
+          🔵 <strong>In target only ${items.length}</strong>
+          <span class="ds-rec-col-sub">pick an action per row</span>
+        </div>
+        <div class="ds-rec-col-actions ds-rec-col-actions-extra">
+          <button class="ds-btn ds-btn-xs" data-rec-extra-all="pull" title="Pull all">← Pull all</button>
+          <button class="ds-btn ds-btn-xs" data-rec-extra-all="del"  title="Delete all">🗑 Delete all</button>
+          <button class="ds-btn ds-btn-xs" data-rec-extra-clear="1">✗ None</button>
+        </div>
+        ${empty ? '' : `<div class="ds-rec-extra-subcounts">
+          <span class="ds-rec-extra-sub-pull">← ${pullCount} to pull</span>
+          <span class="ds-rec-extra-sub-del">🗑 ${delCount} to delete</span>
+          <span class="ds-rec-extra-sub-skip">${items.length - pullCount - delCount} skipped</span>
+        </div>`}
+        <div class="ds-rec-col-list">${rows}</div>
+      </div>`;
+  }
+
   setMain(`${headerHtml}
     <div class="ds-op-banner ds-op-banner-write">
       <span class="ds-op-banner-icon">⚖</span>
       <div class="ds-op-banner-body">
-        <div class="ds-op-banner-title">Reconcile writes to the target org</div>
-        <div class="ds-op-banner-desc">Push inserts/updates records in <strong>${esc(orgLabel(p.targetOrg))}</strong>. Delete permanently removes target records. Source org is never modified. Review your selections before running.</div>
+        <div class="ds-op-banner-title">Reconcile is bidirectional</div>
+        <div class="ds-op-banner-desc">Push and Update write to <strong>${esc(orgLabel(p.targetOrg))}</strong> (target). <strong>← Pull</strong> writes new records into <strong>${esc(orgLabel(p.sourceOrg))}</strong> (source) — use it to rescue good records that only exist in target. Delete permanently removes records from target. Review your selections before running.</div>
       </div>
     </div>
 
     <div class="ds-rec-cols">
       ${colHtml('Insert', 'in source only', 'ds-diff-missing', '🔴', missing, 'push')}
       ${colHtml('Update', 'drifted — values differ', 'ds-diff-drift', '🟡', drift, 'overwrite')}
-      ${colHtml('Delete', 'in target only', 'ds-diff-extra', '🔵', extras, 'del')}
+      ${extrasColHtml(extras)}
     </div>
 
     <div class="ds-rec-insync-note">🟢 ${inSync.length} record(s) already in sync — no action needed.</div>
@@ -4617,14 +4669,26 @@ async function renderReconcile() {
     const parts = [];
     if (_recSel.push.size)      parts.push(`<span class="ds-diff-chip ds-diff-missing">Insert ${_recSel.push.size}</span>`);
     if (_recSel.overwrite.size) parts.push(`<span class="ds-diff-chip ds-diff-drift">Update ${_recSel.overwrite.size}</span>`);
+    if (_recSel.pull.size)      parts.push(`<span class="ds-diff-chip ds-diff-pull">← Pull ${_recSel.pull.size}</span>`);
     if (_recSel.del.size)       parts.push(`<span class="ds-diff-chip ds-diff-extra">Delete ${_recSel.del.size}</span>`);
     el.innerHTML = parts.length ? `Actions: ${parts.join(' ')}` : '<span style="color:var(--subtext)">Nothing selected</span>';
     const runBtn = eid('dsRecRunBtn');
     if (runBtn) runBtn.disabled = !parts.length;
+    // Refresh the extras column subcounts as the user toggles per-row picks.
+    const sub = document.querySelector('.ds-rec-extra-subcounts');
+    if (sub) {
+      const totalExtras = extras.length;
+      const pullN = _recSel.pull.size;
+      const delN  = _recSel.del.size;
+      sub.innerHTML = `
+        <span class="ds-rec-extra-sub-pull">← ${pullN} to pull</span>
+        <span class="ds-rec-extra-sub-del">🗑 ${delN} to delete</span>
+        <span class="ds-rec-extra-sub-skip">${totalExtras - pullN - delN} skipped</span>`;
+    }
   }
   updateSummary();
 
-  // Wire checkboxes
+  // Wire checkboxes for the source-driven columns (push, overwrite)
   document.querySelectorAll('[data-rec-kind]').forEach(cb => {
     cb.addEventListener('change', () => {
       const kind = cb.dataset.recKind, id = cb.dataset.recId;
@@ -4632,7 +4696,7 @@ async function renderReconcile() {
       updateSummary();
     });
   });
-  // All / None per column
+  // All / None per column (push + overwrite only — extras has its own handlers)
   document.querySelectorAll('[data-rec-all]').forEach(btn => btn.addEventListener('click', () => {
     const kind = btn.dataset.recAll;
     document.querySelectorAll(`[data-rec-kind="${kind}"]`).forEach(cb => { cb.checked = true; _recSel[kind].add(cb.dataset.recId); });
@@ -4643,6 +4707,53 @@ async function renderReconcile() {
     document.querySelectorAll(`[data-rec-kind="${kind}"]`).forEach(cb => { cb.checked = false; _recSel[kind].delete(cb.dataset.recId); });
     updateSummary();
   }));
+
+  // Phase 3B — extras column per-row Pull/Delete buttons (mutually exclusive).
+  // Click an already-selected action to deselect it (= Skip).
+  function paintExtraRow(rowEl, tgtId) {
+    const pullBtn = rowEl.querySelector('[data-rec-extra="pull"]');
+    const delBtn  = rowEl.querySelector('[data-rec-extra="del"]');
+    if (pullBtn) pullBtn.classList.toggle('ds-rec-extra-on-pull', _recSel.pull.has(tgtId));
+    if (delBtn)  delBtn.classList.toggle('ds-rec-extra-on-del',   _recSel.del.has(tgtId));
+  }
+  document.querySelectorAll('[data-rec-extra]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      const action = btn.dataset.recExtra;            // 'pull' or 'del'
+      const tgtId  = btn.dataset.recId;
+      const other  = action === 'pull' ? 'del' : 'pull';
+      if (_recSel[action].has(tgtId)) {
+        _recSel[action].delete(tgtId);                // toggle off → Skip
+      } else {
+        _recSel[action].add(tgtId);
+        _recSel[other].delete(tgtId);                 // mutually exclusive
+      }
+      paintExtraRow(btn.closest('.ds-rec-row-extra'), tgtId);
+      updateSummary();
+    });
+  });
+  // Bulk: Pull all / Delete all / None for the extras column.
+  document.querySelectorAll('[data-rec-extra-all]').forEach(btn => btn.addEventListener('click', () => {
+    const action = btn.dataset.recExtraAll;           // 'pull' or 'del'
+    const other  = action === 'pull' ? 'del' : 'pull';
+    extras.forEach(r => {
+      _recSel[action].add(r.targetId);
+      _recSel[other].delete(r.targetId);
+    });
+    document.querySelectorAll('.ds-rec-row-extra').forEach(row => {
+      const id = row.querySelector('[data-rec-id]')?.dataset.recId;
+      if (id) paintExtraRow(row, id);
+    });
+    updateSummary();
+  }));
+  document.querySelector('[data-rec-extra-clear]')?.addEventListener('click', () => {
+    extras.forEach(r => { _recSel.pull.delete(r.targetId); _recSel.del.delete(r.targetId); });
+    document.querySelectorAll('.ds-rec-row-extra').forEach(row => {
+      const id = row.querySelector('[data-rec-id]')?.dataset.recId;
+      if (id) paintExtraRow(row, id);
+    });
+    updateSummary();
+  });
   // Drift "fields" expander — reuse fetchDriftRowDetail + renderDriftCompareTable
   document.querySelectorAll('[data-rec-drift]').forEach(link => {
     link.addEventListener('click', async (ev) => {
@@ -4671,7 +4782,7 @@ async function renderReconcile() {
   eid('dsRecRefreshBtn')?.addEventListener('click', async () => {
     await window.refreshProfileState(p.id);
     _reconcileProfile = _profiles.find(x => x.id === p.id);
-    _recSel = { push: new Set(), overwrite: new Set(), del: new Set() };
+    _recSel = { push: new Set(), overwrite: new Set(), del: new Set(), pull: new Set() };
     renderReconcile();
   });
   eid('dsRecDeleteMode')?.addEventListener('change', e => { _recDeleteMode = e.target.value; });
@@ -4685,25 +4796,42 @@ async function runReconcile(profile, objType, buckets) {
   const pushIds = [..._recSel.push];
   const ovwIds  = [..._recSel.overwrite];
   const delIds  = [..._recSel.del];
-  if (!pushIds.length && !ovwIds.length && !delIds.length) return;
+  const pullIds = [..._recSel.pull];
+  if (!pushIds.length && !ovwIds.length && !delIds.length && !pullIds.length) return;
 
-  // Confirm destructive deletes before doing anything. Wording adapts to the
-  // delete mode — hard delete gets a stronger warning since it's unrecoverable.
+  // ── Confirmation step ────────────────────────────────────────────────
+  // If anything destructive (delete) or anything that writes to the SOURCE
+  // org (pull) is selected, surface a single combined confirm modal so the
+  // user sees the full impact in one place before any writes happen.
   const isHard = _recDeleteMode === 'hard';
-  if (delIds.length) {
+  if (delIds.length || pullIds.length) {
     const ok = await new Promise(resolve => {
+      const delBlock = delIds.length ? (isHard
+        ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:4px;font-size:12px;color:#991b1b">
+             🔥 <strong>Hard-delete ${delIds.length} ${esc(objType)} record(s)</strong> from
+             <strong>${esc(orgLabel(profile.targetOrg))}</strong> — purged from the Recycle Bin and
+             <strong>cannot be recovered</strong>.</div>`
+        : `<div style="margin-top:10px;padding:10px 12px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:4px;font-size:12px;color:#92400e">
+             🗑 <strong>Delete ${delIds.length} ${esc(objType)} record(s)</strong> from
+             <strong>${esc(orgLabel(profile.targetOrg))}</strong> — recoverable from the Recycle Bin for 15 days.</div>`) : '';
+      const pullBlock = pullIds.length
+        ? `<div style="margin-top:10px;padding:10px 12px;background:#eff6ff;border-left:3px solid #2563eb;border-radius:4px;font-size:12px;color:#1e3a8a">
+             ← <strong>Pull ${pullIds.length} ${esc(objType)} record(s)</strong> into
+             <strong>${esc(orgLabel(profile.sourceOrg))}</strong> (source). New rows will be inserted there.</div>`
+        : '';
+      const title = delIds.length
+        ? (isHard ? '🔥 Confirm HARD delete' : '⚠ Confirm reconcile actions')
+        : '← Confirm pull into source';
       showModal(`
-        <div class="ds-modal-header">${isHard ? '🔥 Confirm HARD delete' : '⚠ Confirm delete'}</div>
+        <div class="ds-modal-header">${title}</div>
         <div class="ds-modal-body">
-          You're about to delete <strong>${delIds.length} ${esc(objType)} record(s)</strong> from
-          <strong>${esc(orgLabel(profile.targetOrg))}</strong>.
-          ${isHard
-            ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:4px;font-size:12px;color:#991b1b">🔥 <strong>Hard delete is permanent</strong> — records are purged from the Recycle Bin and <strong>cannot be recovered</strong>.</div>`
-            : `<div style="margin-top:10px;padding:10px 12px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:4px;font-size:12px;color:#92400e">🗑 Records go to the <strong>Recycle Bin</strong> — recoverable for 15 days from Salesforce.</div>`}
+          Review the changes before continuing:
+          ${pullBlock}
+          ${delBlock}
         </div>
         <div class="ds-modal-footer">
           <button class="ds-btn" id="dsRecDelCancel">Cancel</button>
-          <button class="ds-btn ds-btn-danger" id="dsRecDelOk">${isHard ? '🔥 Hard delete' : '🗑 Delete'} ${delIds.length} record(s)</button>
+          <button class="ds-btn ${delIds.length ? 'ds-btn-danger' : 'ds-btn-primary'}" id="dsRecDelOk">Proceed</button>
         </div>`);
       eid('dsRecDelCancel')?.addEventListener('click', () => { closeModal(); resolve(false); });
       eid('dsRecDelOk')?.addEventListener('click', () => { closeModal(); resolve(true); });
@@ -4735,8 +4863,8 @@ async function runReconcile(profile, objType, buckets) {
   // History view can show what was actually inserted/updated/deleted, not
   // just "errors". Hard-delete tracks the bin-purge count separately.
   const startedAt = new Date().toISOString();
-  const counts = { inserted: 0, updated: 0, deleted: 0, purged: 0,
-                   insertedFailed: 0, updatedFailed: 0, deletedFailed: 0 };
+  const counts = { inserted: 0, updated: 0, deleted: 0, purged: 0, pulled: 0,
+                   insertedFailed: 0, updatedFailed: 0, deletedFailed: 0, pulledFailed: 0 };
   const allErrors = [];
 
   // ── 1. Delete extras (regular → Recycle Bin, or hard → purge) ────────
@@ -4771,7 +4899,41 @@ async function runReconcile(profile, objType, buckets) {
     }
   }
 
-  // ── 2. Push missing (insert) — reuse the transfer engine, root only ──
+  // ── 2. Pull target-only rows into source (Phase 3B) ──────────────────
+  // Same transfer engine, but src/tgt swapped. Field mappings are inverted
+  // so { srcFld → tgtFld } applied during push becomes { tgtFld → srcFld }
+  // during pull. Only the root object — children stay in their own org.
+  if (pullIds.length) {
+    log('←', `Pulling ${pullIds.length} record(s) from target into source…`);
+    try {
+      const pullProfile = JSON.parse(JSON.stringify(profile));
+      const fm = pullProfile.tree?.fieldMappings || {};
+      const inverseFm = {};
+      for (const [s, t] of Object.entries(fm)) { if (t) inverseFm[t] = s; }
+      pullProfile.tree.fieldMappings = inverseFm;
+      pullProfile.tree.recordIds = pullIds;
+      pullProfile.tree.children  = [];
+      // Swap the profile's orgs so anything downstream that inspects them
+      // (logging, lookup-bridge resolution, error messages) sees the
+      // reverse direction consistently.
+      pullProfile.sourceOrg = profile.targetOrg;
+      pullProfile.targetOrg = profile.sourceOrg;
+      const res = await sendBg({
+        type: 'SF_EXECUTE_PROFILE_TRANSFER',
+        profile: pullProfile,
+        srcOrgUrl: tgtSess.orgUrl, srcSid: tgtSess.sid,   // read from TARGET
+        tgtOrgUrl: srcSess.orgUrl, tgtSid: srcSess.sid    // write to SOURCE
+      });
+      const s = res.summary?.[objType] || {};
+      counts.pulled       += (s.created || 0);
+      counts.pulledFailed += (s.failed  || 0);
+      log(s.failed ? '⚠' : '✅', `Pulled ${s.created || 0}${s.failed ? `, ${s.failed} failed` : ''} into source`, s.failed ? 'ds-prog-err' : '');
+      (res.errors || []).forEach(e => allErrors.push(`pull: ${e}`));
+      (res.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
+    } catch (e) { allErrors.push(`Pull failed: ${e?.message || e}`); log('❌', `Pull failed: ${e?.message || e}`, 'ds-prog-err'); }
+  }
+
+  // ── 3. Push missing (insert) — reuse the transfer engine, root only ──
   if (pushIds.length) {
     log('⬆', `Pushing ${pushIds.length} missing record(s) to target…`);
     try {
@@ -4792,7 +4954,7 @@ async function runReconcile(profile, objType, buckets) {
     } catch (e) { allErrors.push(`Push failed: ${e?.message || e}`); log('❌', `Push failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
 
-  // ── 3. Overwrite drift (update target with source values) ────────────
+  // ── 4. Overwrite drift (update target with source values) ────────────
   if (ovwIds.length) {
     log('✏', `Updating ${ovwIds.length} drifted record(s) in target…`);
     try {
@@ -4804,9 +4966,9 @@ async function runReconcile(profile, objType, buckets) {
     } catch (e) { allErrors.push(`Overwrite failed: ${e?.message || e}`); log('❌', `Overwrite failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
 
-  // ── 4. Save to History so the run is visible later ───────────────────
-  const totalOk   = counts.inserted + counts.updated + counts.deleted;
-  const totalFail = counts.insertedFailed + counts.updatedFailed + counts.deletedFailed;
+  // ── 5. Save to History so the run is visible later ───────────────────
+  const totalOk   = counts.inserted + counts.updated + counts.deleted + counts.pulled;
+  const totalFail = counts.insertedFailed + counts.updatedFailed + counts.deletedFailed + counts.pulledFailed;
   const status   = totalFail === 0 ? 'success' : (totalOk > 0 ? 'partial' : 'failed');
   _history.push({
     id:           genId('run'),
@@ -4825,6 +4987,7 @@ async function runReconcile(profile, objType, buckets) {
         inserted: counts.inserted, insertedFailed: counts.insertedFailed,
         updated:  counts.updated,  updatedFailed:  counts.updatedFailed,
         deleted:  counts.deleted,  deletedFailed:  counts.deletedFailed,
+        pulled:   counts.pulled,   pulledFailed:   counts.pulledFailed,
         purged:   counts.purged,
         deleteMode: _recDeleteMode
       }
@@ -4837,8 +5000,13 @@ async function runReconcile(profile, objType, buckets) {
   // Refresh diff + snapshots so the columns reflect the new reality.
   await window.refreshProfileState(profile.id);
   _reconcileProfile = _profiles.find(x => x.id === profile.id);
-  _recSel = { push: new Set(), overwrite: new Set(), del: new Set() };
-  const toastMsg = `Reconcile: ${counts.inserted} inserted · ${counts.updated} updated · ${counts.deleted} deleted` +
+  _recSel = { push: new Set(), overwrite: new Set(), del: new Set(), pull: new Set() };
+  const toastParts = [];
+  if (counts.inserted) toastParts.push(`${counts.inserted} inserted`);
+  if (counts.updated)  toastParts.push(`${counts.updated} updated`);
+  if (counts.pulled)   toastParts.push(`${counts.pulled} pulled`);
+  if (counts.deleted)  toastParts.push(`${counts.deleted} deleted`);
+  const toastMsg = `Reconcile: ${toastParts.join(' · ') || 'no actions'}` +
     (totalFail ? ` · ${totalFail} failed` : '');
   showToast(toastMsg, totalFail ? 'warning' : 'success', 4500);
   renderReconcile();
@@ -5374,13 +5542,14 @@ function renderHistory() {
               // deleted). Transfer runs carry the legacy created/failed pair.
               // Show whichever set is populated so success detail is visible.
               const isRec = run.kind === 'reconcile' ||
-                            s.inserted != null || s.updated != null || s.deleted != null;
+                            s.inserted != null || s.updated != null || s.deleted != null || s.pulled != null;
               if (isRec) {
                 const parts = [];
                 if (s.inserted) parts.push(`<span class="ds-rec-tag ds-rec-tag-ins">${s.inserted} inserted</span>`);
                 if (s.updated)  parts.push(`<span class="ds-rec-tag ds-rec-tag-upd">${s.updated} updated</span>`);
+                if (s.pulled)   parts.push(`<span class="ds-rec-tag ds-rec-tag-pull">← ${s.pulled} pulled</span>`);
                 if (s.deleted)  parts.push(`<span class="ds-rec-tag ds-rec-tag-del">${s.deleted} deleted${s.deleteMode === 'hard' ? ' (hard)' : ''}</span>`);
-                const failTot = (s.insertedFailed || 0) + (s.updatedFailed || 0) + (s.deletedFailed || 0);
+                const failTot = (s.insertedFailed || 0) + (s.updatedFailed || 0) + (s.deletedFailed || 0) + (s.pulledFailed || 0);
                 if (failTot)    parts.push(`<span class="ds-rec-tag ds-rec-tag-fail">${failTot} failed</span>`);
                 if (!parts.length) parts.push('<span class="ds-rec-tag">no changes</span>');
                 return `<span class="ds-summary-chip"><strong>${esc(obj)}</strong> · ${parts.join(' ')}</span>`;
