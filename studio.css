@@ -2207,7 +2207,50 @@ html, body {
 .ds-rec-tag-ins  { background: #DBEAFE; color: #1E40AF; }      /* inserted */
 .ds-rec-tag-upd  { background: #FEF3C7; color: #92400E; }      /* updated  */
 .ds-rec-tag-del  { background: #FEE2E2; color: #991B1B; }      /* deleted  */
+.ds-rec-tag-pull { background: #E0E7FF; color: #3730A3; }      /* pulled (Phase 3B) */
 .ds-rec-tag-fail { background: #FEE2E2; color: #991B1B; border: 1px solid #FCA5A5; }
+
+/* Phase 3B — bidirectional pull. Adds a per-row Pull/Delete picker to the
+   "In target only" column. ds-diff-pull mirrors the other diff-chip styles
+   for the action-summary bar above the Run button. */
+.ds-diff-pull { background: #E0E7FF; color: #3730A3; }
+.ds-dark .ds-diff-pull { background: #2C254D; color: #C7D2FE; }
+
+.ds-rec-row-extra {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+.ds-rec-row-extra:hover { background: var(--brand-bg); }
+.ds-rec-extra-actions { display: inline-flex; gap: 4px; flex-shrink: 0; }
+.ds-rec-extra-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--border, #d0d5dd);
+  background: var(--card, #fff);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.ds-rec-extra-btn:hover { background: var(--brand-bg); border-color: var(--brand, #0176D3); }
+.ds-rec-extra-on-pull { background: #E0E7FF !important; color: #3730A3 !important; border-color: #6366F1 !important; }
+.ds-rec-extra-on-del  { background: #FEE2E2 !important; color: #991B1B !important; border-color: #DC2626 !important; }
+
+.ds-rec-col-actions-extra { gap: 6px; }
+.ds-rec-extra-subcounts {
+  display: flex; gap: 10px;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.ds-rec-extra-sub-pull { color: #3730A3; font-weight: 600; }
+.ds-rec-extra-sub-del  { color: #991B1B; font-weight: 600; }
+.ds-rec-extra-sub-skip { color: var(--subtext); margin-left: auto; }
+.ds-dark .ds-rec-extra-sub-pull { color: #C7D2FE; }
+.ds-dark .ds-rec-extra-sub-del  { color: #FECACA; }
 
 .ds-history-errors summary {
   cursor: pointer;
