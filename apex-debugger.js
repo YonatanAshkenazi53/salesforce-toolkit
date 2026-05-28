@@ -1312,26 +1312,22 @@ const ApexDebugger = (() => {
     detail.innerHTML = `
       <div class="adbg-detail-inner">
 
-        <!-- Compact header — click the title bar to minimize/expand. -->
+        <!-- Compact header — click the title bar to minimize/expand.
+             The bar is the single source of op-name + time/size/duration/
+             status so it never duplicates the body. The body holds only the
+             things the bar doesn't: user, entry point, and the action row. -->
         <div class="adbg-det-hdr" id="adbgDetHdr">
           <div class="adbg-det-hdr-bar" id="adbgDetHdrToggle"
             title="Click to minimize / expand the header">
             <span class="adbg-det-hdr-caret">▾</span>
             <span class="adbg-det-hdr-bar-title">${_esc(log.Operation || log.Request || log.Application || 'Unknown operation')}</span>
-            ${timeStr ? `<span class="adbg-det-hdr-bar-meta">${timeStr}</span>` : ''}
-            ${dur ? `<span class="adbg-det-hdr-bar-meta">${dur}</span>` : ''}
+            ${timeStr   ? `<span class="adbg-det-hdr-bar-meta">${timeStr}</span>` : ''}
+            ${kb !== '—'? `<span class="adbg-det-hdr-bar-meta">${kb}</span>` : ''}
+            ${dur       ? `<span class="adbg-det-hdr-bar-meta">${dur}</span>` : ''}
             ${log.Status && log.Status !== 'Success'
                 ? `<span class="adbg-pill-fail">${_esc(log.Status)}</span>` : ''}
           </div>
           <div class="adbg-det-hdr-body">
-            <div class="adbg-det-meta">
-              ${timeStr ? `<span>${timeStr}</span>` : ''}
-              ${kb !== '—' ? `<span>${kb}</span>` : ''}
-              ${dur        ? `<span>${dur}</span>` : ''}
-              ${log.Status && log.Status !== 'Success'
-                  ? `<span class="adbg-pill-fail">${_esc(log.Status)}</span>` : ''}
-            </div>
-            <div class="adbg-det-op">${_esc(log.Operation || log.Request || log.Application || 'Unknown operation')}</div>
             ${!_selUser && log.LogUser?.Name
                 ? `<div class="adbg-det-user">👤 ${_esc(log.LogUser.Name)}</div>` : ''}
             ${p.entryPoint ? `<div class="adbg-det-entry">▶ Entry point: <code>${_esc(p.entryPoint)}</code></div>` : ''}
