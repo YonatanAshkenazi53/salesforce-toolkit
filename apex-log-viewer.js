@@ -344,6 +344,31 @@
         sInp.focus(); sInp.select();
       }
     });
+
+    // Font-size controls (shares the same localStorage key as the popup
+    // debugger so the user's preferred size is consistent across both).
+    document.getElementById('alvFontDown') ?.addEventListener('click', () => _bumpFont(-1));
+    document.getElementById('alvFontUp')   ?.addEventListener('click', () => _bumpFont(+1));
+    document.getElementById('alvFontReset')?.addEventListener('click', () => _bumpFont(0));
+  }
+
+  // ── Log font-size (mirrors apex-debugger.js) ────────────
+  const FONT_MIN = 9, FONT_MAX = 26, FONT_DEFAULT = 12, FONT_KEY = 'adbg_log_font_px';
+  function _getFont() {
+    const v = parseInt(localStorage.getItem(FONT_KEY), 10);
+    return (v >= FONT_MIN && v <= FONT_MAX) ? v : FONT_DEFAULT;
+  }
+  function _applyFont(px) {
+    const size = px != null ? px : _getFont();
+    const view = document.getElementById('alvLogView');
+    if (view) { view.style.fontSize = size + 'px'; view.style.lineHeight = (size + 6) + 'px'; }
+  }
+  function _bumpFont(delta) {
+    const next = delta === 0
+      ? FONT_DEFAULT
+      : Math.max(FONT_MIN, Math.min(FONT_MAX, _getFont() + delta));
+    localStorage.setItem(FONT_KEY, String(next));
+    _applyFont(next);
   }
 
   // ── Boot ────────────────────────────────────────────────
@@ -375,6 +400,7 @@
     _bindActions(payload);
     _bindControls();
     _renderInitial(payload.raw || '');
+    _applyFont();   // restore the user's preferred log text size
 
     // One-shot: delete the storage key so we don't leak data across sessions.
     try { await chrome.storage.local.remove(storeKey); } catch {}

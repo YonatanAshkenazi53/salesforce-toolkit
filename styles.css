@@ -2573,6 +2573,22 @@ body {
 }
 .adbg-log-title-bar:hover { background: var(--hover); }
 .adbg-log-caret { font-size: 11px; color: var(--subtext); width: 12px; }
+/* Font-size controls — pushed to the right edge of the log title bar. */
+.adbg-log-fontctl { margin-left: auto; display: inline-flex; gap: 3px; cursor: default; }
+.adbg-log-font-btn {
+  border: 1px solid var(--border);
+  background: var(--card, #fff);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 7px;
+}
+.adbg-log-font-btn:hover { background: var(--brand, #0176D3); color: #fff; border-color: var(--brand, #0176D3); }
+#adbgLogFontDown  { font-size: 10px; }
+#adbgLogFontReset { font-size: 12px; }
+#adbgLogFontUp    { font-size: 14px; }
 /* Collapsed: hide the search header + the log view, keep just the bar */
 .adbg-logsec-collapsed { flex: 0 0 auto; }
 .adbg-logsec-collapsed > .adbg-log-hdr,
