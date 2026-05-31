@@ -28,6 +28,7 @@ const FlowPermissions = (() => {
   let _selFlows  = new Set();
   let _selPS     = new Set();
   let _psOnlyWithFlows = false;   // filter toggle: show only PS that grant ≥1 flow
+  let _psExpanded = new Set();    // permSetIds whose inline flow list is expanded
 
   // ── tiny helpers ────────────────────────────────────────────
   function esc(s) {
@@ -446,34 +447,40 @@ const FlowPermissions = (() => {
     list.innerHTML = filtered.map(ps => {
       const sel   = _selPS.has(ps.Id);
       const flows = _flowsByPS[ps.Id] || [];
-      // Badge showing how many flows this PS already grants, with the flow
-      // names in the tooltip. Clicking it loads those flows into the flow
-      // selection so the user can see/manage them.
+      const open  = _psExpanded.has(ps.Id);
+      // Clickable badge showing how many flows this PS grants. Click it to
+      // expand an inline list of those flows right under the row.
       const flowBadge = flows.length > 0
         ? `<span class="fp-flowcount-badge" data-ps-flows="${esc(ps.Id)}"
-                 title="Grants ${flows.length} flow(s):\n${esc(flows.map(f => '• ' + f.label).join('\n'))}">⚡ ${flows.length}</span>`
+                 title="Click to ${open ? 'hide' : 'show'} the ${flows.length} flow(s) this permission set grants">⚡ ${flows.length} flow${flows.length !== 1 ? 's' : ''} ${open ? '▾' : '▸'}</span>`
+        : '';
+      // Inline expandable list of the granted flows.
+      const flowListHtml = (flows.length > 0 && open)
+        ? `<div class="fp-ps-flowlist">
+             ${flows.map(fl => `<div class="fp-ps-flowlist-row">⚡ ${esc(fl.label)}</div>`).join('')}
+           </div>`
         : '';
       return `
-        <label class="fp-item${sel ? ' fp-item-sel' : ''}" title="${esc(ps.Name)}">
-          <input type="checkbox" class="fp-cb fp-ps-cb" data-id="${esc(ps.Id)}"${sel ? ' checked' : ''}>
-          <span class="fp-item-name">${esc(ps.Label)}</span>
-          <span class="fp-item-api">${esc(ps.Name)}</span>
-          ${flowBadge}
-        </label>`;
+        <div class="fp-ps-wrap">
+          <label class="fp-item${sel ? ' fp-item-sel' : ''}" title="${esc(ps.Name)}">
+            <input type="checkbox" class="fp-cb fp-ps-cb" data-id="${esc(ps.Id)}"${sel ? ' checked' : ''}>
+            <span class="fp-item-name">${esc(ps.Label)}</span>
+            <span class="fp-item-api">${esc(ps.Name)}</span>
+            ${flowBadge}
+          </label>
+          ${flowListHtml}
+        </div>`;
     }).join('');
 
-    // Click a flow-count badge → select exactly the flows that PS grants in
-    // the flow list (so the user can review/extend them). Doesn't toggle the
-    // PS checkbox (stopPropagation keeps the <label> from flipping it).
+    // Click a flow-count badge → toggle the inline flow list under that PS.
+    // stopPropagation keeps the <label> from flipping the PS checkbox.
     list.querySelectorAll('[data-ps-flows]').forEach(badge => {
       badge.addEventListener('click', e => {
         e.preventDefault(); e.stopPropagation();
-        const psId  = badge.dataset.psFlows;
-        const ids   = new Set((_flowsByPS[psId] || []).map(f => f.flowId));
-        _selFlows = new Set([..._selFlows].filter(id => ids.has(id)));
-        ids.forEach(id => { if (_flows.some(f => f.Id === id)) _selFlows.add(id); });
-        renderFlows();
-        updateActionBar();
+        const psId = badge.dataset.psFlows;
+        if (_psExpanded.has(psId)) _psExpanded.delete(psId);
+        else                       _psExpanded.add(psId);
+        renderPermSets();
       });
     });
 
@@ -554,6 +561,7 @@ const FlowPermissions = (() => {
 
     const errors    = [];
     const successes = [];
+    const grants    = [];   // { psId, psLabel, flowId, flowLabel } — for optimistic UI merge
 
     // Salesforce record Ids are 15 or 18 char base-62 strings. Anything else
     // in the URL path gets reinterpreted as an external-Id field lookup, which
@@ -603,6 +611,7 @@ const FlowPermissions = (() => {
             body: { SetupEntityId: f.Id, ParentId: ps.Id }
           });
           if (r.error) throw new Error(r.error);
+          grants.push({ psId: ps.Id, psLabel: ps.Label, flowId: f.Id, flowLabel: f.MasterLabel || f.DeveloperName || f.Id });
         }
 
         successes.push(f);
@@ -615,6 +624,23 @@ const FlowPermissions = (() => {
 
     // Reload data to reflect updated PS-assignment counts
     await loadData();
+
+    // Optimistic merge: SetupEntityAccess is a setup object and the re-query
+    // above can be momentarily stale (the new grant may not show yet). Fold
+    // the grants we just made into the in-memory maps so the ⚡ badge + the
+    // per-PS flow list reflect them immediately. De-duped against whatever
+    // loadData already pulled.
+    for (const g of grants) {
+      if (!_flowsByPS[g.psId]) _flowsByPS[g.psId] = [];
+      if (!_flowsByPS[g.psId].some(x => x.flowId === g.flowId)) {
+        _flowsByPS[g.psId].push({ flowId: g.flowId, label: g.flowLabel });
+      }
+      if (!_accessMap[g.flowId]) _accessMap[g.flowId] = [];
+      if (!_accessMap[g.flowId].some(x => x.permSetId === g.psId)) {
+        _accessMap[g.flowId].push({ permSetId: g.psId, label: g.psLabel, accessId: null });
+      }
+    }
+    if (grants.length) renderContent();
 
     // Show result
     if (errors.length === 0) {
