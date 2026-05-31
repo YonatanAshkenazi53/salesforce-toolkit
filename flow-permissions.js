@@ -527,16 +527,20 @@ const FlowPermissions = (() => {
         const existingPS = new Set((_accessMap[f.Id] || []).map(a => a.permSetId));
         for (const ps of permSets) {
           if (existingPS.has(ps.Id)) continue;  // already assigned
-          // IMPORTANT: SetupEntityAccess must be created via the TOOLING API.
-          // The standard Data API (/sobjects/SetupEntityAccess) rejects
-          // SetupEntityType as not-createable → HTTP 400 "Unable to
-          // create/update fields: SetupEntityType". The Tooling endpoint
-          // allows writing both SetupEntityType and SetupEntityId.
+          // Create the grant via the TOOLING API. Two non-obvious rules:
+          //  1. SetupEntityAccess writes go through Tooling, not the Data API.
+          //  2. SetupEntityType is NOT createable — it's a system field that
+          //     Salesforce DERIVES from SetupEntityId (a FlowDefinition Id →
+          //     type 'Flow'). Sending it triggers HTTP 400 "Unable to
+          //     create/update fields: SetupEntityType". The Apex equivalent
+          //     (insert new SetupEntityAccess(ParentId=…, SetupEntityId=…))
+          //     likewise never sets the type. So we send ONLY ParentId +
+          //     SetupEntityId.
           const r = await sendBg({
             type: 'SF_REST_POST',
             orgUrl: _orgUrl, sid: _sid,
             path: `services/data/v62.0/tooling/sobjects/SetupEntityAccess`,
-            body: { SetupEntityType: 'Flow', SetupEntityId: f.Id, ParentId: ps.Id }
+            body: { SetupEntityId: f.Id, ParentId: ps.Id }
           });
           if (r.error) throw new Error(r.error);
         }
