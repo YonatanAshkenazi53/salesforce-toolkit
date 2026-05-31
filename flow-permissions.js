@@ -527,10 +527,15 @@ const FlowPermissions = (() => {
         const existingPS = new Set((_accessMap[f.Id] || []).map(a => a.permSetId));
         for (const ps of permSets) {
           if (existingPS.has(ps.Id)) continue;  // already assigned
+          // IMPORTANT: SetupEntityAccess must be created via the TOOLING API.
+          // The standard Data API (/sobjects/SetupEntityAccess) rejects
+          // SetupEntityType as not-createable → HTTP 400 "Unable to
+          // create/update fields: SetupEntityType". The Tooling endpoint
+          // allows writing both SetupEntityType and SetupEntityId.
           const r = await sendBg({
             type: 'SF_REST_POST',
             orgUrl: _orgUrl, sid: _sid,
-            path: `services/data/v62.0/sobjects/SetupEntityAccess`,
+            path: `services/data/v62.0/tooling/sobjects/SetupEntityAccess`,
             body: { SetupEntityType: 'Flow', SetupEntityId: f.Id, ParentId: ps.Id }
           });
           if (r.error) throw new Error(r.error);
