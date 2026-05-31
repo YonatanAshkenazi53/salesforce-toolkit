@@ -2,19 +2,25 @@
 /* ============================================================
    Flow Permissions — bulk-assign Screen Flows to Permission Sets
    ============================================================
-   Grants "Flow Access" (the permission to run a flow) by creating
-   SetupEntityAccess records:
-     SetupEntityType = 'Flow'
-     SetupEntityId   = FlowDefinition.Id
-     ParentId        = PermissionSet.Id
+   WRITE (grant): via the METADATA API. We deploy each selected
+   PermissionSet with <flowAccesses><enabled>true</enabled><flow>API
+   name</flow></flowAccesses>. This is the only mechanism that actually
+   creates a usable grant — a REST insert into SetupEntityAccess returns
+   HTTP 200 but produces NO real Flow Access (Setup shows nothing). The
+   deploy is additive: only flowAccesses are declared, so existing
+   object/field/Apex permissions on the set are preserved.
 
-   We resolve each assignable flow (from FlowDefinitionView) to its real
-   FlowDefinition.Id via a DeveloperName join; flows with no FlowDefinition
-   row (managed-package / read-only) are skipped — they can't be granted.
+   READ (show existing grants): query SetupEntityAccess by
+   `SetupEntityId IN (<FlowDefinition Ids>)`. We do NOT filter on
+   `SetupEntityType = 'Flow'` — the stored type string isn't reliable —
+   matching on the flow Ids we display is robust.
 
-   NOTE: we do NOT modify runInMode. That's a Flow-builder setting (how a
-   flow runs — system vs user context), not an access grant, and it isn't a
-   valid property of FlowDefinition.Metadata in the Tooling API.
+   Flow Id resolution: each assignable flow (FlowDefinitionView) is joined
+   to its FlowDefinition.Id by DeveloperName; flows with no FlowDefinition
+   row (managed-package / read-only) are skipped.
+
+   NOTE: we do NOT modify runInMode (a Flow-builder setting, not an access
+   grant; not a valid FlowDefinition.Metadata property in the Tooling API).
 
    Compatible flow types: Screen Flows only (ProcessType = 'Flow').
    ============================================================ */
@@ -229,28 +235,44 @@ const FlowPermissions = (() => {
       }
 
       // ── Step 4: Permission sets + existing access map ─────────────────────
-      const [psRes, accessRes] = await Promise.all([
+      // Read SetupEntityAccess by SetupEntityId IN (our FlowDefinition Ids),
+      // NOT by `WHERE SetupEntityType = 'Flow'`. The grant we create (REST
+      // insert with just SetupEntityId) is stored with a type string that
+      // doesn't reliably equal 'Flow', so the type filter missed it even
+      // though Salesforce Setup shows the access. Matching on the flow Ids
+      // we already display sidesteps the type-string entirely. Chunked to
+      // keep the IN() clause within SOQL limits.
+      const flowDefIds = _flows.map(f => f.Id).filter(Boolean);
+      const accessRecsP = (async () => {
+        const out = [];
+        for (let i = 0; i < flowDefIds.length; i += 200) {
+          const chunk = flowDefIds.slice(i, i + 200);
+          const inList = chunk.map(id => `'${id}'`).join(',');
+          const res = await sendBg({
+            type: 'SF_QUERY_ALL', tooling: false, orgUrl: _orgUrl, sid: _sid,
+            query: `SELECT Id, ParentId, Parent.Label, SetupEntityId, SetupEntityType
+                    FROM SetupEntityAccess WHERE SetupEntityId IN (${inList})`
+          });
+          if (res?.records) out.push(...res.records);
+        }
+        return out;
+      })();
+      const [psRes, accessRecords] = await Promise.all([
         sendBg({
           type: 'SF_QUERY_ALL', tooling: false, orgUrl: _orgUrl, sid: _sid,
           query: `SELECT Id, Name, Label FROM PermissionSet
                   WHERE IsOwnedByProfile = false ORDER BY Label ASC`
         }),
-        sendBg({
-          type: 'SF_QUERY_ALL', tooling: false, orgUrl: _orgUrl, sid: _sid,
-          query: `SELECT Id, ParentId, Parent.Label, SetupEntityId
-                  FROM SetupEntityAccess WHERE SetupEntityType = 'Flow'`
-        })
+        accessRecsP
       ]);
       if (psRes.error) throw new Error(psRes.error);
 
-      // Diagnostic: how many Flow-type SetupEntityAccess records came back,
-      // and what do they point at? If this is 0 right after a "successful"
-      // assign, the grant isn't persisting as a real Flow access record.
+      // Diagnostic: how many access records matched our flow Ids, and what
+      // SetupEntityType did Salesforce actually store for them.
       if (window.SFToolkitDebug?.enabled) {
-        const recs = accessRes?.records || [];
         window.SFToolkitDebug.log('flow-perms', 'info',
-          `SetupEntityAccess flow grants returned: ${recs.length} — ` +
-          JSON.stringify(recs.slice(0, 15).map(r => ({ ps: r.ParentId, flow: r.SetupEntityId }))));
+          `SetupEntityAccess grants for ${flowDefIds.length} flows: ${accessRecords.length} — ` +
+          JSON.stringify(accessRecords.slice(0, 15).map(r => ({ ps: r.ParentId, flow: r.SetupEntityId, type: r.SetupEntityType }))));
       }
 
       _permSets = psRes.records || [];
@@ -263,7 +285,7 @@ const FlowPermissions = (() => {
 
       _accessMap = {};
       _flowsByPS = {};
-      for (const r of (accessRes?.records || [])) {
+      for (const r of accessRecords) {
         if (!_accessMap[r.SetupEntityId]) _accessMap[r.SetupEntityId] = [];
         _accessMap[r.SetupEntityId].push({
           permSetId: r.ParentId,
@@ -564,93 +586,173 @@ const FlowPermissions = (() => {
     });
   }
 
+  // ── Metadata API: grant flow access via PermissionSet deploy ───────────
+  // CRC-32 + stored-zip builder (same algorithm field-cleaner/lightning-pages
+  // use; kept local so this module is self-contained).
+  function _fpCrc32(bytes) {
+    if (!_fpCrc32._t) {
+      _fpCrc32._t = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        _fpCrc32._t[i] = c;
+      }
+    }
+    let c = 0xFFFFFFFF;
+    for (const b of bytes) c = _fpCrc32._t[(c ^ b) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function _fpBuildStoredZip(files) {
+    const localBlocks = [], centralRecs = [];
+    let offset = 0;
+    const now = new Date();
+    const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+    const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+    const enc = new TextEncoder();
+
+    for (const file of files) {
+      const name = enc.encode(file.name);
+      const data = file.data instanceof Uint8Array ? file.data : enc.encode(String(file.data));
+      const crc  = _fpCrc32(data);
+      const local = new Uint8Array(30 + name.length + data.length);
+      const lv = new DataView(local.buffer);
+      lv.setUint32(0, 0x04034b50, true);
+      lv.setUint16(4, 20, true);
+      lv.setUint16(6, 0, true); lv.setUint16(8, 0, true);
+      lv.setUint16(10, dosTime, true); lv.setUint16(12, dosDate, true);
+      lv.setUint32(14, crc, true);
+      lv.setUint32(18, data.length, true); lv.setUint32(22, data.length, true);
+      lv.setUint16(26, name.length, true); lv.setUint16(28, 0, true);
+      local.set(name, 30); local.set(data, 30 + name.length);
+
+      const central = new Uint8Array(46 + name.length);
+      const cv = new DataView(central.buffer);
+      cv.setUint32(0, 0x02014b50, true);
+      cv.setUint16(4, 0x0314, true); cv.setUint16(6, 20, true);
+      cv.setUint16(8, 0, true); cv.setUint16(10, 0, true);
+      cv.setUint16(12, dosTime, true); cv.setUint16(14, dosDate, true);
+      cv.setUint32(16, crc, true);
+      cv.setUint32(20, data.length, true); cv.setUint32(24, data.length, true);
+      cv.setUint16(28, name.length, true);
+      cv.setUint16(30, 0, true); cv.setUint16(32, 0, true); cv.setUint16(34, 0, true);
+      cv.setUint16(36, 0, true); cv.setUint32(38, 0, true); cv.setUint32(42, offset, true);
+      central.set(name, 46);
+
+      localBlocks.push(local); centralRecs.push(central);
+      offset += local.length;
+    }
+
+    const centralSize = centralRecs.reduce((s, r) => s + r.length, 0);
+    const eocd = new Uint8Array(22);
+    const ev = new DataView(eocd.buffer);
+    ev.setUint32(0, 0x06054b50, true);
+    ev.setUint16(4, 0, true); ev.setUint16(6, 0, true);
+    ev.setUint16(8, files.length, true); ev.setUint16(10, files.length, true);
+    ev.setUint32(12, centralSize, true); ev.setUint32(16, offset, true);
+    ev.setUint16(20, 0, true);
+
+    const zip = new Uint8Array(offset + centralSize + eocd.length);
+    let pos = 0;
+    for (const b of localBlocks) { zip.set(b, pos); pos += b.length; }
+    for (const r of centralRecs) { zip.set(r, pos); pos += r.length; }
+    zip.set(eocd, pos);
+
+    let binary = '';
+    const CHUNK = 8192;
+    for (let i = 0; i < zip.length; i += CHUNK) {
+      binary += String.fromCharCode(...zip.subarray(i, Math.min(i + CHUNK, zip.length)));
+    }
+    return btoa(binary);
+  }
+
+  // PermissionSet metadata XML carrying ONLY <flowAccesses> (+ the required
+  // <label>). Additive — leaves all other permissions on the set intact.
+  function buildPermSetXml(label, flowApiNames) {
+    const lines = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">'
+    ];
+    for (const fn of flowApiNames) {
+      lines.push(
+        '    <flowAccesses>',
+        '        <enabled>true</enabled>',
+        `        <flow>${esc(fn)}</flow>`,
+        '    </flowAccesses>'
+      );
+    }
+    lines.push(`    <label>${esc(label)}</label>`);
+    lines.push('</PermissionSet>');
+    return lines.join('\n');
+  }
+
+  function buildPermSetPackageXml(psApiNames) {
+    return [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<Package xmlns="http://soap.sforce.com/2006/04/metadata">',
+      '    <types>',
+      ...psApiNames.map(n => `        <members>${esc(n)}</members>`),
+      '        <name>PermissionSet</name>',
+      '    </types>',
+      '    <version>62.0</version>',
+      '</Package>'
+    ].join('\n');
+  }
+
+  // Build a single deploy package: package.xml + one .permissionset file per
+  // selected permission set, each granting all selected flows. Deploy once.
+  async function deployFlowAccess(permSets, flowApiNames) {
+    const enc = new TextEncoder();
+    const files = [
+      { name: 'package.xml', data: enc.encode(buildPermSetPackageXml(permSets.map(p => p.Name))) }
+    ];
+    for (const ps of permSets) {
+      files.push({
+        name: `permissionsets/${ps.Name}.permissionset`,
+        data: enc.encode(buildPermSetXml(ps.Label, flowApiNames))
+      });
+    }
+    return sendBg({
+      type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid,
+      zipBase64: _fpBuildStoredZip(files)
+    });
+  }
+
   async function doAssign(flows, permSets) {
     const btn     = document.getElementById('fpAssignBtn');
     const summary = document.getElementById('fpActionSummary');
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Working…'; }
 
-    const errors    = [];
-    const successes = [];
-    const grants    = [];   // { psId, psLabel, flowId, flowLabel } — for optimistic UI merge
+    // Grant flow access via the METADATA API — deploy each selected
+    // PermissionSet with <flowAccesses> members. This is the ONLY mechanism
+    // that actually works. The REST SetupEntityAccess insert returns HTTP 200
+    // but creates NO usable grant (Salesforce Setup → Permission Set → Flow
+    // Access shows nothing afterward). Permission-set metadata deploys are
+    // ADDITIVE: only the flowAccesses we declare are added; existing
+    // object/field/Apex permissions on the set are left untouched.
+    if (summary) summary.textContent = `Deploying flow access to ${permSets.length} permission set(s)…`;
 
-    // Salesforce record Ids are 15 or 18 char base-62 strings. Anything else
-    // in the URL path gets reinterpreted as an external-Id field lookup, which
-    // produces a 404 with the cryptic message "Provided external ID field
-    // does not exist or is not accessible: <value>". Catch bad Ids up front
-    // so the failure is obvious in the UI instead.
-    const SF_ID_RE = /^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$/;
-
-    for (let i = 0; i < flows.length; i++) {
-      const f = flows[i];
-      if (summary) summary.textContent = `[${i + 1}/${flows.length}] ${f.MasterLabel}…`;
-
-      try {
-        if (!f.Id || !SF_ID_RE.test(f.Id)) {
-          throw new Error(
-            `Can't assign permissions — no FlowDefinition record found for "${f.DeveloperName}". ` +
-            `This usually means the flow is from a managed package and is read-only.`);
-        }
-
-        // Grant the flow to each permission set via SetupEntityAccess —
-        // that IS the "Flow Access" permission (who can run the flow).
-        // NOTE: we deliberately do NOT touch runInMode here. runInMode is
-        // a Flow-builder setting (how the flow runs — system vs user
-        // context), not an access grant, and it isn't even a valid
-        // property of FlowDefinition.Metadata in the Tooling API — PATCHing
-        // it returns HTTP 400 "Cannot deserialize complexvalue from
-        // VALUE_STRING". It also blocked the real grant below from running.
-        const existingPS = new Set((_accessMap[f.Id] || []).map(a => a.permSetId));
-        for (const ps of permSets) {
-          if (existingPS.has(ps.Id)) continue;  // already assigned
-          // Create the grant on the STANDARD Data API. Hard-won lesson from
-          // three failed attempts:
-          //  - Tooling endpoint (/tooling/sobjects/SetupEntityAccess) → HTTP
-          //    404 "resource does not exist": SetupEntityAccess isn't exposed
-          //    for POST there.
-          //  - Data endpoint WITH SetupEntityType → HTTP 400 "Unable to
-          //    create/update fields: SetupEntityType": that field is NOT
-          //    createable (Salesforce derives it from SetupEntityId).
-          //  - Data endpoint WITHOUT SetupEntityType → works. The Apex
-          //    equivalent (insert new SetupEntityAccess(ParentId,
-          //    SetupEntityId)) likewise never sets the type.
-          // So: standard /sobjects/ endpoint, body = { SetupEntityId, ParentId }.
-          const r = await sendBg({
-            type: 'SF_REST_POST',
-            orgUrl: _orgUrl, sid: _sid,
-            path: `services/data/v62.0/sobjects/SetupEntityAccess`,
-            body: { SetupEntityId: f.Id, ParentId: ps.Id }
-          });
-          if (r.error) throw new Error(r.error);
-          grants.push({ psId: ps.Id, psLabel: ps.Label, flowId: f.Id, flowLabel: f.MasterLabel || f.DeveloperName || f.Id });
-        }
-
-        successes.push(f);
-      } catch (e) {
-        errors.push({ label: f.MasterLabel, msg: e.message || String(e) });
-      }
+    const flowApiNames = flows.map(f => f.DeveloperName).filter(Boolean);
+    let deployErr = null;
+    try {
+      const res = await deployFlowAccess(permSets, flowApiNames);
+      if (res?.error) deployErr = res.error;
+      else if (res && res.success === false) deployErr = res.errorMessage || 'Deployment failed';
+    } catch (e) {
+      deployErr = e.message || String(e);
     }
 
     if (btn) btn.textContent = '🔑 Assign';
+    if (summary) summary.textContent = '';
 
-    // Reload data to reflect updated PS-assignment counts
+    // Deploy is all-or-nothing (rollbackOnError) → every flow either landed
+    // on every selected PS, or none did.
+    const errors    = deployErr ? [{ label: 'Deployment', msg: deployErr }] : [];
+    const successes = deployErr ? [] : flows;
+
+    // Reload so the SetupEntityAccess read (now matched by flow Id) surfaces
+    // the real grants the deploy created.
     await loadData();
-
-    // Optimistic merge: SetupEntityAccess is a setup object and the re-query
-    // above can be momentarily stale (the new grant may not show yet). Fold
-    // the grants we just made into the in-memory maps so the ⚡ badge + the
-    // per-PS flow list reflect them immediately. De-duped against whatever
-    // loadData already pulled.
-    for (const g of grants) {
-      if (!_flowsByPS[g.psId]) _flowsByPS[g.psId] = [];
-      if (!_flowsByPS[g.psId].some(x => x.flowId === g.flowId)) {
-        _flowsByPS[g.psId].push({ flowId: g.flowId, label: g.flowLabel });
-      }
-      if (!_accessMap[g.flowId]) _accessMap[g.flowId] = [];
-      if (!_accessMap[g.flowId].some(x => x.permSetId === g.psId)) {
-        _accessMap[g.flowId].push({ permSetId: g.psId, label: g.psLabel, accessId: null });
-      }
-    }
-    if (grants.length) renderContent();
 
     // Show result
     if (errors.length === 0) {
