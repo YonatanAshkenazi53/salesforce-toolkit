@@ -3062,6 +3062,21 @@ body {
 }
 .fp-flowcount-badge:hover { background: #FDE68A; }
 
+/* Inline list of flows a permission set grants (expanded under its row) */
+.fp-ps-wrap { border-bottom: 1px solid transparent; }
+.fp-ps-flowlist {
+  padding: 4px 10px 8px 34px;
+  background: #FFFBEB;
+  border-bottom: 1px solid var(--border);
+}
+.ds-dark .fp-ps-flowlist { background: rgba(251, 191, 36, 0.08); }
+.fp-ps-flowlist-row {
+  font-size: 11px;
+  color: #92400E;
+  padding: 2px 0;
+}
+.ds-dark .fp-ps-flowlist-row { color: #FCD34D; }
+
 /* "Only show perm sets with flows enabled" filter toggle */
 .fp-ps-filter {
   display: flex; align-items: center; gap: 6px;
