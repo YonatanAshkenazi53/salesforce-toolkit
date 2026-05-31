@@ -243,6 +243,16 @@ const FlowPermissions = (() => {
       ]);
       if (psRes.error) throw new Error(psRes.error);
 
+      // Diagnostic: how many Flow-type SetupEntityAccess records came back,
+      // and what do they point at? If this is 0 right after a "successful"
+      // assign, the grant isn't persisting as a real Flow access record.
+      if (window.SFToolkitDebug?.enabled) {
+        const recs = accessRes?.records || [];
+        window.SFToolkitDebug.log('flow-perms', 'info',
+          `SetupEntityAccess flow grants returned: ${recs.length} — ` +
+          JSON.stringify(recs.slice(0, 15).map(r => ({ ps: r.ParentId, flow: r.SetupEntityId }))));
+      }
+
       _permSets = psRes.records || [];
 
       // flowDefId → label, for naming flows in the reverse (per-PS) view.
