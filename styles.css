@@ -3045,6 +3045,36 @@ body {
 }
 .fp-item-sel .fp-ps-badge { background: var(--brand); color: #fff; border-color: var(--brand); }
 
+/* Flow-count badge on a permission-set row — clickable, shows how many
+   flows that PS already grants (tooltip lists them). */
+.fp-flowcount-badge {
+  margin-left: auto;
+  background: #FEF3C7;
+  border: 1px solid #FBBF24;
+  color: #92400E;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.fp-flowcount-badge:hover { background: #FDE68A; }
+
+/* "Only show perm sets with flows enabled" filter toggle */
+.fp-ps-filter {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 9px;
+  font-size: 11px;
+  color: var(--subtext);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.fp-ps-filter input { accent-color: var(--brand); }
+
 /* ── Flow type badge ── */
 .fp-ft-badge {
   padding: 1px 6px;

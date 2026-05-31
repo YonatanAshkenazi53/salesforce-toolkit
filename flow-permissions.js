@@ -23,9 +23,11 @@ const FlowPermissions = (() => {
   let _container;
   let _flows     = [];   // FlowDefinitionView records
   let _permSets  = [];   // PermissionSet records
-  let _accessMap = {};   // flowDefId -> [{ permSetId, label, accessId }]
+  let _accessMap = {};   // flowDefId  -> [{ permSetId, label, accessId }]
+  let _flowsByPS = {};   // permSetId  -> [{ flowId, label }]  (reverse of _accessMap)
   let _selFlows  = new Set();
   let _selPS     = new Set();
+  let _psOnlyWithFlows = false;   // filter toggle: show only PS that grant ≥1 flow
 
   // ── tiny helpers ────────────────────────────────────────────
   function esc(s) {
@@ -119,6 +121,9 @@ const FlowPermissions = (() => {
               <div class="fp-panel-search">
                 <input type="text" class="fp-panel-search-input" id="fpPsSearch" placeholder="🔍 Search perm sets…">
               </div>
+              <label class="fp-ps-filter" title="Show only permission sets that already grant access to at least one flow">
+                <input type="checkbox" id="fpPsOnlyFlows"> ⚡ Only show perm sets with flows enabled
+              </label>
               <div id="fpPsList" class="fp-list"></div>
             </div>
 
@@ -239,13 +244,26 @@ const FlowPermissions = (() => {
 
       _permSets = psRes.records || [];
 
+      // flowDefId → label, for naming flows in the reverse (per-PS) view.
+      // Covers the assignable screen flows; flows we couldn't resolve fall
+      // back to their raw Id below.
+      const flowLabelById = {};
+      for (const f of _flows) flowLabelById[f.Id] = f.MasterLabel || f.DeveloperName || f.Id;
+
       _accessMap = {};
+      _flowsByPS = {};
       for (const r of (accessRes?.records || [])) {
         if (!_accessMap[r.SetupEntityId]) _accessMap[r.SetupEntityId] = [];
         _accessMap[r.SetupEntityId].push({
           permSetId: r.ParentId,
           label:     r.Parent?.Label || r.ParentId,
           accessId:  r.Id
+        });
+        // Reverse index: which flows does each permission set grant?
+        if (!_flowsByPS[r.ParentId]) _flowsByPS[r.ParentId] = [];
+        _flowsByPS[r.ParentId].push({
+          flowId: r.SetupEntityId,
+          label:  flowLabelById[r.SetupEntityId] || r.SetupEntityId
         });
       }
 
@@ -273,6 +291,14 @@ const FlowPermissions = (() => {
     const psSearchEl = document.getElementById('fpPsSearch');
     if (psSearchEl) {
       psSearchEl.addEventListener('input', () => { renderPermSets(); updateActionBar(); });
+    }
+    const psOnlyFlowsEl = document.getElementById('fpPsOnlyFlows');
+    if (psOnlyFlowsEl) {
+      psOnlyFlowsEl.checked = _psOnlyWithFlows;
+      psOnlyFlowsEl.addEventListener('change', () => {
+        _psOnlyWithFlows = psOnlyFlowsEl.checked;
+        renderPermSets(); updateActionBar();
+      });
     }
 
     // Wire panel-level select/deselect buttons — select/deselect the currently filtered items
@@ -396,9 +422,13 @@ const FlowPermissions = (() => {
     if (!list) return;
 
     const search   = (document.getElementById('fpPsSearch')?.value || '').toLowerCase().trim();
-    const filtered = search
+    let filtered = search
       ? _permSets.filter(p => (p.Label || p.Name || '').toLowerCase().includes(search))
-      : _permSets;
+      : _permSets.slice();
+    // "Only with flows" filter — keep permission sets that already grant ≥1 flow.
+    if (_psOnlyWithFlows) {
+      filtered = filtered.filter(p => (_flowsByPS[p.Id] || []).length > 0);
+    }
 
     const selCount = filtered.filter(p => _selPS.has(p.Id)).length;
     if (countEl) countEl.textContent = selCount > 0
@@ -406,19 +436,46 @@ const FlowPermissions = (() => {
       : filtered.length;
 
     if (filtered.length === 0) {
-      list.innerHTML = `<div class="fp-empty">${search ? 'No permission sets match' : 'No custom permission sets found'}</div>`;
+      const why = _psOnlyWithFlows ? 'No permission sets have flows enabled'
+                : search ? 'No permission sets match'
+                : 'No custom permission sets found';
+      list.innerHTML = `<div class="fp-empty">${why}</div>`;
       return;
     }
 
     list.innerHTML = filtered.map(ps => {
-      const sel = _selPS.has(ps.Id);
+      const sel   = _selPS.has(ps.Id);
+      const flows = _flowsByPS[ps.Id] || [];
+      // Badge showing how many flows this PS already grants, with the flow
+      // names in the tooltip. Clicking it loads those flows into the flow
+      // selection so the user can see/manage them.
+      const flowBadge = flows.length > 0
+        ? `<span class="fp-flowcount-badge" data-ps-flows="${esc(ps.Id)}"
+                 title="Grants ${flows.length} flow(s):\n${esc(flows.map(f => '• ' + f.label).join('\n'))}">⚡ ${flows.length}</span>`
+        : '';
       return `
         <label class="fp-item${sel ? ' fp-item-sel' : ''}" title="${esc(ps.Name)}">
           <input type="checkbox" class="fp-cb fp-ps-cb" data-id="${esc(ps.Id)}"${sel ? ' checked' : ''}>
           <span class="fp-item-name">${esc(ps.Label)}</span>
           <span class="fp-item-api">${esc(ps.Name)}</span>
+          ${flowBadge}
         </label>`;
     }).join('');
+
+    // Click a flow-count badge → select exactly the flows that PS grants in
+    // the flow list (so the user can review/extend them). Doesn't toggle the
+    // PS checkbox (stopPropagation keeps the <label> from flipping it).
+    list.querySelectorAll('[data-ps-flows]').forEach(badge => {
+      badge.addEventListener('click', e => {
+        e.preventDefault(); e.stopPropagation();
+        const psId  = badge.dataset.psFlows;
+        const ids   = new Set((_flowsByPS[psId] || []).map(f => f.flowId));
+        _selFlows = new Set([..._selFlows].filter(id => ids.has(id)));
+        ids.forEach(id => { if (_flows.some(f => f.Id === id)) _selFlows.add(id); });
+        renderFlows();
+        updateActionBar();
+      });
+    });
 
     list.querySelectorAll('.fp-ps-cb').forEach(cb => {
       cb.addEventListener('change', () => {
