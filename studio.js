@@ -4315,6 +4315,48 @@ async function runTransfer() {
         }
       }
 
+      // ── Step 6: Record-type matching preview ──────────────────────
+      // The transfer matches source → target RecordTypes by DeveloperName
+      // (API name). Show, before running, which record types used by the
+      // source records have an equivalent in the target — unmatched ones
+      // mean those records will land with the target's DEFAULT record type.
+      if (srcCount > 0) {
+        const rtWhere = node.where
+          ? `WHERE (${node.where}) AND RecordTypeId != null`
+          : `WHERE RecordTypeId != null`;
+        const srcRtRes = await sendBg({
+          type: 'SF_QUERY', tooling: false,
+          orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid,
+          // GROUP BY → distinct record-type names cheaply (no row payload).
+          query: `SELECT RecordType.DeveloperName FROM ${obj} ${rtWhere} GROUP BY RecordType.DeveloperName`
+        });
+        // Some objects have no RecordTypeId field → the query errors; that
+        // just means "no record types here", which is fine, so ignore it.
+        if (!srcRtRes.error) {
+          const usedNames = [...new Set(
+            (srcRtRes.records || []).map(r => r.RecordType?.DeveloperName).filter(Boolean)
+          )];
+          if (usedNames.length) {
+            const tgtRtRes = await sendBg({
+              type: 'SF_QUERY', tooling: false,
+              orgUrl: _transferTgt.orgUrl, sid: _transferTgt.sid,
+              query: `SELECT DeveloperName FROM RecordType WHERE SObjectType = '${obj}'`
+            });
+            const tgtNames = new Set((tgtRtRes.records || []).map(r => r.DeveloperName));
+            const matchedRt   = usedNames.filter(n => tgtNames.has(n));
+            const unmatchedRt = usedNames.filter(n => !tgtNames.has(n));
+            if (unmatchedRt.length) {
+              logRow('⚠️',
+                `${obj}: record type(s) ${unmatchedRt.join(', ')} have no match in target — those records will use the target's default record type` +
+                (matchedRt.length ? ` (${matchedRt.length} other type(s) match ✓)` : ''),
+                'ds-prog-warn');
+            } else {
+              logRow('✅', `${obj}: all ${matchedRt.length} record type(s) match in target by API name ✓`);
+            }
+          }
+        }
+      }
+
       for (const c of (node.children || [])) await dryRunNode(c);
     }
 
