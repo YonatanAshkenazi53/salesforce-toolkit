@@ -148,6 +148,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       nodeSourceIds.set(node, recs.map(r => r.Id));
 
       // ── Resolve RecordTypes ──────────────────────────────────────────────
+      // Match source → target RecordType by DeveloperName (API name) — the only
+      // stable cross-org key (the 18-char Id differs per org). A matched RT is
+      // applied to the insert; an UNMATCHED source RT is surfaced as a warning
+      // so the user knows those records fell back to the target's default RT
+      // (rather than it happening silently).
       const rtIds = [...new Set(recs.map(r => r.RecordTypeId).filter(Boolean))];
       const rtMap = {};
       if (rtIds.length) {
@@ -157,7 +162,15 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           `SELECT Id, DeveloperName FROM RecordType WHERE SObjectType = '${objType}'`, false);
         const tgtMap = {};
         for (const r of (tgtRt.records || [])) tgtMap[r.DeveloperName] = r.Id;
-        for (const r of (srcRt.records || [])) rtMap[r.Id] = tgtMap[r.DeveloperName] || null;
+        const unmatchedRt = [];
+        for (const r of (srcRt.records || [])) {
+          const tgtRtId = tgtMap[r.DeveloperName] || null;
+          rtMap[r.Id] = tgtRtId;
+          if (!tgtRtId) unmatchedRt.push(r.DeveloperName);
+        }
+        if (unmatchedRt.length) {
+          errors.push(`${objType}: record type(s) ${unmatchedRt.join(', ')} have no match in the target org — those records use the target's default record type.`);
+        }
       }
 
       // ── Lookup Resolution bridges ─────────────────────────────────────────
