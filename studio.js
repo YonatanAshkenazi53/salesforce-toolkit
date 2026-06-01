@@ -4409,8 +4409,14 @@ async function runTransfer() {
     id:        genId('run'),
     profileId: _transferProfile?.id,
     profileName: _transferProfile?.name,
+    // Set BOTH the *OrgUrl and sourceOrg/targetOrg keys: History (renderHistory)
+    // and the Connected-Orgs "N transfers logged" counter read sourceOrg/
+    // targetOrg, while health tiles read *OrgUrl. Reconcile entries set all
+    // four — transfers must too, or they render "Unknown → Unknown".
     srcOrgUrl: _transferSrc?.orgUrl,
     tgtOrgUrl: _transferTgt?.orgUrl,
+    sourceOrg: _transferSrc?.orgUrl,
+    targetOrg: _transferTgt?.orgUrl,
     startedAt: new Date().toISOString(),
     ...result
   });
@@ -4536,7 +4542,7 @@ async function renderReconcile() {
         <div class="ds-empty-actions"><button class="ds-btn ds-btn-primary" id="dsRecRefreshBtn2">🔄 Refresh state</button></div>
       </div>`);
     eid('dsRecBackBtn')?.addEventListener('click', renderProfiles);
-    const doRefresh = async () => { await window.refreshProfileState(p.id); _reconcileProfile = _profiles.find(x => x.id === p.id); renderReconcile(); };
+    const doRefresh = async () => { await window.refreshProfileState(p.id); const _fp = _profiles.find(x => x.id === p.id); if (_fp) _reconcileProfile = _fp; renderReconcile(); };
     eid('dsRecRefreshBtn')?.addEventListener('click', doRefresh);
     eid('dsRecRefreshBtn2')?.addEventListener('click', doRefresh);
     return;
@@ -4781,7 +4787,7 @@ async function renderReconcile() {
   eid('dsRecCancelBtn')?.addEventListener('click', renderProfiles);
   eid('dsRecRefreshBtn')?.addEventListener('click', async () => {
     await window.refreshProfileState(p.id);
-    _reconcileProfile = _profiles.find(x => x.id === p.id);
+    { const _fp = _profiles.find(x => x.id === p.id); if (_fp) _reconcileProfile = _fp; }
     _recSel = { push: new Set(), overwrite: new Set(), del: new Set(), pull: new Set() };
     renderReconcile();
   });
@@ -4999,7 +5005,9 @@ async function runReconcile(profile, objType, buckets) {
   log('✅', `Reconcile complete — refreshing state…`);
   // Refresh diff + snapshots so the columns reflect the new reality.
   await window.refreshProfileState(profile.id);
-  _reconcileProfile = _profiles.find(x => x.id === profile.id);
+  // Keep the ephemeral Org Compare profile (not in _profiles) — refreshProfileDiff
+  // already updated its lastScan in place. Only re-point at a saved profile.
+  { const _fp = _profiles.find(x => x.id === profile.id); if (_fp) _reconcileProfile = _fp; }
   _recSel = { push: new Set(), overwrite: new Set(), del: new Set(), pull: new Set() };
   const toastParts = [];
   if (counts.inserted) toastParts.push(`${counts.inserted} inserted`);
