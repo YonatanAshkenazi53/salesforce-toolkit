@@ -5050,14 +5050,48 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     srcRecs.push(...(res.records || []));
   }
 
+  // Match RecordTypes by DeveloperName when RecordTypeId is being written.
+  // The raw source RecordTypeId is invalid in the target org, so we resolve
+  // srcRtId → tgtRtId by API name; unmatched RTs are skipped (the target
+  // record keeps its existing RT) rather than pushing a garbage Id.
+  const ovwErrors = [];
+  let rtRemap = null;   // { srcRtId: tgtRtId|null }
+  if (srcFields.includes('RecordTypeId')) {
+    const srcRtIds = [...new Set(srcRecs.map(r => r.RecordTypeId).filter(Boolean))];
+    if (srcRtIds.length) {
+      const [srcRtRes, tgtRtRes] = await Promise.all([
+        sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+                 query: `SELECT Id, DeveloperName FROM RecordType WHERE Id IN (${srcRtIds.map(id => `'${id}'`).join(',')})` }),
+        sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+                 query: `SELECT Id, DeveloperName FROM RecordType WHERE SObjectType = '${objType}'` })
+      ]);
+      const tgtByName = {};
+      for (const r of (tgtRtRes.records || [])) tgtByName[r.DeveloperName] = r.Id;
+      rtRemap = {};
+      const unmatched = [];
+      for (const r of (srcRtRes.records || [])) {
+        rtRemap[r.Id] = tgtByName[r.DeveloperName] || null;
+        if (!rtRemap[r.Id]) unmatched.push(r.DeveloperName);
+      }
+      if (unmatched.length) ovwErrors.push(`record type(s) ${unmatched.join(', ')} not in target — left unchanged on those records`);
+    }
+  }
+
   // Build PATCH payloads keyed by target Id.
   const payloads = srcRecs.map(sr => {
     const tgtId = srcToTgt.get(sr.Id);
     const p = { attributes: { type: objType }, Id: tgtId };
     for (const sf of srcFields) {
       const tf = fm[sf];
-      const v  = sr[sf];
+      let v    = sr[sf];
       if (v == null) continue;
+      // Remap RecordTypeId by DeveloperName; drop it if there's no target
+      // match so we don't PATCH an invalid Id (which would fail the row).
+      if (sf === 'RecordTypeId' && rtRemap) {
+        const mapped = rtRemap[v];
+        if (!mapped) continue;
+        v = mapped;
+      }
       p[tf] = v;
     }
     return p;
@@ -5066,7 +5100,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const res = await sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: payloads });
   const arr = Array.isArray(res) ? res : [];
   const ok = arr.filter(r => r.success).length;
-  const errors = [];
+  const errors = [...ovwErrors];
   for (const r of arr) {
     if (!r.success) errors.push(`${objType}: ${(r.errors || []).map(e => e.message).join('; ')}`);
   }
