@@ -962,22 +962,40 @@ window.removeOrg = function(orgUrl) {
 // transfer/reconcile, Deploy Readiness, and Schema View to populate org
 // dropdowns. Each entry: { id, url, label }.
 function allMapOrgs() {
+  // Key the map by URL — the only truly unique key. The previous id-based
+  // keying used btoa(url).slice(0,12), which encodes only the URL's first
+  // 9 BYTES ("https://a…") — every pair of orgs sharing that prefix (e.g.
+  // ashkenazy6-… and ashkenazy7-…) collided and one silently vanished from
+  // every org dropdown. id stays for consumers but is now the full base64.
   const map = new Map();
-  const autoId = url => 'auto_' + btoa(url).replace(/[^a-z0-9]/gi,'').slice(0,12);
+  const autoId = url => 'auto_' + btoa(url).replace(/[^a-z0-9]/gi,'');
 
   // Remembered orgs (sftk_orgs) — everything seen in Chrome before.
   for (const [url, data] of Object.entries(_orgs)) {
-    const id = autoId(url);
-    if (!map.has(id)) map.set(id, { id, url, label: data.label || orgLabel(url) });
+    if (!map.has(url)) map.set(url, { id: autoId(url), url, label: data.label || orgLabel(url) });
   }
   // Current browser sessions — anything open right now, even if never seen.
   const liveUrls = [...(_orgUrl ? [_orgUrl] : []), ..._allSessions.map(s => s.orgUrl)];
   for (const url of liveUrls) {
-    if ([...map.values()].some(o => o.url === url)) continue;
-    const id = autoId(url);
-    if (!map.has(id)) map.set(id, { id, url, label: orgLabel(url) });
+    if (!url || map.has(url)) continue;
+    map.set(url, { id: autoId(url), url, label: orgLabel(url) });
   }
   return [...map.values()];
+}
+
+// Resolve an allMapOrgs() id (the value used by the Deploy Readiness and
+// Schema View org <select>s) to a live session { orgUrl, sid } — or null
+// when that org isn't open in any Chrome tab. This helper was lost in the
+// credentials trim while its four call sites survived, which made both
+// views throw ReferenceError as soon as a check ran.
+async function getOrgSession(orgId) {
+  const org = allMapOrgs().find(o => o.id === orgId);
+  if (!org) return null;
+  // Refresh open-tab sessions so we hand back the freshest SID available.
+  const freshRes = await sendBg({ type: 'GET_ALL_SF_SESSIONS' });
+  if (freshRes?.sessions?.length) _allSessions = freshRes.sessions;
+  const sess = _resolveSession(org.url, _buildAllSessions());
+  return (sess && sess.sid) ? sess : null;
 }
 
 // Called from org card button — "Transfer" on an org means "transfer FROM
