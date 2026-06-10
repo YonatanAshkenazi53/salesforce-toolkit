@@ -865,7 +865,7 @@ function renderOrgsPanel() {
         <div class="ds-org-row-actions">
           <button class="ds-btn ds-btn-sm" data-dsaction="editOrgLabel" data-arg="${esc(url)}">✏ Rename</button>
           ${isOnline
-            ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="startTransferFrom" data-arg="${esc(url)}">🚀 Transfer</button>`
+            ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="startTransferFrom" data-arg="${esc(url)}" title="Copy data INTO this org — opens Run Transfer with this org as the target">🚀 Transfer into</button>`
             : `<button class="ds-btn ds-btn-sm ds-btn-danger" data-dsaction="removeOrg" data-arg="${esc(url)}">✕</button>`}
         </div>
       </div>`;
@@ -998,12 +998,12 @@ async function getOrgSession(orgId) {
   return (sess && sess.sid) ? sess : null;
 }
 
-// Called from org card button — "Transfer" on an org means "transfer FROM
-// this org": seed it as the run-time SOURCE override so it survives
-// renderTransfer's profile-org resolution. The user can still switch or
-// swap orgs on the Run Transfer page.
-window.startTransferFrom = function(sourceOrg) {
-  _transferOrgOverride = { src: sourceOrg, tgt: null };
+// Called from org card button — "Transfer" on an org means "copy data INTO
+// this org" (user-confirmed intent): seed it as the run-time TARGET override
+// so it survives renderTransfer's profile-org resolution. The user can still
+// switch or swap orgs on the Run Transfer page.
+window.startTransferFrom = function(targetOrg) {
+  _transferOrgOverride = { src: null, tgt: targetOrg };
   // Transfer is now reachable as a sub-page of Data Deployment, not as
   // its own sidebar item. Highlight Data Deployment so the nav stays
   // consistent with where the user is.
