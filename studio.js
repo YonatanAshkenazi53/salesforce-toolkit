@@ -2125,6 +2125,12 @@ async function openFieldMappingModal(pathStr) {
 
   if (!node.fieldMappings) node.fieldMappings = {};
   const mappings = node.fieldMappings; // live reference — { srcApiName: tgtApiName }
+  // Id can never transfer (Salesforce assigns it on insert) — purge any
+  // legacy mapping entry so it can't pollute SOQL/compareFields, and the
+  // row filter below keeps it out of the UI even when the profile carries
+  // a stale cached field list (node._meta.availableFields) from before
+  // the Id exclusion existed.
+  delete mappings.Id;
 
   // Diagnostic — log what the modal is loading so we can tell the difference
   // between "save didn't persist" and "load didn't restore". The previous bug
@@ -2243,6 +2249,9 @@ async function openFieldMappingModal(pathStr) {
     const lc       = filter.toLowerCase();
     const tgtByApi = new Map(tgtFields.map(f => [f.name, f]));
     const pool = srcFields.filter(f => {
+      // Id is never transferable — hide it even when a stale cached field
+      // list (saved before the loadFields Id-exclusion) still contains it.
+      if (f.name === 'Id') return false;
       // Keep explicitly excluded fields visible so users can restore them
       if (node.fields && !node.fields.includes(f.name) && !(f.name in mappings)) return false;
       if (filter && !f.label.toLowerCase().includes(lc) && !f.name.toLowerCase().includes(lc)) return false;
