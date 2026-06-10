@@ -2281,6 +2281,10 @@ html, body {
 .ds-rec-extra-btn:hover { background: var(--brand-bg); border-color: var(--brand, #0176D3); }
 .ds-rec-extra-on-pull { background: #E0E7FF !important; color: #3730A3 !important; border-color: #6366F1 !important; }
 .ds-rec-extra-on-del  { background: #FEE2E2 !important; color: #991B1B !important; border-color: #DC2626 !important; }
+/* Drift "→ source wins" active state — amber, matching the drift column */
+.ds-rec-extra-on-push { background: #FEF3C7 !important; color: #92400E !important; border-color: #F59E0B !important; }
+.ds-rec-drift-sub-push { color: #92400E; font-weight: 600; }
+.ds-dark .ds-rec-drift-sub-push { color: #FCD34D; }
 
 .ds-rec-col-actions-extra { gap: 6px; }
 .ds-rec-extra-subcounts {
