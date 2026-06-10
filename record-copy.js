@@ -226,7 +226,9 @@ const RecordCopy = (() => {
       .filter(f => {
         if (f.name === 'Id') return true;
         if (SYSTEM_FIELDS.has(f.name)) return false;
-        if (!f.accessible) return false;
+        // No `f.accessible` check — REST describe fields have no such
+        // property (undefined for all), so checking it rejected every field.
+        // Describe only returns FLS-visible fields anyway.
         return COPYABLE_TYPES.has(f.type) || f.type === 'reference';
       })
       .map(f => f.name);

@@ -445,8 +445,14 @@ function buildCopyFields(describe) {
     'LastActivityDate','LastViewedDate','LastReferencedDate',
     'MasterRecordId','IsArchived'
   ]);
+  // NOTE: no `f.accessible` check — REST describe field objects have NO such
+  // property (it's a UI-API concept), so it's undefined for every field and
+  // filtering on it rejects ALL fields. That collapsed the field list to
+  // ['Id'], fetched value-less records, sent 0-field payloads, and failed
+  // every insert with "Required fields are missing: [LastName]". Describe
+  // already only returns FLS-visible fields, so no access check is needed.
   return ['Id', ...describe.fields
-    .filter(f => f.accessible && !SKIP.has(f.name) &&
+    .filter(f => !SKIP.has(f.name) &&
       (f.createable || f.type === 'reference'))
     .map(f => f.name)];
 }
