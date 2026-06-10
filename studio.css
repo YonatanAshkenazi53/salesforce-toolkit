@@ -1683,9 +1683,13 @@ html, body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 0;
+  padding: 4px 6px;
   font-size: 12px;
+  border-radius: 5px;
 }
+/* Hover ties each right-aligned Filter button to the object on its row,
+   so the per-object buttons don't read as one ambiguous group. */
+.ds-tr-plan-row:hover { background: var(--hover, rgba(0,0,0,0.04)); }
 .ds-tr-plan-icon  { flex-shrink: 0; }
 .ds-tr-plan-obj   { font-weight: 600; }
 .ds-tr-plan-where { font-family: monospace; font-size: 10px; color: var(--brand); }
