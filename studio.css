@@ -1616,6 +1616,26 @@ html, body {
   font-size: 18px; color: var(--brand);
   flex-shrink: 0;
 }
+/* Run-time org switching on the Run Transfer page */
+.ds-tr-org-select { width: 100%; margin: 2px 0; }
+.ds-tr-org-swap {
+  align-self: center;
+  flex-shrink: 0;
+  font-size: 15px;
+  font-weight: 700;
+  padding: 6px 10px;
+  color: var(--brand);
+}
+.ds-tr-org-override-note {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: -4px 0 10px;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--subtext);
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
 
 .ds-transfer-orgs { display: flex; align-items: flex-end; gap: 12px; }
 .ds-transfer-arrow {

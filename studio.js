@@ -65,6 +65,10 @@ let _transferUpsertField  = '';
 // These override the saved profile for a single run without mutating it.
 // Cleared whenever the selected profile changes.
 let _transferNodeFilters  = {};
+// Per-run ORG overrides — let the user switch source/target on the Run
+// Transfer page (or via the org card's Transfer button) without editing
+// the saved profile. null = use the profile's org. Cleared on profile change.
+let _transferOrgOverride  = { src: null, tgt: null };
 
 // Phase 3A — Reconcile view. The profile currently being reconciled (root
 // object only in v1). Selection state lives in the render closure.
@@ -976,10 +980,12 @@ function allMapOrgs() {
   return [...map.values()];
 }
 
-// Called from org card button
+// Called from org card button — "Transfer" on an org means "transfer FROM
+// this org": seed it as the run-time SOURCE override so it survives
+// renderTransfer's profile-org resolution. The user can still switch or
+// swap orgs on the Run Transfer page.
 window.startTransferFrom = function(sourceOrg) {
-  _transferSrc = _allSessions.find(s => s.orgUrl === sourceOrg) ||
-    (sourceOrg === _orgUrl ? { orgUrl: _orgUrl, sid: _sid } : null);
+  _transferOrgOverride = { src: sourceOrg, tgt: null };
   // Transfer is now reachable as a sub-page of Data Deployment, not as
   // its own sidebar item. Highlight Data Deployment so the nav stays
   // consistent with where the user is.
@@ -1176,6 +1182,7 @@ function countTreeNodes(node) {
 
 window.runProfile = function(profileId) {
   _transferProfile = _profiles.find(p => p.id === profileId) || null;
+  _transferOrgOverride = { src: null, tgt: null };   // fresh launch → profile's own orgs
   // Stay on the "Data Deployment" nav item — the Run view is conceptually a
   // sub-page of the deployment page, not a separate top-level destination.
   document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
@@ -3687,15 +3694,21 @@ async function renderTransfer() {
   const allSess = _buildAllSessions();
   window._dsTrSessions = allSess;
 
-  // ── Source/target derived from the active profile, not from user input. ──
-  // Earlier UX let the user re-pick orgs at the Transfer page; that duplicated
-  // state, made "wrong org" mistakes easy, and meant a profile + an org pair
-  // were two separate concepts in the user's head. They're one thing now.
+  // ── Source/target: profile defaults + per-run override. ──────────────────
+  // The profile defines the default org pair, but the user can switch either
+  // side (or swap) for THIS run via the dropdowns on the org pair — stored in
+  // _transferOrgOverride, never written back to the profile. The org card's
+  // Transfer button also seeds the source override.
   function refreshTransferOrgsFromProfile() {
-    if (!_transferProfile) { _transferSrc = null; _transferTgt = null; return; }
-    _transferSrc = _resolveSession(_transferProfile.sourceOrg, allSess);
-    _transferTgt = _resolveSession(_transferProfile.targetOrg, allSess);
+    if (!_transferProfile && !_transferOrgOverride.src && !_transferOrgOverride.tgt) {
+      _transferSrc = null; _transferTgt = null; return;
+    }
+    const srcUrl = _transferOrgOverride.src || _transferProfile?.sourceOrg || '';
+    const tgtUrl = _transferOrgOverride.tgt || _transferProfile?.targetOrg || '';
+    _transferSrc = srcUrl ? _resolveSession(srcUrl, allSess) || { orgUrl: srcUrl, sid: null } : null;
+    _transferTgt = tgtUrl ? _resolveSession(tgtUrl, allSess) || { orgUrl: tgtUrl, sid: null } : null;
   }
+  window._dsTrRefreshOrgs = refreshTransferOrgsFromProfile;   // used by the org-pair dropdowns
   refreshTransferOrgsFromProfile();
 
   const profileOptions = _profiles.map((p, i) =>
@@ -3794,6 +3807,7 @@ async function renderTransfer() {
   eid('dsTrProfile')?.addEventListener('change', e => {
     _transferProfile = _profiles[parseInt(e.target.value, 10)] || null;
     _transferNodeFilters = {};
+    _transferOrgOverride = { src: null, tgt: null };   // new profile → its own org pair
     refreshTransferOrgsFromProfile();
     renderTrOrgPair();
     updateTransferPreview();
@@ -3855,35 +3869,87 @@ function renderTrOrgPair() {
     return;
   }
 
-  const p   = _transferProfile;
-  const src = p.sourceOrg ? _resolveSession(p.sourceOrg, _buildAllSessions()) : null;
-  const tgt = p.targetOrg ? _resolveSession(p.targetOrg, _buildAllSessions()) : null;
+  const p       = _transferProfile;
+  const allSess = _buildAllSessions();
+  const srcUrl  = _transferOrgOverride.src || p.sourceOrg || '';
+  const tgtUrl  = _transferOrgOverride.tgt || p.targetOrg || '';
+  const overridden = !!(_transferOrgOverride.src || _transferOrgOverride.tgt);
 
-  function chip(url, sess, role) {
-    if (!url) {
-      return `<div class="ds-tr-org-chip ds-tr-org-chip-missing">
-        <div class="ds-tr-org-chip-role">${role}</div>
-        <div class="ds-tr-org-chip-warn">⚠ Not set — open Edit profile</div>
-      </div>`;
-    }
-    const reachable = !!sess;
-    return `<div class="ds-tr-org-chip ${reachable ? '' : 'ds-tr-org-chip-unreachable'}">
+  // All orgs the studio knows about (remembered + currently open), so the
+  // user can pick any of them — reachability is shown per selection.
+  const knownOrgs = allMapOrgs();
+  for (const url of [srcUrl, tgtUrl]) {   // ensure current picks are listed
+    if (url && !knownOrgs.some(o => o.url === url)) knownOrgs.push({ url, label: orgLabel(url) });
+  }
+
+  function chip(url, role) {
+    const sess      = url ? _resolveSession(url, allSess) : null;
+    const reachable = !!(sess && sess.sid);
+    const options = knownOrgs.map(o => {
+      const live = allSess.some(s => s.orgUrl === o.url && s.sid);
+      return `<option value="${esc(o.url)}" ${o.url === url ? 'selected' : ''}>${esc(o.label || orgLabel(o.url))}${live ? '' : ' (not open)'}</option>`;
+    }).join('');
+    return `<div class="ds-tr-org-chip ${url && !reachable ? 'ds-tr-org-chip-unreachable' : ''}">
       <div class="ds-tr-org-chip-role">${role}</div>
-      <div class="ds-tr-org-chip-label">${esc(orgLabel(url))}</div>
+      <select class="ds-select ds-select-sm ds-tr-org-select" data-tr-org-role="${role.toLowerCase()}">
+        ${url ? '' : '<option value="" selected>— pick an org —</option>'}
+        ${options}
+      </select>
       <div class="ds-tr-org-chip-status">
-        ${reachable
-          ? `<span style="color:#2E844A">●</span> Session ready${sess.stored ? ' 🔐' : ''}`
-          : '<span style="color:#EA001E">●</span> Not open in Chrome — open it or add credentials'}
+        ${!url
+          ? '<span style="color:#EA001E">●</span> Not set'
+          : reachable
+            ? '<span style="color:#2E844A">●</span> Session ready'
+            : '<span style="color:#EA001E">●</span> Not open in Chrome — open it in a tab'}
       </div>
     </div>`;
   }
 
   wrap.innerHTML = `
     <div class="ds-tr-org-pair">
-      ${chip(p.sourceOrg, src, 'Source')}
-      <span class="ds-tr-org-arrow">→</span>
-      ${chip(p.targetOrg, tgt, 'Target')}
-    </div>`;
+      ${chip(srcUrl, 'Source')}
+      <button class="ds-btn ds-btn-xs ds-tr-org-swap" id="dsTrOrgSwap"
+        title="Swap source and target for this run">⇄</button>
+      ${chip(tgtUrl, 'Target')}
+    </div>
+    ${overridden ? `
+      <div class="ds-tr-org-override-note">
+        ⚙ Org pair changed for this run only — the saved profile still has
+        <strong>${esc(orgLabel(p.sourceOrg || ''))} → ${esc(orgLabel(p.targetOrg || ''))}</strong>.
+        <button class="ds-btn ds-btn-xs" id="dsTrOrgReset">↺ Reset to profile</button>
+      </div>` : ''}`;
+
+  // Wire: select change → set override (null when it matches the profile,
+  // so the override note disappears when the user dials it back manually).
+  wrap.querySelectorAll('.ds-tr-org-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const role = sel.dataset.trOrgRole;            // 'source' | 'target'
+      const url  = sel.value || null;
+      if (role === 'source') _transferOrgOverride.src = (url === p.sourceOrg) ? null : url;
+      else                   _transferOrgOverride.tgt = (url === p.targetOrg) ? null : url;
+      window._dsTrRefreshOrgs?.();
+      renderTrOrgPair();
+      updateTransferPreview();
+      updateTransferBtn();
+    });
+  });
+  eid('dsTrOrgSwap')?.addEventListener('click', () => {
+    const curSrc = _transferOrgOverride.src || p.sourceOrg || '';
+    const curTgt = _transferOrgOverride.tgt || p.targetOrg || '';
+    _transferOrgOverride.src = (curTgt === p.sourceOrg) ? null : curTgt;
+    _transferOrgOverride.tgt = (curSrc === p.targetOrg) ? null : curSrc;
+    window._dsTrRefreshOrgs?.();
+    renderTrOrgPair();
+    updateTransferPreview();
+    updateTransferBtn();
+  });
+  eid('dsTrOrgReset')?.addEventListener('click', () => {
+    _transferOrgOverride = { src: null, tgt: null };
+    window._dsTrRefreshOrgs?.();
+    renderTrOrgPair();
+    updateTransferPreview();
+    updateTransferBtn();
+  });
 }
 
 function updateTransferBtn() {
@@ -3943,6 +4009,11 @@ function buildTransferProfile() {
   if (_transferWriteMode === 'upsert' && _transferUpsertField) {
     clone.upsert = { field: _transferUpsertField };
   }
+  // Keep the clone's org fields in step with the run-time override so
+  // anything downstream that inspects profile.sourceOrg/targetOrg (logging,
+  // error messages) reflects the orgs actually used this run.
+  if (_transferOrgOverride.src) clone.sourceOrg = _transferOrgOverride.src;
+  if (_transferOrgOverride.tgt) clone.targetOrg = _transferOrgOverride.tgt;
   return clone;
 }
 
