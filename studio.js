@@ -3977,10 +3977,15 @@ function updateTransferPreview(counts = null) {
       : '';
 
     const canFilter = !!_transferSrc;
+    const hasFilter = isOverride || ef.recordIds?.length || ef.where;
+    // Label carries the object name so it's unambiguous WHICH object each
+    // button filters — the buttons right-align per row and were reading as
+    // one ambiguous pair. "Edit" vs "Filter" reflects whether this object
+    // already has a record filter / WHERE set.
     const filterBtn = canFilter
       ? `<button class="ds-btn ds-btn-xs ds-tr-filter-btn" data-tr-filter-path="${esc(pathKey)}" data-tr-filter-obj="${esc(name)}"
-           title="${isOverride ? 'Edit run-time filter' : 'Filter records for this run'}">
-           ${isOverride || ef.recordIds?.length || ef.where ? '🎯 Edit Filter' : '🎯 Filter'}
+           title="${hasFilter ? `Edit which ${esc(name)} records transfer` : `Choose which ${esc(name)} records transfer (pick records or set a WHERE clause)`}">
+           ${hasFilter ? `🎯 Edit filter: ${esc(name)}` : `🎯 Filter ${esc(name)}`}
          </button>`
       : '';
 
