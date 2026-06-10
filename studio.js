@@ -1901,8 +1901,13 @@ function getNodeByPath(root, pathStr) {
 }
 
 function getParentByPath(root, pathStr) {
+  if (!pathStr) return null;            // the root itself has no parent
   const parts = pathStr.split('.');
-  if (parts.length <= 1) return null;
+  // A one-segment path ("0") is a FIRST-LEVEL child — its parent is the
+  // root. The old `parts.length <= 1 → null` made removeNode silently
+  // no-op for every direct child (the ✕ button "did nothing"); only
+  // grandchildren could be removed.
+  if (parts.length === 1) return root;
   return getNodeByPath(root, parts.slice(0, -1).join('.'));
 }
 
