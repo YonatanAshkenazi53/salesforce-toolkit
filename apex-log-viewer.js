@@ -262,9 +262,12 @@
 
   function _bindActions(p) {
     document.getElementById('alvCopyReportBtn')?.addEventListener('click', async e => {
+      // Capture the button BEFORE awaiting — e.currentTarget is nulled once
+      // event dispatch completes, so reading it after the await threw and the
+      // catch turned every SUCCESSFUL copy into a "Copy failed" alert.
+      const btn = e.currentTarget;
       try {
         await navigator.clipboard.writeText(p.report || '');
-        const btn = e.currentTarget;
         const orig = btn.textContent;
         btn.textContent = '✓ Copied';
         setTimeout(() => { btn.textContent = orig; }, 1400);

@@ -133,9 +133,15 @@ const LightningPages = (() => {
   // which are set as the org-wide default.  Runs in the background after
   // the initial list renders; updates allPages and re-renders incrementally.
   async function fetchOrgDefaults() {
-    // ── Pass 1: pageAssignments scan for explicitly-Active pages ────────────
-    // Standard FlexiPage org defaults store their assignment in Metadata.pageAssignments.
-    const targets = allPages.filter(p => (p.PublishStatus || '') === 'Active');
+    // ── Pass 1: pageAssignments scan ─────────────────────────────────────────
+    // Standard FlexiPage org defaults store their assignment in
+    // Metadata.pageAssignments. Scope to unmanaged pages (ManageableState IS
+    // in the list query). The old filter used p.PublishStatus — a field the
+    // list query deliberately does NOT select (it 400s in some orgs) — so it
+    // was undefined on every record, targets was always [], and this entire
+    // pass silently never ran: org-default badges for Home/App pages were
+    // never detected.
+    const targets = allPages.filter(p => (p.ManageableState || 'unmanaged') === 'unmanaged');
     const BATCH = 5;
     for (let i = 0; i < targets.length; i += BATCH) {
       const slice = targets.slice(i, i + BATCH);
