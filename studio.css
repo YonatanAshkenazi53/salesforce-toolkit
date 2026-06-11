@@ -4183,6 +4183,7 @@ html, body {
 .ds-fm-org-status   { font-size: 11px; color: var(--subtext); min-height: 14px; }
 .ds-fm-ok           { color: var(--success, #2da44e); font-weight: 600; }
 .ds-fm-loading-sm   { color: var(--subtext); font-style: italic; }
+.ds-fm-warn-sm      { color: #b45309; font-size: 11px; }
 .ds-fm-no-orgs      { font-size: 11px; color: var(--warning); cursor: help; }
 
 /* ── Toolbar ──────────────────────────────────────────────── */

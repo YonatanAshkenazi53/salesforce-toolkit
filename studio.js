@@ -356,7 +356,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'retryFailed':           window.retryFailedRun?.(arg); break;
       case 'showSecurity':          showSecurityModal(); break;
       case 'switchView': {
-        // Navigate to another view (e.g. the "Go to Org Map" link)
+        // Generic data-dsaction view switcher (no current emitters — kept
+        // as the supported way for injected HTML to navigate between views)
         const navBtn = document.querySelector(`.ds-nav-btn[data-view="${arg}"]`);
         if (navBtn) { navBtn.click(); }
         else if (arg) {
@@ -423,7 +424,7 @@ function maybeRunStudioTour() {
     {
       selector: '.ds-nav',
       title: 'Navigate',
-      text:  'Org Map, Connected Orgs, Data Deployment, Schedule, History, scans and schema views — all from here.'
+      text:  'Connected Orgs, Data Deployment, History, Org Compare, Deploy Readiness and Schema View — all from here.'
     },
     {
       selector: '#dsCmdPaletteBtn',
@@ -432,7 +433,7 @@ function maybeRunStudioTour() {
     },
     {
       title: "You're ready",
-      text:  'Connect an org or open the Org Map to begin. Everything stays local to your browser.'
+      text:  'Open a Salesforce org in a Chrome tab to begin. Everything stays local to your browser.'
     }
   ]);
 }
@@ -1205,6 +1206,7 @@ function profileCard(p) {
   const diff   = p.lastScan;
   const diffFresh = !!(
     diff && diff.status === 'success' &&
+    (!diff.objectType || diff.objectType === (p.tree?.objectType || p.tree?.childSObject)) &&
     (!diff.sourceOrg || diff.sourceOrg === p.sourceOrg) &&
     (!diff.targetOrg || diff.targetOrg === p.targetOrg)
   );
@@ -1238,7 +1240,7 @@ function profileCard(p) {
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs in Edit first"'}>▶ Run</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="refreshState" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
-          title="Query both orgs to refresh what's missing / changed / in sync, AND capture fingerprints of every object in the tree (drives the Org Map drift overlay). Replaces the old Refresh diff + Snapshot buttons.">🔄 Refresh state</button>
+          title="Query both orgs to refresh what's missing / changed / in sync.">🔄 Refresh state</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="openReconcile" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
           title="Open the Reconcile view — review what's missing / drifted / extra across both orgs and push or delete in one screen.">⚖ Reconcile</button>
@@ -2318,6 +2320,8 @@ async function openFieldMappingModal(pathStr) {
   let tgtUrl    = node.fieldMappingOrgs?.tgt || _editingProfile?.targetOrg || '';
   let srcLoaded = node._meta?.fieldsLoaded || false;
   let tgtLoaded = false;
+  let srcLoadFailed = false;
+  let tgtLoadFailed = false;
 
   // ── Auto-map: match by API name first, then by normalised label ───────────
   function normalise(s) { return (s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
@@ -2447,13 +2451,18 @@ async function openFieldMappingModal(pathStr) {
     </select>`;
   }
 
+  // srcLoadFailed / tgtLoadFailed distinguish "still loading" from "couldn't
+  // load" — the source side used to show a permanent "Loading…" with no hint
+  // when the profile's source org simply wasn't open in a Chrome tab.
   function srcStatusHtml() {
     if (!srcUrl) return '';
+    if (srcLoadFailed) return `<span class="ds-fm-warn-sm">⚠ ${esc(orgLabel(srcUrl))} not open — open it in a Chrome tab, then reopen this modal</span>`;
     if (!srcLoaded) return `<span class="ds-fm-loading-sm">Loading…</span>`;
     return `<span class="ds-fm-ok">✓ ${srcFields.length} fields</span>`;
   }
   function tgtStatusHtml() {
     if (!tgtUrl) return '';
+    if (tgtLoadFailed) return `<span class="ds-fm-warn-sm">⚠ ${esc(orgLabel(tgtUrl))} not open — open it in a Chrome tab, then reopen this modal</span>`;
     if (!tgtLoaded) return `<span class="ds-fm-loading-sm">Loading…</span>`;
     return `<span class="ds-fm-ok">✓ ${tgtFields.length} fields</span>`;
   }
@@ -2512,21 +2521,24 @@ async function openFieldMappingModal(pathStr) {
     const org = allOrgs().find(o => o.url === url);
     if (!org) return;
     if (isSource) {
-      srcUrl = url; srcLoaded = false;
+      srcUrl = url; srcLoaded = false; srcLoadFailed = false;
       const statusEl = eid('dsFmSrcStatus');
       if (statusEl) statusEl.innerHTML = '<span class="ds-fm-loading-sm">Loading…</span>';
       const fields = await loadFields(org.url, org.sid);
       if (fields) {
         srcFields = fields; srcLoaded = true;
         node._meta.availableFields = fields; node._meta.fieldsLoaded = true;
+      } else {
+        srcLoadFailed = true;   // failed describe — show the warning, not eternal "Loading…"
       }
       const el = eid('dsFmSrcStatus'); if (el) el.innerHTML = srcStatusHtml();
     } else {
-      tgtUrl = url; tgtLoaded = false;
+      tgtUrl = url; tgtLoaded = false; tgtLoadFailed = false;
       const statusEl = eid('dsFmTgtStatus');
       if (statusEl) statusEl.innerHTML = '<span class="ds-fm-loading-sm">Loading…</span>';
       const fields = await loadFields(org.url, org.sid);
       if (fields) { tgtFields = fields; tgtLoaded = true; }
+      else tgtLoadFailed = true;
       const el = eid('dsFmTgtStatus'); if (el) el.innerHTML = tgtStatusHtml();
     }
     const autoBtn = eid('dsFmAutoMap');
@@ -2740,7 +2752,11 @@ async function openFieldMappingModal(pathStr) {
       if (fields) {
         srcFields = fields; srcLoaded = true;
         node._meta.availableFields = fields; node._meta.fieldsLoaded = true;
+      } else {
+        srcLoadFailed = true;   // describe failed — surface it, don't hang
       }
+    } else {
+      srcLoadFailed = true;     // source org not open in any Chrome tab
     }
   }
 
@@ -2750,9 +2766,9 @@ async function openFieldMappingModal(pathStr) {
     if (tgtOrg) {
       const fields = await loadFields(tgtOrg.url, tgtOrg.sid);
       if (fields) { tgtFields = fields; tgtLoaded = true; }
-      else tgtUrl = ''; // org no longer reachable — clear stored selection
+      else tgtLoadFailed = true;   // keep the org visible + explain, don't silently clear
     } else {
-      tgtUrl = ''; // org not connected anymore
+      tgtLoadFailed = true;        // org not open in any Chrome tab
     }
   }
 
@@ -3793,8 +3809,11 @@ window.retryFailedRun = function(runId) {
 // field compare. No snapshot cache — queries live.
 async function fetchDriftRowDetail(profile, objectType, srcId, tgtId, srcFields, tgtFields) {
   const allSess = _buildAllSessions();
-  const srcUrl  = profile.schedule?.sourceOrg || profile.sourceOrg;
-  const tgtUrl  = profile.schedule?.targetOrg || profile.targetOrg;
+  // Use the profile's org pair directly — the legacy schedule object (the
+  // Schedule feature was removed) could carry a DIFFERENT org pair and made
+  // this compare silently query the wrong orgs on old profiles.
+  const srcUrl  = profile.sourceOrg;
+  const tgtUrl  = profile.targetOrg;
   const srcSess = _resolveSession(srcUrl, allSess);
   const tgtSess = _resolveSession(tgtUrl, allSess);
   if (!srcSess?.sid || !tgtSess?.sid) {
@@ -3830,7 +3849,7 @@ async function fetchDriftRowDetail(profile, objectType, srcId, tgtId, srcFields,
 // captureOrgSnapshot writes them).
 function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields) {
   if (!srcRec || !tgtRec) {
-    return `<div class="ds-drift-compare-err">⚠ Record not found on one or both orgs — may have been deleted since the snapshot was captured. Click 🔄 Refresh state to update.</div>`;
+    return `<div class="ds-drift-compare-err">⚠ Record not found on one or both orgs — may have been deleted since the last scan. Click 🔄 Refresh state to update.</div>`;
   }
   const pairs = [];
   const len = Math.min(srcFields.length, tgtFields.length);
@@ -4379,11 +4398,20 @@ async function runTransfer() {
     async function dryRunNode(node) {
       const obj = node.objectType || node.childSObject;
 
+      // Match the REAL executor's record scoping: picked recordIds take
+      // priority over the WHERE clause (background.js does the same). The
+      // dry run previously used only node.where, so a "🎯 N selected"
+      // profile was validated against the ENTIRE table — wrong counts,
+      // null-sampling false alarms from unselected rows, missed issues.
+      const dryWhere = (Array.isArray(node.recordIds) && node.recordIds.length)
+        ? `Id IN (${node.recordIds.filter(Boolean).map(id => `'${id}'`).join(',')})`
+        : (node.where || '');
+
       // ── Step 1: count records in source ──────────────────────────
       const countRes = await sendBg({
         type: 'SF_QUERY', tooling: false,
         orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid,
-        query: `SELECT COUNT() FROM ${obj}${node.where ? ' WHERE ' + node.where : ''}`
+        query: `SELECT COUNT() FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''}`
       });
       if (countRes.error) {
         logRow('❌', `${obj}: source query failed — ${countRes.error}`, 'ds-prog-err');
@@ -4461,7 +4489,7 @@ async function runTransfer() {
           const sampleRes = await sendBg({
             type: 'SF_QUERY', tooling: false,
             orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid,
-            query: `SELECT ${selectFields} FROM ${obj}${node.where ? ' WHERE ' + node.where : ''} LIMIT 200`
+            query: `SELECT ${selectFields} FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''} LIMIT 200`
           });
           if (!sampleRes.error) {
             for (const { tgtField, srcField } of nullCheckPairs) {
@@ -4546,7 +4574,7 @@ async function runTransfer() {
           const sampleRes = await sendBg({
             type: 'SF_QUERY', tooling: false,
             orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid,
-            query: `SELECT ${fieldName} FROM ${obj}${node.where ? ' WHERE ' + node.where : ''} LIMIT 50`
+            query: `SELECT ${fieldName} FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''} LIMIT 50`
           });
           if (sampleRes.error) continue;
 
@@ -4604,8 +4632,8 @@ async function runTransfer() {
       // source records have an equivalent in the target — unmatched ones
       // mean those records will land with the target's DEFAULT record type.
       if (srcCount > 0) {
-        const rtWhere = node.where
-          ? `WHERE (${node.where}) AND RecordTypeId != null`
+        const rtWhere = dryWhere
+          ? `WHERE (${dryWhere}) AND RecordTypeId != null`
           : `WHERE RecordTypeId != null`;
         const srcRtRes = await sendBg({
           type: 'SF_QUERY', tooling: false,
@@ -4755,7 +4783,15 @@ async function runTransfer() {
   if (_transferProfile?.id && !_transferDryRun) {
     const totalCreated = Object.values(result.summary || {}).reduce((n, s) => n + (s.created || 0), 0);
     if (totalCreated > 0) {
-      window.refreshProfileState?.(_transferProfile.id);
+      // Only auto-refresh the diff when the run used the profile's OWN org
+      // pair — refreshProfileState scans profile.sourceOrg/targetOrg, so
+      // after an org-override run it would compare the wrong pair and mark
+      // the just-transferred records as still "missing".
+      if (_transferOrgOverride.src || _transferOrgOverride.tgt) {
+        showToast('Diff not auto-refreshed — this run used a different org pair than the saved profile.', 'info', 4500);
+      } else {
+        window.refreshProfileState?.(_transferProfile.id);
+      }
     }
   }
 
@@ -4831,8 +4867,13 @@ async function renderReconcile() {
 
   const objType = p.tree?.objectType || p.tree?.childSObject || '?';
   const scan    = p.lastScan;
+  // objectType check is SAFETY-critical, not cosmetic: if the profile's root
+  // object changed after the last scan, the old scan's buckets carry record
+  // Ids of a DIFFERENT object — and Delete passes those raw Ids to
+  // SF_COLLECTIONS_DELETE, which deletes by Id regardless of type.
   const scanFresh = !!(
     scan && scan.status === 'success' &&
+    (!scan.objectType || scan.objectType === objType) &&
     (!scan.sourceOrg || scan.sourceOrg === p.sourceOrg) &&
     (!scan.targetOrg || scan.targetOrg === p.targetOrg)
   );
@@ -5361,7 +5402,13 @@ async function runReconcile(profile, objType, buckets) {
       const pullProfile = JSON.parse(JSON.stringify(profile));
       const fm = pullProfile.tree?.fieldMappings || {};
       const inverseFm = {};
-      for (const [s, t] of Object.entries(fm)) { if (t) inverseFm[t] = s; }
+      // Keep null EXCLUSIONS when inverting — `if (t)` alone dropped them,
+      // and an absent mapping means identity passthrough in the executor,
+      // so deliberately-excluded fields were copied into the source on Pull.
+      for (const [s, t] of Object.entries(fm)) {
+        if (t === null) inverseFm[s] = null;
+        else if (t) inverseFm[t] = s;
+      }
       pullProfile.tree.fieldMappings = inverseFm;
       pullProfile.tree.recordIds = pullIds;
       pullProfile.tree.children  = [];
@@ -5430,7 +5477,10 @@ async function runReconcile(profile, objType, buckets) {
       const invProfile = JSON.parse(JSON.stringify(profile));
       const fm = invProfile.tree?.fieldMappings || {};
       const invFm = {};
-      for (const [s, t] of Object.entries(fm)) { if (t) invFm[t] = s; }
+      for (const [s, t] of Object.entries(fm)) {
+        if (t === null) invFm[s] = null;       // keep exclusions on inversion
+        else if (t) invFm[t] = s;
+      }
       invProfile.tree.fieldMappings = invFm;
       invProfile.sourceOrg = profile.targetOrg;
       invProfile.targetOrg = profile.sourceOrg;
@@ -6385,8 +6435,8 @@ async function runReadinessCheck() {
   // Resolve sessions
   setDrStatus('⏳ Connecting to orgs…');
   const [srcSess, tgtSess] = await Promise.all([getOrgSession(srcId), getOrgSession(tgtId)]);
-  if (!srcSess) { showDrError('Cannot connect to source org. Open it in Chrome or add credentials.'); return; }
-  if (!tgtSess) { showDrError('Cannot connect to target org. Open it in Chrome or add credentials.'); return; }
+  if (!srcSess) { showDrError('Cannot connect to the source org — open it in a Chrome tab first.'); return; }
+  if (!tgtSess) { showDrError('Cannot connect to the target org — open it in a Chrome tab first.'); return; }
 
   // Object list — from the multi-select panel. If the user never opened the
   // panel, load it now so the default (all custom objects) applies.
@@ -6412,6 +6462,7 @@ async function runReadinessCheck() {
         ${window.sftkCatSm
           ? sftkCatSm(`Analysing ${objects.length} object${objects.length !== 1 ? 's' : ''}…`)
           : `Analysing ${objects.length} object${objects.length !== 1 ? 's' : ''}…`}
+        <div id="drProgressText" class="dr-progress-text"></div>
       </div>
       <div id="drObjectCards" class="dr-object-cards"></div>`;
   }
@@ -6487,7 +6538,7 @@ async function analyseObject(obj, srcSess, tgtSess, opts) {
     opts.chkValidation ? sendBg({ type: 'SF_QUERY', tooling: true, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
       query: `SELECT Id, ValidationName, Active, Description FROM ValidationRule WHERE EntityDefinitionId = '${obj}' AND Active = true` }) : Promise.resolve(null),
     opts.chkDupRules ? sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
-      query: `SELECT Id, DeveloperName FROM DuplicateRule WHERE SObjectApiName = '${obj}' AND IsActive = true` }) : Promise.resolve(null),
+      query: `SELECT Id, DeveloperName FROM DuplicateRule WHERE SobjectType = '${obj}' AND IsActive = true` }) : Promise.resolve(null),
   ]);
 
   if (srcDescRes.error) {
@@ -6962,7 +7013,7 @@ async function svLoad() {
   if (!orgId) { svShowError('Select an org to analyze.'); return; }
 
   const sess = await getOrgSession(orgId);
-  if (!sess) { svShowError('Cannot connect to org. Open it in Chrome or add credentials.'); return; }
+  if (!sess) { svShowError('Cannot connect to the org — open it in a Chrome tab first.'); return; }
 
   svHideError();
   svSetStatus('⏳ Connecting…');
@@ -7090,26 +7141,29 @@ async function svLoad() {
   svSetStatus('');
 }
 
-// ── Fetch active flows from Tooling API ───────────────────────
+// ── Fetch active flows ────────────────────────────────────────
+// FlowDefinitionView on the STANDARD REST API (tooling:false) — this is
+// the object that actually carries ApiName/Label/ProcessType/TriggerType/
+// TriggerObjectOrEvent. The previous query hit a Tooling "FlowVersion"
+// object that doesn't exist (and a FlowDefinition fallback selecting
+// fields FlowDefinition doesn't have), so BOTH legs errored and the
+// Schema View flow layer was silently empty since the day it shipped.
+// ActiveVersionId is selected for the deep scan's Tooling metadata fetch.
 async function svFetchFlows(sess) {
-  // Query FlowVersion (specific flow versions, not FlowDefinition)
   const res = await sendBg({
-    type: 'SF_QUERY', tooling: true,
+    type: 'SF_QUERY', tooling: false,
     orgUrl: sess.orgUrl, sid: sess.sid,
-    query: `SELECT Id, ApiName, Label, ProcessType, TriggerType,
-              TriggerObjectOrEvent.QualifiedApiName, LastModifiedDate
-            FROM FlowVersion
-            WHERE Status = 'Active'
+    query: `SELECT DurableId, ApiName, Label, ProcessType, TriggerType,
+              TriggerObjectOrEvent.QualifiedApiName, ActiveVersionId, LastModifiedDate
+            FROM FlowDefinitionView
+            WHERE IsActive = true
             LIMIT 500`
   });
   if (res.error) {
-    // Fallback: try FlowDefinition (older API versions)
-    const res2 = await sendBg({
-      type: 'SF_QUERY', tooling: true,
-      orgUrl: sess.orgUrl, sid: sess.sid,
-      query: `SELECT Id, ApiName, Label, ActiveVersionId FROM FlowDefinition WHERE ActiveVersionId != null LIMIT 500`
-    });
-    return res2.records || [];
+    if (window.SFToolkitDebug?.enabled) {
+      window.SFToolkitDebug.log('schema', 'error', 'FlowDefinitionView query failed', res.error);
+    }
+    return [];
   }
   return res.records || [];
 }
@@ -7124,21 +7178,22 @@ async function svFetchFlowActions(sess, flows, objects) {
   // Only look at record-triggered flows that have a trigger object in our set
   const triggered = flows.filter(f => {
     const trigObj = (f.TriggerObjectOrEvent?.QualifiedApiName || '').toLowerCase();
-    return trigObj && objectSet.has(trigObj) &&
+    return trigObj && objectSet.has(trigObj) && f.ActiveVersionId &&
       (f.ProcessType === 'AutoLaunchedFlow' || f.ProcessType === 'RecordTriggeredFlow' ||
        f.TriggerType?.includes('Record'));
   }).slice(0, 20); // cap at 20 flows for perf
 
   if (!triggered.length) return actions;
 
-  // Fetch flow metadata in small batches
+  // Fetch the ACTIVE VERSION's metadata via the Tooling Flow object —
+  // FlowDefinitionView.ActiveVersionId is a Flow (version) record Id.
   const BATCH = 3;
   for (let i = 0; i < triggered.length; i += BATCH) {
     const batch = triggered.slice(i, i + BATCH);
     const results = await Promise.all(batch.map(f =>
       sendBg({
-        type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid,
-        path: `services/data/v62.0/tooling/sobjects/FlowVersion/${f.Id}`
+        type: 'SF_TOOLING_GET', orgUrl: sess.orgUrl, sid: sess.sid,
+        sobject: 'Flow', id: f.ActiveVersionId
       })
     ));
 
