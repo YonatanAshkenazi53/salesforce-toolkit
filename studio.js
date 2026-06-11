@@ -389,27 +389,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Chrome can't reliably reopen the toolbar popup from a page, but the
   // Toolkit has a popout mode (popup.html?popout=1): focus it if one is
   // already open, otherwise open it as a popup window.
-  eid('dsBackToToolkit')?.addEventListener('click', async () => {
-    const popoutUrl = chrome.runtime.getURL('popup.html') + '?popout=1';
-    try {
-      // Focus an existing Toolkit popout if there is one.
-      const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL('popup.html') + '*' });
-      if (tabs.length) {
-        await chrome.windows.update(tabs[0].windowId, { focused: true });
-        await chrome.tabs.update(tabs[0].id, { active: true });
-        return;
-      }
-      const w = (typeof screen !== 'undefined' && screen.availWidth)  || 1600;
-      const h = (typeof screen !== 'undefined' && screen.availHeight) || 1000;
-      const win = await chrome.windows.create({
-        url: popoutUrl, type: 'popup', left: 0, top: 0, width: w, height: h
-      });
-      if (win?.id) chrome.windows.update(win.id, { state: 'maximized' });
-    } catch (_) {
-      // Last resort — open it as a normal tab.
-      try { chrome.tabs.create({ url: popoutUrl }); } catch (__) {}
-    }
-  });
+  eid('dsBackToToolkit')?.addEventListener('click', () => openToolkitPopout(null));
 
   // Brand name = home button → Connected Orgs (the landing view).
   document.querySelector('.ds-brand')?.addEventListener('click', () => {
@@ -508,16 +488,54 @@ function recordActivity(view) {
 // ════════════════════════════════════════════════════════════════
 // COMMAND PALETTE — Feature 16
 // ════════════════════════════════════════════════════════════════
+// Mirrors the CURRENT sidebar — Org Map / Schedule / Scan Map were removed
+// in the feature trim; their palette entries were dead links to blank views.
 const CMD_VIEWS = [
-  { icon: '🌐', label: 'Org Map',           view: 'map',       desc: 'Visual org overview' },
   { icon: '🔌', label: 'Connected Orgs',    view: 'orgs',      desc: 'Manage connections' },
   { icon: '📦', label: 'Data Deployment',   view: 'profiles',  desc: 'Profiles + run transfer' },
-  { icon: '📅', label: 'Schedule',          view: 'schedule',  desc: 'Automate transfers' },
   { icon: '📜', label: 'History',           view: 'history',   desc: 'Past transfer runs' },
-  { icon: '🔍', label: 'Scan Map',          view: 'scans',     desc: 'Compare record counts' },
+  { icon: '🔍', label: 'Org Compare',       view: 'compare',   desc: 'Diff data across many objects' },
   { icon: '🛡',  label: 'Deploy Readiness', view: 'readiness', desc: 'Schema compatibility' },
   { icon: '🕸',  label: 'Schema View',      view: 'schema',    desc: 'Flow & object graph' },
 ];
+
+// Toolkit (popup) features — selecting one opens/focuses the Toolkit popout
+// window deep-linked to that tab. Ids match popup.js HOME_FEATURES.
+const CMD_TOOLKIT = [
+  { icon: '🗑', label: 'Flows',             tab: 'flows',        desc: 'Bulk delete, backup & restore' },
+  { icon: '🗺', label: 'Dependencies',      tab: 'dependencies', desc: 'Subflow call chains' },
+  { icon: '🐛', label: 'Apex Debugger',     tab: 'debugger',     desc: 'Trace flows, triggers, recursion' },
+  { icon: '📄', label: 'Lightning Pages',   tab: 'pages',        desc: 'Assignments & org defaults' },
+  { icon: '🔧', label: 'Field Cleaner',     tab: 'fields',       desc: 'Scan deps, fix flows, delete fields' },
+  { icon: '👥', label: 'Copy Permissions',  tab: 'copy-perms',   desc: 'Copy perms between users' },
+  { icon: '🔑', label: 'Licenses',          tab: 'licenses',     desc: 'Manage license assignments' },
+  { icon: '🌊', label: 'Flow Access',       tab: 'flow-access',  desc: 'Grant flows to permission sets' },
+];
+
+// Open (or focus) the Toolkit popout window; when `tab` is given, deep-link
+// to that feature — a fresh window gets it via the ?tab= URL param, an
+// already-open one via a TOOLKIT_NAVIGATE runtime message.
+async function openToolkitPopout(tab) {
+  const base = chrome.runtime.getURL('popup.html');
+  try {
+    const tabs = await chrome.tabs.query({ url: base + '*' });
+    if (tabs.length) {
+      await chrome.windows.update(tabs[0].windowId, { focused: true });
+      await chrome.tabs.update(tabs[0].id, { active: true });
+      if (tab) chrome.runtime.sendMessage({ type: 'TOOLKIT_NAVIGATE', tab }, () => chrome.runtime.lastError);
+      return;
+    }
+    const w = (typeof screen !== 'undefined' && screen.availWidth)  || 1600;
+    const h = (typeof screen !== 'undefined' && screen.availHeight) || 1000;
+    const win = await chrome.windows.create({
+      url: `${base}?popout=1${tab ? `&tab=${encodeURIComponent(tab)}` : ''}`,
+      type: 'popup', left: 0, top: 0, width: w, height: h
+    });
+    if (win?.id) chrome.windows.update(win.id, { state: 'maximized' });
+  } catch (_) {
+    try { chrome.tabs.create({ url: `${base}?popout=1${tab ? `&tab=${encodeURIComponent(tab)}` : ''}` }); } catch (__) {}
+  }
+}
 
 function openCommandPalette() {
   // Remove any existing palette
@@ -534,15 +552,18 @@ function openCommandPalette() {
     const navItems = CMD_VIEWS.filter(v =>
       !q || v.label.toLowerCase().includes(q) || v.desc.toLowerCase().includes(q)
     );
+    const toolkitItems = CMD_TOOLKIT.filter(t =>
+      !q || t.label.toLowerCase().includes(q) || t.desc.toLowerCase().includes(q)
+    );
     const profileItems = q
       ? _profiles.filter(p => p.name.toLowerCase().includes(q))
       : [];
-    return { navItems, profileItems };
+    return { navItems, toolkitItems, profileItems };
   }
 
   function render(filter = '') {
-    const { navItems, profileItems } = buildItems(filter);
-    const total = navItems.length + profileItems.length;
+    const { navItems, toolkitItems, profileItems } = buildItems(filter);
+    const total = navItems.length + toolkitItems.length + profileItems.length;
     if (activeIdx >= total) activeIdx = Math.max(0, total - 1);
 
     let html = '';
@@ -559,10 +580,23 @@ function openCommandPalette() {
       });
     }
 
+    if (toolkitItems.length) {
+      html += `<div class="ds-cmd-section-hdr">Toolkit</div>`;
+      toolkitItems.forEach((t, i) => {
+        const idx = navItems.length + i;
+        const cls = idx === activeIdx ? ' ds-cmd-active' : '';
+        html += `<div class="ds-cmd-item${cls}" data-cmd-toolkit="${esc(t.tab)}">
+          <span class="ds-cmd-item-icon">${t.icon}</span>
+          <span class="ds-cmd-item-label">${esc(t.label)}</span>
+          <span class="ds-cmd-item-desc">${esc(t.desc)}</span>
+        </div>`;
+      });
+    }
+
     if (profileItems.length) {
       html += `<div class="ds-cmd-section-hdr">Run Profile</div>`;
       profileItems.forEach((p, i) => {
-        const idx = navItems.length + i;
+        const idx = navItems.length + toolkitItems.length + i;
         const cls = idx === activeIdx ? ' ds-cmd-active' : '';
         html += `<div class="ds-cmd-item${cls}" data-cmd-profile="${esc(p.id)}">
           <span class="ds-cmd-item-icon">▶️</span>
@@ -581,6 +615,12 @@ function openCommandPalette() {
     // Re-wire click handlers
     list.querySelectorAll('[data-cmd-view]').forEach(el => {
       el.addEventListener('click', () => navigateTo(el.dataset.cmdView));
+    });
+    list.querySelectorAll('[data-cmd-toolkit]').forEach(el => {
+      el.addEventListener('click', () => {
+        closePalette();
+        openToolkitPopout(el.dataset.cmdToolkit);
+      });
     });
     list.querySelectorAll('[data-cmd-profile]').forEach(el => {
       el.addEventListener('click', () => {
@@ -605,8 +645,8 @@ function openCommandPalette() {
 
   function onKey(e) {
     if (e.key === 'Escape') { e.preventDefault(); closePalette(); return; }
-    const { navItems, profileItems } = buildItems(input.value);
-    const total = navItems.length + profileItems.length;
+    const { navItems, toolkitItems, profileItems } = buildItems(input.value);
+    const total = navItems.length + toolkitItems.length + profileItems.length;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       activeIdx = (activeIdx + 1) % Math.max(1, total);
@@ -619,8 +659,11 @@ function openCommandPalette() {
       e.preventDefault();
       if (activeIdx < navItems.length) {
         navigateTo(navItems[activeIdx].view);
+      } else if (activeIdx < navItems.length + toolkitItems.length) {
+        const t = toolkitItems[activeIdx - navItems.length];
+        if (t) { closePalette(); openToolkitPopout(t.tab); }
       } else {
-        const p = profileItems[activeIdx - navItems.length];
+        const p = profileItems[activeIdx - navItems.length - toolkitItems.length];
         if (p) { closePalette(); window.runProfile?.(p.id); }
       }
     }
