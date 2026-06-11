@@ -3422,25 +3422,44 @@ async function runDiffScan(profile) {
   if (!srcSess?.sid) return { error: `source org session not active — open ${orgLabel(profile.sourceOrg)} in a tab` };
   if (!tgtSess?.sid) return { error: `target org session not active — open ${orgLabel(profile.targetOrg)} in a tab` };
 
-  // Validate matchField + compareFields against EACH side's describe. A
-  // source-side field that doesn't exist on target needs to be dropped
-  // (or fall back) on the target query only — not on source. Same for
-  // matchField: Name might exist on source but the target object uses
-  // ReturnOrderNumber.
-  async function validateAgainstOrg(sess, mf, cmp) {
+  // Validate matchField + compareFields against EACH side's describe.
+  // matchField corrects per side (Name might exist on source while the
+  // target object uses ReturnOrderNumber). compareFields are validated as
+  // PAIRS — (srcCompare[i], tgtCompare[i]) refer to the same logical field,
+  // so a pair survives only when BOTH sides have the field. (The old code
+  // filtered each side independently, which shifted the index pairing
+  // whenever a field existed on only one side — comparing field A on
+  // source to field B on target.)
+  //
+  // Pairs are ALSO dropped when either side's field is a lookup
+  // (type 'reference'). Lookup fields hold org-local record Ids that can
+  // NEVER match across orgs — after an insert-based transfer the target's
+  // AccountId is a different Id (or null via Set-null resolution), so
+  // counting them as drift flags every transferred record as "changed"
+  // forever. Upsert/lookup-bridge runs resolve lookups at write time; the
+  // drift scan compares real data fields only.
+  async function describeFieldTypes(sess) {
     try {
-      const d  = await describe(objType, sess.orgUrl, sess.sid);
-      const names = new Set((d?.fields || []).map(f => f.name));
-      if (names.size && !names.has(mf)) {
-        const nameFld = (d.fields || []).find(f => f.nameField === true);
-        if (nameFld?.name) mf = nameFld.name;
-      }
-      if (names.size) cmp = cmp.filter(f => names.has(f));
-    } catch (_) { /* push through */ }
-    return { mf, cmp };
+      const d = await describe(objType, sess.orgUrl, sess.sid);
+      const types = new Map((d?.fields || []).map(f => [f.name, f.type]));
+      const nameFld = (d?.fields || []).find(f => f.nameField === true)?.name || null;
+      return { types, nameFld };
+    } catch (_) { return { types: new Map(), nameFld: null }; }
   }
-  ({ mf: srcMatchField, cmp: srcCompare } = await validateAgainstOrg(srcSess, srcMatchField, srcCompare));
-  ({ mf: tgtMatchField, cmp: tgtCompare } = await validateAgainstOrg(tgtSess, tgtMatchField, tgtCompare));
+  const [srcDesc, tgtDesc] = await Promise.all([describeFieldTypes(srcSess), describeFieldTypes(tgtSess)]);
+  if (srcDesc.types.size && !srcDesc.types.has(srcMatchField) && srcDesc.nameFld) srcMatchField = srcDesc.nameFld;
+  if (tgtDesc.types.size && !tgtDesc.types.has(tgtMatchField) && tgtDesc.nameFld) tgtMatchField = tgtDesc.nameFld;
+  if (srcDesc.types.size && tgtDesc.types.size) {
+    const keptSrc = [], keptTgt = [];
+    for (let i = 0; i < Math.min(srcCompare.length, tgtCompare.length); i++) {
+      const s = srcCompare[i], t = tgtCompare[i];
+      if (!srcDesc.types.has(s) || !tgtDesc.types.has(t)) continue;        // missing on a side
+      if (srcDesc.types.get(s) === 'reference' || tgtDesc.types.get(t) === 'reference') continue; // lookups never match cross-org
+      keptSrc.push(s); keptTgt.push(t);
+    }
+    srcCompare = keptSrc;
+    tgtCompare = keptTgt;
+  }
 
   // Per-org SOQL — different field name on each side is the whole point.
   const srcFieldList = [...new Set(['Id', srcMatchField, ...srcCompare])].filter(Boolean).join(',');
@@ -5328,7 +5347,25 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   // Source fields to read = the mapped source field names (those that map to
   // a non-null target). Drop system fields.
   const SYS = new Set(['Id','CreatedDate','CreatedById','LastModifiedDate','LastModifiedById','SystemModstamp','IsDeleted']);
-  const srcFields = Object.keys(fm).filter(k => fm[k] !== null && fm[k] !== '' && !SYS.has(k));
+  let srcFields = Object.keys(fm).filter(k => fm[k] !== null && fm[k] !== '' && !SYS.has(k));
+
+  // Drop LOOKUP fields (type 'reference') — their values are org-local
+  // record Ids; PATCHing the source org's Id into the target would be
+  // garbage (or an "invalid cross reference id" failure). RecordTypeId is
+  // the one exception: it stays because it gets remapped by DeveloperName
+  // below. Lookup re-pointing belongs to the transfer engine's resolution
+  // strategies, not the reconcile overwrite.
+  try {
+    const d = await sendBg({
+      type: 'SF_REST_GET', orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+      path: `services/data/v62.0/sobjects/${objType}/describe`
+    });
+    if (d && !d.error && Array.isArray(d.fields)) {
+      const refs = new Set(d.fields.filter(f => f.type === 'reference' && f.name !== 'RecordTypeId').map(f => f.name));
+      srcFields = srcFields.filter(k => !refs.has(k));
+    }
+  } catch (_) { /* best effort — proceed with the unfiltered list */ }
+
   if (!srcFields.length) {
     return { ok: 0, failed: sourceIds.length, errors: ['No mapped fields to overwrite — configure Field Mapping on the root node.'] };
   }
