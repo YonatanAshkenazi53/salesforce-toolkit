@@ -223,6 +223,22 @@ const HOME_SECTIONS = [
   }
 ];
 
+// ── Deep links from the Data Studio command palette ──────────
+// A fresh popout window arrives with ?tab=<feature id>; an already-open
+// one receives a TOOLKIT_NAVIGATE runtime message. Either way the target
+// feature opens via its HOME_FEATURES action (which also triggers the
+// tab's first data load) — deferred until a session exists, since every
+// feature init needs orgUrl/sid.
+let _deepLinkTab = new URLSearchParams(location.search).get('tab');
+
+chrome.runtime?.onMessage?.addListener?.((msg) => {
+  if (msg?.type === 'TOOLKIT_NAVIGATE' && msg.tab) {
+    const feat = HOME_FEATURES.find(f => f.id === msg.tab);
+    if (feat && sid) feat.action();
+    else _deepLinkTab = msg.tab;   // run once the session lands
+  }
+});
+
 // Navigate to a feature tab — hides home view, highlights sidebar item.
 function navigateToTab(tabName) {
   document.getElementById('homeView').style.display = 'none';
@@ -253,6 +269,13 @@ function showHomePage() {
 
 // ── Render the full home page into #homeView ──────────────────
 function renderHomePage() {
+  // Deep link pending? Session is ready by the time home renders — jump
+  // straight to the requested feature instead of showing home.
+  if (_deepLinkTab) {
+    const feat = HOME_FEATURES.find(f => f.id === _deepLinkTab);
+    _deepLinkTab = null;
+    if (feat) { feat.action(); return; }
+  }
   const homeView = document.getElementById('homeView');
   if (!homeView) return;
   homeView.style.display = '';
