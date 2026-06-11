@@ -168,6 +168,8 @@ function showSessionBanner(orgUrl, onReconnect = null) {
     const session = await sendBg({ type: 'GET_SF_SESSION' });
     if (session?.orgUrl && session?.sid) {
       _orgUrl = session.orgUrl;
+    window._sftkOrgUrl = _orgUrl;   // debug-modal reads this for exports
+      window._sftkOrgUrl = _orgUrl;   // debug-modal reads this for exports
       _sid    = session.sid;
     }
 
