@@ -383,17 +383,31 @@ document.addEventListener('DOMContentLoaded', async () => {
   eid('dsSecurityBtn')?.addEventListener('click', showSecurityModal);
 
   // ── Back to Toolkit button ────────────────────────────────────
-  // The Data Studio runs in its own tab. Closing this tab returns the user
-  // to wherever they were before — typically the Toolkit popup or the SF tab.
-  eid('dsBackToToolkit')?.addEventListener('click', () => {
-    // Close this Studio tab; falls back to window.close() for edge cases
-    if (typeof chrome !== 'undefined' && chrome.tabs?.getCurrent) {
-      chrome.tabs.getCurrent(tab => {
-        if (tab?.id) chrome.tabs.remove(tab.id);
-        else window.close();
+  // "‹ Toolkit" — actually take the user to the Toolkit. The old behaviour
+  // just closed this tab, which only "went back" if the popup happened to
+  // still be open underneath (it never is — popups close on focus loss).
+  // Chrome can't reliably reopen the toolbar popup from a page, but the
+  // Toolkit has a popout mode (popup.html?popout=1): focus it if one is
+  // already open, otherwise open it as a popup window.
+  eid('dsBackToToolkit')?.addEventListener('click', async () => {
+    const popoutUrl = chrome.runtime.getURL('popup.html') + '?popout=1';
+    try {
+      // Focus an existing Toolkit popout if there is one.
+      const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL('popup.html') + '*' });
+      if (tabs.length) {
+        await chrome.windows.update(tabs[0].windowId, { focused: true });
+        await chrome.tabs.update(tabs[0].id, { active: true });
+        return;
+      }
+      const w = (typeof screen !== 'undefined' && screen.availWidth)  || 1600;
+      const h = (typeof screen !== 'undefined' && screen.availHeight) || 1000;
+      const win = await chrome.windows.create({
+        url: popoutUrl, type: 'popup', left: 0, top: 0, width: w, height: h
       });
-    } else {
-      window.close();
+      if (win?.id) chrome.windows.update(win.id, { state: 'maximized' });
+    } catch (_) {
+      // Last resort — open it as a normal tab.
+      try { chrome.tabs.create({ url: popoutUrl }); } catch (__) {}
     }
   });
 
