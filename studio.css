@@ -1918,6 +1918,11 @@ html, body {
   grid-template-columns: repeat(3, 1fr);
   gap: 12px;
   margin: 14px 0;
+  /* Fit the whole diff area into the viewport: with huge result sets the
+     columns used to grow past the screen, which made the sticky action bar
+     float OVER the lists with rows visibly running beneath it. A bounded
+     grid keeps the bar below the columns and each list scrolls inside. */
+  height: clamp(320px, calc(100vh - 360px), 700px);
 }
 .ds-rec-col {
   border: 1px solid var(--border);
@@ -1926,6 +1931,8 @@ html, body {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;        /* let the flex children shrink inside the grid row */
+  overflow: hidden;     /* nothing ever paints outside the card */
 }
 .ds-rec-col-hdr {
   padding: 8px 12px;
@@ -1954,9 +1961,14 @@ html, body {
   gap: 6px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;       /* header strips never get squashed by the list */
 }
+.ds-rec-extra-subcounts { flex-shrink: 0; }
 .ds-rec-col-list {
-  max-height: min(50vh, 460px);
+  /* Fill the bounded column and scroll internally — the old max-height cap
+     let columns outgrow the viewport when headers/subcounts stacked up. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
 }
@@ -1990,7 +2002,10 @@ html, body {
   border: 1px solid var(--border);
   border-radius: 8px;
   position: sticky;
-  bottom: 0;
+  bottom: 8px;
+  z-index: 20;                          /* always above column content */
+  box-shadow: 0 -4px 14px rgba(0,0,0,.10);
+  margin-top: 12px;
 }
 .ds-rec-action-summary { flex: 1; font-size: 12.5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ds-rec-action-btns { display: flex; gap: 8px; }
