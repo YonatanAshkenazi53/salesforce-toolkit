@@ -586,7 +586,7 @@ const FieldCleaner = (() => {
   // ── Render results ─────────────────────────────────────────
   const TYPE_CFG = {
     Flow:           { icon: '🌊', label: 'Flows',            fixable: true,
-                      note: 'A new version is saved with the field reference removed AND activated automatically — the old version becomes Obsolete.',
+                      note: 'A new version is saved with the field reference removed AND activated automatically. Old versions that still reference the field are deleted too — Salesforce keeps the dependency lock per version, so stale versions would otherwise still block the field delete.',
                       doneLabel: '✅ Activated' },
     FlexiPage:      { icon: '📄', label: 'Lightning Pages',  fixable: true,
                       note: 'Field references in visibility rules and field components will be removed automatically.',
@@ -756,10 +756,15 @@ const FieldCleaner = (() => {
 
     const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
     try {
-      if (type === 'Flow')      await fixFlow(componentId, componentName);
+      let label = cfg.doneLabel || '✅ Done';
+      if (type === 'Flow') {
+        const purge = await fixFlow(componentId, componentName);
+        if (purge?.purged)        label += ` · ${purge.purged} old version(s) purged`;
+        if (purge?.stillBlocking) label += ` · ⚠ ${purge.stillBlocking} old version(s) couldn't be deleted — may still block the field delete`;
+      }
       if (type === 'Layout')    await fixLayout(componentId, componentName);
       if (type === 'FlexiPage') await fixFlexiPage(componentId, componentName);
-      markFixed(componentId, cfg.doneLabel || '✅ Done');
+      markFixed(componentId, label);
     } catch (e) {
       if (btn) { btn.disabled = false; btn.textContent = '✂ Remove'; }
       // Label the open-link button based on which builder we're sending them to.
@@ -898,6 +903,82 @@ const FieldCleaner = (() => {
       if (_orgUrl) e.setupUrl = `${_orgUrl.replace(/\/$/, '')}/builder_platform_interaction/flowBuilder.app?flowId=${flowId}`;
       throw e;
     }
+
+    // Old versions of this flow can STILL reference the field and keep
+    // blocking the delete — Salesforce holds the dependency lock per
+    // VERSION, not per active version. Purge the stale ones.
+    return purgeOldFlowVersions(flowId, flowName);
+  }
+
+  // Does this flow-version metadata reference the selected field ANYWHERE?
+  // Broader than removeFieldRefs (which only counts auto-removable refs):
+  // walks every string value and matches both exact reference forms
+  // (via _xiIsRef) and embedded formula/template tokens like
+  // "{!$Record.Field__c} > 5" that exact-match tests miss.
+  function flowReferencesField(metadata) {
+    const fl = (_selField?.api || '').toLowerCase();
+    if (!fl) return false;
+    // Token-boundary regex: field api name not preceded/followed by an
+    // identifier char, so Latest__c doesn't false-match test__c.
+    const tokenRe = new RegExp(`(^|[^a-z0-9_])${fl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9_]|$)`, 'i');
+    let found = false;
+    (function walk(v) {
+      if (found || v == null) return;
+      if (typeof v === 'string') {
+        if (_xiIsRef(v) || tokenRe.test(v)) found = true;
+        return;
+      }
+      if (Array.isArray(v)) { for (const x of v) walk(x); return; }
+      if (typeof v === 'object') { for (const k of Object.keys(v)) walk(v[k]); }
+    })(metadata);
+    return found;
+  }
+
+  // Delete old (non-Active) versions of a flow that still reference the
+  // selected field. Salesforce blocks custom-field deletion while ANY flow
+  // version references it — deploying a fixed Active version is not enough,
+  // the stale versions keep the lock. The fresh Active version is never
+  // touched. Returns { purged, failed, stillBlocking } for the done-label.
+  async function purgeOldFlowVersions(anyVersionId, flowName) {
+    const out = { purged: 0, failed: 0, stillBlocking: 0 };
+    try {
+      // Resolve the flow's definition from the version we were given…
+      const defRes = await bg({
+        type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
+        query: `SELECT DefinitionId FROM Flow WHERE Id = '${anyVersionId}'`
+      });
+      const defId = defRes?.records?.[0]?.DefinitionId;
+      if (!defId) return out;
+      // …then list every version of it.
+      const verRes = await bg({
+        type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
+        query: `SELECT Id, Status, VersionNumber FROM Flow WHERE DefinitionId = '${defId}' ORDER BY VersionNumber DESC`
+      });
+      const versions = verRes?.records || [];
+      for (const v of versions) {
+        if (v.Status === 'Active') continue;   // the fixed version we just deployed
+        // Only delete versions that actually still reference the field —
+        // clean old versions are harmless history and stay.
+        const read = await bg({
+          type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
+          sobject: 'Flow', id: v.Id
+        });
+        if (read?.error || !read?.Metadata) continue;
+        if (!flowReferencesField(read.Metadata)) continue;
+        const del = await bg({
+          type: 'SF_TOOLING_DELETE', orgUrl: _orgUrl, sid: _sid,
+          sobject: 'Flow', id: v.Id, _suppressError: true
+        });
+        if (del?.error) { out.failed++; out.stillBlocking++; }
+        else out.purged++;
+      }
+    } catch (e) {
+      if (window.SFToolkitDebug?.enabled) {
+        window.SFToolkitDebug.log('fields', 'error',
+          `Old-version purge for "${flowName}" failed`, e.message);
+      }
+    }
+    return out;
   }
 
   // Remove all direct references to objApi.fieldApi from flow metadata JSON.
@@ -1871,6 +1952,9 @@ const FieldCleaner = (() => {
       if (_orgUrl) e.setupUrl = `${_orgUrl.replace(/\/$/, '')}/builder_platform_interaction/flowBuilder.app?flowId=${flowId}`;
       throw e;
     }
+    // Stale versions still referencing the field keep the dependency lock —
+    // purge them so the field delete isn't blocked (see purgeOldFlowVersions).
+    return purgeOldFlowVersions(flowId, flowName);
   }
 
   // Toggle the XML inspector panel open/closed for a dependency item.
@@ -1999,7 +2083,7 @@ const FieldCleaner = (() => {
           const isPartial = selSet.size < totalDeletable;
           selBtn.disabled = true; selBtn.textContent = '⏳ Removing…';
           try {
-            await fixFlowSelective(componentId, componentName, selSet);
+            const purge = await fixFlowSelective(componentId, componentName, selSet);
             if (isPartial) {
               // Don't mark the dependency as resolved — the flow still
               // references the field. Show an inline warning, re-render
@@ -2010,7 +2094,10 @@ const FieldCleaner = (() => {
             } else {
               panel.style.display = 'none';
               if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open');
-              markFixed(componentId, '✅ Done');
+              let label = '✅ Done';
+              if (purge?.purged)        label += ` · ${purge.purged} old version(s) purged`;
+              if (purge?.stillBlocking) label += ` · ⚠ ${purge.stillBlocking} old version(s) couldn't be deleted — may still block the field delete`;
+              markFixed(componentId, label);
             }
           } catch (e) {
             selBtn.disabled = false; syncCount();
