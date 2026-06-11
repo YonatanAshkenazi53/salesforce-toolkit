@@ -6123,13 +6123,12 @@ function renderReadiness() {
         </div>
       </div>
 
-      <div class="ds-field-group" style="margin-top:12px">
-        <label class="ds-lbl">Objects to check
-          <span class="ds-lbl-hint">(comma-separated API names — leave blank to auto-detect all custom objects)</span>
-        </label>
-        <input id="drObjects" class="ds-input"
-               placeholder="Account, Contact, MyObject__c … or leave blank">
-      </div>
+      <details id="drObjectsPanel" class="ds-oc-objects-panel" style="margin-top:12px">
+        <summary class="ds-oc-objects-sum"><strong>Objects to check</strong>
+          <span class="ds-oc-sub" id="drObjCount">— select a source org first —</span>
+        </summary>
+        <div id="drObjList" class="ds-oc-obj-list"></div>
+      </details>
 
       <div class="dr-checks-row">
         <label class="dr-check-label"><input type="checkbox" id="drChkFields" checked> Missing &amp; required fields</label>
@@ -6141,7 +6140,6 @@ function renderReadiness() {
 
       <div style="display:flex;gap:8px;margin-top:14px;align-items:center;flex-wrap:wrap">
         <button class="ds-btn ds-btn-primary" id="drRunBtn">🛡 Run Readiness Check</button>
-        <button class="ds-btn" id="drScanAllBtn" title="Fetch and scan all custom objects in source org">📋 Load All Custom Objects</button>
         <span id="drStatus" class="dr-status"></span>
       </div>
 
@@ -6152,32 +6150,105 @@ function renderReadiness() {
   `);
 
   eid('drRunBtn')?.addEventListener('click', runReadinessCheck);
-  eid('drScanAllBtn')?.addEventListener('click', loadAllCustomObjects);
+  // Source org drives the object list — load it when picked (or re-picked),
+  // and lazily when the panel is first opened.
+  eid('drSrcOrg')?.addEventListener('change', () => {
+    _drObjState = { srcId: null, objects: null, selected: new Set() };
+    drRefreshObjectList();
+  });
+  eid('drObjectsPanel')?.addEventListener('toggle', e => {
+    if (e.target.open) drRefreshObjectList();
+  });
 }
 
-// ── Load all custom objects from source org ────────────────────
-async function loadAllCustomObjects() {
+// ── Deploy Readiness object multi-select ───────────────────────
+// Checkbox panel (same pattern + CSS as Org Compare's picker). Defaults
+// pre-check all CUSTOM objects — matching the old "blank = auto-detect
+// customs" behaviour, but now visible and editable instead of implicit.
+let _drObjState = { srcId: null, objects: null, selected: new Set() };
+
+async function drRefreshObjectList() {
+  const listEl  = eid('drObjList');
+  const countEl = eid('drObjCount');
+  if (!listEl) return;
   const srcId = eid('drSrcOrg')?.value;
-  if (!srcId) { showDrError('Select a source org first.'); return; }
+  if (!srcId) {
+    listEl.innerHTML = '<div class="ds-oc-empty">Pick a source org to load its object list.</div>';
+    if (countEl) countEl.textContent = '— select a source org first —';
+    return;
+  }
 
-  const srcSess = await getOrgSession(srcId);
-  if (!srcSess) { showDrError('Cannot connect to source org. Open it in Chrome or add credentials.'); return; }
+  if (_drObjState.srcId !== srcId || !_drObjState.objects) {
+    listEl.innerHTML = '<div class="ds-oc-empty">Loading object list…</div>';
+    const srcSess = await getOrgSession(srcId);
+    if (!srcSess) {
+      listEl.innerHTML = '<div class="ds-oc-empty">Cannot connect to the source org — open it in Chrome.</div>';
+      return;
+    }
+    const res = await sendBg({ type: 'SF_REST_GET', orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+      path: 'services/data/v62.0/sobjects' });
+    if (res.error) {
+      listEl.innerHTML = `<div class="ds-oc-empty">Failed to load objects: ${esc(res.error)}</div>`;
+      return;
+    }
+    const objs = (res.sobjects || [])
+      .filter(o => o.queryable && o.createable && !o.deprecatedAndHidden)
+      .map(o => ({ name: o.name, label: o.label || o.name, custom: !!o.custom }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    _drObjState = {
+      srcId,
+      objects: objs,
+      // Default = all custom objects (the old auto-detect behaviour).
+      selected: new Set(objs.filter(o => o.custom).map(o => o.name))
+    };
+  }
 
-  setDrStatus('⏳ Fetching object list…');
-  const res = await sendBg({ type: 'SF_REST_GET', orgUrl: srcSess.orgUrl, sid: srcSess.sid,
-    path: 'services/data/v62.0/sobjects' });
-  if (res.error) { showDrError(`Failed to load object list: ${res.error}`); return; }
+  const sel  = _drObjState.selected;
+  const rows = _drObjState.objects.map(o => `
+    <label class="ds-oc-obj-row${o.custom ? ' ds-oc-obj-custom' : ''}">
+      <input type="checkbox" data-dr-obj="${esc(o.name)}" ${sel.has(o.name) ? 'checked' : ''}>
+      <span class="ds-oc-obj-name">${esc(o.label)}</span>
+      <span class="ds-oc-obj-api">${esc(o.name)}</span>
+      ${o.custom ? '<span class="ds-oc-obj-tag">custom</span>' : ''}
+    </label>`).join('');
 
-  const customs = (res.sobjects || [])
-    .filter(o => o.custom && o.queryable && o.createable && !o.deprecatedAndHidden)
-    .map(o => o.name)
-    .sort();
+  listEl.innerHTML = `
+    <div class="ds-oc-list-actions">
+      <button class="ds-btn ds-btn-xs" id="drObjSelCustom">✓ All custom</button>
+      <button class="ds-btn ds-btn-xs" id="drObjSelAll">✓ All</button>
+      <button class="ds-btn ds-btn-xs" id="drObjSelNone">✗ None</button>
+      <input type="text" id="drObjFilter" class="ds-input ds-input-sm" placeholder="Filter…" style="margin-left:auto;width:180px">
+    </div>
+    <div class="ds-oc-rows">${rows}</div>`;
 
-  if (!customs.length) { setDrStatus('No custom objects found in source org.'); return; }
-
-  const input = eid('drObjects');
-  if (input) input.value = customs.join(', ');
-  setDrStatus(`✅ Loaded ${customs.length} custom objects`);
+  function syncCount() {
+    if (countEl) countEl.textContent = `${sel.size} of ${_drObjState.objects.length} selected`;
+  }
+  syncCount();
+  listEl.querySelectorAll('[data-dr-obj]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) sel.add(cb.dataset.drObj); else sel.delete(cb.dataset.drObj);
+      syncCount();
+    });
+  });
+  eid('drObjSelCustom')?.addEventListener('click', () => {
+    sel.clear();
+    _drObjState.objects.forEach(o => { if (o.custom) sel.add(o.name); });
+    drRefreshObjectList();
+  });
+  eid('drObjSelAll')?.addEventListener('click', () => {
+    _drObjState.objects.forEach(o => sel.add(o.name));
+    drRefreshObjectList();
+  });
+  eid('drObjSelNone')?.addEventListener('click', () => {
+    sel.clear(); drRefreshObjectList();
+  });
+  eid('drObjFilter')?.addEventListener('input', e => {
+    const q = e.target.value.toLowerCase();
+    listEl.querySelectorAll('.ds-oc-obj-row').forEach(row => {
+      row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  });
 }
 
 // ── Main readiness check runner ────────────────────────────────
@@ -6200,20 +6271,19 @@ async function runReadinessCheck() {
   if (!srcSess) { showDrError('Cannot connect to source org. Open it in Chrome or add credentials.'); return; }
   if (!tgtSess) { showDrError('Cannot connect to target org. Open it in Chrome or add credentials.'); return; }
 
-  // Object list
-  let objectsRaw = (eid('drObjects')?.value || '').trim();
-  let objects;
-  if (!objectsRaw) {
-    setDrStatus('⏳ Loading custom objects from source…');
-    const listRes = await sendBg({ type: 'SF_REST_GET', orgUrl: srcSess.orgUrl, sid: srcSess.sid,
-      path: 'services/data/v62.0/sobjects' });
-    if (listRes.error) { showDrError(`Could not load object list: ${listRes.error}`); return; }
-    objects = (listRes.sobjects || [])
-      .filter(o => o.custom && o.queryable && o.createable && !o.deprecatedAndHidden)
-      .map(o => o.name).sort();
-    if (!objects.length) { showDrError('No custom objects found in source org.'); return; }
-  } else {
-    objects = objectsRaw.split(',').map(s => s.trim()).filter(Boolean);
+  // Object list — from the multi-select panel. If the user never opened the
+  // panel, load it now so the default (all custom objects) applies.
+  if (_drObjState.srcId !== srcId || !_drObjState.objects) {
+    setDrStatus('⏳ Loading object list from source…');
+    await drRefreshObjectList();
+  }
+  const objects = [...(_drObjState.selected || [])];
+  if (!objects.length) {
+    showDrError(_drObjState.objects?.length
+      ? 'No objects selected — open "Objects to check" above and tick at least one object.'
+      : 'No objects available to check — the source org returned no queryable objects.');
+    setDrStatus('');
+    return;
   }
 
   // Results container
