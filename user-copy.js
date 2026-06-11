@@ -84,6 +84,7 @@ const UserCopy = (() => {
       usersLoadState = 'error';
       const ph = res.error === 'SESSION_EXPIRED' ? '❌ Session expired — log back in' : '❌ Failed to load users';
       setPickerPlaceholder(ph);
+      _rerenderOpenDrops();   // an open dropdown must show the error, not stale "Loading…"
       return;
     }
 
@@ -96,6 +97,11 @@ const UserCopy = (() => {
     // is stuck on the stale "⏳ Loading users…" row. Re-render it now that
     // the data is here; re-focusing wouldn't help since the input never
     // lost focus (no new focus event fires).
+    _rerenderOpenDrops();
+  }
+
+  // Re-render any OPEN picker dropdown to reflect the current load state.
+  function _rerenderOpenDrops() {
     [['ucSourceInput', 'ucSourceDrop', 'source'], ['ucTargetInput', 'ucTargetDrop', 'target']]
       .forEach(([inputId, dropId, role]) => {
         const input = document.getElementById(inputId);

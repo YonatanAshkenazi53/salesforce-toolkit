@@ -864,7 +864,7 @@ const ApexDebugger = (() => {
     if (!_logs.length) {
       listEl.innerHTML = `<div class="adbg-list-ph">
         No logs${_traceUser ? ' yet — trigger an action in Salesforce.' : '.'}<br>
-        <small>${_selUser ? `Showing logs for ${_esc(_selUser.Name)}.` : 'All users shown. Select a user and start a trace to capture new logs.'}</small>
+        <small>All logs in the org are shown${_selUser ? ` — the user picker only controls whose trace flag ▶ Start Trace creates (currently ${_esc(_selUser.Name)})` : '. Select a user and start a trace to capture new logs'}.</small>
       </div>`;
       return;
     }
@@ -922,7 +922,7 @@ const ApexDebugger = (() => {
             ${dur ? `<span class="adbg-row-dur">${dur}</span>` : ''}
           </div>
           <div class="adbg-row-op" title="${_esc(op)}">${_esc(op) || '<i>Unknown</i>'}</div>
-          ${!_selUser && user ? `<div class="adbg-row-user">${_esc(user)}</div>` : ''}
+          ${user ? `<div class="adbg-row-user">${_esc(user)}</div>` : ''}
           ${log.Status && log.Status !== 'Success'
               ? `<div class="adbg-row-fail">${_esc(log.Status)}</div>` : ''}
           ${xSnippet}
@@ -1355,7 +1355,7 @@ const ApexDebugger = (() => {
                 ? `<span class="adbg-pill-fail">${_esc(log.Status)}</span>` : ''}
           </div>
           <div class="adbg-det-hdr-body">
-            ${!_selUser && log.LogUser?.Name
+            ${log.LogUser?.Name
                 ? `<div class="adbg-det-user">👤 ${_esc(log.LogUser.Name)}</div>` : ''}
             ${p.entryPoint ? `<div class="adbg-det-entry">▶ Entry point: <code>${_esc(p.entryPoint)}</code></div>` : ''}
             <div class="adbg-det-actions">

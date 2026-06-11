@@ -521,10 +521,13 @@ const FlowPermissions = (() => {
         if (cb.checked) _selPS.add(cb.dataset.id);
         else            _selPS.delete(cb.dataset.id);
         cb.closest('.fp-item').classList.toggle('fp-item-sel', cb.checked);
-        // update count badge
+        // update count badge — apply BOTH filters (search + "only with
+        // flows"), matching renderPermSets, or the denominator flips to the
+        // unfiltered total whenever a checkbox is ticked with the filter on.
         const el = document.getElementById('fpPsCount');
         const q  = (document.getElementById('fpPsSearch')?.value || '').toLowerCase().trim();
-        const vis = q ? _permSets.filter(p => (p.Label || p.Name || '').toLowerCase().includes(q)) : _permSets;
+        let vis = q ? _permSets.filter(p => (p.Label || p.Name || '').toLowerCase().includes(q)) : _permSets;
+        if (_psOnlyWithFlows) vis = vis.filter(p => (_flowsByPS[p.Id] || []).length > 0);
         const sc  = vis.filter(p => _selPS.has(p.Id)).length;
         if (el) el.textContent = sc > 0 ? `${sc} / ${vis.length}` : vis.length;
         updateActionBar();
