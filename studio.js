@@ -1344,7 +1344,8 @@ function renderBuilder() {
             ).join(''); })()}
           </select>
         </div>
-        <span class="ds-builder-orgs-arrow">→</span>
+        <button class="ds-builder-orgs-arrow ds-builder-orgs-swap" id="dsProfileSwapOrgs"
+          title="Swap source and target orgs — also inverts field mappings and clears picked records (they belong to the old source org)">⇄</button>
         <div class="ds-builder-org-col">
           <label class="ds-lbl">Target Org <span class="ds-builder-org-hint">(where records get inserted)</span></label>
           <select id="dsProfileTgtOrg" class="ds-input">
@@ -1406,6 +1407,65 @@ function renderBuilder() {
   // accidental "wrong org" exposure.
   eid('dsProfileSrcOrg')?.addEventListener('change', e => { _editingProfile.sourceOrg = e.target.value || ''; });
   eid('dsProfileTgtOrg')?.addEventListener('change', e => { _editingProfile.targetOrg = e.target.value || ''; });
+
+  // ⇄ Swap orgs — a REAL swap, not just two dropdown flips. Direction-
+  // sensitive config has to follow the orgs or it silently points the
+  // wrong way afterwards:
+  //   • fieldMappings ({srcField → tgtField}) get INVERTED per node
+  //   • matchField / matchFieldTgt swap per node
+  //   • picked recordIds are CLEARED — they're record Ids from the old
+  //     source org and match nothing in the new one (the "Records 20 but
+  //     count 0" confusion)
+  //   • lastScan is dropped (its buckets/ids are direction-specific)
+  eid('dsProfileSwapOrgs')?.addEventListener('click', () => {
+    const doSwap = () => {
+      const prof = _editingProfile;
+      [prof.sourceOrg, prof.targetOrg] = [prof.targetOrg || '', prof.sourceOrg || ''];
+      let clearedPicks = 0;
+      (function walk(node) {
+        if (!node) return;
+        const fm = node.fieldMappings || {};
+        const inv = {};
+        for (const [s, t] of Object.entries(fm)) {
+          if (t === null) inv[s] = null;           // exclusions keep their meaning
+          else if (t) inv[t] = s;                  // rename flips direction
+        }
+        node.fieldMappings = inv;
+        const mf = node.matchField, mft = node.matchFieldTgt;
+        node.matchField    = mft || mf || null;
+        node.matchFieldTgt = mf  || mft || null;
+        if (node.recordIds?.length) { clearedPicks += node.recordIds.length; node.recordIds = null; }
+        if (node._meta) node._meta.count = null;   // stale — was counted in the old source
+        (node.children || []).forEach(walk);
+      })(prof.tree);
+      delete prof.lastScan;
+      // Reflect in the UI: dropdowns + tree badges.
+      const s = eid('dsProfileSrcOrg'), t = eid('dsProfileTgtOrg');
+      if (s) s.value = prof.sourceOrg || '';
+      if (t) t.value = prof.targetOrg || '';
+      refreshTree();
+      showToast(`Orgs swapped ⇄ — field mappings inverted${clearedPicks ? `, ${clearedPicks} picked record(s) cleared (they belonged to the old source org)` : ''}.`, 'info', 5500);
+    };
+    // Picked records are destroyed by a swap — confirm when any exist.
+    let pickCount = 0;
+    (function count(node) { if (!node) return; pickCount += node.recordIds?.length || 0; (node.children || []).forEach(count); })(_editingProfile.tree);
+    if (pickCount > 0) {
+      showModal(`
+        <div class="ds-modal-header">⇄ Swap source and target?</div>
+        <div class="ds-modal-body">
+          Field mappings will be inverted to match the new direction.<br><br>
+          ⚠ <strong>${pickCount} picked record(s)</strong> will be cleared — record Ids belong
+          to the old source org and won't exist in the new one. You can re-pick after swapping.
+        </div>
+        <div class="ds-modal-footer">
+          <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
+          <button class="ds-btn ds-btn-primary" id="dsSwapOrgsOk">⇄ Swap</button>
+        </div>`);
+      eid('dsSwapOrgsOk')?.addEventListener('click', () => { closeModal(); doSwap(); });
+    } else {
+      doSwap();
+    }
+  });
 
   // Diff config is no longer exposed as inputs — see deriveScanConfig() below.
   // The user configures field interest exactly once, via the Field Mapping
