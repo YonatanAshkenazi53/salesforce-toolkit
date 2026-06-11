@@ -4568,6 +4568,17 @@ body {
 .fc-item-btns { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .fc-item-ok    { font-size: 11px; color: #2e7d32; }
 .fc-item-fixed { opacity: .65; }
+/* Honest disclosure of dependency types we can't scan affordably */
+.fc-unscanned-note {
+  margin: 6px 0 10px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--subtext);
+  background: var(--bg, #f7f8fa);
+  border: 1px dashed var(--border, #d0d5dd);
+  border-radius: 6px;
+  line-height: 1.5;
+}
 .fc-item-warn  { background: rgba(245, 158, 11, 0.08); border-left: 3px solid #f59e0b; padding-left: 8px; }
 .fc-item-partial {
   font-size: 11px; color: #92400e;
