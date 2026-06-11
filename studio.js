@@ -983,6 +983,19 @@ function allMapOrgs() {
   return [...map.values()];
 }
 
+// ── Org-status option labels ─────────────────────────────────────────
+// Native <select> options can't render HTML, so emoji is the one styling
+// channel available: 🟢 = org open in Chrome with a live session, ⚪ = known
+// but not currently open. Used by every org picklist (Profile Builder,
+// Run Transfer, Readiness, Schema View, Field Mapping, Org Compare).
+function _liveOrgSet() {
+  return new Set(_buildAllSessions().filter(s => s.sid).map(s => s.orgUrl));
+}
+function orgOptionLabel(url, label, liveSet) {
+  const on = (liveSet || _liveOrgSet()).has(url);
+  return `${on ? '🟢' : '⚪'} ${label || orgLabel(url)}${on ? '' : ' (not open)'}`;
+}
+
 // Resolve an allMapOrgs() id (the value used by the Deploy Readiness and
 // Schema View org <select>s) to a live session { orgUrl, sid } — or null
 // when that org isn't open in any Chrome tab. This helper was lost in the
@@ -1326,9 +1339,9 @@ function renderBuilder() {
           <label class="ds-lbl">Source Org <span class="ds-builder-org-hint">(where records come FROM)</span></label>
           <select id="dsProfileSrcOrg" class="ds-input">
             <option value="">— Select source org —</option>
-            ${allMapOrgs().map(o =>
-              `<option value="${esc(o.url)}" ${p.sourceOrg === o.url ? 'selected' : ''}>${esc(o.label || orgLabel(o.url))}</option>`
-            ).join('')}
+            ${(() => { const ls = _liveOrgSet(); return allMapOrgs().map(o =>
+              `<option value="${esc(o.url)}" ${p.sourceOrg === o.url ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label, ls))}</option>`
+            ).join(''); })()}
           </select>
         </div>
         <span class="ds-builder-orgs-arrow">→</span>
@@ -1336,9 +1349,9 @@ function renderBuilder() {
           <label class="ds-lbl">Target Org <span class="ds-builder-org-hint">(where records get inserted)</span></label>
           <select id="dsProfileTgtOrg" class="ds-input">
             <option value="">— Select target org —</option>
-            ${allMapOrgs().map(o =>
-              `<option value="${esc(o.url)}" ${p.targetOrg === o.url ? 'selected' : ''}>${esc(o.label || orgLabel(o.url))}</option>`
-            ).join('')}
+            ${(() => { const ls = _liveOrgSet(); return allMapOrgs().map(o =>
+              `<option value="${esc(o.url)}" ${p.targetOrg === o.url ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label, ls))}</option>`
+            ).join(''); })()}
           </select>
         </div>
       </div>
@@ -2313,7 +2326,7 @@ async function openFieldMappingModal(pathStr) {
     if (!orgs.length) return `<span class="ds-fm-no-orgs">No connected orgs</span>`;
     return `<select class="ds-input ds-input-sm ds-fm-org-sel">
       <option value="">${esc(placeholder)}</option>
-      ${orgs.map(o => `<option value="${esc(o.url)}" ${o.url === selectedUrl ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
+      ${orgs.map(o => `<option value="${esc(o.url)}" ${o.url === selectedUrl ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label))}</option>`).join('')}
     </select>`;
   }
 
@@ -3936,10 +3949,10 @@ function renderTrOrgPair() {
   function chip(url, role) {
     const sess      = url ? _resolveSession(url, allSess) : null;
     const reachable = !!(sess && sess.sid);
-    const options = knownOrgs.map(o => {
-      const live = allSess.some(s => s.orgUrl === o.url && s.sid);
-      return `<option value="${esc(o.url)}" ${o.url === url ? 'selected' : ''}>${esc(o.label || orgLabel(o.url))}${live ? '' : ' (not open)'}</option>`;
-    }).join('');
+    const liveSet   = new Set(allSess.filter(s => s.sid).map(s => s.orgUrl));
+    const options = knownOrgs.map(o =>
+      `<option value="${esc(o.url)}" ${o.url === url ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label, liveSet))}</option>`
+    ).join('');
     return `<div class="ds-tr-org-chip ${url && !reachable ? 'ds-tr-org-chip-unreachable' : ''}">
       <div class="ds-tr-org-chip-role">${role}</div>
       <select class="ds-select ds-select-sm ds-tr-org-select" data-tr-org-role="${role.toLowerCase()}">
@@ -5480,7 +5493,7 @@ async function renderOrgCompare() {
   if (!_orgCompareState.srcOrgUrl && _orgUrl) _orgCompareState.srcOrgUrl = _orgUrl;
 
   const orgOptions = allSess.map(s =>
-    `<option value="${esc(s.orgUrl)}">${esc(s.label || orgLabel(s.orgUrl))}</option>`
+    `<option value="${esc(s.orgUrl)}">${esc(orgOptionLabel(s.orgUrl, s.label))}</option>`
   ).join('');
 
   setMain(`
@@ -6038,7 +6051,7 @@ function renderHistory() {
 function renderReadiness() {
   const orgs = allMapOrgs();
   const orgOptions = orgs.map(o =>
-    `<option value="${o.id}">${esc(o.label || orgLabel(o.url))}</option>`
+    `<option value="${o.id}">${esc(orgOptionLabel(o.url, o.label))}</option>`
   ).join('');
 
   setMain(`
@@ -6567,7 +6580,7 @@ let _svDragNode = null;
 function renderSchemaView() {
   const orgs = allMapOrgs();
   const orgOptions = orgs.map(o =>
-    `<option value="${o.id}">${esc(o.label || orgLabel(o.url))}</option>`
+    `<option value="${o.id}">${esc(orgOptionLabel(o.url, o.label))}</option>`
   ).join('');
 
   setMain(`
