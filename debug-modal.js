@@ -16,11 +16,12 @@
   }
 
   // ── Resolve orgUrl from whatever global is available ──────
-  function _orgUrl() {
-    // popup.js uses `orgUrl`; studio.js uses `_orgUrl`
-    return (typeof orgUrl  !== 'undefined' && orgUrl)  ? orgUrl
-         : (typeof _orgUrl !== 'undefined' && _orgUrl) ? _orgUrl
-         : null;
+  function _resolveOrgUrl() {
+    // popup.js uses a global `orgUrl`; studio.js exposes window._sftkOrgUrl
+    // (its `_orgUrl` is a top-level `let`, invisible here — and the old
+    // self-named helper shadowed it anyway, returning the function object).
+    return (typeof orgUrl !== 'undefined' && orgUrl) ? orgUrl
+         : (window._sftkOrgUrl || null);
   }
 
   // ============================================================
@@ -327,7 +328,7 @@
     document.getElementById('dbgToggleBtn').addEventListener('click', () => {
       D.toggle();
       if (D.enabled) {
-        const ou = _orgUrl();
+        const ou = _resolveOrgUrl();
         let ver = '?';
         try { ver = chrome.runtime.getManifest().version; } catch (_) {}
         D.log('app', 'session', `Recording started · Org: ${ou || 'unknown'} · v${ver}`);
@@ -362,10 +363,10 @@
     }
 
     document.getElementById('dbgCopyTextBtn').addEventListener('click', () => {
-      copyToClipboard(D.toText(_orgUrl()), document.getElementById('dbgCopyTextBtn'));
+      copyToClipboard(D.toText(_resolveOrgUrl()), document.getElementById('dbgCopyTextBtn'));
     });
     document.getElementById('dbgCopyJsonBtn').addEventListener('click', () => {
-      copyToClipboard(D.toJson(_orgUrl()), document.getElementById('dbgCopyJsonBtn'));
+      copyToClipboard(D.toJson(_resolveOrgUrl()), document.getElementById('dbgCopyJsonBtn'));
     });
 
     // ── Close ─────────────────────────────────────────────────
