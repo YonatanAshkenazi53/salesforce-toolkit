@@ -2753,7 +2753,7 @@ async function openRecordPickerModal(pathStr) {
     for (const r of (liveScan.changed         || [])) {
       if (r.sourceId) {
         idsDrift.add(r.sourceId);
-        if (r.targetId) driftTargetId.set(r.sourceId, { targetId: r.targetId, matchKey: r.matchKey });
+        if (r.targetId) driftTargetId.set(r.sourceId, { targetId: r.targetId, matchKey: r.matchKey, fields: r.fields || [] });
       }
     }
   }
@@ -2898,8 +2898,14 @@ async function openRecordPickerModal(pathStr) {
                     badgeHtml = '<span class="ds-pick-state-badge ds-diff-missing" title="Not present in the target org — will be inserted if you transfer this record">🔴 missing in target</span>';
                   } else if (isDrift) {
                     rowCls = ' ds-pick-row-drift';
-                    // Drift badge is clickable — opens inline compare table below
-                    badgeHtml = `<span class="ds-pick-state-badge ds-diff-drift ds-pick-drift-clickable" data-drift-id="${esc(r.Id)}" title="Click to see field-by-field comparison">🟡 drift ▸</span>`;
+                    // Drift badge is clickable — opens inline compare table below.
+                    // Tooltip names the differing fields from the scan so "why
+                    // is this drift?" is answerable without the live fetch.
+                    const dFields = driftTargetId.get(r.Id)?.fields || [];
+                    const dTip = dFields.length
+                      ? `Differs at last scan: ${dFields.join(', ')} — click for field-by-field comparison`
+                      : 'Click to see field-by-field comparison';
+                    badgeHtml = `<span class="ds-pick-state-badge ds-diff-drift ds-pick-drift-clickable" data-drift-id="${esc(r.Id)}" title="${esc(dTip)}">🟡 drift ▸</span>`;
                   } else if (idsInSync.has(r.Id)) {
                     rowCls = ' ds-pick-row-deployed';
                     badgeHtml = '<span class="ds-pick-state-badge ds-diff-sync" title="Present in target and all compare fields match — no action needed">🟢 in sync</span>';
@@ -3035,7 +3041,13 @@ async function openRecordPickerModal(pathStr) {
         const result = await fetchDriftRowDetail(
           _editingProfile, objType, recId, driftInfo.targetId, srcFields, tgtFields);
         if (result.error) {
-          expand.innerHTML = `<div class="ds-drift-compare-err">⚠ ${esc(result.error)}</div>`;
+          // Live fetch unavailable — fall back to the scan-time answer so
+          // "why is this drift?" still gets answered.
+          const fieldsNote = (driftInfo.fields || []).length
+            ? `<div class="ds-drift-compare-fallback">At the last scan these field(s) differed:
+                 <strong>${esc(driftInfo.fields.join(', '))}</strong></div>`
+            : '';
+          expand.innerHTML = `${fieldsNote}<div class="ds-drift-compare-err">⚠ ${esc(result.error)}</div>`;
           return;
         }
         expand.innerHTML = renderDriftCompareTable(
@@ -3522,12 +3534,18 @@ async function runDiffScan(profile) {
     if (!tr) {
       missingInTarget.push({ matchKey: k, sourceId: sr.Id });
     } else {
-      let differs = false;
+      // Record WHICH fields differ (capped) — this is what lets the UI
+      // answer "why is this drift?" without a live re-fetch, including
+      // when one org isn't open in a tab.
+      const diffFields = [];
       for (let i = 0; i < pairLength; i++) {
-        if (String(sr[srcCompare[i]] ?? '') !== String(tr[tgtCompare[i]] ?? '')) { differs = true; break; }
+        if (String(sr[srcCompare[i]] ?? '') !== String(tr[tgtCompare[i]] ?? '')) {
+          if (diffFields.length < 10) diffFields.push(srcCompare[i]);
+          else break;
+        }
       }
-      if (differs) changed.push({ matchKey: k, sourceId: sr.Id, targetId: tr.Id });
-      else         identical.push({ matchKey: k, sourceId: sr.Id, targetId: tr.Id });
+      if (diffFields.length) changed.push({ matchKey: k, sourceId: sr.Id, targetId: tr.Id, fields: diffFields });
+      else                   identical.push({ matchKey: k, sourceId: sr.Id, targetId: tr.Id });
     }
   }
   for (const [k, tr] of tgtByKey) {
@@ -3658,10 +3676,18 @@ window.retryFailedRun = function(runId) {
 // field compare. No snapshot cache — queries live.
 async function fetchDriftRowDetail(profile, objectType, srcId, tgtId, srcFields, tgtFields) {
   const allSess = _buildAllSessions();
-  const srcSess = _resolveSession(profile.schedule?.sourceOrg || profile.sourceOrg, allSess);
-  const tgtSess = _resolveSession(profile.schedule?.targetOrg || profile.targetOrg, allSess);
+  const srcUrl  = profile.schedule?.sourceOrg || profile.sourceOrg;
+  const tgtUrl  = profile.schedule?.targetOrg || profile.targetOrg;
+  const srcSess = _resolveSession(srcUrl, allSess);
+  const tgtSess = _resolveSession(tgtUrl, allSess);
   if (!srcSess?.sid || !tgtSess?.sid) {
-    return { error: 'Open both orgs in a Chrome tab to fetch live field values for the diff.' };
+    // Name the org(s) that are actually missing — "open both orgs" sent
+    // users hunting when only one tab was needed.
+    const offline = [
+      !srcSess?.sid ? orgLabel(srcUrl || '') : null,
+      !tgtSess?.sid ? orgLabel(tgtUrl || '') : null
+    ].filter(Boolean).join(' and ');
+    return { error: `Open ${offline} in a Chrome tab to fetch live field values for the diff.` };
   }
   // Dedupe — if Id is already in compareFields the SOQL would 400 with
   // "duplicate field selected: Id". Same pattern runDiffScan uses.
@@ -5064,9 +5090,17 @@ async function renderReconcile() {
       const srcFields = scan.compareFields || [];
       const tgtFields = scan.compareFieldsTgt || scan.compareFields || [];
       const res = await fetchDriftRowDetail(p, objType, srcId, tgtId, srcFields, tgtFields);
-      expand.innerHTML = res.error
-        ? `<div class="ds-drift-compare-err">⚠ ${esc(res.error)}</div>`
-        : renderDriftCompareTable(res.srcRec, res.tgtRec, srcFields, tgtFields);
+      if (res.error) {
+        // Fall back to the scan-time answer when the live fetch can't run.
+        const row = drift.find(r => r.sourceId === srcId);
+        const fieldsNote = (row?.fields || []).length
+          ? `<div class="ds-drift-compare-fallback">At the last scan these field(s) differed:
+               <strong>${esc(row.fields.join(', '))}</strong></div>`
+          : '';
+        expand.innerHTML = `${fieldsNote}<div class="ds-drift-compare-err">⚠ ${esc(res.error)}</div>`;
+      } else {
+        expand.innerHTML = renderDriftCompareTable(res.srcRec, res.tgtRec, srcFields, tgtFields);
+      }
       expand.dataset.loaded = '1';
     });
   });

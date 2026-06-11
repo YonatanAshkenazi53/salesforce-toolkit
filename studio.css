@@ -2181,6 +2181,13 @@ html, body {
 }
 .ds-drift-compare-loading { font-size: 11px; color: var(--subtext); padding: 8px; font-style: italic; }
 .ds-drift-compare-err     { font-size: 11px; color: #b45309; background: rgba(234, 88, 12, 0.08); padding: 8px 10px; border-radius: 4px; border-left: 3px solid #ea580c; }
+/* Scan-time "which fields differed" fallback shown when the live fetch can't run */
+.ds-drift-compare-fallback {
+  font-size: 11px; color: #92400E;
+  background: rgba(245, 158, 11, 0.12);
+  padding: 8px 10px; margin-bottom: 6px;
+  border-radius: 4px; border-left: 3px solid #F59E0B;
+}
 .ds-drift-compare-empty   { font-size: 11px; color: var(--subtext); padding: 8px; }
 .ds-drift-compare-hdr {
   font-size: 10.5px;
