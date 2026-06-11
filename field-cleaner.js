@@ -405,7 +405,21 @@ const FieldCleaner = (() => {
         }
       }
 
-      renderResults([...deps, ...flexiHits], fieldId);
+      // ── 4. Supplemental silent-breakage scan ──────────────
+      // List views, compact layouts, quick actions, matching rules, and
+      // workflow field updates — none of which the dependency index tracks,
+      // all of which break silently when the field disappears.
+      let supHits = [];
+      try {
+        supHits = await scanSupplemental([...deps, ...flexiHits], fieldId);
+      } catch (e) {
+        if (window.SFToolkitDebug?.enabled) {
+          window.SFToolkitDebug.log('fields', 'error',
+            'Supplemental dependency scan failed', e.message);
+        }
+      }
+
+      renderResults([...deps, ...flexiHits, ...supHits], fieldId);
     } catch (e) {
       showScanError(`Unexpected error: ${e.message}`);
     } finally {
@@ -466,6 +480,131 @@ const FieldCleaner = (() => {
       if (el) el.textContent =
         `Scanning Lightning Pages… ${Math.min(i + BATCH, pages.length)}/${pages.length}`;
     }
+    return hits;
+  }
+
+  // ── Supplemental scans for silent-breakage types ───────────────────────
+  // MetadataComponentDependency doesn't track these AT ALL, yet deleting a
+  // field they use breaks them without warning: list views, compact layouts,
+  // quick actions, matching rules, workflow field updates. All five are
+  // cheap because they're scoped to the field's own object. Reports and
+  // approval processes can't be scanned affordably — renderResults shows a
+  // static "check manually" note for those.
+  function _fieldTokenRe() {
+    const fl = (_selField?.api || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^a-zA-Z0-9_])${fl}([^a-zA-Z0-9_]|$)`, 'i');
+  }
+
+  async function scanSupplemental(existingDeps, fieldId) {
+    const hits = [];
+    const seen = new Set((existingDeps || []).map(d =>
+      `${d.MetadataComponentType}|${String(d.MetadataComponentId || '').substring(0, 15)}`));
+    const add = (type, id, name) => {
+      const key = `${type}|${String(id || '').substring(0, 15)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      hits.push({
+        MetadataComponentId: id, MetadataComponentName: name,
+        MetadataComponentType: type,
+        RefMetadataComponentId: null, RefMetadataComponentName: _selField.api,
+        _supplemental: true
+      });
+    };
+    const msg = t => { const el = eid('fcResults')?.querySelector('.lp-robot-msg'); if (el) el.textContent = t; };
+    const re      = _fieldTokenRe();
+    const obj     = _selObj.api;
+    const fieldLc = _selField.api.toLowerCase();
+
+    // 1. List views — describe gives the view's SOQL + columns.
+    try {
+      msg('Scanning list views…');
+      const lvRes = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
+        path: `services/data/v62.0/sobjects/${obj}/listviews` });
+      const lvs = lvRes?.listviews || [];
+      const BATCH = 5;
+      for (let i = 0; i < lvs.length; i += BATCH) {
+        const slice = lvs.slice(i, i + BATCH);
+        const rs = await Promise.allSettled(slice.map(lv => bg({
+          type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
+          path: `services/data/v62.0/sobjects/${obj}/listviews/${lv.id}/describe`
+        })));
+        rs.forEach((r, j) => {
+          if (r.status !== 'fulfilled' || r.value?.error) return;
+          const d = r.value, lv = slice[j];
+          const inQuery = typeof d.query === 'string' && re.test(d.query);
+          const inCols  = (d.columns || []).some(c =>
+            String(c.fieldNameOrPath || '').toLowerCase() === fieldLc);
+          if (inQuery || inCols) add('ListView', lv.id, lv.label || lv.developerName || lv.id);
+        });
+        msg(`Scanning list views… ${Math.min(i + BATCH, lvs.length)}/${lvs.length}`);
+      }
+    } catch (_) {/* non-fatal */}
+
+    // 2. Compact layouts — field items are listed right in the describe.
+    try {
+      msg('Scanning compact layouts…');
+      const clRes = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
+        path: `services/data/v62.0/sobjects/${obj}/describe/compactLayouts` });
+      for (const cl of (clRes?.compactLayouts || [])) {
+        const vals = (cl.fieldItems || []).flatMap(fi =>
+          (fi.layoutComponents || []).map(c => String(c.value || '').toLowerCase()));
+        if (vals.includes(fieldLc)) add('CompactLayout', cl.id || cl.name, cl.label || cl.name);
+      }
+    } catch (_) {/* non-fatal */}
+
+    // 3. Quick actions — each action's mini-layout can place the field.
+    try {
+      msg('Scanning quick actions…');
+      const qaRes = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
+        path: `services/data/v62.0/sobjects/${obj}/quickActions` });
+      const qas = Array.isArray(qaRes) ? qaRes : [];
+      const BATCH = 5;
+      for (let i = 0; i < qas.length; i += BATCH) {
+        const slice = qas.slice(i, i + BATCH);
+        const rs = await Promise.allSettled(slice.map(qa => bg({
+          type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
+          path: `services/data/v62.0/sobjects/${obj}/quickActions/${encodeURIComponent(qa.name)}/describe`
+        })));
+        rs.forEach((r, j) => {
+          if (r.status !== 'fulfilled' || r.value?.error) return;
+          const d = r.value, qa = slice[j];
+          // The action layout + default values serialize the field api name —
+          // a token-boundary search over the JSON catches every placement.
+          let blob = '';
+          try { blob = JSON.stringify({ l: d.layout, dv: d.defaultValues }); } catch (_) {}
+          if (blob && re.test(blob)) add('QuickAction', qa.name, qa.label || qa.name);
+        });
+      }
+    } catch (_) {/* non-fatal */}
+
+    // 4. Matching rules — rule items name their fields in Tooling metadata.
+    try {
+      msg('Scanning matching rules…');
+      const mrRes = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
+        query: `SELECT Id, DeveloperName, MasterLabel FROM MatchingRule WHERE SobjectType = '${obj}'` });
+      for (const mr of (mrRes?.records || [])) {
+        const read = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
+          sobject: 'MatchingRule', id: mr.Id });
+        if (read?.error || !read?.Metadata) continue;
+        const items = read.Metadata.matchingRuleItems || [];
+        const used  = items.some(it => String(it.fieldName || '').toLowerCase() === fieldLc);
+        if (used) add('MatchingRule', mr.Id, mr.MasterLabel || mr.DeveloperName);
+      }
+    } catch (_) {/* non-fatal */}
+
+    // 5. Workflow field updates — FieldDefinitionId carries the field's id.
+    try {
+      msg('Scanning workflow field updates…');
+      const id15 = String(fieldId || '').substring(0, 15);
+      const wfRes = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
+        query: `SELECT Id, Name, FieldDefinitionId FROM WorkflowFieldUpdate WHERE SourceTableEnumOrId = '${obj}'` });
+      for (const fu of (wfRes?.records || [])) {
+        const fd = String(fu.FieldDefinitionId || '');
+        if (id15 && fd.includes(id15)) add('WorkflowFieldUpdate', fu.Id, fu.Name);
+        else if (fd.toLowerCase().endsWith('.' + fieldLc)) add('WorkflowFieldUpdate', fu.Id, fu.Name);
+      }
+    } catch (_) {/* non-fatal */}
+
     return hits;
   }
 
@@ -596,6 +735,14 @@ const FieldCleaner = (() => {
                       doneLabel: '✅ Layout updated' },
     ListView:       { icon: '📊', label: 'List Views',       fixable: false,
                       note: 'Open the object\'s list view and remove the column or filter.' },
+    CompactLayout:  { icon: '📇', label: 'Compact Layouts',  fixable: false,
+                      note: 'Edit the compact layout in Object Manager and remove the field.' },
+    QuickAction:    { icon: '⚡', label: 'Quick Actions',    fixable: false,
+                      note: 'Edit the quick action\'s layout (Object Manager → Buttons, Links, and Actions) and remove the field.' },
+    MatchingRule:   { icon: '🧬', label: 'Matching Rules',   fixable: false,
+                      note: 'Deactivate the matching rule, remove the field from its criteria, then reactivate (Setup → Duplicate Management → Matching Rules).' },
+    WorkflowFieldUpdate: { icon: '🛠', label: 'Workflow Field Updates', fixable: false,
+                      note: 'Edit or delete the field update (Setup → Workflow Actions → Field Updates).' },
     ValidationRule: { icon: '✅', label: 'Validation Rules', fixable: false,
                       note: 'Edit the validation rule formula in Object Manager.' },
     ApexClass:      { icon: '☕', label: 'Apex Classes',     fixable: false,
@@ -619,6 +766,10 @@ const FieldCleaner = (() => {
           <div class="fc-clean-title">No dependencies found</div>
           <div class="fc-clean-sub">This field can be safely deleted.</div>
           <button class="btn btn-danger" id="fcDelFreeBtn">🗑 Delete Field</button>
+        </div>
+        <div class="fc-unscanned-note">
+          ℹ️ Not scanned (no affordable API): <strong>Reports</strong>, <strong>approval processes</strong>,
+          and <strong>criteria-based sharing rules</strong> — check those manually before deleting.
         </div>`;
       eid('fcDelFreeBtn').onclick = () => confirmDelete(fieldId);
       return;
@@ -645,6 +796,10 @@ const FieldCleaner = (() => {
           ${autoCount   > 0 ? `<span class="fc-badge-auto">${autoCount} auto-fixable</span>`  : ''}
           ${manualCount > 0 ? `<span class="fc-badge-manual">${manualCount} manual</span>` : ''}
         </span>
+      </div>
+      <div class="fc-unscanned-note">
+        ℹ️ Not scanned (no affordable API): <strong>Reports</strong>, <strong>approval processes</strong>,
+        and <strong>criteria-based sharing rules</strong> — check those manually before deleting.
       </div>`;
 
     for (const [type, items] of Object.entries(_groups)) {
@@ -1746,6 +1901,10 @@ const FieldCleaner = (() => {
       ApexClass:      '/lightning/setup/ApexClasses/home',
       ApexTrigger:    '/lightning/setup/ApexTriggers/home',
       WorkflowRule:   '/lightning/setup/WorkflowRules/home',
+      CompactLayout:  `/lightning/setup/ObjectManager/${obj}/CompactLayouts/view`,
+      QuickAction:    `/lightning/setup/ObjectManager/${obj}/ButtonsLinksActions/view`,
+      MatchingRule:   '/lightning/setup/MatchingRules/home',
+      WorkflowFieldUpdate: '/lightning/setup/WorkflowFieldUpdates/home',
     };
     const url = _orgUrl.replace(/\/$/, '') + (paths[type] || '/lightning/setup/SetupOneHome/home');
     chrome.tabs.create({ url });
