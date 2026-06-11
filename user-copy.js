@@ -90,6 +90,20 @@ const UserCopy = (() => {
     allUsers = res.records || [];
     usersLoadState = 'done';
     setPickerPlaceholder(`🔍 Type to filter ${allUsers.length} users…`);
+
+    // If a dropdown is already OPEN (the input was focused while we were
+    // still loading — typical in the popout, which autofocuses), its content
+    // is stuck on the stale "⏳ Loading users…" row. Re-render it now that
+    // the data is here; re-focusing wouldn't help since the input never
+    // lost focus (no new focus event fires).
+    [['ucSourceInput', 'ucSourceDrop', 'source'], ['ucTargetInput', 'ucTargetDrop', 'target']]
+      .forEach(([inputId, dropId, role]) => {
+        const input = document.getElementById(inputId);
+        const drop  = document.getElementById(dropId);
+        if (input && drop && drop.style.display !== 'none') {
+          showFilteredDrop(input, drop, role);
+        }
+      });
   }
 
   function setPickerPlaceholder(text) {
@@ -233,6 +247,10 @@ const UserCopy = (() => {
 
     input.addEventListener('input', () => showFilteredDrop(input, drop, role));
     input.addEventListener('focus', () => showFilteredDrop(input, drop, role));
+    // Click too — if the input is ALREADY focused (autofocus, or the user
+    // clicked back in after Esc) no focus event fires, and the list looked
+    // permanently empty.
+    input.addEventListener('click', () => showFilteredDrop(input, drop, role));
     input.addEventListener('blur',  () => {
       setTimeout(() => { drop.style.display = 'none'; }, 200);
     });
