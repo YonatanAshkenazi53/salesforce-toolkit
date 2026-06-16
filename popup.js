@@ -32,6 +32,7 @@ const STATUS_MESSAGES = [
 // Init
 // ============================================================
 document.addEventListener('DOMContentLoaded', async () => {
+  initDarkTheme();
   initDebugMode();
   initActivityBar();
   setupTabs();
@@ -120,6 +121,27 @@ function maybeRunFirstRunTour() {
       text:  'Pick a tool from the left to get started. You can replay this tour anytime from the home page.'
     }
   ]);
+}
+
+// ── Dark theme — body.sftk-dark, persisted in chrome.storage.local ──
+// styles.css is fully CSS-variable-driven, so the class flip restyles
+// every component. Shared key with the standalone log viewer.
+function initDarkTheme() {
+  const KEY = 'sftk_dark';
+  const btn = document.getElementById('sftkDarkToggle');
+  const apply = on => {
+    document.body.classList.toggle('sftk-dark', !!on);
+    if (btn) {
+      btn.textContent = on ? '☀️' : '🌙';
+      btn.title = on ? 'Switch to light mode' : 'Switch to dark mode';
+    }
+  };
+  chrome.storage?.local?.get(KEY).then(d => apply(d?.[KEY])).catch(() => {});
+  btn?.addEventListener('click', () => {
+    const on = !document.body.classList.contains('sftk-dark');
+    apply(on);
+    chrome.storage?.local?.set({ [KEY]: on });
+  });
 }
 
 function setupTabs() {

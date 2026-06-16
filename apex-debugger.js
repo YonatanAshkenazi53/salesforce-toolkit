@@ -178,18 +178,21 @@ const ApexDebugger = (() => {
   // Build <option> markup for the profile <select>: built-ins, custom levels,
   // then a "create new" sentinel.
   function _profileSelectHtml() {
-    const opt = (k, label) =>
-      `<option value="${k}" ${k === _selProfile ? 'selected' : ''}>${label}</option>`;
+    // title= shows the scenario's description as a hover tooltip per option
+    // (the only help-text channel a native <select> offers) — the inline
+    // description row still updates after selection.
+    const opt = (k, label, tip) =>
+      `<option value="${k}" ${k === _selProfile ? 'selected' : ''}${tip ? ` title="${_esc(tip)}"` : ''}>${label}</option>`;
     let html = '<optgroup label="Built-in scenarios">';
-    html += Object.entries(PROFILES).map(([k, p]) => opt(k, p.label)).join('');
+    html += Object.entries(PROFILES).map(([k, p]) => opt(k, p.label, p.desc)).join('');
     html += '</optgroup>';
     if (_customProfiles.length) {
       html += '<optgroup label="My custom levels">';
-      html += _customProfiles.map(p => opt(p.key, '✏️ ' + _esc(p.label))).join('');
+      html += _customProfiles.map(p => opt(p.key, '✏️ ' + _esc(p.label), p.desc)).join('');
       html += '</optgroup>';
     }
     html += '<optgroup label="Manage">';
-    html += '<option value="__new__">➕ Create custom level…</option>';
+    html += '<option value="__new__" title="Build your own debug-level combination per log category">➕ Create custom level…</option>';
     html += '</optgroup>';
     return html;
   }

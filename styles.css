@@ -48,6 +48,50 @@
   --shadow-md:    0 4px 16px rgba(0,0,0,.13);
 }
 
+/* ════════════════════════════════════════════════════════════
+   DARK THEME — toggled by body.sftk-dark (persisted in storage).
+   The whole stylesheet is var-driven, so flipping the palette here
+   restyles every component. Mirrors the Data Studio's dark mode.
+   ════════════════════════════════════════════════════════════ */
+body.sftk-dark {
+  --brand:        #1B96FF;
+  --brand-dark:   #78B9F0;
+  --brand-light:  #57A3F2;
+  --brand-bg:     #14304D;
+
+  --bg:           #16181D;
+  --card:         #20232B;
+  --surface2:     #262A33;
+  --header-bg:    #0B1B33;
+  --header-text:  #F0F2F5;
+  --border:       #3A3F4B;
+  --border-light: #2E323C;
+
+  --text:         #E8EAED;
+  --subtext:      #9AA0A6;
+  --subtext-lt:   #6B7075;
+
+  --active-color:   #4CCA75;
+  --draft-color:    #57A3F2;
+  --obsolete-color: #9AA0A6;
+  --invalid-color:  #FF6B6B;
+  --danger:         #FF6B6B;
+  --warning:        #F5A623;
+  --warning-bg:     #3A2A10;
+
+  /* Night kitty 🐱 */
+  --cat-fur:      #546E7A;
+  --cat-fur-dark: #37474F;
+  --cat-belly:    #B0BEC5;
+  --cat-inner:    #B07A80;
+  --cat-eye:      #82B1FF;
+  --cat-nose:     #C98A8A;
+  --cat-stripe:   #455A64;
+  color-scheme: dark;
+  --shadow:       0 2px 8px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.04);
+  --shadow-md:    0 4px 16px rgba(0,0,0,.55);
+}
+
 /* ── Reset ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -3698,7 +3742,10 @@ body {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 8px;
-  overflow: hidden;
+  /* NOT overflow:hidden — that clipped the absolutely-positioned user
+     dropdown (which opens just below .uc-picker) down to a 4px sliver,
+     so the user list was invisible. The label's top corners are rounded
+     directly instead, preserving the look without the clip. */
 }
 
 .uc-picker-label {
@@ -3710,6 +3757,7 @@ body {
   letter-spacing: .4px;
   background: var(--bg);
   border-bottom: 1px solid var(--border-light);
+  border-radius: 8px 8px 0 0;
 }
 
 .uc-picker {
