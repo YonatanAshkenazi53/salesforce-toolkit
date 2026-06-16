@@ -3310,8 +3310,25 @@ body {
 
 .lp-robot-msg { font-size: 12px; color: var(--subtext); }
 
+/* ── Kitty mascot (sftkCatSvg) ───────────────────────────────
+   The loading cat gently breathes; its pupils blink. Success/sleep/sad
+   moods are static. Honors prefers-reduced-motion. */
+.sftk-cat { display: block; }
+.sftk-cat-load .sftk-cat-body { animation: sftk-cat-breathe 2.4s ease-in-out infinite; transform-origin: 32px 40px; }
+.sftk-cat-load .sftk-cat-eye  { animation: sftk-cat-blink 3.2s ease-in-out infinite; transform-origin: center; }
+.sftk-cat-sleep               { animation: sftk-cat-bob 3s ease-in-out infinite; }
+@keyframes sftk-cat-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+@keyframes sftk-cat-blink   { 0%,92%,100% { transform: scaleY(1); } 96% { transform: scaleY(0.1); } }
+@keyframes sftk-cat-bob     { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) {
+  .sftk-cat-load .sftk-cat-body,
+  .sftk-cat-load .sftk-cat-eye,
+  .sftk-cat-sleep { animation: none; }
+}
+
 /* ── Small / compact variant (tight section rows) ── */
 .lp-robot-sm { padding: 14px 20px; }
+.lp-robot-sm .sftk-cat { width: 30px; height: 30px; }
 
 /* Strip inner padding when nested in a container that already provides it */
 .uc-loading > .lp-robot-loading,

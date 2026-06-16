@@ -430,6 +430,10 @@ html, body {
   margin: 0 auto;
 }
 .ds-empty-icon  { font-size: 52px; opacity: .28; line-height: 1; }
+/* When the icon slot holds the kitty mascot, drop the heavy emoji muting
+   (a parent opacity would cap the cat's own) and let it sit at full size. */
+.ds-empty-icon:has(svg) { opacity: 1; }
+.ds-empty-icon .sftk-cat { display: block; margin: 0 auto; opacity: .9; }
 .ds-empty-title { font-size: 18px; font-weight: 700; color: var(--text); opacity: .75; letter-spacing: -.2px; }
 .ds-empty-sub   { font-size: 13px; max-width: 380px; line-height: 1.6; }
 .ds-empty-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
