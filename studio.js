@@ -948,7 +948,7 @@ function renderOrgsPanel() {
 
     ${!allOrgUrls.length ? `
       <div class="ds-empty-page">
-        <div class="ds-empty-icon">🔌</div>
+        <div class="ds-empty-icon">${window.sftkCatSvg('sleep', 72)}</div>
         <div class="ds-empty-title">No orgs detected yet</div>
         <div class="ds-empty-sub">Open a Salesforce org in any Chrome tab, then click <strong>Refresh from open tabs</strong>.</div>
       </div>` : `
@@ -6155,7 +6155,7 @@ function renderHistory() {
     setMain(`
       <div class="ds-view-header"><h2 class="ds-view-title">📜 History</h2></div>
       <div class="ds-empty-page">
-        <div class="ds-empty-icon">📜</div>
+        <div class="ds-empty-icon">${window.sftkCatSvg('sleep', 72)}</div>
         <div class="ds-empty-title">No transfers yet</div>
         <div class="ds-empty-sub">Run a transfer and the results will appear here.</div>
       </div>`);
