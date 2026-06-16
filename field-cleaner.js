@@ -553,16 +553,27 @@ const FieldCleaner = (() => {
     } catch (_) {/* non-fatal */}
 
     // 3. Quick actions — each action's mini-layout can place the field.
+    // The /quickActions list returns EVERY action available on the object,
+    // including standard global ones (LogACall, NewContact, FeedItem.*,
+    // SendEmail…) whose per-action describe 404s at the object scope — that
+    // was flooding the log with red 404s. Only Create/Update actions own a
+    // field layout, and only object-scoped custom ones can hold THIS object's
+    // custom field, so filter to those; suppress errors on the rest.
     try {
       msg('Scanning quick actions…');
       const qaRes = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
         path: `services/data/v62.0/sobjects/${obj}/quickActions` });
-      const qas = Array.isArray(qaRes) ? qaRes : [];
+      const qas = (Array.isArray(qaRes) ? qaRes : []).filter(qa => {
+        const t = (qa.type || '').toLowerCase();
+        // Skip global/chatter actions (name has a '.') and non-layout types.
+        if (String(qa.name || '').includes('.')) return false;
+        return t === 'create' || t === 'update';
+      });
       const BATCH = 5;
       for (let i = 0; i < qas.length; i += BATCH) {
         const slice = qas.slice(i, i + BATCH);
         const rs = await Promise.allSettled(slice.map(qa => bg({
-          type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
+          type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
           path: `services/data/v62.0/sobjects/${obj}/quickActions/${encodeURIComponent(qa.name)}/describe`
         })));
         rs.forEach((r, j) => {
@@ -577,18 +588,23 @@ const FieldCleaner = (() => {
       }
     } catch (_) {/* non-fatal */}
 
-    // 4. Matching rules — rule items name their fields in Tooling metadata.
+    // 4. Matching rules — MatchingRule/MatchingRuleItem are STANDARD data
+    // objects, not Tooling (the Tooling query 400'd "sObject type
+    // 'MatchingRule' is not supported"). One join query gets every rule
+    // item's Field for this object; Field comes back like "Contact.Email".
     try {
       msg('Scanning matching rules…');
-      const mrRes = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
-        query: `SELECT Id, DeveloperName, MasterLabel FROM MatchingRule WHERE SobjectType = '${obj}'` });
-      for (const mr of (mrRes?.records || [])) {
-        const read = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
-          sobject: 'MatchingRule', id: mr.Id });
-        if (read?.error || !read?.Metadata) continue;
-        const items = read.Metadata.matchingRuleItems || [];
-        const used  = items.some(it => String(it.fieldName || '').toLowerCase() === fieldLc);
-        if (used) add('MatchingRule', mr.Id, mr.MasterLabel || mr.DeveloperName);
+      const mriRes = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
+        query: `SELECT Id, Field, MatchingRuleId, MatchingRule.DeveloperName, MatchingRule.MasterLabel ` +
+               `FROM MatchingRuleItem WHERE MatchingRule.SobjectType = '${obj}'` });
+      if (!mriRes?.error) {
+        for (const it of (mriRes?.records || [])) {
+          const f = String(it.Field || '').toLowerCase();
+          if (f === fieldLc || f.endsWith('.' + fieldLc)) {
+            add('MatchingRule', it.MatchingRuleId,
+                it.MatchingRule?.MasterLabel || it.MatchingRule?.DeveloperName || it.MatchingRuleId);
+          }
+        }
       }
     } catch (_) {/* non-fatal */}
 
@@ -1942,6 +1958,26 @@ const FieldCleaner = (() => {
     }
   }
 
+  // Turn Salesforce's raw delete errors into plain-English guidance.
+  function _explainDeleteError(raw) {
+    const s = String(raw || '');
+    if (/INSUFFICIENT_ACCESS_ON_CROSS_REFERENCE_ENTITY|insufficient access rights on cross-reference/i.test(s)) {
+      return 'Salesforce is still blocking this field. Usually one of: (a) a ' +
+        'dependency this scan can\'t see (a report, approval process, or ' +
+        'sharing rule — see the "not scanned" note above), (b) the field is ' +
+        'referenced by a MANAGED package component (read-only), or (c) your ' +
+        'user lacks "Customize Application" / "Modify Metadata". Resolve the ' +
+        'remaining reference, then retry.';
+    }
+    if (/in use|cannot delete.*because|referenced/i.test(s)) {
+      return 'The field is still referenced somewhere. Fix the listed ' +
+        'dependencies above (and check Reports / approval processes / sharing ' +
+        'rules, which aren\'t scanned), then re-scan and delete again. ' +
+        `(Raw: ${s})`;
+    }
+    return s;
+  }
+
   async function doDelete(fieldId) {
     const btn = eid('fcDelBtn') || eid('fcDelFreeBtn');
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Deleting…'; }
@@ -1954,8 +1990,8 @@ const FieldCleaner = (() => {
     if (res.error) {
       if (btn) { btn.disabled = false; btn.textContent = '🗑 Delete Field'; }
       const errEl = document.createElement('div');
-      errEl.className   = 'fc-error-msg';
-      errEl.textContent = `❌ Delete failed: ${res.error}`;
+      errEl.className = 'fc-error-msg';
+      errEl.innerHTML = `❌ Delete failed: ${esc(_explainDeleteError(res.error))}`;
       eid('fcResults').appendChild(errEl);
     } else {
       eid('fcResults').innerHTML = `

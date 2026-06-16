@@ -376,6 +376,11 @@
 
   // ── Boot ────────────────────────────────────────────────
   async function boot() {
+    // Honor the Toolkit's persisted dark theme (shared styles.css palette).
+    try {
+      const d = await chrome.storage.local.get('sftk_dark');
+      if (d?.sftk_dark) document.body.classList.add('sftk-dark');
+    } catch (_) {}
     const params = new URLSearchParams(location.search);
     const key = params.get('key');
     if (!key) {
