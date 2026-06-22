@@ -22,9 +22,14 @@ chrome.action.onClicked.addListener(async () => {
 
 // Execute a profile transfer between two orgs.
 // Returns a summary object for the history log.
-async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid) {
+// sharedIdMap (optional): when running a SEQUENCE of profiles, the caller
+// passes ONE idMap object reused across every profile so a later profile's
+// lookup field that points at a record created by an earlier profile is
+// remapped to the new target Id (priority-1 path in the payload builder).
+// Omitted for a standalone run → a fresh per-run map, identical to before.
+async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid, sharedIdMap = null) {
   const startedAt    = new Date().toISOString();
-  const idMap        = {};  // srcId → tgtId (all objects — used for reference field remapping)
+  const idMap        = sharedIdMap || {};  // srcId → tgtId (all objects — used for reference field remapping)
   const summary      = {};
   const errors       = [];
   // Separate channel so diagnostic lines aren't truncated by the
@@ -434,6 +439,44 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   };
 }
 
+// Run an ordered list of saved profiles as one pipeline against a single
+// org pair, threading ONE idMap through every step so cross-profile lookups
+// remap (e.g. CPQ: a "Price Rules" profile, then a "Lookup Queries" profile
+// whose SBQQ__PriceRule2__c points at the rules just created). Steps run
+// strictly in order; a thrown step is captured and the sequence continues so
+// one bad profile doesn't abort the rest (each step's status reflects its own
+// outcome).
+async function executeProfileSequence(profiles, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid) {
+  const startedAt    = new Date().toISOString();
+  const sharedIdMap  = {};   // threaded across every profile in the sequence
+  const steps        = [];
+  for (let i = 0; i < profiles.length; i++) {
+    const prof = profiles[i];
+    if (!prof || !prof.tree) {
+      steps.push({ index: i, profileId: prof?.id, profileName: prof?.name || `Step ${i + 1}`,
+        status: 'failed', summary: {}, errors: ['Profile not found or has no object tree — skipped.'] });
+      continue;
+    }
+    try {
+      const res = await executeProfileTransfer(prof, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid, sharedIdMap);
+      steps.push({ index: i, ...res });
+    } catch (e) {
+      steps.push({ index: i, profileId: prof.id, profileName: prof.name,
+        status: 'failed', summary: {}, errors: [e.message || String(e)] });
+    }
+  }
+  // Sequence status: success only if every step succeeded; partial if anything
+  // got created anywhere; otherwise failed.
+  const anyCreated = steps.some(s => Object.values(s.summary || {}).some(x => x.created > 0));
+  const status = steps.every(s => s.status === 'success') ? 'success'
+    : anyCreated ? 'partial' : 'failed';
+  return {
+    sequence: true, startedAt, completedAt: new Date().toISOString(),
+    sourceOrg: srcOrgUrl, targetOrg: tgtOrgUrl,
+    status, steps, idMapSize: Object.keys(sharedIdMap).length
+  };
+}
+
 function buildCopyFields(describe) {
   if (!describe?.fields) return ['Id'];
   // These fields are either read-only, system-managed, or we deliberately don't
@@ -534,6 +577,12 @@ async function dispatchMessage(message) {
     case 'SF_EXECUTE_PROFILE_TRANSFER':
       return executeProfileTransfer(
         message.profile,
+        message.srcOrgUrl, message.srcSid,
+        message.tgtOrgUrl, message.tgtSid
+      );
+    case 'SF_EXECUTE_SEQUENCE':
+      return executeProfileSequence(
+        message.profiles,
         message.srcOrgUrl, message.srcSid,
         message.tgtOrgUrl, message.tgtSid
       );
