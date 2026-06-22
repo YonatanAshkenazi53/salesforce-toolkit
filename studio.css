@@ -2287,6 +2287,15 @@ html, body {
 .ds-drift-compare-row-diff .ds-drift-compare-val { font-weight: 600; }
 .ds-drift-compare-field { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-drift-compare-rename { color: var(--subtext); font-weight: 400; font-size: 10px; }
+/* Lookup fields compared by related-record name, not raw Id. */
+.ds-drift-compare-lkptag {
+  display: inline-block; margin-left: 6px; padding: 0 5px;
+  font-size: 9px; font-weight: 600; letter-spacing: .2px;
+  color: var(--brand); background: var(--brand-bg, #f5f9ff);
+  border-radius: 3px; vertical-align: middle; text-transform: uppercase;
+}
+.ds-dark .ds-drift-compare-lkptag { background: #10243d; }
+.ds-drift-compare-row-lkp { opacity: .82; }
 .ds-drift-compare-val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── History ─────────────────────────────────────────────────── */
