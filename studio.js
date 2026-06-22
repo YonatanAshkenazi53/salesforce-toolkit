@@ -251,6 +251,31 @@ document.addEventListener('keydown', e => {
 });
 
 // ── Utility ───────────────────────────────────────────────────
+// Stable per-org identity key, shared across every domain form Salesforce
+// hands out for the SAME org: my.salesforce.com (API origin), lightning.force.com
+// (UI), salesforce-setup.com (Setup), and trailing-slash / scheme variants all
+// collapse to the org's myDomain prefix, e.g.:
+//   https://ashkenazy7-dev-ed.develop.my.salesforce.com  →  ashkenazy7-dev-ed.develop
+//   https://ashkenazy7-dev-ed.develop.lightning.force.com → ashkenazy7-dev-ed.develop
+// Live sessions are always reported as the my.salesforce.com form, but stored
+// profile URLs may have been captured in any form — so equality on the raw
+// string falsely reports an open org as "offline". Match on this key instead.
+function _orgKey(orgUrl) {
+  if (!orgUrl) return '';
+  let host;
+  try { host = new URL(orgUrl).hostname; }
+  catch { host = String(orgUrl).replace(/^https?:\/\//, '').replace(/\/.*$/, ''); }
+  return host
+    .replace(/\.my\.salesforce-setup\.com$/, '')
+    .replace(/\.salesforce-setup\.com$/, '')
+    .replace(/\.my\.salesforce\.com$/, '')
+    .replace(/\.lightning\.force\.com$/, '')
+    .replace(/\.my\.site\.com$/, '')
+    .replace(/\.salesforce\.com$/, '')
+    .replace(/\.force\.com$/, '')
+    .toLowerCase();
+}
+
 function orgLabel(orgUrl) {
   if (!orgUrl) return 'Unknown';
   const stored = _orgs[orgUrl]?.label;
@@ -898,7 +923,8 @@ function renderOrgsPanel() {
   ].filter(Boolean);
 
   const rowsHtml = allOrgUrls.map(url => {
-    const isOnline   = _allSessions.some(s => s.orgUrl === url) || url === _orgUrl;
+    const urlKey     = _orgKey(url);
+    const isOnline   = _allSessions.some(s => _orgKey(s.orgUrl) === urlKey) || _orgKey(_orgUrl) === urlKey;
     const isCurrent  = url === _orgUrl;
     const orgData    = _orgs[url] || {};
     const label      = orgLabel(url);
@@ -1048,11 +1074,14 @@ function allMapOrgs() {
 // channel available: 🟢 = org open in Chrome with a live session, ⚪ = known
 // but not currently open. Used by every org picklist (Profile Builder,
 // Run Transfer, Readiness, Schema View, Field Mapping, Org Compare).
+// Set of org-identity keys (not raw URLs) for every org open in a tab, so an
+// org counts as "online" no matter which domain form its dropdown value was
+// stored in. Matches the same key logic _resolveSession uses.
 function _liveOrgSet() {
-  return new Set(_buildAllSessions().filter(s => s.sid).map(s => s.orgUrl));
+  return new Set(_buildAllSessions().filter(s => s.sid).map(s => _orgKey(s.orgUrl)));
 }
 function orgOptionLabel(url, label, liveSet) {
-  const on = (liveSet || _liveOrgSet()).has(url);
+  const on = (liveSet || _liveOrgSet()).has(_orgKey(url));
   return `${on ? '🟢' : '⚪'} ${label || orgLabel(url)}${on ? '' : ' (not open)'}`;
 }
 
@@ -3906,7 +3935,14 @@ function _buildAllSessions() {
 // expected to show a "open this org in a tab or add credentials" warning.
 function _resolveSession(orgUrl, allSess) {
   if (!orgUrl) return null;
-  return allSess.find(s => s.orgUrl === orgUrl) || null;
+  // Exact match first (fast path, also preserves the original URL when forms
+  // already agree), then fall back to org-identity match so a profile URL
+  // stored in a different domain form (lightning vs my.salesforce, trailing
+  // slash, …) still resolves to its live open-tab session.
+  const exact = allSess.find(s => s.orgUrl === orgUrl);
+  if (exact) return exact;
+  const key = _orgKey(orgUrl);
+  return key ? (allSess.find(s => _orgKey(s.orgUrl) === key) || null) : null;
 }
 
 async function renderTransfer() {
