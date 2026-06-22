@@ -1611,6 +1611,19 @@ function countTreeNodes(node) {
   return 1 + (node.children || []).reduce((n, c) => n + countTreeNodes(c), 0);
 }
 
+// Depth-first search for the first tree node matching an object API name
+// (root uses objectType, children use childSObject). Used to find a node's
+// per-lookup resolution config when comparing drift for that object.
+function _findTreeNode(node, objType) {
+  if (!node) return null;
+  if ((node.objectType || node.childSObject) === objType) return node;
+  for (const c of (node.children || [])) {
+    const hit = _findTreeNode(c, objType);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 window.runProfile = function(profileId) {
   _transferProfile = _profiles.find(p => p.id === profileId) || null;
   _transferOrgOverride = { src: null, tgt: null };   // fresh launch → profile's own orgs
@@ -3525,7 +3538,7 @@ async function openRecordPickerModal(pathStr) {
           return;
         }
         expand.innerHTML = renderDriftCompareTable(
-          result.srcRec, result.tgtRec, srcFields, tgtFields);
+          result.srcRec, result.tgtRec, srcFields, tgtFields, result.lookupMap || {});
         expand.dataset.loaded = '1';
       });
     });
@@ -3937,46 +3950,83 @@ async function runDiffScan(profile) {
   // counting them as drift flags every transferred record as "changed"
   // forever. Upsert/lookup-bridge runs resolve lookups at write time; the
   // drift scan compares real data fields only.
-  async function describeFieldTypes(sess) {
-    try {
-      const d = await describe(objType, sess.orgUrl, sess.sid);
-      const types = new Map((d?.fields || []).map(f => [f.name, f.type]));
-      const nameFld = (d?.fields || []).find(f => f.nameField === true)?.name || null;
-      return { types, nameFld };
-    } catch (_) { return { types: new Map(), nameFld: null }; }
+  async function describeFull(sess) {
+    try { return await describe(objType, sess.orgUrl, sess.sid); } catch (_) { return null; }
   }
-  const [srcDesc, tgtDesc] = await Promise.all([describeFieldTypes(srcSess), describeFieldTypes(tgtSess)]);
-  if (srcDesc.types.size && !srcDesc.types.has(srcMatchField) && srcDesc.nameFld) srcMatchField = srcDesc.nameFld;
-  if (tgtDesc.types.size && !tgtDesc.types.has(tgtMatchField) && tgtDesc.nameFld) tgtMatchField = tgtDesc.nameFld;
-  if (srcDesc.types.size && tgtDesc.types.size) {
-    const keptSrc = [], keptTgt = [];
-    for (let i = 0; i < Math.min(srcCompare.length, tgtCompare.length); i++) {
-      const s = srcCompare[i], t = tgtCompare[i];
-      if (!srcDesc.types.has(s) || !tgtDesc.types.has(t)) continue;        // missing on a side
-      if (srcDesc.types.get(s) === 'reference' || tgtDesc.types.get(t) === 'reference') continue; // lookups never match cross-org
-      keptSrc.push(s); keptTgt.push(t);
+  const [srcDescFull, tgtDescFull] = await Promise.all([describeFull(srcSess), describeFull(tgtSess)]);
+  const srcTypes = new Map((srcDescFull?.fields || []).map(f => [f.name, f.type]));
+  const tgtTypes = new Map((tgtDescFull?.fields || []).map(f => [f.name, f.type]));
+  const srcNameFld = (srcDescFull?.fields || []).find(f => f.nameField === true)?.name || null;
+  const tgtNameFld = (tgtDescFull?.fields || []).find(f => f.nameField === true)?.name || null;
+  if (srcTypes.size && !srcTypes.has(srcMatchField) && srcNameFld) srcMatchField = srcNameFld;
+  if (tgtTypes.size && !tgtTypes.has(tgtMatchField) && tgtNameFld) tgtMatchField = tgtNameFld;
+
+  // Per-lookup compare maps (from the node's resolution config, else Name).
+  // Reference fields are compared by the RELATED record's match field, not the
+  // cross-org Id. Polymorphic / no-name lookups are skipped (excluded from drift).
+  const _scanNode = _findTreeNode(profile.tree, objType);
+  const srcLkp = buildLookupCompareMap(srcDescFull, _scanNode?.lookupResolutions);
+  const tgtLkp = buildLookupCompareMap(tgtDescFull, _scanNode?.lookupResolutions);
+
+  // Build two compare plans. `enhanced` resolves references via SOQL dot-paths
+  // (Account.Name); `plain` drops references entirely (the legacy "ids never
+  // match" behavior). Each plan entry knows how to SELECT and EXTRACT its value.
+  const enhanced = [], plain = [];
+  const haveTypes = srcTypes.size && tgtTypes.size;
+  for (let i = 0; i < Math.min(srcCompare.length, tgtCompare.length); i++) {
+    const s = srcCompare[i], t = tgtCompare[i];
+    if (haveTypes && (!srcTypes.has(s) || !tgtTypes.has(t))) continue;  // missing on a side
+    const isRef = haveTypes && (srcTypes.get(s) === 'reference' || tgtTypes.get(t) === 'reference');
+    if (isRef) {
+      const si = srcLkp[s], ti = tgtLkp[t];
+      // Only compare-by-name when BOTH sides resolve; otherwise exclude the
+      // lookup from drift (don't compare raw Ids → no false drift).
+      if (si && !si.skip && ti && !ti.skip) {
+        enhanced.push({ srcField: s, tgtField: t,
+          srcSel: _lookupSelectExpr(s, si), tgtSel: _lookupSelectExpr(t, ti),
+          srcExtract: r => _lookupResolvedVal(r, si), tgtExtract: r => _lookupResolvedVal(r, ti) });
+      }
+      continue;  // skip lookups never enter `plain`
     }
-    srcCompare = keptSrc;
-    tgtCompare = keptTgt;
+    const entry = { srcField: s, tgtField: t, srcSel: s, tgtSel: t,
+      srcExtract: r => r[s], tgtExtract: r => r[t] };
+    enhanced.push(entry); plain.push(entry);
   }
 
-  // Per-org SOQL — different field name on each side is the whole point.
-  const srcFieldList = [...new Set(['Id', srcMatchField, ...srcCompare])].filter(Boolean).join(',');
-  const tgtFieldList = [...new Set(['Id', tgtMatchField, ...tgtCompare])].filter(Boolean).join(',');
-  const srcSoql = `SELECT ${srcFieldList} FROM ${objType}${where ? ' WHERE ' + where : ''}`;
-  const tgtSoql = `SELECT ${tgtFieldList} FROM ${objType}${where ? ' WHERE ' + where : ''}`;
+  const fieldList = (plan, side) => [...new Set([
+    'Id', side === 'src' ? srcMatchField : tgtMatchField,
+    ...plan.map(p => side === 'src' ? p.srcSel : p.tgtSel)
+  ])].filter(Boolean).join(',');
 
+  const soqlFor = (plan) => ({
+    src: `SELECT ${fieldList(plan, 'src')} FROM ${objType}${where ? ' WHERE ' + where : ''}`,
+    tgt: `SELECT ${fieldList(plan, 'tgt')} FROM ${objType}${where ? ' WHERE ' + where : ''}`
+  });
+  const runScanPair = (q) => Promise.all([
+    sendBg({ type: 'SF_QUERY_ALL', orgUrl: srcSess.orgUrl, sid: srcSess.sid, tooling: false, query: q.src }),
+    sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, query: q.tgt })
+  ]);
+
+  let comparePlan = enhanced;
   let srcRes, tgtRes;
   try {
-    [srcRes, tgtRes] = await Promise.all([
-      sendBg({ type: 'SF_QUERY_ALL', orgUrl: srcSess.orgUrl, sid: srcSess.sid, tooling: false, query: srcSoql }),
-      sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, query: tgtSoql })
-    ]);
+    [srcRes, tgtRes] = await runScanPair(soqlFor(enhanced));
+    // A bad relationship/match field 400s the dot-path query → fall back to the
+    // plain plan (references dropped) so the scan still produces a result.
+    if ((srcRes?.error || tgtRes?.error) && enhanced.length !== plain.length) {
+      comparePlan = plain;
+      [srcRes, tgtRes] = await runScanPair(soqlFor(plain));
+    }
   } catch (e) {
     return { error: `scan failed: ${e?.message || e}` };
   }
   if (srcRes?.error) return { error: `source query failed: ${srcRes.error}` };
   if (tgtRes?.error) return { error: `target query failed: ${tgtRes.error}` };
+
+  // Stored compareFields reflect the plan actually used (so the compare table
+  // shows the same fields and re-resolves lookups by name on demand).
+  srcCompare = comparePlan.map(p => p.srcField);
+  tgtCompare = comparePlan.map(p => p.tgtField);
 
   // Index each side by its own matchField — KEYS are the values themselves,
   // which match across orgs even when the field names that hold them differ
@@ -3999,10 +4049,9 @@ async function runDiffScan(profile) {
   const changed         = []; // present in both, compareFields differ → "drift"
   const identical       = []; // present in both, all compareFields match → "in sync"
 
-  // Pair-aligned compare: srcCompare and tgtCompare are same-length lists
-  // where index i on each side refers to the same logical field. Filter
-  // both side-by-side so a field dropped on one side is dropped on both.
-  const pairLength = Math.min(srcCompare.length, tgtCompare.length);
+  // Pair-aligned compare driven by comparePlan: each entry extracts the value
+  // to compare (raw field for data fields, related record's match field for
+  // resolved lookups). diffFields records the SOURCE field name for the UI.
   for (const [k, sr] of srcByKey) {
     const tr = tgtByKey.get(k);
     if (!tr) {
@@ -4012,9 +4061,9 @@ async function runDiffScan(profile) {
       // answer "why is this drift?" without a live re-fetch, including
       // when one org isn't open in a tab.
       const diffFields = [];
-      for (let i = 0; i < pairLength; i++) {
-        if (String(sr[srcCompare[i]] ?? '') !== String(tr[tgtCompare[i]] ?? '')) {
-          if (diffFields.length < 10) diffFields.push(srcCompare[i]);
+      for (const p of comparePlan) {
+        if (String(p.srcExtract(sr) ?? '') !== String(p.tgtExtract(tr) ?? '')) {
+          if (diffFields.length < 10) diffFields.push(p.srcField);
           else break;
         }
       }
@@ -4148,6 +4197,42 @@ window.retryFailedRun = function(runId) {
 // ════════════════════════════════════════════════════════════════
 // Fetches one record from each org on demand and renders a side-by-side
 // field compare. No snapshot cache — queries live.
+// ── Lookup-aware drift comparison ────────────────────────────────────────────
+// Raw lookup Ids ALWAYS differ across orgs, so comparing them as drift is
+// meaningless. Instead resolve each reference field to a human-comparable value
+// — the related record's match field (the per-lookup matchField the user set on
+// the Field Mapping screen, else "Name"). Returns:
+//   { [fieldName]: { relName, matchField } | { skip:true } }
+// skip:true fields are EXCLUDED from drift entirely (polymorphic lookups, or a
+// reference with no relationshipName) rather than compared by raw Id.
+function buildLookupCompareMap(describe, lookupResolutions) {
+  const map = {};
+  for (const f of (describe?.fields || [])) {
+    if (f.type !== 'reference') continue;
+    const cfg  = (lookupResolutions || {})[f.name];
+    const poly = f.polymorphicForeignKey || (f.referenceTo || []).length > 1;
+    // No relationship to traverse, or polymorphic without an explicit match
+    // field (parent name field varies per type) → can't safely resolve a name.
+    if (!f.relationshipName || (poly && !cfg?.matchField)) { map[f.name] = { skip: true }; continue; }
+    map[f.name] = { relName: f.relationshipName, matchField: cfg?.matchField || 'Name' };
+  }
+  return map;
+}
+
+// SOQL dot-path for a reference field's resolved value, e.g. "Account.Name" or
+// "SBQQ__PriceRule2__r.Name". Pulls the related record's match field inline so
+// no extra per-record query is needed.
+function _lookupSelectExpr(fieldName, info) {
+  return `${info.relName}.${info.matchField}`;
+}
+
+// Read the resolved value out of a record returned by a dot-path SELECT — SOQL
+// nests the parent ("Account.Name" → rec.Account.Name). Null parent → ''.
+function _lookupResolvedVal(rec, info) {
+  const parent = rec ? rec[info.relName] : null;
+  return parent == null ? '' : (parent[info.matchField] ?? '');
+}
+
 async function fetchDriftRowDetail(profile, objectType, srcId, tgtId, srcFields, tgtFields) {
   const allSess = _buildAllSessions();
   // Use the profile's org pair directly — the legacy schedule object (the
@@ -4166,20 +4251,55 @@ async function fetchDriftRowDetail(profile, objectType, srcId, tgtId, srcFields,
     ].filter(Boolean).join(' and ');
     return { error: `Open ${offline} in a Chrome tab to fetch live field values for the diff.` };
   }
-  // Dedupe — if Id is already in compareFields the SOQL would 400 with
-  // "duplicate field selected: Id". Same pattern runDiffScan uses.
-  const srcSelect = [...new Set(['Id', ...srcFields])].filter(Boolean).join(',') || 'Id';
-  const tgtSelect = [...new Set(['Id', ...tgtFields])].filter(Boolean).join(',') || 'Id';
+  // Build a lookup-compare map so reference fields are diffed by the related
+  // record's name (not the cross-org Id). Describe against the source org; on
+  // any describe failure lookupMap is empty → behaves exactly as before.
+  let lookupMap = {};
   try {
-    const [s, t] = await Promise.all([
+    const desc = await describe(objectType, srcSess.orgUrl, srcSess.sid);
+    const node = _findTreeNode(profile.tree, objectType);
+    lookupMap = buildLookupCompareMap(desc, node?.lookupResolutions);
+  } catch (_) { lookupMap = {}; }
+
+  // For ref fields we can resolve, SELECT the dot-path (Account.Name) instead of
+  // the raw Id field; for skip refs, drop them from the SELECT entirely.
+  function buildSelect(fields) {
+    const out = ['Id'];
+    for (const f of (fields || [])) {
+      if (!f) continue;
+      const info = lookupMap[f];
+      if (info?.skip) continue;
+      out.push(info ? _lookupSelectExpr(f, info) : f);
+    }
+    return [...new Set(out)].join(',') || 'Id';
+  }
+  const srcSelectEnh = buildSelect(srcFields);
+  const tgtSelectEnh = buildSelect(tgtFields);
+  // Plain fallback (current behavior) — used if the dot-path query errors, e.g.
+  // a parent object lacks the assumed match field.
+  const srcSelectPlain = [...new Set(['Id', ...srcFields])].filter(Boolean).join(',') || 'Id';
+  const tgtSelectPlain = [...new Set(['Id', ...tgtFields])].filter(Boolean).join(',') || 'Id';
+
+  async function runPair(srcSel, tgtSel) {
+    return Promise.all([
       sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid,
-        query: `SELECT ${srcSelect} FROM ${objectType} WHERE Id = '${srcId}'` }),
+        query: `SELECT ${srcSel} FROM ${objectType} WHERE Id = '${srcId}'` }),
       sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
-        query: `SELECT ${tgtSelect} FROM ${objectType} WHERE Id = '${tgtId}'` })
+        query: `SELECT ${tgtSel} FROM ${objectType} WHERE Id = '${tgtId}'` })
     ]);
+  }
+
+  try {
+    let [s, t] = await runPair(srcSelectEnh, tgtSelectEnh);
+    // Dot-path query failed (bad relationship/match field) → retry plain so the
+    // diff still renders, just with raw Ids for the un-resolvable lookups.
+    if (s?.error || t?.error) {
+      [s, t] = await runPair(srcSelectPlain, tgtSelectPlain);
+      lookupMap = {};
+    }
     if (s?.error) return { error: `Source query failed: ${s.error}` };
     if (t?.error) return { error: `Target query failed: ${t.error}` };
-    return { srcRec: s.records?.[0] || null, tgtRec: t.records?.[0] || null };
+    return { srcRec: s.records?.[0] || null, tgtRec: t.records?.[0] || null, lookupMap };
   } catch (e) {
     return { error: e?.message || String(e) };
   }
@@ -4188,7 +4308,7 @@ async function fetchDriftRowDetail(profile, objectType, srcId, tgtId, srcFields,
 // Side-by-side compareField table — highlights rows whose values differ.
 // srcFields[i] pairs with tgtFields[i] (pair-aligned, same as snapshot
 // captureOrgSnapshot writes them).
-function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields) {
+function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap = {}) {
   if (!srcRec || !tgtRec) {
     return `<div class="ds-drift-compare-err">⚠ Record not found on one or both orgs — may have been deleted since the last scan. Click 🔄 Refresh state to update.</div>`;
   }
@@ -4196,6 +4316,24 @@ function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields) {
   const len = Math.min(srcFields.length, tgtFields.length);
   for (let i = 0; i < len; i++) {
     const sf = srcFields[i], tf = tgtFields[i];
+    const info = lookupMap[sf];
+    if (info?.skip) {
+      // Reference we can't safely compare by name (polymorphic / no name field).
+      // Show it, but never count a raw-Id difference as drift.
+      pairs.push({ srcField: sf, tgtField: tf, srcVal: '—', tgtVal: '—',
+        differs: false, note: 'lookup · not compared' });
+      continue;
+    }
+    if (info) {
+      // Compare the related record's match field, NOT the cross-org Id.
+      const sv = _lookupResolvedVal(srcRec, info);
+      const tv = _lookupResolvedVal(tgtRec, info);
+      const sStr = (sv == null || sv === '') ? '∅' : String(sv);
+      const tStr = (tv == null || tv === '') ? '∅' : String(tv);
+      pairs.push({ srcField: sf, tgtField: tf, srcVal: sStr, tgtVal: tStr,
+        differs: sStr !== tStr, note: `lookup · by ${info.matchField}` });
+      continue;
+    }
     const sv = srcRec[sf], tv = tgtRec[tf];
     const sStr = (sv == null || sv === '') ? '∅' : String(sv);
     const tStr = (tv == null || tv === '') ? '∅' : String(tv);
@@ -4215,9 +4353,10 @@ function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields) {
           <span class="ds-drift-compare-val">Target</span>
         </div>
         ${pairs.map(p => `
-          <div class="ds-drift-compare-row${p.differs ? ' ds-drift-compare-row-diff' : ''}">
+          <div class="ds-drift-compare-row${p.differs ? ' ds-drift-compare-row-diff' : ''}${p.note && !p.differs ? ' ds-drift-compare-row-lkp' : ''}">
             <span class="ds-drift-compare-field" title="${p.srcField !== p.tgtField ? esc(p.srcField + ' → ' + p.tgtField) : esc(p.srcField)}">
               ${esc(p.srcField)}${p.srcField !== p.tgtField ? `<span class="ds-drift-compare-rename"> → ${esc(p.tgtField)}</span>` : ''}
+              ${p.note ? `<span class="ds-drift-compare-lkptag">${esc(p.note)}</span>` : ''}
             </span>
             <span class="ds-drift-compare-val">${esc(p.srcVal)}</span>
             <span class="ds-drift-compare-val">${esc(p.tgtVal)}</span>
@@ -5605,7 +5744,7 @@ async function renderReconcile() {
           : '';
         expand.innerHTML = `${fieldsNote}<div class="ds-drift-compare-err">⚠ ${esc(res.error)}</div>`;
       } else {
-        expand.innerHTML = renderDriftCompareTable(res.srcRec, res.tgtRec, srcFields, tgtFields);
+        expand.innerHTML = renderDriftCompareTable(res.srcRec, res.tgtRec, srcFields, tgtFields, res.lookupMap || {});
       }
       expand.dataset.loaded = '1';
     });
