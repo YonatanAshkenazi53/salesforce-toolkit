@@ -744,6 +744,46 @@ html, body {
 }
 .ds-dark .ds-profile-card-orgs-missing { background: #2A1F00; color: #f59e0b; }
 
+/* ── Sequences (chained profiles) ─────────────────────────────── */
+.ds-seq-section { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--border); }
+.ds-seq-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.ds-seq-section-title { font-size: 16px; font-weight: 700; color: var(--text); margin: 0; }
+.ds-seq-empty { font-size: 12.5px; color: var(--subtext); padding: 14px 16px; background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); }
+.ds-seq-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.ds-seq-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow); }
+.ds-seq-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.ds-seq-card-title { font-size: 14px; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-seq-card-actions { display: flex; gap: 5px; flex-shrink: 0; }
+.ds-seq-steps { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; margin-top: 8px; }
+.ds-seq-step { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); }
+.ds-seq-step-num { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; background: var(--brand); color: #fff; font-size: 10px; font-weight: 700; flex-shrink: 0; }
+.ds-seq-step-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-seq-step-arrow { color: var(--subtext-lt); font-size: 11px; margin-left: 4px; }
+.ds-seq-step-missing .ds-seq-step-name { color: var(--danger); }
+.ds-seq-step-missing .ds-seq-step-num { background: var(--danger); }
+.ds-seq-empty-inline { font-size: 12px; color: var(--subtext-lt); font-style: italic; }
+
+/* Sequence builder modal */
+.ds-field-label { display: block; font-size: 11px; font-weight: 600; color: var(--subtext); text-transform: uppercase; letter-spacing: .3px; margin: 12px 0 5px; }
+.ds-field-label:first-child { margin-top: 0; }
+.ds-seq-builder .ds-input, .ds-seq-builder .ds-select { width: 100%; }
+.ds-seq-builder-orgs { display: grid; grid-template-columns: 1fr auto 1fr; align-items: end; gap: 10px; }
+.ds-seq-builder-arrow { color: var(--brand); font-weight: 700; padding-bottom: 8px; }
+.ds-seq-builder-rows { display: flex; flex-direction: column; gap: 7px; margin-bottom: 8px; }
+.ds-seq-builder-row { display: flex; align-items: center; gap: 6px; }
+.ds-seq-builder-row .ds-seq-builder-prof { flex: 1; min-width: 0; }
+.ds-seq-builder-empty { font-size: 12px; color: var(--subtext-lt); font-style: italic; padding: 6px 0; }
+.ds-seq-builder-note { font-size: 11.5px; color: var(--subtext); background: var(--brand-bg, #f5f9ff); border-radius: 4px; padding: 8px 10px; margin-top: 12px; line-height: 1.5; }
+.ds-dark .ds-seq-builder-note { background: #10243d; }
+
+/* Sequence run progress */
+.ds-seq-run-meta { font-size: 12px; color: var(--text); font-weight: 600; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.ds-seq-run-step { padding: 9px 0; border-bottom: 1px solid var(--border); }
+.ds-seq-run-step:last-child { border-bottom: none; }
+.ds-seq-run-step-head { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); margin-bottom: 3px; }
+.ds-seq-run-step-count { margin-left: auto; font-size: 11px; color: var(--subtext); font-weight: 600; }
+.ds-seq-run-obj { font-size: 11.5px; color: var(--subtext); padding-left: 22px; }
+
 /* Live-diff summary row on each profile card. Four colored chips show the
    counts of missing / drift / in-sync / extras between source and target
    orgs, plus a "scanned Nm ago" timestamp. Surfaces ORG STATE, not run
