@@ -1834,13 +1834,18 @@ async function performRestore(backup) {
   const f = backup.flow;
   const fullName = f.ApiName || f.FullName.replace(/-\d+$/, '');
 
-  const result = await sendBg({
-    type: 'SF_CREATE_FLOW',
-    orgUrl, sid, fullName,
-    metadata: f.Metadata
-  });
+  // Deploy via the Metadata API (new Draft version) rather than the Tooling
+  // `Flow` create. The Tooling create rejects record-triggered flows with
+  // "fullName … for Flow version is not unique"; the Metadata zip-deploy adds
+  // a new version for every flow type. Helper lives in field-cleaner.js (same
+  // popup page) so the proven flow serializer isn't duplicated.
+  if (typeof window.sftkDeployFlowMetadata !== 'function') {
+    throw new Error('Flow deploy helper unavailable — reload the extension and try again.');
+  }
+  const result = await window.sftkDeployFlowMetadata(orgUrl, sid, fullName, f.Metadata, 'Draft');
 
-  if (result.error) throw new Error(result.error);
+  if (result?.error)    throw new Error(result.error);
+  if (!result?.success) throw new Error('Deploy did not report success.');
   return result;
 }
 
