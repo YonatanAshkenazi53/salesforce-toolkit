@@ -1676,6 +1676,22 @@ const FieldCleaner = (() => {
     });
   }
 
+  // Exposed for the popup's Flow Restore (popup.js → performRestore). Restore
+  // used the Tooling `Flow` create, which rejects record-triggered flows with
+  // "fullName … for Flow version is not unique". This is the same Metadata-API
+  // zip-deploy fixFlow uses — it adds a new version for EVERY flow type — but
+  // callable with an explicit org/sid/status instead of the module's selected
+  // _orgUrl/_sid. Defaults to a Draft version so restore never auto-activates.
+  window.sftkDeployFlowMetadata = function (orgUrl, sid, fullName, metadata, status) {
+    const md = { ...(metadata || {}) };
+    delete md.fullName;               // Tooling-only descriptor; breaks the XML
+    md.status = status || 'Draft';    // restore → inactive Draft, user activates
+    return bg({
+      type: 'SF_METADATA_DEPLOY', orgUrl, sid,
+      zipBase64: buildFlowZip(fullName, md)
+    });
+  };
+
   async function fixLayout(componentId, componentName) {
     const res = await bg({
       type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
