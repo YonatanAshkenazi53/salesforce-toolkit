@@ -971,6 +971,7 @@ function renderOrgsPanel() {
         <div class="ds-org-row-info">
           <div class="ds-org-row-label">
             ${esc(label)}
+            ${prodBadge(url)}
             ${isCurrent ? '<span class="ds-org-badge-current" style="margin-left:6px">current tab</span>' : ''}
           </div>
           <div class="ds-org-row-url">${esc(host)}</div>
@@ -1027,6 +1028,22 @@ function renderOrgsPanel() {
     await storageSaveOrgs();
     renderOrgsPanel();
   });
+
+  // Detect org types (prod / sandbox / dev) for online orgs that don't have
+  // a cached answer yet. Fire-and-forget; re-renders once when something new
+  // comes back. ensureOrgType caches results, so this settles quickly and
+  // can't loop (offline orgs stay 'unknown' and are simply skipped).
+  (async () => {
+    let changed = false;
+    for (const url of allOrgUrls) {
+      if (cachedOrgType(url) !== 'unknown') continue;
+      const live = _allSessions.some(s => _orgKey(s.orgUrl) === _orgKey(url));
+      if (!live) continue;
+      const t = await ensureOrgType(url);
+      if (t !== 'unknown') changed = true;
+    }
+    if (changed && _currentView === 'orgs') renderOrgsPanel();
+  })();
 }
 
 window.editOrgLabel = function(orgUrl) {
@@ -3915,6 +3932,69 @@ async function openTransferRecordFilterModal(pathKey, objType) {
   wireModal();
 }
 
+// ── Production-org guard (Phase 5) ────────────────────────────
+// prod = a real production org: NOT a sandbox, NOT a Developer Edition, NOT
+// a trial. Detected once per org via the Organization object and cached on
+// _orgs[url] for a week. Everything reads the CACHE synchronously (badges);
+// destructive paths await ensureOrgType before writing.
+async function ensureOrgType(orgUrl) {
+  if (!orgUrl) return 'unknown';
+  const key = _orgKey(orgUrl);
+  const hit = Object.entries(_orgs).find(([u, v]) =>
+    _orgKey(u) === key && v.orgType && (Date.now() - (v.orgTypeAt || 0)) < 7 * 864e5);
+  if (hit) return hit[1].orgType;
+  const sess = _resolveSession(orgUrl, _buildAllSessions());
+  if (!sess?.sid) return cachedOrgType(orgUrl);   // offline → best effort
+  const q = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
+    query: 'SELECT IsSandbox, OrganizationType, TrialExpirationDate FROM Organization' });
+  const o = q?.records?.[0];
+  if (!o) return cachedOrgType(orgUrl);
+  const type = o.IsSandbox ? 'sandbox'
+    : (o.OrganizationType === 'Developer Edition' || o.TrialExpirationDate) ? 'dev'
+    : 'production';
+  if (!_orgs[orgUrl]) _orgs[orgUrl] = {};
+  _orgs[orgUrl].orgType   = type;
+  _orgs[orgUrl].orgTypeAt = Date.now();
+  await storageSaveOrgs();
+  return type;
+}
+// Cache-only read (synchronous) — for badges in render paths.
+function cachedOrgType(orgUrl) {
+  if (!orgUrl) return 'unknown';
+  const key = _orgKey(orgUrl);
+  const hit = Object.entries(_orgs).find(([u, v]) => _orgKey(u) === key && v.orgType);
+  return hit ? hit[1].orgType : 'unknown';
+}
+function prodBadge(orgUrl) {
+  const t = cachedOrgType(orgUrl);
+  if (t === 'production') return '<span class="ds-org-badge-prod" title="This is a PRODUCTION org — writes here affect real users. Destructive operations require typed confirmation; hard delete is disabled.">PROD</span>';
+  if (t === 'sandbox')    return '<span class="ds-org-badge-sbx" title="Sandbox org">sandbox</span>';
+  return '';
+}
+
+// Typed confirmation for destructive writes into a production org: the user
+// must type the org's label exactly before Proceed enables.
+function confirmTypedProd(orgLabelStr, actionSummary) {
+  return new Promise(resolve => {
+    showModal(`
+      <div class="ds-modal-header">🛑 Production org</div>
+      <div class="ds-modal-body">
+        <p>You're about to <strong>${esc(actionSummary)}</strong> in <strong>${esc(orgLabelStr)}</strong> — which looks like a <strong>PRODUCTION</strong> org.</p>
+        <p style="margin-top:8px">Type the org name to confirm: <code>${esc(orgLabelStr)}</code></p>
+        <input id="dsProdConfirmInput" class="ds-input" autocomplete="off" placeholder="${esc(orgLabelStr)}">
+      </div>
+      <div class="ds-modal-footer">
+        <button class="ds-btn" id="dsProdCancel">Cancel</button>
+        <button class="ds-btn ds-btn-danger" id="dsProdGo" disabled>Proceed</button>
+      </div>`);
+    const inp = eid('dsProdConfirmInput'), go = eid('dsProdGo');
+    inp?.addEventListener('input', () => { if (go) go.disabled = inp.value.trim() !== orgLabelStr; });
+    inp?.focus();
+    eid('dsProdCancel')?.addEventListener('click', () => { closeModal(); resolve(false); });
+    go?.addEventListener('click', () => { closeModal(); resolve(true); });
+  });
+}
+
 // ── Run progress channel (Phase 3) ────────────────────────────
 // Connects a Port to the service worker before a transfer/sequence/reconcile.
 // The engine streams progress events through it (which also keeps the MV3
@@ -5599,20 +5679,25 @@ async function runTransfer() {
     return;
   }
 
-  // Magnitude gate — a large write should never start on a single click.
-  // Uses the auto-counted total; skipped when counts never loaded (the count
-  // pass itself may have failed — don't block on it).
-  if (_trLastTotal != null && _trLastTotal > 2000 && !_trBigRunConfirmed) {
+  // Magnitude / production gate — a large write, or ANY write into a
+  // production org, should never start on a single click. Uses the
+  // auto-counted total when available; the prod check is authoritative
+  // (detected + cached via the Organization object).
+  const tgtProd = (await ensureOrgType(_transferTgt.orgUrl)) === 'production';
+  if ((tgtProd || (_trLastTotal != null && _trLastTotal > 2000)) && !_trBigRunConfirmed) {
+    const nTxt = _trLastTotal != null ? `${_trLastTotal.toLocaleString()} records` : 'records';
     showModal(`
-      <div class="ds-modal-header">⚠ Large transfer</div>
+      <div class="ds-modal-header">${tgtProd ? '🛑 Writing into PRODUCTION' : '⚠ Large transfer'}</div>
       <div class="ds-modal-body">
-        You're about to write <strong>${_trLastTotal.toLocaleString()} records</strong>
+        ${tgtProd ? `<div style="margin-bottom:8px;padding:8px 12px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:4px;font-size:12px;color:#991b1b">
+          🛑 <strong>${esc(orgLabel(_transferTgt.orgUrl))} looks like a PRODUCTION org.</strong> Writes here affect real users.</div>` : ''}
+        You're about to write <strong>${nTxt}</strong>
         into <strong>${esc(orgLabel(_transferTgt.orgUrl))}</strong>
         (${_transferWriteMode === 'upsert' ? `upsert on ${esc(_transferUpsertField)}` : 'insert — always creates new records'}).
       </div>
       <div class="ds-modal-footer">
         <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-        <button class="ds-btn ds-btn-primary" id="dsTrBigRunGo">Proceed with ${_trLastTotal.toLocaleString()} records</button>
+        <button class="ds-btn ${tgtProd ? 'ds-btn-danger' : 'ds-btn-primary'}" id="dsTrBigRunGo">Proceed${_trLastTotal != null ? ` with ${_trLastTotal.toLocaleString()} records` : ''}</button>
       </div>`);
     eid('dsTrBigRunGo')?.addEventListener('click', () => {
       _trBigRunConfirmed = true;
@@ -5622,7 +5707,7 @@ async function runTransfer() {
     if (btn) btn.disabled = false;
     return;
   }
-  _trBigRunConfirmed = false;   // consumed — next big run asks again
+  _trBigRunConfirmed = false;   // consumed — next gated run asks again
 
   const modeLabel = _transferWriteMode === 'upsert' ? `upsert on ${_transferUpsertField}` : 'insert';
   logRow('📤', `Starting transfer of profile "${_transferProfile.name}" (${modeLabel})…`);
@@ -5853,7 +5938,7 @@ async function renderReconcile() {
       <div class="ds-view-title-wrap">
         <button class="ds-back-link" id="dsRecBackBtn" title="Back to Data Deployment">‹ Back to deployments</button>
         <h2 class="ds-view-title">⚖ Reconcile — <span style="color:var(--brand)">${esc(objType)}</span></h2>
-        <div class="ds-view-subtitle">${esc(orgLabel(p.sourceOrg || ''))} → ${esc(orgLabel(p.targetOrg || ''))}${scanFresh ? ` · scanned ${esc(timeAgo(scan.runAt))}` : ''}</div>
+        <div class="ds-view-subtitle">${esc(orgLabel(p.sourceOrg || ''))} → ${esc(orgLabel(p.targetOrg || ''))} ${prodBadge(p.targetOrg)}${scanFresh ? ` · scanned ${esc(timeAgo(scan.runAt))}` : ''}</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         ${p.ephemeral ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="saveEphemeralProfile"
@@ -6478,6 +6563,15 @@ async function runReconcile(profile, objType, buckets) {
   // confirm modal so the user sees the full impact before any writes happen.
   const isHard = _recDeleteMode === 'hard';
 
+  // ── Production-org guard ──────────────────────────────────────────────
+  // Hard delete is flatly disabled against production; regular deletes into
+  // production require typing the org name (after the standard confirm).
+  const tgtOrgType = await ensureOrgType(profile.targetOrg);
+  if (tgtOrgType === 'production' && isHard && delIds.length) {
+    showToast('🔥 Hard delete is disabled against PRODUCTION orgs — switch Delete mode to Recycle Bin.', 'error', 7000);
+    return;
+  }
+
   // Numbered execution plan — mirrors the exact order the phases run in, so
   // what the user reads in the confirm modal is literally what happens.
   const planLines = [];
@@ -6553,6 +6647,12 @@ async function runReconcile(profile, objType, buckets) {
       eid('dsRecDelOk')?.addEventListener('click', () => { closeModal(); resolve(true); });
     });
     if (!ok) return;
+  }
+
+  // Deletes into a PRODUCTION org additionally require typing the org name.
+  if (delIds.length && tgtOrgType === 'production') {
+    const okProd = await confirmTypedProd(orgLabel(profile.targetOrg), `delete ${delIds.length} ${objType} record(s)`);
+    if (!okProd) return;
   }
 
   const prog = eid('dsRecProgress');
