@@ -211,7 +211,7 @@ function handleSessionError(result, orgUrl, onReconnect = null) {
 async function storageLoad() {
   const d = await chrome.storage.local.get([
     'sftk_profiles','sftk_history','sftk_orgs',
-    'ds_dark_mode','ds_activity_log','sftk_sequences'
+    'ds_dark_mode','ds_activity_log','sftk_sequences','sftk_active_run'
   ]);
   _profiles     = d.sftk_profiles   || [];
   _history      = d.sftk_history    || [];
@@ -219,6 +219,16 @@ async function storageLoad() {
   _darkMode     = d.ds_dark_mode    || false;
   _activityLog  = d.ds_activity_log || {};
   _sequences    = d.sftk_sequences  || [];
+
+  // A leftover active-run marker means a previous run was interrupted
+  // (studio tab closed / worker killed mid-run) — say so instead of silence.
+  if (d.sftk_active_run) {
+    const ar = d.sftk_active_run;
+    setTimeout(() => showToast(
+      `⚠ A previous ${ar.kind || 'run'} looks interrupted (started ${timeAgo(ar.startedAt)}). Check History and re-scan before re-running.`,
+      'warning', 8000), 1200);
+    chrome.storage.local.remove('sftk_active_run').catch(() => {});
+  }
 
   // One-time purge of storage keys orphaned by the feature trim
   // (credential vault, schedule, scan map, snapshots, manual connections).
@@ -1467,10 +1477,21 @@ async function runSequence(seqId) {
     <div class="ds-modal-header">🔗 Running “${esc(seq.name)}”</div>
     <div class="ds-modal-body" id="seqRunBody">
       <div class="ds-seq-run-meta">${esc(orgLabel(seq.sourceOrg))} → ${esc(orgLabel(seq.targetOrg))} · ${profiles.length} step(s)</div>
-      <div class="ds-init-loading">${window.sftkCat ? sftkCat(`Deploying ${profiles.length} profile(s) in order…`) : 'Running…'}</div>
+      <div id="dsSeqRunLog" class="ds-progress-log ds-seq-run-log"></div>
     </div>
-    <div class="ds-modal-footer"><button class="ds-btn" id="seqRunClose" disabled>Running…</button></div>
+    <div class="ds-modal-footer">
+      <button class="ds-btn ds-btn-danger" id="seqRunCancel" title="Stop after the current batch — records already written stay written.">✋ Cancel</button>
+      <button class="ds-btn" id="seqRunClose" disabled>Running…</button>
+    </div>
   `);
+
+  // Live progress: step + per-batch lines stream into the modal log.
+  const seqPort = _openRunPort(_runProgressHandler(eid('dsSeqRunLog')));
+  eid('seqRunCancel')?.addEventListener('click', () => {
+    try { seqPort?.postMessage({ cmd: 'cancel' }); } catch (_) {}
+    const cb = eid('seqRunCancel');
+    if (cb) { cb.disabled = true; cb.textContent = '⏳ cancelling…'; }
+  });
 
   const result = await sendBg({
     type:      'SF_EXECUTE_SEQUENCE',
@@ -1479,6 +1500,8 @@ async function runSequence(seqId) {
     tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid
   });
 
+  try { seqPort?.disconnect(); } catch (_) {}
+  eid('seqRunCancel')?.remove();
   const body = eid('seqRunBody');
   const closeBtn = eid('seqRunClose');
   if (closeBtn) { closeBtn.disabled = false; closeBtn.textContent = 'Close'; closeBtn.addEventListener('click', closeModal); }
@@ -1510,6 +1533,7 @@ async function runSequence(seqId) {
   if (body) {
     body.innerHTML = `
       <div class="ds-seq-run-meta">${esc(orgLabel(seq.sourceOrg))} → ${esc(orgLabel(seq.targetOrg))} · Status: <strong>${esc(result.status)}</strong> · ${grandTotal} record(s) total</div>
+      ${result.cancelled ? `<div class="ds-prog-row ds-prog-warn">✋ Sequence cancelled — completed steps stay written; skipped steps are marked below.</div>` : ''}
       ${stepHtml}`;
   }
 
@@ -3891,6 +3915,49 @@ async function openTransferRecordFilterModal(pathKey, objType) {
   wireModal();
 }
 
+// ── Run progress channel (Phase 3) ────────────────────────────
+// Connects a Port to the service worker before a transfer/sequence/reconcile.
+// The engine streams progress events through it (which also keeps the MV3
+// worker alive during long runs) and honors {cmd:'cancel'} between batches.
+function _openRunPort(onEvent) {
+  try {
+    const port = chrome.runtime.connect({ name: 'sftk-run-progress' });
+    if (onEvent) port.onMessage.addListener(onEvent);
+    return port;
+  } catch (_) { return null; }
+}
+
+// Renders progress events into a log element: one LIVE line per object
+// (updated in place per batch) + a step line per sequence step.
+function _runProgressHandler(logEl) {
+  let stepIdx = 0;
+  return (evt) => {
+    if (!evt || !logEl || !logEl.isConnected) return;
+    if (evt.phase === 'hb' || evt.phase === 'start' || evt.phase === 'end') return;
+    if (evt.phase === 'step') {
+      stepIdx = evt.index + 1;
+      const row = document.createElement('div');
+      row.className = 'ds-prog-row ds-prog-step';
+      row.textContent = `▶ Step ${evt.index + 1}/${evt.total}: ${evt.name}`;
+      logEl.appendChild(row);
+      logEl.scrollTop = logEl.scrollHeight;
+      return;
+    }
+    const lineId = `dsRunLive_${stepIdx}_${String(evt.obj || 'x').replace(/[^\w]/g, '_')}`;
+    let row = logEl.querySelector(`#${lineId}`);
+    if (!row) {
+      row = document.createElement('div');
+      row.id = lineId;
+      row.className = 'ds-prog-row ds-prog-live';
+      logEl.appendChild(row);
+    }
+    if (evt.phase === 'node')    row.textContent = `⏳ ${evt.obj}: reading records…`;
+    if (evt.phase === 'fetched') row.textContent = `⏳ ${evt.obj}: ${evt.count} record(s) fetched — writing…`;
+    if (evt.phase === 'batch')   row.textContent = `⏳ ${evt.obj}: ${evt.done}/${evt.total} written · ${evt.created} created${evt.failed ? `, ${evt.failed} failed` : ''}`;
+    logEl.scrollTop = logEl.scrollHeight;
+  };
+}
+
 // ── Save profile ──────────────────────────────────────────────
 // Write the in-memory _editingProfile to _profiles + chrome.storage, without
 // navigating away from the builder. Used by Apply handlers (field mapping,
@@ -5560,6 +5627,25 @@ async function runTransfer() {
   const modeLabel = _transferWriteMode === 'upsert' ? `upsert on ${_transferUpsertField}` : 'insert';
   logRow('📤', `Starting transfer of profile "${_transferProfile.name}" (${modeLabel})…`);
 
+  // Live progress + Cancel: the Port streams per-batch counts into the log
+  // (keeping the worker alive) and carries the cancel command back.
+  const titleEl = document.querySelector('#dsTrProgressArea .ds-progress-title');
+  if (titleEl && !eid('dsTrCancelBtn')) {
+    const cbtn = document.createElement('button');
+    cbtn.id = 'dsTrCancelBtn';
+    cbtn.className = 'ds-btn ds-btn-xs ds-btn-danger';
+    cbtn.style.marginLeft = 'auto';
+    cbtn.textContent = '✋ Cancel';
+    cbtn.title = 'Stop after the current batch — records already written stay written.';
+    titleEl.appendChild(cbtn);
+  }
+  const runPort = _openRunPort(_runProgressHandler(eid('dsTrProgLog')));
+  eid('dsTrCancelBtn')?.addEventListener('click', () => {
+    try { runPort?.postMessage({ cmd: 'cancel' }); } catch (_) {}
+    const cb = eid('dsTrCancelBtn');
+    if (cb) { cb.disabled = true; cb.textContent = '⏳ cancelling…'; }
+  });
+
   const result = await sendBg({
     type:             'SF_EXECUTE_PROFILE_TRANSFER',
     profile:          buildTransferProfile(),   // patched clone — incl. upsert config if set
@@ -5568,6 +5654,13 @@ async function runTransfer() {
     tgtOrgUrl:        _transferTgt.orgUrl,
     tgtSid:           _transferTgt.sid
   });
+
+  try { runPort?.disconnect(); } catch (_) {}
+  eid('dsTrCancelBtn')?.remove();
+  if (result?.cancelled) {
+    logRow('✋', 'Run cancelled — everything written before the cancel stays in the target; the partial result is recorded in History.', 'ds-prog-warn');
+    showToast('Transfer cancelled — partial results recorded', 'warning', 5000);
+  }
 
   if (result.error) {
     logRow('❌', result.error, 'ds-prog-err');
@@ -6482,6 +6575,10 @@ async function runReconcile(profile, objType, buckets) {
     return;
   }
 
+  // Stream the engine's per-batch progress into the reconcile log (also
+  // keeps the worker alive across the multi-phase pipeline).
+  const recPort = _openRunPort(_runProgressHandler(prog));
+
   // Per-action counters — captured into a History entry at the end so the
   // History view can show what was actually inserted/updated/deleted, not
   // just "errors". Hard-delete tracks the bin-purge count separately.
@@ -6835,6 +6932,7 @@ async function runReconcile(profile, objType, buckets) {
   const toastMsg = `Reconcile: ${toastParts.join(' · ') || 'no actions'}` +
     (totalFail ? ` · ${totalFail} failed` : '');
   showToast(toastMsg, totalFail ? 'warning' : 'success', 4500);
+  try { recPort?.disconnect(); } catch (_) {}
   renderReconcile();
 }
 

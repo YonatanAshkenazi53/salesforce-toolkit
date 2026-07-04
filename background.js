@@ -1,5 +1,46 @@
 const API_VERSION = 'v62.0';
 
+// ── Run progress channel ─────────────────────────────────────────────────────
+// Data Studio connects a long-lived Port before launching a transfer /
+// sequence / reconcile. The engine posts progress events through it (which
+// also keeps this MV3 service worker alive during long runs — every message
+// resets the idle timer) and listens for {cmd:'cancel'}: the engine checks
+// the flag between nodes and between 200-record batches, finishing with a
+// partial summary marked cancelled instead of dying mid-write.
+let _runPort      = null;
+let _runCancelled = false;
+let _runHeartbeat = null;
+
+chrome.runtime.onConnect.addListener(port => {
+  if (port.name !== 'sftk-run-progress') return;
+  _runPort = port;
+  port.onMessage.addListener(msg => {
+    if (msg?.cmd === 'cancel') _runCancelled = true;
+  });
+  port.onDisconnect.addListener(() => { if (_runPort === port) _runPort = null; });
+});
+
+function postRunProgress(evt) {
+  try { _runPort?.postMessage(evt); } catch (_) { /* page closed mid-run */ }
+}
+
+// Called at the start of every engine entry point: clears the cancel flag and
+// starts a heartbeat so silent stretches (large queryAll pages) can't idle the
+// worker out. _endRun stops it.
+function _beginRun(kind) {
+  _runCancelled = false;
+  clearInterval(_runHeartbeat);
+  _runHeartbeat = setInterval(() => postRunProgress({ phase: 'hb' }), 20000);
+  chrome.storage.local.set({ sftk_active_run: { kind, startedAt: new Date().toISOString() } }).catch(() => {});
+  postRunProgress({ phase: 'start', kind });
+}
+function _endRun() {
+  clearInterval(_runHeartbeat);
+  _runHeartbeat = null;
+  chrome.storage.local.remove('sftk_active_run').catch(() => {});
+  postRunProgress({ phase: 'end' });
+}
+
 // ── Extension icon click → open / focus the full-page app ─────
 // Because manifest.json has no default_popup, clicking the toolbar
 // icon fires this listener instead of opening a small popup.
@@ -122,6 +163,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
 
   for (const { node, parentNode, parentField } of ordered) {
     const objType = node.objectType || node.childSObject;
+    // Cancel between nodes — never mid-write.
+    if (_runCancelled) {
+      errors.push('Run cancelled — remaining objects skipped.');
+      break;
+    }
+    postRunProgress({ phase: 'node', obj: objType });
     try {
       // Build field list from describe
       const descRes = await sfRestGet(srcOrgUrl, srcSid,
@@ -227,6 +274,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
 
       // Store this node's source IDs so its children can build correct WHERE clauses
       nodeSourceIds.set(node, recs.map(r => r.Id));
+      postRunProgress({ phase: 'fetched', obj: objType, count: recs.length });
 
       // ── Resolve RecordTypes ──────────────────────────────────────────────
       // Match source → target RecordType by DeveloperName (API name) — the only
@@ -425,6 +473,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       const useUpsert   = !!(profile.upsert?.field) && node === profile.tree;
       const upsertField = useUpsert ? profile.upsert.field : null;
       for (let i = 0; i < payloads.length; i += 200) {
+        // Cancel between batches — records already written stay written
+        // (allOrNone:false per batch); the summary reports the partial count.
+        if (_runCancelled) {
+          errors.push(`${objType}: cancelled after ${ok} of ${payloads.length} record(s).`);
+          break;
+        }
         const chunk = payloads.slice(i, i + 200).map((p, k) => {
           const rec = { attributes: { type: objType }, ...p };
           // The external-Id value must be present for Salesforce to match on
@@ -505,6 +559,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             }
           }
         });
+        postRunProgress({ phase: 'batch', obj: objType,
+          done: Math.min(i + 200, payloads.length), total: payloads.length,
+          created: ok, failed: fail });
       }
       summary[objType] = { created: ok, failed: fail };
       // Source IDs that successfully inserted in target — cap at 2000 to keep
@@ -652,6 +709,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
     startedAt, completedAt: new Date().toISOString(),
     sourceOrg: srcOrgUrl, targetOrg: tgtOrgUrl,
     status: errors.length === 0 ? 'success' : (Object.values(summary).some(s=>s.created>0) ? 'partial' : 'failed'),
+    ...(_runCancelled ? { cancelled: true } : {}),
     summary, errors: finalErrors.slice(0, 50)
   };
 }
@@ -669,6 +727,12 @@ async function executeProfileSequence(profiles, srcOrgUrl, srcSid, tgtOrgUrl, tg
   const steps        = [];
   for (let i = 0; i < profiles.length; i++) {
     const prof = profiles[i];
+    if (_runCancelled) {
+      steps.push({ index: i, profileId: prof?.id, profileName: prof?.name || `Step ${i + 1}`,
+        status: 'failed', summary: {}, errors: ['Skipped — run cancelled.'] });
+      continue;
+    }
+    postRunProgress({ phase: 'step', index: i, total: profiles.length, name: prof?.name || `Step ${i + 1}` });
     if (!prof || !prof.tree) {
       steps.push({ index: i, profileId: prof?.id, profileName: prof?.name || `Step ${i + 1}`,
         status: 'failed', summary: {}, errors: ['Profile not found or has no object tree — skipped.'] });
@@ -690,6 +754,7 @@ async function executeProfileSequence(profiles, srcOrgUrl, srcSid, tgtOrgUrl, tg
   return {
     sequence: true, startedAt, completedAt: new Date().toISOString(),
     sourceOrg: srcOrgUrl, targetOrg: tgtOrgUrl,
+    ...(_runCancelled ? { cancelled: true } : {}),
     status, steps, idMapSize: Object.keys(sharedIdMap).length
   };
 }
@@ -791,18 +856,26 @@ async function dispatchMessage(message) {
       return sfHardDelete(orgUrl, sid, message.ids);
     case 'SF_COLLECTIONS_UPDATE':
       return sfCollectionsUpdate(orgUrl, sid, message.records);
-    case 'SF_EXECUTE_PROFILE_TRANSFER':
-      return executeProfileTransfer(
-        message.profile,
-        message.srcOrgUrl, message.srcSid,
-        message.tgtOrgUrl, message.tgtSid
-      );
-    case 'SF_EXECUTE_SEQUENCE':
-      return executeProfileSequence(
-        message.profiles,
-        message.srcOrgUrl, message.srcSid,
-        message.tgtOrgUrl, message.tgtSid
-      );
+    case 'SF_EXECUTE_PROFILE_TRANSFER': {
+      _beginRun('transfer');
+      try {
+        return await executeProfileTransfer(
+          message.profile,
+          message.srcOrgUrl, message.srcSid,
+          message.tgtOrgUrl, message.tgtSid
+        );
+      } finally { _endRun(); }
+    }
+    case 'SF_EXECUTE_SEQUENCE': {
+      _beginRun('sequence');
+      try {
+        return await executeProfileSequence(
+          message.profiles,
+          message.srcOrgUrl, message.srcSid,
+          message.tgtOrgUrl, message.tgtSid
+        );
+      } finally { _endRun(); }
+    }
     case 'SF_RELATIONSHIP_QUERY':
       return sfRelationshipQuery(orgUrl, sid, message.rootObject, message.rootWhere,
         message.childRels, message.limit);
