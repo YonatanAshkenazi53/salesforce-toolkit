@@ -744,6 +744,19 @@ html, body {
 }
 .ds-dark .ds-profile-card-orgs-missing { background: #2A1F00; color: #f59e0b; }
 
+/* ── Production-org guard ─────────────────────────────────────── */
+.ds-org-badge-prod {
+  display: inline-block; margin-left: 6px; padding: 1px 7px;
+  background: #DC2626; color: #fff; border-radius: 3px;
+  font-size: 10px; font-weight: 800; letter-spacing: .06em; vertical-align: middle;
+}
+.ds-org-badge-sbx {
+  display: inline-block; margin-left: 6px; padding: 1px 7px;
+  background: var(--lo-bg, #EDF1F4); color: #5C6C7A; border-radius: 3px;
+  font-size: 10px; font-weight: 600; vertical-align: middle;
+}
+.ds-dark .ds-org-badge-sbx { background: #1D242B; color: #93A5B3; }
+
 /* ── Live run progress (Port) ─────────────────────────────────── */
 .ds-progress-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ds-prog-live { color: var(--brand); font-variant-numeric: tabular-nums; }
