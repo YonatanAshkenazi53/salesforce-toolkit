@@ -1017,6 +1017,10 @@ html, body {
   transition: border-color .15s, color .15s;
 }
 .ds-btn-config:hover { border-color: var(--brand-light); color: var(--brand); }
+/* Active state — e.g. the child-first insert-order toggle when ON */
+.ds-btn-config--active { border-color: var(--brand); color: var(--brand); background: var(--brand-bg, #f5f9ff); font-weight: 600; }
+.ds-btn-config--active:hover { border-color: var(--brand-dark); }
+.ds-dark .ds-btn-config--active { background: #10243d; }
 .ds-config-badge {
   display: inline-flex;
   align-items: center;
