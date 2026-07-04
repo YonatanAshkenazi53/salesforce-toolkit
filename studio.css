@@ -744,6 +744,38 @@ html, body {
 }
 .ds-dark .ds-profile-card-orgs-missing { background: #2A1F00; color: #f59e0b; }
 
+/* ── Child-aware Reconcile ─────────────────────────────────────── */
+.ds-rec-children { margin: 18px 0 0; }
+.ds-rec-children-hdr { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 10px; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.ds-rec-children-sub { font-size: 11.5px; font-weight: 400; color: var(--subtext); }
+.ds-rec-child { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 10px; }
+.ds-rec-child-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; flex-wrap: wrap; }
+.ds-rec-child-title { font-size: 13px; color: var(--text); }
+.ds-rec-child-via { font-size: 11px; color: var(--subtext); }
+.ds-rec-child-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.ds-rec-child-stale { font-size: 11.5px; color: #b3611a; }
+.ds-rec-child-empty { padding: 10px 14px; font-size: 12px; color: var(--subtext); border-top: 1px solid var(--border); }
+.ds-rec-child-body { border-top: 1px solid var(--border); padding: 12px; }
+.ds-rec-cols-child { margin-bottom: 8px; }
+.ds-rec-child-info { font-size: 11.5px; color: var(--subtext); padding: 6px 2px 0; }
+.ds-rec-chip-link { background: #EEE8FD; color: #5A3DBD; }
+.ds-dark .ds-rec-chip-link { background: #2A2050; color: #B4A3F5; }
+.ds-rec-pnote { font-size: 10.5px; padding: 1px 6px; border-radius: 3px; margin-left: auto; white-space: nowrap; }
+.ds-rec-pnote-ok      { background: var(--ok-bg, #E4F3EA); color: #1F7A46; }
+.ds-rec-pnote-missing { background: #FDF0E4; color: #B54708; }
+.ds-rec-pnote-none,
+.ds-rec-pnote-unknown { background: #EDF1F4; color: #5C6C7A; }
+.ds-dark .ds-rec-pnote-ok      { background: #0E2B1A; color: #5BBE84; }
+.ds-dark .ds-rec-pnote-missing { background: #2E1A05; color: #E8964F; }
+.ds-dark .ds-rec-pnote-none,
+.ds-dark .ds-rec-pnote-unknown { background: #1D242B; color: #93A5B3; }
+.ds-rec-row-disabled { opacity: .5; }
+.ds-rec-row-link { display: flex; align-items: center; gap: 8px; }
+.ds-rec-link-detail { font-size: 10.5px; color: var(--subtext); margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+.ds-rec-plan { margin-top: 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+.ds-rec-plan-hdr { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--subtext); margin-bottom: 6px; }
+.ds-rec-plan-line { font-size: 12.5px; color: var(--text); padding: 2px 0; font-variant-numeric: tabular-nums; }
+
 /* ── History filters ──────────────────────────────────────────── */
 .ds-hist-filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 0 0 14px; }
 .ds-hist-status-chips { display: flex; gap: 6px; }
