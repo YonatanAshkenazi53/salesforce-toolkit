@@ -744,6 +744,15 @@ html, body {
 }
 .ds-dark .ds-profile-card-orgs-missing { background: #2A1F00; color: #f59e0b; }
 
+/* ── History filters ──────────────────────────────────────────── */
+.ds-hist-filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 0 0 14px; }
+.ds-hist-status-chips { display: flex; gap: 6px; }
+.ds-hist-filter-count { font-size: 12px; color: var(--subtext); margin-left: auto; }
+
+/* ── Transfer footer: validate-first flow ─────────────────────── */
+.ds-tr-valid-hint { margin-left: auto; }
+.ds-tr-validated  { color: var(--success); font-weight: 600; font-size: 12.5px; }
+
 /* ── Sequences (chained profiles) ─────────────────────────────── */
 .ds-seq-section { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--border); }
 .ds-seq-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }

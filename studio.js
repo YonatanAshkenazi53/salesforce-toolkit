@@ -62,6 +62,14 @@ let _transferProfile      = null;
 let _transferSrc          = null;
 let _transferTgt          = null;
 let _transferDryRun       = false;   // Feature 5 — dry run
+// Dry-run-first guidance: profile|src|tgt keys that passed a dry run this
+// session — flips which footer button is the primary CTA.
+let _validatedRuns        = new Set();
+// Auto-count state: last counted setup key + the total it produced (drives
+// the Run button label and the big-run confirmation threshold).
+let _trAutoCountKey       = null;
+let _trLastTotal          = null;
+let _trBigRunConfirmed    = false;
 // Write mode — 'insert' (always create) or 'upsert' (match on an external-Id
 // field, update existing target records instead of duplicating). Upsert
 // applies to the ROOT object of the profile (v1).
@@ -392,6 +400,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'refreshState':          window.refreshProfileState?.(arg); break;
       case 'openReconcile':         window.openReconcile?.(arg); break;
       case 'retryFailed':           window.retryFailedRun?.(arg); break;
+      case 'runAgain':              window.runAgain?.(arg); break;
+      case 'openOrgTab':            chrome.tabs.create({ url: arg }); break;
+      case 'compareOrgFrom':        window.compareOrgFrom?.(arg); break;
+      case 'saveEphemeralProfile':  window.saveEphemeralProfile?.(); break;
       case 'showSecurity':          showSecurityModal(); break;
       case 'switchView': {
         // Generic data-dsaction view switcher (no current emitters — kept
@@ -960,6 +972,8 @@ function renderOrgsPanel() {
           ${isOnline ? '● Connected' : '○ Not open'}
         </div>
         <div class="ds-org-row-actions">
+          ${!isOnline ? `<button class="ds-btn ds-btn-sm" data-dsaction="openOrgTab" data-arg="${esc(url)}" title="Open this org in a new Chrome tab — refreshes its session so the Studio can reach it">↗ Open</button>` : ''}
+          <button class="ds-btn ds-btn-sm" data-dsaction="compareOrgFrom" data-arg="${esc(url)}" title="Compare this org's data against another org (opens Org Compare with this org as the source)">🔍 Compare with…</button>
           <button class="ds-btn ds-btn-sm" data-dsaction="editOrgLabel" data-arg="${esc(url)}">✏ Rename</button>
           ${isOnline
             ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="startTransferFrom" data-arg="${esc(url)}" title="Copy data INTO this org — opens Run Transfer with this org as the target">🚀 Transfer into</button>`
@@ -1639,6 +1653,57 @@ window.runProfile = function(profileId) {
 
 window.editProfile = function(profileId) {
   openProfileBuilder(_profiles.find(p => p.id === profileId) || null);
+};
+
+// History "↻ Run again" — relaunch a past run's profile against the SAME org
+// pair that run used (which may have been a run-time override of the
+// profile's own pair). Run-time filters are NOT restored — the user is
+// re-running the deployment, not replaying a retry subset.
+window.runAgain = function(runId) {
+  const run = _history.find(h => h.id === runId);
+  if (!run?.profileId) return;
+  const prof = _profiles.find(p => p.id === run.profileId);
+  if (!prof) return showToast('That deployment no longer exists — cannot re-run.', 'error', 4000);
+  _transferProfile     = prof;
+  _transferNodeFilters = {};
+  _transferOrgOverride = {
+    src: run.sourceOrg && _orgKey(run.sourceOrg) !== _orgKey(prof.sourceOrg) ? run.sourceOrg : null,
+    tgt: run.targetOrg && _orgKey(run.targetOrg) !== _orgKey(prof.targetOrg) ? run.targetOrg : null
+  };
+  document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('[data-view="profiles"]')?.classList.add('active');
+  _currentView = 'profiles';
+  renderTransfer();
+};
+
+// Org row "🔍 Compare with…" — seed Org Compare's source with this org and
+// navigate there; the user picks the other side. Clears stale results if the
+// source actually changed so old rows can't be mistaken for the new pair.
+window.compareOrgFrom = function(orgUrl) {
+  if (_orgCompareState.srcOrgUrl !== orgUrl) {
+    _orgCompareState.srcOrgUrl = orgUrl;
+    _orgCompareState.results = null;
+    _orgCompareState.availableObjects = null;
+    _orgCompareState.selectedObjects = null;
+  }
+  document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('[data-view="compare"]')?.classList.add('active');
+  _currentView = 'compare';
+  renderOrgCompare();
+};
+
+// Reconcile "💾 Save as deployment" — promote the ephemeral Org-Compare
+// profile into a real saved deployment. Keeps its id so the run history it
+// already produced stays linked (and retryable).
+window.saveEphemeralProfile = async function() {
+  const p = _reconcileProfile;
+  if (!p || !p.ephemeral) return;
+  delete p.ephemeral;
+  p.createdAt = p.updatedAt = new Date().toISOString();
+  _profiles.push(p);
+  await storageSaveProfiles();
+  showToast(`Saved “${p.name}” — find it under Data Deployment`, 'success', 4000);
+  renderReconcile();   // re-render header without the save button
 };
 
 window.cloneProfile = function(profileId) {
@@ -3806,6 +3871,8 @@ async function openTransferRecordFilterModal(pathKey, objType) {
       delete _transferNodeFilters[pathKey];
       closeModal();
       updateTransferPreview();
+      _trLastTotal = null;   // scope changed → recount
+      _maybeAutoCount();
     });
 
     // Apply — save override and refresh plan
@@ -3815,6 +3882,8 @@ async function openTransferRecordFilterModal(pathKey, objType) {
       _transferNodeFilters[pathKey] = { where: w, recordIds: rIds };
       closeModal();
       updateTransferPreview();
+      _trLastTotal = null;   // scope changed → recount
+      _maybeAutoCount();
     });
   }
 
@@ -4515,6 +4584,9 @@ async function renderTransfer() {
             <option value="insert" ${_transferWriteMode === 'insert' ? 'selected' : ''}>Insert (always create)</option>
             <option value="upsert" ${_transferWriteMode === 'upsert' ? 'selected' : ''}>Upsert (update if exists)</option>
           </select>
+          <select id="dsTrUpsertSelect" class="ds-select ds-select-sm"
+            style="width:220px;display:none"
+            title="External ID fields found on the root object in the TARGET org. Records matching on this field are updated instead of duplicated."></select>
           <input id="dsTrUpsertField" class="ds-input ds-input-sm"
             style="width:200px;${_transferWriteMode === 'upsert' ? '' : 'display:none'}"
             placeholder="External ID field (e.g. External_Id__c)"
@@ -4524,8 +4596,11 @@ async function renderTransfer() {
       </div>
 
       <div class="ds-transfer-footer">
-        <button class="ds-btn" id="dsTrPreviewBtn">👁 Preview Counts</button>
-        <button class="ds-btn ds-btn-primary ds-btn-lg" id="dsTrRunBtn" disabled>▶ Run Transfer</button>
+        <button class="ds-btn" id="dsTrPreviewBtn" title="Re-count the records in scope">👁 Refresh counts</button>
+        <span id="dsTrValidHint" class="ds-tr-valid-hint"></span>
+        <button class="ds-btn ds-btn-lg" id="dsTrValidateBtn" disabled
+          title="Run every safety check — required fields, lookups, record types, child-first feasibility — without writing anything.">🧪 Validate (dry run)</button>
+        <button class="ds-btn ds-btn-lg" id="dsTrRunBtn" disabled>▶ Run Transfer</button>
       </div>
     </div>`}
 
@@ -4546,6 +4621,10 @@ async function renderTransfer() {
     renderTrOrgPair();
     updateTransferPreview();
     updateTransferBtn();
+    _trLastTotal = null;      // stale count belongs to the previous profile
+    _syncRunButtons();
+    _maybeAutoCount();
+    if (_transferWriteMode === 'upsert') _loadUpsertFieldOptions();
     const editBtn = eid('dsTrEditProfile');
     if (editBtn) editBtn.disabled = !_transferProfile;
   });
@@ -4554,21 +4633,24 @@ async function renderTransfer() {
   });
   eid('dsTrPreviewBtn')?.addEventListener('click', previewTransfer);
   eid('dsTrRunBtn')?.addEventListener('click', runTransfer);
+  // Validate = a one-off dry run, without touching the persistent checkbox.
+  eid('dsTrValidateBtn')?.addEventListener('click', async () => {
+    const chk = eid('dsTrDryRun');
+    const prev = _transferDryRun;
+    _transferDryRun = true;
+    try { await runTransfer(); }
+    finally { _transferDryRun = chk ? chk.checked : prev; _syncRunButtons(); }
+  });
   eid('dsTrDryRun')?.addEventListener('change', e => {
     _transferDryRun = e.target.checked;
-    const btn = eid('dsTrRunBtn');
-    if (btn && _transferDryRun) {
-      btn.textContent = '🧪 Dry Run';
-      btn.className = btn.className.replace('ds-btn-primary','') + ' ds-btn-primary-outline';
-    } else if (btn) {
-      btn.textContent = '▶ Run Transfer';
-      btn.className = btn.className.replace('ds-btn-primary-outline','') + ' ds-btn-primary';
-    }
+    _syncRunButtons();
   });
   eid('dsTrWriteMode')?.addEventListener('change', e => {
     _transferWriteMode = e.target.value;
     const fld = eid('dsTrUpsertField');
     if (fld) fld.style.display = _transferWriteMode === 'upsert' ? '' : 'none';
+    if (_transferWriteMode === 'upsert') _loadUpsertFieldOptions();
+    else { const sel = eid('dsTrUpsertSelect'); if (sel) sel.style.display = 'none'; }
   });
   eid('dsTrUpsertField')?.addEventListener('input', e => { _transferUpsertField = e.target.value.trim(); });
   eid('dsGoToProfiles')?.addEventListener('click', () => {
@@ -4580,14 +4662,89 @@ async function renderTransfer() {
 
   if (_transferProfile) updateTransferPreview();
   updateTransferBtn();
+  _syncRunButtons();
+  if (_transferWriteMode === 'upsert') _loadUpsertFieldOptions();
+  // Auto-count once per profile+pair+filters so the Run button shows the
+  // magnitude without requiring the manual Preview click.
+  _maybeAutoCount();
+}
 
+// Which footer button is the primary CTA? Until this profile+org-pair has a
+// passing dry run this session, Validate leads; afterwards Run leads (with a
+// "dry run passed" hint). The dry-run checkbox turns the Run button into the
+// dry-run trigger, preserving the old behavior for users who prefer it.
+function _valKey() {
+  return `${_transferProfile?.id}|${_transferSrc?.orgUrl || ''}|${_transferTgt?.orgUrl || ''}`;
+}
+function _syncRunButtons() {
+  const run  = eid('dsTrRunBtn');
+  const val  = eid('dsTrValidateBtn');
+  const hint = eid('dsTrValidHint');
+  if (!run) return;
+  const validated = _validatedRuns.has(_valKey());
   if (_transferDryRun) {
-    const btn = eid('dsTrRunBtn');
-    if (btn) {
-      btn.textContent = '🧪 Dry Run';
-      btn.className = btn.className.replace('ds-btn-primary', '').trim() + ' ds-btn-primary-outline';
-    }
+    run.textContent = '🧪 Dry Run';
+    run.classList.remove('ds-btn-primary');
+    run.classList.add('ds-btn-primary-outline');
+  } else {
+    run.textContent = `▶ Run Transfer${_trLastTotal != null ? ` (${_trLastTotal.toLocaleString()} records)` : ''}`;
+    run.classList.remove('ds-btn-primary-outline');
+    run.classList.toggle('ds-btn-primary', validated);
   }
+  if (val) val.classList.toggle('ds-btn-primary', !validated && !_transferDryRun);
+  if (hint) hint.innerHTML = validated ? '<span class="ds-tr-validated">✓ dry run passed</span>' : '';
+}
+
+// Debounced-by-key auto count: runs the existing previewTransfer pass when
+// the profile / org pair / run-time filters change, at most once per setup.
+function _maybeAutoCount() {
+  if (!_transferProfile || !_transferSrc?.sid) return;
+  const key = `${_transferProfile.id}|${_transferSrc.orgUrl}|${JSON.stringify(_transferNodeFilters)}`;
+  if (_trAutoCountKey === key) return;
+  _trAutoCountKey = key;
+  previewTransfer();
+}
+
+// Populate the upsert External-ID picker from the TARGET org's describe of
+// the root object. Fields flagged externalId are the only ones Salesforce
+// accepts for upsert — a select prevents the typo-fails-at-runtime path. The
+// free-text input stays for the "Other…" escape hatch and when the describe
+// finds nothing.
+async function _loadUpsertFieldOptions() {
+  const sel = eid('dsTrUpsertSelect');
+  const inp = eid('dsTrUpsertField');
+  if (!sel || !inp || !_transferTgt?.sid || !_transferProfile?.tree) return;
+  const obj = _transferProfile.tree.objectType || _transferProfile.tree.childSObject;
+  if (!obj) return;
+  const desc = await sendBg({
+    type: 'SF_REST_GET', orgUrl: _transferTgt.orgUrl, sid: _transferTgt.sid,
+    path: `services/data/v62.0/sobjects/${obj}/describe`
+  });
+  if (_transferWriteMode !== 'upsert') return;   // user switched away mid-fetch
+  const ext = (!desc?.error && Array.isArray(desc.fields))
+    ? desc.fields.filter(f => f.externalId === true)
+    : [];
+  if (!ext.length) {   // no External-ID fields → keep the free-text input
+    sel.style.display = '';
+    sel.innerHTML = `<option value="">⚠ No External ID fields on ${esc(obj)} in target</option>`;
+    sel.disabled = true;
+    inp.style.display = '';
+    return;
+  }
+  sel.disabled = false;
+  const known = ext.some(f => f.name === _transferUpsertField);
+  sel.innerHTML = `
+    <option value="">— pick External ID field —</option>
+    ${ext.map(f => `<option value="${esc(f.name)}" ${f.name === _transferUpsertField ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})</option>`).join('')}
+    <option value="__other__">✏ Other…</option>`;
+  sel.style.display = '';
+  inp.style.display = (known || !_transferUpsertField) ? 'none' : '';
+  sel.onchange = () => {
+    if (sel.value === '__other__') { inp.style.display = ''; inp.focus(); return; }
+    _transferUpsertField = sel.value;
+    inp.value = sel.value;
+    inp.style.display = 'none';
+  };
 }
 
 // Render the read-only "Source → Target" panel (replaces the old dropdowns).
@@ -4699,6 +4856,8 @@ function updateTransferBtn() {
     && _transferSrc.orgUrl !== _transferTgt.orgUrl;
 
   btn.disabled = !ready;
+  const valBtn = eid('dsTrValidateBtn');
+  if (valBtn) valBtn.disabled = !ready;
 
   // Surface a clear message instead of a silent failure when a session is expired
   if (warn) {
@@ -4858,6 +5017,16 @@ async function previewTransfer() {
   }
 
   const counts = await countNode(runProfile.tree);
+
+  // Total across the tree — feeds the Run button label + the big-run gate.
+  let total = null;
+  (function sum(n) {
+    if (!n) return;
+    if (n.count != null) total = (total ?? 0) + n.count;
+    (n.children || []).forEach(sum);
+  })(counts);
+  _trLastTotal = total;
+  _syncRunButtons();
 
   // Re-render plan with count badges inline — filter buttons stay wired
   updateTransferPreview(counts);
@@ -5221,10 +5390,15 @@ async function runTransfer() {
     if (dryRunIssues > 0) {
       logRow('❌', `Dry run found ${dryRunIssues} issue(s) — fix these before running the real transfer.`, 'ds-prog-err');
       showToast(`Dry run found ${dryRunIssues} issue(s) — see details`, 'warning', 6000);
+      _validatedRuns.delete(_valKey());
     } else {
       logRow('✅', 'Dry run passed — no issues found. Safe to run the real transfer.');
       showToast('Dry run passed ✓ — no field issues found', 'success', 4000);
+      // Flip the footer: Run Transfer becomes the primary CTA for this
+      // profile+org pair now that it's validated.
+      _validatedRuns.add(_valKey());
     }
+    _syncRunButtons();
     if (btn) btn.disabled = false;
     return;
   }
@@ -5236,6 +5410,31 @@ async function runTransfer() {
     if (btn) btn.disabled = false;
     return;
   }
+
+  // Magnitude gate — a large write should never start on a single click.
+  // Uses the auto-counted total; skipped when counts never loaded (the count
+  // pass itself may have failed — don't block on it).
+  if (_trLastTotal != null && _trLastTotal > 2000 && !_trBigRunConfirmed) {
+    showModal(`
+      <div class="ds-modal-header">⚠ Large transfer</div>
+      <div class="ds-modal-body">
+        You're about to write <strong>${_trLastTotal.toLocaleString()} records</strong>
+        into <strong>${esc(orgLabel(_transferTgt.orgUrl))}</strong>
+        (${_transferWriteMode === 'upsert' ? `upsert on ${esc(_transferUpsertField)}` : 'insert — always creates new records'}).
+      </div>
+      <div class="ds-modal-footer">
+        <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
+        <button class="ds-btn ds-btn-primary" id="dsTrBigRunGo">Proceed with ${_trLastTotal.toLocaleString()} records</button>
+      </div>`);
+    eid('dsTrBigRunGo')?.addEventListener('click', () => {
+      _trBigRunConfirmed = true;
+      closeModal();
+      runTransfer();
+    });
+    if (btn) btn.disabled = false;
+    return;
+  }
+  _trBigRunConfirmed = false;   // consumed — next big run asks again
 
   const modeLabel = _transferWriteMode === 'upsert' ? `upsert on ${_transferUpsertField}` : 'insert';
   logRow('📤', `Starting transfer of profile "${_transferProfile.name}" (${modeLabel})…`);
@@ -5436,7 +5635,11 @@ async function renderReconcile() {
         <h2 class="ds-view-title">⚖ Reconcile — <span style="color:var(--brand)">${esc(objType)}</span></h2>
         <div class="ds-view-subtitle">${esc(orgLabel(p.sourceOrg || ''))} → ${esc(orgLabel(p.targetOrg || ''))}${scanFresh ? ` · scanned ${esc(timeAgo(scan.runAt))}` : ''}</div>
       </div>
-      <button class="ds-btn ds-btn-sm" id="dsRecRefreshBtn">🔄 Refresh state</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        ${p.ephemeral ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="saveEphemeralProfile"
+          title="Keep this as a saved deployment — re-run it, retry failures, and track sync from the Data Deployment page. Right now it disappears when you leave this view.">💾 Save as deployment</button>` : ''}
+        <button class="ds-btn ds-btn-sm" id="dsRecRefreshBtn">🔄 Refresh state</button>
+      </div>
     </div>`;
 
   if (!p.sourceOrg || !p.targetOrg) {
@@ -6657,7 +6860,11 @@ function _ocRenderResults() {
           <td>${r.missing ? `<strong>${r.missing.toLocaleString()}</strong>` : '0'}</td>
           <td>${r.extras  ? `<strong>${r.extras.toLocaleString()}</strong>`  : '0'}</td>
           <td class="ds-oc-pct"><strong>${r.matchPct}%</strong></td>
-          <td><button class="ds-btn ds-btn-xs ds-btn-primary" data-oc-reconcile="${esc(r.name)}">⚖ Reconcile</button></td>
+          <td style="white-space:nowrap">
+            <button class="ds-btn ds-btn-xs ds-btn-primary" data-oc-reconcile="${esc(r.name)}">⚖ Reconcile</button>
+            <button class="ds-btn ds-btn-xs" data-oc-deploy="${esc(r.name)}" data-oc-mf="${esc(r.matchField || '')}"
+              title="Create a saved deployment pre-configured for ${esc(r.name)} with this org pair and match field">📦 Deploy</button>
+          </td>
         </tr>`;
       }).join('')}</tbody>
     </table>`;
@@ -6665,6 +6872,26 @@ function _ocRenderResults() {
   // Wire row reconcile buttons — build an ephemeral profile and open Reconcile.
   el.querySelectorAll('[data-oc-reconcile]').forEach(btn => {
     btn.addEventListener('click', () => _ocOpenReconcile(btn.dataset.ocReconcile));
+  });
+
+  // Wire row deploy buttons — open the Profile Builder pre-seeded with the
+  // compared object, this org pair, and the match field the compare used, so
+  // a discovered gap becomes a saved deployment without rebuilding by hand.
+  el.querySelectorAll('[data-oc-deploy]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const objName = btn.dataset.ocDeploy;
+      const mf      = btn.dataset.ocMf || 'Name';
+      openProfileBuilder({
+        id:        genId('prof'),
+        name:      `${objName} · ${orgLabel(_orgCompareState.srcOrgUrl)} → ${orgLabel(_orgCompareState.tgtOrgUrl)}`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        sourceOrg: _orgCompareState.srcOrgUrl,
+        targetOrg: _orgCompareState.tgtOrgUrl,
+        scanConfig: { matchField: mf, compareFields: [] },
+        tree: { objectType: objName, where: '', children: [], fieldMappings: {}, matchField: mf }
+      });
+    });
   });
 }
 
@@ -6698,6 +6925,9 @@ async function _ocOpenReconcile(objName) {
 // ════════════════════════════════════════════════════════════════
 // SCHEDULE
 // ════════════════════════════════════════════════════════════════
+// History filters — module state so they survive re-renders within a session.
+let _histFilter = { status: '', profileId: '' };
+
 function renderHistory() {
   if (!_history.length) {
     setMain(`
@@ -6712,13 +6942,40 @@ function renderHistory() {
 
   const sorted = [..._history].sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
 
+  // Apply filters (status chip + profile dropdown).
+  const filtered = sorted.filter(run =>
+    (!_histFilter.status || run.status === _histFilter.status) &&
+    (!_histFilter.profileId || run.profileId === _histFilter.profileId)
+  );
+
+  // Distinct profiles present in history — for the filter dropdown. Uses the
+  // run's own stored name so deleted profiles remain filterable.
+  const profSeen = new Map();
+  for (const run of sorted) {
+    if (run.profileId && !profSeen.has(run.profileId)) profSeen.set(run.profileId, run.profileName || 'Unnamed');
+  }
+
   setMain(`
     <div class="ds-view-header">
       <h2 class="ds-view-title">📜 History</h2>
       <button class="ds-btn ds-btn-danger ds-btn-sm" id="dsClearHistory">🗑 Clear All</button>
     </div>
+    <div class="ds-hist-filters">
+      <div class="ds-hist-status-chips">
+        ${[['', 'All'], ['success', '✅ success'], ['partial', '⚠ partial'], ['failed', '❌ failed']].map(([v, lbl]) =>
+          `<button class="ds-btn ds-btn-xs ${_histFilter.status === v ? 'ds-btn-primary' : ''}" data-hist-status="${v}">${lbl}</button>`
+        ).join('')}
+      </div>
+      <select id="dsHistProfile" class="ds-select ds-select-sm" style="max-width:260px">
+        <option value="">All deployments</option>
+        ${[...profSeen].map(([id, name]) =>
+          `<option value="${esc(id)}" ${_histFilter.profileId === id ? 'selected' : ''}>${esc(name)}</option>`).join('')}
+      </select>
+      <span class="ds-hist-filter-count">${filtered.length} of ${sorted.length} run${sorted.length !== 1 ? 's' : ''}</span>
+    </div>
+    ${!filtered.length ? `<div class="ds-seq-empty">No runs match the current filters.</div>` : ''}
     <div class="ds-history-list">
-      ${sorted.map(run => {
+      ${filtered.map(run => {
         // Aggregate failed source IDs across all objects in this run.
         // The retry button only appears when we actually have IDs to retry.
         const failedByObj = {};
@@ -6730,7 +6987,9 @@ function renderHistory() {
             totalFailed += failedIds.length;
           }
         }
-        const retryable = totalFailed > 0 && run.profileId && _profiles.some(p => p.id === run.profileId);
+        const profExists = !!(run.profileId && _profiles.some(p => p.id === run.profileId));
+        const retryable  = totalFailed > 0 && profExists;
+        const isRecRun   = run.kind === 'reconcile';
         return `
         <div class="ds-history-card">
           <div class="ds-history-card-header">
@@ -6742,6 +7001,12 @@ function renderHistory() {
             <span class="ds-history-time">${timeAgo(run.startedAt)}</span>
             ${retryable ? `<button class="ds-btn ds-btn-xs ds-btn-primary" data-dsaction="retryFailed" data-arg="${esc(run.id)}"
               title="Re-run this profile transferring ONLY the ${totalFailed} record(s) that failed before. Skips records that already succeeded so you don't double-create.">↻ Retry failed (${totalFailed})</button>` : ''}
+            ${profExists && !isRecRun ? `<button class="ds-btn ds-btn-xs" data-dsaction="runAgain" data-arg="${esc(run.id)}"
+              title="Open Run Transfer for this deployment against the same org pair this run used.">↻ Run again</button>` : ''}
+            ${profExists && isRecRun ? `<button class="ds-btn ds-btn-xs" data-dsaction="openReconcile" data-arg="${esc(run.profileId)}"
+              title="Open the Reconcile view for this deployment.">⚖ Reconcile</button>` : ''}
+            ${profExists ? `<button class="ds-btn ds-btn-xs" data-dsaction="editProfile" data-arg="${esc(run.profileId)}"
+              title="Open this deployment in the builder.">✏ Profile</button>` : ''}
           </div>
           <div class="ds-history-orgs">
             ${esc(orgLabel(run.sourceOrg || ''))} → ${esc(orgLabel(run.targetOrg || ''))}
@@ -6793,6 +7058,13 @@ function renderHistory() {
       await storageSaveHistory();
       renderHistory();
     });
+  });
+
+  // Filter wiring — status chips + profile dropdown re-render the list.
+  document.querySelectorAll('[data-hist-status]').forEach(b =>
+    b.addEventListener('click', () => { _histFilter.status = b.dataset.histStatus; renderHistory(); }));
+  eid('dsHistProfile')?.addEventListener('change', e => {
+    _histFilter.profileId = e.target.value; renderHistory();
   });
 }
 
