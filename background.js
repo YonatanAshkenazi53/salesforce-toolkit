@@ -40,21 +40,85 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   const diagnostics  = [];
 
   // Track source IDs fetched per tree node so each child node's WHERE clause
-  // only references its direct parent's target IDs.
+  // only references its direct parent's records.
   // Bug otherwise: in a 3-level tree (e.g. Account → Contact → Task), when Task
   // is processed, Object.values(idMap) would contain both Account AND Contact
   // target IDs, making the WHERE clause wildly over-broad.
   const nodeSourceIds = new Map();
+  // Full source records + insert-time-linked ids retained for child-first
+  // nodes — needed AFTER their parent inserts to wire child.parentField to the
+  // parent's new target id (the connect step).
+  const nodeRecs         = new Map();  // node → source records
+  const nodePreLinked    = new Map();  // node → Map(srcId → parent target id set at insert)
+  const nodeDeferredRefs = new Map();  // node → [{srcId, tgtField, srcVal, isParentLink}]
 
-  // Depth-first flattening — every parent is always processed before its children.
+  // Depth-first flattening. Default: every parent is processed before its
+  // children. A child node marked insertOrder:'childFirst' (and its own
+  // subtree) is hoisted BEFORE its parent instead: its records are created
+  // first (without the parent-link field), the parent inserts next — the
+  // parent's lookups to those records remap via idMap automatically — then the
+  // children are UPDATEd to point at their parent (connect step below).
+  // NOTE: this is a flatten-ORDER change only; node.children arrays are never
+  // physically reordered (studio.js pathKey navigation is index-based).
   function flattenTree(node, parentNode = null, parentField = null) {
-    return [{ node, parentNode, parentField },
-      ...(node.children || []).flatMap(c => flattenTree(c, node, c.field))];
+    const self = { node, parentNode, parentField };
+    const before = [], after = [];
+    for (const c of (node.children || [])) {
+      (c.insertOrder === 'childFirst' ? before : after).push(...flattenTree(c, node, c.field));
+    }
+    return [...before, self, ...after];
   }
 
   // Guard against a malformed / legacy profile with no tree — flattenTree
   // would otherwise throw on `node.children` of undefined.
   const ordered = profile && profile.tree ? flattenTree(profile.tree) : [];
+  const entryByNode = new Map(ordered.map(e => [e.node, e]));
+
+  // SOURCE-org record ids defining a node's scope, used to filter its
+  // children's fetches. For an already-processed node that's its fetched ids;
+  // for a not-yet-processed node (a child-first child needs its parent's scope
+  // BEFORE the parent's own turn) run a lightweight Id-only prefetch, walking
+  // up the chain recursively. Cached so each node prefetches at most once.
+  const prefetchIds = new Map();
+  async function getScopeIds(entry) {
+    if (!entry) return [];
+    const { node, parentNode, parentField } = entry;
+    if (nodeSourceIds.has(node)) return nodeSourceIds.get(node);
+    if (prefetchIds.has(node))   return prefetchIds.get(node);
+    const objType = node.objectType || node.childSObject;
+    const ridList = Array.isArray(node.recordIds) && node.recordIds.length
+      ? node.recordIds.filter(Boolean) : null;
+    const baseWhere = ridList
+      ? `Id IN (${ridList.map(id => `'${id}'`).join(',')})`
+      : (node.where || '');
+    let ids = [];
+    try {
+      if (parentField && parentNode) {
+        const parentScope = await getScopeIds(entryByNode.get(parentNode));
+        // If the parent was already inserted, narrow to parents that made it
+        // into the target; otherwise (parent also pending) use its full scope.
+        const scope = nodeSourceIds.has(parentNode)
+          ? parentScope.filter(id => idMap[id])
+          : parentScope;
+        for (let ci = 0; ci < scope.length; ci += 200) {
+          const lit = scope.slice(ci, ci + 200).map(id => `'${id}'`).join(',');
+          const w = baseWhere ? `(${baseWhere}) AND ${parentField} IN (${lit})` : `${parentField} IN (${lit})`;
+          const r = await sfQueryAll(srcOrgUrl, srcSid, `SELECT Id FROM ${objType} WHERE ${w}`, false);
+          ids = ids.concat((r.records || []).map(x => x.Id));
+        }
+        ids = [...new Set(ids)];
+      } else {
+        const r = await sfQueryAll(srcOrgUrl, srcSid,
+          `SELECT Id FROM ${objType}${baseWhere ? ' WHERE ' + baseWhere : ''}`, false);
+        ids = (r.records || []).map(x => x.Id);
+      }
+    } catch (e) {
+      errors.push(`${objType}: parent scope prefetch failed — ${e.message}`);
+      ids = [];
+    }
+    prefetchIds.set(node, ids);
+    return ids;
+  }
 
   for (const { node, parentNode, parentField } of ordered) {
     const objType = node.objectType || node.childSObject;
@@ -111,13 +175,25 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         : (node.where || '');
       let recs = [];
 
-      if (parentField && parentNode && nodeSourceIds.has(parentNode)) {
-        const parentTgtIds = nodeSourceIds.get(parentNode)
-          .map(id => idMap[id]).filter(Boolean);
+      if (parentField && parentNode) {
+        // Which parent SOURCE ids scope this child's fetch?
+        //  - Parent already processed (default order): only the parents that
+        //    actually made it into the target. IMPORTANT: keep SOURCE ids and
+        //    use idMap only as a success FILTER — the query below runs against
+        //    the SOURCE org. (The old `.map(id => idMap[id])` put TARGET-org
+        //    ids into a source-org WHERE clause, which can never match, so
+        //    every child node silently fetched 0 records.)
+        //  - Parent not yet processed (this node is child-first): the parent's
+        //    full source scope via the Id-only prefetch above. Without this,
+        //    the node would fall into the unfiltered root branch and copy the
+        //    ENTIRE child table.
+        const parentScopeIds = nodeSourceIds.has(parentNode)
+          ? nodeSourceIds.get(parentNode).filter(id => idMap[id])
+          : await getScopeIds(entryByNode.get(parentNode));
 
-        // If parent node produced zero target IDs (all inserts failed or 0 source
-        // records), skip this child entirely — don't fetch without a parent filter.
-        if (parentTgtIds.length === 0) {
+        // Zero parents in scope (all inserts failed, 0 source records, or the
+        // prefetch errored) — skip this child, don't fetch without a filter.
+        if (parentScopeIds.length === 0) {
           nodeSourceIds.set(node, []);
           summary[objType] = { created: 0, failed: 0, skipped: true };
           continue;
@@ -126,8 +202,8 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         // Chunk parent IDs to keep each SOQL IN clause within safe limits.
         // Salesforce can reject very long IN lists; 200 IDs per chunk is safe.
         const CHUNK = 200;
-        for (let ci = 0; ci < parentTgtIds.length; ci += CHUNK) {
-          const sliceLiteral = parentTgtIds.slice(ci, ci + CHUNK)
+        for (let ci = 0; ci < parentScopeIds.length; ci += CHUNK) {
+          const sliceLiteral = parentScopeIds.slice(ci, ci + CHUNK)
             .map(id => `'${id}'`).join(',');
           const chunkWhere = baseWhere
             ? `(${baseWhere}) AND ${parentField} IN (${sliceLiteral})`
@@ -251,6 +327,18 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // reporting (so a partial/empty copy isn't a mystery).
       const skippedForTarget = new Set();
 
+      // Child-first bookkeeping.
+      // preLinked: records whose parent link WAS resolvable at insert (parent
+      // created earlier in this run/sequence via the shared idMap) → maps to
+      // the target id used, so the connect step can detect a stale link if the
+      // parent gets re-created later and only then re-patch.
+      // deferredRefs: every reference field that could NOT resolve at insert
+      // (the parent link, plus any other lookup pointing at not-yet-created
+      // records). The connect step retries them once the parent exists —
+      // giving child-first exact field parity with the default order.
+      const preLinked    = new Map();
+      const deferredRefs = [];
+
       // ── Build payloads with field mapping ────────────────────────────────
       const payloads = recs.map(r => {
         const p = {};
@@ -271,13 +359,39 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           // failed to load, tgtCreatable is empty → keep all fields (best effort).
           if (tgtCreatable.size && !tgtCreatable.has(tgtField)) { skippedForTarget.add(tgtField); continue; }
           if (f.type === 'reference') {
+            // Child-first: this node's own parent-link field is deliberately
+            // deferred — the parent doesn't exist yet; the connect step patches
+            // it after the parent inserts. Exception: the parent WAS created
+            // earlier (same run or an earlier sequence step → idMap hit) — set
+            // it now and record the id used so a stale link can be detected.
+            // Never let a lookup-resolution bridge fill the deferred link (it
+            // would wire the record to a pre-existing parent, then the connect
+            // step would re-point it — a transient wrong link).
+            const isCf           = node.insertOrder === 'childFirst';
+            const isDeferredLink = isCf && f.name === parentField;
             // Priority 1: idMap — record was transferred earlier in this same session
-            if (idMap[v]) { p[tgtField] = idMap[v]; continue; }
+            if (idMap[v]) {
+              p[tgtField] = idMap[v];
+              if (isDeferredLink) preLinked.set(r.Id, idMap[v]);
+              continue;
+            }
+            if (isDeferredLink) {
+              // NOTE: tgtField (the MAPPED name) is what the connect step must
+              // patch — the insert path writes mapped names, so must the patch.
+              deferredRefs.push({ srcId: r.Id, tgtField, srcVal: v, isParentLink: true });
+              continue;
+            }
             // Priority 2: lookup resolution bridge (skip / match by field)
             const lkpRes = node.lookupResolutions?.[f.name];
             if (lkpRes?.strategy === 'match' && lkpBridges[f.name]?.has(v)) {
               p[tgtField] = lkpBridges[f.name].get(v);
+              continue;
             }
+            // Unresolvable right now. On a child-first node, remember it — the
+            // connect step retries once the parent (and anything else created
+            // in between) exists, so lookups OTHER than the tree link that
+            // point at the parent aren't silently lost.
+            if (isCf) deferredRefs.push({ srcId: r.Id, tgtField, srcVal: v, isParentLink: false });
             // skip / no config / legacy passthrough → field omitted — safe default
             continue;
           }
@@ -285,6 +399,14 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         }
         return p;
       });
+
+      // Child-first nodes are needed again AFTER their parent inserts (the
+      // connect step patches the deferred fields) — retain records + state.
+      if (node.insertOrder === 'childFirst') {
+        nodeRecs.set(node, recs);
+        nodePreLinked.set(node, preLinked);
+        nodeDeferredRefs.set(node, deferredRefs);
+      }
 
       // ── Batch create (200 records/batch, allOrNone:false) ────────────────
       let ok = 0, fail = 0;
@@ -402,10 +524,105 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         // without marking the whole transfer as failed/partial.
         summary[objType].skippedFields = [...skippedForTarget];
       }
+
+      // ── Connect child-first children ─────────────────────────────────────
+      // Children marked insertOrder:'childFirst' were inserted BEFORE this
+      // node with every then-unresolvable reference field deferred (the parent
+      // link plus any other lookup pointing at not-yet-created records). Now
+      // that this node's records exist in the target, patch every deferred
+      // field that resolves — exact field parity with default parent-first.
+      for (const child of (node.children || []).filter(c => c.insertOrder === 'childFirst')) {
+        const childObj  = child.objectType || child.childSObject;
+        const childRecs = nodeRecs.get(child) || [];
+        const linkedMap = nodePreLinked.get(child) || new Map();
+        const deferred  = nodeDeferredRefs.get(child) || [];
+        if (!childRecs.length || !child.field) continue;
+
+        // Honor the child's field mapping for the parent-link field — the
+        // insert path writes the MAPPED name, so the patch must too. A null
+        // mapping means the user excluded the link entirely: nothing to wire.
+        const linkMapping  = child.fieldMappings ? child.fieldMappings[child.field] : undefined;
+        if (linkMapping === null) continue;
+        const linkTgtField = linkMapping || child.field;
+
+        const deferredByRec = new Map();
+        for (const d of deferred) {
+          if (!deferredByRec.has(d.srcId)) deferredByRec.set(d.srcId, []);
+          deferredByRec.get(d.srcId).push(d);
+        }
+
+        const updates = [], updateHasLink = [];
+        let connected = 0, connectFailed = 0, orphaned = 0;
+        for (const cr of childRecs) {
+          const childTgt = idMap[cr.Id];
+          if (!childTgt) continue;   // child insert failed — already counted as failed
+          const patch = {};
+          let patchHasLink = false;
+          for (const d of (deferredByRec.get(cr.Id) || [])) {
+            const resolved = idMap[d.srcVal];
+            if (!resolved) { if (d.isParentLink) orphaned++; continue; }
+            patch[d.tgtField] = resolved;   // tgtField is already the mapped name
+            if (d.isParentLink) patchHasLink = true;
+          }
+          // Linked at insert (idMap hit) — re-point only if the parent was
+          // re-created later in this run and its target id moved (stale link).
+          if (linkedMap.has(cr.Id)) {
+            const nowVal = cr[child.field] ? idMap[cr[child.field]] : null;
+            if (nowVal && nowVal !== linkedMap.get(cr.Id)) {
+              patch[linkTgtField] = nowVal;
+              patchHasLink = true;
+            } else {
+              connected++;   // still correctly linked from insert time
+            }
+          }
+          if (Object.keys(patch).length) {
+            updates.push({ attributes: { type: childObj }, Id: childTgt, ...patch });
+            updateHasLink.push(patchHasLink);
+          }
+        }
+
+        // Patch in 200-chunks with PER-CHUNK error containment: one bad chunk
+        // (HTTP 500, session drop) must not mark records patched by earlier
+        // chunks as failed — and must never erase this parent's own summary.
+        for (let ci = 0; ci < updates.length; ci += 200) {
+          const slice = updates.slice(ci, ci + 200);
+          try {
+            const res = await sfCollectionsUpdate(tgtOrgUrl, tgtSid, slice);
+            (Array.isArray(res) ? res : []).forEach((rr, j) => {
+              const hasLink = updateHasLink[ci + j];
+              if (rr.success) { if (hasLink) connected++; }
+              else {
+                if (hasLink) connectFailed++;
+                errors.push(`${childObj}: linking to ${objType} failed — ${(rr.errors || []).map(x => x.message).join('; ')}`);
+              }
+            });
+          } catch (linkErr) {
+            for (let j = 0; j < slice.length; j++) if (updateHasLink[ci + j]) connectFailed++;
+            errors.push(`${childObj}: linking to ${objType} failed — ${linkErr.message}`);
+          }
+        }
+
+        if (summary[childObj]) {
+          summary[childObj].connected = connected;
+          if (connectFailed) summary[childObj].connectFailed   = connectFailed;
+          if (orphaned)      summary[childObj].connectOrphaned = orphaned;
+        }
+        if (orphaned) {
+          errors.push(`${childObj}: ${orphaned} record(s) were created but their ${objType} parent wasn't — left unlinked in the target.`);
+        }
+      }
     } catch (e) {
       nodeSourceIds.set(node, []);  // prevent children from using a broken parent
       errors.push(`${objType}: ${e.message}`);
       summary[objType] = { created: 0, failed: 0, error: e.message };
+      // Child-first children of THIS node may already be sitting in the target
+      // unlinked — the connect step can't run without the parent. Say so.
+      const cfKids = (node.children || [])
+        .filter(c => c.insertOrder === 'childFirst' && (nodeRecs.get(c) || []).length)
+        .map(c => c.objectType || c.childSObject);
+      if (cfKids.length) {
+        errors.push(`${objType}: failed before its child-first children could be linked — ${cfKids.join(', ')} records were created but remain unconnected.`);
+      }
     }
   }
 

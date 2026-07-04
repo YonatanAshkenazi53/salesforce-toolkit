@@ -1483,7 +1483,7 @@ async function runSequence(seqId) {
     grandTotal += created;
     const icon = step.status === 'success' ? '✅' : (created > 0 ? '⚠' : '❌');
     const objLines = Object.entries(step.summary || {}).map(([obj, s]) =>
-      `<div class="ds-seq-run-obj">${esc(obj)}: ${s.created || 0} created${s.failed ? `, ${s.failed} failed` : ''}${s.error ? ` — ${esc(s.error)}` : ''}</div>`
+      `<div class="ds-seq-run-obj">${esc(obj)}: ${s.created || 0} created${s.failed ? `, ${s.failed} failed` : ''}${s.connected ? `, ${s.connected} linked` : ''}${s.connectFailed ? `, ${s.connectFailed} link failed` : ''}${s.error ? ` — ${esc(s.error)}` : ''}</div>`
     ).join('');
     const errLines = (step.errors || []).slice(0, 6).map(e => `<div class="ds-prog-err">${esc(e)}</div>`).join('');
     return `<div class="ds-seq-run-step">
@@ -1602,8 +1602,10 @@ function treePreviewText(node, depth) {
     : node.where ? `<span class="ds-tree-preview-where">WHERE ${esc(node.where)}</span>` : '';
   const fields = node.fields?.length
     ? `<span class="ds-tree-preview-where">🔲 ${node.fields.length} fields</span>` : '';
+  const order = node.insertOrder === 'childFirst'
+    ? `<span class="ds-tree-preview-where">⤴ child-first</span>` : '';
   const children = (node.children || []).map(c => treePreviewText(c, depth + 1)).join('');
-  return `<div class="ds-tree-preview-row">${pad}${icon} <strong>${esc(name)}</strong> ${where}${fields}</div>${children}`;
+  return `<div class="ds-tree-preview-row">${pad}${icon} <strong>${esc(name)}</strong> ${where}${fields}${order}</div>${children}`;
 }
 
 function countTreeNodes(node) {
@@ -2189,6 +2191,10 @@ function renderTreeNode(node, path, isRoot, depth = 0) {
                 </span>
                </div>`
             : '';
+          const cfOn = node.insertOrder === 'childFirst';
+          const cfTitle = cfOn
+            ? `Child-first is ON: these records are created BEFORE the parent (without ${node.field || 'the parent link'}), the parent is created next — its lookups to these records connect automatically — then these records are updated to point at their parent. Requires ${node.field || 'the link field'} to be optional and updateable in the target (not master-detail). Click to switch back to the default order.`
+            : `Default order: the parent is created first, then these records with ${node.field || 'the parent link'} set at insert. Click to create these records BEFORE the parent instead — for parents whose own lookups require these records to already exist (e.g. CPQ lookup tables).`;
           return `
         <div class="ds-tree-config-row">
           <button class="ds-btn ds-btn-xs ds-btn-config" data-records-btn="${esc(pathKey)}" title="Pick specific records to copy">
@@ -2197,6 +2203,9 @@ function renderTreeNode(node, path, isRoot, depth = 0) {
           <button class="ds-btn ds-btn-xs ds-btn-config" data-map-btn="${esc(pathKey)}" title="Choose which fields to copy and how to map names between source and target">
             🔀 Fields &amp; mapping${Object.keys(node.fieldMappings || {}).length ? ` <span class="ds-config-badge ds-badge-map">${Object.keys(node.fieldMappings).length}</span>` : ''}
           </button>
+          ${!isRoot ? `<button class="ds-btn ds-btn-xs ds-btn-config ${cfOn ? 'ds-btn-config--active' : ''}" data-order-btn="${esc(pathKey)}" title="${esc(cfTitle)}">
+            ${cfOn ? '⤴ Created before parent' : '⤵ Created after parent'}
+          </button>` : ''}
         </div>${warnHtml}${renderLookupSection(node, pathKey)}`;
         })() : ''}
         ${childrenHtml}
@@ -2311,6 +2320,18 @@ function wireTreeEvents() {
   // Field mapping
   area.querySelectorAll('[data-map-btn]').forEach(btn => {
     btn.addEventListener('click', () => openFieldMappingModal(btn.dataset.mapBtn));
+  });
+
+  // Insert-order toggle (child nodes only): default parent-first ⤵ vs
+  // child-first ⤴ (records created before the parent, linked afterwards).
+  area.querySelectorAll('[data-order-btn]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const node = getNodeByPath(_editingProfile.tree, btn.dataset.orderBtn);
+      if (!node) return;
+      if (node.insertOrder === 'childFirst') delete node.insertOrder;
+      else node.insertOrder = 'childFirst';
+      refreshTree();
+    });
   });
 
   // ── Lookup Resolution ─────────────────────────────────────────
@@ -4920,6 +4941,43 @@ async function runTransfer() {
           .filter(f => f.createable && !f.nillable && f.defaultValue === null && !SYSTEM_SKIP.has(f.name))
           .map(f => f.name);
 
+      // ── Child-first feasibility ───────────────────────────────────────────
+      // A child-first node inserts BEFORE its parent (parent-link field left
+      // empty) and gets linked by an UPDATE afterwards. That's only possible
+      // when the link field is optional at insert AND updateable in the
+      // target. The generic required-field check below can't catch this (the
+      // source rows DO have parent values — they're just deliberately not
+      // sent), so a real run would fail 100% while dry run passed.
+      if (node.insertOrder === 'childFirst' && node.field && !tgtDesc.error) {
+        // Resolve the link field the way the executor does — through the
+        // node's field mapping. null = user excluded the link (records will
+        // never be wired); a rename means the TARGET name must be checked.
+        const fmLink = node.fieldMappings ? node.fieldMappings[node.field] : undefined;
+        if (fmLink === null) {
+          logRow('⚠️', `${obj}: child-first — the parent link field ${node.field} is excluded by the field mapping ("Set null"), so these records will be created but never linked to their parent.`, 'ds-prog-warn');
+        } else {
+          const linkName = fmLink || node.field;
+          const mapped   = linkName !== node.field ? ` (mapped from ${node.field})` : '';
+          const pf = (tgtDesc.fields || []).find(f => f.name === linkName);
+          if (!pf) {
+            logRow('❌', `${obj}: child-first — parent link field ${linkName}${mapped} doesn't exist in the target org`, 'ds-prog-err');
+            dryRunIssues++;
+          } else {
+            if (pf.nillable === false) {
+              logRow('❌', `${obj}: child-first won't work — ${linkName}${mapped} is REQUIRED in the target (master-detail or required lookup), so these records can't be created before their parent. Switch the node back to default order.`, 'ds-prog-err');
+              dryRunIssues++;
+            }
+            if (pf.updateable === false) {
+              logRow('❌', `${obj}: child-first won't work — ${linkName}${mapped} is not updateable in the target, so these records can't be linked to their parent after creation.`, 'ds-prog-err');
+              dryRunIssues++;
+            }
+            if (pf.nillable !== false && pf.updateable !== false) {
+              logRow('✅', `${obj}: child-first OK — ${linkName}${mapped} is optional and updateable in the target ✓`);
+            }
+          }
+        }
+      }
+
       // ── Step 3: cross-check which required-target fields exist in source ──
       // CRITICAL: this must apply the same field-mapping logic the real transfer
       // uses, otherwise a profile that maps `LastName → null` (or maps it to a
@@ -5203,13 +5261,18 @@ async function runTransfer() {
   for (const [obj, s] of Object.entries(result.summary || {})) {
     const isExpired = /SESSION_EXPIRED|session.*expired|INVALID_SESSION/i.test(s.error || '');
     if (isExpired) anySessionExpired = true;
-    const icon = s.error ? '❌' : (s.failed > 0 ? '⚠' : '✅');
+    const icon = s.error ? '❌' : ((s.failed > 0 || s.connectFailed || s.connectOrphaned) ? '⚠' : '✅');
+    // Child-first link outcomes (only present on child-first nodes)
+    const linkInfo =
+      `${s.connected ? `, ${s.connected} linked to parent` : ''}` +
+      `${s.connectFailed ? `, ${s.connectFailed} link failed` : ''}` +
+      `${s.connectOrphaned ? `, ${s.connectOrphaned} unlinked (parent failed)` : ''}`;
     const msg  = s.error
       ? (isExpired
           ? `${obj}: Session expired — the Salesforce session ended during the transfer`
           : `${obj}: ${s.error}`)
-      : `${obj}: ${s.created} created${s.failed > 0 ? `, ${s.failed} failed` : ''}`;
-    logRow(icon, msg, s.error || s.failed ? 'ds-prog-err' : '');
+      : `${obj}: ${s.created} created${s.failed > 0 ? `, ${s.failed} failed` : ''}${linkInfo}`;
+    logRow(icon, msg, s.error || s.failed || s.connectFailed ? 'ds-prog-err' : '');
     // Fields skipped because the target org can't accept them (non-fatal).
     if (s.skippedFields && s.skippedFields.length) {
       logRow('ℹ️',
@@ -6703,7 +6766,7 @@ function renderHistory() {
                 if (!parts.length) parts.push('<span class="ds-rec-tag">no changes</span>');
                 return `<span class="ds-summary-chip"><strong>${esc(obj)}</strong> · ${parts.join(' ')}</span>`;
               }
-              return `<span class="ds-summary-chip">${esc(obj)}: ${s.created || 0}↑${s.failed ? ' '+s.failed+'✗' : ''}</span>`;
+              return `<span class="ds-summary-chip">${esc(obj)}: ${s.created || 0}↑${s.failed ? ' '+s.failed+'✗' : ''}${s.connected ? ' '+s.connected+'🔗' : ''}</span>`;
             }).join('')}
           </div>
           ${(run.errors || []).length ? `
