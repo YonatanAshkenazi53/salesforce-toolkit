@@ -3997,24 +3997,46 @@ function deriveScanConfig(profile, node) {
 //
 // The result is stored on profile.lastScan so the picker + cards can show
 // live state without re-querying every time the user opens a modal.
-async function runDiffScan(profile) {
+// node/scope (optional — CHILD-AWARE RECONCILE):
+//   node  — which tree node to scan (default: the root). Child nodes use
+//           their own matchField/compareFields via deriveScanConfig.
+//   scope — { parentField, srcParentIds[], tgtParentIds[] }: restricts both
+//           sides to children of those parents (chunked IN clauses) and adds
+//           link tracking — each matched row's parent KEY is read on both
+//           sides (dot-path via the lookup machinery) producing a fifth
+//           bucket, linkMismatch: child exists in both orgs but points at a
+//           different (or no) parent in the target. Missing rows also carry
+//           parentSrcId + parentKey for the dependency UI.
+// Root behavior with node/scope omitted is unchanged.
+async function runDiffScan(profile, node = null, scope = null) {
   if (!profile)                  return { error: 'no profile' };
   if (!profile.sourceOrg)        return { error: 'profile has no source org set' };
   if (!profile.targetOrg)        return { error: 'profile has no target org set' };
-  const objType = profile.tree?.objectType || profile.tree?.childSObject;
+  node = node || profile.tree;
+  const objType = node?.objectType || node?.childSObject;
   if (!objType)                  return { error: 'profile has no root object' };
 
-  const derived = deriveScanConfig(profile, profile.tree);
+  const derived = deriveScanConfig(profile, node);
   let srcMatchField  = derived.matchField;
   let tgtMatchField  = derived.matchFieldTgt;
   let srcCompare     = derived.compareFields;
   let tgtCompare     = derived.compareFields.map(f => {
     // Per-side compareField names: a source field with a mapping uses the
     // mapped target name; unmapped fields assume same name on target.
-    const fm = profile.tree?.fieldMappings || {};
+    const fm = node?.fieldMappings || {};
     return (fm[f] && fm[f] !== null) ? fm[f] : f;
   });
-  const where       = (profile.tree?.where || '').trim();
+  const where       = (node?.where || '').trim();
+
+  // Target-side name of the parent link field (honors the node's mapping).
+  // A null mapping = the user excluded the link → children can't be scoped
+  // on the target side; child scanning is unsupported for that node.
+  let tgtParentField = null;
+  if (scope?.parentField) {
+    const fmLink = node?.fieldMappings ? node.fieldMappings[scope.parentField] : undefined;
+    if (fmLink === null) return { error: `the parent link field ${scope.parentField} is excluded by the field mapping — child records can't be matched to parents` };
+    tgtParentField = fmLink || scope.parentField;
+  }
 
   // Resolve sessions for both orgs. They must be reachable (open in Chrome
   // OR stored as credentialed orgs) — otherwise the scan can't query target.
@@ -4054,9 +4076,17 @@ async function runDiffScan(profile) {
   // Per-lookup compare maps (from the node's resolution config, else Name).
   // Reference fields are compared by the RELATED record's match field, not the
   // cross-org Id. Polymorphic / no-name lookups are skipped (excluded from drift).
-  const _scanNode = _findTreeNode(profile.tree, objType);
-  const srcLkp = buildLookupCompareMap(srcDescFull, _scanNode?.lookupResolutions);
-  const tgtLkp = buildLookupCompareMap(tgtDescFull, _scanNode?.lookupResolutions);
+  const srcLkp = buildLookupCompareMap(srcDescFull, node?.lookupResolutions);
+  const tgtLkp = buildLookupCompareMap(tgtDescFull, node?.lookupResolutions);
+
+  // Link tracking for scoped (child) scans — resolve each side's parent KEY
+  // via the same dot-path machinery. Both sides must resolve for the
+  // linkMismatch bucket to be trackable (polymorphic links can't).
+  const linkInfoSrc = scope?.parentField && srcLkp[scope.parentField] && !srcLkp[scope.parentField].skip
+    ? srcLkp[scope.parentField] : null;
+  const linkInfoTgt = tgtParentField && tgtLkp[tgtParentField] && !tgtLkp[tgtParentField].skip
+    ? tgtLkp[tgtParentField] : null;
+  const linkTrackable = !!(linkInfoSrc && linkInfoTgt);
 
   // Build two compare plans. `enhanced` resolves references via SOQL dot-paths
   // (Account.Name); `plain` drops references entirely (the legacy "ids never
@@ -4083,29 +4113,61 @@ async function runDiffScan(profile) {
     enhanced.push(entry); plain.push(entry);
   }
 
-  const fieldList = (plan, side) => [...new Set([
-    'Id', side === 'src' ? srcMatchField : tgtMatchField,
-    ...plan.map(p => side === 'src' ? p.srcSel : p.tgtSel)
-  ])].filter(Boolean).join(',');
+  const fieldList = (plan, side) => {
+    const base = [
+      'Id', side === 'src' ? srcMatchField : tgtMatchField,
+      ...plan.map(p => side === 'src' ? p.srcSel : p.tgtSel)
+    ];
+    // Child scans also read the raw parent id + the parent's KEY (dot-path)
+    // on each side — feeds linkMismatch + the dependency annotations.
+    if (scope?.parentField) {
+      if (side === 'src') {
+        base.push(scope.parentField);
+        if (linkInfoSrc) base.push(_lookupSelectExpr(scope.parentField, linkInfoSrc));
+      } else {
+        base.push(tgtParentField);
+        if (linkInfoTgt) base.push(_lookupSelectExpr(tgtParentField, linkInfoTgt));
+      }
+    }
+    return [...new Set(base)].filter(Boolean).join(',');
+  };
 
-  const soqlFor = (plan) => ({
-    src: `SELECT ${fieldList(plan, 'src')} FROM ${objType}${where ? ' WHERE ' + where : ''}`,
-    tgt: `SELECT ${fieldList(plan, 'tgt')} FROM ${objType}${where ? ' WHERE ' + where : ''}`
-  });
-  const runScanPair = (q) => Promise.all([
-    sendBg({ type: 'SF_QUERY_ALL', orgUrl: srcSess.orgUrl, sid: srcSess.sid, tooling: false, query: q.src }),
-    sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, query: q.tgt })
-  ]);
+  // One query for root scans; chunked parentField IN (...) queries for child
+  // scans (200 parent ids per chunk — same limit the executor uses).
+  async function queryAllScoped(side, plan) {
+    const sess = side === 'src' ? srcSess : tgtSess;
+    const fl   = fieldList(plan, side);
+    const base = `SELECT ${fl} FROM ${objType}`;
+    if (!scope) {
+      return sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false,
+        query: `${base}${where ? ' WHERE ' + where : ''}` });
+    }
+    const ids   = side === 'src' ? (scope.srcParentIds || []) : (scope.tgtParentIds || []);
+    const pf    = side === 'src' ? scope.parentField : tgtParentField;
+    if (!ids.length) return { records: [] };
+    let recs = [];
+    for (let ci = 0; ci < ids.length; ci += 200) {
+      const inClause = `${pf} IN (${ids.slice(ci, ci + 200).map(id => `'${id}'`).join(',')})`;
+      const w = where ? `(${where}) AND ${inClause}` : inClause;
+      const r = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false,
+        query: `${base} WHERE ${w}` });
+      if (r?.error) return r;
+      recs = recs.concat(r.records || []);
+    }
+    const seen = new Set();
+    return { records: recs.filter(x => { if (seen.has(x.Id)) return false; seen.add(x.Id); return true; }) };
+  }
+  const runScanPair = (plan) => Promise.all([queryAllScoped('src', plan), queryAllScoped('tgt', plan)]);
 
   let comparePlan = enhanced;
   let srcRes, tgtRes;
   try {
-    [srcRes, tgtRes] = await runScanPair(soqlFor(enhanced));
+    [srcRes, tgtRes] = await runScanPair(enhanced);
     // A bad relationship/match field 400s the dot-path query → fall back to the
     // plain plan (references dropped) so the scan still produces a result.
     if ((srcRes?.error || tgtRes?.error) && enhanced.length !== plain.length) {
       comparePlan = plain;
-      [srcRes, tgtRes] = await runScanPair(soqlFor(plain));
+      [srcRes, tgtRes] = await runScanPair(plain);
     }
   } catch (e) {
     return { error: `scan failed: ${e?.message || e}` };
@@ -4138,6 +4200,7 @@ async function runDiffScan(profile) {
   const onlyInTarget    = []; // present in target, absent in source → "extras"
   const changed         = []; // present in both, compareFields differ → "drift"
   const identical       = []; // present in both, all compareFields match → "in sync"
+  const linkMismatch    = []; // child scans: in both, but pointing at a different parent
 
   // Pair-aligned compare driven by comparePlan: each entry extracts the value
   // to compare (raw field for data fields, related record's match field for
@@ -4145,7 +4208,14 @@ async function runDiffScan(profile) {
   for (const [k, sr] of srcByKey) {
     const tr = tgtByKey.get(k);
     if (!tr) {
-      missingInTarget.push({ matchKey: k, sourceId: sr.Id });
+      const row = { matchKey: k, sourceId: sr.Id };
+      if (scope?.parentField) {
+        // Dependency context for the child Insert column: which parent does
+        // this record belong to, and by what key?
+        row.parentSrcId = sr[scope.parentField] || null;
+        if (linkInfoSrc) row.parentKey = String(_lookupResolvedVal(sr, linkInfoSrc) ?? '');
+      }
+      missingInTarget.push(row);
     } else {
       // Record WHICH fields differ (capped) — this is what lets the UI
       // answer "why is this drift?" without a live re-fetch, including
@@ -4159,6 +4229,16 @@ async function runDiffScan(profile) {
       }
       if (diffFields.length) changed.push({ matchKey: k, sourceId: sr.Id, targetId: tr.Id, fields: diffFields });
       else                   identical.push({ matchKey: k, sourceId: sr.Id, targetId: tr.Id });
+      // Link check (child scans): same record on both sides — does it point
+      // at the same parent? Compared by the parent's KEY, never by raw Id.
+      if (linkTrackable) {
+        const pkS = String(_lookupResolvedVal(sr, linkInfoSrc) ?? '');
+        const pkT = String(_lookupResolvedVal(tr, linkInfoTgt) ?? '');
+        if (pkS !== pkT) {
+          linkMismatch.push({ matchKey: k, sourceId: sr.Id, targetId: tr.Id,
+            parentKeySrc: pkS, parentKeyTgt: pkT });
+        }
+      }
     }
   }
   for (const [k, tr] of tgtByKey) {
@@ -4192,8 +4272,49 @@ async function runDiffScan(profile) {
       onlyInTarget.length    > 5000 ||
       changed.length         > 5000 ||
       identical.length       > 5000
-    )
+    ),
+    // Child-scan extras (absent on root scans).
+    ...(scope ? {
+      scoped:        true,
+      parentField:   scope.parentField,
+      linkTrackable,
+      linkMismatch:  linkMismatch.slice(0, 2000)
+    } : {})
   };
+}
+
+// Scan ONE child node of the profile's tree, scoped to the parents the root
+// scan found (all of them — classification is independent of what the user
+// later selects). Stores the result at profile.lastScan.children[pathKey],
+// stamped with the root scan's runAt so staleness is detectable (root rescan
+// → child scans need re-running).
+async function scanReconcileChild(profile, pathKey) {
+  const node = getNodeByPath(profile.tree, pathKey);
+  if (!node)        return { error: 'child node not found in the profile tree' };
+  if (!node.field)  return { error: 'child node has no parent link field' };
+  const root = profile.lastScan;
+  if (!root || root.status !== 'success') return { error: 'run the root scan first (🔄 Refresh state)' };
+
+  const srcParentIds = [...new Set([
+    ...(root.missingInTarget || []).map(r => r.sourceId),
+    ...(root.changed         || []).map(r => r.sourceId),
+    ...(root.identical       || []).map(r => r.sourceId)
+  ].filter(Boolean))];
+  const tgtParentIds = [...new Set([
+    ...(root.changed      || []).map(r => r.targetId),
+    ...(root.identical    || []).map(r => r.targetId),
+    ...(root.onlyInTarget || []).map(r => r.targetId)
+  ].filter(Boolean))];
+
+  const res = await runDiffScan(profile, node, {
+    parentField: node.field, srcParentIds, tgtParentIds
+  });
+  if (res?.error) return res;
+  res.rootRunAt = root.runAt;   // staleness stamp — must match the root scan
+  if (!profile.lastScan.children) profile.lastScan.children = {};
+  profile.lastScan.children[pathKey] = res;
+  if (!profile.ephemeral) await storageSaveProfiles();
+  return res;
 }
 
 // Run the diff scan for the given profileId, write the result back to the
@@ -5599,6 +5720,11 @@ window.openReconcile = function(profileId) {
 //   overwrite/updSrc per drift row, pull/del per target-only row.
 let _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
 let _recLastProfileId = null;
+// Child-aware reconcile (v1: direct children of the root, Insert + Relink).
+// Selections and UI state are keyed by tree pathKey ('0', '1', …).
+let _recChildSel      = {};   // pathKey → { push:Set(sourceIds), relink:Set(targetIds) }
+let _recOrderOverride = {};   // pathKey → 'childFirst' (run-scoped; absent = node's own order)
+let _recChildOpen     = {};   // pathKey → bool (accordion expanded)
 // Delete mode for the reconcile "In target only" column.
 //   'recycle' — DELETE → Recycle Bin (recoverable 15 days)
 //   'hard'    — DELETE then SOAP emptyRecycleBin (permanent)
@@ -5611,6 +5737,7 @@ async function renderReconcile() {
   // Reset selection when switching to a different profile.
   if (_recLastProfileId !== p.id) {
     _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
+    _recChildSel = {}; _recOrderOverride = {}; _recChildOpen = {};
     _recLastProfileId = p.id;
   }
 
@@ -5802,6 +5929,114 @@ async function renderReconcile() {
       </div>`;
   }
 
+  // ── Child-aware reconcile (v1) — direct children of the root ──────────
+  // Each child renders as a collapsible section: Scan → buckets. Actionable
+  // in v1: Insert (delegates to the transfer engine, which handles ordering
+  // — child-first hoisting — scoping and the reconnect step) and ⇄ Relink
+  // (re-point an existing child at the parent the source says it belongs
+  // to). Drift / target-only counts show for awareness.
+  const rootChildren = p.tree?.children || [];
+  function childSel(pathKey) {
+    if (!_recChildSel[pathKey]) _recChildSel[pathKey] = { push: new Set(), relink: new Set() };
+    return _recChildSel[pathKey];
+  }
+  // Parent status from the ROOT scan — annotates child Insert rows.
+  const rootMissingBySrc = new Set(missing.map(r => r.sourceId));
+  const rootExistsSrc    = new Set([...drift.map(r => r.sourceId), ...inSync.map(r => r.sourceId)]);
+
+  function childBucketsHtml(node, pathKey, cs, sel) {
+    const missingRows = (cs.missingInTarget || []).map(r => {
+      const pMissing = r.parentSrcId && rootMissingBySrc.has(r.parentSrcId);
+      const pExists  = r.parentSrcId && rootExistsSrc.has(r.parentSrcId);
+      const pNote = !r.parentSrcId
+        ? `<span class="ds-rec-pnote ds-rec-pnote-none" title="No parent in the source either — inserts unlinked.">no parent</span>`
+        : pMissing
+          ? `<span class="ds-rec-pnote ds-rec-pnote-missing" title="Its parent is missing in the target too — selecting this row also inserts the parent (added automatically at run time).">parent ${esc(r.parentKey || '?')} ✗ missing</span>`
+          : pExists
+            ? `<span class="ds-rec-pnote ds-rec-pnote-ok" title="Its parent already exists in the target — this record attaches to it at insert, matched by the parent's key.">parent ${esc(r.parentKey || '?')} ✓ exists</span>`
+            : `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="Its parent isn't tracked by the root scan (outside its scope or a key collision) — can't be safely inserted.">parent untracked</span>`;
+      const disabled = !!(r.parentSrcId && !pMissing && !pExists);
+      return `<label class="ds-rec-col-row ${disabled ? 'ds-rec-row-disabled' : ''}">
+        <input type="checkbox" data-recc-push="${pathKey}" data-rec-id="${esc(r.sourceId)}" ${sel.push.has(r.sourceId) ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+        <span class="ds-rec-col-key">${esc(r.matchKey)}</span>
+        ${pNote}
+      </label>`;
+    }).join('') || `<div class="ds-rec-col-empty">none</div>`;
+
+    const linkRows = (cs.linkMismatch || []).map(r => {
+      const on = sel.relink.has(r.targetId);
+      return `<div class="ds-rec-col-row ds-rec-row-link">
+        <button class="ds-rec-extra-btn ${on ? 'ds-rec-extra-on-push' : ''}" data-recc-relink="${pathKey}" data-rec-id="${esc(r.targetId)}"
+          title="Update this target record so ${esc(node.field || 'its parent link')} points at the parent the source says it belongs to. This is a real update — the child's triggers/flows fire.">⇄ Relink</button>
+        <span class="ds-rec-col-key">${esc(r.matchKey)}</span>
+        <span class="ds-rec-link-detail" title="currently → should be">${esc(r.parentKeyTgt || '∅')} → ${esc(r.parentKeySrc || '∅')}</span>
+      </div>`;
+    }).join('') || `<div class="ds-rec-col-empty">none</div>`;
+
+    return `
+    <div class="ds-rec-child-body">
+      <div class="ds-rec-cols ds-rec-cols-child">
+        <div class="ds-rec-col">
+          <div class="ds-rec-col-hdr ds-diff-missing">🔴 <strong>Insert ${cs.missingInTarget.length}</strong>
+            <span class="ds-rec-col-sub">in source only</span></div>
+          <div class="ds-rec-col-actions">
+            <button class="ds-btn ds-btn-xs" data-recc-all="${pathKey}">✓ All</button>
+            <button class="ds-btn ds-btn-xs" data-recc-none="${pathKey}">✗ None</button>
+          </div>
+          <div class="ds-rec-col-list">${missingRows}</div>
+        </div>
+        <div class="ds-rec-col">
+          <div class="ds-rec-col-hdr ds-rec-chip-link">🔗 <strong>Link differs ${(cs.linkMismatch || []).length}</strong>
+            <span class="ds-rec-col-sub">${cs.linkTrackable ? 'same record, different parent' : 'link not trackable for this relationship'}</span></div>
+          <div class="ds-rec-col-actions">
+            <button class="ds-btn ds-btn-xs" data-recc-relink-all="${pathKey}">⇄ All</button>
+            <button class="ds-btn ds-btn-xs" data-recc-relink-none="${pathKey}">✗ None</button>
+          </div>
+          <div class="ds-rec-col-list">${linkRows}</div>
+        </div>
+      </div>
+      <div class="ds-rec-child-info">🟡 ${cs.changed.length} drifted · 🔵 ${cs.onlyInTarget.length} in target only — handle these from a deployment scoped to ${esc(node.objectType || node.childSObject)} (child-level drift actions come next).</div>
+    </div>`;
+  }
+
+  function childSectionHtml(node, idx) {
+    const pathKey  = String(idx);
+    const childObj = node.objectType || node.childSObject || '?';
+    const cs       = scan.children?.[pathKey];
+    const fresh    = !!(cs && cs.status === 'success' && cs.rootRunAt === scan.runAt && cs.objectType === childObj);
+    const open     = !!_recChildOpen[pathKey];
+    const orderCf  = (_recOrderOverride[pathKey] ?? node.insertOrder) === 'childFirst';
+    const sel      = childSel(pathKey);
+
+    const badges = fresh ? `
+      <span class="ds-diff-chip ds-diff-missing">${cs.missingInTarget.length} missing</span>
+      <span class="ds-diff-chip ds-diff-drift" title="Info only in v1">${cs.changed.length} drift</span>
+      <span class="ds-diff-chip ds-diff-extra" title="Info only in v1">${cs.onlyInTarget.length} target-only</span>
+      ${cs.linkTrackable ? `<span class="ds-diff-chip ds-rec-chip-link" title="Same record on both sides, pointing at a DIFFERENT parent in the target">${(cs.linkMismatch || []).length} link differs</span>` : ''}
+      <span class="ds-diff-chip ds-diff-sync">${cs.identical.length} in sync</span>`
+      : (cs ? `<span class="ds-rec-child-stale">scan stale — root was re-scanned</span>` : '');
+
+    return `
+    <div class="ds-rec-child">
+      <div class="ds-rec-child-head">
+        <button class="ds-tree-toggle" data-recc-toggle="${pathKey}">${open ? '▼' : '▶'}</button>
+        <span class="ds-rec-child-title">↳ <strong>${esc(childObj)}</strong> <span class="ds-rec-child-via">via ${esc(node.field || '?')}</span></span>
+        ${badges}
+        <span class="ds-rec-child-actions">
+          <button class="ds-btn ds-btn-xs ${orderCf ? 'ds-btn-config--active' : ''}" data-recc-order="${pathKey}"
+            title="${orderCf
+              ? 'Child-first for THIS run: these records are created before their parents, then reconnected once the parents exist. Click for default order.'
+              : 'Default order for THIS run: parents are created first, then these records with the link set at insert. Click to create these records BEFORE their parents instead (for parents whose lookups need them to exist).'}">
+            ${orderCf ? '⤴ before parent' : '⤵ after parent'}
+          </button>
+          <button class="ds-btn ds-btn-xs" data-recc-scan="${pathKey}">${fresh ? '🔎 Rescan' : '🔎 Scan'}</button>
+        </span>
+      </div>
+      ${open && fresh ? childBucketsHtml(node, pathKey, cs, sel) : ''}
+      ${open && !fresh ? `<div class="ds-rec-child-empty">No fresh scan for this object yet — click 🔎 Scan. The scan is scoped to the ${esc(objType)} records above.</div>` : ''}
+    </div>`;
+  }
+
   setMain(`${headerHtml}
     <div class="ds-op-banner ds-op-banner-write">
       <span class="ds-op-banner-icon">⚖</span>
@@ -5818,6 +6053,14 @@ async function renderReconcile() {
     </div>
 
     <div class="ds-rec-insync-note">🟢 ${inSync.length} record(s) already in sync — no action needed.</div>
+
+    ${rootChildren.length ? `
+    <div class="ds-rec-children">
+      <div class="ds-rec-children-hdr">🔗 Related objects
+        <span class="ds-rec-children-sub">insert child records and reconnect them to their parents — scans are scoped to the ${esc(objType)} records above</span>
+      </div>
+      ${rootChildren.map((c, i) => childSectionHtml(c, i)).join('')}
+    </div>` : ''}
 
     <div class="ds-rec-action-bar">
       <div class="ds-rec-action-summary" id="dsRecSummary"></div>
@@ -5846,6 +6089,13 @@ async function renderReconcile() {
     if (_recSel.updSrc.size)    parts.push(`<span class="ds-diff-chip ds-diff-pull">← Update source ${_recSel.updSrc.size}</span>`);
     if (_recSel.pull.size)      parts.push(`<span class="ds-diff-chip ds-diff-pull">← Pull ${_recSel.pull.size}</span>`);
     if (_recSel.del.size)       parts.push(`<span class="ds-diff-chip ds-diff-extra">Delete ${_recSel.del.size}</span>`);
+    // Child-object actions (insert / relink), per relationship.
+    for (const [k, sel] of Object.entries(_recChildSel)) {
+      const node = getNodeByPath(p.tree, k);
+      const obj  = node?.objectType || node?.childSObject || '?';
+      if (sel.push.size)   parts.push(`<span class="ds-diff-chip ds-diff-missing">Insert ${sel.push.size} ${esc(obj)}</span>`);
+      if (sel.relink.size) parts.push(`<span class="ds-diff-chip ds-rec-chip-link">⇄ Relink ${sel.relink.size} ${esc(obj)}</span>`);
+    }
     el.innerHTML = parts.length ? `Actions: ${parts.join(' ')}` : '<span style="color:var(--subtext)">Nothing selected</span>';
     const runBtn = eid('dsRecRunBtn');
     if (runBtn) runBtn.disabled = !parts.length;
@@ -6016,12 +6266,70 @@ async function renderReconcile() {
     });
   });
 
+  // ── Child section wiring ────────────────────────────────────────────
+  document.querySelectorAll('[data-recc-toggle]').forEach(b => b.addEventListener('click', () => {
+    const k = b.dataset.reccToggle;
+    _recChildOpen[k] = !_recChildOpen[k];
+    renderReconcile();
+  }));
+  document.querySelectorAll('[data-recc-scan]').forEach(b => b.addEventListener('click', async () => {
+    const k = b.dataset.reccScan;
+    b.disabled = true; b.textContent = '⏳ scanning…';
+    const res = await scanReconcileChild(p, k);
+    if (res?.error) showToast(`Child scan: ${res.error}`, 'error', 6000);
+    else _recChildOpen[k] = true;
+    renderReconcile();
+  }));
+  document.querySelectorAll('[data-recc-order]').forEach(b => b.addEventListener('click', () => {
+    const k    = b.dataset.reccOrder;
+    const node = getNodeByPath(p.tree, k);
+    const cur  = (_recOrderOverride[k] ?? node?.insertOrder) === 'childFirst';
+    _recOrderOverride[k] = cur ? 'parentFirst' : 'childFirst';   // run-scoped, never saved
+    renderReconcile();
+  }));
+  document.querySelectorAll('[data-recc-push]').forEach(cb => cb.addEventListener('change', () => {
+    const sel = childSel(cb.dataset.reccPush);
+    if (cb.checked) sel.push.add(cb.dataset.recId); else sel.push.delete(cb.dataset.recId);
+    updateSummary();
+  }));
+  document.querySelectorAll('[data-recc-all]').forEach(b => b.addEventListener('click', () => {
+    const k = b.dataset.reccAll, sel = childSel(k);
+    document.querySelectorAll(`[data-recc-push="${k}"]:not(:disabled)`).forEach(cb => { cb.checked = true; sel.push.add(cb.dataset.recId); });
+    updateSummary();
+  }));
+  document.querySelectorAll('[data-recc-none]').forEach(b => b.addEventListener('click', () => {
+    const k = b.dataset.reccNone, sel = childSel(k);
+    document.querySelectorAll(`[data-recc-push="${k}"]`).forEach(cb => { cb.checked = false; });
+    sel.push.clear();
+    updateSummary();
+  }));
+  document.querySelectorAll('[data-recc-relink]').forEach(b => b.addEventListener('click', e => {
+    e.preventDefault();
+    const sel = childSel(b.dataset.reccRelink), id = b.dataset.recId;
+    if (sel.relink.has(id)) sel.relink.delete(id); else sel.relink.add(id);
+    b.classList.toggle('ds-rec-extra-on-push', sel.relink.has(id));
+    updateSummary();
+  }));
+  document.querySelectorAll('[data-recc-relink-all]').forEach(b => b.addEventListener('click', () => {
+    const k = b.dataset.reccRelinkAll, sel = childSel(k);
+    (scan.children?.[k]?.linkMismatch || []).forEach(r => sel.relink.add(r.targetId));
+    document.querySelectorAll(`[data-recc-relink="${k}"]`).forEach(x => x.classList.add('ds-rec-extra-on-push'));
+    updateSummary();
+  }));
+  document.querySelectorAll('[data-recc-relink-none]').forEach(b => b.addEventListener('click', () => {
+    const k = b.dataset.reccRelinkNone;
+    childSel(k).relink.clear();
+    document.querySelectorAll(`[data-recc-relink="${k}"]`).forEach(x => x.classList.remove('ds-rec-extra-on-push'));
+    updateSummary();
+  }));
+
   eid('dsRecBackBtn')?.addEventListener('click', renderProfiles);
   eid('dsRecCancelBtn')?.addEventListener('click', renderProfiles);
   eid('dsRecRefreshBtn')?.addEventListener('click', async () => {
     await window.refreshProfileState(p.id);
     { const _fp = _profiles.find(x => x.id === p.id); if (_fp) _reconcileProfile = _fp; }
     _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
+    _recChildSel = {};   // child buckets changed too — selections are stale
     renderReconcile();
   });
   eid('dsRecDeleteMode')?.addEventListener('change', e => { _recDeleteMode = e.target.value; });
@@ -6037,14 +6345,74 @@ async function runReconcile(profile, objType, buckets) {
   const updSrcIds = [..._recSel.updSrc];
   const delIds    = [..._recSel.del];
   const pullIds   = [..._recSel.pull];
-  if (!pushIds.length && !ovwIds.length && !updSrcIds.length && !delIds.length && !pullIds.length) return;
+
+  // ── Child-aware selections (v1: Insert + Relink) ──────────────────────
+  // Each selected child insert is partitioned by where its parent lives:
+  //   group A — parent is missing in target too → the child rides a TREE
+  //             transfer with its parent (auto-including parents the user
+  //             didn't tick); the engine orders + reconnects.
+  //   group B — parent already exists in target → child-rooted transfer
+  //             with a match bridge on the link field (attached at insert).
+  const rootScan         = profile.lastScan || {};
+  const rootMissingSrc   = new Set((rootScan.missingInTarget || []).map(r => r.sourceId));
+  const rootExistsSrcSet = new Set([...(rootScan.changed || []).map(r => r.sourceId),
+                                    ...(rootScan.identical || []).map(r => r.sourceId)]);
+  const childActs = Object.entries(_recChildSel)
+    .map(([k, sel]) => ({ pathKey: k, node: getNodeByPath(profile.tree, k), sel,
+                          cs: rootScan.children?.[k] }))
+    .filter(a => a.node && a.cs && (a.sel.push.size || a.sel.relink.size));
+  for (const a of childActs) {
+    a.groupA = []; a.groupB = []; a.autoParents = new Set();
+    for (const id of a.sel.push) {
+      const row = (a.cs.missingInTarget || []).find(r => r.sourceId === id);
+      if (!row) continue;
+      if (row.parentSrcId && rootMissingSrc.has(row.parentSrcId)) {
+        a.groupA.push(id);
+        if (!_recSel.push.has(row.parentSrcId)) a.autoParents.add(row.parentSrcId);
+      } else if (!row.parentSrcId || rootExistsSrcSet.has(row.parentSrcId)) {
+        a.groupB.push(id);   // parent exists in target (or record has no parent)
+      }
+      // parent untracked → row was disabled in the UI; unreachable here
+    }
+  }
+  const anyChildAct = childActs.some(a => a.groupA.length || a.groupB.length || a.sel.relink.size);
+
+  if (!pushIds.length && !ovwIds.length && !updSrcIds.length && !delIds.length && !pullIds.length && !anyChildAct) return;
 
   // ── Confirmation step ────────────────────────────────────────────────
   // If anything destructive (delete) or anything that writes to the SOURCE
   // org (pull insert / ← update) is selected, surface a single combined
   // confirm modal so the user sees the full impact before any writes happen.
   const isHard = _recDeleteMode === 'hard';
-  if (delIds.length || pullIds.length || updSrcIds.length) {
+
+  // Numbered execution plan — mirrors the exact order the phases run in, so
+  // what the user reads in the confirm modal is literally what happens.
+  const planLines = [];
+  if (anyChildAct) {
+    let n = 1;
+    const totalAutoParents = childActs.reduce((s, a) => s + a.autoParents.size, 0);
+    const rootInsertTotal  = pushIds.length + totalAutoParents;
+    if (delIds.length) planLines.push(`${n++}. Delete ${delIds.length} ${objType} from target (${isHard ? 'PERMANENT' : 'Recycle Bin'})`);
+    if (pullIds.length) planLines.push(`${n++}. Pull ${pullIds.length} ${objType} into source`);
+    for (const a of childActs) {
+      const obj = a.node.objectType || a.node.childSObject;
+      const cf  = (_recOrderOverride[a.pathKey] ?? a.node.insertOrder) === 'childFirst';
+      if (a.groupA.length && cf) planLines.push(`${n++}. Insert ${a.groupA.length} ${obj} (child-first — created before their parents, without ${a.node.field})`);
+    }
+    if (rootInsertTotal) planLines.push(`${n++}. Insert ${rootInsertTotal} ${objType}${totalAutoParents ? ` (${totalAutoParents} parent(s) auto-included for selected children)` : ''}`);
+    for (const a of childActs) {
+      const obj = a.node.objectType || a.node.childSObject;
+      const cf  = (_recOrderOverride[a.pathKey] ?? a.node.insertOrder) === 'childFirst';
+      if (a.groupA.length && cf)  planLines.push(`${n++}. Reconnect ${a.groupA.length} ${obj} → ${objType} (link patched after the parents exist)`);
+      if (a.groupA.length && !cf) planLines.push(`${n++}. Insert ${a.groupA.length} ${obj} under the new ${objType} (linked at insert)`);
+      if (a.groupB.length)        planLines.push(`${n++}. Insert ${a.groupB.length} ${obj} under existing ${objType} (matched by ${rootScan.matchField || 'Name'})`);
+      if (a.sel.relink.size)      planLines.push(`${n++}. Relink ${a.sel.relink.size} ${obj} to the right ${objType}`);
+    }
+    if (ovwIds.length)    planLines.push(`${n++}. Update ${ovwIds.length} drifted ${objType} in target`);
+    if (updSrcIds.length) planLines.push(`${n++}. Update ${updSrcIds.length} ${objType} in source`);
+  }
+
+  if (delIds.length || pullIds.length || updSrcIds.length || anyChildAct) {
     const ok = await new Promise(resolve => {
       const delBlock = delIds.length ? (isHard
         ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:4px;font-size:12px;color:#991b1b">
@@ -6066,11 +6434,20 @@ async function runReconcile(profile, objType, buckets) {
         : '';
       const title = delIds.length
         ? (isHard ? '🔥 Confirm HARD delete' : '⚠ Confirm reconcile actions')
-        : '← Confirm writes into source';
+        : (anyChildAct && !pullIds.length && !updSrcIds.length)
+          ? '⚖ Confirm the execution plan'
+          : '← Confirm writes into source';
+      const planBlock = planLines.length
+        ? `<div class="ds-rec-plan">
+             <div class="ds-rec-plan-hdr">Execution plan — steps run in this exact order:</div>
+             ${planLines.map(l => `<div class="ds-rec-plan-line">${esc(l)}</div>`).join('')}
+           </div>`
+        : '';
       showModal(`
         <div class="ds-modal-header">${title}</div>
         <div class="ds-modal-body">
           Review the changes before continuing:
+          ${planBlock}
           ${pullBlock}
           ${updSrcBlock}
           ${delBlock}
@@ -6111,6 +6488,13 @@ async function runReconcile(profile, objType, buckets) {
   const startedAt = new Date().toISOString();
   const counts = { inserted: 0, updated: 0, deleted: 0, purged: 0, pulled: 0, updatedSource: 0,
                    insertedFailed: 0, updatedFailed: 0, deletedFailed: 0, pulledFailed: 0, updatedSourceFailed: 0 };
+  // Per-child-object counters — merged into the History summary alongside
+  // the root object's counts.
+  const childCounts = {};
+  const bumpChild = (obj, key, by) => {
+    if (!childCounts[obj]) childCounts[obj] = { created: 0, failed: 0, connected: 0, connectFailed: 0, relinked: 0, relinkFailed: 0 };
+    childCounts[obj][key] += by;
+  };
   const allErrors = [];
 
   // ── 1. Delete extras (regular → Recycle Bin, or hard → purge) ────────
@@ -6185,13 +6569,32 @@ async function runReconcile(profile, objType, buckets) {
     } catch (e) { allErrors.push(`Pull failed: ${e?.message || e}`); log('❌', `Pull failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
 
-  // ── 3. Push missing (insert) — reuse the transfer engine, root only ──
-  if (pushIds.length) {
-    log('⬆', `Pushing ${pushIds.length} missing record(s) to target…`);
+  // ── 3. Push missing (insert) — delegate to the transfer engine ────────
+  // With child selections this is a real TREE run: the pruned profile keeps
+  // the root plus each child node with group-A rows (parents being inserted
+  // this run), per-node recordIds, and the run-scoped insert order. The
+  // engine does the rest — child-first hoisting, scoping, and the reconnect
+  // step — exactly like a normal deployment.
+  const treePushIds = [...new Set([...pushIds, ...childActs.flatMap(a => [...a.autoParents])])];
+  const groupATotal = childActs.reduce((s, a) => s + a.groupA.length, 0);
+  if (treePushIds.length || groupATotal) {
+    const autoN = treePushIds.length - pushIds.length;
+    log('⬆', `Pushing ${treePushIds.length} ${objType}${autoN > 0 ? ` (${autoN} parent(s) auto-included)` : ''}${groupATotal ? ` + ${groupATotal} child record(s)` : ''} to target…`);
     try {
       const pushProfile = JSON.parse(JSON.stringify(profile));
-      pushProfile.tree.recordIds = pushIds;
-      pushProfile.tree.children  = [];   // root only in v1
+      delete pushProfile.lastScan;
+      pushProfile.tree.recordIds = treePushIds;
+      pushProfile.tree.children  = (profile.tree.children || []).map((c, i) => {
+        const a = childActs.find(x => x.pathKey === String(i));
+        if (!a || !a.groupA.length) return null;      // no group-A rows → drop node
+        const cc = JSON.parse(JSON.stringify(c));
+        cc.recordIds = a.groupA;
+        cc.children  = [];                            // v1: one level deep
+        const ord = _recOrderOverride[a.pathKey] ?? c.insertOrder;
+        if (ord === 'childFirst') cc.insertOrder = 'childFirst';
+        else delete cc.insertOrder;
+        return cc;
+      }).filter(Boolean);
       const res = await sendBg({
         type: 'SF_EXECUTE_PROFILE_TRANSFER',
         profile: pushProfile,
@@ -6200,10 +6603,119 @@ async function runReconcile(profile, objType, buckets) {
       });
       const s = res.summary?.[objType] || {};
       counts.inserted += (s.created || 0); counts.insertedFailed += (s.failed || 0);
-      log(s.failed ? '⚠' : '✅', `Inserted ${s.created || 0}${s.failed ? `, ${s.failed} failed` : ''}`, s.failed ? 'ds-prog-err' : '');
+      log(s.failed ? '⚠' : '✅', `Inserted ${s.created || 0} ${objType}${s.failed ? `, ${s.failed} failed` : ''}`, s.failed ? 'ds-prog-err' : '');
+      for (const a of childActs) {
+        if (!a.groupA.length) continue;
+        const obj  = a.node.objectType || a.node.childSObject;
+        if (obj === objType) continue;   // self-relationship: counts already in root line
+        const cSum = res.summary?.[obj] || {};
+        bumpChild(obj, 'created', cSum.created || 0);
+        bumpChild(obj, 'failed',  cSum.failed  || 0);
+        bumpChild(obj, 'connected', cSum.connected || 0);
+        bumpChild(obj, 'connectFailed', cSum.connectFailed || 0);
+        log('  ' + (cSum.failed ? '⚠' : '✅'),
+          `${obj}: ${cSum.created || 0} created${cSum.connected ? `, ${cSum.connected} linked to parent` : ''}${cSum.connectOrphaned ? `, ${cSum.connectOrphaned} unlinked (parent failed)` : ''}${cSum.failed ? `, ${cSum.failed} failed` : ''}`,
+          cSum.failed ? 'ds-prog-err' : '');
+      }
       (res.errors || []).forEach(e => allErrors.push(`insert: ${e}`));
       (res.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
     } catch (e) { allErrors.push(`Push failed: ${e?.message || e}`); log('❌', `Push failed: ${e?.message || e}`, 'ds-prog-err'); }
+  }
+
+  // ── 3b. Group-B child inserts — parent already exists in target ───────
+  // Child-rooted transfer with the link field seeded as a match bridge, so
+  // each record attaches to its pre-existing parent at insert time.
+  for (const a of childActs) {
+    if (!a.groupB.length) continue;
+    const obj = a.node.objectType || a.node.childSObject;
+    log('⬆', `Inserting ${a.groupB.length} ${obj} under existing ${objType} (matched by ${rootScan.matchField || 'Name'})…`);
+    try {
+      const bProfile = JSON.parse(JSON.stringify(profile));
+      delete bProfile.lastScan;
+      bProfile.tree = {
+        objectType: obj,
+        where: '',
+        recordIds: a.groupB,
+        children: [],
+        fieldMappings: a.node.fieldMappings || {},
+        lookupResolutions: {
+          ...(a.node.lookupResolutions || {}),
+          [a.node.field]: { strategy: 'match', matchObject: objType, matchField: rootScan.matchField || 'Name' }
+        }
+      };
+      const res = await sendBg({
+        type: 'SF_EXECUTE_PROFILE_TRANSFER',
+        profile: bProfile,
+        srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
+        tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid
+      });
+      const s2 = res.summary?.[obj] || {};
+      bumpChild(obj, 'created', s2.created || 0);
+      bumpChild(obj, 'failed',  s2.failed  || 0);
+      log(s2.failed ? '⚠' : '✅', `${obj}: ${s2.created || 0} created under existing parents${s2.failed ? `, ${s2.failed} failed` : ''}`, s2.failed ? 'ds-prog-err' : '');
+      (res.errors || []).forEach(e => allErrors.push(`insert ${obj}: ${e}`));
+      (res.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
+    } catch (e) { allErrors.push(`Insert ${obj} failed: ${e?.message || e}`); log('❌', `Insert ${obj} failed: ${e?.message || e}`, 'ds-prog-err'); }
+  }
+
+  // ── 3c. Relink — re-point existing children at the right parent ───────
+  // Fresh target-parent resolution by key (so parents inserted seconds ago
+  // count), then chunked PATCHes of the child's link field. Rows whose
+  // parent still isn't in the target are SKIPPED — never nulled.
+  for (const a of childActs) {
+    if (!a.sel.relink.size) continue;
+    const obj       = a.node.objectType || a.node.childSObject;
+    const linkField = a.node.field;
+    const fmLink    = a.node.fieldMappings ? a.node.fieldMappings[linkField] : undefined;
+    if (fmLink === null) {
+      allErrors.push(`relink ${obj}: the link field ${linkField} is excluded by the field mapping — nothing to patch`);
+      continue;
+    }
+    const tgtLinkField = fmLink || linkField;
+    const rows = (a.cs.linkMismatch || []).filter(r => a.sel.relink.has(r.targetId));
+    if (!rows.length) continue;
+    log('⇄', `Relinking ${rows.length} ${obj} in target…`);
+    try {
+      const tgtMatch = rootScan.matchFieldTgt || rootScan.matchField || 'Name';
+      const keys = [...new Set(rows.map(r => r.parentKeySrc).filter(Boolean))];
+      const parentByKey = new Map();
+      for (let ci = 0; ci < keys.length; ci += 100) {
+        const lit = keys.slice(ci, ci + 100)
+          .map(v => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',');
+        const q = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false,
+          query: `SELECT Id, ${tgtMatch} FROM ${objType} WHERE ${tgtMatch} IN (${lit})` });
+        if (q?.error) throw new Error(q.error);
+        for (const rec of (q.records || [])) {
+          const kk = String(rec[tgtMatch] ?? '');
+          if (kk && !parentByKey.has(kk)) parentByKey.set(kk, rec.Id);
+        }
+      }
+      const updates = [];
+      let skippedNoParent = 0;
+      for (const r of rows) {
+        const pid = r.parentKeySrc ? parentByKey.get(String(r.parentKeySrc)) : null;
+        if (!pid) { skippedNoParent++; continue; }
+        updates.push({ attributes: { type: obj }, Id: r.targetId, [tgtLinkField]: pid });
+      }
+      let ok = 0, fail = 0;
+      for (let ci = 0; ci < updates.length; ci += 200) {
+        try {
+          const res = await sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+            records: updates.slice(ci, ci + 200) });
+          (Array.isArray(res) ? res : []).forEach(rr => {
+            if (rr.success) ok++;
+            else { fail++; allErrors.push(`relink ${obj}: ${(rr.errors || []).map(x => x.message).join('; ')}`); }
+          });
+        } catch (e2) {
+          fail += Math.min(200, updates.length - ci);
+          allErrors.push(`relink ${obj}: ${e2?.message || e2}`);
+        }
+      }
+      bumpChild(obj, 'relinked', ok);
+      bumpChild(obj, 'relinkFailed', fail);
+      if (skippedNoParent) allErrors.push(`relink ${obj}: ${skippedNoParent} skipped — their parent isn't in the target yet (insert it first)`);
+      log(fail ? '⚠' : '✅', `Relinked ${ok} ${obj}${fail ? `, ${fail} failed` : ''}${skippedNoParent ? `, ${skippedNoParent} skipped (no parent in target)` : ''}`, fail ? 'ds-prog-err' : '');
+    } catch (e) { allErrors.push(`Relink ${obj} failed: ${e?.message || e}`); log('❌', `Relink ${obj} failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
 
   // ── 4. Overwrite drift (update target with source values) ────────────
@@ -6251,8 +6763,10 @@ async function runReconcile(profile, objType, buckets) {
   }
 
   // ── 5. Save to History so the run is visible later ───────────────────
-  const totalOk   = counts.inserted + counts.updated + counts.deleted + counts.pulled + counts.updatedSource;
-  const totalFail = counts.insertedFailed + counts.updatedFailed + counts.deletedFailed + counts.pulledFailed + counts.updatedSourceFailed;
+  const childOk   = Object.values(childCounts).reduce((s, c) => s + c.created + c.relinked, 0);
+  const childFail = Object.values(childCounts).reduce((s, c) => s + c.failed + c.connectFailed + c.relinkFailed, 0);
+  const totalOk   = counts.inserted + counts.updated + counts.deleted + counts.pulled + counts.updatedSource + childOk;
+  const totalFail = counts.insertedFailed + counts.updatedFailed + counts.deletedFailed + counts.pulledFailed + counts.updatedSourceFailed + childFail;
   const status   = totalFail === 0 ? 'success' : (totalOk > 0 ? 'partial' : 'failed');
   _history.push({
     id:           genId('run'),
@@ -6275,21 +6789,45 @@ async function runReconcile(profile, objType, buckets) {
         updatedSource: counts.updatedSource, updatedSourceFailed: counts.updatedSourceFailed,
         purged:   counts.purged,
         deleteMode: _recDeleteMode
-      }
+      },
+      // Child objects — inserted/linked/relinked counts per relationship.
+      ...Object.fromEntries(Object.entries(childCounts)
+        .filter(([obj]) => obj !== objType)
+        .map(([obj, c]) => [obj, {
+          inserted: c.created, insertedFailed: c.failed,
+          connected: c.connected, connectFailed: c.connectFailed,
+          relinked: c.relinked, relinkFailed: c.relinkFailed
+        }]))
     },
     errors: allErrors.slice(0, 50)
   });
   await storageSaveHistory();
 
   log('✅', `Reconcile complete — refreshing state…`);
+  // Remember which child sections had scans BEFORE the root refresh wipes
+  // lastScan.children — they get re-scanned right after so the accordion
+  // reflects the new reality (and just-created orphans are visible).
+  const scannedChildKeys = Object.keys(profile.lastScan?.children || {});
   // Refresh diff + snapshots so the columns reflect the new reality.
   await window.refreshProfileState(profile.id);
   // Keep the ephemeral Org Compare profile (not in _profiles) — refreshProfileDiff
   // already updated its lastScan in place. Only re-point at a saved profile.
   { const _fp = _profiles.find(x => x.id === profile.id); if (_fp) _reconcileProfile = _fp; }
+  for (const k of scannedChildKeys) {
+    log('🔎', `Re-scanning child section ${k}…`);
+    const res2 = await scanReconcileChild(_reconcileProfile, k);
+    if (res2?.error) log('⚠', `Child rescan: ${res2.error}`, 'ds-prog-warn');
+  }
   _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
+  _recChildSel = {};
   const toastParts = [];
   if (counts.inserted)      toastParts.push(`${counts.inserted} inserted`);
+  if (childOk) {
+    const cIns = Object.values(childCounts).reduce((s, c) => s + c.created, 0);
+    const cRel = Object.values(childCounts).reduce((s, c) => s + c.relinked, 0);
+    if (cIns) toastParts.push(`${cIns} child record(s) inserted`);
+    if (cRel) toastParts.push(`⇄ ${cRel} relinked`);
+  }
   if (counts.updated)       toastParts.push(`${counts.updated} updated`);
   if (counts.updatedSource) toastParts.push(`← ${counts.updatedSource} updated in source`);
   if (counts.pulled)        toastParts.push(`${counts.pulled} pulled`);
@@ -7022,11 +7560,13 @@ function renderHistory() {
               if (isRec) {
                 const parts = [];
                 if (s.inserted)      parts.push(`<span class="ds-rec-tag ds-rec-tag-ins">${s.inserted} inserted</span>`);
+                if (s.connected)     parts.push(`<span class="ds-rec-tag ds-rec-tag-ins">🔗 ${s.connected} linked</span>`);
+                if (s.relinked)      parts.push(`<span class="ds-rec-tag ds-rec-tag-upd">⇄ ${s.relinked} relinked</span>`);
                 if (s.updated)       parts.push(`<span class="ds-rec-tag ds-rec-tag-upd">${s.updated} updated</span>`);
                 if (s.updatedSource) parts.push(`<span class="ds-rec-tag ds-rec-tag-pull">← ${s.updatedSource} updated in source</span>`);
                 if (s.pulled)        parts.push(`<span class="ds-rec-tag ds-rec-tag-pull">← ${s.pulled} pulled</span>`);
                 if (s.deleted)       parts.push(`<span class="ds-rec-tag ds-rec-tag-del">${s.deleted} deleted${s.deleteMode === 'hard' ? ' (hard)' : ''}</span>`);
-                const failTot = (s.insertedFailed || 0) + (s.updatedFailed || 0) + (s.deletedFailed || 0) + (s.pulledFailed || 0) + (s.updatedSourceFailed || 0);
+                const failTot = (s.insertedFailed || 0) + (s.updatedFailed || 0) + (s.deletedFailed || 0) + (s.pulledFailed || 0) + (s.updatedSourceFailed || 0) + (s.connectFailed || 0) + (s.relinkFailed || 0);
                 if (failTot)    parts.push(`<span class="ds-rec-tag ds-rec-tag-fail">${failTot} failed</span>`);
                 if (!parts.length) parts.push('<span class="ds-rec-tag">no changes</span>');
                 return `<span class="ds-summary-chip"><strong>${esc(obj)}</strong> · ${parts.join(' ')}</span>`;
