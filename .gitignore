@@ -1,42 +1,4 @@
-# ── OS junk ─────────────────────────────────────────────────────
-.DS_Store
-Thumbs.db
-desktop.ini
-ehthumbs.db
-$RECYCLE.BIN/
-
-# ── Editor / IDE ────────────────────────────────────────────────
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.history/
-
-# ── Chrome extension packaging ──────────────────────────────────
-# Private signing key — NEVER commit (anyone with it can impersonate your extension)
-*.pem
-# Packed extension artifacts — build outputs, not source
-*.crx
-*.zip
-
-# ── Logs ────────────────────────────────────────────────────────
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# ── Local env / secrets ─────────────────────────────────────────
-.env
-.env.local
-.env.*.local
-secrets.json
-
-# ── Node (in case a build step is added later) ──────────────────
 node_modules/
-dist/
-build/
-.cache/
-
-# ── Claude Code / agent artifacts ───────────────────────────────
-.claude/
+package-lock.json
+_harness*
+_smoketest*

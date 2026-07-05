@@ -33,9 +33,9 @@
   // matter what a calling module passes in.
   const _SECRET_RE = [
     // Salesforce session IDs:  00D<orgid>!<token>
-    [/\b00D[A-Za-z0-9]{11,18}![A-Za-z0-9._=+/\-]+/g, '00D…[redacted-sid]'],
+    [/\b00D[A-Za-z0-9]{11,18}![A-Za-z0-9._=+/-]+/g, '00D…[redacted-sid]'],
     // OAuth / Bearer tokens
-    [/\bBearer\s+[A-Za-z0-9._\-]+/gi, 'Bearer [redacted]'],
+    [/\bBearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [redacted]'],
     // key:value / key=value where the key is sensitive — keep key, drop value
     [/(["']?(?:sid|session[_-]?id|password|passwd|pwd|secret|token|access[_-]?token|refresh[_-]?token|authorization|api[_-]?key)["']?\s*[:=]\s*["']?)([^"',}\s|&]+)/gi,
      '$1[redacted]'],

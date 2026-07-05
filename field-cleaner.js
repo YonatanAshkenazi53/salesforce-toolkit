@@ -888,7 +888,7 @@ const FieldCleaner = (() => {
   function renderItem(dep, fixable, type) {
     const id      = dep.MetadataComponentId;
     const name    = esc(dep.MetadataComponentName || id);
-    const canInsp = _INSPECT_SOBJECT.hasOwnProperty(type);
+    const canInsp = Object.prototype.hasOwnProperty.call(_INSPECT_SOBJECT, type);
     const inspBtn = canInsp
       ? `<button class="btn btn-sm fc-inspect-btn" title="View XML metadata"
                  data-id="${esc(id)}" data-type="${esc(type)}">🔍</button>`
