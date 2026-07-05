@@ -371,7 +371,10 @@
           : 'api';
         const desc   = _sftkDesc(msg);
         const mod    = msg.type.replace(/^SF_/, '').replace(/_/g, ' ').toLowerCase().substring(0, 16);
-        D.log(mod, level, desc + (errRaw ? ' — ' + String(errRaw).substring(0, 120) : ''), null, dur);
+        // 120 chars used to cut Salesforce MALFORMED_QUERY errors right
+        // before the caret + "No such column …" line — the only useful part.
+        // The log entry caps msg at 300 anyway; use the room.
+        D.log(mod, level, desc + (errRaw ? ' — ' + String(errRaw).substring(0, 250) : ''), null, dur);
       }
 
       if (cb) {
