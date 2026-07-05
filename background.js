@@ -93,6 +93,15 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   const nodePreLinked    = new Map();  // node → Map(srcId → parent target id set at insert)
   const nodeDeferredRefs = new Map();  // node → [{srcId, tgtField, srcVal, isParentLink}]
 
+  // Owner mapping ('match' mode on the profile): resolve each source owner's
+  // NAME to a target User at write time; unmatched owners get the profile's
+  // fallback user (or the org default when none is set). Resolution results
+  // are cached across nodes. Default mode: owners are never copied.
+  const ownerMode     = profile?.ownerMapping?.mode === 'match';
+  const ownerFallback = ownerMode ? (profile.ownerMapping.fallbackUserId || null) : null;
+  const ownerByName   = new Map();   // source Owner.Name → target User Id
+  const ownerMisses   = new Set();   // names known to have no target match
+
   // Depth-first flattening. Default: every parent is processed before its
   // children. A child node marked insertOrder:'childFirst' (and its own
   // subtree) is hoisted BEFORE its parent instead: its records are created
@@ -190,6 +199,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
 
       const fields = buildCopyFields(descRes);
 
+      // Owner matching needs the source owner's display name — only when the
+      // object actually has owners (children like OpportunityLineItem don't).
+      const wantOwners = ownerMode && (descRes.fields || []).some(f => f.name === 'OwnerId');
+      if (wantOwners) fields.push('Owner.Name');
+
       // Target describe — a field that's createable in the SOURCE may not exist
       // (or may be read-only) in the TARGET. Sending such a field fails every
       // INSERT. Build the set of fields the target will actually accept so the
@@ -275,6 +289,22 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // Store this node's source IDs so its children can build correct WHERE clauses
       nodeSourceIds.set(node, recs.map(r => r.Id));
       postRunProgress({ phase: 'fetched', obj: objType, count: recs.length });
+
+      // Resolve this node's owner names against the TARGET org's users
+      // (User owners only — queue-owned records won't match and fall back).
+      if (wantOwners && recs.length) {
+        const names = [...new Set(recs
+          .map(r => r.Owner ? r.Owner.Name : null)
+          .filter(n => n && !ownerByName.has(n) && !ownerMisses.has(n)))];
+        for (let ci = 0; ci < names.length; ci += 100) {
+          const lit = names.slice(ci, ci + 100)
+            .map(n => `'${String(n).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',');
+          const q = await sfQueryAll(tgtOrgUrl, tgtSid,
+            `SELECT Id, Name FROM User WHERE IsActive = true AND Name IN (${lit})`, false);
+          for (const u of (q.records || [])) if (!ownerByName.has(u.Name)) ownerByName.set(u.Name, u.Id);
+        }
+        names.forEach(n => { if (!ownerByName.has(n)) ownerMisses.add(n); });
+      }
 
       // ── Resolve RecordTypes ──────────────────────────────────────────────
       // Match source → target RecordType by DeveloperName (API name) — the only
@@ -386,6 +416,8 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // giving child-first exact field parity with the default order.
       const preLinked    = new Map();
       const deferredRefs = [];
+      // Owner-mapping outcome counters for this node's summary line.
+      let ownerFellBack = 0, ownerDefaulted = 0;
 
       // ── Build payloads with field mapping ────────────────────────────────
       const payloads = recs.map(r => {
@@ -444,6 +476,17 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             continue;
           }
           p[tgtField] = v;
+        }
+        // Owner mapping: matched name → that user; unmatched → fallback user;
+        // no fallback → omit (target org default), counted for the summary.
+        if (wantOwners) {
+          const oname = r.Owner ? r.Owner.Name : null;
+          if (oname) {
+            const matched = ownerByName.get(oname);
+            const oid = matched || ownerFallback;
+            if (oid && (!tgtCreatable.size || tgtCreatable.has('OwnerId'))) p.OwnerId = oid;
+            if (!matched) { if (ownerFallback) ownerFellBack++; else ownerDefaulted++; }
+          }
         }
         return p;
       });
@@ -564,6 +607,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           created: ok, failed: fail });
       }
       summary[objType] = { created: ok, failed: fail };
+      // Owner-mapping outcome — surfaced as ⚠ notes, never failures.
+      if (ownerFellBack)  errors.push(`⚠ ${objType}: ${ownerFellBack} record(s) had owners with no name match in the target — assigned the fallback user.`);
+      if (ownerDefaulted) errors.push(`⚠ ${objType}: ${ownerDefaulted} record(s) had owners with no name match and no fallback user is set — the target org assigned its default owner.`);
       // Source IDs that successfully inserted in target — cap at 2000 to keep
       // chrome.storage payloads sane on huge transfers. The picker reads this
       // to badge already-deployed records.
