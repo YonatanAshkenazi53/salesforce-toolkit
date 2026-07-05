@@ -1978,13 +1978,25 @@ function renderBuilder() {
       const prof = _editingProfile;
       [prof.sourceOrg, prof.targetOrg] = [prof.targetOrg || '', prof.sourceOrg || ''];
       let clearedPicks = 0;
+      const droppedMappings = [];
       (function walk(node) {
         if (!node) return;
         const fm = node.fieldMappings || {};
         const inv = {};
         for (const [s, t] of Object.entries(fm)) {
-          if (t === null) inv[s] = null;           // exclusions keep their meaning
-          else if (t) inv[t] = s;                  // rename flips direction
+          if (t === null) { inv[s] = null; continue; }   // exclusions keep their meaning
+          if (!t) continue;
+          // Collision: two source fields map to the SAME target — the inverse
+          // is ambiguous, and silently overwriting used to shuffle names
+          // between neighboring fields across swaps (MailingState ending up
+          // mapped to MailingStreet…). Identity wins; the other rename is
+          // dropped LOUDLY so the user knows to re-map it.
+          if (Object.prototype.hasOwnProperty.call(inv, t)) {
+            if (t === s) { droppedMappings.push(`${inv[t]} → ${t}`); inv[t] = s; }
+            else droppedMappings.push(`${s} → ${t}`);
+            continue;
+          }
+          inv[t] = s;                              // rename flips direction
         }
         node.fieldMappings = inv;
         const mf = node.matchField, mft = node.matchFieldTgt;
@@ -2000,7 +2012,7 @@ function renderBuilder() {
       if (s) s.value = prof.sourceOrg || '';
       if (t) t.value = prof.targetOrg || '';
       refreshTree();
-      showToast(`Orgs swapped ⇄ — field mappings inverted${clearedPicks ? `, ${clearedPicks} picked record(s) cleared (they belonged to the old source org)` : ''}.`, 'info', 5500);
+      showToast(`Orgs swapped ⇄ — field mappings inverted${clearedPicks ? `, ${clearedPicks} picked record(s) cleared (they belonged to the old source org)` : ''}${droppedMappings.length ? `. ⚠ ${droppedMappings.length} ambiguous mapping(s) dropped (${droppedMappings.slice(0, 3).join(', ')}${droppedMappings.length > 3 ? ', …' : ''}) — two fields mapped to the same target; re-map them in Fields & mapping` : ''}.`, droppedMappings.length ? 'warning' : 'info', droppedMappings.length ? 8000 : 5500);
     };
     // Picked records are destroyed by a swap — confirm when any exist.
     let pickCount = 0;
@@ -5501,12 +5513,19 @@ async function runTransfer() {
         //   - srcField not in fm      → identity passthrough (source.X → target.X)
         const fm = node.fieldMappings || {};
         const sourceForTarget = {};  // tgtField → srcField that will populate it
+        const dupTargets = [];       // mapping collisions — two sources, one target
         for (const f of srcFields) {
           if (!f.createable) continue;
           if (fm[f.name] === null) continue;                       // user-excluded
           const tgtField = (f.name in fm && fm[f.name]) ? fm[f.name] : f.name;
           // First source field "wins" the target slot (matches executor behaviour)
           if (!(tgtField in sourceForTarget)) sourceForTarget[tgtField] = f.name;
+          else dupTargets.push(`${tgtField} ← ${sourceForTarget[tgtField]} AND ${f.name}`);
+        }
+        // Two source fields writing the same target silently means "one value
+        // wins" — almost always a corrupted or experimental mapping. Warn.
+        if (dupTargets.length) {
+          logRow('⚠', `${obj}: ${dupTargets.length} field-mapping collision(s) — two source fields write the same target field (${dupTargets.slice(0, 5).join('; ')}) — only one value can win. Fix in ✏ Edit → Fields & mapping.`, 'ds-prog-warn');
         }
 
         // Bucket each required-in-target field by how it will (or won't) be populated
