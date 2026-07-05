@@ -4316,12 +4316,15 @@ async function runDiffScan(profile, node = null, scope = null) {
 
   // One query for root scans; chunked parentField IN (...) queries for child
   // scans (200 parent ids per chunk — same limit the executor uses).
-  async function queryAllScoped(side, plan) {
+  // `suppress` marks the request as an expected-may-fail attempt (the
+  // dot-path plan has a designed fallback) so a 400 logs as ↻, not ✖.
+  async function queryAllScoped(side, plan, suppress) {
     const sess = side === 'src' ? srcSess : tgtSess;
     const fl   = fieldList(plan, side);
     const base = `SELECT ${fl} FROM ${objType}`;
     if (!scope) {
       return sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false,
+        _suppressError: !!suppress,
         query: `${base}${where ? ' WHERE ' + where : ''}` });
     }
     const ids   = side === 'src' ? (scope.srcParentIds || []) : (scope.tgtParentIds || []);
@@ -4332,6 +4335,7 @@ async function runDiffScan(profile, node = null, scope = null) {
       const inClause = `${pf} IN (${ids.slice(ci, ci + 200).map(id => `'${id}'`).join(',')})`;
       const w = where ? `(${where}) AND ${inClause}` : inClause;
       const r = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false,
+        _suppressError: !!suppress,
         query: `${base} WHERE ${w}` });
       if (r?.error) return r;
       recs = recs.concat(r.records || []);
@@ -4339,17 +4343,29 @@ async function runDiffScan(profile, node = null, scope = null) {
     const seen = new Set();
     return { records: recs.filter(x => { if (seen.has(x.Id)) return false; seen.add(x.Id); return true; }) };
   }
-  const runScanPair = (plan) => Promise.all([queryAllScoped('src', plan), queryAllScoped('tgt', plan)]);
+  const runScanPair = (plan, suppress) => Promise.all([
+    queryAllScoped('src', plan, suppress), queryAllScoped('tgt', plan, suppress)]);
 
   let comparePlan = enhanced;
+  let lookupCompareDegraded = false;
   let srcRes, tgtRes;
   try {
-    [srcRes, tgtRes] = await runScanPair(enhanced);
+    // The enhanced (dot-path) attempt only has a fallback when it actually
+    // differs from the plain plan — suppress its error styling only then.
+    const canFallback = enhanced.length !== plain.length;
+    [srcRes, tgtRes] = await runScanPair(enhanced, canFallback);
     // A bad relationship/match field 400s the dot-path query → fall back to the
     // plain plan (references dropped) so the scan still produces a result.
-    if ((srcRes?.error || tgtRes?.error) && enhanced.length !== plain.length) {
+    if ((srcRes?.error || tgtRes?.error) && canFallback) {
+      // Record WHY at warn level with the FULL error — the truncated red row
+      // used to hide which relationship Salesforce rejected.
+      const reason = srcRes?.error || tgtRes?.error;
+      window.SFToolkitDebug?.log('scan', 'warn',
+        `Lookup-by-name compare not supported for ${objType} — falling back to plain compare (lookups excluded from drift)`,
+        reason);
+      lookupCompareDegraded = true;
       comparePlan = plain;
-      [srcRes, tgtRes] = await runScanPair(plain);
+      [srcRes, tgtRes] = await runScanPair(plain, false);
     }
   } catch (e) {
     return { error: `scan failed: ${e?.message || e}` };
@@ -4455,6 +4471,9 @@ async function runDiffScan(profile, node = null, scope = null) {
       changed.length         > 5000 ||
       identical.length       > 5000
     ),
+    // Set when the dot-path (lookup-by-name) compare 400'd and the scan fell
+    // back to the plain plan — lookups are excluded from drift in this result.
+    ...(lookupCompareDegraded ? { lookupCompareDegraded: true } : {}),
     // Child-scan extras (absent on root scans).
     ...(scope ? {
       scoped:        true,
@@ -4673,21 +4692,29 @@ async function fetchDriftRowDetail(profile, objectType, srcId, tgtId, srcFields,
   const srcSelectPlain = [...new Set(['Id', ...srcFields])].filter(Boolean).join(',') || 'Id';
   const tgtSelectPlain = [...new Set(['Id', ...tgtFields])].filter(Boolean).join(',') || 'Id';
 
-  async function runPair(srcSel, tgtSel) {
+  async function runPair(srcSel, tgtSel, suppress) {
     return Promise.all([
       sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+        _suppressError: !!suppress,
         query: `SELECT ${srcSel} FROM ${objectType} WHERE Id = '${srcId}'` }),
       sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+        _suppressError: !!suppress,
         query: `SELECT ${tgtSel} FROM ${objectType} WHERE Id = '${tgtId}'` })
     ]);
   }
 
   try {
-    let [s, t] = await runPair(srcSelectEnh, tgtSelectEnh);
+    // Suppress error styling on the dot-path attempt only when a plain
+    // fallback actually exists (i.e. the selects differ).
+    const canFallback = srcSelectEnh !== srcSelectPlain || tgtSelectEnh !== tgtSelectPlain;
+    let [s, t] = await runPair(srcSelectEnh, tgtSelectEnh, canFallback);
     // Dot-path query failed (bad relationship/match field) → retry plain so the
     // diff still renders, just with raw Ids for the un-resolvable lookups.
-    if (s?.error || t?.error) {
-      [s, t] = await runPair(srcSelectPlain, tgtSelectPlain);
+    if ((s?.error || t?.error) && canFallback) {
+      window.SFToolkitDebug?.log('scan', 'warn',
+        `Lookup-by-name fetch not supported for ${objectType} row detail — showing raw values`,
+        s?.error || t?.error);
+      [s, t] = await runPair(srcSelectPlain, tgtSelectPlain, false);
       lookupMap = {};
     }
     if (s?.error) return { error: `Source query failed: ${s.error}` };
