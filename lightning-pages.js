@@ -97,6 +97,30 @@ const LightningPages = (() => {
     document.getElementById('lpProfileMapBtn').addEventListener('click', () => openProfileMap());
   }
 
+  // ── Entity-name resolution ─────────────────────────────────
+  // FlexiPage.EntityDefinitionId is an API name for STANDARD objects
+  // ("Account") but the raw CustomObject id (01I…) for CUSTOM objects —
+  // describing that id 404s (and custom-object record pages never got their
+  // org-default detection). Resolve ids → QualifiedApiName once per load.
+  const _lpEntityNames = new Map();   // '01I…' (15-char) → 'MyObj__c'
+  function _lpEntityName(entity) {
+    if (!entity) return entity;
+    if (!/^01I/i.test(entity)) return entity;                 // already an API name
+    return _lpEntityNames.get(entity.substring(0, 15)) || null;
+  }
+  async function _lpResolveEntityNames(entities) {
+    const ids = [...new Set(entities.filter(e => e && /^01I/i.test(e)).map(e => e.substring(0, 15)))]
+      .filter(id => !_lpEntityNames.has(id));
+    if (!ids.length) return;
+    try {
+      const res = await bg({
+        type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false,
+        query: `SELECT DurableId, QualifiedApiName FROM EntityDefinition WHERE DurableId IN (${ids.map(i => `'${i}'`).join(',')})`
+      });
+      for (const r of (res.records || [])) _lpEntityNames.set(r.DurableId, r.QualifiedApiName);
+    } catch (_) { /* unresolved ids are skipped by callers */ }
+  }
+
   // ── Load all FlexiPages ───────────────────────────────────
   async function loadPages() {
     setLoading(true);
@@ -180,11 +204,17 @@ const LightningPages = (() => {
     );
     const sObjectTypes = [...new Set(recordPageCandidates.map(p => p.EntityDefinitionId))];
 
+    // Custom-object entries are 01I… ids — resolve them to API names first
+    // (describing the raw id 404s).
+    await _lpResolveEntityNames(sObjectTypes);
+
     for (const sObjectType of sObjectTypes) {
+      const apiName = _lpEntityName(sObjectType);
+      if (!apiName) continue;   // unresolved custom-object id — nothing to describe
       try {
         const descRes = await bg({
           type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
-          path: `services/data/v62.0/sobjects/${sObjectType}/describe/?_=${Date.now()}`
+          path: `services/data/v62.0/sobjects/${apiName}/describe/?_=${Date.now()}`
         });
         if (descRes.error || !Array.isArray(descRes.actionOverrides)) continue;
 
@@ -296,7 +326,7 @@ const LightningPages = (() => {
           </div>`;
       for (const p of pages) {
         const obj = p.EntityDefinitionId
-          ? `<span class="lp-obj-tag">${esc(p.EntityDefinitionId)}</span>` : '';
+          ? `<span class="lp-obj-tag">${esc(_lpEntityName(p.EntityDefinitionId) || p.EntityDefinitionId)}</span>` : '';
         const ps  = (p.PublishStatus || '').toLowerCase();
         const dotCls = ps === 'active'   ? 'lp-dot-active'
                      : ps === 'obsolete' ? 'lp-dot-obsolete'
@@ -439,7 +469,7 @@ const LightningPages = (() => {
         const orgBadge = isOrgDefault
           ? '<span class="lp-badge lp-badge-default">Org Default</span>' : '';
         const objTag = page.EntityDefinitionId
-          ? `<span class="lp-obj-tag">${esc(page.EntityDefinitionId)}</span>` : '';
+          ? `<span class="lp-obj-tag">${esc(_lpEntityName(page.EntityDefinitionId) || page.EntityDefinitionId)}</span>` : '';
 
         // Build assignments HTML
         let assignHtml = '';
@@ -680,9 +710,12 @@ const LightningPages = (() => {
       // actionOverrides[{name, type, formFactor, pageId}] showing the CURRENT
       // active FlexiPage for each action + formFactor.
       try {
+        // Resolve a 01I… custom-object id to its API name before describing.
+        await _lpResolveEntityNames([sObjectType]);
+        const descApiName = _lpEntityName(sObjectType) || sObjectType;
         const descRes = await bg({
           type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
-          path: `services/data/v62.0/sobjects/${sObjectType}/describe/?_=${Date.now()}`
+          path: `services/data/v62.0/sobjects/${descApiName}/describe/?_=${Date.now()}`
         });
         log.describeError = descRes.error || 'ok';
         if (!descRes.error && Array.isArray(descRes.actionOverrides)) {
@@ -846,7 +879,7 @@ const LightningPages = (() => {
           <div class="lp-detail-sub">
             <span>${esc(humanType(page.Type))}</span>
             ${page.EntityDefinitionId
-              ? `<span class="lp-obj-tag">${esc(page.EntityDefinitionId)}</span>` : ''}
+              ? `<span class="lp-obj-tag">${esc(_lpEntityName(page.EntityDefinitionId) || page.EntityDefinitionId)}</span>` : ''}
           </div>
         </div>
         <div class="lp-hdr-actions">

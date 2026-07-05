@@ -56,11 +56,16 @@ const FieldCleaner = (() => {
       // strip-and-retry loop, two-attempt Metadata deploy) are logged as
       // 'retry' — not 'error' or 'warn' — so the debug export reads as a
       // clean sequence of expected steps, not a noise of false warnings.
-      const level = resp?.error === 'SESSION_EXPIRED' ? 'session'
-                  : resp?.error ? (msg._suppressError ? 'retry' : 'error')
-                  : 'api';
-      window.SFToolkitDebug.log('fields', level,
-        `${msg.type}${tag ? '  ' + tag : ''}`, resp?.error || null, dur);
+      // _silentError goes further: expected-failure probes (standard quick
+      // actions whose describe 404s at object scope) log NOTHING on failure.
+      const silent = msg._silentError && resp?.error && resp.error !== 'SESSION_EXPIRED';
+      if (!silent) {
+        const level = resp?.error === 'SESSION_EXPIRED' ? 'session'
+                    : resp?.error ? (msg._suppressError ? 'retry' : 'error')
+                    : 'api';
+        window.SFToolkitDebug.log('fields', level,
+          `${msg.type}${tag ? '  ' + tag : ''}`, resp?.error || null, dur);
+      }
     }
     if (resp?.error !== 'SESSION_EXPIRED') return resp;
     const fresh = await bgRaw({ type: 'GET_SF_SESSION', activeTabUrl: _orgUrl });
@@ -573,7 +578,10 @@ const FieldCleaner = (() => {
       for (let i = 0; i < qas.length; i += BATCH) {
         const slice = qas.slice(i, i + BATCH);
         const rs = await Promise.allSettled(slice.map(qa => bg({
-          type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+          // _silentError: standard actions (NewCase, NewContact…) pass the
+          // type filter but 404 on object-scoped describe — expected, carries
+          // no information, logged as nothing instead of 22 Retry rows.
+          type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, _silentError: true,
           path: `services/data/v62.0/sobjects/${obj}/quickActions/${encodeURIComponent(qa.name)}/describe`
         })));
         rs.forEach((r, j) => {
