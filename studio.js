@@ -7128,10 +7128,12 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   //    resolution strategies, not the reconcile overwrite.
   const warnings = [];
   try {
-    const d = await sendBg({
-      type: 'SF_REST_GET', orgUrl: srcSess.orgUrl, sid: srcSess.sid,
-      path: `services/data/v62.0/sobjects/${objType}/describe`
-    });
+    const [d, dt] = await Promise.all([
+      sendBg({ type: 'SF_REST_GET', orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+        path: `services/data/v62.0/sobjects/${objType}/describe` }),
+      sendBg({ type: 'SF_REST_GET', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+        path: `services/data/v62.0/sobjects/${objType}/describe` })
+    ]);
     if (d && !d.error && Array.isArray(d.fields) && d.fields.length) {
       const srcNames = new Set(d.fields.map(f => f.name));
       const refs     = new Set(d.fields.filter(f => f.type === 'reference' && f.name !== 'RecordTypeId').map(f => f.name));
@@ -7140,6 +7142,23 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
         warnings.push(`skipped ${stale.length} mapped field(s) that no longer exist on ${objType} in the source org: ${stale.join(', ')} — open ✏ Edit → Fields & mapping to clean them up`);
       }
       srcFields = srcFields.filter(k => srcNames.has(k) && !refs.has(k));
+    }
+    // TARGET-side validation — the PATCH writes the MAPPED names into the
+    // target org; a mapped name that's missing there (e.g. test__c, or
+    // MailingCountryCode when State/Country picklists are only enabled in
+    // the source) or read-only fails EVERY row with "No such column".
+    if (dt && !dt.error && Array.isArray(dt.fields) && dt.fields.length) {
+      const tgtUpd = new Map(dt.fields.map(f => [f.name, f.updateable !== false]));
+      const badTgt = [];
+      srcFields = srcFields.filter(sf => {
+        const tf = (sf === 'RecordTypeId') ? 'RecordTypeId' : (fm[sf] || sf);
+        if (!tgtUpd.has(tf)) { badTgt.push(`${sf} → ${tf} (missing in target)`);   return false; }
+        if (!tgtUpd.get(tf)) { badTgt.push(`${sf} → ${tf} (read-only in target)`); return false; }
+        return true;
+      });
+      if (badTgt.length) {
+        warnings.push(`skipped ${badTgt.length} mapped field(s) the target org can't accept: ${badTgt.join(', ')} — open ✏ Edit → Fields & mapping to fix`);
+      }
     }
   } catch (_) { /* best effort — proceed with the unfiltered list */ }
 
@@ -7209,9 +7228,15 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const arr = Array.isArray(res) ? res : [];
   const ok = arr.filter(r => r.success).length;
   const errors = [...warnings, ...ovwErrors];
+  // Dedupe identical per-record failures — 20 rows all failing with the same
+  // "No such column 'X'" should read as ONE line with a count, not a wall.
+  const failCounts = new Map();
   for (const r of arr) {
-    if (!r.success) errors.push(`${objType}: ${(r.errors || []).map(e => e.message).join('; ')}`);
+    if (r.success) continue;
+    const m = `${objType}: ${(r.errors || []).map(e => e.message).join('; ')}`;
+    failCounts.set(m, (failCounts.get(m) || 0) + 1);
   }
+  for (const [m, c] of failCounts) errors.push(c > 1 ? `${m}  (×${c})` : m);
   return { ok, failed: arr.length - ok, errors };
 }
 
