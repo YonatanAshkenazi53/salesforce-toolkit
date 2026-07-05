@@ -309,7 +309,8 @@
     _inFlight.set(id, {
       desc:           _sftkDesc(msg),
       t:              Date.now(),
-      suppressOnError: !!msg._suppressError   // set true to hide red-dot on expected 400s
+      // hide red-dot on expected 400s (retries) and silent probes alike
+      suppressOnError: !!(msg._suppressError || msg._silentError)
     });
     if (window._sftkActCb) window._sftkActCb();
     return id;
@@ -358,6 +359,12 @@
         const errRaw = thrownErr
           ? (typeof thrownErr === 'string' ? thrownErr : (thrownErr.message || String(thrownErr)))
           : (resp && resp.error ? resp.error : null);
+        // _silentError = expected-failure probe (e.g. describing standard
+        // quick actions that 404 at object scope). The failure carries no
+        // information — don't log it at all. Successes still log normally.
+        // (_suppressError stays for REAL retry loops worth seeing as ↻.)
+        if (errRaw && msg && msg._silentError &&
+            !String(errRaw).toUpperCase().includes('SESSION')) return;
         const level  = errRaw
           ? (String(errRaw).toUpperCase().includes('SESSION') ? 'session'
              : (msg && msg._suppressError ? 'retry' : 'error'))
