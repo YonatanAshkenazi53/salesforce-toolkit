@@ -6114,6 +6114,12 @@ async function renderReconcile() {
       const sid = r.sourceId;
       const isPush = _recSel.overwrite.has(sid);
       const isPull = _recSel.updSrc.has(sid);
+      // Inline "why is this drifted" — the scan already recorded which
+      // fields differed (capped at 10); show the first few right on the row
+      // so diagnosing drift doesn't require expanding each record.
+      const why = (r.fields || []).length
+        ? `<span class="ds-rec-drift-why" title="Differs on: ${esc(r.fields.join(', '))}">${esc(r.fields.slice(0, 3).join(', '))}${r.fields.length > 3 ? ` +${r.fields.length - 3}` : ''}</span>`
+        : '';
       return `<div class="ds-rec-col-row ds-rec-row-drift">
         <span class="ds-rec-extra-actions">
           <button class="ds-rec-extra-btn ${isPush ? 'ds-rec-extra-on-push' : ''}"
@@ -6124,6 +6130,7 @@ async function renderReconcile() {
                   title="Update the SOURCE record with the target's values">←</button>
         </span>
         <span class="ds-rec-col-key">${esc(r.matchKey)}</span>
+        ${why}
         <span class="ds-rec-drift-link" data-rec-drift="${esc(r.sourceId)}|${esc(r.targetId)}" title="See which fields differ">▸ fields</span>
       </div>
       <div class="ds-rec-drift-expand" data-drift-expand="${esc(r.sourceId)}" style="display:none"></div>`;
