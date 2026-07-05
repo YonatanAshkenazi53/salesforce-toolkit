@@ -2145,11 +2145,13 @@ html, body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
-  position: sticky;
-  bottom: 8px;
-  z-index: 20;                          /* always above column content */
-  box-shadow: 0 -4px 14px rgba(0,0,0,.10);
-  margin-top: 12px;
+  /* In normal page flow — NOT sticky. The old sticky bar hovered over the
+     column lists for the whole scroll (rows visibly running beneath it)
+     whenever the page grew past one viewport, which the banner + bounded
+     columns + Related-objects sections now always do. The columns scroll
+     internally, so the bar sits right below them at its natural position. */
+  box-shadow: var(--shadow);
+  margin: 12px 0 16px;
 }
 .ds-rec-action-summary { flex: 1; font-size: 12.5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ds-rec-action-btns { display: flex; gap: 8px; }
