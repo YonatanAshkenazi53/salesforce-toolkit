@@ -45,6 +45,11 @@ let _orgs        = {};
 // lookup queries). Each: { id, name, sourceOrg, targetOrg, steps:[profileId…],
 // createdAt, updatedAt }.
 let _sequences   = [];
+// Working org pair (topbar) — the pair every view defaults to: Org Compare,
+// Deploy Readiness, Schema View (source), new deployment profiles, new
+// sequences, and Run Transfer when the profile has no orgs. Views can still
+// override locally; this is the default, not a lock.
+let _workingPair = { src: '', tgt: '' };
 
 // Feature 15 — Dark mode
 let _darkMode    = false;
@@ -211,7 +216,8 @@ function handleSessionError(result, orgUrl, onReconnect = null) {
 async function storageLoad() {
   const d = await chrome.storage.local.get([
     'sftk_profiles','sftk_history','sftk_orgs',
-    'ds_dark_mode','ds_activity_log','sftk_sequences','sftk_active_run'
+    'ds_dark_mode','ds_activity_log','sftk_sequences','sftk_active_run',
+    'ds_working_pair'
   ]);
   _profiles     = d.sftk_profiles   || [];
   _history      = d.sftk_history    || [];
@@ -219,6 +225,7 @@ async function storageLoad() {
   _darkMode     = d.ds_dark_mode    || false;
   _activityLog  = d.ds_activity_log || {};
   _sequences    = d.sftk_sequences  || [];
+  _workingPair  = d.ds_working_pair || { src: '', tgt: '' };
 
   // A leftover active-run marker means a previous run was interrupted
   // (studio tab closed / worker killed mid-run) — say so instead of silence.
@@ -246,6 +253,10 @@ async function storageSaveProfiles() {
 
 async function storageSaveSequences() {
   await chrome.storage.local.set({ sftk_sequences: _sequences });
+}
+
+async function storageSaveWorkingPair() {
+  await chrome.storage.local.set({ ds_working_pair: _workingPair });
 }
 
 async function storageSaveHistory() {
@@ -921,6 +932,7 @@ function renderWelcome() {
 function renderView(view) {
   _describeCache = {};   // clear per-view to stay fresh
   _refFieldCache = {};   // clear lookup field cache on view switch (may have stale org data)
+  renderWorkingPair();   // topbar pair options track newly-detected orgs
 
   // Sidebar is always visible now (the full-width Org Map home was removed).
   document.querySelector('.ds-body')?.classList.remove('ds-home');
@@ -1096,27 +1108,22 @@ window.removeOrg = function(orgUrl) {
 // ════════════════════════════════════════════════════════════════
 
 // Build a list of all known orgs from browser sessions + remembered orgs.
-// (Credential-based stored orgs were removed.) Used by the profile builder,
-// transfer/reconcile, Deploy Readiness, and Schema View to populate org
-// dropdowns. Each entry: { id, url, label }.
+// (Credential-based stored orgs were removed.) Used by EVERY org dropdown
+// (profile builder, transfer/reconcile, Deploy Readiness, Schema View,
+// Org Compare, sequences). Each entry: { url, label }.
+// The URL is the org's ONE identity everywhere — the old base64 `id`
+// indirection (only Readiness/Schema used it) is gone.
 function allMapOrgs() {
-  // Key the map by URL — the only truly unique key. The previous id-based
-  // keying used btoa(url).slice(0,12), which encodes only the URL's first
-  // 9 BYTES ("https://a…") — every pair of orgs sharing that prefix (e.g.
-  // ashkenazy6-… and ashkenazy7-…) collided and one silently vanished from
-  // every org dropdown. id stays for consumers but is now the full base64.
-  const map = new Map();
-  const autoId = url => 'auto_' + btoa(url).replace(/[^a-z0-9]/gi,'');
-
+  const map = new Map();   // keyed by URL — the only truly unique key
   // Remembered orgs (sftk_orgs) — everything seen in Chrome before.
   for (const [url, data] of Object.entries(_orgs)) {
-    if (!map.has(url)) map.set(url, { id: autoId(url), url, label: data.label || orgLabel(url) });
+    if (!map.has(url)) map.set(url, { url, label: data.label || orgLabel(url) });
   }
   // Current browser sessions — anything open right now, even if never seen.
   const liveUrls = [...(_orgUrl ? [_orgUrl] : []), ..._allSessions.map(s => s.orgUrl)];
   for (const url of liveUrls) {
     if (!url || map.has(url)) continue;
-    map.set(url, { id: autoId(url), url, label: orgLabel(url) });
+    map.set(url, { url, label: orgLabel(url) });
   }
   return [...map.values()];
 }
@@ -1137,18 +1144,43 @@ function orgOptionLabel(url, label, liveSet) {
   return `${on ? '🟢' : '⚪'} ${label || orgLabel(url)}${on ? '' : ' (not open)'}`;
 }
 
-// Resolve an allMapOrgs() id (the value used by the Deploy Readiness and
-// Schema View org <select>s) to a live session { orgUrl, sid } — or null
-// when that org isn't open in any Chrome tab. This helper was lost in the
-// credentials trim while its four call sites survived, which made both
-// views throw ReferenceError as soon as a check ran.
-async function getOrgSession(orgId) {
-  const org = allMapOrgs().find(o => o.id === orgId);
-  if (!org) return null;
+// ── Working org pair (topbar control) ─────────────────────────────
+// Lives in the static topbar (outside #dsMain) so it survives every view
+// re-render; renderView() repaints it so the options track newly-detected
+// orgs. Changing the pair persists it and re-renders the current view —
+// views are stateless full re-renders, so that's the whole propagation.
+function renderWorkingPair() {
+  const el = eid('dsWorkingPair');
+  if (!el) return;
+  const orgs = allMapOrgs();
+  if (orgs.length < 2) { el.innerHTML = ''; return; }   // pointless with 0-1 orgs
+  const ls = _liveOrgSet();
+  const opts = sel => ['<option value="">—</option>',
+    ...orgs.map(o => `<option value="${esc(o.url)}" ${o.url === sel ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label, ls))}</option>`)
+  ].join('');
+  el.innerHTML = `
+    <span class="ds-pair-lbl" title="Working pair — Org Compare, Deploy Readiness, Schema View, and new deployments all start with these orgs. Each view can still pick different ones.">Pair</span>
+    <select id="dsWpSrc" class="ds-pair-sel" title="Working SOURCE org (data comes from here)">${opts(_workingPair.src)}</select>
+    <button id="dsWpSwap" class="ds-pair-swap" title="Swap source and target">⇄</button>
+    <select id="dsWpTgt" class="ds-pair-sel" title="Working TARGET org (data goes here)">${opts(_workingPair.tgt)}</select>`;
+  const persist = () => { storageSaveWorkingPair(); renderView(_currentView); };
+  eid('dsWpSrc')?.addEventListener('change', e => { _workingPair.src = e.target.value; persist(); });
+  eid('dsWpTgt')?.addEventListener('change', e => { _workingPair.tgt = e.target.value; persist(); });
+  eid('dsWpSwap')?.addEventListener('click', () => {
+    const t = _workingPair.src; _workingPair.src = _workingPair.tgt; _workingPair.tgt = t;
+    persist();   // renderView repaints this control too
+  });
+}
+
+// Resolve an org URL (the value of every org <select>) to a live session
+// { orgUrl, sid } — or null when that org isn't open in any Chrome tab.
+// Used by Deploy Readiness + Schema View before each check/load.
+async function getOrgSession(orgUrl) {
+  if (!orgUrl) return null;
   // Refresh open-tab sessions so we hand back the freshest SID available.
   const freshRes = await sendBg({ type: 'GET_ALL_SF_SESSIONS' });
   if (freshRes?.sessions?.length) _allSessions = freshRes.sessions;
-  const sess = _resolveSession(org.url, _buildAllSessions());
+  const sess = _resolveSession(orgUrl, _buildAllSessions());
   return (sess && sess.sid) ? sess : null;
 }
 
@@ -1330,7 +1362,9 @@ function openSequenceBuilder(seq) {
   const editing = !!seq;
   const draft = seq
     ? JSON.parse(JSON.stringify(seq))
-    : { id: genId('seq'), name: '', sourceOrg: '', targetOrg: '',
+    : { id: genId('seq'), name: '',
+        // New sequences start with the working pair (still editable here).
+        sourceOrg: _workingPair.src || '', targetOrg: _workingPair.tgt || '',
         steps: [], createdAt: new Date().toISOString() };
   if (!Array.isArray(draft.steps)) draft.steps = [];
 
@@ -1790,8 +1824,9 @@ function openProfileBuilder(existingProfile) {
         name: 'New Profile',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        sourceOrg: '',
-        targetOrg: '',
+        // New profiles start with the working pair (still editable below).
+        sourceOrg: _workingPair.src || '',
+        targetOrg: _workingPair.tgt || '',
         // Diff configuration — drives the "is record X already in target?"
         // signal in the Pick Records modal + the "drift" summary on cards.
         // matchField is the field used as cross-org record identity (since
@@ -4774,8 +4809,9 @@ async function renderTransfer() {
     if (!_transferProfile && !_transferOrgOverride.src && !_transferOrgOverride.tgt) {
       _transferSrc = null; _transferTgt = null; return;
     }
-    const srcUrl = _transferOrgOverride.src || _transferProfile?.sourceOrg || '';
-    const tgtUrl = _transferOrgOverride.tgt || _transferProfile?.targetOrg || '';
+    // Precedence: run-time override > the profile's own orgs > working pair.
+    const srcUrl = _transferOrgOverride.src || _transferProfile?.sourceOrg || _workingPair.src || '';
+    const tgtUrl = _transferOrgOverride.tgt || _transferProfile?.targetOrg || _workingPair.tgt || '';
     _transferSrc = srcUrl ? _resolveSession(srcUrl, allSess) || { orgUrl: srcUrl, sid: null } : null;
     _transferTgt = tgtUrl ? _resolveSession(tgtUrl, allSess) || { orgUrl: tgtUrl, sid: null } : null;
   }
@@ -5030,8 +5066,8 @@ function renderTrOrgPair() {
 
   const p       = _transferProfile;
   const allSess = _buildAllSessions();
-  const srcUrl  = _transferOrgOverride.src || p.sourceOrg || '';
-  const tgtUrl  = _transferOrgOverride.tgt || p.targetOrg || '';
+  const srcUrl  = _transferOrgOverride.src || p.sourceOrg || _workingPair.src || '';
+  const tgtUrl  = _transferOrgOverride.tgt || p.targetOrg || _workingPair.tgt || '';
   const overridden = !!(_transferOrgOverride.src || _transferOrgOverride.tgt);
 
   // All orgs the studio knows about (remembered + currently open), so the
@@ -7179,11 +7215,16 @@ let _orgCompareState = {
 };
 
 async function renderOrgCompare() {
-  const allSess = _buildAllSessions();
-  if (!_orgCompareState.srcOrgUrl && _orgUrl) _orgCompareState.srcOrgUrl = _orgUrl;
+  // Default to the working pair, falling back to the current tab's org.
+  if (!_orgCompareState.srcOrgUrl) _orgCompareState.srcOrgUrl = _workingPair.src || _orgUrl || '';
+  if (!_orgCompareState.tgtOrgUrl && _workingPair.tgt) _orgCompareState.tgtOrgUrl = _workingPair.tgt;
 
-  const orgOptions = allSess.map(s =>
-    `<option value="${esc(s.orgUrl)}">${esc(orgOptionLabel(s.orgUrl, s.label))}</option>`
+  // All known orgs (remembered + live), like every other picker — a closed
+  // org is pickable and produces the standard "open it in a tab" error at
+  // run time instead of silently missing from the list.
+  const _ocLs = _liveOrgSet();
+  const orgOptions = allMapOrgs().map(o =>
+    `<option value="${esc(o.url)}">${esc(orgOptionLabel(o.url, o.label, _ocLs))}</option>`
   ).join('');
 
   setMain(`
@@ -7812,7 +7853,7 @@ function renderHistory() {
 function renderReadiness() {
   const orgs = allMapOrgs();
   const orgOptions = orgs.map(o =>
-    `<option value="${o.id}">${esc(orgOptionLabel(o.url, o.label))}</option>`
+    `<option value="${esc(o.url)}">${esc(orgOptionLabel(o.url, o.label))}</option>`
   ).join('');
 
   setMain(`
@@ -7886,6 +7927,14 @@ function renderReadiness() {
   eid('drObjectsPanel')?.addEventListener('toggle', e => {
     if (e.target.open) drRefreshObjectList();
   });
+
+  // Default both selects to the working pair (option values are org URLs).
+  {
+    const s = eid('drSrcOrg'), t = eid('drTgtOrg');
+    if (s && !s.value && _workingPair.src) s.value = _workingPair.src;
+    if (t && !t.value && _workingPair.tgt) t.value = _workingPair.tgt;
+    if (s?.value) drRefreshObjectList();
+  }
 }
 
 // ── Deploy Readiness object multi-select ───────────────────────
@@ -8412,7 +8461,7 @@ let _svDragNode = null;
 function renderSchemaView() {
   const orgs = allMapOrgs();
   const orgOptions = orgs.map(o =>
-    `<option value="${o.id}">${esc(orgOptionLabel(o.url, o.label))}</option>`
+    `<option value="${esc(o.url)}">${esc(orgOptionLabel(o.url, o.label))}</option>`
   ).join('');
 
   setMain(`
@@ -8564,6 +8613,11 @@ function renderSchemaView() {
 
     // Refresh suggestions if org changes
     eid('svOrg')?.addEventListener('change', () => { svAcClose(); _svAcTimer = null; });
+    // Default the org to the working pair's SOURCE (option values are URLs).
+    {
+      const s = eid('svOrg');
+      if (s && !s.value && _workingPair.src) s.value = _workingPair.src;
+    }
   }
 }
 
