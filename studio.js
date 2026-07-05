@@ -7134,18 +7134,22 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const SYS = new Set(['Id','CreatedDate','CreatedById','LastModifiedDate','LastModifiedById','SystemModstamp','IsDeleted']);
   let srcFields = Object.keys(fm).filter(k => fm[k] !== null && fm[k] !== '' && !SYS.has(k));
 
-  // Validate the mapping against the SOURCE describe. Two filters:
+  // Validate the mapping against the SOURCE describe. Filters + resolution:
   //  - STALE fields: fieldMappings keys persist in the profile, so a field
   //    later deleted from the org 400s the whole source read
   //    ("No such column 'X' on entity 'Y'") and kills the entire overwrite
   //    phase. Drop them and say so, instead of failing everything.
-  //  - LOOKUP fields (type 'reference'): their values are org-local record
-  //    Ids; PATCHing the source org's Id into the target would be garbage
-  //    (or an "invalid cross reference id" failure). RecordTypeId is the
-  //    one exception: it stays because it gets remapped by DeveloperName
-  //    below. Lookup re-pointing belongs to the transfer engine's
-  //    resolution strategies, not the reconcile overwrite.
+  //  - LOOKUP fields (type 'reference'): raw ids are org-local, so they are
+  //    RESOLVED, not copied — the source parent's key (Name / configured
+  //    match field) is read via dot-path and matched against the target's
+  //    parents, exactly like the child-section Relink. The old behavior of
+  //    skipping lookups entirely left records permanently "drifted": the
+  //    scan compares lookups by related-record name, so an overwrite that
+  //    never touched them could never bring records in sync. Polymorphic /
+  //    relationship-less lookups are still skipped; RecordTypeId keeps its
+  //    own DeveloperName remap below.
   const warnings = [];
+  let refPairs = [];   // [{sf, tf, relName, matchField, parentObj, unresolved}]
   try {
     const [d, dt] = await Promise.all([
       sendBg({ type: 'SF_REST_GET', orgUrl: srcSess.orgUrl, sid: srcSess.sid,
@@ -7155,11 +7159,28 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     ]);
     if (d && !d.error && Array.isArray(d.fields) && d.fields.length) {
       const srcNames = new Set(d.fields.map(f => f.name));
-      const refs     = new Set(d.fields.filter(f => f.type === 'reference' && f.name !== 'RecordTypeId').map(f => f.name));
       const stale    = srcFields.filter(k => !srcNames.has(k));
       if (stale.length) {
-        warnings.push(`skipped ${stale.length} mapped field(s) that no longer exist on ${objType} in the source org: ${stale.join(', ')} — open ✏ Edit → Fields & mapping to clean them up`);
+        warnings.push(`⚠ skipped ${stale.length} mapped field(s) that no longer exist on ${objType} in the source org: ${stale.join(', ')} — open ✏ Edit → Fields & mapping to clean them up`);
       }
+      // Mapped lookups → resolve-by-key pairs (mirrors buildLookupCompareMap).
+      const lkpCfg = (node.lookupResolutions || {});
+      for (const f of d.fields) {
+        if (f.type !== 'reference' || f.name === 'RecordTypeId') continue;
+        if (!srcFields.includes(f.name)) continue;
+        const cfg  = lkpCfg[f.name];
+        const poly = f.polymorphicForeignKey || (f.referenceTo || []).length > 1;
+        if (!f.relationshipName || (poly && !cfg?.matchObject)) continue;
+        refPairs.push({
+          sf: f.name,
+          tf: fm[f.name] || f.name,
+          relName:    f.relationshipName,
+          matchField: cfg?.matchField || 'Name',
+          parentObj:  cfg?.matchObject || (f.referenceTo || [])[0],
+          unresolved: 0
+        });
+      }
+      const refs = new Set(d.fields.filter(f => f.type === 'reference' && f.name !== 'RecordTypeId').map(f => f.name));
       srcFields = srcFields.filter(k => srcNames.has(k) && !refs.has(k));
     }
     // TARGET-side validation — the PATCH writes the MAPPED names into the
@@ -7175,25 +7196,59 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
         if (!tgtUpd.get(tf)) { badTgt.push(`${sf} → ${tf} (read-only in target)`); return false; }
         return true;
       });
+      refPairs = refPairs.filter(rp => {
+        if (!tgtUpd.has(rp.tf)) { badTgt.push(`${rp.sf} → ${rp.tf} (missing in target)`);   return false; }
+        if (!tgtUpd.get(rp.tf)) { badTgt.push(`${rp.sf} → ${rp.tf} (read-only in target)`); return false; }
+        return true;
+      });
       if (badTgt.length) {
-        warnings.push(`skipped ${badTgt.length} mapped field(s) the target org can't accept: ${badTgt.join(', ')} — open ✏ Edit → Fields & mapping to fix`);
+        warnings.push(`⚠ skipped ${badTgt.length} mapped field(s) the target org can't accept: ${badTgt.join(', ')} — open ✏ Edit → Fields & mapping to fix`);
       }
     }
   } catch (_) { /* best effort — proceed with the unfiltered list */ }
 
-  if (!srcFields.length) {
+  if (!srcFields.length && !refPairs.length) {
     return { ok: 0, failed: sourceIds.length, errors: [...warnings, 'No mapped fields to overwrite — configure Field Mapping on the root node.'] };
   }
 
-  // Fetch source records in chunks.
+  // Fetch source records in chunks — plain fields plus each lookup's parent
+  // KEY via dot-path (Account.Name style) for target-side resolution.
   const idList = sourceIds.filter(id => srcToTgt.has(id));
+  const selFields = [...new Set([
+    'Id', ...srcFields,
+    ...refPairs.map(rp => `${rp.relName}.${rp.matchField}`)
+  ])];
   const srcRecs = [];
   for (let i = 0; i < idList.length; i += 200) {
     const chunk = idList.slice(i, i + 200);
-    const soql = `SELECT ${[...new Set(['Id', ...srcFields])].join(',')} FROM ${objType} WHERE Id IN (${chunk.map(id => `'${id}'`).join(',')})`;
+    const soql = `SELECT ${selFields.join(',')} FROM ${objType} WHERE Id IN (${chunk.map(id => `'${id}'`).join(',')})`;
     const res  = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid, query: soql });
     if (res?.error) return { ok: 0, failed: idList.length, errors: [...warnings, `Source read failed: ${res.error}`] };
     srcRecs.push(...(res.records || []));
+  }
+
+  // Resolve each lookup's target parents by key (fresh query, so parents
+  // inserted earlier in this same reconcile run count). First match wins.
+  for (const rp of refPairs) {
+    rp.byKey = new Map();
+    const keys = [...new Set(srcRecs
+      .map(r => r[rp.relName] ? r[rp.relName][rp.matchField] : null)
+      .filter(v => v != null && v !== ''))];
+    for (let i = 0; i < keys.length; i += 100) {
+      const lit = keys.slice(i, i + 100)
+        .map(v => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',');
+      const q = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+        query: `SELECT Id, ${rp.matchField} FROM ${rp.parentObj} WHERE ${rp.matchField} IN (${lit})` });
+      if (q?.error) {
+        warnings.push(`⚠ ${rp.sf}: couldn't look up ${rp.parentObj} by ${rp.matchField} in the target (${q.error}) — this lookup left unchanged`);
+        rp.failed = true;
+        break;
+      }
+      for (const rec of (q.records || [])) {
+        const k = String(rec[rp.matchField] ?? '');
+        if (k && !rp.byKey.has(k)) rp.byKey.set(k, rec.Id);
+      }
+    }
   }
 
   // Match RecordTypes by DeveloperName when RecordTypeId is being written.
@@ -7240,8 +7295,24 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       }
       p[tf] = v;
     }
+    // Lookups: write the resolved TARGET parent id. Unresolvable parents
+    // are left unchanged (never nulled) and counted for the summary.
+    for (const rp of refPairs) {
+      if (rp.failed) continue;
+      const key = sr[rp.relName] ? sr[rp.relName][rp.matchField] : null;
+      if (key == null || key === '') continue;      // no parent in source — leave as-is
+      const pid = rp.byKey.get(String(key));
+      if (!pid) { rp.unresolved++; continue; }
+      p[rp.tf] = pid;
+    }
     return p;
   }).filter(p => p.Id);
+
+  for (const rp of refPairs) {
+    if (rp.unresolved) {
+      warnings.push(`⚠ ${rp.sf}: ${rp.unresolved} record(s) point at a ${rp.parentObj} with no match in the target (by ${rp.matchField}) — left unchanged; insert the parent first or pick a better match field`);
+    }
+  }
 
   const res = await sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: payloads });
   const arr = Array.isArray(res) ? res : [];
@@ -7898,7 +7969,7 @@ function renderHistory() {
           ${(run.errors || []).length ? `
             <details class="ds-history-errors">
               <summary>${run.errors.length} error${run.errors.length!==1?'s':''}</summary>
-              ${run.errors.map(e => `<div class="ds-history-err-row">❌ ${esc(e)}</div>`).join('')}
+              ${run.errors.map(e => `<div class="ds-history-err-row">${String(e).includes('⚠') ? '⚠' : '❌'} ${esc(e)}</div>`).join('')}
             </details>` : ''}
         </div>`;
       }).join('')}
