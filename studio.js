@@ -7115,25 +7115,36 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const SYS = new Set(['Id','CreatedDate','CreatedById','LastModifiedDate','LastModifiedById','SystemModstamp','IsDeleted']);
   let srcFields = Object.keys(fm).filter(k => fm[k] !== null && fm[k] !== '' && !SYS.has(k));
 
-  // Drop LOOKUP fields (type 'reference') — their values are org-local
-  // record Ids; PATCHing the source org's Id into the target would be
-  // garbage (or an "invalid cross reference id" failure). RecordTypeId is
-  // the one exception: it stays because it gets remapped by DeveloperName
-  // below. Lookup re-pointing belongs to the transfer engine's resolution
-  // strategies, not the reconcile overwrite.
+  // Validate the mapping against the SOURCE describe. Two filters:
+  //  - STALE fields: fieldMappings keys persist in the profile, so a field
+  //    later deleted from the org 400s the whole source read
+  //    ("No such column 'X' on entity 'Y'") and kills the entire overwrite
+  //    phase. Drop them and say so, instead of failing everything.
+  //  - LOOKUP fields (type 'reference'): their values are org-local record
+  //    Ids; PATCHing the source org's Id into the target would be garbage
+  //    (or an "invalid cross reference id" failure). RecordTypeId is the
+  //    one exception: it stays because it gets remapped by DeveloperName
+  //    below. Lookup re-pointing belongs to the transfer engine's
+  //    resolution strategies, not the reconcile overwrite.
+  const warnings = [];
   try {
     const d = await sendBg({
       type: 'SF_REST_GET', orgUrl: srcSess.orgUrl, sid: srcSess.sid,
       path: `services/data/v62.0/sobjects/${objType}/describe`
     });
-    if (d && !d.error && Array.isArray(d.fields)) {
-      const refs = new Set(d.fields.filter(f => f.type === 'reference' && f.name !== 'RecordTypeId').map(f => f.name));
-      srcFields = srcFields.filter(k => !refs.has(k));
+    if (d && !d.error && Array.isArray(d.fields) && d.fields.length) {
+      const srcNames = new Set(d.fields.map(f => f.name));
+      const refs     = new Set(d.fields.filter(f => f.type === 'reference' && f.name !== 'RecordTypeId').map(f => f.name));
+      const stale    = srcFields.filter(k => !srcNames.has(k));
+      if (stale.length) {
+        warnings.push(`skipped ${stale.length} mapped field(s) that no longer exist on ${objType} in the source org: ${stale.join(', ')} — open ✏ Edit → Fields & mapping to clean them up`);
+      }
+      srcFields = srcFields.filter(k => srcNames.has(k) && !refs.has(k));
     }
   } catch (_) { /* best effort — proceed with the unfiltered list */ }
 
   if (!srcFields.length) {
-    return { ok: 0, failed: sourceIds.length, errors: ['No mapped fields to overwrite — configure Field Mapping on the root node.'] };
+    return { ok: 0, failed: sourceIds.length, errors: [...warnings, 'No mapped fields to overwrite — configure Field Mapping on the root node.'] };
   }
 
   // Fetch source records in chunks.
@@ -7143,7 +7154,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     const chunk = idList.slice(i, i + 200);
     const soql = `SELECT ${[...new Set(['Id', ...srcFields])].join(',')} FROM ${objType} WHERE Id IN (${chunk.map(id => `'${id}'`).join(',')})`;
     const res  = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid, query: soql });
-    if (res?.error) return { ok: 0, failed: idList.length, errors: [`Source read failed: ${res.error}`] };
+    if (res?.error) return { ok: 0, failed: idList.length, errors: [...warnings, `Source read failed: ${res.error}`] };
     srcRecs.push(...(res.records || []));
   }
 
@@ -7197,7 +7208,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const res = await sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: payloads });
   const arr = Array.isArray(res) ? res : [];
   const ok = arr.filter(r => r.success).length;
-  const errors = [...ovwErrors];
+  const errors = [...warnings, ...ovwErrors];
   for (const r of arr) {
     if (!r.success) errors.push(`${objType}: ${(r.errors || []).map(e => e.message).join('; ')}`);
   }
