@@ -2128,6 +2128,11 @@ html, body {
 .ds-rec-col-row:hover { background: var(--brand-bg); }
 .ds-rec-col-row input[type=checkbox] { flex-shrink: 0; accent-color: var(--brand); }
 .ds-rec-col-key { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-rec-drift-why {
+  font-size: 10px; color: var(--subtext); font-style: italic;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 40%; flex-shrink: 1;
+}
 .ds-rec-drift-link { font-size: 10.5px; color: var(--brand); cursor: pointer; flex-shrink: 0; }
 .ds-rec-drift-link:hover { text-decoration: underline; }
 .ds-rec-drift-expand {
