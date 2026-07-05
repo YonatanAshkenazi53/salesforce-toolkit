@@ -4848,7 +4848,13 @@ function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap
     const sv = srcRec[sf], tv = tgtRec[tf];
     const sStr = (sv == null || sv === '') ? '∅' : String(sv);
     const tStr = (tv == null || tv === '') ? '∅' : String(tv);
-    pairs.push({ srcField: sf, tgtField: tf, srcVal: sStr, tgtVal: tStr, differs: sStr !== tStr });
+    const differs = sStr !== tStr;
+    // Near-invisible differences get named — "Word of mouth" vs "Word of
+    // Mouth" looks identical at a glance but is real drift.
+    const subtle = differs && sStr.toLowerCase() === tStr.toLowerCase() ? 'case only'
+                 : differs && sStr.trim() === tStr.trim() ? 'whitespace only'
+                 : null;
+    pairs.push({ srcField: sf, tgtField: tf, srcVal: sStr, tgtVal: tStr, differs, subtle });
   }
   const diffCount = pairs.filter(p => p.differs).length;
   if (!pairs.length) {
@@ -4868,6 +4874,7 @@ function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap
             <span class="ds-drift-compare-field" title="${p.srcField !== p.tgtField ? esc(p.srcField + ' → ' + p.tgtField) : esc(p.srcField)}">
               ${esc(p.srcField)}${p.srcField !== p.tgtField ? `<span class="ds-drift-compare-rename"> → ${esc(p.tgtField)}</span>` : ''}
               ${p.note ? `<span class="ds-drift-compare-lkptag">${esc(p.note)}</span>` : ''}
+              ${p.subtle ? `<span class="ds-drift-compare-lkptag" title="The values differ only subtly — easy to miss by eye">≈ ${esc(p.subtle)}</span>` : ''}
             </span>
             <span class="ds-drift-compare-val">${esc(p.srcVal)}</span>
             <span class="ds-drift-compare-val">${esc(p.tgtVal)}</span>
@@ -6866,6 +6873,8 @@ async function runReconcile(profile, objType, buckets) {
     if (!childCounts[obj]) childCounts[obj] = { created: 0, failed: 0, connected: 0, connectFailed: 0, relinked: 0, relinkFailed: 0 };
     childCounts[obj][key] += by;
   };
+  // Written-record refs ({id, label}) for History links, per object.
+  const rootTargets = [];
   const allErrors = [];
 
   // ── 1. Delete extras (regular → Recycle Bin, or hard → purge) ────────
@@ -6974,6 +6983,7 @@ async function runReconcile(profile, objType, buckets) {
       });
       const s = res.summary?.[objType] || {};
       counts.inserted += (s.created || 0); counts.insertedFailed += (s.failed || 0);
+      rootTargets.push(...(s.targetRecords || []));
       log(s.failed ? '⚠' : '✅', `Inserted ${s.created || 0} ${objType}${s.failed ? `, ${s.failed} failed` : ''}`, s.failed ? 'ds-prog-err' : '');
       for (const a of childActs) {
         if (!a.groupA.length) continue;
@@ -6984,6 +6994,9 @@ async function runReconcile(profile, objType, buckets) {
         bumpChild(obj, 'failed',  cSum.failed  || 0);
         bumpChild(obj, 'connected', cSum.connected || 0);
         bumpChild(obj, 'connectFailed', cSum.connectFailed || 0);
+        if (cSum.targetRecords?.length) {
+          childCounts[obj].targetRecords = (childCounts[obj].targetRecords || []).concat(cSum.targetRecords);
+        }
         log('  ' + (cSum.failed ? '⚠' : '✅'),
           `${obj}: ${cSum.created || 0} created${cSum.connected ? `, ${cSum.connected} linked to parent` : ''}${cSum.connectOrphaned ? `, ${cSum.connectOrphaned} unlinked (parent failed)` : ''}${cSum.failed ? `, ${cSum.failed} failed` : ''}`,
           cSum.failed ? 'ds-prog-err' : '');
@@ -7023,6 +7036,9 @@ async function runReconcile(profile, objType, buckets) {
       const s2 = res.summary?.[obj] || {};
       bumpChild(obj, 'created', s2.created || 0);
       bumpChild(obj, 'failed',  s2.failed  || 0);
+      if (s2.targetRecords?.length) {
+        childCounts[obj].targetRecords = (childCounts[obj].targetRecords || []).concat(s2.targetRecords);
+      }
       log(s2.failed ? '⚠' : '✅', `${obj}: ${s2.created || 0} created under existing parents${s2.failed ? `, ${s2.failed} failed` : ''}`, s2.failed ? 'ds-prog-err' : '');
       (res.errors || []).forEach(e => allErrors.push(`insert ${obj}: ${e}`));
       (res.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
@@ -7095,6 +7111,7 @@ async function runReconcile(profile, objType, buckets) {
     try {
       const result = await reconcileOverwrite(profile, objType, ovwIds, buckets.drift, srcSess, tgtSess);
       counts.updated += (result.ok || 0); counts.updatedFailed += (result.failed || 0);
+      rootTargets.push(...(result.updatedRecords || []));
       log(result.failed ? '⚠' : '✅', `Updated ${result.ok}${result.failed ? `, ${result.failed} failed` : ''}`, result.failed ? 'ds-prog-err' : '');
       (result.errors || []).forEach(e => allErrors.push(`update: ${e}`));
       (result.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
@@ -7159,7 +7176,8 @@ async function runReconcile(profile, objType, buckets) {
         pulled:   counts.pulled,   pulledFailed:   counts.pulledFailed,
         updatedSource: counts.updatedSource, updatedSourceFailed: counts.updatedSourceFailed,
         purged:   counts.purged,
-        deleteMode: _recDeleteMode
+        deleteMode: _recDeleteMode,
+        ...(rootTargets.length ? { targetRecords: rootTargets.slice(0, 200) } : {})
       },
       // Child objects — inserted/linked/relinked counts per relationship.
       ...Object.fromEntries(Object.entries(childCounts)
@@ -7167,7 +7185,8 @@ async function runReconcile(profile, objType, buckets) {
         .map(([obj, c]) => [obj, {
           inserted: c.created, insertedFailed: c.failed,
           connected: c.connected, connectFailed: c.connectFailed,
-          relinked: c.relinked, relinkFailed: c.relinkFailed
+          relinked: c.relinked, relinkFailed: c.relinkFailed,
+          ...(c.targetRecords?.length ? { targetRecords: c.targetRecords.slice(0, 200) } : {})
         }]))
     },
     errors: allErrors.slice(0, 50)
@@ -7404,9 +7423,13 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     }
   }
 
-  // Build PATCH payloads keyed by target Id.
-  const payloads = srcRecs.map(sr => {
+  // Build PATCH payloads keyed by target Id. rowMeta stays aligned with
+  // payloads so per-record results can be turned into History record links.
+  const payloads = [];
+  const rowMeta  = [];   // [{ id, label }]
+  for (const sr of srcRecs) {
     const tgtId = srcToTgt.get(sr.Id);
+    if (!tgtId) continue;
     const p = { attributes: { type: objType }, Id: tgtId };
     for (const sf of srcFields) {
       const tf = fm[sf];
@@ -7442,8 +7465,9 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
         else                    ownerKept++;
       }
     }
-    return p;
-  }).filter(p => p.Id);
+    payloads.push(p);
+    rowMeta.push({ id: tgtId, label: sr.Name || tgtId });
+  }
 
   if (ownerFellBack) warnings.push(`⚠ owners: ${ownerFellBack} record(s) reassigned to the fallback user (owner had no name match in the target)`);
   if (ownerKept)     warnings.push(`⚠ owners: ${ownerKept} record(s) kept their current target owner (no name match and no fallback user set)`);
@@ -7458,6 +7482,11 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const arr = Array.isArray(res) ? res : [];
   const ok = arr.filter(r => r.success).length;
   const errors = [...warnings, ...ovwErrors];
+  // Successfully-updated records, with labels — History renders them as links.
+  const updatedRecords = [];
+  arr.forEach((r, i) => {
+    if (r.success && rowMeta[i] && updatedRecords.length < 200) updatedRecords.push(rowMeta[i]);
+  });
   // Dedupe identical per-record failures — 20 rows all failing with the same
   // "No such column 'X'" should read as ONE line with a count, not a wall.
   const failCounts = new Map();
@@ -7467,7 +7496,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     failCounts.set(m, (failCounts.get(m) || 0) + 1);
   }
   for (const [m, c] of failCounts) errors.push(c > 1 ? `${m}  (×${c})` : m);
-  return { ok, failed: arr.length - ok, errors };
+  return { ok, failed: arr.length - ok, errors, updatedRecords };
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -8106,6 +8135,22 @@ function renderHistory() {
               return `<span class="ds-summary-chip">${esc(obj)}: ${s.created || 0}↑${s.failed ? ' '+s.failed+'✗' : ''}${s.connected ? ' '+s.connected+'🔗' : ''}</span>`;
             }).join('')}
           </div>
+          ${(() => {
+            // Written-record links — every inserted/updated record, opening
+            // directly in the target org.
+            const tgtBase = String(run.tgtOrgUrl || run.targetOrg || '').replace(/\/+$/, '');
+            const withRecs = Object.entries(run.summary || {}).filter(([, s]) => s.targetRecords?.length);
+            if (!tgtBase || !withRecs.length) return '';
+            return withRecs.map(([obj, s]) => `
+              <details class="ds-history-links">
+                <summary>🔗 ${esc(obj)}: ${s.targetRecords.length} record(s) written — open in ${esc(orgLabel(tgtBase))}</summary>
+                <div class="ds-history-links-list">
+                  ${s.targetRecords.map(tr =>
+                    `<a href="${esc(tgtBase)}/${esc(tr.id)}" target="_blank" rel="noopener">${esc(tr.label || tr.id)}</a>`
+                  ).join('')}
+                </div>
+              </details>`).join('');
+          })()}
           ${(run.errors || []).length ? `
             <details class="ds-history-errors">
               <summary>${run.errors.length} error${run.errors.length!==1?'s':''}</summary>

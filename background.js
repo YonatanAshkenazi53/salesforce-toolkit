@@ -505,6 +505,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // summary so the Pick-Records modal can badge already-deployed
       // records and avoid the "did this go through?" guesswork.
       const transferredSourceIds = [];
+      // Target-side record refs for History links — id + a human label
+      // (record Name when fetched, else the id). Capped to keep storage sane.
+      const targetRecords = [];
       // Mirror for failures — drives the "↻ Retry failed (N)" button on
       // History rows. Each entry carries the source ID + first error msg
       // so the UI can show what went wrong per row.
@@ -540,6 +543,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           if (result.success) {
             idMap[recs[i + j].Id] = result.id; ok++;
             transferredSourceIds.push(recs[i + j].Id);
+            if (targetRecords.length < 200) {
+              targetRecords.push({ id: result.id, label: recs[i + j].Name || result.id });
+            }
           }
           else {
             fail++;
@@ -615,6 +621,10 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // to badge already-deployed records.
       if (transferredSourceIds.length) {
         summary[objType].transferredSourceIds = transferredSourceIds.slice(0, 2000);
+      }
+      // Target record refs → History renders them as clickable links.
+      if (targetRecords.length) {
+        summary[objType].targetRecords = targetRecords;
       }
       // Failed source IDs — drives the "↻ Retry failed" button on History
       // rows. Cap at 2000 entries; each is { id, error } so the UI can show
