@@ -4152,7 +4152,12 @@ function deriveScanConfig(profile, node) {
   const SYSTEM_NEVER_COMPARE = new Set([
     'Id', 'CreatedDate', 'CreatedById', 'LastModifiedDate', 'LastModifiedById',
     'SystemModstamp', 'LastActivityDate', 'LastViewedDate', 'LastReferencedDate',
-    'IsDeleted', 'MasterRecordId', 'IsArchived'
+    'IsDeleted', 'MasterRecordId', 'IsArchived',
+    // OwnerId: the transfer engine NEVER copies owners (different user sets
+    // per org — target defaults to the running user), so comparing owners by
+    // name is permanent false drift: it kept whole result sets "drifted"
+    // forever with nothing able to sync them.
+    'OwnerId'
   ]);
   const fromMappings = Object.keys(mappings).filter(k =>
     mappings[k] !== null && mappings[k] !== '' && !SYSTEM_NEVER_COMPARE.has(k)
@@ -7131,7 +7136,9 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const fm   = node.fieldMappings || {};
   // Source fields to read = the mapped source field names (those that map to
   // a non-null target). Drop system fields.
-  const SYS = new Set(['Id','CreatedDate','CreatedById','LastModifiedDate','LastModifiedById','SystemModstamp','IsDeleted']);
+  // OwnerId included: owners are org-local users — the engine never copies
+  // them and the scan no longer compares them, so don't try to relink them.
+  const SYS = new Set(['Id','CreatedDate','CreatedById','LastModifiedDate','LastModifiedById','SystemModstamp','IsDeleted','OwnerId']);
   let srcFields = Object.keys(fm).filter(k => fm[k] !== null && fm[k] !== '' && !SYS.has(k));
 
   // Validate the mapping against the SOURCE describe. Filters + resolution:
