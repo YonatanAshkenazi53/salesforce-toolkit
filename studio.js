@@ -1913,6 +1913,22 @@ function renderBuilder() {
         </div>
       </div>
 
+      <div class="ds-builder-owner-row">
+        <label class="ds-lbl">Record owners
+          <span class="ds-builder-org-hint">(users differ between orgs — pick how owners transfer)</span>
+        </label>
+        <div class="ds-builder-owner-ctls">
+          <select id="dsProfileOwnerMode" class="ds-input">
+            <option value="skip"  ${p.ownerMapping?.mode !== 'match' ? 'selected' : ''}>Don't copy owners — the target assigns its default (the running user)</option>
+            <option value="match" ${p.ownerMapping?.mode === 'match' ? 'selected' : ''}>Match owner by name in the target; unmatched → a fallback user</option>
+          </select>
+          <select id="dsProfileOwnerFallback" class="ds-input" style="${p.ownerMapping?.mode === 'match' ? '' : 'display:none'}">
+            <option value="">${p.ownerMapping?.fallbackUserId ? esc(p.ownerMapping.fallbackUserName || 'saved fallback user') : '— fallback user (loads from target org) —'}</option>
+          </select>
+        </div>
+        <div id="dsProfileOwnerHint" class="ds-builder-owner-hint"></div>
+      </div>
+
       <!-- Diff config is now DERIVED, not configured here.
            Match field defaults to Name and auto-falls-back to the object's
            describe-flagged nameField (e.g. ReturnOrderNumber, CaseNumber)
@@ -1963,6 +1979,64 @@ function renderBuilder() {
   // accidental "wrong org" exposure.
   eid('dsProfileSrcOrg')?.addEventListener('change', e => { _editingProfile.sourceOrg = e.target.value || ''; });
   eid('dsProfileTgtOrg')?.addEventListener('change', e => { _editingProfile.targetOrg = e.target.value || ''; });
+
+  // ── Owner handling ──────────────────────────────────────────────
+  // 'skip' (default): owners never copy — target assigns its default.
+  // 'match': resolve the source owner's NAME to a target user at write
+  // time; unmatched owners get the fallback user picked here. The user
+  // list loads live from the TARGET org (must be open in a tab).
+  async function loadOwnerFallbackUsers() {
+    const sel  = eid('dsProfileOwnerFallback');
+    const hint = eid('dsProfileOwnerHint');
+    if (!sel) return;
+    if (!_editingProfile.targetOrg) {
+      if (hint) hint.textContent = 'Pick a target org first — the fallback user comes from there.';
+      return;
+    }
+    const sess = _resolveSession(_editingProfile.targetOrg, _buildAllSessions());
+    if (!sess?.sid) {
+      if (hint) hint.textContent = `Open ${orgLabel(_editingProfile.targetOrg)} in a Chrome tab to load its users.`;
+      return;
+    }
+    if (hint) hint.textContent = 'Loading users…';
+    const q = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
+      query: `SELECT Id, Name, Username FROM User WHERE IsActive = true AND UserType = 'Standard' ORDER BY Name LIMIT 500` });
+    if (q?.error || !Array.isArray(q?.records)) {
+      if (hint) hint.textContent = `Couldn't load users: ${q?.error || 'no response'}`;
+      return;
+    }
+    const cur = _editingProfile.ownerMapping?.fallbackUserId || '';
+    sel.innerHTML = `<option value="">— fallback user (used when the owner has no name match) —</option>` +
+      q.records.map(u =>
+        `<option value="${esc(u.Id)}" data-name="${esc(u.Name)}" ${u.Id === cur ? 'selected' : ''}>${esc(u.Name)} (${esc(u.Username)})</option>`
+      ).join('');
+    if (hint) hint.textContent = cur && !q.records.some(u => u.Id === cur)
+      ? '⚠ The saved fallback user was not found (deactivated?) — pick another.'
+      : `${q.records.length} active user(s) in ${orgLabel(_editingProfile.targetOrg)}.`;
+  }
+  eid('dsProfileOwnerMode')?.addEventListener('change', e => {
+    const mode = e.target.value;
+    const sel  = eid('dsProfileOwnerFallback');
+    if (mode === 'match') {
+      _editingProfile.ownerMapping = { mode: 'match',
+        fallbackUserId:   _editingProfile.ownerMapping?.fallbackUserId   || null,
+        fallbackUserName: _editingProfile.ownerMapping?.fallbackUserName || null };
+      if (sel) sel.style.display = '';
+      loadOwnerFallbackUsers();
+    } else {
+      delete _editingProfile.ownerMapping;
+      if (sel) sel.style.display = 'none';
+      const hint = eid('dsProfileOwnerHint');
+      if (hint) hint.textContent = '';
+    }
+  });
+  eid('dsProfileOwnerFallback')?.addEventListener('change', e => {
+    if (!_editingProfile.ownerMapping) _editingProfile.ownerMapping = { mode: 'match' };
+    const opt = e.target.selectedOptions?.[0];
+    _editingProfile.ownerMapping.fallbackUserId   = e.target.value || null;
+    _editingProfile.ownerMapping.fallbackUserName = opt?.dataset?.name || null;
+  });
+  if (_editingProfile.ownerMapping?.mode === 'match') loadOwnerFallbackUsers();
 
   // ⇄ Swap orgs — a REAL swap, not just two dropdown flips. Direction-
   // sensitive config has to follow the orgs or it silently points the
@@ -5740,6 +5814,12 @@ async function runTransfer() {
       for (const c of (node.children || [])) await dryRunNode(c);
     }
 
+    // Owner-mapping sanity: matching without a fallback is allowed but easy
+    // to pick by accident — say what will happen to unmatched owners.
+    if (_transferProfile?.ownerMapping?.mode === 'match' && !_transferProfile.ownerMapping.fallbackUserId) {
+      logRow('⚠', 'Owner matching is ON but no fallback user is picked — owners with no name match get the target default on inserts, and keep their current owner on updates.', 'ds-prog-warn');
+    }
+
     await dryRunNode(buildTransferProfile().tree);
 
     if (dryRunIssues > 0) {
@@ -7143,10 +7223,17 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const fm   = node.fieldMappings || {};
   // Source fields to read = the mapped source field names (those that map to
   // a non-null target). Drop system fields.
-  // OwnerId included: owners are org-local users — the engine never copies
-  // them and the scan no longer compares them, so don't try to relink them.
+  // OwnerId excluded from the mapping-driven fields — owners are handled by
+  // the profile's ownerMapping setting below, not by field mapping.
   const SYS = new Set(['Id','CreatedDate','CreatedById','LastModifiedDate','LastModifiedById','SystemModstamp','IsDeleted','OwnerId']);
   let srcFields = Object.keys(fm).filter(k => fm[k] !== null && fm[k] !== '' && !SYS.has(k));
+
+  // Owner mapping ('match'): resolve source Owner.Name → target user;
+  // unmatched → the profile's fallback user; updates without a fallback
+  // leave the target's current owner untouched.
+  const ownerMode     = profile?.ownerMapping?.mode === 'match';
+  const ownerFallback = ownerMode ? (profile.ownerMapping.fallbackUserId || null) : null;
+  let   wantOwners    = false;
 
   // Validate the mapping against the SOURCE describe. Filters + resolution:
   //  - STALE fields: fieldMappings keys persist in the profile, so a field
@@ -7173,6 +7260,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     ]);
     if (d && !d.error && Array.isArray(d.fields) && d.fields.length) {
       const srcNames = new Set(d.fields.map(f => f.name));
+      wantOwners = ownerMode && srcNames.has('OwnerId');
       const stale    = srcFields.filter(k => !srcNames.has(k));
       if (stale.length) {
         warnings.push(`⚠ skipped ${stale.length} mapped field(s) that no longer exist on ${objType} in the source org: ${stale.join(', ')} — open ✏ Edit → Fields & mapping to clean them up`);
@@ -7218,10 +7306,14 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       if (badTgt.length) {
         warnings.push(`⚠ skipped ${badTgt.length} mapped field(s) the target org can't accept: ${badTgt.join(', ')} — open ✏ Edit → Fields & mapping to fix`);
       }
+      if (wantOwners && tgtUpd.size && !tgtUpd.get('OwnerId')) {
+        warnings.push('⚠ owners: OwnerId is not updateable in the target — owner matching skipped');
+        wantOwners = false;
+      }
     }
   } catch (_) { /* best effort — proceed with the unfiltered list */ }
 
-  if (!srcFields.length && !refPairs.length) {
+  if (!srcFields.length && !refPairs.length && !wantOwners) {
     return { ok: 0, failed: sourceIds.length, errors: [...warnings, 'No mapped fields to overwrite — configure Field Mapping on the root node.'] };
   }
 
@@ -7230,7 +7322,8 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const idList = sourceIds.filter(id => srcToTgt.has(id));
   const selFields = [...new Set([
     'Id', ...srcFields,
-    ...refPairs.map(rp => `${rp.relName}.${rp.matchField}`)
+    ...refPairs.map(rp => `${rp.relName}.${rp.matchField}`),
+    ...(wantOwners ? ['Owner.Name'] : [])
   ])];
   const srcRecs = [];
   for (let i = 0; i < idList.length; i += 200) {
@@ -7262,6 +7355,25 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
         const k = String(rec[rp.matchField] ?? '');
         if (k && !rp.byKey.has(k)) rp.byKey.set(k, rec.Id);
       }
+    }
+  }
+
+  // Resolve source owner names against the target's active users.
+  const ownerByName = new Map();
+  let ownerFellBack = 0, ownerKept = 0;
+  if (wantOwners) {
+    const names = [...new Set(srcRecs.map(r => r.Owner ? r.Owner.Name : null).filter(Boolean))];
+    for (let i = 0; i < names.length; i += 100) {
+      const lit = names.slice(i, i + 100)
+        .map(n => `'${String(n).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',');
+      const q = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+        query: `SELECT Id, Name FROM User WHERE IsActive = true AND Name IN (${lit})` });
+      if (q?.error) {
+        warnings.push(`⚠ owners: couldn't load target users (${q.error}) — owner matching skipped`);
+        wantOwners = false;
+        break;
+      }
+      for (const u of (q.records || [])) if (!ownerByName.has(u.Name)) ownerByName.set(u.Name, u.Id);
     }
   }
 
@@ -7319,8 +7431,22 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       if (!pid) { rp.unresolved++; continue; }
       p[rp.tf] = pid;
     }
+    // Owners: matched name → that user; unmatched → fallback; no fallback →
+    // the target's current owner stays untouched.
+    if (wantOwners) {
+      const oname = sr.Owner ? sr.Owner.Name : null;
+      if (oname) {
+        const matched = ownerByName.get(oname);
+        if (matched)           p.OwnerId = matched;
+        else if (ownerFallback) { p.OwnerId = ownerFallback; ownerFellBack++; }
+        else                    ownerKept++;
+      }
+    }
     return p;
   }).filter(p => p.Id);
+
+  if (ownerFellBack) warnings.push(`⚠ owners: ${ownerFellBack} record(s) reassigned to the fallback user (owner had no name match in the target)`);
+  if (ownerKept)     warnings.push(`⚠ owners: ${ownerKept} record(s) kept their current target owner (no name match and no fallback user set)`);
 
   for (const rp of refPairs) {
     if (rp.unresolved) {

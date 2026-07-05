@@ -744,6 +744,12 @@ html, body {
 }
 .ds-dark .ds-profile-card-orgs-missing { background: #2A1F00; color: #f59e0b; }
 
+/* ── Profile builder: owner handling ──────────────────────────── */
+.ds-builder-owner-row  { margin: 14px 0 6px; }
+.ds-builder-owner-ctls { display: flex; gap: 10px; flex-wrap: wrap; }
+.ds-builder-owner-ctls .ds-input { flex: 1 1 280px; min-width: 240px; }
+.ds-builder-owner-hint { font-size: 11.5px; color: var(--subtext); margin-top: 4px; }
+
 /* ── Working org pair (topbar) ────────────────────────────────── */
 .ds-pair-ctl { display: flex; align-items: center; gap: 5px; margin-right: 6px; }
 .ds-pair-lbl {
