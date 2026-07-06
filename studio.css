@@ -830,6 +830,8 @@ html, body {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;
 }
 .ds-history-links-list a:hover { text-decoration: underline; }
+.ds-history-links-failed > summary { color: var(--danger); }
+.ds-history-links-failed .ds-history-links-list a { color: var(--danger); }
 
 /* ── History filters ──────────────────────────────────────────── */
 .ds-hist-filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 0 0 14px; }

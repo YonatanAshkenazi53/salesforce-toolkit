@@ -551,7 +551,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             fail++;
             const msg = (result.errors || []).map(e => e.message).join('; ');
             errors.push(`${objType}: ${msg}`);
-            failedSourceIds.push({ id: recs[i + j].Id, error: msg });
+            // label → History links the failed record back to its SOURCE org
+            // (nothing exists in the target for a failed insert).
+            failedSourceIds.push({ id: recs[i + j].Id, error: msg, label: recs[i + j].Name || recs[i + j].Id });
             // When a record fails with "Required fields are missing" the user
             // almost always thinks "but my mapping IS correct" — log once which
             // fields actually went out, so the mismatch is obvious.
