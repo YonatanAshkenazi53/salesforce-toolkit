@@ -6875,6 +6875,10 @@ async function runReconcile(profile, objType, buckets) {
   };
   // Written-record refs ({id, label}) for History links, per object.
   const rootTargets = [];
+  // Failure refs: failed INSERTS link to the SOURCE record (nothing exists in
+  // target); failed UPDATES link to the TARGET record (PATCH refused).
+  const rootFailedInserts = [];
+  const rootFailedUpdates = [];
   const allErrors = [];
 
   // ── 1. Delete extras (regular → Recycle Bin, or hard → purge) ────────
@@ -6984,6 +6988,7 @@ async function runReconcile(profile, objType, buckets) {
       const s = res.summary?.[objType] || {};
       counts.inserted += (s.created || 0); counts.insertedFailed += (s.failed || 0);
       rootTargets.push(...(s.targetRecords || []));
+      rootFailedInserts.push(...(s.failedSourceIds || []));
       log(s.failed ? '⚠' : '✅', `Inserted ${s.created || 0} ${objType}${s.failed ? `, ${s.failed} failed` : ''}`, s.failed ? 'ds-prog-err' : '');
       for (const a of childActs) {
         if (!a.groupA.length) continue;
@@ -6996,6 +7001,9 @@ async function runReconcile(profile, objType, buckets) {
         bumpChild(obj, 'connectFailed', cSum.connectFailed || 0);
         if (cSum.targetRecords?.length) {
           childCounts[obj].targetRecords = (childCounts[obj].targetRecords || []).concat(cSum.targetRecords);
+        }
+        if (cSum.failedSourceIds?.length) {
+          childCounts[obj].failedSourceIds = (childCounts[obj].failedSourceIds || []).concat(cSum.failedSourceIds);
         }
         log('  ' + (cSum.failed ? '⚠' : '✅'),
           `${obj}: ${cSum.created || 0} created${cSum.connected ? `, ${cSum.connected} linked to parent` : ''}${cSum.connectOrphaned ? `, ${cSum.connectOrphaned} unlinked (parent failed)` : ''}${cSum.failed ? `, ${cSum.failed} failed` : ''}`,
@@ -7038,6 +7046,9 @@ async function runReconcile(profile, objType, buckets) {
       bumpChild(obj, 'failed',  s2.failed  || 0);
       if (s2.targetRecords?.length) {
         childCounts[obj].targetRecords = (childCounts[obj].targetRecords || []).concat(s2.targetRecords);
+      }
+      if (s2.failedSourceIds?.length) {
+        childCounts[obj].failedSourceIds = (childCounts[obj].failedSourceIds || []).concat(s2.failedSourceIds);
       }
       log(s2.failed ? '⚠' : '✅', `${obj}: ${s2.created || 0} created under existing parents${s2.failed ? `, ${s2.failed} failed` : ''}`, s2.failed ? 'ds-prog-err' : '');
       (res.errors || []).forEach(e => allErrors.push(`insert ${obj}: ${e}`));
@@ -7112,6 +7123,7 @@ async function runReconcile(profile, objType, buckets) {
       const result = await reconcileOverwrite(profile, objType, ovwIds, buckets.drift, srcSess, tgtSess);
       counts.updated += (result.ok || 0); counts.updatedFailed += (result.failed || 0);
       rootTargets.push(...(result.updatedRecords || []));
+      rootFailedUpdates.push(...(result.failedRecords || []));
       log(result.failed ? '⚠' : '✅', `Updated ${result.ok}${result.failed ? `, ${result.failed} failed` : ''}`, result.failed ? 'ds-prog-err' : '');
       (result.errors || []).forEach(e => allErrors.push(`update: ${e}`));
       (result.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
@@ -7177,7 +7189,9 @@ async function runReconcile(profile, objType, buckets) {
         updatedSource: counts.updatedSource, updatedSourceFailed: counts.updatedSourceFailed,
         purged:   counts.purged,
         deleteMode: _recDeleteMode,
-        ...(rootTargets.length ? { targetRecords: rootTargets.slice(0, 200) } : {})
+        ...(rootTargets.length ? { targetRecords: rootTargets.slice(0, 200) } : {}),
+        ...(rootFailedInserts.length ? { failedSourceIds: rootFailedInserts.slice(0, 200) } : {}),
+        ...(rootFailedUpdates.length ? { failedRecords: rootFailedUpdates.slice(0, 200) } : {})
       },
       // Child objects — inserted/linked/relinked counts per relationship.
       ...Object.fromEntries(Object.entries(childCounts)
@@ -7186,7 +7200,8 @@ async function runReconcile(profile, objType, buckets) {
           inserted: c.created, insertedFailed: c.failed,
           connected: c.connected, connectFailed: c.connectFailed,
           relinked: c.relinked, relinkFailed: c.relinkFailed,
-          ...(c.targetRecords?.length ? { targetRecords: c.targetRecords.slice(0, 200) } : {})
+          ...(c.targetRecords?.length ? { targetRecords: c.targetRecords.slice(0, 200) } : {}),
+          ...(c.failedSourceIds?.length ? { failedSourceIds: c.failedSourceIds.slice(0, 200) } : {})
         }]))
     },
     errors: allErrors.slice(0, 50)
@@ -7482,10 +7497,17 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const arr = Array.isArray(res) ? res : [];
   const ok = arr.filter(r => r.success).length;
   const errors = [...warnings, ...ovwErrors];
-  // Successfully-updated records, with labels — History renders them as links.
+  // Per-record outcomes with labels — History renders both as links:
+  // updated → the target record; failed update → also the target record
+  // (it exists — the PATCH was refused), with the error on hover.
   const updatedRecords = [];
+  const failedRecords  = [];
   arr.forEach((r, i) => {
-    if (r.success && rowMeta[i] && updatedRecords.length < 200) updatedRecords.push(rowMeta[i]);
+    if (!rowMeta[i]) return;
+    if (r.success) { if (updatedRecords.length < 200) updatedRecords.push(rowMeta[i]); }
+    else if (failedRecords.length < 200) {
+      failedRecords.push({ ...rowMeta[i], error: (r.errors || []).map(e => e.message).join('; ') });
+    }
   });
   // Dedupe identical per-record failures — 20 rows all failing with the same
   // "No such column 'X'" should read as ONE line with a count, not a wall.
@@ -7496,7 +7518,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     failCounts.set(m, (failCounts.get(m) || 0) + 1);
   }
   for (const [m, c] of failCounts) errors.push(c > 1 ? `${m}  (×${c})` : m);
-  return { ok, failed: arr.length - ok, errors, updatedRecords };
+  return { ok, failed: arr.length - ok, errors, updatedRecords, failedRecords };
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -8136,12 +8158,17 @@ function renderHistory() {
             }).join('')}
           </div>
           ${(() => {
-            // Written-record links — every inserted/updated record, opening
-            // directly in the target org.
+            // Record links. Written records open in the TARGET org. Failed
+            // records split by kind: failed UPDATES also open in the target
+            // (the record exists — the PATCH was refused); failed INSERTS
+            // open in the SOURCE org (nothing was created in the target).
+            // Error messages show on hover.
             const tgtBase = String(run.tgtOrgUrl || run.targetOrg || '').replace(/\/+$/, '');
-            const withRecs = Object.entries(run.summary || {}).filter(([, s]) => s.targetRecords?.length);
-            if (!tgtBase || !withRecs.length) return '';
-            return withRecs.map(([obj, s]) => `
+            const srcBase = String(run.srcOrgUrl || run.sourceOrg || '').replace(/\/+$/, '');
+            const out = [];
+            for (const [obj, s] of Object.entries(run.summary || {})) {
+              if (tgtBase && s.targetRecords?.length) {
+                out.push(`
               <details class="ds-history-links">
                 <summary>🔗 ${esc(obj)}: ${s.targetRecords.length} record(s) written — open in ${esc(orgLabel(tgtBase))}</summary>
                 <div class="ds-history-links-list">
@@ -8149,7 +8176,33 @@ function renderHistory() {
                     `<a href="${esc(tgtBase)}/${esc(tr.id)}" target="_blank" rel="noopener">${esc(tr.label || tr.id)}</a>`
                   ).join('')}
                 </div>
-              </details>`).join('');
+              </details>`);
+              }
+              if (tgtBase && s.failedRecords?.length) {
+                out.push(`
+              <details class="ds-history-links ds-history-links-failed">
+                <summary>✗ ${esc(obj)}: ${s.failedRecords.length} failed update(s) — open in ${esc(orgLabel(tgtBase))}</summary>
+                <div class="ds-history-links-list">
+                  ${s.failedRecords.map(fr =>
+                    `<a href="${esc(tgtBase)}/${esc(fr.id)}" target="_blank" rel="noopener" title="${esc(fr.error || '')}">${esc(fr.label || fr.id)}</a>`
+                  ).join('')}
+                </div>
+              </details>`);
+              }
+              const failedIns = (s.failedSourceIds || []).filter(f => f && typeof f === 'object' && f.id);
+              if (srcBase && failedIns.length) {
+                out.push(`
+              <details class="ds-history-links ds-history-links-failed">
+                <summary>✗ ${esc(obj)}: ${failedIns.length} failed insert(s) — open the SOURCE record in ${esc(orgLabel(srcBase))}</summary>
+                <div class="ds-history-links-list">
+                  ${failedIns.map(fr =>
+                    `<a href="${esc(srcBase)}/${esc(fr.id)}" target="_blank" rel="noopener" title="${esc(fr.error || '')}">${esc(fr.label || fr.id)}</a>`
+                  ).join('')}
+                </div>
+              </details>`);
+              }
+            }
+            return out.join('');
           })()}
           ${(run.errors || []).length ? `
             <details class="ds-history-errors">
