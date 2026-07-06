@@ -1,7 +1,7 @@
 // First real unit tests — the pure functions whose bugs have actually bitten
 // this codebase (org identity matching, copy-field selection).
 import { describe, it, expect } from 'vitest';
-import { extractFunction } from './extract.mjs';
+import { extractFunction, extractFunctions } from './extract.mjs';
 
 describe('_orgKey (studio.js) — org identity across Salesforce domain forms', () => {
   const _orgKey = extractFunction('studio.js', '_orgKey');
@@ -69,5 +69,49 @@ describe('buildCopyFields (background.js) — which fields a transfer reads', ()
   it('degrades to [Id] on a malformed describe (no .accessible regression!)', () => {
     expect(buildCopyFields(null)).toEqual(['Id']);
     expect(buildCopyFields({})).toEqual(['Id']);
+  });
+});
+
+describe('sftkBuildStoredZip (sftk-zip.js) — the shared Metadata-deploy zip builder', () => {
+  const { sftkCrc32, sftkBuildStoredZip } =
+    extractFunctions('sftk-zip.js', ['sftkCrc32', 'sftkBuildStoredZip']);
+
+  const abcBytes = new TextEncoder().encode('abc');
+
+  it('computes the canonical CRC-32 of "abc" (0x352441C2)', () => {
+    expect(sftkCrc32(abcBytes)).toBe(0x352441C2);
+  });
+
+  it('produces a structurally valid stored zip', () => {
+    const b64 = sftkBuildStoredZip([{ name: 'a.txt', data: abcBytes }]);
+    const zip = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    const dv  = new DataView(zip.buffer);
+
+    // Local file header at offset 0: PK\x03\x04, CRC at +14, sizes at +18/+22
+    expect(dv.getUint32(0, true)).toBe(0x04034b50);
+    expect(dv.getUint32(14, true)).toBe(0x352441C2);
+    expect(dv.getUint32(18, true)).toBe(3);          // compressed = raw (stored)
+    expect(dv.getUint32(22, true)).toBe(3);
+    expect(dv.getUint16(26, true)).toBe(5);          // 'a.txt'.length
+
+    // Filename + payload right after the 30-byte header
+    const text = new TextDecoder().decode(zip.subarray(30, 38));
+    expect(text).toBe('a.txtabc');
+
+    // End-of-central-directory record in the last 22 bytes, 1 entry
+    const eocdOff = zip.length - 22;
+    expect(dv.getUint32(eocdOff, true)).toBe(0x06054b50);
+    expect(dv.getUint16(eocdOff + 10, true)).toBe(1);
+  });
+
+  it('accepts strings for data and handles multiple files', () => {
+    const b64 = sftkBuildStoredZip([
+      { name: 'package.xml', data: '<Package/>' },
+      { name: 'flows/X.flow', data: '<Flow/>' }
+    ]);
+    const zip = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    const dv  = new DataView(zip.buffer);
+    expect(dv.getUint32(0, true)).toBe(0x04034b50);
+    expect(dv.getUint16(zip.length - 22 + 10, true)).toBe(2);  // 2 entries
   });
 });
