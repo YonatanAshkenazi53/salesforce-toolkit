@@ -15,14 +15,25 @@ import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-export function extractFunction(file, name) {
-  const src = readFileSync(join(root, file), 'utf8');
+function sliceFunction(src, file, name) {
   const marker = new RegExp(`^(?:async )?function ${name}\\(`, 'm');
   const m = marker.exec(src);
   if (!m) throw new Error(`top-level function ${name} not found in ${file}`);
-  const start = m.index;
-  const end = src.indexOf('\n}', start);
+  const end = src.indexOf('\n}', m.index);
   if (end === -1) throw new Error(`no column-0 closing brace found after ${name} in ${file}`);
-  const fnSrc = src.slice(start, end + 2);
-  return new Function(`return (${fnSrc});`)();
+  return src.slice(m.index, end + 2);
+}
+
+export function extractFunction(file, name) {
+  const src = readFileSync(join(root, file), 'utf8');
+  return new Function(`return (${sliceFunction(src, file, name)});`)();
+}
+
+// Like extractFunction, but materializes several functions from the same file
+// in ONE scope so they can call each other (e.g. sftkBuildStoredZip →
+// sftkCrc32). Returns { name: fn, ... }.
+export function extractFunctions(file, names) {
+  const src = readFileSync(join(root, file), 'utf8');
+  const parts = names.map(n => sliceFunction(src, file, n));
+  return new Function(`${parts.join('\n')}\nreturn { ${names.join(', ')} };`)();
 }

@@ -2430,108 +2430,11 @@ const LightningPages = (() => {
     return result;
   }
 
-  // CRC-32 with lazily-initialised lookup table
-  function crc32(bytes) {
-    if (!crc32._t) {
-      crc32._t = new Uint32Array(256);
-      for (let i = 0; i < 256; i++) {
-        let c = i;
-        for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-        crc32._t[i] = c;
-      }
-    }
-    let c = 0xFFFFFFFF;
-    for (const b of bytes) c = crc32._t[(c ^ b) & 0xFF] ^ (c >>> 8);
-    return (c ^ 0xFFFFFFFF) >>> 0;
-  }
-
   // Build an uncompressed (stored) ZIP and return it as a base64 string.
-  // files: [{ name: string, data: Uint8Array }]
+  // files: [{ name: string, data: Uint8Array }]. Delegates to the shared
+  // builder in sftk-zip.js (loaded before this module in popup.html).
   function buildStoredZip(files) {
-    const localBlocks   = [];
-    const centralRecs   = [];
-    let   offset        = 0;
-    const now           = new Date();
-    const dosTime       = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
-    const dosDate       = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
-    const enc           = new TextEncoder();
-
-    for (const file of files) {
-      const name = enc.encode(file.name);
-      const data = file.data instanceof Uint8Array ? file.data : enc.encode(String(file.data));
-      const crc  = crc32(data);
-
-      // Local file header (30 bytes) + filename + data
-      const local = new Uint8Array(30 + name.length + data.length);
-      const lv    = new DataView(local.buffer);
-      lv.setUint32( 0, 0x04034b50, true);  // PK\x03\x04
-      lv.setUint16( 4, 20,         true);  // version needed (2.0)
-      lv.setUint16( 6,  0,         true);  // flags
-      lv.setUint16( 8,  0,         true);  // compression: stored
-      lv.setUint16(10, dosTime,    true);
-      lv.setUint16(12, dosDate,    true);
-      lv.setUint32(14, crc,        true);
-      lv.setUint32(18, data.length,true);  // compressed size (same as raw for stored)
-      lv.setUint32(22, data.length,true);  // uncompressed size
-      lv.setUint16(26, name.length,true);
-      lv.setUint16(28, 0,          true);  // extra field length
-      local.set(name, 30);
-      local.set(data, 30 + name.length);
-
-      // Central directory record (46 bytes) + filename
-      const central = new Uint8Array(46 + name.length);
-      const cv      = new DataView(central.buffer);
-      cv.setUint32( 0, 0x02014b50, true);  // PK\x01\x02
-      cv.setUint16( 4, 0x0314,     true);  // version made by
-      cv.setUint16( 6, 20,         true);  // version needed
-      cv.setUint16( 8,  0,         true);  // flags
-      cv.setUint16(10,  0,         true);  // compression: stored
-      cv.setUint16(12, dosTime,    true);
-      cv.setUint16(14, dosDate,    true);
-      cv.setUint32(16, crc,        true);
-      cv.setUint32(20, data.length,true);
-      cv.setUint32(24, data.length,true);
-      cv.setUint16(28, name.length,true);
-      cv.setUint16(30, 0,          true);  // extra length
-      cv.setUint16(32, 0,          true);  // comment length
-      cv.setUint16(34, 0,          true);  // disk start
-      cv.setUint16(36, 0,          true);  // internal attrs
-      cv.setUint32(38, 0,          true);  // external attrs
-      cv.setUint32(42, offset,     true);  // local header offset
-      central.set(name, 46);
-
-      localBlocks.push(local);
-      centralRecs.push(central);
-      offset += local.length;
-    }
-
-    // End of central directory record
-    const centralSize = centralRecs.reduce((s, r) => s + r.length, 0);
-    const eocd = new Uint8Array(22);
-    const ev   = new DataView(eocd.buffer);
-    ev.setUint32( 0, 0x06054b50,   true);  // PK\x05\x06
-    ev.setUint16( 4, 0,            true);  // disk number
-    ev.setUint16( 6, 0,            true);  // disk with central dir
-    ev.setUint16( 8, files.length, true);  // entries on disk
-    ev.setUint16(10, files.length, true);  // total entries
-    ev.setUint32(12, centralSize,  true);  // central dir size
-    ev.setUint32(16, offset,       true);  // central dir offset
-    ev.setUint16(20, 0,            true);  // comment length
-
-    // Concatenate everything
-    const zip = new Uint8Array(offset + centralSize + eocd.length);
-    let pos = 0;
-    for (const b of localBlocks)  { zip.set(b, pos); pos += b.length; }
-    for (const r of centralRecs)  { zip.set(r, pos); pos += r.length; }
-    zip.set(eocd, pos);
-
-    // Base64-encode in chunks to avoid call-stack overflow on large pages
-    let binary = '';
-    const CHUNK = 8192;
-    for (let i = 0; i < zip.length; i += CHUNK) {
-      binary += String.fromCharCode(...zip.subarray(i, Math.min(i + CHUNK, zip.length)));
-    }
-    return btoa(binary);
+    return window.sftkBuildStoredZip(files);
   }
 
   // Build a ready-to-deploy base64 ZIP for a FlexiPage Metadata Deploy.

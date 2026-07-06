@@ -213,7 +213,43 @@ function handleSessionError(result, orgUrl, onReconnect = null) {
 }
 
 // ── Storage helpers ───────────────────────────────────────────
+
+// Storage schema version. Bump when a stored shape changes and add a
+// migration to SFTK_MIGRATIONS below. Each migration receives the raw
+// chrome.storage.local snapshot and returns an object of keys to write
+// (or null for no-op). Migrations run in order, exactly once, before the
+// first storageLoad() consumer sees the data.
+const SFTK_SCHEMA_VERSION = 1;
+const SFTK_MIGRATIONS = [
+  // v0 → v1: baseline — nothing to transform, just stamps the version.
+  // Example of a future entry:
+  // async (snap) => ({ sftk_profiles: (snap.sftk_profiles || []).map(fixShape) }),
+  async () => null
+];
+
+async function runStorageMigrations() {
+  const { sftk_schema_version } = await chrome.storage.local.get('sftk_schema_version');
+  let from = Number.isInteger(sftk_schema_version) ? sftk_schema_version : 0;
+  if (from >= SFTK_SCHEMA_VERSION) return;
+
+  const snap = await chrome.storage.local.get(null);
+  for (let v = from; v < SFTK_SCHEMA_VERSION; v++) {
+    try {
+      const writes = await SFTK_MIGRATIONS[v]?.(snap);
+      if (writes && typeof writes === 'object') {
+        await chrome.storage.local.set(writes);
+        Object.assign(snap, writes);
+      }
+    } catch (e) {
+      console.warn(`[SFTK] storage migration v${v}→v${v + 1} failed:`, e);
+      break; // don't stamp past a failed step — retry next load
+    }
+    await chrome.storage.local.set({ sftk_schema_version: v + 1 });
+  }
+}
+
 async function storageLoad() {
+  await runStorageMigrations();
   const d = await chrome.storage.local.get([
     'sftk_profiles','sftk_history','sftk_orgs',
     'ds_dark_mode','ds_activity_log','sftk_sequences','sftk_active_run',
