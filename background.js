@@ -204,6 +204,13 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       const wantOwners = ownerMode && (descRes.fields || []).some(f => f.name === 'OwnerId');
       if (wantOwners) fields.push('Owner.Name');
 
+      // The object's name field — fetched purely for human-readable History
+      // links. Compound names (Contact.Name) aren't createable so
+      // buildCopyFields drops them, which left links showing raw ids. The
+      // payload builder skips non-createable fields, so this never sends.
+      const nameFld = (descRes.fields || []).find(f => f.nameField)?.name || null;
+      if (nameFld && !fields.includes(nameFld)) fields.push(nameFld);
+
       // Target describe — a field that's createable in the SOURCE may not exist
       // (or may be read-only) in the TARGET. Sending such a field fails every
       // INSERT. Build the set of fields the target will actually accept so the
@@ -544,7 +551,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             idMap[recs[i + j].Id] = result.id; ok++;
             transferredSourceIds.push(recs[i + j].Id);
             if (targetRecords.length < 200) {
-              targetRecords.push({ id: result.id, label: recs[i + j].Name || result.id });
+              targetRecords.push({ id: result.id, label: (nameFld && recs[i + j][nameFld]) || recs[i + j].Name || result.id });
             }
           }
           else {
@@ -553,7 +560,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             errors.push(`${objType}: ${msg}`);
             // label → History links the failed record back to its SOURCE org
             // (nothing exists in the target for a failed insert).
-            failedSourceIds.push({ id: recs[i + j].Id, error: msg, label: recs[i + j].Name || recs[i + j].Id });
+            failedSourceIds.push({ id: recs[i + j].Id, error: msg, label: (nameFld && recs[i + j][nameFld]) || recs[i + j].Name || recs[i + j].Id });
             // When a record fails with "Required fields are missing" the user
             // almost always thinks "but my mapping IS correct" — log once which
             // fields actually went out, so the mismatch is obvious.

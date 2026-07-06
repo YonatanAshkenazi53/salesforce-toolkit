@@ -821,6 +821,16 @@ html, body {
 .ds-rec-plan-hdr { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--subtext); margin-bottom: 6px; }
 .ds-rec-plan-line { font-size: 12.5px; color: var(--text); padding: 2px 0; font-variant-numeric: tabular-nums; }
 
+/* ── Field-mapping stale banner ───────────────────────────────── */
+.ds-fm-stale-banner {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 8px 0 0; padding: 8px 12px; font-size: 12px;
+  background: #FDF0E4; color: #B54708;
+  border-left: 3px solid #B54708; border-radius: 0 4px 4px 0;
+}
+.ds-dark .ds-fm-stale-banner { background: #2E1A05; color: #E8964F; }
+.ds-fm-stale-banner button { margin-left: auto; }
+
 /* ── History record links ─────────────────────────────────────── */
 .ds-history-links { margin: 6px 0 0; font-size: 12px; }
 .ds-history-links > summary { cursor: pointer; color: var(--brand); font-weight: 600; }

@@ -3014,7 +3014,10 @@ async function openFieldMappingModal(pathStr) {
         ? `<span class="ds-fm-type-badge ${mismatch ? 'ds-fm-type-mismatch' : 'ds-fm-type-ok'}"
              title="${mismatch ? `⚠ Type mismatch: source is ${esc(srcType)}, target is ${esc(tgtType)}` : `Target type: ${esc(tgtType)}`}"
            >${esc(tgtType)}${mismatch ? ' ⚠' : ''}</span>`
-        : '';
+        : (!isSkip && tgtLoaded
+          ? `<span class="ds-fm-type-badge ds-fm-type-mismatch"
+               title="No field named ${esc(val || f.name)} exists on ${esc(objType)} in the TARGET org — this field will be skipped at run time (e.g. State/Country picklist fields when the feature is off in the target).">⚠ not in target</span>`
+          : '');
 
       return `<div class="ds-fm-row${rowClass(f)}">
         <div class="ds-fm-src-cell">
@@ -3097,6 +3100,20 @@ async function openFieldMappingModal(pathStr) {
           </button>
           <button class="ds-btn ds-btn-xs ds-btn-danger" id="dsFmClear" title="Clear all mappings">✕ Clear</button>
         </div>
+        ${(() => {
+          // Stale keys: mapped source fields that no longer exist in the org
+          // (deleted since the mapping was saved). Runs skip them with
+          // warnings; offer a one-click cleanup here at the source.
+          if (!srcLoaded) return '';
+          const live  = new Set(srcFields.map(f => f.name));
+          const stale = Object.keys(mappings).filter(k => !live.has(k));
+          if (!stale.length) return '';
+          return `<div class="ds-fm-stale-banner">
+            ⚠ ${stale.length} mapped field(s) no longer exist on ${esc(objType)} in the source org:
+            <strong>${esc(stale.slice(0, 6).join(', '))}${stale.length > 6 ? ', …' : ''}</strong>
+            <button class="ds-btn ds-btn-xs" id="dsFmStaleClean">🧹 Remove stale</button>
+          </div>`;
+        })()}
         <div class="ds-fm-legend">
           <span class="ds-fm-leg ds-fm-leg-diff">■</span> Remapped &nbsp;
           <span class="ds-fm-leg ds-fm-leg-same">■</span> Auto-matched (same name) &nbsp;
@@ -3194,6 +3211,17 @@ async function openFieldMappingModal(pathStr) {
     eid('dsFmClear')?.addEventListener('click', () => {
       Object.keys(mappings).forEach(k => delete mappings[k]);
       rerender(filter);
+    });
+
+    // One-click cleanup for STALE mapping keys — source fields that no
+    // longer exist (deleted since the mapping was saved). Runs tolerate
+    // them with warnings; this removes the noise at the source.
+    eid('dsFmStaleClean')?.addEventListener('click', () => {
+      const live = new Set(srcFields.map(f => f.name));
+      const stale = Object.keys(mappings).filter(k => !live.has(k));
+      stale.forEach(k => delete mappings[k]);
+      showToast(`Removed ${stale.length} stale mapping(s): ${stale.slice(0, 5).join(', ')}${stale.length > 5 ? ', …' : ''} — click Apply to save`, 'info', 4500);
+      rerender(eid('dsFmSearch')?.value || '');
     });
 
     wireInputs();
@@ -7285,6 +7313,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   //    own DeveloperName remap below.
   const warnings = [];
   let refPairs = [];   // [{sf, tf, relName, matchField, parentObj, unresolved}]
+  let srcNameFld = null;   // the object's name field — fetched for link labels only
   try {
     const [d, dt] = await Promise.all([
       sendBg({ type: 'SF_REST_GET', orgUrl: srcSess.orgUrl, sid: srcSess.sid,
@@ -7295,6 +7324,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     if (d && !d.error && Array.isArray(d.fields) && d.fields.length) {
       const srcNames = new Set(d.fields.map(f => f.name));
       wantOwners = ownerMode && srcNames.has('OwnerId');
+      srcNameFld = d.fields.find(f => f.nameField)?.name || null;
       const stale    = srcFields.filter(k => !srcNames.has(k));
       if (stale.length) {
         warnings.push(`⚠ skipped ${stale.length} mapped field(s) that no longer exist on ${objType} in the source org: ${stale.join(', ')} — open ✏ Edit → Fields & mapping to clean them up`);
@@ -7357,7 +7387,8 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const selFields = [...new Set([
     'Id', ...srcFields,
     ...refPairs.map(rp => `${rp.relName}.${rp.matchField}`),
-    ...(wantOwners ? ['Owner.Name'] : [])
+    ...(wantOwners ? ['Owner.Name'] : []),
+    ...(srcNameFld ? [srcNameFld] : [])   // labels for History links only
   ])];
   const srcRecs = [];
   for (let i = 0; i < idList.length; i += 200) {
@@ -7481,7 +7512,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       }
     }
     payloads.push(p);
-    rowMeta.push({ id: tgtId, label: sr.Name || tgtId });
+    rowMeta.push({ id: tgtId, label: (srcNameFld && sr[srcNameFld]) || sr.Name || tgtId });
   }
 
   if (ownerFellBack) warnings.push(`⚠ owners: ${ownerFellBack} record(s) reassigned to the fallback user (owner had no name match in the target)`);
@@ -8206,7 +8237,17 @@ function renderHistory() {
           })()}
           ${(run.errors || []).length ? `
             <details class="ds-history-errors">
-              <summary>${run.errors.length} error${run.errors.length!==1?'s':''}</summary>
+              <summary>${(() => {
+                // ⚠-prefixed lines are informational notes (skipped fields,
+                // fallback owners…), not failures — count them separately so
+                // "4 errors" doesn't overstate 2 notes + 2 real failures.
+                const warns = run.errors.filter(e => String(e).includes('⚠')).length;
+                const reals = run.errors.length - warns;
+                const parts = [];
+                if (reals) parts.push(`${reals} error${reals !== 1 ? 's' : ''}`);
+                if (warns) parts.push(`${warns} note${warns !== 1 ? 's' : ''}`);
+                return parts.join(' · ');
+              })()}</summary>
               ${run.errors.map(e => `<div class="ds-history-err-row">${String(e).includes('⚠') ? '⚠' : '❌'} ${esc(e)}</div>`).join('')}
             </details>` : ''}
         </div>`;
