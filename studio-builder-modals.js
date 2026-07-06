@@ -1,0 +1,1228 @@
+'use strict';
+// ════════════════════════════════════════════════════════════════
+// FIELD MAPPING MODAL  — map source field names → target field names
+// ════════════════════════════════════════════════════════════════
+async function openFieldMappingModal(pathStr) {
+  const node = getNodeByPath(_editingProfile.tree, pathStr);
+  if (!node) return;
+  const objType = node.objectType || node.childSObject || '';
+
+  if (!node.fieldMappings) node.fieldMappings = {};
+  const mappings = node.fieldMappings; // live reference — { srcApiName: tgtApiName }
+  // Id can never transfer (Salesforce assigns it on insert) — purge any
+  // legacy mapping entry so it can't pollute SOQL/compareFields, and the
+  // row filter below keeps it out of the UI even when the profile carries
+  // a stale cached field list (node._meta.availableFields) from before
+  // the Id exclusion existed.
+  delete mappings.Id;
+
+  // Diagnostic — log what the modal is loading so we can tell the difference
+  // between "save didn't persist" and "load didn't restore". The previous bug
+  // (strip identity → invisible save) is fixed; if a future report comes in
+  // claiming the mapping was lost, this line plus the Apply-time round-trip
+  // log together pinpoint exactly which step failed.
+  const existingCount = Object.keys(mappings).length;
+  window.SFToolkitDebug?.log('transfer', 'info',
+    `Field mapping modal OPEN: node "${objType}" already has ${existingCount} saved entries ` +
+    `(srcOrg=${node.fieldMappingOrgs?.src || '—'}, tgtOrg=${node.fieldMappingOrgs?.tgt || '—'})`);
+
+  // ── Org list (all orgs detected from open browser tabs) ──────────────────
+  function allOrgs() {
+    const orgs = [];
+    const seen = new Set();
+    for (const s of _allSessions) {
+      if (!seen.has(s.orgUrl)) {
+        seen.add(s.orgUrl);
+        orgs.push({ url: s.orgUrl, sid: s.sid, label: s.label || s.orgUrl });
+      }
+    }
+    return orgs;
+  }
+
+  // ── Per-org describe (reuses global cache) ────────────────────────────────
+  async function loadFields(orgUrl, orgSid) {
+    const desc = await describe(objType, orgUrl, orgSid);
+    if (!desc) return null;
+    // Id is never createable and never copyable — Salesforce assigns it on
+    // insert. Don't list it in the Field Mapping modal at all; if it's in
+    // fieldMappings it pollutes compareFields and breaks SOQL SELECT clauses
+    // ("duplicate field selected: Id"). Name kept in ALWAYS so it still
+    // appears on objects where the primary name field isn't strictly
+    // createable (e.g. Case → CaseNumber would otherwise hide).
+    const ALWAYS = new Set(['Name']);
+    return (desc.fields || [])
+      .filter(f => f.name !== 'Id' && (f.createable || ALWAYS.has(f.name)))
+      .map(f => ({ name: f.name, label: f.label || f.name, type: f.type }))
+      .sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name));
+  }
+
+  // ── State — restore saved org pair if present ─────────────────────────────
+  // Priority for default org URLs:
+  //   1. Node-level field-mapping-specific override (legacy)
+  //   2. Profile-level sourceOrg/targetOrg (the new source of truth)
+  //   3. Current popup org (last-ditch fallback for source)
+  let srcFields = node._meta?.availableFields || [];
+  let tgtFields = [];
+  let srcUrl    = node.fieldMappingOrgs?.src || _editingProfile?.sourceOrg || _orgUrl || '';
+  let tgtUrl    = node.fieldMappingOrgs?.tgt || _editingProfile?.targetOrg || '';
+  let srcLoaded = node._meta?.fieldsLoaded || false;
+  let tgtLoaded = false;
+  let srcLoadFailed = false;
+  let tgtLoadFailed = false;
+
+  // ── Auto-map: match by API name first, then by normalised label ───────────
+  function normalise(s) { return (s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+
+  function runAutoMap() {
+    if (!srcFields.length || !tgtFields.length) return;
+    const byApi   = new Map(tgtFields.map(f => [f.name.toLowerCase(), f.name]));
+    const byLabel = new Map(tgtFields.map(f => [normalise(f.label), f.name]));
+    srcFields.forEach(sf => {
+      const exactTgt = byApi.get(sf.name.toLowerCase());
+      if (exactTgt) { mappings[sf.name] = exactTgt; return; }
+      const labelTgt = byLabel.get(normalise(sf.label));
+      if (labelTgt) { mappings[sf.name] = labelTgt; }
+    });
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function datalistHtml() {
+    if (!tgtLoaded || !tgtFields.length) return '';
+    return `<datalist id="dsFmTgtList">${tgtFields.map(f =>
+      `<option value="${esc(f.name)}">${esc(f.label)} (${esc(f.name)})</option>`
+    ).join('')}</datalist>`;
+  }
+
+  function mappingCount() {
+    return Object.entries(mappings).filter(([k, v]) => v !== null && v && v.trim() && v.trim() !== k).length;
+  }
+
+  function skipCount() {
+    return Object.values(mappings).filter(v => v === null).length;
+  }
+
+  function countLabel() {
+    const diff  = mappingCount();
+    const skips = skipCount();
+    const parts = [];
+    if (diff)  parts.push(`${diff} field${diff !== 1 ? 's' : ''} remapped`);
+    if (skips) parts.push(`${skips} excluded`);
+    if (!parts.length) return tgtLoaded ? 'All fields map identically' : 'No mappings set';
+    return parts.join(' · ');
+  }
+
+  function rowClass(sf) {
+    const v = mappings[sf.name];
+    if (v === null) return ' ds-fm-row-skip';
+    if (!v || !v.trim()) return '';
+    if (v.trim() === sf.name) return ' ds-fm-row-same';
+    return ' ds-fm-row-diff';
+  }
+
+  // Human-readable type labels
+  const TYPE_LABEL = {
+    string: 'Text', textarea: 'Text area', boolean: 'Checkbox',
+    double: 'Number', integer: 'Integer', currency: 'Currency',
+    percent: 'Percent', date: 'Date', datetime: 'Date/Time',
+    time: 'Time', email: 'Email', phone: 'Phone', url: 'URL',
+    picklist: 'Picklist', multipicklist: 'Multi-select', reference: 'Lookup',
+    id: 'ID', base64: 'Base64', encryptedstring: 'Encrypted',
+    address: 'Address', location: 'Location', combobox: 'Combobox',
+  };
+  function typeLbl(t) { return TYPE_LABEL[t] || t || ''; }
+
+  function renderRows(filter = '') {
+    const lc       = filter.toLowerCase();
+    const tgtByApi = new Map(tgtFields.map(f => [f.name, f]));
+    const pool = srcFields.filter(f => {
+      // Id is never transferable — hide it even when a stale cached field
+      // list (saved before the loadFields Id-exclusion) still contains it.
+      if (f.name === 'Id') return false;
+      // Keep explicitly excluded fields visible so users can restore them
+      if (node.fields && !node.fields.includes(f.name) && !(f.name in mappings)) return false;
+      if (filter && !f.label.toLowerCase().includes(lc) && !f.name.toLowerCase().includes(lc)) return false;
+      return true;
+    });
+    if (!pool.length) return '<div class="ds-picker-empty">No fields to map.</div>';
+    return pool.map(f => {
+      const isSkip = mappings[f.name] === null;
+      const val    = isSkip ? '' : (mappings[f.name] || '');
+      const isDiff = !isSkip && val && val !== f.name;
+      const isRef  = f.type === 'reference';
+      const srcType = typeLbl(f.type);
+      const tgtF    = !isSkip && tgtLoaded ? tgtByApi.get(val || f.name) : null;
+      const tgtType = tgtF ? typeLbl(tgtF.type) : null;
+      const mismatch = tgtType && tgtType !== srcType;
+
+      const srcTypeBadge = `<span class="ds-fm-type-badge ds-fm-type-${esc(f.type)}" title="Source type: ${esc(f.type)}">${esc(srcType)}</span>`;
+      const tgtTypeBadge = tgtType
+        ? `<span class="ds-fm-type-badge ${mismatch ? 'ds-fm-type-mismatch' : 'ds-fm-type-ok'}"
+             title="${mismatch ? `⚠ Type mismatch: source is ${esc(srcType)}, target is ${esc(tgtType)}` : `Target type: ${esc(tgtType)}`}"
+           >${esc(tgtType)}${mismatch ? ' ⚠' : ''}</span>`
+        : (!isSkip && tgtLoaded
+          ? `<span class="ds-fm-type-badge ds-fm-type-mismatch"
+               title="No field named ${esc(val || f.name)} exists on ${esc(objType)} in the TARGET org — this field will be skipped at run time (e.g. State/Country picklist fields when the feature is off in the target).">⚠ not in target</span>`
+          : '');
+
+      return `<div class="ds-fm-row${rowClass(f)}">
+        <div class="ds-fm-src-cell">
+          <span class="ds-fm-src-name" title="${esc(f.name)}">${esc(f.label)}</span>
+          <span class="ds-fm-src-meta">
+            <span class="ds-fm-src-api">${esc(f.name)}</span>
+            ${srcTypeBadge}${isRef ? '<span class="ds-fm-ref-badge">🔗</span>' : ''}
+          </span>
+        </div>
+        <span class="ds-fm-arrow">${isSkip ? '—' : '→'}</span>
+        <div class="ds-fm-tgt-wrap">
+          <input class="ds-input ds-input-sm ds-fm-tgt-input${isDiff ? ' ds-fm-tgt-diff' : ''}" type="text"
+                 list="dsFmTgtList"
+                 data-src="${esc(f.name)}"
+                 placeholder="${isSkip ? '— not transferred —' : esc(f.name)}"
+                 value="${esc(val)}"
+                 autocomplete="off"
+                 ${isSkip ? 'disabled' : ''}
+                 title="${isSkip ? 'Field excluded from transfer' : 'Leave blank or enter same name to copy unchanged'}">
+          ${!isSkip ? tgtTypeBadge : ''}
+          ${isDiff ? `<button class="ds-fm-reset-btn" data-reset="${esc(f.name)}" title="Reset to source name">↺</button>` : ''}
+        </div>
+        <button class="ds-fm-skip-btn" data-skip="${esc(f.name)}"
+                title="${isSkip ? 'Re-include this field' : 'Exclude field from transfer'}">${isSkip ? '↩' : '✕'}</button>
+      </div>`;
+    }).join('');
+  }
+
+  // ── Org selector options ──────────────────────────────────────────────────
+  function orgOptions(selectedUrl, placeholder) {
+    const orgs = allOrgs();
+    if (!orgs.length) return `<span class="ds-fm-no-orgs">No connected orgs</span>`;
+    return `<select class="ds-input ds-input-sm ds-fm-org-sel">
+      <option value="">${esc(placeholder)}</option>
+      ${orgs.map(o => `<option value="${esc(o.url)}" ${o.url === selectedUrl ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label))}</option>`).join('')}
+    </select>`;
+  }
+
+  // srcLoadFailed / tgtLoadFailed distinguish "still loading" from "couldn't
+  // load" — the source side used to show a permanent "Loading…" with no hint
+  // when the profile's source org simply wasn't open in a Chrome tab.
+  function srcStatusHtml() {
+    if (!srcUrl) return '';
+    if (srcLoadFailed) return `<span class="ds-fm-warn-sm">⚠ ${esc(orgLabel(srcUrl))} not open — open it in a Chrome tab, then reopen this modal</span>`;
+    if (!srcLoaded) return `<span class="ds-fm-loading-sm">Loading…</span>`;
+    return `<span class="ds-fm-ok">✓ ${srcFields.length} fields</span>`;
+  }
+  function tgtStatusHtml() {
+    if (!tgtUrl) return '';
+    if (tgtLoadFailed) return `<span class="ds-fm-warn-sm">⚠ ${esc(orgLabel(tgtUrl))} not open — open it in a Chrome tab, then reopen this modal</span>`;
+    if (!tgtLoaded) return `<span class="ds-fm-loading-sm">Loading…</span>`;
+    return `<span class="ds-fm-ok">✓ ${tgtFields.length} fields</span>`;
+  }
+
+  // ── Full modal HTML ───────────────────────────────────────────────────────
+  function renderModal(filter = '') {
+    const canAutoMap = srcLoaded && tgtLoaded;
+    return `
+      <div class="ds-modal-header">🔀 Field Mapping — <strong>${esc(objType)}</strong></div>
+      <div class="ds-modal-body ds-fm-body">
+        <div class="ds-fm-orgs-row">
+          <div class="ds-fm-org-col">
+            <span class="ds-fm-org-pill ds-fm-org-pill-src">Source</span>
+            ${orgOptions(srcUrl, '— select source org —')}
+            <span class="ds-fm-org-status" id="dsFmSrcStatus">${srcStatusHtml()}</span>
+          </div>
+          <span class="ds-fm-orgs-arrow">→</span>
+          <div class="ds-fm-org-col">
+            <span class="ds-fm-org-pill ds-fm-org-pill-tgt">Target</span>
+            ${orgOptions(tgtUrl, '— select target org —')}
+            <span class="ds-fm-org-status" id="dsFmTgtStatus">${tgtStatusHtml()}</span>
+          </div>
+        </div>
+        <div class="ds-fm-toolbar">
+          <input id="dsFmSearch" class="ds-input ds-input-sm" placeholder="Search fields…" value="${esc(filter)}" autocomplete="off">
+          <button class="ds-btn ds-btn-xs ds-btn-brand" id="dsFmAutoMap"
+                  ${canAutoMap ? '' : 'disabled'}
+                  title="Auto-match fields by API name, then by label">
+            🔀 Auto Map
+          </button>
+          <button class="ds-btn ds-btn-xs ds-btn-danger" id="dsFmClear" title="Clear all mappings">✕ Clear</button>
+        </div>
+        ${(() => {
+          // Stale keys: mapped source fields that no longer exist in the org
+          // (deleted since the mapping was saved). Runs skip them with
+          // warnings; offer a one-click cleanup here at the source.
+          if (!srcLoaded) return '';
+          const live  = new Set(srcFields.map(f => f.name));
+          const stale = Object.keys(mappings).filter(k => !live.has(k));
+          if (!stale.length) return '';
+          return `<div class="ds-fm-stale-banner">
+            ⚠ ${stale.length} mapped field(s) no longer exist on ${esc(objType)} in the source org:
+            <strong>${esc(stale.slice(0, 6).join(', '))}${stale.length > 6 ? ', …' : ''}</strong>
+            <button class="ds-btn ds-btn-xs" id="dsFmStaleClean">🧹 Remove stale</button>
+          </div>`;
+        })()}
+        <div class="ds-fm-legend">
+          <span class="ds-fm-leg ds-fm-leg-diff">■</span> Remapped &nbsp;
+          <span class="ds-fm-leg ds-fm-leg-same">■</span> Auto-matched (same name) &nbsp;
+          <span class="ds-fm-leg ds-fm-leg-none">■</span> Unchanged
+        </div>
+        <div class="ds-fm-cols-hdr">
+          <span>Source field &amp; type</span>
+          <span></span>
+          <span>Target field name${tgtLoaded ? ' &amp; type' : ''}</span>
+        </div>
+        ${datalistHtml()}
+        <div class="ds-fm-list" id="dsFmList">${renderRows(filter)}</div>
+      </div>
+      <div class="ds-modal-footer">
+        <span class="ds-fm-count" id="dsFmCount">${countLabel()}</span>
+        <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
+        <button class="ds-btn ds-btn-primary" id="dsFmSave">✓ Apply</button>
+      </div>`;
+  }
+
+  // ── Org load handler ──────────────────────────────────────────────────────
+  async function handleOrgChange(isSource, url) {
+    if (!url) return;
+    const org = allOrgs().find(o => o.url === url);
+    if (!org) return;
+    if (isSource) {
+      srcUrl = url; srcLoaded = false; srcLoadFailed = false;
+      const statusEl = eid('dsFmSrcStatus');
+      if (statusEl) statusEl.innerHTML = '<span class="ds-fm-loading-sm">Loading…</span>';
+      const fields = await loadFields(org.url, org.sid);
+      if (fields) {
+        srcFields = fields; srcLoaded = true;
+        node._meta.availableFields = fields; node._meta.fieldsLoaded = true;
+      } else {
+        srcLoadFailed = true;   // failed describe — show the warning, not eternal "Loading…"
+      }
+      const el = eid('dsFmSrcStatus'); if (el) el.innerHTML = srcStatusHtml();
+    } else {
+      tgtUrl = url; tgtLoaded = false; tgtLoadFailed = false;
+      const statusEl = eid('dsFmTgtStatus');
+      if (statusEl) statusEl.innerHTML = '<span class="ds-fm-loading-sm">Loading…</span>';
+      const fields = await loadFields(org.url, org.sid);
+      if (fields) { tgtFields = fields; tgtLoaded = true; }
+      else tgtLoadFailed = true;
+      const el = eid('dsFmTgtStatus'); if (el) el.innerHTML = tgtStatusHtml();
+    }
+    const autoBtn = eid('dsFmAutoMap');
+    if (autoBtn) autoBtn.disabled = !(srcLoaded && tgtLoaded);
+    // Refresh datalist
+    const existing = document.getElementById('dsFmTgtList');
+    if (existing) existing.remove();
+    if (tgtLoaded) {
+      const dl = document.createElement('div');
+      dl.innerHTML = datalistHtml();
+      if (dl.firstElementChild) eid('dsModalBox')?.appendChild(dl.firstElementChild);
+    }
+    const filter = eid('dsFmSearch')?.value || '';
+    const list = eid('dsFmList');
+    if (list) list.innerHTML = renderRows(filter);
+    wireInputs();
+  }
+
+  // ── Wire ─────────────────────────────────────────────────────────────────
+  function rerender(filter = '') {
+    const box = eid('dsModalBox');
+    if (box) { box.innerHTML = renderModal(filter); wireModal(filter); }
+  }
+
+  function wireModal(filter = '') {
+    const [srcSel, tgtSel] = Array.from(eid('dsModalBox')?.querySelectorAll('.ds-fm-org-sel') || []);
+    srcSel?.addEventListener('change', e => handleOrgChange(true,  e.target.value));
+    tgtSel?.addEventListener('change', e => handleOrgChange(false, e.target.value));
+
+    eid('dsFmSearch')?.addEventListener('input', e => {
+      const val = e.target.value;
+      const list = eid('dsFmList');
+      if (list) list.innerHTML = renderRows(val);
+      wireInputs();
+      const inp = eid('dsFmSearch');
+      if (inp) { inp.focus(); inp.setSelectionRange(val.length, val.length); }
+    });
+
+    eid('dsFmAutoMap')?.addEventListener('click', () => {
+      const before = Object.keys(mappings).length;
+      runAutoMap();
+      const filter = eid('dsFmSearch')?.value || '';
+      const list = eid('dsFmList');
+      if (list) list.innerHTML = renderRows(filter);
+      wireInputs();
+      updateCount();
+      const added = Object.keys(mappings).length - before;
+      showToast(`Auto-mapped ${Object.keys(mappings).filter(k => mappings[k] !== null).length} field(s) — click Apply to save`, 'info', 3500);
+    });
+
+    eid('dsFmClear')?.addEventListener('click', () => {
+      Object.keys(mappings).forEach(k => delete mappings[k]);
+      rerender(filter);
+    });
+
+    // One-click cleanup for STALE mapping keys — source fields that no
+    // longer exist (deleted since the mapping was saved). Runs tolerate
+    // them with warnings; this removes the noise at the source.
+    eid('dsFmStaleClean')?.addEventListener('click', () => {
+      const live = new Set(srcFields.map(f => f.name));
+      const stale = Object.keys(mappings).filter(k => !live.has(k));
+      stale.forEach(k => delete mappings[k]);
+      showToast(`Removed ${stale.length} stale mapping(s): ${stale.slice(0, 5).join(', ')}${stale.length > 5 ? ', …' : ''} — click Apply to save`, 'info', 4500);
+      rerender(eid('dsFmSearch')?.value || '');
+    });
+
+    wireInputs();
+
+    eid('dsFmSave')?.addEventListener('click', async () => {
+      Object.keys(mappings).forEach(k => {
+        if (mappings[k] === null) return; // keep explicit exclusions
+        const v = (mappings[k] || '').trim();
+        // Only strip TRULY empty values. Keep identity mappings (v === k) so
+        // that re-opening the modal shows the user their config — otherwise it
+        // looks like nothing saved (the previous strip-on-identity behaviour
+        // caused exactly the "i saved it but it didn't remember" report).
+        if (!v) delete mappings[k];
+        else    mappings[k] = v;  // normalize whitespace
+      });
+      node.fieldMappings    = mappings;
+      // Persist the org pair so the next modal open pre-loads both fields lists
+      node.fieldMappingOrgs = { src: srcUrl, tgt: tgtUrl };
+
+      const totalMappings = Object.keys(mappings).length;
+      window.SFToolkitDebug?.log('transfer', 'info',
+        `Field mapping Apply: ${totalMappings} entries on node "${objType}" (profile id=${_editingProfile?.id})`);
+
+      closeModal();
+      refreshTree();
+      // Auto-persist so users don't have to remember to click the builder's
+      // "Save" button afterwards. The Apply button now actually applies.
+      try {
+        await commitEditingProfile();
+
+        // Verify the round-trip by reading back from chrome.storage.local.
+        // If this disagrees with what we just put on the node, we'll know
+        // the persistence path is the culprit (vs. the load-on-reopen path).
+        let savedCount = -1;
+        try {
+          const d = await chrome.storage.local.get('sftk_profiles');
+          const saved = (d.sftk_profiles || []).find(p => p.id === _editingProfile?.id);
+          const savedNode = saved && findNodeMatching(saved.tree, node);
+          savedCount = savedNode ? Object.keys(savedNode.fieldMappings || {}).length : -1;
+        } catch (_) {}
+        window.SFToolkitDebug?.log('transfer', 'info',
+          `Field mapping persisted: chrome.storage round-trip shows ${savedCount} entries (expected ${totalMappings})`);
+
+        const remapped = Object.entries(mappings).filter(([k, v]) => v !== null && v && v.trim() && v.trim() !== k).length;
+        const excluded = Object.values(mappings).filter(v => v === null).length;
+        const identity = totalMappings - remapped - excluded;
+        const bits = [];
+        if (remapped) bits.push(`${remapped} remapped`);
+        if (identity) bits.push(`${identity} identity`);
+        if (excluded) bits.push(`${excluded} excluded`);
+        showToast(`✓ Field mapping saved${bits.length ? ' (' + bits.join(', ') + ')' : ''}`, 'success', 3500);
+      } catch (e) {
+        window.SFToolkitDebug?.log('transfer', 'error',
+          `Field mapping persist FAILED: ${e?.message || e}`);
+        showToast('Field mapping applied but failed to persist: ' + (e?.message || e), 'error', 6000);
+      }
+    });
+  }
+
+  // Walk `tree` looking for a node that points at the same object as `target`.
+  // Used by the Apply-handler verification to confirm the storage round-trip
+  // actually preserved fieldMappings on the right node. Matches by objectType +
+  // child path (best-effort — handles single root + same-type nested cases).
+  function findNodeMatching(tree, target) {
+    if (!tree || !target) return null;
+    const targetType = target.objectType || target.childSObject;
+    function walk(n) {
+      if (!n) return null;
+      if ((n.objectType || n.childSObject) === targetType) return n;
+      for (const c of (n.children || [])) {
+        const hit = walk(c);
+        if (hit) return hit;
+      }
+      return null;
+    }
+    return walk(tree);
+  }
+
+  function updateCount() {
+    const el = eid('dsFmCount');
+    if (el) el.textContent = countLabel();
+  }
+
+  function wireInputs() {
+    const list = eid('dsFmList');
+    if (!list) return;
+    list.querySelectorAll('.ds-fm-tgt-input').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const src = inp.dataset.src;
+        const val = inp.value.trim();
+        if (val) mappings[src] = val; else delete mappings[src];
+        inp.classList.toggle('ds-fm-tgt-diff', !!(val && val !== src));
+        const wrap  = inp.closest('.ds-fm-tgt-wrap');
+        const reset = wrap?.querySelector('.ds-fm-reset-btn');
+        if (val && val !== src) {
+          if (!reset) {
+            const btn = document.createElement('button');
+            btn.className = 'ds-fm-reset-btn';
+            btn.dataset.reset = src;
+            btn.title = 'Reset to source name';
+            btn.textContent = '↺';
+            btn.addEventListener('click', () => {
+              delete mappings[src];
+              inp.value = '';
+              inp.classList.remove('ds-fm-tgt-diff');
+              btn.remove();
+              updateCount();
+            });
+            wrap?.appendChild(btn);
+          }
+        } else {
+          reset?.remove();
+        }
+        updateCount();
+      });
+    });
+    list.querySelectorAll('.ds-fm-reset-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const src = btn.dataset.reset;
+        delete mappings[src];
+        const inp = list.querySelector(`.ds-fm-tgt-input[data-src="${CSS.escape(src)}"]`);
+        if (inp) { inp.value = ''; inp.classList.remove('ds-fm-tgt-diff'); }
+        btn.remove();
+        updateCount();
+      });
+    });
+
+    // Skip / re-include toggle
+    list.querySelectorAll('.ds-fm-skip-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const src = btn.dataset.skip;
+        if (mappings[src] === null) {
+          delete mappings[src]; // re-include
+        } else {
+          mappings[src] = null; // exclude
+        }
+        const filter = eid('dsFmSearch')?.value || '';
+        const listEl = eid('dsFmList');
+        if (listEl) listEl.innerHTML = renderRows(filter);
+        wireInputs();
+        updateCount();
+      });
+    });
+  }
+
+  // ── Initial load ──────────────────────────────────────────────────────────
+  showModal(`<div class="ds-modal-header">🔀 Field Mapping — ${esc(objType)}</div>
+    <div class="ds-modal-body" style="text-align:center;padding:40px;color:var(--subtext)">
+      ${window.sftkCatSm ? sftkCatSm('Loading fields…') : 'Loading…'}
+    </div>`);
+
+  // Load source org fields
+  if (!srcLoaded) {
+    const srcOrg = allOrgs().find(o => o.url === srcUrl) ||
+                   (srcUrl === _orgUrl && _sid ? { url: _orgUrl, sid: _sid } : null);
+    if (srcOrg) {
+      const fields = await loadFields(srcOrg.url, srcOrg.sid);
+      if (fields) {
+        srcFields = fields; srcLoaded = true;
+        node._meta.availableFields = fields; node._meta.fieldsLoaded = true;
+      } else {
+        srcLoadFailed = true;   // describe failed — surface it, don't hang
+      }
+    } else {
+      srcLoadFailed = true;     // source org not open in any Chrome tab
+    }
+  }
+
+  // Auto-load target org fields if a target was previously saved
+  if (tgtUrl && !tgtLoaded) {
+    const tgtOrg = allOrgs().find(o => o.url === tgtUrl);
+    if (tgtOrg) {
+      const fields = await loadFields(tgtOrg.url, tgtOrg.sid);
+      if (fields) { tgtFields = fields; tgtLoaded = true; }
+      else tgtLoadFailed = true;   // keep the org visible + explain, don't silently clear
+    } else {
+      tgtLoadFailed = true;        // org not open in any Chrome tab
+    }
+  }
+
+  showModal(renderModal());
+  wireModal();
+}
+
+// ════════════════════════════════════════════════════════════════
+// RECORD PICKER MODAL
+// ════════════════════════════════════════════════════════════════
+async function openRecordPickerModal(pathStr) {
+  const node = getNodeByPath(_editingProfile.tree, pathStr);
+  if (!node) return;
+  const objType = node.objectType || node.childSObject || '';
+
+  // Record picking queries source — uses the profile's sourceOrg, falling
+  // back to the initial page session for legacy profiles without orgs set.
+  const sess = _builderSession();
+  if (!sess.orgUrl || !sess.sid) {
+    showModal(`<div class="ds-modal-header">🎯 Pick Records — ${esc(objType)}</div>
+      <div class="ds-modal-body" style="padding:24px;color:var(--warning)">
+        Set a <strong>Source Org</strong> on this profile first — record picking needs to query the source.
+      </div>
+      <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Close</button></div>`);
+    return;
+  }
+
+  // ── Step 1: load describe to get candidate display fields ──────
+  showModal(`<div class="ds-modal-header">🎯 Pick Records — ${esc(objType)}</div>
+    <div class="ds-modal-body" style="text-align:center;padding:40px;color:var(--subtext)">Loading…</div>`);
+
+  const desc = await describe(objType).catch(() => null);
+
+  // Candidate "display" fields: string/text fields that are readable
+  // Prefer Name, then common key fields, then any string field
+  const candidateFields = (desc?.fields || [])
+    .filter(f => STRING_TYPES.has(f.type) && !f.deprecatedAndHidden && f.name !== 'Id')
+    .map(f => ({ name: f.name, label: f.label || f.name }))
+    .sort((a, b) => {
+      // Preferred fields float to top
+      const PREF = ['Name','CaseNumber','Subject','OrderNumber','ContractNumber','Title','AssetName','ProductCode','EventSubtype'];
+      const ai = PREF.indexOf(a.name), bi = PREF.indexOf(b.name);
+      if (ai !== -1 && bi !== -1) return ai - bi;
+      if (ai !== -1) return -1;
+      if (bi !== -1) return  1;
+      return (a.label).localeCompare(b.label);
+    });
+
+  // ── Step 2: pick initial display field ────────────────────────
+  // Priority: persisted node.matchField (cross-org identity, lives forever) >
+  // transient session pick (_meta._recDisplayField) > best-guess (first
+  // candidate, usually Name).
+  const defaultField = candidateFields[0]?.name || null;
+  let displayField   = node.matchField || node._meta._recDisplayField || defaultField;
+
+  // ── Step 2b: load TARGET describe so the "Match on target" dropdown can
+  // be populated. Best effort — if the target session is unavailable, we
+  // fall back to a free-text input so the user can still declare the
+  // target-side field name manually.
+  const allSess  = _buildAllSessions();
+  const tgtSess  = _editingProfile?.targetOrg ? _resolveSession(_editingProfile.targetOrg, allSess) : null;
+  let tgtCandidates = null;   // null = unavailable (target session missing)
+  if (tgtSess?.sid) {
+    try {
+      const tgtDesc = await describe(objType, tgtSess.orgUrl, tgtSess.sid);
+      if (tgtDesc?.fields?.length) {
+        tgtCandidates = (tgtDesc.fields || [])
+          .filter(f => STRING_TYPES.has(f.type) && !f.deprecatedAndHidden && f.name !== 'Id')
+          .map(f => ({ name: f.name, label: f.label || f.name }))
+          .sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name));
+      }
+    } catch (_) { /* target describe failed — leave tgtCandidates null */ }
+  }
+
+  // Target match field — priority: persisted > field mapping for current
+  // displayField > same name as source (auto-corrected at runtime).
+  function deriveTgtMatchDefault(srcField) {
+    if (node.matchFieldTgt)                                                                return node.matchFieldTgt;
+    if (node.fieldMappings?.[srcField] && node.fieldMappings[srcField] !== null)           return node.fieldMappings[srcField];
+    return srcField;
+  }
+  let tgtMatchField = deriveTgtMatchDefault(displayField);
+
+  // ── Step 3: query helper — fetches records using current displayField ─
+  let records = [];
+  let queryError = null;
+  let selected   = new Set(node.recordIds || []);
+
+  // Source IDs partitioned by their live state in target. Drawn from
+  // `profile.lastScan` (set by runDiffScan), which queries both orgs
+  // and is the source of truth for "what's actually there". Falls back
+  // to the older history-derived `deployedIds` (cumulative successful
+  // run history) for profiles that haven't been scanned yet.
+  // A scan is "fresh" only when the profile's CURRENT object + org pair
+  // matches what the scan was run against — protects against showing
+  // stale state after the user changes orgs in the builder.
+  const liveScan = _editingProfile?.lastScan;
+  const scanFresh = !!(
+    liveScan &&
+    liveScan.status     === 'success' &&
+    liveScan.objectType === objType &&
+    (!liveScan.sourceOrg || liveScan.sourceOrg === _editingProfile?.sourceOrg) &&
+    (!liveScan.targetOrg || liveScan.targetOrg === _editingProfile?.targetOrg)
+  );
+  const idsMissingInTarget = new Set();  // source-only — need to deploy
+  const idsInSync          = new Set();  // present in both, no drift
+  const idsDrift           = new Set();  // present in both, fields differ
+  // Drift→target-Id map so the click-to-expand can fetch from BOTH orgs.
+  // Source Id alone (idsDrift) isn't enough — we need the matching target Id
+  // to query the target record's compareField values.
+  const driftTargetId      = new Map();  // sourceId → { targetId, matchKey }
+  if (scanFresh) {
+    for (const r of (liveScan.missingInTarget || [])) if (r.sourceId) idsMissingInTarget.add(r.sourceId);
+    for (const r of (liveScan.identical       || [])) if (r.sourceId) idsInSync.add(r.sourceId);
+    for (const r of (liveScan.changed         || [])) {
+      if (r.sourceId) {
+        idsDrift.add(r.sourceId);
+        if (r.targetId) driftTargetId.set(r.sourceId, { targetId: r.targetId, matchKey: r.matchKey, fields: r.fields || [] });
+      }
+    }
+  }
+  // Legacy history-derived "deployed" set — only used when no live scan
+  // exists yet. Once the user clicks 🔍 Refresh diff, this is superseded.
+  const deployedIds = new Set();
+  if (!scanFresh && _editingProfile?.id) {
+    for (const h of _history) {
+      if (h.profileId !== _editingProfile.id) continue;
+      if (h.tgtOrgUrl && _editingProfile.targetOrg && h.tgtOrgUrl !== _editingProfile.targetOrg) continue;
+      const s = h.summary?.[objType];
+      if (s && Array.isArray(s.transferredSourceIds)) {
+        for (const id of s.transferredSourceIds) deployedIds.add(id);
+      }
+    }
+  }
+  let hideDeployed   = false;   // user-toggleable filter — hides in-sync rows
+  let showOnlyTodo   = false;   // user-toggleable filter — shows ONLY missing+drift rows (Phase 2.5)
+
+  async function fetchRecords() {
+    const fld  = displayField && displayField !== 'Id' ? displayField : null;
+    const soql = `SELECT Id${fld ? `,${fld}` : ''} FROM ${objType}${node.where ? ' WHERE ' + node.where : ''} ORDER BY ${fld || 'Id'} LIMIT 200`;
+    const res  = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, query: soql });
+    queryError = res.error || null;
+    records    = res.error ? [] : (res.records || []);
+  }
+
+  await fetchRecords();
+
+  // ── Render helpers ────────────────────────────────────────────
+  function noteHtml() {
+    return selected.size > 0
+      ? `<strong>${selected.size}</strong> record${selected.size !== 1 ? 's' : ''} selected — only these will be transferred`
+      : 'No records selected — WHERE filter (or all records) will be used';
+  }
+
+  function fieldOptions() {
+    return candidateFields.map(f =>
+      `<option value="${esc(f.name)}" ${displayField === f.name ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})</option>`
+    ).join('');
+  }
+
+  function renderModal(filter = '') {
+    const lc   = filter.toLowerCase();
+    let list = records;
+    if (filter) {
+      list = list.filter(r => {
+        const val = (r[displayField] || r.Id || '').toLowerCase();
+        return val.includes(lc) || r.Id.toLowerCase().includes(lc);
+      });
+    }
+    // "Hide in-sync" filter — when a live diff exists, hide records that
+    // match between source and target. Falls back to legacy history-derived
+    // "deployed" filter for unscanned profiles.
+    const hideSet = scanFresh ? idsInSync : deployedIds;
+    if (hideDeployed && hideSet.size) {
+      list = list.filter(r => !hideSet.has(r.Id));
+    }
+    // "Show only needs-deploy" filter — inverse of Hide in-sync. Shows ONLY
+    // records badged missing-in-target or drift. Only meaningful with a fresh
+    // live diff; without one, falls back to "anything not previously deployed".
+    if (showOnlyTodo) {
+      if (scanFresh) {
+        list = list.filter(r => idsMissingInTarget.has(r.Id) || idsDrift.has(r.Id));
+      } else {
+        list = list.filter(r => !deployedIds.has(r.Id));
+      }
+    }
+
+    return `
+      <div class="ds-modal-header">🎯 Pick Records — <strong>${esc(objType)}</strong></div>
+      <div class="ds-modal-body ds-picker-body">
+
+        <!-- Match field selectors — drive what's displayed AND how records
+             match across orgs (Salesforce IDs differ between orgs, so a
+             non-Id field needs to be the cross-org identity). Per-org because
+             a field called "Name" on source might be "Full_Name__c" on target. -->
+        <div class="ds-rec-display-row">
+          <div class="ds-rec-mf-col">
+            <span class="ds-rec-display-lbl">Match on source:</span>
+            ${candidateFields.length
+              ? `<select id="dsRecDisplayField" class="ds-select ds-select-sm">
+                  <option value="Id">Id (always unique)</option>
+                  ${fieldOptions()}
+                 </select>`
+              : `<span class="ds-subtext">No string fields found — showing Id only</span>`}
+          </div>
+          <span class="ds-rec-mf-arrow">↔</span>
+          <div class="ds-rec-mf-col">
+            <span class="ds-rec-display-lbl">Match on target:</span>
+            ${tgtCandidates && tgtCandidates.length
+              ? `<select id="dsRecTgtMatchField" class="ds-select ds-select-sm" title="The field on the TARGET org whose value identifies the same logical record as the source-side field. Leave matching source if names are the same on both orgs.">
+                  <option value="Id" ${tgtMatchField === 'Id' ? 'selected' : ''}>Id (always unique)</option>
+                  ${tgtCandidates.map(f => `<option value="${esc(f.name)}" ${tgtMatchField === f.name ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})</option>`).join('')}
+                 </select>`
+              : `<input id="dsRecTgtMatchField" class="ds-input ds-input-sm" value="${esc(tgtMatchField)}" placeholder="${esc(displayField)}" title="Target session unavailable — type the target-side field API name manually. Open the target org in a Chrome tab to get a dropdown.">`}
+          </div>
+        </div>
+
+        ${queryError ? `<div class="ds-error-banner" style="margin-bottom:8px">${esc(queryError)}</div>` : ''}
+
+        <!-- Search + bulk actions -->
+        <div class="ds-picker-toolbar">
+          <input id="dsRecSearch" class="ds-input ds-input-sm" placeholder="Search…" value="${esc(filter)}" autocomplete="off">
+          <button class="ds-btn ds-btn-xs" id="dsRecAll">All</button>
+          <button class="ds-btn ds-btn-xs" id="dsRecNone">None</button>
+          ${(scanFresh ? idsInSync.size : deployedIds.size) ? `
+            <label class="ds-pick-toggle" title="${scanFresh ? 'Hide records that already match between source and target according to the latest diff scan' : 'Hide records that were already successfully transferred to this target'}">
+              <input type="checkbox" id="dsRecHideDeployed" ${hideDeployed ? 'checked' : ''}>
+              <span>${scanFresh ? 'Hide in-sync' : 'Hide already deployed'}</span>
+              <span class="ds-pick-deployed-count">${scanFresh ? idsInSync.size : deployedIds.size}</span>
+            </label>` : ''}
+          ${scanFresh && (idsMissingInTarget.size || idsDrift.size) ? `
+            <label class="ds-pick-toggle" title="Show only records that need to be deployed — missing in target OR present-but-drifted. Hides everything that's already in sync.">
+              <input type="checkbox" id="dsRecShowOnlyTodo" ${showOnlyTodo ? 'checked' : ''}>
+              <span>Only needs-deploy</span>
+              <span class="ds-pick-deployed-count ds-pick-todo-count">${idsMissingInTarget.size + idsDrift.size}</span>
+            </label>` : ''}
+        </div>
+
+        <div class="ds-picker-note" id="dsRecNote">${noteHtml()}</div>
+        ${scanFresh ? `
+          <div class="ds-pick-diff-legend">
+            Live diff (${esc(timeAgo(liveScan.runAt))}):
+            <span class="ds-pick-leg ds-diff-missing">🔴 Missing in target</span>
+            <span class="ds-pick-leg ds-diff-drift">🟡 Drift</span>
+            <span class="ds-pick-leg ds-diff-sync">🟢 In sync</span>
+          </div>` : ''}
+
+        <div class="ds-picker-list" id="dsRecList">
+          ${!records.length
+            ? `<div class="ds-picker-empty">${queryError ? 'Query failed.' : 'No records found.'}</div>`
+            : list.map(r => {
+                const label = (displayField && r[displayField]) ? r[displayField] : r.Id;
+                const sub   = displayField && r[displayField] ? r.Id : '';
+                // Live-scan state takes priority over history when available
+                let rowCls = '', badgeHtml = '';
+                const isDrift = scanFresh && idsDrift.has(r.Id);
+                if (scanFresh) {
+                  if (idsMissingInTarget.has(r.Id)) {
+                    rowCls = ' ds-pick-row-missing';
+                    badgeHtml = '<span class="ds-pick-state-badge ds-diff-missing" title="Not present in the target org — will be inserted if you transfer this record">🔴 missing in target</span>';
+                  } else if (isDrift) {
+                    rowCls = ' ds-pick-row-drift';
+                    // Drift badge is clickable — opens inline compare table below.
+                    // Tooltip names the differing fields from the scan so "why
+                    // is this drift?" is answerable without the live fetch.
+                    const dFields = driftTargetId.get(r.Id)?.fields || [];
+                    const dTip = dFields.length
+                      ? `Differs at last scan: ${dFields.join(', ')} — click for field-by-field comparison`
+                      : 'Click to see field-by-field comparison';
+                    badgeHtml = `<span class="ds-pick-state-badge ds-diff-drift ds-pick-drift-clickable" data-drift-id="${esc(r.Id)}" title="${esc(dTip)}">🟡 drift ▸</span>`;
+                  } else if (idsInSync.has(r.Id)) {
+                    rowCls = ' ds-pick-row-deployed';
+                    badgeHtml = '<span class="ds-pick-state-badge ds-diff-sync" title="Present in target and all compare fields match — no action needed">🟢 in sync</span>';
+                  }
+                } else if (deployedIds.has(r.Id)) {
+                  rowCls = ' ds-pick-row-deployed';
+                  badgeHtml = '<span class="ds-pick-deployed-badge" title="This record was successfully transferred to the target org in a previous run">✓ deployed</span>';
+                }
+                return `<div class="ds-pick-row-container">
+                  <label class="ds-pick-row${rowCls}">
+                    <input type="checkbox" value="${esc(r.Id)}" ${selected.has(r.Id) ? 'checked' : ''}>
+                    <span class="ds-pick-label">${esc(label)}</span>
+                    ${badgeHtml}
+                    ${sub ? `<span class="ds-pick-api ds-pick-id">${esc(sub)}</span>` : ''}
+                  </label>
+                  ${isDrift ? `<div class="ds-pick-row-expand" data-expand-for="${esc(r.Id)}" style="display:none"></div>` : ''}
+                </div>`;
+              }).join('')}
+        </div>
+        ${records.length >= 200 ? `<div class="ds-picker-limit">Showing first 200 — use WHERE filter to narrow results.</div>` : ''}
+      </div>
+      <div class="ds-modal-footer">
+        <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
+        <button class="ds-btn ds-btn-primary" id="dsRecSave">✓ Apply</button>
+      </div>`;
+  }
+
+  function wireModal(filter = '') {
+    const note = () => { const el = eid('dsRecNote'); if (el) el.innerHTML = noteHtml(); };
+
+    // Source-side match field change → persist as node.matchField, re-query, re-render.
+    // Also auto-update tgtMatchField if the user hasn't explicitly set one yet,
+    // since the most common case is "same name on both sides".
+    eid('dsRecDisplayField')?.addEventListener('change', async e => {
+      displayField = e.target.value;
+      node._meta._recDisplayField = displayField;
+      node.matchField             = displayField;  // persisted: cross-org identity (src side)
+      // If the user hasn't explicitly picked a target match field, follow the source choice
+      if (!node.matchFieldTgt || node.matchFieldTgt === '') {
+        tgtMatchField = deriveTgtMatchDefault(displayField);
+      }
+      const box = eid('dsModalBox');
+      if (box) box.innerHTML = `<div class="ds-modal-body" style="text-align:center;padding:40px;color:var(--subtext)">Loading…</div>`;
+      await fetchRecords();
+      if (box) { box.innerHTML = renderModal(''); wireModal(''); }
+    });
+
+    // Target-side match field change → persist as node.matchFieldTgt.
+    // Both dropdown (with session) and free-text input (without) share this handler.
+    const tgtMfEl = eid('dsRecTgtMatchField');
+    tgtMfEl?.addEventListener('change', e => {
+      const v = (e.target.value || '').trim();
+      tgtMatchField        = v || displayField;       // empty → mirror source
+      node.matchFieldTgt   = v || null;               // null = "use source-side name on target too"
+    });
+
+    eid('dsRecSearch')?.addEventListener('input', e => {
+      const val = e.target.value;
+      const box = eid('dsModalBox');
+      if (box) {
+        box.innerHTML = renderModal(val);
+        wireModal(val);
+        const inp = eid('dsRecSearch');
+        if (inp) { inp.focus(); inp.setSelectionRange(val.length, val.length); }
+      }
+    });
+
+    eid('dsRecAll')?.addEventListener('click', () => {
+      selected = new Set(records.map(r => r.Id));
+      const box = eid('dsModalBox');
+      if (box) { box.innerHTML = renderModal(filter); wireModal(filter); }
+    });
+
+    eid('dsRecNone')?.addEventListener('click', () => {
+      selected = new Set();
+      const box = eid('dsModalBox');
+      if (box) { box.innerHTML = renderModal(filter); wireModal(filter); }
+    });
+
+    // Hide already-deployed records filter — re-renders the list with deployed
+    // rows removed so the user only sees "still to transfer".
+    eid('dsRecHideDeployed')?.addEventListener('change', e => {
+      hideDeployed = e.target.checked;
+      // Mutually exclusive with "Only needs-deploy" — they conflict
+      if (hideDeployed && showOnlyTodo) showOnlyTodo = false;
+      const box = eid('dsModalBox');
+      if (box) { box.innerHTML = renderModal(filter); wireModal(filter); }
+    });
+    // Show only records that need to be deployed (missing or drift). Inverse
+    // of Hide in-sync — picks them by inclusion instead of exclusion. Useful
+    // for "select what to transfer" in one click.
+    eid('dsRecShowOnlyTodo')?.addEventListener('change', e => {
+      showOnlyTodo = e.target.checked;
+      if (showOnlyTodo && hideDeployed) hideDeployed = false;
+      const box = eid('dsModalBox');
+      if (box) { box.innerHTML = renderModal(filter); wireModal(filter); }
+    });
+
+    eid('dsRecList')?.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) selected.add(cb.value); else selected.delete(cb.value);
+        note();
+      });
+    });
+
+    // Drift-badge click → fetch the specific record from both orgs and show
+    // a field-by-field compare table inline below the row. Click again to
+    // collapse. Stops the click from propagating up to the <label> so the
+    // checkbox doesn't toggle just because the user wanted to see what's
+    // drifting.
+    eid('dsRecList')?.querySelectorAll('.ds-pick-drift-clickable').forEach(badge => {
+      badge.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const recId = badge.dataset.driftId;
+        if (!recId) return;
+        const driftInfo = driftTargetId.get(recId);
+        if (!driftInfo?.targetId) {
+          showToast('No target Id recorded for this drift entry — run 🔄 Refresh state to repopulate', 'error', 4500);
+          return;
+        }
+        const expand = document.querySelector(`.ds-pick-row-expand[data-expand-for="${recId}"]`);
+        if (!expand) return;
+        // Toggle if already loaded
+        if (expand.dataset.loaded === '1') {
+          expand.style.display = expand.style.display === 'none' ? 'block' : 'none';
+          return;
+        }
+        expand.style.display = 'block';
+        expand.innerHTML = `<div class="ds-drift-compare-loading">Loading field values…</div>`;
+        const srcFields = (liveScan?.compareFields    || []);
+        const tgtFields = (liveScan?.compareFieldsTgt || liveScan?.compareFields || []);
+        const result = await fetchDriftRowDetail(
+          _editingProfile, objType, recId, driftInfo.targetId, srcFields, tgtFields);
+        if (result.error) {
+          // Live fetch unavailable — fall back to the scan-time answer so
+          // "why is this drift?" still gets answered.
+          const fieldsNote = (driftInfo.fields || []).length
+            ? `<div class="ds-drift-compare-fallback">At the last scan these field(s) differed:
+                 <strong>${esc(driftInfo.fields.join(', '))}</strong></div>`
+            : '';
+          expand.innerHTML = `${fieldsNote}<div class="ds-drift-compare-err">⚠ ${esc(result.error)}</div>`;
+          return;
+        }
+        expand.innerHTML = renderDriftCompareTable(
+          result.srcRec, result.tgtRec, srcFields, tgtFields, result.lookupMap || {});
+        expand.dataset.loaded = '1';
+      });
+    });
+
+    eid('dsRecSave')?.addEventListener('click', () => {
+      node.recordIds = selected.size > 0 ? [...selected] : null;
+      closeModal();
+      refreshTree();
+    });
+  }
+
+  showModal(renderModal());
+  wireModal();
+}
+
+// ════════════════════════════════════════════════════════════════
+// TRANSFER RECORD FILTER MODAL
+// Opens from the Transfer screen's plan rows. Saves run-time overrides
+// to _transferNodeFilters[pathKey] without touching the saved profile.
+// ════════════════════════════════════════════════════════════════
+async function openTransferRecordFilterModal(pathKey, objType) {
+  if (!_transferSrc?.orgUrl || !_transferSrc?.sid) {
+    showModal(`
+      <div class="ds-modal-header">🎯 Filter Records — ${esc(objType)}</div>
+      <div class="ds-modal-body" style="padding:24px;color:var(--warning)">
+        Select a Source Org first.
+      </div>
+      <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Close</button></div>`);
+    return;
+  }
+
+  // Profile-saved defaults for this node (read-only reference)
+  const profileNode    = _transferProfile ? getNodeByPath(_transferProfile.tree, pathKey) : null;
+  const profileWhere   = profileNode?.where     || null;
+  const profileRecIds  = profileNode?.recordIds || null;
+
+  // Current run-time override (undefined = not set, use profile defaults)
+  const hasOverride  = pathKey in _transferNodeFilters;
+  const curOverride  = _transferNodeFilters[pathKey] || {};
+
+  let whereClause = hasOverride ? (curOverride.where || '') : (profileWhere || '');
+  let selected    = new Set(hasOverride ? (curOverride.recordIds || []) : (profileRecIds || []));
+
+  // Load describe to get candidate display fields from source org
+  showModal(`
+    <div class="ds-modal-header">🎯 Filter Records — ${esc(objType)}</div>
+    <div class="ds-modal-body" style="text-align:center;padding:40px;color:var(--subtext)">
+      Loading fields from ${esc(orgLabel(_transferSrc.orgUrl))}…
+    </div>`);
+
+  const desc = await sendBg({
+    type: 'SF_REST_GET',
+    orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid,
+    path: `services/data/v62.0/sobjects/${objType}/describe`
+  });
+
+  const candidateFields = (desc.error ? [] : (desc.fields || []))
+    .filter(f => STRING_TYPES.has(f.type) && !f.deprecatedAndHidden && f.name !== 'Id')
+    .map(f => ({ name: f.name, label: f.label || f.name }))
+    .sort((a, b) => {
+      const PREF = ['Name','CaseNumber','Subject','OrderNumber','ContractNumber','Title','AssetName'];
+      const ai = PREF.indexOf(a.name), bi = PREF.indexOf(b.name);
+      if (ai !== -1 && bi !== -1) return ai - bi;
+      if (ai !== -1) return -1; if (bi !== -1) return 1;
+      return a.label.localeCompare(b.label);
+    });
+
+  let displayField  = candidateFields[0]?.name || null;
+  let records       = [];
+  let queryError    = null;
+  let recordsLoaded = false;
+
+  async function fetchRecords() {
+    const fld  = displayField && displayField !== 'Id' ? displayField : null;
+    const w    = whereClause.trim();
+    const soql = `SELECT Id${fld ? `,${fld}` : ''} FROM ${objType}${w ? ' WHERE ' + w : ''} ORDER BY ${fld || 'Id'} LIMIT 200`;
+    const res  = await sendBg({ type: 'SF_QUERY', tooling: false,
+      orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid, query: soql });
+    queryError    = res.error || null;
+    records       = res.error ? [] : (res.records || []);
+    recordsLoaded = true;
+  }
+
+  await fetchRecords();
+
+  function noteHtml() {
+    if (selected.size > 0)
+      return `<strong>${selected.size}</strong> record${selected.size !== 1 ? 's' : ''} selected — only these will be transferred`;
+    if (whereClause.trim())
+      return `WHERE filter active — all matching records will be transferred`;
+    return `No filter — all records will be transferred`;
+  }
+
+  function fieldOptions() {
+    return candidateFields.map(f =>
+      `<option value="${esc(f.name)}" ${displayField === f.name ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})</option>`
+    ).join('');
+  }
+
+  function renderModal(filter = '') {
+    const lc   = filter.toLowerCase();
+    const list = filter
+      ? records.filter(r => {
+          const v = (r[displayField] || r.Id || '').toLowerCase();
+          return v.includes(lc) || r.Id.toLowerCase().includes(lc);
+        })
+      : records;
+
+    const profileHint = profileRecIds?.length
+      ? `Profile default: ${profileRecIds.length} saved IDs`
+      : profileWhere
+        ? `Profile default: WHERE ${esc(profileWhere)}`
+        : `Profile default: no filter`;
+
+    return `
+      <div class="ds-modal-header">🎯 Filter Records — <strong>${esc(objType)}</strong></div>
+      <div class="ds-modal-body ds-picker-body">
+
+        ${hasOverride ? `<div style="font-size:11px;background:#EEF2FF;border:1px solid #C7D2FE;border-radius:4px;padding:6px 10px;margin-bottom:10px">
+          ⚙️ <strong>Run-time override active</strong> — saved profile is unchanged.
+          <button class="ds-btn ds-btn-xs" id="dsTrFltReset" style="margin-left:8px">↺ Reset to profile default</button>
+        </div>` : `<div style="font-size:11px;color:var(--subtext);margin-bottom:10px">
+          ${profileHint} · Changes here apply to this run only.
+        </div>`}
+
+        <!-- WHERE clause -->
+        <div style="margin-bottom:10px">
+          <label class="ds-lbl" style="font-size:12px;margin-bottom:4px">
+            WHERE clause <span style="font-weight:400;color:var(--subtext)">(optional SOQL filter)</span>
+          </label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="dsTrFltWhere" class="ds-input" style="flex:1"
+              placeholder="e.g. IsActive = true AND CreatedDate = LAST_N_DAYS:30"
+              value="${esc(whereClause)}" autocomplete="off">
+            <button class="ds-btn ds-btn-sm" id="dsTrFltReload">🔄 Load Records</button>
+          </div>
+        </div>
+
+        <!-- Display field selector -->
+        <div class="ds-rec-display-row">
+          <span class="ds-rec-display-lbl">Show field:</span>
+          ${candidateFields.length
+            ? `<select id="dsTrFltDisplayField" class="ds-select ds-select-sm">
+                <option value="Id">Id (always unique)</option>
+                ${fieldOptions()}
+               </select>`
+            : `<span class="ds-subtext">No label fields — showing Id only</span>`}
+        </div>
+
+        ${queryError ? `<div class="ds-error-banner" style="margin:8px 0">${esc(queryError)}</div>` : ''}
+
+        <!-- Search + bulk actions -->
+        <div class="ds-picker-toolbar" style="margin-top:8px">
+          <input id="dsTrFltSearch" class="ds-input ds-input-sm" placeholder="Search…"
+                 value="${esc(filter)}" autocomplete="off">
+          <button class="ds-btn ds-btn-xs" id="dsTrFltAll">All</button>
+          <button class="ds-btn ds-btn-xs" id="dsTrFltNone">None</button>
+        </div>
+
+        <div class="ds-picker-note" id="dsTrFltNote">${noteHtml()}</div>
+
+        <div class="ds-picker-list" id="dsTrFltList">
+          ${!recordsLoaded
+            ? `<div class="ds-picker-empty">Loading…</div>`
+            : !records.length
+              ? `<div class="ds-picker-empty">${queryError ? 'Query failed — check WHERE clause.' : 'No records found.'}</div>`
+              : list.map(r => {
+                  const lbl = (displayField && r[displayField]) ? r[displayField] : r.Id;
+                  const sub = displayField && r[displayField] ? r.Id : '';
+                  return `<label class="ds-pick-row">
+                    <input type="checkbox" value="${esc(r.Id)}" ${selected.has(r.Id) ? 'checked' : ''}>
+                    <span class="ds-pick-label">${esc(lbl)}</span>
+                    ${sub ? `<span class="ds-pick-api ds-pick-id">${esc(sub)}</span>` : ''}
+                  </label>`;
+                }).join('')}
+        </div>
+        ${records.length >= 200 ? `<div class="ds-picker-limit">Showing first 200 — use WHERE clause to narrow.</div>` : ''}
+      </div>
+      <div class="ds-modal-footer">
+        <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
+        <button class="ds-btn ds-btn-primary" id="dsTrFltSave">✓ Apply</button>
+      </div>`;
+  }
+
+  function wireModal(filter = '') {
+    const note = () => { const el = eid('dsTrFltNote'); if (el) el.innerHTML = noteHtml(); };
+
+    // WHERE input — track value without re-querying (press Load to reload)
+    eid('dsTrFltWhere')?.addEventListener('input', e => { whereClause = e.target.value; note(); });
+
+    // Load Records — re-query with updated WHERE
+    eid('dsTrFltReload')?.addEventListener('click', async () => {
+      whereClause = eid('dsTrFltWhere')?.value || '';
+      const box = eid('dsModalBox');
+      if (box) box.innerHTML = `<div class="ds-modal-body" style="text-align:center;padding:40px;color:var(--subtext)">Loading…</div>`;
+      await fetchRecords();
+      if (box) { box.innerHTML = renderModal(''); wireModal(''); }
+    });
+
+    // Display field → re-query
+    eid('dsTrFltDisplayField')?.addEventListener('change', async e => {
+      displayField = e.target.value;
+      whereClause  = eid('dsTrFltWhere')?.value || whereClause;
+      const box = eid('dsModalBox');
+      if (box) box.innerHTML = `<div class="ds-modal-body" style="text-align:center;padding:40px;color:var(--subtext)">Loading…</div>`;
+      await fetchRecords();
+      if (box) { box.innerHTML = renderModal(''); wireModal(''); }
+    });
+
+    // Search with focus restore
+    eid('dsTrFltSearch')?.addEventListener('input', e => {
+      const val = e.target.value;
+      const box = eid('dsModalBox');
+      if (box) {
+        box.innerHTML = renderModal(val);
+        wireModal(val);
+        const inp = eid('dsTrFltSearch');
+        if (inp) { inp.focus(); inp.setSelectionRange(val.length, val.length); }
+      }
+    });
+
+    // All / None
+    eid('dsTrFltAll')?.addEventListener('click', () => {
+      selected = new Set(records.map(r => r.Id));
+      const box = eid('dsModalBox');
+      if (box) { box.innerHTML = renderModal(filter); wireModal(filter); }
+    });
+    eid('dsTrFltNone')?.addEventListener('click', () => {
+      selected = new Set();
+      const box = eid('dsModalBox');
+      if (box) { box.innerHTML = renderModal(filter); wireModal(filter); }
+    });
+
+    // Checkboxes
+    eid('dsTrFltList')?.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) selected.add(cb.value); else selected.delete(cb.value);
+        note();
+      });
+    });
+
+    // Reset to profile default — remove the override
+    eid('dsTrFltReset')?.addEventListener('click', () => {
+      delete _transferNodeFilters[pathKey];
+      closeModal();
+      updateTransferPreview();
+      _trLastTotal = null;   // scope changed → recount
+      _maybeAutoCount();
+    });
+
+    // Apply — save override and refresh plan
+    eid('dsTrFltSave')?.addEventListener('click', () => {
+      const w    = whereClause.trim() || null;
+      const rIds = selected.size > 0 ? [...selected] : null;
+      _transferNodeFilters[pathKey] = { where: w, recordIds: rIds };
+      closeModal();
+      updateTransferPreview();
+      _trLastTotal = null;   // scope changed → recount
+      _maybeAutoCount();
+    });
+  }
+
+  showModal(renderModal());
+  wireModal();
+}
+

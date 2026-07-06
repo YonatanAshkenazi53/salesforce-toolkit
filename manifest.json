@@ -19,7 +19,11 @@
         "dependency-map.js", "conflict-scanner.js", "apex-debugger.js",
         "lightning-pages.js", "user-copy.js", "license-manager.js",
         "flow-permissions.js", "field-cleaner.js", "record-copy.js",
-        "studio.html", "studio.css", "studio.js",
+        "studio.html", "studio.css",
+        "studio-core.js", "studio-profiles.js", "studio-builder.js",
+        "studio-builder-modals.js", "studio-scan.js", "studio-transfer.js",
+        "studio-reconcile.js", "studio-compare.js", "studio-history.js",
+        "studio-readiness.js", "studio-schema.js",
         "apex-log-viewer.html", "apex-log-viewer.css", "apex-log-viewer.js",
         "trusted-types-policy.js"
       ],

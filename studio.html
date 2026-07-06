@@ -126,6 +126,18 @@
   <script src="debug-logger.js"></script>
   <script src="onboarding.js"></script>
   <script src="debug-modal.js"></script>
-  <script src="studio.js"></script>
+  <!-- Data Studio — split by view (Phase 6b-2). Load order matters:
+       core first (state + helpers + boot), then views in original order. -->
+  <script src="studio-core.js"></script>
+  <script src="studio-profiles.js"></script>
+  <script src="studio-builder.js"></script>
+  <script src="studio-builder-modals.js"></script>
+  <script src="studio-scan.js"></script>
+  <script src="studio-transfer.js"></script>
+  <script src="studio-reconcile.js"></script>
+  <script src="studio-compare.js"></script>
+  <script src="studio-history.js"></script>
+  <script src="studio-readiness.js"></script>
+  <script src="studio-schema.js"></script>
 </body>
 </html>
