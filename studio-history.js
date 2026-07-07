@@ -1,6 +1,6 @@
 'use strict';
 // ════════════════════════════════════════════════════════════════
-// SCHEDULE
+// HISTORY — run log, filters, retention controls
 // ════════════════════════════════════════════════════════════════
 // History filters — module state so they survive re-renders within a session.
 let _histFilter = { status: '', profileId: '' };

@@ -2716,7 +2716,6 @@ function propagateFreshSession(newOrgUrl, newSid) {
   orgUrl = newOrgUrl;
   sid    = newSid;
   LightningPages.updateSession(orgUrl, sid);
-  if (typeof ConflictScanner  !== 'undefined') ConflictScanner.updateSession(orgUrl, sid);
   if (typeof ApexDebugger     !== 'undefined') ApexDebugger.updateSession(orgUrl, sid);
   if (typeof UserCopy         !== 'undefined') UserCopy.updateSession(orgUrl, sid);
   if (typeof LicenseManager   !== 'undefined') LicenseManager.updateSession(orgUrl, sid);

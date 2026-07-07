@@ -1,6 +1,6 @@
 'use strict';
 // ════════════════════════════════════════════════════════════════
-// ADD ORG MODAL — SOAP login (Jetstream / Gearset style)
+// DEPLOY READINESS — pre-transfer target-org checks
 // ════════════════════════════════════════════════════════════════
 function renderReadiness() {
   const orgs = allMapOrgs();
