@@ -93,6 +93,11 @@ let _transferOrgOverride  = { src: null, tgt: null };
 // object only in v1). Selection state lives in the render closure.
 let _reconcileProfile = null;
 
+// Data-retention settings (Security S5). historyDays: purge run history older
+// than N days on load (0 = keep forever). countsOnly: strip per-record
+// ids/labels from history when saving (disables History record links).
+let _settings = { historyDays: 30, countsOnly: false };
+
 // ── DOM helpers ───────────────────────────────────────────────
 const esc = s => String(s ?? '')
   .replace(/&/g,'&amp;').replace(/</g,'&lt;')
@@ -253,7 +258,7 @@ async function storageLoad() {
   const d = await chrome.storage.local.get([
     'sftk_profiles','sftk_history','sftk_orgs',
     'ds_dark_mode','ds_activity_log','sftk_sequences','sftk_active_run',
-    'ds_working_pair'
+    'ds_working_pair','ds_settings'
   ]);
   _profiles     = d.sftk_profiles   || [];
   _history      = d.sftk_history    || [];
@@ -262,6 +267,33 @@ async function storageLoad() {
   _activityLog  = d.ds_activity_log || {};
   _sequences    = d.sftk_sequences  || [];
   _workingPair  = d.ds_working_pair || { src: '', tgt: '' };
+  _settings     = { historyDays: 30, countsOnly: false, ...(d.ds_settings || {}) };
+
+  // Retention (S5): purge history entries older than the configured window.
+  if (_settings.historyDays > 0 && _history.length) {
+    const cutoff = Date.now() - _settings.historyDays * 86400000;
+    const kept = _history.filter(h => {
+      const t = new Date(h.startedAt || h.finishedAt || 0).getTime();
+      return !Number.isFinite(t) || t === 0 || t >= cutoff;   // keep undated entries
+    });
+    if (kept.length !== _history.length) {
+      _history = kept;
+      storageSaveHistory().catch(() => {});
+    }
+  }
+
+  // Retention (S5): drop stale apex-log-viewer handoff payloads (raw log
+  // bodies parked in storage for the viewer tab). Keys embed Date.now() in
+  // base36 (first 8 chars until 2059); older than 7 days → gone. Unparseable
+  // keys are treated as ancient and removed too.
+  chrome.storage.local.get(null).then(all => {
+    const stale = Object.keys(all).filter(k => {
+      if (!k.startsWith('apex_log_viewer_')) return false;
+      const ts = parseInt(k.slice('apex_log_viewer_'.length, -6), 36);
+      return !Number.isFinite(ts) || ts < Date.now() - 7 * 86400000;
+    });
+    if (stale.length) chrome.storage.local.remove(stale).catch(() => {});
+  }).catch(() => {});
 
   // A leftover active-run marker means a previous run was interrupted
   // (studio tab closed / worker killed mid-run) — say so instead of silence.
@@ -297,7 +329,23 @@ async function storageSaveWorkingPair() {
 
 async function storageSaveHistory() {
   if (_history.length > 100) _history = _history.slice(-100);
+  // Counts-only mode (S5): strip per-record ids/labels before anything hits
+  // disk. Counts, errors, and org URLs stay; record links disappear.
+  if (_settings.countsOnly) {
+    for (const h of _history) {
+      delete h.failedSourceIds;
+      if (h.summary) for (const obj of Object.values(h.summary)) {
+        if (obj && typeof obj === 'object') {
+          delete obj.targetRecords; delete obj.failedRecords; delete obj.failedSourceIds;
+        }
+      }
+    }
+  }
   await chrome.storage.local.set({ sftk_history: _history });
+}
+
+async function storageSaveSettings() {
+  await chrome.storage.local.set({ ds_settings: _settings });
 }
 
 async function storageSaveOrgs() {
