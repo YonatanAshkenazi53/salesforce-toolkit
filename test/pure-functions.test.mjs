@@ -3,8 +3,8 @@
 import { describe, it, expect } from 'vitest';
 import { extractFunction, extractFunctions } from './extract.mjs';
 
-describe('_orgKey (studio-core.js) — org identity across Salesforce domain forms', () => {
-  const _orgKey = extractFunction('studio-core.js', '_orgKey');
+describe('sftkOrgKey (sftk-org-identity.js) — org identity across Salesforce domain forms', () => {
+  const _orgKey = extractFunction('sftk-org-identity.js', 'sftkOrgKey');
 
   it('collapses my.salesforce.com and lightning.force.com to the same key', () => {
     expect(_orgKey('https://acme-dev.develop.my.salesforce.com'))
