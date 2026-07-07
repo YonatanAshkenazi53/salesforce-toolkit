@@ -862,13 +862,14 @@ BUG 6 — MEDIUM: buildCopyFields returned 'Id' inside the filtered array
 
   - Max ~2000 RECORDS PER BATCH in Collections API call (Salesforce limit, we handle it)
   - SOQL IN clause: chunked at 200 IDs per query (conservative but safe)
-  - OwnerId: always defaults to the running user in target org (cannot map users cross-org)
-  - External IDs: no upsert mode yet — always INSERT, never UPDATE existing records
+  - OwnerId: optional owner mapping by user Name with a fallback user (profile.ownerMapping);
+    without a mapping, defaults to the running user in the target org
+  - External IDs: Upsert mode available (describe-driven external-id field picker)
   - Field access: if target org user lacks access to a field, that record will error
   - RecordType: if a RecordType's DeveloperName doesn't exist in target, it's dropped
   - Polymorphic lookups (WhatId, WhoId on Task/Event): mapped if the referenced type
     was transferred, otherwise dropped
-  - No dry-run mode: transfers are real — test with a sandbox first
+  - Dry-run mode available (🧪 Validate) — and prod targets require typed confirmation
 
 ================================================================================
 END OF BRIEF
