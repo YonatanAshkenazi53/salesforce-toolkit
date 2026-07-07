@@ -35,7 +35,17 @@ function renderHistory() {
   setMain(`
     <div class="ds-view-header">
       <h2 class="ds-view-title">📜 History</h2>
-      <button class="ds-btn ds-btn-danger ds-btn-sm" id="dsClearHistory">🗑 Clear All</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="dsRetentionDays" class="ds-select ds-select-sm" title="Runs older than this are purged automatically when the Studio opens">
+          ${[[7, 'Keep 7 days'], [30, 'Keep 30 days'], [90, 'Keep 90 days'], [0, 'Keep forever']].map(([v, lbl]) =>
+            `<option value="${v}" ${_settings.historyDays === v ? 'selected' : ''}>${lbl}</option>`).join('')}
+        </select>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer" title="Store only counts and errors — per-record ids and labels are stripped from history (record links in History cards stop working)">
+          <input type="checkbox" id="dsCountsOnly" ${_settings.countsOnly ? 'checked' : ''}> counts only
+        </label>
+        <button class="ds-btn ds-btn-sm" id="dsClearCached" title="Delete history, activity log, scan results, and cached Apex log bodies — org labels and settings stay">🧹 Clear cached org data</button>
+        <button class="ds-btn ds-btn-danger ds-btn-sm" id="dsClearHistory">🗑 Clear All</button>
+      </div>
     </div>
     <div class="ds-hist-filters">
       <div class="ds-hist-status-chips">
@@ -179,6 +189,60 @@ function renderHistory() {
       }).join('')}
     </div>
   `);
+
+  // Retention controls (Security S5)
+  eid('dsRetentionDays')?.addEventListener('change', async e => {
+    _settings.historyDays = parseInt(e.target.value, 10) || 0;
+    await storageSaveSettings();
+    showToast(_settings.historyDays
+      ? `History older than ${_settings.historyDays} days will be purged on load`
+      : 'History is kept forever', 'info');
+  });
+  eid('dsCountsOnly')?.addEventListener('change', async e => {
+    _settings.countsOnly = e.target.checked;
+    await storageSaveSettings();
+    if (_settings.countsOnly) {
+      await storageSaveHistory();   // strips existing entries immediately
+      showToast('Counts-only mode on — record ids stripped from history', 'warning');
+      renderHistory();
+    } else {
+      showToast('Counts-only mode off — future runs keep record links', 'info');
+    }
+  });
+  eid('dsClearCached')?.addEventListener('click', () => {
+    showModal(`
+      <div class="ds-modal-header">🧹 Clear cached org data</div>
+      <div class="ds-modal-body">
+        Deletes everything cached <em>about your orgs' data</em>:
+        <ul style="margin:8px 0 8px 18px;font-size:12.5px">
+          <li>all run history (${_history.length} entries)</li>
+          <li>all deployment scan results (record ids + match keys)</li>
+          <li>activity log and cached Apex log bodies</li>
+        </ul>
+        Deployment configurations, org labels, read-only locks, and settings are kept.
+      </div>
+      <div class="ds-modal-footer">
+        <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
+        <button class="ds-btn ds-btn-danger" id="dsConfirmClearCached">Clear cached data</button>
+      </div>`);
+    eid('dsConfirmClearCached')?.addEventListener('click', async () => {
+      closeModal();
+      _history = [];
+      _activityLog = {};
+      let scans = 0;
+      for (const p of _profiles) if (p.lastScan) { delete p.lastScan; scans++; }
+      const all = await chrome.storage.local.get(null);
+      const logKeys = Object.keys(all).filter(k => k.startsWith('apex_log_viewer_'));
+      if (logKeys.length) await chrome.storage.local.remove(logKeys);
+      await Promise.all([
+        storageSaveHistory(),
+        storageSaveProfiles(),
+        chrome.storage.local.set({ ds_activity_log: {} }),
+      ]);
+      showToast(`Cleared: history, ${scans} scan result${scans !== 1 ? 's' : ''}, activity log, ${logKeys.length} cached log${logKeys.length !== 1 ? 's' : ''}`, 'success');
+      renderHistory();
+    });
+  });
 
   eid('dsClearHistory')?.addEventListener('click', () => {
     showModal(`
