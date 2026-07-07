@@ -170,21 +170,56 @@ function renderHistory() {
             }
             return out.join('');
           })()}
-          ${(run.errors || []).length ? `
+          ${(run.errors || []).length ? (() => {
+            // Friendly rendering (U1): every raw error string goes through
+            // sftkFriendlyError → plain-language message + hint; skipped-field
+            // notes collapse into one per-field list instead of arrow walls.
+            const parsed = run.errors.map(e => sftkFriendlyError(e));
+            const notes  = parsed.filter(p => p.kind === 'note');
+            const fails  = parsed.filter(p => p.kind === 'error');
+            const skips  = notes.filter(n => n.type === 'skipped-fields');
+            const otherNotes = notes.filter(n => n.type !== 'skipped-fields');
+
+            // Identical failures collapse into one row with a count.
+            const failGroups = new Map();
+            for (const f of fails) {
+              const g = failGroups.get(f.message);
+              if (g) g.count += f.count; else failGroups.set(f.message, { ...f });
+            }
+
+            const summary = [];
+            if (fails.length) summary.push(`${fails.length} error${fails.length !== 1 ? 's' : ''}`);
+            if (notes.length) summary.push(`${notes.length} note${notes.length !== 1 ? 's' : ''}`);
+
+            const skipBlock = skips.length ? `
+              <div class="ds-err-skipblock">
+                <div class="ds-err-skiphead">⚠ Fields not copied (mapping issues) — records themselves were still written:</div>
+                ${skips.flatMap(n => n.fields || []).map(f => `
+                  <div class="ds-err-fieldrow"><code>${esc(f.field)}</code><span class="ds-err-fieldreason">${esc(f.reason)}</span></div>`).join('')}
+                <div class="ds-err-hint">💡 Open ✏ Edit → Fields &amp; mapping to clean these up (🧹 removes stale entries).</div>
+              </div>` : '';
+
+            const failBlock = [...failGroups.values()].map(f => `
+              <div class="ds-history-err-row" title="${esc(f.raw)}">❌ ${esc(f.object ? f.object + ': ' : '')}${esc(f.message)}${f.count > 1 ? ` <span class="ds-err-count">×${f.count}</span>` : ''}${f.phase ? ` <span class="ds-err-phase">while ${esc(f.phase)}</span>` : ''}
+                ${f.hint ? `<div class="ds-err-hint">💡 ${esc(f.hint)}</div>` : ''}
+              </div>`).join('');
+
+            const noteBlock = otherNotes.map(n => `
+              <div class="ds-history-err-row" title="${esc(n.raw)}">⚠ ${esc(n.message)}
+                ${n.hint ? `<div class="ds-err-hint">💡 ${esc(n.hint)}</div>` : ''}
+              </div>`).join('');
+
+            return `
             <details class="ds-history-errors">
-              <summary>${(() => {
-                // ⚠-prefixed lines are informational notes (skipped fields,
-                // fallback owners…), not failures — count them separately so
-                // "4 errors" doesn't overstate 2 notes + 2 real failures.
-                const warns = run.errors.filter(e => String(e).includes('⚠')).length;
-                const reals = run.errors.length - warns;
-                const parts = [];
-                if (reals) parts.push(`${reals} error${reals !== 1 ? 's' : ''}`);
-                if (warns) parts.push(`${warns} note${warns !== 1 ? 's' : ''}`);
-                return parts.join(' · ');
-              })()}</summary>
-              ${run.errors.map(e => `<div class="ds-history-err-row">${String(e).includes('⚠') ? '⚠' : '❌'} ${esc(e)}</div>`).join('')}
-            </details>` : ''}
+              <summary>${summary.join(' · ')}</summary>
+              ${failBlock}
+              ${skipBlock}
+              ${noteBlock}
+              <details class="ds-err-raw"><summary>raw error text (for support / copy-paste)</summary>
+                ${run.errors.map(e => `<div class="ds-err-rawline">${esc(e)}</div>`).join('')}
+              </details>
+            </details>`;
+          })() : ''}
         </div>`;
       }).join('')}
     </div>

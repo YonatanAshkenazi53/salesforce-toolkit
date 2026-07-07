@@ -4578,3 +4578,25 @@ html, body {
   color: var(--subtext);
   margin-right: auto;
 }
+
+/* ── Friendly run errors (U1) ─────────────────────────────────── */
+.ds-err-hint {
+  margin: 3px 0 2px 22px; font-size: 11.5px; color: var(--subtext, #706e6b);
+  line-height: 1.45;
+}
+.ds-err-phase { font-size: 10.5px; opacity: .65; font-style: italic; margin-left: 4px; }
+.ds-err-count { font-weight: 700; font-size: 11px; opacity: .8; }
+.ds-err-skipblock {
+  margin: 8px 0; padding: 8px 10px; border-left: 3px solid #B54708;
+  background: rgba(181, 71, 8, .07); border-radius: 0 6px 6px 0;
+}
+.ds-err-skiphead { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.ds-err-fieldrow { display: flex; gap: 10px; align-items: baseline; padding: 2px 0 2px 8px; font-size: 12px; }
+.ds-err-fieldrow code { font-size: 11.5px; }
+.ds-err-fieldreason { color: var(--subtext, #706e6b); font-size: 11.5px; }
+.ds-err-raw { margin-top: 8px; }
+.ds-err-raw > summary { font-size: 11px; color: var(--subtext, #706e6b); cursor: pointer; }
+.ds-err-rawline {
+  font-family: ui-monospace, Consolas, monospace; font-size: 10.5px;
+  color: var(--subtext, #706e6b); padding: 2px 0; word-break: break-all;
+}

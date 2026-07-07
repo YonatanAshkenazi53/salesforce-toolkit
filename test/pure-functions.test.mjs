@@ -72,6 +72,49 @@ describe('buildCopyFields (background.js) — which fields a transfer reads', ()
   });
 });
 
+describe('sftkFriendlyError (sftk-friendly-error.js) — raw run errors → plain language', () => {
+  const { sftkFriendlyError } =
+    extractFunctions('sftk-friendly-error.js', ['sftkDecodeEntities', 'sftkFriendlyError']);
+
+  it('translates the invalid-email failure and spots HTML-escaped addresses', () => {
+    const f = sftkFriendlyError('update: contact: Email: invalid email address: b.levy@expressl&amp;t.net');
+    expect(f.kind).toBe('error');
+    expect(f.object).toBe('contact');
+    expect(f.phase).toBe('updating target records');
+    expect(f.message).toContain("isn't a valid address");
+    expect(f.hint).toContain('b.levy@expressl&t.net');   // decoded intended value
+  });
+
+  it('parses target-reject skipped fields into per-field rows', () => {
+    const f = sftkFriendlyError("⚠ update: ⚠ skipped 6 mapped field(s) the target org can't accept: MailingCountryCode → MailingCountryCode (missing in target), Name → Name (read-only in target), test__c → test__c (missing in target) — open ✏ Edit → Fields & mapping to fix");
+    expect(f.kind).toBe('note');
+    expect(f.type).toBe('skipped-fields');
+    expect(f.fields).toHaveLength(3);
+    expect(f.fields[0]).toEqual({ field: 'MailingCountryCode', reason: 'missing in target' });
+    expect(f.fields[1].reason).toBe('read-only in target');
+  });
+
+  it('parses stale-source skipped fields', () => {
+    const f = sftkFriendlyError('⚠ update: ⚠ skipped 1 mapped field(s) that no longer exist on contact in the source org: Last_Customer_Verification__c — open ✏ Edit → Fields & mapping to clean them up');
+    expect(f.type).toBe('skipped-fields');
+    expect(f.fields).toEqual([{ field: 'Last_Customer_Verification__c', reason: 'no longer exists in the source org' }]);
+  });
+
+  it('handles No such column and preserves ×N counts', () => {
+    const f = sftkFriendlyError("contact: No such column 'test__c' on sobject of type Contact  (×17)");
+    expect(f.type).toBe('missing-field');
+    expect(f.count).toBe(17);
+    expect(f.message).toContain('test__c');
+  });
+
+  it('passes unknown errors through untranslated with raw preserved', () => {
+    const f = sftkFriendlyError('something completely novel went wrong');
+    expect(f.type).toBe('generic');
+    expect(f.message).toBe('something completely novel went wrong');
+    expect(f.raw).toBe('something completely novel went wrong');
+  });
+});
+
 describe('sftkBuildStoredZip (sftk-zip.js) — the shared Metadata-deploy zip builder', () => {
   const { sftkCrc32, sftkBuildStoredZip } =
     extractFunctions('sftk-zip.js', ['sftkCrc32', 'sftkBuildStoredZip']);
