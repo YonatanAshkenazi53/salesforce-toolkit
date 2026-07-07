@@ -599,9 +599,14 @@ const ApexDebugger = (() => {
     d.style.display = '';
     const res = await _bg({
       type: 'SF_QUERY', tooling: false,
-      query: `SELECT Id,Name,Username FROM User WHERE IsActive=true AND ` +
-             `(Name LIKE '%${q.replace(/'/g,"\\'")}%' OR Username LIKE '%${q.toLowerCase().replace(/'/g,"\\'")}%') ` +
-             `ORDER BY Name LIMIT 10`
+      query: (() => {
+        // Backslashes FIRST, then quotes — quote-only escaping is defeated by
+        // a term ending in '\' (audit S2).
+        const safe = s => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        return `SELECT Id,Name,Username FROM User WHERE IsActive=true AND ` +
+               `(Name LIKE '%${safe(q)}%' OR Username LIKE '%${safe(q.toLowerCase())}%') ` +
+               `ORDER BY Name LIMIT 10`;
+      })()
     });
     if (res.error || !res.records?.length) {
       d.innerHTML = `<div class="adbg-drop-msg">${res.error ? '⚠ ' + _esc(res.error) : 'No active users found'}</div>`;

@@ -1807,7 +1807,7 @@ async function onRestoreClick() {
       loadFlows();
     });
   } else {
-    const errHtml  = errors.map(e => `<li style="word-break:break-word">${e}</li>`).join('');
+    const errHtml  = errors.map(e => `<li style="word-break:break-word">${escHtml(e)}</li>`).join('');
     const okHtml   = successes.map(f => `<li>${escHtml(f.MasterLabel)} v${f.VersionNumber}</li>`).join('');
     showModal(`
       <div class="modal-header modal-warn">

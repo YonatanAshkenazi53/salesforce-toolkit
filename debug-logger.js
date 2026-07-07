@@ -32,8 +32,9 @@
   // tokens, and auth headers can never reach storage or an export — no
   // matter what a calling module passes in.
   const _SECRET_RE = [
-    // Salesforce session IDs:  00D<orgid>!<token>
-    [/\b00D[A-Za-z0-9]{11,18}![A-Za-z0-9._=+/-]+/g, '00D…[redacted-sid]'],
+    // Salesforce session IDs:  00D<orgid>!<token> — also the URL-encoded
+    // form (%21) so a sid inside a logged URL can't slip through.
+    [/\b00D[A-Za-z0-9]{11,18}(?:!|%21)[A-Za-z0-9._=+%/-]+/g, '00D…[redacted-sid]'],
     // OAuth / Bearer tokens
     [/\bBearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [redacted]'],
     // key:value / key=value where the key is sensitive — keep key, drop value
