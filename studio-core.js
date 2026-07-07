@@ -337,19 +337,7 @@ document.addEventListener('keydown', e => {
 // profile URLs may have been captured in any form — so equality on the raw
 // string falsely reports an open org as "offline". Match on this key instead.
 function _orgKey(orgUrl) {
-  if (!orgUrl) return '';
-  let host;
-  try { host = new URL(orgUrl).hostname; }
-  catch { host = String(orgUrl).replace(/^https?:\/\//, '').replace(/\/.*$/, ''); }
-  return host
-    .replace(/\.my\.salesforce-setup\.com$/, '')
-    .replace(/\.salesforce-setup\.com$/, '')
-    .replace(/\.my\.salesforce\.com$/, '')
-    .replace(/\.lightning\.force\.com$/, '')
-    .replace(/\.my\.site\.com$/, '')
-    .replace(/\.salesforce\.com$/, '')
-    .replace(/\.force\.com$/, '')
-    .toLowerCase();
+  return sftkOrgKey(orgUrl);   // canonical implementation: sftk-org-identity.js
 }
 
 function orgLabel(orgUrl) {
@@ -460,6 +448,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'runAgain':              window.runAgain?.(arg); break;
       case 'openOrgTab':            chrome.tabs.create({ url: arg }); break;
       case 'compareOrgFrom':        window.compareOrgFrom?.(arg); break;
+      case 'toggleReadOnly':        window.toggleOrgReadOnly?.(arg); break;
       case 'saveEphemeralProfile':  window.saveEphemeralProfile?.(); break;
       case 'showSecurity':          showSecurityModal(); break;
       case 'switchView': {
@@ -1020,6 +1009,7 @@ function renderOrgsPanel() {
           <div class="ds-org-row-label">
             ${esc(label)}
             ${prodBadge(url)}
+            ${orgData.readOnly ? '<span class="ds-org-badge-current" style="margin-left:6px;background:#FDF0E4;color:#B54708" title="All writes to this org are blocked">🔒 read-only</span>' : ''}
             ${isCurrent ? '<span class="ds-org-badge-current" style="margin-left:6px">current tab</span>' : ''}
           </div>
           <div class="ds-org-row-url">${esc(host)}</div>
@@ -1034,6 +1024,7 @@ function renderOrgsPanel() {
           ${!isOnline ? `<button class="ds-btn ds-btn-sm" data-dsaction="openOrgTab" data-arg="${esc(url)}" title="Open this org in a new Chrome tab — refreshes its session so the Studio can reach it">↗ Open</button>` : ''}
           <button class="ds-btn ds-btn-sm" data-dsaction="compareOrgFrom" data-arg="${esc(url)}" title="Compare this org's data against another org (opens Org Compare with this org as the source)">🔍 Compare with…</button>
           <button class="ds-btn ds-btn-sm" data-dsaction="editOrgLabel" data-arg="${esc(url)}">✏ Rename</button>
+          <button class="ds-btn ds-btn-sm" data-dsaction="toggleReadOnly" data-arg="${esc(url)}" title="${orgData.readOnly ? 'Allow writes to this org again' : 'Block ALL writes to this org (inserts, updates, deletes, deploys)'}">${orgData.readOnly ? '🔓 Unlock' : '🔒 Read-only'}</button>
           ${isOnline
             ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="startTransferFrom" data-arg="${esc(url)}" title="Copy data INTO this org — opens Run Transfer with this org as the target">🚀 Transfer into</button>`
             : `<button class="ds-btn ds-btn-sm ds-btn-danger" data-dsaction="removeOrg" data-arg="${esc(url)}">✕</button>`}
@@ -1121,6 +1112,21 @@ window.editOrgLabel = function(orgUrl) {
       renderOrgsPanel();
     });
   }, 50);
+};
+
+// Per-org read-only lock (Security S4). The flag lives on _orgs[url].readOnly;
+// enforcement is in the service worker at the fetch chokepoint (any non-GET
+// to a locked org throws), so every write path — transfers, reconcile,
+// deletes, metadata deploys, popup tools — is covered by one gate.
+window.toggleOrgReadOnly = async function(orgUrl) {
+  if (!_orgs[orgUrl]) _orgs[orgUrl] = {};
+  const on = !_orgs[orgUrl].readOnly;
+  _orgs[orgUrl].readOnly = on;
+  await storageSaveOrgs();
+  showToast(on
+    ? `🔒 ${orgLabel(orgUrl)} is now read-only — all writes are blocked`
+    : `🔓 ${orgLabel(orgUrl)} is writable again`, on ? 'warning' : 'success');
+  renderOrgsPanel();
 };
 
 window.removeOrg = function(orgUrl) {

@@ -1,4 +1,21 @@
+importScripts('sftk-org-identity.js');   // sftkOrgKey — shared org-identity key
+
 const API_VERSION = 'v62.0';
+
+// ── Per-org read-only gate ───────────────────────────────────────────────────
+// Orgs marked read-only in Connected Orgs (sftk_orgs[url].readOnly) reject every
+// write at the single fetch chokepoint (any non-GET method). Matching uses
+// sftkOrgKey so all domain forms of the org are covered.
+async function assertOrgWritable(orgUrl) {
+  const { sftk_orgs } = await chrome.storage.local.get('sftk_orgs');
+  if (!sftk_orgs) return;
+  const key = sftkOrgKey(orgUrl);
+  for (const [url, o] of Object.entries(sftk_orgs)) {
+    if (o?.readOnly && sftkOrgKey(url) === key) {
+      throw new Error(`Org is marked read-only (${o.label || url}) — writes are blocked. Unlock it in Data Studio → Connected Orgs.`);
+    }
+  }
+}
 
 // ── Run progress channel ─────────────────────────────────────────────────────
 // Data Studio connects a long-lived Port before launching a transfer /
@@ -1090,6 +1107,10 @@ async function sfFetchWithProxy(orgUrl, sid, url, fetchOptions = {}) {
   const method  = fetchOptions.method || 'GET';
   const bodyStr = fetchOptions.body   ?? null;
 
+  // Read-only orgs reject every write here — the one chokepoint all REST
+  // create/update/delete calls flow through (GETs pass untouched).
+  if (method !== 'GET') await assertOrgWritable(orgUrl);
+
   // ── Tier 1: always-fresh Bearer ──────────────────────────────────────────
   // Read the current sid cookie right now (not the value cached at startup).
   // If Lightning rotated it since the last call, we pick up the new value here
@@ -1312,7 +1333,8 @@ async function sfMetadataDeploy(orgUrl, sid, zipBase64) {
   let pos = 0;
   for (const chunk of [p1Hdr, p1Body, p2Hdr, zipBytes, close]) { multipart.set(chunk, pos); pos += chunk.length; }
 
-  // 1. Kick off the deployment
+  // 1. Kick off the deployment (direct sfFetch — gate reads here explicitly)
+  await assertOrgWritable(orgUrl);
   const deployUrl = `${orgUrl}/services/data/${API_VERSION}/metadata/deployRequest`;
   const deployRes = await sfFetch(deployUrl, {
     method:  'POST',
@@ -1488,6 +1510,7 @@ async function sfHardDelete(orgUrl, sid, ids) {
 async function sfEmptyRecycleBin(orgUrl, sid, ids) {
   const idList = (ids || []).filter(Boolean);
   if (!idList.length) return { ok: 0, errors: [] };
+  await assertOrgWritable(orgUrl);   // direct sfFetch below bypasses the proxy gate
   const ver     = API_VERSION.replace(/^v/, '');
   const soapUrl = `${orgUrl}/services/Soap/u/${ver}`;
   let ok = 0; const errors = [];
