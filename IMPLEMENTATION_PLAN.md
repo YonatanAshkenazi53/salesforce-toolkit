@@ -16,12 +16,10 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
 
 ## Phase S — Security (first: user-priority + highest risk)
 
-- [ ] **S1. Manifest hardening**
-  - Remove the `web_accessible_resources` block (pages open via `chrome.tabs.create`, which
-    needs no WAR). Verify popup popout, Data Studio, and apex-log-viewer all still open.
-  - Add `content_security_policy.extension_pages` with `connect-src` allowlist:
-    `'self' https://*.salesforce.com https://*.force.com https://*.salesforce-setup.com`
-    (verify against every fetch host in background.js first). Browser then *enforces* "Local only".
+- [x] **S1. Manifest hardening** (commit `e02f6ad`) — WAR block removed entirely.
+  DISCOVERY: the CSP connect-src allowlist AND `require-trusted-types-for 'script'`
+  were ALREADY in the manifest — only the WAR exposure was real.
+  USER TEST PENDING: reload extension → popout, Data Studio, apex-log-viewer all open.
 - [ ] **S2. SOQL injection audit** — ~34 `WHERE X='${v}'` interpolations lack visible escaping.
   Audit every site (workflow fan-out), route string values through `soqlStrLit()` (studio-core)
   or a shared equivalent in background/popup modules. Add unit tests for the escaper.
@@ -29,15 +27,24 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
   sinks (org labels, record names, API errors are org-controlled). Fix gaps with `esc()`.
   Then add `require-trusted-types-for 'script'` to the extension-pages CSP so future gaps
   throw instead of executing (only after the audit passes — enforcement first would break the app).
-- [ ] **S4. Per-org read-only toggle** — Connected Orgs row toggle → `_orgs[url].readOnly`;
+- [x] **S4. Per-org read-only toggle** (commit `e02f6ad`) — Connected Orgs toggle + badge;
+  worker blocks every non-GET at sfFetchWithProxy + explicit gates on metadata deploy and
+  SOAP emptyRecycleBin; sftkOrgKey matching covers all domain forms.
+  ~~original spec below~~ — Connected Orgs row toggle → `_orgs[url].readOnly`;
   background dispatcher blocks all write message types (create/update/delete/deploy/patch)
   for that org; UI badge on org chips; clear error message when blocked.
-- [ ] **S5. Data-at-rest retention** — settings: auto-purge history > N days (default 30);
+- [x] **S5. Data-at-rest retention** (commit `9026b27`) — historyDays purge (default 30),
+  counts-only mode, clear-cached-org-data, apex_log_viewer_* 7-day auto-purge.
+  ~~original spec below~~ — settings: auto-purge history > N days (default 30);
   "store counts only" mode (drop per-record ids/labels from new history); one-click
   "Clear all cached org data" (extend existing history-clear to scans/caches/activity log).
-- [ ] **S6. sid-storage verification** — prove sids never reach `chrome.storage.local`
+- [x] **S6. sid-storage verification** (done 2026-07-07) — every storage.set payload
+  enumerated; no sid/token ever persisted. Documented in PRIVACY.md.
+  ~~original spec below~~ — prove sids never reach `chrome.storage.local`
   (grep every `.set(` payload); document the finding in SECURITY notes inside PRIVACY.md.
-- [ ] **S7. PRIVACY.md** — state the "Local only" promise concretely: what is stored
+- [x] **S7. PRIVACY.md** (commit `e02f6ad`) — storage inventory, session handling,
+  permissions rationale, CSP-enforced local-only.
+  ~~original spec below~~ — state the "Local only" promise concretely: what is stored
   (chrome.storage.local inventory), what never leaves the browser, retention controls, the
   CSP enforcement from S1. Link it from the README if one exists.
 - [ ] **S8. sfProxyFetch least-privilege review** — verify the injected function is a fixed
@@ -89,7 +96,11 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
 
 ## Phase A — Architecture completion
 
-- [ ] **A1. Shared org-identity lib** — `sftk-org-identity.js` (window + globalThis attach,
+- [x] **A1. Shared org-identity lib** (commit `e02f6ad`, pulled forward as S4 dependency) —
+  sftk-org-identity.js on globalThis; loaded by popup.html + studio.html + background
+  importScripts; tests extract the shared impl. REMAINING SLIVER: background's local
+  `normApiOrigin` (sfFetchWithProxy) is a second normalizer — consider consolidating.
+  ~~original spec below~~ — `sftk-org-identity.js` (window + globalThis attach,
   same pattern as sftk-zip.js): `_orgKey`, `orgLabel`, `orgOptionLabel`. Loaded by popup.html
   + studio.html; background.js gets it via `importScripts` (classic SW) — verify background
   has no raw-URL org comparisons left afterwards.
@@ -129,3 +140,8 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
 
 ## Progress log
 - 2026-07-07: Plan created. Phases S+C started this session.
+- 2026-07-07: S1, S4, S5, S6, S7, A1 done (commits e02f6ad, 9026b27). S2+S3+S9 audit
+  workflow launched. HARNESS LESSON: studio's sendBg uses CALLBACK-style sendMessage —
+  harness stubs must invoke the callback (promise-only stubs hang init at session
+  detection, and innerHTML-length view checks pass hollowly on the static loading
+  screen). Honest content-marker view-walk now passes 11/11.
