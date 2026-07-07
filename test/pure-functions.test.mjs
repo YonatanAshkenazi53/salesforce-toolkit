@@ -35,6 +35,22 @@ describe('sftkOrgKey (sftk-org-identity.js) — org identity across Salesforce d
     expect(_orgKey('')).toBe('');
     expect(_orgKey(null)).toBe('');
   });
+
+  it('PARITY: background.js inline copy behaves identically to the canonical lib', () => {
+    // background.js cannot importScripts the shared lib (Trusted-Types CSP +
+    // trustedTypes factory absent in worker scope on some Chrome builds), so
+    // it carries an inline copy. This test fails the build if they diverge.
+    const bgCopy = extractFunction('background.js', 'sftkOrgKey');
+    const URLS = [
+      'https://acme-dev.develop.my.salesforce.com',
+      'https://acme-dev.develop.lightning.force.com',
+      'https://acme-dev.develop.my.salesforce-setup.com',
+      'https://ACME.my.salesforce.com/lightning/page',
+      'https://foo.my.site.com', 'https://x.force.com',
+      'not a url', '', null, 'https://evil.com/?x=.my.salesforce.com',
+    ];
+    for (const u of URLS) expect(bgCopy(u)).toBe(_orgKey(u));
+  });
 });
 
 describe('buildCopyFields (background.js) — which fields a transfer reads', () => {

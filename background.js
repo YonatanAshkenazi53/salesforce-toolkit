@@ -1,14 +1,27 @@
-// sftkOrgKey — shared org-identity key. The manifest CSP enforces Trusted
-// Types extension-wide (require-trusted-types-for 'script'), which makes
-// importScripts a TT sink even in this service worker — so the one static,
-// packaged-file path goes through a script-URL policy ('sftk-sw', allowlisted
-// in the manifest's trusted-types directive). Pass-through is safe here: the
-// policy is used exactly once, with this constant.
-importScripts(
-  (typeof trustedTypes !== 'undefined' && trustedTypes.createPolicy)
-    ? trustedTypes.createPolicy('sftk-sw', { createScriptURL: u => u }).createScriptURL('sftk-org-identity.js')
-    : 'sftk-org-identity.js'
-);
+// sftkOrgKey — org-identity key. This is a BYTE-FOR-BYTE copy of the
+// canonical implementation in sftk-org-identity.js (which popup + studio
+// load as a classic script). It is inlined here rather than imported because
+// the manifest CSP enforces require-trusted-types-for 'script' in this
+// service worker too, importScripts is a Trusted-Types sink, and the
+// trustedTypes FACTORY is not exposed in worker scope on all Chrome builds —
+// so importScripts is effectively unusable under this CSP.
+// A parity unit test (test/pure-functions.test.mjs) fails the build if this
+// copy and the canonical one ever diverge.
+function sftkOrgKey(orgUrl) {
+  if (!orgUrl) return '';
+  let host;
+  try { host = new URL(orgUrl).hostname; }
+  catch { host = String(orgUrl).replace(/^https?:\/\//, '').replace(/\/.*$/, ''); }
+  return host
+    .replace(/\.my\.salesforce-setup\.com$/, '')
+    .replace(/\.salesforce-setup\.com$/, '')
+    .replace(/\.my\.salesforce\.com$/, '')
+    .replace(/\.lightning\.force\.com$/, '')
+    .replace(/\.my\.site\.com$/, '')
+    .replace(/\.salesforce\.com$/, '')
+    .replace(/\.force\.com$/, '')
+    .toLowerCase();
+}
 
 const API_VERSION = 'v62.0';
 
