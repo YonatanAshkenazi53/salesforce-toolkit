@@ -20,10 +20,17 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
   DISCOVERY: the CSP connect-src allowlist AND `require-trusted-types-for 'script'`
   were ALREADY in the manifest — only the WAR exposure was real.
   USER TEST PENDING: reload extension → popout, Data Studio, apex-log-viewer all open.
-- [ ] **S2. SOQL injection audit** — ~34 `WHERE X='${v}'` interpolations lack visible escaping.
+- [x] **S2. SOQL injection audit** (commit `7de2516`) — multi-agent audit of every
+  interpolation site; only TWO gaps existed (license-manager + apex-debugger LIKE
+  searches, quote-only escaping defeated by trailing backslash) — both fixed; all other
+  sites verified escaped or API-name-constrained.
+  ~~original spec below~~ — ~34 `WHERE X='${v}'` interpolations lack visible escaping.
   Audit every site (workflow fan-out), route string values through `soqlStrLit()` (studio-core)
   or a shared equivalent in background/popup modules. Add unit tests for the escaper.
-- [ ] **S3. XSS audit + Trusted Types enforcement** — grep-audit unescaped `${…}` into innerHTML
+- [x] **S3. XSS audit + Trusted Types enforcement** (commit `7de2516`) — TT CSP
+  enforcement was already in the manifest; audit found all sinks covered and only two
+  esc() gaps (builder dependency-warning banner, popup Flow Restore error list) — fixed.
+  ~~original spec below~~ — grep-audit unescaped `${…}` into innerHTML
   sinks (org labels, record names, API errors are org-controlled). Fix gaps with `esc()`.
   Then add `require-trusted-types-for 'script'` to the extension-pages CSP so future gaps
   throw instead of executing (only after the audit passes — enforcement first would break the app).
@@ -47,19 +54,31 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
   ~~original spec below~~ — state the "Local only" promise concretely: what is stored
   (chrome.storage.local inventory), what never leaves the browser, retention controls, the
   CSP enforcement from S1. Link it from the README if one exists.
-- [ ] **S8. sfProxyFetch least-privilege review** — verify the injected function is a fixed
+- [x] **S8. sfProxyFetch least-privilege review** (audit-verified clean) — fixed closure
+  via func:+args, isolated world, no eval/interpolated code, 401-fallback only, top-3
+  pre-filtered SF tabs. No consent gate needed.
+  ~~original spec below~~ — verify the injected function is a fixed
   closure (no string eval / interpolated code); log proxied calls distinctly in the debug
   panel; gate proxying behind a visible one-time consent per org.
-- [ ] **S9. Re-run the security deep audit** (the original was cut off) — workflow over
+- [x] **S9. Security deep audit re-run** (commit `7de2516`) — 3-dimension workflow,
+  adversarial verify per finding. All 8 confirmed findings FIXED: tabs permission
+  dropped, hostname-suffix URL predicates, dispatcher sender check, sid redaction %21,
+  + the S2/S3 items. Verified clean: proxy injection, sid-at-rest, content.js,
+  no foreign fetch hosts, log-viewer payload deletion.
+  ~~original spec below~~ (the original was cut off) — workflow over
   background.js + both apps; fix what it finds or file it here.
 
 ## Phase C — Cleanup & popup quick wins
 
-- [ ] **C1. Orphaned modules** — remove `conflict-scanner.js` `<script>` from popup.html
+- [x] **C1. Orphaned modules** (commit `ce0b27e`) — conflict-scanner.js + record-copy.js
+  deleted; popup.html script tag + dead updateSession call removed.
+  ~~original spec below~~ — remove `conflict-scanner.js` `<script>` from popup.html
   (loaded but unreachable — no tab reaches it); delete `conflict-scanner.js` and
   `record-copy.js` from disk (git history preserves them); update manifest WAR list if S1
   hasn't already removed it; memory Tab Structure section update.
-- [ ] **C2. Stale docs** — DATA_STUDIO_PROJECT_BRIEF.txt §15 (claims no upsert/dry-run; both
+- [x] **C2. Stale docs** (commit `ce0b27e`) — brief §15 fixed (upsert/dry-run/owner
+  mapping all exist), history/readiness banners corrected.
+  ~~original spec below~~ — DATA_STUDIO_PROJECT_BRIEF.txt §15 (claims no upsert/dry-run; both
   exist), OwnerId line; fix misleading legacy banners in studio-history.js ("SCHEDULE") and
   studio-readiness.js ("ADD ORG MODAL").
 - [ ] **C3. Unified loading/empty/error states** — sweep every popup module: `sftkCat()`/
@@ -77,7 +96,11 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
 
 ## Phase U — Studio UX polish
 
-- [ ] **U1. friendlyError()** — central mapper: raw errorCode → {message, hint, action};
+- [x] **U1. friendlyError()** (commit `4d53167`, user-prompted: "errors are not very
+  readable") — shared sftk-friendly-error.js + grouped History rendering (skipped-field
+  blocks, hints incl. the &amp;-email artifact, raw behind a fold, ×N merging).
+  REMAINING SLIVER: also wire into toasts/compare rows/live run logs.
+  ~~original spec below~~ — central mapper: raw errorCode → {message, hint, action};
   raw string behind "Copy details". Wire into toasts, compare rows, run logs, banners.
 - [ ] **U2. Jargon rename (complete it)** — one noun set: Deployment / Run / Sync check;
   "drift" → "changed"; "extras" → "only in target". String-level sweep across studio files
@@ -140,6 +163,10 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
 
 ## Progress log
 - 2026-07-07: Plan created. Phases S+C started this session.
+- 2026-07-07 (later): PHASE S COMPLETE — S2/S3/S8/S9 closed via audit workflow (8
+  confirmed findings fixed, commit 7de2516). C1+C2 done (ce0b27e). U1 done (4d53167).
+  USER TEST PENDING: reload extension (manifest changed twice: WAR removal + tabs
+  permission drop) → popup, popout, Data Studio, log viewer, one popup user-search.
 - 2026-07-07: S1, S4, S5, S6, S7, A1 done (commits e02f6ad, 9026b27). S2+S3+S9 audit
   workflow launched. HARNESS LESSON: studio's sendBg uses CALLBACK-style sendMessage —
   harness stubs must invoke the callback (promise-only stubs hang init at session
