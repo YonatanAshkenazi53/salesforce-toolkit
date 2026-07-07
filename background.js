@@ -1,4 +1,14 @@
-importScripts('sftk-org-identity.js');   // sftkOrgKey — shared org-identity key
+// sftkOrgKey — shared org-identity key. The manifest CSP enforces Trusted
+// Types extension-wide (require-trusted-types-for 'script'), which makes
+// importScripts a TT sink even in this service worker — so the one static,
+// packaged-file path goes through a script-URL policy ('sftk-sw', allowlisted
+// in the manifest's trusted-types directive). Pass-through is safe here: the
+// policy is used exactly once, with this constant.
+importScripts(
+  (typeof trustedTypes !== 'undefined' && trustedTypes.createPolicy)
+    ? trustedTypes.createPolicy('sftk-sw', { createScriptURL: u => u }).createScriptURL('sftk-org-identity.js')
+    : 'sftk-org-identity.js'
+);
 
 const API_VERSION = 'v62.0';
 
