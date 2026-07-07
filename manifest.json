@@ -24,7 +24,7 @@
   ],
 
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'self' https://*.salesforce.com https://*.force.com https://*.salesforce-setup.com; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types sftk-html sftk-sw;"
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'self' https://*.salesforce.com https://*.force.com https://*.salesforce-setup.com; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types sftk-html;"
   },
 
   "action": {
