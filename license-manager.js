@@ -229,7 +229,9 @@ const LicenseManager = (() => {
     document.getElementById('lmResult').style.display  = 'none';
     selectedUserIds.clear();
 
-    const safe = q.replace(/'/g, "\\'");
+    // Backslashes FIRST, then quotes — a quote-only escape is defeated by a
+    // search term ending in '\' (audit S2).
+    const safe = q.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     const filters = [];
     if (currentFilter === 'active')   filters.push('IsActive=true');
     if (currentFilter === 'inactive') filters.push('IsActive=false');

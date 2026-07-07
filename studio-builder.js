@@ -597,9 +597,9 @@ function renderTreeNode(node, path, isRoot, depth = 0) {
             ? `<div class="ds-tree-dep-warning">
                 <span class="ds-tree-dep-icon">⚠️</span>
                 <span>Lookup field${depWarnings.length > 1 ? 's' : ''}
-                  <strong>${depWarnings.map(w => w.fieldLabel).join(', ')}</strong>
+                  <strong>${esc(depWarnings.map(w => w.fieldLabel).join(', '))}</strong>
                   reference${depWarnings.length === 1 ? 's' : ''}
-                  <strong>${depWarnings.flatMap(w => w.referenceTo).join(', ')}</strong>
+                  <strong>${esc(depWarnings.flatMap(w => w.referenceTo).join(', '))}</strong>
                   which is not in this profile — IDs may not resolve in target org.
                 </span>
                </div>`

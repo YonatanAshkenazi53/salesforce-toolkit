@@ -865,6 +865,12 @@ function buildCopyFields(describe) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Belt-and-braces sender check (audit S9): only this extension's own pages
+  // may drive the dispatcher. Safe by construction today (no
+  // externally_connectable, no content-script relays) — this makes the trust
+  // assumption explicit so a future manifest change can't silently expose
+  // sfQuery/sfDelete/sfMetadataDeploy to less-trusted senders.
+  if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL(''))) return;
   handleMessage(message).then(sendResponse).catch(err => {
     const resp = { error: err.message || String(err) };
     if (err.sfBody) resp.sfBody = err.sfBody;  // include raw SF 401 body for diagnostics
@@ -1661,7 +1667,9 @@ function isSalesforceUrl(url) {
   try {
     const host = new URL(url).hostname;
     if (SF_EXCLUDED_HOSTS.includes(host)) return false;
-    return SF_URL_PATTERNS.some(p => url.includes(p));
+    // Hostname-suffix match, NOT substring — a substring test passes
+    // https://evil.com/?x=.my.salesforce.com (audit S9).
+    return SF_URL_PATTERNS.some(p => host === p.slice(1) || host.endsWith(p));
   } catch (_) { return false; }
 }
 
@@ -1669,7 +1677,8 @@ function isOrgInstanceUrl(url) {
   try {
     const host = new URL(url).hostname;
     if (SF_EXCLUDED_HOSTS.includes(host)) return false;
-    return SF_ORG_PATTERNS.some(p => host.includes(p));
+    // Suffix match — host.includes() passes foo.my.salesforce.com.evil.com.
+    return SF_ORG_PATTERNS.some(p => host === p.slice(1) || host.endsWith(p));
   } catch (_) { return false; }
 }
 
