@@ -747,37 +747,62 @@ const FieldCleaner = (() => {
   }
 
   // ── Render results ─────────────────────────────────────────
+  // sev (F2 — predictive blocker check): does this dependency actually stop
+  // Salesforce from deleting the field, or just break silently afterwards?
+  //   'blocker' — Salesforce REJECTS the delete until this reference is gone
+  //               (Apex, validation/workflow rules, matching rules, active flows)
+  //   'silent'  — delete succeeds; the reference just stops working / vanishes
+  //               (layouts, list views, quick actions — cosmetic breakage)
   const TYPE_CFG = {
-    Flow:           { icon: '🌊', label: 'Flows',            fixable: true,
+    Flow:           { icon: '🌊', label: 'Flows',            fixable: true, sev: 'blocker',
                       note: 'A new version is saved with the field reference removed AND activated automatically. Old versions that still reference the field are deleted too — Salesforce keeps the dependency lock per version, so stale versions would otherwise still block the field delete.',
                       doneLabel: '✅ Activated' },
-    FlexiPage:      { icon: '📄', label: 'Lightning Pages',  fixable: true,
+    FlexiPage:      { icon: '📄', label: 'Lightning Pages',  fixable: true, sev: 'silent',
                       note: 'Field references in visibility rules and field components will be removed automatically.',
                       doneLabel: '✅ Page updated' },
-    Layout:         { icon: '📋', label: 'Page Layouts',     fixable: true,
+    Layout:         { icon: '📋', label: 'Page Layouts',     fixable: true, sev: 'silent',
                       note: 'The field will be removed from all layout sections automatically.',
                       doneLabel: '✅ Layout updated' },
-    ListView:       { icon: '📊', label: 'List Views',       fixable: false,
+    ListView:       { icon: '📊', label: 'List Views',       fixable: false, sev: 'silent',
                       note: 'Open the object\'s list view and remove the column or filter.' },
-    CompactLayout:  { icon: '📇', label: 'Compact Layouts',  fixable: false,
+    CompactLayout:  { icon: '📇', label: 'Compact Layouts',  fixable: false, sev: 'silent',
                       note: 'Edit the compact layout in Object Manager and remove the field.' },
-    QuickAction:    { icon: '⚡', label: 'Quick Actions',    fixable: false,
+    QuickAction:    { icon: '⚡', label: 'Quick Actions',    fixable: false, sev: 'silent',
                       note: 'Edit the quick action\'s layout (Object Manager → Buttons, Links, and Actions) and remove the field.' },
-    MatchingRule:   { icon: '🧬', label: 'Matching Rules',   fixable: false,
+    MatchingRule:   { icon: '🧬', label: 'Matching Rules',   fixable: false, sev: 'blocker',
                       note: 'Deactivate the matching rule, remove the field from its criteria, then reactivate (Setup → Duplicate Management → Matching Rules).' },
-    WorkflowFieldUpdate: { icon: '🛠', label: 'Workflow Field Updates', fixable: false,
+    WorkflowFieldUpdate: { icon: '🛠', label: 'Workflow Field Updates', fixable: false, sev: 'blocker',
                       note: 'Edit or delete the field update (Setup → Workflow Actions → Field Updates).' },
-    ValidationRule: { icon: '✅', label: 'Validation Rules', fixable: false,
+    ValidationRule: { icon: '✅', label: 'Validation Rules', fixable: false, sev: 'blocker',
                       note: 'Edit the validation rule formula in Object Manager.' },
-    ApexClass:      { icon: '☕', label: 'Apex Classes',     fixable: false,
+    ApexClass:      { icon: '☕', label: 'Apex Classes',     fixable: false, sev: 'blocker',
                       note: 'Update the Apex code to remove the field reference.' },
-    ApexTrigger:    { icon: '⚡', label: 'Apex Triggers',    fixable: false,
+    ApexTrigger:    { icon: '⚡', label: 'Apex Triggers',    fixable: false, sev: 'blocker',
                       note: 'Update the Apex trigger to remove the field reference.' },
-    WorkflowRule:   { icon: '🔁', label: 'Workflow Rules',   fixable: false,
+    WorkflowRule:   { icon: '🔁', label: 'Workflow Rules',   fixable: false, sev: 'blocker',
                       note: 'Edit or deactivate the workflow rule in Setup.' },
   };
-  const TYPE_CFG_DEFAULT = { icon: '🔧', label: 'Other', fixable: false,
+  const TYPE_CFG_DEFAULT = { icon: '🔧', label: 'Other', fixable: false, sev: 'blocker',
     note: 'Review this dependency in Setup before deleting the field.' };
+
+  // F2: unresolved manual blockers (types the extension can't auto-fix that
+  // will make Salesforce reject the delete). Read by checkEnableDelete.
+  let _manualBlockers = [];
+
+  // F8: honest disclosure of what the scan does NOT cover — the Tooling
+  // dependency index doesn't track these, so silent breakage hides here.
+  function _unscannedNoteHtml() {
+    const reportsUrl = _orgUrl
+      ? _orgUrl.replace(/\/$/, '') + '/lightning/o/Report/home'
+      : null;
+    return `
+      <div class="fc-unscanned-note">
+        ℹ️ <strong>Not scanned</strong> (no affordable API): Reports, Email Templates,
+        approval processes, and criteria-based sharing rules — these break silently if
+        the field is removed. Check them before deleting.
+        ${reportsUrl ? `<a class="fc-unscanned-link" href="${esc(reportsUrl)}" target="_blank" rel="noopener">↗ Open Reports</a>` : ''}
+      </div>`;
+  }
 
   function renderResults(deps, fieldId) {
     const results = eid('fcResults');
@@ -791,10 +816,7 @@ const FieldCleaner = (() => {
           <div class="fc-clean-sub">This field can be safely deleted.</div>
           <button class="btn btn-danger" id="fcDelFreeBtn">🗑 Delete Field</button>
         </div>
-        <div class="fc-unscanned-note">
-          ℹ️ Not scanned (no affordable API): <strong>Reports</strong>, <strong>approval processes</strong>,
-          and <strong>criteria-based sharing rules</strong> — check those manually before deleting.
-        </div>`;
+        ${_unscannedNoteHtml()}`;
       eid('fcDelFreeBtn').onclick = () => confirmDelete(fieldId);
       return;
     }
@@ -821,10 +843,7 @@ const FieldCleaner = (() => {
           ${manualCount > 0 ? `<span class="fc-badge-manual">${manualCount} manual</span>` : ''}
         </span>
       </div>
-      <div class="fc-unscanned-note">
-        ℹ️ Not scanned (no affordable API): <strong>Reports</strong>, <strong>approval processes</strong>,
-        and <strong>criteria-based sharing rules</strong> — check those manually before deleting.
-      </div>`;
+      ${_unscannedNoteHtml()}`;
 
     for (const [type, items] of Object.entries(_groups)) {
       const cfg = TYPE_CFG[type] || { ...TYPE_CFG_DEFAULT, label: type };
@@ -849,14 +868,45 @@ const FieldCleaner = (() => {
         </div>`;
     }
 
+    // ── F2: predictive blocker check ─────────────────────────────────────
+    // Classify by whether Salesforce will actually REJECT the delete. Manual
+    // blockers (Apex, validation/workflow/matching rules) can't be auto-fixed
+    // here — Salesforce would 400 the delete — so gate the button on them up
+    // front instead of letting the attempt fail server-side.
+    _manualBlockers = Object.entries(_groups)
+      .filter(([t]) => {
+        const cfg = TYPE_CFG[t] || TYPE_CFG_DEFAULT;
+        return cfg.sev === 'blocker' && !cfg.fixable;
+      })
+      .map(([t, arr]) => ({ type: t, label: (TYPE_CFG[t] || { label: t }).label, count: arr.length }));
+    const blockerTotal = _manualBlockers.reduce((n, b) => n + b.count, 0);
+    const silentManual = Object.entries(_groups)
+      .filter(([t]) => { const c = TYPE_CFG[t] || TYPE_CFG_DEFAULT; return c.sev === 'silent' && !c.fixable; })
+      .reduce((n, [, arr]) => n + arr.length, 0);
+    const delDisabled = autoCount > 0 || blockerTotal > 0;
+
+    const blockerBlock = blockerTotal > 0 ? `
+      <div class="fc-blockers">
+        <div class="fc-blockers-hdr">🔒 ${blockerTotal} blocker${blockerTotal === 1 ? '' : 's'} — Salesforce will refuse the delete until ${blockerTotal === 1 ? 'this is' : 'these are'} cleared:</div>
+        ${_manualBlockers.map(b => `<div class="fc-blocker-row">${(TYPE_CFG[b.type] || {}).icon || '🔧'} <strong>${b.count}</strong> ${esc(b.label)} — clear in Setup, then re-scan</div>`).join('')}
+      </div>` : '';
+    const silentNote = silentManual > 0 ? `
+      <div class="fc-silent-note">⚠ ${silentManual} cosmetic reference${silentManual === 1 ? '' : 's'} (list views, quick actions…) won't block the delete but will stop working afterwards.</div>` : '';
+
     html += `
       <div class="fc-delete-zone" id="fcDeleteZone">
+        ${blockerBlock}
+        ${silentNote}
         <div class="fc-delete-note" id="fcDeleteNote">
           ${autoCount > 0
-            ? '⚠ Fix all auto-fixable dependencies above first, then delete.'
-            : '⚠ Remove all manual dependencies in Setup before deleting.'}
+            ? '⚠ Fix all auto-fixable dependencies above first.'
+            : blockerTotal > 0
+              ? '🔒 Delete is blocked until the blockers above are cleared.'
+              : silentManual > 0
+                ? '✅ No blockers — safe to delete (the cosmetic references above will simply vanish).'
+                : '✅ Safe to delete.'}
         </div>
-        <button class="btn btn-danger" id="fcDelBtn" ${autoCount > 0 ? 'disabled' : ''}>
+        <button class="btn btn-danger" id="fcDelBtn" ${delDisabled ? 'disabled' : ''}>
           🗑 Delete Field
         </button>
       </div>`;
@@ -999,10 +1049,18 @@ const FieldCleaner = (() => {
   function checkEnableDelete() {
     const remaining = document.querySelectorAll('.fc-fix-btn:not([disabled])');
     const delBtn    = eid('fcDelBtn');
-    if (delBtn && remaining.length === 0) {
+    if (!delBtn) return;
+    const blockerTotal = (_manualBlockers || []).reduce((n, b) => n + b.count, 0);
+    // F2: even with every auto-fix done, manual blockers still make Salesforce
+    // reject the delete — keep the button locked and say why.
+    if (remaining.length === 0 && blockerTotal === 0) {
       delBtn.disabled = false;
       const note = eid('fcDeleteNote');
-      if (note) note.textContent = 'All auto-fixable dependencies resolved. Safe to delete.';
+      if (note) note.textContent = 'All dependencies resolved. Safe to delete.';
+    } else if (remaining.length === 0 && blockerTotal > 0) {
+      delBtn.disabled = true;
+      const note = eid('fcDeleteNote');
+      if (note) note.textContent = `🔒 Auto-fixes done, but ${blockerTotal} manual blocker(s) remain — clear them in Setup and re-scan.`;
     }
   }
 
@@ -2394,5 +2452,12 @@ const FieldCleaner = (() => {
     goTo(0);
   }
 
-  return { init, updateSession };
+  // Test-only surface (harness). Lets a headless test drive renderResults with
+  // synthetic dependency records without the object/field picker flow.
+  const _test = {
+    renderResults,
+    setSel: (obj, field, orgUrl) => { _selObj = obj; _selField = field; if (orgUrl) _orgUrl = orgUrl; },
+    getManualBlockers: () => _manualBlockers,
+  };
+  return { init, updateSession, _test };
 })();
