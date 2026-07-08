@@ -1471,6 +1471,56 @@ const ApexDebugger = (() => {
           ${limitsBlock}
         </div>
 
+        <!-- D3: execution timeline — where the wall time went -->
+        ${(p.timeline || []).length ? (() => {
+          const top = p.timeline.slice(0, 5);
+          const maxMs = top[0].ms || 1;
+          const fmt = ms => ms >= 1000 ? (ms / 1000).toFixed(2) + 's' : Math.round(ms) + 'ms';
+          const icon = t => t === 'flow' ? '🌊' : t === 'method' ? '⚙' : '⚡';
+          return `
+          <div class="adbg-section">
+            <div class="adbg-sec-hdr">⏱ Where the time went
+              <span class="adbg-cnt-badge">top ${top.length}</span>
+            </div>
+            ${top.map(u => `
+              <div class="adbg-time-row" title="${_esc(u.label)} — ${fmt(u.ms)} total across ${u.count} execution(s)">
+                <span class="adbg-time-lbl">${icon(u.type)} ${_esc(u.label.length > 58 ? u.label.slice(0, 58) + '…' : u.label)}</span>
+                <span class="adbg-time-bar"><span class="adbg-time-fill" style="width:${Math.max(2, Math.round(u.ms / maxMs * 100))}%"></span></span>
+                <span class="adbg-time-val">${fmt(u.ms)}${u.count > 1 ? ` <em>×${u.count}</em>` : ''}</span>
+              </div>`).join('')}
+            ${p.timeline.length > 5 ? `
+              <details class="adbg-time-more"><summary>…${p.timeline.length - 5} more timed units</summary>
+                ${p.timeline.slice(5).map(u => `
+                  <div class="adbg-time-row">
+                    <span class="adbg-time-lbl">${icon(u.type)} ${_esc(u.label.length > 58 ? u.label.slice(0, 58) + '…' : u.label)}</span>
+                    <span class="adbg-time-val">${fmt(u.ms)}${u.count > 1 ? ` <em>×${u.count}</em>` : ''}</span>
+                  </div>`).join('')}
+              </details>` : ''}
+          </div>`;
+        })() : ''}
+
+        <!-- D2: repeated-query (N+1) detector -->
+        ${(() => {
+          const repeats = Object.entries(p.soqlShapes || {})
+            .filter(([, s]) => s.count >= 5)
+            .sort((a, b) => b[1].count - a[1].count);
+          if (!repeats.length) return '';
+          return `
+          <div class="adbg-section">
+            <div class="adbg-sec-hdr">🔁 Repeated queries
+              <span class="adbg-cnt-badge adbg-cnt-err">${repeats.length}</span>
+            </div>
+            <div class="adbg-nplus-hint">The same query shape ran many times in one transaction — the classic
+              query-inside-a-loop pattern that burns the SOQL governor limit. Bulkify: query once before the loop.</div>
+            ${repeats.map(([shape, s]) => `
+              <div class="adbg-nplus-row adbg-err-jump" data-err-line="${s.firstLine}" title="Jump to the first execution (line ${s.firstLine})">
+                <span class="adbg-nplus-count">×${s.count}</span>
+                <code class="adbg-nplus-q">${_esc(s.sample.length > 90 ? s.sample.slice(0, 90) + '…' : s.sample)}</code>
+                <span class="adbg-nplus-rows">${s.rows} row${s.rows === 1 ? '' : 's'} total${s.count ? ` (~${(s.rows / s.count).toFixed(1)}/query)` : ''}</span>
+              </div>`).join('')}
+          </div>`;
+        })()}
+
         <!-- Recursion / loop banner -->
         ${hasLoop ? `
           <div class="adbg-loop-banner">
@@ -2155,6 +2205,8 @@ const ApexDebugger = (() => {
       entryPoint: null,
       codeUnits:  [],   // [{label, count}] — every CODE_UNIT_STARTED
       limits:     {},   // limitName → {used, max} — governor-limit summary
+      soqlShapes: {},   // D2: normalizedQuery → {count, rows, firstLine, sample}
+      timeline:   [],   // D3: [{label, type, ms, count}] slowest units (filled at end)
       stats: {          // raw transaction counters (always populated)
         lines: 0, soql: 0, soqlRows: 0, dml: 0, dmlRows: 0,
         callouts: 0, codeUnits: 0, validationFails: 0
@@ -2164,6 +2216,25 @@ const ApexDebugger = (() => {
     const flowStack = []; // stack of currently-executing flow names
     const dmlStack  = []; // stack of active DML contexts {op, type}
     let   inLimits  = false; // inside a LIMIT_USAGE_FOR_NS summary block
+    // D2: the query shape currently between BEGIN/END (to attach its row count).
+    let   pendingSoql = null;
+    // D3: unit-duration tracking. Each log line carries an elapsed-nanoseconds
+    // value in parens ("10:00:00.1 (1234)|…"); pairing START/FINISH events by
+    // that value gives exact durations. Aggregated by label so an N+1 method
+    // shows its TOTAL cost. Unbalanced pairs (truncated logs) are ignored.
+    const unitStack = [];              // [{label, type, startNs}]
+    const durByLabel = new Map();      // label → {type, totalNs, count}
+    const addDur = (label, type, ns) => {
+      if (!label || !(ns >= 0)) return;
+      const e = durByLabel.get(label) || { type, totalNs: 0, count: 0 };
+      e.totalNs += ns; e.count++; durByLabel.set(label, e);
+    };
+    const _normSoql = q => String(q)
+      .replace(/'[^']*'/g, '?')            // string literals
+      .replace(/\b\d{4}-\d\d-\d\d[^\s,)]*/g, '?')  // date/datetime literals
+      .replace(/\b\d+\b/g, '?')            // numbers / ids-in-bind
+      .replace(/\bIN\s*\([^)]*\)/gi, 'IN (?)')     // IN lists
+      .replace(/\s+/g, ' ').trim().slice(0, 300);
 
     for (const line of text.split('\n')) {
       result.stats.lines++;
@@ -2193,6 +2264,36 @@ const ApexDebugger = (() => {
       const event = p2 === -1 ? rest : rest.slice(0, p2);
       const data  = p2 === -1 ? '' : rest.slice(p2 + 1);
 
+      // D3: elapsed nanoseconds from the timestamp prefix "HH:MM:SS.m (12345)".
+      const nsM = line.slice(0, p1).match(/\((\d+)\)/);
+      const ns  = nsM ? parseInt(nsM[1], 10) : NaN;
+
+      // D3: pair *_STARTED/_FINISHED (code units) and METHOD_ENTRY/EXIT into
+      // durations. Matching is LIFO by label when possible, else top-of-stack —
+      // truncated logs with unbalanced pairs simply drop the orphan.
+      if (Number.isFinite(ns)) {
+        if (event === 'CODE_UNIT_STARTED' || event === 'METHOD_ENTRY' || event === 'FLOW_START_INTERVIEW_BEGIN') {
+          const type  = event === 'CODE_UNIT_STARTED' ? 'unit' : event === 'METHOD_ENTRY' ? 'method' : 'flow';
+          const label = event === 'FLOW_START_INTERVIEW_BEGIN'
+            ? 'Flow: ' + (data.split('|')[1] || 'Unknown')
+            : (data.split('|').pop() || '').trim();
+          unitStack.push({ label, type, startNs: ns });
+        } else if (event === 'CODE_UNIT_FINISHED' || event === 'METHOD_EXIT' || event === 'FLOW_START_INTERVIEW_END') {
+          const closeLabel = event === 'FLOW_START_INTERVIEW_END'
+            ? 'Flow: ' + (data.split('|')[1] || 'Unknown')
+            : (data.split('|').pop() || '').trim();
+          let idx = -1;
+          for (let i = unitStack.length - 1; i >= 0; i--) {
+            if (unitStack[i].label === closeLabel) { idx = i; break; }
+          }
+          if (idx === -1 && unitStack.length) idx = unitStack.length - 1;
+          if (idx !== -1) {
+            const open = unitStack.splice(idx, 1)[0];
+            addDur(open.label, open.type, ns - open.startNs);
+          }
+        }
+      }
+
       switch (event) {
 
         case 'LIMIT_USAGE_FOR_NS': {
@@ -2205,12 +2306,29 @@ const ApexDebugger = (() => {
           inLimits = false;
           break;
 
-        case 'SOQL_EXECUTE_BEGIN':
+        case 'SOQL_EXECUTE_BEGIN': {
           result.stats.soql++;
+          // D2: group queries by SHAPE (bind values stripped) so the same
+          // query running 47× in a loop shows up as one row with a count.
+          const qm = data.match(/\|(SELECT[\s\S]*)$/i);
+          if (qm) {
+            const shape = _normSoql(qm[1]);
+            if (!result.soqlShapes[shape]) {
+              result.soqlShapes[shape] = { count: 0, rows: 0, firstLine: result.stats.lines, sample: qm[1].slice(0, 200) };
+            }
+            const sh = result.soqlShapes[shape];
+            sh.count++;
+            pendingSoql = sh;
+          } else {
+            pendingSoql = null;
+          }
           break;
+        }
         case 'SOQL_EXECUTE_END': {
           const rm = data.match(/Rows:(\d+)/);
-          if (rm) result.stats.soqlRows += parseInt(rm[1], 10) || 0;
+          const rows = rm ? (parseInt(rm[1], 10) || 0) : 0;
+          if (rm) result.stats.soqlRows += rows;
+          if (pendingSoql) { pendingSoql.rows += rows; pendingSoql = null; }
           break;
         }
         case 'CALLOUT_REQUEST':
@@ -2359,6 +2477,14 @@ const ApexDebugger = (() => {
         result.recursions.push({ type: 'trigger', name, count: info.count, depth: 0 });
       }
     }
+
+    // D3: finalize the timeline — top units by total wall time. Methods under
+    // 1ms total are noise; drop them. ms = ns / 1e6.
+    result.timeline = [...durByLabel.entries()]
+      .map(([label, e]) => ({ label, type: e.type, ms: e.totalNs / 1e6, count: e.count }))
+      .filter(u => u.ms >= 1)
+      .sort((a, b) => b.ms - a.ms)
+      .slice(0, 25);
 
     return result;
   }
