@@ -817,9 +817,13 @@ const FieldCleaner = (() => {
           <button class="btn btn-danger" id="fcDelFreeBtn">🗑 Delete Field</button>
         </div>
         <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">📊 Measuring how much data is stored in this field…</div>
+        <div id="fcDepZone"></div>
+        <div id="fcFlsPanel"></div>
         ${_unscannedNoteHtml()}`;
       eid('fcDelFreeBtn').onclick = () => confirmDelete(fieldId);
       runDataUsage();
+      renderDeprecationZone(fieldId);
+      renderFlsPanel();
       return;
     }
 
@@ -846,6 +850,8 @@ const FieldCleaner = (() => {
         </span>
       </div>
       <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">📊 Measuring how much data is stored in this field…</div>
+      <div id="fcDepZone"></div>
+      <div id="fcFlsPanel"></div>
       ${_unscannedNoteHtml()}`;
 
     for (const [type, items] of Object.entries(_groups)) {
@@ -945,7 +951,172 @@ const FieldCleaner = (() => {
     const delBtn = eid('fcDelBtn');
     if (delBtn) delBtn.onclick = () => confirmDelete(fieldId);
 
-    runDataUsage();   // F1: fill the verdict placeholder asynchronously
+    runDataUsage();              // F1: fill the verdict placeholder asynchronously
+    renderDeprecationZone(fieldId);  // F3: stage banner / deprecate button
+    renderFlsPanel();            // F5: who can see this field
+  }
+
+  // ── F5: FLS visibility panel — who can even see this field? ─────────────
+  // One FieldPermissions query lists every profile / permission set granting
+  // read or edit. Per-row ✂ strips that grant (PermissionsRead/Edit → false).
+  async function _queryFls() {
+    const res = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
+      query: `SELECT Id, Parent.Label, Parent.IsOwnedByProfile, Parent.Profile.Name, ` +
+             `PermissionsRead, PermissionsEdit FROM FieldPermissions ` +
+             `WHERE SobjectType = '${_selObj.api}' AND Field = '${_selObj.api}.${_selField.api}'` });
+    if (res.error) return { error: res.error };
+    return { rows: res.records || [] };
+  }
+
+  async function renderFlsPanel() {
+    const el = eid('fcFlsPanel');
+    if (!el || !_selObj?.api || !_selField?.api) return;
+    const { rows, error } = await _queryFls();
+    if (error) { el.innerHTML = `<div class="fc-unscanned-note">👁 FLS check unavailable: ${esc(error)}</div>`; return; }
+    if (!rows.length) {
+      el.innerHTML = `<div class="fc-fls-empty">👁 <strong>No profile or permission set grants access</strong> to this field — nobody can see it today.</div>`;
+      return;
+    }
+    el.innerHTML = `
+      <details class="fc-fls">
+        <summary>👁 Visible to <strong>${rows.length}</strong> profile${rows.length === 1 ? '' : 's'}/permission set${rows.length === 1 ? '' : 's'}</summary>
+        <div class="fc-fls-rows">
+          ${rows.map(r => {
+            const name = r.Parent?.IsOwnedByProfile ? (r.Parent?.Profile?.Name || r.Parent?.Label) : r.Parent?.Label;
+            const kind = r.Parent?.IsOwnedByProfile ? 'Profile' : 'Perm set';
+            return `<div class="fc-fls-row" data-fls-id="${esc(r.Id)}">
+              <span class="fc-fls-kind">${kind}</span>
+              <span class="fc-fls-name">${esc(name || r.Id)}</span>
+              <span class="fc-fls-perm">${r.PermissionsEdit ? 'read + edit' : 'read'}</span>
+              <button class="btn btn-sm fc-fls-strip" data-fls-id="${esc(r.Id)}" title="Remove this grant — the field disappears for these users">✂ Strip</button>
+            </div>`;
+          }).join('')}
+        </div>
+      </details>`;
+    el.querySelectorAll('.fc-fls-strip').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true; btn.textContent = '⏳';
+        const res = await bg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: _orgUrl, sid: _sid,
+          records: [{ attributes: { type: 'FieldPermissions' }, Id: btn.dataset.flsId,
+                      PermissionsRead: false, PermissionsEdit: false }] });
+        const ok = Array.isArray(res) ? res[0]?.success : !res.error;
+        if (ok) {
+          const row = btn.closest('.fc-fls-row');
+          if (row) { row.classList.add('fc-fls-stripped'); btn.replaceWith(Object.assign(document.createElement('span'), { textContent: '✅ stripped', className: 'fc-fls-done' })); }
+        } else {
+          btn.disabled = false; btn.textContent = '❌ retry';
+        }
+      });
+    });
+  }
+
+  // ── F3: staged deprecation — rename + strip FLS now, delete later ───────
+  // The careful-admin dance as one button: label → "zz_DEPRECATED …" (+ a
+  // description stamp), read access stripped everywhere, stage + undo
+  // snapshot recorded in extension storage. LABEL only — the API name never
+  // changes (renaming it breaks integrations).
+  function _depKey() {
+    return `fc_dep|${sftkOrgKey(_orgUrl)}|${_selObj.api}.${_selField.api}`;
+  }
+
+  async function renderDeprecationZone(fieldId) {
+    const el = eid('fcDepZone');
+    if (!el || !_selObj?.api || !_selField?.api) return;
+    const store = await chrome.storage.local.get(_depKey());
+    const dep = store[_depKey()];
+    if (dep) {
+      const days = Math.floor((Date.now() - dep.at) / 86400000);
+      el.innerHTML = `
+        <div class="fc-dep-banner">
+          🕐 <strong>Deprecated ${days === 0 ? 'today' : days + ' day(s) ago'}</strong> —
+          label renamed and ${dep.fls.length} access grant(s) stripped. No complaints so far?
+          It's safe to delete. Changed your mind?
+          <button class="btn btn-sm" id="fcDepUndo">↩ Undo deprecation</button>
+        </div>`;
+      eid('fcDepUndo')?.addEventListener('click', e => undoDeprecation(e.currentTarget));
+    } else {
+      el.innerHTML = `
+        <div class="fc-dep-offer">
+          🕐 Not sure it's unused? <button class="btn btn-secondary btn-sm" id="fcDepBtn">Deprecate first</button>
+          <span class="fc-dep-hint">renames the label to <code>zz_DEPRECATED…</code> and hides the field from everyone —
+          wait for complaints, then delete (or undo) with one click.</span>
+        </div>`;
+      eid('fcDepBtn')?.addEventListener('click', e => deprecateField(fieldId, e.currentTarget));
+    }
+  }
+
+  async function deprecateField(fieldId, btn) {
+    if (!fieldId) return;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Deprecating…'; }
+    try {
+      // 1. Current metadata (Tooling PATCH needs the full Metadata blob back).
+      const cur = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
+        sobject: 'CustomField', id: fieldId });
+      if (cur.error || !cur.Metadata) throw new Error(cur.error || 'Could not read field metadata');
+      const prevLabel = cur.Metadata.label;
+      const prevDesc  = cur.Metadata.description || '';
+
+      // 2. Rename label + stamp description.
+      const md = { ...cur.Metadata };
+      if (!/^zz_DEPRECATED/i.test(md.label || '')) md.label = `zz_DEPRECATED ${md.label || _selField.api}`;
+      md.description = `[DEPRECATED ${new Date().toISOString().slice(0, 10)} by Salesforce Toolkit — pending delete] ${prevDesc}`.slice(0, 1000);
+      const patch = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+        path: `services/data/v62.0/tooling/sobjects/CustomField/${fieldId}`,
+        body: { Metadata: md } });
+      if (patch?.error) throw new Error(patch.error);
+
+      // 3. Strip FLS everywhere (snapshot first for undo).
+      const { rows, error } = await _queryFls();
+      if (error) throw new Error('FLS query failed: ' + error);
+      const flsSnapshot = rows.map(r => ({ id: r.Id, read: !!r.PermissionsRead, edit: !!r.PermissionsEdit }));
+      if (rows.length) {
+        const res = await bg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: _orgUrl, sid: _sid,
+          records: rows.map(r => ({ attributes: { type: 'FieldPermissions' }, Id: r.Id,
+                                    PermissionsRead: false, PermissionsEdit: false })) });
+        const fails = (Array.isArray(res) ? res : []).filter(x => !x.success).length;
+        if (fails) throw new Error(`${fails} FLS strip(s) failed — field renamed but still partially visible`);
+      }
+
+      // 4. Record the stage + undo snapshot.
+      await chrome.storage.local.set({ [_depKey()]: {
+        at: Date.now(), fieldId, prevLabel, prevDesc, fls: flsSnapshot } });
+      renderDeprecationZone(fieldId);
+      renderFlsPanel();
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = '❌ ' + String(e.message || e).slice(0, 60); }
+    }
+  }
+
+  async function undoDeprecation(btn) {
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Restoring…'; }
+    try {
+      const key = _depKey();
+      const store = await chrome.storage.local.get(key);
+      const dep = store[key];
+      if (!dep) throw new Error('No deprecation record found');
+
+      // 1. Restore label + description.
+      const cur = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
+        sobject: 'CustomField', id: dep.fieldId });
+      if (cur.error || !cur.Metadata) throw new Error(cur.error || 'Could not read field metadata');
+      const md = { ...cur.Metadata, label: dep.prevLabel, description: dep.prevDesc || null };
+      const patch = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+        path: `services/data/v62.0/tooling/sobjects/CustomField/${dep.fieldId}`,
+        body: { Metadata: md } });
+      if (patch?.error) throw new Error(patch.error);
+
+      // 2. Restore the FLS grants from the snapshot.
+      if (dep.fls.length) {
+        await bg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: _orgUrl, sid: _sid,
+          records: dep.fls.map(f => ({ attributes: { type: 'FieldPermissions' }, Id: f.id,
+                                       PermissionsRead: f.read, PermissionsEdit: f.edit })) });
+      }
+      await chrome.storage.local.remove(key);
+      renderDeprecationZone(dep.fieldId);
+      renderFlsPanel();
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = '❌ ' + String(e.message || e).slice(0, 60); }
+    }
   }
 
   // ── F1: data-usage verdict — "is anything actually stored here?" ─────────
@@ -2631,6 +2802,7 @@ const FieldCleaner = (() => {
     renderResults,
     setSel: (obj, field, orgUrl) => { _selObj = obj; _selField = field; if (orgUrl) _orgUrl = orgUrl; },
     getManualBlockers: () => _manualBlockers,
+    deprecateField, undoDeprecation, renderFlsPanel, renderDeprecationZone,
   };
   return { init, updateSession, _test };
 })();

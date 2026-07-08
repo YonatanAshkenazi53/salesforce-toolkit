@@ -196,12 +196,12 @@ Tooling-PATCH + Metadata-zip fallback, flow-version purge, _explainDeleteError, 
 - [x] **F2. Predictive blocker check** — classify scan hits: blocks-delete (apex/trigger/
   validation-rule) vs breaks-silently vs cosmetic; Delete shows "🔒 N blockers remain" (disabled,
   listed) until cleared. Classification of existing scan data.
-- [ ] **F3. Staged deprecation** — "🕐 Deprecate first": Tooling PATCH label→`zz_DEPRECATED …`
+- [x] **F3. Staged deprecation** — "🕐 Deprecate first": Tooling PATCH label→`zz_DEPRECATED …`
   + description stamp; FieldPermissions DML strips read from all profiles/perm sets; record stage+
   date + snapshot for undo (restore label+FLS). LABEL only, never API name.
 - [x] **F4. CSV value backup** — "💾 Back up values" on delete confirm: `queryAll Id,Name,Field
   WHERE Field != null` → client CSV. Cap ~50k rows w/ warning.
-- [ ] **F5. FLS visibility panel** — results section listing profiles/perm sets with read/edit
+- [x] **F5. FLS visibility panel** — results section listing profiles/perm sets with read/edit
   (`FieldPermissions` query) + per-row strip toggles. Standalone half of F3.
 - [ ] **F6. Pre-fix metadata snapshots + restore** — before any fix, store pre-change XML
   (layout/flow/FlexiPage) in a "cleanup log"; ↩ Restore redeploys via existing Metadata-zip path;
