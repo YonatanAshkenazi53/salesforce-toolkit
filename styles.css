@@ -5358,3 +5358,18 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 }
 .adbg-err-goto { margin-left: auto; font-size: 10.5px; color: var(--subtext); white-space: nowrap; opacity: .7; }
 .adbg-err-jump:hover .adbg-err-goto { opacity: 1; color: var(--brand); }
+/* D3: execution timeline */
+.adbg-time-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
+.adbg-time-lbl { flex: 0 0 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.adbg-time-bar { flex: 1; height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.adbg-time-fill { display: block; height: 100%; background: var(--brand); border-radius: 4px; }
+.adbg-time-val { flex: 0 0 84px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
+.adbg-time-val em { font-style: normal; color: var(--subtext); font-weight: 400; font-size: 10.5px; }
+.adbg-time-more summary { font-size: 11px; color: var(--subtext); cursor: pointer; padding: 3px 0; }
+/* D2: repeated queries */
+.adbg-nplus-hint { font-size: 11px; color: var(--subtext); margin: 2px 0 7px; line-height: 1.5; }
+.adbg-nplus-row { display: flex; align-items: baseline; gap: 8px; padding: 4px 6px; border-radius: 5px; cursor: pointer; }
+.adbg-nplus-row:hover { background: var(--warning-bg); }
+.adbg-nplus-count { font-weight: 800; color: var(--danger); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.adbg-nplus-q { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.adbg-nplus-rows { font-size: 10.5px; color: var(--subtext); white-space: nowrap; }

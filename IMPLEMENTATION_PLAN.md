@@ -165,9 +165,9 @@ except where an API is named. File: apex-debugger.js (+ apex-log-viewer.js for t
 - [x] **D1. Governor-limit proximity alerts** — `result.limits` (used/max) already parsed;
   red/amber banner atop ANALYSIS for any limit ≥95%/≥80%; badge on log-list rows whose
   log neared a limit. Rendering only.
-- [ ] **D2. Repeated-query (N+1) detector** — group `SOQL_EXECUTE_BEGIN` by normalized query
+- [x] **D2. Repeated-query (N+1) detector** — group `SOQL_EXECUTE_BEGIN` by normalized query
   (strip bind values); shape running ≥5× → ANALYSIS row with rows-per-query + jump-to-first.
-- [ ] **D3. Execution timeline** — pair `CODE_UNIT/METHOD/FLOW _STARTED/_FINISHED` into a
+- [x] **D3. Execution timeline** — pair `CODE_UNIT/METHOD/FLOW _STARTED/_FINISHED` into a
   duration tree via the elapsed-ns column; "Top 5 slowest units" strip, expandable, links into
   log. Must degrade on truncated/unbalanced logs.
 - [x] **D4. Category filter chips** — Only USER_DEBUG · Only SOQL/DML · Hide system noise ·
