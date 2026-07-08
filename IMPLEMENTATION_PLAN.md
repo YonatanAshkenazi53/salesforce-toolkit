@@ -157,7 +157,7 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
   Prereqs: A1 (shared org identity), C4 (shared confirm), U1 (friendlyError).
 - [ ] **X5. Unify theming** — one dark-mode key + one palette shared by launcher and Studio.
 
-## Phase D — Apex Debugger deep-analysis (proposal 2026-07-08, artifact 3c0cbd93)
+## Phase D — Apex Debugger deep-analysis — ✅ COMPLETE 2026-07-08 (proposal artifact 3c0cbd93)
 User directive: "implement everything under the proposal … don't miss anything."
 All items are client-side parsing/rendering over data the log parser already extracts,
 except where an API is named. File: apex-debugger.js (+ apex-log-viewer.js for the tab).
@@ -183,7 +183,7 @@ except where an API is named. File: apex-debugger.js (+ apex-log-viewer.js for t
   Callouts · Minimal noise); header meter from `SELECT COUNT(Id),SUM(LogLength) FROM ApexLog` +
   "purge older than 24h".
 
-## Phase F — Field Cleaner data+lifecycle (same proposal)
+## Phase F — Field Cleaner data+lifecycle — ✅ COMPLETE 2026-07-08 (same proposal)
 File: field-cleaner.js. "Already there" — do NOT rebuild: MetadataComponentDependency scan +
 supplemental (FlexiPage/Dynamic Forms, list views, compact layouts, quick actions, matching
 rules, workflow field updates), flow XML inspector w/ selective removal + partial guard, layout
@@ -206,7 +206,7 @@ Tooling-PATCH + Metadata-zip fallback, flow-version purge, _explainDeleteError, 
 - [x] **F6. Pre-fix metadata snapshots + restore** — before any fix, store pre-change XML
   (layout/flow/FlexiPage) in a "cleanup log"; ↩ Restore redeploys via existing Metadata-zip path;
   audit trail. Respect S5 retention.
-- [ ] **F7. Object-wide deprecation dashboard** — pick object → table of ALL custom fields ranked
+- [x] **F7. Object-wide deprecation dashboard** — pick object → table of ALL custom fields ranked
   by fill-rate (F1 batched+throttled+cancellable) + dependency count (lazy on-demand) + last-mod +
   FLS reach; sort, multi-select → F3. Doesn't fit 600px popup → build as first Data-Studio-shell
   tool (Phase X pilot).

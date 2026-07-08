@@ -4600,3 +4600,19 @@ html, body {
   font-family: ui-monospace, Consolas, monospace; font-size: 10.5px;
   color: var(--subtext, #706e6b); padding: 2px 0; word-break: break-all;
 }
+
+/* ── Field Audit (F7) ─────────────────────────────────────────── */
+.ds-fa-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.ds-fa-progress { font-size: 12px; color: var(--subtext); }
+.ds-fa-summary { font-size: 12.5px; margin-bottom: 10px; color: var(--text); }
+.ds-fa-tablewrap { overflow-x: auto; }
+.ds-fa-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.ds-fa-table th { text-align: left; padding: 7px 10px; background: var(--panel, var(--bg)); border-bottom: 2px solid var(--border); position: sticky; top: 0; }
+.ds-fa-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.ds-fa-candidate td { background: rgba(46, 132, 74, 0.07); }
+.ds-fa-lbl { font-weight: 600; }
+.ds-fa-api { font-size: 10.5px; color: var(--subtext); }
+.ds-fa-na { color: var(--subtext); }
+.ds-fa-empty { color: #2E844A; font-weight: 700; }
+.ds-fa-low { color: #DD7A01; font-weight: 600; }
+.ds-fa-foot { margin-top: 10px; font-size: 11.5px; color: var(--subtext); line-height: 1.5; }
