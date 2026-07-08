@@ -5412,3 +5412,12 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .adbg-cmp-worse  { color: var(--danger); font-weight: 700; }
 .adbg-cmp-same   { color: var(--subtext); }
 .adbg-cmp-hint { margin-top: 8px; font-size: 11px; color: var(--subtext); }
+/* F6: cleanup history / restore points */
+.fc-snaplog { margin: 12px 0 6px; font-size: 12px; }
+.fc-snaplog > summary { cursor: pointer; padding: 7px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); }
+.fc-snaplog[open] > summary { border-radius: 6px 6px 0 0; }
+.fc-snap-rows { border: 1px solid var(--border); border-top: 0; border-radius: 0 0 6px 6px; padding: 4px 8px; }
+.fc-snap-row { display: flex; align-items: center; gap: 10px; padding: 4px 2px; }
+.fc-snap-when { color: var(--subtext); font-size: 10.5px; flex: 0 0 130px; }
+.fc-snap-what { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-snap-what small { color: var(--subtext); }

@@ -30,6 +30,7 @@ const FieldCleaner = (() => {
     _sid       = sid;
     _container = container;
     renderShell();
+    renderSnapshotLog();   // F6: restore points survive across sessions
   }
 
   function updateSession(orgUrl, sid) {
@@ -119,6 +120,7 @@ const FieldCleaner = (() => {
 
         <!-- Results area -->
         <div id="fcResults"></div>
+        <div id="fcSnapLog"></div>
 
       </div>`;
 
@@ -1395,6 +1397,9 @@ const FieldCleaner = (() => {
     const metadata = flowRes.Metadata;
     if (!fullName || !metadata) throw new Error(`"${flowName}" returned no metadata.`);
 
+    // F6: snapshot BEFORE the in-place mutation below — ↩ Restore redeploys it.
+    await _snapshotFix('Flow', flowId, flowName, fullName, metadata);
+
     // Remove field references
     const changes = removeFieldRefs(metadata, _selObj.api, _selField.api);
     if (changes === 0) {
@@ -1963,6 +1968,9 @@ const FieldCleaner = (() => {
     const metadata = res.Metadata;
     if (!metadata) throw new Error(`"${componentName}" returned no metadata.`);
 
+    // F6: snapshot before the in-place mutation (layout has no undo otherwise).
+    await _snapshotFix('Layout', componentId, componentName, res.FullName || res.fullName, metadata);
+
     const changes = removeFieldFromLayout(metadata, _selField.api);
     if (changes === 0) {
       throw new Error(
@@ -2038,6 +2046,9 @@ const FieldCleaner = (() => {
 
     const metadata = res.Metadata;
     if (!metadata) throw new Error(`"${componentName}" returned no metadata.`);
+
+    // F6: snapshot before the in-place mutation.
+    await _snapshotFix('FlexiPage', componentId, componentName, res.FullName || res.fullName, metadata);
 
     const changes = removeFieldFromFlexiPage(metadata, _selObj.api, _selField.api);
     if (changes === 0) {
@@ -2796,6 +2807,91 @@ const FieldCleaner = (() => {
     goTo(0);
   }
 
+  // ── F6: pre-fix metadata snapshots + one-click restore ───────────────────
+  // Every auto-fix (flow / layout / Lightning page) stores the ORIGINAL
+  // metadata before modifying it. The 🧾 Cleanup history section lists the
+  // last 20 changes with ↩ Restore, which redeploys the untouched snapshot
+  // through the same deploy paths the fixes use. Doubles as an audit trail.
+  const SNAP_KEY = 'fc_fix_snapshots';
+  const SNAP_CAP = 20;
+
+  async function _snapshotFix(type, id, name, fullName, metadata) {
+    try {
+      const store = await chrome.storage.local.get(SNAP_KEY);
+      const list = store[SNAP_KEY] || [];
+      list.unshift({
+        at: Date.now(),
+        orgKey: sftkOrgKey(_orgUrl), orgUrl: _orgUrl,
+        type, id, name, fullName: fullName || null,
+        obj: _selObj?.api, field: _selField?.api,
+        metadata: JSON.parse(JSON.stringify(metadata)),   // deep copy — fixers mutate in place
+      });
+      await chrome.storage.local.set({ [SNAP_KEY]: list.slice(0, SNAP_CAP) });
+      renderSnapshotLog();
+    } catch (e) {
+      // Snapshot failure must never block the fix itself.
+      if (window.SFToolkitDebug?.enabled) window.SFToolkitDebug.log('fields', 'error', 'snapshot failed', e.message);
+    }
+  }
+
+  async function renderSnapshotLog() {
+    const el = eid('fcSnapLog');
+    if (!el) return;
+    const store = await chrome.storage.local.get(SNAP_KEY);
+    const all = store[SNAP_KEY] || [];
+    const mine = _orgUrl ? all.filter(s => s.orgKey === sftkOrgKey(_orgUrl)) : all;
+    if (!mine.length) { el.innerHTML = ''; return; }
+    el.innerHTML = `
+      <details class="fc-snaplog">
+        <summary>🧾 Cleanup history — ${mine.length} change${mine.length === 1 ? '' : 's'} with restore points</summary>
+        <div class="fc-snap-rows">
+          ${mine.map(s => `
+            <div class="fc-snap-row">
+              <span class="fc-snap-when">${new Date(s.at).toLocaleString()}</span>
+              <span class="fc-snap-what">${esc(s.type)} <strong>${esc(s.name)}</strong>
+                <small>(${esc(s.obj || '?')}.${esc(s.field || '?')} removed)</small></span>
+              <button class="btn btn-sm fc-snap-restore" data-snap-at="${s.at}"
+                title="Redeploy the metadata exactly as it was BEFORE this fix">↩ Restore</button>
+            </div>`).join('')}
+        </div>
+      </details>`;
+    el.querySelectorAll('.fc-snap-restore').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const snap = mine.find(s => String(s.at) === btn.dataset.snapAt);
+        if (snap) restoreSnapshot(snap, btn);
+      });
+    });
+  }
+
+  async function restoreSnapshot(snap, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Restoring…'; }
+    try {
+      const md = JSON.parse(JSON.stringify(snap.metadata));
+      if (snap.type === 'Flow') {
+        if (!snap.fullName) throw new Error('Snapshot has no FullName — cannot deploy');
+        const r = await deployFlowViaMetadataApi(snap.fullName, md);
+        if (!r || r.error || r.success === false) throw new Error(r?.error || 'Deploy failed');
+      } else if (snap.type === 'Layout') {
+        const patchRes = await patchLayoutMetadata(snap.id, sanitizeLayoutMetadata(md));
+        if (patchRes.error) {
+          if (!snap.fullName) throw new Error(patchRes.error);
+          const r = await deployLayoutViaMetadataApi(snap.fullName, JSON.parse(JSON.stringify(snap.metadata)));
+          if (!r || !r.success) throw new Error(r?.error || patchRes.error);
+        }
+      } else if (snap.type === 'FlexiPage') {
+        const r = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+          path: `services/data/v62.0/tooling/sobjects/FlexiPage/${snap.id}`,
+          body: { Metadata: md } });
+        if (r?.error) throw new Error(r.error);
+      } else {
+        throw new Error(`Unknown snapshot type ${snap.type}`);
+      }
+      if (btn) { btn.textContent = '✅ Restored'; }
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = '❌ ' + String(e.message || e).slice(0, 48); }
+    }
+  }
+
   // Test-only surface (harness). Lets a headless test drive renderResults with
   // synthetic dependency records without the object/field picker flow.
   const _test = {
@@ -2803,6 +2899,7 @@ const FieldCleaner = (() => {
     setSel: (obj, field, orgUrl) => { _selObj = obj; _selField = field; if (orgUrl) _orgUrl = orgUrl; },
     getManualBlockers: () => _manualBlockers,
     deprecateField, undoDeprecation, renderFlsPanel, renderDeprecationZone,
+    snapshotFix: _snapshotFix, renderSnapshotLog, restoreSnapshot,
   };
   return { init, updateSession, _test };
 })();
