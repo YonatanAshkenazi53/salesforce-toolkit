@@ -492,7 +492,10 @@ const ApexDebugger = (() => {
           </div>
           <button id="adbgXSearchBtn" class="btn btn-secondary btn-sm" title="Search every log body for this keyword">🔍 Search</button>
           <button id="adbgRefreshBtn" class="btn btn-secondary btn-sm" title="Refresh log list">🔄</button>
+          <button id="adbgCompareBtn" class="btn btn-secondary btn-sm" style="display:none"
+            title="Compare the two checked logs side by side — before vs after your fix">⚖ Compare 2</button>
           <button id="adbgDelSelBtn"  class="btn btn-danger btn-sm" disabled>Delete Selected</button>
+          <button id="adbgPurgeOldBtn" class="btn btn-danger btn-sm" title="Delete logs older than 24 hours">🧹 &gt;24h</button>
           <button id="adbgDelAllBtn"  class="btn btn-danger btn-sm">🗑 Delete All</button>
         </div>
 
@@ -579,6 +582,8 @@ const ApexDebugger = (() => {
     });
     document.getElementById('adbgDelSelBtn').addEventListener('click', _deleteSelected);
     document.getElementById('adbgDelAllBtn').addEventListener('click', _deleteAll);
+    document.getElementById('adbgPurgeOldBtn').addEventListener('click', _purgeOld);   // D8
+    document.getElementById('adbgCompareBtn').addEventListener('click', _compareLogs); // D7
 
     // ── Cross-log search ──
     const xInp = document.getElementById('adbgXSearch');
@@ -858,8 +863,14 @@ const ApexDebugger = (() => {
     }
     _logs = res.records || [];
     _renderLogList();
+    // D8: org log-storage meter. Tooling SOQL has no aggregates, so sum the
+    // fetched rows — exact when under the cap, a labelled floor when at it.
+    const bytes = _logs.reduce((s, l) => s + (l.LogLength || 0), 0);
+    const mb    = (bytes / 1048576).toFixed(bytes > 10485760 ? 0 : 1);
+    const capped = _logs.length >= MAX_LOGS;
     const cnt = document.getElementById('adbgLogCount');
-    if (cnt) cnt.textContent = `${_logs.length} log${_logs.length !== 1 ? 's' : ''}`;
+    if (cnt) cnt.textContent =
+      `${_logs.length}${capped ? '+' : ''} log${_logs.length !== 1 ? 's' : ''} · ${capped ? '≥' : ''}${mb} MB`;
   }
 
   function _logQuery(where) {
@@ -981,6 +992,7 @@ const ApexDebugger = (() => {
     if (!btn) return;
     btn.disabled    = _checked.size === 0;
     btn.textContent = _checked.size > 0 ? `Delete (${_checked.size})` : 'Delete Selected';
+    _syncCompareBtn();   // D7: ⚖ Compare appears when exactly two logs are checked
   }
 
   // ── Cross-log search ──────────────────────────────────────
@@ -1558,7 +1570,15 @@ const ApexDebugger = (() => {
                 <div class="adbg-auto-sub">
                   ${info.triggeringObjects?.length ? `Triggered by: ${_esc(info.triggeringObjects.join(', '))}` : ''}
                   ${info.parents?.length ? `${info.triggeringObjects?.length ? ' · ' : ''}Called by: ${_esc(info.parents.join(', '))}` : ''}
-                </div>` : ''}`).join('')}
+                </div>` : ''}
+              ${(info.path || []).length ? `
+                <details class="adbg-flow-path">
+                  <summary>🧭 path taken — ${info.path.length} step${info.path.length === 1 ? '' : 's'}${info.path.truncated ? ' (first 80)' : ''}</summary>
+                  <div class="adbg-flow-path-crumbs">
+                    ${info.path.map(s => `<span class="adbg-fp-step${/decision/i.test(s.t) ? ' adbg-fp-decision' : ''}${/loop/i.test(s.t) ? ' adbg-fp-loop' : ''}" title="${_esc(s.t)}">${_esc(s.n)}${s.c > 1 ? `<b>×${s.c}</b>` : ''}</span>`).join('<span class="adbg-fp-arrow">→</span>')}
+                  </div>
+                  <div class="adbg-fp-hint">Decisions are highlighted; ×N = loop iterations. Needs the Workflow category at FINER+ (🌊 Flows Only / ⚡ Flows + Apex profiles).</div>
+                </details>` : ''}`).join('')}
           </div>` : ''}
 
         <!-- Apex Triggers -->
@@ -2398,6 +2418,27 @@ const ApexDebugger = (() => {
           break;
         }
 
+        case 'FLOW_ELEMENT_BEGIN': {
+          // D6: record the path the interview actually took. data:
+          // [interviewId]|ElementType|ElementName — attach to the innermost
+          // running flow; consecutive repeats collapse into ×N (loop turns).
+          const top = flowStack[flowStack.length - 1];
+          const f   = top ? result.flows[top] : null;
+          if (f) {
+            const parts = data.split('|');
+            const etype = (parts[1] || '').trim();
+            const ename = (parts[2] || parts[1] || '').trim();
+            if (ename) {
+              if (!f.path) f.path = [];
+              const last = f.path[f.path.length - 1];
+              if (last && last.n === ename && last.t === etype) last.c++;
+              else if (f.path.length < 80) f.path.push({ n: ename, t: etype, c: 1 });
+              else f.path.truncated = true;
+            }
+          }
+          break;
+        }
+
         case 'FLOW_ELEMENT_FAULT':
         case 'FLOW_INTERVIEW_FINISHED_NOT_RESUMED': {
           const top = flowStack[flowStack.length - 1];
@@ -2487,6 +2528,101 @@ const ApexDebugger = (() => {
       .slice(0, 25);
 
     return result;
+  }
+
+  // ── D8: purge logs older than 24h ─────────────────────────
+  async function _purgeOld() {
+    const btn = document.getElementById('adbgPurgeOldBtn');
+    if (!btn) return;
+    if (!btn.dataset.armed) {   // two-click confirm, same pattern as Delete All
+      btn.dataset.armed = '1';
+      btn.textContent   = '⚠ Confirm >24h';
+      btn.classList.add('adbg-btn-armed');
+      setTimeout(() => {
+        if (btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = '🧹 >24h'; btn.classList.remove('adbg-btn-armed'); }
+      }, 3500);
+      return;
+    }
+    delete btn.dataset.armed;
+    btn.classList.remove('adbg-btn-armed');
+    btn.disabled = true; btn.textContent = 'Purging…';
+    const cutoff = new Date(Date.now() - 86400000).toISOString().replace(/\.\d+Z$/, 'Z');
+    const res = await _bg({ type: 'SF_QUERY_ALL', tooling: true,
+      query: `SELECT Id FROM ApexLog WHERE StartTime < ${cutoff}` });
+    const ids = (res.records || []).map(r => r.Id);
+    for (const id of ids) {
+      await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id }).catch(() => {});
+    }
+    btn.disabled = false; btn.textContent = '🧹 >24h';
+    _loadLogs();
+  }
+
+  // ── D7: compare two logs side by side ─────────────────────
+  function _syncCompareBtn() {
+    const btn = document.getElementById('adbgCompareBtn');
+    if (btn) btn.style.display = _checked.size === 2 ? '' : 'none';
+  }
+
+  async function _ensureParsed(id) {
+    if (_bodyCache[id]) return _bodyCache[id];
+    const res = await _bg({ type: 'SF_REST_GET_TEXT', path: `${TAPI}/sobjects/ApexLog/${id}/Body` });
+    if (res.error) return null;
+    const parsed = _parseLog(res.text || '');
+    parsed.id = id; parsed.raw = res.text || '';
+    parsed.meta = _logs.find(l => l.Id === id) || {};
+    _bodyCache[id] = parsed;
+    return parsed;
+  }
+
+  async function _compareLogs() {
+    const [aId, bId] = [..._checked];
+    const detail = document.getElementById('adbgDetail');
+    if (!detail || !aId || !bId) return;
+    detail.innerHTML = `<div class="adbg-detail-loading">${sftkCat('Comparing logs…')}</div>`;
+    const [A, B] = await Promise.all([_ensureParsed(aId), _ensureParsed(bId)]);
+    if (!A || !B) { detail.innerHTML = '<div class="adbg-detail-err">Could not load one of the logs.</div>'; return; }
+
+    // Older log on the left = "before". StartTime from meta.
+    const [L, R] = (Date.parse(A.meta.StartTime || 0) <= Date.parse(B.meta.StartTime || 0)) ? [A, B] : [B, A];
+    const peak = p => Math.max(0, ...Object.values(p.limits || {}).map(l => l.max > 0 ? Math.round(l.used / l.max * 100) : 0));
+    const topMs = p => (p.timeline && p.timeline[0]) ? p.timeline[0].ms : 0;
+    const rows = [
+      ['Duration',        p => p.meta.DurationMilliseconds ?? '—', v => typeof v === 'number' ? (v >= 1000 ? (v/1000).toFixed(1)+'s' : v+'ms') : v, true],
+      ['Log lines',       p => p.stats.lines,      v => v.toLocaleString(), true],
+      ['SOQL queries',    p => p.stats.soql,       v => v, true],
+      ['Query rows',      p => p.stats.soqlRows,   v => v.toLocaleString(), true],
+      ['DML statements',  p => p.stats.dml,        v => v, true],
+      ['Exceptions',      p => p.errors.length,    v => v, true],
+      ['Peak limit %',    p => peak(p),            v => v + '%', true],
+      ['Slowest unit',    p => topMs(p),           v => v >= 1000 ? (v/1000).toFixed(2)+'s' : Math.round(v)+'ms', true],
+    ];
+    const fmtDelta = (a, b) => {
+      if (typeof a !== 'number' || typeof b !== 'number') return '';
+      const d = b - a;
+      if (d === 0) return '<span class="adbg-cmp-same">=</span>';
+      const better = d < 0;   // lower is better for every metric here
+      return `<span class="${better ? 'adbg-cmp-better' : 'adbg-cmp-worse'}">${better ? '▼' : '▲'} ${Math.abs(Math.round(d * 10) / 10).toLocaleString()}</span>`;
+    };
+    const name = p => `${_esc((p.meta.Operation || 'log').slice(0, 34))}<br><small>${p.meta.StartTime ? new Date(p.meta.StartTime).toLocaleTimeString() : ''}</small>`;
+    detail.innerHTML = `
+      <div class="adbg-detail-inner">
+        <div class="adbg-cmp">
+          <div class="adbg-cmp-hdr">⚖ Before / after comparison
+            <button class="btn btn-secondary btn-sm" id="adbgCmpClose">✕ Close</button>
+          </div>
+          <table class="adbg-cmp-table">
+            <tr><th></th><th>${name(L)}</th><th>${name(R)}</th><th>Δ</th></tr>
+            ${rows.map(([lbl, get, fmt]) => {
+              const a = get(L), b = get(R);
+              return `<tr><td>${lbl}</td><td>${fmt(a)}</td><td>${fmt(b)}</td><td>${fmtDelta(a, b)}</td></tr>`;
+            }).join('')}
+          </table>
+          <div class="adbg-cmp-hint">Older log on the left. ▼ = improved (lower), ▲ = regressed. Click a log row to leave compare view.</div>
+        </div>
+      </div>`;
+    document.getElementById('adbgCmpClose')?.addEventListener('click', () => {
+      detail.innerHTML = '<div class="adbg-detail-empty"><div class="adbg-detail-icon">🔍</div><div>Select a log to inspect automations</div></div>';
+    });
   }
 
   // ── Delete operations ─────────────────────────────────────

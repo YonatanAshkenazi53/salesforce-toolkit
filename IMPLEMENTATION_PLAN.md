@@ -174,12 +174,12 @@ except where an API is named. File: apex-debugger.js (+ apex-log-viewer.js for t
   Errors only, as event-name predicates over already-split lines; composable with text filter.
 - [x] **D5. Exception jump-list + auto-scroll to first FATAL** — `result.errors` already parsed;
   clickable list jumps viewer (goto exists); opening a FATAL_ERROR log auto-scrolls+highlights.
-- [ ] **D6. Flow path trace** — parse `FLOW_ELEMENT_BEGIN/END` into an ordered breadcrumb per
+- [x] **D6. Flow path trace** — parse `FLOW_ELEMENT_BEGIN/END` into an ordered breadcrumb per
   interview with loop counts, under each flow's ANALYSIS row. Needs FINER/FINEST flow level
   (D8 preset sets it).
-- [ ] **D7. Compare two logs** — select two → side-by-side metric diff (SOQL/DML/CPU/heap/limit
+- [x] **D7. Compare two logs** — select two → side-by-side metric diff (SOQL/DML/CPU/heap/limit
   %, D3 durations) with green/red deltas. Needs D3.
-- [ ] **D8. Scenario presets + org log meter** — 4 level-builder presets (Slow txn · Flow debug ·
+- [x] **D8. Scenario presets + org log meter** — 4 level-builder presets (Slow txn · Flow debug ·
   Callouts · Minimal noise); header meter from `SELECT COUNT(Id),SUM(LogLength) FROM ApexLog` +
   "purge older than 24h".
 
