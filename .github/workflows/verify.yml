@@ -1,0 +1,38 @@
+name: verify
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # parse-check (node --check every root .js) + eslint + vitest
+      - run: npm run verify
+
+      # "Local only" gate (plan S1/A3): no hardcoded fetch() to a non-Salesforce
+      # host may ever appear. The manifest CSP enforces this at runtime; this
+      # catches it at review time. URLs in comments/docs don't trip it — only
+      # actual fetch call sites with a hardcoded absolute URL.
+      - name: local-only gate — no foreign fetch hosts
+        run: |
+          BAD=$(grep -rn --include='*.js' --exclude-dir=node_modules --exclude-dir=test \
+                -E "fetch\(\s*['\"\`]https?://" . \
+                | grep -vE "salesforce|force\.com" || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::Hardcoded non-Salesforce fetch host found:"
+            echo "$BAD"
+            exit 1
+          fi
+          echo "clean — no foreign fetch hosts"

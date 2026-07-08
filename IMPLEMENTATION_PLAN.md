@@ -130,8 +130,9 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
 - [ ] **A2. Typed message contracts** — MESSAGES manifest (name → required fields) validated
   at the background dispatcher; JSDoc typedefs for editor autocomplete. Reject-with-clear-error
   on missing fields instead of silent undefined.
-- [ ] **A3. CI** — REQUIRES USER: create a GitHub repo (private) + push. Then Actions workflow
-  running `npm run verify` on every push. Add the S1 "no foreign fetch hosts" grep gate here.
+- [x] **A3. CI** (2026-07-08) — remote existed all along (YonatanAshkenazi53/salesforce-toolkit);
+  user pushed. .github/workflows/verify.yml runs npm ci + npm run verify + the "no foreign
+  fetch hosts" grep gate on every push/PR. package-lock.json un-ignored for npm ci.
 - [ ] **A4. eslint no-undef** — generate per-page-group globals lists (script scans top-level
   declarations of each file group) and enable no-undef. Catches typo'd cross-file calls statically.
 
