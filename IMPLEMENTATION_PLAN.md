@@ -203,7 +203,7 @@ Tooling-PATCH + Metadata-zip fallback, flow-version purge, _explainDeleteError, 
   WHERE Field != null` → client CSV. Cap ~50k rows w/ warning.
 - [x] **F5. FLS visibility panel** — results section listing profiles/perm sets with read/edit
   (`FieldPermissions` query) + per-row strip toggles. Standalone half of F3.
-- [ ] **F6. Pre-fix metadata snapshots + restore** — before any fix, store pre-change XML
+- [x] **F6. Pre-fix metadata snapshots + restore** — before any fix, store pre-change XML
   (layout/flow/FlexiPage) in a "cleanup log"; ↩ Restore redeploys via existing Metadata-zip path;
   audit trail. Respect S5 retention.
 - [ ] **F7. Object-wide deprecation dashboard** — pick object → table of ALL custom fields ranked
