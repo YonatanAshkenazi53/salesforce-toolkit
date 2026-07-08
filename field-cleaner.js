@@ -816,8 +816,10 @@ const FieldCleaner = (() => {
           <div class="fc-clean-sub">This field can be safely deleted.</div>
           <button class="btn btn-danger" id="fcDelFreeBtn">🗑 Delete Field</button>
         </div>
+        <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">📊 Measuring how much data is stored in this field…</div>
         ${_unscannedNoteHtml()}`;
       eid('fcDelFreeBtn').onclick = () => confirmDelete(fieldId);
+      runDataUsage();
       return;
     }
 
@@ -843,6 +845,7 @@ const FieldCleaner = (() => {
           ${manualCount > 0 ? `<span class="fc-badge-manual">${manualCount} manual</span>` : ''}
         </span>
       </div>
+      <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">📊 Measuring how much data is stored in this field…</div>
       ${_unscannedNoteHtml()}`;
 
     for (const [type, items] of Object.entries(_groups)) {
@@ -941,6 +944,118 @@ const FieldCleaner = (() => {
 
     const delBtn = eid('fcDelBtn');
     if (delBtn) delBtn.onclick = () => confirmDelete(fieldId);
+
+    runDataUsage();   // F1: fill the verdict placeholder asynchronously
+  }
+
+  // ── F1: data-usage verdict — "is anything actually stored here?" ─────────
+  // The dependency scan proves nothing REFERENCES the field; this proves
+  // whether it holds data. One aggregate query gives total + non-null counts;
+  // a second gives the last time a value was written. Formula/derived fields
+  // (nothing stored) and aggregate-unsupported fields degrade to an honest
+  // "N/A". Huge objects that time out fall back to a LIMIT sample.
+  let _dataVerdict = null;   // { fillPct, filled, total, lastIso, formula, sampled } | null
+  async function runDataUsage() {
+    _dataVerdict = null;
+    const el = () => eid('fcDataVerdict');
+    if (!el() || !_selObj?.api || !_selField?.api) return;
+    const obj = _selObj.api, fld = _selField.api;
+
+    // Formula / roll-up / auto-number fields never "store" editable data.
+    if (/formula|roll-?up|summary|auto\s*number/i.test(_selField.type || '')) {
+      _dataVerdict = { formula: true };
+      _renderDataVerdict();
+      return;
+    }
+
+    const agg = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false,
+      query: `SELECT COUNT(Id) tot, COUNT(${fld}) filled FROM ${obj}` });
+
+    if (agg.error) {
+      // Aggregation not supported (formula/encrypted/long-text) or timeout →
+      // sample fallback: read a slice and estimate the fill rate.
+      if (/aggregate|group by|not supported|COUNT|encrypted/i.test(agg.error)) {
+        return _sampleDataUsage(obj, fld);
+      }
+      if (/timeout|time limit|too many/i.test(agg.error)) {
+        return _sampleDataUsage(obj, fld);
+      }
+      const e = el(); if (e) { e.className = 'fc-data-verdict'; e.textContent = `📊 Couldn't measure field usage: ${agg.error}`; }
+      return;
+    }
+
+    const rec    = (agg.records || [])[0] || {};
+    const total  = Number(rec.tot)    || 0;
+    const filled = Number(rec.filled) || 0;
+    let lastIso = null;
+    if (filled > 0) {
+      const mx = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false,
+        query: `SELECT MAX(LastModifiedDate) m FROM ${obj} WHERE ${fld} != null` });
+      lastIso = (mx.records || [])[0]?.m || null;
+    }
+    _dataVerdict = {
+      filled, total, lastIso, sampled: false,
+      fillPct: total > 0 ? (filled / total * 100) : 0,
+    };
+    _renderDataVerdict();
+  }
+
+  async function _sampleDataUsage(obj, fld) {
+    const el = eid('fcDataVerdict');
+    const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
+      query: `SELECT ${fld} FROM ${obj} LIMIT 5000` });
+    if (q.error) {
+      if (el) { el.className = 'fc-data-verdict'; el.textContent = `📊 Couldn't measure field usage: ${q.error}`; }
+      return;
+    }
+    const rows = q.records || [];
+    const filled = rows.filter(r => r[fld] != null && r[fld] !== '').length;
+    _dataVerdict = {
+      filled, total: rows.length, lastIso: null, sampled: true,
+      fillPct: rows.length ? (filled / rows.length * 100) : 0,
+    };
+    _renderDataVerdict();
+  }
+
+  function _renderDataVerdict() {
+    const el = eid('fcDataVerdict');
+    if (!el || !_dataVerdict) return;
+    const v = _dataVerdict;
+    if (v.formula) {
+      el.className = 'fc-data-verdict fc-data-na';
+      el.innerHTML = '📊 <strong>Formula / derived field</strong> — stores no editable data of its own.';
+      return;
+    }
+    const pctFilled = v.fillPct;
+    const emptyPct  = Math.max(0, 100 - pctFilled);
+    const safe = pctFilled < 1;   // <1% populated ⇒ effectively unused
+    const ageStr = v.lastIso
+      ? _relAge(v.lastIso)
+      : (v.filled === 0 ? 'never' : 'unknown');
+    const scope = v.sampled ? `~${v.filled} of ${v.total.toLocaleString()} sampled` : `${v.filled.toLocaleString()} of ${v.total.toLocaleString()} records`;
+    // Never round UP to 100% / down to 0% unless the value is truly there —
+    // "100% empty" on a field that still holds 12 values would be a lie.
+    const pctStr = p => (p >= 99.95 && p < 100) ? '99.9'
+                      : (p > 0 && p < 0.05) ? '0.1'
+                      : p.toFixed(p > 99 || p < 1 ? 1 : 0);
+    el.className = `fc-data-verdict ${safe ? 'fc-data-safe' : 'fc-data-caution'}`;
+    el.innerHTML = `
+      <span class="fc-data-badge">${safe ? '✅ SAFE' : '⚠ CAUTION'}</span>
+      <span class="fc-data-text">
+        ${safe
+          ? `Empty on <strong>${pctStr(emptyPct)}%</strong> of ${scope}`
+          : `Populated on <strong>${pctStr(pctFilled)}%</strong> of ${scope}`}
+        · last value written <strong>${ageStr}</strong>${v.sampled ? ' <em>(sampled)</em>' : ''}
+      </span>`;
+  }
+
+  function _relAge(iso) {
+    const d = Date.parse(iso);
+    if (!d) return 'unknown';
+    const months = (Date.now() - d) / (1000 * 60 * 60 * 24 * 30.4);
+    if (months < 1)  return 'within the last month';
+    if (months < 12) return `${Math.round(months)} month(s) ago`;
+    return `${(months / 12).toFixed(1)} year(s) ago`;
   }
 
   function renderItem(dep, fixable, type) {
@@ -1932,12 +2047,19 @@ const FieldCleaner = (() => {
           <p style="margin-top:8px;color:var(--danger);font-size:12px">
             This cannot be undone. All data stored in this field will be lost.
           </p>
+          ${_dataVerdict && !_dataVerdict.formula && _dataVerdict.filled > 0 ? `
+            <div class="fc-backup-offer">
+              💾 <strong>${_dataVerdict.filled.toLocaleString()}${_dataVerdict.sampled ? '+' : ''}</strong>
+              record(s) still hold a value. Download them first?
+              <button class="btn btn-secondary btn-sm" id="fcBackupBtn" style="margin-left:6px">💾 Back up values (CSV)</button>
+            </div>` : ''}
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" id="fcCancelBtn">Cancel</button>
           <button class="btn btn-danger"    id="fcConfirmBtn">🗑 Delete</button>
         </div>`);
       eid('fcCancelBtn').onclick  = () => { if (typeof closeModal === 'function') closeModal(); };
+      eid('fcBackupBtn') && (eid('fcBackupBtn').onclick = e => backupFieldValues(e.currentTarget));
       eid('fcConfirmBtn').onclick = () => {
         if (typeof closeModal === 'function') closeModal();
         doDelete(fieldId);
@@ -1946,6 +2068,57 @@ const FieldCleaner = (() => {
       if (confirm(`Delete ${_selObj.api}.${_selField.api}? This cannot be undone.`)) {
         doDelete(fieldId);
       }
+    }
+  }
+
+  // ── F4: CSV backup of field values before delete ────────────────────────
+  // Post-delete, values survive only 15 days in the recycle bin. This exports
+  // Id + Name (when present) + the field's value for every non-null record to
+  // a local CSV — insurance exactly when F1's verdict says CAUTION.
+  async function backupFieldValues(btn) {
+    if (!_selObj?.api || !_selField?.api) return;
+    const obj = _selObj.api, fld = _selField.api;
+    const orig = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Exporting…'; }
+    try {
+      const CAP = 50000;
+      // Try with Name (nice for readability); if the object has no Name field
+      // Salesforce 400s → retry once with Id + field only.
+      let cols = ['Id', 'Name', fld];
+      let q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
+        query: `SELECT ${cols.join(',')} FROM ${obj} WHERE ${fld} != null LIMIT ${CAP}` });
+      if (q.error && /No such column 'Name'|INVALID_FIELD/i.test(q.error)) {
+        cols = ['Id', fld];
+        q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
+          query: `SELECT ${cols.join(',')} FROM ${obj} WHERE ${fld} != null LIMIT ${CAP}` });
+      }
+      if (q.error) {
+        if (btn) { btn.textContent = '❌ ' + q.error.slice(0, 40); }
+        return;
+      }
+      const rows = q.records || [];
+      const esc2 = v => {
+        const s = v == null ? '' : String(v);
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      };
+      const header = cols.join(',');
+      const body = rows.map(r => cols.map(c => esc2(r[c])).join(',')).join('\r\n');
+      const csv = header + '\r\n' + body;
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${obj}.${fld}-backup-${rows.length}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      if (btn) {
+        btn.textContent = `✅ ${rows.length.toLocaleString()} row(s) saved${rows.length >= 50000 ? ' (capped 50k)' : ''}`;
+      }
+    } catch (e) {
+      if (btn) { btn.textContent = '❌ Export failed'; }
+      if (window.SFToolkitDebug?.enabled) window.SFToolkitDebug.log('fields', 'error', 'CSV backup failed', e.message);
+    } finally {
+      if (btn && /Export/.test(btn.textContent)) { btn.disabled = false; btn.textContent = orig; }
     }
   }
 

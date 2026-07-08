@@ -162,7 +162,7 @@ User directive: "implement everything under the proposal … don't miss anything
 All items are client-side parsing/rendering over data the log parser already extracts,
 except where an API is named. File: apex-debugger.js (+ apex-log-viewer.js for the tab).
 
-- [ ] **D1. Governor-limit proximity alerts** — `result.limits` (used/max) already parsed;
+- [x] **D1. Governor-limit proximity alerts** — `result.limits` (used/max) already parsed;
   red/amber banner atop ANALYSIS for any limit ≥95%/≥80%; badge on log-list rows whose
   log neared a limit. Rendering only.
 - [ ] **D2. Repeated-query (N+1) detector** — group `SOQL_EXECUTE_BEGIN` by normalized query
@@ -170,9 +170,9 @@ except where an API is named. File: apex-debugger.js (+ apex-log-viewer.js for t
 - [ ] **D3. Execution timeline** — pair `CODE_UNIT/METHOD/FLOW _STARTED/_FINISHED` into a
   duration tree via the elapsed-ns column; "Top 5 slowest units" strip, expandable, links into
   log. Must degrade on truncated/unbalanced logs.
-- [ ] **D4. Category filter chips** — Only USER_DEBUG · Only SOQL/DML · Hide system noise ·
+- [x] **D4. Category filter chips** — Only USER_DEBUG · Only SOQL/DML · Hide system noise ·
   Errors only, as event-name predicates over already-split lines; composable with text filter.
-- [ ] **D5. Exception jump-list + auto-scroll to first FATAL** — `result.errors` already parsed;
+- [x] **D5. Exception jump-list + auto-scroll to first FATAL** — `result.errors` already parsed;
   clickable list jumps viewer (goto exists); opening a FATAL_ERROR log auto-scrolls+highlights.
 - [ ] **D6. Flow path trace** — parse `FLOW_ELEMENT_BEGIN/END` into an ordered breadcrumb per
   interview with loop counts, under each flow's ANALYSIS row. Needs FINER/FINEST flow level
@@ -189,17 +189,17 @@ supplemental (FlexiPage/Dynamic Forms, list views, compact layouts, quick action
 rules, workflow field updates), flow XML inspector w/ selective removal + partial guard, layout
 Tooling-PATCH + Metadata-zip fallback, flow-version purge, _explainDeleteError, Setup deep-links.
 
-- [ ] **F1. Data-usage verdict** — `COUNT()` total vs `COUNT() WHERE Field != null` +
+- [x] **F1. Data-usage verdict** — `COUNT()` total vs `COUNT() WHERE Field != null` +
   `MAX(LastModifiedDate) WHERE Field != null` → verdict chip (SAFE/CAUTION w/ %). Caveat: large
   objects time out aggregates → LIMIT-sample fallback labeled as such; formula fields detected
   via describe → "always populated, N/A".
-- [ ] **F2. Predictive blocker check** — classify scan hits: blocks-delete (apex/trigger/
+- [x] **F2. Predictive blocker check** — classify scan hits: blocks-delete (apex/trigger/
   validation-rule) vs breaks-silently vs cosmetic; Delete shows "🔒 N blockers remain" (disabled,
   listed) until cleared. Classification of existing scan data.
 - [ ] **F3. Staged deprecation** — "🕐 Deprecate first": Tooling PATCH label→`zz_DEPRECATED …`
   + description stamp; FieldPermissions DML strips read from all profiles/perm sets; record stage+
   date + snapshot for undo (restore label+FLS). LABEL only, never API name.
-- [ ] **F4. CSV value backup** — "💾 Back up values" on delete confirm: `queryAll Id,Name,Field
+- [x] **F4. CSV value backup** — "💾 Back up values" on delete confirm: `queryAll Id,Name,Field
   WHERE Field != null` → client CSV. Cap ~50k rows w/ warning.
 - [ ] **F5. FLS visibility panel** — results section listing profiles/perm sets with read/edit
   (`FieldPermissions` query) + per-row strip toggles. Standalone half of F3.
@@ -210,7 +210,7 @@ Tooling-PATCH + Metadata-zip fallback, flow-version purge, _explainDeleteError, 
   by fill-rate (F1 batched+throttled+cancellable) + dependency count (lazy on-demand) + last-mod +
   FLS reach; sort, multi-select → F3. Doesn't fit 600px popup → build as first Data-Studio-shell
   tool (Phase X pilot).
-- [ ] **F8. Honest "not scanned" disclosure** — muted chip on every result set: "Not scanned:
+- [x] **F8. Honest "not scanned" disclosure** — muted chip on every result set: "Not scanned:
   Reports, Email Templates — check in Setup ↗" w/ deep-link. Static UI.
 
 ### Build order (from the proposal §3)
