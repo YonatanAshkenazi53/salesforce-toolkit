@@ -1020,6 +1020,7 @@ function renderView(view) {
     case 'history':  renderHistory();    break;
     case 'readiness': renderReadiness();   break;
     case 'schema':    renderSchemaView();  break;
+    case 'fields':    renderFieldAudit();  break;
     case 'reconcile': renderReconcile();   break;
     case 'compare':   renderOrgCompare(); break;
   }
