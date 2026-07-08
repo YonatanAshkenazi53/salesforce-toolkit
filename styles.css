@@ -5389,3 +5389,26 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .fc-dep-offer { margin: 8px 0; padding: 8px 11px; font-size: 12px; border: 1px dashed var(--border); border-radius: 6px; background: var(--bg); }
 .fc-dep-hint { color: var(--subtext); font-size: 11px; display: block; margin-top: 4px; }
 .fc-dep-banner { margin: 8px 0; padding: 9px 12px; font-size: 12.5px; border: 1px solid var(--brand); border-left-width: 4px; border-radius: 6px; background: rgba(1,118,211,.07); }
+/* D6: flow path breadcrumbs */
+.adbg-flow-path { margin: 2px 0 6px 10px; font-size: 11px; }
+.adbg-flow-path > summary { cursor: pointer; color: var(--subtext); padding: 2px 0; }
+.adbg-flow-path-crumbs { padding: 5px 2px; line-height: 2; }
+.adbg-fp-step {
+  display: inline-block; padding: 1px 7px; border-radius: 4px; white-space: nowrap;
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+}
+.adbg-fp-step b { margin-left: 3px; color: var(--danger); }
+.adbg-fp-decision { border-color: var(--brand); background: rgba(1,118,211,.08); font-weight: 600; }
+.adbg-fp-loop { border-color: var(--warning); }
+.adbg-fp-arrow { color: var(--subtext); margin: 0 3px; }
+.adbg-fp-hint { color: var(--subtext); font-size: 10px; margin-top: 3px; }
+/* D7: compare view */
+.adbg-cmp { padding: 12px; }
+.adbg-cmp-hdr { display: flex; align-items: center; justify-content: space-between; font-weight: 700; font-size: 14px; margin-bottom: 10px; color: var(--text); }
+.adbg-cmp-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.adbg-cmp-table th { text-align: left; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); color: var(--text); }
+.adbg-cmp-table td { padding: 5px 10px; border: 1px solid var(--border); font-variant-numeric: tabular-nums; color: var(--text); }
+.adbg-cmp-better { color: var(--active-color); font-weight: 700; }
+.adbg-cmp-worse  { color: var(--danger); font-weight: 700; }
+.adbg-cmp-same   { color: var(--subtext); }
+.adbg-cmp-hint { margin-top: 8px; font-size: 11px; color: var(--subtext); }
