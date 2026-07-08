@@ -4644,6 +4644,18 @@ body {
   border-radius: 6px;
   line-height: 1.5;
 }
+.fc-unscanned-link {
+  display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 5px;
+  background: var(--brand); color: #fff; font-weight: 600; font-size: 10.5px; text-decoration: none;
+}
+/* F2: predictive blocker checklist */
+.fc-blockers {
+  margin: 0 0 8px; padding: 9px 11px; border-radius: 6px;
+  background: rgba(234, 0, 30, 0.06); border: 1px solid var(--danger); border-left-width: 4px;
+}
+.fc-blockers-hdr { font-size: 12px; font-weight: 700; color: var(--danger); margin-bottom: 5px; }
+.fc-blocker-row  { font-size: 12px; color: var(--text); padding: 1px 0; }
+.fc-silent-note  { margin: 0 0 8px; font-size: 11.5px; color: var(--warning); }
 .fc-item-warn  { background: rgba(245, 158, 11, 0.08); border-left: 3px solid #f59e0b; padding-left: 8px; }
 .fc-item-partial {
   font-size: 11px; color: #92400e;
@@ -5282,3 +5294,45 @@ body {
   overflow-y: auto;
   min-height: 0;
 }
+
+/* ── Apex Debugger — deep analysis (Phase D) ───────────────────── */
+/* D1: governor-limit proximity alert */
+.adbg-limit-alert {
+  display: flex; gap: 10px; align-items: flex-start;
+  background: var(--warning-bg); border: 1px solid var(--warning);
+  border-left-width: 4px; border-radius: 6px; padding: 10px 12px; margin: 0 0 12px;
+}
+.adbg-limit-alert-crit { background: #FEECEC; border-color: var(--danger); }
+body.sftk-dark .adbg-limit-alert-crit { background: #3A1518; }
+.adbg-limit-alert-icon { font-size: 18px; line-height: 1.2; }
+.adbg-limit-alert-body { flex: 1; font-size: 12.5px; }
+.adbg-limit-alert-body > strong { display: block; margin-bottom: 4px; color: var(--text); }
+.adbg-limit-alert-row { display: flex; align-items: baseline; gap: 6px; padding: 1px 0; color: var(--text); }
+.adbg-limit-alert-row code { font-size: 11.5px; }
+.adbg-limit-alert-pct { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
+.adbg-limit-alert-hint { margin-top: 5px; color: var(--subtext); font-size: 11.5px; }
+/* D1: list-row badge */
+.adbg-badge-limit {
+  font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 3px;
+  background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning);
+}
+.adbg-badge-limit-crit { background: #FEECEC; color: var(--danger); border-color: var(--danger); }
+body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
+/* D4: category filter chips */
+.adbg-log-cats { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+.adbg-log-cat {
+  font-size: 11px; padding: 2px 9px; border-radius: 12px; cursor: pointer;
+  background: var(--bg); color: var(--subtext); border: 1px solid var(--border);
+}
+.adbg-log-cat:hover { color: var(--text); }
+.adbg-log-cat-on { background: var(--brand); color: #fff; border-color: transparent; }
+/* D5: exception jump-list */
+.adbg-err-jump { cursor: pointer; display: flex; align-items: baseline; gap: 7px; transition: background .1s; }
+.adbg-err-jump:hover { background: var(--warning-bg); }
+.adbg-err-row-fatal { border-left: 3px solid var(--danger); padding-left: 7px; }
+.adbg-err-tag {
+  font-size: 9.5px; font-weight: 800; letter-spacing: .04em; padding: 1px 5px;
+  border-radius: 3px; background: var(--danger); color: #fff; flex-shrink: 0;
+}
+.adbg-err-goto { margin-left: auto; font-size: 10.5px; color: var(--subtext); white-space: nowrap; opacity: .7; }
+.adbg-err-jump:hover .adbg-err-goto { opacity: 1; color: var(--brand); }

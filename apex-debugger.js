@@ -381,6 +381,9 @@ const ApexDebugger = (() => {
   let _checked     = new Set(); // log Ids selected for bulk ops
   let _bodyCache   = {};    // logId → parsed result
   let _newIds      = new Set(); // Ids that arrived since last render
+  // D1: peak governor-limit % per already-analysed log → badges its list row.
+  const _logPeak   = {};        // logId → peak limit percent (0–100)
+  const _logCompare = new Set(); // D7: log Ids picked for side-by-side compare
 
   // Cross-log search — populated by _searchAcrossLogs. Each value is the
   // first few matching lines so we can show a snippet under the row.
@@ -900,6 +903,10 @@ const ApexDebugger = (() => {
       const hasLoop = cached?.recursions?.length > 0;
       const hasFault = Object.values(cached?.flows || {}).some(f => f.faulted);
       const xHits = _xSearchHits.get(log.Id);
+      // D1: badge logs already analysed this session whose transaction ran a
+      // governor limit high. Only appears once a log has been opened (parsing
+      // every log on list-load would mean a fetch per row).
+      const peak = _logPeak[log.Id] || 0;
 
       // First matching line snippet — shown under the op when cross-log
       // search is active. We highlight the matched keyword inside the line.
@@ -926,6 +933,7 @@ const ApexDebugger = (() => {
             ${xHits     ? `<span class="adbg-badge-xhit" title="${xHits.length} matching line${xHits.length === 1 ? '' : 's'}">🔍 ${xHits.length}</span>` : ''}
             ${hasLoop   ? '<span class="adbg-badge-loop">🔄 LOOP</span>' : ''}
             ${hasFault  ? '<span class="adbg-badge-fault">⚠ FAULT</span>' : ''}
+            ${peak >= 80 ? `<span class="adbg-badge-limit${peak >= 95 ? ' adbg-badge-limit-crit' : ''}" title="Governor limit peaked at ${peak}% in this transaction">${peak >= 95 ? '🛑' : '⚠️'} ${peak}%</span>` : ''}
             <span class="adbg-row-size">${kb}</span>
             ${dur ? `<span class="adbg-row-dur">${dur}</span>` : ''}
           </div>
@@ -1100,8 +1108,12 @@ const ApexDebugger = (() => {
     parsed.meta = _logs.find(l => l.Id === id) || {};
     _bodyCache[id] = parsed;
 
-    // Re-render list to show LOOP / FAULT badges
-    if (parsed.recursions.length || Object.values(parsed.flows).some(f => f.faulted)) {
+    // D1: record this log's peak governor-limit % so its list row gets a badge.
+    _logPeak[id] = Math.max(0, ...Object.values(parsed.limits || {})
+      .map(l => l.max > 0 ? Math.round(l.used / l.max * 100) : 0));
+
+    // Re-render list to show LOOP / FAULT / limit badges
+    if (parsed.recursions.length || Object.values(parsed.flows).some(f => f.faulted) || _logPeak[id] >= 80) {
       _renderLogList();
     }
     _renderDetail(parsed);
@@ -1187,10 +1199,24 @@ const ApexDebugger = (() => {
     if (!raw) { _logViewState = null; return '<div class="adbg-detail-none">Log body is empty.</div>'; }
     const lines = raw.split('\n');
     const shown = Math.min(LOG_CHUNK, lines.length);
-    _logViewState = { lines, shown, filter: '' };
+    _logViewState = { lines, shown, filter: '', cat: '' };
     let html = _logLinesHtml(lines, 0, shown);
     if (lines.length > shown) html += _logMoreBar(shown, lines.length);
     return html;
+  }
+
+  // D4: category predicates over the Apex log's event grammar. A log line is
+  // `timestamp|EVENT|…`; we test the EVENT token. 'nonoise' hides the
+  // high-volume low-signal events that bury the interesting ones.
+  const _LOG_NOISE = /\|(HEAP_ALLOCATE|STATEMENT_EXECUTE|SYSTEM_METHOD_ENTRY|SYSTEM_METHOD_EXIT|SYSTEM_CONSTRUCTOR_ENTRY|SYSTEM_CONSTRUCTOR_EXIT|VARIABLE_SCOPE_BEGIN|VARIABLE_ASSIGNMENT)\|/;
+  function _logMatchesCat(line, cat) {
+    switch (cat) {
+      case 'debug':   return line.includes('|USER_DEBUG|');
+      case 'soqldml': return /\|(SOQL_EXECUTE_BEGIN|SOQL_EXECUTE_END|DML_BEGIN|DML_END)\|/.test(line);
+      case 'errors':  return /\|(FATAL_ERROR|EXCEPTION_THROWN|FLOW_ELEMENT_FAULT|VALIDATION_FAIL)\|/.test(line);
+      case 'nonoise': return !_LOG_NOISE.test(line);
+      default:        return true;
+    }
   }
 
   // Append the next chunk — called when the user scrolls near the bottom.
@@ -1213,14 +1239,30 @@ const ApexDebugger = (() => {
   }
 
   // Filter — scans ALL lines (not just rendered ones), renders matches (capped).
+  // Combines the text query (st.filter) with the D4 category predicate (st.cat).
   function _logViewFilter(q) {
+    const st = _logViewState;
+    if (st) st.filter = q;
+    _logViewApply();
+  }
+
+  // D4: set the active category chip and re-render with both filters applied.
+  function _logViewSetCat(cat) {
+    const st = _logViewState;
+    if (st) st.cat = cat || '';
+    _logViewApply();
+  }
+
+  function _logViewApply() {
     const st   = _logViewState;
     const view = document.getElementById('adbgLogView');
     if (!st || !view) return;
-    st.filter = q;
     view.scrollTop = 0;
+    const q   = st.filter || '';
+    const cat = st.cat || '';
 
-    if (!q) {  // cleared — restore the chunked view
+    // No active filter of either kind → restore the chunked (lazy) view.
+    if (!q && !cat) {
       st.shown = Math.min(LOG_CHUNK, st.lines.length);
       let html = _logLinesHtml(st.lines, 0, st.shown);
       if (st.lines.length > st.shown) html += _logMoreBar(st.shown, st.lines.length);
@@ -1231,13 +1273,14 @@ const ApexDebugger = (() => {
     const ql = q.toLowerCase();
     let html = '', matches = 0;
     for (let i = 0; i < st.lines.length && matches < FILTER_CAP; i++) {
-      if (st.lines[i].toLowerCase().includes(ql)) {
-        html += _oneLogLine(st.lines[i], i);   // keeps original line numbers
-        matches++;
-      }
+      const line = st.lines[i];
+      if (cat && !_logMatchesCat(line, cat)) continue;
+      if (ql && !line.toLowerCase().includes(ql)) continue;
+      html += _oneLogLine(line, i);   // keeps original line numbers
+      matches++;
     }
     if (!html) {
-      view.innerHTML = '<div class="adbg-log-empty-filter">No lines match the filter.</div>';
+      view.innerHTML = '<div class="adbg-log-empty-filter">No lines match the current filter.</div>';
       return;
     }
     if (matches >= FILTER_CAP) {
@@ -1254,11 +1297,15 @@ const ApexDebugger = (() => {
     if (!st || !view) return;
     const idx = Math.max(0, Math.min(st.lines.length - 1, (parseInt(lineNum, 10) || 1) - 1));
 
-    // A goto on a filtered view doesn't make sense — restore the full view first.
-    if (st.filter) {
+    // A goto on a filtered view doesn't make sense — restore the full chunked
+    // view first (clear BOTH the text filter and the D4 category chip).
+    if (st.filter || st.cat) {
       const fi = document.getElementById('adbgLogFilter');
       if (fi) fi.value = '';
-      _logViewFilter('');
+      st.filter = ''; st.cat = '';
+      document.querySelectorAll('#adbgLogCats .adbg-log-cat').forEach(b =>
+        b.classList.toggle('adbg-log-cat-on', b.dataset.cat === ''));
+      _logViewApply();
     }
     // Render chunks until the target line is in the DOM.
     let guard = 0;
@@ -1332,6 +1379,32 @@ const ApexDebugger = (() => {
       }).join('');
     const limitsBlock = limitRows ? `<div class="adbg-limits">${limitRows}</div>` : '';
 
+    // ── D1: governor-limit proximity alerts ──────────────────────────────
+    // The limit block is already parsed into p.limits (used/max). Surface the
+    // dangerous ones loudly instead of leaving them as a passive bar: an admin
+    // scanning ANALYSIS should SEE "97 of 100 SOQL — one more kills it".
+    const limitAlerts = Object.entries(p.limits || {})
+      .map(([name, l]) => ({ name, used: l.used, max: l.max,
+        pct: l.max > 0 ? Math.round(l.used / l.max * 100) : 0 }))
+      .filter(a => a.pct >= 80)
+      .sort((a, b) => b.pct - a.pct);
+    const peakPct = limitAlerts.length ? limitAlerts[0].pct : 0;
+    if (p.id) _logPeak[p.id] = peakPct;   // D1: badge this log's list row
+    const limitAlertBlock = limitAlerts.length ? `
+      <div class="adbg-limit-alert${peakPct >= 95 ? ' adbg-limit-alert-crit' : ''}">
+        <span class="adbg-limit-alert-icon">${peakPct >= 95 ? '🛑' : '⚠️'}</span>
+        <div class="adbg-limit-alert-body">
+          <strong>${peakPct >= 95 ? 'Governor limit almost hit' : 'Governor limit running high'}</strong>
+          ${limitAlerts.map(a => `<div class="adbg-limit-alert-row">
+            <code>${_esc(a.name)}</code> — <b>${a.used.toLocaleString()} of ${a.max.toLocaleString()}</b>
+            <span class="adbg-limit-alert-pct">${a.pct}%</span>
+          </div>`).join('')}
+          <div class="adbg-limit-alert-hint">${peakPct >= 95
+            ? 'This transaction is one iteration away from failing — look for a query or DML inside a loop.'
+            : 'Headroom is thin; a larger data volume could push this over the limit.'}</div>
+        </div>
+      </div>` : '';
+
     // Compact stat chips shown in the collapsed Analysis summary row.
     const chip = (v, l, danger) =>
       `<span class="adbg-chip${danger ? ' adbg-chip-err' : ''}"><b>${v}</b> ${l}</span>`;
@@ -1388,6 +1461,9 @@ const ApexDebugger = (() => {
             <span class="adbg-analysis-chips">${analysisChips}</span>
           </summary>
           <div class="adbg-analysis-body">
+
+        <!-- D1: governor-limit proximity alert (loud, above everything) -->
+        ${limitAlertBlock}
 
         <!-- Transaction summary -->
         <div class="adbg-section">
@@ -1482,17 +1558,23 @@ const ApexDebugger = (() => {
             </div>
           </div>` : ''}
 
-        <!-- Exceptions -->
+        <!-- Exceptions — D5: each row jumps the viewer to its log line -->
         ${hasErr ? `
           <div class="adbg-section">
             <div class="adbg-sec-hdr">🚨 Exceptions
               <span class="adbg-cnt-badge adbg-cnt-err">${p.errors.length}</span>
             </div>
-            ${p.errors.slice(0, 6).map(e =>
-              `<div class="adbg-err-row">${_esc(e.msg)}</div>`
+            ${p.errors.slice(0, 8).map(e =>
+              `<div class="adbg-err-row${e.fatal ? ' adbg-err-row-fatal' : ''} adbg-err-jump"
+                    data-err-line="${e.line || ''}"
+                    title="${e.line ? 'Jump to line ' + e.line + ' in the log' : ''}">
+                ${e.fatal ? '<span class="adbg-err-tag">FATAL</span>' : ''}
+                ${_esc(e.msg)}
+                ${e.line ? `<span class="adbg-err-goto">line ${e.line} ↵</span>` : ''}
+              </div>`
             ).join('')}
-            ${p.errors.length > 6
-                ? `<div class="adbg-err-more">…and ${p.errors.length - 6} more</div>` : ''}
+            ${p.errors.length > 8
+                ? `<div class="adbg-err-more">…and ${p.errors.length - 8} more</div>` : ''}
           </div>` : ''}
 
           </div><!-- /adbg-analysis-body -->
@@ -1537,6 +1619,13 @@ const ApexDebugger = (() => {
             </div>
 
             <input type="text" id="adbgLogFilter" class="adbg-log-filter" placeholder="Filter to matching lines only…">
+
+            <!-- D4: one-click category filters (composable with the text filter) -->
+            <div class="adbg-log-cats" id="adbgLogCats">
+              ${[['', 'All'], ['debug', '🗣 Debug'], ['soqldml', '🗄 SOQL/DML'],
+                 ['errors', '🚨 Errors'], ['nonoise', '🔇 Hide noise']].map(([c, lbl], i) =>
+                `<button class="adbg-log-cat${i === 0 ? ' adbg-log-cat-on' : ''}" data-cat="${c}">${lbl}</button>`).join('')}
+            </div>
           </div>
           <div class="adbg-log-view" id="adbgLogView">${_renderLogLines(p.raw || '')}</div>
         </div>
@@ -1669,6 +1758,29 @@ const ApexDebugger = (() => {
         _ft = setTimeout(() => _logViewFilter(logFilter.value.trim()), 160);
       });
     }
+
+    // ── D4: category filter chips ───────────────────────────────────
+    document.getElementById('adbgLogCats')?.addEventListener('click', e => {
+      const btn = e.target.closest('.adbg-log-cat');
+      if (!btn) return;
+      document.querySelectorAll('#adbgLogCats .adbg-log-cat')
+        .forEach(b => b.classList.toggle('adbg-log-cat-on', b === btn));
+      _logViewSetCat(btn.dataset.cat);
+    });
+
+    // ── D5: exception jump-list — click a row → jump the viewer to its line ──
+    document.getElementById('adbgDetail')?.querySelectorAll('.adbg-err-jump').forEach(row => {
+      const line = parseInt(row.dataset.errLine, 10);
+      if (!line) return;
+      row.addEventListener('click', () => {
+        document.getElementById('adbgLogsec')?.classList.remove('adbg-logsec-collapsed');
+        _logViewGoto(line);
+      });
+    });
+
+    // ── D5: opening a log with a FATAL error auto-scrolls to the first one ──
+    const firstFatal = (_bodyCache[p.id]?.errors || p.errors || []).find(e => e.fatal && e.line);
+    if (firstFatal) setTimeout(() => _logViewGoto(firstFatal.line), 300);
     if (logGoto) {
       const go = () => {
         const v = parseInt(logGoto.value, 10);
@@ -2228,7 +2340,13 @@ const ApexDebugger = (() => {
         case 'EXCEPTION_THROWN':
         case 'FATAL_ERROR': {
           if (result.errors.length < 25) {
-            result.errors.push({ msg: data.substring(0, 360) });
+            // result.stats.lines is the current 1-based line number (D5:
+            // click an exception → jump the viewer to it).
+            result.errors.push({
+              msg: data.substring(0, 360),
+              line: result.stats.lines,
+              fatal: event === 'FATAL_ERROR'
+            });
           }
           break;
         }
@@ -2399,5 +2517,8 @@ const ApexDebugger = (() => {
   }
 
   // ── Export ────────────────────────────────────────────────
-  return { init, updateSession };
+  // Test-only surface (harness/unit tests). Harmless in production — just refs.
+  const _test = { parseLog: _parseLog, matchesCat: _logMatchesCat, renderDetail: _renderDetail,
+    setLogs: (l) => { _logs = l; }, peak: _logPeak };
+  return { init, updateSession, _test };
 })();

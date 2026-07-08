@@ -157,6 +157,70 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
   Prereqs: A1 (shared org identity), C4 (shared confirm), U1 (friendlyError).
 - [ ] **X5. Unify theming** — one dark-mode key + one palette shared by launcher and Studio.
 
+## Phase D — Apex Debugger deep-analysis (proposal 2026-07-08, artifact 3c0cbd93)
+User directive: "implement everything under the proposal … don't miss anything."
+All items are client-side parsing/rendering over data the log parser already extracts,
+except where an API is named. File: apex-debugger.js (+ apex-log-viewer.js for the tab).
+
+- [ ] **D1. Governor-limit proximity alerts** — `result.limits` (used/max) already parsed;
+  red/amber banner atop ANALYSIS for any limit ≥95%/≥80%; badge on log-list rows whose
+  log neared a limit. Rendering only.
+- [ ] **D2. Repeated-query (N+1) detector** — group `SOQL_EXECUTE_BEGIN` by normalized query
+  (strip bind values); shape running ≥5× → ANALYSIS row with rows-per-query + jump-to-first.
+- [ ] **D3. Execution timeline** — pair `CODE_UNIT/METHOD/FLOW _STARTED/_FINISHED` into a
+  duration tree via the elapsed-ns column; "Top 5 slowest units" strip, expandable, links into
+  log. Must degrade on truncated/unbalanced logs.
+- [ ] **D4. Category filter chips** — Only USER_DEBUG · Only SOQL/DML · Hide system noise ·
+  Errors only, as event-name predicates over already-split lines; composable with text filter.
+- [ ] **D5. Exception jump-list + auto-scroll to first FATAL** — `result.errors` already parsed;
+  clickable list jumps viewer (goto exists); opening a FATAL_ERROR log auto-scrolls+highlights.
+- [ ] **D6. Flow path trace** — parse `FLOW_ELEMENT_BEGIN/END` into an ordered breadcrumb per
+  interview with loop counts, under each flow's ANALYSIS row. Needs FINER/FINEST flow level
+  (D8 preset sets it).
+- [ ] **D7. Compare two logs** — select two → side-by-side metric diff (SOQL/DML/CPU/heap/limit
+  %, D3 durations) with green/red deltas. Needs D3.
+- [ ] **D8. Scenario presets + org log meter** — 4 level-builder presets (Slow txn · Flow debug ·
+  Callouts · Minimal noise); header meter from `SELECT COUNT(Id),SUM(LogLength) FROM ApexLog` +
+  "purge older than 24h".
+
+## Phase F — Field Cleaner data+lifecycle (same proposal)
+File: field-cleaner.js. "Already there" — do NOT rebuild: MetadataComponentDependency scan +
+supplemental (FlexiPage/Dynamic Forms, list views, compact layouts, quick actions, matching
+rules, workflow field updates), flow XML inspector w/ selective removal + partial guard, layout
+Tooling-PATCH + Metadata-zip fallback, flow-version purge, _explainDeleteError, Setup deep-links.
+
+- [ ] **F1. Data-usage verdict** — `COUNT()` total vs `COUNT() WHERE Field != null` +
+  `MAX(LastModifiedDate) WHERE Field != null` → verdict chip (SAFE/CAUTION w/ %). Caveat: large
+  objects time out aggregates → LIMIT-sample fallback labeled as such; formula fields detected
+  via describe → "always populated, N/A".
+- [ ] **F2. Predictive blocker check** — classify scan hits: blocks-delete (apex/trigger/
+  validation-rule) vs breaks-silently vs cosmetic; Delete shows "🔒 N blockers remain" (disabled,
+  listed) until cleared. Classification of existing scan data.
+- [ ] **F3. Staged deprecation** — "🕐 Deprecate first": Tooling PATCH label→`zz_DEPRECATED …`
+  + description stamp; FieldPermissions DML strips read from all profiles/perm sets; record stage+
+  date + snapshot for undo (restore label+FLS). LABEL only, never API name.
+- [ ] **F4. CSV value backup** — "💾 Back up values" on delete confirm: `queryAll Id,Name,Field
+  WHERE Field != null` → client CSV. Cap ~50k rows w/ warning.
+- [ ] **F5. FLS visibility panel** — results section listing profiles/perm sets with read/edit
+  (`FieldPermissions` query) + per-row strip toggles. Standalone half of F3.
+- [ ] **F6. Pre-fix metadata snapshots + restore** — before any fix, store pre-change XML
+  (layout/flow/FlexiPage) in a "cleanup log"; ↩ Restore redeploys via existing Metadata-zip path;
+  audit trail. Respect S5 retention.
+- [ ] **F7. Object-wide deprecation dashboard** — pick object → table of ALL custom fields ranked
+  by fill-rate (F1 batched+throttled+cancellable) + dependency count (lazy on-demand) + last-mod +
+  FLS reach; sort, multi-select → F3. Doesn't fit 600px popup → build as first Data-Studio-shell
+  tool (Phase X pilot).
+- [ ] **F8. Honest "not scanned" disclosure** — muted chip on every result set: "Not scanned:
+  Reports, Email Templates — check in Setup ↗" w/ deep-link. Static UI.
+
+### Build order (from the proposal §3)
+1. **D1+D5+D4+F2+F8** (5×S — rendering/classification over already-computed data) ← START HERE
+2. **F1+F4** (data verdict + CSV backup)
+3. **D2+D3** (N+1, then timeline — D2 reuses D3 line-indexing)
+4. **F3+F5** (staged deprecation + FLS — shared FieldPermissions plumbing)
+5. **D6+D7+F6+D8** (flow paths, log compare [needs D3], fix snapshots, presets)
+6. **F7** (object-wide dashboard — flagship + Phase X migration pilot)
+
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.
 - **X phase**: confirm tool migration order before starting.
