@@ -1210,6 +1210,21 @@ async function onDeleteClick() {
     }
   }
 
+  // Step 4 (C4): ONE final summary confirm that names every version going
+  // away and states the true stakes — flow-version deletes are PERMANENT
+  // (Tooling deletes skip the Recycle Bin), so it requires the checkbox.
+  const finalOk = await sftkConfirmDestructive({
+    title: `Delete ${toDelete.length} flow version${toDelete.length !== 1 ? 's' : ''}`,
+    items: toDelete.map(f => ({
+      label: `${f.MasterLabel} v${f.VersionNumber}`,
+      sub: f.Status === 'Active' ? 'Active' : (extraToDelete.includes(f) ? 'added for dependencies' : ''),
+    })),
+    reversibility: 'permanent',
+    confirmLabel: `🗑 Delete ${toDelete.length}`,
+    undoHint: 'Only flows you backed up (⬇) can come back — via Restore mode in this tab.',
+  });
+  if (!finalOk) return;
+
   // Start deletion
   await performDeletion(toDelete, extraToDelete);
 }
@@ -1223,7 +1238,14 @@ async function checkAndWarnInterviews(selected) {
       sid,
       query: `SELECT Id, Name FROM FlowInterview WHERE FlowVersionViewId IN (${ids})`
     });
-    if (result.error) return true; // If query fails, proceed anyway
+    if (result.error) {
+      // Audit C7 finding: this used to fail OPEN silently — deletion went
+      // ahead with no interview warning at all. Still proceed (the check is
+      // best-effort), but SAY the check couldn't run.
+      const cont = confirm('Could not check for paused flow interviews (' +
+        result.error + ').\n\nPaused interviews on these flows would be deleted too. Continue anyway?');
+      return cont;
+    }
     const interviews = result.records || [];
     if (interviews.length === 0) return true;
 
@@ -2018,9 +2040,16 @@ function showResultToast(successCount, errors) {
   const list = document.getElementById('flowList');
   const toast = document.createElement('div');
   toast.className = 'result-toast';
-  toast.innerHTML = `<div class="toast-success">✅ ${successCount} flow version${successCount !== 1 ? 's' : ''} deleted successfully.</div>`;
+  // C4: the undo path travels WITH the success message — backed-up flows can
+  // come back via Restore mode; everything else is gone for good.
+  toast.innerHTML = `<div class="toast-success">✅ ${successCount} flow version${successCount !== 1 ? 's' : ''} deleted successfully.
+    <span class="toast-undo-hint">↩ Backed-up flows can be restored via <a href="#" id="toastRestoreLink">Restore mode</a>.</span></div>`;
   list.insertBefore(toast, list.firstChild);
-  setTimeout(() => toast.remove(), 6000);
+  toast.querySelector('#toastRestoreLink')?.addEventListener('click', e => {
+    e.preventDefault();
+    if (typeof switchMode === 'function') switchMode('restore');
+  });
+  setTimeout(() => toast.remove(), 12000);
 }
 
 // ============================================================
