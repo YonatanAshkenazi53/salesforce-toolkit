@@ -5421,3 +5421,16 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .fc-snap-when { color: var(--subtext); font-size: 10.5px; flex: 0 0 130px; }
 .fc-snap-what { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fc-snap-what small { color: var(--subtext); }
+/* C4: shared destructive-confirm modal */
+.sftk-confirm-items { margin: 0 0 10px; padding-left: 20px; font-size: 12.5px; max-height: 180px; overflow-y: auto; }
+.sftk-confirm-items li { padding: 1px 0; }
+.sftk-confirm-items small { color: var(--subtext); margin-left: 5px; }
+.sftk-confirm-more { color: var(--subtext); font-style: italic; }
+.sftk-confirm-rev { padding: 8px 11px; border-radius: 6px; font-size: 12px; line-height: 1.5; margin: 8px 0; border: 1px solid var(--border); }
+.sftk-rev-permanent { background: rgba(234, 0, 30, 0.07); border-color: var(--danger); }
+.sftk-rev-recycle   { background: rgba(46, 132, 74, 0.08); border-color: var(--active-color); }
+.sftk-rev-newver    { background: rgba(1, 118, 211, 0.07); border-color: var(--brand); }
+.sftk-confirm-undo { font-size: 11.5px; color: var(--subtext); margin: 6px 0; }
+.sftk-confirm-ack { display: flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 12.5px; cursor: pointer; font-weight: 600; }
+.toast-undo-hint { display: block; margin-top: 4px; font-size: 11px; color: var(--subtext); }
+.toast-undo-hint a { color: var(--brand); }

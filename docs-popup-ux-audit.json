@@ -1,0 +1,801 @@
+{
+  "audited": 8,
+  "totals": {
+    "bareLoading": 33,
+    "rawErrors": 38,
+    "confirms": 35,
+    "crossLinks": 26
+  },
+  "perModule": [
+    {
+      "module": "popup.js",
+      "bareLoadingStates": [
+        {
+          "line": 418,
+          "snippet": "spinner.textContent = 'Detecting sessions…';  // home org dropdown, while awaiting GET_ALL_SF_SESSIONS + ds_stored_orgs",
+          "fix": "Use the shared compact cat: spinner.innerHTML = sftkCatSm('Detecting sessions…') — the dropdown is a plain div so the small cat fits."
+        },
+        {
+          "line": 2782,
+          "snippet": "spinner.textContent = 'Detecting sessions…';  // identical bare text in the topbar org dropdown copy of buildDropdown()",
+          "fix": "Same fix as line 418: spinner.innerHTML = sftkCatSm('Detecting sessions…'). (Also a candidate for deduplicating the two buildDropdown implementations.)"
+        },
+        {
+          "line": 1767,
+          "snippet": "btn.textContent = '⏳ Restoring…';  // onRestoreClick then loops N sequential Metadata API deploys with no other feedback",
+          "fix": "Metadata deploys take seconds each; show progress like onBackupClick does: showScanProgress(true, `📥 Restoring… ${done} / ${toRestore.length}`) inside the loop (the #scanProgress strip already carries the cat markup), updating per flow."
+        },
+        {
+          "line": 1462,
+          "snippet": "allBtn.textContent = '⏳ Downloading...';  // 'Download All Backups' loops one SF_GET_METADATA per active flow with no count",
+          "fix": "Update the button text per iteration (`⏳ ${i+1} / ${activeFlows.length}`) or render sftkCatSm progress inside the modal body so multi-flow backups don't look frozen."
+        },
+        {
+          "line": 2175,
+          "snippet": "noBanner.textContent = '⏳ Dependency map is building… This tab will refresh automatically when ready.'; container.innerHTML = '';",
+          "fix": "Inconsistent with the two branches above it (2161, 2169) which use sftkCat. Render container.innerHTML = sftkCat('Dependency map is building…') instead of a bare emoji banner over an empty container. Same for the 'Waiting for dependency metadata…' branch at line 2182."
+        },
+        {
+          "line": 888,
+          "snippet": "await DependencyMap.buildDependencyMap(allFlows, loadOrgUrl, loadSid, showProgress ? … : null);  // showProgress is false for orgs under LAZY_THRESHOLD (50 flows)",
+          "fix": "For <50 flows the scan runs with zero indicator, then renderFlowList() at line 896 silently repaints the list (rows gain 🔗 icons, process types change under the cursor). Show the scanProgress strip (which has the cat) unconditionally, or a sftkCatSm inline row, so the repaint is explained."
+        }
+      ],
+      "rawErrorSurfaces": [
+        {
+          "line": 2304,
+          "snippet": "showSessionError(`API Error: ${errMsg}`);  // handleApiError: raw Tooling API error from loadFlows result.error (848) / e.message (872) rendered via textContent into #sessionErrorMsg",
+          "fix": "popup.js never calls sftkFriendlyError even though sftk-friendly-error.js is shared with the popup. Translate first: const fe = sftkFriendlyError(errMsg); showSessionError(fe.message + (fe.hint ? ' — ' + fe.hint : '')), keeping the raw string in a collapsible/title for copy-paste."
+        },
+        {
+          "line": 1927,
+          "snippet": "errors.push({ flow, msg: `${flow.MasterLabel} v${flow.VersionNumber}: ${msg}` });  // raw e.message from delete/deactivate failures, shown verbatim in the showResultToast modal at line 1999",
+          "fix": "Only CANNOT_DELETE_MANAGED_COMPONENT gets a hand-written translation (1924); everything else — including the raw patchResult.error thrown by deactivateFlow at line 1867 — reaches the modal untranslated. Pass msg through sftkFriendlyError before pushing and render fe.message with fe.hint."
+        },
+        {
+          "line": 1780,
+          "snippet": "errors.push(`${escHtml(f.MasterLabel)}: ${escHtml(e.message || String(e))}`);  // raw Metadata deploy error from performRestore (throw new Error(result.error) at 1847)",
+          "fix": "Two issues: (1) raw deploy error shown untranslated in the failure modal at 1810; (2) double-escaping — escHtml is applied here AND again at line 1810, so '&'/'<' in deploy errors display as '&amp;'/'&lt;'. Push the raw message, translate with sftkFriendlyError, and escape exactly once at render time."
+        },
+        {
+          "line": 1454,
+          "snippet": "btn.title = e.message;  // per-flow backup button in the active-warning modal shows raw SF_GET_METADATA error only as a hover tooltip",
+          "fix": "Tooltip-only raw error is easy to miss during a pre-delete backup. Set btn.title = sftkFriendlyError(e.message).message and surface a visible one-line error under the row so the user knows the backup they are relying on failed."
+        }
+      ],
+      "destructiveConfirms": [
+        {
+          "line": 1182,
+          "operation": "Bulk delete of selected flow versions (onDeleteClick → performDeletion via SF_TOOLING_DELETE)",
+          "currentPattern": "Conditional custom modals only: active-flow warning modal (1417), paused-interview modal (1233), subflow-dependency modal (1353). If the selection is all inactive versions with no paused interviews and no outside parents, NONE of the modals fire — one click on 'Delete Selected (n)' goes straight to deletion with zero confirmation.",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 1233,
+          "operation": "Cascade delete of paused/waiting FlowInterviews when their flow version is deleted",
+          "currentPattern": "Custom modal listing up to 10 interview names with explicit 'Delete interviews + flows' button — but if the FlowInterview query errors, checkAndWarnInterviews returns true at line 1226 and deletion proceeds with no interview warning at all (silent fail-open).",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 1406,
+          "operation": "Deactivate + delete parent flows that reference a deleted subflow (deactivateDeleteBtn → deactivateFlow PATCH activeVersionNumber:0, then delete)",
+          "currentPattern": "Custom modal with per-parent checkboxes; the danger button stays disabled until at least one parent is checked (effectively a two-step arm). Good pattern.",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 1887,
+          "operation": "Silent auto-deactivation fallback inside deleteOneFlow: an Active flow whose direct delete fails is deactivated via FlowDefinition PATCH, then deleted",
+          "currentPattern": "No dedicated confirmation — covered only by the upstream active-flow warning modal, whose text says 'delete' but never mentions the flow will first be deactivated org-wide (a user-visible behavior change if the subsequent delete throws, leaving the flow deactivated but not deleted).",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 1761,
+          "operation": "Restore selected backup flows as new Draft versions (onRestoreClick → sftkDeployFlowMetadata)",
+          "currentPattern": "No confirmation — acceptable here since it only adds Draft versions and overwrites nothing; success modal correctly tells the user to review/activate in Flow Builder.",
+          "reversibility": "new-version-deploy"
+        }
+      ],
+      "crossLinkIdeas": [
+        {
+          "where": "popup.js:1015 and 1089 — the 🔗 subflow icon on flow group headers and version rows; parent flows are named only in a title tooltip",
+          "link": "Dependencies tab",
+          "why": "The icon already knows the exact parent-flow chain; making it clickable (navigateToTab('dependencies') + renderDependenciesTab(), ideally focused on that flow's node) turns a hover-only hint into the investigation the user is about to do anyway before deleting."
+        },
+        {
+          "where": "popup.js:1359 — showSubflowDependencyModal renders parent/grandparent chains as a static table (and punts with 'Manual review recommended' beyond depth 3 at line 1319)",
+          "link": "Dependencies tab",
+          "why": "A 'View full chain in Dependencies' button that closes the modal and opens the Dependencies tree is the natural escape hatch, especially for the >3-levels case where the modal explicitly tells the user to review manually but gives them no way to do it."
+        },
+        {
+          "where": "popup.js:1421 — active-flow warning modal lists each Active flow being deleted (name + version) with only a Backup button per row",
+          "link": "Flow Access tab",
+          "why": "Before deleting an Active flow the key question is 'who is running this?' — a per-row link to Flow Access (initFlowAccessTab exists, navigateToTab('flow-access')) prefiltered to that flow shows impacted users/profiles and makes the 'may break user-facing screens' warning actionable."
+        },
+        {
+          "where": "popup.js:1999 — deletion-failure modal lists flows that could not be deleted; the common non-managed cause is another component still referencing the flow",
+          "link": "Dependencies tab",
+          "why": "When a delete fails on a reference error, the user's next step is finding the referrer — a 'Check references in Dependencies' link on each failed row saves the round-trip through Setup."
+        }
+      ],
+      "notes": "Structurally solid popup shell — session/home states use sftkCat, escHtml is applied consistently, and the layered delete-confirmation modals (active/interviews/dependencies) are thoughtful — but sftkFriendlyError is never called anywhere in popup.js so every delete/restore/backup/API error surfaces raw, and the plain inactive-version delete path is a one-click permanent operation with no confirmation."
+    },
+    {
+      "module": "lightning-pages.js",
+      "bareLoadingStates": [
+        {
+          "line": 256,
+          "snippet": "function lpRobot(msg, isError = false) { ... lp-rcat div markup ... }",
+          "fix": "lpRobot() is a private, hand-rolled div-based cat that duplicates the shared sftkCat()/sftkCatSvg component (debug-logger.js even reuses the lp-robot-* wrapper classes). Every loading/error state in this module routes through it. Delete lpRobot and call sftkCat(msg, isError) so the module picks up the themed SVG cat, dark-mode vars, and future fixes for free."
+        },
+        {
+          "line": 64,
+          "snippet": "<div class=\"lp-robot-loading\"><div class=\"lp-rcat\">... <div class=\"lp-robot-msg\">Loading Lightning pages…</div>",
+          "fix": "Second inline copy of the same hand-rolled cat markup in renderShell's #lpLoading block. Replace with `${sftkCat('Loading Lightning pages…')}`."
+        },
+        {
+          "line": 1494,
+          "snippet": "if (addBtn) { addBtn.disabled = true; addBtn.textContent = '⏳ Saving…'; }",
+          "fix": "doAdd runs 1..N sequential Metadata Deploys (ARTP mode is apps × profiles × recordTypes — easily dozens, each several seconds) with only a static button label. Show sftkCatSm with a progress counter ('Deploying 3/12…') in the tab pane, mirroring what openProfileMap already does with percentages."
+        },
+        {
+          "line": 1788,
+          "snippet": "btn.textContent = '⏳ Cloning…';",
+          "fix": "doClone performs a full Metadata Deploy + Tooling query + up to N assignment deploys behind a frozen modal button. Swap the modal body for sftkCatSm('Cloning page…') and step messages (deploying / locating / copying assignments)."
+        },
+        {
+          "line": 1335,
+          "snippet": "btn.textContent = '⏳ Loading…';",
+          "fix": "'Show affected users' runs SF_QUERY_ALL (can page through large profiles) with only a button-label spinner. Replace the button with sftkCatSm('Loading users…') in the lpUsers slot."
+        },
+        {
+          "line": 570,
+          "snippet": "btn.textContent = '⏳';",
+          "fix": "Same pattern in the Who-sees-what view's 'load users' button — bare hourglass character during an await. Use sftkCatSm or at least a labelled state."
+        }
+      ],
+      "rawErrorSurfaces": [
+        {
+          "line": 144,
+          "snippet": ": `Failed to load pages: ${esc(res.error)}`;",
+          "fix": "Only SESSION_EXPIRED is special-cased; every other API error string hits the user verbatim. Route through sftkFriendlyError(res.error) and render .message + .hint."
+        },
+        {
+          "line": 590,
+          "snippet": "if (body) body.innerHTML = lpRobot(esc(e.message), true);",
+          "fix": "openProfileMap's catch dumps raw e.message (Tooling/network errors) into the body with no translation. Wrap with sftkFriendlyError(e.message)."
+        },
+        {
+          "line": 973,
+          "snippet": "body.innerHTML = lpRobot(`Could not load page: ${esc(metaRes.error)}`, true);",
+          "fix": "Raw Tooling GET error surfaced verbatim in page detail. Translate via sftkFriendlyError and keep the raw string in a collapsible details block for copy/paste."
+        },
+        {
+          "line": 1084,
+          "snippet": "errDiv.innerHTML = `❌ ${esc(errorMsg)}${hint}`;",
+          "fix": "Post-deploy error banner has a module-specific hint ONLY for /INSUFFICIENT_ACCESS|cannot.*modify|managed/ (line 1077); all other deploy failures (XSD cascade errors, FIELD_INTEGRITY, timeouts) reach the user raw. Fall back to sftkFriendlyError for the untranslated cases."
+        },
+        {
+          "line": 1596,
+          "snippet": "errEl.innerHTML = `❌ ${esc(e.message)}${hint}`;",
+          "fix": "doAdd's inline error has the same single INSUFFICIENT_ACCESS explainer; raw Metadata Deploy errors otherwise. Same fix: sftkFriendlyError fallback."
+        },
+        {
+          "line": 1796,
+          "snippet": "errEl.textContent = '❌ ' + e.message;",
+          "fix": "Clone dialog surfaces 'Deploy failed: <raw server XML error>' verbatim with no explainer at all — the most user-hostile surface in the module since name-collision and XSD errors land here. Translate common cases (duplicate DeveloperName, invalid chars) and sftkFriendlyError the rest."
+        }
+      ],
+      "destructiveConfirms": [
+        {
+          "line": 1603,
+          "operation": "Remove assignment (✕ on a row) — org-default/profile rows deploy CustomObject actionOverride type=Default; app rows PATCH the entry out of CustomApplication.profileActionOverrides",
+          "currentPattern": "custom modal (confirmRemove) with impact note, including affected-user count when the profile's users are cached",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 1895,
+          "operation": "Deactivate page — deletes the org-wide Desktop ActionOverride via metadata deploy, page reverts to Draft",
+          "currentPattern": "custom modal with warning ('Users will no longer see this page')",
+          "reversibility": "new-version-deploy"
+        },
+        {
+          "line": 1920,
+          "operation": "Activate page — deploys THIS page as the org-wide Desktop View override, silently displacing whichever page is currently the org default for that object",
+          "currentPattern": "custom modal, but it never names or warns about the page being displaced (the module often already knows it from fetchOrgDefaults/describe)",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 1516,
+          "operation": "Set as Org Default button — deploys CustomObject actionOverrides per form factor, overwriting the existing org default; the displaced page's identity is not captured or shown",
+          "currentPattern": "none — single click fires the deploy immediately",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 1505,
+          "operation": "Hidden side effect: adding an App Default or ARTP assignment to a Draft page first calls activatePage(), which deploys this page as the org-wide Desktop default — displacing the current org default even though the user only asked for an app/profile-scoped assignment",
+          "currentPattern": "none — only a passive hint ('Adding any assignment will also activate this page', line 1209) that never mentions the org-default takeover",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 1536,
+          "operation": "App Default / ARTP assignment — saveAppAssignment silently drops any existing conflicting profileActionOverride entry (dedupe filter at line 2116) before PATCHing, overwriting prior app assignments",
+          "currentPattern": "none — button click deploys with no confirm and no mention of the replaced entry",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 1816,
+          "operation": "Clone deploy — the dialog validates API-name format only, never existence; if the chosen DeveloperName matches an existing FlexiPage, the Metadata Deploy silently overwrites that page's entire layout",
+          "currentPattern": "custom modal (clone dialog) with format validation, no collision check",
+          "reversibility": "permanent"
+        }
+      ],
+      "crossLinkIdeas": [
+        {
+          "where": "User chips in assignment rows (renderUserBadges, line 1425) and the full user list modal (showUsersModal, line 1444)",
+          "link": "Copy Permissions tab",
+          "why": "These surfaces name concrete users while the admin is auditing who sees a page — one click to jump to Copy Permissions prefilled with that user closes the loop when the fix is 'give this user the same access as that one'."
+        },
+        {
+          "where": "Object tag (lp-obj-tag) on list rows (line 329), detail header (line 882), and Who-sees-what cards (line 472)",
+          "link": "Field Cleaner tab",
+          "why": "The tag names the exact sObject the record page belongs to; Field Cleaner operates on that same object, so a click-through prefiltered to it turns 'inspecting this object's page' into 'cleaning this object's fields' without retyping."
+        },
+        {
+          "where": "Detail view of FlowPage-type pages / pages embedding flowruntime:interview components — metaRes.Metadata (fetched at line 906) contains the flow's API name in componentInstanceProperties but it is never surfaced",
+          "link": "Flows tab (and Flow Access tab)",
+          "why": "The embedded flow's name is already in memory; rendering it as a chip that jumps to the Flows tab (or Flow Access to manage which profiles can run it) connects the page assignment to the flow it actually launches."
+        }
+      ],
+      "notes": "Functionally deep and unusually careful about Salesforce API quirks, but it predates the shared affordances: every loading state goes through a private duplicate cat (lpRobot), only INSUFFICIENT_ACCESS gets a friendly explanation, and the org-default/app-default write paths are one-click permanent metadata overwrites with no confirmation and one hidden org-default takeover (line 1505)."
+    },
+    {
+      "module": "user-copy.js (Copy Permissions tab)",
+      "bareLoadingStates": [
+        {
+          "line": 269,
+          "snippet": "drop.innerHTML = '<div class=\"uc-drop-item uc-drop-loading\">⏳ Loading users…</div>';",
+          "fix": "The picker dropdown shows a bare emoji-text loading row while allUsers loads. Replace with sftkCatSm('Loading users…') inside the dropdown item — this is real HTML (unlike the input placeholder at line 72, which can't hold markup and is fine as text)."
+        },
+        {
+          "line": 700,
+          "snippet": "btn.textContent = '⏳ Copying…';",
+          "fix": "executeCopy() fires N sequential API calls (one POST per permission set at 720, one per group at 736, plus up to two PATCHes) behind a static '⏳ Copying…' button label — no sftkCatSm and no progress. Show the #ucLoading block with sftkCatSm and update its text with a running count, e.g. sftkCatSm(`Copying… ${done}/${total}`), so long copies (20+ perm sets) don't look hung."
+        }
+      ],
+      "rawErrorSurfaces": [
+        {
+          "line": 457,
+          "snippet": "showResult(`Failed to load permissions: ${esc(e.message || String(e))}`, true);",
+          "fix": "Raw exception message rendered into the error banner. Pass through sftkFriendlyError(e.message) and render {message} with the {hint} as a sub-line."
+        },
+        {
+          "line": 712,
+          "snippet": "if (r.error) errors.push(`Profile: ${r.error}`);",
+          "fix": "Raw SF_PATCH error (e.g. 'LICENSE_LIMIT_EXCEEDED: license limit exceeded' JSON-ish text) is pushed verbatim and rendered in the error <ul> at line 804. Wrap with sftkFriendlyError(r.error).message before pushing."
+        },
+        {
+          "line": 727,
+          "snippet": "errors.push(`Permission set \\\"${name}\\\": ${r.error}`);",
+          "fix": "Per-perm-set assignment failures surface the raw Salesforce error string (common ones: license mismatch, duplicate assignment). Translate via sftkFriendlyError so the user sees 'Target's license doesn't allow this permission set' instead of an API code."
+        },
+        {
+          "line": 743,
+          "snippet": "errors.push(`Group \\\"${name}\\\": ${r.error}`);",
+          "fix": "Raw GroupMember POST error reaches the UI untranslated — run through sftkFriendlyError."
+        },
+        {
+          "line": 773,
+          "snippet": "errors.push(`User update: ${r.error}`);",
+          "fix": "Raw error from the combined User PATCH (user permissions + locale fields). Since this one PATCH bundles many fields, a raw field-level error is especially cryptic — translate with sftkFriendlyError and, ideally, name which category (permissions vs locale) failed."
+        }
+      ],
+      "destructiveConfirms": [
+        {
+          "line": 707,
+          "operation": "Overwrite target user's ProfileId (SF_PATCH User) — can also silently swap the user's license and consume a license slot (warned at line 497 but not gated)",
+          "currentPattern": "none — single click on '📋 Copy Selected' (wired at line 464) executes immediately; no confirm(), no showModal, no two-click arm",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 766,
+          "operation": "Disable user-permission booleans on target ('Can be disabled' checkboxes, data-target=\"false\", rendered lines 636-643, collected lines 753-757 into the User PATCH) — strips access like Marketing/Service Cloud/Knowledge User",
+          "currentPattern": "none — checkboxes default unchecked (good), but once checked they execute on the same single 'Copy Selected' click with no confirmation; previous values are not preserved after the post-copy refresh",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 760,
+          "operation": "Overwrite target's LocaleSidKey/LanguageLocaleKey/TimeZoneSidKey/EmailEncodingKey (same User PATCH, lines 760-771) — the target's current values are never even displayed (preview at 678-684 shows only the source value plus a 'same' badge), so the old values are unrecoverable from the UI",
+          "currentPattern": "none — checked-by-default when values differ, executed on single 'Copy Selected' click",
+          "reversibility": "permanent"
+        }
+      ],
+      "crossLinkIdeas": [
+        {
+          "where": "License-change warning in the Profile preview section (user-copy.js:497-503): '⚠️ This also changes the license from X → Y. Make sure a license slot is available.'",
+          "link": "Licenses tab — navigateToTab('licenses'); initLicenseManagerTab() (popup.js:220), or the dependency-map.js:371 pattern of clicking .tab-btn[data-tab=\"licenses\"]",
+          "why": "The warning tells the user to verify slot availability but makes them do it by hand; the Licenses tab shows exactly the used/total seat counts for the named license. A 'Check availability →' link closes the loop before a copy that could fail with LICENSE_LIMIT_EXCEEDED."
+        },
+        {
+          "where": "'Incompatible license' permission-set group (user-copy.js:552-564), each row badged with the blocking license name (ps.License.Name, line 561)",
+          "link": "Licenses tab (navigateToTab('licenses'))",
+          "why": "These rows name a specific permission-set license the target lacks; linking the badge to the Licenses tab lets the user see whether that license exists in the org with free seats (i.e. whether the incompatibility is fixable) instead of a dead-end ✗ row."
+        },
+        {
+          "where": "'Flow User' row in the User Permissions section (rows rendered at user-copy.js:626-631 / 636-643 from userPermFields)",
+          "link": "Flow Access tab — navigateToTab('flow-access'); initFlowAccessTab() (popup.js:228)",
+          "why": "Enabling the Flow User checkbox only grants the ability to run flows; which flows the target can actually run is governed by the profile/perm-set overrides managed in the Flow Access tab. A small 'manage per-flow access →' link on that specific row bridges the two halves of the same admin task."
+        }
+      ],
+      "notes": "Solid module overall — good esc() hygiene, thoughtful load-state machine for the user pickers, and sftkCatSm already used for the main preview load (line 185) — but it executes profile/permission/locale overwrites on a single unconfirmed click and surfaces every API error string raw (sftkFriendlyError is never imported/used)."
+    },
+    {
+      "module": "license-manager.js",
+      "bareLoadingStates": [
+        {
+          "line": 372,
+          "snippet": "btn.textContent = '⏳ Loading…'; btn.disabled = true;  // onChangeLicense first-use profile query",
+          "fix": "Replace the bare button-text swap with the shared loading affordance: show sftkCatSm('Loading profiles…') in #lmResult (or a small inline container under the action bar) while the Profile SOQL awaits, keeping the button disabled."
+        },
+        {
+          "line": 339,
+          "snippet": "for (const u of selected) { const r = await bg({ type: 'SF_PATCH', ... body: { IsActive: !isDeactivate } }); }",
+          "fix": "onBulkAction has NO loading state at all: after the confirm modal closes, the sequential per-user PATCH loop runs silently (can be many seconds for a large selection) until doSearch() repaints. Show sftkCatSm(`Deactivating ${i}/${n}…`) in #lmLoading or #lmResult and update the counter each iteration; disable the action bar buttons during the loop."
+        },
+        {
+          "line": 509,
+          "snippet": "btn.textContent = '⏳ Applying…';  // change-license modal, then sequential PATCH loop over selected users",
+          "fix": "Bare text on the modal button with no progress for the N-user PATCH loop. Swap the modal body footer area to sftkCatSm(`Applying ${i}/${n}…`) (or render sftkCatSm next to the footer) and increment per user so bulk changes don't look frozen."
+        }
+      ],
+      "rawErrorSurfaces": [
+        {
+          "line": 157,
+          "snippet": "contentEl.innerHTML = `<div class=\"lm-overview-error\">Could not load licenses: ${esc(r.error)}</div>`;",
+          "fix": "Escaped but untranslated raw SOQL error. Run r.error through sftkFriendlyError() and render {message} with {hint} (it already maps INSUFFICIENT_ACCESS / SESSION_EXPIRED), falling back to the raw string in a title/copy affordance."
+        },
+        {
+          "line": 249,
+          "snippet": "const eMsg = res.error === 'SESSION_EXPIRED' ? 'Session expired — …' : `Error: ${esc(res.error)}`;",
+          "fix": "Only SESSION_EXPIRED is hand-translated; every other query failure (MALFORMED_QUERY, INVALID_FIELD, permission errors) reaches the user raw. Replace the else branch with sftkFriendlyError(res.error).message + hint."
+        },
+        {
+          "line": 345,
+          "snippet": "if (r.error) errors.push(`${u.Name}: ${r.error}`);  // rendered raw (escaped) at lines 356-357",
+          "fix": "Deactivate/reactivate PATCH failures surface raw Salesforce errors like 'LICENSE_LIMIT_EXCEEDED, license limit exceeded: []' or 'CANNOT_UPDATE_...'. Push `${u.Name}: ${sftkFriendlyError(r.error).message}` and append the hint once below the list; a module-specific explainer for LICENSE_LIMIT_EXCEEDED ('No free licenses of this type — free one up or pick a different license') would cover the most common case."
+        },
+        {
+          "line": 382,
+          "snippet": "if (r.error) { showLmResult(`Error loading profiles: ${esc(r.error)}`, true); return; }",
+          "fix": "Raw error for the Profile query. Route through sftkFriendlyError() before showLmResult."
+        },
+        {
+          "line": 519,
+          "snippet": "if (r.error) errors.push(`${u.Name}: ${r.error}`);  // change-license loop, rendered raw at lines 531-532",
+          "fix": "Profile/license change failures are the place users will hit LICENSE_LIMIT_EXCEEDED and FIELD_INTEGRITY_EXCEPTION (profile/license mismatch) — both reach the user raw. Translate via sftkFriendlyError() plus a module explainer for the two license-specific codes."
+        }
+      ],
+      "destructiveConfirms": [
+        {
+          "line": 331,
+          "operation": "Bulk deactivate users (SF_PATCH IsActive=false per selected user)",
+          "currentPattern": "Custom modal via confirmModal() listing each affected user's name + license pill, Cancel/Deactivate buttons (btn-warning). No typed confirmation, no arm step — appropriate for the risk level.",
+          "reversibility": "recycle-bin"
+        },
+        {
+          "line": 504,
+          "operation": "Bulk change ProfileId (license follows profile) — overwrites each user's current profile",
+          "currentPattern": "Custom modal with searchable profile picker, affected-user list, 'New license:' preview, and a static warning ('Users may lose access to features tied to their current license'); Apply button disabled until a profile is picked. The tool does NOT record the previous profile of each user, so there is no in-tool undo — the old assignment is only discoverable via Setup Audit Trail.",
+          "reversibility": "permanent"
+        }
+      ],
+      "crossLinkIdeas": [
+        {
+          "where": "User rows in renderUserList (lines 275-288) — each row names a user (Name/Username) and shows their Profile",
+          "link": "Per-row action (or context link) 'Copy permissions' that calls navigateToTab('copy-perms') + initUserCopyTab() with the username prefilled as the source user in the Copy Permissions tab",
+          "why": "Copy Permissions operates on exactly the users this list outputs; today the user must retype the name. popup.js already exposes navigateToTab()/initUserCopyTab() globals in the same page context, so only a small prefill hook on UserCopy is needed."
+        },
+        {
+          "where": "Deactivate confirm modal body (confirmModal call at line 331)",
+          "link": "Add a line under the user list: 'Tip: copy this user's permissions to a replacement first → Copy Permissions' linking to the copy-perms tab before committing the deactivation",
+          "why": "Deactivating a user is precisely the moment admins need to transfer that user's permission sets; the confirm modal is the natural intercept point and the target tool (Copy Permissions) already exists."
+        }
+      ],
+      "notes": "Above-average module: both primary loading states already use sftkCatSm, escaping is consistent, and both destructive ops have custom list-the-victims modals — remaining gaps are the silent bulk PATCH loops, zero sftkFriendlyError usage (5 raw error surfaces), and no cross-tab links. Note: 'recycle-bin' on deactivate means reversible in-place via the module's own Reactivate button, not the actual Recycle Bin."
+    },
+    {
+      "module": "flow-permissions.js",
+      "bareLoadingStates": [
+        {
+          "line": 654,
+          "snippet": "if (btn) { btn.disabled = true; btn.textContent = '⏳ Working…'; }",
+          "fix": "During the multi-second Metadata API deploy the only progress cue is a bare emoji button label. Keep the button disabled but move the progress indicator to the action bar using sftkCatSm (see next finding); restore label in the existing line-675 reset."
+        },
+        {
+          "line": 663,
+          "snippet": "if (summary) summary.textContent = `Deploying flow access to ${permSets.length} permission set(s)…`;",
+          "fix": "Bare plain-text progress during the await of deployFlowAccess (can take 5-30s for a metadata deploy). Replace with summary.innerHTML = sftkCatSm(`Deploying flow access to ${permSets.length} permission set(s)…`) so the shared loading-cat shows, matching the initial-load state at line 100 which already uses sftkCat correctly."
+        }
+      ],
+      "rawErrorSurfaces": [
+        {
+          "line": 308,
+          "snippet": "showError(raw === 'SESSION_EXPIRED' ? 'Session expired — log back into Salesforce and retry' : raw);",
+          "fix": "Raw Salesforce error strings reach the user verbatim: fdvRes.error (line 180, prefixed 'Could not load flows: '), psRes.error (line 268, no prefix at all), and chrome.runtime.lastError (line 47) all funnel here and are rendered into #fpError innerHTML with only esc(). Run through sftkFriendlyError(raw) and render f.message plus f.hint (as a second muted line) inside showError."
+        },
+        {
+          "line": 709,
+          "snippet": "`<li style=\"word-break:break-word\"><strong>${esc(e.label)}</strong>: ${esc(e.msg)}</li>`",
+          "fix": "The failure modal prints the raw metadata-deploy error (deployErr = res.error / res.errorMessage / e.message, lines 669-673) untranslated — deploy failures are cryptic XML/component-error strings like 'Cannot find flow X in package'. At line 680 where the errors array is built, map deployErr through sftkFriendlyError() and render {message, hint} in the modal list instead of the raw string."
+        }
+      ],
+      "destructiveConfirms": [
+        {
+          "line": 651,
+          "operation": "doAssign — bulk grant of Flow Access via a single Metadata API deploy: each selected PermissionSet is redeployed with <flowAccesses><enabled>true</enabled> entries for every selected flow (rollbackOnError, all-or-nothing). This is the module's ONLY write; it is additive (no existing perms removed) and there is no revoke/ungrant path anywhere in the module.",
+          "currentPattern": "Custom modal via shared showModal (showConfirmModal, lines 565-590): lists every selected flow and permission set in scrollable lists with explicit Cancel / '🔑 Assign' buttons. Single-click confirm, no type-to-confirm or two-click arm — appropriate for an additive grant.",
+          "reversibility": "permanent"
+        }
+      ],
+      "crossLinkIdeas": [
+        {
+          "where": "Flow rows in the left Flows panel (renderFlows, line 431) and the per-PS expanded flow list (line 492) — flow names are dead text today",
+          "link": "Dependencies tab (navigateToTab('dependencies') exists in popup.js:265; dependency-map.js builds the subflow dependency map for exactly these flows)",
+          "why": "Before granting run access to a flow, admins often want to know what subflows it pulls in (those need access too, or the flow fails at runtime for the granted user); a per-row jump icon closes that gap."
+        },
+        {
+          "where": "Flow rows in the Flows panel (line 431) — a flow with a '3 PS' badge invites lifecycle follow-up",
+          "link": "Flows tab / Flow Cleaner (popup.js:172 — navigateToTab('flows') + loadFlowsIfNeeded)",
+          "why": "The same flow's version cleanup and active/inactive management lives in the Flows tab; module already loads inactive-but-assignable flows, so a 'manage this flow' jump with the API name prefilled in the Flows search saves re-finding it."
+        },
+        {
+          "where": "Success modal after assignment (line 689-705: 'Assigned to N permission sets') and permission-set rows (line 499)",
+          "link": "Copy Permissions tab (popup.js:212 — navigateToTab('copy-perms'); user-copy.js manages PermissionSetAssignment records)",
+          "why": "Granting Flow Access to a permission set does nothing until users hold that set — the natural next step after the success modal is assigning/copying the perm set to users, which the Copy Permissions tab does; a 'now give users this set' link completes the workflow."
+        }
+      ],
+      "notes": "Solid module overall: initial load uses sftkCat, all dynamic HTML goes through esc(), session-expiry is auto-retried, and the sole write is guarded by a proper custom confirm modal — the gaps are the bare deploy-phase progress text and two raw-error surfaces that skip sftkFriendlyError."
+    },
+    {
+      "module": "field-cleaner.js",
+      "bareLoadingStates": [
+        {
+          "line": 150,
+          "snippet": "drop.innerHTML = '<div class=\"fc-dd-loading\">Loading objects…</div>';",
+          "fix": "Use sftkCatSm('Loading objects…') inside the dropdown instead of bare text — this await (EntityDefinition query, up to 2000 rows) is the single longest first-paint wait in the tab."
+        },
+        {
+          "line": 242,
+          "snippet": "drop.innerHTML = '<div class=\"fc-dd-loading\">Loading fields…</div>';",
+          "fix": "Same as the object picker: swap bare 'Loading fields…' text for sftkCatSm while the FieldDefinition query runs."
+        },
+        {
+          "line": 821,
+          "snippet": "<div id=\"fcDataVerdict\" class=\"fc-data-verdict fc-data-loading\">📊 Measuring how much data is stored in this field…</div>",
+          "fix": "Bare-text placeholder during the runDataUsage() aggregate query (can be slow on huge objects, has an explicit timeout fallback). Use sftkCatSm here; same duplicated markup at line 854."
+        },
+        {
+          "line": 976,
+          "snippet": "const { rows, error } = await _queryFls();",
+          "fix": "renderFlsPanel shows NOTHING during the FieldPermissions query — #fcFlsPanel stays empty and the panel pops in later. Seed it with sftkCatSm('Checking who can see this field…') before the await."
+        }
+      ],
+      "rawErrorSurfaces": [
+        {
+          "line": 159,
+          "snippet": "const eMsg = res.error === 'SESSION_EXPIRED' ? '…' : `Error: ${esc(res.error)}`;",
+          "fix": "Only SESSION_EXPIRED is translated; every other API error (INVALID_SESSION_ID variants, 403s) lands raw in the dropdown. Route through sftkFriendlyError(res.error) and show message + hint."
+        },
+        {
+          "line": 252,
+          "snippet": "`Error loading fields: ${esc(res.error)}`",
+          "fix": "Raw Tooling error shown in the field dropdown. Use sftkFriendlyError."
+        },
+        {
+          "line": 387,
+          "snippet": "showScanError(`Could not scan dependencies: ${depRes.error}. …`)",
+          "fix": "MetadataComponentDependency errors (commonly a cryptic 400 or feature-not-enabled message) are interpolated raw. Translate via sftkFriendlyError, keep the permission hint as the hint line."
+        },
+        {
+          "line": 431,
+          "snippet": "showScanError(`Unexpected error: ${e.message}`)",
+          "fix": "Catch-all surfaces raw exception text. Wrap with sftkFriendlyError(e.message)."
+        },
+        {
+          "line": 977,
+          "snippet": "el.innerHTML = `<div class=\"fc-unscanned-note\">👁 FLS check unavailable: ${esc(error)}</div>`",
+          "fix": "Raw FieldPermissions query error. sftkFriendlyError it or degrade to a generic 'couldn't check visibility' line."
+        },
+        {
+          "line": 1088,
+          "snippet": "btn.textContent = '❌ ' + String(e.message || e).slice(0, 60);",
+          "fix": "deprecateField failure crams a truncated raw API error into the button label — unreadable and can leave a half-done state (label renamed but FLS intact) unexplained. Show a proper inline error via sftkFriendlyError; same pattern in undoDeprecation at line 1120 and restoreSnapshot at line 2891."
+        },
+        {
+          "line": 1156,
+          "snippet": "e.textContent = `📊 Couldn't measure field usage: ${agg.error}`;",
+          "fix": "Raw SOQL aggregate error (e.g. OPERATION_TOO_LARGE) shown verbatim; duplicated at line 1181. Translate with sftkFriendlyError."
+        },
+        {
+          "line": 1320,
+          "snippet": "err.textContent = `❌ ${msg}`;  // appendInlineError sink",
+          "fix": "fixFlow/fixLayout/fixFlexiPage error messages embed raw res.error / deploy errors (built at lines 1394, 1428, 1966, 2006, 2045, 2066). The surrounding guidance text is good, but pass the embedded raw fragment through sftkFriendlyError before composing."
+        },
+        {
+          "line": 2278,
+          "snippet": "if (btn) { btn.textContent = '❌ ' + q.error.slice(0, 40); }",
+          "fix": "CSV-backup failure shows a 40-char raw SOQL error inside the modal button. Use sftkFriendlyError and render it as a line under the button."
+        },
+        {
+          "line": 2655,
+          "snippet": "panel.innerHTML = `<div class=\"fc-xml-err\">❌ ${esc(e.message)}</div>`;",
+          "fix": "XML inspector shows raw Tooling GET errors (thrown untranslated at line 2527). Wrap with sftkFriendlyError."
+        }
+      ],
+      "destructiveConfirms": [
+        {
+          "line": 2218,
+          "operation": "Delete custom field (confirmDelete → doDelete, both the no-deps fcDelFreeBtn and the main fcDelBtn paths)",
+          "currentPattern": "Custom modal via showModal with Cancel/Delete buttons, data-verdict recap, and an optional pre-delete CSV backup button; falls back to native confirm() if showModal is missing. Best-confirmed operation in the module.",
+          "reversibility": "recycle-bin"
+        },
+        {
+          "line": 1270,
+          "operation": "Auto-fix a Flow (fixOne → fixFlow): deploys a new ACTIVE flow version with field refs stripped; same for the selective-checkbox variant at line 2618 (fixFlowSelective)",
+          "currentPattern": "None — single click on '✂ Remove'. Pre-fix snapshot is stored (F6) and the group note explains the behavior, but there is no confirm before activating a new version of a production flow.",
+          "reversibility": "new-version-deploy"
+        },
+        {
+          "line": 1496,
+          "operation": "Purge old flow versions (purgeOldFlowVersions): SF_TOOLING_DELETE of every non-Active version still referencing the field — silent side effect of every flow fix",
+          "currentPattern": "None — no confirmation and no per-version snapshot; only the group note (line 760) mentions old versions are deleted. Deleted flow versions have no recycle bin and only the single version read by fixFlow is snapshotted, so the other purged versions are unrecoverable.",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 935,
+          "operation": "Bulk fix-all button ('✂ Remove from all N Flows/Layouts/Pages') — runs fixOne serially over every item in a group, including the flow-version purges",
+          "currentPattern": "None — one click, button removes itself immediately; no confirm, no summary of what is about to change.",
+          "reversibility": "unknown"
+        },
+        {
+          "line": 1961,
+          "operation": "Auto-fix Layout (fixLayout): in-place Tooling PATCH or Metadata-API zip deploy overwriting the layout",
+          "currentPattern": "None — single click '✂ Remove'. Mitigated by the F6 snapshot (↩ Restore, capped at 20 entries), but server-side the overwrite is immediate with no version history.",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 2040,
+          "operation": "Auto-fix Lightning Page (fixFlexiPage): in-place Tooling PATCH overwriting the FlexiPage, may delete whole visibility rules",
+          "currentPattern": "None — single click '✂ Remove'; F6 snapshot is the only undo.",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 999,
+          "operation": "FLS strip ('✂ Strip' per profile/perm-set row): sets PermissionsRead/Edit to false, instantly hiding the field from those users",
+          "currentPattern": "None — single click, no confirm, no snapshot for this per-row path (unlike deprecateField which snapshots all grants). Undo requires manually re-granting in Setup.",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 1050,
+          "operation": "Deprecate field (deprecateField): renames label to zz_DEPRECATED, stamps description, strips ALL FLS grants in one shot",
+          "currentPattern": "None — single click on 'Deprecate first'; deliberately reversible via the stored undo snapshot (one-click 'Undo deprecation'), but there is no confirm before hiding the field org-wide.",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 2866,
+          "operation": "Restore snapshot (restoreSnapshot): redeploys pre-fix metadata over the CURRENT state; for Flows this deploys the snapshot as a new ACTIVE version (deployFlowViaMetadataApi forces status:'Active' at line 1938), reverting any changes made since",
+          "currentPattern": "None — single click '↩ Restore' in the Cleanup history list; no confirm and no warning that a flow restore auto-activates.",
+          "reversibility": "new-version-deploy"
+        }
+      ],
+      "crossLinkIdeas": [
+        {
+          "where": "Flow dependency rows (renderItem ~line 1234 / group at 859-879) and the done-label '⚠ N old version(s) couldn't be deleted' at line 1280",
+          "link": "Flows tab",
+          "why": "Every flow named here is exactly what the Flows tool manages; when the old-version purge partially fails, the Flows tab is where the user finishes deleting stale versions — today they get only a warning string with no way to jump there."
+        },
+        {
+          "where": "Flow dependency rows (renderItem ~line 1234)",
+          "link": "Dependencies tab",
+          "why": "Before trimming a flow, users often want the flow's full dependency picture; a per-row '↗ Dependencies' link prefilled with the flow name turns a blind auto-fix into an informed one."
+        },
+        {
+          "where": "FlexiPage rows and the fixFlexiPage failure message 'remove manually in App Builder' (line 2055-2058)",
+          "link": "Lightning Pages tab",
+          "why": "The failure path currently dead-ends into manual App Builder work; the toolkit's own Lightning Pages tool operates on these exact pages and could be opened prefilled with the failing page."
+        },
+        {
+          "where": "FLS panel rows listing profiles/permission sets (renderFlsPanel, lines 986-994)",
+          "link": "Copy Permissions tab",
+          "why": "Each row names a profile/perm set that Copy Permissions operates on — a link would let the user inspect or migrate that grant set before stripping visibility, instead of retyping the name in the other tab."
+        },
+        {
+          "where": "Flow group note about auto-activation (TYPE_CFG.Flow note, line 760) and the '✅ Activated' done label",
+          "link": "Flow Access tab",
+          "why": "After the fix activates a new flow version, verifying who can run it is a Flow Access job — a post-fix 'check access' link closes that loop."
+        }
+      ],
+      "notes": "Feature-rich and thoughtfully engineered module (snapshots, blocker prediction, CSV backup, staged deprecation) but it predates the shared affordances: sftkFriendlyError is never called (11 raw-error surfaces, several crammed into button labels), sftkCat appears only twice, and most destructive one-click actions (flow-version purge, FLS strip, restore-as-Active) ship with zero confirmation while the one well-confirmed action (field delete) overstates its own irreversibility."
+    },
+    {
+      "module": "apex-debugger.js",
+      "bareLoadingStates": [
+        {
+          "line": 485,
+          "snippet": "<span class=\"adbg-log-count\" id=\"adbgLogCount\">Loading…</span>",
+          "fix": "Shell renders a bare 'Loading…' in the count span while the list placeholder next to it already shows sftkCatSm; set it empty (or '—') until _loadLogs resolves so there aren't two competing loading texts."
+        },
+        {
+          "line": 606,
+          "snippet": "d.innerHTML = '<div class=\"adbg-drop-msg\">Searching…</div>';",
+          "fix": "User-search dropdown shows bare 'Searching…' during the SOQL await — use sftkCatSm('Searching users…') inside the drop message div."
+        },
+        {
+          "line": 702,
+          "snippet": "startBtn.textContent = 'Starting…';",
+          "fix": "_startTrace runs up to 4 sequential API calls (DebugLevel query/create, TraceFlag query, PATCH/POST) with only button text as feedback; render sftkCatSm('Starting trace…') into #adbgStatusCell for the duration."
+        },
+        {
+          "line": 762,
+          "snippet": "await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'TraceFlag', id: _traceFlag.Id }).catch(() => {});",
+          "fix": "_stopTrace awaits the TraceFlag delete with no visual state at all — the ⏹ Stop button stays enabled and unchanged until the call returns. Disable it and show 'Stopping…' (or sftkCatSm in the status cell) during the await."
+        },
+        {
+          "line": 2548,
+          "snippet": "btn.disabled = true; btn.textContent = 'Purging…';",
+          "fix": "_purgeOld deletes logs one-by-one (SF_QUERY_ALL can return far more than the 200 listed) with only 'Purging…' on the button and no list repaint until done; put sftkCatSm in #adbgLogList plus a live 'Deleting n/N' counter in #adbgLogCount."
+        },
+        {
+          "line": 2651,
+          "snippet": "if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }",
+          "fix": "_deleteSelected loops sequential deletes with only static button text; show sftkCatSm placeholder or a 'Deleting n/N' progress in #adbgLogCount as each _bg call completes."
+        },
+        {
+          "line": 2693,
+          "snippet": "btn.textContent = 'Deleting…';",
+          "fix": "_deleteAll can issue up to 200 sequential delete calls (easily 30+ seconds) with no progress indicator; replace the list body with sftkCatSm('Deleting logs…') and update a n/N counter per completion."
+        },
+        {
+          "line": 2736,
+          "snippet": "if (btn) { btn.disabled = true; btn.textContent = '… opening'; }",
+          "fix": "_openLogInNewTab may refetch a multi-MB log body and write it to chrome.storage with only '… opening' on the button; swap the detail-panel header area to sftkCatSm('Preparing log viewer…') while it works."
+        }
+      ],
+      "rawErrorSurfaces": [
+        {
+          "line": 620,
+          "snippet": "d.innerHTML = `<div class=\"adbg-drop-msg\">${res.error ? '⚠ ' + _esc(res.error) : 'No active users found'}</div>`;",
+          "fix": "User-search dropdown prints the raw SOQL/session error verbatim; pass res.error through sftkFriendlyError() and render {message} with {hint} as a sub-line."
+        },
+        {
+          "line": 752,
+          "snippet": "_renderStatus('Error: ' + err.message, 'error');",
+          "fix": "_startTrace catch surfaces raw Tooling API errors (e.g. FIELD_INTEGRITY_EXCEPTION JSON from TraceFlag create, 'Could not create DebugLevel: <raw>' from line 692) in the status pill; run err.message through sftkFriendlyError() before rendering."
+        },
+        {
+          "line": 859,
+          "snippet": "listEl.innerHTML = `<div class=\"adbg-list-ph adbg-list-err\">⚠ ${_esc(res.error)}</div>`;",
+          "fix": "_loadLogs failure shows the raw query error in the list placeholder; translate via sftkFriendlyError() (session-expired and missing-Tooling-permission are the common cases here and both have known friendly forms)."
+        },
+        {
+          "line": 1113,
+          "snippet": "detail.innerHTML = `<div class=\"adbg-detail-err\">Failed to load log: ${_esc(res.error)}</div>`;",
+          "fix": "_openLog body-fetch failure prints the raw REST error (often a 404 NOT_FOUND JSON when the log was auto-purged); use sftkFriendlyError() and add a 'log may have been deleted — refresh the list' hint."
+        },
+        {
+          "line": 2718,
+          "snippet": "if (res.error) { alert('Download failed: ' + res.error); return; }",
+          "fix": "_downloadRaw uses a native alert() with the raw error — double miss: route through sftkFriendlyError() and show via showModal (or an inline detail-panel error) instead of alert."
+        },
+        {
+          "line": 2757,
+          "snippet": "alert('Could not open log in new tab: ' + (err.message || err));",
+          "fix": "_openLogInNewTab error path also uses native alert() with the raw message (can be a chrome.storage quota error for huge logs); use sftkFriendlyError() + showModal, with a specific hint when the payload exceeds storage quota."
+        }
+      ],
+      "destructiveConfirms": [
+        {
+          "line": 2629,
+          "operation": "Per-row 🗑 delete of a single ApexLog (_deleteLog, wired at line 986)",
+          "currentPattern": "none — one click on the row's trash icon deletes immediately (row dims to 0.35 opacity during the call)",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 2647,
+          "operation": "Delete Selected — bulk delete of all checked ApexLogs (_deleteSelected)",
+          "currentPattern": "none — single click on 'Delete (N)' deletes every checked log with no confirmation at any count",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 2669,
+          "operation": "Delete All — deletes every fetched ApexLog (capped at the 200 loaded rows, so 'All' can silently miss org logs beyond MAX_LOGS)",
+          "currentPattern": "two-click arm ('⚠ Confirm Delete All', 3.5s auto-disarm)",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 2534,
+          "operation": "Purge >24h — SF_QUERY_ALL for every ApexLog older than 24h org-wide (not just the 200 listed), then sequential deletes (_purgeOld)",
+          "currentPattern": "two-click arm ('⚠ Confirm >24h', 3.5s auto-disarm) — but no preview of HOW MANY logs will be deleted before executing",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 357,
+          "operation": "Delete a custom debug-level profile from the level-builder modal (removes it from chrome.storage.local; the SFTK_C_* DebugLevel record stays in the org)",
+          "currentPattern": "two-click arm ('⚠ Confirm Delete', 3s auto-disarm)",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 719,
+          "operation": "_startTrace PATCHes any existing USER_DEBUG TraceFlag on the target user — silently overwrites its DebugLevelId, StartDate and ExpirationDate (may clobber a trace another admin or Dev Console set up)",
+          "currentPattern": "none — no notice that an existing flag was found, and prior values are neither shown nor preserved",
+          "reversibility": "permanent"
+        },
+        {
+          "line": 762,
+          "operation": "_stopTrace deletes the TraceFlag record outright",
+          "currentPattern": "none — single click on ⏹ Stop; low risk since Start Trace recreates it in one click, but it also deletes flags this session merely extended (line 719 path)",
+          "reversibility": "permanent"
+        }
+      ],
+      "crossLinkIdeas": [
+        {
+          "where": "Flow rows in the Analysis panel (lines 1560-1567, .adbg-auto-name) — especially rows tagged '⚠ Fault' or 'LOOP'",
+          "link": "Flow Access tab (flow name prefilled)",
+          "why": "After seeing a flow fault or fail to run in a log, the immediate next question is 'who can actually run this flow?' — Flow Access answers it, but today the user must retype the API name."
+        },
+        {
+          "where": "Recursion/loop banner items naming a flow (lines 1543-1551) and the same flow rows at 1560",
+          "link": "Dependencies tab (flow prefilled)",
+          "why": "Diagnosing a cascade loop ('flow A updates X which re-triggers flow B') is exactly the what-references-what question the Dependencies tab answers; a one-click jump from the LOOP banner closes the loop-hunting workflow."
+        },
+        {
+          "where": "Log user name — detail header 'shot' line 1451-1452 (log.LogUser.Name) and list rows line 952 (.adbg-row-user)",
+          "link": "Copy Permissions tab (user preselected)",
+          "why": "'Automation behaves differently for this user' debugging usually ends in a permissions diff; the log already knows exactly which user ran the transaction."
+        },
+        {
+          "where": "Faulted flow names in the Flows section (line 1566, '⚠ Fault' tag) ",
+          "link": "Flows tab (Flow Cleaner, flow prefilled)",
+          "why": "Once a fault is diagnosed the remediation action — inspect versions, open the flow in Setup, deactivate a bad version — lives in the Flows tab, not the debugger."
+        }
+      ],
+      "notes": "Strong module overall — sftkCat/sftkCatSm used at the 4 big repaints (list load, parse, compare) and Delete All/Purge use two-click arming, but sftkFriendlyError is never used (6 raw error surfaces incl. two native alert()s), single-log and Delete Selected have zero confirmation for permanent deletes, and bulk deletes give no n/N progress."
+    },
+    {
+      "module": "dependency-map.js",
+      "bareLoadingStates": [
+        {
+          "line": 88,
+          "snippet": "if (progressCallback) progressCallback(done, total); — buildDependencyMap renders no loading UI itself and the callback is optional; caller popup.js:883-890 passes null when orgFlowCount < LAZY_THRESHOLD, so for smaller orgs the entire metadata scan (one SF_GET_METADATA per flow, awaited in batches of 10) runs with NO visible loading state at all before the tab repaints",
+          "fix": "Make progress reporting unconditional: either always pass the callback from popup.js (drop the showProgress gate) or have buildDependencyMap fall back to sftkCatSm('Scanning flow metadata… X/Y') in #depTreeContainer when no callback is supplied"
+        },
+        {
+          "line": 111,
+          "snippet": "renderDependencyTreeTab is only reached after the scan, but this module's tab waiting states in its caller (popup.js:2175 '⏳ Dependency map is building…' and popup.js:2182 '⏳ Waiting for dependency metadata…') are bare textContent banners with container.innerHTML = ''",
+          "fix": "Replace both bare banner states in renderDependenciesTab (popup.js:2173-2185) with container.innerHTML = sftkCat('Building dependency map…'), matching the sftkCat already used two branches up at popup.js:2161/2169"
+        }
+      ],
+      "rawErrorSurfaces": [],
+      "destructiveConfirms": [
+        {
+          "line": 362,
+          "operation": "Right-click context menu 'Select this flow for deletion' — arms flow versions for deletion and jumps to the Flows tab; the popup.js:1168-1174 listener adds EVERY version of the flow's label (including the Active one) to selectedIds, not just the right-clicked version",
+          "currentPattern": "none at this step (selection-arming only — correct, nothing is deleted here); the actual delete downstream runs through the Flows tab pipeline which shows the custom 'Subflow Dependencies Detected' modal (popup.js:1353) with Cancel / Proceed anyway / Deactivate+delete options",
+          "reversibility": "permanent"
+        }
+      ],
+      "crossLinkIdeas": [
+        {
+          "where": "dependency-map.js:356-377 showDepContextMenu — the context menu on every flow node offers only the destructive 'Select this flow for deletion'",
+          "link": "Flow Access tab (document.querySelector('.tab-btn[data-tab=\"flow-access\"]').click() prefiltered to flow.ApiName)",
+          "why": "The tree names flows, which is exactly the entity Flow Access operates on; a 'Who can run this flow?' menu item would reuse the identical tab-switch + CustomEvent pattern already proven at lines 369-371, and gives the menu a non-destructive action"
+        },
+        {
+          "where": "dependency-map.js:66-67 — triggerObjectMap (record-triggered flow's SObject) is collected per flow but never rendered in the tree (node badges at lines 210-216 show only ProcessType/Status)",
+          "link": "Field Cleaner tab (data-tab=\"fields\"), preselecting the trigger object",
+          "why": "A record-triggered flow's trigger object is the entity Field Cleaner operates on; rendering an 'on Account'-style badge on ⚡ nodes and linking it to Field Cleaner turns already-fetched data into a navigation path for object cleanup work"
+        }
+      ],
+      "notes": "Solid module overall — escHtml used on all dynamic tree strings, run-token guard prevents stale cross-org scans, and its only destructive affordance correctly defers to the Flows tab modal; the two real gaps are the silent scan path for sub-threshold orgs and an all-silent error policy (line 84-85 empty catch, line 62 skips result.error) that makes a totally failed scan (e.g. expired session) indistinguishable from the genuine 'No subflow relationships found' empty state at line 323."
+    }
+  ]
+}

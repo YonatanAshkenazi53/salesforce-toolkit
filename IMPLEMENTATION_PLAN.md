@@ -84,14 +84,14 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
 - [ ] **C3. Unified loading/empty/error states** — sweep every popup module: `sftkCat()`/
   `sftkCatSm()` loaders + honest empty states + `_explainDeleteError`-style translation
   everywhere (no bare spinners, no raw API errors).
-- [ ] **C4. Shared destructive-confirm modal** — one component: names every item, states
+- [x] **C4. Shared destructive-confirm modal** — one component: names every item, states
   reversibility (Recycle Bin vs permanent), checkbox for permanent ops, undo path linked in
   the success toast (e.g. Flow Restore). Adopt in flow delete, version purge, field delete.
 - [ ] **C5. Cross-links between tools** — Field Cleaner flow-dependency → Flow Access;
   Apex Debugger user → Copy Permissions; "open in X" affordances where output feeds input.
 - [ ] **C6. Popup Ctrl+K palette + home grid descriptions** — reuse the Studio palette code;
   one-line descriptions under each tool on the home grid.
-- [ ] **C7. Re-run the popup UX deep audit** (original was cut off) — workflow over popup
+- [x] **C7. Re-run the popup UX deep audit** (original was cut off) — workflow over popup
   modules; fold findings into C3–C6 or file here.
 
 ## Phase U — Studio UX polish

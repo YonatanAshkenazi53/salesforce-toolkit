@@ -2215,42 +2215,31 @@ const FieldCleaner = (() => {
   }
 
   // ── Delete field ───────────────────────────────────────────
-  function confirmDelete(fieldId) {
+  // Uses the shared destructive-confirm (C4): names the field, states the
+  // 15-day-Recycle-Bin-then-gone reality, requires the permanent checkbox,
+  // and carries the F4 CSV-backup offer when data still exists.
+  async function confirmDelete(fieldId) {
     if (!fieldId || !_selObj || !_selField) return;
-    if (typeof showModal === 'function') {
-      showModal(`
-        <div class="modal-header modal-danger">
-          <span class="modal-icon">⚠️</span>
-          <h2>Delete Field</h2>
-        </div>
-        <div class="modal-body">
-          <p>Permanently delete
-             <strong>${esc(_selObj.api)}.${esc(_selField.api)}</strong>?</p>
-          <p style="margin-top:8px;color:var(--danger);font-size:12px">
-            This cannot be undone. All data stored in this field will be lost.
-          </p>
-          ${_dataVerdict && !_dataVerdict.formula && _dataVerdict.filled > 0 ? `
-            <div class="fc-backup-offer">
-              💾 <strong>${_dataVerdict.filled.toLocaleString()}${_dataVerdict.sampled ? '+' : ''}</strong>
-              record(s) still hold a value. Download them first?
-              <button class="btn btn-secondary btn-sm" id="fcBackupBtn" style="margin-left:6px">💾 Back up values (CSV)</button>
-            </div>` : ''}
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" id="fcCancelBtn">Cancel</button>
-          <button class="btn btn-danger"    id="fcConfirmBtn">🗑 Delete</button>
-        </div>`);
-      eid('fcCancelBtn').onclick  = () => { if (typeof closeModal === 'function') closeModal(); };
-      eid('fcBackupBtn') && (eid('fcBackupBtn').onclick = e => backupFieldValues(e.currentTarget));
-      eid('fcConfirmBtn').onclick = () => {
-        if (typeof closeModal === 'function') closeModal();
-        doDelete(fieldId);
-      };
-    } else {
-      if (confirm(`Delete ${_selObj.api}.${_selField.api}? This cannot be undone.`)) {
-        doDelete(fieldId);
-      }
-    }
+    const hasValues = _dataVerdict && !_dataVerdict.formula && _dataVerdict.filled > 0;
+    const ok = await sftkConfirmDestructive({
+      title: 'Delete field',
+      items: [{ label: `${_selObj.api}.${_selField.api}`, sub: _selField.type }],
+      revOverride: {
+        html: '⏳ <strong>15-day grace, then permanent</strong> — the field moves to Setup → Deleted Fields (data intact, restorable) and is erased forever after 15 days. Everything referencing it breaks immediately.',
+        needsCheckbox: true,
+      },
+      confirmLabel: '🗑 Delete field',
+      extraHtml: hasValues ? `
+        <div class="fc-backup-offer">
+          💾 <strong>${_dataVerdict.filled.toLocaleString()}${_dataVerdict.sampled ? '+' : ''}</strong>
+          record(s) still hold a value. Download them first?
+          <button class="btn btn-secondary btn-sm" id="fcBackupBtn" style="margin-left:6px">💾 Back up values (CSV)</button>
+        </div>` : '',
+      onRender: () => {
+        eid('fcBackupBtn')?.addEventListener('click', e => backupFieldValues(e.currentTarget));
+      },
+    });
+    if (ok) doDelete(fieldId);
   }
 
   // ── F4: CSV backup of field values before delete ────────────────────────
