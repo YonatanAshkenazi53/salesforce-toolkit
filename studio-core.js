@@ -638,6 +638,7 @@ function recordActivity(view) {
 const CMD_VIEWS = [
   { icon: '🔌', label: 'Connected Orgs',    view: 'orgs',      desc: 'Manage connections' },
   { icon: '📦', label: 'Data Deployment',   view: 'profiles',  desc: 'Profiles + run transfer' },
+  { icon: '🎚', label: 'Picklists',         view: 'picklists', desc: 'Values, usage & data fixes' },
   { icon: '📜', label: 'History',           view: 'history',   desc: 'Past transfer runs' },
   { icon: '🔍', label: 'Org Compare',       view: 'compare',   desc: 'Diff data across many objects' },
   { icon: '🛡',  label: 'Deploy Readiness', view: 'readiness', desc: 'Schema compatibility' },
@@ -1041,6 +1042,7 @@ function renderView(view) {
     case 'fields':    renderFieldAudit();  break;
     case 'reconcile': renderReconcile();   break;
     case 'compare':   renderOrgCompare(); break;
+    case 'picklists': renderPicklists();  break;
   }
 }
 

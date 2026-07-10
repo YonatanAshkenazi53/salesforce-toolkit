@@ -81,7 +81,7 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
   ~~original spec below~~ — DATA_STUDIO_PROJECT_BRIEF.txt §15 (claims no upsert/dry-run; both
   exist), OwnerId line; fix misleading legacy banners in studio-history.js ("SCHEDULE") and
   studio-readiness.js ("ADD ORG MODAL").
-- [ ] **C3. Unified loading/empty/error states** — sweep every popup module: `sftkCat()`/
+- [x] **C3. Unified loading/empty/error states** — sweep every popup module: `sftkCat()`/
   `sftkCatSm()` loaders + honest empty states + `_explainDeleteError`-style translation
   everywhere (no bare spinners, no raw API errors).
 - [x] **C4. Shared destructive-confirm modal** — one component: names every item, states
@@ -221,6 +221,38 @@ Tooling-PATCH + Metadata-zip fallback, flow-version purge, _explainDeleteError, 
 4. **F3+F5** (staged deprecation + FLS — shared FieldPermissions plumbing)
 5. **D6+D7+F6+D8** (flow paths, log compare [needs D3], fix snapshots, presets)
 6. **F7** (object-wide dashboard — flagship + Phase X migration pilot)
+
+## Phase P — Multi-org Picklist & Record Type management (user request 2026-07-10)
+User: deactivating/deleting a picklist value must offer a DATA FIX (remap/clear records
+holding the value), warn about automation impact (flows/triggers the mass-update fires),
+and work across MULTIPLE ORGS at once. Lives in Data Studio (new sidebar view), file
+studio-picklists.js — multi-org infra (org registry, sessions, prod guard, read-only gate,
+history) already exists there.
+
+- [x] **P1. Single-org picklist inventory + safe value lifecycle** — org/object/field pickers
+  (picklist fields only); value table: label/API name, active/default badges, USAGE COUNT
+  (one `SELECT Field, COUNT(Id) GROUP BY Field` aggregate), record-type assignment chips
+  (Tooling RecordType metadata, read-only v1). Actions: deactivate/activate/delete via
+  Tooling CustomField Metadata PATCH (full-Metadata pattern proven by F3); usage>0 →
+  data-fix wizard FIRST (remap to another active value or clear; queryAll ids → collections
+  update 200/chunk, soqlStrLit-escaped); automation-impact panel before any fix (active
+  triggers + record-triggered flows via FlowDefinitionView + validation rules + workflow
+  rules on the object, by name); prod-org typed confirm; read-only gate applies via the
+  worker chokepoint automatically; history entry kind:'picklist-fix'.
+  V1 SCOPE: custom local-valueSet picklists; global value sets + standard picklists render
+  read-only with a "P4" banner.
+- [ ] **P2. Multi-org matrix + bulk apply** — same object.field across N selected orgs:
+  value×org matrix (exists / active / usage per org); select value(s) + orgs → one wizard
+  applies deactivate/delete + data fix PER ORG (per-org sessions via getOrgSession; orgs
+  without a live tab are skipped with a badge); per-org result log + one history entry per
+  org; value-literal automation scan (which flows/VRs mention 'TheValue' — supplemental-
+  scan grep pattern from field-cleaner) folded into the impact panel.
+- [ ] **P3. Record-type assignment editing** — RT × value matrix per org (and cross-org):
+  add/remove values from record types via RecordType Tooling metadata PATCH; keep the
+  matrix in sync when a value is deactivated (SF drops it from RTs — surface that).
+- [ ] **P4. StandardValueSet + GlobalValueSet support** — standard picklists (LeadSource,
+  Industry…) via StandardValueSet metadata; global picklists edit the GlobalValueSet
+  (warn: affects EVERY field using it — list them via MetadataComponentDependency).
 
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.
