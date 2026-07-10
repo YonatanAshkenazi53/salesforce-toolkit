@@ -4616,3 +4616,35 @@ html, body {
 .ds-fa-empty { color: #2E844A; font-weight: 700; }
 .ds-fa-low { color: #DD7A01; font-weight: 600; }
 .ds-fa-foot { margin-top: 10px; font-size: 11.5px; color: var(--subtext); line-height: 1.5; }
+
+/* ── Picklist manager (Phase P1) ─────────────────────────────── */
+.ds-pk-config { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.ds-pk-config .ds-select { min-width: 180px; max-width: 320px; }
+.ds-pk-banner { padding: 12px 16px; border: 1px solid var(--border); border-left: 4px solid var(--brand, #0176D3); border-radius: 6px; font-size: 13px; max-width: 720px; }
+.ds-pk-summary { font-size: 13px; margin-bottom: 6px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ds-pk-note { font-size: 11.5px; color: var(--subtext); margin-bottom: 8px; }
+.ds-pk-hint { font-size: 11.5px; color: var(--subtext); margin-top: 6px; }
+.ds-pk-table { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; max-width: 980px; }
+.ds-pk-head, .ds-pk-row { display: grid; grid-template-columns: minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(120px, 1fr) auto; gap: 10px; align-items: center; padding: 7px 12px; }
+.ds-pk-head { background: var(--panel-bg, rgba(128,128,128,.08)); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--subtext); }
+.ds-pk-row { border-top: 1px solid var(--border); font-size: 12.5px; }
+.ds-pk-row-inactive { opacity: .55; }
+.ds-pk-name { font-weight: 600; }
+.ds-pk-api { font-size: 10.5px; margin-left: 5px; opacity: .7; }
+.ds-pk-default { font-size: 9.5px; font-weight: 700; text-transform: uppercase; background: var(--brand, #0176D3); color: #fff; border-radius: 3px; padding: 1px 5px; margin-left: 6px; }
+.ds-pk-inactive-badge { font-size: 9.5px; font-weight: 700; text-transform: uppercase; border: 1px solid var(--subtext); color: var(--subtext); border-radius: 3px; padding: 0 5px; margin-left: 6px; }
+.ds-pk-usage { display: flex; align-items: center; gap: 7px; }
+.ds-pk-bar { flex: 1; max-width: 110px; height: 7px; background: rgba(128,128,128,.15); border-radius: 4px; overflow: hidden; }
+.ds-pk-fill { display: block; height: 100%; background: var(--brand, #0176D3); border-radius: 4px; }
+.ds-pk-count { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 11.5px; }
+.ds-pk-uncounted { color: var(--subtext); }
+.ds-pk-rt { display: inline-block; font-size: 10px; border: 1px solid var(--border); border-radius: 10px; padding: 0 7px; margin: 1px 2px; }
+.ds-pk-actions { display: flex; gap: 5px; justify-content: flex-end; }
+.ds-pk-fixchoice { display: flex; flex-direction: column; gap: 7px; margin: 10px 0; font-size: 12.5px; }
+.ds-pk-impact { margin-top: 10px; padding: 9px 12px; border: 1px solid var(--border); border-left: 4px solid #DD7A01; border-radius: 6px; font-size: 12px; }
+.ds-pk-imp-title { font-weight: 700; margin-bottom: 5px; }
+.ds-pk-imp-row { padding: 1px 0; }
+.ds-pk-imp-hit { font-weight: 600; }
+.ds-pk-imp-hint { margin-top: 6px; font-size: 11px; color: var(--subtext); }
+.ds-pk-delwarn { margin-top: 10px; padding: 8px 11px; border: 1px solid #EA001E; background: rgba(234,0,30,.06); border-radius: 6px; font-size: 12px; }
+.ds-pk-progress { padding: 8px 12px; margin-bottom: 10px; border: 1px dashed var(--border); border-radius: 6px; }

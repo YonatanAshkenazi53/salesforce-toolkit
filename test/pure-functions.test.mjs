@@ -131,6 +131,29 @@ describe('sftkFriendlyError (sftk-friendly-error.js) — raw run errors → plai
   });
 });
 
+describe('pkMultiRemap (studio-picklists.js) — multipicklist token surgery', () => {
+  const pkMultiRemap = extractFunction('studio-picklists.js', 'pkMultiRemap');
+
+  it('remaps one token in place', () => {
+    expect(pkMultiRemap('A;B;C', 'B', 'X')).toBe('A;X;C');
+  });
+  it('clears a token when newVal is null', () => {
+    expect(pkMultiRemap('A;B;C', 'B', null)).toBe('A;C');
+  });
+  it('dedupes when the target already exists in the selection', () => {
+    expect(pkMultiRemap('A;X', 'A', 'X')).toBe('X');
+  });
+  it('handles whitespace and empty segments', () => {
+    expect(pkMultiRemap(' A ; B ;; C ', 'B', 'X')).toBe('A;X;C');
+  });
+  it('clearing the only token yields empty string', () => {
+    expect(pkMultiRemap('B', 'B', null)).toBe('');
+  });
+  it('leaves untouched selections alone', () => {
+    expect(pkMultiRemap('A;C', 'B', 'X')).toBe('A;C');
+  });
+});
+
 describe('sftkBuildStoredZip (sftk-zip.js) — the shared Metadata-deploy zip builder', () => {
   const { sftkCrc32, sftkBuildStoredZip } =
     extractFunctions('sftk-zip.js', ['sftkCrc32', 'sftkBuildStoredZip']);
