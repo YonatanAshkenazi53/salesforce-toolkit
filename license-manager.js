@@ -154,7 +154,8 @@ const LicenseManager = (() => {
     loadingEl.style.display = 'none';
 
     if (r.error) {
-      contentEl.innerHTML = `<div class="lm-overview-error">Could not load licenses: ${esc(r.error)}</div>`;
+      const fe = sftkFriendlyError(r.error);
+      contentEl.innerHTML = `<div class="lm-overview-error" title="${esc(fe.raw)}">Could not load licenses: ${esc(fe.message + (fe.hint ? ' — ' + fe.hint : ''))}</div>`;
       contentEl.style.display = '';
       return;
     }
@@ -246,7 +247,10 @@ const LicenseManager = (() => {
     document.getElementById('lmLoading').style.display = 'none';
 
     if (res.error) {
-      const eMsg = res.error === 'SESSION_EXPIRED' ? 'Session expired — log back into Salesforce and retry' : `Error: ${esc(res.error)}`;
+      const fe = sftkFriendlyError(res.error);
+      const eMsg = res.error === 'SESSION_EXPIRED'
+        ? 'Session expired — log back into Salesforce and retry'
+        : `Error: ${esc(fe.message + (fe.hint ? ' — ' + fe.hint : ''))}`;
       showLmResult(eMsg, true); return;
     }
 
@@ -334,17 +338,35 @@ const LicenseManager = (() => {
       verb, cls);
     if (!ok) return;
 
+    // Progress: the sequential per-user PATCH loop can take many seconds
+    const verbIng = isDeactivate ? 'Deactivating' : 'Reactivating';
+    const loadingEl = document.getElementById('lmLoading');
+    const actionBtns = document.querySelectorAll('#lmActions button');
+    actionBtns.forEach(b => { b.disabled = true; });
+
     const errors = [];
+    const errorHints = new Set();
     let doneCount = 0;
+    let i = 0;
     for (const u of selected) {
+      i++;
+      loadingEl.innerHTML = sftkCatSm(`${verbIng} ${i}/${selected.length}…`);
+      loadingEl.style.display = '';
       const r = await bg({
         type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
         path: `services/data/v62.0/sobjects/User/${u.Id}`,
         body: { IsActive: !isDeactivate }
       });
-      if (r.error) errors.push(`${u.Name}: ${r.error}`);
-      else doneCount++;
+      if (r.error) {
+        const fe = lmFriendly(r.error);
+        errors.push(`${u.Name}: ${fe.message}`);
+        if (fe.hint) errorHints.add(fe.hint);
+      } else doneCount++;
     }
+
+    loadingEl.style.display = 'none';
+    loadingEl.innerHTML = sftkCatSm('Loading users…');  // restore for doSearch()
+    actionBtns.forEach(b => { b.disabled = false; });
 
     // Build result first — doSearch() hides #lmResult at its start,
     // so we refresh the list first then display the outcome
@@ -353,8 +375,9 @@ const LicenseManager = (() => {
     if (errors.length === 0) {
       resultMsg = `✅ ${doneCount} user${doneCount > 1 ? 's' : ''} ${isDeactivate ? 'deactivated' : 'reactivated'}.`;
     } else {
-      const errHtml = errors.map(e => `<li>${esc(e)}</li>`).join('');
-      resultMsg = `⚠️ ${doneCount} succeeded, ${errors.length} failed:<ul style="margin-top:4px;padding-left:14px">${errHtml}</ul>`;
+      const errHtml  = errors.map(e => `<li>${esc(e)}</li>`).join('');
+      const hintHtml = [...errorHints].map(h => `<div style="margin-top:4px;font-size:11px">💡 ${esc(h)}</div>`).join('');
+      resultMsg = `⚠️ ${doneCount} succeeded, ${errors.length} failed:<ul style="margin-top:4px;padding-left:14px">${errHtml}</ul>${hintHtml}`;
       isErr = true;
     }
     await doSearch();
@@ -369,17 +392,24 @@ const LicenseManager = (() => {
     // Load profiles on first use
     if (allProfiles.length === 0) {
       const btn = document.getElementById('lmChangeLicenseBtn');
-      btn.textContent = '⏳ Loading…';
       btn.disabled = true;
+      const resultEl = document.getElementById('lmResult');
+      resultEl.className = 'uc-loading';
+      resultEl.innerHTML = sftkCatSm('Loading profiles…');
+      resultEl.style.display = '';
       const r = await bg({
         type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid,
         query: `SELECT Id,Name,UserLicenseId,UserLicense.Name FROM Profile ` +
                `WHERE UserType='Standard' ORDER BY UserLicense.Name,Name`,
         tooling: false
       });
-      btn.textContent = '🔑 Change License';
       btn.disabled = false;
-      if (r.error) { showLmResult(`Error loading profiles: ${esc(r.error)}`, true); return; }
+      resultEl.style.display = 'none';
+      if (r.error) {
+        const fe = sftkFriendlyError(r.error);
+        showLmResult(`Error loading profiles: ${esc(fe.message + (fe.hint ? ' — ' + fe.hint : ''))}`, true);
+        return;
+      }
       allProfiles = r.records || [];
     }
 
@@ -435,6 +465,7 @@ const LicenseManager = (() => {
         <div class="lm-change-warn">
           ⚠️ Make sure sufficient licenses are available. Users may lose access to features tied to their current license.
         </div>
+        <div id="lmApplyProgress" class="uc-loading" style="display:none"></div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" id="lmModalCancel">Cancel</button>
@@ -506,18 +537,29 @@ const LicenseManager = (() => {
       if (!profileId) return;
       const btn = document.getElementById('lmModalConfirm');
       btn.disabled = true;
-      btn.textContent = '⏳ Applying…';
 
+      // Progress: sequential per-user PATCH loop, counted in the modal body
+      const progEl = document.getElementById('lmApplyProgress');
       const errors = [];
+      const errorHints = new Set();
       let doneCount = 0;
+      let i = 0;
       for (const u of selected) {
+        i++;
+        if (progEl) {
+          progEl.innerHTML = sftkCatSm(`Applying ${i}/${selected.length}…`);
+          progEl.style.display = '';
+        }
         const r = await bg({
           type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
           path: `services/data/v62.0/sobjects/User/${u.Id}`,
           body: { ProfileId: profileId }
         });
-        if (r.error) errors.push(`${u.Name}: ${r.error}`);
-        else doneCount++;
+        if (r.error) {
+          const fe = lmFriendly(r.error);
+          errors.push(`${u.Name}: ${fe.message}`);
+          if (fe.hint) errorHints.add(fe.hint);
+        } else doneCount++;
       }
 
       closeLmModal();
@@ -528,8 +570,9 @@ const LicenseManager = (() => {
       if (errors.length === 0) {
         resultMsg = `✅ License/Profile updated for ${doneCount} user${doneCount > 1 ? 's' : ''}.`;
       } else {
-        const errHtml = errors.map(e => `<li>${esc(e)}</li>`).join('');
-        resultMsg = `⚠️ ${doneCount} succeeded, ${errors.length} failed:<ul style="margin-top:4px;padding-left:14px">${errHtml}</ul>`;
+        const errHtml  = errors.map(e => `<li>${esc(e)}</li>`).join('');
+        const hintHtml = [...errorHints].map(h => `<div style="margin-top:4px;font-size:11px">💡 ${esc(h)}</div>`).join('');
+        resultMsg = `⚠️ ${doneCount} succeeded, ${errors.length} failed:<ul style="margin-top:4px;padding-left:14px">${errHtml}</ul>${hintHtml}`;
         isErr = true;
       }
       await doSearch();
@@ -580,6 +623,21 @@ const LicenseManager = (() => {
 
   function esc(str) {
     return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // Shared error translation plus explainers for the two license-specific
+  // codes the bulk User PATCH loops commonly hit.
+  function lmFriendly(raw) {
+    const fe = sftkFriendlyError(raw);
+    const s = String(raw ?? '');
+    if (/LICENSE_LIMIT_EXCEEDED/i.test(s)) {
+      fe.message = 'No free licenses of this type';
+      fe.hint = 'Free up a seat (deactivate a user) or pick a profile on a different license.';
+    } else if (/FIELD_INTEGRITY_EXCEPTION/i.test(s)) {
+      fe.message = 'Salesforce rejected the profile/license combination for this user';
+      fe.hint = 'The selected profile’s license isn’t compatible with this user type — pick a different profile.';
+    }
+    return fe;
   }
 
   function bgRaw(msg) {

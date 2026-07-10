@@ -651,7 +651,7 @@ const FlowPermissions = (() => {
   async function doAssign(flows, permSets) {
     const btn     = document.getElementById('fpAssignBtn');
     const summary = document.getElementById('fpActionSummary');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Working…'; }
+    if (btn) btn.disabled = true;
 
     // Grant flow access via the METADATA API — deploy each selected
     // PermissionSet with <flowAccesses> members. This is the ONLY mechanism
@@ -660,7 +660,7 @@ const FlowPermissions = (() => {
     // Access shows nothing afterward). Permission-set metadata deploys are
     // ADDITIVE: only the flowAccesses we declare are added; existing
     // object/field/Apex permissions on the set are left untouched.
-    if (summary) summary.textContent = `Deploying flow access to ${permSets.length} permission set(s)…`;
+    if (summary) summary.innerHTML = sftkCatSm(`Deploying flow access to ${permSets.length} permission set(s)…`);
 
     const flowApiNames = flows.map(f => f.DeveloperName).filter(Boolean);
     let deployErr = null;
@@ -677,7 +677,9 @@ const FlowPermissions = (() => {
 
     // Deploy is all-or-nothing (rollbackOnError) → every flow either landed
     // on every selected PS, or none did.
-    const errors    = deployErr ? [{ label: 'Deployment', msg: deployErr }] : [];
+    const errors    = deployErr
+      ? [{ label: 'Deployment', fe: sftkFriendlyError(deployErr), raw: deployErr }]
+      : [];
     const successes = deployErr ? [] : flows;
 
     // Reload so the SetupEntityAccess read (now matched by flow Id) surfaces
@@ -706,7 +708,7 @@ const FlowPermissions = (() => {
       document.getElementById('modalCancel').addEventListener('click', closeModal);
     } else {
       const errHtml = errors.map(e =>
-        `<li style="word-break:break-word"><strong>${esc(e.label)}</strong>: ${esc(e.msg)}</li>`
+        `<li style="word-break:break-word" title="${esc(e.raw)}"><strong>${esc(e.label)}</strong>: ${esc(e.fe.message + (e.fe.hint ? ' — ' + e.fe.hint : ''))}</li>`
       ).join('');
       const okHtml = successes.map(f => `<li>${esc(f.MasterLabel)}</li>`).join('');
       showModal(`
@@ -744,7 +746,13 @@ const FlowPermissions = (() => {
 
   function showError(msg) {
     const el = document.getElementById('fpError');
-    if (el) { el.innerHTML = `❌ ${esc(msg)}`; el.style.display = ''; }
+    if (!el) return;
+    const raw = String(msg || '');
+    const fe  = sftkFriendlyError(raw);
+    el.innerHTML = `❌ ${esc(fe.message)}` +
+      (fe.hint ? `<div style="margin-top:3px;font-size:11px;color:var(--subtext)">${esc(fe.hint)}</div>` : '');
+    el.title = raw;
+    el.style.display = '';
   }
 
   function hideError() {
