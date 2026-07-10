@@ -147,7 +147,7 @@ const FieldCleaner = (() => {
     input.addEventListener('focus', async () => {
       if (!_objectsLoaded) {
         _objectsLoaded = true;
-        drop.innerHTML = '<div class="fc-dd-loading">Loading objects…</div>';
+        drop.innerHTML = `<div class="fc-dd-loading">${sftkCatSm('Loading objects…')}</div>`;
         drop.style.display = '';
         const res = await bg({
           type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
@@ -156,8 +156,8 @@ const FieldCleaner = (() => {
                  'ORDER BY Label LIMIT 2000'
         });
         if (res.error) {
-          const eMsg = res.error === 'SESSION_EXPIRED' ? 'Session expired — log back in and retry' : `Error: ${esc(res.error)}`;
-          drop.innerHTML = `<div class="fc-dd-empty">${eMsg}</div>`;
+          const fe = sftkFriendlyError(res.error);
+          drop.innerHTML = `<div class="fc-dd-empty" title="${esc(fe.raw)}">${esc(fe.message + (fe.hint ? ' — ' + fe.hint : ''))}</div>`;
           drop.style.display = '';
           return;
         }
@@ -239,7 +239,7 @@ const FieldCleaner = (() => {
 
     step.style.display = '';
     input.value = '';
-    drop.innerHTML = '<div class="fc-dd-loading">Loading fields…</div>';
+    drop.innerHTML = `<div class="fc-dd-loading">${sftkCatSm('Loading fields…')}</div>`;
     drop.style.display = '';
 
     const res = await bg({
@@ -249,8 +249,8 @@ const FieldCleaner = (() => {
     });
 
     if (res.error) {
-      const eMsg = res.error === 'SESSION_EXPIRED' ? 'Session expired — log back in and retry' : `Error loading fields: ${esc(res.error)}`;
-      drop.innerHTML = `<div class="fc-dd-empty">${eMsg}</div>`;
+      const fe = sftkFriendlyError(res.error);
+      drop.innerHTML = `<div class="fc-dd-empty" title="${esc(fe.raw)}">Error loading fields: ${esc(fe.message + (fe.hint ? ' — ' + fe.hint : ''))}</div>`;
       return;
     }
 
@@ -384,8 +384,9 @@ const FieldCleaner = (() => {
       });
 
       if (depRes.error) {
+        const fe = sftkFriendlyError(depRes.error);
         showScanError(
-          `Could not scan dependencies: ${depRes.error}. ` +
+          `Could not scan dependencies: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}. ` +
           'This requires API access and Customize Application permission.'
         );
         return;
@@ -428,7 +429,8 @@ const FieldCleaner = (() => {
 
       renderResults([...deps, ...flexiHits, ...supHits], fieldId);
     } catch (e) {
-      showScanError(`Unexpected error: ${e.message}`);
+      const fe = sftkFriendlyError(e.message);
+      showScanError(`Unexpected error: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`);
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '🔍 Re-scan'; }
     }
@@ -818,7 +820,7 @@ const FieldCleaner = (() => {
           <div class="fc-clean-sub">This field can be safely deleted.</div>
           <button class="btn btn-danger" id="fcDelFreeBtn">🗑 Delete Field</button>
         </div>
-        <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">📊 Measuring how much data is stored in this field…</div>
+        <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">${sftkCatSm('Measuring how much data is stored in this field…')}</div>
         <div id="fcDepZone"></div>
         <div id="fcFlsPanel"></div>
         ${_unscannedNoteHtml()}`;
@@ -851,7 +853,7 @@ const FieldCleaner = (() => {
           ${manualCount > 0 ? `<span class="fc-badge-manual">${manualCount} manual</span>` : ''}
         </span>
       </div>
-      <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">📊 Measuring how much data is stored in this field…</div>
+      <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">${sftkCatSm('Measuring how much data is stored in this field…')}</div>
       <div id="fcDepZone"></div>
       <div id="fcFlsPanel"></div>
       ${_unscannedNoteHtml()}`;
@@ -973,8 +975,13 @@ const FieldCleaner = (() => {
   async function renderFlsPanel() {
     const el = eid('fcFlsPanel');
     if (!el || !_selObj?.api || !_selField?.api) return;
+    el.innerHTML = sftkCatSm('Checking who can see this field…');
     const { rows, error } = await _queryFls();
-    if (error) { el.innerHTML = `<div class="fc-unscanned-note">👁 FLS check unavailable: ${esc(error)}</div>`; return; }
+    if (error) {
+      const fe = sftkFriendlyError(error);
+      el.innerHTML = `<div class="fc-unscanned-note" title="${esc(fe.raw)}">👁 FLS check unavailable: ${esc(fe.message + (fe.hint ? ' — ' + fe.hint : ''))}</div>`;
+      return;
+    }
     if (!rows.length) {
       el.innerHTML = `<div class="fc-fls-empty">👁 <strong>No profile or permission set grants access</strong> to this field — nobody can see it today.</div>`;
       return;
@@ -1085,7 +1092,10 @@ const FieldCleaner = (() => {
       renderDeprecationZone(fieldId);
       renderFlsPanel();
     } catch (e) {
-      if (btn) { btn.disabled = false; btn.textContent = '❌ ' + String(e.message || e).slice(0, 60); }
+      if (btn) {
+        btn.disabled = false; btn.textContent = 'Deprecate first';
+        _friendlyErrorUnder(btn, e.message || e);
+      }
     }
   }
 
@@ -1117,7 +1127,10 @@ const FieldCleaner = (() => {
       renderDeprecationZone(dep.fieldId);
       renderFlsPanel();
     } catch (e) {
-      if (btn) { btn.disabled = false; btn.textContent = '❌ ' + String(e.message || e).slice(0, 60); }
+      if (btn) {
+        btn.disabled = false; btn.textContent = '↩ Undo deprecation';
+        _friendlyErrorUnder(btn, e.message || e);
+      }
     }
   }
 
@@ -1153,7 +1166,8 @@ const FieldCleaner = (() => {
       if (/timeout|time limit|too many/i.test(agg.error)) {
         return _sampleDataUsage(obj, fld);
       }
-      const e = el(); if (e) { e.className = 'fc-data-verdict'; e.textContent = `📊 Couldn't measure field usage: ${agg.error}`; }
+      const fe = sftkFriendlyError(agg.error);
+      const e = el(); if (e) { e.className = 'fc-data-verdict'; e.title = fe.raw; e.textContent = `📊 Couldn't measure field usage: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`; }
       return;
     }
 
@@ -1178,7 +1192,8 @@ const FieldCleaner = (() => {
     const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
       query: `SELECT ${fld} FROM ${obj} LIMIT 5000` });
     if (q.error) {
-      if (el) { el.className = 'fc-data-verdict'; el.textContent = `📊 Couldn't measure field usage: ${q.error}`; }
+      const fe = sftkFriendlyError(q.error);
+      if (el) { el.className = 'fc-data-verdict'; el.title = fe.raw; el.textContent = `📊 Couldn't measure field usage: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`; }
       return;
     }
     const rows = q.records || [];
@@ -1334,6 +1349,28 @@ const FieldCleaner = (() => {
     item.appendChild(err);
   }
 
+  // Render a translated one-line error right under a button (instead of
+  // cramming raw API text into the button label). Raw string stays in the
+  // title attribute for copy/paste; textContent keeps it injection-safe.
+  function _friendlyErrorUnder(btn, raw) {
+    if (!btn) return;
+    const fe = sftkFriendlyError(raw);
+    btn.parentElement?.querySelectorAll('.fc-btn-err').forEach(n => n.remove());
+    const err = document.createElement('div');
+    err.className = 'fc-item-err fc-btn-err';
+    err.title = fe.raw;
+    err.textContent = `❌ ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`;
+    btn.insertAdjacentElement('afterend', err);
+  }
+
+  // Translate a raw API/deploy error fragment before it is embedded inside
+  // composed guidance text (fixFlow/fixLayout/fixFlexiPage messages all flow
+  // into appendInlineError, which renders via textContent — plain string).
+  function _feText(raw) {
+    const fe = sftkFriendlyError(raw);
+    return fe.message + (fe.hint ? ' — ' + fe.hint : '');
+  }
+
   function checkEnableDelete() {
     const remaining = document.querySelectorAll('.fc-fix-btn:not([disabled])');
     const delBtn    = eid('fcDelBtn');
@@ -1391,7 +1428,7 @@ const FieldCleaner = (() => {
       type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
       sobject: 'Flow', id: flowId
     });
-    if (flowRes.error) throw new Error(`Could not read "${flowName}": ${flowRes.error}`);
+    if (flowRes.error) throw new Error(`Could not read "${flowName}": ${_feText(flowRes.error)}`);
 
     const fullName = flowRes.FullName;
     const metadata = flowRes.Metadata;
@@ -1425,7 +1462,7 @@ const FieldCleaner = (() => {
     const deployRes = await deployFlowViaMetadataApi(flowApiName, metadata);
     if (!deployRes || !deployRes.success) {
       const e = new Error(
-        `Couldn't deploy the fixed "${flowName}" (${deployRes?.error || 'deploy failed'}). ` +
+        `Couldn't deploy the fixed "${flowName}" (${deployRes?.error ? _feText(deployRes.error) : 'deploy failed'}). ` +
         `Open in Flow Builder to remove the field reference by hand.`
       );
       if (_orgUrl) e.setupUrl = `${_orgUrl.replace(/\/$/, '')}/builder_platform_interaction/flowBuilder.app?flowId=${flowId}`;
@@ -1963,7 +2000,7 @@ const FieldCleaner = (() => {
       type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
       sobject: 'Layout', id: componentId
     });
-    if (res.error) throw new Error(`Could not read "${componentName}": ${res.error}`);
+    if (res.error) throw new Error(`Could not read "${componentName}": ${_feText(res.error)}`);
 
     const metadata = res.Metadata;
     if (!metadata) throw new Error(`"${componentName}" returned no metadata.`);
@@ -1998,9 +2035,9 @@ const FieldCleaner = (() => {
 
     // Both paths failed — surface a clean message *with* a one-click deep link
     // to the layout in Setup, so the manual fix is 30 seconds, not a hunt.
-    const toolingReason = String(patchRes.error).replace(/^HTTP\s*\d+:\s*/i, '').trim();
+    const toolingReason = _feText(String(patchRes.error).replace(/^HTTP\s*\d+:\s*/i, '').trim());
     const deployReason  = typeof deployErr === 'string'
-                        ? String(deployErr).replace(/^HTTP\s*\d+:\s*/i, '').trim()
+                        ? _feText(String(deployErr).replace(/^HTTP\s*\d+:\s*/i, '').trim())
                         : '';
     const err = new Error(
       `Salesforce won't accept the layout update for "${componentName}" (${toolingReason}` +
@@ -2042,7 +2079,7 @@ const FieldCleaner = (() => {
       type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
       sobject: 'FlexiPage', id: componentId
     });
-    if (res.error) throw new Error(`Could not read "${componentName}": ${res.error}`);
+    if (res.error) throw new Error(`Could not read "${componentName}": ${_feText(res.error)}`);
 
     const metadata = res.Metadata;
     if (!metadata) throw new Error(`"${componentName}" returned no metadata.`);
@@ -2063,7 +2100,7 @@ const FieldCleaner = (() => {
       path: `services/data/v62.0/tooling/sobjects/FlexiPage/${componentId}`,
       body: { Metadata: metadata }
     });
-    if (patchRes.error) throw new Error(`Could not save "${componentName}": ${patchRes.error}`);
+    if (patchRes.error) throw new Error(`Could not save "${componentName}": ${_feText(patchRes.error)}`);
   }
 
   // Remove field references from a FlexiPage metadata object.
@@ -2264,7 +2301,7 @@ const FieldCleaner = (() => {
           query: `SELECT ${cols.join(',')} FROM ${obj} WHERE ${fld} != null LIMIT ${CAP}` });
       }
       if (q.error) {
-        if (btn) { btn.textContent = '❌ ' + q.error.slice(0, 40); }
+        if (btn) { btn.textContent = '❌ Backup failed'; _friendlyErrorUnder(btn, q.error); }
         return;
       }
       const rows = q.records || [];
@@ -2463,7 +2500,7 @@ const FieldCleaner = (() => {
     const flowRes = await bg({
       type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: 'Flow', id: flowId
     });
-    if (flowRes.error) throw new Error(`Could not read "${flowName}": ${flowRes.error}`);
+    if (flowRes.error) throw new Error(`Could not read "${flowName}": ${_feText(flowRes.error)}`);
     const fullName = flowRes.FullName;
     const metadata = flowRes.Metadata;
     if (!fullName || !metadata) throw new Error(`"${flowName}" returned no metadata.`);
@@ -2477,7 +2514,7 @@ const FieldCleaner = (() => {
     if (!deployRes || !deployRes.success) {
       const e = new Error(
         `Removed ${removed} block(s) but couldn't deploy "${flowName}" ` +
-        `(${deployRes?.error || 'deploy failed'}). Open in Flow Builder to finish by hand.`
+        `(${deployRes?.error ? _feText(deployRes.error) : 'deploy failed'}). Open in Flow Builder to finish by hand.`
       );
       if (_orgUrl) e.setupUrl = `${_orgUrl.replace(/\/$/, '')}/builder_platform_interaction/flowBuilder.app?flowId=${flowId}`;
       throw e;
@@ -2641,7 +2678,8 @@ const FieldCleaner = (() => {
 
       panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     } catch (e) {
-      panel.innerHTML = `<div class="fc-xml-err">❌ ${esc(e.message)}</div>`;
+      const fe = sftkFriendlyError(e.message);
+      panel.innerHTML = `<div class="fc-xml-err" title="${esc(fe.raw)}">❌ ${esc(fe.message + (fe.hint ? ' — ' + fe.hint : ''))}</div>`;
     } finally {
       if (inspBtn) inspBtn.disabled = false;
     }
@@ -2877,7 +2915,10 @@ const FieldCleaner = (() => {
       }
       if (btn) { btn.textContent = '✅ Restored'; }
     } catch (e) {
-      if (btn) { btn.disabled = false; btn.textContent = '❌ ' + String(e.message || e).slice(0, 48); }
+      if (btn) {
+        btn.disabled = false; btn.textContent = '↩ Restore';
+        _friendlyErrorUnder(btn, e.message || e);
+      }
     }
   }
 
