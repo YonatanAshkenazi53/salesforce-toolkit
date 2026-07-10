@@ -40,6 +40,20 @@ const DependencyMap = (() => {
     const total = flows.length;
     let done = 0;
 
+    // No caller-supplied progress UI (popup.js passes null below the lazy
+    // threshold) — fall back to the shared compact loading cat in the
+    // Dependencies tab container so the scan is never completely invisible.
+    // Any later render of that tab repaints the container, so this cleans
+    // itself up.
+    let fallbackMsgEl = null;
+    if (!progressCallback) {
+      const depContainer = document.getElementById('depTreeContainer');
+      if (depContainer) {
+        depContainer.innerHTML = sftkCatSm(`Scanning flow metadata… 0 / ${total}`);
+        fallbackMsgEl = depContainer.querySelector('.lp-robot-msg');
+      }
+    }
+
     // Fetch metadata in batches of 10
     const BATCH = 10;
     for (let i = 0; i < flows.length; i += BATCH) {
@@ -86,6 +100,7 @@ const DependencyMap = (() => {
         }
         done++;
         if (progressCallback) progressCallback(done, total);
+        else if (fallbackMsgEl) fallbackMsgEl.textContent = `Scanning flow metadata… ${done} / ${total}`;
       }));
     }
 

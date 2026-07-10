@@ -266,7 +266,7 @@ const UserCopy = (() => {
     const q = input.value.trim();
 
     if (usersLoadState === 'loading') {
-      drop.innerHTML = '<div class="uc-drop-item uc-drop-loading">⏳ Loading users…</div>';
+      drop.innerHTML = `<div class="uc-drop-item uc-drop-loading">${sftkCatSm('Loading users…')}</div>`;
       drop.style.display = '';
       return;
     }
@@ -454,7 +454,12 @@ const UserCopy = (() => {
 
     } catch (e) {
       document.getElementById('ucLoading').style.display = 'none';
-      showResult(`Failed to load permissions: ${esc(e.message || String(e))}`, true);
+      const fe = sftkFriendlyError(e.message || String(e));
+      showResult(
+        `<span title="${esc(fe.raw)}">Failed to load permissions: ${esc(fe.message)}</span>` +
+        (fe.hint ? `<div style="margin-top:4px;font-size:11px;opacity:.8">${esc(fe.hint)}</div>` : ''),
+        true
+      );
       return;
     }
 
@@ -699,53 +704,17 @@ const UserCopy = (() => {
     btn.disabled    = true;
     btn.textContent = '⏳ Copying…';
 
-    const errors = [];
-    let profileOk = false, psOk = 0, grpOk = 0, fieldsOk = false, permsOk = 0;
+    // Collect every selected operation up-front so the progress counter
+    // knows the real total before the first API call fires.
+    const doProfile = opts.profile && !!document.getElementById('ucProfileCb')?.checked;
+    const psIds = opts.permSets
+      ? [...document.querySelectorAll('.uc-ps-cb:checked')].map(cb => cb.dataset.psid)
+      : [];
+    const groupIds = opts.groups
+      ? [...document.querySelectorAll('.uc-grp-cb:checked')].map(cb => cb.dataset.groupid)
+      : [];
 
-    // 1. Profile
-    if (opts.profile && document.getElementById('ucProfileCb')?.checked) {
-      const r = await bg({
-        type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
-        path: `services/data/v62.0/sobjects/User/${targetUser.Id}`,
-        body: { ProfileId: sourceUser.Profile.Id }
-      });
-      if (r.error) errors.push(`Profile: ${r.error}`);
-      else profileOk = true;
-    }
-
-    // 2. Permission Sets
-    if (opts.permSets) {
-      const psIds = [...document.querySelectorAll('.uc-ps-cb:checked')].map(cb => cb.dataset.psid);
-      for (const psId of psIds) {
-        const r = await bg({
-          type: 'SF_REST_POST', orgUrl: _orgUrl, sid: _sid,
-          path: 'services/data/v62.0/sobjects/PermissionSetAssignment',
-          body: { AssigneeId: targetUser.Id, PermissionSetId: psId }
-        });
-        if (r.error) {
-          const name = sourcePermSets.find(p => p.PermissionSetId === psId)?.PermissionSet?.Label || psId;
-          errors.push(`Permission set "${name}": ${r.error}`);
-        } else psOk++;
-      }
-    }
-
-    // 3. Public Groups
-    if (opts.groups) {
-      const groupIds = [...document.querySelectorAll('.uc-grp-cb:checked')].map(cb => cb.dataset.groupid);
-      for (const groupId of groupIds) {
-        const r = await bg({
-          type: 'SF_REST_POST', orgUrl: _orgUrl, sid: _sid,
-          path: 'services/data/v62.0/sobjects/GroupMember',
-          body: { GroupId: groupId, UserOrGroupId: targetUser.Id }
-        });
-        if (r.error) {
-          const name = sourceGroups.find(g => g.GroupId === groupId)?.Group?.Name || groupId;
-          errors.push(`Group "${name}": ${r.error}`);
-        } else grpOk++;
-      }
-    }
-
-    // 4. User Permissions + Locale & Timezone — batched into one User PATCH
+    // User Permissions + Locale & Timezone — batched into one User PATCH
     // when both run, to halve the API calls.
     const userPatch = {};
 
@@ -763,6 +732,63 @@ const UserCopy = (() => {
       });
     }
 
+    // Running progress in the shared loading block — one tick per API call
+    // (profile PATCH + each perm-set POST + each group POST + the combined
+    // User PATCH), so long copies don't look hung.
+    const total = (doProfile ? 1 : 0) + psIds.length + groupIds.length +
+      (Object.keys(userPatch).length > 0 ? 1 : 0);
+    let done = 0;
+    const loadingEl = document.getElementById('ucLoading');
+    const tickProgress = () => {
+      loadingEl.innerHTML = sftkCatSm(`Copying… ${done}/${total}`);
+      loadingEl.style.display = '';
+    };
+    if (total > 0) tickProgress();
+
+    const errors = [];
+    let profileOk = false, psOk = 0, grpOk = 0, fieldsOk = false, permsOk = 0;
+
+    // 1. Profile
+    if (doProfile) {
+      const r = await bg({
+        type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+        path: `services/data/v62.0/sobjects/User/${targetUser.Id}`,
+        body: { ProfileId: sourceUser.Profile.Id }
+      });
+      if (r.error) errors.push(`Profile: ${friendlyMsg(r.error)}`);
+      else profileOk = true;
+      done++; tickProgress();
+    }
+
+    // 2. Permission Sets
+    for (const psId of psIds) {
+      const r = await bg({
+        type: 'SF_REST_POST', orgUrl: _orgUrl, sid: _sid,
+        path: 'services/data/v62.0/sobjects/PermissionSetAssignment',
+        body: { AssigneeId: targetUser.Id, PermissionSetId: psId }
+      });
+      if (r.error) {
+        const name = sourcePermSets.find(p => p.PermissionSetId === psId)?.PermissionSet?.Label || psId;
+        errors.push(`Permission set "${name}": ${friendlyMsg(r.error)}`);
+      } else psOk++;
+      done++; tickProgress();
+    }
+
+    // 3. Public Groups
+    for (const groupId of groupIds) {
+      const r = await bg({
+        type: 'SF_REST_POST', orgUrl: _orgUrl, sid: _sid,
+        path: 'services/data/v62.0/sobjects/GroupMember',
+        body: { GroupId: groupId, UserOrGroupId: targetUser.Id }
+      });
+      if (r.error) {
+        const name = sourceGroups.find(g => g.GroupId === groupId)?.Group?.Name || groupId;
+        errors.push(`Group "${name}": ${friendlyMsg(r.error)}`);
+      } else grpOk++;
+      done++; tickProgress();
+    }
+
+    // 4. Combined User PATCH (user permissions + locale & timezone)
     if (Object.keys(userPatch).length > 0) {
       const r = await bg({
         type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
@@ -770,7 +796,13 @@ const UserCopy = (() => {
         body: userPatch
       });
       if (r.error) {
-        errors.push(`User update: ${r.error}`);
+        // One PATCH bundles both categories — name which one(s) were in it
+        // so the failure isn't cryptic.
+        const permCount = Object.keys(userPatch).filter(k => k.startsWith('UserPermissions')).length;
+        const cats = [];
+        if (permCount > 0) cats.push('user permissions');
+        if (permCount < Object.keys(userPatch).length) cats.push('locale & timezone');
+        errors.push(`User update (${cats.join(' + ')}): ${friendlyMsg(r.error)}`);
       } else {
         // Count which categories landed for the result message.
         const permCount = Object.keys(userPatch).filter(k => k.startsWith('UserPermissions')).length;
@@ -778,7 +810,13 @@ const UserCopy = (() => {
         permsOk  = permCount;
         fieldsOk = settingCount > 0;
       }
+      done++; tickProgress();
     }
+
+    // Hide the progress block and restore its default content for the
+    // next preview load (loadAndPreview only toggles display).
+    loadingEl.style.display = 'none';
+    loadingEl.innerHTML = sftkCatSm('Loading permissions…');
 
     btn.disabled    = false;
     btn.textContent = '📋 Copy Selected';
@@ -815,6 +853,13 @@ const UserCopy = (() => {
   }
 
   // ── Helpers ──────────────────────────────────────────────
+  // Translate a raw API error into a plain-language one-liner. Returned text
+  // is UNescaped — callers escape once at render (the error <ul> uses esc()).
+  function friendlyMsg(raw) {
+    const fe = sftkFriendlyError(raw);
+    return fe.message + (fe.hint ? ' — ' + fe.hint : '');
+  }
+
   function showResult(html, isError) {
     const el = document.getElementById('ucResult');
     el.className    = isError ? 'error-banner' : 'result-toast';
