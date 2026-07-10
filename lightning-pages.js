@@ -61,16 +61,7 @@ const LightningPages = (() => {
           <button class="btn btn-secondary btn-sm lp-profile-map-btn" id="lpProfileMapBtn" title="Show which page each profile sees">👤 Who sees what?</button>
         </div>
         <div id="lpLoading" style="display:none">
-          <div class="lp-robot-loading">
-            <div class="lp-rcat">
-              <div class="lp-rcat-ears"><div class="lp-rcat-ear"></div><div class="lp-rcat-ear"></div></div>
-              <div class="lp-rcat-head"><div class="lp-rcat-eye"></div><div class="lp-rcat-eye"></div></div>
-              <div class="lp-rcat-body"></div>
-              <div class="lp-rcat-arms"><div class="lp-rcat-arm lp-rcat-arm-left"></div><div class="lp-rcat-arm lp-rcat-arm-right"></div></div>
-              <div class="lp-rcat-legs"><div class="lp-rcat-leg"></div><div class="lp-rcat-leg"></div></div>
-            </div>
-            <div class="lp-robot-msg">Loading Lightning pages…</div>
-          </div>
+          ${sftkCat('Loading Lightning pages…')}
         </div>
         <div id="lpContent" class="lp-content"></div>
       </div>
@@ -139,10 +130,11 @@ const LightningPages = (() => {
     setLoading(false);
 
     if (res.error) {
+      const fe = sftkFriendlyError(res.error);
       const userMsg = res.error === 'SESSION_EXPIRED'
         ? 'Session expired — log back into Salesforce, then click 🔄'
-        : `Failed to load pages: ${esc(res.error)}`;
-      setContent(lpRobot(userMsg, true));
+        : `Failed to load pages: ${esc(fe.message + (fe.hint ? ' — ' + fe.hint : ''))}`;
+      setContent(sftkCat(userMsg, true));
       return;
     }
 
@@ -249,23 +241,6 @@ const LightningPages = (() => {
         // Ignore errors for individual sObject types — list still renders with what we have
       }
     }
-  }
-
-  // Returns the HTML for a mini grey robot-cat loading indicator.
-  // Pass isError=true to render the cat in red with a shake animation.
-  function lpRobot(msg, isError = false) {
-    const wrapCls = isError ? 'lp-robot-loading lp-robot-error' : 'lp-robot-loading';
-    const prefix  = isError ? '❌ ' : '';
-    return `<div class="${wrapCls}">
-      <div class="lp-rcat">
-        <div class="lp-rcat-ears"><div class="lp-rcat-ear"></div><div class="lp-rcat-ear"></div></div>
-        <div class="lp-rcat-head"><div class="lp-rcat-eye"></div><div class="lp-rcat-eye"></div></div>
-        <div class="lp-rcat-body"></div>
-        <div class="lp-rcat-arms"><div class="lp-rcat-arm lp-rcat-arm-left"></div><div class="lp-rcat-arm lp-rcat-arm-right"></div></div>
-        <div class="lp-rcat-legs"><div class="lp-rcat-leg"></div><div class="lp-rcat-leg"></div></div>
-      </div>
-      <div class="lp-robot-msg">${prefix}${msg}</div>
-    </div>`;
   }
 
   // Keep allPages in sync after status-changing operations so the list
@@ -375,7 +350,7 @@ const LightningPages = (() => {
         </div>
       </div>
       <div id="lpDetailBody" class="lp-detail-body">
-        ${lpRobot('Loading pages…')}
+        ${sftkCat('Loading pages…')}
       </div>`;
     document.getElementById('lpBackBtn').addEventListener('click', () => renderPageList());
 
@@ -399,7 +374,7 @@ const LightningPages = (() => {
       for (let i = 0; i < targets.length; i += BATCH) {
         if (!document.getElementById('lpDetailBody')) return; // navigated away
         const pct = Math.round((i / targets.length) * 100);
-        if (body) body.innerHTML = lpRobot(`Loading pages… ${pct}%`);
+        if (body) body.innerHTML = sftkCat(`Loading pages… ${pct}%`);
 
         const slice = targets.slice(i, i + BATCH);
         const results = await Promise.allSettled(
@@ -567,10 +542,13 @@ const LightningPages = (() => {
       // Wire: load users buttons
       body?.querySelectorAll('.lp-pm-load-users').forEach(btn => {
         btn.addEventListener('click', async () => {
-          btn.textContent = '⏳';
-          btn.disabled = true;
-          const users = await fetchUsers(btn.dataset.pid);
-          btn.replaceWith(Object.assign(document.createElement('span'), {
+          const pid = btn.dataset.pid;
+          const loading = document.createElement('span');
+          loading.className = 'lp-pm-user-count';
+          loading.innerHTML = sftkCatSm('Loading users…');
+          btn.replaceWith(loading);
+          const users = await fetchUsers(pid);
+          loading.replaceWith(Object.assign(document.createElement('span'), {
             className: 'lp-pm-user-count',
             textContent: `${users.length} user${users.length !== 1 ? 's' : ''}`
           }));
@@ -587,7 +565,8 @@ const LightningPages = (() => {
       });
 
     } catch (e) {
-      if (body) body.innerHTML = lpRobot(esc(e.message), true);
+      const fe = sftkFriendlyError(e.message);
+      if (body) body.innerHTML = sftkCat(esc(fe.message + (fe.hint ? ' — ' + fe.hint : '')), true);
     }
   }
 
@@ -888,7 +867,7 @@ const LightningPages = (() => {
         </div>
       </div>
       <div id="lpDetailBody" class="lp-detail-body">
-        ${lpRobot('Loading assignments…')}
+        ${sftkCat('Loading assignments…')}
       </div>
     `;
 
@@ -970,7 +949,12 @@ const LightningPages = (() => {
     if (!body) return;
 
     if (metaRes.error) {
-      body.innerHTML = lpRobot(`Could not load page: ${esc(metaRes.error)}`, true);
+      const fe = sftkFriendlyError(metaRes.error);
+      body.innerHTML = sftkCat(`Could not load page: ${esc(fe.message + (fe.hint ? ' — ' + fe.hint : ''))}`, true) +
+        `<details style="margin:8px 0;font-size:10px;color:var(--subtext)">
+           <summary style="cursor:pointer">Raw error (for copy/paste)</summary>
+           <pre style="margin:4px 0;white-space:pre-wrap;word-break:break-all;max-height:150px;overflow:auto;">${esc(metaRes.error)}</pre>
+         </details>`;
       return;
     }
 
@@ -1078,10 +1062,18 @@ const LightningPages = (() => {
         const hint = isAccessDenied
           ? '<br><small style="opacity:0.8">💡 Use <strong>Setup → Lightning App Builder → Activation</strong> to manage assignments for this page.</small>'
           : '';
+        // Module-specific access-denied explainer wins; everything else gets the
+        // shared friendly translation (raw string kept in the title for copy/paste).
+        let shownMsg = errorMsg;
+        if (!isAccessDenied) {
+          const fe = sftkFriendlyError(errorMsg);
+          shownMsg = fe.message + (fe.hint ? ' — ' + fe.hint : '');
+        }
         const errDiv = document.createElement('div');
         errDiv.className = 'error-banner';
         errDiv.style.marginBottom = '12px';
-        errDiv.innerHTML = `❌ ${esc(errorMsg)}${hint}`;
+        errDiv.title = errorMsg;
+        errDiv.innerHTML = `❌ ${esc(shownMsg)}${hint}`;
         freshBody.insertBefore(errDiv, freshBody.firstChild);
       }
     }
@@ -1331,10 +1323,11 @@ const LightningPages = (() => {
     // ── Wire: show-users buttons ─────────────────────────
     bodyEl.querySelectorAll('.lp-users-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
-        btn.disabled    = true;
-        btn.textContent = '⏳ Loading…';
-        const users = await fetchUsers(btn.dataset.pid);
-        renderUserBadges(btn.dataset.slot, users, btn.dataset.name);
+        const { pid, slot, name } = btn.dataset;
+        const slotEl = document.getElementById(`lpUsers${slot}`);
+        if (slotEl) slotEl.innerHTML = sftkCatSm('Loading users…');
+        const users = await fetchUsers(pid);
+        renderUserBadges(slot, users, name);
       });
     });
 
@@ -1493,6 +1486,18 @@ const LightningPages = (() => {
     if (errEl) errEl.style.display = 'none';
     if (addBtn) { addBtn.disabled = true; addBtn.textContent = '⏳ Saving…'; }
 
+    // Progress counter in the tab pane — doAdd can run many sequential Metadata
+    // Deploys (ARTP mode is apps × profiles × record types), each several seconds.
+    let progEl = null;
+    if (addBtn) {
+      progEl = document.createElement('div');
+      progEl.className = 'lp-add-progress';
+      addBtn.insertAdjacentElement('afterend', progEl);
+    }
+    const showDeployProgress = (done, total) => {
+      if (progEl) progEl.innerHTML = sftkCatSm(`Deploying ${done}/${total}…`);
+    };
+
     try {
       // For orgdefault mode: DO NOT pre-activate separately.
       // The saveActionOverride call IS the activation — deploying CustomObject.actionOverrides
@@ -1512,8 +1517,9 @@ const LightningPages = (() => {
         if (desktop || (!desktop && !mobile)) ffs.push('Large');
         if (mobile) ffs.push('Small');
         if (ffs.length === 0) throw new Error('Select at least one form factor.');
-        for (const ff of ffs) {
-          await saveActionOverride(sobjectType, devName, ff, null);
+        for (let fi = 0; fi < ffs.length; fi++) {
+          showDeployProgress(fi + 1, ffs.length);
+          await saveActionOverride(sobjectType, devName, ffs[fi], null);
         }
         // After saving, synthesize the assignments so the UI is immediately correct
         // (the Tooling API pageAssignments field lags behind Metadata Deploy by seconds).
@@ -1530,7 +1536,9 @@ const LightningPages = (() => {
         const checked = [...document.querySelectorAll('#lpAppDefList .lp-appdef-cb:checked')];
         if (checked.length === 0) throw new Error('No apps selected.');
         // Sequential to avoid PATCH conflicts on the same CustomApplication
-        for (const cb of checked) {
+        for (let ci = 0; ci < checked.length; ci++) {
+          const cb  = checked[ci];
+          showDeployProgress(ci + 1, checked.length);
           const row = cb.closest('.lp-app-item');
           const ff  = row?.querySelector('.lp-app-ff-sel')?.value || 'Large';
           await saveAppAssignment(cb.value, devName, ff, sobjectType, null, null);
@@ -1563,9 +1571,12 @@ const LightningPages = (() => {
         }
 
         // Sequential writes — multiple requests to the same CustomApplication must not race
+        const totalDeploys = appPairs.length * profiles.length * rts.length;
+        let deploysDone = 0;
         for (const pair of appPairs) {
           for (const profile of profiles) {
             for (const rt of rts) {
+              showDeployProgress(++deploysDone, totalDeploys);
               if (pair.app) {
                 // Specific app → CustomApplication.profileActionOverrides
                 await saveAppAssignment(pair.app, devName, pair.ff, sobjectType, profile, rt || null);
@@ -1586,6 +1597,7 @@ const LightningPages = (() => {
       if (!isActive && sobjectType) syncPageStatus(page.Id, 'Active');
       await openDetail(page, null, !isActive && sobjectType ? 'Active' : null);
     } catch (e) {
+      if (progEl) progEl.remove();
       if (addBtn) { addBtn.disabled = false; addBtn.textContent = origLabel; }
       if (errEl) {
         const isAccessDenied = /INSUFFICIENT_ACCESS|cannot.*modify|managed.*component/i.test(e.message);
@@ -1593,7 +1605,15 @@ const LightningPages = (() => {
           ? '<br><span class="lp-err-hint">💡 This is a managed or standard page. ' +
             'Use <strong>Setup → Lightning App Builder → Activation</strong> instead.</span>'
           : '';
-        errEl.innerHTML = `❌ ${esc(e.message)}${hint}`;
+        // Module-specific access-denied explainer wins; everything else gets the
+        // shared friendly translation (raw string kept in the title for copy/paste).
+        let shownMsg = e.message;
+        if (!isAccessDenied) {
+          const fe = sftkFriendlyError(e.message);
+          shownMsg = fe.message + (fe.hint ? ' — ' + fe.hint : '');
+        }
+        errEl.title = e.message;
+        errEl.innerHTML = `❌ ${esc(shownMsg)}${hint}`;
         errEl.style.display = '';
       }
     }
@@ -1641,7 +1661,7 @@ const LightningPages = (() => {
 
   async function doRemove(page, metaRes, assignments, idx) {
     const bodyEl = document.getElementById('lpDetailBody');
-    if (bodyEl) bodyEl.innerHTML = lpRobot('Removing assignment…');
+    if (bodyEl) bodyEl.innerHTML = sftkCat('Removing assignment…');
 
     const a           = assignments[idx];
     const sobjectType = metaRes.Metadata?.sobjectType || page.EntityDefinitionId || null;
@@ -1741,6 +1761,7 @@ const LightningPages = (() => {
         <div id="cloneAssignPreview"${assignments.length === 0 ? ' style="display:none"' : ''}>${assignHtml}</div>
 
         <div id="cloneError" class="lp-add-err" style="display:none;margin-top:8px"></div>
+        <div id="cloneStatus" style="margin-top:8px"></div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" id="modalCancel">Cancel</button>
@@ -1783,9 +1804,11 @@ const LightningPages = (() => {
         return;
       }
 
-      const btn = document.getElementById('cloneConfirmBtn');
+      const btn      = document.getElementById('cloneConfirmBtn');
+      const statusEl = document.getElementById('cloneStatus');
       btn.disabled    = true;
       btn.textContent = '⏳ Cloning…';
+      if (statusEl) statusEl.innerHTML = sftkCatSm('Cloning page…');
 
       try {
         await doClone(page, metaRes, assignments, label, apiName, copyA);
@@ -1793,7 +1816,21 @@ const LightningPages = (() => {
       } catch (e) {
         btn.disabled    = false;
         btn.textContent = '📋 Clone Page';
-        errEl.textContent = '❌ ' + e.message;
+        if (statusEl) statusEl.innerHTML = '';
+        // Translate common clone failures (name collision, invalid name);
+        // sftkFriendlyError covers the rest. Raw error kept in title for copy/paste.
+        const raw = e.message || String(e);
+        let shownMsg;
+        if (/DUPLICATE_DEVELOPER_NAME|duplicate.*developer.?name/i.test(raw)) {
+          shownMsg = `A page with the API name "${apiName}" already exists — choose a different API name.`;
+        } else if (/invalid.*(?:character|name)|INVALID_NAME/i.test(raw)) {
+          shownMsg = 'The API name is not valid — use letters, numbers, and underscores, starting with a letter.';
+        } else {
+          const fe = sftkFriendlyError(raw);
+          shownMsg = fe.message + (fe.hint ? ' — ' + fe.hint : '');
+        }
+        errEl.title = raw;
+        errEl.textContent = '❌ ' + shownMsg;
         errEl.style.display = '';
       }
     });
@@ -1801,6 +1838,12 @@ const LightningPages = (() => {
 
   // Deploy a cloned FlexiPage and optionally recreate all assignments on it.
   async function doClone(page, metaRes, assignments, newLabel, newApiName, copyAssignments) {
+    // Step progress in the clone modal (#cloneStatus exists while the modal is open)
+    const cloneStep = msg => {
+      const el = document.getElementById('cloneStatus');
+      if (el) el.innerHTML = sftkCatSm(msg);
+    };
+
     // ── 1. Build the clone metadata ──────────────────────────
     // Deep-copy metadata, update masterLabel, strip read-only / assignment fields.
     const cloneMeta = JSON.parse(JSON.stringify(metaRes.Metadata || {}));
@@ -1813,10 +1856,12 @@ const LightningPages = (() => {
     const zipBase64    = buildFlexiPageZip(cloneMetaRes);
 
     // ── 2. Deploy via Metadata Deploy ───────────────────────
+    cloneStep('Deploying cloned page…');
     const deployRes = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64 });
     if (deployRes.error) throw new Error('Deploy failed: ' + deployRes.error);
 
     // ── 3. Find the new page record ─────────────────────────
+    cloneStep('Locating new page…');
     const findRes = await bg({
       type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
       query: `SELECT Id,DeveloperName,MasterLabel,Type,EntityDefinitionId,ManageableState ` +
@@ -1831,6 +1876,7 @@ const LightningPages = (() => {
 
     // ── 4. Recreate assignments ──────────────────────────────
     if (copyAssignments && assignments.length > 0) {
+      cloneStep('Copying assignments…');
       const sobjectType = metaRes.Metadata?.sobjectType || page.EntityDefinitionId || null;
       const errors      = [];
 
@@ -1949,7 +1995,7 @@ const LightningPages = (() => {
   async function runDeploy(page, metaRes, currentAssignments, publishStatus) {
     const bodyEl = document.getElementById('lpDetailBody');
     const label  = publishStatus === 'Active' ? 'Activating' : 'Deactivating';
-    if (bodyEl) bodyEl.innerHTML = lpRobot(`${label} page…`);
+    if (bodyEl) bodyEl.innerHTML = sftkCat(`${label} page…`);
 
     try {
       await activatePage(page, metaRes, publishStatus);

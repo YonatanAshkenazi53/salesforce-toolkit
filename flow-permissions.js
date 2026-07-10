@@ -305,7 +305,7 @@ const FlowPermissions = (() => {
     } catch (e) {
       setLoading(false);
       const raw = e.message || String(e);
-      showError(raw === 'SESSION_EXPIRED' ? 'Session expired — log back into Salesforce and retry' : raw);
+      showError(raw);   // showError translates via sftkFriendlyError (handles SESSION_EXPIRED too)
     }
   }
 

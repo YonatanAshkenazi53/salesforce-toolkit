@@ -1482,7 +1482,21 @@ async function showActiveWarningModal(activeFlows) {
           btn.textContent = '✅';
         } catch (e) {
           btn.textContent = '❌';
-          btn.title = e.message;
+          const fe = sftkFriendlyError(e.message || String(e));
+          btn.title = fe.message;
+          // Tooltip-only errors are easy to miss during a pre-delete backup —
+          // surface a visible one-line error under the row too.
+          let errEl = btn.parentElement.querySelector('.backup-row-error');
+          if (!errEl) {
+            errEl = document.createElement('div');
+            errEl.className = 'backup-row-error';
+            errEl.style.cssText = 'flex-basis:100%;width:100%;font-size:11px;color:var(--danger)';
+            btn.parentElement.style.flexWrap = 'wrap';
+            btn.parentElement.appendChild(errEl);
+          }
+          errEl.textContent = `Backup failed: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`;
+          // Keep the raw API error reachable for copy-paste / support
+          errEl.title = e.message || String(e);
         }
       });
     });

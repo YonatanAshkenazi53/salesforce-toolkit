@@ -482,7 +482,7 @@ const ApexDebugger = (() => {
           <label class="adbg-sel-all-lbl" title="Select all">
             <input type="checkbox" id="adbgSelAll">
           </label>
-          <span class="adbg-log-count" id="adbgLogCount">Loading…</span>
+          <span class="adbg-log-count" id="adbgLogCount"></span>
           <span class="adbg-live-dot" id="adbgLiveDot" title="Live — polling for new logs" style="display:none"></span>
           <div style="flex:1"></div>
           <div class="adbg-xsearch-wrap" title="Search across every log body — marks logs that contain the keyword">
@@ -603,7 +603,7 @@ const ApexDebugger = (() => {
   // ── User search dropdown ──────────────────────────────────
   async function _searchUsers(q) {
     const d = document.getElementById('adbgUserDrop');
-    d.innerHTML = '<div class="adbg-drop-msg">Searching…</div>';
+    d.innerHTML = '<div class="adbg-drop-msg">' + sftkCatSm('Searching users…') + '</div>';
     d.style.display = '';
     const res = await _bg({
       type: 'SF_QUERY', tooling: false,
@@ -617,7 +617,12 @@ const ApexDebugger = (() => {
       })()
     });
     if (res.error || !res.records?.length) {
-      d.innerHTML = `<div class="adbg-drop-msg">${res.error ? '⚠ ' + _esc(res.error) : 'No active users found'}</div>`;
+      if (res.error) {
+        const fe = sftkFriendlyError(res.error);
+        d.innerHTML = `<div class="adbg-drop-msg" title="${_esc(fe.raw)}">⚠ ${_esc(fe.message)}${fe.hint ? `<br><small>${_esc(fe.hint)}</small>` : ''}</div>`;
+      } else {
+        d.innerHTML = '<div class="adbg-drop-msg">No active users found</div>';
+      }
       return;
     }
     d.innerHTML = res.records.map(u =>
@@ -700,7 +705,10 @@ const ApexDebugger = (() => {
     const stopBtn  = document.getElementById('adbgStopBtn');
     startBtn.disabled = true;
     startBtn.textContent = 'Starting…';
-    _renderStatus('');
+    // Up to 4 sequential API calls follow — show a busy cat in the status cell
+    // instead of leaving only the button text as feedback.
+    const statusCell = document.getElementById('adbgStatusCell');
+    if (statusCell) statusCell.innerHTML = sftkCatSm('Starting trace…');
 
     try {
       const debugLevelId = await _ensureDebugLevel();
@@ -749,7 +757,10 @@ const ApexDebugger = (() => {
       _startPolling();
 
     } catch (err) {
-      _renderStatus('Error: ' + err.message, 'error');
+      const fe = sftkFriendlyError(err.message || String(err));
+      _renderStatus('Error: ' + fe.message + (fe.hint ? ' — ' + fe.hint : ''), 'error');
+      const cell = document.getElementById('adbgStatusCell');
+      if (cell) cell.title = fe.raw;   // raw error kept for copy/paste
       startBtn.disabled    = false;
       startBtn.textContent = '▶ Start Trace';
     }
@@ -759,7 +770,11 @@ const ApexDebugger = (() => {
     _stopPolling();
     _stopCountdown();
     if (_traceFlag?.Id) {
+      // Visual state while the TraceFlag delete is in flight.
+      const stopping = document.getElementById('adbgStopBtn');
+      if (stopping) { stopping.disabled = true; stopping.textContent = 'Stopping…'; }
       await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'TraceFlag', id: _traceFlag.Id }).catch(() => {});
+      if (stopping) { stopping.disabled = false; stopping.textContent = '⏹ Stop'; }
     }
     _traceFlag = null;
     _traceUser = null;
@@ -856,7 +871,8 @@ const ApexDebugger = (() => {
     _lastPoll = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
 
     if (res.error) {
-      listEl.innerHTML = `<div class="adbg-list-ph adbg-list-err">⚠ ${_esc(res.error)}</div>`;
+      const fe = sftkFriendlyError(res.error);
+      listEl.innerHTML = `<div class="adbg-list-ph adbg-list-err" title="${_esc(fe.raw)}">⚠ ${_esc(fe.message)}${fe.hint ? `<br><small>${_esc(fe.hint)}</small>` : ''}</div>`;
       const cnt = document.getElementById('adbgLogCount');
       if (cnt) cnt.textContent = 'Error';
       return;
@@ -1110,7 +1126,8 @@ const ApexDebugger = (() => {
       path: `${TAPI}/sobjects/ApexLog/${id}/Body`
     });
     if (res.error) {
-      detail.innerHTML = `<div class="adbg-detail-err">Failed to load log: ${_esc(res.error)}</div>`;
+      const fe = sftkFriendlyError(res.error);
+      detail.innerHTML = `<div class="adbg-detail-err" title="${_esc(fe.raw)}">Failed to load log: ${_esc(fe.message)}<br><small>${_esc(fe.hint || 'The log may have been deleted — refresh the list (🔄).')}</small></div>`;
       return;
     }
 
@@ -2550,8 +2567,16 @@ const ApexDebugger = (() => {
     const res = await _bg({ type: 'SF_QUERY_ALL', tooling: true,
       query: `SELECT Id FROM ApexLog WHERE StartTime < ${cutoff}` });
     const ids = (res.records || []).map(r => r.Id);
+    // Deletes run one-by-one and can far exceed the 200 listed — show a busy
+    // cat in the list plus a live n/N counter so it never looks frozen.
+    const listEl = document.getElementById('adbgLogList');
+    if (listEl) listEl.innerHTML = '<div class="adbg-list-ph">' + sftkCatSm('Purging old logs…') + '</div>';
+    const cnt = document.getElementById('adbgLogCount');
+    let done = 0;
     for (const id of ids) {
       await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id }).catch(() => {});
+      done++;
+      if (cnt) cnt.textContent = `Deleting ${done}/${ids.length}`;
     }
     btn.disabled = false; btn.textContent = '🧹 >24h';
     _loadLogs();
@@ -2649,12 +2674,17 @@ const ApexDebugger = (() => {
     if (!ids.length) return;
     const btn = document.getElementById('adbgDelSelBtn');
     if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+    // Live n/N progress in the count span — deletes run sequentially.
+    const cnt = document.getElementById('adbgLogCount');
+    let done = 0;
     for (const id of ids) {
       await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id }).catch(() => {});
       _logs = _logs.filter(l => l.Id !== id);
       _checked.delete(id);
       _newIds.delete(id);
       delete _bodyCache[id];
+      done++;
+      if (cnt) cnt.textContent = `Deleting ${done}/${ids.length}`;
     }
     if (ids.includes(_selLogId)) {
       _selLogId = null;
@@ -2693,8 +2723,16 @@ const ApexDebugger = (() => {
     btn.textContent = 'Deleting…';
 
     const ids = _logs.map(l => l.Id);
+    // Up to 200 sequential deletes (30+ seconds) — busy cat in the list body
+    // plus a live n/N counter in the count span.
+    const listEl = document.getElementById('adbgLogList');
+    if (listEl) listEl.innerHTML = '<div class="adbg-list-ph">' + sftkCatSm('Deleting logs…') + '</div>';
+    const cnt = document.getElementById('adbgLogCount');
+    let done = 0;
     for (const id of ids) {
       await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id }).catch(() => {});
+      done++;
+      if (cnt) cnt.textContent = `Deleting ${done}/${ids.length}`;
     }
     _logs      = [];
     _bodyCache = {};
@@ -2715,7 +2753,7 @@ const ApexDebugger = (() => {
   // ── Download raw log ──────────────────────────────────────
   async function _downloadRaw(id) {
     const res = await _bg({ type: 'SF_REST_GET_TEXT', path: `${TAPI}/sobjects/ApexLog/${id}/Body` });
-    if (res.error) { alert('Download failed: ' + res.error); return; }
+    if (res.error) { _showErrorModal('Download failed', res.error); return; }
     const blob = new Blob([res.text], { type: 'text/plain' });
     const url  = URL.createObjectURL(blob);
     const a    = Object.assign(document.createElement('a'), {
@@ -2734,6 +2772,15 @@ const ApexDebugger = (() => {
   async function _openLogInNewTab(p, btn) {
     const orig = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = '… opening'; }
+    // May refetch a multi-MB log body and write it to chrome.storage — show a
+    // busy cat in the detail header while it works.
+    const hdr = document.getElementById('adbgDetHdr');
+    let busy = null;
+    if (hdr) {
+      busy = document.createElement('div');
+      busy.innerHTML = sftkCatSm('Preparing log viewer…');
+      hdr.prepend(busy);
+    }
     try {
       let raw = p.raw;
       // p.raw is set by _renderDetail but defensive: refetch if missing.
@@ -2754,8 +2801,14 @@ const ApexDebugger = (() => {
       const url = chrome.runtime.getURL(`apex-log-viewer.html?key=${encodeURIComponent(key)}`);
       await chrome.tabs.create({ url });
     } catch (err) {
-      alert('Could not open log in new tab: ' + (err.message || err));
+      const raw = err.message || String(err);
+      // Huge logs can blow the chrome.storage quota — give a specific hint.
+      const quotaHint = /quota/i.test(raw)
+        ? 'This log is too large for the new-tab viewer — use ⬇ Raw Log to download it instead.'
+        : null;
+      _showErrorModal('Could not open log in new tab', raw, quotaHint);
     } finally {
+      busy?.remove();
       if (btn) { btn.disabled = false; btn.textContent = orig || '⤢ Open in new tab'; }
     }
   }
@@ -2764,6 +2817,30 @@ const ApexDebugger = (() => {
   function _updateCount() {
     const cnt = document.getElementById('adbgLogCount');
     if (cnt) cnt.textContent = `${_logs.length} log${_logs.length !== 1 ? 's' : ''}`;
+  }
+
+  // Friendly-error modal — replaces native alert(). Raw error kept in the
+  // title attribute for copy/paste; hintOverride wins over the generic hint.
+  function _showErrorModal(title, rawError, hintOverride) {
+    const fe   = sftkFriendlyError(rawError);
+    const hint = hintOverride || fe.hint;
+    if (typeof showModal !== 'function') {   // defensive — popup.js provides it
+      alert(title + ': ' + fe.message + (hint ? ' — ' + hint : ''));
+      return;
+    }
+    showModal(`
+      <div class="modal-header modal-warn">
+        <span class="modal-icon">⚠️</span>
+        <h2>${_esc(title)}</h2>
+      </div>
+      <div class="modal-body">
+        <p title="${_esc(fe.raw)}">${_esc(fe.message)}${hint ? ` — ${_esc(hint)}` : ''}</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="modalCancel">Close</button>
+      </div>
+    `);
+    document.getElementById('modalCancel')?.addEventListener('click', () => closeModal());
   }
 
   function _esc(s) {
