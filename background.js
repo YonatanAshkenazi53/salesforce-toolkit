@@ -87,12 +87,24 @@ function _endRun() {
 chrome.action.onClicked.addListener(async () => {
   const appUrl = chrome.runtime.getURL('popup.html');
 
-  // If a toolkit tab is already open, bring it to focus instead of opening a second
-  const existing = await chrome.tabs.query({ url: appUrl });
-  if (existing.length > 0) {
-    const tab = existing[0];
-    await chrome.tabs.update(tab.id, { active: true });
-    await chrome.windows.update(tab.windowId, { focused: true });
+  // If a toolkit page is already open, focus it instead of opening a second.
+  // Uses TOOLKIT_PING (the page answers with its own tab id) rather than
+  // tabs.query({url}) — URL filtering needs the dropped "tabs" permission;
+  // focusing by id doesn't.
+  const existing = await new Promise(resolve => {
+    let settled = false;
+    const done = v => { if (!settled) { settled = true; resolve(v); } };
+    try {
+      chrome.runtime.sendMessage({ type: 'TOOLKIT_PING' }, resp => {
+        void chrome.runtime.lastError;
+        done(resp && resp.tabId != null ? resp : null);
+      });
+    } catch (_) { done(null); }
+    setTimeout(() => done(null), 400);
+  });
+  if (existing) {
+    await chrome.tabs.update(existing.tabId, { active: true });
+    await chrome.windows.update(existing.windowId, { focused: true });
     return;
   }
 
@@ -894,6 +906,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // assumption explicit so a future manifest change can't silently expose
   // sfQuery/sfDelete/sfMetadataDeploy to less-trusted senders.
   if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL(''))) return;
+  // Page-to-page messages (Studio ↔ Toolkit): stay SILENT so the page's
+  // sendResponse wins the response race — answering here (even with an
+  // "unknown type" error) would beat the real recipient to the channel.
+  if (message?.type === 'TOOLKIT_PING' || message?.type === 'TOOLKIT_NAVIGATE') return;
   handleMessage(message).then(sendResponse).catch(err => {
     const resp = { error: err.message || String(err) };
     if (err.sfBody) resp.sfBody = err.sfBody;  // include raw SF 401 body for diagnostics
@@ -1859,3 +1875,4 @@ chrome.cookies.onChanged.addListener((changeInfo) => {
   // Broadcast to all extension pages (popup, studio, etc.)
   chrome.runtime.sendMessage({ type: 'SF_SESSION_REFRESHED', domain }).catch(() => {});
 });
+

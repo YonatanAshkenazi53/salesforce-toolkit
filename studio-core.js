@@ -662,11 +662,29 @@ const CMD_TOOLKIT = [
 // already-open one via a TOOLKIT_NAVIGATE runtime message.
 async function openToolkitPopout(tab) {
   const base = chrome.runtime.getURL('popup.html');
+
+  // Find an already-open Toolkit by ASKING it (TOOLKIT_PING) instead of
+  // tabs.query({url}) — URL-filtered queries silently stopped matching when
+  // the "tabs" permission was dropped (security S9), which made this button
+  // open a NEW full-screen popout every time instead of focusing the one you
+  // came from. Pinging needs no permission: the page answers with its tab id
+  // (tabs.getCurrent) and focusing by id is always allowed.
+  const existing = await new Promise(resolve => {
+    let settled = false;
+    const done = v => { if (!settled) { settled = true; resolve(v); } };
+    try {
+      chrome.runtime.sendMessage({ type: 'TOOLKIT_PING' }, resp => {
+        void chrome.runtime.lastError;   // "no receiver" — that's an answer too
+        done(resp && resp.tabId != null ? resp : null);
+      });
+    } catch (_) { done(null); }
+    setTimeout(() => done(null), 400);   // no listener responded in time
+  });
+
   try {
-    const tabs = await chrome.tabs.query({ url: base + '*' });
-    if (tabs.length) {
-      await chrome.windows.update(tabs[0].windowId, { focused: true });
-      await chrome.tabs.update(tabs[0].id, { active: true });
+    if (existing) {
+      await chrome.windows.update(existing.windowId, { focused: true });
+      await chrome.tabs.update(existing.tabId, { active: true });
       if (tab) chrome.runtime.sendMessage({ type: 'TOOLKIT_NAVIGATE', tab }, () => chrome.runtime.lastError);
       return;
     }

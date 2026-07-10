@@ -253,11 +253,22 @@ const HOME_SECTIONS = [
 // feature init needs orgUrl/sid.
 let _deepLinkTab = new URLSearchParams(location.search).get('tab');
 
-chrome.runtime?.onMessage?.addListener?.((msg) => {
+chrome.runtime?.onMessage?.addListener?.((msg, _sender, sendResponse) => {
   if (msg?.type === 'TOOLKIT_NAVIGATE' && msg.tab) {
     const feat = HOME_FEATURES.find(f => f.id === msg.tab);
     if (feat && sid) feat.action();
     else _deepLinkTab = msg.tab;   // run once the session lands
+  }
+  // "Anyone home?" — Data Studio's ‹ Toolkit button (and the toolbar-icon
+  // handler) ping instead of tabs.query({url}), which silently stopped
+  // matching when the "tabs" permission was dropped. We answer with our tab
+  // id so the caller can FOCUS this view instead of opening a new one.
+  // tabs.getCurrent needs no permission and works in tabs + popout windows.
+  if (msg?.type === 'TOOLKIT_PING') {
+    chrome.tabs.getCurrent(tab => {
+      sendResponse(tab ? { tabId: tab.id, windowId: tab.windowId } : {});
+    });
+    return true;   // async sendResponse
   }
 });
 
@@ -415,7 +426,7 @@ function renderHomePage() {
 
       const spinner = document.createElement('div');
       spinner.className = 'home-org-dd-empty';
-      spinner.textContent = 'Detecting sessions…';
+      spinner.innerHTML = sftkCatSm('Detecting sessions…');
       dd.appendChild(spinner);
 
       // Fetch both live browser-tab sessions AND stored credential orgs in parallel
@@ -879,17 +890,15 @@ async function fetchAllMetadataSilently(loadOrgUrl, loadSid) {
   loadSid    = loadSid    || sid;
   metadataScanState = 'scanning';
 
-  // Show scan progress bar for orgs with many flows
-  const showProgress = orgFlowCount >= LAZY_THRESHOLD;
-  if (showProgress) {
-    showScanProgress(true, `🔍 Building dependency map… 0 / ${orgFlowCount}`);
-  }
+  // Show scan progress for every org size — without it the post-scan repaint
+  // (🔗 icons appearing, process types changing) looks unexplained in small orgs.
+  showScanProgress(true, `🔍 Building dependency map… 0 / ${orgFlowCount}`);
 
-  await DependencyMap.buildDependencyMap(allFlows, loadOrgUrl, loadSid, showProgress ? (done, total) => {
+  await DependencyMap.buildDependencyMap(allFlows, loadOrgUrl, loadSid, (done, total) => {
     showScanProgress(true, `🔍 Building dependency map… ${done} / ${total}`);
-  } : null);
+  });
 
-  if (showProgress) showScanProgress(false);
+  showScanProgress(false);
   metadataScanState = 'done';
   patchFlowTypesFromMetadata();
   groupFlows();
@@ -1481,10 +1490,10 @@ async function showActiveWarningModal(activeFlows) {
     // Download all
     document.getElementById('backupAllBtn').addEventListener('click', async () => {
       const allBtn = document.getElementById('backupAllBtn');
-      allBtn.textContent = '⏳ Downloading...';
       allBtn.disabled = true;
-      for (const f of activeFlows) {
-        try { await downloadFlowBackup(f); } catch (_) {}
+      for (let i = 0; i < activeFlows.length; i++) {
+        allBtn.textContent = `⏳ ${i + 1} / ${activeFlows.length}`;
+        try { await downloadFlowBackup(activeFlows[i]); } catch (_) {}
       }
       allBtn.textContent = '✅ All Downloaded';
     });
@@ -1790,18 +1799,26 @@ async function onRestoreClick() {
 
   const errors    = [];
   const successes = [];
+  let done = 0;
+  showScanProgress(true, `📥 Restoring… ${done} / ${toRestore.length}`);
   for (const f of toRestore) {
+    showScanProgress(true, `📥 Restoring… ${done} / ${toRestore.length}`);
     if (!f.Metadata || !f.FullName) {
       errors.push(`${f.MasterLabel}: missing metadata in backup`);
+      done++;
       continue;
     }
     try {
       await performRestore({ flow: f });
       successes.push(f);
     } catch (e) {
-      errors.push(`${escHtml(f.MasterLabel)}: ${escHtml(e.message || String(e))}`);
+      // Translate the raw deploy error; escaping happens ONCE at render time below.
+      const fe = sftkFriendlyError(e.message || String(e));
+      errors.push(`${f.MasterLabel}: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`);
     }
+    done++;
   }
+  showScanProgress(false);
 
   updateActionBar();
 
@@ -1946,7 +1963,8 @@ async function performDeletion(toDelete, toDeactivate) {
       if (msg.includes('CANNOT_DELETE_MANAGED_COMPONENT')) {
         errors.push({ flow, msg: `"${flow.MasterLabel}" is part of a managed package and cannot be deleted.` });
       } else {
-        errors.push({ flow, msg: `${flow.MasterLabel} v${flow.VersionNumber}: ${msg}` });
+        const fe = sftkFriendlyError(msg);
+        errors.push({ flow, msg: `${flow.MasterLabel} v${flow.VersionNumber}: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}` });
       }
     }
   }
@@ -2200,16 +2218,14 @@ function renderDependenciesTab() {
   }
 
   if (metadataScanState === 'scanning') {
-    noBanner.style.display = '';
-    noBanner.textContent = '⏳ Dependency map is building… This tab will refresh automatically when ready.';
-    container.innerHTML = '';
+    noBanner.style.display = 'none';
+    container.innerHTML = sftkCat('Dependency map is building… This tab will refresh automatically when ready.');
     return;
   }
 
   if (!DependencyMap.isMetadataFetched()) {
-    noBanner.style.display = '';
-    noBanner.textContent = '⏳ Waiting for dependency metadata… This tab will refresh automatically.';
-    container.innerHTML = '';
+    noBanner.style.display = 'none';
+    container.innerHTML = sftkCat('Waiting for dependency metadata… This tab will refresh automatically.');
     return;
   }
 
@@ -2259,8 +2275,11 @@ function showScanProgress(show, text) {
   }
 }
 
-function showSessionError(msg) {
-  document.getElementById('sessionErrorMsg').textContent = msg;
+function showSessionError(msg, rawDetail) {
+  const msgEl = document.getElementById('sessionErrorMsg');
+  msgEl.textContent = msg;
+  // Keep the raw API error reachable for copy-paste / support without surfacing it
+  msgEl.title = (rawDetail && rawDetail !== msg) ? rawDetail : '';
   document.getElementById('sessionError').style.display = '';
   document.getElementById('loadingState').style.display = 'none';
   document.getElementById('toolbar').style.display = 'none';
@@ -2330,7 +2349,8 @@ function handleApiError(errMsg) {
     _flowsLoaded = false;
     initSession('expired');
   } else {
-    showSessionError(`API Error: ${errMsg}`);
+    const fe = sftkFriendlyError(errMsg);
+    showSessionError(fe.message + (fe.hint ? ' — ' + fe.hint : ''), String(errMsg));
   }
 }
 
@@ -2808,7 +2828,7 @@ function openTopbarOrgDropdown() {
 
     const spinner = document.createElement('div');
     spinner.className = 'home-org-dd-empty';
-    spinner.textContent = 'Detecting sessions…';
+    spinner.innerHTML = sftkCatSm('Detecting sessions…');
     dd.appendChild(spinner);
 
     // Fetch both live browser-tab sessions and stored credential orgs in parallel
