@@ -152,11 +152,11 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
 
 ## Phase X — App-shell convergence (last: biggest, benefits from all above)
 
-- [ ] **X1–X4. Migrate heavyweight popup tools into the Data Studio shell** as sidebar
+- [x] **X1–X4. Migrate heavyweight popup tools into the Data Studio shell** as sidebar
   sections, one tool per commit: Field Cleaner → Flow Access → Apex Debugger → Copy
   Permissions. The popup becomes a fast launcher + current-org quick actions.
   Prereqs: A1 (shared org identity), C4 (shared confirm), U1 (friendlyError).
-- [ ] **X5. Unify theming** — one dark-mode key + one palette shared by launcher and Studio.
+- [x] **X5. Unify theming** — one dark-mode key + one palette shared by launcher and Studio.
 
 ## Phase D — Apex Debugger deep-analysis — ✅ COMPLETE 2026-07-08 (proposal artifact 3c0cbd93)
 User directive: "implement everything under the proposal … don't miss anything."
@@ -241,16 +241,16 @@ history) already exists there.
   worker chokepoint automatically; history entry kind:'picklist-fix'.
   V1 SCOPE: custom local-valueSet picklists; global value sets + standard picklists render
   read-only with a "P4" banner.
-- [ ] **P2. Multi-org matrix + bulk apply** — same object.field across N selected orgs:
+- [x] **P2. Multi-org matrix + bulk apply** — same object.field across N selected orgs:
   value×org matrix (exists / active / usage per org); select value(s) + orgs → one wizard
   applies deactivate/delete + data fix PER ORG (per-org sessions via getOrgSession; orgs
   without a live tab are skipped with a badge); per-org result log + one history entry per
   org; value-literal automation scan (which flows/VRs mention 'TheValue' — supplemental-
   scan grep pattern from field-cleaner) folded into the impact panel.
-- [ ] **P3. Record-type assignment editing** — RT × value matrix per org (and cross-org):
+- [x] **P3. Record-type assignment editing** — RT × value matrix per org (and cross-org):
   add/remove values from record types via RecordType Tooling metadata PATCH; keep the
   matrix in sync when a value is deactivated (SF drops it from RTs — surface that).
-- [ ] **P4. StandardValueSet + GlobalValueSet support** — standard picklists (LeadSource,
+- [x] **P4. StandardValueSet + GlobalValueSet support** — standard picklists (LeadSource,
   Industry…) via StandardValueSet metadata; global picklists edit the GlobalValueSet
   (warn: affects EVERY field using it — list them via MetadataComponentDependency).
 

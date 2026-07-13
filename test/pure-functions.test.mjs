@@ -154,6 +154,65 @@ describe('pkMultiRemap (studio-picklists.js) — multipicklist token surgery', (
   });
 });
 
+describe('picklist P2/P3 pure helpers (studio-picklists.js)', () => {
+  const pkValueUnion   = extractFunction('studio-picklists.js', 'pkValueUnion');
+  // pkBuildMatrix calls pkValueName → materialize both in one scope.
+  const { pkBuildMatrix } = extractFunctions('studio-picklists.js', ['pkValueName', 'pkBuildMatrix']);
+  const pkValueMentions = extractFunction('studio-picklists.js', 'pkValueMentions');
+  const pkDedupeErrors = extractFunction('studio-picklists.js', 'pkDedupeErrors');
+  const pkRtMatrixDiff = extractFunction('studio-picklists.js', 'pkRtMatrixDiff');
+
+  it('pkValueUnion preserves first-seen order across orgs', () => {
+    expect(pkValueUnion([
+      { values: ['Hot', 'Warm'] },
+      { values: ['Warm', 'Cold'] },
+      { values: ['Hot', 'Frozen'] },
+    ])).toEqual(['Hot', 'Warm', 'Cold', 'Frozen']);
+  });
+
+  it('pkBuildMatrix marks exists/active/count and missing-org cells', () => {
+    const inv = { rawValues: [{ fullName: 'Hot', isActive: true }, { fullName: 'Cold', isActive: false }],
+                  usage: new Map([['Hot', 5]]) };
+    const m = pkBuildMatrix([
+      { orgKey: 'a', inv },
+      { orgKey: 'b', inv: null },   // org not open → missing
+    ], ['Hot', 'Cold', 'Ghost']);
+    const hot = m.rows[0].cells;
+    expect(hot[0]).toMatchObject({ orgKey: 'a', exists: true, active: true, count: 5 });
+    expect(hot[1]).toMatchObject({ orgKey: 'b', missing: true });
+    expect(m.rows[1].cells[0]).toMatchObject({ exists: true, active: false });   // Cold inactive
+    expect(m.rows[2].cells[0]).toMatchObject({ exists: false });                 // Ghost absent
+  });
+
+  it('pkValueMentions counts literal occurrences and escapes regex chars', () => {
+    expect(pkValueMentions('status=Hot; when Hot then Hot', 'Hot')).toBe(3);
+    expect(pkValueMentions('a.b matched a.b', 'a.b')).toBe(2);   // '.' literal, not wildcard
+    expect(pkValueMentions('axb', 'a.b')).toBe(0);
+  });
+
+  it('pkDedupeErrors collapses repeats with ×N', () => {
+    const out = pkDedupeErrors(['bad', 'bad', 'bad', 'other']);
+    expect(out).toContain('bad  (×3)');
+    expect(out).toContain('other');
+    expect(out).toHaveLength(2);
+  });
+
+  it('pkRtMatrixDiff computes adds/removes only for changed record types', () => {
+    const rts = [
+      { id: 'rtA', values: new Set(['Hot']) },
+      { id: 'rtB', values: new Set(['Cold']) },
+    ];
+    const edited = new Map([
+      ['rtA|Hot', true],   // unchanged (had it)
+      ['rtA|Cold', true],  // add
+      ['rtB|Cold', false], // remove
+    ]);
+    const diff = pkRtMatrixDiff(rts, edited);
+    expect(diff).toContainEqual({ rtId: 'rtA', adds: ['Cold'], removes: [] });
+    expect(diff).toContainEqual({ rtId: 'rtB', adds: [], removes: ['Cold'] });
+  });
+});
+
 describe('sftkBuildStoredZip (sftk-zip.js) — the shared Metadata-deploy zip builder', () => {
   const { sftkCrc32, sftkBuildStoredZip } =
     extractFunctions('sftk-zip.js', ['sftkCrc32', 'sftkBuildStoredZip']);
