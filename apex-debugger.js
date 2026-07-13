@@ -430,6 +430,65 @@ const ApexDebugger = (() => {
     _lastPoll  = null;
   }
 
+  // ── C5b: cross-links into sibling Toolkit tabs ────────────
+  // A log already names the exact user/flow the next investigative step
+  // needs (who can run this flow? what re-triggers it? what can this user
+  // see?), so analysis rows and the detail header offer one-click jumps.
+  // HOME_FEATURES actions (popup.js) both navigate AND kick off the target
+  // tab's first data load; bare navigateToTab is the fallback. typeof-guarded
+  // so the module stays inert if it ever loads outside the popup shell.
+  function _jumpToTab(tabId, prefill) {
+    try {
+      const feat = (typeof HOME_FEATURES !== 'undefined')
+        ? HOME_FEATURES.find(f => f.id === tabId) : null;
+      if (feat) feat.action();
+      else if (typeof navigateToTab === 'function') navigateToTab(tabId);
+      else return;
+      if (prefill) _xlinkPrefill(tabId, prefill);
+    } catch (e) { /* a broken convenience link must never break the tab */ }
+  }
+
+  // Best-effort prefill of the target tab's own search/picker inputs — all
+  // existing sibling-module DOM, no cross-module state. Every target render
+  // reads its input live, so setting the value even BEFORE the tab's async
+  // data arrives still filters its first paint. Silently a no-op if the
+  // input isn't there (markup changed / module missing).
+  function _xlinkPrefill(tabId, q) {
+    const fill = el => {
+      if (!el) return;
+      el.value = q;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    if (tabId === 'flow-access') {
+      fill(document.getElementById('fpFlowSearch'));           // flow-permissions.js
+    } else if (tabId === 'flows') {
+      fill(document.getElementById('searchInput'));            // popup.js flow list
+    } else if (tabId === 'copy-perms') {
+      // Source-user picker (user-copy.js). Don't clobber an already-picked
+      // source user — when one is chosen the input is hidden behind a chip.
+      const inp = document.getElementById('ucSourceInput');
+      if (inp && inp.style.display !== 'none') {
+        fill(inp);
+        inp.focus();   // focus opens the filtered dropdown for one-click pick
+      }
+    }
+    // 'dependencies' has no handoff state (same as Field Cleaner's C5a) —
+    // plain navigation only.
+  }
+
+  // Small link-styled "↗ open in X" button (same visual as Field Cleaner's
+  // C5a links). Clicks are handled by ONE delegated listener wired in
+  // _wireEvents(), so links keep working across every innerHTML re-render.
+  const _XLINK_CSS =
+    'background:none;border:none;padding:0;margin-left:8px;' +
+    'color:#0176d3;font:inherit;font-size:11px;font-weight:600;' +
+    'cursor:pointer;text-decoration:underline;white-space:nowrap;';
+  function _xlink(tabId, label, title, prefill) {
+    return `<button type="button" class="adbg-xlink" data-xtab="${_esc(tabId)}"` +
+           (prefill ? ` data-xq="${_esc(prefill)}"` : '') +
+           ` title="${_esc(title || '')}" style="${_XLINK_CSS}">${_esc(label)}</button>`;
+  }
+
   // ── Shell HTML ────────────────────────────────────────────
   function _renderShell() {
     _container.innerHTML = `
@@ -598,6 +657,21 @@ const ApexDebugger = (() => {
     });
     xBtn?.addEventListener('click', () => _searchAcrossLogs(xInp.value.trim()));
     xClr?.addEventListener('click', _clearXSearch);
+
+    // ── C5b: cross-links (↗ Deps / Access / Flows / Permissions) ──
+    // One delegated listener on the persistent container so links keep
+    // working across every detail/list re-render. dataset-guarded: an
+    // org-switch re-init calls _wireEvents() again on the same container.
+    if (!_container.dataset.adbgXlinkWired) {
+      _container.addEventListener('click', e => {
+        const link = e.target.closest?.('.adbg-xlink');
+        if (link?.dataset.xtab) {
+          e.stopPropagation();   // some links live inside clickable rows
+          _jumpToTab(link.dataset.xtab, link.dataset.xq || '');
+        }
+      });
+      _container.dataset.adbgXlinkWired = '1';
+    }
   }
 
   // ── User search dropdown ──────────────────────────────────
@@ -1466,7 +1540,13 @@ const ApexDebugger = (() => {
           </div>
           <div class="adbg-det-hdr-body">
             ${log.LogUser?.Name
-                ? `<div class="adbg-det-user">👤 ${_esc(log.LogUser.Name)}</div>` : ''}
+                ? `<div class="adbg-det-user">👤 ${_esc(log.LogUser.Name)}${
+                    // C5b: "automation behaves differently for THIS user"
+                    // debugging usually ends in a permissions diff — jump to
+                    // Copy Permissions with this user prefilled as the source.
+                    _xlink('copy-perms', '↗ Permissions',
+                      `Inspect or compare ${log.LogUser.Name}'s profile, permission sets & groups in the Copy Permissions tool`,
+                      log.LogUser.Name)}</div>` : ''}
             ${p.entryPoint ? `<div class="adbg-det-entry">▶ Entry point: <code>${_esc(p.entryPoint)}</code></div>` : ''}
             <div class="adbg-det-actions">
               <button class="btn btn-primary btn-sm"   id="adbgCopyReportBtn">📋 Copy Report</button>
@@ -1565,6 +1645,13 @@ const ApexDebugger = (() => {
                     ${r.depth > 0
                         ? `and triggered <em>itself</em> while already running (nesting depth: ${r.depth})`
                         : `in a single transaction — possible cascade loop`}
+                    ${r.type === 'flow'
+                        // C5b: "flow A updates X which re-triggers flow B" is
+                        // exactly the what-references-what question the
+                        // Dependencies tab answers.
+                        ? _xlink('dependencies', '↗ Deps',
+                            'Map which flows call or re-trigger this one in the Dependencies tab')
+                        : ''}
                   </div>`).join('')}
               </div>
             </div>
@@ -1582,6 +1669,23 @@ const ApexDebugger = (() => {
                 <span class="adbg-auto-count">${info.count}×</span>
                 ${info.faulted   ? '<span class="adbg-tag-fault">⚠ Fault</span>'  : ''}
                 ${info.recursed  ? '<span class="adbg-tag-loop">LOOP</span>'       : ''}
+                ${
+                  // C5b: jump links. Deps for every flow (call-chain map);
+                  // Flow Access only for flows that could be screen flows —
+                  // that tab manages Screen Flows only, so a RECORD-TRIGGERED
+                  // flow would just dead-end into an empty filter; Flows
+                  // (version cleaner) for faulted flows, where remediation
+                  // (inspect versions / deactivate a bad one) lives.
+                  _xlink('dependencies', '↗ Deps',
+                    "Map this flow's subflow call chain — and what re-triggers it — in the Dependencies tab")}
+                ${!info.recordTriggered
+                  ? _xlink('flow-access', '↗ Access',
+                      'See who can run this flow in the Flow Access tool (screen flows only) — list prefiltered to this name', name)
+                  : ''}
+                ${info.faulted
+                  ? _xlink('flows', '↗ Flows',
+                      'This flow faulted — inspect, back up, or clean its versions in the Flows tool (list prefiltered to this name)', name)
+                  : ''}
               </div>
               ${(info.triggeringObjects?.length || info.parents?.length) ? `
                 <div class="adbg-auto-sub">

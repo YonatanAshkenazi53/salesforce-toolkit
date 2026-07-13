@@ -42,12 +42,50 @@ const LightningPages = (() => {
     _aoStorageKey = `sftk_ao_${orgUrl.replace(/[^a-z0-9]/gi, '_')}`;
     _actionOverrideSupported = false;
     renderShell();
+    // C5c: one delegated listener for every "↗ open in X" cross-link —
+    // survives all the innerHTML re-renders inside the container. Guarded so
+    // repeated init() calls never stack duplicate listeners.
+    if (!container.dataset.lpXlinkWired) {
+      container.addEventListener('click', ev => {
+        const link = ev.target.closest?.('.lp-xlink');
+        if (link?.dataset.xtab) jumpToTab(link.dataset.xtab);
+      });
+      container.dataset.lpXlinkWired = '1';
+    }
     loadPages();
   }
 
   function updateSession(orgUrl, sid) {
     _orgUrl = orgUrl;
     _sid    = sid;
+  }
+
+  // ── C5c: cross-links into sibling Toolkit tabs ────────────
+  // Lightning Pages findings often continue in another tool (Field Cleaner,
+  // Copy Permissions, Flows, Flow Access). HOME_FEATURES actions (popup.js)
+  // both navigate AND kick off the target tab's first data load; bare
+  // navigateToTab is the fallback. typeof-guarded so the module stays inert
+  // if it ever loads outside the popup shell. No prefill — the target tabs
+  // have no handoff state (same convention as field-cleaner.js C5a).
+  function jumpToTab(tabId) {
+    try {
+      const feat = (typeof HOME_FEATURES !== 'undefined')
+        ? HOME_FEATURES.find(f => f.id === tabId) : null;
+      if (feat) { feat.action(); return; }
+      if (typeof navigateToTab === 'function') navigateToTab(tabId);
+    } catch (e) { /* a broken convenience link must never break the tab */ }
+  }
+
+  // Small link-styled "↗ open in X" button. Clicks inside the container are
+  // handled by ONE delegated listener wired in init(); links rendered in a
+  // modal (outside the container) are wired directly. Escapes everything.
+  const _LP_XLINK_CSS =
+    'background:none;border:none;padding:0;margin-left:8px;' +
+    'color:#0176d3;font:inherit;font-size:11px;font-weight:600;' +
+    'cursor:pointer;text-decoration:underline;white-space:nowrap;';
+  function xlinkHtml(tabId, label, title) {
+    return `<button type="button" class="lp-xlink" data-xtab="${esc(tabId)}"` +
+           ` title="${esc(title || '')}" style="${_LP_XLINK_CSS}">${esc(label)}</button>`;
   }
 
   // ── Shell ────────────────────────────────────────────────
@@ -858,7 +896,10 @@ const LightningPages = (() => {
           <div class="lp-detail-sub">
             <span>${esc(humanType(page.Type))}</span>
             ${page.EntityDefinitionId
-              ? `<span class="lp-obj-tag">${esc(_lpEntityName(page.EntityDefinitionId) || page.EntityDefinitionId)}</span>` : ''}
+              ? `<span class="lp-obj-tag">${esc(_lpEntityName(page.EntityDefinitionId) || page.EntityDefinitionId)}</span>` +
+                xlinkHtml('fields', '↗ Field Cleaner',
+                  'Open Field Cleaner to scan and clean fields on this same object')
+              : ''}
           </div>
         </div>
         <div class="lp-hdr-actions">
@@ -1079,6 +1120,29 @@ const LightningPages = (() => {
     }
   }
 
+  // ── C5c: embedded-flow extraction ─────────────────────────
+  // Flow components (flowruntime:interview / the App Builder "Flow"
+  // component) store the flow they launch as a componentInstanceProperty
+  // named 'flowName'. Walk the whole Metadata tree — component instances can
+  // nest inside flexiPageRegions → itemInstances → componentInstance.
+  function extractEmbeddedFlowNames(meta) {
+    const names = new Set();
+    (function walk(node) {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { node.forEach(walk); return; }
+      if (Array.isArray(node.componentInstanceProperties)) {
+        for (const p of node.componentInstanceProperties) {
+          if (p && typeof p.value === 'string' && p.value &&
+              /^flow(Api)?Name$/i.test(p.name || '')) {
+            names.add(p.value);
+          }
+        }
+      }
+      for (const v of Object.values(node)) walk(v);
+    })(meta);
+    return [...names];
+  }
+
   // ── Detail body ───────────────────────────────────────────
   function renderDetail(page, metaRes, assignments, bodyEl, recordTypes = []) {
     // Pages with ManageableState !== 'unmanaged' are standard or managed-package pages.
@@ -1127,6 +1191,24 @@ const LightningPages = (() => {
       }
     }
     html += '</div>';
+
+    // ── C5c: embedded-flow cross-links ────────────────────
+    // The page's Metadata already names the flow(s) it launches — surface
+    // them with jumps to the Flows tab (version management) and Flow Access
+    // (who can run it). No prefill — those tabs have no handoff state.
+    const embeddedFlows = extractEmbeddedFlowNames(metaRes.Metadata);
+    if (embeddedFlows.length > 0) {
+      html += '<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:2px 0 6px;font-size:11px">';
+      html += '<span style="color:var(--subtext)">⚡ Embedded flow' + (embeddedFlows.length !== 1 ? 's' : '') + ':</span>';
+      for (const fn of embeddedFlows) {
+        html += '<span class="lp-rt-tag" title="Flow API name">' + esc(fn) + '</span>';
+      }
+      html += xlinkHtml('flows', '↗ Flows',
+        'Open the Flows tab to manage versions of this flow');
+      html += xlinkHtml('flow-access', '↗ Flow Access',
+        'Open Flow Access to control which users and profiles can run this flow');
+      html += '</div>';
+    }
 
     // ── Current Assignments section ──────────────────────
     html += '<div class="lp-section-hdr">';
@@ -1419,8 +1501,12 @@ const LightningPages = (() => {
     const moreCount = users.length - 4;
     const moreBtn   = moreCount > 0
       ? `<button class="lp-chip-more-btn">+${moreCount} more</button>` : '';
+    // C5c: these chips name concrete users — one click to Copy Permissions
+    // when the fix is "give this user the same access as that one".
+    const copyLink = xlinkHtml('copy-perms', '↗ Copy Permissions',
+      'Open Copy Permissions to copy permission sets and profiles between these users');
 
-    el.innerHTML = `<div class="lp-chip-row">${chips}${moreBtn}</div>`;
+    el.innerHTML = `<div class="lp-chip-row">${chips}${moreBtn}${copyLink}</div>`;
 
     if (moreCount > 0) {
       el.querySelector('.lp-chip-more-btn').addEventListener('click', () =>
@@ -1451,11 +1537,20 @@ const LightningPages = (() => {
         <div class="lp-modal-list">${rows}</div>
       </div>
       <div class="modal-footer">
+        <button class="btn btn-secondary" id="lpUsersCopyPerms"
+          title="Open Copy Permissions to copy permission sets and profiles between these users">👥 Copy Permissions</button>
         <button class="btn btn-secondary" id="modalCancel">Close</button>
       </div>
     `);
     document.getElementById('modalCancel').addEventListener('click', () => {
       if (typeof closeModal === 'function') closeModal();
+    });
+    // C5c: the modal renders outside _container, so the delegated cross-link
+    // listener never sees this click — wire it directly. Close first so the
+    // overlay isn't left covering the Copy Permissions tab.
+    document.getElementById('lpUsersCopyPerms')?.addEventListener('click', () => {
+      if (typeof closeModal === 'function') closeModal();
+      jumpToTab('copy-perms');
     });
   }
 

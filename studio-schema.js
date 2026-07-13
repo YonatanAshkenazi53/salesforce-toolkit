@@ -12,9 +12,39 @@ let _svPan      = { x: 0, y: 0 };
 let _svPanning  = false;
 let _svPanStart = null;
 let _svDragNode = null;
+let _svLoadedAt     = null;  // ISO timestamp of the last successful graph build (this session)
+let _svGraphMetaTxt = '';    // toolbar meta line, cached so a restored graph can repaint it
+let _svSavedState   = null;  // persisted setup (org / objects / toggles) — see _SV_STATE_KEY
+
+// ── Persist view setup (U4b) ──────────────────────────────────
+// Mirrors the Readiness pattern: only the lightweight config (chosen org,
+// objects text, checkbox toggles) goes to storage — never graph data.
+const _SV_STATE_KEY = 'ds_schema_state';
+
+async function svRestoreSavedState() {
+  if (_svSavedState) return _svSavedState;
+  try {
+    const d = await chrome.storage.local.get(_SV_STATE_KEY);
+    _svSavedState = d[_SV_STATE_KEY] || null;
+  } catch (_) { _svSavedState = null; }
+  return _svSavedState;
+}
+
+function svPersistState() {
+  _svSavedState = {
+    org:         eid('svOrg')?.value || '',
+    objects:     eid('svObjects')?.value || '',
+    rels:        eid('svChkRels')?.checked ?? true,
+    flows:       eid('svChkFlows')?.checked ?? true,
+    flowActions: eid('svChkFlowActions')?.checked ?? true,
+    std:         eid('svChkStd')?.checked ?? false,
+  };
+  try { chrome.storage.local.set({ [_SV_STATE_KEY]: _svSavedState }); } catch (_) {}
+}
 
 // ── Render config form ────────────────────────────────────────
-function renderSchemaView() {
+async function renderSchemaView() {
+  const saved = await svRestoreSavedState();
   const orgs = allMapOrgs();
   const orgOptions = orgs.map(o =>
     `<option value="${esc(o.url)}">${esc(orgOptionLabel(o.url, o.label))}</option>`
@@ -66,6 +96,8 @@ function renderSchemaView() {
       <div id="svError" class="dr-error" style="display:none"></div>
     </div>
 
+    <div id="svCacheBanner" style="display:none"></div>
+
     <div id="svCanvas" class="sv-canvas" style="display:none">
       <div class="sv-toolbar">
         <button class="ds-btn ds-btn-sm" id="svFitBtn">⊞ Fit to screen</button>
@@ -90,6 +122,27 @@ function renderSchemaView() {
   eid('svLoadBtn')?.addEventListener('click', svLoad);
   eid('svFitBtn')?.addEventListener('click', svFitGraph);
   eid('svResetBtn')?.addEventListener('click', () => { _svPan = { x: 0, y: 0 }; svRenderGraph(); });
+
+  // ── Restore persisted setup + re-save on any change (U4b) ────
+  if (saved) {
+    const orgSel = eid('svOrg');
+    if (orgSel && saved.org) {
+      orgSel.value = saved.org;
+      if (orgSel.value !== saved.org) orgSel.value = '';   // org no longer known
+    }
+    const objInp0 = eid('svObjects');
+    if (objInp0 && saved.objects) objInp0.value = saved.objects;
+    const restoreChk = (id, val) => {
+      const el = eid(id);
+      if (el && typeof val === 'boolean') el.checked = val;
+    };
+    restoreChk('svChkRels',        saved.rels);
+    restoreChk('svChkFlows',       saved.flows);
+    restoreChk('svChkFlowActions', saved.flowActions);
+    restoreChk('svChkStd',         saved.std);
+  }
+  ['svOrg', 'svObjects', 'svChkRels', 'svChkFlows', 'svChkFlowActions', 'svChkStd']
+    .forEach(id => eid(id)?.addEventListener('change', svPersistState));
 
   // ── Object autocomplete ───────────────────────────────────────
   // When the user types in the Objects field, fetch all sObjects from the
@@ -175,10 +228,47 @@ function renderSchemaView() {
       if (s && !s.value && _workingPair.src) s.value = _workingPair.src;
     }
   }
+
+  // ── Re-show an already-loaded graph (U4b) ─────────────────────
+  // If graph data is still in memory from earlier this session, render it
+  // again with a "from N min ago" banner instead of resetting the user to
+  // the empty config form.
+  if (_svNodes.length) {
+    const canvas = eid('svCanvas');
+    if (canvas) canvas.style.display = '';
+    const metaEl = eid('svGraphMeta');
+    if (metaEl) metaEl.textContent = _svGraphMetaTxt;
+    svShowCacheBanner();
+    svRenderGraph();
+    if (_svSelected) svShowDetail(_svSelected);
+  }
+}
+
+// ── Cached-graph banner (U4b) ─────────────────────────────────
+function svShowCacheBanner() {
+  const el = eid('svCacheBanner');
+  if (!el) return;
+  el.style.display = '';
+  el.innerHTML = `
+    <div class="ds-op-banner ds-op-banner-info" style="margin-bottom:14px;align-items:center">
+      <span class="ds-op-banner-icon">🕸</span>
+      <div class="ds-op-banner-body">
+        <div class="ds-op-banner-title">Showing graph from ${esc(timeAgo(_svLoadedAt))}</div>
+        <div class="ds-op-banner-desc">Loaded earlier this session — org data may have changed since.</div>
+      </div>
+      <button class="ds-btn ds-btn-sm" id="svReloadBtn" style="flex-shrink:0">↻ Re-load</button>
+    </div>`;
+  eid('svReloadBtn')?.addEventListener('click', () => { svHideCacheBanner(); svLoad(); });
+}
+
+function svHideCacheBanner() {
+  const el = eid('svCacheBanner');
+  if (el) { el.style.display = 'none'; el.innerHTML = ''; }
 }
 
 // ── Load schema data ──────────────────────────────────────────
 async function svLoad() {
+  svPersistState();  // capture the exact setup being run (U4b)
   const orgId = eid('svOrg')?.value;
   if (!orgId) { svShowError('Select an org to analyze.'); return; }
 
@@ -186,6 +276,7 @@ async function svLoad() {
   if (!sess) { svShowError('Cannot connect to the org — open it in a Chrome tab first.'); return; }
 
   svHideError();
+  svHideCacheBanner();  // a fresh load supersedes the cached-graph banner
   svSetStatus('⏳ Connecting…');
 
   // Quick connectivity check — catch stale SID before batching 60 describe calls
@@ -250,7 +341,7 @@ async function svLoad() {
         svSetStatus('ℹ️ No custom objects found — showing core standard objects');
         // pre-fill the input so the user sees what was chosen
         const inp = eid('svObjects');
-        if (inp && !inp.value.trim()) inp.value = objects.join(', ');
+        if (inp && !inp.value.trim()) { inp.value = objects.join(', '); svPersistState(); }
       }
     }
   } else {
@@ -489,14 +580,16 @@ function svBuildGraph(objects, descMap, flows, flowActions, inclRels) {
   _svEdges    = edges;
   _svPan      = { x: 0, y: 0 };
   _svSelected = null;
+  _svLoadedAt = new Date().toISOString();  // for the "from N min ago" banner (U4b)
 
   const canvas = eid('svCanvas');
   if (canvas) canvas.style.display = '';
 
-  const metaEl = eid('svGraphMeta');
-  if (metaEl) metaEl.textContent =
+  _svGraphMetaTxt =
     `${nodes.length} objects · ${edges.filter(e => e.edgeType !== 'flow-action').length} relationships · ` +
     `${edges.filter(e => e.edgeType === 'flow-action').length} flow actions · ${flows.length} total flows`;
+  const metaEl = eid('svGraphMeta');
+  if (metaEl) metaEl.textContent = _svGraphMetaTxt;
 
   svRenderGraph();
 }

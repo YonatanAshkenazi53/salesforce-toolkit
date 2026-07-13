@@ -31,6 +31,16 @@ const FieldCleaner = (() => {
     _container = container;
     renderShell();
     renderSnapshotLog();   // F6: restore points survive across sessions
+    // C5a: one delegated listener for every "↗ open in X" cross-link —
+    // survives all the innerHTML re-renders. init() is already one-shot
+    // per container (popup.js _fcInitialized), but keep our own guard too.
+    if (!container.dataset.fcXlinkWired) {
+      container.addEventListener('click', ev => {
+        const link = ev.target.closest?.('.fc-xlink');
+        if (link?.dataset.xtab) jumpToTab(link.dataset.xtab);
+      });
+      container.dataset.fcXlinkWired = '1';
+    }
   }
 
   function updateSession(orgUrl, sid) {
@@ -85,6 +95,43 @@ const FieldCleaner = (() => {
     return String(str || '')
       .replace(/&/g,'&amp;').replace(/</g,'&lt;')
       .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── C5a: cross-links into sibling Toolkit tabs ─────────────
+  // Field Cleaner findings often continue in another tool (Flows,
+  // Dependencies, Lightning Pages, Copy Permissions, Flow Access).
+  // HOME_FEATURES actions (popup.js) both navigate AND kick off the target
+  // tab's first data load; bare navigateToTab is the fallback. typeof-guarded
+  // so the module stays inert if it ever loads outside the popup shell.
+  function jumpToTab(tabId) {
+    try {
+      const feat = (typeof HOME_FEATURES !== 'undefined')
+        ? HOME_FEATURES.find(f => f.id === tabId) : null;
+      if (feat) { feat.action(); return; }
+      if (typeof navigateToTab === 'function') navigateToTab(tabId);
+    } catch (e) { /* a broken convenience link must never break the tab */ }
+  }
+
+  // Small link-styled "↗ open in X" button. Clicks are handled by ONE
+  // delegated listener wired in init(), so links keep working across every
+  // innerHTML re-render. xlinkHtml escapes everything it embeds.
+  const _XLINK_CSS =
+    'background:none;border:none;padding:0;margin-left:8px;' +
+    'color:#0176d3;font:inherit;font-size:11px;font-weight:600;' +
+    'cursor:pointer;text-decoration:underline;white-space:nowrap;';
+  function xlinkHtml(tabId, label, title) {
+    return `<button type="button" class="fc-xlink" data-xtab="${esc(tabId)}"` +
+           ` title="${esc(title || '')}" style="${_XLINK_CSS}">${esc(label)}</button>`;
+  }
+  function xlinkEl(tabId, label, title) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'fc-xlink';
+    b.dataset.xtab = tabId;
+    if (title) b.title = title;
+    b.style.cssText = _XLINK_CSS;
+    b.textContent = label;
+    return b;
   }
 
   // ── Shell ──────────────────────────────────────────────────
@@ -867,7 +914,16 @@ const FieldCleaner = (() => {
             <span class="fc-group-label">${esc(cfg.label)}</span>
             <span class="fc-group-count">${items.length}</span>
           </div>
-          <div class="fc-group-note">${esc(cfg.note)}</div>
+          <div class="fc-group-note">${esc(cfg.note)}${
+            // C5a: the toolkit's own tools manage exactly these components —
+            // offer a jump instead of dead-ending into Setup.
+            type === 'Flow'
+              ? xlinkHtml('flows', '↗ Open in Flows',
+                  "Manage these flows' versions — delete stale ones, backup, restore — in the Flows tool")
+              : type === 'FlexiPage'
+                ? xlinkHtml('pages', '↗ Open in Lightning Pages',
+                    'Inspect assignments, org defaults, and profile overrides for these pages in the Lightning Pages tool')
+                : ''}</div>
           <div class="fc-group-items">
             ${items.map(d => renderItem(d, cfg.fixable, type)).join('')}
           </div>
@@ -1000,6 +1056,10 @@ const FieldCleaner = (() => {
               <button class="btn btn-sm fc-fls-strip" data-fls-id="${esc(r.Id)}" title="Remove this grant — the field disappears for these users">✂ Strip</button>
             </div>`;
           }).join('')}
+        </div>
+        <div class="fc-fls-foot" style="padding:4px 0 2px">
+          ${xlinkHtml('copy-perms', '↗ Open in Copy Permissions',
+            'Inspect or migrate these profile / permission-set assignments in the Copy Permissions tool before stripping visibility')}
         </div>
       </details>`;
     el.querySelectorAll('.fc-fls-strip').forEach(btn => {
@@ -1258,11 +1318,20 @@ const FieldCleaner = (() => {
       ? `<div class="fc-xml-panel" id="fcXml_${esc(id)}" style="display:none"></div>`
       : '';
 
+    // C5a: before trimming a flow, its full subflow picture lives in the
+    // Dependencies tab — a per-row jump turns a blind auto-fix into an
+    // informed one (no prefill: the Dependencies tab has no handoff state).
+    const depsLink = type === 'Flow'
+      ? xlinkHtml('dependencies', '↗ Deps',
+          "Map this flow's subflow call chain in the Dependencies tab before trimming it")
+      : '';
+
     if (fixable) {
       return `
         <div class="fc-item" id="fcItem_${esc(id)}">
           <span class="fc-item-name">${name}</span>
           <span class="fc-item-btns">
+            ${depsLink}
             ${inspBtn}
             <button class="btn btn-secondary btn-sm fc-fix-btn"
                     data-id="${esc(id)}" data-name="${name}" data-type="${esc(type)}">
@@ -1289,20 +1358,41 @@ const FieldCleaner = (() => {
     const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
     try {
       let label = cfg.doneLabel || '✅ Done';
+      let doneLinks = '';
       if (type === 'Flow') {
         const purge = await fixFlow(componentId, componentName);
         if (purge?.purged)        label += ` · ${purge.purged} old version(s) purged`;
         if (purge?.stillBlocking) label += ` · ⚠ ${purge.stillBlocking} old version(s) couldn't be deleted — may still block the field delete`;
+        doneLinks = _flowDoneLinks(purge);
       }
       if (type === 'Layout')    await fixLayout(componentId, componentName);
       if (type === 'FlexiPage') await fixFlexiPage(componentId, componentName);
-      markFixed(componentId, label);
+      markFixed(componentId, label, doneLinks);
     } catch (e) {
       if (btn) { btn.disabled = false; btn.textContent = '✂ Remove'; }
       // Label the open-link button based on which builder we're sending them to.
       const linkLabel = type === 'Flow' ? '↗ Open in Flow Builder' : '↗ Open in Setup';
-      appendInlineError(componentId, e.message, e.setupUrl, linkLabel);
+      // C5a: FlexiPage failures dead-end into manual App Builder work — the
+      // toolkit's own Lightning Pages tool operates on these exact pages.
+      const crossTab = type === 'FlexiPage'
+        ? { tab: 'pages', label: '↗ Open in Lightning Pages',
+            title: 'Open the Lightning Pages tool — it manages these record pages' }
+        : null;
+      appendInlineError(componentId, e.message, e.setupUrl, linkLabel, crossTab);
     }
+  }
+
+  // C5a: follow-up links for a completed flow fix. The fix just ACTIVATED a
+  // new flow version, so verifying who can run it is a Flow Access job; if
+  // the old-version purge left stragglers, deleting those is a Flows job.
+  function _flowDoneLinks(purge) {
+    let links = xlinkHtml('flow-access', '↗ Check access',
+      'A new flow version was activated — verify who can run it in the Flow Access tool');
+    if (purge?.stillBlocking) {
+      links += xlinkHtml('flows', '↗ Open in Flows',
+        'Finish deleting the stale flow versions in the Flows tool');
+    }
+    return links;
   }
 
   async function fixAll(type, items, fieldId) {
@@ -1312,21 +1402,23 @@ const FieldCleaner = (() => {
     }
   }
 
-  function markFixed(componentId, label = '✅ Done') {
+  // extraLinksHtml (C5a) — optional pre-escaped xlinkHtml() follow-up links
+  // rendered after the done-label (e.g. "↗ Check access" after a flow fix).
+  function markFixed(componentId, label = '✅ Done', extraLinksHtml = '') {
     const item = eid(`fcItem_${componentId}`);
     if (!item) return;
     const name = item.querySelector('.fc-item-name')?.textContent || '';
     item.classList.add('fc-item-fixed');
     item.innerHTML = `
       <span class="fc-item-name">${esc(name)}</span>
-      <span class="fc-item-ok">${esc(label)}</span>`;
+      <span class="fc-item-ok">${esc(label)}${extraLinksHtml}</span>`;
     // Close any open XML inspector for this item
     const xmlPanel = eid(`fcXml_${componentId}`);
     if (xmlPanel) xmlPanel.style.display = 'none';
     checkEnableDelete();
   }
 
-  function appendInlineError(componentId, msg, setupUrl, linkLabel) {
+  function appendInlineError(componentId, msg, setupUrl, linkLabel, crossTab) {
     const item = eid(`fcItem_${componentId}`);
     if (!item) return;
     const err = document.createElement('div');
@@ -1346,6 +1438,9 @@ const FieldCleaner = (() => {
         'background:#0176d3;color:#fff;font-weight:600;font-size:11px;text-decoration:none;';
       err.appendChild(btn);
     }
+    // C5a: optional in-toolkit follow-up ({ tab, label, title }) — jumps to
+    // the sibling tool that can finish the job the auto-fix couldn't.
+    if (crossTab?.tab) err.appendChild(xlinkEl(crossTab.tab, crossTab.label, crossTab.title));
     item.appendChild(err);
   }
 
@@ -2664,7 +2759,7 @@ const FieldCleaner = (() => {
               let label = '✅ Done';
               if (purge?.purged)        label += ` · ${purge.purged} old version(s) purged`;
               if (purge?.stillBlocking) label += ` · ⚠ ${purge.stillBlocking} old version(s) couldn't be deleted — may still block the field delete`;
-              markFixed(componentId, label);
+              markFixed(componentId, label, _flowDoneLinks(purge));
             }
           } catch (e) {
             selBtn.disabled = false; syncCount();

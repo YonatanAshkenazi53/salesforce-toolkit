@@ -87,9 +87,9 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
 - [x] **C4. Shared destructive-confirm modal** — one component: names every item, states
   reversibility (Recycle Bin vs permanent), checkbox for permanent ops, undo path linked in
   the success toast (e.g. Flow Restore). Adopt in flow delete, version purge, field delete.
-- [ ] **C5. Cross-links between tools** — Field Cleaner flow-dependency → Flow Access;
+- [x] **C5. Cross-links between tools** — Field Cleaner flow-dependency → Flow Access;
   Apex Debugger user → Copy Permissions; "open in X" affordances where output feeds input.
-- [ ] **C6. Popup Ctrl+K palette + home grid descriptions** — reuse the Studio palette code;
+- [x] **C6. Popup Ctrl+K palette + home grid descriptions** — reuse the Studio palette code;
   one-line descriptions under each tool on the home grid.
 - [x] **C7. Re-run the popup UX deep audit** (original was cut off) — workflow over popup
   modules; fold findings into C3–C6 or file here.
@@ -107,14 +107,14 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
   (UI strings only — do NOT rename functions/state; keep diff reviewable).
 - [ ] **U3. Get-started checklist** — dismissible, computed from real state: connect two orgs
   → compare → create deployment → dry run → run; each step deep-links and self-checks.
-- [ ] **U4. Persist Readiness/Schema view state** — mirror the `_orgCompareState` pattern;
+- [x] **U4. Persist Readiness/Schema view state** — mirror the `_orgCompareState` pattern;
   persist lightweight setup (org choices, toggles) to storage; "from N min ago — Re-run"
   banner for cached results.
 - [ ] **U5. Sync status strip on Connected Orgs** — aggregate fresh `lastScan`s into per-pair
   tiles ("Prod → UAT · 12 missing · 3 changed · 2h ago") linking into Reconcile. No new API calls.
 - [ ] **U6. Hash routing** — `#/view/:arg` routes; central `navigate()` replaces the sidebar-
   highlight loops; back/forward/F5/deep-links work. (Respect the classic-script load-order rule.)
-- [ ] **U7. Org Compare: summary banner + CSV export + history entry** — headline strip,
+- [x] **U7. Org Compare: summary banner + CSV export + history entry** — headline strip,
   client-side CSV download, `{kind:'compare'}` history entries.
 
 ## Phase A — Architecture completion
