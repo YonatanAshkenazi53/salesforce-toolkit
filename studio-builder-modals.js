@@ -787,7 +787,7 @@ async function openRecordPickerModal(pathStr) {
           <div class="ds-pick-diff-legend">
             Live diff (${esc(timeAgo(liveScan.runAt))}):
             <span class="ds-pick-leg ds-diff-missing">🔴 Missing in target</span>
-            <span class="ds-pick-leg ds-diff-drift">🟡 Drift</span>
+            <span class="ds-pick-leg ds-diff-drift">🟡 Changed</span>
             <span class="ds-pick-leg ds-diff-sync">🟢 In sync</span>
           </div>` : ''}
 
@@ -813,7 +813,7 @@ async function openRecordPickerModal(pathStr) {
                     const dTip = dFields.length
                       ? `Differs at last scan: ${dFields.join(', ')} — click for field-by-field comparison`
                       : 'Click to see field-by-field comparison';
-                    badgeHtml = `<span class="ds-pick-state-badge ds-diff-drift ds-pick-drift-clickable" data-drift-id="${esc(r.Id)}" title="${esc(dTip)}">🟡 drift ▸</span>`;
+                    badgeHtml = `<span class="ds-pick-state-badge ds-diff-drift ds-pick-drift-clickable" data-drift-id="${esc(r.Id)}" title="${esc(dTip)}">🟡 changed ▸</span>`;
                   } else if (idsInSync.has(r.Id)) {
                     rowCls = ' ds-pick-row-deployed';
                     badgeHtml = '<span class="ds-pick-state-badge ds-diff-sync" title="Present in target and all compare fields match — no action needed">🟢 in sync</span>';
