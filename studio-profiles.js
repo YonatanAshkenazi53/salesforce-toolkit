@@ -468,6 +468,9 @@ function profileCard(p) {
       <div class="ds-profile-card-actions">
         <button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="runProfile" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs in Edit first"'}>▶ Run</button>
+        <button class="ds-btn ds-btn-sm" data-dsaction="openFanOut" data-arg="${p.id}"
+          ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
+          title="Run this deployment against SEVERAL target orgs in one go — one History entry per org (M1)">🌐 Multi-org…</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="refreshState" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
           title="Query both orgs to refresh what's missing / changed / in sync.">🔄 Refresh state</button>
