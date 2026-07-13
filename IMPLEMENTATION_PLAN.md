@@ -105,14 +105,14 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
 - [ ] **U2. Jargon rename (complete it)** — one noun set: Deployment / Run / Sync check;
   "drift" → "changed"; "extras" → "only in target". String-level sweep across studio files
   (UI strings only — do NOT rename functions/state; keep diff reviewable).
-- [ ] **U3. Get-started checklist** — dismissible, computed from real state: connect two orgs
+- [x] **U3. Get-started checklist** — dismissible, computed from real state: connect two orgs
   → compare → create deployment → dry run → run; each step deep-links and self-checks.
 - [x] **U4. Persist Readiness/Schema view state** — mirror the `_orgCompareState` pattern;
   persist lightweight setup (org choices, toggles) to storage; "from N min ago — Re-run"
   banner for cached results.
-- [ ] **U5. Sync status strip on Connected Orgs** — aggregate fresh `lastScan`s into per-pair
+- [x] **U5. Sync status strip on Connected Orgs** — aggregate fresh `lastScan`s into per-pair
   tiles ("Prod → UAT · 12 missing · 3 changed · 2h ago") linking into Reconcile. No new API calls.
-- [ ] **U6. Hash routing** — `#/view/:arg` routes; central `navigate()` replaces the sidebar-
+- [x] **U6. Hash routing** — `#/view/:arg` routes; central `navigate()` replaces the sidebar-
   highlight loops; back/forward/F5/deep-links work. (Respect the classic-script load-order rule.)
 - [x] **U7. Org Compare: summary banner + CSV export + history entry** — headline strip,
   client-side CSV download, `{kind:'compare'}` history entries.

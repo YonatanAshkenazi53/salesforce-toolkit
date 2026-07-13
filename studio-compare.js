@@ -53,7 +53,7 @@ async function renderOrgCompare() {
     <div class="ds-view-header">
       <div class="ds-view-title-wrap">
         <h2 class="ds-view-title">🔍 Org Compare</h2>
-        <div class="ds-view-subtitle">Diff record counts across many objects between two orgs — find drift at a glance</div>
+        <div class="ds-view-subtitle">Diff record counts across many objects between two orgs — find what changed at a glance</div>
       </div>
     </div>
 

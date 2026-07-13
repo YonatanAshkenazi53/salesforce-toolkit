@@ -464,14 +464,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   // memory for places that haven't fully migrated yet, but they're set
   // once from the initial session detection and never user-switchable.
 
-  // Wire nav
+  // Wire nav — routes through the hash (U6) so Back/Forward/refresh work and
+  // views are linkable. Clicking a tab just sets location.hash; the single
+  // hashchange handler below does the actual render.
   document.querySelectorAll('.ds-nav-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      _currentView = btn.dataset.view;
-      renderView(_currentView);
-    });
+    btn.addEventListener('click', () => navigateToView(btn.dataset.view));
+  });
+
+  // U6: hash routing. #/<view> is the single source of truth for which top-
+  // level view is showing. Sub-views opened via functions (openReconcile,
+  // openProfileBuilder…) don't participate — they're transient and set their
+  // own _currentView; the hash still reflects the last real nav so Back
+  // returns somewhere sane.
+  window.addEventListener('hashchange', () => {
+    const v = _viewFromHash();
+    if (v && v !== _currentView) _applyView(v);
   });
 
   // ── Global action delegate — replaces all inline onclick= (blocked by CSP) ──
@@ -500,16 +507,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'saveEphemeralProfile':  window.saveEphemeralProfile?.(); break;
       case 'showSecurity':          showSecurityModal(); break;
       case 'switchView': {
-        // Generic data-dsaction view switcher (no current emitters — kept
-        // as the supported way for injected HTML to navigate between views)
-        const navBtn = document.querySelector(`.ds-nav-btn[data-view="${arg}"]`);
-        if (navBtn) { navBtn.click(); }
-        else if (arg) {
-          document.querySelectorAll('.ds-nav-btn').forEach(b =>
-            b.classList.toggle('active', b.dataset.view === arg));
-          _currentView = arg;
-          renderView(arg);
-        }
+        // Generic data-dsaction view switcher — routes through the hash (U6).
+        if (arg) navigateToView(arg);
         break;
       }
     }
@@ -537,12 +536,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   eid('dsBackToToolkit')?.addEventListener('click', () => openToolkitPopout(null));
 
   // Brand name = home button → Connected Orgs (the landing view).
-  document.querySelector('.ds-brand')?.addEventListener('click', () => {
-    document.querySelectorAll('.ds-nav-btn').forEach(b =>
-      b.classList.toggle('active', b.dataset.view === 'orgs'));
-    _currentView = 'orgs';
-    renderView('orgs');
-  });
+  document.querySelector('.ds-brand')?.addEventListener('click', () => navigateToView('orgs'));
 
   // First-run: if no orgs known, show welcome instead of an empty list.
   const isFirstRun = !_orgUrl && !_allSessions.length
@@ -550,7 +544,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (isFirstRun) {
     renderWelcome();
   } else {
-    renderView('orgs');
+    // U6: honor a deep-link hash (#/compare etc.) on load; else land on orgs.
+    const hashView = _viewFromHash();
+    const initView = hashView || 'orgs';
+    _applyView(initView);
+    // Stamp the hash so refresh/Back are stable — replaceState doesn't fire
+    // hashchange, so no double render.
+    if (location.hash !== `#/${initView}`) {
+      try { history.replaceState(null, '', `#/${initView}`); } catch (_) { location.hash = `#/${initView}`; }
+    }
   }
 
   // First-run guided tour — shown once, ever
@@ -796,10 +798,7 @@ function openCommandPalette() {
 
   function navigateTo(view) {
     closePalette();
-    document.querySelectorAll('.ds-nav-btn').forEach(b =>
-      b.classList.toggle('active', b.dataset.view === view));
-    _currentView = view;
-    renderView(view);
+    navigateToView(view);   // U6: through the hash so Back/Forward work
   }
 
   function closePalette() {
@@ -967,6 +966,8 @@ function renderWelcome() {
         </div>
       </div>
 
+      ${_getStartedHtml()}
+
       <div class="ds-welcome-grid">
         <div class="ds-welcome-card" data-gotoview="orgs">
           <div class="ds-welcome-card-icon">🔌</div>
@@ -1006,19 +1007,90 @@ function renderWelcome() {
     </div>
   `);
 
-  // Wire card navigation
+  // Wire card navigation (U6: through the hash)
   document.querySelectorAll('[data-gotoview]').forEach(card => {
-    card.addEventListener('click', () => {
-      const view = card.dataset.gotoview;
-      document.querySelectorAll('.ds-nav-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.view === view);
-      });
-      _currentView = view;
-      renderView(view);
-    });
+    card.addEventListener('click', () => navigateToView(card.dataset.gotoview));
   });
 
   eid('dsWelcomeSecBtn')?.addEventListener('click', showSecurityModal);
+
+  // U3: get-started checklist — each step deep-links; dismiss hides it forever.
+  eid('dsGsDismiss')?.addEventListener('click', async () => {
+    _settings.getStartedDone = true;
+    try { await storageSaveSettings(); } catch (_) {}
+    eid('dsGetStarted')?.remove();
+  });
+  document.querySelectorAll('[data-gs-view]').forEach(el =>
+    el.addEventListener('click', () => navigateToView(el.dataset.gsView)));
+}
+
+// U3: compute the onboarding checklist from REAL state — each step checks
+// itself off as the user does the underlying thing. Hidden once every step is
+// done or the user dismisses it (persisted in _settings.getStartedDone).
+function _getStartedHtml() {
+  if (_settings.getStartedDone) return '';
+  const orgCount   = allMapOrgs().length;
+  const hasProfile = _profiles.length > 0;
+  const hasScan    = _profiles.some(p => p.lastScan && (p.lastScan.buckets || p.lastScan.runAt));
+  const hasRun     = _history.length > 0;
+  const hasCompare = _history.some(h => h.kind === 'compare');
+
+  const steps = [
+    { done: orgCount >= 2, view: 'orgs',      label: 'Connect two orgs',       hint: orgCount ? `${orgCount} open` : 'Open two Salesforce tabs' },
+    { done: hasCompare,    view: 'compare',   label: 'Compare them',           hint: 'See what differs across objects' },
+    { done: hasProfile,    view: 'profiles',  label: 'Create a deployment',    hint: 'Pick objects, orgs & field mapping' },
+    { done: hasRun,        view: 'profiles',  label: 'Dry-run, then run it',   hint: 'Validate before writing anything' },
+  ];
+  const doneN = steps.filter(s => s.done).length;
+  if (doneN === steps.length) return '';   // fully onboarded — retire the card
+
+  return `
+    <div class="ds-get-started" id="dsGetStarted">
+      <div class="ds-gs-head">
+        <span class="ds-gs-title">🚀 Get started <span class="ds-gs-progress">${doneN} of ${steps.length}</span></span>
+        <button class="ds-gs-dismiss" id="dsGsDismiss" title="Hide this checklist">✕</button>
+      </div>
+      <div class="ds-gs-steps">
+        ${steps.map((s, i) => `
+          <div class="ds-gs-step${s.done ? ' ds-gs-done' : ''}" data-gs-view="${s.view}" title="Go to ${esc(s.label)}">
+            <span class="ds-gs-check">${s.done ? '✅' : (i + 1)}</span>
+            <span class="ds-gs-step-body">
+              <span class="ds-gs-step-label">${esc(s.label)}</span>
+              <span class="ds-gs-step-hint">${esc(s.hint)}</span>
+            </span>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+// ── U6: hash routing helpers ────────────────────────────────────
+// The set of top-level views that own a sidebar tab (transient sub-views like
+// reconcile/builder are NOT hash-routed).
+const DS_HASH_VIEWS = new Set([
+  'orgs', 'profiles', 'picklists', 'history', 'compare', 'readiness', 'schema', 'fields', 'transfer',
+]);
+
+function _viewFromHash() {
+  const m = /^#\/([a-z-]+)/.exec(location.hash || '');
+  return m && DS_HASH_VIEWS.has(m[1]) ? m[1] : null;
+}
+
+// Apply a view without touching the hash (used by the hashchange handler and
+// initial load). Highlights the tab and renders.
+function _applyView(view) {
+  document.querySelectorAll('.ds-nav-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === view));
+  _currentView = view;
+  renderView(view);
+}
+
+// Nav entry point: set the hash (which fires hashchange → _applyView). If the
+// hash is already this view (e.g. re-click), render directly so it still works.
+function navigateToView(view) {
+  if (!view) return;
+  const target = `#/${view}`;
+  if (location.hash === target) _applyView(view);
+  else location.hash = target;   // hashchange handler renders
 }
 
 function renderView(view) {
@@ -1044,6 +1116,44 @@ function renderView(view) {
     case 'compare':   renderOrgCompare(); break;
     case 'picklists': renderPicklists();  break;
   }
+}
+
+// U5: sync-status strip — answers "is anything out of sync?" right on the
+// landing page, aggregating deployments that already have a fresh scan. Zero
+// new API calls: reads profile.lastScan buckets. Each tile → Reconcile.
+function _syncStatusStripHtml() {
+  const tiles = [];
+  for (const p of _profiles) {
+    const s = p.lastScan;
+    if (!s || !s.runAt) continue;
+    const missing = (s.missingInTarget || []).length;
+    const changed = (s.changed || []).length;
+    const extra   = (s.onlyInTarget || []).length;
+    const drift   = missing + changed + extra;
+    tiles.push({ id: p.id, name: p.name, missing, changed, extra, drift,
+      src: p.sourceOrg, tgt: p.targetOrg, at: s.runAt });
+  }
+  if (!tiles.length) return '';
+  tiles.sort((a, b) => b.drift - a.drift);
+  return `
+    <div class="ds-sync-strip">
+      <div class="ds-sync-strip-title">Sync status <span class="ds-sync-strip-sub">from your last scans</span></div>
+      <div class="ds-sync-tiles">
+        ${tiles.slice(0, 6).map(t => `
+          <div class="ds-sync-tile${t.drift === 0 ? ' ds-sync-ok' : ''}" data-sync-profile="${esc(t.id)}"
+               title="Open Reconcile for ${esc(t.name)}">
+            <div class="ds-sync-tile-name">${esc(t.name)}</div>
+            <div class="ds-sync-tile-pair">${esc(orgLabel(t.src))} → ${esc(orgLabel(t.tgt))}</div>
+            <div class="ds-sync-tile-stats">
+              ${t.drift === 0 ? '<span class="ds-sync-clean">✓ in sync</span>'
+                : `${t.missing ? `<span class="ds-sync-m">${t.missing} missing</span>` : ''}
+                   ${t.changed ? `<span class="ds-sync-c">${t.changed} changed</span>` : ''}
+                   ${t.extra ? `<span class="ds-sync-e">${t.extra} only in target</span>` : ''}`}
+            </div>
+            <div class="ds-sync-tile-age">${t.at ? esc(timeAgo(t.at)) : ''}</div>
+          </div>`).join('')}
+      </div>
+    </div>`;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1116,6 +1226,8 @@ function renderOrgsPanel() {
       your existing browser session is used securely. Transfers and reconcile run against orgs that are open in a tab.
     </div>
 
+    ${_syncStatusStripHtml()}
+
     ${!allOrgUrls.length ? `
       <div class="ds-empty-page">
         <div class="ds-empty-icon">${window.sftkCatSvg('sleep', 72)}</div>
@@ -1126,6 +1238,10 @@ function renderOrgsPanel() {
         ${rowsHtml}
       </div>`}
   `);
+
+  // U5: sync tiles deep-link into Reconcile for that profile.
+  eid('dsMain')?.querySelectorAll('[data-sync-profile]').forEach(t =>
+    t.addEventListener('click', () => window.openReconcile?.(t.dataset.syncProfile)));
 
   eid('dsRefreshOrgsBtn')?.addEventListener('click', async () => {
     const btn = eid('dsRefreshOrgsBtn');
