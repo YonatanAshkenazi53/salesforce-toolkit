@@ -307,6 +307,25 @@ async function runDiffScan(profile, node = null, scope = null) {
     ? tgtLkp[tgtParentField] : null;
   const linkTrackable = !!(linkInfoSrc && linkInfoTgt);
 
+  // R2 — master-detail guardrail (child scans): detect whether the parent
+  // link field is master-detail on the SOURCE describe. relationshipOrder is
+  // non-null ONLY for master-detail fields (0 or 1, per the REST describe);
+  // cascadeDelete is a belt-and-braces secondary signal. MD links are
+  // required at insert (child-first is impossible) and can be re-parented
+  // only when the field is reparentable (describe exposes that as
+  // updateable=true on the detail-side field). Any failure here degrades to
+  // v1 behavior: treated as a plain lookup.
+  let linkMasterDetail = false, linkUpdateable = true;
+  if (scope?.parentField) {
+    try {
+      const lf = (srcDescFull?.fields || []).find(f => f.name === scope.parentField);
+      if (lf) {
+        linkMasterDetail = lf.relationshipOrder != null || lf.cascadeDelete === true;
+        linkUpdateable   = lf.updateable !== false;
+      }
+    } catch (_) { linkMasterDetail = false; linkUpdateable = true; }
+  }
+
   // Build two compare plans. `enhanced` resolves references via SOQL dot-paths
   // (Account.Name); `plain` drops references entirely (the legacy "ids never
   // match" behavior). Each plan entry knows how to SELECT and EXTRACT its value.
@@ -415,6 +434,58 @@ async function runDiffScan(profile, node = null, scope = null) {
   srcCompare = comparePlan.map(p => p.srcField);
   tgtCompare = comparePlan.map(p => p.tgtField);
 
+  // R1 — match-key collision detection (child scans only). When two source
+  // (or two target) records share the same match-key value, matching is
+  // ambiguous: an overwrite/relink/delete could hit the WRONG record. Those
+  // rows are excluded from every actionable bucket (they simply don't enter
+  // the key indexes below) and counted so the UI can say why. A key that
+  // collides on EITHER side is excluded from BOTH sides — half-matched pairs
+  // would be just as misleading. Root scans are untouched (v1 behavior).
+  let _dupKeys = new Set();
+  let _keyCollisions = null;
+  if (scope) {
+    try {
+      const countKeys = (recs, fld) => {
+        const m = new Map();
+        for (const r of recs) {
+          const k = r[fld];
+          if (k != null && k !== '') { const s = String(k); m.set(s, (m.get(s) || 0) + 1); }
+        }
+        return m;
+      };
+      const sCnt = countKeys(srcRes.records || [], srcMatchField);
+      const tCnt = countKeys(tgtRes.records || [], tgtMatchField);
+      for (const [k, n] of sCnt) if (n > 1) _dupKeys.add(k);
+      for (const [k, n] of tCnt) if (n > 1) _dupKeys.add(k);
+      if (_dupKeys.size) {
+        let rows = 0;
+        for (const [k, n] of sCnt) if (_dupKeys.has(k)) rows += n;
+        for (const [k, n] of tCnt) if (_dupKeys.has(k)) rows += n;
+        _keyCollisions = { rows, keys: [..._dupKeys].slice(0, 50) };
+      }
+    } catch (_) { _dupKeys = new Set(); _keyCollisions = null; }
+  }
+
+  // R3 — orphan detection (child scans only). The scoped target query can
+  // only see children whose link field points at a tracked parent — children
+  // with a NULL link (e.g. created by a prior partial child-first run whose
+  // reconnect step failed) are invisible to it. Query them separately and
+  // surface them as tagged "possible orphan" extras: they stay OUT of the
+  // key match-up (missing/changed/identical are untouched) and get excluded
+  // from bulk delete by default in the UI. Best-effort: any error here just
+  // means no orphan rows (v1 behavior).
+  let _orphanRecs = [];
+  if (scope && tgtParentField) {
+    try {
+      const nullClause = `${tgtParentField} = null`;
+      const w = where ? `(${where}) AND ${nullClause}` : nullClause;
+      const q = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false,
+        _suppressError: true,
+        query: `SELECT ${fieldList(comparePlan, 'tgt')} FROM ${objType} WHERE ${w} LIMIT 2000` });
+      if (q && !q.error) _orphanRecs = (q.records || []).slice(0, 2000);
+    } catch (_) { _orphanRecs = []; }
+  }
+
   // Index each side by its own matchField — KEYS are the values themselves,
   // which match across orgs even when the field names that hold them differ
   // (Name="Andy Young" on source, Full_Name__c="Andy Young" on target both
@@ -423,12 +494,16 @@ async function runDiffScan(profile, node = null, scope = null) {
   const srcByKey = new Map();
   for (const r of (srcRes.records || [])) {
     const k = r[srcMatchField];
-    if (k != null && k !== '') srcByKey.set(String(k), r);
+    if (k == null || k === '') continue;
+    if (scope && _dupKeys.has(String(k))) continue;   // R1 — ambiguous key, excluded
+    srcByKey.set(String(k), r);
   }
   const tgtByKey = new Map();
   for (const r of (tgtRes.records || [])) {
     const k = r[tgtMatchField];
-    if (k != null && k !== '') tgtByKey.set(String(k), r);
+    if (k == null || k === '') continue;
+    if (scope && _dupKeys.has(String(k))) continue;   // R1 — ambiguous key, excluded
+    tgtByKey.set(String(k), r);
   }
 
   const missingInTarget = []; // present in source, absent in target → "deploy"
@@ -479,6 +554,22 @@ async function runDiffScan(profile, node = null, scope = null) {
   for (const [k, tr] of tgtByKey) {
     if (!srcByKey.has(k)) onlyInTarget.push({ matchKey: k, targetId: tr.Id });
   }
+  // R3 — append the NULL-link target rows as tagged "possible orphan"
+  // extras. They never joined the key match-up above, so every other bucket
+  // is exactly what v1 produced.
+  let orphanCount = 0;
+  if (_orphanRecs.length) {
+    try {
+      const seenTgt = new Set((tgtRes.records || []).map(r => r.Id));
+      for (const tr of _orphanRecs) {
+        if (!tr?.Id || seenTgt.has(tr.Id)) continue;
+        seenTgt.add(tr.Id);
+        const k = String(tr[tgtMatchField] ?? '');
+        onlyInTarget.push({ matchKey: k || '(no key)', targetId: tr.Id, orphan: true });
+        orphanCount++;
+      }
+    } catch (_) { /* degrade — orphans just don't show */ }
+  }
 
   return {
     runAt:         new Date().toISOString(),
@@ -516,7 +607,14 @@ async function runDiffScan(profile, node = null, scope = null) {
       scoped:        true,
       parentField:   scope.parentField,
       linkTrackable,
-      linkMismatch:  linkMismatch.slice(0, 2000)
+      linkMismatch:  linkMismatch.slice(0, 2000),
+      // R2 — master-detail flags for the parent link field (source describe).
+      linkMasterDetail,
+      linkUpdateable,
+      // R3 — how many NULL-link "possible orphan" rows were appended above.
+      ...(orphanCount ? { orphanCount } : {}),
+      // R1 — rows excluded because their match key is duplicated on a side.
+      ...(_keyCollisions ? { keyCollisions: _keyCollisions } : {})
     } : {})
   };
 }
@@ -533,15 +631,35 @@ async function scanReconcileChild(profile, pathKey) {
   const root = profile.lastScan;
   if (!root || root.status !== 'success') return { error: 'run the root scan first (🔄 Refresh state)' };
 
+  // R5 — depth-aware scoping. Direct children ('0') scope by the ROOT scan's
+  // ids (v1, unchanged). Grandchildren ('0.1') scope by their PARENT child
+  // scan's ids — which therefore must exist and be fresh. Deeper nesting is
+  // out of scope for v2.
+  const segs = String(pathKey).split('.');
+  if (segs.length > 2) {
+    return { error: 'reconcile scans go two levels deep (children + grandchildren) in v2 — deeper nodes aren\'t supported yet' };
+  }
+  let scanBasis = root;   // whose buckets provide the parent ids
+  if (segs.length === 2) {
+    const parentKey = segs.slice(0, -1).join('.');
+    const ps = root.children?.[parentKey];
+    if (!ps || ps.status !== 'success' || ps.rootRunAt !== root.runAt) {
+      const pNode = getNodeByPath(profile.tree, parentKey);
+      const pObj  = pNode?.objectType || pNode?.childSObject || 'parent';
+      return { error: `scan the parent first — this scan is scoped to the ${pObj} child scan's results (🔎 Scan on the ${pObj} section above)` };
+    }
+    scanBasis = ps;
+  }
+
   const srcParentIds = [...new Set([
-    ...(root.missingInTarget || []).map(r => r.sourceId),
-    ...(root.changed         || []).map(r => r.sourceId),
-    ...(root.identical       || []).map(r => r.sourceId)
+    ...(scanBasis.missingInTarget || []).map(r => r.sourceId),
+    ...(scanBasis.changed         || []).map(r => r.sourceId),
+    ...(scanBasis.identical       || []).map(r => r.sourceId)
   ].filter(Boolean))];
   const tgtParentIds = [...new Set([
-    ...(root.changed      || []).map(r => r.targetId),
-    ...(root.identical    || []).map(r => r.targetId),
-    ...(root.onlyInTarget || []).map(r => r.targetId)
+    ...(scanBasis.changed      || []).map(r => r.targetId),
+    ...(scanBasis.identical    || []).map(r => r.targetId),
+    ...(scanBasis.onlyInTarget || []).map(r => r.targetId)
   ].filter(Boolean))];
 
   const res = await runDiffScan(profile, node, {
