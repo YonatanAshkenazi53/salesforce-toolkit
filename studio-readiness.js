@@ -2,7 +2,17 @@
 // ════════════════════════════════════════════════════════════════
 // DEPLOY READINESS — pre-transfer target-org checks
 // ════════════════════════════════════════════════════════════════
-function renderReadiness() {
+async function renderReadiness() {
+  // U4a: restore the persisted lightweight setup (orgs, object selection,
+  // check toggles) once per session. Results never go to storage.
+  if (!_drSetupLoaded) {
+    try {
+      const d = await chrome.storage.local.get(DR_STATE_KEY);
+      _drSavedSetup = d[DR_STATE_KEY] || null;
+    } catch (_) { _drSavedSetup = null; }
+    _drSetupLoaded = true;
+  }
+
   const orgs = allMapOrgs();
   const orgOptions = orgs.map(o =>
     `<option value="${esc(o.url)}">${esc(orgOptionLabel(o.url, o.label))}</option>`
@@ -74,19 +84,40 @@ function renderReadiness() {
   // and lazily when the panel is first opened.
   eid('drSrcOrg')?.addEventListener('change', () => {
     _drObjState = { srcId: null, objects: null, selected: new Set() };
+    drSaveSetup();
     drRefreshObjectList();
   });
+  eid('drTgtOrg')?.addEventListener('change', drSaveSetup);
   eid('drObjectsPanel')?.addEventListener('toggle', e => {
     if (e.target.open) drRefreshObjectList();
   });
+  ['drChkFields', 'drChkPicklists', 'drChkRecordTypes', 'drChkValidation', 'drChkDupRules']
+    .forEach(id => eid(id)?.addEventListener('change', drSaveSetup));
 
-  // Default both selects to the working pair (option values are org URLs).
+  // Default both selects: persisted setup first, then the working pair
+  // (option values are org URLs; assigning an unknown URL leaves '' so the
+  // fallback still applies).
   {
     const s = eid('drSrcOrg'), t = eid('drTgtOrg');
-    if (s && !s.value && _workingPair.src) s.value = _workingPair.src;
-    if (t && !t.value && _workingPair.tgt) t.value = _workingPair.tgt;
+    if (s && !s.value && _drSavedSetup?.src) s.value = _drSavedSetup.src;
+    if (s && !s.value && _workingPair.src)   s.value = _workingPair.src;
+    if (t && !t.value && _drSavedSetup?.tgt) t.value = _drSavedSetup.tgt;
+    if (t && !t.value && _workingPair.tgt)   t.value = _workingPair.tgt;
+    if (_drSavedSetup?.checks) {
+      const c = _drSavedSetup.checks;
+      const setChk = (id, v) => { const el = eid(id); if (el && typeof v === 'boolean') el.checked = v; };
+      setChk('drChkFields',      c.fields);
+      setChk('drChkPicklists',   c.picklists);
+      setChk('drChkRecordTypes', c.recordTypes);
+      setChk('drChkValidation',  c.validation);
+      setChk('drChkDupRules',    c.dupRules);
+    }
     if (s?.value) drRefreshObjectList();
   }
+
+  // U4a: results from a previous run this session are still in memory —
+  // re-show them with a "from N ago" banner instead of a blank view.
+  drRestoreCachedResults();
 }
 
 // ── Deploy Readiness object multi-select ───────────────────────
@@ -94,6 +125,55 @@ function renderReadiness() {
 // pre-check all CUSTOM objects — matching the old "blank = auto-detect
 // customs" behaviour, but now visible and editable instead of implicit.
 let _drObjState = { srcId: null, objects: null, selected: new Set() };
+
+// ── U4a: view-state persistence ────────────────────────────────
+// Only the lightweight SETUP (orgs, object selection, check toggles) is
+// persisted to chrome.storage.local. RESULTS stay in module memory so a
+// view switch this session re-shows them, but a reload starts clean.
+const DR_STATE_KEY  = 'ds_readiness_state';
+let _drSavedSetup   = null;   // last persisted setup (restored on first render)
+let _drSetupLoaded  = false;  // storage read once per session
+let _drResultsCache = null;   // { ts, html } — in-memory results from last run
+
+function drSaveSetup() {
+  const setup = {
+    src:      eid('drSrcOrg')?.value || '',
+    tgt:      eid('drTgtOrg')?.value || '',
+    // Keep the previously saved selection when the object list isn't loaded
+    // (e.g. only the orgs or check toggles changed this render).
+    srcId:    _drObjState.objects ? _drObjState.srcId : (_drSavedSetup?.srcId ?? null),
+    selected: _drObjState.objects ? [..._drObjState.selected] : (_drSavedSetup?.selected ?? null),
+    checks: {
+      fields:      eid('drChkFields')?.checked ?? true,
+      picklists:   eid('drChkPicklists')?.checked ?? true,
+      recordTypes: eid('drChkRecordTypes')?.checked ?? true,
+      validation:  eid('drChkValidation')?.checked ?? true,
+      dupRules:    eid('drChkDupRules')?.checked ?? true
+    }
+  };
+  _drSavedSetup = setup;
+  try { chrome.storage.local.set({ [DR_STATE_KEY]: setup }); } catch (_) { /* storage unavailable — setup just won't persist */ }
+}
+
+function drRestoreCachedResults() {
+  if (!_drResultsCache) return;
+  const resultsEl = eid('drResults');
+  if (!resultsEl) return;
+  resultsEl.style.display = '';
+  resultsEl.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#E8F4FD;border:1px solid #C5DBF0;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:#014486">
+      <span>🕒 Results from <strong>${esc(timeAgo(_drResultsCache.ts))}</strong></span>
+      <button class="ds-btn ds-btn-xs" id="drRerunBtn">↻ Re-run</button>
+    </div>
+    ${_drResultsCache.html}`;
+  eid('drRerunBtn')?.addEventListener('click', runReadinessCheck);
+  // Re-wire expand/collapse on the restored cards (innerHTML drops listeners)
+  resultsEl.querySelectorAll('.dr-obj-card-hdr').forEach(hdr => {
+    hdr.addEventListener('click', () => {
+      hdr.closest('.dr-obj-card')?.classList.toggle('dr-obj-card-open');
+    });
+  });
+}
 
 async function drRefreshObjectList() {
   const listEl  = eid('drObjList');
@@ -123,12 +203,18 @@ async function drRefreshObjectList() {
       .filter(o => o.queryable && o.createable && !o.deprecatedAndHidden)
       .map(o => ({ name: o.name, label: o.label || o.name, custom: !!o.custom }))
       .sort((a, b) => a.label.localeCompare(b.label));
-    _drObjState = {
-      srcId,
-      objects: objs,
-      // Default = all custom objects (the old auto-detect behaviour).
-      selected: new Set(objs.filter(o => o.custom).map(o => o.name))
-    };
+    // U4a: restore the persisted selection when it belongs to this same
+    // source org — otherwise default = all custom objects (the old
+    // auto-detect behaviour). Names no longer in the org are dropped; if
+    // that empties a non-empty saved selection, fall back to the default.
+    let selected = null;
+    if (_drSavedSetup && _drSavedSetup.srcId === srcId && Array.isArray(_drSavedSetup.selected)) {
+      const names    = new Set(objs.map(o => o.name));
+      const restored = new Set(_drSavedSetup.selected.filter(n => names.has(n)));
+      if (restored.size || !_drSavedSetup.selected.length) selected = restored;
+    }
+    if (!selected) selected = new Set(objs.filter(o => o.custom).map(o => o.name));
+    _drObjState = { srcId, objects: objs, selected };
   }
 
   const sel  = _drObjState.selected;
@@ -151,6 +237,9 @@ async function drRefreshObjectList() {
 
   function syncCount() {
     if (countEl) countEl.textContent = `${sel.size} of ${_drObjState.objects.length} selected`;
+    // U4a: every path that changes the selection (checkbox, All/None/Custom
+    // buttons, fresh load) lands here — persist the setup in one place.
+    drSaveSetup();
   }
   syncCount();
   listEl.querySelectorAll('[data-dr-obj]').forEach(cb => {
@@ -214,6 +303,9 @@ async function runReadinessCheck() {
     return;
   }
 
+  // U4a: persist the exact setup this run uses
+  drSaveSetup();
+
   // Results container
   const resultsEl = eid('drResults');
   if (resultsEl) {
@@ -272,6 +364,10 @@ async function runReadinessCheck() {
   }
 
   setDrStatus(`✅ Done — ${total} objects checked`);
+
+  // U4a: keep the rendered results in memory so switching views this
+  // session re-shows them (via drRestoreCachedResults) instead of blank.
+  if (resultsEl) _drResultsCache = { ts: new Date().toISOString(), html: resultsEl.innerHTML };
 
   // Wire expand/collapse
   document.querySelectorAll('.dr-obj-card-hdr').forEach(hdr => {

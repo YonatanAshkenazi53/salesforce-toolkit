@@ -5434,3 +5434,28 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .sftk-confirm-ack { display: flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 12.5px; cursor: pointer; font-weight: 600; }
 .toast-undo-hint { display: block; margin-top: 4px; font-size: 11px; color: var(--subtext); }
 .toast-undo-hint a { color: var(--brand); }
+
+/* C6: popup Ctrl+K command palette */
+.tk-cmd-overlay {
+  position: fixed; inset: 0; z-index: 9000; background: rgba(0,0,0,.35);
+  display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh;
+}
+.tk-cmd-box {
+  width: min(520px, 92vw); background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.3); overflow: hidden;
+}
+.tk-cmd-input {
+  width: 100%; border: 0; border-bottom: 1px solid var(--border); background: transparent;
+  color: var(--text); font-size: 14px; padding: 12px 14px; outline: none; box-sizing: border-box;
+}
+.tk-cmd-list { max-height: 46vh; overflow-y: auto; padding: 5px; }
+.tk-cmd-item {
+  display: flex; align-items: baseline; gap: 9px; padding: 8px 10px;
+  border-radius: 6px; cursor: pointer; font-size: 13px;
+}
+.tk-cmd-item:hover, .tk-cmd-active { background: var(--brand); color: #fff; }
+.tk-cmd-item:hover .tk-cmd-desc, .tk-cmd-active .tk-cmd-desc { color: rgba(255,255,255,.75); }
+.tk-cmd-icon { flex-shrink: 0; }
+.tk-cmd-label { font-weight: 600; white-space: nowrap; }
+.tk-cmd-desc { color: var(--subtext); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tk-cmd-empty { padding: 14px; text-align: center; color: var(--subtext); font-size: 12.5px; }

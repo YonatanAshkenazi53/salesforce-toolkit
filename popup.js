@@ -301,6 +301,71 @@ function showHomePage() {
 }
 
 // ── Render the full home page into #homeView ──────────────────
+// ── Ctrl+K command palette (C6) — Studio has one; the popup, with MORE
+// tools, only had a tab strip. Same interaction: type to filter, ↑↓ + Enter,
+// Esc closes. Items = every HOME_FEATURE + two shell actions.
+function openToolkitPalette() {
+  document.getElementById('tkCmdOverlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'tkCmdOverlay';
+  overlay.className = 'tk-cmd-overlay';
+  let activeIdx = 0;
+
+  const ITEMS = [
+    ...HOME_FEATURES.map(f => ({ icon: f.icon, label: f.title, desc: f.desc, run: () => f.action() })),
+    { icon: '🏠', label: 'Home', desc: 'Back to the tool overview', run: () => renderHomePage() },
+    { icon: '🌐', label: 'Open Data Studio', desc: 'Cross-org data compare, transfer & reconcile', run: () => document.getElementById('dataStudioBtn')?.click() },
+  ];
+
+  function itemsFor(q) {
+    const ql = q.toLowerCase().trim();
+    return ITEMS.filter(i => !ql || i.label.toLowerCase().includes(ql) || i.desc.toLowerCase().includes(ql));
+  }
+  function paint(q) {
+    const list = itemsFor(q);
+    activeIdx = Math.min(activeIdx, Math.max(0, list.length - 1));
+    overlay.querySelector('.tk-cmd-list').innerHTML = list.length ? list.map((i, k) => `
+      <div class="tk-cmd-item${k === activeIdx ? ' tk-cmd-active' : ''}" data-k="${k}">
+        <span class="tk-cmd-icon">${i.icon}</span>
+        <span class="tk-cmd-label">${escHtml(i.label)}</span>
+        <span class="tk-cmd-desc">${escHtml(i.desc)}</span>
+      </div>`).join('') : '<div class="tk-cmd-empty">No matches</div>';
+    overlay.querySelectorAll('.tk-cmd-item').forEach(el =>
+      el.addEventListener('click', () => { const it = list[+el.dataset.k]; close(); it?.run(); }));
+    return list;
+  }
+  function close() { overlay.remove(); }
+
+  overlay.innerHTML = `
+    <div class="tk-cmd-box">
+      <input type="text" class="tk-cmd-input" placeholder="Jump to a tool… (↑↓ + Enter)" autocomplete="off">
+      <div class="tk-cmd-list"></div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  document.body.appendChild(overlay);
+
+  const input = overlay.querySelector('.tk-cmd-input');
+  let current = paint('');
+  input.addEventListener('input', () => { activeIdx = 0; current = paint(input.value); });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { close(); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); activeIdx = Math.min(activeIdx + 1, current.length - 1); current = paint(input.value); }
+    if (e.key === 'ArrowUp')   { e.preventDefault(); activeIdx = Math.max(activeIdx - 1, 0); current = paint(input.value); }
+    if (e.key === 'Enter')     { e.preventDefault(); const it = current[activeIdx]; close(); it?.run(); }
+  });
+  input.focus();
+}
+
+if (!window._tkPaletteBound) {
+  window._tkPaletteBound = true;
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      openToolkitPalette();
+    }
+  });
+}
+
 function renderHomePage() {
   // Deep link pending? Session is ready by the time home renders — jump
   // straight to the requested feature instead of showing home.

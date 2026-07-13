@@ -200,7 +200,8 @@ async function _ocRefreshObjectList() {
         .sort((a, b) => a.label.localeCompare(b.label));
       _orgCompareState.availableObjects = objs;
     } catch (e) {
-      listEl.innerHTML = `<div class="ds-oc-empty">Failed to load objects: ${esc(e?.message || e)}</div>`;
+      const fe = sftkFriendlyError(e?.message || e);
+      listEl.innerHTML = `<div class="ds-oc-empty" title="${esc(fe.raw)}">Failed to load objects: ${esc(fe.message)}${fe.hint ? ` — ${esc(fe.hint)}` : ''}</div>`;
       return;
     }
   }
@@ -277,6 +278,7 @@ async function runOrgCompare() {
     return;
   }
 
+  const startedAt = new Date().toISOString();
   _orgCompareState.running = true;
   _orgCompareState.results = toRun.map(name => ({ name, status: 'pending' }));
   _ocRenderResults();
@@ -307,6 +309,32 @@ async function runOrgCompare() {
   if (btn) { btn.disabled = false; btn.textContent = '▶ Compare'; }
   _ocRenderResults();
   showToast(`Org Compare complete — ${toRun.length} object(s)`, 'success', 3500);
+
+  // Log the finished run to shared History so Org Compare shows up alongside
+  // transfers/reconciles. kind:'compare' — read-only, no records were touched.
+  // Errors count as drift too: a red row means we could NOT prove the orgs
+  // match, so the run isn't a clean 'success'.
+  const finished = _orgCompareState.results || [];
+  const anyDrift = finished.some(r =>
+    r.error || (!r.skipped && (((r.missing || 0) > 0) || ((r.extras || 0) > 0))));
+  _history.push({
+    id:          genId('run'),
+    kind:        'compare',
+    profileName: `Org Compare: ${orgLabel(s)} vs ${orgLabel(t)}`,
+    // Set BOTH the *OrgUrl and sourceOrg/targetOrg keys — History and the
+    // Connected-Orgs counters read sourceOrg/targetOrg, health tiles read
+    // *OrgUrl (same convention as transfer + reconcile entries).
+    srcOrgUrl:   s,
+    tgtOrgUrl:   t,
+    sourceOrg:   s,
+    targetOrg:   t,
+    startedAt,
+    completedAt: new Date().toISOString(),
+    status:      anyDrift ? 'partial' : 'success',
+    summary:     {},
+    errors:      []
+  });
+  await storageSaveHistory();
 }
 
 // Compare ONE object: describe (to pick matchField), parallel SOQL on both
@@ -440,7 +468,30 @@ function _ocRenderResults() {
                        : pct >= 70 ? 'ds-oc-orange'
                        :             'ds-oc-red';
 
-  el.innerHTML = `
+  // Headline summary strip + CSV export — only once the run has finished
+  // (hidden while rows are still pending so mid-run repaints don't show a
+  // misleading half-count).
+  let banner = '';
+  if (!pend.length && !_orgCompareState.running) {
+    const clean = done.filter(r => !r.missing && !r.extras).length;
+    const drift = done.length - clean;
+    banner = `
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#F3F3F3;border:1px solid #DDDBDA;border-radius:8px;padding:9px 14px;margin:0 0 10px;font-size:12.5px">
+        <strong>${rows.length} object${rows.length === 1 ? '' : 's'} compared</strong>
+        <span style="color:#706E6B">·</span>
+        <span style="color:#2E844A;font-weight:600">✓ ${clean} clean</span>
+        <span style="color:#706E6B">·</span>
+        <span style="color:${drift ? '#B75D00' : '#706E6B'};font-weight:${drift ? '600' : '400'}">△ ${drift} drifted</span>
+        ${errs.length ? `<span style="color:#706E6B">·</span>
+        <span style="color:#BA0517;font-weight:600">⚠ ${errs.length} error${errs.length === 1 ? '' : 's'}</span>` : ''}
+        <span style="color:#706E6B">·</span>
+        <span style="color:#706E6B">${skip.length} skipped</span>
+        <span style="color:#706E6B;margin-left:auto">${esc(orgLabel(_orgCompareState.srcOrgUrl))} → ${esc(orgLabel(_orgCompareState.tgtOrgUrl))}</span>
+        <button class="ds-btn ds-btn-xs" id="dsOCExportCsv" title="Download these results as a CSV file">⬇ CSV</button>
+      </div>`;
+  }
+
+  el.innerHTML = `${banner}
     <table class="ds-oc-table">
       <thead><tr>
         <th>Object</th><th>Source</th><th>Target</th>
@@ -449,7 +500,12 @@ function _ocRenderResults() {
       </tr></thead>
       <tbody>${ordered.map(r => {
         if (r.status === 'pending') return `<tr><td>${esc(r.name)}</td><td colspan="7" class="ds-oc-pending">⏳ comparing…</td></tr>`;
-        if (r.error)   return `<tr><td>${esc(r.name)}</td><td colspan="7" class="ds-oc-err">⚠ ${esc(r.error)}</td></tr>`;
+        if (r.error) {
+          // U1: translate raw API errors — friendly message + hint visible,
+          // raw string preserved in the title for copy-paste/debugging.
+          const fe = sftkFriendlyError(r.error);
+          return `<tr><td>${esc(r.name)}</td><td colspan="7" class="ds-oc-err" title="${esc(fe.raw)}">⚠ ${esc(fe.message)}${fe.hint ? ` <span style="opacity:.75">— ${esc(fe.hint)}</span>` : ''}</td></tr>`;
+        }
         if (r.skipped) return `<tr class="ds-oc-skipped"><td>${esc(r.name)}</td><td colspan="7" class="ds-oc-skip">— ${esc(r.reason || 'Skipped.')}</td></tr>`;
         return `<tr class="ds-oc-row ${colorFor(r.matchPct)}">
           <td>${esc(r.name)} <span class="ds-oc-row-mf">by ${esc(r.matchField)}</span></td>
@@ -467,6 +523,9 @@ function _ocRenderResults() {
         </tr>`;
       }).join('')}</tbody>
     </table>`;
+
+  // Wire the summary-strip CSV export.
+  eid('dsOCExportCsv')?.addEventListener('click', _ocExportCsv);
 
   // Wire row reconcile buttons — build an ephemeral profile and open Reconcile.
   el.querySelectorAll('[data-oc-reconcile]').forEach(btn => {
@@ -494,6 +553,49 @@ function _ocRenderResults() {
   });
 }
 
+// Export the current result set as a CSV file (client-side Blob download —
+// no server round-trip). Columns adapt to the presence-only result shape:
+// matched/missing/onlyInTarget instead of per-field "changed" (Org Compare
+// doesn't diff field values — that's Reconcile's job).
+function _ocExportCsv() {
+  const rows = (_orgCompareState.results || []).filter(r => r.status !== 'pending');
+  if (!rows.length) {
+    showToast('Nothing to export yet — run a compare first', 'error', 3000);
+    return;
+  }
+  const cell = v => {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const header = ['object', 'status', 'matchField', 'sourceCount', 'targetCount',
+                  'matched', 'missingInTarget', 'onlyInTarget', 'matchPct', 'detail'];
+  const body = rows.map(r => {
+    const status = r.error ? 'error'
+                 : r.skipped ? 'skipped'
+                 : ((r.missing || r.extras) ? 'drifted' : 'clean');
+    const detail = r.error ? r.error : (r.skipped ? (r.reason || 'Skipped.') : '');
+    return [
+      r.name, status, r.matchField || '',
+      r.srcCount ?? '', r.tgtCount ?? '',
+      r.matched ?? '', r.missing ?? '', r.extras ?? '', r.matchPct ?? '',
+      detail
+    ].map(cell).join(',');
+  }).join('\r\n');
+  const csv = header.join(',') + '\r\n' + body;
+
+  const slug = lbl => String(lbl || 'org').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'org';
+  const fname = `org-compare-${slug(orgLabel(_orgCompareState.srcOrgUrl))}-vs-${slug(orgLabel(_orgCompareState.tgtOrgUrl))}-${new Date().toISOString().slice(0, 10)}.csv`;
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fname;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  showToast(`CSV exported — ${rows.length} row(s)`, 'success', 3000);
+}
+
 // Open Reconcile scoped to one object — build an ephemeral, unsaved profile
 // so the user can act on the diff right away without going through the
 // Profile Builder. Pre-runs the diff scan so the columns are populated
@@ -510,7 +612,8 @@ async function _ocOpenReconcile(objName) {
   showToast(`Loading diff for ${objName}…`, 'info', 2500);
   const res = await runDiffScan(ephemeral);
   if (res?.error) {
-    showToast(`Diff scan failed: ${res.error}`, 'error', 5000);
+    const fe = sftkFriendlyError(res.error);
+    showToast(`Diff scan failed: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`, 'error', 6000);
     return;
   }
   ephemeral.lastScan = res;
