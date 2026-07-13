@@ -102,7 +102,7 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
   REMAINING SLIVER: also wire into toasts/compare rows/live run logs.
   ~~original spec below~~ — central mapper: raw errorCode → {message, hint, action};
   raw string behind "Copy details". Wire into toasts, compare rows, run logs, banners.
-- [ ] **U2. Jargon rename (complete it)** — one noun set: Deployment / Run / Sync check;
+- [x] **U2. Jargon rename (complete it)** — one noun set: Deployment / Run / Sync check;
   "drift" → "changed"; "extras" → "only in target". String-level sweep across studio files
   (UI strings only — do NOT rename functions/state; keep diff reviewable).
 - [x] **U3. Get-started checklist** — dismissible, computed from real state: connect two orgs
@@ -138,16 +138,16 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
 
 ## Phase R — Reconcile v2
 
-- [ ] **R1. Match-key collision detection** — child scan detects duplicate match-key values,
+- [x] **R1. Match-key collision detection** — child scan detects duplicate match-key values,
   excludes those rows by default, prompts for a better match field.
-- [ ] **R2. Master-detail guardrails** — detect MD relationship fields (describe:
+- [x] **R2. Master-detail guardrails** — detect MD relationship fields (describe:
   `relationshipOrder`/`cascadeDelete`); disable child-first + relink with the reason in the UI;
   block orphaning deletes.
-- [ ] **R3. Orphan tagging** — after partial runs, tag null-link child rows "possible orphan"
+- [x] **R3. Orphan tagging** — after partial runs, tag null-link child rows "possible orphan"
   in target-only bucket (protect from Delete-all); Relink re-attaches them.
-- [ ] **R4. Actionable child drift/extras** — extend `_recChildSel` with overwrite/del sets;
+- [x] **R4. Actionable child drift/extras** — extend `_recChildSel` with overwrite/del sets;
   same guards as root (typed prod confirm, recycle vs hard).
-- [ ] **R5. Grandchildren** — extend scan scoping + selection UX one level at a time; the
+- [x] **R5. Grandchildren** — extend scan scoping + selection UX one level at a time; the
   engine already handles deep trees. Label depth limits clearly in the UI.
 
 ## Phase X — App-shell convergence (last: biggest, benefits from all above)
