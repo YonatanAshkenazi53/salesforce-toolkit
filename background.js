@@ -941,8 +941,74 @@ async function handleMessage(message) {
   }
 }
 
+// ── Typed message contracts (plan A2) ───────────────────────────────────────
+// Every message type dispatchMessage handles, with the fields its handler
+// actually dereferences. Validated at the top of dispatchMessage so a missing
+// orgUrl/sid/query/etc. fails fast with a clear error instead of surfacing as
+// a confusing failure deep inside a fetch. Optional fields (tooling,
+// activeTabUrl, rootWhere, childRels, limit) are deliberately NOT listed.
+// NOTE: handleMessage's SESSION_EXPIRED retry re-dispatches
+// { ...message, orgUrl, sid } — it only ADDS/refreshes fields on an
+// already-validated message, so it always re-passes validation.
+//
+/** @typedef {{ type: 'GET_SF_SESSION', activeTabUrl?: string } |
+ *            { type: 'GET_ALL_SF_SESSIONS' }} SessionMessage */
+/** @typedef {{ type: 'SF_QUERY'|'SF_QUERY_ALL', orgUrl: string, sid: string, query: string, tooling?: boolean } |
+ *            { type: 'SF_REST_QUERY', orgUrl: string, sid: string, query: string }} QueryMessage */
+/** @typedef {{ type: 'SF_TOOLING_DELETE'|'SF_REST_DELETE'|'SF_TOOLING_GET', orgUrl: string, sid: string, sobject: string, id: string } |
+ *            { type: 'SF_GET_METADATA', orgUrl: string, sid: string, id: string }} RecordMessage */
+/** @typedef {{ type: 'SF_REST_GET'|'SF_REST_GET_TEXT', orgUrl: string, sid: string, path: string } |
+ *            { type: 'SF_PATCH'|'SF_REST_POST', orgUrl: string, sid: string, path: string, body: Object }} RestPathMessage */
+/** @typedef {{ type: 'SF_CREATE_FLOW', orgUrl: string, sid: string, fullName: string, metadata: Object } |
+ *            { type: 'SF_METADATA_DEPLOY', orgUrl: string, sid: string, zipBase64: string }} MetadataMessage */
+/** @typedef {{ type: 'SF_COLLECTIONS_CREATE'|'SF_COLLECTIONS_UPDATE', orgUrl: string, sid: string, records: Object[] } |
+ *            { type: 'SF_COLLECTIONS_DELETE'|'SF_HARD_DELETE', orgUrl: string, sid: string, ids: string[] }} CollectionsMessage */
+/** @typedef {{ type: 'SF_EXECUTE_PROFILE_TRANSFER', profile: Object, srcOrgUrl: string, srcSid: string, tgtOrgUrl: string, tgtSid: string } |
+ *            { type: 'SF_EXECUTE_SEQUENCE', profiles: Object[], srcOrgUrl: string, srcSid: string, tgtOrgUrl: string, tgtSid: string }} TransferMessage */
+/** @typedef {{ type: 'SF_RELATIONSHIP_QUERY', orgUrl: string, sid: string, rootObject: string, rootWhere?: string, childRels?: Object[], limit?: number }} RelationshipQueryMessage */
+/** @typedef {SessionMessage|QueryMessage|RecordMessage|RestPathMessage|MetadataMessage|CollectionsMessage|TransferMessage|RelationshipQueryMessage} ToolkitMessage */
+
+const MESSAGE_CONTRACTS = {
+  GET_SF_SESSION:              { required: [] },
+  GET_ALL_SF_SESSIONS:         { required: [] },
+  SF_QUERY:                    { required: ['orgUrl', 'sid', 'query'] },
+  SF_QUERY_ALL:                { required: ['orgUrl', 'sid', 'query'] },
+  SF_REST_QUERY:               { required: ['orgUrl', 'sid', 'query'] },
+  SF_TOOLING_DELETE:           { required: ['orgUrl', 'sid', 'sobject', 'id'] },
+  SF_REST_DELETE:              { required: ['orgUrl', 'sid', 'sobject', 'id'] },
+  SF_TOOLING_GET:              { required: ['orgUrl', 'sid', 'sobject', 'id'] },
+  SF_GET_METADATA:             { required: ['orgUrl', 'sid', 'id'] },
+  SF_CREATE_FLOW:              { required: ['orgUrl', 'sid', 'fullName', 'metadata'] },
+  SF_PATCH:                    { required: ['orgUrl', 'sid', 'path', 'body'] },
+  SF_REST_POST:                { required: ['orgUrl', 'sid', 'path', 'body'] },
+  SF_REST_GET:                 { required: ['orgUrl', 'sid', 'path'] },
+  SF_REST_GET_TEXT:            { required: ['orgUrl', 'sid', 'path'] },
+  SF_METADATA_DEPLOY:          { required: ['orgUrl', 'sid', 'zipBase64'] },
+  SF_COLLECTIONS_CREATE:       { required: ['orgUrl', 'sid', 'records'] },
+  SF_COLLECTIONS_UPDATE:       { required: ['orgUrl', 'sid', 'records'] },
+  SF_COLLECTIONS_DELETE:       { required: ['orgUrl', 'sid', 'ids'] },
+  SF_HARD_DELETE:              { required: ['orgUrl', 'sid', 'ids'] },
+  SF_EXECUTE_PROFILE_TRANSFER: { required: ['profile', 'srcOrgUrl', 'srcSid', 'tgtOrgUrl', 'tgtSid'] },
+  SF_EXECUTE_SEQUENCE:         { required: ['profiles', 'srcOrgUrl', 'srcSid', 'tgtOrgUrl', 'tgtSid'] },
+  SF_RELATIONSHIP_QUERY:       { required: ['orgUrl', 'sid', 'rootObject'] }
+};
+
+/** @param {ToolkitMessage} message */
 async function dispatchMessage(message) {
   const { type, orgUrl, sid } = message;
+
+  // Contract validation: fail fast on missing/empty required fields BEFORE any
+  // network call. Unknown types fall through to the switch's default (keeps
+  // the existing "Unknown message type" error). Empty arrays/objects are NOT
+  // treated as missing — handlers like sfCollectionsDelete accept [] today.
+  const contract = MESSAGE_CONTRACTS[type];
+  if (contract) {
+    const missing = contract.required.filter(f =>
+      message[f] === undefined || message[f] === null || message[f] === '');
+    if (missing.length) {
+      throw new Error(`${type}: missing required field(s) ${missing.join(', ')} — this is an extension bug, please report it`);
+    }
+  }
 
   switch (type) {
     case 'GET_SF_SESSION':

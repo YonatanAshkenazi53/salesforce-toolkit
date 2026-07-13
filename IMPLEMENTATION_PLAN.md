@@ -127,7 +127,7 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
   same pattern as sftk-zip.js): `_orgKey`, `orgLabel`, `orgOptionLabel`. Loaded by popup.html
   + studio.html; background.js gets it via `importScripts` (classic SW) — verify background
   has no raw-URL org comparisons left afterwards.
-- [ ] **A2. Typed message contracts** — MESSAGES manifest (name → required fields) validated
+- [x] **A2. Typed message contracts** — MESSAGES manifest (name → required fields) validated
   at the background dispatcher; JSDoc typedefs for editor autocomplete. Reject-with-clear-error
   on missing fields instead of silent undefined.
 - [x] **A3. CI** (2026-07-08) — remote existed all along (YonatanAshkenazi53/salesforce-toolkit);
