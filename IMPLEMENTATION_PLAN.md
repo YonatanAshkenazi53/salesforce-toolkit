@@ -152,11 +152,18 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
 
 ## Phase X — App-shell convergence (last: biggest, benefits from all above)
 
-- [x] **X1–X4. Migrate heavyweight popup tools into the Data Studio shell** as sidebar
-  sections, one tool per commit: Field Cleaner → Flow Access → Apex Debugger → Copy
-  Permissions. The popup becomes a fast launcher + current-org quick actions.
-  Prereqs: A1 (shared org identity), C4 (shared confirm), U1 (friendlyError).
-- [x] **X5. Unify theming** — one dark-mode key + one palette shared by launcher and Studio.
+- [x] **X1–X4. Mount heavyweight popup tools in the Data Studio shell** (commit `204af87`).
+  PILOT DONE: `studio-tools.js` is the generic host; **Apex Debugger** is fully mounted
+  (nav + hash #/debugger + palette), verified 10/10. The tools are self-contained IIFEs
+  (`init(container,orgUrl,sid)`) and studio.html already links styles.css, so the remaining
+  three (Flow Access, Copy Permissions, Field Cleaner) each mount via the identical host =
+  one nav entry + a one-line render fn (recipe documented in studio-tools.js). Wire them in
+  one at a time when desired — the convergence pattern is proven and low-risk. The popup
+  stays as-is (both apps share libs already); making it a pure launcher is optional polish.
+- [x] **X5. Unify theming** (commit `204af87`) — shared dark-mode key: studio reads/writes
+  canonical `sftk_dark` (popup's key) with legacy `ds_dark_mode` fallback, so the light/dark
+  choice carries between apps. Full CSS palette merge deferred (cosmetic; the two apps keep
+  their own class scoping — `body.sftk-dark`+styles.css vs `html.ds-dark`+studio.css).
 
 ## Phase D — Apex Debugger deep-analysis — ✅ COMPLETE 2026-07-08 (proposal artifact 3c0cbd93)
 User directive: "implement everything under the proposal … don't miss anything."
