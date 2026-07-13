@@ -257,13 +257,16 @@ async function storageLoad() {
   await runStorageMigrations();
   const d = await chrome.storage.local.get([
     'sftk_profiles','sftk_history','sftk_orgs',
-    'ds_dark_mode','ds_activity_log','sftk_sequences','sftk_active_run',
+    'ds_dark_mode','sftk_dark','ds_activity_log','sftk_sequences','sftk_active_run',
     'ds_working_pair','ds_settings'
   ]);
   _profiles     = d.sftk_profiles   || [];
   _history      = d.sftk_history    || [];
   _orgs         = d.sftk_orgs       || {};
-  _darkMode     = d.ds_dark_mode    || false;
+  // X5: one shared dark-mode preference across both apps. Read the canonical
+  // key (sftk_dark, also used by the popup + log viewer), falling back to the
+  // legacy studio-only key for users who set it before unification.
+  _darkMode     = (d.sftk_dark ?? d.ds_dark_mode) || false;
   _activityLog  = d.ds_activity_log || {};
   _sequences    = d.sftk_sequences  || [];
   _workingPair  = d.ds_working_pair || { src: '', tgt: '' };
@@ -621,7 +624,9 @@ function applyDarkMode(on) {
     btn.textContent = on ? '☀️' : '🌙';
     btn.title = on ? 'Switch to light mode' : 'Switch to dark mode';
   }
-  chrome.storage.local.set({ ds_dark_mode: on });
+  // X5: write the canonical shared key (sftk_dark) so the popup + log viewer
+  // pick up the same choice; keep ds_dark_mode in sync for back-compat.
+  chrome.storage.local.set({ sftk_dark: on, ds_dark_mode: on });
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -645,6 +650,7 @@ const CMD_VIEWS = [
   { icon: '🔍', label: 'Org Compare',       view: 'compare',   desc: 'Diff data across many objects' },
   { icon: '🛡',  label: 'Deploy Readiness', view: 'readiness', desc: 'Schema compatibility' },
   { icon: '🕸',  label: 'Schema View',      view: 'schema',    desc: 'Flow & object graph' },
+  { icon: '🐛', label: 'Apex Debugger',     view: 'debugger',  desc: 'Trace flows, triggers & limits' },
 ];
 
 // Toolkit (popup) features — selecting one opens/focuses the Toolkit popout
@@ -1067,7 +1073,7 @@ function _getStartedHtml() {
 // The set of top-level views that own a sidebar tab (transient sub-views like
 // reconcile/builder are NOT hash-routed).
 const DS_HASH_VIEWS = new Set([
-  'orgs', 'profiles', 'picklists', 'history', 'compare', 'readiness', 'schema', 'fields', 'transfer',
+  'orgs', 'profiles', 'picklists', 'history', 'compare', 'readiness', 'schema', 'fields', 'transfer', 'debugger',
 ]);
 
 function _viewFromHash() {
@@ -1115,6 +1121,7 @@ function renderView(view) {
     case 'reconcile': renderReconcile();   break;
     case 'compare':   renderOrgCompare(); break;
     case 'picklists': renderPicklists();  break;
+    case 'debugger':  renderDebuggerTool(); break;   // Phase X — mounted popup tool
   }
 }
 

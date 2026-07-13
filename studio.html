@@ -103,6 +103,15 @@
           </span>
         </button>
 
+        <div class="ds-nav-section-title">Tools</div>
+        <button class="ds-nav-btn" data-view="debugger">
+          <span class="ds-nav-icon">🐛</span>
+          <span class="ds-nav-label">
+            <span class="ds-nav-name">Apex Debugger</span>
+            <span class="ds-nav-desc">Trace flows, triggers &amp; limits</span>
+          </span>
+        </button>
+
         <!-- Nav footer -->
         <div class="ds-nav-footer">
           <span class="ds-nav-footer-text">Read-only by default</span>
@@ -157,5 +166,9 @@
   <script src="studio-schema.js"></script>
   <script src="studio-fields.js"></script>
   <script src="studio-picklists.js"></script>
+  <!-- Phase X: heavyweight popup tools mounted in the Studio shell
+       (debug-logger.js already loaded above; styles.css already linked) -->
+  <script src="apex-debugger.js"></script>
+  <script src="studio-tools.js"></script>
 </body>
 </html>
