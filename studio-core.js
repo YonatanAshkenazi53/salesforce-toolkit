@@ -497,6 +497,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'startTransferFrom':     window.startTransferFrom?.(arg); break;
       case 'removeOrg':             window.removeOrg?.(arg); break;
       case 'runProfile':            window.runProfile?.(arg); break;
+      case 'openFanOut':            window.openFanOut?.(arg); break;
       case 'editProfile':           window.editProfile?.(arg); break;
       case 'cloneProfile':          window.cloneProfile?.(arg); break;
       case 'deleteProfile':         window.deleteProfile?.(arg); break;

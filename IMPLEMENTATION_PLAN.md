@@ -261,6 +261,40 @@ history) already exists there.
   Industry…) via StandardValueSet metadata; global picklists edit the GlobalValueSet
   (warn: affects EVERY field using it — list them via MetadataComponentDependency).
 
+## Phase M — Multi-org sync + smart matching (user scenario 2026-07-13: "5 orgs that
+## need their data synced"; no external IDs in their orgs; user picks matching per node)
+
+- [x] **M1. Fan-out runner** — run one deployment against N target orgs: multi-target picker
+  on Run Transfer + "Run against multiple orgs" on profile cards; sequential per-target runs
+  (fresh idMap each), one history entry per org, per-org result log. Engine untouched —
+  executeProfileTransfer(profile, src, tgt) already takes any pair; this is a loop + UI
+  (the picklist P2 bulk-apply pattern).
+- [ ] **M2. Sync Ring dashboard** — org group ("ring") with designated source-of-truth;
+  matrix view profile × target org (missing/changed per cell from runDiffScan, parallel,
+  session-availability badges); per-cell ⚖ Reconcile; per-row "scan all" / "push all
+  missing". Answers "is everything in sync?" at a glance.
+- [ ] **M3a. Matching engine + per-node config** — node.matching { strategy: 'field'|
+  'composite'|'externalId', fields: [..], normalize: { caseFold, trim, collapseWs,
+  emailLower, phoneDigits } }; builder UI to pick it (external-id dropdown describe-driven,
+  greyed with hint when the org has none — the user's orgs currently don't). ONE shared
+  pure key-builder (top-level, unit-tested) used by runDiffScan AND every studio-side
+  writer (reconcile relink + group-B bridge) — R1's invariant: scan and writers build keys
+  IDENTICALLY, normalization is part of the key. Composite server-side candidate fetch:
+  query by first component IN(...) then client-filter the full normalized key (SOQL text =
+  is case-insensitive, JS is not — normalization matters client-side). Back-compat:
+  node.matchField remains the fallback when node.matching is absent.
+- [ ] **M3b. Key-quality analyzer** — "Test this key" in the matching UI: populated% +
+  unique% per org (GROUP BY / describe unique|externalId flags), cross-org match preview
+  ("matches 1,240 of 1,300 uniquely · 38 ambiguous · 22 unmatched"), ranked suggestions
+  (external-id fields → unique fields → nameField → discovered composites).
+- [ ] **M3c. Match memory + review UI** — persistent srcId→tgtId pairs per profile+org-pair
+  (populated by successful inserts/upserts/overwrites AND manual pairing); matched FIRST,
+  before key comparison → rename-proof identity without schema changes. Post-scan Match
+  Review screen for ambiguous/unmatched rows with normalized near-match candidates; human
+  pairs → memory. Capped + clearable under the S5 retention controls.
+- [ ] **M4. Later** — opt-in scheduling (needs re-adding the alarms permission — weigh vs
+  minimal-permissions posture); reverse-pull polish; Bulk API 2.0 for large volumes.
+
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.
 - **X phase**: confirm tool migration order before starting.

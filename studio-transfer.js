@@ -1129,3 +1129,118 @@ async function runTransfer() {
   if (btn) btn.disabled = false;
 }
 
+
+// ════════════════════════════════════════════════════════════════
+// M1 — FAN-OUT RUNNER: one deployment against N target orgs
+// ════════════════════════════════════════════════════════════════
+// The engine already takes any (profile, src, tgt) — fan-out is a sequential
+// loop with per-org sessions, per-org history entries and a result log
+// (the picklist P2 bulk-apply pattern). Fresh idMap per target by design:
+// targets share nothing. No dry-run here — validate the profile on one pair
+// first (the modal says so).
+window.openFanOut = async function (profileId) {
+  const p = _profiles.find(x => x.id === profileId);
+  if (!p || !p.tree) { showToast('Deployment not found', 'error'); return; }
+  const srcUrl = p.sourceOrg || _workingPair.src;
+  if (!srcUrl) { showToast('Set a source org on the deployment first', 'error'); return; }
+
+  const candidates = allMapOrgs().filter(o => _orgKey(o.url) !== _orgKey(srcUrl));
+  if (!candidates.length) { showToast('No other orgs known — open them in Chrome tabs first', 'warning', 5000); return; }
+
+  const rows = candidates.map(o => `
+    <label class="ds-fanout-org">
+      <input type="checkbox" class="ds-fanout-cb" value="${esc(o.url)}"
+             ${_orgKey(o.url) === _orgKey(p.targetOrg || '') ? 'checked' : ''}>
+      <span>${esc(orgOptionLabel(o.url, o.label))}</span>
+      ${prodBadge(o.url)}
+    </label>`).join('');
+
+  showModal(`
+    <div class="ds-modal-header">🌐 Run “${esc(p.name)}” against multiple orgs</div>
+    <div class="ds-modal-body">
+      <p style="font-size:12.5px">Source: <strong>${esc(orgLabel(srcUrl))}</strong> → pick the targets.
+      Runs are sequential; each org gets its own History entry. Orgs without an open tab are skipped.</p>
+      <div class="ds-fanout-list">${rows}</div>
+      <div class="ds-pk-hint" style="margin-top:8px">💡 Validate the deployment with a 🧪 dry run on one pair before fanning out —
+      fan-out runs are real writes. Production targets will ask for their typed confirmation.</div>
+    </div>
+    <div class="ds-modal-footer">
+      <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
+      <button class="ds-btn ds-btn-primary" id="dsFanoutGo">🌐 Run fan-out</button>
+    </div>`);
+
+  eid('dsFanoutGo')?.addEventListener('click', async () => {
+    const targets = [...document.querySelectorAll('.ds-fanout-cb:checked')].map(c => c.value);
+    if (!targets.length) { showToast('Pick at least one target org', 'warning'); return; }
+    closeModal();
+
+    // One typed confirm covering every production target up front.
+    for (const t of targets) {
+      if (cachedOrgType(t) === 'production') {
+        const ok = await confirmTypedProd(orgLabel(t), `fan-out deploy "${p.name}" into PRODUCTION`);
+        if (!ok) { showToast('Fan-out cancelled', 'info'); return; }
+      }
+    }
+    await runFanOut(p, srcUrl, targets);
+  });
+};
+
+async function runFanOut(p, srcUrl, targets) {
+  // Result surface: a modal-free inline panel at the top of the current view.
+  const host = eid('dsMain');
+  const panel = document.createElement('div');
+  panel.className = 'ds-fanout-panel';
+  panel.innerHTML = `<div class="ds-pk-res-title">🌐 Fan-out: ${esc(p.name)} — ${targets.length} target(s)</div>
+    <div id="dsFanoutLog"></div>`;
+  host?.prepend(panel);
+  const log = (org, icon, msg) => {
+    const el = panel.querySelector('#dsFanoutLog');
+    if (!el) return;
+    const row = document.createElement('div');
+    row.className = 'ds-pk-res-row';
+    row.innerHTML = org
+      ? `<span>${icon} <strong>${esc(orgLabel(org))}</strong></span><span>${esc(msg)}</span>`
+      : `<span>${icon}</span><span><strong>${esc(msg)}</strong></span>`;
+    el.appendChild(row);
+  };
+
+  const srcSess = await getOrgSession(srcUrl);
+  if (!srcSess) { log(srcUrl, '❌', 'Source org has no open tab — aborted'); return; }
+
+  let okOrgs = 0, failOrgs = 0, skipOrgs = 0;
+  for (const tgtUrl of targets) {
+    const tgtSess = await getOrgSession(tgtUrl);
+    if (!tgtSess) { skipOrgs++; log(tgtUrl, '⏭', 'skipped — org not open in a tab'); continue; }
+    log(tgtUrl, '⏳', 'running…');
+    try {
+      const result = await sendBg({
+        type: 'SF_EXECUTE_PROFILE_TRANSFER',
+        profile: p,
+        srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
+        tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid,
+      });
+      if (result?.error) throw new Error(result.error);
+      _history.push({
+        id: genId('run'), profileId: p.id,
+        srcOrgUrl: srcSess.orgUrl, tgtOrgUrl: tgtSess.orgUrl,
+        sourceOrg: srcSess.orgUrl, targetOrg: tgtSess.orgUrl,
+        startedAt: new Date().toISOString(),
+        ...result,
+        // AFTER the spread — the engine result carries its own profileName
+        // and would clobber the tag otherwise.
+        profileName: `${p.name} (fan-out)`,
+      });
+      const created = Object.values(result.summary || {}).reduce((n, s) => n + (s.created || 0), 0);
+      const failed  = Object.values(result.summary || {}).reduce((n, s) => n + (s.failed || 0), 0);
+      if (result.status === 'success') { okOrgs++; log(tgtUrl, '✅', `${created} record(s) written`); }
+      else { failOrgs++; log(tgtUrl, '⚠', `${created} written, ${failed} failed — see History`); }
+    } catch (e) {
+      failOrgs++;
+      const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
+      log(tgtUrl, '❌', fe.message);
+    }
+  }
+  await storageSaveHistory();
+  log('', '🏁', `done — ${okOrgs} ok · ${failOrgs} with failures · ${skipOrgs} skipped`);
+  showToast(`Fan-out complete: ${okOrgs}/${targets.length} orgs clean`, failOrgs ? 'warning' : 'success', 6000);
+}

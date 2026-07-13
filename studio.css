@@ -4721,3 +4721,9 @@ html, body {
 .ds-pk-rtm-chk { display: flex; justify-content: center; }
 .ds-pk-rtm-dirty { background: rgba(1,118,211,.06); }
 .ds-pk-rtm-actions { display: flex; gap: 8px; margin-top: 8px; }
+
+/* M1: fan-out runner */
+.ds-fanout-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; margin: 8px 0; }
+.ds-fanout-org { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.ds-fanout-org:hover { border-color: var(--brand); }
+.ds-fanout-panel { border: 1px solid var(--brand); border-radius: 8px; margin-bottom: 14px; overflow: hidden; background: var(--card); }
