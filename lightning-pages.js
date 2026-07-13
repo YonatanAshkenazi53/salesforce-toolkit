@@ -720,6 +720,14 @@ const LightningPages = (() => {
     if (!sObjectType || !devName) return [];
     _orgDefaultDebug = null;
     const log = {};
+    // devName from FullName may be 'ObjectName-DevName'; keep both the full and
+    // short (post-hyphen) lowercase forms. Function-scoped so every matching
+    // strategy below (perm-set, ActionOverride) can use them — a later strategy
+    // referenced these out of an earlier block's scope (caught by no-undef).
+    const devNameLower = devName.toLowerCase();
+    const devNameShort = devNameLower.includes('-')
+      ? devNameLower.split('-').slice(1).join('-')
+      : devNameLower;
 
     try {
       // ── Strategy 0: sObject describe — most reliable (direct live read) ───────
@@ -746,11 +754,7 @@ const LightningPages = (() => {
           // the describe endpoint and Tooling SOQL can return different casing
           // for the same Salesforce ID, causing === to fail silently.
           const pageIdLower = (pageId || '').toLowerCase();
-          // devName from FullName may be 'ObjectName-DevName'; extract the short form
-          const devNameLower = devName.toLowerCase();
-          const devNameShort = devNameLower.includes('-')
-            ? devNameLower.split('-').slice(1).join('-')
-            : devNameLower;
+          // devNameLower / devNameShort are function-scoped (defined at the top).
 
           const matches = descRes.actionOverrides.filter(o => {
             // name must be 'View' (case-insensitive)

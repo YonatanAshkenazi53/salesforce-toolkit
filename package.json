@@ -5,7 +5,8 @@
   "description": "Salesforce Toolkit Chrome extension (MV3) — dev toolchain only; the extension itself has no build step.",
   "scripts": {
     "check": "node scripts/parse-check.mjs",
-    "lint": "eslint .",
+    "globals": "node scripts/gen-globals.mjs",
+    "lint": "node scripts/gen-globals.mjs && eslint .",
     "test": "vitest run",
     "verify": "npm run check && npm run lint && npm run test"
   },

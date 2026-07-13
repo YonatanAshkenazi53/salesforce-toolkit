@@ -603,7 +603,9 @@ function startKeepalive() {
     try {
       // GET /limits is the lightest authenticated SF API call — no side effects.
       // _suppressError: true keeps it silent in the activity bar (no red dot).
-      await bg({ type: 'SF_REST_GET', orgUrl, sid,
+      // (was `bg(...)` — undefined in popup.js; the keepalive silently never
+      // ran, swallowed by the catch below. Caught by no-undef, A4.)
+      await sendBg({ type: 'SF_REST_GET', orgUrl, sid,
                   path: `services/data/v62.0/limits`,
                   _suppressError: true });
     } catch (_) {}

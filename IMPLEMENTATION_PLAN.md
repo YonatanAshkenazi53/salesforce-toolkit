@@ -133,7 +133,7 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
 - [x] **A3. CI** (2026-07-08) — remote existed all along (YonatanAshkenazi53/salesforce-toolkit);
   user pushed. .github/workflows/verify.yml runs npm ci + npm run verify + the "no foreign
   fetch hosts" grep gate on every push/PR. package-lock.json un-ignored for npm ci.
-- [ ] **A4. eslint no-undef** — generate per-page-group globals lists (script scans top-level
+- [x] **A4. eslint no-undef** — generate per-page-group globals lists (script scans top-level
   declarations of each file group) and enable no-undef. Catches typo'd cross-file calls statically.
 
 ## Phase R — Reconcile v2
