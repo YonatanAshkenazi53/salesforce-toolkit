@@ -213,6 +213,54 @@ describe('picklist P2/P3 pure helpers (studio-picklists.js)', () => {
   });
 });
 
+describe('smart matching (sftk-matching.js) — the ONE shared key builder', () => {
+  const { sftkNormalizeValue, sftkMatchKey, sftkMatchingFromNode } =
+    extractFunctions('sftk-matching.js', ['sftkNormalizeValue', 'sftkMatchKey', 'sftkMatchingFromNode']);
+  const sftkCrossOrgPreview = (() => {
+    try { return extractFunction('sftk-matching.js', 'sftkCrossOrgPreview'); } catch { return null; }
+  })();
+
+  it('normalizes per toggles (case, whitespace, email, phone)', () => {
+    expect(sftkNormalizeValue('  Word of Mouth ', { caseFold: true, trim: true, collapseWs: true }))
+      .toBe(sftkNormalizeValue('word  OF   mouth', { caseFold: true, trim: true, collapseWs: true }));
+    expect(sftkNormalizeValue('B.Levy@ACME.com', { emailLower: true }))
+      .toBe(sftkNormalizeValue('b.levy@acme.com', { emailLower: true }));
+    expect(sftkNormalizeValue('(03) 555-1234', { phoneDigits: true }))
+      .toBe(sftkNormalizeValue('035551234', { phoneDigits: true }));
+    expect(sftkNormalizeValue(null, {})).toBe('');
+  });
+
+  it('composite keys join components; all-blank → "" (unmatchable)', () => {
+    const m = { strategy: 'composite', fields: ['FirstName', 'LastName'], normalize: { caseFold: true } };
+    const k1 = sftkMatchKey({ FirstName: 'ANA', LastName: 'Levy' }, m);
+    const k2 = sftkMatchKey({ FirstName: 'ana', LastName: 'LEVY' }, m);
+    expect(k1).toBe(k2);
+    expect(k1).toContain(String.fromCharCode(1));
+    expect(sftkMatchKey({ FirstName: null, LastName: '' }, m)).toBe('');
+    // Separator prevents cross-field bleed: ("ab","c") ≠ ("a","bc")
+    const m2 = { strategy: 'composite', fields: ['A', 'B'], normalize: {} };
+    expect(sftkMatchKey({ A: 'ab', B: 'c' }, m2)).not.toBe(sftkMatchKey({ A: 'a', B: 'bc' }, m2));
+  });
+
+  it('BACK-COMPAT: legacy node without .matching produces byte-identical keys to the old raw-value path', () => {
+    const node = { matchField: 'Name' };
+    const cfg = sftkMatchingFromNode(node);
+    const rec = { Name: '  Acme & Söhne GmbH ' };   // weird value stays EXACTLY as stored
+    expect(sftkMatchKey(rec, cfg)).toBe(String(rec.Name));
+  });
+
+  it('cross-org preview: unique 1:1, dup-either-side → ambiguous, no-target/blank → unmatched', () => {
+    const p = sftkCrossOrgPreview(
+      { keyCounts: new Map([['a', 1], ['b', 2], ['c', 1], ['d', 1]]), total: 5, blank: 1 },
+      { keyCounts: new Map([['a', 1], ['b', 1], ['c', 2]]), total: 4, blank: 0 },
+    );
+    expect(p.matchedUnique).toBe(1);   // 'a' — 1:1
+    expect(p.ambiguous).toBe(3);       // 'b' (2 src rows, dup) + 'c' (tgt dup, 1 src row)
+    expect(p.unmatched).toBe(2);       // 'd' (no target) + 1 blank source key
+    expect(p.sourceTotal).toBe(5);
+  });
+});
+
 describe('sftkBuildStoredZip (sftk-zip.js) — the shared Metadata-deploy zip builder', () => {
   const { sftkCrc32, sftkBuildStoredZip } =
     extractFunctions('sftk-zip.js', ['sftkCrc32', 'sftkBuildStoredZip']);
