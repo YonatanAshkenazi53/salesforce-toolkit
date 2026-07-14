@@ -98,6 +98,13 @@ let _reconcileProfile = null;
 // ids/labels from history when saving (disables History record links).
 let _settings = { historyDays: 30, countsOnly: false };
 
+// M2 — Sync Ring: the org group being kept in sync + which org is the source
+// of truth. Replaces the old two-org "working pair" as the global context
+// (user decision 2026-07-14: "a global two-org context is the wrong shape for
+// a 5-org ring"). _workingPair.src stays mirrored to ring.sourceUrl so every
+// existing default-seeding path keeps working unchanged.
+let _ring = null;   // { orgs: [urls], sourceUrl } | null (not configured)
+
 // ── DOM helpers ───────────────────────────────────────────────
 const esc = s => String(s ?? '')
   .replace(/&/g,'&amp;').replace(/</g,'&lt;')
@@ -258,7 +265,7 @@ async function storageLoad() {
   const d = await chrome.storage.local.get([
     'sftk_profiles','sftk_history','sftk_orgs',
     'ds_dark_mode','sftk_dark','ds_activity_log','sftk_sequences','sftk_active_run',
-    'ds_working_pair','ds_settings'
+    'ds_working_pair','ds_settings','ds_ring'
   ]);
   _profiles     = d.sftk_profiles   || [];
   _history      = d.sftk_history    || [];
@@ -271,6 +278,15 @@ async function storageLoad() {
   _sequences    = d.sftk_sequences  || [];
   _workingPair  = d.ds_working_pair || { src: '', tgt: '' };
   _settings     = { historyDays: 30, countsOnly: false, ...(d.ds_settings || {}) };
+
+  // M2: ring config — migrate the legacy working pair into a 2-org ring the
+  // first time (its source becomes the source of truth).
+  _ring = d.ds_ring || null;
+  if (!_ring && _workingPair.src) {
+    _ring = { orgs: [_workingPair.src, _workingPair.tgt].filter(Boolean), sourceUrl: _workingPair.src };
+    chrome.storage.local.set({ ds_ring: _ring }).catch(() => {});
+  }
+  if (_ring?.sourceUrl) _workingPair.src = _ring.sourceUrl;   // keep default-seeding paths alive
 
   // Retention (S5): purge history entries older than the configured window.
   if (_settings.historyDays > 0 && _history.length) {
@@ -646,6 +662,7 @@ function recordActivity(view) {
 const CMD_VIEWS = [
   { icon: '🔌', label: 'Connected Orgs',    view: 'orgs',      desc: 'Manage connections' },
   { icon: '📦', label: 'Data Deployment',   view: 'profiles',  desc: 'Profiles + run transfer' },
+  { icon: '🔄', label: 'Sync Ring',         view: 'ring',      desc: 'All orgs vs the source of truth' },
   { icon: '🎚', label: 'Picklists',         view: 'picklists', desc: 'Values, usage & data fixes' },
   { icon: '📜', label: 'History',           view: 'history',   desc: 'Past transfer runs' },
   { icon: '🔍', label: 'Org Compare',       view: 'compare',   desc: 'Diff data across many objects' },
@@ -1073,7 +1090,7 @@ function _getStartedHtml() {
 // The set of top-level views that own a sidebar tab (transient sub-views like
 // reconcile/builder are NOT hash-routed).
 const DS_HASH_VIEWS = new Set([
-  'orgs', 'profiles', 'picklists', 'history', 'compare', 'readiness', 'schema', 'fields', 'transfer',
+  'orgs', 'profiles', 'ring', 'picklists', 'history', 'compare', 'readiness', 'schema', 'fields', 'transfer',
 ]);
 
 function _viewFromHash() {
@@ -1121,6 +1138,7 @@ function renderView(view) {
     case 'reconcile': renderReconcile();   break;
     case 'compare':   renderOrgCompare(); break;
     case 'picklists': renderPicklists();  break;
+    case 'ring':      renderRing();       break;
   }
 }
 
@@ -1382,27 +1400,38 @@ function orgOptionLabel(url, label, liveSet) {
 // re-render; renderView() repaints it so the options track newly-detected
 // orgs. Changing the pair persists it and re-renders the current view —
 // views are stateless full re-renders, so that's the whole propagation.
+// M2: the topbar control is now a single SOURCE-OF-TRUTH chip (the old
+// two-org PAIR was the wrong shape for a multi-org ring — user decision).
+// It shows the ring's golden org; clicking picks a different source; the
+// gear opens the Sync Ring view. _workingPair.src mirrors the choice so all
+// existing default-seeding paths keep working; _workingPair.tgt is retired.
 function renderWorkingPair() {
   const el = eid('dsWorkingPair');
   if (!el) return;
   const orgs = allMapOrgs();
-  if (orgs.length < 2) { el.innerHTML = ''; return; }   // pointless with 0-1 orgs
+  if (!orgs.length) { el.innerHTML = ''; return; }
   const ls = _liveOrgSet();
-  const opts = sel => ['<option value="">—</option>',
-    ...orgs.map(o => `<option value="${esc(o.url)}" ${o.url === sel ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label, ls))}</option>`)
-  ].join('');
+  const srcUrl = _ring?.sourceUrl || _workingPair.src || '';
+  const candidates = (_ring?.orgs?.length ? _ring.orgs : orgs.map(o => o.url));
+  const opts = candidates.map(u => {
+    const o = orgs.find(x => _orgKey(x.url) === _orgKey(u));
+    return `<option value="${esc(u)}" ${_orgKey(u) === _orgKey(srcUrl) ? 'selected' : ''}>${esc(orgOptionLabel(u, o?.label, ls))}</option>`;
+  }).join('');
   el.innerHTML = `
-    <span class="ds-pair-lbl" title="Working pair — Org Compare, Deploy Readiness, Schema View, and new deployments all start with these orgs. Each view can still pick different ones.">Pair</span>
-    <select id="dsWpSrc" class="ds-pair-sel" title="Working SOURCE org (data comes from here)">${opts(_workingPair.src)}</select>
-    <button id="dsWpSwap" class="ds-pair-swap" title="Swap source and target">⇄</button>
-    <select id="dsWpTgt" class="ds-pair-sel" title="Working TARGET org (data goes here)">${opts(_workingPair.tgt)}</select>`;
-  const persist = () => { storageSaveWorkingPair(); renderView(_currentView); };
-  eid('dsWpSrc')?.addEventListener('change', e => { _workingPair.src = e.target.value; persist(); });
-  eid('dsWpTgt')?.addEventListener('change', e => { _workingPair.tgt = e.target.value; persist(); });
-  eid('dsWpSwap')?.addEventListener('click', () => {
-    const t = _workingPair.src; _workingPair.src = _workingPair.tgt; _workingPair.tgt = t;
-    persist();   // renderView repaints this control too
+    <span class="ds-pair-lbl" title="Source of truth — new deployments, compares and picklist loads all start from this org. Configure the full ring with ⚙.">⦿ Source</span>
+    <select id="dsSotSel" class="ds-pair-sel" title="The golden org data flows FROM">${opts}</select>
+    <button id="dsSotRingBtn" class="ds-pair-swap" title="Configure the Sync Ring (which orgs stay in sync)">⚙</button>`;
+  eid('dsSotSel')?.addEventListener('change', async e => {
+    const v = e.target.value;
+    if (!_ring) _ring = { orgs: [v], sourceUrl: v };
+    _ring.sourceUrl = v;
+    if (!_ring.orgs.some(u => _orgKey(u) === _orgKey(v))) _ring.orgs.push(v);
+    _workingPair.src = v;
+    await chrome.storage.local.set({ ds_ring: _ring });
+    storageSaveWorkingPair();
+    renderView(_currentView);
   });
+  eid('dsSotRingBtn')?.addEventListener('click', () => navigateToView('ring'));
 }
 
 // Resolve an org URL (the value of every org <select>) to a live session

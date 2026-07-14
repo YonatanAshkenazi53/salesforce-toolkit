@@ -4727,3 +4727,28 @@ html, body {
 .ds-fanout-org { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
 .ds-fanout-org:hover { border-color: var(--brand); }
 .ds-fanout-panel { border: 1px solid var(--brand); border-radius: 8px; margin-bottom: 14px; overflow: hidden; background: var(--card); }
+
+/* ── Sync Ring (M2) ───────────────────────────────────────────── */
+.ds-ring-cfg { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; }
+.ds-ring-cfg-sum { padding: 10px 14px; cursor: pointer; font-size: 13px; display: flex; gap: 10px; align-items: baseline; }
+.ds-ring-orgs { padding: 6px 14px 12px; display: flex; flex-direction: column; gap: 6px; }
+.ds-ring-org { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.ds-ring-org-in { border-color: var(--brand); }
+.ds-ring-src-pick { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--subtext); cursor: pointer; }
+.ds-ring-matrix { border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
+.ds-ring-head, .ds-ring-row { display: grid; grid-template-columns: minmax(220px, 1.4fr) repeat(var(--ring-cols, 3), minmax(150px, 1fr)); gap: 8px; padding: 8px 12px; align-items: center; }
+.ds-ring-head { background: var(--panel-bg, rgba(128,128,128,.08)); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--subtext); }
+.ds-ring-row { border-top: 1px solid var(--border); }
+.ds-ring-rowhdr { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.ds-ring-pname { font-weight: 600; font-size: 13px; }
+.ds-ring-pobj { font-size: 10.5px; color: var(--subtext); }
+.ds-ring-row-acts { display: flex; gap: 4px; }
+.ds-ring-cell { display: flex; align-items: center; gap: 7px; font-size: 12px; min-height: 26px; }
+.ds-ring-clean { color: var(--active-color); font-weight: 600; }
+.ds-ring-counts b { font-weight: 700; margin-right: 6px; font-variant-numeric: tabular-nums; }
+.ds-ring-m { color: #C23934; } .ds-ring-c { color: #DD7A01; } .ds-ring-e { color: var(--subtext); }
+.ds-ring-age { font-size: 10.5px; color: var(--subtext); }
+.ds-ring-stale { color: #DD7A01; font-weight: 600; }
+.ds-ring-unknown { color: var(--subtext); font-style: italic; }
+.ds-ring-offline { opacity: .7; }
+.ds-ring-cell-acts { display: flex; gap: 3px; margin-left: auto; }
