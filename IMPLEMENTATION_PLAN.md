@@ -273,6 +273,11 @@ history) already exists there.
   executeProfileTransfer(profile, src, tgt) already takes any pair; this is a loop + UI
   (the picklist P2 bulk-apply pattern).
 - [ ] **M2. Sync Ring dashboard** — org group ("ring") with designated source-of-truth;
+  ALSO (user decision 2026-07-14): REPLACE the topbar PAIR control with a single
+  source-of-truth CHIP — one org, not two; seeds the same defaults (new deployments,
+  compares, picklists start from the golden org); ds_working_pair migrates to the ring
+  config. "A global two-org context is the wrong shape for a 5-org ring."
+  Original spec:
   matrix view profile × target org (missing/changed per cell from runDiffScan, parallel,
   session-availability badges); per-cell ⚖ Reconcile; per-row "scan all" / "push all
   missing". Answers "is everything in sync?" at a glance.
