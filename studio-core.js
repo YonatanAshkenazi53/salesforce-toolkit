@@ -651,7 +651,6 @@ const CMD_VIEWS = [
   { icon: '🔍', label: 'Org Compare',       view: 'compare',   desc: 'Diff data across many objects' },
   { icon: '🛡',  label: 'Deploy Readiness', view: 'readiness', desc: 'Schema compatibility' },
   { icon: '🕸',  label: 'Schema View',      view: 'schema',    desc: 'Flow & object graph' },
-  { icon: '🐛', label: 'Apex Debugger',     view: 'debugger',  desc: 'Trace flows, triggers & limits' },
 ];
 
 // Toolkit (popup) features — selecting one opens/focuses the Toolkit popout
@@ -1074,7 +1073,7 @@ function _getStartedHtml() {
 // The set of top-level views that own a sidebar tab (transient sub-views like
 // reconcile/builder are NOT hash-routed).
 const DS_HASH_VIEWS = new Set([
-  'orgs', 'profiles', 'picklists', 'history', 'compare', 'readiness', 'schema', 'fields', 'transfer', 'debugger',
+  'orgs', 'profiles', 'picklists', 'history', 'compare', 'readiness', 'schema', 'fields', 'transfer',
 ]);
 
 function _viewFromHash() {
@@ -1122,7 +1121,6 @@ function renderView(view) {
     case 'reconcile': renderReconcile();   break;
     case 'compare':   renderOrgCompare(); break;
     case 'picklists': renderPicklists();  break;
-    case 'debugger':  renderDebuggerTool(); break;   // Phase X — mounted popup tool
   }
 }
 

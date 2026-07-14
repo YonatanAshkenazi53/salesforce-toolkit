@@ -160,6 +160,9 @@ User directive (2026-07-07): "Please make sure we implement all of them. i want 
   one nav entry + a one-line render fn (recipe documented in studio-tools.js). Wire them in
   one at a time when desired — the convergence pattern is proven and low-risk. The popup
   stays as-is (both apps share libs already); making it a pure launcher is optional polish.
+  UPDATE 2026-07-14: user chose to keep the Debugger POPUP-ONLY ("remove it from the data
+  studio") — nav entry/case/hash/palette removed; studio-tools.js kept in repo UNLOADED as
+  the documented mounting recipe. Data Studio's identity stays multi-org data operations.
 - [x] **X5. Unify theming** (commit `204af87`) — shared dark-mode key: studio reads/writes
   canonical `sftk_dark` (popup's key) with legacy `ds_dark_mode` fallback, so the light/dark
   choice carries between apps. Full CSS palette merge deferred (cosmetic; the two apps keep
