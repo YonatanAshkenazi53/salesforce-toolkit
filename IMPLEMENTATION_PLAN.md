@@ -281,7 +281,7 @@ history) already exists there.
   matrix view profile × target org (missing/changed per cell from runDiffScan, parallel,
   session-availability badges); per-cell ⚖ Reconcile; per-row "scan all" / "push all
   missing". Answers "is everything in sync?" at a glance.
-- [ ] **M3a. Matching engine + per-node config** — node.matching { strategy: 'field'|
+- [x] **M3a. Matching engine + per-node config** — node.matching { strategy: 'field'|
   'composite'|'externalId', fields: [..], normalize: { caseFold, trim, collapseWs,
   emailLower, phoneDigits } }; builder UI to pick it (external-id dropdown describe-driven,
   greyed with hint when the org has none — the user's orgs currently don't). ONE shared
@@ -291,7 +291,7 @@ history) already exists there.
   query by first component IN(...) then client-filter the full normalized key (SOQL text =
   is case-insensitive, JS is not — normalization matters client-side). Back-compat:
   node.matchField remains the fallback when node.matching is absent.
-- [ ] **M3b. Key-quality analyzer** — "Test this key" in the matching UI: populated% +
+- [x] **M3b. Key-quality analyzer** — "Test this key" in the matching UI: populated% +
   unique% per org (GROUP BY / describe unique|externalId flags), cross-org match preview
   ("matches 1,240 of 1,300 uniquely · 38 ambiguous · 22 unmatched"), ranked suggestions
   (external-id fields → unique fields → nameField → discovered composites).

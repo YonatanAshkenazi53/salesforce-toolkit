@@ -236,8 +236,22 @@ async function runDiffScan(profile, node = null, scope = null) {
   if (!objType)                  return { error: 'profile has no root object' };
 
   const derived = deriveScanConfig(profile, node);
-  let srcMatchField  = derived.matchField;
-  let tgtMatchField  = derived.matchFieldTgt;
+  // M3a — resolved matching config. ONE shared key builder (sftk-matching.js)
+  // produces every key in this scan; the SAME resolved config is stored on
+  // the result (scan.matching) so writers can never build keys differently.
+  // Nodes with node.matching use it verbatim; legacy nodes reduce to the
+  // single derived matchField pair (identical to pre-M3a behavior).
+  const hasMatchingCfg = !!(node?.matching && Array.isArray(node.matching.fields)
+    && node.matching.fields.filter(Boolean).length);
+  const nodeMatching = hasMatchingCfg
+    ? sftkMatchingFromNode(node)
+    : { strategy: 'field', fields: [derived.matchField], normalize: {} };
+  let srcKeyFields = sftkMatchingFields(nodeMatching);
+  let tgtKeyFields = hasMatchingCfg
+    ? sftkMatchingTgtFields(node, nodeMatching)
+    : [derived.matchFieldTgt];
+  let srcMatchField  = srcKeyFields[0];
+  let tgtMatchField  = tgtKeyFields[0];
   let srcCompare     = derived.compareFields;
   let tgtCompare     = derived.compareFields.map(f => {
     // Per-side compareField names: a source field with a mapping uses the
@@ -289,8 +303,24 @@ async function runDiffScan(profile, node = null, scope = null) {
   const tgtTypes = new Map((tgtDescFull?.fields || []).map(f => [f.name, f.type]));
   const srcNameFld = (srcDescFull?.fields || []).find(f => f.nameField === true)?.name || null;
   const tgtNameFld = (tgtDescFull?.fields || []).find(f => f.nameField === true)?.name || null;
-  if (srcTypes.size && !srcTypes.has(srcMatchField) && srcNameFld) srcMatchField = srcNameFld;
-  if (tgtTypes.size && !tgtTypes.has(tgtMatchField) && tgtNameFld) tgtMatchField = tgtNameFld;
+  if (!hasMatchingCfg) {
+    // Legacy single-field path — silent nameField auto-correct (unchanged).
+    if (srcTypes.size && !srcTypes.has(srcMatchField) && srcNameFld) { srcMatchField = srcNameFld; srcKeyFields = [srcMatchField]; }
+    if (tgtTypes.size && !tgtTypes.has(tgtMatchField) && tgtNameFld) { tgtMatchField = tgtNameFld; tgtKeyFields = [tgtMatchField]; }
+  } else {
+    // Explicit matching config — a missing component would silently change
+    // the key definition mid-scan, so fail loudly instead of auto-correcting.
+    const missSrc = srcTypes.size ? srcKeyFields.filter(f => !srcTypes.has(f)) : [];
+    const missTgt = tgtTypes.size ? tgtKeyFields.filter(f => !tgtTypes.has(f)) : [];
+    if (missSrc.length || missTgt.length) {
+      return { error: `matching field(s) ${[...new Set([...missSrc, ...missTgt])].join(', ')} don't exist on ${objType} in the ${missSrc.length ? 'source' : 'target'} org — fix the Matching setup in 🎯 Pick Records` };
+    }
+  }
+  // Per-side key configs — same strategy + normalization, only the field
+  // NAMES differ per side. Every key below comes from sftkMatchKey with one
+  // of these two configs (THE invariant: scan and writers share this).
+  const srcMatching = { strategy: nodeMatching.strategy, fields: srcKeyFields, normalize: nodeMatching.normalize || {} };
+  const tgtMatching = { strategy: nodeMatching.strategy, fields: tgtKeyFields, normalize: nodeMatching.normalize || {} };
 
   // Per-lookup compare maps (from the node's resolution config, else Name).
   // Reference fields are compared by the RELATED record's match field, not the
@@ -301,10 +331,24 @@ async function runDiffScan(profile, node = null, scope = null) {
   // Link tracking for scoped (child) scans — resolve each side's parent KEY
   // via the same dot-path machinery. Both sides must resolve for the
   // linkMismatch bucket to be trackable (polymorphic links can't).
-  const linkInfoSrc = scope?.parentField && srcLkp[scope.parentField] && !srcLkp[scope.parentField].skip
+  let linkInfoSrc = scope?.parentField && srcLkp[scope.parentField] && !srcLkp[scope.parentField].skip
     ? srcLkp[scope.parentField] : null;
-  const linkInfoTgt = tgtParentField && tgtLkp[tgtParentField] && !tgtLkp[tgtParentField].skip
+  let linkInfoTgt = tgtParentField && tgtLkp[tgtParentField] && !tgtLkp[tgtParentField].skip
     ? tgtLkp[tgtParentField] : null;
+  // M3a — when the caller hands over the PARENT's resolved matching config
+  // (scanReconcileChild does), track parent keys by its FIRST component so
+  // linkMismatch/relink and the parent scan's own key indexes stay aligned.
+  // Dot-paths resolve one field, so composite parents track by component 1;
+  // normalization is applied at COMPARE time (raw values stay stored for
+  // relink's server-side queries).
+  const pMatchCfg = scope?.parentMatching || null;
+  if (linkInfoSrc && pMatchCfg?.fields?.[0]) {
+    linkInfoSrc = { ...linkInfoSrc, matchField: pMatchCfg.fields[0] };
+  }
+  if (linkInfoTgt && (pMatchCfg?.tgtFields?.[0] || pMatchCfg?.fields?.[0])) {
+    linkInfoTgt = { ...linkInfoTgt, matchField: pMatchCfg.tgtFields?.[0] || pMatchCfg.fields[0] };
+  }
+  const pkNorm = v => pMatchCfg ? sftkNormalizeValue(v, pMatchCfg.normalize || {}) : String(v ?? '');
   const linkTrackable = !!(linkInfoSrc && linkInfoTgt);
 
   // R2 — master-detail guardrail (child scans): detect whether the parent
@@ -353,7 +397,8 @@ async function runDiffScan(profile, node = null, scope = null) {
 
   const fieldList = (plan, side) => {
     const base = [
-      'Id', side === 'src' ? srcMatchField : tgtMatchField,
+      // M3a — SELECT every key component (composite keys need them all).
+      'Id', ...(side === 'src' ? srcKeyFields : tgtKeyFields),
       ...plan.map(p => side === 'src' ? p.srcSel : p.tgtSel)
     ];
     // Child scans also read the raw parent id + the parent's KEY (dot-path)
@@ -445,16 +490,19 @@ async function runDiffScan(profile, node = null, scope = null) {
   let _keyCollisions = null;
   if (scope) {
     try {
-      const countKeys = (recs, fld) => {
+      // M3a — collision detection runs on the SAME keys the indexes use
+      // (sftkMatchKey; normalization included), so "two different raw values
+      // that normalize to the same key" counts as a collision too.
+      const countKeys = (recs, cfg) => {
         const m = new Map();
         for (const r of recs) {
-          const k = r[fld];
-          if (k != null && k !== '') { const s = String(k); m.set(s, (m.get(s) || 0) + 1); }
+          const k = sftkMatchKey(r, cfg);
+          if (k !== '') m.set(k, (m.get(k) || 0) + 1);
         }
         return m;
       };
-      const sCnt = countKeys(srcRes.records || [], srcMatchField);
-      const tCnt = countKeys(tgtRes.records || [], tgtMatchField);
+      const sCnt = countKeys(srcRes.records || [], srcMatching);
+      const tCnt = countKeys(tgtRes.records || [], tgtMatching);
       for (const [k, n] of sCnt) if (n > 1) _dupKeys.add(k);
       for (const [k, n] of tCnt) if (n > 1) _dupKeys.add(k);
       if (_dupKeys.size) {
@@ -491,19 +539,22 @@ async function runDiffScan(profile, node = null, scope = null) {
   // (Name="Andy Young" on source, Full_Name__c="Andy Young" on target both
   // key to "Andy Young"). Coerce to string so "123" (number) and "123"
   // (text) cross-org don't accidentally land in different buckets.
+  // M3a — blank keys (ALL components empty) are unmatchable: excluded from
+  // the indexes and COUNTED so the UI can say why rows are missing.
+  let _blankSrc = 0, _blankTgt = 0;
   const srcByKey = new Map();
   for (const r of (srcRes.records || [])) {
-    const k = r[srcMatchField];
-    if (k == null || k === '') continue;
-    if (scope && _dupKeys.has(String(k))) continue;   // R1 — ambiguous key, excluded
-    srcByKey.set(String(k), r);
+    const k = sftkMatchKey(r, srcMatching);
+    if (k === '') { _blankSrc++; continue; }
+    if (scope && _dupKeys.has(k)) continue;   // R1 — ambiguous key, excluded
+    srcByKey.set(k, r);
   }
   const tgtByKey = new Map();
   for (const r of (tgtRes.records || [])) {
-    const k = r[tgtMatchField];
-    if (k == null || k === '') continue;
-    if (scope && _dupKeys.has(String(k))) continue;   // R1 — ambiguous key, excluded
-    tgtByKey.set(String(k), r);
+    const k = sftkMatchKey(r, tgtMatching);
+    if (k === '') { _blankTgt++; continue; }
+    if (scope && _dupKeys.has(k)) continue;   // R1 — ambiguous key, excluded
+    tgtByKey.set(k, r);
   }
 
   const missingInTarget = []; // present in source, absent in target → "deploy"
@@ -544,7 +595,9 @@ async function runDiffScan(profile, node = null, scope = null) {
       if (linkTrackable) {
         const pkS = String(_lookupResolvedVal(sr, linkInfoSrc) ?? '');
         const pkT = String(_lookupResolvedVal(tr, linkInfoTgt) ?? '');
-        if (pkS !== pkT) {
+        // M3a — compare NORMALIZED (per the parent's matching config) so a
+        // case-only parent-name difference isn't flagged as a wrong link.
+        if (pkNorm(pkS) !== pkNorm(pkT)) {
           linkMismatch.push({ matchKey: k, sourceId: sr.Id, targetId: tr.Id,
             parentKeySrc: pkS, parentKeyTgt: pkT });
         }
@@ -564,7 +617,7 @@ async function runDiffScan(profile, node = null, scope = null) {
       for (const tr of _orphanRecs) {
         if (!tr?.Id || seenTgt.has(tr.Id)) continue;
         seenTgt.add(tr.Id);
-        const k = String(tr[tgtMatchField] ?? '');
+        const k = sftkMatchKey(tr, tgtMatching);
         onlyInTarget.push({ matchKey: k || '(no key)', targetId: tr.Id, orphan: true });
         orphanCount++;
       }
@@ -582,6 +635,17 @@ async function runDiffScan(profile, node = null, scope = null) {
     targetOrg:     profile.targetOrg,
     matchField:    srcMatchField,
     matchFieldTgt: tgtMatchField,
+    // M3a — the EXACT resolved key config this scan used. Writers (relink,
+    // group-B bridge) read THIS, never re-derive from the node, so scan and
+    // writers can't diverge even if the profile is edited between scan+run.
+    matching: {
+      strategy:  srcMatching.strategy,
+      fields:    [...srcMatching.fields],
+      tgtFields: [...tgtMatching.fields],
+      normalize: { ...(srcMatching.normalize || {}) }
+    },
+    // M3a — rows excluded because every key component was blank.
+    ...((_blankSrc + _blankTgt) ? { blankKeys: { rows: _blankSrc + _blankTgt, src: _blankSrc, tgt: _blankTgt } } : {}),
     compareFields: srcCompare,
     compareFieldsTgt: tgtCompare,
     sourceCount:   srcByKey.size,
@@ -662,8 +726,27 @@ async function scanReconcileChild(profile, pathKey) {
     ...(scanBasis.onlyInTarget || []).map(r => r.targetId)
   ].filter(Boolean))];
 
+  // M3a — hand the child scan the PARENT's key config so parent-link keys
+  // (parentKey / linkMismatch) are built the same way the parent scan built
+  // its own keys. Prefer the parent scan's STORED config (already validated
+  // against both orgs' describes); fall back to resolving the parent node.
+  let parentMatching = scanBasis.matching || null;
+  if (!parentMatching) {
+    try {
+      const pNode = segs.length === 2
+        ? getNodeByPath(profile.tree, segs.slice(0, -1).join('.'))
+        : profile.tree;
+      const pm = sftkMatchingFromNode(pNode);
+      parentMatching = {
+        strategy: pm.strategy, fields: pm.fields,
+        tgtFields: sftkMatchingTgtFields(pNode, pm),
+        normalize: pm.normalize
+      };
+    } catch (_) { parentMatching = null; }
+  }
+
   const res = await runDiffScan(profile, node, {
-    parentField: node.field, srcParentIds, tgtParentIds
+    parentField: node.field, srcParentIds, tgtParentIds, parentMatching
   });
   if (res?.error) return res;
   res.rootRunAt = root.runAt;   // staleness stamp — must match the root scan

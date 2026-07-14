@@ -627,6 +627,51 @@ async function openRecordPickerModal(pathStr) {
   }
   let tgtMatchField = deriveTgtMatchDefault(displayField);
 
+  // ── M3a — per-node Matching config state ──────────────────────────────
+  // node.matching { strategy, fields[≤4], normalize } is the new cross-org
+  // identity config; sftkMatchingFromNode supplies the legacy single-field
+  // fallback. node.matchField is kept in sync (first component) for
+  // back-compat with anything that still reads it.
+  const initialMatching = sftkMatchingFromNode(node);
+  let matchStrategy  = initialMatching.strategy;
+  let matchFields    = [...initialMatching.fields];
+  let matchNormalize = {
+    caseFold: false, trim: false, collapseWs: false, emailLower: false, phoneDigits: false,
+    ...(initialMatching.normalize || {})
+  };
+  if (node.matching?.fields?.[0]) displayField = node.matching.fields[0];
+  // External-ID candidates from the source describe. The user's orgs may
+  // have NONE — the strategy stays visible (greyed) with a Setup hint.
+  const extIdCandidates = (desc?.fields || [])
+    .filter(f => (f.externalId === true || f.unique === true) && f.name !== 'Id' && f.type !== 'id')
+    .map(f => ({ name: f.name, label: f.label || f.name, ext: f.externalId === true }));
+  // M3b — analyzer state: cached results survive search-driven re-renders.
+  let matchTestHtml    = '';
+  let matchSuggestOpen = false;
+  const gradeCache     = new Map();   // suggestion sig → rendered mini-grade
+  const suggestions    = _matchSuggestionsFromDescribe(desc);
+
+  const NORM_OPTS = [
+    ['caseFold',    'Ignore case'],
+    ['trim',        'Trim spaces'],
+    ['collapseWs',  'Collapse whitespace'],
+    ['emailLower',  'Lowercase emails'],
+    ['phoneDigits', 'Digits-only phones']
+  ];
+
+  // Write the current Matching UI state onto the node. Legacy consumers keep
+  // working: node.matchField mirrors the first key component.
+  function persistMatching() {
+    const fields = matchFields.filter(Boolean).slice(0, 4);
+    if (!fields.length) fields.push(displayField || 'Name');
+    node.matching = { strategy: matchStrategy, fields, normalize: { ...matchNormalize } };
+    node.matchField = fields[0];
+    node._meta._recDisplayField = fields[0];
+    // Composite/external-ID target-side names derive from the Field Mapping;
+    // an explicit single-field target pick only applies to 'field' strategy.
+    if (matchStrategy !== 'field') node.matchFieldTgt = null;
+  }
+
   // ── Step 3: query helper — fetches records using current displayField ─
   let records = [];
   let queryError = null;
@@ -704,6 +749,101 @@ async function openRecordPickerModal(pathStr) {
     ).join('');
   }
 
+  // ── M3a — Matching section (strategy + fields + normalization) ────────
+  function matchCfgHtml() {
+    const stratRadio = (val, lbl, disabled, title) => `
+      <label class="ds-match-strat" style="display:inline-flex;align-items:center;gap:4px;font-size:12px;${disabled ? 'opacity:.55;cursor:not-allowed' : 'cursor:pointer'}" title="${esc(title || '')}">
+        <input type="radio" name="dsMatchStrat" value="${val}" ${matchStrategy === val ? 'checked' : ''} ${disabled ? 'disabled' : ''}> ${lbl}
+      </label>`;
+    let body = '';
+    if (matchStrategy === 'field') {
+      body = `
+        <div class="ds-rec-display-row">
+          <div class="ds-rec-mf-col">
+            <span class="ds-rec-display-lbl">Match on source:</span>
+            ${candidateFields.length
+              ? `<select id="dsRecDisplayField" class="ds-select ds-select-sm">
+                  <option value="Id">Id (always unique)</option>
+                  ${fieldOptions()}
+                 </select>`
+              : `<span class="ds-subtext">No string fields found — showing Id only</span>`}
+          </div>
+          <span class="ds-rec-mf-arrow">↔</span>
+          <div class="ds-rec-mf-col">
+            <span class="ds-rec-display-lbl">Match on target:</span>
+            ${tgtCandidates && tgtCandidates.length
+              ? `<select id="dsRecTgtMatchField" class="ds-select ds-select-sm" title="The field on the TARGET org whose value identifies the same logical record as the source-side field. Leave matching source if names are the same on both orgs.">
+                  <option value="Id" ${tgtMatchField === 'Id' ? 'selected' : ''}>Id (always unique)</option>
+                  ${tgtCandidates.map(f => `<option value="${esc(f.name)}" ${tgtMatchField === f.name ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})</option>`).join('')}
+                 </select>`
+              : `<input id="dsRecTgtMatchField" class="ds-input ds-input-sm" value="${esc(tgtMatchField)}" placeholder="${esc(displayField)}" title="Target session unavailable — type the target-side field API name manually. Open the target org in a Chrome tab to get a dropdown.">`}
+          </div>
+        </div>`;
+    } else if (matchStrategy === 'composite') {
+      const slots = Math.min(4, matchFields.length + 1);
+      const sels = [];
+      for (let i = 0; i < slots; i++) {
+        const val = matchFields[i] || '';
+        sels.push(`<select class="ds-select ds-select-sm" data-match-comp="${i}" title="Key component ${i + 1}${i === 0 ? ' — also drives the record list below' : ''}">
+          <option value="">${val ? '— remove —' : '+ add field'}</option>
+          ${candidateFields.map(f => `<option value="${esc(f.name)}" ${val === f.name ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})</option>`).join('')}
+        </select>`);
+      }
+      body = `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        ${sels.join('<span style="color:var(--subtext)">+</span>')}
+        <span class="ds-subtext" style="font-size:11px">ordered, up to 4 — target-side names follow the Field Mapping</span>
+      </div>`;
+    } else {
+      body = extIdCandidates.length
+        ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <select id="dsMatchExtId" class="ds-select ds-select-sm">
+              ${extIdCandidates.map(f => `<option value="${esc(f.name)}" ${matchFields[0] === f.name ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})${f.ext ? ' — external ID' : ' — unique'}</option>`).join('')}
+            </select>
+            <span class="ds-subtext" style="font-size:11px">target-side name follows the Field Mapping</span>
+          </div>`
+        : `<select class="ds-select ds-select-sm" disabled title="External ID fields are created in Setup → Object Manager → Fields & Relationships — tick 'External ID' on a text field and deploy it to every org; it then becomes the ideal cross-org match key.">
+            <option>No external ID fields in this org — add one in Setup to enable</option>
+          </select>`;
+    }
+    return `
+      <div class="ds-match-cfg" style="border:1px solid var(--border,#e2e8f0);border-radius:6px;padding:8px 10px;margin-bottom:10px">
+        <div class="ds-match-strat-row" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <span class="ds-rec-display-lbl" title="How records are recognized as 'the same' across orgs. Normalization is part of the key — the diff scan and every writer build keys identically from this config.">Matching:</span>
+          ${stratRadio('field', 'Single field', false, 'One field identifies the record (the classic matchField)')}
+          ${stratRadio('composite', 'Composite', false, 'Combine up to 4 fields into one key — for objects where no single field is unique (e.g. Name + Email)')}
+          ${stratRadio('externalId', 'External ID', !extIdCandidates.length, extIdCandidates.length
+            ? 'Match on a dedicated external-ID (or unique) field — the most reliable cross-org identity'
+            : 'No external ID fields in this org — add one in Setup to enable')}
+          <span style="flex:1"></span>
+          <button class="ds-btn ds-btn-xs" id="dsMatchTestBtn" title="Grade this key against BOTH live orgs: populated% + unique% per org and a cross-org match preview">🧪 Test this key</button>
+          <button class="ds-btn ds-btn-xs" id="dsMatchSuggestBtn" title="Ranked match-key suggestions from this object's schema (external IDs → unique fields → name → composites)">💡 Suggestions</button>
+        </div>
+        <div class="ds-match-fields-row" style="margin-top:6px">${body}</div>
+        <div class="ds-match-norm-row" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;font-size:12px;align-items:center">
+          <span class="ds-subtext" title="Applied to every key component on BOTH sides before comparing — normalization is part of the key itself.">Normalize:</span>
+          ${NORM_OPTS.map(([k, lbl]) => `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" data-match-norm="${esc(k)}" ${matchNormalize[k] ? 'checked' : ''}> ${lbl}</label>`).join('')}
+        </div>
+        <div id="dsMatchTestResults">${matchTestHtml}</div>
+        <div id="dsMatchSuggestBox" style="display:${matchSuggestOpen ? 'block' : 'none'};margin-top:6px">${matchSuggestOpen ? suggestListHtml() : ''}</div>
+      </div>`;
+  }
+
+  // M3b — ranked suggestion rows; mini-grades are computed lazily per row
+  // (never auto-run N analyses — API cost).
+  function suggestListHtml() {
+    if (!suggestions.length) return `<div class="ds-subtext" style="font-size:12px">No obvious key candidates found on this object's schema.</div>`;
+    return `<div class="ds-match-suggest-list" style="display:flex;flex-direction:column;gap:4px">
+      ${suggestions.map(s => `
+        <div class="ds-match-suggest-row" style="display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap">
+          <button class="ds-btn ds-btn-xs" data-match-adopt="${esc(s.sig)}" title="Use this as the matching config">Use</button>
+          <button class="ds-btn ds-btn-xs" data-match-grade="${esc(s.sig)}" title="Run the key-quality analysis for this candidate (queries both orgs)">Grade</button>
+          <strong>${esc(s.label)}</strong>
+          <span class="ds-subtext">${esc(s.why)}${Object.keys(s.normalize || {}).some(k => s.normalize[k]) ? ' · normalized' : ''}</span>
+          <div data-match-grade-out="${esc(s.sig)}" style="flex-basis:100%">${gradeCache.get(s.sig) || ''}</div>
+        </div>`).join('')}
+    </div>`;
+  }
+
   function renderModal(filter = '') {
     const lc   = filter.toLowerCase();
     let list = records;
@@ -735,31 +875,11 @@ async function openRecordPickerModal(pathStr) {
       <div class="ds-modal-header">🎯 Pick Records — <strong>${esc(objType)}</strong></div>
       <div class="ds-modal-body ds-picker-body">
 
-        <!-- Match field selectors — drive what's displayed AND how records
-             match across orgs (Salesforce IDs differ between orgs, so a
-             non-Id field needs to be the cross-org identity). Per-org because
-             a field called "Name" on source might be "Full_Name__c" on target. -->
-        <div class="ds-rec-display-row">
-          <div class="ds-rec-mf-col">
-            <span class="ds-rec-display-lbl">Match on source:</span>
-            ${candidateFields.length
-              ? `<select id="dsRecDisplayField" class="ds-select ds-select-sm">
-                  <option value="Id">Id (always unique)</option>
-                  ${fieldOptions()}
-                 </select>`
-              : `<span class="ds-subtext">No string fields found — showing Id only</span>`}
-          </div>
-          <span class="ds-rec-mf-arrow">↔</span>
-          <div class="ds-rec-mf-col">
-            <span class="ds-rec-display-lbl">Match on target:</span>
-            ${tgtCandidates && tgtCandidates.length
-              ? `<select id="dsRecTgtMatchField" class="ds-select ds-select-sm" title="The field on the TARGET org whose value identifies the same logical record as the source-side field. Leave matching source if names are the same on both orgs.">
-                  <option value="Id" ${tgtMatchField === 'Id' ? 'selected' : ''}>Id (always unique)</option>
-                  ${tgtCandidates.map(f => `<option value="${esc(f.name)}" ${tgtMatchField === f.name ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})</option>`).join('')}
-                 </select>`
-              : `<input id="dsRecTgtMatchField" class="ds-input ds-input-sm" value="${esc(tgtMatchField)}" placeholder="${esc(displayField)}" title="Target session unavailable — type the target-side field API name manually. Open the target org in a Chrome tab to get a dropdown.">`}
-          </div>
-        </div>
+        <!-- M3a — Matching section: strategy (single/composite/external ID) +
+             normalization toggles + M3b key-quality analyzer. Drives what's
+             displayed AND how records match across orgs (Salesforce IDs
+             differ between orgs, so a non-Id key is the cross-org identity). -->
+        ${matchCfgHtml()}
 
         ${queryError ? `<div class="ds-error-banner" style="margin-bottom:8px">${esc(queryError)}</div>` : ''}
 
@@ -847,10 +967,30 @@ async function openRecordPickerModal(pathStr) {
     // Source-side match field change → persist as node.matchField, re-query, re-render.
     // Also auto-update tgtMatchField if the user hasn't explicitly set one yet,
     // since the most common case is "same name on both sides".
+    // Re-render the whole modal after a matching-config change. Config edits
+    // invalidate cached analyzer output; the record list re-queries when the
+    // FIRST key component (the display field) changed.
+    async function matchCfgChanged(requery) {
+      persistMatching();
+      matchTestHtml = '';
+      gradeCache.clear();
+      const box = eid('dsModalBox');
+      const filterVal = eid('dsRecSearch')?.value || '';
+      const first = node.matching.fields[0];
+      if (requery && first && first !== displayField) {
+        displayField = first;
+        if (!node.matchFieldTgt) tgtMatchField = deriveTgtMatchDefault(displayField);
+        if (box) box.innerHTML = `<div class="ds-modal-body" style="text-align:center;padding:40px;color:var(--subtext)">Loading…</div>`;
+        await fetchRecords();
+      }
+      if (box) { box.innerHTML = renderModal(filterVal); wireModal(filterVal); }
+    }
+
     eid('dsRecDisplayField')?.addEventListener('change', async e => {
       displayField = e.target.value;
-      node._meta._recDisplayField = displayField;
-      node.matchField             = displayField;  // persisted: cross-org identity (src side)
+      matchFields  = [displayField];
+      persistMatching();   // keeps node.matchField (legacy) + node.matching in sync
+      matchTestHtml = ''; gradeCache.clear();
       // If the user hasn't explicitly picked a target match field, follow the source choice
       if (!node.matchFieldTgt || node.matchFieldTgt === '') {
         tgtMatchField = deriveTgtMatchDefault(displayField);
@@ -868,6 +1008,109 @@ async function openRecordPickerModal(pathStr) {
       const v = (e.target.value || '').trim();
       tgtMatchField        = v || displayField;       // empty → mirror source
       node.matchFieldTgt   = v || null;               // null = "use source-side name on target too"
+      matchTestHtml = ''; gradeCache.clear();
+    });
+
+    // ── M3a — matching strategy / composite fields / normalization ───────
+    document.querySelectorAll('input[name="dsMatchStrat"]').forEach(rb => rb.addEventListener('change', () => {
+      matchStrategy = rb.value;
+      if (matchStrategy === 'externalId') {
+        if (!extIdCandidates.some(f => f.name === matchFields[0])) {
+          matchFields = extIdCandidates.length ? [extIdCandidates[0].name] : matchFields.slice(0, 1);
+        } else {
+          matchFields = [matchFields[0]];
+        }
+      } else if (matchStrategy === 'field') {
+        matchFields = [matchFields[0] || displayField || 'Name'];
+      }
+      matchCfgChanged(true);
+    }));
+
+    document.querySelectorAll('[data-match-comp]').forEach(sel => sel.addEventListener('change', () => {
+      const vals = [...document.querySelectorAll('[data-match-comp]')]
+        .sort((a, b) => Number(a.dataset.matchComp) - Number(b.dataset.matchComp))
+        .map(s => s.value).filter(Boolean);
+      matchFields = [...new Set(vals)].slice(0, 4);
+      if (!matchFields.length) matchFields = [displayField || 'Name'];
+      matchCfgChanged(true);
+    }));
+
+    eid('dsMatchExtId')?.addEventListener('change', e => {
+      matchFields = [e.target.value];
+      matchCfgChanged(true);
+    });
+
+    document.querySelectorAll('[data-match-norm]').forEach(cb => cb.addEventListener('change', () => {
+      matchNormalize[cb.dataset.matchNorm] = cb.checked;
+      persistMatching();
+      // Analyzer output is stale the moment the key definition changes.
+      matchTestHtml = ''; gradeCache.clear();
+      const out = eid('dsMatchTestResults');
+      if (out) out.innerHTML = '';
+      document.querySelectorAll('[data-match-grade-out]').forEach(el => { el.innerHTML = ''; });
+    }));
+
+    // ── M3b — key-quality analyzer ("Test this key") ─────────────────────
+    eid('dsMatchTestBtn')?.addEventListener('click', async () => {
+      const btn = eid('dsMatchTestBtn');
+      const out = eid('dsMatchTestResults');
+      if (!out) return;
+      persistMatching();
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ testing…'; }
+      out.innerHTML = `<div class="ds-subtext" style="font-size:12px;margin-top:6px">Analyzing key quality in both orgs…</div>`;
+      try {
+        const m    = sftkMatchingFromNode(node);
+        const tgtF = sftkMatchingTgtFields(node, m);
+        const res  = await sftkAnalyzeMatchKey(objType, _editingProfile, m.fields, tgtF, m.normalize, m.strategy);
+        matchTestHtml = _matchAnalysisHtml(res, _editingProfile, false);
+      } catch (e) {
+        const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e?.message || String(e)) : { message: String(e?.message || e) };
+        matchTestHtml = `<div class="ds-drift-compare-err" style="margin-top:6px">⚠ Key test failed: ${esc(fe.message)}</div>`;
+      }
+      out.innerHTML = matchTestHtml;
+      if (btn) { btn.disabled = false; btn.textContent = '🧪 Test this key'; }
+    });
+
+    // ── M3b — ranked suggestions (adopt on click, grade lazily) ──────────
+    function wireSuggestRows() {
+      document.querySelectorAll('[data-match-adopt]').forEach(b => b.addEventListener('click', () => {
+        const s = suggestions.find(x => x.sig === b.dataset.matchAdopt);
+        if (!s) return;
+        matchStrategy  = s.strategy;
+        matchFields    = [...s.fields];
+        matchNormalize = { caseFold: false, trim: false, collapseWs: false, emailLower: false, phoneDigits: false, ...(s.normalize || {}) };
+        showToast(`Matching set to ${s.fields.join(' + ')} — click ✓ Apply to save`, 'info', 3500);
+        matchCfgChanged(true);
+      }));
+      document.querySelectorAll('[data-match-grade]').forEach(b => b.addEventListener('click', async () => {
+        const s = suggestions.find(x => x.sig === b.dataset.matchGrade);
+        if (!s) return;
+        const outEl = [...document.querySelectorAll('[data-match-grade-out]')].find(x => x.dataset.matchGradeOut === s.sig);
+        if (!outEl) return;
+        b.disabled = true; b.textContent = '⏳';
+        outEl.innerHTML = `<div class="ds-subtext" style="font-size:11px">Grading…</div>`;
+        try {
+          const fm   = node.fieldMappings || {};
+          const tgtF = s.fields.map(f => (fm[f] !== null && fm[f] !== undefined && fm[f] !== '') ? fm[f] : f);
+          const res  = await sftkAnalyzeMatchKey(objType, _editingProfile, s.fields, tgtF, s.normalize || {}, s.strategy);
+          gradeCache.set(s.sig, _matchAnalysisHtml(res, _editingProfile, true));
+        } catch (e) {
+          gradeCache.set(s.sig, `<div class="ds-drift-compare-err">⚠ ${esc(e?.message || String(e))}</div>`);
+        }
+        outEl.innerHTML = gradeCache.get(s.sig);
+        b.disabled = false; b.textContent = 'Grade';
+      }));
+    }
+    wireSuggestRows();
+
+    eid('dsMatchSuggestBtn')?.addEventListener('click', () => {
+      matchSuggestOpen = !matchSuggestOpen;
+      const boxEl = eid('dsMatchSuggestBox');
+      if (boxEl) {
+        boxEl.style.display = matchSuggestOpen ? 'block' : 'none';
+        boxEl.innerHTML = matchSuggestOpen ? suggestListHtml() : '';
+        if (matchSuggestOpen) wireSuggestRows();
+      }
     });
 
     eid('dsRecSearch')?.addEventListener('input', e => {
@@ -964,10 +1207,16 @@ async function openRecordPickerModal(pathStr) {
       });
     });
 
-    eid('dsRecSave')?.addEventListener('click', () => {
+    eid('dsRecSave')?.addEventListener('click', async () => {
       node.recordIds = selected.size > 0 ? [...selected] : null;
       closeModal();
       refreshTree();
+      // M3a — matching edits were applied to the node live; persist them so
+      // Apply actually saves (same pattern as the Field Mapping modal).
+      try { await commitEditingProfile(); }
+      catch (e) {
+        showToast('Applied, but saving the profile failed: ' + (e?.message || e), 'error', 6000);
+      }
     });
   }
 
@@ -1226,3 +1475,148 @@ async function openTransferRecordFilterModal(pathKey, objType) {
   wireModal();
 }
 
+
+// ════════════════════════════════════════════════════════════════
+// M3b — KEY-QUALITY ANALYZER (used by the Matching section above)
+// ════════════════════════════════════════════════════════════════
+// Grades a matching config against BOTH live orgs: populated% + unique% per
+// org and a cross-org match preview. Single-field configs use one GROUP BY
+// aggregate per org (the picklist P1 pattern, ~2,000-group cap); composite
+// configs sample up to 2,000 records per org and build keys client-side with
+// sftkMatchKey — the SAME key builder the scan and writers use.
+
+// Ranked suggestions from a describe: external-ID fields → unique fields →
+// the name field → 2-3 discovered composites (name + email / phone / city,
+// only when those fields exist on the object).
+function _matchSuggestionsFromDescribe(desc) {
+  const fields = (desc && desc.fields) || [];
+  const out = [];
+  const seen = new Set();
+  const push = (label, strategy, flds, normalize, why) => {
+    const sig = strategy + ':' + flds.join(',');
+    if (!flds.length || seen.has(sig)) return;
+    seen.add(sig);
+    out.push({ label, strategy, fields: flds, normalize: normalize || {}, why, sig });
+  };
+  fields.filter(f => f.externalId === true && f.name !== 'Id').forEach(f =>
+    push(`${f.label || f.name} (${f.name})`, 'externalId', [f.name], {}, 'external ID — built for cross-org identity'));
+  fields.filter(f => f.unique === true && f.externalId !== true && f.name !== 'Id' && f.type !== 'id').forEach(f =>
+    push(`${f.label || f.name} (${f.name})`, 'field', [f.name], {}, 'unique field'));
+  const nameFld = fields.find(f => f.nameField === true)?.name || null;
+  if (nameFld) {
+    push(nameFld, 'field', [nameFld], {}, 'name field');
+    const strOk    = f => f && !f.deprecatedAndHidden;
+    const emailFld = fields.find(f => f.type === 'email' && strOk(f))?.name || null;
+    const phoneFld = fields.find(f => f.type === 'phone' && strOk(f))?.name || null;
+    const cityFld  = fields.find(f => f.type === 'string' && /city/i.test(f.name) && strOk(f))?.name || null;
+    const baseNorm = { caseFold: true, trim: true, collapseWs: true };
+    if (emailFld) push(`${nameFld} + ${emailFld}`, 'composite', [nameFld, emailFld], { ...baseNorm, emailLower: true }, 'composite: name + email');
+    if (phoneFld) push(`${nameFld} + ${phoneFld}`, 'composite', [nameFld, phoneFld], { ...baseNorm, phoneDigits: true }, 'composite: name + phone');
+    if (cityFld)  push(`${nameFld} + ${cityFld}`,  'composite', [nameFld, cityFld],  { ...baseNorm }, 'composite: name + city');
+  }
+  return out.slice(0, 8);
+}
+
+// Per-org key counts for a field list. Returns { keyCounts, total, blank,
+// sampled } or { error }. Never throws for API errors — degrades to error.
+async function _matchOrgKeyCounts(objType, sess, fields, normalize, strategy) {
+  const flds = (fields || []).filter(Boolean).slice(0, 4);
+  if (!flds.length) return { error: 'no key fields configured' };
+  try {
+    if (flds.length === 1) {
+      // GROUP BY aggregate — one call, exact counts (cap ~2,000 groups).
+      const f = flds[0];
+      const agg = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false,
+        _suppressError: true,
+        query: `SELECT ${f} pv, COUNT(Id) cnt FROM ${objType} GROUP BY ${f}` });
+      if (agg && !agg.error) {
+        const rows = (agg.records || []).map(r => ({ value: r.pv ?? r[f], count: r.cnt ?? r.expr0 ?? 0 }));
+        const counts = sftkKeyCountsFromGroups(rows, normalize || {});
+        counts.sampled = (agg.records || []).length >= 2000;
+        return counts;
+      }
+      // GROUP BY unsupported for this field type (long text etc.) → sample.
+    }
+    const q = await sendBg({ type: 'SF_QUERY', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false,
+      _suppressError: true,
+      query: `SELECT ${['Id', ...flds].join(',')} FROM ${objType} LIMIT 2000` });
+    if (q?.error) return { error: q.error };
+    const counts = sftkKeyCountsFromRecords(q.records || [], { strategy, fields: flds, normalize: normalize || {} });
+    counts.sampled = (q.records || []).length >= 2000;
+    return counts;
+  } catch (e) {
+    return { error: e?.message || String(e) };
+  }
+}
+
+// Full analysis: both orgs (graceful "org not open" per side) + cross-org
+// preview when both sides produced counts.
+async function sftkAnalyzeMatchKey(objType, profile, srcFields, tgtFields, normalize, strategy) {
+  const out = { src: null, tgt: null, srcErr: null, tgtErr: null, cross: null };
+  const friendly = m => (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(m).message : String(m);
+  try {
+    const srcSess = profile?.sourceOrg ? await getOrgSession(profile.sourceOrg) : null;
+    const tgtSess = profile?.targetOrg ? await getOrgSession(profile.targetOrg) : null;
+    if (!srcSess?.sid) out.srcErr = profile?.sourceOrg
+      ? `org not open — open ${orgLabel(profile.sourceOrg)} in a Chrome tab` : 'no source org set on this profile';
+    if (!tgtSess?.sid) out.tgtErr = profile?.targetOrg
+      ? `org not open — open ${orgLabel(profile.targetOrg)} in a Chrome tab` : 'no target org set on this profile';
+    if (srcSess?.sid) {
+      const c = await _matchOrgKeyCounts(objType, srcSess, srcFields, normalize, strategy);
+      if (c?.error) out.srcErr = friendly(c.error); else out.src = c;
+    }
+    if (tgtSess?.sid) {
+      const c = await _matchOrgKeyCounts(objType, tgtSess, tgtFields, normalize, strategy);
+      if (c?.error) out.tgtErr = friendly(c.error); else out.tgt = c;
+    }
+    if (out.src && out.tgt) out.cross = sftkCrossOrgPreview(out.src, out.tgt);
+  } catch (e) {
+    const msg = friendly(e?.message || String(e));
+    if (!out.src && !out.srcErr) out.srcErr = msg;
+    else if (!out.tgt && !out.tgtErr) out.tgtErr = msg;
+  }
+  return out;
+}
+
+// One org's stats line — ds-pk-style bar + numbers.
+function _matchStatsHtml(label, counts, err) {
+  if (err) return `<div class="ds-match-stat-row" style="font-size:12px;color:var(--warning,#b45309);margin-top:4px">⚠ ${esc(label)}: ${esc(err)}</div>`;
+  if (!counts) return '';
+  const st  = sftkKeyStats(counts);
+  const col = p => p >= 98 ? '#16a34a' : p >= 90 ? '#f59e0b' : '#dc2626';
+  const bar = pct => `<span class="ds-pk-bar" style="width:64px;display:inline-block"><span class="ds-pk-fill" style="width:${Math.max(2, pct)}%;background:${col(pct)}"></span></span>`;
+  return `<div class="ds-match-stat-row" style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:4px;flex-wrap:wrap">
+    <span style="min-width:150px"><strong>${esc(label)}</strong>${counts.sampled ? ` <span class="ds-subtext" title="More than 2,000 rows/groups — computed on the first 2,000">(sampled)</span>` : ''}</span>
+    ${bar(st.populatedPct)} ${st.populatedPct}% populated
+    ${bar(st.uniquePct)} ${st.uniquePct}% unique
+    <span class="ds-subtext">${st.total.toLocaleString()} record(s)${st.blank ? ` · ${st.blank.toLocaleString()} blank key` : ''}${st.dupRecords ? ` · ${st.dupRecords.toLocaleString()} share dup keys` : ''}</span>
+  </div>`;
+}
+
+// Cross-org verdict chip + "N of M match uniquely · X ambiguous · Y unmatched".
+function _matchVerdictHtml(res) {
+  if (!res?.cross) return '';
+  const c = res.cross;
+  const pct = c.sourceTotal ? Math.round((c.matchedUnique / c.sourceTotal) * 100) : 0;
+  const cls = pct >= 98 ? 'ds-diff-sync' : pct >= 85 ? 'ds-diff-drift' : 'ds-diff-missing';
+  const verdict = pct >= 98 ? 'Excellent key' : pct >= 85 ? 'Usable — review the gaps' : 'Weak key — expect mismatches';
+  return `<div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:6px;flex-wrap:wrap">
+    <span class="ds-diff-chip ${cls}">${esc(verdict)}</span>
+    <span>matches <strong>${c.matchedUnique.toLocaleString()}</strong> of <strong>${c.sourceTotal.toLocaleString()}</strong> source records uniquely
+      · <strong>${c.ambiguous.toLocaleString()}</strong> ambiguous (dup keys either side)
+      · <strong>${c.unmatched.toLocaleString()}</strong> unmatched</span>
+  </div>`;
+}
+
+// Full analysis panel (mini variant for suggestion-row grades).
+function _matchAnalysisHtml(res, profile, mini) {
+  const srcLbl = `Source · ${orgLabel(profile?.sourceOrg || '') || 'source org'}`;
+  const tgtLbl = `Target · ${orgLabel(profile?.targetOrg || '') || 'target org'}`;
+  const bothMissing = !res.src && !res.tgt;
+  return `<div class="ds-match-test-out" style="margin-top:${mini ? '2px' : '8px'};padding:${mini ? '4px 8px' : '8px 10px'};background:rgba(148,163,184,.12);border-radius:6px">
+    ${_matchStatsHtml(srcLbl, res.src, res.srcErr)}
+    ${_matchStatsHtml(tgtLbl, res.tgt, res.tgtErr)}
+    ${_matchVerdictHtml(res)}
+    ${!res.cross && !bothMissing ? `<div class="ds-subtext" style="font-size:11px;margin-top:4px">Cross-org preview needs BOTH orgs reachable.</div>` : ''}
+  </div>`;
+}

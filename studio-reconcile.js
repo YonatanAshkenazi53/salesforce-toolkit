@@ -110,6 +110,10 @@ async function renderReconcile() {
   const extras  = scan.onlyInTarget || [];      // {matchKey, targetId}
   const inSync  = scan.identical || [];
 
+  // M3a — composite match keys carry a U+0001 separator; render it as ' · '
+  // (display only — the raw key stays the matching identity).
+  const keyLbl = k => esc(typeof sftkMatchKeyLabel === 'function' ? sftkMatchKeyLabel(k) : String(k ?? ''));
+
   // Default-select all missing + all drift for push (the common intent:
   // bring target up to match source). Extras default UNCHECKED — deletion
   // is destructive, opt-in only. Only seed defaults on first load.
@@ -129,7 +133,7 @@ async function renderReconcile() {
       const sel = _recSel[kind].has(id);
       return `<label class="ds-rec-col-row">
         <input type="checkbox" data-rec-kind="${kind}" data-rec-id="${esc(id)}" ${sel ? 'checked' : ''}>
-        <span class="ds-rec-col-key">${esc(r.matchKey)}</span>
+        <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
         ${kind === 'overwrite' ? `<span class="ds-rec-drift-link" data-rec-drift="${esc(r.sourceId)}|${esc(r.targetId)}" title="See which fields differ">▸ fields</span>` : ''}
       </label>
       ${kind === 'overwrite' ? `<div class="ds-rec-drift-expand" data-drift-expand="${esc(r.sourceId)}" style="display:none"></div>` : ''}`;
@@ -174,7 +178,7 @@ async function renderReconcile() {
                   data-rec-driftdir="updSrc" data-rec-id="${esc(sid)}"
                   title="Update the SOURCE record with the target's values">←</button>
         </span>
-        <span class="ds-rec-col-key">${esc(r.matchKey)}</span>
+        <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
         ${why}
         <span class="ds-rec-drift-link" data-rec-drift="${esc(r.sourceId)}|${esc(r.targetId)}" title="See which fields differ">▸ fields</span>
       </div>
@@ -221,7 +225,7 @@ async function renderReconcile() {
                   data-rec-extra="del" data-rec-id="${esc(tgtId)}"
                   title="Delete this record from the target org">🗑 Delete</button>
         </span>
-        <span class="ds-rec-col-key">${esc(r.matchKey)}</span>
+        <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
       </div>`;
     }).join('');
     const pullCount = items.filter(r => _recSel.pull.has(r.targetId)).length;
@@ -287,7 +291,7 @@ async function renderReconcile() {
       const disabled = !!(r.parentSrcId && !pMissing && !pExists) || deepBlock;
       return `<label class="ds-rec-col-row ${disabled ? 'ds-rec-row-disabled' : ''}">
         <input type="checkbox" data-recc-push="${pathKey}" data-rec-id="${esc(r.sourceId)}" ${!disabled && sel.push.has(r.sourceId) ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
-        <span class="ds-rec-col-key">${esc(r.matchKey)}</span>
+        <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
         ${pNote}
       </label>`;
     }).join('') || `<div class="ds-rec-col-empty">none</div>`;
@@ -302,7 +306,7 @@ async function renderReconcile() {
       return `<div class="ds-rec-col-row ds-rec-row-link">
         <button class="ds-rec-extra-btn ${on ? 'ds-rec-extra-on-push' : ''}" data-recc-relink="${pathKey}" data-rec-id="${esc(r.targetId)}" ${relinkBlocked ? 'disabled' : ''}
           title="${relinkBlocked ? relinkBlockTitle : `Update this target record so ${esc(node.field || 'its parent link')} points at the parent the source says it belongs to. This is a real update — the child's triggers/flows fire.`}">⇄ Relink</button>
-        <span class="ds-rec-col-key">${esc(r.matchKey)}</span>
+        <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
         <span class="ds-rec-link-detail" title="currently → should be">${esc(r.parentKeyTgt || '∅')} → ${esc(r.parentKeySrc || '∅')}</span>
       </div>`;
     }).join('') || `<div class="ds-rec-col-empty">none</div>`;
@@ -317,7 +321,7 @@ async function renderReconcile() {
       return `<div class="ds-rec-col-row ds-rec-row-drift">
         <button class="ds-rec-extra-btn ${on ? 'ds-rec-extra-on-push' : ''}" data-recc-ovw="${pathKey}" data-rec-id="${esc(r.sourceId)}"
           title="Update the TARGET record with the source's values (fields from this node's field mapping)">→</button>
-        <span class="ds-rec-col-key">${esc(r.matchKey)}</span>
+        <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
         ${why}
       </div>`;
     }).join('') || `<div class="ds-rec-col-empty">none</div>`;
@@ -331,19 +335,24 @@ async function renderReconcile() {
       return `<div class="ds-rec-col-row ds-rec-row-extra">
         <button class="ds-rec-extra-btn ${on ? 'ds-rec-extra-on-del' : ''}" data-recc-del="${pathKey}" data-rec-id="${esc(r.targetId)}"
           title="Delete this record from the target org (honors the Delete mode below)">🗑</button>
-        <span class="ds-rec-col-key">${esc(r.matchKey)}</span>
+        <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
         ${r.orphan ? `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="Its ${esc(node.field || 'link')} field is empty in the target — a prior partial run may have created it, then failed to reconnect it. ⇄ Relink can re-attach it to the right parent instead of deleting. Excluded from '🗑 All' — select it individually if you're sure.">⚠ orphan</span>` : ''}
       </div>`;
     }).join('') || `<div class="ds-rec-col-empty">none</div>`;
 
     // R1 — rows sharing duplicate match keys were excluded from every bucket.
     const collisionNote = cs.keyCollisions
-      ? `<div class="ds-rec-child-info" style="border-left:3px solid #f59e0b;padding-left:8px" title="Duplicate keys: ${esc((cs.keyCollisions.keys || []).slice(0, 10).join(', '))}">⚠ ${cs.keyCollisions.rows} row(s) share duplicate match keys — excluded from all actions; pick a better match field in the profile (e.g. an external Id).</div>`
+      ? `<div class="ds-rec-child-info" style="border-left:3px solid #f59e0b;padding-left:8px" title="Duplicate keys: ${esc((cs.keyCollisions.keys || []).slice(0, 10).map(k => typeof sftkMatchKeyLabel === 'function' ? sftkMatchKeyLabel(k) : k).join(', '))}">⚠ ${cs.keyCollisions.rows} row(s) share duplicate match keys — excluded from all actions; pick a better match field in the profile (e.g. an external Id).</div>`
+      : '';
+    // M3a — rows whose match key was blank (every component empty) are
+    // unmatchable and were excluded from every bucket. Counted, not hidden.
+    const blankNote = cs.blankKeys
+      ? `<div class="ds-rec-child-info ds-match-blank-note" style="border-left:3px solid #f59e0b;padding-left:8px">⚠ ${cs.blankKeys.rows} row(s) have a blank match key — excluded from all actions (${cs.blankKeys.src} source, ${cs.blankKeys.tgt} target). Pick a better-populated match field, or use 🧪 Test this key in Pick Records.</div>`
       : '';
 
     return `
     <div class="ds-rec-child-body">
-      ${collisionNote}
+      ${collisionNote}${blankNote}
       <div class="ds-rec-cols ds-rec-cols-child">
         <div class="ds-rec-col">
           <div class="ds-rec-col-hdr ds-diff-missing">🔴 <strong>Insert ${cs.missingInTarget.length}</strong>
@@ -472,6 +481,7 @@ async function renderReconcile() {
     </div>
 
     <div class="ds-rec-insync-note">🟢 ${inSync.length} record(s) already in sync — no action needed.</div>
+    ${scan.blankKeys ? `<div class="ds-rec-child-info ds-match-blank-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">⚠ ${scan.blankKeys.rows} row(s) have a blank match key — excluded from matching (${scan.blankKeys.src} source, ${scan.blankKeys.tgt} target). Pick a better-populated match field in 🎯 Pick Records (🧪 Test this key grades candidates).</div>` : ''}
 
     ${rootChildren.length ? `
     <div class="ds-rec-children">
@@ -921,7 +931,7 @@ async function runReconcile(profile, objType, buckets) {
       const cf   = actCf(a);
       if (a.groupA.length && cf)  planLines.push(`${n++}. Reconnect ${a.groupA.length} ${obj} → ${objType} (link patched after the parents exist)`);
       if (a.groupA.length && !cf) planLines.push(`${n++}. Insert ${a.groupA.length} ${obj} under the new ${objType} (linked at insert)`);
-      if (a.groupB.length)        planLines.push(`${n++}. Insert ${a.groupB.length} ${obj} under existing ${pObj} (matched by ${(a.parentScan || rootScan).matchField || 'Name'})`);
+      if (a.groupB.length)        planLines.push(`${n++}. Insert ${a.groupB.length} ${obj} under existing ${pObj} (matched by ${((a.parentScan || rootScan).matching?.fields || [(a.parentScan || rootScan).matchField || 'Name']).join(' + ')})`);
       if (a.sel.relink.size)      planLines.push(`${n++}. Relink ${a.sel.relink.size} ${obj} to the right ${pObj}`);
       if (a.ovwIds.length)        planLines.push(`${n++}. Update ${a.ovwIds.length} drifted ${obj} in target`);
     }
@@ -1240,7 +1250,18 @@ async function runReconcile(profile, objType, buckets) {
     // direct children (v1, identical values), the parent CHILD node + its
     // scan's match field for grandchildren.
     const pObj   = a.parentObj || objType;
-    const pMatch = (a.parentScan || rootScan).matchField || 'Name';
+    // M3a — the bridge's match field comes from the parent SCAN's stored
+    // matching config (scan.matching, first source component) so it can't
+    // diverge from the keys the scan matched on. The transfer engine resolves
+    // a 'match' bridge by ONE exact-value field, so composite/normalized
+    // configs degrade to first-component exact matching — warn instead of
+    // silently pretending full fidelity.
+    const pScanM = (a.parentScan || rootScan).matching || null;
+    const pMatch = pScanM?.fields?.[0] || (a.parentScan || rootScan).matchField || 'Name';
+    if (pScanM && ((pScanM.fields || []).length > 1 || Object.values(pScanM.normalize || {}).some(Boolean))) {
+      const mW = `⚠ ${obj}: parent matching uses ${(pScanM.fields || []).length > 1 ? 'a composite key' : 'normalization'} — the insert bridge attaches by ${pMatch} with exact values (engine limit), so parents that differ only ${(pScanM.fields || []).length > 1 ? 'in later key components' : 'by case/spacing'} may not attach`;
+      allErrors.push(mW); log('⚠', mW, 'ds-prog-warn');
+    }
     log('⬆', `Inserting ${a.groupB.length} ${obj} under existing ${pObj} (matched by ${pMatch})…`);
     try {
       const bProfile = JSON.parse(JSON.stringify(profile));
@@ -1308,24 +1329,80 @@ async function runReconcile(profile, objType, buckets) {
     const relParentScan = a.parentScan || rootScan;
     log('⇄', `Relinking ${rows.length} ${obj} in target…`);
     try {
-      const tgtMatch = relParentScan.matchFieldTgt || relParentScan.matchField || 'Name';
+      // M3a — parent resolution honors the parent scan's STORED matching
+      // config (scan.matching), so relink resolves parents with EXACTLY the
+      // keys the scan matched on. Composite/normalized configs: query
+      // candidates by the FIRST target component IN (raw first-component
+      // values), then client-filter by FULL sftkMatchKey equality — SOQL
+      // text '=' is case-insensitive, JS is not, so normalization has to be
+      // applied in the client-side comparison, never trusted to the query.
+      // Legacy scans without .matching resolve through the same builder with
+      // the single stored matchField (byte-identical to the old behavior
+      // when no normalization is configured).
+      const pm = relParentScan.matching || null;
+      const pmSrcFields = (pm?.fields || []).length ? pm.fields : [relParentScan.matchField || 'Name'];
+      const pmTgtFields = (pm?.tgtFields || []).length ? pm.tgtFields
+        : [relParentScan.matchFieldTgt || relParentScan.matchField || 'Name'];
+      const pmNorm   = pm?.normalize || {};
+      const tgtMatch = pmTgtFields[0];
+
+      // Full source-side parent key per child row. linkMismatch rows carry
+      // only the FIRST component (parentKeySrc), so for composite configs
+      // every component is re-read via the link's dot-path. Any failure
+      // degrades to first-component matching with a warning.
+      const srcKeyByChild = new Map();   // child sourceId → full parent key
+      let fullKeys = false;
+      try {
+        const cd = await describe(obj, srcSess.orgUrl, srcSess.sid);
+        const lf = (cd?.fields || []).find(f => f.name === linkField);
+        if (lf?.relationshipName) {
+          const rel  = lf.relationshipName;
+          const cIds = rows.map(r => r.sourceId).filter(Boolean);
+          for (let ci = 0; ci < cIds.length; ci += 200) {
+            const idLit = cIds.slice(ci, ci + 200).map(id => soqlStrLit(id)).join(',');
+            const q0 = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: srcSess.orgUrl, sid: srcSess.sid, tooling: false,
+              query: `SELECT Id, ${pmSrcFields.map(f => `${rel}.${f}`).join(', ')} FROM ${obj} WHERE Id IN (${idLit})` });
+            if (q0?.error) throw new Error(q0.error);
+            for (const rec of (q0.records || [])) {
+              srcKeyByChild.set(rec.Id, rec[rel]
+                ? sftkMatchKey(rec[rel], { fields: pmSrcFields, normalize: pmNorm }) : '');
+            }
+          }
+          fullKeys = true;
+        }
+      } catch (e0) {
+        window.SFToolkitDebug?.log('scan', 'warn',
+          `relink ${obj}: couldn't rebuild full parent keys from the source — falling back to first-component matching`,
+          e0?.message || String(e0));
+      }
+      if (!fullKeys && pmSrcFields.length > 1) {
+        const mW = `⚠ relink ${obj}: parent matching is a composite key but only its first component (${pmSrcFields[0]}) could be read — matching by that component alone`;
+        allErrors.push(mW); log('⚠', mW, 'ds-prog-warn');
+      }
+
+      // Candidate fetch by FIRST component; candidates indexed by the SAME
+      // key form the source side uses (full when available, else component 1).
       const keys = [...new Set(rows.map(r => r.parentKeySrc).filter(Boolean))];
-      const parentByKey = new Map();
+      const parentByKey = new Map();     // normalized key → target parent Id
       for (let ci = 0; ci < keys.length; ci += 100) {
-        const lit = keys.slice(ci, ci + 100)
-          .map(v => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',');
+        const lit = keys.slice(ci, ci + 100).map(v => soqlStrLit(v)).join(',');
         const q = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false,
-          query: `SELECT Id, ${tgtMatch} FROM ${relParentObj} WHERE ${tgtMatch} IN (${lit})` });
+          query: `SELECT Id, ${pmTgtFields.join(', ')} FROM ${relParentObj} WHERE ${tgtMatch} IN (${lit})` });
         if (q?.error) throw new Error(q.error);
         for (const rec of (q.records || [])) {
-          const kk = String(rec[tgtMatch] ?? '');
+          const kk = fullKeys
+            ? sftkMatchKey(rec, { fields: pmTgtFields, normalize: pmNorm })
+            : sftkMatchKey(rec, { fields: [tgtMatch], normalize: pmNorm });
           if (kk && !parentByKey.has(kk)) parentByKey.set(kk, rec.Id);
         }
       }
       const updates = [];
       let skippedNoParent = 0;
       for (const r of rows) {
-        const pid = r.parentKeySrc ? parentByKey.get(String(r.parentKeySrc)) : null;
+        const wantKey = fullKeys
+          ? (srcKeyByChild.get(r.sourceId) || '')
+          : (r.parentKeySrc ? sftkNormalizeValue(r.parentKeySrc, pmNorm) : '');
+        const pid = wantKey ? parentByKey.get(wantKey) : null;
         if (!pid) { skippedNoParent++; continue; }
         updates.push({ attributes: { type: obj }, Id: r.targetId, [tgtLinkField]: pid });
       }
@@ -1645,6 +1722,11 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
 
   // Resolve each lookup's target parents by key (fresh query, so parents
   // inserted earlier in this same reconcile run count). First match wins.
+  // M3a NOTE (deliberate skip): refPairs matching keeps its OWN per-lookup
+  // matchField concept (node.lookupResolutions[field].matchField, default
+  // 'Name') and is NOT wired to node.matching — these are per-LOOKUP parent
+  // resolutions, a different axis from the node's own record identity, and
+  // rewiring them here would not be a small contained change. Revisit in M3c.
   for (const rp of refPairs) {
     rp.byKey = new Map();
     const keys = [...new Set(srcRecs
