@@ -272,7 +272,7 @@ history) already exists there.
   (fresh idMap each), one history entry per org, per-org result log. Engine untouched —
   executeProfileTransfer(profile, src, tgt) already takes any pair; this is a loop + UI
   (the picklist P2 bulk-apply pattern).
-- [ ] **M2. Sync Ring dashboard** — org group ("ring") with designated source-of-truth;
+- [x] **M2. Sync Ring dashboard** — org group ("ring") with designated source-of-truth;
   ALSO (user decision 2026-07-14): REPLACE the topbar PAIR control with a single
   source-of-truth CHIP — one org, not two; seeds the same defaults (new deployments,
   compares, picklists start from the golden org); ds_working_pair migrates to the ring

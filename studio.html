@@ -58,6 +58,13 @@
             <span class="ds-nav-desc">Profiles + run transfer</span>
           </span>
         </button>
+        <button class="ds-nav-btn" data-view="ring">
+          <span class="ds-nav-icon">🔄</span>
+          <span class="ds-nav-label">
+            <span class="ds-nav-name">Sync Ring</span>
+            <span class="ds-nav-desc">All orgs vs the source of truth</span>
+          </span>
+        </button>
         <button class="ds-nav-btn" data-view="picklists">
           <span class="ds-nav-icon">🎚</span>
           <span class="ds-nav-label">
@@ -158,6 +165,7 @@
   <script src="studio-schema.js"></script>
   <script src="studio-fields.js"></script>
   <script src="studio-picklists.js"></script>
+  <script src="studio-ring.js"></script>
   <!-- Phase X note: studio-tools.js (kept in the repo, not loaded) is the
        proven host for mounting popup tools in this shell — the user chose to
        keep the Debugger popup-only (2026-07-13). To mount a tool: add its
