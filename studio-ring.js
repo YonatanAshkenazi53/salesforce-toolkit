@@ -18,6 +18,10 @@ function renderRing() {
   const orgs = allMapOrgs();
   const ls   = _liveOrgSet();
   const ring = _ring || { orgs: [], sourceUrl: '' };
+  // Keep the config panel open across the re-render each change triggers —
+  // otherwise it snaps shut after every org you tick (user bug report).
+  const prevCfg = document.querySelector('.ds-ring-cfg');
+  const cfgOpen = prevCfg ? prevCfg.open : ring.orgs.length < 2;
 
   const orgRows = orgs.map(o => {
     const inRing  = ring.orgs.some(u => _orgKey(u) === _orgKey(o.url));
@@ -30,7 +34,7 @@ function renderRing() {
         <span style="flex:1"></span>
         <label class="ds-ring-src-pick" title="Data flows FROM the source of truth to every other ring org">
           <input type="radio" name="dsRingSrc" value="${esc(o.url)}" ${isSrc ? 'checked' : ''} ${inRing ? '' : 'disabled'}>
-          ⦿ source of truth
+          source of truth
         </label>
       </label>`;
   }).join('');
@@ -43,7 +47,7 @@ function renderRing() {
       </div>
     </div>
 
-    <details class="ds-ring-cfg" ${ring.orgs.length >= 2 ? '' : 'open'}>
+    <details class="ds-ring-cfg" ${cfgOpen ? 'open' : ''}>
       <summary class="ds-ring-cfg-sum"><strong>⚙ Ring configuration</strong>
         <span class="ds-oc-sub">${ring.orgs.length} org(s) in the ring${ring.sourceUrl ? ` · source: ${esc(orgLabel(ring.sourceUrl))}` : ''}</span>
       </summary>
@@ -195,6 +199,12 @@ async function _ringScanOne(profileId, tgtUrl, btn) {
       extra: (res.onlyInTarget || []).length,
       status: res.status || 'success',
     };
+    // M3c: ring scans run on clones — persist this scan's confirmed 1:1
+    // pairs into the REAL profile's match memory (typeof-guarded until the
+    // helper lands with the M3c batch).
+    if (typeof window.sftkLearnPairs === 'function' && res.learnedPairs?.length) {
+      window.sftkLearnPairs(p.id, tgtUrl, res.learnedPairs);
+    }
     await storageSaveProfiles();
   } catch (e) {
     const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
@@ -247,6 +257,9 @@ async function _ringOpenReconcile(profileId, tgtUrl) {
     extra: (res.onlyInTarget || []).length,
     status: res.status || 'success',
   };
+  if (typeof window.sftkLearnPairs === 'function' && res.learnedPairs?.length) {
+    window.sftkLearnPairs(p.id, tgtUrl, res.learnedPairs);
+  }
   storageSaveProfiles().catch(() => {});
   _reconcileProfile = ephemeral;
   _currentView = 'reconcile';
