@@ -4752,3 +4752,15 @@ html, body {
 .ds-ring-unknown { color: var(--subtext); font-style: italic; }
 .ds-ring-offline { opacity: .7; }
 .ds-ring-cell-acts { display: flex; gap: 3px; margin-left: auto; }
+
+/* Sync Plan modal + matrix legibility (user feedback: "the ui is very weird") */
+.ds-plan-org { border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; margin-bottom: 8px; }
+.ds-plan-org-hdr { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 4px; flex-wrap: wrap; }
+.ds-plan-op { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 3px 0 3px 4px; }
+.ds-plan-extras { color: var(--subtext); }
+.ds-plan-err { border-color: #C23934; }
+.ds-plan-status { font-size: 12px; font-weight: 600; }
+/* column separators + breathing room in the ring matrix */
+.ds-ring-row > div + div, .ds-ring-head > div + div { border-left: 1px solid var(--border); padding-left: 10px; }
+.ds-ring-cell { flex-wrap: wrap; row-gap: 3px; }
+.ds-ring-row-acts .ds-btn { white-space: nowrap; }

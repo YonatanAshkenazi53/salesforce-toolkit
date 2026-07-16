@@ -165,8 +165,9 @@ function _ringRenderMatrix() {
             <span class="ds-ring-pname">${esc(p.name)}</span>
             <span class="ds-ring-pobj">${esc(p.tree.objectType || '')}</span>
             <span class="ds-ring-row-acts">
-              <button class="ds-btn ds-btn-xs" data-ring-scanall="${esc(p.id)}" title="Scan every open ring target">🔎 all</button>
-              <button class="ds-btn ds-btn-xs" data-ring-push="${esc(p.id)}" title="Push from ${esc(orgLabel(ring.sourceUrl))} to the ring targets (M1 fan-out)">🌐 push</button>
+              <button class="ds-btn ds-btn-xs ds-btn-primary" data-ring-plan="${esc(p.id)}" title="Scan every open target fresh, then propose the operations for ALL of them on one page — push missing, overwrite changed — and run the ones you tick">▶ Sync plan…</button>
+              <button class="ds-btn ds-btn-xs" data-ring-scanall="${esc(p.id)}" title="Refresh the drift counts for every open ring target (no changes)">🔎 Scan</button>
+              <button class="ds-btn ds-btn-xs" data-ring-push="${esc(p.id)}" title="Fan-out: push this deployment's records from ${esc(orgLabel(ring.sourceUrl))} to targets you pick (full record set)">🌐 Push…</button>
             </span>
           </div>
           ${targets.map(t => cell(p, t)).join('')}
@@ -183,6 +184,8 @@ function _ringRenderMatrix() {
     b.addEventListener('click', () => { const [pid, t] = b.dataset.ringRec.split('|'); _ringOpenReconcile(pid, t); }));
   // Ring pushes flow from the ring's source of truth — same rule as ring
   // scans — with the ring targets pre-checked in the fan-out modal.
+  body.querySelectorAll('[data-ring-plan]').forEach(b =>
+    b.addEventListener('click', () => _ringOpenPlan(b.dataset.ringPlan)));
   body.querySelectorAll('[data-ring-push]').forEach(b =>
     b.addEventListener('click', () =>
       window.openFanOut?.(b.dataset.ringPush, { src: _ring?.sourceUrl, preselect: _ringTargets() })));
@@ -287,3 +290,160 @@ async function _ringOpenReconcile(profileId, tgtUrl) {
   document.querySelector('[data-view="ring"]')?.classList.add('active');
   renderReconcile();
 }
+
+// ════════════════════════════════════════════════════════════════
+// SYNC PLAN — all secondary orgs, one page (user request)
+// ════════════════════════════════════════════════════════════════
+// Fresh-scans every open target, then ONE modal proposes the operations per
+// org — "push N missing" / "overwrite M changed" checkboxes — and a single
+// Run executes everything ticked, org by org. Extras (only-in-target) stay
+// in the full per-org Reconcile (deletes deserve that UI's guards).
+async function _ringOpenPlan(profileId) {
+  const p = _profiles.find(x => x.id === profileId);
+  if (!p || !_ring?.sourceUrl) return;
+  const targets = _ringTargets();
+  const ls = _liveOrgSet();
+  const open = targets.filter(u => [...ls].some(x => _orgKey(x) === _orgKey(u)));
+  const closed = targets.filter(u => ![...ls].some(x => _orgKey(x) === _orgKey(u)));
+  if (!open.length) { showToast('No ring target is open in a tab', 'warning', 5000); return; }
+
+  showModal(`
+    <div class="ds-modal-header">▶ Sync plan — ${esc(p.name)}</div>
+    <div class="ds-modal-body">
+      <div class="ds-pk-hint" style="margin-bottom:8px">From <strong>${esc(orgLabel(_ring.sourceUrl))}</strong> — scanning ${open.length} target(s) fresh…</div>
+      <div id="dsPlanRows">${window.sftkCatSm ? sftkCatSm('Scanning…') : 'Scanning…'}</div>
+      ${closed.length ? `<div class="ds-pk-note">⏭ Not open (skipped): ${closed.map(u => esc(orgLabel(u))).join(', ')}</div>` : ''}
+    </div>
+    <div class="ds-modal-footer">
+      <button class="ds-btn" data-dsaction="closeModal">Close</button>
+      <button class="ds-btn ds-btn-primary" id="dsPlanRun" disabled>▶ Run selected</button>
+    </div>`);
+
+  // Fresh scans — full buckets kept in memory for the run step.
+  const plans = [];
+  for (const tgt of open) {
+    try {
+      const res = await runDiffScan({ ...p, sourceOrg: _ring.sourceUrl, targetOrg: tgt, ephemeral: true });
+      if (res?.error) plans.push({ tgt, error: res.error });
+      else {
+        plans.push({ tgt, res });
+        p.ringScans = p.ringScans || {};
+        p.ringScans[_ringScanKey(tgt)] = {
+          runAt: res.runAt || new Date().toISOString(),
+          missing: (res.missingInTarget || []).length,
+          changed: (res.changed || []).length,
+          extra: (res.onlyInTarget || []).length,
+          status: res.status || 'success',
+        };
+      }
+    } catch (e) { plans.push({ tgt, error: e.message }); }
+    const el = eid('dsPlanRows');
+    if (el) el.innerHTML = (window.sftkCatSm ? sftkCatSm(`Scanning… ${plans.length} / ${open.length}`) : `${plans.length}/${open.length}`);
+  }
+  storageSaveProfiles().catch(() => {});
+
+  const rowsEl = eid('dsPlanRows');
+  if (!rowsEl) return;   // modal closed mid-scan
+  rowsEl.innerHTML = plans.map((pl, i) => {
+    if (pl.error) {
+      const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(pl.error) : { message: pl.error };
+      return `<div class="ds-plan-org ds-plan-err"><strong>${esc(orgLabel(pl.tgt))}</strong> — ❌ ${esc(fe.message)}</div>`;
+    }
+    const m = (pl.res.missingInTarget || []).length;
+    const c = (pl.res.changed || []).length;
+    const x = (pl.res.onlyInTarget || []).length;
+    const clean = !m && !c && !x;
+    return `
+      <div class="ds-plan-org" data-plan-idx="${i}">
+        <div class="ds-plan-org-hdr"><strong>${esc(orgLabel(pl.tgt))}</strong> ${prodBadge(pl.tgt)}
+          ${clean ? '<span class="ds-ring-clean">✓ in sync — nothing to do</span>' : ''}</div>
+        ${m ? `<label class="ds-plan-op"><input type="checkbox" class="ds-plan-push" data-idx="${i}" checked>
+            ⬆ Push <strong>${m}</strong> missing record${m !== 1 ? 's' : ''}</label>` : ''}
+        ${c ? `<label class="ds-plan-op"><input type="checkbox" class="ds-plan-ovw" data-idx="${i}">
+            ✏ Overwrite <strong>${c}</strong> changed record${c !== 1 ? 's' : ''} with source values</label>` : ''}
+        ${x ? `<div class="ds-plan-op ds-plan-extras">🔵 ${x} only-in-target — review deletes in
+            <a href="#" class="ds-plan-rec" data-idx="${i}">⚖ Reconcile</a></div>` : ''}
+      </div>`;
+  }).join('');
+
+  rowsEl.querySelectorAll('.ds-plan-rec').forEach(a =>
+    a.addEventListener('click', e => {
+      e.preventDefault();
+      const pl = plans[+a.dataset.idx];
+      closeModal();
+      _ringOpenReconcile(profileId, pl.tgt);
+    }));
+
+  const runBtn = eid('dsPlanRun');
+  if (runBtn) runBtn.disabled = false;
+  runBtn?.addEventListener('click', async () => {
+    runBtn.disabled = true;
+    const jobs = plans.map((pl, i) => ({
+      pl, i,
+      push: !!document.querySelector(`.ds-plan-push[data-idx="${i}"]`)?.checked,
+      ovw:  !!document.querySelector(`.ds-plan-ovw[data-idx="${i}"]`)?.checked,
+    })).filter(j => !j.pl.error && (j.push || j.ovw));
+    if (!jobs.length) { showToast('Nothing selected', 'info'); runBtn.disabled = false; return; }
+
+    // One typed confirm per production target, up front.
+    for (const j of jobs) {
+      if (cachedOrgType(j.pl.tgt) === 'production') {
+        const ok = await confirmTypedProd(orgLabel(j.pl.tgt), 'sync-plan writes into PRODUCTION');
+        if (!ok) { runBtn.disabled = false; return; }
+      }
+    }
+
+    const srcSess = await getOrgSession(_ring.sourceUrl);
+    if (!srcSess) { showToast('Source org tab closed — reopen it', 'error', 6000); runBtn.disabled = false; return; }
+
+    for (const j of jobs) {
+      const row = rowsEl.querySelector(`.ds-plan-org[data-plan-idx="${j.i}"] .ds-plan-org-hdr`);
+      const note = document.createElement('span');
+      note.className = 'ds-plan-status';
+      note.textContent = ' ⏳ running…';
+      row?.appendChild(note);
+      try {
+        const tgtSess = await getOrgSession(j.pl.tgt);
+        if (!tgtSess) throw new Error('org tab closed');
+        let pushed = 0, pushFailed = 0, ovwOk = 0, ovwFailed = 0;
+
+        if (j.push) {
+          const ids = (j.pl.res.missingInTarget || []).map(r => r.sourceId).filter(Boolean);
+          const clone = { ...p, sourceOrg: _ring.sourceUrl, targetOrg: j.pl.tgt, ephemeral: true,
+            tree: { ...p.tree, recordIds: ids } };
+          const result = await sendBg({ type: 'SF_EXECUTE_PROFILE_TRANSFER', profile: clone,
+            srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid, tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid });
+          if (result?.error) throw new Error(result.error);
+          for (const s of Object.values(result.summary || {})) { pushed += s.created || 0; pushFailed += s.failed || 0; }
+          _history.push({ id: genId('run'), profileId: p.id,
+            srcOrgUrl: srcSess.orgUrl, tgtOrgUrl: tgtSess.orgUrl,
+            sourceOrg: srcSess.orgUrl, targetOrg: tgtSess.orgUrl,
+            startedAt: new Date().toISOString(), ...result,
+            profileName: `${p.name} (sync plan)` });
+        }
+        if (j.ovw) {
+          const scanClone = { ...p, sourceOrg: _ring.sourceUrl, targetOrg: j.pl.tgt, ephemeral: true, lastScan: j.pl.res };
+          const ids = (j.pl.res.changed || []).map(r => r.sourceId).filter(Boolean);
+          const out = await reconcileOverwrite(scanClone, p.tree.objectType, ids, j.pl.res.changed, srcSess, tgtSess);
+          ovwOk = out?.ok || 0; ovwFailed = out?.failed || 0;
+          _history.push({ id: genId('run'), kind: 'reconcile', profileId: p.id,
+            srcOrgUrl: srcSess.orgUrl, tgtOrgUrl: tgtSess.orgUrl,
+            sourceOrg: srcSess.orgUrl, targetOrg: tgtSess.orgUrl,
+            startedAt: new Date().toISOString(),
+            status: ovwFailed ? (ovwOk ? 'partial' : 'failed') : 'success',
+            summary: { [p.tree.objectType]: { created: 0, failed: ovwFailed, updated: ovwOk } },
+            errors: (out?.errors || []).slice(0, 20),
+            profileName: `${p.name} (sync plan · overwrite)` });
+        }
+        note.textContent = ` ✅ ${j.push ? `${pushed} pushed${pushFailed ? ` (${pushFailed} failed)` : ''}` : ''}${j.push && j.ovw ? ' · ' : ''}${j.ovw ? `${ovwOk} overwritten${ovwFailed ? ` (${ovwFailed} failed)` : ''}` : ''}`;
+        await _ringScanOne(p.id, j.pl.tgt, null);   // refresh the matrix cell
+      } catch (e) {
+        const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
+        note.textContent = ` ❌ ${fe.message}`;
+      }
+    }
+    await storageSaveHistory();
+    runBtn.textContent = '✓ Done';
+  });
+}
+
