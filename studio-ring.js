@@ -116,16 +116,19 @@ function _ringRenderMatrix() {
   const now = Date.now();
   const cell = (p, tUrl) => {
     const k = _orgKey(tUrl);
-    // The profile's own pair uses its native lastScan; other targets use the
-    // ring-scan summaries.
-    const native = _orgKey(p.targetOrg || '') === k && p.lastScan?.runAt;
+    // Native lastScan is only valid for the ring cell when the profile's own
+    // pair IS the ring flow (same source AND same target) — a lastScan from a
+    // different source org describes a different flow entirely.
+    const native = _orgKey(p.targetOrg || '') === k
+      && _orgKey(p.sourceOrg || '') === _orgKey(ring.sourceUrl || '')
+      && p.lastScan?.runAt;
     const s = native
       ? { runAt: p.lastScan.runAt,
           missing: (p.lastScan.missingInTarget || []).length,
           changed: (p.lastScan.changed || []).length,
           extra: (p.lastScan.onlyInTarget || []).length,
           status: p.lastScan.status }
-      : (p.ringScans || {})[k];
+      : (p.ringScans || {})[`${_orgKey(ring.sourceUrl || '')}|${k}`];
     const live = [...ls].some(u => _orgKey(u) === k);
     const badge = live ? '' : `<span class="ds-ring-offline" title="Org not open in a Chrome tab — open it to scan or push">⚫</span>`;
     if (!s) return `<div class="ds-ring-cell ds-ring-cell-unknown" data-ring-cell="${esc(p.id)}|${esc(tUrl)}">
@@ -170,7 +173,7 @@ function _ringRenderMatrix() {
         </div>`).join('')}
     </div>
     <div class="ds-pk-note" style="margin-top:8px">Counts refresh when you scan — cells show missing · changed · only-in-target.
-    ⚖ opens a full Reconcile against that org. Deployments whose source differs from the ring source scan from their own source org.</div>`;
+    ⚖ opens a full Reconcile against that org. Every row flows FROM the ring's source of truth — a deployment's own source pair applies only outside the ring.</div>`;
 
   body.querySelectorAll('[data-ring-scan1]').forEach(b =>
     b.addEventListener('click', () => { const [pid, t] = b.dataset.ringScan1.split('|'); _ringScanOne(pid, t, b); }));
@@ -184,15 +187,24 @@ function _ringRenderMatrix() {
 // Ring scans reuse runDiffScan on a shallow clone with the target swapped —
 // full matching-config fidelity (M3a: the clone carries the same tree, so
 // scan.matching resolves identically). Only summary counts are persisted.
+function _ringScanKey(tgtUrl) {
+  return `${_orgKey(_ring?.sourceUrl || '')}|${_orgKey(tgtUrl)}`;
+}
+
 async function _ringScanOne(profileId, tgtUrl, btn) {
   const p = _profiles.find(x => x.id === profileId);
   if (!p) return;
   if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
   try {
-    const res = await runDiffScan({ ...p, targetOrg: tgtUrl, ephemeral: true });
+    // THE RING'S PREMISE: data flows FROM the source of truth. The clone
+    // overrides the deployment's own sourceOrg — a deployment created months
+    // ago against a different pair still scans golden-org → target here
+    // (user bug: a profile born on org A errored "open org A in a tab" even
+    // though the ring source was org B and the header said "FROM B").
+    const res = await runDiffScan({ ...p, sourceOrg: _ring.sourceUrl, targetOrg: tgtUrl, ephemeral: true });
     if (res?.error) throw new Error(res.error);
     p.ringScans = p.ringScans || {};
-    p.ringScans[_orgKey(tgtUrl)] = {
+    p.ringScans[_ringScanKey(tgtUrl)] = {
       runAt: res.runAt || new Date().toISOString(),
       missing: (res.missingInTarget || []).length,
       changed: (res.changed || []).length,
@@ -200,9 +212,10 @@ async function _ringScanOne(profileId, tgtUrl, btn) {
       status: res.status || 'success',
     };
     // M3c: ring scans run on clones — persist this scan's confirmed 1:1
-    // pairs into the REAL profile's match memory (typeof-guarded until the
-    // helper lands with the M3c batch).
-    if (typeof window.sftkLearnPairs === 'function' && res.learnedPairs?.length) {
+    // pairs into the REAL profile's match memory. ONLY when the ring flow's
+    // source equals the profile's own source (memory pairs are src-specific).
+    if (typeof window.sftkLearnPairs === 'function' && res.learnedPairs?.length
+        && _orgKey(p.sourceOrg || '') === _orgKey(_ring.sourceUrl || '')) {
       window.sftkLearnPairs(p.id, tgtUrl, res.learnedPairs);
     }
     await storageSaveProfiles();
@@ -234,7 +247,8 @@ async function _ringOpenReconcile(profileId, tgtUrl) {
   const ephemeral = {
     ...p,
     id: `ring_${Date.now()}_${p.id}`,
-    name: `${p.name} → ${orgLabel(tgtUrl)}`,
+    name: `${p.name} · ${orgLabel(_ring.sourceUrl)} → ${orgLabel(tgtUrl)}`,
+    sourceOrg: _ring.sourceUrl,   // ring flow, not the profile's birth pair
     targetOrg: tgtUrl,
     lastScan: null,
     ringScans: undefined,
@@ -250,14 +264,15 @@ async function _ringOpenReconcile(profileId, tgtUrl) {
   ephemeral.lastScan = res;
   // Refresh the summary cell from this fresh scan too.
   p.ringScans = p.ringScans || {};
-  p.ringScans[_orgKey(tgtUrl)] = {
+  p.ringScans[_ringScanKey(tgtUrl)] = {
     runAt: res.runAt || new Date().toISOString(),
     missing: (res.missingInTarget || []).length,
     changed: (res.changed || []).length,
     extra: (res.onlyInTarget || []).length,
     status: res.status || 'success',
   };
-  if (typeof window.sftkLearnPairs === 'function' && res.learnedPairs?.length) {
+  if (typeof window.sftkLearnPairs === 'function' && res.learnedPairs?.length
+      && _orgKey(p.sourceOrg || '') === _orgKey(_ring.sourceUrl || '')) {
     window.sftkLearnPairs(p.id, tgtUrl, res.learnedPairs);
   }
   storageSaveProfiles().catch(() => {});
