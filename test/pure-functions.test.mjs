@@ -261,6 +261,56 @@ describe('smart matching (sftk-matching.js) — the ONE shared key builder', () 
   });
 });
 
+describe('P5 picklist sync diffs (studio-picklists.js)', () => {
+  const { pkValueName, pkValueSetSyncDiff, pkRtSyncDiff } =
+    extractFunctions('studio-picklists.js', ['pkValueName', 'pkValueSetSyncDiff', 'pkRtSyncDiff']);
+
+  it('computes adds / label alignments / activations / deactivations / extras / default', () => {
+    const src = [
+      { fullName: 'Hot',  label: 'Hot',      default: true },
+      { fullName: 'Warm', label: 'Warm-ish' },
+      { fullName: 'Cold', label: 'Cold', isActive: false },
+      { fullName: 'New',  label: 'Brand New' },
+    ];
+    const tgt = [
+      { fullName: 'Hot',  label: 'Hot' },
+      { fullName: 'Warm', label: 'Warm', default: true },
+      { fullName: 'Cold', label: 'Cold' },              // active here, inactive in src
+      { fullName: 'Extra', label: 'Extra' },            // not in source
+    ];
+    const d = pkValueSetSyncDiff(src, tgt);
+    expect(d.adds).toEqual([{ name: 'New', label: 'Brand New', active: true }]);
+    expect(d.labelChanges).toEqual([{ name: 'Warm', from: 'Warm', to: 'Warm-ish' }]);
+    expect(d.activate).toEqual([]);
+    expect(d.deactivate).toEqual(['Cold']);
+    expect(d.extras).toEqual(['Extra']);
+    expect(d.defaultChange).toEqual({ from: 'Warm', to: 'Hot' });
+  });
+
+  it('identical sets → empty diff, null defaultChange', () => {
+    const vs = [{ fullName: 'A', label: 'A', default: true }, { fullName: 'B', label: 'B' }];
+    const d = pkValueSetSyncDiff(vs, JSON.parse(JSON.stringify(vs)));
+    expect(d.adds).toEqual([]);
+    expect(d.labelChanges).toEqual([]);
+    expect(d.deactivate).toEqual([]);
+    expect(d.extras).toEqual([]);
+    expect(d.defaultChange).toBeNull();
+  });
+
+  it('RT sync matches by DeveloperName and diffs assignments; unmatched RTs untouched', () => {
+    const srcRts = [
+      { id: 'S1', devName: 'Partner',  values: new Set(['Hot', 'Warm']) },
+      { id: 'S2', devName: 'Internal', values: new Set(['Hot']) },
+    ];
+    const tgtRts = [
+      { id: 'T1', devName: 'Partner',  values: new Set(['Hot', 'Extra']) },
+      { id: 'T3', devName: 'OnlyHere', values: new Set(['Hot']) },   // no source twin
+    ];
+    const out = pkRtSyncDiff(srcRts, tgtRts);
+    expect(out).toEqual([{ rtId: 'T1', devName: 'Partner', adds: ['Warm'], removes: ['Extra'] }]);
+  });
+});
+
 describe('sftkBuildStoredZip (sftk-zip.js) — the shared Metadata-deploy zip builder', () => {
   const { sftkCrc32, sftkBuildStoredZip } =
     extractFunctions('sftk-zip.js', ['sftkCrc32', 'sftkBuildStoredZip']);
