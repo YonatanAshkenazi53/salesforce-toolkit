@@ -166,7 +166,7 @@ function _ringRenderMatrix() {
             <span class="ds-ring-pobj">${esc(p.tree.objectType || '')}</span>
             <span class="ds-ring-row-acts">
               <button class="ds-btn ds-btn-xs" data-ring-scanall="${esc(p.id)}" title="Scan every open ring target">🔎 all</button>
-              <button class="ds-btn ds-btn-xs" data-dsaction="openFanOut" data-arg="${esc(p.id)}" title="Push to multiple targets (M1 fan-out)">🌐 push</button>
+              <button class="ds-btn ds-btn-xs" data-ring-push="${esc(p.id)}" title="Push from ${esc(orgLabel(ring.sourceUrl))} to the ring targets (M1 fan-out)">🌐 push</button>
             </span>
           </div>
           ${targets.map(t => cell(p, t)).join('')}
@@ -181,6 +181,11 @@ function _ringRenderMatrix() {
     b.addEventListener('click', () => _ringScanAll(b.dataset.ringScanall, b)));
   body.querySelectorAll('[data-ring-rec]').forEach(b =>
     b.addEventListener('click', () => { const [pid, t] = b.dataset.ringRec.split('|'); _ringOpenReconcile(pid, t); }));
+  // Ring pushes flow from the ring's source of truth — same rule as ring
+  // scans — with the ring targets pre-checked in the fan-out modal.
+  body.querySelectorAll('[data-ring-push]').forEach(b =>
+    b.addEventListener('click', () =>
+      window.openFanOut?.(b.dataset.ringPush, { src: _ring?.sourceUrl, preselect: _ringTargets() })));
 }
 
 // ── Scans ────────────────────────────────────────────────────────

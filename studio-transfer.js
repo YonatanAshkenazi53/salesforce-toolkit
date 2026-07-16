@@ -1138,11 +1138,16 @@ async function runTransfer() {
 // (the picklist P2 bulk-apply pattern). Fresh idMap per target by design:
 // targets share nothing. No dry-run here — validate the profile on one pair
 // first (the modal says so).
-window.openFanOut = async function (profileId) {
+window.openFanOut = async function (profileId, opts = {}) {
   const p = _profiles.find(x => x.id === profileId);
   if (!p || !p.tree) { showToast('Deployment not found', 'error'); return; }
-  const srcUrl = p.sourceOrg || _workingPair.src;
+  // opts.src: flow override — the Sync Ring passes its source of truth so a
+  // deployment born on a different pair still pushes golden-org → targets
+  // (same rule as ring scans, user bug report). opts.preselect: target urls
+  // to pre-check (the ring passes its targets).
+  const srcUrl = opts.src || p.sourceOrg || _workingPair.src;
   if (!srcUrl) { showToast('Set a source org on the deployment first', 'error'); return; }
+  const preKeys = (opts.preselect || []).map(u => _orgKey(u));
 
   const candidates = allMapOrgs().filter(o => _orgKey(o.url) !== _orgKey(srcUrl));
   if (!candidates.length) { showToast('No other orgs known — open them in Chrome tabs first', 'warning', 5000); return; }
@@ -1150,7 +1155,7 @@ window.openFanOut = async function (profileId) {
   const rows = candidates.map(o => `
     <label class="ds-fanout-org">
       <input type="checkbox" class="ds-fanout-cb" value="${esc(o.url)}"
-             ${_orgKey(o.url) === _orgKey(p.targetOrg || '') ? 'checked' : ''}>
+             ${(preKeys.length ? preKeys.includes(_orgKey(o.url)) : _orgKey(o.url) === _orgKey(p.targetOrg || '')) ? 'checked' : ''}>
       <span>${esc(orgOptionLabel(o.url, o.label))}</span>
       ${prodBadge(o.url)}
     </label>`).join('');
