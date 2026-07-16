@@ -102,6 +102,50 @@ function pkRtMatrixDiff(rts, edited) {
   return out;
 }
 
+// Diff a TARGET org's value set against the SOURCE org's (P5 sync-from-source).
+// srcRaw/tgtRaw: raw Tooling value arrays. Pure — unit-testable.
+// Returns { adds, labelChanges, activate, deactivate, extras, defaultChange }.
+function pkValueSetSyncDiff(srcRaw, tgtRaw) {
+  const tgtBy = new Map((tgtRaw || []).map(v => [pkValueName(v), v]));
+  const srcBy = new Map((srcRaw || []).map(v => [pkValueName(v), v]));
+  const adds = [], labelChanges = [], activate = [], deactivate = [];
+  for (const sv of (srcRaw || [])) {
+    const name = pkValueName(sv);
+    if (!name) continue;
+    const tv = tgtBy.get(name);
+    const sActive = sv.isActive !== false;
+    if (!tv) { adds.push({ name, label: sv.label || name, active: sActive }); continue; }
+    const tActive = tv.isActive !== false;
+    if (sActive && !tActive) activate.push(name);
+    if (!sActive && tActive) deactivate.push(name);
+    const sLabel = sv.label || name, tLabel = tv.label || name;
+    if (sLabel !== tLabel) labelChanges.push({ name, from: tLabel, to: sLabel });
+  }
+  const extras = (tgtRaw || [])
+    .filter(tv => tv.isActive !== false && !srcBy.has(pkValueName(tv)))
+    .map(tv => pkValueName(tv));
+  const srcDefault = pkValueName((srcRaw || []).find(v => v.default)) || null;
+  const tgtDefault = pkValueName((tgtRaw || []).find(v => v.default)) || null;
+  const defaultChange = srcDefault !== tgtDefault ? { from: tgtDefault, to: srcDefault } : null;
+  return { adds, labelChanges, activate, deactivate, extras, defaultChange };
+}
+
+// Per-record-type assignment diffs for THIS field, source → target (P5).
+// RTs matched across orgs by DeveloperName. Pure — unit-testable.
+// srcRts/tgtRts: [{ id, devName, values:Set }]. Returns [{ rtId, devName, adds, removes }].
+function pkRtSyncDiff(srcRts, tgtRts) {
+  const out = [];
+  const srcBy = new Map((srcRts || []).map(r => [r.devName, r]));
+  for (const trt of (tgtRts || [])) {
+    const srt = srcBy.get(trt.devName);
+    if (!srt) continue;   // RT doesn't exist in the source — leave it alone
+    const adds    = [...srt.values].filter(v => !trt.values.has(v));
+    const removes = [...trt.values].filter(v => !srt.values.has(v));
+    if (adds.length || removes.length) out.push({ rtId: trt.id, devName: trt.devName, adds, removes });
+  }
+  return out;
+}
+
 // ── View state ──────────────────────────────────────────────────
 let _pkOrgUrl   = '';
 let _pkObj      = '';
@@ -350,7 +394,7 @@ async function _pkLoadRecordTypes(sess, obj, field, devName) {
       sobject: 'RecordType', id: rt.Id });
     const plEntry = (meta?.Metadata?.picklistValues || []).find(p =>
       p.picklist === field || p.picklist === devName);
-    rts.push({ id: rt.Id, name: rt.Name, values: new Set((plEntry?.values || []).map(v => pkValueName(v))) });
+    rts.push({ id: rt.Id, name: rt.Name, devName: rt.DeveloperName, values: new Set((plEntry?.values || []).map(v => pkValueName(v))) });
   }
   if (rtRows.length > RT_CAP) rtNote = `Showing ${RT_CAP} of ${rtRows.length} record types.`;
   return { rts, rtNote };
@@ -920,6 +964,9 @@ function _pkRenderMatrix() {
       <span class="ds-pk-bulk-lbl">With selected value(s) in the checked org(s):</span>
       <button class="ds-btn ds-btn-sm" id="dsPkBulkDeact">⏸ Deactivate…</button>
       <button class="ds-btn ds-btn-sm ds-btn-danger" id="dsPkBulkDel">🗑 Delete…</button>
+      <span style="flex:1"></span>
+      <button class="ds-btn ds-btn-sm ds-btn-primary" id="dsPkSyncBtn"
+        title="Make the other orgs' value sets match a source org: add missing values, align labels/active states/default, and align record-type assignments — you pick the operations per org">🔄 Sync from source…</button>
     </div>
     <div id="dsPkBulkResult"></div>`;
 
@@ -927,6 +974,7 @@ function _pkRenderMatrix() {
     body.querySelectorAll('.ds-pk-mx-valchk').forEach(c => { c.checked = e.target.checked; }));
   eid('dsPkBulkDeact')?.addEventListener('click', () => _pkOpenBulkWizard('toggle'));
   eid('dsPkBulkDel')?.addEventListener('click', () => _pkOpenBulkWizard('delete'));
+  eid('dsPkSyncBtn')?.addEventListener('click', () => _pkOpenSyncPlan());
 }
 
 function _pkMxSelectedValues() {
@@ -1295,4 +1343,173 @@ async function _pkGvsApplyCore(gvs, idx, op) {
     path: `services/data/v62.0/tooling/sobjects/GlobalValueSet/${gvs.gvsId}`, body: { Metadata: md } });
   if (res?.error) throw new Error(res.error);
   return true;
+}
+
+// ════════════════════════════════════════════════════════════════
+// P5 — SYNC FROM SOURCE: make target value sets match a source org
+// ════════════════════════════════════════════════════════════════
+// One full-Metadata PATCH per target field applies every ticked value
+// operation; record-type assignments align per shared DeveloperName.
+// Deactivations that would strand data show usage counts and start unticked.
+async function _pkApplySyncCore(tgt, sel) {
+  const md = JSON.parse(JSON.stringify(tgt.inv.metadata));
+  const list = md.valueSet.valueSetDefinition.value;
+  const by = new Map(list.map(v => [pkValueName(v), v]));
+  for (const a of sel.adds)      if (!by.has(a.name)) list.push({ fullName: a.name, label: a.label, default: false, isActive: a.active });
+  for (const lc of sel.labels)   { const v = by.get(lc.name); if (v) v.label = lc.to; }
+  for (const n of sel.activate)  { const v = by.get(n); if (v) v.isActive = true; }
+  for (const n of sel.deactivate){ const v = by.get(n); if (v) { v.isActive = false; if (v.default) v.default = false; } }
+  for (const n of sel.extrasOff) { const v = by.get(n); if (v) { v.isActive = false; if (v.default) v.default = false; } }
+  if (sel.alignDefault && sel.alignDefault.to) {
+    for (const v of list) v.default = false;
+    const dv = by.get(sel.alignDefault.to) || list.find(v => pkValueName(v) === sel.alignDefault.to);
+    if (dv && dv.isActive !== false) dv.default = true;
+  }
+  const res = await sendBg({ type: 'SF_PATCH', orgUrl: tgt.inv.orgUrl, sid: tgt.inv.sid,
+    path: `services/data/v62.0/tooling/sobjects/CustomField/${tgt.inv.fieldId}`,
+    body: { Metadata: md } });
+  if (res?.error) throw new Error(res.error);
+  return true;
+}
+
+async function _pkOpenSyncPlan() {
+  const M = _pkMatrix;
+  if (!M) return;
+  const loaded = M.results.filter(r => r.inv);
+  if (loaded.length < 2) { showToast('Load at least two orgs in the matrix first', 'warning', 5000); return; }
+
+  // Default source: the ring's source of truth when it's among the loaded orgs.
+  const ringSrcKey = _orgKey((typeof _ring === 'object' && _ring?.sourceUrl) || '');
+  let srcIdx = Math.max(0, loaded.findIndex(r => r.orgKey === ringSrcKey));
+
+  const render = () => {
+    const src = loaded[srcIdx];
+    const targets = loaded.filter((_, i) => i !== srcIdx);
+    const plans = targets.map(tgt => ({
+      tgt,
+      diff: pkValueSetSyncDiff(src.inv.rawValues, tgt.inv.rawValues),
+    }));
+
+    const usageOf = (tgt, name) => {
+      const c = tgt.inv.usage?.has?.(name) ? tgt.inv.usage.get(name) : null;
+      return (c == null || c < 0) ? null : c;
+    };
+
+    showModal(`
+      <div class="ds-modal-header">🔄 Sync ${esc(M.obj)}.${esc(M.field)} from source</div>
+      <div class="ds-modal-body">
+        <div class="ds-plan-op" style="margin-bottom:10px">
+          Source of truth:
+          <select id="dsPkSyncSrc" class="ds-select ds-select-sm">
+            ${loaded.map((r, i) => `<option value="${i}" ${i === srcIdx ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}
+          </select>
+          <span class="ds-pk-hint">every other loaded org becomes a target</span>
+        </div>
+        ${plans.map((pl, pi) => {
+          const d = pl.diff;
+          const nothing = !d.adds.length && !d.labelChanges.length && !d.activate.length
+            && !d.deactivate.length && !d.extras.length && !d.defaultChange;
+          return `
+          <div class="ds-plan-org" data-sync-idx="${pi}">
+            <div class="ds-plan-org-hdr"><strong>${esc(pl.tgt.label)}</strong> ${prodBadge(pl.tgt.orgUrl)}
+              ${nothing ? '<span class="ds-ring-clean">✓ matches the source — nothing to do</span>' : ''}</div>
+            ${d.adds.length ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="adds" checked>
+              ➕ Add <strong>${d.adds.length}</strong> value${d.adds.length !== 1 ? 's' : ''}: ${esc(d.adds.slice(0, 6).map(a => a.name).join(', '))}${d.adds.length > 6 ? '…' : ''}</label>` : ''}
+            ${d.labelChanges.length ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="labels" checked>
+              ✏ Align <strong>${d.labelChanges.length}</strong> label${d.labelChanges.length !== 1 ? 's' : ''} (${esc(d.labelChanges.slice(0, 3).map(l => `${l.from}→${l.to}`).join(', '))}${d.labelChanges.length > 3 ? '…' : ''})</label>` : ''}
+            ${d.activate.length ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="activate" checked>
+              ▶ Activate <strong>${d.activate.length}</strong>: ${esc(d.activate.slice(0, 6).join(', '))}</label>` : ''}
+            ${d.deactivate.map(n => {
+              const u = usageOf(pl.tgt, n);
+              return `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="deactivate" data-val="${esc(n)}" ${u ? '' : 'checked'}>
+                ⏸ Deactivate <strong>${esc(n)}</strong> (inactive in source)${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s) still hold it</span>` : ''}</label>`;
+            }).join('')}
+            ${d.extras.map(n => {
+              const u = usageOf(pl.tgt, n);
+              return `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="extrasOff" data-val="${esc(n)}">
+                🔵 Deactivate extra <strong>${esc(n)}</strong> (not in source${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s)</span>` : ''}) — never deleted automatically</label>`;
+            }).join('')}
+            ${d.defaultChange ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="alignDefault" checked>
+              ⭐ Default: ${esc(d.defaultChange.from || '—')} → <strong>${esc(d.defaultChange.to || '—')}</strong></label>` : ''}
+            <label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="rts" checked>
+              🎛 Align record-type assignments to the source (matched by developer name — computed on run)</label>
+          </div>`;
+        }).join('')}
+        <div class="ds-pk-hint">Adds copy the source's label and active state. Value ORDER isn't synced. Standard picklists and global value sets aren't part of this v1.</div>
+      </div>
+      <div class="ds-modal-footer">
+        <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
+        <button class="ds-btn ds-btn-primary" id="dsPkSyncRun">🔄 Sync selected</button>
+      </div>`);
+
+    eid('dsPkSyncSrc')?.addEventListener('change', e => { srcIdx = +e.target.value; render(); });
+    eid('dsPkSyncRun')?.addEventListener('click', async () => {
+      const btn = eid('dsPkSyncRun');
+      btn.disabled = true;
+
+      // Prod confirms up front, one per production target with anything ticked.
+      for (let pi = 0; pi < plans.length; pi++) {
+        const anyTicked = !!document.querySelector(`.ds-sync-op[data-p="${pi}"]:checked, .ds-sync-one[data-p="${pi}"]:checked`);
+        if (anyTicked && cachedOrgType(plans[pi].tgt.orgUrl) === 'production') {
+          const ok = await confirmTypedProd(orgLabel(plans[pi].tgt.orgUrl), 'sync picklist values into PRODUCTION');
+          if (!ok) { btn.disabled = false; return; }
+        }
+      }
+
+      const srcSess = await getOrgSession(src.orgUrl);
+      for (let pi = 0; pi < plans.length; pi++) {
+        const pl = plans[pi];
+        const hdr = document.querySelector(`.ds-plan-org[data-sync-idx="${pi}"] .ds-plan-org-hdr`);
+        const note = document.createElement('span');
+        note.className = 'ds-plan-status';
+        const on = op => !!document.querySelector(`.ds-sync-op[data-p="${pi}"][data-op="${op}"]:checked`);
+        const ones = op => [...document.querySelectorAll(`.ds-sync-one[data-p="${pi}"][data-op="${op}"]:checked`)].map(c => c.dataset.val);
+        const sel = {
+          adds: on('adds') ? pl.diff.adds : [],
+          labels: on('labels') ? pl.diff.labelChanges : [],
+          activate: on('activate') ? pl.diff.activate : [],
+          deactivate: ones('deactivate'),
+          extrasOff: ones('extrasOff'),
+          alignDefault: on('alignDefault') ? pl.diff.defaultChange : null,
+        };
+        const anyValueOp = sel.adds.length || sel.labels.length || sel.activate.length
+          || sel.deactivate.length || sel.extrasOff.length || sel.alignDefault;
+        const wantRts = on('rts');
+        if (!anyValueOp && !wantRts) continue;
+        note.textContent = ' ⏳ syncing…';
+        hdr?.appendChild(note);
+        try {
+          if (anyValueOp) await _pkApplySyncCore(pl.tgt, sel);
+          let rtDone = 0, rtFail = 0;
+          if (wantRts && srcSess) {
+            const tgtSess = await getOrgSession(pl.tgt.orgUrl);
+            const [srcRts, tgtRts] = await Promise.all([
+              _pkLoadRecordTypes(srcSess, M.obj, M.field, M.field.replace(/__c$/i, '')),
+              tgtSess ? _pkLoadRecordTypes(tgtSess, M.obj, M.field, M.field.replace(/__c$/i, '')) : Promise.resolve({ rts: [] }),
+            ]);
+            const rtPlans = pkRtSyncDiff(srcRts.rts, tgtRts.rts);
+            for (const rp of rtPlans) {
+              try {
+                await _pkApplyRtCore({ orgUrl: pl.tgt.inv.orgUrl, sid: pl.tgt.inv.sid,
+                  field: M.field, devName: M.field.replace(/__c$/i, '') }, rp.rtId, rp.adds, rp.removes);
+                rtDone++;
+              } catch (_) { rtFail++; }
+            }
+          }
+          note.textContent = ` ✅ synced${wantRts ? ` · ${rtDone} record type${rtDone !== 1 ? 's' : ''} aligned${rtFail ? ` (${rtFail} failed)` : ''}` : ''}`;
+        } catch (e) {
+          const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
+          note.textContent = ` ❌ ${fe.message}`;
+        }
+      }
+      btn.textContent = '✓ Done — reload the matrix to verify';
+      _history.push({ id: genId('run'), kind: 'picklist-sync',
+        profileName: `Picklist sync: ${M.obj}.${M.field} from ${src.label}`,
+        startedAt: new Date().toISOString(), completedAt: new Date().toISOString(),
+        status: 'success', sourceOrg: src.orgUrl, targetOrg: '',
+        summary: {}, errors: [] });
+      storageSaveHistory().catch(() => {});
+    });
+  };
+  render();
 }

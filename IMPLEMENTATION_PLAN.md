@@ -264,6 +264,17 @@ history) already exists there.
   Industry…) via StandardValueSet metadata; global picklists edit the GlobalValueSet
   (warn: affects EVERY field using it — list them via MetadataComponentDependency).
 
+## Phase P5 — Picklist SYNC from source (user request 2026-07-15)
+- [x] **P5. Sync picklist values by the source org** — in the P2 compare matrix: "🔄 Sync
+  from source…" computes per-target diffs vs a chosen source org (default: ring source):
+  ➕ add missing values (label+active copied) · ✏ align labels · ▶ activate / ⏸ deactivate
+  to match source (deactivations show usage counts, unticked by default when data exists) ·
+  extras (target-only) offered as deactivate, never auto-delete · ⭐ align default value.
+  ONE full-Metadata PATCH per target field. RECORD-TYPE SYNC: match RTs by DeveloperName
+  across orgs; align this field's per-RT assignments to the source (uses _pkApplyRtCore).
+  V1 scope: custom local value sets (std/GVS banner). Ring-Sync-Plan-style modal: per-org
+  sections, checkboxes, one Run, per-org status + prod typed confirms.
+
 ## Phase M — Multi-org sync + smart matching (user scenario 2026-07-13: "5 orgs that
 ## need their data synced"; no external IDs in their orgs; user picks matching per node)
 

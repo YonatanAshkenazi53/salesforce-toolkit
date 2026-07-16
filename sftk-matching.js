@@ -192,6 +192,62 @@ function sftkCrossOrgPreview(srcCounts, tgtCounts) {
   return { sourceTotal: src.total, matchedUnique, ambiguous, unmatched };
 }
 
+// ── Match memory (M3c) — pure so extract tests can cover them ─────────────
+
+// Merge learned [srcId, tgtId] pairs into an existing memory map (plain
+// object { srcId: tgtId }), returning a NEW object. Re-learning a srcId
+// refreshes it (delete + re-insert moves it to the end of the insertion
+// order). When the merged map exceeds `cap` (default 5000), the OLDEST
+// entries are evicted — "oldest" = earliest in the object's insertion order,
+// which is approximate LRU (arbitrary-oldest eviction is acceptable: memory
+// is an optimization layer; evicted pairs simply fall back to key matching).
+function sftkMemoryMerge(mem, pairs, cap) {
+  const limit = (typeof cap === 'number' && cap > 0) ? Math.floor(cap) : 5000;
+  const out = {};
+  const src = (mem && typeof mem === 'object') ? mem : {};
+  for (const k of Object.keys(src)) {
+    const v = src[k];
+    if (k && typeof v === 'string' && v) out[k] = v;
+  }
+  for (const p of (Array.isArray(pairs) ? pairs : [])) {
+    if (!Array.isArray(p)) continue;
+    const s = p[0], t = p[1];
+    if (typeof s !== 'string' || !s || typeof t !== 'string' || !t) continue;
+    if (Object.prototype.hasOwnProperty.call(out, s)) delete out[s]; // refresh recency
+    out[s] = t;
+  }
+  const keys = Object.keys(out);
+  for (let i = 0; i < keys.length - limit; i++) delete out[keys[i]];
+  return out;
+}
+
+// 0..1 similarity of two ALREADY-NORMALIZED match-key strings. Component-
+// aware: keys split on the U+0001 separator (String.fromCharCode(1), inlined
+// for self-contained extraction) and the score is the MEAN of per-component
+// scores — 1 for equal components, else prefix-ratio partial credit
+// (shared-prefix length / longer component length).
+//
+// FOR RANKING MATCH-REVIEW CANDIDATES ONLY. Never use this for automatic
+// matching — pairing is a human decision (M3c invariant).
+function sftkPairSimilarity(keyA, keyB) {
+  const a = String(keyA === null || keyA === undefined ? '' : keyA).split(String.fromCharCode(1));
+  const b = String(keyB === null || keyB === undefined ? '' : keyB).split(String.fromCharCode(1));
+  const n = Math.max(a.length, b.length);
+  if (!n) return 0;
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const x = a[i] || '', y = b[i] || '';
+    if (x === y) { sum += 1; continue; }        // equal (both-blank counts as equal)
+    const longer = Math.max(x.length, y.length);
+    if (!longer) { sum += 1; continue; }
+    const shorter = Math.min(x.length, y.length);
+    let p = 0;
+    while (p < shorter && x[p] === y[p]) p++;
+    sum += p / longer;
+  }
+  return sum / n;
+}
+
 // ── Global attach (classic-script export) ─────────────────────────────────
 if (typeof globalThis !== 'undefined') {
   globalThis.sftkNormalizeValue      = sftkNormalizeValue;
@@ -204,4 +260,6 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkKeyCountsFromRecords = sftkKeyCountsFromRecords;
   globalThis.sftkKeyStats            = sftkKeyStats;
   globalThis.sftkCrossOrgPreview     = sftkCrossOrgPreview;
+  globalThis.sftkMemoryMerge         = sftkMemoryMerge;
+  globalThis.sftkPairSimilarity      = sftkPairSimilarity;
 }

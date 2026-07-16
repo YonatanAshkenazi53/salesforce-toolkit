@@ -534,6 +534,51 @@ async function runDiffScan(profile, node = null, scope = null) {
     } catch (_) { _orphanRecs = []; }
   }
 
+  // ── M3c — MATCH-MEMORY PRE-PASS (root scans only) ───────────────────────
+  // Records paired here are matched by REMEMBERED IDENTITY — persistent
+  // srcId→tgtId pairs learned from successful transfers, prior confirmed
+  // scans, and manual Match Review pairing (profile.matchMemory, keyed by
+  // the TARGET org's identity key) — so a rename on either side can't break
+  // the match. Matching is by Id ONLY (never by similarity). Both sides of a
+  // memory pair are EXCLUDED from the key indexes below; everything else
+  // flows through key matching exactly as before. Profiles without
+  // matchMemory: empty mem → this whole block no-ops (byte-identical
+  // legacy behavior). Any failure degrades to plain key matching with a
+  // warning on the result.
+  const isRootScan = !scope && node === profile.tree;
+  let memoryMatched = 0;
+  const memPairedSrc = new Set();
+  const memPairedTgt = new Set();
+  let memRows = [];                 // [{ sr, tr }] — classified with the buckets below
+  const memWarnings = [];
+  if (isRootScan) {
+    try {
+      const mem = (profile.matchMemory && typeof profile.matchMemory === 'object'
+        ? profile.matchMemory[_orgKey(profile.targetOrg)] : null) || {};
+      if (Object.keys(mem).length) {
+        const tgtById = new Map((tgtRes.records || []).map(r => [r.Id, r]));
+        for (const sr of (srcRes.records || [])) {
+          const tgtId = mem[sr.Id];
+          if (!tgtId) continue;
+          const tr = tgtById.get(tgtId);
+          // Target record gone (deleted) → the source row falls back to key
+          // matching this scan. A tgt already claimed by an earlier src (bad
+          // memory data) → first claim wins, the rest key-match.
+          if (!tr || memPairedTgt.has(tr.Id) || memPairedSrc.has(sr.Id)) continue;
+          memPairedSrc.add(sr.Id);
+          memPairedTgt.add(tr.Id);
+          memRows.push({ sr, tr });
+          memoryMatched++;
+        }
+      }
+    } catch (e) {
+      memPairedSrc.clear(); memPairedTgt.clear(); memRows = []; memoryMatched = 0;
+      memWarnings.push(`match memory skipped (fell back to key matching): ${e?.message || e}`);
+      window.SFToolkitDebug?.log('scan', 'warn',
+        'M3c memory pre-pass failed — falling back to key matching', e?.message || String(e));
+    }
+  }
+
   // Index each side by its own matchField — KEYS are the values themselves,
   // which match across orgs even when the field names that hold them differ
   // (Name="Andy Young" on source, Full_Name__c="Andy Young" on target both
@@ -544,6 +589,7 @@ async function runDiffScan(profile, node = null, scope = null) {
   let _blankSrc = 0, _blankTgt = 0;
   const srcByKey = new Map();
   for (const r of (srcRes.records || [])) {
+    if (memPairedSrc.has(r.Id)) continue;     // M3c — matched from memory
     const k = sftkMatchKey(r, srcMatching);
     if (k === '') { _blankSrc++; continue; }
     if (scope && _dupKeys.has(k)) continue;   // R1 — ambiguous key, excluded
@@ -551,6 +597,7 @@ async function runDiffScan(profile, node = null, scope = null) {
   }
   const tgtByKey = new Map();
   for (const r of (tgtRes.records || [])) {
+    if (memPairedTgt.has(r.Id)) continue;     // M3c — matched from memory
     const k = sftkMatchKey(r, tgtMatching);
     if (k === '') { _blankTgt++; continue; }
     if (scope && _dupKeys.has(k)) continue;   // R1 — ambiguous key, excluded
@@ -562,6 +609,29 @@ async function runDiffScan(profile, node = null, scope = null) {
   const changed         = []; // present in both, compareFields differ → "drift"
   const identical       = []; // present in both, all compareFields match → "in sync"
   const linkMismatch    = []; // child scans: in both, but pointing at a different parent
+
+  // M3c — classify the memory-matched pairs with the SAME compare logic the
+  // key-matched rows use below (memory decides WHO matches; the compare plan
+  // still decides identical vs changed). Root scans only, so no link
+  // tracking here. A per-row extraction failure degrades that row to
+  // "identical, no drift detail" rather than dropping it.
+  for (const { sr, tr } of memRows) {
+    let diffFields = [];
+    try {
+      for (const cp of comparePlan) {
+        if (String(cp.srcExtract(sr) ?? '') !== String(cp.tgtExtract(tr) ?? '')) {
+          if (diffFields.length < 10) diffFields.push(cp.srcField);
+          else break;
+        }
+      }
+    } catch (e) {
+      diffFields = [];
+      memWarnings.push(`memory pair compare failed for ${sr.Id}: ${e?.message || e}`);
+    }
+    const mk = sftkMatchKey(sr, srcMatching) || sftkMatchKey(tr, tgtMatching) || '(from memory)';
+    if (diffFields.length) changed.push({ matchKey: mk, sourceId: sr.Id, targetId: tr.Id, fields: diffFields, viaMemory: true });
+    else                   identical.push({ matchKey: mk, sourceId: sr.Id, targetId: tr.Id, viaMemory: true });
+  }
 
   // Pair-aligned compare driven by comparePlan: each entry extracts the value
   // to compare (raw field for data fields, related record's match field for
@@ -624,6 +694,28 @@ async function runDiffScan(profile, node = null, scope = null) {
     } catch (_) { /* degrade — orphans just don't show */ }
   }
 
+  // M3c — AUTO-LEARN: this scan's confirmed 1:1 pairs (identical + changed
+  // rows all carry sourceId + targetId; memory-matched pairs are included,
+  // which refreshes their recency). NEVER persisted here — ring scans run on
+  // clones, so CALLERS merge scan.learnedPairs into the real profile's
+  // matchMemory (refreshProfileDiff / window.sftkLearnPairs). Root only, cap
+  // 5000 to match the memory-map cap.
+  let learnedPairs = [];
+  if (isRootScan) {
+    try {
+      for (const r of identical) {
+        if (r.sourceId && r.targetId) learnedPairs.push([r.sourceId, r.targetId]);
+        if (learnedPairs.length >= 5000) break;
+      }
+      if (learnedPairs.length < 5000) {
+        for (const r of changed) {
+          if (r.sourceId && r.targetId) learnedPairs.push([r.sourceId, r.targetId]);
+          if (learnedPairs.length >= 5000) break;
+        }
+      }
+    } catch (_) { learnedPairs = []; }
+  }
+
   return {
     runAt:         new Date().toISOString(),
     status:        'success',
@@ -646,10 +738,16 @@ async function runDiffScan(profile, node = null, scope = null) {
     },
     // M3a — rows excluded because every key component was blank.
     ...((_blankSrc + _blankTgt) ? { blankKeys: { rows: _blankSrc + _blankTgt, src: _blankSrc, tgt: _blankTgt } } : {}),
+    // M3c — how many pairs matched from persistent memory (Id-based), this
+    // scan's learnable 1:1 pairs, and any degraded-path warnings. All three
+    // are absent when memory is empty/unused (legacy shape unchanged).
+    ...(memoryMatched ? { memoryMatched } : {}),
+    ...(learnedPairs.length ? { learnedPairs } : {}),
+    ...(memWarnings.length ? { warnings: memWarnings.slice(0, 10) } : {}),
     compareFields: srcCompare,
     compareFieldsTgt: tgtCompare,
-    sourceCount:   srcByKey.size,
-    targetCount:   tgtByKey.size,
+    sourceCount:   srcByKey.size + memoryMatched,
+    targetCount:   tgtByKey.size + memoryMatched,
     // Caps to keep chrome.storage payload reasonable on big orgs. The
     // picker only needs source IDs to badge rows, and "extras in target"
     // is just informational for now.
@@ -773,6 +871,19 @@ async function refreshProfileDiff(profileId) {
     showToast(`Diff scan: ${res.error}`, 'error', 6000);
     return res;
   }
+  // M3c — AUTO-LEARN: merge this scan's confirmed 1:1 pairs into the real
+  // profile's match memory (skipped for ephemeral profiles — e.g. ring
+  // reconcile clones, whose sourceOrg may be overridden). The raw pair list
+  // is then stripped from the stored scan: it lives in matchMemory, not in
+  // lastScan (keeps chrome.storage payloads lean).
+  try {
+    if (!profile.ephemeral && Array.isArray(res.learnedPairs) && res.learnedPairs.length) {
+      await window.sftkLearnPairs?.(profile.id, profile.targetOrg, res.learnedPairs);
+    }
+  } catch (e) {
+    window.SFToolkitDebug?.log('scan', 'warn', 'match-memory auto-learn failed', e?.message || String(e));
+  }
+  delete res.learnedPairs;
   profile.lastScan  = res;
   profile.updatedAt = new Date().toISOString();
   if (!profile.ephemeral) await storageSaveProfiles();
