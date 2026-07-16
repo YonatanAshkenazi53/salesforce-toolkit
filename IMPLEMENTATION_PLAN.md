@@ -295,6 +295,11 @@ history) already exists there.
   unique% per org (GROUP BY / describe unique|externalId flags), cross-org match preview
   ("matches 1,240 of 1,300 uniquely · 38 ambiguous · 22 unmatched"), ranked suggestions
   (external-id fields → unique fields → nameField → discovered composites).
+- [ ] **M-followup: ring push source override** — the ring's 🌐 push routes through
+  openFanOut which uses the PROFILE's own sourceOrg (same class of bug as the fixed
+  scan-source issue, `8301f31`). Add openFanOut(profileId, srcOverride) once the M3c
+  agent releases studio-transfer.js; ring passes ring.sourceUrl. Until then the fan-out
+  modal SHOWS its source org, so the mismatch is visible before running.
 - [ ] **M3c. Match memory + review UI** — persistent srcId→tgtId pairs per profile+org-pair
   (populated by successful inserts/upserts/overwrites AND manual pairing); matched FIRST,
   before key comparison → rename-proof identity without schema changes. Post-scan Match
