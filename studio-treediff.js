@@ -1,0 +1,201 @@
+'use strict';
+// ════════════════════════════════════════════════════════════════
+// TREE DIFF — the record tree, compared across environments
+// ════════════════════════════════════════════════════════════════
+// User request: "show more than just numbers — show differences between the
+// record TREE in a couple of environments and suggest data operations."
+// Rows = the deployment's object tree (root → children → grandchildren),
+// columns = environments. Each cell shows that node's buckets in that env
+// plus a SUGGESTED operation line; each env column can open a fully-loaded
+// Reconcile (root + child scans pre-run) where every suggestion is executable
+// with all the usual guards. Scans run on ephemeral clones — the real
+// profile's own lastScan is never touched.
+
+// Suggest operations for one node's scan buckets. Pure — unit-testable.
+// counts: { missing, changed, extra, link } · depth 0 = root.
+function tdSuggest(counts, depth, insertOrder) {
+  const ops = [];
+  if (counts.missing) ops.push(`⬆ push ${counts.missing}${depth > 0 && insertOrder === 'childFirst' ? ' (child-first)' : ''}`);
+  if (counts.changed) ops.push(`✏ overwrite ${counts.changed}`);
+  if (counts.link)    ops.push(`🔗 relink ${counts.link}`);
+  if (counts.extra)   ops.push(`🔵 review ${counts.extra} extra${counts.extra !== 1 ? 's' : ''}`);
+  return ops;
+}
+
+// Flatten a profile tree to depth 2 with pathKeys ('0', '0.1', …). Pure.
+function tdTreeNodes(tree) {
+  const out = [{ pathKey: '', node: tree, depth: 0 }];
+  (tree.children || []).forEach((c, i) => {
+    out.push({ pathKey: String(i), node: c, depth: 1 });
+    (c.children || []).forEach((g, j) => {
+      out.push({ pathKey: `${i}.${j}`, node: g, depth: 2 });
+    });
+  });
+  return out;
+}
+
+// Bucket counts for a node's scan result (root scan or child scan). Pure.
+function tdCounts(scan) {
+  if (!scan || scan.error) return null;
+  return {
+    missing: (scan.missingInTarget || []).length,
+    changed: (scan.changed || []).length,
+    extra: (scan.onlyInTarget || []).length,
+    link: (scan.linkMismatch || []).length,
+    identical: (scan.identical || []).length,
+  };
+}
+
+// ── View state ──────────────────────────────────────────────────
+let _tdProfileId = null;
+let _tdEnvs      = [];      // selected env urls
+let _tdResults   = null;    // [{ url, label, clone|null, error|null }]
+
+window.openTreeDiff = function (profileId) {
+  const p = _profiles.find(x => x.id === profileId);
+  if (!p || !p.tree) { showToast('Deployment not found', 'error'); return; }
+  _tdProfileId = profileId;
+  _tdResults = null;
+  // Default envs: ring targets when a ring exists, else the profile's target.
+  const ringTargets = (typeof _ring === 'object' && _ring?.orgs?.length)
+    ? _ring.orgs.filter(u => _orgKey(u) !== _orgKey(p.sourceOrg || ''))
+    : [];
+  _tdEnvs = ringTargets.length ? ringTargets : (p.targetOrg ? [p.targetOrg] : []);
+  _currentView = 'treediff';
+  document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('[data-view="profiles"]')?.classList.add('active');
+  renderTreeDiffPage();
+};
+
+function renderTreeDiffPage() {
+  const p = _profiles.find(x => x.id === _tdProfileId);
+  if (!p) { renderView('profiles'); return; }
+  const orgs = allMapOrgs().filter(o => _orgKey(o.url) !== _orgKey(p.sourceOrg || ''));
+  const ls = _liveOrgSet();
+
+  const envRows = orgs.map(o => `
+    <label class="ds-fanout-org">
+      <input type="checkbox" class="ds-td-env" value="${esc(o.url)}"
+             ${_tdEnvs.some(u => _orgKey(u) === _orgKey(o.url)) ? 'checked' : ''}>
+      <span>${esc(orgOptionLabel(o.url, o.label, ls))}</span>
+      ${prodBadge(o.url)}
+    </label>`).join('');
+
+  setMain(`
+    <div class="ds-view-header">
+      <div class="ds-view-title-wrap">
+        <h2 class="ds-view-title">🌳 Tree diff — ${esc(p.name)}</h2>
+        <div class="ds-view-subtitle">The record tree from <strong>${esc(orgLabel(p.sourceOrg))}</strong>, compared node-by-node across environments — with suggested operations</div>
+      </div>
+      <button class="ds-btn" data-dsaction="switchView" data-arg="profiles">‹ Back</button>
+    </div>
+    <details class="ds-ring-cfg" ${_tdResults ? '' : 'open'}>
+      <summary class="ds-ring-cfg-sum"><strong>Environments</strong>
+        <span class="ds-oc-sub">${_tdEnvs.length} selected</span></summary>
+      <div class="ds-ring-orgs">${envRows || '<div class="ds-seq-empty">No other orgs known.</div>'}</div>
+      <div style="padding:0 14px 12px"><button class="ds-btn ds-btn-primary" id="dsTdScan">🔎 Scan environments</button></div>
+    </details>
+    <div id="dsTdBody">${_tdResults ? '' : `<div class="ds-pk-note">Pick environments and scan — the whole tree (root, children, grandchildren) is scanned per environment.</div>`}</div>`);
+
+  document.querySelectorAll('.ds-td-env').forEach(cb =>
+    cb.addEventListener('change', () => {
+      _tdEnvs = [...document.querySelectorAll('.ds-td-env:checked')].map(c => c.value);
+      const sub = document.querySelector('.ds-ring-cfg-sum .ds-oc-sub');
+      if (sub) sub.textContent = `${_tdEnvs.length} selected`;
+    }));
+  eid('dsTdScan')?.addEventListener('click', () => _tdRunScans(p));
+  if (_tdResults) _tdRenderMatrix(p);
+}
+
+async function _tdRunScans(p) {
+  const body = eid('dsTdBody');
+  if (!body || !_tdEnvs.length) { showToast('Pick at least one environment', 'warning'); return; }
+  const nodes = tdTreeNodes(p.tree);
+  const childKeys = nodes.filter(n => n.depth === 1).map(n => n.pathKey);
+  const grandKeys = nodes.filter(n => n.depth === 2).map(n => n.pathKey);
+  _tdResults = [];
+
+  for (const url of _tdEnvs) {
+    const label = orgLabel(url);
+    body.innerHTML = `<div class="ds-init-loading">${window.sftkCat ? sftkCat(`Scanning ${esc(label)} — root + ${childKeys.length + grandKeys.length} child node(s)…`) : 'Scanning…'}</div>`;
+    const sess = await getOrgSession(url);
+    if (!sess) { _tdResults.push({ url, label, error: 'org not open in a tab' }); continue; }
+    try {
+      const clone = { ...p, targetOrg: url, ephemeral: true, lastScan: null, ringScans: undefined };
+      const root = await runDiffScan(clone);
+      if (root?.error) throw new Error(root.error);
+      clone.lastScan = root;
+      // Children first (grandchildren scope by their parent's child scan).
+      for (const k of childKeys) await scanReconcileChild(clone, k);
+      for (const k of grandKeys) await scanReconcileChild(clone, k);
+      _tdResults.push({ url, label, clone });
+    } catch (e) {
+      const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
+      _tdResults.push({ url, label, error: fe.message });
+    }
+  }
+  _tdRenderMatrix(p);
+}
+
+function _tdNodeScan(result, pathKey) {
+  if (!result.clone) return null;
+  if (pathKey === '') return result.clone.lastScan;
+  return result.clone.lastScan?.children?.[pathKey] || null;
+}
+
+function _tdRenderMatrix(p) {
+  const body = eid('dsTdBody');
+  if (!body || !_tdResults) return;
+  const nodes = tdTreeNodes(p.tree);
+
+  const head = `<div class="ds-td-row ds-td-head">
+    <div class="ds-td-node">Tree node</div>
+    ${_tdResults.map((r, i) => `<div class="ds-td-col">
+      ${esc(r.label)} ${prodBadge(r.url)}
+      ${r.clone ? `<button class="ds-btn ds-btn-xs" data-td-rec="${i}" title="Open a fully-loaded Reconcile against this environment — every suggested operation is executable there with the usual guards">⚖ operate</button>` : ''}
+    </div>`).join('')}
+  </div>`;
+
+  const rows = nodes.map(({ pathKey, node, depth }) => {
+    const obj = node.objectType || node.childSObject || '?';
+    const cells = _tdResults.map(r => {
+      if (r.error) return `<div class="ds-td-cell ds-td-err" title="${esc(r.error)}">❌</div>`;
+      const scan = _tdNodeScan(r, pathKey);
+      if (!scan) return `<div class="ds-td-cell ds-td-na" title="not scanned (parent scan failed?)">·</div>`;
+      if (scan.error) return `<div class="ds-td-cell ds-td-err" title="${esc(scan.error)}">⚠</div>`;
+      const c = tdCounts(scan);
+      const drift = c.missing + c.changed + c.extra + c.link;
+      if (!drift) return `<div class="ds-td-cell ds-td-ok" title="${c.identical} record(s), all in sync">✓ in sync</div>`;
+      const ops = tdSuggest(c, depth, node.insertOrder);
+      return `<div class="ds-td-cell ds-td-drift">
+        <span class="ds-td-counts" title="${c.missing} missing · ${c.changed} changed · ${c.extra} only in target${c.link ? ` · ${c.link} link mismatch` : ''}">
+          ${c.missing ? `<b class="ds-ring-m">${c.missing}</b>` : ''}${c.changed ? `<b class="ds-ring-c">${c.changed}</b>` : ''}${c.extra ? `<b class="ds-ring-e">${c.extra}</b>` : ''}${c.link ? `<b class="ds-td-link">🔗${c.link}</b>` : ''}
+        </span>
+        <span class="ds-td-suggest">${esc(ops.join(' · '))}</span>
+      </div>`;
+    }).join('');
+    return `<div class="ds-td-row">
+      <div class="ds-td-node ds-td-depth${depth}">
+        ${depth > 0 ? '<span class="ds-td-twig">↳</span>' : ''}
+        <strong>${esc(obj)}</strong>
+        ${depth > 0 && node.field ? `<span class="ds-td-via">via ${esc(node.field)}</span>` : ''}
+        ${node.insertOrder === 'childFirst' ? '<span class="ds-td-cf" title="Inserted before its parent, reconnected after">⤴ child-first</span>' : ''}
+      </div>${cells}</div>`;
+  }).join('');
+
+  body.innerHTML = `
+    <div class="ds-td-matrix" style="--td-cols:${_tdResults.length}">${head}${rows}</div>
+    <div class="ds-pk-note" style="margin-top:8px">Suggestions per node: ⬆ push missing · ✏ overwrite changed · 🔗 relink mismatched links · 🔵 review extras (deletes).
+    Click <strong>⚖ operate</strong> on an environment to open its Reconcile with every node's scan pre-loaded — all operations run there with the full guards (data fixes, prod confirms, orphan protection).</div>`;
+
+  body.querySelectorAll('[data-td-rec]').forEach(b =>
+    b.addEventListener('click', () => {
+      const r = _tdResults[+b.dataset.tdRec];
+      if (!r?.clone) return;
+      _reconcileProfile = r.clone;
+      _currentView = 'reconcile';
+      document.querySelectorAll('.ds-nav-btn').forEach(x => x.classList.remove('active'));
+      document.querySelector('[data-view="profiles"]')?.classList.add('active');
+      renderReconcile();
+    }));
+}

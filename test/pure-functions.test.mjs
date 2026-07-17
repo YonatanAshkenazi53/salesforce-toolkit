@@ -311,6 +311,35 @@ describe('P5 picklist sync diffs (studio-picklists.js)', () => {
   });
 });
 
+describe('tree diff helpers (studio-treediff.js)', () => {
+  const tdSuggest = extractFunction('studio-treediff.js', 'tdSuggest');
+  const tdTreeNodes = extractFunction('studio-treediff.js', 'tdTreeNodes');
+  const tdCounts = extractFunction('studio-treediff.js', 'tdCounts');
+
+  it('suggests operations in execution order, child-first annotated', () => {
+    expect(tdSuggest({ missing: 12, changed: 3, extra: 1, link: 4 }, 1, 'childFirst'))
+      .toEqual(['⬆ push 12 (child-first)', '✏ overwrite 3', '🔗 relink 4', '🔵 review 1 extra']);
+    expect(tdSuggest({ missing: 0, changed: 0, extra: 0, link: 0 }, 0)).toEqual([]);
+  });
+
+  it('flattens the tree to depth 2 with pathKeys', () => {
+    const tree = { objectType: 'Account', children: [
+      { childSObject: 'Contact', children: [{ childSObject: 'Task', children: [] }] },
+      { childSObject: 'Case', children: [] },
+    ] };
+    const nodes = tdTreeNodes(tree);
+    expect(nodes.map(n => n.pathKey)).toEqual(['', '0', '0.0', '1']);
+    expect(nodes.map(n => n.depth)).toEqual([0, 1, 2, 1]);
+  });
+
+  it('counts buckets, null for failed/absent scans', () => {
+    expect(tdCounts({ missingInTarget: [1, 2], changed: [1], onlyInTarget: [], linkMismatch: [1], identical: [1, 2, 3] }))
+      .toEqual({ missing: 2, changed: 1, extra: 0, link: 1, identical: 3 });
+    expect(tdCounts(null)).toBeNull();
+    expect(tdCounts({ error: 'x' })).toBeNull();
+  });
+});
+
 describe('sftkBuildStoredZip (sftk-zip.js) — the shared Metadata-deploy zip builder', () => {
   const { sftkCrc32, sftkBuildStoredZip } =
     extractFunctions('sftk-zip.js', ['sftkCrc32', 'sftkBuildStoredZip']);
