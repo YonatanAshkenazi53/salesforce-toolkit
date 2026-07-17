@@ -39,6 +39,27 @@ function prodBadge(orgUrl) {
   return '';
 }
 
+// 🎯 match-accuracy chip for a graded scan (acc = sftkScanAccuracy(scan)).
+// compact=true → just "🎯 97%" (Tree Diff cells); full → fields + wording.
+// Shared by the Reconcile header and Tree Diff (both load after this file).
+function accuracyChip(acc, compact) {
+  if (!acc) return '';
+  const tone = acc.grade === 'high' ? 'background:#dcfce7;color:#166534'
+             : acc.grade === 'ok'   ? 'background:#fef3c7;color:#92400e'
+             :                        'background:#fee2e2;color:#991b1b';
+  const why = [];
+  if (acc.blank)  why.push(`${acc.blank} row(s) have a blank key (unmatchable)`);
+  if (acc.dup)    why.push(`${acc.dup} row(s) share duplicated keys (ambiguous)`);
+  if (acc.memory) why.push(`${acc.memory} pair(s) matched from 🧠 memory (Id-exact)`);
+  const kind = acc.strategy === 'externalId' ? ' (external ID)'
+             : acc.fields.length > 1 ? ' (composite key)' : '';
+  const title = `Matched by ${acc.fields.join(' + ')}${kind} — ${acc.pct}% of the `
+    + `${acc.total} row(s) scanned have a usable, unambiguous key.`
+    + (why.length ? ` ${why.join('; ')}.` : '')
+    + ` Improve it: deployment ✏ Edit → 🔎 Pick records → Matching (combine up to 4 fields, or use an external ID).`;
+  return `<span class="ds-acc-chip" style="font-size:11px;padding:1px 7px;border-radius:9px;white-space:nowrap;${tone}" title="${esc(title)}">🎯 ${compact ? '' : esc(acc.fields.join(' + ')) + ' · '}${acc.pct}%${compact ? '' : ' key confidence'}</span>`;
+}
+
 // Typed confirmation for destructive writes into a production org: the user
 // must type the org's label exactly before Proceed enables.
 function confirmTypedProd(orgLabelStr, actionSummary) {
@@ -479,16 +500,19 @@ async function runDiffScan(profile, node = null, scope = null) {
   srcCompare = comparePlan.map(p => p.srcField);
   tgtCompare = comparePlan.map(p => p.tgtField);
 
-  // R1 — match-key collision detection (child scans only). When two source
-  // (or two target) records share the same match-key value, matching is
-  // ambiguous: an overwrite/relink/delete could hit the WRONG record. Those
-  // rows are excluded from every actionable bucket (they simply don't enter
-  // the key indexes below) and counted so the UI can say why. A key that
-  // collides on EITHER side is excluded from BOTH sides — half-matched pairs
-  // would be just as misleading. Root scans are untouched (v1 behavior).
+  // R1 — match-key collision detection. When two source (or two target)
+  // records share the same match-key value, matching is ambiguous: an
+  // overwrite/relink/delete could hit the WRONG record. CHILD scans exclude
+  // those rows from every actionable bucket (they simply don't enter the key
+  // indexes below — the `scope &&` guards) and report scan.keyCollisions. A
+  // key that collides on EITHER side is excluded from BOTH sides — half-
+  // matched pairs would be just as misleading. ROOT scans keep v1 matching
+  // untouched (dup keys still pair arbitrarily) but the duplicates are now
+  // COUNTED (scan.dupKeys) so the 🎯 accuracy grade can say how trustworthy
+  // the matching was.
   let _dupKeys = new Set();
   let _keyCollisions = null;
-  if (scope) {
+  {
     try {
       // M3a — collision detection runs on the SAME keys the indexes use
       // (sftkMatchKey; normalization included), so "two different raw values
@@ -744,6 +768,9 @@ async function runDiffScan(profile, node = null, scope = null) {
     ...(memoryMatched ? { memoryMatched } : {}),
     ...(learnedPairs.length ? { learnedPairs } : {}),
     ...(memWarnings.length ? { warnings: memWarnings.slice(0, 10) } : {}),
+    // Duplicate-key info for ROOT scans — info-only (the rows stayed matched,
+    // arbitrarily); child scans exclude instead and report keyCollisions below.
+    ...((!scope && _keyCollisions) ? { dupKeys: _keyCollisions } : {}),
     compareFields: srcCompare,
     compareFieldsTgt: tgtCompare,
     sourceCount:   srcByKey.size + memoryMatched,

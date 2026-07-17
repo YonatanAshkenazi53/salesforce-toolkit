@@ -158,18 +158,24 @@ function _tdRenderMatrix(p) {
 
   const rows = nodes.map(({ pathKey, node, depth }) => {
     const obj = node.objectType || node.childSObject || '?';
+    // 🎯 how this node's records are recognized across orgs (M3a config).
+    const mf = sftkMatchingFromNode(node).fields.join(' + ');
     const cells = _tdResults.map(r => {
       if (r.error) return `<div class="ds-td-cell ds-td-err" title="${esc(r.error)}">❌</div>`;
       const scan = _tdNodeScan(r, pathKey);
       if (!scan) return `<div class="ds-td-cell ds-td-na" title="not scanned (parent scan failed?)">·</div>`;
       if (scan.error) return `<div class="ds-td-cell ds-td-err" title="${esc(scan.error)}">⚠</div>`;
       const c = tdCounts(scan);
+      // 🎯 compact accuracy — only shown when matching wasn't fully confident
+      // (blank or duplicated keys); hover explains what dragged it down.
+      const acc = (typeof sftkScanAccuracy === 'function') ? sftkScanAccuracy(scan) : null;
+      const accChip = (acc && acc.pct < 100) ? ` ${accuracyChip(acc, true)}` : '';
       const drift = c.missing + c.changed + c.extra + c.link;
-      if (!drift) return `<div class="ds-td-cell ds-td-ok" title="${c.identical} record(s), all in sync">✓ in sync</div>`;
+      if (!drift) return `<div class="ds-td-cell ds-td-ok" title="${c.identical} record(s), all in sync">✓ in sync${accChip}</div>`;
       const ops = tdSuggest(c, depth, node.insertOrder);
       return `<div class="ds-td-cell ds-td-drift">
         <span class="ds-td-counts" title="${c.missing} missing · ${c.changed} changed · ${c.extra} only in target${c.link ? ` · ${c.link} link mismatch` : ''}">
-          ${c.missing ? `<b class="ds-ring-m">${c.missing}</b>` : ''}${c.changed ? `<b class="ds-ring-c">${c.changed}</b>` : ''}${c.extra ? `<b class="ds-ring-e">${c.extra}</b>` : ''}${c.link ? `<b class="ds-td-link">🔗${c.link}</b>` : ''}
+          ${c.missing ? `<b class="ds-ring-m">${c.missing}</b>` : ''}${c.changed ? `<b class="ds-ring-c">${c.changed}</b>` : ''}${c.extra ? `<b class="ds-ring-e">${c.extra}</b>` : ''}${c.link ? `<b class="ds-td-link">🔗${c.link}</b>` : ''}${accChip}
         </span>
         <span class="ds-td-suggest">${esc(ops.join(' · '))}</span>
       </div>`;
@@ -180,6 +186,7 @@ function _tdRenderMatrix(p) {
         <strong>${esc(obj)}</strong>
         ${depth > 0 && node.field ? `<span class="ds-td-via">via ${esc(node.field)}</span>` : ''}
         ${node.insertOrder === 'childFirst' ? '<span class="ds-td-cf" title="Inserted before its parent, reconnected after">⤴ child-first</span>' : ''}
+        <span class="ds-td-match" title="Records are recognized as 'the same' across orgs by ${esc(mf)}. Configure per node in the deployment's ✏ Edit → 🔎 Pick records → Matching — single field, composite (up to 4 fields), or external ID; the 🧪 analyzer there grades candidates against live orgs.">🎯 by ${esc(mf)}</span>
       </div>${cells}</div>`;
   }).join('');
 

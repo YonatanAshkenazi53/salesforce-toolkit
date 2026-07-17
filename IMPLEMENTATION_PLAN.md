@@ -283,6 +283,16 @@ history) already exists there.
   depth-ordered child scans); "⚖ operate" opens a fully pre-loaded Reconcile per env where
   every suggestion executes with the full guards. Pure helpers tdSuggest/tdTreeNodes/
   tdCounts (unit-tested). Harness 13/13.
+- [x] **T2. Match accuracy everywhere** (user 2026-07-17: "enable matching by multiple
+  fields and say how accurate it is") — multi-field (composite) matching already existed
+  in ✏ Edit → 🔎 Pick records → Matching (M3a); what was missing is accuracy OUTSIDE the
+  builder. New `sftkScanAccuracy(scan)` grades every FINISHED scan from its own recorded
+  rows (blank keys + duplicated keys = uncertain; memory pairs = Id-exact): root scans now
+  COUNT duplicate keys (scan.dupKeys, info-only — child scans keep R1 exclusion) so the
+  grade is honest at the root too. Shared `accuracyChip()` renders 🎯 in the Reconcile
+  header ("🎯 Name · 75% key confidence", tooltip explains why + how to improve) and in
+  Tree Diff (per-row "🎯 by Name + Email" labels; per-cell compact % when < 100).
+  Unit tests for the grader; harness 18/18.
 
 ## Phase M — Multi-org sync + smart matching (user scenario 2026-07-13: "5 orgs that
 ## need their data synced"; no external IDs in their orgs; user picks matching per node)
