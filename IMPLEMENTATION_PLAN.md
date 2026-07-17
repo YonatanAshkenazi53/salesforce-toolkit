@@ -275,6 +275,15 @@ history) already exists there.
   V1 scope: custom local value sets (std/GVS banner). Ring-Sync-Plan-style modal: per-org
   sections, checkboxes, one Run, per-org status + prod typed confirms.
 
+## Phase T — Tree Diff (user request 2026-07-16)
+- [x] **T1. Tree Diff page** — "🌳 Tree diff" on deployment cards: the record tree (root →
+  children → grandchildren) as rows, environments as columns (ring targets pre-selected);
+  per-cell bucket counts + SUGGESTED operations (⬆ push / ✏ overwrite / 🔗 relink /
+  🔵 review extras, child-first annotated); scans run on ephemeral clones (root scan then
+  depth-ordered child scans); "⚖ operate" opens a fully pre-loaded Reconcile per env where
+  every suggestion executes with the full guards. Pure helpers tdSuggest/tdTreeNodes/
+  tdCounts (unit-tested). Harness 13/13.
+
 ## Phase M — Multi-org sync + smart matching (user scenario 2026-07-13: "5 orgs that
 ## need their data synced"; no external IDs in their orgs; user picks matching per node)
 

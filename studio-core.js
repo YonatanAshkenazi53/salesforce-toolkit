@@ -514,6 +514,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'removeOrg':             window.removeOrg?.(arg); break;
       case 'runProfile':            window.runProfile?.(arg); break;
       case 'openFanOut':            window.openFanOut?.(arg); break;
+      case 'openTreeDiff':          window.openTreeDiff?.(arg); break;
       case 'editProfile':           window.editProfile?.(arg); break;
       case 'cloneProfile':          window.cloneProfile?.(arg); break;
       case 'deleteProfile':         window.deleteProfile?.(arg); break;
@@ -1139,6 +1140,7 @@ function renderView(view) {
     case 'compare':   renderOrgCompare(); break;
     case 'picklists': renderPicklists();  break;
     case 'ring':      renderRing();       break;
+    case 'treediff':  renderTreeDiffPage(); break;
   }
 }
 
