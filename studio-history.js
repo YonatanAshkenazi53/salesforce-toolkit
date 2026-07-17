@@ -252,6 +252,7 @@ function renderHistory() {
         <ul style="margin:8px 0 8px 18px;font-size:12.5px">
           <li>all run history (${_history.length} entries)</li>
           <li>all deployment scan results (record ids + match keys)</li>
+          <li>remembered match pairs (🧠 match memory — record-id pairs learned from transfers and Match Review)</li>
           <li>activity log and cached Apex log bodies</li>
         </ul>
         Deployment configurations, org labels, read-only locks, and settings are kept.
@@ -266,6 +267,9 @@ function renderHistory() {
       _activityLog = {};
       let scans = 0;
       for (const p of _profiles) if (p.lastScan) { delete p.lastScan; scans++; }
+      // M3c — match memory holds record-id pairs about org data → S5 scope.
+      let mems = 0;
+      for (const p of _profiles) if (p.matchMemory) { delete p.matchMemory; mems++; }
       const all = await chrome.storage.local.get(null);
       const logKeys = Object.keys(all).filter(k => k.startsWith('apex_log_viewer_'));
       if (logKeys.length) await chrome.storage.local.remove(logKeys);
@@ -274,7 +278,7 @@ function renderHistory() {
         storageSaveProfiles(),
         chrome.storage.local.set({ ds_activity_log: {} }),
       ]);
-      showToast(`Cleared: history, ${scans} scan result${scans !== 1 ? 's' : ''}, activity log, ${logKeys.length} cached log${logKeys.length !== 1 ? 's' : ''}`, 'success');
+      showToast(`Cleared: history, ${scans} scan result${scans !== 1 ? 's' : ''}, match memory on ${mems} deployment${mems !== 1 ? 's' : ''}, activity log, ${logKeys.length} cached log${logKeys.length !== 1 ? 's' : ''}`, 'success');
       renderHistory();
     });
   });

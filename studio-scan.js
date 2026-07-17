@@ -900,6 +900,29 @@ async function refreshProfileDiff(profileId) {
 }
 window.refreshProfileDiff = refreshProfileDiff;
 
+// M3c — merge learned [srcId, tgtId] pairs into the REAL profile's persistent
+// match memory and save. THE single write path for match memory: called by
+// refreshProfileDiff (auto-learn), the ring scans in studio-ring.js (which run
+// on clones), the transfer/fan-out learn hooks, and Match Review's manual
+// [Pair ⇒]. Memory is keyed per TARGET org identity:
+//   profile.matchMemory = { [orgKey(tgtUrl)]: { [srcId]: tgtId } }   (cap 5000)
+// No-ops safely for unknown/ephemeral profile ids, empty pair lists, or an
+// unresolvable org key. Never throws.
+window.sftkLearnPairs = async function (profileId, tgtUrl, learnedPairs) {
+  try {
+    if (!Array.isArray(learnedPairs) || !learnedPairs.length) return;
+    const p = _profiles.find(x => x.id === profileId);
+    if (!p || p.ephemeral) return;
+    const key = _orgKey(tgtUrl || '');
+    if (!key) return;
+    if (!p.matchMemory || typeof p.matchMemory !== 'object') p.matchMemory = {};
+    p.matchMemory[key] = sftkMemoryMerge(p.matchMemory[key], learnedPairs, 5000);
+    await storageSaveProfiles();
+  } catch (e) {
+    window.SFToolkitDebug?.log('scan', 'warn', 'match-memory merge failed', e?.message || String(e));
+  }
+};
+
 // "Refresh state" — now just the diff scan (drives Pick Records badges +
 // profile card chips + Reconcile columns). The snapshot capture that this
 // used to bundle was removed along with the Org Map drift overlay (its only

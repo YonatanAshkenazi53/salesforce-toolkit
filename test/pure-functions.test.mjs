@@ -383,3 +383,32 @@ describe('sftkBuildStoredZip (sftk-zip.js) — the shared Metadata-deploy zip bu
     expect(dv.getUint16(zip.length - 22 + 10, true)).toBe(2);  // 2 entries
   });
 });
+
+describe('match memory (M3c) — sftk-matching.js pure helpers', () => {
+  const { sftkMemoryMerge, sftkPairSimilarity } =
+    extractFunctions('sftk-matching.js', ['sftkMemoryMerge', 'sftkPairSimilarity']);
+
+  it('sftkMemoryMerge merges, refreshes recency, evicts oldest past the cap', () => {
+    const m1 = sftkMemoryMerge({}, [['s1', 't1'], ['s2', 't2']]);
+    expect(m1).toEqual({ s1: 't1', s2: 't2' });
+    // Re-learning s1 refreshes its recency, so with cap 2 the OLDEST (s2) is evicted.
+    const m2 = sftkMemoryMerge(m1, [['s1', 't1b'], ['s3', 't3']], 2);
+    expect(m2).toEqual({ s1: 't1b', s3: 't3' });
+    // Junk pairs are ignored; the input map is never mutated.
+    const base = { a: 'b' };
+    const m3 = sftkMemoryMerge(base, [['', 'x'], ['y', ''], 'nope', ['z', 'w']]);
+    expect(m3).toEqual({ a: 'b', z: 'w' });
+    expect(base).toEqual({ a: 'b' });
+  });
+
+  it('sftkPairSimilarity: exact=1, per-component prefix credit, sane ranking', () => {
+    const SEP = String.fromCharCode(1);
+    expect(sftkPairSimilarity('acme', 'acme')).toBe(1);
+    // component 1 equal (1), component 2 'levy' vs 'levi' → prefix 3 of 4 (0.75)
+    expect(sftkPairSimilarity(`acme${SEP}levy`, `acme${SEP}levi`)).toBeCloseTo((1 + 0.75) / 2);
+    // The closer candidate must rank higher (review modal sorts by this).
+    const target = `globex${SEP}davis`;
+    expect(sftkPairSimilarity(target, `globex${SEP}davies`))
+      .toBeGreaterThan(sftkPairSimilarity(target, `initech${SEP}moore`));
+  });
+});
