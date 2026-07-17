@@ -4784,3 +4784,6 @@ html, body {
 .ds-td-counts b { margin-right: 6px; font-variant-numeric: tabular-nums; }
 .ds-td-link { color: var(--brand); font-weight: 600; }
 .ds-td-suggest { font-size: 11px; color: var(--subtext); }
+
+/* 🎯 Tree Diff — per-row match-fields label */
+.ds-td-match { font-size: 10px; color: var(--subtext, #64748b); margin-left: 6px; white-space: nowrap; }

@@ -412,3 +412,41 @@ describe('match memory (M3c) — sftk-matching.js pure helpers', () => {
       .toBeGreaterThan(sftkPairSimilarity(target, `initech${SEP}moore`));
   });
 });
+
+describe('scan accuracy (🎯 — user request 2026-07-17)', () => {
+  const sftkScanAccuracy = extractFunction('sftk-matching.js', 'sftkScanAccuracy');
+
+  it('clean scan → 100% high; fields fall back to legacy matchField', () => {
+    const acc = sftkScanAccuracy({ identical: [1], changed: [1], missingInTarget: [1], onlyInTarget: [] });
+    expect(acc).toMatchObject({ pct: 100, grade: 'high', fields: ['Name'] });
+    expect(acc.total).toBe(5);   // 2 matched pairs = 4 rows + 1 missing
+  });
+
+  it('blank keys and duplicated keys lower confidence (root dupKeys stay in buckets)', () => {
+    // 1 matched pair (2 rows) + 1 missing + 1 blank → 3 of 4 rows certain = 75%
+    const acc = sftkScanAccuracy({
+      identical: [1], changed: [], missingInTarget: [2], onlyInTarget: [],
+      blankKeys: { rows: 1, src: 1, tgt: 0 },
+      matching: { strategy: 'composite', fields: ['FirstName', 'LastName'] },
+    });
+    expect(acc.pct).toBe(75);
+    expect(acc.grade).toBe('low');
+    expect(acc.fields).toEqual(['FirstName', 'LastName']);
+    // Root dup rows are inside the buckets already — uncertain, not re-added.
+    expect(sftkScanAccuracy({
+      identical: [1, 2], changed: [], missingInTarget: [], onlyInTarget: [],
+      dupKeys: { rows: 2 },
+    }).pct).toBe(50);
+    // Child collision rows were EXCLUDED from buckets — they extend the total.
+    expect(sftkScanAccuracy({
+      identical: [1], changed: [], missingInTarget: [], onlyInTarget: [],
+      keyCollisions: { rows: 2, keys: ['k'] },
+    }).pct).toBe(50);   // 2 certain of 4
+  });
+
+  it('ungradeable scans → null (error, or nothing on either side)', () => {
+    expect(sftkScanAccuracy({ error: 'boom' })).toBeNull();
+    expect(sftkScanAccuracy({ identical: [], changed: [], missingInTarget: [], onlyInTarget: [] })).toBeNull();
+    expect(sftkScanAccuracy(null)).toBeNull();
+  });
+});

@@ -248,6 +248,39 @@ function sftkPairSimilarity(keyA, keyB) {
   return sum / n;
 }
 
+// ── Scan accuracy (2026-07-17, user: "say how accurate it is") ────────────
+// Grade how trustworthy a FINISHED scan's matching was, from what the scan
+// itself recorded. Unlike the M3b pre-flight analyzer (which samples live
+// orgs before scanning), this reflects the exact rows behind the buckets.
+// Row universe: a matched pair counts 2 rows (one per side); missing /
+// target-only / blank-key / collision-excluded rows count 1 each.
+// Uncertain rows — the ones that cap confidence:
+//   • blank keys (every component empty) — unmatchable
+//   • duplicated keys — ambiguous: child scans EXCLUDED them (keyCollisions),
+//     root scans paired them arbitrarily (dupKeys) — untrustworthy either way
+// Memory-matched pairs (M3c) are Id-exact; they always count as confident.
+// Returns null when there is nothing to grade (error scan / both sides empty).
+function sftkScanAccuracy(scan) {
+  if (!scan || scan.error) return null;
+  const matched  = (scan.identical || []).length + (scan.changed || []).length;
+  const missing  = (scan.missingInTarget || []).length;
+  const extra    = (scan.onlyInTarget || []).length;
+  const blank    = (scan.blankKeys && scan.blankKeys.rows) || 0;
+  const excluded = (scan.keyCollisions && scan.keyCollisions.rows) || 0; // child: rows NOT in buckets
+  const dupRoot  = (scan.dupKeys && scan.dupKeys.rows) || 0;            // root: rows still in buckets
+  const total    = matched * 2 + missing + extra + blank + excluded;
+  if (!total) return null;
+  const uncertain = Math.min(total, blank + excluded + dupRoot);
+  const pct   = Math.round(((total - uncertain) / total) * 100);
+  const grade = pct >= 95 ? 'high' : pct >= 80 ? 'ok' : 'low';
+  const m = scan.matching || {};
+  const fields = (Array.isArray(m.fields) && m.fields.filter(Boolean).length)
+    ? m.fields.filter(Boolean).slice(0, 4)
+    : [scan.matchField || 'Name'];
+  return { pct, grade, fields, strategy: m.strategy || 'field',
+           total, blank, dup: excluded + dupRoot, memory: scan.memoryMatched || 0 };
+}
+
 // ── Global attach (classic-script export) ─────────────────────────────────
 if (typeof globalThis !== 'undefined') {
   globalThis.sftkNormalizeValue      = sftkNormalizeValue;
@@ -262,4 +295,5 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkCrossOrgPreview     = sftkCrossOrgPreview;
   globalThis.sftkMemoryMerge         = sftkMemoryMerge;
   globalThis.sftkPairSimilarity      = sftkPairSimilarity;
+  globalThis.sftkScanAccuracy        = sftkScanAccuracy;
 }

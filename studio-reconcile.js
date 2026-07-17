@@ -64,13 +64,16 @@ async function renderReconcile() {
     (!scan.targetOrg || scan.targetOrg === p.targetOrg)
   );
 
+  // 🎯 — how trustworthy this scan's matching was (fields + confidence %).
+  const _acc = (scanFresh && typeof sftkScanAccuracy === 'function') ? sftkScanAccuracy(scan) : null;
+
   // Header with back link + refresh.
   const headerHtml = `
     <div class="ds-view-header">
       <div class="ds-view-title-wrap">
         <button class="ds-back-link" id="dsRecBackBtn" title="Back to Data Deployment">‹ Back to deployments</button>
         <h2 class="ds-view-title">⚖ Reconcile — <span style="color:var(--brand)">${esc(objType)}</span></h2>
-        <div class="ds-view-subtitle">${esc(orgLabel(p.sourceOrg || ''))} → ${esc(orgLabel(p.targetOrg || ''))} ${prodBadge(p.targetOrg)}${scanFresh ? ` · scanned ${esc(timeAgo(scan.runAt))}` : ''}${scanFresh && scan.memoryMatched ? ` · <span class="ds-mm-chip" style="font-size:11px;padding:1px 7px;border-radius:9px;background:#eef2ff;color:#4338ca;white-space:nowrap" title="${scan.memoryMatched} record pair(s) matched by remembered identity (match memory) instead of key — they survive renames on either side.">🧠 ${scan.memoryMatched} matched from memory</span>` : ''}</div>
+        <div class="ds-view-subtitle">${esc(orgLabel(p.sourceOrg || ''))} → ${esc(orgLabel(p.targetOrg || ''))} ${prodBadge(p.targetOrg)}${scanFresh ? ` · scanned ${esc(timeAgo(scan.runAt))}` : ''}${scanFresh && scan.memoryMatched ? ` · <span class="ds-mm-chip" style="font-size:11px;padding:1px 7px;border-radius:9px;background:#eef2ff;color:#4338ca;white-space:nowrap" title="${scan.memoryMatched} record pair(s) matched by remembered identity (match memory) instead of key — they survive renames on either side.">🧠 ${scan.memoryMatched} matched from memory</span>` : ''}${_acc ? ` · ${accuracyChip(_acc)}` : ''}</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         ${p.ephemeral ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="saveEphemeralProfile"
