@@ -1065,6 +1065,26 @@ async function runTransfer() {
     5000
   );
 
+  // M3c — MATCH MEMORY: remember the root object's srcId→tgtId pairs from
+  // this run's successful creates/upserts, so future scans match these
+  // records by identity (rename-proof). M-followup guard: only when this
+  // run's SOURCE equals the profile's own source — pairs learned under a
+  // run-time src override must never enter the profile's memory. The pairs
+  // are then stripped from the result so History stays lean (they live in
+  // profile.matchMemory). Any failure here degrades silently — the transfer
+  // result is already complete.
+  try {
+    const mmRootObj = _transferProfile?.tree?.objectType || _transferProfile?.tree?.childSObject;
+    const mmPairs = mmRootObj ? (result.summary?.[mmRootObj]?.idPairs || []) : [];
+    if (mmPairs.length) {
+      if (_transferProfile?.id
+          && _orgKey(_transferSrc.orgUrl) === _orgKey(_transferProfile.sourceOrg || '')) {
+        await window.sftkLearnPairs?.(_transferProfile.id, _transferTgt.orgUrl, mmPairs);
+      }
+      delete result.summary[mmRootObj].idPairs;
+    }
+  } catch (_) { /* memory is an optimization — never fail the run for it */ }
+
   // Record activity & save to history (Feature 12: include org URLs for health tiles)
   recordActivity('transfer');
   _history.push({
@@ -1225,6 +1245,20 @@ async function runFanOut(p, srcUrl, targets) {
         tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid,
       });
       if (result?.error) throw new Error(result.error);
+      // M3c — match memory per target org. Same M-followup guard as
+      // runTransfer: a ring push passes opts.src (the ring's source of
+      // truth), so only learn when that source IS the profile's own source.
+      // Strip the pairs before the history push below keeps them on disk.
+      try {
+        const mmRootObj = p.tree?.objectType || p.tree?.childSObject;
+        const mmPairs = mmRootObj ? (result.summary?.[mmRootObj]?.idPairs || []) : [];
+        if (mmPairs.length) {
+          if (_orgKey(srcSess.orgUrl) === _orgKey(p.sourceOrg || '')) {
+            await window.sftkLearnPairs?.(p.id, tgtSess.orgUrl, mmPairs);
+          }
+          delete result.summary[mmRootObj].idPairs;
+        }
+      } catch (_) { /* memory is an optimization — never fail the run for it */ }
       _history.push({
         id: genId('run'), profileId: p.id,
         srcOrgUrl: srcSess.orgUrl, tgtOrgUrl: tgtSess.orgUrl,

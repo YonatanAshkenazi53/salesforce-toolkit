@@ -320,11 +320,14 @@ history) already exists there.
   (pre-checked). ONE SLIVER FOR M3c LANDING: when the match-memory merge lands in
   runFanOut/runTransfer, guard it with orgKey(srcUrl)===orgKey(p.sourceOrg) — pairs
   learned under a src override must not enter the profile's memory.
-- [ ] **M3c. Match memory + review UI** — persistent srcId→tgtId pairs per profile+org-pair
-  (populated by successful inserts/upserts/overwrites AND manual pairing); matched FIRST,
-  before key comparison → rename-proof identity without schema changes. Post-scan Match
-  Review screen for ambiguous/unmatched rows with normalized near-match candidates; human
-  pairs → memory. Capped + clearable under the S5 retention controls.
+- [x] **M3c. Match memory + review UI** — `profile.matchMemory[tgtOrgKey][srcId]=tgtId`
+  (cap 5000, LRU-ish via sftkMemoryMerge): learned from successful root inserts/upserts
+  (engine returns summary[obj].idPairs), from scans (1:1 identical/changed pairs), and
+  from MANUAL pairing in the 🔗 Match review modal (similarity-ranked candidates via
+  sftkPairSimilarity — a hint only; pairing is always human). Memory pre-pass in
+  runDiffScan matches by Id FIRST (rename-proof), rows shown via the 🧠 chip; ALL merge
+  paths guarded by orgKey(srcUrl)===orgKey(p.sourceOrg) (the fan-out src-override sliver);
+  Clear-cached-org-data wipes memory. Unit tests for both pure helpers.
 - [ ] **M4. Later** — opt-in scheduling (needs re-adding the alarms permission — weigh vs
   minimal-permissions posture); reverse-pull polish; Bulk API 2.0 for large volumes.
 

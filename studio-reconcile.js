@@ -70,7 +70,7 @@ async function renderReconcile() {
       <div class="ds-view-title-wrap">
         <button class="ds-back-link" id="dsRecBackBtn" title="Back to Data Deployment">‹ Back to deployments</button>
         <h2 class="ds-view-title">⚖ Reconcile — <span style="color:var(--brand)">${esc(objType)}</span></h2>
-        <div class="ds-view-subtitle">${esc(orgLabel(p.sourceOrg || ''))} → ${esc(orgLabel(p.targetOrg || ''))} ${prodBadge(p.targetOrg)}${scanFresh ? ` · scanned ${esc(timeAgo(scan.runAt))}` : ''}</div>
+        <div class="ds-view-subtitle">${esc(orgLabel(p.sourceOrg || ''))} → ${esc(orgLabel(p.targetOrg || ''))} ${prodBadge(p.targetOrg)}${scanFresh ? ` · scanned ${esc(timeAgo(scan.runAt))}` : ''}${scanFresh && scan.memoryMatched ? ` · <span class="ds-mm-chip" style="font-size:11px;padding:1px 7px;border-radius:9px;background:#eef2ff;color:#4338ca;white-space:nowrap" title="${scan.memoryMatched} record pair(s) matched by remembered identity (match memory) instead of key — they survive renames on either side.">🧠 ${scan.memoryMatched} matched from memory</span>` : ''}</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         ${p.ephemeral ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="saveEphemeralProfile"
@@ -480,8 +480,15 @@ async function renderReconcile() {
       ${extrasColHtml(extras)}
     </div>
 
+    ${!p.ephemeral && (missing.length || extras.length) ? `
+    <div class="ds-mm-review-row" style="display:flex;align-items:center;gap:10px;margin:8px 0 2px">
+      <button class="ds-btn ds-btn-sm" id="dsMatchReviewBtn"
+        title="Manually pair 'in source only' rows with 'in target only' rows that are actually the same record (renamed, typo'd, …). Pairs are remembered per target org and match by identity on every future scan.">🔗 Match review (${missing.length} + ${extras.length} unmatched)</button>
+      <span style="font-size:11.5px;color:var(--subtext)">same record on both sides under different keys? Pair them once — matching then survives renames.</span>
+    </div>` : ''}
     <div class="ds-rec-insync-note">🟢 ${inSync.length} record(s) already in sync — no action needed.</div>
     ${scan.blankKeys ? `<div class="ds-rec-child-info ds-match-blank-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">⚠ ${scan.blankKeys.rows} row(s) have a blank match key — excluded from matching (${scan.blankKeys.src} source, ${scan.blankKeys.tgt} target). Pick a better-populated match field in 🎯 Pick Records (🧪 Test this key grades candidates).</div>` : ''}
+    ${(scan.warnings || []).length ? `<div class="ds-rec-child-info ds-mm-warn-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">⚠ ${esc(scan.warnings.join(' · '))}</div>` : ''}
 
     ${rootChildren.length ? `
     <div class="ds-rec-children">
@@ -818,6 +825,156 @@ async function renderReconcile() {
   });
   eid('dsRecDeleteMode')?.addEventListener('change', e => { _recDeleteMode = e.target.value; });
   eid('dsRecRunBtn')?.addEventListener('click', () => runReconcile(p, objType, { missing, drift, extras }));
+  eid('dsMatchReviewBtn')?.addEventListener('click', () => openMatchReview(p));
+}
+
+// ════════════════════════════════════════════════════════════════
+// M3c — MATCH REVIEW: human pairing of unmatched rows → match memory
+// ════════════════════════════════════════════════════════════════
+// Left list: "in source only" rows. For the selected row, the right list
+// shows the top-5 "in target only" candidates ranked by sftkPairSimilarity
+// on the (already-normalized) match keys. The % is a RANKING HINT ONLY —
+// nothing is ever paired automatically; [Pair ⇒] is the human decision.
+// Pairing records srcId→tgtId via window.sftkLearnPairs (persistent match
+// memory, per target org), removes both rows from the scan buckets in
+// place, and re-renders the modal. Not offered on ephemeral profiles
+// (ring/compare clones) — memory belongs to the saved deployment.
+function openMatchReview(p) {
+  const scan = p?.lastScan;
+  if (!scan) return;
+  const tgtKey = _orgKey(p.targetOrg || '');
+  const lbl = k => esc(typeof sftkMatchKeyLabel === 'function' ? sftkMatchKeyLabel(k) : String(k ?? ''));
+  let paired = 0;         // pairs made this modal session
+  let selSrcId = null;    // selected "in source only" row
+  let clearArmed = false; // two-click confirm for the clear-memory button
+
+  function finish() {
+    closeModal();
+    if (paired > 0) {
+      showToast(`${paired} pair(s) remembered — 🔄 Refresh state to see their drift status`, 'success', 6000);
+      renderReconcile();
+    }
+  }
+
+  function render() {
+    const missing = scan.missingInTarget || [];
+    const extras  = scan.onlyInTarget || [];
+    const memN    = Object.keys((p.matchMemory || {})[tgtKey] || {}).length;
+    clearArmed = false;
+    if (!selSrcId || !missing.some(r => r.sourceId === selSrcId)) {
+      selSrcId = missing.length ? missing[0].sourceId : null;
+    }
+    const selRow = missing.find(r => r.sourceId === selSrcId) || null;
+
+    const listHtml = missing.length ? missing.map(r => `
+      <div class="ds-mm-src" data-mm-src="${esc(r.sourceId)}"
+        style="padding:5px 8px;cursor:pointer;border-bottom:1px solid rgba(128,128,128,.15);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap${r.sourceId === selSrcId ? ';background:#eef2ff;font-weight:600' : ''}"
+        title="${lbl(r.matchKey)}">${lbl(r.matchKey)}</div>`).join('')
+      : `<div class="ds-rec-col-empty" style="padding:10px">no unmatched source records 🎉</div>`;
+
+    let candHtml;
+    if (!selRow) {
+      candHtml = `<div class="ds-rec-col-empty" style="padding:10px">select a source row on the left</div>`;
+    } else if (!extras.length) {
+      candHtml = `<div class="ds-rec-col-empty" style="padding:10px">no unmatched target records to pair with</div>`;
+    } else {
+      let ranked;
+      try {
+        ranked = extras
+          .map(r => ({ r, sim: sftkPairSimilarity(String(selRow.matchKey ?? ''), String(r.matchKey ?? '')) }))
+          .sort((a, b) => b.sim - a.sim)
+          .slice(0, 5);
+      } catch (_) {
+        ranked = extras.slice(0, 5).map(r => ({ r, sim: 0 }));   // degrade: unranked
+      }
+      candHtml = ranked.map(c => `
+        <div class="ds-mm-cand" style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid rgba(128,128,128,.15);font-size:12px">
+          <span style="min-width:38px;text-align:right;color:var(--subtext);font-variant-numeric:tabular-nums" title="Key similarity — a ranking hint only, never an automatic match">${Math.round(c.sim * 100)}%</span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${lbl(c.r.matchKey)}">${lbl(c.r.matchKey)}${c.r.orphan ? ' <span class="ds-chip">possible orphan</span>' : ''}</span>
+          <button class="ds-btn ds-btn-xs ds-btn-primary" data-mm-pair="${esc(c.r.targetId)}"
+            title="These two are the SAME record — remember the pair. Future scans match them by identity, even after renames.">Pair ⇒</button>
+        </div>`).join('');
+    }
+
+    showModal(`
+      <div class="ds-modal-header">🔗 Match review — ${esc(scan.objectType || '')}</div>
+      <div class="ds-modal-body">
+        <p style="font-size:12px;color:var(--subtext);margin:0 0 10px">Pick a source record, then pair it with the target record it actually is (renamed, retyped, …). Pairs are remembered 🧠 per target org and matched by identity on every future scan. The % is a similarity <em>hint</em> — pairing is always your call.</p>
+        <div class="ds-mm-grid" style="display:flex;gap:12px;max-height:340px">
+          <div style="flex:1;min-width:0;overflow:auto;border:1px solid rgba(128,128,128,.35);border-radius:6px">
+            <div style="padding:5px 8px;font-weight:600;font-size:11px;position:sticky;top:0;background:inherit;border-bottom:1px solid rgba(128,128,128,.25)">🔴 In source only (${missing.length})</div>
+            ${listHtml}
+          </div>
+          <div style="flex:1.25;min-width:0;overflow:auto;border:1px solid rgba(128,128,128,.35);border-radius:6px">
+            <div style="padding:5px 8px;font-weight:600;font-size:11px;position:sticky;top:0;background:inherit;border-bottom:1px solid rgba(128,128,128,.25)">🔵 Closest "in target only" candidates${selRow ? ` for <em>${lbl(selRow.matchKey)}</em>` : ''}</div>
+            ${candHtml}
+          </div>
+        </div>
+      </div>
+      <div class="ds-modal-footer" style="display:flex;gap:8px;align-items:center">
+        <button class="ds-btn ds-btn-sm" id="dsMmClearMem" ${memN ? '' : 'disabled'}
+          title="Forget every remembered pair for this target org — those records fall back to key matching on the next scan.">🧠 Clear memory for this org (${memN} remembered)</button>
+        <span style="flex:1"></span>
+        ${paired ? `<span class="ds-chip">🧠 ${paired} paired</span>` : ''}
+        <button class="ds-btn ds-btn-primary" id="dsMmClose">Done</button>
+      </div>`);
+
+    document.querySelectorAll('[data-mm-src]').forEach(el =>
+      el.addEventListener('click', () => { selSrcId = el.dataset.mmSrc; render(); }));
+
+    document.querySelectorAll('[data-mm-pair]').forEach(btn =>
+      btn.addEventListener('click', async () => {
+        const tgtId  = btn.dataset.mmPair;
+        const srcRow = (scan.missingInTarget || []).find(r => r.sourceId === selSrcId);
+        const tgtRow = (scan.onlyInTarget || []).find(r => r.targetId === tgtId);
+        if (!srcRow || !tgtRow) return;
+        try {
+          await window.sftkLearnPairs?.(p.id, p.targetOrg, [[srcRow.sourceId, tgtRow.targetId]]);
+          // Remove BOTH rows from the scan buckets in place — the pair is no
+          // longer "missing"/"extra". Its identical-vs-drift status needs a
+          // rescan (the closing toast says so).
+          const mi = (scan.missingInTarget || []).indexOf(srcRow);
+          if (mi !== -1) scan.missingInTarget.splice(mi, 1);
+          const ei = (scan.onlyInTarget || []).indexOf(tgtRow);
+          if (ei !== -1) scan.onlyInTarget.splice(ei, 1);
+          // Drop them from pending reconcile selections — running an Insert
+          // (or Delete/Pull) against a just-paired record would duplicate it.
+          _recSel.push.delete(srcRow.sourceId);
+          _recSel.del.delete(tgtRow.targetId);
+          _recSel.pull.delete(tgtRow.targetId);
+          paired++;
+          if (!p.ephemeral) await storageSaveProfiles();   // persist the bucket edit
+        } catch (e) {
+          showToast(`Couldn't record the pair: ${e?.message || e}`, 'error', 5000);
+        }
+        render();
+      }));
+
+    eid('dsMmClearMem')?.addEventListener('click', async () => {
+      const b = eid('dsMmClearMem');
+      if (!clearArmed) {
+        clearArmed = true;
+        if (b) {
+          b.textContent = `⚠ Really forget ${memN} remembered pair(s)? Click again`;
+          b.classList.add('ds-btn-danger');
+        }
+        return;
+      }
+      try {
+        if (p.matchMemory) delete p.matchMemory[tgtKey];
+        const real = _profiles.find(x => x.id === p.id);
+        if (real && real !== p && real.matchMemory) delete real.matchMemory[tgtKey];
+        await storageSaveProfiles();
+        showToast('Match memory cleared for this org — the next scan matches by key only', 'success', 4500);
+      } catch (e) {
+        showToast(`Couldn't clear match memory: ${e?.message || e}`, 'error', 5000);
+      }
+      render();
+    });
+
+    eid('dsMmClose')?.addEventListener('click', finish);
+  }
+  render();
 }
 
 // Execute the selected reconcile actions. Deletes require a confirmation
@@ -1212,6 +1369,17 @@ async function runReconcile(profile, objType, buckets) {
         tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid
       });
       const s = res.summary?.[objType] || {};
+      // M3c — remember the srcId→tgtId pairs this push just created (root
+      // object). sftkLearnPairs no-ops for ephemeral profile ids; the guard
+      // mirrors runTransfer's (reconcile always runs the profile's own pair,
+      // but ephemeral ring clones override sourceOrg — belt and braces).
+      try {
+        if (s.idPairs?.length && !profile.ephemeral
+            && _orgKey(srcSess.orgUrl) === _orgKey(profile.sourceOrg || '')) {
+          await window.sftkLearnPairs?.(profile.id, tgtSess.orgUrl, s.idPairs);
+        }
+        delete s.idPairs;
+      } catch (_) { /* memory is an optimization — never fail the run */ }
       counts.inserted += (s.created || 0); counts.insertedFailed += (s.failed || 0);
       rootTargets.push(...(s.targetRecords || []));
       rootFailedInserts.push(...(s.failedSourceIds || []));

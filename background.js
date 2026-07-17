@@ -571,6 +571,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // History rows. Each entry carries the source ID + first error msg
       // so the UI can show what went wrong per row.
       const failedSourceIds = [];        // [{ id, error }]
+      // M3c — MATCH MEMORY feed: [srcId, tgtId] pairs for every successful
+      // create/upsert on the ROOT node only (v1). Studio-side callers merge
+      // these into profile.matchMemory so future scans match these records by
+      // identity (rename-proof). Capped at 2000 like the other id lists.
+      const isRootNode = node === profile.tree;
+      const idPairs = [];
       let reqMissingDiagPushed = false; // emit the payload-keys diag only once per node
       // Upsert mode (v1): applies to the ROOT object only, keyed by an
       // external-Id field. When on, existing target records (matched on that
@@ -602,6 +608,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           if (result.success) {
             idMap[recs[i + j].Id] = result.id; ok++;
             transferredSourceIds.push(recs[i + j].Id);
+            if (isRootNode && idPairs.length < 2000) idPairs.push([recs[i + j].Id, result.id]);
             if (targetRecords.length < 200) {
               targetRecords.push({ id: result.id, label: (nameFld && recs[i + j][nameFld]) || recs[i + j].Name || result.id });
             }
@@ -682,6 +689,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // to badge already-deployed records.
       if (transferredSourceIds.length) {
         summary[objType].transferredSourceIds = transferredSourceIds.slice(0, 2000);
+      }
+      // M3c — root-node srcId→tgtId pairs for the studio's match memory.
+      // Callers merge these then strip them before persisting to History.
+      if (idPairs.length) {
+        summary[objType].idPairs = idPairs;
       }
       // Target record refs → History renders them as clickable links.
       if (targetRecords.length) {
