@@ -1394,7 +1394,12 @@ function _liveOrgSet() {
 }
 function orgOptionLabel(url, label, liveSet) {
   const on = (liveSet || _liveOrgSet()).has(_orgKey(url));
-  return `${on ? '🟢' : '⚪'} ${label || orgLabel(url)}${on ? '' : ' (not open)'}`;
+  // 👑 marks the Sync Ring's source of truth in EVERY org dropdown and
+  // checkbox list app-wide (user directive 2026-07-17: the source org must be
+  // recognizable in every feature, not just the ring view).
+  const sot = !!(typeof _ring === 'object' && _ring?.sourceUrl &&
+    (_ring.orgs || []).length >= 2 && _orgKey(url) === _orgKey(_ring.sourceUrl));
+  return `${on ? '🟢' : '⚪'} ${label || orgLabel(url)}${sot ? ' 👑' : ''}${on ? '' : ' (not open)'}`;
 }
 
 // ── Working org pair (topbar control) ─────────────────────────────

@@ -1165,8 +1165,15 @@ window.openFanOut = async function (profileId, opts = {}) {
   // deployment born on a different pair still pushes golden-org → targets
   // (same rule as ring scans, user bug report). opts.preselect: target urls
   // to pre-check (the ring passes its targets).
-  const srcUrl = opts.src || p.sourceOrg || _workingPair.src;
+  // Source resolution: explicit override (the ring's 🌐 push) → the ring's
+  // source of truth when a ring is configured (user directive 2026-07-17:
+  // multi-org surfaces always flow FROM the source of truth, not from a
+  // deployment's birth pair) → the deployment's own source.
+  const ringSrc = (typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2)
+    ? _ring.sourceUrl : '';
+  const srcUrl = opts.src || ringSrc || p.sourceOrg || _workingPair.src;
   if (!srcUrl) { showToast('Set a source org on the deployment first', 'error'); return; }
+  const fromRing = !!ringSrc && _orgKey(srcUrl) === _orgKey(ringSrc);
   const preKeys = (opts.preselect || []).map(u => _orgKey(u));
 
   const candidates = allMapOrgs().filter(o => _orgKey(o.url) !== _orgKey(srcUrl));
@@ -1183,7 +1190,7 @@ window.openFanOut = async function (profileId, opts = {}) {
   showModal(`
     <div class="ds-modal-header">🌐 Run “${esc(p.name)}” against multiple orgs</div>
     <div class="ds-modal-body">
-      <p style="font-size:12.5px">Source: <strong>${esc(orgLabel(srcUrl))}</strong> → pick the targets.
+      <p style="font-size:12.5px">Source: <strong>${esc(orgLabel(srcUrl))}</strong>${fromRing ? ` <span title="Your Sync Ring's source of truth — every multi-org run flows FROM it. The source org itself is never listed as a target. Change it in 🔄 Sync Ring or the topbar chip.">👑 source of truth</span>` : ''} → pick the targets.
       Runs are sequential; each org gets its own History entry. Orgs without an open tab are skipped.</p>
       <div class="ds-fanout-list">${rows}</div>
       <div class="ds-pk-hint" style="margin-top:8px">💡 Validate the deployment with a 🧪 dry run on one pair before fanning out —

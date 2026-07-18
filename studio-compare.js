@@ -494,7 +494,9 @@ function _ocRenderResults() {
   el.innerHTML = `${banner}
     <table class="ds-oc-table">
       <thead><tr>
-        <th>Object</th><th>Source</th><th>Target</th>
+        <th>Object</th>
+        <th title="Source org">${esc(orgLabel(_orgCompareState.srcOrgUrl) || 'Source')}</th>
+        <th title="Target org">${esc(orgLabel(_orgCompareState.tgtOrgUrl) || 'Target')}</th>
         <th>Matched</th><th>Missing in target</th><th>Only in target</th>
         <th>% match</th><th></th>
       </tr></thead>

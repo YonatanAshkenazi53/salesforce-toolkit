@@ -344,27 +344,77 @@ async function _ringOpenPlan(profileId) {
 
   const rowsEl = eid('dsPlanRows');
   if (!rowsEl) return;   // modal closed mid-scan
+  // Per-record selection (user 2026-07-17: "has to show the records and let
+  // the user select them"). Each op lists its records behind a fold; the op
+  // checkbox is the master toggle. Beyond REC_CAP rendered rows, the overflow
+  // follows the master checkbox (noted inline — nothing is silently dropped).
+  const REC_CAP = 500;
+  const recName = r => (typeof sftkMatchKeyLabel === 'function' ? sftkMatchKeyLabel(r.matchKey || '') : (r.matchKey || '')) || r.sourceId || r.targetId || '?';
   rowsEl.innerHTML = plans.map((pl, i) => {
     if (pl.error) {
       const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(pl.error) : { message: pl.error };
       return `<div class="ds-plan-org ds-plan-err"><strong>${esc(orgLabel(pl.tgt))}</strong> — ❌ ${esc(fe.message)}</div>`;
     }
-    const m = (pl.res.missingInTarget || []).length;
-    const c = (pl.res.changed || []).length;
-    const x = (pl.res.onlyInTarget || []).length;
+    const missing = pl.res.missingInTarget || [];
+    const changedR = pl.res.changed || [];
+    const extras = pl.res.onlyInTarget || [];
+    pl.pushOverflow = missing.slice(REC_CAP).map(r => r.sourceId).filter(Boolean);
+    pl.ovwOverflow  = changedR.slice(REC_CAP).map(r => r.sourceId).filter(Boolean);
+    const m = missing.length, c = changedR.length, x = extras.length;
     const clean = !m && !c && !x;
+    const recList = (rows, kind, checked) => `
+      <details class="ds-plan-recs"><summary>show record${rows.length !== 1 ? 's' : ''}</summary>
+        <div class="ds-plan-reclist">
+          ${rows.slice(0, REC_CAP).map(r => `<label class="ds-plan-rrow">
+            <input type="checkbox" class="ds-plan-r ds-plan-r-${kind}" data-idx="${i}" value="${esc(r.sourceId || '')}" ${checked ? 'checked' : ''}>
+            ${esc(recName(r))}</label>`).join('')}
+          ${rows.length > REC_CAP ? `<div class="ds-pk-note">…and ${rows.length - REC_CAP} more — they follow the checkbox above; open ⚖ Reconcile for the full list.</div>` : ''}
+        </div>
+      </details>`;
     return `
       <div class="ds-plan-org" data-plan-idx="${i}">
         <div class="ds-plan-org-hdr"><strong>${esc(orgLabel(pl.tgt))}</strong> ${prodBadge(pl.tgt)}
           ${clean ? '<span class="ds-ring-clean">✓ in sync — nothing to do</span>' : ''}</div>
-        ${m ? `<label class="ds-plan-op"><input type="checkbox" class="ds-plan-push" data-idx="${i}" checked>
-            ⬆ Push <strong>${m}</strong> missing record${m !== 1 ? 's' : ''}</label>` : ''}
-        ${c ? `<label class="ds-plan-op"><input type="checkbox" class="ds-plan-ovw" data-idx="${i}">
-            ✏ Overwrite <strong>${c}</strong> changed record${c !== 1 ? 's' : ''} with source values</label>` : ''}
-        ${x ? `<div class="ds-plan-op ds-plan-extras">🔵 ${x} only-in-target — review deletes in
-            <a href="#" class="ds-plan-rec" data-idx="${i}">⚖ Reconcile</a></div>` : ''}
+        ${m ? `<div class="ds-plan-opblock"><label class="ds-plan-op"><input type="checkbox" class="ds-plan-push" data-idx="${i}" checked>
+            ⬆ Push <strong class="ds-plan-cnt" data-cnt="push-${i}">${m}</strong> missing record${m !== 1 ? 's' : ''}</label>
+            ${recList(missing, 'push', true)}</div>` : ''}
+        ${c ? `<div class="ds-plan-opblock"><label class="ds-plan-op"><input type="checkbox" class="ds-plan-ovw" data-idx="${i}">
+            ✏ Overwrite <strong class="ds-plan-cnt" data-cnt="ovw-${i}">0</strong> of ${c} changed record${c !== 1 ? 's' : ''} with source values</label>
+            ${recList(changedR, 'ovw', false)}</div>` : ''}
+        ${x ? `<div class="ds-plan-opblock"><div class="ds-plan-op ds-plan-extras">🔵 ${x} only-in-target — review deletes in
+            <a href="#" class="ds-plan-rec" data-idx="${i}">⚖ Reconcile</a></div>
+            <details class="ds-plan-recs"><summary>show record${x !== 1 ? 's' : ''}</summary>
+              <div class="ds-plan-reclist">${extras.slice(0, 100).map(r => `<div class="ds-plan-rrow ds-plan-rro">${esc(recName(r))}</div>`).join('')}
+              ${x > 100 ? `<div class="ds-pk-note">…and ${x - 100} more in ⚖ Reconcile.</div>` : ''}</div>
+            </details></div>` : ''}
       </div>`;
   }).join('');
+
+  // Master op checkbox ↔ record rows ↔ live count in the op label.
+  const recount = (kind, i) => {
+    const master = rowsEl.querySelector(`.ds-plan-${kind}[data-idx="${i}"]`);
+    const rows = [...rowsEl.querySelectorAll(`.ds-plan-r-${kind}[data-idx="${i}"]`)];
+    const overflow = kind === 'push' ? (plans[i].pushOverflow || []) : (plans[i].ovwOverflow || []);
+    const n = rows.filter(r => r.checked).length + (master?.checked ? overflow.length : 0);
+    const cntEl = rowsEl.querySelector(`[data-cnt="${kind}-${i}"]`);
+    if (cntEl) cntEl.textContent = String(n);
+    if (master && rows.length) {
+      const some = rows.some(r => r.checked), all = rows.every(r => r.checked);
+      master.checked = some; master.indeterminate = some && !all;
+    }
+    return n;
+  };
+  rowsEl.querySelectorAll('.ds-plan-push, .ds-plan-ovw').forEach(cb =>
+    cb.addEventListener('change', () => {
+      const kind = cb.classList.contains('ds-plan-push') ? 'push' : 'ovw';
+      rowsEl.querySelectorAll(`.ds-plan-r-${kind}[data-idx="${cb.dataset.idx}"]`).forEach(r => { r.checked = cb.checked; });
+      recount(kind, +cb.dataset.idx);
+    }));
+  rowsEl.querySelectorAll('.ds-plan-r').forEach(cb =>
+    cb.addEventListener('change', () => {
+      const kind = cb.classList.contains('ds-plan-r-push') ? 'push' : 'ovw';
+      recount(kind, +cb.dataset.idx);
+    }));
 
   rowsEl.querySelectorAll('.ds-plan-rec').forEach(a =>
     a.addEventListener('click', e => {
@@ -378,11 +428,18 @@ async function _ringOpenPlan(profileId) {
   if (runBtn) runBtn.disabled = false;
   runBtn?.addEventListener('click', async () => {
     runBtn.disabled = true;
-    const jobs = plans.map((pl, i) => ({
-      pl, i,
-      push: !!document.querySelector(`.ds-plan-push[data-idx="${i}"]`)?.checked,
-      ovw:  !!document.querySelector(`.ds-plan-ovw[data-idx="${i}"]`)?.checked,
-    })).filter(j => !j.pl.error && (j.push || j.ovw));
+    // The record checkboxes ARE the selection; overflow rows beyond REC_CAP
+    // follow their master op checkbox (never silently dropped).
+    const jobs = plans.map((pl, i) => {
+      const pick = kind => [...rowsEl.querySelectorAll(`.ds-plan-r-${kind}[data-idx="${i}"]:checked`)]
+        .map(cb => cb.value).filter(Boolean);
+      const masterOn = kind => !!rowsEl.querySelector(`.ds-plan-${kind}[data-idx="${i}"]`)?.checked;
+      return {
+        pl, i,
+        pushIds: pick('push').concat(masterOn('push') ? (pl.pushOverflow || []) : []),
+        ovwIds:  pick('ovw').concat(masterOn('ovw') ? (pl.ovwOverflow || []) : []),
+      };
+    }).filter(j => !j.pl.error && (j.pushIds.length || j.ovwIds.length));
     if (!jobs.length) { showToast('Nothing selected', 'info'); runBtn.disabled = false; return; }
 
     // One typed confirm per production target, up front.
@@ -407,8 +464,8 @@ async function _ringOpenPlan(profileId) {
         if (!tgtSess) throw new Error('org tab closed');
         let pushed = 0, pushFailed = 0, ovwOk = 0, ovwFailed = 0;
 
-        if (j.push) {
-          const ids = (j.pl.res.missingInTarget || []).map(r => r.sourceId).filter(Boolean);
+        if (j.pushIds.length) {
+          const ids = j.pushIds;
           const clone = { ...p, sourceOrg: _ring.sourceUrl, targetOrg: j.pl.tgt, ephemeral: true,
             tree: { ...p.tree, recordIds: ids } };
           const result = await sendBg({ type: 'SF_EXECUTE_PROFILE_TRANSFER', profile: clone,
@@ -421,9 +478,9 @@ async function _ringOpenPlan(profileId) {
             startedAt: new Date().toISOString(), ...result,
             profileName: `${p.name} (sync plan)` });
         }
-        if (j.ovw) {
+        if (j.ovwIds.length) {
           const scanClone = { ...p, sourceOrg: _ring.sourceUrl, targetOrg: j.pl.tgt, ephemeral: true, lastScan: j.pl.res };
-          const ids = (j.pl.res.changed || []).map(r => r.sourceId).filter(Boolean);
+          const ids = j.ovwIds;
           const out = await reconcileOverwrite(scanClone, p.tree.objectType, ids, j.pl.res.changed, srcSess, tgtSess);
           ovwOk = out?.ok || 0; ovwFailed = out?.failed || 0;
           _history.push({ id: genId('run'), kind: 'reconcile', profileId: p.id,
@@ -435,7 +492,7 @@ async function _ringOpenPlan(profileId) {
             errors: (out?.errors || []).slice(0, 20),
             profileName: `${p.name} (sync plan · overwrite)` });
         }
-        note.textContent = ` ✅ ${j.push ? `${pushed} pushed${pushFailed ? ` (${pushFailed} failed)` : ''}` : ''}${j.push && j.ovw ? ' · ' : ''}${j.ovw ? `${ovwOk} overwritten${ovwFailed ? ` (${ovwFailed} failed)` : ''}` : ''}`;
+        note.textContent = ` ✅ ${j.pushIds.length ? `${pushed} pushed${pushFailed ? ` (${pushFailed} failed)` : ''}` : ''}${j.pushIds.length && j.ovwIds.length ? ' · ' : ''}${j.ovwIds.length ? `${ovwOk} overwritten${ovwFailed ? ` (${ovwFailed} failed)` : ''}` : ''}`;
         await _ringScanOne(p.id, j.pl.tgt, null);   // refresh the matrix cell
       } catch (e) {
         const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };

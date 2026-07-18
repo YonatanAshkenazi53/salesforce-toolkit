@@ -51,16 +51,27 @@ let _tdProfileId = null;
 let _tdEnvs      = [];      // selected env urls
 let _tdResults   = null;    // [{ url, label, clone|null, error|null }]
 
+// The tree's source org — the RING'S source of truth when a ring is
+// configured (same rule as ring scans/pushes: multi-org surfaces always flow
+// FROM the source of truth, never from a deployment's birth pair), else the
+// deployment's own source.
+function _tdSrcUrl(p) {
+  return (typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2)
+    ? _ring.sourceUrl : (p.sourceOrg || '');
+}
+
 window.openTreeDiff = function (profileId) {
   const p = _profiles.find(x => x.id === profileId);
   if (!p || !p.tree) { showToast('Deployment not found', 'error'); return; }
   _tdProfileId = profileId;
   _tdResults = null;
+  const srcUrl = _tdSrcUrl(p);
   // Default envs: ring targets when a ring exists, else the profile's target.
   const ringTargets = (typeof _ring === 'object' && _ring?.orgs?.length)
-    ? _ring.orgs.filter(u => _orgKey(u) !== _orgKey(p.sourceOrg || ''))
+    ? _ring.orgs.filter(u => _orgKey(u) !== _orgKey(srcUrl))
     : [];
-  _tdEnvs = ringTargets.length ? ringTargets : (p.targetOrg ? [p.targetOrg] : []);
+  _tdEnvs = ringTargets.length ? ringTargets
+    : (p.targetOrg && _orgKey(p.targetOrg) !== _orgKey(srcUrl) ? [p.targetOrg] : []);
   _currentView = 'treediff';
   document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
   document.querySelector('[data-view="profiles"]')?.classList.add('active');
@@ -70,7 +81,10 @@ window.openTreeDiff = function (profileId) {
 function renderTreeDiffPage() {
   const p = _profiles.find(x => x.id === _tdProfileId);
   if (!p) { renderView('profiles'); return; }
-  const orgs = allMapOrgs().filter(o => _orgKey(o.url) !== _orgKey(p.sourceOrg || ''));
+  const srcUrl = _tdSrcUrl(p);
+  const fromRing = !!(typeof _ring === 'object' && _ring?.sourceUrl &&
+    (_ring.orgs || []).length >= 2 && _orgKey(_ring.sourceUrl) === _orgKey(srcUrl));
+  const orgs = allMapOrgs().filter(o => _orgKey(o.url) !== _orgKey(srcUrl));
   const ls = _liveOrgSet();
 
   const envRows = orgs.map(o => `
@@ -85,7 +99,7 @@ function renderTreeDiffPage() {
     <div class="ds-view-header">
       <div class="ds-view-title-wrap">
         <h2 class="ds-view-title">🌳 Tree diff — ${esc(p.name)}</h2>
-        <div class="ds-view-subtitle">The record tree from <strong>${esc(orgLabel(p.sourceOrg))}</strong>, compared node-by-node across environments — with suggested operations</div>
+        <div class="ds-view-subtitle">The record tree from <strong>${esc(orgLabel(srcUrl))}</strong>${fromRing ? ` <span class="ds-td-sot" title="This is your Sync Ring's source of truth — every multi-org surface (ring scans, pushes, tree diff) reads FROM it. Change it in 🔄 Sync Ring or the topbar chip.">👑 source of truth</span>` : ''}, compared node-by-node across environments — with suggested operations</div>
       </div>
       <button class="ds-btn" data-dsaction="switchView" data-arg="profiles">‹ Back</button>
     </div>
@@ -110,6 +124,17 @@ function renderTreeDiffPage() {
 async function _tdRunScans(p) {
   const body = eid('dsTdBody');
   if (!body || !_tdEnvs.length) { showToast('Pick at least one environment', 'warning'); return; }
+  const srcUrl = _tdSrcUrl(p);
+  // The tree is READ from the source of truth — without it open there is
+  // nothing to compare. Fail loudly up front, not per-cell.
+  const srcSess = await getOrgSession(srcUrl);
+  if (!srcSess) {
+    body.innerHTML = `<div class="ds-pk-note" style="border-left:3px solid #ef4444;padding-left:10px">
+      ❌ <strong>${esc(orgLabel(srcUrl))}</strong> (the source of truth) is not open in a Chrome tab —
+      the record tree is read from it. Open the org in a tab, then scan again.</div>`;
+    showToast(`Open ${orgLabel(srcUrl)} in a tab first — it is the source of the tree`, 'error', 6000);
+    return;
+  }
   const nodes = tdTreeNodes(p.tree);
   const childKeys = nodes.filter(n => n.depth === 1).map(n => n.pathKey);
   const grandKeys = nodes.filter(n => n.depth === 2).map(n => n.pathKey);
@@ -119,9 +144,9 @@ async function _tdRunScans(p) {
     const label = orgLabel(url);
     body.innerHTML = `<div class="ds-init-loading">${window.sftkCat ? sftkCat(`Scanning ${esc(label)} — root + ${childKeys.length + grandKeys.length} child node(s)…`) : 'Scanning…'}</div>`;
     const sess = await getOrgSession(url);
-    if (!sess) { _tdResults.push({ url, label, error: 'org not open in a tab' }); continue; }
+    if (!sess) { _tdResults.push({ url, label, error: 'org not open in a Chrome tab — open it and re-scan' }); continue; }
     try {
-      const clone = { ...p, targetOrg: url, ephemeral: true, lastScan: null, ringScans: undefined };
+      const clone = { ...p, sourceOrg: srcUrl, targetOrg: url, ephemeral: true, lastScan: null, ringScans: undefined };
       const root = await runDiffScan(clone);
       if (root?.error) throw new Error(root.error);
       clone.lastScan = root;
@@ -161,10 +186,12 @@ function _tdRenderMatrix(p) {
     // 🎯 how this node's records are recognized across orgs (M3a config).
     const mf = sftkMatchingFromNode(node).fields.join(' + ');
     const cells = _tdResults.map(r => {
-      if (r.error) return `<div class="ds-td-cell ds-td-err" title="${esc(r.error)}">❌</div>`;
+      // Errors say WHY inline — a bare icon with a hover-only tooltip is not
+      // "easy to understand" (user directive 2026-07-17).
+      if (r.error) return `<div class="ds-td-cell ds-td-err" title="${esc(r.error)}">❌ <span class="ds-td-errmsg">${esc(r.error)}</span></div>`;
       const scan = _tdNodeScan(r, pathKey);
       if (!scan) return `<div class="ds-td-cell ds-td-na" title="not scanned (parent scan failed?)">·</div>`;
-      if (scan.error) return `<div class="ds-td-cell ds-td-err" title="${esc(scan.error)}">⚠</div>`;
+      if (scan.error) return `<div class="ds-td-cell ds-td-err" title="${esc(scan.error)}">⚠ <span class="ds-td-errmsg">${esc(String(scan.error).slice(0, 120))}</span></div>`;
       const c = tdCounts(scan);
       // 🎯 compact accuracy — only shown when matching wasn't fully confident
       // (blank or duplicated keys); hover explains what dragged it down.

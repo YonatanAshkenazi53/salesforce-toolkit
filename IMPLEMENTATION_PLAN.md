@@ -293,6 +293,24 @@ history) already exists there.
   header ("🎯 Name · 75% key confidence", tooltip explains why + how to improve) and in
   Tree Diff (per-row "🎯 by Name + Email" labels; per-cell compact % when < 100).
   Unit tests for the grader; harness 18/18.
+- [x] **T3. Source-of-truth consistency pass** (user 2026-07-17: "make sure the source org
+  is applied in other features") — 9-view parallel audit, then: 👑 marks the ring source in
+  EVERY org dropdown/checkbox app-wide (one change in orgOptionLabel); Tree Diff scans now
+  actually FLOW from the ring source (clone sourceOrg override + header 👑 chip + source
+  session pre-check + inline error text in cells); profile-card fan-out defaults to the
+  ring source (labeled); deployment cards show 👑 / "⚠ off-ring source" divergence chips
+  (card runs keep their own pair BY DESIGN — the chip makes it visible); picklist matrix:
+  ring orgs pre-selected, 👑 column badge, how-to-read-a-cell legend; Org Compare results
+  name the real orgs in the table header. AUDIT DEBT (not yet fixed): Readiness/Schema/
+  Field-Audit seed-once staleness + unattributed results; silent query failures in
+  Readiness/Schema/Field-Audit; Transfer-view precedence still profile-first.
+- [x] **T4. Sync Plan record-level selection** (user: "has to show the records and let the
+  user select them") — each push/overwrite op folds open to the actual records (match-key
+  labels) with per-record checkboxes; op checkbox = master toggle (indeterminate on
+  partial); live count in the label; >500 rows follow the master (noted, never silently
+  dropped); extras listed read-only with the ⚖ Reconcile link. Run executes exactly the
+  checked ids. Schema View gained a real object PICKLIST (▦ Pick from list) writing back
+  to the objects field. Harness 22/22.
 
 ## Phase M — Multi-org sync + smart matching (user scenario 2026-07-13: "5 orgs that
 ## need their data synced"; no external IDs in their orgs; user picks matching per node)
