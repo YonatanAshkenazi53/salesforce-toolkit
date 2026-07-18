@@ -418,7 +418,14 @@ already cover them — verify, don't assume, in B4.
   users. Show per-page user COUNTS + expandable user list (active only, capped + "and N
   more"), and the reverse lens: pick a user → the pages they see and WHY (which
   assignment wins, in Salesforce's precedence order).
-- [ ] **N4. Flow dependencies, deeper** (user: "how can we take it even further?") —
+- [x] **N4a+b. Flow dependencies — blast radius + reverse lookup** (SHIPPED; user
+  accepted the recommendation 2026-07-18) — buildDependencyMap already downloads every
+  flow's Metadata: it now KEEPS references (sftkFlowRefs pure extractor + raw-text index).
+  Dependencies tab gains: right-click → "🧨 Blast radius" panel (objects+ops, fields,
+  subflows, apex actions, custom labels, who CALLS it, plain-language delete-risk
+  verdict) and a "🔎 What uses…" search (field / object / label / any literal value →
+  flows mentioning it, ranked by mention count, click to open). Unit-tested (48).
+- [ ] **N4c-e. Flow dependencies, further** —
   candidates, in value order: (a) blast-radius report per flow — fields/objects/other
   flows/labels/picklist VALUES it references (pkValueMentions exists) with "safe to
   delete?" verdict; (b) reverse lookup — pick a field/object/value → every flow touching

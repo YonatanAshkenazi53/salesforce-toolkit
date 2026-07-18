@@ -451,6 +451,35 @@ describe('scan accuracy (🎯 — user request 2026-07-17)', () => {
   });
 });
 
+describe('flow reference extraction (N4 blast radius)', () => {
+  const sftkFlowRefs = extractFunction('dependency-map.js', 'sftkFlowRefs');
+
+  it('extracts objects+ops, fields, subflows, apex, $Record/$Label refs', () => {
+    const refs = sftkFlowRefs({
+      start: { object: 'Account', filters: [{ field: 'SLA__c', operator: 'EqualTo', value: { stringValue: 'Gold' } }], triggerType: 'RecordAfterSave' },
+      recordLookups: [{ object: 'Contact', filters: [{ field: 'Email' }], queriedFields: ['LastName'], outputAssignments: [] }],
+      recordUpdates: [{ object: 'Account', filters: [], inputAssignments: [{ field: 'Rating' }] }],
+      variables: [{ name: 'acc', objectType: 'Opportunity' }],
+      subflows: [{ flowName: 'Child_Flow' }],
+      actionCalls: [{ actionType: 'apex', actionName: 'MyInvocable' }, { actionType: 'emailSimple', actionName: 'sendEmail' }],
+      formulas: [{ expression: '{!$Record.Custom__c} & $Label.My_Label' }],
+    });
+    expect(refs.objects).toContainEqual({ name: 'Account', ops: ['trigger', 'update'] });
+    expect(refs.objects).toContainEqual({ name: 'Contact', ops: ['read'] });
+    expect(refs.objects).toContainEqual({ name: 'Opportunity', ops: ['variable'] });
+    expect(refs.fields).toEqual(expect.arrayContaining(
+      ['Account.SLA__c', 'Contact.Email', 'Contact.LastName', 'Account.Rating', 'Account.Custom__c']));
+    expect(refs.subflows).toEqual(['Child_Flow']);
+    expect(refs.apex).toEqual(['MyInvocable']);   // non-apex action excluded
+    expect(refs.labels).toEqual(['My_Label']);
+  });
+
+  it('degrades to empty ref sets on junk input', () => {
+    expect(sftkFlowRefs(null)).toEqual({ objects: [], fields: [], subflows: [], apex: [], labels: [] });
+    expect(sftkFlowRefs({}).objects).toEqual([]);
+  });
+});
+
 describe('record types in the Picklist Manager matrix (2026-07-18)', () => {
   const { pkRtCellInfo, pkRtDrift } =
     extractFunctions('studio-picklists.js', ['pkRtCellInfo', 'pkRtDrift']);

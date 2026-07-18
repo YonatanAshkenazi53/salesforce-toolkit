@@ -5459,3 +5459,20 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .tk-cmd-label { font-weight: 600; white-space: nowrap; }
 .tk-cmd-desc { color: var(--subtext); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tk-cmd-empty { padding: 14px; text-align: center; color: var(--subtext); font-size: 12.5px; }
+
+/* ── N4: reverse lookup + blast radius (Dependencies tab) ── */
+.dep-ref-search-row { display: flex; gap: 6px; padding: 6px 8px 2px; }
+.dep-ref-search { flex: 1; padding: 5px 8px; border: 1px solid var(--border, #d8dde6); border-radius: 6px; font-size: 12px; }
+.dep-ref-hdr { padding: 6px 10px 2px; font-size: 12px; font-weight: 600; }
+.dep-ref-note { font-weight: 400; color: var(--subtext, #706e6b); font-size: 11px; }
+.dep-ref-hit { display: flex; align-items: center; gap: 6px; padding: 4px 10px; cursor: pointer; border-bottom: 1px solid var(--border, #eee); font-size: 12px; }
+.dep-ref-hit:hover { background: var(--hover, #f3f6fb); }
+.dep-ref-count { margin-left: auto; font-size: 11px; color: var(--subtext, #706e6b); }
+.dep-blast-panel { position: fixed; top: 60px; right: 16px; width: 340px; max-height: 70vh; overflow: auto; background: var(--card, #fff); border: 1px solid var(--border, #d8dde6); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.22); z-index: 9000; font-size: 12px; }
+.dep-blast-hdr { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; padding: 10px 12px; border-bottom: 1px solid var(--border, #eee); position: sticky; top: 0; background: inherit; }
+.dep-blast-close { margin-left: auto; }
+.dep-blast-verdict { padding: 8px 12px; border-bottom: 1px solid var(--border, #eee); }
+.dep-blast-sec { padding: 6px 12px; }
+.dep-blast-sec-hdr { font-weight: 700; margin: 4px 0 2px; }
+.dep-blast-item { padding: 1px 0 1px 8px; word-break: break-all; }
+.dep-blast-ops { color: var(--subtext, #706e6b); font-size: 11px; }

@@ -1,10 +1,66 @@
 // Dependency Map module — builds and renders the subflow dependency map
 
+// Extract every external reference from ONE flow's Metadata (N4a — blast
+// radius). Walks the element types that name objects/fields explicitly, then
+// sweeps the raw metadata text for $Record.Field / $Label.Name references
+// (formulas, templates). Pure — unit-testable (top-level for extract.mjs).
+function sftkFlowRefs(meta) {
+  const objects = new Map();   // object → Set(ops)
+  const fields = new Set(), subflows = new Set(), apex = new Set(), labels = new Set();
+  if (!meta || typeof meta !== 'object') {
+    return { objects: [], fields: [], subflows: [], apex: [], labels: [] };
+  }
+  const arr = x => Array.isArray(x) ? x : [];
+  const addObj = (o, op) => { if (!o) return; if (!objects.has(o)) objects.set(o, new Set()); objects.get(o).add(op); };
+  const addField = (obj, f) => { if (f) fields.add(obj ? `${obj}.${f}` : String(f)); };
+
+  const st = meta.start || {};
+  if (st.object) { addObj(st.object, 'trigger'); arr(st.filters).forEach(f => addField(st.object, f.field)); }
+  for (const rl of arr(meta.recordLookups)) {
+    addObj(rl.object, 'read');
+    arr(rl.filters).forEach(f => addField(rl.object, f.field));
+    arr(rl.queriedFields).forEach(f => addField(rl.object, f));
+    arr(rl.outputAssignments).forEach(a => addField(rl.object, a.field));
+  }
+  for (const rc of arr(meta.recordCreates)) { addObj(rc.object, 'create'); arr(rc.inputAssignments).forEach(a => addField(rc.object, a.field)); }
+  for (const ru of arr(meta.recordUpdates)) { addObj(ru.object, 'update'); arr(ru.filters).forEach(f => addField(ru.object, f.field)); arr(ru.inputAssignments).forEach(a => addField(ru.object, a.field)); }
+  for (const rd of arr(meta.recordDeletes)) { addObj(rd.object, 'delete'); arr(rd.filters).forEach(f => addField(rd.object, f.field)); }
+  for (const v of arr(meta.variables)) if (v.objectType) addObj(v.objectType, 'variable');
+  for (const d of arr(meta.dynamicChoiceSets)) {
+    if (d.object) { addObj(d.object, 'choice'); addField(d.object, d.displayField); addField(d.object, d.valueField); }
+    if (d.picklistObject) { addObj(d.picklistObject, 'choice'); addField(d.picklistObject, d.picklistField); }
+  }
+  for (const sf of arr(meta.subflows)) if (sf.flowName) subflows.add(sf.flowName);
+  for (const ac of arr(meta.actionCalls)) if (ac.actionName && /apex/i.test(ac.actionType || '')) apex.add(ac.actionName);
+  for (const ap of arr(meta.apexPluginCalls)) if (ap.apexClass) apex.add(ap.apexClass);
+
+  const txt = JSON.stringify(meta);
+  let m;
+  const recRe = /\$Record\.([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?)/g;
+  while ((m = recRe.exec(txt))) addField(st.object || '$Record', m[1]);
+  const labRe = /\$Label\.([A-Za-z0-9_]+)/g;
+  while ((m = labRe.exec(txt))) labels.add(m[1]);
+
+  return {
+    objects: [...objects.entries()].map(([name, ops]) => ({ name, ops: [...ops].sort() }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    fields: [...fields].sort(),
+    subflows: [...subflows].sort(),
+    apex: [...apex].sort(),
+    labels: [...labels].sort(),
+  };
+}
+
 const DependencyMap = (() => {
   let dependencyMap = {}; // subflowApiName -> [{ id, masterLabel, versionNumber, status, processType }]
   let flowsByApiName = {}; // apiName -> [flow records]
   let triggerTypeMap = {};   // flowId -> triggerType string from Metadata.start.triggerType
   let triggerObjectMap = {}; // flowId -> SObject API name from Metadata.start.object
+  // N4 — the metadata is already downloaded per flow; keep what it references
+  // instead of throwing it away. refsByFlowId powers 🧨 blast radius,
+  // metaTextByFlowId powers the "what uses…" reverse lookup.
+  let refsByFlowId = {};     // flowId -> sftkFlowRefs(meta)
+  let metaTextByFlowId = {}; // flowId -> JSON.stringify(meta)
   let metadataFetched = false;
   let fetchInProgress = false;
   let _runToken = 0;   // bumped on every reset() — invalidates in-flight scans
@@ -15,6 +71,8 @@ const DependencyMap = (() => {
     flowsByApiName = {};
     triggerTypeMap = {};
     triggerObjectMap = {};
+    refsByFlowId = {};
+    metaTextByFlowId = {};
     metadataFetched = false;
     fetchInProgress = false;
   }
@@ -79,6 +137,10 @@ const DependencyMap = (() => {
             const triggerObj  = meta.start?.object || null;
             if (triggerType) triggerTypeMap[flow.Id]   = triggerType;
             if (triggerObj)  triggerObjectMap[flow.Id] = triggerObj;
+            try {
+              refsByFlowId[flow.Id] = sftkFlowRefs(meta);
+              metaTextByFlowId[flow.Id] = JSON.stringify(meta);
+            } catch (_) { /* refs are additive — never fail the map build */ }
 
             const subflows = meta.subflows || [];
             for (const sf of subflows) {
@@ -142,6 +204,48 @@ const DependencyMap = (() => {
       </div>
     `;
     container.appendChild(filterBar);
+
+    // N4b — reverse lookup: field / object / label / any literal (e.g. a
+    // picklist value) → every flow whose metadata mentions it.
+    const refSearchRow = document.createElement('div');
+    refSearchRow.className = 'dep-ref-search-row';
+    refSearchRow.innerHTML = `
+      <input type="text" id="depRefSearch" class="dep-ref-search"
+        placeholder="🔎 What uses… a field API name, object, or value (e.g. SLA__c, Account, Gold)" autocomplete="off">
+      <button class="btn-small" id="depRefGo">Search</button>`;
+    container.appendChild(refSearchRow);
+    const refResults = document.createElement('div');
+    refResults.id = 'depRefResults';
+    container.appendChild(refResults);
+
+    const runRefSearch = () => {
+      const term = (document.getElementById('depRefSearch')?.value || '').trim();
+      if (!term) { refResults.innerHTML = ''; return; }
+      const hits = searchReferences(term);
+      const byId = {};
+      for (const f of allFlows) byId[f.Id] = f;
+      refResults.innerHTML = hits.length
+        ? `<div class="dep-ref-hdr">${hits.length} flow(s) mention “${escHtml(term)}” <span class="dep-ref-note">(literal, case-insensitive match in the flow's metadata)</span></div>`
+          + hits.map(h => {
+            const f = byId[h.flowId];
+            if (!f) return '';
+            return `<div class="dep-ref-hit" data-id="${escHtml(f.Id)}" title="Open in Flow Builder">
+              <span class="dep-node-name">${escHtml(f.MasterLabel)}</span>
+              <span class="badge dep-type-badge">${escHtml(f.ProcessType || '')}</span>
+              <span class="badge ${f.Status === 'Active' ? 'badge-active' : 'badge-draft'}">${escHtml(f.Status || '')}</span>
+              <span class="dep-ref-count">×${h.count}</span>
+            </div>`;
+          }).join('')
+        : `<div class="dep-ref-hdr">No flow mentions “${escHtml(term)}”${isMetadataFetched() ? '' : ' — metadata scan still running, try again in a moment'}.</div>`;
+      refResults.querySelectorAll('.dep-ref-hit').forEach(row =>
+        row.addEventListener('click', () =>
+          chrome.tabs.create({ url: `${orgUrl}/builder_platform_interaction/flowBuilder.app?flowId=${row.dataset.id}` })));
+    };
+    document.getElementById('depRefGo')?.addEventListener('click', runRefSearch);
+    document.getElementById('depRefSearch')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') runRefSearch();
+      if (e.key === 'Escape') { e.target.value = ''; refResults.innerHTML = ''; }
+    });
 
     // Build parent->children map using dependency map
     const childrenMap = {}; // parentApiName -> [child apiNames]
@@ -374,9 +478,16 @@ const DependencyMap = (() => {
     contextMenu.className = 'dep-context-menu';
     contextMenu.style.left = e.clientX + 'px';
     contextMenu.style.top = e.clientY + 'px';
-    contextMenu.innerHTML = `<div class="dep-context-item" id="depCtxSelect">Select this flow for deletion</div>`;
+    contextMenu.innerHTML = `
+      <div class="dep-context-item" id="depCtxBlast">🧨 Blast radius — what this flow touches</div>
+      <div class="dep-context-item" id="depCtxSelect">Select this flow for deletion</div>`;
     document.body.appendChild(contextMenu);
 
+    document.getElementById('depCtxBlast').addEventListener('click', () => {
+      contextMenu.remove();
+      contextMenu = null;
+      showBlastRadius(flow);
+    });
     document.getElementById('depCtxSelect').addEventListener('click', () => {
       contextMenu.remove();
       contextMenu = null;
@@ -397,6 +508,60 @@ const DependencyMap = (() => {
 
   function getTriggerTypeMap() { return triggerTypeMap; }
 
+  // ── N4 API ────────────────────────────────────────────────────────────
+  function getRefsFor(flowId) { return refsByFlowId[flowId] || null; }
+
+  // Reverse lookup: which flows literally mention this term (field API name,
+  // object, label, or any value like "Gold") anywhere in their metadata?
+  function searchReferences(term) {
+    const t = String(term || '').trim();
+    if (!t) return [];
+    const re = new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    const out = [];
+    for (const [flowId, txt] of Object.entries(metaTextByFlowId)) {
+      const n = (txt.match(re) || []).length;
+      if (n) out.push({ flowId, count: n });
+    }
+    return out.sort((a, b) => b.count - a.count);
+  }
+
+  // 🧨 Blast radius panel — everything one flow touches + who calls IT,
+  // ending in a plain-language delete/deactivate risk verdict.
+  function showBlastRadius(flow) {
+    document.querySelector('.dep-blast-panel')?.remove();
+    const refs = refsByFlowId[flow.Id];
+    const callers = getParentsForApiName(flow.ApiName);
+    const verdict = callers.length
+      ? `⚠ ${callers.length} flow(s) call this as a subflow — deleting or deactivating it can break them.`
+      : (flow.Status === 'Active'
+        ? '🟡 No flow calls this one. Still active though — check buttons/pages that may launch it before deleting.'
+        : '🟢 No flow calls this one and it is not active — low-risk to delete.');
+    const section = (title, items, fmt) => items && items.length
+      ? `<div class="dep-blast-sec"><div class="dep-blast-sec-hdr">${title} (${items.length})</div>
+          ${items.map(fmt || (x => `<div class="dep-blast-item">${escHtml(x)}</div>`)).join('')}</div>` : '';
+    const panel = document.createElement('div');
+    panel.className = 'dep-blast-panel';
+    panel.innerHTML = `
+      <div class="dep-blast-hdr">
+        🧨 ${escHtml(flow.MasterLabel)}
+        <span class="badge ${flow.Status === 'Active' ? 'badge-active' : 'badge-draft'}">${escHtml(flow.Status || '')}</span>
+        <button class="btn-small dep-blast-close" title="Close">✖</button>
+      </div>
+      <div class="dep-blast-verdict">${verdict}</div>
+      ${section('⬆ Called by', callers, c => `<div class="dep-blast-item">${escHtml(c.masterLabel)} <span class="badge ${c.status === 'Active' ? 'badge-active' : 'badge-draft'}">${escHtml(c.status || '')}</span></div>`)}
+      ${refs ? `
+        ${section('🗃 Objects', refs.objects, o => `<div class="dep-blast-item">${escHtml(o.name)} <span class="dep-blast-ops">${escHtml(o.ops.join(' · '))}</span></div>`)}
+        ${section('🏷 Fields', refs.fields)}
+        ${section('🔀 Calls subflows', refs.subflows)}
+        ${section('⚙ Apex actions', refs.apex)}
+        ${section('💬 Custom labels', refs.labels)}
+        ${!refs.objects.length && !refs.fields.length && !refs.subflows.length && !refs.apex.length && !refs.labels.length
+          ? '<div class="dep-blast-sec">No object/field/subflow/apex/label references found in this version\'s metadata.</div>' : ''}`
+        : `<div class="dep-blast-sec">Reference details unavailable for this flow (its metadata didn't load${isMetadataFetched() ? '' : ' yet — scan still running'}).</div>`}`;
+    document.body.appendChild(panel);
+    panel.querySelector('.dep-blast-close').addEventListener('click', () => panel.remove());
+  }
+
   return {
     reset,
     buildDependencyMap,
@@ -406,6 +571,8 @@ const DependencyMap = (() => {
     isMetadataFetched,
     getParentsForApiName,
     getFlowsByApiName,
-    renderDependencyTreeTab
+    renderDependencyTreeTab,
+    getRefsFor,
+    searchReferences
   };
 })();
