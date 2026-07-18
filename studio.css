@@ -4800,3 +4800,7 @@ html, body {
 .ds-plan-rrow { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 1px 0; }
 .ds-plan-rro { opacity: .8; }
 .ds-profile-sot-diff { font-size: 10px; color: #991b1b; background: #fee2e2; border-radius: 8px; padding: 1px 6px; margin-left: 6px; white-space: nowrap; }
+
+/* Record-type badge in the Picklist Manager matrix */
+.ds-pk-mx-rt { font-size: 9.5px; opacity: .85; border-radius: 6px; padding: 0 4px; margin-left: 5px; background: rgba(128,128,128,.14); white-space: nowrap; }
+.ds-pk-mx-rt-drift { background: #fee2e2; color: #991b1b; opacity: 1; }

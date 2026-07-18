@@ -275,6 +275,14 @@ history) already exists there.
   V1 scope: custom local value sets (std/GVS banner). Ring-Sync-Plan-style modal: per-org
   sections, checkboxes, one Run, per-org status + prod typed confirms.
 
+- [x] **P6. "Picklist Manager" rename + record types in the matrix** (user 2026-07-18:
+  "Lets call it picklist manager, btw i dont see any mention to record types") — nav/
+  palette/title renamed; the compare matrix now loads record types per org and every cell
+  shows an "a/b RT" badge (value included in a of b active record types; hover names
+  them); same-DeveloperName record types disagreeing across orgs turn the badge red
+  (assignment drift — align via 🔄 Sync from source); RT-load failures degrade to a note,
+  never kill the matrix; legend extended. Pure pkRtCellInfo/pkRtDrift unit-tested (46).
+  Compare mode is now the DEFAULT view mode (prev commit e83701e).
 ## Phase T — Tree Diff (user request 2026-07-16)
 - [x] **T1. Tree Diff page** — "🌳 Tree diff" on deployment cards: the record tree (root →
   children → grandchildren) as rows, environments as columns (ring targets pre-selected);

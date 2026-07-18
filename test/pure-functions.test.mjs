@@ -450,3 +450,28 @@ describe('scan accuracy (🎯 — user request 2026-07-17)', () => {
     expect(sftkScanAccuracy(null)).toBeNull();
   });
 });
+
+describe('record types in the Picklist Manager matrix (2026-07-18)', () => {
+  const { pkRtCellInfo, pkRtDrift } =
+    extractFunctions('studio-picklists.js', ['pkRtCellInfo', 'pkRtDrift']);
+
+  it('pkRtCellInfo counts and names the record types that include a value', () => {
+    const rts = [
+      { name: 'Sales',   devName: 'Sales',   values: new Set(['Gold', 'Silver']) },
+      { name: 'Support', devName: 'Support', values: new Set(['Silver']) },
+    ];
+    expect(pkRtCellInfo(rts, 'Gold')).toEqual({ inCount: 1, total: 2, names: ['Sales'] });
+    expect(pkRtCellInfo(rts, 'Bronze')).toEqual({ inCount: 0, total: 2, names: [] });
+    expect(pkRtCellInfo(null, 'Gold')).toEqual({ inCount: 0, total: 0, names: [] });
+  });
+
+  it('pkRtDrift: same-devName RTs disagreeing across orgs = drift; RT missing in an org ≠ drift', () => {
+    const orgA = [{ devName: 'Sales', values: new Set(['Gold']) }];
+    const orgB = [{ devName: 'Sales', values: new Set([]) }];        // Sales disagrees on Gold
+    const orgC = [{ devName: 'OnlyHere', values: new Set(['Gold']) }]; // RT exists in one org only
+    expect(pkRtDrift([orgA, orgB], 'Gold')).toBe(true);
+    expect(pkRtDrift([orgA, orgA], 'Gold')).toBe(false);
+    expect(pkRtDrift([orgA, orgC], 'Gold')).toBe(false);   // no shared devName → comparable in 0 orgs
+    expect(pkRtDrift([], 'Gold')).toBe(false);
+  });
+});
