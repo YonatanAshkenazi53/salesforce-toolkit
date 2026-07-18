@@ -357,7 +357,35 @@ history) already exists there.
   paths guarded by orgKey(srcUrl)===orgKey(p.sourceOrg) (the fan-out src-override sliver);
   Clear-cached-org-data wipes memory. Unit tests for both pure helpers.
 - [ ] **M4. Later** — opt-in scheduling (needs re-adding the alarms permission — weigh vs
-  minimal-permissions posture); reverse-pull polish; Bulk API 2.0 for large volumes.
+  minimal-permissions posture); reverse-pull polish. (Bulk API graduated to Phase B below,
+  user request 2026-07-18.)
+
+## Phase B — Bulk API 2.0 for large volumes (user request 2026-07-18)
+
+Rule: Bulk is a TRANSPARENT engine-level switch, not a new UI. Same buttons, same guards;
+the engine picks Bulk when an operation crosses the record threshold (default 2,000 —
+setting under ⚙). Below the threshold nothing changes: REST collections stay faster and
+simpler for small batches. All bulk endpoints are same-host (`/services/data/vXX.0/jobs/*`)
+so the CSP connect-src allowlist and the read-only-org worker chokepoint (non-GET block)
+already cover them — verify, don't assume, in B4.
+
+- [ ] **B1. Bulk ingest for writes** — SF_EXECUTE_PROFILE_TRANSFER insert/upsert paths +
+  reconcile overwrite/delete switch to Bulk API 2.0 ingest jobs (create job → upload CSV →
+  close → poll → fetch successful/failed record results) when ids.length > threshold.
+  Map per-record failures back into the existing summary/history shape (created/updated/
+  failed + friendly errors) so History, fan-out tallies, and the Sync Plan status lines
+  render unchanged. Preserve idPairs learning (M3c) from the successfulResults CSV.
+- [ ] **B2. Bulk query for reads** — runDiffScan target/source fetches switch to Bulk
+  Query jobs past ~10k rows (today's queryMore loop + 5,000-row bucket caps truncate);
+  stream-parse the result CSV; keep scan.truncated honest either way.
+- [ ] **B3. Async progress + cancel** — jobs are submit-then-poll: reuse the runtime-Port
+  live-progress pattern (Phase 3) to show job state (Open → InProgress → JobComplete,
+  processed/failed counts) in the run panel, Sync Plan rows, and fan-out log; Cancel
+  aborts the job via PATCH state=Aborted; History entries note `via Bulk API`.
+- [ ] **B4. Guard parity + tests** — verify the per-org read-only lock blocks job
+  creation/upload at the worker chokepoint (they are non-GET — confirm with a harness
+  probe); typed prod confirms unchanged; unit tests for the CSV build/parse pure helpers
+  (escaping commas/quotes/newlines in org data!) + a stubbed end-to-end harness walk.
 
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.
