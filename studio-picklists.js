@@ -233,6 +233,12 @@ function _pkRenderSingleConfig() {
 // selected org that's open) + "Load matrix" (P2).
 function _pkRenderCompareConfig() {
   const orgs = allMapOrgs();
+  // First visit: pre-select the Sync Ring (source of truth + targets) — the
+  // multi-org matrix is exactly the ring's job (user directive 2026-07-17).
+  if (!_pkCmpOrgs.length && typeof _ring === 'object' && (_ring?.orgs || []).length >= 2) {
+    const known = new Set(orgs.map(o => _orgKey(o.url)));
+    _pkCmpOrgs = _ring.orgs.filter(u => known.has(_orgKey(u)));
+  }
   const chks = orgs.map(o =>
     `<label class="ds-pk-orgchk"><input type="checkbox" data-pk-cmporg="${esc(o.url)}" ${_pkCmpOrgs.includes(o.url) ? 'checked' : ''}> ${esc(orgOptionLabel(o.url, o.label))}</label>`).join('');
   const cfg = eid('dsPkConfig');
@@ -936,6 +942,8 @@ function _pkRenderMatrix() {
       <div class="ds-pk-mx-val">Value</div>
       ${cols.map(c => `<div class="ds-pk-mx-col">
         <label class="ds-pk-mx-orgsel"><input type="checkbox" class="ds-pk-mx-orgchk" data-org="${esc(c.orgUrl)}" ${c.inv ? 'checked' : 'disabled'}> ${esc(c.label)}</label>
+        ${(typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2 && _orgKey(c.orgUrl) === _orgKey(_ring.sourceUrl))
+          ? `<span class="ds-pk-mx-sot" title="Your Sync Ring's source of truth — 🔄 Sync from source pre-selects this org as the source.">👑 source of truth</span>` : ''}
         ${c.skip ? `<span class="ds-pk-mx-skip" title="${esc(c.skip)}">skipped: ${esc(c.skip)}</span>` : prodBadge(c.orgUrl)}
       </div>`).join('')}
     </div>`;
@@ -958,6 +966,7 @@ function _pkRenderMatrix() {
   const loaded = cols.filter(c => c.inv);
   body.innerHTML = `
     <div class="ds-pk-summary">Matrix · <strong>${esc(M.obj)}.${esc(M.field)}</strong> · ${M.union.length} value(s) across ${loaded.length}/${cols.length} loaded org(s)</div>
+    <div class="ds-pk-note" style="margin:4px 0 6px">How to read a cell: <strong>✓</strong> value exists &amp; is active in that org · <strong>⏸</strong> exists but inactive · <strong>—</strong> value missing from that org · the <strong>number</strong> = how many records in that org currently hold the value (so you can judge the impact of deactivate / delete / sync before touching anything).</div>
     ${skipped.length ? `<div class="ds-pk-note">⚠ Skipped ${skipped.length} org(s): ${esc(skipped.map(c => `${c.label} (${c.skip})`).join(', '))}</div>` : ''}
     <div class="ds-pk-matrix">${head}${rows || '<div class="ds-pk-note">No values loaded.</div>'}</div>
     <div class="ds-pk-bulkbar">

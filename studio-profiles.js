@@ -416,9 +416,18 @@ function profileCard(p) {
   const lastRun     = _history.filter(h => h.profileId === p.id).sort((a,b) => b.startedAt.localeCompare(a.startedAt))[0];
 
   const hasOrgs = !!(p.sourceOrg && p.targetOrg);
+  // 👑/⚠ — is this deployment's own source the ring's source of truth?
+  // ▶ Run and 🔄 Refresh state use the deployment's OWN pair (by design — a
+  // saved pair is intentional); the chip makes any divergence visible so the
+  // user never mistakes a card scan for a ring-flow scan.
+  const _ringOn = typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2;
+  const sotChip = !hasOrgs || !_ringOn ? ''
+    : _orgKey(p.sourceOrg) === _orgKey(_ring.sourceUrl)
+      ? `<span class="ds-td-sot" title="This deployment's source IS your Sync Ring's source of truth.">👑</span>`
+      : `<span class="ds-profile-sot-diff" title="This deployment's source (${esc(orgLabel(p.sourceOrg))}) is NOT your Sync Ring's source of truth (${esc(orgLabel(_ring.sourceUrl))}). ▶ Run and 🔄 Refresh state here use the deployment's own pair; ring flows (Sync Ring, 🌳 Tree diff, 🌐 Multi-org) flow from the source of truth.">⚠ off-ring source</span>`;
   const orgRow  = hasOrgs
     ? `<div class="ds-profile-card-orgs">
-         <span class="ds-profile-card-org">${esc(orgLabel(p.sourceOrg))}</span>
+         <span class="ds-profile-card-org">${esc(orgLabel(p.sourceOrg))}</span>${sotChip}
          <span class="ds-profile-card-org-arrow">→</span>
          <span class="ds-profile-card-org">${esc(orgLabel(p.targetOrg))}</span>
        </div>`

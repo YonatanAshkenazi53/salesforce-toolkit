@@ -76,7 +76,9 @@ async function renderSchemaView() {
           </select>
         </div>
         <div class="ds-autocomplete-wrap" style="flex:2">
-          <label class="ds-lbl">Objects <span class="ds-lbl-hint">(comma-separated API names — blank = auto-load all custom)</span></label>
+          <label class="ds-lbl">Objects <span class="ds-lbl-hint">(blank = auto-load all custom)</span>
+            <button class="ds-btn ds-btn-xs" id="svPickObjs" style="margin-left:6px" title="Pick objects from the org's list instead of typing API names">▦ Pick from list</button>
+          </label>
           <input id="svObjects" class="ds-input" placeholder="Account, Contact, MyObj__c … or leave blank for all custom" autocomplete="off">
           <div id="svObjectsAC" class="ds-autocomplete-list" style="display:none"></div>
         </div>
@@ -222,6 +224,36 @@ async function renderSchemaView() {
 
     // Refresh suggestions if org changes
     eid('svOrg')?.addEventListener('change', () => { svAcClose(); _svAcTimer = null; });
+
+    // ▦ Object PICKLIST (user 2026-07-17: "object selecting … should be in a
+    // form of picklist") — same svFetchObjList data, rendered as a checkbox
+    // list that writes the comma string back into the input.
+    eid('svPickObjs')?.addEventListener('click', async e => {
+      e.preventDefault();
+      if (!eid('svOrg')?.value) { showToast('Pick the org to analyze first', 'warning'); return; }
+      svAcList.innerHTML = `<div style="padding:8px;font-size:12px">Loading object list…</div>`;
+      svAcList.style.display = '';
+      const list = await svFetchObjList();
+      if (!list.length) { svAcList.innerHTML = `<div style="padding:8px;font-size:12px">Couldn't load objects — is the org open in a tab?</div>`; return; }
+      const chosen = new Set((svObjInp.value || '').split(',').map(s => s.trim()).filter(Boolean));
+      svAcList.innerHTML = `
+        <div style="max-height:260px;overflow:auto;padding:4px 8px">
+          ${list.map(o => `<label style="display:flex;gap:6px;align-items:center;font-size:12px;padding:1px 0">
+            <input type="checkbox" class="sv-pick-obj" value="${esc(o.name)}" ${chosen.has(o.name) ? 'checked' : ''}>
+            <span>${esc(o.label)} <span style="opacity:.65">(${esc(o.name)})</span></span></label>`).join('')}
+        </div>
+        <div style="display:flex;gap:6px;padding:6px 8px;border-top:1px solid rgba(128,128,128,.25)">
+          <button class="ds-btn ds-btn-xs ds-btn-primary" id="svPickApply">✓ Use selected</button>
+          <button class="ds-btn ds-btn-xs" id="svPickClose">Close</button>
+        </div>`;
+      eid('svPickClose')?.addEventListener('click', ev => { ev.preventDefault(); svAcClose(); });
+      eid('svPickApply')?.addEventListener('click', ev => {
+        ev.preventDefault();
+        svObjInp.value = [...svAcList.querySelectorAll('.sv-pick-obj:checked')].map(c => c.value).join(', ');
+        svObjInp.dispatchEvent(new Event('change'));   // persist via svPersistState
+        svAcClose();
+      });
+    });
     // Default the org to the working pair's SOURCE (option values are URLs).
     {
       const s = eid('svOrg');
