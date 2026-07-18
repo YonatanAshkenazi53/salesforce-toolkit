@@ -152,7 +152,9 @@ let _pkObj      = '';
 let _pkField    = '';
 let _pkObjCache = {};     // orgKey → [{name, label}]
 let _pkInv      = null;   // loaded inventory (null = nothing loaded)
-let _pkMode     = 'single';   // 'single' | 'compare' (P2)
+let _pkMode     = 'compare';  // 'single' | 'compare' — compare is the DEFAULT
+                              // (user 2026-07-18: multi-org matrix is the main
+                              // flow; ring orgs pre-seed its checkboxes)
 let _pkCmpOrgs  = [];     // selected org URLs for compare mode (P2)
 let _pkCmpObj   = '';
 let _pkCmpField = '';
