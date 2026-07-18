@@ -4804,3 +4804,7 @@ html, body {
 /* Record-type badge in the Picklist Manager matrix */
 .ds-pk-mx-rt { font-size: 9.5px; opacity: .85; border-radius: 6px; padding: 0 4px; margin-left: 5px; background: rgba(128,128,128,.14); white-space: nowrap; }
 .ds-pk-mx-rt-drift { background: #fee2e2; color: #991b1b; opacity: 1; }
+
+/* Labs nav entries — visibly "early preview" */
+.ds-nav-labs { opacity: .72; }
+.ds-nav-labs:hover { opacity: 1; }

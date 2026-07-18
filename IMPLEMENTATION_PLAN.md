@@ -395,6 +395,48 @@ already cover them — verify, don't assume, in B4.
   probe); typed prod confirms unchanged; unit tests for the CSV build/parse pure helpers
   (escaping commas/quotes/newlines in org data!) + a stubbed end-to-end harness walk.
 
+## Phase N — 2026-07-18 user batch (popup depth + Labs graduation)
+
+- [ ] **N1. Flows in XML** (user: "delete deploy and backup of flows, please do it in XML")
+  — flow BACKUP downloads real Metadata-API XML (`<Flow xmlns=…>` in a
+  `flows/<API_Name>.flow-meta.xml` + `package.xml` zip via sftkBuildStoredZip — same
+  artifact `sf project deploy` / Workbench accepts), not raw Tooling JSON. JSON→XML
+  serializer must preserve Flow element ORDER (deploys are order-sensitive) — pure +
+  unit-tested against a real flow's Metadata. Deploy path: verify it already ships XML
+  (it uses the zip builder); pre-delete safety snapshot uses the same XML artifact.
+- [ ] **N2. Copy Permissions — real user picker + Permission Set Groups** (user: "match
+  against multiple fields… never let them write, populate it with all the existing
+  fields"; "what about permission set groups?") — COPY FROM/TO: load users up front and
+  LIST them (name · username · email · alias · profile, active badge); the filter box
+  matches across ALL those fields; selection is click-only. Add "Permission Set Groups"
+  to WHAT TO COPY: read PermissionSetAssignment rows with PermissionSetGroupId, insert
+  matching assignments on the target user (dedupe existing; report per-group results).
+- [ ] **N3. Lightning Pages — who ACTUALLY sees what** (user: "we dont actually show
+  which users see what lightning page") — resolve each page's activation to real users:
+  org default → all active users minus those captured by a more specific assignment;
+  app default → users of that app's profiles; app+profile/record-type → those profiles'
+  users. Show per-page user COUNTS + expandable user list (active only, capped + "and N
+  more"), and the reverse lens: pick a user → the pages they see and WHY (which
+  assignment wins, in Salesforce's precedence order).
+- [ ] **N4. Flow dependencies, deeper** (user: "how can we take it even further?") —
+  candidates, in value order: (a) blast-radius report per flow — fields/objects/other
+  flows/labels/picklist VALUES it references (pkValueMentions exists) with "safe to
+  delete?" verdict; (b) reverse lookup — pick a field/object/value → every flow touching
+  it (pairs with Field Cleaner + Picklist Manager data fixes); (c) cross-org dependency
+  DIFF — same flow in 2+ orgs, which references break in each target (pre-deploy check);
+  (d) subflow chains — transitive graph incl. dead-subflow detection; (e) export the
+  report (CSV/MD). Ship (a)+(b) first.
+- [ ] **N5. Inspect strengthening — Labs graduation bar** (user: "not very strong, some
+  not even functional… ship them when we are ready"; views demoted to a Labs nav section
+  meanwhile) — for EACH of Deploy Readiness / Schema View / Field Audit: fix the audited
+  defects (seed-once staleness vs the source of truth; results/caches that never name
+  their org — incl. Readiness restoring cached results under whatever the selects now
+  say; silently-swallowed query failures rendering as clean/empty: Readiness
+  validation+duplicate rules, Schema flows/describes/actions, Field Audit usage/FLS/
+  deps) + one real capability jump each (Readiness: actionable fix-list handoff;
+  Schema: org-diff overlay; Field Audit: cross-org fill-rate compare). A view returns
+  from Labs to Inspect only when its checklist is done and it's been used live.
+
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.
 - **X phase**: confirm tool migration order before starting.

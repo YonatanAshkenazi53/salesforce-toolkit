@@ -269,8 +269,16 @@ function _pkRenderCompareConfig() {
     const known = new Set(orgs.map(o => _orgKey(o.url)));
     _pkCmpOrgs = _ring.orgs.filter(u => known.has(_orgKey(u)));
   }
-  const chks = orgs.map(o =>
-    `<label class="ds-pk-orgchk"><input type="checkbox" data-pk-cmporg="${esc(o.url)}" ${_pkCmpOrgs.includes(o.url) ? 'checked' : ''}> ${esc(orgOptionLabel(o.url, o.label))}</label>`).join('');
+  // The source of truth is ALWAYS part of the comparison (user 2026-07-18:
+  // "i can still deselect the source of truth org") — a matrix without the
+  // source can't answer "what differs from it". Checked + locked.
+  const _sotUrl = (typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2)
+    ? (orgs.find(o => _orgKey(o.url) === _orgKey(_ring.sourceUrl))?.url || '') : '';
+  if (_sotUrl && !_pkCmpOrgs.some(u => _orgKey(u) === _orgKey(_sotUrl))) _pkCmpOrgs.push(_sotUrl);
+  const chks = orgs.map(o => {
+    const isSot = _sotUrl && _orgKey(o.url) === _orgKey(_sotUrl);
+    return `<label class="ds-pk-orgchk"${isSot ? ' title="Source of truth — always part of the comparison. Change it in 🔄 Sync Ring or the topbar chip."' : ''}><input type="checkbox" data-pk-cmporg="${esc(o.url)}" ${(_pkCmpOrgs.includes(o.url) || isSot) ? 'checked' : ''} ${isSot ? 'disabled' : ''}> ${esc(orgOptionLabel(o.url, o.label))}</label>`;
+  }).join('');
   const cfg = eid('dsPkConfig');
   if (!cfg) return;
   cfg.innerHTML = `
