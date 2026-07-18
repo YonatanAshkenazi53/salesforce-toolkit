@@ -1779,9 +1779,11 @@ const ApexDebugger = (() => {
             <span class="adbg-log-caret">▾</span>
             📜 Log Content
             <span class="adbg-cnt-badge">${(p.stats?.lines || 0).toLocaleString()} lines</span>
-            <!-- Font-size controls. Click target stops propagation so it
-                 doesn't toggle the collapse when adjusting text size. -->
-            <span class="adbg-log-fontctl" onclick="event.stopPropagation()">
+            <!-- Font-size controls. NO inline onclick here — MV3 extension
+                 pages block inline handlers (CSP), so it silently never ran
+                 and every A± click also collapsed the log via bubbling. The
+                 addEventListener wiring stops propagation instead. -->
+            <span class="adbg-log-fontctl">
               <button class="adbg-log-font-btn" id="adbgLogFontDown" title="Smaller text">A−</button>
               <button class="adbg-log-font-btn" id="adbgLogFontReset" title="Reset text size">A</button>
               <button class="adbg-log-font-btn" id="adbgLogFontUp" title="Larger text">A+</button>
@@ -1893,7 +1895,10 @@ const ApexDebugger = (() => {
 
     // Log section minimize / expand — click the title bar to collapse the
     // search + log view down to just the bar, freeing space for Analysis.
-    document.getElementById('adbgLogToggle')?.addEventListener('click', () => {
+    document.getElementById('adbgLogToggle')?.addEventListener('click', (e) => {
+      // Ignore clicks born inside the font controls (incl. their gaps) —
+      // adjusting text size must never collapse the log.
+      if (e.target.closest('.adbg-log-fontctl')) return;
       const sec = document.getElementById('adbgLogsec');
       if (!sec) return;
       const collapsed = sec.classList.toggle('adbg-logsec-collapsed');
@@ -1905,9 +1910,9 @@ const ApexDebugger = (() => {
     // Lets the user scale the log text (esp. handy in fullscreen). The
     // chosen size persists across logs + sessions via localStorage.
     _applyLogFontSize();   // apply the stored size to the freshly-rendered view
-    document.getElementById('adbgLogFontDown') ?.addEventListener('click', () => _bumpLogFont(-1));
-    document.getElementById('adbgLogFontUp')   ?.addEventListener('click', () => _bumpLogFont(+1));
-    document.getElementById('adbgLogFontReset')?.addEventListener('click', () => _bumpLogFont(0));
+    document.getElementById('adbgLogFontDown') ?.addEventListener('click', (e) => { e.stopPropagation(); _bumpLogFont(-1); });
+    document.getElementById('adbgLogFontUp')   ?.addEventListener('click', (e) => { e.stopPropagation(); _bumpLogFont(+1); });
+    document.getElementById('adbgLogFontReset')?.addEventListener('click', (e) => { e.stopPropagation(); _bumpLogFont(0); });
 
     // Detail header minimize / expand — click the title bar to collapse the
     // entire upper section (meta + op + user + entry-point + buttons AND
