@@ -1024,7 +1024,7 @@ const ApexDebugger = (() => {
       }
 
       return `<div class="adbg-log-row${isSel ? ' adbg-row-sel' : ''}${isNew ? ' adbg-row-new' : ''}${xHits ? ' adbg-row-xhit' : ''}" data-id="${log.Id}">
-        <label class="adbg-row-ck" onclick="event.stopPropagation()">
+        <label class="adbg-row-ck">
           <input type="checkbox" class="adbg-cb" data-id="${log.Id}" ${isCk ? 'checked' : ''}>
         </label>
         <div class="adbg-row-body">
