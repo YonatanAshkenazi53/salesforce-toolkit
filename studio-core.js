@@ -664,7 +664,7 @@ const CMD_VIEWS = [
   { icon: '🔌', label: 'Connected Orgs',    view: 'orgs',      desc: 'Manage connections' },
   { icon: '📦', label: 'Data Deployment',   view: 'profiles',  desc: 'Profiles + run transfer' },
   { icon: '🔄', label: 'Sync Ring',         view: 'ring',      desc: 'All orgs vs the source of truth' },
-  { icon: '🎚', label: 'Picklists',         view: 'picklists', desc: 'Values, usage & data fixes' },
+  { icon: '🎚', label: 'Picklist Manager',  view: 'picklists', desc: 'Values & record types across orgs' },
   { icon: '📜', label: 'History',           view: 'history',   desc: 'Past transfer runs' },
   { icon: '🔍', label: 'Org Compare',       view: 'compare',   desc: 'Diff data across many objects' },
   { icon: '🛡',  label: 'Deploy Readiness', view: 'readiness', desc: 'Schema compatibility' },

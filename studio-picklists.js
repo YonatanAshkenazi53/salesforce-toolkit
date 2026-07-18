@@ -64,6 +64,34 @@ function pkBuildMatrix(orgResults, unionValues) {
   return { values: unionValues || [], rows };
 }
 
+// Which of one org's record types include a value. rts: [{ name, devName,
+// values:Set }] (from _pkLoadRecordTypes). Pure — unit-testable.
+function pkRtCellInfo(rts, valueName) {
+  const list = rts || [];
+  const inRts = list.filter(rt => rt.values && rt.values.has(valueName));
+  return { inCount: inRts.length, total: list.length, names: inRts.map(rt => rt.name || rt.devName) };
+}
+
+// Does a value's record-type ASSIGNMENT differ across orgs? Record types are
+// matched cross-org by DeveloperName (the P5 sync rule); only devNames present
+// in ≥2 orgs are comparable — an RT existing in just one org is an RT-set
+// difference, not an assignment drift (the Sync plan's RT alignment covers
+// that). perOrgRts: array of rts arrays, one per loaded org. Pure.
+function pkRtDrift(perOrgRts, valueName) {
+  const byDev = new Map();   // devName → Set('y'|'n') across the orgs that have this RT
+  for (const rts of (perOrgRts || [])) {
+    for (const rt of (rts || [])) {
+      if (!rt.devName) continue;
+      const has = rt.values && rt.values.has(valueName) ? 'y' : 'n';
+      const s = byDev.get(rt.devName) || new Set();
+      s.add(has);
+      byDev.set(rt.devName, s);
+    }
+  }
+  for (const s of byDev.values()) if (s.size > 1) return true;
+  return false;
+}
+
 // Count literal occurrences of a picklist value name inside a blob of
 // automation metadata text (P2 value-literal scan). Pure — unit-testable.
 function pkValueMentions(text, valueName) {
@@ -170,8 +198,8 @@ function renderPicklists() {
   setMain(`
     <div class="ds-view-header">
       <div class="ds-view-title-wrap">
-        <h2 class="ds-view-title">🎚 Picklists</h2>
-        <div class="ds-view-subtitle">Value usage, safe deactivation, data fixes — per org or across orgs</div>
+        <h2 class="ds-view-title">🎚 Picklist Manager</h2>
+        <div class="ds-view-subtitle">Values, record types, usage &amp; data fixes — per org or across orgs</div>
       </div>
       <div class="ds-pk-mode-toggle">
         <button class="ds-btn ds-btn-sm ${_pkMode === 'single' ? 'ds-btn-primary' : ''}" data-pk-mode="single">Single org</button>
@@ -184,7 +212,7 @@ function renderPicklists() {
         <div class="ds-empty-icon">${window.sftkCatSvg ? window.sftkCatSvg('sleep', 64) : '🎚'}</div>
         <div class="ds-empty-title">${_pkMode === 'compare' ? 'Pick orgs, an object and a picklist field' : 'Pick an org, object and picklist field'}</div>
         <div class="ds-empty-sub">${_pkMode === 'compare'
-          ? 'You\'ll get a value×org matrix (exists / active / usage per org) and a bulk wizard that applies the same deactivate/delete + data fix to every selected org.'
+          ? 'You\'ll get a value×org matrix (exists / active / usage / record-type assignments per org) and a bulk wizard that applies the same deactivate/delete + data fix to every selected org.'
           : 'You\'ll get every value with its live record count, record-type assignments, and safe deactivate / delete / remap operations.'}</div>
       </div>
     </div>`);
@@ -920,7 +948,14 @@ async function _pkLoadMatrix() {
     try {
       const r = await _pkFetchInventory(sess, _pkCmpObj, _pkCmpField);
       if (r.kind !== 'local') return { orgUrl: url, orgKey, label, skip: r.kind === 'standard' ? 'standard picklist' : 'global value set' };
-      return { orgUrl: url, orgKey, label, inv: r.inv };
+      // Record types per org (user 2026-07-18: the matrix showed no RT info).
+      // A failed RT load degrades to a note — never kills the value matrix.
+      let rts = [], rtNote = '';
+      try {
+        const rt = await _pkLoadRecordTypes(sess, _pkCmpObj, _pkCmpField, _pkCmpField.replace(/__c$/i, ''));
+        rts = rt.rts; rtNote = rt.rtNote;
+      } catch (e2) { rtNote = `record types unavailable: ${e2.message}`; }
+      return { orgUrl: url, orgKey, label, inv: r.inv, rts, rtNote };
     } catch (e) {
       const msg = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message).message : e.message;
       return { orgUrl: url, orgKey, label, skip: msg };
@@ -951,13 +986,19 @@ function _pkRenderMatrix() {
     </div>`;
 
   const rows = M.matrix.rows.map(row => {
-    const cells = row.cells.map(cell => {
+    // Record-type assignment per cell + cross-org drift for this value
+    // (user 2026-07-18: "i dont see any mention to record types").
+    const rtDrift = pkRtDrift(cols.filter(c => c.rts?.length).map(c => c.rts), row.name);
+    const cells = row.cells.map((cell, ci) => {
       if (cell.missing) return `<div class="ds-pk-mx-cell ds-pk-mx-na" title="org skipped / not loaded">·</div>`;
       if (!cell.exists) return `<div class="ds-pk-mx-cell ds-pk-mx-absent" title="value not present in this org">—</div>`;
       const cnt = cell.count == null ? '' : cell.count === -1 ? '?' : cell.count.toLocaleString();
+      const rti = cols[ci]?.rts?.length ? pkRtCellInfo(cols[ci].rts, row.name) : null;
+      const rtBadge = rti ? `<span class="ds-pk-mx-rt ${rtDrift ? 'ds-pk-mx-rt-drift' : ''}"
+        title="${rti.inCount ? `In record type(s): ${esc(rti.names.join(', '))}` : 'Not included in any active record type here'}${rtDrift ? ' · ⚠ this value’s record-type assignment DIFFERS across orgs (same-name record types disagree) — align via 🔄 Sync from source' : ''}">${rti.inCount}/${rti.total} RT</span>` : '';
       return `<div class="ds-pk-mx-cell ${cell.active ? 'ds-pk-mx-active' : 'ds-pk-mx-inactive'}"
         title="${cell.active ? 'active' : 'inactive'}${cell.count != null && cell.count >= 0 ? ` · ${cell.count} record(s)` : ''}">
-        ${cell.active ? '✓' : '⏸'}${cnt ? `<span class="ds-pk-mx-cnt">${cnt}</span>` : ''}</div>`;
+        ${cell.active ? '✓' : '⏸'}${cnt ? `<span class="ds-pk-mx-cnt">${cnt}</span>` : ''}${rtBadge}</div>`;
     }).join('');
     return `<div class="ds-pk-mx-row">
       <div class="ds-pk-mx-sel"><input type="checkbox" class="ds-pk-mx-valchk" data-val="${esc(row.name)}"></div>
@@ -968,7 +1009,8 @@ function _pkRenderMatrix() {
   const loaded = cols.filter(c => c.inv);
   body.innerHTML = `
     <div class="ds-pk-summary">Matrix · <strong>${esc(M.obj)}.${esc(M.field)}</strong> · ${M.union.length} value(s) across ${loaded.length}/${cols.length} loaded org(s)</div>
-    <div class="ds-pk-note" style="margin:4px 0 6px">How to read a cell: <strong>✓</strong> value exists &amp; is active in that org · <strong>⏸</strong> exists but inactive · <strong>—</strong> value missing from that org · the <strong>number</strong> = how many records in that org currently hold the value (so you can judge the impact of deactivate / delete / sync before touching anything).</div>
+    <div class="ds-pk-note" style="margin:4px 0 6px">How to read a cell: <strong>✓</strong> value exists &amp; is active in that org · <strong>⏸</strong> exists but inactive · <strong>—</strong> value missing from that org · the <strong>number</strong> = how many records in that org currently hold the value · <strong>a/b RT</strong> = included in a of that org's b active record types (hover for names; <span style="color:#991b1b">red</span> = same-name record types disagree across orgs — align via 🔄 Sync from source).</div>
+    ${cols.some(c => c.rtNote) ? `<div class="ds-pk-note">⚠ Record types: ${esc(cols.filter(c => c.rtNote).map(c => `${c.label} — ${c.rtNote}`).join(' · '))}</div>` : ''}
     ${skipped.length ? `<div class="ds-pk-note">⚠ Skipped ${skipped.length} org(s): ${esc(skipped.map(c => `${c.label} (${c.skip})`).join(', '))}</div>` : ''}
     <div class="ds-pk-matrix">${head}${rows || '<div class="ds-pk-note">No values loaded.</div>'}</div>
     <div class="ds-pk-bulkbar">
