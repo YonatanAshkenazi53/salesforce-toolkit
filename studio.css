@@ -2621,6 +2621,11 @@ html, body {
   max-width: 520px;
   max-height: 80vh;
   overflow: hidden;
+  /* Flex column so .ds-modal-body actually SCROLLS inside the 80vh cap —
+     without this, tall modal content (e.g. Sync plan record lists) was
+     clipped dead, footer buttons unreachable (user bug 2026-07-18). */
+  display: flex;
+  flex-direction: column;
   box-shadow: var(--shadow-md);
   animation: slideUpModal .2s ease;
 }
@@ -2644,7 +2649,12 @@ html, body {
   padding: 16px 20px;
   line-height: 1.6;
   overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
+.ds-modal-header, .ds-modal-footer { flex-shrink: 0; }
+/* Record-heavy modals get more width to breathe */
+.ds-modal-box:has(.ds-plan-org) { max-width: 660px; width: min(660px, 92vw); }
 .ds-modal-footer {
   display: flex;
   gap: 8px;
@@ -4808,3 +4818,8 @@ html, body {
 /* Labs nav entries — visibly "early preview" */
 .ds-nav-labs { opacity: .72; }
 .ds-nav-labs:hover { opacity: 1; }
+
+/* Sync-plan clarity pass */
+.ds-plan-sum { font-size: 11.5px; color: var(--subtext); margin-left: 8px; }
+.ds-plan-op-why { font-weight: 400; font-size: 11.5px; color: var(--subtext); }
+.ds-plan-rfields { margin-left: auto; font-size: 10.5px; color: #92400e; background: #fef3c7; border-radius: 6px; padding: 0 5px; white-space: nowrap; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }
