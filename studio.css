@@ -4823,3 +4823,4 @@ html, body {
 .ds-plan-sum { font-size: 11.5px; color: var(--subtext); margin-left: 8px; }
 .ds-plan-op-why { font-weight: 400; font-size: 11.5px; color: var(--subtext); }
 .ds-plan-rfields { margin-left: auto; font-size: 10.5px; color: #92400e; background: #fef3c7; border-radius: 6px; padding: 0 5px; white-space: nowrap; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }
+.ds-pk-sot-line { font-size: 12.5px; margin-bottom: 6px; }
