@@ -739,7 +739,7 @@ function openCommandPalette() {
 
   function buildItems(filter) {
     const q = filter.toLowerCase().trim();
-    const navItems = CMD_VIEWS.filter(v =>
+    const navItems = CMD_VIEWS.filter(v => _viewAvailable(v.view)).filter(v =>
       !q || v.label.toLowerCase().includes(q) || v.desc.toLowerCase().includes(q)
     );
     const toolkitItems = CMD_TOOLKIT.filter(t =>
@@ -1096,7 +1096,7 @@ const DS_HASH_VIEWS = new Set([
 
 function _viewFromHash() {
   const m = /^#\/([a-z-]+)/.exec(location.hash || '');
-  return m && DS_HASH_VIEWS.has(m[1]) ? m[1] : null;
+  return m && DS_HASH_VIEWS.has(m[1]) && _viewAvailable(m[1]) ? m[1] : null;
 }
 
 // Apply a view without touching the hash (used by the hashchange handler and
@@ -1117,7 +1117,16 @@ function navigateToView(view) {
   else location.hash = target;   // hashchange handler renders
 }
 
+// Store builds ship WITHOUT the Labs files (scripts/pack_store.py strips
+// them) — a view whose render function isn't loaded falls back to home.
+// Palette/hash entries for absent views are filtered by this same check.
+function _viewAvailable(view) {
+  const need = { readiness: 'renderReadiness', schema: 'renderSchemaView', fields: 'renderFieldAudit' };
+  return !need[view] || typeof window[need[view]] === 'function';
+}
+
 function renderView(view) {
+  if (!_viewAvailable(view)) view = 'orgs';
   _describeCache = {};   // clear per-view to stay fresh
   _refFieldCache = {};   // clear lookup field cache on view switch (may have stale org data)
   renderWorkingPair();   // topbar pair options track newly-detected orgs
