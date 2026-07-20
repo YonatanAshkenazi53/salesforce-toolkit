@@ -1439,9 +1439,15 @@ async function _pkOpenSyncPlan() {
   const loaded = M.results.filter(r => r.inv);
   if (loaded.length < 2) { showToast('Load at least two orgs in the matrix first', 'warning', 5000); return; }
 
-  // Default source: the ring's source of truth when it's among the loaded orgs.
-  const ringSrcKey = _orgKey((typeof _ring === 'object' && _ring?.sourceUrl) || '');
-  let srcIdx = Math.max(0, loaded.findIndex(r => r.orgKey === ringSrcKey));
+  // Source: the ring's source of truth, LOCKED when it's among the loaded
+  // orgs (user 2026-07-18: "source should be auto selected… without the
+  // option to unmark"). Only when no ring exists — or its source isn't in
+  // the matrix — does a manual picker appear (with an explicit warning,
+  // never a silent fallback to whichever org loaded first).
+  const ringSrcKey = _orgKey((typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2) ? _ring.sourceUrl : '');
+  const ringLoadedIdx = ringSrcKey ? loaded.findIndex(r => r.orgKey === ringSrcKey) : -1;
+  let srcIdx = Math.max(0, ringLoadedIdx);
+  const srcLocked = ringLoadedIdx >= 0;
 
   const render = () => {
     const src = loaded[srcIdx];
@@ -1461,9 +1467,11 @@ async function _pkOpenSyncPlan() {
       <div class="ds-modal-body">
         <div class="ds-plan-op" style="margin-bottom:10px">
           Source of truth:
-          <select id="dsPkSyncSrc" class="ds-select ds-select-sm">
-            ${loaded.map((r, i) => `<option value="${i}" ${i === srcIdx ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}
-          </select>
+          ${srcLocked
+            ? `<strong>${esc(loaded[srcIdx].label)}</strong> <span class="ds-pk-mx-sot" title="Locked to your Sync Ring's source of truth — every sync flows FROM it. Change it in 🔄 Sync Ring or the topbar chip.">👑 source of truth</span>`
+            : `<select id="dsPkSyncSrc" class="ds-select ds-select-sm">
+                ${loaded.map((r, i) => `<option value="${i}" ${i === srcIdx ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}
+              </select>${ringSrcKey ? ` <span style="font-size:11px;color:#92400e">⚠ your 👑 source of truth isn't loaded in this matrix — reload the matrix with it, or pick a source explicitly</span>` : ''}`}
           <span class="ds-pk-hint">every other loaded org becomes a target</span>
         </div>
         ${plans.map((pl, pi) => {
