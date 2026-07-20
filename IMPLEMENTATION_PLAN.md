@@ -444,6 +444,25 @@ already cover them — verify, don't assume, in B4.
   Schema: org-diff overlay; Field Audit: cross-org fill-rate compare). A view returns
   from Labs to Inspect only when its checklist is done and it's been used live.
 
+## Shipping — Chrome Web Store
+
+- [x] **SHIP-1. Store packaging pipeline** (2026-07-20, user: "upload to chrome store…
+  ship it without the lab features") — `python scripts/pack_store.py` builds
+  `dist/salesforce-toolkit-v<version>-store.zip`: Labs files (readiness/schema/fields)
+  + studio-tools.js + harness/dev files excluded; studio.html Labs nav + script tags
+  stripped (marker-based, fails loudly if markers move); post-checks (no leakage, every
+  html src/href resolves, worker/popup/icons present). Runtime safety: _viewAvailable()
+  in studio-core hides absent views from palette + hash and renderView falls back home.
+  Verified: 42-file 503 KB zip, zero leakage; headless boot-smoke of the packed build
+  4/4 (zero errors, no Labs nav, renderView('readiness') degrades gracefully).
+- [ ] **SHIP-2. Store listing + submission** (user does the console steps; assets to
+  prepare): developer account ($5 one-time) → item → upload zip → listing (name, ≤132-char
+  summary, description, category Developer Tools, 1280×800 screenshots, 128px icon ✓) →
+  Privacy tab: single-purpose statement, per-permission justifications (cookies/scripting/
+  storage/activeTab + salesforce hosts), data-use = collects nothing / local only, host a
+  privacy policy URL (PRIVACY.md via GitHub) → visibility (recommend UNLISTED first) →
+  submit for review. Version bump in manifest.json per re-upload.
+
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.
 - **X phase**: confirm tool migration order before starting.
