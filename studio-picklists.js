@@ -269,22 +269,29 @@ function _pkRenderCompareConfig() {
     const known = new Set(orgs.map(o => _orgKey(o.url)));
     _pkCmpOrgs = _ring.orgs.filter(u => known.has(_orgKey(u)));
   }
-  // The source of truth is ALWAYS part of the comparison (user 2026-07-18:
-  // "i can still deselect the source of truth org") — a matrix without the
-  // source can't answer "what differs from it". Checked + locked.
+  // The source of truth is a GIVEN, not a choice (user 2026-07-18: "i have
+  // to select it in order to compare it?") — it never appears in the
+  // checkbox list. It renders as a fixed line above, is silently kept in
+  // _pkCmpOrgs so the matrix always loads it, and the checkboxes only pick
+  // which orgs to compare AGAINST it.
   const _sotUrl = (typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2)
     ? (orgs.find(o => _orgKey(o.url) === _orgKey(_ring.sourceUrl))?.url || '') : '';
   if (_sotUrl && !_pkCmpOrgs.some(u => _orgKey(u) === _orgKey(_sotUrl))) _pkCmpOrgs.push(_sotUrl);
-  const chks = orgs.map(o => {
-    const isSot = _sotUrl && _orgKey(o.url) === _orgKey(_sotUrl);
-    return `<label class="ds-pk-orgchk"${isSot ? ' title="Source of truth — always part of the comparison. Change it in 🔄 Sync Ring or the topbar chip."' : ''}><input type="checkbox" data-pk-cmporg="${esc(o.url)}" ${(_pkCmpOrgs.includes(o.url) || isSot) ? 'checked' : ''} ${isSot ? 'disabled' : ''}> ${esc(orgOptionLabel(o.url, o.label))}</label>`;
-  }).join('');
+  const sotOrg = _sotUrl ? orgs.find(o => _orgKey(o.url) === _orgKey(_sotUrl)) : null;
+  const sotLine = sotOrg
+    ? `<div class="ds-pk-sot-line" title="Always part of the comparison — every org below is compared against it. Change it in 🔄 Sync Ring or the topbar chip.">
+        👑 Source of truth: <strong>${esc(orgOptionLabel(sotOrg.url, sotOrg.label))}</strong>
+        ${(!_liveOrgSet().has(_orgKey(sotOrg.url))) ? '<span style="color:#92400e">— open it in a Chrome tab, the matrix reads from it</span>' : ''}
+      </div>` : '';
+  const chks = orgs.filter(o => !(_sotUrl && _orgKey(o.url) === _orgKey(_sotUrl))).map(o =>
+    `<label class="ds-pk-orgchk"><input type="checkbox" data-pk-cmporg="${esc(o.url)}" ${_pkCmpOrgs.includes(o.url) ? 'checked' : ''}> ${esc(orgOptionLabel(o.url, o.label))}</label>`).join('');
   const cfg = eid('dsPkConfig');
   if (!cfg) return;
   cfg.innerHTML = `
     <div class="ds-pk-cmp-config">
       <div class="ds-pk-cmp-orgs">
-        <div class="ds-pk-cmp-lbl">Orgs to compare</div>
+        ${sotLine}
+        <div class="ds-pk-cmp-lbl">${sotOrg ? 'Compare against' : 'Orgs to compare'}</div>
         <div class="ds-pk-orgchk-list">${chks || 'No orgs known'}</div>
       </div>
       <div class="ds-pk-config">
