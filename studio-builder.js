@@ -3,6 +3,7 @@
 // PROFILE BUILDER — Object Tree Editor
 // ════════════════════════════════════════════════════════════════
 function openProfileBuilder(existingProfile) {
+  window._bldSrcOverride = false;   // fresh builder → source follows the ring again
   _editingProfile = existingProfile
     ? JSON.parse(JSON.stringify(existingProfile))
     : {
@@ -76,28 +77,50 @@ function renderBuilder() {
         <input id="dsProfileName" class="ds-input ds-input-lg" value="${esc(p.name)}" placeholder="e.g. Account + Contacts">
       </div>
 
+      ${(() => {
+        // Multi-org reframe (user 2026-07-20: "the source and target thing
+        // doesn't work any more"): with a Sync Ring, the SOURCE is the ring's
+        // source of truth — locked, with an explicit escape hatch for the
+        // rare intentional off-ring deployment. The TARGET becomes a
+        // REFERENCE target: it drives field mapping, previews and the default
+        // scan — the actual orgs written to are picked at run time (▶ Run,
+        // 🌐 Multi-org, Sync Ring, 🌳 Tree diff).
+        const ls = _liveOrgSet();
+        const ringSrc = (typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2) ? _ring.sourceUrl : '';
+        const srcLocked = !!ringSrc && !window._bldSrcOverride &&
+          (!p.sourceOrg || _orgKey(p.sourceOrg) === _orgKey(ringSrc));
+        if (srcLocked) p.sourceOrg = ringSrc;
+        // Default reference target: the first ring target.
+        if (ringSrc && !p.targetOrg) {
+          p.targetOrg = (_ring.orgs || []).find(u => _orgKey(u) !== _orgKey(ringSrc)) || '';
+        }
+        const orgOpts = sel => allMapOrgs().map(o =>
+          `<option value="${esc(o.url)}" ${sel === o.url ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label, ls))}</option>`).join('');
+        return `
       <div class="ds-builder-orgs-row">
         <div class="ds-builder-org-col">
-          <label class="ds-lbl">Source Org <span class="ds-builder-org-hint">(where records come FROM)</span></label>
-          <select id="dsProfileSrcOrg" class="ds-input">
-            <option value="">— Select source org —</option>
-            ${(() => { const ls = _liveOrgSet(); return allMapOrgs().map(o =>
-              `<option value="${esc(o.url)}" ${p.sourceOrg === o.url ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label, ls))}</option>`
-            ).join(''); })()}
-          </select>
+          <label class="ds-lbl">Source <span class="ds-builder-org-hint">(where records come FROM)</span></label>
+          ${srcLocked
+            ? `<div class="ds-pk-sot-line" style="padding:9px 2px" title="Locked to your Sync Ring's source of truth — every multi-org surface flows FROM it. Change it in 🔄 Sync Ring or the topbar chip.">
+                 👑 <strong>${esc(orgLabel(ringSrc))}</strong> — your source of truth
+                 <a href="#" id="dsBldSrcUnlock" style="font-size:11px;margin-left:8px">use a different source…</a>
+               </div>`
+            : `<select id="dsProfileSrcOrg" class="ds-input">
+                <option value="">— Select source org —</option>${orgOpts(p.sourceOrg)}
+              </select>
+              ${ringSrc && p.sourceOrg && _orgKey(p.sourceOrg) !== _orgKey(ringSrc)
+                ? `<div style="font-size:11px;color:#92400e;margin-top:3px">⚠ not your 👑 source of truth (${esc(orgLabel(ringSrc))}) — this deployment will show as off-ring</div>` : ''}`}
         </div>
-        <button class="ds-builder-orgs-arrow ds-builder-orgs-swap" id="dsProfileSwapOrgs"
-          title="Swap source and target orgs — also inverts field mappings and clears picked records (they belong to the old source org)">⇄</button>
+        ${srcLocked ? '' : `<button class="ds-builder-orgs-arrow ds-builder-orgs-swap" id="dsProfileSwapOrgs"
+          title="Swap source and target orgs — also inverts field mappings and clears picked records (they belong to the old source org)">⇄</button>`}
         <div class="ds-builder-org-col">
-          <label class="ds-lbl">Target Org <span class="ds-builder-org-hint">(where records get inserted)</span></label>
+          <label class="ds-lbl">Reference target <span class="ds-builder-org-hint">(drives field mapping &amp; previews — actual targets are picked at run time)</span></label>
           <select id="dsProfileTgtOrg" class="ds-input">
-            <option value="">— Select target org —</option>
-            ${(() => { const ls = _liveOrgSet(); return allMapOrgs().map(o =>
-              `<option value="${esc(o.url)}" ${p.targetOrg === o.url ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label, ls))}</option>`
-            ).join(''); })()}
+            <option value="">— Select reference target —</option>${orgOpts(p.targetOrg)}
           </select>
         </div>
-      </div>
+      </div>`;
+      })()}
 
       <div class="ds-builder-owner-row">
         <label class="ds-lbl">Record owners
@@ -128,7 +151,11 @@ function renderBuilder() {
         <div class="ds-builder-root-picker">
           <label class="ds-lbl">Root Object Type</label>
           <div class="ds-builder-root-row">
-            <input id="dsRootObj" class="ds-input" placeholder="Account, Contact, Case__c…">
+            <!-- Prepopulated from the SOURCE org (user 2026-07-20: "select
+                 objects from a prepopulated list") — the text input is only
+                 the fallback when the source org isn't open in a tab. -->
+            <select id="dsRootObjSel" class="ds-input" style="display:none"></select>
+            <input id="dsRootObj" class="ds-input" placeholder="Loading objects from the source org…">
             <button class="ds-btn ds-btn-primary" id="dsSetRoot">Set Root</button>
           </div>
         </div>` : `
@@ -163,8 +190,19 @@ function renderBuilder() {
   // a transfer (or schedule) runs between — the old Transfer page used to ask
   // separately at run time, which both duplicated state and gave the user
   // accidental "wrong org" exposure.
-  eid('dsProfileSrcOrg')?.addEventListener('change', e => { _editingProfile.sourceOrg = e.target.value || ''; });
+  eid('dsProfileSrcOrg')?.addEventListener('change', e => {
+    _editingProfile.sourceOrg = e.target.value || '';
+    _bldLoadRootObjects();   // the root-object list comes from the source org
+  });
   eid('dsProfileTgtOrg')?.addEventListener('change', e => { _editingProfile.targetOrg = e.target.value || ''; });
+  // Escape hatch from the 👑-locked source — reveals the plain org select
+  // (the off-ring warning under it keeps the divergence visible).
+  eid('dsBldSrcUnlock')?.addEventListener('click', e => {
+    e.preventDefault();
+    window._bldSrcOverride = true;
+    renderBuilder();
+  });
+  _bldLoadRootObjects();
 
   // ── Owner handling ──────────────────────────────────────────────
   // 'skip' (default): owners never copy — target assigns its default.
@@ -308,8 +346,41 @@ function renderBuilder() {
   }
 }
 
+// Populate the root-object PICKLIST from the source org's object list.
+// Cached per org key; falls back to the free-text input when the source
+// org has no live session.
+let _bldObjCache = {};
+async function _bldLoadRootObjects() {
+  const sel = eid('dsRootObjSel');
+  const inp = eid('dsRootObj');
+  if (!sel || !inp) return;   // tree already set — no root picker on screen
+  const srcUrl = _editingProfile?.sourceOrg;
+  const fallback = msg => { inp.placeholder = msg; };
+  if (!srcUrl) { fallback('Pick a source org first — or type the API name (Account, Case__c…)'); return; }
+  const key = _orgKey(srcUrl);
+  let list = _bldObjCache[key];
+  if (!list) {
+    const sess = await getOrgSession(srcUrl);
+    if (!sess) { fallback(`${orgLabel(srcUrl)} isn't open in a tab — type the API name (Account, Case__c…)`); return; }
+    const res = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid,
+      path: 'services/data/v62.0/sobjects' });
+    if (res?.error || !Array.isArray(res?.sobjects)) { fallback('Object list unavailable — type the API name (Account, Case__c…)'); return; }
+    list = res.sobjects
+      .filter(o => o.queryable && o.createable && o.name)
+      .map(o => ({ name: o.name, label: o.label || o.name }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    _bldObjCache[key] = list;
+  }
+  if (!eid('dsRootObjSel')) return;   // view changed while loading
+  sel.innerHTML = `<option value="">— Pick the root object —</option>` +
+    list.map(o => `<option value="${esc(o.name)}">${esc(o.label)} (${esc(o.name)})</option>`).join('');
+  sel.style.display = '';
+  inp.style.display = 'none';
+}
+
 function setRootObject() {
-  const objType = (eid('dsRootObj')?.value || '').trim();
+  const selVal = (eid('dsRootObjSel')?.value || '').trim();
+  const objType = selVal || (eid('dsRootObj')?.value || '').trim();
   if (!objType) return;
   _editingProfile.tree = {
     objectType: objType,
