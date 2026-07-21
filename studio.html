@@ -88,18 +88,20 @@
             <span class="ds-nav-desc">Diff data across many objects</span>
           </span>
         </button>
+        <!-- Graduated from Labs 2026-07-20: ring-aware (source of truth →
+             every target), attributed results, no silent check failures. -->
+        <button class="ds-nav-btn" data-view="readiness">
+          <span class="ds-nav-icon">🛡</span>
+          <span class="ds-nav-label">
+            <span class="ds-nav-name">Deploy Readiness</span>
+            <span class="ds-nav-desc">Schema readiness of every ring target</span>
+          </span>
+        </button>
 
         <!-- Labs: early previews, demoted from Inspect until strengthened
              (user 2026-07-18: "not very strong, some not even functional…
              ship them when we are ready" — plan Phase N5 is the exit bar). -->
         <div class="ds-nav-section-title">Labs · early previews</div>
-        <button class="ds-nav-btn ds-nav-labs" data-view="readiness">
-          <span class="ds-nav-icon">🛡</span>
-          <span class="ds-nav-label">
-            <span class="ds-nav-name">Deploy Readiness</span>
-            <span class="ds-nav-desc">Preview — schema compatibility</span>
-          </span>
-        </button>
         <button class="ds-nav-btn ds-nav-labs" data-view="schema">
           <span class="ds-nav-icon">🕸</span>
           <span class="ds-nav-label">
