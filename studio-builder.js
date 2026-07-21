@@ -91,10 +91,18 @@ function renderBuilder() {
         const srcLocked = !!ringSrc && !window._bldSrcOverride &&
           (!p.sourceOrg || _orgKey(p.sourceOrg) === _orgKey(ringSrc));
         if (srcLocked) p.sourceOrg = ringSrc;
-        // Default reference target: the first ring target.
-        if (ringSrc && !p.targetOrg) {
-          p.targetOrg = (_ring.orgs || []).find(u => _orgKey(u) !== _orgKey(ringSrc)) || '';
+        // TARGETS, plural (user 2026-07-20: "let him select a couple of
+        // target orgs"): p.targetOrgs is the deployment's declared target
+        // set (default: every ring target). p.targetOrg stays as the FIRST
+        // of them — it is the invisible schema reference every existing
+        // engine path (mapping describes, previews, scans) keeps using.
+        if (!Array.isArray(p.targetOrgs) || !p.targetOrgs.length) {
+          p.targetOrgs = ringSrc
+            ? (_ring.orgs || []).filter(u => _orgKey(u) !== _orgKey(ringSrc))
+            : (p.targetOrg ? [p.targetOrg] : []);
         }
+        p.targetOrgs = p.targetOrgs.filter(u => _orgKey(u) !== _orgKey(p.sourceOrg || ''));
+        p.targetOrg = p.targetOrgs[0] || '';
         const orgOpts = sel => allMapOrgs().map(o =>
           `<option value="${esc(o.url)}" ${sel === o.url ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label, ls))}</option>`).join('');
         return `
@@ -115,10 +123,12 @@ function renderBuilder() {
         ${srcLocked ? '' : `<button class="ds-builder-orgs-arrow ds-builder-orgs-swap" id="dsProfileSwapOrgs"
           title="Swap source and target orgs — also inverts field mappings and clears picked records (they belong to the old source org)">⇄</button>`}
         <div class="ds-builder-org-col">
-          <label class="ds-lbl">Schema reference <span class="ds-builder-org-hint">(field mapping &amp; previews are built against THIS org's schema — actual targets are picked at run time; 🧪 Check all targets validates the whole ring)</span></label>
-          <select id="dsProfileTgtOrg" class="ds-input">
-            <option value="">— Select schema reference org —</option>${orgOpts(p.targetOrg)}
-          </select>
+          <label class="ds-lbl">Targets <span class="ds-builder-org-hint">(every org this deployment writes to — ▶ Run deploys to ALL of them; field mapping &amp; previews quietly use the first checked target's schema, 🧪 Check all targets validates the rest)</span></label>
+          <div class="ds-pk-orgchk-list">
+            ${allMapOrgs().filter(o => _orgKey(o.url) !== _orgKey(p.sourceOrg || '')).map(o =>
+              `<label class="ds-pk-orgchk"><input type="checkbox" data-bld-tgt="${esc(o.url)}" ${(p.targetOrgs || []).some(u => _orgKey(u) === _orgKey(o.url)) ? 'checked' : ''}> ${esc(orgOptionLabel(o.url, o.label, ls))}</label>`).join('')
+            || '<div class="ds-seq-empty">No other orgs known — open them in Chrome tabs.</div>'}
+          </div>
         </div>
       </div>`;
       })()}
@@ -196,7 +206,12 @@ function renderBuilder() {
     _editingProfile.sourceOrg = e.target.value || '';
     _bldLoadRootObjects();   // the root-object list comes from the source org
   });
-  eid('dsProfileTgtOrg')?.addEventListener('change', e => { _editingProfile.targetOrg = e.target.value || ''; });
+  document.querySelectorAll('[data-bld-tgt]').forEach(cb =>
+    cb.addEventListener('change', () => {
+      const sel = [...document.querySelectorAll('[data-bld-tgt]:checked')].map(c => c.dataset.bldTgt);
+      _editingProfile.targetOrgs = sel;
+      _editingProfile.targetOrg  = sel[0] || '';   // first target = schema reference (engine compat)
+    }));
   // Escape hatch from the 👑-locked source — reveals the plain org select
   // (the off-ring warning under it keeps the divergence visible).
   eid('dsBldSrcUnlock')?.addEventListener('click', e => {
@@ -277,6 +292,9 @@ function renderBuilder() {
     const doSwap = () => {
       const prof = _editingProfile;
       [prof.sourceOrg, prof.targetOrg] = [prof.targetOrg || '', prof.sourceOrg || ''];
+      // A swap collapses the target set to the single swapped-in org — the
+      // old multi-target set pointed at the OLD source's world.
+      prof.targetOrgs = prof.targetOrg ? [prof.targetOrg] : [];
       let clearedPicks = 0;
       const droppedMappings = [];
       (function walk(node) {

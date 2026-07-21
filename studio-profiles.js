@@ -429,7 +429,9 @@ function profileCard(p) {
     ? `<div class="ds-profile-card-orgs">
          <span class="ds-profile-card-org">${esc(orgLabel(p.sourceOrg))}</span>${sotChip}
          <span class="ds-profile-card-org-arrow">→</span>
-         <span class="ds-profile-card-org">${esc(orgLabel(p.targetOrg))}</span>
+         ${p.targetOrgs?.length > 1
+           ? `<span class="ds-profile-card-org" title="${esc(p.targetOrgs.map(u => orgLabel(u)).join(' · '))}">${p.targetOrgs.length} targets</span>`
+           : `<span class="ds-profile-card-org">${esc(orgLabel(p.targetOrg))}</span>`}
        </div>`
     : `<div class="ds-profile-card-orgs ds-profile-card-orgs-missing">
          ⚠ Source and target orgs not set — click ✏ Edit to configure
@@ -531,7 +533,15 @@ function _findTreeNode(node, objType) {
 }
 
 window.runProfile = function(profileId) {
-  _transferProfile = _profiles.find(p => p.id === profileId) || null;
+  const p = _profiles.find(x => x.id === profileId) || null;
+  // Multi-target deployment: ▶ Run means "deploy to ALL its targets" — the
+  // fan-out runner (per-org runs, prod confirms, per-org history) with the
+  // declared targets pre-checked.
+  if (p?.targetOrgs?.length > 1 && typeof window.openFanOut === 'function') {
+    window.openFanOut(profileId, { preselect: p.targetOrgs });
+    return;
+  }
+  _transferProfile = p;
   _transferOrgOverride = { src: null, tgt: null };   // fresh launch → profile's own orgs
   // Stay on the "Data Deployment" nav item — the Run view is conceptually a
   // sub-page of the deployment page, not a separate top-level destination.
