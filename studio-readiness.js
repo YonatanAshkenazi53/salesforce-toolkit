@@ -35,6 +35,12 @@ async function renderReadiness() {
     </div>
 
     <div class="dr-config">
+      ${(() => {
+        // Ring mode (graduation, 2026-07-20): source = the 👑 source of
+        // truth, targets = EVERY ring target, each checked separately. The
+        // classic pair selects only exist when no ring is configured.
+        const ring = _drRingCfg();
+        if (!ring) return `
       <div class="dr-orgs-row">
         <div class="ds-field-group" style="flex:1">
           <label class="ds-lbl">Source Org <span class="ds-lbl-hint">(where data comes from)</span></label>
@@ -51,7 +57,20 @@ async function renderReadiness() {
             ${orgOptions}
           </select>
         </div>
+      </div>`;
+        const ls = _liveOrgSet();
+        return `
+      <div class="ds-pk-sot-line" title="Every target below is checked against this org's schema. Change it in 🔄 Sync Ring or the topbar chip.">
+        👑 Source of truth: <strong>${esc(orgOptionLabel(ring.src, orgLabel(ring.src), ls))}</strong>
+        ${!ls.has(_orgKey(ring.src)) ? '<span style="color:#92400e">— open it in a Chrome tab, schemas are read from it</span>' : ''}
       </div>
+      <div class="ds-pk-cmp-lbl" style="margin-top:6px">Check readiness of</div>
+      <div class="ds-pk-orgchk-list">
+        ${ring.targets.map(u => `<label class="ds-pk-orgchk">
+          <input type="checkbox" data-dr-tgt="${esc(u)}" ${!_drTgtSel || _drTgtSel.has(_orgKey(u)) ? 'checked' : ''}>
+          ${esc(orgOptionLabel(u, orgLabel(u), ls))}</label>`).join('')}
+      </div>`;
+      })()}
 
       <details id="drObjectsPanel" class="ds-oc-objects-panel" style="margin-top:12px">
         <summary class="ds-oc-objects-sum"><strong>Objects to check</strong>
@@ -80,6 +99,11 @@ async function renderReadiness() {
   `);
 
   eid('drRunBtn')?.addEventListener('click', runReadinessCheck);
+  // Ring mode: target checkboxes (session-scoped selection).
+  document.querySelectorAll('[data-dr-tgt]').forEach(cb =>
+    cb.addEventListener('change', () => {
+      _drTgtSel = new Set([...document.querySelectorAll('[data-dr-tgt]:checked')].map(c => _orgKey(c.dataset.drTgt)));
+    }));
   // Source org drives the object list — load it when picked (or re-picked),
   // and lazily when the panel is first opened.
   eid('drSrcOrg')?.addEventListener('change', () => {
@@ -112,7 +136,7 @@ async function renderReadiness() {
       setChk('drChkValidation',  c.validation);
       setChk('drChkDupRules',    c.dupRules);
     }
-    if (s?.value) drRefreshObjectList();
+    if (s?.value || _drRingCfg()) drRefreshObjectList();
   }
 
   // U4a: results from a previous run this session are still in memory —
@@ -133,7 +157,17 @@ let _drObjState = { srcId: null, objects: null, selected: new Set() };
 const DR_STATE_KEY  = 'ds_readiness_state';
 let _drSavedSetup   = null;   // last persisted setup (restored on first render)
 let _drSetupLoaded  = false;  // storage read once per session
-let _drResultsCache = null;   // { ts, html } — in-memory results from last run
+let _drResultsCache = null;   // { ts, html, srcKey, tgtKeys } — in-memory results from last run
+let _drTgtSel       = null;   // ring mode: Set of checked target orgKeys (null = all)
+
+// Ring config for this view: { src, targets[] } when a Sync Ring with a
+// source of truth exists, else null (→ classic pair selects).
+function _drRingCfg() {
+  if (typeof _ring !== 'object' || !_ring?.sourceUrl || (_ring.orgs || []).length < 2) return null;
+  const src = _ring.sourceUrl;
+  const targets = (_ring.orgs || []).filter(u => _orgKey(u) !== _orgKey(src));
+  return targets.length ? { src, targets } : null;
+}
 
 function drSaveSetup() {
   const setup = {
@@ -159,6 +193,12 @@ function drRestoreCachedResults() {
   if (!_drResultsCache) return;
   const resultsEl = eid('drResults');
   if (!resultsEl) return;
+  // Never re-show results under a different configuration than produced them
+  // (audit fix — misattribution). The cached html names its own orgs, but the
+  // stamp check guarantees it can't outlive a source-of-truth/target change.
+  const ring = _drRingCfg();
+  const curSrc = _orgKey(ring ? ring.src : (eid('drSrcOrg')?.value || ''));
+  if (_drResultsCache.srcKey && _drResultsCache.srcKey !== curSrc) { _drResultsCache = null; return; }
   resultsEl.style.display = '';
   resultsEl.innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#E8F4FD;border:1px solid #C5DBF0;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:#014486">
@@ -179,7 +219,7 @@ async function drRefreshObjectList() {
   const listEl  = eid('drObjList');
   const countEl = eid('drObjCount');
   if (!listEl) return;
-  const srcId = eid('drSrcOrg')?.value;
+  const srcId = eid('drSrcOrg')?.value || _drRingCfg()?.src;
   if (!srcId) {
     listEl.innerHTML = '<div class="ds-oc-empty">Pick a source org to load its object list.</div>';
     if (countEl) countEl.textContent = '— select a source org first —';
@@ -213,7 +253,17 @@ async function drRefreshObjectList() {
       const restored = new Set(_drSavedSetup.selected.filter(n => names.has(n)));
       if (restored.size || !_drSavedSetup.selected.length) selected = restored;
     }
-    if (!selected) selected = new Set(objs.filter(o => o.custom).map(o => o.name));
+    if (!selected) {
+      selected = new Set(objs.filter(o => o.custom).map(o => o.name));
+      // + the objects your deployments actually move — they are the ones a
+      // failed load hurts (collectTreeObjects lives in studio-builder.js).
+      try {
+        (_profiles || []).forEach(p => {
+          if (!p.tree || typeof collectTreeObjects !== 'function') return;
+          collectTreeObjects(p.tree).forEach(n => { if (objs.some(o => o.name === n)) selected.add(n); });
+        });
+      } catch (_) { /* defaults only */ }
+    }
     _drObjState = { srcId, objects: objs, selected };
   }
 
@@ -271,10 +321,13 @@ async function drRefreshObjectList() {
 // ── Main readiness check runner ────────────────────────────────
 async function runReadinessCheck() {
   hideDrError();
-  const srcId = eid('drSrcOrg')?.value;
-  const tgtId = eid('drTgtOrg')?.value;
-  if (!srcId || !tgtId) { showDrError('Select both source and target orgs.'); return; }
-  if (srcId === tgtId)  { showDrError('Source and target org must be different.'); return; }
+  const ring = _drRingCfg();
+  const srcId = ring ? ring.src : eid('drSrcOrg')?.value;
+  const tgtIds = ring
+    ? ring.targets.filter(u => !_drTgtSel || _drTgtSel.has(_orgKey(u)))
+    : [eid('drTgtOrg')?.value].filter(Boolean);
+  if (!srcId || !tgtIds.length) { showDrError(ring ? 'Tick at least one target to check.' : 'Select both source and target orgs.'); return; }
+  if (!ring && srcId === tgtIds[0]) { showDrError('Source and target org must be different.'); return; }
 
   const chkFields      = eid('drChkFields')?.checked ?? true;
   const chkPicklists   = eid('drChkPicklists')?.checked ?? true;
@@ -282,14 +335,14 @@ async function runReadinessCheck() {
   const chkValidation  = eid('drChkValidation')?.checked ?? true;
   const chkDupRules    = eid('drChkDupRules')?.checked ?? true;
 
-  // Resolve sessions
+  // Resolve the source session (targets resolve one by one in the loop —
+  // a closed target is a visible skip, never a dead stop).
   setDrStatus('⏳ Connecting to orgs…');
-  const [srcSess, tgtSess] = await Promise.all([getOrgSession(srcId), getOrgSession(tgtId)]);
-  if (!srcSess) { showDrError('Cannot connect to the source org — open it in a Chrome tab first.'); return; }
-  if (!tgtSess) { showDrError('Cannot connect to the target org — open it in a Chrome tab first.'); return; }
+  const srcSess = await getOrgSession(srcId);
+  if (!srcSess) { showDrError(`Cannot connect to ${orgLabel(srcId)} (the source) — open it in a Chrome tab first.`); return; }
 
   // Object list — from the multi-select panel. If the user never opened the
-  // panel, load it now so the default (all custom objects) applies.
+  // panel, load it now so the defaults (customs + deployment objects) apply.
   if (_drObjState.srcId !== srcId || !_drObjState.objects) {
     setDrStatus('⏳ Loading object list from source…');
     await drRefreshObjectList();
@@ -306,68 +359,84 @@ async function runReadinessCheck() {
   // U4a: persist the exact setup this run uses
   drSaveSetup();
 
-  // Results container
+  // Results container — the header names the exact orgs this run describes
+  // (audit fix: results were previously unattributed).
   const resultsEl = eid('drResults');
   if (resultsEl) {
     resultsEl.style.display = '';
     resultsEl.innerHTML = `
+      <div class="dr-run-attrib" style="font-size:12.5px;margin-bottom:8px">
+        ${ring ? '👑 ' : ''}<strong>${esc(orgLabel(srcId))}</strong> → ${tgtIds.map(u => esc(orgLabel(u))).join(' · ')}
+        <span style="color:var(--subtext)"> · ${objects.length} object(s) · ${esc(new Date().toLocaleString())}</span>
+      </div>
       <div class="dr-progress">
-        ${window.sftkCatSm
-          ? sftkCatSm(`Analysing ${objects.length} object${objects.length !== 1 ? 's' : ''}…`)
-          : `Analysing ${objects.length} object${objects.length !== 1 ? 's' : ''}…`}
+        ${window.sftkCatSm ? sftkCatSm('Analysing…') : 'Analysing…'}
         <div id="drProgressText" class="dr-progress-text"></div>
       </div>
-      <div id="drObjectCards" class="dr-object-cards"></div>`;
+      <div id="drTargetSecs"></div>`;
   }
+  const secsEl = eid('drTargetSecs');
 
-  const cardsEl = eid('drObjectCards');
-  let total = 0, critCount = 0, warnCount = 0, okCount = 0;
-
-  for (let i = 0; i < objects.length; i++) {
-    const obj = objects[i];
-    setDrStatus(`⏳ ${i + 1} / ${objects.length}: ${obj}`);
-    const progEl = eid('drProgressText');
-    if (progEl) progEl.textContent = `${i + 1} / ${objects.length}: ${obj}`;
-
-    try {
-      const card = await analyseObject(obj, srcSess, tgtSess, { chkFields, chkPicklists, chkRecordTypes, chkValidation, chkDupRules });
-      total++;
-      if (card.severity === 'critical') critCount++;
-      else if (card.severity === 'warning') warnCount++;
-      else okCount++;
-      if (cardsEl) cardsEl.insertAdjacentHTML('beforeend', renderObjectCard(card));
-    } catch (e) {
-      total++;
-      if (cardsEl) cardsEl.insertAdjacentHTML('beforeend', renderObjectCard({
-        obj, severity: 'error',
-        error: e.message || String(e),
-        missingFields: [], requiredFields: [], picklistMismatches: [],
-        recordTypeGaps: [], validationRules: [], duplicationRules: []
-      }));
+  for (const tgtId of tgtIds) {
+    const tgtLabel = orgLabel(tgtId);
+    const tgtSess = await getOrgSession(tgtId);
+    if (!tgtSess) {
+      if (secsEl) secsEl.insertAdjacentHTML('beforeend',
+        `<div class="dr-target-sec"><div class="dr-target-hdr" style="font-weight:700;margin:10px 0 4px">→ ${esc(tgtLabel)} — ⏭ not open in a Chrome tab, skipped</div></div>`);
+      continue;
     }
+    const secId = `drSec_${_orgKey(tgtId).replace(/[^a-z0-9]/gi, '')}`;
+    if (secsEl) secsEl.insertAdjacentHTML('beforeend',
+      `<div class="dr-target-sec">
+         <div class="dr-target-hdr" style="font-weight:700;margin:10px 0 4px">→ ${esc(tgtLabel)} ${prodBadge(tgtId)} <span class="dr-target-sum" data-sum="${secId}"></span></div>
+         <div class="dr-object-cards" id="${secId}"></div>
+       </div>`);
+    const cardsEl = eid(secId);
+    let total = 0, critCount = 0, warnCount = 0, okCount = 0;
+
+    for (let i = 0; i < objects.length; i++) {
+      const obj = objects[i];
+      setDrStatus(`⏳ ${tgtLabel}: ${i + 1} / ${objects.length}: ${obj}`);
+      const progEl = eid('drProgressText');
+      if (progEl) progEl.textContent = `${tgtLabel} — ${i + 1} / ${objects.length}: ${obj}`;
+      try {
+        const card = await analyseObject(obj, srcSess, tgtSess, { chkFields, chkPicklists, chkRecordTypes, chkValidation, chkDupRules });
+        total++;
+        if (card.severity === 'critical') critCount++;
+        else if (card.severity === 'warning') warnCount++;
+        else okCount++;
+        if (cardsEl) cardsEl.insertAdjacentHTML('beforeend', renderObjectCard(card));
+      } catch (e) {
+        total++; critCount++;
+        if (cardsEl) cardsEl.insertAdjacentHTML('beforeend', renderObjectCard({
+          obj, severity: 'error',
+          error: e.message || String(e),
+          missingFields: [], requiredFields: [], picklistMismatches: [],
+          recordTypeGaps: [], validationRules: [], duplicationRules: []
+        }));
+      }
+    }
+    const sumEl = document.querySelector(`[data-sum="${secId}"]`);
+    if (sumEl) sumEl.innerHTML =
+      `${critCount ? `<span class="dr-sum-badge dr-sum-crit">🔴 ${critCount}</span>` : ''}
+       ${warnCount ? `<span class="dr-sum-badge dr-sum-warn">🟡 ${warnCount}</span>` : ''}
+       ${okCount ? `<span class="dr-sum-badge dr-sum-ok">✅ ${okCount} ok</span>` : ''}
+       <span style="color:var(--subtext);font-size:11px">${total} checked</span>`;
   }
 
   // Remove spinner
   const progRow = resultsEl?.querySelector('.dr-progress');
   if (progRow) progRow.remove();
 
-  // Summary banner at top of cards
-  if (cardsEl) {
-    const summary = `
-      <div class="dr-summary-banner">
-        <span class="dr-sum-total">📊 ${total} object${total !== 1 ? 's' : ''} scanned</span>
-        ${critCount ? `<span class="dr-sum-badge dr-sum-crit">🔴 ${critCount} critical</span>` : ''}
-        ${warnCount ? `<span class="dr-sum-badge dr-sum-warn">🟡 ${warnCount} warnings</span>` : ''}
-        ${okCount   ? `<span class="dr-sum-badge dr-sum-ok">✅ ${okCount} ok</span>` : ''}
-      </div>`;
-    cardsEl.insertAdjacentHTML('afterbegin', summary);
-  }
+  setDrStatus(`✅ Done — ${tgtIds.length} target(s) checked`);
 
-  setDrStatus(`✅ Done — ${total} objects checked`);
-
-  // U4a: keep the rendered results in memory so switching views this
-  // session re-shows them (via drRestoreCachedResults) instead of blank.
-  if (resultsEl) _drResultsCache = { ts: new Date().toISOString(), html: resultsEl.innerHTML };
+  // Cached results are STAMPED with the orgs they describe — restore only
+  // ever re-shows them for the same configuration (audit fix: the old cache
+  // re-rendered under whatever the selects happened to say).
+  if (resultsEl) _drResultsCache = {
+    ts: new Date().toISOString(), html: resultsEl.innerHTML,
+    srcKey: _orgKey(srcId), tgtKeys: tgtIds.map(u => _orgKey(u)).sort().join('|'),
+  };
 
   // Wire expand/collapse
   document.querySelectorAll('.dr-obj-card-hdr').forEach(hdr => {
@@ -393,9 +462,9 @@ async function analyseObject(obj, srcSess, tgtSess, opts) {
     sendBg({ type: 'SF_REST_GET', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
              path: `services/data/v62.0/sobjects/${obj}/describe` }),
     opts.chkValidation ? sendBg({ type: 'SF_QUERY', tooling: true, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
-      query: `SELECT Id, ValidationName, Active, Description FROM ValidationRule WHERE EntityDefinitionId = '${obj}' AND Active = true` }) : Promise.resolve(null),
+      query: `SELECT Id, ValidationName, Active, Description FROM ValidationRule WHERE EntityDefinitionId = ${soqlStrLit(obj)} AND Active = true` }) : Promise.resolve(null),
     opts.chkDupRules ? sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
-      query: `SELECT Id, DeveloperName FROM DuplicateRule WHERE SobjectType = '${obj}' AND IsActive = true` }) : Promise.resolve(null),
+      query: `SELECT Id, DeveloperName FROM DuplicateRule WHERE SobjectType = ${soqlStrLit(obj)} AND IsActive = true` }) : Promise.resolve(null),
   ]);
 
   if (srcDescRes.error) {
@@ -505,15 +574,20 @@ async function analyseObject(obj, srcSess, tgtSess, opts) {
   }
 
   // ── Validation rules ─────────────────────────────────────────
-  if (opts.chkValidation && valRulesRes && !valRulesRes.error) {
-    result.validationRules = (valRulesRes.records || []).map(r => ({
+  // A FAILED rule query is reported, never swallowed (audit fix: it used to
+  // render as "no rules" — a clean bill of health the check never earned).
+  result.checkNotes = [];
+  if (opts.chkValidation && valRulesRes) {
+    if (valRulesRes.error) result.checkNotes.push(`Validation rules could NOT be read on the target (${valRulesRes.error}) — this check is inconclusive, not clean.`);
+    else result.validationRules = (valRulesRes.records || []).map(r => ({
       name: r.ValidationName, desc: r.Description || ''
     }));
   }
 
   // ── Duplication rules ─────────────────────────────────────────
-  if (opts.chkDupRules && dupRulesRes && !dupRulesRes.error) {
-    result.duplicationRules = (dupRulesRes.records || []).map(r => ({ name: r.DeveloperName }));
+  if (opts.chkDupRules && dupRulesRes) {
+    if (dupRulesRes.error) result.checkNotes.push(`Duplicate rules could NOT be read on the target (${dupRulesRes.error}) — this check is inconclusive, not clean.`);
+    else result.duplicationRules = (dupRulesRes.records || []).map(r => ({ name: r.DeveloperName }));
   }
 
   // ── Severity ─────────────────────────────────────────────────
@@ -525,7 +599,8 @@ async function analyseObject(obj, srcSess, tgtSess, opts) {
 
   const hasWarning = result.missingFields.some(f => !f.required)
     || result.validationRules.length > 0
-    || result.duplicationRules.length > 0;
+    || result.duplicationRules.length > 0
+    || result.checkNotes.length > 0;
 
   result.severity = hasCritical ? 'critical' : hasWarning ? 'warning' : 'ok';
   return result;
@@ -543,6 +618,11 @@ function renderObjectCard(card) {
   if (error) {
     bodyHtml = `<div class="dr-issue-row dr-issue-error">❌ Error: ${esc(error)}</div>`;
   } else {
+    // Inconclusive checks first — louder than any finding below.
+    if (card.checkNotes?.length) {
+      bodyHtml += card.checkNotes.map(n =>
+        `<div class="dr-issue-row dr-issue-warn">⚠ ${esc(n)}</div>`).join('');
+    }
     // Missing fields (critical = required ones first)
     if (card.missingFields.length) {
       const critFields = card.missingFields.filter(f => f.required);

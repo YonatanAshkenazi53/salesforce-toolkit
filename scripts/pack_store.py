@@ -18,7 +18,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(ROOT, 'dist')
 STAGE = os.path.join(DIST, 'store-staging')
 
-LABS_JS = {'studio-readiness.js', 'studio-schema.js', 'studio-fields.js'}
+# studio-readiness.js graduated out of Labs 2026-07-20 (ring-aware rebuild) —
+# it SHIPS now; only Schema View + Field Audit stay excluded.
+LABS_JS = {'studio-schema.js', 'studio-fields.js'}
 # studio-tools.js is kept in the repo as the tool-mounting recipe but is not
 # loaded by any page — no reason to ship it.
 EXCLUDE_JS = LABS_JS | {'studio-tools.js'}
@@ -70,8 +72,8 @@ def main():
     for js in EXCLUDE_JS:
         if os.path.exists(os.path.join(STAGE, js)):
             fail(f'{js} leaked into staging')
-    for needle in ['studio-readiness.js', 'studio-schema.js', 'studio-fields.js',
-                   'data-view="readiness"', 'data-view="schema"', 'data-view="fields"']:
+    for needle in ['studio-schema.js', 'studio-fields.js',
+                   'data-view="schema"', 'data-view="fields"']:
         if needle in html:
             fail(f'packed studio.html still contains {needle}')
     # every local script/css/icon reference in every packed html must resolve

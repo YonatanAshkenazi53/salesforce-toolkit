@@ -433,7 +433,17 @@ already cover them — verify, don't assume, in B4.
   DIFF — same flow in 2+ orgs, which references break in each target (pre-deploy check);
   (d) subflow chains — transitive graph incl. dead-subflow detection; (e) export the
   report (CSV/MD). Ship (a)+(b) first.
-- [ ] **N5. Inspect strengthening — Labs graduation bar** (user: "not very strong, some
+- [x] **N5a. Deploy Readiness GRADUATED** (2026-07-20, user: "lets do it") — ring-first
+  rebuild: source locked to the 👑 source of truth (no pair selects when a ring exists),
+  targets = every ring target as checkboxes (closed ones skip visibly, never dead-stop);
+  results attributed ("👑 X → targets · timestamp") with a per-target section + its own
+  severity summary; results cache STAMPED with src/tgt org keys — never re-shown under a
+  different configuration; failed validation/duplicate-rule queries now render as
+  "⚠ could NOT be read — inconclusive, not clean" (warning severity) instead of silently
+  passing; object defaults = all customs + every object your deployments actually move;
+  rule queries hardened with soqlStrLit. Back in the Inspect nav; SHIPS in the store zip
+  (pack_store LABS_JS now excludes only schema/fields). Harness 10/10.
+- [ ] **N5b. Schema View + Field Audit strengthening — Labs graduation bar** (user: "not very strong, some
   not even functional… ship them when we are ready"; views demoted to a Labs nav section
   meanwhile) — for EACH of Deploy Readiness / Schema View / Field Audit: fix the audited
   defects (seed-once staleness vs the source of truth; results/caches that never name
