@@ -192,13 +192,63 @@ async function openFieldMappingModal(pathStr) {
   }
 
   // ── Org selector options ──────────────────────────────────────────────────
-  function orgOptions(selectedUrl, placeholder) {
-    const orgs = allOrgs();
+  function orgOptions(selectedUrl, placeholder, targetsOnly) {
+    let orgs = allOrgs();
+    // The "validate against" selector only offers the deployment's own
+    // targets — previewing against an org you don't deploy to is noise.
+    if (targetsOnly && typeof profileTargets === 'function') {
+      const keys = new Set(profileTargets(_editingProfile).map(u => _orgKey(u)));
+      const filtered = orgs.filter(o => keys.has(_orgKey(o.url)));
+      if (filtered.length) orgs = filtered;
+    }
     if (!orgs.length) return `<span class="ds-fm-no-orgs">No connected orgs</span>`;
     return `<select class="ds-input ds-input-sm ds-fm-org-sel">
       <option value="">${esc(placeholder)}</option>
       ${orgs.map(o => `<option value="${esc(o.url)}" ${o.url === selectedUrl ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label))}</option>`).join('')}
     </select>`;
+  }
+
+  // ── Multi-target cross-check (user 2026-07-20: "mapping looks broken
+  // because we can have multi targets") — ONE mapping applies to EVERY
+  // target, so load each CONNECTED target's field list and badge any mapped
+  // name that doesn't exist somewhere. The "validate against" org is only
+  // the previewed schema; these badges cover the rest (closed targets are
+  // 🧪 Check all targets' job).
+  let xtSets = null, xtLoading = false;
+  async function loadCrossTargets() {
+    if (xtSets || xtLoading) { xtAnnotate(); return; }
+    const tgts = (typeof profileTargets === 'function') ? profileTargets(_editingProfile) : [];
+    if (tgts.length < 2) return;
+    xtLoading = true;
+    const sets = [];
+    for (const url of tgts) {
+      const org = allOrgs().find(o => _orgKey(o.url) === _orgKey(url));
+      if (!org) continue;
+      const fields = await loadFields(org.url, org.sid);
+      if (fields) sets.push({ label: orgLabel(url), names: new Set(fields.map(f => f.name)) });
+    }
+    xtSets = sets.length >= 2 ? sets : null;
+    xtLoading = false;
+    xtAnnotate();
+  }
+  function xtAnnotate() {
+    if (!xtSets) return;
+    document.querySelectorAll('#dsFmList .ds-fm-tgt-input').forEach(inp => {
+      const src = inp.dataset.src;
+      if (!src || mappings[src] === null) return;
+      const eff = (mappings[src] && mappings[src].trim()) || src;
+      const missing = xtSets.filter(s => !s.names.has(eff)).map(s => s.label);
+      const wrap = inp.closest('.ds-fm-tgt-wrap');
+      if (!wrap) return;
+      wrap.querySelector('.ds-fm-xt-badge')?.remove();
+      if (missing.length) {
+        const b = document.createElement('span');
+        b.className = 'ds-fm-type-badge ds-fm-type-mismatch ds-fm-xt-badge';
+        b.title = `⚠ ${eff} does not exist on ${objType} in: ${missing.join(', ')} — runs into those orgs will skip this field. Remember: this ONE mapping applies to ALL targets.`;
+        b.textContent = `⚠ missing in ${missing.length} target${missing.length !== 1 ? 's' : ''}`;
+        wrap.appendChild(b);
+      }
+    });
   }
 
   // srcLoadFailed / tgtLoadFailed distinguish "still loading" from "couldn't
@@ -231,11 +281,15 @@ async function openFieldMappingModal(pathStr) {
           </div>
           <span class="ds-fm-orgs-arrow">→</span>
           <div class="ds-fm-org-col">
-            <span class="ds-fm-org-pill ds-fm-org-pill-tgt">Target</span>
-            ${orgOptions(tgtUrl, '— select target org —')}
+            <span class="ds-fm-org-pill ds-fm-org-pill-tgt">Validate against</span>
+            ${orgOptions(tgtUrl, '— pick a target schema —', true)}
             <span class="ds-fm-org-status" id="dsFmTgtStatus">${tgtStatusHtml()}</span>
           </div>
         </div>
+        ${(() => {
+          const tgts = (typeof profileTargets === 'function') ? profileTargets(_editingProfile) : [];
+          return tgts.length > 1 ? `<div class="ds-fm-multi-note">One mapping, <strong>all ${tgts.length} targets</strong> (${esc(tgts.map(u => orgLabel(u)).join(' · '))}). The selector above only picks which target's schema to preview — ⚠ badges below flag names missing in ANY connected target.</div>` : '';
+        })()}
         <div class="ds-fm-toolbar">
           <input id="dsFmSearch" class="ds-input ds-input-sm" placeholder="Search fields…" value="${esc(filter)}" autocomplete="off">
           <button class="ds-btn ds-btn-xs ds-btn-brand" id="dsFmAutoMap"
@@ -319,6 +373,7 @@ async function openFieldMappingModal(pathStr) {
     const list = eid('dsFmList');
     if (list) list.innerHTML = renderRows(filter);
     wireInputs();
+    xtAnnotate();
   }
 
   // ── Wire ─────────────────────────────────────────────────────────────────
@@ -337,9 +392,13 @@ async function openFieldMappingModal(pathStr) {
       const list = eid('dsFmList');
       if (list) list.innerHTML = renderRows(val);
       wireInputs();
+      xtAnnotate();
       const inp = eid('dsFmSearch');
       if (inp) { inp.focus(); inp.setSelectionRange(val.length, val.length); }
     });
+
+    // Multi-target badges track every mapping edit (bubbling from row inputs).
+    eid('dsFmList')?.addEventListener('input', () => setTimeout(xtAnnotate, 60));
 
     eid('dsFmAutoMap')?.addEventListener('click', () => {
       const before = Object.keys(mappings).length;
@@ -348,6 +407,7 @@ async function openFieldMappingModal(pathStr) {
       const list = eid('dsFmList');
       if (list) list.innerHTML = renderRows(filter);
       wireInputs();
+      xtAnnotate();
       updateCount();
       const added = Object.keys(mappings).length - before;
       showToast(`Auto-mapped ${Object.keys(mappings).filter(k => mappings[k] !== null).length} field(s) — click Apply to save`, 'info', 3500);
@@ -370,6 +430,7 @@ async function openFieldMappingModal(pathStr) {
     });
 
     wireInputs();
+    loadCrossTargets();   // async; annotates when all connected targets are in
 
     eid('dsFmSave')?.addEventListener('click', async () => {
       Object.keys(mappings).forEach(k => {
