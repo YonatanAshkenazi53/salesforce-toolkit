@@ -68,6 +68,7 @@ function renderRing() {
       }
       await chrome.storage.local.set({ ds_ring: _ring });
       if (_ring.sourceUrl) { _workingPair.src = _ring.sourceUrl; storageSaveWorkingPair(); }
+      if (typeof syncRingFollowers === 'function') syncRingFollowers();
       renderWorkingPair();
       renderRing();
     }));
@@ -78,6 +79,7 @@ function renderRing() {
       _workingPair.src = r.value;
       await chrome.storage.local.set({ ds_ring: _ring });
       storageSaveWorkingPair();
+      if (typeof syncRingFollowers === 'function') syncRingFollowers();
       renderWorkingPair();
       renderRing();
     }));
