@@ -71,8 +71,7 @@ window.openTreeDiff = function (profileId) {
     ? _ring.orgs.filter(u => _orgKey(u) !== _orgKey(srcUrl))
     : [];
   _tdEnvs = ringTargets.length ? ringTargets
-    : ((p.targetOrgs?.length ? p.targetOrgs : (p.targetOrg ? [p.targetOrg] : []))
-        .filter(u => _orgKey(u) !== _orgKey(srcUrl)));
+    : profileTargets(p).filter(u => _orgKey(u) !== _orgKey(srcUrl));
   _currentView = 'treediff';
   document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
   document.querySelector('[data-view="profiles"]')?.classList.add('active');

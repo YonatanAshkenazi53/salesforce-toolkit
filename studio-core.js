@@ -288,6 +288,21 @@ async function storageLoad() {
   }
   if (_ring?.sourceUrl) _workingPair.src = _ring.sourceUrl;   // keep default-seeding paths alive
 
+  // 2026-07-20 migration: earlier builds SNAPSHOTTED targetOrgs on every
+  // builder open. A pinned set identical to the current ring targets carries
+  // no information — convert it to follow-mode (null) so those deployments
+  // track the ring, which is what the default should have been.
+  if (typeof _ring === 'object' && _ring?.sourceUrl) {
+    const ringKeys = new Set((_ring.orgs || [])
+      .filter(u => _orgKey(u) !== _orgKey(_ring.sourceUrl)).map(u => _orgKey(u)));
+    for (const p of _profiles) {
+      if (!Array.isArray(p.targetOrgs)) continue;
+      const keys = p.targetOrgs.map(u => _orgKey(u));
+      if (keys.length === ringKeys.size && keys.every(k => ringKeys.has(k))) p.targetOrgs = null;
+    }
+  }
+  syncRingFollowers();
+
   // Retention (S5): purge history entries older than the configured window.
   if (_settings.historyDays > 0 && _history.length) {
     const cutoff = Date.now() - _settings.historyDays * 86400000;
@@ -1125,6 +1140,32 @@ function _viewAvailable(view) {
   return !need[view] || typeof window[need[view]] === 'function';
 }
 
+// ── Deployment targets: FOLLOW THE RING unless pinned ─────────────────────
+// (user decision 2026-07-20). p.targetOrgs === null/undefined means the
+// deployment follows the ring — its target set is resolved LIVE here, so
+// growing the ring grows every following deployment. An array means the
+// user pinned a specific set in the builder. p.targetOrg (the schema
+// reference every engine path reads) is kept in sync by syncRingFollowers().
+function profileFollowsRing(p) { return !!p && !Array.isArray(p.targetOrgs); }
+function profileTargets(p) {
+  if (!p) return [];
+  if (Array.isArray(p.targetOrgs)) return p.targetOrgs;
+  if (typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2) {
+    return (_ring.orgs || []).filter(u =>
+      _orgKey(u) !== _orgKey(_ring.sourceUrl) && _orgKey(u) !== _orgKey(p.sourceOrg || ''));
+  }
+  return p.targetOrg ? [p.targetOrg] : [];
+}
+function syncRingFollowers() {
+  let changed = false;
+  for (const p of (_profiles || [])) {
+    if (!profileFollowsRing(p)) continue;
+    const first = profileTargets(p)[0];
+    if (first && _orgKey(first) !== _orgKey(p.targetOrg || '')) { p.targetOrg = first; changed = true; }
+  }
+  if (changed) { try { storageSaveProfiles().catch(() => {}); } catch (_) {} }
+}
+
 function renderView(view) {
   if (!_viewAvailable(view)) view = 'orgs';
   _describeCache = {};   // clear per-view to stay fresh
@@ -1441,6 +1482,7 @@ function renderWorkingPair() {
     const v = e.target.value;
     if (!_ring) _ring = { orgs: [v], sourceUrl: v };
     _ring.sourceUrl = v;
+    syncRingFollowers();   // follow-mode deployments track the new source's targets
     if (!_ring.orgs.some(u => _orgKey(u) === _orgKey(v))) _ring.orgs.push(v);
     _workingPair.src = v;
     await chrome.storage.local.set({ ds_ring: _ring });

@@ -429,9 +429,14 @@ function profileCard(p) {
     ? `<div class="ds-profile-card-orgs">
          <span class="ds-profile-card-org">${esc(orgLabel(p.sourceOrg))}</span>${sotChip}
          <span class="ds-profile-card-org-arrow">→</span>
-         ${p.targetOrgs?.length > 1
-           ? `<span class="ds-profile-card-org" title="${esc(p.targetOrgs.map(u => orgLabel(u)).join(' · '))}">${p.targetOrgs.length} targets</span>`
-           : `<span class="ds-profile-card-org">${esc(orgLabel(p.targetOrg))}</span>`}
+         ${(() => {
+           const tgts = profileTargets(p);
+           const follows = profileFollowsRing(p) && _ringOn;
+           if (tgts.length > 1 || (follows && tgts.length)) {
+             return `<span class="ds-profile-card-org" title="${esc(tgts.map(u => orgLabel(u)).join(' · '))}${follows ? ' — follows the Sync Ring (grows with it)' : ' — pinned set'}">${follows ? '🔄 ring targets' : `📌 ${tgts.length} targets`} (${tgts.length})</span>`;
+           }
+           return `<span class="ds-profile-card-org">${esc(orgLabel(p.targetOrg))}</span>`;
+         })()}
        </div>`
     : `<div class="ds-profile-card-orgs ds-profile-card-orgs-missing">
          ⚠ Source and target orgs not set — click ✏ Edit to configure
@@ -537,8 +542,9 @@ window.runProfile = function(profileId) {
   // Multi-target deployment: ▶ Run means "deploy to ALL its targets" — the
   // fan-out runner (per-org runs, prod confirms, per-org history) with the
   // declared targets pre-checked.
-  if (p?.targetOrgs?.length > 1 && typeof window.openFanOut === 'function') {
-    window.openFanOut(profileId, { preselect: p.targetOrgs });
+  const _tgts = p ? profileTargets(p) : [];
+  if (_tgts.length > 1 && typeof window.openFanOut === 'function') {
+    window.openFanOut(profileId, { preselect: _tgts });
     return;
   }
   _transferProfile = p;

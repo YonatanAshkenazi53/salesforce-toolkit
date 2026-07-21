@@ -91,18 +91,19 @@ function renderBuilder() {
         const srcLocked = !!ringSrc && !window._bldSrcOverride &&
           (!p.sourceOrg || _orgKey(p.sourceOrg) === _orgKey(ringSrc));
         if (srcLocked) p.sourceOrg = ringSrc;
-        // TARGETS, plural (user 2026-07-20: "let him select a couple of
-        // target orgs"): p.targetOrgs is the deployment's declared target
-        // set (default: every ring target). p.targetOrg stays as the FIRST
-        // of them — it is the invisible schema reference every existing
+        // TARGETS: follow the ring unless pinned (user decision 2026-07-20).
+        // targetOrgs === null → follow-mode: the set is profileTargets(p),
+        // resolved LIVE, so ring changes flow into this deployment forever.
+        // An array → the user pinned specific orgs. p.targetOrg stays the
+        // FIRST effective target — the invisible schema reference every
         // engine path (mapping describes, previews, scans) keeps using.
-        if (!Array.isArray(p.targetOrgs) || !p.targetOrgs.length) {
-          p.targetOrgs = ringSrc
-            ? (_ring.orgs || []).filter(u => _orgKey(u) !== _orgKey(ringSrc))
-            : (p.targetOrg ? [p.targetOrg] : []);
+        const followMode = !!ringSrc && !Array.isArray(p.targetOrgs);
+        if (!ringSrc && !Array.isArray(p.targetOrgs)) {
+          p.targetOrgs = p.targetOrg ? [p.targetOrg] : [];   // no ring → pinning is the only mode
         }
-        p.targetOrgs = p.targetOrgs.filter(u => _orgKey(u) !== _orgKey(p.sourceOrg || ''));
-        p.targetOrg = p.targetOrgs[0] || '';
+        const effTargets = (Array.isArray(p.targetOrgs) ? p.targetOrgs : profileTargets(p))
+          .filter(u => _orgKey(u) !== _orgKey(p.sourceOrg || ''));
+        p.targetOrg = effTargets[0] || '';
         const orgOpts = sel => allMapOrgs().map(o =>
           `<option value="${esc(o.url)}" ${sel === o.url ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label, ls))}</option>`).join('');
         return `
@@ -123,10 +124,19 @@ function renderBuilder() {
         ${srcLocked ? '' : `<button class="ds-builder-orgs-arrow ds-builder-orgs-swap" id="dsProfileSwapOrgs"
           title="Swap source and target orgs — also inverts field mappings and clears picked records (they belong to the old source org)">⇄</button>`}
         <div class="ds-builder-org-col">
-          <label class="ds-lbl">Targets <span class="ds-builder-org-hint">(every org this deployment writes to — ▶ Run deploys to ALL of them; field mapping &amp; previews quietly use the first checked target's schema, 🧪 Check all targets validates the rest)</span></label>
-          <div class="ds-pk-orgchk-list">
+          <label class="ds-lbl">Targets <span class="ds-builder-org-hint">(▶ Run deploys to ALL of them; field mapping &amp; previews quietly use the first target's schema, 🧪 Check all targets validates the rest)</span></label>
+          ${ringSrc ? `
+          <label class="ds-pk-orgchk" title="The deployment's targets are ALWAYS whatever the ring's targets are — add an org to the ring and this deployment covers it automatically.">
+            <input type="radio" name="dsBldTgtMode" value="follow" ${followMode ? 'checked' : ''}>
+            🔄 Follow the Sync Ring — all its targets, always <span class="ds-builder-org-hint">(now: ${esc(effTargets.map(u => orgLabel(u)).join(' · ')) || 'none'})</span>
+          </label>
+          <label class="ds-pk-orgchk" title="Freeze this deployment to specific orgs — ring changes won't affect it.">
+            <input type="radio" name="dsBldTgtMode" value="pin" ${followMode ? '' : 'checked'}>
+            📌 Pin specific orgs:
+          </label>` : ''}
+          <div class="ds-pk-orgchk-list" id="dsBldTgtList" style="${followMode ? 'display:none' : ''}">
             ${allMapOrgs().filter(o => _orgKey(o.url) !== _orgKey(p.sourceOrg || '')).map(o =>
-              `<label class="ds-pk-orgchk"><input type="checkbox" data-bld-tgt="${esc(o.url)}" ${(p.targetOrgs || []).some(u => _orgKey(u) === _orgKey(o.url)) ? 'checked' : ''}> ${esc(orgOptionLabel(o.url, o.label, ls))}</label>`).join('')
+              `<label class="ds-pk-orgchk"><input type="checkbox" data-bld-tgt="${esc(o.url)}" ${effTargets.some(u => _orgKey(u) === _orgKey(o.url)) ? 'checked' : ''}> ${esc(orgOptionLabel(o.url, o.label, ls))}</label>`).join('')
             || '<div class="ds-seq-empty">No other orgs known — open them in Chrome tabs.</div>'}
           </div>
         </div>
@@ -209,8 +219,23 @@ function renderBuilder() {
   document.querySelectorAll('[data-bld-tgt]').forEach(cb =>
     cb.addEventListener('change', () => {
       const sel = [...document.querySelectorAll('[data-bld-tgt]:checked')].map(c => c.dataset.bldTgt);
-      _editingProfile.targetOrgs = sel;
-      _editingProfile.targetOrg  = sel[0] || '';   // first target = schema reference (engine compat)
+      _editingProfile.targetOrgs = sel;           // touching the list = pinning
+      _editingProfile.targetOrg  = sel[0] || '';  // first target = schema reference (engine compat)
+      const pin = document.querySelector('input[name="dsBldTgtMode"][value="pin"]');
+      if (pin) pin.checked = true;
+    }));
+  // Follow ⇄ pin mode switch. Follow = targetOrgs null (resolved live from
+  // the ring); pin starts from the current effective set.
+  document.querySelectorAll('input[name="dsBldTgtMode"]').forEach(r =>
+    r.addEventListener('change', () => {
+      if (!r.checked) return;
+      if (r.value === 'follow') {
+        _editingProfile.targetOrgs = null;
+        _editingProfile.targetOrg = profileTargets(_editingProfile)[0] || '';
+      } else {
+        _editingProfile.targetOrgs = profileTargets(_editingProfile).slice();
+      }
+      renderBuilder();
     }));
   // Escape hatch from the 👑-locked source — reveals the plain org select
   // (the off-ring warning under it keeps the divergence visible).
@@ -449,11 +474,8 @@ function bldSchemaGaps(tree, describes) {
 async function _bldCheckAllTargets() {
   const p = _editingProfile;
   if (!p?.tree) return;
-  const ringSrc = (typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2) ? _ring.sourceUrl : '';
-  const targets = ringSrc
-    ? (_ring.orgs || []).filter(u => _orgKey(u) !== _orgKey(ringSrc))
-    : (p.targetOrg ? [p.targetOrg] : []);
-  if (!targets.length) { showToast('No targets known — configure the Sync Ring or a schema reference org', 'warning', 5000); return; }
+  const targets = profileTargets(p);
+  if (!targets.length) { showToast('No targets known — configure the Sync Ring or pin targets in the builder', 'warning', 5000); return; }
   const objs = [...collectTreeObjects(p.tree)];
   showModal(`
     <div class="ds-modal-header">🧪 Schema check — ${esc(p.name)}</div>
