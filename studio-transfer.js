@@ -1179,10 +1179,15 @@ window.openFanOut = async function (profileId, opts = {}) {
   const candidates = allMapOrgs().filter(o => _orgKey(o.url) !== _orgKey(srcUrl));
   if (!candidates.length) { showToast('No other orgs known — open them in Chrome tabs first', 'warning', 5000); return; }
 
+  // Default pre-check: explicit preselect → the deployment's declared
+  // target set → its single legacy target.
+  const defKeys = preKeys.length ? preKeys
+    : (p.targetOrgs?.length ? p.targetOrgs.map(u => _orgKey(u))
+      : (p.targetOrg ? [_orgKey(p.targetOrg)] : []));
   const rows = candidates.map(o => `
     <label class="ds-fanout-org">
       <input type="checkbox" class="ds-fanout-cb" value="${esc(o.url)}"
-             ${(preKeys.length ? preKeys.includes(_orgKey(o.url)) : _orgKey(o.url) === _orgKey(p.targetOrg || '')) ? 'checked' : ''}>
+             ${defKeys.includes(_orgKey(o.url)) ? 'checked' : ''}>
       <span>${esc(orgOptionLabel(o.url, o.label))}</span>
       ${prodBadge(o.url)}
     </label>`).join('');
