@@ -451,6 +451,38 @@ describe('scan accuracy (🎯 — user request 2026-07-17)', () => {
   });
 });
 
+describe('multi-org schema check (builder 🧪 Check all targets)', () => {
+  const bldSchemaGaps = extractFunction('studio-builder.js', 'bldSchemaGaps');
+  const tree = {
+    objectType: 'Account',
+    fieldMappings: { Name: 'Name', Rating: 'Rating__c', Skip__c: null },
+    children: [{ childSObject: 'Contact', field: 'AccountId', fieldMappings: { LastName: '' } }],
+  };
+
+  it('flags missing objects, missing mapped fields, and missing link fields', () => {
+    const gaps = bldSchemaGaps(tree, {
+      Account: { fields: [{ name: 'Name' }] },     // Rating__c missing; Skip__c excluded → ignored
+      Contact: null,                                // whole object missing
+    });
+    expect(gaps).toContainEqual({ object: 'Account', field: 'Rating__c' });
+    expect(gaps).toContainEqual({ object: 'Contact', missing: 'object' });
+    expect(gaps.find(g => g.field === 'Skip__c')).toBeUndefined();
+  });
+
+  it('empty mapping assumes same name; link fields are flagged as links; clean org → no gaps', () => {
+    const gaps = bldSchemaGaps(tree, {
+      Account: { fields: [{ name: 'Name' }, { name: 'Rating__c' }] },
+      Contact: { fields: [{ name: 'LastName' }] },  // AccountId link missing
+    });
+    expect(gaps).toEqual([{ object: 'Contact', field: 'AccountId', link: true }]);
+    const clean = bldSchemaGaps(tree, {
+      Account: { fields: [{ name: 'Name' }, { name: 'Rating__c' }] },
+      Contact: { fields: [{ name: 'LastName' }, { name: 'AccountId' }] },
+    });
+    expect(clean).toEqual([]);
+  });
+});
+
 describe('flow reference extraction (N4 blast radius)', () => {
   const sftkFlowRefs = extractFunction('dependency-map.js', 'sftkFlowRefs');
 

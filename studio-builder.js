@@ -63,7 +63,8 @@ function renderBuilder() {
     <div class="ds-view-header">
       <h2 class="ds-view-title">📦 Profile Builder</h2>
       <div class="ds-builder-hdr-btns">
-        ${p.tree ? `<button class="ds-btn" id="dsPreviewAllBtn" title="Count records for every node in parallel">👁 Preview All</button>` : ''}
+        ${p.tree ? `<button class="ds-btn" id="dsPreviewAllBtn" title="Count records for every node in parallel">👁 Preview All</button>
+        <button class="ds-btn" id="dsBldCheckTargets" title="Describe every ring target and verify the tree's objects + every mapped field exist there — the multi-org answer to 'which org will this break in?'">🧪 Check all targets</button>` : ''}
         <button class="ds-btn" id="dsBuilderCancel">Cancel</button>
         <button class="ds-btn" id="dsBuilderSave">💾 Save</button>
         ${p.tree ? `<button class="ds-btn ds-btn-primary" id="dsBuilderSaveRun"
@@ -114,9 +115,9 @@ function renderBuilder() {
         ${srcLocked ? '' : `<button class="ds-builder-orgs-arrow ds-builder-orgs-swap" id="dsProfileSwapOrgs"
           title="Swap source and target orgs — also inverts field mappings and clears picked records (they belong to the old source org)">⇄</button>`}
         <div class="ds-builder-org-col">
-          <label class="ds-lbl">Reference target <span class="ds-builder-org-hint">(drives field mapping &amp; previews — actual targets are picked at run time)</span></label>
+          <label class="ds-lbl">Schema reference <span class="ds-builder-org-hint">(field mapping &amp; previews are built against THIS org's schema — actual targets are picked at run time; 🧪 Check all targets validates the whole ring)</span></label>
           <select id="dsProfileTgtOrg" class="ds-input">
-            <option value="">— Select reference target —</option>${orgOpts(p.targetOrg)}
+            <option value="">— Select schema reference org —</option>${orgOpts(p.targetOrg)}
           </select>
         </div>
       </div>`;
@@ -171,6 +172,7 @@ function renderBuilder() {
   eid('dsBuilderSave')?.addEventListener('click', () => saveProfile());
   eid('dsSetRoot')?.addEventListener('click', () => setRootObject());
   eid('dsPreviewAllBtn')?.addEventListener('click', () => previewAll());
+  eid('dsBldCheckTargets')?.addEventListener('click', () => _bldCheckAllTargets());
 
   // Save & Run — commit the profile, then jump straight to the Run page.
   // Saves two clicks for the most common path (you just configured it; you
@@ -397,6 +399,78 @@ const SYSTEM_LOOKUP_OBJS = new Set([
   'User','Group','RecordType','Profile','Organization',
   'BusinessHours','UserRole','Territory2','Territory2Type',
 ]);
+
+// Compare the tree against ONE org's describes (the multi-org schema check).
+// describes: { objName: describeJson | null } — null = object missing there.
+// Returns gaps: [{ object, missing:'object' } | { object, field, link? }].
+// A null mapping means "excluded on purpose" and is never a gap; an
+// unmapped/empty mapping assumes the same name on the target. Pure.
+function bldSchemaGaps(tree, describes) {
+  const gaps = [];
+  const walk = node => {
+    if (!node) return;
+    const obj = node.objectType || node.childSObject;
+    if (!obj) return;
+    const d = describes[obj];
+    if (!d) { gaps.push({ object: obj, missing: 'object' }); return; }
+    const have = new Set((d.fields || []).map(f => f.name));
+    for (const [srcF, tgtF] of Object.entries(node.fieldMappings || {})) {
+      if (tgtF === null) continue;
+      const name = (tgtF === undefined || tgtF === '') ? srcF : tgtF;
+      if (!have.has(name)) gaps.push({ object: obj, field: name });
+    }
+    if (node.field && !have.has(node.field)) gaps.push({ object: obj, field: node.field, link: true });
+    (node.children || []).forEach(walk);
+  };
+  walk(tree);
+  return gaps;
+}
+
+// 🧪 Check the tree against EVERY ring target (fallback: the schema
+// reference org) — which org would this deployment break in, before any run.
+async function _bldCheckAllTargets() {
+  const p = _editingProfile;
+  if (!p?.tree) return;
+  const ringSrc = (typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2) ? _ring.sourceUrl : '';
+  const targets = ringSrc
+    ? (_ring.orgs || []).filter(u => _orgKey(u) !== _orgKey(ringSrc))
+    : (p.targetOrg ? [p.targetOrg] : []);
+  if (!targets.length) { showToast('No targets known — configure the Sync Ring or a schema reference org', 'warning', 5000); return; }
+  const objs = [...collectTreeObjects(p.tree)];
+  showModal(`
+    <div class="ds-modal-header">🧪 Schema check — ${esc(p.name)}</div>
+    <div class="ds-modal-body">
+      <p style="font-size:12px;margin:0 0 8px">Verifying the tree's ${objs.length} object(s) and every mapped field against each target's schema…</p>
+      <div id="dsBldChkRows">${window.sftkCatSm ? sftkCatSm('Describing targets…') : '…'}</div>
+    </div>
+    <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Close</button></div>`);
+  const rows = [];
+  for (const url of targets) {
+    const label = orgLabel(url);
+    const sess = await getOrgSession(url);
+    if (!sess) { rows.push(`<div class="ds-plan-org"><strong>${esc(label)}</strong> — ⏭ not open in a tab, skipped</div>`); continue; }
+    const describes = {};
+    for (const obj of objs) {
+      try {
+        const d = await describe(obj, sess.orgUrl, sess.sid);
+        describes[obj] = (d && !d.error && Array.isArray(d.fields)) ? d : null;
+      } catch (_) { describes[obj] = null; }
+    }
+    const gaps = bldSchemaGaps(p.tree, describes);
+    rows.push(`<div class="ds-plan-org"><strong>${esc(label)}</strong> ${prodBadge(url)}
+      ${gaps.length
+        ? `<div style="margin-top:4px">${gaps.map(g => g.missing === 'object'
+            ? `<div class="ds-plan-rrow">⚠ object <strong>${esc(g.object)}</strong> does not exist here — the whole node would fail</div>`
+            : `<div class="ds-plan-rrow">⚠ ${esc(g.object)}.<strong>${esc(g.field)}</strong> missing${g.link ? ' (the parent link field!)' : ''} — records would ${g.link ? 'fail' : 'drop this field'}</div>`).join('')}
+          </div>`
+        : `<span class="ds-ring-clean">✓ compatible — every object &amp; mapped field exists</span>`}
+    </div>`);
+    const el = eid('dsBldChkRows');
+    if (el) el.innerHTML = rows.join('');
+  }
+  const el = eid('dsBldChkRows');
+  if (el) el.innerHTML = rows.join('') || '<div class="ds-pk-note">Nothing checked.</div>';
+}
 
 // Collect all objectType/childSObject values in a tree
 function collectTreeObjects(node, set = new Set()) {
