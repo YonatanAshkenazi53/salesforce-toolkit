@@ -226,14 +226,32 @@ async function openFieldMappingModal(pathStr) {
     if (tgts.length < 2) return;
     xtLoading = true;
     const sets = [];
+    const status = [];   // honest per-target check outcome — shown in the note
     for (const url of tgts) {
       const org = allOrgs().find(o => _orgKey(o.url) === _orgKey(url));
-      if (!org) continue;
+      if (!org) { status.push({ label: orgLabel(url), ok: 'closed' }); continue; }
       const fields = await loadFields(org.url, org.sid);
-      if (fields) sets.push({ label: orgLabel(url), key: _orgKey(url), names: new Set(fields.map(f => f.name)) });
+      if (fields) {
+        sets.push({ label: orgLabel(url), key: _orgKey(url), names: new Set(fields.map(f => f.name)) });
+        status.push({ label: orgLabel(url), ok: 'ok' });
+      } else status.push({ label: orgLabel(url), ok: 'failed' });
     }
     xtSets = sets.length >= 2 ? sets : null;
     xtLoading = false;
+    // Say EXACTLY which targets were verified — a closed target silently
+    // skipping the check is how "multi-target" quietly becomes one target
+    // (user report 2026-07-22).
+    const note = eid('dsFmXtStatus');
+    if (note) {
+      const unchecked = status.filter(s => s.ok !== 'ok');
+      note.innerHTML = `One mapping, <strong>all ${tgts.length} targets</strong> — cross-checked: `
+        + status.map(s => s.ok === 'ok'
+          ? `<strong>✓ ${esc(s.label)}</strong>`
+          : `<strong style="color:#b91c1c">✗ ${esc(s.label)}</strong> (${s.ok === 'closed' ? 'not open in a tab — NOT checked' : 'schema load failed'})`).join(' · ')
+        + (unchecked.length
+          ? `<br>⚠ Open the unchecked org(s) in Chrome tabs and reopen this modal to validate against them. Until then, only the checked schemas are verified.`
+          : ` — every mapped name below is verified against every target (⚠ badges mark the gaps; ⚙ sets per-target exceptions).`);
+    }
     xtAnnotate();
   }
   // Effective target-side name for one source field in one org: per-target
@@ -364,7 +382,7 @@ async function openFieldMappingModal(pathStr) {
         </div>
         ${(() => {
           const tgts = (typeof profileTargets === 'function') ? profileTargets(_editingProfile) : [];
-          return tgts.length > 1 ? `<div class="ds-fm-multi-note">One mapping, <strong>all ${tgts.length} targets</strong> (${esc(tgts.map(u => orgLabel(u)).join(' · '))}). The selector above only picks which target's schema to preview — ⚠ badges below flag names missing in ANY connected target.</div>` : '';
+          return tgts.length > 1 ? `<div class="ds-fm-multi-note" id="dsFmXtStatus">One mapping, <strong>all ${tgts.length} targets</strong>. Loading every target's schema for the cross-check…</div>` : '';
         })()}
         <div class="ds-fm-toolbar">
           <input id="dsFmSearch" class="ds-input ds-input-sm" placeholder="Search fields…" value="${esc(filter)}" autocomplete="off">
