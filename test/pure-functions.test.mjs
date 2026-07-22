@@ -451,6 +451,26 @@ describe('scan accuracy (🎯 — user request 2026-07-17)', () => {
   });
 });
 
+describe('per-target field-mapping overrides (sftkResolveMappings)', () => {
+  const sftkResolveMappings = extractFunction('studio-core.js', 'sftkResolveMappings');
+  const base = { Rating: 'Rating__c', Name: 'Name', Phone: null };
+
+  it('override wins; null excludes; absent falls through to base; base never mutated', () => {
+    const overrides = { orgA: { Rating: 'Acct_Rating__c', Name: null } };
+    expect(sftkResolveMappings(base, overrides, 'orgA'))
+      .toEqual({ Rating: 'Acct_Rating__c', Name: null, Phone: null });
+    expect(sftkResolveMappings(base, overrides, 'orgB')).toEqual(base);
+    expect(sftkResolveMappings(base, null, 'orgA')).toEqual(base);
+    expect(base.Rating).toBe('Rating__c');   // input untouched
+  });
+
+  it('resolution is idempotent (chokepoints may run twice)', () => {
+    const overrides = { orgA: { Rating: 'Acct_Rating__c' } };
+    const once = sftkResolveMappings(base, overrides, 'orgA');
+    expect(sftkResolveMappings(once, overrides, 'orgA')).toEqual(once);
+  });
+});
+
 describe('multi-org schema check (builder 🧪 Check all targets)', () => {
   const bldSchemaGaps = extractFunction('studio-builder.js', 'bldSchemaGaps');
   const tree = {

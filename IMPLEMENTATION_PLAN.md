@@ -367,6 +367,18 @@ history) already exists there.
 - [ ] **M4. Later** — opt-in scheduling (needs re-adding the alarms permission — weigh vs
   minimal-permissions posture); reverse-pull polish. (Bulk API graduated to Phase B below,
   user request 2026-07-18.)
+- [x] **T5. Per-target field-mapping overrides** (user 2026-07-22: "i think we need per
+  target mapping") — `node.fieldMappingOverrides = { orgKey: { srcField: tgtName|null } }`,
+  a SPARSE overlay for targets whose schema genuinely differs (renamed fields; null =
+  exclude for that org only). Resolution at launch, engine untouched: pure
+  `sftkResolveMappings` + `treeForTarget` (studio-core) applied at runDiffScan /
+  scanReconcileChild chokepoints (covers card refresh, ring, tree diff, sync-plan scans)
+  and at the three run launch sites (buildTransferProfile, fan-out per leg, sync-plan
+  push clone). UI: ⚙ per row in Field Mapping → inline panel per target (input, blank =
+  base; "skip here"); 🎯 N chip; the ⚠ missing-in-target badge is override-aware and
+  clears when an exception satisfies that org's schema. Unit tests (override wins / null
+  excludes / idempotent / base unmutated); harness 9/9 with a divergent-schema target
+  incl. persistence through Apply + reopen.
 
 ## Phase B — Bulk API 2.0 for large volumes (user request 2026-07-18)
 

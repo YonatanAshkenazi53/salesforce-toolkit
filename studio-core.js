@@ -1156,6 +1156,32 @@ function profileTargets(p) {
   }
   return p.targetOrg ? [p.targetOrg] : [];
 }
+// ── Per-target field-mapping overrides (user 2026-07-20) ──────────────────
+// node.fieldMappingOverrides = { [orgKey]: { srcField: tgtName|null } } — a
+// SPARSE overlay on the base node.fieldMappings for targets whose schema
+// genuinely differs (renamed fields). null = exclude for that org only.
+// Resolution happens at scan/run launch (treeForTarget) — the engine and
+// every downstream consumer keep seeing one plain fieldMappings map.
+function sftkResolveMappings(base, overrides, orgKey) {
+  const out = { ...(base || {}) };
+  const ov = (overrides || {})[orgKey];
+  if (ov) for (const k of Object.keys(ov)) out[k] = ov[k];
+  return out;
+}
+function treeForTarget(tree, tgtUrl) {
+  if (!tree || !tgtUrl) return tree;
+  const key = _orgKey(tgtUrl);
+  const hasOv = n => n && n.fieldMappingOverrides && n.fieldMappingOverrides[key];
+  const anyOv = (function scan(n) { return !!n && (hasOv(n) || (n.children || []).some(scan)); })(tree);
+  if (!anyOv) return tree;   // fast path — nothing to resolve
+  const walk = n => ({
+    ...n,
+    fieldMappings: sftkResolveMappings(n.fieldMappings, n.fieldMappingOverrides, key),
+    children: (n.children || []).map(walk),
+  });
+  return walk(tree);
+}
+
 function syncRingFollowers() {
   let changed = false;
   for (const p of (_profiles || [])) {
