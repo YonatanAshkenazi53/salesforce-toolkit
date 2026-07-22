@@ -491,7 +491,7 @@ async function _ringOpenPlan(profileId) {
         if (j.pushIds.length) {
           const ids = j.pushIds;
           const clone = { ...p, sourceOrg: _ring.sourceUrl, targetOrg: j.pl.tgt, ephemeral: true,
-            tree: { ...p.tree, recordIds: ids } };
+            tree: { ...((typeof treeForTarget === 'function') ? treeForTarget(p.tree, j.pl.tgt) : p.tree), recordIds: ids } };
           const result = await sendBg({ type: 'SF_EXECUTE_PROFILE_TRANSFER', profile: clone,
             srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid, tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid });
           if (result?.error) throw new Error(result.error);

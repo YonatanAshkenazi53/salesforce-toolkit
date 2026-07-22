@@ -252,6 +252,14 @@ async function runDiffScan(profile, node = null, scope = null) {
   if (!profile)                  return { error: 'no profile' };
   if (!profile.sourceOrg)        return { error: 'profile has no source org set' };
   if (!profile.targetOrg)        return { error: 'profile has no target org set' };
+  // Per-target mapping overrides resolve HERE — one chokepoint for every
+  // scan path (card refresh, ring, tree diff, sync plan). Shallow profile
+  // shadow: lastScan stays the caller's object, only the tree is the merged
+  // view. Resolution is idempotent, so callers that pre-merged are fine.
+  if (typeof treeForTarget === 'function' && profile.tree && !node) {
+    const merged = treeForTarget(profile.tree, profile.targetOrg);
+    if (merged !== profile.tree) profile = { ...profile, tree: merged };
+  }
   node = node || profile.tree;
   const objType = node?.objectType || node?.childSObject;
   if (!objType)                  return { error: 'profile has no root object' };
@@ -814,6 +822,12 @@ async function runDiffScan(profile, node = null, scope = null) {
 // stamped with the root scan's runAt so staleness is detectable (root rescan
 // → child scans need re-running).
 async function scanReconcileChild(profile, pathKey) {
+  // Per-target overrides — same shadow as runDiffScan (child nodes read
+  // their fieldMappings for link scoping + compare planning).
+  if (typeof treeForTarget === 'function' && profile?.tree) {
+    const merged = treeForTarget(profile.tree, profile.targetOrg);
+    if (merged !== profile.tree) profile = { ...profile, tree: merged };
+  }
   const node = getNodeByPath(profile.tree, pathKey);
   if (!node)        return { error: 'child node not found in the profile tree' };
   if (!node.field)  return { error: 'child node has no parent link field' };

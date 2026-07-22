@@ -402,6 +402,10 @@ function effectiveFilter(node, pathKey) {
 // any run-time overrides before sending to background.js or using in dry run.
 function buildTransferProfile() {
   const clone = JSON.parse(JSON.stringify(_transferProfile));
+  // Per-target mapping overrides resolve HERE — the engine sees one plain map.
+  if (typeof treeForTarget === 'function' && clone.tree) {
+    clone.tree = treeForTarget(clone.tree, _transferTgt?.orgUrl || clone.targetOrg);
+  }
   function patch(node, path) {
     const pathKey = path.join('.');
     if (pathKey in _transferNodeFilters) {
@@ -1250,7 +1254,8 @@ async function runFanOut(p, srcUrl, targets) {
     try {
       const result = await sendBg({
         type: 'SF_EXECUTE_PROFILE_TRANSFER',
-        profile: p,
+        // Per-target mapping overrides resolve per fan-out leg.
+        profile: (typeof treeForTarget === 'function' && p.tree) ? { ...p, tree: treeForTarget(p.tree, tgtUrl) } : p,
         srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
         tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid,
       });

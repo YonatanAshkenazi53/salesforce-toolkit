@@ -9,6 +9,9 @@ async function openFieldMappingModal(pathStr) {
 
   if (!node.fieldMappings) node.fieldMappings = {};
   const mappings = node.fieldMappings; // live reference — { srcApiName: tgtApiName }
+  // Per-target exceptions — sparse overlay { orgKey: { srcField: tgtName|null } }.
+  // Edited live like mappings; persisted on Apply (dropped when empty).
+  const overrides = node.fieldMappingOverrides || {};
   // Id can never transfer (Salesforce assigns it on insert) — purge any
   // legacy mapping entry so it can't pollute SOQL/compareFields, and the
   // row filter below keeps it out of the UI even when the profile carries
@@ -185,6 +188,8 @@ async function openFieldMappingModal(pathStr) {
           ${!isSkip ? tgtTypeBadge : ''}
           ${isDiff ? `<button class="ds-fm-reset-btn" data-reset="${esc(f.name)}" title="Reset to source name">↺</button>` : ''}
         </div>
+        ${(typeof profileTargets === 'function' && profileTargets(_editingProfile).length > 1)
+          ? `<button class="ds-fm-ov-btn" data-ov="${esc(f.name)}" title="Per-target exceptions — map this field to a DIFFERENT name (or skip it) in specific target orgs">⚙</button>` : ''}
         <button class="ds-fm-skip-btn" data-skip="${esc(f.name)}"
                 title="${isSkip ? 'Re-include this field' : 'Exclude field from transfer'}">${isSkip ? '↩' : '✕'}</button>
       </div>`;
@@ -225,29 +230,100 @@ async function openFieldMappingModal(pathStr) {
       const org = allOrgs().find(o => _orgKey(o.url) === _orgKey(url));
       if (!org) continue;
       const fields = await loadFields(org.url, org.sid);
-      if (fields) sets.push({ label: orgLabel(url), names: new Set(fields.map(f => f.name)) });
+      if (fields) sets.push({ label: orgLabel(url), key: _orgKey(url), names: new Set(fields.map(f => f.name)) });
     }
     xtSets = sets.length >= 2 ? sets : null;
     xtLoading = false;
     xtAnnotate();
   }
+  // Effective target-side name for one source field in one org: per-target
+  // override (may be null = excluded there) → base mapping → same name.
+  function effFor(src, orgKey) {
+    const ov = overrides[orgKey];
+    if (ov && Object.prototype.hasOwnProperty.call(ov, src)) return ov[src];
+    if (mappings[src] === null) return null;
+    return (mappings[src] && mappings[src].trim()) || src;
+  }
+  function ovCount(src) {
+    return Object.keys(overrides).filter(k =>
+      overrides[k] && Object.prototype.hasOwnProperty.call(overrides[k], src)).length;
+  }
   function xtAnnotate() {
-    if (!xtSets) return;
     document.querySelectorAll('#dsFmList .ds-fm-tgt-input').forEach(inp => {
       const src = inp.dataset.src;
-      if (!src || mappings[src] === null) return;
-      const eff = (mappings[src] && mappings[src].trim()) || src;
-      const missing = xtSets.filter(s => !s.names.has(eff)).map(s => s.label);
+      if (!src) return;
       const wrap = inp.closest('.ds-fm-tgt-wrap');
       if (!wrap) return;
       wrap.querySelector('.ds-fm-xt-badge')?.remove();
+      wrap.querySelector('.ds-fm-ov-chip')?.remove();
+      const n = ovCount(src);
+      if (n) {
+        const c = document.createElement('span');
+        c.className = 'ds-fm-type-badge ds-fm-ov-chip';
+        c.title = `${n} per-target exception(s) set for this field — click ⚙ to edit.`;
+        c.textContent = `🎯 ${n}`;
+        wrap.appendChild(c);
+      }
+      if (!xtSets || mappings[src] === null) return;
+      const missing = xtSets.filter(s => {
+        const eff = effFor(src, s.key);
+        return eff !== null && !s.names.has(eff);
+      }).map(s => s.label);
       if (missing.length) {
         const b = document.createElement('span');
         b.className = 'ds-fm-type-badge ds-fm-type-mismatch ds-fm-xt-badge';
-        b.title = `⚠ ${eff} does not exist on ${objType} in: ${missing.join(', ')} — runs into those orgs will skip this field. Remember: this ONE mapping applies to ALL targets.`;
+        b.title = `⚠ the mapped name does not exist on ${objType} in: ${missing.join(', ')} — runs into those orgs will skip this field. Set a per-target exception with ⚙ if the field has a DIFFERENT name there.`;
         b.textContent = `⚠ missing in ${missing.length} target${missing.length !== 1 ? 's' : ''}`;
         wrap.appendChild(b);
       }
+    });
+  }
+  // ⚙ per-target exception editor — one inline panel at a time.
+  function openOvPanel(src, rowEl) {
+    document.querySelector('.ds-fm-ov-panel')?.remove();
+    const tgts = (typeof profileTargets === 'function') ? profileTargets(_editingProfile) : [];
+    if (!tgts.length) { showToast('No targets declared for this deployment', 'warning'); return; }
+    const base = (mappings[src] && mappings[src].trim()) || src;
+    const panel = document.createElement('div');
+    panel.className = 'ds-fm-ov-panel';
+    panel.innerHTML = `
+      <div class="ds-fm-ov-hdr">🎯 Per-target exceptions for <strong>${esc(src)}</strong>
+        <span class="ds-fm-ov-hint">blank = use the base mapping (${esc(base)})</span></div>
+      ${tgts.map(u => {
+        const k = _orgKey(u);
+        const has = overrides[k] && Object.prototype.hasOwnProperty.call(overrides[k], src);
+        const v = has ? overrides[k][src] : undefined;
+        return `<div class="ds-fm-ov-row" data-ov-org="${esc(k)}">
+          <span class="ds-fm-ov-org">${esc(orgLabel(u))}</span>
+          <input class="ds-input ds-input-sm ds-fm-ov-input" type="text"
+                 value="${esc(has && v !== null ? v : '')}" placeholder="${esc(base)}"
+                 ${has && v === null ? 'disabled' : ''} autocomplete="off">
+          <label class="ds-fm-ov-skip"><input type="checkbox" class="ds-fm-ov-skipcb" ${has && v === null ? 'checked' : ''}> skip here</label>
+        </div>`;
+      }).join('')}
+      <div class="ds-fm-ov-actions">
+        <button class="ds-btn ds-btn-xs ds-btn-primary ds-fm-ov-done">✓ Done</button>
+        <button class="ds-btn ds-btn-xs ds-fm-ov-cancel">Cancel</button>
+      </div>`;
+    rowEl.after(panel);
+    panel.querySelectorAll('.ds-fm-ov-skipcb').forEach(cb =>
+      cb.addEventListener('change', () => {
+        const inp = cb.closest('.ds-fm-ov-row').querySelector('.ds-fm-ov-input');
+        inp.disabled = cb.checked;
+      }));
+    panel.querySelector('.ds-fm-ov-cancel').addEventListener('click', () => panel.remove());
+    panel.querySelector('.ds-fm-ov-done').addEventListener('click', () => {
+      panel.querySelectorAll('.ds-fm-ov-row').forEach(row => {
+        const k = row.dataset.ovOrg;
+        const skip = row.querySelector('.ds-fm-ov-skipcb').checked;
+        const val = row.querySelector('.ds-fm-ov-input').value.trim();
+        if (skip) { (overrides[k] = overrides[k] || {})[src] = null; }
+        else if (val && val !== base) { (overrides[k] = overrides[k] || {})[src] = val; }
+        else if (overrides[k]) { delete overrides[k][src]; if (!Object.keys(overrides[k]).length) delete overrides[k]; }
+      });
+      panel.remove();
+      xtAnnotate();
+      updateCount();
     });
   }
 
@@ -399,6 +475,11 @@ async function openFieldMappingModal(pathStr) {
 
     // Multi-target badges track every mapping edit (bubbling from row inputs).
     eid('dsFmList')?.addEventListener('input', () => setTimeout(xtAnnotate, 60));
+    // ⚙ per-target exception editor (delegated — rows re-render often).
+    eid('dsFmList')?.addEventListener('click', e => {
+      const b = e.target.closest('.ds-fm-ov-btn');
+      if (b) openOvPanel(b.dataset.ov, b.closest('.ds-fm-row'));
+    });
 
     eid('dsFmAutoMap')?.addEventListener('click', () => {
       const before = Object.keys(mappings).length;
@@ -444,6 +525,9 @@ async function openFieldMappingModal(pathStr) {
         else    mappings[k] = v;  // normalize whitespace
       });
       node.fieldMappings    = mappings;
+      // Per-target exceptions — persist only when non-empty.
+      if (Object.keys(overrides).length) node.fieldMappingOverrides = overrides;
+      else delete node.fieldMappingOverrides;
       // Persist the org pair so the next modal open pre-loads both fields lists
       node.fieldMappingOrgs = { src: srcUrl, tgt: tgtUrl };
 
