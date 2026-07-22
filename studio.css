@@ -4837,3 +4837,14 @@ html, body {
 .ds-fm-ov-org { min-width: 160px; }
 .ds-fm-ov-skip { display: flex; align-items: center; gap: 4px; font-size: 11.5px; white-space: nowrap; }
 .ds-fm-ov-actions { display: flex; gap: 6px; margin-top: 6px; }
+
+/* Org pick lists (.ds-pk-orgchk*) — Picklist Manager "Compare against",
+   Readiness targets, builder Targets. Labels were UNSTYLED inline text and
+   ran together (user 2026-07-22: "very hard to read. lines are not
+   separated") — now a responsive grid of bordered chip rows. */
+.ds-pk-orgchk-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 5px 12px; margin: 6px 0; }
+.ds-pk-orgchk { display: flex; align-items: center; gap: 7px; font-size: 12.5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; min-width: 0; }
+.ds-pk-orgchk:hover { background: var(--hover, rgba(128,128,128,.08)); }
+.ds-pk-orgchk input { flex-shrink: 0; }
+/* Builder follow/pin mode radios sit OUTSIDE the list — full-width rows */
+.ds-builder-org-col > .ds-pk-orgchk { border: none; padding: 3px 0; margin: 2px 0; display: flex; }
