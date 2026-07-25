@@ -424,7 +424,17 @@ simpler for small batches. All bulk endpoints are same-host (`/services/data/vXX
 so the CSP connect-src allowlist and the read-only-org worker chokepoint (non-GET block)
 already cover them — verify, don't assume, in B4.
 
-- [ ] **B1. Bulk ingest for writes** — SF_EXECUTE_PROFILE_TRANSFER insert/upsert paths +
+- [x] **B1. Bulk ingest for writes** (2026-07-22) — Bulk API 2.0 ingest in the worker:
+  create job → PUT CSV batch → UploadComplete → poll (1s→5s backoff, progress events
+  through the existing run Port) → successful/failedResults. Switches on at
+  `profile.bulkThreshold` (default 2000 records per node); below it Collections stays.
+  Aborts the job on any error so nothing is left Open in Setup. CSV codec + result
+  CORRELATION are pure and unit-tested — Salesforce returns success/failure in SEPARATE
+  CSVs with no row index, so results are matched back to upload order by column tuple
+  (duplicates in order, unmatched → explicit BULK_NO_RESULT failure). This is what keeps
+  idMap/child-linking correct at bulk scale. Absent keys emit EMPTY, never #N/A (which
+  would null real values on upsert). summary[obj].viaBulk marks the run.
+  ~~original spec~~ — SF_EXECUTE_PROFILE_TRANSFER insert/upsert paths +
   reconcile overwrite/delete switch to Bulk API 2.0 ingest jobs (create job → upload CSV →
   close → poll → fetch successful/failed record results) when ids.length > threshold.
   Map per-record failures back into the existing summary/history shape (created/updated/
@@ -437,7 +447,13 @@ already cover them — verify, don't assume, in B4.
   live-progress pattern (Phase 3) to show job state (Open → InProgress → JobComplete,
   processed/failed counts) in the run panel, Sync Plan rows, and fan-out log; Cancel
   aborts the job via PATCH state=Aborted; History entries note `via Bulk API`.
-- [ ] **B4. Guard parity + tests** — verify the per-org read-only lock blocks job
+- [x] **B4. Guard parity + tests** (2026-07-22) — bulk rides the SAME sfFetchWithProxy
+  chokepoint, so the per-org read-only lock (non-GET → assertOrgWritable) covers job
+  creation, CSV upload and state PATCHes; caller headers now merge over the JSON defaults
+  so the CSV upload keeps its Content-Type without bypassing the guard. 5 unit tests
+  (escaping incl. commas/quotes/newlines, union columns, result-CSV parsing, correlation,
+  duplicate/orphan rows). REMAINING: a stubbed end-to-end harness walk of a bulk run.
+  ~~original spec~~ — verify the per-org read-only lock blocks job
   creation/upload at the worker chokepoint (they are non-GET — confirm with a harness
   probe); typed prod confirms unchanged; unit tests for the CSV build/parse pure helpers
   (escaping commas/quotes/newlines in org data!) + a stubbed end-to-end harness walk.
@@ -519,6 +535,16 @@ already cover them — verify, don't assume, in B4.
   storage/activeTab + salesforce hosts), data-use = collects nothing / local only, host a
   privacy policy URL (PRIVACY.md via GitHub) → visibility (recommend UNLISTED first) →
   submit for review. Version bump in manifest.json per re-upload.
+- [ ] **T9. Picklist Manager — whole-object sync, not one field at a time** (user
+  2026-07-22) — today the matrix compares ONE field across orgs. Add an object-level
+  sweep: every picklist field on the object × every selected org, with active RECORD
+  TYPES folded in (which values each RT exposes), one verdict per field (in sync /
+  values differ / RT assignment differs / field missing in org), and a bulk plan that
+  syncs them all from the source of truth in one pass (reuse P5 _pkApplySyncCore +
+  _pkApplyRtCore per field). Must carry the same guards as the single-field flow: usage
+  counts + data fix for values that lose their home (T6), and flow-usage check with an
+  automation fix before any deactivation (T8). Global + standard value sets are shared
+  objects — sync them ONCE, not per referencing field, and say which fields inherit.
 
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.

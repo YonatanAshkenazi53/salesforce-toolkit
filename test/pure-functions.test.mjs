@@ -451,6 +451,60 @@ describe('scan accuracy (🎯 — user request 2026-07-17)', () => {
   });
 });
 
+describe('Bulk API 2.0 codec + correlation (Phase B, background.js)', () => {
+  const { sftkCsvField, sftkRecordsToCsv, sftkParseCsv } =
+    extractFunctions('background.js', ['sftkCsvField', 'sftkRecordsToCsv', 'sftkParseCsv']);
+  const sftkCorrelateBulkResults = extractFunction('background.js', 'sftkCorrelateBulkResults');
+
+  it('CSV escaping: quotes, commas, newlines; null → #N/A (the Bulk null token)', () => {
+    expect(sftkCsvField('plain')).toBe('plain');
+    expect(sftkCsvField('a,b')).toBe('"a,b"');
+    expect(sftkCsvField('say "hi"')).toBe('"say ""hi"""');
+    expect(sftkCsvField('line1\nline2')).toBe('"line1\nline2"');
+    expect(sftkCsvField(null)).toBe('#N/A');
+    expect(sftkCsvField(undefined)).toBe('#N/A');
+    expect(sftkCsvField(0)).toBe('0');
+  });
+
+  it('records → CSV uses the union of keys and fills gaps', () => {
+    const csv = sftkRecordsToCsv([{ Name: 'Acme, Inc', Phone: '555' }, { Name: 'B' }]);
+    expect(csv).toBe('Name,Phone\n"Acme, Inc",555\nB,\n');
+    expect(sftkRecordsToCsv([], ['Name'])).toBe('Name\n');
+  });
+
+  it('parses result CSVs with embedded commas, quotes and newlines', () => {
+    const rows = sftkParseCsv('sf__Id,sf__Error,Name\n,"Required fields are missing: [X], fix it","A ""quoted"" name"\n001,,"multi\nline"\n');
+    expect(rows.length).toBe(2);
+    expect(rows[0]['sf__Error']).toBe('Required fields are missing: [X], fix it');
+    expect(rows[0]['Name']).toBe('A "quoted" name');
+    expect(rows[1]['sf__Id']).toBe('001');
+    expect(rows[1]['Name']).toBe('multi\nline');
+    expect(sftkParseCsv('')).toEqual([]);
+    expect(sftkParseCsv('a,b\n')).toEqual([]);   // header only
+  });
+
+  it('correlates split success/failure CSVs back to upload order (child linking depends on it)', () => {
+    const upload = [{ Name: 'A' }, { Name: 'B' }, { Name: 'C' }];
+    const res = sftkCorrelateBulkResults(upload, ['Name'],
+      [{ sf__Id: '003', Name: 'C' }, { sf__Id: '001', Name: 'A' }],   // out of order vs upload
+      [{ sf__Error: 'boom', Name: 'B' }]);
+    expect(res.map(r => r.id)).toEqual(['001', null, '003']);
+    expect(res.map(r => r.success)).toEqual([true, false, true]);
+    expect(res[1].errors[0].message).toBe('boom');
+  });
+
+  it('duplicate rows are handed out in order; a missing result never silently succeeds', () => {
+    const dup = [{ Name: 'X' }, { Name: 'X' }];
+    const res = sftkCorrelateBulkResults(dup, ['Name'],
+      [{ sf__Id: '001', Name: 'X' }], [{ sf__Error: 'dup rule', Name: 'X' }]);
+    expect(res[0]).toMatchObject({ id: '001', success: true });
+    expect(res[1].success).toBe(false);
+    const orphan = sftkCorrelateBulkResults([{ Name: 'Z' }], ['Name'], [], []);
+    expect(orphan[0].success).toBe(false);
+    expect(orphan[0].errors[0].statusCode).toBe('BULK_NO_RESULT');
+  });
+});
+
 describe('flow XML backup (N1 — sftk-flow-xml.js + zip round-trip)', () => {
   const { sftkFlowToXml, sftkFlowPackageXml } =
     extractFunctions('sftk-flow-xml.js', ['sftkFlowToXml', 'sftkFlowPackageXml', 'sftkXmlNode', 'sftkXmlEscape']);
