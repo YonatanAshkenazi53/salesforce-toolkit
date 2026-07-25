@@ -553,6 +553,29 @@ already cover them — verify, don't assume, in B4.
   (Studio nav + popup home) and from the store listing's "What's new" text — same content,
   written once. Keep entries user-facing ("Sync plan now lists the records"), not commit
   subjects.
+- [x] **T11a. Exact per-org field TYPES in the drift compare table** (user 2026-07-22:
+  "for every field we show there we need to say which type of field it is exactly… number
+  0.2 in one org and something else in the target") — DONE: fetchDriftRowDetail now
+  returns both orgs' describes; every value cell carries its own org's exact type
+  (`Number(18,2)`, `Text(255)`, `Lookup(Account)`, `Picklist`…) via pure
+  `sftkFieldTypeLabel`, and a `⚠ type differs` chip fires when the two orgs define the
+  field differently — even if the current values happen to match.
+- [ ] **T11b. Failed-run errors must show the DATA, not just the message** (user
+  2026-07-22, from a real failure: "There's a problem with this state… : Billing
+  State/Province ×6") — for each failed record, show WHAT WAS PUSHED: the offending
+  field(s) named in the error with the source value that was sent, the target's current
+  value, and both orgs' field definitions (type + picklist/State-Country configuration).
+  Salesforce names the field in the message — parse it, map it back to the payload the
+  engine actually sent (the engine already keeps payloads + failedSourceIds), and render
+  it inline under the error with a link to the record on both sides. This turns
+  "10 failed" into "these 6 records tried to write BillingState='TX' into an org whose
+  State/Country picklists are ON — valid label is 'Texas'".
+- [ ] **T11c. Org-configuration differences as first-class findings** — the same failure
+  proves an ORG SETTING differs (State and Country picklists enabled in the target, off
+  in the source). Detect the setting-level difference (State/Country picklists,
+  person accounts, multi-currency, advanced currency management) and report it in Deploy
+  Readiness + as the explanation on these errors, instead of leaving the user to infer it
+  from a rejected value.
 
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.

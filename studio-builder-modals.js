@@ -1365,7 +1365,7 @@ async function openRecordPickerModal(pathStr) {
           return;
         }
         expand.innerHTML = renderDriftCompareTable(
-          result.srcRec, result.tgtRec, srcFields, tgtFields, result.lookupMap || {});
+          result.srcRec, result.tgtRec, srcFields, tgtFields, result.lookupMap || {}, result.types || null);
         expand.dataset.loaded = '1';
       });
     });

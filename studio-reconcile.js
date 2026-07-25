@@ -711,7 +711,7 @@ async function renderReconcile() {
           : '';
         expand.innerHTML = `${fieldsNote}<div class="ds-drift-compare-err">⚠ ${esc(res.error)}</div>`;
       } else {
-        expand.innerHTML = renderDriftCompareTable(res.srcRec, res.tgtRec, srcFields, tgtFields, res.lookupMap || {});
+        expand.innerHTML = renderDriftCompareTable(res.srcRec, res.tgtRec, srcFields, tgtFields, res.lookupMap || {}, res.types || null);
       }
       expand.dataset.loaded = '1';
     });

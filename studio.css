@@ -4848,3 +4848,8 @@ html, body {
 .ds-pk-orgchk input { flex-shrink: 0; }
 /* Builder follow/pin mode radios sit OUTSIDE the list — full-width rows */
 .ds-builder-org-col > .ds-pk-orgchk { border: none; padding: 3px 0; margin: 2px 0; display: flex; }
+
+/* Exact per-org field types in the drift compare table */
+.ds-drift-type { display: block; font-size: 9.5px; color: var(--subtext); font-variant-numeric: tabular-nums; }
+.ds-drift-type-bad { color: #b91c1c; font-weight: 600; }
+.ds-drift-typediff { background: #fee2e2; color: #991b1b; }
