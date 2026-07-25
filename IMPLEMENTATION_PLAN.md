@@ -402,139 +402,21 @@ history) already exists there.
   (which is where the user actually sees "TX vs Texas"). Detection needs the `*Code`
   sibling in the compare field set — when it is absent, fall back to reporting the
   difference (never guess).
-- [ ] **T8. Deactivating a picklist value → check FLOWS, not just data** (user 2026-07-22)
-  — a data fix today remaps the RECORDS holding a value; automation that branches on the
-  literal value keeps referencing it and silently stops matching. Before deactivating or
-  deleting a value, scan the org's flows for the literal and, when hits exist, offer the
-  automation fix beside the data fix: list the flows (name · status · mention count),
-  link each to Flow Builder, and show the 🧨 blast radius. REUSE, don't rebuild:
-  dependency-map.js already downloads every flow's metadata and indexes it —
-  `searchReferences(term)` (N4b) does exactly this literal lookup, and
-  `pkValueMentions(text, value)` already exists in studio-picklists.js. Wire the deactivate
-  /delete wizard (single-org P3 + the P2 bulk wizard) to it; block nothing, but never let
-  a value die silently while a flow still names it. Validation rules + Apex are the same
-  shape of problem — note them as out of scope for v1 (Tooling queries, no metadata index).
-
-## Phase B — Bulk API 2.0 for large volumes (user request 2026-07-18)
-
-Rule: Bulk is a TRANSPARENT engine-level switch, not a new UI. Same buttons, same guards;
-the engine picks Bulk when an operation crosses the record threshold (default 2,000 —
-setting under ⚙). Below the threshold nothing changes: REST collections stay faster and
-simpler for small batches. All bulk endpoints are same-host (`/services/data/vXX.0/jobs/*`)
-so the CSP connect-src allowlist and the read-only-org worker chokepoint (non-GET block)
-already cover them — verify, don't assume, in B4.
-
-- [x] **B1. Bulk ingest for writes** (2026-07-22) — Bulk API 2.0 ingest in the worker:
-  create job → PUT CSV batch → UploadComplete → poll (1s→5s backoff, progress events
-  through the existing run Port) → successful/failedResults. Switches on at
-  `profile.bulkThreshold` (default 2000 records per node); below it Collections stays.
-  Aborts the job on any error so nothing is left Open in Setup. CSV codec + result
-  CORRELATION are pure and unit-tested — Salesforce returns success/failure in SEPARATE
-  CSVs with no row index, so results are matched back to upload order by column tuple
-  (duplicates in order, unmatched → explicit BULK_NO_RESULT failure). This is what keeps
-  idMap/child-linking correct at bulk scale. Absent keys emit EMPTY, never #N/A (which
-  would null real values on upsert). summary[obj].viaBulk marks the run.
-  ~~original spec~~ — SF_EXECUTE_PROFILE_TRANSFER insert/upsert paths +
-  reconcile overwrite/delete switch to Bulk API 2.0 ingest jobs (create job → upload CSV →
-  close → poll → fetch successful/failed record results) when ids.length > threshold.
-  Map per-record failures back into the existing summary/history shape (created/updated/
-  failed + friendly errors) so History, fan-out tallies, and the Sync Plan status lines
-  render unchanged. Preserve idPairs learning (M3c) from the successfulResults CSV.
-- [ ] **B2. Bulk query for reads** — runDiffScan target/source fetches switch to Bulk
-  Query jobs past ~10k rows (today's queryMore loop + 5,000-row bucket caps truncate);
-  stream-parse the result CSV; keep scan.truncated honest either way.
-- [ ] **B3. Async progress + cancel** — jobs are submit-then-poll: reuse the runtime-Port
-  live-progress pattern (Phase 3) to show job state (Open → InProgress → JobComplete,
-  processed/failed counts) in the run panel, Sync Plan rows, and fan-out log; Cancel
-  aborts the job via PATCH state=Aborted; History entries note `via Bulk API`.
-- [x] **B4. Guard parity + tests** (2026-07-22) — bulk rides the SAME sfFetchWithProxy
-  chokepoint, so the per-org read-only lock (non-GET → assertOrgWritable) covers job
-  creation, CSV upload and state PATCHes; caller headers now merge over the JSON defaults
-  so the CSV upload keeps its Content-Type without bypassing the guard. 5 unit tests
-  (escaping incl. commas/quotes/newlines, union columns, result-CSV parsing, correlation,
-  duplicate/orphan rows). REMAINING: a stubbed end-to-end harness walk of a bulk run.
-  ~~original spec~~ — verify the per-org read-only lock blocks job
-  creation/upload at the worker chokepoint (they are non-GET — confirm with a harness
-  probe); typed prod confirms unchanged; unit tests for the CSV build/parse pure helpers
-  (escaping commas/quotes/newlines in org data!) + a stubbed end-to-end harness walk.
-
-## Phase N — 2026-07-18 user batch (popup depth + Labs graduation)
-
-- [ ] **N1. Flows in XML** (user: "delete deploy and backup of flows, please do it in XML")
-  — flow BACKUP downloads real Metadata-API XML (`<Flow xmlns=…>` in a
-  `flows/<API_Name>.flow-meta.xml` + `package.xml` zip via sftkBuildStoredZip — same
-  artifact `sf project deploy` / Workbench accepts), not raw Tooling JSON. JSON→XML
-  serializer must preserve Flow element ORDER (deploys are order-sensitive) — pure +
-  unit-tested against a real flow's Metadata. Deploy path: verify it already ships XML
-  (it uses the zip builder); pre-delete safety snapshot uses the same XML artifact.
-- [ ] **N2. Copy Permissions — real user picker + Permission Set Groups** (user: "match
-  against multiple fields… never let them write, populate it with all the existing
-  fields"; "what about permission set groups?") — COPY FROM/TO: load users up front and
-  LIST them (name · username · email · alias · profile, active badge); the filter box
-  matches across ALL those fields; selection is click-only. Add "Permission Set Groups"
-  to WHAT TO COPY: read PermissionSetAssignment rows with PermissionSetGroupId, insert
-  matching assignments on the target user (dedupe existing; report per-group results).
-- [ ] **N3. Lightning Pages — who ACTUALLY sees what** (user: "we dont actually show
-  which users see what lightning page") — resolve each page's activation to real users:
-  org default → all active users minus those captured by a more specific assignment;
-  app default → users of that app's profiles; app+profile/record-type → those profiles'
-  users. Show per-page user COUNTS + expandable user list (active only, capped + "and N
-  more"), and the reverse lens: pick a user → the pages they see and WHY (which
-  assignment wins, in Salesforce's precedence order).
-- [x] **N4a+b. Flow dependencies — blast radius + reverse lookup** (SHIPPED; user
-  accepted the recommendation 2026-07-18) — buildDependencyMap already downloads every
-  flow's Metadata: it now KEEPS references (sftkFlowRefs pure extractor + raw-text index).
-  Dependencies tab gains: right-click → "🧨 Blast radius" panel (objects+ops, fields,
-  subflows, apex actions, custom labels, who CALLS it, plain-language delete-risk
-  verdict) and a "🔎 What uses…" search (field / object / label / any literal value →
-  flows mentioning it, ranked by mention count, click to open). Unit-tested (48).
-- [ ] **N4c-e. Flow dependencies, further** —
-  candidates, in value order: (a) blast-radius report per flow — fields/objects/other
-  flows/labels/picklist VALUES it references (pkValueMentions exists) with "safe to
-  delete?" verdict; (b) reverse lookup — pick a field/object/value → every flow touching
-  it (pairs with Field Cleaner + Picklist Manager data fixes); (c) cross-org dependency
-  DIFF — same flow in 2+ orgs, which references break in each target (pre-deploy check);
-  (d) subflow chains — transitive graph incl. dead-subflow detection; (e) export the
-  report (CSV/MD). Ship (a)+(b) first.
-- [x] **N5a. Deploy Readiness GRADUATED** (2026-07-20, user: "lets do it") — ring-first
-  rebuild: source locked to the 👑 source of truth (no pair selects when a ring exists),
-  targets = every ring target as checkboxes (closed ones skip visibly, never dead-stop);
-  results attributed ("👑 X → targets · timestamp") with a per-target section + its own
-  severity summary; results cache STAMPED with src/tgt org keys — never re-shown under a
-  different configuration; failed validation/duplicate-rule queries now render as
-  "⚠ could NOT be read — inconclusive, not clean" (warning severity) instead of silently
-  passing; object defaults = all customs + every object your deployments actually move;
-  rule queries hardened with soqlStrLit. Back in the Inspect nav; SHIPS in the store zip
-  (pack_store LABS_JS now excludes only schema/fields). Harness 10/10.
-- [ ] **N5b. Schema View + Field Audit strengthening — Labs graduation bar** (user: "not very strong, some
-  not even functional… ship them when we are ready"; views demoted to a Labs nav section
-  meanwhile) — for EACH of Deploy Readiness / Schema View / Field Audit: fix the audited
-  defects (seed-once staleness vs the source of truth; results/caches that never name
-  their org — incl. Readiness restoring cached results under whatever the selects now
-  say; silently-swallowed query failures rendering as clean/empty: Readiness
-  validation+duplicate rules, Schema flows/describes/actions, Field Audit usage/FLS/
-  deps) + one real capability jump each (Readiness: actionable fix-list handoff;
-  Schema: org-diff overlay; Field Audit: cross-org fill-rate compare). A view returns
-  from Labs to Inspect only when its checklist is done and it's been used live.
-
-## Shipping — Chrome Web Store
-
-- [x] **SHIP-1. Store packaging pipeline** (2026-07-20, user: "upload to chrome store…
-  ship it without the lab features") — `python scripts/pack_store.py` builds
-  `dist/salesforce-toolkit-v<version>-store.zip`: Labs files (readiness/schema/fields)
-  + studio-tools.js + harness/dev files excluded; studio.html Labs nav + script tags
-  stripped (marker-based, fails loudly if markers move); post-checks (no leakage, every
-  html src/href resolves, worker/popup/icons present). Runtime safety: _viewAvailable()
-  in studio-core hides absent views from palette + hash and renderView falls back home.
-  Verified: 42-file 503 KB zip, zero leakage; headless boot-smoke of the packed build
-  4/4 (zero errors, no Labs nav, renderView('readiness') degrades gracefully).
-- [ ] **SHIP-2. Store listing + submission** (user does the console steps; assets to
-  prepare): developer account ($5 one-time) → item → upload zip → listing (name, ≤132-char
-  summary, description, category Developer Tools, 1280×800 screenshots, 128px icon ✓) →
-  Privacy tab: single-purpose statement, per-permission justifications (cookies/scripting/
-  storage/activeTab + salesforce hosts), data-use = collects nothing / local only, host a
-  privacy policy URL (PRIVACY.md via GitHub) → visibility (recommend UNLISTED first) →
-  submit for review. Version bump in manifest.json per re-upload.
+- [~] **T8. Deactivating a picklist value → check FLOWS, not just data** (user
+  2026-07-22) — CORRECTION AFTER CODE AUDIT: most of this ALREADY SHIPPED with P3/P2.
+  `_pkImpact(inv)` enumerates the object's active triggers / record-triggered flows /
+  validation rules / workflow rules, and `_pkValueLiteralScan(ctx, value)` greps the
+  serialized Metadata of active VALIDATION RULES and active RECORD-TRIGGERED FLOWS for
+  the literal value (pkValueMentions), listing the hits. Both run BEFORE apply, in the
+  single-org wizard (`_pkImpactHtml`) and per-org in the multi-org bulk wizard. The data
+  fix (remap / clear, multipicklist-token aware) already gates on usage counts.
+  REMAINING GAP (this is the actual work): the panel REPORTS automation hits but offers
+  no fix — (a) link each hit to Flow Builder / the validation rule in Setup and to the
+  N4b 🧨 blast radius, (b) widen coverage beyond record-triggered flows on that object
+  (screen/autolaunched flows and subflows can reference the value too — the popup's
+  DependencyMap already indexes EVERY flow's metadata; expose that index to the Studio
+  instead of re-querying), (c) carry the same automation panel into the P5 Sync-from-
+  source plan, which today aligns values/RTs across orgs with no automation check at all.
 - [ ] **T9. Picklist Manager — whole-object sync, not one field at a time** (user
   2026-07-22) — today the matrix compares ONE field across orgs. Add an object-level
   sweep: every picklist field on the object × every selected org, with active RECORD
