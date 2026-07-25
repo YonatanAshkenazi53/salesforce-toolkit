@@ -85,6 +85,7 @@ async function renderReadiness() {
         <label class="dr-check-label"><input type="checkbox" id="drChkRecordTypes" checked> Record type gaps</label>
         <label class="dr-check-label"><input type="checkbox" id="drChkValidation" checked> Validation rules (target)</label>
         <label class="dr-check-label"><input type="checkbox" id="drChkDupRules" checked> Duplication rules (target)</label>
+        <label class="dr-check-label" title="Compares ORG-LEVEL configuration once per target (not per object): State &amp; Country picklists, Person Accounts, multi-currency, Advanced Currency Management."><input type="checkbox" id="drChkOrgSettings" checked> Org settings (state/country, person accounts, currency)</label>
       </div>
 
       <div style="display:flex;gap:8px;margin-top:14px;align-items:center;flex-wrap:wrap">
@@ -115,7 +116,7 @@ async function renderReadiness() {
   eid('drObjectsPanel')?.addEventListener('toggle', e => {
     if (e.target.open) drRefreshObjectList();
   });
-  ['drChkFields', 'drChkPicklists', 'drChkRecordTypes', 'drChkValidation', 'drChkDupRules']
+  ['drChkFields', 'drChkPicklists', 'drChkRecordTypes', 'drChkValidation', 'drChkDupRules', 'drChkOrgSettings']
     .forEach(id => eid(id)?.addEventListener('change', drSaveSetup));
 
   // Default both selects: persisted setup first, then the working pair
@@ -135,6 +136,7 @@ async function renderReadiness() {
       setChk('drChkRecordTypes', c.recordTypes);
       setChk('drChkValidation',  c.validation);
       setChk('drChkDupRules',    c.dupRules);
+      setChk('drChkOrgSettings', c.orgSettings);   // T11c — absent in setups saved before T11c, so the `checked` default stands
     }
     if (s?.value || _drRingCfg()) drRefreshObjectList();
   }
@@ -182,7 +184,8 @@ function drSaveSetup() {
       picklists:   eid('drChkPicklists')?.checked ?? true,
       recordTypes: eid('drChkRecordTypes')?.checked ?? true,
       validation:  eid('drChkValidation')?.checked ?? true,
-      dupRules:    eid('drChkDupRules')?.checked ?? true
+      dupRules:    eid('drChkDupRules')?.checked ?? true,
+      orgSettings: eid('drChkOrgSettings')?.checked ?? true
     }
   };
   _drSavedSetup = setup;
@@ -334,6 +337,7 @@ async function runReadinessCheck() {
   const chkRecordTypes = eid('drChkRecordTypes')?.checked ?? true;
   const chkValidation  = eid('drChkValidation')?.checked ?? true;
   const chkDupRules    = eid('drChkDupRules')?.checked ?? true;
+  const chkOrgSettings = eid('drChkOrgSettings')?.checked ?? true;   // T11c
 
   // Resolve the source session (targets resolve one by one in the loop —
   // a closed target is a visible skip, never a dead stop).
@@ -377,6 +381,22 @@ async function runReadinessCheck() {
   }
   const secsEl = eid('drTargetSecs');
 
+  // T11c: the SOURCE org's configuration is probed once for the whole run —
+  // it is the same org for every target. A failure here is not fatal: the
+  // flags stay null and every setting renders as INCONCLUSIVE.
+  let srcFlags = null;
+  if (chkOrgSettings) {
+    setDrStatus('⏳ Reading org settings from the source…');
+    const progEl = eid('drProgressText');
+    if (progEl) progEl.textContent = `${orgLabel(srcId)} — reading org settings…`;
+    try {
+      srcFlags = await drProbeOrgSettings(srcSess, orgLabel(srcId));
+    } catch (e) {
+      srcFlags = { label: orgLabel(srcId), stateCountry: null, personAccounts: null,
+                   multiCurrency: null, acm: null, probeError: e.message || String(e) };
+    }
+  }
+
   for (const tgtId of tgtIds) {
     const tgtLabel = orgLabel(tgtId);
     const tgtSess = await getOrgSession(tgtId);
@@ -393,6 +413,33 @@ async function runReadinessCheck() {
        </div>`);
     const cardsEl = eid(secId);
     let total = 0, critCount = 0, warnCount = 0, okCount = 0;
+
+    // ── T11c: ORG SETTINGS — once per target, BEFORE the object cards ──
+    // Org configuration is not a per-object property, so it gets its own
+    // panel and its own badge in this target's summary. It is never folded
+    // into the object counts (that would misreport how many objects ran).
+    let orgSetSev = null;
+    if (chkOrgSettings) {
+      setDrStatus(`⏳ ${tgtLabel}: reading org settings…`);
+      const progEl = eid('drProgressText');
+      if (progEl) progEl.textContent = `${tgtLabel} — reading org settings…`;
+      let tgtFlags;
+      try {
+        tgtFlags = await drProbeOrgSettings(tgtSess, tgtLabel);
+      } catch (e) {
+        tgtFlags = { label: tgtLabel, stateCountry: null, personAccounts: null,
+                     multiCurrency: null, acm: null, probeError: e.message || String(e) };
+      }
+      const rows = drOrgSettingDiffs(srcFlags, tgtFlags);
+      orgSetSev = drOrgSettingsSeverity(rows);
+      if (cardsEl) cardsEl.insertAdjacentHTML('beforebegin', renderOrgSettingsPanel(rows, {
+        srcLabel: orgLabel(srcId),
+        tgtLabel,
+        srcErr: srcFlags?.probeError || null,
+        tgtErr: tgtFlags?.probeError || null,
+        recordTypesChecked: chkRecordTypes
+      }));
+    }
 
     for (let i = 0; i < objects.length; i++) {
       const obj = objects[i];
@@ -421,7 +468,10 @@ async function runReadinessCheck() {
       `${critCount ? `<span class="dr-sum-badge dr-sum-crit">🔴 ${critCount}</span>` : ''}
        ${warnCount ? `<span class="dr-sum-badge dr-sum-warn">🟡 ${warnCount}</span>` : ''}
        ${okCount ? `<span class="dr-sum-badge dr-sum-ok">✅ ${okCount} ok</span>` : ''}
-       <span style="color:var(--subtext);font-size:11px">${total} checked</span>`;
+       ${orgSetSev === 'critical' ? '<span class="dr-sum-badge dr-sum-crit">🔴 org settings</span>'
+         : orgSetSev === 'warning' ? '<span class="dr-sum-badge dr-sum-warn">🟡 org settings</span>'
+         : orgSetSev === 'ok' ? '<span class="dr-sum-badge dr-sum-ok">✅ org settings</span>' : ''}
+       <span style="color:var(--subtext);font-size:11px">${total} object(s) checked${orgSetSev === null ? ' · org settings NOT checked' : ''}</span>`;
   }
 
   // Remove spinner
@@ -445,6 +495,318 @@ async function runReadinessCheck() {
       card?.classList.toggle('dr-obj-card-open');
     });
   });
+}
+
+// ════════════════════════════════════════════════════════════════
+// T11c — ORG-CONFIGURATION differences as first-class findings
+// ════════════════════════════════════════════════════════════════
+// Why this exists: a real run failed because the TARGET had State and
+// Country picklists ON while the SOURCE had them OFF. Every per-object
+// check passed — BillingState existed on both sides — and the load still
+// died on "Please select a state from the list of valid states". Field
+// parity is not org parity. These checks run ONCE per target, before the
+// object cards, and compare the two orgs' CONFIGURATION.
+//
+// SEVERITY CALIBRATION (kept consistent on purpose):
+//   🔴 critical — the difference makes the target REJECT writes the source
+//                 produces, or silently reinterprets their meaning.
+//   🟡 warning  — the data still lands, but something is lost, defaulted,
+//                 or only breaks if a specific field is in the mapping
+//                 (and that field is already listed per object as missing).
+//   ❔ unknown  — the probe could not tell. Reported as INCONCLUSIVE, never
+//                 folded into "ok" (silent success is the cardinal sin).
+
+// PURE. Takes two plain flag objects (see drProbeOrgSettings for the shape)
+// and returns one row per setting:
+//   { key, label, src, tgt, consequence, severity, srcHow, tgtHow }
+// Matching settings are returned too (severity 'ok') so the panel can show
+// what was checked and found equal — a check you can't see didn't happen.
+// Org display names come from srcFlags.label / tgtFlags.label; they end up
+// inside `consequence`, so the RENDERER must esc() the whole string.
+function drOrgSettingDiffs(srcFlags, tgtFlags) {
+  const S = srcFlags || {};
+  const T = tgtFlags || {};
+  const srcName = S.label || 'the source';
+  const tgtName = T.label || 'the target';
+  const RULES = [
+    {
+      key: 'stateCountry',
+      label: 'State & Country picklists',
+      // ON in source, OFF in target
+      onOff: {
+        severity: 'warning',
+        text: `State & Country picklists are ON in ${srcName} but OFF in ${tgtName} — the state/country TEXT values still load (${tgtName} accepts free text), but ${srcName}'s BillingStateCode / BillingCountryCode fields (and the Shipping, Mailing and Other equivalents) do not exist in ${tgtName}, so any mapping that includes them fails with INVALID_FIELD. Those fields are listed per object under "Missing fields" below.`
+      },
+      // OFF in source, ON in target — the failure that prompted this check
+      offOn: {
+        severity: 'critical',
+        text: `State & Country picklists are ON in ${tgtName} but OFF in ${srcName} — state/country values written from ${srcName} will be REJECTED unless they exactly match ${tgtName}'s valid state/country labels, and a country/territory must be set on the record before a state value is accepted. Free-text values like "TX" fail with "Please select a state from the list of valid states".`
+      }
+    },
+    {
+      key: 'personAccounts',
+      label: 'Person Accounts',
+      onOff: {
+        severity: 'critical',
+        text: `Person Accounts are ON in ${srcName} but OFF in ${tgtName} — ${tgtName} has no person-account record type and no person fields (FirstName, LastName, PersonEmail, PersonMailingStreet, …), so every person-account row copied from ${srcName} will be REJECTED. Only business accounts can load into ${tgtName}.`
+      },
+      offOn: {
+        severity: 'warning',
+        text: `Person Accounts are ON in ${tgtName} but OFF in ${srcName} — business accounts still load, but ${tgtName} adds person-account record types plus IsPersonAccount and Person* fields that ${srcName} has no data for. Leaving RecordTypeId unmapped lets ${tgtName} pick its default record type, which may be the person-account one.`
+      }
+    },
+    {
+      key: 'multiCurrency',
+      label: 'Multi-currency',
+      onOff: {
+        severity: 'critical',
+        text: `Multi-currency is ON in ${srcName} but OFF in ${tgtName} — CurrencyIsoCode does not exist in ${tgtName}, so writing it is REJECTED, and every amount lands in ${tgtName}'s single corporate currency with NO conversion: an amount recorded in one currency in ${srcName} becomes the same NUMBER in a different currency in ${tgtName}.`
+      },
+      offOn: {
+        severity: 'warning',
+        text: `Multi-currency is ON in ${tgtName} but OFF in ${srcName} — inserts still succeed, but every row loaded without an explicit CurrencyIsoCode takes ${tgtName}'s corporate currency and amounts are NOT converted. Map CurrencyIsoCode explicitly if ${srcName}'s amounts are not already in that currency.`
+      }
+    },
+    {
+      key: 'acm',
+      label: 'Advanced Currency Management (dated exchange rates)',
+      onOff: {
+        severity: 'warning',
+        text: `Advanced Currency Management is ON in ${srcName} but OFF in ${tgtName} — ${tgtName} converts every amount at the current static rate instead of the rate dated to the record, so historical Opportunity converted amounts will not match ${srcName}.`
+      },
+      offOn: {
+        severity: 'warning',
+        text: `Advanced Currency Management is ON in ${tgtName} but OFF in ${srcName} — ${tgtName} converts Opportunity amounts using dated exchange rates keyed to CloseDate. Rows loaded with a CloseDate outside ${tgtName}'s dated-rate ranges fall back to the static rate, so converted amounts can differ from ${srcName}.`
+      }
+    }
+  ];
+  const show = v => (v === true ? 'On' : v === false ? 'Off' : 'Unknown');
+  const out = [];
+  for (const r of RULES) {
+    const sv = S[r.key];
+    const tv = T[r.key];
+    const sKnown = sv === true || sv === false;
+    const tKnown = tv === true || tv === false;
+    const row = {
+      key:    r.key,
+      label:  r.label,
+      src:    show(sv),
+      tgt:    show(tv),
+      srcHow: S[r.key + 'How'] || '',
+      tgtHow: T[r.key + 'How'] || '',
+      consequence: '',
+      severity:    'ok'
+    };
+    if (!sKnown || !tKnown) {
+      const who = (!sKnown && !tKnown) ? `${srcName} or ${tgtName}` : (!sKnown ? srcName : tgtName);
+      row.severity = 'unknown';
+      row.consequence = `Could NOT be determined in ${who} — this check is INCONCLUSIVE, not clean. Confirm "${r.label}" in that org's Setup yourself before loading data.`;
+    } else if (sv === tv) {
+      row.consequence = `Same in both orgs (${show(sv)}) — nothing to reconcile for this setting.`;
+    } else if (sv === true) {
+      row.severity    = r.onOff.severity;
+      row.consequence = r.onOff.text;
+    } else {
+      row.severity    = r.offOn.severity;
+      row.consequence = r.offOn.text;
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+// PURE. Roll a drOrgSettingDiffs() row list up to one severity for the
+// target's summary badge. 'unknown' counts as a warning — an inconclusive
+// check must never read as a clean one.
+function drOrgSettingsSeverity(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.some(r => r && r.severity === 'critical')) return 'critical';
+  if (list.some(r => r && (r.severity === 'warning' || r.severity === 'unknown'))) return 'warning';
+  return 'ok';
+}
+
+// IMPURE probe — kept deliberately separate from drOrgSettingDiffs.
+// Everything is derived from the DESCRIBE API (no Tooling, no Setup pages)
+// so it works with the read-only permissions this view already promises,
+// and each flag carries a `<key>How` string saying exactly how it was
+// decided so the UI can show its own evidence.
+// Returns { label, stateCountry, personAccounts, multiCurrency, acm,
+//           <key>How…, probeError } where each flag is true | false | null
+// (null = could not tell → rendered as INCONCLUSIVE).
+async function drProbeOrgSettings(sess, label) {
+  const flags = {
+    label: label || '',
+    stateCountry: null,   stateCountryHow:   '',
+    personAccounts: null, personAccountsHow: '',
+    multiCurrency: null,  multiCurrencyHow:  '',
+    acm: null,            acmHow:            '',
+    probeError: null
+  };
+  if (!sess) { flags.probeError = 'no session for this org'; return flags; }
+
+  // Account is the probe object: it is the one standard object that carries
+  // all three signals (Billing*Code, IsPersonAccount, CurrencyIsoCode).
+  // DatedConversionRate only exists when Advanced Currency Management is on,
+  // so a 404 there is an expected answer, not an error → _silentError.
+  const [accRes, acmRes] = await Promise.all([
+    sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid,
+             path: 'services/data/v62.0/sobjects/Account/describe' }),
+    sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid, _silentError: true,
+             path: 'services/data/v62.0/sobjects/DatedConversionRate/describe' })
+  ]);
+
+  if (!accRes || accRes.error) {
+    if (accRes && typeof isSessionResult === 'function' && isSessionResult(accRes)
+        && typeof showSessionBanner === 'function') showSessionBanner(sess.orgUrl);
+    flags.probeError = (accRes && accRes.error) || 'no response';
+    return flags;   // every flag stays null → every row renders as inconclusive
+  }
+
+  const byName = {};
+  (accRes.fields || []).forEach(f => { byName[f.name] = f; });
+
+  // ── State & Country picklists ───────────────────────────────
+  // The *Code companion fields only exist when the picklists are enabled —
+  // that is the strongest describe-level signal, so it is tried first.
+  const codeField = byName.BillingStateCode || byName.BillingCountryCode;
+  const billState = byName.BillingState;
+  if (codeField) {
+    flags.stateCountry = true;
+    flags.stateCountryHow = `Account.${codeField.name} (type ${codeField.type}) is present — the Code companion fields only exist when the picklists are enabled`;
+  } else if (billState && (billState.picklistValues || []).length) {
+    flags.stateCountry = true;
+    flags.stateCountryHow = `Account.BillingState returns ${billState.picklistValues.length} picklist value(s)`;
+  } else if (billState) {
+    flags.stateCountry = false;
+    flags.stateCountryHow = 'Account.BillingState is free text and there is no Account.BillingStateCode / BillingCountryCode field';
+  } else {
+    flags.stateCountryHow = 'Account.BillingState is not in the describe for your user — could not tell';
+  }
+
+  // ── Person Accounts ─────────────────────────────────────────
+  if (byName.IsPersonAccount) {
+    flags.personAccounts = true;
+    flags.personAccountsHow = 'Account.IsPersonAccount is present';
+  } else {
+    flags.personAccounts = false;
+    flags.personAccountsHow = 'Account.IsPersonAccount is absent';
+  }
+
+  // ── Multi-currency ──────────────────────────────────────────
+  if (byName.CurrencyIsoCode) {
+    flags.multiCurrency = true;
+    flags.multiCurrencyHow = 'Account.CurrencyIsoCode is present — Salesforce adds it to every object when multi-currency is enabled';
+  } else {
+    flags.multiCurrency = false;
+    flags.multiCurrencyHow = 'Account.CurrencyIsoCode is absent';
+  }
+
+  // ── Advanced Currency Management ────────────────────────────
+  if (flags.multiCurrency === false) {
+    flags.acm = false;
+    flags.acmHow = 'multi-currency is off, so dated exchange rates cannot be enabled';
+  } else if (acmRes && !acmRes.error) {
+    flags.acm = true;
+    flags.acmHow = 'the DatedConversionRate object is describable in this org';
+  } else if (acmRes && /not_found|404|does not exist|invalid.*sobject|no such/i.test(String(acmRes.error))) {
+    flags.acm = false;
+    flags.acmHow = 'the DatedConversionRate object does not exist — it is only created when Advanced Currency Management is on';
+  } else {
+    // A non-404 failure is NOT evidence of "off". Say so rather than guess.
+    flags.acm = null;
+    flags.acmHow = `the DatedConversionRate probe failed for another reason (${(acmRes && acmRes.error) || 'no response'}) — could not tell`;
+  }
+
+  return flags;
+}
+
+// Render the per-target "Org settings" panel. Sits above that target's
+// object cards. ctx = { srcLabel, tgtLabel, srcErr, tgtErr, recordTypesChecked }.
+function renderOrgSettingsPanel(rows, ctx) {
+  const c    = ctx || {};
+  const list = Array.isArray(rows) ? rows : [];
+  const sev  = drOrgSettingsSeverity(list);
+  const icon = sev === 'critical' ? '🔴' : sev === 'warning' ? '🟡' : '✅';
+  const sevClass = sev === 'critical' ? 'dr-sev-critical' : sev === 'warning' ? 'dr-sev-warning' : 'dr-sev-ok';
+  const sL = esc(c.srcLabel || 'source');
+  const tL = esc(c.tgtLabel || 'target');
+
+  let body = '';
+
+  // Probe failures first — louder than any finding below them.
+  if (c.srcErr) body += `<div class="dr-issue-row dr-issue-warn" style="display:block;padding:9px 14px;line-height:1.5">⚠ The Account describe could NOT be read from <strong>${sL}</strong> (${esc(c.srcErr)}) — every setting below is INCONCLUSIVE for that org, not clean.</div>`;
+  if (c.tgtErr) body += `<div class="dr-issue-row dr-issue-warn" style="display:block;padding:9px 14px;line-height:1.5">⚠ The Account describe could NOT be read from <strong>${tL}</strong> (${esc(c.tgtErr)}) — every setting below is INCONCLUSIVE for that org, not clean.</div>`;
+
+  const diffs = list.filter(r => r.severity === 'critical' || r.severity === 'warning');
+  const unk   = list.filter(r => r.severity === 'unknown');
+  const same  = list.filter(r => r.severity === 'ok');
+
+  if (diffs.length) body += `<div class="dr-section-hdr ${sev === 'critical' ? 'dr-section-crit' : 'dr-section-warn'}">${sev === 'critical' ? '🔴' : '🟡'} Org configuration differs (${diffs.length}) — this is not a field problem, it is a SETUP problem</div>`;
+
+  const rowHtml = r => {
+    const ic  = r.severity === 'critical' ? '🔴' : r.severity === 'warning' ? '🟡' : r.severity === 'unknown' ? '❔' : '✅';
+    const cls = r.severity === 'critical' ? 'dr-issue-crit' : r.severity === 'ok' ? '' : 'dr-issue-warn';
+    // Target chip is coloured only when it is the side that differs / is unknown.
+    const tgtStyle = r.severity === 'critical' ? 'background:#FEE2E2;color:#B91C1C'
+      : r.severity === 'warning' ? 'background:#FEF3C7;color:#92400E'
+      : r.severity === 'unknown' ? 'background:#F3F4F6;color:#6B7280' : '';
+    const srcStyle = r.src === 'Unknown' ? 'background:#F3F4F6;color:#6B7280' : '';
+    const how = (r.srcHow || r.tgtHow)
+      ? `<div style="margin-top:4px;font-size:11px;color:var(--subtext);line-height:1.45">🔍 Detected from the Describe API — ${sL}: ${esc(r.srcHow || 'no detail')} · ${tL}: ${esc(r.tgtHow || 'no detail')}</div>`
+      : '';
+    return `<div class="dr-issue-row ${cls}" style="display:block;padding:9px 14px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:13px">${ic}</span>
+          <span class="dr-field-api">${esc(r.label)}</span>
+          <span class="dr-field-type" style="${srcStyle}">${sL}: ${esc(r.src)}</span>
+          <span style="color:var(--subtext);font-size:11px">vs</span>
+          <span class="dr-field-type" style="${tgtStyle}">${tL}: ${esc(r.tgt)}</span>
+          ${r.severity === 'critical' ? '<span class="dr-badge-crit">CAN REJECT WRITES</span>' : ''}
+        </div>
+        <div style="margin-top:5px;font-size:12px;line-height:1.5">${esc(r.consequence)}</div>
+        ${how}
+      </div>`;
+  };
+
+  body += diffs.map(rowHtml).join('');
+  if (unk.length) {
+    body += `<div class="dr-section-hdr dr-section-warn">❔ Could not be determined (${unk.length}) — inconclusive, not clean</div>`;
+    body += unk.map(rowHtml).join('');
+  }
+  if (same.length) {
+    body += `<div class="dr-section-hdr" style="background:var(--brand-bg);color:var(--brand-dark);border-top:1px solid var(--border)">✅ Same in both orgs (${same.length}) — checked, no action</div>`;
+    body += same.map(rowHtml).join('');
+  }
+
+  // Record types are already compared per object — reference, don't duplicate.
+  body += `<div class="dr-issue-row" style="display:block;padding:9px 14px;font-size:11.5px;line-height:1.5">
+      📋 <strong>Record types</strong> are compared per object, not here — see each object card's “Record types in source missing from target” section below.${
+        c.recordTypesChecked === false ? ` <strong style="color:#92400E">The record-type check is switched OFF for this run</strong>, so no object below reports record-type gaps.` : ''}
+    </div>`;
+
+  // Honesty footer: what this panel can get wrong, and what it does not look at.
+  body += `<div class="dr-issue-row" style="display:block;padding:9px 14px;font-size:11px;color:var(--subtext);line-height:1.5">
+      ℹ Detection is describe-based and reflects what <em>your</em> user can see in each org — a field hidden by field-level security or a permission set can make a setting look Off. Not checked here: Shield Platform Encryption, Territory Management, org-wide sharing defaults, Locale/currency formatting, and managed-package configuration.
+    </div>`;
+
+  const nCrit = list.filter(r => r.severity === 'critical').length;
+  const nWarn = list.filter(r => r.severity === 'warning').length;
+  const nUnk  = unk.length;
+  const chips = [
+    nCrit ? `<span class="dr-chip dr-chip-crit">${nCrit} blocking</span>` : '',
+    nWarn ? `<span class="dr-chip dr-chip-warn">${nWarn} differ</span>` : '',
+    nUnk  ? `<span class="dr-chip dr-chip-warn">${nUnk} unknown</span>` : ''
+  ].join('');
+
+  return `<div class="dr-obj-card ${sevClass} dr-obj-card-open" style="margin-bottom:8px">
+      <div class="dr-obj-card-hdr">
+        <span class="dr-obj-sev">${icon}</span>
+        <span class="dr-obj-name">⚙ Org settings — ${sL} vs ${tL}</span>
+        <div class="dr-obj-chips">${chips}</div>
+        <span class="dr-obj-chevron">›</span>
+      </div>
+      <div class="dr-obj-card-body">${body}</div>
+    </div>`;
 }
 
 // ── Analyse a single object ────────────────────────────────────

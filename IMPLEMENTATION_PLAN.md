@@ -379,7 +379,7 @@ history) already exists there.
   clears when an exception satisfies that org's schema. Unit tests (override wins / null
   excludes / idempotent / base unmutated); harness 9/9 with a divergent-schema target
   incl. persistence through Apply + reopen.
-- [ ] **T6. Picklist readiness INSIDE a data deployment** (user 2026-07-22, from a real
+- [x] **T6. Picklist readiness INSIDE a data deployment** (user 2026-07-22, from a real
   Reconcile screen) — the capability already exists in Picklist Manager (P1-P5: value
   sync from source, data fix/remap, record-type alignment, global + standard value sets);
   what is missing is DETECTION during a data deployment and the HANDOFF. Build: when a
@@ -389,7 +389,7 @@ history) already exists there.
   (reuse _pkFetchInventory kind:'local'|'standard'|'global', pkValueSetSyncDiff,
   _pkApplySyncCore, pkRtSyncDiff/_pkApplyRtCore). Multi-target: check per target, since a
   value may exist in some ring orgs only. Do NOT re-implement any picklist logic.
-- [ ] **T7. Phantom drift — State/Country picklist normalization** (user 2026-07-22:
+- [x] **T7. Phantom drift — State/Country picklist normalization** (user 2026-07-22:
   source `BillingState` "TX" vs target "Texas", `BillingStateCode` "TX" on BOTH sides).
   Root cause: with State and Country picklists ENABLED, Salesforce rewrites the label
   from the code on every write — pushing "TX" is normalized straight back to "Texas", so
@@ -402,7 +402,7 @@ history) already exists there.
   (which is where the user actually sees "TX vs Texas"). Detection needs the `*Code`
   sibling in the compare field set — when it is absent, fall back to reporting the
   difference (never guess).
-- [~] **T8. Deactivating a picklist value → check FLOWS, not just data** (user
+- [x] **T8. Deactivating a picklist value → check FLOWS, not just data** (user
   2026-07-22) — CORRECTION AFTER CODE AUDIT: most of this ALREADY SHIPPED with P3/P2.
   `_pkImpact(inv)` enumerates the object's active triggers / record-triggered flows /
   validation rules / workflow rules, and `_pkValueLiteralScan(ctx, value)` greps the
@@ -417,7 +417,7 @@ history) already exists there.
   DependencyMap already indexes EVERY flow's metadata; expose that index to the Studio
   instead of re-querying), (c) carry the same automation panel into the P5 Sync-from-
   source plan, which today aligns values/RTs across orgs with no automation check at all.
-- [ ] **T9. Picklist Manager — whole-object sync, not one field at a time** (user
+- [x] **T9. Picklist Manager — whole-object sync, not one field at a time** (user
   2026-07-22) — today the matrix compares ONE field across orgs. Add an object-level
   sweep: every picklist field on the object × every selected org, with active RECORD
   TYPES folded in (which values each RT exposes), one verdict per field (in sync /
@@ -427,7 +427,7 @@ history) already exists there.
   counts + data fix for values that lose their home (T6), and flow-usage check with an
   automation fix before any deactivation (T8). Global + standard value sets are shared
   objects — sync them ONCE, not per referencing field, and say which fields inherit.
-- [ ] **T10. What's New page** (user 2026-07-22) — an in-app changelog so users see what
+- [x] **T10. What's New page** (user 2026-07-22) — an in-app changelog so users see what
   shipped: new features, fixes, known issues, per version. Source of truth = a committed
   CHANGELOG.md (release notes are written with the code, not reconstructed later);
   the page renders it and the app badges the nav entry once per unseen version
@@ -442,7 +442,7 @@ history) already exists there.
   (`Number(18,2)`, `Text(255)`, `Lookup(Account)`, `Picklist`…) via pure
   `sftkFieldTypeLabel`, and a `⚠ type differs` chip fires when the two orgs define the
   field differently — even if the current values happen to match.
-- [ ] **T11b. Failed-run errors must show the DATA, not just the message** (user
+- [x] **T11b. Failed-run errors must show the DATA, not just the message** (user
   2026-07-22, from a real failure: "There's a problem with this state… : Billing
   State/Province ×6") — for each failed record, show WHAT WAS PUSHED: the offending
   field(s) named in the error with the source value that was sent, the target's current
@@ -452,7 +452,7 @@ history) already exists there.
   it inline under the error with a link to the record on both sides. This turns
   "10 failed" into "these 6 records tried to write BillingState='TX' into an org whose
   State/Country picklists are ON — valid label is 'Texas'".
-- [ ] **T11c. Org-configuration differences as first-class findings** — the same failure
+- [x] **T11c. Org-configuration differences as first-class findings** — the same failure
   proves an ORG SETTING differs (State and Country picklists enabled in the target, off
   in the source). Detect the setting-level difference (State/Country picklists,
   person accounts, multi-currency, advanced currency management) and report it in Deploy
@@ -464,6 +464,12 @@ history) already exists there.
 - **X phase**: confirm tool migration order before starting.
 
 ## Progress log
+- 2026-07-22: MEGA-BUILD — 9-agent workflow implemented every remaining item in one
+  pass (T6-T11c, N2, N3, N4c-e, N5b, B2, B3). Gate: 38 files parse, eslint clean,
+  343 tests across 10 files, harness 10/10 (boot zero-error with all modules, every
+  new surface renders, tree-diff regression intact), store zip 46 files incl.
+  CHANGELOG.md. Only M4 (scheduling — alarms-permission decision) and SHIP-2 (store
+  console submission, user-side) remain open.
 - 2026-07-07: Plan created. Phases S+C started this session.
 - 2026-07-07 (later): PHASE S COMPLETE — S2/S3/S8/S9 closed via audit workflow (8
   confirmed findings fixed, commit 7de2516). C1+C2 done (ce0b27e). U1 done (4d53167).

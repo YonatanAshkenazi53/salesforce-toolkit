@@ -43,7 +43,7 @@ def main():
         p = os.path.join(ROOT, name)
         if os.path.isfile(p):
             ext = os.path.splitext(name)[1].lower()
-            if name == 'manifest.json' or ext in ('.html', '.css', '.png'):
+            if name in ('manifest.json', 'CHANGELOG.md') or ext in ('.html', '.css', '.png'):
                 pass
             elif ext == '.js':
                 if name in EXCLUDE_JS or name.startswith('_') or name.startswith('eslint'):

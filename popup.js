@@ -227,6 +227,20 @@ const HOME_FEATURES = [
     desc: 'Control which users and profiles can run each flow',
     action() { navigateToTab('flow-access'); initFlowAccessTab(); }
   },
+  {
+    // T10 — same CHANGELOG.md and the same parser the Data Studio uses
+    // (studio-whatsnew.js is loaded by both pages). Needs no Salesforce
+    // session: it reads a file packaged inside the extension.
+    id: 'whatsnew',
+    icon: '🎉',
+    color: '#8B5CF6',   // violet
+    title: "What's New",
+    desc: 'Release notes — what shipped, what got fixed, what is still broken',
+    action() {
+      navigateToTab('whatsnew');
+      if (typeof initWhatsNewTab === 'function') initWhatsNewTab();
+    }
+  },
 ];
 
 // Feature sections — defines grouping on the home page
@@ -242,6 +256,10 @@ const HOME_SECTIONS = [
   {
     title: 'Users & Records',
     ids: ['copy-perms', 'licenses', 'flow-access']
+  },
+  {
+    title: 'About',
+    ids: ['whatsnew']
   }
 ];
 

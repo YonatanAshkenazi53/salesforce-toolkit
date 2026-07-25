@@ -174,6 +174,143 @@ function pkRtSyncDiff(srcRts, tgtRts) {
   return out;
 }
 
+// Deep link to an automation component so an impact hit becomes ACTIONABLE (T8).
+// kind:'flow' → Flow Builder for that flow VERSION id (the 301… Flow record we
+// already fetch, NOT the FlowDefinition); kind:'vr' → the rule's Object Manager
+// page. Returns '' when the org or id is unknown so callers render plain text
+// instead of a dead link. Pure — unit-testable.
+function pkAutomationUrl(orgUrl, obj, kind, id) {
+  const base = String(orgUrl || '').replace(/\/+$/, '');
+  if (!base || !id) return '';
+  if (kind === 'flow') return `${base}/builder_platform_interaction/flowBuilder.app?flowId=${encodeURIComponent(id)}`;
+  if (kind === 'vr') return `${base}/lightning/setup/ObjectManager/${encodeURIComponent(obj || '')}/ValidationRules/${encodeURIComponent(id)}/view`;
+  return `${base}/${encodeURIComponent(id)}`;
+}
+
+// ONE verdict for ONE field across orgs — the heart of the T9 whole-object sweep.
+// perOrgInv[i]: { orgKey, label, kind:'local'|'global'|'standard'|'missing'|'error',
+//                 values:[{ name, label, active, isDefault }], valueSetName, error }
+// perOrgRts[i]: that org's record types FOR THIS FIELD ([{ devName, values:Set }]),
+//               or null/[] when they couldn't be read — INDEX-ALIGNED with perOrgInv.
+// Returns { status, label, drifting, diffCount, differing, defaultDiffers, rtDrift,
+//           rtDriftValues, missingIn, erroredIn, comparable, rtComparable,
+//           valueCount, shared, detail }.
+// status: 'sync' | 'values' | 'rts' | 'missing' | 'notcomparable' | 'error' | 'insufficient'.
+// Pure — unit-tested in test/picklists-t9.test.mjs (calls pkRtDrift only).
+function pkFieldVerdict(perOrgInv, perOrgRts, fieldName) {
+  const raw = perOrgInv || [], rtsAll = perOrgRts || [];
+  const orgs = [], local = [], shared = [], rtLists = [], missingIn = [], erroredIn = [];
+  for (let i = 0; i < raw.length; i++) {
+    const o = raw[i];
+    if (!o) continue;
+    orgs.push(o);
+    if (o.kind === 'missing') missingIn.push(o.orgKey);
+    else if (o.kind === 'error') erroredIn.push(o.orgKey);
+    else if (o.kind === 'global' || o.kind === 'standard') shared.push(o);
+    else if (o.kind === 'local') {
+      local.push(o);
+      const rl = rtsAll[i];
+      if (rl && rl.length) rtLists.push(rl);
+    }
+  }
+  const out = {
+    status: 'sync', label: '', drifting: false, diffCount: 0, differing: [], defaultDiffers: false,
+    rtDrift: false, rtDriftValues: [], missingIn, erroredIn, comparable: local.length,
+    rtComparable: rtLists.length, valueCount: 0, shared: null, detail: '',
+  };
+
+  // Global / standard value sets are ORG-WIDE objects reused by many fields —
+  // the per-field sync plan cannot write them. Name the set and stop, so the
+  // sweep can group every field that inherits it and offer ONE action.
+  if (shared.length) {
+    const kinds = [...new Set(shared.map(o => o.kind))];
+    const names = [...new Set(shared.map(o => o.valueSetName || fieldName).filter(Boolean))];
+    const kind = kinds.length === 1 ? kinds[0] : 'mixed';
+    const mixed = kinds.length > 1 || names.length > 1 || shared.length !== orgs.length;
+    let detail = kind === 'global'
+      ? 'Backed by the global value set ' + names.join(' / ') + ' — shared by every field that inherits it, so it is synced ONCE, not per field.'
+      : kind === 'standard'
+        ? fieldName + ' is a standard picklist (StandardValueSet ' + names.join(' / ') + ') — Salesforce owns its values; the per-field sync plan cannot write them.'
+        : 'Backed by a shared value set in some orgs and a local one in others — not comparable field by field.';
+    if (mixed) detail += ' ⚠ NOT identical across the loaded orgs (different set name, or local/missing in some orgs) — check each org individually.';
+    if (erroredIn.length) detail += ' Could NOT be read in: ' + erroredIn.join(', ') + '.';
+    out.status = 'notcomparable';
+    out.label = 'not comparable — ' + (kind === 'mixed' ? 'shared value set' : kind + ' value set') + (names.length === 1 ? ' (' + names[0] + ')' : '');
+    out.shared = { kind, names, mixed, key: kind + ':' + names.join('|'), orgKeys: shared.map(o => o.orgKey) };
+    out.detail = detail;
+    return out;
+  }
+
+  if (!local.length) {
+    out.status = erroredIn.length ? 'error' : 'missing';
+    out.label = erroredIn.length ? 'could not read' : 'field missing in all ' + orgs.length + ' org(s)';
+    out.detail = erroredIn.length
+      ? fieldName + ' could not be read in any loaded org (' + erroredIn.join(', ') + ') — NO verdict was computed.'
+      : fieldName + ' does not exist in any loaded org.';
+    return out;
+  }
+
+  const seen = new Set(), union = [];
+  for (const o of local) {
+    for (const v of (o.values || [])) {
+      if (v && v.name && !seen.has(v.name)) { seen.add(v.name); union.push(v.name); }
+    }
+  }
+  const differing = [];
+  for (const name of union) {
+    let present = 0, on = 0, off = 0;
+    const labels = new Set();
+    for (const o of local) {
+      const v = (o.values || []).find(x => x && x.name === name);
+      if (!v) continue;
+      present++;
+      if (v.active === false) off++; else on++;
+      labels.add((v.label === undefined || v.label === null || v.label === '') ? name : v.label);
+    }
+    if (present !== local.length || (on && off) || labels.size > 1) differing.push(name);
+  }
+  const defaults = new Set(local.map(o => {
+    const d = (o.values || []).find(v => v && v.isDefault);
+    return d ? d.name : '';
+  }));
+  const rtDriftValues = [];
+  if (rtLists.length >= 2) for (const name of union) if (pkRtDrift(rtLists, name)) rtDriftValues.push(name);
+
+  out.valueCount = union.length;
+  out.differing = differing;
+  out.diffCount = differing.length;
+  out.defaultDiffers = defaults.size > 1;
+  out.rtDriftValues = rtDriftValues;
+  out.rtDrift = rtDriftValues.length > 0;
+
+  const bits = [];
+  if (missingIn.length) bits.push('field missing in ' + missingIn.length + ' org(s)');
+  if (out.diffCount) bits.push('values differ (' + out.diffCount + ')');
+  else if (out.defaultDiffers) bits.push('default value differs');
+  if (out.rtDrift) bits.push('RT assignment differs');
+
+  if (missingIn.length) out.status = 'missing';
+  else if (out.diffCount || out.defaultDiffers) out.status = 'values';
+  else if (out.rtDrift) out.status = 'rts';
+  else if (local.length < 2) out.status = 'insufficient';
+  else out.status = 'sync';
+  out.drifting = out.status === 'missing' || out.status === 'values' || out.status === 'rts';
+  out.label = out.status === 'sync' ? '✓ in sync'
+    : out.status === 'insufficient' ? 'only ' + local.length + ' org readable — nothing to compare'
+    : bits.join(' · ');
+
+  const parts = [];
+  if (missingIn.length) parts.push('Missing in: ' + missingIn.join(', ') + '.');
+  if (erroredIn.length) parts.push('Could NOT be read in: ' + erroredIn.join(', ') + ' — those orgs are excluded from this verdict.');
+  if (out.diffCount) parts.push('Values that differ: ' + differing.slice(0, 8).join(', ') + (out.diffCount > 8 ? '… (+' + (out.diffCount - 8) + ' more)' : '') + '.');
+  if (out.defaultDiffers) parts.push('The default value is not the same in every org.');
+  if (out.rtDrift) parts.push('Record-type assignment differs for: ' + rtDriftValues.slice(0, 6).join(', ') + (rtDriftValues.length > 6 ? '…' : '') + '.');
+  if (rtLists.length < 2) parts.push('Record types were readable in ' + rtLists.length + ' org(s) only — RT drift was NOT checked.');
+  if (out.status === 'sync') parts.push('All ' + local.length + ' orgs expose the same ' + union.length + ' value(s) with matching labels, active states' + (rtLists.length >= 2 ? ' and record-type assignments' : '') + '.');
+  out.detail = parts.join(' ');
+  return out;
+}
+
 // ── View state ──────────────────────────────────────────────────
 let _pkOrgUrl   = '';
 let _pkObj      = '';
@@ -190,6 +327,11 @@ let _pkMatrix   = null;   // last built matrix { obj, field, results, union, mat
 let _pkStd      = null;   // loaded standard value set editor state (P4a)
 let _pkGvs      = null;   // loaded global value set editor state (P4b)
 let _pkPendingRtCheck = null;   // { name, pre } — surface SF's RT auto-drop after deactivate (P3)
+let _pkHighlightValue = '';     // value row to scroll to + flash after a deep link (sftkOpenPicklistFix)
+let _pkSweep    = null;   // T9 whole-object sweep state { obj, orgs, rows, ... }
+let _pkSweepRunning = false;
+let _pkSyncScanToken = 0;              // invalidates an in-flight sync-plan automation pass (T8c)
+const _pkSyncScanCache = new Map();    // `${orgKey}|${obj}.${field}|${value}` → literal-scan result
 
 function renderPicklists() {
   const orgs = allMapOrgs();
@@ -300,6 +442,8 @@ function _pkRenderCompareConfig() {
         </select>
         <select id="dsPkCmpField" class="ds-select" disabled><option value="">Field…</option></select>
         <button class="ds-btn ds-btn-primary" id="dsPkCmpLoad" disabled>Load matrix</button>
+        <button class="ds-btn" id="dsPkSweep" ${_pkCmpObj ? '' : 'disabled'}
+          title="Skip the field picker: compare EVERY picklist / multi-picklist field on this object across the selected orgs and give each one a verdict (in sync / values differ / RT assignment differs / missing / not comparable).">🧹 Sweep whole object…</button>
       </div>
     </div>`;
 
@@ -309,9 +453,14 @@ function _pkRenderCompareConfig() {
     else _pkCmpOrgs = _pkCmpOrgs.filter(u => u !== url);
     _pkCmpLoadObjects();
   }));
-  eid('dsPkCmpObj')?.addEventListener('change', async e => { _pkCmpObj = e.target.value; _pkCmpField = ''; await _pkCmpLoadFields(); });
+  eid('dsPkCmpObj')?.addEventListener('change', async e => {
+    _pkCmpObj = e.target.value; _pkCmpField = '';
+    const sw = eid('dsPkSweep'); if (sw) sw.disabled = !_pkCmpObj;
+    await _pkCmpLoadFields();
+  });
   eid('dsPkCmpField')?.addEventListener('change', e => { _pkCmpField = e.target.value; const b = eid('dsPkCmpLoad'); if (b) b.disabled = !_pkCmpField; });
   eid('dsPkCmpLoad')?.addEventListener('click', () => _pkLoadMatrix());
+  eid('dsPkSweep')?.addEventListener('click', () => _pkSweepObject());
 
   if (_pkCmpOrgs.length) _pkCmpLoadObjects();
 }
@@ -456,7 +605,12 @@ async function _pkLoadRecordTypes(sess, obj, field, devName) {
 //   { kind:'standard', field, obj, isMulti }          — standard picklist (P4a)
 //   { kind:'global', field, obj, isMulti, fieldId, metadata, name } — global value set (P4b)
 // Throws on hard errors. No DOM — reused by single load AND the multi-org matrix.
-async function _pkFetchInventory(sess, obj, field) {
+// opts (T9): { skipUsage, skipRts } — the whole-object sweep reads 25 fields ×
+// N orgs, so it opts out of the per-field usage GROUP BY and the per-field
+// RecordType fetches (it loads RT metadata ONCE per org instead). The skipped
+// work is reported in the UI, never silently dropped.
+async function _pkFetchInventory(sess, obj, field, opts) {
+  const o = opts || {};
   const desc = await describe(obj, sess.orgUrl, sess.sid);
   const fieldMeta = (desc?.fields || []).find(f => f.name === field);
   if (!fieldMeta) throw new Error(`${field} not found on ${obj}`);
@@ -491,8 +645,12 @@ async function _pkFetchInventory(sess, obj, field) {
   const rawValues = cf.Metadata.valueSet?.valueSetDefinition?.value || [];
   if (!rawValues.length) throw new Error('No values found in this field\'s value set.');
 
-  const { usage, usageNote, nullCount, totalCount } = await _pkLoadUsage(sess, obj, field, isMulti, rawValues);
-  const { rts, rtNote } = await _pkLoadRecordTypes(sess, obj, field, devName);
+  const { usage, usageNote, nullCount, totalCount } = o.skipUsage
+    ? { usage: new Map(), usageNote: 'Record counts were NOT loaded for this read.', nullCount: 0, totalCount: 0 }
+    : await _pkLoadUsage(sess, obj, field, isMulti, rawValues);
+  const { rts, rtNote } = o.skipRts
+    ? { rts: [], rtNote: 'Record types were NOT loaded for this read.' }
+    : await _pkLoadRecordTypes(sess, obj, field, devName);
 
   const inv = {
     orgUrl: sess.orgUrl, sid: sess.sid, obj, field, devName, fieldId, isMulti,
@@ -535,7 +693,7 @@ function _pkRenderInventory() {
     const rtChips = inv.rts.filter(rt => rt.values.has(name))
       .map(rt => `<span class="ds-pk-rt" title="Assigned to record type ${esc(rt.name)}">${esc(rt.name)}</span>`).join('');
     return `
-      <div class="ds-pk-row${active ? '' : ' ds-pk-row-inactive'}">
+      <div class="ds-pk-row${active ? '' : ' ds-pk-row-inactive'}" data-pk-val="${esc(name)}">
         <div class="ds-pk-val">
           <span class="ds-pk-name">${esc(v.label || name)}</span>
           ${v.label && v.label !== name ? `<code class="ds-pk-api">${esc(name)}</code>` : ''}
@@ -587,6 +745,8 @@ function _pkRenderInventory() {
   body.querySelectorAll('[data-pk-del]').forEach(b =>
     b.addEventListener('click', () => _pkOpenWizard(parseInt(b.dataset.pkDel, 10), 'delete')));
   _pkWireRtMatrix(inv, body);
+
+  _pkApplyHighlight();   // deep link from another view (window.sftkOpenPicklistFix)
 
   // Surface Salesforce's automatic RT drop after a just-applied deactivate (P3).
   if (_pkPendingRtCheck) {
@@ -715,7 +875,8 @@ function _pkImpactHtml(impact, recordCount, literal) {
     ? `<div class="ds-pk-imp-row">${icon} ${label}: <em>couldn't check</em></div>`
     : `<div class="ds-pk-imp-row${list.length ? ' ds-pk-imp-hit' : ''}">${icon} ${label}: <strong>${list.length}</strong>${list.length ? ` — ${esc(list.slice(0, 4).join(', '))}${list.length > 4 ? '…' : ''}` : ''}</div>`;
   const litRow = literal
-    ? `<div class="ds-pk-imp-row${literal.mentions ? ' ds-pk-imp-hit' : ''}">🔎 Automations mentioning this value <em>by name</em>: <strong>${literal.mentions}</strong>${literal.hits.length ? ` — ${esc(literal.hits.slice(0, 4).join(', '))}${literal.hits.length > 4 ? '…' : ''}` : ''}</div>`
+    ? `<div class="ds-pk-imp-row${literal.mentions ? ' ds-pk-imp-hit' : ''}">🔎 Automations mentioning this value <em>by name</em>: <strong>${literal.mentions}</strong></div>
+       ${_pkAutomationHitsHtml(literal)}`
     : '';
   return `
     <div class="ds-pk-impact">
@@ -731,30 +892,121 @@ function _pkImpactHtml(impact, recordCount, literal) {
     </div>`;
 }
 
-// Supplemental "N automations mention this value by name" scan (P2). Greps the
-// serialized Metadata of active validation rules + record-triggered flows on the
-// object for the literal value string. Degrades silently (returns 0 hits) if a
-// sub-query is unavailable. Returns { mentions, hits:[label] }.
+// Supplemental "N automations mention this value by name" scan (P2, widened +
+// made actionable in T8). Greps the serialized Metadata of:
+//   · every ACTIVE validation rule on the object, and
+//   · every ACTIVE flow — record-triggered on this object FIRST, then
+//     autolaunched + screen flows org-wide (they reference picklist values in
+//     decisions, assignments and choices too) — capped at FLOW_CAP.
+// Every hit carries the component's Id so the UI can deep-link it (Flow Builder
+// / Setup). Nothing degrades silently: whatever could NOT be scanned, and
+// whatever the cap left out, comes back in `notes` for the UI to print.
+// Returns { mentions, hits:[label], items:[{kind,id,label,sub,url}], notes:[], scan:{…} }.
 async function _pkValueLiteralScan(ctx, valueName) {
   const lit = soqlStrLit(ctx.obj);
+  const FLOW_CAP = 40;
+  const hits = [], items = [], notes = [];
   let mentions = 0;
-  const hits = [];
+
+  // 1) Active validation rules on the object (Id → Object Manager deep link).
   const vr = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: ctx.orgUrl, sid: ctx.sid, tooling: true,
-    query: `SELECT ValidationName, Metadata FROM ValidationRule WHERE Active = true AND EntityDefinition.QualifiedApiName = ${lit}`, _silentError: true });
-  if (vr && !vr.error) for (const r of (vr.records || [])) {
-    if (pkValueMentions(JSON.stringify(r.Metadata || {}), valueName) > 0) { mentions++; hits.push('VR: ' + r.ValidationName); }
-  }
-  const fdv = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: ctx.orgUrl, sid: ctx.sid, tooling: false,
-    query: `SELECT ApiName, Label FROM FlowDefinitionView WHERE IsActive = true AND TriggerObjectOrEventApiName = ${lit}`, _silentError: true });
-  const flowRows = (fdv && !fdv.error) ? (fdv.records || []).slice(0, 15) : [];
-  for (const f of flowRows) {
-    const fq = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: ctx.orgUrl, sid: ctx.sid, tooling: true,
-      query: `SELECT Metadata FROM Flow WHERE Status = 'Active' AND Definition.DeveloperName = ${soqlStrLit(f.ApiName)}`, _silentError: true });
-    if (fq && !fq.error) for (const fr of (fq.records || [])) {
-      if (pkValueMentions(JSON.stringify(fr.Metadata || {}), valueName) > 0) { mentions++; hits.push('Flow: ' + (f.Label || f.ApiName)); break; }
+    query: `SELECT Id, ValidationName, Metadata FROM ValidationRule WHERE Active = true AND EntityDefinition.QualifiedApiName = ${lit}`, _silentError: true });
+  const vrOk = !!(vr && !vr.error);
+  if (!vrOk) notes.push(`validation rules could NOT be scanned${vr?.error ? ` (${vr.error})` : ''}`);
+  else for (const r of (vr.records || [])) {
+    if (pkValueMentions(JSON.stringify(r.Metadata || {}), valueName) > 0) {
+      mentions++;
+      hits.push('VR: ' + r.ValidationName);
+      items.push({ kind: 'vr', id: r.Id, label: r.ValidationName, sub: `validation rule on ${ctx.obj}`,
+        url: pkAutomationUrl(ctx.orgUrl, ctx.obj, 'vr', r.Id) });
     }
   }
-  return { mentions, hits };
+
+  // 2) Flows — two enumerations, deduped by ApiName, record-triggered first so
+  //    the cap (if it bites) always keeps the most relevant ones.
+  const seenFlows = new Set();
+  const queue = [];
+  const trg = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: ctx.orgUrl, sid: ctx.sid, tooling: false,
+    query: `SELECT ApiName, Label, ProcessType FROM FlowDefinitionView WHERE IsActive = true AND TriggerObjectOrEventApiName = ${lit}`, _silentError: true });
+  if (!trg || trg.error) notes.push('record-triggered flows could NOT be enumerated');
+  else for (const f of (trg.records || [])) {
+    if (f.ApiName && !seenFlows.has(f.ApiName)) {
+      seenFlows.add(f.ApiName);
+      queue.push({ apiName: f.ApiName, label: f.Label, why: `record-triggered on ${ctx.obj}` });
+    }
+  }
+  const triggeredN = queue.length;
+  const wide = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: ctx.orgUrl, sid: ctx.sid, tooling: false,
+    query: `SELECT ApiName, Label, ProcessType FROM FlowDefinitionView WHERE IsActive = true AND ProcessType IN ('AutoLaunchedFlow','Flow')`, _silentError: true });
+  if (!wide || wide.error) notes.push('autolaunched + screen flows could NOT be enumerated — ONLY record-triggered flows on this object were scanned');
+  else for (const f of (wide.records || [])) {
+    if (f.ApiName && !seenFlows.has(f.ApiName)) {
+      seenFlows.add(f.ApiName);
+      queue.push({ apiName: f.ApiName, label: f.Label, why: f.ProcessType === 'Flow' ? 'screen flow' : 'autolaunched flow' });
+    }
+  }
+
+  const toScan = queue.slice(0, FLOW_CAP);
+  let flowErrors = 0;
+  for (const f of toScan) {
+    const fq = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: ctx.orgUrl, sid: ctx.sid, tooling: true,
+      query: `SELECT Id, Metadata FROM Flow WHERE Status = 'Active' AND Definition.DeveloperName = ${soqlStrLit(f.apiName)}`, _silentError: true });
+    if (!fq || fq.error) { flowErrors++; continue; }
+    for (const fr of (fq.records || [])) {
+      if (pkValueMentions(JSON.stringify(fr.Metadata || {}), valueName) > 0) {
+        mentions++;
+        hits.push('Flow: ' + (f.label || f.apiName));
+        items.push({ kind: 'flow', id: fr.Id, label: f.label || f.apiName, sub: f.why,
+          url: pkAutomationUrl(ctx.orgUrl, ctx.obj, 'flow', fr.Id) });
+        break;
+      }
+    }
+  }
+  const notScanned = queue.length - toScan.length;
+  if (notScanned > 0) notes.push(`scanned ${toScan.length} of ${queue.length} active flows (cap ${FLOW_CAP}) — the other ${notScanned} were NOT checked`);
+  if (flowErrors) notes.push(`${flowErrors} flow(s) returned no readable metadata — NOT checked`);
+
+  return { mentions, hits, items, notes,
+    scan: { vrOk, vrCount: vrOk ? (vr.records || []).length : 0,
+      flowsScanned: toScan.length, flowsFound: queue.length, triggeredN, cap: FLOW_CAP } };
+}
+
+// Render literal-scan hits as ACTIONABLE rows — each one deep-links into Flow
+// Builder / Setup so "12 automations mention this value" stops being a dead end
+// (T8a). Always prints what was scanned and what was skipped.
+function _pkAutomationHitsHtml(literal) {
+  if (!literal) return '';
+  const rows = (literal.items || []).map(it => {
+    const icon = it.kind === 'flow' ? '🌊' : '✅';
+    const link = it.url
+      ? `<a href="${esc(it.url)}" target="_blank" rel="noopener" title="Open in ${it.kind === 'flow' ? 'Flow Builder' : 'Setup'}">↗ open</a>`
+      : `<span style="color:#92400e">no id returned — open it manually in Setup</span>`;
+    return `<div class="ds-pk-imp-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <span>${icon}</span><strong>${esc(it.label)}</strong>
+      <span style="font-size:11px;color:#6b7280">${esc(it.sub || '')}</span>
+      <span style="flex:1"></span>${link}</div>`;
+  }).join('');
+  const notes = (literal.notes || []).length
+    ? `<div class="ds-pk-imp-row" style="color:#92400e">⚠ ${esc(literal.notes.join(' · '))}</div>` : '';
+  const s = literal.scan;
+  const scanned = s
+    ? `<div class="ds-pk-imp-row" style="font-size:11px;color:#6b7280">Scanned ${s.flowsScanned} active flow(s) (${s.triggeredN} record-triggered on this object, plus autolaunched + screen flows org-wide) and ${s.vrOk ? `${s.vrCount} active validation rule(s)` : 'NO validation rules — that query failed'}. Apex triggers and managed code are NOT text-scanned.</div>`
+    : '';
+  return `${rows}${notes}${scanned}`;
+}
+
+// The "no records hold this value" case still needs the automation panel (T8):
+// zero data does NOT mean zero references — a flow or validation rule that
+// compares against the literal keeps compiling and silently stops matching.
+function _pkLiteralOnlyHtml(literal, valueName) {
+  if (!literal) return '';
+  return `
+    <div class="ds-pk-impact">
+      <div class="ds-pk-imp-title">🔎 No records hold “${esc(valueName)}” — but automation can still name it:</div>
+      <div class="ds-pk-imp-row${literal.mentions ? ' ds-pk-imp-hit' : ''}">Automations mentioning it <em>by name</em>: <strong>${literal.mentions}</strong></div>
+      ${_pkAutomationHitsHtml(literal)}
+      <div class="ds-pk-imp-hint">💡 These won't break — they'll just stop matching, silently. Open each one and update it before or right after this change.</div>
+    </div>`;
 }
 
 // One-line impact summary for the bulk per-org panel (P2).
@@ -780,12 +1032,22 @@ async function _pkOpenWizard(idx, mode) {
   const needsFix = count > 0;
   const fixRequired = mode === 'delete' && needsFix;
 
-  const impact = needsFix ? await _pkImpact(inv) : null;
-  const literal = needsFix ? await _pkValueLiteralScan(inv, name) : null;
-
   const title = mode === 'delete' ? `Delete value “${name}”`
               : mode === 'fix'    ? `Fix data for “${name}”`
               :                     `Deactivate “${name}”`;
+
+  // T8: the literal scan runs for EVERY deactivate/delete, not only when
+  // records hold the value — a flow or validation rule comparing against the
+  // literal keeps compiling and silently stops matching. Zero records is
+  // exactly the case where the old "no records → metadata-only" copy lied.
+  const wantScan = needsFix || mode === 'toggle' || mode === 'delete';
+  if (wantScan) {
+    showModal(`<div class="ds-modal-header">${esc(title)}</div>
+      <div class="ds-modal-body"><div class="ds-init-loading">${window.sftkCat ? sftkCat('Checking records, flows and validation rules…') : 'Checking automation…'}</div></div>`);
+  }
+  const impact = needsFix ? await _pkImpact(inv) : null;
+  const literal = wantScan ? await _pkValueLiteralScan(inv, name) : null;
+
   showModal(`
     <div class="ds-modal-header">${mode === 'delete' ? '🗑' : mode === 'fix' ? '🔧' : '⏸'} ${esc(title)}</div>
     <div class="ds-modal-body">
@@ -804,7 +1066,7 @@ async function _pkOpenWizard(idx, mode) {
           ${fixRequired ? '' : `<label><input type="radio" name="dsPkFixMode" value="skip"> Skip the data fix${mode === 'toggle' ? ' — records keep the value' : ''}</label>`}
         </div>
         ${_pkImpactHtml(impact, count, literal)}
-      ` : `<p>No records hold this value — this is a metadata-only change.</p>`}
+      ` : `<p>No records hold this value — no data fix is needed.</p>${_pkLiteralOnlyHtml(literal, name)}`}
       ${mode === 'delete' ? `<div class="ds-pk-delwarn">⛔ Deleting removes the value from the value set permanently
         (records already fixed above are unaffected). Prefer <strong>Deactivate</strong> unless you're sure.</div>` : ''}
     </div>
@@ -1205,7 +1467,7 @@ function _pkRenderValueSet(ctx, opts) {
     const name = pkValueName(v);
     const active = v.isActive !== false;
     const count = ctx.usage.has(name) ? ctx.usage.get(name) : null;
-    return `<div class="ds-pk-row${active ? '' : ' ds-pk-row-inactive'}">
+    return `<div class="ds-pk-row${active ? '' : ' ds-pk-row-inactive'}" data-pk-val="${esc(name)}">
       <div class="ds-pk-val"><span class="ds-pk-name">${esc(v.label || name)}</span>${v.label && v.label !== name ? `<code class="ds-pk-api">${esc(name)}</code>` : ''}${v.default ? '<span class="ds-pk-default">default</span>' : ''}${active ? '' : '<span class="ds-pk-inactive-badge">inactive</span>'}</div>
       <div class="ds-pk-usage">${count == null ? '<span class="ds-pk-uncounted">—</span>' : count === -1 ? '<span class="ds-pk-uncounted">?</span>' : `<span class="ds-pk-bar"><span class="ds-pk-fill" style="width:${Math.max(2, Math.round(count / maxCount * 100))}%"></span></span><span class="ds-pk-count">${count.toLocaleString()}</span>`}</div>
       <div class="ds-pk-actions">
@@ -1223,6 +1485,29 @@ function _pkRenderValueSet(ctx, opts) {
   body.querySelectorAll('[data-vs-fix]').forEach(b => b.addEventListener('click', () => _pkValueSetWizard(ctx, +b.dataset.vsFix, 'fix', opts.applyFn, opts.reloadFn)));
   body.querySelectorAll('[data-vs-toggle]').forEach(b => b.addEventListener('click', () => _pkValueSetWizard(ctx, +b.dataset.vsToggle, 'toggle', opts.applyFn, opts.reloadFn)));
   body.querySelectorAll('[data-vs-del]').forEach(b => b.addEventListener('click', () => _pkValueSetWizard(ctx, +b.dataset.vsDel, 'delete', opts.applyFn, opts.reloadFn)));
+  _pkApplyHighlight();
+}
+
+// Scroll to + flash one value's row after a deep link (window.sftkOpenPicklistFix).
+// Consumes _pkHighlightValue so a later re-render doesn't re-flash. Says so out
+// loud when the value isn't in the value set — silence would look like success.
+function _pkApplyHighlight() {
+  const want = _pkHighlightValue;
+  if (!want) return;
+  _pkHighlightValue = '';
+  const row = [...document.querySelectorAll('[data-pk-val]')].find(r => r.dataset.pkVal === want);
+  if (!row) {
+    showToast(`“${want}” isn't in this field's value set here — it may already be deleted, or its API name differs`, 'warning', 8000);
+    return;
+  }
+  try { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) { row.scrollIntoView(); }
+  row.style.outline = '2px solid #f59e0b';
+  row.style.outlineOffset = '2px';
+  row.style.borderRadius = '6px';
+  row.style.background = '#fffbeb';
+  setTimeout(() => {
+    row.style.outline = ''; row.style.outlineOffset = ''; row.style.background = ''; row.style.borderRadius = '';
+  }, 6000);
 }
 
 // Generic deactivate/activate/delete wizard for standard + global value sets (P4).
@@ -1242,9 +1527,14 @@ async function _pkValueSetWizard(ctx, idx, mode, applyFn, reloadFn) {
   const others = ctx.rawValues.filter((o, i) => i !== idx && o.isActive !== false).map(o => pkValueName(o));
   const needsFix = count > 0;
   const fixRequired = mode === 'delete' && needsFix;
-  const impact = needsFix ? await _pkImpact(ctx) : null;
-  const literal = needsFix ? await _pkValueLiteralScan(ctx, name) : null;
   const title = mode === 'delete' ? `Delete value “${name}”` : mode === 'fix' ? `Fix data for “${name}”` : `Deactivate “${name}”`;
+  const wantScan = needsFix || mode === 'toggle' || mode === 'delete';   // T8: scan even at 0 records
+  if (wantScan) {
+    showModal(`<div class="ds-modal-header">${esc(title)}</div>
+      <div class="ds-modal-body"><div class="ds-init-loading">${window.sftkCat ? sftkCat('Checking records, flows and validation rules…') : 'Checking automation…'}</div></div>`);
+  }
+  const impact = needsFix ? await _pkImpact(ctx) : null;
+  const literal = wantScan ? await _pkValueLiteralScan(ctx, name) : null;
 
   showModal(`
     <div class="ds-modal-header">${mode === 'delete' ? '🗑' : mode === 'fix' ? '🔧' : '⏸'} ${esc(title)}</div>
@@ -1258,7 +1548,7 @@ async function _pkValueSetWizard(ctx, idx, mode, applyFn, reloadFn) {
           ${fixRequired ? '' : `<label><input type="radio" name="dsVsFix" value="skip"> Skip the data fix</label>`}
         </div>
         ${_pkImpactHtml(impact, count, literal)}
-      ` : `<p>No records hold this value — this is a metadata-only change.</p>`}
+      ` : `<p>No records hold this value — no data fix is needed.</p>${_pkLiteralOnlyHtml(literal, name)}`}
       ${mode === 'delete' ? `<div class="ds-pk-delwarn">⛔ Deleting removes the value permanently. Prefer <strong>Deactivate</strong> unless you're sure.</div>` : ''}
     </div>
     <div class="ds-modal-footer">
@@ -1440,11 +1730,98 @@ async function _pkApplySyncCore(tgt, sel) {
   return true;
 }
 
+// T8c — the sync plan used to align values across orgs with NO automation check
+// at all. This pass runs _pkValueLiteralScan IN EACH TARGET for every value the
+// plan would deactivate there, links the hits, and leaves any row with hits
+// UNTICKED with a visible reason (mirroring the usage guard). Rows start
+// disabled so nothing can be ticked before it has been checked; the Run button
+// stays disabled until the pass finishes. `token` lets a re-render (source
+// change) abandon an in-flight pass.
+async function _pkSyncAutomationPass(plans, guards, obj, field, token) {
+  const CAP = 20;   // hard cap on scans per plan — each one is several queries
+  const runBtn = () => eid('dsPkSyncRun');
+  const noteEl = () => eid('dsPkSyncAutoNote');
+  const finishBtn = () => { const b = runBtn(); if (b) { b.disabled = false; b.textContent = '🔄 Sync selected'; } };
+
+  if (!guards.length) {
+    const n = noteEl();
+    if (n) n.innerHTML = '✓ This plan would not switch any value off in any target — no automation check needed.';
+    finishBtn();
+    return;
+  }
+
+  let done = 0, hitRows = 0, overCap = 0, failed = 0, abortMsg = '';
+  try {
+    for (let i = 0; i < guards.length; i++) {
+      if (token !== _pkSyncScanToken) return;   // plan re-rendered — abandon quietly
+      const g = guards[i];
+      const c = document.querySelector(`.ds-sync-one[data-g="${i}"]`);
+      const s = document.querySelector(`.ds-sync-auto[data-g="${i}"]`);
+      if (!c) continue;
+      const tgt = plans[g.pi]?.tgt;
+      const defaultTick = () => { c.checked = (g.op === 'deactivate') && !g.usage; };
+
+      if (!tgt || !tgt.inv) { c.disabled = false; if (s) s.innerHTML = '<span style="color:#92400e">⚠ target inventory unavailable — automation NOT checked, left unticked</span>'; continue; }
+      if (done >= CAP) {
+        overCap++;
+        c.disabled = false;
+        if (s) s.innerHTML = `<span style="color:#92400e">⚠ automation NOT checked — this plan hit the ${CAP}-scan cap. Tick it only if you have checked the flows yourself.</span>`;
+        continue;
+      }
+
+      const key = `${tgt.orgKey}|${obj}.${field}|${g.val}`;
+      let lit = _pkSyncScanCache.get(key);
+      if (!lit) {
+        try { lit = await _pkValueLiteralScan(tgt.inv, g.val); _pkSyncScanCache.set(key, lit); }
+        catch (e) { lit = { error: e.message }; }   // failures are NOT cached — a re-render retries
+      }
+      if (token !== _pkSyncScanToken) return;
+      done++;
+      c.disabled = false;
+
+      if (lit.error) {
+        failed++;
+        c.checked = false;
+        if (s) s.innerHTML = `<span style="color:#92400e">⚠ automation check FAILED here (${esc(lit.error)}) — left unticked</span>`;
+      } else if (lit.mentions) {
+        hitRows++;
+        c.checked = false;
+        const links = (lit.items || []).slice(0, 6).map(it =>
+          it.url ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${it.kind === 'flow' ? '🌊' : '✅'} ${esc(it.label)}</a>`
+                 : `${it.kind === 'flow' ? '🌊' : '✅'} ${esc(it.label)}`).join(' · ');
+        if (s) s.innerHTML = `<span style="color:#991b1b">⛔ UNTICKED — ${lit.mentions} automation(s) in ${esc(tgt.label)} name “${esc(g.val)}”: </span>${links}${(lit.items || []).length > 6 ? ' …' : ''}${(lit.notes || []).length ? `<span style="color:#92400e"> · ⚠ ${esc(lit.notes.join(' · '))}</span>` : ''}`;
+      } else {
+        defaultTick();
+        if (s) s.innerHTML = `<span style="color:#166534">✓ no flow or validation rule in ${esc(tgt.label)} names this value</span>`
+          + (g.usage ? `<span style="color:#92400e"> · still unticked: ${g.usage.toLocaleString()} record(s) hold it</span>` : '')
+          + ((lit.notes || []).length ? `<span style="color:#92400e"> · ⚠ ${esc(lit.notes.join(' · '))}</span>` : '');
+      }
+    }
+  } catch (e) {
+    abortMsg = e.message;
+  } finally {
+    if (token === _pkSyncScanToken) {
+      // Never leave a row permanently un-tickable, whatever went wrong above.
+      document.querySelectorAll('.ds-sync-one[disabled]').forEach(c => { c.disabled = false; });
+      finishBtn();
+      const n = noteEl();
+      const unchecked = guards.length - done;
+      if (n) n.innerHTML = `🔎 Automation check: <strong>${done}</strong> of ${guards.length} switch-off row(s) scanned`
+        + (overCap ? ` · <span style="color:#92400e">${overCap} NOT checked (${CAP}-scan cap)</span>` : '')
+        + (failed ? ` · <span style="color:#92400e">${failed} scan(s) failed</span>` : '')
+        + (abortMsg ? ` · <span style="color:#92400e">the pass STOPPED EARLY (${esc(abortMsg)})</span>` : '')
+        + ` · <strong>${hitRows}</strong> row(s) reference the value in a flow or validation rule and start unticked.`
+        + (unchecked > 0 ? ` <strong>${unchecked} row(s) were never checked</strong> — they stay unticked; verify them yourself before ticking.` : '');
+    }
+  }
+}
+
 async function _pkOpenSyncPlan() {
   const M = _pkMatrix;
   if (!M) return;
   const loaded = M.results.filter(r => r.inv);
   if (loaded.length < 2) { showToast('Load at least two orgs in the matrix first', 'warning', 5000); return; }
+  _pkSyncScanCache.clear();   // value sets may have moved since the last plan
 
   // Source: the ring's source of truth, LOCKED when it's among the loaded
   // orgs (user 2026-07-18: "source should be auto selected… without the
@@ -1468,6 +1845,17 @@ async function _pkOpenSyncPlan() {
       const c = tgt.inv.usage?.has?.(name) ? tgt.inv.usage.get(name) : null;
       return (c == null || c < 0) ? null : c;
     };
+
+    // T8c: every operation that would TURN A VALUE OFF in a target is a
+    // "guard row" — it gets its own automation scan IN THAT TARGET before it
+    // may be ticked. Flat + indexed so the async pass can address each row by
+    // a plain numeric selector (value names can contain quotes).
+    const guards = [];
+    plans.forEach((pl, pi) => {
+      for (const n of pl.diff.deactivate) guards.push({ pi, op: 'deactivate', val: n, usage: usageOf(pl.tgt, n) });
+      for (const n of pl.diff.extras)     guards.push({ pi, op: 'extrasOff',  val: n, usage: usageOf(pl.tgt, n) });
+    });
+    const gi = (pi, op, val) => guards.findIndex(g => g.pi === pi && g.op === op && g.val === val);
 
     showModal(`
       <div class="ds-modal-header">🔄 Sync ${esc(M.obj)}.${esc(M.field)} from source</div>
@@ -1497,13 +1885,19 @@ async function _pkOpenSyncPlan() {
               ▶ Activate <strong>${d.activate.length}</strong>: ${esc(d.activate.slice(0, 6).join(', '))}</label>` : ''}
             ${d.deactivate.map(n => {
               const u = usageOf(pl.tgt, n);
-              return `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="deactivate" data-val="${esc(n)}" ${u ? '' : 'checked'}>
-                ⏸ Deactivate <strong>${esc(n)}</strong> (inactive in source)${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s) still hold it</span>` : ''}</label>`;
+              const k = gi(pi, 'deactivate', n);
+              // The automation note sits OUTSIDE the <label> on purpose — a link
+              // inside a label would toggle the checkbox when clicked.
+              return `<div><label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="deactivate" data-g="${k}" data-val="${esc(n)}" disabled>
+                ⏸ Deactivate <strong>${esc(n)}</strong> (inactive in source)${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s) still hold it</span>` : ''}</label>
+                <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:#6b7280;margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div></div>`;
             }).join('')}
             ${d.extras.map(n => {
               const u = usageOf(pl.tgt, n);
-              return `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="extrasOff" data-val="${esc(n)}">
-                🔵 Deactivate extra <strong>${esc(n)}</strong> (not in source${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s)</span>` : ''}) — never deleted automatically</label>`;
+              const k = gi(pi, 'extrasOff', n);
+              return `<div><label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="extrasOff" data-g="${k}" data-val="${esc(n)}" disabled>
+                🔵 Deactivate extra <strong>${esc(n)}</strong> (not in source${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s)</span>` : ''}) — never deleted automatically</label>
+                <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:#6b7280;margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div></div>`;
             }).join('')}
             ${d.defaultChange ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="alignDefault" checked>
               ⭐ Default: ${esc(d.defaultChange.from || '—')} → <strong>${esc(d.defaultChange.to || '—')}</strong></label>` : ''}
@@ -1511,12 +1905,17 @@ async function _pkOpenSyncPlan() {
               🎛 Align record-type assignments to the source (matched by developer name — computed on run)</label>
           </div>`;
         }).join('')}
+        <div class="ds-pk-note" id="dsPkSyncAutoNote" style="margin-top:8px">⏳ Checking each target org's flows and validation rules for the values this plan would switch off…</div>
         <div class="ds-pk-hint">Adds copy the source's label and active state. Value ORDER isn't synced. Standard picklists and global value sets aren't part of this v1.</div>
       </div>
       <div class="ds-modal-footer">
         <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-        <button class="ds-btn ds-btn-primary" id="dsPkSyncRun">🔄 Sync selected</button>
+        <button class="ds-btn ds-btn-primary" id="dsPkSyncRun" disabled>⏳ checking automation…</button>
       </div>`);
+
+    // T8c — no deactivation may start ticked until THAT target's automation has
+    // been checked. Runs after the modal is up so the plan renders instantly.
+    _pkSyncAutomationPass(plans, guards, M.obj, M.field, ++_pkSyncScanToken);
 
     eid('dsPkSyncSrc')?.addEventListener('change', e => { srcIdx = +e.target.value; render(); });
     eid('dsPkSyncRun')?.addEventListener('click', async () => {
@@ -1589,3 +1988,459 @@ async function _pkOpenSyncPlan() {
   };
   render();
 }
+
+// ════════════════════════════════════════════════════════════════
+// T9 — WHOLE-OBJECT SWEEP: every picklist field × every selected org
+// ════════════════════════════════════════════════════════════════
+// The matrix answers "is THIS field in sync?". The sweep answers "is this
+// OBJECT in sync?" — one verdict per picklist/multipicklist field, record
+// types folded in, with a 🔄 Sync action per drifting field that reuses the
+// existing single-field P5 plan (so every guard it carries — usage counts,
+// the T8 automation check, the production typed-confirm — still applies).
+//
+// Cost control, stated in the UI rather than hidden: the field count is
+// capped, record counts are NOT loaded during the sweep (the per-field Sync
+// re-reads them), and each org's RecordType metadata is fetched ONCE and
+// reused for every field (RecordType metadata carries all fields' assignments).
+
+// Fetch every active record type's FULL picklist assignment map for one org,
+// once. Returns { rts:[{ id, name, devName, byField:Map(picklist → Set(value)) }], note }.
+async function _pkLoadRtBundle(sess, obj) {
+  const RT_CAP = 8;
+  const rtRes = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false,
+    query: `SELECT Id, Name, DeveloperName, IsActive FROM RecordType WHERE SObjectType = ${soqlStrLit(obj)}`, _silentError: true });
+  if (!rtRes || rtRes.error) return { rts: [], note: `record types unavailable (${rtRes?.error || 'query failed'}) — RT drift NOT checked here` };
+  const rows = (rtRes.records || []).filter(r => r.IsActive);
+  const rts = [];
+  for (const rt of rows.slice(0, RT_CAP)) {
+    const meta = await sendBg({ type: 'SF_TOOLING_GET', orgUrl: sess.orgUrl, sid: sess.sid, sobject: 'RecordType', id: rt.Id });
+    const byField = new Map();
+    for (const p of (meta?.Metadata?.picklistValues || [])) {
+      if (!p || !p.picklist) continue;
+      byField.set(p.picklist, new Set((p.values || []).map(v => pkValueName(v))));
+    }
+    rts.push({ id: rt.Id, name: rt.Name, devName: rt.DeveloperName, byField });
+  }
+  return { rts, note: rows.length > RT_CAP ? `read ${RT_CAP} of ${rows.length} active record types — the rest were NOT checked` : '' };
+}
+
+// Slice one field's assignments out of an RT bundle, shaped exactly like
+// _pkLoadRecordTypes' output so pkRtDrift / pkRtCellInfo work unchanged.
+function _pkRtsForField(bundle, field) {
+  const dev = String(field || '').replace(/__c$/i, '');
+  return ((bundle && bundle.rts) || []).map(rt => ({
+    id: rt.id, name: rt.name, devName: rt.devName,
+    values: rt.byField.get(field) || rt.byField.get(dev) || new Set(),
+  }));
+}
+
+async function _pkSweepObject() {
+  const body = eid('dsPkBody');
+  if (!body || !_pkCmpObj) return;
+  if (!_pkCmpOrgs.length) { showToast('Tick at least two orgs first', 'warning', 5000); return; }
+  if (_pkSweepRunning) { showToast('A sweep is already running — let it finish', 'warning', 5000); return; }
+  _pkSweepRunning = true;
+  const obj = _pkCmpObj;
+  const FIELD_CAP = 25;
+  body.innerHTML = `<div class="ds-init-loading">${window.sftkCat ? sftkCat('Opening every org and listing this object’s picklist fields…') : 'Loading…'}</div>`;
+
+  try {
+    // 1) Sessions — an org that isn't open is REPORTED, never silently dropped.
+    const orgs = [];
+    for (const url of _pkCmpOrgs) {
+      const sess = await getOrgSession(url);
+      orgs.push({ orgUrl: url, orgKey: _orgKey(url), label: orgLabel(url), sess: sess || null,
+        skip: sess ? '' : 'not open in a Chrome tab' });
+    }
+
+    // 2) Describe the object in each live org.
+    for (const o of orgs) {
+      if (!o.sess) continue;
+      o.desc = await describe(obj, o.sess.orgUrl, o.sess.sid);
+      if (!o.desc) { o.skip = `${obj} could not be described here (object missing, or no access)`; o.sess = null; }
+    }
+    const usable = orgs.filter(o => o.sess && o.desc);
+    const skipped = orgs.filter(o => o.skip);
+    if (usable.length < 2) {
+      body.innerHTML = `<div class="ds-seq-empty">Need at least TWO readable orgs to sweep — ${usable.length} available.
+        ${skipped.length ? `<div class="ds-pk-note" style="margin-top:8px">Skipped: ${esc(skipped.map(o => `${o.label} (${o.skip})`).join(' · '))}</div>` : ''}</div>`;
+      return;
+    }
+
+    // 3) Field list = UNION across orgs (a field that exists only in a target
+    //    is drift too), ordered from the source of truth when it's readable.
+    const ringKey = _orgKey((typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2) ? _ring.sourceUrl : '');
+    const srcOrg = (ringKey && usable.find(o => o.orgKey === ringKey)) || usable[0];
+    const seenF = new Set(), allFields = [];
+    for (const o of [srcOrg, ...usable.filter(x => x !== srcOrg)]) {
+      for (const f of (o.desc.fields || [])) {
+        if ((f.type === 'picklist' || f.type === 'multipicklist') && !seenF.has(f.name)) {
+          seenF.add(f.name);
+          allFields.push({ name: f.name, label: f.label, isMulti: f.type === 'multipicklist' });
+        }
+      }
+    }
+    if (!allFields.length) {
+      body.innerHTML = `<div class="ds-seq-empty">${esc(obj)} has no picklist or multi-picklist fields in the readable orgs.</div>`;
+      return;
+    }
+    const fields = allFields.slice(0, FIELD_CAP);
+    const capped = allFields.length - fields.length;
+
+    // 4) RecordType metadata — ONCE per org, reused for every field.
+    const rtBundles = {};
+    await Promise.all(usable.map(async o => {
+      try { rtBundles[o.orgKey] = await _pkLoadRtBundle(o.sess, obj); }
+      catch (e) { rtBundles[o.orgKey] = { rts: [], note: `record types unavailable (${e.message}) — RT drift NOT checked here` }; }
+    }));
+    const rtNotes = usable.filter(o => rtBundles[o.orgKey]?.note).map(o => `${o.label} — ${rtBundles[o.orgKey].note}`);
+
+    _pkSweep = { obj, orgs, usable, srcOrg, fields, rtBundles, rows: [], sharedGroups: new Map() };
+
+    // 5) Shell — rows stream in as each field resolves.
+    body.innerHTML = `
+      <div class="ds-pk-summary">🧹 Whole-object sweep · <strong>${esc(obj)}</strong> ·
+        ${fields.length} picklist field${fields.length !== 1 ? 's' : ''} × ${usable.length} org${usable.length !== 1 ? 's' : ''}
+        <span id="dsPkSwProgress" style="color:var(--subtext)">— starting…</span></div>
+      <div class="ds-pk-note">Field list &amp; sync direction come from <strong>${esc(srcOrg.label)}</strong>${ringKey && srcOrg.orgKey === ringKey ? ' 👑 source of truth' : ' — no ring source of truth is loaded, so this is simply the first readable org'}.
+        Record counts are <strong>NOT</strong> loaded in a sweep (that would be one aggregate query per field per org); each field's 🔄 Sync re-reads them, plus record types and the automation check, before anything is written.</div>
+      ${capped > 0 ? `<div class="ds-pk-note">⚠ Capped at ${FIELD_CAP} fields — <strong>${capped}</strong> further picklist field(s) on ${esc(obj)} were NOT swept: ${esc(allFields.slice(FIELD_CAP).map(f => f.name).join(', '))}</div>` : ''}
+      ${skipped.length ? `<div class="ds-pk-note">⚠ Skipped ${skipped.length} org(s): ${esc(skipped.map(o => `${o.label} (${o.skip})`).join(' · '))} — they are NOT part of any verdict below.</div>` : ''}
+      ${rtNotes.length ? `<div class="ds-pk-note">⚠ Record types: ${esc(rtNotes.join(' · '))}</div>` : ''}
+      <div class="ds-pk-table" style="max-width:1180px">
+        <div class="ds-pk-head" style="display:grid;grid-template-columns:minmax(170px,1.2fr) minmax(160px,1fr) 2.2fr minmax(150px,auto);gap:10px">
+          <div>Field</div><div>Verdict</div><div>What differs</div><div>Action</div>
+        </div>
+        <div id="dsPkSwRows"></div>
+      </div>
+      <div id="dsPkSwShared"></div>
+      <div class="ds-pk-bulkbar" style="margin-top:10px">
+        <span class="ds-pk-bulk-lbl">Drifting fields:</span>
+        <span id="dsPkSwCount">counting…</span>
+        <span style="flex:1"></span>
+        <button class="ds-btn ds-btn-sm ds-btn-primary" id="dsPkSwSyncAll" disabled
+          title="Opens the existing single-field sync plan for each drifting field, one after another. Nothing is written until you press Sync inside each plan.">🔄 Sync all drifting fields…</button>
+      </div>
+      <div id="dsPkSwLog"></div>`;
+
+    eid('dsPkSwSyncAll')?.addEventListener('click', () => _pkSweepSyncAll());
+    const rowsBox = eid('dsPkSwRows');
+    const prog = eid('dsPkSwProgress');
+
+    // 6) Fields SEQUENTIALLY (so rows stream), orgs in PARALLEL per field.
+    for (let i = 0; i < fields.length; i++) {
+      // The user navigated away (or opened a single-org editor) — stop burning
+      // API calls into a DOM that no longer exists, and say the sweep is partial.
+      if (!eid('dsPkSwRows')) {
+        showToast(`Sweep stopped after ${i} of ${fields.length} field(s) — the view changed`, 'info', 5000);
+        return;
+      }
+      const f = fields[i];
+      if (rowsBox) rowsBox.insertAdjacentHTML('beforeend', _pkSweepRowShellHtml(i, f));
+      if (prog) prog.textContent = `— reading ${f.name} (${i + 1}/${fields.length})…`;
+
+      const perOrg = [], perRts = [];
+      await Promise.all(usable.map(async (o, oi) => {
+        if (!(o.desc.fields || []).some(x => x.name === f.name)) {
+          perOrg[oi] = { orgKey: o.orgKey, label: o.label, kind: 'missing' }; perRts[oi] = null; return;
+        }
+        try {
+          const r = await _pkFetchInventory(o.sess, obj, f.name, { skipUsage: true, skipRts: true });
+          if (r.kind === 'standard') { perOrg[oi] = { orgKey: o.orgKey, label: o.label, kind: 'standard', valueSetName: f.name }; perRts[oi] = null; return; }
+          if (r.kind === 'global')   { perOrg[oi] = { orgKey: o.orgKey, label: o.label, kind: 'global',   valueSetName: r.name  }; perRts[oi] = null; return; }
+          perOrg[oi] = { orgKey: o.orgKey, label: o.label, kind: 'local',
+            values: r.inv.rawValues.map(v => ({ name: pkValueName(v), label: v.label || pkValueName(v),
+              active: v.isActive !== false, isDefault: !!v.default })) };
+          perRts[oi] = _pkRtsForField(rtBundles[o.orgKey], f.name);
+        } catch (e) {
+          perOrg[oi] = { orgKey: o.orgKey, label: o.label, kind: 'error', error: e.message };
+          perRts[oi] = null;
+        }
+      }));
+
+      const verdict = pkFieldVerdict(perOrg, perRts, f.name);
+      _pkSweep.rows[i] = { field: f.name, label: f.label, isMulti: f.isMulti, verdict, perOrg };
+      _pkSweepFillRow(i, verdict);
+      _pkSweepUpdateShared(i, verdict, f);
+      _pkSweepUpdateFooter();
+    }
+
+    if (prog) prog.textContent = `— done (${fields.length} field(s) read)`;
+    _pkSweepUpdateFooter();
+  } catch (e) {
+    const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
+    body.innerHTML = `<div class="ds-seq-empty" title="${esc(e.message)}">❌ Sweep failed: ${esc(fe.message)}</div>`;
+  } finally {
+    _pkSweepRunning = false;
+  }
+}
+
+function _pkSweepRowShellHtml(i, f) {
+  return `<div class="ds-pk-row" data-pk-swi="${i}" style="display:grid;grid-template-columns:minmax(170px,1.2fr) minmax(160px,1fr) 2.2fr minmax(150px,auto);gap:10px;align-items:start">
+    <div><span class="ds-pk-name">${esc(f.label || f.name)}</span>
+      <div><code class="ds-pk-api" style="margin-left:0">${esc(f.name)}</code>${f.isMulti ? ' <span style="font-size:10px;color:var(--subtext)">multi</span>' : ''}</div></div>
+    <div data-pk-swverdict="${i}" style="font-size:12px">⏳ reading…</div>
+    <div data-pk-swdetail="${i}" style="font-size:11px;color:var(--subtext)"></div>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+      <span data-pk-swstatus="${i}" style="font-size:11px;color:var(--subtext)"></span>
+      <span data-pk-swact="${i}"></span></div>
+  </div>`;
+}
+
+// Colour + icon for one verdict — inline styles so no CSS file is touched.
+function _pkSweepVerdictHtml(v) {
+  const style = {
+    sync:          'color:#166534',
+    values:        'color:#991b1b;font-weight:600',
+    missing:       'color:#991b1b;font-weight:600',
+    rts:           'color:#92400e;font-weight:600',
+    notcomparable: 'color:var(--subtext)',
+    error:         'color:#991b1b',
+    insufficient:  'color:var(--subtext)',
+  }[v.status] || 'color:var(--subtext)';
+  const icon = { sync: '✓', values: '⚠', missing: '⛔', rts: '⚠', notcomparable: '🔒', error: '❌', insufficient: 'ℹ' }[v.status] || '·';
+  return `<span style="${style}">${icon} ${esc(v.label)}</span>`;
+}
+
+function _pkSweepFillRow(i, v) {
+  const vEl = document.querySelector(`[data-pk-swverdict="${i}"]`);
+  const dEl = document.querySelector(`[data-pk-swdetail="${i}"]`);
+  const aEl = document.querySelector(`[data-pk-swact="${i}"]`);
+  if (vEl) vEl.innerHTML = _pkSweepVerdictHtml(v);
+  if (dEl) dEl.textContent = v.detail || '';
+  if (!aEl) return;
+  if (v.drifting) {
+    aEl.innerHTML = `<button class="ds-btn ds-btn-sm ds-btn-primary" data-pk-swsync="${i}"
+      title="Opens the existing single-field sync plan for this field — it re-reads values, record counts and record types, and runs the automation check first.">🔄 Sync</button>`;
+    aEl.querySelector('[data-pk-swsync]')?.addEventListener('click', () => _pkSweepSyncField(i));
+  } else if (v.status === 'notcomparable') {
+    aEl.innerHTML = `<button class="ds-btn ds-btn-sm" data-pk-swopen="${i}" title="Open this value set in the single-org editor — shared value sets are edited once, not per field.">↗ Open value set</button>`;
+    aEl.querySelector('[data-pk-swopen]')?.addEventListener('click', () => _pkSweepOpenField(i));
+  } else {
+    aEl.innerHTML = `<span style="font-size:11px;color:var(--subtext)">—</span>`;
+  }
+}
+
+// Global / standard value sets are SHARED across fields: group them by set and
+// list every field that inherits it, so the same set is acted on ONCE (T9).
+function _pkSweepUpdateShared(i, v, f) {
+  const S = _pkSweep;
+  if (!S || !v.shared) return;
+  const key = v.shared.key;
+  const g = S.sharedGroups.get(key) || { kind: v.shared.kind, names: v.shared.names, mixed: v.shared.mixed, fields: [], firstRow: i };
+  g.fields.push(f.name);
+  g.mixed = g.mixed || v.shared.mixed;
+  S.sharedGroups.set(key, g);
+
+  // A repeat of an already-listed set: point at the group instead of repeating.
+  if (g.fields.length > 1) {
+    const dEl = document.querySelector(`[data-pk-swdetail="${i}"]`);
+    if (dEl) dEl.textContent = `Inherits the ${g.kind} value set ${g.names.join(' / ')} — already listed under “Shared value sets” below (${g.fields.length} field(s) inherit it). Editing it once changes every one of them.`;
+    const aEl = document.querySelector(`[data-pk-swact="${i}"]`);
+    if (aEl) aEl.innerHTML = `<span style="font-size:11px;color:var(--subtext)">↓ shared</span>`;
+  }
+
+  const box = eid('dsPkSwShared');
+  if (!box) return;
+  const groups = [...S.sharedGroups.values()];
+  box.innerHTML = `
+    <div class="ds-pk-summary" style="margin-top:12px">🌐 Shared value sets — acted on ONCE, not per field (${groups.length})</div>
+    <div class="ds-pk-note">Global and standard value sets are org-wide objects, so the per-field sync plan cannot write them. They are listed here with every field that inherits them. Cross-org sync of shared value sets is NOT implemented — open the set in one org and edit it there.</div>
+    <div class="ds-pk-table" style="max-width:1180px">
+      ${groups.map(gg => `
+        <div class="ds-pk-row" style="display:grid;grid-template-columns:minmax(220px,1fr) 2fr auto;gap:10px;align-items:center">
+          <div><span class="ds-pk-name">${esc(gg.names.join(' / ') || '(unnamed)')}</span>
+            <div style="font-size:10.5px;color:var(--subtext)">${esc(gg.kind)} value set</div></div>
+          <div style="font-size:11px;color:var(--subtext)">Inherited by ${gg.fields.length} field(s): ${esc(gg.fields.join(', '))}${gg.mixed ? ' · ⚠ NOT the same in every loaded org — check each org individually' : ''}</div>
+          <div><button class="ds-btn ds-btn-sm" data-pk-swshared="${gg.firstRow}">↗ Open in ${esc(S.srcOrg.label)}</button></div>
+        </div>`).join('')}
+    </div>`;
+  box.querySelectorAll('[data-pk-swshared]').forEach(b =>
+    b.addEventListener('click', () => _pkSweepOpenField(parseInt(b.dataset.pkSwshared, 10))));
+}
+
+function _pkSweepUpdateFooter() {
+  const S = _pkSweep;
+  if (!S) return;
+  const done = S.rows.filter(Boolean);
+  const drifting = done.filter(r => r.verdict.drifting);
+  const cnt = eid('dsPkSwCount');
+  if (cnt) {
+    const inSync = done.filter(r => r.verdict.status === 'sync').length;
+    const nc = done.filter(r => r.verdict.status === 'notcomparable').length;
+    const bad = done.filter(r => r.verdict.status === 'error').length;
+    cnt.innerHTML = `<strong>${drifting.length}</strong> drifting · ${inSync} in sync · ${nc} not comparable${bad ? ` · ${bad} unreadable` : ''} (of ${done.length} read)`;
+  }
+  const btn = eid('dsPkSwSyncAll');
+  if (btn) {
+    btn.disabled = drifting.length === 0;
+    btn.textContent = drifting.length ? `🔄 Sync all ${drifting.length} drifting field(s)…` : '🔄 Sync all drifting fields…';
+  }
+}
+
+// Open ONE swept field in the single-org editor (used for shared value sets,
+// which have no cross-org plan). Reuses the public deep-link contract.
+function _pkSweepOpenField(i) {
+  const S = _pkSweep;
+  const row = S && S.rows[i];
+  if (!row) return;
+  window.sftkOpenPicklistFix({ orgUrl: S.srcOrg.orgUrl, object: S.obj, field: row.field });
+}
+
+// Build a REAL single-field matrix for one swept field (with usage counts and
+// record types — the sweep deliberately skipped both) and hand it to the
+// existing P5 plan, so every guard in that plan still applies.
+async function _pkSweepSyncField(i) {
+  const S = _pkSweep;
+  const row = S && S.rows[i];
+  if (!row) return false;
+  const st = document.querySelector(`[data-pk-swstatus="${i}"]`);
+  const set = h => { if (st) st.innerHTML = h; };
+  set('⏳ re-reading values, record counts &amp; record types…');
+
+  const results = await Promise.all(S.usable.map(async o => {
+    const sess = await getOrgSession(o.orgUrl);
+    if (!sess) return { orgUrl: o.orgUrl, orgKey: o.orgKey, label: o.label, skip: 'not open in a tab' };
+    try {
+      const r = await _pkFetchInventory(sess, S.obj, row.field);
+      if (r.kind !== 'local') return { orgUrl: o.orgUrl, orgKey: o.orgKey, label: o.label, skip: r.kind === 'standard' ? 'standard picklist' : 'global value set' };
+      let rts = [], rtNote = '';
+      try {
+        const rt = await _pkLoadRecordTypes(sess, S.obj, row.field, row.field.replace(/__c$/i, ''));
+        rts = rt.rts; rtNote = rt.rtNote;
+      } catch (e2) { rtNote = `record types unavailable: ${e2.message}`; }
+      return { orgUrl: o.orgUrl, orgKey: o.orgKey, label: o.label, inv: r.inv, rts, rtNote };
+    } catch (e) {
+      return { orgUrl: o.orgUrl, orgKey: o.orgKey, label: o.label, skip: e.message };
+    }
+  }));
+
+  const loaded = results.filter(r => r.inv);
+  if (loaded.length < 2) {
+    set(`<span style="color:#92400e">⚠ only ${loaded.length} org readable for this field — no plan (${esc(results.filter(r => r.skip).map(r => `${r.label}: ${r.skip}`).join(' · '))})</span>`);
+    return false;
+  }
+  const perOrg = loaded.map(r => ({ orgKey: r.orgKey, values: r.inv.rawValues.map(v => pkValueName(v)) }));
+  const union = pkValueUnion(perOrg);
+  // _pkMatrix is the sync plan's input contract — the sweep borrows it per field.
+  _pkMatrix = { obj: S.obj, field: row.field, results, union, matrix: pkBuildMatrix(results, union) };
+  set('📋 reviewing plan…');
+  await _pkOpenSyncPlan();
+  return true;
+}
+
+// Wait until the shared modal is dismissed (Cancel / Esc / done), so the
+// "sync all" queue can present one plan at a time. Capped so a forgotten
+// modal can't leave a timer running forever.
+function _pkWaitModalClosed(maxMs) {
+  const limit = maxMs || 15 * 60 * 1000;
+  const started = Date.now();
+  return new Promise(resolve => {
+    const t = setInterval(() => {
+      const ov = eid('dsModal');
+      if (!ov || ov.style.display === 'none' || Date.now() - started > limit) { clearInterval(t); resolve(); }
+    }, 300);
+  });
+}
+
+// Sequential review of every drifting field. Deliberately NOT a silent
+// bulk-apply: each field gets its own plan (with its own usage + automation
+// guards) and the user presses Sync inside it. The log below records
+// queued → reviewing → closed, per field.
+async function _pkSweepSyncAll() {
+  const S = _pkSweep;
+  if (!S) return;
+  const idxs = S.rows.map((r, i) => (r && r.verdict && r.verdict.drifting) ? i : -1).filter(i => i >= 0);
+  if (!idxs.length) { showToast('Nothing is drifting — nothing to sync', 'info', 4000); return; }
+
+  showModal(`
+    <div class="ds-modal-header">🔄 Sync ${idxs.length} drifting field(s) on ${esc(S.obj)}</div>
+    <div class="ds-modal-body">
+      <p>You review <strong>one plan per field, in sequence</strong>. Nothing is written until you press
+      <em>Sync selected</em> inside a plan; closing a plan (Cancel / Esc) skips that field and moves to the next.</p>
+      <p style="font-size:12px">Each plan re-reads that field's values, <strong>record counts</strong> and record types from every org
+      (the sweep skipped counts to stay fast) and runs the automation check before any deactivation can be ticked.</p>
+      <div class="ds-pk-hint">Queue: ${esc(idxs.map(i => S.rows[i].field).join(' → '))}</div>
+    </div>
+    <div class="ds-modal-footer">
+      <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
+      <button class="ds-btn ds-btn-primary" id="dsPkSwAllGo">▶ Start — ${idxs.length} plan(s)</button>
+    </div>`);
+
+  eid('dsPkSwAllGo')?.addEventListener('click', async () => {
+    closeModal();
+    const log = eid('dsPkSwLog');
+    if (log) log.innerHTML = `<div class="ds-pk-reslog"><div class="ds-pk-res-title">Sequential sync — one plan per field</div></div>`;
+    const box = log?.querySelector('.ds-pk-reslog');
+    const append = html => { if (box) { const d = document.createElement('div'); d.className = 'ds-pk-res-row'; d.innerHTML = html; box.appendChild(d); } };
+
+    for (let k = 0; k < idxs.length; k++) {
+      const i = idxs[k];
+      const name = S.rows[i].field;
+      append(`▶ <strong>${esc(name)}</strong> (${k + 1}/${idxs.length}) — opening its plan…`);
+      let ok = false;
+      try { ok = await _pkSweepSyncField(i); }
+      catch (e) { append(`❌ <strong>${esc(name)}</strong>: ${esc(e.message)}`); continue; }
+      if (!ok) { append(`⏭ <strong>${esc(name)}</strong>: skipped — no plan could be built (see that row's status)`); continue; }
+      await _pkWaitModalClosed();
+      const st = document.querySelector(`[data-pk-swstatus="${i}"]`);
+      if (st) st.innerHTML = '<span style="color:var(--subtext)">plan closed</span>';
+      append(`✓ <strong>${esc(name)}</strong>: plan closed`);
+    }
+    append(`<em>Queue finished. The verdicts above are from BEFORE these syncs — re-run the sweep to verify.</em>`);
+    showToast('Sequential sync finished — re-run the sweep to verify', 'info', 6000);
+  });
+}
+
+// ════════════════════════════════════════════════════════════════
+// PUBLIC ENTRY POINT — consumed by other Studio views
+// ════════════════════════════════════════════════════════════════
+// Contract (do NOT rename): switch the Picklist Manager into SINGLE-org mode
+// for one org/object/field, load the inventory, and — when `value` is given —
+// scroll to + flash that value's row. Robust when the view isn't rendered yet
+// and when the org isn't open in a tab (both are reported, never silent).
+// Returns a Promise<boolean>: true once the inventory load ran.
+window.sftkOpenPicklistFix = function ({ orgUrl, object, field, value } = {}) {
+  return (async () => {
+    if (!object || !field) {
+      showToast('Picklist fix needs both an object and a field', 'warning', 6000);
+      return false;
+    }
+    if (!eid('dsMain')) { showToast('Studio isn’t ready yet — try again in a moment', 'warning', 5000); return false; }
+
+    const orgs = (typeof allMapOrgs === 'function') ? allMapOrgs() : [];
+    const match = orgUrl ? orgs.find(o => _orgKey(o.url) === _orgKey(orgUrl)) : null;
+    const url = (match && match.url) || orgUrl || '';
+    if (!url) { showToast('Picklist fix needs an org URL', 'warning', 6000); return false; }
+    if (orgUrl && !match) showToast(`⚠ ${orgLabel(orgUrl)} isn't in the org map — opening it anyway`, 'warning', 6000);
+
+    _pkMode = 'single';
+    _pkOrgUrl = url;
+    _pkObj = object;
+    _pkField = field;
+    _pkInv = null; _pkStd = null; _pkGvs = null;
+    _pkHighlightValue = value || '';
+
+    // The Picklist view may not be the current one (deep link from elsewhere) —
+    // switch to it the same way the other cross-view entry points do.
+    try {
+      if (_currentView !== 'picklists') {
+        document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
+        document.querySelector('[data-view="picklists"]')?.classList.add('active');
+        _currentView = 'picklists';
+      }
+    } catch (_) { /* _currentView unreachable — the direct render below still works */ }
+    renderPicklists();   // rebuilds #dsPkConfig (single-org bar) + #dsPkBody
+
+    const sess = await getOrgSession(url);
+    if (!sess) {
+      const msg = `${orgLabel(url)} isn't open in a Chrome tab — open it, then press “Load values”.`;
+      const body = eid('dsPkBody');
+      if (body) body.innerHTML = `<div class="ds-seq-empty">🔌 ${esc(msg)}</div>`;
+      showToast(msg, 'warning', 8000);
+      return false;
+    }
+    await loadPicklistInventory();
+    return true;
+  })();
+};
