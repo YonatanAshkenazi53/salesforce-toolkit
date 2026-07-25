@@ -1857,6 +1857,25 @@ async function _pkOpenSyncPlan() {
     });
     const gi = (pi, op, val) => guards.findIndex(g => g.pi === pi && g.op === op && g.val === val);
 
+    // Data fix INSIDE the plan (user 2026-07-25: "what about the datafix and
+    // picklist change when the values are drifted?"): a value that records
+    // still hold may only be switched off together with a chosen fix — move
+    // the records to a value that will be ACTIVE after this sync (the
+    // source's active set), or clear the field. Runs BEFORE the metadata
+    // change, per target, via the same _pkDataFixCore the wizards use.
+    const remapTargets = src.inv.rawValues
+      .filter(v => v.isActive !== false)
+      .map(v => pkValueName(v));
+    const fixCtl = (k, n, u) => !u ? '' : `
+      <div class="ds-sync-fix" style="font-size:12px;margin:-2px 0 6px 22px">
+        ↳ first, its ${u.toLocaleString()} record(s):
+        <select class="ds-sync-fixsel ds-select ds-select-sm" data-g="${k}">
+          <option value="">— keep holding “${esc(n)}” (pick a fix to enable the tick) —</option>
+          ${remapTargets.filter(v => v !== n).map(v => `<option value="${esc(v)}">move to “${esc(v)}”</option>`).join('')}
+          <option value="__clear__">clear the field</option>
+        </select>
+      </div>`;
+
     showModal(`
       <div class="ds-modal-header">🔄 Sync ${esc(M.obj)}.${esc(M.field)} from source</div>
       <div class="ds-modal-body">
@@ -1890,14 +1909,14 @@ async function _pkOpenSyncPlan() {
               // inside a label would toggle the checkbox when clicked.
               return `<div><label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="deactivate" data-g="${k}" data-val="${esc(n)}" disabled>
                 ⏸ Deactivate <strong>${esc(n)}</strong> (inactive in source)${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s) still hold it</span>` : ''}</label>
-                <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:#6b7280;margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div></div>`;
+                <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:#6b7280;margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div>${fixCtl(k, n, u)}</div>`;
             }).join('')}
             ${d.extras.map(n => {
               const u = usageOf(pl.tgt, n);
               const k = gi(pi, 'extrasOff', n);
               return `<div><label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="extrasOff" data-g="${k}" data-val="${esc(n)}" disabled>
                 🔵 Deactivate extra <strong>${esc(n)}</strong> (not in source${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s)</span>` : ''}) — never deleted automatically</label>
-                <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:#6b7280;margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div></div>`;
+                <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:#6b7280;margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div>${fixCtl(k, n, u)}</div>`;
             }).join('')}
             ${d.defaultChange ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="alignDefault" checked>
               ⭐ Default: ${esc(d.defaultChange.from || '—')} → <strong>${esc(d.defaultChange.to || '—')}</strong></label>` : ''}
@@ -1916,6 +1935,28 @@ async function _pkOpenSyncPlan() {
     // T8c — no deactivation may start ticked until THAT target's automation has
     // been checked. Runs after the modal is up so the plan renders instantly.
     _pkSyncAutomationPass(plans, guards, M.obj, M.field, ++_pkSyncScanToken);
+
+    // Data-fix gating: a switch-off with records behind it can only be ticked
+    // once a fix is chosen; clearing the fix unticks it again.
+    const box = eid('dsModalBox');
+    box?.addEventListener('change', e => {
+      const cb = e.target.closest?.('.ds-sync-one');
+      if (cb && cb.checked) {
+        const g = guards[+cb.dataset.g];
+        if (g && g.usage > 0) {
+          const fix = box.querySelector(`.ds-sync-fixsel[data-g="${cb.dataset.g}"]`)?.value || '';
+          if (!fix) {
+            cb.checked = false;
+            showToast(`${g.usage.toLocaleString()} record(s) still hold “${g.val}” — pick a data fix on that row first`, 'warning', 5000);
+          }
+        }
+      }
+      const sel = e.target.closest?.('.ds-sync-fixsel');
+      if (sel && !sel.value) {
+        const row = box.querySelector(`.ds-sync-one[data-g="${sel.dataset.g}"]`);
+        if (row) row.checked = false;
+      }
+    });
 
     eid('dsPkSyncSrc')?.addEventListener('change', e => { srcIdx = +e.target.value; render(); });
     eid('dsPkSyncRun')?.addEventListener('click', async () => {
@@ -1954,6 +1995,28 @@ async function _pkOpenSyncPlan() {
         note.textContent = ' ⏳ syncing…';
         hdr?.appendChild(note);
         try {
+          // Data fixes FIRST — records must stop holding a value before the
+          // plan switches it off. Same core the wizards use, in THIS target.
+          let fixedRecs = 0, fixFailed = 0;
+          const fixRows = [...document.querySelectorAll(`.ds-sync-one[data-p="${pi}"]:checked`)]
+            .map(cb => ({ val: cb.dataset.val,
+              fix: document.querySelector(`.ds-sync-fixsel[data-g="${cb.dataset.g}"]`)?.value || '' }))
+            .filter(x => x.fix);
+          for (const f of fixRows) {
+            note.textContent = ` ⏳ moving records off “${f.val}”…`;
+            const ctx = { orgUrl: pl.tgt.inv.orgUrl, sid: pl.tgt.inv.sid,
+              obj: M.obj, field: M.field, isMulti: !!pl.tgt.inv.isMulti };
+            try {
+              const out = await _pkDataFixCore(ctx, f.val,
+                f.fix === '__clear__' ? 'clear' : 'remap',
+                f.fix === '__clear__' ? null : f.fix, null);
+              fixedRecs += out.updated; fixFailed += out.failed;
+            } catch (e) {
+              fixFailed++;
+              showToast(`${pl.tgt.label}: data fix for “${f.val}” failed — ${e.message}. The value will still be deactivated; its records keep the old value.`, 'error', 7000);
+            }
+          }
+          note.textContent = ' ⏳ syncing…';
           if (anyValueOp) await _pkApplySyncCore(pl.tgt, sel);
           let rtDone = 0, rtFail = 0;
           if (wantRts && srcSess) {
@@ -1971,7 +2034,7 @@ async function _pkOpenSyncPlan() {
               } catch (_) { rtFail++; }
             }
           }
-          note.textContent = ` ✅ synced${wantRts ? ` · ${rtDone} record type${rtDone !== 1 ? 's' : ''} aligned${rtFail ? ` (${rtFail} failed)` : ''}` : ''}`;
+          note.textContent = ` ✅ synced${fixedRecs || fixFailed ? ` · 🔧 ${fixedRecs} record(s) moved${fixFailed ? ` (${fixFailed} failed)` : ''}` : ''}${wantRts ? ` · ${rtDone} record type${rtDone !== 1 ? 's' : ''} aligned${rtFail ? ` (${rtFail} failed)` : ''}` : ''}`;
         } catch (e) {
           const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
           note.textContent = ` ❌ ${fe.message}`;

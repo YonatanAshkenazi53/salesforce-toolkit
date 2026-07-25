@@ -20,6 +20,13 @@ they were never published to the store as separate releases.
   which orgs it could not check (not signed in, hand-picked record sets).
 - **▶ Check now** button to run the same probe on demand.
 
+### Added (picklists)
+- **Data fix inside the multi-org sync plan**: when syncing values from the source
+  would deactivate a value that records still hold, the plan row now offers the fix
+  right there — move those records to a value that stays active, or clear the field —
+  and won't let the deactivation be ticked without one. Fixes run first, per org,
+  then the picklist change; the result line reports how many records were moved.
+
 ### Notes
 - A count probe catches added/removed records, not value changes — run a 🔎 scan
   for those. This release adds the `alarms` permission to support scheduling.
