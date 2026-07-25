@@ -451,6 +451,55 @@ describe('scan accuracy (🎯 — user request 2026-07-17)', () => {
   });
 });
 
+describe('flow XML backup (N1 — sftk-flow-xml.js + zip round-trip)', () => {
+  const { sftkFlowToXml, sftkFlowPackageXml } =
+    extractFunctions('sftk-flow-xml.js', ['sftkFlowToXml', 'sftkFlowPackageXml', 'sftkXmlNode', 'sftkXmlEscape']);
+
+  it('serializes a Flow: alphabetical elements, arrays repeated, nulls omitted, text escaped', () => {
+    const xml = sftkFlowToXml({
+      status: 'Active',
+      label: 'Send & Notify <Owner>',
+      apiVersion: 62,
+      description: null,
+      decisions: [
+        { name: 'D1', rules: [{ name: 'R1', conditionLogic: 'and' }] },
+        { name: 'D2' },
+      ],
+      start: { locationX: 50, connector: { targetReference: 'D1' } },
+    });
+    expect(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>\n<Flow xmlns="http://soap.sforce.com/2006/04/metadata">\n')).toBe(true);
+    expect(xml).toContain('<label>Send &amp; Notify &lt;Owner&gt;</label>');
+    expect(xml).not.toContain('<description>');                    // null omitted
+    expect((xml.match(/<decisions>/g) || []).length).toBe(2);      // array → repeated
+    expect(xml).toContain('<targetReference>D1</targetReference>');
+    // alphabetical: apiVersion before decisions before label before start
+    const order = ['<apiVersion>', '<decisions>', '<label>', '<start>'].map(s => xml.indexOf(s));
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(xml.trim().endsWith('</Flow>')).toBe(true);
+  });
+
+  it('package.xml lists sorted unique members with the Flow type', () => {
+    const pkg = sftkFlowPackageXml(['Zeta', 'Alpha', 'Zeta']);
+    expect(pkg.indexOf('<members>Alpha</members>')).toBeLessThan(pkg.indexOf('<members>Zeta</members>'));
+    expect((pkg.match(/<members>Zeta<\/members>/g) || []).length).toBe(1);
+    expect(pkg).toContain('<name>Flow</name>');
+  });
+
+  it('stored-zip write → read round-trips the backup artifact', () => {
+    const { sftkBuildStoredZip } = extractFunctions('sftk-zip.js', ['sftkCrc32', 'sftkBuildStoredZip']);
+    const sftkReadStoredZip = extractFunction('sftk-zip.js', 'sftkReadStoredZip');
+    const b64 = sftkBuildStoredZip([
+      { name: 'package.xml', data: '<Package/>' },
+      { name: 'flows/My_Flow.flow', data: '<Flow>x</Flow>' },
+      { name: 'backup.json', data: '{"flows":[]}' },
+    ]);
+    const entries = sftkReadStoredZip(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
+    expect(Object.keys(entries).sort()).toEqual(['backup.json', 'flows/My_Flow.flow', 'package.xml']);
+    expect(new TextDecoder().decode(entries['backup.json'])).toBe('{"flows":[]}');
+    expect(new TextDecoder().decode(entries['flows/My_Flow.flow'])).toBe('<Flow>x</Flow>');
+  });
+});
+
 describe('per-target field-mapping overrides (sftkResolveMappings)', () => {
   const sftkResolveMappings = extractFunction('studio-core.js', 'sftkResolveMappings');
   const base = { Rating: 'Rating__c', Name: 'Name', Phone: null };

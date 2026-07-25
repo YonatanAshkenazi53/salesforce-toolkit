@@ -102,7 +102,32 @@ function sftkBuildStoredZip(files) {
   return btoa(binary);
 }
 
+// Read a STORED (uncompressed) zip built by sftkBuildStoredZip back into
+// { name: Uint8Array } — used by flow Restore to open our own backup zips
+// (N1). Walks local file headers from offset 0; compressed entries (method
+// !== 0) throw — we never produce them, and foreign zips aren't our format.
+function sftkReadStoredZip(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const out = {};
+  let pos = 0;
+  while (pos + 30 <= u8.length && dv.getUint32(pos, true) === 0x04034b50) {
+    const method  = dv.getUint16(pos + 8, true);
+    const size    = dv.getUint32(pos + 18, true);
+    const nameLen = dv.getUint16(pos + 26, true);
+    const extraLen = dv.getUint16(pos + 28, true);
+    const name = new TextDecoder().decode(u8.subarray(pos + 30, pos + 30 + nameLen));
+    if (method !== 0) throw new Error(`zip entry "${name}" is compressed — not a Toolkit backup zip`);
+    const dataStart = pos + 30 + nameLen + extraLen;
+    out[name] = u8.subarray(dataStart, dataStart + size);
+    pos = dataStart + size;
+  }
+  if (!Object.keys(out).length) throw new Error('no zip entries found — not a Toolkit backup zip');
+  return out;
+}
+
 if (typeof window !== 'undefined') {
   window.sftkCrc32 = sftkCrc32;
   window.sftkBuildStoredZip = sftkBuildStoredZip;
+  window.sftkReadStoredZip = sftkReadStoredZip;
 }

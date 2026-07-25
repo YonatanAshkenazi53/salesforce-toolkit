@@ -1517,7 +1517,7 @@ async function showActiveWarningModal(activeFlows) {
     const rows = activeFlows.map((f, i) =>
       `<li class="backup-row">
         <span>${escHtml(f.MasterLabel)} — v${f.VersionNumber}</span>
-        <button class="btn btn-secondary btn-sm backup-one-btn" data-idx="${i}" title="Download backup JSON">⬇ Backup</button>
+        <button class="btn btn-secondary btn-sm backup-one-btn" data-idx="${i}" title="Download a Metadata-XML backup zip (deployable via Workbench / sf CLI)">⬇ Backup</button>
       </li>`
     ).join('');
 
@@ -1585,8 +1585,38 @@ async function showActiveWarningModal(activeFlows) {
 }
 
 // ============================================================
-// Backup — download flow metadata as JSON
+// Backup — download flow metadata as a Metadata-API XML zip (N1)
 // ============================================================
+// The zip is a real mdapi artifact: package.xml + flows/<ApiName>.flow —
+// deployable as-is via Workbench or `sf project deploy start --metadata-dir`.
+// backup.json (the full Tooling bundle) rides along inside the zip so the
+// 📥 Restore mode keeps its exact pre-XML fidelity.
+function downloadFlowBackupZip(flowEntries, orgUrlForBundle, zipName) {
+  const bundle = {
+    _info: 'Salesforce Toolkit flow backup bundle — restore via the 📥 Restore mode',
+    backupDate: new Date().toISOString(),
+    orgUrl: orgUrlForBundle,
+    version: 2,
+    flows: flowEntries,
+  };
+  const files = [
+    { name: 'package.xml', data: sftkFlowPackageXml(flowEntries.map(f => f.ApiName)) },
+    ...flowEntries.map(f => ({
+      name: `flows/${String(f.ApiName || 'Flow').replace(/[^a-zA-Z0-9_]/g, '_')}.flow`,
+      data: sftkFlowToXml(f.Metadata),
+    })),
+    { name: 'backup.json', data: JSON.stringify(bundle, null, 2) },
+  ];
+  const b64 = sftkBuildStoredZip(files);
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = zipName;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 async function downloadFlowBackup(flow) {
   const result = await sendBg({ type: 'SF_GET_METADATA', orgUrl, sid, id: flow.Id });
   if (result.error) throw new Error(result.error);
@@ -1606,15 +1636,8 @@ async function downloadFlowBackup(flow) {
     }
   };
 
-  const json = JSON.stringify(backup, null, 2);
-  const blob = new Blob([json], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
   const safeName = (flow.MasterLabel || 'Flow').replace(/[^a-zA-Z0-9_-]/g, '_');
-  a.download = `${safeName}_v${flow.VersionNumber}_backup.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadFlowBackupZip([backup.flow], orgUrl, `${safeName}_v${flow.VersionNumber}_backup.zip`);
 }
 
 // ============================================================
@@ -1722,23 +1745,9 @@ async function onBackupClick() {
     return;
   }
 
-  const bundle = {
-    _info: 'Salesforce Toolkit flow backup bundle — restore via the 📥 Restore mode',
-    backupDate: new Date().toISOString(),
-    orgUrl,
-    version: 2,
-    flows
-  };
-
-  const json  = JSON.stringify(bundle, null, 2);
-  const blob  = new Blob([json], { type: 'application/json' });
-  const url   = URL.createObjectURL(blob);
-  const a     = document.createElement('a');
-  a.href      = url;
-  const date  = new Date().toISOString().slice(0, 10);
-  a.download  = `SF_Backup_${date}_${flows.length}flow${flows.length !== 1 ? 's' : ''}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+  const date = new Date().toISOString().slice(0, 10);
+  downloadFlowBackupZip(flows, orgUrl,
+    `SF_Backup_${date}_${flows.length}flow${flows.length !== 1 ? 's' : ''}.zip`);
 
   // Brief success toast
   const list = document.getElementById('flowList');
@@ -1755,10 +1764,16 @@ async function onBackupClick() {
 async function handleRestoreFile(file) {
   let backup;
   try {
-    const text = await file.text();
-    backup = JSON.parse(text);
+    if (/\.zip$/i.test(file.name || '')) {
+      // N1 XML backup zip — the full-fidelity bundle rides inside as backup.json.
+      const entries = sftkReadStoredZip(new Uint8Array(await file.arrayBuffer()));
+      if (!entries['backup.json']) throw new Error('backup.json missing from zip');
+      backup = JSON.parse(new TextDecoder().decode(entries['backup.json']));
+    } else {
+      backup = JSON.parse(await file.text());   // legacy .json backups keep working
+    }
   } catch (_) {
-    showRestorePanelError('Invalid file — could not parse JSON.');
+    showRestorePanelError('Invalid file — expected a Toolkit backup .zip (or a legacy .json backup).');
     return;
   }
 
