@@ -402,6 +402,18 @@ history) already exists there.
   (which is where the user actually sees "TX vs Texas"). Detection needs the `*Code`
   sibling in the compare field set — when it is absent, fall back to reporting the
   difference (never guess).
+- [ ] **T8. Deactivating a picklist value → check FLOWS, not just data** (user 2026-07-22)
+  — a data fix today remaps the RECORDS holding a value; automation that branches on the
+  literal value keeps referencing it and silently stops matching. Before deactivating or
+  deleting a value, scan the org's flows for the literal and, when hits exist, offer the
+  automation fix beside the data fix: list the flows (name · status · mention count),
+  link each to Flow Builder, and show the 🧨 blast radius. REUSE, don't rebuild:
+  dependency-map.js already downloads every flow's metadata and indexes it —
+  `searchReferences(term)` (N4b) does exactly this literal lookup, and
+  `pkValueMentions(text, value)` already exists in studio-picklists.js. Wire the deactivate
+  /delete wizard (single-org P3 + the P2 bulk wizard) to it; block nothing, but never let
+  a value die silently while a flow still names it. Validation rules + Apex are the same
+  shape of problem — note them as out of scope for v1 (Tooling queries, no metadata index).
 
 ## Phase B — Bulk API 2.0 for large volumes (user request 2026-07-18)
 
