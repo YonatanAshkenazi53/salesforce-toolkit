@@ -2287,10 +2287,31 @@ async function runRingProbe() {
       return `https://${h}`;
     } catch (_) { return (u || '').toLowerCase(); }
   };
+  // Direct cookie lookup for THIS org — the schedule's whole point is
+  // working with ZERO Salesforce tabs open, and getSfSession only builds its
+  // cookie candidates from an open SF tab, so alone it would report "not
+  // signed in" all night. As long as the user is still logged in (Salesforce
+  // sid cookies live for the browser session), this finds the session
+  // tab-or-no-tab. Longest cookie domain wins — the parent-domain-stale-sid
+  // lesson from getSfSession applies here too.
+  async function cookieSessFor(url) {
+    try {
+      const h = new URL(url).hostname
+        .replace('.lightning.force.com', '.my.salesforce.com')
+        .replace('.salesforce-setup.com', '.salesforce.com');
+      const cookies = await chrome.cookies.getAll({ name: 'sid', url: `https://${h}` });
+      const best = (cookies || []).filter(c => c.value)
+        .sort((a, b) => (b.domain || '').length - (a.domain || '').length)[0];
+      if (best) return { orgUrl: `https://${h}`, sid: best.value };
+    } catch (_) {}
+    return null;
+  }
   // Per-org session with a WRONG-ORG GUARD: getSfSession falls back to any
   // open SF tab when the requested org has none — a probe must NEVER count
   // records in a different org and call it this one.
   async function sessFor(url) {
+    const direct = await cookieSessFor(url);
+    if (direct) return direct;
     try {
       const s = await getSfSession(url);
       if (s?.sid && norm(s.orgUrl) === norm(url)) return s;
