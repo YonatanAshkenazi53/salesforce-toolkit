@@ -1132,16 +1132,63 @@ async function fetchDriftRowDetail(profile, objectType, srcId, tgtId, srcFields,
     }
     if (s?.error) return { error: `Source query failed: ${s.error}` };
     if (t?.error) return { error: `Target query failed: ${t.error}` };
-    return { srcRec: s.records?.[0] || null, tgtRec: t.records?.[0] || null, lookupMap };
+    // Per-ORG field types (user 2026-07-22: "say which type of field it is
+    // exactly… number 0.2 in one org and something else in the target").
+    // Describes are cached per org, so this costs nothing after the first row.
+    let types = null;
+    try {
+      const [sd, td] = await Promise.all([
+        describe(objectType, srcSess.orgUrl, srcSess.sid),
+        describe(objectType, tgtSess.orgUrl, tgtSess.sid),
+      ]);
+      const idx = d => {
+        const m = {};
+        for (const f of (d?.fields || [])) m[f.name] = f;
+        return m;
+      };
+      types = { src: idx(sd), tgt: idx(td) };
+    } catch (_) { types = null; }   // types are additive — never fail the diff
+    return { srcRec: s.records?.[0] || null, tgtRec: t.records?.[0] || null, lookupMap, types };
   } catch (e) {
     return { error: e?.message || String(e) };
   }
 }
 
+// Exact field type for ONE org, from its describe entry: the type plus the
+// precision that actually bites — Number(18,2) vs Number(18,0), Text(255) vs
+// Text(80), Picklist, Lookup(Account). Pure — unit-testable.
+function sftkFieldTypeLabel(f) {
+  if (!f || !f.type) return '';
+  const t = f.type;
+  const num = ['double', 'currency', 'percent'].includes(t);
+  const NAMES = { string: 'Text', textarea: 'Long text', boolean: 'Checkbox', double: 'Number',
+    int: 'Number', integer: 'Number', currency: 'Currency', percent: 'Percent', date: 'Date',
+    datetime: 'Date/Time', time: 'Time', email: 'Email', phone: 'Phone', url: 'URL',
+    picklist: 'Picklist', multipicklist: 'Multi-picklist', reference: 'Lookup', id: 'Id',
+    encryptedstring: 'Encrypted text', base64: 'File', address: 'Address', location: 'Geolocation' };
+  const base = NAMES[t] || t;
+  if (num) {
+    const prec = f.precision != null ? f.precision : '';
+    const scale = f.scale != null ? f.scale : '';
+    return (prec !== '' || scale !== '') ? `${base}(${prec},${scale})` : base;
+  }
+  if (t === 'int' || t === 'integer') return f.digits ? `${base}(${f.digits})` : base;
+  if (['string', 'textarea', 'email', 'phone', 'url', 'encryptedstring'].includes(t)) {
+    return f.length ? `${base}(${f.length})` : base;
+  }
+  if (t === 'reference') {
+    const to = (f.referenceTo || []).join('/');
+    return to ? `${base}(${to})` : base;
+  }
+  return base;
+}
+
 // Side-by-side compareField table — highlights rows whose values differ.
 // srcFields[i] pairs with tgtFields[i] (pair-aligned, same as snapshot
-// captureOrgSnapshot writes them).
-function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap = {}) {
+// captureOrgSnapshot writes them). `types` = { src: {name:describeField},
+// tgt: {…} } → each side shows its EXACT type, and a type difference is
+// called out even when the values happen to match.
+function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap = {}, types = null) {
   if (!srcRec || !tgtRec) {
     return `<div class="ds-drift-compare-err">⚠ Record not found on one or both orgs — may have been deleted since the last scan. Click 🔄 Refresh state to update.</div>`;
   }
@@ -1178,6 +1225,15 @@ function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap
                  : null;
     pairs.push({ srcField: sf, tgtField: tf, srcVal: sStr, tgtVal: tStr, differs, subtle });
   }
+  // Per-org exact types — attached to every pair, plus a type-mismatch flag
+  // (a Number(18,2) source into a Number(18,0) target rounds silently).
+  if (types) {
+    for (const p of pairs) {
+      p.srcType = sftkFieldTypeLabel(types.src?.[p.srcField]);
+      p.tgtType = sftkFieldTypeLabel(types.tgt?.[p.tgtField]);
+      p.typeDiffers = !!(p.srcType && p.tgtType && p.srcType !== p.tgtType);
+    }
+  }
   const diffCount = pairs.filter(p => p.differs).length;
   if (!pairs.length) {
     return `<div class="ds-drift-compare-empty">No compareFields configured for this profile — can't show field-by-field diff. Add fields to the Field Mapping on the root node to enable.</div>`;
@@ -1197,9 +1253,10 @@ function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap
               ${esc(p.srcField)}${p.srcField !== p.tgtField ? `<span class="ds-drift-compare-rename"> → ${esc(p.tgtField)}</span>` : ''}
               ${p.note ? `<span class="ds-drift-compare-lkptag">${esc(p.note)}</span>` : ''}
               ${p.subtle ? `<span class="ds-drift-compare-lkptag" title="The values differ only subtly — easy to miss by eye">≈ ${esc(p.subtle)}</span>` : ''}
+              ${p.typeDiffers ? `<span class="ds-drift-compare-lkptag ds-drift-typediff" title="This field is defined DIFFERENTLY in the two orgs (${esc(p.srcType)} vs ${esc(p.tgtType)}) — values can be truncated, rounded or rejected on write.">⚠ type differs</span>` : ''}
             </span>
-            <span class="ds-drift-compare-val">${esc(p.srcVal)}</span>
-            <span class="ds-drift-compare-val">${esc(p.tgtVal)}</span>
+            <span class="ds-drift-compare-val">${esc(p.srcVal)}${p.srcType ? `<span class="ds-drift-type">${esc(p.srcType)}</span>` : ''}</span>
+            <span class="ds-drift-compare-val">${esc(p.tgtVal)}${p.tgtType ? `<span class="ds-drift-type${p.typeDiffers ? ' ds-drift-type-bad' : ''}">${esc(p.tgtType)}</span>` : ''}</span>
           </div>
         `).join('')}
       </div>

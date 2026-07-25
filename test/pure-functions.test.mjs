@@ -451,6 +451,21 @@ describe('scan accuracy (🎯 — user request 2026-07-17)', () => {
   });
 });
 
+describe('exact per-org field types (drift compare table)', () => {
+  const sftkFieldTypeLabel = extractFunction('studio-scan.js', 'sftkFieldTypeLabel');
+
+  it('names the precision that actually bites', () => {
+    expect(sftkFieldTypeLabel({ type: 'double', precision: 18, scale: 2 })).toBe('Number(18,2)');
+    expect(sftkFieldTypeLabel({ type: 'double', precision: 18, scale: 0 })).toBe('Number(18,0)');
+    expect(sftkFieldTypeLabel({ type: 'currency', precision: 16, scale: 2 })).toBe('Currency(16,2)');
+    expect(sftkFieldTypeLabel({ type: 'string', length: 255 })).toBe('Text(255)');
+    expect(sftkFieldTypeLabel({ type: 'string', length: 80 })).toBe('Text(80)');
+    expect(sftkFieldTypeLabel({ type: 'reference', referenceTo: ['Account'] })).toBe('Lookup(Account)');
+    expect(sftkFieldTypeLabel({ type: 'picklist' })).toBe('Picklist');
+    expect(sftkFieldTypeLabel(null)).toBe('');
+  });
+});
+
 describe('Bulk API 2.0 codec + correlation (Phase B, background.js)', () => {
   const { sftkCsvField, sftkRecordsToCsv, sftkParseCsv } =
     extractFunctions('background.js', ['sftkCsvField', 'sftkRecordsToCsv', 'sftkParseCsv']);
