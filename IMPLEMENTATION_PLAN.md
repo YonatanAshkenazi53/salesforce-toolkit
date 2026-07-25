@@ -379,6 +379,29 @@ history) already exists there.
   clears when an exception satisfies that org's schema. Unit tests (override wins / null
   excludes / idempotent / base unmutated); harness 9/9 with a divergent-schema target
   incl. persistence through Apply + reopen.
+- [ ] **T6. Picklist readiness INSIDE a data deployment** (user 2026-07-22, from a real
+  Reconcile screen) — the capability already exists in Picklist Manager (P1-P5: value
+  sync from source, data fix/remap, record-type alignment, global + standard value sets);
+  what is missing is DETECTION during a data deployment and the HANDOFF. Build: when a
+  scan/preview sees a picklist value in the source records that the target's value set
+  lacks (or that isn't assigned to the target record type), flag it on the changed/missing
+  row and offer "🎚 Fix in Picklist Manager" pre-loaded with that object+field+target
+  (reuse _pkFetchInventory kind:'local'|'standard'|'global', pkValueSetSyncDiff,
+  _pkApplySyncCore, pkRtSyncDiff/_pkApplyRtCore). Multi-target: check per target, since a
+  value may exist in some ring orgs only. Do NOT re-implement any picklist logic.
+- [ ] **T7. Phantom drift — State/Country picklist normalization** (user 2026-07-22:
+  source `BillingState` "TX" vs target "Texas", `BillingStateCode` "TX" on BOTH sides).
+  Root cause: with State and Country picklists ENABLED, Salesforce rewrites the label
+  from the code on every write — pushing "TX" is normalized straight back to "Texas", so
+  the row shows as changed FOREVER and an overwrite never converges. Fix: pure
+  `sftkPhantomStateCountry(field, srcRec, tgtRec)` — field matches `^[A-Za-z]*(State|
+  Country)$`, both records carry a non-empty `${field}Code`, and the codes are EQUAL →
+  the label difference is phantom. Exclude those fields from `diffFields` (a row whose
+  only differences are phantom becomes identical, not changed), count them as
+  `scan.phantomFields`, and explain the exclusion in Reconcile + the drift-detail table
+  (which is where the user actually sees "TX vs Texas"). Detection needs the `*Code`
+  sibling in the compare field set — when it is absent, fall back to reporting the
+  difference (never guess).
 
 ## Phase B — Bulk API 2.0 for large volumes (user request 2026-07-18)
 
