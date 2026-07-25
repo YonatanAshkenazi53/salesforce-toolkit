@@ -9,6 +9,21 @@ listing text is copied from the newest section. Write the notes here, with the c
 Versions below `1.0.0` are development milestones grouped by the day they landed —
 they were never published to the store as separate releases.
 
+## 1.1.0 — 2026-07-25
+
+### Added
+- **Scheduled drift checks** (Sync Ring → ⚙ Ring configuration): Chrome can now
+  check your ring in the background — hourly, every 6 hours, or daily — and put a
+  red badge on the extension icon when record counts drift between the source of
+  truth and any target. Opening the Sync Ring shows what drifted and clears the
+  badge. Read-only by design: it never writes to any org, and it tells you exactly
+  which orgs it could not check (not signed in, hand-picked record sets).
+- **▶ Check now** button to run the same probe on demand.
+
+### Notes
+- A count probe catches added/removed records, not value changes — run a 🔎 scan
+  for those. This release adds the `alarms` permission to support scheduling.
+
 ## 1.0.0 — 2026-07-25
 
 ### Added

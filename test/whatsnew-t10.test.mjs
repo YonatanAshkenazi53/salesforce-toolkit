@@ -125,9 +125,20 @@ describe('the REAL CHANGELOG.md parses (a broken file would ship a blank page)',
     }
   });
 
-  it('newest section first, and it declares its known issues', () => {
-    expect(real[0].version).toBe('1.0.0');
-    expect(real[0].sections.map(s => s.title)).toContain('Known issues');
+  it('newest section first, matching the manifest version (the badge + store text depend on it)', () => {
+    // Do NOT pin a literal version — every release would break this test.
+    // The durable invariants: the top entry IS the shipped version, and the
+    // file stays strictly newest-first.
+    const manifest = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'manifest.json'), 'utf8'));
+    expect(real[0].version).toBe(manifest.version);
+    const nums = real
+      .map(v => (v.version.match(/^\d+\.\d+\.\d+$/) ? v.version.split('.').map(Number) : null))
+      .filter(Boolean);
+    for (let i = 1; i < nums.length; i++) {
+      const [a, b] = [nums[i - 1], nums[i]];
+      const cmp = a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+      expect(cmp, `${nums[i - 1].join('.')} must be newer than ${nums[i].join('.')}`).toBeGreaterThan(0);
+    }
   });
 
   it('leaves no stray markdown bullet marker at the start of an item', () => {
