@@ -591,7 +591,10 @@ const ApexDebugger = (() => {
       _searchT = setTimeout(() => _searchUsers(q), 280);
     });
     document.getElementById('adbgUserInput').addEventListener('focus', () => {
-      if (inp().value.trim().length >= 2) drop().style.display = '';
+      const q = inp().value.trim();
+      if (q.length >= 2) { drop().style.display = ''; return; }
+      // Empty box → suggest straight away instead of demanding 2 characters.
+      if (!q) _searchUsers('');
     });
     document.addEventListener('click', e => {
       if (!document.getElementById('adbgUserWrap')?.contains(e.target))
@@ -675,9 +678,13 @@ const ApexDebugger = (() => {
   }
 
   // ── User search dropdown ──────────────────────────────────
+  // q = '' → the default suggestion list (recently-active users first), shown
+  // the moment the box is clicked (user 2026-07-22: "when i click on the box
+  // i want the search box to already suggest users"). Typing filters it.
   async function _searchUsers(q) {
     const d = document.getElementById('adbgUserDrop');
-    d.innerHTML = '<div class="adbg-drop-msg">' + sftkCatSm('Searching users…') + '</div>';
+    const isSuggest = !q;
+    d.innerHTML = '<div class="adbg-drop-msg">' + sftkCatSm(isSuggest ? 'Loading users…' : 'Searching users…') + '</div>';
     d.style.display = '';
     const res = await _bg({
       type: 'SF_QUERY', tooling: false,
@@ -685,6 +692,12 @@ const ApexDebugger = (() => {
         // Backslashes FIRST, then quotes — quote-only escaping is defeated by
         // a term ending in '\' (audit S2).
         const safe = s => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        if (isSuggest) {
+          // No term yet — the most useful default is who has been active
+          // lately (that is whose debug logs you are about to collect).
+          return `SELECT Id,Name,Username FROM User WHERE IsActive=true ` +
+                 `ORDER BY LastLoginDate DESC NULLS LAST LIMIT 10`;
+        }
         return `SELECT Id,Name,Username FROM User WHERE IsActive=true AND ` +
                `(Name LIKE '%${safe(q)}%' OR Username LIKE '%${safe(q.toLowerCase())}%') ` +
                `ORDER BY Name LIMIT 10`;
@@ -695,7 +708,7 @@ const ApexDebugger = (() => {
         const fe = sftkFriendlyError(res.error);
         d.innerHTML = `<div class="adbg-drop-msg" title="${_esc(fe.raw)}">⚠ ${_esc(fe.message)}${fe.hint ? `<br><small>${_esc(fe.hint)}</small>` : ''}</div>`;
       } else {
-        d.innerHTML = '<div class="adbg-drop-msg">No active users found</div>';
+        d.innerHTML = '<div class="adbg-drop-msg">' + (isSuggest ? 'No active users in this org' : 'No active user matches that search') + '</div>';
       }
       return;
     }
