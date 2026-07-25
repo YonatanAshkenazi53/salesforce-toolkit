@@ -40,6 +40,93 @@ let _recChildOpen     = {};   // pathKey → bool (accordion expanded)
 //   'hard'    — DELETE then SOAP emptyRecycleBin (permanent)
 let _recDeleteMode = 'recycle';
 
+// ── T7 — phantom State/Country drift note ────────────────────────────────
+// runDiffScan drops field differences where BOTH orgs hold the same
+// `${field}Code` and only the label differs: the target org has State &
+// Country Picklists enabled and rewrites the label from the code on every
+// write. Those rows are in "in sync", NOT in drift — say so out loud, because
+// silently hiding a difference is exactly the kind of thing that erodes trust.
+function sftkPhantomDriftNote(scan) {
+  const n = scan?.phantomFields || 0;
+  if (!n) return '';
+  return `<div class="ds-rec-child-info" style="border-left:3px solid #6366f1;padding-left:8px;margin:6px 0"
+    title="Salesforce owns the State/Country LABEL when State &amp; Country Picklists are enabled: on every write it re-derives BillingState from BillingStateCode. If the source says 'TX' and the target labels that code 'Texas', pushing 'TX' is normalized straight back to 'Texas' — or rejected with &quot;There's a problem with this state…&quot;. The row would show as drift forever.">
+    ≡ ${n} field difference${n === 1 ? '' : 's'} ignored — State/Country <strong>label</strong> rewritten by the target org
+    (same underlying code on both sides). ${n === 1 ? 'It is' : 'They are'} not counted as drift because an overwrite
+    could <strong>never</strong> make ${n === 1 ? 'it' : 'them'} converge — the target's State &amp; Country Picklists
+    re-derive the label from the code on every write. Rows with no other differences are counted as in sync.
+  </div>`;
+}
+
+// ── T6 — picklist readiness note (above the buckets) ─────────────────────
+// scan.picklistGaps = [{ field, tgtField, missing[], missingTotal, affected,
+// multi, restricted, valuesTruncated, distinctCapped }]. Every cap and every
+// failure is stated; the check NEVER claims a clean bill of health it didn't
+// earn (picklistGapsError = it couldn't run at all).
+function sftkPicklistGapNote(scan, tgtOrgUrl, objectType) {
+  if (!scan) return '';
+  const gaps = scan.picklistGaps || [];
+  const err  = scan.picklistGapsError;
+  if (err) {
+    return `<div class="ds-rec-child-info" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">⚠ Picklist readiness could <strong>not</strong> be checked for ${esc(objectType || '')} (${esc(String(err))}) — this is inconclusive, not clean. A record can still fail on a missing picklist value.</div>`;
+  }
+  if (!gaps.length) return '';
+  const cap    = scan.picklistGapsCap || null;
+  const tgtLbl = typeof orgLabel === 'function' ? orgLabel(tgtOrgUrl || '') : String(tgtOrgUrl || 'the target org');
+  const totalVals = gaps.reduce((a, g) => a + (g.missingTotal || (g.missing || []).length), 0);
+  const rows = gaps.map((g, i) => {
+    const shown  = g.missing || [];
+    const more   = Math.max(0, (g.missingTotal || shown.length) - shown.length);
+    const first  = shown[0] || '';
+    const rename = g.field !== g.tgtField ? `<span class="ds-drift-compare-rename"> → ${esc(g.tgtField)}</span>` : '';
+    const consequence = g.restricted
+      ? 'restricted picklist — the write is rejected'
+      : 'unrestricted picklist — Salesforce may accept the value but it will not appear in the list';
+    return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0 4px 4px">
+      <code style="font-weight:600">${esc(g.field)}${rename}</code>
+      <span style="color:var(--subtext)">${g.multi ? '(multi-select)' : ''}</span>
+      <span>→ ${shown.map(v => `<span class="ds-diff-chip ds-diff-drift" style="margin-right:3px">${esc(v)}</span>`).join('')}${more ? `<span style="color:var(--subtext)">+${more} more</span>` : ''}</span>
+      <span style="color:var(--subtext)">· ${g.affected} record(s) affected · ${esc(consequence)}</span>
+      <button class="ds-btn ds-btn-xs" data-recpl-fix="${i}"
+        data-pl-org="${esc(tgtOrgUrl || '')}" data-pl-obj="${esc(objectType || '')}"
+        data-pl-field="${esc(g.tgtField || g.field)}" data-pl-value="${esc(first)}"
+        title="Open the Picklist Manager on ${esc(tgtLbl)} for ${esc(objectType || '')}.${esc(g.tgtField || g.field)}, pre-filled with &quot;${esc(first)}&quot;.">🎚 Fix in Picklist Manager</button>
+    </div>`;
+  }).join('');
+  const capNote = cap ? `<div style="color:var(--subtext);font-size:11.5px;margin-top:4px">
+      Capped check — examined ${cap.fieldsExamined} of ${cap.fieldsTotal} picklist field(s) and ${cap.recordsExamined} of ${cap.recordsTotal} record(s);
+      up to ${cap.valueCap} distinct value(s) per field, ${cap.reportCap} listed. There may be more gaps than shown.
+    </div>` : '';
+  return `<div class="ds-rec-child-info" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">
+    <div>⚠ <strong>${totalVals} value(s)</strong> used by these records don't exist in <strong>${esc(tgtLbl)}</strong>'s picklist — the records will fail or drop the field.</div>
+    ${rows}
+    <div style="color:var(--subtext);font-size:11.5px;margin-top:4px">Checked against the target's field-level picklist values only — record-type availability and dependent-picklist controlling values are <strong>not</strong> checked, so a listed value can still be unavailable to a given record type.</div>
+    ${capNote}
+  </div>`;
+}
+
+// Shared click wiring for every 🎚 Fix in Picklist Manager button on screen
+// (root + child sections). window.sftkOpenPicklistFix is owned by the Picklist
+// Manager; call it defensively — if it isn't loaded, say so instead of doing
+// nothing.
+function sftkWirePicklistFixButtons() {
+  document.querySelectorAll('[data-recpl-fix]').forEach(btn => btn.addEventListener('click', (ev) => {
+    ev.preventDefault(); ev.stopPropagation();
+    const arg = {
+      orgUrl: btn.dataset.plOrg || '',
+      object: btn.dataset.plObj || '',
+      field:  btn.dataset.plField || '',
+      value:  btn.dataset.plValue || ''
+    };
+    if (typeof window.sftkOpenPicklistFix !== 'function') {
+      showToast('The Picklist Manager quick-fix isn\'t available in this build — open 🎚 Picklists from the sidebar and add the value manually.', 'warning', 7000);
+      return;
+    }
+    try { window.sftkOpenPicklistFix(arg); }
+    catch (e) { showToast(`Couldn't open the Picklist Manager: ${e?.message || e}`, 'error', 6000); }
+  }));
+}
+
 async function renderReconcile() {
   const p = _reconcileProfile;
   if (!p) { renderProfiles(); return; }
@@ -353,9 +440,18 @@ async function renderReconcile() {
       ? `<div class="ds-rec-child-info ds-match-blank-note" style="border-left:3px solid #f59e0b;padding-left:8px">⚠ ${cs.blankKeys.rows} row(s) have a blank match key — excluded from all actions (${cs.blankKeys.src} source, ${cs.blankKeys.tgt} target). Pick a better-populated match field, or use 🧪 Test this key in Pick Records.</div>`
       : '';
 
+    // T6/T7 — same readiness + phantom notes the root gets, for this child's
+    // own object and its own scan result.
+    const childObj = node.objectType || node.childSObject || '';
+    let plNote = '', phNote = '';
+    try {
+      plNote = sftkPicklistGapNote(cs, p.targetOrg, childObj);
+      phNote = sftkPhantomDriftNote(cs);
+    } catch (_) { plNote = ''; phNote = ''; }
+
     return `
     <div class="ds-rec-child-body">
-      ${collisionNote}${blankNote}
+      ${collisionNote}${blankNote}${plNote}${phNote}
       <div class="ds-rec-cols ds-rec-cols-child">
         <div class="ds-rec-col">
           <div class="ds-rec-col-hdr ds-diff-missing">🔴 <strong>Insert ${cs.missingInTarget.length}</strong>
@@ -477,6 +573,8 @@ async function renderReconcile() {
       </div>
     </div>
 
+    ${sftkPicklistGapNote(scan, p.targetOrg, objType)}
+
     <div class="ds-rec-cols">
       ${colHtml('Insert', 'in source only', 'ds-diff-missing', '🔴', missing, 'push')}
       ${driftColHtml(drift)}
@@ -490,6 +588,7 @@ async function renderReconcile() {
       <span style="font-size:11.5px;color:var(--subtext)">same record on both sides under different keys? Pair them once — matching then survives renames.</span>
     </div>` : ''}
     <div class="ds-rec-insync-note">🟢 ${inSync.length} record(s) already in sync — no action needed.</div>
+    ${sftkPhantomDriftNote(scan)}
     ${scan.blankKeys ? `<div class="ds-rec-child-info ds-match-blank-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">⚠ ${scan.blankKeys.rows} row(s) have a blank match key — excluded from matching (${scan.blankKeys.src} source, ${scan.blankKeys.tgt} target). Pick a better-populated match field in 🎯 Pick Records (🧪 Test this key grades candidates).</div>` : ''}
     ${(scan.warnings || []).length ? `<div class="ds-rec-child-info ds-mm-warn-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">⚠ ${esc(scan.warnings.join(' · '))}</div>` : ''}
 
@@ -716,6 +815,9 @@ async function renderReconcile() {
       expand.dataset.loaded = '1';
     });
   });
+
+  // T6 — 🎚 Fix in Picklist Manager buttons (root + every child section).
+  sftkWirePicklistFixButtons();
 
   // ── Child section wiring ────────────────────────────────────────────
   document.querySelectorAll('[data-recc-toggle]').forEach(b => b.addEventListener('click', () => {

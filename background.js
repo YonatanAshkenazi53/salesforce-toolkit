@@ -131,6 +131,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   // lines (the things you actually need to read) would never reach the UI.
   // Prepended to `errors` right before returning.
   const diagnostics  = [];
+  // Phase B — the ONE volume threshold that switches this run onto Bulk API
+  // 2.0, for READS (sfBulkQuery, B2) and WRITES (sfBulkIngest) alike.
+  // profile.bulkThreshold overrides it per deployment; 2000 is the default.
+  // Declared once here on purpose: a second hard-coded constant further down
+  // is exactly how reads and writes drift apart.
+  const BULK_MIN = Number(profile?.bulkThreshold) > 0 ? Number(profile.bulkThreshold) : 2000;
 
   // Track source IDs fetched per tree node so each child node's WHERE clause
   // only references its direct parent's records.
@@ -275,6 +281,24 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           .filter(f => f.createable)
           .map(f => f.name)
       );
+      // T11b — Salesforce names the offending field by its LABEL in most save
+      // errors ("…: Billing State/Province"). This map resolves BOTH the label
+      // and the API name back to the API name (= the payload key), so a failed
+      // record can be shown with the value we actually pushed. API names are
+      // written first and labels never overwrite one — a label that collides
+      // with another field's API name must not hijack it.
+      const tgtFieldByAnyName = {};
+      const tgtDescFields = (tgtDescRes && !tgtDescRes.error ? (tgtDescRes.fields || []) : []);
+      for (const f of tgtDescFields) if (f && f.name) tgtFieldByAnyName[f.name] = f.name;
+      for (const f of tgtDescFields) {
+        if (f && f.label && !Object.prototype.hasOwnProperty.call(tgtFieldByAnyName, f.label)) {
+          tgtFieldByAnyName[f.label] = f.name;
+        }
+      }
+      // If the target describe failed we can still parse API-name-shaped tokens
+      // out of the error, but labels won't resolve — say so once, per node,
+      // rather than quietly showing fewer values than we could.
+      const tgtDescribeUsable = tgtDescFields.length > 0;
 
       // Build SOQL — for child nodes, filter by the PARENT NODE'S target IDs only.
       // Using Object.values(idMap) would mix IDs from sibling object types in
@@ -341,8 +365,63 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         // Root node — no parent filter.
         // ORDER BY Id ensures deterministic pagination across large result sets.
         const soql = `SELECT ${fields.join(',')} FROM ${objType}${baseWhere ? ' WHERE ' + baseWhere : ''} ORDER BY Id`;
-        const qRes  = await sfQueryAll(srcOrgUrl, srcSid, soql, false);
-        recs = qRes.records || [];
+
+        // ── B2: big reads go through ONE Bulk API 2.0 query job ─────────────
+        // Above BULK_MIN the REST reader pages 2 000 records at a time — 20+
+        // round trips for a 40 k object, each one a full JSON payload. One
+        // bulk query job replaces the whole loop. Below the threshold REST is
+        // faster (no job create/poll latency), so it stays the default.
+        // Child nodes are deliberately NOT bulk-read: their fetch is already
+        // chunked by 200 parent ids, so each query is small.
+        // COUNT() decides — one tiny aggregate call, not a guess. If it fails
+        // (aggregate not allowed on the object, odd WHERE) we simply stay on
+        // the REST path.
+        let srcCount = null;
+        try {
+          const cRes = await sfQuery(srcOrgUrl, srcSid,
+            `SELECT COUNT() FROM ${objType}${baseWhere ? ' WHERE ' + baseWhere : ''}`, false);
+          if (Number.isFinite(cRes?.totalSize)) srcCount = cRes.totalSize;
+        } catch (_) { /* count is a routing hint only — never fatal */ }
+
+        let bulkRead = null;
+        if (srcCount != null && srcCount >= BULK_MIN) {
+          try {
+            // Bulk query hands back CSV (all strings, '' for blanks, dotted
+            // parent columns) — the source describe types drive the reshape
+            // back into REST-shaped records.
+            const srcTypes = {};
+            for (const f of (descRes.fields || [])) if (f && f.name) srcTypes[f.name] = f.type;
+            bulkRead = await sfBulkQuery(srcOrgUrl, srcSid, soql, {
+              fieldTypes: srcTypes,
+              onProgress: p => postRunProgress({ phase: 'bulkQuery', obj: objType, objType,
+                state: p.state, processed: p.processed, total: p.total }),
+            });
+            if (bulkRead.truncated && bulkRead.truncated.reason === 'cancelled') {
+              // Cancelled mid-read: do NOT silently re-read via REST (that
+              // would ignore the cancel) and do NOT write an arbitrary slice.
+              errors.push(`${objType}: cancelled while reading — ${bulkRead.truncated.got} record(s) had been read, nothing was written for this object.`);
+              bulkRead = { records: [] };
+            } else if (bulkRead.truncated) {
+              diagnostics.push(
+                `${objType}: the Bulk API read returned ${bulkRead.truncated.got} of ` +
+                `${bulkRead.truncated.expected == null ? 'an unknown number of' : bulkRead.truncated.expected} ` +
+                `record(s) (${bulkRead.truncated.reason}) — discarded it and re-read through the REST pager so no record is missed.`);
+              bulkRead = null;
+            } else {
+              diagnostics.push(`${objType}: ${srcCount} record(s) ≥ ${BULK_MIN} — read with one Bulk API 2.0 query job instead of ${Math.ceil(srcCount / 2000)} REST page(s).`);
+            }
+          } catch (e) {
+            diagnostics.push(`${objType}: Bulk API read failed (${e.message}) — falling back to the REST pager; no record set was taken from the failed job.`);
+            bulkRead = null;
+          }
+        }
+
+        if (bulkRead) {
+          recs = bulkRead.records;
+        } else {
+          const qRes = await sfQueryAll(srcOrgUrl, srcSid, soql, false);
+          recs = qRes.records || [];
+        }
       }
 
       // Store this node's source IDs so its children can build correct WHERE clauses
@@ -560,6 +639,17 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
 
       // ── Batch create (200 records/batch, allOrNone:false) ────────────────
       let ok = 0, fail = 0, usedBulk = false;
+      // B3 — records a cancelled Bulk job never even attempted. They are NOT
+      // failures (nothing was rejected; the job was aborted before reaching
+      // them) so they are counted and reported separately. They still land in
+      // failedSourceIds so "↻ Retry failed" can finish the job.
+      let notProcessed = 0;
+      // T11b — how many failed records we captured payload values for. Each
+      // captured record adds ~5 short strings to chrome.storage, so the
+      // capture stops well before the 2000-entry failedSourceIds cap; when it
+      // does, the run says so instead of the values just thinning out.
+      let valuesCaptured = 0;
+      const VALUE_CAPTURE_MAX = 200;
       // Track which SOURCE record IDs succeeded — surfaced in the per-node
       // summary so the Pick-Records modal can badge already-deployed
       // records and avoid the "did this go through?" guesswork.
@@ -588,7 +678,8 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // limit pressure at volume. Below it, Collections stays faster and
       // gives instant per-record errors. Results are ALIGNED to the input
       // records either way, so everything downstream is unchanged.
-      const BULK_MIN = Number(profile.bulkThreshold) > 0 ? Number(profile.bulkThreshold) : 2000;
+      // BULK_MIN is the run-level threshold declared at the top of this
+      // function — the same number gates the Bulk READ (B2) above.
       const useBulk  = payloads.length >= BULK_MIN;
       const STEP     = useBulk ? payloads.length : 200;
       if (useBulk) {
@@ -621,7 +712,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             operation: useUpsert ? 'upsert' : 'insert',
             externalIdFieldName: upsertField || undefined,
             records: flat,
-            onProgress: p => postRunProgress({ phase: 'bulk', objType,
+            // `obj` mirrors `objType` so the SHARED progress handler
+            // (_runProgressHandler) keys this event to the object's existing
+            // live row instead of opening a blank one; studio-transfer.js
+            // intercepts phase:'bulk' and renders the job state in full.
+            onProgress: p => postRunProgress({ phase: 'bulk', objType, obj: objType,
               state: p.state, processed: p.processed, failed: p.failed, total: p.total }),
           });
         } else {
@@ -640,12 +735,56 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             }
           }
           else {
-            fail++;
             const msg = (result.errors || []).map(e => e.message).join('; ');
-            errors.push(`${objType}: ${msg}`);
+            // B3 — a cancelled Bulk job marks every record it never reached.
+            // Those are "not attempted", not "rejected": counting them as
+            // failures would report 38 000 failures for a run the user simply
+            // stopped. One summary line covers them all (below), so they don't
+            // flood the per-record error list either.
+            const notRun = (result.errors || []).some(e => e.statusCode === 'BULK_CANCELLED');
+            if (notRun) notProcessed++; else fail++;
+            if (!notRun) errors.push(`${objType}: ${msg}`);
+            // T11b — the message alone ("…please select a state from the list
+            // of valid states.: Billing State/Province") never says WHAT was
+            // pushed. Attach the offending field(s) with the exact value this
+            // record sent, so History can show
+            // "tried to write BillingState = "TX"".
+            // Two sources, best first:
+            //  1. errors[].fields — the API gives the API names outright
+            //     (Collections returns it; Bulk result CSVs don't).
+            //  2. sftkFieldsFromError — parses the message text and resolves
+            //     labels through the target describe.
+            let fieldNotes = null;
+            if (!notRun && valuesCaptured < VALUE_CAPTURE_MAX) {
+              const named = [];
+              for (const e of (result.errors || [])) {
+                for (const fn of (Array.isArray(e.fields) ? e.fields : [])) {
+                  if (fn && !named.includes(fn)) named.push(fn);
+                }
+              }
+              for (const fn of sftkFieldsFromError(msg, tgtFieldByAnyName, 5)) {
+                if (fn && !named.includes(fn)) named.push(fn);
+              }
+              const sentPayload = payloads[i + j] || {};
+              const notes = named.slice(0, 5).map(fn =>
+                Object.prototype.hasOwnProperty.call(sentPayload, fn)
+                  ? { field: fn, sent: sftkTruncValue(sentPayload[fn], 120) }
+                  : { field: fn, absent: true });
+              if (notes.length) { fieldNotes = notes; valuesCaptured++; }
+            }
             // label → History links the failed record back to its SOURCE org
             // (nothing exists in the target for a failed insert).
-            failedSourceIds.push({ id: recs[i + j].Id, error: msg, label: (nameFld && recs[i + j][nameFld]) || recs[i + j].Name || recs[i + j].Id });
+            failedSourceIds.push({
+              id: recs[i + j].Id,
+              // The bulk layer already writes an accurate per-record message
+              // for the cancelled case (including the "we can't tell" one) —
+              // never paper over it with a generic string.
+              error: msg,
+              label: (nameFld && recs[i + j][nameFld]) || recs[i + j].Name || recs[i + j].Id,
+              ...(fieldNotes ? { fields: fieldNotes } : {}),
+              ...(notRun ? { notProcessed: true } : {}),
+            });
+            if (notRun) return;   // no diagnostics for a record nothing was tried on
             // When a record fails with "Required fields are missing" the user
             // almost always thinks "but my mapping IS correct" — log once which
             // fields actually went out, so the mismatch is obvious.
@@ -706,7 +845,24 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           done: Math.min(i + STEP, payloads.length), total: payloads.length,
           created: ok, failed: fail });
       }
-      summary[objType] = { created: ok, failed: fail, ...(usedBulk ? { viaBulk: true } : {}) };
+      summary[objType] = { created: ok, failed: fail,
+        ...(usedBulk ? { viaBulk: true } : {}),
+        ...(notProcessed ? { notProcessed } : {}) };
+      // B3 — one line for everything the aborted Bulk job did not confirm.
+      // "not confirmed written" rather than "never attempted": when the job's
+      // result files are unreadable after an abort we genuinely cannot tell,
+      // and each record's own line in ↻ Retry failed says which case it is.
+      if (notProcessed) {
+        errors.push(`${objType}: ${notProcessed} record(s) were not confirmed written — the Bulk job was aborted when you cancelled. Each one is listed under "↻ Retry failed" with its exact status.`);
+      }
+      // T11b honesty: say when the payload-value capture stopped, and when
+      // labels could not be resolved because the target describe was missing.
+      if (valuesCaptured >= VALUE_CAPTURE_MAX && fail > valuesCaptured) {
+        diagnostics.push(`${objType}: captured the pushed field values for the first ${valuesCaptured} of ${fail} failed record(s) — capture stops at ${VALUE_CAPTURE_MAX} records to keep History inside the browser storage quota, so the rest carry the error message only.`);
+      }
+      if (fail > 0 && !tgtDescribeUsable) {
+        diagnostics.push(`${objType}: the target describe could not be read, so field LABELS in the error text (e.g. "Billing State/Province") could not be resolved to API names — pushed values are shown only for fields the error names by API name.`);
+      }
       // Owner-mapping outcome — surfaced as ⚠ notes, never failures.
       if (ownerFellBack)  errors.push(`⚠ ${objType}: ${ownerFellBack} record(s) had owners with no name match in the target — assigned the fallback user.`);
       if (ownerDefaulted) errors.push(`⚠ ${objType}: ${ownerDefaulted} record(s) had owners with no name match and no fallback user is set — the target org assigned its default owner.`);
@@ -1221,7 +1377,15 @@ async function sfProxyFetch(orgUrl, targetUrl, method = 'GET', bodyStr = null) {
             };
             if (bodyStr !== null) opts.body = bodyStr;
             const r = await fetch(url, opts);
-            return { status: r.status, ok: r.ok, body: await r.text() };
+            // Response headers, lower-cased. Bulk API 2.0 query paging lives in
+            // Sforce-Locator, which is a HEADER, not part of the body. Note the
+            // honest limitation: on a CROSS-origin proxy fetch the browser only
+            // exposes CORS-safelisted headers, so Sforce-Locator can legitimately
+            // be missing here — sfBulkQuery detects the short read and says so
+            // rather than silently returning page 1 as if it were everything.
+            const hdrs = {};
+            try { r.headers.forEach((v, k) => { hdrs[String(k).toLowerCase()] = v; }); } catch (_) {}
+            return { status: r.status, ok: r.ok, body: await r.text(), headers: hdrs };
           } catch (e) {
             return { error: e.message };
           }
@@ -1299,7 +1463,12 @@ async function sfFetchWithProxy(orgUrl, sid, url, fetchOptions = {}) {
     headers: { ...authHeaders(activeSid), ...(fetchOptions.headers || {}) },
   });
   if (res.status !== 401) {
-    return { ok: res.ok, status: res.status, body: await res.text() };
+    // headers (lower-cased) travel with every response — Bulk API 2.0 query
+    // paging is driven by the Sforce-Locator RESPONSE HEADER. Additive: every
+    // existing caller destructures { ok, status, body } and ignores this.
+    const headers = {};
+    try { res.headers.forEach((v, k) => { headers[String(k).toLowerCase()] = v; }); } catch (_) {}
+    return { ok: res.ok, status: res.status, body: await res.text(), headers };
   }
 
   // ── Tier 2: proxy via live SF tab ────────────────────────────────────────
@@ -1689,7 +1858,9 @@ function sftkParseCsv(text) {
 // echo the original columns, so correlate on the full column tuple and hand
 // duplicates out in order. Any row we can't place (shouldn't happen) is
 // reported as a failure rather than silently dropped. Pure — unit-testable.
-function sftkCorrelateBulkResults(uploadRows, columns, successRows, failedRows) {
+// missingMsg/missingCode override the "no result row" text: a CANCELLED job
+// leaves most rows unprocessed, and those must not read as rejections.
+function sftkCorrelateBulkResults(uploadRows, columns, successRows, failedRows, missingMsg, missingCode) {
   const key = r => (columns || []).map(c => String(r && r[c] !== undefined && r[c] !== null ? r[c] : '')).join('');
   const buckets = new Map();
   const push = (r, success) => {
@@ -1706,8 +1877,243 @@ function sftkCorrelateBulkResults(uploadRows, columns, successRows, failedRows) 
     const list = buckets.get(key(row));
     const hit = list && list.length ? list.shift() : null;
     return hit || { id: null, success: false,
-      errors: [{ message: 'Bulk API returned no result row for this record', statusCode: 'BULK_NO_RESULT' }] };
+      errors: [{ message: missingMsg || 'Bulk API returned no result row for this record',
+                 statusCode: missingCode || 'BULK_NO_RESULT' }] };
   });
+}
+
+// ── T11b: which FIELDS does a Salesforce save error actually name? ──────────
+// PURE (unit-tested in test/engine-b2-t11b.test.mjs). Real messages name the
+// offending field in several different shapes:
+//   "…Please select a state from the list of valid states.: Billing State/Province"
+//        → trailing colon segment, comma-separated LABELS
+//   "Required fields are missing: [LastName, AccountId]"   → bracketed API names
+//   "No such column 'Foo__c' on entity 'Account'"          → quoted API name
+//   "bad value for restricted picklist field: Hot: Rating" → trailing label
+//   "Email: invalid email address: a@b"                    → leading field prefix
+// describeFieldsMap maps BOTH the API name AND the label of every TARGET field
+// to that field's API name (= the payload key), so labels resolve.
+// Positions that are unambiguously a field name (brackets, "No such column")
+// also accept an API-name-SHAPED token that the map doesn't know, so parsing
+// still works when the describe is unavailable. The leading/trailing prose
+// positions require a describe hit — otherwise ordinary English words in an
+// error message would be reported as fields.
+function sftkFieldsFromError(errorMsg, describeFieldsMap, maxFields) {
+  const cap = Number(maxFields) > 0 ? Number(maxFields) : 5;
+  const s = String(errorMsg == null ? '' : errorMsg);
+  if (!s.trim()) return [];
+  const map = describeFieldsMap || {};
+  const isMap = typeof Map !== 'undefined' && map instanceof Map;
+  const entries = () => (isMap ? [...map.entries()] : Object.entries(map));
+  const direct = k => (isMap ? map.get(k) : (Object.prototype.hasOwnProperty.call(map, k) ? map[k] : undefined));
+  let lower = null;
+  const resolve = (token, allowShape) => {
+    let t = String(token == null ? '' : token).trim();
+    t = t.replace(/^[[("'`]+/, '').replace(/[\])"'`.]+$/, '').trim();
+    if (!t) return null;
+    const hit = direct(t);
+    if (hit) return hit;
+    if (!lower) {
+      lower = {};
+      for (const [k, v] of entries()) {
+        const lk = String(k).toLowerCase();
+        if (!Object.prototype.hasOwnProperty.call(lower, lk)) lower[lk] = v;
+      }
+    }
+    const ci = lower[t.toLowerCase()];
+    if (ci) return ci;
+    // Unknown token: only trust it where the position guarantees a field name.
+    return (allowShape && /^[A-Za-z][A-Za-z0-9_]*(?:__(?:c|r|pc|kav|mdt|e|x|b))?$/.test(t)) ? t : null;
+  };
+  const out = [];
+  const add = (token, allowShape) => {
+    const f = resolve(token, allowShape);
+    if (f && out.indexOf(f) === -1) out.push(f);
+  };
+
+  // 1. Bracketed lists — "Required fields are missing: [A, B]" and the
+  //    ": [Field]" suffix Salesforce appends to many statusCode messages.
+  let m;
+  const bracket = /\[([^\]]+)\]/g;
+  while ((m = bracket.exec(s)) !== null) {
+    for (const tok of m[1].split(',')) add(tok, true);
+  }
+  // 2. Quoted column names.
+  const noCol = /No such column '([^']+)'/gi;
+  while ((m = noCol.exec(s)) !== null) add(m[1], true);
+  // 3. Leading "Field: message" prefix (must be a real field).
+  m = s.match(/^\s*([A-Za-z0-9_./]+)\s*:\s+/);
+  if (m) add(m[1], false);
+  // 4. Trailing colon segment — where Salesforce parks the field LABEL(S).
+  if (s.indexOf(':') !== -1) {
+    const parts = s.split(':');
+    const tail = parts[parts.length - 1];
+    if (tail && tail.length <= 200) for (const tok of tail.split(',')) add(tok, false);
+  }
+  return out.slice(0, cap);
+}
+
+// One payload value rendered for display. Collapses whitespace so a multi-line
+// text area can't blow up a History row, and truncates with an explicit
+// "…(+N chars)" so a cut value never looks like the whole value. PURE.
+function sftkTruncValue(v, maxLen) {
+  const cap = Number(maxLen) > 0 ? Number(maxLen) : 120;
+  if (v === undefined) return null;
+  if (v === null) return 'null';
+  let s;
+  if (typeof v === 'string') s = v;
+  else { try { s = JSON.stringify(v); } catch (_) { s = String(v); } }
+  if (s === undefined) s = String(v);
+  s = String(s).replace(/\s+/g, ' ').trim();
+  if (s === '') return '(empty string)';
+  return s.length > cap ? `${s.slice(0, cap)}…(+${s.length - cap} chars)` : s;
+}
+
+// Bulk QUERY results are CSV: every value is a STRING, a blank is '' (not
+// null), and parent fields arrive as DOTTED columns ("Owner.Name"). The
+// engine's payload builder relies on `v == null` to skip empties and reads
+// r.Owner.Name for owner matching, so reshape bulk rows into exactly what the
+// REST reader produces before they go anywhere near it. fieldTypes (API name →
+// describe type) drives the only two coercions that matter; an unknown field
+// stays a string, which Salesforce coerces on write — never silently wrong.
+// PURE.
+function sftkBulkRowsToRecords(rows, fieldTypes) {
+  const types = fieldTypes || {};
+  const NUMERIC = { int: 1, double: 1, currency: 1, percent: 1, long: 1 };
+  return (Array.isArray(rows) ? rows : []).map(row => {
+    const rec = {};
+    for (const key of Object.keys(row || {})) {
+      const raw = row[key];
+      let v = (raw === '' || raw === undefined || raw === null) ? null : raw;
+      const t = Object.prototype.hasOwnProperty.call(types, key) ? types[key] : null;
+      if (v !== null && t === 'boolean') v = /^true$/i.test(String(v));
+      else if (v !== null && Object.prototype.hasOwnProperty.call(NUMERIC, String(t))) {
+        const n = Number(v);
+        if (Number.isFinite(n)) v = n;
+      }
+      if (key.indexOf('.') === -1) { rec[key] = v; continue; }
+      const parts = key.split('.');
+      let node = rec;
+      for (let p = 0; p < parts.length - 1; p++) {
+        if (!node[parts[p]] || typeof node[parts[p]] !== 'object') node[parts[p]] = {};
+        node = node[parts[p]];
+      }
+      node[parts[parts.length - 1]] = v;
+    }
+    return rec;
+  });
+}
+
+// ── B2: Bulk API 2.0 QUERY — one async job instead of N REST pages ──────────
+// create POST /jobs/query {operation, query} → poll GET /jobs/query/{id} →
+// GET /jobs/query/{id}/results, following the Sforce-Locator response header
+// until it stops coming back. Results are CSV, parsed with the SAME
+// sftkParseCsv the ingest path uses, then reshaped by sftkBulkRowsToRecords so
+// callers get REST-shaped records (typed values, nested parent objects).
+//
+// Returns { records, totalSize, done, truncated? }. `truncated` is set — and
+// `done` is false — whenever fewer records came back than the job says it
+// processed: a locator we could not read (cross-origin proxy fetch hides
+// non-safelisted headers), a cancel, or a page cap. Callers MUST look at it;
+// the engine discards a truncated read and re-reads through REST rather than
+// transferring a silently short record set.
+//
+// opts: { onProgress({state, processed, total}), includeDeleted, fieldTypes,
+//         maxPages }
+async function sfBulkQuery(orgUrl, sid, soql, opts = {}) {
+  const { onProgress, includeDeleted = false, fieldTypes = null } = opts;
+  const maxPages = Number(opts.maxPages) > 0 ? Number(opts.maxPages) : 5000;
+  const base   = `${orgUrl}/services/data/${API_VERSION}/jobs/query`;
+  const report = p => { if (typeof onProgress === 'function') { try { onProgress(p); } catch (_) {} } };
+
+  // A Bulk query is a READ, but starting one is an HTTP POST — which the
+  // per-org read-only gate blocks by design. Rather than punch a hole in that
+  // gate, say plainly why this org can't use the bulk reader; the caller falls
+  // back to the REST pager and reads every record anyway.
+  let created;
+  try {
+    created = await sfFetchWithProxy(orgUrl, sid, base, {
+      method: 'POST',
+      body: JSON.stringify({
+        operation: includeDeleted ? 'queryAll' : 'query',
+        query: soql, contentType: 'CSV', lineEnding: 'LF',
+      }),
+    });
+  } catch (e) {
+    if (/read-only/i.test(e && e.message ? e.message : '')) {
+      throw new Error('this org is marked read-only, and creating a Bulk query job is an HTTP POST that the read-only gate blocks');
+    }
+    throw e;
+  }
+  if (!created.ok) throw new Error(sfErrorMsg(created.status, created.body, base));
+  const job    = JSON.parse(created.body);
+  const jobUrl = `${base}/${job.id}`;
+
+  let cancelled = false;
+  try {
+    // 1. poll — same 1s → 5s backoff as the ingest path.
+    let state = job.state || 'UploadComplete', delay = 1000, info = null;
+    for (let i = 0; i < 600 && state !== 'JobComplete'; i++) {
+      if (_runCancelled) { cancelled = true; break; }
+      await new Promise(r => setTimeout(r, delay));
+      delay = Math.min(delay + 500, 5000);
+      const poll = await sfFetchWithProxy(orgUrl, sid, jobUrl, { method: 'GET' });
+      if (!poll.ok) throw new Error(sfErrorMsg(poll.status, poll.body, jobUrl));
+      info  = JSON.parse(poll.body);
+      state = info.state;
+      report({ state, processed: info.numberRecordsProcessed || 0, total: null });
+      if (state === 'Failed' || state === 'Aborted') {
+        throw new Error(`Bulk query job ${state}${info.errorMessage ? `: ${info.errorMessage}` : ''}`);
+      }
+    }
+    if (!cancelled && state !== 'JobComplete') {
+      throw new Error('Bulk query job did not finish in time — check Setup → Bulk Data Load Jobs');
+    }
+
+    const expected = info && Number.isFinite(info.numberRecordsProcessed)
+      ? info.numberRecordsProcessed : null;
+
+    // 2. download every page, following Sforce-Locator.
+    let rows = [], locator = '', pages = 0, sawHeaders = false;
+    if (!cancelled) {
+      do {
+        if (_runCancelled) { cancelled = true; break; }
+        const url = `${jobUrl}/results${locator ? `?locator=${encodeURIComponent(locator)}` : ''}`;
+        const res = await sfFetchWithProxy(orgUrl, sid, url, { method: 'GET' });
+        if (!res.ok) throw new Error(sfErrorMsg(res.status, res.body, url));
+        rows = rows.concat(sftkParseCsv(res.body));
+        pages++;
+        const hdrs = res.headers || null;
+        if (hdrs) sawHeaders = true;
+        const loc = hdrs ? (hdrs['sforce-locator'] || '') : '';
+        locator = (loc && loc !== 'null') ? loc : '';
+        report({ state: 'Downloading', processed: rows.length, total: expected });
+      } while (locator && pages < maxPages);
+    }
+
+    const records = sftkBulkRowsToRecords(rows, fieldTypes);
+    const out = { records, totalSize: records.length, done: true };
+    if (cancelled) {
+      out.done = false;
+      out.truncated = { reason: 'cancelled', got: records.length, expected };
+    } else if (expected != null && records.length < expected) {
+      out.done = false;
+      out.truncated = {
+        reason: !sawHeaders ? 'locator header not readable'
+              : (locator ? 'page cap reached' : 'short read'),
+        got: records.length, expected,
+      };
+    }
+    return out;
+  } catch (e) {
+    // Never leave a query job running on the org.
+    try { await sfFetchWithProxy(orgUrl, sid, jobUrl, { method: 'PATCH', body: JSON.stringify({ state: 'Aborted' }) }); } catch (_) {}
+    throw e;
+  } finally {
+    if (cancelled) {
+      try { await sfFetchWithProxy(orgUrl, sid, jobUrl, { method: 'PATCH', body: JSON.stringify({ state: 'Aborted' }) }); } catch (_) {}
+    }
+  }
 }
 
 // Run ONE Bulk API 2.0 ingest job end to end: create → upload CSV → close →
@@ -1750,8 +2156,12 @@ async function sfBulkIngest(orgUrl, sid, opts) {
     if (!close.ok) throw new Error(sfErrorMsg(close.status, close.body, jobUrl));
 
     // 4. poll — backs off 1s → 5s; jobs are async and can take minutes
-    let state = 'InProgress', delay = 1000, info = null;
+    let state = 'InProgress', delay = 1000, info = null, cancelled = false;
     for (let i = 0; i < 600 && state !== 'JobComplete'; i++) {
+      // B3 — Cancel during a bulk job. The engine's between-batch check can't
+      // help here: a bulk job IS one batch and can run for minutes. Abort the
+      // job on the org, then salvage whatever it managed to write.
+      if (_runCancelled) { cancelled = true; break; }
       await new Promise(r => setTimeout(r, delay));
       delay = Math.min(delay + 500, 5000);
       const poll = await sfFetchWithProxy(orgUrl, sid, jobUrl, { method: 'GET' });
@@ -1767,6 +2177,32 @@ async function sfBulkIngest(orgUrl, sid, opts) {
       if (state === 'Failed' || state === 'Aborted') {
         throw new Error(`Bulk job ${state}${info.errorMessage ? `: ${info.errorMessage}` : ''}`);
       }
+    }
+    if (cancelled) {
+      // Abort on the org first so it stops writing, THEN collect the partial
+      // results. Records the job never reached come back flagged
+      // BULK_CANCELLED, which the engine counts as "not processed" rather
+      // than as failures — and lists under ↻ Retry failed so they can be
+      // finished later. Records already written stay written.
+      try { await sfFetchWithProxy(orgUrl, sid, jobUrl, { method: 'PATCH', body: JSON.stringify({ state: 'Aborted' }) }); } catch (_) {}
+      let okC = null, badC = null;
+      try { okC  = await sfFetchWithProxy(orgUrl, sid, `${jobUrl}/successfulResults/`, { method: 'GET' }); } catch (_) {}
+      try { badC = await sfFetchWithProxy(orgUrl, sid, `${jobUrl}/failedResults/`,     { method: 'GET' }); } catch (_) {}
+      if (typeof onProgress === 'function') {
+        try { onProgress({ state: 'Aborted', processed: info?.numberRecordsProcessed || 0,
+          failed: info?.numberRecordsFailed || 0, total: rows.length }); } catch (_) {}
+      }
+      // If neither result file could be read we do NOT know whether a given
+      // record was written before the abort — say exactly that instead of
+      // claiming it was untouched.
+      const resultsReadable = !!(okC && okC.ok) || !!(badC && badC.ok);
+      return sftkCorrelateBulkResults(rows, columns,
+        okC && okC.ok  ? sftkParseCsv(okC.body)  : [],
+        badC && badC.ok ? sftkParseCsv(badC.body) : [],
+        resultsReadable
+          ? 'Not processed — the run was cancelled and the Bulk job was aborted before this record.'
+          : 'Unknown — the run was cancelled and the Bulk job was aborted, but its result files could not be read, so we cannot say whether this record was written. Check the target org before retrying it.',
+        'BULK_CANCELLED');
     }
     if (state !== 'JobComplete') throw new Error('Bulk job did not finish in time — check Setup → Bulk Data Load Jobs');
 

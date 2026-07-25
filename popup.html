@@ -257,6 +257,19 @@
           <div id="fieldCleanerContainer"></div>
         </div>
 
+        <!-- ================================================== -->
+        <!-- TAB: WHAT'S NEW (T10) — same CHANGELOG.md the Studio renders -->
+        <!-- ================================================== -->
+        <div id="tab-whatsnew" class="tab-content" style="display:none">
+          <div style="padding:16px 18px;max-width:860px">
+            <h2 style="font-size:17px;font-weight:700;margin-bottom:2px">🎉 What's New</h2>
+            <div style="font-size:12px;color:var(--subtext,#706E6B);margin-bottom:14px">
+              Everything that shipped, newest first — straight from the changelog
+            </div>
+            <div id="whatsNewContainer"></div>
+          </div>
+        </div>
+
 
       </main>
     </div><!-- /.app-body -->
@@ -297,6 +310,10 @@
   <script src="license-manager.js"></script>
   <script src="flow-permissions.js"></script>
   <script src="field-cleaner.js"></script>
+  <!-- T10 What's New — the SAME file studio.html loads. One markdown parser,
+       one changelog, two apps; it carries its own escaper so it needs nothing
+       from studio-core.js at runtime. -->
+  <script src="studio-whatsnew.js"></script>
 
   <script src="popup.js"></script>
 </body>

@@ -117,10 +117,23 @@ function renderHistory() {
                 if (s.deleted)       parts.push(`<span class="ds-rec-tag ds-rec-tag-del">${s.deleted} deleted${s.deleteMode === 'hard' ? ' (hard)' : ''}</span>`);
                 const failTot = (s.insertedFailed || 0) + (s.updatedFailed || 0) + (s.deletedFailed || 0) + (s.pulledFailed || 0) + (s.updatedSourceFailed || 0) + (s.connectFailed || 0) + (s.relinkFailed || 0);
                 if (failTot)    parts.push(`<span class="ds-rec-tag ds-rec-tag-fail">${failTot} failed</span>`);
+                if (s.notProcessed) parts.push(`<span class="ds-rec-tag ds-rec-tag-fail" title="The Bulk job was aborted when the run was cancelled — these records were not confirmed written.">${s.notProcessed} not confirmed</span>`);
+                if (s.viaBulk)  parts.push('<span class="ds-rec-tag" title="Written with one Bulk API 2.0 job instead of 200-record REST batches.">⚡ via Bulk API</span>');
                 if (!parts.length) parts.push('<span class="ds-rec-tag">no changes</span>');
                 return `<span class="ds-summary-chip"><strong>${esc(obj)}</strong> · ${parts.join(' ')}</span>`;
               }
-              return `<span class="ds-summary-chip">${esc(obj)}: ${s.created || 0}↑${s.failed ? ' '+s.failed+'✗' : ''}${s.connected ? ' '+s.connected+'🔗' : ''}</span>`;
+              // B3 — bulk provenance (⚡) and the records an aborted Bulk job
+              // left unconfirmed (⏸) belong on the chip: they are neither
+              // created nor failed, and hiding them makes a cancelled run look
+              // like a clean small run.
+              const chipTitle = [
+                `${s.created || 0} created`,
+                s.failed ? `${s.failed} failed` : '',
+                s.notProcessed ? `${s.notProcessed} not confirmed written — the Bulk job was aborted when the run was cancelled` : '',
+                s.connected ? `${s.connected} linked to parent` : '',
+                s.viaBulk ? 'written with one Bulk API 2.0 job' : '',
+              ].filter(Boolean).join(' · ');
+              return `<span class="ds-summary-chip" title="${esc(chipTitle)}">${esc(obj)}: ${s.created || 0}↑${s.failed ? ' '+s.failed+'✗' : ''}${s.notProcessed ? ' '+s.notProcessed+'⏸' : ''}${s.connected ? ' '+s.connected+'🔗' : ''}${s.viaBulk ? ' <span style="opacity:.75">⚡ via Bulk API</span>' : ''}</span>`;
             }).join('')}
           </div>
           ${(() => {
@@ -180,12 +193,75 @@ function renderHistory() {
             const skips  = notes.filter(n => n.type === 'skipped-fields');
             const otherNotes = notes.filter(n => n.type !== 'skipped-fields');
 
+            // ── T11b: the DATA behind each failure ────────────────────────
+            // The engine attaches `fields:[{field, sent|absent}]` to every
+            // failed record whose error named a field, so a group can show
+            // WHAT was pushed, not just that something was rejected.
+            // Index them by the engine's own raw error line ("Account: <msg>")
+            // — the exact string the deduper grouped on, minus its "(×N)"
+            // suffix — so a record's values land under its own error and
+            // nowhere else.
+            const srcLinkBase = String(run.srcOrgUrl || run.sourceOrg || '').replace(/\/+$/, '');
+            const rawKey = t => String(t == null ? '' : t)
+              .replace(/^[⚠❌✖✕]\s*/, '').replace(/\s*\(×\d+\)\s*$/, '').trim();
+            const valuesByRaw = new Map();
+            for (const [obj, s] of Object.entries(run.summary || {})) {
+              for (const fr of (s.failedSourceIds || [])) {
+                if (!fr || typeof fr !== 'object') continue;
+                if (!Array.isArray(fr.fields) || !fr.fields.length) continue;
+                const k = rawKey(`${obj}: ${fr.error || ''}`);
+                if (!valuesByRaw.has(k)) valuesByRaw.set(k, []);
+                valuesByRaw.get(k).push(fr);
+              }
+            }
+
             // Identical failures collapse into one row with a count.
+            // `raws` keeps every raw line the group swallowed so the values
+            // above can be looked up — grouping behaviour itself is unchanged.
             const failGroups = new Map();
             for (const f of fails) {
               const g = failGroups.get(f.message);
-              if (g) g.count += f.count; else failGroups.set(f.message, { ...f });
+              if (g) { g.count += f.count; g.raws.push(rawKey(f.raw)); }
+              else failGroups.set(f.message, { ...f, raws: [rawKey(f.raw)] });
             }
+
+            // Renders "Acme Corp — tried to write BillingState = "TX"" rows
+            // under one grouped error. Capped; the cap is always stated.
+            const VALUE_ROWS = 5;
+            const valueBlock = (g) => {
+              const recs = [];
+              const seen = new Set();
+              for (const k of (g.raws || [])) {
+                for (const fr of (valuesByRaw.get(k) || [])) {
+                  if (fr.id && seen.has(fr.id)) continue;
+                  if (fr.id) seen.add(fr.id);
+                  recs.push(fr);
+                }
+              }
+              if (!recs.length) return '';
+              const shown = recs.slice(0, VALUE_ROWS);
+              const rows = shown.map(fr => {
+                const bits = (fr.fields || []).filter(Boolean).map(fd => (fd.absent || fd.sent == null)
+                  ? `<code>${esc(fd.field)}</code> <span style="opacity:.75">was not sent at all (no value in the payload)</span>`
+                  : `tried to write <code>${esc(fd.field)}</code> = <code>${esc(String(fd.sent))}</code>`
+                ).join(' · ');
+                const label = esc(fr.label || fr.id || 'record');
+                const link  = (srcLinkBase && fr.id)
+                  ? `<a href="${esc(srcLinkBase)}/${esc(fr.id)}" target="_blank" rel="noopener">${label}</a>`
+                  : label;
+                return `<div style="padding:2px 0 2px 14px;font-size:11.5px;line-height:1.5">${link} — ${bits}</div>`;
+              }).join('');
+              const more = recs.length > shown.length
+                ? `<div style="padding:2px 0 2px 14px;font-size:11.5px;opacity:.75">…and ${recs.length - shown.length} more record(s) with the same error.</div>`
+                : '';
+              // Honest about the OTHER cap: the engine only captures values for
+              // the first 200 failures of an object (storage quota), so a group
+              // of 5 000 will legitimately have fewer value rows than ×N.
+              const partial = g.count > recs.length
+                ? `<div style="padding:2px 0 2px 14px;font-size:11.5px;opacity:.75">Values were captured for ${recs.length} of the ${g.count} record(s) that hit this error.</div>`
+                : '';
+              return `<div style="margin:4px 0 2px">${rows}${more}${partial}</div>`;
+            };
 
             const summary = [];
             if (fails.length) summary.push(`${fails.length} error${fails.length !== 1 ? 's' : ''}`);
@@ -201,6 +277,7 @@ function renderHistory() {
 
             const failBlock = [...failGroups.values()].map(f => `
               <div class="ds-history-err-row" title="${esc(f.raw)}">❌ ${esc(f.object ? f.object + ': ' : '')}${esc(f.message)}${f.count > 1 ? ` <span class="ds-err-count">×${f.count}</span>` : ''}${f.phase ? ` <span class="ds-err-phase">while ${esc(f.phase)}</span>` : ''}
+                ${valueBlock(f)}
                 ${f.hint ? `<div class="ds-err-hint">💡 ${esc(f.hint)}</div>` : ''}
               </div>`).join('');
 

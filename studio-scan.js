@@ -225,6 +225,165 @@ function deriveScanConfig(profile, node) {
 }
 
 // ════════════════════════════════════════════════════════════════
+// T7 — PHANTOM DRIFT (State & Country picklist normalization)
+// ════════════════════════════════════════════════════════════════
+// When an org has State and Country Picklists ENABLED, Salesforce OWNS the
+// label field: on every write it rewrites `BillingState` from the value of
+// `BillingStateCode`. So if the source says "TX" and the target renders that
+// same code as "Texas", pushing "TX" is normalized straight back to "Texas" —
+// the row shows as drift again on the very next scan, FOREVER, and an
+// overwrite can never converge. (Worse, Salesforce often rejects the write
+// outright: "There's a problem with this state, even though it may appear
+// correct. Please select a state from the list of valid states.")
+//
+// The tell is the CODE. Same `${field}Code` on both sides = the two orgs agree
+// on the actual value and only the rendered label differs → phantom. Different
+// codes = a REAL value difference → reported as drift exactly as before.
+//
+// `tgtField` covers a field mapping that renames the field on the target side;
+// it defaults to `field`, so the 3-argument call behaves identically.
+//
+// PURE — no free variables (materialized standalone by test/extract.mjs).
+function sftkPhantomStateCountry(field, srcRec, tgtRec, tgtField) {
+  if (!field || !srcRec || !tgtRec) return false;
+  if (typeof srcRec !== 'object' || typeof tgtRec !== 'object') return false;
+  const sName = String(field);
+  const tName = String(tgtField || field);
+  // BillingState, ShippingCountry, MailingState, OtherCountry, State, Country…
+  if (!/^[A-Za-z]*(State|Country)$/.test(sName)) return false;
+  const sCode = srcRec[sName + 'Code'];
+  const tCode = tgtRec[tName + 'Code'];
+  // The `${field}Code` sibling has to be present on BOTH sides (i.e. in the
+  // compare set) for this to be knowable. When it isn't, we CANNOT tell a
+  // label normalization from a real value change — so never guess: return
+  // false and let the difference be reported as ordinary drift.
+  if (sCode == null || sCode === '') return false;
+  if (tCode == null || tCode === '') return false;
+  return String(sCode) === String(tCode);
+}
+
+// ════════════════════════════════════════════════════════════════
+// T6 — PICKLIST READINESS for a data deployment
+// ════════════════════════════════════════════════════════════════
+// Today a data run only discovers a missing picklist value when Salesforce
+// rejects the record mid-run. This answers the question BEFORE the run: of the
+// values these records actually carry, which ones don't exist in the TARGET
+// org's picklist?
+//
+//   records            — the source records that would be pushed/overwritten
+//   comparePlanOrFields— compare plan entries ({srcField,tgtField}) or plain
+//                        field-name strings (same name on both sides)
+//   tgtDescribeFieldsMap — target describe fields, as a plain object or a Map
+//                        keyed by field API name ({ type, picklistValues, … })
+//   opts               — cap overrides (all optional)
+//
+// Returns { gaps, … cap telemetry } where gaps is
+//   [{ field, tgtField, missing:[values], affected:n, multi, restricted, … }]
+// for fields WITH gaps only. Everything is capped and every cap is reported
+// back so the UI can say what was NOT examined.
+//
+// Deliberately conservative — it never invents a gap it can't prove:
+//   • target field absent from the describe        → skipped
+//   • target field isn't a (multi)picklist         → skipped
+//   • target picklist has no values in the describe (dependent picklist,
+//     unreadable describe)                          → skipped
+//   • matching is case-INSENSITIVE, because Salesforce accepts picklist
+//     writes case-insensitively and normalizes them
+//
+// PURE — no free variables (materialized standalone by test/extract.mjs).
+function sftkPicklistGaps(records, comparePlanOrFields, tgtDescribeFieldsMap, opts) {
+  const o = opts || {};
+  const MAX_FIELDS   = o.maxFields   > 0 ? o.maxFields   : 30;    // compare fields examined
+  const MAX_RECORDS  = o.maxRecords  > 0 ? o.maxRecords  : 5000;  // records scanned
+  const MAX_DISTINCT = o.maxDistinct > 0 ? o.maxDistinct : 500;   // distinct values per field
+  const MAX_REPORT   = o.maxReport   > 0 ? o.maxReport   : 25;    // missing values listed
+  const recs = Array.isArray(records) ? records : [];
+  const plan = Array.isArray(comparePlanOrFields) ? comparePlanOrFields : [];
+  const descOf = (name) => {
+    if (!name || !tgtDescribeFieldsMap) return null;
+    if (typeof tgtDescribeFieldsMap.get === 'function') return tgtDescribeFieldsMap.get(name) || null;
+    return tgtDescribeFieldsMap[name] || null;
+  };
+
+  // Which compare pairs land on a picklist in the TARGET org — the target's
+  // list is the one that decides whether the write is accepted.
+  const eligible = [];
+  const seenField = new Set();
+  for (const e of plan) {
+    const srcField = (typeof e === 'string') ? e : (e && e.srcField);
+    if (!srcField) continue;
+    const tgtField = (typeof e === 'string') ? e : (e.tgtField || e.srcField);
+    if (seenField.has(srcField + '' + tgtField)) continue;
+    seenField.add(srcField + '' + tgtField);
+    const d = descOf(tgtField);
+    if (!d) continue;
+    if (d.type !== 'picklist' && d.type !== 'multipicklist') continue;
+    const active = (d.picklistValues || []).filter(v => v && v.active !== false);
+    if (!active.length) continue;   // nothing to compare against — don't guess
+    const allowed = new Set();
+    for (const v of active) allowed.add(String(v.value == null ? '' : v.value).trim().toLowerCase());
+    eligible.push({ srcField, tgtField, allowed,
+      multi: d.type === 'multipicklist',
+      restricted: d.restrictedPicklist === true });
+  }
+  const cand     = eligible.slice(0, MAX_FIELDS);
+  const scanRecs = recs.length > MAX_RECORDS ? recs.slice(0, MAX_RECORDS) : recs;
+
+  const gaps = [];
+  for (const c of cand) {
+    const missing  = new Map();   // lowercased value → first-seen original casing
+    const affected = new Set();
+    const seenVal  = new Set();
+    let distinctCapped = false;
+    for (let i = 0; i < scanRecs.length; i++) {
+      const r = scanRecs[i];
+      if (!r || typeof r !== 'object') continue;
+      const raw = r[c.srcField];
+      if (raw == null || raw === '') continue;
+      // Multipicklist values arrive ';'-separated ("Hot;Warm") — each part is
+      // its own picklist value and each must exist in the target.
+      const parts = c.multi ? String(raw).split(';') : [String(raw)];
+      let hit = false;
+      for (const part of parts) {
+        const v = part.trim();
+        if (!v) continue;
+        const key = v.toLowerCase();
+        if (!seenVal.has(key)) {
+          if (seenVal.size >= MAX_DISTINCT) { distinctCapped = true; continue; }
+          seenVal.add(key);
+        }
+        if (!c.allowed.has(key)) { if (!missing.has(key)) missing.set(key, v); hit = true; }
+      }
+      if (hit) affected.add(r.Id || ('#' + i));
+    }
+    if (!missing.size) continue;
+    const vals = [...missing.values()];
+    gaps.push({
+      field: c.srcField,
+      tgtField: c.tgtField,
+      missing: vals.slice(0, MAX_REPORT),
+      missingTotal: vals.length,
+      affected: affected.size,
+      multi: c.multi,
+      restricted: c.restricted,
+      ...(vals.length > MAX_REPORT ? { valuesTruncated: true } : {}),
+      ...(distinctCapped ? { distinctCapped: MAX_DISTINCT } : {})
+    });
+  }
+  return {
+    gaps,
+    fieldsExamined:  cand.length,
+    fieldsTotal:     eligible.length,
+    fieldsCapped:    eligible.length > cand.length,
+    recordsExamined: scanRecs.length,
+    recordsTotal:    recs.length,
+    recordsCapped:   recs.length > scanRecs.length,
+    valueCap:        MAX_DISTINCT,
+    reportCap:       MAX_REPORT
+  };
+}
+
+// ════════════════════════════════════════════════════════════════
 // LIVE DIFF SCAN — the source of truth for "what's in each org"
 // ════════════════════════════════════════════════════════════════
 // Queries source AND target for the profile's root object, indexes both
@@ -641,6 +800,10 @@ async function runDiffScan(profile, node = null, scope = null) {
   const changed         = []; // present in both, compareFields differ → "drift"
   const identical       = []; // present in both, all compareFields match → "in sync"
   const linkMismatch    = []; // child scans: in both, but pointing at a different parent
+  // T7 — how many field differences were dropped as PHANTOM drift (State /
+  // Country label rewritten by the target org's picklists, same code on both
+  // sides). Counted across BOTH compare loops, surfaced on the scan result.
+  let phantomFields = 0;
 
   // M3c — classify the memory-matched pairs with the SAME compare logic the
   // key-matched rows use below (memory decides WHO matches; the compare plan
@@ -652,6 +815,10 @@ async function runDiffScan(profile, node = null, scope = null) {
     try {
       for (const cp of comparePlan) {
         if (String(cp.srcExtract(sr) ?? '') !== String(cp.tgtExtract(tr) ?? '')) {
+          // T7 — same State/Country CODE on both sides: the target's State &
+          // Country Picklists rewrite the label on every write, so this
+          // difference can NEVER converge. Not drift — don't flag it.
+          if (sftkPhantomStateCountry(cp.srcField, sr, tr, cp.tgtField)) { phantomFields++; continue; }
           if (diffFields.length < 10) diffFields.push(cp.srcField);
           else break;
         }
@@ -686,6 +853,10 @@ async function runDiffScan(profile, node = null, scope = null) {
       const diffFields = [];
       for (const p of comparePlan) {
         if (String(p.srcExtract(sr) ?? '') !== String(p.tgtExtract(tr) ?? '')) {
+          // T7 — phantom State/Country normalization (see above): same code,
+          // different label. A row whose ONLY differences are phantom lands
+          // in `identical`, because an overwrite could never fix it anyway.
+          if (sftkPhantomStateCountry(p.srcField, sr, tr, p.tgtField)) { phantomFields++; continue; }
           if (diffFields.length < 10) diffFields.push(p.srcField);
           else break;
         }
@@ -724,6 +895,42 @@ async function runDiffScan(profile, node = null, scope = null) {
         orphanCount++;
       }
     } catch (_) { /* degrade — orphans just don't show */ }
+  }
+
+  // T6 — PICKLIST READINESS. Before anything is written, check the DISTINCT
+  // (multi)picklist values carried by the records this run would push or
+  // overwrite against the TARGET org's allowed values. Uses the target
+  // describe fetched (and cached) above — no extra queries, no Tooling calls.
+  // A failure here NEVER fails the scan; it's reported as "couldn't check".
+  let picklistGaps = [], picklistGapsCap = null, picklistGapsError = null;
+  try {
+    const wantIds = new Set();
+    for (const r of missingInTarget) if (r.sourceId) wantIds.add(r.sourceId);
+    for (const r of changed)         if (r.sourceId) wantIds.add(r.sourceId);
+    // Nothing would be written → nothing to check (and nothing to warn about).
+    if (wantIds.size) {
+      if (!tgtDescFull?.fields?.length) {
+        picklistGapsError = `the ${objType} describe on the target org couldn't be read`;
+      } else {
+        const plRecs = [];
+        for (const r of (srcRes.records || [])) if (r?.Id && wantIds.has(r.Id)) plRecs.push(r);
+        const tgtFieldMap = {};
+        for (const f of tgtDescFull.fields) tgtFieldMap[f.name] = f;
+        const pg = sftkPicklistGaps(plRecs, comparePlan, tgtFieldMap);
+        picklistGaps = pg.gaps || [];
+        if (pg.fieldsCapped || pg.recordsCapped ||
+            picklistGaps.some(g => g.valuesTruncated || g.distinctCapped)) {
+          picklistGapsCap = {
+            fieldsExamined: pg.fieldsExamined, fieldsTotal: pg.fieldsTotal,
+            recordsExamined: pg.recordsExamined, recordsTotal: pg.recordsTotal,
+            valueCap: pg.valueCap, reportCap: pg.reportCap
+          };
+        }
+      }
+    }
+  } catch (e) {
+    picklistGaps = []; picklistGapsCap = null;
+    picklistGapsError = String(e?.message || e);
   }
 
   // M3c — AUTO-LEARN: this scan's confirmed 1:1 pairs (identical + changed
@@ -799,6 +1006,16 @@ async function runDiffScan(profile, node = null, scope = null) {
     // Set when the dot-path (lookup-by-name) compare 400'd and the scan fell
     // back to the plain plan — lookups are excluded from drift in this result.
     ...(lookupCompareDegraded ? { lookupCompareDegraded: true } : {}),
+    // T7 — field differences dropped as phantom State/Country normalization
+    // (same code on both sides). Rows whose ONLY differences were phantom are
+    // in `identical`, not `changed`.
+    ...(phantomFields ? { phantomFields } : {}),
+    // T6 — (multi)picklist values these records carry that the TARGET org's
+    // picklist doesn't have. Absent when there are none. picklistGapsCap says
+    // what the check did NOT look at; picklistGapsError says it couldn't run.
+    ...(picklistGaps.length ? { picklistGaps } : {}),
+    ...(picklistGapsCap ? { picklistGapsCap } : {}),
+    ...(picklistGapsError ? { picklistGapsError } : {}),
     // Child-scan extras (absent on root scans).
     ...(scope ? {
       scoped:        true,
@@ -1217,13 +1434,21 @@ function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap
     const sv = srcRec[sf], tv = tgtRec[tf];
     const sStr = (sv == null || sv === '') ? '∅' : String(sv);
     const tStr = (tv == null || tv === '') ? '∅' : String(tv);
-    const differs = sStr !== tStr;
+    const rawDiffers = sStr !== tStr;
+    // T7 — PHANTOM: State/Country whose CODE is identical on both sides. The
+    // target org's State & Country Picklists rewrite the label from the code
+    // on every write, so this is not drift and an overwrite can never fix it.
+    // (Needs the `${field}Code` sibling in the compare set — without it we
+    // don't guess and the difference shows as ordinary drift.)
+    const phantom = rawDiffers && sftkPhantomStateCountry(sf, srcRec, tgtRec, tf);
+    const differs = rawDiffers && !phantom;
     // Near-invisible differences get named — "Word of mouth" vs "Word of
     // Mouth" looks identical at a glance but is real drift.
     const subtle = differs && sStr.toLowerCase() === tStr.toLowerCase() ? 'case only'
                  : differs && sStr.trim() === tStr.trim() ? 'whitespace only'
                  : null;
-    pairs.push({ srcField: sf, tgtField: tf, srcVal: sStr, tgtVal: tStr, differs, subtle });
+    pairs.push({ srcField: sf, tgtField: tf, srcVal: sStr, tgtVal: tStr, differs, subtle,
+      phantom, phantomCode: phantom ? String(srcRec[sf + 'Code']) : null });
   }
   // Per-org exact types — attached to every pair, plus a type-mismatch flag
   // (a Number(18,2) source into a Number(18,0) target rounds silently).
@@ -1234,13 +1459,14 @@ function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap
       p.typeDiffers = !!(p.srcType && p.tgtType && p.srcType !== p.tgtType);
     }
   }
-  const diffCount = pairs.filter(p => p.differs).length;
+  const diffCount    = pairs.filter(p => p.differs).length;
+  const phantomCount = pairs.filter(p => p.phantom).length;
   if (!pairs.length) {
     return `<div class="ds-drift-compare-empty">No compareFields configured for this profile — can't show field-by-field diff. Add fields to the Field Mapping on the root node to enable.</div>`;
   }
   return `
     <div class="ds-drift-compare">
-      <div class="ds-drift-compare-hdr">${diffCount} of ${pairs.length} field${pairs.length !== 1 ? 's' : ''} differ${diffCount === 1 ? 's' : ''}</div>
+      <div class="ds-drift-compare-hdr">${diffCount} of ${pairs.length} field${pairs.length !== 1 ? 's' : ''} differ${diffCount === 1 ? 's' : ''}${phantomCount ? `<span style="margin-left:8px;font-weight:400;color:#4338ca" title="State/Country label(s) rewritten by the target org's State &amp; Country Picklists — same underlying code on both sides. Not counted as drift: an overwrite can never change them.">· ${phantomCount} normalized by the target org</span>` : ''}</div>
       <div class="ds-drift-compare-table">
         <div class="ds-drift-compare-row ds-drift-compare-row-hdr">
           <span class="ds-drift-compare-field">Field</span>
@@ -1248,10 +1474,11 @@ function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap
           <span class="ds-drift-compare-val">Target</span>
         </div>
         ${pairs.map(p => `
-          <div class="ds-drift-compare-row${p.differs ? ' ds-drift-compare-row-diff' : ''}${p.note && !p.differs ? ' ds-drift-compare-row-lkp' : ''}">
+          <div class="ds-drift-compare-row${p.differs ? ' ds-drift-compare-row-diff' : ''}${(p.note || p.phantom) && !p.differs ? ' ds-drift-compare-row-lkp' : ''}">
             <span class="ds-drift-compare-field" title="${p.srcField !== p.tgtField ? esc(p.srcField + ' → ' + p.tgtField) : esc(p.srcField)}">
               ${esc(p.srcField)}${p.srcField !== p.tgtField ? `<span class="ds-drift-compare-rename"> → ${esc(p.tgtField)}</span>` : ''}
               ${p.note ? `<span class="ds-drift-compare-lkptag">${esc(p.note)}</span>` : ''}
+              ${p.phantom ? `<span class="ds-drift-compare-lkptag" style="background:#eef2ff;color:#4338ca;border-color:#c7d2fe" title="Both orgs hold the same code (${esc(p.phantomCode || '')}) — the target org has State &amp; Country Picklists enabled, so it rewrites this label from the code on every write. Pushing the source label would be normalized straight back (or rejected outright), so this can never converge. Not counted as drift.">≡ normalized by the target org — same code, different label</span>` : ''}
               ${p.subtle ? `<span class="ds-drift-compare-lkptag" title="The values differ only subtly — easy to miss by eye">≈ ${esc(p.subtle)}</span>` : ''}
               ${p.typeDiffers ? `<span class="ds-drift-compare-lkptag ds-drift-typediff" title="This field is defined DIFFERENTLY in the two orgs (${esc(p.srcType)} vs ${esc(p.tgtType)}) — values can be truncated, rounded or rejected on write.">⚠ type differs</span>` : ''}
             </span>

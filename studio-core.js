@@ -684,6 +684,7 @@ const CMD_VIEWS = [
   { icon: '🔍', label: 'Org Compare',       view: 'compare',   desc: 'Diff data across many objects' },
   { icon: '🛡',  label: 'Deploy Readiness', view: 'readiness', desc: 'Schema compatibility' },
   { icon: '🕸',  label: 'Schema View',      view: 'schema',    desc: 'Flow & object graph' },
+  { icon: '🎉', label: "What's New",        view: 'whatsnew',  desc: 'Changelog — what shipped, per version' },
 ];
 
 // Toolkit (popup) features — selecting one opens/focuses the Toolkit popout
@@ -1107,6 +1108,7 @@ function _getStartedHtml() {
 // reconcile/builder are NOT hash-routed).
 const DS_HASH_VIEWS = new Set([
   'orgs', 'profiles', 'ring', 'picklists', 'history', 'compare', 'readiness', 'schema', 'fields', 'transfer',
+  'whatsnew',
 ]);
 
 function _viewFromHash() {
@@ -1136,7 +1138,8 @@ function navigateToView(view) {
 // them) — a view whose render function isn't loaded falls back to home.
 // Palette/hash entries for absent views are filtered by this same check.
 function _viewAvailable(view) {
-  const need = { readiness: 'renderReadiness', schema: 'renderSchemaView', fields: 'renderFieldAudit' };
+  const need = { readiness: 'renderReadiness', schema: 'renderSchemaView', fields: 'renderFieldAudit',
+                 whatsnew: 'renderWhatsNew' };
   return !need[view] || typeof window[need[view]] === 'function';
 }
 
@@ -1217,6 +1220,7 @@ function renderView(view) {
     case 'picklists': renderPicklists();  break;
     case 'ring':      renderRing();       break;
     case 'treediff':  renderTreeDiffPage(); break;
+    case 'whatsnew':  renderWhatsNew();     break;   // T10 — studio-whatsnew.js
   }
 }
 

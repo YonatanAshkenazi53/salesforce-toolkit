@@ -14,6 +14,21 @@ const LightningPages = (() => {
   let allApps          = [];   // AppDefinition records (cached after first load)
   let recordTypeCache  = {};   // sObjectType → [RecordType records]
 
+  // ── N3: assignment → users resolution ────────────────────
+  // _wswScan   — the (expensive) full Tooling scan of every FlexiPage's
+  //              assignments. Shared by "Who sees what?" and the reverse
+  //              "Which pages does a user see?" lens so we scan once.
+  // _lpAudience — resolved user data for the profiles named in assignments:
+  //              { byProfile: {lowercased profile name → [User]},
+  //                missingProfiles: [names not found in this org],
+  //                totalActive: n|null, capped: bool, cap: n, error: string|null }
+  let _wswScan   = null;
+  let _lpAudience = null;
+  const LP_USER_CAP      = 2000;  // hard cap on users pulled for profile audiences
+  const LP_USER_SHOW     = 25;    // users listed inline before "and N more"
+  const LP_LENS_USER_CAP = 200;   // users listed in the reverse-lens picker
+  const LP_CTX_CAP       = 120;   // app × record-type × form-factor rows in the lens
+
   // ActionOverride is NOT a SOQL-queryable sObject in any Salesforce org —
   // querying it always returns HTTP 400. Org-default detection relies on the
   // sObject describe endpoint's `actionOverrides` array instead (Strategy in
@@ -37,6 +52,8 @@ const LightningPages = (() => {
     allApps                   = [];
     recordTypeCache           = {};
     _appDefinitionSupported   = true;
+    _wswScan                  = null;
+    _lpAudience               = null;
 
     // ActionOverride SOQL is never supported — keep the flag off (see decl).
     _aoStorageKey = `sftk_ao_${orgUrl.replace(/[^a-z0-9]/gi, '_')}`;
@@ -92,11 +109,12 @@ const LightningPages = (() => {
   function renderShell() {
     _container.innerHTML = `
       <div class="lp-wrap">
-        <div class="lp-toolbar">
+        <div class="lp-toolbar" style="flex-wrap:wrap">
           <input class="search-input lp-search" id="lpSearch"
-            placeholder="🔍 Search pages…" autocomplete="off">
+            placeholder="🔍 Search pages…" autocomplete="off" style="min-width:140px">
           <button class="btn-icon" id="lpRefreshBtn" title="Reload pages">🔄</button>
           <button class="btn btn-secondary btn-sm lp-profile-map-btn" id="lpProfileMapBtn" title="Show which page each profile sees">👤 Who sees what?</button>
+          <button class="btn btn-secondary btn-sm" id="lpUserLensBtn" style="white-space:nowrap" title="Pick a user → the page they get for each object, and which assignment rule won">🔎 What a user sees</button>
         </div>
         <div id="lpLoading" style="display:none">
           ${sftkCat('Loading Lightning pages…')}
@@ -120,10 +138,13 @@ const LightningPages = (() => {
       // off on refresh too, matching init(). See the flag declaration comment.
       _actionOverrideSupported  = false;
       _appDefinitionSupported   = true;
+      _wswScan                  = null;
+      _lpAudience               = null;
       loadPages();
     });
 
     document.getElementById('lpProfileMapBtn').addEventListener('click', () => openProfileMap());
+    document.getElementById('lpUserLensBtn').addEventListener('click', () => openUserLens());
   }
 
   // ── Entity-name resolution ─────────────────────────────────
@@ -395,81 +416,25 @@ const LightningPages = (() => {
     const body = document.getElementById('lpDetailBody');
 
     try {
-      // Ensure profiles loaded
-      if (!allProfiles.length) {
-        const pRes = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid,
-          tooling: false, query: 'SELECT Id,Name FROM Profile ORDER BY Name' });
-        if (!pRes.error && pRes.records) allProfiles = pRes.records;
-      }
-
-      // Fetch full metadata for ALL pages (no ManageableState filter) in batches
-      const BATCH = 5;
-      const targets = [...allPages].sort((a, b) =>
-        (a.MasterLabel || '').localeCompare(b.MasterLabel || '')
+      const pageDataArr = await scanAllPageAssignments(
+        pct => { if (document.getElementById('lpDetailBody') && body) body.innerHTML = sftkCat(`Loading pages… ${pct}%`); },
+        () => !!document.getElementById('lpDetailBody')
       );
-
-      const pageDataArr = [];
-      for (let i = 0; i < targets.length; i += BATCH) {
-        if (!document.getElementById('lpDetailBody')) return; // navigated away
-        const pct = Math.round((i / targets.length) * 100);
-        if (body) body.innerHTML = sftkCat(`Loading pages… ${pct}%`);
-
-        const slice = targets.slice(i, i + BATCH);
-        const results = await Promise.allSettled(
-          slice.map(p => bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
-                               sobject: 'FlexiPage', id: p.Id }))
-        );
-        for (let j = 0; j < slice.length; j++) {
-          const r = results[j];
-          if (r.status !== 'fulfilled' || r.value?.error) {
-            pageDataArr.push({ page: slice[j], meta: null, assignments: [], orgDefaults: [] });
-            continue;
-          }
-          const meta = r.value;
-          // Use sobjectType from Metadata compound field first, then fall back to
-          // EntityDefinitionId from the initial SOQL list — critical for custom Record
-          // Pages where Metadata.sobjectType may return null.
-          const sobjectType    = meta.Metadata?.sobjectType || slice[j].EntityDefinitionId || null;
-          const devName        = meta.FullName || slice[j].DeveloperName;
-          const apiAssignments = meta.Metadata?.pageAssignments || [];
-          // Prefer direct PublishStatus from SOQL list (more reliable than compound Metadata
-          // field, which returns null for managed/system pages even when they are active).
-          const pageStatus = (slice[j].PublishStatus || meta.Metadata?.publishStatus || '').toLowerCase();
-          let assignments = [...apiAssignments];
-          let orgDefaults = [];
-          let resolvedPage = slice[j]; // may be updated if org-default detection infers Active status
-          // Only SKIP the describe/ActionOverride check when the page is explicitly Draft or
-          // Obsolete. Unknown/null status (managed or recently-created pages) still gets checked.
-          if (sobjectType && pageStatus !== 'draft' && pageStatus !== 'obsolete') {
-            orgDefaults = await fetchCustomObjectOrgDefaults(sobjectType, devName, slice[j].Id);
-            for (const co of orgDefaults) {
-              const already = apiAssignments.some(
-                a => !a.profile && !a.app && (a.formFactor || 'Large') === co.formFactor
-              );
-              if (!already) assignments.push(co);
-            }
-            // Salesforce enforces: a page can only be an org default while Active.
-            // Unconditionally set status to Active when org-default is confirmed —
-            // this corrects stale Tooling API data without any extra round-trip.
-            if (orgDefaults.length > 0) {
-              resolvedPage = { ...slice[j], PublishStatus: 'Active' };
-              syncPageStatus(slice[j].Id, 'Active');
-            }
-          }
-          // Only attach debug data when org-default detection was actually attempted for
-          // this page.  Pages without an sobjectType (Utility Bar, App Home, etc.) skip
-          // the check entirely and must NOT inherit stale debug from the previous page
-          // in the same batch — _orgDefaultDebug is a module-level variable.
-          const ranOrgDefaultCheck = !!(sobjectType && pageStatus !== 'draft' && pageStatus !== 'obsolete');
-          pageDataArr.push({ page: resolvedPage, meta, assignments, orgDefaults,
-                             orgDefaultDebug: ranOrgDefaultCheck ? _orgDefaultDebug : null });
-        }
-      }
+      if (pageDataArr === null) return;   // navigated away mid-scan
 
       if (!document.getElementById('lpDetailBody')) return;
 
+      // ── N3: resolve assignments → real users ──────────────
+      if (body) body.innerHTML = sftkCat('Resolving users…');
+      const audience = await ensureAudience(pageDataArr);
+      // Object → every active assignment on that object (across all pages).
+      // Needed for the org-default subtraction: "everyone EXCEPT the users a
+      // more specific assignment already captured for this same object".
+      const objIndex = lpBuildObjectIndex(pageDataArr);
+      if (!document.getElementById('lpDetailBody')) return;
+
       // Helper: render one page card
-      const renderCard = ({ page, meta, assignments, orgDefaults, orgDefaultDebug }) => {
+      const renderCard = ({ page, meta, assignments, orgDefaults, orgDefaultDebug, scanError }) => {
         // Use direct PublishStatus field from SOQL list as the primary source — it's more
         // reliable than the compound Metadata field which returns null for managed pages.
         const ps     = (page.PublishStatus || meta?.Metadata?.publishStatus || '').toLowerCase();
@@ -487,45 +452,145 @@ const LightningPages = (() => {
         // Build assignments HTML
         let assignHtml = '';
 
+        // ── N3: resolve each assignment to the users it actually reaches ──
+        // Only ACTIVE pages reach anyone; a Draft/Obsolete page is shown to
+        // nobody no matter what assignments it carries, so we say that plainly
+        // instead of printing a user count that would be a lie.
+        const isActivePage = ps === 'active';
+        const objKey  = lpObjectKeyOf({ page, meta });
+        const sameObj = objIndex.get(objKey) || [];
+        // Card-header badge: users this page reaches summed across its rows.
+        // Org-default and profile rows never overlap (the org-default count
+        // already subtracts every profile that has its own assignment on the
+        // same object), so a plain sum is correct. App-scoped rows add nothing
+        // to the total — we cannot confirm app visibility per profile — they
+        // only flip pageCountSure so the badge is marked as a lower bound.
+        let pageAudience  = 0;
+        let pageCountSure = true;
+
         // Org-default rows
         for (const a of assignments.filter(a => !a.profile && !a.app)) {
-          const ff = (a.formFactor || 'Large') === 'Small' ? '📱 Mobile' : '🖥 Desktop';
+          const ffKey = (a.formFactor || 'Large');
+          const ff    = ffKey === 'Small' ? '📱 Mobile' : '🖥 Desktop';
+          // Profiles captured by a MORE SPECIFIC, app-independent assignment on
+          // the SAME object + form factor never reach the org default.
+          // App-scoped assignments are deliberately NOT subtracted: they only
+          // win inside their app, so those users still land here everywhere else.
+          const overridingProfiles = [...new Set(sameObj
+            .filter(x => x.assignment?.profile && !x.assignment.app
+                      && (x.assignment.formFactor || 'Large') === ffKey)
+            .map(x => x.assignment.profile))];
+          const excl  = lpSumProfileCounts(audience, overridingProfiles);
+          const total = audience.totalActive;
+          const net   = (total == null || !excl.exact) ? null : Math.max(0, total - excl.count);
+
+          let countBit;
+          if (!isActivePage) {
+            countBit = `<span style="font-size:11px;color:var(--subtext)">page inactive — 0 users</span>`;
+          } else if (net != null) {
+            countBit = `<span class="lp-pm-user-count">👥 ${net} user${net !== 1 ? 's' : ''}</span>`;
+          } else {
+            countBit = `<span style="font-size:11px;color:#c0392b" title="${esc(audience.countError || excl.reason || 'user count unavailable')}">👥 count unavailable</span>`;
+          }
+          if (isActivePage) {
+            if (net != null) pageAudience += net; else pageCountSure = false;
+          }
+
+          const exclIds = overridingProfiles
+            .map(n => lpProfileIdByName(n)).filter(Boolean);
+          const expander = isActivePage
+            ? `<details style="margin:2px 0 2px 18px" class="lp-od-users" data-ff="${esc(ffKey)}" data-excl="${esc(JSON.stringify(exclIds))}">
+                 <summary style="cursor:pointer;font-size:11px;color:#0176d3">Show users</summary>
+                 <div style="padding:3px 0 3px 8px;border-left:2px solid rgba(128,128,128,.35);max-height:220px;overflow:auto">
+                   <span style="font-size:11px;color:var(--subtext)">Not loaded yet.</span>
+                 </div>
+               </details>`
+            : '';
+          const exclNote = overridingProfiles.length
+            ? `<div style="font-size:10px;color:var(--subtext);padding-left:18px">Excludes ${overridingProfiles.length} profile${overridingProfiles.length !== 1 ? 's' : ''} with their own ${esc(objKey.startsWith('__page:') ? 'page' : objKey)} assignment: ${esc(overridingProfiles.slice(0, 6).join(', '))}${overridingProfiles.length > 6 ? `, +${overridingProfiles.length - 6} more` : ''}.</div>`
+            : '';
+          const appNote = sameObj.some(x => x.assignment?.app)
+            ? `<div style="font-size:10px;color:var(--subtext);padding-left:18px">⚠ App-specific assignments exist for this object. Those users still see this org-default page <em>outside</em> that app, so they are counted here. App visibility per profile is not queried.</div>`
+            : '';
           assignHtml += `<div class="lp-wsw-row">
             <span class="lp-wsw-who">🌐 Org Default</span>
             <span class="lp-wsw-ff">${ff}</span>
-          </div>`;
+            ${countBit}
+          </div>${exclNote}${appNote}${expander}`;
         }
 
         // Profile-specific rows (no app context)
         for (const a of assignments.filter(a => a.profile && !a.app)) {
-          const ff    = (a.formFactor || 'Large') === 'Small' ? '📱' : '🖥';
-          const prof  = allProfiles.find(p => p.Name === a.profile);
-          const ucCls = prof ? profileUserCache[prof.Id]?.length : null;
-          const userBit = ucCls != null
-            ? `<span class="lp-pm-user-count">${ucCls} user${ucCls !== 1 ? 's' : ''}</span>`
-            : prof
-              ? `<button class="lp-pm-load-users btn-link" data-pid="${esc(prof.Id)}" data-pname="${esc(a.profile)}">load users</button>`
-              : '';
+          const ff   = (a.formFactor || 'Large') === 'Small' ? '📱' : '🖥';
+          const aud  = lpProfileAudience(audience, a.profile);
+          let countBit, expander;
+          if (!isActivePage) {
+            countBit = `<span style="font-size:11px;color:var(--subtext)">page inactive — 0 users</span>`;
+            expander = '';
+          } else if (!aud.resolved) {
+            countBit = `<span style="font-size:11px;color:#c0392b">profile not found in this org — cannot resolve users</span>`;
+            expander = '';
+          } else {
+            countBit = `<span class="lp-pm-user-count">👥 ${aud.count} user${aud.count !== 1 ? 's' : ''}${aud.exact ? '' : ' (approx.)'}</span>`;
+            expander = lpUsersBlockHtml(aud.users, aud.count,
+              audience.capped ? `Sample only — the org-wide user pull hit the ${LP_USER_CAP}-user cap.` : '');
+            pageAudience += (aud.count || 0);
+            if (!aud.exact) pageCountSure = false;
+          }
           assignHtml += `<div class="lp-wsw-row">
             <span class="lp-wsw-who">👤 ${esc(a.profile)}</span>
             <span class="lp-wsw-ff">${ff}</span>
-            ${userBit}
-          </div>`;
+            ${countBit}
+          </div>${expander}`;
         }
 
         // App-context rows
         for (const a of assignments.filter(a => a.app)) {
-          const ff = (a.formFactor || 'Large') === 'Small' ? '📱' : '🖥';
-          const who = a.profile ? `⚡ ${esc(a.app)} · ${esc(a.profile)}` : `⚡ ${esc(a.app)}`;
+          const ff  = (a.formFactor || 'Large') === 'Small' ? '📱' : '🖥';
+          const rt  = a.recordType ? ` · RT ${esc(a.recordType)}` : '';
+          const who = a.profile ? `⚡ ${esc(a.app)} · ${esc(a.profile)}${rt}` : `⚡ ${esc(a.app)}${rt}`;
+          let countBit, expander = '', note = '';
+          // App-scoped rows never contribute to the header total (we cannot
+          // confirm who actually has the app), so the badge becomes a floor.
+          if (isActivePage) pageCountSure = false;
+          if (!isActivePage) {
+            countBit = `<span style="font-size:11px;color:var(--subtext)">page inactive — 0 users</span>`;
+          } else if (a.profile) {
+            const aud = lpProfileAudience(audience, a.profile);
+            if (!aud.resolved) {
+              countBit = `<span style="font-size:11px;color:#c0392b">profile not found in this org — cannot resolve users</span>`;
+            } else {
+              countBit = `<span class="lp-pm-user-count">👥 up to ${aud.count} user${aud.count !== 1 ? 's' : ''}</span>`;
+              expander = lpUsersBlockHtml(aud.users, aud.count, '');
+              note = `<div style="font-size:10px;color:var(--subtext);padding-left:18px">Only while these users are inside the <strong>${esc(a.app)}</strong> app${a.recordType ? ` viewing a <strong>${esc(a.recordType)}</strong> record` : ''}. We do <em>not</em> query app visibility per profile, so some of them may not have this app at all.</div>`;
+            }
+          } else {
+            countBit = `<span style="font-size:11px;color:var(--subtext)">every user of this app</span>`;
+            note = `<div style="font-size:10px;color:var(--subtext);padding-left:18px">App-default assignment — reaches whoever can open the <strong>${esc(a.app)}</strong> app. App visibility per profile is not queried, so this cannot be resolved to a user list.</div>`;
+          }
           assignHtml += `<div class="lp-wsw-row">
             <span class="lp-wsw-who">${who}</span>
             <span class="lp-wsw-ff">${ff}</span>
-          </div>`;
+            ${countBit}
+          </div>${note}${expander}`;
         }
 
         if (!assignHtml) {
-          assignHtml = `<div class="lp-wsw-none">No assignments</div>`;
+          assignHtml = `<div class="lp-wsw-none">No assignments${isActivePage ? ' — no user reaches this page through an assignment' : ''}</div>`;
         }
+        if (scanError) {
+          // The Tooling GET for this page failed, so its assignment list is
+          // EMPTY BECAUSE WE COULD NOT READ IT — not because nobody sees it.
+          assignHtml = `<div style="font-size:10px;color:#c0392b;padding:2px 0">⚠ Could not read this page's assignments (${esc(sftkFriendlyError(String(scanError)).message)}). Its audience is <strong>unknown</strong>, not zero — and any user it captures is still being counted in some other page's org-default number below.</div>` + assignHtml;
+        }
+        if (audience.error) {
+          assignHtml = `<div style="font-size:10px;color:#c0392b;padding:2px 0">⚠ User lookup failed (${esc(sftkFriendlyError(audience.error).message)}) — counts below are incomplete.</div>` + assignHtml;
+        }
+        const badgeUsers = isActivePage && (pageAudience > 0 || !pageCountSure)
+          ? `<span class="lp-pm-user-count" title="${pageCountSure
+                ? 'Active users this page reaches (org default + profile assignments)'
+                : 'Lower bound — some rows could not be resolved to users (app-scoped assignment, missing profile, or a failed count). Expand the rows for the detail.'}">👥 ${pageAudience}${pageCountSure ? '' : '+'}</span>`
+          : '';
 
         // Show the debug panel ONLY for genuine errors — not for the normal case where
         // describe succeeded but found no View overrides (which conclusively means
@@ -551,7 +616,7 @@ const LightningPages = (() => {
           <div class="lp-wsw-card-hdr">
             <span class="lp-status-dot ${dotCls}" title="${ps === 'active' ? 'Active' : ps === 'obsolete' ? 'Obsolete' : ps === 'draft' ? 'Draft' : 'Unknown'}"></span>
             <span class="lp-wsw-page-name">${esc(page.MasterLabel)}</span>
-            ${orgBadge}${objTag}
+            ${orgBadge}${objTag}${badgeUsers}
             <span class="lp-wsw-type">${esc(humanType(page.Type))}</span>
             <button class="lp-wsw-open btn-link" data-id="${esc(page.Id)}" title="Open in Salesforce">↗</button>
           </div>
@@ -564,7 +629,7 @@ const LightningPages = (() => {
       const activePages   = pageDataArr.filter(d => getStatus(d) === 'active');
       const inactivePages = pageDataArr.filter(d => getStatus(d) !== 'active');
 
-      let html = '';
+      let html = lpAudienceCaveatHtml(audience, pageDataArr);
       if (activePages.length) {
         html += `<div class="lp-pm-section-hdr">✅ Active Pages (${activePages.length})</div>`;
         for (const d of activePages) html += renderCard(d);
@@ -573,23 +638,30 @@ const LightningPages = (() => {
         html += `<div class="lp-pm-section-hdr" style="margin-top:14px">○ Draft / Inactive Pages (${inactivePages.length})</div>`;
         for (const d of inactivePages) html += renderCard(d);
       }
-      if (!html) html = `<div class="lp-empty-sm">No Lightning Pages found.</div>`;
+      if (!activePages.length && !inactivePages.length) html += `<div class="lp-empty-sm">No Lightning Pages found.</div>`;
 
       if (body) body.innerHTML = html;
 
-      // Wire: load users buttons
-      body?.querySelectorAll('.lp-pm-load-users').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const pid = btn.dataset.pid;
-          const loading = document.createElement('span');
-          loading.className = 'lp-pm-user-count';
-          loading.innerHTML = sftkCatSm('Loading users…');
-          btn.replaceWith(loading);
-          const users = await fetchUsers(pid);
-          loading.replaceWith(Object.assign(document.createElement('span'), {
-            className: 'lp-pm-user-count',
-            textContent: `${users.length} user${users.length !== 1 ? 's' : ''}`
-          }));
+      // Wire: org-default "Show users" expanders — the "everyone except the
+      // profiles with their own assignment" list is fetched lazily on first
+      // open (one query per row) so opening the view stays cheap.
+      body?.querySelectorAll('details.lp-od-users').forEach(det => {
+        det.addEventListener('toggle', async () => {
+          if (!det.open || det.dataset.loaded) return;
+          det.dataset.loaded = '1';
+          const slot = det.querySelector('div');
+          if (slot) slot.innerHTML = sftkCatSm('Loading users…');
+          let exclIds = [];
+          try { exclIds = JSON.parse(det.dataset.excl || '[]'); } catch (_) { exclIds = []; }
+          const res = await fetchOrgDefaultUsers(exclIds);
+          if (!slot) return;
+          if (res.error) {
+            const fe = sftkFriendlyError(res.error);
+            slot.innerHTML = `<span style="font-size:11px;color:#c0392b">Could not load users: ${esc(fe.message)}</span>`;
+            return;
+          }
+          slot.innerHTML = lpUserRowsHtml(res.users, res.total,
+            res.capped ? `Showing the first ${res.users.length} by name — ${res.total != null ? res.total : 'the full set'} match in total.` : '');
         });
       });
 
@@ -606,6 +678,565 @@ const LightningPages = (() => {
       const fe = sftkFriendlyError(e.message);
       if (body) body.innerHTML = sftkCat(esc(fe.message + (fe.hint ? ' — ' + fe.hint : '')), true);
     }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // N3 — assignment → users resolution
+  // ══════════════════════════════════════════════════════════
+
+  // Full Tooling scan of every FlexiPage's assignments.  Extracted from
+  // openProfileMap so the reverse "What does a user see?" lens reuses the exact
+  // same data (and the same cache) instead of scanning the org twice.
+  //
+  // onProgress(pct)   — called before each batch
+  // stillAlive()      — return false to abort (view navigated away); the
+  //                     function then returns null so callers can bail cleanly.
+  async function scanAllPageAssignments(onProgress, stillAlive) {
+    if (_wswScan) return _wswScan;
+
+    // Ensure profiles loaded — assignments name profiles, we need Ids.
+    if (!allProfiles.length) {
+      const pRes = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid,
+        tooling: false, query: 'SELECT Id,Name FROM Profile ORDER BY Name' });
+      if (!pRes.error && pRes.records) allProfiles = pRes.records;
+    }
+
+    const BATCH = 5;
+    const targets = [...allPages].sort((a, b) =>
+      (a.MasterLabel || '').localeCompare(b.MasterLabel || '')
+    );
+
+    const pageDataArr = [];
+    for (let i = 0; i < targets.length; i += BATCH) {
+      if (stillAlive && !stillAlive()) return null;   // navigated away
+      if (onProgress) onProgress(Math.round((i / Math.max(1, targets.length)) * 100));
+
+      const slice = targets.slice(i, i + BATCH);
+      const results = await Promise.allSettled(
+        slice.map(p => bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
+                             sobject: 'FlexiPage', id: p.Id }))
+      );
+      for (let j = 0; j < slice.length; j++) {
+        const r = results[j];
+        if (r.status !== 'fulfilled' || r.value?.error) {
+          pageDataArr.push({ page: slice[j], meta: null, assignments: [], orgDefaults: [],
+                             scanError: r.status === 'fulfilled' ? (r.value?.error || 'unknown') : String(r.reason?.message || r.reason) });
+          continue;
+        }
+        const meta = r.value;
+        // Use sobjectType from Metadata compound field first, then fall back to
+        // EntityDefinitionId from the initial SOQL list — critical for custom Record
+        // Pages where Metadata.sobjectType may return null.
+        const sobjectType    = meta.Metadata?.sobjectType || slice[j].EntityDefinitionId || null;
+        const devName        = meta.FullName || slice[j].DeveloperName;
+        const apiAssignments = meta.Metadata?.pageAssignments || [];
+        // Prefer direct PublishStatus from SOQL list (more reliable than compound Metadata
+        // field, which returns null for managed/system pages even when they are active).
+        const pageStatus = (slice[j].PublishStatus || meta.Metadata?.publishStatus || '').toLowerCase();
+        let assignments = [...apiAssignments];
+        let orgDefaults = [];
+        let resolvedPage = slice[j]; // may be updated if org-default detection infers Active status
+        // Only SKIP the describe/ActionOverride check when the page is explicitly Draft or
+        // Obsolete. Unknown/null status (managed or recently-created pages) still gets checked.
+        if (sobjectType && pageStatus !== 'draft' && pageStatus !== 'obsolete') {
+          orgDefaults = await fetchCustomObjectOrgDefaults(sobjectType, devName, slice[j].Id);
+          for (const co of orgDefaults) {
+            const already = apiAssignments.some(
+              a => !a.profile && !a.app && (a.formFactor || 'Large') === co.formFactor
+            );
+            if (!already) assignments.push(co);
+          }
+          // Salesforce enforces: a page can only be an org default while Active.
+          // Unconditionally set status to Active when org-default is confirmed —
+          // this corrects stale Tooling API data without any extra round-trip.
+          if (orgDefaults.length > 0) {
+            resolvedPage = { ...slice[j], PublishStatus: 'Active' };
+            syncPageStatus(slice[j].Id, 'Active');
+          }
+        }
+        // Only attach debug data when org-default detection was actually attempted for
+        // this page.  Pages without an sobjectType (Utility Bar, App Home, etc.) skip
+        // the check entirely and must NOT inherit stale debug from the previous page
+        // in the same batch — _orgDefaultDebug is a module-level variable.
+        const ranOrgDefaultCheck = !!(sobjectType && pageStatus !== 'draft' && pageStatus !== 'obsolete');
+        pageDataArr.push({ page: resolvedPage, meta, assignments, orgDefaults,
+                           orgDefaultDebug: ranOrgDefaultCheck ? _orgDefaultDebug : null });
+      }
+    }
+
+    _wswScan = pageDataArr;
+    return pageDataArr;
+  }
+
+  // Object bucket for a scanned page. Record pages group by their object so the
+  // org-default subtraction only ever compares assignments that actually compete.
+  // Pages with no object (Home / App / Utility Bar) get their own private bucket.
+  function lpObjectKeyOf(d) {
+    const raw   = d?.meta?.Metadata?.sobjectType || d?.page?.EntityDefinitionId || null;
+    const named = raw ? (_lpEntityName(raw) || raw) : null;
+    return named || `__page:${d?.page?.Id || ''}`;
+  }
+
+  // object key → [{ page, assignment }] for ACTIVE pages only.
+  // A Draft/Obsolete page is shown to nobody, so its assignments must not
+  // subtract anyone from another page's org-default audience.
+  function lpBuildObjectIndex(pageDataArr) {
+    const idx = new Map();
+    for (const d of (pageDataArr || [])) {
+      const st = (d.page?.PublishStatus || d.meta?.Metadata?.publishStatus || '').toLowerCase();
+      if (st !== 'active') continue;
+      const key = lpObjectKeyOf(d);
+      if (!idx.has(key)) idx.set(key, []);
+      const bucket = idx.get(key);
+      for (const a of (d.assignments || [])) bucket.push({ page: d.page, assignment: a });
+    }
+    return idx;
+  }
+
+  function lpProfileIdByName(name) {
+    const n = String(name || '').toLowerCase();
+    const rec = allProfiles.find(p => (p.Name || '').toLowerCase() === n);
+    return rec ? rec.Id : null;
+  }
+
+  // Resolve every profile named by any assignment to its active users.
+  // Two queries per 100 profiles:
+  //   • GROUP BY ProfileId  → EXACT per-profile counts (never capped)
+  //   • the user rows       → the sample list we can actually display (capped)
+  // Plus one COUNT() for the org-wide active-user denominator.
+  async function ensureAudience(pageDataArr) {
+    if (_lpAudience) return _lpAudience;
+
+    const out = {
+      byProfile: {},        // lowercased profile name → [User] (null = profile not in org)
+      countByProfile: {},   // lowercased profile name → exact active-user count
+      missingProfiles: [],
+      totalActive: null,
+      capped: false,
+      cap: LP_USER_CAP,
+      error: null,
+      countError: null,
+      groupError: null
+    };
+
+    const names = new Set();
+    for (const d of (pageDataArr || [])) {
+      for (const a of (d.assignments || [])) {
+        if (a && a.profile) names.add(String(a.profile));
+      }
+    }
+
+    const idByName = new Map();
+    const nameById = new Map();
+    for (const n of names) {
+      const id = lpProfileIdByName(n);
+      if (id) {
+        idByName.set(n, id);
+        // Index under both the 18- and 15-char forms: the aggregate query can
+        // come back with either casing/length depending on API version.
+        nameById.set(id, n);
+        nameById.set(String(id).substring(0, 15), n);
+        out.byProfile[n.toLowerCase()] = [];
+      } else {
+        out.missingProfiles.push(n);
+        out.byProfile[n.toLowerCase()] = null;
+      }
+    }
+
+    // Org-wide denominator for the org-default rows.
+    const cRes = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false,
+      query: 'SELECT COUNT() FROM User WHERE IsActive = true', _silentError: true });
+    if (cRes && !cRes.error && typeof cRes.totalSize === 'number') out.totalActive = cRes.totalSize;
+    else out.countError = cRes?.error || 'COUNT() returned no total';
+
+    const ids = [...idByName.values()];
+    let pulled = 0;
+    for (let i = 0; i < ids.length; i += 100) {
+      const chunk   = ids.slice(i, i + 100);
+      const inList  = chunk.map(x => lpSoqlLit(x)).join(',');
+
+      // Exact counts (aggregate — unaffected by the row cap below).
+      const gRes = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false,
+        query: `SELECT ProfileId, COUNT(Id) cnt FROM User ` +
+               `WHERE IsActive = true AND ProfileId IN (${inList}) GROUP BY ProfileId`,
+        _silentError: true });
+      if (gRes?.error) {
+        out.groupError = gRes.error;
+      } else {
+        for (const g of (gRes?.records || [])) {
+          const nm = nameById.get(g.ProfileId) || nameById.get(String(g.ProfileId || '').substring(0, 15));
+          if (nm) out.countByProfile[nm.toLowerCase()] = Number(g.cnt) || 0;
+        }
+      }
+
+      // The displayable rows.
+      const remaining = LP_USER_CAP - pulled;
+      if (remaining <= 0) { out.capped = true; continue; }
+      const res = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false,
+        query: `SELECT Id,Name,Username,Profile.Name FROM User ` +
+               `WHERE IsActive = true AND ProfileId IN (${inList}) ` +
+               `ORDER BY Name LIMIT ${remaining}` });
+      if (res?.error) { out.error = res.error; break; }
+      const recs = res?.records || [];
+      pulled += recs.length;
+      if (recs.length >= remaining) out.capped = true;
+      for (const u of recs) {
+        const pn = String(u.Profile?.Name || '').toLowerCase();
+        if (!Array.isArray(out.byProfile[pn])) out.byProfile[pn] = [];
+        out.byProfile[pn].push(u);
+      }
+    }
+
+    // Seed the legacy per-profile cache only when the pull was complete —
+    // caching a truncated list would make later "show users" views silently wrong.
+    if (!out.capped && !out.error) {
+      for (const [n, id] of idByName) {
+        const lst = out.byProfile[n.toLowerCase()];
+        if (Array.isArray(lst)) profileUserCache[id] = lst;
+      }
+    }
+
+    _lpAudience = out;
+    return out;
+  }
+
+  function lpProfileAudience(audience, profileName) {
+    const key   = String(profileName || '').toLowerCase();
+    const users = audience?.byProfile?.[key];
+    const exact = audience?.countByProfile?.[key];
+    const resolved = Array.isArray(users);
+    return {
+      resolved,
+      users: resolved ? users : [],
+      count: (typeof exact === 'number') ? exact : (resolved ? users.length : null),
+      exact: typeof exact === 'number'
+    };
+  }
+
+  // Sum of active users across a list of profile names.
+  // exact=false when any profile could not be resolved or had no exact count —
+  // the caller must then refuse to print a number rather than print a guess.
+  function lpSumProfileCounts(audience, profileNames) {
+    let total = 0, exact = true, reason = '';
+    for (const n of (profileNames || [])) {
+      const a = lpProfileAudience(audience, n);
+      if (!a.resolved)   { exact = false; reason = `profile "${n}" not found in this org`; continue; }
+      if (!a.exact)      { exact = false; reason = `no exact user count for profile "${n}"`; }
+      total += (a.count || 0);
+    }
+    return { count: total, exact, reason };
+  }
+
+  // Plain user rows: name · username · profile. `total` is the true count when
+  // known so the "and N more" line is honest about what is being hidden.
+  function lpUserRowsHtml(users, total, note) {
+    const list  = users || [];
+    const shown = list.slice(0, LP_USER_SHOW);
+    const real  = (typeof total === 'number') ? total : list.length;
+    if (!real) return `<span style="font-size:11px;color:var(--subtext)">No active users.</span>`;
+    let inner = shown.map(u =>
+      `<div style="font-size:11px;padding:1px 0;display:flex;gap:6px;flex-wrap:wrap">` +
+        `<span style="font-weight:600">${esc(u.Name)}</span>` +
+        `<span style="color:var(--subtext)">${esc(u.Username)}</span>` +
+        `<span style="color:var(--subtext)">· ${esc(u.Profile?.Name || 'unknown profile')}</span>` +
+      `</div>`).join('');
+    const more = real - shown.length;
+    if (more > 0) {
+      inner += `<div style="font-size:11px;color:var(--subtext);padding-top:3px">…and ${more} more (only the first ${shown.length} by name are listed)</div>`;
+    }
+    if (note) inner += `<div style="font-size:10px;color:var(--subtext);padding-top:3px">${esc(note)}</div>`;
+    return inner;
+  }
+
+  function lpUsersBlockHtml(users, exactCount, note) {
+    const real = (typeof exactCount === 'number') ? exactCount : (users || []).length;
+    if (!real) return `<div style="font-size:11px;color:var(--subtext);padding:1px 0 1px 18px">No active users on this profile.</div>`;
+    return `<details style="margin:2px 0 2px 18px">
+      <summary style="cursor:pointer;font-size:11px;color:#0176d3">Show ${real} user${real !== 1 ? 's' : ''}</summary>
+      <div style="padding:3px 0 3px 8px;border-left:2px solid rgba(128,128,128,.35);max-height:220px;overflow:auto">
+        ${lpUserRowsHtml(users, exactCount, note)}
+      </div></details>`;
+  }
+
+  // Up-front honesty panel: what these numbers do and do NOT account for.
+  function lpAudienceCaveatHtml(audience, pageDataArr) {
+    const bits = [];
+    const failed = (pageDataArr || []).filter(d => d.scanError);
+    if (failed.length) {
+      bits.push(`<span style="color:#c0392b">${failed.length} page${failed.length !== 1 ? 's' : ''} could not be read from the Tooling API — their assignments are unknown, so every number below may be missing users those pages capture.</span>`);
+    }
+    bits.push('Counts are <strong>active users only</strong>. Inactive pages are shown to nobody, so their rows read 0.');
+    bits.push('<strong>App visibility per profile is not queried</strong> — an “App + Profile” row is an upper bound (only the users who actually have that app see the page there), and an “App default” row cannot be resolved to a user list at all.');
+    bits.push('Precedence used: <em>App + Record Type + Profile</em> &gt; <em>App + Profile</em> &gt; <em>App default</em> &gt; <em>Profile</em> &gt; <em>Org default</em>.');
+    if (audience?.totalActive == null) {
+      bits.push(`<span style="color:#c0392b">Org-wide active-user count unavailable (${esc(audience?.countError || 'unknown error')}) — org-default rows cannot show a number.</span>`);
+    } else {
+      bits.push(`Org has <strong>${audience.totalActive}</strong> active users.`);
+    }
+    if (audience?.capped) {
+      bits.push(`<span style="color:#b35c00">User lists were capped at ${LP_USER_CAP} rows — per-profile <em>counts</em> stay exact (aggregate query), but the expandable lists are samples.</span>`);
+    }
+    if (audience?.groupError) {
+      bits.push(`<span style="color:#b35c00">Exact per-profile counts unavailable (${esc(audience.groupError)}) — falling back to the length of the fetched sample, which may undercount.</span>`);
+    }
+    if (audience?.missingProfiles?.length) {
+      bits.push(`<span style="color:#c0392b">${audience.missingProfiles.length} assigned profile${audience.missingProfiles.length !== 1 ? 's are' : ' is'} not present in this org and could not be resolved: ${esc(audience.missingProfiles.slice(0, 8).join(', '))}${audience.missingProfiles.length > 8 ? '…' : ''}.</span>`);
+    }
+    return `<details style="margin:0 0 8px;border:1px solid rgba(128,128,128,.35);border-radius:4px;padding:4px 8px">
+      <summary style="cursor:pointer;font-size:11px;font-weight:600">ℹ️ How these user counts are worked out (and what they can't tell you)</summary>
+      <ul style="margin:6px 0 2px 16px;padding:0;font-size:10px;line-height:1.5;color:var(--subtext)">
+        ${bits.map(b => `<li style="margin-bottom:3px">${b}</li>`).join('')}
+      </ul></details>`;
+  }
+
+  // Users who fall through to an org default: every active user EXCEPT those on
+  // a profile that already has its own app-independent assignment for the same
+  // object. Fetched on demand (one query per expander).
+  async function fetchOrgDefaultUsers(excludeProfileIds) {
+    const ids  = (excludeProfileIds || []).filter(Boolean);
+    const where = ['IsActive = true'];
+    if (ids.length) where.push(`ProfileId NOT IN (${ids.map(x => lpSoqlLit(x)).join(',')})`);
+    const clause = where.join(' AND ');
+
+    const cRes = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false,
+      query: `SELECT COUNT() FROM User WHERE ${clause}`, _silentError: true });
+    const total = (cRes && !cRes.error && typeof cRes.totalSize === 'number') ? cRes.totalSize : null;
+
+    const res = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false,
+      query: `SELECT Id,Name,Username,Profile.Name FROM User WHERE ${clause} ORDER BY Name LIMIT ${LP_USER_SHOW}` });
+    if (res?.error) return { users: [], total, capped: false, error: res.error };
+    const users = res.records || [];
+    return { users, total, capped: total != null && total > users.length, error: null };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // N3 — reverse lens: pick a user → which page do they get, and why
+  // ══════════════════════════════════════════════════════════
+  async function openUserLens() {
+    const content = document.getElementById('lpContent');
+    if (!content) return;
+    content.className = 'lp-content lp-content--detail';
+    content.innerHTML = `
+      <div class="lp-detail-hdr" id="lpDetailHeader">
+        <button class="lp-back-btn" id="lpBackBtn">‹ Back</button>
+        <div class="lp-detail-title">
+          <div class="lp-detail-name">What does a user see?</div>
+          <div class="lp-detail-sub"><span>Pick a user → the page they get per object, and which assignment rule won</span></div>
+        </div>
+      </div>
+      <div id="lpDetailBody" class="lp-detail-body">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
+          <input class="search-input" id="lpUlSearch" placeholder="🔍 Search users by name or username…" autocomplete="off" style="flex:1">
+          <button class="btn btn-secondary btn-sm" id="lpUlSearchBtn">Search</button>
+        </div>
+        <div id="lpUlList">${sftkCat('Loading users…')}</div>
+      </div>`;
+    document.getElementById('lpBackBtn').addEventListener('click', () => renderPageList());
+
+    const run = () => loadLensUsers(document.getElementById('lpUlSearch')?.value || '');
+    document.getElementById('lpUlSearchBtn').addEventListener('click', run);
+    document.getElementById('lpUlSearch').addEventListener('keydown', ev => {
+      if (ev.key === 'Enter') run();
+    });
+    loadLensUsers('');
+  }
+
+  // Searchable, click-to-select user list (same click-a-row pattern as the page list).
+  async function loadLensUsers(term) {
+    const listEl = document.getElementById('lpUlList');
+    if (!listEl) return;
+    listEl.innerHTML = sftkCat('Loading users…');
+
+    const t = String(term || '').trim();
+    const where = ['IsActive = true'];
+    if (t) {
+      const like = lpSoqlLike(t);
+      where.push(`(Name LIKE ${like} OR Username LIKE ${like})`);
+    }
+    const clause = where.join(' AND ');
+
+    const cRes = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false,
+      query: `SELECT COUNT() FROM User WHERE ${clause}`, _silentError: true });
+    const total = (cRes && !cRes.error && typeof cRes.totalSize === 'number') ? cRes.totalSize : null;
+
+    const res = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false,
+      query: `SELECT Id,Name,Username,ProfileId,Profile.Name FROM User WHERE ${clause} ` +
+             `ORDER BY Name LIMIT ${LP_LENS_USER_CAP}` });
+    if (!document.getElementById('lpUlList')) return;
+    if (res?.error) {
+      const fe = sftkFriendlyError(res.error);
+      listEl.innerHTML = sftkCat(`Could not load users: ${esc(fe.message + (fe.hint ? ' — ' + fe.hint : ''))}`, true);
+      return;
+    }
+    const users = res.records || [];
+    if (!users.length) {
+      listEl.innerHTML = `<div class="lp-empty-sm">No active user matches “${esc(t)}”.</div>`;
+      return;
+    }
+
+    const capped = (total != null && total > users.length) || users.length >= LP_LENS_USER_CAP;
+    let html = '';
+    if (capped) {
+      html += `<div style="font-size:10px;color:#b35c00;padding:2px 0 6px">Showing the first ${users.length}${total != null ? ` of ${total}` : ''} matching active users — narrow the search to reach the rest.</div>`;
+    } else {
+      html += `<div style="font-size:10px;color:var(--subtext);padding:2px 0 6px">${users.length} active user${users.length !== 1 ? 's' : ''}.</div>`;
+    }
+    for (const u of users) {
+      html += `<div class="lp-row" data-uid="${esc(u.Id)}">
+        <div class="lp-row-info">
+          <span class="lp-row-name">${esc(u.Name)}</span>
+          <span class="lp-obj-tag">${esc(u.Profile?.Name || 'no profile')}</span>
+          <span style="font-size:10px;color:var(--subtext);margin-left:6px">${esc(u.Username)}</span>
+        </div>
+        <span class="lp-row-arrow">›</span>
+      </div>`;
+    }
+    listEl.innerHTML = html;
+    listEl.querySelectorAll('.lp-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const u = users.find(x => x.Id === row.dataset.uid);
+        if (u) renderUserLens(u);
+      });
+    });
+  }
+
+  // For one user: every object that has an active Lightning page assignment,
+  // and which page wins in each app / record-type context — naming the rule.
+  async function renderUserLens(user) {
+    const body = document.getElementById('lpDetailBody');
+    if (!body) return;
+    body.innerHTML = sftkCat('Scanning page assignments…');
+
+    const scan = await scanAllPageAssignments(
+      pct => { const b = document.getElementById('lpDetailBody'); if (b) b.innerHTML = sftkCat(`Scanning page assignments… ${pct}%`); },
+      () => !!document.getElementById('lpDetailBody')
+    );
+    if (scan === null) return;
+    const bodyEl = document.getElementById('lpDetailBody');
+    if (!bodyEl) return;
+
+    const profileName = user.Profile?.Name || '';
+    const objIndex    = lpBuildObjectIndex(scan);
+    const pageById    = new Map();
+    for (const d of scan) pageById.set(d.page.Id, d.page);
+
+    let html = `<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:6px">
+      <button class="btn btn-secondary btn-sm" id="lpUlBack">‹ Pick another user</button>
+      <strong>${esc(user.Name)}</strong>
+      <span style="font-size:11px;color:var(--subtext)">${esc(user.Username)}</span>
+      <span class="lp-obj-tag">${esc(profileName || 'no profile')}</span>
+    </div>`;
+
+    if (!profileName) {
+      html += `<div style="font-size:11px;color:#c0392b;padding:4px 0">This user record has no readable Profile name, so profile-scoped assignments cannot be matched. Only org defaults below are reliable.</div>`;
+    }
+
+    html += `<div style="font-size:10px;color:var(--subtext);border:1px solid rgba(128,128,128,.35);border-radius:4px;padding:5px 8px;margin-bottom:8px;line-height:1.5">
+      <strong>What this can and cannot tell you.</strong>
+      Only <strong>active</strong> Lightning pages are considered — a draft page reaches nobody.
+      Rows are generated for every app and record type <em>named by an assignment</em> on that object;
+      we do <strong>not</strong> query which apps this user's profile can open, nor which record types they can access,
+      so an “inside app X” row only applies if they actually have app X.
+      Permission-set-based page overrides are not part of the FlexiPage assignment model and are not shown.
+      Precedence: App + Record Type + Profile &gt; App + Profile &gt; App default &gt; Profile &gt; Org default.
+    </div>`;
+
+    const scanFailed = scan.filter(d => d.scanError);
+    if (scanFailed.length) {
+      html += `<div style="font-size:10px;color:#c0392b;padding:0 0 6px">⚠ ${scanFailed.length} page${scanFailed.length !== 1 ? 's' : ''} could not be read from the Tooling API (${esc(scanFailed.slice(0, 4).map(d => d.page.MasterLabel || d.page.Id).join(', '))}${scanFailed.length > 4 ? '…' : ''}). If one of them carries a more specific assignment for this user, the winner shown below is wrong.</div>`;
+    }
+
+    const keys = [...objIndex.keys()].sort((a, b) => a.localeCompare(b));
+    let rendered = 0;
+    let ctxBudget = LP_CTX_CAP;
+    let ctxTruncated = false;
+
+    for (const key of keys) {
+      const entries     = objIndex.get(key) || [];
+      const assignments = entries.map(e => ({ ...e.assignment, _pageId: e.page.Id, _pageLabel: e.page.MasterLabel || e.page.DeveloperName || e.page.Id }));
+      if (!assignments.length) continue;
+
+      // Contexts worth evaluating: every app / record type / form factor that
+      // some assignment on this object actually names, plus the "none" case.
+      const apps = [null, ...new Set(assignments.map(a => a.app).filter(Boolean))];
+      const rts  = [null, ...new Set(assignments.map(a => a.recordType).filter(Boolean))];
+      const ffs  = [...new Set(assignments.map(a => a.formFactor || 'Large'))];
+      if (!ffs.length) ffs.push('Large');
+
+      const rows = [];
+      for (const ff of ffs) {
+        for (const app of apps) {
+          for (const rt of rts) {
+            if (ctxBudget <= 0) { ctxTruncated = true; break; }
+            ctxBudget--;
+            const r = lpResolveWinner(assignments, { profile: profileName, app, recordType: rt, formFactor: ff });
+            rows.push({ ff, app, rt, r });
+          }
+          if (ctxBudget <= 0) break;
+        }
+        if (ctxBudget <= 0) break;
+      }
+
+      if (!rows.length) continue;   // budget ran out before this object
+
+      const objLabel = key.startsWith('__page:')
+        ? (pageById.get(key.slice(7))?.MasterLabel || 'Page with no object')
+        : key;
+
+      // Collapse identical outcomes — most contexts resolve to the same page
+      // for the same reason, and one line per combination is unreadable noise.
+      const groups = new Map();
+      for (const row of rows) {
+        const winKey = row.r.winner ? (row.r.winner._pageId || row.r.winner._pageLabel || '') : '(none)';
+        const k = `${winKey}|${row.r.scope}|${row.r.reason}`;
+        if (!groups.has(k)) groups.set(k, { r: row.r, contexts: [] });
+        groups.get(k).contexts.push(row);
+      }
+
+      let rowsHtml = '';
+      for (const g of groups.values()) {
+        const r = g.r;
+        const ctxLabels = g.contexts.map(({ ff, app, rt }) => [
+          ff === 'Small' ? '📱 Mobile' : '🖥 Desktop',
+          app ? `⚡ ${esc(app)}` : 'any app',
+          rt ? `RT ${esc(rt)}` : 'any record type'
+        ].join(' · '));
+        const ctxTxt = ctxLabels.slice(0, 6).join('<br>') +
+          (ctxLabels.length > 6 ? `<br>+${ctxLabels.length - 6} more combination${ctxLabels.length - 6 !== 1 ? 's' : ''}` : '');
+        const winTxt = r.winner
+          ? `<strong>${esc(r.winner._pageLabel || '')}</strong> <span class="lp-obj-tag">${esc(r.scope)}</span>`
+          : `<span style="color:var(--subtext)">Salesforce standard page (no assignment matches)</span>`;
+        rowsHtml += `<div style="padding:4px 0;border-top:1px solid rgba(128,128,128,.2)">
+          <div style="font-size:11px">${winTxt}</div>
+          <div style="font-size:10px;color:var(--subtext);padding-top:2px">${ctxTxt}</div>
+          <div style="font-size:10px;color:var(--subtext);padding-top:2px"><strong>Why:</strong> ${esc(r.reason)}</div>`;
+        if (r.beaten.length) {
+          rowsHtml += `<div style="font-size:10px;color:var(--subtext);padding-top:2px">Beat: ${
+            r.beaten.slice(0, 4).map(b => `${esc(b.assignment._pageLabel || '')} <em>(${esc(b.scope)}, specificity ${b.rank})</em>`).join('; ')
+          }${r.beaten.length > 4 ? `; +${r.beaten.length - 4} more` : ''}.</div>`;
+        }
+        rowsHtml += `</div>`;
+      }
+
+      html += `<div class="lp-wsw-card">
+        <div class="lp-wsw-card-hdr">
+          <span class="lp-wsw-page-name">${esc(objLabel)}</span>
+          <span class="lp-wsw-type">${groups.size} outcome${groups.size !== 1 ? 's' : ''} across ${rows.length} combination${rows.length !== 1 ? 's' : ''}</span>
+        </div>
+        <div class="lp-wsw-card-body">${rowsHtml}</div>
+      </div>`;
+      rendered++;
+    }
+
+    if (!rendered && !ctxTruncated) {
+      html += `<div class="lp-empty-sm">No active Lightning page carries any assignment in this org — every object falls back to the Salesforce standard page.</div>`;
+    }
+    if (ctxTruncated) {
+      html += `<div style="font-size:10px;color:#b35c00;padding:6px 0">⚠ Stopped after ${LP_CTX_CAP} app × record-type × form-factor combinations — later objects are incomplete. Use “Who sees what?” for the full assignment inventory.</div>`;
+    }
+
+    bodyEl.innerHTML = html;
+    document.getElementById('lpUlBack')?.addEventListener('click', () => openUserLens());
   }
 
   // ── Load Lightning apps with sequential fallback strategies ─
@@ -1566,6 +2197,9 @@ const LightningPages = (() => {
   //   • Org Default / Profile-only  → Tooling API ActionOverride sObject
   //   • App Default / App+Profile   → Tooling API CustomApplication.profileActionOverrides
   async function doAdd(page, metaRes, currentAssignments, mode) {
+    // N3: any write invalidates the cached org-wide assignment scan, otherwise
+    // "Who sees what?" would keep showing pre-change user counts.
+    _wswScan = null;
     const sobjectType = metaRes.Metadata?.sobjectType || page.EntityDefinitionId || null;
     const devName     = metaRes.FullName;
     const isActive    = (page.PublishStatus || metaRes.Metadata?.publishStatus || '').toLowerCase() === 'active';
@@ -1759,6 +2393,8 @@ const LightningPages = (() => {
   }
 
   async function doRemove(page, metaRes, assignments, idx) {
+    // N3: see doAdd — drop the cached scan so user counts are recomputed.
+    _wswScan = null;
     const bodyEl = document.getElementById('lpDetailBody');
     if (bodyEl) bodyEl.innerHTML = sftkCat('Removing assignment…');
 
@@ -2034,6 +2670,9 @@ const LightningPages = (() => {
   // this modal (which caused confusion when page was already active).
   function doActivate(page, metaRes, assignments, activate) {
     if (typeof showModal !== 'function') return;
+    // N3: activation flips whether this page reaches anyone at all, so the
+    // cached scan (which keys audiences off PublishStatus) must be rebuilt.
+    _wswScan = null;
 
     if (!activate) {
       // Deactivate confirmation
@@ -2680,3 +3319,166 @@ const LightningPages = (() => {
 
   return { init, updateSession };
 })();
+
+// ============================================================
+// N3 — Lightning page assignment precedence (PURE, unit-tested)
+//
+// These live at column 0 (outside the IIFE) on purpose: test/extract.mjs can
+// only materialize top-level `function NAME(` declarations, and the whole
+// point of N3 is that the precedence rule is testable rather than buried in a
+// render function. They reference no file-level state — everything they need
+// arrives as arguments. Function declarations hoist, so the IIFE above can
+// call them even though it is evaluated first.
+//
+// Salesforce resolves competing FlexiPage assignments by SPECIFICITY: the
+// assignment naming the most dimensions wins. We score the three dimensions
+// independently so the documented chain falls out of the arithmetic:
+//
+//   app(4) + profile(2) + recordType(1)
+//
+//     App + Record Type + Profile   7   ← most specific
+//     App + Profile                 6
+//     App + Record Type             5
+//     App default                   4
+//     Record Type + Profile         3
+//     Profile                       2
+//     Record Type                   1
+//     Org default                   0   ← least specific
+//
+// This satisfies the required chain
+//   record-type + app + profile > app + profile > app default > org default
+// and gives the in-between combinations a defensible, deterministic slot
+// instead of an arbitrary one.
+// ============================================================
+
+// Specificity score for a single page assignment. -1 for a non-object input so
+// a malformed assignment can never outrank a real one.
+function lpAssignmentRank(a) {
+  if (!a || typeof a !== 'object') return -1;
+  const has = v => !!(v !== null && v !== undefined && String(v).trim() !== '');
+  return (has(a.app) ? 4 : 0) + (has(a.profile) ? 2 : 0) + (has(a.recordType) ? 1 : 0);
+}
+
+// Human name for the rule tier an assignment sits in — used verbatim in the UI
+// so the reason string names the rule the user would recognise in App Builder.
+function lpScopeLabel(a) {
+  const has = v => !!(v !== null && v !== undefined && String(v).trim() !== '');
+  const hasApp = has(a && a.app), hasProfile = has(a && a.profile), hasRt = has(a && a.recordType);
+  if (!hasApp && !hasProfile && !hasRt) return 'Org default';
+  if (hasApp && !hasProfile && !hasRt) return 'App default';
+  const bits = [];
+  if (hasApp) bits.push('App');
+  if (hasRt) bits.push('Record Type');
+  if (hasProfile) bits.push('Profile');
+  return bits.join(' + ');
+}
+
+// Does this assignment apply to a user in this context?
+// An assignment constrains only the dimensions it names: an assignment with no
+// app applies in every app, one with no record type applies to every record
+// type. A dimension the assignment DOES name must match the context exactly.
+// A context dimension left null/'' means "not in that app / no record type",
+// so an assignment that names one does not apply.
+function lpMatchesUser(a, ctx) {
+  if (!a || typeof a !== 'object' || !ctx || typeof ctx !== 'object') return false;
+  const norm = v => (v === null || v === undefined) ? '' : String(v).trim().toLowerCase();
+  const aApp = norm(a.app), aProf = norm(a.profile), aRt = norm(a.recordType), aFf = norm(a.formFactor);
+  const cApp = norm(ctx.app), cProf = norm(ctx.profile), cRt = norm(ctx.recordType), cFf = norm(ctx.formFactor);
+  if (aProf && aProf !== cProf) return false;
+  if (aApp  && aApp  !== cApp)  return false;
+  if (aRt   && aRt   !== cRt)   return false;
+  // Form factor: only compared when BOTH sides state one. Salesforce defaults a
+  // missing formFactor to Large, but an unstated context means "either", and we
+  // would rather over-report a row than silently hide a page a user can see.
+  if (aFf && cFf && aFf !== cFf) return false;
+  return true;
+}
+
+// Pick the winning assignment for a user context.
+//
+// Returns { winner, rank, scope, reason, matched, beaten }:
+//   winner  — the assignment object that wins, or null if none matches
+//   rank    — its specificity score (-1 when nothing matched)
+//   scope   — lpScopeLabel of the winner ('None' when nothing matched)
+//   reason  — plain-English sentence naming the rule that won and what it beat
+//   matched — every applicable assignment, already sorted winner-first
+//   beaten  — matched.slice(1)
+//
+// Ties (two assignments at the same specificity) are broken deterministically:
+//   1. an assignment explicitly flagged `default: true` wins
+//   2. then alphabetically on app / record type / profile / page label
+//   3. then original array order
+// Salesforce does not document its own tie-break, so `reason` says so out loud
+// rather than implying we know which one the org will really render.
+function lpResolveWinner(assignments, userContext) {
+  const ctx  = userContext || {};
+  const list = Array.isArray(assignments) ? assignments : [];
+  const matched = [];
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
+    if (!lpMatchesUser(a, ctx)) continue;
+    const label = (a._pageLabel || a.pageLabel || a._pageId || a.pageId || '');
+    matched.push({
+      assignment: a,
+      index: i,
+      rank:  lpAssignmentRank(a),
+      scope: lpScopeLabel(a),
+      tieKey: [a.app, a.recordType, a.profile, label]
+        .map(v => String(v === null || v === undefined ? '' : v).toLowerCase())
+        .join(' ')
+    });
+  }
+  matched.sort((x, y) => {
+    if (y.rank !== x.rank) return y.rank - x.rank;
+    const xd = x.assignment.default ? 0 : 1;
+    const yd = y.assignment.default ? 0 : 1;
+    if (xd !== yd) return xd - yd;
+    if (x.tieKey !== y.tieKey) return x.tieKey < y.tieKey ? -1 : 1;
+    return x.index - y.index;
+  });
+
+  const top    = matched.length ? matched[0] : null;
+  const beaten = matched.slice(1);
+  let reason;
+  if (!top) {
+    reason = 'No assignment matches this user here — Salesforce falls back to the standard page for this object.';
+  } else if (!beaten.length) {
+    reason = 'Only matching assignment: ' + top.scope + ' (specificity ' + top.rank + ').';
+  } else if (beaten[0].rank < top.rank) {
+    reason = top.scope + ' (specificity ' + top.rank + ') beats ' + beaten[0].scope +
+             ' (specificity ' + beaten[0].rank + ') — the more specific assignment wins.';
+  } else {
+    const tied = matched.filter(m => m.rank === top.rank).length;
+    reason = tied + ' assignments tie at ' + top.scope + ' (specificity ' + top.rank +
+             '). Broken deterministically: "Default"-flagged first, then app / record type / profile / page name alphabetically. ' +
+             'Salesforce does not document its tie-break, so confirm this one in Lightning App Builder.';
+  }
+
+  return {
+    winner: top ? top.assignment : null,
+    rank:   top ? top.rank : -1,
+    scope:  top ? top.scope : 'None',
+    reason,
+    matched,
+    beaten
+  };
+}
+
+// SOQL string literal. Backslash first, then the single quote — reversing the
+// order would double-escape the backslash we just inserted.
+function lpSoqlLit(v) {
+  return "'" + String(v === null || v === undefined ? '' : v)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'") + "'";
+}
+
+// SOQL LIKE literal with %…% wrapping. Escapes the LIKE wildcards too, so a
+// user searching for "50%" does not accidentally match everything.
+function lpSoqlLike(v) {
+  const body = String(v === null || v === undefined ? '' : v)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/%/g, '\\%')
+    .replace(/_/g, '\\_');
+  return "'%" + body + "%'";
+}

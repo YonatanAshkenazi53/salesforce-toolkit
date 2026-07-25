@@ -1,4 +1,53 @@
 'use strict';
+
+// ── B3: live Bulk API job state in the run panel ─────────────────────────────
+// The engine already streams {phase:'bulk'|'bulkQuery', obj, state, processed,
+// failed, total} over the run Port, but the SHARED handler in studio-scan.js
+// only knows node/fetched/batch — so a bulk job used to look like a frozen
+// "reading records…" line for minutes. These two helpers give it its own live
+// row per object: "⚡ Account — Bulk write: InProgress — 12,000 / 40,000
+// processed, 3 failed".
+//
+// Inline styles (no CSS file is owned here) match the ds-prog-row look.
+function _trRenderBulkRow(logEl, evt) {
+  if (!logEl || !logEl.isConnected) return;
+  const isRead = evt.phase === 'bulkQuery';
+  const obj    = String(evt.obj || evt.objType || '?');
+  const id     = `dsTrBulk_${isRead ? 'r' : 'w'}_${obj.replace(/[^\w]/g, '_')}`;
+  let row = logEl.querySelector(`#${id}`);
+  if (!row) {
+    row = document.createElement('div');
+    row.id = id;
+    row.className = 'ds-prog-row ds-prog-live';
+    logEl.appendChild(row);
+  }
+  const num  = n => (Number.isFinite(Number(n)) ? Number(n).toLocaleString() : '?');
+  const done = num(evt.processed);
+  // total is unknown while the job is still being sized — say "?" rather than
+  // inventing a denominator.
+  const tot  = (evt.total === null || evt.total === undefined) ? '?' : num(evt.total);
+  const verb = isRead ? 'read' : 'processed';
+  const tail = (!isRead && evt.failed) ? `, ${num(evt.failed)} failed` : '';
+  const icon = evt.state === 'Aborted' ? '✋' : (evt.state === 'JobComplete' ? '✅' : '⚡');
+  row.textContent = `${icon} ${obj} — Bulk ${isRead ? 'read' : 'write'} job: ${evt.state || 'InProgress'} — ${done} / ${tot} ${verb}${tail}`;
+  if (evt.state === 'Aborted') row.style.color = '#b45309';
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// Wraps the shared progress handler: bulk phases get the dedicated row above,
+// everything else falls through unchanged.
+function _trProgressHandler(logEl) {
+  // Cross-file call (studio-scan.js) — guarded per the load-order rule.
+  const base = (typeof _runProgressHandler === 'function') ? _runProgressHandler(logEl) : () => {};
+  return evt => {
+    if (evt && (evt.phase === 'bulk' || evt.phase === 'bulkQuery')) {
+      _trRenderBulkRow(logEl, evt);
+      return;
+    }
+    base(evt);
+  };
+}
+
 async function renderTransfer() {
   setMain(`<div class="ds-init-loading">${window.sftkCat ? sftkCat('Refreshing sessions…') : 'Refreshing sessions…'}</div>`);
 
@@ -986,14 +1035,21 @@ async function runTransfer() {
     cbtn.className = 'ds-btn ds-btn-xs ds-btn-danger';
     cbtn.style.marginLeft = 'auto';
     cbtn.textContent = '✋ Cancel';
-    cbtn.title = 'Stop after the current batch — records already written stay written.';
+    cbtn.title = 'Stop after the current batch — records already written stay written. '
+               + 'During a Bulk API job the job itself is aborted on the org, so records it hadn\'t reached yet are never written.';
     titleEl.appendChild(cbtn);
   }
-  const runPort = _openRunPort(_runProgressHandler(eid('dsTrProgLog')));
+  const runPort = _openRunPort(_trProgressHandler(eid('dsTrProgLog')));
   eid('dsTrCancelBtn')?.addEventListener('click', () => {
     try { runPort?.postMessage({ cmd: 'cancel' }); } catch (_) {}
     const cb = eid('dsTrCancelBtn');
     if (cb) { cb.disabled = true; cb.textContent = '⏳ cancelling…'; }
+    // B3 — say exactly what "cancel" does at this moment, including the bulk
+    // case (the job is aborted on the org; partial writes stay).
+    logRow('✋', 'Cancelling — the current batch finishes and nothing further starts. '
+      + 'If a Bulk API job is running it is aborted on the org: records it already wrote stay written, '
+      + 'records it never reached are reported as "not processed" and can be finished with ↻ Retry failed.',
+      'ds-prog-warn');
   });
 
   const result = await sendBg({
@@ -1030,11 +1086,16 @@ async function runTransfer() {
       `${s.connected ? `, ${s.connected} linked to parent` : ''}` +
       `${s.connectFailed ? `, ${s.connectFailed} link failed` : ''}` +
       `${s.connectOrphaned ? `, ${s.connectOrphaned} unlinked (parent failed)` : ''}`;
+    // B3 — bulk provenance and the cancelled-but-never-attempted count are
+    // part of the result, not footnotes: "0 failed" next to 38 000 untouched
+    // records would be a lie of omission.
+    const bulkInfo = s.viaBulk ? ' · ⚡ via Bulk API' : '';
+    const npInfo   = s.notProcessed ? `, ${s.notProcessed} not confirmed written (Bulk job aborted by cancel)` : '';
     const msg  = s.error
       ? (isExpired
           ? `${obj}: Session expired — the Salesforce session ended during the transfer`
           : `${obj}: ${s.error}`)
-      : `${obj}: ${s.created} created${s.failed > 0 ? `, ${s.failed} failed` : ''}${linkInfo}`;
+      : `${obj}: ${s.created} created${s.failed > 0 ? `, ${s.failed} failed` : ''}${npInfo}${linkInfo}${bulkInfo}`;
     logRow(icon, msg, s.error || s.failed || s.connectFailed ? 'ds-prog-err' : '');
     // Fields skipped because the target org can't accept them (non-fatal).
     if (s.skippedFields && s.skippedFields.length) {

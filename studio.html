@@ -49,6 +49,20 @@
             <span class="ds-nav-desc">Orgs open in your browser</span>
           </span>
         </button>
+        <!-- T10: What's New. Placed here on purpose — pack_store.py cuts the
+             whole Labs preview block out of store builds by slicing between
+             its two nav comment markers below, so anything inside that range
+             disappears. This entry sits above it and ships everywhere.
+             #dsWhatsNewBadge is filled by studio-whatsnew.js when the newest
+             changelog version has not been read yet. -->
+        <button class="ds-nav-btn" data-view="whatsnew">
+          <span class="ds-nav-icon">🎉</span>
+          <span class="ds-nav-label">
+            <span class="ds-nav-name">What's New</span>
+            <span class="ds-nav-desc">Changelog — what shipped, per version</span>
+          </span>
+          <span id="dsWhatsNewBadge" style="margin-left:auto;flex-shrink:0"></span>
+        </button>
 
         <div class="ds-nav-section-title">Data</div>
         <button class="ds-nav-btn" data-view="profiles">
@@ -174,6 +188,10 @@
   <script src="studio-picklists.js"></script>
   <script src="studio-ring.js"></script>
   <script src="studio-treediff.js"></script>
+  <!-- T10 What's New — renders the committed CHANGELOG.md. Must load AFTER
+       studio-core.js (it uses setMain/renderView wiring from there) and is
+       shared verbatim with popup.html, so it carries its own HTML escaper. -->
+  <script src="studio-whatsnew.js"></script>
   <!-- Phase X note: studio-tools.js (kept in the repo, not loaded) is the
        proven host for mounting popup tools in this shell — the user chose to
        keep the Debugger popup-only (2026-07-13). To mount a tool: add its
