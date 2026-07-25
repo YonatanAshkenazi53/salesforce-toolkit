@@ -559,7 +559,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       }
 
       // ── Batch create (200 records/batch, allOrNone:false) ────────────────
-      let ok = 0, fail = 0;
+      let ok = 0, fail = 0, usedBulk = false;
       // Track which SOURCE record IDs succeeded — surfaced in the per-node
       // summary so the Pick-Records modal can badge already-deployed
       // records and avoid the "did this go through?" guesswork.
@@ -583,14 +583,26 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // field) are UPDATED instead of duplicated; new ones are inserted.
       const useUpsert   = !!(profile.upsert?.field) && node === profile.tree;
       const upsertField = useUpsert ? profile.upsert.field : null;
-      for (let i = 0; i < payloads.length; i += 200) {
+      // Phase B — Bulk API 2.0 above the threshold. One async job instead of
+      // N synchronous 200-record calls: far fewer round trips and no API-call
+      // limit pressure at volume. Below it, Collections stays faster and
+      // gives instant per-record errors. Results are ALIGNED to the input
+      // records either way, so everything downstream is unchanged.
+      const BULK_MIN = Number(profile.bulkThreshold) > 0 ? Number(profile.bulkThreshold) : 2000;
+      const useBulk  = payloads.length >= BULK_MIN;
+      const STEP     = useBulk ? payloads.length : 200;
+      if (useBulk) {
+        diagnostics.push(`${objType}: ${payloads.length} record(s) ≥ ${BULK_MIN} — using Bulk API 2.0 (one async job).`);
+        usedBulk = true;
+      }
+      for (let i = 0; i < payloads.length; i += STEP) {
         // Cancel between batches — records already written stay written
         // (allOrNone:false per batch); the summary reports the partial count.
         if (_runCancelled) {
           errors.push(`${objType}: cancelled after ${ok} of ${payloads.length} record(s).`);
           break;
         }
-        const chunk = payloads.slice(i, i + 200).map((p, k) => {
+        const chunk = payloads.slice(i, i + STEP).map((p, k) => {
           const rec = { attributes: { type: objType }, ...p };
           // The external-Id value must be present for Salesforce to match on
           // upsert — inject it from the source record if the mapping dropped it.
@@ -600,9 +612,23 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           }
           return rec;
         });
-        const res     = useUpsert
-          ? await sfCollectionsUpsert(tgtOrgUrl, tgtSid, objType, upsertField, chunk)
-          : await sfCollectionsCreate(tgtOrgUrl, tgtSid, chunk);
+        let res;
+        if (useBulk) {
+          // Bulk speaks CSV — strip the Collections-only `attributes` wrapper.
+          const flat = chunk.map(({ attributes, ...rest }) => rest);
+          res = await sfBulkIngest(tgtOrgUrl, tgtSid, {
+            objectType: objType,
+            operation: useUpsert ? 'upsert' : 'insert',
+            externalIdFieldName: upsertField || undefined,
+            records: flat,
+            onProgress: p => postRunProgress({ phase: 'bulk', objType,
+              state: p.state, processed: p.processed, failed: p.failed, total: p.total }),
+          });
+        } else {
+          res = useUpsert
+            ? await sfCollectionsUpsert(tgtOrgUrl, tgtSid, objType, upsertField, chunk)
+            : await sfCollectionsCreate(tgtOrgUrl, tgtSid, chunk);
+        }
         const results = Array.isArray(res) ? res : [];
         results.forEach((result, j) => {
           if (result.success) {
@@ -677,10 +703,10 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           }
         });
         postRunProgress({ phase: 'batch', obj: objType,
-          done: Math.min(i + 200, payloads.length), total: payloads.length,
+          done: Math.min(i + STEP, payloads.length), total: payloads.length,
           created: ok, failed: fail });
       }
-      summary[objType] = { created: ok, failed: fail };
+      summary[objType] = { created: ok, failed: fail, ...(usedBulk ? { viaBulk: true } : {}) };
       // Owner-mapping outcome — surfaced as ⚠ notes, never failures.
       if (ownerFellBack)  errors.push(`⚠ ${objType}: ${ownerFellBack} record(s) had owners with no name match in the target — assigned the fallback user.`);
       if (ownerDefaulted) errors.push(`⚠ ${objType}: ${ownerDefaulted} record(s) had owners with no name match and no fallback user is set — the target org assigned its default owner.`);
@@ -1265,7 +1291,13 @@ async function sfFetchWithProxy(orgUrl, sid, url, fetchOptions = {}) {
     }
   } catch (_) { /* keep caller-supplied sid */ }
 
-  const res = await sfFetch(url, { ...fetchOptions, headers: authHeaders(activeSid) });
+  // Caller headers win over the JSON defaults — Bulk API 2.0 uploads a CSV
+  // batch body (Content-Type: text/csv) through this same chokepoint, so the
+  // read-only-org guard above still covers it.
+  const res = await sfFetch(url, {
+    ...fetchOptions,
+    headers: { ...authHeaders(activeSid), ...(fetchOptions.headers || {}) },
+  });
   if (res.status !== 401) {
     return { ok: res.ok, status: res.status, body: await res.text() };
   }
@@ -1577,6 +1609,183 @@ async function sfCollectionsUpsert(orgUrl, sid, objectType, extIdField, records)
 // SObject Collections API — bulk create up to 200 records of the same type.
 // Each record must have an "attributes: { type }" already set by the caller.
 // Returns an array of { id, success, errors[] } in the same order as input.
+// ═══════════════════════════════════════════════════════════════════════
+// BULK API 2.0 — Phase B (large-volume writes)
+// ═══════════════════════════════════════════════════════════════════════
+// Lives in the worker only: everything here is I/O plus the CSV codec the
+// ingest endpoints speak. The pure helpers are top-level column-0 so
+// test/extract.mjs can unit-test them straight out of this file (no
+// importScripts — that is a Trusted Types sink in MV3 workers).
+
+// One CSV field. Salesforce reads RFC4180: quote when the value contains a
+// comma, quote or newline, and double any embedded quotes. null/undefined →
+// #N/A, the Bulk API's "set this field to null" token (a bare empty string
+// means "leave unchanged" on update).
+function sftkCsvField(v) {
+  if (v === null || v === undefined) return '#N/A';
+  const s = String(v);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// Records → CSV document. `columns` fixes the header order; omit it and the
+// union of every record's keys is used (first-seen order, stable).
+function sftkRecordsToCsv(records, columns) {
+  const rows = Array.isArray(records) ? records : [];
+  let cols = columns;
+  if (!cols) {
+    cols = [];
+    const seen = new Set();
+    for (const r of rows) {
+      for (const k of Object.keys(r || {})) {
+        if (!seen.has(k)) { seen.add(k); cols.push(k); }
+      }
+    }
+  }
+  const head = cols.map(sftkCsvField).join(',');
+  // A key the record simply doesn't have → EMPTY (leave alone), never #N/A.
+  // #N/A is the Bulk "set this to null" token: emitting it for an absent key
+  // would blank real target values on an upsert.
+  const body = rows.map(r => cols.map(c =>
+    (r && Object.prototype.hasOwnProperty.call(r, c)) ? sftkCsvField(r[c]) : ''
+  ).join(',')).join('\n');
+  return rows.length ? `${head}\n${body}\n` : `${head}\n`;
+}
+
+// CSV → array of row objects. Handles quoted fields containing commas,
+// newlines and doubled quotes — Salesforce's result CSVs contain all three
+// (error messages love commas). Returns [] for an empty/header-only doc.
+function sftkParseCsv(text) {
+  const src = String(text || '');
+  if (!src.trim()) return [];
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (src[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+      continue;
+    }
+    if (c === '"') { inQuotes = true; continue; }
+    if (c === ',') { row.push(field); field = ''; continue; }
+    if (c === '\r') continue;
+    if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; continue; }
+    field += c;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  if (!rows.length) return [];
+  const header = rows.shift();
+  return rows
+    .filter(r => r.length && !(r.length === 1 && r[0] === ''))
+    .map(r => { const o = {}; header.forEach((h, i) => { o[h] = r[i] ?? ''; }); return o; });
+}
+
+// Align Bulk result rows back to the records we uploaded. Salesforce returns
+// TWO CSVs (successfulResults / failedResults) — each preserves upload order
+// within itself, but neither carries the original row index, so a naive
+// concat scrambles which result belongs to which record. Both result CSVs DO
+// echo the original columns, so correlate on the full column tuple and hand
+// duplicates out in order. Any row we can't place (shouldn't happen) is
+// reported as a failure rather than silently dropped. Pure — unit-testable.
+function sftkCorrelateBulkResults(uploadRows, columns, successRows, failedRows) {
+  const key = r => (columns || []).map(c => String(r && r[c] !== undefined && r[c] !== null ? r[c] : '')).join('');
+  const buckets = new Map();
+  const push = (r, success) => {
+    const k = key(r);
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(success
+      ? { id: r['sf__Id'] || null, success: true, errors: [] }
+      : { id: r['sf__Id'] || null, success: false,
+          errors: [{ message: r['sf__Error'] || 'Bulk API row failed', statusCode: 'BULK_ROW_ERROR' }] });
+  };
+  for (const r of (successRows || [])) push(r, true);
+  for (const r of (failedRows || [])) push(r, false);
+  return (uploadRows || []).map(row => {
+    const list = buckets.get(key(row));
+    const hit = list && list.length ? list.shift() : null;
+    return hit || { id: null, success: false,
+      errors: [{ message: 'Bulk API returned no result row for this record', statusCode: 'BULK_NO_RESULT' }] };
+  });
+}
+
+// Run ONE Bulk API 2.0 ingest job end to end: create → upload CSV → close →
+// poll → collect per-record results. Returns SaveResult-shaped objects
+// ALIGNED to the input records, so callers treat bulk and Collections
+// results identically.
+// onProgress({state, processed, failed}) fires on every poll.
+async function sfBulkIngest(orgUrl, sid, opts) {
+  const { objectType, operation, externalIdFieldName, records, onProgress } = opts || {};
+  const rows = Array.isArray(records) ? records : [];
+  if (!rows.length) return [];
+  const base = `${orgUrl}/services/data/${API_VERSION}/jobs/ingest`;
+
+  // 1. create
+  const createBody = { object: objectType, operation: operation || 'insert',
+    contentType: 'CSV', lineEnding: 'LF' };
+  if (externalIdFieldName) createBody.externalIdFieldName = externalIdFieldName;
+  const created = await sfFetchWithProxy(orgUrl, sid, base, { method: 'POST', body: JSON.stringify(createBody) });
+  if (!created.ok) throw new Error(sfErrorMsg(created.status, created.body, base));
+  const job = JSON.parse(created.body);
+  const jobUrl = `${base}/${job.id}`;
+
+  // Fix the column set once — the same order is used to build the upload CSV
+  // and to correlate the result rows back to their records.
+  const columns = [];
+  { const seen = new Set();
+    for (const r of rows) for (const k of Object.keys(r || {})) if (!seen.has(k)) { seen.add(k); columns.push(k); } }
+
+  try {
+    // 2. upload the CSV batch
+    const put = await sfFetchWithProxy(orgUrl, sid, `${jobUrl}/batches`, {
+      method: 'PUT', body: sftkRecordsToCsv(rows, columns), headers: { 'Content-Type': 'text/csv' },
+    });
+    if (!put.ok) throw new Error(sfErrorMsg(put.status, put.body, `${jobUrl}/batches`));
+
+    // 3. close → Salesforce starts processing
+    const close = await sfFetchWithProxy(orgUrl, sid, jobUrl, {
+      method: 'PATCH', body: JSON.stringify({ state: 'UploadComplete' }),
+    });
+    if (!close.ok) throw new Error(sfErrorMsg(close.status, close.body, jobUrl));
+
+    // 4. poll — backs off 1s → 5s; jobs are async and can take minutes
+    let state = 'InProgress', delay = 1000, info = null;
+    for (let i = 0; i < 600 && state !== 'JobComplete'; i++) {
+      await new Promise(r => setTimeout(r, delay));
+      delay = Math.min(delay + 500, 5000);
+      const poll = await sfFetchWithProxy(orgUrl, sid, jobUrl, { method: 'GET' });
+      if (!poll.ok) throw new Error(sfErrorMsg(poll.status, poll.body, jobUrl));
+      info = JSON.parse(poll.body);
+      state = info.state;
+      if (typeof onProgress === 'function') {
+        try {
+          onProgress({ state, processed: info.numberRecordsProcessed || 0,
+            failed: info.numberRecordsFailed || 0, total: rows.length });
+        } catch (_) {}
+      }
+      if (state === 'Failed' || state === 'Aborted') {
+        throw new Error(`Bulk job ${state}${info.errorMessage ? `: ${info.errorMessage}` : ''}`);
+      }
+    }
+    if (state !== 'JobComplete') throw new Error('Bulk job did not finish in time — check Setup → Bulk Data Load Jobs');
+
+    // 5. results — successful rows carry sf__Id, failures carry sf__Error.
+    // Row ORDER matches the uploaded CSV, which is how each result maps back
+    // to its source record.
+    const okRes = await sfFetchWithProxy(orgUrl, sid, `${jobUrl}/successfulResults/`, { method: 'GET' });
+    const badRes = await sfFetchWithProxy(orgUrl, sid, `${jobUrl}/failedResults/`, { method: 'GET' });
+    return sftkCorrelateBulkResults(rows, columns,
+      okRes.ok ? sftkParseCsv(okRes.body) : [],
+      badRes.ok ? sftkParseCsv(badRes.body) : []);
+  } catch (e) {
+    // Never leave a job open on the org — an abandoned Open/UploadComplete job
+    // holds resources and shows up in Setup as a stuck load.
+    try { await sfFetchWithProxy(orgUrl, sid, jobUrl, { method: 'PATCH', body: JSON.stringify({ state: 'Aborted' }) }); } catch (_) {}
+    throw e;
+  }
+}
+
 async function sfCollectionsCreate(orgUrl, sid, records) {
   const url = `${orgUrl}/services/data/${API_VERSION}/composite/sobjects`;
   const bodyStr = JSON.stringify({ allOrNone: false, records });
