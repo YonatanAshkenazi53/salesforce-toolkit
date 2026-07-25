@@ -1,16 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Salesforce Toolkit",
-  "version": "1.0.0",
-  "description": "Salesforce admin toolkit: bulk-manage flows, Lightning pages, permission sets, licenses, field dependencies, and record copy — all from one place.",
-
+  "version": "1.1.0",
+  "description": "Salesforce admin toolkit: bulk-manage flows, Lightning pages, permission sets, licenses, field dependencies, and record copy \u2014 all from one place.",
   "permissions": [
     "cookies",
     "activeTab",
     "storage",
-    "scripting"
+    "scripting",
+    "alarms"
   ],
-
   "host_permissions": [
     "https://*.salesforce.com/*",
     "https://*.my.salesforce.com/*",
@@ -22,11 +21,9 @@
     "https://*.develop.my.salesforce-setup.com/*",
     "https://*.force.com/*"
   ],
-
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'self' https://*.salesforce.com https://*.force.com https://*.salesforce-setup.com; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types sftk-html;"
   },
-
   "action": {
     "default_title": "Salesforce Toolkit",
     "default_icon": {
@@ -35,11 +32,9 @@
       "128": "icons/icon128.png"
     }
   },
-
   "background": {
     "service_worker": "background.js"
   },
-
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

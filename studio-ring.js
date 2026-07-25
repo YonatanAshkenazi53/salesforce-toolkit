@@ -52,9 +52,41 @@ function renderRing() {
         <span class="ds-oc-sub">${ring.orgs.length} org(s) in the ring${ring.sourceUrl ? ` · source: ${esc(orgLabel(ring.sourceUrl))}` : ''}</span>
       </summary>
       <div class="ds-ring-orgs">${orgRows || '<div class="ds-seq-empty">No orgs known — open them in Chrome tabs first.</div>'}</div>
+      <!-- M4 — opt-in scheduled drift check (read-only count probe) -->
+      <div style="padding:4px 14px 12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px">
+        ⏰ Scheduled drift check:
+        <select id="dsRingSched" class="ds-select ds-select-sm" title="Chrome checks in the background even with Data Studio closed — the extension icon shows a red badge when drift appears.">
+          ${[[0, 'off'], [60, 'every hour'], [360, 'every 6 hours'], [1440, 'daily']].map(([m, l]) =>
+            `<option value="${m}" ${(Number(_ring?.scheduleMins) || 0) === m ? 'selected' : ''}>${l}</option>`).join('')}
+        </select>
+        <button class="ds-btn ds-btn-xs" id="dsRingProbeNow">▶ Check now</button>
+        <span style="font-size:11px;color:var(--subtext)">Count probe, read-only: catches added/removed records, NOT value changes — run a 🔎 scan for those. Orgs must be signed in in this Chrome profile.</span>
+      </div>
     </details>
 
+    <div id="dsRingSchedPanel"></div>
     <div id="dsRingBody"></div>`);
+
+  // Opening the ring view acknowledges the drift badge.
+  try { chrome.action?.setBadgeText?.({ text: '' }); } catch (_) {}
+
+  // M4 — schedule select + on-demand probe + last-result panel.
+  eid('dsRingSched')?.addEventListener('change', async e => {
+    const mins = Number(e.target.value) || 0;
+    if (_ring) _ring.scheduleMins = mins;   // worker persists it on ds_ring too
+    const res = await sendBg({ type: 'SF_SET_RING_SCHEDULE', minutes: mins });
+    if (res?.error) showToast(`Couldn't set the schedule: ${res.error}`, 'error', 5000);
+    else showToast(mins ? `Scheduled — Chrome will check every ${mins >= 1440 ? 'day' : mins >= 60 ? `${mins / 60}h` : `${mins}m`} in the background` : 'Scheduled drift check turned off', 'info', 4000);
+  });
+  eid('dsRingProbeNow')?.addEventListener('click', async () => {
+    const btn = eid('dsRingProbeNow');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ checking…'; }
+    const res = await sendBg({ type: 'SF_RUN_RING_PROBE' });
+    if (btn) { btn.disabled = false; btn.textContent = '▶ Check now'; }
+    if (res?.error) showToast(`Probe failed: ${res.error}`, 'error', 5000);
+    _ringRenderSchedPanel();
+  });
+  _ringRenderSchedPanel();
 
   // Config wiring — checkbox membership + source radio, persisted immediately.
   document.querySelectorAll('.ds-ring-cb').forEach(cb =>
@@ -300,6 +332,31 @@ async function _ringOpenReconcile(profileId, tgtUrl) {
 // org — "push N missing" / "overwrite M changed" checkboxes — and a single
 // Run executes everything ticked, org by org. Extras (only-in-target) stay
 // in the full per-org Reconcile (deletes deserve that UI's guards).
+// M4 — render the last scheduled-probe result (from ds_sched_drift). Honest
+// about scope: a count probe is not a scan, and skipped pairs are listed with
+// their reasons rather than blending into "in sync".
+async function _ringRenderSchedPanel() {
+  const el = eid('dsRingSchedPanel');
+  if (!el) return;
+  let data = null;
+  try { data = (await chrome.storage.local.get('ds_sched_drift')).ds_sched_drift || null; } catch (_) {}
+  if (!data) { el.innerHTML = ''; return; }
+  const s = data.summary || { checked: 0, drifted: 0, skipped: 0 };
+  const drifted = (data.rows || []).filter(r => !r.skip && r.drifted);
+  const skipped = (data.rows || []).filter(r => r.skip);
+  el.innerHTML = `
+    <div class="ds-pk-note" style="margin:0 0 8px;${s.drifted ? 'border-left:3px solid #C23934;padding-left:10px' : ''}">
+      ⏰ Last drift check: <strong>${esc(timeAgo(data.ts))}</strong> —
+      ${s.drifted ? `<strong style="color:#C23934">🔴 ${s.drifted} pair(s) drifted</strong>` : s.checked ? '✓ no count drift' : 'nothing probed'}
+      · ${s.checked} checked${s.skipped ? ` · ⏭ ${s.skipped} skipped` : ''}
+      <span style="font-size:11px;color:var(--subtext)"> (count probe — value changes need a 🔎 scan)</span>
+      ${drifted.slice(0, 8).map(r => `<div style="font-size:12px;margin-top:3px">🔴 <strong>${esc(r.profileName || r.obj)}</strong> → ${esc(orgLabel(r.tgt))}: source ${r.srcCount} vs target ${r.tgtCount} record(s)</div>`).join('')}
+      ${drifted.length > 8 ? `<div style="font-size:11px">…and ${drifted.length - 8} more</div>` : ''}
+      ${skipped.slice(0, 4).map(r => `<div style="font-size:11px;color:var(--subtext);margin-top:2px">⏭ ${esc(r.profileName || r.obj || 'ring')}${r.tgt ? ` → ${esc(orgLabel(r.tgt))}` : ''}: ${esc(r.reason || r.skip)}</div>`).join('')}
+      ${skipped.length > 4 ? `<div style="font-size:11px;color:var(--subtext)">…and ${skipped.length - 4} more skipped</div>` : ''}
+    </div>`;
+}
+
 async function _ringOpenPlan(profileId) {
   const p = _profiles.find(x => x.id === profileId);
   if (!p || !_ring?.sourceUrl) return;

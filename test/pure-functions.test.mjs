@@ -451,6 +451,19 @@ describe('scan accuracy (🎯 — user request 2026-07-17)', () => {
   });
 });
 
+describe('scheduled ring probe summary (M4, background.js)', () => {
+  const sftkProbeSummary = extractFunction('background.js', 'sftkProbeSummary');
+
+  it('counts checked/drifted/skipped without conflating them', () => {
+    expect(sftkProbeSummary([
+      { drifted: true }, { drifted: false }, { skip: 'session', reason: 'x' },
+      { drifted: true }, { skip: 'picked' },
+    ])).toEqual({ checked: 3, drifted: 2, skipped: 2 });
+    expect(sftkProbeSummary([])).toEqual({ checked: 0, drifted: 0, skipped: 0 });
+    expect(sftkProbeSummary(null)).toEqual({ checked: 0, drifted: 0, skipped: 0 });
+  });
+});
+
 describe('exact per-org field types (drift compare table)', () => {
   const sftkFieldTypeLabel = extractFunction('studio-scan.js', 'sftkFieldTypeLabel');
 
