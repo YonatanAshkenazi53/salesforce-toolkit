@@ -545,6 +545,14 @@ already cover them — verify, don't assume, in B4.
   counts + data fix for values that lose their home (T6), and flow-usage check with an
   automation fix before any deactivation (T8). Global + standard value sets are shared
   objects — sync them ONCE, not per referencing field, and say which fields inherit.
+- [ ] **T10. What's New page** (user 2026-07-22) — an in-app changelog so users see what
+  shipped: new features, fixes, known issues, per version. Source of truth = a committed
+  CHANGELOG.md (release notes are written with the code, not reconstructed later);
+  the page renders it and the app badges the nav entry once per unseen version
+  (last-seen version in chrome.storage.local, cleared on view). Reachable from both apps
+  (Studio nav + popup home) and from the store listing's "What's new" text — same content,
+  written once. Keep entries user-facing ("Sync plan now lists the records"), not commit
+  subjects.
 
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.
