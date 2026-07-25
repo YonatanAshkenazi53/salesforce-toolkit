@@ -364,9 +364,16 @@ history) already exists there.
   runDiffScan matches by Id FIRST (rename-proof), rows shown via the 🧠 chip; ALL merge
   paths guarded by orgKey(srcUrl)===orgKey(p.sourceOrg) (the fan-out src-override sliver);
   Clear-cached-org-data wipes memory. Unit tests for both pure helpers.
-- [ ] **M4. Later** — opt-in scheduling (needs re-adding the alarms permission — weigh vs
-  minimal-permissions posture); reverse-pull polish. (Bulk API graduated to Phase B below,
-  user request 2026-07-18.)
+- [x] **M4. Scheduled drift checks** (`c89d2a3`, 2026-07-25, user: "m4" = the alarms
+  decision) — opt-in chrome.alarms schedule (off/1h/6h/daily in ⚙ Ring configuration;
+  ds_ring.scheduleMins, re-asserted on browser startup). The WORKER probes every
+  deployment root × every ring target by record COUNT — READ-ONLY, with a wrong-org
+  session guard (getSfSession's any-tab fallback rejected unless the org matches).
+  Results → ds_sched_drift + red badge on the extension icon (drifted-pair count;
+  opening Sync Ring clears it); ▶ Check now on demand. Honesty: count probe ≠ scan
+  (says so); picked-record profiles + signed-out orgs SKIPPED with visible reasons.
+  Scheduled WRITES deliberately do not exist. sftkProbeSummary unit-tested; harness 9/9.
+  manifest → 1.1.0 + alarms. (Reverse-pull polish folded out; Bulk API = Phase B.)
 - [x] **T5. Per-target field-mapping overrides** (user 2026-07-22: "i think we need per
   target mapping") — `node.fieldMappingOverrides = { orgKey: { srcField: tgtName|null } }`,
   a SPARSE overlay for targets whose schema genuinely differs (renamed fields; null =
@@ -458,6 +465,25 @@ history) already exists there.
   person accounts, multi-currency, advanced currency management) and report it in Deploy
   Readiness + as the explanation on these errors, instead of leaving the user to infer it
   from a rejected value.
+
+## Shipping — Chrome Web Store  (section restored 2026-07-25 — an earlier
+anchor-based plan edit accidentally deleted it)
+
+- [x] **SHIP-1. Store packaging pipeline** — `npm run pack` (UTF-8-safe) →
+  dist/salesforce-toolkit-v<manifest.version>-store.zip. Labs-only exclusions now
+  (schema/fields), CHANGELOG.md + studio-whatsnew.js ship, marker-based Labs strip with
+  loud post-checks, packed-build boot-smoked. Current artifact: v1.1.0, 46 files, 615 KB.
+- [ ] **SHIP-2. Store listing + submission — DEFERRED by user 2026-07-25** ("let's delay
+  the chrome ship, but also keep updating the chrome ship as we go").
+  STANDING POLICY until submission: every user-visible milestone (a) gets a CHANGELOG.md
+  entry written WITH the code, (b) bumps manifest version when it warrants a release,
+  (c) re-runs `npm run pack` so the dist/ zip is ALWAYS submission-ready. Guard: the
+  whatsnew test pins CHANGELOG's newest entry to the manifest version — a bump without
+  release notes fails the gate. Submission steps when ready: dev account ($5) → upload
+  zip → listing (Developer Tools, 1280×800 shots) → privacy tab (single purpose;
+  justify cookies/scripting/storage/activeTab + salesforce hosts + NEW `alarms` =
+  "opt-in scheduled read-only drift checks with a badge — no background writes";
+  data-use: collects nothing, local only; PRIVACY.md URL) → visibility (Unlisted first).
 
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.
