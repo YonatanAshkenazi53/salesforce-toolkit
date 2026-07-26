@@ -466,6 +466,22 @@ history) already exists there.
   Readiness + as the explanation on these errors, instead of leaving the user to infer it
   from a rejected value.
 
+## Phase Q — Debugger QA (2026-07-26, user: "debug the debugger and do a full qa on it")
+
+- [x] **Q1. Six confirmed bugs fixed** (`e08508f`) — 6-dimension review + adversarial
+  verify: stale cross-org DebugLevel cache; unchecked TraceFlag PATCH faking a live
+  trace; swallowed Stop failure leaving the flag ACTIVE org-side with no retry handle;
+  poll window permanently missing transactions longer than one poll (StartTime-vs-
+  insertion-time — fixed with a 15-min lookback + existing Id dedupe); D4 category chip
+  bypassed by the chunked renderer (duplicates + wrong-category rows); checked-log ids
+  outliving their rows. 51 areas verified CLEAN (escaping, SOQL escaping, no inline
+  handlers, storage hygiene included).
+- [ ] **Q2. Verify the 34 unverified findings** — their adversarial verifiers died on
+  the session cap (one is severity-critical). The review phase is CACHED: resume with
+  Workflow({scriptPath: '<session>/workflows/scripts/debugger-full-qa-wf_d8be10bd-96b.js',
+  resumeFromRunId: 'wf_d8be10bd-96b'}) after the limit reset — only verifiers re-run.
+  Raw findings live in the run's journal. Fix whatever survives.
+
 ## Shipping — Chrome Web Store  (section restored 2026-07-25 — an earlier
 anchor-based plan edit accidentally deleted it)
 
