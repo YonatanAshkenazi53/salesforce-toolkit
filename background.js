@@ -2248,6 +2248,144 @@ function sftkProbeSummary(rows) {
   return out;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// TRACE HOTKEY (chrome.commands "toggle-trace", user 2026-07-26: "map keys
+// to auto activating a trace from anywhere in the org, for example ctrl+d")
+// ═══════════════════════════════════════════════════════════════════════
+// Press once on any Salesforce tab → start a 60-minute debug trace for the
+// CURRENT USER of that org (badge shows REC). Press again → stop it, from
+// anywhere. Reuses the popup's SFTK_FlowsApex DebugLevel (the "best
+// all-rounder") so no duplicate levels pile up in the org. Chrome reserves
+// Ctrl+D (bookmark), so the DEFAULT is Ctrl+Shift+L — rebindable to
+// anything, including Ctrl+D, at chrome://extensions/shortcuts.
+
+const HOTKEY_TRACE_ALARM = 'sftkHotkeyTraceEnd';
+const HOTKEY_LEVELS = { Workflow: 'FINER', ApexCode: 'FINEST', Database: 'INFO',
+  System: 'DEBUG', Callout: 'INFO', Validation: 'INFO', Visualforce: 'INFO',
+  ApexProfiling: 'INFO', Wave: 'NONE', Nba: 'NONE' };
+
+async function sftkHotkeyBadge() {
+  // Badge reflects reality: REC while a hotkey trace runs, else empty.
+  try {
+    const st = (await chrome.storage.local.get('sftk_hotkey_trace')).sftk_hotkey_trace;
+    const live = st && st.flagId && Date.parse(st.expiresAt) > Date.now();
+    chrome.action.setBadgeBackgroundColor({ color: '#C23934' });
+    chrome.action.setBadgeText({ text: live ? 'REC' : '' });
+    chrome.action.setTitle({ title: live
+      ? `Tracing ${st.userName || 'you'} in ${new URL(st.orgUrl).hostname} until ${new Date(st.expiresAt).toLocaleTimeString()} — press the shortcut again to stop`
+      : 'Salesforce Toolkit' });
+  } catch (_) {}
+}
+
+async function sftkHotkeyToggleTrace() {
+  const fail = async (title) => {
+    try {
+      chrome.action.setBadgeBackgroundColor({ color: '#C23934' });
+      chrome.action.setBadgeText({ text: 'ERR' });
+      chrome.action.setTitle({ title: `Trace hotkey: ${title}` });
+    } catch (_) {}
+    setTimeout(sftkHotkeyBadge, 6000);   // restore the truthful badge
+  };
+  try {
+    const T = `services/data/${API_VERSION}/tooling`;
+    // Toggle OFF first — works from ANY tab, not just the traced org's.
+    const st = (await chrome.storage.local.get('sftk_hotkey_trace')).sftk_hotkey_trace;
+    if (st && st.flagId && Date.parse(st.expiresAt) > Date.now()) {
+      const sess = await sftkCookieSessFor(st.orgUrl);
+      if (!sess) { await fail(`can't stop — not signed in to ${new URL(st.orgUrl).hostname}. Log in there and press again.`); return; }
+      const del = await sfFetchWithProxy(st.orgUrl, sess.sid,
+        `${st.orgUrl}/${T}/sobjects/TraceFlag/${st.flagId}`, { method: 'DELETE' });
+      if (!del.ok && del.status !== 404) { await fail(`couldn't stop the trace (${sfErrorMsg(del.status, del.body, 'TraceFlag delete')}) — the flag is STILL ACTIVE`); return; }
+      await chrome.storage.local.remove('sftk_hotkey_trace');
+      try { await chrome.alarms.clear(HOTKEY_TRACE_ALARM); } catch (_) {}
+      await sftkHotkeyBadge();
+      return;
+    }
+    // Toggle ON — the org is whatever Salesforce tab is active right now.
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tabUrl = tabs?.[0]?.url || '';
+    if (!tabUrl || !isSalesforceUrl(tabUrl)) { await fail('the active tab is not a Salesforce org'); return; }
+    const orgUrl = sfApiOrigin(new URL(tabUrl).hostname);
+    const sess = await sftkCookieSessFor(orgUrl);
+    if (!sess) { await fail(`no session for ${new URL(orgUrl).hostname}`); return; }
+
+    // Who am I in this org? (userinfo first, Chatter me as fallback)
+    let userId = null, userName = '';
+    const u1 = await sfFetchWithProxy(orgUrl, sess.sid, `${orgUrl}/services/oauth2/userinfo`, { method: 'GET' });
+    if (u1.ok) { try { const j = JSON.parse(u1.body); userId = j.user_id; userName = j.name || ''; } catch (_) {} }
+    if (!userId) {
+      const u2 = await sfFetchWithProxy(orgUrl, sess.sid, `${orgUrl}/services/data/${API_VERSION}/chatter/users/me`, { method: 'GET' });
+      if (u2.ok) { try { const j = JSON.parse(u2.body); userId = j.id; userName = j.name || ''; } catch (_) {} }
+    }
+    if (!userId) { await fail('could not resolve the current user in this org'); return; }
+
+    // DebugLevel — reuse the popup's SFTK_FlowsApex, create only if absent.
+    const lq = await sfFetchWithProxy(orgUrl, sess.sid,
+      `${orgUrl}/${T}/query?q=${encodeURIComponent("SELECT Id FROM DebugLevel WHERE DeveloperName='SFTK_FlowsApex' LIMIT 1")}`, { method: 'GET' });
+    let lvlId = lq.ok ? (JSON.parse(lq.body).records?.[0]?.Id || null) : null;
+    if (!lvlId) {
+      const lc = await sfFetchWithProxy(orgUrl, sess.sid, `${orgUrl}/${T}/sobjects/DebugLevel`, {
+        method: 'POST',
+        body: JSON.stringify({ DeveloperName: 'SFTK_FlowsApex', MasterLabel: 'SFTK Flows + Apex', ...HOTKEY_LEVELS }),
+      });
+      if (!lc.ok) throw new Error(sfErrorMsg(lc.status, lc.body, 'DebugLevel create'));
+      lvlId = JSON.parse(lc.body).id;
+    }
+
+    // TraceFlag — extend the user's existing USER_DEBUG flag or create one.
+    const now = new Date(), exp = new Date(now.getTime() + 60 * 60 * 1000);
+    const tfBody = { DebugLevelId: lvlId, StartDate: now.toISOString(), ExpirationDate: exp.toISOString() };
+    const tq = await sfFetchWithProxy(orgUrl, sess.sid,
+      `${orgUrl}/${T}/query?q=${encodeURIComponent(`SELECT Id FROM TraceFlag WHERE TracedEntityId='${userId}' AND LogType='USER_DEBUG' LIMIT 1`)}`, { method: 'GET' });
+    const existingId = tq.ok ? (JSON.parse(tq.body).records?.[0]?.Id || null) : null;
+    let flagId;
+    if (existingId) {
+      const p = await sfFetchWithProxy(orgUrl, sess.sid, `${orgUrl}/${T}/sobjects/TraceFlag/${existingId}`,
+        { method: 'PATCH', body: JSON.stringify(tfBody) });
+      if (!p.ok) throw new Error(sfErrorMsg(p.status, p.body, 'TraceFlag extend'));
+      flagId = existingId;
+    } else {
+      const c = await sfFetchWithProxy(orgUrl, sess.sid, `${orgUrl}/${T}/sobjects/TraceFlag`,
+        { method: 'POST', body: JSON.stringify({ TracedEntityId: userId, LogType: 'USER_DEBUG', ...tfBody }) });
+      if (!c.ok) throw new Error(sfErrorMsg(c.status, c.body, 'TraceFlag create'));
+      flagId = JSON.parse(c.body).id;
+    }
+
+    await chrome.storage.local.set({ sftk_hotkey_trace:
+      { orgUrl, flagId, userId, userName, expiresAt: exp.toISOString() } });
+    chrome.alarms.create(HOTKEY_TRACE_ALARM, { when: exp.getTime() });
+    await sftkHotkeyBadge();
+  } catch (e) {
+    await fail(e.message || String(e));
+  }
+}
+
+chrome.commands?.onCommand?.addListener(cmd => {
+  if (cmd === 'toggle-trace') sftkHotkeyToggleTrace();
+});
+chrome.alarms?.onAlarm?.addListener(a => {
+  if (a.name !== HOTKEY_TRACE_ALARM) return;
+  chrome.storage.local.remove('sftk_hotkey_trace').catch(() => {});
+  sftkHotkeyBadge();
+});
+
+// Direct cookie lookup for a SPECIFIC org — works with zero Salesforce tabs
+// open (getSfSession needs a tab to build its cookie candidates). Longest
+// cookie domain wins — the parent-domain-stale-sid lesson applies here too.
+// Shared by the scheduled ring probe and the trace hotkey.
+async function sftkCookieSessFor(url) {
+  try {
+    const h = new URL(url).hostname
+      .replace('.lightning.force.com', '.my.salesforce.com')
+      .replace('.salesforce-setup.com', '.salesforce.com');
+    const cookies = await chrome.cookies.getAll({ name: 'sid', url: `https://${h}` });
+    const best = (cookies || []).filter(c => c.value)
+      .sort((a, b) => (b.domain || '').length - (a.domain || '').length)[0];
+    if (best) return { orgUrl: `https://${h}`, sid: best.value };
+  } catch (_) {}
+  return null;
+}
+
 const RING_ALARM = 'sftkRingProbe';
 
 async function setRingSchedule(minutes) {
@@ -2287,30 +2425,11 @@ async function runRingProbe() {
       return `https://${h}`;
     } catch (_) { return (u || '').toLowerCase(); }
   };
-  // Direct cookie lookup for THIS org — the schedule's whole point is
-  // working with ZERO Salesforce tabs open, and getSfSession only builds its
-  // cookie candidates from an open SF tab, so alone it would report "not
-  // signed in" all night. As long as the user is still logged in (Salesforce
-  // sid cookies live for the browser session), this finds the session
-  // tab-or-no-tab. Longest cookie domain wins — the parent-domain-stale-sid
-  // lesson from getSfSession applies here too.
-  async function cookieSessFor(url) {
-    try {
-      const h = new URL(url).hostname
-        .replace('.lightning.force.com', '.my.salesforce.com')
-        .replace('.salesforce-setup.com', '.salesforce.com');
-      const cookies = await chrome.cookies.getAll({ name: 'sid', url: `https://${h}` });
-      const best = (cookies || []).filter(c => c.value)
-        .sort((a, b) => (b.domain || '').length - (a.domain || '').length)[0];
-      if (best) return { orgUrl: `https://${h}`, sid: best.value };
-    } catch (_) {}
-    return null;
-  }
   // Per-org session with a WRONG-ORG GUARD: getSfSession falls back to any
   // open SF tab when the requested org has none — a probe must NEVER count
   // records in a different org and call it this one.
   async function sessFor(url) {
-    const direct = await cookieSessFor(url);
+    const direct = await sftkCookieSessFor(url);
     if (direct) return direct;
     try {
       const s = await getSfSession(url);
