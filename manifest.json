@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Salesforce Toolkit",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Salesforce admin toolkit: bulk-manage flows, Lightning pages, permission sets, licenses, field dependencies, and record copy \u2014 all from one place.",
   "permissions": [
     "cookies",
@@ -39,5 +39,14 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "commands": {
+    "toggle-trace": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+L",
+        "mac": "Command+Shift+L"
+      },
+      "description": "Start/stop a debug trace for YOU in the Salesforce org in the active tab"
+    }
   }
 }

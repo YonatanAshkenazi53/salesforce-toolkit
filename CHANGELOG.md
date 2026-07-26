@@ -9,6 +9,26 @@ listing text is copied from the newest section. Write the notes here, with the c
 Versions below `1.0.0` are development milestones grouped by the day they landed —
 they were never published to the store as separate releases.
 
+## 1.2.0 — 2026-07-26
+
+### Added
+- **Trace hotkey**: press **Ctrl+Shift+L** on any Salesforce tab to start a 60-minute
+  debug trace for *you* in that org — no popup needed. The extension icon shows **REC**
+  while it runs; press the shortcut again (from anywhere) to stop. Rebind the key —
+  including to Ctrl+D — at chrome://extensions/shortcuts.
+- **Debugger QA pass**: six confirmed bugs fixed, including traces that could silently
+  fail while looking live, a stopped trace that kept running in the org, and live
+  polling missing exactly the slow transactions you were debugging.
+- **What's New** moved out of the feature lists into a small 🎉 in both top bars.
+- **Key testing across all targets**: 🧪 Test this key now grades every target org
+  separately, and the Matching panel shows which field names the key uses per target.
+- **Sync plan data fix**: deactivating a drifted value now offers the record fix
+  (move/clear) inline, per org, before the picklist change applies.
+
+### Notes
+- The search toggles (Aa · .* · W) in the debugger now explain themselves with
+  real examples on hover.
+
 ## 1.1.0 — 2026-07-25
 
 ### Added
