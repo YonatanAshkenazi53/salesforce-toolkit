@@ -4857,3 +4857,7 @@ html, body {
 /* 🎉 What's New — topbar announcement control (not a nav feature) */
 .ds-whatsnew-top { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: none; border-radius: 50%; background: rgba(255,255,255,.10); color: rgba(255,255,255,.85); cursor: pointer; font-size: 15px; }
 .ds-whatsnew-top:hover { background: rgba(255,255,255,.22); }
+
+/* Record picker + field mapping modals get room to breathe (user: "the view
+   is kinda small, hard to see the fields") */
+.ds-modal-box:has(.ds-match-cfg), .ds-modal-box:has(.ds-fm-body) { max-width: 780px; width: min(780px, 94vw); }

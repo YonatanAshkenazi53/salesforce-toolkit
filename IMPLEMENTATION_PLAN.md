@@ -482,6 +482,24 @@ history) already exists there.
   resumeFromRunId: 'wf_d8be10bd-96b'}) after the limit reset — only verifiers re-run.
   Raw findings live in the run's journal. Fix whatever survives.
 
+## Phase O — Owner matching by fields (user 2026-07-26)
+
+- [ ] **O1. Smart owner matching** — "we can match an owner by fields and let the user
+  pick a couple of them. for example email + other fields. just like we do on anything."
+  Today ownerMapping matches by NAME only, with one fallback user. Rebuild on the M3a
+  pattern: `profile.ownerMapping.matching = { fields: ['Email','Name',…] ≤4, normalize
+  {emailLower,…} }` — the SAME sftkMatchKey/sftkNormalizeValue key builder, applied to
+  User records. Engine (background executeProfileTransfer owner resolution): query the
+  target org's active users once per run, index by the composite key, resolve each source
+  owner by key; unmatched → fallback user (existing behavior). Builder UI: replace the
+  single mode select's "match by name" with the same field-picker + normalize toggles
+  used by record matching (reuse the components; Email pre-selected + emailLower ON by
+  default — usernames are org-suffixed, emails usually survive). Per-target: users differ
+  per org — resolution must run per target (fan-out legs already carry their own
+  sessions). Honesty: report per run how many owners matched by key vs fell back, and
+  keep the collision rule — a duplicated key on either side falls back rather than
+  guessing. Unit-test the pure key-resolution over user rows.
+
 ## Shipping — Chrome Web Store  (section restored 2026-07-25 — an earlier
 anchor-based plan edit accidentally deleted it)
 

@@ -124,12 +124,14 @@ function renderBuilder() {
         ${srcLocked ? '' : `<button class="ds-builder-orgs-arrow ds-builder-orgs-swap" id="dsProfileSwapOrgs"
           title="Swap source and target orgs — also inverts field mappings and clears picked records (they belong to the old source org)">⇄</button>`}
         <div class="ds-builder-org-col">
-          <label class="ds-lbl">Targets <span class="ds-builder-org-hint">(▶ Run deploys to ALL of them; field mapping &amp; previews quietly use the first target's schema, 🧪 Check all targets validates the rest)</span></label>
+          <label class="ds-lbl">Targets</label>
+          <div style="font-size:11px;color:var(--subtext);margin:-2px 0 8px;text-transform:none;letter-spacing:0">▶ Run deploys to <strong>all</strong> of them · field mapping previews use the first target's schema · 🧪 Check all targets validates the rest</div>
           ${ringSrc ? `
           <label class="ds-pk-orgchk" title="The deployment's targets are ALWAYS whatever the ring's targets are — add an org to the ring and this deployment covers it automatically.">
             <input type="radio" name="dsBldTgtMode" value="follow" ${followMode ? 'checked' : ''}>
-            🔄 Follow the Sync Ring — all its targets, always <span class="ds-builder-org-hint">(now: ${esc(effTargets.map(u => orgLabel(u)).join(' · ')) || 'none'})</span>
+            🔄 Follow the Sync Ring — all its targets, always
           </label>
+          <div style="font-size:11px;color:var(--subtext);margin:-2px 0 6px 26px;text-transform:none">now: ${esc(effTargets.map(u => orgLabel(u)).join(' · ')) || 'none'}</div>
           <label class="ds-pk-orgchk" title="Freeze this deployment to specific orgs — ring changes won't affect it.">
             <input type="radio" name="dsBldTgtMode" value="pin" ${followMode ? '' : 'checked'}>
             📌 Pin specific orgs:

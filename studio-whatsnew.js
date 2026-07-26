@@ -362,9 +362,16 @@ function sftkWhatsNewBoot() {
   if (!document.getElementById('dsWhatsNewBadge')) return;
   sftkWhatsNewRefreshBadge();
   document.getElementById('dsWhatsNewTop')?.addEventListener('click', () => {
-    document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
-    try { _currentView = 'whatsnew'; } catch (_) {}
-    if (typeof renderView === 'function') renderView('whatsnew');
+    if (typeof renderView === 'function') {
+      // Data Studio page
+      document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
+      try { _currentView = 'whatsnew'; } catch (_) {}
+      renderView('whatsnew');
+    } else if (typeof navigateToTab === 'function') {
+      // Toolkit popup page — same control, same id, its own navigation
+      navigateToTab('whatsnew');
+      if (typeof initWhatsNewTab === 'function') initWhatsNewTab().then(() => sftkWhatsNewRefreshBadge());
+    }
   });
 }
 if (document.readyState === 'loading') {
