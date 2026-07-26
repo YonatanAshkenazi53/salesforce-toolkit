@@ -1845,13 +1845,13 @@ const ApexDebugger = (() => {
               <input type="text" id="adbgLogSearch" class="adbg-log-search"
                 placeholder="Find in log (Ctrl+F)… use ⏎ next, ⇧⏎ prev"
                 autocomplete="off">
-              <label class="adbg-log-search-opt" title="Case-sensitive match">
+              <label class="adbg-log-search-opt" title="Match case — e.g. searching 'Account' finds Account but NOT ACCOUNT_TRIGGER; off, 'soql' also finds SOQL_EXECUTE_BEGIN">
                 <input type="checkbox" id="adbgLogCase"> Aa
               </label>
-              <label class="adbg-log-search-opt" title="Regular expression — interpret query as regex">
+              <label class="adbg-log-search-opt" title="Regex search — e.g. 'SOQL|DML' finds lines with either word; 'LIMIT.*100' finds LIMIT followed by 100 on the same line; off, text matches literally">
                 <input type="checkbox" id="adbgLogRegex"> .*
               </label>
-              <label class="adbg-log-search-opt" title="Whole word only">
+              <label class="adbg-log-search-opt" title="Whole word — e.g. 'Case' finds the Case object but NOT CaseNumber or uppercase(); off, it matches inside words too">
                 <input type="checkbox" id="adbgLogWord"> W
               </label>
               <span class="adbg-log-search-count" id="adbgLogSearchCount" title="Match navigation">—</span>
