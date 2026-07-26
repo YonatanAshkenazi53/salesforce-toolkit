@@ -5476,3 +5476,7 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .dep-blast-sec-hdr { font-weight: 700; margin: 4px 0 2px; }
 .dep-blast-item { padding: 1px 0 1px 8px; word-break: break-all; }
 .dep-blast-ops { color: var(--subtext, #706e6b); font-size: 11px; }
+
+/* 🎉 What's New — popup topbar control (announcement, not a feature tile) */
+.topbar-whatsnew { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: none; border-radius: 50%; background: rgba(255,255,255,.10); cursor: pointer; font-size: 14px; }
+.topbar-whatsnew:hover { background: rgba(255,255,255,.22); }

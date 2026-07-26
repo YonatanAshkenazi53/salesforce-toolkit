@@ -986,6 +986,29 @@ async function openRecordPickerModal(pathStr) {
           <span class="ds-subtext" title="Applied to every key component on BOTH sides before comparing — normalization is part of the key itself.">Normalize:</span>
           ${NORM_OPTS.map(([k, lbl]) => `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" data-match-norm="${esc(k)}" ${matchNormalize[k] ? 'checked' : ''}> ${lbl}</label>`).join('')}
         </div>
+        ${(() => {
+          // Per-target key resolution (user 2026-07-26: "what will happen if
+          // the target field is different on two orgs?") — show EXACTLY which
+          // field names the key resolves to in EVERY target. Same key logic
+          // everywhere; only the names differ, via ⚙ per-target exceptions in
+          // Field Mapping. 🧪 grades each target's DATA separately.
+          const tgts = (typeof profileTargets === 'function') ? profileTargets(_editingProfile) : [];
+          if (tgts.length < 2) return '';
+          const m2 = sftkMatchingFromNode(node);
+          return `<div style="margin-top:7px;padding:6px 9px;border:1px dashed var(--border,#d8dde6);border-radius:6px;font-size:11.5px">
+            <strong style="font-size:11px">Key per target</strong>
+            <span style="color:var(--subtext)" title="Matching runs per target with THAT org's field names. If a name doesn't exist in some target, records there can't be matched on it — set a ⚙ per-target exception in Field Mapping for renamed fields, and use 🧪 to grade each target's data.">ⓘ</span><br>
+            ${tgts.map(u => {
+              const k = _orgKey(u);
+              const hasOv = !!(node.fieldMappingOverrides && node.fieldMappingOverrides[k]);
+              const nodeT = (hasOv && typeof sftkResolveMappings === 'function')
+                ? { ...node, fieldMappings: sftkResolveMappings(node.fieldMappings, node.fieldMappingOverrides, k) }
+                : node;
+              const names = sftkMatchingTgtFields(nodeT, m2).join(' + ');
+              return `<span style="display:inline-block;margin:2px 12px 0 0;white-space:nowrap">${esc(orgLabel(u))}: <strong>${esc(names)}</strong>${hasOv ? ` <span title="This org has ⚙ per-target field-mapping exceptions — its names differ from the base mapping.">🎯</span>` : ''}</span>`;
+            }).join('')}
+          </div>`;
+        })()}
         <div id="dsMatchTestResults">${matchTestHtml}</div>
         <div id="dsMatchSuggestBox" style="display:${matchSuggestOpen ? 'block' : 'none'};margin-top:6px">${matchSuggestOpen ? suggestListHtml() : ''}</div>
       </div>`;
