@@ -428,6 +428,10 @@ const ApexDebugger = (() => {
     _bodyCache = {};
     _newIds.clear();
     _lastPoll  = null;
+    // QA 2026-07-26: DebugLevel record Ids are ORG-SPECIFIC. Without this,
+    // an org switch reused the previous org's cached Id and every Start
+    // Trace failed with a cross-reference error until full popup reload.
+    _debugLevels = {};
   }
 
   // ── C5b: cross-links into sibling Toolkit tabs ────────────
@@ -810,14 +814,17 @@ const ApexDebugger = (() => {
       });
 
       if (!existing.error && existing.records?.length) {
-        // Extend existing flag
-        await _bg({
+        // Extend existing flag. QA 2026-07-26: the result MUST be checked —
+        // an ignored PATCH failure (expired session, bad DebugLevelId) used
+        // to fake a live 60-minute countdown while the org captured nothing.
+        const pRes = await _bg({
           type: 'SF_PATCH',
           path: `${TAPI}/sobjects/TraceFlag/${existing.records[0].Id}`,
           body: { DebugLevelId: debugLevelId,
                   StartDate: now.toISOString(),
                   ExpirationDate: exp.toISOString() }
         });
+        if (pRes?.error) throw new Error(pRes.error);
         _traceFlag = { Id: existing.records[0].Id, ExpirationDate: exp.toISOString() };
       } else {
         // Create new
@@ -860,8 +867,19 @@ const ApexDebugger = (() => {
       // Visual state while the TraceFlag delete is in flight.
       const stopping = document.getElementById('adbgStopBtn');
       if (stopping) { stopping.disabled = true; stopping.textContent = 'Stopping…'; }
-      await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'TraceFlag', id: _traceFlag.Id }).catch(() => {});
+      // QA 2026-07-26: _bg never rejects — errors come back as {error}. A
+      // swallowed delete failure left the TraceFlag ACTIVE in the org (still
+      // generating FINEST logs) while the UI claimed the trace was stopped,
+      // and nulling _traceFlag threw away the only handle for a retry.
+      const dRes = await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'TraceFlag', id: _traceFlag.Id });
       if (stopping) { stopping.disabled = false; stopping.textContent = '⏹ Stop'; }
+      if (dRes?.error) {
+        const fe = sftkFriendlyError(dRes.error);
+        _renderStatus(`Couldn't stop the trace: ${fe.message} — the flag is STILL ACTIVE in the org${_traceFlag?.ExpirationDate ? ` until ${new Date(_traceFlag.ExpirationDate).toLocaleTimeString()}` : ''}. Fix the session (open the org tab) and click ⏹ Stop again.`, 'error');
+        _startCountdown();   // keep showing the truth: it IS still running
+        _startPolling();
+        return;              // keep _traceFlag so Stop can retry
+      }
     }
     _traceFlag = null;
     _traceUser = null;
@@ -915,7 +933,13 @@ const ApexDebugger = (() => {
 
   async function _pollForNew() {
     if (!_lastPoll) { _loadLogs(); return; }
-    const ts  = _lastPoll;
+    // QA 2026-07-26: ApexLog rows only APPEAR at transaction END but carry
+    // the transaction START time — so `StartTime > lastPoll` permanently
+    // missed any transaction longer than one poll interval (exactly the
+    // slow batches/flows being debugged). Query with a 15-minute LOOKBACK;
+    // the Id-dedup below makes the overlap free.
+    const ts = new Date(Date.parse(_lastPoll) - 15 * 60 * 1000)
+      .toISOString().replace(/\.\d+Z$/, 'Z');
     // Show ALL new logs in the org (no user filter on the list view; the
     // user picker is for setting trace flags, not for filtering the list).
     // StartTime is ApexLog's canonical creation timestamp — the Tooling
@@ -965,6 +989,14 @@ const ApexDebugger = (() => {
       return;
     }
     _logs = res.records || [];
+    // QA 2026-07-26: checked ids can outlive their rows (deleted elsewhere,
+    // fallen past the cap) — prune so the Delete button can't claim
+    // selections that no longer exist in the list.
+    {
+      const live = new Set(_logs.map(l => l.Id));
+      for (const id of [..._checked]) if (!live.has(id)) _checked.delete(id);
+      _updateDelBtn();
+    }
     _renderLogList();
     // D8: org log-storage meter. Tooling SOQL has no aggregates, so sum the
     // fetched rows — exact when under the cap, a labelled floor when at it.
@@ -1339,7 +1371,10 @@ const ApexDebugger = (() => {
   function _logViewAppendChunk() {
     const st   = _logViewState;
     const view = document.getElementById('adbgLogView');
-    if (!st || !view || st.filter) return;            // filtered view: no chunking
+    // QA 2026-07-26: st.cat (the D4 category chip) is a filtered view too —
+    // without it, scrolling/search-stepping appended raw unfiltered lines
+    // into a category-filtered log (duplicates + wrong-category rows).
+    if (!st || !view || st.filter || st.cat) return;  // filtered view: no chunking
     if (st.shown >= st.lines.length) return;
     const next   = Math.min(st.shown + LOG_CHUNK, st.lines.length);
     const moreEl = document.getElementById('adbgLogMore');
