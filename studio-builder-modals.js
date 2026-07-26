@@ -1220,12 +1220,30 @@ async function openRecordPickerModal(pathStr) {
       if (!out) return;
       persistMatching();
       if (btn) { btn.disabled = true; btn.textContent = '⏳ testing…'; }
-      out.innerHTML = `<div class="ds-subtext" style="font-size:12px;margin-top:6px">Analyzing key quality in both orgs…</div>`;
+      // Multi-target (user 2026-07-26: "I need to be able to compare with
+      // both orgs"): grade the key against EVERY effective target, not just
+      // the schema reference. Per-target field-mapping overrides apply to
+      // the key's target-side names too.
+      const tgts = (typeof profileTargets === 'function' ? profileTargets(_editingProfile) : [])
+        .filter(Boolean);
+      const list = tgts.length ? tgts : (_editingProfile.targetOrg ? [_editingProfile.targetOrg] : []);
+      out.innerHTML = `<div class="ds-subtext" style="font-size:12px;margin-top:6px">Analyzing key quality — source + ${list.length} target${list.length !== 1 ? 's' : ''}…</div>`;
       try {
-        const m    = sftkMatchingFromNode(node);
-        const tgtF = sftkMatchingTgtFields(node, m);
-        const res  = await sftkAnalyzeMatchKey(objType, _editingProfile, m.fields, tgtF, m.normalize, m.strategy);
-        matchTestHtml = _matchAnalysisHtml(res, _editingProfile, false);
+        const m = sftkMatchingFromNode(node);
+        const blocks = [];
+        for (const tgtUrl of list) {
+          const nodeT = (typeof sftkResolveMappings === 'function')
+            ? { ...node, fieldMappings: sftkResolveMappings(node.fieldMappings, node.fieldMappingOverrides, _orgKey(tgtUrl)) }
+            : node;
+          const tgtF  = sftkMatchingTgtFields(nodeT, m);
+          const clone = { ..._editingProfile, targetOrg: tgtUrl };
+          const res   = await sftkAnalyzeMatchKey(objType, clone, m.fields, tgtF, m.normalize, m.strategy);
+          blocks.push(
+            (list.length > 1 ? `<div style="font-weight:700;font-size:12px;margin-top:8px">→ ${esc(orgLabel(tgtUrl))}</div>` : '')
+            + _matchAnalysisHtml(res, clone, false));
+        }
+        matchTestHtml = blocks.join('')
+          + (list.length > 1 ? `<div class="ds-subtext" style="font-size:11px;margin-top:4px">Graded against all ${list.length} targets — a key can be strong in one org and weak in another (different data, different duplicates).</div>` : '');
       } catch (e) {
         const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e?.message || String(e)) : { message: String(e?.message || e) };
         matchTestHtml = `<div class="ds-drift-compare-err" style="margin-top:6px">⚠ Key test failed: ${esc(fe.message)}</div>`;
