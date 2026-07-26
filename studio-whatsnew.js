@@ -340,9 +340,10 @@ async function sftkWhatsNewRefreshBadge() {
   const seen = await sftkWhatsNewSeenVersion();
   if (!sftkWhatsNewIsUnseen(latest, seen)) { slot.innerHTML = ''; return; }
   slot.title = 'Version ' + latest + ' — not read yet';
-  slot.innerHTML = '<span style="display:inline-block;font-size:9px;font-weight:700;line-height:1;'
-    + 'letter-spacing:.4px;padding:3px 6px;border-radius:9px;color:#fff;'
-    + 'background:var(--brand,#0176D3)">NEW</span>';
+  // Topbar placement (2026-07-26, user: "small portion, not as a feature"):
+  // the badge is a tiny dot pinned to the 🎉 button's corner, not a chip.
+  slot.innerHTML = '<span style="position:absolute;top:2px;right:2px;width:8px;height:8px;'
+    + 'border-radius:50%;background:#C23934;border:1.5px solid rgba(255,255,255,.9)"></span>';
 }
 
 // ── Toolkit popup tab ────────────────────────────────────────────
@@ -354,11 +355,17 @@ async function initWhatsNewTab() {
   if (latest) await sftkWhatsNewMarkSeen(latest);
 }
 
-// Self-init: paint the Studio nav badge as soon as the sidebar exists. The
-// slot only lives in studio.html, so this is a no-op in the popup.
+// Self-init: paint the topbar badge as soon as the shell exists, and wire
+// the 🎉 topbar button (What's New is an announcement control, not a nav
+// feature). No-op in the popup — the elements only live in studio.html.
 function sftkWhatsNewBoot() {
   if (!document.getElementById('dsWhatsNewBadge')) return;
   sftkWhatsNewRefreshBadge();
+  document.getElementById('dsWhatsNewTop')?.addEventListener('click', () => {
+    document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
+    try { _currentView = 'whatsnew'; } catch (_) {}
+    if (typeof renderView === 'function') renderView('whatsnew');
+  });
 }
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', sftkWhatsNewBoot);

@@ -4853,3 +4853,7 @@ html, body {
 .ds-drift-type { display: block; font-size: 9.5px; color: var(--subtext); font-variant-numeric: tabular-nums; }
 .ds-drift-type-bad { color: #b91c1c; font-weight: 600; }
 .ds-drift-typediff { background: #fee2e2; color: #991b1b; }
+
+/* 🎉 What's New — topbar announcement control (not a nav feature) */
+.ds-whatsnew-top { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: none; border-radius: 50%; background: rgba(255,255,255,.10); color: rgba(255,255,255,.85); cursor: pointer; font-size: 15px; }
+.ds-whatsnew-top:hover { background: rgba(255,255,255,.22); }

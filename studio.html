@@ -32,6 +32,10 @@
           <kbd>Ctrl</kbd><kbd>K</kbd>
           <span>Quick nav</span>
         </button>
+        <!-- What's New lives in the topbar as a small announcement control
+             (user 2026-07-26: "not as a feature :)"). Badge dot filled by
+             studio-whatsnew.js while the newest version is unread. -->
+        <button class="ds-whatsnew-top" id="dsWhatsNewTop" title="What's New — what shipped, per version">🎉<span id="dsWhatsNewBadge"></span></button>
         <button class="ds-dark-toggle" id="dsDarkToggle" title="Switch to dark mode">🌙</button>
         <button id="dbgBtn" class="dbg-btn" title="Debug Log — off">🐛 Debug</button>
       </div>
@@ -49,21 +53,6 @@
             <span class="ds-nav-desc">Orgs open in your browser</span>
           </span>
         </button>
-        <!-- T10: What's New. Placed here on purpose — pack_store.py cuts the
-             whole Labs preview block out of store builds by slicing between
-             its two nav comment markers below, so anything inside that range
-             disappears. This entry sits above it and ships everywhere.
-             #dsWhatsNewBadge is filled by studio-whatsnew.js when the newest
-             changelog version has not been read yet. -->
-        <button class="ds-nav-btn" data-view="whatsnew">
-          <span class="ds-nav-icon">🎉</span>
-          <span class="ds-nav-label">
-            <span class="ds-nav-name">What's New</span>
-            <span class="ds-nav-desc">Changelog — what shipped, per version</span>
-          </span>
-          <span id="dsWhatsNewBadge" style="margin-left:auto;flex-shrink:0"></span>
-        </button>
-
         <div class="ds-nav-section-title">Data</div>
         <button class="ds-nav-btn" data-view="profiles">
           <span class="ds-nav-icon">📦</span>
