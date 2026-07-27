@@ -687,3 +687,47 @@ describe('record types in the Picklist Manager matrix (2026-07-18)', () => {
     expect(pkRtDrift([], 'Gold')).toBe(false);
   });
 });
+
+describe('standard picklist helpers (studio-picklists.js) — SVS name resolution + describe fallback', () => {
+  const { sftkSvsCandidates, sftkDescribeValues } = extractFunctions('studio-picklists.js',
+    ['sftkSvsCandidates', 'sftkDescribeValues']);
+
+  it('Account.Type resolves to AccountType FIRST (the bug: plain "Type" matched nothing)', () => {
+    expect(sftkSvsCandidates('Account', 'Type')).toEqual(['AccountType', 'Type']);
+  });
+
+  it('Opportunity.StageName goes through the special map to OpportunityStage', () => {
+    const c = sftkSvsCandidates('Opportunity', 'StageName');
+    expect(c[0]).toBe('OpportunityStage');
+    expect(c).toContain('StageName');
+  });
+
+  it('shared bare-name sets (Industry, Salutation, LeadSource) keep the bare field as a candidate', () => {
+    expect(sftkSvsCandidates('Lead', 'Industry')).toContain('Industry');
+    expect(sftkSvsCandidates('Contact', 'Salutation')).toContain('Salutation');
+    expect(sftkSvsCandidates('Contact', 'LeadSource')).toContain('LeadSource');
+  });
+
+  it('special-map candidates come first and the list never holds duplicates', () => {
+    const c = sftkSvsCandidates('AccountContactRole', 'Role');
+    expect(c[0]).toBe('AccountContactRole');
+    expect(new Set(c).size).toBe(c.length);   // obj+field === special here — deduped
+  });
+
+  it('sftkDescribeValues maps describe picklistValues to pkValueName shape, active only', () => {
+    const out = sftkDescribeValues({ picklistValues: [
+      { value: 'Prospect', label: 'Prospect', active: true, defaultValue: false },
+      { value: 'Old', label: 'Old Label', active: false, defaultValue: false },
+      { value: 'Hot', label: 'Hot!', active: true, defaultValue: true },
+    ] });
+    expect(out.map(v => v.fullName)).toEqual(['Prospect', 'Hot']);
+    expect(out[1].label).toBe('Hot!');
+    expect(out[1].default).toBe(true);
+    expect(out.every(v => v.isActive === true)).toBe(true);
+  });
+
+  it('sftkDescribeValues survives a missing field / empty picklist', () => {
+    expect(sftkDescribeValues(null)).toEqual([]);
+    expect(sftkDescribeValues({})).toEqual([]);
+  });
+});

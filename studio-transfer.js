@@ -850,6 +850,112 @@ async function runTransfer() {
               `(${wontTransfer.slice(0, 8).join(', ')}${wontTransfer.length > 8 ? '…' : ''})`,
               'ds-prog-warn');
           }
+
+          // ── Step 4c: VALUE preflight — restricted picklists, State/Country,
+          // field lengths. This is the classic "dry run passes, real run
+          // fails" gap: Salesforce only validates VALUES on a real write, but
+          // INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST, FIELD_INTEGRITY_EXCEPTION
+          // (state/country) and STRING_TOO_LONG are all predictable from the
+          // two describes plus a sample of the actual source data.
+          const tgtByName = new Map((tgtDesc.fields || []).map(f => [f.name, f]));
+          const valueChecks = [];   // { srcField, tgtField, tgtMeta, kind }
+          for (const f of (srcDescFull.fields || [])) {
+            if (!f.createable || SYSTEM_SKIP.has(f.name) || f.name === 'RecordTypeId') continue;
+            if (fm[f.name] === null) continue;
+            const tgtField = (f.name in fm && fm[f.name]) ? fm[f.name] : f.name;
+            const t = tgtByName.get(tgtField);
+            if (!t || !t.createable) continue;   // already reported in 4b
+            if ((t.type === 'picklist' || t.type === 'multipicklist') && t.restrictedPicklist) {
+              valueChecks.push({ srcField: f.name, tgtField, tgtMeta: t, kind: 'picklist' });
+            } else if (typeof t.length === 'number' && t.length > 0 && typeof f.length === 'number' && f.length > t.length
+                       && ['string', 'textarea', 'url', 'email', 'phone'].includes(t.type)) {
+              valueChecks.push({ srcField: f.name, tgtField, tgtMeta: t, kind: 'length' });
+            }
+            // State/Country picklists: the TEXT field (e.g. BillingState)
+            // validates against integration values when the target org has
+            // them enabled — visible in the describe as a sibling *Code field.
+            const sc = /^(Billing|Shipping|Mailing|Other)?(State|Country)$/.exec(tgtField);
+            if (sc && tgtByName.has(`${sc[1] || ''}${sc[2]}Code`)) {
+              valueChecks.push({ srcField: f.name, tgtField, tgtMeta: tgtByName.get(`${sc[1] || ''}${sc[2]}Code`), kind: 'state' });
+            }
+          }
+          if (valueChecks.length) {
+            const CHECK_CAP = 40;
+            const capped = valueChecks.slice(0, CHECK_CAP);
+            if (valueChecks.length > CHECK_CAP) {
+              logRow('⚠️', `${obj}: value preflight covers the first ${CHECK_CAP} of ${valueChecks.length} checkable fields — the rest are NOT value-checked.`, 'ds-prog-warn');
+            }
+            const sampleQ = await sendBg({
+              type: 'SF_QUERY', tooling: false,
+              orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid,
+              query: `SELECT ${['Id', ...new Set(capped.map(c => c.srcField))].join(', ')} FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''} LIMIT 200`,
+            });
+            if (sampleQ.error) {
+              logRow('⚠️', `${obj}: value preflight sample failed — ${sampleQ.error}`, 'ds-prog-warn');
+            } else {
+              const rows = sampleQ.records || [];
+              for (const c of capped) {
+                if (c.kind === 'length') {
+                  let worst = 0, hits = 0;
+                  for (const r of rows) {
+                    const len = (r[c.srcField] == null) ? 0 : String(r[c.srcField]).length;
+                    if (len > c.tgtMeta.length) { hits++; if (len > worst) worst = len; }
+                  }
+                  if (hits) {
+                    dryRunIssues++;
+                    logRow('❌', `${obj}.${c.tgtField}: target field takes ${c.tgtMeta.length} chars but ${hits} of ${rows.length} sampled record(s) exceed that (longest ${worst}) — the real run fails with STRING_TOO_LONG. Shorten the data or widen the target field.`, 'ds-prog-err');
+                  }
+                  continue;
+                }
+                // picklist + state share the "value must be in this set" shape;
+                // state also accepts the code-field's codes (TX) AND labels (Texas).
+                const allowed = new Set();
+                for (const v of (c.tgtMeta.picklistValues || [])) {
+                  if (v.active === false) continue;
+                  allowed.add(v.value);
+                  if (c.kind === 'state' && v.label) allowed.add(v.label);
+                }
+                const bad = new Map();   // offending value → sampled record count
+                for (const r of rows) {
+                  const raw = r[c.srcField];
+                  if (raw == null || raw === '') continue;
+                  const vals = (c.kind === 'picklist' && c.tgtMeta.type === 'multipicklist') ? String(raw).split(';') : [String(raw)];
+                  for (const v of vals) if (v && !allowed.has(v)) bad.set(v, (bad.get(v) || 0) + 1);
+                }
+                if (bad.size) {
+                  dryRunIssues++;
+                  const list = [...bad.entries()].slice(0, 6).map(([v, n]) => `“${v}” (${n}×)`).join(', ');
+                  if (c.kind === 'state') {
+                    logRow('❌', `${obj}.${c.tgtField}: the target enforces State/Country picklists and these sampled value(s) match neither a code nor a label there: ${list}${bad.size > 6 ? '…' : ''} — the real run fails with FIELD_INTEGRITY_EXCEPTION. Fix the source data or align the target's integration values.`, 'ds-prog-err');
+                  } else {
+                    logRow('❌', `${obj}.${c.tgtField}: restricted picklist in the target — sampled value(s) not in its active value set: ${list}${bad.size > 6 ? '…' : ''} — the real run fails with INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST. Add the value(s) in the target via the Picklist Manager, or remap the data first.`, 'ds-prog-err');
+                  }
+                } else {
+                  logRow('✅', `${obj}.${c.tgtField}: all sampled values are accepted by the target ${c.kind === 'state' ? 'State/Country picklist' : 'restricted picklist'} ✓`);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // ── Step 4d: what a dry run CANNOT test — say so, with names ──
+      // Validation rules, Apex triggers and duplicate rules only fire on a
+      // real write. List the active ones in the target so a clean dry run is
+      // never read as "the real run cannot fail".
+      if (srcCount > 0) {
+        const auto = [];
+        const vr = await sendBg({ type: 'SF_QUERY', tooling: true, orgUrl: _transferTgt.orgUrl, sid: _transferTgt.sid,
+          query: `SELECT ValidationName FROM ValidationRule WHERE Active = true AND EntityDefinition.QualifiedApiName = '${obj}'` });
+        if (!vr.error && (vr.records || []).length) auto.push(`${vr.records.length} validation rule(s) — ${vr.records.slice(0, 5).map(r => r.ValidationName).join(', ')}${vr.records.length > 5 ? '…' : ''}`);
+        const tg = await sendBg({ type: 'SF_QUERY', tooling: true, orgUrl: _transferTgt.orgUrl, sid: _transferTgt.sid,
+          query: `SELECT Name FROM ApexTrigger WHERE Status = 'Active' AND TableEnumOrId = '${obj}'` });
+        if (!tg.error && (tg.records || []).length) auto.push(`${tg.records.length} Apex trigger(s) — ${tg.records.slice(0, 5).map(r => r.Name).join(', ')}${tg.records.length > 5 ? '…' : ''}`);
+        const dr = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: _transferTgt.orgUrl, sid: _transferTgt.sid,
+          query: `SELECT DeveloperName FROM DuplicateRule WHERE IsActive = true AND SobjectType = '${obj}'` });
+        if (!dr.error && (dr.records || []).length) auto.push(`${dr.records.length} duplicate rule(s) — ${dr.records.slice(0, 5).map(r => r.DeveloperName).join(', ')}${dr.records.length > 5 ? '…' : ''}`);
+        if (auto.length) {
+          logRow('ℹ️', `${obj}: target automation a dry run CANNOT test (it only fires on real writes): ${auto.join(' · ')}. If the real run fails with a custom error message, start here.`, 'ds-prog-warn');
         }
       }
 
@@ -974,7 +1080,7 @@ async function runTransfer() {
       showToast(`Dry run found ${dryRunIssues} issue(s) — see details`, 'warning', 6000);
       _validatedRuns.delete(_valKey());
     } else {
-      logRow('✅', 'Dry run passed — no issues found. Safe to run the real transfer.');
+      logRow('✅', 'Dry run passed — no issues found, including value-level checks (restricted picklists, state/country, field lengths) against sampled data. Remaining risk on the real run: target validation rules, triggers and duplicate rules, which only fire on real writes (listed above per object when present).');
       showToast('Dry run passed ✓ — no field issues found', 'success', 4000);
       // Flip the footer: Run Transfer becomes the primary CTA for this
       // profile+org pair now that it's validated.

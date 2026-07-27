@@ -9,6 +9,28 @@ listing text is copied from the newest section. Write the notes here, with the c
 Versions below `1.0.0` are development milestones grouped by the day they landed —
 they were never published to the store as separate releases.
 
+## 1.3.0 — 2026-07-27
+
+### Added
+- **Standard picklists now show their values** in the Picklist Manager instead of a
+  lock banner. Even when Salesforce won't hand over the value-set metadata (common in
+  cookie sessions), you get the live value table from the org itself: active values,
+  record counts per value, and 🔧 data fixes — only adding/deactivating values still
+  happens in Setup. Name resolution also got smarter (Account.Type lives in the
+  "AccountType" standard value set, Stage in "OpportunityStage" — the Toolkit now
+  knows the naming rules).
+- **Standard picklists join the multi-org matrix**: compare a standard field's values
+  and per-org record counts across every open org side by side — no more flipping
+  between Setup tabs to diff them by eye. The columns are read-only for bulk apply
+  and sync (Salesforce owns those value sets), and the matrix says so.
+- **Dry run now checks your actual data values** — the #1 reason a passing dry run
+  still failed for real: restricted picklists in the target rejecting source values,
+  State/Country picklist mismatches ("TX" vs "Texas"), and source text longer than
+  the target field. All three are now caught before anything is written, with the
+  offending values named. The dry run also lists the target's active validation
+  rules, triggers and duplicate rules — the things that can only fire on a real
+  write — so a green dry run is honest about what it could and couldn't test.
+
 ## 1.2.0 — 2026-07-26
 
 ### Added

@@ -1224,7 +1224,7 @@ async function _pkLoadMatrix() {
     if (!sess) return { orgUrl: url, orgKey, label, skip: 'not open in a tab' };
     try {
       const r = await _pkFetchInventory(sess, _pkCmpObj, _pkCmpField);
-      if (r.kind !== 'local') return { orgUrl: url, orgKey, label, skip: r.kind === 'standard' ? 'standard picklist' : 'global value set' };
+      if (r.kind === 'global') return { orgUrl: url, orgKey, label, skip: 'global value set' };
       // Record types per org (user 2026-07-18: the matrix showed no RT info).
       // A failed RT load degrades to a note — never kills the value matrix.
       let rts = [], rtNote = '';
@@ -1232,6 +1232,19 @@ async function _pkLoadMatrix() {
         const rt = await _pkLoadRecordTypes(sess, _pkCmpObj, _pkCmpField, _pkCmpField.replace(/__c$/i, ''));
         rts = rt.rts; rtNote = rt.rtNote;
       } catch (e2) { rtNote = `record types unavailable: ${e2.message}`; }
+      // Standard picklists join the matrix READ-ONLY (user 2026-07-25: present
+      // them, don't send people off to compare in Setup): values come from the
+      // describe (active only) under stdInv — deliberately NOT .inv, so the
+      // bulk wizard and sync plan (both keyed on .inv) can never write them.
+      if (r.kind === 'standard') {
+        const desc = await describe(_pkCmpObj, sess.orgUrl, sess.sid);
+        const fieldMeta = (desc?.fields || []).find(f => f.name === _pkCmpField);
+        const rawValues = sftkDescribeValues(fieldMeta);
+        if (!rawValues.length) return { orgUrl: url, orgKey, label, skip: 'standard picklist — describe returned no values' };
+        const { usage } = await _pkLoadUsage(sess, _pkCmpObj, _pkCmpField, r.isMulti, rawValues);
+        return { orgUrl: url, orgKey, label, stdInv: { rawValues, usage }, rts, rtNote,
+          metaRO: 'Standard picklist — values shown from the describe (active only). Compare freely; editing the value set happens in Setup, so bulk apply / sync can’t target this column.' };
+      }
       return { orgUrl: url, orgKey, label, inv: r.inv, rts, rtNote };
     } catch (e) {
       const msg = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message).message : e.message;
@@ -1239,9 +1252,12 @@ async function _pkLoadMatrix() {
     }
   }));
 
-  const perOrg = results.filter(r => r.inv).map(r => ({ orgKey: r.orgKey, values: r.inv.rawValues.map(v => pkValueName(v)) }));
+  const perOrg = results.filter(r => r.inv || r.stdInv).map(r => ({ orgKey: r.orgKey, values: (r.inv || r.stdInv).rawValues.map(v => pkValueName(v)) }));
   const union = pkValueUnion(perOrg);
-  _pkMatrix = { obj: _pkCmpObj, field: _pkCmpField, results, union, matrix: pkBuildMatrix(results, union) };
+  // Display copy: standard columns get their stdInv as .inv so the pure
+  // matrix builder renders their cells; _pkMatrix.results stays clean.
+  const displayCols = results.map(r => (!r.inv && r.stdInv) ? { ...r, inv: r.stdInv } : r);
+  _pkMatrix = { obj: _pkCmpObj, field: _pkCmpField, results, union, matrix: pkBuildMatrix(displayCols, union) };
   _pkRenderMatrix();
 }
 
@@ -1255,10 +1271,12 @@ function _pkRenderMatrix() {
       <div class="ds-pk-mx-sel"><input type="checkbox" id="dsPkMxAll" title="Select all values"></div>
       <div class="ds-pk-mx-val">Value</div>
       ${cols.map(c => `<div class="ds-pk-mx-col">
-        <label class="ds-pk-mx-orgsel"><input type="checkbox" class="ds-pk-mx-orgchk" data-org="${esc(c.orgUrl)}" ${c.inv ? 'checked' : 'disabled'}> ${esc(c.label)}</label>
+        <label class="ds-pk-mx-orgsel"><input type="checkbox" class="ds-pk-mx-orgchk" data-org="${esc(c.orgUrl)}" ${c.inv ? 'checked' : 'disabled'}${c.metaRO ? ` title="${esc(c.metaRO)}"` : ''}> ${esc(c.label)}</label>
         ${(typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2 && _orgKey(c.orgUrl) === _orgKey(_ring.sourceUrl))
           ? `<span class="ds-pk-mx-sot" title="Your Sync Ring's source of truth — 🔄 Sync from source pre-selects this org as the source.">👑 source of truth</span>` : ''}
-        ${c.skip ? `<span class="ds-pk-mx-skip" title="${esc(c.skip)}">skipped: ${esc(c.skip)}</span>` : prodBadge(c.orgUrl)}
+        ${c.skip ? `<span class="ds-pk-mx-skip" title="${esc(c.skip)}">skipped: ${esc(c.skip)}</span>`
+          : c.metaRO ? `<span class="ds-pk-mx-skip" title="${esc(c.metaRO)}">standard — read-only</span>${prodBadge(c.orgUrl)}`
+          : prodBadge(c.orgUrl)}
       </div>`).join('')}
     </div>`;
 
@@ -1283,9 +1301,11 @@ function _pkRenderMatrix() {
   }).join('');
 
   const skipped = cols.filter(c => c.skip);
-  const loaded = cols.filter(c => c.inv);
+  const loaded = cols.filter(c => c.inv || c.stdInv);
+  const stdCols = cols.filter(c => c.stdInv);
   body.innerHTML = `
     <div class="ds-pk-summary">Matrix · <strong>${esc(M.obj)}.${esc(M.field)}</strong> · ${M.union.length} value(s) across ${loaded.length}/${cols.length} loaded org(s)</div>
+    ${stdCols.length ? `<div class="ds-pk-note">🔒 Standard picklist — values compare across orgs below (active values via describe), but the value sets themselves are edited in Setup, so bulk apply / 🔄 sync can't write these columns. Record counts and 🔧 data fixes work as usual.</div>` : ''}
     <div class="ds-pk-note" style="margin:4px 0 6px">How to read a cell: <strong>✓</strong> value exists &amp; is active in that org · <strong>⏸</strong> exists but inactive · <strong>—</strong> value missing from that org · the <strong>number</strong> = how many records in that org currently hold the value · <strong>a/b RT</strong> = included in a of that org's b active record types (hover for names; <span style="color:#991b1b">red</span> = same-name record types disagree across orgs — align via 🔄 Sync from source).</div>
     ${cols.some(c => c.rtNote) ? `<div class="ds-pk-note">⚠ Record types: ${esc(cols.filter(c => c.rtNote).map(c => `${c.label} — ${c.rtNote}`).join(' · '))}</div>` : ''}
     ${skipped.length ? `<div class="ds-pk-note">⚠ Skipped ${skipped.length} org(s): ${esc(skipped.map(c => `${c.label} (${c.skip})`).join(', '))}</div>` : ''}
@@ -1472,8 +1492,8 @@ function _pkRenderValueSet(ctx, opts) {
       <div class="ds-pk-usage">${count == null ? '<span class="ds-pk-uncounted">—</span>' : count === -1 ? '<span class="ds-pk-uncounted">?</span>' : `<span class="ds-pk-bar"><span class="ds-pk-fill" style="width:${Math.max(2, Math.round(count / maxCount * 100))}%"></span></span><span class="ds-pk-count">${count.toLocaleString()}</span>`}</div>
       <div class="ds-pk-actions">
         ${(count > 0) ? `<button class="ds-btn ds-btn-sm" data-vs-fix="${i}">🔧 Fix data…</button>` : ''}
-        <button class="ds-btn ds-btn-sm" data-vs-toggle="${i}">${active ? '⏸ Deactivate' : '▶ Activate'}</button>
-        ${opts.allowDelete ? `<button class="ds-btn ds-btn-sm ds-btn-danger" data-vs-del="${i}">🗑</button>` : ''}
+        ${opts.readOnlyMeta ? '' : `<button class="ds-btn ds-btn-sm" data-vs-toggle="${i}">${active ? '⏸ Deactivate' : '▶ Activate'}</button>`}
+        ${opts.allowDelete && !opts.readOnlyMeta ? `<button class="ds-btn ds-btn-sm ds-btn-danger" data-vs-del="${i}">🗑</button>` : ''}
       </div></div>`;
   }).join('');
   body.innerHTML = `${opts.banner || ''}
@@ -1581,35 +1601,90 @@ async function _pkValueSetWizard(ctx, idx, mode, applyFn, reloadFn) {
 }
 
 // ── P4a: Standard picklists (StandardValueSet) ──────────────────
+
+// The StandardValueSet DeveloperName rarely equals the field's API name:
+// Account.Type lives in "AccountType", Opportunity.StageName in
+// "OpportunityStage", Contact.Salutation in plain "Salutation". Candidate
+// names to try, most specific first. Pure — unit-tested.
+function sftkSvsCandidates(obj, field) {
+  const SPECIAL = {
+    'Opportunity.StageName':                ['OpportunityStage'],
+    'Account.AccountSource':                ['AccountSource', 'LeadSource'],
+    'Lead.Rating':                          ['LeadRating', 'AccountRating'],
+    'OpportunityTeamMember.TeamMemberRole': ['SalesTeamRole'],
+    'AccountContactRole.Role':              ['AccountContactRole'],
+    'CaseContactRole.Role':                 ['CaseContactRole'],
+    'ContractContactRole.Role':             ['ContractContactRole'],
+    'OpportunityPartner.Role':              ['PartnerRole'],
+    'AccountPartner.Role':                  ['PartnerRole'],
+  };
+  const out = [];
+  const push = n => { if (n && !out.includes(n)) out.push(n); };
+  (SPECIAL[`${obj}.${field}`] || []).forEach(push);
+  push(`${obj}${field}`);   // AccountType, CaseStatus, TaskPriority…
+  push(field);              // Industry, Salutation, LeadSource…
+  return out;
+}
+
+// Describe-based read-only fallback: build a rawValues list (pkValueName
+// shape) from a describe field's ACTIVE picklist values. Pure — unit-tested.
+function sftkDescribeValues(fieldMeta) {
+  return ((fieldMeta && fieldMeta.picklistValues) || [])
+    .filter(v => v.active !== false)
+    .map(v => ({ fullName: v.value, label: v.label || v.value, isActive: true, default: v.defaultValue === true }));
+}
+
 async function _pkLoadStandard(sess, field, obj, isMulti) {
   const body = eid('dsPkBody');
   if (!body) return;
   body.innerHTML = `<div class="ds-init-loading">${window.sftkCat ? sftkCat('Loading standard value set…') : 'Loading…'}</div>`;
   try {
-    // Best-effort: the StandardValueSet DeveloperName usually equals the field name.
+    const candidates = sftkSvsCandidates(obj, field);
     const q = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: true,
-      query: `SELECT Id, MasterLabel, DeveloperName FROM StandardValueSet WHERE DeveloperName = ${soqlStrLit(field)}`, _silentError: true });
-    const rec = (q && !q.error) ? (q.records || [])[0] : null;
-    if (!rec) return _pkStandardDegrade(sess, field, obj, 'This standard value set could not be resolved via the Tooling API in a cookie session.');
+      query: `SELECT Id, MasterLabel, DeveloperName FROM StandardValueSet WHERE DeveloperName IN (${candidates.map(soqlStrLit).join(', ')})`, _silentError: true });
+    const recs = (q && !q.error) ? (q.records || []) : [];
+    const rec = candidates.map(c => recs.find(r => r.DeveloperName === c)).find(Boolean);
+    if (!rec) return _pkStandardDegrade(sess, field, obj, isMulti, `no StandardValueSet matched ${candidates.join(' / ')} via the Tooling API`);
     const meta = await sendBg({ type: 'SF_TOOLING_GET', orgUrl: sess.orgUrl, sid: sess.sid, sobject: 'StandardValueSet', id: rec.Id });
-    if (meta?.error || !meta?.Metadata) return _pkStandardDegrade(sess, field, obj, meta?.error || 'Standard value set metadata is unavailable.');
+    if (meta?.error || !meta?.Metadata) return _pkStandardDegrade(sess, field, obj, isMulti, meta?.error || 'the value-set metadata is unavailable');
     const values = meta.Metadata.standardValue || [];
-    if (!values.length) return _pkStandardDegrade(sess, field, obj, 'No standard values returned.');
+    if (!values.length) return _pkStandardDegrade(sess, field, obj, isMulti, 'no standard values returned');
     const { usage } = await _pkLoadUsage(sess, obj, field, isMulti, values);
     _pkStd = { orgUrl: sess.orgUrl, sid: sess.sid, obj, field, isMulti, svsId: rec.Id, svsName: rec.DeveloperName, metadata: meta.Metadata, rawValues: values, usage };
     _pkRenderStandard();
   } catch (e) {
-    _pkStandardDegrade(sess, field, obj, e.message);
+    _pkStandardDegrade(sess, field, obj, isMulti, e.message);
   }
 }
 
-function _pkStandardDegrade(sess, field, obj, reason) {
+// Metadata path failed (SVS unresolved, or no Customize Application perm) —
+// fall back to the describe instead of a dead-end lock banner: active values,
+// live usage counts and 🔧 data fixes all still work; only add/deactivate
+// needs Setup. (user 2026-07-25: "we need to present them here and not send
+// the user to compare them manually")
+async function _pkStandardDegrade(sess, field, obj, isMulti, reason) {
   const body = eid('dsPkBody');
   if (!body) return;
   const base = String(sess.orgUrl || '').replace(/\/$/, '');
-  const url = `${base}/lightning/setup/ObjectManager/${encodeURIComponent(obj)}/FieldsAndRelationships/view`;
-  body.innerHTML = `<div class="ds-pk-banner">🔒 <strong>${esc(field)}</strong> is a standard picklist and can't be edited here
-    (${esc(reason)}). <a href="${esc(url)}" target="_blank" rel="noopener">↗ Manage in Setup</a></div>`;
+  const setupUrl = `${base}/lightning/setup/ObjectManager/${encodeURIComponent(obj)}/FieldsAndRelationships/view`;
+  try {
+    const desc = await describe(obj, sess.orgUrl, sess.sid);
+    const fieldMeta = (desc?.fields || []).find(f => f.name === field);
+    const rawValues = sftkDescribeValues(fieldMeta);
+    if (!rawValues.length) throw new Error('the describe returned no active values either');
+    const { usage } = await _pkLoadUsage(sess, obj, field, isMulti, rawValues);
+    _pkRenderValueSet({ orgUrl: sess.orgUrl, sid: sess.sid, obj, field, isMulti, rawValues, usage }, {
+      title: `Standard picklist ${field} — values via describe`,
+      banner: `<div class="ds-pk-banner">🔒 <strong>${esc(field)}</strong> is a standard picklist and its value-set metadata isn't writable from here (${esc(reason)}), so activate/deactivate lives in <a href="${esc(setupUrl)}" target="_blank" rel="noopener">↗ Setup</a>. Everything below is live: active values, record counts and 🔧 data fixes. Inactive values can't be listed without the metadata.</div>`,
+      readOnlyMeta: true,
+      allowDelete: false,
+      applyFn: () => { throw new Error('Standard value-set metadata is read-only here — use Setup.'); },
+      reloadFn: () => loadPicklistInventory(),
+    });
+  } catch (e) {
+    body.innerHTML = `<div class="ds-pk-banner">🔒 <strong>${esc(field)}</strong> is a standard picklist and can't be edited here
+      (${esc(reason)}; ${esc(e.message)}). <a href="${esc(setupUrl)}" target="_blank" rel="noopener">↗ Manage in Setup</a></div>`;
+  }
 }
 
 function _pkRenderStandard() {
@@ -1820,7 +1895,14 @@ async function _pkOpenSyncPlan() {
   const M = _pkMatrix;
   if (!M) return;
   const loaded = M.results.filter(r => r.inv);
-  if (loaded.length < 2) { showToast('Load at least two orgs in the matrix first', 'warning', 5000); return; }
+  if (loaded.length < 2) {
+    if (M.results.some(r => r.stdInv)) {
+      showToast('This is a standard picklist — its value set is edited in Setup, so the sync plan can\'t write it. Use the matrix above to see exactly what differs per org.', 'warning', 8000);
+    } else {
+      showToast('Load at least two orgs in the matrix first', 'warning', 5000);
+    }
+    return;
+  }
   _pkSyncScanCache.clear();   // value sets may have moved since the last plan
 
   // Source: the ring's source of truth, LOCKED when it's among the loaded
