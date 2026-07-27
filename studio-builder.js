@@ -152,12 +152,31 @@ function renderBuilder() {
         <div class="ds-builder-owner-ctls">
           <select id="dsProfileOwnerMode" class="ds-input">
             <option value="skip"  ${p.ownerMapping?.mode !== 'match' ? 'selected' : ''}>Don't copy owners — the target assigns its default (the running user)</option>
-            <option value="match" ${p.ownerMapping?.mode === 'match' ? 'selected' : ''}>Match owner by name in the target; unmatched → a fallback user</option>
+            <option value="match" ${p.ownerMapping?.mode === 'match' ? 'selected' : ''}>Match owners in the target; unmatched → a fallback user</option>
           </select>
           <select id="dsProfileOwnerFallback" class="ds-input" style="${p.ownerMapping?.mode === 'match' ? '' : 'display:none'}">
             <option value="">${p.ownerMapping?.fallbackUserId ? esc(p.ownerMapping.fallbackUserName || 'saved fallback user') : '— fallback user (loads from target org) —'}</option>
           </select>
         </div>
+        ${(() => {
+          // "Match owners by" — visible only in 'match' mode. Renders from
+          // bldOwnerMatchingDisplay so a legacy match-profile WITHOUT a
+          // matching config shows the Name-only path the engine will really
+          // run; nothing is written back until a control here is touched.
+          const m = bldOwnerMatchingDisplay(p.ownerMapping);
+          const fld = (name, label, title) => `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer"${title ? ` title="${title}"` : ''}><input type="checkbox" data-owner-match-field="${name}" ${m.fields.includes(name) ? 'checked' : ''}> ${label}</label>`;
+          const tgl = (key, label, title) => `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer" title="${title}"><input type="checkbox" data-owner-match-norm="${key}" ${m.normalize[key] ? 'checked' : ''}> ${label}</label>`;
+          return `
+        <div id="dsOwnerMatchBlock" style="${p.ownerMapping?.mode === 'match' ? '' : 'display:none;'}margin:6px 0 0 2px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:11.5px;color:var(--subtext)">
+            <span>Match owners by</span>
+            ${fld('Email', 'Email')}${fld('Name', 'Name')}${fld('Username', 'Username')}${fld('Alias', 'Alias')}${fld('FederationIdentifier', 'Federation ID', 'Not usable on queue-enabled objects (Case, Lead, …) — Salesforce can’t read Federation ID through their Owner field, so the source query would fail. Prefer Email there.')}
+            <span style="opacity:.5">·</span>
+            ${tgl('caseFold', 'case-insensitive', 'Compare keys lowercase — "ADA" matches "ada"')}${tgl('trim', 'trim spaces', 'Strip leading/trailing spaces before comparing')}${tgl('emailLower', 'lowercase emails', 'Lowercase email-shaped values only — safe on non-email fields')}
+          </div>
+          <div style="font-size:11px;color:var(--subtext);margin-top:3px">Usernames are org-suffixed, so Email usually survives sandbox refreshes best. Two target users sharing the same key = no guess: those records go to the fallback user.</div>
+        </div>`;
+        })()}
         <div id="dsProfileOwnerHint" class="ds-builder-owner-hint"></div>
       </div>
 
@@ -250,9 +269,11 @@ function renderBuilder() {
 
   // ── Owner handling ──────────────────────────────────────────────
   // 'skip' (default): owners never copy — target assigns its default.
-  // 'match': resolve the source owner's NAME to a target user at write
-  // time; unmatched owners get the fallback user picked here. The user
-  // list loads live from the TARGET org (must be open in a tab).
+  // 'match': resolve the source owner to a target user at write time via
+  // ownerMapping.matching (fields picked in the block below; ABSENT config
+  // = the legacy Name-only engine path). Unmatched owners get the fallback
+  // user picked here. The user list loads live from the TARGET org (must
+  // be open in a tab).
   async function loadOwnerFallbackUsers() {
     const sel  = eid('dsProfileOwnerFallback');
     const hint = eid('dsProfileOwnerHint');
@@ -282,18 +303,64 @@ function renderBuilder() {
       ? '⚠ The saved fallback user was not found (deactivated?) — pick another.'
       : `${q.records.length} active user(s) in ${orgLabel(_editingProfile.targetOrg)}.`;
   }
+  // Match-owners-by controls. Selection is capped at 4 fields (matches the
+  // sftk-matching key-builder cap); at the cap, unchecked boxes disable
+  // with a title saying why.
+  const _ownerMatchCapSync = () => {
+    const boxes = [...document.querySelectorAll('[data-owner-match-field]')];
+    const atCap = boxes.filter(b => b.checked).length >= 4;
+    boxes.forEach(b => {
+      b.disabled = atCap && !b.checked;
+      const lbl = b.closest('label');
+      if (lbl) lbl.title = b.disabled ? 'Up to 4 match fields — untick one to add this' : '';
+    });
+  };
+  const _ownerMatchStore = () => {
+    if (_editingProfile.ownerMapping?.mode !== 'match') return;
+    _editingProfile.ownerMapping.matching = bldOwnerMatchingFromControls(
+      [...document.querySelectorAll('[data-owner-match-field]')].filter(b => b.checked).map(b => b.dataset.ownerMatchField),
+      Object.fromEntries([...document.querySelectorAll('[data-owner-match-norm]')].map(b => [b.dataset.ownerMatchNorm, b.checked])));
+  };
+  const _ownerMatchSyncDom = m => {
+    document.querySelectorAll('[data-owner-match-field]').forEach(b => { b.checked = (m.fields || []).includes(b.dataset.ownerMatchField); });
+    document.querySelectorAll('[data-owner-match-norm]').forEach(b => { b.checked = !!(m.normalize || {})[b.dataset.ownerMatchNorm]; });
+    _ownerMatchCapSync();
+  };
+  document.querySelectorAll('[data-owner-match-field]').forEach(cb =>
+    cb.addEventListener('change', () => {
+      // Zero fields would send EVERY record to the fallback user — keep one.
+      if (!cb.checked && !document.querySelector('[data-owner-match-field]:checked')) {
+        cb.checked = true;
+        showToast('Owner matching needs at least one field.', 'warning', 3000);
+        return;
+      }
+      _ownerMatchStore();
+      _ownerMatchCapSync();
+    }));
+  document.querySelectorAll('[data-owner-match-norm]').forEach(cb =>
+    cb.addEventListener('change', () => _ownerMatchStore()));
+  _ownerMatchCapSync();
+
   eid('dsProfileOwnerMode')?.addEventListener('change', e => {
     const mode = e.target.value;
     const sel  = eid('dsProfileOwnerFallback');
+    const blk  = eid('dsOwnerMatchBlock');
     if (mode === 'match') {
       _editingProfile.ownerMapping = { mode: 'match',
         fallbackUserId:   _editingProfile.ownerMapping?.fallbackUserId   || null,
-        fallbackUserName: _editingProfile.ownerMapping?.fallbackUserName || null };
+        fallbackUserName: _editingProfile.ownerMapping?.fallbackUserName || null,
+        // Picking 'match' is a control touch, so seeding the default here is
+        // safe: only UNTOUCHED legacy profiles must stay config-less (absent
+        // matching = the Name-only engine path).
+        matching: _editingProfile.ownerMapping?.matching
+          || bldOwnerMatchingFromControls(['Email', 'Name'], { emailLower: true, trim: true }) };
       if (sel) sel.style.display = '';
+      if (blk) { blk.style.display = ''; _ownerMatchSyncDom(_editingProfile.ownerMapping.matching); }
       loadOwnerFallbackUsers();
     } else {
       delete _editingProfile.ownerMapping;
       if (sel) sel.style.display = 'none';
+      if (blk) blk.style.display = 'none';
       const hint = eid('dsProfileOwnerHint');
       if (hint) hint.textContent = '';
     }
@@ -391,6 +458,41 @@ function renderBuilder() {
     if (p.tree._meta.relsLoaded) { /* already loaded */ }
     else loadNodeRels(p.tree, []);
   }
+}
+
+// ── Owner matching (O1) — pure helpers ────────────────────────────
+// What the "Match owners by" block should SHOW for a profile's
+// ownerMapping — read-only, never writes back. Three states:
+//   • matching present → it, sanitized (known fields, canonical order, ≤4)
+//   • mode 'match' with NO matching → the legacy Name-only engine path —
+//     showing the modern default there would misreport what a run will do
+//   • otherwise (skip / unset) → the default a fresh switch to 'match' seeds
+function bldOwnerMatchingDisplay(ownerMapping) {
+  const KNOWN = ['Email', 'Name', 'Username', 'Alias', 'FederationIdentifier'];
+  const m = ownerMapping && ownerMapping.matching;
+  if (m && Array.isArray(m.fields) && m.fields.filter(Boolean).length) {
+    const set = new Set(m.fields.filter(Boolean));
+    return { fields: KNOWN.filter(f => set.has(f)).slice(0, 4),
+             normalize: { ...(m.normalize || {}) } };
+  }
+  if (ownerMapping && ownerMapping.mode === 'match') {
+    return { fields: ['Name'], normalize: {} };
+  }
+  return { fields: ['Email', 'Name'], normalize: { emailLower: true, trim: true } };
+}
+
+// Build ownerMapping.matching from the block's control state. Field order is
+// canonical, not click order (key components must line up on both sides);
+// unknown names drop; selection is capped at 4 (the sftkMatchKey cap).
+// Pure — the field list is inlined so test extraction stays self-contained.
+function bldOwnerMatchingFromControls(checkedFields, toggles) {
+  const KNOWN = ['Email', 'Name', 'Username', 'Alias', 'FederationIdentifier'];
+  const set = new Set(Array.isArray(checkedFields) ? checkedFields : []);
+  const t = toggles || {};
+  return {
+    fields: KNOWN.filter(f => set.has(f)).slice(0, 4),
+    normalize: { emailLower: !!t.emailLower, caseFold: !!t.caseFold, trim: !!t.trim }
+  };
 }
 
 // Populate the root-object PICKLIST from the source org's object list.

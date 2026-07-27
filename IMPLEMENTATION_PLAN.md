@@ -476,15 +476,33 @@ history) already exists there.
   bypassed by the chunked renderer (duplicates + wrong-category rows); checked-log ids
   outliving their rows. 51 areas verified CLEAN (escaping, SOQL escaping, no inline
   handlers, storage hygiene included).
-- [ ] **Q2. Verify the 34 unverified findings** — their adversarial verifiers died on
-  the session cap (one is severity-critical). The review phase is CACHED: resume with
-  Workflow({scriptPath: '<session>/workflows/scripts/debugger-full-qa-wf_d8be10bd-96b.js',
-  resumeFromRunId: 'wf_d8be10bd-96b'}) after the limit reset — only verifiers re-run.
-  Raw findings live in the run's journal. Fix whatever survives.
+- [x] **Q2. Verify the 34 unverified findings** (verified 2026-07-26, fixed 2026-07-27) —
+  resumed run completed 46/46; 10 distinct bugs survived verification and ALL are fixed:
+  (1) CRITICAL dead trigger parsing → pure sftkTriggerName (real __sfdc_trigger/ +
+  "X on Y trigger event" + legacy grammars, both call sites); (2) _pollForNew error
+  swallowing → _pollErrMsg status + stop-on-SESSION_EXPIRED; (3) _openLog race →
+  _openLogSeq token; (4) _reset missing x-search state → full inventory cleared +
+  mid-reset cache-write guard; (5) four delete paths ignored per-record results →
+  "N deleted, M failed", failed rows kept; (6) x-search cached failures as '' →
+  successes-only cache + "searched X of Y (Z unreachable)"; (7) parse stacks not reset
+  at truncation/EXECUTION_STARTED → sftkLogNestingReset; (8) D5 goto freeze →
+  sftkChunkShownFor single-render; (9) purge-all swallowed query error; (10) Trusted-
+  Types sanitizer ate handler-shaped log text → sftkEscLogLine ('=' → &#61;) at all
+  insertion sites + same fix in apex-log-viewer.js's _esc. 16 new tests
+  (test/debugger-q2.test.mjs).
 
 ## Phase O — Owner matching by fields (user 2026-07-26)
 
-- [ ] **O1. Smart owner matching** — "we can match an owner by fields and let the user
+- [x] **O1. Smart owner matching** (done 2026-07-27) — engine + builder UI shipped as
+  specced below; parity copies of sftkNormalizeValue/sftkMatchKey inlined in
+  background.js (byte-identical, parity-tested), pure sftkBuildOwnerIndex with dup-key
+  exclusion, once-per-run target-user index (LIMIT 4000 + honest cap note), per-field
+  Owner.<field> source reads, "X matched by Email+Name, Y dup-key → fallback, Z
+  unmatched" run notes; UI: field checkboxes (≤4) + normalize toggles, seeds
+  Email+Name/emailLower+trim on first switch to 'match', legacy Name-only profiles
+  untouched until a control is touched; Federation ID checkbox warns about
+  queue-enabled objects. 19 new tests (owner-o1 + owner-o1-ui). Original spec:
+  "we can match an owner by fields and let the user
   pick a couple of them. for example email + other fields. just like we do on anything."
   Today ownerMapping matches by NAME only, with one fallback user. Rebuild on the M3a
   pattern: `profile.ownerMapping.matching = { fields: ['Email','Name',…] ≤4, normalize

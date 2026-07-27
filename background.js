@@ -23,6 +23,65 @@ function sftkOrgKey(orgUrl) {
     .toLowerCase();
 }
 
+// sftkNormalizeValue + sftkMatchKey — the shared match-key engine. These are
+// BYTE-FOR-BYTE copies of the canonical implementations in sftk-matching.js,
+// inlined for the same reason as sftkOrgKey above (importScripts is a
+// Trusted-Types sink under this worker's CSP). Smart owner matching (O1)
+// builds owner keys through them, and keys MUST be built identically to every
+// other consumer — normalization is part of the key. A parity unit test
+// (test/owner-o1.test.mjs) fails the build if these copies and the canonical
+// ones ever diverge.
+function sftkNormalizeValue(v, normalize) {
+  if (v === null || v === undefined) return '';
+  let s = String(v);
+  const n = normalize || {};
+  if (n.trim)       s = s.trim();
+  if (n.collapseWs) s = s.replace(/\s+/g, ' ');
+  // emailLower: lowercase only email-shaped values (contains @, no spaces) —
+  // leaves non-email text alone so the toggle is safe on mixed fields.
+  if (n.emailLower && s.indexOf('@') !== -1 && !/\s/.test(s.trim())) {
+    s = s.toLowerCase();
+  }
+  // phoneDigits: reduce phone-shaped values ("(415) 555-1234 x89") to their
+  // digits. Only applies when the text looks like a phone number (digits +
+  // separators, 7+ digits) — never mangles ordinary text.
+  if (n.phoneDigits) {
+    const digits = s.replace(/\D/g, '');
+    if (digits.length >= 7 && /^[\d\s()+\-./x#*]*$/i.test(s)) s = digits;
+  }
+  if (n.caseFold)   s = s.toLowerCase();
+  return s;
+}
+
+function sftkMatchKey(record, matching) {
+  const m = matching || {};
+  const fields = Array.isArray(m.fields) ? m.fields.filter(Boolean) : [];
+  if (!record || !fields.length) return '';
+  const norm = m.normalize || {};
+  const parts = fields.map(f => sftkNormalizeValue(record[f], norm));
+  if (!parts.some(p => p !== '')) return '';
+  return parts.join(String.fromCharCode(1));
+}
+
+// O1 — target-side owner index for smart owner matching. Every active User
+// keyed by its sftkMatchKey over matching.fields. A key hit by MORE THAN ONE
+// user is ambiguous: it goes to `dups` and is EXCLUDED from byKey — a dup
+// match must fall back, never guess an owner. Blank keys (every component
+// empty) are unmatchable and never indexed. byKey is null-prototype so a
+// user named "constructor" can't collide with Object.prototype.
+function sftkBuildOwnerIndex(users, matching) {
+  const byKey = Object.create(null);
+  const dup = new Set();
+  for (const u of (users || [])) {
+    const key = sftkMatchKey(u, matching);
+    if (key === '') continue;
+    if (dup.has(key)) continue;
+    if (key in byKey) { delete byKey[key]; dup.add(key); continue; }
+    byKey[key] = u.Id;   // a falsy record already returned key '' above
+  }
+  return { byKey, dups: [...dup] };
+}
+
 const API_VERSION = 'v62.0';
 
 // ── Per-org read-only gate ───────────────────────────────────────────────────
@@ -159,6 +218,21 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   const ownerFallback = ownerMode ? (profile.ownerMapping.fallbackUserId || null) : null;
   const ownerByName   = new Map();   // source Owner.Name → target User Id
   const ownerMisses   = new Set();   // names known to have no target match
+  // O1 — smart owner matching: when the profile carries a matching config,
+  // owners resolve by sftkMatchKey over the picked fields (e.g. Email + Name)
+  // instead of the legacy Name-only lookup above. Sanitized like
+  // sftkMatchingFromNode (max 4 fields); names must be identifier-shaped —
+  // they are interpolated into SOQL and read as Owner.<field>, so anything
+  // else is dropped. No usable fields → null → the legacy path, unchanged.
+  const _omRaw = ownerMode ? profile.ownerMapping.matching : null;
+  const _omFields = _omRaw && Array.isArray(_omRaw.fields)
+    ? _omRaw.fields.filter(f => typeof f === 'string' && /^[A-Za-z][A-Za-z0-9_]*$/.test(f)).slice(0, 4)
+    : [];
+  const ownerMatching = _omFields.length
+    ? { fields: _omFields, normalize: { ...(_omRaw.normalize || {}) } }
+    : null;
+  let ownerIndex   = null;   // { byKey, dups } — built ONCE per run, first node that needs it
+  let ownerDupKeys = null;   // Set of ambiguous keys (O(1) checks in the payload loop)
 
   // Depth-first flattening. Default: every parent is processed before its
   // children. A child node marked insertOrder:'childFirst' (and its own
@@ -259,8 +333,17 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
 
       // Owner matching needs the source owner's display name — only when the
       // object actually has owners (children like OpportunityLineItem don't).
+      // O1: field-based matching additionally reads every key component off
+      // the Owner relationship. Owner.Name stays regardless — log lines and
+      // History labels read it. (Both read paths deliver the same shape:
+      // sftkBulkRowsToRecords nests dotted CSV columns back into r.Owner.)
       const wantOwners = ownerMode && (descRes.fields || []).some(f => f.name === 'OwnerId');
-      if (wantOwners) fields.push('Owner.Name');
+      if (wantOwners) {
+        fields.push('Owner.Name');
+        for (const f of (ownerMatching ? ownerMatching.fields : [])) {
+          if (!fields.includes('Owner.' + f)) fields.push('Owner.' + f);
+        }
+      }
 
       // The object's name field — fetched purely for human-readable History
       // links. Compound names (Contact.Name) aren't createable so
@@ -430,18 +513,37 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
 
       // Resolve this node's owner names against the TARGET org's users
       // (User owners only — queue-owned records won't match and fall back).
+      // O1 field-based matching instead indexes ALL active target users once
+      // per run — key values can't be pushed into a WHERE clause the way
+      // names are (normalization happens client-side), so the index is the
+      // whole table. LIMIT 4000 keeps a giant org from unbounded paging;
+      // exactly 4000 rows means the cap may have bitten, so say so honestly.
       if (wantOwners && recs.length) {
-        const names = [...new Set(recs
-          .map(r => r.Owner ? r.Owner.Name : null)
-          .filter(n => n && !ownerByName.has(n) && !ownerMisses.has(n)))];
-        for (let ci = 0; ci < names.length; ci += 100) {
-          const lit = names.slice(ci, ci + 100)
-            .map(n => `'${String(n).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',');
-          const q = await sfQueryAll(tgtOrgUrl, tgtSid,
-            `SELECT Id, Name FROM User WHERE IsActive = true AND Name IN (${lit})`, false);
-          for (const u of (q.records || [])) if (!ownerByName.has(u.Name)) ownerByName.set(u.Name, u.Id);
+        if (ownerMatching) {
+          if (!ownerIndex) {
+            const cols = [...new Set(['Id', 'Name', ...ownerMatching.fields])];
+            const q = await sfQueryAll(tgtOrgUrl, tgtSid,
+              `SELECT ${cols.join(', ')} FROM User WHERE IsActive = true LIMIT 4000`, false);
+            const users = q.records || [];
+            ownerIndex   = sftkBuildOwnerIndex(users, ownerMatching);
+            ownerDupKeys = new Set(ownerIndex.dups);
+            if (users.length === 4000) {
+              diagnostics.push(`owner matching: the target org returned exactly 4000 active users — the owner index may be capped and some owners could fall back as unmatched.`);
+            }
+          }
+        } else {
+          const names = [...new Set(recs
+            .map(r => r.Owner ? r.Owner.Name : null)
+            .filter(n => n && !ownerByName.has(n) && !ownerMisses.has(n)))];
+          for (let ci = 0; ci < names.length; ci += 100) {
+            const lit = names.slice(ci, ci + 100)
+              .map(n => `'${String(n).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',');
+            const q = await sfQueryAll(tgtOrgUrl, tgtSid,
+              `SELECT Id, Name FROM User WHERE IsActive = true AND Name IN (${lit})`, false);
+            for (const u of (q.records || [])) if (!ownerByName.has(u.Name)) ownerByName.set(u.Name, u.Id);
+          }
+          names.forEach(n => { if (!ownerByName.has(n)) ownerMisses.add(n); });
         }
-        names.forEach(n => { if (!ownerByName.has(n)) ownerMisses.add(n); });
       }
 
       // ── Resolve RecordTypes ──────────────────────────────────────────────
@@ -555,7 +657,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       const preLinked    = new Map();
       const deferredRefs = [];
       // Owner-mapping outcome counters for this node's summary line.
-      let ownerFellBack = 0, ownerDefaulted = 0;
+      // O1 adds: ownerKeyMatched (index hit), ownerKeyDup (ambiguous key —
+      // excluded from the index, fell back rather than guessed).
+      let ownerFellBack = 0, ownerDefaulted = 0, ownerKeyMatched = 0, ownerKeyDup = 0;
 
       // ── Build payloads with field mapping ────────────────────────────────
       const payloads = recs.map(r => {
@@ -617,13 +721,29 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         }
         // Owner mapping: matched name → that user; unmatched → fallback user;
         // no fallback → omit (target org default), counted for the summary.
+        // O1 field-based path: rebuild this record's key from Owner.<field>
+        // values through the SAME sftkMatchKey the index used (normalization
+        // is part of the key). Blank key (queue-owned, no owner data) and
+        // dup key (ambiguous in the target) both fall back — never guess.
         if (wantOwners) {
-          const oname = r.Owner ? r.Owner.Name : null;
-          if (oname) {
-            const matched = ownerByName.get(oname);
+          if (ownerMatching) {
+            const shim = {};
+            for (const f of ownerMatching.fields) shim[f] = r.Owner ? r.Owner[f] : null;
+            const key = sftkMatchKey(shim, ownerMatching);
+            const matched = key && ownerIndex ? ownerIndex.byKey[key] : undefined;
             const oid = matched || ownerFallback;
             if (oid && (!tgtCreatable.size || tgtCreatable.has('OwnerId'))) p.OwnerId = oid;
-            if (!matched) { if (ownerFallback) ownerFellBack++; else ownerDefaulted++; }
+            if (matched) ownerKeyMatched++;
+            else if (key && ownerDupKeys && ownerDupKeys.has(key)) ownerKeyDup++;
+            else if (ownerFallback) ownerFellBack++; else ownerDefaulted++;
+          } else {
+            const oname = r.Owner ? r.Owner.Name : null;
+            if (oname) {
+              const matched = ownerByName.get(oname);
+              const oid = matched || ownerFallback;
+              if (oid && (!tgtCreatable.size || tgtCreatable.has('OwnerId'))) p.OwnerId = oid;
+              if (!matched) { if (ownerFallback) ownerFellBack++; else ownerDefaulted++; }
+            }
           }
         }
         return p;
@@ -864,8 +984,17 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         diagnostics.push(`${objType}: the target describe could not be read, so field LABELS in the error text (e.g. "Billing State/Province") could not be resolved to API names — pushed values are shown only for fields the error names by API name.`);
       }
       // Owner-mapping outcome — surfaced as ⚠ notes, never failures.
-      if (ownerFellBack)  errors.push(`⚠ ${objType}: ${ownerFellBack} record(s) had owners with no name match in the target — assigned the fallback user.`);
-      if (ownerDefaulted) errors.push(`⚠ ${objType}: ${ownerDefaulted} record(s) had owners with no name match and no fallback user is set — the target org assigned its default owner.`);
+      // O1 field-based matching gets ONE line with the full accounting; the
+      // legacy Name-only notes below are untouched (shipped deployments read
+      // them).
+      if (ownerMatching) {
+        if (ownerKeyMatched || ownerKeyDup || ownerFellBack || ownerDefaulted) {
+          errors.push(`⚠ ${objType}: owners: ${ownerKeyMatched} matched by ${ownerMatching.fields.join('+')}, ${ownerKeyDup} dup-key → fallback, ${ownerFellBack + ownerDefaulted} unmatched → fallback${ownerFallback ? '' : ' (no fallback user set — the target org assigned its default owner)'}.`);
+        }
+      } else {
+        if (ownerFellBack)  errors.push(`⚠ ${objType}: ${ownerFellBack} record(s) had owners with no name match in the target — assigned the fallback user.`);
+        if (ownerDefaulted) errors.push(`⚠ ${objType}: ${ownerDefaulted} record(s) had owners with no name match and no fallback user is set — the target org assigned its default owner.`);
+      }
       // Source IDs that successfully inserted in target — cap at 2000 to keep
       // chrome.storage payloads sane on huge transfers. The picker reads this
       // to badge already-deployed records.
