@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Salesforce Toolkit",
   "version": "1.0.0",
-  "description": "Salesforce admin toolkit: bulk-manage flows, Lightning pages, permission sets, licenses, field dependencies, and record copy \u2014 all from one place.",
+  "description": "Admin toolkit for Salesforce: flows, picklists, deployments, permission sets, Lightning pages, debug logs \u2014 across all your orgs.",
   "permissions": [
     "cookies",
     "activeTab",
