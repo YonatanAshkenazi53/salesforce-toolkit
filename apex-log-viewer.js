@@ -23,9 +23,13 @@
   let _search   = null;     // { matches, idx, opts }
 
   // ── HTML escape ─────────────────────────────────────────
+  // '=' → &#61; (renders identically): the page-wide Trusted Types sanitizer
+  // strips inline-handler-shaped patterns (" onclick=…"), which can match
+  // inside raw LOG TEXT and silently delete it — every strip pattern needs a
+  // literal '='. Same fix as apex-debugger.js sftkEscLogLine.
   const _esc = s => String(s ?? '')
     .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/=/g,'&#61;');
 
   // ── Per-line CSS class (matches apex-debugger.js _logLineClass) ──
   function _logLineClass(line) {

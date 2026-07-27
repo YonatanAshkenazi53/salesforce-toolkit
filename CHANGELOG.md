@@ -30,6 +30,24 @@ they were never published to the store as separate releases.
   offending values named. The dry run also lists the target's active validation
   rules, triggers and duplicate rules — the things that can only fire on a real
   write — so a green dry run is honest about what it could and couldn't test.
+- **Match owners by the fields you choose**: deployment profiles can now match record
+  owners between orgs by Email + Name (default), Username, Alias or Federation ID —
+  with case/trim/email normalization — instead of display name only. Two target users
+  sharing the same key is never guessed: those records go to your fallback user, and
+  the run report says exactly how many owners matched, collided, or fell back.
+
+### Fixed
+- **Deep debugger QA, round 2 — ten more confirmed bugs fixed**, the big one being
+  trigger analysis that silently never worked (the log parser expected a grammar
+  Salesforce doesn't emit — trigger names now parse from real logs, including
+  namespaced triggers). Also: live polling now says so when your session expires
+  instead of spinning forever; fast log-switching can't render the wrong log anymore;
+  deletes report per-log failures instead of claiming success; cross-log search no
+  longer counts unreachable logs as "searched, no match" (and tells you how many it
+  couldn't reach); truncated logs can't scramble the flow/DML nesting anymore;
+  jumping to a line in a huge log no longer freezes the tab; and log lines that
+  *look* like HTML event handlers are no longer silently eaten by the page's
+  sanitizer — in both the debugger and the full-page log viewer.
 
 ## 1.2.0 — 2026-07-26
 

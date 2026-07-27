@@ -8,6 +8,59 @@
 //
 // Uses Tooling API: TraceFlag, DebugLevel, ApexLog
 // ============================================================
+
+// ── Pure log-grammar helpers ─────────────────────────────────
+// Top-level (column 0) so test/extract.mjs can slice + unit-test them.
+
+// Trigger name from a CODE_UNIT_STARTED log line. Live grammar:
+//   …|CODE_UNIT_STARTED|[EXTERNAL]|01q…|AccountTrigger on Account trigger event AfterInsert|__sfdc_trigger/AccountTrigger
+// Managed-package triggers carry the namespace as a middle path segment
+// (__sfdc_trigger/ns/Name). Very old logs used "Trigger:Name on Object…".
+// Returns the bare trigger name, or null for non-trigger lines.
+function sftkTriggerName(line) {
+  const s = String(line || '');
+  let m = s.match(/__sfdc_trigger\/(?:\w+\/)?(\w+)/);
+  if (m) return m[1];
+  m = s.match(/\bTrigger:(\w+)/);
+  if (m) return m[1];
+  m = s.match(/(?:^|\|)(\w+) on \w+ trigger event \w+/);
+  if (m) return m[1];
+  return null;
+}
+
+// True when a log line invalidates all open nesting: Salesforce truncation
+// markers (the lines between them and the next event are simply missing from
+// the file) and a new top-level EXECUTION_STARTED (a second transaction in
+// the same log) — stack entries opened before either point close in lines
+// the log doesn't contain, so nesting derived from them is garbage.
+function sftkLogNestingReset(line) {
+  const s = String(line || '');
+  if (s.includes('MAXIMUM DEBUG LOG SIZE REACHED')) return true;
+  if (/\*+\s*Skipped\s+[\d,]+\s+bytes/i.test(s)) return true;
+  return /\|EXECUTION_STARTED\s*$/.test(s);
+}
+
+// Shown-line target for a goto: every chunk up to (and including) the one
+// containing lineIdx, capped at totalLines. Lets the viewer render ONE big
+// slice instead of looping chunk-sized DOM appends until the target is in.
+function sftkChunkShownFor(lineIdx, chunkSize, totalLines) {
+  const idx   = Math.max(0, parseInt(lineIdx, 10) || 0);
+  const chunk = Math.max(1, parseInt(chunkSize, 10) || 1);
+  return Math.min(totalLines, Math.ceil((idx + 1) / chunk) * chunk);
+}
+
+// HTML-escape ONE log line for innerHTML insertion. Beyond the standard
+// entities, '=' becomes &#61; (renders identically): the page-wide Trusted
+// Types sanitizer (trusted-types-policy.js) strips inline-handler-shaped
+// patterns (" onclick=…"), so log TEXT containing one would be silently
+// removed — or, with an unpaired quote, swallow neighbouring markup too.
+// Without '=' none of the sanitizer's strip patterns can match.
+function sftkEscLogLine(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/=/g, '&#61;');
+}
+
 const ApexDebugger = (() => {
   'use strict';
 
@@ -396,6 +449,8 @@ const ApexDebugger = (() => {
   let _pollTimer   = null;
   let _cdTimer     = null;  // countdown timer
   let _lastPoll    = null;  // ISO timestamp of last poll
+  let _pollErrMsg  = null;  // first poll failure — shown in the status line until a poll succeeds
+  let _openLogSeq  = 0;     // _openLog request token — stale responses are discarded
 
   // ── Public API ────────────────────────────────────────────
   function init(container, orgUrl, sid) {
@@ -428,10 +483,20 @@ const ApexDebugger = (() => {
     _bodyCache = {};
     _newIds.clear();
     _lastPoll  = null;
+    _pollErrMsg = null;
+    _openLogSeq++;          // discard any in-flight _openLog response
     // QA 2026-07-26: DebugLevel record Ids are ORG-SPECIFIC. Without this,
     // an org switch reused the previous org's cached Id and every Start
     // Trace failed with a cross-reference error until full popup reload.
     _debugLevels = {};
+    // QA 2026-07-27: cross-log search state is per-org too — hits, query and
+    // the raw-body cache are all keyed by the previous org's log Ids, so an
+    // org/profile switch leaked its search marks and cached bodies. A search
+    // still running is told to stop; its workers clear _xSearchRunning.
+    _xSearchQuery = '';
+    _xSearchHits  = new Map();
+    _xRawCache    = {};
+    if (_xSearchRunning) _xSearchCancel = true;
   }
 
   // ── C5b: cross-links into sibling Toolkit tabs ────────────
@@ -896,7 +961,13 @@ const ApexDebugger = (() => {
   function _renderStatus(msg, type) {
     const cell = document.getElementById('adbgStatusCell');
     if (!cell) return;
-    if (!msg && _traceFlag) {
+    // A failing poll outranks the countdown — the countdown interval redraws
+    // this cell every second, so the error must win here or it would flash
+    // for under a second and vanish while the trace looks healthily live.
+    if (!msg && _pollErrMsg) {
+      msg  = _pollErrMsg;
+      type = 'error';
+    } else if (!msg && _traceFlag) {
       const rem  = Math.max(0, new Date(_traceFlag.ExpirationDate) - Date.now());
       const mins = Math.floor(rem / 60000);
       const secs = Math.floor((rem % 60000) / 1000);
@@ -921,6 +992,7 @@ const ApexDebugger = (() => {
   // ── Polling ───────────────────────────────────────────────
   function _startPolling() {
     _stopPolling();
+    _pollErrMsg = null;   // a fresh polling session starts with a clean status
     const dot = document.getElementById('adbgLiveDot');
     if (dot) dot.style.display = '';
     _pollTimer = setInterval(_pollForNew, POLL_MS);
@@ -952,7 +1024,24 @@ const ApexDebugger = (() => {
     // SOQL DateTime literals reject the millisecond suffix (.NNNZ) — Salesforce
     // returns HTTP 400 if we pass it. Drop the fraction before storing.
     _lastPoll = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
-    if (res.error || !res.records?.length) return;
+    // QA 2026-07-27: a swallowed poll error left the interval spinning forever
+    // — live dot on, countdown ticking — while every tick failed. Surface the
+    // FIRST failure in the status line (no toast spam: it's set once and the
+    // countdown redraw keeps it visible); a dead session never heals on its
+    // own, so stop the interval and say how to reconnect.
+    if (res.error) {
+      const fe = sftkFriendlyError(res.error);
+      if (fe.type === 'session') {
+        _stopPolling();
+        _pollErrMsg = 'Session expired — live updates stopped. Open the org in a tab to refresh the session, then ⏹ Stop and ▶ Start Trace to reconnect.';
+      } else if (!_pollErrMsg) {
+        _pollErrMsg = `Live updates failing: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`;
+      }
+      _renderStatus();
+      return;
+    }
+    if (_pollErrMsg) { _pollErrMsg = null; _renderStatus(); }   // recovered
+    if (!res.records?.length) return;
     const existing = new Set(_logs.map(l => l.Id));
     res.records.forEach(l => {
       if (!existing.has(l.Id)) {
@@ -1060,8 +1149,9 @@ const ApexDebugger = (() => {
       if (xHits?.length) {
         const re = new RegExp(_xSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig');
         const h = xHits[0];
-        const safe = _esc(h.text).replace(re, m => `<mark class="adbg-row-hit-mark">${_esc(m)}</mark>`);
-        xSnippet = `<div class="adbg-row-hit" title="${_esc(h.text)}">
+        // sftkEscLogLine — snippets are raw log text; see _oneLogLine.
+        const safe = sftkEscLogLine(h.text).replace(re, m => `<mark class="adbg-row-hit-mark">${_esc(m)}</mark>`);
+        xSnippet = `<div class="adbg-row-hit" title="${sftkEscLogLine(h.text)}">
           <span class="adbg-row-hit-ln">L${h.ln}</span>
           <span class="adbg-row-hit-txt">${safe}</span>
           ${xHits.length > 1 ? `<span class="adbg-row-hit-more">+${xHits.length - 1}</span>` : ''}
@@ -1154,7 +1244,7 @@ const ApexDebugger = (() => {
 
     const total = _logs.length;
     const ql    = query.toLowerCase();
-    let done = 0, idx = 0;
+    let done = 0, idx = 0, unreachable = 0;
     const CONC = 4;
 
     const updateProgress = () => {
@@ -1175,13 +1265,17 @@ const ApexDebugger = (() => {
           });
           if (!res.error && typeof res.text === 'string') {
             raw = res.text;
+            // Cache SUCCESSES only. QA 2026-07-27: caching a failed fetch as
+            // '' reported the log as "scanned, no match" — a lie — and the
+            // poisoned cache blocked every retry. Failures stay uncached so
+            // the next search re-attempts them; the count is surfaced below.
+            // (Skip the write if a reset/cancel swapped the cache mid-fetch.)
+            if (!_xSearchCancel) _xRawCache[log.Id] = raw;
+          } else {
+            unreachable++;
           }
         }
-        // Always record completion in _xRawCache so the visibility filter
-        // can tell "scanned (and didn't match)" apart from "not scanned yet".
-        // An empty string is a fine sentinel for "no body / fetch failed".
-        if (!(log.Id in _xRawCache)) _xRawCache[log.Id] = raw || '';
-        if (raw && !_xSearchCancel) {
+        if (raw != null && !_xSearchCancel) {
           const lines = raw.split('\n');
           const hits = [];
           for (let i = 0; i < lines.length && hits.length < 5; i++) {
@@ -1208,10 +1302,14 @@ const ApexDebugger = (() => {
     if (_xSearchQuery !== query) return;
     _renderLogList();
     if (cnt) {
+      // A log whose body fetch failed was NOT scanned — saying "no match"
+      // for it would be a lie, so the unreachable count is spelled out.
+      const scanned = unreachable
+        ? ` — searched ${total - unreachable} of ${total} logs (${unreachable} unreachable)` : '';
       if (_xSearchCancel) {
         cnt.textContent = `Cancelled — ${_xSearchHits.size} match${_xSearchHits.size === 1 ? '' : 'es'} (${done}/${total} scanned)`;
       } else {
-        cnt.textContent = `${_xSearchHits.size} of ${total} log${total === 1 ? '' : 's'} match "${query}"`;
+        cnt.textContent = `${_xSearchHits.size} of ${total} log${total === 1 ? '' : 's'} match "${query}"${scanned}`;
       }
     }
   }
@@ -1230,6 +1328,10 @@ const ApexDebugger = (() => {
 
   // ── Open log → parse + render detail ─────────────────────
   async function _openLog(id) {
+    // QA 2026-07-27: request token. Two quick clicks race their body fetches
+    // — without this, the FIRST log's (slower) response rendered over the
+    // second's, showing the wrong body under the second log's highlight.
+    const seq = ++_openLogSeq;
     _selLogId = id;
     _renderLogList(); // refresh active highlight
 
@@ -1244,6 +1346,7 @@ const ApexDebugger = (() => {
       type: 'SF_REST_GET_TEXT',
       path: `${TAPI}/sobjects/ApexLog/${id}/Body`
     });
+    if (seq !== _openLogSeq) return;   // superseded by a newer click — discard
     if (res.error) {
       const fe = sftkFriendlyError(res.error);
       detail.innerHTML = `<div class="adbg-detail-err" title="${_esc(fe.raw)}">Failed to load log: ${_esc(fe.message)}<br><small>${_esc(fe.hint || 'The log may have been deleted — refresh the list (🔄).')}</small></div>`;
@@ -1294,11 +1397,14 @@ const ApexDebugger = (() => {
 
   // HTML for a single log line — line-number gutter + colour-coded text.
   // `i` is the 0-based line index; the gutter shows the 1-based number.
+  // sftkEscLogLine (not _esc): log text can contain inline-handler-shaped
+  // fragments (" onclick='…'") that the Trusted Types sanitizer would strip
+  // from the rendered log — with an unpaired quote, markup along with it.
   function _oneLogLine(ln, i) {
     const cls = _logLineClass(ln);
     return `<div class="adbg-log-line${cls ? ' ' + cls : ''}" data-ln="${i}">` +
            `<span class="adbg-ln-num">${i + 1}</span>` +
-           `<span class="adbg-ln-txt">${_esc(ln) || '&nbsp;'}</span></div>`;
+           `<span class="adbg-ln-txt">${sftkEscLogLine(ln) || '&nbsp;'}</span></div>`;
   }
 
   // Build the HTML for a slice of lines [from, to).
@@ -1389,6 +1495,28 @@ const ApexDebugger = (() => {
     }
   }
 
+  // Render every chunk up to the one containing 0-based line `idx` in ONE
+  // DOM insertion. QA 2026-07-27: goto/match-step used to loop
+  // _logViewAppendChunk one chunk at a time — a jump deep into a
+  // multi-hundred-thousand-line log froze the UI for seconds.
+  function _logViewEnsureShown(idx) {
+    const st   = _logViewState;
+    const view = document.getElementById('adbgLogView');
+    if (!st || !view || st.filter || st.cat) return;  // filtered view: no chunking
+    const need = sftkChunkShownFor(idx, LOG_CHUNK, st.lines.length);
+    if (need <= st.shown) return;
+    const moreEl = document.getElementById('adbgLogMore');
+    const html   = _logLinesHtml(st.lines, st.shown, need);
+    if (moreEl) moreEl.insertAdjacentHTML('beforebegin', html);
+    else        view.insertAdjacentHTML('beforeend', html);
+    st.shown = need;
+    if (moreEl) {
+      if (st.shown >= st.lines.length) moreEl.remove();
+      else moreEl.textContent =
+        `Showing ${st.shown.toLocaleString()} of ${st.lines.length.toLocaleString()} lines — scroll to load more`;
+    }
+  }
+
   // Filter — scans ALL lines (not just rendered ones), renders matches (capped).
   // Combines the text query (st.filter) with the D4 category predicate (st.cat).
   function _logViewFilter(q) {
@@ -1458,11 +1586,8 @@ const ApexDebugger = (() => {
         b.classList.toggle('adbg-log-cat-on', b.dataset.cat === ''));
       _logViewApply();
     }
-    // Render chunks until the target line is in the DOM.
-    let guard = 0;
-    while (st.shown <= idx && st.shown < st.lines.length && guard++ < 10000) {
-      _logViewAppendChunk();
-    }
+    // Render everything up to the target line in one DOM insertion.
+    _logViewEnsureShown(idx);
     const el = view.querySelector(`.adbg-log-line[data-ln="${idx}"]`);
     if (el) {
       el.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -1808,7 +1933,7 @@ const ApexDebugger = (() => {
                     data-err-line="${e.line || ''}"
                     title="${e.line ? 'Jump to line ' + e.line + ' in the log' : ''}">
                 ${e.fatal ? '<span class="adbg-err-tag">FATAL</span>' : ''}
-                ${_esc(e.msg)}
+                ${sftkEscLogLine(e.msg) /* raw log text — see _oneLogLine */}
                 ${e.line ? `<span class="adbg-err-goto">line ${e.line} ↵</span>` : ''}
               </div>`
             ).join('')}
@@ -2187,12 +2312,8 @@ const ApexDebugger = (() => {
     st.idx = ((st.idx + delta) % st.matches.length + st.matches.length) % st.matches.length;
     const m = st.matches[st.idx];
 
-    // Render chunks until the target line is in the DOM
-    const ls = _logViewState;
-    let guard = 0;
-    while (ls && ls.shown <= m.ln && ls.shown < ls.lines.length && guard++ < 10000) {
-      _logViewAppendChunk();
-    }
+    // Render everything up to the target line in one DOM insertion
+    _logViewEnsureShown(m.ln);
     // Re-paint highlights now that more lines may be present
     _paintSearchHighlights();
 
@@ -2433,6 +2554,19 @@ const ApexDebugger = (() => {
     for (const line of text.split('\n')) {
       result.stats.lines++;
 
+      // QA 2026-07-27: truncation markers ("*** Skipped N bytes", MAXIMUM
+      // DEBUG LOG SIZE REACHED) and a new EXECUTION_STARTED invalidate every
+      // open stack entry — its closing line is in the part of the log that
+      // doesn't exist (or in the previous transaction), so nesting/depth
+      // derived after this point was garbage. Checked BEFORE the '|' guard:
+      // the truncation markers carry no '|' at all.
+      if (sftkLogNestingReset(line)) {
+        flowStack.length = 0;
+        dmlStack.length  = 0;
+        unitStack.length = 0;   // D3 durations: orphaned opens must not pair
+        pendingSoql = null;     // a BEGIN whose END was truncated away
+      }
+
       // ── Governor-limit summary block — these lines have no '|' delimiter ──
       if (inLimits) {
         if (line.includes('|')) {
@@ -2466,16 +2600,23 @@ const ApexDebugger = (() => {
       // durations. Matching is LIFO by label when possible, else top-of-stack —
       // truncated logs with unbalanced pairs simply drop the orphan.
       if (Number.isFinite(ns)) {
+        // Trigger units get a normalized "Trigger: Name" label on BOTH ends:
+        // STARTED's last segment is "__sfdc_trigger/Name" while FINISHED's
+        // varies by API version, so raw .pop() labels wouldn't pair.
         if (event === 'CODE_UNIT_STARTED' || event === 'METHOD_ENTRY' || event === 'FLOW_START_INTERVIEW_BEGIN') {
-          const type  = event === 'CODE_UNIT_STARTED' ? 'unit' : event === 'METHOD_ENTRY' ? 'method' : 'flow';
+          const type = event === 'CODE_UNIT_STARTED' ? 'unit' : event === 'METHOD_ENTRY' ? 'method' : 'flow';
+          const trg  = event === 'CODE_UNIT_STARTED' ? sftkTriggerName(line) : null;
           const label = event === 'FLOW_START_INTERVIEW_BEGIN'
             ? 'Flow: ' + (data.split('|')[1] || 'Unknown')
-            : (data.split('|').pop() || '').trim();
+            : trg ? 'Trigger: ' + trg
+                  : (data.split('|').pop() || '').trim();
           unitStack.push({ label, type, startNs: ns });
         } else if (event === 'CODE_UNIT_FINISHED' || event === 'METHOD_EXIT' || event === 'FLOW_START_INTERVIEW_END') {
+          const trg = event === 'CODE_UNIT_FINISHED' ? sftkTriggerName(line) : null;
           const closeLabel = event === 'FLOW_START_INTERVIEW_END'
             ? 'Flow: ' + (data.split('|')[1] || 'Unknown')
-            : (data.split('|').pop() || '').trim();
+            : trg ? 'Trigger: ' + trg
+                  : (data.split('|').pop() || '').trim();
           let idx = -1;
           for (let i = unitStack.length - 1; i >= 0; i--) {
             if (unitStack[i].label === closeLabel) { idx = i; break; }
@@ -2621,8 +2762,9 @@ const ApexDebugger = (() => {
         }
 
         case 'CODE_UNIT_STARTED': {
-          // data: [EXTERNAL]|id|Trigger:Name on Object trigger event AfterUpdate
-          //   OR  [EXTERNAL]|id|Class:Name  OR  [EXTERNAL]|id|VF:...  etc.
+          // data: [EXTERNAL]|01q…|Name on Object trigger event AfterUpdate|__sfdc_trigger/Name
+          //   OR  [EXTERNAL]|01p…|Class.method  OR  [EXTERNAL]|VF:...  etc.
+          // (Old API versions labelled triggers "Trigger:Name on Object …".)
           result.stats.codeUnits++;
           const label = (data.split('|').pop() || '').trim();
           if (label) {
@@ -2631,9 +2773,8 @@ const ApexDebugger = (() => {
             if (cu) cu.count++;
             else if (result.codeUnits.length < 50) result.codeUnits.push({ label, count: 1 });
           }
-          const m = data.match(/Trigger:(\w+)/);
-          if (m) {
-            const name = m[1];
+          const name = sftkTriggerName(line);
+          if (name) {
             if (!result.triggers[name]) result.triggers[name] = { count: 0, operations: [] };
             result.triggers[name].count++;
             // Capture the DML event (BeforeInsert / AfterUpdate / …)
@@ -2723,20 +2864,32 @@ const ApexDebugger = (() => {
     const cutoff = new Date(Date.now() - 86400000).toISOString().replace(/\.\d+Z$/, 'Z');
     const res = await _bg({ type: 'SF_QUERY_ALL', tooling: true,
       query: `SELECT Id FROM ApexLog WHERE StartTime < ${cutoff}` });
+    // QA 2026-07-27: a FAILED list query used to read as "0 logs to purge"
+    // and report silent success — surface it instead.
+    if (res?.error) {
+      btn.disabled = false; btn.textContent = '🧹 >24h';
+      _showErrorModal('Could not query old logs', res.error);
+      return;
+    }
     const ids = (res.records || []).map(r => r.Id);
     // Deletes run one-by-one and can far exceed the 200 listed — show a busy
     // cat in the list plus a live n/N counter so it never looks frozen.
     const listEl = document.getElementById('adbgLogList');
     if (listEl) listEl.innerHTML = '<div class="adbg-list-ph">' + sftkCatSm('Purging old logs…') + '</div>';
     const cnt = document.getElementById('adbgLogCount');
-    let done = 0;
+    let done = 0, failed = 0, firstErr = null;
     for (const id of ids) {
-      await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id }).catch(() => {});
+      const dRes = await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id });
       done++;
+      if (dRes?.error) {
+        failed++;
+        if (!firstErr) firstErr = dRes.error;
+      }
       if (cnt) cnt.textContent = `Deleting ${done}/${ids.length}`;
     }
     btn.disabled = false; btn.textContent = '🧹 >24h';
-    _loadLogs();
+    if (failed) _showErrorModal(`Purge: ${ids.length - failed} deleted, ${failed} failed`, firstErr);
+    _loadLogs();   // reloads from the org, so surviving rows reappear
   }
 
   // ── D7: compare two logs side by side ─────────────────────
@@ -2811,7 +2964,15 @@ const ApexDebugger = (() => {
   async function _deleteLog(id) {
     const row = document.querySelector(`.adbg-log-row[data-id="${id}"]`);
     if (row) row.style.opacity = '0.35';
-    await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id }).catch(() => {});
+    // _bg never rejects — failures come back as {error}. QA 2026-07-27: the
+    // old .catch() was dead code and the row was pruned even when the org
+    // still holds the log.
+    const res = await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id });
+    if (res?.error) {
+      if (row) row.style.opacity = '';
+      _showErrorModal('Could not delete log', res.error);
+      return;
+    }
     _logs = _logs.filter(l => l.Id !== id);
     _checked.delete(id);
     _newIds.delete(id);
@@ -2832,25 +2993,33 @@ const ApexDebugger = (() => {
     const btn = document.getElementById('adbgDelSelBtn');
     if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
     // Live n/N progress in the count span — deletes run sequentially.
+    // Per-record results ARE checked (QA 2026-07-27): a failed delete keeps
+    // its row (and checkbox) so the user can see + retry what's still there.
     const cnt = document.getElementById('adbgLogCount');
-    let done = 0;
+    let done = 0, failed = 0, firstErr = null;
     for (const id of ids) {
-      await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id }).catch(() => {});
-      _logs = _logs.filter(l => l.Id !== id);
-      _checked.delete(id);
-      _newIds.delete(id);
-      delete _bodyCache[id];
+      const res = await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id });
       done++;
+      if (res?.error) {
+        failed++;
+        if (!firstErr) firstErr = res.error;
+      } else {
+        _logs = _logs.filter(l => l.Id !== id);
+        _checked.delete(id);
+        _newIds.delete(id);
+        delete _bodyCache[id];
+        if (_selLogId === id) {
+          _selLogId = null;
+          const d = document.getElementById('adbgDetail');
+          if (d) d.innerHTML = '<div class="adbg-detail-empty"><div class="adbg-detail-icon">🗑</div><div>Logs deleted</div></div>';
+        }
+      }
       if (cnt) cnt.textContent = `Deleting ${done}/${ids.length}`;
-    }
-    if (ids.includes(_selLogId)) {
-      _selLogId = null;
-      const d = document.getElementById('adbgDetail');
-      if (d) d.innerHTML = '<div class="adbg-detail-empty"><div class="adbg-detail-icon">🗑</div><div>Logs deleted</div></div>';
     }
     _renderLogList();
     _updateCount();
     _updateDelBtn();
+    if (failed) _showErrorModal(`${ids.length - failed} deleted, ${failed} failed`, firstErr);
   }
 
   async function _deleteAll() {
@@ -2885,26 +3054,36 @@ const ApexDebugger = (() => {
     const listEl = document.getElementById('adbgLogList');
     if (listEl) listEl.innerHTML = '<div class="adbg-list-ph">' + sftkCatSm('Deleting logs…') + '</div>';
     const cnt = document.getElementById('adbgLogCount');
-    let done = 0;
+    // Per-record results ARE checked (QA 2026-07-27): rows whose delete
+    // failed stay in the list instead of vanishing while the org keeps them.
+    let done = 0, failed = 0, firstErr = null;
     for (const id of ids) {
-      await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id }).catch(() => {});
+      const res = await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id });
       done++;
+      if (res?.error) {
+        failed++;
+        if (!firstErr) firstErr = res.error;
+      } else {
+        _logs = _logs.filter(l => l.Id !== id);
+        _checked.delete(id);
+        _newIds.delete(id);
+        delete _bodyCache[id];
+        if (_selLogId === id) _selLogId = null;
+      }
       if (cnt) cnt.textContent = `Deleting ${done}/${ids.length}`;
     }
-    _logs      = [];
-    _bodyCache = {};
-    _checked.clear();
-    _newIds.clear();
-    _selLogId  = null;
 
-    const d = document.getElementById('adbgDetail');
-    if (d) d.innerHTML = '<div class="adbg-detail-empty"><div class="adbg-detail-icon">🗑</div><div>All logs deleted</div></div>';
+    if (!_selLogId) {
+      const d = document.getElementById('adbgDetail');
+      if (d) d.innerHTML = `<div class="adbg-detail-empty"><div class="adbg-detail-icon">🗑</div><div>${failed ? 'Logs deleted' : 'All logs deleted'}</div></div>`;
+    }
 
     _renderLogList();
     _updateCount();
     _updateDelBtn();
     btn.disabled    = false;
     btn.textContent = '🗑 Delete All';
+    if (failed) _showErrorModal(`${ids.length - failed} deleted, ${failed} failed`, firstErr);
   }
 
   // ── Download raw log ──────────────────────────────────────
