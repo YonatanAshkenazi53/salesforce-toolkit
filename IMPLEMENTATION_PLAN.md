@@ -525,17 +525,20 @@ anchor-based plan edit accidentally deleted it)
   dist/salesforce-toolkit-v<manifest.version>-store.zip. Labs-only exclusions now
   (schema/fields), CHANGELOG.md + studio-whatsnew.js ship, marker-based Labs strip with
   loud post-checks, packed-build boot-smoked. Current artifact: v1.1.0, 46 files, 615 KB.
-- [ ] **SHIP-2. Store listing + submission — DEFERRED by user 2026-07-25** ("let's delay
-  the chrome ship, but also keep updating the chrome ship as we go").
-  STANDING POLICY until submission: every user-visible milestone (a) gets a CHANGELOG.md
-  entry written WITH the code, (b) bumps manifest version when it warrants a release,
-  (c) re-runs `npm run pack` so the dist/ zip is ALWAYS submission-ready. Guard: the
-  whatsnew test pins CHANGELOG's newest entry to the manifest version — a bump without
-  release notes fails the gate. Submission steps when ready: dev account ($5) → upload
-  zip → listing (Developer Tools, 1280×800 shots) → privacy tab (single purpose;
-  justify cookies/scripting/storage/activeTab + salesforce hosts + NEW `alarms` =
-  "opt-in scheduled read-only drift checks with a badge — no background writes";
-  data-use: collects nothing, local only; PRIVACY.md URL) → visibility (Unlisted first).
+- [~] **SHIP-2. Store listing + submission — GO-LIVE KIT READY (2026-07-27), user's
+  console steps remain.** USER DECISION: public story starts at **1.0.0 with no
+  changelog history** ("we shouldn't state them. since we have to launch on version
+  1.0" / "When we have something new we will update it there") — manifest reset
+  1.3.0 → 1.0.0, CHANGELOG.md = single "Initial release." entry, full dev history
+  archived to `_CHANGELOG_HISTORY.md` (underscore = pack-excluded; verified absent
+  from zip). PRIVACY.md perms table synced to manifest (removed stale `tabs`, added
+  `alarms`) + contact/date added. Artifact: dist/salesforce-toolkit-v1.0.0-store.zip
+  (46 files, 629 KB), stale zips deleted. STANDING POLICY unchanged for future
+  releases: CHANGELOG entry WITH the code, bump version, `npm run pack` — versions
+  now continue upward from 1.0.0 (1.0.1/1.1.0…), guard test enforces sync.
+  Remaining (user, in browser): dev console account ($5) → upload zip → listing
+  copy + 1280×800 screenshots → privacy tab (justifications drafted in the go-live
+  kit) → submit Unlisted → sanity-check install → flip Public.
 
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.

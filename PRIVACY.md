@@ -1,5 +1,7 @@
 # Privacy — Salesforce Toolkit
 
+**Effective date:** July 27, 2026 · **Contact:** yonash53@gmail.com
+
 **The short version: everything stays in your browser.** No servers, no analytics, no
 telemetry, no third-party services. The extension talks only to the Salesforce orgs you
 have open, using the session you already have.
@@ -49,9 +51,9 @@ extension deletes all of it.
 |---|---|
 | `cookies` | Read your existing Salesforce session cookie to authenticate API calls |
 | `storage` | The local data inventory above |
-| `tabs` | Detect open Salesforce org tabs; open the Data Studio / log viewer tabs |
-| `activeTab` | Identify the org of the tab you invoked the popup from |
+| `activeTab` | Identify the org of the tab you invoked the popup or trace hotkey from |
 | `scripting` | Fallback only: if a direct API call is rejected (401), retry it from inside the org's own tab context |
+| `alarms` | Opt-in scheduled **read-only** drift checks (record-count queries) with a badge — no background writes, nothing leaves the browser |
 | `host_permissions` (salesforce.com family) | The API calls themselves |
 
 The extension exposes **no** web-accessible resources: ordinary websites cannot detect
