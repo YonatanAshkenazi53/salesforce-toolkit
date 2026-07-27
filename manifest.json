@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Salesforce Toolkit",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Salesforce admin toolkit: bulk-manage flows, Lightning pages, permission sets, licenses, field dependencies, and record copy \u2014 all from one place.",
   "permissions": [
     "cookies",
