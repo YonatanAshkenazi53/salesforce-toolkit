@@ -5,7 +5,6 @@
   "description": "Admin toolkit for Salesforce: flows, picklists, deployments, permission sets, Lightning pages, debug logs \u2014 across all your orgs.",
   "permissions": [
     "cookies",
-    "activeTab",
     "storage",
     "scripting",
     "alarms"

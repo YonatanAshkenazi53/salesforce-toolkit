@@ -2893,8 +2893,8 @@ async function getSfSession(activeTabUrl = null) {
       // Exact hostname match first — same org, same subdomain
       sfTab = tabs.find(t => t.url && new URL(t.url).hostname === activeHostname);
       // Slug match — handles my.salesforce.com ↔ lightning.force.com sibling URLs.
-      // e.g. "ashkenazy7-dev-ed.develop.my.salesforce.com" → slug "ashkenazy7-dev-ed"
-      // matches "ashkenazy7-dev-ed.develop.lightning.force.com" tab perfectly.
+      // e.g. "acme-dev.develop.my.salesforce.com" → slug "acme-dev"
+      // matches "acme-dev.develop.lightning.force.com" tab perfectly.
       // This must come BEFORE the broad base-domain fallback below, which for
       // ".develop.my.salesforce.com" orgs computes base = "my.salesforce.com"
       // and incorrectly matches every sandbox in the browser.
@@ -2947,7 +2947,7 @@ async function getSfSession(activeTabUrl = null) {
   // ── Step 3: try direct URL-based cookie lookup ───────────────────────────
   // IMPORTANT: use getAll() not get() here.
   // chrome.cookies.get() returns the earliest-created matching cookie when
-  // paths tie — this means a stale shared-domain cookie (e.g. ashkenazy6's
+  // paths tie — this means a stale shared-domain cookie (e.g. another org's
   // sid scoped to .develop.my.salesforce.com) beats the fresher org-specific
   // cookie even when querying for a completely different org's URL.
   // getAll() lets us sort by domain length so the most-specific (longest)

@@ -3425,7 +3425,7 @@ function lpResolveWinner(assignments, userContext) {
       scope: lpScopeLabel(a),
       tieKey: [a.app, a.recordType, a.profile, label]
         .map(v => String(v === null || v === undefined ? '' : v).toLowerCase())
-        .join(' ')
+        .join('\u0000')
     });
   }
   matched.sort((x, y) => {

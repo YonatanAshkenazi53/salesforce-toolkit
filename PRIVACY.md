@@ -51,7 +51,6 @@ extension deletes all of it.
 |---|---|
 | `cookies` | Read your existing Salesforce session cookie to authenticate API calls |
 | `storage` | The local data inventory above |
-| `activeTab` | Identify the org of the tab you invoked the popup or trace hotkey from |
 | `scripting` | Fallback only: if a direct API call is rejected (401), retry it from inside the org's own tab context |
 | `alarms` | Opt-in scheduled **read-only** drift checks (record-count queries) with a badge — no background writes, nothing leaves the browser |
 | `host_permissions` (salesforce.com family) | The API calls themselves |

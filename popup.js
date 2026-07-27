@@ -865,8 +865,8 @@ async function getSalesforceSession() {
   // Reading the cookie here instead of delegating to background.js avoids a
   // stale-service-worker bug where the old bg code uses chrome.cookies.get()
   // (returns earliest-created cookie) instead of getAll() sorted by domain
-  // length.  A shared-domain cookie from another org (e.g. ashkenazy6's sid
-  // scoped to .develop.my.salesforce.com) would otherwise shadow the correct
+  // length.  A shared-domain cookie from another org (a sid scoped to
+  // .develop.my.salesforce.com) would otherwise shadow the correct
   // org-specific cookie when the service worker hasn't been reloaded yet.
   if (activeTabUrl) {
     try {
