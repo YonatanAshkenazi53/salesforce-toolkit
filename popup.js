@@ -903,6 +903,14 @@ async function getSalesforceSession() {
 // Load Flows
 // ============================================================
 async function loadFlows() {
+  // No session yet (no SF tab open) — a sidebar click can land here before any
+  // connect. Show the normal "connect to Salesforce" state instead of firing a
+  // doomed query whose contract error would render as a scary banner.
+  if (!orgUrl || !sid) {
+    _flowsLoaded = false;   // let the next real session load flows
+    initSession();
+    return;
+  }
   // Re-show toolbar in case it was hidden by a previous session error
   document.getElementById('toolbar').style.display = '';
   document.getElementById('selectionSummary').style.display = '';
@@ -2444,6 +2452,11 @@ function handleApiError(errMsg) {
     // navigates their SF tab and Salesforce issues a fresh session cookie).
     _flowsLoaded = false;
     initSession('expired');
+  } else if (!sid && /Not connected to a Salesforce org/.test(String(errMsg))) {
+    // A feature fired before any session existed (no SF tab open). The waiting
+    // state polls and auto-connects — better than a static error banner.
+    _flowsLoaded = false;
+    initSession();
   } else {
     const fe = sftkFriendlyError(errMsg);
     showSessionError(fe.message + (fe.hint ? ' — ' + fe.hint : ''), String(errMsg));

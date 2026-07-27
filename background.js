@@ -1331,6 +1331,13 @@ async function dispatchMessage(message) {
     const missing = contract.required.filter(f =>
       message[f] === undefined || message[f] === null || message[f] === '');
     if (missing.length) {
+      // Missing session fields almost always mean "no Salesforce tab is open",
+      // not a code defect — a feature fired before any session existed. Say
+      // that, instead of scaring the user with "extension bug" (2026-07-27
+      // screenshot: raw contract error rendered in the popup's error banner).
+      if (missing.every(f => f === 'orgUrl' || f === 'sid')) {
+        throw new Error('Not connected to a Salesforce org — open a Salesforce org tab, then try again.');
+      }
       throw new Error(`${type}: missing required field(s) ${missing.join(', ')} — this is an extension bug, please report it`);
     }
   }
