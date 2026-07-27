@@ -2007,7 +2007,7 @@ async function _pkOpenSyncPlan() {
           </div>`;
         }).join('')}
         <div class="ds-pk-note" id="dsPkSyncAutoNote" style="margin-top:8px">⏳ Checking each target org's flows and validation rules for the values this plan would switch off…</div>
-        <div class="ds-pk-hint">Adds copy the source's label and active state. Value ORDER isn't synced. Standard picklists and global value sets aren't part of this v1.</div>
+        <div class="ds-pk-hint">Adds copy the source's label and active state. Value ORDER isn't synced. Standard picklists and global value sets can't be written by this sync — compare them in the matrix.</div>
       </div>
       <div class="ds-modal-footer">
         <button class="ds-btn" data-dsaction="closeModal">Cancel</button>

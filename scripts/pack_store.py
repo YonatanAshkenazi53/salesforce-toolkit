@@ -22,8 +22,10 @@ STAGE = os.path.join(DIST, 'store-staging')
 # it SHIPS now; only Schema View + Field Audit stay excluded.
 LABS_JS = {'studio-schema.js', 'studio-fields.js'}
 # studio-tools.js is kept in the repo as the tool-mounting recipe but is not
-# loaded by any page — no reason to ship it.
-EXCLUDE_JS = LABS_JS | {'studio-tools.js'}
+# loaded by any page — no reason to ship it. content.js is likewise a
+# comment-only placeholder (no content_scripts key, nothing injects it) —
+# shipping an unregistered "content script" just invites reviewer questions.
+EXCLUDE_JS = LABS_JS | {'studio-tools.js', 'content.js'}
 
 def fail(msg):
     print(f'❌ PACK FAILED: {msg}')
@@ -68,6 +70,29 @@ def main():
     html = html[:i_labs] + html[i_footer:]
     io.open(sh_path, 'w', encoding='utf-8').write(html)
 
+    # ── Strip HTML comments from every staged page ───────────────────────
+    # Dev comments carry internal history (Labs notes, dated decisions, file
+    # names that don't ship). Runs AFTER the Labs slice above, which needs
+    # its marker comments intact. Store-audit 2026-07-27.
+    for name in os.listdir(STAGE):
+        if name.endswith('.html'):
+            p = os.path.join(STAGE, name)
+            doc = io.open(p, encoding='utf-8').read()
+            doc = re.sub(r'[ \t]*<!--.*?-->\r?\n?', '', doc, flags=re.S)
+            io.open(p, 'w', encoding='utf-8').write(doc)
+    html = io.open(sh_path, encoding='utf-8').read()   # re-read for post-checks
+
+    # ── Ship CHANGELOG.md without its contributor preamble ───────────────
+    # The header names repo-only files and the release process; the What's
+    # New parser ignores it, but the raw file is world-readable in the CRX.
+    ch_path = os.path.join(STAGE, 'CHANGELOG.md')
+    ch = io.open(ch_path, encoding='utf-8').read()
+    first_entry = ch.find('\n## ')
+    if first_entry == -1:
+        fail('CHANGELOG.md has no "## " release entry')
+    title = ch.split('\n', 1)[0]
+    io.open(ch_path, 'w', encoding='utf-8').write(title + '\n' + ch[first_entry:])
+
     # ── Post-checks ──────────────────────────────────────────────────────
     for js in EXCLUDE_JS:
         if os.path.exists(os.path.join(STAGE, js)):
@@ -106,7 +131,7 @@ def main():
                 z.write(full, os.path.relpath(full, STAGE))
     size = os.path.getsize(zip_path)
     print(f'✅ {os.path.relpath(zip_path, ROOT)} — {len(copied)} files, {size/1024:.0f} KB')
-    print('   Labs excluded:', ', '.join(sorted(LABS_JS)), '(+ studio-tools.js, harness/_ files, eslint config)')
+    print('   Labs excluded:', ', '.join(sorted(LABS_JS)), '(+ studio-tools.js, content.js, harness/_ files, eslint config; html comments + changelog preamble stripped)')
 
 if __name__ == '__main__':
     main()

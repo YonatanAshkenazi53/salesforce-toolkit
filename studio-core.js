@@ -413,8 +413,8 @@ document.addEventListener('keydown', e => {
 // hands out for the SAME org: my.salesforce.com (API origin), lightning.force.com
 // (UI), salesforce-setup.com (Setup), and trailing-slash / scheme variants all
 // collapse to the org's myDomain prefix, e.g.:
-//   https://ashkenazy7-dev-ed.develop.my.salesforce.com  →  ashkenazy7-dev-ed.develop
-//   https://ashkenazy7-dev-ed.develop.lightning.force.com → ashkenazy7-dev-ed.develop
+//   https://acme-dev.develop.my.salesforce.com  →  acme-dev.develop
+//   https://acme-dev.develop.lightning.force.com → acme-dev.develop
 // Live sessions are always reported as the my.salesforce.com form, but stored
 // profile URLs may have been captured in any form — so equality on the raw
 // string falsely reports an open org as "offline". Match on this key instead.
@@ -1030,18 +1030,18 @@ function renderWelcome() {
           <span class="ds-welcome-card-badge ds-badge-read">Read-only</span>
           ${activityBadge('readiness')}
         </div>
-        <div class="ds-welcome-card" data-gotoview="schema">
+        ${_viewAvailable('schema') ? `<div class="ds-welcome-card" data-gotoview="schema">
           <div class="ds-welcome-card-icon">🕸</div>
           <div class="ds-welcome-card-title">Schema View</div>
           <div class="ds-welcome-card-desc">Visualize how objects relate to each other and which flows run on them.</div>
           <span class="ds-welcome-card-badge ds-badge-read">Read-only</span>
           ${activityBadge('schema')}
-        </div>
+        </div>` : ''}
       </div>
 
       <div class="ds-welcome-trust">
         <span class="ds-welcome-trust-icon">🔒</span>
-        <span>All operations run <strong>locally in your browser</strong>. No data is ever sent to external servers. Schema View and Deploy Readiness are completely read-only.</span>
+        <span>All operations run <strong>locally in your browser</strong>. No data is ever sent to external servers. ${_viewAvailable('schema') ? 'Schema View and Deploy Readiness are' : 'Deploy Readiness is'} completely read-only.</span>
         <span class="ds-welcome-trust-link" id="dsWelcomeSecBtn">Security details →</span>
       </div>
     </div>
@@ -1134,8 +1134,8 @@ function navigateToView(view) {
   else location.hash = target;   // hashchange handler renders
 }
 
-// Store builds ship WITHOUT the Labs files (scripts/pack_store.py strips
-// them) — a view whose render function isn't loaded falls back to home.
+// Store builds ship WITHOUT the Labs files — a view whose render function
+// isn't loaded falls back to home.
 // Palette/hash entries for absent views are filtered by this same check.
 function _viewAvailable(view) {
   const need = { readiness: 'renderReadiness', schema: 'renderSchemaView', fields: 'renderFieldAudit',
