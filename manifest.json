@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Salesforce Toolkit",
+  "name": "Admin Toolkit for Salesforce",
   "version": "1.0.0",
   "description": "Admin toolkit for Salesforce: flows, picklists, deployments, permission sets, Lightning pages, debug logs \u2014 across all your orgs.",
   "permissions": [
@@ -24,7 +24,7 @@
     "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'self' https://*.salesforce.com https://*.force.com https://*.salesforce-setup.com; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types sftk-html;"
   },
   "action": {
-    "default_title": "Salesforce Toolkit",
+    "default_title": "Admin Toolkit for Salesforce",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

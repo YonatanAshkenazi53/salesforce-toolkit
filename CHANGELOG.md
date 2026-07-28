@@ -1,4 +1,4 @@
-# What's New — Salesforce Toolkit
+# What's New — Admin Toolkit for Salesforce
 
 Everything that ships, newest first, in plain language.
 
