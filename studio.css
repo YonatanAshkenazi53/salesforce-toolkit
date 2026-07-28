@@ -4705,7 +4705,7 @@ html, body {
 .ds-pk-cmp-orgs { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 .ds-pk-mx-orgchk { display: flex; align-items: center; gap: 5px; font-size: 12.5px; }
 .ds-pk-matrix { border: 1px solid var(--border); border-radius: 8px; overflow: auto; max-width: 100%; }
-.ds-pk-mx-head, .ds-pk-mx-row { display: grid; grid-template-columns: minmax(160px, 1.3fr) repeat(var(--pk-cols, 3), minmax(90px, 1fr)); gap: 8px; padding: 7px 12px; align-items: center; }
+.ds-pk-mx-head, .ds-pk-mx-row { display: grid; grid-template-columns: 28px minmax(160px, 1.3fr) repeat(var(--pk-cols, 3), minmax(90px, 1fr)); gap: 8px; padding: 7px 12px; align-items: center; }
 .ds-pk-mx-head { background: var(--panel-bg, rgba(128,128,128,.08)); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--subtext); position: sticky; top: 0; }
 .ds-pk-mx-row { border-top: 1px solid var(--border); font-size: 12.5px; }
 .ds-pk-mx-col { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

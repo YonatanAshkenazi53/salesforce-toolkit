@@ -778,7 +778,7 @@ function _pkRtMatrixHtml(inv) {
   return `
     <div class="ds-pk-rtmatrix">
       <div class="ds-pk-rtm-title">🧩 Record-type assignments <span class="ds-pk-note-inline">tick to add · untick to remove · then Apply</span></div>
-      <div class="ds-pk-rtm-grid">${head}${rows}</div>
+      <div class="ds-pk-rtm-grid" style="--pk-rt-cols:${inv.rts.length}">${head}${rows}</div>
       <div class="ds-pk-rtm-actions">
         <button class="ds-btn ds-btn-sm ds-btn-primary" id="dsPkRtApply" disabled>Apply record-type changes</button>
         <span class="ds-pk-rtm-dirty" id="dsPkRtDirty"></span>
@@ -1309,7 +1309,7 @@ function _pkRenderMatrix() {
     <div class="ds-pk-note" style="margin:4px 0 6px">How to read a cell: <strong>✓</strong> value exists &amp; is active in that org · <strong>⏸</strong> exists but inactive · <strong>—</strong> value missing from that org · the <strong>number</strong> = how many records in that org currently hold the value · <strong>a/b RT</strong> = included in a of that org's b active record types (hover for names; <span style="color:#991b1b">red</span> = same-name record types disagree across orgs — align via 🔄 Sync from source).</div>
     ${cols.some(c => c.rtNote) ? `<div class="ds-pk-note">⚠ Record types: ${esc(cols.filter(c => c.rtNote).map(c => `${c.label} — ${c.rtNote}`).join(' · '))}</div>` : ''}
     ${skipped.length ? `<div class="ds-pk-note">⚠ Skipped ${skipped.length} org(s): ${esc(skipped.map(c => `${c.label} (${c.skip})`).join(', '))}</div>` : ''}
-    <div class="ds-pk-matrix">${head}${rows || '<div class="ds-pk-note">No values loaded.</div>'}</div>
+    <div class="ds-pk-matrix" style="--pk-cols:${cols.length}">${head}${rows || '<div class="ds-pk-note">No values loaded.</div>'}</div>
     <div class="ds-pk-bulkbar">
       <span class="ds-pk-bulk-lbl">With selected value(s) in the checked org(s):</span>
       <button class="ds-btn ds-btn-sm" id="dsPkBulkDeact">⏸ Deactivate…</button>
