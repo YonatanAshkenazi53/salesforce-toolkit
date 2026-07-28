@@ -1,4 +1,4 @@
-# Privacy — Salesforce Toolkit
+# Privacy — Admin Toolkit for Salesforce
 
 **Effective date:** July 27, 2026 · **Contact:** yonash53@gmail.com
 
