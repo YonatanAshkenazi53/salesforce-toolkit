@@ -539,19 +539,41 @@ stated in UI, never invents a total it did not measure).
   (500, plus the false-negative that inferred a saved user was missing), apex-debugger
   user search (N+1 probe), studio-scan orphan counts; picklist bulk-modal progressive scan.
 
-- [ ] **L5. scanAllPageAssignments fan-out** (lightning-pages.js) — LARGER than the L3 one
+- [x] **L5. scanAllPageAssignments fan-out** (v1.1.0 — ~1400→~101 calls; describes deduped by object, page meta batched, entity-id resolution collapsed to one chunked query; render virtualised. Viewport-scoped RESOLUTION declined: whole-org couplings make counts drift under scroll.)
+  ~~original~~ (lightning-pages.js) — LARGER than the L3 one
   that was fixed: one SF_TOOLING_GET per FlexiPage in a batch-of-5 barrier AND, inside the
   same loop, a sequential `fetchCustomObjectOrgDefaults` per page that re-describes with a
   cache-buster and memoizes nothing (600 pages / 200 objects → 600 describes where 200 would
   do, concurrency 1). User-triggered with a progress %, so not a blocker. Dedupe by a Map
   keyed on sObjectType (~3× fewer calls) and reuse the new `lpRunPool`.
-- [ ] **L6. studio-scan.js bucket caps** — missingInTarget / onlyInTarget / changed /
+- [x] **L6. studio-scan.js bucket caps** (v1.1.0 — true totals were already in memory one line before the slice, so "5,000 of 47,213" costs zero calls; every display site fixed; capped sets feeding a WRITE now warn.)
+  ~~original~~ — missingInTarget / onlyInTarget / changed /
   identical capped at 5,000 each; surface per the user-copy.js pattern.
-- [ ] **L7. Schema View flow layer** (studio-schema.js:709 and :1617) — `FROM
+- [x] **L7. Schema View flow layer** (v1.1.0 — one shared paginating reader + COUNT reconciliation; incomplete side ⇒ NO flow comparison emitted rather than a wrong one. Also fixed a silent 60-object cap and batched the deep scan.)
+  ~~original~~ (studio-schema.js:709 and :1617) — `FROM
   FlowDefinitionView WHERE IsActive = true LIMIT 500` single-page, and :1617 DIFFS two
   independently-truncated arrays, so a large org can report false flow-count differences.
   LABS FILE — excluded from the store build, so no shipped user is affected; fix before
   Schema View ever graduates.
+
+- [x] **L8. Composite-batch read primitive** (v1.1.0) — `sfCompositeBatch` /
+  `sfRunBatchedReads` in background.js: 25 subrequests per round-trip, per-item error
+  isolation, input-order preservation. **Misalignment defence**: a batch response is a
+  bare positional array with no echo of the request, so a dropped subrequest silently
+  shifts every later answer — any length mismatch fails the WHOLE chunk rather than
+  guessing which slot went missing. **Read-only guard**: `sftkIsWriteRequest` replaced
+  `method !== 'GET'`, which would have blocked READS on read-only orgs once callers
+  batched; it parses the outgoing body and clears only an all-GET composite batch.
+- [x] **L9. Incremental dependency cache** (v1.1.0) — per-org, keyed on
+  `Flow.LastModifiedDate`; warm org with 2 edits = 1 round-trip. Deleted flows evicted
+  (no phantom edges). The delete path re-verifies live whenever an edge came from cache,
+  so a cached answer can never make a delete look safe.
+- [x] **L10. Ring Sync Plan cap disclosure** (v1.1.0) — a multi-org WRITE built from
+  5,000-capped buckets with the push checkbox pre-checked, disclosing only its own 500
+  display slice. Now warns above the op checkboxes.
+- [x] **L11. sfQueryAll serverTotal** (v1.1.0) — was overwriting the server's own
+  totalSize with `records.length`, destroying a free authoritative count and forcing
+  callers to spend a round-trip on `SELECT COUNT()`.
 
 ## Shipping — Chrome Web Store  (section restored 2026-07-25 — an earlier
 anchor-based plan edit accidentally deleted it)
