@@ -1964,20 +1964,48 @@ function sftkBatchFailAll(sent, offset, message) {
   }));
 }
 
+// PURE. The lowercased authority ("host[:port]") of an absolute http(s) url,
+// or '' for anything relative or unparseable. A regex rather than new URL():
+// this runs once per subrequest on caller-supplied strings and must classify
+// junk as "not absolute", never throw on it.
+function sftkBatchUrlHost(url) {
+  const m = /^https?:\/\/([^/?#]+)/i.exec(String(url == null ? '' : url).trim());
+  return m ? m[1].toLowerCase() : '';
+}
+
+// PURE. The Salesforce record id a subrequest url addresses, or '' when the
+// url does not address a single record. Only the canonical record-GET shape
+// counts — a 15- or 18-char alphanumeric segment directly after
+// /sobjects/<Type>/ — so query urls, describes, and layout paths yield ''
+// (no identity claim) rather than a lookalike.
+function sftkBatchRecordId(url) {
+  const m = /(?:^|\/)sobjects\/[^/?#]+\/([a-zA-Z0-9]{18}|[a-zA-Z0-9]{15})(?=[/?#]|$)/i.exec(String(url == null ? '' : url));
+  return m ? m[1] : '';
+}
+
 // PURE. The reassembly. Turns one { hasErrors, results:[{statusCode, result}] }
 // response into per-item results aligned 1:1 with the subrequests that were
 // sent, offset into the caller's original array.
 //
-// ALIGNMENT IS POSITIONAL AND UNVERIFIABLE. composite/batch guarantees
-// results[i] answers batchRequests[i] and carries NO echo of the url, id, or
-// anything else identifying which subrequest a result belongs to. So if the
-// server ever returns a different NUMBER of results than we sent, there is no
-// way to work out which slot went missing: a dropped subrequest 3 shifts every
-// later answer one place left and the response still looks perfectly
+// ALIGNMENT IS POSITIONAL, AND VERIFIED WHEREVER THE PAYLOAD CARRIES IDENTITY
+// EVIDENCE. composite/batch guarantees results[i] answers batchRequests[i] and
+// carries NO echo of the url naming which subrequest a result belongs to. So if
+// the server ever returns a different NUMBER of results than we sent, there is
+// no way to work out which slot went missing: a dropped subrequest 3 shifts
+// every later answer one place left and the response still looks perfectly
 // well-formed. Attaching flow B's metadata to flow A is the worst failure this
 // primitive could have, so a length mismatch fails the WHOLE CHUNK loudly
 // instead of aligning the ones that "probably" line up. Other chunks are
 // untouched — this is a per-call verdict, not a per-run one.
+//
+// A SAME-length response can still be reordered or duplicated, and one class of
+// subrequest lets us PROVE that: a record GET names its id in the url, and the
+// record it returns names its own Id in the body. When both sides carry an id
+// they must agree on the first 15 chars (the case-safe prefix shared by the
+// 15- and 18-char forms of one id); a disagreement is misalignment proven, and
+// the whole chunk fails exactly like a length mismatch. Results with no Id to
+// check — query subrequests, 204s, error slots — stay exempt: absence of
+// evidence is not mismatch.
 //
 // `hasErrors` is advisory only and deliberately ignored for per-item verdicts:
 // the per-subrequest statusCode is the authority, and trusting a summary flag
@@ -1996,7 +2024,7 @@ function sftkBatchNormalize(sent, parsed, offset) {
     return sftkBatchFailAll(reqs, base, `composite/batch returned ${results.length} result(s) for ${reqs.length} subrequest(s) — results cannot be matched to requests, so none of this batch is trusted`);
   }
 
-  return reqs.map((req, i) => {
+  const items = reqs.map((req, i) => {
     const r = (results[i] && typeof results[i] === 'object') ? results[i] : {};
     const sn = Number(r.statusCode);
     const status = Number.isFinite(sn) ? sn : 0;
@@ -2015,6 +2043,25 @@ function sftkBatchNormalize(sent, parsed, offset) {
     if (!ok) item.error = sftkBatchItemError(status, item.body, url);
     return item;
   });
+
+  // Identity check: a same-length response can still be reordered or
+  // duplicated. Where a subrequest url addresses a record AND its 2xx result
+  // body carries an Id, the two must agree on the case-safe 15-char prefix —
+  // one proven disagreement means the positional alignment is broken for the
+  // whole chunk, and none of it is trusted.
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (!it.ok) continue;                                  // error slots: exempt
+    const want = sftkBatchRecordId(it.url);
+    if (!want) continue;                                   // no id in the url: exempt
+    const b = it.body;
+    const got = (b && typeof b === 'object' && !Array.isArray(b) && typeof b.Id === 'string') ? b.Id : '';
+    if (!/^[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?$/.test(got)) continue;  // no Id evidence (204s, queries): exempt
+    if (got.slice(0, 15) !== want.slice(0, 15)) {
+      return sftkBatchFailAll(reqs, base, `composite/batch results are misaligned: the result answering ${it.url} carries Id ${got}, a different record — results cannot be matched to requests, so none of this batch is trusted`);
+    }
+  }
+  return items;
 }
 
 // ---------------------------------------------------------------
@@ -2043,6 +2090,21 @@ function sftkBatchNormalize(sent, parsed, offset) {
 // all SESSION_EXPIRED: handleMessage retries the entire message with a
 // refreshed sid, exactly as it does for every other read, and swallowing it
 // here would turn a recoverable cookie rotation into 25 permanently-dead items.
+// Under concurrency > 1 the first throw also ABORTS the run: sibling runners
+// stop pulling new chunks and go quiet (no further onProgress) — the caller has
+// abandoned this run, so feeding it progress from a rejected promise would be
+// a lie. In-flight requests are left to settle (a fetch cannot be recalled)
+// but dispatch no further work. At concurrency 1 there are no siblings and the
+// throw behaves exactly as it always has.
+//
+// CROSS-ORG SUBREQUESTS ARE REFUSED, NOT RE-POINTED. sftkBatchSubUrl strips
+// the origin off an absolute subrequest url, which for a same-org url is mere
+// normalisation — but in a multi-org toolkit an absolute url whose host is NOT
+// the batch org's host would silently become a read against the wrong org.
+// Those items get a per-item failure ({ok:false, batchError:false}, error
+// naming both hosts) WITHOUT being dispatched; the remaining items still chunk
+// and align into their own slots around the refused ones. Same-host absolute
+// urls stay allowed.
 //
 // chunkSize exists because 25 is the limit on COUNT, not on SIZE. Flow
 // Metadata bodies are large; a consumer pulling full flow metadata should pass
@@ -2052,8 +2114,7 @@ function sftkBatchNormalize(sent, parsed, offset) {
 //
 // concurrency defaults to 1 so the plain primitive behaves like every other
 // read helper in this file: one request at a time, in order. Callers that want
-// several batches in flight ask for it explicitly (or use sfRunBatchedReads,
-// which defaults to 3).
+// several batches in flight ask for it explicitly.
 async function sfCompositeBatch(orgUrl, sid, subrequests, opts) {
   if (!Array.isArray(subrequests)) {
     throw new Error('sfCompositeBatch: subrequests must be an array of { method, url }');
@@ -2063,32 +2124,71 @@ async function sfCompositeBatch(orgUrl, sid, subrequests, opts) {
   const onProgress = typeof o.onProgress === 'function' ? o.onProgress : null;
   const shouldStop = typeof o.shouldStop === 'function' ? o.shouldStop : null;
   const url = `${orgUrl}/services/data/${API_VERSION}/composite/batch`;
-  const chunks = sftkBatchChunks(subrequests, o.chunkSize);
 
-  // Chunk k always lands at starts[k] in the output, computed BEFORE any
-  // request goes out. With concurrency > 1 batches settle out of order; their
-  // destination does not move, so completion order can never reorder results.
+  // Cross-org guard: refuse (do not dispatch) any absolute subrequest url whose
+  // host provably differs from the batch org's host. dispatchIdx maps a
+  // position in the dispatched list back to the caller's array, fixed here
+  // before any request goes out, so refused slots never shift their neighbours.
+  const orgHost = sftkBatchUrlHost(orgUrl);
+  const out = new Array(subrequests.length);
+  const dispatchIdx = [];
+  const dispatchSubs = [];
+  for (let i = 0; i < subrequests.length; i++) {
+    const r = subrequests[i];
+    const rawUrl = String((r && r.url) || '');
+    const subHost = sftkBatchUrlHost(rawUrl);
+    if (subHost && orgHost && subHost !== orgHost) {
+      out[i] = {
+        index: i,
+        method: String((r && r.method) || 'GET'),
+        url: rawUrl,
+        ok: false,
+        status: 0,
+        body: undefined,
+        error: `cross-org subrequest refused: url addresses host ${subHost} but this batch targets ${orgHost} — not dispatched`,
+        batchError: false
+      };
+    } else {
+      dispatchIdx.push(i);
+      dispatchSubs.push(r);
+    }
+  }
+  const refused = subrequests.length - dispatchSubs.length;
+  const chunks = sftkBatchChunks(dispatchSubs, o.chunkSize);
+
+  // Chunk k always lands at dispatchIdx[starts[k] ..] in the output, computed
+  // BEFORE any request goes out. With concurrency > 1 batches settle out of
+  // order; their destination does not move, so completion order can never
+  // reorder results.
   const starts = [];
   let acc = 0;
   for (const c of chunks) { starts.push(acc); acc += c.length; }
 
-  const out = new Array(subrequests.length);
   const limit = Math.max(1, Math.min(Math.floor(Number(o.concurrency)) || 1, chunks.length));
   let next = 0;
-  let settled = 0;
+  let settled = refused;   // refused slots already hold their verdict
+  let aborted = false;     // set on the first runner throw; siblings observe it
+  if (refused && onProgress) onProgress(settled, subrequests.length);
 
   async function runner() {
     for (;;) {
+      if (aborted) return;
       if (shouldStop && shouldStop()) return;
       const k = next++;
       if (k >= chunks.length) return;
       const offset = starts[k];
       const payload = sftkBatchBody(chunks[k], API_VERSION);
       const sent = payload.batchRequests;
-      const res = await sfFetchWithProxy(orgUrl, sid, url, {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      });
+      let res;
+      try {
+        res = await sfFetchWithProxy(orgUrl, sid, url, {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+      } catch (e) {
+        aborted = true;    // stop siblings BEFORE the rethrow rejects the run
+        throw e;
+      }
       let items;
       if (!res.ok) {
         items = sftkBatchFailAll(sent, offset, sfErrorMsg(res.status, res.body, url));
@@ -2102,9 +2202,12 @@ async function sfCompositeBatch(orgUrl, sid, subrequests, opts) {
           ? sftkBatchNormalize(sent, parsed, offset)
           : sftkBatchFailAll(sent, offset, `composite/batch returned an unreadable response — ${parseErr}`);
       }
-      for (let i = 0; i < items.length; i++) out[offset + i] = items[i];
+      for (let i = 0; i < items.length; i++) {
+        const at = dispatchIdx[offset + i];
+        out[at] = { ...items[i], index: at };
+      }
       settled += items.length;
-      if (onProgress) onProgress(settled, subrequests.length);
+      if (onProgress && !aborted) onProgress(settled, subrequests.length);
     }
   }
 
@@ -2112,114 +2215,6 @@ async function sfCompositeBatch(orgUrl, sid, subrequests, opts) {
   for (let r = 0; r < limit; r++) runners.push(runner());
   await Promise.all(runners);
   return out;
-}
-
-// ---------------------------------------------------------------
-// sfRunBatchedReads — the consumer-facing helper. Same contract as depRunPool /
-// lpRunPool (results in input order, onProgress(done,total), shouldStop, honest
-// complete flag) so a caller swaps its per-item pool for this and its progress
-// UI keeps working — but each unit of work is a 25-read batch instead of one
-// read, so the pool's `concurrency` is now batches in flight, not reads.
-//
-//   items      : anything[]
-//   builder    : (item, index) => { method?, url } | urlString | null
-//   opts       : { chunkSize?: <=25, concurrency? (default 3),
-//                  onProgress?: (doneItems, totalItems) => void,
-//                  shouldStop?: () => boolean }
-//
-// Returns { results, done, total, stopped, complete, batches, calls } where
-// results[i] is the per-item shape sfCompositeBatch returns (or undefined for
-// an item the pool never reached after a Stop — same as the existing pools).
-//
-// PROGRESS IS COUNTED IN ITEMS, NOT BATCHES: done/total are item counts so an
-// existing "n of m" UI stays literally true. The callback fires once per
-// settled batch and can therefore jump by up to chunkSize — which is the truth,
-// since those items really did settle at the same instant. Inventing 25
-// staggered callbacks would look smoother and be a lie about when the data
-// arrived.
-//
-// `builder` returning nothing for an item is not an error and is not silently
-// dropped: that slot is filled with an ok:false item saying no subrequest was
-// built and counted as settled, so no later item's answer shifts into it.
-// Callers that want those items gone should filter BEFORE calling.
-async function sfRunBatchedReads(orgUrl, sid, items, builder, opts) {
-  const list = Array.isArray(items) ? items : [];
-  const o = opts || {};
-  const total = list.length;
-  const onProgress = typeof o.onProgress === 'function' ? o.onProgress : null;
-  const shouldStop = typeof o.shouldStop === 'function' ? o.shouldStop : null;
-  const results = new Array(total);
-  if (!total) return { results, done: 0, total: 0, stopped: false, complete: true, batches: 0, calls: 0 };
-
-  // Build every subrequest up front. An item's position in `results` is decided
-  // here, once, and never inferred from anything the server sends back.
-  const builtIdx = [];
-  const builtSubs = [];
-  let done = 0;
-  for (let i = 0; i < total; i++) {
-    let s = null;
-    try { s = builder(list[i], i); } catch (_) { s = null; }
-    if (typeof s === 'string') s = { method: 'GET', url: s };
-    const sub = (s && s.url) ? { method: s.method || 'GET', url: s.url } : null;
-    if (sub) { builtIdx.push(i); builtSubs.push(sub); }
-    else {
-      results[i] = {
-        index: i, method: '', url: '', ok: false, status: 0, body: undefined,
-        error: 'no subrequest was built for this item', batchError: false
-      };
-      done++;
-    }
-  }
-  const built = builtSubs.length;
-  const preDone = done;
-  if (preDone && onProgress) onProgress(preDone, total);
-
-  // Chunked with the SAME chunker the primitive uses, so `batches` is the real
-  // number of round-trips this run costs — not an estimate.
-  const chunkList = sftkBatchChunks(builtSubs, o.chunkSize);
-
-  // Observe the caller's stop signal rather than inferring it from the counts:
-  // a Stop pressed after the last batch was dispatched still leaves every item
-  // covered, and `complete` is decided by the count alone (same rule as
-  // depRunPool / lpRunPool).
-  let stopped = false;
-  const stopFn = shouldStop ? () => { const s = !!shouldStop(); if (s) stopped = true; return s; } : undefined;
-
-  const batchResults = await sfCompositeBatch(orgUrl, sid, builtSubs, {
-    chunkSize: o.chunkSize,
-    concurrency: Number.isFinite(Number(o.concurrency)) ? o.concurrency : 3,
-    shouldStop: stopFn,
-    // settledBuilt counts BUILT items; the un-buildable ones were already
-    // counted, so what the caller sees is always "items of this run that are
-    // finished", in ITEMS, monotonic.
-    onProgress: onProgress ? (settledBuilt) => onProgress(preDone + settledBuilt, total) : undefined
-  });
-
-  // Map back through builtIdx — the only place a batch answer meets a caller
-  // item. It is a lookup into an index array fixed before the first request
-  // went out, so nothing here depends on completion order or on the server.
-  let settled = 0;
-  for (let b = 0; b < built; b++) {
-    if (batchResults[b] === undefined) continue;   // batch never dispatched (stopped)
-    results[builtIdx[b]] = { ...batchResults[b], index: builtIdx[b] };
-    settled++;
-  }
-  done = preDone + settled;
-
-  // Exact call count, not a ratio: one per chunk whose first slot came back.
-  let calls = 0;
-  let at = 0;
-  for (const c of chunkList) {
-    if (batchResults[at] !== undefined) calls++;
-    at += c.length;
-  }
-
-  return {
-    results, done, total, stopped,
-    complete: done === total,
-    batches: chunkList.length,
-    calls
-  };
 }
 
 // ── Metadata Deploy (REST-based, v38+) ─────────────────────────

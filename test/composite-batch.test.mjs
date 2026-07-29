@@ -22,11 +22,13 @@ import { extractFunction, extractFunctions } from './extract.mjs';
 // Pure helpers, materialised in one scope so they can call each other.
 const P = extractFunctions('background.js', [
   'sftkBatchSubUrl', 'sftkBatchChunks', 'sftkBatchBody',
-  'sftkBatchItemError', 'sftkBatchFailAll', 'sftkBatchNormalize'
+  'sftkBatchItemError', 'sftkBatchFailAll', 'sftkBatchNormalize',
+  'sftkBatchUrlHost', 'sftkBatchRecordId'
 ]);
 const {
   sftkBatchSubUrl, sftkBatchChunks, sftkBatchBody,
-  sftkBatchItemError, sftkBatchFailAll, sftkBatchNormalize
+  sftkBatchItemError, sftkBatchFailAll, sftkBatchNormalize,
+  sftkBatchUrlHost, sftkBatchRecordId
 } = P;
 
 const sftkIsWriteRequest = extractFunction('background.js', 'sftkIsWriteRequest');
@@ -39,9 +41,10 @@ const sftkIsWriteRequest = extractFunction('background.js', 'sftkIsWriteRequest'
 const IO = extractFunctions('background.js', [
   'sftkBatchSubUrl', 'sftkBatchChunks', 'sftkBatchBody',
   'sftkBatchItemError', 'sftkBatchFailAll', 'sftkBatchNormalize',
-  'sfErrorMsg', 'sfCompositeBatch', 'sfRunBatchedReads'
+  'sftkBatchUrlHost', 'sftkBatchRecordId',
+  'sfErrorMsg', 'sfCompositeBatch'
 ]);
-const { sfCompositeBatch, sfRunBatchedReads } = IO;
+const { sfCompositeBatch } = IO;
 
 const ORG = 'https://acme.my.salesforce.com';
 const SID = '00Dxx!fake';
@@ -556,111 +559,213 @@ describe('sfCompositeBatch — one failure never takes the rest down', () => {
   });
 });
 
-// ════════════════════════════════════════════════════════════════════════
-describe('sfRunBatchedReads — batched pool with per-item progress', () => {
-  const items = n => Array.from({ length: n }, (_, i) => ({ id: `301x${i}` }));
-  const build = it_ => `tooling/sobjects/Flow/${it_.id}`;
 
-  it('answers an empty list without touching the network', async () => {
-    const r = await sfRunBatchedReads(ORG, SID, [], build);
-    expect(r).toMatchObject({ done: 0, total: 0, stopped: false, complete: true, batches: 0, calls: 0 });
-    expect(calls).toHaveLength(0);
+// ════════════════════════════════════════════════════════════════════════
+describe('sftkBatchUrlHost / sftkBatchRecordId — the identity evidence extractors', () => {
+  it('extracts the lowercased host of an absolute http(s) url and nothing else', () => {
+    expect(sftkBatchUrlHost('https://Acme.my.salesforce.com/services/data')).toBe('acme.my.salesforce.com');
+    expect(sftkBatchUrlHost('http://a.example:8080/x')).toBe('a.example:8080');
+    for (const notAbs of ['v62.0/query?q=x', '/services/data/v62.0/x', '', '   ', null, undefined, 'ftp://x/y']) {
+      expect(sftkBatchUrlHost(notAbs)).toBe('');
+    }
   });
 
-  it('preserves item order through batching and out-of-order completion', async () => {
-    server(async (call) => {
-      await new Promise(r => setTimeout(r, (4 - call.n) * 10));
+  it('reads a record id only from the canonical /sobjects/<Type>/<id> shape', () => {
+    expect(sftkBatchRecordId('v62.0/tooling/sobjects/Flow/301xx0000004GhTAAU')).toBe('301xx0000004GhTAAU');
+    expect(sftkBatchRecordId('v62.0/sobjects/Account/001xx000003DGb2')).toBe('001xx000003DGb2');
+    expect(sftkBatchRecordId('v62.0/sobjects/Account/001xx000003DGb2AAG?fields=Name')).toBe('001xx000003DGb2AAG');
+    // NOT identity claims: describes, queries, short tails, 16-char lookalikes.
+    expect(sftkBatchRecordId('v62.0/sobjects/Account/describe')).toBe('');
+    expect(sftkBatchRecordId('v62.0/query?q=SELECT+Id')).toBe('');
+    expect(sftkBatchRecordId('v62.0/tooling/sobjects/Flow/301x0')).toBe('');
+    expect(sftkBatchRecordId('v62.0/sobjects/Account/001xx000003DGb2A')).toBe('');   // 16 chars
+    expect(sftkBatchRecordId(null)).toBe('');
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════
+describe('sftkBatchNormalize — identity evidence catches same-length misalignment', () => {
+  const FLOW_A = '301xx0000004GhTAAU';           // case-safe prefix 301xx0000004GhT
+  const FLOW_B = '301xx0000004AbCAAU';
+  const req = id => ({ method: 'GET', url: `v62.0/tooling/sobjects/Flow/${id}` });
+  const rec = (id, extra) => ({ statusCode: 200, result: { Id: id, ...(extra || {}) } });
+
+  it('rejects a same-length REORDERED response — length alone is not alignment', () => {
+    const out = sftkBatchNormalize([req(FLOW_A), req(FLOW_B)], {
+      hasErrors: false,
+      results: [rec(FLOW_B, { FullName: 'flow_b' }), rec(FLOW_A, { FullName: 'flow_a' })]
+    }, 0);
+    expect(out).toHaveLength(2);
+    expect(out.every(r => r.ok === false && r.batchError === true)).toBe(true);
+    // No slot is handed a payload that belongs to a different flow.
+    expect(out.every(r => r.body === undefined)).toBe(true);
+    expect(out[0].error).toContain('misaligned');
+    expect(out[0].error).toContain(FLOW_B);      // names the id that proved it
+  });
+
+  it('rejects a DUPLICATED slot — one record answering two different subrequests', () => {
+    const out = sftkBatchNormalize([req(FLOW_A), req(FLOW_B)], {
+      hasErrors: false, results: [rec(FLOW_A), rec(FLOW_A)]
+    }, 0);
+    expect(out.every(r => r.ok === false && r.batchError === true)).toBe(true);
+    expect(out.every(r => r.body === undefined)).toBe(true);
+  });
+
+  it('accepts the aligned case, and the 18- and 15-char forms of one id MATCH', () => {
+    // The url names the 15-char form, the body answers with the 18-char form —
+    // same record, case-safe prefix agrees, no false alarm.
+    const out = sftkBatchNormalize([
+      { method: 'GET', url: `v62.0/tooling/sobjects/Flow/${FLOW_A.slice(0, 15)}` },
+      req(FLOW_B)
+    ], { hasErrors: false, results: [rec(FLOW_A), rec(FLOW_B)] }, 0);
+    expect(out.map(r => r.ok)).toEqual([true, true]);
+    expect(out[0].body.Id).toBe(FLOW_A);
+  });
+
+  it('leaves a query-shaped subrequest without a top-level Id alone', () => {
+    // Absence of evidence is not mismatch: a query result carries no top-level
+    // Id to check and must not be failed for it.
+    const out = sftkBatchNormalize([
+      { method: 'GET', url: 'v62.0/query?q=SELECT+Id+FROM+Account' },
+      req(FLOW_A)
+    ], { hasErrors: false, results: [
+      { statusCode: 200, result: { totalSize: 1, records: [{ Id: '001xx000003DGb2AAG' }] } },
+      rec(FLOW_A)
+    ] }, 0);
+    expect(out.map(r => r.ok)).toEqual([true, true]);
+  });
+
+  it('exempts error slots and 204s — a failed or empty slot claims no identity', () => {
+    const out = sftkBatchNormalize([req(FLOW_A), req(FLOW_B)], {
+      hasErrors: true, results: [
+        { statusCode: 404, result: [{ message: 'not found', errorCode: 'NOT_FOUND' }] },
+        { statusCode: 204 }
+      ]
+    }, 0);
+    expect(out[0].ok).toBe(false);
+    expect(out[0].batchError).toBe(false);       // that ITEM failed, not the call
+    expect(out[1].ok).toBe(true);
+    expect(out[1].body).toBeUndefined();
+  });
+
+  it('end-to-end: a reordered wire response fails ITS chunk; other chunks are untouched', async () => {
+    const FLOW_C = '301xx0000004XyZAAU';
+    const FLOW_D = '301xx0000004QrSAAU';
+    // Two chunks of 2. Chunk 1 comes back with its two records swapped; chunk 0 is honest.
+    server(call => {
+      const ids = call.batchRequests.map(r => r.url.split('/').pop());
+      const order = call.n === 1 ? [...ids].reverse() : ids;
+      return { ok: true, status: 200, body: okBody(order.map(id => rec(id))) };
+    });
+    const out = await sfCompositeBatch(ORG, SID,
+      [FLOW_A, FLOW_B, FLOW_C, FLOW_D].map(id => req(id)), { chunkSize: 2 });
+    expect(out.slice(0, 2).every(r => r.ok)).toBe(true);
+    expect(out.slice(2).every(r => r.ok === false && r.batchError === true && r.body === undefined)).toBe(true);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════
+describe('sfCompositeBatch — a thrown runner aborts the run, siblings included', () => {
+  it('SESSION_EXPIRED at concurrency 1 still propagates for the message-level retry', async () => {
+    // The shipped callers all use concurrency 1: the abort flag must not
+    // change this path at all — the throw reaches handleMessage, which
+    // retries the whole message with a refreshed sid.
+    server(call => {
+      if (call.n === 1) throw new Error('SESSION_EXPIRED');
       return echoServer(call);
     });
-    const r = await sfRunBatchedReads(ORG, SID, items(100), build, { concurrency: 4 });
-    expect(r.complete).toBe(true);
-    expect(r.done).toBe(100);
-    expect(r.batches).toBe(4);
-    expect(r.calls).toBe(4);
-    r.results.forEach((res, i) => {
-      expect(res.index).toBe(i);
-      expect(res.body.echo).toBe(`v62.0/tooling/sobjects/Flow/301x${i}`);
-    });
+    await expect(sfCompositeBatch(ORG, SID, subs(75), { concurrency: 1 }))
+      .rejects.toThrow('SESSION_EXPIRED');
+    expect(calls).toHaveLength(2);   // chunk 0 answered, chunk 1 threw, chunk 2 never dispatched
   });
 
-  it('reports progress per settled ITEM so an existing "n of m" UI stays true', async () => {
+  it('stops siblings pulling NEW chunks and silences onProgress after a throw', async () => {
     const seen = [];
-    await sfRunBatchedReads(ORG, SID, items(60), build, {
-      concurrency: 1, onProgress: (d, t) => seen.push([d, t])
+    server(async (call) => {
+      if (call.n === 0) {
+        await new Promise(r => setTimeout(r, 5));
+        throw new Error('SESSION_EXPIRED');
+      }
+      await new Promise(r => setTimeout(r, 30));
+      return echoServer(call);
     });
-    expect(seen.map(s => s[1]).every(t => t === 60)).toBe(true);
-    expect(seen.map(s => s[0])).toEqual([25, 50, 60]);        // items, not batches
-    const done = seen.map(s => s[0]);
-    expect([...done].sort((a, b) => a - b)).toEqual(done);     // monotonic
-    expect(done[done.length - 1]).toBe(60);
+    await expect(sfCompositeBatch(ORG, SID, subs(200), {
+      concurrency: 2, onProgress: (d, t) => seen.push([d, t])
+    })).rejects.toThrow('SESSION_EXPIRED');
+    // At rejection: chunk 0 (threw) and chunk 1 (already in flight) were sent.
+    expect(calls).toHaveLength(2);
+    // The in-flight sibling settles late — it may finish (a fetch cannot be
+    // recalled) but must dispatch nothing further and report nothing into a
+    // run the caller has abandoned.
+    await new Promise(r => setTimeout(r, 80));
+    expect(calls).toHaveLength(2);               // chunks 2..7 never dispatched
+    expect(seen).toEqual([]);                    // no progress after the abort
   });
+});
 
-  it('accepts either a url string or a {method,url} from the builder', async () => {
-    await sfRunBatchedReads(ORG, SID, items(2), (x, i) =>
-      i === 0 ? `tooling/sobjects/Flow/${x.id}` : { method: 'GET', url: `tooling/sobjects/Flow/${x.id}` });
-    expect(calls[0].batchRequests.map(r => r.method)).toEqual(['GET', 'GET']);
-  });
+// ════════════════════════════════════════════════════════════════════════
+describe('sfCompositeBatch — a cross-org url is refused, never silently re-pointed', () => {
+  const FOREIGN = 'https://other.my.salesforce.com/services/data/v62.0/tooling/sobjects/Flow/301xx0000004GhTAAU';
 
-  it('keeps the slot of an item the builder could not describe', async () => {
-    // The dangerous alternative is dropping it, which shifts every later
-    // answer one place left — the same misattribution the normaliser refuses.
-    const r = await sfRunBatchedReads(ORG, SID, items(5), (x, i) => (i === 2 ? null : build(x)));
-    expect(r.results).toHaveLength(5);
-    expect(r.done).toBe(5);
-    expect(r.complete).toBe(true);
-    expect(r.results[2].ok).toBe(false);
-    expect(r.results[2].error).toMatch(/no subrequest was built/);
-    expect(r.results[2].batchError).toBe(false);
-    expect(r.results[3].body.echo).toBe('v62.0/tooling/sobjects/Flow/301x3');
-    expect(calls[0].batchRequests).toHaveLength(4);   // only 4 were ever asked for
-  });
-
-  it('treats a throwing builder the same way — that item, not the run', async () => {
-    const r = await sfRunBatchedReads(ORG, SID, items(4), (x, i) => {
-      if (i === 1) throw new Error('bad item');
-      return build(x);
+  it('refuses a mid-chunk cross-org item; every neighbour still lands in its own slot', async () => {
+    const list = subs(10);
+    list.splice(4, 0, { method: 'GET', url: FOREIGN });   // 11 items, foreign at index 4
+    const out = await sfCompositeBatch(ORG, SID, list);
+    expect(out).toHaveLength(11);
+    // The foreign item: failed per-item, both hosts named, never dispatched.
+    expect(out[4].ok).toBe(false);
+    expect(out[4].batchError).toBe(false);       // this ITEM was refused, not the call
+    expect(out[4].error).toContain('other.my.salesforce.com');
+    expect(out[4].error).toContain('acme.my.salesforce.com');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].batchRequests).toHaveLength(10);      // 10 dispatched, not 11
+    expect(calls[0].batchRequests.every(r => !r.url.includes('other.my'))).toBe(true);
+    // Neighbours: each result echoes ITS OWN url, before and after the hole.
+    list.forEach((s, i) => {
+      if (i === 4) return;
+      expect(out[i].index).toBe(i);
+      expect(out[i].ok).toBe(true);
+      expect(out[i].body.echo).toBe(`v62.0/${s.url}`);
     });
-    expect(r.results[1].ok).toBe(false);
-    expect(r.results[0].ok).toBe(true);
-    expect(r.results[2].ok).toBe(true);
-    expect(r.done).toBe(4);
   });
 
-  it('reports a stop honestly: stopped, not complete, unread items absent', async () => {
-    let n = 0;
-    const r = await sfRunBatchedReads(ORG, SID, items(100), build, {
-      concurrency: 1, shouldStop: () => n++ >= 2
-    });
-    expect(r.stopped).toBe(true);
-    expect(r.complete).toBe(false);
-    expect(r.done).toBe(50);
-    expect(r.calls).toBe(2);
-    expect(r.batches).toBe(4);                       // what it WOULD have cost
-    expect(r.results.slice(50).every(x => x === undefined)).toBe(true);
+  it('keeps alignment when refusals change the chunking arithmetic', async () => {
+    // 27 caller items, 2 refused → 25 dispatchable → exactly ONE round-trip,
+    // where the naive count (27) would have taken two.
+    const list = subs(27);
+    list[3]  = { method: 'GET', url: FOREIGN };
+    list[19] = { method: 'GET', url: FOREIGN };
+    const out = await sfCompositeBatch(ORG, SID, list);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].batchRequests).toHaveLength(25);
+    for (let i = 0; i < 27; i++) {
+      expect(out[i].index).toBe(i);
+      if (i === 3 || i === 19) {
+        expect(out[i].ok).toBe(false);
+        expect(out[i].batchError).toBe(false);
+      } else {
+        expect(out[i].body.echo).toBe(`v62.0/tooling/sobjects/Flow/301x${i}`);
+      }
+    }
   });
 
-  it('does not call a completed run "stopped" just because Stop came late', async () => {
-    // Same rule as depRunPool/lpRunPool: complete is decided by the count.
-    const r = await sfRunBatchedReads(ORG, SID, items(10), build, { shouldStop: () => false });
-    expect(r.stopped).toBe(false);
-    expect(r.complete).toBe(true);
+  it('still allows a SAME-host absolute url — that is mere normalisation', async () => {
+    const out = await sfCompositeBatch(ORG, SID, [
+      { method: 'GET', url: `${ORG}/services/data/v62.0/tooling/sobjects/Flow/301x0` }
+    ]);
+    expect(out[0].ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].batchRequests[0].url).toBe('v62.0/tooling/sobjects/Flow/301x0');
   });
 
-  it('surfaces a failed batch per item without failing the run', async () => {
-    server(call => call.n === 0
-      ? { ok: false, status: 503, body: JSON.stringify([{ message: 'Service unavailable' }]) }
-      : echoServer(call));
-    const r = await sfRunBatchedReads(ORG, SID, items(50), build, { concurrency: 1 });
-    expect(r.complete).toBe(true);                   // every item was settled…
-    expect(r.results.slice(0, 25).every(x => x.ok === false && x.batchError)).toBe(true);
-    expect(r.results.slice(25).every(x => x.ok)).toBe(true);   // …25 of them badly
-  });
-
-  it('quotes a call count that matches the round-trips actually made', async () => {
-    const r = await sfRunBatchedReads(ORG, SID, items(1600), build, { concurrency: 5 });
-    expect(r.batches).toBe(64);
-    expect(r.calls).toBe(64);
-    expect(calls).toHaveLength(64);
-    expect(r.done).toBe(1600);
+  it('counts refused items as settled progress; an all-refused batch costs zero calls', async () => {
+    const seen = [];
+    const out = await sfCompositeBatch(ORG, SID,
+      [{ url: FOREIGN }, { url: FOREIGN }],
+      { onProgress: (d, t) => seen.push([d, t]) });
+    expect(calls).toHaveLength(0);
+    expect(out).toHaveLength(2);
+    expect(out.every(r => r.ok === false && r.batchError === false)).toBe(true);
+    expect(seen).toEqual([[2, 2]]);              // settled with a verdict, honestly
   });
 });

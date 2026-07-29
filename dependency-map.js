@@ -561,11 +561,11 @@ function depReportCsv(report) {
   return rows.map(row => row.map(cell).join(',')).join('\r\n');
 }
 
-// ── Scan sizing (P1, batched in v1.0.2) ───────────────────────────────────────
+// ── Scan sizing (P1, batched in v1.1.0) ───────────────────────────────────────
 // The dependency map needs ONE Tooling metadata READ per flow VERSION — the
 // Flow tooling object is version-grained, so 400 definitions × 4 versions is
 // 1600 reads. In v1.0.1 that was 1600 HTTP round-trips and the reported "first
-// load takes a few minutes". Since v1.0.2 those reads travel in composite/batch
+// load takes a few minutes". Since v1.1.0 those reads travel in composite/batch
 // chunks (background.js sfCompositeBatch), so the same 1600 reads cost
 // ceil(1600 / chunkSize) round-trips — 160 at chunkSize 10.
 //
@@ -583,9 +583,9 @@ function depScanPlan(versionCount, opts) {
   const o = opts || {};
   const num = (v, d) => (Number.isFinite(v) && v > 0 ? v : d);
   const autoMax     = Number.isFinite(o.autoMax) && o.autoMax >= 0 ? o.autoMax : 150;
-  // Concurrency is now BATCHES in flight, not single reads. 3 matches
-  // sfRunBatchedReads' default; 3 × 10 reads in flight is the same pressure on
-  // the org as v1.0.1's 6 single reads, for a tenth of the round-trips.
+  // Concurrency is now BATCHES in flight, not single reads. 3 × 10 reads in
+  // flight is the same pressure on the org as v1.0.1's 6 single reads, for a
+  // tenth of the round-trips.
   const concurrency = num(o.concurrency, 3);
   // Reads per round-trip. 25 is the server's hard ceiling on subrequest COUNT
   // (sftkBatchChunks enforces it); flow Metadata bodies are large, so the
@@ -660,7 +660,7 @@ async function depRunPool(items, worker, opts) {
   return { results, done, total, stopped, complete: done === total };
 }
 
-// ══ Batched metadata scan (v1.0.2) ═══════════════════════════════════════════
+// ══ Batched metadata scan (v1.1.0) ═══════════════════════════════════════════
 // The unit of work the pool above now hands out is a CHUNK of flow versions, not
 // a single one. Everything that decides what goes into a chunk, what a chunk's
 // answer means, and whether the run covered the org lives here at column 0 so it
@@ -685,8 +685,8 @@ function depScanChunks(items, size) {
 // wants. The url is deliberately version-LESS ("tooling/sobjects/Flow/301x"):
 // sftkBatchSubUrl rewrites the version to background.js' API_VERSION, so this
 // file never carries a second copy of the version string that could go stale.
-// A record with no Id yields an empty url, which sfRunBatchedReads/… reports as
-// a failed item rather than silently shifting every later answer up one slot.
+// A record with no Id yields an empty url, which the batch call reports as a
+// failed item rather than silently shifting every later answer up one slot.
 function depBatchSubrequests(chunk) {
   return (Array.isArray(chunk) ? chunk : []).map(f => ({
     method: 'GET',
@@ -755,8 +755,83 @@ function depApiVersionOf(url) {
   return m ? m[1].toLowerCase() : '';
 }
 
-// ══ Incremental dependency cache (v1.0.2) ════════════════════════════════════
-// Before v1.0.2 nothing persisted: every popup open called reset() and rescanned
+// PURE. QA 2026-07-29 (F7) — the API version a QUERY's records were really
+// served on. Every SOQL/Tooling query record echoes its own REST url in
+// attributes.url ("/services/data/v62.0/tooling/sobjects/Flow/301…"), so the
+// version the wire actually used is already in hand on every list query — no
+// extra HTTP call and no scan needed. This is what lets the fully-warm-cache
+// path (zero batches dispatched) still verify the version assumption the
+// cache key is built on; before it, that check lived only inside the scan
+// worker and could never fire on precisely the path that trusts the cache
+// most. Returns '' (= nothing observable, do not judge) when no record
+// carries a parseable url.
+function depListApiVersion(records) {
+  for (const r of (Array.isArray(records) ? records : [])) {
+    const url = r && r.attributes && r.attributes.url;
+    if (!url) continue;
+    const m = /\/services\/data\/(v\d+(?:\.\d+)?)(?=[/?])/i.exec(String(url));
+    if (m) return m[1].toLowerCase();
+  }
+  return '';
+}
+
+// PURE. QA 2026-07-29 (F2) — did the delete-path re-check's Flow list cover
+// the WHOLE org? sfQueryAll reports the server's own total (serverTotal)
+// alongside the rows it actually returned; a Tooling query can cap
+// server-side even when pagination is followed to exhaustion. Treating a
+// capped list as authoritative would make every version missing from it read
+// as DELETED — evicting live edges and then stamping the re-check as
+// complete. A capped list makes the whole re-check PARTIAL: evict nothing,
+// stamp nothing, and say why. An unknown serverTotal is "no evidence of a
+// cap", not "capped" — the caller keeps its other guards either way.
+function depRecheckCoverage(gotCount, serverTotal) {
+  const got = Math.max(0, Math.floor(Number(gotCount) || 0));
+  const t = Number(serverTotal);
+  if (!Number.isFinite(t) || t <= got) return { complete: true, got, missing: 0, reason: '' };
+  return {
+    complete: false,
+    got,
+    missing: t - got,
+    reason: `the org returned ${got} of ${t} flow versions — the re-check could not complete, so nothing was evicted and cached edges remain unverified`
+  };
+}
+
+// PURE. QA 2026-07-29 (F3) — cached edges carry the CALLING version's
+// MasterLabel / VersionNumber / Status / ProcessType from when the cache was
+// BUILT. Status in particular moves without the version's own metadata
+// changing (activating v5 flips v4 to Obsolete), so a delete-dependency
+// table rendered from cached edges can show a now-Active parent wearing a
+// stale grey 'Draft' chip. Given a LIVE flow list, refresh those descriptive
+// fields on every edge whose calling version (matched by Id) is in it; an
+// edge whose caller is not in the live list is left untouched rather than
+// blanked. Never mutates its input.
+function depMapRefreshFields(map, liveFlows) {
+  const src = (map && typeof map === 'object') ? map : {};
+  const byId = new Map();
+  for (const f of (Array.isArray(liveFlows) ? liveFlows : [])) {
+    if (f && f.Id) byId.set(f.Id, f);
+  }
+  const out = {};
+  for (const called of Object.keys(src)) {
+    const parents = Array.isArray(src[called]) ? src[called] : [];
+    out[called] = parents.map(p => {
+      const f = p && byId.get(p.id);
+      if (!f) return p;
+      return {
+        ...p,
+        masterLabel: f.MasterLabel,
+        apiName: f.ApiName != null ? f.ApiName : p.apiName,
+        versionNumber: f.VersionNumber,
+        status: f.Status,
+        processType: f.ProcessType
+      };
+    });
+  }
+  return out;
+}
+
+// ══ Incremental dependency cache (v1.1.0) ════════════════════════════════════
+// Before v1.1.0 nothing persisted: every popup open called reset() and rescanned
 // the org from zero. The cache below stores the built map plus, per flow VERSION
 // id, the LastModifiedDate the Flow list query returned for it. On the next open
 // the (already paid for) list query is diffed against those stamps and only the
@@ -1138,7 +1213,7 @@ const DependencyMap = (() => {
   let _scanMsPerCall = 0;       // measured on the last COMPLETED scan (0 = unknown)
   let _scanCalls = 0;           // batch round-trips this scan actually made
   let _scanUnread = 0;          // versions left unread because their CALL failed
-  // v1.0.2 — incremental cache state. _stamps is the LastModifiedDate the FLOW
+  // v1.1.0 — incremental cache state. _stamps is the LastModifiedDate the FLOW
   // LIST query returned for every version in this org (the list is already paid
   // for, so this costs nothing); _cachedIds is the subset of the map whose edges
   // came from storage rather than from a read in this session — the distinction
@@ -1149,6 +1224,7 @@ const DependencyMap = (() => {
   let _cacheKey = '';               // orgKey|apiVersion, '' = do not cache
   let _cacheBuiltAt = 0;            // when the restored half of the map was gathered
   let _cacheNote = '';              // why the cache was skipped / what was dropped
+  let _cacheDroppedRefs = false;    // the primed entry's 🧨 reference detail was dropped for size
   let _cacheState = 'none';         // 'none'|'miss'|'unusable'|'primed'|'disabled'
   let _cacheSaveNote = '';          // what the last write to storage did or refused to do
   let _apiMismatch = false;         // the version the batch really used ≠ the one we keyed on
@@ -1168,7 +1244,7 @@ const DependencyMap = (() => {
   const DEP_XO_FLOWS      = 200;  // max flows compared in one cross-org diff
   const DEP_XO_OBJECTS    = 60;   // max objects described in the comparison org
   // P1 — above this many flow VERSIONS TO READ the popup stops scanning on open
-  // and asks first. Deliberately UNCHANGED at 150 in v1.0.2: batching made the
+  // and asks first. Deliberately UNCHANGED at 150 in v1.1.0: batching made the
   // same work cheaper, it did not make it free, and quietly raising the bar
   // would start doing hundreds of reads on open in orgs that used to be asked.
   // What did change is what the threshold is measured against — the DELTA the
@@ -1182,7 +1258,7 @@ const DependencyMap = (() => {
                                     // background.js' own contract recommends for
                                     // full flow metadata. 3 × 10 in flight is the
                                     // same pressure v1.0.1's 6 single GETs applied.
-  // ── Persistent cache (v1.0.2) ────────────────────────────────────────────
+  // ── Persistent cache (v1.1.0) ────────────────────────────────────────────
   const DEP_CACHE_STORE   = 'sftk_dep_cache';  // ONE chrome.storage.local key
   const DEP_CACHE_SCHEMA  = 1;                 // bump on ANY shape change → old entries dropped
   const DEP_CACHE_MAX_ORGS = 3;                // LRU: the orgs you actually work in
@@ -1226,6 +1302,7 @@ const DependencyMap = (() => {
     _cacheKey = '';
     _cacheBuiltAt = 0;
     _cacheNote = '';
+    _cacheDroppedRefs = false;
     _cacheState = 'none';
     _cacheSaveNote = '';
     _apiMismatch = false;
@@ -1289,7 +1366,7 @@ const DependencyMap = (() => {
     const shouldStop = () => _scanAbort || myToken !== _runToken;
     const startedAt = Date.now();
 
-    // v1.0.2 — the pool's unit of work is a CHUNK of versions, delivered by one
+    // v1.1.0 — the pool's unit of work is a CHUNK of versions, delivered by one
     // composite/batch round-trip. Same pool, same cancellation, same per-item
     // progress; a tenth of the HTTP calls. The chunker is the same one
     // DependencyMap.scanPlan() sizes with, so the call count the UI quoted is
@@ -1323,6 +1400,16 @@ const DependencyMap = (() => {
       } catch (_) {
         items = null;   // treated as an unread batch below, never as "no subflows"
       }
+
+      // QA 2026-07-29 (F1): the await above can span a reset() — an org switch
+      // while this batch was in flight. Everything below writes MODULE state
+      // (map absorption, _scannedIds, _apiMismatch, _scanDone, the progress
+      // UI), so a superseded run must drop its answer HERE, not only after the
+      // pool drains — or the previous org's batch lands in the new org's
+      // dependency map. A user Stop (_scanAbort) deliberately does NOT drop
+      // it: those versions really settled in THIS org and counting them is
+      // the honest coverage number.
+      if (myToken !== _runToken) return;
 
       const applied = depBatchApply(chunk, items);
       // Verify the API version the subrequests really went out with against the
@@ -1455,7 +1542,7 @@ const DependencyMap = (() => {
       done: _scanDone,
       total: _scanTotal,
       msPerCall: _scanMsPerCall,
-      // v1.0.2 — how much of `done` was READ and how much was REUSED. Every
+      // v1.1.0 — how much of `done` was READ and how much was REUSED. Every
       // caller that prints a coverage number gets the split, so "covered" can
       // never be quietly read as "verified just now".
       calls: _scanCalls,
@@ -1585,6 +1672,7 @@ const DependencyMap = (() => {
     _cacheKey = _stampsAvailable ? depCacheKey(orgKey, DEP_API_VERSION) : '';
     _cachedIds = new Set();
     _cacheBuiltAt = 0;
+    _cacheDroppedRefs = false;
 
     if (!list.length) {
       _cacheState = 'none';
@@ -1602,6 +1690,23 @@ const DependencyMap = (() => {
     if (!_cacheKey) {
       _cacheState = 'disabled';
       _cacheNote = 'this org could not be identified from its URL, so no dependency cache is kept for it';
+      return { used: false, cached: 0, toScan: list.length, deleted: 0, reason: _cacheNote };
+    }
+
+    // QA 2026-07-29 (F7): verify the API-version ASSUMPTION at load, not only
+    // inside the scan worker. A fully-warm cache dispatches ZERO batches, so
+    // the worker's wire check could never fire on exactly the path that
+    // trusts the cache most. The flow list's own records echo the version
+    // their request really went out on (attributes.url), so the comparison is
+    // free. A mismatch means DEP_API_VERSION has drifted from the version
+    // background.js actually uses — every stored entry is keyed on the wrong
+    // assumption, so the cache is treated as cold: nothing primed, and
+    // _apiMismatch also blocks any save until the constant is fixed.
+    const wireVer = depListApiVersion(list);
+    if (wireVer && wireVer !== DEP_API_VERSION) {
+      _apiMismatch = true;
+      _cacheState = 'unusable';
+      _cacheNote = `this session's Salesforce reads use API ${wireVer} but this build's dependency cache is keyed to ${DEP_API_VERSION} — the stored cache was treated as cold and nothing will be cached, so this org is read live`;
       return { used: false, cached: 0, toScan: list.length, deleted: 0, reason: _cacheNote };
     }
 
@@ -1644,6 +1749,10 @@ const DependencyMap = (() => {
     _scanDone   = delta.unchanged.length;
     _cacheBuiltAt = Number(entry.builtAt) || 0;
     _cacheState = 'primed';
+    // Remembered so the 🧨 blast panel can name the REAL reason a restored
+    // version has no reference detail (dropped for size at store time),
+    // instead of blaming a metadata load that never happened (QA F5).
+    _cacheDroppedRefs = !!entry.droppedRefs;
     _cacheNote = [
       entry.droppedRefs ? 'reference detail (🧨 blast radius) was not cached for this org because of its size — it comes back on a rescan' : '',
       entry.droppedTriggers ? 'refined flow types were not cached for this org because of its size' : ''
@@ -1666,6 +1775,12 @@ const DependencyMap = (() => {
   // feature's share of chrome.storage.local — the byte budget is measured on the
   // exact JSON that is about to be written, not guessed from entry counts.
   async function saveCacheEntry(flows) {
+    // QA 2026-07-29 (F1): this function awaits storage I/O, and a reset() (org
+    // switch) can land inside those awaits. Post-await it must not write the
+    // superseded org's entry under the NEW org's state (_cacheKey is '' right
+    // after a reset, so the write would land under a junk key) nor stamp
+    // _cacheSaveNote into the new org's status line.
+    const myToken = _runToken;
     _cacheSaveNote = '';
     if (!_cacheKey || !_stampsAvailable) return { stored: false, note: _cacheNote };
     if (_apiMismatch) {
@@ -1708,6 +1823,7 @@ const DependencyMap = (() => {
       // Drop any older entry for this org too — keeping a stale one next to a
       // map we refused to store is worse than having none.
       const store = await readCacheStore();
+      if (myToken !== _runToken) return { stored: false, note: 'the org changed while the cache was being written' };
       if (store[_cacheKey]) {
         delete store[_cacheKey];
         await depStorageSet(DEP_CACHE_STORE, { v: DEP_CACHE_SCHEMA, orgs: store });
@@ -1716,6 +1832,7 @@ const DependencyMap = (() => {
     }
 
     const store = await readCacheStore();
+    if (myToken !== _runToken) return { stored: false, note: 'the org changed while the cache was being written' };
     store[_cacheKey] = fit.entry;
     const bounded = depCacheEvictLru(store, {
       maxOrgs: DEP_CACHE_MAX_ORGS,
@@ -1723,6 +1840,7 @@ const DependencyMap = (() => {
       keepKey: _cacheKey
     });
     const ok = await depStorageSet(DEP_CACHE_STORE, { v: DEP_CACHE_SCHEMA, orgs: bounded.store });
+    if (myToken !== _runToken) return { stored: !!ok, note: 'the org changed while the cache was being written' };
     if (!ok) {
       _cacheSaveNote = 'the dependency cache could not be written to local storage — the next open will scan again';
       return { stored: false, note: _cacheSaveNote };
@@ -1804,7 +1922,10 @@ const DependencyMap = (() => {
       res = await depBg({
         type: 'SF_QUERY_ALL',
         orgUrl, sid, tooling: true,
-        query: 'SELECT Id,MasterLabel,Definition.DeveloperName,VersionNumber,Status,ProcessType,LastModifiedDate FROM Flow',
+        // DefinitionId rides along for popup.js (QA F4): versions this
+        // re-check DISCOVERS get merged into its flow list, and its
+        // deactivate-parent path cannot work without their DefinitionId.
+        query: 'SELECT Id,MasterLabel,Definition.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,LastModifiedDate FROM Flow',
         _suppressError: true
       });
     } catch (e) {
@@ -1827,6 +1948,22 @@ const DependencyMap = (() => {
     if (!live.every(f => f.LastModifiedDate)) {
       return { ok: false, reason: 'the re-check query did not return LastModifiedDate, so cached edges still cannot be proven current' };
     }
+    // QA 2026-07-29 (F2): a server-capped list is NOT authoritative. Without
+    // this gate, every version the cap cut off would land in delta.deleted
+    // below — its live edges evicted as "deleted" — and _recheckedAt would
+    // then stamp the re-check as completed. Partial re-check = evict nothing,
+    // stamp nothing, and tell the user why the check could not complete.
+    const cov = depRecheckCoverage(live.length, res.serverTotal);
+    if (!cov.complete) {
+      return { ok: false, reason: cov.reason };
+    }
+    // QA 2026-07-29 (F7): the re-check list also echoes the wire version —
+    // verify it here too, since this is the answer a PERMANENT delete trusts.
+    const wireVer = depListApiVersion(live);
+    if (wireVer && wireVer !== DEP_API_VERSION) {
+      _apiMismatch = true;
+      return { ok: false, reason: `the re-check ran on Salesforce API ${wireVer} but the cached map is keyed to ${DEP_API_VERSION}, so cached edges cannot be proven current` };
+    }
 
     const delta = depCacheDelta(live, _stamps);
     // Everything the delta calls stale loses its edges and its scanned mark, so
@@ -1844,6 +1981,14 @@ const DependencyMap = (() => {
       }
     }
     for (const f of live) _stamps[f.Id] = String(f.LastModifiedDate);
+
+    // QA 2026-07-29 (F3): edges that SURVIVED the diff still carry the
+    // calling version's Status/MasterLabel/VersionNumber/ProcessType from
+    // cache-build time — and Status moves without the version's metadata
+    // changing (activating v5 obsoletes v4). The delete-dependency table
+    // renders straight from this map, so merge the live list's descriptive
+    // fields in now, before anything below renders or persists them.
+    dependencyMap = depMapRefreshFields(dependencyMap, live);
 
     const before = { added: delta.added.length, changed: delta.changed.length, deleted: delta.deleted.length };
     if (delta.todo.length) {
@@ -2871,7 +3016,13 @@ const DependencyMap = (() => {
         ${section('💬 Custom labels', refs.labels)}
         ${!refs.objects.length && !refs.fields.length && !refs.subflows.length && !refs.apex.length && !refs.labels.length
           ? '<div class="dep-blast-sec">No object/field/subflow/apex/label references found in this version\'s metadata.</div>' : ''}`
-        : `<div class="dep-blast-sec">Reference details unavailable for this flow (its metadata didn't load${isMetadataFetched() ? '' : ` — ${scanCaveat()}`}).</div>`}`;
+        : `<div class="dep-blast-sec">${(_cacheDroppedRefs && _cachedIds.has(flow.Id))
+          // QA 2026-07-29 (F5): this version was restored from the stored
+          // cache, whose reference detail was dropped for size at store time.
+          // Blaming a metadata load that never ran pointed the user at the
+          // wrong fix — the detail comes back by re-reading, not by waiting.
+          ? 'Reference details for this flow were not kept in this org\'s stored cache (too large to fit its storage budget) and this version was restored from that cache rather than re-read — rescan the dependencies to rebuild them.'
+          : `Reference details unavailable for this flow (its metadata didn't load${isMetadataFetched() ? '' : ` — ${scanCaveat()}`}).`}</div>`}`;
     document.body.appendChild(panel);
     panel.querySelector('.dep-blast-close').addEventListener('click', () => panel.remove());
     panel.querySelector('.dep-blast-chain').addEventListener('click', () => {
@@ -2901,7 +3052,7 @@ const DependencyMap = (() => {
     scanCaveat,
     freshness,
     searchCoverage,
-    // v1.0.2 — incremental cache + the destructive-path guarantee.
+    // v1.1.0 — incremental cache + the destructive-path guarantee.
     primeFromCache,
     clearCache,
     deleteTrust,
