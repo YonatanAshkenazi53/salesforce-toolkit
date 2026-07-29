@@ -91,7 +91,25 @@ def main():
     if first_entry == -1:
         fail('CHANGELOG.md has no "## " release entry')
     title = ch.split('\n', 1)[0]
-    io.open(ch_path, 'w', encoding='utf-8').write(title + '\n' + ch[first_entry:])
+    ch = title + '\n' + ch[first_entry:]
+
+    # Drop release-note bullets about features this build excludes. The in-app
+    # What's New renders CHANGELOG.md verbatim, so a Labs bullet advertises a
+    # view the store user has no way to open (QA 2026-07-29). Bullets continue
+    # across wrapped lines until the next bullet or heading.
+    out_lines, skipping = [], False
+    for line in ch.split('\n'):
+        stripped = line.lstrip()
+        if stripped.startswith('- '):
+            skipping = '(Labs)' in line
+        elif stripped.startswith('#') or not stripped:
+            skipping = False
+        if not skipping:
+            out_lines.append(line)
+    ch = '\n'.join(out_lines)
+    if '(Labs)' in ch:
+        fail('CHANGELOG Labs-bullet strip left a "(Labs)" mention behind')
+    io.open(ch_path, 'w', encoding='utf-8').write(ch)
 
     # ── Post-checks ──────────────────────────────────────────────────────
     for js in EXCLUDE_JS:

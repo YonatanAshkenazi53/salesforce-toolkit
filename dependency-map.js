@@ -700,9 +700,18 @@ function depBatchSubrequests(chunk) {
 //
 // The one judgement call: which failures COUNT AS COVERED.
 //   • ok            → covered, metadata handed back for absorption.
-//   • item failure  → covered. A metadata GET legitimately 404s for an obsolete
-//                     version; v1.0.1 marked those scanned because retrying
-//                     costs the same call and fails the same way.
+//   • 404           → covered. A metadata GET legitimately 404s for an obsolete
+//                     version; retrying costs the same call and fails the same
+//                     way. "Gone" is a real answer.
+//   • other failure → NOT covered (QA 2026-07-29). A 403 (no permission on a
+//                     managed-package flow), 400 or 500 means we do not KNOW
+//                     what this version calls. Counting it as covered recorded
+//                     it as calling NOTHING, which flows straight into
+//                     depDeleteTrust: the map reports `complete`, the delete
+//                     panel shows no callers, and the user deletes a flow that
+//                     something still calls. Leaving it unread makes the scan
+//                     honestly incomplete, and depDeleteTrust already refuses
+//                     to call an incomplete map safe.
 //   • batchError    → NOT covered. That is "the whole CALL died" (HTTP error on
 //                     the batch endpoint, unreadable body, unalignable results),
 //                     which is retryable as a unit — marking those 10 versions
@@ -719,6 +728,8 @@ function depBatchApply(chunk, items) {
     const r = res[i];
     if (r === undefined || r === null) { out.unread.push(flow); continue; }
     if (r.batchError) { out.unread.push(flow); out.callFailed = true; continue; }
+    // Only a success or a definitive 404 proves anything about this version.
+    if (!r.ok && Number(r.status) !== 404) { out.unread.push(flow); continue; }
     out.covered.push(flow);
     const meta = (r.ok && r.body && typeof r.body === 'object') ? r.body.Metadata : null;
     if (meta) out.metas.push({ flow, meta });
@@ -1064,6 +1075,11 @@ function depScanFreshness(state) {
 // existing "the subflow check has no data" gate, which asks the user.
 function depDeleteTrust(state) {
   const s = state || {};
+  // How long a live re-check keeps authorising deletes. Short enough that a
+  // long-lived popup cannot answer from stale edges, long enough that deleting
+  // several flows in a row does not re-query for each one. Declared inside the
+  // function so the unit test can extract it standalone.
+  const DEP_RECHECK_TTL_MS = 5 * 60 * 1000;
   const cached = Math.max(0, Math.floor(Number(s.fromCache) || 0));
   if (!s.complete) {
     return { safe: false, needsLiveRecheck: false,
@@ -1084,6 +1100,16 @@ function depDeleteTrust(state) {
   if (!s.recheckedAt) {
     return { safe: false, needsLiveRecheck: true,
       reason: `${cached} of the ${Math.max(0, Math.floor(Number(s.total) || 0))} flow versions in this map came from the stored cache and have not been re-checked against the org since this popup opened` };
+  }
+  // A re-check proves the cache was current AT THAT MOMENT, not forever
+  // (QA 2026-07-29). Without an expiry, one re-check authorised every later
+  // delete in the session — a popup left open for hours would still answer
+  // "nothing calls this" from edges last proven that morning, while someone
+  // else adds a caller. Deletes are irreversible; re-proving costs one query.
+  const age = Math.max(0, (Number(s.now) || Date.now()) - Number(s.recheckedAt));
+  if (age > DEP_RECHECK_TTL_MS) {
+    return { safe: false, needsLiveRecheck: true,
+      reason: `cached edges were last proven current ${depCacheAge(s.recheckedAt, s.now)} — too long ago to answer a delete, since a new caller could have been added since` };
   }
   return { safe: true, needsLiveRecheck: false,
     reason: `cached edges were re-checked against a live LastModifiedDate query ${depCacheAge(s.recheckedAt, s.now)}` };

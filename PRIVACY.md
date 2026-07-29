@@ -41,10 +41,25 @@ not exfiltrate data past this policy.
 | `ds_working_pair`, `ds_dark_mode`, `ds_activity_log` | UI preferences and view-usage timestamps |
 | `apex_log_viewer_*` | Raw Apex log bodies handed to the log-viewer tab |
 | `sftk_dep_cache` | Flow subflow-dependency map per org (flow version ids, API names, labels, version numbers, statuses) plus each version's `LastModifiedDate`, so reopening the popup re-reads only what changed. Capped at 3 orgs / 1.5 MB total, least-recently-used evicted; raw flow metadata is never stored |
-| `adbg_custom_profiles`, onboarding flags, `sftk_schema_version` | Debugger presets, first-run flags, storage schema version |
+| `ds_scans`, `ds_scan_results` | Saved comparison results: record ids and match-key values for the records a scan found on each side |
+| `ds_ring`, `ds_connections`, `ds_stored_orgs` | Your multi-org setup: which orgs are grouped, which is the source of truth, your labels for them |
+| `ds_sched_drift` | Latest scheduled drift-check result: per-org record counts and any errors |
+| `ds_readiness_state`, `ds_settings` | Deploy-readiness selections and Data Studio preferences |
+| `fc_fix_snapshots` | Field Cleaner undo data: the **full metadata** of flows, layouts and Lightning pages captured before it edits them, so a change can be rolled back |
+| `fc_dep\|<org>\|<field>` | Cached field-dependency scan results per org and field |
+| `sftk_hotkey_trace` | Active keyboard-shortcut trace: the org and the **name of the Salesforce user** being traced, plus its expiry |
+| `sftk_active_run` | In-progress transfer state, so a run survives closing the window |
+| `sftk_debug_enabled`, `sftk_debug_entries`, `sftk_debug_meta` | Debug mode: recent API calls with URLs and error text, for the exportable debug report. Session ids and bearer tokens are stripped before anything is written |
+| `adbg_custom_profiles`, `adbg_log_font_px` | Debugger presets and reader font size |
+| `sftk_dark`, `sftk_tour_*`, `ds_whatsnew_seen`, `sftk_ao_*`, `sftk_schema_version` | Theme, first-run flags, last-seen release, per-view options, storage schema version |
 
-All of it is data **about your orgs, for you**, on your machine. Uninstalling the
-extension deletes all of it.
+All of it is data **about your orgs, for you**, on your machine. Nothing in this
+table is ever transmitted anywhere. Uninstalling the extension deletes all of it,
+and **Data Studio → History → "Clear cached org data"** clears the org-data keys
+above on demand.
+
+A few short-lived values (an in-flight scan's progress, a pending modal's state)
+are held in `chrome.storage.session`, which the browser discards when it closes.
 
 ## Permissions rationale
 
