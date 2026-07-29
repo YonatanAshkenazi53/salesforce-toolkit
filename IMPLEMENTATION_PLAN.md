@@ -518,6 +518,41 @@ history) already exists there.
   keep the collision rule — a duplicated key on either side falls back rather than
   guessing. Unit-test the pure key-resolution over user rows.
 
+## Phase L — Large-org scale (from real enterprise-org testing, 2026-07-29)
+
+Author ran the SHIPPED build against a production org (thousands of metadata items,
+several managed packages). Two bug CLASSES surfaced and were swept repo-wide:
+(A) silent truncation — a single-page query / embedded LIMIT caps a list and the UI
+presents it as complete; (B) eager fan-out — N-per-item API calls fired on load.
+Reference pattern for an honest cap: `user-copy.js` (named constant, detected flag,
+stated in UI, never invents a total it did not measure).
+
+- [x] **L1. Field Cleaner object+field pickers** (v1.0.1) — two-phase load + server-side
+  EntityDefinition LIKE fallback + honest caps; custom settings no longer excluded.
+- [x] **L2. Popup dependency preload** (v1.0.1) — depScanPlan/depFormatEta/depRunPool;
+  auto ≤150 versions, else explicit prompt quoting call count + ETA; pooled, cancellable,
+  resumable. Latest-version-only scope DECLINED (subflow callers match by version id —
+  would break the delete-safety check).
+- [x] **L3. Lightning Pages org defaults** (v1.0.1) — size-aware, pooled, cancellable,
+  resumable; dead PublishStatus predicate removed; unknown ≠ not-default in the UI.
+- [x] **L4. Silent caps** (v1.0.1) — license-manager (100), studio-builder owner fallback
+  (500, plus the false-negative that inferred a saved user was missing), apex-debugger
+  user search (N+1 probe), studio-scan orphan counts; picklist bulk-modal progressive scan.
+
+- [ ] **L5. scanAllPageAssignments fan-out** (lightning-pages.js) — LARGER than the L3 one
+  that was fixed: one SF_TOOLING_GET per FlexiPage in a batch-of-5 barrier AND, inside the
+  same loop, a sequential `fetchCustomObjectOrgDefaults` per page that re-describes with a
+  cache-buster and memoizes nothing (600 pages / 200 objects → 600 describes where 200 would
+  do, concurrency 1). User-triggered with a progress %, so not a blocker. Dedupe by a Map
+  keyed on sObjectType (~3× fewer calls) and reuse the new `lpRunPool`.
+- [ ] **L6. studio-scan.js bucket caps** — missingInTarget / onlyInTarget / changed /
+  identical capped at 5,000 each; surface per the user-copy.js pattern.
+- [ ] **L7. Schema View flow layer** (studio-schema.js:709 and :1617) — `FROM
+  FlowDefinitionView WHERE IsActive = true LIMIT 500` single-page, and :1617 DIFFS two
+  independently-truncated arrays, so a large org can report false flow-count differences.
+  LABS FILE — excluded from the store build, so no shipped user is affected; fix before
+  Schema View ever graduates.
+
 ## Shipping — Chrome Web Store  (section restored 2026-07-25 — an earlier
 anchor-based plan edit accidentally deleted it)
 
