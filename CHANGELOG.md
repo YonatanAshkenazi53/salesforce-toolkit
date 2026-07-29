@@ -13,6 +13,42 @@ lives in `CHANGELOG_HISTORY.md` (repo only, never shipped — the packer only sh
 `CHANGELOG.md` itself; no leading underscore, Chrome refuses to load unpacked
 extensions containing root files that start with `_`).
 
+## 1.1.0 — 2026-07-29
+
+Large orgs got dramatically faster. 1.0.1 stopped the Toolkit from doing work you
+hadn't asked for; this release makes the work you *do* ask for cost a fraction of
+what it used to.
+
+### Changed
+- **Scans are up to 25× fewer network round-trips.** Reading a thousand things used
+  to mean a thousand separate requests to Salesforce, and the waiting was almost all
+  overhead rather than actual work. Requests are now sent in batches of up to 25. In a
+  1,600-flow org the dependency scan drops from 1,600 round-trips to about 160.
+- **The dependency scan remembers what it already knows.** Previously every single
+  Toolkit open rescanned the whole org from scratch. Now the map is saved per org, and
+  reopening only fetches the flows that actually changed since last time — typically a
+  handful, so a scan that took minutes finishes in about one request. The screen always
+  tells you when the data was built and what was refreshed, so cached results are never
+  passed off as freshly checked. Deleting a flow still verifies that flow live, so a
+  cached answer can never make a delete look safe when it isn't.
+- **"Who sees what?" in Lightning Pages** was re-describing the same object once per
+  page — roughly 1,400 requests for 600 pages. It now asks about each object once and
+  batches the rest: about 100 requests for the same work, and the page list itself
+  renders smoothly no matter how many pages your org has.
+- **Schema View** (Labs) compared only the first 500 active flows per org, and diffed
+  two separately-truncated lists — which could invent flow differences that didn't
+  exist. It now reads every flow and, if either side is incomplete, declines to show a
+  comparison rather than show a wrong one.
+
+### Fixed
+- **Scan results no longer report a floor as a total.** Comparison buckets are capped at
+  5,000 records; a 47,213-record difference displayed as "5,000". Every count now reads
+  "5,000 of 47,213 shown", measured rather than estimated.
+- **The multi-org Sync Plan now warns before writing from a capped list.** It disclosed
+  its own display limit while staying silent about the larger one underneath — and the
+  push checkbox is on by default, so "Add 5,000 of 5,000" could quietly leave tens of
+  thousands of records unwritten.
+
 ## 1.0.1 — 2026-07-29
 
 Everything here comes from testing against a large production org — the kind with

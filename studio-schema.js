@@ -24,6 +24,12 @@ let _svSavedState   = null;  // persisted setup (org / objects / toggles) — se
 let _svOrgUrl           = '';    // org URL that produced _svNodes/_svEdges
 let _svFlowsLoaded      = false; // did the loaded graph include a WORKING flow layer?
 let _svFlowsQueryOk     = false; // did the FlowDefinitionView query itself succeed?
+// L7 — "the query succeeded" and "the query returned EVERY active flow" are two
+// different facts, and the org diff needs the second one. _svFlowsComplete is
+// set only by a SELECT COUNT() cross-check that agreed with what was paged in;
+// it is never assumed. An unconfirmed layer counts as incomplete.
+let _svFlowsComplete    = false; // did COUNT() confirm the flow list is whole?
+let _svFlowsCompleteWhy = '';    // why it could not be confirmed, when it wasn't
 let _svFlowActionsScanned = false; // did it include the deep cross-object scan?
 // Inline "could NOT be checked" notes for the CURRENT graph. Every probe that
 // can fail pushes one instead of degrading to a silent clean result.
@@ -118,6 +124,7 @@ function svResetGraph() {
   _svNodes = []; _svEdges = []; _svFlows = [];
   _svSelected = null; _svLoadedAt = null; _svGraphMetaTxt = '';
   _svOrgUrl = ''; _svFlowsLoaded = false; _svFlowsQueryOk = false; _svFlowActionsScanned = false;
+  _svFlowsComplete = false; _svFlowsCompleteWhy = '';
   _svNotes = [];
   svClearDiffState();
 }
@@ -480,12 +487,15 @@ async function renderSchemaView() {
 // Returns { list, error } — NEVER a bare [] that a caller can mistake for
 // "this org genuinely has no objects" (N5b audit: svFetchObjList swallowed
 // both the no-session case and every API error).
+// L7 sweep: `cached` is reported too. The cache is per popup session and has no
+// expiry, so the org diff — which stamps itself with the time it RAN — could
+// otherwise present a minutes-old object list as a fresh read of both orgs.
 async function svFetchObjList(orgUrl) {
-  if (!orgUrl) return { list: [], error: 'no org selected' };
-  if (_svObjListCache[orgUrl]) return { list: _svObjListCache[orgUrl], error: '' };
+  if (!orgUrl) return { list: [], error: 'no org selected', cached: false };
+  if (_svObjListCache[orgUrl]) return { list: _svObjListCache[orgUrl], error: '', cached: true };
   const sess = await getOrgSession(orgUrl);
   if (!sess?.sid) {
-    return { list: [], error: `${orgLabel(orgUrl)} is not open in a Chrome tab, so its object list could not be read` };
+    return { list: [], error: `${orgLabel(orgUrl)} is not open in a Chrome tab, so its object list could not be read`, cached: false };
   }
   const res = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid,
     path: 'services/data/v62.0/sobjects' });
@@ -523,6 +533,84 @@ function svHideCacheBanner() {
   const el = eid('svCacheBanner');
   if (el) { el.style.display = 'none'; el.innerHTML = ''; }
 }
+
+// ── Object-list cap (L7 sweep) ────────────────────────────────
+// The graph auto-picks objects when the input box is empty and then took the
+// first 60 with a bare `.slice(0, 60)` and NO note. In an org with 300 custom
+// objects that silently drew a "complete" schema of 60 of them: every lookup to
+// one of the 240 that were cut vanished, and nothing on screen said so. Same
+// bug class as the flow LIMIT, different layer.
+const SV_OBJECT_CAP = 60;   // objects auto-selected for one graph
+
+// PURE. The cap decision, separated from the reporting so it can be tested.
+// Returns the kept list plus exactly how much was left out — never a bare
+// truncated array that the caller can mistake for the whole set.
+function svObjectCapPlan(names, cap) {
+  const list = Array.isArray(names) ? names.filter(n => typeof n === 'string' && n) : [];
+  const n = Number(cap);
+  const max = (Number.isFinite(n) && n > 0) ? Math.floor(n) : list.length;
+  const capped = list.length > max;
+  return {
+    total:   list.length,
+    cap:     max,
+    capped,
+    kept:    capped ? list.slice(0, max) : list,
+    dropped: capped ? list.length - max : 0,
+  };
+}
+
+// Apply the cap AND say so. `what` names the population that was cut.
+function svCapObjects(names, what) {
+  const plan = svObjectCapPlan(names, SV_OBJECT_CAP);
+  if (plan.capped) {
+    svNote(`Object list capped at ${plan.cap} objects`,
+      `this org has ${plan.total} ${what}; the first ${plan.cap} in alphabetical order were graphed and the other ` +
+      `${plan.dropped} were NOT looked at — their fields, relationships and flows are absent from this graph, ` +
+      'and any lookup pointing at one of them is missing too. Name the objects you want in the box above to choose which.');
+  }
+  return plan.kept;
+}
+
+// ── Bounded describe pool (L7 sweep) ──────────────────────────
+// Both describe fan-outs in this file were a batch-of-6 Promise.all BARRIER:
+// the pool drained to zero every 6 objects, so one slow describe stalled the
+// other five. Same shape as depRunPool / lpRunPool — `limit` workers stay in
+// flight until the queue empties, results keep INPUT order, and `complete` is
+// decided by the count alone so a stop after the last item still counts as full
+// coverage. The call COUNT is unchanged (one describe per object), so an org
+// that was never near a limit issues exactly the requests it issued before.
+//
+// Describes are the one per-item read in this file that is deliberately NOT
+// routed through the composite/batch primitive — see the comment at svLoad.
+async function svRunPool(items, worker, opts) {
+  const list = Array.isArray(items) ? items : [];
+  const o = opts || {};
+  const total = list.length;
+  const limit = Math.max(1, Math.min(Math.floor(o.concurrency) || 6, total || 1));
+  const onProgress = typeof o.onProgress === 'function' ? o.onProgress : null;
+  const shouldStop = typeof o.shouldStop === 'function' ? o.shouldStop : null;
+  const results = new Array(total);
+  let next = 0, done = 0, stopped = false;
+
+  async function runner() {
+    for (;;) {
+      if (shouldStop && shouldStop()) { stopped = true; return; }
+      const i = next++;
+      if (i >= total) return;
+      try { results[i] = await worker(list[i], i); }
+      catch (_) { results[i] = undefined; }   // a failed item is still a done item
+      done++;
+      if (onProgress) onProgress(done, total);
+    }
+  }
+
+  const runners = [];
+  for (let k = 0; k < limit; k++) runners.push(runner());
+  await Promise.all(runners);
+  return { results, done, total, stopped, complete: done === total };
+}
+
+const SV_DESCRIBE_POOL = 6;   // describes in flight (was the batch-of-6 barrier)
 
 // ── Load schema data ──────────────────────────────────────────
 async function svLoad() {
@@ -586,17 +674,17 @@ async function svLoad() {
     const allSobjects = listRes.sobjects || [];
 
     if (inclStd) {
-      // User explicitly wants standard — show queryable + layoutable, cap 60
+      // User explicitly wants standard — show queryable + layoutable
       objects = allSobjects
         .filter(o => o.queryable && o.layoutable && !o.deprecatedAndHidden)
         .map(o => o.name).sort();
-      if (objects.length > 60) objects = objects.slice(0, 60);
+      objects = svCapObjects(objects, 'queryable standard + custom objects');
     } else {
       // Default: custom objects only
       objects = allSobjects
         .filter(o => o.custom && !o.deprecatedAndHidden && o.queryable)
         .map(o => o.name).sort();
-      if (objects.length > 60) objects = objects.slice(0, 60);
+      objects = svCapObjects(objects, 'custom objects');
 
       // Fallback: no custom objects (fresh / Dev Edition org) → use standard set
       if (!objects.length) {
@@ -618,34 +706,40 @@ async function svLoad() {
   }
   svSetStatus(`⏳ Describing ${objects.length} objects…`);
 
-  // Step 2 — Describe each object (batched parallel)
+  // Step 2 — Describe each object.
+  //
+  // L7 NOTE — this is the ONE per-item read in this file left off the
+  // composite/batch primitive, deliberately. sObject describe is the largest
+  // payload in the REST API (a wide object in a package-heavy org runs to
+  // megabytes on its own); 25 of them concatenated into a single
+  // composite/batch response body is a response-size gamble whose downside is
+  // the WHOLE batch failing at once, in exchange for saving round-trips on a
+  // fan-out that is already hard-capped at SV_OBJECT_CAP objects. The barrier
+  // is gone (rolling pool below), the call count is unchanged.
   const descMap = {};
   const descFailed = [];   // [{ obj, error }] — N5b: failures are REPORTED now
-  const BATCH = 6;
   let sessionExpiredDuringDescribe = false;
-  for (let i = 0; i < objects.length; i += BATCH) {
-    if (sessionExpiredDuringDescribe) break;
-    const batch = objects.slice(i, i + BATCH);
-    svSetStatus(`⏳ Describing ${i + 1}–${Math.min(i + BATCH, objects.length)} / ${objects.length}…`);
-    const results = await Promise.all(batch.map(obj =>
-      sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid,
-               path: `services/data/v62.0/sobjects/${obj}/describe` })
-    ));
-    for (let j = 0; j < batch.length; j++) {
-      const r = results[j];
-      if (isSessionResult(r)) {
-        sessionExpiredDuringDescribe = true;
-        break;
-      }
-      if (!r.error) descMap[batch[j]] = r;
-      else descFailed.push({ obj: batch[j], error: r.error });
-    }
-  }
+  const descPool = await svRunPool(objects, async (obj) => {
+    const r = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid,
+      path: `services/data/v62.0/sobjects/${obj}/describe` });
+    if (isSessionResult(r)) { sessionExpiredDuringDescribe = true; return null; }
+    return r;
+  }, {
+    concurrency: SV_DESCRIBE_POOL,
+    shouldStop: () => sessionExpiredDuringDescribe,
+    onProgress: (d, t) => svSetStatus(`⏳ Describing ${d} / ${t} objects…`),
+  });
   if (sessionExpiredDuringDescribe) {
     svSetStatus('');
     showSessionBanner(sess.orgUrl, () => svLoad());
     return;
   }
+  objects.forEach((obj, i) => {
+    const r = descPool.results[i];
+    if (!r) { descFailed.push({ obj, error: 'the describe never completed for this object' }); return; }
+    if (!r.error) descMap[obj] = r;
+    else descFailed.push({ obj, error: r.error });
+  });
   // A failed describe used to produce a node that looked perfectly healthy —
   // 0 fields, 0 child relationships, no edges. Name every one of them.
   if (descFailed.length) {
@@ -659,7 +753,11 @@ async function svLoad() {
 
   // Step 3 — Fetch flows
   let flows = [];
+  // Cleared before the probe, not after: a graph built WITHOUT the flow layer
+  // must not inherit the previous run's "complete" verdict.
   _svFlowsQueryOk = false;
+  _svFlowsComplete = false;
+  _svFlowsCompleteWhy = '';
   if (inclFlows) {
     svSetStatus('⏳ Fetching flow automations…');
     flows = await svFetchFlows(sess);
@@ -690,6 +788,164 @@ async function svLoad() {
   svSetStatus('');
 }
 
+// ════════════════════════════════════════════════════════════════
+// L7 — THE ACTIVE-FLOW LAYER: paging, determinism, reconciliation
+// ════════════════════════════════════════════════════════════════
+// Both flow reads in this file (the graph's own layer and the compare org's
+// leg of the diff) used to be ONE page of
+//     SELECT … FROM FlowDefinitionView WHERE IsActive = true LIMIT 500
+// with no ORDER BY. In an org with more than 500 active flows that is a silent
+// truncation, and in the DIFF it is worse than a truncation: two independently
+// truncated arrays were compared object by object, so an object whose flows sat
+// past the cut-off in one org and inside it in the other was reported as a
+// FLOW-COUNT DIFFERENCE BETWEEN THE ORGS THAT DOES NOT EXIST.
+//
+// The fix has three parts and all three are load-bearing:
+//   1. SF_QUERY_ALL follows nextRecordsUrl to the end — but only if the query
+//      carries NO embedded LIMIT. An embedded LIMIT makes SF_QUERY_ALL a no-op:
+//      the server stops at the limit, never emits nextRecordsUrl, and the paging
+//      loop exits after one page believing it read everything. The LIMIT is gone
+//      and a unit test asserts it stays gone.
+//   2. ORDER BY makes the paging deterministic. FlowDefinitionView has no
+//      guaranteed default order, and an unordered multi-page read can revisit or
+//      skip rows across page boundaries. A diff of two unordered reads is not
+//      reproducible even when both complete.
+//   3. SELECT COUNT() is the cross-check that makes an incomplete read
+//      DETECTABLE instead of assumed-away. It is an aggregate: one row, one
+//      tiny call, and it cannot itself be truncated.
+
+// PURE. The list query used by BOTH sides of the diff — two sides selecting
+// different fields would be a difference in the instrument, not in the orgs.
+// NO LIMIT (see 1 above) and ORDER BY (see 2). The field list is inline rather
+// than in a shared const so the function is self-contained and the unit test
+// can materialise it with no surrounding scope.
+//
+// `ordered` is a parameter, not two hand-written queries, so the fallback below
+// cannot drift from the real thing in the SELECT clause.
+function svFlowListQuery(ordered) {
+  return 'SELECT DurableId, ApiName, Label, ProcessType, TriggerType, ' +
+         'TriggerObjectOrEvent.QualifiedApiName, ActiveVersionId, LastModifiedDate ' +
+         'FROM FlowDefinitionView WHERE IsActive = true' +
+         (ordered === false ? '' : ' ORDER BY DurableId ASC');
+}
+
+// PURE. The reconciliation probe. Same object, same WHERE — anything else and
+// the two numbers would not be comparable in the first place.
+function svFlowCountQuery() {
+  return 'SELECT COUNT() FROM FlowDefinitionView WHERE IsActive = true';
+}
+
+// PURE. Does this error read as the ORG REFUSING THE SORT, as opposed to a
+// session, permission or network failure?
+//
+// FlowDefinitionView is a metadata-backed view entity, and that family has
+// per-field sortability quirks that vary by API version. If DurableId turns out
+// not to be sortable in some org, an unconditional ORDER BY would take the flow
+// layer from "silently truncated" (the bug being fixed) to "broken everywhere",
+// which is a worse trade. So a sort rejection — and ONLY a sort rejection —
+// costs one retry without the ORDER BY, and the loss of paging determinism is
+// then reported rather than absorbed.
+function svIsSortRejection(err) {
+  const s = String(err == null ? '' : err).toLowerCase();
+  if (!s) return false;
+  return s.includes('order by') || s.includes('not sortable') || s.includes('is not sortable') ||
+         s.includes('malformed_query') || s.includes('invalid_field');
+}
+
+// PURE. Did the paged read get everything? Returns a verdict, never a guess.
+//
+//   fetched  — records actually paged in
+//   reported — the org's own COUNT(), or null/NaN when the probe failed
+//
+// `complete` is true ONLY when the org answered and the read is not short. An
+// unanswered COUNT() leaves completeness UNKNOWN, and unknown is not complete:
+// the whole point of the probe is that "we could not check" and "we checked and
+// it was fine" must not render as the same thing. fetched > reported is not a
+// hole — a flow can be activated between the two calls, which leaves the list
+// with more than the count, not less — so it stays complete and records `drift`.
+function svReconcileFlows(fetched, reported) {
+  const gotN = Number(fetched);
+  const got  = Number.isFinite(gotN) && gotN > 0 ? Math.floor(gotN) : 0;
+  // Deliberately `typeof === 'number'`, not Number(): Number(null) is 0, and a
+  // response whose totalSize came back null would otherwise be read as a
+  // confident "this org has 0 active flows" — an absent answer rendered as a
+  // real one, which is the exact failure this probe exists to prevent.
+  const known = typeof reported === 'number' && Number.isFinite(reported) && reported >= 0;
+  if (!known) {
+    return {
+      fetched: got, reported: null, known: false, complete: false, shortBy: 0, drift: 0,
+      reason: `${got} active flow${got === 1 ? '' : 's'} were read, but the org did not answer the ` +
+              'SELECT COUNT() cross-check, so the list could not be confirmed complete',
+    };
+  }
+  const want = Math.floor(reported);
+  if (got >= want) {
+    return {
+      fetched: got, reported: want, known: true, complete: true, shortBy: 0, drift: got - want,
+      reason: '',
+    };
+  }
+  return {
+    fetched: got, reported: want, known: true, complete: false, shortBy: want - got, drift: 0,
+    reason: `the org reports ${want} active flows but only ${got} were read — ${want - got} ` +
+            'are missing from this layer',
+  };
+}
+
+// PURE. Read one flow-layer response pair into records + verdict, so the graph
+// leg and the compare-org leg of the diff cannot drift apart. `listRes` is the
+// SF_QUERY_ALL result, `countRes` the SF_QUERY COUNT() result; either may be an
+// { error } envelope.
+//
+// A failed LIST is fatal to the layer (records: [], ok: false). A failed COUNT
+// is not fatal — the records are still real — but it does leave the layer
+// unconfirmed, which is exactly what `complete: false` means here.
+function svFlowLayerResult(listRes, countRes) {
+  const lr = listRes || {};
+  if (lr.error || !Array.isArray(lr.records)) {
+    return {
+      ok: false, records: [], complete: false,
+      error: lr.error || 'the flow query returned no records array',
+      reason: '', countError: '',
+    };
+  }
+  const cr = countRes || {};
+  const countErr = cr.error ? String(cr.error) : '';
+  // Only a real number counts as an answer. A COUNT() response with no
+  // totalSize is a probe that did not answer, not an org with zero flows.
+  const total = (!countErr && typeof cr.totalSize === 'number') ? cr.totalSize : null;
+  const rec = svReconcileFlows(lr.records.length, total);
+  return {
+    ok: true, records: lr.records, complete: rec.complete,
+    error: '', reason: rec.reason, countError: countErr, recon: rec,
+  };
+}
+
+// ── Read one org's active-flow layer ──────────────────────────
+// THE single place either side of the diff reads flows. Both legs called it
+// with their own hand-written SOQL before, which is how they ended up with two
+// different field lists and two independent `LIMIT 500`s. One reader means the
+// two sides of a comparison cannot be read differently.
+//
+// The COUNT() probe is fired CONCURRENTLY with the list, not after it: it is
+// one extra round-trip, and overlapping it means an org that was never near a
+// limit pays no extra wall-clock for the honesty and sees no extra spinner.
+//
+// Returns the svFlowLayerResult shape plus `ordered` — false when the org
+// rejected the sort and the deterministic paging guarantee was lost.
+async function svReadFlowLayer(orgUrl, sid) {
+  let [res, cnt] = await Promise.all([
+    sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl, sid, query: svFlowListQuery(true) }),
+    sendBg({ type: 'SF_QUERY',     tooling: false, orgUrl, sid, query: svFlowCountQuery() }),
+  ]);
+  let ordered = true;
+  if (res && res.error && svIsSortRejection(res.error)) {
+    ordered = false;
+    res = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl, sid, query: svFlowListQuery(false) });
+  }
+  return { ...svFlowLayerResult(res, cnt), ordered };
+}
+
 // ── Fetch active flows ────────────────────────────────────────
 // FlowDefinitionView on the STANDARD REST API (tooling:false) — this is
 // the object that actually carries ApiName/Label/ProcessType/TriggerType/
@@ -699,39 +955,98 @@ async function svLoad() {
 // Schema View flow layer was silently empty since the day it shipped.
 // ActiveVersionId is selected for the deep scan's Tooling metadata fetch.
 async function svFetchFlows(sess) {
-  const res = await sendBg({
-    type: 'SF_QUERY', tooling: false,
-    orgUrl: sess.orgUrl, sid: sess.sid,
-    query: `SELECT DurableId, ApiName, Label, ProcessType, TriggerType,
-              TriggerObjectOrEvent.QualifiedApiName, ActiveVersionId, LastModifiedDate
-            FROM FlowDefinitionView
-            WHERE IsActive = true
-            LIMIT 500`
-  });
-  if (res.error) {
+  const layer = await svReadFlowLayer(sess.orgUrl, sess.sid);
+  if (!layer.ok) {
     if (window.SFToolkitDebug?.enabled) {
-      window.SFToolkitDebug.log('schema', 'error', 'FlowDefinitionView query failed', res.error);
+      window.SFToolkitDebug.log('schema', 'error', 'FlowDefinitionView query failed', layer.error);
     }
     // N5b: an empty flow layer that means "the query failed" must never look
     // like "this org has no automation". Debug-log only was not enough.
     svNote('Flow automations could not be listed',
       'the FlowDefinitionView query failed, so every flow badge on this graph reads 0 and no flow-action edges exist — ' +
       'that is missing data, not an automation-free org',
-      res.error);
+      layer.error);
+    _svFlowsComplete = false;
+    _svFlowsCompleteWhy = layer.error;
     return [];
   }
   _svFlowsQueryOk = true;
-  const recs = res.records || [];
-  if (recs.length >= 500) {
-    svNote('Flow list capped at 500 active flows',
-      'the org returned the maximum this query asks for — flows beyond the first 500 are not counted on any node');
+  _svFlowsComplete = layer.complete;
+  _svFlowsCompleteWhy = layer.complete ? '' : layer.reason;
+  if (!layer.complete) {
+    svNote('The active-flow list could not be confirmed complete',
+      `${layer.reason}. Flow badges may under-count, and the ⇄ org diff will not compare flow counts at all ` +
+      'rather than report differences it cannot stand behind',
+      layer.countError);
   }
-  return recs;
+  // Not downgraded to incomplete on purpose — see the matching note in
+  // svLoadDiff. The COUNT() cross-check still ran; only reproducibility is lost.
+  if (!layer.ordered) {
+    svNote('The flow list was read without a deterministic order',
+      'this org rejected ORDER BY on FlowDefinitionView, so the paged read was taken unordered — ' +
+      'the record count was still reconciled against the org\'s own COUNT(), but a repeat read is ' +
+      'not guaranteed to page identically');
+  }
+  return layer.records;
 }
 
 // ── Deep scan: cross-object flow actions ─────────────────────
-// Queries the Metadata field on FlowVersion for a sample of record-triggered flows
-// and parses recordCreates / recordUpdates pointing at other objects.
+// Reads the Metadata field of each record-triggered flow's ACTIVE VERSION and
+// parses recordCreates / recordUpdates / subflows pointing at other objects.
+//
+// L7 — this used to be one Tooling GET per flow (batch-of-3 Promise.all
+// barrier), so the 20-flow cap existed purely to keep the round-trip count
+// down. It now goes through the composite/batch primitive in background.js:
+// N reads cost ceil(N/chunk) round-trips. 100 flows at chunk 10 is 10 calls,
+// against 20 calls for 20 flows before — 5× the coverage for half the traffic
+// (10× cheaper per flow), so the cap is raised rather than the budget.
+//
+// Chunk is 10, not the primitive's maximum of 25, ON PURPOSE: a Flow's Metadata
+// is one of the largest payloads in the Tooling API and 25 big flows in one
+// response is a response-size gamble for no round-trip gain worth the risk. A
+// batch that does blow up comes back with batchError on every item, which is
+// reported separately below from a single flow that failed on its own.
+const SV_FLOW_META_CAP     = 100;  // flows opened by the deep scan (10 batched calls)
+const SV_FLOW_META_CHUNK   = 10;   // subrequests per composite/batch call
+const SV_FLOW_META_PARALLEL = 2;   // batches in flight
+
+// PURE. One flow's parsed Metadata → the cross-object actions it performs.
+// Extracted so the batching rewrite could not quietly change what a flow body
+// means, and so the parse is unit-testable without a network.
+//   flow        — the FlowDefinitionView record (needs TriggerObjectOrEvent)
+//   meta        — the Tooling Flow record's Metadata object
+//   objectSet   — Set of LOWERCASE object names that are on the graph
+//   flowsByName — Map apiName → flow record, for resolving subflow targets
+// Returns [] (never throws) for junk input or a flow with no trigger object.
+function svFlowMetaActions(flow, meta, objectSet, flowsByName) {
+  const out = [];
+  if (!flow || !meta || typeof meta !== 'object') return out;
+  const set = (objectSet instanceof Set) ? objectSet : new Set();
+  const fromObj = flow.TriggerObjectOrEvent && flow.TriggerObjectOrEvent.QualifiedApiName;
+  if (!fromObj) return out;
+  const flowName = flow.Label || flow.ApiName || '';
+  const many = v => Array.isArray(v) ? v : (v ? [v] : []);
+  const add = (toObj, action) => {
+    if (toObj && toObj !== fromObj && set.has(String(toObj).toLowerCase())) {
+      out.push({ fromObj, toObj, flowName, action });
+    }
+  };
+
+  for (const rc of many(meta.recordCreates)) add(rc && rc.object, 'creates');
+  for (const ru of many(meta.recordUpdates)) add(ru && ru.object, 'updates');
+  // Subflows: resolve the CALLED flow's trigger object. The lookup spans the
+  // whole active-flow list, not just the flows this scan happened to open — the
+  // target's trigger object is already known from the list query, so scoping it
+  // to the scanned subset only lost edges for no reason.
+  const byName = (flowsByName instanceof Map) ? flowsByName : new Map();
+  for (const sf of many(meta.subflows)) {
+    const target = sf && sf.flowName ? byName.get(sf.flowName) : null;
+    add(target && target.TriggerObjectOrEvent && target.TriggerObjectOrEvent.QualifiedApiName,
+      'calls subflow');
+  }
+  return out;
+}
+
 async function svFetchFlowActions(sess, flows, objects) {
   const objectSet = new Set(objects.map(o => o.toLowerCase()));
   const actions = [];
@@ -743,79 +1058,70 @@ async function svFetchFlowActions(sess, flows, objects) {
       (f.ProcessType === 'AutoLaunchedFlow' || f.ProcessType === 'RecordTriggeredFlow' ||
        f.TriggerType?.includes('Record'));
   });
-  const triggered = eligible.slice(0, 20); // cap at 20 flows for perf
+  const triggered = eligible.slice(0, SV_FLOW_META_CAP);
   // Honesty over cleverness: the cap is real, so say it out loud.
   if (eligible.length > triggered.length) {
-    svNote('Deep scan capped at 20 flows',
+    svNote(`Deep scan capped at ${SV_FLOW_META_CAP} flows`,
       `${eligible.length} record-triggered flows target the graphed objects but only the first ${triggered.length} were opened — ` +
       'cross-object actions inside the remaining ' + (eligible.length - triggered.length) + ' flows are NOT on this graph');
   }
 
   if (!triggered.length) return actions;
-  const metaFailed = [];   // flows whose Tooling metadata could not be read
 
-  // Fetch the ACTIVE VERSION's metadata via the Tooling Flow object —
-  // FlowDefinitionView.ActiveVersionId is a Flow (version) record Id.
-  const BATCH = 3;
-  for (let i = 0; i < triggered.length; i += BATCH) {
-    const batch = triggered.slice(i, i + BATCH);
-    const results = await Promise.all(batch.map(f =>
-      sendBg({
-        type: 'SF_TOOLING_GET', orgUrl: sess.orgUrl, sid: sess.sid,
-        sobject: 'Flow', id: f.ActiveVersionId
-      })
-    ));
-
-    batch.forEach((flow, idx) => {
-      const r    = results[idx];
-      const meta = r?.Metadata;
-      if (!meta) {
-        // Was it an API failure or a genuinely empty flow body? Only the first
-        // is a hole in the data — record it either way, we cannot tell the
-        // difference from an absent Metadata key without the error string.
-        metaFailed.push({ name: flow.Label || flow.ApiName, error: r?.error || 'the Tooling API returned no Metadata for this flow version' });
-        return;
-      }
-
-      const fromObj = flow.TriggerObjectOrEvent?.QualifiedApiName;
-      if (!fromObj) return;
-
-      // Parse recordCreates
-      const creates = Array.isArray(meta.recordCreates) ? meta.recordCreates
-        : meta.recordCreates ? [meta.recordCreates] : [];
-      for (const rc of creates) {
-        const toObj = rc.object;
-        if (toObj && toObj !== fromObj && objectSet.has(toObj.toLowerCase())) {
-          actions.push({ fromObj, toObj, flowName: flow.Label || flow.ApiName, action: 'creates' });
-        }
-      }
-
-      // Parse recordUpdates
-      const updates = Array.isArray(meta.recordUpdates) ? meta.recordUpdates
-        : meta.recordUpdates ? [meta.recordUpdates] : [];
-      for (const ru of updates) {
-        const toObj = ru.object;
-        if (toObj && toObj !== fromObj && objectSet.has(toObj.toLowerCase())) {
-          actions.push({ fromObj, toObj, flowName: flow.Label || flow.ApiName, action: 'updates' });
-        }
-      }
-
-      // Parse subflows (flow calls another flow — show as connection)
-      const subflows = Array.isArray(meta.subflows) ? meta.subflows
-        : meta.subflows ? [meta.subflows] : [];
-      for (const sf of subflows) {
-        if (sf.flowName) {
-          // find target flow's trigger object
-          const target = triggered.find(f2 => f2.ApiName === sf.flowName);
-          const toObj = target?.TriggerObjectOrEvent?.QualifiedApiName;
-          if (toObj && toObj !== fromObj && objectSet.has(toObj.toLowerCase())) {
-            actions.push({ fromObj, toObj, flowName: flow.Label || flow.ApiName, action: 'calls subflow' });
-          }
-        }
-      }
-    });
+  // One message, ceil(n/10) round-trips. The primitive returns a per-item array
+  // aligned 1:1 with the subrequests, so results[i] belongs to triggered[i] —
+  // no matching by id, no chance of attaching flow B's body to flow A.
+  const res = await sendBg({
+    type: 'SF_COMPOSITE_BATCH', orgUrl: sess.orgUrl, sid: sess.sid,
+    subrequests: triggered.map(f => ({ method: 'GET', url: `tooling/sobjects/Flow/${f.ActiveVersionId}` })),
+    chunkSize: SV_FLOW_META_CHUNK,
+    concurrency: SV_FLOW_META_PARALLEL,
+  });
+  // Dispatcher/session failure comes back as the usual { error } envelope
+  // instead of the array. Nothing was read, so say nothing was read.
+  if (!Array.isArray(res)) {
+    svNote('Cross-object flow actions could not be scanned',
+      `the batched Tooling read of ${triggered.length} flow version${triggered.length === 1 ? '' : 's'} failed outright, ` +
+      'so NO flow-action edges are on this graph — that is missing data, not an absence of cross-object automation',
+      res?.error || 'the batch request returned no result array');
+    return actions;
   }
 
+  // A whole batch dying (batchError) and one flow failing on its own are
+  // different facts with different fixes, so they are counted separately.
+  const flowsByName = new Map();
+  for (const f of flows) if (f && f.ApiName && !flowsByName.has(f.ApiName)) flowsByName.set(f.ApiName, f);
+  const metaFailed = [];   // this flow's own read failed
+  const batchDead  = [];   // the call carrying this flow failed
+
+  triggered.forEach((flow, idx) => {
+    const item = res[idx];
+    const name = flow.Label || flow.ApiName;
+    if (!item) {
+      metaFailed.push({ name, error: 'this flow version was never requested — the batched read stopped early' });
+      return;
+    }
+    if (!item.ok) {
+      (item.batchError ? batchDead : metaFailed).push({ name, error: item.error || 'the Tooling API rejected this read' });
+      return;
+    }
+    const meta = item.body && item.body.Metadata;
+    if (!meta) {
+      // Was it an empty flow body or an unexpected payload? Either way this
+      // flow's cross-object actions are unknown, not absent.
+      metaFailed.push({ name, error: 'the Tooling API returned no Metadata for this flow version' });
+      return;
+    }
+    for (const a of svFlowMetaActions(flow, meta, objectSet, flowsByName)) actions.push(a);
+  });
+
+  if (batchDead.length) {
+    svNote(
+      `${batchDead.length} of ${triggered.length} deep-scanned flows were lost with a failed batch`,
+      `${batchDead.slice(0, 6).map(m => m.name).join(', ')}${batchDead.length > 6 ? `, +${batchDead.length - 6} more` : ''} — ` +
+      'the whole composite/batch call carrying them failed, so their cross-object actions are missing from the graph',
+      batchDead[0].error);
+  }
   if (metaFailed.length) {
     svNote(
       `${metaFailed.length} of ${triggered.length} deep-scanned flow${metaFailed.length === 1 ? '' : 's'} could not be read`,
@@ -1286,28 +1592,39 @@ function svShowDetail(nodeId) {
       </div>`).join('')}
     </div>` : '';
 
-  // Reference fields (lookup/MD fields)
-  const lookupFields = (node.fields || [])
-    .filter(f => f.type === 'reference' && (f.referenceTo || []).length > 0)
-    .slice(0, 20);
-  const lookupSection = lookupFields.length ? `
+  // Reference fields (lookup/MD fields).
+  // L7 sweep — the header used to count the SLICED array, so an object with 35
+  // lookup fields displayed "Reference Fields (20)": a wrong number stated as a
+  // fact, in the panel whose entire job is to describe the object. The count is
+  // now the real total and the trim says so. Display-only; the describe payload
+  // is already in memory, so nothing extra is fetched.
+  const DETAIL_ROWS = 20;
+  const lookupAll = (node.fields || [])
+    .filter(f => f.type === 'reference' && (f.referenceTo || []).length > 0);
+  const lookupFields = lookupAll.slice(0, DETAIL_ROWS);
+  const moreNote = (shown, total) => total > shown
+    ? `<div class="sv-detail-empty">…and ${total - shown} more, not listed here</div>` : '';
+  const lookupSection = lookupAll.length ? `
     <div class="sv-detail-section">
-      <div class="sv-detail-section-title">🔗 Reference Fields (${lookupFields.length})</div>
+      <div class="sv-detail-section-title">🔗 Reference Fields (${lookupAll.length})</div>
       ${lookupFields.map(f => `<div class="sv-detail-field">
         <span class="sv-detail-field-name">${esc(f.name)}</span>
         <span class="sv-detail-field-ref">→ ${esc((f.referenceTo || []).slice(0,3).join(', '))}${(f.referenceTo||[]).length > 3 ? '…' : ''}</span>
       </div>`).join('')}
+      ${moreNote(lookupFields.length, lookupAll.length)}
     </div>` : '';
 
-  // Child relationships
-  const childRels = (node.childRels || []).slice(0, 20);
-  const childSection = childRels.length ? `
+  // Child relationships — same fix.
+  const childAll  = node.childRels || [];
+  const childRels = childAll.slice(0, DETAIL_ROWS);
+  const childSection = childAll.length ? `
     <div class="sv-detail-section">
-      <div class="sv-detail-section-title">👇 Child Relationships (${childRels.length})</div>
+      <div class="sv-detail-section-title">👇 Child Relationships (${childAll.length})</div>
       ${childRels.map(r => `<div class="sv-detail-field">
         <span class="sv-detail-field-name">${esc(r.relationshipName || r.childSObject)}</span>
         <span class="sv-detail-field-ref">${esc(r.childSObject)}</span>
       </div>`).join('')}
+      ${moreNote(childRels.length, childAll.length)}
     </div>` : '';
 
   // N5b — attribution + honesty in the detail panel.
@@ -1405,7 +1722,8 @@ function svFitGraph() {
 
 // PURE — the whole comparison. Both sides are
 //   { objects: [{ id, described, flowCount }], edges: [{ from, to, edgeType, label }],
-//     flowsLoaded: bool, flowActionsScanned: bool }
+//     flowsLoaded: bool, flowsIncomplete?: bool, flowsIncompleteWhy?: string,
+//     flowActionsScanned: bool }
 // Anything the inputs say was not loaded comes back as status 'unknown' with a
 // reason, never as a difference.
 function svDiffGraphs(a, b) {
@@ -1434,6 +1752,62 @@ function svDiffGraphs(a, b) {
   }
 
   const uncomparable = [];
+
+  // ── L7: may a flow-count comparison be emitted AT ALL? ──────
+  // This gate stops the worst bug in this file. The two sides are two
+  // INDEPENDENTLY paged active-flow lists. If either one is short, an object
+  // whose missing flows sit in the unread tail of one org and inside the read
+  // part of the other comes out as "flow counts differ" — a difference between
+  // the orgs THAT DOES NOT EXIST. A wrong diff is worse than a missing one,
+  // because the user acts on it.
+  //
+  // Suppression is all-or-nothing on purpose. Per-object salvage ("compare the
+  // objects whose flows we are sure about") is impossible: without reading the
+  // tail there is no way to know WHICH objects the unread flows belong to, so
+  // every object is potentially affected. "Same" is suppressed for the same
+  // reason as "differs" — both are claims about data that was not read.
+  //
+  // `flowsIncomplete` is a POSITIVE assertion that a side is known short or
+  // unconfirmed, so its ABSENCE means "no incompleteness known" and an older
+  // caller that never reconciled keeps its previous behaviour. svLoadDiff
+  // computes it for BOTH sides from the COUNT() cross-check and always passes
+  // it explicitly.
+  //
+  // Deliberately a NESTED function: svDiffGraphs has to stay materialisable on
+  // its own by test/extract.mjs, so it may not reference sibling top-level
+  // helpers. It is covered end-to-end in test/schema-flows-scale.test.mjs
+  // through the result it produces — which is the thing that matters anyway:
+  // nothing EMITTED.
+  const flowCmp = (function flowComparability() {
+    const rd = s => ({
+      loaded:     !!(s && s.flowsLoaded),
+      incomplete: !!(s && s.flowsIncomplete),
+      why:        String((s && s.flowsIncompleteWhy) || ''),
+    });
+    const x = rd(A), y = rd(B);
+    if (!x.loaded || !y.loaded) {
+      return {
+        comparable: false,
+        reason: 'Flow counts were NOT compared — flows were ' +
+          ((!x.loaded && !y.loaded) ? 'not loaded for either org'
+            : (!x.loaded ? 'not loaded for this org' : 'not loaded for the compare org')),
+      };
+    }
+    if (x.incomplete || y.incomplete) {
+      const who = (x.incomplete && y.incomplete) ? 'both orgs'
+        : (x.incomplete ? 'this org' : 'the compare org');
+      const why = [x.incomplete ? x.why : '', y.incomplete ? y.why : ''].filter(Boolean).join('; ');
+      return {
+        comparable: false,
+        reason: 'Flow counts were NOT compared — the active-flow list is INCOMPLETE for ' + who +
+          (why ? ` (${why})` : '') +
+          '. Comparing two partially-read flow lists reports differences that do not exist, ' +
+          'so no flow-count comparison was made at all.',
+      };
+    }
+    return { comparable: true, reason: '' };
+  })();
+
   const nodes = order.map(k => {
     const x = aMap.get(k) || null, y = bMap.get(k) || null;
     const id = (x && x.id) || (y && y.id) || k;
@@ -1447,18 +1821,12 @@ function svDiffGraphs(a, b) {
     const flowsA = (x && typeof x.flowCount === 'number') ? x.flowCount : null;
     const flowsB = (y && typeof y.flowCount === 'number') ? y.flowCount : null;
     let flowStatus = 'unknown';
-    if (status === 'both') {
-      if (A.flowsLoaded && B.flowsLoaded && flowsA !== null && flowsB !== null) {
-        flowStatus = (flowsA === flowsB) ? 'same' : 'differs';
-      }
+    if (status === 'both' && flowCmp.comparable && flowsA !== null && flowsB !== null) {
+      flowStatus = (flowsA === flowsB) ? 'same' : 'differs';
     }
     return { id, key: k, status, describedA, describedB, comparable, flowsA, flowsB, flowStatus };
   });
-  if (!A.flowsLoaded || !B.flowsLoaded) {
-    uncomparable.push('Flow counts were NOT compared — flows were ' +
-      ((!A.flowsLoaded && !B.flowsLoaded) ? 'not loaded for either org'
-        : (!A.flowsLoaded ? 'not loaded for this org' : 'not loaded for the compare org')));
-  }
+  if (!flowCmp.comparable) uncomparable.push(flowCmp.reason);
   if (!A.flowActionsScanned || !B.flowActionsScanned) {
     uncomparable.push('Cross-object flow-action edges were NOT compared — the deep scan did not run for ' +
       ((!A.flowActionsScanned && !B.flowActionsScanned) ? 'either org'
@@ -1529,7 +1897,13 @@ function svDiffGraphs(a, b) {
     flowsDiffer:       cnt(nodes, n => n.flowStatus === 'differs'),
     flowsUnknown:      cnt(nodes, n => n.status === 'both' && n.flowStatus === 'unknown'),
   };
-  return { nodes, edges, counts, uncomparable };
+  // flowsComparable is surfaced so the legend can say "not compared" outright
+  // instead of leaving the reader to infer it from a zero.
+  return {
+    nodes, edges, counts, uncomparable,
+    flowsComparable: flowCmp.comparable,
+    flowsNotComparedWhy: flowCmp.reason,
+  };
 }
 
 // Run the compare. Lazy (nothing happens until the button is pressed) and
@@ -1579,54 +1953,85 @@ async function svLoadDiff() {
     diffNotes.push(`Objects that exist ONLY in ${orgLabel(tgtUrl)} could not be listed — this org's object list failed to load (${srcList.error}). "Only there" objects are missing from this overlay.`);
   }
   const srcLower = new Set(srcList.list.map(o => o.name.toLowerCase()));
+  // Object lists are cached per popup session with no expiry. This overlay
+  // stamps itself with the time the compare RAN, so say when part of it did not
+  // come off the wire just now.
+  if (tgtList.cached || srcList.cached) {
+    diffNotes.push('Object existence came from this session\'s cached sObject list for ' +
+      ((tgtList.cached && srcList.cached) ? 'both orgs'
+        : (tgtList.cached ? orgLabel(tgtUrl) : 'this org')) +
+      ', not from a read taken just now — an object created since the list was cached is not in this comparison.');
+  }
 
-  // 2) Describe the shared objects in the compare org (same batching as svLoad).
+  // 2) Describe the shared objects in the compare org (same pool as svLoad, and
+  //    for the same reason describes are not composite-batched — see svLoad).
   const tgtDesc = {}, tgtFailed = [];
   const shared  = objects.filter(o => tgtByLower.has(o.toLowerCase()));
-  const BATCH = 6;
-  for (let i = 0; i < shared.length; i += BATCH) {
-    const batch = shared.slice(i, i + BATCH);
-    svSetStatus(`⏳ Describing ${Math.min(i + BATCH, shared.length)} / ${shared.length} in ${orgLabel(tgtUrl)}…`);
-    const results = await Promise.all(batch.map(obj =>
-      sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid,
-               path: `services/data/v62.0/sobjects/${obj}/describe` })));
-    for (let j = 0; j < batch.length; j++) {
-      const r = results[j];
-      if (isSessionResult(r)) {
-        done(); svSetStatus('');
-        showSessionBanner(sess.orgUrl, () => svLoadDiff());
-        return;
-      }
-      if (!r.error) tgtDesc[batch[j]] = r;
-      else tgtFailed.push({ obj: batch[j], error: r.error });
-    }
+  let tgtSessionExpired = false;
+  const tgtPool = await svRunPool(shared, async (obj) => {
+    const r = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid,
+      path: `services/data/v62.0/sobjects/${obj}/describe` });
+    if (isSessionResult(r)) { tgtSessionExpired = true; return null; }
+    return r;
+  }, {
+    concurrency: SV_DESCRIBE_POOL,
+    shouldStop: () => tgtSessionExpired,
+    onProgress: (d, t) => svSetStatus(`⏳ Describing ${d} / ${t} in ${orgLabel(tgtUrl)}…`),
+  });
+  if (tgtSessionExpired) {
+    done(); svSetStatus('');
+    showSessionBanner(sess.orgUrl, () => svLoadDiff());
+    return;
   }
+  shared.forEach((obj, i) => {
+    const r = tgtPool.results[i];
+    if (!r) { tgtFailed.push({ obj, error: 'the describe never completed for this object' }); return; }
+    if (!r.error) tgtDesc[obj] = r;
+    else tgtFailed.push({ obj, error: r.error });
+  });
   if (tgtFailed.length) {
     const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(tgtFailed[0].error) : { message: String(tgtFailed[0].error) };
     diffNotes.push(`${tgtFailed.length} object${tgtFailed.length === 1 ? '' : 's'} could not be described in ${orgLabel(tgtUrl)} (${tgtFailed.slice(0, 5).map(t => t.obj).join(', ')}${tgtFailed.length > 5 ? ', …' : ''}) — first error: ${fe.message}. Those objects and their relationships are marked "not comparable", not "missing".`);
   }
 
   // 3) Flows in the compare org — only if this graph HAS a flow layer to compare.
-  let tgtFlows = [], tgtFlowsOk = false;
+  //    L7: identical query, paging and COUNT() cross-check as the graph's own
+  //    leg (svFetchFlows). Two sides of a diff MUST be read the same way, and
+  //    the old code here ran a bare single-page `LIMIT 500` against a graph
+  //    layer that was also `LIMIT 500` — two independent truncations, diffed.
+  let tgtFlows = [], tgtFlowsOk = false, tgtFlowsComplete = false, tgtFlowsWhy = '';
   if (_svFlowsLoaded) {
     svSetStatus(`⏳ Fetching flows in ${orgLabel(tgtUrl)}…`);
-    const fres = await sendBg({
-      type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
-      query: `SELECT DurableId, ApiName, Label, ProcessType, TriggerType,
-                TriggerObjectOrEvent.QualifiedApiName, ActiveVersionId
-              FROM FlowDefinitionView WHERE IsActive = true LIMIT 500`,
-    });
-    if (fres.error) {
-      const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(fres.error) : { message: String(fres.error) };
-      diffNotes.push(`Flow counts were NOT compared — the flow query failed in ${orgLabel(tgtUrl)}: ${fe.message}`);
-    } else { tgtFlows = fres.records || []; tgtFlowsOk = true; }
+    const layer = await svReadFlowLayer(sess.orgUrl, sess.sid);
+    if (!layer.ok) {
+      const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(layer.error) : { message: String(layer.error) };
+      tgtFlowsWhy = fe.message || String(layer.error);
+      diffNotes.push(`Flow counts were NOT compared — the flow query failed in ${orgLabel(tgtUrl)}: ${tgtFlowsWhy}`);
+    } else {
+      tgtFlows = layer.records;
+      tgtFlowsOk = true;
+      tgtFlowsComplete = layer.complete;
+      tgtFlowsWhy = layer.complete ? '' : `in ${orgLabel(tgtUrl)}, ${layer.reason}`;
+      // An unordered read is NOT downgraded to incomplete: the COUNT() check
+      // still proved the record count matches the org's own, and an org under
+      // one page never pages at all. Losing the flow diff entirely in an org
+      // that refuses the sort would be a bigger loss than the residual risk —
+      // but it is stated, not absorbed.
+      if (!layer.ordered) {
+        diffNotes.push(`${orgLabel(tgtUrl)} rejected ORDER BY on FlowDefinitionView, so its flow list was paged without a deterministic order. The record count still reconciled against the org's own COUNT().`);
+      }
+    }
   } else {
     diffNotes.push('Flow counts were NOT compared — this graph was built without the flow layer.');
   }
-  // The deep cross-object scan is deliberately NOT re-run for the compare org
-  // (up to 20 extra Tooling metadata GETs). Flow-action edges therefore come
-  // back "unknown", which is the honest answer.
-  diffNotes.push('Cross-object flow-action edges are shown as "not compared" — the deep flow scan is not re-run against the compare org (it costs up to 20 extra Tooling calls).');
+  // The graph side's own verdict, restated here so the reason travels with the
+  // diff even though the graph was loaded minutes ago.
+  if (_svFlowsLoaded && !_svFlowsComplete) {
+    diffNotes.push(`This org's active-flow list was never confirmed complete (${_svFlowsCompleteWhy || 'no reconciliation was recorded'}).`);
+  }
+  // The deep cross-object scan is deliberately NOT re-run for the compare org.
+  // Flow-action edges therefore come back "unknown", which is the honest answer.
+  diffNotes.push(`Cross-object flow-action edges are shown as "not compared" — the deep flow scan is not re-run against the compare org (it costs up to ${Math.ceil(SV_FLOW_META_CAP / SV_FLOW_META_CHUNK)} extra batched Tooling calls).`);
 
   // 4) Build the compare side with the SAME pure builders as the live graph.
   const tgtObjects = shared.map(id => ({
@@ -1654,10 +2059,15 @@ async function svLoadDiff() {
   }
 
   const inclRels = eid('svChkRels')?.checked ?? true;
+  // L7 — both sides state their flow-list completeness EXPLICITLY. If either is
+  // short (or was never confirmed), svDiffGraphs emits no flow-count comparison
+  // at all instead of diffing two partially-read lists.
   const bSide = {
     objects: tgtObjects,
     edges: inclRels ? svRelEdges(shared, tgtDesc) : [],
     flowsLoaded: tgtFlowsOk,
+    flowsIncomplete: !tgtFlowsComplete,
+    flowsIncompleteWhy: tgtFlowsWhy,
     flowActionsScanned: false,
   };
   const aSide = {
@@ -1666,6 +2076,8 @@ async function svLoadDiff() {
     })),
     edges: _svEdges.filter(e => !e._diffOnly),
     flowsLoaded: _svFlowsLoaded,
+    flowsIncomplete: !_svFlowsComplete,
+    flowsIncompleteWhy: _svFlowsCompleteWhy,
     flowActionsScanned: _svFlowActionsScanned,
   };
 
@@ -1746,8 +2158,9 @@ function svRenderDiffLegend() {
       </div>
       <div style="margin-top:6px;opacity:.85">
         Objects compared: <strong>${_svDiff.objectsCompared}</strong> ·
-        flow counts differing: <strong>${c.flowsDiffer}</strong> ·
-        flow counts not compared: <strong>${c.flowsUnknown}</strong>.
+        ${_svDiff.result.flowsComparable === false
+          ? 'flow counts: <strong>not compared at all</strong> (see below)'
+          : `flow counts differing: <strong>${c.flowsDiffer}</strong> · flow counts not compared: <strong>${c.flowsUnknown}</strong>`}.
         Dashed grey = we could not tell; it is <em>not</em> a match.
       </div>
       ${(unc.length || (_svDiff.notes || []).length) ? `

@@ -16,7 +16,17 @@ const { depScanPlan, depFormatEta } = extractFunctions('dependency-map.js', ['de
 const depRunPool = extractFunction('dependency-map.js', 'depRunPool');
 
 // Mirrors the constants the IIFE passes in via DependencyMap.scanPlan().
-const LIVE = { autoMax: 150, concurrency: 6 };
+//
+// v1.0.2 UPDATE: the reads are now batched (composite/batch, DEP_SCAN_CHUNK
+// reads per round-trip), so `concurrency` counts BATCHES in flight and
+// depScanPlan reports `reads` (metadata reads = one per version, unchanged) and
+// `calls` (HTTP round-trips = ceil(reads/chunkSize)) as separate numbers. The
+// assertions below that were written when those were the same number have been
+// updated to the batched cost — the ETA the UI quotes has to be the cost the
+// scan actually pays. Everything the batching did NOT change (the 150-version
+// auto threshold, the junk-input handling, the whole depRunPool suite) is
+// untouched. The batched contract itself is covered in test/dep-incremental.test.mjs.
+const LIVE = { autoMax: 150, concurrency: 3, chunkSize: 10 };
 
 describe('depScanPlan — eager scan vs. ask first', () => {
   it('scans eagerly at and below the threshold', () => {
@@ -31,29 +41,34 @@ describe('depScanPlan — eager scan vs. ask first', () => {
     expect(depScanPlan(1600, LIVE).auto).toBe(false);
   });
 
-  it('quotes ONE metadata call per flow version — never a capped or rounded number', () => {
-    // The honesty requirement: the number the UI shows is the number of calls
-    // the pool will actually make.
+  it('quotes ONE metadata READ per flow version — never a capped or rounded number', () => {
+    // The honesty requirement, unchanged: the org is still asked for exactly one
+    // metadata read per version. What changed in v1.0.2 is how many HTTP calls
+    // carry them — see the `calls` assertion below and dep-incremental.test.mjs.
     for (const n of [0, 7, 150, 151, 1600, 12345]) {
-      expect(depScanPlan(n, LIVE).calls).toBe(n);
+      expect(depScanPlan(n, LIVE).reads).toBe(n);
       expect(depScanPlan(n, LIVE).versions).toBe(n);
+      expect(depScanPlan(n, LIVE).calls).toBe(Math.ceil(n / 10));
     }
   });
 
   it('divides the ETA by the real pool width', () => {
+    // msPerCall is now ms per BATCH round-trip, and the pool width is batches
+    // in flight — the two units the estimate is actually made of.
     const p = depScanPlan(1200, { ...LIVE, msPerCall: 300 });
-    expect(p.estMs).toBe(Math.round((1200 * 300) / 6));   // 60_000
-    expect(p.estLabel).toBe('about 1m');
-    expect(p.concurrency).toBe(6);
+    expect(p.calls).toBe(120);
+    expect(p.estMs).toBe(Math.round((120 * 300) / 3));   // 12_000
+    expect(p.estLabel).toBe('about 12s');
+    expect(p.concurrency).toBe(3);
   });
 
   it('flags whether the ETA came from a measured scan or the default', () => {
     expect(depScanPlan(200, LIVE).measured).toBe(false);
-    expect(depScanPlan(200, LIVE).msPerCall).toBe(300);          // documented default
+    expect(depScanPlan(200, LIVE).msPerCall).toBe(1200);         // documented default
     const m = depScanPlan(200, { ...LIVE, msPerCall: 900 });
     expect(m.measured).toBe(true);
     expect(m.msPerCall).toBe(900);
-    expect(m.estMs).toBe(30000);
+    expect(m.estMs).toBe(Math.round((20 * 900) / 3));            // 6_000
   });
 
   it('survives junk version counts instead of quoting NaN', () => {
@@ -69,9 +84,10 @@ describe('depScanPlan — eager scan vs. ask first', () => {
   it('falls back to sane defaults when opts are missing or nonsense', () => {
     const p = depScanPlan(151);
     expect(p.autoMax).toBe(150);
-    expect(p.concurrency).toBe(6);
+    expect(p.concurrency).toBe(3);
+    expect(p.chunkSize).toBe(10);
     expect(p.auto).toBe(false);
-    expect(depScanPlan(10, { concurrency: 0, msPerCall: -1 }).concurrency).toBe(6);
+    expect(depScanPlan(10, { concurrency: 0, msPerCall: -1 }).concurrency).toBe(3);
   });
 
   it('allows autoMax 0 — every org then asks first', () => {
@@ -222,16 +238,21 @@ describe('resume accounting — a stopped scan must not re-pay for what it cover
   // buildDependencyMap filters the queue by _scannedIds and offsets progress by
   // the count already covered. That arithmetic is what the offer bar quotes.
   it('quotes only the remaining calls after a partial scan', () => {
+    // The remainder is measured in VERSIONS still to read (popup.js gets that
+    // from DependencyMap.pendingCount) and the plan converts it to round-trips.
     const total = depScanPlan(1600, LIVE);
+    expect(total.reads).toBe(1600);
     const doneSoFar = 640;
-    const left = depScanPlan(total.calls - doneSoFar, LIVE);
-    expect(left.calls).toBe(960);
-    expect(left.estMs).toBe(Math.round((960 * 300) / 6));
-    expect(left.estLabel).toBe('about 48s');
+    const left = depScanPlan(total.reads - doneSoFar, { ...LIVE, msPerCall: 300 });
+    expect(left.reads).toBe(960);
+    expect(left.calls).toBe(96);
+    expect(left.estMs).toBe(Math.round((96 * 300) / 3));
+    expect(left.estLabel).toBe('about 10s');
   });
 
   it('quotes zero remaining when a stop landed on the last item', () => {
     const left = depScanPlan(0, LIVE);
+    expect(left.reads).toBe(0);
     expect(left.calls).toBe(0);
     expect(left.estLabel).toBe('under a second');
   });
