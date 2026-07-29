@@ -33,6 +33,18 @@
   --shadow:       0 2px 8px rgba(0,0,0,.10), 0 0 0 1px rgba(0,0,0,.04);
   --shadow-md:    0 6px 24px rgba(0,0,0,.13);
   --nav-w:        224px;
+
+  /* E4 — density knobs. Structural rules consume these so professional mode
+     (body.ds-pro, see PROFESSIONAL MODE block at the end of this file) can
+     tighten density ~10% by overriding the variables, not rewriting rules. */
+  --main-pad-y:    28px;
+  --main-pad-x:    32px;
+  --card-pad-y:    16px;
+  --card-pad-x:    18px;
+  --row-pad-y:     14px;
+  --row-pad-x:     18px;
+  --view-gap:      24px;
+  --nav-btn-pad-y: 8px;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -316,7 +328,7 @@ html, body {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 8px 12px;
+  padding: var(--nav-btn-pad-y) 12px;
   background: transparent;
   border: none;
   border-radius: 7px;
@@ -369,7 +381,7 @@ html, body {
   /* Extra bottom padding so the last tree node never sits flush against
      the viewport edge — leaves a gutter so the user knows they've reached
      the end of the content. */
-  padding: 28px 32px 80px;
+  padding: var(--main-pad-y) var(--main-pad-x) 80px;
   background: var(--bg);
   /* Always-visible scrollbar so users can see the page is scrollable as
      they expand tree nodes. Chrome's auto-hide default made the Profile
@@ -401,7 +413,7 @@ html, body {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 24px;
+  margin-bottom: var(--view-gap);
   flex-wrap: wrap;
   gap: 10px;
 }
@@ -666,7 +678,7 @@ html, body {
   background: var(--surface);
   border: 1.5px solid var(--border);
   border-radius: 10px;
-  padding: 18px;
+  padding: var(--row-pad-x);
   transition: border-color .2s, box-shadow .15s;
 }
 .ds-profile-card:hover { border-color: #AEAEAC; box-shadow: var(--shadow); }
@@ -2534,7 +2546,7 @@ html, body {
   background: var(--surface);
   border: 1.5px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px 18px;
+  padding: var(--row-pad-y) var(--row-pad-x);
   display: flex;
   align-items: center;
   gap: 14px;
@@ -3895,7 +3907,7 @@ html, body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 16px 18px;
+  padding: var(--card-pad-y) var(--card-pad-x);
   cursor: pointer;
   transition: border-color .15s, box-shadow .15s, transform .12s;
 }
@@ -4861,3 +4873,110 @@ html, body {
 /* Record picker + field mapping modals get room to breathe (user: "the view
    is kinda small, hard to see the fields") */
 .ds-modal-box:has(.ds-match-cfg), .ds-modal-box:has(.ds-fm-body) { max-width: 780px; width: min(780px, 94vw); }
+
+/* ════════════════════════════════════════════════════════════════
+   E4 — PROFESSIONAL MODE (body.ds-pro)
+   Emoji-free, denser, calmer chrome for enterprise/procurement eyes.
+   Default OFF; toggled from the topbar "Pro" button, persisted in
+   ds_settings.proMode, applied by applyProMode() in studio-core.js.
+   ════════════════════════════════════════════════════════════════ */
+body.ds-pro {
+  /* Density — ~10% tighter via the :root knobs (no per-rule rewrites). */
+  --main-pad-y:    24px;
+  --main-pad-x:    28px;
+  --card-pad-y:    14px;
+  --card-pad-x:    16px;
+  --row-pad-y:     12px;
+  --row-pad-x:     16px;
+  --view-gap:      20px;
+  --nav-btn-pad-y: 7px;
+  --nav-w:         208px;
+
+  /* Muted accents — alias the bright accent vars to their calmer theme
+     counterparts. var() aliases resolve against the ACTIVE theme (html.ds-dark
+     redefines --brand/--surface2), so this stays correct in dark mode too. */
+  --brand-light: var(--brand);
+  --brand-bg:    var(--surface2);
+}
+
+/* Emoji glyph pattern (documented in studio-core.js E4 comment):
+   static-HTML emoji get class="ds-glyph" (hidden in pro mode) with an
+   optional sibling <span class="ds-pro-only">Label</span> (shown ONLY in
+   pro mode). JS-built HTML uses window.sftkGlyph(emoji, label) instead. */
+.ds-pro .ds-glyph { display: none; }
+.ds-pro-only { display: none; }
+.ds-pro .ds-pro-only { display: inline; }
+
+/* Purely decorative icon slots — hidden wholesale in pro mode. */
+.ds-pro .ds-logo,
+.ds-pro .ds-nav-icon,
+.ds-pro .ds-trust-lock,
+.ds-pro .ds-welcome-hero-icon,
+.ds-pro .ds-welcome-card-icon,
+.ds-pro .ds-welcome-trust-icon,
+.ds-pro .sec-hero-icon,
+.ds-pro .sec-yes-icon,
+.ds-pro .ds-cmd-item-icon,
+.ds-pro .ds-cmd-search-icon { display: none; }
+
+/* Topbar "Pro" toggle — pill matching the dark/whatsnew controls. */
+.ds-pro-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 16px;
+  background: rgba(255,255,255,.10);
+  color: rgba(255,255,255,.85);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  cursor: pointer;
+  transition: background .15s;
+  flex-shrink: 0;
+  margin-right: 8px;
+}
+.ds-pro-toggle:hover { background: rgba(255,255,255,.20); }
+.ds-pro-toggle--on   { background: rgba(255,255,255,.30); color: #fff; }
+
+/* The What's New button grows from emoji circle to text pill in pro mode. */
+.ds-pro .ds-whatsnew-top {
+  width: auto;
+  border-radius: 16px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+/* Dark toggle shows "Light"/"Dark" text in pro mode (set by applyDarkMode). */
+.ds-pro .ds-dark-toggle {
+  width: auto;
+  border-radius: 16px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   E4 — ACCESSIBILITY
+   ════════════════════════════════════════════════════════════════ */
+/* Visible keyboard focus on every interactive element — covers all the
+   .ds-* buttons/inputs/selects plus links and tabbable custom elements.
+   :focus-visible (not :focus) so mouse clicks stay outline-free. */
+:is(button, select, input, textarea, a, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+/* Brand blue is invisible against the navy topbar — use white there. */
+.ds-topbar :is(button, select, input):focus-visible { outline-color: #fff; }
+
+/* Reduced motion: kill transitions & animations app-wide. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}

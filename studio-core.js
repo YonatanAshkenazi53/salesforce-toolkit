@@ -112,6 +112,85 @@ const esc = s => String(s ?? '')
 const eid = id => document.getElementById(id);
 const setMain = html => { const m = eid('dsMain'); if (m) m.innerHTML = html; };
 
+// ── E4: Professional mode ─────────────────────────────────────
+// Emoji-dense chrome reads as hobbyist in procurement screenshot reviews.
+// Professional mode (default OFF — existing users keep today's look) swaps
+// decorative emoji for plain-text labels (or nothing), tightens density and
+// mutes accents. Mechanism: body.ds-pro + the CSS variables in studio.css.
+//
+// THE PATTERN — adopt this in any render function you touch:
+//   · JS-built HTML:   ${window.sftkGlyph('🔌 ', '')} before a text label
+//                      (drops the emoji in pro mode), or
+//                      ${window.sftkGlyph(' 👑', ' — source')} when a plain-
+//                      text stand-in must replace it.
+//   · static HTML (studio.html): give the emoji span class="ds-glyph"
+//     (hidden by .ds-pro), plus an optional sibling
+//     <span class="ds-pro-only">Label</span> (shown only under .ds-pro).
+//   · purely decorative icon slots with their own class (nav icons, welcome
+//     card icons…) are hidden wholesale in the .ds-pro CSS block.
+// Views are stateless full re-renders, so toggling re-renders and every
+// baked-in glyph updates.
+//
+// CONVERTED so far (highest-visibility chrome): studio.html topbar (logo,
+// trust lock, What's New) + sidebar nav icons, and in this file: welcome
+// hero/cards/get-started, security modal, Connected Orgs panel, toasts,
+// session banner, dark toggle, org <option> labels (🟢/⚪/👑 — the 👑 source
+// chip becomes " — source").
+// REMAINING EMOJI SITES for a later sweep (do NOT sweep other agents' files
+// in this task): studio-profiles.js (card chips ⚠/✏/📌/🔄, sequence rows),
+// studio-builder.js + studio-builder-modals.js, studio-transfer.js (progress
+// rows, run buttons), studio-history.js, studio-reconcile.js,
+// studio-scan.js, studio-compare.js, studio-readiness.js, studio-schema.js,
+// studio-fields.js, studio-picklists.js, studio-ring.js, studio-treediff.js,
+// studio-whatsnew.js (🎉 view header), sftk-confirm.js, debug-modal.js
+// (#dbgBtn 🐛 label — it rewrites the button text itself), and the popup app
+// (separate shell, out of studio scope). Intentionally KEPT in both modes:
+// the cat SVG empty states (brand illustration, not emoji) and plain text
+// symbols (‹ › ⦿ ⚙ ● ○ ✕ →).
+function sftkGlyphFor(pro, emoji, label) {
+  return pro ? String(label ?? '') : String(emoji ?? '');
+}
+window.sftkGlyph = (emoji, label) => sftkGlyphFor(!!_settings.proMode, emoji, label);
+
+// Normalize the persisted ds_settings blob: defaults for missing keys,
+// unknown keys preserved (forward/backward compat across agents' features),
+// proMode coerced to a real boolean.
+function sftkSettingsShape(raw) {
+  const s = { historyDays: 30, countsOnly: false, proMode: false, ...(raw || {}) };
+  s.proMode = !!s.proMode;
+  return s;
+}
+
+// Apply (not persist) professional mode. Persisting is the caller's job —
+// storageLoad calls this with the stored value; the toggle saves explicitly.
+function applyProMode(on) {
+  _settings.proMode = !!on;
+  document.body.classList.toggle('ds-pro', _settings.proMode);
+  const btn = eid('dsProToggle');
+  if (btn) {
+    btn.classList.toggle('ds-pro-toggle--on', _settings.proMode);
+    btn.setAttribute('aria-pressed', _settings.proMode ? 'true' : 'false');
+    btn.title = _settings.proMode
+      ? 'Professional mode is on — plain-text labels, tighter density. Click to switch back.'
+      : 'Professional mode — replaces emoji with plain text and tightens density (presentation-friendly)';
+  }
+  // The dark toggle's label is emoji written from JS (not CSS-hideable) —
+  // refresh it here so flipping pro mode doesn't leave a stale 🌙/☀️ behind.
+  const dk = eid('dsDarkToggle');
+  if (dk) dk.textContent = window.sftkGlyph(_darkMode ? '☀️' : '🌙', _darkMode ? 'Light' : 'Dark');
+}
+
+// Kick off the ds_settings read IMMEDIATELY at script evaluation — the same
+// fire-and-forget early read the dark-mode class uses in the popup shell
+// (popup.js initDarkTheme). Scripts sit at the end of <body>, so
+// document.body already exists here, and this single get() resolves before
+// storageLoad()'s migration-check round-trips do — the earliest an MV3 page
+// (no inline scripts) can get body.ds-pro on, so pro users don't see the
+// emoji chrome flash. storageLoad() re-applies from the same key right after.
+chrome.storage?.local?.get('ds_settings')
+  .then(d => { if (sftkSettingsShape(d?.ds_settings).proMode) applyProMode(true); })
+  .catch(() => {});
+
 // ── Background bridge ─────────────────────────────────────────
 function sendBg(msg) {
   return new Promise(r =>
@@ -174,12 +253,12 @@ function showSessionBanner(orgUrl, onReconnect = null) {
   banner.id = 'dsSessionBanner';
   banner.className = 'ds-session-banner';
   banner.innerHTML = `
-    <span class="ds-session-banner-icon">🔑</span>
+    <span class="ds-session-banner-icon">${window.sftkGlyph('🔑', '')}</span>
     <div class="ds-session-banner-body">
       <strong>Salesforce session expired — ${esc(label)}</strong>
       <span>Open that org in any Chrome tab (even just the home page), then click Reconnect.</span>
     </div>
-    <button class="ds-btn ds-btn-primary ds-btn-sm" id="dsSessionReconnect">🔄 Reconnect</button>
+    <button class="ds-btn ds-btn-primary ds-btn-sm" id="dsSessionReconnect">${window.sftkGlyph('🔄 ', '')}Reconnect</button>
     <button class="ds-btn ds-btn-sm ds-btn-xs" id="dsSessionDismiss">✕</button>`;
 
   const main = eid('dsMain');
@@ -189,7 +268,7 @@ function showSessionBanner(orgUrl, onReconnect = null) {
 
   eid('dsSessionReconnect')?.addEventListener('click', async () => {
     const reconnBtn = eid('dsSessionReconnect');
-    if (reconnBtn) { reconnBtn.disabled = true; reconnBtn.textContent = '🔄 Reconnecting…'; }
+    if (reconnBtn) { reconnBtn.disabled = true; reconnBtn.textContent = `${window.sftkGlyph('🔄 ', '')}Reconnecting…`; }
 
     // Re-detect all open SF sessions
     const allRes = await sendBg({ type: 'GET_ALL_SF_SESSIONS' });
@@ -277,7 +356,12 @@ async function storageLoad() {
   _activityLog  = d.ds_activity_log || {};
   _sequences    = d.sftk_sequences  || [];
   _workingPair  = d.ds_working_pair || { src: '', tgt: '' };
-  _settings     = { historyDays: 30, countsOnly: false, ...(d.ds_settings || {}) };
+  _settings     = sftkSettingsShape(d.ds_settings);
+  // E4: professional mode rides the SAME early storage read dark mode uses
+  // (this get() call) — body.ds-pro lands here, before the first view render,
+  // so no rendered content ever flashes emoji at a pro-mode user. The static
+  // topbar/nav glyphs are CSS-hidden the moment the class lands.
+  applyProMode(_settings.proMode);
 
   // M2: ring config — migrate the legacy working pair into a 2-org ring the
   // first time (its source becomes the source of truth).
@@ -334,7 +418,7 @@ async function storageLoad() {
   if (d.sftk_active_run) {
     const ar = d.sftk_active_run;
     setTimeout(() => showToast(
-      `⚠ A previous ${ar.kind || 'run'} looks interrupted (started ${timeAgo(ar.startedAt)}). Check History and re-scan before re-running.`,
+      `${window.sftkGlyph('⚠ ', '')}A previous ${ar.kind || 'run'} looks interrupted (started ${timeAgo(ar.startedAt)}). Check History and re-scan before re-running.`,
       'warning', 8000), 1200);
     chrome.storage.local.remove('sftk_active_run').catch(() => {});
   }
@@ -556,6 +640,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Wire dark mode toggle
   eid('dsDarkToggle')?.addEventListener('click', () => applyDarkMode(!_darkMode));
 
+  // E4: professional-mode toggle — persists in ds_settings, then re-renders
+  // the current view so JS-baked glyphs update (views are stateless full
+  // re-renders; static chrome is handled purely by the body.ds-pro CSS).
+  eid('dsProToggle')?.addEventListener('click', async () => {
+    applyProMode(!_settings.proMode);
+    try { await storageSaveSettings(); } catch (_) {}
+    // The Profile Builder holds unsaved in-memory edits — don't blow it away.
+    // Its baked-in glyphs update on its next render.
+    if (document.querySelector('.ds-builder-wrap')) return;
+    if (document.querySelector('.ds-welcome-wrap')) { renderWelcome(); return; }
+    renderView(_currentView);
+  });
+
   // Wire command palette button
   eid('dsCmdPaletteBtn')?.addEventListener('click', () => openCommandPalette());
 
@@ -632,12 +729,15 @@ function upsertOrg(orgUrl, label = null) {
 // ════════════════════════════════════════════════════════════════
 function showToast(message, type = 'info', durationMs = 3500) {
   const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
+  // E4: plain-text stand-ins in professional mode — the icon carries state
+  // (success/error), so it's swapped rather than dropped.
+  const plain = { success: '✓', error: '✕', warning: '!', info: 'i' };
   const container = eid('dsToastContainer');
   if (!container) return;
 
   const toast = document.createElement('div');
   toast.className = `ds-toast ds-toast-${type}`;
-  toast.innerHTML = `<span class="ds-toast-icon">${icons[type] || 'ℹ️'}</span><span>${esc(message)}</span>`;
+  toast.innerHTML = `<span class="ds-toast-icon">${window.sftkGlyph(icons[type] || 'ℹ️', plain[type] || 'i')}</span><span>${esc(message)}</span>`;
   container.appendChild(toast);
 
   setTimeout(() => {
@@ -654,7 +754,8 @@ function applyDarkMode(on) {
   document.documentElement.classList.toggle('ds-dark', on);
   const btn = eid('dsDarkToggle');
   if (btn) {
-    btn.textContent = on ? '☀️' : '🌙';
+    // E4: plain-text label in professional mode (window.sftkGlyph).
+    btn.textContent = window.sftkGlyph(on ? '☀️' : '🌙', on ? 'Light' : 'Dark');
     btn.title = on ? 'Switch to light mode' : 'Switch to dark mode';
   }
   // X5: write the canonical shared key (sftk_dark) so the popup + log viewer
@@ -921,7 +1022,7 @@ function showSecurityModal() {
 
     <div class="sec-body">
 
-      <div class="sec-section-title">✅ What it DOES</div>
+      <div class="sec-section-title">${window.sftkGlyph('✅ ', '')}What it DOES</div>
       <div class="sec-yes-list">
         <div class="sec-yes-row">
           <span class="sec-yes-icon">🔑</span>
@@ -941,7 +1042,7 @@ function showSecurityModal() {
         </div>
       </div>
 
-      <div class="sec-section-title">🚫 What it NEVER does</div>
+      <div class="sec-section-title">${window.sftkGlyph('🚫 ', '')}What it NEVER does</div>
       <div class="sec-never-list">
         <div class="sec-never-row">
           <span class="sec-never-icon">✗</span>
@@ -966,7 +1067,7 @@ function showSecurityModal() {
       </div>
 
       <div class="sec-storage-note">
-        <strong>🔍 Fully inspectable:</strong> This is a Chrome extension — you can review every line of code at
+        <strong>${window.sftkGlyph('🔍 ', '')}Fully inspectable:</strong> This is a Chrome extension — you can review every line of code at
         <code>chrome://extensions</code> → Details → Inspect views. All network requests appear in the DevTools Network tab.
         There is no minified or obfuscated code.
       </div>
@@ -1087,13 +1188,13 @@ function _getStartedHtml() {
   return `
     <div class="ds-get-started" id="dsGetStarted">
       <div class="ds-gs-head">
-        <span class="ds-gs-title">🚀 Get started <span class="ds-gs-progress">${doneN} of ${steps.length}</span></span>
+        <span class="ds-gs-title">${window.sftkGlyph('🚀 ', '')}Get started <span class="ds-gs-progress">${doneN} of ${steps.length}</span></span>
         <button class="ds-gs-dismiss" id="dsGsDismiss" title="Hide this checklist">✕</button>
       </div>
       <div class="ds-gs-steps">
         ${steps.map((s, i) => `
           <div class="ds-gs-step${s.done ? ' ds-gs-done' : ''}" data-gs-view="${s.view}" title="Go to ${esc(s.label)}">
-            <span class="ds-gs-check">${s.done ? '✅' : (i + 1)}</span>
+            <span class="ds-gs-check">${s.done ? window.sftkGlyph('✅', '✓') : (i + 1)}</span>
             <span class="ds-gs-step-body">
               <span class="ds-gs-step-label">${esc(s.label)}</span>
               <span class="ds-gs-step-hint">${esc(s.hint)}</span>
@@ -1119,8 +1220,13 @@ function _viewFromHash() {
 // Apply a view without touching the hash (used by the hashchange handler and
 // initial load). Highlights the tab and renders.
 function _applyView(view) {
-  document.querySelectorAll('.ds-nav-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.view === view));
+  document.querySelectorAll('.ds-nav-btn').forEach(b => {
+    const on = b.dataset.view === view;
+    b.classList.toggle('active', on);
+    // E4 a11y: aria-current mirrors the visual active state for screen readers.
+    if (on) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
   _currentView = view;
   renderView(view);
 }
@@ -1289,12 +1395,12 @@ function renderOrgsPanel() {
 
     return `
       <div class="ds-org-row ${isCurrent ? 'ds-org-row--active' : ''}">
-        <div class="ds-org-row-icon">${isOnline ? '🟢' : '⚫'}</div>
+        <div class="ds-org-row-icon">${window.sftkGlyph(isOnline ? '🟢' : '⚫', '')}</div>
         <div class="ds-org-row-info">
           <div class="ds-org-row-label">
             ${esc(label)}
             ${prodBadge(url)}
-            ${orgData.readOnly ? '<span class="ds-org-badge-current" style="margin-left:6px;background:#FDF0E4;color:#B54708" title="All writes to this org are blocked">🔒 read-only</span>' : ''}
+            ${orgData.readOnly ? `<span class="ds-org-badge-current" style="margin-left:6px;background:#FDF0E4;color:#B54708" title="All writes to this org are blocked">${window.sftkGlyph('🔒 ', '')}read-only</span>` : ''}
             ${isCurrent ? '<span class="ds-org-badge-current" style="margin-left:6px">current tab</span>' : ''}
           </div>
           <div class="ds-org-row-url">${esc(host)}</div>
@@ -1307,11 +1413,11 @@ function renderOrgsPanel() {
         </div>
         <div class="ds-org-row-actions">
           ${!isOnline ? `<button class="ds-btn ds-btn-sm" data-dsaction="openOrgTab" data-arg="${esc(url)}" title="Open this org in a new Chrome tab — refreshes its session so the Studio can reach it">↗ Open</button>` : ''}
-          <button class="ds-btn ds-btn-sm" data-dsaction="compareOrgFrom" data-arg="${esc(url)}" title="Compare this org's data against another org (opens Org Compare with this org as the source)">🔍 Compare with…</button>
-          <button class="ds-btn ds-btn-sm" data-dsaction="editOrgLabel" data-arg="${esc(url)}">✏ Rename</button>
-          <button class="ds-btn ds-btn-sm" data-dsaction="toggleReadOnly" data-arg="${esc(url)}" title="${orgData.readOnly ? 'Allow writes to this org again' : 'Block ALL writes to this org (inserts, updates, deletes, deploys)'}">${orgData.readOnly ? '🔓 Unlock' : '🔒 Read-only'}</button>
+          <button class="ds-btn ds-btn-sm" data-dsaction="compareOrgFrom" data-arg="${esc(url)}" title="Compare this org's data against another org (opens Org Compare with this org as the source)">${window.sftkGlyph('🔍 ', '')}Compare with…</button>
+          <button class="ds-btn ds-btn-sm" data-dsaction="editOrgLabel" data-arg="${esc(url)}">${window.sftkGlyph('✏ ', '')}Rename</button>
+          <button class="ds-btn ds-btn-sm" data-dsaction="toggleReadOnly" data-arg="${esc(url)}" title="${orgData.readOnly ? 'Allow writes to this org again' : 'Block ALL writes to this org (inserts, updates, deletes, deploys)'}">${orgData.readOnly ? `${window.sftkGlyph('🔓 ', '')}Unlock` : `${window.sftkGlyph('🔒 ', '')}Read-only`}</button>
           ${isOnline
-            ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="startTransferFrom" data-arg="${esc(url)}" title="Copy data INTO this org — opens Run Transfer with this org as the target">🚀 Transfer into</button>`
+            ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="startTransferFrom" data-arg="${esc(url)}" title="Copy data INTO this org — opens Run Transfer with this org as the target">${window.sftkGlyph('🚀 ', '')}Transfer into</button>`
             : `<button class="ds-btn ds-btn-sm ds-btn-danger" data-dsaction="removeOrg" data-arg="${esc(url)}">✕</button>`}
         </div>
       </div>`;
@@ -1320,14 +1426,14 @@ function renderOrgsPanel() {
   setMain(`
     <div class="ds-view-header">
       <div class="ds-view-title-wrap">
-        <h2 class="ds-view-title">🔌 Connected Orgs</h2>
+        <h2 class="ds-view-title">${window.sftkGlyph('🔌 ', '')}Connected Orgs</h2>
         <div class="ds-view-subtitle">${allOrgUrls.length} org${allOrgUrls.length !== 1 ? 's' : ''} known · ${_allSessions.length} currently open in Chrome</div>
       </div>
-      <button class="ds-btn ds-btn-primary" id="dsRefreshOrgsBtn">🔄 Refresh from open tabs</button>
+      <button class="ds-btn ds-btn-primary" id="dsRefreshOrgsBtn">${window.sftkGlyph('🔄 ', '')}Refresh from open tabs</button>
     </div>
 
     <div style="background:#E8F4FD;border:1px solid #C5DBF0;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#014486;max-width:820px">
-      <strong>💡 How it works:</strong> The Studio auto-detects any Salesforce org you have open in a Chrome tab.
+      <strong>${window.sftkGlyph('💡 ', '')}How it works:</strong> The Studio auto-detects any Salesforce org you have open in a Chrome tab.
       Open an org in Chrome, then click <em>Refresh from open tabs</em> to add it. No Connected App or passwords —
       your existing browser session is used securely. Transfers and reconcile run against orgs that are open in a tab.
     </div>
@@ -1351,7 +1457,7 @@ function renderOrgsPanel() {
 
   eid('dsRefreshOrgsBtn')?.addEventListener('click', async () => {
     const btn = eid('dsRefreshOrgsBtn');
-    if (btn) { btn.disabled = true; btn.textContent = '🔄 Refreshing…'; }
+    if (btn) { btn.disabled = true; btn.textContent = `${window.sftkGlyph('🔄 ', '')}Refreshing…`; }
     const allRes = await sendBg({ type: 'GET_ALL_SF_SESSIONS' });
     _allSessions = allRes?.sessions || [];
     _allSessions.forEach(s => upsertOrg(s.orgUrl, s.label));
@@ -1379,7 +1485,7 @@ function renderOrgsPanel() {
 window.editOrgLabel = function(orgUrl) {
   const current = _orgs[orgUrl]?.label || orgLabel(orgUrl);
   showModal(`
-    <div class="ds-modal-header">✏ Rename Org</div>
+    <div class="ds-modal-header">${window.sftkGlyph('✏ ', '')}Rename Org</div>
     <div class="ds-modal-body">
       <div class="ds-org-edit-row">
         <label class="ds-lbl">Friendly label</label>
@@ -1415,8 +1521,8 @@ window.toggleOrgReadOnly = async function(orgUrl) {
   _orgs[orgUrl].readOnly = on;
   await storageSaveOrgs();
   showToast(on
-    ? `🔒 ${orgLabel(orgUrl)} is now read-only — all writes are blocked`
-    : `🔓 ${orgLabel(orgUrl)} is writable again`, on ? 'warning' : 'success');
+    ? `${window.sftkGlyph('🔒 ', '')}${orgLabel(orgUrl)} is now read-only — all writes are blocked`
+    : `${window.sftkGlyph('🔓 ', '')}${orgLabel(orgUrl)} is writable again`, on ? 'warning' : 'success');
   renderOrgsPanel();
 };
 
@@ -1479,7 +1585,9 @@ function orgOptionLabel(url, label, liveSet) {
   // recognizable in every feature, not just the ring view).
   const sot = !!(typeof _ring === 'object' && _ring?.sourceUrl &&
     (_ring.orgs || []).length >= 2 && _orgKey(url) === _orgKey(_ring.sourceUrl));
-  return `${on ? '🟢' : '⚪'} ${label || orgLabel(url)}${sot ? ' 👑' : ''}${on ? '' : ' (not open)'}`;
+  // E4 pro mode: status dots drop (the "(not open)" suffix already carries
+  // the offline state) and the 👑 source-of-truth chip becomes " — source".
+  return `${window.sftkGlyph(on ? '🟢 ' : '⚪ ', '')}${label || orgLabel(url)}${sot ? window.sftkGlyph(' 👑', ' — source') : ''}${on ? '' : ' (not open)'}`;
 }
 
 // ── Working org pair (topbar control) ─────────────────────────────
@@ -1543,8 +1651,9 @@ window.startTransferFrom = function(targetOrg) {
   // Transfer is now reachable as a sub-page of Data Deployment, not as
   // its own sidebar item. Highlight Data Deployment so the nav stays
   // consistent with where the user is.
-  document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
-  document.querySelector('[data-view="profiles"]')?.classList.add('active');
+  document.querySelectorAll('.ds-nav-btn').forEach(b => { b.classList.remove('active'); b.removeAttribute('aria-current'); });
+  const profBtn = document.querySelector('[data-view="profiles"]');
+  if (profBtn) { profBtn.classList.add('active'); profBtn.setAttribute('aria-current', 'page'); }
   _currentView = 'profiles';
   renderTransfer();
 };

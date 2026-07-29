@@ -35,7 +35,11 @@
         <!-- What's New lives in the topbar as a small announcement control
              (user 2026-07-26: "not as a feature :)"). Badge dot filled by
              studio-whatsnew.js while the newest version is unread. -->
-        <button class="ds-whatsnew-top" id="dsWhatsNewTop" title="What's New — what shipped, per version">🎉<span id="dsWhatsNewBadge"></span></button>
+        <button class="ds-whatsnew-top" id="dsWhatsNewTop" title="What's New — what shipped, per version"><span class="ds-glyph">🎉</span><span class="ds-pro-only">What's New</span><span id="dsWhatsNewBadge"></span></button>
+        <!-- E4 professional mode — swaps emoji chrome for plain text, tightens
+             density. State lives in ds_settings.proMode (chrome.storage.local);
+             applyProMode() in studio-core.js drives body.ds-pro + this button. -->
+        <button class="ds-pro-toggle" id="dsProToggle" aria-pressed="false" title="Professional mode — replaces emoji with plain text and tightens density (presentation-friendly)">Pro</button>
         <button class="ds-dark-toggle" id="dsDarkToggle" title="Switch to dark mode">🌙</button>
         <button id="dbgBtn" class="dbg-btn" title="Debug Log — off">🐛 Debug</button>
       </div>
@@ -44,9 +48,11 @@
     <!-- Body: sidebar + main -->
     <div class="ds-body">
 
-      <nav class="ds-nav">
+      <!-- E4 a11y: explicit landmark role + label; the active button also
+           carries aria-current="page" (kept in sync by _applyView). -->
+      <nav class="ds-nav" role="navigation" aria-label="Data Studio views">
         <div class="ds-nav-section-title">Overview</div>
-        <button class="ds-nav-btn active" data-view="orgs">
+        <button class="ds-nav-btn active" data-view="orgs" aria-current="page">
           <span class="ds-nav-icon">🔌</span>
           <span class="ds-nav-label">
             <span class="ds-nav-name">Connected Orgs</span>
@@ -161,6 +167,7 @@
        core first (state + helpers + boot), then views in original order. -->
   <script src="sftk-org-identity.js"></script>
   <script src="sftk-friendly-error.js"></script>
+  <script src="sftk-api-budget.js"></script>
   <script src="sftk-matching.js"></script>
   <script src="studio-core.js"></script>
   <script src="studio-profiles.js"></script>

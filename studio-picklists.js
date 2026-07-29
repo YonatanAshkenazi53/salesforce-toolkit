@@ -213,6 +213,100 @@ function pkAutomationUrl(orgUrl, obj, kind, id) {
   return `${base}/${encodeURIComponent(id)}`;
 }
 
+// ── E4 — API-call cost estimates (pure, unit-tested in test/ent-quota-pk.test.mjs) ──
+// The moat is NO SERVER, so every read spends the org's own daily API budget.
+// These estimators count what the code above ACTUALLY issues — nothing is
+// hidden, nothing is invented, and costs that depend on mid-scan discoveries
+// (record-type count, flow count) are said as "more if X", never faked.
+
+// What ONE whole-object sweep (_pkSweepObject) issues per org:
+//   · 1 describe (fetched once, then REUSED by all 25 per-field reads),
+//   · 1 RecordType list query (the RT bundle is loaded ONCE per org),
+//   · 2 Tooling reads per CUSTOM picklist field (CustomField id query +
+//     Metadata read) — standard fields cost nothing beyond the cached
+//     describe, and skipUsage/skipRts mean NO usage queries and NO per-field
+//     RT fetches during a sweep.
+// Unknown until the scan runs (hence known:false): the RT bundle's metadata
+// reads (one per active record type, capped at 8), fields that exist only in
+// non-probe orgs, ambiguous field names (+1 EntityDefinition query each).
+// opts: { orgs, customFields }. Returns { total, perOrg, known, moreIf }.
+function pkSweepCallEstimate(opts) {
+  const num = v => Number.isFinite(+v) ? Math.max(0, Math.floor(+v)) : 0;
+  const orgs = num(opts && opts.orgs), customFields = num(opts && opts.customFields);
+  if (!orgs) return { total: 0, perOrg: 0, known: true, moreIf: '' };
+  const perOrg = 2 + 2 * customFields;
+  return { total: orgs * perOrg, perOrg, known: false,
+    moreIf: 'the object has record types (up to 8 more reads per org)' };
+}
+
+// What ONE "Load matrix" click (_pkLoadMatrix) issues per org:
+//   custom field:   1 describe + 2 Tooling reads (CustomField id + Metadata)
+//                   + usage + 2 RecordType list queries (the full inventory
+//                   fetch lists them once and the matrix lists them again);
+//   standard field: 1 describe + usage + 1 RecordType list query.
+//   usage: single picklist = 1 GROUP BY query; multi-select = one COUNT query
+//   per value, capped at 30 (value count comes from the probe org's describe,
+//   so other orgs may differ — hence known:false).
+// Unknown until it runs: RT metadata reads (one per active record type,
+// capped at 8 — listed twice for custom fields, so up to 16 per org).
+// opts: { orgs, isCustom, isMulti, values }. Returns { total, perOrg, known, moreIf }.
+function pkMatrixCallEstimate(opts) {
+  const num = v => Number.isFinite(+v) ? Math.max(0, Math.floor(+v)) : 0;
+  const orgs = num(opts && opts.orgs);
+  if (!orgs) return { total: 0, perOrg: 0, known: true, moreIf: '' };
+  const usage = opts && opts.isMulti ? Math.min(Math.max(num(opts.values), 1), 30) : 1;
+  const isCustom = !!(opts && opts.isCustom);
+  const perOrg = isCustom ? (3 + usage + 2) : (1 + usage + 1);
+  return { total: orgs * perOrg, perOrg, known: false,
+    moreIf: `the object has record types (up to ${isCustom ? 16 : 8} more reads per org)` };
+}
+
+// Per-org cost of the bulk wizard's automation scan, computed AFTER the org
+// finished so the number is real, not guessed: 4 impact queries (_pkImpact)
+// + 1 validation-rule scan + 2 flow enumerations + one Metadata read per
+// scanned flow (scan.flowsScanned, capped at 40 upstream). Still "≈" in the
+// UI because >2000-row query results paginate into extra calls.
+function pkBulkScanCalls(scan) {
+  const flows = (scan && Number.isFinite(+scan.flowsScanned)) ? Math.max(0, Math.floor(+scan.flowsScanned)) : 0;
+  return 7 + flows;
+}
+
+// The one-line cost display. est: { total, perOrg, known, moreIf, scope } —
+// scope is optional display text like "across 3 org(s)". budgets: null/absent
+// when the shared budget helper (studio-transfer.js) is unavailable — the
+// line is then JUST the local estimate; otherwise [{ label, budget, calls }]
+// where budget is { max, remaining } | null (null = the meter could not be
+// read, which is SAID, never hidden) and calls is the estimate against THAT
+// org — each org has its OWN pool, so pools are labeled and never summed.
+// Returns { text, warn }; warn flips when any org's estimated calls EXCEED
+// its remaining daily budget (equal is not over) — it informs, never blocks.
+// Copy mirrors sftkApiBudgetLine (studio-transfer.js) so cost lines read the
+// same app-wide, but this is self-contained: no cross-file dependency.
+function pkApiCostLine(est, budgets) {
+  const fmt = v => Number(v).toLocaleString();
+  const total = (est && Number.isFinite(est.total)) ? Math.max(0, Math.floor(est.total)) : null;
+  if (total === null) return { text: '', warn: false };
+  const rough = est.known === false;
+  let head = `≈${fmt(total)}${rough && !est.moreIf ? '+' : ''} API call${total === 1 ? '' : 's'}`;
+  if (est.scope) head += ` ${est.scope}`;
+  if (rough && est.moreIf) head += `, more if ${est.moreIf}`;
+  const parts = [head];
+  let warn = false;
+  const over = [];
+  for (const b of (budgets || [])) {
+    const label = (b && b.label) ? String(b.label) : 'org';
+    if (b && b.budget && Number.isFinite(b.budget.remaining) && Number.isFinite(b.budget.max)) {
+      parts.push(`${label} has ${fmt(b.budget.remaining)} of ${fmt(b.budget.max)} daily API calls remaining`);
+      if (Number.isFinite(b.calls) && b.calls > b.budget.remaining) { warn = true; over.push(label); }
+    } else {
+      parts.push(`${label}: API budget unavailable`);
+    }
+  }
+  let text = parts.join(' · ');
+  if (warn) text = `⚠ ${text} — may exhaust the org's remaining daily API budget${over.length > 1 ? 's' : ''} (${over.join(', ')})`;
+  return { text, warn };
+}
+
 // ONE verdict for ONE field across orgs — the heart of the T9 whole-object sweep.
 // perOrgInv[i]: { orgKey, label, kind:'local'|'global'|'standard'|'missing'|'error',
 //                 values:[{ name, label, active, isDefault }], valueSetName, error }
@@ -358,6 +452,8 @@ let _pkSweep    = null;   // T9 whole-object sweep state { obj, orgs, rows, ... 
 let _pkSweepRunning = false;
 let _pkSyncScanToken = 0;              // invalidates an in-flight sync-plan automation pass (T8c)
 let _pkBulkScanToken = 0;              // same, for the bulk wizard's per-org automation scan
+let _pkCmpPicks = null;                // { obj, fields:[{name,isCustom,isMulti,values}] } — probe describe's picklist fields (E4 cost lines)
+const _pkCostTokens = Object.create(null);   // elId → token: last-render-wins for the async budget meters (E4)
 const _pkSyncScanCache = new Map();    // `${orgKey}|${obj}.${field}|${value}` → literal-scan result
 
 function renderPicklists() {
@@ -472,20 +568,24 @@ function _pkRenderCompareConfig() {
         <button class="ds-btn" id="dsPkSweep" ${_pkCmpObj ? '' : 'disabled'}
           title="Skip the field picker: compare EVERY picklist / multi-picklist field on this object across the selected orgs and give each one a verdict (in sync / values differ / RT assignment differs / missing / not comparable).">🧹 Sweep whole object…</button>
       </div>
+      <div id="dsPkMatrixCost" class="ds-pk-note" style="margin:2px 0 0"></div>
+      <div id="dsPkSweepCost" class="ds-pk-note" style="margin:2px 0 0"></div>
     </div>`;
 
   cfg.querySelectorAll('[data-pk-cmporg]').forEach(c => c.addEventListener('change', () => {
     const url = c.dataset.pkCmporg;
     if (c.checked) { if (!_pkCmpOrgs.includes(url)) _pkCmpOrgs.push(url); }
     else _pkCmpOrgs = _pkCmpOrgs.filter(u => u !== url);
+    _pkCmpCostRefresh();   // org count changed — re-estimate immediately
     _pkCmpLoadObjects();
   }));
   eid('dsPkCmpObj')?.addEventListener('change', async e => {
     _pkCmpObj = e.target.value; _pkCmpField = '';
     const sw = eid('dsPkSweep'); if (sw) sw.disabled = !_pkCmpObj;
+    _pkCmpCostRefresh();   // stale-object picks are guarded out — clears the lines while fields load
     await _pkCmpLoadFields();
   });
-  eid('dsPkCmpField')?.addEventListener('change', e => { _pkCmpField = e.target.value; const b = eid('dsPkCmpLoad'); if (b) b.disabled = !_pkCmpField; });
+  eid('dsPkCmpField')?.addEventListener('change', e => { _pkCmpField = e.target.value; const b = eid('dsPkCmpLoad'); if (b) b.disabled = !_pkCmpField; _pkCmpCostRefresh(); });
   eid('dsPkCmpLoad')?.addEventListener('click', () => _pkLoadMatrix());
   eid('dsPkSweep')?.addEventListener('click', () => _pkSweepObject());
 
@@ -529,14 +629,84 @@ async function _pkCmpLoadFields() {
   if (!sel || !_pkCmpObj) return;
   sel.disabled = true; sel.innerHTML = '<option value="">Loading fields…</option>';
   const sess = await _pkCmpProbeSession();
-  if (!sess) { sel.innerHTML = '<option value="">No selected org open</option>'; return; }
+  if (!sess) { sel.innerHTML = '<option value="">No selected org open</option>'; _pkCmpPicks = null; _pkCmpCostRefresh(); return; }
   const desc = await describe(_pkCmpObj, sess.orgUrl, sess.sid);
   const picks = (desc?.fields || []).filter(f => f.type === 'picklist' || f.type === 'multipicklist');
-  if (!picks.length) { sel.innerHTML = '<option value="">No picklist fields on this object</option>'; return; }
+  // E4 — what the cost estimators need per field, from the probe describe:
+  // custom vs standard, multi-select, and the ACTIVE value count (usage cost).
+  _pkCmpPicks = { obj: _pkCmpObj, fields: picks.map(f => ({ name: f.name,
+    isCustom: /__c$/i.test(f.name), isMulti: f.type === 'multipicklist',
+    values: (f.picklistValues || []).length })) };
+  if (!picks.length) { sel.innerHTML = '<option value="">No picklist fields on this object</option>'; _pkCmpCostRefresh(); return; }
   sel.innerHTML = '<option value="">Field…</option>' + picks
     .map(f => `<option value="${esc(f.name)}" ${f.name === _pkCmpField ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})${f.type === 'multipicklist' ? ' — multi' : ''}</option>`).join('');
   sel.disabled = false;
   const b = eid('dsPkCmpLoad'); if (b) b.disabled = !_pkCmpField;
+  _pkCmpCostRefresh();
+}
+
+// ── E4 — cost + budget lines under the compare config ──────────
+// Renders elId's line in two beats: the LOCAL estimate paints synchronously
+// (it needs no helper and is never blocked), then — only if the shared budget
+// reader window.sftkApiBudget (studio-transfer.js) exists — each org's own
+// daily-quota meter is fetched and appended, labeled per org because every
+// org has its OWN pool (pools are never summed). A helper that is missing
+// leaves the plain estimate; one that returns null is SAID as "API budget
+// unavailable". The token guard makes stale fetches lose to newer renders.
+function _pkCostLine(elId, prefix, suffix, est, orgUrls) {
+  const tok = (_pkCostTokens[elId] = (_pkCostTokens[elId] || 0) + 1);
+  const el = eid(elId);
+  if (!el) return;
+  if (!est || !(est.total > 0)) { el.textContent = ''; return; }
+  const paint = budgets => {
+    const t = eid(elId);
+    if (!t) return;
+    const line = pkApiCostLine(est, budgets);
+    t.textContent = `${prefix}${line.text}${suffix}`;
+    t.style.color = line.warn ? '#b45309' : '';
+  };
+  paint(null);
+  if (typeof window.sftkApiBudget !== 'function') return;   // helper absent → estimate alone
+  (async () => {
+    const budgets = await Promise.all((orgUrls || []).map(async url => {
+      const sess = await getOrgSession(url);
+      const budget = sess ? await window.sftkApiBudget(sess.orgUrl, sess.sid) : null;
+      return { label: orgLabel(url), budget, calls: est.perOrg };
+    }));
+    if (_pkCostTokens[elId] !== tok) return;   // a newer render won
+    paint(budgets);
+  })().catch(() => {});
+}
+
+// Recompute both lines from current selections. Estimates come from the probe
+// org's describe (_pkCmpPicks) — other orgs can differ, which is exactly why
+// every number is "≈" with the unknowns named, never silently precise.
+function _pkCmpCostRefresh() {
+  if (!eid('dsPkSweepCost') && !eid('dsPkMatrixCost')) return;
+  const live = _liveOrgSet();
+  const open = _pkCmpOrgs.filter(u => live.has(_orgKey(u)));
+  const closedN = _pkCmpOrgs.length - open.length;
+  const suffix = closedN ? ` · ${closedN} selected org(s) not open — skipped, no calls go there` : '';
+  const picks = (_pkCmpPicks && _pkCmpPicks.obj === _pkCmpObj) ? _pkCmpPicks.fields : null;
+
+  // Matrix line — needs a chosen field (P2 "Load matrix").
+  let mxEst = null;
+  const fm = picks ? picks.find(f => f.name === _pkCmpField) : null;
+  if (fm && open.length) {
+    mxEst = pkMatrixCallEstimate({ orgs: open.length, isCustom: fm.isCustom, isMulti: fm.isMulti, values: fm.values });
+    mxEst.scope = `across ${open.length} org${open.length !== 1 ? 's' : ''}`;
+  }
+  _pkCostLine('dsPkMatrixCost', 'Load matrix: ', suffix, mxEst, open);
+
+  // Sweep line — needs an object; the field list (capped like the sweep caps
+  // it) comes from the probe describe.
+  let swEst = null;
+  if (_pkCmpObj && picks && picks.length && open.length) {
+    const swept = picks.slice(0, 25);   // FIELD_CAP in _pkSweepObject
+    swEst = pkSweepCallEstimate({ orgs: open.length, customFields: swept.filter(f => f.isCustom).length });
+    swEst.scope = `across ${open.length} org${open.length !== 1 ? 's' : ''}`;
+  }
+  _pkCostLine('dsPkSweepCost', '🧹 Sweep: ', suffix, swEst, open);
 }
 
 // ── Pickers ─────────────────────────────────────────────────────
@@ -1436,6 +1606,10 @@ async function _pkOpenBulkWizard(mode) {
         // treatment as _pkSyncAutomationPass gives it.
         inner = `<strong>${esc(o.label)}</strong>: ${_pkImpactSummaryLine(imp)}
           · ${lit.mentions} automation(s) mention “${esc(values[0])}” by name${lit.hits.length ? ` (${esc(lit.hits.slice(0, 3).join(', '))})` : ''}`
+          // E4 — what this org's scan just cost, counted from what actually ran
+          // (4 impact queries + VR scan + 2 flow enumerations + 1 read per
+          // scanned flow). "≈" because paginated query results add calls.
+          + ` <span style="color:var(--subtext)">· ≈${pkBulkScanCalls(lit.scan)} API calls</span>`
           + ((lit.notes || []).length ? `<span style="color:#92400e"> · ⚠ ${esc(lit.notes.join(' · '))}</span>` : '');
       } catch (e) {
         // A thrown org must never vanish from the panel: an org with no line

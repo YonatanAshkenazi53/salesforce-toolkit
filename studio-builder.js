@@ -708,8 +708,10 @@ function bldSchemaGaps(tree, describes) {
 
 // 🧪 Check the tree against EVERY ring target (fallback: the schema
 // reference org) — which org would this deployment break in, before any run.
-async function _bldCheckAllTargets() {
-  const p = _editingProfile;
+// Accepts an explicit profile (post-import check runs before any builder
+// session exists); no argument = the builder's editing profile, as before.
+async function _bldCheckAllTargets(profileArg) {
+  const p = profileArg || _editingProfile;
   if (!p?.tree) return;
   const targets = profileTargets(p);
   if (!targets.length) { showToast('No targets known — configure the Sync Ring or pin targets in the builder', 'warning', 5000); return; }
@@ -1461,4 +1463,183 @@ async function previewAll() {
 // All field inclusion/exclusion now flows through the Field Mapping modal.
 // Legacy `node.fields` data in saved profiles is loaded but no longer
 // surfaced or honored at runtime.
+
+// ════════════════════════════════════════════════════════════════
+// E1 — DEPLOYMENT PROFILE EXPORT / IMPORT (team shareability)
+// ════════════════════════════════════════════════════════════════
+// Profiles are CONFIG (orgs, tree, mappings, owner rules — shareable) plus
+// accumulated RUNTIME state (scan results, learned record pairs — machine-
+// and session-scoped). Only config may travel: shipping runtime state would
+// render another user's card chips and scan badges as if THEY had scanned.
+// Pure helpers live at column 0 so test/ent-profile-io.test.mjs can
+// materialize them via test/extract.mjs.
+
+// The profile-level fields that never leave the machine. A function rather
+// than a const so test extraction stays self-contained (extract.mjs only
+// slices top-level functions).
+function bldProfileRuntimeFields() {
+  return [
+    'lastScan',      // diff-scan buckets vs ONE target at ONE time on the exporter's machine — stale + record ids
+    'matchMemory',   // learned {srcId→tgtId} pairs per target org — machine-learned state, not config
+    'ringScans',     // per-target ring scan summaries — the exporter's scan status, not the importer's
+    'schedule',      // legacy schedule — its alarms live in the exporter's browser only; the chip would lie here
+    'ephemeral',     // internal flag for unsaved org-compare/ring clones — never meaningful in a file
+    'importedFrom'   // provenance of a PREVIOUS import on the exporter's machine — each import mints its own
+  ];
+}
+
+// Deep-clone a profile and drop everything runtime/machine-local: the fields
+// above plus per-node `_meta` (session describe/UI cache the builder attaches
+// at edit time). Org URLs, the tree, field mappings (incl. per-target
+// fieldMappingOverrides), owner mapping, matching config and picked recordIds
+// are CONFIG and stay — they mean the same thing on a teammate's machine
+// pointed at the same orgs. Pure.
+function bldProfileStrip(profile) {
+  if (!profile || typeof profile !== 'object') return null;
+  const clean = JSON.parse(JSON.stringify(profile));
+  for (const f of bldProfileRuntimeFields()) delete clean[f];
+  (function walk(node) {
+    if (!node || typeof node !== 'object') return;
+    delete node._meta;
+    (Array.isArray(node.children) ? node.children : []).forEach(walk);
+  })(clean.tree);
+  return clean;
+}
+
+// The downloadable payload. `schema` is the FILE format version — bump it on
+// any incompatible shape change so older Toolkits can refuse newer files by
+// name instead of half-importing them. `exportedBy` records the extension
+// version that wrote the file (chrome.runtime.getManifest().version) so a
+// refusal can name both sides. Pure.
+function bldProfileExportPayload(profile, version) {
+  return {
+    format: 'sftk-profile',
+    schema: 1,
+    exportedBy: String(version || 'unknown'),
+    exportedAt: new Date().toISOString(),
+    profile: bldProfileStrip(profile)
+  };
+}
+
+// Parse + validate an imported profile file. Returns { profile, stripped }
+// on success or { error } with a SPECIFIC reason — never a half-import.
+//   • unknown NEWER schema → refusal naming the file's schema AND ours
+//   • the file's id is NEVER reused: ids key history, match memory and
+//     schedule lookups, and re-importing your own export next to the
+//     original must not collide (existingIds guards the regeneration)
+//   • runtime fields present in a hand-edited file are stripped again and
+//     REPORTED in `stripped` so the UI can say so instead of silently eating
+//   • targetOrgs semantics survive: null / absent = follow-the-ring
+//     (profileFollowsRing checks !Array.isArray), an array = pinned set
+//   • provenance (importedFrom) is minted fresh — shown on the card
+// Pure (needs bldProfileRuntimeFields + bldProfileStrip in scope).
+function bldProfileImportParse(text, existingIds, fileName) {
+  let payload;
+  try {
+    payload = JSON.parse(String(text));
+  } catch (e) {
+    return { error: `not valid JSON (${e && e.message ? e.message : 'parse error'}) — the file may be truncated or not a profile export` };
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { error: 'not a profile export — expected a JSON object with format "sftk-profile"' };
+  }
+  if (payload.format !== 'sftk-profile') {
+    return { error: `not a Toolkit profile export — the file says format ${payload.format === undefined ? '(none)' : JSON.stringify(payload.format)}, expected "sftk-profile"` };
+  }
+  if (!Number.isInteger(payload.schema) || payload.schema < 1) {
+    return { error: 'the file has no valid schema number — it may be corrupted or hand-edited' };
+  }
+  if (payload.schema > 1) {
+    const by = typeof payload.exportedBy === 'string' && payload.exportedBy ? ` (Toolkit v${payload.exportedBy})` : '';
+    return { error: `this file is profile schema ${payload.schema}, written by a newer Toolkit${by}; this Toolkit reads schema 1 — update the extension and retry. Nothing was imported` };
+  }
+  const raw = payload.profile;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { error: 'the file contains no profile object — it may be truncated' };
+  }
+  if (typeof raw.name !== 'string' || !raw.name.trim()) {
+    return { error: 'the exported profile has no name — the file may be truncated or hand-edited' };
+  }
+  if (raw.tree !== null && raw.tree !== undefined && (typeof raw.tree !== 'object' || Array.isArray(raw.tree))) {
+    return { error: 'the exported profile’s object tree is malformed — the file may be truncated or hand-edited' };
+  }
+  const stripped = bldProfileRuntimeFields().filter(f => raw[f] !== undefined && raw[f] !== null);
+  const profile = bldProfileStrip(raw);
+  const taken = new Set(Array.isArray(existingIds) ? existingIds : []);
+  let id;
+  do { id = `prof_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`; } while (taken.has(id));
+  profile.id = id;
+  const now = new Date().toISOString();
+  profile.importedFrom = {
+    fileName: (typeof fileName === 'string' && fileName.trim()) ? fileName.trim() : null,
+    exportedBy: typeof payload.exportedBy === 'string' ? payload.exportedBy : null,
+    exportedAt: typeof payload.exportedAt === 'string' ? payload.exportedAt : null,
+    importedAt: now
+  };
+  if (!profile.createdAt) profile.createdAt = now;
+  profile.updatedAt = now;
+  return { profile, stripped };
+}
+
+// ── E1 UI: per-card ⬇ Export + ⬆ Import (called from the profiles list) ──
+window.exportProfile = function (profileId) {
+  const p = _profiles.find(x => x.id === profileId);
+  if (!p) return;
+  let version = '';
+  try { version = chrome?.runtime?.getManifest?.()?.version || ''; } catch (_) { /* non-extension context */ }
+  const payload = bldProfileExportPayload(p, version);
+  const slug = String(p.name || 'profile').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'profile';
+  const fname = `sftk-profile-${slug}-${new Date().toISOString().slice(0, 10)}.json`;
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fname;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  showToast(`Exported “${p.name}” — config only (orgs, tree, mappings, owner rules). Scan state and learned matches are machine-local and stay here.`, 'success', 5500);
+};
+
+window.importProfileFromFile = function () {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.json,application/json';
+  inp.style.display = 'none';
+  inp.addEventListener('cancel', () => inp.remove());
+  inp.addEventListener('change', async () => {
+    const file = inp.files && inp.files[0];
+    inp.remove();
+    if (!file) return;
+    let text;
+    try { text = await file.text(); }
+    catch (e) { showToast(`Couldn't read ${file.name}: ${e?.message || e}`, 'error', 6000); return; }
+    const res = bldProfileImportParse(text, _profiles.map(p => p.id), file.name);
+    if (res.error) { showToast(`Import failed: ${res.error}.`, 'error', 9000); return; }
+    const prof = res.profile;
+    _profiles.push(prof);
+    await storageSaveProfiles();
+    if (_currentView === 'profiles') renderProfiles();
+    // The file was written against the EXPORTER's orgs and ring. Say plainly
+    // that nothing has been validated against this machine's targets, and
+    // offer the existing schema-gap check right here — an import is exactly
+    // the "which org will this break in?" moment.
+    const tgtDesc = Array.isArray(prof.targetOrgs)
+      ? `${prof.targetOrgs.length} pinned target(s)`
+      : 'targets follow YOUR Sync Ring';
+    showModal(`
+      <div class="ds-modal-header">⬆ Imported “${esc(prof.name)}”</div>
+      <div class="ds-modal-body" style="font-size:12.5px">
+        <div style="margin-bottom:8px">Source: <strong>${esc(prof.sourceOrg ? orgLabel(prof.sourceOrg) : '— not set —')}</strong> · ${esc(tgtDesc)}.</div>
+        ${res.stripped.length ? `<div style="color:var(--subtext);margin-bottom:8px">Machine-local state in the file was not imported (it belongs to the exporter's machine): ${esc(res.stripped.join(', '))}.</div>` : ''}
+        <div style="color:var(--subtext)">This file was written against the exporter's orgs and Sync Ring — nothing has been validated against <em>your</em> targets yet.${prof.tree ? ' Run the schema check to see which of your orgs it would break in.' : ' It has no object tree yet — open ✏ Edit to build one.'}</div>
+      </div>
+      <div class="ds-modal-footer">
+        <button class="ds-btn" data-dsaction="closeModal">Later</button>
+        ${prof.tree ? `<button class="ds-btn ds-btn-primary" id="dsImpCheckTargets" title="Verify every object and mapped field in the imported tree exists in each of YOUR targets">🧪 Check all targets</button>` : ''}
+      </div>`);
+    eid('dsImpCheckTargets')?.addEventListener('click', () => _bldCheckAllTargets(prof));
+  });
+  document.body.appendChild(inp);
+  inp.click();
+};
 

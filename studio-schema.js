@@ -1010,6 +1010,54 @@ const SV_FLOW_META_CAP     = 100;  // flows opened by the deep scan (10 batched 
 const SV_FLOW_META_CHUNK   = 10;   // subrequests per composite/batch call
 const SV_FLOW_META_PARALLEL = 2;   // batches in flight
 
+// PURE. E3b — the deep scan's batched-call count, computed from the same cap
+// and chunk the scan itself uses (they are passed in, not re-declared, so the
+// estimate cannot drift from the real batch). eligibleCount is how many
+// record-triggered flows target the graphed objects — known only mid-load,
+// AFTER the flow list lands, which is why this is quoted at that moment
+// instead of inventing a number up front.
+function svDeepScanCallEstimate(eligibleCount, cap, chunk) {
+  const n  = Math.max(0, Math.floor(Number(eligibleCount) || 0));
+  const cp = Math.max(1, Math.floor(Number(cap) || 1));
+  const ch = Math.max(1, Math.floor(Number(chunk) || 1));
+  const opened = Math.min(n, cp);
+  return { eligible: n, opened, capped: n > cp, calls: Math.ceil(opened / ch), chunk: ch };
+}
+
+// PURE. E3b — the deep scan's cost line: the batched call count, with the
+// org's daily-budget meter beside it when it could be read. budgetInfo is
+// null/undefined when the shared reader (window.sftkApiBudget) is absent —
+// then the line is JUST the count. Otherwise { label, budget } where budget
+// is { max, remaining } or null; null is SAID ("API budget unavailable"),
+// never hidden. The meter names WHOSE pool it is. warn flips when the
+// batched calls EXCEED the remaining budget (equal is not over) — this line
+// informs, it never blocks the scan.
+function svDeepScanBudgetLine(est, budgetInfo) {
+  const fmt = v => Number(v).toLocaleString();
+  const e = est || {};
+  const calls  = Number.isFinite(e.calls)  ? e.calls  : 0;
+  const opened = Number.isFinite(e.opened) ? e.opened : 0;
+  const parts = [
+    `≈${fmt(calls)} batched Tooling call${calls === 1 ? '' : 's'} to open ` +
+    `${fmt(opened)} flow${opened === 1 ? '' : 's'}` +
+    (e.capped ? ` (capped from ${fmt(e.eligible)})` : '')
+  ];
+  let warn = false;
+  if (budgetInfo) {
+    const label = budgetInfo.label ? String(budgetInfo.label) : 'this org';
+    const b = budgetInfo.budget;
+    if (b && Number.isFinite(b.remaining) && Number.isFinite(b.max)) {
+      parts.push(`${label} has ${fmt(b.remaining)} of ${fmt(b.max)} daily API calls remaining`);
+      if (calls > b.remaining) warn = true;
+    } else {
+      parts.push(`${label}: API budget unavailable`);
+    }
+  }
+  let text = parts.join(' · ');
+  if (warn) text = `⚠ ${text} — this deep scan may exhaust the org's remaining daily API budget`;
+  return { text, warn };
+}
+
 // PURE. One flow's parsed Metadata → the cross-object actions it performs.
 // Extracted so the batching rewrite could not quietly change what a flow body
 // means, and so the parse is unit-testable without a network.
@@ -1067,6 +1115,28 @@ async function svFetchFlowActions(sess, flows, objects) {
   }
 
   if (!triggered.length) return actions;
+
+  // E3b: quote the batched call count BEFORE spending it, with the org's
+  // daily-budget meter beside it. The count renders even without the shared
+  // reader (window.sftkApiBudget, studio-transfer.js) — wired tolerantly so
+  // this view never depends on it. The meter read is 5-min cached in the
+  // reader; a warn is also pinned as a note, because the status line below
+  // is overwritten as soon as the graph builds.
+  const costEst = svDeepScanCallEstimate(eligible.length, SV_FLOW_META_CAP, SV_FLOW_META_CHUNK);
+  let costLine = svDeepScanBudgetLine(costEst, null);
+  svSetStatus(`⏳ Scanning cross-object flow actions… ${costLine.text}`);
+  if (typeof window.sftkApiBudget === 'function') {
+    let budget = null;
+    try { budget = await window.sftkApiBudget(sess.orgUrl, sess.sid); } catch (_) { budget = null; }
+    costLine = svDeepScanBudgetLine(costEst, {
+      label: (typeof orgLabel === 'function' && orgLabel(sess.orgUrl)) || 'this org',
+      budget: budget || null,
+    });
+    svSetStatus(`⏳ Scanning cross-object flow actions… ${costLine.text}`);
+    if (costLine.warn) {
+      svNote('The deep scan may exhaust the org\'s remaining daily API budget', costLine.text);
+    }
+  }
 
   // One message, ceil(n/10) round-trips. The primitive returns a per-item array
   // aligned 1:1 with the subrequests, so results[i] belongs to triggered[i] —

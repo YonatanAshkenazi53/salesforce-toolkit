@@ -373,7 +373,8 @@ async function _ringOpenPlan(profileId) {
       <div id="dsPlanRows">${window.sftkCatSm ? sftkCatSm('Scanning…') : 'Scanning…'}</div>
       ${closed.length ? `<div class="ds-pk-note">⏭ Not open (skipped): ${closed.map(u => esc(orgLabel(u))).join(', ')}</div>` : ''}
     </div>
-    <div class="ds-modal-footer">
+    <div class="ds-modal-footer" style="flex-wrap:wrap">
+      <div id="dsPlanApiBudget" class="ds-pk-note" style="flex-basis:100%;margin:0" aria-live="polite"></div>
       <span id="dsPlanTotal" style="margin-right:auto;font-size:12px;color:var(--subtext)"></span>
       <button class="ds-btn" data-dsaction="closeModal">Close</button>
       <button class="ds-btn ds-btn-primary" id="dsPlanRun" disabled>▶ Run selected</button>
@@ -480,9 +481,56 @@ async function _ringOpenPlan(profileId) {
     }
     return n;
   };
+  // E3 — API-budget line in the footer. The ESTIMATE recomputes synchronously
+  // from the current selection on every tick; the org METERS come from one
+  // fetch per modal open (window.sftkApiBudget caches per org for 5 minutes —
+  // the /limits read itself costs a call). Meters render only once fetched:
+  // "unavailable" is reserved for a read that actually failed, never for one
+  // that is still in flight. Informational only — Run is never blocked.
+  const _planBudgets = new Map();   // orgUrl → { max, remaining } | null
+  let _planBudgetsReady = false;
+  async function loadPlanBudgets() {
+    if (typeof window.sftkApiBudget !== 'function') return;
+    await Promise.all([_ring.sourceUrl, ...open].map(async u => {
+      const sess = await getOrgSession(u);
+      _planBudgets.set(u, sess ? await window.sftkApiBudget(sess.orgUrl, sess.sid) : null);
+    }));
+    _planBudgetsReady = true;
+    renderPlanBudget(null);   // repaint with meters (selection re-read below)
+  }
+  // sel: [{ label, tgt, push, ovw }] from updPlanUI, or null to re-read the
+  // current checkboxes (used when the async meter fetch lands).
+  function renderPlanBudget(sel) {
+    const el = eid('dsPlanApiBudget');
+    if (!el || typeof window.sftkEstimateSyncPlanCalls !== 'function'
+            || typeof window.sftkApiBudgetLine !== 'function') return;
+    if (!sel) {
+      sel = plans.map((pl, i) => pl.error ? null : ({
+        label: orgLabel(pl.tgt), tgt: pl.tgt,
+        push: recount('push', i), ovw: recount('ovw', i),
+      })).filter(Boolean);
+    }
+    const active = sel.filter(s => s.push || s.ovw);
+    if (!active.length) { el.textContent = ''; el.style.color = ''; return; }
+    const est = window.sftkEstimateSyncPlanCalls(active, {
+      tree: p.tree, bulkThreshold: p.bulkThreshold,
+      ownerMatch: p?.ownerMapping?.mode === 'match',
+    });
+    const budgets = _planBudgetsReady ? [
+      { label: `${orgLabel(_ring.sourceUrl)} (source)`,
+        budget: _planBudgets.get(_ring.sourceUrl) ?? null, calls: est.source },
+      ...active.map((s, k) => ({ label: s.label,
+        budget: _planBudgets.get(s.tgt) ?? null, calls: est.perOrg[k]?.calls })),
+    ] : [];
+    const line = window.sftkApiBudgetLine(est, budgets);
+    el.textContent = line.text;
+    el.style.color = line.warn ? '#b45309' : '';
+  }
+  loadPlanBudgets();
   // Live "what will actually happen" summaries — per org card + footer total.
   const updPlanUI = () => {
     let tAdd = 0, tOvw = 0, orgsTouched = 0;
+    const sel = [];
     plans.forEach((pl, i) => {
       if (pl.error) return;
       const a = recount('push', i), o = recount('ovw', i);
@@ -492,11 +540,13 @@ async function _ringOpenPlan(profileId) {
         : '→ nothing selected';
       if (a || o) orgsTouched++;
       tAdd += a; tOvw += o;
+      sel.push({ label: orgLabel(pl.tgt), tgt: pl.tgt, push: a, ovw: o });
     });
     const tot = eid('dsPlanTotal');
     if (tot) tot.textContent = (tAdd || tOvw)
       ? `Run will: add ${tAdd} · overwrite ${tOvw} — across ${orgsTouched} org${orgsTouched !== 1 ? 's' : ''}`
       : 'Nothing selected yet — tick an operation or records above';
+    renderPlanBudget(sel);
   };
   rowsEl.querySelectorAll('.ds-plan-push, .ds-plan-ovw').forEach(cb =>
     cb.addEventListener('change', () => {
@@ -555,6 +605,8 @@ async function _ringOpenPlan(profileId) {
         const tgtSess = await getOrgSession(j.pl.tgt);
         if (!tgtSess) throw new Error('org tab closed');
         let pushed = 0, pushFailed = 0, ovwOk = 0, ovwFailed = 0;
+        // E3 — this job's API cost from ACTUALS, appended to its ✅ note.
+        let usedCalls = 0, usedKnown = true;
 
         if (j.pushIds.length) {
           const ids = j.pushIds;
@@ -564,6 +616,15 @@ async function _ringOpenPlan(profileId) {
             srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid, tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid });
           if (result?.error) throw new Error(result.error);
           for (const s of Object.values(result.summary || {})) { pushed += s.created || 0; pushFailed += s.failed || 0; }
+          // Same estimator as the pre-run footer line, fed with what the
+          // engine reported (record counts + viaBulk pin the real paths).
+          if (typeof window.sftkPlanFromRunSummary === 'function'
+              && typeof window.sftkEstimateRunCalls === 'function') {
+            const used = window.sftkEstimateRunCalls(window.sftkPlanFromRunSummary(
+              clone.tree, result.summary, p.bulkThreshold, p?.ownerMapping?.mode === 'match'));
+            usedCalls += used.total;
+            if (used.known === false) usedKnown = false;
+          }
           _history.push({ id: genId('run'), profileId: p.id,
             srcOrgUrl: srcSess.orgUrl, tgtOrgUrl: tgtSess.orgUrl,
             sourceOrg: srcSess.orgUrl, targetOrg: tgtSess.orgUrl,
@@ -575,6 +636,12 @@ async function _ringOpenPlan(profileId) {
           const ids = j.ovwIds;
           const out = await reconcileOverwrite(scanClone, p.tree.objectType, ids, j.pl.res.changed, srcSess, tgtSess);
           ovwOk = out?.ok || 0; ovwFailed = out?.failed || 0;
+          // Overwrite actuals: describes + 200-chunked reads and updates for
+          // the rows that were actually attempted (ok + failed).
+          if (typeof window.sftkEstimateSyncPlanCalls === 'function') {
+            usedCalls += window.sftkEstimateSyncPlanCalls(
+              [{ label: orgLabel(j.pl.tgt), push: 0, ovw: ovwOk + ovwFailed }], { tree: p.tree }).total;
+          }
           _history.push({ id: genId('run'), kind: 'reconcile', profileId: p.id,
             srcOrgUrl: srcSess.orgUrl, tgtOrgUrl: tgtSess.orgUrl,
             sourceOrg: srcSess.orgUrl, targetOrg: tgtSess.orgUrl,
@@ -584,7 +651,7 @@ async function _ringOpenPlan(profileId) {
             errors: (out?.errors || []).slice(0, 20),
             profileName: `${p.name} (sync plan · overwrite)` });
         }
-        note.textContent = ` ✅ ${j.pushIds.length ? `${pushed} pushed${pushFailed ? ` (${pushFailed} failed)` : ''}` : ''}${j.pushIds.length && j.ovwIds.length ? ' · ' : ''}${j.ovwIds.length ? `${ovwOk} overwritten${ovwFailed ? ` (${ovwFailed} failed)` : ''}` : ''}`;
+        note.textContent = ` ✅ ${j.pushIds.length ? `${pushed} pushed${pushFailed ? ` (${pushFailed} failed)` : ''}` : ''}${j.pushIds.length && j.ovwIds.length ? ' · ' : ''}${j.ovwIds.length ? `${ovwOk} overwritten${ovwFailed ? ` (${ovwFailed} failed)` : ''}` : ''}${usedCalls ? ` · used ≈${usedCalls.toLocaleString()}${usedKnown ? '' : '+'} API calls` : ''}`;
         await _ringScanOne(p.id, j.pl.tgt, null);   // refresh the matrix cell
       } catch (e) {
         const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
@@ -593,6 +660,11 @@ async function _ringOpenPlan(profileId) {
     }
     await storageSaveHistory();
     runBtn.textContent = '✓ Done';
+    // E3 — the run just spent calls on the source and every touched target:
+    // drop those meters and re-read so the footer shows post-run remaining.
+    window.sftkApiBudgetInvalidate?.(_ring.sourceUrl, ...jobs.map(j => j.pl.tgt));
+    _planBudgetsReady = false;
+    loadPlanBudgets();
   });
 }
 

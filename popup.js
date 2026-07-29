@@ -2795,6 +2795,25 @@ function buildDepScanOffer() {
       : `, so it is not started automatically above ${plan.autoMax} versions to read. Nothing on this tab has data until you start it.`);
   box.appendChild(p);
 
+  // E3b — the quota half of the cost line. The estimate above renders without
+  // it; the meter fills in async when the shared helper (sftk-api-budget.js)
+  // resolves. Stale fill-ins are dropped once the box leaves the DOM.
+  const meter = document.createElement('div');
+  meter.style.cssText = 'color:var(--subtext,#706E6B);margin-top:4px;font-size:12px';
+  box.appendChild(meter);
+  (async () => {
+    const b = await (typeof window.sftkApiBudget === 'function'
+      ? window.sftkApiBudget(orgUrl, sid) : null);
+    if (!meter.isConnected) return;
+    if (!b) {
+      if (typeof window.sftkApiBudget === 'function') meter.textContent = 'API budget unavailable for this org.';
+      return;
+    }
+    const over = plan.calls > b.remaining;
+    meter.textContent = `Org API budget: ${b.remaining.toLocaleString()} of ${b.max.toLocaleString()} daily calls remaining`
+      + (over ? ` — ⚠ this scan's ${plan.calls.toLocaleString()} call(s) may exhaust it.` : '.');
+  })();
+
   const btn = document.createElement('button');
   btn.className = 'btn btn-primary btn-sm';
   btn.style.marginTop = '8px';

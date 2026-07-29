@@ -48,6 +48,256 @@ function _trProgressHandler(logEl) {
   };
 }
 
+// ════════════════════════════════════════════════════════════════
+// E3 — API-BUDGET AWARENESS
+// ════════════════════════════════════════════════════════════════
+// Big orgs meter API calls and the daily pool is shared with every other
+// integration — one surprise bulk run is how tools get banned. These helpers
+// (a) read an org's DailyApiRequests limit, (b) estimate what a run will
+// cost BEFORE it starts, and (c) restate the cost after the run from actual
+// record counts. Estimates carry '≈' on purpose: poll counts, retries and
+// the optional resolution queries (record types, owners, lookup bridges)
+// can't be known from the plan — only the derivable calls are counted
+// (describes, reads, batched writes, child-first link updates). The line
+// NEVER blocks a run; it informs. This file loads before studio-ring.js
+// (studio.html order), so the ring's Sync Plan footer shares these via
+// window.* below.
+
+// sftkBudgetCacheFresh / sftkExtractDailyApi / window.sftkApiBudget /
+// window.sftkApiBudgetInvalidate moved to sftk-api-budget.js (E3b hoist) —
+// loaded by BOTH apps so the popup's operations get the meter too.
+
+// Pure — flatten a preview-counts tree (previewTransfer's { count, children })
+// plus the index-parallel profile tree into the estimator's plan shape.
+// A null count (COUNT() failed) stays null — the estimator then reports
+// known:false instead of inventing a number.
+function sftkPlanFromCounts(counts, tree, bulkThreshold, ownerMatch) {
+  const nodes = [];
+  (function walk(c, t, parentRecords, isRoot) {
+    if (!c) return;
+    const records = Number.isFinite(c.count) ? Math.max(0, c.count) : null;
+    nodes.push({
+      records,
+      isRoot: !!isRoot,
+      parentRecords: isRoot ? null : parentRecords,
+      childFirst: !!(t && t.insertOrder === 'childFirst'),
+    });
+    const kids = c.children || [];
+    const tkids = (t && t.children) || [];
+    for (let i = 0; i < kids.length; i++) walk(kids[i], tkids[i], records, false);
+  })(counts, tree, null, true);
+  return { bulkThreshold, ownerMatch: !!ownerMatch, nodes };
+}
+
+// Pure — same plan shape, but from a finished run's summary (actuals).
+// records = created + failed + notProcessed per reported object. An object
+// ABSENT from the summary is unknown (→ known:false downstream), never zero.
+// viaBulk from the summary pins the write path (bulkWrite true/false) so the
+// post-run figure reflects what the engine actually did, not the threshold.
+function sftkPlanFromRunSummary(tree, summary, bulkThreshold, ownerMatch) {
+  const nodes = [];
+  (function walk(t, parentRecords, isRoot) {
+    if (!t) return;
+    const obj = t.objectType || t.childSObject;
+    const s = summary && obj ? summary[obj] : null;
+    const records = s ? (s.created || 0) + (s.failed || 0) + (s.notProcessed || 0) : null;
+    nodes.push({
+      records,
+      isRoot: !!isRoot,
+      parentRecords: isRoot ? null : parentRecords,
+      childFirst: !!(t.insertOrder === 'childFirst'),
+      bulkWrite: s ? !!s.viaBulk : null,
+    });
+    for (const c of (t.children || [])) walk(c, records, false);
+  })(tree, null, true);
+  return { bulkThreshold, ownerMatch: !!ownerMatch, nodes };
+}
+
+// Pure — estimate the API calls a run will make, derived from what
+// executeProfileTransfer (background.js) actually does:
+//   per node: 1 source describe + 1 target describe (paid even for 0 records)
+//   root read: 1 COUNT() routing call, then EITHER one Bulk API 2.0 query
+//     job when records ≥ bulkThreshold (job create + status polls + result
+//     download — a 4-call floor; polls grow with job duration) OR
+//     ceil(records / 2000) REST pages
+//   child read: fetches chunk by 200 parent ids —
+//     max(ceil(parentRecords/200), ceil(records/2000)) queries; a child
+//     whose parent scope is EMPTY is skipped before any fetch or write
+//   write: EITHER one Bulk ingest job when records ≥ bulkThreshold (create
+//     + CSV upload + close + polls + 2 result files — a 7-call floor) OR
+//     ceil(records / 200) Collections calls; zero records write nothing
+//   child-first connect step: up to ceil(records / 200) update calls
+//   owner matching on (plan.ownerMatch, profile.ownerMapping.mode==='match'):
+//     +1 target call — the owner index / first name-lookup query, made once
+//     per run by the first node that has records; per-name lookup chunks
+//     beyond that floor depend on distinct owner names and aren't counted
+// NOT counted (unknowable from the plan): record-type / lookup resolution
+// queries, retries, polls beyond the floors — hence the '≈'.
+// plan: { bulkThreshold, ownerMatch, nodes: [{ records, isRoot,
+//   parentRecords, childFirst, bulkWrite }] } — null records/parentRecords
+//   = unknown.
+// Returns { total, source, target, known } — split per org so each side can
+// be weighed against ITS OWN remaining daily budget.
+function sftkEstimateRunCalls(plan) {
+  const thr = Number(plan && plan.bulkThreshold) > 0 ? Number(plan.bulkThreshold) : 2000;
+  const BULK_READ_CALLS = 4, BULK_WRITE_CALLS = 7;
+  let source = 0, target = 0, known = true, anyRecords = false;
+  for (const node of ((plan && plan.nodes) || [])) {
+    const n = Number.isFinite(node && node.records) ? Math.max(0, node.records) : null;
+    if (n === null) known = false;
+    if (n === null || n > 0) anyRecords = true;     // unknown might have records
+    source += 1; target += 1;                       // the two describes
+    let nodeSkipped = false;                        // empty parent scope → engine skips the node
+    if (node.isRoot) {
+      source += 1;                                  // COUNT() routing call
+      if (n === null) source += 1;                  // at least one read page
+      else if (n >= thr) source += BULK_READ_CALLS;
+      else source += Math.max(1, Math.ceil(n / 2000));
+    } else {
+      const pn = Number.isFinite(node && node.parentRecords) ? Math.max(0, node.parentRecords) : null;
+      if (pn === null) { known = false; source += 1; }
+      else if (pn === 0) nodeSkipped = true;
+      else source += Math.max(Math.ceil(pn / 200), Math.ceil((n || 0) / 2000));
+    }
+    if (!nodeSkipped) {
+      if (n === null) target += 1;                  // at least one write attempt
+      else if (n > 0) {
+        const bulk = node.bulkWrite === true || (node.bulkWrite == null && n >= thr);
+        target += bulk ? BULK_WRITE_CALLS : Math.ceil(n / 200);
+        if (node.childFirst) target += Math.ceil(n / 200);   // connect-step updates
+      }
+    }
+  }
+  // Owner matching resolves against the TARGET org's users — one index (or
+  // first name-lookup) query per run, paid by the first node with records.
+  // All-zero-record runs never reach the owner code, so they don't pay it.
+  if (plan && plan.ownerMatch && anyRecords) target += 1;
+  return { total: source + target, source, target, known };
+}
+
+// Pure — the one-line budget display. est: { total, known } (estimator
+// output or compatible). budgets: [{ label, budget, calls }] where budget is
+// { max, remaining } | null — null means the meter could NOT be read, which
+// is SAID ("API budget unavailable"), never hidden. calls is the estimate
+// against that specific org. Returns { text, warn }; warn flips when any
+// org's estimated calls EXCEED its remaining daily budget (equal is not
+// over). The caller styles the line — nothing here blocks anything.
+function sftkApiBudgetLine(est, budgets) {
+  const fmt = v => Number(v).toLocaleString();
+  const total = est && Number.isFinite(est.total) ? est.total : null;
+  const unknown = !!(est && est.known === false);
+  const parts = [];
+  if (total !== null) {
+    parts.push(`≈${fmt(total)}${unknown ? '+' : ''} API call${total === 1 && !unknown ? '' : 's'}`);
+  }
+  let warn = false;
+  const over = [];
+  for (const b of (budgets || [])) {
+    const label = b && b.label ? String(b.label) : 'org';
+    if (b && b.budget && Number.isFinite(b.budget.remaining) && Number.isFinite(b.budget.max)) {
+      parts.push(`${label} has ${fmt(b.budget.remaining)} of ${fmt(b.budget.max)} daily API calls remaining`);
+      if (Number.isFinite(b.calls) && b.calls > b.budget.remaining) { warn = true; over.push(label); }
+    } else {
+      parts.push(`${label}: API budget unavailable`);
+    }
+  }
+  let text = parts.join(' · ');
+  if (warn) {
+    text = `⚠ ${text} — this run may exhaust the org's remaining daily API budget${over.length > 1 ? 's' : ''} (${over.join(', ')})`;
+  }
+  return { text, warn };
+}
+
+// Pure — API-call estimate for a ring Sync Plan run (studio-ring.js). One
+// shared source, N independent target jobs. Per target the plan can PUSH
+// missing records (a real executeProfileTransfer scoped to the ticked root
+// ids — the profile tree's children ride along, their counts unknowable
+// until the run → known:false) and/or OVERWRITE drifted ones
+// (reconcileOverwrite: 1 describe per org, source reads chunked by 200 ids,
+// SF_COLLECTIONS_UPDATE batches of 200; its lookup/owner/record-type
+// resolution queries aren't derivable — same '≈' rule as the transfer
+// estimator). sel: [{ label, push, ovw }] — the ticked record counts.
+// opts: { tree, bulkThreshold, ownerMatch }.
+// Returns { total, source, known, perOrg: [{ label, calls }] } — perOrg
+// aligns with sel by index so each target's cost can be weighed against ITS
+// remaining daily budget; source aggregates every job's reads against the
+// source of truth.
+function sftkEstimateSyncPlanCalls(sel, opts) {
+  const tree = opts && opts.tree;
+  let source = 0, known = true;
+  const perOrg = [];
+  for (const s of (sel || [])) {
+    const push = Math.max(0, Number(s && s.push) || 0);
+    const ovw  = Math.max(0, Number(s && s.ovw) || 0);
+    let calls = 0;
+    if (push > 0) {
+      const nodes = [];
+      (function walk(t, parentRecords, isRoot) {
+        if (!t) return;
+        const records = isRoot ? push : null;   // children ride along — unknown here
+        nodes.push({ records, isRoot, parentRecords: isRoot ? null : parentRecords,
+          childFirst: !!(t.insertOrder === 'childFirst') });
+        for (const c of (t.children || [])) walk(c, records, false);
+      })(tree || {}, null, true);
+      const est = sftkEstimateRunCalls({
+        bulkThreshold: opts && opts.bulkThreshold,
+        ownerMatch: !!(opts && opts.ownerMatch),
+        nodes,
+      });
+      source += est.source;
+      calls  += est.target;
+      if (est.known === false) known = false;
+    }
+    if (ovw > 0) {
+      const chunks = Math.ceil(ovw / 200);
+      source += 1 + chunks;   // source describe + id-chunked reads
+      calls  += 1 + chunks;   // target describe + 200-record update batches
+    }
+    perOrg.push({ label: (s && s.label) || 'org', calls });
+  }
+  const total = source + perOrg.reduce((n, o) => n + o.calls, 0);
+  return { total, source, known, perOrg };
+}
+
+window.sftkEstimateRunCalls      = sftkEstimateRunCalls;
+window.sftkPlanFromCounts        = sftkPlanFromCounts;
+window.sftkPlanFromRunSummary    = sftkPlanFromRunSummary;
+window.sftkApiBudgetLine         = sftkApiBudgetLine;
+window.sftkEstimateSyncPlanCalls = sftkEstimateSyncPlanCalls;
+
+// The counts tree from the last previewTransfer — the estimator's input.
+let _trLastCounts = null;
+// Last-render-wins token for the async meter fetch below.
+let _trBudgetToken = 0;
+
+// E3 — paint the budget line under the run footer. The estimate renders
+// synchronously; the two orgs' meters fill in when fetched (5-min cached).
+// No counts yet → nothing honest to show → empty line (the auto-count that
+// populates the preview also lands here).
+async function _trUpdateApiBudget() {
+  const el = eid('dsTrApiBudget');
+  if (!el) return;
+  if (!_transferProfile?.tree || !_trLastCounts) { el.textContent = ''; return; }
+  const tok = ++_trBudgetToken;
+  const plan = sftkPlanFromCounts(_trLastCounts, buildTransferProfile().tree,
+    _transferProfile.bulkThreshold, _transferProfile?.ownerMapping?.mode === 'match');
+  const est = sftkEstimateRunCalls(plan);
+  el.textContent = sftkApiBudgetLine(est, []).text;   // estimate now, meters next
+  const [sb, tb] = await Promise.all([
+    window.sftkApiBudget(_transferSrc?.orgUrl, _transferSrc?.sid),
+    window.sftkApiBudget(_transferTgt?.orgUrl, _transferTgt?.sid),
+  ]);
+  if (tok !== _trBudgetToken) return;                 // a newer render won
+  const el2 = eid('dsTrApiBudget');
+  if (!el2) return;
+  const line = sftkApiBudgetLine(est, [
+    { label: orgLabel(_transferSrc?.orgUrl || '') || 'source org', budget: sb, calls: est.source },
+    { label: orgLabel(_transferTgt?.orgUrl || '') || 'target org', budget: tb, calls: est.target },
+  ]);
+  el2.textContent = line.text;
+  el2.style.color = line.warn ? '#b45309' : '';
+}
+
 async function renderTransfer() {
   setMain(`<div class="ds-init-loading">${window.sftkCat ? sftkCat('Refreshing sessions…') : 'Refreshing sessions…'}</div>`);
 
@@ -167,6 +417,8 @@ async function renderTransfer() {
           title="Run every safety check — required fields, lookups, record types, child-first feasibility — without writing anything.">🧪 Validate (dry run)</button>
         <button class="ds-btn ds-btn-lg" id="dsTrRunBtn" disabled>▶ Run Transfer</button>
       </div>
+      <!-- E3: API-cost estimate + each org's daily-budget meter (informs, never blocks) -->
+      <div id="dsTrApiBudget" class="ds-pk-note" style="margin:8px 0 0" aria-live="polite"></div>
     </div>`}
 
     <div id="dsTrProgressArea"></div>
@@ -187,6 +439,8 @@ async function renderTransfer() {
     updateTransferPreview();
     updateTransferBtn();
     _trLastTotal = null;      // stale count belongs to the previous profile
+    _trLastCounts = null;     // …and so does the API-cost estimate (E3)
+    _trUpdateApiBudget();
     _syncRunButtons();
     _maybeAutoCount();
     if (_transferWriteMode === 'upsert') _loadUpsertFieldOptions();
@@ -387,6 +641,7 @@ function renderTrOrgPair() {
       renderTrOrgPair();
       updateTransferPreview();
       updateTransferBtn();
+      _trUpdateApiBudget();   // E3 — different org, different meter
     });
   });
   eid('dsTrOrgSwap')?.addEventListener('click', () => {
@@ -398,6 +653,7 @@ function renderTrOrgPair() {
     renderTrOrgPair();
     updateTransferPreview();
     updateTransferBtn();
+    _trUpdateApiBudget();   // E3
   });
   eid('dsTrOrgReset')?.addEventListener('click', () => {
     _transferOrgOverride = { src: null, tgt: null };
@@ -405,6 +661,7 @@ function renderTrOrgPair() {
     renderTrOrgPair();
     updateTransferPreview();
     updateTransferBtn();
+    _trUpdateApiBudget();   // E3
   });
 }
 
@@ -596,6 +853,10 @@ async function previewTransfer() {
   })(counts);
   _trLastTotal = total;
   _syncRunButtons();
+
+  // E3 — fresh counts → refresh the API-cost line under the footer.
+  _trLastCounts = counts;
+  _trUpdateApiBudget();
 
   // Re-render plan with count badges inline — filter buttons stay wired
   updateTransferPreview(counts);
@@ -1217,6 +1478,27 @@ async function runTransfer() {
   const total = Object.values(result.summary || {}).reduce((n,s)=>n+(s.created||0),0);
   logRow(result.status === 'success' ? '✅' : '⚠',
     `Done — ${total} records transferred · Status: ${result.status}`);
+
+  // E3 — restate the API cost from ACTUALS: created+failed+notProcessed per
+  // object pins each node's record count, viaBulk pins its write path. Same
+  // estimator as the pre-run line; still '≈' (polls and resolution queries
+  // beyond the floors aren't counted), and a '+' when an object never
+  // reported (its cost is unknown, not zero). Purely informational.
+  try {
+    const usedPlan = sftkPlanFromRunSummary(buildTransferProfile().tree, result.summary,
+      _transferProfile?.bulkThreshold, _transferProfile?.ownerMapping?.mode === 'match');
+    const used = sftkEstimateRunCalls(usedPlan);
+    if (Number.isFinite(used.total)) {
+      const plus = used.known === false ? '+' : '';
+      logRow('🧮', `This run used ≈${used.total.toLocaleString()}${plus} API calls — `
+        + `≈${used.source.toLocaleString()}${plus} on the source org, `
+        + `≈${used.target.toLocaleString()}${plus} on the target.`);
+    }
+  } catch (_) { /* informational only — never fail a finished run over it */ }
+  // The run just spent calls — drop both meters so the next budget line
+  // re-reads instead of showing pre-run numbers, then repaint it.
+  window.sftkApiBudgetInvalidate?.(_transferSrc?.orgUrl, _transferTgt?.orgUrl);
+  _trUpdateApiBudget();
 
   // Session-expired hint — guide the user to reopen their org tab
   if (anySessionExpired) {
