@@ -435,8 +435,19 @@ async function _ringOpenPlan(profileId) {
           ${rows.length > REC_CAP ? `<div class="ds-pk-note">…and ${rows.length - REC_CAP} more — they follow the checkbox above; open ⚖ Reconcile for the full list.</div>` : ''}
         </div>
       </details>`;
+    // The scan's buckets are capped (studio-scan.js slices at 5,000). This plan
+    // WRITES from them, so a cap here means "Add N of N" is a floor presented as
+    // a total — and the push checkbox is on by default. Disclose it on the same
+    // panel that already discloses the REC_CAP display slice below; hiding the
+    // larger truncation while flagging the smaller one reads as scrupulous and
+    // is the more misleading of the two.
+    const capKinds = [m ? 'push' : null, c ? 'overwrite' : null, x ? 'del' : null].filter(Boolean);
+    const capNote = (typeof window.sftkCappedWriteNote === 'function' && capKinds.length)
+      ? window.sftkCappedWriteNote(pl.res, capKinds, p.tree.objectType)
+      : { lines: [] };
     return `
       <div class="ds-plan-org" data-plan-idx="${i}">
+        ${capNote.lines.length ? `<div class="ds-pk-note ds-plan-capwarn">⚠ ${capNote.lines.map(esc).join('<br>')}</div>` : ''}
         <div class="ds-plan-org-hdr"><strong>${esc(orgLabel(pl.tgt))}</strong> ${prodBadge(pl.tgt)}
           ${clean ? '<span class="ds-ring-clean">✓ in sync — nothing to do</span>'
                   : `<span class="ds-plan-sum" data-plan-sum="${i}"></span>`}</div>

@@ -11,6 +11,13 @@ let orgFlowCount = 0;
 // it. Neither may be treated as 'done' — see renderDependenciesTab.
 let metadataScanState = 'none'; // 'none' | 'scanning' | 'skipped' | 'partial' | 'done'
 let toolbarEventsReady = false;  // guard against duplicate listeners
+// v1.0.2 — did the Flow list really return LastModifiedDate for every version?
+// Without it nothing can be proven unchanged, so the incremental dependency
+// cache is disabled for this org rather than trusted blind.
+let flowStampsAvailable = false;
+// Result of the last live re-verification run before a delete (TASK C), so the
+// final confirm can say what was re-checked instead of implying it was all live.
+let _lastDeleteRecheck = null;
 
 // ── Lazy-load guard ───────────────────────────────────────────
 let _flowsLoaded = false;      // true after first loadFlows() call
@@ -922,6 +929,10 @@ async function loadFlows() {
   selectedIds.clear();
   DependencyMap.reset();
   metadataScanState = 'none';
+  // Belongs to the org being replaced — a stale `true` here would let the next
+  // org's cache note claim a freshness field this org may not have.
+  flowStampsAvailable = false;
+  _lastDeleteRecheck = null;
 
   try {
     // Snapshot the org context — an org switch can update the module-level
@@ -929,8 +940,27 @@ async function loadFlows() {
     // wrong org's session (HTTP 404 on the metadata fetch).
     const loadOrgUrl = orgUrl, loadSid = sid;
 
-    const query = `SELECT Id,MasterLabel,Definition.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,Description FROM Flow ORDER BY MasterLabel ASC,VersionNumber ASC`;
-    const result = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: loadOrgUrl, sid: loadSid, query, tooling: true });
+    // LastModifiedDate is the freshness field the incremental dependency cache
+    // is built on (the Tooling Flow object is version-grained and carries the
+    // standard audit fields). It rides along on a query the popup already pays
+    // for, so it costs nothing — but it must NEVER cost the flow list itself:
+    // if this org/API version rejects the field, retry once without it and let
+    // DependencyMap disable caching rather than leave the user with no flows.
+    const FLOW_FIELDS = 'Id,MasterLabel,Definition.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,Description';
+    const order = ' ORDER BY MasterLabel ASC,VersionNumber ASC';
+    let result = await sendBg({
+      type: 'SF_QUERY_ALL', orgUrl: loadOrgUrl, sid: loadSid, tooling: true,
+      query: `SELECT ${FLOW_FIELDS},LastModifiedDate FROM Flow${order}`,
+      _suppressError: true
+    });
+    let stampField = true;
+    if (result && result.error && /INVALID_FIELD|No such column|LastModifiedDate/i.test(String(result.error))) {
+      stampField = false;
+      result = await sendBg({
+        type: 'SF_QUERY_ALL', orgUrl: loadOrgUrl, sid: loadSid, tooling: true,
+        query: `SELECT ${FLOW_FIELDS} FROM Flow${order}`
+      });
+    }
     if (result.error) {
       handleApiError(result.error);
       return;
@@ -942,6 +972,7 @@ async function loadFlows() {
       // ProcessType will be refined after metadata fetch via patchFlowTypesFromMetadata()
     }));
     orgFlowCount = allFlows.length;
+    flowStampsAvailable = stampField && allFlows.length > 0 && allFlows.every(f => f.LastModifiedDate);
 
     groupFlows();
     showLoading(false);
@@ -972,7 +1003,18 @@ async function fetchAllMetadataSilently(loadOrgUrl, loadSid) {
   loadOrgUrl = loadOrgUrl || orgUrl;
   loadSid    = loadSid    || sid;
 
-  const plan = DependencyMap.scanPlan(allFlows.length);
+  // v1.0.2 — reuse whatever this org's stored map still proves. Zero HTTP
+  // round-trips: it diffs chrome.storage.local against the flow list that was
+  // just fetched. On a cold cache (every first run, every new org) it finds
+  // nothing and the scan below is byte-for-byte the one v1.0.1 ran.
+  await DependencyMap.primeFromCache(allFlows, loadOrgUrl);
+  // An org switch during the storage read means these flows are the wrong org's.
+  if (orgUrl !== loadOrgUrl) return;
+
+  // Size the decision on what still has to be READ, not on the org's size — a
+  // 1600-version org with a warm cache and three edited drafts must scan those
+  // three on open, not be told it is too large to look at.
+  const plan = DependencyMap.scanPlan(DependencyMap.pendingCount(allFlows));
   if (!plan.auto) {
     metadataScanState = 'skipped';
     // Also clears a progress bar left standing by a scan the previous org
@@ -999,10 +1041,13 @@ async function runDependencyScan(loadOrgUrl, loadSid) {
   metadataScanState = 'scanning';
   const stop = () => DependencyMap.cancelScan();
   const total0 = allFlows.length;
+  const st0 = DependencyMap.getScanStatus();
 
   // Show scan progress for every org size — without it the post-scan repaint
   // (🔗 icons appearing, process types changing) looks unexplained in small orgs.
-  showScanProgress(true, `🔍 Building dependency map… 0 / ${total0}`, stop);
+  // The starting count is whatever is already covered: with a warm cache that is
+  // not zero, and starting the bar at 0 would imply work that is not happening.
+  showScanProgress(true, `🔍 Building dependency map… ${st0.done} / ${total0}`, stop);
   if (document.getElementById('tab-dependencies').style.display !== 'none') {
     renderDependenciesTab();
   }
@@ -1042,12 +1087,15 @@ async function runDependencyScan(loadOrgUrl, loadSid) {
 function showScanOfferBar(loadOrgUrl, loadSid) {
   const wrap = document.getElementById('scanSubflowBtnWrap');
   if (!wrap) return;
-  const plan = DependencyMap.scanPlan(allFlows.length);
   const st   = DependencyMap.getScanStatus();
-  const left = DependencyMap.scanPlan(Math.max(0, plan.calls - st.done));
+  // What is LEFT TO READ — with a cache that is not "org size minus done", it is
+  // the delta the module is actually holding. Both numbers below come from the
+  // same place the pool does, so the quote cannot drift from the work.
+  const left = DependencyMap.scanPlan(DependencyMap.pendingCount(allFlows));
   const offerScan = !st.complete;
   const coverage  = flowCoverageNote();
-  if (!offerScan && !coverage) { hideScanOfferBar(); return; }
+  const cacheNote = scanCacheNote(st);
+  if (!offerScan && !coverage && !cacheNote) { hideScanOfferBar(); return; }
 
   wrap.style.display = '';
   wrap.style.flexBasis = '100%';   // its own row — the note is a sentence, not a label
@@ -1059,14 +1107,20 @@ function showScanOfferBar(loadOrgUrl, loadSid) {
     warn.textContent = coverage;
     wrap.appendChild(warn);
   }
+  if (cacheNote) {
+    const cn = document.createElement('span');
+    cn.style.cssText = 'font-size:11px;color:var(--subtext,#706E6B);display:block;margin-bottom:4px';
+    cn.textContent = cacheNote;
+    wrap.appendChild(cn);
+  }
   if (!offerScan) return;
 
   const note = document.createElement('span');
   note.className = 'scan-offer-note';
   note.style.cssText = 'font-size:11px;color:var(--subtext,#706E6B);display:block;margin-bottom:4px';
   note.textContent = st.done > 0
-    ? `Dependency scan stopped at ${st.done} of ${plan.calls} flow versions. 🔗 subflow markers, flow types and the Dependencies tab cover only those — ${left.calls} calls left (${left.estLabel}).`
-    : `${plan.versions} flow versions loaded. The dependency scan needs ${plan.calls} metadata calls (${plan.estLabel}) and has not been run, so 🔗 subflow markers, refined flow types and the Dependencies tab have no data yet.`;
+    ? `Dependency scan covers ${st.done} of ${allFlows.length} flow versions. 🔗 subflow markers, flow types and the Dependencies tab cover only those — ${left.reads} version(s) left to read, ${left.calls} batched call(s) (${left.estLabel}).`
+    : `${allFlows.length} flow versions loaded. The dependency scan reads ${left.reads} of them in ${left.calls} batched API call(s) (${left.estLabel}) and has not been run, so 🔗 subflow markers, refined flow types and the Dependencies tab have no data yet.`;
 
   const btn = document.createElement('button');
   btn.id = 'scanSubflowBtn';
@@ -1081,6 +1135,25 @@ function showScanOfferBar(loadOrgUrl, loadSid) {
 function hideScanOfferBar() {
   const wrap = document.getElementById('scanSubflowBtnWrap');
   if (wrap) wrap.style.display = 'none';
+}
+
+// v1.0.2 — the one line that says how much of this map was READ and how much was
+// REUSED, plus anything the cache had to give up. Empty when the whole map was
+// read live in this session (the pre-cache behaviour), so a small org that never
+// had a cache sees exactly what it saw before.
+function scanCacheNote(st) {
+  const s = st || DependencyMap.getScanStatus();
+  const bits = [];
+  if (s.fromCache) bits.push(DependencyMap.freshness().text);
+  else if (!flowStampsAvailable && allFlows.length) {
+    bits.push('This org\'s Flow list does not carry a usable LastModifiedDate, so no dependency data is kept between opens — every scan reads the org live.');
+  } else if (s.cacheState === 'disabled' && s.cacheNote) {
+    bits.push(`No dependency cache is kept for this org: ${s.cacheNote}.`);
+  }
+  if (s.unread) bits.push(`${s.unread} version(s) were not read because their batched call failed — they are retried by resuming, not left as "no dependencies".`);
+  if (s.cacheSaveNote) bits.push(s.cacheSaveNote.charAt(0).toUpperCase() + s.cacheSaveNote.slice(1) + '.');
+  if (s.apiMismatch) bits.push('⚠️ The Salesforce API version used for the metadata reads is not the one this build caches against, so nothing was cached.');
+  return bits.join(' ');
 }
 
 // ── Flow-list coverage ────────────────────────────────────────────────────────
@@ -1385,7 +1458,7 @@ function setupToolbarEvents() {
 async function onDeleteClick() {
   if (selectedIds.size === 0) return;
 
-  const selected = allFlows.filter(f => selectedIds.has(f.Id));
+  let selected = allFlows.filter(f => selectedIds.has(f.Id));
 
   // Step 1: Active flow warning
   const activeFlows = selected.filter(f => f.Status === 'Active');
@@ -1401,6 +1474,13 @@ async function onDeleteClick() {
   // Step 3: Subflow dependency check
   const depProceed = await checkSubflowDependencies(selected);
   if (depProceed === null) return; // cancelled
+
+  // The check's live re-verification (TASK C) can discover that some selected
+  // versions were deleted in the org by someone else; it drops them from
+  // selectedIds, so the deletion set is recomputed here rather than kept from
+  // before the check.
+  selected = allFlows.filter(f => selectedIds.has(f.Id));
+  if (!selected.length) return;
 
   // The depProceed can be an array of extra flows to deactivate+delete
   const extraToDelete = Array.isArray(depProceed) ? depProceed : [];
@@ -1425,9 +1505,9 @@ async function onDeleteClick() {
     reversibility: 'permanent',
     confirmLabel: `🗑 Delete ${toDelete.length}`,
     // The subflow check above may have run against a map that was never fully
-    // built — say so here rather than let the summary imply an all-clear.
-    undoHint: (DependencyMap.isMetadataFetched() ? ''
-      : '⚠️ The subflow dependency check ran against an INCOMPLETE map — other flows may still call these versions. ')
+    // built, or against one whose edges came from the stored cache — say which
+    // here rather than let the summary imply an all-clear it did not earn.
+    undoHint: deleteCheckProvenance()
       + 'Only flows you backed up (⬇) can come back — via Restore mode in this tab.',
   });
   if (!finalOk) return;
@@ -1507,6 +1587,56 @@ async function checkSubflowDependencies(selected) {
     }
   }
 
+  // ── TASK C — the destructive path stays authoritative ────────────────────
+  // "Nothing calls this flow" is a claim about every OTHER flow's metadata, so
+  // one cached edge anywhere makes the whole verdict only as current as the
+  // cache. Re-reading just the flows being deleted would prove nothing. What
+  // does prove it is ONE live LastModifiedDate query over the whole Flow list,
+  // followed by a batched re-read of whatever moved.
+  //
+  // deleteTrust() returns safe:true with zero extra work when the map was read
+  // live in this session — so an org that never had a cache issues exactly the
+  // requests it issued before this feature existed.
+  _lastDeleteRecheck = null;
+  let trust = DependencyMap.deleteTrust();
+  if (!trust.safe && trust.needsLiveRecheck) {
+    showScanProgress(true, '🔄 Re-checking cached dependency data against the org…');
+    const rc = await DependencyMap.recheckForDelete(orgUrl, sid, (done, total) =>
+      showScanProgress(true, `🔄 Re-reading changed flow versions… ${done} / ${total}`));
+    showScanProgress(false);
+    _lastDeleteRecheck = rc;
+    trust = DependencyMap.deleteTrust();
+    // The re-check can leave the map INCOMPLETE (a changed version that would
+    // not re-read). The tab state has to follow, or the Dependencies tab keeps
+    // rendering a tree it now knows is partial as if it were whole.
+    metadataScanState = DependencyMap.isMetadataFetched() ? 'done' : 'partial';
+    showScanOfferBar(orgUrl, sid);
+    if (!rc.ok || !trust.safe) {
+      const proceed = await askStaleBeforeDelete(rc.reason || trust.reason);
+      if (proceed !== 'skip') return null;
+    } else if (rc.added || rc.changed || rc.deleted) {
+      // The org moved between opening the popup and pressing delete. The map is
+      // current again, but the LIST on screen is not — say so before the
+      // permanent step rather than after it.
+      const cont = confirm(
+        `The org changed since this list was loaded: ${rc.added} new, ${rc.changed} edited and ${rc.deleted} deleted flow version(s).\n\n` +
+        'The dependency check below has been re-run against the current org, but the list on screen is out of date. ' +
+        'Reload the flow list before deleting, or continue if you are sure of the versions you selected.');
+      if (!cont) return null;
+    }
+    // Deleted-elsewhere versions must not be "deleted" again by us.
+    if (rc.ok && Array.isArray(rc.flows)) {
+      const liveIds = new Set(rc.flows.map(f => f.Id));
+      const gone = selected.filter(f => !liveIds.has(f.Id));
+      if (gone.length) {
+        alert(`${gone.length} of the selected flow version(s) no longer exist in this org — they were removed from the deletion set.`);
+        for (const g of gone) selectedIds.delete(g.Id);
+        selected = selected.filter(f => liveIds.has(f.Id));
+        if (!selected.length) return null;
+      }
+    }
+  }
+
   const depMap = DependencyMap.getDependencyMap();
   const deletingIds = new Set(selected.map(f => f.Id));
 
@@ -1530,12 +1660,11 @@ async function checkSubflowDependencies(selected) {
 // Gate shown when a delete is about to be checked against an incomplete
 // dependency map. Returns 'scan' | 'skip' | 'cancel'.
 async function askScanBeforeDelete() {
-  const plan = DependencyMap.scanPlan(allFlows.length);
   const st   = DependencyMap.getScanStatus();
-  const left = DependencyMap.scanPlan(Math.max(0, plan.calls - st.done));
+  const left = DependencyMap.scanPlan(DependencyMap.pendingCount(allFlows));
   const coverage = st.done > 0
-    ? `Only ${st.done} of ${plan.calls} flow versions have been scanned.`
-    : `None of the ${plan.calls} flow versions in this org have been scanned.`;
+    ? `Only ${st.done} of ${allFlows.length} flow versions have been scanned.`
+    : `None of the ${allFlows.length} flow versions in this org have been scanned.`;
 
   return new Promise((resolve) => {
     showModal(`
@@ -1545,18 +1674,61 @@ async function askScanBeforeDelete() {
       </div>
       <div class="modal-body">
         <p>${escHtml(coverage)} Without that map the toolkit cannot tell whether another flow calls the versions you are about to delete — and this delete is permanent.</p>
-        <p class="modal-warning-text">Finishing the scan costs ${left.calls} metadata API calls (${escHtml(left.estLabel)}). You can stop it at any point.</p>
+        <p class="modal-warning-text">Finishing the scan reads ${left.reads} flow version(s) in ${left.calls} batched API call(s) (${escHtml(left.estLabel)}). You can stop it at any point.</p>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" id="modalCancel">Cancel delete</button>
         <button class="btn btn-danger" id="modalSkip">Delete without checking</button>
-        <button class="btn btn-primary" id="modalScan">Scan now (${left.calls} calls)</button>
+        <button class="btn btn-primary" id="modalScan">Scan now (${left.calls} call${left.calls === 1 ? '' : 's'})</button>
       </div>
     `);
     document.getElementById('modalCancel').addEventListener('click', () => { closeModal(); resolve('cancel'); });
     document.getElementById('modalSkip').addEventListener('click',   () => { closeModal(); resolve('skip'); });
     document.getElementById('modalScan').addEventListener('click',   () => { closeModal(); resolve('scan'); });
   });
+}
+
+// TASK C gate. The map LOOKS complete but part of it came from the stored cache
+// and the live re-check that would prove it current did not succeed. The map is
+// not shown as trustworthy and it is not silently used — the user is told
+// exactly what could not be proven and chooses. Returns 'skip' | 'cancel'.
+async function askStaleBeforeDelete(reason) {
+  return new Promise((resolve) => {
+    showModal(`
+      <div class="modal-header modal-danger">
+        <span class="modal-icon">⚠️</span>
+        <h2>The subflow check could not be re-verified</h2>
+      </div>
+      <div class="modal-body">
+        <p>Part of this org's dependency map was reused from the stored cache, and ${escHtml(String(reason || 'it could not be re-checked against the org'))}.</p>
+        <p class="modal-warning-text">That means “nothing calls these flows” has <b>not</b> been confirmed against the org as it is right now, and this delete is permanent. Reopening the popup (or resuming the scan) re-reads the org from scratch.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="modalCancel">Cancel delete</button>
+        <button class="btn btn-danger" id="modalSkip">Delete without a verified check</button>
+      </div>
+    `);
+    document.getElementById('modalCancel').addEventListener('click', () => { closeModal(); resolve('cancel'); });
+    document.getElementById('modalSkip').addEventListener('click',   () => { closeModal(); resolve('skip'); });
+  });
+}
+
+// The provenance sentence on the final permanent-delete confirm. Says which of
+// the three things actually happened — incomplete map, cache re-verified live,
+// or cache NOT re-verified — instead of one caveat that covers all three badly.
+function deleteCheckProvenance() {
+  if (!DependencyMap.isMetadataFetched()) {
+    return '⚠️ The subflow dependency check ran against an INCOMPLETE map — other flows may still call these versions. ';
+  }
+  const trust = DependencyMap.deleteTrust();
+  const rc = _lastDeleteRecheck;
+  if (!trust.safe) {
+    return `⚠️ The subflow dependency check was NOT verified against the org (${trust.reason}) — other flows may still call these versions. `;
+  }
+  if (rc && rc.ok) {
+    return `✔ The subflow check was re-verified against the org just now (${rc.rescanned || 0} changed version(s) re-read). `;
+  }
+  return '';
 }
 
 function showSubflowDependencyModal(problematic, allFlowsList, deletingIds, resolve) {
@@ -2513,7 +2685,12 @@ function renderDependenciesTab() {
 
   // P1 — never rendered from a map that was never built. An empty tree here
   // would read as "this org has no subflow dependencies", which is a lie.
-  if (metadataScanState === 'skipped') {
+  // v1.0.2: 'skipped' no longer implies "no data" — a warm cache can have
+  // covered most of the org while the remaining delta is still too large to
+  // scan on open. When that is the case fall through to the partial branch
+  // below, which shows what IS known WITH its coverage stated, rather than
+  // hiding real data behind the offer.
+  if (metadataScanState === 'skipped' && DependencyMap.getScanStatus().done === 0) {
     noBanner.style.display = 'none';
     container.innerHTML = '';
     container.appendChild(buildDepScanOffer());
@@ -2527,8 +2704,9 @@ function renderDependenciesTab() {
     const st = DependencyMap.getScanStatus();
     noBanner.style.display = '';
     noBanner.textContent = (st.done > 0
-      ? `⚠️ Partial data: ${st.done} of ${st.total} flow versions scanned. Anything below is only what those versions reference — use “🔗 Resume dependency scan” in the Flows tab for the rest.`
+      ? `⚠️ Partial data: ${st.done} of ${st.total} flow versions covered. Anything below is only what those versions reference — use “🔗 ${metadataScanState === 'skipped' ? 'Scan dependencies' : 'Resume dependency scan'}” in the Flows tab for the rest.`
       : '⚠️ No dependency data has been collected for this org yet — use “🔗 Scan dependencies” in the Flows tab.')
+      + (scanCacheNote(st) ? ` ${scanCacheNote(st)}` : '')
       + (flowCoverageNote() ? ` ${flowCoverageNote()}` : '');
     if (st.done === 0) {
       container.innerHTML = '';
@@ -2540,17 +2718,22 @@ function renderDependenciesTab() {
   }
 
   // Scan complete — but "complete" only ever means every version the flow-list
-  // query returned, which the server may have capped.
+  // query returned, which the server may have capped, AND it may mean "reused
+  // from a cache whose stamps still match" rather than "read just now". Both
+  // qualifications are printed; neither is implied away.
   const coverage = flowCoverageNote();
-  noBanner.style.display = coverage ? '' : 'none';
-  if (coverage) noBanner.textContent = coverage;
+  const freshLine = scanCacheNote(DependencyMap.getScanStatus());
+  const banner = [coverage, freshLine].filter(Boolean).join(' ');
+  noBanner.style.display = banner ? '' : 'none';
+  if (banner) noBanner.textContent = banner;
   DependencyMap.renderDependencyTreeTab(allFlows, container, orgUrl);
 }
 
 // The Dependencies-tab twin of showScanOfferBar: same numbers, same honesty,
 // with the button where the user is actually looking for the data.
 function buildDepScanOffer() {
-  const plan = DependencyMap.scanPlan(allFlows.length);
+  const plan = DependencyMap.scanPlan(DependencyMap.pendingCount(allFlows));
+  const st   = DependencyMap.getScanStatus();
   const box = document.createElement('div');
   box.className = 'info-banner';
   box.style.lineHeight = '1.6';
@@ -2562,18 +2745,28 @@ function buildDepScanOffer() {
     warn.textContent = coverage;
     box.appendChild(warn);
   }
+  const cacheNote = scanCacheNote(st);
+  if (cacheNote) {
+    const cn = document.createElement('div');
+    cn.style.cssText = 'color:var(--subtext,#706E6B);margin-bottom:6px';
+    cn.textContent = cacheNote;
+    box.appendChild(cn);
+  }
 
   const p = document.createElement('div');
-  p.textContent = `${plan.versions} flow versions loaded. Building the dependency map needs ${plan.calls} metadata API calls (${plan.estLabel}, ${plan.measured ? 'measured on this org' : 'estimated'})`
+  // reads vs calls are different numbers since v1.0.2 — both are stated, because
+  // "160 API calls" and "1600 flow versions" answer different questions and
+  // quoting only one of them has been wrong in both directions.
+  p.textContent = `${allFlows.length} flow versions loaded. Building the dependency map still needs to read ${plan.reads} of them, which costs ${plan.calls} batched API call(s) at ${plan.chunkSize} reads each (${plan.estLabel}, ${plan.measured ? 'measured on this org' : 'estimated'})`
     + (plan.auto
       ? '. It has not run — nothing on this tab has data until it does.'
-      : `, so it is not started automatically above ${plan.autoMax} versions. Nothing on this tab has data until you start it.`);
+      : `, so it is not started automatically above ${plan.autoMax} versions to read. Nothing on this tab has data until you start it.`);
   box.appendChild(p);
 
   const btn = document.createElement('button');
   btn.className = 'btn btn-primary btn-sm';
   btn.style.marginTop = '8px';
-  btn.textContent = `🔗 Scan dependencies (${plan.calls} calls)`;
+  btn.textContent = `🔗 Scan dependencies (${plan.calls} call${plan.calls === 1 ? '' : 's'})`;
   btn.addEventListener('click', () => runDependencyScan(orgUrl, sid));
   box.appendChild(btn);
   return box;

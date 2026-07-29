@@ -41,6 +41,27 @@ const LightningPages = (() => {
   const LP_OD_AUTO_MAX    = 150;  // total org-default calls paid without asking
   const LP_ENTITY_CHUNK   = 200;  // ids per EntityDefinition resolution query
 
+  // ── L5: the "Who sees what?" scan, batched ────────────────
+  // composite/batch caps a call at 25 subrequests, but that is a limit on COUNT,
+  // not on SIZE — and these two reads are the largest in the file. A FlexiPage's
+  // Metadata compound carries its whole component tree, and an enterprise
+  // object's describe carries every field, record type and layout. 25 of either
+  // in one response is how you discover the response ceiling as a 500, so the
+  // chunk sizes below are deliberately conservative: still 10× / 5× fewer
+  // round-trips than one call per item, with headroom.
+  //
+  // A batch that fails AS A CALL (the whole response, not one subrequest) is
+  // re-read item by item rather than reported as unread pages — see _lpBatchRead.
+  // Worst case that costs one wasted round-trip per chunk on top of the old
+  // per-item count; the alternative is a size ceiling silently becoming "this
+  // page has no assignments", which is the failure mode this file exists to
+  // avoid.
+  const LP_SCAN_PAGE_CHUNK  = 10;  // FlexiPage metadata reads per batch call
+  const LP_SCAN_DESC_CHUNK  = 5;   // sObject describes per batch call
+  const LP_SCAN_CONCURRENCY = 3;   // batch calls in flight (matches sfRunBatchedReads)
+  const LP_WSW_RENDER_STEP  = 30;  // cards appended per viewport fill
+  const LP_WSW_LOOKAHEAD_PX = 600; // distance from the bottom that triggers the next fill
+
   // Live coverage of the org-default check. Every number here is MEASURED —
   // nothing is estimated, and `unresolved` is what drives the "?" row chips.
   let _odRunToken  = 0;           // bumped by init()/refresh — invalidates a run
@@ -228,6 +249,86 @@ const LightningPages = (() => {
       } catch (_) { /* this chunk stays unresolved and is counted below */ }
     }
     return ids.filter(id => !_lpEntityNames.has(id)).length;
+  }
+
+  // ── L5: N reads → ceil(N/chunk) round-trips ────────────────
+  // `paths` are ordinary REST paths — the exact strings a per-item SF_REST_GET
+  // would take. background.js's composite primitive strips the /services/data/
+  // prefix itself and rewrites the version, so ONE string per item serves both
+  // the batched call and the per-item fallback and the two can never address
+  // different records.
+  //
+  // Returns an array aligned 1:1 with `paths`: { ok, body, error }. A slot is
+  // `undefined` ONLY when shouldStop cut the run short before its batch was
+  // dispatched — absent is not the same as failed, and no caller may read it as
+  // an empty result.
+  //
+  // Failure handling is deliberately two-tier, because the two failures mean
+  // different things:
+  //   • one subrequest failed  → that item carries the error, the rest are real
+  //     answers (this is the whole point of the per-item shape)
+  //   • the CALL failed        → nothing in the chunk was read, so it is re-read
+  //     one request at a time. That covers a chunk too large for the response
+  //     ceiling, a proxy hiccup, and an org where composite/batch is unavailable
+  //     — all of which would otherwise turn into "these pages have no
+  //     assignments", the exact lie this module must never tell.
+  async function _lpBatchRead(paths, chunkSize, opts) {
+    const list = Array.isArray(paths) ? paths : [];
+    const o = opts || {};
+    const out = new Array(list.length);
+    if (!list.length) return out;
+    const shouldStop = typeof o.shouldStop === 'function' ? o.shouldStop : null;
+    const onProgress = typeof o.onProgress === 'function' ? o.onProgress : null;
+    const chunks = lpBatchChunkPlan(list.length, chunkSize);
+    let settled = 0;
+
+    // One item, the old way. Also the fallback for a dead batch call.
+    const readOne = async (path) => {
+      const r = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, path });
+      return (r && r.error)
+        ? { ok: false, body: undefined, error: r.error }
+        : { ok: true,  body: r,         error: undefined };
+    };
+
+    await lpRunPool(chunks, async (c) => {
+      const slice = list.slice(c.start, c.start + c.len);
+      let items = null;
+      try {
+        const res = await bg({
+          type: 'SF_COMPOSITE_BATCH', orgUrl: _orgUrl, sid: _sid,
+          subrequests: slice.map(p => ({ method: 'GET', url: p }))
+        });
+        // The dispatcher answers with the per-item array, or the usual { error }
+        // envelope. A short/long array is background.js refusing to guess which
+        // slot went missing — treat it as a dead call, same as an error.
+        if (Array.isArray(res) && res.length === slice.length) items = res;
+      } catch (_) { items = null; }
+
+      const dead = !items || items.some(it => it && it.batchError);
+      if (dead) {
+        for (let i = 0; i < slice.length; i++) {
+          if (shouldStop && shouldStop()) break;
+          try { out[c.start + i] = await readOne(slice[i]); }
+          catch (e) { out[c.start + i] = { ok: false, body: undefined, error: String(e?.message || e) }; }
+        }
+      } else {
+        for (let i = 0; i < items.length; i++) {
+          const it = items[i] || {};
+          out[c.start + i] = { ok: !!it.ok, body: it.body, error: it.ok ? undefined : (it.error || 'read failed') };
+        }
+      }
+      // Counted in ITEMS, not batches, so an existing "n of m" stays literally
+      // true. It can jump by a whole chunk — those items really did settle
+      // together, and staggering the callback would be a lie about when.
+      settled += c.len;
+      if (onProgress) onProgress(settled, list.length);
+      return true;
+    }, {
+      concurrency: Math.max(1, Math.floor(Number(o.concurrency) || LP_SCAN_CONCURRENCY)),
+      shouldStop
+    });
+
+    return out;
   }
 
   // ── Load all FlexiPages ───────────────────────────────────
@@ -911,50 +1012,112 @@ const LightningPages = (() => {
       const activePages   = pageDataArr.filter(d => getStatus(d) === 'active');
       const inactivePages = pageDataArr.filter(d => getStatus(d) !== 'active');
 
-      let html = lpAudienceCaveatHtml(audience, pageDataArr);
+      // ── L5: viewport-lazy RENDER ─────────────────────────────────────────
+      // The DATA is whole-org and stays that way — see the note on
+      // scanAllPageAssignments and lpBuildObjectIndex: an org-default row's user
+      // count subtracts every profile that has its own assignment on the same
+      // object ANYWHERE in the org, and the two section counts below depend on a
+      // PublishStatus the scan itself corrects. Resolving only what is on screen
+      // would make those numbers start wrong and quietly change as the user
+      // scrolls, which is worse than slow.
+      //
+      // What IS deferred is DOM creation, which has no such coupling. A 900-page
+      // org used to build every card into one string and hand the browser a
+      // single multi-megabyte innerHTML before showing anything; now the first
+      // screenful lands immediately and the rest is appended as the user scrolls
+      // toward it. Both header counts are complete from the first frame: the
+      // list is windowed, the numbers are not.
+      const blocks = [];   // deferred thunks — the string cost is paid on append too
       if (activePages.length) {
-        html += `<div class="lp-pm-section-hdr">✅ Active Pages (${activePages.length})</div>`;
-        for (const d of activePages) html += renderCard(d);
+        blocks.push(() => `<div class="lp-pm-section-hdr">✅ Active Pages (${activePages.length})</div>`);
+        for (const d of activePages) blocks.push(() => renderCard(d));
       }
       if (inactivePages.length) {
-        html += `<div class="lp-pm-section-hdr" style="margin-top:14px">○ Draft / Inactive Pages (${inactivePages.length})</div>`;
-        for (const d of inactivePages) html += renderCard(d);
+        blocks.push(() => `<div class="lp-pm-section-hdr" style="margin-top:14px">○ Draft / Inactive Pages (${inactivePages.length})</div>`);
+        for (const d of inactivePages) blocks.push(() => renderCard(d));
       }
-      if (!activePages.length && !inactivePages.length) html += `<div class="lp-empty-sm">No Lightning Pages found.</div>`;
+      if (!activePages.length && !inactivePages.length) {
+        blocks.push(() => `<div class="lp-empty-sm">No Lightning Pages found.</div>`);
+      }
 
-      if (body) body.innerHTML = html;
+      if (!body) return;
+      body.innerHTML = lpAudienceCaveatHtml(audience, pageDataArr);
 
-      // Wire: org-default "Show users" expanders — the "everyone except the
-      // profiles with their own assignment" list is fetched lazily on first
-      // open (one query per row) so opening the view stays cheap.
-      body?.querySelectorAll('details.lp-od-users').forEach(det => {
-        det.addEventListener('toggle', async () => {
-          if (!det.open || det.dataset.loaded) return;
-          det.dataset.loaded = '1';
-          const slot = det.querySelector('div');
-          if (slot) slot.innerHTML = sftkCatSm('Loading users…');
-          let exclIds = [];
-          try { exclIds = JSON.parse(det.dataset.excl || '[]'); } catch (_) { exclIds = []; }
-          const res = await fetchOrgDefaultUsers(exclIds);
-          if (!slot) return;
-          if (res.error) {
-            const fe = sftkFriendlyError(res.error);
-            slot.innerHTML = `<span style="font-size:11px;color:#c0392b">Could not load users: ${esc(fe.message)}</span>`;
-            return;
-          }
-          slot.innerHTML = lpUserRowsHtml(res.users, res.total,
-            res.capped ? `Showing the first ${res.users.length} by name — ${res.total != null ? res.total : 'the full set'} match in total.` : '');
-        });
-      });
-
-      // Wire: open-in-LAB buttons
-      body?.querySelectorAll('.lp-wsw-open').forEach(btn => {
-        btn.addEventListener('click', () => {
-          chrome.tabs.create({
-            url: `${_orgUrl}/visualEditor/appBuilder.app?id=${btn.dataset.id}`
+      // Wiring runs after every append and only touches elements it has not seen
+      // (data-lpw). Delegation is not an option for the expanders: `toggle` does
+      // not bubble.
+      const wireCards = () => {
+        // Wire: org-default "Show users" expanders — the "everyone except the
+        // profiles with their own assignment" list is fetched lazily on first
+        // open (one query per row) so opening the view stays cheap.
+        body.querySelectorAll('details.lp-od-users:not([data-lpw])').forEach(det => {
+          det.dataset.lpw = '1';
+          det.addEventListener('toggle', async () => {
+            if (!det.open || det.dataset.loaded) return;
+            det.dataset.loaded = '1';
+            const slot = det.querySelector('div');
+            if (slot) slot.innerHTML = sftkCatSm('Loading users…');
+            let exclIds = [];
+            try { exclIds = JSON.parse(det.dataset.excl || '[]'); } catch (_) { exclIds = []; }
+            const res = await fetchOrgDefaultUsers(exclIds);
+            if (!slot) return;
+            if (res.error) {
+              const fe = sftkFriendlyError(res.error);
+              slot.innerHTML = `<span style="font-size:11px;color:#c0392b">Could not load users: ${esc(fe.message)}</span>`;
+              return;
+            }
+            slot.innerHTML = lpUserRowsHtml(res.users, res.total,
+              res.capped ? `Showing the first ${res.users.length} by name — ${res.total != null ? res.total : 'the full set'} match in total.` : '');
           });
         });
-      });
+
+        // Wire: open-in-LAB buttons
+        body.querySelectorAll('.lp-wsw-open:not([data-lpw])').forEach(btn => {
+          btn.dataset.lpw = '1';
+          btn.addEventListener('click', () => {
+            chrome.tabs.create({
+              url: `${_orgUrl}/visualEditor/appBuilder.app?id=${btn.dataset.id}`
+            });
+          });
+        });
+      };
+
+      // Append until lpAppendTarget stops asking for more. It keeps growing
+      // while the content does not fill the scroll container, so a short list
+      // renders completely and never waits for a scroll event that cannot come.
+      let shown = 0;
+      const fillCards = () => {
+        for (;;) {
+          const want = lpAppendTarget({
+            scrollTop:    body.scrollTop,
+            clientHeight: body.clientHeight,
+            scrollHeight: body.scrollHeight,
+            shown, total: blocks.length,
+            step:      LP_WSW_RENDER_STEP,
+            threshold: LP_WSW_LOOKAHEAD_PX
+          });
+          if (want <= shown) return;
+          let chunk;
+          try {
+            chunk = blocks.slice(shown, want).map(fn => fn()).join('');
+          } catch (err) {
+            // Only the first fill runs inside openProfileMap's try — a later one
+            // is called from the scroll listener, where a throw would leave the
+            // list simply STOPPING mid-org with no explanation. Say so instead.
+            const remaining = blocks.length - shown;
+            shown = blocks.length;
+            body.removeEventListener('scroll', fillCards);
+            body.insertAdjacentHTML('beforeend',
+              `<div style="font-size:11px;color:#c0392b;padding:8px 0">⚠ ${remaining} more page${remaining !== 1 ? 's were' : ' was'} scanned but could not be rendered (${esc(sftkFriendlyError(String(err?.message || err)).message)}). They are missing from the list below this point — this is a display failure, not an empty result.</div>`);
+            return;
+          }
+          body.insertAdjacentHTML('beforeend', chunk);
+          shown = want;
+          wireCards();
+        }
+      };
+      body.addEventListener('scroll', fillCards);
+      fillCards();
 
     } catch (e) {
       const fe = sftkFriendlyError(e.message);
@@ -970,11 +1133,44 @@ const LightningPages = (() => {
   // openProfileMap so the reverse "What does a user see?" lens reuses the exact
   // same data (and the same cache) instead of scanning the org twice.
   //
-  // onProgress(pct)   — called before each batch
+  // onProgress(pct)   — 0-100, counted in ITEMS (one page read or one deduped
+  //                     object describe), monotonic. See lpScanPct.
   // stillAlive()      — return false to abort (view navigated away); the
   //                     function then returns null so callers can bail cleanly.
+  //
+  // ── L5: what this used to cost, and why ──────────────────────────────────
+  // Three separate per-page fan-outs used to run INTERLEAVED inside one loop:
+  //   1. one SF_TOOLING_GET per FlexiPage, in a batch-of-5 barrier
+  //   2. one sObject describe per PAGE — fetchCustomObjectOrgDefaults memoized
+  //      nothing, so 600 record pages over 200 objects paid for 600 describes
+  //      where 200 answer the question, at concurrency exactly 1
+  //   3. one EntityDefinition SOQL query per page carrying an unresolved 01I…
+  //      id, issued one id at a time from inside that same describe
+  // Now the three run as three passes: every page read is batched, the describes
+  // are DEDUPED BY OBJECT before any of them is issued, and the id resolution is
+  // one chunked query for the whole org. Same reads, same verdicts, same shape
+  // out — a small org just makes two or three round-trips instead of a dozen,
+  // and a 600-page org makes ~100 instead of ~1,400.
+  //
+  // ── the describe cache-buster ────────────────────────────────────────────
+  // This is the ONLY module in the repo that describes with `?_=${Date.now()}`;
+  // the other ~28 describe call sites do not, and nothing in background.js sets
+  // `cache: 'no-store'`. It is here because this is also the only module that
+  // WRITES what it then reads back: activating a page as the org default is a
+  // Metadata deploy, and the very next thing the UI does is re-read the
+  // describe's actionOverrides to confirm it. A response served from Chrome's
+  // HTTP cache would report the PRE-deploy org default and the user would be
+  // told their activation did nothing. (The same staleness class is called out
+  // twice more in this file — see the ActionOverride strategy comment and the
+  // publishStatus override in openDetail.) So it stays.
+  // The dedupe therefore lives INSIDE ONE RUN, never across runs: every write
+  // path (doAdd / doRemove / activation) already drops _wswScan, so a run-local
+  // map cannot outlive a write, while a module-level describe cache could.
   async function scanAllPageAssignments(onProgress, stillAlive) {
     if (_wswScan) return _wswScan;
+
+    const alive = () => !stillAlive || !!stillAlive();
+    const stop  = () => !alive();
 
     // Ensure profiles loaded — assignments name profiles, we need Ids.
     if (!allProfiles.length) {
@@ -983,69 +1179,162 @@ const LightningPages = (() => {
       if (!pRes.error && pRes.records) allProfiles = pRes.records;
     }
 
-    const BATCH = 5;
     const targets = [...allPages].sort((a, b) =>
       (a.MasterLabel || '').localeCompare(b.MasterLabel || '')
     );
+    if (!targets.length) { _wswScan = []; return _wswScan; }
 
-    const pageDataArr = [];
-    for (let i = 0; i < targets.length; i += BATCH) {
-      if (stillAlive && !stillAlive()) return null;   // navigated away
-      if (onProgress) onProgress(Math.round((i / Math.max(1, targets.length)) * 100));
+    // Progress is per ITEM. The describe count is not knowable until every
+    // page's metadata is in (a page's object can come from its Metadata
+    // compound, not only from the list query), so the denominator starts at the
+    // measured count of distinct objects in the list and is revised to the real
+    // figure once Pass 1 has settled. lpScanPct floors the result so a revised
+    // total can never make the number run backwards.
+    let pagesDone = 0, objsDone = 0, pctFloor = 0;
+    let itemsTotal = targets.length + new Set(
+      targets.filter(p => p.EntityDefinitionId)
+             .map(p => _lpEntityName(p.EntityDefinitionId) || p.EntityDefinitionId)
+    ).size;
+    const report = () => {
+      if (!onProgress) return;
+      pctFloor = lpScanPct(pagesDone + objsDone, itemsTotal, pctFloor);
+      onProgress(pctFloor);
+    };
+    report();
 
-      const slice = targets.slice(i, i + BATCH);
-      const results = await Promise.allSettled(
-        slice.map(p => bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
-                             sobject: 'FlexiPage', id: p.Id }))
-      );
-      for (let j = 0; j < slice.length; j++) {
-        const r = results[j];
-        if (r.status !== 'fulfilled' || r.value?.error) {
-          pageDataArr.push({ page: slice[j], meta: null, assignments: [], orgDefaults: [],
-                             scanError: r.status === 'fulfilled' ? (r.value?.error || 'unknown') : String(r.reason?.message || r.reason) });
-          continue;
-        }
-        const meta = r.value;
-        // Use sobjectType from Metadata compound field first, then fall back to
-        // EntityDefinitionId from the initial SOQL list — critical for custom Record
-        // Pages where Metadata.sobjectType may return null.
-        const sobjectType    = meta.Metadata?.sobjectType || slice[j].EntityDefinitionId || null;
-        const devName        = meta.FullName || slice[j].DeveloperName;
-        const apiAssignments = meta.Metadata?.pageAssignments || [];
-        // Prefer direct PublishStatus from SOQL list (more reliable than compound Metadata
-        // field, which returns null for managed/system pages even when they are active).
-        const pageStatus = (slice[j].PublishStatus || meta.Metadata?.publishStatus || '').toLowerCase();
-        let assignments = [...apiAssignments];
-        let orgDefaults = [];
-        let resolvedPage = slice[j]; // may be updated if org-default detection infers Active status
-        // Only SKIP the describe/ActionOverride check when the page is explicitly Draft or
-        // Obsolete. Unknown/null status (managed or recently-created pages) still gets checked.
-        if (sobjectType && pageStatus !== 'draft' && pageStatus !== 'obsolete') {
-          orgDefaults = await fetchCustomObjectOrgDefaults(sobjectType, devName, slice[j].Id);
-          for (const co of orgDefaults) {
-            const already = apiAssignments.some(
-              a => !a.profile && !a.app && (a.formFactor || 'Large') === co.formFactor
-            );
-            if (!already) assignments.push(co);
-          }
-          // Salesforce enforces: a page can only be an org default while Active.
-          // Unconditionally set status to Active when org-default is confirmed —
-          // this corrects stale Tooling API data without any extra round-trip.
-          if (orgDefaults.length > 0) {
-            resolvedPage = { ...slice[j], PublishStatus: 'Active' };
-            syncPageStatus(slice[j].Id, 'Active');
-          }
-        }
-        // Only attach debug data when org-default detection was actually attempted for
-        // this page.  Pages without an sobjectType (Utility Bar, App Home, etc.) skip
-        // the check entirely and must NOT inherit stale debug from the previous page
-        // in the same batch — _orgDefaultDebug is a module-level variable.
-        const ranOrgDefaultCheck = !!(sobjectType && pageStatus !== 'draft' && pageStatus !== 'obsolete');
-        pageDataArr.push({ page: resolvedPage, meta, assignments, orgDefaults,
-                           orgDefaultDebug: ranOrgDefaultCheck ? _orgDefaultDebug : null });
+    // ── Pass 1: every page's Tooling metadata, batched ───────────────────────
+    const metaReads = await _lpBatchRead(
+      targets.map(p => `services/data/v62.0/tooling/sobjects/FlexiPage/${encodeURIComponent(p.Id)}`),
+      LP_SCAN_PAGE_CHUNK,
+      {
+        concurrency: LP_SCAN_CONCURRENCY,
+        shouldStop:  stop,
+        onProgress:  (done) => { pagesDone = done; report(); }
       }
+    );
+    if (!alive()) return null;   // navigated away
+
+    // Rows in INPUT order — the position of a page in this array is fixed here
+    // and never inferred from anything the server sends back.
+    const rows = targets.map((p, i) => {
+      const r = metaReads[i];
+      if (!r || !r.ok) {
+        // An ABSENT slot is a page whose batch was never dispatched (the view was
+        // navigated away from and then re-entered mid-run). It is not a failed
+        // read and it is certainly not an empty one — the card says so.
+        return { page: p, meta: null, assignments: [], orgDefaults: [], orgDefaultDebug: null,
+                 scanError: r ? (r.error || 'unknown')
+                              : 'the scan was interrupted before this page was read' };
+      }
+      const meta = r.body || {};
+      // Use sobjectType from Metadata compound field first, then fall back to
+      // EntityDefinitionId from the initial SOQL list — critical for custom Record
+      // Pages where Metadata.sobjectType may return null.
+      const sobjectType = meta.Metadata?.sobjectType || p.EntityDefinitionId || null;
+      // Prefer direct PublishStatus from SOQL list (more reliable than compound Metadata
+      // field, which returns null for managed/system pages even when they are active).
+      const pageStatus  = (p.PublishStatus || meta.Metadata?.publishStatus || '').toLowerCase();
+      return {
+        page: p, meta,
+        assignments: [...(meta.Metadata?.pageAssignments || [])],
+        orgDefaults: [], orgDefaultDebug: null,
+        _devName:     meta.FullName || p.DeveloperName,
+        _sobjectType: sobjectType,
+        // Only SKIP the describe check when the page is explicitly Draft or
+        // Obsolete. Unknown/null status (managed or recently-created pages)
+        // still gets checked — same predicate as before, just hoisted.
+        _wantsDescribe: !!(sobjectType && pageStatus !== 'draft' && pageStatus !== 'obsolete')
+      };
+    });
+
+    // ── Pass 2: ONE describe per unique OBJECT ───────────────────────────────
+    // 01I… ids are resolved to API names FIRST, in one chunked query for the
+    // whole org rather than one query per page, because the dedupe key has to be
+    // the resolved name: "01I5g000000XyzA" and "MyObj__c" are the same object
+    // under two spellings and would otherwise be described twice.
+    await _lpResolveEntityNames(rows.filter(r => r._wantsDescribe).map(r => r._sobjectType), stop);
+    if (!alive()) return null;
+
+    const plan = lpDescribePlan(rows.map(r =>
+      r._wantsDescribe ? (_lpEntityName(r._sobjectType) || r._sobjectType) : null
+    ));
+    itemsTotal = targets.length + plan.describes;   // measured, replaces the estimate
+    report();
+
+    // One timestamp for the whole run: the cache-buster's job is "not a response
+    // cached from before this scan started", not "different from the last item".
+    const bust = Date.now();
+    const descReads = await _lpBatchRead(
+      plan.targets.map(k => `services/data/v62.0/sobjects/${encodeURIComponent(k)}/describe/?_=${bust}`),
+      LP_SCAN_DESC_CHUNK,
+      {
+        concurrency: LP_SCAN_CONCURRENCY,
+        shouldStop:  stop,
+        onProgress:  (done) => { objsDone = done; report(); }
+      }
+    );
+    if (!alive()) return null;
+
+    // ── Assemble ─────────────────────────────────────────────────────────────
+    // One describe answers every page on that object: the per-page verdict is
+    // replayed from the shared payload by the same pure function the single-page
+    // detail view uses, so the two can never disagree.
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const t = plan.byIndex[i];
+      if (t < 0) continue;    // no describe applies — page keeps orgDefaultDebug null
+
+      const read = descReads[t];
+      const descRes = (read && read.ok)
+        ? read.body
+        : { error: (read && read.error) || 'describe not read' };
+
+      let out = lpOrgDefaultsFromDescribe(descRes, r.page.Id, r._devName, allPages);
+      if (!out.conclusive && _actionOverrideSupported) {
+        // The describe settled nothing and this org still has the ActionOverride
+        // SOQL strategy available. That path is per-page by nature, so pay for it
+        // per page rather than duplicate it here (in practice unreachable — the
+        // flag is permanently false, see its declaration).
+        const defaults = await fetchCustomObjectOrgDefaults(r._sobjectType, r._devName, r.page.Id);
+        out = { defaults, log: _orgDefaultDebug, conclusive: !_orgDefaultDebug };
+      } else if (!out.conclusive) {
+        out.log.strategy1Skipped = 'ActionOverride not supported in this org';
+      }
+
+      // Merge: add describe-derived entries that the Tooling pageAssignments did
+      // not already carry. Tested against the ORIGINAL api list, not the growing
+      // one — same as openDetail, and the same as the loop this replaced.
+      const apiAssignments = r.meta.Metadata?.pageAssignments || [];
+      r.orgDefaults = out.defaults;
+      for (const co of out.defaults) {
+        const already = apiAssignments.some(
+          a => !a.profile && !a.app && (a.formFactor || 'Large') === co.formFactor
+        );
+        if (!already) r.assignments.push(co);
+      }
+      // Salesforce enforces: a page can only be an org default while Active.
+      // Unconditionally set status to Active when org-default is confirmed —
+      // this corrects stale Tooling API data without any extra round-trip.
+      if (out.defaults.length > 0) {
+        r.page = { ...r.page, PublishStatus: 'Active' };
+        syncPageStatus(r.page.Id, 'Active');
+      }
+      // Debug is attached PER ROW, from that row's own verdict. It used to be
+      // read back off the module-level _orgDefaultDebug after each await, which
+      // is why the old code needed a guard against a page inheriting the
+      // previous page's debug data.
+      r.orgDefaultDebug = out.conclusive ? null : out.log;
     }
 
+    pagesDone = targets.length;
+    objsDone  = plan.describes;
+    report();
+
+    const pageDataArr = rows.map(r => ({
+      page: r.page, meta: r.meta, assignments: r.assignments,
+      orgDefaults: r.orgDefaults, orgDefaultDebug: r.orgDefaultDebug,
+      ...(r.scanError ? { scanError: r.scanError } : {})
+    }));
     _wswScan = pageDataArr;
     return pageDataArr;
   }
@@ -1647,79 +1936,36 @@ const LightningPages = (() => {
       // GET /services/data/v62.0/sobjects/{SObjectType}/describe/ returns
       // actionOverrides[{name, type, formFactor, pageId}] showing the CURRENT
       // active FlexiPage for each action + formFactor.
+      //
+      // The MATCHING is lpOrgDefaultsFromDescribe (column 0, unit-tested) — the
+      // same function the whole-org scan replays against its ONE describe per
+      // object. Two copies of this ID-matching would be two places for the
+      // 15/18-char and casing rules to drift apart.
+      //
+      // The `?_=` cache-buster is load-bearing, not cargo: this module deploys
+      // org-default changes and then reads them straight back, so a describe
+      // served from Chrome's HTTP cache would report the pre-deploy state. See
+      // the long note on scanAllPageAssignments.
       try {
         // Resolve a 01I… custom-object id to its API name before describing.
+        // Free after the scan has run — _lpEntityNames memoizes for the org.
         await _lpResolveEntityNames([sObjectType]);
         const descApiName = _lpEntityName(sObjectType) || sObjectType;
         const descRes = await bg({
           type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
           path: `services/data/v62.0/sobjects/${descApiName}/describe/?_=${Date.now()}`
         });
-        log.describeError = descRes.error || 'ok';
-        if (!descRes.error && Array.isArray(descRes.actionOverrides)) {
-          log.describeOverrides = descRes.actionOverrides.length;
-          log.allViewOverrides  = descRes.actionOverrides
-            .filter(o => (o.name || '').toLowerCase() === 'view')
-            .map(o => ({ name: o.name, type: o.type, formFactor: o.formFactor, pageId: o.pageId }));
-          log.pageIdUsed   = pageId;
-          log.devNameUsed  = devName;
-          // Normalise IDs to lowercase for case-insensitive comparison —
-          // the describe endpoint and Tooling SOQL can return different casing
-          // for the same Salesforce ID, causing === to fail silently.
-          const pageIdLower = (pageId || '').toLowerCase();
-          // devNameLower / devNameShort are function-scoped (defined at the top).
-
-          const matches = descRes.actionOverrides.filter(o => {
-            // name must be 'View' (case-insensitive)
-            if ((o.name || '').toLowerCase() !== 'view') return false;
-            // Must have a non-empty pageId — we rely on ID/devName matching below
-            // to ensure we only match FlexiPage records (no prefix or type guard needed)
-            if (!o.pageId) return false;
-            const oPidLower = o.pageId.toLowerCase();
-            const oPid15    = oPidLower.substring(0, 15);
-            // Primary: match by pageId — all comparisons are case-insensitive
-            // and handle 15/18-char Salesforce ID variants
-            if (pageIdLower && (
-              oPidLower === pageIdLower ||
-              oPidLower === pageIdLower.substring(0, 15) ||
-              pageIdLower.startsWith(oPid15)
-            )) return true;
-            // Fallback: look up page in allPages by the describe's pageId,
-            // then confirm by comparing DeveloperName — this handles cases where
-            // the describe endpoint and the Tooling API return different ID formats
-            const matchedPage = allPages.find(p => {
-              const pIdLower = (p.Id || '').toLowerCase();
-              return pIdLower === oPidLower ||
-                     pIdLower.startsWith(oPid15) ||
-                     oPidLower.startsWith(pIdLower.substring(0, 15));
-            });
-            if (!matchedPage) return false;
-            const mpDev = (matchedPage.DeveloperName || '').toLowerCase();
-            return mpDev === devNameLower || mpDev === devNameShort;
-          });
-          log.describeMatches = matches.length;
-          if (matches.length > 0) {
-            return matches.map(o => ({
-              formFactor: (o.formFactor || 'LARGE').toUpperCase() === 'SMALL' ? 'Small' : 'Large',
-              default:    true,
-              _source:    'describe'
-            }));
-          }
-          // Describe succeeded and found View overrides, but none belong to this page.
-          // The describe API is authoritative: a different page is the org default.
-          // This is a conclusive, successful determination — not an error or warning.
-          // Clear _orgDefaultDebug so no warning is surfaced for this normal case.
-          // Skip Strategy 1 — running ActionOverride SOQL would be redundant and may
-          // generate a noisy 400 error in orgs where ActionOverride isn't queryable.
-          const overridesWithPageId = (log.allViewOverrides || []).filter(o => o.pageId);
-          if (overridesWithPageId.length > 0) {
-            _orgDefaultDebug = null;
-            return [];
-          }
-          // Describe found NO View overrides with page IDs — not conclusive.
-          // Fall through to Strategy 1 to try the ActionOverride SOQL approach.
-          log.describeNoMatch = true;
+        const verdict = lpOrgDefaultsFromDescribe(descRes, pageId, devName, allPages);
+        Object.assign(log, verdict.log);
+        if (verdict.conclusive) {
+          // Either this page IS the org default, or the describe named a
+          // DIFFERENT page and is authoritative about it. Both are successful
+          // determinations, so no warning is surfaced and Strategy 1 is skipped
+          // (its SOQL is redundant here and 400s noisily in some orgs).
+          _orgDefaultDebug = null;
+          return verdict.defaults;
         }
+        // Not conclusive — fall through to Strategy 1.
       } catch (descErr) {
         log.describeException = descErr.message;
         // Describe failed entirely — fall through to SOQL strategy
@@ -3836,6 +4082,223 @@ async function lpRunPool(items, worker, opts) {
   for (let k = 0; k < limit; k++) runners.push(runner());
   await Promise.all(runners);
   return { results, done, total, stopped, complete: done === total };
+}
+
+// ============================================================
+// L5 — the "Who sees what?" scan at enterprise scale (PURE, unit-tested)
+//
+// scanAllPageAssignments() used to cost one Tooling GET per FlexiPage (in a
+// batch-of-5 barrier) PLUS, inside the same loop, one sObject describe per PAGE
+// at concurrency 1 — 600 record pages over 200 objects paid for 600 describes
+// where 200 answer the question, and one EntityDefinition query per page on top
+// of that. These four functions are the arithmetic behind the fix, at column 0
+// so test/extract.mjs can materialize them standalone. No free variables.
+// ============================================================
+
+// How a flat list of N reads is cut into composite/batch calls.
+// Mirrors background.js's sftkBatchChunks EXACTLY (25 is the server's ceiling on
+// COUNT, junk sizes fall back to 25) but returns offsets instead of slices, so
+// the caller can drive the chunks through lpRunPool and still know which input
+// positions each call covers. Chunk k covers [start, start+len).
+//   0 items  → []            (zero HTTP calls)
+//   25 @ 25  → 1 chunk
+//   26 @ 25  → 25 + 1
+//   600 @ 10 → 60 chunks
+function lpBatchChunkPlan(total, size) {
+  const MAX = 25;
+  const t = Math.max(0, Math.floor(Number(total) || 0));
+  let n = Math.floor(Number(size));
+  if (!Number.isFinite(n) || n < 1) n = MAX;
+  if (n > MAX) n = MAX;
+  const out = [];
+  for (let start = 0; start < t; start += n) {
+    out.push({ index: out.length, start, len: Math.min(n, t - start) });
+  }
+  return out;
+}
+
+// The dedupe. `keys[i]` is the describe key for page i — the RESOLVED object API
+// name — or null/'' for a page no describe applies to (no object, or Draft /
+// Obsolete, where the old code skipped the check too).
+//
+// Returns the unique keys to actually describe, plus byIndex[i] → the position
+// of page i's describe in that list (-1 when none applies). One describe result
+// then answers every page on that object, which is the whole point: `describes`
+// is what the run pays, `saved` is what the dedupe removed, and both are counted
+// here rather than estimated anywhere else.
+//
+// Key identity is by string, and the caller must resolve 01I… ids to API names
+// BEFORE building the keys — "01I5g000000XyzA" and "MyObj__c" are the same
+// object under two spellings, and deduping on the raw value would describe it
+// twice and count that as two objects.
+function lpDescribePlan(keys) {
+  const list = Array.isArray(keys) ? keys : [];
+  const targets = [];
+  const seen = new Map();
+  const byIndex = new Array(list.length);
+  let applicable = 0;
+  for (let i = 0; i < list.length; i++) {
+    const k = list[i];
+    if (k === null || k === undefined || k === '') { byIndex[i] = -1; continue; }
+    applicable++;
+    const key = String(k);
+    if (!seen.has(key)) { seen.set(key, targets.length); targets.push(key); }
+    byIndex[i] = seen.get(key);
+  }
+  return {
+    targets, byIndex,
+    pages:      list.length,
+    applicable,                       // pages a describe applies to
+    describes:  targets.length,       // calls the run will actually pay for
+    saved:      applicable - targets.length   // calls the dedupe removed
+  };
+}
+
+// Scan progress, in ITEMS. One item is one read the run pays for: one page
+// metadata GET, or one deduped object describe. The denominator is not fully
+// knowable until every page's metadata is in (a page's object can come from its
+// Metadata compound, not just the list query), so it is revised once the real
+// figure is measured — and `floor` keeps the number the user sees monotonic, so
+// a revised total can never make the bar run backwards. It never reports 100
+// until every item has settled.
+function lpScanPct(done, total, floor) {
+  const d = Math.max(0, Math.floor(Number(done)  || 0));
+  const t = Math.max(0, Math.floor(Number(total) || 0));
+  const f = Math.min(100, Math.max(0, Math.floor(Number(floor) || 0)));
+  if (!t) return 100;                       // nothing to read is nothing to wait for
+  // 100 is reserved for "every item settled". Rounding 799/800 up to 100 would
+  // park the number on "done" with a read still outstanding — the same class of
+  // lie as reporting coverage a pass never reached, just three digits smaller.
+  const pct = d >= t ? 100 : Math.min(99, Math.floor((d / t) * 100));
+  return Math.max(f, pct);
+}
+
+// How many list blocks should be in the DOM right now.
+//
+// This windows the RENDER, never the data: every card's numbers are computed
+// before the first block is appended (see the note in openProfileMap for why a
+// viewport-scoped RESOLUTION would make those numbers change under the user's
+// scroll). It answers "given where the scroll bar is, how many blocks should
+// exist", and is called in a loop until it stops asking for more.
+//
+//   shown → total     already rendered / available
+//   step              blocks appended per fill
+//   threshold         px from the bottom at which the next step is appended
+//
+// Two degenerate cases must GROW rather than wait, or the list would stall with
+// no scrollbar left to move and no scroll event ever coming: nothing rendered
+// yet, and content that does not fill (or a container with no measured height).
+function lpAppendTarget(v) {
+  const s = v || {};
+  const num = x => { const k = Number(x); return Number.isFinite(k) ? k : 0; };
+  const total = Math.max(0, Math.floor(num(s.total)));
+  let shown = Math.max(0, Math.floor(num(s.shown)));
+  if (shown > total) shown = total;
+  if (shown >= total) return total;
+  let step = Math.floor(num(s.step));
+  if (!(step > 0)) step = 30;
+  const grow = Math.min(total, shown + step);
+  const clientHeight = num(s.clientHeight);
+  const scrollHeight = num(s.scrollHeight);
+  if (shown === 0 || clientHeight <= 0 || scrollHeight <= clientHeight) return grow;
+  const remaining = scrollHeight - num(s.scrollTop) - clientHeight;
+  return remaining <= Math.max(0, num(s.threshold)) ? grow : shown;
+}
+
+// PURE. The org-default verdict for ONE page, read out of ONE sObject describe.
+//
+// Lifted verbatim out of fetchCustomObjectOrgDefaults' Strategy 0 so the batched
+// whole-org scan and the single-page detail view cannot drift: the scan issues
+// one describe per OBJECT and replays this function once per PAGE on that
+// object, which is exactly what the old per-page describe was computing.
+//
+//   descRes  the parsed describe payload, or { error } when the read failed
+//   pageId   this FlexiPage's 15/18-char id
+//   devName  its FullName / DeveloperName (may be 'Object-Name')
+//   pages    every FlexiPage in the org — {Id, DeveloperName} is all that is read
+//
+// Returns { defaults, log, conclusive }:
+//   defaults    synthetic assignments [{formFactor, default:true, _source}]
+//   conclusive  the describe settled the question — the caller must NOT fall
+//               through to the ActionOverride SOQL strategy, and must clear the
+//               debug log (a describe naming a DIFFERENT page is a successful
+//               "no", not a failure)
+//   log         the debug record the UI surfaces when it is NOT conclusive
+function lpOrgDefaultsFromDescribe(descRes, pageId, devName, pages) {
+  const log = {};
+  const res = descRes || { error: 'no describe result' };
+  const all = Array.isArray(pages) ? pages : [];
+  log.describeError = res.error || 'ok';
+  if (res.error || !Array.isArray(res.actionOverrides)) {
+    return { defaults: [], log, conclusive: false };
+  }
+
+  const devNameLower = String(devName || '').toLowerCase();
+  const devNameShort = devNameLower.includes('-')
+    ? devNameLower.split('-').slice(1).join('-')
+    : devNameLower;
+  const pageIdLower = String(pageId || '').toLowerCase();
+
+  log.describeOverrides = res.actionOverrides.length;
+  log.allViewOverrides  = res.actionOverrides
+    .filter(o => (o.name || '').toLowerCase() === 'view')
+    .map(o => ({ name: o.name, type: o.type, formFactor: o.formFactor, pageId: o.pageId }));
+  log.pageIdUsed  = pageId;
+  log.devNameUsed = devName;
+
+  // Normalise IDs to lowercase for case-insensitive comparison — the describe
+  // endpoint and Tooling SOQL can return different casing for the same
+  // Salesforce ID, causing === to fail silently.
+  const matches = res.actionOverrides.filter(o => {
+    if ((o.name || '').toLowerCase() !== 'view') return false;
+    // Must have a non-empty pageId — the ID/devName matching below is what
+    // guarantees we only match FlexiPage records.
+    if (!o.pageId) return false;
+    const oPidLower = String(o.pageId).toLowerCase();
+    const oPid15    = oPidLower.substring(0, 15);
+    // Primary: match by pageId, handling 15/18-char variants both ways.
+    if (pageIdLower && (
+      oPidLower === pageIdLower ||
+      oPidLower === pageIdLower.substring(0, 15) ||
+      pageIdLower.startsWith(oPid15)
+    )) return true;
+    // Fallback: look the describe's pageId up in the page list and confirm by
+    // DeveloperName — covers orgs where describe and Tooling disagree on ID form.
+    const matchedPage = all.find(p => {
+      const pIdLower = String((p && p.Id) || '').toLowerCase();
+      return pIdLower === oPidLower ||
+             pIdLower.startsWith(oPid15) ||
+             oPidLower.startsWith(pIdLower.substring(0, 15));
+    });
+    if (!matchedPage) return false;
+    const mpDev = String(matchedPage.DeveloperName || '').toLowerCase();
+    return mpDev === devNameLower || mpDev === devNameShort;
+  });
+  log.describeMatches = matches.length;
+
+  if (matches.length > 0) {
+    return {
+      defaults: matches.map(o => ({
+        formFactor: String(o.formFactor || 'LARGE').toUpperCase() === 'SMALL' ? 'Small' : 'Large',
+        default:    true,
+        _source:    'describe'
+      })),
+      log,
+      conclusive: true
+    };
+  }
+
+  // The describe succeeded and named View overrides, just not this page. The
+  // describe API is authoritative, so that is a conclusive "a DIFFERENT page is
+  // the org default" — a successful determination, not an error, and the caller
+  // must not surface a warning for it.
+  if ((log.allViewOverrides || []).some(o => o.pageId)) {
+    return { defaults: [], log, conclusive: true };
+  }
+
+  // No View override carried a pageId — nothing was settled either way.
+  log.describeNoMatch = true;
+  return { defaults: [], log, conclusive: false };
 }
 
 // Org-default badge state for ONE row of the page list.

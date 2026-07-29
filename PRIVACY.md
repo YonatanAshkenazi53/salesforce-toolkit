@@ -40,6 +40,7 @@ not exfiltrate data past this policy.
 | `sftk_sequences` | Saved multi-step deployment sequences |
 | `ds_working_pair`, `ds_dark_mode`, `ds_activity_log` | UI preferences and view-usage timestamps |
 | `apex_log_viewer_*` | Raw Apex log bodies handed to the log-viewer tab |
+| `sftk_dep_cache` | Flow subflow-dependency map per org (flow version ids, API names, labels, version numbers, statuses) plus each version's `LastModifiedDate`, so reopening the popup re-reads only what changed. Capped at 3 orgs / 1.5 MB total, least-recently-used evicted; raw flow metadata is never stored |
 | `adbg_custom_profiles`, onboarding flags, `sftk_schema_version` | Debugger presets, first-run flags, storage schema version |
 
 All of it is data **about your orgs, for you**, on your machine. Uninstalling the

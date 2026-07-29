@@ -200,6 +200,49 @@ async function renderReconcile() {
   const extras  = scan.onlyInTarget || [];      // {matchKey, targetId}
   const inSync  = scan.identical || [];
 
+  // L6 — every bucket count on this page goes through these two. The arrays
+  // above are what the scan SHIPPED (capped at 5,000 each); `.length` is
+  // therefore a floor whenever the scan hit that cap, and printing it bare
+  // told the user "there are 5,000" when there were 47,213. capInfo reads the
+  // totals the scan measured (or falls back to the length>=cap rule for a
+  // scan stored before L6); capLbl turns them into the only wording allowed.
+  // On a complete scan both collapse to the plain number this page always
+  // showed, and capTitle returns '' so no tooltip is emitted.
+  // (via window.* — studio-scan.js owns these builders and loads first; the
+  // prefix keeps the reference resolvable to the linter's generated globals
+  // map and degrades to the old plain count if the file ever fails to load.)
+  const capInfo = k => (typeof window.sftkScanBucketInfo === 'function'
+    ? window.sftkScanBucketInfo(scan, k)
+    : { shown: (scan[k] || []).length, total: null, capped: false, totalIsFloor: false });
+  const capLbl = (k, info) => {
+    const i = info || capInfo(k);
+    return typeof window.sftkBucketCountLabel === 'function'
+      ? window.sftkBucketCountLabel(i.shown, i.total, i.capped, i.totalIsFloor)
+      : String(i.shown);
+  };
+  const capTitle = (k, what, info) => {
+    const i = info || capInfo(k);
+    return typeof window.sftkBucketCapTitle === 'function'
+      ? window.sftkBucketCapTitle(i.shown, i.total, i.capped, i.totalIsFloor, what)
+      : '';
+  };
+  // Merge the cap disclosure into an existing tooltip instead of replacing it.
+  const capAttr = (k, what, base) => {
+    const t = capTitle(k, what);
+    const full = [base || '', t].filter(Boolean).join(' — ');
+    return full ? ` title="${esc(full)}"` : '';
+  };
+
+  // The page-level banner. Prefer the wording the scan already built; a scan
+  // stored before L6 has no bucketCapNote, so rebuild it from the arrays it
+  // does carry (sftkBucketCapNote falls back to the length>=cap rule). ''
+  // when nothing was capped — no banner, no layout shift for a small org.
+  let _recCapNote = '';
+  try {
+    _recCapNote = scan.bucketCapNote
+      || (typeof window.sftkBucketCapNote === 'function' ? window.sftkBucketCapNote(scan, objType) : '');
+  } catch (_) { _recCapNote = ''; }
+
   // M3a — composite match keys carry a U+0001 separator; render it as ' · '
   // (display only — the raw key stays the matching identity).
   const keyLbl = k => esc(typeof sftkMatchKeyLabel === 'function' ? sftkMatchKeyLabel(k) : String(k ?? ''));
@@ -217,7 +260,8 @@ async function renderReconcile() {
   // dml = the plain Salesforce operation this column performs (Insert/Update/
   // Delete). subtitle = the diff state that put records here. Leading with the
   // DML verb so it's obvious what ▶ Run reconcile will actually do.
-  function colHtml(dml, subtitle, badgeClass, icon, items, kind) {
+  function colHtml(dml, subtitle, badgeClass, icon, items, kind, bucket) {
+    const info = capInfo(bucket || 'missingInTarget');
     const rows = items.length ? items.map(r => {
       const id = kind === 'del' ? r.targetId : r.sourceId;
       const sel = _recSel[kind].has(id);
@@ -230,12 +274,12 @@ async function renderReconcile() {
     }).join('') : `<div class="ds-rec-col-empty">none</div>`;
     return `
       <div class="ds-rec-col">
-        <div class="ds-rec-col-hdr ${badgeClass}">
-          ${icon} <strong>${dml} ${items.length}</strong>
-          <span class="ds-rec-col-sub">${subtitle}</span>
+        <div class="ds-rec-col-hdr ${badgeClass}"${capAttr(bucket || 'missingInTarget', subtitle)}>
+          ${icon} <strong>${dml} ${capLbl(bucket || 'missingInTarget', info)}</strong>
+          <span class="ds-rec-col-sub">${subtitle}${info.capped ? ' · list truncated' : ''}</span>
         </div>
         <div class="ds-rec-col-actions">
-          <button class="ds-btn ds-btn-xs" data-rec-all="${kind}">✓ All</button>
+          <button class="ds-btn ds-btn-xs" data-rec-all="${kind}"${info.capped ? ` title="Selects the ${capLbl(bucket || 'missingInTarget', { shown: info.shown, total: null, capped: false })} record(s) listed here — NOT every record in this bucket. The scan was truncated."` : ''}>✓ All</button>
           <button class="ds-btn ds-btn-xs" data-rec-none="${kind}">✗ None</button>
         </div>
         <div class="ds-rec-col-list">${rows}</div>
@@ -276,11 +320,12 @@ async function renderReconcile() {
     }).join('');
     const pushCount = items.filter(r => _recSel.overwrite.has(r.sourceId)).length;
     const pullCount = items.filter(r => _recSel.updSrc.has(r.sourceId)).length;
+    const info = capInfo('changed');
     return `
       <div class="ds-rec-col">
-        <div class="ds-rec-col-hdr ds-diff-drift">
-          🟡 <strong>Changed ${items.length}</strong>
-          <span class="ds-rec-col-sub">values differ — pick a winner per row</span>
+        <div class="ds-rec-col-hdr ds-diff-drift"${capAttr('changed', 'changed')}>
+          🟡 <strong>Changed ${capLbl('changed', info)}</strong>
+          <span class="ds-rec-col-sub">values differ — pick a winner per row${info.capped ? ' · list truncated' : ''}</span>
         </div>
         <div class="ds-rec-col-actions ds-rec-col-actions-extra">
           <button class="ds-btn ds-btn-xs" data-rec-driftdir-all="overwrite" title="Source wins everywhere — update all target records">→ all</button>
@@ -320,11 +365,12 @@ async function renderReconcile() {
     }).join('');
     const pullCount = items.filter(r => _recSel.pull.has(r.targetId)).length;
     const delCount  = items.filter(r => _recSel.del.has(r.targetId)).length;
+    const info = capInfo('onlyInTarget');
     return `
       <div class="ds-rec-col">
-        <div class="ds-rec-col-hdr ds-diff-extra">
-          🔵 <strong>In target only ${items.length}</strong>
-          <span class="ds-rec-col-sub">pick an action per row</span>
+        <div class="ds-rec-col-hdr ds-diff-extra"${capAttr('onlyInTarget', 'in target only')}>
+          🔵 <strong>In target only ${capLbl('onlyInTarget', info)}</strong>
+          <span class="ds-rec-col-sub">pick an action per row${info.capped ? ' · list truncated' : ''}</span>
         </div>
         <div class="ds-rec-col-actions ds-rec-col-actions-extra">
           <button class="ds-btn ds-btn-xs" data-rec-extra-all="pull" title="Pull all">← Pull all</button>
@@ -358,6 +404,27 @@ async function renderReconcile() {
   // Parent status from the ROOT scan — annotates child Insert rows.
   const rootMissingBySrc = new Set(missing.map(r => r.sourceId));
   const rootExistsSrc    = new Set([...drift.map(r => r.sourceId), ...inSync.map(r => r.sourceId)]);
+
+  // L6 — the same three helpers as the root, bound to a CHILD scan result.
+  // Child scans ship with the identical 5,000-row caps (linkMismatch 2,000),
+  // so every count in a child section had the same "floor printed as total"
+  // bug the root did.
+  const csInfo = (cs, k) => (typeof window.sftkScanBucketInfo === 'function'
+    ? window.sftkScanBucketInfo(cs, k)
+    : { shown: (cs?.[k] || []).length, total: null, capped: false, totalIsFloor: false });
+  const csLbl = (cs, k) => {
+    const i = csInfo(cs, k);
+    return typeof window.sftkBucketCountLabel === 'function'
+      ? window.sftkBucketCountLabel(i.shown, i.total, i.capped, i.totalIsFloor)
+      : String(i.shown);
+  };
+  const csAttr = (cs, k, what, base) => {
+    const i = csInfo(cs, k);
+    const t = typeof window.sftkBucketCapTitle === 'function'
+      ? window.sftkBucketCapTitle(i.shown, i.total, i.capped, i.totalIsFloor, what) : '';
+    const full = [base || '', t].filter(Boolean).join(' — ');
+    return full ? ` title="${esc(full)}"` : '';
+  };
 
   function childBucketsHtml(node, pathKey, cs, sel, pMissingSet, pExistsSet, depth) {
     pMissingSet = pMissingSet || rootMissingBySrc;
@@ -446,6 +513,24 @@ async function renderReconcile() {
     const orphanNote = cs.orphanNote
       ? `<div class="ds-rec-child-info" style="border-left:3px solid #f59e0b;padding-left:8px">${esc(cs.orphanNote)}</div>`
       : '';
+    // L6 — this child scan's own buckets hit their ship cap. Same contract as
+    // orphanNote: the scan hands over the wording, rendering it is mandatory.
+    let _csCapText = '';
+    try {
+      _csCapText = cs.bucketCapNote
+        || (typeof window.sftkBucketCapNote === 'function'
+          ? window.sftkBucketCapNote(cs, node.objectType || node.childSObject || '') : '');
+    } catch (_) { _csCapText = ''; }
+    const capNote = _csCapText
+      ? `<div class="ds-rec-child-info ds-rec-cap-note" style="border-left:3px solid #f59e0b;padding-left:8px">${esc(_csCapText)}</div>`
+      : '';
+    // L6 — and the harder one: this scan was SCOPED to the parent ids the
+    // parent scan listed, and that scan was truncated. Rows under the parents
+    // past the cap were never queried, so nothing below is a total — and no
+    // number in this section would ever hint at it.
+    const scopeNote = cs.parentScopeNote
+      ? `<div class="ds-rec-child-info ds-rec-scope-note" style="border-left:3px solid #dc2626;padding-left:8px">${esc(cs.parentScopeNote)}</div>`
+      : '';
 
     // T6/T7 — same readiness + phantom notes the root gets, for this child's
     // own object and its own scan result.
@@ -458,20 +543,20 @@ async function renderReconcile() {
 
     return `
     <div class="ds-rec-child-body">
-      ${collisionNote}${blankNote}${orphanNote}${plNote}${phNote}
+      ${scopeNote}${capNote}${collisionNote}${blankNote}${orphanNote}${plNote}${phNote}
       <div class="ds-rec-cols ds-rec-cols-child">
         <div class="ds-rec-col">
-          <div class="ds-rec-col-hdr ds-diff-missing">🔴 <strong>Insert ${cs.missingInTarget.length}</strong>
-            <span class="ds-rec-col-sub">in source only</span></div>
+          <div class="ds-rec-col-hdr ds-diff-missing"${csAttr(cs, 'missingInTarget', 'in source only')}>🔴 <strong>Insert ${csLbl(cs, 'missingInTarget')}</strong>
+            <span class="ds-rec-col-sub">in source only${csInfo(cs, 'missingInTarget').capped ? ' · list truncated' : ''}</span></div>
           <div class="ds-rec-col-actions">
-            <button class="ds-btn ds-btn-xs" data-recc-all="${pathKey}">✓ All</button>
+            <button class="ds-btn ds-btn-xs" data-recc-all="${pathKey}"${csInfo(cs, 'missingInTarget').capped ? ` title="Selects the ${csInfo(cs, 'missingInTarget').shown} record(s) listed here — NOT every record in this bucket. The scan was truncated."` : ''}>✓ All</button>
             <button class="ds-btn ds-btn-xs" data-recc-none="${pathKey}">✗ None</button>
           </div>
           <div class="ds-rec-col-list">${missingRows}</div>
         </div>
         <div class="ds-rec-col">
-          <div class="ds-rec-col-hdr ds-rec-chip-link">🔗 <strong>Link differs ${(cs.linkMismatch || []).length}</strong>
-            <span class="ds-rec-col-sub">${relinkBlocked ? 'master-detail — not reparentable' : cs.linkTrackable ? 'same record, different parent' : 'link not trackable for this relationship'}</span></div>
+          <div class="ds-rec-col-hdr ds-rec-chip-link"${csAttr(cs, 'linkMismatch', 'link differs')}>🔗 <strong>Link differs ${csLbl(cs, 'linkMismatch')}</strong>
+            <span class="ds-rec-col-sub">${relinkBlocked ? 'master-detail — not reparentable' : cs.linkTrackable ? 'same record, different parent' : 'link not trackable for this relationship'}${csInfo(cs, 'linkMismatch').capped ? ' · list truncated' : ''}</span></div>
           <div class="ds-rec-col-actions">
             <button class="ds-btn ds-btn-xs" data-recc-relink-all="${pathKey}" ${relinkBlocked ? `disabled title="${relinkBlockTitle}"` : ''}>⇄ All</button>
             <button class="ds-btn ds-btn-xs" data-recc-relink-none="${pathKey}">✗ None</button>
@@ -481,17 +566,17 @@ async function renderReconcile() {
       </div>
       <div class="ds-rec-cols ds-rec-cols-child">
         <div class="ds-rec-col">
-          <div class="ds-rec-col-hdr ds-diff-drift">🟡 <strong>Changed ${cs.changed.length}</strong>
-            <span class="ds-rec-col-sub">values differ — → updates target</span></div>
+          <div class="ds-rec-col-hdr ds-diff-drift"${csAttr(cs, 'changed', 'changed')}>🟡 <strong>Changed ${csLbl(cs, 'changed')}</strong>
+            <span class="ds-rec-col-sub">values differ — → updates target${csInfo(cs, 'changed').capped ? ' · list truncated' : ''}</span></div>
           <div class="ds-rec-col-actions">
-            <button class="ds-btn ds-btn-xs" data-recc-ovw-all="${pathKey}" title="Source wins everywhere — update all drifted target records">→ All</button>
+            <button class="ds-btn ds-btn-xs" data-recc-ovw-all="${pathKey}" title="Source wins everywhere — update all drifted target records${csInfo(cs, 'changed').capped ? `. ⚠ Only the ${csInfo(cs, 'changed').shown} row(s) listed here — the scan was truncated.` : ''}">→ All</button>
             <button class="ds-btn ds-btn-xs" data-recc-ovw-none="${pathKey}">✗ None</button>
           </div>
           <div class="ds-rec-col-list">${driftRows}</div>
         </div>
         <div class="ds-rec-col">
-          <div class="ds-rec-col-hdr ds-diff-extra">🔵 <strong>In target only ${cs.onlyInTarget.length}</strong>
-            <span class="ds-rec-col-sub">${orphanN ? `${esc(cs.orphanLabel || `${orphanN} possible orphan(s)`)} — ⇄ Relink can re-attach them` : 'pick rows to delete'}</span></div>
+          <div class="ds-rec-col-hdr ds-diff-extra"${csAttr(cs, 'onlyInTarget', 'in target only')}>🔵 <strong>In target only ${csLbl(cs, 'onlyInTarget')}</strong>
+            <span class="ds-rec-col-sub">${orphanN ? `${esc(cs.orphanLabel || `${orphanN} possible orphan(s)`)} — ⇄ Relink can re-attach them` : 'pick rows to delete'}${csInfo(cs, 'onlyInTarget').capped ? ' · list truncated' : ''}</span></div>
           <div class="ds-rec-col-actions">
             <button class="ds-btn ds-btn-xs" data-recc-del-all="${pathKey}" title="Select all for delete${orphanN ? ` — ⚠ orphan rows are excluded (select them individually)` : ''}">🗑 All</button>
             <button class="ds-btn ds-btn-xs" data-recc-del-none="${pathKey}">✗ None</button>
@@ -540,14 +625,17 @@ async function renderReconcile() {
     const showCf = orderCf && !orderDisabled;
     const scanBlocked = depth > 1 && !parentFresh;
 
+    // L6 — the collapsed-section chips are the numbers most users read first,
+    // and they were the plain shipped lengths. Same labels as the columns.
     const badges = fresh ? `
-      <span class="ds-diff-chip ds-diff-missing">${cs.missingInTarget.length} missing</span>
-      <span class="ds-diff-chip ds-diff-drift" title="Values differ — pick → per row inside">${cs.changed.length} changed</span>
-      <span class="ds-diff-chip ds-diff-extra" title="In target only — pick 🗑 per row inside">${cs.onlyInTarget.length} target-only</span>
-      ${cs.linkTrackable ? `<span class="ds-diff-chip ds-rec-chip-link" title="Same record on both sides, pointing at a DIFFERENT parent in the target">${(cs.linkMismatch || []).length} link differs</span>` : ''}
+      ${(cs.parentScopeCapped || cs.bucketCaps) ? `<span class="ds-diff-chip ds-diff-drift ds-rec-cap-chip" title="${esc(cs.parentScopeNote || cs.bucketCapNote || 'This scan is truncated — the counts below are floors, not totals.')}">⚠ truncated</span>` : ''}
+      <span class="ds-diff-chip ds-diff-missing"${csAttr(cs, 'missingInTarget', 'in source only')}>${csLbl(cs, 'missingInTarget')} missing</span>
+      <span class="ds-diff-chip ds-diff-drift"${csAttr(cs, 'changed', 'changed', 'Values differ — pick → per row inside')}>${csLbl(cs, 'changed')} changed</span>
+      <span class="ds-diff-chip ds-diff-extra"${csAttr(cs, 'onlyInTarget', 'in target only', 'In target only — pick 🗑 per row inside')}>${csLbl(cs, 'onlyInTarget')} target-only</span>
+      ${cs.linkTrackable ? `<span class="ds-diff-chip ds-rec-chip-link"${csAttr(cs, 'linkMismatch', 'link differs', 'Same record on both sides, pointing at a DIFFERENT parent in the target')}>${csLbl(cs, 'linkMismatch')} link differs</span>` : ''}
       ${cs.keyCollisions ? `<span class="ds-diff-chip ds-diff-drift" title="${cs.keyCollisions.rows} row(s) share duplicate match keys and were excluded from all buckets — pick a better match field in the profile">⚠ ${cs.keyCollisions.rows} dup keys</span>` : ''}
       ${isMD ? `<span class="ds-diff-chip" title="${esc(node.field || 'The link')} is a master-detail relationship — parent required at insert${cs.linkUpdateable === false ? '; not reparentable, so Relink is disabled' : ''}">MD</span>` : ''}
-      <span class="ds-diff-chip ds-diff-sync">${cs.identical.length} in sync</span>`
+      <span class="ds-diff-chip ds-diff-sync"${csAttr(cs, 'identical', 'in sync')}>${csLbl(cs, 'identical')} in sync</span>`
       : (cs ? `<span class="ds-rec-child-stale">scan stale — ${depth > 1 ? 'the parent' : 'root'} was re-scanned</span>` : '');
 
     return `
@@ -580,10 +668,12 @@ async function renderReconcile() {
       </div>
     </div>
 
+    ${_recCapNote ? `<div class="ds-rec-child-info ds-rec-cap-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">${esc(_recCapNote)}</div>` : ''}
+
     ${sftkPicklistGapNote(scan, p.targetOrg, objType)}
 
     <div class="ds-rec-cols">
-      ${colHtml('Insert', 'in source only', 'ds-diff-missing', '🔴', missing, 'push')}
+      ${colHtml('Insert', 'in source only', 'ds-diff-missing', '🔴', missing, 'push', 'missingInTarget')}
       ${driftColHtml(drift)}
       ${extrasColHtml(extras)}
     </div>
@@ -591,10 +681,10 @@ async function renderReconcile() {
     ${!p.ephemeral && (missing.length || extras.length) ? `
     <div class="ds-mm-review-row" style="display:flex;align-items:center;gap:10px;margin:8px 0 2px">
       <button class="ds-btn ds-btn-sm" id="dsMatchReviewBtn"
-        title="Manually pair 'in source only' rows with 'in target only' rows that are actually the same record (renamed, typo'd, …). Pairs are remembered per target org and match by identity on every future scan.">🔗 Match review (${missing.length} + ${extras.length} unmatched)</button>
+        title="Manually pair 'in source only' rows with 'in target only' rows that are actually the same record (renamed, typo'd, …). Pairs are remembered per target org and match by identity on every future scan.${(capInfo('missingInTarget').capped || capInfo('onlyInTarget').capped) ? ' Both lists are truncated by this scan — only the rows it carries can be paired here.' : ''}">🔗 Match review (${missing.length} + ${extras.length} listed${(capInfo('missingInTarget').capped || capInfo('onlyInTarget').capped) ? ', truncated' : ' unmatched'})</button>
       <span style="font-size:11.5px;color:var(--subtext)">same record on both sides under different keys? Pair them once — matching then survives renames.</span>
     </div>` : ''}
-    <div class="ds-rec-insync-note">🟢 ${inSync.length} record(s) already in sync — no action needed.</div>
+    <div class="ds-rec-insync-note"${capAttr('identical', 'in sync')}>🟢 ${capLbl('identical')} record(s) already in sync — no action needed.</div>
     ${sftkPhantomDriftNote(scan)}
     ${scan.blankKeys ? `<div class="ds-rec-child-info ds-match-blank-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">⚠ ${scan.blankKeys.rows} row(s) have a blank match key — excluded from matching (${scan.blankKeys.src} source, ${scan.blankKeys.tgt} target). Pick a better-populated match field in 🎯 Pick Records (🧪 Test this key grades candidates).</div>` : ''}
     ${(scan.warnings || []).length ? `<div class="ds-rec-child-info ds-mm-warn-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">⚠ ${esc(scan.warnings.join(' · '))}</div>` : ''}
@@ -1008,13 +1098,28 @@ function openMatchReview(p) {
         </div>`).join('');
     }
 
+    // L6 — Match review pairs rows out of the SHIPPED buckets, so on a capped
+    // scan "no unmatched target records to pair with" can mean "none in the
+    // slice", and the row you want may simply not be here. Say it once, at the
+    // top; '' (and no banner) when the scan was complete.
+    let mmCapNote = '';
+    try {
+      const mi = window.sftkScanBucketInfo(scan, 'missingInTarget');
+      const ei = window.sftkScanBucketInfo(scan, 'onlyInTarget');
+      if (mi.capped || ei.capped) {
+        mmCapNote = `⚠ Both lists come from a TRUNCATED scan — in source only ${window.sftkBucketCountLabel(mi.shown, mi.total, mi.capped, mi.totalIsFloor)}, in target only ${window.sftkBucketCountLabel(ei.shown, ei.total, ei.capped, ei.totalIsFloor)}. `
+          + `A record that isn't listed here has NOT been ruled out as a match — it was never loaded. Narrow the deployment's WHERE filter and re-scan to pair the rest.`;
+      }
+    } catch (_) { mmCapNote = ''; }
+
     showModal(`
       <div class="ds-modal-header">🔗 Match review — ${esc(scan.objectType || '')}</div>
       <div class="ds-modal-body">
         <p style="font-size:12px;color:var(--subtext);margin:0 0 10px">Pick a source record, then pair it with the target record it actually is (renamed, retyped, …). Pairs are remembered 🧠 per target org and matched by identity on every future scan. The % is a similarity <em>hint</em> — pairing is always your call.</p>
+        ${mmCapNote ? `<div class="ds-rec-child-info ds-rec-cap-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:0 0 10px;font-size:12px">${esc(mmCapNote)}</div>` : ''}
         <div class="ds-mm-grid" style="display:flex;gap:12px;max-height:340px">
           <div style="flex:1;min-width:0;overflow:auto;border:1px solid rgba(128,128,128,.35);border-radius:6px">
-            <div style="padding:5px 8px;font-weight:600;font-size:11px;position:sticky;top:0;background:inherit;border-bottom:1px solid rgba(128,128,128,.25)">🔴 In source only (${missing.length})</div>
+            <div style="padding:5px 8px;font-weight:600;font-size:11px;position:sticky;top:0;background:inherit;border-bottom:1px solid rgba(128,128,128,.25)">🔴 In source only (${missing.length}${mmCapNote ? ' listed' : ''})</div>
             ${listHtml}
           </div>
           <div style="flex:1.25;min-width:0;overflow:auto;border:1px solid rgba(128,128,128,.35);border-radius:6px">
@@ -1157,6 +1262,51 @@ async function runReconcile(profile, objType, buckets) {
 
   if (!pushIds.length && !ovwIds.length && !updSrcIds.length && !delIds.length && !pullIds.length && !anyChildAct) return;
 
+  // ── L6 — TRUNCATED-SET WRITE GUARD ───────────────────────────────────
+  // Every id above was picked from a list the scan may have cut off at its
+  // ship cap. "Insert 5,000" then means "insert the 5,000 rows I was shown",
+  // not "insert everything that's missing" — and that difference is exactly
+  // what decides whether the user has to run again. This does not block or
+  // change the run; it refuses to let a truncated basis stay invisible at the
+  // moment of writing. A complete scan produces no lines, no extra dialog and
+  // no behaviour change at all.
+  const capWarnLines = [];
+  let capWarnTail = '';
+  try {
+    const rootKinds = [
+      pushIds.length   ? 'push'      : null,
+      ovwIds.length    ? 'overwrite' : null,
+      updSrcIds.length ? 'updSrc'    : null,
+      delIds.length    ? 'del'       : null,
+      pullIds.length   ? 'pull'      : null
+    ].filter(Boolean);
+    const rootNote = window.sftkCappedWriteNote(rootScan, rootKinds, objType);
+    for (const l of rootNote.lines) capWarnLines.push(l);
+    if (rootNote.text) capWarnTail = rootNote.text;
+    for (const a of childActs) {
+      const obj = a.node.objectType || a.node.childSObject || 'child';
+      const kinds = [
+        (a.groupA.length || a.groupB.length) ? 'push'      : null,
+        a.sel.relink.size                    ? 'relink'    : null,
+        a.ovwIds.length                      ? 'overwrite' : null,
+        a.delIds.length                      ? 'del'       : null
+      ].filter(Boolean);
+      const n = window.sftkCappedWriteNote(a.cs, kinds, obj);
+      for (const l of n.lines) capWarnLines.push(`${obj} — ${l}`);
+      if (n.text && !capWarnTail) capWarnTail = n.text;
+      // A child scan can be complete in itself and still be scoped to a
+      // TRUNCATED parent list — the rows it never saw are invisible to both.
+      if (a.cs && a.cs.parentScopeNote) capWarnLines.push(`${obj} — ${a.cs.parentScopeNote}`);
+    }
+  } catch (_) { capWarnLines.length = 0; }   // never block a run on the warning builder
+  const capWarnBlock = capWarnLines.length
+    ? `<div style="margin-top:10px;padding:10px 12px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:4px;font-size:12px;color:#92400e">
+         ⚠ <strong>This run is based on a TRUNCATED scan</strong>
+         ${capWarnLines.map(l => `<div style="margin-top:6px">• ${esc(l)}</div>`).join('')}
+         <div style="margin-top:8px">${esc(capWarnTail || 'This run acts on the listed rows ONLY. Re-scan after it finishes and run again until the counts stop shrinking.')}</div>
+       </div>`
+    : '';
+
   // ── Confirmation step ────────────────────────────────────────────────
   // If anything destructive (delete) or anything that writes to the SOURCE
   // org (pull insert / ← update) is selected, surface a single combined
@@ -1208,7 +1358,10 @@ async function runReconcile(profile, objType, buckets) {
     if (updSrcIds.length) planLines.push(`${n++}. Update ${updSrcIds.length} ${objType} in source`);
   }
 
-  if (delIds.length || pullIds.length || updSrcIds.length || anyChildAct) {
+  // L6 — a plain "Insert only" run used to write with NO confirmation at all.
+  // That is still true when the scan was complete; when it wasn't, the guard
+  // above has something to say, so the dialog opens to say it.
+  if (delIds.length || pullIds.length || updSrcIds.length || anyChildAct || capWarnLines.length) {
     const ok = await new Promise(resolve => {
       const delBlock = delIds.length ? (isHard
         ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:4px;font-size:12px;color:#991b1b">
@@ -1241,7 +1394,9 @@ async function runReconcile(profile, objType, buckets) {
         ? (isHard ? '🔥 Confirm HARD delete' : '⚠ Confirm reconcile actions')
         : (anyChildAct && !pullIds.length && !updSrcIds.length)
           ? '⚖ Confirm the execution plan'
-          : '← Confirm writes into source';
+          : (!pullIds.length && !updSrcIds.length && capWarnLines.length)
+            ? '⚠ Confirm — this run is based on a truncated scan'
+            : '← Confirm writes into source';
       const planBlock = planLines.length
         ? `<div class="ds-rec-plan">
              <div class="ds-rec-plan-hdr">Execution plan — steps run in this exact order:</div>
@@ -1252,6 +1407,7 @@ async function runReconcile(profile, objType, buckets) {
         <div class="ds-modal-header">${title}</div>
         <div class="ds-modal-body">
           Review the changes before continuing:
+          ${capWarnBlock}
           ${planBlock}
           ${pullBlock}
           ${updSrcBlock}

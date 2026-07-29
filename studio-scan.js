@@ -322,6 +322,212 @@ function sftkOrphanCapNote(shown, total, capped) {
   return `${head} Treat the count as a floor, not a total: clear the listed ones (⇄ Relink or 🗑) and re-scan to reach the rest.`;
 }
 
+// ── L6 — DIFF-BUCKET CAPS (PURE) ────────────────────────────────────────
+// The four diff buckets SHIP capped at 5,000 rows each (linkMismatch at
+// 2,000) so a scan of a huge object doesn't blow the chrome.storage payload.
+// The ROWS are a cap; the COUNT never had to be. runDiffScan pages both
+// sides in full — SF_QUERY_ALL follows every nextRecordsUrl and returns the
+// complete record set — so the exact size of every bucket is already in
+// memory, measured, one line before the slice. A `SELECT COUNT()` here would
+// buy nothing and cost a round-trip: it would be a SECOND, weaker source of
+// truth (a different point in time, a different query) for a number the scan
+// already holds. What was missing was carrying it: every display site read
+// `bucket.length` off the SLICED array, so 5,000 was printed as a total when
+// it was a floor.
+//
+//   sftkBucketCap        — the MEASURING end: full array in hand, exact total.
+//   sftkBucketCapShipped — the READING end for a scan that predates this
+//                          change (profiles persist lastScan, so stored scans
+//                          arrive with sliced arrays and no measured totals)
+//                          or any consumer holding only the shipped slice.
+//                          With no total, `length >= cap` is the only honest
+//                          signal — the same detection user-copy.js uses for
+//                          its capped user list — and `total` stays null
+//                          rather than being invented.
+//
+// PURE — no free variables (materialized standalone by test/extract.mjs).
+function sftkBucketCap(list, cap) {
+  const c = Number(cap) > 0 ? Math.floor(Number(cap)) : 5000;
+  const total = Array.isArray(list) ? list.length : 0;
+  return { shown: total > c ? c : total, total, capped: total > c, cap: c };
+}
+
+// PURE — no free variables (materialized standalone by test/extract.mjs).
+function sftkBucketCapShipped(shownLen, cap) {
+  const c = Number(cap) > 0 ? Math.floor(Number(cap)) : 5000;
+  const s = Number(shownLen) > 0 ? Math.floor(Number(shownLen)) : 0;
+  // No measured total: "the slice is exactly as long as the cap allowed" is
+  // the only evidence there is. `>=`, not `>`, so a server/array that lands
+  // exactly on the cap is treated as possibly-more (user-copy.js rule).
+  return { shown: s, total: null, capped: s >= c, cap: c, totalIsFloor: false, measured: false };
+}
+
+// THE resolver every display site calls. Prefers the totals the scan measured
+// (scan.bucketCaps, written only when at least one bucket reached its cap —
+// a small org's result stays byte-identical), and degrades to the shipped-
+// length rule for scans stored before L6. Never invents a total.
+// PURE — depends on sftkBucketCapShipped (extract them together).
+function sftkScanBucketInfo(scan, bucket, cap) {
+  const s = scan || {};
+  const caps = (s.bucketCaps && typeof s.bucketCaps === 'object') ? s.bucketCaps : null;
+  const dflt = bucket === 'linkMismatch'
+    ? (caps && Number(caps.linkCap) > 0 ? Math.floor(Number(caps.linkCap)) : 2000)
+    : (caps && Number(caps.cap)     > 0 ? Math.floor(Number(caps.cap))     : 5000);
+  const c = Number(cap) > 0 ? Math.floor(Number(cap)) : dflt;
+  const rec = caps ? caps[bucket] : null;
+  if (rec && Number.isFinite(Number(rec.total))) {
+    return {
+      shown:        Number(rec.shown) || 0,
+      total:        Number(rec.total),
+      capped:       !!rec.capped,
+      totalIsFloor: !!rec.totalIsFloor,
+      cap:          Number(rec.cap) > 0 ? Math.floor(Number(rec.cap)) : c,
+      measured:     true
+    };
+  }
+  const arr = Array.isArray(s[bucket]) ? s[bucket] : [];
+  return sftkBucketCapShipped(arr.length, c);
+}
+
+// The number as it may be SPOKEN. Never "5,000" when 5,000 is a floor.
+//   complete            → "47,213"
+//   capped, total known → "5,000 of 47,213"
+//   capped, total not   → "5,000+"
+//   totalIsFloor        → a trailing "+" on the total (the total itself is a
+//                         lower bound — onlyInTarget when the one-page orphan
+//                         probe was itself capped)
+// PURE — no free variables (materialized standalone by test/extract.mjs).
+function sftkBucketCountLabel(shown, total, capped, totalIsFloor) {
+  const group = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const s = Number(shown) > 0 ? Math.floor(Number(shown)) : 0;
+  const t = Number(total);
+  const known = Number.isFinite(t) && t >= 0;
+  if (!capped) return known ? `${group(t)}${totalIsFloor ? '+' : ''}` : group(s);
+  if (known && t > s) return `${group(s)} of ${group(t)}${totalIsFloor ? '+' : ''}`;
+  return `${group(s)}+`;
+}
+
+// Tooltip for a capped number. '' when there is nothing to disclose, so a
+// small org renders no title attribute at all.
+// PURE — no free variables (materialized standalone by test/extract.mjs).
+function sftkBucketCapTitle(shown, total, capped, totalIsFloor, what) {
+  if (!capped && !totalIsFloor) return '';
+  const group = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const s = Number(shown) > 0 ? Math.floor(Number(shown)) : 0;
+  const t = Number(total);
+  const known = Number.isFinite(t) && t >= 0;
+  const label = what ? String(what) : 'record(s)';
+  if (!capped) {
+    return `${group(known ? t : s)} ${label} were classified, and the possible-orphan probe was itself capped — more exist that this scan never saw.`;
+  }
+  const head = known && t > s
+    ? `This scan carries the first ${group(s)} of ${group(t)}${totalIsFloor ? '+' : ''} ${label} — ${group(t - s)}${totalIsFloor ? '+' : ''} more exist and are NOT listed or selectable here.`
+    : `This scan carries the first ${group(s)} ${label} — the object has more that are NOT listed or selectable here.`;
+  return `${head} Treat the number as a floor, not a total: run what is listed, re-scan, repeat until it stops shrinking — or narrow the deployment's WHERE filter so the set fits.`;
+}
+
+// The banner above the buckets: one line naming EVERY capped bucket. '' when
+// nothing was capped, so a small org gets no banner and no layout shift.
+// PURE — depends on sftkScanBucketInfo, sftkBucketCapShipped, sftkBucketCountLabel.
+function sftkBucketCapNote(scan, objType) {
+  const s = scan || {};
+  const order = ['missingInTarget', 'changed', 'onlyInTarget', 'identical', 'linkMismatch'];
+  const human = {
+    missingInTarget: 'in source only',
+    changed:         'changed',
+    onlyInTarget:    'in target only',
+    identical:       'in sync',
+    linkMismatch:    'link differs'
+  };
+  const hits = [];
+  for (const n of order) {
+    if (!Array.isArray(s[n])) continue;
+    const i = sftkScanBucketInfo(s, n);
+    if (!i.capped) continue;
+    hits.push(`${human[n]} ${sftkBucketCountLabel(i.shown, i.total, i.capped, i.totalIsFloor)}`);
+  }
+  if (!hits.length) return '';
+  const obj = objType ? String(objType) : 'this object';
+  return `⚠ This ${obj} scan is TRUNCATED — ${hits.join(' · ')}. `
+    + `Only the rows listed below exist in this result; the rest were never loaded, so they cannot be shown, selected, or acted on. `
+    + `Treat every count here as a floor: run what is listed, 🔄 Refresh state, and repeat until the counts stop shrinking — or narrow the deployment's WHERE filter so the set fits in one scan.`;
+}
+
+// L6 — THE WRITE GUARD. `kinds` are the action kinds the user actually has
+// selected; each maps to the bucket the selection was PICKED FROM. A capped
+// bucket means the picker only ever offered a slice, so "Insert 5,000" is not
+// "insert everything missing" — and the run must say so BEFORE it writes.
+// Returns { lines: [], text: '' } when nothing selected is capped (falsy
+// `text`, so a caller can gate on it) — a small org sees no extra dialog.
+// PURE — depends on sftkScanBucketInfo, sftkBucketCapShipped, sftkBucketCountLabel.
+function sftkCappedWriteNote(scan, kinds, objType) {
+  const s = scan || {};
+  const want = Array.isArray(kinds) ? kinds : [];
+  const map = {
+    push:      { bucket: 'missingInTarget', verb: 'Insert',            what: 'in source only' },
+    overwrite: { bucket: 'changed',         verb: '→ Update target',   what: 'changed' },
+    updSrc:    { bucket: 'changed',         verb: '← Update source',   what: 'changed' },
+    del:       { bucket: 'onlyInTarget',    verb: 'Delete',            what: 'in target only' },
+    pull:      { bucket: 'onlyInTarget',    verb: '← Pull',            what: 'in target only' },
+    relink:    { bucket: 'linkMismatch',    verb: '⇄ Relink',          what: 'link differs' }
+  };
+  const obj = objType ? ` ${String(objType)}` : '';
+  const seen = {};
+  const lines = [];
+  for (const k of want) {
+    const m = map[k];
+    if (!m || seen[k]) continue;
+    seen[k] = true;
+    const i = sftkScanBucketInfo(s, m.bucket);
+    if (!i.capped) continue;
+    lines.push(`${m.verb} was picked from a TRUNCATED list: ${sftkBucketCountLabel(i.shown, i.total, i.capped, i.totalIsFloor)}${obj} "${m.what}" record(s) — only the ${sftkBucketCountLabel(i.shown, null, false, false)} listed could be selected.`);
+  }
+  if (!lines.length) return { lines: [], text: '' };
+  return {
+    lines,
+    text: `This run acts on the listed rows ONLY — it is not "everything". `
+      + `Re-scan after it finishes and run again until the counts stop shrinking, or narrow the deployment's WHERE filter so the whole set fits in one scan.`
+  };
+}
+
+// L6 — a CHILD scan is scoped to the parent ids the parent scan LISTED. If
+// the parent scan was capped, the child scan never saw the children of the
+// parents that fell off the end: its own buckets are then a floor too, and
+// nothing in the child's numbers reveals that. Returns null when the parent
+// scan was complete (child scans of a small org are unchanged).
+// PURE — depends on sftkScanBucketInfo, sftkBucketCapShipped.
+function sftkParentScopeCap(basis) {
+  const b = basis || {};
+  // The buckets scanReconcileChild reads to build srcParentIds / tgtParentIds.
+  const feeds = ['missingInTarget', 'changed', 'identical', 'onlyInTarget'];
+  const buckets = [];
+  let parentsMissed = 0;
+  let exact = true;
+  for (const n of feeds) {
+    const i = sftkScanBucketInfo(b, n);
+    if (!i.capped) continue;
+    buckets.push(n);
+    const t = Number(i.total);
+    if (Number.isFinite(t) && t > Number(i.shown)) parentsMissed += t - Number(i.shown);
+    else exact = false;
+  }
+  if (!buckets.length) return null;
+  return { buckets, parentsMissed: (exact && parentsMissed > 0) ? parentsMissed : null };
+}
+
+// PURE — no free variables (materialized standalone by test/extract.mjs).
+function sftkParentScopeNote(info, parentObj, childObj) {
+  if (!info || !Array.isArray(info.buckets) || !info.buckets.length) return '';
+  const group = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const p = parentObj ? String(parentObj) : 'parent';
+  const c = childObj ? String(childObj) : 'child';
+  const n = Number(info.parentsMissed);
+  const miss = Number.isFinite(n) && n > 0
+    ? `${group(n)} ${p} record(s)`
+    : `some ${p} record(s)`;
+  return `⚠ This ${c} scan is scoped to the ${p} records the ${p} scan LISTED, and that scan was truncated (${info.buckets.join(', ')}) — ${miss} were never in scope, so their ${c} rows are in no bucket below. Every count here is a floor, not a total. Clear the ${p} truncation first (narrower WHERE filter, or reconcile + 🔄 Refresh state) before trusting these numbers or acting on them.`;
+}
+
 // PURE — no free variables (materialized standalone by test/extract.mjs).
 function sftkPicklistGaps(records, comparePlanOrFields, tgtDescribeFieldsMap, opts) {
   const o = opts || {};
@@ -950,10 +1156,15 @@ async function runDiffScan(profile, node = null, scope = null) {
       }
     } catch (_) { /* degrade — orphans just don't show */ }
   }
+  // L6 — the per-bucket SHIP caps. The buckets above are COMPLETE (both sides
+  // were paged in full by SF_QUERY_ALL); these caps only decide how much of
+  // each one travels into chrome.storage.
+  const BUCKET_CAP = 5000;
+  const LINK_CAP   = 2000;
   // What actually SHIPS is onlyInTarget capped at 5000, and orphans are
   // appended last — so that slice eats orphan rows first. Count the survivors,
   // not the intent, or the UI would name rows it never received.
-  const onlyInTargetOut = onlyInTarget.slice(0, 5000);
+  const onlyInTargetOut = onlyInTarget.slice(0, BUCKET_CAP);
   const orphanShown = onlyInTargetOut.reduce((n, r) => n + (r && r.orphan ? 1 : 0), 0);
   const orphanCapped = _orphanTotal != null
     ? _orphanTotal > orphanShown
@@ -1023,6 +1234,41 @@ async function runDiffScan(profile, node = null, scope = null) {
     } catch (_) { learnedPairs = []; }
   }
 
+  // ── L6 — MEASURED BUCKET CAPS ─────────────────────────────────────────
+  // Measured against the FULL arrays, one line before they are sliced, so
+  // `total` is the number this scan actually counted — never estimated,
+  // never a second query. onlyInTarget carries one extra caveat: its orphan
+  // tail comes from the R3 one-page probe, so when THAT was capped even the
+  // total is a lower bound (totalIsFloor), and the label says so with a "+".
+  const _capMissing = sftkBucketCap(missingInTarget, BUCKET_CAP);
+  const _capChanged = sftkBucketCap(changed,         BUCKET_CAP);
+  const _capIdent   = sftkBucketCap(identical,       BUCKET_CAP);
+  const _capOnly    = sftkBucketCap(onlyInTarget,    BUCKET_CAP);
+  const _capLink    = sftkBucketCap(linkMismatch,    LINK_CAP);
+  if (orphanCapped) _capOnly.totalIsFloor = true;
+  // Attached ONLY when a bucket actually reached its cap. A small org's
+  // result keeps the exact shape (and byte size) it had before L6, and the
+  // `shown >= cap` fallback in sftkScanBucketInfo — which would otherwise
+  // false-positive on a bucket that lands on exactly 5,000 — never runs,
+  // because ">= cap" is also the condition for attaching this.
+  const _anyCapped = [_capMissing, _capChanged, _capIdent, _capOnly].some(c => c.shown >= c.cap)
+    || (!!scope && _capLink.shown >= _capLink.cap);
+  const _bucketCaps = _anyCapped ? {
+    cap:     BUCKET_CAP,
+    linkCap: LINK_CAP,
+    missingInTarget: _capMissing,
+    changed:         _capChanged,
+    identical:       _capIdent,
+    onlyInTarget:    _capOnly,
+    ...(scope ? { linkMismatch: _capLink } : {})
+  } : null;
+  // One ready-made string for every display site, same contract as
+  // orphanNote: rendering it is not optional, and nobody re-words it.
+  const _bucketCapNote = _bucketCaps
+    ? sftkBucketCapNote({ ...{ missingInTarget, changed, identical, onlyInTarget, linkMismatch },
+                          bucketCaps: _bucketCaps }, objType)
+    : '';
+
   return {
     runAt:         new Date().toISOString(),
     status:        'success',
@@ -1061,16 +1307,24 @@ async function runDiffScan(profile, node = null, scope = null) {
     // Caps to keep chrome.storage payload reasonable on big orgs. The
     // picker only needs source IDs to badge rows, and "extras in target"
     // is just informational for now.
-    missingInTarget: missingInTarget.slice(0, 5000),
+    missingInTarget: missingInTarget.slice(0, BUCKET_CAP),
     onlyInTarget:    onlyInTargetOut,
-    changed:         changed.slice(0, 5000),
-    identical:       identical.slice(0, 5000),
+    changed:         changed.slice(0, BUCKET_CAP),
+    identical:       identical.slice(0, BUCKET_CAP),
+    // L6 — `truncated` (v1 key, unchanged meaning) said only THAT something
+    // was cut, had no consumer anywhere in the extension, and carried no
+    // number. bucketCaps is the per-bucket truth — { shown, total, capped }
+    // measured off the full arrays — and bucketCapNote is the wording every
+    // display site renders. Both are absent unless a bucket really hit its
+    // cap, so a small org's stored scan is byte-for-byte what it was.
     truncated: (
-      missingInTarget.length > 5000 ||
-      onlyInTarget.length    > 5000 ||
-      changed.length         > 5000 ||
-      identical.length       > 5000
+      missingInTarget.length > BUCKET_CAP ||
+      onlyInTarget.length    > BUCKET_CAP ||
+      changed.length         > BUCKET_CAP ||
+      identical.length       > BUCKET_CAP
     ),
+    ...(_bucketCaps ? { bucketCaps: _bucketCaps } : {}),
+    ...(_bucketCapNote ? { bucketCapNote: _bucketCapNote } : {}),
     // Set when the dot-path (lookup-by-name) compare 400'd and the scan fell
     // back to the plain plan — lookups are excluded from drift in this result.
     ...(lookupCompareDegraded ? { lookupCompareDegraded: true } : {}),
@@ -1089,7 +1343,7 @@ async function runDiffScan(profile, node = null, scope = null) {
       scoped:        true,
       parentField:   scope.parentField,
       linkTrackable,
-      linkMismatch:  linkMismatch.slice(0, 2000),
+      linkMismatch:  linkMismatch.slice(0, LINK_CAP),
       // R2 — master-detail flags for the parent link field (source describe).
       linkMasterDetail,
       linkUpdateable,
@@ -1182,6 +1436,24 @@ async function scanReconcileChild(profile, pathKey) {
   });
   if (res?.error) return res;
   res.rootRunAt = root.runAt;   // staleness stamp — must match the root scan
+  // L6 — the id lists above come from the BASIS scan's buckets, which ship
+  // capped. If the basis was truncated, the parents past its cap were never
+  // in scope, so this child scan's own buckets are a floor and nothing in
+  // its own numbers reveals that. Record it (and the ready-made wording) so
+  // the section can't present a scoped-away count as a total. Absent when
+  // the basis was complete — a small org's child scan is unchanged.
+  try {
+    const _pScope = sftkParentScopeCap(scanBasis);
+    if (_pScope) {
+      const _pNode = segs.length === 2
+        ? getNodeByPath(profile.tree, segs.slice(0, -1).join('.'))
+        : profile.tree;
+      const _pObj = _pNode?.objectType || _pNode?.childSObject || 'parent';
+      res.parentScopeCapped = _pScope;
+      res.parentScopeNote    = sftkParentScopeNote(_pScope, _pObj,
+        node.objectType || node.childSObject || 'child');
+    }
+  } catch (_) { /* degrade — the child scan itself is unaffected */ }
   if (!profile.lastScan.children) profile.lastScan.children = {};
   profile.lastScan.children[pathKey] = res;
   if (!profile.ephemeral) await storageSaveProfiles();
@@ -1225,9 +1497,16 @@ async function refreshProfileDiff(profileId) {
   // Keep the in-memory transfer profile aligned, mirroring commitEditingProfile.
   if (_transferProfile && _transferProfile.id === profile.id) _transferProfile = profile;
 
+  // L6 — the toast is a display site too. On a complete scan these labels are
+  // the plain numbers it always showed; on a capped one they read
+  // "5,000 of 47,213" instead of quietly reporting the floor as the answer.
+  const _lbl = k => {
+    const i = sftkScanBucketInfo(res, k);
+    return sftkBucketCountLabel(i.shown, i.total, i.capped, i.totalIsFloor);
+  };
   showToast(
-    `Diff refreshed — ${res.missingInTarget.length} missing, ${res.changed.length} drift, ${res.identical.length} in sync`,
-    'success', 4000);
+    `Diff refreshed — ${_lbl('missingInTarget')} missing, ${_lbl('changed')} drift, ${_lbl('identical')} in sync${res.bucketCaps ? ' · list truncated, see the ⚠ note in Reconcile' : ''}`,
+    'success', res.bucketCaps ? 7000 : 4000);
   // Re-render whichever view is open
   if (_currentView === 'profiles') renderProfiles();
   return res;
@@ -1592,5 +1871,25 @@ function _resolveSession(orgUrl, allSess) {
   if (exact) return exact;
   const key = _orgKey(orgUrl);
   return key ? (allSess.find(s => _orgKey(s.orgUrl) === key) || null) : null;
+}
+
+// ── L6 — bucket-cap contract, published explicitly ────────────────────────
+// These are the ONLY sanctioned way to turn a diff bucket into a number a
+// user reads, or to decide that a selection came from a truncated list. They
+// are already globals (classic script), but the explicit attach is the
+// contract: display sites in other files call window.sftk*, so a missing
+// script shows up as a degraded label instead of a page-killing ReferenceError
+// — and no site can quietly grow its own wording. Same convention as
+// sftk-matching.js.
+if (typeof window !== 'undefined') {
+  window.sftkBucketCap         = sftkBucketCap;
+  window.sftkBucketCapShipped  = sftkBucketCapShipped;
+  window.sftkScanBucketInfo    = sftkScanBucketInfo;
+  window.sftkBucketCountLabel  = sftkBucketCountLabel;
+  window.sftkBucketCapTitle    = sftkBucketCapTitle;
+  window.sftkBucketCapNote     = sftkBucketCapNote;
+  window.sftkCappedWriteNote   = sftkCappedWriteNote;
+  window.sftkParentScopeCap    = sftkParentScopeCap;
+  window.sftkParentScopeNote   = sftkParentScopeNote;
 }
 
