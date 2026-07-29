@@ -7,9 +7,10 @@ let allFlows = [];          // flat list of all Flow records
 let flowGroups = {};        // MasterLabel -> [Flow records]
 let selectedIds = new Set(); // selected Flow version Ids
 let orgFlowCount = 0;
-let metadataScanState = 'none'; // 'none' | 'scanning' | 'done'
+// 'skipped' = org too large to scan on open (P1); 'partial' = the user stopped
+// it. Neither may be treated as 'done' — see renderDependenciesTab.
+let metadataScanState = 'none'; // 'none' | 'scanning' | 'skipped' | 'partial' | 'done'
 let toolbarEventsReady = false;  // guard against duplicate listeners
-const LAZY_THRESHOLD = 50; // show progress bar during silent scan above this count
 
 // ── Lazy-load guard ───────────────────────────────────────────
 let _flowsLoaded = false;      // true after first loadFlows() call
@@ -948,9 +949,11 @@ async function loadFlows() {
     updateActionBar();
     updateSelectionSummary();
 
-    // Always scan metadata eagerly in the background — pass the snapshotted
-    // org context so the flow IDs and the session always belong together.
-    document.getElementById('scanSubflowBtnWrap').style.display = 'none';
+    // Scan metadata in the background if the org is small enough to make that
+    // free (see fetchAllMetadataSilently) — pass the snapshotted org context so
+    // the flow IDs and the session always belong together.
+    hideScanOfferBar();
+    verifyFlowListCoverage(loadOrgUrl, loadSid, allFlows.length);
     fetchAllMetadataSilently(loadOrgUrl, loadSid);
 
     setupToolbarEvents();
@@ -959,22 +962,69 @@ async function loadFlows() {
   }
 }
 
+// P1 — the dependency scan costs ONE metadata GET per flow VERSION. In a small
+// org that is a couple of seconds and worth paying on open (🔗 icons and refined
+// flow types appear with no user action). In a large enterprise org it is
+// hundreds of calls and minutes of waiting before the user has asked for
+// anything, so above the threshold we do not scan — we say what it would cost.
 async function fetchAllMetadataSilently(loadOrgUrl, loadSid) {
   // Fall back to the current module values if not passed (older callers).
   loadOrgUrl = loadOrgUrl || orgUrl;
   loadSid    = loadSid    || sid;
+
+  const plan = DependencyMap.scanPlan(allFlows.length);
+  if (!plan.auto) {
+    metadataScanState = 'skipped';
+    // Also clears a progress bar left standing by a scan the previous org
+    // abandoned when this load reset the module.
+    showScanProgress(false);
+    showScanOfferBar(loadOrgUrl, loadSid);
+    if (document.getElementById('tab-dependencies').style.display !== 'none') {
+      renderDependenciesTab();
+    }
+    return;
+  }
+  await runDependencyScan(loadOrgUrl, loadSid);
+}
+
+// The one place a scan is started. Cancellable, resumable, and it never claims
+// completion it didn't reach — metadataScanState ends 'done' only if the pool
+// actually drained.
+async function runDependencyScan(loadOrgUrl, loadSid) {
+  loadOrgUrl = loadOrgUrl || orgUrl;
+  loadSid    = loadSid    || sid;
+  if (DependencyMap.getScanStatus().running) return;
+
+  hideScanOfferBar();
   metadataScanState = 'scanning';
+  const stop = () => DependencyMap.cancelScan();
+  const total0 = allFlows.length;
 
   // Show scan progress for every org size — without it the post-scan repaint
   // (🔗 icons appearing, process types changing) looks unexplained in small orgs.
-  showScanProgress(true, `🔍 Building dependency map… 0 / ${orgFlowCount}`);
+  showScanProgress(true, `🔍 Building dependency map… 0 / ${total0}`, stop);
+  if (document.getElementById('tab-dependencies').style.display !== 'none') {
+    renderDependenciesTab();
+  }
 
   await DependencyMap.buildDependencyMap(allFlows, loadOrgUrl, loadSid, (done, total) => {
-    showScanProgress(true, `🔍 Building dependency map… ${done} / ${total}`);
+    showScanProgress(true, `🔍 Building dependency map… ${done} / ${total}`, stop);
+    const live = document.getElementById('depScanLive');
+    if (live) live.textContent = `Dependency map is building… ${done} / ${total} flow versions. This tab will refresh automatically when ready.`;
   });
 
+  const st = DependencyMap.getScanStatus();
+  // Superseded: an org switch mid-flight resets the module and re-enters
+  // loadFlows, so allFlows and every count below now describe a DIFFERENT org.
+  // Whichever load owns the new org owns the UI too.
+  if (st.running || orgUrl !== loadOrgUrl) return;
+
   showScanProgress(false);
-  metadataScanState = 'done';
+  metadataScanState = st.complete ? 'done' : 'partial';
+  // Self-hiding — renders the resume offer, the flow-list coverage warning,
+  // both, or nothing at all.
+  showScanOfferBar(loadOrgUrl, loadSid);
+
   patchFlowTypesFromMetadata();
   groupFlows();
   renderFlowList(); // re-render with corrected types + 🔗 icons
@@ -983,6 +1033,87 @@ async function fetchAllMetadataSilently(loadOrgUrl, loadSid) {
   if (document.getElementById('tab-dependencies').style.display !== 'none') {
     renderDependenciesTab();
   }
+}
+
+// The honest affordance that replaces the eager scan in a large org, and the
+// "you stopped it here" bar after a cancel. Lives in the flow toolbar so it is
+// visible from the Flows tab, where the missing 🔗 markers are. Also carries the
+// flow-list coverage warning, which applies whether or not a scan is offered.
+function showScanOfferBar(loadOrgUrl, loadSid) {
+  const wrap = document.getElementById('scanSubflowBtnWrap');
+  if (!wrap) return;
+  const plan = DependencyMap.scanPlan(allFlows.length);
+  const st   = DependencyMap.getScanStatus();
+  const left = DependencyMap.scanPlan(Math.max(0, plan.calls - st.done));
+  const offerScan = !st.complete;
+  const coverage  = flowCoverageNote();
+  if (!offerScan && !coverage) { hideScanOfferBar(); return; }
+
+  wrap.style.display = '';
+  wrap.style.flexBasis = '100%';   // its own row — the note is a sentence, not a label
+  wrap.innerHTML = '';
+
+  if (coverage) {
+    const warn = document.createElement('span');
+    warn.style.cssText = 'font-size:11px;color:var(--warning,#DD7A01);display:block;margin-bottom:4px';
+    warn.textContent = coverage;
+    wrap.appendChild(warn);
+  }
+  if (!offerScan) return;
+
+  const note = document.createElement('span');
+  note.className = 'scan-offer-note';
+  note.style.cssText = 'font-size:11px;color:var(--subtext,#706E6B);display:block;margin-bottom:4px';
+  note.textContent = st.done > 0
+    ? `Dependency scan stopped at ${st.done} of ${plan.calls} flow versions. 🔗 subflow markers, flow types and the Dependencies tab cover only those — ${left.calls} calls left (${left.estLabel}).`
+    : `${plan.versions} flow versions loaded. The dependency scan needs ${plan.calls} metadata calls (${plan.estLabel}) and has not been run, so 🔗 subflow markers, refined flow types and the Dependencies tab have no data yet.`;
+
+  const btn = document.createElement('button');
+  btn.id = 'scanSubflowBtn';
+  btn.className = 'btn btn-secondary btn-sm';
+  btn.textContent = st.done > 0 ? '🔗 Resume dependency scan' : '🔗 Scan dependencies';
+  btn.addEventListener('click', () => runDependencyScan(loadOrgUrl, loadSid));
+
+  wrap.appendChild(note);
+  wrap.appendChild(btn);
+}
+
+function hideScanOfferBar() {
+  const wrap = document.getElementById('scanSubflowBtnWrap');
+  if (wrap) wrap.style.display = 'none';
+}
+
+// ── Flow-list coverage ────────────────────────────────────────────────────────
+// A Tooling query can cap server-side even when pagination is followed to
+// exhaustion, and sfQueryAll reports records.length back as totalSize — so a
+// truncated list is indistinguishable from a complete one. Every count this
+// page quotes (and the dependency map itself) is derived from that list, so
+// one COUNT() call is worth it to know whether we are quoting the whole org.
+let flowListShortfall = null;   // rows the server has that we don't; null = unchecked
+
+function flowCoverageNote() {
+  if (!flowListShortfall) return '';
+  return `⚠️ This org has ${allFlows.length + flowListShortfall} flow versions but the query returned only ${allFlows.length} — Salesforce capped the result. Every count and dependency below covers the ${allFlows.length} loaded versions only.`;
+}
+
+async function verifyFlowListCoverage(loadOrgUrl, loadSid, got) {
+  flowListShortfall = null;
+  try {
+    const r = await sendBg({
+      type: 'SF_QUERY', orgUrl: loadOrgUrl, sid: loadSid,
+      query: 'SELECT COUNT() FROM Flow', tooling: true, _suppressError: true
+    });
+    // COUNT() is not supported on every Tooling object / API version. An
+    // unusable answer means "not checked" — never "the list is complete".
+    if (!r || r.error || typeof r.totalSize !== 'number') return;
+    if (orgUrl !== loadOrgUrl) return;         // org switched while we asked
+    if (r.totalSize <= got) return;
+    flowListShortfall = r.totalSize - got;
+    showScanOfferBar(loadOrgUrl, loadSid);     // surface the warning now
+    if (document.getElementById('tab-dependencies').style.display !== 'none') {
+      renderDependenciesTab();
+    }
+  } catch (_) { /* best-effort — a failed check must never break the load */ }
 }
 
 function patchFlowTypesFromMetadata() {
@@ -1232,21 +1363,9 @@ function setupToolbarEvents() {
   document.getElementById('backupBtn').addEventListener('click', onBackupClick);
   document.getElementById('restoreActionBtn').addEventListener('click', onRestoreClick);
 
-  const scanBtn = document.getElementById('scanSubflowBtn');
-  if (scanBtn) {
-    scanBtn.addEventListener('click', async () => {
-      scanBtn.disabled = true;
-      scanBtn.textContent = '🔍 Scanning...';
-      showScanProgress(true, 'Scanning subflow dependencies...');
-      await DependencyMap.buildDependencyMap(allFlows, orgUrl, sid, (done, total) => {
-        showScanProgress(true, `🔍 Scanning for subflow dependencies… ${done}/${total}`);
-      });
-      metadataScanState = 'done';
-      showScanProgress(false);
-      scanBtn.textContent = '✅ Scan Complete';
-      renderFlowList();
-    });
-  }
+  // #scanSubflowBtn is owned by showScanOfferBar() since P1 — it rebuilds the
+  // wrap (note + button) on every state change, so binding it here would either
+  // double-fire or bind a node that is about to be replaced.
 
   // Listen for "select flow for deletion" event from dependency map context menu
   document.addEventListener('selectFlowForDeletion', (e) => {
@@ -1305,7 +1424,11 @@ async function onDeleteClick() {
     })),
     reversibility: 'permanent',
     confirmLabel: `🗑 Delete ${toDelete.length}`,
-    undoHint: 'Only flows you backed up (⬇) can come back — via Restore mode in this tab.',
+    // The subflow check above may have run against a map that was never fully
+    // built — say so here rather than let the summary imply an all-clear.
+    undoHint: (DependencyMap.isMetadataFetched() ? ''
+      : '⚠️ The subflow dependency check ran against an INCOMPLETE map — other flows may still call these versions. ')
+      + 'Only flows you backed up (⬇) can come back — via Restore mode in this tab.',
   });
   if (!finalOk) return;
 
@@ -1370,6 +1493,20 @@ async function checkSubflowDependencies(selected) {
     showScanProgress(false);
   }
 
+  // P1 — "nothing depends on these flows" is only true if the map is complete.
+  // Reading that verdict off a map that was never built (large org, no auto
+  // scan) or was stopped part-way is a false all-clear on a PERMANENT delete,
+  // so the user decides explicitly instead.
+  if (!DependencyMap.isMetadataFetched()) {
+    const choice = await askScanBeforeDelete();
+    if (choice !== 'skip') {
+      if (choice !== 'scan') return null;
+      await runDependencyScan(orgUrl, sid);
+      // Stopped again — re-affirm rather than assume consent carries over.
+      if (!DependencyMap.isMetadataFetched() && await askScanBeforeDelete() !== 'skip') return null;
+    }
+  }
+
   const depMap = DependencyMap.getDependencyMap();
   const deletingIds = new Set(selected.map(f => f.Id));
 
@@ -1387,6 +1524,38 @@ async function checkSubflowDependencies(selected) {
 
   return new Promise((resolve) => {
     showSubflowDependencyModal(problematic, allFlows, deletingIds, resolve);
+  });
+}
+
+// Gate shown when a delete is about to be checked against an incomplete
+// dependency map. Returns 'scan' | 'skip' | 'cancel'.
+async function askScanBeforeDelete() {
+  const plan = DependencyMap.scanPlan(allFlows.length);
+  const st   = DependencyMap.getScanStatus();
+  const left = DependencyMap.scanPlan(Math.max(0, plan.calls - st.done));
+  const coverage = st.done > 0
+    ? `Only ${st.done} of ${plan.calls} flow versions have been scanned.`
+    : `None of the ${plan.calls} flow versions in this org have been scanned.`;
+
+  return new Promise((resolve) => {
+    showModal(`
+      <div class="modal-header modal-danger">
+        <span class="modal-icon">⚠️</span>
+        <h2>The subflow check has no data</h2>
+      </div>
+      <div class="modal-body">
+        <p>${escHtml(coverage)} Without that map the toolkit cannot tell whether another flow calls the versions you are about to delete — and this delete is permanent.</p>
+        <p class="modal-warning-text">Finishing the scan costs ${left.calls} metadata API calls (${escHtml(left.estLabel)}). You can stop it at any point.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="modalCancel">Cancel delete</button>
+        <button class="btn btn-danger" id="modalSkip">Delete without checking</button>
+        <button class="btn btn-primary" id="modalScan">Scan now (${left.calls} calls)</button>
+      </div>
+    `);
+    document.getElementById('modalCancel').addEventListener('click', () => { closeModal(); resolve('cancel'); });
+    document.getElementById('modalSkip').addEventListener('click',   () => { closeModal(); resolve('skip'); });
+    document.getElementById('modalScan').addEventListener('click',   () => { closeModal(); resolve('scan'); });
   });
 }
 
@@ -2322,19 +2491,92 @@ function renderDependenciesTab() {
   }
 
   if (metadataScanState === 'scanning') {
+    const st = DependencyMap.getScanStatus();
     noBanner.style.display = 'none';
-    container.innerHTML = sftkCat('Dependency map is building… This tab will refresh automatically when ready.');
+    container.innerHTML = sftkCat(`Dependency map is building… ${st.done} / ${st.total} flow versions. This tab will refresh automatically when ready.`);
+    // #scanProgress (with its Stop) lives in the Flows tab, so the scan would be
+    // unstoppable from here without a second one.
+    const msg = container.querySelector('.lp-robot-msg');
+    if (msg) msg.id = 'depScanLive';
+    const stopBtn = document.createElement('button');
+    stopBtn.className = 'btn btn-secondary btn-sm';
+    stopBtn.style.cssText = 'display:block;margin:10px auto 0';
+    stopBtn.textContent = '✕ Stop scan';
+    stopBtn.addEventListener('click', () => {
+      DependencyMap.cancelScan();
+      stopBtn.disabled = true;
+      stopBtn.textContent = 'Stopping…';
+    });
+    container.appendChild(stopBtn);
+    return;
+  }
+
+  // P1 — never rendered from a map that was never built. An empty tree here
+  // would read as "this org has no subflow dependencies", which is a lie.
+  if (metadataScanState === 'skipped') {
+    noBanner.style.display = 'none';
+    container.innerHTML = '';
+    container.appendChild(buildDepScanOffer());
     return;
   }
 
   if (!DependencyMap.isMetadataFetched()) {
-    noBanner.style.display = 'none';
-    container.innerHTML = sftkCat('Waiting for dependency metadata… This tab will refresh automatically.');
+    // Stopped part-way (or never started from this tab's point of view). Show
+    // what IS known, with the coverage stated — the tree's own renderers add
+    // their per-panel caveats on top.
+    const st = DependencyMap.getScanStatus();
+    noBanner.style.display = '';
+    noBanner.textContent = (st.done > 0
+      ? `⚠️ Partial data: ${st.done} of ${st.total} flow versions scanned. Anything below is only what those versions reference — use “🔗 Resume dependency scan” in the Flows tab for the rest.`
+      : '⚠️ No dependency data has been collected for this org yet — use “🔗 Scan dependencies” in the Flows tab.')
+      + (flowCoverageNote() ? ` ${flowCoverageNote()}` : '');
+    if (st.done === 0) {
+      container.innerHTML = '';
+      container.appendChild(buildDepScanOffer());
+      return;
+    }
+    DependencyMap.renderDependencyTreeTab(allFlows, container, orgUrl);
     return;
   }
 
-  noBanner.style.display = 'none';
+  // Scan complete — but "complete" only ever means every version the flow-list
+  // query returned, which the server may have capped.
+  const coverage = flowCoverageNote();
+  noBanner.style.display = coverage ? '' : 'none';
+  if (coverage) noBanner.textContent = coverage;
   DependencyMap.renderDependencyTreeTab(allFlows, container, orgUrl);
+}
+
+// The Dependencies-tab twin of showScanOfferBar: same numbers, same honesty,
+// with the button where the user is actually looking for the data.
+function buildDepScanOffer() {
+  const plan = DependencyMap.scanPlan(allFlows.length);
+  const box = document.createElement('div');
+  box.className = 'info-banner';
+  box.style.lineHeight = '1.6';
+
+  const coverage = flowCoverageNote();
+  if (coverage) {
+    const warn = document.createElement('div');
+    warn.style.cssText = 'color:var(--warning,#DD7A01);margin-bottom:6px';
+    warn.textContent = coverage;
+    box.appendChild(warn);
+  }
+
+  const p = document.createElement('div');
+  p.textContent = `${plan.versions} flow versions loaded. Building the dependency map needs ${plan.calls} metadata API calls (${plan.estLabel}, ${plan.measured ? 'measured on this org' : 'estimated'})`
+    + (plan.auto
+      ? '. It has not run — nothing on this tab has data until it does.'
+      : `, so it is not started automatically above ${plan.autoMax} versions. Nothing on this tab has data until you start it.`);
+  box.appendChild(p);
+
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-primary btn-sm';
+  btn.style.marginTop = '8px';
+  btn.textContent = `🔗 Scan dependencies (${plan.calls} calls)`;
+  btn.addEventListener('click', () => runDependencyScan(orgUrl, sid));
+  box.appendChild(btn);
+  return box;
 }
 
 // ============================================================
@@ -2368,14 +2610,29 @@ function showLoading(show) {
   }
 }
 
-function showScanProgress(show, text) {
+// onCancel is optional: only the dependency scan runs long enough to need a
+// Stop button, so the button is injected here rather than sitting in popup.html
+// for every other caller (backup, restore, delete) that passes no handler.
+function showScanProgress(show, text, onCancel) {
   const el = document.getElementById('scanProgress');
+  const btn = document.getElementById('scanCancelBtn');
   if (show) {
     el.style.display = '';
     const textEl = document.getElementById('scanProgressText');
     if (textEl && text) textEl.textContent = text;
+    if (onCancel) {
+      const b = btn || el.appendChild(Object.assign(document.createElement('button'), {
+        id: 'scanCancelBtn', className: 'btn btn-secondary btn-sm', textContent: '✕ Stop'
+      }));
+      b.style.cssText = 'margin-left:auto;flex-shrink:0';
+      b.onclick = onCancel;
+    } else if (btn) {
+      btn.style.display = 'none';
+      btn.onclick = null;
+    }
   } else {
     el.style.display = 'none';
+    if (btn) { btn.style.display = 'none'; btn.onclick = null; }
   }
 }
 
@@ -3032,6 +3289,8 @@ function resetOrgState() {
   restoreBackupFlows = [];
   restoreSelected    = new Set();
   currentMode        = 'delete';
+  flowListShortfall  = null;
+  hideScanOfferBar();   // its numbers describe the OLD org
 
   // Clear module lazy-init flags so each tab re-initializes against the new org
   const flagMap = {

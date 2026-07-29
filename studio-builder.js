@@ -288,20 +288,44 @@ function renderBuilder() {
       return;
     }
     if (hint) hint.textContent = 'Loading users…';
-    const q = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
-      query: `SELECT Id, Name, Username FROM User WHERE IsActive = true AND UserType = 'Standard' ORDER BY Name LIMIT 500` });
+    // ONE page (SF_QUERY), no embedded LIMIT. The old query said
+    // "SF_QUERY_ALL … LIMIT 500", which is a contradiction: the LIMIT means
+    // the server returns a single page with no nextRecordsUrl, so paging
+    // never happened and the list was silently truncated at 500. Dropping the
+    // LIMIT also makes totalSize the org's REAL count (with a LIMIT it just
+    // echoes the cap), so the cap below is stated with a measured number.
+    // Still one round-trip — an org under the cap sees exactly what it saw.
+    const q = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
+      query: `SELECT Id, Name, Username FROM User WHERE IsActive = true AND UserType = 'Standard' ORDER BY Name` });
     if (q?.error || !Array.isArray(q?.records)) {
       if (hint) hint.textContent = `Couldn't load users: ${q?.error || 'no response'}`;
       return;
     }
-    const cur = _editingProfile.ownerMapping?.fallbackUserId || '';
+    const list = bldOwnerFallbackList(q.records, q.totalSize, OWNER_FALLBACK_OPTION_LIMIT, q.done);
+    const cur  = _editingProfile.ownerMapping?.fallbackUserId || '';
+
+    // Is the SAVED fallback user really gone, or just past the cap? Never
+    // conclude "missing" from a truncated list — that false negative silently
+    // changes owner mapping on the next deployment. Resolve the id directly
+    // when (and ONLY when) the page can't answer it: no extra round-trip for
+    // an org whose users all fit in one page.
+    let saved = bldSavedFallbackPlan(cur, list.shown, q.records, list.pageComplete);
+    if (saved.action === 'lookup') {
+      // 'lookup' is only returned for an id that already passed the strict
+      // 15/18-char alphanumeric test, so there is nothing quotable to inject.
+      const one = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
+        query: `SELECT Id, Name, Username, IsActive, UserType FROM User WHERE Id = '${cur}'` });
+      saved = bldSavedFallbackFromLookup(one);
+    }
+    // 'restore' = a real, usable user the cap hid. Pin it at the top so the
+    // select shows the truth instead of falling back to the placeholder.
+    const pinned = saved.action === 'restore' && saved.user ? saved.user : null;
+    const opt = u => `<option value="${esc(u.Id)}" data-name="${esc(u.Name)}"${u.Id === cur ? ' selected' : ''}>` +
+      `${esc(u.Name)}${u.Username ? ` (${esc(u.Username)})` : ''}${pinned && u.Id === pinned.Id ? ' — not in the list below' : ''}</option>`;
     sel.innerHTML = `<option value="">— fallback user (used when the owner has no name match) —</option>` +
-      q.records.map(u =>
-        `<option value="${esc(u.Id)}" data-name="${esc(u.Name)}" ${u.Id === cur ? 'selected' : ''}>${esc(u.Name)} (${esc(u.Username)})</option>`
-      ).join('');
-    if (hint) hint.textContent = cur && !q.records.some(u => u.Id === cur)
-      ? '⚠ The saved fallback user was not found (deactivated?) — pick another.'
-      : `${q.records.length} active user(s) in ${orgLabel(_editingProfile.targetOrg)}.`;
+      (pinned ? opt(pinned) : '') +
+      list.shown.map(opt).join('');
+    if (hint) hint.textContent = bldOwnerFallbackHint(list, orgLabel(_editingProfile.targetOrg), saved);
   }
   // Match-owners-by controls. Selection is capped at 4 fields (matches the
   // sftk-matching key-builder cap); at the cap, unchecked boxes disable
@@ -493,6 +517,115 @@ function bldOwnerMatchingFromControls(checkedFields, toggles) {
     fields: KNOWN.filter(f => set.has(f)).slice(0, 4),
     normalize: { emailLower: !!t.emailLower, caseFold: !!t.caseFold, trim: !!t.trim }
   };
+}
+
+// ── Owner-fallback picker: cap + saved-id resolution (pure) ─────────────
+// Top-level (column 0) and free-variable-free so test/scale-caps.test.mjs can
+// materialize them via test/extract.mjs.
+//
+// The fallback picker is a <select>. In a 50k-user org an unbounded fetch
+// would build a 50k-option dropdown nobody can use, so the OPTION list stays
+// capped — but the query no longer carries an embedded LIMIT, which means the
+// response's totalSize is the org's REAL count of active standard users
+// (a LIMIT makes totalSize echo the cap). So the cap is stated with a
+// measured number instead of being silent.
+
+// How many users the fallback <select> renders. A cap on the OPTIONS only —
+// never on what the code believes exists.
+const OWNER_FALLBACK_OPTION_LIMIT = 500;
+
+// Split one page of user records into "what the dropdown shows" and "what
+// this org actually has". `totalSize` is the count Salesforce reported for
+// the whole query; pass null/undefined when it wasn't reported.
+//   shown        — the options to render (≤ limit)
+//   total        — measured org total, or null when unknown (never guessed)
+//   capped       — true when rows exist that the dropdown does NOT show
+//   pageComplete — true when `records` is every matching row, so an id that
+//                  is absent from it really is absent (no lookup needed)
+function bldOwnerFallbackList(records, totalSize, limit, pageDone) {
+  const all = Array.isArray(records) ? records : [];
+  const cap = Number.isFinite(limit) && limit > 0 ? limit : all.length;
+  const shown = all.slice(0, cap);
+  const t = Number(totalSize);
+  // A totalSize below the rows in hand is not a total (that is what a LIMIT-ed
+  // query reports) — treat it as "unknown" rather than publish it.
+  const total = Number.isFinite(t) && t >= all.length ? t : null;
+  // Completeness needs BOTH signals to agree: Salesforce saying it is done AND
+  // the total (when known) fitting in what we hold. Either one saying "more"
+  // wins, because claiming completeness wrongly is the expensive mistake.
+  const pageComplete = pageDone !== false && (total == null || total <= all.length);
+  const capped = (total != null && total > shown.length) || all.length > shown.length || !pageComplete;
+  return { shown, total, capped, fetched: all.length, pageComplete };
+}
+
+// What can we honestly say about the SAVED fallback user id? Absence from a
+// capped list proves nothing — that inference is the false negative this
+// replaces. Returns the action the caller must take:
+//   'none'    — nothing saved
+//   'listed'  — already an option; render as-is (the common path)
+//   'restore' — real user, just past the display cap; prepend it as selected
+//   'absent'  — the page IS complete, so it genuinely is not an active
+//               standard user here (deactivated / deleted / other type)
+//   'lookup'  — the page is truncated; the id must be queried directly
+//   'invalid' — not an 18/15-char Salesforce id; nothing to look up
+function bldSavedFallbackPlan(savedId, shown, page, pageComplete) {
+  const id = typeof savedId === 'string' ? savedId.trim() : '';
+  if (!id) return { action: 'none', user: null };
+  if (!/^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$/.test(id)) return { action: 'invalid', user: null };
+  const inShown = (Array.isArray(shown) ? shown : []).find(u => u && u.Id === id);
+  if (inShown) return { action: 'listed', user: inShown };
+  const inPage = (Array.isArray(page) ? page : []).find(u => u && u.Id === id);
+  if (inPage) return { action: 'restore', user: inPage };
+  if (pageComplete) return { action: 'absent', user: null };
+  return { action: 'lookup', user: null };
+}
+
+// Interpret the targeted "SELECT … WHERE Id = '…'" response. A failed lookup
+// is reported as unverified — never as "the user is gone".
+function bldSavedFallbackFromLookup(res) {
+  if (!res || res.error) return { action: 'unverified', user: null, error: res && res.error ? String(res.error) : 'no response' };
+  const rec = Array.isArray(res.records) ? res.records[0] : null;
+  if (!rec) return { action: 'gone', user: null };
+  if (rec.IsActive === false) return { action: 'inactive', user: rec };
+  if (rec.UserType != null && rec.UserType !== 'Standard') return { action: 'othertype', user: rec };
+  return { action: 'restore', user: rec };
+}
+
+// The one-line hint under the picker. Never claims a total it did not
+// measure, and never reports the saved user as missing on the strength of a
+// capped list alone.
+function bldOwnerFallbackHint(list, orgName, saved) {
+  const group = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const shownN = list && Array.isArray(list.shown) ? list.shown.length : 0;
+  const where = orgName ? ` in ${orgName}` : '';
+  let base;
+  if (!list || !list.capped) {
+    base = `${group(shownN)} active standard user(s)${where}.`;
+  } else if (list.total != null) {
+    base = `Showing the first ${group(shownN)} of ${group(list.total)} active standard users${where}, by name.`;
+  } else {
+    base = `Showing the first ${group(shownN)} active standard users${where}, by name — this org has more.`;
+  }
+  const s = saved || { action: 'none' };
+  const name = s.user && s.user.Name ? s.user.Name : 'the saved user';
+  switch (s.action) {
+    case 'restore':
+      return `${base} Saved fallback user ${name} is outside that list — kept and pinned at the top.`;
+    case 'absent':
+      return `${base} ⚠ The saved fallback user is not among them (deactivated, deleted, or not a standard user) — pick another.`;
+    case 'inactive':
+      return `${base} ⚠ Saved fallback user ${name} is INACTIVE in this org — inactive users can't own records; pick another.`;
+    case 'othertype':
+      return `${base} ⚠ Saved fallback user ${name} is not a standard user in this org — pick another.`;
+    case 'gone':
+      return `${base} ⚠ The saved fallback user no longer exists in this org — pick another.`;
+    case 'unverified':
+      return `${base} ⚠ Couldn't check the saved fallback user (${s.error || 'lookup failed'}) — it is left unchanged; re-open this profile to retry.`;
+    case 'invalid':
+      return `${base} ⚠ The saved fallback user id is not a valid Salesforce id — pick another.`;
+    default:
+      return base;
+  }
 }
 
 // Populate the root-object PICKLIST from the source org's object list.

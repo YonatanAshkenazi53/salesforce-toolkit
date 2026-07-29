@@ -1,19 +1,70 @@
 // ============================================================
 // License Manager Module — deactivate users & change licenses
 // ============================================================
+
+// ── Pure result-cap helpers (top-level on purpose) ───────────
+// These live at column 0, outside the IIFE, so test/scale-caps.test.mjs can
+// materialize them standalone via test/extract.mjs. They must therefore stay
+// PURE: no free variables, no DOM, no module state.
+//
+// The user search deliberately loads ONE page of at most LM_USER_LIMIT rows:
+// every row becomes a DOM row with a checkbox, and an unbounded fetch in a
+// 50k-user org would be both a long wait and an unusable list. The cap is
+// therefore kept — but it is stated, never silent (same contract as the
+// user-copy picker). We ask for exactly LM_USER_LIMIT rows, so getting that
+// many back means more almost certainly matched; we do NOT know how many
+// more without a second query, so nothing here ever invents a total.
+
+// Did the single-page query come back full? `returned` is the row count the
+// query produced, `limit` the LIMIT it was asked for.
+function lmListCapped(returned, limit) {
+  const n = Number(returned);
+  const cap = Number(limit);
+  if (!Number.isFinite(n) || !Number.isFinite(cap) || cap <= 0) return false;
+  return n >= cap;
+}
+
+// The short label beside the select-all checkbox. Says "the first N" — not a
+// bare count — whenever the list is a capped slice of a bigger result.
+function lmResultCountLabel(shown, capped, limit) {
+  const n = Number(shown) || 0;
+  if (!capped) return `${n} user${n !== 1 ? 's' : ''}`;
+  return `first ${Number(limit) || n} users`;
+}
+
+// The banner under the results header. Empty string when the list is
+// complete — nothing to warn about. `hasQuery` picks the right escape hatch:
+// with a search term the fix is a narrower one, without one it is searching
+// at all.
+function lmCapNoteText(limit, hasQuery) {
+  const cap = Number(limit) || 0;
+  return `⚠ Showing only the first ${cap} users by name — more match, this list is not all of them. ` +
+    (hasQuery
+      ? 'Narrow the search to reach the rest.'
+      : 'Search by name or email (or switch filter) to reach the rest.');
+}
+
 const LicenseManager = (() => {
   let _orgUrl = null;
   let _sid = null;
   let users = [];
+  let usersCapped = false;   // true when the org has MORE users than this list shows
   let selectedUserIds = new Set();
   let allProfiles = [];
   let currentFilter = 'active';
+
+  // How many users ONE search loads. Hard cap, not SF_QUERY_ALL paging: the
+  // list is rendered as checkbox rows and drives bulk deactivate / license
+  // changes, so it has to stay clickable in a big org. When the cap bites
+  // the UI says so — see lmCapNoteText().
+  const LM_USER_LIMIT = 100;
 
   // ── Public API ───────────────────────────────────────────
   function init(container, orgUrl, sid) {
     _orgUrl = orgUrl;
     _sid = sid;
     users = [];
+    usersCapped = false;
     selectedUserIds.clear();
     allProfiles = [];
     renderTab(container);
@@ -66,7 +117,7 @@ const LicenseManager = (() => {
         <!-- Search hint (shown before any search) -->
         <div id="lmHint" class="lm-hint">
           🔍 Search by name or email, then click <strong>Search</strong> to browse users.<br>
-          Leave the search box empty to list all users (up to 100).
+          Each search loads the first ${LM_USER_LIMIT} matches by name — if there are more, the list says so.
         </div>
 
         <!-- Empty -->
@@ -79,6 +130,9 @@ const LicenseManager = (() => {
               <input type="checkbox" id="lmSelectAll"> <span id="lmResultCount"></span>
             </label>
           </div>
+          <!-- Honest cap banner — filled by doSearch() only when the list is
+               a capped slice; hidden whenever the list IS the whole result. -->
+          <div id="lmCapNote" class="lm-hint" style="display:none;border-top:1px solid #C5DBF0"></div>
           <div class="lm-user-list" id="lmUserList"></div>
         </div>
 
@@ -241,9 +295,13 @@ const LicenseManager = (() => {
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
     const soql = `SELECT Id,Name,Username,IsActive,Profile.Name,Profile.Id,` +
       `Profile.UserLicense.Name,Profile.UserLicense.Id ` +
-      `FROM User ${where} ORDER BY Name LIMIT 100`;
+      `FROM User ${where} ORDER BY Name LIMIT ${LM_USER_LIMIT}`;
 
-    const res = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, query: soql, tooling: false });
+    // SF_QUERY, not SF_QUERY_ALL: the LIMIT above means the server returns one
+    // page and no nextRecordsUrl, so the paginating wrapper only ever looked
+    // like it fetched everything. One page is what we ask for and what we say
+    // we got — the cap is declared below instead of being hidden.
+    const res = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, query: soql, tooling: false });
     document.getElementById('lmLoading').style.display = 'none';
 
     if (res.error) {
@@ -255,6 +313,16 @@ const LicenseManager = (() => {
     }
 
     users = res.records || [];
+    // We asked for exactly LM_USER_LIMIT rows. Getting that many back means
+    // the org almost certainly has more matches. How many more is NOT known
+    // without a second query, so the banner says "more" and never a number.
+    usersCapped = lmListCapped(users.length, LM_USER_LIMIT);
+
+    const capNote = document.getElementById('lmCapNote');
+    if (capNote) {
+      capNote.textContent   = usersCapped ? lmCapNoteText(LM_USER_LIMIT, q.length >= 2) : '';
+      capNote.style.display = usersCapped ? '' : 'none';
+    }
 
     if (users.length === 0) {
       document.getElementById('lmEmpty').style.display = '';
@@ -264,7 +332,7 @@ const LicenseManager = (() => {
     renderUserList();
     document.getElementById('lmResults').style.display = '';
     document.getElementById('lmResultCount').textContent =
-      `${users.length} user${users.length !== 1 ? 's' : ''}`;
+      lmResultCountLabel(users.length, usersCapped, LM_USER_LIMIT);
     updateActions();
   }
 

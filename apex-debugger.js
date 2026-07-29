@@ -61,6 +61,29 @@ function sftkEscLogLine(s) {
     .replace(/"/g, '&quot;').replace(/=/g, '&#61;');
 }
 
+// ── N+1 overflow probe (honest truncation) ───────────────────
+// Ask the server for ONE more row than the UI intends to show. Getting the
+// extra row back is PROOF that more matches exist — no second COUNT query, no
+// extra round-trip for an org that was never near the cap. It deliberately
+// never reveals HOW MANY more, so callers must say "more exist" and must never
+// invent a total.
+// Returns { rows: the first `shown` records, more: true when an extra came back }.
+function sftkOverflowRows(records, shown) {
+  const all = Array.isArray(records) ? records : [];
+  const n   = Number.isFinite(+shown) ? Math.max(0, Math.floor(+shown)) : 0;
+  return { rows: all.slice(0, n), more: all.length > n };
+}
+
+// Footer text for a dropdown whose N+1 probe came back full. Returns '' when
+// nothing was truncated, so the caller renders no footer at all — an org that
+// fits under the cap sees exactly the UI it saw before.
+function sftkMoreMatchesNote(more, isSuggest) {
+  if (!more) return '';
+  return isSuggest
+    ? 'More active users exist — type part of a name or username to narrow'
+    : 'More matches — keep typing to narrow';
+}
+
 const ApexDebugger = (() => {
   'use strict';
 
@@ -69,6 +92,10 @@ const ApexDebugger = (() => {
   const POLL_MS      = 4000;    // poll interval while trace is active
   const TRACE_HOURS  = 1;       // default trace expiry (hours)
   const MAX_LOGS     = 200;     // max ApexLog records to fetch
+  // Rows the trace-flag user dropdown renders. The SOQL asks for
+  // USER_DROP_SHOWN + 1 so an 11th row proves the org has more matches than
+  // fit — see sftkOverflowRows / sftkMoreMatchesNote.
+  const USER_DROP_SHOWN = 10;
 
   // ── Debug log categories ──────────────────────────────────
   // Each Salesforce debug-log category supports only a specific subset of
@@ -761,15 +788,20 @@ const ApexDebugger = (() => {
         // Backslashes FIRST, then quotes — quote-only escaping is defeated by
         // a term ending in '\' (audit S2).
         const safe = s => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        // N+1: ask for one MORE row than we render. The extra row is the only
+        // evidence we need that this org has more matches than the dropdown
+        // shows — cheaper than a COUNT() and it keeps small orgs at exactly
+        // one query, same as before.
+        const lim = USER_DROP_SHOWN + 1;
         if (isSuggest) {
           // No term yet — the most useful default is who has been active
           // lately (that is whose debug logs you are about to collect).
           return `SELECT Id,Name,Username FROM User WHERE IsActive=true ` +
-                 `ORDER BY LastLoginDate DESC NULLS LAST LIMIT 10`;
+                 `ORDER BY LastLoginDate DESC NULLS LAST LIMIT ${lim}`;
         }
         return `SELECT Id,Name,Username FROM User WHERE IsActive=true AND ` +
                `(Name LIKE '%${safe(q)}%' OR Username LIKE '%${safe(q.toLowerCase())}%') ` +
-               `ORDER BY Name LIMIT 10`;
+               `ORDER BY Name LIMIT ${lim}`;
       })()
     });
     if (res.error || !res.records?.length) {
@@ -781,12 +813,20 @@ const ApexDebugger = (() => {
       }
       return;
     }
-    d.innerHTML = res.records.map(u =>
+    // Render the first USER_DROP_SHOWN; the (n+1)th row is never rendered as a
+    // pickable option — it only tells us to print the "more exist" footer, so
+    // the list never passes itself off as the complete set of matches.
+    const { rows, more } = sftkOverflowRows(res.records, USER_DROP_SHOWN);
+    const moreNote = sftkMoreMatchesNote(more, isSuggest);
+    d.innerHTML = rows.map(u =>
       `<div class="adbg-uopt" data-id="${u.Id}" data-name="${_esc(u.Name)}" data-uname="${_esc(u.Username)}">
          <div class="adbg-uopt-name">${_esc(u.Name)}</div>
          <div class="adbg-uopt-uname">${_esc(u.Username)}</div>
        </div>`
-    ).join('');
+    ).join('')
+      // Footer is a .adbg-drop-msg, NOT a .adbg-uopt — the click wiring below
+      // only binds .adbg-uopt, so it is non-selectable by construction.
+      + (moreNote ? `<div class="adbg-drop-msg" style="font-style:italic">⋯ ${_esc(moreNote)}</div>` : '');
     d.querySelectorAll('.adbg-uopt').forEach(el => {
       el.addEventListener('click', () => {
         _selUser = { Id: el.dataset.id, Name: el.dataset.name, Username: el.dataset.uname };

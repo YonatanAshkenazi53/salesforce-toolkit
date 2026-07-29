@@ -561,6 +561,81 @@ function depReportCsv(report) {
   return rows.map(row => row.map(cell).join(',')).join('\r\n');
 }
 
+// ── Scan sizing (P1) ──────────────────────────────────────────────────────────
+// buildDependencyMap costs exactly ONE Tooling metadata GET per flow VERSION —
+// the Flow tooling object is version-grained, so 400 definitions × 4 versions is
+// 1600 GETs. That is the reported "first load takes a few minutes" in a large
+// enterprise org. Above autoMax the popup must NOT scan on open.
+// Pure — the numbers the UI quotes and the pool that does the work both come
+// from here, so an estimate can never drift from the real cost.
+function depScanPlan(versionCount, opts) {
+  const o = opts || {};
+  const num = (v, d) => (Number.isFinite(v) && v > 0 ? v : d);
+  const autoMax     = Number.isFinite(o.autoMax) && o.autoMax >= 0 ? o.autoMax : 150;
+  const concurrency = num(o.concurrency, 6);
+  // Wall-clock per metadata GET as seen by the pool. 300 ms is the default
+  // until a completed scan measures the real figure for this org/session.
+  const msPerCall   = num(o.msPerCall, 300);
+  const versions    = Math.max(0, Math.floor(Number(versionCount) || 0));
+  const calls       = versions;   // one GET per version — no batching server-side
+  const estMs       = Math.round((calls * msPerCall) / concurrency);
+  return {
+    versions, calls, concurrency, msPerCall, autoMax,
+    auto: versions <= autoMax,
+    measured: !!(Number.isFinite(o.msPerCall) && o.msPerCall > 0),
+    estMs,
+    estLabel: depFormatEta(estMs)
+  };
+}
+
+// Human ETA for a scan. Deliberately hedged ("about") — it is an estimate, and
+// the UI states the call count next to it so the user has the hard number too.
+function depFormatEta(ms) {
+  const s = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+  if (s < 1)  return 'under a second';
+  if (s < 60) return `about ${s}s`;
+  const m = Math.floor(s / 60), rem = s % 60;
+  return rem ? `about ${m}m ${rem}s` : `about ${m}m`;
+}
+
+// Rolling concurrency pool (P1). Replaces the old batch-of-10 + Promise.all
+// barrier, which drained to zero every 10 items and let one slow GET stall the
+// other nine. `limit` workers stay in flight until the queue empties.
+//   opts.shouldStop — polled before each item; a true return stops the pool and
+//                     reports stopped:true rather than pretending completion.
+//   opts.onProgress — (done, total) after every settled item, monotonic.
+// Results keep INPUT order regardless of completion order. `complete` is decided
+// by the count alone, not by `stopped` — a Stop pressed after the last item
+// settled still leaves every item covered, and calling that partial would
+// under-report coverage just as dishonestly as over-reporting it.
+async function depRunPool(items, worker, opts) {
+  const list = Array.isArray(items) ? items : [];
+  const o = opts || {};
+  const total = list.length;
+  const limit = Math.max(1, Math.min(Math.floor(o.concurrency) || 6, total || 1));
+  const onProgress = typeof o.onProgress === 'function' ? o.onProgress : null;
+  const shouldStop = typeof o.shouldStop === 'function' ? o.shouldStop : null;
+  const results = new Array(total);
+  let next = 0, done = 0, stopped = false;
+
+  async function runner() {
+    for (;;) {
+      if (shouldStop && shouldStop()) { stopped = true; return; }
+      const i = next++;
+      if (i >= total) return;
+      try { results[i] = await worker(list[i], i); }
+      catch (_) { results[i] = undefined; }   // a failed item is still a done item
+      done++;
+      if (onProgress) onProgress(done, total);
+    }
+  }
+
+  const runners = [];
+  for (let k = 0; k < limit; k++) runners.push(runner());
+  await Promise.all(runners);
+  return { results, done, total, stopped, complete: done === total };
+}
+
 const DependencyMap = (() => {
   let dependencyMap = {}; // subflowApiName -> [{ id, masterLabel, versionNumber, status, processType }]
   let flowsByApiName = {}; // apiName -> [flow records]
@@ -574,6 +649,14 @@ const DependencyMap = (() => {
   let metadataFetched = false;
   let fetchInProgress = false;
   let _runToken = 0;   // bumped on every reset() — invalidates in-flight scans
+  // P1 — scan lifecycle. _scannedIds lets a cancelled scan RESUME instead of
+  // re-paying for the versions it already fetched; _scanMsPerCall feeds the
+  // next cost estimate the real measured latency of this org.
+  let _scannedIds = new Set();  // flow version Ids whose metadata GET has settled
+  let _scanAbort = false;       // user pressed Stop — distinct from a reset()
+  let _scanDone = 0;            // versions settled so far…
+  let _scanTotal = 0;           // …out of this many
+  let _scanMsPerCall = 0;       // measured on the last COMPLETED scan (0 = unknown)
   // N4c — cross-org diff state. Org list is cached per popup session; the last
   // diff result is kept so the N4e export can include it without re-running.
   let _xoOrgs = null;      // [{ orgUrl, sid, label, online, stored }]
@@ -588,6 +671,11 @@ const DependencyMap = (() => {
   const DEP_EXPORT_CHAINS = 50;   // max chains detailed in the exported report
   const DEP_XO_FLOWS      = 200;  // max flows compared in one cross-org diff
   const DEP_XO_OBJECTS    = 60;   // max objects described in the comparison org
+  // P1 — above this many flow VERSIONS the popup stops scanning on open and
+  // asks first. 150 versions ≈ 7 s at the pool width below; 1600 ≈ 80 s.
+  const DEP_SCAN_AUTO_MAX    = 150;
+  const DEP_SCAN_CONCURRENCY = 6;   // metadata GETs in flight — enough to be fast,
+                                    // low enough not to stampede the org's API limit
 
   function reset() {
     _runToken++;       // any in-flight buildDependencyMap is now superseded
@@ -599,6 +687,11 @@ const DependencyMap = (() => {
     metaTextByFlowId = {};
     metadataFetched = false;
     fetchInProgress = false;
+    _scannedIds = new Set();
+    _scanAbort = false;
+    _scanDone = 0;
+    _scanTotal = 0;
+    _scanMsPerCall = 0;   // a per-call latency measured in the OLD org means nothing here
     _xoResult = null;   // a diff against the OLD org must never survive a switch
     _xoOrgs = null;
     _xoRunning = false;
@@ -615,7 +708,12 @@ const DependencyMap = (() => {
     // never fires metadata GETs with the wrong org's flow IDs.
     const myToken = _runToken;
 
-    dependencyMap = {};
+    _scanAbort = false;
+    // A cancelled scan left partial results and a record of what it covered —
+    // resume rather than re-pay for those versions. Only a fresh run (or a
+    // reset()) starts the map from empty.
+    const resuming = _scannedIds.size > 0;
+    if (!resuming) dependencyMap = {};
     flowsByApiName = {};
     // Remember the org context this map belongs to — the N4c cross-org diff
     // needs to describe objects in THIS org too (see runCrossOrgDiff).
@@ -629,86 +727,141 @@ const DependencyMap = (() => {
     }
 
     const total = flows.length;
-    let done = 0;
+    const todo = flows.filter(f => !_scannedIds.has(f.Id));
+    const already = total - todo.length;
+    _scanTotal = total;
+    _scanDone = already;
 
-    // No caller-supplied progress UI (popup.js passes null below the lazy
-    // threshold) — fall back to the shared compact loading cat in the
-    // Dependencies tab container so the scan is never completely invisible.
-    // Any later render of that tab repaints the container, so this cleans
-    // itself up.
+    // No caller-supplied progress UI — fall back to the shared compact loading
+    // cat in the Dependencies tab container so the scan is never completely
+    // invisible. Any later render of that tab repaints the container, so this
+    // cleans itself up.
     let fallbackMsgEl = null;
     if (!progressCallback) {
       const depContainer = document.getElementById('depTreeContainer');
       if (depContainer) {
-        depContainer.innerHTML = sftkCatSm(`Scanning flow metadata… 0 / ${total}`);
+        depContainer.innerHTML = sftkCatSm(`Scanning flow metadata… ${already} / ${total}`);
         fallbackMsgEl = depContainer.querySelector('.lp-robot-msg');
       }
     }
 
-    // Fetch metadata in batches of 10
-    const BATCH = 10;
-    for (let i = 0; i < flows.length; i += BATCH) {
-      // Superseded by a newer reset()/scan — stop firing GETs and bail out.
-      // Leave fetchInProgress alone; the newer scan owns the module state.
-      if (myToken !== _runToken) return dependencyMap;
-      const batch = flows.slice(i, i + BATCH);
-      await Promise.all(batch.map(async (flow) => {
-        try {
-          const result = await chrome.runtime.sendMessage({
-            type: 'SF_GET_METADATA',
-            orgUrl,
-            sid,
-            id: flow.Id,
-            // A metadata GET can legitimately 404 for a deleted / obsolete flow
-            // version — buildDependencyMap skips those silently, so don't flag
-            // them as hard errors in the debug log.
-            _suppressError: true
-          });
-          if (result && !result.error && result.Metadata) {
-            const meta = result.Metadata;
-            const triggerType = meta.start?.triggerType || meta.triggerType || null;
-            const triggerObj  = meta.start?.object || null;
-            if (triggerType) triggerTypeMap[flow.Id]   = triggerType;
-            if (triggerObj)  triggerObjectMap[flow.Id] = triggerObj;
-            try {
-              refsByFlowId[flow.Id] = sftkFlowRefs(meta);
-              metaTextByFlowId[flow.Id] = JSON.stringify(meta);
-            } catch (_) { /* refs are additive — never fail the map build */ }
+    // Stop on either a user cancel or a newer reset()/scan superseding this one.
+    const shouldStop = () => _scanAbort || myToken !== _runToken;
+    const startedAt = Date.now();
 
-            const subflows = meta.subflows || [];
-            for (const sf of subflows) {
-              const calledApiName = sf.flowName;
-              if (!calledApiName) continue; // skip null/undefined/empty flowName refs
-              if (!dependencyMap[calledApiName]) dependencyMap[calledApiName] = [];
-              dependencyMap[calledApiName].push({
-                id: flow.Id,
-                masterLabel: flow.MasterLabel,
-                apiName: flow.ApiName,
-                versionNumber: flow.VersionNumber,
-                status: flow.Status,
-                processType: flow.ProcessType
-              });
-            }
+    const run = await depRunPool(todo, async (flow) => {
+      try {
+        const result = await chrome.runtime.sendMessage({
+          type: 'SF_GET_METADATA',
+          orgUrl,
+          sid,
+          id: flow.Id,
+          // A metadata GET can legitimately 404 for a deleted / obsolete flow
+          // version — buildDependencyMap skips those silently, so don't flag
+          // them as hard errors in the debug log.
+          _suppressError: true
+        });
+        if (result && !result.error && result.Metadata) {
+          const meta = result.Metadata;
+          const triggerType = meta.start?.triggerType || meta.triggerType || null;
+          const triggerObj  = meta.start?.object || null;
+          if (triggerType) triggerTypeMap[flow.Id]   = triggerType;
+          if (triggerObj)  triggerObjectMap[flow.Id] = triggerObj;
+          try {
+            refsByFlowId[flow.Id] = sftkFlowRefs(meta);
+            metaTextByFlowId[flow.Id] = JSON.stringify(meta);
+          } catch (_) { /* refs are additive — never fail the map build */ }
+
+          const subflows = meta.subflows || [];
+          for (const sf of subflows) {
+            const calledApiName = sf.flowName;
+            if (!calledApiName) continue; // skip null/undefined/empty flowName refs
+            if (!dependencyMap[calledApiName]) dependencyMap[calledApiName] = [];
+            dependencyMap[calledApiName].push({
+              id: flow.Id,
+              masterLabel: flow.MasterLabel,
+              apiName: flow.ApiName,
+              versionNumber: flow.VersionNumber,
+              status: flow.Status,
+              processType: flow.ProcessType
+            });
           }
-        } catch (e) {
-          // Silently skip metadata fetch errors
         }
-        done++;
-        if (progressCallback) progressCallback(done, total);
-        else if (fallbackMsgEl) fallbackMsgEl.textContent = `Scanning flow metadata… ${done} / ${total}`;
-      }));
-    }
+      } catch (e) {
+        // Silently skip metadata fetch errors
+      }
+      // Marked covered even on error/404: retrying it on resume would cost the
+      // same call and fail the same way.
+      _scannedIds.add(flow.Id);
+    }, {
+      concurrency: DEP_SCAN_CONCURRENCY,
+      shouldStop,
+      onProgress: (n) => {
+        _scanDone = already + n;
+        if (progressCallback) progressCallback(_scanDone, total);
+        else if (fallbackMsgEl) fallbackMsgEl.textContent = `Scanning flow metadata… ${_scanDone} / ${total}`;
+      }
+    });
 
-    // Only commit completion state if this scan is still the current one.
-    if (myToken === _runToken) {
+    // Superseded by a newer reset()/scan — that run owns the module state now,
+    // so don't touch fetchInProgress or the completion flag.
+    if (myToken !== _runToken) return dependencyMap;
+
+    fetchInProgress = false;
+    if (run.complete) {
       metadataFetched = true;
-      fetchInProgress = false;
+      _scanAbort = false;
+      // Feed the next estimate this org's real latency instead of the default.
+      if (run.done > 0) {
+        _scanMsPerCall = Math.round(((Date.now() - startedAt) * DEP_SCAN_CONCURRENCY) / run.done);
+      }
     }
     return dependencyMap;
   }
 
+  // Stop an in-flight scan WITHOUT discarding what it already learned. The
+  // partial map stays readable, but metadataFetched stays false so every
+  // consumer keeps printing its "scan has NOT finished" caveat, and the next
+  // buildDependencyMap resumes from _scannedIds instead of restarting.
+  function cancelScan() {
+    if (!fetchInProgress) return false;
+    _scanAbort = true;
+    return true;
+  }
+
+  function getScanStatus() {
+    return {
+      running: fetchInProgress,
+      complete: metadataFetched,
+      aborted: _scanAbort && !metadataFetched,
+      done: _scanDone,
+      total: _scanTotal,
+      msPerCall: _scanMsPerCall
+    };
+  }
+
+  // Single source of truth for scan sizing — popup.js asks through here so the
+  // quoted cost and the pool that pays it can never disagree.
+  function scanPlan(versionCount) {
+    return depScanPlan(versionCount, {
+      autoMax: DEP_SCAN_AUTO_MAX,
+      concurrency: DEP_SCAN_CONCURRENCY,
+      msPerCall: _scanMsPerCall || undefined
+    });
+  }
+
   function getDependencyMap() { return dependencyMap; }
   function isMetadataFetched() { return metadataFetched; }
+
+  // One accurate phrase behind every "why is this incomplete" caveat. Since P1
+  // the scan can be running, stopped part-way, or never started at all (large
+  // org, no auto-scan) — printing "still running" for the last two is a lie.
+  function scanCaveat() {
+    if (metadataFetched) return '';
+    if (fetchInProgress)  return `the metadata scan is still running (${_scanDone} / ${_scanTotal})`;
+    if (_scannedIds.size) return `the metadata scan was stopped at ${_scanDone} of ${_scanTotal} flow versions`;
+    return 'the dependency scan has not been run for this org';
+  }
   function getTriggerObjectMap() { return triggerObjectMap; }
 
   function getParentsForApiName(apiName) {
@@ -762,7 +915,7 @@ const DependencyMap = (() => {
       const byId = {};
       for (const f of allFlows) byId[f.Id] = f;
       refResults.innerHTML = hits.length
-        ? `<div class="dep-ref-hdr">${hits.length} flow(s) mention “${escHtml(term)}” <span class="dep-ref-note">(literal, case-insensitive match in the flow's metadata)</span></div>`
+        ? `<div class="dep-ref-hdr">${hits.length} flow(s) mention “${escHtml(term)}” <span class="dep-ref-note">(literal, case-insensitive match in the flow's metadata)</span>${isMetadataFetched() ? '' : `<b style="color:var(--warning,#DD7A01)"> — ${scanCaveat()}, so there may be more.</b>`}</div>`
           + hits.map(h => {
             const f = byId[h.flowId];
             if (!f) return '';
@@ -773,7 +926,7 @@ const DependencyMap = (() => {
               <span class="dep-ref-count">×${h.count}</span>
             </div>`;
           }).join('')
-        : `<div class="dep-ref-hdr">No flow mentions “${escHtml(term)}”${isMetadataFetched() ? '' : ' — metadata scan still running, try again in a moment'}.</div>`;
+        : `<div class="dep-ref-hdr">No flow mentions “${escHtml(term)}”${isMetadataFetched() ? '' : ` — but ${scanCaveat()}, so this search covered only part of the org`}.</div>`;
       refResults.querySelectorAll('.dep-ref-hit').forEach(row =>
         row.addEventListener('click', () =>
           chrome.tabs.create({ url: `${orgUrl}/builder_platform_interaction/flowBuilder.app?flowId=${row.dataset.id}` })));
@@ -1254,7 +1407,7 @@ const DependencyMap = (() => {
         Transitive, cycle-safe, capped at ${DEP_CHAIN_DEPTH} levels.
         Built from the <b>subflow calls found in each flow's scanned metadata</b> — it does not
         know about flows started from buttons, Apex, REST or scheduled paths.
-        ${isMetadataFetched() ? '' : '<b style="color:var(--warning,#DD7A01)"> The metadata scan has NOT finished, so this chain is incomplete.</b>'}
+        ${isMetadataFetched() ? '' : `<b style="color:var(--warning,#DD7A01)"> Incomplete — ${scanCaveat()}.</b>`}
       </div>
       <div class="dep-blast-sec">
         <div class="dep-blast-sec-hdr">⬇ Calls (downstream) — ${down.stats.nodes - 1} node(s), ${down.stats.cycles} cycle(s)</div>
@@ -1293,7 +1446,7 @@ const DependencyMap = (() => {
     mount.innerHTML = `
       <div class="dep-blast-verdict" style="border-top:1px solid var(--border,#DDDBDA)">
         <b>🧟 Subflow health</b> — ${res.counts.subflowTargets} flow(s) are referenced as a subflow somewhere.
-        ${isMetadataFetched() ? '' : '<b style="color:var(--warning,#DD7A01)">The metadata scan has NOT finished — these results are incomplete.</b>'}
+        ${isMetadataFetched() ? '' : `<b style="color:var(--warning,#DD7A01)">These results are incomplete — ${scanCaveat()}.</b>`}
       </div>
       ${sec('💀 Dead subflows — no ACTIVE caller', res.counts.dead,
     res.dead.length
@@ -1390,7 +1543,7 @@ const DependencyMap = (() => {
         notes.push(`Capped at the first ${DEP_XO_FLOWS} flows (of ${scope.length}) — the rest were NOT compared.`);
         scope = scope.slice(0, DEP_XO_FLOWS);
       }
-      if (!isMetadataFetched()) notes.push('The metadata scan had not finished, so some flows had no references to compare.');
+      if (!isMetadataFetched()) notes.push(`Some flows had no references to compare — ${scanCaveat()}.`);
 
       // 2 ─ the comparison org's flows.
       out.innerHTML = depSpin(`Reading flows in ${target.label}…`);
@@ -1554,7 +1707,7 @@ const DependencyMap = (() => {
   // unit-tested) turn it into the two files.
   function buildReportObject(orgUrl) {
     const notes = [];
-    if (!isMetadataFetched()) notes.push('The metadata scan had NOT finished — flows whose metadata never loaded contribute nothing to this report.');
+    if (!isMetadataFetched()) notes.push(`Flows whose metadata never loaded contribute nothing to this report — ${scanCaveat()}.`);
     notes.push('Only ONE version per flow (the Active one, else the highest) was analysed.');
     notes.push('Subflow relationships come from flow metadata only — flows started by buttons, Apex, REST, platform events or scheduled paths are invisible here.');
     notes.push('Custom labels, permissions, record types and picklist values are not analysed.');
@@ -1693,7 +1846,7 @@ const DependencyMap = (() => {
         ${section('💬 Custom labels', refs.labels)}
         ${!refs.objects.length && !refs.fields.length && !refs.subflows.length && !refs.apex.length && !refs.labels.length
           ? '<div class="dep-blast-sec">No object/field/subflow/apex/label references found in this version\'s metadata.</div>' : ''}`
-        : `<div class="dep-blast-sec">Reference details unavailable for this flow (its metadata didn't load${isMetadataFetched() ? '' : ' yet — scan still running'}).</div>`}`;
+        : `<div class="dep-blast-sec">Reference details unavailable for this flow (its metadata didn't load${isMetadataFetched() ? '' : ` — ${scanCaveat()}`}).</div>`}`;
     document.body.appendChild(panel);
     panel.querySelector('.dep-blast-close').addEventListener('click', () => panel.remove());
     panel.querySelector('.dep-blast-chain').addEventListener('click', () => {
@@ -1714,6 +1867,11 @@ const DependencyMap = (() => {
     renderDependencyTreeTab,
     getRefsFor,
     searchReferences,
+    // P1 — scan sizing / lifecycle. popup.js goes through these instead of
+    // touching depScanPlan directly so the pool width stays one constant.
+    scanPlan,
+    cancelScan,
+    getScanStatus,
     // N4c / N4d / N4e
     chainFor,                                        // apiName -> { down, up } annotated trees
     getDeadSubflows: () => depDeadSubflows(dependencyMap, flowsByApiName),
