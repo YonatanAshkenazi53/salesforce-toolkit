@@ -1,6 +1,163 @@
 // ============================================================
 // Field Cleaner — scan field dependencies & safely clean them
 // ============================================================
+
+// ── Pure picker helpers (top-level on purpose) ───────────────
+// These live at column 0, outside the IIFE, so
+// test/field-cleaner-objects.test.mjs can materialize them standalone via
+// test/extract.mjs. They must therefore stay PURE: no free variables, no DOM,
+// no module state. Thresholds are inlined here for the same reason.
+
+// SOQL string literal. Same contract as studio-core's soqlStrLit(), carried
+// locally because that lib is only loaded on the Studio page, not the popup.
+function fcSoqlLit(v) {
+  return "'" + String(v == null ? '' : v).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
+}
+
+// SOQL LIKE literal wrapped in %…%. Backslash MUST be escaped first, then the
+// quote, then the LIKE wildcards % and _ — so a user typing "npsp__" searches
+// for two literal underscores instead of matching every object in the org.
+function fcSoqlLike(v) {
+  const body = String(v == null ? '' : v)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/%/g, '\\%')
+    .replace(/_/g, '\\_');
+  return "'%" + body + "%'";
+}
+
+// Strip a managed-package namespace prefix: FinServ__FinancialAccount__c →
+// FinancialAccount__c. A namespace only exists with three or more
+// __-separated segments; Account__c is a plain custom object, not namespaced.
+function fcLocalApiName(api) {
+  const s = String(api == null ? '' : api);
+  const parts = s.split('__');
+  return parts.length >= 3 ? parts.slice(1).join('__') : s;
+}
+
+// Match rank for one picker row: 0 exact · 1 prefix · 2 prefix after the
+// namespace · 3 contains · null no match. Tier 2 exists because an admin types
+// "FinancialAccount", not the "FinServ__" prefix the package ships it under —
+// without it every package object sinks below the .slice(0, 60) cut-off.
+function fcScoreEntry(entry, term) {
+  const t = String(term == null ? '' : term).trim().toLowerCase();
+  const api   = String((entry && entry.api)   || '').toLowerCase();
+  const label = String((entry && entry.label) || '').toLowerCase();
+  if (!api && !label) return null;
+  if (!t) return 0;
+  if (api === t || label === t) return 0;
+  if (api.startsWith(t) || label.startsWith(t)) return 1;
+  const local = fcLocalApiName(api);
+  if (local !== api && local.startsWith(t)) return 2;
+  if (api.includes(t) || label.includes(t)) return 3;
+  return null;
+}
+
+function fcCompareEntries(a, b) {
+  const al = String((a && (a.label || a.api)) || '');
+  const bl = String((b && (b.label || b.api)) || '');
+  const c  = al.localeCompare(bl);
+  return c !== 0
+    ? c
+    : String((a && a.api) || '').localeCompare(String((b && b.api) || ''));
+}
+
+// Filter + rank a picker pool. An empty filter returns the whole pool sorted
+// by label — the server's ORDER BY can't be trusted once server-search hits
+// are merged in out of band.
+function fcRankEntries(pool, filter) {
+  const list = Array.isArray(pool) ? pool : [];
+  const t    = String(filter == null ? '' : filter).trim();
+  if (!t) return list.slice().sort(fcCompareEntries);
+  const scored = [];
+  for (const e of list) {
+    const s = fcScoreEntry(e, t);
+    if (s !== null) scored.push({ e, s });
+  }
+  scored.sort((x, y) => (x.s - y.s) || fcCompareEntries(x.e, y.e));
+  return scored.map(x => x.e);
+}
+
+// Merge server-search hits into the loaded pool without duplicating rows.
+// Keyed on api name case-insensitively — Salesforce api names are
+// case-insensitive and two queries can spell the same one differently.
+// Returns a NEW array; the pool is never mutated.
+function fcMergeEntries(pool, incoming) {
+  const list = Array.isArray(pool) ? pool.slice() : [];
+  const seen = new Set(list.map(e => String((e && e.api) || '').toLowerCase()));
+  let added = 0;
+  for (const e of (Array.isArray(incoming) ? incoming : [])) {
+    const key = String((e && e.api) || '').toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    list.push(e);
+    added++;
+  }
+  return { list, added };
+}
+
+// A Tooling list query that lands exactly on a page or limit boundary cannot
+// be proven complete: EntityDefinition caps server-side and stops paginating
+// without saying so. 2000 is the Tooling page size. A false "may be capped" is
+// the acceptable error here; a false "that's everything" is the bug.
+function fcLooksCapped(count, requestedLimit) {
+  const n = Number(count);
+  if (!Number.isFinite(n) || n <= 0) return false;
+  const lim = Number(requestedLimit);
+  if (Number.isFinite(lim) && lim > 0 && n >= lim) return true;
+  return n % 2000 === 0;
+}
+
+// Does this typed term warrant a round-trip to the org? Only past 2 characters
+// (shorter terms match half the org), and only when the local list is thin
+// enough that an object could be missing rather than merely unmatched.
+// `completedTerms` holds terms whose server search returned COMPLETE — any
+// longer term containing one of them is already fully represented locally,
+// because every string containing "Fina" also contains "Fin".
+function fcShouldServerSearch(term, localMatchCount, completedTerms) {
+  const t = String(term == null ? '' : term).trim().toLowerCase();
+  if (t.length < 2) return false;
+  for (const d of (completedTerms ? Array.from(completedTerms) : [])) {
+    const s = String(d == null ? '' : d).toLowerCase();
+    if (s && t.includes(s)) return false;
+  }
+  return (Number(localMatchCount) || 0) < 5;
+}
+
+// The dropdown's honest footer. Absence must never look like non-existence:
+// a truncated render says how many it hid, and a capped fetch says the list
+// itself is incomplete. Returns '' when there is genuinely nothing to declare.
+function fcPickerSummary(state) {
+  const s       = state || {};
+  const shown   = Number(s.shown)   || 0;
+  const matched = Number(s.matched) || 0;
+  const total   = Number(s.total)   || 0;
+  const noun    = String(s.noun || 'item');
+  const parts   = [];
+  if (matched > shown) {
+    parts.push(`showing ${shown} of ${matched} matches — keep typing to narrow`);
+  }
+  if (s.capped) {
+    parts.push(`${total} ${noun}${total === 1 ? '' : 's'} loaded — Salesforce ` +
+               `stopped at exactly ${total}, so this list is incomplete` +
+               (s.capHint ? `. ${s.capHint}` : ''));
+  }
+  if (s.searching) parts.push('searching the org…');
+  return parts.join(' · ');
+}
+
+// Targeted EntityDefinition lookup for one typed term — the fallback for
+// objects the capped list never contained. LIMIT is clamped to one Tooling
+// page; anything past that is reported as capped rather than trusted.
+function fcObjectSearchSoql(term, limit) {
+  const lit = fcSoqlLike(term);
+  const n   = Math.max(1, Math.min(2000, Number(limit) || 200));
+  return 'SELECT QualifiedApiName, Label, DurableId FROM EntityDefinition ' +
+         'WHERE IsDeprecatedAndHidden = false ' +
+         `AND (QualifiedApiName LIKE ${lit} OR Label LIKE ${lit}) ` +
+         `ORDER BY QualifiedApiName LIMIT ${n}`;
+}
+
 const FieldCleaner = (() => {
   'use strict';
 
@@ -15,6 +172,42 @@ const FieldCleaner = (() => {
   let _allFields  = [];
   let _objectsLoaded = false;
   let _groups    = {};     // type → [dep records] — kept for fixAll
+
+  // Picker completeness state. The bug this guards: EntityDefinition caps
+  // server-side, so a big managed-package org silently loses objects off the
+  // end of the list — and renderObjDrop filters CLIENT-SIDE, so search can
+  // never reach one that never loaded. Everything below exists to make that
+  // visible and recoverable instead of invisible.
+  let _objCapped   = false;   // the object load itself landed on a cap boundary
+  let _objListCount = 0;      // rows the LIST query returned — the number the
+                              // cap message quotes. Distinct from
+                              // _allObjects.length, which grows as server-search
+                              // hits are merged in and would make the "stopped
+                              // at exactly N" claim false.
+  let _objTopping  = false;   // phase-2 pagination still running
+  let _objSearchInFlight = null;  // lowercased term currently being asked of the org
+  let _objSearchErr = null;   // last server-search failure, disclosed in the drop
+  let _objSearchSeq = 0;      // cancel token — stale responses are dropped
+  let _objSearchTimer  = null;
+  const _objSearchDone = new Set();  // terms whose COMPLETE server search landed
+  const _objSearchTried = new Set(); // terms already asked (incl. capped/failed)
+  let _fieldsCapped = false;  // FieldDefinition load landed on a cap boundary
+  let _fieldsTotal  = 0;      // raw FieldDefinition rows, before the __c filter
+
+  // Tooling page size. EntityDefinition / FieldDefinition come back one page at
+  // a time and a result landing exactly on this boundary can't be proven
+  // complete — see fcLooksCapped.
+  const FC_TOOLING_PAGE = 2000;
+  const FC_OBJ_LIMIT    = 12000;  // paginated ceiling for the whole object list
+  const FC_FIELD_LIMIT  = 4000;   // one object cannot legally hold this many
+  const FC_SEARCH_LIMIT = 200;    // rows one server-side name search returns
+  const FC_SEARCH_DEBOUNCE_MS = 280;
+
+  // Dropdown footer / disclosure row. Inline so the module needs nothing new
+  // from styles.css.
+  const _DD_NOTE_CSS =
+    'padding:6px 12px;font-size:10.5px;line-height:1.4;color:var(--subtext);' +
+    'border-top:1px solid var(--border-light);';
 
   // Tooling API sobject names that the XML Inspector can fetch.
   // Types with `Body` at the root (Apex) are handled separately from Metadata types.
@@ -136,6 +329,12 @@ const FieldCleaner = (() => {
 
   // ── Shell ──────────────────────────────────────────────────
   function renderShell() {
+    // Invalidate any in-flight object search — the drop it would render into
+    // is about to be replaced.
+    _objSearchSeq++;
+    _objSearchInFlight = null;
+    if (_objSearchTimer) { clearTimeout(_objSearchTimer); _objSearchTimer = null; }
+
     _container.innerHTML = `
       <div class="fc-wrap">
 
@@ -196,24 +395,26 @@ const FieldCleaner = (() => {
         _objectsLoaded = true;
         drop.innerHTML = `<div class="fc-dd-loading">${sftkCatSm('Loading objects…')}</div>`;
         drop.style.display = '';
+        // Phase 1 — ONE page, painted immediately. An org with fewer objects
+        // than a page finishes here and is no slower than before the fix.
         const res = await bg({
           type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
-          query: 'SELECT QualifiedApiName, Label, DurableId FROM EntityDefinition ' +
-                 'WHERE IsCustomSetting = false AND IsDeprecatedAndHidden = false ' +
-                 'ORDER BY Label LIMIT 2000'
+          query: objectListSoql(FC_TOOLING_PAGE)
         });
         if (res.error) {
+          _objectsLoaded = false;   // let a re-focus retry instead of dead-ending
           const fe = sftkFriendlyError(res.error);
           drop.innerHTML = `<div class="fc-dd-empty" title="${esc(fe.raw)}">${esc(fe.message + (fe.hint ? ' — ' + fe.hint : ''))}</div>`;
           drop.style.display = '';
           return;
         }
-        _allObjects = (res.records || []).map(r => ({
-          api: r.QualifiedApiName,
-          label: r.Label,
-          durableId: r.DurableId || r.QualifiedApiName
-        }));
+        _allObjects   = mapEntityRows(res.records);
+        _objListCount = (res.records || []).length;
+        // Exactly one full page means there is very likely more behind it.
+        _objCapped    = fcLooksCapped(_objListCount, FC_TOOLING_PAGE);
+        _objTopping   = _objCapped;
         renderObjDrop(input.value);
+        if (_objTopping) topUpObjects();
       } else {
         renderObjDrop(input.value);
         drop.style.display = '';
@@ -226,58 +427,156 @@ const FieldCleaner = (() => {
     });
   }
 
+  // IsCustomSetting is deliberately NOT filtered out: custom settings are real
+  // sObjects with custom fields an admin may well want to clean, and hiding
+  // them is the same "silently absent" failure this whole path exists to fix.
+  // ORDER BY QualifiedApiName, not Label: Label is not unique, and a
+  // non-unique sort key lets paging skip or repeat rows across pages. The
+  // dropdown sorts by label client-side anyway (fcRankEntries).
+  function objectListSoql(limit) {
+    return 'SELECT QualifiedApiName, Label, DurableId FROM EntityDefinition ' +
+           'WHERE IsDeprecatedAndHidden = false ' +
+           `ORDER BY QualifiedApiName LIMIT ${limit}`;
+  }
+
+  function mapEntityRows(records) {
+    return (records || [])
+      .filter(r => r && r.QualifiedApiName)
+      .map(r => ({
+        api:       r.QualifiedApiName,
+        label:     r.Label || r.QualifiedApiName,
+        durableId: r.DurableId || r.QualifiedApiName
+      }));
+  }
+
+  // Phase 2 — only runs when phase 1 came back full. SF_QUERY_ALL follows
+  // nextRecordsUrl; if EntityDefinition refuses to paginate it hands back the
+  // same single page, the count stays on the boundary, and _objCapped stays
+  // true — which is exactly the honest answer, and why the server-side search
+  // fallback below is not optional.
+  async function topUpObjects() {
+    const res = await bg({
+      type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
+      query: objectListSoql(FC_OBJ_LIMIT), _suppressError: true
+    });
+    _objTopping = false;
+    if (!res.error) {
+      _allObjects   = fcMergeEntries(_allObjects, mapEntityRows(res.records)).list;
+      _objListCount = (res.records || []).length;
+      _objCapped    = fcLooksCapped(_objListCount, FC_OBJ_LIMIT);
+    }
+    const drop = eid('fcObjDrop');
+    if (drop && drop.style.display !== 'none') renderObjDrop(eid('fcObjInput')?.value);
+  }
+
   function renderObjDrop(filter) {
     const drop = eid('fcObjDrop');
     if (!drop) return;
-    const fl = (filter || '').toLowerCase();
-    let matches;
-    if (!fl) {
-      matches = _allObjects;
-    } else {
-      // Score so exact/prefix hits float to the top before contains-matches.
-      // Without this, "Contact" is buried past position 60 by all the
-      // "Account Contact Role …" objects that come first alphabetically.
-      const scored = _allObjects
-        .map(o => {
-          const al = o.api.toLowerCase();
-          const ll = o.label.toLowerCase();
-          if (al === fl || ll === fl)                     return { o, s: 0 };
-          if (al.startsWith(fl) || ll.startsWith(fl))    return { o, s: 1 };
-          if (al.includes(fl)   || ll.includes(fl))      return { o, s: 2 };
-          return null;
-        })
-        .filter(Boolean);
-      scored.sort((a, b) => a.s - b.s);
-      matches = scored.map(x => x.o);
+    // Ranked so exact/prefix hits float above contains-matches — otherwise
+    // "Contact" is buried past position 60 by every "Account Contact Role …".
+    const matches   = fcRankEntries(_allObjects, filter);
+    const rows      = matches.slice(0, 60);
+    const searching = !!_objSearchInFlight || _objTopping;
+
+    let html = rows.map(o =>
+      `<div class="fc-dd-item"
+            data-api="${esc(o.api)}"
+            data-label="${esc(o.label)}"
+            data-durable="${esc(o.durableId)}">
+         <span class="fc-dd-main">${esc(o.label)}</span>
+         <span class="fc-dd-sub">${esc(o.api)}</span>
+       </div>`
+    ).join('');
+
+    if (!rows.length) {
+      html = `<div class="fc-dd-empty">${searching
+        ? esc('Searching the org…')
+        : esc('No objects found' + (_objCapped
+            ? ' — and the loaded list is incomplete, so this name may still exist'
+            : ''))}</div>`;
     }
 
-    if (!matches.length) {
-      drop.innerHTML = '<div class="fc-dd-empty">No objects found</div>';
-    } else {
-      drop.innerHTML = matches.slice(0, 60).map(o =>
-        `<div class="fc-dd-item"
-              data-api="${esc(o.api)}"
-              data-label="${esc(o.label)}"
-              data-durable="${esc(o.durableId)}">
-           <span class="fc-dd-main">${esc(o.label)}</span>
-           <span class="fc-dd-sub">${esc(o.api)}</span>
-         </div>`
-      ).join('');
-      drop.querySelectorAll('.fc-dd-item').forEach(item => {
-        item.addEventListener('mousedown', e => {
-          e.preventDefault();
-          eid('fcObjInput').value = `${item.dataset.label} (${item.dataset.api})`;
-          drop.style.display = 'none';
-          selectObject(item.dataset.api, item.dataset.label, item.dataset.durable);
-        });
-      });
+    const note = fcPickerSummary({
+      shown: rows.length, matched: matches.length, total: _objListCount,
+      capped: _objCapped, searching, noun: 'object',
+      capHint: 'Type 2+ characters — anything missing is searched directly in the org.'
+    });
+    if (note) html += `<div style="${_DD_NOTE_CSS}">${esc(note)}</div>`;
+    if (_objSearchErr) {
+      html += `<div style="${_DD_NOTE_CSS}">⚠ ${esc('Org search unavailable: ' + _objSearchErr +
+        ` — only the ${_allObjects.length} objects loaded above were checked.`)}</div>`;
     }
+
+    drop.innerHTML = html;
+    drop.querySelectorAll('.fc-dd-item').forEach(item => {
+      item.addEventListener('mousedown', e => {
+        e.preventDefault();
+        eid('fcObjInput').value = `${item.dataset.label} (${item.dataset.api})`;
+        drop.style.display = 'none';
+        selectObject(item.dataset.api, item.dataset.label, item.dataset.durable);
+      });
+    });
     drop.style.display = '';
+
+    maybeServerSearchObjects(filter, matches.length);
+  }
+
+  // ── Server-side object search (debounced, cancel-safe) ─────
+  // The local list can be missing an object ENTIRELY, so a client-side filter
+  // can never find it. Past 2 characters with a thin local result, ask the org
+  // by name and merge the answer into _allObjects so selection still works.
+  function maybeServerSearchObjects(filter, localMatchCount) {
+    if (_objSearchTimer) { clearTimeout(_objSearchTimer); _objSearchTimer = null; }
+    if (_objTopping) return;              // pagination may still close the gap
+    const term = String(filter || '').trim();
+    const key  = term.toLowerCase();
+    if (!key || key === _objSearchInFlight || _objSearchTried.has(key)) return;
+    if (!fcShouldServerSearch(term, localMatchCount, _objSearchDone)) return;
+    _objSearchTimer = setTimeout(() => {
+      _objSearchTimer = null;
+      runObjectSearch(term);
+    }, FC_SEARCH_DEBOUNCE_MS);
+  }
+
+  async function runObjectSearch(term) {
+    const seq = ++_objSearchSeq;          // cancel token, taken before the await
+    const key = term.toLowerCase();
+    _objSearchInFlight = key;
+    _objSearchErr      = null;
+    const drop = eid('fcObjDrop');
+    if (drop && drop.style.display !== 'none') renderObjDrop(eid('fcObjInput')?.value);
+
+    // No _suppressError: a failure here is surfaced in the dropdown, so the
+    // debug export should carry it as a real error row, not a quiet retry.
+    const res = await bg({
+      type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
+      query: fcObjectSearchSoql(term, FC_SEARCH_LIMIT)
+    });
+
+    // A newer search superseded this one (or the picker was rebuilt): drop the
+    // response. Rendering it would paint a list for a term the user replaced.
+    if (seq !== _objSearchSeq) return;
+    _objSearchInFlight = null;
+    _objSearchTried.add(key);
+    if (res.error) {
+      _objSearchErr = sftkFriendlyError(res.error).message;
+    } else {
+      const rows  = mapEntityRows(res.records);
+      _allObjects = fcMergeEntries(_allObjects, rows).list;
+      // Only a search that did NOT cap out proves "everything containing this
+      // term is now local" — the claim fcShouldServerSearch relies on.
+      if (!fcLooksCapped(rows.length, FC_SEARCH_LIMIT)) _objSearchDone.add(key);
+    }
+    const d = eid('fcObjDrop');
+    if (d && d.style.display !== 'none') renderObjDrop(eid('fcObjInput')?.value);
   }
 
   async function selectObject(api, label, durableId) {
     _selObj = { api, label, durableId: durableId || api };
     resetFieldAndBelow();
+    // Clear the previous object's completeness state up front — a failed load
+    // must not inherit the last object's "complete" claim.
+    _allFields = []; _fieldsTotal = 0; _fieldsCapped = false;
 
     const step  = eid('fcFieldStep');
     const input = eid('fcFieldInput');
@@ -289,10 +588,12 @@ const FieldCleaner = (() => {
     drop.innerHTML = `<div class="fc-dd-loading">${sftkCatSm('Loading fields…')}</div>`;
     drop.style.display = '';
 
+    // SF_QUERY_ALL: a wide object in a package-heavy org approaches the field
+    // cap, and the old single-page LIMIT 1000 dropped the tail silently.
     const res = await bg({
-      type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
+      type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
       query: `SELECT Id, QualifiedApiName, Label, DataType FROM FieldDefinition ` +
-             `WHERE EntityDefinitionId = '${api}' ORDER BY Label LIMIT 1000`
+             `WHERE EntityDefinitionId = ${fcSoqlLit(api)} ORDER BY Label LIMIT ${FC_FIELD_LIMIT}`
     });
 
     if (res.error) {
@@ -301,7 +602,16 @@ const FieldCleaner = (() => {
       return;
     }
 
+    // Measure the cap on the RAW row count — the __c filter below is ours, not
+    // Salesforce's, so filtering first would hide a real truncation. No object
+    // can legally hold FC_FIELD_LIMIT fields, so with pagination this note is
+    // a safety net that should never fire; if it does, it is telling the truth.
+    _fieldsTotal  = (res.records || []).length;
+    _fieldsCapped = fcLooksCapped(_fieldsTotal, FC_FIELD_LIMIT);
+
     _allFields = (res.records || [])
+      // Namespaced package fields (ns__Foo__c) still end in __c — this filter
+      // keeps them.
       .filter(r => r.QualifiedApiName && r.QualifiedApiName.endsWith('__c'))
       .map(r => ({
         durableId: r.Id,
@@ -339,40 +649,51 @@ const FieldCleaner = (() => {
   function renderFieldDrop(filter) {
     const drop = eid('fcFieldDrop');
     if (!drop) return;
-    const fl = (filter || '').toLowerCase();
-    const matches = fl
-      ? _allFields.filter(f =>
-          f.api.toLowerCase().includes(fl) || f.label.toLowerCase().includes(fl))
-      : _allFields;
+    const matches = fcRankEntries(_allFields, filter);
+    const rows    = matches.slice(0, 80);
 
-    if (!matches.length) {
-      drop.innerHTML = '<div class="fc-dd-empty">No custom fields found</div>';
-    } else {
-      drop.innerHTML = matches.slice(0, 80).map(f =>
-        `<div class="fc-dd-item"
-              data-durable="${esc(f.durableId)}"
-              data-api="${esc(f.api)}"
-              data-label="${esc(f.label)}"
-              data-type="${esc(f.type)}">
-           <span class="fc-dd-main">${esc(f.label)}</span>
-           <span class="fc-dd-sub">${esc(f.api)}</span>
-           <span class="fc-dd-type">${esc(f.type)}</span>
-         </div>`
-      ).join('');
-      drop.querySelectorAll('.fc-dd-item').forEach(item => {
-        item.addEventListener('mousedown', e => {
-          e.preventDefault();
-          eid('fcFieldInput').value = `${item.dataset.label} (${item.dataset.api})`;
-          drop.style.display = 'none';
-          selectField({
-            durableId: item.dataset.durable,
-            api:       item.dataset.api,
-            label:     item.dataset.label,
-            type:      item.dataset.type
-          });
+    let html = rows.map(f =>
+      `<div class="fc-dd-item"
+            data-durable="${esc(f.durableId)}"
+            data-api="${esc(f.api)}"
+            data-label="${esc(f.label)}"
+            data-type="${esc(f.type)}">
+         <span class="fc-dd-main">${esc(f.label)}</span>
+         <span class="fc-dd-sub">${esc(f.api)}</span>
+         <span class="fc-dd-type">${esc(f.type)}</span>
+       </div>`
+    ).join('');
+
+    if (!rows.length) {
+      html = `<div class="fc-dd-empty">${esc('No custom fields found' +
+        (_fieldsCapped ? ' — and the field list is incomplete, see below' : ''))}</div>`;
+    }
+
+    // Cap total is the RAW FieldDefinition row count: that is the number
+    // Salesforce actually stopped at, and the __c filter is ours, not its.
+    const note = fcPickerSummary({
+      shown: rows.length, matched: matches.length, total: _fieldsTotal,
+      capped: _fieldsCapped, noun: 'field',
+      capHint: 'Some custom fields on this object are not listed.'
+    });
+    if (note) html += `<div style="${_DD_NOTE_CSS}">${esc(note)}</div>`;
+
+    // Assign once, THEN wire — reassigning innerHTML afterwards would discard
+    // every listener attached above.
+    drop.innerHTML = html;
+    drop.querySelectorAll('.fc-dd-item').forEach(item => {
+      item.addEventListener('mousedown', e => {
+        e.preventDefault();
+        eid('fcFieldInput').value = `${item.dataset.label} (${item.dataset.api})`;
+        drop.style.display = 'none';
+        selectField({
+          durableId: item.dataset.durable,
+          api:       item.dataset.api,
+          label:     item.dataset.label,
+          type:      item.dataset.type
         });
       });
-    }
+    });
     drop.style.display = '';
   }
 

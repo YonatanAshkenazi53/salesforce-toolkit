@@ -290,6 +290,38 @@ function sftkPhantomStateCountry(field, srcRec, tgtRec, tgtField) {
 //   • matching is case-INSENSITIVE, because Salesforce accepts picklist
 //     writes case-insensitively and normalizes them
 //
+// ── R3 orphan-cap wording (PURE) ────────────────────────────────────────
+// The "possible orphan" probe reads ONE page of NULL-link target rows. That
+// page is a cap, and a capped bucket presented as a total is a lie: an
+// orphanCount of 2,000 in an org with 9,000 orphans reads as "there are
+// 2,000". These two builders are the only place that wording lives, so every
+// display site says the same true thing. `total` is the count Salesforce
+// reported for the query (measured); pass null when it wasn't reported —
+// neither builder ever invents one.
+// PURE — no free variables (materialized standalone by test/extract.mjs).
+function sftkOrphanLabel(shown, total, capped) {
+  const group = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const s = Number(shown) || 0;
+  if (!capped) return `${group(s)} possible orphan(s)`;
+  const t = Number(total);
+  return Number.isFinite(t) && t > s
+    ? `${group(s)} of ${group(t)} possible orphan(s) shown`
+    : `${group(s)} possible orphan(s) shown — more exist`;
+}
+
+// The banner above the buckets. '' when the list is complete: nothing to say.
+// PURE — no free variables (materialized standalone by test/extract.mjs).
+function sftkOrphanCapNote(shown, total, capped) {
+  if (!capped) return '';
+  const group = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const s = Number(shown) || 0;
+  const t = Number(total);
+  const head = Number.isFinite(t) && t > s
+    ? `⚠ Possible orphans: showing the first ${group(s)} of ${group(t)} — ${group(t - s)} more are NOT listed here.`
+    : `⚠ Possible orphans: showing the first ${group(s)} — this target has more that are NOT listed here.`;
+  return `${head} Treat the count as a floor, not a total: clear the listed ones (⇄ Relink or 🗑) and re-scan to reach the rest.`;
+}
+
 // PURE — no free variables (materialized standalone by test/extract.mjs).
 function sftkPicklistGaps(records, comparePlanOrFields, tgtDescribeFieldsMap, opts) {
   const o = opts || {};
@@ -713,16 +745,40 @@ async function runDiffScan(profile, node = null, scope = null) {
   // key match-up (missing/changed/identical are untouched) and get excluded
   // from bulk delete by default in the UI. Best-effort: any error here just
   // means no orphan rows (v1 behavior).
+  //
+  // The probe is deliberately ONE page: "children with no parent link" is
+  // unbounded in principle (every Contact with a blank AccountId qualifies),
+  // so paging it could pull six figures of rows into a scan the user did not
+  // ask to be slow. What changed is honesty about that page. It used to read
+  // `SF_QUERY_ALL … LIMIT 2000`, which is self-cancelling — the embedded
+  // LIMIT means one page and no nextRecordsUrl, so the pager never paged, and
+  // it also made totalSize echo 2000. Asking SF_QUERY for the un-LIMITed
+  // query returns the same single page PLUS the true totalSize, so the cap is
+  // now reported with a measured number. Same one round-trip as before; a
+  // target with fewer orphans than a page sees no change at all.
+  const ORPHAN_ROW_CAP = 2000;
   let _orphanRecs = [];
+  let _orphanTotal = null;     // measured org-side total; null = not reported
+  let _orphanPageDone = true;  // false when Salesforce had more pages to give
+  let _orphanErr = '';         // probe failure — reported, not swallowed
   if (scope && tgtParentField) {
     try {
       const nullClause = `${tgtParentField} = null`;
       const w = where ? `(${where}) AND ${nullClause}` : nullClause;
-      const q = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false,
+      const q = await sendBg({ type: 'SF_QUERY', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false,
         _suppressError: true,
-        query: `SELECT ${fieldList(comparePlan, 'tgt')} FROM ${objType} WHERE ${w} LIMIT 2000` });
-      if (q && !q.error) _orphanRecs = (q.records || []).slice(0, 2000);
-    } catch (_) { _orphanRecs = []; }
+        query: `SELECT ${fieldList(comparePlan, 'tgt')} FROM ${objType} WHERE ${w}` });
+      if (q && !q.error) {
+        _orphanRecs     = (q.records || []).slice(0, ORPHAN_ROW_CAP);
+        _orphanTotal    = Number.isFinite(q.totalSize) ? q.totalSize : null;
+        _orphanPageDone = q.done !== false;
+      } else {
+        _orphanErr = String(q?.error || 'no response').slice(0, 200);
+      }
+    } catch (e) {
+      _orphanRecs = []; _orphanTotal = null; _orphanPageDone = true;
+      _orphanErr = String(e?.message || e).slice(0, 200);
+    }
   }
 
   // ── M3c — MATCH-MEMORY PRE-PASS (root scans only) ───────────────────────
@@ -883,7 +939,6 @@ async function runDiffScan(profile, node = null, scope = null) {
   // R3 — append the NULL-link target rows as tagged "possible orphan"
   // extras. They never joined the key match-up above, so every other bucket
   // is exactly what v1 produced.
-  let orphanCount = 0;
   if (_orphanRecs.length) {
     try {
       const seenTgt = new Set((tgtRes.records || []).map(r => r.Id));
@@ -892,10 +947,23 @@ async function runDiffScan(profile, node = null, scope = null) {
         seenTgt.add(tr.Id);
         const k = sftkMatchKey(tr, tgtMatching);
         onlyInTarget.push({ matchKey: k || '(no key)', targetId: tr.Id, orphan: true });
-        orphanCount++;
       }
     } catch (_) { /* degrade — orphans just don't show */ }
   }
+  // What actually SHIPS is onlyInTarget capped at 5000, and orphans are
+  // appended last — so that slice eats orphan rows first. Count the survivors,
+  // not the intent, or the UI would name rows it never received.
+  const onlyInTargetOut = onlyInTarget.slice(0, 5000);
+  const orphanShown = onlyInTargetOut.reduce((n, r) => n + (r && r.orphan ? 1 : 0), 0);
+  const orphanCapped = _orphanTotal != null
+    ? _orphanTotal > orphanShown
+    : (!_orphanPageDone || _orphanRecs.length > orphanShown);
+  // One string for every display site: the probe's own failure outranks the
+  // cap (a failed probe means NO orphan row is listed, which is the bigger
+  // thing to say), otherwise the cap wording, otherwise nothing.
+  const orphanNote = _orphanErr
+    ? `⚠ The possible-orphan check couldn't run (${_orphanErr}) — children whose ${tgtParentField} link is empty are NOT listed below.`
+    : sftkOrphanCapNote(orphanShown, _orphanTotal, orphanCapped);
 
   // T6 — PICKLIST READINESS. Before anything is written, check the DISTINCT
   // (multi)picklist values carried by the records this run would push or
@@ -994,7 +1062,7 @@ async function runDiffScan(profile, node = null, scope = null) {
     // picker only needs source IDs to badge rows, and "extras in target"
     // is just informational for now.
     missingInTarget: missingInTarget.slice(0, 5000),
-    onlyInTarget:    onlyInTarget.slice(0, 5000),
+    onlyInTarget:    onlyInTargetOut,
     changed:         changed.slice(0, 5000),
     identical:       identical.slice(0, 5000),
     truncated: (
@@ -1025,8 +1093,16 @@ async function runDiffScan(profile, node = null, scope = null) {
       // R2 — master-detail flags for the parent link field (source describe).
       linkMasterDetail,
       linkUpdateable,
-      // R3 — how many NULL-link "possible orphan" rows were appended above.
-      ...(orphanCount ? { orphanCount } : {}),
+      // R3 — how many NULL-link "possible orphan" rows this result CARRIES
+      // (orphanCount, kept under its v1 name), whether that is all of them
+      // (orphanCapped + the measured orphanTotal when Salesforce reported
+      // one), and the ready-made wording every display site must use so none
+      // of them can quietly present a floor as a total.
+      ...(orphanShown ? { orphanCount: orphanShown } : {}),
+      ...(orphanCapped ? { orphanCapped: true, orphanCap: ORPHAN_ROW_CAP } : {}),
+      ...(_orphanTotal != null ? { orphanTotal: _orphanTotal } : {}),
+      ...((orphanShown || orphanCapped) ? { orphanLabel: sftkOrphanLabel(orphanShown, _orphanTotal, orphanCapped) } : {}),
+      ...(orphanNote ? { orphanNote } : {}),
       // R1 — rows excluded because their match key is duplicated on a side.
       ...(_keyCollisions ? { keyCollisions: _keyCollisions } : {})
     } : {})

@@ -439,6 +439,13 @@ async function renderReconcile() {
     const blankNote = cs.blankKeys
       ? `<div class="ds-rec-child-info ds-match-blank-note" style="border-left:3px solid #f59e0b;padding-left:8px">⚠ ${cs.blankKeys.rows} row(s) have a blank match key — excluded from all actions (${cs.blankKeys.src} source, ${cs.blankKeys.tgt} target). Pick a better-populated match field, or use 🧪 Test this key in Pick Records.</div>`
       : '';
+    // R3 — the possible-orphan probe reads ONE page of the target. When that
+    // page was a cap (or the probe failed outright) the scan hands us the
+    // wording; rendering it is not optional — without it the orphan count
+    // below reads as a total when it is only a floor.
+    const orphanNote = cs.orphanNote
+      ? `<div class="ds-rec-child-info" style="border-left:3px solid #f59e0b;padding-left:8px">${esc(cs.orphanNote)}</div>`
+      : '';
 
     // T6/T7 — same readiness + phantom notes the root gets, for this child's
     // own object and its own scan result.
@@ -451,7 +458,7 @@ async function renderReconcile() {
 
     return `
     <div class="ds-rec-child-body">
-      ${collisionNote}${blankNote}${plNote}${phNote}
+      ${collisionNote}${blankNote}${orphanNote}${plNote}${phNote}
       <div class="ds-rec-cols ds-rec-cols-child">
         <div class="ds-rec-col">
           <div class="ds-rec-col-hdr ds-diff-missing">🔴 <strong>Insert ${cs.missingInTarget.length}</strong>
@@ -484,7 +491,7 @@ async function renderReconcile() {
         </div>
         <div class="ds-rec-col">
           <div class="ds-rec-col-hdr ds-diff-extra">🔵 <strong>In target only ${cs.onlyInTarget.length}</strong>
-            <span class="ds-rec-col-sub">${orphanN ? `${orphanN} possible orphan(s) — ⇄ Relink can re-attach them` : 'pick rows to delete'}</span></div>
+            <span class="ds-rec-col-sub">${orphanN ? `${esc(cs.orphanLabel || `${orphanN} possible orphan(s)`)} — ⇄ Relink can re-attach them` : 'pick rows to delete'}</span></div>
           <div class="ds-rec-col-actions">
             <button class="ds-btn ds-btn-xs" data-recc-del-all="${pathKey}" title="Select all for delete${orphanN ? ` — ⚠ orphan rows are excluded (select them individually)` : ''}">🗑 All</button>
             <button class="ds-btn ds-btn-xs" data-recc-del-none="${pathKey}">✗ None</button>

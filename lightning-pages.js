@@ -29,6 +29,44 @@ const LightningPages = (() => {
   const LP_LENS_USER_CAP = 200;   // users listed in the reverse-lens picker
   const LP_CTX_CAP       = 120;   // app × record-type × form-factor rows in the lens
 
+  // ── P2: org-default resolution sizing ────────────────────
+  // fetchOrgDefaults() costs one Tooling GET per unmanaged FlexiPage plus one
+  // sObject describe per unique object. In a dev org that is a few dozen calls
+  // and worth paying on open. In an enterprise org it is hundreds of calls the
+  // user never asked for — so above LP_OD_AUTO_MAX we do NOT run it, we state
+  // the exact cost and let the user press the button. Sizing arithmetic lives
+  // in lpOrgDefaultsPlan() (column 0, unit-tested) so the number the UI quotes
+  // and the work the pool actually does can never disagree.
+  const LP_OD_CONCURRENCY = 5;    // same width as the old batch-of-5, now rolling
+  const LP_OD_AUTO_MAX    = 150;  // total org-default calls paid without asking
+  const LP_ENTITY_CHUNK   = 200;  // ids per EntityDefinition resolution query
+
+  // Live coverage of the org-default check. Every number here is MEASURED —
+  // nothing is estimated, and `unresolved` is what drives the "?" row chips.
+  let _odRunToken  = 0;           // bumped by init()/refresh — invalidates a run
+  let _odAbort     = false;       // user pressed Stop
+  let _odPassDone  = new Set();   // FlexiPage ids whose Pass-1 GET has settled
+  let _odObjDone   = new Set();   // EntityDefinitionIds whose describe has settled
+  let _odState     = null;        // see _odResetState()
+  let _odRepaintAt = 0;           // throttle for the incremental list repaint
+
+  function _odResetState(status) {
+    _odRunToken++;
+    _odAbort    = false;
+    _odPassDone = new Set();
+    _odObjDone  = new Set();
+    _odRepaintAt = 0;
+    _odState = {
+      status: status || 'idle',   // idle | skipped | running | partial | done
+      pagesDone: 0, pagesTotal: 0,
+      objectsDone: 0, objectsTotal: 0,
+      pagesFailed: 0, objectsFailed: 0,
+      unresolved: 0,
+      msPerCall: 0
+    };
+  }
+  _odResetState('idle');
+
   // ActionOverride is NOT a SOQL-queryable sObject in any Salesforce org —
   // querying it always returns HTTP 400. Org-default detection relies on the
   // sObject describe endpoint's `actionOverrides` array instead (Strategy in
@@ -54,6 +92,11 @@ const LightningPages = (() => {
     _appDefinitionSupported   = true;
     _wswScan                  = null;
     _lpAudience               = null;
+    // init() can be re-entered for a DIFFERENT org. A 01I… id means a different
+    // object there, so a cached name would send Pass 2 to describe the wrong
+    // object and badge the wrong page as the org default.
+    _lpEntityNames.clear();
+    _odResetState('idle');   // also invalidates any org-default run still in flight
 
     // ActionOverride SOQL is never supported — keep the flag off (see decl).
     _aoStorageKey = `sftk_ao_${orgUrl.replace(/[^a-z0-9]/gi, '_')}`;
@@ -140,6 +183,7 @@ const LightningPages = (() => {
       _appDefinitionSupported   = true;
       _wswScan                  = null;
       _lpAudience               = null;
+      _odResetState('idle');   // cancels an org-default run still in flight
       loadPages();
     });
 
@@ -158,17 +202,32 @@ const LightningPages = (() => {
     if (!/^01I/i.test(entity)) return entity;                 // already an API name
     return _lpEntityNames.get(entity.substring(0, 15)) || null;
   }
-  async function _lpResolveEntityNames(entities) {
-    const ids = [...new Set(entities.filter(e => e && /^01I/i.test(e)).map(e => e.substring(0, 15)))]
+  // Ids still needing a name — exposed so the cost estimate counts the exact
+  // number of resolution queries the run will actually issue.
+  function _lpPendingEntityIds(entities) {
+    return [...new Set((entities || []).filter(e => e && /^01I/i.test(e)).map(e => e.substring(0, 15)))]
       .filter(id => !_lpEntityNames.has(id));
-    if (!ids.length) return;
-    try {
-      const res = await bg({
-        type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false,
-        query: `SELECT DurableId, QualifiedApiName FROM EntityDefinition WHERE DurableId IN (${ids.map(i => `'${i}'`).join(',')})`
-      });
-      for (const r of (res.records || [])) _lpEntityNames.set(r.DurableId, r.QualifiedApiName);
-    } catch (_) { /* unresolved ids are skipped by callers */ }
+  }
+  // Chunked on purpose: one org-wide IN list of every custom-object id is a
+  // multi-kilobyte query that fails outright past a few hundred ids — and the
+  // catch below would swallow that, leaving EVERY custom record page silently
+  // unresolvable. An org under LP_ENTITY_CHUNK ids still costs exactly one query.
+  // Returns the number of ids left unresolved so callers can report it.
+  async function _lpResolveEntityNames(entities, shouldStop) {
+    const ids = _lpPendingEntityIds(entities);
+    if (!ids.length) return 0;
+    for (let i = 0; i < ids.length; i += LP_ENTITY_CHUNK) {
+      if (shouldStop && shouldStop()) break;
+      const chunk = ids.slice(i, i + LP_ENTITY_CHUNK);
+      try {
+        const res = await bg({
+          type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false,
+          query: `SELECT DurableId, QualifiedApiName FROM EntityDefinition WHERE DurableId IN (${chunk.map(x => lpSoqlLit(x)).join(',')})`
+        });
+        for (const r of (res.records || [])) _lpEntityNames.set(r.DurableId, r.QualifiedApiName);
+      } catch (_) { /* this chunk stays unresolved and is counted below */ }
+    }
+    return ids.filter(id => !_lpEntityNames.has(id)).length;
   }
 
   // ── Load all FlexiPages ───────────────────────────────────
@@ -198,16 +257,103 @@ const LightningPages = (() => {
     }
 
     allPages = res.records || [];
-    renderPageList();
-    // Background: determine which pages are set as org default.
-    // Fetches metadata for Active pages in batches; re-renders list as results arrive.
-    fetchOrgDefaults();
+    _odResetState('idle');
+
+    // P2 — org-default resolution is now SIZE-AWARE.
+    //
+    // It used to be fired here un-awaited, after setLoading(false) had already
+    // told the user the view was done: in a large org that is hundreds of
+    // Tooling GETs nobody asked for, mutating the list minutes later while the
+    // org gets hammered. Now:
+    //   • small org (calls <= LP_OD_AUTO_MAX) — still automatic, still after
+    //     first paint, so nothing about a small org gets slower. The difference
+    //     is that the status strip above the list ATTRIBUTES the late arrival
+    //     with real numbers and offers Stop.
+    //   • large org — not run at all. The strip states the exact call count and
+    //     offers a button, and every row that has not been resolved says so.
+    const plan = orgDefaultsPlan();
+    if (plan.auto) {
+      // First paint is unchanged and immediate; fetchOrgDefaults repaints with
+      // the status strip on its first synchronous step, in this same task, so
+      // the browser never shows the intermediate frame.
+      renderPageList();
+      startOrgDefaults();
+    } else {
+      _odState.status = 'skipped';
+      renderPageList();
+    }
   }
 
-  // Fetches pageAssignments for all Active pages in batches to determine
-  // which are set as the org-wide default.  Runs in the background after
-  // the initial list renders; updates allPages and re-renders incrementally.
+  // Exact cost of an org-default resolution for the CURRENT allPages, using only
+  // measured counts. Single source of truth: the strip quotes this and the pools
+  // below spend it, so the quote can never drift from the real cost.
+  // `remaining` — count only the work a resume would still have to pay for.
+  function orgDefaultsPlan(remaining) {
+    const pageTargets = allPages.filter(p =>
+      (p.ManageableState || 'unmanaged') === 'unmanaged' &&
+      (!remaining || !_odPassDone.has(p.Id)));
+    const objects = [...new Set(allPages.filter(p => p.EntityDefinitionId).map(p => p.EntityDefinitionId))]
+      .filter(t => !remaining || !_odObjDone.has(t));
+    const pendingIds = _lpPendingEntityIds(objects);
+    return lpOrgDefaultsPlan(pageTargets.length, objects.length, {
+      autoMax:     LP_OD_AUTO_MAX,
+      concurrency: LP_OD_CONCURRENCY,
+      msPerCall:   _odState.msPerCall || undefined,
+      extraCalls:  Math.ceil(pendingIds.length / LP_ENTITY_CHUNK)
+    });
+  }
+
+  // The one place an org-default run is started. Never awaited by the caller,
+  // so it must never throw and must never leave the strip mid-sentence.
+  function startOrgDefaults() {
+    if (_odState.status === 'running') return;
+    fetchOrgDefaults().catch(() => {
+      // A crash must not leave the strip claiming a check is still running.
+      if (_odState.status === 'running') { _odState.status = 'partial'; renderPageList(); }
+    });
+  }
+
+  function cancelOrgDefaults() {
+    if (_odState.status !== 'running') return false;
+    _odAbort = true;
+    return true;
+  }
+
+  // How many pages the check has NOT conclusively resolved. Measured, not
+  // guessed: a page counts as resolved only once every pass that applies to it
+  // has settled. Drives both the "?" chips and the number in the strip.
+  function odUnresolvedCount() {
+    let n = 0;
+    for (const p of allPages) {
+      if (lpOdRowState(p, odRowCoverage(p)).state === 'unknown') n++;
+    }
+    return n;
+  }
+
+  function odRowCoverage(p) {
+    return {
+      status:    _odState.status,
+      pass1Done: _odPassDone.has(p.Id),
+      pass2Done: !p.EntityDefinitionId || _odObjDone.has(p.EntityDefinitionId)
+    };
+  }
+
+  // Determines which pages are set as the org-wide default.
+  //
+  // Both passes run through lpRunPool: a bounded ROLLING pool, so one slow call
+  // no longer stalls the rest (Pass 1 used a batch-of-5 barrier, Pass 2 was
+  // strictly sequential — concurrency exactly 1 — which is where the minutes
+  // went in a large org). Both are cancellable, and neither ever reports
+  // coverage it did not reach.
   async function fetchOrgDefaults() {
+    const myToken = ++_odRunToken;
+    // Clear the previous run's Stop, or "Finish the check" would abort on its
+    // very first item and report a resume that never resumed.
+    _odAbort = false;
+    const stop = () => _odAbort || myToken !== _odRunToken;
+    const startedAt = Date.now();
+    let calls = 0;
+
     // ── Pass 1: pageAssignments scan ─────────────────────────────────────────
     // Standard FlexiPage org defaults store their assignment in
     // Metadata.pageAssignments. Scope to unmanaged pages (ManageableState IS
@@ -216,63 +362,101 @@ const LightningPages = (() => {
     // was undefined on every record, targets was always [], and this entire
     // pass silently never ran: org-default badges for Home/App pages were
     // never detected.
-    const targets = allPages.filter(p => (p.ManageableState || 'unmanaged') === 'unmanaged');
-    const BATCH = 5;
-    for (let i = 0; i < targets.length; i += BATCH) {
-      const slice = targets.slice(i, i + BATCH);
-      const results = await Promise.allSettled(
-        slice.map(p => bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
-                             sobject: 'FlexiPage', id: p.Id }))
-      );
-      let changed = false;
-      for (let j = 0; j < slice.length; j++) {
-        const r = results[j];
-        if (r.status !== 'fulfilled' || r.value?.error) continue;
-        const assignments = r.value.Metadata?.pageAssignments || [];
-        // An org-wide default has no app and no profile
-        const isOrgDefault = assignments.some(a => !a.app && !a.profile);
-        const idx = allPages.findIndex(p => p.Id === slice[j].Id);
-        if (idx !== -1 && !!allPages[idx]._isOrgDefault !== isOrgDefault) {
-          allPages[idx] = { ...allPages[idx], _isOrgDefault: isOrgDefault };
-          changed = true;
-        }
-      }
-      // Only re-render if user is still on the list view (not inside a detail panel)
-      if (changed && !document.getElementById('lpDetailHeader')) renderPageList();
-    }
+    // A stopped run left a record of what it already covered — resume instead of
+    // re-paying for it. `already` keeps the reported progress against the FULL
+    // total, so "120 / 300 pages" always means the same thing.
+    const allTargets = allPages.filter(p => (p.ManageableState || 'unmanaged') === 'unmanaged');
+    const targets    = allTargets.filter(p => !_odPassDone.has(p.Id));
+    const pagesAlready = allTargets.length - targets.length;
 
-    // ── Pass 2: sObject describe scan for custom-object record pages ────────
+    // ── Pass 2 candidates ────────────────────────────────────────────────────
     // Custom-object org defaults are stored in the CustomObject actionOverrides,
     // NOT in FlexiPage.Metadata.pageAssignments. The describe endpoint returns the
     // current active pageId for each sObject action, so one call per unique
     // EntityDefinitionId tells us which page is the org default without fetching
     // full metadata for every record page.
-    // This is why a page with null PublishStatus can actually be the active org default.
-    const recordPageCandidates = allPages.filter(p =>
-      p.EntityDefinitionId &&
-      (p.PublishStatus || '').toLowerCase() !== 'draft' &&
-      (p.PublishStatus || '').toLowerCase() !== 'obsolete'
-    );
-    const sObjectTypes = [...new Set(recordPageCandidates.map(p => p.EntityDefinitionId))];
+    //
+    // There is deliberately NO PublishStatus filter here. The old code excluded
+    // `PublishStatus === 'draft' || 'obsolete'`, but loadPages() does not SELECT
+    // PublishStatus (it 400s in some org types), so the field was undefined on
+    // every record and both comparisons were against '': the predicate passed
+    // 100% of rows while implying it had filtered out drafts. Removed rather
+    // than repaired — selecting the field would break the list query in exactly
+    // the orgs the comment above says it breaks in, and the describe is the
+    // authority on which page is live anyway.
+    const allObjects   = [...new Set(allPages.filter(p => p.EntityDefinitionId).map(p => p.EntityDefinitionId))];
+    const sObjectTypes = allObjects.filter(t => !_odObjDone.has(t));
+    const objsAlready  = allObjects.length - sObjectTypes.length;
+
+    _odState.status       = 'running';
+    _odState.pagesTotal   = allTargets.length;
+    _odState.objectsTotal = allObjects.length;
+    _odState.pagesDone    = pagesAlready;
+    _odState.objectsDone  = objsAlready;
+    _odState.pagesFailed  = 0;
+    _odState.objectsFailed = 0;
+    odRepaint(true);
+
+    const p1 = await lpRunPool(targets, async (p) => {
+      const r = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
+                           sobject: 'FlexiPage', id: p.Id });
+      // A Stop / refresh only halts the pool at the next item boundary, so the
+      // calls already in flight still land here. They must not write into the
+      // counters of whatever run owns the module now.
+      if (myToken !== _odRunToken) return false;
+      calls++;
+      // Settled either way — a failed read is a read we already paid for, and
+      // retrying it would fail the same way. It is recorded as FAILED so the
+      // row keeps its "?" instead of silently reading as "not the org default".
+      if (!r || r.error) { _odState.pagesFailed++; return false; }
+      _odPassDone.add(p.Id);
+      const assignments = r.Metadata?.pageAssignments || [];
+      // An org-wide default has no app and no profile
+      const isOrgDefault = assignments.some(a => !a.app && !a.profile);
+      const idx = allPages.findIndex(x => x.Id === p.Id);
+      if (idx !== -1 && !!allPages[idx]._isOrgDefault !== isOrgDefault) {
+        allPages[idx] = { ...allPages[idx], _isOrgDefault: isOrgDefault };
+        return true;
+      }
+      return false;
+    }, {
+      concurrency: LP_OD_CONCURRENCY,
+      shouldStop:  stop,
+      onProgress:  (done) => {
+        if (myToken !== _odRunToken) return;
+        _odState.pagesDone = pagesAlready + done;
+        odRepaint();
+      }
+    });
+    if (myToken !== _odRunToken) return;   // superseded by a refresh / org switch
 
     // Custom-object entries are 01I… ids — resolve them to API names first
-    // (describing the raw id 404s).
-    await _lpResolveEntityNames(sObjectTypes);
+    // (describing the raw id 404s). Cancellable, and it reports how many ids
+    // it could not resolve so those objects are not counted as covered.
+    let unresolvedIds = 0;
+    if (!stop()) unresolvedIds = await _lpResolveEntityNames(sObjectTypes, stop);
+    if (myToken !== _odRunToken) return;
 
-    for (const sObjectType of sObjectTypes) {
+    const p2 = await lpRunPool(sObjectTypes, async (sObjectType) => {
       const apiName = _lpEntityName(sObjectType);
-      if (!apiName) continue;   // unresolved custom-object id — nothing to describe
+      if (!apiName) { _odState.objectsFailed++; return false; }   // unresolved id — nothing to describe
       try {
         const descRes = await bg({
           type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
           path: `services/data/v62.0/sobjects/${apiName}/describe/?_=${Date.now()}`
         });
-        if (descRes.error || !Array.isArray(descRes.actionOverrides)) continue;
+        if (myToken !== _odRunToken) return false;   // superseded mid-call (see Pass 1)
+        calls++;
+        if (!descRes || descRes.error) { _odState.objectsFailed++; return false; }
+        // A describe with no actionOverrides array is a CONCLUSIVE "no override
+        // on this object", so the object counts as covered.
+        _odObjDone.add(sObjectType);
+        if (!Array.isArray(descRes.actionOverrides)) return false;
 
         const viewOverrides = descRes.actionOverrides.filter(o =>
           (o.name || '').toLowerCase() === 'view' && o.pageId
         );
-        if (!viewOverrides.length) continue;
+        if (!viewOverrides.length) return false;
 
         // Collect unique pageIds the describe says are the org default for this object
         const defaultPageIds = [...new Set(viewOverrides.map(o => o.pageId.toLowerCase()))];
@@ -295,11 +479,94 @@ const LightningPages = (() => {
             changed = true;
           }
         }
-        if (changed && !document.getElementById('lpDetailHeader')) renderPageList();
+        return changed;
       } catch (_) {
-        // Ignore errors for individual sObject types — list still renders with what we have
+        // One sObject failing must not abort the pass — but it is NOT covered.
+        _odState.objectsFailed++;
+        return false;
       }
+    }, {
+      concurrency: LP_OD_CONCURRENCY,
+      shouldStop:  stop,
+      onProgress:  (done) => {
+        if (myToken !== _odRunToken) return;
+        _odState.objectsDone = objsAlready + done;
+        odRepaint();
+      }
+    });
+    if (myToken !== _odRunToken) return;
+
+    // `complete` is decided by the pools' own counts, never by the absence of a
+    // Stop press: a cancel that landed after the last item still covered
+    // everything, and calling that partial would under-report coverage just as
+    // dishonestly as over-reporting it.
+    _odState.status = (p1.complete && p2.complete && !unresolvedIds) ? 'done' : 'partial';
+    _odAbort = false;
+    if (calls > 0) {
+      // Feed the next estimate this org's REAL latency instead of the default.
+      _odState.msPerCall = Math.round(((Date.now() - startedAt) * LP_OD_CONCURRENCY) / calls);
     }
+    odRepaint(true);
+  }
+
+  // Incremental repaint of the list while a pass runs. Throttled: the old code
+  // rebuilt the whole list every 5 pages, which in a 900-page org is 180 full
+  // innerHTML rebuilds. Progress text is patched in place (no rebuild) and the
+  // list itself is rebuilt at most ~2×/second, plus once at the end.
+  function odRepaint(force) {
+    if (document.getElementById('lpDetailHeader')) return;   // user is in a detail panel
+    const now = Date.now();
+    if (!force && now - _odRepaintAt < 500) {
+      const msg = document.getElementById('lpOdMsg');
+      // Progress-only patch — the 'running' sentence needs neither the plan nor
+      // a full unresolved recount, so a tick stays O(1) instead of O(pages).
+      if (msg) msg.textContent = lpOdSummary(_odState, null);
+      return;
+    }
+    _odRepaintAt = now;
+    renderPageList();
+  }
+
+  // The measured state the strip describes. unresolved is recomputed here so it
+  // can never drift from what the rows are actually showing.
+  function odSummaryState() {
+    return { ..._odState, unresolved: odUnresolvedCount() };
+  }
+
+  // The org-default status strip above the page list. This is the honest
+  // affordance that replaces the old eager fan-out: it attributes a check that
+  // is still running, states the exact cost of one that has not run, and says
+  // how many pages a stopped/failed check left unresolved. It renders NOTHING
+  // when every page is resolved — so a small org, where the automatic check
+  // completes cleanly, looks exactly as it did before.
+  function odStripHtml() {
+    const st   = odSummaryState();
+    const plan = orgDefaultsPlan(true);   // what a run from here would still cost
+    const text = lpOdSummary(st, plan);
+    if (!text) return '';
+
+    let btn = '';
+    if (st.status === 'running') {
+      btn = `<button class="btn btn-secondary btn-sm" id="lpOdStopBtn" style="flex-shrink:0">Stop</button>`;
+    } else if (plan.calls > 0) {
+      const label = st.status === 'skipped' ? 'Check org defaults' : 'Finish the check';
+      btn = `<button class="btn btn-secondary btn-sm" id="lpOdRunBtn" style="flex-shrink:0"` +
+            ` title="Runs ${plan.calls} Salesforce API call${plan.calls !== 1 ? 's' : ''} — ${esc(plan.estLabel)}">` +
+            `${esc(label)} (${plan.calls} call${plan.calls !== 1 ? 's' : ''})</button>`;
+    }
+    return `<div class="lp-od-strip" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;` +
+           `margin:0 0 8px;padding:5px 8px;border:1px solid rgba(128,128,128,.35);border-radius:4px;` +
+           `font-size:11px;line-height:1.45;color:var(--subtext)">` +
+           `<span id="lpOdMsg" style="flex:1;min-width:170px">${esc(text)}</span>${btn}</div>`;
+  }
+
+  function wireOdStrip() {
+    document.getElementById('lpOdStopBtn')?.addEventListener('click', () => {
+      // The pools poll shouldStop before each item, so in-flight calls finish
+      // and nothing beyond them is issued. Status becomes 'partial', never 'done'.
+      cancelOrgDefaults();
+    });
+    document.getElementById('lpOdRunBtn')?.addEventListener('click', () => startOrgDefaults());
   }
 
   // Keep allPages in sync after status-changing operations so the list
@@ -329,7 +596,9 @@ const LightningPages = (() => {
       return;
     }
     if (filtered.length === 0) {
-      content.innerHTML = `<div class="lp-empty">No pages match "<strong>${esc(q)}</strong>".</div>`;
+      content.innerHTML = odStripHtml() +
+        `<div class="lp-empty">No pages match "<strong>${esc(q)}</strong>".</div>`;
+      wireOdStrip();
       return;
     }
 
@@ -348,7 +617,7 @@ const LightningPages = (() => {
       ...(groups['Other'] ? ['Other'] : [])
     ];
 
-    let html = '';
+    let html = odStripHtml();
     for (const typeKey of keys) {
       const pages = groups[typeKey];
       html += `
@@ -365,11 +634,23 @@ const LightningPages = (() => {
         const dotCls = ps === 'active'   ? 'lp-dot-active'
                      : ps === 'obsolete' ? 'lp-dot-obsolete'
                      : ps === 'draft'    ? 'lp-dot-draft'
-                     : 'lp-dot-unknown'; // null/empty = scanning in background
+                     : 'lp-dot-unknown'; // null/empty = not established yet
+        // "Checking…" is only true while a check is actually running. When the
+        // org-default run was never started or was stopped, nothing is checking
+        // and the status is simply not known — say that instead.
         const dotTitle = ps === 'active' ? 'Active' : ps === 'obsolete' ? 'Obsolete'
-                       : ps === 'draft'  ? 'Draft'  : 'Checking…';
-        const defBadge = p._isOrgDefault
-          ? '<span class="lp-badge lp-badge-default">Org Default</span>' : '';
+                       : ps === 'draft'  ? 'Draft'
+                       : _odState.status === 'running' ? 'Checking…'
+                       : 'Status not checked';
+        // Org-default badge. A page that has NOT been resolved gets an explicit
+        // "?" rather than the same blank space a confirmed non-default gets —
+        // blank there would read as "we checked, it isn't the default".
+        const od = lpOdRowState(p, odRowCoverage(p));
+        const defBadge = od.state === 'default'
+          ? `<span class="lp-badge lp-badge-default" title="${esc(od.title)}">${esc(od.label)}</span>`
+          : od.state === 'unknown'
+            ? `<span class="lp-badge" style="background:transparent;border:1px dashed rgba(128,128,128,.55);color:var(--subtext)" title="${esc(od.title)}">org default ${esc(od.label)}</span>`
+            : '';
         html += `
           <div class="lp-row" data-id="${esc(p.Id)}">
             <span class="lp-status-dot ${dotCls}" title="${esc(dotTitle)}"></span>
@@ -385,6 +666,7 @@ const LightningPages = (() => {
     }
 
     content.innerHTML = html;
+    wireOdStrip();
     content.querySelectorAll('.lp-row').forEach(row => {
       row.addEventListener('click', () => {
         const page = allPages.find(p => p.Id === row.dataset.id);
@@ -3462,6 +3744,185 @@ function lpResolveWinner(assignments, userContext) {
     matched,
     beaten
   };
+}
+
+// ============================================================
+// P2 — org-default resolution sizing (PURE, unit-tested)
+//
+// Resolving "which page is the org default" costs real Salesforce API calls:
+//   • Pass 1 — one Tooling GET per UNMANAGED FlexiPage (Metadata.pageAssignments)
+//   • Pass 2 — one sObject describe per unique object (actionOverrides, which is
+//              where CUSTOM-object org defaults actually live)
+//   • plus one EntityDefinition query per LP_ENTITY_CHUNK custom-object ids that
+//     still need their 01I… id turned into an API name.
+// In a small org that is a few dozen calls, worth paying automatically on open.
+// In an enterprise org it is hundreds, so above autoMax we do not run it — we
+// state the cost and wait to be asked.
+//
+// Column 0 on purpose: test/extract.mjs can only materialize top-level
+// `function NAME(` declarations, and these are exactly the parts worth testing.
+// No free variables — everything arrives as an argument.
+// ============================================================
+
+// Cost of resolving org defaults for `pageCount` pages over `objectCount`
+// objects. Every field is derived from counts the caller MEASURED; estMs is the
+// only estimate and it is labelled as one everywhere it is shown.
+function lpOrgDefaultsPlan(pageCount, objectCount, opts) {
+  const o = opts || {};
+  const num = (v, d) => (Number.isFinite(v) && v > 0 ? v : d);
+  const autoMax     = Number.isFinite(o.autoMax) && o.autoMax >= 0 ? o.autoMax : 150;
+  const concurrency = num(o.concurrency, 5);
+  // Wall-clock per call as seen by the pool. 300 ms is the default until a
+  // completed run measures the real figure for this org/session.
+  const msPerCall   = num(o.msPerCall, 300);
+  const pages   = Math.max(0, Math.floor(Number(pageCount)   || 0));
+  const objects = Math.max(0, Math.floor(Number(objectCount) || 0));
+  const extra   = Math.max(0, Math.floor(Number(o.extraCalls) || 0));
+  const calls   = pages + objects + extra;
+  const estMs   = Math.round((calls * msPerCall) / concurrency);
+  return {
+    pages, objects, extraCalls: extra, calls, concurrency, msPerCall, autoMax,
+    auto: calls <= autoMax,
+    measured: !!(Number.isFinite(o.msPerCall) && o.msPerCall > 0),
+    estMs,
+    estLabel: lpFormatEta(estMs)
+  };
+}
+
+// Human ETA. Deliberately hedged ("about") — it is an estimate, and the UI
+// always prints the hard call count next to it.
+function lpFormatEta(ms) {
+  const s = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+  if (s < 1)  return 'under a second';
+  if (s < 60) return `about ${s}s`;
+  const m = Math.floor(s / 60), rem = s % 60;
+  return rem ? `about ${m}m ${rem}s` : `about ${m}m`;
+}
+
+// Rolling concurrency pool. Replaces Pass 1's batch-of-5 barrier (which drained
+// to zero every 5 items, letting one slow GET stall the other four) and Pass 2's
+// fully sequential loop (concurrency exactly 1). `limit` workers stay in flight
+// until the queue empties.
+//   opts.shouldStop — polled before each item; true stops the pool and reports
+//                     stopped:true rather than pretending completion.
+//   opts.onProgress — (done, total) after every settled item, monotonic.
+// Results keep INPUT order regardless of completion order. `complete` is decided
+// by the count alone, not by `stopped`: a Stop pressed after the last item
+// settled still left every item covered, and calling that partial would
+// under-report coverage just as dishonestly as over-reporting it.
+async function lpRunPool(items, worker, opts) {
+  const list = Array.isArray(items) ? items : [];
+  const o = opts || {};
+  const total = list.length;
+  const limit = Math.max(1, Math.min(Math.floor(o.concurrency) || 5, total || 1));
+  const onProgress = typeof o.onProgress === 'function' ? o.onProgress : null;
+  const shouldStop = typeof o.shouldStop === 'function' ? o.shouldStop : null;
+  const results = new Array(total);
+  let next = 0, done = 0, stopped = false;
+
+  async function runner() {
+    for (;;) {
+      if (shouldStop && shouldStop()) { stopped = true; return; }
+      const i = next++;
+      if (i >= total) return;
+      try { results[i] = await worker(list[i], i); }
+      catch (_) { results[i] = undefined; }   // a failed item is still a done item
+      done++;
+      if (onProgress) onProgress(done, total);
+    }
+  }
+
+  const runners = [];
+  for (let k = 0; k < limit; k++) runners.push(runner());
+  await Promise.all(runners);
+  return { results, done, total, stopped, complete: done === total };
+}
+
+// Org-default badge state for ONE row of the page list.
+//   cov.status    — 'idle' | 'skipped' | 'running' | 'partial' | 'done'
+//   cov.pass1Done — this page's Tooling pageAssignments GET has settled OK
+//   cov.pass2Done — the describe for this page's object has settled OK
+//
+// A page is only conclusively "not the org default" once EVERY pass that applies
+// to it has settled: Pass 1 finds standard org defaults, Pass 2 finds the
+// custom-object ones, and a page with an object needs both before a blank badge
+// means anything. Anything short of that returns 'unknown', because rendering
+// the same blank space a confirmed non-default gets would assert a check that
+// never happened.
+function lpOdRowState(page, cov) {
+  const p = page || {};
+  if (p._isOrgDefault) {
+    return { state: 'default', label: 'Org Default', title: 'This page is the org-wide default.' };
+  }
+  const c  = cov || {};
+  const st = String(c.status || 'idle');
+  const p1Applies = String(p.ManageableState || 'unmanaged') === 'unmanaged';
+  const p2Applies = !!p.EntityDefinitionId;
+  const covered   = (p1Applies || p2Applies) &&
+                    (!p1Applies || !!c.pass1Done) &&
+                    (!p2Applies || !!c.pass2Done);
+  if (covered) return { state: 'none', label: '', title: '' };
+  // While the check is running, the status strip above the list already accounts
+  // for every row still in flight, with real numbers. Per-row marks that clear
+  // themselves seconds later would be noise, not honesty.
+  if (st === 'running') return { state: 'none', label: '', title: '' };
+
+  const why = (!p1Applies && !p2Applies)
+    ? 'This is a managed-package page with no object, so neither org-default check applies to it.'
+    : st === 'skipped' || st === 'idle'
+      ? 'The org-default check has not been run in this org — use the button above the list.'
+      : 'The org-default check did not cover this page: it was stopped, or the read failed.';
+  return { state: 'unknown', label: '?', title: 'Org default not resolved. ' + why };
+}
+
+// One accurate sentence for the status strip. Returns '' when there is nothing
+// to say (every page resolved) so the strip disappears entirely.
+// Plain text on purpose — the caller escapes it and sets it as textContent.
+// Every number here is MEASURED; the only estimate is plan.estLabel, which is
+// always printed beside the exact call count.
+function lpOdSummary(state, plan) {
+  const s  = state || {};
+  const pl = plan  || {};
+  const n  = v => Math.max(0, Math.floor(Number(v) || 0));
+  const st = String(s.status || 'idle');
+  const pagesDone = n(s.pagesDone), pagesTotal = n(s.pagesTotal);
+  const objDone   = n(s.objectsDone), objTotal = n(s.objectsTotal);
+  const unresolved = n(s.unresolved);
+  const plural = (k, one, many) => k === 1 ? one : (many || one + 's');
+
+  if (st === 'running') {
+    return `Checking which pages are the org default… ${pagesDone} / ${pagesTotal} ` +
+           `${plural(pagesTotal, 'page')}, ${objDone} / ${objTotal} ${plural(objTotal, 'object')}. ` +
+           `Rows update as results arrive.`;
+  }
+
+  if (st === 'skipped' || st === 'idle') {
+    const calls = n(pl.calls);
+    if (!calls) return '';
+    const eta = pl.estLabel ? `, ${pl.estLabel}` : '';
+    return `Org defaults have not been checked. This org needs ${calls} Salesforce API ` +
+           `${plural(calls, 'call')} to resolve them (${n(pl.pages)} page ` +
+           `${plural(n(pl.pages), 'read')} + ${n(pl.objects)} object ` +
+           `${plural(n(pl.objects), 'describe')}${n(pl.extraCalls) ? ` + ${n(pl.extraCalls)} name ${plural(n(pl.extraCalls), 'lookup')}` : ''})${eta}. ` +
+           `Until it runs, no page here can be shown as the org default — pages marked "?" are UNCHECKED, not "not the default".`;
+  }
+
+  const failures = [];
+  if (n(s.pagesFailed))   failures.push(`${n(s.pagesFailed)} page ${plural(n(s.pagesFailed), 'read')} failed`);
+  if (n(s.objectsFailed)) failures.push(`${n(s.objectsFailed)} object ${plural(n(s.objectsFailed), 'describe', 'describes')} failed`);
+  const failBit = failures.length ? ` ${failures.join(' and ')}.` : '';
+
+  if (st === 'partial') {
+    return `Org-default check stopped at ${pagesDone} / ${pagesTotal} ${plural(pagesTotal, 'page')} ` +
+           `and ${objDone} / ${objTotal} ${plural(objTotal, 'object')}.${failBit} ` +
+           `${unresolved} ${plural(unresolved, 'page')} still marked "?" — that means UNCHECKED, not "not the org default".`;
+  }
+
+  // st === 'done'
+  if (!unresolved && !failures.length) return '';
+  return `Org-default check finished: ${pagesDone} / ${pagesTotal} ${plural(pagesTotal, 'page')} ` +
+         `and ${objDone} / ${objTotal} ${plural(objTotal, 'object')}.${failBit} ` +
+         `${unresolved} ${plural(unresolved, 'page')} could not be resolved and stay marked "?" — UNCHECKED, not "not the org default".`;
 }
 
 // SOQL string literal. Backslash first, then the single quote — reversing the

@@ -101,6 +101,32 @@ function pkValueMentions(text, valueName) {
   return m ? m.length : 0;
 }
 
+// Progressive header for a per-org automation scan (bulk wizard, T8b/N7).
+// Honest by construction: while the pass is running it reports how many orgs
+// are DONE out of how many will be scanned — it never implies the orgs that
+// have no line yet are clean — and once it finishes it still names the orgs
+// that FAILED, so an unreadable org can't read as a zero-impact one.
+// Pure — unit-testable.
+function pkScanProgressText(done, total, failed, subject) {
+  const num = v => Number.isFinite(+v) ? Math.max(0, Math.floor(+v)) : 0;
+  const d = num(done), t = num(total), f = num(failed);
+  if (t === 0) return '⚡ No orgs selected — nothing to scan.';
+  const head = `⚡ Automation that will run / references ${subject || 'this value'}`;
+  if (d < t) return `${head} — scanned ${d} of ${t} org(s)…`;
+  return `${head} — scanned ${t} of ${t} org(s)` +
+    (f ? ` · ⚠ ${f} org(s) could NOT be checked — see below` : '');
+}
+
+// Superseded-run guard — same shape as the `token !== _pkSyncScanToken` check
+// in _pkSyncAutomationPass. An async pass captures the token it started with
+// and must abandon the instant it stops matching the live counter, so a modal
+// re-opened mid-scan can never have its newer results painted over by the
+// older run. A non-numeric token counts as superseded (fail closed).
+// Pure — unit-testable.
+function pkScanSuperseded(token, live) {
+  return !Number.isFinite(token) || !Number.isFinite(live) || token !== live;
+}
+
 // Dedupe identical row-error strings (validation rules emit N copies).
 // Pure — unit-testable. Returns strings with a "(×N)" suffix when repeated.
 function pkDedupeErrors(errors) {
@@ -331,6 +357,7 @@ let _pkHighlightValue = '';     // value row to scroll to + flash after a deep l
 let _pkSweep    = null;   // T9 whole-object sweep state { obj, orgs, rows, ... }
 let _pkSweepRunning = false;
 let _pkSyncScanToken = 0;              // invalidates an in-flight sync-plan automation pass (T8c)
+let _pkBulkScanToken = 0;              // same, for the bulk wizard's per-org automation scan
 const _pkSyncScanCache = new Map();    // `${orgKey}|${obj}.${field}|${value}` → literal-scan result
 
 function renderPicklists() {
@@ -1356,7 +1383,10 @@ async function _pkOpenBulkWizard(mode) {
         <label><input type="radio" name="dsPkBulkFix" value="skip"> Skip data fix${mode === 'delete' ? ' — leaves orphan text' : ''}</label>
       </div>
       ${!single ? '<div class="ds-pk-note-inline">Remap is available when a single value is selected; multi-value bulk offers clear or skip.</div>' : ''}
-      <div id="dsPkBulkImpact" class="ds-pk-note">Computing automation impact per org…</div>
+      <div id="dsPkBulkImpact" class="ds-pk-note">
+        <div class="ds-pk-imp-title" id="dsPkBulkImpactHead">⏳ Checking automation impact per org…</div>
+        <div id="dsPkBulkImpactRows"></div>
+      </div>
     </div>
     <div class="ds-modal-footer">
       <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
@@ -1374,16 +1404,60 @@ async function _pkOpenBulkWizard(mode) {
   }
 
   // Per-org impact + value-literal automation scan (before apply — required).
+  //
+  // Deliberately NOT awaited — the modal has to paint instantly. But this pass
+  // is expensive per org (_pkValueLiteralScan alone is a ValidationRule Tooling
+  // query plus one Flow query per active flow), and it runs the orgs
+  // SEQUENTIALLY, so with several orgs it lasts a long time. Two consequences
+  // are handled here:
+  //   · it used to build parts[] and paint ONCE at the end, so the panel sat on
+  //     a frozen "Computing…" the whole time. Each org's line is now appended
+  //     AS IT COMPLETES, with a running "scanned x of n org(s)…" header, so what
+  //     is on screen is always exactly what has actually been measured.
+  //   · re-opening the wizard used to leave the previous run alive and racing;
+  //     it could land after the new one and paint stale orgs over fresh results.
+  //     The pass now captures a token (same guard as _pkSyncScanToken) and
+  //     abandons quietly the moment a newer run supersedes it.
+  const scanToken   = ++_pkBulkScanToken;
+  const scanSubject = single ? 'this value' : 'the first value';
+  const scanHead    = () => eid('dsPkBulkImpactHead');
+  const scanRows    = () => eid('dsPkBulkImpactRows');
+  { const h0 = scanHead(); if (h0) h0.textContent = pkScanProgressText(0, orgs.length, 0, scanSubject); }
   (async () => {
-    const parts = [];
+    let done = 0, failed = 0;
     for (const o of orgs) {
-      const imp = await _pkImpact(o.inv);
-      const lit = await _pkValueLiteralScan(o.inv, values[0]);
-      parts.push(`<div class="ds-pk-imp-org"><strong>${esc(o.label)}</strong>: ${_pkImpactSummaryLine(imp)}
-        · ${lit.mentions} automation(s) mention “${esc(values[0])}” by name${lit.hits.length ? ` (${esc(lit.hits.slice(0, 3).join(', '))})` : ''}</div>`);
+      let inner, bad = false;
+      try {
+        const imp = await _pkImpact(o.inv);
+        const lit = await _pkValueLiteralScan(o.inv, values[0]);
+        // lit.notes carries whatever the scan could NOT cover (its own 40-flow
+        // cap, an enumeration that failed). Dropping it — as this line used to
+        // — turned a partial scan into a confident "N mentions" verdict. Same
+        // treatment as _pkSyncAutomationPass gives it.
+        inner = `<strong>${esc(o.label)}</strong>: ${_pkImpactSummaryLine(imp)}
+          · ${lit.mentions} automation(s) mention “${esc(values[0])}” by name${lit.hits.length ? ` (${esc(lit.hits.slice(0, 3).join(', '))})` : ''}`
+          + ((lit.notes || []).length ? `<span style="color:#92400e"> · ⚠ ${esc(lit.notes.join(' · '))}</span>` : '');
+      } catch (e) {
+        // A thrown org must never vanish from the panel: an org with no line
+        // would read as "nothing to worry about here".
+        bad = true;
+        failed++;
+        inner = `<strong>${esc(o.label)}</strong>: ⚠ automation could NOT be checked (${esc(e?.message || String(e))}) — treat this org as UNKNOWN, not clean`;
+      }
+      done++;
+      // Superseded by a newer wizard run, or the modal is gone — stop, and
+      // above all do NOT paint into whatever is on screen now.
+      if (pkScanSuperseded(scanToken, _pkBulkScanToken)) return;
+      const rows = scanRows();
+      if (!rows) return;
+      const row = document.createElement('div');
+      row.className = 'ds-pk-imp-org';
+      if (bad) row.style.color = '#92400e';
+      row.innerHTML = inner;
+      rows.appendChild(row);
+      const h = scanHead();
+      if (h) h.textContent = pkScanProgressText(done, orgs.length, failed, scanSubject);
     }
-    const box = eid('dsPkBulkImpact');
-    if (box) box.innerHTML = `<div class="ds-pk-imp-title">⚡ Automation that will run / references ${single ? 'this value' : 'the first value'}:</div>${parts.join('')}`;
   })();
 
   eid('dsPkBulkGo')?.addEventListener('click', async () => {

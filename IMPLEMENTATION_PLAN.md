@@ -530,8 +530,10 @@ anchor-based plan edit accidentally deleted it)
   changelog history** ("we shouldn't state them. since we have to launch on version
   1.0" / "When we have something new we will update it there") — manifest reset
   1.3.0 → 1.0.0, CHANGELOG.md = single "Initial release." entry, full dev history
-  archived to `_CHANGELOG_HISTORY.md` (underscore = pack-excluded; verified absent
-  from zip). PRIVACY.md perms table synced to manifest (removed stale `tabs`, added
+  archived to `CHANGELOG_HISTORY.md` (pack-excluded because the packer whitelists
+  only CHANGELOG.md among .md files; verified absent from zip. Was briefly
+  `_CHANGELOG_HISTORY.md` — renamed 2026-07-28: Chrome refuses to load unpacked
+  extensions with root files starting with `_`). PRIVACY.md perms table synced to manifest (removed stale `tabs`, added
   `alarms`) + contact/date added. Artifact: dist/salesforce-toolkit-v1.0.0-store.zip
   (46 files, 629 KB), stale zips deleted. STANDING POLICY unchanged for future
   releases: CHANGELOG entry WITH the code, bump version, `npm run pack` — versions
