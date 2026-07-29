@@ -556,8 +556,9 @@ stated in UI, never invents a total it did not measure).
   LABS FILE — excluded from the store build, so no shipped user is affected; fix before
   Schema View ever graduates.
 
-- [x] **L8. Composite-batch read primitive** (v1.1.0) — `sfCompositeBatch` /
-  `sfRunBatchedReads` in background.js: 25 subrequests per round-trip, per-item error
+- [x] **L8. Composite-batch read primitive** (v1.1.0) — `sfCompositeBatch` in
+  background.js (a second helper, sfRunBatchedReads, shipped unadopted and was
+  deleted by the v1.1.0 QA remainder): 25 subrequests per round-trip, per-item error
   isolation, input-order preservation. **Misalignment defence**: a batch response is a
   bare positional array with no echo of the request, so a dropped subrequest silently
   shifts every later answer — any length mismatch fails the WHOLE chunk rather than
@@ -574,6 +575,42 @@ stated in UI, never invents a total it did not measure).
 - [x] **L11. sfQueryAll serverTotal** (v1.1.0) — was overwriting the server's own
   totalSize with `records.length`, destroying a free authoritative count and forcing
   callers to spend a round-trip on `SELECT COUNT()`.
+
+## Phase E — Enterprise suitability (user 2026-07-29: "lets do them all")
+
+The moat stays: NO SERVER — everything local, CSP-enforced. Nothing in this phase
+may call a non-Salesforce host. Store release plan: these ship together with the
+v1.1.0-QA remainder fixes as **1.2.0** (store already has 1.1.0).
+
+- [~] **E1. Profile export/import** — versioned JSON ({format:'sftk-profile', schema:1}),
+  runtime/session fields stripped on export (documented list), import validates schema +
+  regenerates id + provenance tag + prompts the existing Check-all-targets validation.
+  Teams share profiles via git/Teams; no server.
+- [~] **E2. Exportable audit reports** — per-run JSON/CSV (timestamps, orgs, per-object
+  counts, failure detail incl. field/value context) + full-history export; states the
+  retention window and counts-only mode honestly; CSV formula-injection guarded.
+- [~] **E3. API-budget awareness** — /limits (DailyApiRequests) cached 5 min per org;
+  "≈N API calls · org has R of M remaining" before transfer runs and ring sync plans;
+  ⚠ when estimate may exhaust the budget — inform, never block; post-run actuals line.
+- [ ] **E3b. Quota line on EVERY big operation** (user 2026-07-29: "say how many api
+  calls big operations cost and how much is it compared to the orgs quota") — reuse
+  E3's window.sftkApiBudget + the '≈N calls · R of M remaining' line on: dependency
+  scan prompt (popup.js/dependency-map.js — wait for the QA-remainder workflow to
+  release them), Lightning Pages org-defaults + Who-sees-what, picklist whole-object
+  sweep, Deploy Readiness multi-target run, Field Cleaner full scans, Schema View deep
+  scan (Labs). Most already quote a call count from the v1.0.1 work — add the quota
+  comparison beside it. Popup pages must load the helper (check script order/exposure;
+  the popup does not load studio-transfer.js — may need the helper hoisted to a shared
+  file both apps load, e.g. sftk-friendly-error.js's pattern).
+- [~] **E4. Professional mode + a11y** — ds_settings toggle (default OFF) → body.ds-pro:
+  sftkGlyph(emoji,label) swaps emoji chrome for text labels, density tightened ~10% via
+  CSS variables, muted accents; :focus-visible on all .ds-* interactives, nav ARIA,
+  prefers-reduced-motion, WCAG-AA contrast for --subtext (measured, not guessed).
+  High-visibility surfaces first; remaining emoji sites listed for a later sweep.
+
+Deliberately NOT doing: email/Slack drift alerts (needs a server — breaks the moat),
+licensing plumbing (free-first strategy), org-stored shared config (write-path feature;
+revisit only if E1's file-based sharing proves demand).
 
 ## Shipping — Chrome Web Store  (section restored 2026-07-25 — an earlier
 anchor-based plan edit accidentally deleted it)

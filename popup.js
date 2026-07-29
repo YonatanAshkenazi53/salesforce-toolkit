@@ -11,7 +11,7 @@ let orgFlowCount = 0;
 // it. Neither may be treated as 'done' — see renderDependenciesTab.
 let metadataScanState = 'none'; // 'none' | 'scanning' | 'skipped' | 'partial' | 'done'
 let toolbarEventsReady = false;  // guard against duplicate listeners
-// v1.0.2 — did the Flow list really return LastModifiedDate for every version?
+// v1.1.0 — did the Flow list really return LastModifiedDate for every version?
 // Without it nothing can be proven unchanged, so the incremental dependency
 // cache is disabled for this org rather than trusted blind.
 let flowStampsAvailable = false;
@@ -1003,7 +1003,7 @@ async function fetchAllMetadataSilently(loadOrgUrl, loadSid) {
   loadOrgUrl = loadOrgUrl || orgUrl;
   loadSid    = loadSid    || sid;
 
-  // v1.0.2 — reuse whatever this org's stored map still proves. Zero HTTP
+  // v1.1.0 — reuse whatever this org's stored map still proves. Zero HTTP
   // round-trips: it diffs chrome.storage.local against the flow list that was
   // just fetched. On a cold cache (every first run, every new org) it finds
   // nothing and the scan below is byte-for-byte the one v1.0.1 ran.
@@ -1137,14 +1137,22 @@ function hideScanOfferBar() {
   if (wrap) wrap.style.display = 'none';
 }
 
-// v1.0.2 — the one line that says how much of this map was READ and how much was
+// v1.1.0 — the one line that says how much of this map was READ and how much was
 // REUSED, plus anything the cache had to give up. Empty when the whole map was
 // read live in this session (the pre-cache behaviour), so a small org that never
 // had a cache sees exactly what it saw before.
 function scanCacheNote(st) {
   const s = st || DependencyMap.getScanStatus();
   const bits = [];
-  if (s.fromCache) bits.push(DependencyMap.freshness().text);
+  if (s.fromCache) {
+    bits.push(DependencyMap.freshness().text);
+    // QA 2026-07-29 (F5): the PRIMED path carries its own note too — e.g. the
+    // 🧨 blast-radius reference detail was dropped from the stored entry for
+    // size. This line used to surface cacheNote only when the cache was
+    // 'disabled', so the primed path silently lost the one sentence that
+    // explains why reference detail is missing.
+    if (s.cacheNote) bits.push(s.cacheNote.charAt(0).toUpperCase() + s.cacheNote.slice(1) + '.');
+  }
   else if (!flowStampsAvailable && allFlows.length) {
     bits.push('This org\'s Flow list does not carry a usable LastModifiedDate, so no dependency data is kept between opens — every scan reads the org live.');
   } else if (s.cacheState === 'disabled' && s.cacheNote) {
@@ -1634,6 +1642,23 @@ async function checkSubflowDependencies(selected) {
         selected = selected.filter(f => liveIds.has(f.Id));
         if (!selected.length) return null;
       }
+      // QA 2026-07-29 (F4): versions the re-check DISCOVERED (created since
+      // this popup opened) are already in the dependency map — they can show
+      // up as PARENTS in the modal below — but that modal resolves its
+      // "Deactivate + delete selected parents" checkboxes against allFlows,
+      // and walks grandparents through allFlows too. An unmerged parent would
+      // let the user tick its box and then silently delete nothing, and its
+      // own callers were never walked. Merge the discovered versions in and
+      // regroup so both paths really see them.
+      const knownIds = new Set(allFlows.map(f => f.Id));
+      const discovered = rc.flows.filter(f => !knownIds.has(f.Id));
+      if (discovered.length) {
+        allFlows = allFlows.concat(discovered);
+        orgFlowCount = allFlows.length;
+        groupFlows();
+        renderFlowList();
+        updateSelectionSummary();
+      }
     }
   }
 
@@ -1662,8 +1687,15 @@ async function checkSubflowDependencies(selected) {
 async function askScanBeforeDelete() {
   const st   = DependencyMap.getScanStatus();
   const left = DependencyMap.scanPlan(DependencyMap.pendingCount(allFlows));
+  // QA 2026-07-29 (F6): st.done counts cache-RESTORED versions as covered.
+  // Calling those "scanned" here erased the live-vs-restored distinction the
+  // rest of this feature is built on — say which half is which.
+  const cachedN = Math.min(Number(st.fromCache) || 0, st.done);
+  const liveN   = Math.max(0, st.done - cachedN);
   const coverage = st.done > 0
-    ? `Only ${st.done} of ${allFlows.length} flow versions have been scanned.`
+    ? (cachedN > 0
+      ? `Only ${st.done} of ${allFlows.length} flow versions are covered — ${liveN} scanned live this session, ${cachedN} restored from the stored cache.`
+      : `Only ${st.done} of ${allFlows.length} flow versions have been scanned.`)
     : `None of the ${allFlows.length} flow versions in this org have been scanned.`;
 
   return new Promise((resolve) => {
@@ -2685,7 +2717,7 @@ function renderDependenciesTab() {
 
   // P1 — never rendered from a map that was never built. An empty tree here
   // would read as "this org has no subflow dependencies", which is a lie.
-  // v1.0.2: 'skipped' no longer implies "no data" — a warm cache can have
+  // v1.1.0: 'skipped' no longer implies "no data" — a warm cache can have
   // covered most of the org while the remaining delta is still too large to
   // scan on open. When that is the case fall through to the partial branch
   // below, which shows what IS known WITH its coverage stated, rather than
@@ -2754,7 +2786,7 @@ function buildDepScanOffer() {
   }
 
   const p = document.createElement('div');
-  // reads vs calls are different numbers since v1.0.2 — both are stated, because
+  // reads vs calls are different numbers since v1.1.0 — both are stated, because
   // "160 API calls" and "1600 flow versions" answer different questions and
   // quoting only one of them has been wrong in both directions.
   p.textContent = `${allFlows.length} flow versions loaded. Building the dependency map still needs to read ${plan.reads} of them, which costs ${plan.calls} batched API call(s) at ${plan.chunkSize} reads each (${plan.estLabel}, ${plan.measured ? 'measured on this org' : 'estimated'})`

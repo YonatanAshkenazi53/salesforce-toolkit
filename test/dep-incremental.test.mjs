@@ -967,3 +967,198 @@ describe('depBatchApply — only a success or a 404 proves anything (QA 2026-07-
     expect(outcome.missing).toBe(1);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// QA 2026-07-29 (second pass) — cache/regression follow-ups F1–F7.
+// The adversarial verifiers for these died on a session cap, so each
+// claim was re-verified against the source before being fixed here.
+// ══════════════════════════════════════════════════════════════════
+
+describe('depRecheckCoverage — a capped re-check list is PARTIAL (QA F2)', () => {
+  const depRecheckCoverage = extractFunction('dependency-map.js', 'depRecheckCoverage');
+
+  it('is complete when the server total matches what arrived', () => {
+    expect(depRecheckCoverage(40, 40)).toEqual({ complete: true, got: 40, missing: 0, reason: '' });
+  });
+
+  it('is complete when no server total is observable — absence of evidence is not a cap', () => {
+    for (const t of [null, undefined, NaN, 'lots']) {
+      expect(depRecheckCoverage(40, t).complete).toBe(true);
+    }
+  });
+
+  it('REFUSES a capped list and quotes both numbers, so the user learns why', () => {
+    const c = depRecheckCoverage(1000, 1600);
+    expect(c.complete).toBe(false);
+    expect(c.missing).toBe(600);
+    expect(c.reason).toMatch(/returned 1000 of 1600/);
+    expect(c.reason).toMatch(/could not complete/);
+    expect(c.reason).toMatch(/nothing was evicted/);
+  });
+
+  it('a server total at or below what arrived is not a cap', () => {
+    expect(depRecheckCoverage(40, 30).complete).toBe(true);
+    expect(depRecheckCoverage(0, 0).complete).toBe(true);
+  });
+
+  it('junk row counts with a REAL larger server total still refuse — the safe default', () => {
+    expect(depRecheckCoverage(null, 5).complete).toBe(false);
+    expect(depRecheckCoverage('x', 5).complete).toBe(false);
+  });
+
+  it('shows the exact trap it exists for: a capped list reads as mass deletion', () => {
+    // Server holds a/b/c but capped the answer at just `a`. The delta alone
+    // would classify b and c as DELETED and evict their live edges; the
+    // coverage gate refuses before depCacheDelta's verdict can be acted on.
+    const depCacheDelta = extractFunction('dependency-map.js', 'depCacheDelta');
+    const stamps = { a: 'T1', b: 'T1', c: 'T1' };
+    const capped = [{ Id: 'a', LastModifiedDate: 'T1' }];
+    expect(depCacheDelta(capped, stamps).deleted.sort()).toEqual(['b', 'c']);   // the trap
+    expect(depRecheckCoverage(capped.length, 3).complete).toBe(false);          // the gate
+  });
+});
+
+describe('depMapRefreshFields — cached edges wear the LIVE status (QA F3)', () => {
+  const depMapRefreshFields = extractFunction('dependency-map.js', 'depMapRefreshFields');
+  const cachedMap = {
+    Child_A: [
+      { id: 'p1', masterLabel: 'Old Label', apiName: 'P1', versionNumber: 3, status: 'Draft', processType: 'Flow' },
+      { id: 'p2', masterLabel: 'P2', apiName: 'P2', versionNumber: 1, status: 'Active', processType: 'Flow' }
+    ],
+    Child_B: [{ id: 'p9', masterLabel: 'Gone', status: 'Draft' }]
+  };
+  const live = [
+    { Id: 'p1', MasterLabel: 'New Label', ApiName: 'P1', VersionNumber: 3, Status: 'Active', ProcessType: 'AutoLaunchedFlow' }
+  ];
+
+  it('refreshes MasterLabel/VersionNumber/Status/ProcessType from the live list, matched by Id', () => {
+    // The QA scenario: a parent activated since the cache was built must not
+    // wear its stale grey 'Draft' chip in the delete-dependency table.
+    const out = depMapRefreshFields(cachedMap, live);
+    expect(out.Child_A[0].status).toBe('Active');
+    expect(out.Child_A[0].masterLabel).toBe('New Label');
+    expect(out.Child_A[0].processType).toBe('AutoLaunchedFlow');
+    expect(out.Child_A[0].versionNumber).toBe(3);
+  });
+
+  it('leaves an edge whose caller is NOT in the live list untouched rather than blanked', () => {
+    const out = depMapRefreshFields(cachedMap, live);
+    expect(out.Child_A[1]).toEqual(cachedMap.Child_A[1]);
+    expect(out.Child_B[0]).toEqual(cachedMap.Child_B[0]);
+  });
+
+  it('keeps the cached apiName when the live row does not carry one', () => {
+    const out = depMapRefreshFields(
+      { C: [{ id: 'p1', apiName: 'Kept', status: 'Draft' }] },
+      [{ Id: 'p1', MasterLabel: 'L', VersionNumber: 2, Status: 'Active', ProcessType: 'Flow' }]
+    );
+    expect(out.C[0].apiName).toBe('Kept');
+    expect(out.C[0].status).toBe('Active');
+  });
+
+  it('never mutates the map or the live list it was handed', () => {
+    const beforeMap = JSON.stringify(cachedMap);
+    const beforeLive = JSON.stringify(live);
+    depMapRefreshFields(cachedMap, live);
+    expect(JSON.stringify(cachedMap)).toBe(beforeMap);
+    expect(JSON.stringify(live)).toBe(beforeLive);
+  });
+
+  it('tolerates junk on either side', () => {
+    expect(depMapRefreshFields(null, live)).toEqual({});
+    expect(depMapRefreshFields(cachedMap, null)).toEqual(cachedMap);
+    expect(depMapRefreshFields({ X: 'not-an-array' }, live)).toEqual({ X: [] });
+  });
+});
+
+describe('depListApiVersion — the version the LIST was really served on (QA F7)', () => {
+  const depListApiVersion = extractFunction('dependency-map.js', 'depListApiVersion');
+  const rec = url => ({ Id: '301x', attributes: { type: 'Flow', url } });
+
+  it('reads it off the attributes.url every query record already carries', () => {
+    expect(depListApiVersion([rec('/services/data/v62.0/tooling/sobjects/Flow/301A')])).toBe('v62.0');
+    expect(depListApiVersion([rec('/services/data/v63.0/sobjects/Account/001A')])).toBe('v63.0');
+  });
+
+  it('skips records with no usable attributes and answers from the first that has them', () => {
+    expect(depListApiVersion([
+      { Id: 'a' },
+      { Id: 'b', attributes: {} },
+      rec('/services/data/v58.0/tooling/sobjects/Flow/1')
+    ])).toBe('v58.0');
+  });
+
+  it('normalises case so the comparison against the cache key constant cannot false-alarm', () => {
+    expect(depListApiVersion([rec('/services/data/V62.0/tooling/x')])).toBe('v62.0');
+  });
+
+  it('returns empty (= nothing observable, do not judge) rather than guessing', () => {
+    for (const bad of [[], null, undefined, 'nope', [{ Id: 'a' }], [rec('/no/version/here')]]) {
+      expect(depListApiVersion(bad)).toBe('');
+    }
+  });
+});
+
+describe('the QA F1–F7 wiring is really in the source', () => {
+  const dep = srcOf('dependency-map.js');
+  const pop = srcOf('popup.js');
+  const depCode = dep.replace(/^\s*\/\/.*$/gm, '');
+
+  it('F1: the scan worker re-checks the run token AFTER the batch await, before any module-state write', () => {
+    // The failure this pins: an in-flight batch from the previous org landing
+    // in the new org's dependency map after an org-switch reset().
+    const worker = depCode.indexOf('depRunPool(chunks');
+    const apply  = depCode.indexOf('depBatchApply(chunk', worker);
+    expect(worker).toBeGreaterThan(-1);
+    expect(apply).toBeGreaterThan(worker);
+    expect(depCode.slice(worker, apply)).toMatch(/if \(myToken !== _runToken\) return;/);
+  });
+
+  it('F1: the cache write path is token-guarded across its storage awaits too', () => {
+    const saveAt = depCode.indexOf('async function saveCacheEntry');
+    const dropAt = depCode.indexOf('async function dropCacheEntry');
+    expect(depCode.slice(saveAt, dropAt)).toMatch(/myToken !== _runToken/);
+  });
+
+  it('F2: the delete re-check consults coverage BEFORE diffing/evicting, and stamps only after', () => {
+    const covAt   = dep.indexOf('depRecheckCoverage(live.length');
+    const deltaAt = dep.indexOf('depCacheDelta(live, _stamps)');
+    const stampAt = dep.indexOf('_recheckedAt = Date.now()');
+    expect(covAt).toBeGreaterThan(-1);
+    expect(covAt).toBeLessThan(deltaAt);
+    expect(deltaAt).toBeLessThan(stampAt);
+  });
+
+  it('F3: surviving edges are refreshed from the live list before the re-check stamps or returns', () => {
+    const refreshAt = dep.indexOf('depMapRefreshFields(dependencyMap, live)');
+    const stampAt   = dep.indexOf('_recheckedAt = Date.now()');
+    expect(refreshAt).toBeGreaterThan(-1);
+    expect(refreshAt).toBeLessThan(stampAt);
+  });
+
+  it('F7: the wire version is verified at LOAD — before the stored entry is even read — and again on the delete re-check', () => {
+    const primeAt = depCode.indexOf('depListApiVersion(list)');
+    const readAt  = depCode.indexOf('await readCacheStore()');
+    expect(primeAt).toBeGreaterThan(-1);
+    expect(primeAt).toBeLessThan(readAt);
+    expect(depCode).toMatch(/depListApiVersion\(live\)/);
+  });
+
+  it('F4: versions discovered by the re-check are merged into the popup flow list and regrouped', () => {
+    expect(pop).toMatch(/allFlows = allFlows\.concat\(discovered\)/);
+    const mergeAt = pop.indexOf('allFlows = allFlows.concat(discovered)');
+    expect(pop.indexOf('groupFlows();', mergeAt)).toBeGreaterThan(mergeAt);
+  });
+
+  it('F4: the re-check query carries DefinitionId, without which a merged parent could never be deactivated', () => {
+    expect(dep).toMatch(/SELECT Id,MasterLabel,Definition\.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,LastModifiedDate FROM Flow/);
+  });
+
+  it('F5: the cache-primed path surfaces the cache note (e.g. dropped blast-radius detail)', () => {
+    expect(pop).toMatch(/if \(s\.fromCache\) \{[\s\S]{0,800}?bits\.push\(s\.cacheNote/);
+  });
+
+  it('F6: the pre-delete gate distinguishes restored-from-cache from scanned-live', () => {
+    expect(pop).toMatch(/restored from the stored cache/);
+  });
+});
