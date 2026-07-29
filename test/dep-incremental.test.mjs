@@ -886,3 +886,84 @@ describe('popup.js asks for the freshness field and survives losing it', () => {
     expect(pop).toMatch(/askStaleBeforeDelete/);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// QA 2026-07-29 — two delete-path holes found by the v1.1.0 release QA.
+// Both let "nothing calls this flow" be answered from something that did
+// not actually prove it. Deletes are irreversible; these stay pinned.
+// ══════════════════════════════════════════════════════════════════
+describe('depDeleteTrust — a re-check expires (QA 2026-07-29)', () => {
+  const depDeleteTrust = extractFunctions('dependency-map.js', ['depCacheAge', 'depDeleteTrust']).depDeleteTrust;
+  const NOW = 2_000_000_000;
+  const cached = { complete: true, fromCache: 1598, total: 1600, stampsAvailable: true, now: NOW };
+
+  it('still trusts a re-check from moments ago (deleting several in a row must not re-query each time)', () => {
+    const t = depDeleteTrust({ ...cached, recheckedAt: NOW - 30_000 });
+    expect(t.safe).toBe(true);
+    expect(t.needsLiveRecheck).toBe(false);
+  });
+
+  it('REFUSES a re-check older than the TTL — the bug was that one re-check authorised every later delete in the session', () => {
+    const t = depDeleteTrust({ ...cached, recheckedAt: NOW - 6 * 60 * 1000 });
+    expect(t.safe).toBe(false);
+    expect(t.needsLiveRecheck).toBe(true);
+    expect(t.reason).toMatch(/too long ago/i);
+  });
+
+  it('a popup left open for hours cannot answer a delete from that morning\'s proof', () => {
+    const t = depDeleteTrust({ ...cached, recheckedAt: NOW - 4 * 60 * 60 * 1000 });
+    expect(t.safe).toBe(false);
+  });
+
+  it('an all-live map is unaffected by the TTL — it never needed a re-check', () => {
+    const t = depDeleteTrust({ complete: true, fromCache: 0, total: 40, stampsAvailable: true, now: NOW });
+    expect(t.safe).toBe(true);
+    expect(t.needsLiveRecheck).toBe(false);
+  });
+});
+
+describe('depBatchApply — only a success or a 404 proves anything (QA 2026-07-29)', () => {
+  const depBatchApply = extractFunction('dependency-map.js', 'depBatchApply');
+  const chunk = [{ Id: '301a' }, { Id: '301b' }, { Id: '301c' }];
+
+  it('counts a 404 as covered — an obsolete version is legitimately gone', () => {
+    const out = depBatchApply([{ Id: '301a' }], [{ ok: false, status: 404 }]);
+    expect(out.covered).toHaveLength(1);
+    expect(out.unread).toHaveLength(0);
+  });
+
+  it('does NOT count a 403 as covered — no permission means we do not know what it calls', () => {
+    const out = depBatchApply([{ Id: '301a' }], [{ ok: false, status: 403 }]);
+    expect(out.covered).toHaveLength(0);
+    expect(out.unread).toHaveLength(1);
+  });
+
+  it('does NOT count a 500 as covered — a transient failure is not proof of "calls nothing"', () => {
+    const out = depBatchApply([{ Id: '301a' }], [{ ok: false, status: 500 }]);
+    expect(out.covered).toHaveLength(0);
+    expect(out.unread).toHaveLength(1);
+  });
+
+  it('a mixed chunk splits correctly and only the readable one yields metadata', () => {
+    const out = depBatchApply(chunk, [
+      { ok: true, status: 200, body: { Metadata: { start: {} } } },
+      { ok: false, status: 403 },
+      { ok: false, status: 404 },
+    ]);
+    expect(out.covered.map(f => f.Id)).toEqual(['301a', '301c']);
+    expect(out.unread.map(f => f.Id)).toEqual(['301b']);
+    expect(out.metas).toHaveLength(1);
+  });
+
+  it('an unreadable version leaves the scan incomplete, which depDeleteTrust already refuses to call safe', () => {
+    const out = depBatchApply(chunk, [
+      { ok: true, status: 200, body: { Metadata: {} } },
+      { ok: false, status: 403 },
+      { ok: true, status: 200, body: { Metadata: {} } },
+    ]);
+    const depScanOutcome = extractFunction('dependency-map.js', 'depScanOutcome');
+    const outcome = depScanOutcome(chunk.length, out.covered.length, false);
+    expect(outcome.complete).toBe(false);
+    expect(outcome.missing).toBe(1);
+  });
+});

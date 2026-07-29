@@ -331,6 +331,7 @@ function renderHistory() {
           <li>all deployment scan results (record ids + match keys)</li>
           <li>remembered match pairs (🧠 match memory — record-id pairs learned from transfers and Match Review)</li>
           <li>activity log and cached Apex log bodies</li>
+          <li>the flow dependency cache, Field Cleaner undo snapshots and field-dependency scans, and the last scheduled drift result</li>
         </ul>
         Deployment configurations, org labels, read-only locks, and settings are kept.
       </div>
@@ -348,14 +349,31 @@ function renderHistory() {
       let mems = 0;
       for (const p of _profiles) if (p.matchMemory) { delete p.matchMemory; mems++; }
       const all = await chrome.storage.local.get(null);
-      const logKeys = Object.keys(all).filter(k => k.startsWith('apex_log_viewer_'));
-      if (logKeys.length) await chrome.storage.local.remove(logKeys);
+      // Every key holding data ABOUT THE ORGS, not configuration. Prefix-matched
+      // so per-org/per-field variants are caught too. QA 2026-07-29: the button
+      // promised "everything cached about your orgs' data" while leaving the
+      // v1.1.0 dependency cache, Field Cleaner's undo snapshots (full flow /
+      // layout / FlexiPage metadata) and the drift result behind.
+      const ORG_DATA_PREFIXES = [
+        'apex_log_viewer_',   // raw Apex log bodies
+        'sftk_dep_cache',     // flow dependency map per org
+        'fc_fix_snapshots',   // Field Cleaner undo: full metadata of edited components
+        'fc_dep|',            // per-org/per-field dependency scans
+        'ds_sched_drift',     // last scheduled drift-check result
+        'ds_scans', 'ds_scan_results',
+        'sftk_debug_entries', 'sftk_debug_meta',   // captured API calls (already sid-redacted)
+      ];
+      const cachedKeys = Object.keys(all).filter(k => ORG_DATA_PREFIXES.some(p => k.startsWith(p)));
+      if (cachedKeys.length) await chrome.storage.local.remove(cachedKeys);
+      // The in-memory dependency map would otherwise keep serving the data we
+      // just deleted from disk until the popup is reopened.
+      try { window.DependencyMap?.clearCache?.(); } catch (_) {}
       await Promise.all([
         storageSaveHistory(),
         storageSaveProfiles(),
         chrome.storage.local.set({ ds_activity_log: {} }),
       ]);
-      showToast(`Cleared: history, ${scans} scan result${scans !== 1 ? 's' : ''}, match memory on ${mems} deployment${mems !== 1 ? 's' : ''}, activity log, ${logKeys.length} cached log${logKeys.length !== 1 ? 's' : ''}`, 'success');
+      showToast(`Cleared: history, ${scans} scan result${scans !== 1 ? 's' : ''}, match memory on ${mems} deployment${mems !== 1 ? 's' : ''}, activity log, ${cachedKeys.length} cached org-data entr${cachedKeys.length !== 1 ? 'ies' : 'y'}`, 'success');
       renderHistory();
     });
   });
