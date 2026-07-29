@@ -92,6 +92,9 @@ async function renderReadiness() {
         <button class="ds-btn ds-btn-primary" id="drRunBtn">🛡 Run Readiness Check</button>
         <span id="drStatus" class="dr-status"></span>
       </div>
+      <!-- E3b: what this run will spend, before it spends it. Filled by
+           drUpdateApiBudget() on every setup change. -->
+      <div id="drApiBudget" style="margin-top:6px;font-size:11.5px;color:var(--subtext)"></div>
 
       <div id="drError" class="dr-error" style="display:none"></div>
     </div>
@@ -104,6 +107,7 @@ async function renderReadiness() {
   document.querySelectorAll('[data-dr-tgt]').forEach(cb =>
     cb.addEventListener('change', () => {
       _drTgtSel = new Set([...document.querySelectorAll('[data-dr-tgt]:checked')].map(c => _orgKey(c.dataset.drTgt)));
+      drUpdateApiBudget();   // E3b: fewer/more targets = a different spend
     }));
   // Source org drives the object list — load it when picked (or re-picked),
   // and lazily when the panel is first opened.
@@ -144,6 +148,9 @@ async function renderReadiness() {
   // U4a: results from a previous run this session are still in memory —
   // re-show them with a "from N ago" banner instead of a blank view.
   drRestoreCachedResults();
+
+  // E3b: the API-cost line for the setup as restored.
+  drUpdateApiBudget();
 }
 
 // ── Deploy Readiness object multi-select ───────────────────────
@@ -190,6 +197,9 @@ function drSaveSetup() {
   };
   _drSavedSetup = setup;
   try { chrome.storage.local.set({ [DR_STATE_KEY]: setup }); } catch (_) { /* storage unavailable — setup just won't persist */ }
+  // E3b: every setup change funnels through here — orgs, object selection,
+  // check toggles all change what a run costs, so re-quote it.
+  drUpdateApiBudget();
 }
 
 function drRestoreCachedResults() {
@@ -1114,6 +1124,124 @@ function renderObjectCard(card) {
         ${bodyHtml}
       </div>
     </div>`;
+}
+
+// ════════════════════════════════════════════════════════════════
+// E3b — API-budget awareness for the multi-target run
+// ════════════════════════════════════════════════════════════════
+// The run's call profile, counted from runReadinessCheck/analyseObject as
+// they actually execute (not from what the toggles *sound* like they cost):
+//   per target per object — 1 source describe + 1 target describe
+//                           + 1 target Tooling query  (validation rules ON)
+//                           + 1 target SOQL query      (duplicate rules ON)
+//   per target            — 2 target describes         (org settings ON)
+//   once per run          — 2 source describes         (org settings ON)
+// Fields / picklists / record types ride on the describes and cost nothing
+// extra. NOT counted: the one-off object-list load and session refreshes —
+// hence the '≈'. Each org spends its OWN daily pool, so the result is split:
+// `source` is the source org's spend, `perTarget` is what EACH target spends.
+
+// PURE. targets/objects are counts; checks = { validation, dupRules,
+// orgSettings } booleans (absent = true, matching the UI defaults).
+function drEstimateReadinessCalls(targets, objects, checks) {
+  const t = Math.max(0, Math.floor(Number(targets) || 0));
+  const o = Math.max(0, Math.floor(Number(objects) || 0));
+  const c = checks || {};
+  const val = c.validation  !== false ? 1 : 0;
+  const dup = c.dupRules    !== false ? 1 : 0;
+  const set = c.orgSettings !== false ? 2 : 0;
+  const source    = t * o + (t > 0 ? set : 0);
+  const perTarget = o * (1 + val + dup) + set;
+  return { total: source + t * perTarget, source, perTarget, targets: t, objects: o };
+}
+
+// PURE. The one-line cost display. est: drEstimateReadinessCalls output.
+// budgets: [{ label, budget, calls }] where budget is { max, remaining } |
+// null — null means the meter could NOT be read, which is SAID ("API budget
+// unavailable"), never hidden. An empty budgets array renders the bare
+// estimate (the shared window.sftkApiBudget helper wasn't there / hasn't
+// answered). Each entry is labeled with WHOSE pool it is — pools are never
+// summed, because every org has its own daily limit. warn flips when any
+// org's estimated calls EXCEED its remaining budget (equal is not over);
+// this line informs, it never blocks.
+function drReadinessBudgetLine(est, budgets) {
+  const fmt = v => Number(v).toLocaleString();
+  const e = est || {};
+  const total = Number.isFinite(e.total) ? e.total : 0;
+  const parts = [
+    `≈${fmt(total)} API call${total === 1 ? '' : 's'} ` +
+    `(${fmt(e.targets || 0)} target${e.targets === 1 ? '' : 's'} × ` +
+    `${fmt(e.objects || 0)} object${e.objects === 1 ? '' : 's'})`
+  ];
+  let warn = false;
+  const over = [];
+  for (const b of (budgets || [])) {
+    const label = b && b.label ? String(b.label) : 'org';
+    if (b && b.budget && Number.isFinite(b.budget.remaining) && Number.isFinite(b.budget.max)) {
+      parts.push(`${label} has ${fmt(b.budget.remaining)} of ${fmt(b.budget.max)} daily API calls remaining`);
+      if (Number.isFinite(b.calls) && b.calls > b.budget.remaining) { warn = true; over.push(label); }
+    } else {
+      parts.push(`${label}: API budget unavailable`);
+    }
+  }
+  let text = parts.join(' · ');
+  if (warn) {
+    text = `⚠ ${text} — this run may exhaust the org's remaining daily API budget${over.length > 1 ? 's' : ''} (${over.join(', ')})`;
+  }
+  return { text, warn };
+}
+
+// Last-render-wins token for the async meter fetch below.
+let _drBudgetToken = 0;
+
+// Paint the cost line under the Run button. The local estimate renders
+// synchronously and needs no helper; the per-org meters are appended only
+// when the shared E3 reader (window.sftkApiBudget, studio-transfer.js) is
+// loaded and answers — wired tolerantly so this view stands alone.
+async function drUpdateApiBudget() {
+  const el = eid('drApiBudget');
+  if (!el) return;
+  const ring   = _drRingCfg();
+  const srcId  = ring ? ring.src : (eid('drSrcOrg')?.value || '');
+  const tgtIds = ring
+    ? ring.targets.filter(u => !_drTgtSel || _drTgtSel.has(_orgKey(u)))
+    : [eid('drTgtOrg')?.value].filter(Boolean);
+  // No objects loaded yet → no honest N to show (the count appears when the
+  // source org's object list lands; runReadinessCheck loads it anyway).
+  const objCount = (_drObjState.objects && _drObjState.srcId === srcId)
+    ? _drObjState.selected.size : null;
+  if (!srcId || !tgtIds.length || !objCount) { el.textContent = ''; return; }
+
+  const est = drEstimateReadinessCalls(tgtIds.length, objCount, {
+    validation:  eid('drChkValidation')?.checked ?? true,
+    dupRules:    eid('drChkDupRules')?.checked ?? true,
+    orgSettings: eid('drChkOrgSettings')?.checked ?? true,
+  });
+  el.textContent = drReadinessBudgetLine(est, []).text;   // estimate now, meters next
+  el.style.color = '';
+  if (typeof window.sftkApiBudget !== 'function') return;
+
+  const tok = ++_drBudgetToken;
+  // Every org in the run gets ITS OWN labeled meter: the source spends the
+  // describes, each target spends its checks — different pools, never summed.
+  const wanted = [
+    { id: srcId, tag: 'source', calls: est.source },
+    ...tgtIds.map(u => ({ id: u, tag: 'target', calls: est.perTarget })),
+  ];
+  const budgets = await Promise.all(wanted.map(async w => {
+    let budget = null;
+    try {
+      const sess = await getOrgSession(w.id);
+      budget = sess ? await window.sftkApiBudget(sess.orgUrl, sess.sid) : null;
+    } catch (_) { budget = null; }   // unreadable meter → said as unavailable
+    return { label: `${w.tag} ${orgLabel(w.id)}`, budget, calls: w.calls };
+  }));
+  if (tok !== _drBudgetToken) return;                     // a newer render won
+  const el2 = eid('drApiBudget');
+  if (!el2) return;
+  const line = drReadinessBudgetLine(est, budgets);
+  el2.textContent = line.text;
+  el2.style.color = line.warn ? '#b45309' : '';
 }
 
 // ── Status / error helpers ─────────────────────────────────────

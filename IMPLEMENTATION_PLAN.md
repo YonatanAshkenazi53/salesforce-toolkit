@@ -582,17 +582,17 @@ The moat stays: NO SERVER — everything local, CSP-enforced. Nothing in this ph
 may call a non-Salesforce host. Store release plan: these ship together with the
 v1.1.0-QA remainder fixes as **1.2.0** (store already has 1.1.0).
 
-- [~] **E1. Profile export/import** — versioned JSON ({format:'sftk-profile', schema:1}),
+- [x] **E1. Profile export/import** (v1.2.0; 25 tests; strip-list locked by test) — versioned JSON ({format:'sftk-profile', schema:1}),
   runtime/session fields stripped on export (documented list), import validates schema +
   regenerates id + provenance tag + prompts the existing Check-all-targets validation.
   Teams share profiles via git/Teams; no server.
-- [~] **E2. Exportable audit reports** — per-run JSON/CSV (timestamps, orgs, per-object
+- [x] **E2. Exportable audit reports** (v1.2.0; 38 tests) — per-run JSON/CSV (timestamps, orgs, per-object
   counts, failure detail incl. field/value context) + full-history export; states the
   retention window and counts-only mode honestly; CSV formula-injection guarded.
-- [~] **E3. API-budget awareness** — /limits (DailyApiRequests) cached 5 min per org;
+- [x] **E3. API-budget awareness** (v1.2.0; helper hoisted to sftk-api-budget.js, loaded by BOTH apps; 40 tests) — /limits (DailyApiRequests) cached 5 min per org;
   "≈N API calls · org has R of M remaining" before transfer runs and ring sync plans;
   ⚠ when estimate may exhaust the budget — inform, never block; post-run actuals line.
-- [ ] **E3b. Quota line on EVERY big operation** (user 2026-07-29: "say how many api
+- [x] **E3b. Quota line on EVERY big operation** (v1.2.0 — dep scan (popup, wired by orchestrator), Lightning Pages ×2, picklist sweep/matrix/bulk-scan, Readiness, Field Cleaner, Schema View; 83 tests. Follow-up filed: _pkLoadMatrix loads RecordTypes twice per org for custom fields — reuse r.inv.rts to halve it) (user 2026-07-29: "say how many api
   calls big operations cost and how much is it compared to the orgs quota") — reuse
   E3's window.sftkApiBudget + the '≈N calls · R of M remaining' line on: dependency
   scan prompt (popup.js/dependency-map.js — wait for the QA-remainder workflow to
@@ -602,7 +602,7 @@ v1.1.0-QA remainder fixes as **1.2.0** (store already has 1.1.0).
   comparison beside it. Popup pages must load the helper (check script order/exposure;
   the popup does not load studio-transfer.js — may need the helper hoisted to a shared
   file both apps load, e.g. sftk-friendly-error.js's pattern).
-- [~] **E4. Professional mode + a11y** — ds_settings toggle (default OFF) → body.ds-pro:
+- [x] **E4. Professional mode + a11y** (v1.2.0; --subtext already passed AA both themes — now guarded by test; 26 tests) — ds_settings toggle (default OFF) → body.ds-pro:
   sftkGlyph(emoji,label) swaps emoji chrome for text labels, density tightened ~10% via
   CSS variables, muted accents; :focus-visible on all .ds-* interactives, nav ARIA,
   prefers-reduced-motion, WCAG-AA contrast for --subtext (measured, not guessed).

@@ -13,6 +13,36 @@ lives in `CHANGELOG_HISTORY.md` (repo only, never shipped — the packer only sh
 `CHANGELOG.md` itself; no leading underscore, Chrome refuses to load unpacked
 extensions containing root files that start with `_`).
 
+## 1.2.0 — 2026-07-30
+
+Built for teams and big orgs: share your work, prove what ran, and always know
+what an operation costs before you start it. Still no server — everything runs
+in your browser, and nothing ever leaves it.
+
+### Added
+- **Share deployment profiles as files.** Export any deployment profile to JSON and a
+  teammate imports it — field mappings, per-target overrides, and owner-matching rules
+  intact. Machine-local state (scan results, learned match pairs, schedules) is stripped
+  on export and the import says exactly what was removed. Imported profiles carry a
+  provenance note and prompt a schema check against *your* orgs before first use.
+- **Audit reports.** Every run in History can now be exported as JSON or CSV — timestamps,
+  orgs, per-record outcomes, and failure details including the exact values that were
+  rejected. A full-history export covers everything still retained (and says when your
+  retention window means older runs are gone). CSVs are safe to open in Excel — cells
+  that look like formulas are neutralized, and the export says so.
+- **Every big operation now shows its price.** Before a deploy, sync plan, dependency
+  scan, page audit, picklist sweep, readiness check, or field scan runs, you'll see
+  "≈N API calls · org has R of M daily calls remaining" — measured against your org's
+  real quota. If a run could exhaust the day's budget it warns you first (it never
+  blocks), and afterwards the log shows what it actually used. Multi-org operations
+  show each org's own meter, because each org has its own pool.
+- **Professional mode.** A toggle in Data Studio settings that swaps the emoji labels
+  for plain text, tightens spacing, and mutes the palette — for demos, screenshots, and
+  anyone who prefers a quieter tool. Off by default; your current look is unchanged.
+- **Accessibility.** Visible keyboard-focus outlines everywhere, proper navigation
+  landmarks for screen readers, and animations respect your system's reduced-motion
+  setting.
+
 ## 1.1.0 — 2026-07-29
 
 Large orgs got dramatically faster. 1.0.1 stopped the Toolkit from doing work you

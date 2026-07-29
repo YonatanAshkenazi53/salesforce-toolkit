@@ -54,7 +54,10 @@ function renderProfiles() {
         <h2 class="ds-view-title">📦 Data Deployment</h2>
         <div class="ds-view-subtitle">Define a profile (objects + orgs), then click ▶ Run</div>
       </div>
-      <button class="ds-btn ds-btn-primary" id="dsNewProfile">+ New Profile</button>
+      <div class="ds-builder-hdr-btns">
+        <button class="ds-btn" id="dsImportProfile" title="Import a deployment profile from a teammate's exported .json file — config only; you'll be prompted to validate it against your own targets">⬆ Import</button>
+        <button class="ds-btn ds-btn-primary" id="dsNewProfile">+ New Profile</button>
+      </div>
     </div>
 
     <div class="ds-template-bar">
@@ -90,6 +93,10 @@ function renderProfiles() {
   `);
 
   eid('dsNewProfile')?.addEventListener('click', () => openProfileBuilder(null));
+  // E1: profile file import/export — implementations live in studio-builder.js.
+  eid('dsImportProfile')?.addEventListener('click', () => window.importProfileFromFile?.());
+  document.querySelectorAll('[data-prof-export]').forEach(b =>
+    b.addEventListener('click', () => window.exportProfile?.(b.dataset.profExport)));
   eid('dsNewSequence')?.addEventListener('click', () => openSequenceBuilder(null));
   document.querySelectorAll('[data-seq-run]').forEach(b =>
     b.addEventListener('click', () => runSequence(b.dataset.seqRun)));
@@ -481,6 +488,7 @@ function profileCard(p) {
       ${diffRow}
       <div class="ds-profile-card-tree">${treePreviewText(p.tree, 0)}</div>
       ${lastRun ? `<div class="ds-profile-card-meta">Last run: ${timeAgo(lastRun.startedAt)} · <span class="ds-run-status-${lastRun.status}">${lastRun.status}</span></div>` : ''}
+      ${p.importedFrom ? `<div class="ds-profile-card-meta" title="Imported from a teammate's export file${p.importedFrom.exportedBy ? ` (written by Toolkit v${esc(p.importedFrom.exportedBy)})` : ''}${p.importedFrom.exportedAt ? `, exported ${esc(String(p.importedFrom.exportedAt).slice(0, 10))}` : ''}. Scan state was not part of the file — run 🔄 Refresh state to compare against your orgs.">⬆ imported from ${esc(p.importedFrom.fileName || 'file')} on ${esc(String(p.importedFrom.importedAt || '').slice(0, 10))}</div>` : ''}
       <div class="ds-profile-card-actions">
         <button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="runProfile" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs in Edit first"'}>▶ Run</button>
@@ -498,6 +506,8 @@ function profileCard(p) {
           title="Open the Reconcile view — review what's missing / drifted / extra across both orgs and push or delete in one screen.">⚖ Reconcile</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="editProfile" data-arg="${p.id}">✏ Edit</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="cloneProfile" data-arg="${p.id}">⧉ Clone</button>
+        <button class="ds-btn ds-btn-sm" data-prof-export="${esc(p.id)}"
+          title="Export this profile as a .json file for teammates — config only (orgs, tree, mappings, owner rules); scan state and learned matches stay on this machine">⬇ Export</button>
         <button class="ds-btn ds-btn-sm ds-btn-danger" data-dsaction="deleteProfile" data-arg="${p.id}">🗑</button>
       </div>
     </div>`;

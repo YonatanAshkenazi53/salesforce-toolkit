@@ -146,6 +146,73 @@ function fcPickerSummary(state) {
   return parts.join(' · ');
 }
 
+// E3b — what a full dependency scan costs, stated honestly. The floor is the
+// scan's fixed legs, counted from runScan/scanFlexiPages/scanSupplemental as
+// written: field-id lookup (1) + MetadataComponentDependency query (1) +
+// Lightning-page list (1) + list-view list (1) + compact-layout describe (1)
+// + quick-action list (1) + matching-rule query (1) + workflow-field-update
+// query (1) = 8. Three legs then fan out one call PER ITEM the lists return —
+// unknowable before the scan looks, so a count that hasn't been discovered
+// yet stays a "more if", never a made-up number.
+// counts: { flexiPages, listViews, quickActions } — each a number when known,
+// null/undefined when not. Returns { now, known, moreIf } where `now` is the
+// call floor including every KNOWN leg and `moreIf` names the unknown ones.
+function fcEstimateScanCalls(counts) {
+  const c = counts || {};
+  const known = v => (Number.isFinite(Number(v)) && Number(v) >= 0) ? Math.floor(Number(v)) : null;
+  const legs = [
+    { count: known(c.flexiPages),   what: 'Lightning page in the org' },
+    { count: known(c.listViews),    what: 'list view on this object' },
+    { count: known(c.quickActions), what: 'create/update quick action on this object' },
+  ];
+  let now = 8;
+  const moreIf = [];
+  for (const l of legs) {
+    if (l.count === null) moreIf.push(l.what);
+    else now += l.count;
+  }
+  return { now, known: moreIf.length === 0, moreIf };
+}
+
+// E3b — the one-line cost display for the scan button. est comes from
+// fcEstimateScanCalls. budgetInfo is null/undefined when the shared budget
+// reader (window.sftkApiBudget — a Studio-page helper the popup may not
+// load) is absent: then the line is JUST the local estimate. When the reader
+// exists, budgetInfo = { label, budget } with budget { max, remaining } or
+// null — null is SAID ("API budget unavailable"), never hidden. warn flips
+// when the known call floor alone EXCEEDS the remaining budget (equal is not
+// over) — it informs, it never blocks the scan.
+function fcScanBudgetLine(est, budgetInfo) {
+  const fmt = v => Number(v).toLocaleString();
+  const e = est || {};
+  const now = Number.isFinite(e.now) ? e.now : 0;
+  const moreIf = Array.isArray(e.moreIf) ? e.moreIf : [];
+  let head;
+  if (moreIf.length) {
+    const list = moreIf.length === 1
+      ? moreIf[0]
+      : moreIf.slice(0, -1).join(', ') + ', and ' + moreIf[moreIf.length - 1];
+    head = `≈${fmt(now)} API calls now, plus 1 for each ${list} the scan opens`;
+  } else {
+    head = `≈${fmt(now)} API call${now === 1 ? '' : 's'}`;
+  }
+  const parts = [head];
+  let warn = false;
+  if (budgetInfo) {
+    const label = budgetInfo.label ? String(budgetInfo.label) : 'this org';
+    const b = budgetInfo.budget;
+    if (b && Number.isFinite(b.remaining) && Number.isFinite(b.max)) {
+      parts.push(`${label} has ${fmt(b.remaining)} of ${fmt(b.max)} daily API calls remaining`);
+      if (now > b.remaining) warn = true;
+    } else {
+      parts.push(`${label}: API budget unavailable`);
+    }
+  }
+  let text = parts.join(' · ');
+  if (warn) text = `⚠ ${text} — this scan may exhaust the org's remaining daily API budget`;
+  return { text, warn };
+}
+
 // Targeted EntityDefinition lookup for one typed term — the fallback for
 // objects the capped list never contained. LIMIT is clamped to one Tooling
 // page; anything past that is reported as capped rather than trusted.
@@ -363,6 +430,8 @@ const FieldCleaner = (() => {
         <button id="fcScanBtn" class="btn btn-primary fc-scan-btn" style="display:none">
           🔍 Scan Dependencies
         </button>
+        <!-- E3b: what the scan will spend, quoted before it runs -->
+        <div id="fcApiCost" style="display:none;font-size:11px;color:var(--subtext);margin-top:4px;line-height:1.4"></div>
 
         <!-- Results area -->
         <div id="fcResults"></div>
@@ -640,8 +709,10 @@ const FieldCleaner = (() => {
     const pill    = eid('fcPill');
     const scanBtn = eid('fcScanBtn');
     const results = eid('fcResults');
+    const cost    = eid('fcApiCost');
     if (pill)    pill.style.display    = 'none';
     if (scanBtn) scanBtn.style.display = 'none';
+    if (cost)    cost.style.display    = 'none';
     if (results) results.innerHTML     = '';
   }
 
@@ -721,6 +792,37 @@ const FieldCleaner = (() => {
     }
 
     eid('fcResults').innerHTML = '';
+    updateScanCostLine();
+  }
+
+  // E3b: quote the scan's API cost under the button, BEFORE it runs. The
+  // local "≈N now, more if…" estimate needs nothing but arithmetic; the
+  // org's daily-budget meter is appended only when the shared reader
+  // (window.sftkApiBudget) is loaded in this page AND answers — the popup
+  // does not load studio-transfer.js today, so tolerant wiring is the
+  // difference between "estimate only" and a crash.
+  let _fcBudgetSeq = 0;
+  function updateScanCostLine() {
+    const el = eid('fcApiCost');
+    if (!el) return;
+    // Pre-scan, all three fan-out legs are undiscovered — say so.
+    const est = fcEstimateScanCalls(null);
+    el.textContent   = fcScanBudgetLine(est, null).text;
+    el.style.color   = '';
+    el.style.display = '';
+    if (typeof window.sftkApiBudget !== 'function') return;
+    const seq = ++_fcBudgetSeq;
+    let pending;
+    try { pending = Promise.resolve(window.sftkApiBudget(_orgUrl, _sid)); }
+    catch (_) { return; }                          // the meter is optional; the estimate already shows
+    pending.then(budget => {
+      if (seq !== _fcBudgetSeq) return;            // a newer render won
+      const el2 = eid('fcApiCost');
+      if (!el2) return;
+      const line = fcScanBudgetLine(est, { label: 'this org', budget: budget || null });
+      el2.textContent = line.text;
+      el2.style.color = line.warn ? '#b45309' : '';
+    }).catch(() => { /* the meter is optional; the estimate already shows */ });
   }
 
   // ── Scan ───────────────────────────────────────────────────

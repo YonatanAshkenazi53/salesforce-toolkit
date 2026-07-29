@@ -24,6 +24,12 @@ const LightningPages = (() => {
   //                totalActive: n|null, capped: bool, cap: n, error: string|null }
   let _wswScan   = null;
   let _lpAudience = null;
+  // E-quota: what the LAST completed assignment scan cost, in API calls —
+  // computed by lpAssignmentsScanPlan from MEASURED inputs (real page count,
+  // the real post-dedupe describe list), never from the pre-run estimate, so
+  // "used ≈N" can only disagree with "≈N" when the scan discovered work the
+  // list query could not see. null until a scan has run.
+  let _wswScanCost = null;
   const LP_USER_CAP      = 2000;  // hard cap on users pulled for profile audiences
   const LP_USER_SHOW     = 25;    // users listed inline before "and N more"
   const LP_LENS_USER_CAP = 200;   // users listed in the reverse-lens picker
@@ -112,6 +118,7 @@ const LightningPages = (() => {
     recordTypeCache           = {};
     _appDefinitionSupported   = true;
     _wswScan                  = null;
+    _wswScanCost              = null;
     _lpAudience               = null;
     // init() can be re-entered for a DIFFERENT org. A 01I… id means a different
     // object there, so a cached name would send Pass 2 to describe the wrong
@@ -203,6 +210,7 @@ const LightningPages = (() => {
       _actionOverrideSupported  = false;
       _appDefinitionSupported   = true;
       _wswScan                  = null;
+      _wswScanCost              = null;
       _lpAudience               = null;
       _odResetState('idle');   // cancels an org-default run still in flight
       loadPages();
@@ -402,6 +410,54 @@ const LightningPages = (() => {
       msPerCall:   _odState.msPerCall || undefined,
       extraCalls:  Math.ceil(pendingIds.length / LP_ENTITY_CHUNK)
     });
+  }
+
+  // E-quota: pre-run cost of the "Who sees what?" scan, from the SAME
+  // dedupe/batch arithmetic scanAllPageAssignments pays with
+  // (lpDescribePlan + lpBatchChunkPlan via lpAssignmentsScanPlan), so the
+  // number quoted before the scan and the round-trips it issues cannot drift.
+  // It is still a floor, and is always shown hedged: Pass 1 can discover
+  // objects the list query does not carry (Metadata.sobjectType).
+  function assignmentsScanPlan() {
+    return lpAssignmentsScanPlan({
+      pages: allPages.length,
+      describeKeys: allPages.map(p => p.EntityDefinitionId
+        ? (_lpEntityName(p.EntityDefinitionId) || p.EntityDefinitionId) : null),
+      pendingEntityIds: _lpPendingEntityIds(allPages.map(p => p.EntityDefinitionId)).length,
+      profilesLoaded: allProfiles.length > 0,
+      pageChunk:   LP_SCAN_PAGE_CHUNK,
+      descChunk:   LP_SCAN_DESC_CHUNK,
+      entityChunk: LP_ENTITY_CHUNK
+    });
+  }
+
+  // E-quota: fill a rendered span with the org's daily API budget, TOLERANTLY.
+  // The local "≈N calls" estimate is already on screen before this runs — it
+  // needs no helper. window.sftkApiBudget (built by studio-transfer.js; not
+  // loaded in every context this file runs in) only ever APPENDS:
+  //   • helper absent        → nothing happens, the estimate stands alone
+  //   • helper returns null  → "API budget unavailable" — said, not hidden
+  //   • helper returns meter → "org has R of M daily API calls remaining",
+  //     with ⚠ when the estimate EXCEEDS remaining. Informational only —
+  //     nothing here blocks or disables anything.
+  // Last-write-wins token: renders re-create the span, and a stale fetch must
+  // not overwrite a newer render's numbers.
+  let _lpBudgetSeq = 0;
+  async function _lpFillBudgetSpan(spanId, calls, opts) {
+    if (typeof window.sftkApiBudget !== 'function') return;
+    const seq = ++_lpBudgetSeq;
+    let budget = null;
+    try { budget = await window.sftkApiBudget(_orgUrl, _sid); } catch (_) { budget = null; }
+    if (seq !== _lpBudgetSeq) return;
+    const el = document.getElementById(spanId);
+    if (!el) return;
+    const line = lpApiBudgetText(calls, budget, opts);
+    if (!line.text) return;
+    // opts.lead — caller's framing sentence, re-applied because this write
+    // replaces the whole span. opts.noEstimate — the count is already in the
+    // surrounding text, so the fill reads as a continuation ("· …").
+    el.textContent = (opts && opts.noEstimate ? '· ' : '') + ((opts && opts.lead) || '') + line.text;
+    el.style.color = line.warn ? '#b45309' : '';
   }
 
   // The one place an org-default run is started. Never awaited by the caller,
@@ -647,6 +703,7 @@ const LightningPages = (() => {
     if (!text) return '';
 
     let btn = '';
+    let budget = '';
     if (st.status === 'running') {
       btn = `<button class="btn btn-secondary btn-sm" id="lpOdStopBtn" style="flex-shrink:0">Stop</button>`;
     } else if (plan.calls > 0) {
@@ -654,11 +711,15 @@ const LightningPages = (() => {
       btn = `<button class="btn btn-secondary btn-sm" id="lpOdRunBtn" style="flex-shrink:0"` +
             ` title="Runs ${plan.calls} Salesforce API call${plan.calls !== 1 ? 's' : ''} — ${esc(plan.estLabel)}">` +
             `${esc(label)} (${plan.calls} call${plan.calls !== 1 ? 's' : ''})</button>`;
+      // E-quota: sits right beside the strip's call count AND the run button.
+      // Empty until (and unless) the budget helper answers — the exact call
+      // count above needs no helper and is already on screen.
+      budget = `<span id="lpOdBudget" data-calls="${plan.calls}" style="flex-basis:100%"></span>`;
     }
     return `<div class="lp-od-strip" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;` +
            `margin:0 0 8px;padding:5px 8px;border:1px solid rgba(128,128,128,.35);border-radius:4px;` +
            `font-size:11px;line-height:1.45;color:var(--subtext)">` +
-           `<span id="lpOdMsg" style="flex:1;min-width:170px">${esc(text)}</span>${btn}</div>`;
+           `<span id="lpOdMsg" style="flex:1;min-width:170px">${esc(text)}</span>${btn}${budget}</div>`;
   }
 
   function wireOdStrip() {
@@ -668,6 +729,11 @@ const LightningPages = (() => {
       cancelOrgDefaults();
     });
     document.getElementById('lpOdRunBtn')?.addEventListener('click', () => startOrgDefaults());
+    // The strip already states the exact call count, so the fill only appends
+    // the meter ("· org has R of M daily API calls remaining" / "· API budget
+    // unavailable") — and nothing at all when no helper is loaded.
+    const b = document.getElementById('lpOdBudget');
+    if (b) _lpFillBudgetSpan('lpOdBudget', Number(b.dataset.calls) || 0, { noEstimate: true });
   }
 
   // Keep allPages in sync after status-changing operations so the list
@@ -783,6 +849,23 @@ const LightningPages = (() => {
     const content = document.getElementById('lpContent');
     if (!content) return;
     content.className = 'lp-content lp-content--detail';
+
+    // E-quota: state the scan's cost BEFORE paying it. hadCache means this
+    // open pays nothing new for the scan — no estimate line, and the post-run
+    // line says "reused" instead of quoting a cost that was never incurred.
+    // The estimate is a hedged floor ("more if…"): Pass 1 can name objects
+    // the list query does not carry, and a dead batch call is re-read
+    // per item — mid-scan discoveries, so no fake precision.
+    const hadCache = !!_wswScan;
+    const WSW_MORE_IF = 'page metadata names more objects';
+    let preHtml = '', preCalls = 0;
+    if (!hadCache && allPages.length) {
+      preCalls = assignmentsScanPlan().calls;
+      const line = lpApiBudgetText(preCalls, undefined, { moreIf: WSW_MORE_IF });
+      preHtml = `<div id="lpWswBudget" style="font-size:11px;color:var(--subtext);margin:0 0 8px">` +
+                `${esc(`Scanning every page's assignments — ${line.text}`)}</div>`;
+    }
+
     content.innerHTML = `
       <div class="lp-detail-hdr" id="lpDetailHeader">
         <button class="lp-back-btn" id="lpBackBtn">‹ Back</button>
@@ -792,15 +875,21 @@ const LightningPages = (() => {
         </div>
       </div>
       <div id="lpDetailBody" class="lp-detail-body">
-        ${sftkCat('Loading pages…')}
+        ${preHtml}<div id="lpWswLoad">${sftkCat('Loading pages…')}</div>
       </div>`;
     document.getElementById('lpBackBtn').addEventListener('click', () => renderPageList());
 
     const body = document.getElementById('lpDetailBody');
 
+    // Estimate is already painted; append the org's daily meter when readable.
+    if (preHtml) {
+      _lpFillBudgetSpan('lpWswBudget', preCalls,
+        { moreIf: WSW_MORE_IF, lead: "Scanning every page's assignments — " });
+    }
+
     try {
       const pageDataArr = await scanAllPageAssignments(
-        pct => { if (document.getElementById('lpDetailBody') && body) body.innerHTML = sftkCat(`Loading pages… ${pct}%`); },
+        pct => { const l = document.getElementById('lpWswLoad'); if (l) l.innerHTML = sftkCat(`Loading pages… ${pct}%`); },
         () => !!document.getElementById('lpDetailBody')
       );
       if (pageDataArr === null) return;   // navigated away mid-scan
@@ -1041,7 +1130,20 @@ const LightningPages = (() => {
       }
 
       if (!body) return;
-      body.innerHTML = lpAudienceCaveatHtml(audience, pageDataArr);
+      // E-quota post-run: what the scan actually cost, from measured inputs
+      // (_wswScanCost — see scanAllPageAssignments). "≈" because a batch call
+      // that dies as a CALL is re-read per item, which costs more than the
+      // plan counted. A cached open pays nothing for the scan and says so —
+      // the caveat is scoped to the scan because resolving users costs its
+      // own (small) set of queries on top.
+      const costText = hadCache
+        ? 'Reused the last assignment scan — no new API calls for the scan.'
+        : (_wswScanCost != null
+            ? `Scan used ≈${Number(_wswScanCost).toLocaleString()} API call${_wswScanCost === 1 ? '' : 's'}.`
+            : '');
+      const costHtml = costText
+        ? `<div style="font-size:11px;color:var(--subtext);margin:0 0 6px">${esc(costText)}</div>` : '';
+      body.innerHTML = costHtml + lpAudienceCaveatHtml(audience, pageDataArr);
 
       // Wiring runs after every append and only touches elements it has not seen
       // (data-lpw). Delegation is not an option for the expanders: `toggle` does
@@ -1172,6 +1274,10 @@ const LightningPages = (() => {
     const alive = () => !stillAlive || !!stillAlive();
     const stop  = () => !alive();
 
+    // E-quota: captured BEFORE the ensure below — whether THIS run paid the
+    // profile query is part of what it cost.
+    const profilesWereLoaded = allProfiles.length > 0;
+
     // Ensure profiles loaded — assignments name profiles, we need Ids.
     if (!allProfiles.length) {
       const pRes = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid,
@@ -1182,7 +1288,11 @@ const LightningPages = (() => {
     const targets = [...allPages].sort((a, b) =>
       (a.MasterLabel || '').localeCompare(b.MasterLabel || '')
     );
-    if (!targets.length) { _wswScan = []; return _wswScan; }
+    if (!targets.length) {
+      _wswScanCost = profilesWereLoaded ? 0 : 1;   // nothing to scan ≠ nothing was paid
+      _wswScan = [];
+      return _wswScan;
+    }
 
     // Progress is per ITEM. The describe count is not knowable until every
     // page's metadata is in (a page's object can come from its Metadata
@@ -1252,14 +1362,33 @@ const LightningPages = (() => {
     // whole org rather than one query per page, because the dedupe key has to be
     // the resolved name: "01I5g000000XyzA" and "MyObj__c" are the same object
     // under two spellings and would otherwise be described twice.
-    await _lpResolveEntityNames(rows.filter(r => r._wantsDescribe).map(r => r._sobjectType), stop);
+    const rawDescTargets = rows.filter(r => r._wantsDescribe).map(r => r._sobjectType);
+    // E-quota: the id-resolution query count is knowable only BEFORE the
+    // resolution runs — measure it here for the cost record below.
+    const pendingIdCount = _lpPendingEntityIds(rawDescTargets).length;
+    await _lpResolveEntityNames(rawDescTargets, stop);
     if (!alive()) return null;
 
-    const plan = lpDescribePlan(rows.map(r =>
+    const descKeys = rows.map(r =>
       r._wantsDescribe ? (_lpEntityName(r._sobjectType) || r._sobjectType) : null
-    ));
+    );
+    const plan = lpDescribePlan(descKeys);
     itemsTotal = targets.length + plan.describes;   // measured, replaces the estimate
     report();
+
+    // E-quota: this run's cost, recorded through the SAME plan function the
+    // pre-run estimate uses — but with measured inputs (real page count, the
+    // real post-Pass-1 describe keys), so the "used ≈N" the view prints is
+    // arithmetic over what actually happened, not a re-quote of the guess.
+    _wswScanCost = lpAssignmentsScanPlan({
+      pages: targets.length,
+      describeKeys: descKeys,
+      pendingEntityIds: pendingIdCount,
+      profilesLoaded: profilesWereLoaded,
+      pageChunk:   LP_SCAN_PAGE_CHUNK,
+      descChunk:   LP_SCAN_DESC_CHUNK,
+      entityChunk: LP_ENTITY_CHUNK
+    }).calls;
 
     // One timestamp for the whole run: the cache-buster's job is "not a response
     // cached from before this scan started", not "different from the last item".
@@ -4405,4 +4534,86 @@ function lpSoqlLike(v) {
     .replace(/%/g, '\\%')
     .replace(/_/g, '\\_');
   return "'%" + body + "%'";
+}
+
+// ============================================================
+// E-quota — API cost vs the org's daily budget (PURE, unit-tested)
+//
+// Every fan-out in this file states its cost in Salesforce API calls before it
+// runs. These two functions are the arithmetic and the sentence, at column 0 so
+// test/ent-quota-lp.test.mjs can materialize them. lpAssignmentsScanPlan calls
+// lpDescribePlan and lpBatchChunkPlan — the SAME functions the scan itself is
+// driven by — so tests must extract the three together (extractFunctions, one
+// shared scope), and the quoted number and the paid number share one source.
+//
+// The daily-budget meter comes from window.sftkApiBudget (studio-transfer.js)
+// and is OPTIONAL everywhere: the estimate needs no helper, the meter only
+// appends, and an unreadable meter is said out loud, never guessed.
+// ============================================================
+
+// Cost of one scanAllPageAssignments run, in HTTP round-trips:
+//   • 1 profile query, unless profiles are already cached
+//   • ceil(pages / pageChunk) composite/batch calls for Pass-1 metadata
+//   • ceil(pendingEntityIds / entityChunk) id→name resolution queries
+//   • ceil(uniqueObjects / descChunk) batch calls for the deduped describes,
+//     where uniqueObjects comes from lpDescribePlan over `describeKeys`
+//     (one entry per page: resolved object API name, or null when no
+//     describe applies) — the same dedupe the run pays with.
+// Pre-run this is a FLOOR: Pass 1 can discover objects the page list does not
+// carry, and a batch call that dies as a call is re-read per item. Callers
+// must present it hedged ("≈", "more if…") — see lpApiBudgetText.
+function lpAssignmentsScanPlan(input) {
+  const o = input || {};
+  const chunk = (v, d) => (Number.isFinite(v) && v > 0 ? Math.floor(v) : d);
+  const pages  = Math.max(0, Math.floor(Number(o.pages) || 0));
+  const dedupe = lpDescribePlan(Array.isArray(o.describeKeys) ? o.describeKeys : []);
+  const pageCalls     = lpBatchChunkPlan(pages, chunk(o.pageChunk, 10)).length;
+  const describeCalls = lpBatchChunkPlan(dedupe.describes, chunk(o.descChunk, 5)).length;
+  const pendingIds    = Math.max(0, Math.floor(Number(o.pendingEntityIds) || 0));
+  const entityCalls   = Math.ceil(pendingIds / chunk(o.entityChunk, 200));
+  const profileCalls  = o.profilesLoaded ? 0 : 1;
+  return {
+    pages,
+    describes: dedupe.describes,        // unique objects the run will describe
+    saved:     dedupe.saved,            // describes the dedupe removed
+    pageCalls, describeCalls, entityCalls, profileCalls,
+    calls: pageCalls + describeCalls + entityCalls + profileCalls
+  };
+}
+
+// The one-line cost/budget sentence. Returns { text, warn, calls }.
+//   calls   — the local estimate. Always shown (unless opts.noEstimate, for
+//             callers whose surrounding text already states the count).
+//   budget  — three states, matching the sftkApiBudget contract:
+//               undefined         → no helper in this context: estimate only
+//               null / malformed  → helper answered but the meter could not be
+//                                   read: "API budget unavailable" — SAID,
+//                                   never silently dropped
+//               { max, remaining }→ "org has R of M daily API calls remaining"
+//   opts.moreIf — hedge for costs that depend on mid-run discoveries:
+//             "≈N API calls now, more if <moreIf>". No fake precision.
+// warn flips only when the estimate EXCEEDS remaining (equal is not over),
+// and the sentence informs — nothing anywhere blocks a run because of it.
+function lpApiBudgetText(calls, budget, opts) {
+  const o = opts || {};
+  const fmt = v => Number(v).toLocaleString();
+  const n = Math.max(0, Math.floor(Number(calls) || 0));
+  const parts = [];
+  if (!o.noEstimate) {
+    let est = `≈${fmt(n)} API call${n === 1 ? '' : 's'}`;
+    if (o.moreIf) est += ` now, more if ${String(o.moreIf)}`;
+    parts.push(est);
+  }
+  let warn = false;
+  if (budget !== undefined) {
+    if (budget && Number.isFinite(budget.remaining) && Number.isFinite(budget.max)) {
+      parts.push(`org has ${fmt(budget.remaining)} of ${fmt(budget.max)} daily API calls remaining`);
+      if (n > budget.remaining) warn = true;
+    } else {
+      parts.push('API budget unavailable');
+    }
+  }
+  let text = parts.join(' · ');
+  if (warn) text = `⚠ ${text} — this may exhaust the org's remaining daily API budget`;
+  return { text, warn, calls: n };
 }
