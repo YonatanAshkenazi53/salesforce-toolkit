@@ -45,17 +45,63 @@ function contrastRatio(a, b) {
 // ── CSS extraction (shipped values, not fixtures) ───────────────
 // Grabs the body of the FIRST `selector {` block. Good enough for the flat
 // variable blocks under test (:root, .ds-dark, body.ds-pro).
-function cssBlock(selector) {
-  const i = css.indexOf(`${selector} {`);
-  if (i === -1) throw new Error(`selector "${selector}" not found in studio.css`);
-  const open = css.indexOf('{', i);
-  const close = css.indexOf('}', open);
-  return css.slice(open + 1, close);
+// NOTE ON WHY THIS IS SHAPED LIKE THIS (2026-07-30). The first version read
+// studio.css at DESCRIBE-BODY level and threw when a variable was missing.
+// Two bad consequences, both worse than the thing it was guarding:
+//   1. A throw during collection aborts the whole FILE — vitest then reports
+//      the run as passing while ~1,100 assertions never execute. A guard that
+//      can silently disable the suite is a liability.
+//   2. It demanded a LITERAL hex in studio.css's :root, which blocked the
+//      token refactor: after it, studio.css legitimately aliases
+//      (--subtext: var(--c-text-muted)) with the literal living in styles.css.
+// So: resolve through the alias chain across BOTH shipped stylesheets, and do
+// every read INSIDE a test, where a failure is a failing test.
+const stylesCss = readFileSync(join(root, 'styles.css'), 'utf8');
+
+// All bodies of `selector {` blocks in a stylesheet (a selector may repeat).
+// `selector` is a RAW css selector (':root', '.ds-dark', 'body.ds-pro') —
+// escaped here, so callers never pre-escape. Anchored to line start, which is
+// how every variable block in these files is formatted; that also avoids
+// matching the same name inside a descendant rule like `.ds-dark .ds-main`.
+function blocksFor(src, selector) {
+  const out = [];
+  const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`^\\s*${esc}\\s*\\{`, 'gm');
+  let m;
+  while ((m = re.exec(src))) {
+    const open = src.indexOf('{', m.index);
+    const close = src.indexOf('}', open);
+    if (open !== -1 && close !== -1) out.push(src.slice(open + 1, close));
+  }
+  return out;
 }
-function cssVar(block, name) {
-  const m = new RegExp(`${name}:\\s*(#[0-9A-Fa-f]{3,8})\\s*;`).exec(block);
-  if (!m) throw new Error(`variable ${name} not found in block`);
-  return m[1];
+
+// Flatten custom-property declarations for a theme: later selectors override
+// earlier ones, exactly as the cascade would apply them.
+function varMapFor(selectors) {
+  const map = {};
+  for (const sel of selectors) {
+    for (const src of [stylesCss, css]) {          // studio.css wins over styles.css
+      for (const block of blocksFor(src, sel)) {
+        const re = /(--[\w-]+)\s*:\s*([^;]+);/g;
+        let d;
+        while ((d = re.exec(block))) map[d[1]] = d[2].trim();
+      }
+    }
+  }
+  return map;
+}
+
+// Follow var(--a) → var(--b) → #hex, honouring fallbacks. Returns null rather
+// than throwing so the caller can assert a useful message.
+function resolveVar(map, name, seen = new Set()) {
+  if (seen.has(name)) return null;                 // cycle guard
+  seen.add(name);
+  const raw = map[name];
+  if (!raw) return null;
+  const m = /^var\(\s*(--[\w-]+)\s*(?:,\s*([^)]+))?\)$/.exec(raw);
+  if (m) return resolveVar(map, m[1], seen) || (m[2] ? m[2].trim() : null);
+  return /^#[0-9A-Fa-f]{3,8}$/.test(raw) ? raw : null;
 }
 
 describe('E4 sftkGlyphFor — emoji vs plain-text label', () => {
@@ -152,21 +198,39 @@ describe('E4 contrast — --subtext vs its real backgrounds (WCAG AA ≥ 4.5)', 
     expect(contrastRatio('#FFFFFF', '#000000')).toBeCloseTo(21, 5);
   });
 
-  const lightBlock = cssBlock(':root');
-  const darkBlock  = cssBlock('.ds-dark');
+  // Theme = the selectors the cascade would have applied, in order.
+  const THEMES = [['light', [':root']], ['dark', [':root', '.ds-dark']]];
 
-  for (const [themeName, block] of [['light', lightBlock], ['dark', darkBlock]]) {
-    const subtext = cssVar(block, '--subtext');
+  for (const [themeName, selectors] of THEMES) {
     for (const bgVar of ['--bg', '--surface', '--surface2']) {
-      const bg = cssVar(block, bgVar);
-      it(`${themeName}: --subtext ${subtext} on ${bgVar} ${bg}`, () => {
-        expect(contrastRatio(subtext, bg)).toBeGreaterThanOrEqual(4.5);
+      it(`${themeName}: --subtext on ${bgVar} meets WCAG AA (4.5:1)`, () => {
+        const map = varMapFor(selectors);
+        const subtext = resolveVar(map, '--subtext');
+        const bg = resolveVar(map, bgVar);
+        // Assert resolvability HERE, so a rename fails one test loudly instead
+        // of aborting collection and skipping the whole file.
+        expect(subtext, `--subtext must resolve to a hex in ${themeName}`).toBeTruthy();
+        expect(bg, `${bgVar} must resolve to a hex in ${themeName}`).toBeTruthy();
+        expect(contrastRatio(subtext, bg),
+          `${themeName}: --subtext ${subtext} on ${bgVar} ${bg}`).toBeGreaterThanOrEqual(4.5);
       });
     }
   }
 
+  it('--subtext-lt is no longer the 2.0:1 grey it was before the token pass', () => {
+    for (const [themeName, selectors] of THEMES) {
+      const map = varMapFor(selectors);
+      const lt = resolveVar(map, '--subtext-lt');
+      const bg = resolveVar(map, '--surface');
+      expect(lt, `--subtext-lt must resolve in ${themeName}`).toBeTruthy();
+      expect(contrastRatio(lt, bg), `${themeName}: --subtext-lt ${lt} on --surface ${bg}`)
+        .toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it('body.ds-pro mutes accents only — never the text/background vars the AA checks cover', () => {
-    const proBlock = cssBlock('body.ds-pro');
+    const proBlock = (blocksFor(css, 'body.ds-pro')[0] || '');
+    expect(proBlock, 'body.ds-pro block must exist in studio.css').toBeTruthy();
     for (const v of ['--subtext:', '--subtext-lt:', '--text:', '--bg:', '--surface:', '--surface2:']) {
       expect(proBlock).not.toContain(v);
     }

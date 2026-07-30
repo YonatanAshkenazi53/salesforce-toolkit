@@ -20,13 +20,11 @@
    the canonical tokens in styles.css §A3 and must be changed together.
    ════════════════════════════════════════════════════════════════════════ */
 :root {
-  /* ↓ guard-visible mirrors of --c-bg / --c-surface / --c-surface-sunk /
-       --c-text-faint.  Same values; keep in sync with styles.css §A3. */
-  --bg:           #F3F3F3;
-  --surface:      #FFFFFF;
-  --surface2:     #F8F8F8;
-  --subtext:      #706E6B;
-
+  /* --bg / --surface / --surface2 / --subtext used to be mirrored here as
+     literals, purely because the WCAG guard test regex-parsed THIS block for
+     hex. That test now resolves the real var() chain across both stylesheets,
+     so the duplication is gone: styles.css §B is the single definition and
+     these can never drift out of sync with it again. */
   --nav-w:        224px;
 
   /* E4 — density knobs. Structural rules consume these so professional mode
