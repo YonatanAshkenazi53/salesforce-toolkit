@@ -32,8 +32,16 @@ export function extractFunction(file, name) {
 // Like extractFunction, but materializes several functions from the same file
 // in ONE scope so they can call each other (e.g. sftkBuildStoredZip →
 // sftkCrc32). Returns { name: fn, ... }.
-export function extractFunctions(file, names) {
+export function extractFunctions(file, names, alsoFrom) {
   const src = readFileSync(join(root, file), 'utf8');
   const parts = names.map(n => sliceFunction(src, file, n));
+  // Optional cross-file dependencies: { 'other-file.js': ['fnA', 'fnB'] }.
+  // Materialized into the SAME scope first, so an extracted function can call
+  // a helper that lives in another file (e.g. studio-core's _orgKey → the
+  // shared sftkOrgKey). They are not returned — only `names` are.
+  for (const [depFile, depNames] of Object.entries(alsoFrom || {})) {
+    const depSrc = readFileSync(join(root, depFile), 'utf8');
+    for (const n of depNames) parts.unshift(sliceFunction(depSrc, depFile, n));
+  }
   return new Function(`${parts.join('\n')}\nreturn { ${names.join(', ')} };`)();
 }

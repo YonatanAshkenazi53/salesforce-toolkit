@@ -1258,12 +1258,17 @@ function _viewAvailable(view) {
 function profileFollowsRing(p) { return !!p && !Array.isArray(p.targetOrgs); }
 function profileTargets(p) {
   if (!p) return [];
-  if (Array.isArray(p.targetOrgs)) return p.targetOrgs;
+  // An org is NEVER a target of itself — every record would match itself and
+  // a "sync" would write the source onto the source. The builder locks the
+  // source out of the picker, but this is the chokepoint every run, scan and
+  // fan-out resolves through, so a profile saved before that lock (or edited
+  // by hand / imported from a file) is corrected here too. (2026-07-30)
+  const notSelf = u => _orgKey(u) !== _orgKey(p.sourceOrg || '');
+  if (Array.isArray(p.targetOrgs)) return p.targetOrgs.filter(notSelf);
   if (typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2) {
-    return (_ring.orgs || []).filter(u =>
-      _orgKey(u) !== _orgKey(_ring.sourceUrl) && _orgKey(u) !== _orgKey(p.sourceOrg || ''));
+    return (_ring.orgs || []).filter(u => _orgKey(u) !== _orgKey(_ring.sourceUrl) && notSelf(u));
   }
-  return p.targetOrg ? [p.targetOrg] : [];
+  return (p.targetOrg && notSelf(p.targetOrg)) ? [p.targetOrg] : [];
 }
 // ── Per-target field-mapping overrides (user 2026-07-20) ──────────────────
 // node.fieldMappingOverrides = { [orgKey]: { srcField: tgtName|null } } — a

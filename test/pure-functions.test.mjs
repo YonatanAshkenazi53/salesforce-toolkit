@@ -731,3 +731,46 @@ describe('standard picklist helpers (studio-picklists.js) — SVS name resolutio
     expect(sftkDescribeValues({})).toEqual([]);
   });
 });
+
+describe('profileTargets (studio-core.js) — an org is never a target of itself', () => {
+  // Pinned targetOrgs used to be returned VERBATIM, so a profile whose source
+  // was later changed to one of its own targets (or imported/hand-edited that
+  // way) would deploy the org onto itself: every record matches itself and the
+  // "sync" writes the source over the source. The builder now locks the source
+  // out of the picker; this pins the engine-side chokepoint that every run,
+  // scan and fan-out resolves through. (user 2026-07-30)
+  // _orgKey delegates to the shared identity lib, so both must live in one scope.
+  const { profileTargets } = extractFunctions('studio-core.js', ['_orgKey', 'profileTargets'],
+    { 'sftk-org-identity.js': ['sftkOrgKey'] });
+  const A = 'https://acme.my.salesforce.com';
+  const B = 'https://acme-dev.develop.my.salesforce.com';
+  const C = 'https://acme--qa.sandbox.my.salesforce.com';
+
+  it('drops the source from a PINNED target list', () => {
+    expect(profileTargets({ sourceOrg: A, targetOrgs: [A, B, C] })).toEqual([B, C]);
+  });
+
+  it('matches the source across Salesforce domain forms, not by string equality', () => {
+    const lightning = 'https://acme.lightning.force.com';
+    expect(profileTargets({ sourceOrg: lightning, targetOrgs: [A, B] })).toEqual([B]);
+  });
+
+  it('a pinned list of ONLY the source resolves to no targets, not to itself', () => {
+    expect(profileTargets({ sourceOrg: A, targetOrgs: [A] })).toEqual([]);
+  });
+
+  it('drops a legacy single targetOrg that equals the source', () => {
+    expect(profileTargets({ sourceOrg: A, targetOrg: A })).toEqual([]);
+    expect(profileTargets({ sourceOrg: A, targetOrg: B })).toEqual([B]);
+  });
+
+  it('leaves a legitimate pinned set untouched', () => {
+    expect(profileTargets({ sourceOrg: A, targetOrgs: [B, C] })).toEqual([B, C]);
+  });
+
+  it('survives junk input', () => {
+    expect(profileTargets(null)).toEqual([]);
+    expect(profileTargets({})).toEqual([]);
+    expect(profileTargets({ sourceOrg: A, targetOrgs: [] })).toEqual([]);
+  });
+});
