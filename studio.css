@@ -4876,6 +4876,10 @@ html, body {
 .ds-pk-orgchk { display: flex; align-items: center; gap: 7px; font-size: 12.5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; min-width: 0; }
 .ds-pk-orgchk:hover { background: var(--hover, rgba(128,128,128,.08)); }
 .ds-pk-orgchk input { flex-shrink: 0; }
+/* The source org, shown in the target list but locked — visibly present and
+   visibly unavailable beats silently missing. */
+.ds-pk-orgchk-locked { opacity: .55; cursor: not-allowed; background: var(--surface2, rgba(128,128,128,.06)); }
+.ds-pk-orgchk-locked:hover { background: var(--surface2, rgba(128,128,128,.06)); }
 /* Builder follow/pin mode radios sit OUTSIDE the list — full-width rows */
 .ds-builder-org-col > .ds-pk-orgchk { border: none; padding: 3px 0; margin: 2px 0; display: flex; }
 

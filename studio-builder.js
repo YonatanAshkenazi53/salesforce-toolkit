@@ -137,9 +137,19 @@ function renderBuilder() {
             📌 Pin specific orgs:
           </label>` : ''}
           <div class="ds-pk-orgchk-list" id="dsBldTgtList" style="${followMode ? 'display:none' : ''}">
-            ${allMapOrgs().filter(o => _orgKey(o.url) !== _orgKey(p.sourceOrg || '')).map(o =>
-              `<label class="ds-pk-orgchk"><input type="checkbox" data-bld-tgt="${esc(o.url)}" ${effTargets.some(u => _orgKey(u) === _orgKey(o.url)) ? 'checked' : ''}> ${esc(orgOptionLabel(o.url, o.label, ls))}</label>`).join('')
-            || '<div class="ds-seq-empty">No other orgs known — open them in Chrome tabs.</div>'}
+            ${allMapOrgs().map(o => {
+              // The source is LOCKED here, not hidden (user 2026-07-30: "when we
+              // select a source org here, we need to lock it from the target
+              // list"). An org silently vanishing from the list reads as a bug;
+              // a disabled row that says why is self-explanatory. Deploying an
+              // org to itself would match every record against itself.
+              const isSrc = _orgKey(o.url) === _orgKey(p.sourceOrg || '');
+              return `<label class="ds-pk-orgchk${isSrc ? ' ds-pk-orgchk-locked' : ''}"
+                ${isSrc ? 'title="This is the source org — records come FROM here, so it can\'t also be a target."' : ''}>
+                <input type="checkbox" data-bld-tgt="${esc(o.url)}" ${isSrc ? 'disabled' : ''} ${!isSrc && effTargets.some(u => _orgKey(u) === _orgKey(o.url)) ? 'checked' : ''}>
+                ${esc(orgOptionLabel(o.url, o.label, ls))}${isSrc ? ' <span class="ds-subtext" style="font-size:11px">— source</span>' : ''}</label>`;
+            }).join('')
+            || '<div class="ds-seq-empty">No orgs known — open them in Chrome tabs.</div>'}
           </div>
         </div>
       </div>`;
@@ -233,13 +243,35 @@ function renderBuilder() {
   // a transfer (or schedule) runs between — the old Transfer page used to ask
   // separately at run time, which both duplicated state and gave the user
   // accidental "wrong org" exposure.
+  // The unsaved name lives only in the DOM until Save; every renderBuilder()
+  // below would discard it. Bind it live so re-rendering is always safe.
+  eid('dsProfileName')?.addEventListener('input', e => { _editingProfile.name = e.target.value; });
+
   eid('dsProfileSrcOrg')?.addEventListener('change', e => {
     _editingProfile.sourceOrg = e.target.value || '';
+    // An org can't deploy to itself. Drop the new source from a PINNED target
+    // set — the render-time filter only cleans the display, so without this
+    // the stale entry survives in targetOrgs and the next checkbox tick
+    // re-saves it. Follow-mode (null) resolves live and needs no fix.
+    if (Array.isArray(_editingProfile.targetOrgs)) {
+      const before = _editingProfile.targetOrgs.length;
+      _editingProfile.targetOrgs = _editingProfile.targetOrgs
+        .filter(u => _orgKey(u) !== _orgKey(_editingProfile.sourceOrg));
+      if (_editingProfile.targetOrgs.length !== before) {
+        showToast(`${orgLabel(_editingProfile.sourceOrg)} is the source now — removed it from the targets.`, 'info', 4500);
+      }
+      _editingProfile.targetOrg = _editingProfile.targetOrgs[0] || '';
+    }
+    renderBuilder();         // repaint the target list with the new source locked
     _bldLoadRootObjects();   // the root-object list comes from the source org
   });
   document.querySelectorAll('[data-bld-tgt]').forEach(cb =>
     cb.addEventListener('change', () => {
-      const sel = [...document.querySelectorAll('[data-bld-tgt]:checked')].map(c => c.dataset.bldTgt);
+      // Filter the source out again here: the disabled checkbox can't be
+      // ticked, but a stale checked one from a pre-fix profile would
+      // otherwise be re-collected and persisted.
+      const sel = [...document.querySelectorAll('[data-bld-tgt]:checked')].map(c => c.dataset.bldTgt)
+        .filter(u => _orgKey(u) !== _orgKey(_editingProfile.sourceOrg || ''));
       _editingProfile.targetOrgs = sel;           // touching the list = pinning
       _editingProfile.targetOrg  = sel[0] || '';  // first target = schema reference (engine compat)
       const pin = document.querySelector('input[name="dsBldTgtMode"][value="pin"]');
