@@ -47,16 +47,22 @@
           ? `Debug mode OFF · ${count} persisted entries — click to view`
           : 'Debug mode OFF — click to open';
 
+      // The bug glyph is no longer part of the label: it is a masked
+      // ::before painted from #dbgBtn's own rule in styles.css. It had to
+      // leave the text because these assignments destroy any child node, so
+      // an icon <span> could not survive them — the same reason the Apex
+      // Debugger's rewritten buttons carry their glyph as an attribute.
+      // Both apps share this button, so both pick the icon up.
       if (on && hasErrors && count > 0) {
-        btn.textContent = `🐛 ${count} ⚠`;
+        btn.textContent = `${count} ⚠`;
         btn.style.background  = 'rgba(234,0,30,.25)';
         btn.style.borderColor = 'rgba(234,0,30,.5)';
         btn.style.color       = '#FF8888';
       } else if (on && count > 0) {
-        btn.textContent = `🐛 ${count}`;
+        btn.textContent = `${count}`;
         btn.style.background = btn.style.borderColor = btn.style.color = '';
       } else {
-        btn.textContent = '🐛 Debug';
+        btn.textContent = 'Debug';
         btn.style.background = btn.style.borderColor = btn.style.color = '';
       }
     }

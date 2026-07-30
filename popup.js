@@ -140,8 +140,14 @@ function initDarkTheme() {
   const apply = on => {
     document.body.classList.toggle('sftk-dark', !!on);
     if (btn) {
-      btn.textContent = on ? '☀️' : '🌙';
-      btn.title = on ? 'Switch to light mode' : 'Switch to dark mode';
+      // The glyph is a masked icon on a child span, swapped by name. It used
+      // to be the button's own textContent, which is why the control had no
+      // accessible name beyond "crescent moon".
+      const icon = document.getElementById('sftkDarkIcon');
+      if (icon) icon.dataset.i = on ? 'sun' : 'moon';
+      const label = on ? 'Switch to light mode' : 'Switch to dark mode';
+      btn.title = label;
+      btn.setAttribute('aria-label', label);
     }
   };
   chrome.storage?.local?.get(KEY).then(d => apply(d?.[KEY])).catch(() => {});
@@ -170,67 +176,64 @@ function setupTabs() {
 }
 
 // ── Feature descriptor list used by the home page ────────────
+// `i` is a name in the shared icon mask table (styles.css) — the same
+// dialect the Apex Debugger uses: a monochrome glyph painted with
+// currentColor. It replaced an `icon` emoji plus a `color` hex that
+// popup.js wrote into the markup as an inline style, which is where the
+// home grid's six different icon-chip tints came from.
 const HOME_FEATURES = [
   {
     id: 'flows',
-    icon: '🗑',
-    color: '#0176D3',   // brand blue
+    i: 'nodes',
     title: 'Flows',
     desc: 'Bulk delete, backup, and restore flow versions safely',
     action() { navigateToTab('flows'); loadFlowsIfNeeded(); }
   },
   {
     id: 'dependencies',
-    icon: '🗺',
-    color: '#5867e8',   // indigo
+    i: 'share',
     title: 'Dependencies',
     desc: 'Map subflow call chains and see which flows reference other flows',
     action() { navigateToTab('dependencies'); renderDependenciesTab(); }
   },
   {
     id: 'debugger',
-    icon: '🐛',
-    color: '#8B5CF6',   // violet
+    i: 'bug',
     title: 'Debugger',
     desc: 'Real-time automation monitor — trace flows, triggers, and detect recursion loops',
     action() { navigateToTab('debugger'); initDebuggerTab(); }
   },
   {
     id: 'pages',
-    icon: '📄',
-    color: '#6B57D2',   // purple
+    i: 'layout',
     title: 'Lightning Pages',
     desc: 'View assignments, org defaults, and profile overrides for Record Pages',
     action() { navigateToTab('pages'); initLightningPagesTab(); }
   },
   {
     id: 'fields',
-    icon: '🔧',
-    color: '#3BA755',   // green
+    i: 'sliders',
     title: 'Field Cleaner',
     desc: 'Scan field dependencies, auto-remove from flows, then safely delete the field',
     action() { navigateToTab('fields'); initFieldCleanerTab(); }
   },
   {
     id: 'copy-perms',
-    icon: '👥',
-    color: '#0D74CE',   // teal-blue
+    i: 'users',
     title: 'Copy Permissions',
     desc: 'Copy permission sets, profiles, and assignments between users',
     action() { navigateToTab('copy-perms'); initUserCopyTab(); }
   },
   {
     id: 'licenses',
-    icon: '🔑',
-    color: '#0D74CE',
+    i: 'key',
     title: 'Licenses',
     desc: 'View and manage user license assignments across your org',
     action() { navigateToTab('licenses'); initLicenseManagerTab(); }
   },
   {
     id: 'flow-access',
-    icon: '🌊',
-    color: '#0D74CE',
+    i: 'shield',
     title: 'Flow Access',
     desc: 'Control which users and profiles can run each flow',
     action() { navigateToTab('flow-access'); initFlowAccessTab(); }
@@ -320,9 +323,9 @@ function openToolkitPalette() {
   let activeIdx = 0;
 
   const ITEMS = [
-    ...HOME_FEATURES.map(f => ({ icon: f.icon, label: f.title, desc: f.desc, run: () => f.action() })),
-    { icon: '🏠', label: 'Home', desc: 'Back to the tool overview', run: () => renderHomePage() },
-    { icon: '🌐', label: 'Open Data Studio', desc: 'Cross-org data compare, transfer & reconcile', run: () => document.getElementById('dataStudioBtn')?.click() },
+    ...HOME_FEATURES.map(f => ({ i: f.i, label: f.title, desc: f.desc, run: () => f.action() })),
+    { i: 'home',  label: 'Home', desc: 'Back to the tool overview', run: () => renderHomePage() },
+    { i: 'globe', label: 'Open Data Studio', desc: 'Cross-org data compare, transfer & reconcile', run: () => document.getElementById('dataStudioBtn')?.click() },
   ];
 
   function itemsFor(q) {
@@ -334,7 +337,7 @@ function openToolkitPalette() {
     activeIdx = Math.min(activeIdx, Math.max(0, list.length - 1));
     overlay.querySelector('.tk-cmd-list').innerHTML = list.length ? list.map((i, k) => `
       <div class="tk-cmd-item${k === activeIdx ? ' tk-cmd-active' : ''}" data-k="${k}">
-        <span class="tk-cmd-icon">${i.icon}</span>
+        <span class="tk-cmd-icon" data-i="${escHtml(i.i)}" aria-hidden="true"></span>
         <span class="tk-cmd-label">${escHtml(i.label)}</span>
         <span class="tk-cmd-desc">${escHtml(i.desc)}</span>
       </div>`).join('') : '<div class="tk-cmd-empty">No matches</div>';
@@ -404,12 +407,11 @@ function renderHomePage() {
       .filter(Boolean)
       .map(f => `
         <button class="home-card" data-fid="${escHtml(f.id)}">
-          <span class="home-card-icon" style="background:${f.color}14;border-color:${f.color}33;color:${f.color}">${f.icon}</span>
-          <div class="home-card-body">
+          <span class="home-card-icon" data-i="${escHtml(f.i)}" aria-hidden="true"></span>
+          <span class="home-card-body">
             <span class="home-card-title">${escHtml(f.title)}</span>
             <span class="home-card-desc">${escHtml(f.desc)}</span>
-          </div>
-          <span class="home-card-arrow">›</span>
+          </span>
         </button>`).join('');
 
     return `
@@ -419,30 +421,38 @@ function renderHomePage() {
       </div>`;
   }).join('');
 
+  // The org header card. `aria-label` spells out what the visual pieces say
+  // — the button is the org switcher, and "Session active" is the same claim
+  // the green dot used to make with colour alone.
+  const orgLabel = `Connected org ${orgShort}, ${orgHost}. Session active. Switch org`;
+
   homeView.innerHTML = `
     ${orgHost ? `
-      <button class="home-org-chip home-org-chip-btn" id="homeOrgSelector" title="Switch active org">
-        <span class="home-org-dot"></span>
-        <div class="home-org-chip-text">
-          <span class="home-org-name">${escHtml(orgShort)}</span>
-          <span class="home-org-host">${escHtml(orgHost)}</span>
-        </div>
-        <span class="home-org-chip-arrow">▾</span>
-      </button>` : ''}
+      <div class="home-org-chip">
+        <button class="home-org-chip-btn" id="homeOrgSelector" title="Switch active org"
+                aria-haspopup="true" aria-label="${escHtml(orgLabel)}">
+          <span class="home-org-icon" data-i="cloud" aria-hidden="true"></span>
+          <span class="home-org-chip-text">
+            <span class="home-org-eyebrow">Connected org</span>
+            <span class="home-org-name">${escHtml(orgShort)}</span>
+            <span class="home-org-host">${escHtml(orgHost)}</span>
+          </span>
+          <span class="home-org-status" aria-hidden="true">Session active</span>
+          <span class="home-org-chip-arrow" aria-hidden="true">Switch org</span>
+        </button>
+      </div>` : ''}
 
     <div class="home-sections">
       ${sectionsHTML}
 
-      <div class="home-studio-row">
-        <button class="home-studio-btn" id="homeStudioBtn">
-          <span class="home-studio-icon">🌐</span>
-          <div class="home-studio-body">
-            <span class="home-studio-title">Data Studio</span>
-            <span class="home-studio-desc">Multi-org data deployment, profiles &amp; transfer</span>
-          </div>
-          <span class="home-studio-arrow">→</span>
-        </button>
-      </div>
+      <button class="home-studio-btn" id="homeStudioBtn">
+        <span class="home-studio-icon" data-i="globe" aria-hidden="true"></span>
+        <span class="home-studio-body">
+          <span class="home-studio-title">Data Studio</span>
+          <span class="home-studio-desc">Multi-org data deployment, profiles &amp; transfer</span>
+        </span>
+        <span class="home-studio-arrow" data-i="chevron" aria-hidden="true"></span>
+      </button>
     </div>`;
 
   homeView.querySelectorAll('.home-card').forEach(card => {
@@ -471,7 +481,10 @@ function renderHomePage() {
     const dd = document.createElement('div');
     dd.id        = 'homeOrgDropdown';
     dd.className = 'home-org-dropdown';
-    dd.style.cssText = `top:${rect.bottom + 4}px;left:${rect.left}px;min-width:${Math.max(rect.width, 260)}px`;
+    // Anchored to the header card's left edge. Width is its own now: the
+    // card grew into a full-width page header, and inheriting its width made
+    // the org list a 992px-wide strip holding three short rows.
+    dd.style.cssText = `top:${rect.bottom + 4}px;left:${rect.left}px`;
 
     // Close helper — defined before buildDropdown so it can reference it
     function closeDropdown() {
@@ -536,17 +549,19 @@ function renderHomePage() {
           const host      = (() => { try { return new URL(sess.orgUrl).hostname; } catch (_) { return sess.orgUrl || ''; } })();
           const name      = sess.label || host;
           const isCurrent = normUrl(sess.orgUrl) === normUrl(orgUrl);
-          const dotColor  = sess.online ? '#4ac154' : '#9b8ec4';
 
           const item = document.createElement('button');
           item.className = 'home-org-dd-item' + (isCurrent ? ' home-org-dd-item-active' : '');
+          // The dot still distinguishes a live browser session from a stored
+          // credential — the two states just come from classes now instead of
+          // two raw hexes that never re-pointed in dark mode.
           item.innerHTML = `
-            <span class="home-org-dd-dot" style="background:${dotColor};box-shadow:none"></span>
+            <span class="home-org-dd-dot ${sess.online ? 'home-org-dd-dot-live' : 'home-org-dd-dot-stored'}"></span>
             <span class="home-org-dd-text">
               <span class="home-org-dd-name">${escHtml(name)}</span>
               <span class="home-org-dd-host">${escHtml(host)}</span>
             </span>
-            ${sess.stored ? '<span class="t-tag t-tag-cred" style="font-size:9px;padding:1px 5px;border-radius:3px;background:#f0ebff;color:#7c5ce0;flex-shrink:0">credentials</span>' : ''}
+            ${sess.stored ? '<span class="home-org-dd-tag">credentials</span>' : ''}
             ${isCurrent ? '<span class="home-org-dd-check">active</span>' : ''}`;
 
           item.addEventListener('click', ev => {
@@ -565,7 +580,7 @@ function renderHomePage() {
       // Retry button at the bottom
       const retryRow = document.createElement('button');
       retryRow.className = 'home-org-dd-retry';
-      retryRow.textContent = '🔄 Re-scan';
+      retryRow.innerHTML = '<span data-i="refresh" aria-hidden="true"></span>Re-scan';
       retryRow.addEventListener('click', ev => { ev.stopPropagation(); buildDropdown(); });
       dd.appendChild(retryRow);
     }
@@ -694,35 +709,35 @@ async function initSession(reason) {
 
   if (homeView) {
     homeView.style.display = '';
+    // These two states used to reuse .home-studio-btn — the full-width brand
+    // banner — and then undo it with five inline style declarations per
+    // button, including three hard-coded greys that ignored dark mode.
     homeView.innerHTML = isExpired ? `
       <div class="home-loading">
         ${sftkCat('Session expired', true)}
-        <div style="font-size:12px;color:#706E6B;margin-top:6px;margin-bottom:4px;text-align:center;line-height:1.55">
+        <div class="home-loading-text">
           Your Salesforce session has expired.<br>
-          <strong style="color:#444">Log back into Salesforce</strong>, then return here.
+          <strong>Log back into Salesforce</strong>, then return here.
         </div>
-        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;justify-content:center">
-          <button id="goToSfBtn" class="home-studio-btn"
-            style="display:inline-flex;width:auto;padding:8px 16px;font-size:13px">
-            🌐 Go to Salesforce
+        <div class="home-loading-actions">
+          <button id="goToSfBtn" class="home-btn">
+            <span data-i="globe" aria-hidden="true"></span>Go to Salesforce
           </button>
-          <button id="retryManualBtn" class="home-studio-btn"
-            style="display:inline-flex;width:auto;padding:8px 16px;font-size:13px;background:#f4f6f9;color:#444;border:1px solid #ddd">
-            🔄 Try again
+          <button id="retryManualBtn" class="home-btn home-btn-secondary">
+            <span data-i="refresh" aria-hidden="true"></span>Try again
           </button>
         </div>
-        <div style="font-size:11px;color:#a0a0a0;margin-top:10px;text-align:center">
+        <div class="home-loading-hint">
           Reconnects automatically once you log in.
         </div>
       </div>` : `
       <div class="home-loading">
         ${sftkCat('No Salesforce tab detected.', true)}
-        <div style="font-size:12px;color:#706E6B;margin-top:4px;margin-bottom:10px;text-align:center">
+        <div class="home-loading-text">
           Open a Salesforce org in Chrome and this will connect automatically.
         </div>
-        <button id="retryManualBtn" class="home-studio-btn"
-          style="display:inline-flex;width:auto;padding:8px 18px;font-size:13px">
-          🔄 Retry now
+        <button id="retryManualBtn" class="home-btn">
+          <span data-i="refresh" aria-hidden="true"></span>Retry now
         </button>
       </div>`;
 
@@ -3475,16 +3490,17 @@ function openTopbarOrgDropdown() {
         const host      = (() => { try { return new URL(sess.orgUrl).hostname; } catch (_) { return sess.orgUrl || ''; } })();
         const name      = sess.label || host;
         const isCurrent = normUrl(sess.orgUrl) === normUrl(orgUrl);
-        const dotColor  = sess.online ? '#4ac154' : '#9b8ec4';
         const item = document.createElement('button');
         item.className = 'home-org-dd-item' + (isCurrent ? ' home-org-dd-item-active' : '');
+        // Same rows as the home org switcher — same classes, so the two
+        // lists cannot drift apart again.
         item.innerHTML = `
-          <span class="home-org-dd-dot" style="background:${dotColor};box-shadow:none"></span>
+          <span class="home-org-dd-dot ${sess.online ? 'home-org-dd-dot-live' : 'home-org-dd-dot-stored'}"></span>
           <span class="home-org-dd-text">
             <span class="home-org-dd-name">${escHtml(name)}</span>
             <span class="home-org-dd-host">${escHtml(host)}</span>
           </span>
-          ${sess.stored ? '<span class="t-tag t-tag-cred" style="font-size:9px;padding:1px 5px;border-radius:3px;background:#f0ebff;color:#7c5ce0;flex-shrink:0">credentials</span>' : ''}
+          ${sess.stored ? '<span class="home-org-dd-tag">credentials</span>' : ''}
           ${isCurrent ? '<span class="home-org-dd-check">active</span>' : ''}`;
         item.addEventListener('click', ev => {
           ev.stopPropagation();

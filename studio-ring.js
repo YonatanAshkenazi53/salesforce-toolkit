@@ -40,12 +40,14 @@ function renderRing() {
   }).join('');
 
   setMain(`
-    <div class="ds-view-header">
-      <div class="ds-view-title-wrap">
-        <h2 class="ds-view-title">🔄 Sync Ring</h2>
-        <div class="ds-view-subtitle">One source of truth → every ring org. Scan to see drift; fan out to fix it.</div>
-      </div>
-    </div>
+    ${dsViewHeader({
+      icon: 'repeat',
+      title: 'Sync Ring',
+      subtitle: 'One source of truth → every ring org. Scan to see drift; fan out to fix it.',
+      // ring.orgs is the configured ring — the same array the configuration
+      // panel below counts. Not "orgs known", not "orgs open".
+      count: `${ring.orgs.length} org${ring.orgs.length !== 1 ? 's' : ''} in the ring`,
+    })}
 
     <details class="ds-ring-cfg" ${cfgOpen ? 'open' : ''}>
       <summary class="ds-ring-cfg-sum"><strong>⚙ Ring configuration</strong>

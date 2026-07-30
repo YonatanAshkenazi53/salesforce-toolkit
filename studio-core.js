@@ -112,6 +112,47 @@ const esc = s => String(s ?? '')
 const eid = id => document.getElementById(id);
 const setMain = html => { const m = eid('dsMain'); if (m) m.innerHTML = html; };
 
+// ── THE SHARED VIEW HEADER ────────────────────────────────────
+// The SLDS audit's headline finding was that every one of the 13 views
+// hand-rolls its own title markup, so none of them has the page-header shape
+// a Salesforce admin recognises: an icon container, a title, a record count,
+// and right-aligned actions. This builds that shape ONCE.
+//
+//   dsIcon('sliders')                 → a decorative mask icon (aria-hidden)
+//   dsViewHeader({ icon, title, … })  → the whole header
+//
+// Icons are the debugger's mask table (styles.css declares `[data-i="…"]`
+// unscoped, studio.css adds the Studio-only glyphs to the same custom
+// property) so an icon is always currentColor and always inverts in dark
+// mode. See "DATA STUDIO — DESIGN REFRESH LAYER" in studio.css.
+//
+// HONESTY: `count` is printed verbatim. Pass a string you have actually
+// computed from the data on screen — never an estimate, never a rounded
+// "~N". If you don't have a real number, omit it.
+//
+// title/subtitle/count/actions are raw HTML (callers already interpolate
+// esc()'d values and inline <strong>), so escape at the call site as before.
+// Adoption is opt-in: the header only changes shape once .ds-vh is on it, so
+// views that still emit a bare .ds-view-header are untouched.
+const dsIcon = (name, cls) =>
+  `<span class="ds-i${cls ? ' ' + cls : ''}" data-i="${esc(name)}" aria-hidden="true"></span>`;
+
+function dsViewHeader({ icon, title, subtitle, count, actions, back, cls } = {}) {
+  const sub = [subtitle || '', count ? `<span class="ds-vh-count">${count}</span>` : '']
+    .filter(Boolean).join('');
+  return `<div class="ds-view-header ds-vh${cls ? ' ' + cls : ''}">
+      <div class="ds-vh-lead">
+        ${icon ? `<span class="ds-vh-icon">${dsIcon(icon)}</span>` : ''}
+        <div class="ds-vh-titles">
+          ${back || ''}
+          <h2 class="ds-view-title">${title || ''}</h2>
+          ${sub ? `<div class="ds-view-subtitle">${sub}</div>` : ''}
+        </div>
+      </div>
+      ${actions ? `<div class="ds-vh-actions">${actions}</div>` : ''}
+    </div>`;
+}
+
 // ── E4: Professional mode ─────────────────────────────────────
 // Emoji-dense chrome reads as hobbyist in procurement screenshot reviews.
 // Professional mode (default OFF — existing users keep today's look) swaps
@@ -177,7 +218,7 @@ function applyProMode(on) {
   // The dark toggle's label is emoji written from JS (not CSS-hideable) —
   // refresh it here so flipping pro mode doesn't leave a stale 🌙/☀️ behind.
   const dk = eid('dsDarkToggle');
-  if (dk) dk.textContent = window.sftkGlyph(_darkMode ? '☀️' : '🌙', _darkMode ? 'Light' : 'Dark');
+  if (dk) dk.textContent = window.sftkGlyph('', _darkMode ? 'Light' : 'Dark');
 }
 
 // Kick off the ds_settings read IMMEDIATELY at script evaluation — the same
@@ -755,8 +796,18 @@ function applyDarkMode(on) {
   const btn = eid('dsDarkToggle');
   if (btn) {
     // E4: plain-text label in professional mode (window.sftkGlyph).
-    btn.textContent = window.sftkGlyph(on ? '☀️' : '🌙', on ? 'Light' : 'Dark');
+    // The glyph is a masked ::before driven by data-i (see the topbar block
+    // in studio.css) — an ATTRIBUTE, because this very assignment destroys
+    // any child node an icon <span> would live in. Same mechanism the Apex
+    // Debugger uses for its ten relabelled buttons. Pro mode still swaps in
+    // the plain-text label; the ::before is hidden there by .ds-pro.
+    btn.setAttribute('data-i', on ? 'sun' : 'moon');
+    btn.textContent = window.sftkGlyph('', on ? 'Light' : 'Dark');
     btn.title = on ? 'Switch to light mode' : 'Switch to dark mode';
+    // a11y: outside pro mode the label IS an emoji, which no AT announces as
+    // an action. title= alone is not exposed as a name by every AT, so the
+    // accessible name is set here and kept in step with the state.
+    btn.setAttribute('aria-label', btn.title);
   }
   // X5: write the canonical shared key (sftk_dark) so the popup + log viewer
   // pick up the same choice; keep ds_dark_mode in sync for back-compat.
@@ -1405,8 +1456,8 @@ function renderOrgsPanel() {
           <div class="ds-org-row-label">
             ${esc(label)}
             ${prodBadge(url)}
-            ${orgData.readOnly ? `<span class="ds-org-badge-current" style="margin-left:6px;background:#FDF0E4;color:#B54708" title="All writes to this org are blocked">${window.sftkGlyph('🔒 ', '')}read-only</span>` : ''}
-            ${isCurrent ? '<span class="ds-org-badge-current" style="margin-left:6px">current tab</span>' : ''}
+            ${orgData.readOnly ? `<span class="ds-org-badge-current ds-badge-warn" title="All writes to this org are blocked">${dsIcon('lock')}read-only</span>` : ''}
+            ${isCurrent ? '<span class="ds-org-badge-current">current tab</span>' : ''}
           </div>
           <div class="ds-org-row-url">${esc(host)}</div>
           <div class="ds-org-row-meta">
@@ -1429,16 +1480,22 @@ function renderOrgsPanel() {
   }).join('');
 
   setMain(`
-    <div class="ds-view-header">
-      <div class="ds-view-title-wrap">
-        <h2 class="ds-view-title">${window.sftkGlyph('🔌 ', '')}Connected Orgs</h2>
-        <div class="ds-view-subtitle">${allOrgUrls.length} org${allOrgUrls.length !== 1 ? 's' : ''} known · ${_allSessions.length} currently open in Chrome</div>
-      </div>
-      <button class="ds-btn ds-btn-primary" id="dsRefreshOrgsBtn">${window.sftkGlyph('🔄 ', '')}Refresh from open tabs</button>
-    </div>
+    ${dsViewHeader({
+      icon: 'plug',
+      title: 'Connected Orgs',
+      // Same two numbers as before, in the same order, from the same arrays —
+      // the count moves into the header's count slot, its meaning unchanged.
+      subtitle: `${allOrgUrls.length} org${allOrgUrls.length !== 1 ? 's' : ''} known`,
+      count: `${_allSessions.length} currently open in Chrome`,
+      actions: `<button class="ds-btn ds-btn-primary" id="dsRefreshOrgsBtn">${dsIcon('refresh')}Refresh from open tabs</button>`,
+    })}
 
-    <div style="background:#E8F4FD;border:1px solid #C5DBF0;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#014486;max-width:820px">
-      <strong>${window.sftkGlyph('💡 ', '')}How it works:</strong> The Studio auto-detects any Salesforce org you have open in a Chrome tab.
+    <!-- Was five hardcoded hex values in an inline style, so this panel stayed
+         a light-blue card with #014486 text in DARK mode — the one element on
+         this screen that never flipped. It is a class on the brand tokens now,
+         which re-point per theme. -->
+    <div class="ds-callout">
+      <strong>${dsIcon('bulb')}How it works:</strong> The Studio auto-detects any Salesforce org you have open in a Chrome tab.
       Open an org in Chrome, then click <em>Refresh from open tabs</em> to add it. No Connected App or passwords —
       your existing browser session is used securely. Transfers and reconcile run against orgs that are open in a tab.
     </div>
@@ -1618,9 +1675,9 @@ function renderWorkingPair() {
     return `<option value="${esc(u)}" ${_orgKey(u) === _orgKey(srcUrl) ? 'selected' : ''}>${esc(orgOptionLabel(u, o?.label, ls))}</option>`;
   }).join('');
   el.innerHTML = `
-    <span class="ds-pair-lbl" title="Source of truth — new deployments, compares and picklist loads all start from this org. Configure the full ring with ⚙.">⦿ Source</span>
-    <select id="dsSotSel" class="ds-pair-sel" title="The golden org data flows FROM">${opts}</select>
-    <button id="dsSotRingBtn" class="ds-pair-swap" title="Configure the Sync Ring (which orgs stay in sync)">⚙</button>`;
+    <span class="ds-pair-lbl" title="Source of truth — new deployments, compares and picklist loads all start from this org. Configure the full ring with the gear.">Source</span>
+    <select id="dsSotSel" class="ds-pair-sel" aria-label="Source of truth — the org data flows FROM" title="The golden org data flows FROM">${opts}</select>
+    <button id="dsSotRingBtn" class="ds-pair-swap" aria-label="Configure the Sync Ring" title="Configure the Sync Ring (which orgs stay in sync)">${dsIcon('gear')}</button>`;
   eid('dsSotSel')?.addEventListener('change', async e => {
     const v = e.target.value;
     if (!_ring) _ring = { orgs: [v], sourceUrl: v };

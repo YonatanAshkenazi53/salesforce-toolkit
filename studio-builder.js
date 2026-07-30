@@ -57,20 +57,36 @@ function attachMeta(node) {
   (node.children || []).forEach(attachMeta);
 }
 
+// How many objects this profile actually deploys — the header's record count.
+// Counts the SAME nodes renderTreeNode paints (root + every descendant), so
+// the number in the header can never disagree with the tree under it.
+function bldTreeNodeCount(node) {
+  if (!node) return 0;
+  return 1 + (node.children || []).reduce((n, c) => n + bldTreeNodeCount(c), 0);
+}
+
 function renderBuilder() {
   const p = _editingProfile;
   setMain(`
-    <div class="ds-view-header">
-      <h2 class="ds-view-title">📦 Profile Builder</h2>
-      <div class="ds-builder-hdr-btns">
-        ${p.tree ? `<button class="ds-btn" id="dsPreviewAllBtn" title="Count records for every node in parallel">👁 Preview All</button>
-        <button class="ds-btn" id="dsBldCheckTargets" title="Describe every ring target and verify the tree's objects + every mapped field exist there — the multi-org answer to 'which org will this break in?'">🧪 Check all targets</button>` : ''}
+    ${dsViewHeader({
+      icon: 'box',
+      title: 'Profile Builder',
+      // The builder's content column is capped at 900px, so a full-bleed
+      // page header sat ~90px wider than every field under it.
+      cls: 'ds-vh-narrow',
+      // Truthful, and computed from the tree that is actually on screen:
+      // countTreeNodes walks the same node graph the editor renders.
+      subtitle: p.tree ? `${esc(p.tree.objectType || 'Untitled')} deployment` : 'New deployment',
+      count: p.tree ? `${bldTreeNodeCount(p.tree)} object${bldTreeNodeCount(p.tree) !== 1 ? 's' : ''} in the tree` : '',
+      // ONE primary in the region (Save &amp; Run). Save/Cancel are neutral,
+      // and nothing here is destructive, so nothing here is red.
+      actions: `${p.tree ? `<button class="ds-btn" id="dsPreviewAllBtn" title="Count records for every node in parallel">${dsIcon('eye')}Preview All</button>
+        <button class="ds-btn" id="dsBldCheckTargets" title="Describe every ring target and verify the tree's objects + every mapped field exist there — the multi-org answer to 'which org will this break in?'">${dsIcon('flask')}Check all targets</button>` : ''}
         <button class="ds-btn" id="dsBuilderCancel">Cancel</button>
-        <button class="ds-btn" id="dsBuilderSave">💾 Save</button>
+        <button class="ds-btn" id="dsBuilderSave">${dsIcon('save')}Save</button>
         ${p.tree ? `<button class="ds-btn ds-btn-primary" id="dsBuilderSaveRun"
-          title="Save the profile and immediately jump to the Run screen">💾 Save &amp; Run ▶</button>` : ''}
-      </div>
-    </div>
+          title="Save the profile and immediately jump to the Run screen">${dsIcon('play')}Save &amp; Run</button>` : ''}`,
+    })}
 
     <div class="ds-builder-wrap">
       <div class="ds-builder-name-row">
@@ -108,35 +124,45 @@ function renderBuilder() {
           `<option value="${esc(o.url)}" ${sel === o.url ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label, ls))}</option>`).join('');
         return `
       <div class="ds-builder-orgs-row">
-        <div class="ds-builder-org-col">
-          <label class="ds-lbl">Source <span class="ds-builder-org-hint">(where records come FROM)</span></label>
+        <div class="ds-builder-org-col ds-bld-col-src">
+          <div class="ds-lbl ds-bld-col-hd">${dsIcon('database')}Source <span class="ds-builder-org-hint">where records come FROM</span></div>
           ${srcLocked
-            ? `<div class="ds-pk-sot-line" style="padding:9px 2px" title="Locked to your Sync Ring's source of truth — every multi-org surface flows FROM it. Change it in 🔄 Sync Ring or the topbar chip.">
-                 👑 <strong>${esc(orgLabel(ringSrc))}</strong> — your source of truth
-                 <a href="#" id="dsBldSrcUnlock" style="font-size:11px;margin-left:8px">use a different source…</a>
+            ? `<div class="ds-bld-src-locked" title="Locked to your Sync Ring's source of truth — every multi-org surface flows FROM it. Change it in 🔄 Sync Ring or the topbar chip.">
+                 ${dsIcon('crown')}<strong>${esc(orgLabel(ringSrc))}</strong>
+                 <span class="ds-bld-src-note">your source of truth</span>
+                 <a href="#" id="dsBldSrcUnlock" class="ds-bld-src-note">use a different source…</a>
                </div>`
-            : `<select id="dsProfileSrcOrg" class="ds-input">
+            : `<select id="dsProfileSrcOrg" class="ds-select" aria-label="Source org — where records come from">
                 <option value="">— Select source org —</option>${orgOpts(p.sourceOrg)}
               </select>
               ${ringSrc && p.sourceOrg && _orgKey(p.sourceOrg) !== _orgKey(ringSrc)
-                ? `<div style="font-size:11px;color:#92400e;margin-top:3px">⚠ not your 👑 source of truth (${esc(orgLabel(ringSrc))}) — this deployment will show as off-ring</div>` : ''}`}
+                ? `<div class="ds-bld-src-warn">${dsIcon('warn')}not your source of truth (${esc(orgLabel(ringSrc))}) — this deployment will show as off-ring</div>` : ''}`}
         </div>
-        ${srcLocked ? '' : `<button class="ds-builder-orgs-arrow ds-builder-orgs-swap" id="dsProfileSwapOrgs"
-          title="Swap source and target orgs — also inverts field mappings and clears picked records (they belong to the old source org)">⇄</button>`}
-        <div class="ds-builder-org-col">
-          <label class="ds-lbl">Targets</label>
-          <div style="font-size:11px;color:var(--subtext);margin:-2px 0 8px;text-transform:none;letter-spacing:0">▶ Run deploys to <strong>all</strong> of them · field mapping previews use the first target's schema · 🧪 Check all targets validates the rest</div>
+        <!-- The direction statement. Two of the recent bug reports came from
+             this row reading as two unrelated columns; the slot is now always
+             filled — the ⇄ swap BUTTON when the source can be changed, a
+             static → when the ring has locked it — so the arrow is always
+             there to say which way records move. -->
+        <div class="ds-builder-orgs-flow">
+          ${srcLocked
+            ? `${dsIcon('arrow-right')}<span class="ds-sr">records flow from the source to the targets</span>`
+            : `<button class="ds-builder-orgs-swap" id="dsProfileSwapOrgs" aria-label="Swap source and target orgs"
+                title="Swap source and target orgs — also inverts field mappings and clears picked records (they belong to the old source org)">${dsIcon('swap')}</button>`}
+        </div>
+        <div class="ds-builder-org-col ds-bld-col-tgt">
+          <div class="ds-lbl ds-bld-col-hd">${dsIcon('box')}Targets <span class="ds-builder-org-hint">where records are written</span></div>
+          <div class="ds-bld-tgt-hint">Run deploys to <strong>all</strong> of them · field mapping previews use the first target's schema · Check all targets validates the rest</div>
           ${ringSrc ? `
           <label class="ds-pk-orgchk" title="The deployment's targets are ALWAYS whatever the ring's targets are — add an org to the ring and this deployment covers it automatically.">
             <input type="radio" name="dsBldTgtMode" value="follow" ${followMode ? 'checked' : ''}>
-            🔄 Follow the Sync Ring — all its targets, always
+            ${dsIcon('repeat')} Follow the Sync Ring — all its targets, always
           </label>
-          <div style="font-size:11px;color:var(--subtext);margin:-2px 0 6px 26px;text-transform:none">now: ${esc(effTargets.map(u => orgLabel(u)).join(' · ')) || 'none'}</div>
+          <div class="ds-bld-tgt-now">now: ${esc(effTargets.map(u => orgLabel(u)).join(' · ')) || 'none'}</div>
           <label class="ds-pk-orgchk" title="Freeze this deployment to specific orgs — ring changes won't affect it.">
             <input type="radio" name="dsBldTgtMode" value="pin" ${followMode ? '' : 'checked'}>
-            📌 Pin specific orgs:
+            ${dsIcon('pin')} Pin specific orgs:
           </label>` : ''}
-          <div class="ds-pk-orgchk-list" id="dsBldTgtList" style="${followMode ? 'display:none' : ''}">
+          <div class="ds-pk-orgchk-list" id="dsBldTgtList" ${followMode ? 'hidden' : ''}>
             ${allMapOrgs().map(o => {
               // The source is LOCKED here, not hidden (user 2026-07-30: "when we
               // select a source org here, we need to lock it from the target
@@ -147,7 +173,7 @@ function renderBuilder() {
               return `<label class="ds-pk-orgchk${isSrc ? ' ds-pk-orgchk-locked' : ''}"
                 ${isSrc ? 'title="This is the source org — records come FROM here, so it can\'t also be a target."' : ''}>
                 <input type="checkbox" data-bld-tgt="${esc(o.url)}" ${isSrc ? 'disabled' : ''} ${!isSrc && effTargets.some(u => _orgKey(u) === _orgKey(o.url)) ? 'checked' : ''}>
-                ${esc(orgOptionLabel(o.url, o.label, ls))}${isSrc ? ' <span class="ds-subtext" style="font-size:11px">— source</span>' : ''}</label>`;
+                ${esc(orgOptionLabel(o.url, o.label, ls))}${isSrc ? `<span class="ds-pk-lock-pill">${dsIcon('lock')}source</span>` : ''}</label>`;
             }).join('')
             || '<div class="ds-seq-empty">No orgs known — open them in Chrome tabs.</div>'}
           </div>
@@ -160,11 +186,16 @@ function renderBuilder() {
           <span class="ds-builder-org-hint">(users differ between orgs — pick how owners transfer)</span>
         </label>
         <div class="ds-builder-owner-ctls">
-          <select id="dsProfileOwnerMode" class="ds-input">
+          <select id="dsProfileOwnerMode" class="ds-select" aria-label="How record owners transfer">
             <option value="skip"  ${p.ownerMapping?.mode !== 'match' ? 'selected' : ''}>Don't copy owners — the target assigns its default (the running user)</option>
             <option value="match" ${p.ownerMapping?.mode === 'match' ? 'selected' : ''}>Match owners in the target; unmatched → a fallback user</option>
           </select>
-          <select id="dsProfileOwnerFallback" class="ds-input" style="${p.ownerMapping?.mode === 'match' ? '' : 'display:none'}">
+          <!-- display: is still an inline style on these two. The owner-mode
+               change handler shows/hides them with el.style.display, so the
+               attribute is the state channel, not decoration — switching to
+               [hidden] here would leave them hidden when the handler cleared
+               the inline value. -->
+          <select id="dsProfileOwnerFallback" class="ds-select" aria-label="Fallback user for unmatched owners" style="${p.ownerMapping?.mode === 'match' ? '' : 'display:none'}">
             <option value="">${p.ownerMapping?.fallbackUserId ? esc(p.ownerMapping.fallbackUserName || 'saved fallback user') : '— fallback user (loads from target org) —'}</option>
           </select>
         </div>
@@ -174,17 +205,17 @@ function renderBuilder() {
           // matching config shows the Name-only path the engine will really
           // run; nothing is written back until a control here is touched.
           const m = bldOwnerMatchingDisplay(p.ownerMapping);
-          const fld = (name, label, title) => `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer"${title ? ` title="${title}"` : ''}><input type="checkbox" data-owner-match-field="${name}" ${m.fields.includes(name) ? 'checked' : ''}> ${label}</label>`;
-          const tgl = (key, label, title) => `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer" title="${title}"><input type="checkbox" data-owner-match-norm="${key}" ${m.normalize[key] ? 'checked' : ''}> ${label}</label>`;
+          const fld = (name, label, title) => `<label class="ds-bld-chk"${title ? ` title="${title}"` : ''}><input type="checkbox" data-owner-match-field="${name}" ${m.fields.includes(name) ? 'checked' : ''}> ${label}</label>`;
+          const tgl = (key, label, title) => `<label class="ds-bld-chk" title="${title}"><input type="checkbox" data-owner-match-norm="${key}" ${m.normalize[key] ? 'checked' : ''}> ${label}</label>`;
           return `
-        <div id="dsOwnerMatchBlock" style="${p.ownerMapping?.mode === 'match' ? '' : 'display:none;'}margin:6px 0 0 2px">
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:11.5px;color:var(--subtext)">
+        <div id="dsOwnerMatchBlock" class="ds-bld-owner-match" style="${p.ownerMapping?.mode === 'match' ? '' : 'display:none'}">
+          <div class="ds-bld-owner-row">
             <span>Match owners by</span>
             ${fld('Email', 'Email')}${fld('Name', 'Name')}${fld('Username', 'Username')}${fld('Alias', 'Alias')}${fld('FederationIdentifier', 'Federation ID', 'Not usable on queue-enabled objects (Case, Lead, …) — Salesforce can’t read Federation ID through their Owner field, so the source query would fail. Prefer Email there.')}
-            <span style="opacity:.5">·</span>
+            <span class="ds-bld-owner-sep" aria-hidden="true">·</span>
             ${tgl('caseFold', 'case-insensitive', 'Compare keys lowercase — "ADA" matches "ada"')}${tgl('trim', 'trim spaces', 'Strip leading/trailing spaces before comparing')}${tgl('emailLower', 'lowercase emails', 'Lowercase email-shaped values only — safe on non-email fields')}
           </div>
-          <div style="font-size:11px;color:var(--subtext);margin-top:3px">Usernames are org-suffixed, so Email usually survives sandbox refreshes best. Two target users sharing the same key = no guess: those records go to the fallback user.</div>
+          <div class="ds-bld-owner-note">Usernames are org-suffixed, so Email usually survives sandbox refreshes best. Two target users sharing the same key = no guess: those records go to the fallback user.</div>
         </div>`;
         })()}
         <div id="dsProfileOwnerHint" class="ds-builder-owner-hint"></div>
@@ -206,8 +237,8 @@ function renderBuilder() {
             <!-- Prepopulated from the SOURCE org (user 2026-07-20: "select
                  objects from a prepopulated list") — the text input is only
                  the fallback when the source org isn't open in a tab. -->
-            <select id="dsRootObjSel" class="ds-input" style="display:none"></select>
-            <input id="dsRootObj" class="ds-input" placeholder="Loading objects from the source org…">
+            <select id="dsRootObjSel" class="ds-select" aria-label="Root object type" style="display:none"></select>
+            <input id="dsRootObj" class="ds-input" aria-label="Root object API name" placeholder="Loading objects from the source org…">
             <button class="ds-btn ds-btn-primary" id="dsSetRoot">Set Root</button>
           </div>
         </div>` : `
@@ -1032,14 +1063,14 @@ function renderTreeNode(node, path, isRoot, depth = 0) {
     <div class="ds-tree-node ${depthClass}">
       <div class="ds-tree-node-card">
         <div class="ds-tree-node-header" data-path="${esc(pathKey)}">
-          <button class="ds-tree-toggle" data-path="${esc(pathKey)}">${meta.expanded ? '▼' : '▶'}</button>
+          <button class="ds-tree-toggle" data-path="${esc(pathKey)}" aria-expanded="${meta.expanded ? 'true' : 'false'}" aria-label="${meta.expanded ? 'Collapse' : 'Expand'} ${esc(objName)}">${meta.expanded ? '▼' : '▶'}</button>
           <span class="ds-tree-node-icon">${icon}</span>
           <span class="ds-tree-obj-name">${esc(objName)}</span>
           ${relBadge}
           ${countBadge}${loadingBadge}
           <div class="ds-tree-node-actions">
             <button class="ds-btn ds-btn-xs" data-preview="${esc(pathKey)}" title="Count records">👁 Preview</button>
-            ${!isRoot ? `<button class="ds-btn ds-btn-xs ds-btn-danger" data-remove="${esc(pathKey)}" title="Remove">✕</button>` : ''}
+            ${!isRoot ? `<button class="ds-btn ds-btn-xs ds-btn-danger" data-remove="${esc(pathKey)}" aria-label="Remove ${esc(objName)} from the tree" title="Remove">${dsIcon('x')}</button>` : ''}
           </div>
         </div>
         <div class="ds-tree-where-row" data-path="${esc(pathKey)}" ${meta.expanded ? '' : 'style="display:none"'}>

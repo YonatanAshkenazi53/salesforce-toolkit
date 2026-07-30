@@ -12,22 +12,30 @@
     <!-- ── Top bar (full width) ───────────────────────────────── -->
     <div class="app-topbar">
       <div class="app-brand">
-        <span class="app-logo">🐾</span>
+        <span class="app-logo" data-i="paw" aria-hidden="true"></span>
         <span class="app-brand-name">Admin Toolkit for Salesforce</span>
       </div>
       <div class="app-topbar-actions">
-        <button id="dsWhatsNewTop" class="topbar-whatsnew" title="What's New — release notes">🎉<span id="dsWhatsNewBadge"></span></button>
-        <button id="homeBtn" class="dbg-btn" title="Back to home" style="display:none">🏠 Home</button>
+        <!-- Icon-only controls: the glyph is decorative (aria-hidden) and the
+             name comes from aria-label, which a title= alone does not
+             reliably provide to assistive tech. -->
+        <button id="dsWhatsNewTop" class="topbar-whatsnew" title="What's New — release notes" aria-label="What's New — release notes"><span data-i="sparkle" aria-hidden="true"></span><span id="dsWhatsNewBadge"></span></button>
+        <!-- The glyph is a child span, not the button's text: initDarkTheme
+             swaps `data-i` on it, so no textContent assignment can destroy it. -->
+        <button id="sftkDarkToggle" class="dbg-btn" title="Switch to dark mode" aria-label="Switch to dark mode"><span id="sftkDarkIcon" data-i="moon" aria-hidden="true"></span></button>
+        <span class="topbar-sep" aria-hidden="true"></span>
+        <button id="homeBtn" class="dbg-btn" title="Back to home" style="display:none"><span data-i="home" aria-hidden="true"></span>Home</button>
         <!-- Persistent org chip — visible on every screen -->
-        <button id="topbarOrgChip" class="topbar-org-chip" style="display:none" title="Switch active org">
-          <span class="topbar-org-dot"></span>
+        <button id="topbarOrgChip" class="topbar-org-chip" style="display:none" title="Switch active org" aria-haspopup="true">
+          <span class="topbar-org-dot" aria-hidden="true"></span>
           <span id="topbarOrgLabel" class="topbar-org-label">—</span>
-          <span class="topbar-org-arrow">▾</span>
+          <span class="topbar-org-arrow" data-i="chevron" aria-hidden="true"></span>
         </button>
-        <button id="sftkDarkToggle" class="dbg-btn" title="Switch to dark mode">🌙</button>
-        <button id="dataStudioBtn" class="dbg-btn" title="Open Data Studio — multi-org data deployment">🌐 Data Studio</button>
-        <button id="popoutBtn" class="dbg-btn" title="Open this view in a full browser window (no 800px popup cap)">↗ Popout</button>
-        <button id="dbgBtn" class="dbg-btn" title="Debug Log — off">🐛 Debug</button>
+        <button id="dataStudioBtn" class="dbg-btn" title="Open Data Studio — multi-org data deployment"><span data-i="globe" aria-hidden="true"></span>Data Studio</button>
+        <button id="popoutBtn" class="dbg-btn" title="Open this view in a full browser window (no 800px popup cap)"><span data-i="popout" aria-hidden="true"></span>Popout</button>
+        <!-- Label is rewritten by debug-modal.js ("Debug" / "5" / "5 ⚠"), so
+             the glyph comes from #dbgBtn::before in styles.css. -->
+        <button id="dbgBtn" class="dbg-btn" title="Debug Log — off">Debug</button>
       </div>
     </div>
 
@@ -36,41 +44,44 @@
 
       <!-- Left sidebar nav -->
       <nav class="app-sidebar">
+        <!-- Nav glyphs are the SAME masked icons the home cards use, so one
+             tool reads as one icon wherever it appears. Decorative: the name
+             is the label beside it. -->
         <div class="app-sidebar-section-title">Flows &amp; Automation</div>
         <button class="tab-btn app-nav-btn" data-tab="flows">
-          <span class="app-nav-icon">🗑</span>
+          <span class="app-nav-icon" data-i="nodes" aria-hidden="true"></span>
           <span>Flows</span>
         </button>
         <button class="tab-btn app-nav-btn" data-tab="dependencies">
-          <span class="app-nav-icon">🗺</span>
+          <span class="app-nav-icon" data-i="share" aria-hidden="true"></span>
           <span>Dependencies</span>
         </button>
         <button class="tab-btn app-nav-btn" data-tab="debugger">
-          <span class="app-nav-icon">🐛</span>
+          <span class="app-nav-icon" data-i="bug" aria-hidden="true"></span>
           <span>Debugger</span>
         </button>
 
         <div class="app-sidebar-section-title">Pages &amp; Fields</div>
         <button class="tab-btn app-nav-btn" data-tab="pages">
-          <span class="app-nav-icon">📄</span>
+          <span class="app-nav-icon" data-i="layout" aria-hidden="true"></span>
           <span>Lightning Pages</span>
         </button>
         <button class="tab-btn app-nav-btn" data-tab="fields">
-          <span class="app-nav-icon">🔧</span>
+          <span class="app-nav-icon" data-i="sliders" aria-hidden="true"></span>
           <span>Field Cleaner</span>
         </button>
 
         <div class="app-sidebar-section-title">Users &amp; Records</div>
         <button class="tab-btn app-nav-btn" data-tab="copy-perms">
-          <span class="app-nav-icon">👥</span>
+          <span class="app-nav-icon" data-i="users" aria-hidden="true"></span>
           <span>Copy Permissions</span>
         </button>
         <button class="tab-btn app-nav-btn" data-tab="licenses">
-          <span class="app-nav-icon">🔑</span>
+          <span class="app-nav-icon" data-i="key" aria-hidden="true"></span>
           <span>Licenses</span>
         </button>
         <button class="tab-btn app-nav-btn" data-tab="flow-access">
-          <span class="app-nav-icon">🌊</span>
+          <span class="app-nav-icon" data-i="shield" aria-hidden="true"></span>
           <span>Flow Access</span>
         </button>
       </nav>
@@ -82,15 +93,14 @@
         <div id="sessionError" class="error-banner session-error-banner" style="display:none">
           <div id="sessionErrorMsg"></div>
           <!-- Manual org URL connect — bypasses auto-detection -->
-          <div style="margin-top:10px;display:flex;gap:6px;align-items:center">
-            <input type="text" id="orgUrlInput" class="search-input"
-              style="flex:1;font-size:12px;padding:5px 8px"
+          <div class="session-error-row">
+            <input type="text" id="orgUrlInput" class="search-input session-error-input"
               placeholder="Paste org URL: https://myorg.my.salesforce.com">
             <button class="btn btn-primary btn-sm" id="connectOrgBtn">Connect</button>
           </div>
-          <div style="margin-top:6px">
-            <button class="btn btn-secondary btn-sm" id="retryBtn">🔄 Auto-detect</button>
-            <button class="btn btn-secondary btn-sm" id="reloadExtBtn" style="margin-left:8px" title="Reload the extension and reconnect — use this if Retry doesn't work">⚙️ Reload Extension</button>
+          <div class="session-error-row">
+            <button class="btn btn-secondary btn-sm" id="retryBtn"><span data-i="refresh" aria-hidden="true"></span>Auto-detect</button>
+            <button class="btn btn-secondary btn-sm" id="reloadExtBtn" title="Reload the extension and reconnect — use this if Retry doesn't work"><span data-i="gear" aria-hidden="true"></span>Reload Extension</button>
           </div>
         </div>
 
@@ -262,9 +272,9 @@
         <!-- TAB: WHAT'S NEW (T10) — same CHANGELOG.md the Studio renders -->
         <!-- ================================================== -->
         <div id="tab-whatsnew" class="tab-content" style="display:none">
-          <div style="padding:16px 18px;max-width:860px">
-            <h2 style="font-size:17px;font-weight:700;margin-bottom:2px">🎉 What's New</h2>
-            <div style="font-size:12px;color:var(--subtext,#706E6B);margin-bottom:14px">
+          <div class="tab-pad">
+            <h2 class="tab-title">What's New</h2>
+            <div class="tab-subtitle">
               Everything that shipped, newest first — straight from the changelog
             </div>
             <div id="whatsNewContainer"></div>
