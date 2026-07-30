@@ -11,8 +11,11 @@ function openProfileBuilder(existingProfile) {
         name: 'New Profile',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        // New profiles start with the working pair (still editable below).
-        sourceOrg: _workingPair.src || '',
+        // New profiles start from whatever the topbar SOURCE chip is showing
+        // — same resolution, one helper — so a new deployment never opens
+        // blank while the topbar plainly names a source. The target list
+        // excludes it automatically (an org is never its own target).
+        sourceOrg: (typeof currentSourceOrg === 'function' ? currentSourceOrg() : (_workingPair.src || '')),
         targetOrg: _workingPair.tgt || '',
         // Diff configuration — drives the "is record X already in target?"
         // signal in the Pick Records modal + the "drift" summary on cards.

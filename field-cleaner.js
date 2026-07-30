@@ -82,6 +82,38 @@ function fcRankEntries(pool, filter) {
 // Keyed on api name case-insensitively — Salesforce api names are
 // case-insensitive and two queries can spell the same one differently.
 // Returns a NEW array; the pool is never mutated.
+// PURE. Is this EntityDefinition row noise for a CUSTOM-FIELD cleaner?
+// (user 2026-07-30: "why do we see all the missing labels? its a noise. who
+// use these objects?")
+//
+// Salesforce auto-creates a shadow object per feature — <X>Feed for Chatter,
+// <X>Share for sharing rows, <X>History for field history, <X>ChangeEvent for
+// CDC — and in most orgs ships them with an unresolved label, which surfaces
+// literally as "__MISSING LABEL__ PropertyFile - val X not found in section
+// StandardFeedLabel". None of them hold custom fields an admin can clean, so
+// every one is a row the user must scroll past to reach a real object.
+//
+// They are HIDDEN, NOT DROPPED: the picker states how many it hid and can
+// show them on demand — an object silently missing is the exact failure the
+// pagination work existed to fix.
+function fcIsSystemShadowObject(api, label) {
+  const a = String(api || '');
+  if (/(?:Feed|Share|History|ChangeEvent|Tag)$/.test(a)) return true;
+  // A broken label is itself the signal: nothing an admin picks on purpose
+  // announces itself as a missing translation key.
+  if (/^__MISSING LABEL__/.test(String(label || ''))) return true;
+  return false;
+}
+
+// PURE. Split a mapped entity list into what the picker shows and what it
+// hides, so the count in the UI is measured rather than guessed.
+function fcPartitionObjects(list, showAll) {
+  const all = Array.isArray(list) ? list : [];
+  if (showAll) return { shown: all, hidden: 0 };
+  const shown = all.filter(e => !fcIsSystemShadowObject(e && e.api, e && e.label));
+  return { shown, hidden: all.length - shown.length };
+}
+
 function fcMergeEntries(pool, incoming) {
   const list = Array.isArray(pool) ? pool.slice() : [];
   const seen = new Set(list.map(e => String((e && e.api) || '').toLowerCase()));
@@ -238,6 +270,9 @@ const FieldCleaner = (() => {
   let _allObjects = [];
   let _allFields  = [];
   let _objectsLoaded = false;
+  // Session-only: Feed/Share/History/ChangeEvent objects stay hidden until the
+  // user asks for them in the picker.
+  let _objShowSystem = false;
   let _groups    = {};     // type → [dep records] — kept for fixAll
 
   // Picker completeness state. The bug this guards: EntityDefinition caps
@@ -541,9 +576,14 @@ const FieldCleaner = (() => {
   function renderObjDrop(filter) {
     const drop = eid('fcObjDrop');
     if (!drop) return;
+    // Hide Salesforce's shadow objects (<X>Feed / Share / History /
+    // ChangeEvent, and rows whose label is an unresolved translation key)
+    // unless the user asks for them — they have no cleanable custom fields
+    // and used to fill the whole dropdown before a real object appeared.
+    const part = fcPartitionObjects(_allObjects, _objShowSystem);
     // Ranked so exact/prefix hits float above contains-matches — otherwise
     // "Contact" is buried past position 60 by every "Account Contact Role …".
-    const matches   = fcRankEntries(_allObjects, filter);
+    const matches   = fcRankEntries(part.shown, filter);
     const rows      = matches.slice(0, 60);
     const searching = !!_objSearchInFlight || _objTopping;
 
@@ -571,12 +611,28 @@ const FieldCleaner = (() => {
       capHint: 'Type 2+ characters — anything missing is searched directly in the org.'
     });
     if (note) html += `<div style="${_DD_NOTE_CSS}">${esc(note)}</div>`;
+    // Never hide silently: say how many and offer them.
+    if (part.hidden > 0) {
+      html += `<div style="${_DD_NOTE_CSS}">${esc(`${part.hidden} system object(s) hidden — Feed, Share, History and Change Event objects have no custom fields to clean.`)}
+        <a href="#" id="fcShowSysObjs">Show them</a></div>`;
+    } else if (_objShowSystem) {
+      html += `<div style="${_DD_NOTE_CSS}">Showing system objects.
+        <a href="#" id="fcHideSysObjs">Hide them</a></div>`;
+    }
     if (_objSearchErr) {
       html += `<div style="${_DD_NOTE_CSS}">⚠ ${esc('Org search unavailable: ' + _objSearchErr +
         ` — only the ${_allObjects.length} objects loaded above were checked.`)}</div>`;
     }
 
     drop.innerHTML = html;
+    // mousedown, not click: the input's blur would close the dropdown first.
+    const toggleSys = show => e => {
+      e.preventDefault();
+      _objShowSystem = show;
+      renderObjDrop(eid('fcObjInput')?.value);
+    };
+    drop.querySelector('#fcShowSysObjs')?.addEventListener('mousedown', toggleSys(true));
+    drop.querySelector('#fcHideSysObjs')?.addEventListener('mousedown', toggleSys(false));
     drop.querySelectorAll('.fc-dd-item').forEach(item => {
       item.addEventListener('mousedown', e => {
         e.preventDefault();

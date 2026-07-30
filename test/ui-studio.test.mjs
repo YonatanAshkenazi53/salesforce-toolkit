@@ -17,6 +17,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { extractFunction } from './extract.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = f => readFileSync(join(root, f), 'utf8');
@@ -271,8 +272,7 @@ describe('the layer speaks the token vocabulary and adds nothing to it', () => {
 // concept from the screen entirely.
 // ══════════════════════════════════════════════════════════════════
 describe('unset source of truth is stated, not implied', () => {
-  const core = readFileSync(join(root, 'studio-core.js'), 'utf8');
-  const pk   = readFileSync(join(root, 'studio-picklists.js'), 'utf8');
+  const core = CORE, pk = PICKLISTS;
 
   it('the topbar select carries a selected placeholder when no source is set', () => {
     // Must be BOTH selected (so it wins over the browser's first-option
@@ -304,5 +304,38 @@ describe('unset source of truth is stated, not implied', () => {
   it('and offers the one click that fixes it', () => {
     expect(pk).toMatch(/id="dsPkGoRing"/);
     expect(pk).toMatch(/navigateToView\('ring'\)/);
+  });
+});
+
+// A new deployment must open with the SAME source the topbar shows
+// (user 2026-07-30: "source is already selected on the top bar. you need
+// to preselect it as source and give the others as target"). The topbar
+// resolved `_ring.sourceUrl || _workingPair.src` while the builder used
+// `_workingPair.src` alone, so a new profile could open sourceless — and
+// with the source unset, every org including the topbar's source was
+// offered as a write target.
+describe('new deployments inherit the topbar source', () => {
+  const core = CORE, bld = BUILDER, prof = PROFILES;
+  const currentSourceOrg = extractFunction('studio-core.js', 'currentSourceOrg');
+
+  it('the helper prefers the ring source, then the working pair, then empty', () => {
+    globalThis._ring = { sourceUrl: 'https://ring.my.salesforce.com' };
+    globalThis._workingPair = { src: 'https://wp.my.salesforce.com' };
+    expect(currentSourceOrg()).toBe('https://ring.my.salesforce.com');
+    globalThis._ring = { sourceUrl: '' };
+    expect(currentSourceOrg()).toBe('https://wp.my.salesforce.com');
+    globalThis._workingPair = { src: '' };
+    expect(currentSourceOrg()).toBe('');
+    globalThis._ring = null; globalThis._workingPair = null;
+    expect(currentSourceOrg()).toBe('');
+  });
+
+  it('the topbar chip resolves through the helper, not its own expression', () => {
+    expect(core).toMatch(/const srcUrl = currentSourceOrg\(\);/);
+  });
+
+  it('both new-record paths seed their source from the helper', () => {
+    expect(bld).toMatch(/sourceOrg: \(typeof currentSourceOrg === 'function' \? currentSourceOrg\(\)/);
+    expect(prof).toMatch(/sourceOrg: \(typeof currentSourceOrg === 'function' \? currentSourceOrg\(\)/);
   });
 });
