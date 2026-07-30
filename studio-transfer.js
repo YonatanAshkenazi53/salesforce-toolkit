@@ -1611,6 +1611,66 @@ async function runTransfer() {
 // (the picklist P2 bulk-apply pattern). Fresh idMap per target by design:
 // targets share nothing. No dry-run here — validate the profile on one pair
 // first (the modal says so).
+// PURE — what a fan-out will actually do to ONE target, from whatever is
+// already known about it. The fan-out modal used to list target checkboxes and
+// nothing else (user 2026-07-30: "you don't see any information about the
+// operation… suggest actions against both targets"), which asked the user to
+// authorize real writes to N orgs blind.
+//
+// scan: the cached per-target summary { runAt, missing, changed, extra,
+// status } that ring scans already store on the profile — or null when this
+// pair was never scanned. `live` = the org has an open tab (no tab = the
+// runner skips it, so that outranks everything else). writeMode 'insert' can
+// only ADD, so a target whose only difference is `changed` gets nothing from
+// a run — saying so beforehand is the whole point.
+// Returns { tone, headline, detail, actionable }.
+function sftkFanoutTargetAdvice(scan, live, writeMode, now) {
+  if (!live) {
+    return { tone: 'skip', actionable: false,
+      headline: 'no open tab — will be skipped',
+      detail: 'Open this org in a Chrome tab, then reopen this dialog.' };
+  }
+  if (!scan || scan.status === 'error' || (!Number.isFinite(scan.missing) && !Number.isFinite(scan.changed))) {
+    return { tone: 'unknown', actionable: true,
+      headline: 'never scanned — outcome unknown',
+      detail: 'Run a scan against this org first, or fan out and read the result afterwards.' };
+  }
+  const miss = Math.max(0, Number(scan.missing) || 0);
+  const chg  = Math.max(0, Number(scan.changed) || 0);
+  const extra = Math.max(0, Number(scan.extra) || 0);
+  const age = sftkFanoutScanAge(scan.runAt, now);
+  const extraNote = extra ? ` ${extra} record(s) exist only here and are never touched by a deploy.` : '';
+  if (!miss && !chg) {
+    return { tone: 'clean', actionable: false,
+      headline: `in sync as of ${age} — nothing to write`,
+      detail: `Running this target would write nothing.${extraNote}` };
+  }
+  if (writeMode === 'insert' && !miss && chg) {
+    return { tone: 'warn', actionable: false,
+      headline: `${chg} record(s) differ, but Insert can't update them`,
+      detail: `Nothing would be written here (scanned ${age}). Switch the write mode to Upsert to push these changes.${extraNote}` };
+  }
+  const bits = [];
+  if (miss) bits.push(`add ${miss}`);
+  if (chg) bits.push(writeMode === 'upsert' ? `update ${chg}` : `${chg} differing (Insert skips)`);
+  return { tone: 'act', actionable: true,
+    headline: `will ${bits.join(' · ')} — scanned ${age}`,
+    detail: `Counts are from the last scan${extraNote}` };
+}
+
+// PURE — "4 minutes ago" / "3 days ago" for a stored ISO timestamp.
+function sftkFanoutScanAge(runAt, now) {
+  const t = Date.parse(runAt || '');
+  if (!Number.isFinite(t)) return 'an unknown time ago';
+  const mins = Math.floor(((Number(now) || Date.now()) - t) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
 window.openFanOut = async function (profileId, opts = {}) {
   const p = _profiles.find(x => x.id === profileId);
   if (!p || !p.tree) { showToast('Deployment not found', 'error'); return; }
@@ -1635,31 +1695,116 @@ window.openFanOut = async function (profileId, opts = {}) {
   // Default pre-check: explicit preselect → the deployment's effective
   // target set (follows the ring unless pinned).
   const defKeys = preKeys.length ? preKeys : profileTargets(p).map(u => _orgKey(u));
-  const rows = candidates.map(o => `
-    <label class="ds-fanout-org">
+
+  // ── What this run actually DOES, stated before it is authorized ──────
+  const live = (typeof _liveOrgSet === 'function') ? _liveOrgSet() : new Set();
+  const isLive = u => {
+    try { return live.has(_orgKey(u)) || live.has(u); } catch (_) { return true; }
+  };
+  const objs = (typeof collectTreeObjects === 'function') ? [...collectTreeObjects(p.tree)] : [];
+  const mode = (typeof _transferWriteMode === 'string' && _transferWriteMode) || 'insert';
+  const modeLabel = mode === 'upsert'
+    ? 'Upsert — create missing records and update ones that already exist'
+    : 'Insert — always create; existing records are NOT updated';
+  const ownerLabel = p.ownerMapping?.mode === 'match'
+    ? `matched by ${(p.ownerMapping.matching?.fields || ['Name']).join(' + ')}, unmatched → fallback user`
+    : 'not copied — each target assigns its own default owner';
+  const now = Date.now();
+  const scanFor = t => (p.ringScans || {})[`${_orgKey(srcUrl)}|${_orgKey(t)}`] || null;
+
+  const rows = candidates.map(o => {
+    const adv = sftkFanoutTargetAdvice(scanFor(o.url), isLive(o.url), mode, now);
+    const icon = { skip: '⏭', unknown: '❔', clean: '✓', warn: '⚠', act: '⬆' }[adv.tone] || '•';
+    return `
+    <label class="ds-fanout-org ds-fanout-${esc(adv.tone)}">
       <input type="checkbox" class="ds-fanout-cb" value="${esc(o.url)}"
-             ${defKeys.includes(_orgKey(o.url)) ? 'checked' : ''}>
-      <span>${esc(orgOptionLabel(o.url, o.label))}</span>
-      ${prodBadge(o.url)}
-    </label>`).join('');
+             ${adv.tone === 'skip' ? 'disabled' : ''}
+             ${adv.tone !== 'skip' && defKeys.includes(_orgKey(o.url)) ? 'checked' : ''}>
+      <span class="ds-fanout-org-main">
+        <span class="ds-fanout-org-name">${esc(orgOptionLabel(o.url, o.label))} ${prodBadge(o.url)}</span>
+        <span class="ds-fanout-advice" title="${esc(adv.detail)}">${icon} ${esc(adv.headline)}</span>
+      </span>
+    </label>`;
+  }).join('');
+
+  const anyUnscanned = candidates.some(o => isLive(o.url) && !scanFor(o.url));
 
   showModal(`
     <div class="ds-modal-header">🌐 Run “${esc(p.name)}” against multiple orgs</div>
     <div class="ds-modal-body">
-      <p style="font-size:12.5px">Source: <strong>${esc(orgLabel(srcUrl))}</strong>${fromRing ? ` <span title="Your Sync Ring's source of truth — every multi-org run flows FROM it. The source org itself is never listed as a target. Change it in 🔄 Sync Ring or the topbar chip.">👑 source of truth</span>` : ''} → pick the targets.
-      Runs are sequential; each org gets its own History entry. Orgs without an open tab are skipped.</p>
+      <div class="ds-fanout-what">
+        <div class="ds-fanout-what-title">What this will do to every target you tick</div>
+        <div class="ds-fanout-what-grid">
+          <span>Records</span><strong>${esc(objs.join(' → ') || 'this deployment’s tree')}</strong>
+          <span>From</span><strong>${esc(orgLabel(srcUrl))}${fromRing ? ' 👑' : ''}</strong>
+          <span>Write mode</span><strong>${esc(modeLabel)}</strong>
+          <span>Owners</span><strong>${esc(ownerLabel)}</strong>
+          <span>Deletes</span><strong>never — a deploy only adds and updates</strong>
+        </div>
+        <div class="ds-fanout-what-note">Targets run one after another, each with its own History entry. These are <strong>real writes</strong> — fan-out has no dry-run mode.</div>
+      </div>
       <div class="ds-fanout-list">${rows}</div>
-      <div class="ds-pk-hint" style="margin-top:8px">💡 Validate the deployment with a 🧪 dry run on one pair before fanning out —
-      fan-out runs are real writes. Production targets will ask for their typed confirmation.</div>
+      <div id="dsFanoutBudget" class="ds-pk-hint" style="margin-top:6px"></div>
+      ${anyUnscanned ? `<div class="ds-pk-hint" style="margin-top:6px">❔ Some targets were never scanned, so their outcome is unknown until the run happens. <strong>🔎 Scan</strong> them from 🔄 Sync Ring (or ⚖ Reconcile) to see the numbers first.</div>` : ''}
+      <div class="ds-pk-hint" style="margin-top:6px">💡 Validate the deployment with a 🧪 dry run on one pair before fanning out. Production targets will ask for their typed confirmation.</div>
     </div>
     <div class="ds-modal-footer">
       <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
       <button class="ds-btn ds-btn-primary" id="dsFanoutGo">🌐 Run fan-out</button>
     </div>`);
 
+  // E3b — what the whole fan-out costs, and what each target's own daily pool
+  // has left. Each org meters separately, so they are listed per org rather
+  // than summed. Renders after the modal so the meters fill in async.
+  (async () => {
+    const box = eid('dsFanoutBudget');
+    if (!box) return;
+    const est = (typeof sftkEstimateRunCalls === 'function' && _trLastCounts)
+      ? sftkEstimateRunCalls(sftkPlanFromCounts(_trLastCounts, p.tree, p.bulkThreshold, p.ownerMapping?.mode === 'match'))
+      : null;
+    const per = est && Number.isFinite(est.total) ? est.total : null;
+    const head = per == null
+      ? 'API cost: run a 👁 Preview on this deployment to estimate it.'
+      : `API cost: ≈${per.toLocaleString()} call(s) per target.`;
+    const parts = [];
+    for (const o of candidates.filter(c => isLive(c.url))) {
+      const b = await (typeof window.sftkApiBudget === 'function'
+        ? window.sftkApiBudget(o.url, (await getOrgSession(o.url))?.sid) : null);
+      if (!box.isConnected) return;
+      if (!b) continue;
+      const over = per != null && per > b.remaining;
+      parts.push(`${esc(orgLabel(o.url))}: ${b.remaining.toLocaleString()}/${b.max.toLocaleString()} left${over ? ' ⚠' : ''}`);
+    }
+    box.innerHTML = `${esc(head)}${parts.length ? ` Remaining today — ${parts.join(' · ')}` : ''}`;
+  })();
+
   eid('dsFanoutGo')?.addEventListener('click', async () => {
     const targets = [...document.querySelectorAll('.ds-fanout-cb:checked')].map(c => c.value);
     if (!targets.length) { showToast('Pick at least one target org', 'warning'); return; }
+    // A target the advice says will write nothing is almost always a misclick.
+    const noop = targets.filter(t => {
+      const a = sftkFanoutTargetAdvice(scanFor(t), isLive(t), mode, Date.now());
+      return a.tone === 'clean' || a.tone === 'warn';
+    });
+    if (noop.length === targets.length) {
+      // Same promise-modal shape as confirmTypedProd (studio-scan.js) —
+      // sftk-confirm.js is a popup-only script and isn't loaded here.
+      const ok = await new Promise(resolve => {
+        showModal(`
+          <div class="ds-modal-header">Nothing to write</div>
+          <div class="ds-modal-body">
+            <p>Every target you picked is already in sync${mode === 'insert' ? ', or differs only in ways Insert cannot write' : ''} — as of the last scan of each one.</p>
+            <p style="margin-top:8px;font-size:12.5px;color:var(--subtext)">Running now would still re-read the source and write nothing. Scans can be stale, so this is a heads-up, not a block.</p>
+          </div>
+          <div class="ds-modal-footer">
+            <button class="ds-btn" id="dsFanoutNoopBack">Back</button>
+            <button class="ds-btn ds-btn-primary" id="dsFanoutNoopGo">Run anyway</button>
+          </div>`);
+        eid('dsFanoutNoopBack')?.addEventListener('click', () => { closeModal(); resolve(false); });
+        eid('dsFanoutNoopGo')?.addEventListener('click', () => { closeModal(); resolve(true); });
+      });
+      if (!ok) { window.openFanOut(profileId, opts); return; }   // reopen where they were
+    }
     closeModal();
 
     // One typed confirm covering every production target up front.

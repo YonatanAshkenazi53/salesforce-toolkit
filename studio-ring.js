@@ -52,6 +52,23 @@ function renderRing() {
         <span class="ds-oc-sub">${ring.orgs.length} org(s) in the ring${ring.sourceUrl ? ` · source: ${esc(orgLabel(ring.sourceUrl))}` : ''}</span>
       </summary>
       <div class="ds-ring-orgs">${orgRows || '<div class="ds-seq-empty">No orgs known — open them in Chrome tabs first.</div>'}</div>
+      ${(() => {
+        // The topbar SOURCE chip and the ring's source of truth are two
+        // different things that look identical (user 2026-07-30: "it doesn't
+        // tell you who is the source of truth that you selected in the menu
+        // above"). State which is which, and when the ring has none, offer the
+        // topbar's org in one click instead of leaving the user to guess that
+        // these radios are unrelated to the chip they already set.
+        const wp = (typeof _workingPair === 'object' && _workingPair?.src) || '';
+        if (ring.sourceUrl) {
+          return `<div class="ds-ring-sot-explain">👑 <strong>${esc(orgLabel(ring.sourceUrl))}</strong> is this ring's source of truth — every org below is compared against it, and the topbar SOURCE chip follows it.</div>`;
+        }
+        return `<div class="ds-ring-sot-explain ds-ring-sot-unset">
+          No source of truth yet — pick one with the ⦿ buttons above. It is what every other ring org gets compared against.
+          ${wp ? `<br><span style="color:var(--subtext)">The topbar <strong>SOURCE</strong> chip currently points at <strong>${esc(orgLabel(wp))}</strong>; that's your working org for one-off comparisons, which is a separate setting.</span>
+            <button class="ds-btn ds-btn-xs" id="dsRingAdoptWp" style="margin-left:6px">Use ${esc(orgLabel(wp))} as the source of truth</button>` : ''}
+        </div>`;
+      })()}
       <!-- M4 — opt-in scheduled drift check (read-only count probe) -->
       <div style="padding:4px 14px 12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px">
         ⏰ Scheduled drift check:
@@ -87,6 +104,22 @@ function renderRing() {
     _ringRenderSchedPanel();
   });
   _ringRenderSchedPanel();
+
+  // Adopt the topbar SOURCE as the ring's source of truth — also joins it to
+  // the ring if it isn't a member yet, since a non-member source would leave
+  // the ring in the same unconfigured state it was in.
+  eid('dsRingAdoptWp')?.addEventListener('click', async () => {
+    const url = (typeof _workingPair === 'object' && _workingPair?.src) || '';
+    if (!url) return;
+    if (!_ring) _ring = { orgs: [], sourceUrl: '' };
+    if (!_ring.orgs.some(u => _orgKey(u) === _orgKey(url))) _ring.orgs.push(url);
+    _ring.sourceUrl = url;
+    await chrome.storage.local.set({ ds_ring: _ring });
+    if (typeof syncRingFollowers === 'function') syncRingFollowers();
+    renderWorkingPair();
+    renderRing();
+    showToast(`${orgLabel(url)} is now the ring's source of truth — tick the other orgs to compare against it.`, 'success', 5000);
+  });
 
   // Config wiring — checkbox membership + source radio, persisted immediately.
   document.querySelectorAll('.ds-ring-cb').forEach(cb =>

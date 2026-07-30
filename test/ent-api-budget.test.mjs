@@ -368,3 +368,74 @@ describe('sftkEstimateSyncPlanCalls', () => {
     expect(sftkEstimateSyncPlanCalls(null, {}).total).toBe(0);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// Fan-out pre-flight (user 2026-07-30: "when you run a fan out you don't
+// see any information about the operation… suggest actions against both
+// targets"). The modal authorized REAL writes to N orgs while showing
+// only checkboxes. These pin the per-target verdict.
+// ══════════════════════════════════════════════════════════════════
+describe('sftkFanoutTargetAdvice — what a fan-out does to ONE target', () => {
+  const { sftkFanoutTargetAdvice } = extractFunctions('studio-transfer.js',
+    ['sftkFanoutScanAge', 'sftkFanoutTargetAdvice']);
+  const NOW = Date.parse('2026-07-30T12:00:00Z');
+  const ago = mins => new Date(NOW - mins * 60000).toISOString();
+
+  it('a closed org is skipped — that outranks whatever the scan said', () => {
+    const a = sftkFanoutTargetAdvice({ missing: 99, runAt: ago(5) }, false, 'insert', NOW);
+    expect(a.tone).toBe('skip');
+    expect(a.actionable).toBe(false);
+    expect(a.headline).toMatch(/no open tab/i);
+  });
+
+  it('never scanned → unknown, and says so rather than implying safety', () => {
+    const a = sftkFanoutTargetAdvice(null, true, 'insert', NOW);
+    expect(a.tone).toBe('unknown');
+    expect(a.headline).toMatch(/never scanned/i);
+  });
+
+  it('in sync → nothing to write', () => {
+    const a = sftkFanoutTargetAdvice({ missing: 0, changed: 0, extra: 0, runAt: ago(5) }, true, 'insert', NOW);
+    expect(a.tone).toBe('clean');
+    expect(a.actionable).toBe(false);
+    expect(a.headline).toMatch(/nothing to write/i);
+  });
+
+  it('THE TRAP: Insert mode with only CHANGED records writes nothing — and says which mode would', () => {
+    const a = sftkFanoutTargetAdvice({ missing: 0, changed: 12, runAt: ago(30) }, true, 'insert', NOW);
+    expect(a.tone).toBe('warn');
+    expect(a.actionable).toBe(false);
+    expect(a.headline).toMatch(/Insert can't update/i);
+    expect(a.detail).toMatch(/Upsert/);
+  });
+
+  it('the same target under Upsert becomes actionable', () => {
+    const a = sftkFanoutTargetAdvice({ missing: 0, changed: 12, runAt: ago(30) }, true, 'upsert', NOW);
+    expect(a.tone).toBe('act');
+    expect(a.headline).toMatch(/update 12/);
+  });
+
+  it('missing records are added in either mode', () => {
+    expect(sftkFanoutTargetAdvice({ missing: 7, changed: 0, runAt: ago(1) }, true, 'insert', NOW).headline).toMatch(/add 7/);
+    expect(sftkFanoutTargetAdvice({ missing: 7, changed: 3, runAt: ago(1) }, true, 'upsert', NOW).headline).toMatch(/add 7 · update 3/);
+  });
+
+  it('target-only records are called out as never touched — a deploy never deletes', () => {
+    const a = sftkFanoutTargetAdvice({ missing: 0, changed: 0, extra: 5, runAt: ago(2) }, true, 'insert', NOW);
+    expect(a.detail).toMatch(/only here and are never touched/i);
+  });
+
+  it('a failed scan is treated as unknown, never as clean', () => {
+    const a = sftkFanoutTargetAdvice({ status: 'error', missing: 0, changed: 0 }, true, 'insert', NOW);
+    expect(a.tone).toBe('unknown');
+  });
+
+  it('scan age reads in human units', () => {
+    const { sftkFanoutScanAge } = extractFunctions('studio-transfer.js', ['sftkFanoutScanAge']);
+    expect(sftkFanoutScanAge(ago(0), NOW)).toBe('just now');
+    expect(sftkFanoutScanAge(ago(1), NOW)).toBe('1 minute ago');
+    expect(sftkFanoutScanAge(ago(90), NOW)).toBe('1 hour ago');
+    expect(sftkFanoutScanAge(ago(60 * 50), NOW)).toBe('2 days ago');
+    expect(sftkFanoutScanAge('nonsense', NOW)).toMatch(/unknown/);
+  });
+});
