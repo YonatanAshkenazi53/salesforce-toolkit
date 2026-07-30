@@ -49,16 +49,16 @@ const PROFILE_TEMPLATES = [
 function renderProfiles() {
   const hasProfiles = _profiles.length > 0;
   setMain(`
-    <div class="ds-view-header">
-      <div class="ds-view-title-wrap">
-        <h2 class="ds-view-title">📦 Data Deployment</h2>
-        <div class="ds-view-subtitle">Define a profile (objects + orgs), then click ▶ Run</div>
-      </div>
-      <div class="ds-builder-hdr-btns">
-        <button class="ds-btn" id="dsImportProfile" title="Import a deployment profile from a teammate's exported .json file — config only; you'll be prompted to validate it against your own targets">⬆ Import</button>
-        <button class="ds-btn ds-btn-primary" id="dsNewProfile">+ New Profile</button>
-      </div>
-    </div>
+    ${dsViewHeader({
+      icon: 'box',
+      title: 'Data Deployment',
+      subtitle: 'Define a profile (objects + orgs), then run it',
+      // _profiles is the exact array rendered as cards below — the count and
+      // the list can never disagree.
+      count: `${_profiles.length} profile${_profiles.length !== 1 ? 's' : ''}`,
+      actions: `<button class="ds-btn" id="dsImportProfile" title="Import a deployment profile from a teammate's exported .json file — config only; you'll be prompted to validate it against your own targets">${dsIcon('upload')}Import</button>
+        <button class="ds-btn ds-btn-primary" id="dsNewProfile">${dsIcon('plus')}New Profile</button>`,
+    })}
 
     <div class="ds-template-bar">
       <span class="ds-template-bar-label">Quick start:</span>

@@ -14,14 +14,14 @@
     <div class="ds-topbar">
       <div class="ds-brand">
         <button class="ds-back-btn" id="dsBackToToolkit" title="Back to Salesforce Toolkit">‹ Toolkit</button>
-        <span class="ds-logo">🐱</span>
+        <span class="ds-logo" aria-hidden="true">🐱</span>
         <span class="ds-brand-name">Data Studio</span>
       </div>
       <div class="ds-topbar-center">
-        <button class="ds-trust-badge" id="dsSecurityBtn">
-          <span class="ds-trust-lock">🔒</span>
+        <button class="ds-trust-badge" id="dsSecurityBtn" aria-label="Security &amp; privacy — how the Studio uses your session">
+          <span class="ds-trust-lock ds-i" data-i="lock" aria-hidden="true"></span>
           <span class="ds-trust-text">Local only — no data leaves your browser</span>
-          <span class="ds-trust-arrow">›</span>
+          <span class="ds-trust-arrow" aria-hidden="true">›</span>
         </button>
       </div>
       <div class="ds-topbar-right">
@@ -35,13 +35,16 @@
         <!-- What's New lives in the topbar as a small announcement control
              (user 2026-07-26: "not as a feature :)"). Badge dot filled by
              studio-whatsnew.js while the newest version is unread. -->
-        <button class="ds-whatsnew-top" id="dsWhatsNewTop" title="What's New — what shipped, per version"><span class="ds-glyph">🎉</span><span class="ds-pro-only">What's New</span><span id="dsWhatsNewBadge"></span></button>
+        <button class="ds-whatsnew-top" id="dsWhatsNewTop" aria-label="What's New — what shipped, per version" title="What's New — what shipped, per version"><span class="ds-glyph ds-i" data-i="megaphone" aria-hidden="true"></span><span class="ds-pro-only">What's New</span><span id="dsWhatsNewBadge" aria-hidden="true"></span></button>
         <!-- E4 professional mode — swaps emoji chrome for plain text, tightens
              density. State lives in ds_settings.proMode (chrome.storage.local);
              applyProMode() in studio-core.js drives body.ds-pro + this button. -->
         <button class="ds-pro-toggle" id="dsProToggle" aria-pressed="false" title="Professional mode — replaces emoji with plain text and tightens density (presentation-friendly)">Pro</button>
-        <button class="ds-dark-toggle" id="dsDarkToggle" title="Switch to dark mode">🌙</button>
-        <button id="dbgBtn" class="dbg-btn" title="Debug Log — off">🐛 Debug</button>
+        <!-- data-i drives the glyph through ::before because applyDarkMode
+             rewrites this button's textContent; a child <span> would not
+             survive that. Same trick as the debugger's relabelled buttons. -->
+        <button class="ds-dark-toggle" id="dsDarkToggle" data-i="moon" aria-label="Switch to dark mode" title="Switch to dark mode"></button>
+        <button id="dbgBtn" class="dbg-btn" title="Debug Log — off">Debug</button>
       </div>
     </div>
 
@@ -53,7 +56,7 @@
       <nav class="ds-nav" role="navigation" aria-label="Data Studio views">
         <div class="ds-nav-section-title">Overview</div>
         <button class="ds-nav-btn active" data-view="orgs" aria-current="page">
-          <span class="ds-nav-icon">🔌</span>
+          <span class="ds-nav-icon ds-i" data-i="plug" aria-hidden="true"></span>
           <span class="ds-nav-label">
             <span class="ds-nav-name">Connected Orgs</span>
             <span class="ds-nav-desc">Orgs open in your browser</span>
@@ -61,28 +64,28 @@
         </button>
         <div class="ds-nav-section-title">Data</div>
         <button class="ds-nav-btn" data-view="profiles">
-          <span class="ds-nav-icon">📦</span>
+          <span class="ds-nav-icon ds-i" data-i="box" aria-hidden="true"></span>
           <span class="ds-nav-label">
             <span class="ds-nav-name">Data Deployment</span>
             <span class="ds-nav-desc">Profiles + run transfer</span>
           </span>
         </button>
         <button class="ds-nav-btn" data-view="ring">
-          <span class="ds-nav-icon">🔄</span>
+          <span class="ds-nav-icon ds-i" data-i="repeat" aria-hidden="true"></span>
           <span class="ds-nav-label">
             <span class="ds-nav-name">Sync Ring</span>
             <span class="ds-nav-desc">All orgs vs the source of truth</span>
           </span>
         </button>
         <button class="ds-nav-btn" data-view="picklists">
-          <span class="ds-nav-icon">🎚</span>
+          <span class="ds-nav-icon ds-i" data-i="sliders" aria-hidden="true"></span>
           <span class="ds-nav-label">
             <span class="ds-nav-name">Picklist Manager</span>
             <span class="ds-nav-desc">Values &amp; record types across orgs</span>
           </span>
         </button>
         <button class="ds-nav-btn" data-view="history">
-          <span class="ds-nav-icon">📜</span>
+          <span class="ds-nav-icon ds-i" data-i="scroll" aria-hidden="true"></span>
           <span class="ds-nav-label">
             <span class="ds-nav-name">History</span>
             <span class="ds-nav-desc">Past transfer runs</span>
@@ -91,7 +94,7 @@
 
         <div class="ds-nav-section-title">Inspect</div>
         <button class="ds-nav-btn" data-view="compare">
-          <span class="ds-nav-icon">🔍</span>
+          <span class="ds-nav-icon ds-i" data-i="search" aria-hidden="true"></span>
           <span class="ds-nav-label">
             <span class="ds-nav-name">Org Compare</span>
             <span class="ds-nav-desc">Diff data across many objects</span>
@@ -100,7 +103,7 @@
         <!-- Graduated from Labs 2026-07-20: ring-aware (source of truth →
              every target), attributed results, no silent check failures. -->
         <button class="ds-nav-btn" data-view="readiness">
-          <span class="ds-nav-icon">🛡</span>
+          <span class="ds-nav-icon ds-i" data-i="shield" aria-hidden="true"></span>
           <span class="ds-nav-label">
             <span class="ds-nav-name">Deploy Readiness</span>
             <span class="ds-nav-desc">Schema readiness of every ring target</span>
@@ -112,14 +115,14 @@
              ship them when we are ready" — plan Phase N5 is the exit bar). -->
         <div class="ds-nav-section-title">Labs · early previews</div>
         <button class="ds-nav-btn ds-nav-labs" data-view="schema">
-          <span class="ds-nav-icon">🕸</span>
+          <span class="ds-nav-icon ds-i" data-i="flow" aria-hidden="true"></span>
           <span class="ds-nav-label">
             <span class="ds-nav-name">Schema View</span>
             <span class="ds-nav-desc">Preview — flow &amp; object graph</span>
           </span>
         </button>
         <button class="ds-nav-btn ds-nav-labs" data-view="fields">
-          <span class="ds-nav-icon">🧹</span>
+          <span class="ds-nav-icon ds-i" data-i="wand" aria-hidden="true"></span>
           <span class="ds-nav-label">
             <span class="ds-nav-name">Field Audit</span>
             <span class="ds-nav-desc">Preview — rank fields for cleanup</span>

@@ -752,7 +752,8 @@ html, body {
 /* ── Profile builder: owner handling ──────────────────────────── */
 .ds-builder-owner-row  { margin: 14px 0 6px; }
 .ds-builder-owner-ctls { display: flex; gap: 10px; flex-wrap: wrap; }
-.ds-builder-owner-ctls .ds-input { flex: 1 1 280px; min-width: 240px; }
+.ds-builder-owner-ctls .ds-input,
+.ds-builder-owner-ctls .ds-select { flex: 1 1 280px; min-width: 240px; }
 .ds-builder-owner-hint { font-size: 11.5px; color: var(--subtext); margin-top: 4px; }
 
 /* ── Working org pair (topbar) ────────────────────────────────── */
@@ -5054,3 +5055,676 @@ body.ds-pro {
     scroll-behavior: auto !important;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   DATA STUDIO — DESIGN REFRESH LAYER
+   Speaks the SAME dialect as the "APEX DEBUGGER — DESIGN REFRESH LAYER" in
+   styles.css: mask icons painting currentColor, one control height per
+   region, one primary per region, red reserved for destruction, real table
+   headers with right-aligned tabular figures, an accessible name on every
+   icon-only control.  Every value resolves to a --sp-/--fs-/--c-/--r-/--sh-
+   token from styles.css §A.  Nothing new is added to the vocabulary.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── §1  ICONS — the debugger's mask table, reused verbatim ──────────────
+   styles.css declares the glyph table as UNSCOPED attribute selectors
+   (`[data-i="check"] { --adbg-icon: url(…) }`), so every glyph the debugger
+   drew is already available on this page — studio.html loads styles.css.
+   All that is missing here is the box, which is what .ds-i is.  The Studio
+   needs eleven glyphs the debugger never had; they are appended to the SAME
+   custom property below, so there is one table, not two.
+
+   Masks paint currentColor: an icon is whatever colour its container is,
+   which means it inverts for free in dark mode and turns white inside a
+   brand-filled tile.  Every icon is decorative (aria-hidden) — the meaning
+   lives in the adjacent label or in an aria-label on the control. */
+.ds-i {
+  display: inline-block;
+  width: 14px; height: 14px;
+  flex: 0 0 auto;
+  background-color: currentColor;
+  -webkit-mask: center / contain no-repeat;
+  mask: center / contain no-repeat;
+  -webkit-mask-image: var(--adbg-icon);
+  mask-image: var(--adbg-icon);
+}
+
+[data-i="plug"]     { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'><path d='M5.9 1.9v3.2M10.1 1.9v3.2'/><path d='M3.7 5.1h8.6v2.2a4.3 4.3 0 0 1-8.6 0z'/><path d='M8 11.6v2.5'/></svg>"); }
+[data-i="box"]      { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><path d='M8 1.9l5.6 2.9v6.3L8 14.1 2.4 11.1V4.8z'/><path d='M2.4 4.8L8 7.8l5.6-3'/><path d='M8 7.8v6.3'/></svg>"); }
+[data-i="sliders"]  { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round'><path d='M2.4 4.6h10.9M2.4 11.4h10.9'/><circle cx='5.9' cy='4.6' r='1.8'/><circle cx='10.3' cy='11.4' r='1.8'/></svg>"); }
+[data-i="shield"]   { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><path d='M8 1.8l4.8 1.8v4.1c0 3-1.9 5.3-4.8 6.4-2.9-1.1-4.8-3.4-4.8-6.4V3.6z'/><path d='M5.8 8l1.7 1.7 3-3.2' stroke-linecap='round'/></svg>"); }
+[data-i="lock"]     { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.35' stroke-linejoin='round'><rect x='3.4' y='6.9' width='9.2' height='6.7' rx='1.4'/><path d='M5.7 6.9V5.1a2.3 2.3 0 0 1 4.6 0v1.8'/></svg>"); }
+[data-i="arrow-right"] { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='M2.7 8h10.1'/><path d='M9.3 4.5L12.8 8l-3.5 3.5'/></svg>"); }
+[data-i="swap"]     { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'><path d='M2.9 5.6h10'/><path d='M10.2 2.9l2.7 2.7-2.7 2.7'/><path d='M13.1 10.4h-10'/><path d='M5.8 7.7l-2.7 2.7 2.7 2.7'/></svg>"); }
+[data-i="eye"]      { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><path d='M1.5 8S4 3.8 8 3.8 14.5 8 14.5 8 12 12.2 8 12.2 1.5 8 1.5 8z'/><circle cx='8' cy='8' r='2'/></svg>"); }
+[data-i="flask"]    { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'><path d='M6.4 1.9v4.2L2.9 12a1.4 1.4 0 0 0 1.2 2.1h7.8a1.4 1.4 0 0 0 1.2-2.1L9.6 6.1V1.9'/><path d='M5.5 1.9h5'/><path d='M4.6 9.7h6.8'/></svg>"); }
+[data-i="save"]     { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><path d='M2.6 3.9a1.3 1.3 0 0 1 1.3-1.3h6.6l2.9 2.9v6.6a1.3 1.3 0 0 1-1.3 1.3H3.9a1.3 1.3 0 0 1-1.3-1.3z'/><path d='M5.3 2.6v3.5h4.6V3.3'/><path d='M5.3 13.4V9.5h5.4v3.9'/></svg>"); }
+[data-i="upload"]   { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'><path d='M8 10.6V2.9'/><path d='M5.1 5.8L8 2.9l2.9 2.9'/><path d='M2.8 13.2h10.4'/></svg>"); }
+[data-i="wand"]     { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'><path d='M2.6 13.4L10.4 5.6'/><path d='M9.9 2.1l.7 1.7 1.7.7-1.7.7-.7 1.7-.7-1.7-1.7-.7 1.7-.7z'/></svg>"); }
+[data-i="pause"]    { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='4.4' y='3.4' width='2.5' height='9.2' rx='.8' fill='black'/><rect x='9.1' y='3.4' width='2.5' height='9.2' rx='.8' fill='black'/></svg>"); }
+[data-i="grid"]     { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><rect x='2.3' y='2.9' width='11.4' height='10.2' rx='1.3'/><path d='M2.3 6.3h11.4M6.5 6.3v6.8'/></svg>"); }
+[data-i="crown"]    { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><path d='M2.2 4.6l2.4 2.6L8 3.1l3.4 4.1 2.4-2.6v6.7H2.2z'/><path d='M2.2 13.4h11.6' stroke-linecap='round'/></svg>"); }
+[data-i="scroll"]   { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'><path d='M4.4 2.4h7.2v9.4a2.2 2.2 0 0 0 2.2 2.2H5.7a2.2 2.2 0 0 1-2.2-2.2V3.3'/><path d='M2.2 3.3a1.1 1.1 0 0 1 2.2 0v1.8H2.2z'/><path d='M6.6 5.6h3.1M6.6 8.1h3.1'/></svg>"); }
+[data-i="pin"]      { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.35' stroke-linejoin='round'><path d='M8 14.2s4.6-4.4 4.6-7.7a4.6 4.6 0 1 0-9.2 0c0 3.3 4.6 7.7 4.6 7.7z'/><circle cx='8' cy='6.4' r='1.7'/></svg>"); }
+
+/* Visually-hidden label — how an icon-only control gets an accessible name
+   without printing text. Mirrors .adbg-sr. */
+.ds-sr {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+/* ── §2  THE SHARED VIEW HEADER (.ds-vh) ─────────────────────────────────
+   The SLDS audit's headline finding: "no icon container, no record count,
+   no header card — the single most recognizable Lightning shape is absent
+   from all 13 views."  This is that shape, built once:
+
+       ┌──────┐  Title                          [ actions ]
+       │ icon │  subtitle · count
+       └──────┘
+
+   It is OPT-IN: `.ds-view-header` alone keeps the old flex row, so the six
+   views this pass did not touch are byte-for-byte unaffected; adding .ds-vh
+   is all they need to adopt it later.  The title/subtitle keep their
+   existing class names so nothing else has to move. */
+.ds-view-header.ds-vh {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-5) var(--sp-6);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-xs);
+}
+.ds-vh-lead {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+/* The icon container. Solid brand fill + white glyph is the SLDS shape; the
+   mask paints currentColor so the glyph follows the tile's colour. */
+.ds-vh-icon {
+  width: 40px; height: 40px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-md);
+  background: var(--c-brand);
+  color: var(--c-text-inverse);
+}
+.ds-vh-icon .ds-i { width: 22px; height: 22px; }
+.ds-vh-titles { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+.ds-vh-titles .ds-view-title {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
+  line-height: var(--lh-tight);
+  letter-spacing: -.2px;
+}
+.ds-vh-titles .ds-view-subtitle {
+  font-size: var(--fs-sm);
+  color: var(--c-text-faint);
+  line-height: var(--lh-tight);
+}
+/* The record count. Tabular figures so it does not jitter as it updates,
+   and a middot separator so it reads as part of the subtitle line rather
+   than as a second sentence. */
+.ds-vh-count {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ds-vh-count::before { content: ' · '; }
+.ds-vh-titles .ds-view-subtitle:first-child > .ds-vh-count:first-child::before { content: none; }
+/* The back link (Run Transfer's sub-page affordance) sits above the title. */
+.ds-vh-titles .ds-back-link { margin: 0 0 var(--sp-1); padding: 0; }
+.ds-vh-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* ONE control height in the header strip — the audit found five in a row of
+   six buttons on the debugger, and the builder header had the same problem
+   (.ds-btn sizes from padding + whatever the label happens to be). */
+.ds-vh-actions .ds-btn {
+  height: 32px;
+  padding: 0 var(--sp-5);
+  justify-content: center;
+  gap: var(--sp-3);
+  font-size: var(--fs-sm);
+  line-height: 1;
+}
+.ds-vh-actions .ds-btn-sm { height: 28px; padding: 0 var(--sp-4); }
+
+@media (max-width: 900px) {
+  .ds-view-header.ds-vh { flex-wrap: wrap; }
+  .ds-vh-actions { width: 100%; justify-content: flex-start; }
+}
+
+/* ── §3  SIDEBAR NAV + TOPBAR ────────────────────────────────────────────
+   One icon treatment (monochrome masks that inherit the row's colour, so
+   the active row's icon goes brand-blue with its label instead of staying a
+   full-colour emoji), one active state, focus-visible everywhere. */
+.ds-nav-icon.ds-i {
+  width: 16px; height: 16px;
+  color: var(--c-text-faint);
+  transition: color var(--dur-fast) var(--ease);
+}
+.ds-nav-btn:hover  .ds-nav-icon.ds-i,
+.ds-nav-btn.active .ds-nav-icon.ds-i { color: var(--brand); }
+/* The active row already carries a 3px brand rail (::before) — the icon and
+   the label now agree with it instead of competing. */
+.ds-nav-btn:focus-visible { outline-offset: -2px; }
+.ds-nav-labs .ds-nav-icon.ds-i { color: var(--c-text-faint); }
+
+/* Topbar: the decorative marks are masks too, so the strip is one colour. */
+.ds-trust-lock.ds-i { width: 12px; height: 12px; }
+.ds-topbar .ds-i { color: currentColor; }
+
+/* ── §4  ONE CONTROL HEIGHT (builder + picklist config) ─────────────────
+   Scoped, exactly like the debugger's §2: the other nine views keep the
+   padding-sized controls they were tuned against. */
+.ds-builder-wrap .ds-input,
+.ds-builder-wrap .ds-select,
+.ds-pk-config .ds-input,
+.ds-pk-config .ds-select {
+  height: 34px;
+  padding: 0 var(--sp-5);
+  font-size: var(--fs-md);
+  line-height: 1;
+}
+.ds-builder-wrap .ds-input-lg { height: 40px; font-size: var(--fs-lg); }
+.ds-builder-wrap textarea.ds-input { height: auto; padding: var(--sp-4) var(--sp-5); line-height: var(--lh-base); }
+.ds-pk-config .ds-btn,
+.ds-builder-wrap .ds-builder-root-row .ds-btn { height: 34px; padding: 0 var(--sp-5); }
+
+/* ── §5  THE PICKLIST MATRIX AS A REAL TABLE ────────────────────────────
+   The flagship screen. Header row that reads as a header, hoverable rows,
+   numbers right-aligned in tabular figures so they compare down a column,
+   and — the accessibility fix — every cell state carries a SHAPE, not only
+   a colour: ✓ active, ▮▮ paused, — absent, · not loaded, ⚠ record-type
+   drift. Red/green alone fails for ~1 in 12 men.
+
+   --pk-cols is set inline by _pkRenderMatrix (a real bug fix: without it 3+
+   org columns wrapped). Nothing here touches the grid template. */
+.ds-pk-matrix {
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  background: var(--c-surface);
+  box-shadow: var(--sh-xs);
+}
+.ds-pk-mx-head {
+  background: var(--c-surface-sunk);
+  border-bottom: 1px solid var(--c-border);
+  /* Title case, not ALL-CAPS: these headers are ORG NAMES — proper nouns —
+     and uppercasing mangled them ("QA SANDBOX", "ACME PROD"). SLDS column
+     headers are title case anyway. */
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+  color: var(--c-text);
+  align-items: start;
+  padding-top: var(--sp-4);
+  padding-bottom: var(--sp-4);
+  z-index: 2;
+}
+.ds-pk-mx-head .ds-pk-mx-val { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--c-text-muted); }
+.ds-pk-mx-head .ds-pk-mx-col { display: flex; flex-direction: column; gap: var(--sp-2); align-items: flex-start; white-space: normal; }
+.ds-pk-mx-orgsel { font-size: var(--fs-sm); font-weight: var(--fw-semibold); }
+.ds-pk-mx-row:not(.ds-pk-mx-head) { transition: background var(--dur-fast) var(--ease); }
+.ds-pk-mx-row:not(.ds-pk-mx-head):hover { background: var(--c-surface-sunk); }
+.ds-pk-mx-row:last-child { border-radius: 0 0 var(--r-lg) var(--r-lg); }
+.ds-pk-mx-val { font-weight: var(--fw-medium); overflow: hidden; text-overflow: ellipsis; }
+
+/* Three tracks per cell: state glyph · count (right-aligned, tabular) ·
+   record-type chip. Every count in a column therefore lands on the same
+   right edge, which is the entire point of a numeric column. */
+.ds-pk-mx-cell {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.ds-pk-mx-state { display: inline-flex; align-items: center; justify-content: center; }
+.ds-pk-mx-state .ds-i { width: 12px; height: 12px; }
+.ds-pk-mx-cnt {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
+  color: var(--c-text-muted);
+  text-align: right;
+}
+.ds-pk-mx-active { color: var(--c-good-fg); font-weight: var(--fw-semibold); }
+.ds-pk-mx-active .ds-pk-mx-cnt { color: var(--c-text); }
+.ds-pk-mx-inactive { color: var(--c-text-faint); text-decoration: none; }
+.ds-pk-mx-inactive .ds-pk-mx-cnt { text-decoration: line-through; }
+.ds-pk-mx-absent, .ds-pk-mx-na { color: var(--c-text-faint); }
+
+/* Record-type chip. Drift is red AND carries a ⚠ mask — the colour is the
+   emphasis, the icon is the information. */
+.ds-pk-mx-rt {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--r-sm);
+  padding: 1px var(--sp-3);
+  margin-left: 0;
+  opacity: 1;
+  background: var(--c-surface-sunk);
+  border: 1px solid var(--c-border-subtle);
+  color: var(--c-text-muted);
+  white-space: nowrap;
+}
+.ds-pk-mx-rt-drift {
+  background: var(--c-critical-bg);
+  border-color: var(--c-critical-border);
+  color: var(--c-critical-fg);
+  font-weight: var(--fw-semibold);
+}
+.ds-pk-mx-rt .ds-i { width: 10px; height: 10px; }
+
+/* The source-of-truth badge, as a chip rather than loose amber text. */
+.ds-pk-mx-sot {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  font-size: var(--fs-2xs); font-weight: var(--fw-semibold);
+  background: var(--c-warn-bg); color: var(--c-warn-fg);
+  border: 1px solid var(--c-warn-border);
+  border-radius: var(--r-sm); padding: 1px var(--sp-3);
+}
+.ds-pk-mx-sot .ds-i { width: 10px; height: 10px; }
+.ds-pk-mx-skip { font-size: var(--fs-2xs); color: var(--c-text-faint); }
+
+/* The legend. Same words as before, laid out as scannable key/meaning pairs
+   instead of one 60-word paragraph. */
+.ds-pk-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3) var(--sp-6);
+  padding: var(--sp-4) var(--sp-5);
+  margin: var(--sp-3) 0 var(--sp-5);
+  background: var(--c-surface-sunk);
+  border: 1px solid var(--c-border-subtle);
+  border-radius: var(--r-md);
+  font-size: var(--fs-xs);
+  color: var(--c-text-muted);
+}
+.ds-pk-legend-item { display: inline-flex; align-items: center; gap: var(--sp-3); }
+.ds-pk-legend-key {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 var(--sp-2);
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+.ds-pk-legend-key .ds-i { width: 11px; height: 11px; }
+.ds-pk-legend-key-good { color: var(--c-good-fg); }
+.ds-pk-legend-key-bad  { color: var(--c-critical-fg); border-color: var(--c-critical-border); background: var(--c-critical-bg); }
+
+/* Bulk bar — one primary (Sync from source), red only on Delete. */
+.ds-pk-bulkbar .ds-btn { height: 30px; padding: 0 var(--sp-5); gap: var(--sp-3); }
+
+/* Matrix summary line above the table. */
+.ds-pk-summary { font-size: var(--fs-md); color: var(--c-text); margin-bottom: var(--sp-2); }
+.ds-pk-summary strong { font-weight: var(--fw-semibold); }
+
+/* ── §6  THE BUILDER ────────────────────────────────────────────────────
+   Two of the author's recent bug reports came out of the source/targets
+   row, and the screenshot shows why: the two columns were `align-items:
+   flex-end` siblings in a tinted box, so when the source is ring-locked
+   (no swap button between them) its label floated in the middle of an empty
+   half while the targets column started at the top of the other. There was
+   no visual statement that records flow LEFT → RIGHT.
+
+   Now: two equal cards, a direction glyph between them, one column header
+   treatment, and the locked source row in the target list styled as
+   "present but unavailable" rather than 55%-opacity invisible. */
+.ds-builder-orgs-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  /* start, not stretch: the source card holds one line and the targets card
+     holds a list, so stretching left a 200px white void under "Production". */
+  align-items: start;
+  gap: var(--sp-5);
+  padding: var(--sp-5);
+  background: var(--c-surface-sunk);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+}
+.ds-builder-org-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-5);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+}
+/* Column header: icon + name + inline hint, one baseline for both columns. */
+.ds-bld-col-hd {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--c-text-faint);
+}
+.ds-bld-col-hd .ds-i { width: 13px; height: 13px; }
+.ds-bld-col-hd .ds-builder-org-hint {
+  font-weight: var(--fw-normal);
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: var(--fs-xs);
+}
+/* The direction statement. Renders as the ⇄ swap BUTTON when the source can
+   be changed and as a static → glyph when the ring has locked it, so the
+   slot never collapses and the arrow always says which way data moves. */
+.ds-builder-orgs-flow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Aligned to the SOURCE card's content line, not to the middle of the row:
+     the targets card is three times taller, so a row-centred arrow floated
+     below the source card it is supposed to point out of. */
+  align-self: start;
+  margin-top: 22px;
+  color: var(--c-text-faint);
+}
+.ds-builder-orgs-flow .ds-i { width: 18px; height: 18px; }
+.ds-builder-orgs-swap {
+  width: 32px; height: 32px;
+  padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-sm);
+  color: var(--c-text);
+  cursor: pointer;
+  align-self: center;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease);
+}
+.ds-builder-orgs-swap:hover { background: var(--c-brand); border-color: var(--c-brand); color: var(--c-text-inverse); }
+.ds-builder-orgs-swap .ds-i { width: 15px; height: 15px; }
+
+/* The ring-locked source line. */
+.ds-bld-src-locked {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  min-height: 34px;
+  font-size: var(--fs-md);
+}
+.ds-bld-src-locked .ds-i { color: var(--c-warn-fg); }
+.ds-bld-src-note { font-size: var(--fs-xs); color: var(--c-text-faint); }
+.ds-bld-src-warn {
+  display: flex; align-items: center; gap: var(--sp-3);
+  font-size: var(--fs-xs); color: var(--c-warn-fg); margin-top: var(--sp-2);
+}
+
+/* Follow / pin radios: full-width rows above the org list, with the
+   currently-resolved target set indented under the follow option. */
+.ds-builder-org-col > .ds-pk-orgchk {
+  border: none; background: none;
+  padding: var(--sp-2) 0; margin: 0;
+  font-size: var(--fs-md); font-weight: var(--fw-medium);
+}
+.ds-builder-org-col > .ds-pk-orgchk:hover { background: none; }
+.ds-bld-tgt-now {
+  font-size: var(--fs-xs);
+  color: var(--c-text-faint);
+  margin: 0 0 var(--sp-3) 24px;
+}
+.ds-bld-tgt-hint {
+  font-size: var(--fs-xs);
+  color: var(--c-text-faint);
+  line-height: var(--lh-base);
+  margin: 0 0 var(--sp-3);
+}
+.ds-builder-org-col .ds-pk-orgchk-list { grid-template-columns: 1fr; gap: var(--sp-2); margin: 0; }
+
+/* THE LOCKED SOURCE ROW. It was `opacity:.55`, which took a legible row down
+   to ~2.4:1 — the meaning ("this org is the source, it can't also be a
+   target") was invisible exactly when a user was hunting for the org they
+   couldn't find. Full-contrast text, a dashed border that reads as
+   "not a choice", a lock glyph and a — source pill. */
+.ds-pk-orgchk-locked,
+.ds-pk-orgchk-locked:hover {
+  opacity: 1;
+  background: var(--c-surface-sunk);
+  border-style: dashed;
+  border-color: var(--c-border-strong);
+  color: var(--c-text-muted);
+  cursor: not-allowed;
+}
+.ds-pk-orgchk-locked .ds-i { color: var(--c-text-faint); }
+.ds-pk-lock-pill {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  font-size: var(--fs-2xs); font-weight: var(--fw-semibold);
+  text-transform: uppercase; letter-spacing: .05em;
+  color: var(--c-text-faint);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-pill);
+  padding: 0 var(--sp-3);
+  white-space: nowrap;
+}
+
+/* Owner block — the checkbox strip was fourteen inline style= attributes. */
+.ds-bld-owner-match { margin: var(--sp-4) 0 0; }
+.ds-bld-owner-row {
+  display: flex; align-items: center; gap: var(--sp-3) var(--sp-5);
+  flex-wrap: wrap;
+  font-size: var(--fs-sm);
+  color: var(--c-text-muted);
+}
+.ds-bld-chk {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  cursor: pointer; white-space: nowrap;
+}
+.ds-bld-owner-sep { opacity: .5; }
+.ds-bld-owner-note { font-size: var(--fs-xs); color: var(--c-text-faint); margin-top: var(--sp-2); }
+.ds-builder-owner-ctls .ds-input,
+.ds-builder-owner-ctls .ds-select { flex: 1 1 280px; min-width: 240px; }
+
+/* Section labels between builder blocks. */
+.ds-builder-wrap .ds-lbl { font-size: var(--fs-xs); letter-spacing: .06em; color: var(--c-text-faint); }
+.ds-builder-wrap .ds-section-title { margin-top: var(--sp-7); }
+
+/* ── §7  DARK MODE ──────────────────────────────────────────────────────
+   The token layer already flips (styles.css re-points every --c-* under
+   body.sftk-dark, studio under .ds-dark) — these are the four places this
+   layer paints something the tokens can't reach on their own. */
+.ds-dark .ds-view-header.ds-vh { box-shadow: none; }
+.ds-dark .ds-pk-matrix { box-shadow: none; }
+.ds-dark .ds-pk-mx-head { background: var(--surface2); }
+.ds-dark .ds-pk-mx-row:not(.ds-pk-mx-head):hover { background: rgba(255,255,255,.04); }
+.ds-dark .ds-builder-orgs-row { background: var(--surface2); }
+.ds-dark .ds-builder-org-col { background: var(--surface); }
+.ds-dark .ds-pk-orgchk-locked,
+.ds-dark .ds-pk-orgchk-locked:hover { background: rgba(255,255,255,.04); }
+.ds-dark .ds-pk-legend { background: var(--surface2); }
+.ds-dark .ds-pk-legend-key { background: var(--surface); }
+
+/* Picklist compare-config + bulk-bar odds and ends that were inline style=. */
+.ds-pk-bulk-spacer { flex: 1 1 auto; }
+.ds-pk-note-tight  { margin: var(--sp-1) 0 0; }
+.ds-pk-sot-line { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.ds-pk-sot-crown { color: var(--c-warn-fg); }
+.ds-pk-sot-warn  { color: var(--c-warn-fg); }
+/* `hidden` beats the list's own display:grid — the builder's follow-mode
+   target list is hidden with the attribute now, not an inline style, so it
+   is hidden from assistive tech too rather than only visually. */
+.ds-pk-orgchk-list[hidden] { display: none; }
+
+/* Column rules. Without them a cell's ✓ sat close enough to the previous
+   cell's right-aligned number to read as one datum ("1,284 ✓ 312"); the
+   matrix is three org columns wide and needed to look like three columns. */
+.ds-pk-mx-head .ds-pk-mx-col,
+.ds-pk-mx-cell {
+  border-left: 1px solid var(--c-border-subtle);
+  padding-left: var(--sp-4);
+}
+.ds-dark .ds-pk-mx-head .ds-pk-mx-col,
+.ds-dark .ds-pk-mx-cell { border-left-color: rgba(255,255,255,.09); }
+
+/* The direction glyph between the two builder columns, as a chip so it reads
+   as a deliberate connector rather than stray punctuation. */
+.ds-builder-orgs-flow > .ds-i {
+  width: 16px; height: 16px;
+  box-sizing: content-box;
+  padding: var(--sp-4);
+  border-radius: var(--r-pill);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  color: var(--c-text-faint);
+}
+
+/* Compare-config: source-of-truth line, label and org list stack, they were
+   a wrapping flex row that dropped "Compare against" wherever it fitted. */
+.ds-pk-cmp-orgs { flex-direction: column; align-items: stretch; gap: var(--sp-3); }
+.ds-pk-cmp-lbl { font-size: var(--fs-xs); font-weight: var(--fw-bold); text-transform: uppercase; letter-spacing: .06em; color: var(--c-text-faint); }
+
+/* ── §8  TOPBAR — ONE CONTROL SHAPE ─────────────────────────────────────
+   Seven controls in five shapes and four heights: two 32px circles, a 32px
+   pill, two 26px bordered pills and a bare select. They are all the same
+   KIND of thing — a small utility control on the navy strip — so they are
+   now one 28px rounded chip with one translucent fill, and the icon-only
+   ones are 28px squares rather than circles (circles read as avatars).
+   Scoped to .ds-topbar so nothing else that shares these classes moves. */
+.ds-topbar .ds-trust-badge,
+.ds-topbar .ds-cmd-topbar-hint,
+.ds-topbar .ds-pro-toggle,
+.ds-topbar .ds-dark-toggle,
+.ds-topbar .ds-whatsnew-top,
+.ds-topbar .dbg-btn,
+.ds-topbar .ds-back-btn {
+  height: 28px;
+  padding: 0 var(--sp-5);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  border-radius: var(--r-sm);
+  border: 1px solid rgba(255,255,255,.18);
+  background: rgba(255,255,255,.08);
+  color: rgba(255,255,255,.88);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  white-space: nowrap;
+  margin-right: 0;
+  flex-shrink: 0;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.ds-topbar .ds-trust-badge:hover,
+.ds-topbar .ds-cmd-topbar-hint:hover,
+.ds-topbar .ds-pro-toggle:hover,
+.ds-topbar .ds-dark-toggle:hover,
+.ds-topbar .ds-whatsnew-top:hover,
+.ds-topbar .dbg-btn:hover,
+.ds-topbar .ds-back-btn:hover {
+  background: rgba(255,255,255,.18);
+  border-color: rgba(255,255,255,.34);
+  color: #fff;
+}
+/* Icon-only controls are squares, not stubby pills (mirrors the debugger's
+   .adbg-btn-icon rule). */
+.ds-topbar .ds-dark-toggle,
+.ds-topbar .ds-whatsnew-top { width: 28px; padding: 0; }
+/* …until pro mode turns them into text pills, which the existing pro-mode
+   block already does; give the width back so the label fits. */
+.ds-pro .ds-topbar .ds-dark-toggle,
+.ds-pro .ds-topbar .ds-whatsnew-top { width: auto; padding: 0 var(--sp-5); border-radius: var(--r-sm); }
+.ds-topbar .ds-pro-toggle--on { background: rgba(255,255,255,.30); border-color: rgba(255,255,255,.45); color: #fff; }
+.ds-topbar .ds-trust-badge { font-size: var(--fs-xs); }
+.ds-topbar .ds-trust-arrow { opacity: .55; }
+.ds-topbar .ds-cmd-topbar-hint { color: rgba(255,255,255,.70); }
+
+/* The dark toggle's label is rewritten by applyDarkMode with
+   `btn.textContent = …`, which would destroy a child <span>. Same fix the
+   debugger used for its ten relabelled buttons: drive the glyph from an
+   ATTRIBUTE through a ::before, so the icon and the label are independent.
+   The attribute is the same data-i the rest of the Studio uses. */
+.ds-topbar .ds-dark-toggle::before {
+  content: '';
+  display: inline-block;
+  width: 14px; height: 14px;
+  flex: 0 0 auto;
+  background-color: currentColor;
+  -webkit-mask: center / contain no-repeat;
+  mask: center / contain no-repeat;
+  -webkit-mask-image: var(--adbg-icon);
+  mask-image: var(--adbg-icon);
+}
+[data-i="moon"]     { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='black' d='M13.4 10.1A5.9 5.9 0 0 1 5.9 2.6a5.9 5.9 0 1 0 7.5 7.5z'/></svg>"); }
+[data-i="sun"]      { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round'><circle cx='8' cy='8' r='3.1'/><path d='M8 1.4v1.6M8 13v1.6M1.4 8h1.6M13 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1'/></svg>"); }
+[data-i="megaphone"] { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'><path d='M2.4 6.2v3.6h2.3l4.7 2.9V3.3L4.7 6.2z'/><path d='M11.7 5.5a3.4 3.4 0 0 1 0 5'/><path d='M4.7 9.8v2.9h2'/></svg>"); }
+/* Pro mode is the emoji-free, text-label mode — the masked glyph steps aside
+   for the "Light"/"Dark" word the same way .ds-glyph does. */
+.ds-pro .ds-topbar .ds-dark-toggle::before { display: none; }
+/* Header width modifier — for views whose content column is capped, so the
+   header lines up with the fields under it instead of overhanging them. */
+.ds-view-header.ds-vh-narrow { max-width: 900px; }
+
+/* ── §9  HOVER-REVEAL CONTROLS MUST ALSO REVEAL ON FOCUS ────────────────
+   `.ds-fm-skip-btn` (field-mapping rows) is opacity:0 until its row is
+   hovered. opacity:0 keeps it in the tab order, so a keyboard user could
+   land on a control that paints nothing — the "invisible but focusable"
+   bug the accessibility brief calls out. Focus reveals it now, same as a
+   hover does. */
+.ds-fm-skip-btn:focus-visible,
+.ds-fm-row:focus-within .ds-fm-skip-btn { opacity: 1; }
+
+/* Informational callout — the "How it works" panel on Connected Orgs was
+   five hardcoded hex values in an inline style attribute, which is why it
+   was the only element on that screen that stayed light in dark mode. */
+.ds-callout {
+  display: block;
+  max-width: 820px;
+  margin-bottom: var(--sp-7);
+  padding: var(--sp-5) var(--sp-6);
+  background: var(--c-brand-subtle);
+  border: 1px solid var(--c-brand-border);
+  border-radius: var(--r-lg);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  color: var(--c-text);
+}
+.ds-callout strong { display: inline-flex; align-items: center; gap: var(--sp-3); color: var(--c-brand-hover); }
+.ds-dark .ds-callout strong { color: var(--c-brand-light); }
+/* Badges sitting after an org name keep one gap; the amber one is the
+   read-only lock, on the warn tokens rather than two frozen hex values. */
+.ds-org-badge-current { margin-left: var(--sp-3); }
+.ds-badge-warn {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  background: var(--c-warn-bg); color: var(--c-warn-fg);
+  border: 1px solid var(--c-warn-border);
+}
+/* Topbar working-pair strip — the last two controls on the navy row that were
+   not on the shared 28px height. */
+.ds-topbar .ds-pair-sel,
+.ds-topbar .ds-pair-swap {
+  height: 28px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+}
+.ds-topbar .ds-pair-swap { width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.ds-topbar .ds-pair-lbl { display: inline-flex; align-items: center; gap: var(--sp-2); }

@@ -462,16 +462,15 @@ function renderPicklists() {
   if (!_pkOrgUrl) _pkOrgUrl = _workingPair.src || _orgUrl || (orgs[0] && orgs[0].url) || '';
 
   setMain(`
-    <div class="ds-view-header">
-      <div class="ds-view-title-wrap">
-        <h2 class="ds-view-title">🎚 Picklist Manager</h2>
-        <div class="ds-view-subtitle">Values, record types, usage &amp; data fixes — per org or across orgs</div>
-      </div>
-      <div class="ds-pk-mode-toggle">
-        <button class="ds-btn ds-btn-sm ${_pkMode === 'single' ? 'ds-btn-primary' : ''}" data-pk-mode="single">Single org</button>
-        <button class="ds-btn ds-btn-sm ${_pkMode === 'compare' ? 'ds-btn-primary' : ''}" data-pk-mode="compare">Compare across orgs</button>
-      </div>
-    </div>
+    ${dsViewHeader({
+      icon: 'sliders',
+      title: 'Picklist Manager',
+      subtitle: 'Values, record types, usage &amp; data fixes — per org or across orgs',
+      actions: `<div class="ds-pk-mode-toggle" role="group" aria-label="Picklist Manager mode">
+        <button class="ds-btn ds-btn-sm ${_pkMode === 'single' ? 'ds-btn-primary' : ''}" data-pk-mode="single" aria-pressed="${_pkMode === 'single'}">Single org</button>
+        <button class="ds-btn ds-btn-sm ${_pkMode === 'compare' ? 'ds-btn-primary' : ''}" data-pk-mode="compare" aria-pressed="${_pkMode === 'compare'}">Compare across orgs</button>
+      </div>`,
+    })}
     <div id="dsPkConfig"></div>
     <div id="dsPkBody">
       <div class="ds-empty-page">
@@ -546,8 +545,8 @@ function _pkRenderCompareConfig() {
   const sotOrg = _sotUrl ? orgs.find(o => _orgKey(o.url) === _orgKey(_sotUrl)) : null;
   const sotLine = sotOrg
     ? `<div class="ds-pk-sot-line" title="Always part of the comparison — every org below is compared against it. Change it in 🔄 Sync Ring or the topbar chip.">
-        👑 Source of truth: <strong>${esc(orgOptionLabel(sotOrg.url, sotOrg.label))}</strong>
-        ${(!_liveOrgSet().has(_orgKey(sotOrg.url))) ? '<span style="color:#92400e">— open it in a Chrome tab, the matrix reads from it</span>' : ''}
+        Source of truth: <strong>${esc(orgOptionLabel(sotOrg.url, sotOrg.label))}</strong>
+        ${(!_liveOrgSet().has(_orgKey(sotOrg.url))) ? '<span class="ds-pk-sot-warn">— open it in a Chrome tab, the matrix reads from it</span>' : ''}
       </div>` : '';
   const chks = orgs.filter(o => !(_sotUrl && _orgKey(o.url) === _orgKey(_sotUrl))).map(o =>
     `<label class="ds-pk-orgchk"><input type="checkbox" data-pk-cmporg="${esc(o.url)}" ${_pkCmpOrgs.includes(o.url) ? 'checked' : ''}> ${esc(orgOptionLabel(o.url, o.label))}</label>`).join('');
@@ -567,10 +566,10 @@ function _pkRenderCompareConfig() {
         <select id="dsPkCmpField" class="ds-select" disabled><option value="">Field…</option></select>
         <button class="ds-btn ds-btn-primary" id="dsPkCmpLoad" disabled>Load matrix</button>
         <button class="ds-btn" id="dsPkSweep" ${_pkCmpObj ? '' : 'disabled'}
-          title="Skip the field picker: compare EVERY picklist / multi-picklist field on this object across the selected orgs and give each one a verdict (in sync / values differ / RT assignment differs / missing / not comparable).">🧹 Sweep whole object…</button>
+          title="Skip the field picker: compare EVERY picklist / multi-picklist field on this object across the selected orgs and give each one a verdict (in sync / values differ / RT assignment differs / missing / not comparable).">${dsIcon('wand')}Sweep whole object…</button>
       </div>
-      <div id="dsPkMatrixCost" class="ds-pk-note" style="margin:2px 0 0"></div>
-      <div id="dsPkSweepCost" class="ds-pk-note" style="margin:2px 0 0"></div>
+      <div id="dsPkMatrixCost" class="ds-pk-note ds-pk-note-tight"></div>
+      <div id="dsPkSweepCost" class="ds-pk-note ds-pk-note-tight"></div>
     </div>`;
 
   cfg.querySelectorAll('[data-pk-cmporg]').forEach(c => c.addEventListener('change', () => {
@@ -1472,13 +1471,15 @@ function _pkRenderMatrix() {
   if (!body || !M) return;
   const cols = M.results;
 
+  // A real table header row: sticky, on the sunk surface, TITLE CASE (these
+  // are org names — proper nouns — and uppercasing mangled "QA Sandbox").
   const head = `<div class="ds-pk-mx-row ds-pk-mx-head">
-      <div class="ds-pk-mx-sel"><input type="checkbox" id="dsPkMxAll" title="Select all values"></div>
+      <div class="ds-pk-mx-sel"><input type="checkbox" id="dsPkMxAll" aria-label="Select all values" title="Select all values"></div>
       <div class="ds-pk-mx-val">Value</div>
       ${cols.map(c => `<div class="ds-pk-mx-col">
         <label class="ds-pk-mx-orgsel"><input type="checkbox" class="ds-pk-mx-orgchk" data-org="${esc(c.orgUrl)}" ${c.inv ? 'checked' : 'disabled'}${c.metaRO ? ` title="${esc(c.metaRO)}"` : ''}> ${esc(c.label)}</label>
         ${(typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2 && _orgKey(c.orgUrl) === _orgKey(_ring.sourceUrl))
-          ? `<span class="ds-pk-mx-sot" title="Your Sync Ring's source of truth — 🔄 Sync from source pre-selects this org as the source.">👑 source of truth</span>` : ''}
+          ? `<span class="ds-pk-mx-sot" title="Your Sync Ring's source of truth — 🔄 Sync from source pre-selects this org as the source.">${dsIcon('crown')}source of truth</span>` : ''}
         ${c.skip ? `<span class="ds-pk-mx-skip" title="${esc(c.skip)}">skipped: ${esc(c.skip)}</span>`
           : c.metaRO ? `<span class="ds-pk-mx-skip" title="${esc(c.metaRO)}">standard — read-only</span>${prodBadge(c.orgUrl)}`
           : prodBadge(c.orgUrl)}
@@ -1490,18 +1491,22 @@ function _pkRenderMatrix() {
     // (user 2026-07-18: "i dont see any mention to record types").
     const rtDrift = pkRtDrift(cols.filter(c => c.rts?.length).map(c => c.rts), row.name);
     const cells = row.cells.map((cell, ci) => {
-      if (cell.missing) return `<div class="ds-pk-mx-cell ds-pk-mx-na" title="org skipped / not loaded">·</div>`;
-      if (!cell.exists) return `<div class="ds-pk-mx-cell ds-pk-mx-absent" title="value not present in this org">—</div>`;
+      // EVERY state carries a shape, not only a colour: red/green alone fails
+      // for ~1 in 12 men. · not loaded, — missing, ✓ active, ▮▮ inactive,
+      // ⚠ record-type drift. The .ds-sr span is the same distinction spoken
+      // aloud — title= is not exposed as a name by every AT.
+      if (cell.missing) return `<div class="ds-pk-mx-cell ds-pk-mx-na" title="org skipped / not loaded"><span class="ds-pk-mx-state" aria-hidden="true">·</span><span class="ds-sr">not loaded</span></div>`;
+      if (!cell.exists) return `<div class="ds-pk-mx-cell ds-pk-mx-absent" title="value not present in this org"><span class="ds-pk-mx-state" aria-hidden="true">—</span><span class="ds-sr">missing</span></div>`;
       const cnt = cell.count == null ? '' : cell.count === -1 ? '?' : cell.count.toLocaleString();
       const rti = cols[ci]?.rts?.length ? pkRtCellInfo(cols[ci].rts, row.name) : null;
       const rtBadge = rti ? `<span class="ds-pk-mx-rt ${rtDrift ? 'ds-pk-mx-rt-drift' : ''}"
-        title="${rti.inCount ? `In record type(s): ${esc(rti.names.join(', '))}` : 'Not included in any active record type here'}${rtDrift ? ' · ⚠ this value’s record-type assignment DIFFERS across orgs (same-name record types disagree) — align via 🔄 Sync from source' : ''}">${rti.inCount}/${rti.total} RT</span>` : '';
+        title="${rti.inCount ? `In record type(s): ${esc(rti.names.join(', '))}` : 'Not included in any active record type here'}${rtDrift ? ' · ⚠ this value’s record-type assignment DIFFERS across orgs (same-name record types disagree) — align via 🔄 Sync from source' : ''}">${rtDrift ? dsIcon('warn') : ''}${rti.inCount}/${rti.total} RT</span>` : '';
       return `<div class="ds-pk-mx-cell ${cell.active ? 'ds-pk-mx-active' : 'ds-pk-mx-inactive'}"
         title="${cell.active ? 'active' : 'inactive'}${cell.count != null && cell.count >= 0 ? ` · ${cell.count} record(s)` : ''}">
-        ${cell.active ? '✓' : '⏸'}${cnt ? `<span class="ds-pk-mx-cnt">${cnt}</span>` : ''}${rtBadge}</div>`;
+        <span class="ds-pk-mx-state">${dsIcon(cell.active ? 'check' : 'pause')}<span class="ds-sr">${cell.active ? 'active' : 'inactive'}</span></span><span class="ds-pk-mx-cnt">${cnt}</span>${rtBadge}</div>`;
     }).join('');
     return `<div class="ds-pk-mx-row">
-      <div class="ds-pk-mx-sel"><input type="checkbox" class="ds-pk-mx-valchk" data-val="${esc(row.name)}"></div>
+      <div class="ds-pk-mx-sel"><input type="checkbox" class="ds-pk-mx-valchk" data-val="${esc(row.name)}" aria-label="Select value ${esc(row.name)}"></div>
       <div class="ds-pk-mx-val">${esc(row.name)}</div>${cells}</div>`;
   }).join('');
 
@@ -1511,17 +1516,24 @@ function _pkRenderMatrix() {
   body.innerHTML = `
     <div class="ds-pk-summary">Matrix · <strong>${esc(M.obj)}.${esc(M.field)}</strong> · ${M.union.length} value(s) across ${loaded.length}/${cols.length} loaded org(s)</div>
     ${stdCols.length ? `<div class="ds-pk-note">🔒 Standard picklist — values compare across orgs below (active values via describe), but the value sets themselves are edited in Setup, so bulk apply / 🔄 sync can't write these columns. Record counts and 🔧 data fixes work as usual.</div>` : ''}
-    <div class="ds-pk-note" style="margin:4px 0 6px">How to read a cell: <strong>✓</strong> value exists &amp; is active in that org · <strong>⏸</strong> exists but inactive · <strong>—</strong> value missing from that org · the <strong>number</strong> = how many records in that org currently hold the value · <strong>a/b RT</strong> = included in a of that org's b active record types (hover for names; <span style="color:#991b1b">red</span> = same-name record types disagree across orgs — align via 🔄 Sync from source).</div>
+    <div class="ds-pk-legend" role="note" aria-label="How to read a cell">
+      <span class="ds-pk-legend-item"><span class="ds-pk-legend-key ds-pk-legend-key-good">${dsIcon('check')}</span> exists &amp; active in that org</span>
+      <span class="ds-pk-legend-item"><span class="ds-pk-legend-key">${dsIcon('pause')}</span> exists but inactive</span>
+      <span class="ds-pk-legend-item"><span class="ds-pk-legend-key">—</span> missing from that org</span>
+      <span class="ds-pk-legend-item"><span class="ds-pk-legend-key">N</span> records in that org holding the value</span>
+      <span class="ds-pk-legend-item"><span class="ds-pk-legend-key">a/b RT</span> in a of that org's b active record types (hover for names)</span>
+      <span class="ds-pk-legend-item"><span class="ds-pk-legend-key ds-pk-legend-key-bad">${dsIcon('warn')}</span> same-name record types disagree across orgs — align via 🔄 Sync from source</span>
+    </div>
     ${cols.some(c => c.rtNote) ? `<div class="ds-pk-note">⚠ Record types: ${esc(cols.filter(c => c.rtNote).map(c => `${c.label} — ${c.rtNote}`).join(' · '))}</div>` : ''}
     ${skipped.length ? `<div class="ds-pk-note">⚠ Skipped ${skipped.length} org(s): ${esc(skipped.map(c => `${c.label} (${c.skip})`).join(', '))}</div>` : ''}
     <div class="ds-pk-matrix" style="--pk-cols:${cols.length}">${head}${rows || '<div class="ds-pk-note">No values loaded.</div>'}</div>
     <div class="ds-pk-bulkbar">
       <span class="ds-pk-bulk-lbl">With selected value(s) in the checked org(s):</span>
-      <button class="ds-btn ds-btn-sm" id="dsPkBulkDeact">⏸ Deactivate…</button>
-      <button class="ds-btn ds-btn-sm ds-btn-danger" id="dsPkBulkDel">🗑 Delete…</button>
-      <span style="flex:1"></span>
+      <button class="ds-btn ds-btn-sm" id="dsPkBulkDeact">${dsIcon('pause')}Deactivate…</button>
+      <button class="ds-btn ds-btn-sm ds-btn-danger" id="dsPkBulkDel">${dsIcon('trash')}Delete…</button>
+      <span class="ds-pk-bulk-spacer"></span>
       <button class="ds-btn ds-btn-sm ds-btn-primary" id="dsPkSyncBtn"
-        title="Make the other orgs' value sets match a source org: add missing values, align labels/active states/default, and align record-type assignments — you pick the operations per org">🔄 Sync from source…</button>
+        title="Make the other orgs' value sets match a source org: add missing values, align labels/active states/default, and align record-type assignments — you pick the operations per org">${dsIcon('repeat')}Sync from source…</button>
     </div>
     <div id="dsPkBulkResult"></div>`;
 
