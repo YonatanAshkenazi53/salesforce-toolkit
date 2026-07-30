@@ -153,7 +153,7 @@ const ApexDebugger = (() => {
   // valid for their category (see LOG_CATEGORIES above).
   const PROFILES = {
     flows: {
-      label: '🌊 Flows Only',
+      label: 'Flows Only',
       desc:  'Flows, Process Builder & workflow rules. Skips Apex — smallest logs.',
       devName: 'SFTK_FlowsOnly',
       levels: { Workflow:'FINEST', ApexCode:'NONE', Database:'NONE',
@@ -161,7 +161,7 @@ const ApexDebugger = (() => {
                 Visualforce:'NONE', ApexProfiling:'NONE' }
     },
     apex: {
-      label: '⚡ Flows + Apex',
+      label: 'Flows + Apex',
       desc:  'Flows AND Apex triggers/classes. Best all-rounder.',
       devName: 'SFTK_FlowsApex',
       levels: { Workflow:'FINEST', ApexCode:'FINEST', Database:'INFO',
@@ -169,7 +169,7 @@ const ApexDebugger = (() => {
                 Visualforce:'NONE', ApexProfiling:'NONE' }
     },
     callouts: {
-      label: '🔌 Integrations & Callouts',
+      label: 'Integrations & Callouts',
       desc:  'HTTP callouts & web-service calls — for debugging integrations.',
       devName: 'SFTK_Callouts',
       levels: { Workflow:'INFO', ApexCode:'FINE', Database:'INFO',
@@ -177,7 +177,7 @@ const ApexDebugger = (() => {
                 Visualforce:'NONE', ApexProfiling:'INFO' }
     },
     performance: {
-      label: '⏱️ Performance & Limits',
+      label: 'Performance & Limits',
       desc:  'Governor limits, slow SOQL & CPU — for hunting performance issues.',
       devName: 'SFTK_Performance',
       levels: { Workflow:'INFO', ApexCode:'FINE', Database:'FINEST',
@@ -185,7 +185,7 @@ const ApexDebugger = (() => {
                 Visualforce:'NONE', ApexProfiling:'FINEST' }
     },
     database: {
-      label: '🗄️ Database & SOQL',
+      label: 'Database & SOQL',
       desc:  'Every SOQL, SOSL & DML statement — for query / DML debugging.',
       devName: 'SFTK_Database',
       levels: { Workflow:'INFO', ApexCode:'INFO', Database:'FINEST',
@@ -193,7 +193,7 @@ const ApexDebugger = (() => {
                 Visualforce:'NONE', ApexProfiling:'FINE' }
     },
     validation: {
-      label: '✅ Validation & Errors',
+      label: 'Validation & Errors',
       desc:  'Validation rules & exceptions — for "why did my save fail?" issues.',
       devName: 'SFTK_Validation',
       levels: { Workflow:'INFO', ApexCode:'ERROR', Database:'INFO',
@@ -201,7 +201,7 @@ const ApexDebugger = (() => {
                 Visualforce:'NONE', ApexProfiling:'NONE' }
     },
     vf: {
-      label: '🖥️ Visualforce',
+      label: 'Visualforce',
       desc:  'Visualforce page lifecycle, controllers & view state.',
       devName: 'SFTK_Visualforce',
       levels: { Workflow:'INFO', ApexCode:'FINE', Database:'INFO',
@@ -209,7 +209,7 @@ const ApexDebugger = (() => {
                 Visualforce:'FINEST', ApexProfiling:'NONE' }
     },
     full: {
-      label: '🔍 Full Debug',
+      label: 'Full Debug',
       desc:  'Everything at FINEST. Large logs — use for short bursts only.',
       devName: 'SFTK_FullDebug',
       levels: { Workflow:'FINEST', ApexCode:'FINEST', Database:'FINEST',
@@ -217,7 +217,7 @@ const ApexDebugger = (() => {
                 Visualforce:'FINEST', ApexProfiling:'FINEST' }
     },
     minimal: {
-      label: '🪶 Errors Only',
+      label: 'Errors Only',
       desc:  'Just exceptions & errors — tiny logs, lowest overhead.',
       devName: 'SFTK_ErrorsOnly',
       levels: { Workflow:'ERROR', ApexCode:'ERROR', Database:'NONE',
@@ -268,11 +268,14 @@ const ApexDebugger = (() => {
     html += '</optgroup>';
     if (_customProfiles.length) {
       html += '<optgroup label="My custom levels">';
-      html += _customProfiles.map(p => opt(p.key, '✏️ ' + _esc(p.label), p.desc)).join('');
+      html += _customProfiles.map(p => opt(p.key, _esc(p.label), p.desc)).join('');
       html += '</optgroup>';
     }
     html += '<optgroup label="Manage">';
-    html += '<option value="__new__" title="Build your own debug-level combination per log category">➕ Create custom level…</option>';
+    // No glyph: a native <option> cannot host the mask-image icon system, and
+    // the <optgroup> label already says these entries are management, not
+    // scenarios. Emoji-as-icon here was the one place it could not be fixed.
+    html += '<option value="__new__" title="Build your own debug-level combination per log category">Create custom level…</option>';
     html += '</optgroup>';
     return html;
   }
@@ -295,9 +298,13 @@ const ApexDebugger = (() => {
     if (!btn) return;
     const prof = _getProfile(_selProfile);
     const isCustom = prof && prof.custom;
-    btn.textContent = isCustom ? '✏️' : '➕';
+    // The glyph is a data attribute, not a text node, so it survives any
+    // later textContent write. title alone is not an accessible name for an
+    // icon-only control — aria-label is what a screen reader announces.
+    btn.dataset.adbgIcon = isCustom ? 'pencil' : 'plus';
     btn.title = isCustom ? 'Edit this custom debug level'
                          : 'Create a new custom debug level';
+    btn.setAttribute('aria-label', btn.title);
   }
 
   // ── Custom debug-level builder modal ──────────────────────
@@ -338,8 +345,9 @@ const ApexDebugger = (() => {
     overlay.innerHTML = `
       <div class="adbg-modal">
         <div class="adbg-modal-hdr">
-          <span>${editing ? '✏️ Edit Custom Debug Level' : '➕ New Custom Debug Level'}</span>
-          <button class="adbg-modal-x" id="adbgLvlClose" title="Close">✕</button>
+          <span>${editing ? 'Edit Custom Debug Level' : 'New Custom Debug Level'}</span>
+          <button class="adbg-modal-x" id="adbgLvlClose" title="Close" aria-label="Close"
+            ><span class="adbg-i" data-i="x" aria-hidden="true"></span></button>
         </div>
         <div class="adbg-modal-body">
           <label class="adbg-lvl-field">
@@ -357,15 +365,16 @@ const ApexDebugger = (() => {
           <div class="adbg-lvl-grid-hdr">Category levels</div>
           <div class="adbg-lvl-grid">${catRows}</div>
           <div class="adbg-lvl-tip">
-            💡 Each category only allows the levels Salesforce supports for it.
-            Higher levels (FINE → FINEST) capture more detail but produce bigger
-            logs — keep categories you don't need at <strong>NONE</strong>.
+            <span class="adbg-i" data-i="bulb" aria-hidden="true"></span>
+            <span>Each category only allows the levels Salesforce supports for it.
+            Higher levels (FINE up to FINEST) capture more detail but produce bigger
+            logs — keep categories you don't need at <strong>NONE</strong>.</span>
           </div>
           <div id="adbgLvlErr" class="adbg-lvl-err" style="display:none"></div>
         </div>
         <div class="adbg-modal-ftr">
           ${editing
-            ? '<button class="btn btn-danger btn-sm" id="adbgLvlDelete">🗑 Delete</button>'
+            ? '<button class="btn btn-danger btn-sm" id="adbgLvlDelete" data-adbg-icon="trash">Delete</button>'
             : '<span></span>'}
           <div class="adbg-modal-ftr-right">
             <button class="btn btn-secondary btn-sm" id="adbgLvlCancel">Cancel</button>
@@ -437,11 +446,13 @@ const ApexDebugger = (() => {
       delBtn.addEventListener('click', async () => {
         if (!delBtn.dataset.armed) {
           delBtn.dataset.armed = '1';
-          delBtn.textContent   = '⚠ Confirm Delete';
+          delBtn.dataset.adbgIcon = 'warn';
+          delBtn.textContent   = 'Confirm Delete';
           setTimeout(() => {
             if (delBtn.dataset.armed) {
               delete delBtn.dataset.armed;
-              delBtn.textContent = '🗑 Delete';
+              delBtn.dataset.adbgIcon = 'trash';
+              delBtn.textContent = 'Delete';
             }
           }, 3000);
           return;
@@ -572,17 +583,16 @@ const ApexDebugger = (() => {
     // plain navigation only.
   }
 
-  // Small link-styled "↗ open in X" button (same visual as Field Cleaner's
+  // Small link-styled "open in X" button (same visual as Field Cleaner's
   // C5a links). Clicks are handled by ONE delegated listener wired in
   // _wireEvents(), so links keep working across every innerHTML re-render.
-  const _XLINK_CSS =
-    'background:none;border:none;padding:0;margin-left:8px;' +
-    'color:#0176d3;font:inherit;font-size:11px;font-weight:600;' +
-    'cursor:pointer;text-decoration:underline;white-space:nowrap;';
+  // The style= blob that used to be stamped onto every one of these (up to
+  // ~20 per rendered log) now lives in .adbg-xlink; the hard-coded #0176d3
+  // came with it, which is why these links never followed dark mode.
   function _xlink(tabId, label, title, prefill) {
     return `<button type="button" class="adbg-xlink" data-xtab="${_esc(tabId)}"` +
            (prefill ? ` data-xq="${_esc(prefill)}"` : '') +
-           ` title="${_esc(title || '')}" style="${_XLINK_CSS}">${_esc(label)}</button>`;
+           ` title="${_esc(title || '')}"><span class="adbg-i" data-i="link-out" aria-hidden="true"></span>${_esc(label)}</button>`;
   }
 
   // ── Shell HTML ────────────────────────────────────────────
@@ -601,7 +611,9 @@ const ApexDebugger = (() => {
                 <div class="adbg-user-inp-row">
                   <input id="adbgUserInput" class="adbg-user-input"
                          placeholder="Search active user…" autocomplete="off">
-                  <button id="adbgUserClear" class="adbg-clear-x" title="Clear" style="display:none">✕</button>
+                  <button id="adbgUserClear" class="adbg-clear-x" title="Clear"
+                          aria-label="Clear the user search" style="display:none"
+                    ><span class="adbg-i" data-i="x" aria-hidden="true"></span></button>
                 </div>
                 <div id="adbgUserDrop" class="adbg-user-drop" style="display:none"></div>
               </div>
@@ -614,15 +626,16 @@ const ApexDebugger = (() => {
                 <select id="adbgProfile" class="adbg-profile-sel">
                   ${_profileSelectHtml()}
                 </select>
-                <button id="adbgProfileEdit" class="adbg-profile-edit"
-                        title="Create or edit a custom debug level">✏️</button>
+                <button id="adbgProfileEdit" class="adbg-profile-edit" data-adbg-icon="plus"
+                        title="Create or edit a custom debug level"
+                        aria-label="Create or edit a custom debug level"></button>
               </div>
             </div>
 
             <!-- Trace controls -->
             <div class="adbg-cell adbg-trace-cell">
-              <button id="adbgStartBtn" class="btn btn-success btn-sm" disabled>▶ Start Trace</button>
-              <button id="adbgStopBtn"  class="btn btn-danger  btn-sm" style="display:none">⏹ Stop</button>
+              <button id="adbgStartBtn" class="btn btn-success btn-sm" data-adbg-icon="play" disabled>Start Trace</button>
+              <button id="adbgStopBtn"  class="btn btn-danger  btn-sm" data-adbg-icon="stop" style="display:none">Stop</button>
             </div>
 
             <!-- Live status -->
@@ -632,26 +645,39 @@ const ApexDebugger = (() => {
           <div class="adbg-profile-desc" id="adbgProfileDesc">${(_getProfile(_selProfile) || {}).desc || ''}</div>
         </div>
 
-        <!-- ── Log list bar ──────────────────────────── -->
+        <!-- ── Log list bar — the SLDS page-header shape: icon + title +
+             record count on the left, actions right-aligned. Only the two
+             buttons that actually destroy data are red; Search and Refresh
+             were red-adjacent noise in a row where 4 of 6 shouted. -->
         <div class="adbg-log-bar">
           <label class="adbg-sel-all-lbl" title="Select all">
-            <input type="checkbox" id="adbgSelAll">
+            <input type="checkbox" id="adbgSelAll" aria-label="Select all logs">
           </label>
+          <span class="adbg-bar-title">
+            <span class="adbg-i" data-i="doc" aria-hidden="true"></span>Debug Logs
+          </span>
           <span class="adbg-log-count" id="adbgLogCount"></span>
           <span class="adbg-live-dot" id="adbgLiveDot" title="Live — polling for new logs" style="display:none"></span>
-          <div style="flex:1"></div>
+          <span class="adbg-bar-spacer"></span>
           <div class="adbg-xsearch-wrap" title="Search across every log body — marks logs that contain the keyword">
             <input type="text" id="adbgXSearch" class="adbg-xsearch-input"
-              placeholder="🔍 Search across all logs…" autocomplete="off">
-            <button id="adbgXSearchClear" class="adbg-xsearch-clear" title="Clear search" style="display:none">✕</button>
+              placeholder="Search across all logs…" autocomplete="off"
+              aria-label="Search across all logs">
+            <button id="adbgXSearchClear" class="adbg-xsearch-clear" title="Clear search"
+                    aria-label="Clear the cross-log search" style="display:none"
+              ><span class="adbg-i" data-i="x" aria-hidden="true"></span></button>
           </div>
-          <button id="adbgXSearchBtn" class="btn btn-secondary btn-sm" title="Search every log body for this keyword">🔍 Search</button>
-          <button id="adbgRefreshBtn" class="btn btn-secondary btn-sm" title="Refresh log list">🔄</button>
-          <button id="adbgCompareBtn" class="btn btn-secondary btn-sm" style="display:none"
-            title="Compare the two checked logs side by side — before vs after your fix">⚖ Compare 2</button>
-          <button id="adbgDelSelBtn"  class="btn btn-danger btn-sm" disabled>Delete Selected</button>
-          <button id="adbgPurgeOldBtn" class="btn btn-danger btn-sm" title="Delete logs older than 24 hours">🧹 &gt;24h</button>
-          <button id="adbgDelAllBtn"  class="btn btn-danger btn-sm">🗑 Delete All</button>
+          <button id="adbgXSearchBtn" class="btn btn-secondary btn-sm" data-adbg-icon="search"
+            title="Search every log body for this keyword">Search</button>
+          <button id="adbgRefreshBtn" class="btn btn-secondary btn-sm adbg-btn-icon" data-adbg-icon="refresh"
+            title="Refresh log list" aria-label="Refresh log list"></button>
+          <button id="adbgCompareBtn" class="btn btn-secondary btn-sm" data-adbg-icon="compare" style="display:none"
+            title="Compare the two checked logs side by side — before vs after your fix">Compare 2</button>
+          <span class="adbg-bar-sep" aria-hidden="true"></span>
+          <button id="adbgDelSelBtn"  class="btn btn-danger btn-sm" data-adbg-icon="trash" disabled>Delete Selected</button>
+          <button id="adbgPurgeOldBtn" class="btn btn-secondary btn-sm" data-adbg-icon="clock"
+            title="Delete logs older than 24 hours">Purge &gt;24h</button>
+          <button id="adbgDelAllBtn"  class="btn btn-danger btn-sm" data-adbg-icon="trash">Delete All</button>
         </div>
 
         <!-- ── Split: list | detail ───────────────── -->
@@ -661,7 +687,7 @@ const ApexDebugger = (() => {
           </div>
           <div class="adbg-detail" id="adbgDetail">
             <div class="adbg-detail-empty">
-              <div class="adbg-detail-icon">🔍</div>
+              <div class="adbg-detail-icon adbg-i" data-i="search" aria-hidden="true"></div>
               <div>Select a log to inspect automations</div>
               <div class="adbg-detail-hint">Flows, Apex Triggers, Process Builder, and<br>recursion loops are all detected automatically.</div>
             </div>
@@ -807,7 +833,7 @@ const ApexDebugger = (() => {
     if (res.error || !res.records?.length) {
       if (res.error) {
         const fe = sftkFriendlyError(res.error);
-        d.innerHTML = `<div class="adbg-drop-msg" title="${_esc(fe.raw)}">⚠ ${_esc(fe.message)}${fe.hint ? `<br><small>${_esc(fe.hint)}</small>` : ''}</div>`;
+        d.innerHTML = `<div class="adbg-drop-msg" title="${_esc(fe.raw)}"><span class="adbg-i" data-i="warn" aria-hidden="true"></span>${_esc(fe.message)}${fe.hint ? `<br><small>${_esc(fe.hint)}</small>` : ''}</div>`;
       } else {
         d.innerHTML = '<div class="adbg-drop-msg">' + (isSuggest ? 'No active users in this org' : 'No active user matches that search') + '</div>';
       }
@@ -826,7 +852,7 @@ const ApexDebugger = (() => {
     ).join('')
       // Footer is a .adbg-drop-msg, NOT a .adbg-uopt — the click wiring below
       // only binds .adbg-uopt, so it is non-selectable by construction.
-      + (moreNote ? `<div class="adbg-drop-msg" style="font-style:italic">⋯ ${_esc(moreNote)}</div>` : '');
+      + (moreNote ? `<div class="adbg-drop-msg adbg-drop-more">${_esc(moreNote)}</div>` : '');
     d.querySelectorAll('.adbg-uopt').forEach(el => {
       el.addEventListener('click', () => {
         _selUser = { Id: el.dataset.id, Name: el.dataset.name, Username: el.dataset.uname };
@@ -961,7 +987,7 @@ const ApexDebugger = (() => {
       const cell = document.getElementById('adbgStatusCell');
       if (cell) cell.title = fe.raw;   // raw error kept for copy/paste
       startBtn.disabled    = false;
-      startBtn.textContent = '▶ Start Trace';
+      startBtn.textContent = 'Start Trace';
     }
   }
 
@@ -977,10 +1003,10 @@ const ApexDebugger = (() => {
       // generating FINEST logs) while the UI claimed the trace was stopped,
       // and nulling _traceFlag threw away the only handle for a retry.
       const dRes = await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'TraceFlag', id: _traceFlag.Id });
-      if (stopping) { stopping.disabled = false; stopping.textContent = '⏹ Stop'; }
+      if (stopping) { stopping.disabled = false; stopping.textContent = 'Stop'; }
       if (dRes?.error) {
         const fe = sftkFriendlyError(dRes.error);
-        _renderStatus(`Couldn't stop the trace: ${fe.message} — the flag is STILL ACTIVE in the org${_traceFlag?.ExpirationDate ? ` until ${new Date(_traceFlag.ExpirationDate).toLocaleTimeString()}` : ''}. Fix the session (open the org tab) and click ⏹ Stop again.`, 'error');
+        _renderStatus(`Couldn't stop the trace: ${fe.message} — the flag is STILL ACTIVE in the org${_traceFlag?.ExpirationDate ? ` until ${new Date(_traceFlag.ExpirationDate).toLocaleTimeString()}` : ''}. Fix the session (open the org tab) and click Stop again.`, 'error');
         _startCountdown();   // keep showing the truth: it IS still running
         _startPolling();
         return;              // keep _traceFlag so Stop can retry
@@ -991,7 +1017,7 @@ const ApexDebugger = (() => {
 
     const startBtn = document.getElementById('adbgStartBtn');
     const stopBtn  = document.getElementById('adbgStopBtn');
-    if (startBtn) { startBtn.style.display = ''; startBtn.disabled = !_selUser; startBtn.textContent = '▶ Start Trace'; }
+    if (startBtn) { startBtn.style.display = ''; startBtn.disabled = !_selUser; startBtn.textContent = 'Start Trace'; }
     if (stopBtn)  stopBtn.style.display = 'none';
     const dot = document.getElementById('adbgLiveDot');
     if (dot) dot.style.display = 'none';
@@ -1011,11 +1037,16 @@ const ApexDebugger = (() => {
       const rem  = Math.max(0, new Date(_traceFlag.ExpirationDate) - Date.now());
       const mins = Math.floor(rem / 60000);
       const secs = Math.floor((rem % 60000) / 1000);
-      msg  = `⏱ ${_traceUser?.Name || '?'} — ${mins}m ${String(secs).padStart(2,'0')}s left`;
+      msg  = `${_traceUser?.Name || '?'} — ${mins}m ${String(secs).padStart(2,'0')}s left`;
       type = 'active';
     }
+    // msg is escaped, so the icon cannot ride inside it — it is chosen from
+    // the pill's own state instead. (Server error text lands here verbatim;
+    // _esc stays the only thing between it and innerHTML.)
+    const pillIcon = type === 'active' ? 'clock' : type === 'error' ? 'warn' : '';
     cell.innerHTML = msg
-      ? `<span class="adbg-status-pill adbg-spill-${type || 'info'}">${_esc(msg)}</span>`
+      ? `<span class="adbg-status-pill adbg-spill-${type || 'info'}">${
+          pillIcon ? _ICON(pillIcon) : ''}${_esc(msg)}</span>`
       : '';
   }
 
@@ -1073,7 +1104,7 @@ const ApexDebugger = (() => {
       const fe = sftkFriendlyError(res.error);
       if (fe.type === 'session') {
         _stopPolling();
-        _pollErrMsg = 'Session expired — live updates stopped. Open the org in a tab to refresh the session, then ⏹ Stop and ▶ Start Trace to reconnect.';
+        _pollErrMsg = 'Session expired — live updates stopped. Open the org in a tab to refresh the session, then Stop and Start Trace to reconnect.';
       } else if (!_pollErrMsg) {
         _pollErrMsg = `Live updates failing: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`;
       }
@@ -1112,7 +1143,7 @@ const ApexDebugger = (() => {
 
     if (res.error) {
       const fe = sftkFriendlyError(res.error);
-      listEl.innerHTML = `<div class="adbg-list-ph adbg-list-err" title="${_esc(fe.raw)}">⚠ ${_esc(fe.message)}${fe.hint ? `<br><small>${_esc(fe.hint)}</small>` : ''}</div>`;
+      listEl.innerHTML = `<div class="adbg-list-ph adbg-list-err" title="${_esc(fe.raw)}"><span class="adbg-i" data-i="warn" aria-hidden="true"></span>${_esc(fe.message)}${fe.hint ? `<br><small>${_esc(fe.hint)}</small>` : ''}</div>`;
       const cnt = document.getElementById('adbgLogCount');
       if (cnt) cnt.textContent = 'Error';
       return;
@@ -1150,7 +1181,7 @@ const ApexDebugger = (() => {
     if (!_logs.length) {
       listEl.innerHTML = `<div class="adbg-list-ph">
         No logs${_traceUser ? ' yet — trigger an action in Salesforce.' : '.'}<br>
-        <small>All logs in the org are shown${_selUser ? ` — the user picker only controls whose trace flag ▶ Start Trace creates (currently ${_esc(_selUser.Name)})` : '. Select a user and start a trace to capture new logs'}.</small>
+        <small>All logs in the org are shown${_selUser ? ` — the user picker only controls whose trace flag Start Trace creates (currently ${_esc(_selUser.Name)})` : '. Select a user and start a trace to capture new logs'}.</small>
       </div>`;
       return;
     }
@@ -1163,7 +1194,22 @@ const ApexDebugger = (() => {
       ? _logs.filter(l => _xSearchHits.has(l.Id) || (_xSearchRunning && !(l.Id in _xRawCache) && !_bodyCache[l.Id]))
       : _logs;
 
-    listEl.innerHTML = visible.map(log => {
+    // A real header row. The list is a data table in everything but tag name:
+    // it has four columns and every row repeats them, so name them once at the
+    // top instead of making the reader infer "10.2 KB / 4.8s" from position.
+    // Column widths are pinned in CSS (.adbg-list-hdr / .adbg-row-*), and the
+    // two numeric columns are right-aligned with tabular figures so digits
+    // stack. Not sortable — see the note in styles.css §4.
+    const listHdr =
+      `<div class="adbg-list-hdr" aria-hidden="true">` +
+        `<span></span>` +
+        `<span>Operation</span>` +
+        `<span class="adbg-list-hdr-num">Size</span>` +
+        `<span class="adbg-list-hdr-num">Duration</span>` +
+        `<span></span>` +
+      `</div>`;
+
+    listEl.innerHTML = listHdr + visible.map(log => {
       const isNew  = _newIds.has(log.Id);
       const isSel  = log.Id === _selLogId;
       const isCk   = _checked.has(log.Id);
@@ -1206,10 +1252,10 @@ const ApexDebugger = (() => {
           <div class="adbg-row-top">
             <span class="adbg-row-time">${time}</span>
             ${isNew     ? '<span class="adbg-badge-new">NEW</span>'  : ''}
-            ${xHits     ? `<span class="adbg-badge-xhit" title="${xHits.length} matching line${xHits.length === 1 ? '' : 's'}">🔍 ${xHits.length}</span>` : ''}
-            ${hasLoop   ? '<span class="adbg-badge-loop">🔄 LOOP</span>' : ''}
-            ${hasFault  ? '<span class="adbg-badge-fault">⚠ FAULT</span>' : ''}
-            ${peak >= 80 ? `<span class="adbg-badge-limit${peak >= 95 ? ' adbg-badge-limit-crit' : ''}" title="Governor limit peaked at ${peak}% in this transaction">${peak >= 95 ? '🛑' : '⚠️'} ${peak}%</span>` : ''}
+            ${xHits     ? `<span class="adbg-badge-xhit" title="${xHits.length} matching line${xHits.length === 1 ? '' : 's'}"><span class="adbg-i" data-i="search" aria-hidden="true"></span>${xHits.length}</span>` : ''}
+            ${hasLoop   ? '<span class="adbg-badge-loop"><span class="adbg-i" data-i="repeat" aria-hidden="true"></span>LOOP</span>' : ''}
+            ${hasFault  ? '<span class="adbg-badge-fault"><span class="adbg-i" data-i="warn" aria-hidden="true"></span>FAULT</span>' : ''}
+            ${peak >= 80 ? `<span class="adbg-badge-limit${peak >= 95 ? ' adbg-badge-limit-crit' : ''}" title="Governor limit peaked at ${peak}% in this transaction">${_ICON('warn')}${peak}%</span>` : ''}
             <span class="adbg-row-size">${kb}</span>
             ${dur ? `<span class="adbg-row-dur">${dur}</span>` : ''}
           </div>
@@ -1219,7 +1265,7 @@ const ApexDebugger = (() => {
               ? `<div class="adbg-row-fail">${_esc(log.Status)}</div>` : ''}
           ${xSnippet}
         </div>
-        <button class="adbg-row-del" data-id="${log.Id}" title="Delete this log">🗑</button>
+        <button class="adbg-row-del" data-id="${log.Id}" title="Delete this log" aria-label="Delete this log"><span class="adbg-i" data-i="trash" aria-hidden="true"></span></button>
       </div>`;
     }).join('');
 
@@ -1278,7 +1324,7 @@ const ApexDebugger = (() => {
 
     const btn = document.getElementById('adbgXSearchBtn');
     const cnt = document.getElementById('adbgLogCount');
-    if (btn) { btn.textContent = '✕ Cancel'; btn.classList.add('adbg-xsearch-busy'); }
+    if (btn) { btn.dataset.adbgIcon = 'x'; btn.textContent = 'Cancel'; btn.classList.add('adbg-xsearch-busy'); }
 
     _renderLogList(); // clear previous marks immediately
 
@@ -1336,7 +1382,7 @@ const ApexDebugger = (() => {
     await Promise.all(Array.from({ length: CONC }, worker));
 
     _xSearchRunning = false;
-    if (btn) { btn.textContent = '🔍 Search'; btn.classList.remove('adbg-xsearch-busy'); }
+    if (btn) { btn.dataset.adbgIcon = 'search'; btn.textContent = 'Search'; btn.classList.remove('adbg-xsearch-busy'); }
     // If the user cleared the search mid-run, _clearXSearch already restored
     // the count message — don't overwrite it.
     if (_xSearchQuery !== query) return;
@@ -1389,7 +1435,7 @@ const ApexDebugger = (() => {
     if (seq !== _openLogSeq) return;   // superseded by a newer click — discard
     if (res.error) {
       const fe = sftkFriendlyError(res.error);
-      detail.innerHTML = `<div class="adbg-detail-err" title="${_esc(fe.raw)}">Failed to load log: ${_esc(fe.message)}<br><small>${_esc(fe.hint || 'The log may have been deleted — refresh the list (🔄).')}</small></div>`;
+      detail.innerHTML = `<div class="adbg-detail-err" title="${_esc(fe.raw)}">Failed to load log: ${_esc(fe.message)}<br><small>${_esc(fe.hint || 'The log may have been deleted — refresh the list.')}</small></div>`;
       return;
     }
 
@@ -1708,7 +1754,7 @@ const ApexDebugger = (() => {
     if (p.id) _logPeak[p.id] = peakPct;   // D1: badge this log's list row
     const limitAlertBlock = limitAlerts.length ? `
       <div class="adbg-limit-alert${peakPct >= 95 ? ' adbg-limit-alert-crit' : ''}">
-        <span class="adbg-limit-alert-icon">${peakPct >= 95 ? '🛑' : '⚠️'}</span>
+        <span class="adbg-limit-alert-icon adbg-i" data-i="warn" aria-hidden="true"></span>
         <div class="adbg-limit-alert-body">
           <strong>${peakPct >= 95 ? 'Governor limit almost hit' : 'Governor limit running high'}</strong>
           ${limitAlerts.map(a => `<div class="adbg-limit-alert-row">
@@ -1731,7 +1777,7 @@ const ApexDebugger = (() => {
       chip(triggers.length, 'Triggers') +
       chip(st.codeUnits, 'Code units') +
       chip(p.errors.length, 'Exceptions', hasErr) +
-      (hasLoop ? '<span class="adbg-chip adbg-chip-loop">🔄 Recursion</span>' : '');
+      (hasLoop ? '<span class="adbg-chip adbg-chip-loop"><span class="adbg-i" data-i="repeat" aria-hidden="true"></span>Recursion</span>' : '');
 
     detail.innerHTML = `
       <div class="adbg-detail-inner">
@@ -1743,7 +1789,7 @@ const ApexDebugger = (() => {
         <div class="adbg-det-hdr" id="adbgDetHdr">
           <div class="adbg-det-hdr-bar" id="adbgDetHdrToggle"
             title="Click to minimize / expand the header">
-            <span class="adbg-det-hdr-caret">▾</span>
+            <span class="adbg-det-hdr-caret adbg-i" data-i="chevron" aria-hidden="true"></span>
             <span class="adbg-det-hdr-bar-title">${_esc(log.Operation || log.Request || log.Application || 'Unknown operation')}</span>
             ${timeStr   ? `<span class="adbg-det-hdr-bar-meta">${timeStr}</span>` : ''}
             ${kb !== '—'? `<span class="adbg-det-hdr-bar-meta">${kb}</span>` : ''}
@@ -1753,24 +1799,36 @@ const ApexDebugger = (() => {
           </div>
           <div class="adbg-det-hdr-body">
             ${log.LogUser?.Name
-                ? `<div class="adbg-det-user">👤 ${_esc(log.LogUser.Name)}${
+                ? `<div class="adbg-det-user"><span class="adbg-i" data-i="user" aria-hidden="true"></span>${_esc(log.LogUser.Name)}${
                     // C5b: "automation behaves differently for THIS user"
                     // debugging usually ends in a permissions diff — jump to
                     // Copy Permissions with this user prefilled as the source.
-                    _xlink('copy-perms', '↗ Permissions',
+                    _xlink('copy-perms', 'Permissions',
                       `Inspect or compare ${log.LogUser.Name}'s profile, permission sets & groups in the Copy Permissions tool`,
                       log.LogUser.Name)}</div>` : ''}
-            ${p.entryPoint ? `<div class="adbg-det-entry">▶ Entry point: <code>${_esc(p.entryPoint)}</code></div>` : ''}
+            ${p.entryPoint ? `<div class="adbg-det-entry"><span class="adbg-i" data-i="chevron" aria-hidden="true"></span>Entry point: <code>${_esc(p.entryPoint)}</code></div>` : ''}
+            <!-- Six equally-loud brand-blue buttons gave the primary no
+                 dominance and could not fit one row in an 800px popup. Now:
+                 one filled primary, two labelled exports, then the three
+                 view-manipulation controls as icon buttons (each with a real
+                 aria-label, so nothing is announced as "button"). -->
             <div class="adbg-det-actions">
-              <button class="btn btn-primary btn-sm"   id="adbgCopyReportBtn">📋 Copy Report</button>
-              <button class="btn btn-secondary btn-sm" id="adbgDlReportBtn">📄 Download Report</button>
-              <button class="btn btn-secondary btn-sm" id="adbgDlBtn">⬇ Raw Log</button>
-              <button class="btn btn-secondary btn-sm" id="adbgCollapseAllBtn"
-                title="Collapse all expandable sections in this view">↕ Collapse all</button>
-              <button class="btn btn-secondary btn-sm" id="adbgFullLogBtn"
-                title="Hide the trace summary panel — give the log viewer the entire screen">⛶ Fullscreen log</button>
-              <button class="btn btn-secondary btn-sm" id="adbgNewTabBtn"
-                title="Open this log in a new browser tab with all search/filter/goto controls">⤢ Open in new tab</button>
+              <button class="btn btn-primary btn-sm"   id="adbgCopyReportBtn" data-adbg-icon="copy"
+                title="Copy the analysis report to the clipboard">Copy Report</button>
+              <button class="btn btn-secondary btn-sm" id="adbgDlReportBtn" data-adbg-icon="doc"
+                title="Download the analysis report as a Markdown file">Download</button>
+              <button class="btn btn-secondary btn-sm" id="adbgDlBtn" data-adbg-icon="download"
+                title="Download the raw, unparsed log file">Raw log</button>
+              <span class="adbg-bar-sep" aria-hidden="true"></span>
+              <button class="btn btn-secondary btn-sm adbg-btn-icon" id="adbgCollapseAllBtn"
+                data-adbg-icon="expand" aria-label="Collapse all sections"
+                title="Collapse all expandable sections in this view"></button>
+              <button class="btn btn-secondary btn-sm adbg-btn-icon" id="adbgFullLogBtn"
+                data-adbg-icon="fullscreen" aria-label="Fullscreen log"
+                title="Hide the trace summary panel — give the log viewer the entire screen"></button>
+              <button class="btn btn-secondary btn-sm adbg-btn-icon" id="adbgNewTabBtn"
+                data-adbg-icon="popout" aria-label="Open this log in a new tab"
+                title="Open this log in a new browser tab with all search/filter/goto controls"></button>
             </div>
           </div>
         </div>
@@ -1779,7 +1837,7 @@ const ApexDebugger = (() => {
              gets the screen. Collapsed state still shows the compact chips. -->
         <details class="adbg-analysis">
           <summary class="adbg-analysis-sum">
-            <span class="adbg-analysis-title">📊 Analysis</span>
+            <span class="adbg-analysis-title"><span class="adbg-i" data-i="chart" aria-hidden="true"></span>Analysis</span>
             <span class="adbg-analysis-chips">${analysisChips}</span>
           </summary>
           <div class="adbg-analysis-body">
@@ -1798,10 +1856,10 @@ const ApexDebugger = (() => {
           const top = p.timeline.slice(0, 5);
           const maxMs = top[0].ms || 1;
           const fmt = ms => ms >= 1000 ? (ms / 1000).toFixed(2) + 's' : Math.round(ms) + 'ms';
-          const icon = t => t === 'flow' ? '🌊' : t === 'method' ? '⚙' : '⚡';
+          const icon = t => _ICON(t === 'flow' ? 'flow' : t === 'method' ? 'code' : 'bolt');
           return `
           <div class="adbg-section">
-            <div class="adbg-sec-hdr">⏱ Where the time went
+            <div class="adbg-sec-hdr"><span class="adbg-i" data-i="clock" aria-hidden="true"></span>Where the time went
               <span class="adbg-cnt-badge">top ${top.length}</span>
             </div>
             ${top.map(u => `
@@ -1829,7 +1887,7 @@ const ApexDebugger = (() => {
           if (!repeats.length) return '';
           return `
           <div class="adbg-section">
-            <div class="adbg-sec-hdr">🔁 Repeated queries
+            <div class="adbg-sec-hdr"><span class="adbg-i" data-i="repeat" aria-hidden="true"></span>Repeated queries
               <span class="adbg-cnt-badge adbg-cnt-err">${repeats.length}</span>
             </div>
             <div class="adbg-nplus-hint">The same query shape ran many times in one transaction — the classic
@@ -1846,13 +1904,13 @@ const ApexDebugger = (() => {
         <!-- Recursion / loop banner -->
         ${hasLoop ? `
           <div class="adbg-loop-banner">
-            <span class="adbg-loop-icon">🔄</span>
+            <span class="adbg-loop-icon adbg-i" data-i="repeat" aria-hidden="true"></span>
             <div>
               <strong>Recursion / Loop Detected</strong>
               <div class="adbg-loop-items">
                 ${p.recursions.map(r => `
                   <div class="adbg-loop-item">
-                    ${r.type === 'flow' ? '🌊' : '⚡'}
+                    ${_ICON(r.type === 'flow' ? 'flow' : 'bolt')}
                     <strong>${_esc(r.name)}</strong>
                     — ran <strong>${r.count}×</strong>
                     ${r.depth > 0
@@ -1862,7 +1920,7 @@ const ApexDebugger = (() => {
                         // C5b: "flow A updates X which re-triggers flow B" is
                         // exactly the what-references-what question the
                         // Dependencies tab answers.
-                        ? _xlink('dependencies', '↗ Deps',
+                        ? _xlink('dependencies', 'Deps',
                             'Map which flows call or re-trigger this one in the Dependencies tab')
                         : ''}
                   </div>`).join('')}
@@ -1873,14 +1931,14 @@ const ApexDebugger = (() => {
         <!-- Flows -->
         ${flows.length ? `
           <div class="adbg-section">
-            <div class="adbg-sec-hdr">🌊 Flows <span class="adbg-cnt-badge">${flows.length}</span></div>
+            <div class="adbg-sec-hdr"><span class="adbg-i" data-i="flow" aria-hidden="true"></span>Flows <span class="adbg-cnt-badge">${flows.length}</span></div>
             ${flows.map(([name, info]) => `
               <div class="adbg-auto-row${info.recursed ? ' adbg-auto-loop' : ''}">
                 <span class="adbg-auto-name">${_esc(name)}</span>
                 ${info.recordTriggered ? '<span class="adbg-tag-rt">RECORD-TRIGGERED</span>' : ''}
                 ${info.parents?.length ? `<span class="adbg-tag-sub" title="Sub-flow called by ${_esc(info.parents.join(', '))}">SUB-FLOW</span>` : ''}
                 <span class="adbg-auto-count">${info.count}×</span>
-                ${info.faulted   ? '<span class="adbg-tag-fault">⚠ Fault</span>'  : ''}
+                ${info.faulted   ? '<span class="adbg-tag-fault"><span class="adbg-i" data-i="warn" aria-hidden="true"></span>Fault</span>'  : ''}
                 ${info.recursed  ? '<span class="adbg-tag-loop">LOOP</span>'       : ''}
                 ${
                   // C5b: jump links. Deps for every flow (call-chain map);
@@ -1889,14 +1947,14 @@ const ApexDebugger = (() => {
                   // flow would just dead-end into an empty filter; Flows
                   // (version cleaner) for faulted flows, where remediation
                   // (inspect versions / deactivate a bad one) lives.
-                  _xlink('dependencies', '↗ Deps',
+                  _xlink('dependencies', 'Deps',
                     "Map this flow's subflow call chain — and what re-triggers it — in the Dependencies tab")}
                 ${!info.recordTriggered
-                  ? _xlink('flow-access', '↗ Access',
+                  ? _xlink('flow-access', 'Access',
                       'See who can run this flow in the Flow Access tool (screen flows only) — list prefiltered to this name', name)
                   : ''}
                 ${info.faulted
-                  ? _xlink('flows', '↗ Flows',
+                  ? _xlink('flows', 'Flows',
                       'This flow faulted — inspect, back up, or clean its versions in the Flows tool (list prefiltered to this name)', name)
                   : ''}
               </div>
@@ -1907,18 +1965,18 @@ const ApexDebugger = (() => {
                 </div>` : ''}
               ${(info.path || []).length ? `
                 <details class="adbg-flow-path">
-                  <summary>🧭 path taken — ${info.path.length} step${info.path.length === 1 ? '' : 's'}${info.path.truncated ? ' (first 80)' : ''}</summary>
+                  <summary><span class="adbg-i" data-i="compass" aria-hidden="true"></span>path taken — ${info.path.length} step${info.path.length === 1 ? '' : 's'}${info.path.truncated ? ' (first 80)' : ''}</summary>
                   <div class="adbg-flow-path-crumbs">
-                    ${info.path.map(s => `<span class="adbg-fp-step${/decision/i.test(s.t) ? ' adbg-fp-decision' : ''}${/loop/i.test(s.t) ? ' adbg-fp-loop' : ''}" title="${_esc(s.t)}">${_esc(s.n)}${s.c > 1 ? `<b>×${s.c}</b>` : ''}</span>`).join('<span class="adbg-fp-arrow">→</span>')}
+                    ${info.path.map(s => `<span class="adbg-fp-step${/decision/i.test(s.t) ? ' adbg-fp-decision' : ''}${/loop/i.test(s.t) ? ' adbg-fp-loop' : ''}" title="${_esc(s.t)}">${_esc(s.n)}${s.c > 1 ? `<b>×${s.c}</b>` : ''}</span>`).join('<span class="adbg-fp-arrow adbg-i" data-i="chevron" aria-hidden="true"></span>')}
                   </div>
-                  <div class="adbg-fp-hint">Decisions are highlighted; ×N = loop iterations. Needs the Workflow category at FINER+ (🌊 Flows Only / ⚡ Flows + Apex profiles).</div>
+                  <div class="adbg-fp-hint">Decisions are highlighted; ×N = loop iterations. Needs the Workflow category at FINER+ (Flows Only / Flows + Apex profiles).</div>
                 </details>` : ''}`).join('')}
           </div>` : ''}
 
         <!-- Apex Triggers -->
         ${triggers.length ? `
           <div class="adbg-section">
-            <div class="adbg-sec-hdr">⚡ Apex Triggers <span class="adbg-cnt-badge">${triggers.length}</span></div>
+            <div class="adbg-sec-hdr"><span class="adbg-i" data-i="bolt" aria-hidden="true"></span>Apex Triggers <span class="adbg-cnt-badge">${triggers.length}</span></div>
             ${triggers.map(([name, info]) => `
               <div class="adbg-auto-row${info.count > 1 ? ' adbg-auto-loop' : ''}">
                 <span class="adbg-auto-name">${_esc(name)}</span>
@@ -1931,7 +1989,7 @@ const ApexDebugger = (() => {
         <!-- Process Builder -->
         ${procs.length ? `
           <div class="adbg-section">
-            <div class="adbg-sec-hdr">📋 Process Builder <span class="adbg-cnt-badge">${procs.length}</span></div>
+            <div class="adbg-sec-hdr"><span class="adbg-i" data-i="list" aria-hidden="true"></span>Process Builder <span class="adbg-cnt-badge">${procs.length}</span></div>
             ${procs.map(([name, info]) => `
               <div class="adbg-auto-row">
                 <span class="adbg-auto-name">${_esc(name)}</span>
@@ -1942,7 +2000,7 @@ const ApexDebugger = (() => {
         <!-- Workflow Rules -->
         ${wfRules.length ? `
           <div class="adbg-section">
-            <div class="adbg-sec-hdr">⚙️ Workflow Rules <span class="adbg-cnt-badge">${wfRules.length}</span></div>
+            <div class="adbg-sec-hdr"><span class="adbg-i" data-i="gear" aria-hidden="true"></span>Workflow Rules <span class="adbg-cnt-badge">${wfRules.length}</span></div>
             ${wfRules.map(([name, info]) => `
               <div class="adbg-auto-row">
                 <span class="adbg-auto-name">${_esc(name)}</span>
@@ -1965,7 +2023,7 @@ const ApexDebugger = (() => {
         <!-- Exceptions — D5: each row jumps the viewer to its log line -->
         ${hasErr ? `
           <div class="adbg-section">
-            <div class="adbg-sec-hdr">🚨 Exceptions
+            <div class="adbg-sec-hdr"><span class="adbg-i" data-i="alert" aria-hidden="true"></span>Exceptions
               <span class="adbg-cnt-badge adbg-cnt-err">${p.errors.length}</span>
             </div>
             ${p.errors.slice(0, 8).map(e =>
@@ -1974,7 +2032,7 @@ const ApexDebugger = (() => {
                     title="${e.line ? 'Jump to line ' + e.line + ' in the log' : ''}">
                 ${e.fatal ? '<span class="adbg-err-tag">FATAL</span>' : ''}
                 ${sftkEscLogLine(e.msg) /* raw log text — see _oneLogLine */}
-                ${e.line ? `<span class="adbg-err-goto">line ${e.line} ↵</span>` : ''}
+                ${e.line ? `<span class="adbg-err-goto">line ${e.line}</span>` : ''}
               </div>`
             ).join('')}
             ${p.errors.length > 8
@@ -1989,8 +2047,8 @@ const ApexDebugger = (() => {
              analysis) when they want. -->
         <div class="adbg-logsec" id="adbgLogsec">
           <div class="adbg-log-title-bar" id="adbgLogToggle" title="Click to minimize / expand the log">
-            <span class="adbg-log-caret">▾</span>
-            📜 Log Content
+            <span class="adbg-log-caret adbg-i" data-i="chevron" aria-hidden="true"></span>
+            <span class="adbg-i" data-i="doc" aria-hidden="true"></span>Log Content
             <span class="adbg-cnt-badge">${(p.stats?.lines || 0).toLocaleString()} lines</span>
             <!-- Font-size controls. NO inline onclick here — MV3 extension
                  pages block inline handlers (CSP), so it silently never ran
@@ -2008,7 +2066,7 @@ const ApexDebugger = (() => {
             <!-- Notepad++-style search row: query + options + match nav -->
             <div class="adbg-log-search-row">
               <input type="text" id="adbgLogSearch" class="adbg-log-search"
-                placeholder="Find in log (Ctrl+F)… use ⏎ next, ⇧⏎ prev"
+                placeholder="Find in log (Ctrl+F)… Enter = next, Shift+Enter = prev"
                 autocomplete="off">
               <label class="adbg-log-search-opt" title="Match case — e.g. searching 'Account' finds Account but NOT ACCOUNT_TRIGGER; off, 'soql' also finds SOQL_EXECUTE_BEGIN">
                 <input type="checkbox" id="adbgLogCase"> Aa
@@ -2020,17 +2078,17 @@ const ApexDebugger = (() => {
                 <input type="checkbox" id="adbgLogWord"> W
               </label>
               <span class="adbg-log-search-count" id="adbgLogSearchCount" title="Match navigation">—</span>
-              <button class="adbg-log-search-btn" id="adbgLogSearchPrev" title="Previous match (Shift+Enter)">↑</button>
-              <button class="adbg-log-search-btn" id="adbgLogSearchNext" title="Next match (Enter)">↓</button>
+              <button class="adbg-log-search-btn" id="adbgLogSearchPrev" title="Previous match (Shift+Enter)" aria-label="Previous match"><span class="adbg-i" data-i="arrow-up" aria-hidden="true"></span></button>
+              <button class="adbg-log-search-btn" id="adbgLogSearchNext" title="Next match (Enter)" aria-label="Next match"><span class="adbg-i" data-i="arrow-down" aria-hidden="true"></span></button>
             </div>
 
             <input type="text" id="adbgLogFilter" class="adbg-log-filter" placeholder="Filter to matching lines only…">
 
             <!-- D4: one-click category filters (composable with the text filter) -->
             <div class="adbg-log-cats" id="adbgLogCats">
-              ${[['', 'All'], ['debug', '🗣 Debug'], ['soqldml', '🗄 SOQL/DML'],
-                 ['errors', '🚨 Errors'], ['nonoise', '🔇 Hide noise']].map(([c, lbl], i) =>
-                `<button class="adbg-log-cat${i === 0 ? ' adbg-log-cat-on' : ''}" data-cat="${c}">${lbl}</button>`).join('')}
+              ${[['', 'All', ''], ['debug', 'Debug', 'speech'], ['soqldml', 'SOQL/DML', 'database'],
+                 ['errors', 'Errors', 'alert'], ['nonoise', 'Hide noise', 'mute']].map(([c, lbl, ic], i) =>
+                `<button class="adbg-log-cat${i === 0 ? ' adbg-log-cat-on' : ''}" data-cat="${c}">${ic ? _ICON(ic) : ''}${lbl}</button>`).join('')}
             </div>
           </div>
           <div class="adbg-log-view" id="adbgLogView">${_renderLogLines(p.raw || '')}</div>
@@ -2066,7 +2124,11 @@ const ApexDebugger = (() => {
       const anyOpen = allDetails.some(d => d.open);
       // If anything is open → close everything. If nothing is open → expand everything.
       allDetails.forEach(d => { d.open = !anyOpen; });
-      e.currentTarget.textContent = anyOpen ? '↕ Expand all' : '↕ Collapse all';
+      // Icon-only button: its state lives in the accessible name + tooltip,
+      // not in a text node (which would break the 28px square).
+      const label = anyOpen ? 'Expand all sections' : 'Collapse all sections';
+      e.currentTarget.setAttribute('aria-label', label);
+      e.currentTarget.title = label;
     });
 
     // Fullscreen log — hide everything in .adbg-detail-inner EXCEPT the
@@ -2078,7 +2140,8 @@ const ApexDebugger = (() => {
       const detail = document.getElementById('adbgDetail');
       if (!detail) return;
       const isFull = detail.classList.toggle('adbg-detail-fulllog');
-      e.currentTarget.textContent = isFull ? '⛶ Exit fullscreen (Esc)' : '⛶ Fullscreen log';
+      e.currentTarget.setAttribute('aria-label',
+        isFull ? 'Exit fullscreen log (Esc)' : 'Fullscreen log');
       e.currentTarget.title = isFull
         ? 'Restore the trace summary panel — or press Esc'
         : 'Hide the trace summary panel — give the log viewer the entire screen';
@@ -2101,7 +2164,10 @@ const ApexDebugger = (() => {
         if (d?.classList.contains('adbg-detail-fulllog')) {
           d.classList.remove('adbg-detail-fulllog');
           const btn = document.getElementById('adbgFullLogBtn');
-          if (btn) { btn.textContent = '⛶ Fullscreen log'; btn.title = 'Hide the trace summary panel — give the log viewer the entire screen'; }
+          if (btn) {
+            btn.setAttribute('aria-label', 'Fullscreen log');
+            btn.title = 'Hide the trace summary panel — give the log viewer the entire screen';
+          }
         }
       });
     }
@@ -2116,7 +2182,7 @@ const ApexDebugger = (() => {
       if (!sec) return;
       const collapsed = sec.classList.toggle('adbg-logsec-collapsed');
       const caret = sec.querySelector('.adbg-log-caret');
-      if (caret) caret.textContent = collapsed ? '▸' : '▾';
+      if (caret) caret.classList.toggle('adbg-caret-closed', collapsed);
     });
 
     // ── Log font-size controls ──────────────────────────────
@@ -2145,7 +2211,7 @@ const ApexDebugger = (() => {
       const analysis = inner?.querySelector('.adbg-analysis');
       if (analysis && collapsed) analysis.open = false;
       const caret = hdr.querySelector('.adbg-det-hdr-caret');
-      if (caret) caret.textContent = collapsed ? '▸' : '▾';
+      if (caret) caret.classList.toggle('adbg-caret-closed', collapsed);
     });
 
     // ── Log viewer: chunked scroll-load + filter + goto ──
@@ -2395,17 +2461,17 @@ const ApexDebugger = (() => {
 
     // ── Verdict ──
     if (hasLoop || hasErr) {
-      L.push('## ⚠️ Issues Found');
+      L.push('## Issues Found');
       if (hasLoop) L.push(`- Recursion / loop detected in ${p.recursions.length} automation(s).`);
       if (hasErr)  L.push(`- ${p.errors.length} exception(s) thrown during this transaction.`);
     } else {
-      L.push('## ✅ No recursion or exceptions detected');
+      L.push('## No recursion or exceptions detected');
     }
     L.push('');
 
     // ── Transaction summary ──
     const st = p.stats || {};
-    L.push('## 📊 Transaction Summary');
+    L.push('## Transaction Summary');
     L.push(`- SOQL queries: ${st.soql || 0}${st.soqlRows ? ` (${st.soqlRows} rows)` : ''}`);
     L.push(`- DML statements: ${st.dml || 0}${st.dmlRows ? ` (${st.dmlRows} rows)` : ''}`);
     L.push(`- Code units: ${st.codeUnits || 0}`);
@@ -2432,7 +2498,7 @@ const ApexDebugger = (() => {
 
     // ── Recursion ──
     if (hasLoop) {
-      L.push('## 🔄 Recursion / Loop Detection');
+      L.push('## Recursion / Loop Detection');
       p.recursions.forEach(r => {
         const kind = r.type === 'flow' ? 'Flow' : 'Apex Trigger';
         if (r.depth > 0) {
@@ -2447,7 +2513,7 @@ const ApexDebugger = (() => {
     // ── Flows ──
     const flows = Object.entries(p.flows);
     if (flows.length) {
-      L.push('## 🌊 Flows');
+      L.push('## Flows');
       flows.forEach(([name, info]) => {
         const tags = [];
         if (info.recordTriggered) tags.push('record-triggered');
@@ -2458,7 +2524,7 @@ const ApexDebugger = (() => {
         if (info.triggeringObjects?.length)
           L.push(`  - Triggered by: ${info.triggeringObjects.join(', ')}`);
         if (info.faulted)
-          L.push(`  - ⚠️ A flow element hit a fault path — check the flow's fault connectors.`);
+          L.push(`  - A flow element hit a fault path — check the flow's fault connectors.`);
       });
       L.push('');
     }
@@ -2466,7 +2532,7 @@ const ApexDebugger = (() => {
     // ── Apex Triggers ──
     const triggers = Object.entries(p.triggers);
     if (triggers.length) {
-      L.push('## ⚡ Apex Triggers');
+      L.push('## Apex Triggers');
       triggers.forEach(([name, info]) => {
         const ops = info.operations?.length ? ` _(${info.operations.join(', ')})_` : '';
         L.push(`- **${name}** — fired ${info.count}×${ops}${info.count > 1 ? ' — fired more than once; verify this is intended bulk behaviour and not a re-entry.' : ''}`);
@@ -2477,7 +2543,7 @@ const ApexDebugger = (() => {
     // ── Process Builder ──
     const procs = Object.entries(p.processes);
     if (procs.length) {
-      L.push('## 📋 Process Builder');
+      L.push('## Process Builder');
       procs.forEach(([name, info]) => L.push(`- **${name}** — ran ${info.count}×`));
       L.push('');
     }
@@ -2485,7 +2551,7 @@ const ApexDebugger = (() => {
     // ── Workflow Rules ──
     const wfRules = Object.entries(p.wfRules);
     if (wfRules.length) {
-      L.push('## ⚙️ Workflow Rules');
+      L.push('## Workflow Rules');
       wfRules.forEach(([name, info]) => L.push(`- **${name}** — evaluated ${info.count}×`));
       L.push('');
     }
@@ -2497,7 +2563,7 @@ const ApexDebugger = (() => {
 
     // ── Exceptions ──
     if (hasErr) {
-      L.push('## 🚨 Exceptions');
+      L.push('## Exceptions');
       p.errors.forEach((e, i) => L.push(`${i + 1}. ${e.msg}`));
       L.push('');
     }
@@ -2513,9 +2579,14 @@ const ApexDebugger = (() => {
       await navigator.clipboard.writeText(report);
       if (btn) {
         const orig = btn.textContent;
-        btn.textContent = '✓ Copied';
+        btn.dataset.adbgIcon = 'check';
+        btn.textContent = 'Copied';
         btn.disabled = true;
-        setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1800);
+        setTimeout(() => {
+          btn.dataset.adbgIcon = 'copy';
+          btn.textContent = orig;
+          btn.disabled = false;
+        }, 1800);
       }
     } catch (_) {
       // Clipboard API blocked — fall back to a download
@@ -2891,10 +2962,11 @@ const ApexDebugger = (() => {
     if (!btn) return;
     if (!btn.dataset.armed) {   // two-click confirm, same pattern as Delete All
       btn.dataset.armed = '1';
-      btn.textContent   = '⚠ Confirm >24h';
+      btn.dataset.adbgIcon = 'warn';
+      btn.textContent   = 'Confirm purge';
       btn.classList.add('adbg-btn-armed');
       setTimeout(() => {
-        if (btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = '🧹 >24h'; btn.classList.remove('adbg-btn-armed'); }
+        if (btn.dataset.armed) { delete btn.dataset.armed; btn.dataset.adbgIcon = 'clock'; btn.textContent = 'Purge >24h'; btn.classList.remove('adbg-btn-armed'); }
       }, 3500);
       return;
     }
@@ -2907,7 +2979,7 @@ const ApexDebugger = (() => {
     // QA 2026-07-27: a FAILED list query used to read as "0 logs to purge"
     // and report silent success — surface it instead.
     if (res?.error) {
-      btn.disabled = false; btn.textContent = '🧹 >24h';
+      btn.disabled = false; btn.dataset.adbgIcon = 'clock'; btn.textContent = 'Purge >24h';
       _showErrorModal('Could not query old logs', res.error);
       return;
     }
@@ -2927,7 +2999,7 @@ const ApexDebugger = (() => {
       }
       if (cnt) cnt.textContent = `Deleting ${done}/${ids.length}`;
     }
-    btn.disabled = false; btn.textContent = '🧹 >24h';
+    btn.disabled = false; btn.dataset.adbgIcon = 'clock'; btn.textContent = 'Purge >24h';
     if (failed) _showErrorModal(`Purge: ${ids.length - failed} deleted, ${failed} failed`, firstErr);
     _loadLogs();   // reloads from the org, so surviving rows reappear
   }
@@ -2976,14 +3048,14 @@ const ApexDebugger = (() => {
       const d = b - a;
       if (d === 0) return '<span class="adbg-cmp-same">=</span>';
       const better = d < 0;   // lower is better for every metric here
-      return `<span class="${better ? 'adbg-cmp-better' : 'adbg-cmp-worse'}">${better ? '▼' : '▲'} ${Math.abs(Math.round(d * 10) / 10).toLocaleString()}</span>`;
+      return `<span class="${better ? 'adbg-cmp-better' : 'adbg-cmp-worse'}">${_ICON(better ? 'arrow-down' : 'arrow-up')}${Math.abs(Math.round(d * 10) / 10).toLocaleString()}</span>`;
     };
     const name = p => `${_esc((p.meta.Operation || 'log').slice(0, 34))}<br><small>${p.meta.StartTime ? new Date(p.meta.StartTime).toLocaleTimeString() : ''}</small>`;
     detail.innerHTML = `
       <div class="adbg-detail-inner">
         <div class="adbg-cmp">
-          <div class="adbg-cmp-hdr">⚖ Before / after comparison
-            <button class="btn btn-secondary btn-sm" id="adbgCmpClose">✕ Close</button>
+          <div class="adbg-cmp-hdr"><span class="adbg-cmp-hdr-title"><span class="adbg-i" data-i="compare" aria-hidden="true"></span>Before / after comparison</span>
+            <button class="btn btn-secondary btn-sm" id="adbgCmpClose" data-adbg-icon="x">Close</button>
           </div>
           <table class="adbg-cmp-table">
             <tr><th></th><th>${name(L)}</th><th>${name(R)}</th><th>Δ</th></tr>
@@ -2992,11 +3064,11 @@ const ApexDebugger = (() => {
               return `<tr><td>${lbl}</td><td>${fmt(a)}</td><td>${fmt(b)}</td><td>${fmtDelta(a, b)}</td></tr>`;
             }).join('')}
           </table>
-          <div class="adbg-cmp-hint">Older log on the left. ▼ = improved (lower), ▲ = regressed. Click a log row to leave compare view.</div>
+          <div class="adbg-cmp-hint">Older log on the left. <span class="adbg-i" data-i="arrow-down" aria-hidden="true"></span> = improved (lower), <span class="adbg-i" data-i="arrow-up" aria-hidden="true"></span> = regressed. Click a log row to leave compare view.</div>
         </div>
       </div>`;
     document.getElementById('adbgCmpClose')?.addEventListener('click', () => {
-      detail.innerHTML = '<div class="adbg-detail-empty"><div class="adbg-detail-icon">🔍</div><div>Select a log to inspect automations</div></div>';
+      detail.innerHTML = '<div class="adbg-detail-empty"><div class="adbg-detail-icon adbg-i" data-i="search" aria-hidden="true"></div><div>Select a log to inspect automations</div></div>';
     });
   }
 
@@ -3020,7 +3092,7 @@ const ApexDebugger = (() => {
     if (_selLogId === id) {
       _selLogId = null;
       const d = document.getElementById('adbgDetail');
-      if (d) d.innerHTML = '<div class="adbg-detail-empty"><div class="adbg-detail-icon">🗑</div><div>Log deleted</div></div>';
+      if (d) d.innerHTML = '<div class="adbg-detail-empty"><div class="adbg-detail-icon adbg-i" data-i="trash" aria-hidden="true"></div><div>Log deleted</div></div>';
     }
     _renderLogList();
     _updateCount();
@@ -3051,7 +3123,7 @@ const ApexDebugger = (() => {
         if (_selLogId === id) {
           _selLogId = null;
           const d = document.getElementById('adbgDetail');
-          if (d) d.innerHTML = '<div class="adbg-detail-empty"><div class="adbg-detail-icon">🗑</div><div>Logs deleted</div></div>';
+          if (d) d.innerHTML = '<div class="adbg-detail-empty"><div class="adbg-detail-icon adbg-i" data-i="trash" aria-hidden="true"></div><div>Logs deleted</div></div>';
         }
       }
       if (cnt) cnt.textContent = `Deleting ${done}/${ids.length}`;
@@ -3070,12 +3142,13 @@ const ApexDebugger = (() => {
     // Two-click confirm: first click arms the button; second click executes
     if (!btn.dataset.armed) {
       btn.dataset.armed    = '1';
-      btn.textContent      = '⚠ Confirm Delete All';
+      btn.dataset.adbgIcon = 'warn';
+      btn.textContent      = 'Confirm Delete All';
       btn.classList.add('adbg-btn-armed');
       setTimeout(() => {
         if (btn.dataset.armed) {
           delete btn.dataset.armed;
-          btn.textContent = '🗑 Delete All';
+          btn.dataset.adbgIcon = 'trash'; btn.textContent = 'Delete All';
           btn.classList.remove('adbg-btn-armed');
         }
       }, 3500);
@@ -3115,14 +3188,14 @@ const ApexDebugger = (() => {
 
     if (!_selLogId) {
       const d = document.getElementById('adbgDetail');
-      if (d) d.innerHTML = `<div class="adbg-detail-empty"><div class="adbg-detail-icon">🗑</div><div>${failed ? 'Logs deleted' : 'All logs deleted'}</div></div>`;
+      if (d) d.innerHTML = `<div class="adbg-detail-empty"><div class="adbg-detail-icon adbg-i" data-i="trash" aria-hidden="true"></div><div>${failed ? 'Logs deleted' : 'All logs deleted'}</div></div>`;
     }
 
     _renderLogList();
     _updateCount();
     _updateDelBtn();
     btn.disabled    = false;
-    btn.textContent = '🗑 Delete All';
+    btn.dataset.adbgIcon = 'trash'; btn.textContent = 'Delete All';
     if (failed) _showErrorModal(`${ids.length - failed} deleted, ${failed} failed`, firstErr);
   }
 
@@ -3146,8 +3219,11 @@ const ApexDebugger = (() => {
   // log experience (whole viewport, no popup chrome) with the same search /
   // filter / goto controls as the inline panel.
   async function _openLogInNewTab(p, btn) {
-    const orig = btn?.textContent;
-    if (btn) { btn.disabled = true; btn.textContent = '… opening'; }
+    // Icon-only button: the busy state is disabled + the busy cat prepended
+    // to the header below, and the accessible name says what's happening.
+    // Writing a text node here would blow out the 28px square.
+    const orig = btn?.getAttribute('aria-label');
+    if (btn) { btn.disabled = true; btn.setAttribute('aria-label', 'Opening the log viewer…'); }
     // May refetch a multi-MB log body and write it to chrome.storage — show a
     // busy cat in the detail header while it works.
     const hdr = document.getElementById('adbgDetHdr');
@@ -3180,12 +3256,15 @@ const ApexDebugger = (() => {
       const raw = err.message || String(err);
       // Huge logs can blow the chrome.storage quota — give a specific hint.
       const quotaHint = /quota/i.test(raw)
-        ? 'This log is too large for the new-tab viewer — use ⬇ Raw Log to download it instead.'
+        ? 'This log is too large for the new-tab viewer — use Raw Log to download it instead.'
         : null;
       _showErrorModal('Could not open log in new tab', raw, quotaHint);
     } finally {
       busy?.remove();
-      if (btn) { btn.disabled = false; btn.textContent = orig || '⤢ Open in new tab'; }
+      if (btn) {
+        btn.disabled = false;
+        btn.setAttribute('aria-label', orig || 'Open this log in a new tab');
+      }
     }
   }
 
@@ -3206,7 +3285,7 @@ const ApexDebugger = (() => {
     }
     showModal(`
       <div class="modal-header modal-warn">
-        <span class="modal-icon">⚠️</span>
+        <span class="modal-icon adbg-i adbg-i-lg" data-i="warn" aria-hidden="true"></span>
         <h2>${_esc(title)}</h2>
       </div>
       <div class="modal-body">
@@ -3221,6 +3300,15 @@ const ApexDebugger = (() => {
 
   function _esc(s) {
     return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // One monochrome icon, as markup. The glyph itself is a CSS mask keyed off
+  // data-i (see the "APEX DEBUGGER — DESIGN REFRESH" block in styles.css), so
+  // it paints in currentColor and follows the theme. Always aria-hidden: an
+  // icon here is decoration for an adjacent label, never the only cue.
+  // `name` is always a literal from this file, never user data.
+  function _ICON(name) {
+    return `<span class="adbg-i" data-i="${name}" aria-hidden="true"></span>`;
   }
 
   function _bg(msg) {
