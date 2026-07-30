@@ -336,3 +336,35 @@ describe('fcIsSystemShadowObject / fcPartitionObjects', () => {
     expect(fcIsSystemShadowObject(null, null)).toBe(false);
   });
 });
+
+// The Popout button is gone (user 2026-07-30: "i dont want the popout feature
+// on the toolkit. its anoying and doesn't work good"). Clicking the extension
+// icon already opens the Toolkit as a full tab, so a button that conjured a
+// second chromeless window was a redundant path — and Data Studio's back
+// button used the same mechanism, so it opens a plain tab now too.
+describe('the popout feature is removed, not just hidden', () => {
+  const HTML_ = readFileSync(join(root, 'popup.html'), 'utf8');
+  const JS_   = readFileSync(join(root, 'popup.js'), 'utf8');
+  const CORE_ = readFileSync(join(root, 'studio-core.js'), 'utf8');
+
+  it('no button, no handler, no dead listener left behind', () => {
+    expect(HTML_).not.toContain('popoutBtn');
+    expect(JS_).not.toContain('popoutBtn');
+    expect(JS_).not.toContain('?popout=1');
+  });
+
+  it('Data Studio opens the Toolkit as a TAB, never a chromeless window', () => {
+    expect(CORE_).toMatch(/async function openToolkit\(/);
+    expect(CORE_).not.toMatch(/openToolkitPopout/);
+    // The whole point: no windows.create at all. (Matching on `type:'popup'`
+    // caught the COMMENT that explains the removal — assert on the API call,
+    // which prose cannot accidentally satisfy.)
+    expect(CORE_).not.toMatch(/chrome\.windows\.create/);
+    expect(CORE_).toMatch(/chrome\.tabs\.create\(\{ url: `\$\{base\}/);
+  });
+
+  it('deep-linking to a feature still works (?tab= survives)', () => {
+    expect(CORE_).toMatch(/\?tab=\$\{encodeURIComponent\(tab\)\}/);
+    expect(JS_).toMatch(/TOOLKIT_NAVIGATE|[?&]tab=/);
+  });
+});
