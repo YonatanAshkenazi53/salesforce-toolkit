@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { extractFunctions } from './extract.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = f => readFileSync(join(root, f), 'utf8');
@@ -268,5 +269,70 @@ describe('the popup layer speaks the token vocabulary', () => {
 
   it('no raw hex colours', () => {
     expect(noMasks.match(/#[0-9A-Fa-f]{3,8}\b/g) || []).toEqual([]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════
+// Field Cleaner object picker — Salesforce's shadow objects are noise
+// (user 2026-07-30: "why do we see all the missing labels? its a noise.
+// who use these objects? do we need to show them?"). Salesforce creates
+// <X>Feed / <X>Share / <X>History / <X>ChangeEvent per feature and ships
+// them with unresolved labels, which render literally as
+// "__MISSING LABEL__ PropertyFile - val X not found in section …".
+// None hold cleanable custom fields, and they filled the dropdown before
+// a single real object appeared.
+// ══════════════════════════════════════════════════════════════════
+describe('fcIsSystemShadowObject / fcPartitionObjects', () => {
+  const { fcIsSystemShadowObject, fcPartitionObjects } =
+    extractFunctions('field-cleaner.js', ['fcIsSystemShadowObject', 'fcPartitionObjects']);
+
+  it('flags every shadow-object suffix', () => {
+    for (const api of ['ActivityFeed', 'AccountShare', 'OpportunityFieldHistory',
+                       'AccountHistory', 'AccountChangeEvent', 'ContactTag']) {
+      expect(fcIsSystemShadowObject(api, 'whatever'), api).toBe(true);
+    }
+  });
+
+  it('flags a broken label even when the API name looks ordinary', () => {
+    expect(fcIsSystemShadowObject('SomeThing__c',
+      '__MISSING LABEL__ PropertyFile - val Activity not found in section StandardFeedLabel')).toBe(true);
+  });
+
+  it('does NOT flag the real objects an admin cleans', () => {
+    for (const api of ['Account', 'Contact', 'Opportunity', 'My_Object__c',
+                       'FinServ__FinancialAccount__c', 'Order']) {
+      expect(fcIsSystemShadowObject(api, 'Label'), api).toBe(false);
+    }
+  });
+
+  it('does not over-match names that merely CONTAIN a suffix word', () => {
+    // "…Feed" only at the END; a Feedback object is a real custom object.
+    expect(fcIsSystemShadowObject('Feedback__c', 'Feedback')).toBe(false);
+    expect(fcIsSystemShadowObject('ShareholderReport__c', 'Shareholder Report')).toBe(false);
+    expect(fcIsSystemShadowObject('HistoryLog__c', 'History Log')).toBe(false);
+  });
+
+  it('partition hides them by default and counts what it hid', () => {
+    const list = [
+      { api: 'Account', label: 'Account' },
+      { api: 'ActivityFeed', label: '__MISSING LABEL__ PropertyFile - val Activity not found' },
+      { api: 'AccountShare', label: 'Account Share' },
+      { api: 'My_Object__c', label: 'My Object' },
+    ];
+    const hidden = fcPartitionObjects(list, false);
+    expect(hidden.shown.map(o => o.api)).toEqual(['Account', 'My_Object__c']);
+    expect(hidden.hidden).toBe(2);
+  });
+
+  it('showAll returns everything and reports nothing hidden', () => {
+    const list = [{ api: 'Account', label: 'A' }, { api: 'ActivityFeed', label: 'F' }];
+    const all = fcPartitionObjects(list, true);
+    expect(all.shown).toHaveLength(2);
+    expect(all.hidden).toBe(0);
+  });
+
+  it('survives junk input', () => {
+    expect(fcPartitionObjects(null, false)).toEqual({ shown: [], hidden: 0 });
+    expect(fcIsSystemShadowObject(null, null)).toBe(false);
   });
 });

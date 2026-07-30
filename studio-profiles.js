@@ -170,8 +170,10 @@ function openSequenceBuilder(seq) {
   const draft = seq
     ? JSON.parse(JSON.stringify(seq))
     : { id: genId('seq'), name: '',
-        // New sequences start with the working pair (still editable here).
-        sourceOrg: _workingPair.src || '', targetOrg: _workingPair.tgt || '',
+        // Same default as a new deployment and the topbar chip — one helper,
+        // so a new sequence never opens sourceless while the topbar shows one.
+        sourceOrg: (typeof currentSourceOrg === 'function' ? currentSourceOrg() : (_workingPair.src || '')),
+        targetOrg: _workingPair.tgt || '',
         steps: [], createdAt: new Date().toISOString() };
   if (!Array.isArray(draft.steps)) draft.steps = [];
 

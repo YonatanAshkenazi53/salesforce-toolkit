@@ -1662,13 +1662,24 @@ function orgOptionLabel(url, label, liveSet) {
 // It shows the ring's golden org; clicking picks a different source; the
 // gear opens the Sync Ring view. _workingPair.src mirrors the choice so all
 // existing default-seeding paths keep working; _workingPair.tgt is retired.
+// THE one answer to "which org is the source right now" — the ring's source of
+// truth, else the working pair. Everything that needs a default source must
+// call this: the topbar chip resolved it one way and the Profile Builder
+// another (_workingPair.src alone), so a new deployment could open with an
+// empty source while the topbar plainly showed one (user 2026-07-30).
+function currentSourceOrg() {
+  return (typeof _ring === 'object' && _ring?.sourceUrl)
+    || (typeof _workingPair === 'object' && _workingPair?.src)
+    || '';
+}
+
 function renderWorkingPair() {
   const el = eid('dsWorkingPair');
   if (!el) return;
   const orgs = allMapOrgs();
   if (!orgs.length) { el.innerHTML = ''; return; }
   const ls = _liveOrgSet();
-  const srcUrl = _ring?.sourceUrl || _workingPair.src || '';
+  const srcUrl = currentSourceOrg();
   const candidates = (_ring?.orgs?.length ? _ring.orgs : orgs.map(o => o.url));
   const opts = candidates.map(u => {
     const o = orgs.find(x => _orgKey(x.url) === _orgKey(u));
