@@ -1497,6 +1497,24 @@ html, body {
   padding: 4px 8px;
   flex: 1;
 }
+/* Match-key pickers (user 2026-07-30: "the field text boxes looks weird and
+   don't show the full name"): long namespaced API names (FinServ__…__c) hit
+   two flex problems at once — flex:1 makes up to 4 selects DIVIDE one row,
+   while a <select>'s min-width:auto refuses to shrink below its widest
+   option. Give each component a real share and let the row wrap; the
+   selected text ellipsizes, with the full name in the hover title (kept in
+   sync by the modal's change wiring). */
+.ds-match-fields-row select.ds-select-sm {
+  flex: 1 1 240px;
+  min-width: 200px;
+  max-width: 100%;
+  width: auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ds-rec-mf-col .ds-select-sm,
+.ds-rec-mf-col .ds-input-sm { text-overflow: ellipsis; }
 .ds-tree-where-input {
   flex: 1;
   font-family: 'SF Mono', 'Fira Code', monospace;

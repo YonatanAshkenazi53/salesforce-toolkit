@@ -1212,12 +1212,24 @@ async function openRecordPickerModal(pathStr) {
       matchCfgChanged(true);
     }));
 
+    // Long namespaced names ellipsize in the narrow selects — the hover title
+    // always carries the FULL selected option text (or the slot hint when
+    // empty), so "which field is this box?" is never a guess.
+    const syncKeyTitles = () => {
+      document.querySelectorAll('.ds-match-fields-row select.ds-select-sm, .ds-rec-mf-col .ds-select-sm').forEach(s => {
+        const opt = s.selectedOptions && s.selectedOptions[0];
+        if (opt && opt.value) s.title = opt.textContent.trim();
+      });
+    };
+    syncKeyTitles();
+
     document.querySelectorAll('[data-match-comp]').forEach(sel => sel.addEventListener('change', () => {
       const vals = [...document.querySelectorAll('[data-match-comp]')]
         .sort((a, b) => Number(a.dataset.matchComp) - Number(b.dataset.matchComp))
         .map(s => s.value).filter(Boolean);
       matchFields = [...new Set(vals)].slice(0, 4);
       if (!matchFields.length) matchFields = [displayField || 'Name'];
+      syncKeyTitles();
       matchCfgChanged(true);
     }));
 
