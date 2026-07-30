@@ -3,37 +3,116 @@
    Kitty mascot replaces the robot (same class names, new look)
    ============================================================ */
 
+/* ════════════════════════════════════════════════════════════════════════
+   THE DESIGN TOKENS — single canonical source for BOTH apps.
+
+   styles.css is loaded by popup.html, studio.html and apex-log-viewer.html,
+   so this one :root is the only place a base value is authored. studio.css
+   no longer re-declares the shared palette; it keeps only its own layout
+   knobs (--nav-w, density paddings).
+
+   Two layers, deliberately:
+     §A  NEW TOKENS (--sp-*, --fs-*, --c-*, --r-*, --sh-*)  — the vocabulary
+         all new/refactored CSS should speak.
+     §B  LEGACY ALIASES (--brand, --card, --radius, …)      — every variable
+         name the existing ~5,000 lines of rules already consume, redefined
+         in terms of §A so those rules keep working untouched.
+   ════════════════════════════════════════════════════════════════════════ */
 :root {
-  /* ── Brand palette (Salesforce Lightning Design System) ── */
-  --brand:        #0176D3;
-  --brand-dark:   #014486;
-  --brand-light:  #1B96FF;
-  --brand-bg:     #E8F4FD;
+  /* ── §A1 spacing ─────────────────────────────────────────────────────── */
+  --sp-1: 2px;  --sp-2: 4px;  --sp-3: 6px;  --sp-4: 8px;
+  --sp-5: 12px; --sp-6: 16px; --sp-7: 24px; --sp-8: 32px; --sp-9: 48px;
 
-  /* ── Neutrals ── */
-  --bg:           #F3F3F3;
-  --card:         #FFFFFF;
-  --surface2:     #F8F8F8;
-  --header-bg:    #032D60;
-  --header-text:  #FFFFFF;
-  --border:       #DDDBDA;
-  --border-light: #E5E4E2;
+  /* ── §A2 type ────────────────────────────────────────────────────────── */
+  --fs-2xs: 10px; --fs-xs: 11px; --fs-sm: 12px; --fs-md: 13px;
+  --fs-lg: 15px;  --fs-xl: 18px; --fs-2xl: 22px;
+  --lh-tight: 1.25; --lh-base: 1.5;
+  --fw-normal: 400; --fw-medium: 500; --fw-semibold: 600; --fw-bold: 700;
+  --font-sans: 'Salesforce Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* ── Text ── */
-  --text:         #181818;
-  --subtext:      #706E6B;
-  --subtext-lt:   #AEAEAC;
+  /* ── §A3 colour — surfaces / text / borders ──────────────────────────── */
+  --c-bg:            #F3F3F3;
+  --c-surface:       #FFFFFF;
+  --c-surface-sunk:  #F8F8F8;
+  --c-surface-nav:   #032D60;
+  --c-border:        #DDDBDA;
+  --c-border-subtle: #E5E4E2;
+  --c-border-strong: #AEAEAC;
+  --c-text:          #181818;
+  --c-text-muted:    #514F4D;
+  --c-text-faint:    #706E6B;
+  --c-text-inverse:  #FFFFFF;
 
-  /* ── Semantic ── */
-  --active-color:   #2E844A;
-  --draft-color:    #0176D3;
-  --obsolete-color: #706E6B;
+  /* ── §A4 colour — brand (accent only, never a status) ────────────────── */
+  --c-brand:        #0176D3;
+  --c-brand-hover:  #014486;
+  --c-brand-light:  #1B96FF;
+  --c-brand-subtle: #E8F4FD;
+  --c-brand-border: #C5DBF0;
+
+  /* ── §A5 colour — semantic status ────────────────────────────────────── */
+  --c-good-fg: #2E844A;  --c-good-bg: #EEF7EF;  --c-good-border: #B3DEB8;
+  --c-warn-fg: #B35C00;  --c-warn-bg: #FEF0E0;  --c-warn-border: #F5C08A;
+  --c-critical-fg: #C23934; --c-critical-bg: #FEF0EE; --c-critical-border: #FF8888;
+
+  /* ── §A6 radii / elevation / motion ──────────────────────────────────── */
+  --r-sm: 4px; --r-md: 6px; --r-lg: 8px; --r-pill: 999px;
+  --sh-xs: 0 0 0 1px rgba(0,0,0,.06);
+  --sh-sm: 0 1px 3px rgba(0,0,0,.08), 0 0 0 1px rgba(0,0,0,.04);
+  --sh-md: 0 4px 12px rgba(0,0,0,.12);
+  --focus-ring: 0 0 0 2px rgba(1,118,211,.35);
+  --dur-fast: .12s; --dur-base: .18s; --ease: cubic-bezier(.2,0,.2,1);
+
+  /* ── §A7 layout ──────────────────────────────────────────────────────── */
+  --home-w: 1040px;
+
+  /* ══ §B LEGACY ALIASES — do not author new rules against these ═════════ */
+
+  /* brand */
+  --brand:        var(--c-brand);
+  --brand-dark:   var(--c-brand-hover);
+  --brand-light:  var(--c-brand-light);
+  --brand-bg:     var(--c-brand-subtle);
+
+  /* neutrals.  --card (popup) and --surface (studio) were two names for the
+     same white; both now resolve to --c-surface so either spelling works in
+     either app. */
+  --bg:           var(--c-bg);
+  --card:         var(--c-surface);
+  --surface:      var(--c-surface);
+  --surface2:     var(--c-surface-sunk);
+  /* --hover was consumed by 8 rules (Lightning Pages rows, debugger log rows
+     and user options) but DEFINED NOWHERE, so every one of those hover
+     highlights was silently dead — the rows simply never lit up. Found during
+     the token reconciliation. Defining it here revives all 8 at once, and it
+     re-points per theme like every other alias. */
+  --hover:        var(--c-surface-sunk);
+  --header-bg:    var(--c-surface-nav);
+  --header-text:  var(--c-text-inverse);
+  --border:       var(--c-border);
+  --border-light: var(--c-border-subtle);
+
+  /* text.  --subtext-lt was #AEAEAC — 2.0:1 on --bg, a WCAG AA failure
+     wherever it painted body text (Studio nav descriptions, card meta,
+     timestamps…).  Retargeted to the --subtext tier. */
+  --text:         var(--c-text);
+  --subtext:      var(--c-text-faint);
+  --subtext-lt:   var(--c-text-faint);
+
+  /* semantic.  --danger/--invalid-color/--warning keep their literals: the
+     audit's --c-critical-fg / --c-warn-fg are a different red/amber and
+     swapping them is a per-screen sweep, not a token reconciliation. */
+  --active-color:   var(--c-good-fg);
+  --success:        var(--c-good-fg);
+  --draft-color:    var(--c-brand);
+  --obsolete-color: var(--c-text-faint);
   --invalid-color:  #EA001E;
   --danger:         #EA001E;
   --warning:        #DD7A01;
-  --warning-bg:     #FEF0E0;
+  --warning-bg:     var(--c-warn-bg);
 
-  /* ── Kitty palette ── */
+  /* kitty mascot palette — illustration colours, outside the system */
   --cat-fur:      #B0BEC5;
   --cat-fur-dark: #78909C;
   --cat-belly:    #F8F4EE;
@@ -42,8 +121,9 @@
   --cat-nose:     #EF9A9A;
   --cat-stripe:   #90A4AE;
 
-  /* ── Misc ── */
-  --radius:       6px;
+  /* shape + elevation.  studio.css used to say --radius:8px and
+     --shadow-md:0 6px 24px; the popup said 6px / 0 4px 16px.  One value now. */
+  --radius:       var(--r-md);
   --shadow:       0 2px 8px rgba(0,0,0,.10), 0 0 0 1px rgba(0,0,0,.04);
   --shadow-md:    0 4px 16px rgba(0,0,0,.13);
 }
@@ -54,23 +134,59 @@
    restyles every component. Mirrors the Data Studio's dark mode.
    ════════════════════════════════════════════════════════════ */
 body.sftk-dark {
-  --brand:        #1B96FF;
+  /* §A — the token layer flips first… */
+  --c-bg:            #16181D;
+  --c-surface:       #20232B;
+  --c-surface-sunk:  #262A33;
+  --c-surface-nav:   #0B1B33;
+  --c-border:        #3A3F4B;
+  --c-border-subtle: #2E323C;
+  --c-border-strong: #565C6B;
+  --c-text:          #E8EAED;
+  --c-text-muted:    #B4B9C0;
+  --c-text-faint:    #9AA0A6;
+  --c-brand:         #1B96FF;
+  --c-brand-hover:   #57A3F2;
+  --c-brand-light:   #57A3F2;
+  --c-brand-subtle:  #14304D;
+  --c-brand-border:  #235A8C;
+  --c-good-fg: #4CCA75; --c-good-bg: #17301F; --c-good-border: #2E5A3C;
+  --c-warn-fg: #F5A623; --c-warn-bg: #3A2A10; --c-warn-border: #6B4A15;
+  --c-critical-fg: #FF6B6B; --c-critical-bg: #3A1518; --c-critical-border: #7A2B2B;
+
+  /* …and EVERY legacy alias is restated.  This repetition is load-bearing,
+     not sloppiness: `--card: var(--c-surface)` in :root computes to a
+     concrete colour ON THE ROOT ELEMENT and is inherited as that colour, so
+     re-pointing --c-surface further down the tree does NOT retroactively
+     move --card.  Each alias has to be re-declared wherever the palette
+     flips. */
+  --brand:        var(--c-brand);
   --brand-dark:   #78B9F0;
-  --brand-light:  #57A3F2;
-  --brand-bg:     #14304D;
+  --brand-light:  var(--c-brand-light);
+  --brand-bg:     var(--c-brand-subtle);
 
-  --bg:           #16181D;
-  --card:         #20232B;
-  --surface2:     #262A33;
-  --header-bg:    #0B1B33;
+  --bg:           var(--c-bg);
+  --card:         var(--c-surface);
+  --surface:      var(--c-surface);
+  --surface2:     var(--c-surface-sunk);
+  /* --hover was consumed by 8 rules (Lightning Pages rows, debugger log rows
+     and user options) but DEFINED NOWHERE, so every one of those hover
+     highlights was silently dead — the rows simply never lit up. Found during
+     the token reconciliation. Defining it here revives all 8 at once, and it
+     re-points per theme like every other alias. */
+  --hover:        var(--c-surface-sunk);
+  --header-bg:    var(--c-surface-nav);
   --header-text:  #F0F2F5;
-  --border:       #3A3F4B;
-  --border-light: #2E323C;
+  --border:       var(--c-border);
+  --border-light: var(--c-border-subtle);
 
-  --text:         #E8EAED;
-  --subtext:      #9AA0A6;
-  --subtext-lt:   #6B7075;
+  --text:         var(--c-text);
+  --subtext:      var(--c-text-faint);
+  /* --subtext-lt was #6B7075 = 3.4:1 on the dark card — same AA failure as
+     light mode, same fix: fold it into the --subtext tier. */
+  --subtext-lt:   var(--c-text-faint);
 
+  --success:        var(--c-good-fg);
   --active-color:   #4CCA75;
   --draft-color:    #57A3F2;
   --obsolete-color: #9AA0A6;
@@ -94,6 +210,21 @@ body.sftk-dark {
 
 /* ── Reset ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Form controls do not inherit font-family from their ancestors — the UA
+   stylesheet hard-sets them to a system font.  Because every tool card, nav
+   item and toolbar action in this extension is a <button>, the majority of
+   painted text was rendering in Arial next to Salesforce Sans headings.
+   One declaration fixes all of it, in both apps (styles.css is loaded by
+   popup.html, studio.html and apex-log-viewer.html).
+
+   Element selectors, so every existing class-based rule still outranks this
+   and nothing that already specifies its own size/colour moves. */
+button, input, select, textarea, optgroup, kbd {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
 
 html, body {
   height: 100%;
