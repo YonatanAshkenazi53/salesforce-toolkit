@@ -248,7 +248,8 @@ function pkSweepCallEstimate(opts) {
 //   per value, capped at 30 (value count comes from the probe org's describe,
 //   so other orgs may differ — hence known:false).
 // Unknown until it runs: RT metadata reads (one per active record type,
-// capped at 8 — listed twice for custom fields, so up to 16 per org).
+// capped at 8 per org — the matrix reuses the inventory's RT reads for
+// custom fields since the dedupe fix, so nothing is listed twice).
 // opts: { orgs, isCustom, isMulti, values }. Returns { total, perOrg, known, moreIf }.
 function pkMatrixCallEstimate(opts) {
   const num = v => Number.isFinite(+v) ? Math.max(0, Math.floor(+v)) : 0;
@@ -258,7 +259,7 @@ function pkMatrixCallEstimate(opts) {
   const isCustom = !!(opts && opts.isCustom);
   const perOrg = isCustom ? (3 + usage + 2) : (1 + usage + 1);
   return { total: orgs * perOrg, perOrg, known: false,
-    moreIf: `the object has record types (up to ${isCustom ? 16 : 8} more reads per org)` };
+    moreIf: 'the object has record types (up to 8 more reads per org)' };
 }
 
 // Per-org cost of the bulk wizard's automation scan, computed AFTER the org
@@ -1424,11 +1425,18 @@ async function _pkLoadMatrix() {
       if (r.kind === 'global') return { orgUrl: url, orgKey, label, skip: 'global value set' };
       // Record types per org (user 2026-07-18: the matrix showed no RT info).
       // A failed RT load degrades to a note — never kills the value matrix.
+      // Custom fields: _pkFetchInventory already paid for this org's RT reads
+      // (r.inv.rts) — reuse them instead of re-fetching. Backlog item from the
+      // E3b estimator work, which counted the duplicate honestly until now.
       let rts = [], rtNote = '';
-      try {
-        const rt = await _pkLoadRecordTypes(sess, _pkCmpObj, _pkCmpField, _pkCmpField.replace(/__c$/i, ''));
-        rts = rt.rts; rtNote = rt.rtNote;
-      } catch (e2) { rtNote = `record types unavailable: ${e2.message}`; }
+      if (r.kind === 'local' && r.inv && Array.isArray(r.inv.rts)) {
+        rts = r.inv.rts; rtNote = r.inv.rtNote || '';
+      } else {
+        try {
+          const rt = await _pkLoadRecordTypes(sess, _pkCmpObj, _pkCmpField, _pkCmpField.replace(/__c$/i, ''));
+          rts = rt.rts; rtNote = rt.rtNote;
+        } catch (e2) { rtNote = `record types unavailable: ${e2.message}`; }
+      }
       // Standard picklists join the matrix READ-ONLY (user 2026-07-25: present
       // them, don't send people off to compare in Setup): values come from the
       // describe (active only) under stdInv — deliberately NOT .inv, so the
