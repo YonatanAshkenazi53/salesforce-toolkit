@@ -1674,9 +1674,18 @@ function renderWorkingPair() {
     const o = orgs.find(x => _orgKey(x.url) === _orgKey(u));
     return `<option value="${esc(u)}" ${_orgKey(u) === _orgKey(srcUrl) ? 'selected' : ''}>${esc(orgOptionLabel(u, o?.label, ls))}</option>`;
   }).join('');
+  // With no source set, NOTHING carries `selected` and a <select> silently
+  // falls back to displaying its FIRST option — so this chip asserted an org
+  // was the source of truth while none was (user 2026-07-30: "source of truth
+  // is not pre select but it is select in the top bar", with the Sync Ring
+  // correctly saying "No source of truth yet" right below it). A placeholder
+  // makes the unset state say so instead of impersonating whichever org
+  // happens to sort first.
+  const placeholder = srcUrl ? '' :
+    `<option value="" selected disabled>— none set —</option>`;
   el.innerHTML = `
     <span class="ds-pair-lbl" title="Source of truth — new deployments, compares and picklist loads all start from this org. Configure the full ring with the gear.">Source</span>
-    <select id="dsSotSel" class="ds-pair-sel" aria-label="Source of truth — the org data flows FROM" title="The golden org data flows FROM">${opts}</select>
+    <select id="dsSotSel" class="ds-pair-sel${srcUrl ? '' : ' ds-pair-sel-unset'}" aria-label="Source of truth — the org data flows FROM" title="${srcUrl ? 'The golden org data flows FROM' : 'No source of truth is set yet — pick one here or in the Sync Ring'}">${placeholder}${opts}</select>
     <button id="dsSotRingBtn" class="ds-pair-swap" aria-label="Configure the Sync Ring" title="Configure the Sync Ring (which orgs stay in sync)">${dsIcon('gear')}</button>`;
   eid('dsSotSel')?.addEventListener('change', async e => {
     const v = e.target.value;
