@@ -1698,7 +1698,15 @@ window.openFanOut = async function (profileId, opts = {}) {
 
   // ── What this run actually DOES, stated before it is authorized ──────
   const live = (typeof _liveOrgSet === 'function') ? _liveOrgSet() : new Set();
+  // An EMPTY set means "sessions aren't enumerated yet", not "nothing is
+  // open" — and treating unknown as closed disabled every target and told
+  // the user the whole run would be skipped (seen while capturing this
+  // dialog against a harness that opened it before sessions landed).
+  // runFanOut already skips a sessionless org at run time and says so, so
+  // the honest default when we don't know is to let it through.
+  const liveKnown = live.size > 0;
   const isLive = u => {
+    if (!liveKnown) return true;
     try { return live.has(_orgKey(u)) || live.has(u); } catch (_) { return true; }
   };
   const objs = (typeof collectTreeObjects === 'function') ? [...collectTreeObjects(p.tree)] : [];
@@ -1721,7 +1729,7 @@ window.openFanOut = async function (profileId, opts = {}) {
              ${adv.tone === 'skip' ? 'disabled' : ''}
              ${adv.tone !== 'skip' && defKeys.includes(_orgKey(o.url)) ? 'checked' : ''}>
       <span class="ds-fanout-org-main">
-        <span class="ds-fanout-org-name">${esc(orgOptionLabel(o.url, o.label))} ${prodBadge(o.url)}</span>
+        <span class="ds-fanout-org-name">${esc(orgOptionLabel(o.url, o.label, live))} ${prodBadge(o.url)}</span>
         <span class="ds-fanout-advice" title="${esc(adv.detail)}">${icon} ${esc(adv.headline)}</span>
       </span>
     </label>`;
