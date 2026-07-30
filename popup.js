@@ -51,51 +51,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     chrome.tabs.create({ url: chrome.runtime.getURL('studio.html') });
   });
 
-  // ── Popout — open popup.html in its own browser window ────────────
-  // Chrome action popups are capped at 800px wide which crushes the Apex
-  // Debugger and the new merged Data Deployment page. Opening popup.html
-  // as a window unlocks full viewport sizing. We use chrome.windows.create
-  // with `type:"popup"` so the user gets a chromeless window that feels
-  // like a dedicated workspace, not a regular tab.
-  //
-  // If we're already in a popout window (URL has ?popout=1) the button is
-  // hidden — popout from inside a popout would just clone the view.
-  const popoutBtn = document.getElementById('popoutBtn');
-  const inPopout  = new URLSearchParams(location.search).has('popout');
-  if (popoutBtn) {
-    if (inPopout) {
-      popoutBtn.style.display = 'none';
-    } else {
-      popoutBtn.addEventListener('click', () => {
-        if (chrome.windows?.create) {
-          // Two-step open: create at the largest available screen size, then
-          // immediately maximize. The two-step matters because some Chrome
-          // builds ignore `state:'maximized'` if a fixed width/height is also
-          // passed, and on multi-monitor setups omitting both can mis-place
-          // the window. Sizing to availWidth/availHeight gives us full screen
-          // on most setups; the maximize call covers the rest.
-          const w = (typeof screen !== 'undefined' && screen.availWidth)  || 1600;
-          const h = (typeof screen !== 'undefined' && screen.availHeight) || 1000;
-          chrome.windows.create({
-            url:    chrome.runtime.getURL('popup.html') + '?popout=1',
-            type:   'popup',
-            left:   0,
-            top:    0,
-            width:  w,
-            height: h
-          }, win => {
-            if (win?.id != null) {
-              try { chrome.windows.update(win.id, { state: 'maximized' }); } catch (_) {}
-            }
-          });
-        } else {
-          // Fallback for the very unlikely "no windows API" case
-          chrome.tabs.create({ url: chrome.runtime.getURL('popup.html') + '?popout=1' });
-        }
-      });
-    }
-  }
-
   await initSession();
   maybeRunFirstRunTour();
 });

@@ -705,9 +705,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // just closed this tab, which only "went back" if the popup happened to
   // still be open underneath (it never is — popups close on focus loss).
   // Chrome can't reliably reopen the toolbar popup from a page, but the
-  // Toolkit has a popout mode (popup.html?popout=1): focus it if one is
+  // Focus an already-open Toolkit tab if there is one, else open one.
   // already open, otherwise open it as a popup window.
-  eid('dsBackToToolkit')?.addEventListener('click', () => openToolkitPopout(null));
+  eid('dsBackToToolkit')?.addEventListener('click', () => openToolkit(null));
 
   // Brand name = home button → Connected Orgs (the landing view).
   document.querySelector('.ds-brand')?.addEventListener('click', () => navigateToView('orgs'));
@@ -839,7 +839,7 @@ const CMD_VIEWS = [
   { icon: '🎉', label: "What's New",        view: 'whatsnew',  desc: 'Changelog — what shipped, per version' },
 ];
 
-// Toolkit (popup) features — selecting one opens/focuses the Toolkit popout
+// Toolkit (popup) features — selecting one opens/focuses the Toolkit
 // window deep-linked to that tab. Ids match popup.js HOME_FEATURES.
 const CMD_TOOLKIT = [
   { icon: '🗑', label: 'Flows',             tab: 'flows',        desc: 'Bulk delete, backup & restore' },
@@ -852,17 +852,23 @@ const CMD_TOOLKIT = [
   { icon: '🌊', label: 'Flow Access',       tab: 'flow-access',  desc: 'Grant flows to permission sets' },
 ];
 
-// Open (or focus) the Toolkit popout window; when `tab` is given, deep-link
-// to that feature — a fresh window gets it via the ?tab= URL param, an
-// already-open one via a TOOLKIT_NAVIGATE runtime message.
-async function openToolkitPopout(tab) {
+// Open (or focus) the Toolkit; when `tab` is given, deep-link to that feature
+// — a fresh tab gets it via the ?tab= URL param, an already-open one via a
+// TOOLKIT_NAVIGATE runtime message.
+//
+// This used to spawn a chromeless `type:'popup'` WINDOW (the "popout"
+// feature). The user removed the Toolkit's own Popout button as "annoying and
+// doesn't work good" (2026-07-30), and a back-button that conjures a second
+// chromeless window is the same feature wearing a different hat — so this
+// opens an ordinary tab now, matching what clicking the extension icon does.
+async function openToolkit(tab) {
   const base = chrome.runtime.getURL('popup.html');
 
   // Find an already-open Toolkit by ASKING it (TOOLKIT_PING) instead of
   // tabs.query({url}) — URL-filtered queries silently stopped matching when
   // the "tabs" permission was dropped (security S9), which made this button
-  // open a NEW full-screen popout every time instead of focusing the one you
-  // came from. Pinging needs no permission: the page answers with its tab id
+  // open a NEW Toolkit every time instead of focusing the one you came from.
+  // Pinging needs no permission: the page answers with its tab id
   // (tabs.getCurrent) and focusing by id is always allowed.
   const existing = await new Promise(resolve => {
     let settled = false;
@@ -883,16 +889,8 @@ async function openToolkitPopout(tab) {
       if (tab) chrome.runtime.sendMessage({ type: 'TOOLKIT_NAVIGATE', tab }, () => chrome.runtime.lastError);
       return;
     }
-    const w = (typeof screen !== 'undefined' && screen.availWidth)  || 1600;
-    const h = (typeof screen !== 'undefined' && screen.availHeight) || 1000;
-    const win = await chrome.windows.create({
-      url: `${base}?popout=1${tab ? `&tab=${encodeURIComponent(tab)}` : ''}`,
-      type: 'popup', left: 0, top: 0, width: w, height: h
-    });
-    if (win?.id) chrome.windows.update(win.id, { state: 'maximized' });
-  } catch (_) {
-    try { chrome.tabs.create({ url: `${base}?popout=1${tab ? `&tab=${encodeURIComponent(tab)}` : ''}` }); } catch (__) {}
-  }
+    await chrome.tabs.create({ url: `${base}${tab ? `?tab=${encodeURIComponent(tab)}` : ''}` });
+  } catch (_) { /* the tab could not be opened; nothing else to fall back to */ }
 }
 
 function openCommandPalette() {
@@ -977,7 +975,7 @@ function openCommandPalette() {
     list.querySelectorAll('[data-cmd-toolkit]').forEach(el => {
       el.addEventListener('click', () => {
         closePalette();
-        openToolkitPopout(el.dataset.cmdToolkit);
+        openToolkit(el.dataset.cmdToolkit);
       });
     });
     list.querySelectorAll('[data-cmd-profile]').forEach(el => {
@@ -1016,7 +1014,7 @@ function openCommandPalette() {
         navigateTo(navItems[activeIdx].view);
       } else if (activeIdx < navItems.length + toolkitItems.length) {
         const t = toolkitItems[activeIdx - navItems.length];
-        if (t) { closePalette(); openToolkitPopout(t.tab); }
+        if (t) { closePalette(); openToolkit(t.tab); }
       } else {
         const p = profileItems[activeIdx - navItems.length - toolkitItems.length];
         if (p) { closePalette(); window.runProfile?.(p.id); }
