@@ -2979,7 +2979,11 @@ body {
   user-select: none;
   display: inline-flex; align-items: center; gap: 4px;
 }
-.adbg-log-search-opt input { display: none; }
+/* `display: none` here used to remove the Aa / .* / W search modifiers from
+   the accessibility tree AND the tab order — they were mouse-only. The refresh
+   layer below replaces this with a visually-hidden pattern that keeps them
+   focusable; this rule is deleted rather than left dead, since it only wins if
+   someone later drops the override. */
 .adbg-log-search-opt:has(input:checked) {
   background: var(--brand-bg, #eef5fb);
   border-color: var(--brand, #0176D3);
@@ -3107,6 +3111,670 @@ body {
   background: #dc2626 !important; border-color: #dc2626 !important;
   color: #fff !important;
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   APEX DEBUGGER — DESIGN REFRESH LAYER
+   Consumes the §A tokens declared at the top of this file. Adds nothing to
+   the vocabulary: every value below resolves to one of the --sp-, --fs-,
+   --c-, --r- or --sh- families.
+
+   Scoped to .adbg-wrap (the popup tab) and .alv-shell (the standalone log
+   viewer page) so the shared .btn / .search-input rules used by the other
+   seven tools are untouched.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── §1  MONOCHROME ICON SYSTEM ──────────────────────────────────────────
+   Two consumers, one mask table:
+     .adbg-i[data-i="…"]        an inline <span>, for static markup
+     [data-adbg-icon="…"]::before   an ATTRIBUTE-driven pseudo-element
+
+   The second form exists because ten buttons in this screen have their label
+   rewritten with `btn.textContent = '…'` (Start/Stop, Search/Cancel, the two
+   armed-delete confirms, Collapse/Expand all, Copy→Copied). A child <span>
+   would be destroyed by that assignment; an attribute survives it, so the
+   glyph and the label stay independent.
+
+   Masks are painted with currentColor, so an icon is whatever colour its
+   button already is — brand on brand buttons, red on destructive ones — and
+   it inverts for free in dark mode. Every icon is aria-hidden: the meaning
+   lives in the adjacent label or in an aria-label on the control. */
+.adbg-i,
+[data-adbg-icon]::before {
+  content: '';
+  display: inline-block;
+  width: 14px; height: 14px;
+  flex: 0 0 auto;
+  background-color: currentColor;
+  -webkit-mask: center / contain no-repeat;
+  mask: center / contain no-repeat;
+  -webkit-mask-image: var(--adbg-icon);
+  mask-image: var(--adbg-icon);
+}
+.adbg-i-lg { width: 28px; height: 28px; }
+
+/* Mask table — one custom property per glyph. Because --adbg-icon is a
+   custom property it inherits into ::before, so both consumers above read
+   the same declaration. */
+[data-i="play"],        [data-adbg-icon="play"]        { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='black' d='M5.4 3.2l7.2 4.8-7.2 4.8z'/></svg>"); }
+[data-i="stop"],        [data-adbg-icon="stop"]        { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='4.2' y='4.2' width='7.6' height='7.6' rx='1.2' fill='black'/></svg>"); }
+[data-i="search"],      [data-adbg-icon="search"]      { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round'><circle cx='7.1' cy='7.1' r='4.4'/><path d='M10.4 10.4l3.1 3.1'/></svg>"); }
+[data-i="x"],           [data-adbg-icon="x"]           { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round'><path d='M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6'/></svg>"); }
+[data-i="refresh"],     [data-adbg-icon="refresh"]     { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'><path d='M13.1 8.3a5.2 5.2 0 1 1-1.7-3.9'/><path d='M13.5 2.4v3.1h-3.1'/></svg>"); }
+[data-i="compare"],     [data-adbg-icon="compare"]     { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'><path d='M8 2.2v11.6M4.4 3.6h7.2'/><path d='M1.8 8.6l2.6-5 2.6 5a2.6 2.6 0 0 1-5.2 0z'/><path d='M9 8.6l2.6-5 2.6 5a2.6 2.6 0 0 1-5.2 0z'/></svg>"); }
+[data-i="clock"],       [data-adbg-icon="clock"]       { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.35' stroke-linecap='round' stroke-linejoin='round'><circle cx='8' cy='8' r='5.7'/><path d='M8 4.5V8l2.5 1.5'/></svg>"); }
+[data-i="trash"],       [data-adbg-icon="trash"]       { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'><path d='M2.8 4.3h10.4'/><path d='M6.2 4.3V2.9h3.6v1.4'/><path d='M4.2 4.3l.7 8.8h6.2l.7-8.8'/><path d='M6.7 6.6v4.2M9.3 6.6v4.2'/></svg>"); }
+[data-i="warn"],        [data-adbg-icon="warn"]        { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><path d='M8 2.1l6 10.6H2z'/><path d='M8 6.2v3.1' stroke-linecap='round'/><circle cx='8' cy='11.2' r='.8' fill='black' stroke='none'/></svg>"); }
+[data-i="copy"],        [data-adbg-icon="copy"]        { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><rect x='5.4' y='5.4' width='7.6' height='7.8' rx='1.3'/><path d='M10.3 5.4V4.1a1.3 1.3 0 0 0-1.3-1.3H4.3A1.3 1.3 0 0 0 3 4.1v4.8a1.3 1.3 0 0 0 1.3 1.3h1.1'/></svg>"); }
+[data-i="check"],       [data-adbg-icon="check"]       { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M3 8.4l3.3 3.3L13 4.5'/></svg>"); }
+[data-i="doc"],         [data-adbg-icon="doc"]         { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><path d='M3.8 1.9h5.1l3.3 3.3v8.9H3.8z'/><path d='M8.9 1.9v3.3h3.3'/><path d='M5.8 8.4h4.4M5.8 10.6h3' stroke-linecap='round'/></svg>"); }
+[data-i="download"],    [data-adbg-icon="download"]    { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'><path d='M8 2.4v7.4'/><path d='M5.1 7l2.9 2.9L10.9 7'/><path d='M2.8 13.2h10.4'/></svg>"); }
+[data-i="expand"],      [data-adbg-icon="expand"]      { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'><path d='M8 2.3v11.4'/><path d='M5.3 5L8 2.3 10.7 5'/><path d='M5.3 11L8 13.7 10.7 11'/></svg>"); }
+[data-i="fullscreen"],  [data-adbg-icon="fullscreen"]  { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'><path d='M2.6 6.1V2.6H6.1'/><path d='M9.9 2.6h3.5V6.1'/><path d='M13.4 9.9v3.5H9.9'/><path d='M6.1 13.4H2.6V9.9'/></svg>"); }
+[data-i="popout"],      [data-adbg-icon="popout"]      { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'><path d='M9.6 2.6h3.8v3.8'/><path d='M13.4 2.6L7.6 8.4'/><path d='M11.6 9.4v3a1.2 1.2 0 0 1-1.2 1.2H3.6a1.2 1.2 0 0 1-1.2-1.2V5.6a1.2 1.2 0 0 1 1.2-1.2h3'/></svg>"); }
+[data-i="user"],        [data-adbg-icon="user"]        { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round'><circle cx='8' cy='5.4' r='2.7'/><path d='M2.9 13.7c0-2.8 2.3-4.4 5.1-4.4s5.1 1.6 5.1 4.4'/></svg>"); }
+[data-i="chart"],       [data-adbg-icon="chart"]       { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'><path d='M2.4 13.4h11.2'/><path d='M4.3 11.6V8M8 11.6V4.4M11.7 11.6V6.6'/></svg>"); }
+[data-i="repeat"],      [data-adbg-icon="repeat"]      { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.35' stroke-linecap='round' stroke-linejoin='round'><path d='M2.9 6.6V5.8a2 2 0 0 1 2-2h6.3'/><path d='M9.4 1.9l1.9 1.9-1.9 1.9'/><path d='M13.1 9.4v.8a2 2 0 0 1-2 2H4.8'/><path d='M6.6 14.1l-1.9-1.9 1.9-1.9'/></svg>"); }
+[data-i="flow"],        [data-adbg-icon="flow"]        { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round'><circle cx='3.5' cy='3.4' r='1.7'/><circle cx='3.5' cy='12.6' r='1.7'/><circle cx='12.5' cy='8' r='1.7'/><path d='M5.1 4.2l5.8 3M5.1 11.8l5.8-3'/></svg>"); }
+[data-i="bolt"],        [data-adbg-icon="bolt"]        { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='black' d='M9.4 1.4L3.6 9.1h3.3l-.5 5.5 5.9-7.9H8.9z'/></svg>"); }
+[data-i="list"],        [data-adbg-icon="list"]        { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round'><path d='M5.8 4h7.6M5.8 8h7.6M5.8 12h7.6'/><circle cx='2.9' cy='4' r='.95' fill='black' stroke='none'/><circle cx='2.9' cy='8' r='.95' fill='black' stroke='none'/><circle cx='2.9' cy='12' r='.95' fill='black' stroke='none'/></svg>"); }
+/* Gear redrawn with four thick teeth rather than eight thin ones: at the
+   14px the toolbar actually renders, eight spokes anti-aliased into a fuzzy
+   asterisk. Same for the method glyph, which is now a code chevron pair —
+   a gear read as "settings" where it meant "Apex method". */
+[data-i="gear"],        [data-adbg-icon="gear"]        { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round'><circle cx='8' cy='8' r='2.6'/><path d='M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2'/></svg>"); }
+[data-i="code"],        [data-adbg-icon="code"]        { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='M5.7 4.2L2.2 8l3.5 3.8'/><path d='M10.3 4.2L13.8 8l-3.5 3.8'/></svg>"); }
+[data-i="alert"],       [data-adbg-icon="alert"]       { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><path d='M5.5 1.9h5l3.6 3.6v5l-3.6 3.6h-5L1.9 10.5v-5z'/><path d='M6.1 6.1l3.8 3.8M9.9 6.1l-3.8 3.8' stroke-linecap='round'/></svg>"); }
+[data-i="database"],    [data-adbg-icon="database"]    { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3'><ellipse cx='8' cy='3.9' rx='5' ry='2.1'/><path d='M3 3.9v8.2c0 1.2 2.2 2.1 5 2.1s5-.9 5-2.1V3.9'/><path d='M3 8c0 1.2 2.2 2.1 5 2.1s5-.9 5-2.1'/></svg>"); }
+[data-i="speech"],      [data-adbg-icon="speech"]      { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><path d='M13.4 9.4a1.6 1.6 0 0 1-1.6 1.6H5.5L2.6 13.6V4a1.6 1.6 0 0 1 1.6-1.6h7.6A1.6 1.6 0 0 1 13.4 4z'/></svg>"); }
+[data-i="mute"],        [data-adbg-icon="mute"]        { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'><path d='M7.2 3.1L4.4 5.6H2.2v4.8h2.2l2.8 2.5z'/><path d='M10.3 6.3l3.2 3.4M13.5 6.3l-3.2 3.4'/></svg>"); }
+[data-i="pencil"],      [data-adbg-icon="pencil"]      { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><path d='M11.3 2.1l2.6 2.6-8.2 8.2-3.5.9.9-3.5z'/><path d='M9.6 3.8l2.6 2.6'/></svg>"); }
+[data-i="plus"],        [data-adbg-icon="plus"]        { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'><path d='M8 3.1v9.8M3.1 8h9.8'/></svg>"); }
+[data-i="link-out"],    [data-adbg-icon="link-out"]    { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='M4.4 11.6l7.2-7.2'/><path d='M5.6 4.4h6v6'/></svg>"); }
+[data-i="chevron"],     [data-adbg-icon="chevron"]     { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><path d='M6 3.2L10.8 8 6 12.8'/></svg>"); }
+[data-i="bulb"],        [data-adbg-icon="bulb"]        { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'><path d='M8 1.9a4.1 4.1 0 0 0-2.5 7.3v1.6h5V9.2A4.1 4.1 0 0 0 8 1.9z'/><path d='M6.3 12.4h3.4M6.8 14h2.4'/></svg>"); }
+[data-i="compass"],     [data-adbg-icon="compass"]     { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><circle cx='8' cy='8' r='6.1'/><path d='M10.7 5.3L9.1 9.1 5.3 10.7 6.9 6.9z' fill='black' stroke='none'/></svg>"); }
+[data-i="arrow-up"],    [data-adbg-icon="arrow-up"]    { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='M8 12.9V3.1'/><path d='M4.3 6.8L8 3.1l3.7 3.7'/></svg>"); }
+[data-i="arrow-down"],  [data-adbg-icon="arrow-down"]  { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='M8 3.1v9.8'/><path d='M4.3 9.2L8 12.9l3.7-3.7'/></svg>"); }
+
+/* Visually-hidden label — how an icon-only control gets an accessible name
+   without printing text. Several buttons on this screen previously had a
+   title= and nothing else, which is not exposed as a name to every AT. */
+.adbg-sr {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+/* ── §2  ONE CONTROL HEIGHT ──────────────────────────────────────────────
+   The log toolbar was six buttons at five different heights, three of them
+   wrapping their label onto a second line, because .btn/.btn-sm size from
+   padding + whatever the label happens to be. Fixing the box (28px, no
+   wrap, centred) makes the row a row. Scoped, so the seven other tools that
+   share .btn are unaffected. */
+/* .adbg-modal is in the selector list because the debug-level builder's
+   overlay is appended to <body>, outside .adbg-wrap — without it the modal
+   footer kept the old ragged sizing while the tab behind it did not. */
+.adbg-wrap .btn,
+.alv-shell .btn,
+.adbg-modal .btn {
+  height: 28px;
+  padding: 0 var(--sp-5);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  flex: 0 0 auto;
+  border-width: 1px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease),
+              color var(--dur-fast) var(--ease);
+}
+.adbg-wrap .btn:active:not(:disabled),
+.alv-shell .btn:active:not(:disabled),
+.adbg-modal .btn:active:not(:disabled) { transform: none; }
+.adbg-wrap .btn:focus-visible,
+.alv-shell .btn:focus-visible,
+.adbg-modal .btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* Icon-only buttons are squares, not stubby pills. */
+.adbg-wrap .btn.adbg-btn-icon,
+.alv-shell .btn.adbg-btn-icon { width: 28px; padding: 0; }
+
+/* The modal's one primary. It was .btn-success — a pale green that read as a
+   status, not as "this is the button you came here to press". */
+.adbg-modal .btn-success {
+  background: var(--c-brand);
+  border-color: var(--c-brand);
+  color: var(--c-text-inverse);
+}
+.adbg-modal .btn-success:hover:not(:disabled) {
+  background: var(--c-brand-hover); border-color: var(--c-brand-hover);
+}
+.adbg-modal .btn-danger {
+  background: var(--c-surface);
+  border-color: var(--c-critical-border);
+  color: var(--c-critical-fg);
+}
+.adbg-modal .btn-danger:hover:not(:disabled) {
+  background: var(--c-critical-bg); border-color: var(--c-critical-fg);
+}
+.adbg-modal, .adbg-modal-ftr, .adbg-lvl-sel, .adbg-lvl-field input { border-radius: var(--r-sm); }
+.adbg-lvl-tip { border-radius: var(--r-sm); }
+
+/* §2b  THE HIERARCHY. Four of six toolbar buttons used to be red, which put
+   the visual weight of the screen on DESTRUCTION. Red is now reserved for
+   the two buttons that actually destroy data (Delete Selected / Delete All);
+   >24h purge is destructive too but scoped, so it reads as neutral until
+   armed, at which point .adbg-btn-armed turns it red. Everything else is
+   neutral, and each region has exactly one brand-filled primary. */
+.adbg-wrap .btn-secondary,
+.alv-shell .btn-secondary,
+.adbg-modal .btn-secondary {
+  background: var(--c-surface);
+  border-color: var(--c-border-strong);
+  color: var(--c-text);
+}
+.adbg-wrap .btn-secondary:hover:not(:disabled),
+.alv-shell .btn-secondary:hover:not(:disabled),
+.adbg-modal .btn-secondary:hover:not(:disabled) {
+  background: var(--c-surface-sunk);
+  border-color: var(--c-border-strong);
+  color: var(--c-text);
+}
+.adbg-wrap .btn-primary,
+.alv-shell .btn-primary {
+  background: var(--c-brand);
+  border-color: var(--c-brand);
+  color: var(--c-text-inverse);
+}
+.adbg-wrap .btn-primary:hover:not(:disabled),
+.alv-shell .btn-primary:hover:not(:disabled) {
+  background: var(--c-brand-hover);
+  border-color: var(--c-brand-hover);
+}
+.adbg-wrap .btn-danger {
+  background: var(--c-surface);
+  border-color: var(--c-critical-border);
+  color: var(--c-critical-fg);
+}
+.adbg-wrap .btn-danger:hover:not(:disabled) {
+  background: var(--c-critical-bg);
+  border-color: var(--c-critical-fg);
+}
+/* Start Trace is the primary action of the toolbar region — it was a pale
+   green .btn-success sitting quieter than the three reds beside it. */
+.adbg-wrap #adbgStartBtn {
+  background: var(--c-brand);
+  border-color: var(--c-brand);
+  color: var(--c-text-inverse);
+}
+.adbg-wrap #adbgStartBtn:hover:not(:disabled) {
+  background: var(--c-brand-hover); border-color: var(--c-brand-hover);
+}
+.adbg-wrap #adbgStopBtn {
+  background: var(--c-critical-bg);
+  border-color: var(--c-critical-fg);
+  color: var(--c-critical-fg);
+}
+
+/* ── §3  TOOLBAR + PAGE HEADER ───────────────────────────────────────── */
+.adbg-toolbar { padding: var(--sp-4) var(--sp-5); }
+.adbg-toolbar-row { gap: var(--sp-4); }
+.adbg-lbl {
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--c-text-faint);
+}
+.adbg-user-input,
+.adbg-profile-sel {
+  height: 28px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  background: var(--c-surface);
+  border-color: var(--c-border-strong);
+}
+.adbg-user-input { padding: 0 26px 0 var(--sp-4); }
+.adbg-profile-sel { padding: 0 var(--sp-4); }
+.adbg-profile-edit {
+  width: 28px; height: 28px;
+  border-radius: var(--r-sm);
+  border-color: var(--c-border-strong);
+  background: var(--c-surface);
+  color: var(--c-text);
+}
+.adbg-profile-desc {
+  font-size: var(--fs-xs);
+  color: var(--c-text-faint);
+  margin-top: var(--sp-3);
+}
+.adbg-status-pill {
+  height: 28px;
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  gap: var(--sp-3);
+}
+.adbg-spill-active { background: var(--c-good-bg); color: var(--c-good-fg); }
+.adbg-spill-error  { background: var(--c-critical-bg); color: var(--c-critical-fg); }
+
+/* The SLDS page-header shape: icon + title + record count on the left,
+   actions right-aligned. Previously a ragged wrap-happy strip with the
+   count floating loose at the start. */
+.adbg-log-bar {
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--c-surface);
+  border-bottom: 1px solid var(--c-border);
+  /* Wraps rather than overflowing: the real popup is 800px wide and the
+     destructive buttons were being pushed off the right edge entirely. */
+  flex-wrap: wrap;
+  row-gap: var(--sp-3);
+}
+.adbg-bar-title {
+  display: flex; align-items: center; gap: var(--sp-3);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--c-text);
+  white-space: nowrap;
+}
+.adbg-bar-title .adbg-i { color: var(--c-text-faint); }
+.adbg-log-count {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-normal);
+  color: var(--c-text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.adbg-bar-spacer { flex: 1 1 auto; min-width: var(--sp-4); }
+.adbg-bar-sep {
+  width: 1px; height: 18px; flex: 0 0 auto;
+  background: var(--c-border);
+  margin: 0 var(--sp-2);
+}
+.adbg-sel-all-lbl { display: inline-flex; align-items: center; }
+.adbg-xsearch-wrap { min-width: 210px; flex: 0 1 260px; }
+.adbg-xsearch-input {
+  height: 28px;
+  padding: 0 26px 0 var(--sp-4);
+  border-radius: var(--r-sm);
+  border-color: var(--c-border-strong);
+  font-size: var(--fs-sm);
+}
+.adbg-live-dot { background: var(--c-good-fg); }
+
+/* ── §4  THE LOG LIST AS A TABLE ─────────────────────────────────────────
+   A real header row, a fixed grid so every row's columns line up, numbers
+   right-aligned with tabular figures. NOT sortable: see the report — the
+   rows are client-side so it is feasible, but sort is net-new behaviour and
+   the live-poll path unshifts on a fixed StartTime-DESC contract. */
+.adbg-list-hdr {
+  display: grid;
+  /* Mirrors the row's flex track exactly: checkbox · body · size · duration ·
+     the always-reserved slot the hover-reveal delete button sits in. Same
+     gap and padding as .adbg-log-row, so the labels sit over their data. */
+  grid-template-columns: 16px 1fr 56px 50px 24px;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--c-surface-sunk);
+  border-bottom: 1px solid var(--c-border);
+  position: sticky; top: 0; z-index: 3;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  /* Title case, not ALL-CAPS: in the 800px popup this column strip is only
+     ~230px wide, and uppercase + tracking made "DURATION" wider than the
+     column whose numbers it labels. SLDS column headers are title case
+     anyway. */
+  letter-spacing: .02em;
+  color: var(--c-text-faint);
+  user-select: none;
+}
+.adbg-list-hdr > span { white-space: nowrap; overflow: hidden; }
+.adbg-list-hdr-num { text-align: right; }
+
+/* 210px could not hold four columns plus a readable operation string in the
+   800px popup — every row ellipsised after ~14 characters. */
+.adbg-log-list { background: var(--c-surface); min-width: 244px; }
+.adbg-log-row {
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--c-border-subtle);
+  transition: background var(--dur-fast) var(--ease);
+}
+/* Hover was authored years ago against --hover, a variable that was never
+   defined — so the flagship table had no row hover at all. The token
+   foundation defines it now; this rule just makes it visible enough to read
+   as an affordance. */
+.adbg-log-row:hover { background: var(--c-surface-sunk); }
+.adbg-row-sel {
+  background: var(--c-brand-subtle) !important;
+  border-left: 3px solid var(--c-brand);
+  padding-left: calc(var(--sp-4) - 3px);
+}
+.adbg-row-new { background: var(--c-good-bg); }
+.adbg-row-top { gap: var(--sp-3); margin-bottom: var(--sp-1); flex-wrap: nowrap; }
+.adbg-row-time {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--c-text-muted);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+/* Size and duration are quantities: right-aligned, tabular, fixed columns so
+   the decimal points line up down the list instead of ragging. */
+.adbg-row-size,
+.adbg-row-dur {
+  font-size: var(--fs-2xs);
+  color: var(--c-text-faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  flex: 0 0 auto;
+}
+.adbg-row-size { margin-left: auto; width: 56px; }
+.adbg-row-dur  { width: 50px; }
+.adbg-row-ck {
+  width: 16px; display: inline-flex;
+  align-items: center; justify-content: center;
+}
+.adbg-row-op {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--c-text);
+}
+.adbg-row-user { font-size: var(--fs-xs); color: var(--c-text-faint); }
+.adbg-row-fail { font-size: var(--fs-xs); color: var(--c-critical-fg); }
+.adbg-row-del {
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
+  color: var(--c-text-faint);
+}
+.adbg-row-del:hover { background: var(--c-critical-bg); color: var(--c-critical-fg); }
+/* Keyboard users never trigger :hover, so the delete affordance was
+   unreachable for them — reveal it on focus too. */
+.adbg-row-del:focus-visible { opacity: 1; outline: none; box-shadow: var(--focus-ring); }
+
+/* Row badges — one shape, one scale, semantic colour only. */
+.adbg-badge-new,
+.adbg-badge-loop,
+.adbg-badge-fault,
+.adbg-badge-xhit,
+.adbg-badge-limit {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: .03em;
+  border-radius: var(--r-sm);
+  padding: 1px var(--sp-3);
+  border: 1px solid transparent;
+  flex: 0 0 auto;
+}
+.adbg-badge-new   { background: var(--c-good-bg);     color: var(--c-good-fg);     border-color: var(--c-good-border); }
+.adbg-badge-loop  { background: var(--c-warn-bg);     color: var(--c-warn-fg);     border-color: var(--c-warn-border); }
+.adbg-badge-fault { background: var(--c-critical-bg); color: var(--c-critical-fg); border-color: var(--c-critical-border); }
+.adbg-badge-xhit  { background: var(--c-brand-subtle);color: var(--c-brand);       border-color: var(--c-brand-border); }
+
+/* ── §5  DETAIL PANEL ────────────────────────────────────────────────────
+   Six brand-blue buttons meant the primary had no dominance. Copy Report
+   stays the one filled brand button; the other five are neutral. */
+.adbg-det-actions { gap: var(--sp-3); margin-top: var(--sp-4); }
+.adbg-det-hdr-bar-title { font-size: var(--fs-lg); font-weight: var(--fw-semibold); }
+.adbg-det-hdr-bar-meta {
+  font-size: var(--fs-xs);
+  color: var(--c-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.adbg-det-hdr-caret,
+.adbg-log-caret {
+  width: 12px; height: 12px;
+  color: var(--c-text-faint);
+  transition: transform var(--dur-fast) var(--ease);
+}
+/* The two collapse toggles used to swap the caret's TEXT between ▾ and ▸.
+   Now they toggle a class and the same chevron mask rotates — one glyph,
+   two states, and the transition actually animates. */
+.adbg-det-hdr-caret,
+.adbg-log-caret { transform: rotate(90deg); }
+.adbg-caret-closed { transform: rotate(0deg); }
+.adbg-det-user,
+.adbg-det-entry { display: flex; align-items: center; gap: var(--sp-3); }
+.adbg-det-user .adbg-i,
+.adbg-det-entry .adbg-i { color: var(--c-text-faint); }
+
+/* Cross-tool jump links — were an inline style= blob repeated per link. */
+.adbg-xlink {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: none; border: none; padding: 0;
+  margin-left: var(--sp-4);
+  color: var(--c-brand);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.adbg-xlink:hover { text-decoration: underline; }
+.adbg-xlink:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-sm); }
+
+/* Section headings — icon + label + count, one rhythm everywhere. */
+.adbg-sec-hdr,
+.adbg-analysis-title {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: .07em;
+  color: var(--c-text-muted);
+}
+.adbg-sec-hdr .adbg-i,
+.adbg-analysis-title .adbg-i { color: var(--c-text-faint); }
+.adbg-analysis-title { display: inline-flex; align-items: center; gap: var(--sp-3); }
+.adbg-analysis-sum::before { content: none; }
+.adbg-analysis-sum::after {
+  content: '';
+  order: -1;
+  width: 12px; height: 12px;
+  flex: 0 0 auto;
+  background-color: var(--c-text-faint);
+  --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M6 3.2L10.8 8 6 12.8'/></svg>");
+  -webkit-mask: center / contain no-repeat var(--adbg-icon);
+  mask: center / contain no-repeat var(--adbg-icon);
+  transition: transform var(--dur-fast) var(--ease);
+}
+.adbg-analysis[open] .adbg-analysis-sum::after { transform: rotate(90deg); }
+.adbg-analysis { border-radius: var(--r-sm); }
+.adbg-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: var(--fs-2xs);
+  border-radius: var(--r-sm);
+  padding: 1px var(--sp-3);
+  font-variant-numeric: tabular-nums;
+}
+.adbg-chip-err  { background: var(--c-critical-bg); border-color: var(--c-critical-border); }
+.adbg-chip-err b { color: var(--c-critical-fg); }
+.adbg-chip-loop { background: var(--c-warn-bg); border-color: var(--c-warn-border); color: var(--c-warn-fg); }
+.adbg-cnt-badge {
+  border-color: var(--c-brand-border);
+  border-radius: var(--r-sm);
+  font-variant-numeric: tabular-nums;
+}
+.adbg-cnt-err { background: var(--c-critical-bg); color: var(--c-critical-fg); border-color: var(--c-critical-border); }
+
+.adbg-log-title-bar { gap: var(--sp-3); font-size: var(--fs-md); }
+.adbg-log-title-bar > .adbg-i { color: var(--c-text-faint); }
+.adbg-log-fontctl { gap: var(--sp-1); }
+.adbg-wrap .adbg-log-font-btn,
+.alv-shell .adbg-log-font-btn {
+  width: 26px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
+  border-radius: var(--r-sm);
+  border-color: var(--c-border-strong);
+  font-size: var(--fs-sm) !important;
+  font-weight: var(--fw-semibold);
+}
+.adbg-log-search-btn {
+  width: 26px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--r-sm);
+  border-color: var(--c-border-strong);
+  color: var(--c-text-muted);
+}
+.adbg-log-search-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.adbg-log-search-opt {
+  height: 24px;
+  border-radius: var(--r-sm);
+  border-color: var(--c-border-strong);
+}
+/* The Aa / .* / W toggles hid their checkbox with display:none, which takes
+   it out of the accessibility tree AND off the tab order — the three search
+   modifiers were mouse-only. Visually hidden instead: same pixels, but the
+   control is focusable and announced (the <label> text is its name). */
+.adbg-log-search-opt input {
+  display: inline-block;
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); border: 0;
+}
+.adbg-log-search-opt:focus-within { box-shadow: var(--focus-ring); }
+.adbg-log-search,
+.adbg-log-filter,
+.adbg-log-goto {
+  height: 24px;
+  border-radius: var(--r-sm);
+  border-color: var(--c-border-strong);
+  font-size: var(--fs-xs);
+}
+.adbg-log-cat {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  height: 22px; padding: 0 var(--sp-4);
+  border-radius: var(--r-sm);
+}
+.adbg-log-cat .adbg-i { width: 12px; height: 12px; }
+
+.adbg-detail-empty .adbg-detail-icon {
+  width: 34px; height: 34px;
+  font-size: 0;
+  color: var(--c-border-strong);
+}
+.adbg-limit-alert-icon { width: 18px; height: 18px; flex: 0 0 auto; }
+.adbg-loop-icon { width: 20px; height: 20px; color: var(--c-warn-fg); }
+.adbg-fp-arrow { width: 10px; height: 10px; color: var(--c-text-faint); vertical-align: -1px; }
+/* <summary> keeps its native disclosure marker (so display:flex is out) —
+   space the icon off the label the inline way instead. */
+.adbg-wrap summary .adbg-i { margin-right: var(--sp-2); vertical-align: -2px; }
+/* space-between treated the bare text node as its own flex item, so the icon
+   drifted to the far left away from the title it belongs to. */
+.adbg-cmp-hdr-title { display: inline-flex; align-items: center; gap: var(--sp-3); }
+.adbg-cmp-hdr .adbg-i  { width: 15px; height: 15px; }
+.adbg-cmp-hint .adbg-i { width: 12px; height: 12px; vertical-align: -1px; }
+.adbg-cmp-table th { font-size: var(--fs-xs); font-weight: var(--fw-bold); color: var(--c-text-muted); }
+.adbg-cmp-table td:not(:first-child) { text-align: right; }
+.adbg-cmp-table th:not(:first-child) { text-align: right; }
+.adbg-cmp-better .adbg-i { color: var(--c-good-fg); }
+.adbg-cmp-worse  .adbg-i { color: var(--c-critical-fg); }
+.adbg-cmp-better, .adbg-cmp-worse {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.adbg-lvl-tip { display: flex; gap: var(--sp-3); align-items: flex-start; }
+.adbg-lvl-tip .adbg-i { color: var(--c-brand); margin-top: 2px; }
+.adbg-modal-x, .adbg-clear-x, .adbg-xsearch-clear {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0; border-radius: var(--r-sm);
+}
+.adbg-modal-x:focus-visible,
+.adbg-clear-x:focus-visible,
+.adbg-xsearch-clear:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* ── §5b  SEMANTIC COLOUR, TOKENISED ─────────────────────────────────────
+   These blocks were authored against raw Tailwind-ish hexes (#22c55e,
+   #dc2626, #fef2f2, #fffbeb…) that predate the token system and therefore
+   never followed dark mode. Same intent, now expressed in --c-good/warn/
+   critical so both themes get it. */
+.adbg-limit-fill                   { background: var(--c-good-fg); }
+.adbg-limit-fill.adbg-limit-warn   { background: var(--c-warn-fg); }
+.adbg-limit-fill.adbg-limit-danger { background: var(--c-critical-fg); }
+.adbg-limit-bar { background: var(--c-border-subtle); height: 8px; border-radius: var(--r-pill); }
+.adbg-limit-lbl { color: var(--c-text-muted); }
+.adbg-limit-val { color: var(--c-text-muted); }
+.adbg-limit-alert {
+  background: var(--c-warn-bg); border-color: var(--c-warn-border);
+  border-radius: var(--r-sm);
+}
+.adbg-limit-alert-icon { color: var(--c-warn-fg); }
+.adbg-limit-alert-crit { background: var(--c-critical-bg); border-color: var(--c-critical-border); }
+.adbg-limit-alert-crit .adbg-limit-alert-icon { color: var(--c-critical-fg); }
+.adbg-loop-banner {
+  background: var(--c-warn-bg); border-color: var(--c-warn-border);
+  border-radius: var(--r-sm);
+}
+.adbg-loop-item { color: var(--c-warn-fg); }
+.adbg-auto-row  { border-radius: var(--r-sm); }
+.adbg-auto-loop { background: var(--c-warn-bg); border-color: var(--c-warn-border); }
+.adbg-stat      { border-radius: var(--r-sm); }
+.adbg-stat-err  { background: var(--c-critical-bg); border-color: var(--c-critical-border); }
+.adbg-stat-err .adbg-stat-val { color: var(--c-critical-fg); }
+.adbg-stat-val  { font-variant-numeric: tabular-nums; }
+.adbg-err-row {
+  background: var(--c-critical-bg); border-color: var(--c-critical-border);
+  color: var(--c-critical-fg); border-radius: var(--r-sm);
+}
+.adbg-list-err, .adbg-detail-err { color: var(--c-critical-fg); }
+.adbg-lvl-err {
+  background: var(--c-critical-bg); border-color: var(--c-critical-border);
+  color: var(--c-critical-fg); border-radius: var(--r-sm);
+}
+.adbg-time-fill { background: var(--c-brand); }
+.adbg-time-val  { color: var(--c-text); }
+
+/* The five automation tags were five saturated fills (#f59e0b amber,
+   #ef4444 red, #7c3aed violet, #0ea5e9 cyan, #e0e7ff/#4338ca indigo) in a
+   row that already carries a name and a count. One badge shape, colour only
+   where colour means something: amber = loop, red = fault, neutral for the
+   descriptive ones. */
+.adbg-tag-loop, .adbg-tag-fault, .adbg-tag-rt, .adbg-tag-sub, .adbg-tag-op {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: .03em;
+  border-radius: var(--r-sm);
+  padding: 1px var(--sp-3);
+  border: 1px solid transparent;
+  flex: 0 0 auto;
+}
+.adbg-tag-loop  { background: var(--c-warn-bg);     color: var(--c-warn-fg);     border-color: var(--c-warn-border); }
+.adbg-tag-fault { background: var(--c-critical-bg); color: var(--c-critical-fg); border-color: var(--c-critical-border); }
+.adbg-tag-rt,
+.adbg-tag-sub,
+.adbg-tag-op    { background: var(--c-surface-sunk); color: var(--c-text-muted);  border-color: var(--c-border); }
+.adbg-auto-count { font-variant-numeric: tabular-nums; color: var(--c-text-faint); }
+/* break-all chopped "Account Region Rollup" into "Roll / up"; anywhere only
+   breaks when the word genuinely cannot fit. */
+.adbg-auto-name { word-break: normal; overflow-wrap: anywhere; }
+/* Goto was 96px, which clipped its own "Go to line #" placeholder. */
+.adbg-log-goto { width: 124px; }
+.adbg-drop-more { font-style: italic; color: var(--c-text-faint); }
+
+/* ── §6  STANDALONE LOG-VIEWER PAGE (alv-*) ──────────────────────────── */
+.alv-logo {
+  width: 20px; height: 20px;
+  font-size: 0;
+  color: var(--c-text-faint);
+}
+.alv-actions { gap: var(--sp-3); }
+.alv-meta { font-variant-numeric: tabular-nums; }
+/* In the popup these sit inside a 24px sub-toolbar; in the viewer's top bar
+   they line up beside 28px buttons, so they take the toolbar height there. */
+.alv-actions .adbg-log-font-btn { width: 28px; height: 28px; }
+.alv-topbar { padding: var(--sp-4) var(--sp-6); }
+.alv-title { font-size: var(--fs-lg); font-weight: var(--fw-semibold); }
 
 /* ============================================================
    Flow Permissions module

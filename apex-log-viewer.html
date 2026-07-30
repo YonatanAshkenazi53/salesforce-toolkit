@@ -13,29 +13,30 @@
     <!-- Top bar -->
     <div class="alv-topbar">
       <div class="alv-brand">
-        <span class="alv-logo">📜</span>
+        <span class="alv-logo adbg-i" data-i="doc" aria-hidden="true"></span>
         <span class="alv-title" id="alvTitle">Apex Log</span>
         <span class="alv-meta" id="alvMeta"></span>
       </div>
       <div class="alv-actions">
         <span class="alv-fontctl" title="Adjust log text size">
-          <button class="adbg-log-font-btn" id="alvFontDown" title="Smaller text">A−</button>
-          <button class="adbg-log-font-btn" id="alvFontReset" title="Reset text size">A</button>
-          <button class="adbg-log-font-btn" id="alvFontUp" title="Larger text">A+</button>
+          <button class="adbg-log-font-btn" id="alvFontDown" title="Smaller text" aria-label="Smaller log text">A−</button>
+          <button class="adbg-log-font-btn" id="alvFontReset" title="Reset text size" aria-label="Reset log text size">A</button>
+          <button class="adbg-log-font-btn" id="alvFontUp" title="Larger text" aria-label="Larger log text">A+</button>
         </span>
-        <button class="btn btn-primary btn-sm"   id="alvCopyReportBtn">📋 Copy Report</button>
-        <button class="btn btn-secondary btn-sm" id="alvDlReportBtn">📄 Download Report</button>
-        <button class="btn btn-secondary btn-sm" id="alvDlRawBtn">⬇ Raw Log</button>
+        <button class="btn btn-primary btn-sm"   id="alvCopyReportBtn" data-adbg-icon="copy">Copy Report</button>
+        <button class="btn btn-secondary btn-sm" id="alvDlReportBtn" data-adbg-icon="doc">Download Report</button>
+        <button class="btn btn-secondary btn-sm" id="alvDlRawBtn" data-adbg-icon="download">Raw Log</button>
       </div>
     </div>
 
     <!-- Search + filter row -->
     <div class="alv-controls">
-      <input type="number" id="alvLogGoto" class="adbg-log-goto" placeholder="Go to line #" min="1">
+      <input type="number" id="alvLogGoto" class="adbg-log-goto" placeholder="Go to line #" min="1" aria-label="Go to line number">
 
       <div class="adbg-log-search-row alv-search-row">
         <input type="text" id="alvLogSearch" class="adbg-log-search"
-          placeholder="Find in log (Ctrl+F)… use ⏎ next, ⇧⏎ prev" autocomplete="off">
+          placeholder="Find in log (Ctrl+F)… Enter = next, Shift+Enter = prev"
+          autocomplete="off" aria-label="Find in log">
         <label class="adbg-log-search-opt" title="Match case — e.g. searching 'Account' finds Account but NOT ACCOUNT_TRIGGER; off, 'soql' also finds SOQL_EXECUTE_BEGIN">
           <input type="checkbox" id="alvLogCase"> Aa
         </label>
@@ -46,11 +47,11 @@
           <input type="checkbox" id="alvLogWord"> W
         </label>
         <span class="adbg-log-search-count" id="alvLogSearchCount" title="Match navigation">—</span>
-        <button class="adbg-log-search-btn" id="alvLogSearchPrev" title="Previous match (Shift+Enter)">↑</button>
-        <button class="adbg-log-search-btn" id="alvLogSearchNext" title="Next match (Enter)">↓</button>
+        <button class="adbg-log-search-btn" id="alvLogSearchPrev" title="Previous match (Shift+Enter)" aria-label="Previous match"><span class="adbg-i" data-i="arrow-up" aria-hidden="true"></span></button>
+        <button class="adbg-log-search-btn" id="alvLogSearchNext" title="Next match (Enter)" aria-label="Next match"><span class="adbg-i" data-i="arrow-down" aria-hidden="true"></span></button>
       </div>
 
-      <input type="text" id="alvLogFilter" class="adbg-log-filter" placeholder="Filter to matching lines only…">
+      <input type="text" id="alvLogFilter" class="adbg-log-filter" placeholder="Filter to matching lines only…" aria-label="Filter log to matching lines">
     </div>
 
     <!-- Log view — fills the rest of the viewport -->

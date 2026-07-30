@@ -249,7 +249,7 @@
     const metaEl  = document.getElementById('alvMeta');
     const op = meta.Operation || meta.Request || meta.Application || 'Apex Log';
     titleEl.textContent = op;
-    document.title = `📜 ${op} — Apex Log`;
+    document.title = `${op} — Apex Log`;
 
     const parts = [];
     if (meta.StartTime)            parts.push(new Date(meta.StartTime).toLocaleString());
@@ -260,7 +260,7 @@
         : meta.DurationMilliseconds + 'ms');
     }
     if (meta.Status && meta.Status !== 'Success') parts.push(meta.Status);
-    if (meta.LogUser?.Name)        parts.push('👤 ' + meta.LogUser.Name);
+    if (meta.LogUser?.Name)        parts.push('User: ' + meta.LogUser.Name);
     metaEl.innerHTML = parts.map(s => `<span>${_esc(s)}</span>`).join('');
   }
 
@@ -273,8 +273,12 @@
       try {
         await navigator.clipboard.writeText(p.report || '');
         const orig = btn.textContent;
-        btn.textContent = '✓ Copied';
-        setTimeout(() => { btn.textContent = orig; }, 1400);
+        btn.dataset.adbgIcon = 'check';
+        btn.textContent = 'Copied';
+        setTimeout(() => {
+          btn.dataset.adbgIcon = 'copy';
+          btn.textContent = orig;
+        }, 1400);
       } catch {
         alert('Copy failed. Use Download Report instead.');
       }
