@@ -24,6 +24,12 @@
   // ── Inject styles once ────────────────────────────────────
   const CSS = `
   .sftk-tour-overlay { position: fixed; inset: 0; z-index: 2147483000; }
+  /* The dimming normally comes from .sftk-tour-hole's 9999px box-shadow — so a
+     step with NO target element (the welcome step) had no backdrop at all and
+     its card floated over the page looking like a stray panel (user report,
+     2026-07-30, on a wide window). Carry the same wash on the overlay itself
+     whenever the spotlight is hidden. */
+  .sftk-tour-overlay.sftk-tour-dim { background: rgba(15,23,42,0.66); }
   .sftk-tour-hole {
     position: fixed; border-radius: 8px; pointer-events: none;
     box-shadow: 0 0 0 9999px rgba(15,23,42,0.66);
@@ -152,6 +158,8 @@
       } else {
         hole.style.display = 'none';
       }
+      // No spotlight → no box-shadow wash, so the overlay supplies it.
+      overlay.classList.toggle('sftk-tour-dim', hole.style.display === 'none');
       const last = idx === steps.length - 1;
       card.innerHTML =
         `<div class="sftk-tour-step">Step ${idx + 1} of ${steps.length}</div>` +
