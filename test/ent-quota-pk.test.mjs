@@ -88,8 +88,11 @@ describe('pkMatrixCallEstimate', () => {
     expect(e.perOrg).toBe(1 + 1 + 1);
   });
 
-  it('names the RT unknown honestly — custom fields list record types TWICE (up to 16)', () => {
-    expect(pkMatrixCallEstimate({ orgs: 1, isCustom: true }).moreIf).toMatch(/up to 16 more reads per org/);
+  it('names the RT unknown honestly — reads are never listed twice since the matrix reuses inventory RTs', () => {
+    // The estimator once said "up to 16" for custom fields because _pkLoadMatrix
+    // genuinely double-loaded RecordTypes; the dedupe fix (reuse r.inv.rts)
+    // halved the real cost, and the quote follows the code, not the other way.
+    expect(pkMatrixCallEstimate({ orgs: 1, isCustom: true }).moreIf).toMatch(/up to 8 more reads per org/);
     expect(pkMatrixCallEstimate({ orgs: 1, isCustom: false }).moreIf).toMatch(/up to 8 more reads per org/);
     expect(pkMatrixCallEstimate({ orgs: 1, isCustom: true }).known).toBe(false);
   });
