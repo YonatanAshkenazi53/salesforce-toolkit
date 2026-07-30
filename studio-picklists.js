@@ -543,11 +543,21 @@ function _pkRenderCompareConfig() {
     ? (orgs.find(o => _orgKey(o.url) === _orgKey(_ring.sourceUrl))?.url || '') : '';
   if (_sotUrl && !_pkCmpOrgs.some(u => _orgKey(u) === _orgKey(_sotUrl))) _pkCmpOrgs.push(_sotUrl);
   const sotOrg = _sotUrl ? orgs.find(o => _orgKey(o.url) === _orgKey(_sotUrl)) : null;
+  // With no ring source this line used to render as NOTHING, so the screen
+  // silently dropped the concept while the topbar still showed a Source chip
+  // (user 2026-07-30: "same in the picklist manager"). Say the state out loud
+  // and offer the one click that fixes it — an absent explanation reads as a
+  // bug, and the matrix genuinely behaves differently without a golden org.
   const sotLine = sotOrg
     ? `<div class="ds-pk-sot-line" title="Always part of the comparison — every org below is compared against it. Change it in 🔄 Sync Ring or the topbar chip.">
         Source of truth: <strong>${esc(orgOptionLabel(sotOrg.url, sotOrg.label))}</strong>
         ${(!_liveOrgSet().has(_orgKey(sotOrg.url))) ? '<span class="ds-pk-sot-warn">— open it in a Chrome tab, the matrix reads from it</span>' : ''}
-      </div>` : '';
+      </div>`
+    : `<div class="ds-pk-sot-line ds-pk-sot-unset">
+        No source of truth set — the orgs you tick are compared side by side, with none treated as golden, and
+        <strong>🔄 Sync from source</strong> has nothing to sync from.
+        <button class="ds-btn ds-btn-xs" id="dsPkGoRing" style="margin-left:6px">Set one in Sync Ring</button>
+      </div>`;
   const chks = orgs.filter(o => !(_sotUrl && _orgKey(o.url) === _orgKey(_sotUrl))).map(o =>
     `<label class="ds-pk-orgchk"><input type="checkbox" data-pk-cmporg="${esc(o.url)}" ${_pkCmpOrgs.includes(o.url) ? 'checked' : ''}> ${esc(orgOptionLabel(o.url, o.label))}</label>`).join('');
   const cfg = eid('dsPkConfig');
@@ -571,6 +581,10 @@ function _pkRenderCompareConfig() {
       <div id="dsPkMatrixCost" class="ds-pk-note ds-pk-note-tight"></div>
       <div id="dsPkSweepCost" class="ds-pk-note ds-pk-note-tight"></div>
     </div>`;
+
+  eid('dsPkGoRing')?.addEventListener('click', () => {
+    if (typeof navigateToView === 'function') navigateToView('ring');
+  });
 
   cfg.querySelectorAll('[data-pk-cmporg]').forEach(c => c.addEventListener('change', () => {
     const url = c.dataset.pkCmporg;

@@ -258,3 +258,51 @@ describe('the layer speaks the token vocabulary and adds nothing to it', () => {
     expect(LAYER).toContain('var(--r-');
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// The "no source of truth" state must never look like a chosen org
+// (user 2026-07-30: "source of truth is not pre select but it is select
+// in the top bar" + "same in the picklist manager").
+//
+// A <select> with no `selected` option silently DISPLAYS ITS FIRST ONE,
+// so the topbar chip asserted an org was the source while the Sync Ring
+// correctly said none was set. The picklist config had the mirror-image
+// bug: it rendered the source line as an empty string, dropping the
+// concept from the screen entirely.
+// ══════════════════════════════════════════════════════════════════
+describe('unset source of truth is stated, not implied', () => {
+  const core = readFileSync(join(root, 'studio-core.js'), 'utf8');
+  const pk   = readFileSync(join(root, 'studio-picklists.js'), 'utf8');
+
+  it('the topbar select carries a selected placeholder when no source is set', () => {
+    // Must be BOTH selected (so it wins over the browser's first-option
+    // fallback) and disabled (so it can never be chosen as a real value).
+    expect(core).toMatch(/const placeholder = srcUrl \? '' :/);
+    expect(core).toMatch(/<option value=""\s+selected\s+disabled>/);
+  });
+
+  it('the placeholder is emitted BEFORE the org options, or it cannot win', () => {
+    const m = /\$\{placeholder\}\$\{opts\}/.exec(core);
+    expect(m, 'placeholder must precede opts in the select markup').toBeTruthy();
+  });
+
+  it('the topbar chip is visually marked as unset, not styled like a real choice', () => {
+    expect(core).toMatch(/ds-pair-sel-unset/);
+  });
+
+  it('the picklist source line renders an explanation instead of an empty string', () => {
+    expect(pk).toMatch(/ds-pk-sot-unset/);
+    expect(pk).toMatch(/No source of truth set/);
+    // Scoped to the sotLine assignment itself: a broad "no `: ''` anywhere"
+    // regex matched unrelated conditional renders in this 2,500-line file.
+    const decl = /const sotLine = sotOrg([\s\S]{0,900}?)\n\s*const chks/.exec(pk);
+    expect(decl, 'sotLine declaration must be findable').toBeTruthy();
+    expect(decl[1], 'the else branch must render something, not \'\'')
+      .not.toMatch(/:\s*''\s*;/);
+  });
+
+  it('and offers the one click that fixes it', () => {
+    expect(pk).toMatch(/id="dsPkGoRing"/);
+    expect(pk).toMatch(/navigateToView\('ring'\)/);
+  });
+});

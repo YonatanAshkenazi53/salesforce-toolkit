@@ -5567,6 +5567,13 @@ body.ds-pro {
 .ds-pk-bulk-spacer { flex: 1 1 auto; }
 .ds-pk-note-tight  { margin: var(--sp-1) 0 0; }
 .ds-pk-sot-line { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+/* The "no source of truth" state — visible and explained, not an empty gap. */
+.ds-pk-sot-unset {
+  padding: var(--sp-3) var(--sp-4); border: 1px dashed var(--c-border);
+  border-radius: var(--r-md); background: var(--c-surface-sunk); color: var(--c-text-muted);
+}
+/* Same idea in the topbar: an unset source must not look like a chosen org. */
+.ds-pair-sel-unset { color: var(--c-text-muted); font-style: italic; }
 .ds-pk-sot-crown { color: var(--c-warn-fg); }
 .ds-pk-sot-warn  { color: var(--c-warn-fg); }
 /* `hidden` beats the list's own display:grid — the builder's follow-mode
