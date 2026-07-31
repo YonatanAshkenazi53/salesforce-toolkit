@@ -4821,6 +4821,13 @@ html, body {
 .ds-ring-cfg-sum { padding: 10px 14px; cursor: pointer; font-size: 13px; display: flex; gap: 10px; align-items: baseline; }
 /* Says WHICH org is the ring's source of truth, and distinguishes it from the
    topbar SOURCE chip — two similar-looking settings (user 2026-07-30). */
+/* The source row in the ring list: checked, disabled, and labelled so the
+   lock reads as deliberate rather than broken. */
+.ds-ring-org-locked { opacity: .82; }
+.ds-ring-src-lock {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--c-text-muted); margin-left: var(--sp-3); white-space: nowrap;
+}
 .ds-ring-sot-explain { margin: 2px 14px 10px; padding: 7px 10px; border-radius: 6px; font-size: 12px; line-height: 1.5;
   background: var(--surface2, rgba(128,128,128,.06)); border: 1px solid var(--border); }
 .ds-ring-sot-unset { border-style: dashed; }
