@@ -871,6 +871,485 @@ async function previewTransfer() {
   }
 }
 
+// ════════════════════════════════════════════════════════════════
+// THE DRY-RUN VALIDATOR — one implementation, any (source → target) pair
+// ════════════════════════════════════════════════════════════════
+// This used to be a 430-line block welded inside runTransfer's
+// `if (_transferDryRun)`, closing over _transferSrc / _transferTgt /
+// logRow / dryRunIssues. That made it unreachable from the fan-out runner —
+// so the moment a deployment had 2+ targets (runProfile routes straight into
+// openFanOut), the best safety net in the product silently vanished and the
+// run went to real writes across every org. Lifting it out changes nothing
+// about WHAT it checks: every message string, every counter increment and
+// the order of every log line are preserved exactly.
+//
+// It WRITES NOTHING. The only messages it can send are SF_QUERY (read) and
+// SF_REST_GET (describe) — see test/fanout-dryrun.test.mjs, which pins that
+// at the source level.
+//
+//   profileTree — the tree the REAL run would send (already patched by
+//                 buildTransferProfile() / treeForTarget()), not the raw one.
+//   srcSess/tgtSess — { orgUrl, sid }.
+//   log(icon, msg, cls) — caller-supplied line writer, so the same validator
+//                 can paint the transfer progress log or a fan-out panel.
+//   ownerMapping — profile.ownerMapping, for the owner-fallback sanity line.
+//
+// Returns { issues, checked, unchecked }:
+//   issues    — the original dryRunIssues counter, unchanged.
+//   checked   — objects whose validation actually ran.
+//   unchecked — objects whose validation could NOT run (source query failed,
+//               target describe failed). NOT the same as "clean": a caller
+//               that reports a target clean while this is non-zero is lying.
+async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMapping) {
+  const logRow = log;
+  let issues = 0, checked = 0, unchecked = 0;
+
+  async function dryRunNode(node) {
+    const obj = node.objectType || node.childSObject;
+
+    // Match the REAL executor's record scoping: picked recordIds take
+    // priority over the WHERE clause (background.js does the same). The
+    // dry run previously used only node.where, so a "🎯 N selected"
+    // profile was validated against the ENTIRE table — wrong counts,
+    // null-sampling false alarms from unselected rows, missed issues.
+    const dryWhere = (Array.isArray(node.recordIds) && node.recordIds.length)
+      ? `Id IN (${node.recordIds.filter(Boolean).map(id => `'${id}'`).join(',')})`
+      : (node.where || '');
+
+    // ── Step 1: count records in source ──────────────────────────
+    const countRes = await sendBg({
+      type: 'SF_QUERY', tooling: false,
+      orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+      query: `SELECT COUNT() FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''}`
+    });
+    if (countRes.error) {
+      logRow('❌', `${obj}: source query failed — ${countRes.error}`, 'ds-prog-err');
+      issues++;
+      unchecked++;
+      return;
+    }
+    const srcCount = countRes.totalSize ?? 0;
+    checked++;
+
+    // ── Step 2: get required fields from TARGET org describe ──────
+    const tgtDesc = await sendBg({
+      type: 'SF_REST_GET',
+      orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+      path: `services/data/v62.0/sobjects/${obj}/describe`
+    });
+    // LATENT BUG, reported not fixed (extraction is a refactor): when the
+    // TARGET describe fails, requiredInTarget silently falls back to [] and
+    // Step 4 below logs "all required fields present" — a green line for a
+    // check that never ran. Every message here is byte-identical to the
+    // pre-extraction code, so that line still lies to a single-target dry
+    // run; what IS new is the `unchecked` counter, which lets a caller
+    // refuse to call this target clean. Fix the message in a separate change.
+    if (tgtDesc.error) unchecked++;
+    const SYSTEM_SKIP = new Set(['Id','IsDeleted','CreatedDate','CreatedById',
+      'LastModifiedDate','LastModifiedById','SystemModstamp','OwnerId']);
+    const requiredInTarget = tgtDesc.error ? [] :
+      (tgtDesc.fields || [])
+        .filter(f => f.createable && !f.nillable && f.defaultValue === null && !SYSTEM_SKIP.has(f.name))
+        .map(f => f.name);
+
+    // ── Child-first feasibility ───────────────────────────────────────────
+    // A child-first node inserts BEFORE its parent (parent-link field left
+    // empty) and gets linked by an UPDATE afterwards. That's only possible
+    // when the link field is optional at insert AND updateable in the
+    // target. The generic required-field check below can't catch this (the
+    // source rows DO have parent values — they're just deliberately not
+    // sent), so a real run would fail 100% while dry run passed.
+    if (node.insertOrder === 'childFirst' && node.field && !tgtDesc.error) {
+      // Resolve the link field the way the executor does — through the
+      // node's field mapping. null = user excluded the link (records will
+      // never be wired); a rename means the TARGET name must be checked.
+      const fmLink = node.fieldMappings ? node.fieldMappings[node.field] : undefined;
+      if (fmLink === null) {
+        logRow('⚠️', `${obj}: child-first — the parent link field ${node.field} is excluded by the field mapping ("Set null"), so these records will be created but never linked to their parent.`, 'ds-prog-warn');
+      } else {
+        const linkName = fmLink || node.field;
+        const mapped   = linkName !== node.field ? ` (mapped from ${node.field})` : '';
+        const pf = (tgtDesc.fields || []).find(f => f.name === linkName);
+        if (!pf) {
+          logRow('❌', `${obj}: child-first — parent link field ${linkName}${mapped} doesn't exist in the target org`, 'ds-prog-err');
+          issues++;
+        } else {
+          if (pf.nillable === false) {
+            logRow('❌', `${obj}: child-first won't work — ${linkName}${mapped} is REQUIRED in the target (master-detail or required lookup), so these records can't be created before their parent. Switch the node back to default order.`, 'ds-prog-err');
+            issues++;
+          }
+          if (pf.updateable === false) {
+            logRow('❌', `${obj}: child-first won't work — ${linkName}${mapped} is not updateable in the target, so these records can't be linked to their parent after creation.`, 'ds-prog-err');
+            issues++;
+          }
+          if (pf.nillable !== false && pf.updateable !== false) {
+            logRow('✅', `${obj}: child-first OK — ${linkName}${mapped} is optional and updateable in the target ✓`);
+          }
+        }
+      }
+    }
+
+    // ── Step 3: cross-check which required-target fields exist in source ──
+    // CRITICAL: this must apply the same field-mapping logic the real transfer
+    // uses, otherwise a profile that maps `LastName → null` (or maps it to a
+    // different target field) passes dry run but fails the real INSERT with
+    // "Required fields are missing: [LastName]".
+    let fieldIssues = [];
+    if (requiredInTarget.length && srcCount > 0) {
+      // Get source describe to know which fields actually exist there
+      const srcDesc = await sendBg({
+        type: 'SF_REST_GET',
+        orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+        path: `services/data/v62.0/sobjects/${obj}/describe`
+      });
+      const srcFields = srcDesc.error ? [] : (srcDesc.fields || []);
+      const srcFieldNames = new Set(srcFields.map(f => f.name));
+
+      // Build the "what source field will populate each target field" map by
+      // simulating the executor's payload-building loop.
+      //   - fm[srcField] === null   → source field is dropped entirely
+      //   - fm[srcField] === 'X'    → source field is renamed to target.X
+      //   - srcField not in fm      → identity passthrough (source.X → target.X)
+      const fm = node.fieldMappings || {};
+      const sourceForTarget = {};  // tgtField → srcField that will populate it
+      const dupTargets = [];       // mapping collisions — two sources, one target
+      for (const f of srcFields) {
+        if (!f.createable) continue;
+        if (fm[f.name] === null) continue;                       // user-excluded
+        const tgtField = (f.name in fm && fm[f.name]) ? fm[f.name] : f.name;
+        // First source field "wins" the target slot (matches executor behaviour)
+        if (!(tgtField in sourceForTarget)) sourceForTarget[tgtField] = f.name;
+        else dupTargets.push(`${tgtField} ← ${sourceForTarget[tgtField]} AND ${f.name}`);
+      }
+      // Two source fields writing the same target silently means "one value
+      // wins" — almost always a corrupted or experimental mapping. Warn.
+      if (dupTargets.length) {
+        logRow('⚠', `${obj}: ${dupTargets.length} field-mapping collision(s) — two source fields write the same target field (${dupTargets.slice(0, 5).join('; ')}) — only one value can win. Fix in ✏ Edit → Fields & mapping.`, 'ds-prog-warn');
+      }
+
+      // Bucket each required-in-target field by how it will (or won't) be populated
+      const droppedByMapping = [];   // required field is in source but mapped to null
+      const missingInSrc     = [];   // required field has no source field producing it
+      const nullCheckPairs   = [];   // [{ tgtField, srcField }] — needs row-level null check
+
+      for (const reqTgt of requiredInTarget) {
+        const srcFieldForReq = sourceForTarget[reqTgt];
+        if (srcFieldForReq) {
+          nullCheckPairs.push({ tgtField: reqTgt, srcField: srcFieldForReq });
+        } else if (fm[reqTgt] === null && srcFieldNames.has(reqTgt)) {
+          droppedByMapping.push(reqTgt);
+        } else {
+          missingInSrc.push(reqTgt);
+        }
+      }
+
+      droppedByMapping.forEach(f => fieldIssues.push({ fieldName: f, droppedByMapping: true }));
+      missingInSrc.forEach(f    => fieldIssues.push({ fieldName: f, missingFromSource: true }));
+
+      // Row-level null check — sample real data on the source side of the mapping
+      if (nullCheckPairs.length) {
+        const selectFields = ['Id', ...new Set(nullCheckPairs.map(p => p.srcField))].join(', ');
+        const sampleRes = await sendBg({
+          type: 'SF_QUERY', tooling: false,
+          orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+          query: `SELECT ${selectFields} FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''} LIMIT 200`
+        });
+        if (!sampleRes.error) {
+          for (const { tgtField, srcField } of nullCheckPairs) {
+            const nullCount = (sampleRes.records || [])
+              .filter(r => r[srcField] === null || r[srcField] === undefined || r[srcField] === '').length;
+            if (nullCount > 0) {
+              fieldIssues.push({
+                fieldName: tgtField, srcField,
+                nullCount, total: sampleRes.records.length
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // ── Step 4: log required-field results ───────────────────────
+    if (fieldIssues.length) {
+      issues += fieldIssues.length;
+      logRow('⚠️', `${obj}: ${srcCount} record(s) found — ${fieldIssues.length} required field issue(s):`, 'ds-prog-warn');
+      for (const issue of fieldIssues) {
+        if (issue.droppedByMapping) {
+          logRow('❌',
+            `  ${issue.fieldName}: required in target but excluded by your field mapping — ` +
+            `target inserts will fail. Open "Edit profile" and map this field back.`,
+            'ds-prog-err');
+        } else if (issue.missingFromSource) {
+          logRow('❌',
+            `  ${issue.fieldName}: required in target, but no source field is mapped to it`,
+            'ds-prog-err');
+        } else {
+          const via = issue.srcField && issue.srcField !== issue.fieldName
+            ? ` (via source field ${issue.srcField})` : '';
+          logRow('❌',
+            `  ${issue.fieldName}: ${issue.nullCount} of ${issue.total} sampled records have no value (required in target)${via}`,
+            'ds-prog-err');
+        }
+      }
+    } else {
+      logRow('✅', `${obj}: ${srcCount} record(s) — all required fields present`);
+    }
+
+    // ── Step 4b: source fields the target org can't accept ───────
+    // Mirrors the real transfer, which skips fields that aren't createable
+    // in the target. Without this, a dry run could pass while the real run
+    // dropped fields — the "dry run passes, real fails" gap.
+    if (srcCount > 0 && !tgtDesc.error) {
+      const tgtCreatable = new Set(
+        (tgtDesc.fields || []).filter(f => f.createable).map(f => f.name)
+      );
+      const srcDescFull = await sendBg({
+        type: 'SF_REST_GET',
+        orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+        path: `services/data/v62.0/sobjects/${obj}/describe`
+      });
+      if (!srcDescFull.error) {
+        const fm = node.fieldMappings || {};
+        const wontTransfer = [];
+        for (const f of (srcDescFull.fields || [])) {
+          if (!f.createable || SYSTEM_SKIP.has(f.name) || f.name === 'RecordTypeId') continue;
+          if (fm[f.name] === null) continue;  // user-excluded — intentional
+          const tgtField = (f.name in fm && fm[f.name]) ? fm[f.name] : f.name;
+          if (!tgtCreatable.has(tgtField)) wontTransfer.push(tgtField);
+        }
+        if (wontTransfer.length) {
+          logRow('⚠️',
+            `${obj}: ${wontTransfer.length} field(s) won't transfer — not writable in target ` +
+            `(${wontTransfer.slice(0, 8).join(', ')}${wontTransfer.length > 8 ? '…' : ''})`,
+            'ds-prog-warn');
+        }
+
+        // ── Step 4c: VALUE preflight — restricted picklists, State/Country,
+        // field lengths. This is the classic "dry run passes, real run
+        // fails" gap: Salesforce only validates VALUES on a real write, but
+        // INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST, FIELD_INTEGRITY_EXCEPTION
+        // (state/country) and STRING_TOO_LONG are all predictable from the
+        // two describes plus a sample of the actual source data.
+        const tgtByName = new Map((tgtDesc.fields || []).map(f => [f.name, f]));
+        const valueChecks = [];   // { srcField, tgtField, tgtMeta, kind }
+        for (const f of (srcDescFull.fields || [])) {
+          if (!f.createable || SYSTEM_SKIP.has(f.name) || f.name === 'RecordTypeId') continue;
+          if (fm[f.name] === null) continue;
+          const tgtField = (f.name in fm && fm[f.name]) ? fm[f.name] : f.name;
+          const t = tgtByName.get(tgtField);
+          if (!t || !t.createable) continue;   // already reported in 4b
+          if ((t.type === 'picklist' || t.type === 'multipicklist') && t.restrictedPicklist) {
+            valueChecks.push({ srcField: f.name, tgtField, tgtMeta: t, kind: 'picklist' });
+          } else if (typeof t.length === 'number' && t.length > 0 && typeof f.length === 'number' && f.length > t.length
+                     && ['string', 'textarea', 'url', 'email', 'phone'].includes(t.type)) {
+            valueChecks.push({ srcField: f.name, tgtField, tgtMeta: t, kind: 'length' });
+          }
+          // State/Country picklists: the TEXT field (e.g. BillingState)
+          // validates against integration values when the target org has
+          // them enabled — visible in the describe as a sibling *Code field.
+          const sc = /^(Billing|Shipping|Mailing|Other)?(State|Country)$/.exec(tgtField);
+          if (sc && tgtByName.has(`${sc[1] || ''}${sc[2]}Code`)) {
+            valueChecks.push({ srcField: f.name, tgtField, tgtMeta: tgtByName.get(`${sc[1] || ''}${sc[2]}Code`), kind: 'state' });
+          }
+        }
+        if (valueChecks.length) {
+          const CHECK_CAP = 40;
+          const capped = valueChecks.slice(0, CHECK_CAP);
+          if (valueChecks.length > CHECK_CAP) {
+            logRow('⚠️', `${obj}: value preflight covers the first ${CHECK_CAP} of ${valueChecks.length} checkable fields — the rest are NOT value-checked.`, 'ds-prog-warn');
+          }
+          const sampleQ = await sendBg({
+            type: 'SF_QUERY', tooling: false,
+            orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+            query: `SELECT ${['Id', ...new Set(capped.map(c => c.srcField))].join(', ')} FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''} LIMIT 200`,
+          });
+          if (sampleQ.error) {
+            logRow('⚠️', `${obj}: value preflight sample failed — ${sampleQ.error}`, 'ds-prog-warn');
+          } else {
+            const rows = sampleQ.records || [];
+            for (const c of capped) {
+              if (c.kind === 'length') {
+                let worst = 0, hits = 0;
+                for (const r of rows) {
+                  const len = (r[c.srcField] == null) ? 0 : String(r[c.srcField]).length;
+                  if (len > c.tgtMeta.length) { hits++; if (len > worst) worst = len; }
+                }
+                if (hits) {
+                  issues++;
+                  logRow('❌', `${obj}.${c.tgtField}: target field takes ${c.tgtMeta.length} chars but ${hits} of ${rows.length} sampled record(s) exceed that (longest ${worst}) — the real run fails with STRING_TOO_LONG. Shorten the data or widen the target field.`, 'ds-prog-err');
+                }
+                continue;
+              }
+              // picklist + state share the "value must be in this set" shape;
+              // state also accepts the code-field's codes (TX) AND labels (Texas).
+              const allowed = new Set();
+              for (const v of (c.tgtMeta.picklistValues || [])) {
+                if (v.active === false) continue;
+                allowed.add(v.value);
+                if (c.kind === 'state' && v.label) allowed.add(v.label);
+              }
+              const bad = new Map();   // offending value → sampled record count
+              for (const r of rows) {
+                const raw = r[c.srcField];
+                if (raw == null || raw === '') continue;
+                const vals = (c.kind === 'picklist' && c.tgtMeta.type === 'multipicklist') ? String(raw).split(';') : [String(raw)];
+                for (const v of vals) if (v && !allowed.has(v)) bad.set(v, (bad.get(v) || 0) + 1);
+              }
+              if (bad.size) {
+                issues++;
+                const list = [...bad.entries()].slice(0, 6).map(([v, n]) => `“${v}” (${n}×)`).join(', ');
+                if (c.kind === 'state') {
+                  logRow('❌', `${obj}.${c.tgtField}: the target enforces State/Country picklists and these sampled value(s) match neither a code nor a label there: ${list}${bad.size > 6 ? '…' : ''} — the real run fails with FIELD_INTEGRITY_EXCEPTION. Fix the source data or align the target's integration values.`, 'ds-prog-err');
+                } else {
+                  logRow('❌', `${obj}.${c.tgtField}: restricted picklist in the target — sampled value(s) not in its active value set: ${list}${bad.size > 6 ? '…' : ''} — the real run fails with INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST. Add the value(s) in the target via the Picklist Manager, or remap the data first.`, 'ds-prog-err');
+                }
+              } else {
+                logRow('✅', `${obj}.${c.tgtField}: all sampled values are accepted by the target ${c.kind === 'state' ? 'State/Country picklist' : 'restricted picklist'} ✓`);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // ── Step 4d: what a dry run CANNOT test — say so, with names ──
+    // Validation rules, Apex triggers and duplicate rules only fire on a
+    // real write. List the active ones in the target so a clean dry run is
+    // never read as "the real run cannot fail".
+    if (srcCount > 0) {
+      const auto = [];
+      const vr = await sendBg({ type: 'SF_QUERY', tooling: true, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+        query: `SELECT ValidationName FROM ValidationRule WHERE Active = true AND EntityDefinition.QualifiedApiName = '${obj}'` });
+      if (!vr.error && (vr.records || []).length) auto.push(`${vr.records.length} validation rule(s) — ${vr.records.slice(0, 5).map(r => r.ValidationName).join(', ')}${vr.records.length > 5 ? '…' : ''}`);
+      const tg = await sendBg({ type: 'SF_QUERY', tooling: true, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+        query: `SELECT Name FROM ApexTrigger WHERE Status = 'Active' AND TableEnumOrId = '${obj}'` });
+      if (!tg.error && (tg.records || []).length) auto.push(`${tg.records.length} Apex trigger(s) — ${tg.records.slice(0, 5).map(r => r.Name).join(', ')}${tg.records.length > 5 ? '…' : ''}`);
+      const dr = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+        query: `SELECT DeveloperName FROM DuplicateRule WHERE IsActive = true AND SobjectType = '${obj}'` });
+      if (!dr.error && (dr.records || []).length) auto.push(`${dr.records.length} duplicate rule(s) — ${dr.records.slice(0, 5).map(r => r.DeveloperName).join(', ')}${dr.records.length > 5 ? '…' : ''}`);
+      if (auto.length) {
+        logRow('ℹ️', `${obj}: target automation a dry run CANNOT test (it only fires on real writes): ${auto.join(' · ')}. If the real run fails with a custom error message, start here.`, 'ds-prog-warn');
+      }
+    }
+
+    // ── Step 5: validate lookup resolution bridges ────────────────
+    // For each 'match' resolution, probe a sample to see how many IDs resolve.
+    if (node.lookupResolutions && srcCount > 0 && tgtSess) {
+      for (const [fieldName, res] of Object.entries(node.lookupResolutions)) {
+        if (res.strategy !== 'match' || !res.matchField || !res.matchObject) continue;
+
+        // Grab a 50-record sample from source and check how many AccountId values
+        // we can bridge via the chosen anchor field
+        const sampleRes = await sendBg({
+          type: 'SF_QUERY', tooling: false,
+          orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+          query: `SELECT ${fieldName} FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''} LIMIT 50`
+        });
+        if (sampleRes.error) continue;
+
+        const sampleIds = [...new Set(
+          (sampleRes.records || []).map(r => r[fieldName]).filter(Boolean)
+        )];
+        if (!sampleIds.length) continue;
+
+        // Lookup anchor values from source
+        const idList = sampleIds.map(id => `'${id}'`).join(',');
+        const srcLookup = await sendBg({
+          type: 'SF_QUERY', tooling: false,
+          orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+          query: `SELECT Id, ${res.matchField} FROM ${res.matchObject} WHERE Id IN (${idList})`
+        });
+        if (srcLookup.error) continue;
+
+        const anchorValues = [...new Set(
+          (srcLookup.records || []).map(r => r[res.matchField]).filter(Boolean)
+        )];
+        if (!anchorValues.length) continue;
+
+        // Match against target
+        // Use soqlStrLit so values like O'Brien (or anything containing
+        // a backslash) are safely escaped — the old inline escape only
+        // handled single quotes, leaving backslashes to corrupt the query.
+        const valList = anchorValues.map(soqlStrLit).join(',');
+        const tgtLookup = await sendBg({
+          type: 'SF_QUERY', tooling: false,
+          orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+          query: `SELECT Id, ${res.matchField} FROM ${res.matchObject} WHERE ${res.matchField} IN (${valList})`
+        });
+        if (tgtLookup.error) {
+          logRow('⚠️', `  ${fieldName}: lookup probe failed — ${tgtLookup.error}`, 'ds-prog-warn');
+          issues++;
+          continue;
+        }
+
+        const matched = (tgtLookup.records || []).length;
+        const total   = anchorValues.length;
+        if (matched === 0) {
+          logRow('❌', `  ${fieldName} → ${res.matchObject}.${res.matchField}: no matches found in target — all will be null`, 'ds-prog-err');
+          issues++;
+        } else if (matched < total) {
+          logRow('⚠️', `  ${fieldName} → ${res.matchObject}.${res.matchField}: ${matched}/${total} sampled values found in target — some will be null`, 'ds-prog-warn');
+        } else {
+          logRow('✅', `  ${fieldName} → ${res.matchObject}.${res.matchField}: all ${total} sampled values resolve in target ✓`);
+        }
+      }
+    }
+
+    // ── Step 6: Record-type matching preview ──────────────────────
+    // The transfer matches source → target RecordTypes by DeveloperName
+    // (API name). Show, before running, which record types used by the
+    // source records have an equivalent in the target — unmatched ones
+    // mean those records will land with the target's DEFAULT record type.
+    if (srcCount > 0) {
+      const rtWhere = dryWhere
+        ? `WHERE (${dryWhere}) AND RecordTypeId != null`
+        : `WHERE RecordTypeId != null`;
+      const srcRtRes = await sendBg({
+        type: 'SF_QUERY', tooling: false,
+        orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+        // GROUP BY → distinct record-type names cheaply (no row payload).
+        query: `SELECT RecordType.DeveloperName FROM ${obj} ${rtWhere} GROUP BY RecordType.DeveloperName`
+      });
+      // Some objects have no RecordTypeId field → the query errors; that
+      // just means "no record types here", which is fine, so ignore it.
+      if (!srcRtRes.error) {
+        const usedNames = [...new Set(
+          (srcRtRes.records || []).map(r => r.RecordType?.DeveloperName).filter(Boolean)
+        )];
+        if (usedNames.length) {
+          const tgtRtRes = await sendBg({
+            type: 'SF_QUERY', tooling: false,
+            orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+            query: `SELECT DeveloperName FROM RecordType WHERE SObjectType = '${obj}'`
+          });
+          const tgtNames = new Set((tgtRtRes.records || []).map(r => r.DeveloperName));
+          const matchedRt   = usedNames.filter(n => tgtNames.has(n));
+          const unmatchedRt = usedNames.filter(n => !tgtNames.has(n));
+          if (unmatchedRt.length) {
+            logRow('⚠️',
+              `${obj}: record type(s) ${unmatchedRt.join(', ')} have no match in target — those records will use the target's default record type` +
+              (matchedRt.length ? ` (${matchedRt.length} other type(s) match ✓)` : ''),
+              'ds-prog-warn');
+          } else {
+            logRow('✅', `${obj}: all ${matchedRt.length} record type(s) match in target by API name ✓`);
+          }
+        }
+      }
+    }
+
+    for (const c of (node.children || [])) await dryRunNode(c);
+  }
+
+  // Owner-mapping sanity: matching without a fallback is allowed but easy
+  // to pick by accident — say what will happen to unmatched owners.
+  if (ownerMapping?.mode === 'match' && !ownerMapping.fallbackUserId) {
+    logRow('⚠', 'Owner matching is ON but no fallback user is picked — owners with no name match get the target default on inserts, and keep their current owner on updates.', 'ds-prog-warn');
+  }
+
+  await dryRunNode(profileTree);
+  return { issues, checked, unchecked };
+}
+
 async function runTransfer() {
   if (!_transferProfile || !_transferSrc || !_transferTgt) return;
   if (_transferSrc.orgUrl === _transferTgt.orgUrl) return;
@@ -897,444 +1376,14 @@ async function runTransfer() {
     log.scrollTop = log.scrollHeight;
   }
 
-  // Feature 5: Dry run mode — validate fields + count, no writes
+  // Feature 5: Dry run mode — validate fields + count, no writes.
+  // The validator itself lives in sftkDryRunAgainst (above) so the fan-out
+  // runner can use the identical checks against every target.
   if (_transferDryRun) {
     logRow('🧪', `DRY RUN — validating "${_transferProfile.name}" (nothing will be written)…`);
-    let dryRunIssues = 0;
-
-    async function dryRunNode(node) {
-      const obj = node.objectType || node.childSObject;
-
-      // Match the REAL executor's record scoping: picked recordIds take
-      // priority over the WHERE clause (background.js does the same). The
-      // dry run previously used only node.where, so a "🎯 N selected"
-      // profile was validated against the ENTIRE table — wrong counts,
-      // null-sampling false alarms from unselected rows, missed issues.
-      const dryWhere = (Array.isArray(node.recordIds) && node.recordIds.length)
-        ? `Id IN (${node.recordIds.filter(Boolean).map(id => `'${id}'`).join(',')})`
-        : (node.where || '');
-
-      // ── Step 1: count records in source ──────────────────────────
-      const countRes = await sendBg({
-        type: 'SF_QUERY', tooling: false,
-        orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid,
-        query: `SELECT COUNT() FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''}`
-      });
-      if (countRes.error) {
-        logRow('❌', `${obj}: source query failed — ${countRes.error}`, 'ds-prog-err');
-        dryRunIssues++;
-        return;
-      }
-      const srcCount = countRes.totalSize ?? 0;
-
-      // ── Step 2: get required fields from TARGET org describe ──────
-      const tgtDesc = await sendBg({
-        type: 'SF_REST_GET',
-        orgUrl: _transferTgt.orgUrl, sid: _transferTgt.sid,
-        path: `services/data/v62.0/sobjects/${obj}/describe`
-      });
-      const SYSTEM_SKIP = new Set(['Id','IsDeleted','CreatedDate','CreatedById',
-        'LastModifiedDate','LastModifiedById','SystemModstamp','OwnerId']);
-      const requiredInTarget = tgtDesc.error ? [] :
-        (tgtDesc.fields || [])
-          .filter(f => f.createable && !f.nillable && f.defaultValue === null && !SYSTEM_SKIP.has(f.name))
-          .map(f => f.name);
-
-      // ── Child-first feasibility ───────────────────────────────────────────
-      // A child-first node inserts BEFORE its parent (parent-link field left
-      // empty) and gets linked by an UPDATE afterwards. That's only possible
-      // when the link field is optional at insert AND updateable in the
-      // target. The generic required-field check below can't catch this (the
-      // source rows DO have parent values — they're just deliberately not
-      // sent), so a real run would fail 100% while dry run passed.
-      if (node.insertOrder === 'childFirst' && node.field && !tgtDesc.error) {
-        // Resolve the link field the way the executor does — through the
-        // node's field mapping. null = user excluded the link (records will
-        // never be wired); a rename means the TARGET name must be checked.
-        const fmLink = node.fieldMappings ? node.fieldMappings[node.field] : undefined;
-        if (fmLink === null) {
-          logRow('⚠️', `${obj}: child-first — the parent link field ${node.field} is excluded by the field mapping ("Set null"), so these records will be created but never linked to their parent.`, 'ds-prog-warn');
-        } else {
-          const linkName = fmLink || node.field;
-          const mapped   = linkName !== node.field ? ` (mapped from ${node.field})` : '';
-          const pf = (tgtDesc.fields || []).find(f => f.name === linkName);
-          if (!pf) {
-            logRow('❌', `${obj}: child-first — parent link field ${linkName}${mapped} doesn't exist in the target org`, 'ds-prog-err');
-            dryRunIssues++;
-          } else {
-            if (pf.nillable === false) {
-              logRow('❌', `${obj}: child-first won't work — ${linkName}${mapped} is REQUIRED in the target (master-detail or required lookup), so these records can't be created before their parent. Switch the node back to default order.`, 'ds-prog-err');
-              dryRunIssues++;
-            }
-            if (pf.updateable === false) {
-              logRow('❌', `${obj}: child-first won't work — ${linkName}${mapped} is not updateable in the target, so these records can't be linked to their parent after creation.`, 'ds-prog-err');
-              dryRunIssues++;
-            }
-            if (pf.nillable !== false && pf.updateable !== false) {
-              logRow('✅', `${obj}: child-first OK — ${linkName}${mapped} is optional and updateable in the target ✓`);
-            }
-          }
-        }
-      }
-
-      // ── Step 3: cross-check which required-target fields exist in source ──
-      // CRITICAL: this must apply the same field-mapping logic the real transfer
-      // uses, otherwise a profile that maps `LastName → null` (or maps it to a
-      // different target field) passes dry run but fails the real INSERT with
-      // "Required fields are missing: [LastName]".
-      let fieldIssues = [];
-      if (requiredInTarget.length && srcCount > 0) {
-        // Get source describe to know which fields actually exist there
-        const srcDesc = await sendBg({
-          type: 'SF_REST_GET',
-          orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid,
-          path: `services/data/v62.0/sobjects/${obj}/describe`
-        });
-        const srcFields = srcDesc.error ? [] : (srcDesc.fields || []);
-        const srcFieldNames = new Set(srcFields.map(f => f.name));
-
-        // Build the "what source field will populate each target field" map by
-        // simulating the executor's payload-building loop.
-        //   - fm[srcField] === null   → source field is dropped entirely
-        //   - fm[srcField] === 'X'    → source field is renamed to target.X
-        //   - srcField not in fm      → identity passthrough (source.X → target.X)
-        const fm = node.fieldMappings || {};
-        const sourceForTarget = {};  // tgtField → srcField that will populate it
-        const dupTargets = [];       // mapping collisions — two sources, one target
-        for (const f of srcFields) {
-          if (!f.createable) continue;
-          if (fm[f.name] === null) continue;                       // user-excluded
-          const tgtField = (f.name in fm && fm[f.name]) ? fm[f.name] : f.name;
-          // First source field "wins" the target slot (matches executor behaviour)
-          if (!(tgtField in sourceForTarget)) sourceForTarget[tgtField] = f.name;
-          else dupTargets.push(`${tgtField} ← ${sourceForTarget[tgtField]} AND ${f.name}`);
-        }
-        // Two source fields writing the same target silently means "one value
-        // wins" — almost always a corrupted or experimental mapping. Warn.
-        if (dupTargets.length) {
-          logRow('⚠', `${obj}: ${dupTargets.length} field-mapping collision(s) — two source fields write the same target field (${dupTargets.slice(0, 5).join('; ')}) — only one value can win. Fix in ✏ Edit → Fields & mapping.`, 'ds-prog-warn');
-        }
-
-        // Bucket each required-in-target field by how it will (or won't) be populated
-        const droppedByMapping = [];   // required field is in source but mapped to null
-        const missingInSrc     = [];   // required field has no source field producing it
-        const nullCheckPairs   = [];   // [{ tgtField, srcField }] — needs row-level null check
-
-        for (const reqTgt of requiredInTarget) {
-          const srcFieldForReq = sourceForTarget[reqTgt];
-          if (srcFieldForReq) {
-            nullCheckPairs.push({ tgtField: reqTgt, srcField: srcFieldForReq });
-          } else if (fm[reqTgt] === null && srcFieldNames.has(reqTgt)) {
-            droppedByMapping.push(reqTgt);
-          } else {
-            missingInSrc.push(reqTgt);
-          }
-        }
-
-        droppedByMapping.forEach(f => fieldIssues.push({ fieldName: f, droppedByMapping: true }));
-        missingInSrc.forEach(f    => fieldIssues.push({ fieldName: f, missingFromSource: true }));
-
-        // Row-level null check — sample real data on the source side of the mapping
-        if (nullCheckPairs.length) {
-          const selectFields = ['Id', ...new Set(nullCheckPairs.map(p => p.srcField))].join(', ');
-          const sampleRes = await sendBg({
-            type: 'SF_QUERY', tooling: false,
-            orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid,
-            query: `SELECT ${selectFields} FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''} LIMIT 200`
-          });
-          if (!sampleRes.error) {
-            for (const { tgtField, srcField } of nullCheckPairs) {
-              const nullCount = (sampleRes.records || [])
-                .filter(r => r[srcField] === null || r[srcField] === undefined || r[srcField] === '').length;
-              if (nullCount > 0) {
-                fieldIssues.push({
-                  fieldName: tgtField, srcField,
-                  nullCount, total: sampleRes.records.length
-                });
-              }
-            }
-          }
-        }
-      }
-
-      // ── Step 4: log required-field results ───────────────────────
-      if (fieldIssues.length) {
-        dryRunIssues += fieldIssues.length;
-        logRow('⚠️', `${obj}: ${srcCount} record(s) found — ${fieldIssues.length} required field issue(s):`, 'ds-prog-warn');
-        for (const issue of fieldIssues) {
-          if (issue.droppedByMapping) {
-            logRow('❌',
-              `  ${issue.fieldName}: required in target but excluded by your field mapping — ` +
-              `target inserts will fail. Open "Edit profile" and map this field back.`,
-              'ds-prog-err');
-          } else if (issue.missingFromSource) {
-            logRow('❌',
-              `  ${issue.fieldName}: required in target, but no source field is mapped to it`,
-              'ds-prog-err');
-          } else {
-            const via = issue.srcField && issue.srcField !== issue.fieldName
-              ? ` (via source field ${issue.srcField})` : '';
-            logRow('❌',
-              `  ${issue.fieldName}: ${issue.nullCount} of ${issue.total} sampled records have no value (required in target)${via}`,
-              'ds-prog-err');
-          }
-        }
-      } else {
-        logRow('✅', `${obj}: ${srcCount} record(s) — all required fields present`);
-      }
-
-      // ── Step 4b: source fields the target org can't accept ───────
-      // Mirrors the real transfer, which skips fields that aren't createable
-      // in the target. Without this, a dry run could pass while the real run
-      // dropped fields — the "dry run passes, real fails" gap.
-      if (srcCount > 0 && !tgtDesc.error) {
-        const tgtCreatable = new Set(
-          (tgtDesc.fields || []).filter(f => f.createable).map(f => f.name)
-        );
-        const srcDescFull = await sendBg({
-          type: 'SF_REST_GET',
-          orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid,
-          path: `services/data/v62.0/sobjects/${obj}/describe`
-        });
-        if (!srcDescFull.error) {
-          const fm = node.fieldMappings || {};
-          const wontTransfer = [];
-          for (const f of (srcDescFull.fields || [])) {
-            if (!f.createable || SYSTEM_SKIP.has(f.name) || f.name === 'RecordTypeId') continue;
-            if (fm[f.name] === null) continue;  // user-excluded — intentional
-            const tgtField = (f.name in fm && fm[f.name]) ? fm[f.name] : f.name;
-            if (!tgtCreatable.has(tgtField)) wontTransfer.push(tgtField);
-          }
-          if (wontTransfer.length) {
-            logRow('⚠️',
-              `${obj}: ${wontTransfer.length} field(s) won't transfer — not writable in target ` +
-              `(${wontTransfer.slice(0, 8).join(', ')}${wontTransfer.length > 8 ? '…' : ''})`,
-              'ds-prog-warn');
-          }
-
-          // ── Step 4c: VALUE preflight — restricted picklists, State/Country,
-          // field lengths. This is the classic "dry run passes, real run
-          // fails" gap: Salesforce only validates VALUES on a real write, but
-          // INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST, FIELD_INTEGRITY_EXCEPTION
-          // (state/country) and STRING_TOO_LONG are all predictable from the
-          // two describes plus a sample of the actual source data.
-          const tgtByName = new Map((tgtDesc.fields || []).map(f => [f.name, f]));
-          const valueChecks = [];   // { srcField, tgtField, tgtMeta, kind }
-          for (const f of (srcDescFull.fields || [])) {
-            if (!f.createable || SYSTEM_SKIP.has(f.name) || f.name === 'RecordTypeId') continue;
-            if (fm[f.name] === null) continue;
-            const tgtField = (f.name in fm && fm[f.name]) ? fm[f.name] : f.name;
-            const t = tgtByName.get(tgtField);
-            if (!t || !t.createable) continue;   // already reported in 4b
-            if ((t.type === 'picklist' || t.type === 'multipicklist') && t.restrictedPicklist) {
-              valueChecks.push({ srcField: f.name, tgtField, tgtMeta: t, kind: 'picklist' });
-            } else if (typeof t.length === 'number' && t.length > 0 && typeof f.length === 'number' && f.length > t.length
-                       && ['string', 'textarea', 'url', 'email', 'phone'].includes(t.type)) {
-              valueChecks.push({ srcField: f.name, tgtField, tgtMeta: t, kind: 'length' });
-            }
-            // State/Country picklists: the TEXT field (e.g. BillingState)
-            // validates against integration values when the target org has
-            // them enabled — visible in the describe as a sibling *Code field.
-            const sc = /^(Billing|Shipping|Mailing|Other)?(State|Country)$/.exec(tgtField);
-            if (sc && tgtByName.has(`${sc[1] || ''}${sc[2]}Code`)) {
-              valueChecks.push({ srcField: f.name, tgtField, tgtMeta: tgtByName.get(`${sc[1] || ''}${sc[2]}Code`), kind: 'state' });
-            }
-          }
-          if (valueChecks.length) {
-            const CHECK_CAP = 40;
-            const capped = valueChecks.slice(0, CHECK_CAP);
-            if (valueChecks.length > CHECK_CAP) {
-              logRow('⚠️', `${obj}: value preflight covers the first ${CHECK_CAP} of ${valueChecks.length} checkable fields — the rest are NOT value-checked.`, 'ds-prog-warn');
-            }
-            const sampleQ = await sendBg({
-              type: 'SF_QUERY', tooling: false,
-              orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid,
-              query: `SELECT ${['Id', ...new Set(capped.map(c => c.srcField))].join(', ')} FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''} LIMIT 200`,
-            });
-            if (sampleQ.error) {
-              logRow('⚠️', `${obj}: value preflight sample failed — ${sampleQ.error}`, 'ds-prog-warn');
-            } else {
-              const rows = sampleQ.records || [];
-              for (const c of capped) {
-                if (c.kind === 'length') {
-                  let worst = 0, hits = 0;
-                  for (const r of rows) {
-                    const len = (r[c.srcField] == null) ? 0 : String(r[c.srcField]).length;
-                    if (len > c.tgtMeta.length) { hits++; if (len > worst) worst = len; }
-                  }
-                  if (hits) {
-                    dryRunIssues++;
-                    logRow('❌', `${obj}.${c.tgtField}: target field takes ${c.tgtMeta.length} chars but ${hits} of ${rows.length} sampled record(s) exceed that (longest ${worst}) — the real run fails with STRING_TOO_LONG. Shorten the data or widen the target field.`, 'ds-prog-err');
-                  }
-                  continue;
-                }
-                // picklist + state share the "value must be in this set" shape;
-                // state also accepts the code-field's codes (TX) AND labels (Texas).
-                const allowed = new Set();
-                for (const v of (c.tgtMeta.picklistValues || [])) {
-                  if (v.active === false) continue;
-                  allowed.add(v.value);
-                  if (c.kind === 'state' && v.label) allowed.add(v.label);
-                }
-                const bad = new Map();   // offending value → sampled record count
-                for (const r of rows) {
-                  const raw = r[c.srcField];
-                  if (raw == null || raw === '') continue;
-                  const vals = (c.kind === 'picklist' && c.tgtMeta.type === 'multipicklist') ? String(raw).split(';') : [String(raw)];
-                  for (const v of vals) if (v && !allowed.has(v)) bad.set(v, (bad.get(v) || 0) + 1);
-                }
-                if (bad.size) {
-                  dryRunIssues++;
-                  const list = [...bad.entries()].slice(0, 6).map(([v, n]) => `“${v}” (${n}×)`).join(', ');
-                  if (c.kind === 'state') {
-                    logRow('❌', `${obj}.${c.tgtField}: the target enforces State/Country picklists and these sampled value(s) match neither a code nor a label there: ${list}${bad.size > 6 ? '…' : ''} — the real run fails with FIELD_INTEGRITY_EXCEPTION. Fix the source data or align the target's integration values.`, 'ds-prog-err');
-                  } else {
-                    logRow('❌', `${obj}.${c.tgtField}: restricted picklist in the target — sampled value(s) not in its active value set: ${list}${bad.size > 6 ? '…' : ''} — the real run fails with INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST. Add the value(s) in the target via the Picklist Manager, or remap the data first.`, 'ds-prog-err');
-                  }
-                } else {
-                  logRow('✅', `${obj}.${c.tgtField}: all sampled values are accepted by the target ${c.kind === 'state' ? 'State/Country picklist' : 'restricted picklist'} ✓`);
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // ── Step 4d: what a dry run CANNOT test — say so, with names ──
-      // Validation rules, Apex triggers and duplicate rules only fire on a
-      // real write. List the active ones in the target so a clean dry run is
-      // never read as "the real run cannot fail".
-      if (srcCount > 0) {
-        const auto = [];
-        const vr = await sendBg({ type: 'SF_QUERY', tooling: true, orgUrl: _transferTgt.orgUrl, sid: _transferTgt.sid,
-          query: `SELECT ValidationName FROM ValidationRule WHERE Active = true AND EntityDefinition.QualifiedApiName = '${obj}'` });
-        if (!vr.error && (vr.records || []).length) auto.push(`${vr.records.length} validation rule(s) — ${vr.records.slice(0, 5).map(r => r.ValidationName).join(', ')}${vr.records.length > 5 ? '…' : ''}`);
-        const tg = await sendBg({ type: 'SF_QUERY', tooling: true, orgUrl: _transferTgt.orgUrl, sid: _transferTgt.sid,
-          query: `SELECT Name FROM ApexTrigger WHERE Status = 'Active' AND TableEnumOrId = '${obj}'` });
-        if (!tg.error && (tg.records || []).length) auto.push(`${tg.records.length} Apex trigger(s) — ${tg.records.slice(0, 5).map(r => r.Name).join(', ')}${tg.records.length > 5 ? '…' : ''}`);
-        const dr = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: _transferTgt.orgUrl, sid: _transferTgt.sid,
-          query: `SELECT DeveloperName FROM DuplicateRule WHERE IsActive = true AND SobjectType = '${obj}'` });
-        if (!dr.error && (dr.records || []).length) auto.push(`${dr.records.length} duplicate rule(s) — ${dr.records.slice(0, 5).map(r => r.DeveloperName).join(', ')}${dr.records.length > 5 ? '…' : ''}`);
-        if (auto.length) {
-          logRow('ℹ️', `${obj}: target automation a dry run CANNOT test (it only fires on real writes): ${auto.join(' · ')}. If the real run fails with a custom error message, start here.`, 'ds-prog-warn');
-        }
-      }
-
-      // ── Step 5: validate lookup resolution bridges ────────────────
-      // For each 'match' resolution, probe a sample to see how many IDs resolve.
-      if (node.lookupResolutions && srcCount > 0 && _transferTgt) {
-        for (const [fieldName, res] of Object.entries(node.lookupResolutions)) {
-          if (res.strategy !== 'match' || !res.matchField || !res.matchObject) continue;
-
-          // Grab a 50-record sample from source and check how many AccountId values
-          // we can bridge via the chosen anchor field
-          const sampleRes = await sendBg({
-            type: 'SF_QUERY', tooling: false,
-            orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid,
-            query: `SELECT ${fieldName} FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''} LIMIT 50`
-          });
-          if (sampleRes.error) continue;
-
-          const sampleIds = [...new Set(
-            (sampleRes.records || []).map(r => r[fieldName]).filter(Boolean)
-          )];
-          if (!sampleIds.length) continue;
-
-          // Lookup anchor values from source
-          const idList = sampleIds.map(id => `'${id}'`).join(',');
-          const srcLookup = await sendBg({
-            type: 'SF_QUERY', tooling: false,
-            orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid,
-            query: `SELECT Id, ${res.matchField} FROM ${res.matchObject} WHERE Id IN (${idList})`
-          });
-          if (srcLookup.error) continue;
-
-          const anchorValues = [...new Set(
-            (srcLookup.records || []).map(r => r[res.matchField]).filter(Boolean)
-          )];
-          if (!anchorValues.length) continue;
-
-          // Match against target
-          // Use soqlStrLit so values like O'Brien (or anything containing
-          // a backslash) are safely escaped — the old inline escape only
-          // handled single quotes, leaving backslashes to corrupt the query.
-          const valList = anchorValues.map(soqlStrLit).join(',');
-          const tgtLookup = await sendBg({
-            type: 'SF_QUERY', tooling: false,
-            orgUrl: _transferTgt.orgUrl, sid: _transferTgt.sid,
-            query: `SELECT Id, ${res.matchField} FROM ${res.matchObject} WHERE ${res.matchField} IN (${valList})`
-          });
-          if (tgtLookup.error) {
-            logRow('⚠️', `  ${fieldName}: lookup probe failed — ${tgtLookup.error}`, 'ds-prog-warn');
-            dryRunIssues++;
-            continue;
-          }
-
-          const matched = (tgtLookup.records || []).length;
-          const total   = anchorValues.length;
-          if (matched === 0) {
-            logRow('❌', `  ${fieldName} → ${res.matchObject}.${res.matchField}: no matches found in target — all will be null`, 'ds-prog-err');
-            dryRunIssues++;
-          } else if (matched < total) {
-            logRow('⚠️', `  ${fieldName} → ${res.matchObject}.${res.matchField}: ${matched}/${total} sampled values found in target — some will be null`, 'ds-prog-warn');
-          } else {
-            logRow('✅', `  ${fieldName} → ${res.matchObject}.${res.matchField}: all ${total} sampled values resolve in target ✓`);
-          }
-        }
-      }
-
-      // ── Step 6: Record-type matching preview ──────────────────────
-      // The transfer matches source → target RecordTypes by DeveloperName
-      // (API name). Show, before running, which record types used by the
-      // source records have an equivalent in the target — unmatched ones
-      // mean those records will land with the target's DEFAULT record type.
-      if (srcCount > 0) {
-        const rtWhere = dryWhere
-          ? `WHERE (${dryWhere}) AND RecordTypeId != null`
-          : `WHERE RecordTypeId != null`;
-        const srcRtRes = await sendBg({
-          type: 'SF_QUERY', tooling: false,
-          orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid,
-          // GROUP BY → distinct record-type names cheaply (no row payload).
-          query: `SELECT RecordType.DeveloperName FROM ${obj} ${rtWhere} GROUP BY RecordType.DeveloperName`
-        });
-        // Some objects have no RecordTypeId field → the query errors; that
-        // just means "no record types here", which is fine, so ignore it.
-        if (!srcRtRes.error) {
-          const usedNames = [...new Set(
-            (srcRtRes.records || []).map(r => r.RecordType?.DeveloperName).filter(Boolean)
-          )];
-          if (usedNames.length) {
-            const tgtRtRes = await sendBg({
-              type: 'SF_QUERY', tooling: false,
-              orgUrl: _transferTgt.orgUrl, sid: _transferTgt.sid,
-              query: `SELECT DeveloperName FROM RecordType WHERE SObjectType = '${obj}'`
-            });
-            const tgtNames = new Set((tgtRtRes.records || []).map(r => r.DeveloperName));
-            const matchedRt   = usedNames.filter(n => tgtNames.has(n));
-            const unmatchedRt = usedNames.filter(n => !tgtNames.has(n));
-            if (unmatchedRt.length) {
-              logRow('⚠️',
-                `${obj}: record type(s) ${unmatchedRt.join(', ')} have no match in target — those records will use the target's default record type` +
-                (matchedRt.length ? ` (${matchedRt.length} other type(s) match ✓)` : ''),
-                'ds-prog-warn');
-            } else {
-              logRow('✅', `${obj}: all ${matchedRt.length} record type(s) match in target by API name ✓`);
-            }
-          }
-        }
-      }
-
-      for (const c of (node.children || [])) await dryRunNode(c);
-    }
-
-    // Owner-mapping sanity: matching without a fallback is allowed but easy
-    // to pick by accident — say what will happen to unmatched owners.
-    if (_transferProfile?.ownerMapping?.mode === 'match' && !_transferProfile.ownerMapping.fallbackUserId) {
-      logRow('⚠', 'Owner matching is ON but no fallback user is picked — owners with no name match get the target default on inserts, and keep their current owner on updates.', 'ds-prog-warn');
-    }
-
-    await dryRunNode(buildTransferProfile().tree);
+    const { issues: dryRunIssues } = await sftkDryRunAgainst(
+      buildTransferProfile().tree, _transferSrc, _transferTgt, logRow,
+      _transferProfile?.ownerMapping);
 
     if (dryRunIssues > 0) {
       logRow('❌', `Dry run found ${dryRunIssues} issue(s) — fix these before running the real transfer.`, 'ds-prog-err');
@@ -1609,8 +1658,8 @@ async function runTransfer() {
 // The engine already takes any (profile, src, tgt) — fan-out is a sequential
 // loop with per-org sessions, per-org history entries and a result log
 // (the picklist P2 bulk-apply pattern). Fresh idMap per target by design:
-// targets share nothing. No dry-run here — validate the profile on one pair
-// first (the modal says so).
+// targets share nothing. Fan-out DOES have a dry run now — dryRunFanOut()
+// below runs the identical validator against every ticked target first.
 // PURE — what a fan-out will actually do to ONE target, from whatever is
 // already known about it. The fan-out modal used to list target checkboxes and
 // nothing else (user 2026-07-30: "you don't see any information about the
@@ -1671,6 +1720,195 @@ function sftkFanoutScanAge(runAt, now) {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
+// ════════════════════════════════════════════════════════════════
+// M1b — FAN-OUT DRY RUN: the same validator, against every target
+// ════════════════════════════════════════════════════════════════
+// runProfile() routes the main Run button into openFanOut() whenever a
+// deployment has more than one target, so "fan out" IS what Run means for a
+// multi-org deployment. runFanOut() called SF_EXECUTE_PROFILE_TRANSFER
+// directly while the whole dry-run validator sat inside runTransfer's
+// `if (_transferDryRun)` — i.e. adding a second target silently deleted the
+// best safety feature in the product. sftkDryRunAgainst (above) is now
+// callable per target, and this is the surface that calls it.
+
+// PURE — one target's dry-run outcome → the verdict shown in the panel and in
+// the summary line. THREE states, never two: a target whose validation could
+// not run is "could not check", which is NOT clean. Reporting it as clean
+// would be the exact lie this feature exists to prevent.
+//   res: { skipped:true } | { error } | { issues, checked, unchecked }
+// Returns { state, icon, label, detail }; state ∈
+//   'skipped' | 'unknown' | 'dirty' | 'clean'.
+function sftkFanoutDryVerdict(res) {
+  if (!res || res.skipped) {
+    return { state: 'skipped', icon: '⏭', label: 'skipped',
+      detail: 'skipped — no open tab, so nothing was checked here (the real run skips it the same way)' };
+  }
+  if (res.error) {
+    return { state: 'unknown', icon: '❔', label: 'could not check',
+      detail: `could not check — ${res.error}` };
+  }
+  const issues    = Math.max(0, Number(res.issues) || 0);
+  const checked   = Math.max(0, Number(res.checked) || 0);
+  const unchecked = Math.max(0, Number(res.unchecked) || 0);
+  if (issues > 0) {
+    const tail = unchecked ? ` · ${unchecked} object(s) could not be checked` : '';
+    return { state: 'dirty', icon: '❌', label: `${issues} issue(s)`,
+      detail: `${issues} issue(s) found${tail}` };
+  }
+  if (unchecked > 0) {
+    return { state: 'unknown', icon: '❔', label: 'could not check',
+      detail: `no issues in what could be read, but ${unchecked} object(s) could not be checked — this is NOT a clean result` };
+  }
+  if (checked === 0) {
+    return { state: 'unknown', icon: '❔', label: 'could not check',
+      detail: 'nothing was checked — this is NOT a clean result' };
+  }
+  return { state: 'clean', icon: '✅', label: 'clean',
+    detail: `clean — ${checked} object(s) checked, 0 issues` };
+}
+
+// PURE — the honest end-of-run lines: per target, then the grand total.
+// Each state is tallied separately so "clean" never absorbs "could not
+// check" or "skipped". rows: [{ label, issues, verdict }].
+function sftkFanoutDrySummary(rows) {
+  const list = rows || [];
+  const per = list.map(r => `${r.label}: ${r.verdict.label}`).join(' · ');
+  const tally = { clean: 0, dirty: 0, unknown: 0, skipped: 0, issues: 0 };
+  for (const r of list) {
+    tally[r.verdict.state] = (tally[r.verdict.state] || 0) + 1;
+    tally.issues += Math.max(0, Number(r.issues) || 0);
+  }
+  const bits = [];
+  if (tally.clean)   bits.push(`${tally.clean} clean`);
+  if (tally.dirty)   bits.push(`${tally.dirty} with issues (${tally.issues} total)`);
+  if (tally.unknown) bits.push(`${tally.unknown} could not be checked`);
+  if (tally.skipped) bits.push(`${tally.skipped} skipped`);
+  return { per, total: bits.join(' · ') || 'no targets', tally };
+}
+
+// The runner. Validates every ticked target sequentially against the SAME
+// source, streaming each target's lines into its own section of the fan-out
+// result panel. It WRITES NOTHING: the only messages this path can send are
+// GET_ALL_SF_SESSIONS (via getOrgSession), SF_QUERY and SF_REST_GET — all
+// reads. There is deliberately no SF_EXECUTE_PROFILE_TRANSFER, no history
+// push and no storage write anywhere below.
+async function dryRunFanOut(p, srcUrl, targets) {
+  const host  = eid('dsMain');
+  const panel = document.createElement('div');
+  panel.className = 'ds-fanout-panel';
+  // The point-in-time caveat lives OUTSIDE the log: the log auto-scrolls to
+  // the newest line, so anything written into it as a header scrolls away
+  // exactly when the user reaches the verdict and needs it most.
+  panel.innerHTML = `<div class="ds-pk-res-title">🧪 Dry run: ${esc(p.name)} — ${targets.length} target(s), nothing is written</div>
+    <div class="ds-fanout-dry-sub">⏱ <strong>Point-in-time check.</strong> Each target is validated as it is <strong>right now</strong> — metadata, picklist values and automation can change between this and the real run, so a clean result is a reading, not a guarantee. Nothing is written: this only reads.</div>
+    <div class="ds-fanout-drylog"></div>`;
+  host?.prepend(panel);
+  const logEl = panel.querySelector('.ds-fanout-drylog');
+
+  // The validator's line writer — same (icon, msg, cls) contract as
+  // runTransfer's logRow, so the checks paint identically here.
+  const line = (icon, msg, cls = '') => {
+    if (!logEl || !logEl.isConnected) return;
+    const row = document.createElement('div');
+    row.className = `ds-prog-row ds-fanout-dry-line ${cls}`;
+    row.innerHTML = `<span class="ds-prog-icon">${icon}</span><span>${esc(msg)}</span>`;
+    logEl.appendChild(row);
+    logEl.scrollTop = logEl.scrollHeight;
+  };
+  const head = (icon, msg) => {
+    if (!logEl || !logEl.isConnected) return;
+    const row = document.createElement('div');
+    row.className = 'ds-fanout-dry-head';
+    row.innerHTML = `<span class="ds-prog-icon">${icon}</span><span>${esc(msg)}</span>`;
+    logEl.appendChild(row);
+    logEl.scrollTop = logEl.scrollHeight;
+  };
+
+  line('🧪', `Validating "${p.name}" from ${orgLabel(srcUrl)} against ${targets.length} target(s), one after another. This only READS — no record is created or updated in any org. Each target is checked AS IT IS RIGHT NOW.`);
+
+  const srcSess = await getOrgSession(srcUrl);
+  if (!srcSess) {
+    line('❌', `${orgLabel(srcUrl)} (source) has no open tab — nothing could be checked. Open it in a Chrome tab and run the dry run again.`, 'ds-prog-err');
+    showToast('Dry run aborted — the source org has no open tab', 'error', 6000);
+    return;
+  }
+
+  const rows = [];
+  for (const tgtUrl of targets) {
+    head('▸', orgLabel(tgtUrl));
+    const valKey  = `${p.id}|${srcUrl}|${tgtUrl}`;
+    const tgtSess = await getOrgSession(tgtUrl);
+    if (!tgtSess) {
+      // Exactly what the real run does with a sessionless org — and said out
+      // loud, because "skipped" must never read as "checked and fine".
+      const verdict = sftkFanoutDryVerdict({ skipped: true });
+      line('⏭', verdict.detail, 'ds-prog-warn');
+      rows.push({ url: tgtUrl, label: orgLabel(tgtUrl), issues: 0, verdict });
+      _validatedRuns.delete(valKey);
+      continue;
+    }
+    let res;
+    try {
+      // Validate the tree the REAL fan-out would send to THIS org —
+      // per-target field-mapping overrides included (runFanOut does the same).
+      const tree = (typeof treeForTarget === 'function' && p.tree)
+        ? treeForTarget(p.tree, tgtUrl) : p.tree;
+      res = await sftkDryRunAgainst(tree, srcSess, tgtSess, line, p.ownerMapping);
+    } catch (e) {
+      const fe = (typeof sftkFriendlyError === 'function')
+        ? sftkFriendlyError(e.message) : { message: e.message };
+      res = { error: fe.message };
+    }
+    const verdict = sftkFanoutDryVerdict(res);
+    line(verdict.icon, `${orgLabel(tgtUrl)}: ${verdict.detail}`,
+      verdict.state === 'clean' ? '' : (verdict.state === 'dirty' ? 'ds-prog-err' : 'ds-prog-warn'));
+    rows.push({ url: tgtUrl, label: orgLabel(tgtUrl), issues: res?.issues || 0, verdict });
+    // Same key shape as _valKey() — a clean pair lights the "✓ dry run
+    // passed" hint on the Run Transfer footer and in this dialog.
+    if (verdict.state === 'clean') _validatedRuns.add(valKey);
+    else _validatedRuns.delete(valKey);
+  }
+
+  const sum = sftkFanoutDrySummary(rows);
+  head('🏁', `Dry run done — ${sum.total}`);
+  line('📋', sum.per);
+  line('ℹ️', 'A dry run can never test the target’s validation rules, Apex triggers or duplicate rules — those only fire on real writes (listed per object above when the target has them).');
+
+  // Informs, never blocks: the real run stays one click away in every case,
+  // but a dirty or unknown result gets a banner that cannot be missed.
+  const runnable = rows.filter(r => r.verdict.state !== 'skipped').map(r => r.url);
+  const { dirty, unknown, issues } = sum.tally;
+  const act = document.createElement('div');
+  act.className = 'ds-fanout-dry-act';
+  const banner = dirty
+    ? `<div class="ds-fanout-dry-banner ds-fanout-dry-banner--bad">❌ <strong>${issues} issue(s)</strong> across <strong>${dirty} target(s)</strong>${unknown ? `, and ${unknown} target(s) could not be checked` : ''}. Nothing is blocked — you can still run the fan-out, but these are what will bite.</div>`
+    : unknown
+      ? `<div class="ds-fanout-dry-banner ds-fanout-dry-banner--unknown">❔ <strong>${unknown} target(s) could not be checked</strong> — treat them as unknown, not clean. Nothing is blocked.</div>`
+      // Zero clean targets with zero failures means everything was skipped.
+      // "Every checked target came back clean" would be true-but-worthless
+      // there — nothing was checked, and that has to be the headline.
+      : sum.tally.clean === 0
+        ? `<div class="ds-fanout-dry-banner ds-fanout-dry-banner--unknown">❔ <strong>Nothing was checked.</strong> Every target you picked was skipped because it has no open Chrome tab — this is not a clean result.</div>`
+        : `<div class="ds-fanout-dry-banner ds-fanout-dry-banner--ok">✅ <strong>All ${sum.tally.clean} checked target(s) came back clean.</strong> Point-in-time — re-check if a target changes.</div>`;
+  act.innerHTML = `${banner}
+    <button class="ds-btn ${dirty || unknown ? '' : 'ds-btn-primary'}" id="dsFanoutDryReal">🌐 Run fan-out for real${runnable.length ? ` (${runnable.length} target(s))` : ''}</button>
+    <button class="ds-btn" id="dsFanoutDryClose">Dismiss</button>`;
+  panel.appendChild(act);
+  eid('dsFanoutDryReal')?.addEventListener('click', () => {
+    panel.remove();
+    window.openFanOut(p.id, { src: srcUrl, preselect: runnable });
+  });
+  eid('dsFanoutDryClose')?.addEventListener('click', () => panel.remove());
+
+  const allGood = !dirty && !unknown && sum.tally.clean > 0;
+  showToast(
+    dirty ? `Dry run: ${issues} issue(s) across ${dirty} target(s)`
+      : unknown ? `Dry run: ${unknown} target(s) could not be checked`
+        : allGood ? `Dry run passed ✓ — ${sum.tally.clean} target(s) clean`
+          : 'Dry run checked nothing — every target was skipped',
+    allGood ? 'success' : 'warning', 6000);
+}
+
 window.openFanOut = async function (profileId, opts = {}) {
   const p = _profiles.find(x => x.id === profileId);
   if (!p || !p.tree) { showToast('Deployment not found', 'error'); return; }
@@ -1723,13 +1961,18 @@ window.openFanOut = async function (profileId, opts = {}) {
   const rows = candidates.map(o => {
     const adv = sftkFanoutTargetAdvice(scanFor(o.url), isLive(o.url), mode, now);
     const icon = { skip: '⏭', unknown: '❔', clean: '✓', warn: '⚠', act: '⬆' }[adv.tone] || '•';
+    // A 🧪 dry run of THIS profile against THIS pair came back clean earlier
+    // in the session (same key shape as _valKey()). Said, not assumed: the
+    // chip is explicitly point-in-time.
+    const dryOk = _validatedRuns.has(`${p.id}|${srcUrl}|${o.url}`);
     return `
     <label class="ds-fanout-org ds-fanout-${esc(adv.tone)}">
       <input type="checkbox" class="ds-fanout-cb" value="${esc(o.url)}"
              ${adv.tone === 'skip' ? 'disabled' : ''}
              ${adv.tone !== 'skip' && defKeys.includes(_orgKey(o.url)) ? 'checked' : ''}>
       <span class="ds-fanout-org-main">
-        <span class="ds-fanout-org-name">${esc(orgOptionLabel(o.url, o.label, live))} ${prodBadge(o.url)}</span>
+        <span class="ds-fanout-org-name">${esc(orgOptionLabel(o.url, o.label, live))} ${prodBadge(o.url)}${dryOk
+          ? `<span class="ds-fanout-dryok" title="A 🧪 dry run against this org came back clean earlier in this session. Point-in-time — the org may have changed since.">🧪 dry run passed</span>` : ''}</span>
         <span class="ds-fanout-advice" title="${esc(adv.detail)}">${icon} ${esc(adv.headline)}</span>
       </span>
     </label>`;
@@ -1749,15 +1992,17 @@ window.openFanOut = async function (profileId, opts = {}) {
           <span>Owners</span><strong>${esc(ownerLabel)}</strong>
           <span>Deletes</span><strong>never — a deploy only adds and updates</strong>
         </div>
-        <div class="ds-fanout-what-note">Targets run one after another, each with its own History entry. These are <strong>real writes</strong> — fan-out has no dry-run mode.</div>
+        <div class="ds-fanout-what-note">Targets run one after another, each with its own History entry. These are <strong>real writes</strong> — use <strong>🧪 Dry run all targets</strong> first to validate every ticked org without writing anything.</div>
       </div>
       <div class="ds-fanout-list">${rows}</div>
       <div id="dsFanoutBudget" class="ds-pk-hint" style="margin-top:6px"></div>
       ${anyUnscanned ? `<div class="ds-pk-hint" style="margin-top:6px">❔ Some targets were never scanned, so their outcome is unknown until the run happens. <strong>🔎 Scan</strong> them from 🔄 Sync Ring (or ⚖ Reconcile) to see the numbers first.</div>` : ''}
-      <div class="ds-pk-hint" style="margin-top:6px">💡 Validate the deployment with a 🧪 dry run on one pair before fanning out. Production targets will ask for their typed confirmation.</div>
+      <div class="ds-pk-hint" style="margin-top:6px">💡 <strong>🧪 Dry run all targets</strong> validates every ticked org against this source — required fields, lookups, record types, picklist values, field lengths — and writes nothing. It is a <strong>point-in-time</strong> check: it reads each target as it is right now. Production targets will still ask for their typed confirmation before a real run.</div>
     </div>
     <div class="ds-modal-footer">
       <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
+      <button class="ds-btn" id="dsFanoutDry"
+        title="Run every safety check against each ticked target — required fields, lookups, record types, restricted picklists, field lengths — without writing a single record.">🧪 Dry run all targets</button>
       <button class="ds-btn ds-btn-primary" id="dsFanoutGo">🌐 Run fan-out</button>
     </div>`);
 
@@ -1785,6 +2030,16 @@ window.openFanOut = async function (profileId, opts = {}) {
     }
     box.innerHTML = `${esc(head)}${parts.length ? ` Remaining today — ${parts.join(' · ')}` : ''}`;
   })();
+
+  // 🧪 Dry run all targets — same checks as the single-target dry run, run
+  // against every ticked org in turn. No prod confirm and no no-op guard
+  // here on purpose: neither applies to a path that cannot write.
+  eid('dsFanoutDry')?.addEventListener('click', async () => {
+    const targets = [...document.querySelectorAll('.ds-fanout-cb:checked')].map(c => c.value);
+    if (!targets.length) { showToast('Pick at least one target org', 'warning'); return; }
+    closeModal();
+    await dryRunFanOut(p, srcUrl, targets);
+  });
 
   eid('dsFanoutGo')?.addEventListener('click', async () => {
     const targets = [...document.querySelectorAll('.ds-fanout-cb:checked')].map(c => c.value);
