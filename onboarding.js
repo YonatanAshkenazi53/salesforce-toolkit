@@ -52,7 +52,10 @@
   .sftk-tour-actions {
     display: flex; justify-content: space-between; align-items: center; margin-top: 13px;
   }
-  .sftk-tour-nav { display: flex; gap: 6px; }
+  /* margin-left:auto keeps the nav on the right even on the last step, where
+     the Skip button is no longer rendered and space-between would otherwise
+     pull the buttons across to the left. */
+  .sftk-tour-nav { display: flex; gap: 6px; margin-left: auto; }
   .sftk-tour-card button {
     font-size: 12px; padding: 5px 13px; border-radius: 6px; cursor: pointer;
     border: 1px solid #cbd5e1; background: #fff; color: #475569; font-weight: 600;
@@ -166,7 +169,10 @@
         `<div class="sftk-tour-title">${esc(step.title || '')}</div>` +
         `<div class="sftk-tour-text">${esc(step.text || '')}</div>` +
         `<div class="sftk-tour-actions">` +
-          `<button class="sftk-tour-skip">${last ? '' : 'Skip tour'}</button>` +
+          // On the last step this rendered an EMPTY button: still focusable,
+          // still clickable, announced as nothing (QA 2026-07-31). Omit it
+          // entirely — "Got it" already ends the tour.
+          (last ? '' : `<button class="sftk-tour-skip">Skip tour</button>`) +
           `<div class="sftk-tour-nav">` +
             (idx > 0 ? `<button class="sftk-tour-back">Back</button>` : '') +
             `<button class="sftk-tour-next">${last ? 'Got it' : 'Next'}</button>` +

@@ -53,7 +53,7 @@
 
   /* ── §A5 colour — semantic status ────────────────────────────────────── */
   --c-good-fg: #2E844A;  --c-good-bg: #EEF7EF;  --c-good-border: #B3DEB8;
-  --c-warn-fg: #B35C00;  --c-warn-bg: #FEF0E0;  --c-warn-border: #F5C08A;
+  --c-warn-fg: #A85400;  --c-warn-bg: #FEF0E0;  --c-warn-border: #F5C08A;
   --c-critical-fg: #C23934; --c-critical-bg: #FEF0EE; --c-critical-border: #FF8888;
 
   /* ── §A6 radii / elevation / motion ──────────────────────────────────── */
@@ -109,7 +109,12 @@
   --obsolete-color: var(--c-text-faint);
   --invalid-color:  #EA001E;
   --danger:         #EA001E;
-  --warning:        #DD7A01;
+  /* QA 2026-07-31: #DD7A01 failed AA everywhere it painted text —
+     2.73:1 on its own tint, 3.06:1 on white. Aliased to the token so
+     there is ONE warning foreground and it is the accessible one.
+     Its 5 background uses (dots, bars, pills, badges) only gain
+     contrast for the white text sitting on them. */
+  --warning:        var(--c-warn-fg);
   --warning-bg:     var(--c-warn-bg);
 
   /* kitty mascot palette — illustration colours, outside the system */
@@ -192,7 +197,7 @@ body.sftk-dark {
   --obsolete-color: #9AA0A6;
   --invalid-color:  #FF6B6B;
   --danger:         #FF6B6B;
-  --warning:        #F5A623;
+  --warning:        var(--c-warn-fg);   /* dark #F5A623 measures 7.66:1 — already fine */
   --warning-bg:     #3A2A10;
 
   /* Night kitty 🐱 */
@@ -5645,6 +5650,21 @@ body {
 }
 .fc-dd-item:last-child { border-bottom: none; }
 .fc-dd-item:hover { background: var(--brand-bg); }
+/* Keyboard cursor for the two pickers (QA 2026-07-31: the whole feature was
+   mouse-only). The row is "active", not focused — real focus stays in the
+   input so typing keeps filtering. Marked with a bar as well as a tint so it
+   does not rely on colour alone. */
+.fc-dd-item.fc-dd-active {
+  background: var(--brand-bg);
+  box-shadow: inset 3px 0 0 var(--brand);
+}
+/* The Show/Hide-system-objects control is a real <button> styled as a link,
+   so Enter and Space work without giving up the inline look. */
+.fc-dd-linkbtn {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--brand); font: inherit; text-decoration: underline;
+}
+.fc-dd-linkbtn:hover { color: var(--brand-dark); }
 .fc-dd-item mark {
   background: transparent;
   color: var(--brand);

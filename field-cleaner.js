@@ -114,6 +114,62 @@ function fcPartitionObjects(list, showAll) {
   return { shown, hidden: all.length - shown.length };
 }
 
+// ── Keyboard access for the two dropdown pickers (QA 2026-07-31) ─────
+// Field Cleaner shipped with FIVE mousedown handlers, ZERO keydown handlers
+// and no tabindex anywhere: both the object and the field picker were pure
+// <div> lists you could only reach with a mouse, so the whole feature was
+// unusable by keyboard. The a11y pass swept the debugger and the popup shell
+// and missed this file entirely.
+//
+// Both pickers render the same `.fc-dd-item` rows into a list under a text
+// input, so one combobox layer serves both: ↓/↑ move an active row, Enter
+// picks it, Escape closes, Home/End jump. The ACTIVE row is a class, not
+// focus — moving real focus out of the input would break typing.
+function fcWireDropdownKeys(input, drop, pick) {
+  if (!input || !drop || input.dataset.fcKeys === '1') return;
+  input.dataset.fcKeys = '1';
+  input.setAttribute('role', 'combobox');
+  input.setAttribute('aria-autocomplete', 'list');
+  input.setAttribute('aria-expanded', 'false');
+
+  const items = () => [...drop.querySelectorAll('.fc-dd-item')];
+  const activeIdx = list => list.findIndex(el => el.classList.contains('fc-dd-active'));
+  const setActive = (list, i) => {
+    list.forEach(el => { el.classList.remove('fc-dd-active'); el.removeAttribute('aria-selected'); });
+    const el = list[Math.max(0, Math.min(list.length - 1, i))];
+    if (!el) return;
+    el.classList.add('fc-dd-active');
+    el.setAttribute('aria-selected', 'true');
+    if (!el.id) el.id = 'fcdd_' + Math.random().toString(36).slice(2, 9);
+    input.setAttribute('aria-activedescendant', el.id);
+    try { el.scrollIntoView({ block: 'nearest' }); } catch (_) {}
+  };
+
+  input.addEventListener('keydown', e => {
+    const open = drop.style.display !== 'none';
+    if (e.key === 'Escape') { drop.style.display = 'none'; input.setAttribute('aria-expanded', 'false'); return; }
+    const list = items();
+    if (!list.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      if (!open) { drop.style.display = ''; input.setAttribute('aria-expanded', 'true'); }
+      const cur = activeIdx(list);
+      const next = e.key === 'Home' ? 0
+        : e.key === 'End' ? list.length - 1
+        : e.key === 'ArrowDown' ? (cur < 0 ? 0 : cur + 1)
+        : (cur < 0 ? list.length - 1 : cur - 1);
+      setActive(list, next);
+      return;
+    }
+    if (e.key === 'Enter') {
+      // No explicit selection yet → the top-ranked row is what the user sees
+      // first and what a mouse user would click.
+      const el = list[Math.max(0, activeIdx(list))];
+      if (el) { e.preventDefault(); pick(el); }
+    }
+  });
+}
+
 function fcMergeEntries(pool, incoming) {
   const list = Array.isArray(pool) ? pool.slice() : [];
   const seen = new Set(list.map(e => String((e && e.api) || '').toLowerCase()));
@@ -613,11 +669,14 @@ const FieldCleaner = (() => {
     if (note) html += `<div style="${_DD_NOTE_CSS}">${esc(note)}</div>`;
     // Never hide silently: say how many and offer them.
     if (part.hidden > 0) {
+      // A <button>, not an <a href="#">: the anchor only had a mousedown
+      // handler, so Enter on the focused link did nothing (QA 2026-07-31).
+      // A button fires click for mouse, Enter AND Space for free.
       html += `<div style="${_DD_NOTE_CSS}">${esc(`${part.hidden} system object(s) hidden — Feed, Share, History and Change Event objects have no custom fields to clean.`)}
-        <a href="#" id="fcShowSysObjs">Show them</a></div>`;
+        <button type="button" class="fc-dd-linkbtn" id="fcShowSysObjs">Show them</button></div>`;
     } else if (_objShowSystem) {
       html += `<div style="${_DD_NOTE_CSS}">Showing system objects.
-        <a href="#" id="fcHideSysObjs">Hide them</a></div>`;
+        <button type="button" class="fc-dd-linkbtn" id="fcHideSysObjs">Hide them</button></div>`;
     }
     if (_objSearchErr) {
       html += `<div style="${_DD_NOTE_CSS}">⚠ ${esc('Org search unavailable: ' + _objSearchErr +
@@ -631,17 +690,26 @@ const FieldCleaner = (() => {
       _objShowSystem = show;
       renderObjDrop(eid('fcObjInput')?.value);
     };
-    drop.querySelector('#fcShowSysObjs')?.addEventListener('mousedown', toggleSys(true));
-    drop.querySelector('#fcHideSysObjs')?.addEventListener('mousedown', toggleSys(false));
+    // mousedown keeps the mouse path working (the input's blur would close
+    // the dropdown before a click landed); click covers Enter and Space.
+    for (const [id, show] of [['#fcShowSysObjs', true], ['#fcHideSysObjs', false]]) {
+      const b = drop.querySelector(id);
+      if (!b) continue;
+      b.addEventListener('mousedown', toggleSys(show));
+      b.addEventListener('click', toggleSys(show));
+    }
+    const pickObj = item => {
+      eid('fcObjInput').value = `${item.dataset.label} (${item.dataset.api})`;
+      drop.style.display = 'none';
+      eid('fcObjInput')?.setAttribute('aria-expanded', 'false');
+      selectObject(item.dataset.api, item.dataset.label, item.dataset.durable);
+    };
     drop.querySelectorAll('.fc-dd-item').forEach(item => {
-      item.addEventListener('mousedown', e => {
-        e.preventDefault();
-        eid('fcObjInput').value = `${item.dataset.label} (${item.dataset.api})`;
-        drop.style.display = 'none';
-        selectObject(item.dataset.api, item.dataset.label, item.dataset.durable);
-      });
+      item.addEventListener('mousedown', e => { e.preventDefault(); pickObj(item); });
     });
+    fcWireDropdownKeys(eid('fcObjInput'), drop, pickObj);
     drop.style.display = '';
+    eid('fcObjInput')?.setAttribute('aria-expanded', 'true');
 
     maybeServerSearchObjects(filter, matches.length);
   }
@@ -808,20 +876,23 @@ const FieldCleaner = (() => {
     // Assign once, THEN wire — reassigning innerHTML afterwards would discard
     // every listener attached above.
     drop.innerHTML = html;
-    drop.querySelectorAll('.fc-dd-item').forEach(item => {
-      item.addEventListener('mousedown', e => {
-        e.preventDefault();
-        eid('fcFieldInput').value = `${item.dataset.label} (${item.dataset.api})`;
-        drop.style.display = 'none';
-        selectField({
-          durableId: item.dataset.durable,
-          api:       item.dataset.api,
-          label:     item.dataset.label,
-          type:      item.dataset.type
-        });
+    const pickField = item => {
+      eid('fcFieldInput').value = `${item.dataset.label} (${item.dataset.api})`;
+      drop.style.display = 'none';
+      eid('fcFieldInput')?.setAttribute('aria-expanded', 'false');
+      selectField({
+        durableId: item.dataset.durable,
+        api:       item.dataset.api,
+        label:     item.dataset.label,
+        type:      item.dataset.type
       });
+    };
+    drop.querySelectorAll('.fc-dd-item').forEach(item => {
+      item.addEventListener('mousedown', e => { e.preventDefault(); pickField(item); });
     });
+    fcWireDropdownKeys(eid('fcFieldInput'), drop, pickField);
     drop.style.display = '';
+    eid('fcFieldInput')?.setAttribute('aria-expanded', 'true');
   }
 
   function selectField(field) {

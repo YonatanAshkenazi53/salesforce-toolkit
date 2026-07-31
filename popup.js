@@ -2796,11 +2796,54 @@ function buildDepScanOffer() {
 // ============================================================
 // Modal helpers
 // ============================================================
+// QA 2026-07-31: this modal had no dialog semantics, no Escape, no focus
+// management and no focus trap — and it is what confirms FLOW DELETION. A
+// keyboard user landed behind the overlay, tabbing through the page under it
+// with no way out but the mouse. Screen readers never announced a dialog had
+// opened at all.
+let _modalRestoreFocus = null;
+let _modalKeyHandler   = null;
+
+function _modalFocusable(box) {
+  return [...box.querySelectorAll(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter(el => !el.disabled && el.offsetParent !== null);
+}
+
 function showModal(html) {
   const overlay = document.getElementById('modalOverlay');
   const box = document.getElementById('modalBox');
   box.innerHTML = html;
   overlay.style.display = '';
+
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  // Name the dialog from its own heading when it has one.
+  const hdr = box.querySelector('.modal-header, h2, h3');
+  if (hdr) {
+    if (!hdr.id) hdr.id = 'sftkModalTitle';
+    overlay.setAttribute('aria-labelledby', hdr.id);
+  } else {
+    overlay.removeAttribute('aria-labelledby');
+  }
+
+  _modalRestoreFocus = document.activeElement;
+  const focusables = _modalFocusable(box);
+  // Prefer the first non-destructive control so Enter never lands on Delete.
+  (focusables.find(el => !/delete|remove|destructive|danger/i.test(el.className + ' ' + el.id))
+    || focusables[0] || box).focus?.();
+
+  _modalKeyHandler = e => {
+    if (e.key === 'Escape') { e.preventDefault(); closeModal(); return; }
+    if (e.key !== 'Tab') return;
+    const list = _modalFocusable(box);
+    if (!list.length) return;
+    const first = list[0], last = list[list.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+  document.addEventListener('keydown', _modalKeyHandler, true);
+
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) closeModal();
   }, { once: true });
@@ -2810,7 +2853,18 @@ function closeModal() {
   const box = document.getElementById('modalBox');
   box.style.width = ''; // reset any per-modal width override (e.g. debug panel)
   box.innerHTML = '';
-  document.getElementById('modalOverlay').style.display = 'none';
+  const overlay = document.getElementById('modalOverlay');
+  overlay.style.display = 'none';
+  overlay.removeAttribute('role');
+  overlay.removeAttribute('aria-modal');
+  overlay.removeAttribute('aria-labelledby');
+  if (_modalKeyHandler) {
+    document.removeEventListener('keydown', _modalKeyHandler, true);
+    _modalKeyHandler = null;
+  }
+  // Send focus back where it came from, or the page loses it entirely.
+  try { _modalRestoreFocus?.focus?.(); } catch (_) {}
+  _modalRestoreFocus = null;
 }
 
 // ============================================================
