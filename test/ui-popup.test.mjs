@@ -368,3 +368,73 @@ describe('the popout feature is removed, not just hidden', () => {
     expect(JS_).toMatch(/TOOLKIT_NAVIGATE|[?&]tab=/);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// QA 2026-07-31 accessibility fixes. Field Cleaner shipped with FIVE
+// mousedown handlers, ZERO keydown handlers and no tabindex — the whole
+// feature was mouse-only, and the a11y sweep had missed the file. The
+// popup modal, which confirms FLOW DELETION, had no dialog semantics,
+// no Escape and no focus trap.
+// ══════════════════════════════════════════════════════════════════
+describe('Field Cleaner is keyboard-operable', () => {
+  const FC = readFileSync(join(root, 'field-cleaner.js'), 'utf8');
+
+  it('ships a keyboard layer for the dropdown pickers', () => {
+    expect(FC).toMatch(/function fcWireDropdownKeys\(/);
+    expect(FC).toMatch(/addEventListener\('keydown'/);
+  });
+
+  it('handles the full combobox key set', () => {
+    for (const key of ['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter', 'Escape']) {
+      expect(FC, `${key} must be handled`).toContain(`'${key}'`);
+    }
+  });
+
+  it('both pickers are wired, not just one', () => {
+    expect(FC).toMatch(/fcWireDropdownKeys\(eid\('fcObjInput'\)/);
+    expect(FC).toMatch(/fcWireDropdownKeys\(eid\('fcFieldInput'\)/);
+  });
+
+  it('announces itself as a combobox with an active option', () => {
+    expect(FC).toMatch(/setAttribute\('role', 'combobox'\)/);
+    expect(FC).toMatch(/aria-activedescendant/);
+    expect(FC).toMatch(/aria-expanded/);
+  });
+
+  it('the system-object toggle is a real button, reachable by Enter', () => {
+    // It was an <a href="#"> wired to mousedown only, so Enter did nothing.
+    expect(FC).not.toMatch(/<a href="#" id="fcShowSysObjs"/);
+    expect(FC).toMatch(/<button type="button" class="fc-dd-linkbtn" id="fcShowSysObjs"/);
+    expect(FC).toMatch(/addEventListener\('click', toggleSys\(show\)\)/);
+  });
+});
+
+describe('the popup modal is a real dialog', () => {
+  const JS = readFileSync(join(root, 'popup.js'), 'utf8');
+
+  it('declares dialog semantics and names itself from its heading', () => {
+    expect(JS).toMatch(/setAttribute\('role', 'dialog'\)/);
+    expect(JS).toMatch(/setAttribute\('aria-modal', 'true'\)/);
+    expect(JS).toMatch(/aria-labelledby/);
+  });
+
+  it('Escape closes it and Tab is trapped inside', () => {
+    expect(JS).toMatch(/e\.key === 'Escape'/);
+    expect(JS).toMatch(/e\.key !== 'Tab'/);
+    expect(JS).toMatch(/shiftKey/);
+  });
+
+  it('focus moves in on open and returns on close', () => {
+    expect(JS).toMatch(/_modalRestoreFocus = document\.activeElement/);
+    expect(JS).toMatch(/_modalRestoreFocus\?\.focus\?\.\(\)/);
+  });
+
+  it('initial focus avoids the destructive control', () => {
+    // Enter must never land on Delete just because it was rendered first.
+    expect(JS).toMatch(/delete\|remove\|destructive\|danger/);
+  });
+
+  it('the keydown listener is removed on close (no leak across modals)', () => {
+    expect(JS).toMatch(/removeEventListener\('keydown', _modalKeyHandler, true\)/);
+  });
+});
