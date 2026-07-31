@@ -26,10 +26,18 @@ function renderRing() {
   const orgRows = orgs.map(o => {
     const inRing  = ring.orgs.some(u => _orgKey(u) === _orgKey(o.url));
     const isSrc   = _orgKey(o.url) === _orgKey(ring.sourceUrl || '');
+    // The source of truth is PRESELECTED AND LOCKED in the ring (user
+    // 2026-07-31: "if ashkenazy6 is the source it shouldn't be available in
+    // the ring sync picklist... maybe it should be preselected and locked").
+    // Unticking it used to silently hand the crown to whichever org happened
+    // to sort first — a surprising, unannounced change of the one setting
+    // every other view flows from. To move the source you now pick a new one.
     return `
-      <label class="ds-ring-org${inRing ? ' ds-ring-org-in' : ''}">
-        <input type="checkbox" class="ds-ring-cb" value="${esc(o.url)}" ${inRing ? 'checked' : ''}>
+      <label class="ds-ring-org${inRing ? ' ds-ring-org-in' : ''}${isSrc ? ' ds-ring-org-locked' : ''}"
+             ${isSrc ? 'title="This is the ring\'s source of truth, so it is always part of the ring. Pick a different ⦿ source to move it."' : ''}>
+        <input type="checkbox" class="ds-ring-cb" value="${esc(o.url)}" ${isSrc || inRing ? 'checked' : ''} ${isSrc ? 'disabled' : ''}>
         <span class="ds-ring-org-name">${esc(orgOptionLabel(o.url, o.label, ls))}</span>
+        ${isSrc ? '<span class="ds-ring-src-lock">source — always in the ring</span>' : ''}
         ${prodBadge(o.url)}
         <span style="flex:1"></span>
         <label class="ds-ring-src-pick" title="Data flows FROM the source of truth to every other ring org">

@@ -339,3 +339,58 @@ describe('new deployments inherit the topbar source', () => {
     expect(prof).toMatch(/sourceOrg: \(typeof currentSourceOrg === 'function' \? currentSourceOrg\(\)/);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// Two user reports, 2026-07-31.
+// (1) "orgfarm is open but doesn't show as open in the data studio" —
+//     sandboxes SHARE the .develop.my.salesforce.com cookie domain, so
+//     one org's tab could resolve to another org's session; the dedup
+//     then dropped the tab that was actually open.
+// (2) "if ashkenazy6 is the source it shouldn't be available in the ring
+//     sync picklist... maybe it should be preselected and locked" —
+//     unticking the source silently handed the crown to whichever org
+//     sorted first.
+// ══════════════════════════════════════════════════════════════════
+describe('multi-org session enumeration attributes sessions to the right org', () => {
+  const BG = read('background.js');
+  const fn = BG.slice(BG.indexOf('async function getAllSfSessions('),
+                      BG.indexOf('async function getSfSession('));
+
+  it('the region under test was found', () => {
+    expect(fn).toContain('orgTabs');
+  });
+
+  it('resolves each tab against its OWN host before falling back', () => {
+    expect(fn).toMatch(/sftkCookieSessFor\(tab\.url\)/);
+    expect(fn).toMatch(/await getSfSession\(tab\.url\)/);
+  });
+
+  it('refuses to report a tab using another org\'s session', () => {
+    expect(fn).toMatch(/sftkOrgKey\(orgUrl\) !== sftkOrgKey\(tabUrl\)/);
+  });
+
+  it('dedupes on org identity, not the raw URL string', () => {
+    // my.salesforce.com and lightning.force.com are ONE org.
+    expect(fn).toMatch(/const key = sftkOrgKey\(orgUrl\)/);
+    expect(fn).toMatch(/seenOrgs\.has\(key\)/);
+    expect(fn).not.toMatch(/seenOrgs\.has\(orgUrl\)/);
+  });
+});
+
+describe('the ring source of truth is preselected and locked', () => {
+  it('the source row is checked and disabled, never unticked by accident', () => {
+    expect(RING).toMatch(/\$\{isSrc \|\| inRing \? 'checked' : ''\}/);
+    expect(RING).toMatch(/\$\{isSrc \? 'disabled' : ''\}/);
+  });
+
+  it('the lock is explained, not silent', () => {
+    expect(RING).toMatch(/ds-ring-src-lock/);
+    expect(RING).toMatch(/source — always in the ring/);
+    expect(RING).toMatch(/Pick a different ⦿ source to move it/);
+  });
+
+  it('studio.css styles the locked row', () => {
+    expect(CSS).toMatch(/\.ds-ring-org-locked\s*\{/);
+    expect(CSS).toMatch(/\.ds-ring-src-lock\s*\{/);
+  });
+});

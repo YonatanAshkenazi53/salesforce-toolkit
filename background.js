@@ -3215,18 +3215,39 @@ async function getAllSfSessions() {
 
   const orgTabs = tabs.filter(t => t.url && isOrgInstanceUrl(t.url));
 
-  // Fetch sessions in parallel — one per tab
+  // Fetch sessions in parallel — one per tab.
+  //
+  // Each tab is resolved against ITS OWN host first (sftkCookieSessFor does a
+  // direct sid lookup, longest cookie domain wins). getSfSession is only the
+  // fallback: given a URL hint it re-scans ALL tabs and can hand back a
+  // DIFFERENT org's session — sandboxes share the .develop.my.salesforce.com
+  // cookie domain, so one org's tab could resolve to another org's session,
+  // and the dedup below would then silently drop the tab that was actually
+  // open. That is exactly the "my org is open but shows as not open" report
+  // (user 2026-07-31: orgfarm open in a tab, listed as "(not open)" while its
+  // two siblings resolved fine).
   const results = await Promise.allSettled(
-    orgTabs.map(tab => getSfSession(tab.url).then(s => ({ ...s, tabTitle: tab.title || '' })))
+    orgTabs.map(async tab => {
+      const direct = await sftkCookieSessFor(tab.url);
+      const s = (direct && direct.sid) ? direct : await getSfSession(tab.url);
+      return { ...(s || {}), tabUrl: tab.url, tabTitle: tab.title || '' };
+    })
   );
 
   const sessions = [];
   const seenOrgs = new Set();
   for (const r of results) {
     if (r.status !== 'fulfilled') continue;
-    const { orgUrl, sid, tabTitle } = r.value || {};
-    if (!orgUrl || !sid || seenOrgs.has(orgUrl)) continue;
-    seenOrgs.add(orgUrl);
+    const { orgUrl, sid, tabTitle, tabUrl } = r.value || {};
+    if (!orgUrl || !sid) continue;
+    // WRONG-ORG GUARD: never report a tab's org using another org's session.
+    // Without this a mis-resolved tab both mislabels one org and hides another.
+    if (tabUrl && sftkOrgKey(orgUrl) !== sftkOrgKey(tabUrl)) continue;
+    // Dedupe on org IDENTITY, not the raw string: the same org reached via
+    // my.salesforce.com and lightning.force.com is one org, not two.
+    const key = sftkOrgKey(orgUrl);
+    if (seenOrgs.has(key)) continue;
+    seenOrgs.add(key);
 
     // Build a human-readable org label from the hostname
     let label;
