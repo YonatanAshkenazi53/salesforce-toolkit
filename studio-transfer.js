@@ -492,8 +492,35 @@ async function renderTransfer() {
 // passing dry run this session, Validate leads; afterwards Run leads (with a
 // "dry run passed" hint). The dry-run checkbox turns the Run button into the
 // dry-run trigger, preserving the old behavior for users who prefer it.
+// PURE — stable fingerprint of the payload a dry run actually validated:
+// the effective tree plus the write mode ('insert', or the upsert External-ID
+// field). Underscore keys (UI state like _meta.expanded) are stripped so
+// folding a tree node doesn't un-validate a run. djb2-xor over the JSON.
+function sftkValFingerprint(tree, upsertField) {
+  let s;
+  try {
+    s = JSON.stringify(tree ?? null,
+      (k, v) => (typeof k === 'string' && k.startsWith('_')) ? undefined : v)
+      + '|' + (upsertField == null ? 'insert' : 'upsert:' + upsertField);
+  } catch (_) { return 'fp0'; }
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return 'fp' + h.toString(36);
+}
+
+// The "✓ dry run passed" bookkeeping key. Fingerprints the EXACT payload the
+// dry run validated — effective tree (run-time node filters and per-target
+// mapping overrides applied) plus write mode — so a chip can only vouch for
+// the write it actually checked. Pre-fix the key was profile|src|tgt alone:
+// a clean fan-out dry run (raw saved tree, always insert) lit "✓ dry run
+// passed" on a Transfer tab holding different run-time filters or Upsert
+// mode, and vice versa. Org urls normalize via _orgKey so session urls and
+// org-map urls build the same key.
 function _valKey() {
-  return `${_transferProfile?.id}|${_transferSrc?.orgUrl || ''}|${_transferTgt?.orgUrl || ''}`;
+  const fp = sftkValFingerprint(
+    _transferProfile ? buildTransferProfile().tree : null,
+    _transferWriteMode === 'upsert' ? (_transferUpsertField || '') : null);
+  return `${_transferProfile?.id}|${_orgKey(_transferSrc?.orgUrl || '')}|${_orgKey(_transferTgt?.orgUrl || '')}|${fp}`;
 }
 function _syncRunButtons() {
   const run  = eid('dsTrRunBtn');
@@ -903,6 +930,10 @@ async function previewTransfer() {
 async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMapping) {
   const logRow = log;
   let issues = 0, checked = 0, unchecked = 0;
+  // Every node in a subtree, itself included — when a node's source query
+  // fails we bail before recursing, and its NEVER-VISITED children must land
+  // in `unchecked`, not silently vanish from both counters.
+  const subtreeSize = n => 1 + (n.children || []).reduce((s, c) => s + subtreeSize(c), 0);
 
   async function dryRunNode(node) {
     const obj = node.objectType || node.childSObject;
@@ -925,11 +956,12 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
     if (countRes.error) {
       logRow('❌', `${obj}: source query failed — ${countRes.error}`, 'ds-prog-err');
       issues++;
-      unchecked++;
+      // The early return skips this node AND its whole subtree — count all
+      // of them as unchecked so the verdict can't call this target clean.
+      unchecked += subtreeSize(node);
       return;
     }
     const srcCount = countRes.totalSize ?? 0;
-    checked++;
 
     // ── Step 2: get required fields from TARGET org describe ──────
     const tgtDesc = await sendBg({
@@ -944,7 +976,11 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
     // pre-extraction code, so that line still lies to a single-target dry
     // run; what IS new is the `unchecked` counter, which lets a caller
     // refuse to call this target clean. Fix the message in a separate change.
-    if (tgtDesc.error) unchecked++;
+    //
+    // A node lands in exactly ONE bucket: `checked` only when its target
+    // describe was readable (pre-fix it got checked++ AND unchecked++, so
+    // one describe-failed node inflated both counters at once).
+    if (tgtDesc.error) unchecked++; else checked++;
     const SYSTEM_SKIP = new Set(['Id','IsDeleted','CreatedDate','CreatedById',
       'LastModifiedDate','LastModifiedById','SystemModstamp','OwnerId']);
     const requiredInTarget = tgtDesc.error ? [] :
@@ -1381,13 +1417,26 @@ async function runTransfer() {
   // runner can use the identical checks against every target.
   if (_transferDryRun) {
     logRow('🧪', `DRY RUN — validating "${_transferProfile.name}" (nothing will be written)…`);
-    const { issues: dryRunIssues } = await sftkDryRunAgainst(
+    const dryRes = await sftkDryRunAgainst(
       buildTransferProfile().tree, _transferSrc, _transferTgt, logRow,
       _transferProfile?.ownerMapping);
 
-    if (dryRunIssues > 0) {
+    // Same three-state verdict the fan-out uses. The old branch read
+    // `issues` alone — a run whose target describe FAILED had issues:0 and
+    // still printed "Dry run passed" and lit the ✓ chip, exactly the lying
+    // caller the validator's contract comment warns about. 'No issues' only
+    // counts when every object could actually be checked.
+    const verdict = sftkFanoutDryVerdict(dryRes);
+    const dryRunIssues = dryRes?.issues || 0;
+    if (verdict.state === 'dirty') {
       logRow('❌', `Dry run found ${dryRunIssues} issue(s) — fix these before running the real transfer.`, 'ds-prog-err');
       showToast(`Dry run found ${dryRunIssues} issue(s) — see details`, 'warning', 6000);
+      _validatedRuns.delete(_valKey());
+    } else if (verdict.state !== 'clean') {
+      // 'unknown' — a source query or target describe never ran. Zero
+      // issues in what WAS read proves nothing about what wasn't.
+      logRow('❔', `Dry run incomplete — ${verdict.detail}. This pair is NOT marked validated.`, 'ds-prog-warn');
+      showToast('Dry run could not check everything — see details', 'warning', 6000);
       _validatedRuns.delete(_valKey());
     } else {
       logRow('✅', 'Dry run passed — no issues found, including value-level checks (restricted picklists, state/country, field lengths) against sampled data. Remaining risk on the real run: target validation rules, triggers and duplicate rules, which only fire on real writes (listed above per object when present).');
@@ -1836,7 +1885,14 @@ async function dryRunFanOut(p, srcUrl, targets) {
   const rows = [];
   for (const tgtUrl of targets) {
     head('▸', orgLabel(tgtUrl));
-    const valKey  = `${p.id}|${srcUrl}|${tgtUrl}`;
+    // Validate the tree the REAL fan-out would send to THIS org —
+    // per-target field-mapping overrides included (runFanOut does the same).
+    const tree = (typeof treeForTarget === 'function' && p.tree)
+      ? treeForTarget(p.tree, tgtUrl) : p.tree;
+    // Key matches _valKey()'s shape INCLUDING the payload fingerprint: this
+    // leg validated exactly `tree` in insert mode (fan-out never upserts),
+    // and may vouch for nothing else.
+    const valKey  = `${p.id}|${_orgKey(srcUrl)}|${_orgKey(tgtUrl)}|${sftkValFingerprint(tree, null)}`;
     const tgtSess = await getOrgSession(tgtUrl);
     if (!tgtSess) {
       // Exactly what the real run does with a sessionless org — and said out
@@ -1849,10 +1905,6 @@ async function dryRunFanOut(p, srcUrl, targets) {
     }
     let res;
     try {
-      // Validate the tree the REAL fan-out would send to THIS org —
-      // per-target field-mapping overrides included (runFanOut does the same).
-      const tree = (typeof treeForTarget === 'function' && p.tree)
-        ? treeForTarget(p.tree, tgtUrl) : p.tree;
       res = await sftkDryRunAgainst(tree, srcSess, tgtSess, line, p.ownerMapping);
     } catch (e) {
       const fe = (typeof sftkFriendlyError === 'function')
@@ -1948,10 +2000,15 @@ window.openFanOut = async function (profileId, opts = {}) {
     try { return live.has(_orgKey(u)) || live.has(u); } catch (_) { return true; }
   };
   const objs = (typeof collectTreeObjects === 'function') ? [...collectTreeObjects(p.tree)] : [];
-  const mode = (typeof _transferWriteMode === 'string' && _transferWriteMode) || 'insert';
-  const modeLabel = mode === 'upsert'
-    ? 'Upsert — create missing records and update ones that already exist'
-    : 'Insert — always create; existing records are NOT updated';
+  // What the engine will ACTUALLY do: runFanOut sends the profile as saved —
+  // the Transfer tab's Upsert toggle is attached by buildTransferProfile()
+  // for single-target runs ONLY and does not ride along here. This dialog
+  // used to display that toggle's mode, promising upserts the fan-out never
+  // performed. Advice rows below get the same truth.
+  const mode = 'insert';
+  const modeLabel = 'Insert — always create; existing records are NOT updated'
+    + ((typeof _transferWriteMode === 'string' && _transferWriteMode === 'upsert')
+      ? ' (your Upsert setting on the Transfer tab applies to single-target runs only)' : '');
   const ownerLabel = p.ownerMapping?.mode === 'match'
     ? `matched by ${(p.ownerMapping.matching?.fields || ['Name']).join(' + ')}, unmatched → fallback user`
     : 'not copied — each target assigns its own default owner';
@@ -1962,9 +2019,11 @@ window.openFanOut = async function (profileId, opts = {}) {
     const adv = sftkFanoutTargetAdvice(scanFor(o.url), isLive(o.url), mode, now);
     const icon = { skip: '⏭', unknown: '❔', clean: '✓', warn: '⚠', act: '⬆' }[adv.tone] || '•';
     // A 🧪 dry run of THIS profile against THIS pair came back clean earlier
-    // in the session (same key shape as _valKey()). Said, not assumed: the
-    // chip is explicitly point-in-time.
-    const dryOk = _validatedRuns.has(`${p.id}|${srcUrl}|${o.url}`);
+    // in the session — same fingerprinted key dryRunFanOut writes, so the
+    // chip only lights for the exact payload (per-target tree, insert mode)
+    // this fan-out would send. Said, not assumed: explicitly point-in-time.
+    const dryOk = _validatedRuns.has(`${p.id}|${_orgKey(srcUrl)}|${_orgKey(o.url)}|${sftkValFingerprint(
+      (typeof treeForTarget === 'function' && p.tree) ? treeForTarget(p.tree, o.url) : p.tree, null)}`);
     return `
     <label class="ds-fanout-org ds-fanout-${esc(adv.tone)}">
       <input type="checkbox" class="ds-fanout-cb" value="${esc(o.url)}"

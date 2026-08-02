@@ -1118,40 +1118,55 @@ function renderTreeNode(node, path, isRoot, depth = 0) {
 }
 
 // ── SOQL Preview ──────────────────────────────────────────────
-function buildNestedSOQL(node, depth = 0) {
+// Mirrors what the run engine (executeProfileTransfer) actually sends to the
+// SOURCE org: ONE query per tree node — the root filtered by your picks /
+// WHERE, each child filtered by its parent-link field against the parent
+// records fetched above it (the engine chunks those Ids 200 per query).
+//
+// This pane used to render a single nested relationship query whose WHERE
+// clauses were walls of raw record Ids — right under the Lookup-resolution
+// match-field pickers, it read exactly like "records are matched across orgs
+// by Id". They never are: those Ids identify the picked records in the
+// SOURCE org only; cross-org lookups resolve via the match fields, and
+// upsert matches on the External ID field. The pane now says so.
+function buildRunSOQL(node, parentObj, parentField) {
   if (!node) return '';
   const objName = node.objectType || node.childSObject || '?';
 
-  // Effective WHERE: recordIds override takes priority
-  const effectiveWhere = node.recordIds?.length
-    ? `Id IN (${node.recordIds.slice(0,5).map(id => `'${id}'`).join(', ')}${node.recordIds.length > 5 ? `, …+${node.recordIds.length - 5}` : ''})`
-    : (node.where || '').trim();
+  // SELECT — the engine copies every createable field from the source
+  // describe (honouring your Fields & mapping choices), not a typed list.
+  const mapped = Object.keys(node.fieldMappings || {}).length;
+  const selectTok = `<span class="ds-soql-note">⟨all copyable fields${mapped ? ` · ${mapped} mapped` : ''}⟩</span>`;
 
-  // Build direct-child subqueries (Salesforce supports 1 level of relationship query)
-  const directChildren = (node.children || []).filter(c => c.childSObject || c.objectType);
-  const subqueries = directChildren.map(c => {
-    const childWhere = c.recordIds?.length
-      ? `Id IN (${c.recordIds.slice(0,3).map(id => `'${id}'`).join(', ')}${c.recordIds.length > 3 ? ',…' : ''})`
-      : (c.where || '').trim();
-    const childRel   = c.relationshipName || (c.childSObject || '') + 's';
-    const childFlds  = c.fields?.length ? esc(c.fields.join(', ')) : 'Id';
-    return `<span class="ds-soql-sub">(</span><span class="ds-soql-kw">SELECT</span> <span class="ds-soql-fld">${childFlds}</span> <span class="ds-soql-kw">FROM</span> <span class="ds-soql-obj">${esc(childRel)}</span>${childWhere ? ` <span class="ds-soql-kw">WHERE</span> <span class="ds-soql-val">${esc(childWhere)}</span>` : ''}<span class="ds-soql-sub">)</span>`;
-  }).join(',\n    ');
+  // WHERE — picked records beat the free-form filter (engine rule), and a
+  // child is ALWAYS additionally scoped to its parent's records. No raw Id
+  // walls: they carry no information a count doesn't, and they mislead.
+  const parts = [];
+  if (node.recordIds?.length) {
+    parts.push(`<span class="ds-soql-fld">Id</span> <span class="ds-soql-kw">IN</span> <span class="ds-soql-note">⟨the ${node.recordIds.length} record(s) you picked⟩</span>`);
+  } else if ((node.where || '').trim()) {
+    parts.push(`<span class="ds-soql-val">${esc(node.where.trim())}</span>`);
+  }
+  if (parentField && parentObj) {
+    parts.push(`<span class="ds-soql-fld">${esc(parentField)}</span> <span class="ds-soql-kw">IN</span> <span class="ds-soql-note">⟨the ${esc(parentObj)} Ids fetched above — 200 per query⟩</span>`);
+  }
+  const whereHtml = parts.length
+    ? `\n<span class="ds-soql-kw">WHERE</span> ${parts.join(' <span class="ds-soql-kw">AND</span> ')}`
+    : '';
 
-  // Root SELECT fields
-  const rootFields = node.fields?.length ? esc(node.fields.join(', ')) : 'Id';
-  const selectFields = subqueries ? `${rootFields},\n    ${subqueries}` : rootFields;
+  // A child with no parent-link field runs unscoped — mirror the engine
+  // instead of inventing a scope it won't apply.
+  const label = parentField && parentObj
+    ? `${esc(objName)} — separate query, scoped to the ${esc(parentObj)} records above`
+    : `${esc(objName)} — fetched from the source org`;
 
-  const rootSOQL = `<span class="ds-soql-kw">SELECT</span> <span class="ds-soql-fld">${selectFields}</span>\n<span class="ds-soql-kw">FROM</span> <span class="ds-soql-obj">${esc(objName)}</span>${effectiveWhere ? `\n<span class="ds-soql-kw">WHERE</span> <span class="ds-soql-val">${esc(effectiveWhere)}</span>` : ''}`;
+  const block = `<div class="ds-soql-sep">${label}</div><pre class="ds-soql-code"><span class="ds-soql-kw">SELECT</span> ${selectTok}\n<span class="ds-soql-kw">FROM</span> <span class="ds-soql-obj">${esc(objName)}</span>${whereHtml}</pre>`;
 
-  // Deeper levels shown as separate annotated queries
-  const deeperBlocks = (node.children || []).flatMap(c =>
-    (c.children || []).length > 0
-      ? [`<div class="ds-soql-sep">— separate query for ${esc(c.childSObject || c.objectType || '?')} children —</div>` + buildNestedSOQL(c, depth + 1)]
-      : []
-  ).join('\n');
-
-  return `<pre class="ds-soql-code">${rootSOQL}</pre>${deeperBlocks ? `<div class="ds-soql-deeper">${deeperBlocks}</div>` : ''}`;
+  const childBlocks = (node.children || [])
+    .filter(c => c.childSObject || c.objectType)
+    .map(c => buildRunSOQL(c, c.field ? objName : null, c.field || null))
+    .join('');
+  return block + childBlocks;
 }
 
 function refreshSOQLPreview() {
@@ -1160,11 +1175,12 @@ function refreshSOQLPreview() {
   pane.innerHTML = `
     <div class="ds-soql-pane-header">
       <span class="ds-soql-pane-title">📋 SOQL Preview</span>
-      <span class="ds-soql-pane-note">Shows how records will be fetched</span>
+      <span class="ds-soql-pane-note">How records are read from the source org</span>
     </div>
     <div class="ds-soql-pane-body">
-      ${buildNestedSOQL(_editingProfile.tree)}
-    </div>`;
+      ${buildRunSOQL(_editingProfile.tree, null, null)}
+    </div>
+    <div class="ds-soql-foot">Picked records are fetched by their <strong>source-org Ids</strong> — Ids are never used to match or write across orgs. Cross-org lookups resolve via your <strong>Lookup resolution</strong> match fields; Upsert matches on your <strong>External ID</strong> field.</div>`;
 }
 
 // ── Wire all tree events ──────────────────────────────────────

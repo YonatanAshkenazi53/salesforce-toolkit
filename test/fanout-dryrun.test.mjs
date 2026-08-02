@@ -397,4 +397,111 @@ describe('runTransfer still behaves identically for one target', () => {
     expect(runTransferSrc).not.toContain('async function dryRunNode');
     expect(runTransferSrc).not.toContain('lookupResolutions');
   });
+
+  // ── Fable recheck fix: the caller was the "lying caller" the validator's
+  // contract comment warns about — it destructured `issues` alone, so a run
+  // whose target describe failed (issues:0, unchecked:1) still printed
+  // "Dry run passed" and lit the ✓ chip.
+  it('HONEST CALLER: the three-state verdict gates the outcome — unchecked is no longer discarded', () => {
+    expect(runTransferSrc).toMatch(/sftkFanoutDryVerdict\(dryRes\)/);
+    expect(runTransferSrc).not.toMatch(/const \{ issues: dryRunIssues \} = await sftkDryRunAgainst/);
+    // the incomplete path exists, warns, and refuses to mark validated
+    expect(runTransferSrc).toContain('Dry run incomplete');
+    expect(runTransferSrc).toMatch(/verdict\.state !== 'clean'[\s\S]*?_validatedRuns\.delete\(_valKey\(\)\)/);
+    // "passed" and the ✓ add live ONLY in the else (clean) branch
+    const passedIdx = runTransferSrc.indexOf("showToast('Dry run passed ✓");
+    const incompleteIdx = runTransferSrc.indexOf('Dry run incomplete');
+    expect(passedIdx).toBeGreaterThan(incompleteIdx);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════
+// 7. Honest counting — every node lands in exactly one bucket
+// ══════════════════════════════════════════════════════════════════
+describe('sftkDryRunAgainst counting (Fable recheck fixes)', () => {
+  it('a failed source COUNT marks the WHOLE skipped subtree unchecked — never-visited children must not vanish from both counters', async () => {
+    makeSendBg({ countFails: true });
+    const tree = { objectType: 'Account', children: [
+      { childSObject: 'Contact', field: 'AccountId', children: [
+        { childSObject: 'Task', field: 'WhoId' },
+      ] },
+    ] };
+    const r = await sftkDryRunAgainst(tree, SRC, TGT, noop, null);
+    expect(r.checked).toBe(0);
+    expect(r.unchecked).toBe(3);   // Account + Contact + Task, all unread
+  });
+
+  it('a failed target describe puts the node in ONE bucket — unchecked, never checked AND unchecked', async () => {
+    makeSendBg({ targetDescribeFails: true });
+    const r = await sftkDryRunAgainst({ objectType: 'Account' }, SRC, TGT, noop, null);
+    expect(r.checked).toBe(0);
+    expect(r.unchecked).toBe(1);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════
+// 8. _validatedRuns keys are payload-fingerprinted
+// ══════════════════════════════════════════════════════════════════
+// Pre-fix every surface keyed on profile|src|tgt alone, but each validates a
+// DIFFERENT payload: the Transfer tab patches run-time node filters + the
+// Upsert toggle in, the fan-out validates treeForTarget() in insert mode. A
+// clean chip from one could vouch for a write the other never checked.
+describe('_validatedRuns keys are payload-fingerprinted', () => {
+  const { sftkValFingerprint } = extractFunctions('studio-transfer.js', ['sftkValFingerprint']);
+  const tree = { objectType: 'Account', children: [{ childSObject: 'Case', field: 'AccountId' }] };
+
+  it('is stable for an identical payload', () => {
+    expect(sftkValFingerprint(tree, null))
+      .toBe(sftkValFingerprint(JSON.parse(JSON.stringify(tree)), null));
+  });
+
+  it('ignores underscore UI state — folding a tree node does not un-validate a run', () => {
+    const withMeta = { ...tree, _meta: { expanded: true } };
+    expect(sftkValFingerprint(withMeta, null)).toBe(sftkValFingerprint(tree, null));
+  });
+
+  it('changes when the effective tree changes', () => {
+    const filtered = { ...tree, where: "Name = 'Acme'" };
+    expect(sftkValFingerprint(filtered, null)).not.toBe(sftkValFingerprint(tree, null));
+  });
+
+  it('separates insert from upsert — an insert validation cannot vouch for an upsert write', () => {
+    expect(sftkValFingerprint(tree, 'External_Id__c')).not.toBe(sftkValFingerprint(tree, null));
+  });
+
+  it('_valKey embeds the fingerprint and normalizes org urls via _orgKey', () => {
+    const src = sourceOf('_valKey');
+    expect(src).toContain('sftkValFingerprint');
+    expect(src).toContain('_orgKey(_transferSrc?.orgUrl');
+    expect(src).toContain('_orgKey(_transferTgt?.orgUrl');
+  });
+
+  it('dryRunFanOut writes the same key shape for the per-target tree it validated, insert mode', () => {
+    const src = sourceOf('dryRunFanOut');
+    expect(src).toMatch(/valKey\s+=\s+`\$\{p\.id\}\|\$\{_orgKey\(srcUrl\)\}\|\$\{_orgKey\(tgtUrl\)\}\|\$\{sftkValFingerprint\(tree, null\)\}`/);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════
+// 9. The fan-out dialog tells the truth about write mode
+// ══════════════════════════════════════════════════════════════════
+describe('openFanOut write-mode claim', () => {
+  const openFanOutSrc = (() => {
+    const i = TRANSFER.indexOf('window.openFanOut = async function');
+    if (i < 0) throw new Error('openFanOut not found');
+    return TRANSFER.slice(i, TRANSFER.indexOf('\n};', i) + 3);
+  })();
+
+  it('claims INSERT — runFanOut sends the profile as saved, the Transfer-tab Upsert toggle never rides along', () => {
+    // The dialog previously displayed _transferWriteMode as "Write mode",
+    // promising upserts the engine never performed on fan-out.
+    expect(openFanOutSrc).toContain("const mode = 'insert'");
+    expect(openFanOutSrc).not.toMatch(/modeLabel = mode === 'upsert'/);
+    expect(openFanOutSrc).toContain('applies to single-target runs only');
+  });
+
+  it('the ✓ chip reads the fingerprinted key for the per-target payload', () => {
+    expect(openFanOutSrc).toContain('sftkValFingerprint');
+    expect(openFanOutSrc).not.toContain('_validatedRuns.has(`${p.id}|${srcUrl}|${o.url}`)');
+  });
 });
