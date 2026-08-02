@@ -1741,6 +1741,24 @@ html, body {
   border-top: 1px dashed var(--border);
 }
 
+/* ⟨…⟩ placeholder tokens — things the run resolves that a preview can only
+   describe (picked-record sets, parent-scope Id chunks, the field list). */
+.ds-soql-note {
+  color: var(--subtext);
+  font-style: italic;
+  font-weight: 400;
+}
+
+/* The Ids-never-cross-orgs footnote under the preview body. */
+.ds-soql-foot {
+  padding: 8px 16px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--subtext);
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+
 /* Preview banner */
 .ds-preview-banner {
   margin-top: 10px;
@@ -4104,6 +4122,8 @@ html, body {
 .ds-dark .ds-soql-code { background: #161616; color: var(--text); }
 .ds-dark .ds-soql-kw   { color: #5BA8E8; }   /* SELECT / FROM / WHERE — light blue */
 .ds-dark .ds-soql-val  { color: #E0A458; }   /* string literals — light amber */
+.ds-dark .ds-soql-note { color: var(--subtext-lt); }
+.ds-dark .ds-soql-foot { background: #161616; color: var(--subtext-lt); }
 
 /* ── Dropdowns — dark-mode fixes ────────────────────────────── */
 .ds-dark .ds-org-dropdown,
