@@ -247,20 +247,30 @@ function navigateToTab(tabName) {
   // Restore the topbar org chip now that we're on a feature tab
   updateTopbarOrgChip();
 
-  // Deactivate all sidebar items and hide all tab panels
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  // Deactivate all sidebar items and hide all tab panels.
+  // a11y: aria-current mirrors the visual .active state — the eight sidebar
+  // buttons are otherwise identical to a screen reader (same contract the
+  // Studio keeps in _applyView).
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.remove('active');
+    b.removeAttribute('aria-current');
+  });
   document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
 
   // Activate the matching sidebar button and show the panel
   const btn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
   const tab = document.getElementById(`tab-${tabName}`);
-  if (btn) btn.classList.add('active');
+  if (btn) { btn.classList.add('active'); btn.setAttribute('aria-current', 'page'); }
   if (tab) tab.style.display = '';
 }
 
 // Show the home page — deactivates sidebar selection.
 function showHomePage() {
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  // Home is not a sidebar tab, so no button may claim aria-current here.
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.remove('active');
+    b.removeAttribute('aria-current');
+  });
   document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
   document.getElementById('homeBtn').style.display = 'none';
   renderHomePage();
@@ -385,7 +395,7 @@ function renderHomePage() {
     ${orgHost ? `
       <div class="home-org-chip">
         <button class="home-org-chip-btn" id="homeOrgSelector" title="Switch active org"
-                aria-haspopup="true" aria-label="${escHtml(orgLabel)}">
+                aria-haspopup="true" aria-expanded="false" aria-label="${escHtml(orgLabel)}">
           <span class="home-org-icon" data-i="cloud" aria-hidden="true"></span>
           <span class="home-org-chip-text">
             <span class="home-org-eyebrow">Connected org</span>
@@ -424,9 +434,13 @@ function renderHomePage() {
 
     // Toggle: close if already open
     const existing = document.getElementById('homeOrgDropdown');
-    if (existing) { existing.remove(); return; }
+    if (existing) { existing.remove(); e.currentTarget.setAttribute('aria-expanded', 'false'); return; }
 
     const chipBtn = document.getElementById('homeOrgSelector');
+    // a11y: the chip advertises aria-haspopup, so aria-expanded must track
+    // the dropdown through every open/close path — this one, closeDropdown,
+    // and the toggle-close above.
+    chipBtn.setAttribute('aria-expanded', 'true');
     const rect    = chipBtn.getBoundingClientRect();
 
     // Normalize org URL for comparison (strips trailing slash / path differences)
@@ -445,6 +459,7 @@ function renderHomePage() {
     function closeDropdown() {
       const el = document.getElementById('homeOrgDropdown');
       if (el) el.remove();
+      chipBtn.setAttribute('aria-expanded', 'false');
       document.removeEventListener('click', onOutsideClick, true);
     }
 
@@ -610,8 +625,10 @@ async function initSession(reason) {
   clearInterval(_sessionPollTimer);
   stopKeepalive();
 
-  // Reset to "home loading" state.
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  // Reset to "home loading" state. aria-current rides with .active in every
+  // strip site — this is the third one (navigateToTab/showHomePage are the
+  // others); leaving it here kept announcing a tab that was no longer active.
+  document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); b.removeAttribute('aria-current'); });
   document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
   document.getElementById('homeBtn').style.display = 'none';
   document.getElementById('sessionError').style.display = 'none';
@@ -3425,10 +3442,12 @@ function openTopbarOrgDropdown() {
   const chip = document.getElementById('topbarOrgChip');
   if (!chip) return;
 
-  // Toggle
+  // Toggle. a11y: aria-expanded rides along with the .open class in every
+  // path — the chip declares aria-haspopup, so AT needs the open/closed state.
   const existing = document.getElementById('topbarOrgDropdown');
-  if (existing) { existing.remove(); chip.classList.remove('open'); return; }
+  if (existing) { existing.remove(); chip.classList.remove('open'); chip.setAttribute('aria-expanded', 'false'); return; }
   chip.classList.add('open');
+  chip.setAttribute('aria-expanded', 'true');
 
   const rect = chip.getBoundingClientRect();
   const normUrl = u => { try { return new URL(u).origin.toLowerCase(); } catch (_) { return (u || '').toLowerCase(); } };
@@ -3442,6 +3461,7 @@ function openTopbarOrgDropdown() {
     const el = document.getElementById('topbarOrgDropdown');
     if (el) el.remove();
     chip.classList.remove('open');
+    chip.setAttribute('aria-expanded', 'false');
     document.removeEventListener('click', onOutside, true);
   }
   function onOutside(ev) {

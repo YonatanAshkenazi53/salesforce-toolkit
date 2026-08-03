@@ -238,7 +238,7 @@ let _histFilter = { status: '', profileId: '' };
 function renderHistory() {
   if (!_history.length) {
     setMain(`
-      <div class="ds-view-header"><h2 class="ds-view-title">📜 History</h2></div>
+      ${dsViewHeader({ icon: 'scroll', title: 'History' })}
       <div class="ds-empty-page">
         <div class="ds-empty-icon">${window.sftkCatSvg('sleep', 72)}</div>
         <div class="ds-empty-title">No transfers yet</div>
@@ -263,10 +263,13 @@ function renderHistory() {
   }
 
   setMain(`
-    <div class="ds-view-header">
-      <h2 class="ds-view-title">📜 History</h2>
-      <div style="display:flex;gap:8px;align-items:center">
-        <select id="dsRetentionDays" class="ds-select ds-select-sm" title="Runs older than this are purged automatically when the Studio opens">
+    ${dsViewHeader({
+      icon: 'scroll',
+      title: 'History',
+      // sorted is the full retained set — the filter row below counts against
+      // the same array, so the two numbers can never disagree.
+      count: `${sorted.length} run${sorted.length !== 1 ? 's' : ''} retained`,
+      actions: `<select id="dsRetentionDays" class="ds-select ds-select-sm" title="Runs older than this are purged automatically when the Studio opens">
           ${[[7, 'Keep 7 days'], [30, 'Keep 30 days'], [90, 'Keep 90 days'], [0, 'Keep forever']].map(([v, lbl]) =>
             `<option value="${v}" ${_settings.historyDays === v ? 'selected' : ''}>${lbl}</option>`).join('')}
         </select>
@@ -275,9 +278,8 @@ function renderHistory() {
         </label>
         <button class="ds-btn ds-btn-sm" id="dsHistExportAll" title="Download every retained run as a JSON or CSV audit file — for change-management records">⬇ Export</button>
         <button class="ds-btn ds-btn-sm" id="dsClearCached" title="Delete history, activity log, scan results, and cached Apex log bodies — org labels and settings stay">🧹 Clear cached org data</button>
-        <button class="ds-btn ds-btn-danger ds-btn-sm" id="dsClearHistory">🗑 Clear All</button>
-      </div>
-    </div>
+        <button class="ds-btn ds-btn-danger ds-btn-sm" id="dsClearHistory">🗑 Clear All</button>`,
+    })}
     <div class="ds-hist-filters">
       <div class="ds-hist-status-chips">
         ${[['', 'All'], ['success', '✅ success'], ['partial', '⚠ partial'], ['failed', '❌ failed']].map(([v, lbl]) =>

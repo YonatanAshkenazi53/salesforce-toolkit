@@ -96,13 +96,14 @@ function renderTreeDiffPage() {
     </label>`).join('');
 
   setMain(`
-    <div class="ds-view-header">
-      <div class="ds-view-title-wrap">
-        <h2 class="ds-view-title">🌳 Tree diff — ${esc(p.name)}</h2>
-        <div class="ds-view-subtitle">The record tree from <strong>${esc(orgLabel(srcUrl))}</strong>${fromRing ? ` <span class="ds-td-sot" title="This is your Sync Ring's source of truth — every multi-org surface (ring scans, pushes, tree diff) reads FROM it. Change it in 🔄 Sync Ring or the topbar chip.">👑 source of truth</span>` : ''}, compared node-by-node across environments — with suggested operations</div>
-      </div>
-      <button class="ds-btn" data-dsaction="switchView" data-arg="profiles">‹ Back</button>
-    </div>
+    ${dsViewHeader({
+      // 'nodes' — the subject is the record tree itself; this sub-page has no
+      // sidebar row, so there is no nav glyph to mirror.
+      icon: 'nodes',
+      title: `Tree diff — ${esc(p.name)}`,
+      subtitle: `The record tree from <strong>${esc(orgLabel(srcUrl))}</strong>${fromRing ? ` <span class="ds-td-sot" title="This is your Sync Ring's source of truth — every multi-org surface (ring scans, pushes, tree diff) reads FROM it. Change it in 🔄 Sync Ring or the topbar chip.">👑 source of truth</span>` : ''}, compared node-by-node across environments — with suggested operations`,
+      actions: `<button class="ds-btn" data-dsaction="switchView" data-arg="profiles">‹ Back</button>`,
+    })}
     <details class="ds-ring-cfg" ${_tdResults ? '' : 'open'}>
       <summary class="ds-ring-cfg-sum"><strong>Environments</strong>
         <span class="ds-oc-sub">${_tdEnvs.length} selected</span></summary>

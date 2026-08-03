@@ -677,7 +677,7 @@ function _pkCostLine(elId, prefix, suffix, est, orgUrls) {
     if (!t) return;
     const line = pkApiCostLine(est, budgets);
     t.textContent = `${prefix}${line.text}${suffix}`;
-    t.style.color = line.warn ? '#b45309' : '';
+    t.style.color = line.warn ? 'var(--warning)' : '';
   };
   paint(null);
   if (typeof window.sftkApiBudget !== 'function') return;   // helper absent → estimate alone
@@ -1191,17 +1191,17 @@ function _pkAutomationHitsHtml(literal) {
     const icon = it.kind === 'flow' ? '🌊' : '✅';
     const link = it.url
       ? `<a href="${esc(it.url)}" target="_blank" rel="noopener" title="Open in ${it.kind === 'flow' ? 'Flow Builder' : 'Setup'}">↗ open</a>`
-      : `<span style="color:#92400e">no id returned — open it manually in Setup</span>`;
+      : `<span style="color:var(--warning)">no id returned — open it manually in Setup</span>`;
     return `<div class="ds-pk-imp-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <span>${icon}</span><strong>${esc(it.label)}</strong>
-      <span style="font-size:11px;color:#6b7280">${esc(it.sub || '')}</span>
+      <span style="font-size:11px;color:var(--subtext)">${esc(it.sub || '')}</span>
       <span style="flex:1"></span>${link}</div>`;
   }).join('');
   const notes = (literal.notes || []).length
-    ? `<div class="ds-pk-imp-row" style="color:#92400e">⚠ ${esc(literal.notes.join(' · '))}</div>` : '';
+    ? `<div class="ds-pk-imp-row" style="color:var(--warning)">⚠ ${esc(literal.notes.join(' · '))}</div>` : '';
   const s = literal.scan;
   const scanned = s
-    ? `<div class="ds-pk-imp-row" style="font-size:11px;color:#6b7280">Scanned ${s.flowsScanned} active flow(s) (${s.triggeredN} record-triggered on this object, plus autolaunched + screen flows org-wide) and ${s.vrOk ? `${s.vrCount} active validation rule(s)` : 'NO validation rules — that query failed'}. Apex triggers and managed code are NOT text-scanned.</div>`
+    ? `<div class="ds-pk-imp-row" style="font-size:11px;color:var(--subtext)">Scanned ${s.flowsScanned} active flow(s) (${s.triggeredN} record-triggered on this object, plus autolaunched + screen flows org-wide) and ${s.vrOk ? `${s.vrCount} active validation rule(s)` : 'NO validation rules — that query failed'}. Apex triggers and managed code are NOT text-scanned.</div>`
     : '';
   return `${rows}${notes}${scanned}`;
 }
@@ -1644,7 +1644,7 @@ async function _pkOpenBulkWizard(mode) {
           // (4 impact queries + VR scan + 2 flow enumerations + 1 read per
           // scanned flow). "≈" because paginated query results add calls.
           + ` <span style="color:var(--subtext)">· ≈${pkBulkScanCalls(lit.scan)} API calls</span>`
-          + ((lit.notes || []).length ? `<span style="color:#92400e"> · ⚠ ${esc(lit.notes.join(' · '))}</span>` : '');
+          + ((lit.notes || []).length ? `<span style="color:var(--warning)"> · ⚠ ${esc(lit.notes.join(' · '))}</span>` : '');
       } catch (e) {
         // A thrown org must never vanish from the panel: an org with no line
         // would read as "nothing to worry about here".
@@ -1660,7 +1660,7 @@ async function _pkOpenBulkWizard(mode) {
       if (!rows) return;
       const row = document.createElement('div');
       row.className = 'ds-pk-imp-org';
-      if (bad) row.style.color = '#92400e';
+      if (bad) row.style.color = 'var(--warning)';
       row.innerHTML = inner;
       rows.appendChild(row);
       const h = scanHead();
@@ -1803,10 +1803,10 @@ function _pkApplyHighlight() {
     return;
   }
   try { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) { row.scrollIntoView(); }
-  row.style.outline = '2px solid #f59e0b';
+  row.style.outline = '2px solid var(--warning)';
   row.style.outlineOffset = '2px';
   row.style.borderRadius = '6px';
-  row.style.background = '#fffbeb';
+  row.style.background = 'var(--c-warn-bg)';
   setTimeout(() => {
     row.style.outline = ''; row.style.outlineOffset = ''; row.style.background = ''; row.style.borderRadius = '';
   }, 6000);
@@ -2118,11 +2118,11 @@ async function _pkSyncAutomationPass(plans, guards, obj, field, token) {
       const tgt = plans[g.pi]?.tgt;
       const defaultTick = () => { c.checked = (g.op === 'deactivate') && !g.usage; };
 
-      if (!tgt || !tgt.inv) { c.disabled = false; if (s) s.innerHTML = '<span style="color:#92400e">⚠ target inventory unavailable — automation NOT checked, left unticked</span>'; continue; }
+      if (!tgt || !tgt.inv) { c.disabled = false; if (s) s.innerHTML = '<span style="color:var(--warning)">⚠ target inventory unavailable — automation NOT checked, left unticked</span>'; continue; }
       if (done >= CAP) {
         overCap++;
         c.disabled = false;
-        if (s) s.innerHTML = `<span style="color:#92400e">⚠ automation NOT checked — this plan hit the ${CAP}-scan cap. Tick it only if you have checked the flows yourself.</span>`;
+        if (s) s.innerHTML = `<span style="color:var(--warning)">⚠ automation NOT checked — this plan hit the ${CAP}-scan cap. Tick it only if you have checked the flows yourself.</span>`;
         continue;
       }
 
@@ -2139,19 +2139,19 @@ async function _pkSyncAutomationPass(plans, guards, obj, field, token) {
       if (lit.error) {
         failed++;
         c.checked = false;
-        if (s) s.innerHTML = `<span style="color:#92400e">⚠ automation check FAILED here (${esc(lit.error)}) — left unticked</span>`;
+        if (s) s.innerHTML = `<span style="color:var(--warning)">⚠ automation check FAILED here (${esc(lit.error)}) — left unticked</span>`;
       } else if (lit.mentions) {
         hitRows++;
         c.checked = false;
         const links = (lit.items || []).slice(0, 6).map(it =>
           it.url ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${it.kind === 'flow' ? '🌊' : '✅'} ${esc(it.label)}</a>`
                  : `${it.kind === 'flow' ? '🌊' : '✅'} ${esc(it.label)}`).join(' · ');
-        if (s) s.innerHTML = `<span style="color:#991b1b">⛔ UNTICKED — ${lit.mentions} automation(s) in ${esc(tgt.label)} name “${esc(g.val)}”: </span>${links}${(lit.items || []).length > 6 ? ' …' : ''}${(lit.notes || []).length ? `<span style="color:#92400e"> · ⚠ ${esc(lit.notes.join(' · '))}</span>` : ''}`;
+        if (s) s.innerHTML = `<span style="color:var(--danger)">⛔ UNTICKED — ${lit.mentions} automation(s) in ${esc(tgt.label)} name “${esc(g.val)}”: </span>${links}${(lit.items || []).length > 6 ? ' …' : ''}${(lit.notes || []).length ? `<span style="color:var(--warning)"> · ⚠ ${esc(lit.notes.join(' · '))}</span>` : ''}`;
       } else {
         defaultTick();
-        if (s) s.innerHTML = `<span style="color:#166534">✓ no flow or validation rule in ${esc(tgt.label)} names this value</span>`
-          + (g.usage ? `<span style="color:#92400e"> · still unticked: ${g.usage.toLocaleString()} record(s) hold it</span>` : '')
-          + ((lit.notes || []).length ? `<span style="color:#92400e"> · ⚠ ${esc(lit.notes.join(' · '))}</span>` : '');
+        if (s) s.innerHTML = `<span style="color:var(--success)">✓ no flow or validation rule in ${esc(tgt.label)} names this value</span>`
+          + (g.usage ? `<span style="color:var(--warning)"> · still unticked: ${g.usage.toLocaleString()} record(s) hold it</span>` : '')
+          + ((lit.notes || []).length ? `<span style="color:var(--warning)"> · ⚠ ${esc(lit.notes.join(' · '))}</span>` : '');
       }
     }
   } catch (e) {
@@ -2164,9 +2164,9 @@ async function _pkSyncAutomationPass(plans, guards, obj, field, token) {
       const n = noteEl();
       const unchecked = guards.length - done;
       if (n) n.innerHTML = `🔎 Automation check: <strong>${done}</strong> of ${guards.length} switch-off row(s) scanned`
-        + (overCap ? ` · <span style="color:#92400e">${overCap} NOT checked (${CAP}-scan cap)</span>` : '')
-        + (failed ? ` · <span style="color:#92400e">${failed} scan(s) failed</span>` : '')
-        + (abortMsg ? ` · <span style="color:#92400e">the pass STOPPED EARLY (${esc(abortMsg)})</span>` : '')
+        + (overCap ? ` · <span style="color:var(--warning)">${overCap} NOT checked (${CAP}-scan cap)</span>` : '')
+        + (failed ? ` · <span style="color:var(--warning)">${failed} scan(s) failed</span>` : '')
+        + (abortMsg ? ` · <span style="color:var(--warning)">the pass STOPPED EARLY (${esc(abortMsg)})</span>` : '')
         + ` · <strong>${hitRows}</strong> row(s) reference the value in a flow or validation rule and start unticked.`
         + (unchecked > 0 ? ` <strong>${unchecked} row(s) were never checked</strong> — they stay unticked; verify them yourself before ticking.` : '');
     }
@@ -2249,7 +2249,7 @@ async function _pkOpenSyncPlan() {
             ? `<strong>${esc(loaded[srcIdx].label)}</strong> <span class="ds-pk-mx-sot" title="Locked to your Sync Ring's source of truth — every sync flows FROM it. Change it in 🔄 Sync Ring or the topbar chip.">👑 source of truth</span>`
             : `<select id="dsPkSyncSrc" class="ds-select ds-select-sm">
                 ${loaded.map((r, i) => `<option value="${i}" ${i === srcIdx ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}
-              </select>${ringSrcKey ? ` <span style="font-size:11px;color:#92400e">⚠ your 👑 source of truth isn't loaded in this matrix — reload the matrix with it, or pick a source explicitly</span>` : ''}`}
+              </select>${ringSrcKey ? ` <span style="font-size:11px;color:var(--warning)">⚠ your 👑 source of truth isn't loaded in this matrix — reload the matrix with it, or pick a source explicitly</span>` : ''}`}
           <span class="ds-pk-hint">every other loaded org becomes a target</span>
         </div>
         ${plans.map((pl, pi) => {
@@ -2273,14 +2273,14 @@ async function _pkOpenSyncPlan() {
               // inside a label would toggle the checkbox when clicked.
               return `<div><label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="deactivate" data-g="${k}" data-val="${esc(n)}" disabled>
                 ⏸ Deactivate <strong>${esc(n)}</strong> (inactive in source)${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s) still hold it</span>` : ''}</label>
-                <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:#6b7280;margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div>${fixCtl(k, n, u)}</div>`;
+                <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:var(--subtext);margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div>${fixCtl(k, n, u)}</div>`;
             }).join('')}
             ${d.extras.map(n => {
               const u = usageOf(pl.tgt, n);
               const k = gi(pi, 'extrasOff', n);
               return `<div><label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="extrasOff" data-g="${k}" data-val="${esc(n)}" disabled>
                 🔵 Deactivate extra <strong>${esc(n)}</strong> (not in source${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s)</span>` : ''}) — never deleted automatically</label>
-                <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:#6b7280;margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div>${fixCtl(k, n, u)}</div>`;
+                <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:var(--subtext);margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div>${fixCtl(k, n, u)}</div>`;
             }).join('')}
             ${d.defaultChange ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="alignDefault" checked>
               ⭐ Default: ${esc(d.defaultChange.from || '—')} → <strong>${esc(d.defaultChange.to || '—')}</strong></label>` : ''}
@@ -2617,12 +2617,12 @@ function _pkSweepRowShellHtml(i, f) {
 // Colour + icon for one verdict — inline styles so no CSS file is touched.
 function _pkSweepVerdictHtml(v) {
   const style = {
-    sync:          'color:#166534',
-    values:        'color:#991b1b;font-weight:600',
-    missing:       'color:#991b1b;font-weight:600',
-    rts:           'color:#92400e;font-weight:600',
+    sync:          'color:var(--success)',
+    values:        'color:var(--danger);font-weight:600',
+    missing:       'color:var(--danger);font-weight:600',
+    rts:           'color:var(--warning);font-weight:600',
     notcomparable: 'color:var(--subtext)',
-    error:         'color:#991b1b',
+    error:         'color:var(--danger)',
     insufficient:  'color:var(--subtext)',
   }[v.status] || 'color:var(--subtext)';
   const icon = { sync: '✓', values: '⚠', missing: '⛔', rts: '⚠', notcomparable: '🔒', error: '❌', insufficient: 'ℹ' }[v.status] || '·';
@@ -2744,7 +2744,7 @@ async function _pkSweepSyncField(i) {
 
   const loaded = results.filter(r => r.inv);
   if (loaded.length < 2) {
-    set(`<span style="color:#92400e">⚠ only ${loaded.length} org readable for this field — no plan (${esc(results.filter(r => r.skip).map(r => `${r.label}: ${r.skip}`).join(' · '))})</span>`);
+    set(`<span style="color:var(--warning)">⚠ only ${loaded.length} org readable for this field — no plan (${esc(results.filter(r => r.skip).map(r => `${r.label}: ${r.skip}`).join(' · '))})</span>`);
     return false;
   }
   const perOrg = loaded.map(r => ({ orgKey: r.orgKey, values: r.inv.rawValues.map(v => pkValueName(v)) }));

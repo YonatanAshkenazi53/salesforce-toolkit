@@ -335,13 +335,14 @@ async function renderTransfer() {
   ).join('');
 
   setMain(`
-    <div class="ds-view-header">
-      <div class="ds-view-title-wrap">
-        <button class="ds-back-link" id="dsTrBackBtn" title="Back to Data Deployment">‹ Back to deployments</button>
-        <h2 class="ds-view-title">🚀 Run Transfer</h2>
-        <div class="ds-view-subtitle">Copy records using a saved profile</div>
-      </div>
-    </div>
+    ${dsViewHeader({
+      // 'play' — this is Data Deployment's run screen; no sidebar row of its
+      // own, so the glyph states the verb rather than mirroring a nav icon.
+      icon: 'play',
+      back: `<button class="ds-back-link" id="dsTrBackBtn" title="Back to Data Deployment">‹ Back to deployments</button>`,
+      title: 'Run Transfer',
+      subtitle: 'Copy records using a saved profile',
+    })}
 
     <div class="ds-op-banner ds-op-banner-write">
       <span class="ds-op-banner-icon">✍️</span>

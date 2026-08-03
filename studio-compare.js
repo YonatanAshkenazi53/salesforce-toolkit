@@ -50,12 +50,13 @@ async function renderOrgCompare() {
   ).join('');
 
   setMain(`
-    <div class="ds-view-header">
-      <div class="ds-view-title-wrap">
-        <h2 class="ds-view-title">🔍 Org Compare</h2>
-        <div class="ds-view-subtitle">Diff record counts across many objects between two orgs — find what changed at a glance</div>
-      </div>
-    </div>
+    ${dsViewHeader({
+      // 'search' is this view's sidebar glyph (studio.html data-view="compare"),
+      // so the header tile and the nav row read as the same place.
+      icon: 'search',
+      title: 'Org Compare',
+      subtitle: 'Diff record counts across many objects between two orgs — find what changed at a glance',
+    })}
 
     <div style="background:#E8F4FD;border:1px solid #C5DBF0;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#014486;max-width:920px">
       <strong>Read-only.</strong> Org Compare queries record counts and which records exist in each org.

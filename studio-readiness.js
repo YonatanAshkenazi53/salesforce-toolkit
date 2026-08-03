@@ -19,12 +19,12 @@ async function renderReadiness() {
   ).join('');
 
   setMain(`
-    <div class="ds-view-header">
-      <div class="ds-view-title-wrap">
-        <h2 class="ds-view-title">🛡 Deployment Readiness</h2>
-        <div class="ds-view-subtitle">Compare schemas between orgs — find missing fields, picklist gaps, validation rules, and more before a data load fails</div>
-      </div>
-    </div>
+    ${dsViewHeader({
+      // 'shield' is this view's sidebar glyph (studio.html data-view="readiness").
+      icon: 'shield',
+      title: 'Deployment Readiness',
+      subtitle: 'Compare schemas between orgs — find missing fields, picklist gaps, validation rules, and more before a data load fails',
+    })}
 
     <div class="ds-op-banner ds-op-banner-read">
       <span class="ds-op-banner-icon">📖</span>
@@ -202,6 +202,31 @@ function drSaveSetup() {
   drUpdateApiBudget();
 }
 
+// Expand/collapse wiring for every result-card header — shared by the
+// fresh-run and cache-restore paths so neither can regress alone. The header
+// stays a <div role="button" tabindex="0"> (a real <button> would drag in UA
+// styles the .dr-obj-card-hdr rules never reset), so the button contract is
+// kept by hand: Enter AND Space activate, Space without scrolling the pane,
+// and aria-expanded tracks the open class — the cached innerHTML can be
+// serialised in either state, so the attribute is re-synced at wire time.
+function drWireObjCardHeaders(rootEl) {
+  if (!rootEl) return;
+  rootEl.querySelectorAll('.dr-obj-card-hdr').forEach(hdr => {
+    const card = hdr.closest('.dr-obj-card');
+    if (!card) return;
+    const sync = () => hdr.setAttribute('aria-expanded',
+      card.classList.contains('dr-obj-card-open') ? 'true' : 'false');
+    const toggle = () => { card.classList.toggle('dr-obj-card-open'); sync(); };
+    sync();
+    hdr.addEventListener('click', toggle);
+    hdr.addEventListener('keydown', e => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      toggle();
+    });
+  });
+}
+
 function drRestoreCachedResults() {
   if (!_drResultsCache) return;
   const resultsEl = eid('drResults');
@@ -221,11 +246,7 @@ function drRestoreCachedResults() {
     ${_drResultsCache.html}`;
   eid('drRerunBtn')?.addEventListener('click', runReadinessCheck);
   // Re-wire expand/collapse on the restored cards (innerHTML drops listeners)
-  resultsEl.querySelectorAll('.dr-obj-card-hdr').forEach(hdr => {
-    hdr.addEventListener('click', () => {
-      hdr.closest('.dr-obj-card')?.classList.toggle('dr-obj-card-open');
-    });
-  });
+  drWireObjCardHeaders(resultsEl);
 }
 
 async function drRefreshObjectList() {
@@ -499,12 +520,7 @@ async function runReadinessCheck() {
   };
 
   // Wire expand/collapse
-  document.querySelectorAll('.dr-obj-card-hdr').forEach(hdr => {
-    hdr.addEventListener('click', () => {
-      const card = hdr.closest('.dr-obj-card');
-      card?.classList.toggle('dr-obj-card-open');
-    });
-  });
+  drWireObjCardHeaders(resultsEl);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -809,7 +825,7 @@ function renderOrgSettingsPanel(rows, ctx) {
   ].join('');
 
   return `<div class="dr-obj-card ${sevClass} dr-obj-card-open" style="margin-bottom:8px">
-      <div class="dr-obj-card-hdr">
+      <div class="dr-obj-card-hdr" role="button" tabindex="0" aria-expanded="true">
         <span class="dr-obj-sev">${icon}</span>
         <span class="dr-obj-name">⚙ Org settings — ${sL} vs ${tL}</span>
         <div class="dr-obj-chips">${chips}</div>
@@ -1114,7 +1130,7 @@ function renderObjectCard(card) {
 
   return `
     <div class="dr-obj-card ${isDefaultOpen ? 'dr-obj-card-open' : ''}">
-      <div class="dr-obj-card-hdr ${sevClass}">
+      <div class="dr-obj-card-hdr ${sevClass}" role="button" tabindex="0" aria-expanded="${isDefaultOpen ? 'true' : 'false'}">
         <span class="dr-obj-sev">${sevIcon}</span>
         <span class="dr-obj-name">${esc(obj)}</span>
         <div class="dr-obj-chips">${chips.join('')}</div>
