@@ -663,9 +663,12 @@ anchor-based plan edit accidentally deleted it)
   dist/salesforce-toolkit-v1.3.0-store.zip (46 files, 797 KB) packed, boot-smoke
   PASS both pages, zip delivered to user. PRIVACY.md unchanged (no new perms or
   storage keys) → public gist untouched. Store submission is user-side.
-- [ ] V4 (post-1.3.0, needs user input): full Pro-mode emoji sweep (~1300 sites in
-  view files) and popup-vs-Studio dark palette unification — user must pick which
-  dark look wins (popup cool blue-grey vs Studio neutral grey).
+- [x] V4a Dark palette unification — DONE 2026-08-03 in 1.3.0 (commit 7ba1eb9,
+  user picked the popup's cool blue-grey). .ds-dark token values byte-match
+  body.sftk-dark; all neutral-grey literals re-pointed to tokens; parity guard in
+  test/studio-dark-css.test.mjs; verified with a dark capture of the packed build.
+- [ ] V4b (post-1.3.0): full Pro-mode emoji sweep (~1300 sites in view files) —
+  opt-in feature, coverage documented as phased; no user input needed.
 
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.
