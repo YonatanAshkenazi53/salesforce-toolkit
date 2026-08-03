@@ -1331,13 +1331,18 @@ body {
 .btn-secondary:hover:not(:disabled) { background: var(--brand-bg); }
 
 .btn-danger {
-  background: #FEF0EE;
-  border-color: #FF8888;
+  /* Semantic tokens, not literals — the light-pink literal shipped into dark
+     mode as the one bright panel on the screen (Fable recheck, functional). */
+  background: var(--c-critical-bg);
+  border-color: var(--c-critical-border);
   color: var(--danger);
 }
 .btn-danger:hover:not(:disabled) { background: #FFDDDD; }
+body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 
-.btn-warning { background: var(--warning-bg); border-color: #F5A623; color: #8A4700; }
+/* The old hardcoded brown text measured 1.96:1 on the dark warning bg —
+   var(--warning) is the theme-aware fg (#A85400 light / #F5A623 dark). */
+.btn-warning { background: var(--warning-bg); border-color: var(--c-warn-border); color: var(--warning); }
 
 .btn-sm { padding: 3px 8px; font-size: 11px; }
 
@@ -1574,8 +1579,8 @@ body {
    Error / Info Banners
    ============================================================ */
 .error-banner {
-  background: #FEF0EE;
-  border: 1px solid #FFB3B3;
+  background: var(--c-critical-bg);
+  border: 1px solid var(--c-critical-border);
   border-radius: var(--radius);
   margin: 8px 10px;
   padding: 8px 12px;
@@ -2200,7 +2205,7 @@ body {
 .mode-btn:last-child { border-right: none; }
 .mode-btn:hover:not(.active) { background: var(--brand-bg); color: var(--brand); }
 .mode-btn.active { background: var(--brand); color: #fff; }
-.mode-btn[data-mode="delete"].active  { background: #FEF0EE; color: var(--danger); }
+.mode-btn[data-mode="delete"].active  { background: var(--c-critical-bg); color: var(--danger); }
 .mode-btn[data-mode="backup"].active  { background: var(--brand-bg); color: var(--brand-dark); }
 .mode-btn[data-mode="restore"].active { background: #EEF7EF; color: var(--active-color); }
 
@@ -6098,8 +6103,8 @@ body {
   font-size: 11px;
   font-weight: 700;
 }
-.cs-pill-critical { background: #FEF0EE; color: var(--danger); border: 1px solid #FFB3B3; }
-.cs-pill-warning  { background: var(--warning-bg); color: #8A4700; border: 1px solid #F5A623; }
+.cs-pill-critical { background: var(--c-critical-bg); color: var(--danger); border: 1px solid var(--c-critical-border); }
+.cs-pill-warning  { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--c-warn-border); }
 .cs-pill-info     { background: var(--brand-bg); color: var(--brand); border: 1px solid #C5DBF0; }
 
 .cs-scan-meta {

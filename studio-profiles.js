@@ -316,6 +316,7 @@ async function runSequence(seqId) {
 
   // Refresh open-tab sessions so we use the freshest SIDs, then resolve the pair.
   const freshRes = await sendBg({ type: 'GET_ALL_SF_SESSIONS' });
+  if (Array.isArray(freshRes?.sessions)) _allSessionsOk = true;
   if (freshRes?.sessions?.length) {
     _allSessions = freshRes.sessions;
     _allSessions.forEach(s => upsertOrg(s.orgUrl, s.label));

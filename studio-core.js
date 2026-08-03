@@ -35,6 +35,14 @@
 let _orgUrl      = null;
 let _sid         = null;
 let _allSessions = [];
+// TRUE once a GET_ALL_SF_SESSIONS round-trip actually completed (even with
+// zero sessions). Liveness consumers read _liveKnown(), never `set.size > 0`:
+// the active-tab session alone puts one entry in the live set while
+// enumeration may have FAILED — inferring knowledge from size re-disables
+// every genuinely-open target (the pre-e9d8f0f symptom, reintroduced for
+// the partial-knowledge state). Never reset — stale knowledge is still
+// knowledge; a failed refresh keeps the last good answer.
+let _allSessionsOk = false;
 let _currentView = 'orgs';
 let _profiles    = [];
 let _history     = [];
@@ -314,6 +322,7 @@ function showSessionBanner(orgUrl, onReconnect = null) {
     // Re-detect all open SF sessions
     const allRes = await sendBg({ type: 'GET_ALL_SF_SESSIONS' });
     _allSessions = allRes?.sessions || [];
+    _allSessionsOk = _allSessionsOk || Array.isArray(allRes?.sessions);
     _allSessions.forEach(s => upsertOrg(s.orgUrl, s.label));
 
     const session = await sendBg({ type: 'GET_SF_SESSION' });
@@ -611,6 +620,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // All open org sessions
   const allRes = await sendBg({ type: 'GET_ALL_SF_SESSIONS' });
   _allSessions = (allRes?.sessions || []);
+  _allSessionsOk = _allSessionsOk || Array.isArray(allRes?.sessions);
   _allSessions.forEach(s => upsertOrg(s.orgUrl, s.label));
   await storageSaveOrgs();
 
@@ -1520,6 +1530,7 @@ function renderOrgsPanel() {
     if (btn) { btn.disabled = true; btn.textContent = `${window.sftkGlyph('🔄 ', '')}Refreshing…`; }
     const allRes = await sendBg({ type: 'GET_ALL_SF_SESSIONS' });
     _allSessions = allRes?.sessions || [];
+    _allSessionsOk = _allSessionsOk || Array.isArray(allRes?.sessions);
     _allSessions.forEach(s => upsertOrg(s.orgUrl, s.label));
     await storageSaveOrgs();
     renderOrgsPanel();
@@ -1596,6 +1607,15 @@ window.removeOrg = function(orgUrl) {
     </div>`);
   eid('dsOrgRemoveConfirm')?.addEventListener('click', async () => {
     delete _orgs[orgUrl];
+    // The ring must not keep pointing at an org the map no longer knows —
+    // a removed source used to survive as _ring.sourceUrl, so new
+    // deployments silently seeded sourceOrg with an org whose select showed
+    // "— Select source org —" (Fable recheck, behaviour audit).
+    if (_ring) {
+      _ring.orgs = (_ring.orgs || []).filter(u => _orgKey(u) !== _orgKey(orgUrl));
+      if (_ring.sourceUrl && _orgKey(_ring.sourceUrl) === _orgKey(orgUrl)) _ring.sourceUrl = '';
+      try { await chrome.storage.local.set({ ds_ring: _ring }); } catch (_) {}
+    }
     await storageSaveOrgs();
     closeModal();
     renderOrgsPanel();
@@ -1638,13 +1658,19 @@ function allMapOrgs() {
 function _liveOrgSet() {
   return new Set(_buildAllSessions().filter(s => s.sid).map(s => _orgKey(s.orgUrl)));
 }
+// Whether the live set is KNOWLEDGE or a partial guess — true only after a
+// GET_ALL_SF_SESSIONS round-trip completed. Consumers must branch on this,
+// not on set size (the active-tab session alone makes size 1 while
+// enumeration may have failed, silently disabling every open target).
+function _liveKnown() { return _allSessionsOk; }
 function orgOptionLabel(url, label, liveSet) {
   const live = liveSet || _liveOrgSet();
-  // An EMPTY set means "sessions aren't enumerated yet", NOT "everything is
-  // closed" (same rule the fan-out advice column applies). Painting '⚪ …
-  // (not open)' in that state contradicted the advice on the very same row,
-  // which correctly lets unknown targets through. Unknown → no marker.
-  const known = live.size > 0;
+  // Liveness markers only when the live set is KNOWLEDGE (enumeration
+  // completed), not a partial guess. Painting '⚪ … (not open)' on unknown
+  // data contradicted the fan-out advice on the very same row, which
+  // correctly lets unknown targets through. Unknown → no marker at all.
+  // (typeof guard: tests extract this function standalone.)
+  const known = (typeof _liveKnown === 'function') ? _liveKnown() : live.size > 0;
   const on = known && live.has(_orgKey(url));
   // 👑 marks the Sync Ring's source of truth in EVERY org dropdown and
   // checkbox list app-wide (user directive 2026-07-17: the source org must be
@@ -1723,6 +1749,7 @@ async function getOrgSession(orgUrl) {
   if (!orgUrl) return null;
   // Refresh open-tab sessions so we hand back the freshest SID available.
   const freshRes = await sendBg({ type: 'GET_ALL_SF_SESSIONS' });
+  if (Array.isArray(freshRes?.sessions)) _allSessionsOk = true;
   if (freshRes?.sessions?.length) _allSessions = freshRes.sessions;
   const sess = _resolveSession(orgUrl, _buildAllSessions());
   return (sess && sess.sid) ? sess : null;

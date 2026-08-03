@@ -303,6 +303,7 @@ async function renderTransfer() {
 
   // Refresh open-tab sessions so we use the freshest SIDs.
   const freshRes = await sendBg({ type: 'GET_ALL_SF_SESSIONS' });
+  if (Array.isArray(freshRes?.sessions)) _allSessionsOk = true;
   if (freshRes?.sessions?.length) {
     _allSessions = freshRes.sessions;
     _allSessions.forEach(s => upsertOrg(s.orgUrl, s.label));
@@ -1988,13 +1989,15 @@ window.openFanOut = async function (profileId, opts = {}) {
 
   // ── What this run actually DOES, stated before it is authorized ──────
   const live = (typeof _liveOrgSet === 'function') ? _liveOrgSet() : new Set();
-  // An EMPTY set means "sessions aren't enumerated yet", not "nothing is
-  // open" — and treating unknown as closed disabled every target and told
-  // the user the whole run would be skipped (seen while capturing this
-  // dialog against a harness that opened it before sessions landed).
+  // Liveness is only KNOWLEDGE when enumeration actually completed
+  // (_liveKnown, studio-core). Treating unknown as closed disabled every
+  // target and told the user the whole run would be skipped (seen while
+  // capturing this dialog before sessions landed). Inferring knowledge from
+  // set SIZE reintroduced the same bug for the partial state: the active-tab
+  // session alone makes size 1 while GET_ALL_SF_SESSIONS may have failed.
   // runFanOut already skips a sessionless org at run time and says so, so
   // the honest default when we don't know is to let it through.
-  const liveKnown = live.size > 0;
+  const liveKnown = (typeof _liveKnown === 'function') ? _liveKnown() : live.size > 0;
   const isLive = u => {
     if (!liveKnown) return true;
     try { return live.has(_orgKey(u)) || live.has(u); } catch (_) { return true; }
@@ -2125,7 +2128,13 @@ window.openFanOut = async function (profileId, opts = {}) {
         eid('dsFanoutNoopBack')?.addEventListener('click', () => { closeModal(); resolve(false); });
         eid('dsFanoutNoopGo')?.addEventListener('click', () => { closeModal(); resolve(true); });
       });
-      if (!ok) { window.openFanOut(profileId, opts); return; }   // reopen where they were
+      if (!ok) {
+        // "Back" must return to the user's ACTUAL ticks — reopening with the
+        // original opts rebuilt the checkboxes from the DEFAULT preselect,
+        // silently reverting the selection they had just made.
+        window.openFanOut(profileId, { ...opts, preselect: targets });
+        return;
+      }
     }
     closeModal();
 

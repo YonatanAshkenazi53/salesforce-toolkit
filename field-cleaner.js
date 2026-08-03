@@ -162,12 +162,37 @@ function fcWireDropdownKeys(input, drop, pick) {
       return;
     }
     if (e.key === 'Enter') {
+      // Only while the dropdown is VISIBLE. A closed dropdown still holds
+      // its last item list (pick() hides, it doesn't clear), so Enter after
+      // a mouse pick or Escape used to silently re-select the top-ranked
+      // row — replacing the object/field the user had just chosen.
+      if (!open) return;
       // No explicit selection yet → the top-ranked row is what the user sees
       // first and what a mouse user would click.
       const el = list[Math.max(0, activeIdx(list))];
       if (el) { e.preventDefault(); pick(el); }
     }
   });
+}
+
+// Re-point the keyboard-active row after a dropdown repaint. An async org-
+// search response lands mid-arrow-navigation and innerHTML wipes the active
+// row: aria-activedescendant is left announcing a removed node and Enter
+// selects row 0 instead of the row the user had reached. Matches the row by
+// data-api (its identity across repaints); when it is gone from the new
+// list the stale descendant reference is CLEARED, never left dangling.
+function fcRestoreActiveRow(drop, input, api) {
+  if (!drop) return;
+  const sel = api ? `.fc-dd-item[data-api="${(window.CSS && CSS.escape) ? CSS.escape(api) : api}"]` : null;
+  const el = sel ? drop.querySelector(sel) : null;
+  if (el) {
+    el.classList.add('fc-dd-active');
+    el.setAttribute('aria-selected', 'true');
+    if (!el.id) el.id = 'fcdd_' + Math.random().toString(36).slice(2, 9);
+    input?.setAttribute('aria-activedescendant', el.id);
+  } else {
+    input?.removeAttribute('aria-activedescendant');
+  }
 }
 
 function fcMergeEntries(pool, incoming) {
@@ -683,7 +708,9 @@ const FieldCleaner = (() => {
         ` — only the ${_allObjects.length} objects loaded above were checked.`)}</div>`;
     }
 
+    const prevActive = drop.querySelector('.fc-dd-item.fc-dd-active')?.dataset.api || null;
     drop.innerHTML = html;
+    fcRestoreActiveRow(drop, eid('fcObjInput'), prevActive);
     // mousedown, not click: the input's blur would close the dropdown first.
     const toggleSys = show => e => {
       e.preventDefault();
@@ -875,7 +902,9 @@ const FieldCleaner = (() => {
 
     // Assign once, THEN wire — reassigning innerHTML afterwards would discard
     // every listener attached above.
+    const prevActive = drop.querySelector('.fc-dd-item.fc-dd-active')?.dataset.api || null;
     drop.innerHTML = html;
+    fcRestoreActiveRow(drop, eid('fcFieldInput'), prevActive);
     const pickField = item => {
       eid('fcFieldInput').value = `${item.dataset.label} (${item.dataset.api})`;
       drop.style.display = 'none';

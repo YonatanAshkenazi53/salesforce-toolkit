@@ -137,6 +137,9 @@ function renderBuilder() {
                </div>`
             : `<select id="dsProfileSrcOrg" class="ds-select" aria-label="Source org — where records come from">
                 <option value="">— Select source org —</option>${orgOpts(p.sourceOrg)}
+                ${p.sourceOrg && !allMapOrgs().some(o => _orgKey(o.url) === _orgKey(p.sourceOrg))
+                  ? `<option value="${esc(p.sourceOrg)}" selected disabled>${esc(orgLabel(p.sourceOrg))} — no longer in your org list</option>`
+                  : ''}
               </select>
               ${ringSrc && p.sourceOrg && _orgKey(p.sourceOrg) !== _orgKey(ringSrc)
                 ? `<div class="ds-bld-src-warn">${dsIcon('warn')}not your source of truth (${esc(orgLabel(ringSrc))}) — this deployment will show as off-ring</div>` : ''}`}
@@ -1374,6 +1377,16 @@ function refreshTree() {
   if (area && _editingProfile?.tree) {
     area.innerHTML = renderTreeNode(_editingProfile.tree, [], true);
     wireTreeEvents();
+  }
+  // The header's "N objects in the tree" chip is rendered once by
+  // renderBuilder; every mutation (add child, remove node, set root) funnels
+  // through here — repaint it here too, or bldTreeNodeCount's guarantee
+  // ("the number in the header can never disagree with the tree under it")
+  // is a lie between mutation and the next full re-render.
+  const chip = document.querySelector('.ds-vh-count');
+  if (chip && _editingProfile?.tree) {
+    const n = bldTreeNodeCount(_editingProfile.tree);
+    chip.textContent = `${n} object${n !== 1 ? 's' : ''} in the tree`;
   }
   refreshSOQLPreview();
 }
