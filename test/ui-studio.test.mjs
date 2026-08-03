@@ -432,7 +432,7 @@ describe('empty live set = unknown, not closed', () => {
   it('Sync Plan attempts all targets when liveness is unknown instead of refusing', () => {
     const src = RING.slice(RING.indexOf('async function _ringOpenPlan('),
                            RING.indexOf('\n}', RING.indexOf('async function _ringOpenPlan(')));
-    expect(src).toMatch(/lsKnown = ls\.size > 0/);
+    expect(src).toMatch(/lsKnown = \(typeof _liveKnown === 'function'\) \? _liveKnown\(\)/);
     expect(src).toMatch(/lsKnown \? targets\.filter[\s\S]*?: targets\.slice\(\)/);
   });
 
@@ -444,6 +444,75 @@ describe('empty live set = unknown, not closed', () => {
 
   it('matrix cells only badge ⚫ / disable 🔎 when liveness is known', () => {
     expect(RING).toMatch(/const live = !lsKnown \|\| \[\.\.\.ls\]\.some/);
+  });
+
+  // Knowledge is a completed enumeration, never set SIZE: the active-tab
+  // session alone makes size 1 while GET_ALL_SF_SESSIONS may have failed —
+  // size>0 re-disabled every open target in exactly that state.
+  it('every liveness consumer branches on _liveKnown(), not set size', () => {
+    const TRANSFER = read('studio-transfer.js');
+    expect(TRANSFER).toMatch(/liveKnown = \(typeof _liveKnown === 'function'\) \? _liveKnown\(\)/);
+    expect(RING.match(/typeof _liveKnown === 'function'/g)?.length).toBe(3);
+    expect(CORE).toMatch(/function _liveKnown\(\) \{ return _allSessionsOk; \}/);
+  });
+
+  it('_allSessionsOk is set at every enumeration site and never inferred', () => {
+    const PROFILES2 = read('studio-profiles.js');
+    const TRANSFER = read('studio-transfer.js');
+    // one flag write per GET_ALL_SF_SESSIONS response adoption
+    expect(CORE.match(/_allSessionsOk = _allSessionsOk \|\| Array\.isArray\(allRes\?\.sessions\)/g)?.length).toBe(3);
+    expect(CORE).toMatch(/if \(Array\.isArray\(freshRes\?\.sessions\)\) _allSessionsOk = true/);
+    expect(TRANSFER).toMatch(/if \(Array\.isArray\(freshRes\?\.sessions\)\) _allSessionsOk = true/);
+    expect(PROFILES2).toMatch(/if \(Array\.isArray\(freshRes\?\.sessions\)\) _allSessionsOk = true/);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════
+// Fable recheck — behaviour/functional confirmed fixes
+// ══════════════════════════════════════════════════════════════════
+describe('the builder header count can never disagree with the tree', () => {
+  it('refreshTree repaints the .ds-vh-count chip — add/remove funnel through it', () => {
+    const src = BUILDER.slice(BUILDER.indexOf('function refreshTree('),
+                              BUILDER.indexOf('\n}', BUILDER.indexOf('function refreshTree(')));
+    expect(src).toMatch(/querySelector\('\.ds-vh-count'\)/);
+    expect(src).toMatch(/bldTreeNodeCount\(_editingProfile\.tree\)/);
+    expect(src).toMatch(/object\$\{n !== 1 \? 's' : ''\} in the tree/);
+  });
+});
+
+describe('a phantom source org is named, never silently kept', () => {
+  it('removeOrg drops the org from the ring and clears a matching sourceUrl', () => {
+    const src = CORE.slice(CORE.indexOf('window.removeOrg ='));
+    expect(src).toMatch(/_ring\.orgs = \(_ring\.orgs \|\| \[\]\)\.filter/);
+    expect(src).toMatch(/_orgKey\(_ring\.sourceUrl\) === _orgKey\(orgUrl\)\) _ring\.sourceUrl = ''/);
+    expect(src).toMatch(/ds_ring: _ring/);
+  });
+
+  it('the builder source select names a sourceOrg that is no longer in the org list', () => {
+    expect(BUILDER).toMatch(/no longer in your org list/);
+    expect(BUILDER).toMatch(/!allMapOrgs\(\)\.some\(o => _orgKey\(o\.url\) === _orgKey\(p\.sourceOrg\)\)/);
+  });
+});
+
+describe('destructive/warning colours are theme tokens, not light literals', () => {
+  // The light-pink literal shipped into dark mode as the ONE bright panel on
+  // the screen (Delete Selected, Flows tab), and #8A4700 measured 1.96:1 on
+  // the dark warning bg.
+  it('.btn-danger / delete-mode chip / error banner / cs pills use the critical tokens', () => {
+    expect(SHARED).toMatch(/\.btn-danger \{[^}]*var\(--c-critical-bg\)/s);
+    expect(SHARED).toMatch(/\.mode-btn\[data-mode="delete"\]\.active\s+\{ background: var\(--c-critical-bg\)/);
+    expect(SHARED).toMatch(/\.error-banner \{\s*[^}]*var\(--c-critical-bg\)/s);
+    expect(SHARED).toMatch(/\.cs-pill-critical \{ background: var\(--c-critical-bg\)/);
+  });
+
+  it('.btn-warning and .cs-pill-warning read var(--warning), never #8A4700', () => {
+    expect(SHARED).not.toContain('#8A4700');
+    expect(SHARED).toMatch(/\.btn-warning \{[^}]*color: var\(--warning\)/s);
+    expect(SHARED).toMatch(/\.cs-pill-warning\s+\{[^}]*color: var\(--warning\)/s);
+  });
+
+  it('the danger hover has a dark override', () => {
+    expect(SHARED).toMatch(/body\.sftk-dark \.btn-danger:hover/);
   });
 });
 

@@ -518,3 +518,25 @@ describe('field-cleaner.js query shape', () => {
     expect(SRC).toContain('WHERE EntityDefinitionId = ${fcSoqlLit(api)}');
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// Dropdown keyboard honesty (Fable recheck, behaviour audit)
+// ══════════════════════════════════════════════════════════════════
+describe('dropdown keyboard state survives what the UI does around it', () => {
+  it('Enter acts only while the dropdown is VISIBLE — a hidden list must not re-pick', () => {
+    // pick() hides the dropdown but keeps its items, so Enter after a mouse
+    // pick or Escape used to silently replace the chosen object/field with
+    // the top-ranked row.
+    expect(SRC).toMatch(/if \(e\.key === 'Enter'\) \{[\s\S]*?if \(!open\) return;/);
+  });
+
+  it('both pickers restore the keyboard-active row across an async repaint', () => {
+    // The org-search response lands mid-arrow-navigation; innerHTML wipes
+    // the active row and aria-activedescendant went stale.
+    expect(SRC).toMatch(/function fcRestoreActiveRow\(drop, input, api\)/);
+    expect(SRC.match(/fcRestoreActiveRow\(drop, eid\('fcObjInput'\), prevActive\)/g)?.length).toBe(1);
+    expect(SRC.match(/fcRestoreActiveRow\(drop, eid\('fcFieldInput'\), prevActive\)/g)?.length).toBe(1);
+    // a vanished row CLEARS the descendant reference, never leaves it dangling
+    expect(SRC).toMatch(/input\?\.removeAttribute\('aria-activedescendant'\)/);
+  });
+});

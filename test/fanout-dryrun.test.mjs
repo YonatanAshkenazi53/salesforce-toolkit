@@ -504,4 +504,10 @@ describe('openFanOut write-mode claim', () => {
     expect(openFanOutSrc).toContain('sftkValFingerprint');
     expect(openFanOutSrc).not.toContain('_validatedRuns.has(`${p.id}|${srcUrl}|${o.url}`)');
   });
+
+  it("the noop-confirm Back path reopens with the user's ACTUAL ticks, not the defaults", () => {
+    // Untick A, tick B+C, hit Run, get "Nothing to write", click Back —
+    // reopening with the original opts silently reverted to A ticked.
+    expect(openFanOutSrc).toMatch(/openFanOut\(profileId, \{ \.\.\.opts, preselect: targets \}\)/);
+  });
 });
