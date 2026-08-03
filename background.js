@@ -2957,16 +2957,26 @@ chrome.alarms?.onAlarm?.addListener(a => {
 });
 
 // Direct cookie lookup for a SPECIFIC org — works with zero Salesforce tabs
-// open (getSfSession needs a tab to build its cookie candidates). Longest
-// cookie domain wins — the parent-domain-stale-sid lesson applies here too.
-// Shared by the scheduled ring probe and the trace hotkey.
+// open (getSfSession needs a tab to build its cookie candidates). Shared by
+// getAllSfSessions (per-tab), the scheduled ring probe and the trace hotkey.
+//
+// HOST-SPECIFIC COOKIES ONLY. chrome.cookies.getAll({url}) also returns
+// PARENT-domain cookies (the shared .develop.my.salesforce.com sid the
+// orgfarm fix is about) — and after a logout that parent sid can be the only
+// one left, so returning it would present THIS org as open using a SIBLING
+// org's session. The wrong-org guard downstream can't catch that: it
+// compares orgUrl to tabUrl and both are this tab's own host. An org's real
+// sid is set on its exact host, so requiring domain === host loses nothing;
+// longest-domain-wins remains as the tie-break between the dotted and
+// undotted forms of the host itself.
 async function sftkCookieSessFor(url) {
   try {
     const h = new URL(url).hostname
       .replace('.lightning.force.com', '.my.salesforce.com')
       .replace('.salesforce-setup.com', '.salesforce.com');
     const cookies = await chrome.cookies.getAll({ name: 'sid', url: `https://${h}` });
-    const best = (cookies || []).filter(c => c.value)
+    const best = (cookies || [])
+      .filter(c => c.value && (c.domain || '').replace(/^\./, '') === h)
       .sort((a, b) => (b.domain || '').length - (a.domain || '').length)[0];
     if (best) return { orgUrl: `https://${h}`, sid: best.value };
   } catch (_) {}
@@ -3229,7 +3239,20 @@ async function getAllSfSessions() {
   const results = await Promise.allSettled(
     orgTabs.map(async tab => {
       const direct = await sftkCookieSessFor(tab.url);
-      const s = (direct && direct.sid) ? direct : await getSfSession(tab.url);
+      let s = (direct && direct.sid) ? direct : await getSfSession(tab.url);
+      // A fallback result must survive the same host-specific cookie test
+      // the direct path enforces: getSfSession's broad scans can return a
+      // parent-domain / foreign sid already stamped with this tab's own
+      // origin — invisible to the wrong-org guard below because both keys
+      // are then this tab's host. Re-resolve the CLAIMED org; a session its
+      // own host's cookies can't back is dropped (org shows as not open,
+      // which is the truth for a logged-out tab with a lingering sibling
+      // sid). Legitimate fallback wins — a mapping gap between tab host and
+      // true org host — still pass: the claimed org has its own host cookie.
+      if (s && s !== direct && s.sid && s.orgUrl) {
+        const v = await sftkCookieSessFor(s.orgUrl);
+        if (!v || v.sid !== s.sid) s = null;
+      }
       return { ...(s || {}), tabUrl: tab.url, tabTitle: tab.title || '' };
     })
   );
@@ -3240,8 +3263,15 @@ async function getAllSfSessions() {
     if (r.status !== 'fulfilled') continue;
     const { orgUrl, sid, tabTitle, tabUrl } = r.value || {};
     if (!orgUrl || !sid) continue;
-    // WRONG-ORG GUARD: never report a tab's org using another org's session.
-    // Without this a mis-resolved tab both mislabels one org and hides another.
+    // WRONG-ORG GUARD — scope stated precisely: this catches wrong-TAB
+    // attribution (a session whose orgUrl belongs to a different org than
+    // the tab it was resolved for). It CANNOT catch wrong-COOKIE resolution,
+    // where a foreign sid is returned already stamped with this tab's own
+    // origin (getSfSession's broad any-SF-sid fallback does this) — the keys
+    // then match by construction. That hole is closed upstream instead:
+    // sftkCookieSessFor only trusts host-specific cookies, and a fallback
+    // result is re-verified against the claimed org's own host cookies
+    // before it reaches this loop.
     if (tabUrl && sftkOrgKey(orgUrl) !== sftkOrgKey(tabUrl)) continue;
     // Dedupe on org IDENTITY, not the raw string: the same org reached via
     // my.salesforce.com and lightning.force.com is one org, not two.

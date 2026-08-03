@@ -17,7 +17,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { extractFunction } from './extract.mjs';
+import { extractFunction, extractFunctions } from './extract.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = f => readFileSync(join(root, f), 'utf8');
@@ -392,5 +392,120 @@ describe('the ring source of truth is preselected and locked', () => {
   it('studio.css styles the locked row', () => {
     expect(CSS).toMatch(/\.ds-ring-org-locked\s*\{/);
     expect(CSS).toMatch(/\.ds-ring-src-lock\s*\{/);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════
+// Liveness doctrine (Fable recheck, sessions-ring audit): an EMPTY live
+// set means "sessions aren't enumerated yet" — unknown, NOT closed. The
+// fan-out advice column applied this (e9d8f0f) while the org label on the
+// SAME row printed "(not open)", and every ring surface still treated the
+// empty set as all-closed (Sync Plan refused to run, matrix cells went ⚫
+// with 🔎 disabled). One rule everywhere now.
+// ══════════════════════════════════════════════════════════════════
+describe('empty live set = unknown, not closed', () => {
+  const { orgOptionLabel } = extractFunctions('studio-core.js', ['orgOptionLabel']);
+  const URL_A = 'https://acme.my.salesforce.com';
+
+  const withStubs = fn => {
+    globalThis._orgKey = u => String(u || '').toLowerCase();
+    globalThis.window = { sftkGlyph: (emoji) => emoji };
+    try { return fn(); } finally { delete globalThis._orgKey; delete globalThis.window; }
+  };
+
+  it('orgOptionLabel with an EMPTY set paints no status at all', () => withStubs(() => {
+    const s = orgOptionLabel(URL_A, 'Acme', new Set());
+    expect(s).not.toContain('(not open)');
+    expect(s).not.toContain('🟢');
+    expect(s).not.toContain('⚪');
+    expect(s).toContain('Acme');
+  }));
+
+  it('a populated set still marks open and closed orgs', () => withStubs(() => {
+    const live = new Set([URL_A]);
+    expect(orgOptionLabel(URL_A, 'Acme', live)).toContain('🟢');
+    const off = orgOptionLabel('https://bravo.my.salesforce.com', 'Bravo', live);
+    expect(off).toContain('⚪');
+    expect(off).toContain('(not open)');
+  }));
+
+  it('Sync Plan attempts all targets when liveness is unknown instead of refusing', () => {
+    const src = RING.slice(RING.indexOf('async function _ringOpenPlan('),
+                           RING.indexOf('\n}', RING.indexOf('async function _ringOpenPlan(')));
+    expect(src).toMatch(/lsKnown = ls\.size > 0/);
+    expect(src).toMatch(/lsKnown \? targets\.filter[\s\S]*?: targets\.slice\(\)/);
+  });
+
+  it('Scan-all skips only KNOWN-closed orgs', () => {
+    const src = RING.slice(RING.indexOf('async function _ringScanAll('),
+                           RING.indexOf('\n}', RING.indexOf('async function _ringScanAll(')));
+    expect(src).toMatch(/lsKnown && !\[\.\.\.ls\]\.some/);
+  });
+
+  it('matrix cells only badge ⚫ / disable 🔎 when liveness is known', () => {
+    expect(RING).toMatch(/const live = !lsKnown \|\| \[\.\.\.ls\]\.some/);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════
+// Session attribution: the direct cookie path only trusts HOST-SPECIFIC
+// cookies. getAll({url}) also returns parent-domain cookies (the shared
+// .develop.my.salesforce.com sid) — after a logout that parent sid can be
+// the only one left, and returning it presents a logged-out org as open
+// with a SIBLING org's session. The wrong-org guard can't catch it (both
+// keys are the tab's own host by construction).
+// ══════════════════════════════════════════════════════════════════
+describe('sftkCookieSessFor refuses foreign parent-domain cookies', () => {
+  const { sftkCookieSessFor } = extractFunctions('background.js', ['sftkCookieSessFor']);
+  const HOST = 'acme.develop.my.salesforce.com';
+
+  const withCookies = async (cookies, fn) => {
+    globalThis.chrome = { cookies: { getAll: async () => cookies } };
+    try { return await fn(); } finally { delete globalThis.chrome; }
+  };
+
+  it('a host-specific cookie wins, even next to a parent-domain one', () =>
+    withCookies([
+      { domain: '.develop.my.salesforce.com', value: 'SID_FOREIGN' },
+      { domain: HOST, value: 'SID_OWN' },
+    ], async () => {
+      const s = await sftkCookieSessFor(`https://${HOST}/lightning`);
+      expect(s).toEqual({ orgUrl: `https://${HOST}`, sid: 'SID_OWN' });
+    }));
+
+  it('ONLY a parent-domain cookie → null, never a sibling org presented as this org', () =>
+    withCookies([
+      { domain: '.develop.my.salesforce.com', value: 'SID_FOREIGN' },
+    ], async () => {
+      expect(await sftkCookieSessFor(`https://${HOST}/`)).toBeNull();
+    }));
+
+  it('the dotted form of the org\'s own host still counts as host-specific', () =>
+    withCookies([
+      { domain: `.${HOST}`, value: 'SID_OWN' },
+    ], async () => {
+      expect((await sftkCookieSessFor(`https://${HOST}/`))?.sid).toBe('SID_OWN');
+    }));
+
+  it('lightning.force.com urls resolve against the my.salesforce.com host', () =>
+    withCookies([
+      { domain: 'acme.my.salesforce.com', value: 'SID_OWN' },
+    ], async () => {
+      const s = await sftkCookieSessFor('https://acme.lightning.force.com/x');
+      expect(s?.orgUrl).toBe('https://acme.my.salesforce.com');
+    }));
+
+  it('the wrong-org guard comment no longer overclaims — scope is stated', () => {
+    const BG = read('background.js');
+    expect(BG).toContain('It CANNOT catch wrong-COOKIE resolution');
+    expect(BG).toContain('only trusts host-specific cookies');
+  });
+
+  it('a getSfSession fallback claim is re-verified against the claimed org\'s own host cookies', () => {
+    const BG = read('background.js');
+    const fn = BG.slice(BG.indexOf('async function getAllSfSessions('),
+                        BG.indexOf('async function getSfSession('));
+    expect(fn).toMatch(/const v = await sftkCookieSessFor\(s\.orgUrl\)/);
+    expect(fn).toMatch(/if \(!v \|\| v\.sid !== s\.sid\) s = null/);
   });
 });
