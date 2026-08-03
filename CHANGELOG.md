@@ -13,14 +13,35 @@ lives in `CHANGELOG_HISTORY.md` (repo only, never shipped — the packer only sh
 `CHANGELOG.md` itself; no leading underscore, Chrome refuses to load unpacked
 extensions containing root files that start with `_`).
 
-## 1.3.0 — 2026-08-03
+## 1.2.0 — 2026-08-03
 
-A trust release. Every recent change went through a full independent
-re-verification pass — dozens of audit runs over the code — and everything
-found was fixed. On top of that: a cleaner, more consistent interface, real
-keyboard and screen-reader support, and a dry run for multi-org deploys.
+Built for teams and big orgs — and built on trust. Everything here went
+through a full independent re-verification pass (dozens of audit runs over
+the code), and everything found was fixed. Share your work, prove what ran,
+know what an operation costs before you start it, and validate multi-org
+deploys before a single record is written. Still no server — everything runs
+in your browser, and nothing ever leaves it.
 
 ### Added
+- **Share deployment profiles as files.** Export any deployment profile to JSON and a
+  teammate imports it — field mappings, per-target overrides, and owner-matching rules
+  intact. Machine-local state (scan results, learned match pairs, schedules) is stripped
+  on export and the import says exactly what was removed. Imported profiles carry a
+  provenance note and prompt a schema check against *your* orgs before first use.
+- **Audit reports.** Every run in History can now be exported as JSON or CSV — timestamps,
+  orgs, per-record outcomes, and failure details including the exact values that were
+  rejected. A full-history export covers everything still retained (and says when your
+  retention window means older runs are gone). CSVs are safe to open in Excel — cells
+  that look like formulas are neutralized, and the export says so.
+- **Every big operation now shows its price.** Before a deploy, sync plan, dependency
+  scan, page audit, picklist sweep, readiness check, or field scan runs, you'll see
+  "≈N API calls · org has R of M daily calls remaining" — measured against your org's
+  real quota. If a run could exhaust the day's budget it warns you first (it never
+  blocks), and afterwards the log shows what it actually used. Multi-org operations
+  show each org's own meter, because each org has its own pool.
+- **Professional mode.** A toggle in Data Studio settings that swaps the emoji labels
+  for plain text, tightens spacing, and mutes the palette — for demos, screenshots, and
+  anyone who prefers a quieter tool. Off by default; your current look is unchanged.
 - **Dry run for multi-org deploys.** Before a fan-out writes anything, validate
   every ticked target in one pass — required fields, lookups, record types,
   restricted picklists, field lengths — with an honest three-state verdict per
@@ -29,8 +50,10 @@ keyboard and screen-reader support, and a dry run for multi-org deploys.
   from which org, write mode, owner handling — before you start it.
 - **Keyboard and screen-reader support.** Status updates and toasts are
   announced to assistive tech, every control shows a visible keyboard focus,
-  Deploy Readiness result cards open from the keyboard, and the welcome tour
-  closes with Escape and keeps focus inside its card.
+  Deploy Readiness result cards open from the keyboard, the welcome tour
+  closes with Escape and keeps focus inside its card, screen readers get
+  proper navigation landmarks, and animations respect your system's
+  reduced-motion setting.
 
 ### Changed
 - **A calmer, more consistent look.** One design system across the Toolkit and
@@ -70,36 +93,6 @@ keyboard and screen-reader support, and a dry run for multi-org deploys.
   objects, the fan-out "Back" button keeps your target selection, removing an
   org also removes it from the sync ring instead of leaving a phantom source,
   and a batch of smaller fixes from the verification pass.
-
-## 1.2.0 — 2026-07-30
-
-Built for teams and big orgs: share your work, prove what ran, and always know
-what an operation costs before you start it. Still no server — everything runs
-in your browser, and nothing ever leaves it.
-
-### Added
-- **Share deployment profiles as files.** Export any deployment profile to JSON and a
-  teammate imports it — field mappings, per-target overrides, and owner-matching rules
-  intact. Machine-local state (scan results, learned match pairs, schedules) is stripped
-  on export and the import says exactly what was removed. Imported profiles carry a
-  provenance note and prompt a schema check against *your* orgs before first use.
-- **Audit reports.** Every run in History can now be exported as JSON or CSV — timestamps,
-  orgs, per-record outcomes, and failure details including the exact values that were
-  rejected. A full-history export covers everything still retained (and says when your
-  retention window means older runs are gone). CSVs are safe to open in Excel — cells
-  that look like formulas are neutralized, and the export says so.
-- **Every big operation now shows its price.** Before a deploy, sync plan, dependency
-  scan, page audit, picklist sweep, readiness check, or field scan runs, you'll see
-  "≈N API calls · org has R of M daily calls remaining" — measured against your org's
-  real quota. If a run could exhaust the day's budget it warns you first (it never
-  blocks), and afterwards the log shows what it actually used. Multi-org operations
-  show each org's own meter, because each org has its own pool.
-- **Professional mode.** A toggle in Data Studio settings that swaps the emoji labels
-  for plain text, tightens spacing, and mutes the palette — for demos, screenshots, and
-  anyone who prefers a quieter tool. Off by default; your current look is unchanged.
-- **Accessibility.** Visible keyboard-focus outlines everywhere, proper navigation
-  landmarks for screen readers, and animations respect your system's reduced-motion
-  setting.
 
 ## 1.1.0 — 2026-07-29
 
