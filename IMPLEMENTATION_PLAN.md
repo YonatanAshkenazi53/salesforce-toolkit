@@ -647,20 +647,25 @@ anchor-based plan edit accidentally deleted it)
   header count, field-cleaner Enter + async-repaint keyboard state, fan-out Back
   preselect, dark-mode danger/warning contrast tokens, phantom source org named.
   Plus user-reported SOQL-preview rewrite (engine-true shape, Ids-never-cross-orgs).
-- [ ] V2 Orphan backlog (17 adjudicated findings from the killed qa-1-3-0 run —
-  a11y/design debt, NOT same-day fixes). Should-fix: popup activity bar + studio
-  toasts are not aria-live regions; no global :focus-visible in styles.css
-  (.lm-pp-search/.tk-cmd-input kill outlines); Deploy Readiness cards click-only
-  <div> expanders (no keyboard); tour has no Escape/focus-trap; studio.css .ds-dark
-  never restates --cat-*/--shadow literals; Pro mode hides mask icons it should
-  keep (.ds-nav-icon/.ds-trust-lock) and its emoji strip covers ~1300 emoji in view
-  files it never reaches. Notes: dual mask tables (5 glyphs defined twice), two
-  dark palettes popup vs studio, elevation tokens never re-pointed in dark, command
-  palette emoji/mask split, 8 views still off dsViewHeader, modal/toast divergence.
-- [ ] V3 1.3.0 release: manifest bump 1.2.0→1.3.0, CHANGELOG entry (design system,
-  UI sweeps, user-reported fixes, popout removal, fan-out dry run, session
-  attribution, recheck fixes), pack, boot-smoke, zip delivery. Update the PRIVACY.md
-  public gist only if PRIVACY.md changes.
+- [x] V2 Orphan backlog — DONE 2026-08-03 (commit b5e9f5d) via 7 conflict-free fix
+  streams + 2 sweeps + 2 adversarial reviewers (workflow wf_b92a89a3-536); every
+  reviewer finding fixed before commit (tour Shift+Tab-from-card trap hole,
+  Pro-mode hiding the palette's new mask icons, initSession aria-current,
+  nested-alert double announce, --sh-*/--focus-ring missing from .ds-dark).
+  Landed: aria-live on popup activity bar + studio toasts; global :focus-visible
+  baseline (:where(), styles.css); Readiness keyboard expanders; tour Escape +
+  focus-in + trap; aria-current/aria-expanded in popup; .ds-dark restates
+  --cat-*/--shadow/--sh-*/--focus-ring; picklist JS colours → tokens; one mask
+  table (studio.css dupes deleted, styles.css wins); remaining shipped views on
+  dsViewHeader; modal radii + toast/empty-state on the token scale. 9 new test
+  files, +129 tests.
+- [x] V3 1.3.0 release — DONE 2026-08-03: manifest 1.3.0, CHANGELOG entry,
+  dist/salesforce-toolkit-v1.3.0-store.zip (46 files, 797 KB) packed, boot-smoke
+  PASS both pages, zip delivered to user. PRIVACY.md unchanged (no new perms or
+  storage keys) → public gist untouched. Store submission is user-side.
+- [ ] V4 (post-1.3.0, needs user input): full Pro-mode emoji sweep (~1300 sites in
+  view files) and popup-vs-Studio dark palette unification — user must pick which
+  dark look wins (popup cool blue-grey vs Studio neutral grey).
 
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.
