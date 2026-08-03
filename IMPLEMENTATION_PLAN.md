@@ -636,6 +636,32 @@ anchor-based plan edit accidentally deleted it)
   copy + 1280×800 screenshots → privacy tab (justifications drafted in the go-live
   kit) → submit Unlisted → sanity-check install → flip Public.
 
+## Phase V — Fable recheck of Opus-era work (user 2026-08-02: "We need to recheck
+## everything we did with opus 5 with fable. i think it made some bugs")
+- [x] V1 Recheck workflow over the 12 Opus-era commits (11f63c6..00cb4c7) — 5 audits
+  + adversarial verify, completed across three resumes (session limits). Extraction
+  itself CLEAN; all confirmed defects fixed in 057cc26 / 7a9833f / 7c7406b:
+  dry-run "passed" lie (unchecked discarded), fingerprinted _validatedRuns keys,
+  fan-out write-mode claim, host-specific cookie sessions + fallback re-verify,
+  empty-live-set/liveKnown doctrine (now flag-based, not size-based), builder
+  header count, field-cleaner Enter + async-repaint keyboard state, fan-out Back
+  preselect, dark-mode danger/warning contrast tokens, phantom source org named.
+  Plus user-reported SOQL-preview rewrite (engine-true shape, Ids-never-cross-orgs).
+- [ ] V2 Orphan backlog (17 adjudicated findings from the killed qa-1-3-0 run —
+  a11y/design debt, NOT same-day fixes). Should-fix: popup activity bar + studio
+  toasts are not aria-live regions; no global :focus-visible in styles.css
+  (.lm-pp-search/.tk-cmd-input kill outlines); Deploy Readiness cards click-only
+  <div> expanders (no keyboard); tour has no Escape/focus-trap; studio.css .ds-dark
+  never restates --cat-*/--shadow literals; Pro mode hides mask icons it should
+  keep (.ds-nav-icon/.ds-trust-lock) and its emoji strip covers ~1300 emoji in view
+  files it never reaches. Notes: dual mask tables (5 glyphs defined twice), two
+  dark palettes popup vs studio, elevation tokens never re-pointed in dark, command
+  palette emoji/mask split, 8 views still off dsViewHeader, modal/toast divergence.
+- [ ] V3 1.3.0 release: manifest bump 1.2.0→1.3.0, CHANGELOG entry (design system,
+  UI sweeps, user-reported fixes, popout removal, fan-out dry run, session
+  attribution, recheck fixes), pack, boot-smoke, zip delivery. Update the PRIVACY.md
+  public gist only if PRIVACY.md changes.
+
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.
 - **X phase**: confirm tool migration order before starting.
