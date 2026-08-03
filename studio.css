@@ -427,8 +427,10 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 64px 24px;
-  gap: 12px;
+  /* 64px vertical is deliberate hero breathing room — the spacing scale
+     tops out at --sp-9 (48px), which reads cramped on a full-height view. */
+  padding: 64px var(--sp-7);
+  gap: var(--sp-5);
   color: var(--subtext);
   text-align: center;
   max-width: 480px;
@@ -2657,7 +2659,7 @@ html, body {
 .ds-modal-box {
   background: var(--surface);
   border: 1.5px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-lg);
   padding: 0;
   min-width: 360px;
   max-width: 520px;
@@ -3699,8 +3701,8 @@ html, body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 11px 16px;
-  border-radius: 10px;
+  padding: var(--sp-5) var(--sp-6);
+  border-radius: var(--r-lg);
   font-size: 13px;
   font-weight: 500;
   color: #fff;
@@ -3732,7 +3734,8 @@ html, body {
    ════════════════════════════════════════════════════════════════ */
 .sec-hero {
   background: linear-gradient(135deg, #0F2D5A 0%, #032D60 100%);
-  border-radius: 8px 8px 0 0;
+  /* Top radius must track the .ds-modal-box container clip. */
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
   padding: 24px 24px 20px;
   text-align: center;
   color: #fff;
@@ -4087,6 +4090,28 @@ html, body {
   --invalid-color: #FF4D4D;
   --obsolete-color: var(--c-text-faint);
   --draft-color:  var(--c-brand);
+
+  /* §C — literal-valued :root entries. The §B alias trap applies to these
+     too: a literal declared only at :root inherits into this subtree
+     unchanged, so each one must be restated or dark Studio keeps the
+     light-tuned value. Values mirror body.sftk-dark in styles.css so both
+     apps draw the same night kitty and the same dark elevation. */
+  --cat-fur:      #546E7A;
+  --cat-fur-dark: #37474F;
+  --cat-belly:    #B0BEC5;
+  --cat-inner:    #B07A80;
+  --cat-eye:      #82B1FF;
+  --cat-nose:     #C98A8A;
+  --cat-stripe:   #455A64;
+  --shadow:       0 2px 8px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.04);
+  --shadow-md:    0 4px 16px rgba(0,0,0,.55);
+  /* §A6 elevation/focus foundation tokens — styles.css restates these under
+     body.sftk-dark, but the Studio's dark class is ds-dark on the ROOT
+     element, so that restatement never applies here. Same values. */
+  --sh-xs: 0 0 0 1px rgba(255,255,255,.08);
+  --sh-sm: 0 1px 3px rgba(0,0,0,.50), 0 0 0 1px rgba(255,255,255,.05);
+  --sh-md: 0 4px 12px rgba(0,0,0,.55);
+  --focus-ring: 0 0 0 2px rgba(27,150,255,.55);
 }
 
 /* topbar in dark mode keeps its own colour */
@@ -4247,7 +4272,7 @@ html, body {
   max-width: calc(100vw - 40px);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow-md);
   overflow: hidden;
   animation: cmdSlideIn .16s ease-out;
@@ -5043,17 +5068,18 @@ body.ds-pro {
 .ds-pro-only { display: none; }
 .ds-pro .ds-pro-only { display: inline; }
 
-/* Purely decorative icon slots — hidden wholesale in pro mode. */
+/* Purely decorative EMOJI slots — hidden wholesale in pro mode. Only emoji
+   belong in this list: the nav icons and the trust lock are monochrome mask
+   glyphs (ds-i), which is the presentation pro mode exists to show. */
 .ds-pro .ds-logo,
-.ds-pro .ds-nav-icon,
-.ds-pro .ds-trust-lock,
 .ds-pro .ds-welcome-hero-icon,
 .ds-pro .ds-welcome-card-icon,
 .ds-pro .ds-welcome-trust-icon,
 .ds-pro .sec-hero-icon,
-.ds-pro .sec-yes-icon,
-.ds-pro .ds-cmd-item-icon,
-.ds-pro .ds-cmd-search-icon { display: none; }
+.ds-pro .sec-yes-icon { display: none; }
+/* .ds-cmd-item-icon / .ds-cmd-search-icon left OUT of the hide list: the
+   command palette renders dsIcon() mask glyphs now (same batch), and Pro
+   mode keeps mask icons — it strips emoji only. */
 
 /* Topbar "Pro" toggle — pill matching the dark/whatsnew controls. */
 .ds-pro-toggle {
@@ -5131,9 +5157,12 @@ body.ds-pro {
    styles.css declares the glyph table as UNSCOPED attribute selectors
    (`[data-i="check"] { --adbg-icon: url(…) }`), so every glyph the debugger
    drew is already available on this page — studio.html loads styles.css.
-   All that is missing here is the box, which is what .ds-i is.  The Studio
-   needs eleven glyphs the debugger never had; they are appended to the SAME
-   custom property below, so there is one table, not two.
+   All that is missing here is the box, which is what .ds-i is.  The glyphs
+   the shared table never had are appended to the SAME custom property below,
+   so there is one table, not two.  Never re-declare a name styles.css
+   already defines: studio.css loads second, so the re-declaration would
+   silently replace the shared shape on this page only and the same name
+   would render two different drawings across the two apps.
 
    Masks paint currentColor: an icon is whatever colour its container is,
    which means it inverts for free in dark mode and turns white inside a
@@ -5152,10 +5181,7 @@ body.ds-pro {
 
 [data-i="plug"]     { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'><path d='M5.9 1.9v3.2M10.1 1.9v3.2'/><path d='M3.7 5.1h8.6v2.2a4.3 4.3 0 0 1-8.6 0z'/><path d='M8 11.6v2.5'/></svg>"); }
 [data-i="box"]      { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><path d='M8 1.9l5.6 2.9v6.3L8 14.1 2.4 11.1V4.8z'/><path d='M2.4 4.8L8 7.8l5.6-3'/><path d='M8 7.8v6.3'/></svg>"); }
-[data-i="sliders"]  { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round'><path d='M2.4 4.6h10.9M2.4 11.4h10.9'/><circle cx='5.9' cy='4.6' r='1.8'/><circle cx='10.3' cy='11.4' r='1.8'/></svg>"); }
-[data-i="shield"]   { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><path d='M8 1.8l4.8 1.8v4.1c0 3-1.9 5.3-4.8 6.4-2.9-1.1-4.8-3.4-4.8-6.4V3.6z'/><path d='M5.8 8l1.7 1.7 3-3.2' stroke-linecap='round'/></svg>"); }
 [data-i="lock"]     { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.35' stroke-linejoin='round'><rect x='3.4' y='6.9' width='9.2' height='6.7' rx='1.4'/><path d='M5.7 6.9V5.1a2.3 2.3 0 0 1 4.6 0v1.8'/></svg>"); }
-[data-i="arrow-right"] { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='M2.7 8h10.1'/><path d='M9.3 4.5L12.8 8l-3.5 3.5'/></svg>"); }
 [data-i="swap"]     { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'><path d='M2.9 5.6h10'/><path d='M10.2 2.9l2.7 2.7-2.7 2.7'/><path d='M13.1 10.4h-10'/><path d='M5.8 7.7l-2.7 2.7 2.7 2.7'/></svg>"); }
 [data-i="eye"]      { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'><path d='M1.5 8S4 3.8 8 3.8 14.5 8 14.5 8 12 12.2 8 12.2 1.5 8 1.5 8z'/><circle cx='8' cy='8' r='2'/></svg>"); }
 [data-i="flask"]    { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'><path d='M6.4 1.9v4.2L2.9 12a1.4 1.4 0 0 0 1.2 2.1h7.8a1.4 1.4 0 0 0 1.2-2.1L9.6 6.1V1.9'/><path d='M5.5 1.9h5'/><path d='M4.6 9.7h6.8'/></svg>"); }
@@ -5730,7 +5756,9 @@ body.ds-pro {
    `btn.textContent = …`, which would destroy a child <span>. Same fix the
    debugger used for its ten relabelled buttons: drive the glyph from an
    ATTRIBUTE through a ::before, so the icon and the label are independent.
-   The attribute is the same data-i the rest of the Studio uses. */
+   The attribute is the same data-i the rest of the Studio uses; the moon and
+   sun shapes come from the shared table in styles.css, the same drawings the
+   popup's toggle paints. */
 .ds-topbar .ds-dark-toggle::before {
   content: '';
   display: inline-block;
@@ -5742,8 +5770,6 @@ body.ds-pro {
   -webkit-mask-image: var(--adbg-icon);
   mask-image: var(--adbg-icon);
 }
-[data-i="moon"]     { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='black' d='M13.4 10.1A5.9 5.9 0 0 1 5.9 2.6a5.9 5.9 0 1 0 7.5 7.5z'/></svg>"); }
-[data-i="sun"]      { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round'><circle cx='8' cy='8' r='3.1'/><path d='M8 1.4v1.6M8 13v1.6M1.4 8h1.6M13 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1'/></svg>"); }
 [data-i="megaphone"] { --adbg-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'><path d='M2.4 6.2v3.6h2.3l4.7 2.9V3.3L4.7 6.2z'/><path d='M11.7 5.5a3.4 3.4 0 0 1 0 5'/><path d='M4.7 9.8v2.9h2'/></svg>"); }
 /* Pro mode is the emoji-free, text-label mode — the masked glyph steps aside
    for the "Light"/"Dark" word the same way .ds-glyph does. */

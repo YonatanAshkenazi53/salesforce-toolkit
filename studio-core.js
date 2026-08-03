@@ -778,6 +778,19 @@ function upsertOrg(orgUrl, label = null) {
 // ════════════════════════════════════════════════════════════════
 // TOAST NOTIFICATIONS
 // ════════════════════════════════════════════════════════════════
+// a11y: toasts are the Studio's only transient status surface. The live-region
+// attributes must be on the container BEFORE any toast is appended — a region
+// born in the same tick as its first content is not announced by most screen
+// readers. The container is static markup (studio.html) and scripts load at
+// the end of <body>, so it is already in the DOM at script evaluation.
+{
+  const tc = eid('dsToastContainer');
+  if (tc) {
+    tc.setAttribute('role', 'status');
+    tc.setAttribute('aria-live', 'polite');
+  }
+}
+
 function showToast(message, type = 'info', durationMs = 3500) {
   const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
   // E4: plain-text stand-ins in professional mode — the icon carries state
@@ -788,6 +801,11 @@ function showToast(message, type = 'info', durationMs = 3500) {
 
   const toast = document.createElement('div');
   toast.className = `ds-toast ds-toast-${type}`;
+  // NO role=alert on the toast node: an alert nested inside the polite
+  // live-region container above is TWO live regions announcing one
+  // insertion — double-spoken on some screen reader/browser pairs. One
+  // region, one announcement; errors are announced politely like the rest,
+  // which still beats the silence they had before.
   toast.innerHTML = `<span class="ds-toast-icon">${window.sftkGlyph(icons[type] || 'ℹ️', plain[type] || 'i')}</span><span>${esc(message)}</span>`;
   container.appendChild(toast);
 
@@ -837,29 +855,37 @@ function recordActivity(view) {
 // ════════════════════════════════════════════════════════════════
 // Mirrors the CURRENT sidebar — Org Map / Schedule / Scan Map were removed
 // in the feature trim; their palette entries were dead links to blank views.
+// `i` is a data-i mask name from the shared glyph table (styles.css declares
+// it unscoped, studio.css §1 appends the Studio glyphs) and must be the SAME
+// name the view's sidebar-nav button carries in studio.html (What's New: the
+// topbar megaphone) — a palette row and its nav row are one feature and must
+// wear one icon.
 const CMD_VIEWS = [
-  { icon: '🔌', label: 'Connected Orgs',    view: 'orgs',      desc: 'Manage connections' },
-  { icon: '📦', label: 'Data Deployment',   view: 'profiles',  desc: 'Profiles + run transfer' },
-  { icon: '🔄', label: 'Sync Ring',         view: 'ring',      desc: 'All orgs vs the source of truth' },
-  { icon: '🎚', label: 'Picklist Manager',  view: 'picklists', desc: 'Values & record types across orgs' },
-  { icon: '📜', label: 'History',           view: 'history',   desc: 'Past transfer runs' },
-  { icon: '🔍', label: 'Org Compare',       view: 'compare',   desc: 'Diff data across many objects' },
-  { icon: '🛡',  label: 'Deploy Readiness', view: 'readiness', desc: 'Schema compatibility' },
-  { icon: '🕸',  label: 'Schema View',      view: 'schema',    desc: 'Flow & object graph' },
-  { icon: '🎉', label: "What's New",        view: 'whatsnew',  desc: 'Changelog — what shipped, per version' },
+  { i: 'plug',      label: 'Connected Orgs',   view: 'orgs',      desc: 'Manage connections' },
+  { i: 'box',       label: 'Data Deployment',  view: 'profiles',  desc: 'Profiles + run transfer' },
+  { i: 'repeat',    label: 'Sync Ring',        view: 'ring',      desc: 'All orgs vs the source of truth' },
+  { i: 'sliders',   label: 'Picklist Manager', view: 'picklists', desc: 'Values & record types across orgs' },
+  { i: 'scroll',    label: 'History',          view: 'history',   desc: 'Past transfer runs' },
+  { i: 'search',    label: 'Org Compare',      view: 'compare',   desc: 'Diff data across many objects' },
+  { i: 'shield',    label: 'Deploy Readiness', view: 'readiness', desc: 'Schema compatibility' },
+  { i: 'flow',      label: 'Schema View',      view: 'schema',    desc: 'Flow & object graph' },
+  { i: 'megaphone', label: "What's New",       view: 'whatsnew',  desc: 'Changelog — what shipped, per version' },
 ];
 
 // Toolkit (popup) features — selecting one opens/focuses the Toolkit
-// window deep-linked to that tab. Ids match popup.js HOME_FEATURES.
+// window deep-linked to that tab. Ids match popup.js HOME_FEATURES, and so
+// must the `i` mask names — the popup's own palette renders these features
+// from HOME_FEATURES, so a name drift here shows the same feature with two
+// different icons depending on which app's palette is open.
 const CMD_TOOLKIT = [
-  { icon: '🗑', label: 'Flows',             tab: 'flows',        desc: 'Bulk delete, backup & restore' },
-  { icon: '🗺', label: 'Dependencies',      tab: 'dependencies', desc: 'Subflow call chains' },
-  { icon: '🐛', label: 'Apex Debugger',     tab: 'debugger',     desc: 'Trace flows, triggers, recursion' },
-  { icon: '📄', label: 'Lightning Pages',   tab: 'pages',        desc: 'Assignments & org defaults' },
-  { icon: '🔧', label: 'Field Cleaner',     tab: 'fields',       desc: 'Scan deps, fix flows, delete fields' },
-  { icon: '👥', label: 'Copy Permissions',  tab: 'copy-perms',   desc: 'Copy perms between users' },
-  { icon: '🔑', label: 'Licenses',          tab: 'licenses',     desc: 'Manage license assignments' },
-  { icon: '🌊', label: 'Flow Access',       tab: 'flow-access',  desc: 'Grant flows to permission sets' },
+  { i: 'nodes',   label: 'Flows',            tab: 'flows',        desc: 'Bulk delete, backup & restore' },
+  { i: 'share',   label: 'Dependencies',     tab: 'dependencies', desc: 'Subflow call chains' },
+  { i: 'bug',     label: 'Apex Debugger',    tab: 'debugger',     desc: 'Trace flows, triggers, recursion' },
+  { i: 'layout',  label: 'Lightning Pages',  tab: 'pages',        desc: 'Assignments & org defaults' },
+  { i: 'sliders', label: 'Field Cleaner',    tab: 'fields',       desc: 'Scan deps, fix flows, delete fields' },
+  { i: 'users',   label: 'Copy Permissions', tab: 'copy-perms',   desc: 'Copy perms between users' },
+  { i: 'key',     label: 'Licenses',         tab: 'licenses',     desc: 'Manage license assignments' },
+  { i: 'shield',  label: 'Flow Access',      tab: 'flow-access',  desc: 'Grant flows to permission sets' },
 ];
 
 // Open (or focus) the Toolkit; when `tab` is given, deep-link to that feature
@@ -939,7 +965,7 @@ function openCommandPalette() {
       navItems.forEach((v, i) => {
         const cls = i === activeIdx ? ' ds-cmd-active' : '';
         html += `<div class="ds-cmd-item${cls}" data-cmd-view="${esc(v.view)}">
-          <span class="ds-cmd-item-icon">${v.icon}</span>
+          <span class="ds-cmd-item-icon">${dsIcon(v.i)}</span>
           <span class="ds-cmd-item-label">${esc(v.label)}</span>
           <span class="ds-cmd-item-desc">${esc(v.desc)}</span>
         </div>`;
@@ -952,7 +978,7 @@ function openCommandPalette() {
         const idx = navItems.length + i;
         const cls = idx === activeIdx ? ' ds-cmd-active' : '';
         html += `<div class="ds-cmd-item${cls}" data-cmd-toolkit="${esc(t.tab)}">
-          <span class="ds-cmd-item-icon">${t.icon}</span>
+          <span class="ds-cmd-item-icon">${dsIcon(t.i)}</span>
           <span class="ds-cmd-item-label">${esc(t.label)}</span>
           <span class="ds-cmd-item-desc">${esc(t.desc)}</span>
         </div>`;
@@ -965,7 +991,7 @@ function openCommandPalette() {
         const idx = navItems.length + toolkitItems.length + i;
         const cls = idx === activeIdx ? ' ds-cmd-active' : '';
         html += `<div class="ds-cmd-item${cls}" data-cmd-profile="${esc(p.id)}">
-          <span class="ds-cmd-item-icon">▶️</span>
+          <span class="ds-cmd-item-icon">${dsIcon('play')}</span>
           <span class="ds-cmd-item-label">${esc(p.name)}</span>
           <span class="ds-cmd-item-badge">Run</span>
         </div>`;
@@ -1035,7 +1061,7 @@ function openCommandPalette() {
   overlay.innerHTML = `
     <div class="ds-cmd-box">
       <div class="ds-cmd-search-row">
-        <span class="ds-cmd-search-icon">🔍</span>
+        <span class="ds-cmd-search-icon">${dsIcon('search')}</span>
         <input id="dsCmdInput" class="ds-cmd-input" placeholder="Go to view or run profile…" autocomplete="off" spellcheck="false">
         <span class="ds-cmd-shortcut-hint">ESC to close</span>
       </div>

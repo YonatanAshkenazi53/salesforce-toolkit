@@ -43,6 +43,9 @@
     box-shadow: 0 12px 44px rgba(0,0,0,0.38);
     font-family: inherit; transition: top .2s ease, left .2s ease;
   }
+  /* The card is a programmatic focus target only (tabindex="-1", never in the
+     Tab order), so the default ring would flash on every step change. */
+  .sftk-tour-card:focus { outline: none; }
   .sftk-tour-step {
     font-size: 10px; font-weight: 700; text-transform: uppercase;
     letter-spacing: .06em; color: #64748b;
@@ -117,14 +120,49 @@
     hole.className = 'sftk-tour-hole';
     const card = document.createElement('div');
     card.className = 'sftk-tour-card';
+    // tabindex="-1" lets render() land focus on the card without adding it to
+    // the Tab order; aria-modal tells AT the page behind the wash is inert.
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
+    card.setAttribute('tabindex', '-1');
     overlay.appendChild(hole);
     overlay.appendChild(card);
+    // The tour steals focus for its whole run — remember where it came from.
+    const prevFocus = document.activeElement;
     document.body.appendChild(overlay);
 
     function finish() {
-      overlay.remove();
+      document.removeEventListener('keydown', onKeydown, true);
       window.removeEventListener('resize', render);
+      overlay.remove();
+      if (prevFocus && document.contains(prevFocus) && typeof prevFocus.focus === 'function') {
+        try { prevFocus.focus(); } catch (_) {}
+      }
       if (onDone) onDone();
+    }
+
+    // Escape dismisses; Tab cycles inside the card. The dimmed page keeps its
+    // tab order (the overlay obscures it visually, not from the keyboard), so
+    // without the trap focus walks into UI the user cannot see. Capture phase
+    // so host-app Escape shortcuts underneath don't also fire.
+    function onKeydown(e) {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(); return; }
+      if (e.key !== 'Tab') return;
+      const btns = card.querySelectorAll('button');
+      if (!btns.length) return;
+      const first  = btns[0];
+      const last   = btns[btns.length - 1];
+      const inside = card.contains(document.activeElement);
+      // Focus ON the card itself is every step's DEFAULT state (render()
+      // lands there, tabindex=-1). Forward Tab naturally enters the card's
+      // own buttons, but backward Shift+Tab would walk OUT into the page
+      // behind the wash — the card must act as the first boundary too.
+      const onCard = document.activeElement === card;
+      if (e.shiftKey) {
+        if (!inside || onCard || document.activeElement === first) { e.preventDefault(); last.focus(); }
+      } else {
+        if (!inside || document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
     }
 
     function positionCard(el) {
@@ -186,8 +224,18 @@
       };
       const back = card.querySelector('.sftk-tour-back');
       if (back) back.onclick = () => { idx--; render(); };
+      card.setAttribute('aria-label', step.title || 'Guided tour');
+      // The innerHTML rewrite above destroyed any focused button (focus falls
+      // back to <body>), so land on the card: AT announces the step and the
+      // next Tab starts inside it. The guard's only real short-circuit is
+      // focus sitting on the CARD element itself (the one node the rewrite
+      // keeps) — a focused button never survives the rewrite.
+      if (!card.contains(document.activeElement)) {
+        try { card.focus({ preventScroll: true }); } catch (_) { card.focus(); }
+      }
     }
 
+    document.addEventListener('keydown', onKeydown, true);
     window.addEventListener('resize', render);
     render();
   }

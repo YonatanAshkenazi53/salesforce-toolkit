@@ -13,6 +13,61 @@ lives in `CHANGELOG_HISTORY.md` (repo only, never shipped — the packer only sh
 `CHANGELOG.md` itself; no leading underscore, Chrome refuses to load unpacked
 extensions containing root files that start with `_`).
 
+## 1.3.0 — 2026-08-03
+
+A trust release. Every recent change went through a full independent
+re-verification pass — dozens of audit runs over the code — and everything
+found was fixed. On top of that: a cleaner, more consistent interface, real
+keyboard and screen-reader support, and a dry run for multi-org deploys.
+
+### Added
+- **Dry run for multi-org deploys.** Before a fan-out writes anything, validate
+  every ticked target in one pass — required fields, lookups, record types,
+  restricted picklists, field lengths — with an honest three-state verdict per
+  org: clean, issues found, or *could not check* (which is never called clean).
+  The fan-out dialog also now states exactly what a run will do — which records,
+  from which org, write mode, owner handling — before you start it.
+- **Keyboard and screen-reader support.** Status updates and toasts are
+  announced to assistive tech, every control shows a visible keyboard focus,
+  Deploy Readiness result cards open from the keyboard, and the welcome tour
+  closes with Escape and keeps focus inside its card.
+
+### Changed
+- **A calmer, more consistent look.** One design system across the Toolkit and
+  Data Studio: consistent buttons and spacing, shared view headers with live
+  record counts, and crisp monochrome icons replacing emoji across the popup
+  toolbar and Apex Debugger. Dark mode got a real contrast pass — destructive
+  and warning actions are now readable on dark backgrounds.
+- **The SOQL preview tells the truth.** The Deployment Builder's preview now
+  shows the queries the engine actually runs — one per object, children scoped
+  to their parent records — and explains that record Ids never cross orgs:
+  lookups resolve through your match fields, upsert through your External ID.
+- **Source of truth, everywhere.** Your ring's source org is preselected and
+  locked where it must be, named on every screen that acts on it, and kept out
+  of target lists — an org can never be its own target.
+- **The popout window is gone.** The Toolkit now opens as a regular browser
+  tab instead — the popout was unreliable and added nothing.
+
+### Fixed
+- **A dry run can no longer say "passed" when it couldn't check everything.**
+  If part of a target was unreadable the result now says so and the ✓ validated
+  marker is withheld — and that marker now vouches only for the exact profile,
+  filters and write mode it actually validated.
+- **Org detection got honest.** An org you logged out of no longer shows as
+  open borrowing a sibling sandbox's session; and when the extension doesn't
+  yet know which orgs are open, screens say nothing instead of guessing
+  "not open" — previously a slow session check could disable every target in
+  a fan-out.
+- **Field Cleaner noise and keyboard fixes.** Salesforce's internal shadow
+  objects (Feed/Share/History/ChangeEvent and `__MISSING LABEL__` rows) are
+  hidden by default with an honest count and a "Show them" toggle. Enter can
+  no longer silently replace the object you picked, and search results landing
+  mid-navigation no longer move your position in the list.
+- The Deployment Builder's header count now updates as you add and remove
+  objects, the fan-out "Back" button keeps your target selection, removing an
+  org also removes it from the sync ring instead of leaving a phantom source,
+  and a batch of smaller fixes from the verification pass.
+
 ## 1.2.0 — 2026-07-30
 
 Built for teams and big orgs: share your work, prove what ran, and always know

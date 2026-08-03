@@ -159,6 +159,16 @@ body.sftk-dark {
   --c-warn-fg: #F5A623; --c-warn-bg: #3A2A10; --c-warn-border: #6B4A15;
   --c-critical-fg: #FF6B6B; --c-critical-bg: #3A1518; --c-critical-border: #7A2B2B;
 
+  /* §A6 elevation/focus are :root literals, so they flip here like the
+     colours do.  Black-alpha shadows tuned for white cards barely register
+     on #16181D — dark needs heavier alpha and a faint LIGHT hairline where
+     light mode used a dark one — and the focus ring is rebuilt on the dark
+     brand at higher alpha so it still clears 3:1 on dim surfaces. */
+  --sh-xs: 0 0 0 1px rgba(255,255,255,.08);
+  --sh-sm: 0 1px 3px rgba(0,0,0,.50), 0 0 0 1px rgba(255,255,255,.05);
+  --sh-md: 0 4px 12px rgba(0,0,0,.55);
+  --focus-ring: 0 0 0 2px rgba(27,150,255,.55);
+
   /* …and EVERY legacy alias is restated.  This repetition is load-bearing,
      not sloppiness: `--card: var(--c-surface)` in :root computes to a
      concrete colour ON THE ROOT ELEMENT and is inherited as that colour, so
@@ -1631,7 +1641,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 }
 
 .empty-state {
-  padding: 30px 20px;
+  padding: var(--sp-8) var(--sp-7);
   text-align: center;
   color: var(--subtext);
   font-size: 13px;
@@ -1643,9 +1653,9 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .result-toast {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   margin: 8px 10px;
-  padding: 10px 12px;
+  padding: var(--sp-4) var(--sp-5);
   font-size: 12px;
 }
 .toast-success { color: var(--active-color); font-weight: 600; }
@@ -1971,7 +1981,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .modal-box {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   width: 360px;
   max-height: 520px;
   overflow-y: auto;
@@ -2742,7 +2752,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 }
 .adbg-modal {
   background: var(--card, #fff);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   width: 100%; max-width: 480px;
   max-height: 88vh; display: flex; flex-direction: column;
   box-shadow: 0 12px 40px rgba(0,0,0,0.3);
@@ -3623,7 +3633,10 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .adbg-modal .btn-danger:hover:not(:disabled) {
   background: var(--c-critical-bg); border-color: var(--c-critical-fg);
 }
-.adbg-modal, .adbg-modal-ftr, .adbg-lvl-sel, .adbg-lvl-field input { border-radius: var(--r-sm); }
+.adbg-lvl-sel, .adbg-lvl-field input { border-radius: var(--r-sm); }
+/* The footer paints its own background to its own corners; its bottom radius
+   must equal the container's clip or a sliver of card shows at each corner. */
+.adbg-modal-ftr { border-radius: 0 0 var(--r-lg) var(--r-lg); }
 .adbg-lvl-tip { border-radius: var(--r-sm); }
 
 /* §2b  THE HIERARCHY. Four of six toolbar buttons used to be red, which put
@@ -5512,7 +5525,6 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   background: transparent;
   font-size: 12px;
   color: var(--text);
-  outline: none;
 }
 .lm-pp-search::placeholder { color: var(--subtext-lt); }
 
@@ -6618,11 +6630,11 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 }
 .tk-cmd-box {
   width: min(520px, 92vw); background: var(--card); border: 1px solid var(--border);
-  border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.3); overflow: hidden;
+  border-radius: var(--r-lg); box-shadow: 0 12px 40px rgba(0,0,0,.3); overflow: hidden;
 }
 .tk-cmd-input {
   width: 100%; border: 0; border-bottom: 1px solid var(--border); background: transparent;
-  color: var(--text); font-size: 14px; padding: 12px 14px; outline: none; box-sizing: border-box;
+  color: var(--text); font-size: 14px; padding: 12px 14px; box-sizing: border-box;
 }
 .tk-cmd-list { max-height: 46vh; overflow-y: auto; padding: 5px; }
 .tk-cmd-item {
@@ -6660,3 +6672,26 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
    Sizing/shape live with the rest of the top bar; this rule only keeps the
    positioning context the unread-dot badge is pinned to. */
 .topbar-whatsnew { position: relative; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+
+/* ════════════════════════════════════════════════════════════
+   ACCESSIBILITY — keyboard-focus baseline (popup + debugger shell)
+   ════════════════════════════════════════════════════════════ */
+/* Same blanket rule the Data Studio ships (studio.css §E4): every interactive
+   element shows a ring on keyboard focus, while :focus-visible keeps mouse
+   clicks ring-free.  :where() pins specificity at a bare pseudo-class, so all
+   of the per-component :focus / :focus-visible treatments above — each of
+   which paints its own ring or border — still outrank this baseline; only
+   elements with NO focus treatment of their own fall through to it.  Sits at
+   the end of the sheet so a bare class rule that suppresses the outline can
+   never out-cascade it.  --c-brand flips per theme, and the navy topbar
+   already carries its own white-outline variant (.app-topbar
+   button:focus-visible). */
+:where(button, select, input, textarea, a, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 2px;
+}
+/* These two borderless inputs sit flush against an overflow:hidden container
+   edge (.lm-pp-wrap, .tk-cmd-box), which would clip an outward ring — draw
+   theirs inward instead. */
+.lm-pp-search:focus-visible,
+.tk-cmd-input:focus-visible { outline-offset: -2px; }

@@ -314,12 +314,13 @@ async function sftkWhatsNewRenderInto(el, opts) {
 async function renderWhatsNew() {
   if (typeof setMain !== 'function') return;
   setMain(`
-    <div class="ds-view-header">
-      <div class="ds-view-title-wrap">
-        <h2 class="ds-view-title">🎉 What's New</h2>
-        <div class="ds-view-subtitle">Everything that shipped, newest first — straight from the changelog</div>
-      </div>
-    </div>
+    ${dsViewHeader({
+      // 'megaphone' matches the topbar What's New button (studio.html), the
+      // only other place this feature is announced.
+      icon: 'megaphone',
+      title: `What's New`,
+      subtitle: 'Everything that shipped, newest first — straight from the changelog',
+    })}
     <div id="dsWhatsNewBody" style="max-width:860px"></div>`);
   const latest = await sftkWhatsNewRenderInto(document.getElementById('dsWhatsNewBody'), {});
   if (latest) {

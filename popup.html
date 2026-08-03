@@ -25,8 +25,10 @@
         <button id="sftkDarkToggle" class="dbg-btn" title="Switch to dark mode" aria-label="Switch to dark mode"><span id="sftkDarkIcon" data-i="moon" aria-hidden="true"></span></button>
         <span class="topbar-sep" aria-hidden="true"></span>
         <button id="homeBtn" class="dbg-btn" title="Back to home" style="display:none"><span data-i="home" aria-hidden="true"></span>Home</button>
-        <!-- Persistent org chip — visible on every screen -->
-        <button id="topbarOrgChip" class="topbar-org-chip" style="display:none" title="Switch active org" aria-haspopup="true">
+        <!-- Persistent org chip — visible on every screen. aria-haspopup
+             promises a menu, so aria-expanded must exist from first render;
+             openTopbarOrgDropdown flips it in every open/close path. -->
+        <button id="topbarOrgChip" class="topbar-org-chip" style="display:none" title="Switch active org" aria-haspopup="true" aria-expanded="false">
           <span class="topbar-org-dot" aria-hidden="true"></span>
           <span id="topbarOrgLabel" class="topbar-org-label">—</span>
           <span class="topbar-org-arrow" data-i="chevron" aria-hidden="true"></span>
@@ -287,8 +289,13 @@
     <!-- ── Activity Bar ─────────────────────────────────────── -->
     <div id="activityBar" class="activity-bar">
       <div id="actProgressLine" class="act-progress-line" style="display:none"></div>
-      <div class="act-body">
-        <span id="actDot" class="act-dot act-dot-idle"></span>
+      <!-- Live region: popup.js rewrites #actMsg and auto-clears it back to
+           "Ready" 4s later, so without aria-live a screen-reader user never
+           hears an operation finish or fail before the evidence is gone.
+           aria-atomic reads the whole row (message, count, duration) rather
+           than a bare text diff. The dot repeats the message in colour only. -->
+      <div class="act-body" role="status" aria-live="polite" aria-atomic="true">
+        <span id="actDot" class="act-dot act-dot-idle" aria-hidden="true"></span>
         <span id="actMsg" class="act-msg">Ready</span>
         <span id="actCount" class="act-count" style="display:none"></span>
         <span id="actDur" class="act-dur" style="display:none"></span>
