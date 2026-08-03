@@ -819,7 +819,7 @@ html, body {
 .ds-rec-pnote-none,
 .ds-rec-pnote-unknown { background: #EDF1F4; color: #5C6C7A; }
 .ds-dark .ds-rec-pnote-ok      { background: #0E2B1A; color: #5BBE84; }
-.ds-dark .ds-rec-pnote-missing { background: #2E1A05; color: #E8964F; }
+.ds-dark .ds-rec-pnote-missing { background: var(--c-warn-bg); color: #E8964F; }
 .ds-dark .ds-rec-pnote-none,
 .ds-dark .ds-rec-pnote-unknown { background: #1D242B; color: #93A5B3; }
 .ds-rec-row-disabled { opacity: .5; }
@@ -836,7 +836,7 @@ html, body {
   background: #FDF0E4; color: #B54708;
   border-left: 3px solid #B54708; border-radius: 0 4px 4px 0;
 }
-.ds-dark .ds-fm-stale-banner { background: #2E1A05; color: #E8964F; }
+.ds-dark .ds-fm-stale-banner { background: var(--c-warn-bg); color: #E8964F; }
 .ds-fm-stale-banner button { margin-left: auto; }
 
 /* ── History record links ─────────────────────────────────────── */
@@ -1245,9 +1245,9 @@ html, body {
 .ds-lkp-hint-warn { color: var(--warning); font-style: normal; font-weight: 600; }
 
 /* Dark mode overrides for lookup section */
-.ds-dark .ds-lkp-section { background: #1E1E1E; }
-.ds-dark .ds-lkp-field-pill { background: #0B2B4A; color: var(--brand); }
-.ds-dark .ds-lkp-ref-pill   { background: #2C2C2C; border-color: var(--border); }
+.ds-dark .ds-lkp-section { background: var(--c-bg); }
+.ds-dark .ds-lkp-field-pill { background: var(--c-brand-subtle); color: var(--brand); }
+.ds-dark .ds-lkp-ref-pill   { background: var(--c-surface-sunk); border-color: var(--border); }
 
 /* Shared picker modal styles (field + record pickers) */
 .ds-picker-body {
@@ -4033,40 +4033,43 @@ html, body {
    Applied via .ds-dark on <html>. All new CSS must use var(--...)
    ════════════════════════════════════════════════════════════════ */
 .ds-dark {
-  /* §A — token layer first. */
-  --c-bg:            #1A1A1A;
-  --c-surface:       #242424;
-  --c-surface-sunk:  #2C2C2C;
-  --c-surface-nav:   #111111;
-  --c-border:        #3A3A3A;
-  --c-border-subtle: #2E2E2E;
-  --c-border-strong: #565656;
-  --c-text:          #E8E8E8;
-  --c-text-muted:    #C4C4C4;
+  /* §A — token layer first. ONE dark palette across both apps: these values
+     byte-match body.sftk-dark in styles.css (user decision 2026-08-03 — the
+     popup's cool blue-grey won over the Studio's old neutral grey). The
+     parity test in test/studio-dark-css.test.mjs fails on any drift. */
+  --c-bg:            #16181D;
+  --c-surface:       #20232B;
+  --c-surface-sunk:  #262A33;
+  --c-surface-nav:   #0B1B33;
+  --c-border:        #3A3F4B;
+  --c-border-subtle: #2E323C;
+  --c-border-strong: #565C6B;
+  --c-text:          #E8EAED;
+  --c-text-muted:    #B4B9C0;
   --c-text-faint:    #9AA0A6;
   --c-brand:         #1B96FF;
-  --c-brand-hover:   #1B96FF;
-  --c-brand-light:   #57B5FF;
-  --c-brand-subtle:  #0B2B4A;
+  --c-brand-hover:   #57A3F2;
+  --c-brand-light:   #57A3F2;
+  --c-brand-subtle:  #14304D;
   --c-brand-border:  #235A8C;
-  --c-good-fg: #3FBA68; --c-good-bg: #17301F; --c-good-border: #2E5A3C;
-  --c-warn-fg: #F4A226; --c-warn-bg: #2E1A05; --c-warn-border: #6B4A15;
-  --c-critical-fg: #FF4D4D; --c-critical-bg: #3A1518; --c-critical-border: #7A2B2B;
+  --c-good-fg: #4CCA75; --c-good-bg: #17301F; --c-good-border: #2E5A3C;
+  --c-warn-fg: #F5A623; --c-warn-bg: #3A2A10; --c-warn-border: #6B4A15;
+  --c-critical-fg: #FF6B6B; --c-critical-bg: #3A1518; --c-critical-border: #7A2B2B;
 
   /* §B — every legacy alias restated.  Required, not redundant: an alias
      written as var(--c-…) in :root has already computed to a concrete colour
      on the root element, so overriding the token further down does not move
      the alias. */
   --brand:        var(--c-brand);
-  --brand-dark:   var(--c-brand-hover);
+  --brand-dark:   #78B9F0;
   --brand-light:  var(--c-brand-light);
   --brand-bg:     var(--c-brand-subtle);
 
   /* ↓ literal, for the same WCAG guard that polices :root (see top of file) */
-  --bg:           #1A1A1A;
-  --surface:      #242424;
-  --surface2:     #2C2C2C;
-  --subtext:      #999999;
+  --bg:           #16181D;
+  --surface:      #20232B;
+  --surface2:     #262A33;
+  --subtext:      #9AA0A6;
 
   /* --card was missing from this block entirely, so the three rules in this
      file that spell the white --card (.ds-gs-step, .ds-sync-tile,
@@ -4084,12 +4087,12 @@ html, body {
 
   --success:      var(--c-good-fg);
   --active-color: var(--c-good-fg);
-  --warning:      #F4A226;
+  --warning:      var(--c-warn-fg);
   --warning-bg:   var(--c-warn-bg);
-  --danger:       #FF4D4D;
-  --invalid-color: #FF4D4D;
+  --danger:       #FF6B6B;
+  --invalid-color: #FF6B6B;
   --obsolete-color: var(--c-text-faint);
-  --draft-color:  var(--c-brand);
+  --draft-color:  var(--c-brand-light);
 
   /* §C — literal-valued :root entries. The §B alias trap applies to these
      too: a literal declared only at :root inherits into this subtree
@@ -4114,20 +4117,20 @@ html, body {
   --focus-ring: 0 0 0 2px rgba(27,150,255,.55);
 }
 
-/* topbar in dark mode keeps its own colour */
-.ds-dark .ds-topbar { background: #0D0D0D; }
+/* topbar rides --header-bg (surface-nav navy) — same shell as the popup */
+.ds-dark .ds-topbar { background: var(--header-bg); }
 
 /* nav in dark mode */
-.ds-dark .ds-nav { background: #1E1E1E; border-right-color: var(--border); }
-.ds-dark .ds-nav-btn:hover  { background: #2A2A2A; }
-.ds-dark .ds-nav-btn.active { background: #0B2B4A; color: var(--brand); }
+.ds-dark .ds-nav { background: var(--c-surface); border-right-color: var(--border); }
+.ds-dark .ds-nav-btn:hover  { background: var(--c-surface-sunk); }
+.ds-dark .ds-nav-btn.active { background: var(--c-brand-subtle); color: var(--brand); }
 
 /* inputs in dark mode */
 .ds-dark .ds-input,
 .ds-dark .ds-select,
 .ds-dark .ds-select-sm,
 .ds-dark select.ds-input {
-  background: #2C2C2C;
+  background: var(--c-surface-sunk);
   border-color: var(--border);
   color: var(--text);
 }
@@ -4135,26 +4138,26 @@ html, body {
 
 /* ── Profile Builder — dark-mode fixes ──────────────────────── */
 /* These elements had hardcoded light colours that broke in dark mode. */
-.ds-dark .ds-tree-node-card:hover { background: #2C2C2C; }
+.ds-dark .ds-tree-node-card:hover { background: var(--c-surface-sunk); }
 .ds-dark .ds-tree-where-row,
-.ds-dark .ds-tree-config-row      { background: #1E1E1E; }
+.ds-dark .ds-tree-config-row      { background: var(--c-bg); }
 .ds-dark .ds-tree-where-input {
-  background: #1A1A1A;
+  background: var(--c-bg);
   color: var(--text);
 }
 .ds-dark .ds-tree-where-input::placeholder { color: var(--subtext-lt); }
 /* SOQL preview pane */
-.ds-dark .ds-soql-code { background: #161616; color: var(--text); }
+.ds-dark .ds-soql-code { background: var(--c-bg); color: var(--text); }
 .ds-dark .ds-soql-kw   { color: #5BA8E8; }   /* SELECT / FROM / WHERE — light blue */
 .ds-dark .ds-soql-val  { color: #E0A458; }   /* string literals — light amber */
 .ds-dark .ds-soql-note { color: var(--subtext-lt); }
-.ds-dark .ds-soql-foot { background: #161616; color: var(--subtext-lt); }
+.ds-dark .ds-soql-foot { background: var(--c-bg); color: var(--subtext-lt); }
 
 /* ── Dropdowns — dark-mode fixes ────────────────────────────── */
 .ds-dark .ds-org-dropdown,
 .ds-dark .ds-type-dropdown,
 .ds-dark .ds-autocomplete-list {
-  background: #242424;
+  background: var(--c-surface);
   border-color: var(--border);
 }
 .ds-dark .ds-org-dropdown-item:hover,
@@ -4162,17 +4165,17 @@ html, body {
 .ds-dark .ds-autocomplete-item:hover,
 .ds-dark .ds-autocomplete-item.active,
 .ds-dark .ds-org-dropdown-item.current,
-.ds-dark .ds-type-dd-item-active { background: #0B2B4A; }
+.ds-dark .ds-type-dd-item-active { background: var(--c-brand-subtle); }
 .ds-dark .ds-autocomplete-item-label,
 .ds-dark .ds-org-dropdown-item-tag { color: var(--subtext); }
 
 /* ── Schema View — dark-mode fixes ──────────────────────────── */
 .ds-dark .sv-graph-wrap {
-  background: #161616;
-  background-image: radial-gradient(circle, #333333 1px, transparent 1px);
+  background: var(--c-bg);
+  background-image: radial-gradient(circle, var(--c-border-subtle) 1px, transparent 1px);
 }
-.ds-dark .sv-detail-meta-row { background: #1E1E1E; }
-.ds-dark .sv-leg-std { background: #2C2C2C; border-color: var(--border); }
+.ds-dark .sv-detail-meta-row { background: var(--c-bg); }
+.ds-dark .sv-leg-std { background: var(--c-surface-sunk); border-color: var(--border); }
 
 /* modal in dark mode */
 .ds-dark .ds-modal-box { background: var(--surface); color: var(--text); }
@@ -4190,10 +4193,10 @@ html, body {
 .ds-node-url-text   { fill: #706E6B; }
 
 /* SVG map in dark mode */
-.ds-dark .ds-map-wrap { background: #1A1A1A; }
-.ds-dark .ds-node-rect       { fill: #2A2A2A; }
-.ds-dark .ds-node-label-text { fill: #E8E8E8; }
-.ds-dark .ds-node-url-text   { fill: #999999; }
+.ds-dark .ds-map-wrap { background: var(--c-bg); }
+.ds-dark .ds-node-rect       { fill: var(--c-surface-sunk); }
+.ds-dark .ds-node-label-text { fill: var(--c-text); }
+.ds-dark .ds-node-url-text   { fill: var(--c-text-faint); }
 
 /* Tree dependency warning in dark mode */
 .ds-dark .ds-tree-dep-warning { background: #2A1F00; border-bottom-color: #4A3800; color: #FDE68A; }

@@ -145,3 +145,43 @@ describe('one mask table across the two stylesheets', () => {
     expect(CORE).toMatch(/setAttribute\('data-i',\s*on \? 'sun' : 'moon'\)/);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// 4. ONE dark palette (user decision 2026-08-03: the popup's cool
+//    blue-grey wins). Every --c-* token both dark blocks declare must
+//    byte-match — this is the guard that stops the two apps' dark modes
+//    drifting apart again (the audit found 16+ diverged values).
+// ══════════════════════════════════════════════════════════════════
+describe('the two dark blocks share one palette', () => {
+  const tokensOf = blockSrc => {
+    const out = {};
+    for (const m of blockSrc.matchAll(/(--c-[a-z-]+):\s*([^;]+);/g)) out[m[1]] = m[2].trim();
+    return out;
+  };
+  const darkBlock = (css, opener) => {
+    const i = css.indexOf(opener);
+    return css.slice(i, css.indexOf('}', i));
+  };
+  const popup  = tokensOf(darkBlock(SHARED, 'body.sftk-dark {'));
+  const studio = tokensOf(darkBlock(STUDIO, '.ds-dark {'));
+
+  it('every --c-* token declared by BOTH dark blocks is byte-identical', () => {
+    const shared = Object.keys(popup).filter(k => k in studio);
+    expect(shared.length).toBeGreaterThanOrEqual(16);
+    for (const k of shared) expect(studio[k], k).toBe(popup[k]);
+  });
+
+  it('the Studio dark surfaces are the blue-grey family, not the old neutral greys', () => {
+    expect(studio['--c-bg']).toBe('#16181D');
+    expect(studio['--c-surface']).toBe('#20232B');
+    expect(studio['--c-surface-nav']).toBe('#0B1B33');
+  });
+
+  it('no .ds-dark rule keeps an old neutral-grey surface literal', () => {
+    // Each of these was the neutral palette's surface family — every rule
+    // now rides a token so the palette moves as one.
+    for (const hex of ['#1A1A1A', '#242424', '#2C2C2C', '#1E1E1E', '#161616', '#0D0D0D', '#2A2A2A']) {
+      expect(STUDIO.includes(hex), hex + ' should be gone from studio.css').toBe(false);
+    }
+  });
+});

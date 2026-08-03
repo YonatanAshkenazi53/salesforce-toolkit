@@ -38,6 +38,9 @@ keyboard and screen-reader support, and a dry run for multi-org deploys.
   record counts, and crisp monochrome icons replacing emoji across the popup
   toolbar and Apex Debugger. Dark mode got a real contrast pass — destructive
   and warning actions are now readable on dark backgrounds.
+- **One dark mode, not two.** The Data Studio's dark theme now uses the same
+  cool blue-grey palette as the Toolkit popup — previously the two halves of
+  the extension went dark into two different colour worlds.
 - **The SOQL preview tells the truth.** The Deployment Builder's preview now
   shows the queries the engine actually runs — one per object, children scoped
   to their parent records — and explains that record Ids never cross orgs:
