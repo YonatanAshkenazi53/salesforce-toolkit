@@ -1639,7 +1639,13 @@ function _liveOrgSet() {
   return new Set(_buildAllSessions().filter(s => s.sid).map(s => _orgKey(s.orgUrl)));
 }
 function orgOptionLabel(url, label, liveSet) {
-  const on = (liveSet || _liveOrgSet()).has(_orgKey(url));
+  const live = liveSet || _liveOrgSet();
+  // An EMPTY set means "sessions aren't enumerated yet", NOT "everything is
+  // closed" (same rule the fan-out advice column applies). Painting '⚪ …
+  // (not open)' in that state contradicted the advice on the very same row,
+  // which correctly lets unknown targets through. Unknown → no marker.
+  const known = live.size > 0;
+  const on = known && live.has(_orgKey(url));
   // 👑 marks the Sync Ring's source of truth in EVERY org dropdown and
   // checkbox list app-wide (user directive 2026-07-17: the source org must be
   // recognizable in every feature, not just the ring view).
@@ -1647,7 +1653,7 @@ function orgOptionLabel(url, label, liveSet) {
     (_ring.orgs || []).length >= 2 && _orgKey(url) === _orgKey(_ring.sourceUrl));
   // E4 pro mode: status dots drop (the "(not open)" suffix already carries
   // the offline state) and the 👑 source-of-truth chip becomes " — source".
-  return `${window.sftkGlyph(on ? '🟢 ' : '⚪ ', '')}${label || orgLabel(url)}${sot ? window.sftkGlyph(' 👑', ' — source') : ''}${on ? '' : ' (not open)'}`;
+  return `${known ? window.sftkGlyph(on ? '🟢 ' : '⚪ ', '') : ''}${label || orgLabel(url)}${sot ? window.sftkGlyph(' 👑', ' — source') : ''}${known && !on ? ' (not open)' : ''}`;
 }
 
 // ── Working org pair (topbar control) ─────────────────────────────

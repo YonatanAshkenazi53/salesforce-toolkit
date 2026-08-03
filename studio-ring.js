@@ -190,6 +190,9 @@ function _ringRenderMatrix() {
   }
 
   const ls = _liveOrgSet();
+  // Empty set = sessions not enumerated yet — unknown, not closed. Painting
+  // every cell ⚫ with 🔎/⚖ disabled in that state dead-ended the matrix.
+  const lsKnown = ls.size > 0;
   const now = Date.now();
   const cell = (p, tUrl) => {
     const k = _orgKey(tUrl);
@@ -206,7 +209,7 @@ function _ringRenderMatrix() {
           extra: (p.lastScan.onlyInTarget || []).length,
           status: p.lastScan.status }
       : (p.ringScans || {})[`${_orgKey(ring.sourceUrl || '')}|${k}`];
-    const live = [...ls].some(u => _orgKey(u) === k);
+    const live = !lsKnown || [...ls].some(u => _orgKey(u) === k);
     const badge = live ? '' : `<span class="ds-ring-offline" title="Org not open in a Chrome tab — open it to scan or push">⚫</span>`;
     if (!s) return `<div class="ds-ring-cell ds-ring-cell-unknown" data-ring-cell="${esc(p.id)}|${esc(tUrl)}">
       ${badge}<span class="ds-ring-unknown">not scanned</span>
@@ -314,10 +317,13 @@ async function _ringScanOne(profileId, tgtUrl, btn) {
 async function _ringScanAll(profileId, btn) {
   const targets = _ringTargets();
   const ls = _liveOrgSet();
+  // Empty set = enumeration hasn't landed = unknown, not "all closed" —
+  // attempt every target; _ringScanOne toasts per-org failures honestly.
+  const lsKnown = ls.size > 0;
   if (btn) { btn.disabled = true; }
   let done = 0;
   for (const t of targets) {
-    if (![...ls].some(u => _orgKey(u) === _orgKey(t))) continue;   // closed org
+    if (lsKnown && ![...ls].some(u => _orgKey(u) === _orgKey(t))) continue;   // known-closed org
     if (btn) btn.textContent = `⏳ ${++done}/${targets.length}`;
     await _ringScanOne(profileId, t, null);
   }
@@ -405,8 +411,13 @@ async function _ringOpenPlan(profileId) {
   if (!p || !_ring?.sourceUrl) return;
   const targets = _ringTargets();
   const ls = _liveOrgSet();
-  const open = targets.filter(u => [...ls].some(x => _orgKey(x) === _orgKey(u)));
-  const closed = targets.filter(u => ![...ls].some(x => _orgKey(x) === _orgKey(u)));
+  // An EMPTY live set means "sessions aren't enumerated yet", not "every
+  // target is closed" (the fan-out advice rule, applied here too). Unknown →
+  // attempt every target and let the per-target scan report its own failure;
+  // refusing with "No ring target is open" on unknown data was a false stop.
+  const lsKnown = ls.size > 0;
+  const open = lsKnown ? targets.filter(u => [...ls].some(x => _orgKey(x) === _orgKey(u))) : targets.slice();
+  const closed = lsKnown ? targets.filter(u => ![...ls].some(x => _orgKey(x) === _orgKey(u))) : [];
   if (!open.length) { showToast('No ring target is open in a tab', 'warning', 5000); return; }
 
   showModal(`
