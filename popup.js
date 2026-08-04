@@ -3670,13 +3670,22 @@ function resolveFlowType(processType, triggerType) {
 
 function humanProcessType(pt) {
   switch (pt) {
+    // 'Flow' IS the API name for screen flows — showing it raw reads like
+    // "untyped" (user report 2026-08-04: "It won't recognize screen flow").
     case 'Flow':               return 'Screen Flow';
     case 'AutoLaunchedFlow':   return 'Auto-launched Flow';
     case 'RecordTriggeredFlow':return 'Record-Triggered Flow';
     case 'ScheduledFlow':      return 'Scheduled Flow';
     case 'PlatformEventFlow':  return 'Platform Event Flow';
     case 'Orchestrator':       return 'Orchestrator';
-    default:                   return pt || '';
+    // Legacy automations whose API names don't say what they are.
+    case 'Workflow':           return 'Process Builder';
+    case 'CustomEvent':        return 'Platform Event Process';
+    case 'InvocableProcess':   return 'Invocable Process';
+    // Everything else (PromptFlow, RoutingFlow, TransactionSecurityFlow,
+    // CheckoutFlow, …): split the camel-case so new types Salesforce adds
+    // read as words without needing a case here.
+    default:                   return String(pt || '').replace(/([a-z])([A-Z])/g, '$1 $2');
   }
 }
 

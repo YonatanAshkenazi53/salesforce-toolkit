@@ -2091,7 +2091,7 @@ const DependencyMap = (() => {
             if (!f) return '';
             return `<div class="dep-ref-hit" data-id="${escHtml(f.Id)}" title="Open in Flow Builder">
               <span class="dep-node-name">${escHtml(f.MasterLabel)}</span>
-              <span class="badge dep-type-badge">${escHtml(f.ProcessType || '')}</span>
+              <span class="badge dep-type-badge">${escHtml(humanProcessType(f.ProcessType))}</span>
               <span class="badge ${f.Status === 'Active' ? 'badge-active' : 'badge-draft'}">${escHtml(f.Status || '')}</span>
               <span class="dep-ref-count">×${h.count}</span>
             </div>`;
@@ -2224,7 +2224,7 @@ const DependencyMap = (() => {
         <span class="dep-node-toggle">${hasChildren ? '▼' : '&nbsp;&nbsp;'}</span>
         <span class="dep-node-icon">${icon}</span>
         <span class="dep-node-name" title="Open in Salesforce">${escHtml(flow.MasterLabel)}</span>
-        <span class="badge dep-type-badge">${escHtml(flow.ProcessType || '')}</span>
+        <span class="badge dep-type-badge">${escHtml(humanProcessType(flow.ProcessType))}</span>
         <span class="badge ${statusClass}">${flow.Status}</span>
       `;
 

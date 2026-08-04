@@ -438,3 +438,46 @@ describe('the popup modal is a real dialog', () => {
     expect(JS).toMatch(/removeEventListener\('keydown', _modalKeyHandler, true\)/);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// Flow-type labels tell the truth (user report 2026-08-04: screen
+// flows showed the raw API value "Flow" in the dependency map, which
+// reads as "untyped" — 'Flow' IS Salesforce's name for screen flows).
+// ══════════════════════════════════════════════════════════════════
+describe('humanProcessType — every flow type reads as words', () => {
+  const { humanProcessType } = extractFunctions('popup.js', ['humanProcessType']);
+
+  it("the raw API value 'Flow' means Screen Flow and says so", () => {
+    expect(humanProcessType('Flow')).toBe('Screen Flow');
+  });
+
+  it('the refined synthetic types keep their labels', () => {
+    expect(humanProcessType('RecordTriggeredFlow')).toBe('Record-Triggered Flow');
+    expect(humanProcessType('ScheduledFlow')).toBe('Scheduled Flow');
+    expect(humanProcessType('AutoLaunchedFlow')).toBe('Auto-launched Flow');
+  });
+
+  it('legacy automations get their real product names', () => {
+    expect(humanProcessType('Workflow')).toBe('Process Builder');
+    expect(humanProcessType('CustomEvent')).toBe('Platform Event Process');
+  });
+
+  it('unknown types split camel-case instead of shipping raw API names', () => {
+    expect(humanProcessType('PromptFlow')).toBe('Prompt Flow');
+    expect(humanProcessType('RoutingFlow')).toBe('Routing Flow');
+    expect(humanProcessType('TransactionSecurityFlow')).toBe('Transaction Security Flow');
+    expect(humanProcessType('')).toBe('');
+    expect(humanProcessType(null)).toBe('');
+  });
+
+  it('the dependency map renders badges through the translator, never raw', () => {
+    const DEP = read('dependency-map.js');
+    expect(DEP.match(/dep-type-badge">\$\{escHtml\(humanProcessType\(/g)?.length).toBe(2);
+    expect(DEP).not.toMatch(/dep-type-badge">\$\{escHtml\((?:f|flow)\.ProcessType/);
+  });
+
+  it('the Screen filter tab matches the raw value screen flows actually carry', () => {
+    const DEP = read('dependency-map.js');
+    expect(DEP).toContain('data-type="Flow">🖥 Screen');
+  });
+});
