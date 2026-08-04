@@ -848,13 +848,24 @@ async function openRecordPickerModal(pathStr) {
   // A scan is "fresh" only when the profile's CURRENT object + org pair
   // matches what the scan was run against — protects against showing
   // stale state after the user changes orgs in the builder.
-  const liveScan = _editingProfile?.lastScan;
+  // CHILD nodes read their OWN scan bucket — Reconcile v2 stores per-node
+  // results at lastScan.children[pathKey]. The old gate compared the
+  // ROOT-shaped lastScan's objectType against the child's, which can never
+  // match, so every child picker silently showed NO target comparison
+  // (user report 2026-08-04: "doesn't pick child records correctly when
+  // compared to another org"). A child bucket counts as fresh only while
+  // its rootRunAt matches the current root scan (same staleness rule the
+  // reconcile sections apply).
+  const isRootPick = !String(pathStr || '').length;
+  const rootScan   = _editingProfile?.lastScan;
+  const liveScan   = isRootPick ? rootScan : (rootScan?.children || {})[pathStr];
   const scanFresh = !!(
     liveScan &&
     liveScan.status     === 'success' &&
     liveScan.objectType === objType &&
     (!liveScan.sourceOrg || liveScan.sourceOrg === _editingProfile?.sourceOrg) &&
-    (!liveScan.targetOrg || liveScan.targetOrg === _editingProfile?.targetOrg)
+    (!liveScan.targetOrg || liveScan.targetOrg === _editingProfile?.targetOrg) &&
+    (isRootPick || liveScan.rootRunAt === rootScan?.runAt)
   );
   const idsMissingInTarget = new Set();  // source-only — need to deploy
   const idsInSync          = new Set();  // present in both, no drift
@@ -1095,6 +1106,12 @@ async function openRecordPickerModal(pathStr) {
             <span class="ds-pick-leg ds-diff-missing">🔴 Missing in target</span>
             <span class="ds-pick-leg ds-diff-drift">🟡 Changed</span>
             <span class="ds-pick-leg ds-diff-sync">🟢 In sync</span>
+          </div>` : !isRootPick ? `
+          <div class="ds-picker-note ds-pick-noscan">
+            No source ↔ target comparison for these ${esc(objType)} records yet${rootScan?.status === 'success'
+              ? ` — compare them against ${esc(orgLabel(_editingProfile?.targetOrg || '') || 'the target')} (scoped to the root scan's parents).
+                  <button class="ds-btn ds-btn-xs" id="dsRecChildScan">🔎 Compare with target</button>`
+              : ' — run 🔄 Refresh state on the root object first, then reopen this picker.'}
           </div>` : ''}
 
         <div class="ds-picker-list" id="dsRecList">
@@ -1421,6 +1438,22 @@ async function openRecordPickerModal(pathStr) {
           result.srcRec, result.tgtRec, srcFields, tgtFields, result.lookupMap || {}, result.types || null);
         expand.dataset.loaded = '1';
       });
+    });
+
+    // Child-node compare: run the scoped child scan (Reconcile v2), then
+    // reopen so the badges paint from the fresh bucket. Session ticks made
+    // BEFORE comparing don't survive the reopen — saved picks do.
+    eid('dsRecChildScan')?.addEventListener('click', async () => {
+      const b = eid('dsRecChildScan');
+      if (b) { b.disabled = true; b.textContent = '⏳ comparing…'; }
+      const res = await scanReconcileChild(_editingProfile, pathStr);
+      if (res?.error) {
+        showToast(res.error, 'error', 6000);
+        if (b) { b.disabled = false; b.textContent = '🔎 Compare with target'; }
+        return;
+      }
+      closeModal();
+      openRecordPickerModal(pathStr);
     });
 
     eid('dsRecSave')?.addEventListener('click', async () => {
