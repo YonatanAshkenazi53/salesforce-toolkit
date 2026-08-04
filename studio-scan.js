@@ -1142,6 +1142,33 @@ async function runDiffScan(profile, node = null, scope = null) {
   for (const [k, tr] of tgtByKey) {
     if (!srcByKey.has(k)) onlyInTarget.push({ matchKey: k, targetId: tr.Id });
   }
+
+  // NEAR-MISS pass (user bug 2026-08-04: one child's external-Id value
+  // carried an invisible whitespace difference — the record showed as
+  // "missing in target" AND its twin as an extra, with the two values
+  // looking identical on screen). For every missing↔extra pair whose keys
+  // differ ONLY by whitespace/case, name the difference on both rows so the
+  // UI can say exactly why they didn't match and how to fix it. Detection
+  // only — matching itself is untouched (the keys ARE different until the
+  // user enables normalization or fixes the value).
+  let nearMissCount = 0;
+  try {
+    const tgtByFold = new Map();
+    for (const row of onlyInTarget) {
+      if (row.orphan || !row.matchKey || row.matchKey === '(no key)') continue;
+      const f = sftkNearMissFold(row.matchKey);
+      if (!tgtByFold.has(f)) tgtByFold.set(f, row);
+    }
+    for (const row of missingInTarget) {
+      const twin = tgtByFold.get(sftkNearMissFold(row.matchKey));
+      if (!twin) continue;
+      const reason = sftkNearMissReason(row.matchKey, twin.matchKey);
+      if (!reason) continue;
+      row.nearMiss  = { targetId: twin.targetId, reason };
+      twin.nearMiss = { sourceId: row.sourceId, reason };
+      nearMissCount++;
+    }
+  } catch (_) { nearMissCount = 0; /* detection is advisory — never fail a scan */ }
   // R3 — append the NULL-link target rows as tagged "possible orphan"
   // extras. They never joined the key match-up above, so every other bucket
   // is exactly what v1 produced.
@@ -1291,6 +1318,9 @@ async function runDiffScan(profile, node = null, scope = null) {
     },
     // M3a — rows excluded because every key component was blank.
     ...((_blankSrc + _blankTgt) ? { blankKeys: { rows: _blankSrc + _blankTgt, src: _blankSrc, tgt: _blankTgt } } : {}),
+    // Missing↔extra pairs whose keys differ only by whitespace/case — the
+    // per-row detail rides on the rows themselves (row.nearMiss).
+    ...(nearMissCount ? { nearMisses: nearMissCount } : {}),
     // M3c — how many pairs matched from persistent memory (Id-based), this
     // scan's learnable 1:1 pairs, and any degraded-path warnings. All three
     // are absent when memory is empty/unused (legacy shape unchanged).

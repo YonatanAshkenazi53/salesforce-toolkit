@@ -246,6 +246,12 @@ async function renderReconcile() {
   // (display only — the raw key stays the matching identity).
   const keyLbl = k => esc(typeof sftkMatchKeyLabel === 'function' ? sftkMatchKeyLabel(k) : String(k ?? ''));
 
+  // ≈ near-match chip — this row's key differs from a record on the OTHER
+  // side only by whitespace/case (scan near-miss pass). Acting on it as-is
+  // duplicates or deletes the wrong thing, so the chip says why it didn't
+  // match and both fixes.
+  const nearChip = nm => nm ? `<span class="ds-rec-pnote ds-rec-pnote-missing" title="A ${nm.targetId ? 'target' : 'source'} record has the same key except for ${esc(nm.reason)} — exact matching kept them apart, so pushing would DUPLICATE (and deleting would strand the twin). Fix: enable Trim spaces / Case-insensitive under 🎯 Pick Records → Matching, or correct the value in one org.">≈ near match — ${esc(nm.reason)}</span>` : '';
+
   // Default-select all missing + all drift for push (the common intent:
   // bring target up to match source). Extras default UNCHECKED — deletion
   // is destructive, opt-in only. Only seed defaults on first load.
@@ -267,6 +273,7 @@ async function renderReconcile() {
       return `<label class="ds-rec-col-row">
         <input type="checkbox" data-rec-kind="${kind}" data-rec-id="${esc(id)}" ${sel ? 'checked' : ''}>
         <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
+        ${nearChip(r.nearMiss)}
         ${kind === 'overwrite' ? `<span class="ds-rec-drift-link" data-rec-drift="${esc(r.sourceId)}|${esc(r.targetId)}" title="See which fields differ">▸ fields</span>` : ''}
       </label>
       ${kind === 'overwrite' ? `<div class="ds-rec-drift-expand" data-drift-expand="${esc(r.sourceId)}" style="display:none"></div>` : ''}`;
@@ -448,6 +455,7 @@ async function renderReconcile() {
       return `<label class="ds-rec-col-row ${disabled ? 'ds-rec-row-disabled' : ''}">
         <input type="checkbox" data-recc-push="${pathKey}" data-rec-id="${esc(r.sourceId)}" ${!disabled && sel.push.has(r.sourceId) ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
         <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
+        ${nearChip(r.nearMiss)}
         ${pNote}
       </label>`;
     }).join('') || `<div class="ds-rec-col-empty">none</div>`;
@@ -502,6 +510,9 @@ async function renderReconcile() {
       : '';
     // M3a — rows whose match key was blank (every component empty) are
     // unmatchable and were excluded from every bucket. Counted, not hidden.
+    const nearNote = cs.nearMisses
+      ? `<div class="ds-rec-child-info" style="border-left:3px solid #f59e0b;padding-left:8px">≈ ${cs.nearMisses} record pair(s) almost matched — their keys differ only by whitespace/case (marked ≈ on the rows). Enable Trim spaces / Case-insensitive in 🎯 Pick Records → Matching, or fix the values, then rescan.</div>`
+      : '';
     const blankNote = cs.blankKeys
       ? `<div class="ds-rec-child-info ds-match-blank-note" style="border-left:3px solid #f59e0b;padding-left:8px">⚠ ${cs.blankKeys.rows} row(s) have a blank match key — excluded from all actions (${cs.blankKeys.src} source, ${cs.blankKeys.tgt} target). Pick a better-populated match field, or use 🧪 Test this key in Pick Records.</div>`
       : '';
@@ -542,7 +553,7 @@ async function renderReconcile() {
 
     return `
     <div class="ds-rec-child-body">
-      ${scopeNote}${capNote}${collisionNote}${blankNote}${orphanNote}${plNote}${phNote}
+      ${scopeNote}${capNote}${collisionNote}${nearNote}${blankNote}${orphanNote}${plNote}${phNote}
       <div class="ds-rec-cols ds-rec-cols-child">
         <div class="ds-rec-col">
           <div class="ds-rec-col-hdr ds-diff-missing"${csAttr(cs, 'missingInTarget', 'in source only')}>🔴 <strong>Insert ${csLbl(cs, 'missingInTarget')}</strong>
@@ -668,6 +679,7 @@ async function renderReconcile() {
     </div>
 
     ${_recCapNote ? `<div class="ds-rec-child-info ds-rec-cap-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">${esc(_recCapNote)}</div>` : ''}
+    ${scan.nearMisses ? `<div class="ds-rec-child-info" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">≈ ${scan.nearMisses} record pair(s) almost matched — their keys differ only by whitespace/case (marked ≈ on the rows below). Enable Trim spaces / Case-insensitive in 🎯 Pick Records → Matching, or fix the values, then rescan.</div>` : ''}
 
     ${sftkPicklistGapNote(scan, p.targetOrg, objType)}
 

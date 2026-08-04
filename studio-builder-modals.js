@@ -874,8 +874,13 @@ async function openRecordPickerModal(pathStr) {
   // Source Id alone (idsDrift) isn't enough — we need the matching target Id
   // to query the target record's compareField values.
   const driftTargetId      = new Map();  // sourceId → { targetId, matchKey }
+  const nearMissById       = new Map();  // sourceId → { targetId, reason } (≈ near matches)
   if (scanFresh) {
-    for (const r of (liveScan.missingInTarget || [])) if (r.sourceId) idsMissingInTarget.add(r.sourceId);
+    for (const r of (liveScan.missingInTarget || [])) {
+      if (!r.sourceId) continue;
+      idsMissingInTarget.add(r.sourceId);
+      if (r.nearMiss) nearMissById.set(r.sourceId, r.nearMiss);
+    }
     for (const r of (liveScan.identical       || [])) if (r.sourceId) idsInSync.add(r.sourceId);
     for (const r of (liveScan.changed         || [])) {
       if (r.sourceId) {
@@ -1125,8 +1130,11 @@ async function openRecordPickerModal(pathStr) {
                 const isDrift = scanFresh && idsDrift.has(r.Id);
                 if (scanFresh) {
                   if (idsMissingInTarget.has(r.Id)) {
+                    const nm = nearMissById.get(r.Id);
                     rowCls = ' ds-pick-row-missing';
-                    badgeHtml = '<span class="ds-pick-state-badge ds-diff-missing" title="Not present in the target org — will be inserted if you transfer this record">🔴 missing in target</span>';
+                    badgeHtml = nm
+                      ? `<span class="ds-pick-state-badge ds-diff-drift" title="A target record has the same key except for ${esc(nm.reason)} — exact matching kept them apart, so transferring would DUPLICATE it. Enable Trim spaces / Case-insensitive under Matching above, or fix the value in one org.">≈ near match — ${esc(nm.reason)}</span>`
+                      : '<span class="ds-pick-state-badge ds-diff-missing" title="Not present in the target org — will be inserted if you transfer this record">🔴 missing in target</span>';
                   } else if (isDrift) {
                     rowCls = ' ds-pick-row-drift';
                     // Drift badge is clickable — opens inline compare table below.
@@ -1217,6 +1225,18 @@ async function openRecordPickerModal(pathStr) {
     // ── M3a — matching strategy / composite fields / normalization ───────
     document.querySelectorAll('input[name="dsMatchStrat"]').forEach(rb => rb.addEventListener('change', () => {
       matchStrategy = rb.value;
+      // Honest defaults (user bug 2026-08-04: an invisible whitespace
+      // difference in an external-Id value made one child "missing"): a
+      // Salesforce upsert on a TEXT external Id matches case-insensitively
+      // and data entry adds stray whitespace, so exact matching here said
+      // "missing" for records an upsert would UPDATE. Applied only when NO
+      // normalization is configured yet — a deliberate choice is never
+      // overridden, and the toggles show checked so it's visible and
+      // revertable.
+      if (matchStrategy === 'externalId' && !Object.values(matchNormalize).some(Boolean)) {
+        matchNormalize.trim = true;
+        matchNormalize.caseFold = true;
+      }
       if (matchStrategy === 'externalId') {
         if (!extIdCandidates.some(f => f.name === matchFields[0])) {
           matchFields = extIdCandidates.length ? [extIdCandidates[0].name] : matchFields.slice(0, 1);

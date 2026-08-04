@@ -117,6 +117,40 @@ function sftkMatchKeyLabel(key) {
   return String(key === null || key === undefined ? '' : key).split(String.fromCharCode(1)).join(' · ');
 }
 
+// NEAR-MISS detection (user bug 2026-08-04: one child record "not found" —
+// its external-Id value differed from the target's only by whitespace, and
+// the two values LOOK identical on screen). Given a source key and a target
+// key that failed to match, name the invisible difference — or null when
+// they are genuinely different values. Component-wise (keys are
+// U+0001-joined) so one whitespace component and one case component still
+// report both. PURE.
+function sftkNearMissReason(srcKey, tgtKey) {
+  const SEP = String.fromCharCode(1);
+  const a = String(srcKey ?? '').split(SEP);
+  const b = String(tgtKey ?? '').split(SEP);
+  if (a.length !== b.length) return null;
+  let ws = false, cs = false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] === b[i]) continue;
+    const wsFold = s => s.trim().replace(/\s+/g, ' ');
+    if (wsFold(a[i]) === wsFold(b[i])) { ws = true; continue; }
+    if (a[i].toLowerCase() === b[i].toLowerCase()) { cs = true; continue; }
+    if (wsFold(a[i]).toLowerCase() === wsFold(b[i]).toLowerCase()) { ws = true; cs = true; continue; }
+    return null;   // a real difference — not a near miss
+  }
+  if (!ws && !cs) return null;   // identical keys never reach here, but be safe
+  return ws && cs ? 'case + whitespace' : ws ? 'whitespace' : 'case';
+}
+
+// The fold used to INDEX target keys for near-miss lookup — must accept
+// exactly the differences sftkNearMissReason can name. PURE.
+function sftkNearMissFold(key) {
+  const SEP = String.fromCharCode(1);
+  return String(key ?? '').split(SEP)
+    .map(s => s.trim().replace(/\s+/g, ' ').toLowerCase())
+    .join(SEP);
+}
+
 // ── Key-quality math (M3b) — pure so the analyzer is unit-testable ────────
 
 // Fold SOQL GROUP BY aggregate rows [{ value, count }] into a normalized
