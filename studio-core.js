@@ -118,7 +118,14 @@ const esc = s => String(s ?? '')
   .replace(/&/g,'&amp;').replace(/</g,'&lt;')
   .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const eid = id => document.getElementById(id);
-const setMain = html => { const m = eid('dsMain'); if (m) m.innerHTML = html; };
+const setMain = html => {
+  const m = eid('dsMain');
+  if (!m) return;
+  m.innerHTML = html;
+  // (?) help badges render inert HTML — the bubble behavior wires here, the
+  // one chokepoint every view paints through. Idempotent (data-wired guard).
+  try { window.SFTKOnboard?.wireHelp?.(m); } catch (_) {}
+};
 
 // ── THE SHARED VIEW HEADER ────────────────────────────────────
 // The SLDS audit's headline finding was that every one of the 13 views
@@ -145,15 +152,26 @@ const setMain = html => { const m = eid('dsMain'); if (m) m.innerHTML = html; };
 const dsIcon = (name, cls) =>
   `<span class="ds-i${cls ? ' ' + cls : ''}" data-i="${esc(name)}" aria-hidden="true"></span>`;
 
-function dsViewHeader({ icon, title, subtitle, count, actions, back, cls } = {}) {
+function dsViewHeader({ icon, title, subtitle, count, actions, back, cls, help } = {}) {
   const sub = [subtitle || '', count ? `<span class="ds-vh-count">${count}</span>` : '']
     .filter(Boolean).join('');
+  // `help` — plain text behind a hoverable/focusable (?) badge next to the
+  // title (the shared SFTKOnboard bubble; falls back to a title attr if the
+  // onboarding script ever fails to load). Use it to say what a SURFACE is
+  // and how it relates to its siblings — the scan/reconcile/tree-diff trio
+  // confused a real user precisely because each screen only described
+  // itself (2026-08-04).
+  const helpHtml = help
+    ? (typeof SFTKOnboard !== 'undefined' && SFTKOnboard.help
+        ? SFTKOnboard.help(help)
+        : `<span class="sftk-help" title="${esc(help)}" tabindex="0">?</span>`)
+    : '';
   return `<div class="ds-view-header ds-vh${cls ? ' ' + cls : ''}">
       <div class="ds-vh-lead">
         ${icon ? `<span class="ds-vh-icon">${dsIcon(icon)}</span>` : ''}
         <div class="ds-vh-titles">
           ${back || ''}
-          <h2 class="ds-view-title">${title || ''}</h2>
+          <h2 class="ds-view-title">${title || ''}${helpHtml}</h2>
           ${sub ? `<div class="ds-view-subtitle">${sub}</div>` : ''}
         </div>
       </div>
@@ -527,6 +545,8 @@ function showModal(html) {
   if (!overlay || !box) return;
   box.innerHTML = html;
   overlay.style.display = 'flex';
+  // Same (?) help wiring as setMain — modals are the other paint chokepoint.
+  try { window.SFTKOnboard?.wireHelp?.(box); } catch (_) {}
 }
 
 function closeModal() {

@@ -497,16 +497,16 @@ function profileCard(p) {
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs in Edit first"'}>▶ Run</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="openTreeDiff" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
-          title="Compare the whole record tree across environments, node by node, with suggested operations">🌳 Tree diff</button>
+          title="The OVERVIEW: this deployment's whole record tree compared across every environment, node by node, with suggested operations. Executes nothing itself — opens ⚖ Reconcile per environment.">🌳 Tree diff</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="openFanOut" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
           title="Run this deployment against SEVERAL target orgs in one go — one History entry per org (M1)">🌐 Multi-org…</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="refreshState" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
-          title="Query both orgs to refresh what's missing / changed / in sync.">🔄 Refresh state</button>
+          title="MEASURE this pair: query both orgs and sort records into missing / changed / in sync by your match key. Writes nothing — ⚖ Reconcile and 🌳 Tree diff both read this measurement.">🔄 Refresh state</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="openReconcile" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
-          title="Open the Reconcile view — review what's missing / drifted / extra across both orgs and push or delete in one screen.">⚖ Reconcile</button>
+          title="FIX this source → target pair: review the scan buckets and push what's missing, overwrite what drifted, relink children — per-bucket control, nothing writes until you act.">⚖ Reconcile</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="editProfile" data-arg="${p.id}">✏ Edit</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="cloneProfile" data-arg="${p.id}">⧉ Clone</button>
         <button class="ds-btn ds-btn-sm" data-prof-export="${esc(p.id)}"
