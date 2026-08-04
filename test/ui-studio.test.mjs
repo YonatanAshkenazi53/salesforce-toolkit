@@ -602,3 +602,31 @@ describe('picked records and child-first are never invisible', () => {
     expect(TRANSFER).not.toMatch(/const filterBtn = canFilter\s*\?[\s\S]{0,400}?:\s*'';/);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// Child record picker vs the target org (user report 2026-08-04:
+// "doesn't pick child records correctly when compared to another org").
+// Reconcile v2 stores per-node scans at lastScan.children[pathKey]; the
+// picker's freshness gate compared the ROOT scan's objectType against
+// the child's — never equal — so child pickers silently dropped every
+// 🔴/🟡/🟢 badge and fell back to stale history.
+// ══════════════════════════════════════════════════════════════════
+describe('the child record picker reads its OWN scan bucket', () => {
+  const MODALS = read('studio-builder-modals.js');
+
+  it('liveScan resolves per node: root scan for the root, children[pathKey] for a child', () => {
+    expect(MODALS).toMatch(/isRootPick = !String\(pathStr \|\| ''\)\.length/);
+    expect(MODALS).toMatch(/isRootPick \? rootScan : \(rootScan\?\.children \|\| \{\}\)\[pathStr\]/);
+  });
+
+  it('a child bucket is fresh only while it matches the CURRENT root scan', () => {
+    expect(MODALS).toMatch(/isRootPick \|\| liveScan\.rootRunAt === rootScan\?\.runAt/);
+  });
+
+  it('an uncompared child says so and offers the scoped compare — never a silent nothing', () => {
+    expect(MODALS).toContain('No source ↔ target comparison for these');
+    expect(MODALS).toContain('id="dsRecChildScan"');
+    expect(MODALS).toContain('run 🔄 Refresh state on the root object first');
+    expect(MODALS).toMatch(/scanReconcileChild\(_editingProfile, pathStr\)/);
+  });
+});
