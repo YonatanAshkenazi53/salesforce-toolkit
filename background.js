@@ -697,6 +697,18 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         // Deduplicate in case the same record matches multiple parent chunks
         const seen = new Set();
         recs = recs.filter(r => { if (seen.has(r.Id)) return false; seen.add(r.Id); return true; });
+
+        // HONESTY — hand-picked child records silently vanish when their
+        // parent isn't in the run: the 🎯 picker lists the whole table, but
+        // this fetch is scoped `AND <link> IN (parent scope)`. "Picked 200,
+        // created 63" with no explanation reads as "the feature doesn't
+        // work" (user report 2026-08-04) — name the records and the reason.
+        if (ridList && recs.length < ridList.length) {
+          const got = new Set(recs.map(r => r.Id));
+          const dropped = ridList.filter(id => !got.has(id));
+          const parentObj = parentNode.objectType || parentNode.childSObject || 'parent';
+          diagnostics.push(`${objType}: ${dropped.length} of ${ridList.length} hand-picked record(s) are NOT in this run — their parent (${parentField}) is outside the run's ${parentObj} scope, or they no longer match the filter. Include their parents in the ${parentObj} selection, or clear the child's 🎯 picks to copy every child of the selected parents. Dropped: ${dropped.slice(0, 10).join(', ')}${dropped.length > 10 ? '…' : ''}`);
+        }
       } else {
         // Root node — no parent filter.
         // ORDER BY Id ensures deterministic pagination across large result sets.
