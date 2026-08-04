@@ -84,7 +84,8 @@ function renderBuilder() {
       // ONE primary in the region (Save &amp; Run). Save/Cancel are neutral,
       // and nothing here is destructive, so nothing here is red.
       actions: `${p.tree ? `<button class="ds-btn" id="dsPreviewAllBtn" title="Count records for every node in parallel">${dsIcon('eye')}Preview All</button>
-        <button class="ds-btn" id="dsBldCheckTargets" title="Describe every ring target and verify the tree's objects + every mapped field exist there — the multi-org answer to 'which org will this break in?'">${dsIcon('flask')}Check all targets</button>` : ''}
+        <button class="ds-btn" id="dsBldCheckTargets" title="Describe every ring target and verify the tree's objects + every mapped field exist there — the multi-org answer to 'which org will this break in?'">${dsIcon('flask')}Check all targets</button>
+        <button class="ds-btn" id="dsBldSuggestPii" title="Scan every object in this tree for likely PII (field types, names/labels, org compliance classification) and add write-time mask rules — masked/pseudonymized, never written raw">${dsIcon('lock')}Suggest PII masks</button>` : ''}
         <button class="ds-btn" id="dsBuilderCancel">Cancel</button>
         <button class="ds-btn" id="dsBuilderSave">${dsIcon('save')}Save</button>
         ${p.tree ? `<button class="ds-btn ds-btn-primary" id="dsBuilderSaveRun"
@@ -261,6 +262,7 @@ function renderBuilder() {
   eid('dsSetRoot')?.addEventListener('click', () => setRootObject());
   eid('dsPreviewAllBtn')?.addEventListener('click', () => previewAll());
   eid('dsBldCheckTargets')?.addEventListener('click', () => _bldCheckAllTargets());
+  eid('dsBldSuggestPii')?.addEventListener('click', () => bldOpenPiiSuggestModal());
 
   // Save & Run — commit the profile, then jump straight to the Run page.
   // Saves two clicks for the most common path (you just configured it; you
@@ -1109,6 +1111,15 @@ function renderTreeNode(node, path, isRoot, depth = 0) {
           <button class="ds-btn ds-btn-xs ds-btn-config" data-map-btn="${esc(pathKey)}" title="Choose which fields to copy and how to map names between source and target">
             🔀 Fields &amp; mapping${Object.keys(node.fieldMappings || {}).length ? ` <span class="ds-config-badge ds-badge-map">${Object.keys(node.fieldMappings).length}</span>` : ''}
           </button>
+          ${(() => {
+            // "N masked" chip — rendered from the POLICY (profile.piiPolicy),
+            // not from any modal state, so it survives modal cancel and
+            // profile reload. Wording rule: masked/pseudonymized, never a
+            // stronger claim (deterministic hashing is reversible by a
+            // salt-holder with a guess list).
+            const nMask = bldPiiCountForObject(_editingProfile?.piiPolicy, objName);
+            return nMask ? `<span class="ds-config-badge ds-badge-masked" title="${nMask} ${esc(objName)} field(s) are masked at write time — pseudonymized hash or null, never the raw value. Configure via 🎭 in Fields &amp; mapping or Suggest PII masks.">${dsIcon('lock')}${nMask} masked</span>` : '';
+          })()}
           ${!isRoot ? `<button class="ds-btn ds-btn-xs ds-btn-config ${cfOn ? 'ds-btn-config--active' : ''}" data-order-btn="${esc(pathKey)}" title="${esc(cfTitle)}">
             ${cfOn ? '⤴ Created before parent' : '⤵ Created after parent'}
           </button>` : ''}
@@ -1239,9 +1250,14 @@ function wireTreeEvents() {
     btn.addEventListener('click', () => openRecordPickerModal(btn.dataset.recordsBtn));
   });
 
-  // Field mapping
+  // Field mapping. The modal (studio-builder-modals.js) owns mapping state;
+  // the PII mask treatment is PROFILE state (piiPolicy), layered onto the
+  // modal's rows from here once the modal's async open settles — see
+  // bldPiiDecorateMappingModal for how it survives the modal's re-renders.
   area.querySelectorAll('[data-map-btn]').forEach(btn => {
-    btn.addEventListener('click', () => openFieldMappingModal(btn.dataset.mapBtn));
+    btn.addEventListener('click', () =>
+      openFieldMappingModal(btn.dataset.mapBtn)
+        .then(() => bldPiiDecorateMappingModal(btn.dataset.mapBtn)));
   });
 
   // Insert-order toggle (child nodes only): default parent-first ⤵ vs
@@ -1579,7 +1595,10 @@ function bldProfileRuntimeFields() {
     'ringScans',     // per-target ring scan summaries — the exporter's scan status, not the importer's
     'schedule',      // legacy schedule — its alarms live in the exporter's browser only; the chip would lie here
     'ephemeral',     // internal flag for unsaved org-compare/ring clones — never meaningful in a file
-    'importedFrom'   // provenance of a PREVIOUS import on the exporter's machine — each import mints its own
+    'importedFrom',  // provenance of a PREVIOUS import on the exporter's machine — each import mints its own
+    'piiSalt'        // MACHINE-LOCAL pseudonymization salt (sftk-pii.js contract): export strips it, import
+                     // mints a fresh one — masked values differ per machine BY DESIGN. piiPolicy itself is
+                     // config and travels.
   ];
 }
 
@@ -1692,7 +1711,8 @@ window.exportProfile = function (profileId) {
   a.download = fname;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
-  showToast(`Exported “${p.name}” — config only (orgs, tree, mappings, owner rules). Scan state and learned matches are machine-local and stay here.`, 'success', 5500);
+  const nMaskRules = p.piiPolicy && typeof p.piiPolicy === 'object' ? Object.keys(p.piiPolicy).length : 0;
+  showToast(`Exported “${p.name}” — config only (orgs, tree, mappings, owner rules). Scan state and learned matches are machine-local and stay here.${nMaskRules ? ` ${nMaskRules} PII mask rule(s) travelled; the pseudonymization salt did NOT — it never leaves this machine.` : ''}`, 'success', nMaskRules ? 7000 : 5500);
 };
 
 window.importProfileFromFile = function () {
@@ -1711,6 +1731,12 @@ window.importProfileFromFile = function () {
     const res = bldProfileImportParse(text, _profiles.map(p => p.id), file.name);
     if (res.error) { showToast(`Import failed: ${res.error}.`, 'error', 9000); return; }
     const prof = res.profile;
+    // piiPolicy travels; the salt NEVER does (machine-local by the sftk-pii
+    // contract — the parse strip list already dropped any smuggled one).
+    // Mint this machine's salt BEFORE saving so the first masked run can't
+    // race an absent salt.
+    const nMaskRules = prof.piiPolicy && typeof prof.piiPolicy === 'object' ? Object.keys(prof.piiPolicy).length : 0;
+    if (nMaskRules) bldPiiEnsureSalt(prof);
     _profiles.push(prof);
     await storageSaveProfiles();
     if (_currentView === 'profiles') renderProfiles();
@@ -1725,6 +1751,7 @@ window.importProfileFromFile = function () {
       <div class="ds-modal-header">⬆ Imported “${esc(prof.name)}”</div>
       <div class="ds-modal-body" style="font-size:12.5px">
         <div style="margin-bottom:8px">Source: <strong>${esc(prof.sourceOrg ? orgLabel(prof.sourceOrg) : '— not set —')}</strong> · ${esc(tgtDesc)}.</div>
+        ${nMaskRules ? `<div style="color:var(--subtext);margin-bottom:8px">${dsIcon('lock')} ${nMaskRules} PII masking rule(s) travelled with the profile. The pseudonymization salt is machine-local and is never imported — a fresh one was generated here, so masked values on this machine will differ from the exporter's.</div>` : ''}
         ${res.stripped.length ? `<div style="color:var(--subtext);margin-bottom:8px">Machine-local state in the file was not imported (it belongs to the exporter's machine): ${esc(res.stripped.join(', '))}.</div>` : ''}
         <div style="color:var(--subtext)">This file was written against the exporter's orgs and Sync Ring — nothing has been validated against <em>your</em> targets yet.${prof.tree ? ' Run the schema check to see which of your orgs it would break in.' : ' It has no object tree yet — open ✏ Edit to build one.'}</div>
       </div>
@@ -1737,4 +1764,283 @@ window.importProfileFromFile = function () {
   document.body.appendChild(inp);
   inp.click();
 };
+
+// ════════════════════════════════════════════════════════════════
+// PII MASKING v1 — builder UI for profile.piiPolicy
+// ════════════════════════════════════════════════════════════════
+// The policy ({ "<ObjectApi>.<FieldApi>": { strategy, value? } }, SOURCE API
+// names) and salt live on the PROFILE; the engine (sftk-pii.js and its
+// background.js copies) is the one masking implementation. This section only
+// edits the policy and keeps three surfaces honest about it: the Fields &
+// mapping modal (🎭 per-field treatment + 🔒 lock), the tree config row
+// ("N masked" chip) and the Suggest-PII modal. WORDING CONTRACT everywhere:
+// masked / pseudonymized — deterministic hashing is reversible by anyone
+// holding the salt and a guess list, so no copy may claim more.
+// Pure helpers sit at column 0 for test/pii-ui.test.mjs (test/extract.mjs).
+
+// The rule covering one field, or null. Object/field parts compare
+// case-INSENSITIVELY — the engine (sftkPiiRulesForObject) folds case, so a
+// hand-edited or imported policy key cased differently would otherwise mask
+// at write time while the UI shows the field as unmasked (review finding).
+function bldPiiRuleFor(policy, objectApi, fieldApi) {
+  if (!policy || typeof policy !== 'object' || !objectApi || !fieldApi) return null;
+  const want = (objectApi + '.' + fieldApi).toLowerCase();
+  for (const [k, r] of Object.entries(policy)) {
+    if (r && typeof r === 'object' && k.toLowerCase() === want) return r;
+  }
+  return null;
+}
+
+// How many policy entries cover this object — the tree chip's number.
+// Case-insensitive prefix; the dot boundary keeps "Contact." from swallowing
+// ContactPointEmail keys, and empty/null rule entries don't count.
+function bldPiiCountForObject(policy, objectApi) {
+  if (!policy || typeof policy !== 'object' || !objectApi) return 0;
+  const prefix = (objectApi + '.').toLowerCase();
+  return Object.keys(policy).filter(k => policy[k] && k.toLowerCase().startsWith(prefix)).length;
+}
+
+// Toggle the hash rule for one field → 'added' | 'removed'. Creates
+// profile.piiPolicy on first add and deletes it again when the last rule
+// goes, so a profile that never masked exports without an empty stub.
+// Removal matches case-insensitively (same folding as the engine) so a
+// differently-cased imported key can't survive an untick AND get duplicated
+// by the next tick. Salt lifecycle is the CALLER's job (bldPiiEnsureSalt on
+// 'added') — kept out so this stays crypto-free and extractable.
+function bldPiiToggleHashRule(profile, objectApi, fieldApi) {
+  const key = objectApi + '.' + fieldApi;
+  const policy = (profile.piiPolicy && typeof profile.piiPolicy === 'object') ? profile.piiPolicy : null;
+  const existing = policy
+    ? Object.keys(policy).filter(k => policy[k] && k.toLowerCase() === key.toLowerCase())
+    : [];
+  if (existing.length) {
+    for (const k of existing) delete policy[k];
+    if (!Object.keys(policy).length) delete profile.piiPolicy;
+    return 'removed';
+  }
+  (profile.piiPolicy = policy || {})[key] = { strategy: 'hash' };
+  return 'added';
+}
+
+// Bulk-apply hash rules for "<Object>.<Field>" keys (the Suggest modal's
+// Apply). Existing rules are never overwritten — a hand-tuned 'fixed' or
+// 'null' rule must survive a re-run of Suggest. Returns the number of NEW
+// rules only, because the disclosure toast counts what this click changed.
+function bldPiiApplyHashRules(profile, keys) {
+  if (!profile || typeof profile !== 'object' || !Array.isArray(keys)) return 0;
+  let added = 0;
+  for (const key of keys) {
+    if (typeof key !== 'string' || key.indexOf('.') < 1) continue;
+    const policy = (profile.piiPolicy && typeof profile.piiPolicy === 'object')
+      ? profile.piiPolicy : (profile.piiPolicy = {});
+    if (policy[key]) continue;
+    policy[key] = { strategy: 'hash' };
+    added++;
+  }
+  return added;
+}
+
+// profile.piiSalt — MACHINE-LOCAL by contract (export strips it, import
+// regenerates): 16 crypto.getRandomValues bytes as 32 hex chars, minted
+// lazily when the first rule lands. An existing salt is NEVER rotated here:
+// rotation changes every masked value and breaks re-seed idempotence.
+function bldPiiEnsureSalt(profile) {
+  if (!profile || typeof profile !== 'object') return null;
+  if (typeof profile.piiSalt === 'string' && profile.piiSalt.length) return profile.piiSalt;
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  profile.piiSalt = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  return profile.piiSalt;
+}
+
+// What the 🎭 control may honestly claim for one describe type.
+// Maskable types (sftkPiiMaskable's set) hash to a same-shaped string; every
+// other type under a hash rule is NULLED by the engine (counted, never raw) —
+// so the control disables there and says that consequence out loud instead of
+// implying a pretty masked value. An EXISTING rule stays clickable regardless
+// of type: the user must always be able to remove it.
+function bldPiiMaskTitle(fieldType, active) {
+  const maskable = sftkPiiMaskable({ type: fieldType });
+  if (active) {
+    return { enabled: true, title: maskable
+      ? 'Masked at write time: replaced by a deterministic pseudonymized value — the same source value always masks to the same output, so joins and match keys survive. Click to remove the mask rule.'
+      : `Masked at write time: ${fieldType || 'this'} values can't be re-rendered from a hash, so this rule writes NULL (the run summary counts it as nulled). Click to remove the mask rule.` };
+  }
+  if (!maskable) {
+    return { enabled: false, title: `Hash-masking can't produce a valid ${fieldType || 'value of this type'} — a mask rule here would write NULL at deploy time (counted, never the raw value). Use ✕ to exclude the field from the transfer instead.` };
+  }
+  return { enabled: true, title: 'Mask this field at write time — the value is replaced by a deterministic pseudonymized rendering (hash); the raw value is never written to the target. Click to add the rule.' };
+}
+
+// ── 🎭 in the Fields & mapping modal ──────────────────────────────
+// The modal (studio-builder-modals.js) re-renders its row list from local
+// state on every filter/org/skip/auto-map interaction, and replaces the whole
+// modal box on Clear. The mask treatment is PROFILE state, not mapping state,
+// so it is layered on from here with the two mechanisms that survive both:
+// a delegated click listener and a childList observer on the persistent
+// #dsModalBox element (showModal swaps its innerHTML, never the box itself).
+let _bldPiiModalCtx = null;        // { node, objType } while a mapping modal is decorated
+let _bldPiiModalObserver = null;   // lazy singleton — no-ops whenever #dsFmList is absent
+
+function bldPiiDecorateMappingModal(pathStr) {
+  const node = getNodeByPath(_editingProfile?.tree, pathStr);
+  const objType = node ? (node.objectType || node.childSObject || '') : '';
+  if (!node || !objType) return;
+  _bldPiiModalCtx = { node, objType };
+  const box = eid('dsModalBox');
+  if (box && !_bldPiiModalObserver) {
+    box.addEventListener('click', bldPiiMaskBtnClick);
+    _bldPiiModalObserver = new MutationObserver(() => bldPiiDecorateRows());
+    // childList only: bldPiiDecorateRows' own attribute/class syncs must not
+    // re-trigger it; its node insertions do, and its second pass inserts
+    // nothing, which terminates the loop.
+    _bldPiiModalObserver.observe(box, { childList: true, subtree: true });
+  }
+  bldPiiDecorateRows();
+}
+
+function bldPiiDecorateRows() {
+  const ctx = _bldPiiModalCtx;
+  const list = eid('dsFmList');
+  if (!ctx || !list) return;   // some other modal is up — nothing to decorate
+  const typeByField = {};
+  for (const f of (ctx.node._meta?.availableFields || [])) typeByField[f.name] = f.type;
+  list.querySelectorAll('.ds-fm-row').forEach(row => {
+    const skipBtn = row.querySelector('.ds-fm-skip-btn');
+    const field = skipBtn ? skipBtn.dataset.skip : '';
+    if (!field) return;
+    const active = !!bldPiiRuleFor(_editingProfile?.piiPolicy, ctx.objType, field);
+    const wrap = row.querySelector('.ds-fm-tgt-wrap');
+    let btn = row.querySelector('.ds-fm-mask-btn');
+    if (!btn && wrap) {
+      btn = document.createElement('button');
+      btn.className = 'ds-fm-mask-btn';
+      btn.dataset.mask = field;
+      btn.textContent = '🎭';
+      wrap.appendChild(btn);   // CSS order:99 pins it visually last in the cell
+    }
+    if (!btn) return;
+    const t = bldPiiMaskTitle(typeByField[field], active);
+    btn.disabled = !t.enabled;
+    btn.title = t.title;
+    btn.classList.toggle('ds-fm-mask-on', active);
+    row.classList.toggle('ds-fm-row-masked', active);
+    // 🔒 on the source cell — the policy must be visible without hovering the
+    // control (the lock indicator the mapping modal owes the user).
+    const meta = row.querySelector('.ds-fm-src-meta');
+    const lockEl = meta ? meta.querySelector('.ds-fm-mask-lock') : null;
+    if (active && meta && !lockEl) {
+      const lock = document.createElement('span');
+      lock.className = 'ds-fm-mask-lock';
+      lock.title = `${ctx.objType}.${field} is masked at write time (pseudonymized or nulled — never the raw value)`;
+      lock.innerHTML = dsIcon('lock');
+      meta.appendChild(lock);
+    } else if (!active && lockEl) {
+      lockEl.remove();
+    }
+  });
+}
+
+function bldPiiMaskBtnClick(e) {
+  const btn = e.target && e.target.closest ? e.target.closest('.ds-fm-mask-btn') : null;
+  if (!btn || btn.disabled) return;
+  const ctx = _bldPiiModalCtx;
+  if (!ctx || !_editingProfile) return;
+  const field = btn.dataset.mask;
+  const res = bldPiiToggleHashRule(_editingProfile, ctx.objType, field);
+  if (res === 'added') {
+    // First rule mints the machine-local salt — every masked write needs it.
+    bldPiiEnsureSalt(_editingProfile);
+    showToast(`${ctx.objType}.${field} will be masked (pseudonymized) at write time — deterministic hash, never the raw value.`, 'info', 4500);
+  } else {
+    showToast(`Mask rule removed — ${ctx.objType}.${field} will be written unmasked.`, 'warning', 4500);
+  }
+  bldPiiDecorateRows();
+  refreshTree();   // repaint the "N masked" chips behind the modal
+}
+
+// ── Suggest PII masks — candidates across the whole tree ─────────
+async function bldOpenPiiSuggestModal() {
+  const p = _editingProfile;
+  if (!p?.tree) return;
+  const objs = [...collectTreeObjects(p.tree)];
+  showModal(`<div class="ds-modal-header">🎭 Suggest PII masks</div>
+    <div class="ds-modal-body" style="text-align:center;padding:40px;color:var(--subtext)">
+      ${window.sftkCatSm ? sftkCatSm(`Scanning ${objs.length} object(s) for likely PII…`) : 'Scanning…'}
+    </div>`);
+  const sess = _builderSession();
+  const sections = [];
+  let anyCompliance = false;
+  for (const obj of objs) {
+    // Describe cache is shared with the mapping UI — objects the builder has
+    // touched cost nothing here.
+    const d = await describe(obj);
+    if (!d || !Array.isArray(d.fields)) {
+      sections.push({ obj, error: 'describe unavailable — no suggestions for this object' });
+      continue;
+    }
+    // Compliance classification is optional — many orgs never filled it in.
+    // A failed query degrades to name/type heuristics, said out loud below.
+    const complianceByField = {};
+    if (sess.orgUrl && sess.sid) {
+      const q = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
+        query: `SELECT QualifiedApiName, ComplianceGroup, SecurityClassification FROM FieldDefinition WHERE EntityDefinitionId = ${soqlStrLit(obj)}` });
+      if (!q?.error && Array.isArray(q.records)) {
+        for (const r of q.records) {
+          if (r.QualifiedApiName && r.ComplianceGroup) complianceByField[r.QualifiedApiName] = r.ComplianceGroup;
+        }
+      }
+    }
+    if (Object.keys(complianceByField).length) anyCompliance = true;
+    const typeByField = {};
+    for (const f of d.fields) typeByField[f.name] = f.type;
+    sections.push({ obj, sugg: sftkPiiSuggest(obj, d.fields, complianceByField), typeByField });
+  }
+
+  const secHtml = sections.map(sec => {
+    if (sec.error) return `<div class="ds-pii-sug-obj"><div class="ds-pii-sug-obj-hd">${esc(sec.obj)}</div><div class="ds-pii-sug-empty">⚠ ${esc(sec.error)}</div></div>`;
+    if (!sec.sugg.length) return `<div class="ds-pii-sug-obj"><div class="ds-pii-sug-obj-hd">${esc(sec.obj)}</div><div class="ds-pii-sug-empty">no likely-PII fields found</div></div>`;
+    return `<div class="ds-pii-sug-obj">
+      <div class="ds-pii-sug-obj-hd">${esc(sec.obj)} <span class="ds-pii-sug-count">${sec.sugg.length} candidate(s)</span></div>
+      ${sec.sugg.map(s => {
+        const covered = !!bldPiiRuleFor(p.piiPolicy, sec.obj, s.field);
+        const ftype = sec.typeByField[s.field];
+        const maskable = sftkPiiMaskable({ type: ftype });
+        return `<label class="ds-pii-sug-row${covered ? ' ds-pii-sug-covered' : ''}">
+          <input type="checkbox" data-pii-key="${esc(sec.obj + '.' + s.field)}" ${covered ? 'checked disabled' : (s.sure ? 'checked' : '')}>
+          <span class="ds-pii-sug-field"><strong>${esc(sec.obj)}</strong>.${esc(s.field)}</span>
+          <span class="ds-pii-sug-type">${esc(ftype || '?')}</span>
+          <span class="ds-pii-sug-reason">${esc(s.reason)}</span>
+          ${covered ? '<span class="ds-pii-sug-note">already masked</span>'
+            : (!maskable ? `<span class="ds-pii-sug-note ds-pii-sug-null" title="A hash can't be rendered as ${esc(ftype || 'this type')} — the engine writes NULL and counts it as nulled, never the raw value.">hash → NULL</span>` : '')}
+        </label>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+
+  showModal(`
+    <div class="ds-modal-header">🎭 Suggest PII masks — ${esc(p.name)}</div>
+    <div class="ds-modal-body ds-pii-sug-body">
+      <div class="ds-pii-sug-honesty">Masking here is <strong>deterministic pseudonymization</strong>, not deletion: the same source value always yields the same masked value (that is what keeps joins, match keys and re-seeds working) — which also means anyone holding this machine's salt and a guess list can reverse it. Masked emails land on <code>masked.invalid</code>, a reserved domain that can never receive mail.</div>
+      ${anyCompliance ? '' : `<div class="ds-pii-sug-note-line">This org has no compliance classification on these objects (FieldDefinition.ComplianceGroup is empty or unreadable) — suggestions below come from field types, names and labels only.</div>`}
+      ${secHtml || '<div class="ds-picker-empty">No objects in the tree.</div>'}
+    </div>
+    <div class="ds-modal-footer">
+      <span class="ds-pii-sug-legend">pre-checked = strong signal (field type, name field, label, or compliance group)</span>
+      <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
+      <button class="ds-btn ds-btn-primary" id="dsPiiSugApply">✓ Mask checked fields</button>
+    </div>`);
+
+  eid('dsPiiSugApply')?.addEventListener('click', () => {
+    const keys = [...document.querySelectorAll('#dsModalBox [data-pii-key]')]
+      .filter(cb => cb.checked && !cb.disabled).map(cb => cb.dataset.piiKey);
+    const added = bldPiiApplyHashRules(_editingProfile, keys);
+    if (added) bldPiiEnsureSalt(_editingProfile);   // first rule mints the machine-local salt
+    closeModal();
+    refreshTree();   // paint the "N masked" chips
+    showToast(added
+      ? `${added} field(s) will be masked (pseudonymized) at write time — never the raw value. Save the profile to keep the rules.`
+      : 'No new mask rules — everything checked was already covered.', added ? 'success' : 'info', 5500);
+  });
+}
 

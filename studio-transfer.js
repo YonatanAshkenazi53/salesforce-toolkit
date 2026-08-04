@@ -901,6 +901,122 @@ async function previewTransfer() {
 }
 
 // ════════════════════════════════════════════════════════════════
+// PII MASKING v1 — dry-run disclosure & masked-value planning
+// ════════════════════════════════════════════════════════════════
+// The engine masks policy-covered fields AT WRITE TIME (background.js:
+// sftkPiiRulesForObject → sftkPiiMaskRows), so the dry run must validate the
+// MASKED values — a hashed string can never pass a restricted picklist, and
+// a raw sample passing proves nothing about what actually lands. These
+// helpers mirror the engine's rule resolution (SOURCE describe,
+// case-insensitive API names, engine-resolved fields excluded) studio-side;
+// the masking itself always goes through sftkPiiMaskValue (sftk-pii.js),
+// the ONE implementation, so dry run and real run can never disagree.
+
+// PURE — does any policy key target this object? Cheap pre-describe gate so
+// uncovered objects never pay the extra describe fetch.
+function sftkPiiPolicyCovers(policy, objectApi) {
+  if (!policy || !objectApi) return false;
+  const prefix = String(objectApi).toLowerCase() + '.';
+  return Object.keys(policy).some(k => policy[k] && k.toLowerCase().startsWith(prefix));
+}
+
+// PURE — the policy rule covering <objectApi>.<fieldApi>, or null. API names
+// compare case-insensitively — same rule as the engine's rule resolution.
+function sftkPiiRuleFor(policy, objectApi, fieldApi) {
+  if (!policy || !objectApi || !fieldApi) return null;
+  const want = (String(objectApi) + '.' + String(fieldApi)).toLowerCase();
+  for (const [k, rule] of Object.entries(policy)) {
+    if (rule && k.toLowerCase() === want) return rule;
+  }
+  return null;
+}
+
+// PURE — per-object mask plan: which fields the engine will mask, and HOW.
+// Mirrors background.js sftkPiiRulesForObject: engine-resolved fields
+// (Id/RecordTypeId/OwnerId/audit) and fields absent from the SOURCE describe
+// are excluded — their rules cannot change what lands. `action` is the plan
+// for a NON-EMPTY value ('kept' never appears at plan level):
+//   'fixed'  — fixed strategy;
+//   'hashed' — hash strategy on a maskable type;
+//   'nulled' — null strategy, hash on a non-maskable type, or an
+//              unrecognized strategy (the library's fail-closed branch).
+// → null when no rule touches this object, else
+//   { fields: { <FieldApi>: { rule, desc, action } },
+//     counts: { hashed, nulled, fixed }, total,
+//     unwritable: [<FieldApi>] } — rules on non-createable fields (the
+//     compound-Name trap), excluded from counts, surfaced as a warning.
+function sftkPiiDryPlan(policy, objectApi, srcFields) {
+  if (!policy || !objectApi) return null;
+  const RESOLVED = new Set(['id', 'recordtypeid', 'ownerid', 'createdbyid',
+    'lastmodifiedbyid', 'createddate', 'lastmodifieddate', 'systemmodstamp', 'isdeleted']);
+  const descByLower = Object.create(null);
+  for (const f of (srcFields || [])) if (f && f.name) descByLower[f.name.toLowerCase()] = f;
+  const objLower = String(objectApi).toLowerCase();
+  let fields = null;
+  const counts = { hashed: 0, nulled: 0, fixed: 0 };
+  const unwritable = [];
+  for (const [key, rule] of Object.entries(policy)) {
+    if (!rule) continue;
+    const dot = key.indexOf('.');
+    if (dot <= 0) continue;
+    if (key.slice(0, dot).toLowerCase() !== objLower) continue;
+    const fLower = key.slice(dot + 1).toLowerCase();
+    if (RESOLVED.has(fLower)) continue;
+    const desc = descByLower[fLower];
+    if (!desc) continue;
+    // The payload never sends a non-createable field (the compound-Name
+    // trap) — the engine excludes it and emits a diagnostic; counting it
+    // here would over-disclose. Carried separately so the dry run can
+    // mirror that warning instead of silently under-reporting coverage.
+    if (desc.createable === false) { unwritable.push(desc.name); continue; }
+    const action = rule.strategy === 'fixed' ? 'fixed'
+      : (rule.strategy === 'hash' && sftkPiiMaskable(desc)) ? 'hashed'
+      : 'nulled';
+    counts[action]++;
+    if (!fields) fields = Object.create(null);
+    fields[desc.name] = { rule, desc, action };
+  }
+  return (fields || unwritable.length)
+    ? { fields: fields || Object.create(null), counts,
+        total: counts.hashed + counts.nulled + counts.fixed, unwritable }
+    : null;
+}
+
+// PURE — the per-object disclosure line ("masked", never the banned
+// stronger claim — deterministic hashing is pseudonymization). "fixed" only
+// appears when a fixed rule is present, so the common two-count line reads
+// exactly as specified.
+function sftkPiiDryPlanLine(objectApi, plan) {
+  const c = plan.counts;
+  const fixedTail = c.fixed ? `, ${c.fixed} fixed` : '';
+  return `${objectApi}: ${plan.total} field(s) masked before writing (${c.hashed} hashed, ${c.nulled} set to null${fixedTail})`;
+}
+
+// Substitute each sampled row's covered fields with the value the engine
+// would WRITE. Empty values pass through untouched (the library's 'kept').
+// Per-call cache: 200-row samples repeat values and hashing is async crypto.
+async function sftkPiiMaskSampleRows(rows, plan, salt) {
+  const out = [];
+  const cache = new Map();
+  for (const r of (rows || [])) {
+    const m = Object.assign({}, r);
+    for (const fn of Object.keys(plan.fields)) {
+      const v = m[fn];
+      if (v === null || v === undefined || v === '') continue;
+      const ck = fn + '|' + String(v);
+      let res = cache.get(ck);
+      if (!res) {
+        res = await sftkPiiMaskValue(v, plan.fields[fn].desc, salt, plan.fields[fn].rule);
+        cache.set(ck, res);
+      }
+      m[fn] = res.value;
+    }
+    out.push(m);
+  }
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════════
 // THE DRY-RUN VALIDATOR — one implementation, any (source → target) pair
 // ════════════════════════════════════════════════════════════════
 // This used to be a 430-line block welded inside runTransfer's
@@ -922,6 +1038,12 @@ async function previewTransfer() {
 //   log(icon, msg, cls) — caller-supplied line writer, so the same validator
 //                 can paint the transfer progress log or a fan-out panel.
 //   ownerMapping — profile.ownerMapping, for the owner-fallback sanity line.
+//   piiPolicy / piiSalt — profile.piiPolicy / profile.piiSalt (PII MASKING
+//                 v1), threaded like ownerMapping: per-object masking
+//                 disclosure, masked-value preflight, match-key warnings,
+//                 and the missing-salt hard error the engine would throw.
+//   upsertField — the root object's External-ID for an Upsert run (null on
+//                 insert) — read ONLY to warn when the policy masks it.
 //
 // Returns { issues, checked, unchecked }:
 //   issues    — the original dryRunIssues counter, unchanged.
@@ -929,13 +1051,25 @@ async function previewTransfer() {
 //   unchecked — objects whose validation could NOT run (source query failed,
 //               target describe failed). NOT the same as "clean": a caller
 //               that reports a target clean while this is non-zero is lying.
-async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMapping) {
+async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMapping, piiPolicy, piiSalt, upsertField) {
   const logRow = log;
   let issues = 0, checked = 0, unchecked = 0;
   // Every node in a subtree, itself included — when a node's source query
   // fails we bail before recursing, and its NEVER-VISITED children must land
   // in `unchecked`, not silently vanish from both counters.
   const subtreeSize = n => 1 + (n.children || []).reduce((s, c) => s + subtreeSize(c), 0);
+
+  // PII MASKING v1 — a policy without its machine-local salt is the SAME
+  // hard error the engine throws before any org call (falling back would
+  // write raw PII). Surfaced as an issue BEFORE any target work, with the
+  // whole tree unchecked: nothing was validated, and the real run cannot
+  // start until the salt exists. Unfiltered Object.keys mirrors the engine's
+  // gate exactly.
+  const piiKeys = (piiPolicy && typeof piiPolicy === 'object') ? Object.keys(piiPolicy) : [];
+  if (piiKeys.length && !piiSalt) {
+    logRow('❌', 'PII policy has no salt — open the deployment in the builder once', 'ds-prog-err');
+    return { issues: 1, checked: 0, unchecked: profileTree ? subtreeSize(profileTree) : 0 };
+  }
 
   async function dryRunNode(node) {
     const obj = node.objectType || node.childSObject;
@@ -1027,6 +1161,45 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
       }
     }
 
+    // ── PII MASKING v1: per-object disclosure + masked-value planning ─────
+    // The plan resolves against the SOURCE describe, exactly like the
+    // engine, and the value checks below then validate what the run will
+    // WRITE (masked values), never the raw sample.
+    let piiPlan = null;
+    if (piiKeys.length && sftkPiiPolicyCovers(piiPolicy, obj)) {
+      const srcDescPii = await sendBg({
+        type: 'SF_REST_GET',
+        orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+        path: `services/data/v62.0/sobjects/${obj}/describe`
+      });
+      if (srcDescPii.error) {
+        logRow('⚠️', `${obj}: PII masking is configured here but the source describe failed (${srcDescPii.error}) — masked values could NOT be validated on this object.`, 'ds-prog-warn');
+      } else {
+        piiPlan = sftkPiiDryPlan(piiPolicy, obj, srcDescPii.fields);
+        if (piiPlan && piiPlan.total > 0) logRow('🎭', sftkPiiDryPlanLine(obj, piiPlan));
+        // Mirror the engine's compound-Name diagnostic: a rule on a field
+        // the payload never sends must not read as coverage.
+        if (piiPlan && piiPlan.unwritable.length) {
+          logRow('⚠️', `${obj}: the PII policy covers [${piiPlan.unwritable.join(', ')}] which the payload never sends (not createable in the source) — make sure the writable field(s) carrying that data have their own rules (a compound Name writes through FirstName/LastName).`, 'ds-prog-warn');
+        }
+      }
+    }
+    // A lookup bridge that matches on a masked anchor: the engine compares
+    // hash-covered anchors masked-to-masked and SKIPS null/fixed-covered
+    // bridges entirely — either way, matching an unmasked target breaks.
+    if (piiKeys.length && node.lookupResolutions) {
+      for (const [lookupField, lr] of Object.entries(node.lookupResolutions)) {
+        if (!lr || lr.strategy !== 'match' || !lr.matchField || !lr.matchObject) continue;
+        const anchorRule = sftkPiiRuleFor(piiPolicy, lr.matchObject, lr.matchField);
+        if (!anchorRule) continue;
+        if (anchorRule.strategy === 'hash') {
+          logRow('⚠', `${obj}.${lookupField}: resolves by matching ${lr.matchObject}.${lr.matchField}, which this policy masks — deterministic masking only matches targets seeded with the same salt, so against an unmasked target the bridge finds nothing and the lookup lands null.`, 'ds-prog-warn');
+        } else {
+          logRow('⚠', `${obj}.${lookupField}: resolves by matching ${lr.matchObject}.${lr.matchField}, but its "${anchorRule.strategy}" rule collapses every anchor to one value — the engine skips this bridge entirely and the lookup lands null.`, 'ds-prog-warn');
+        }
+      }
+    }
+
     // ── Step 3: cross-check which required-target fields exist in source ──
     // CRITICAL: this must apply the same field-mapping logic the real transfer
     // uses, otherwise a profile that maps `LastName → null` (or maps it to a
@@ -1093,8 +1266,14 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
           query: `SELECT ${selectFields} FROM ${obj}${dryWhere ? ' WHERE ' + dryWhere : ''} LIMIT 200`
         });
         if (!sampleRes.error) {
+          // PII MASKING v1 — count nulls in what the engine will WRITE: a
+          // null rule (or hash on a non-maskable type) nulls every non-empty
+          // row, and a raw sample passing would hide that certain failure.
+          const nullCheckRows = piiPlan
+            ? await sftkPiiMaskSampleRows(sampleRes.records || [], piiPlan, piiSalt)
+            : (sampleRes.records || []);
           for (const { tgtField, srcField } of nullCheckPairs) {
-            const nullCount = (sampleRes.records || [])
+            const nullCount = nullCheckRows
               .filter(r => r[srcField] === null || r[srcField] === undefined || r[srcField] === '').length;
             if (nullCount > 0) {
               fieldIssues.push({
@@ -1204,7 +1383,13 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
           if (sampleQ.error) {
             logRow('⚠️', `${obj}: value preflight sample failed — ${sampleQ.error}`, 'ds-prog-warn');
           } else {
-            const rows = sampleQ.records || [];
+            // PII MASKING v1 — the checks below must see the MASKED values:
+            // they are what the real run writes, and e.g. a hashed string
+            // can never satisfy a restricted picklist even when every raw
+            // value would. Also keeps raw covered values out of log lines.
+            const rows = piiPlan
+              ? await sftkPiiMaskSampleRows(sampleQ.records || [], piiPlan, piiSalt)
+              : (sampleQ.records || []);
             for (const c of capped) {
               if (c.kind === 'length') {
                 let worst = 0, hits = 0;
@@ -1214,7 +1399,12 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
                 }
                 if (hits) {
                   issues++;
-                  logRow('❌', `${obj}.${c.tgtField}: target field takes ${c.tgtMeta.length} chars but ${hits} of ${rows.length} sampled record(s) exceed that (longest ${worst}) — the real run fails with STRING_TOO_LONG. Shorten the data or widen the target field.`, 'ds-prog-err');
+                  // A covered field's oversize values are the MASKED ones —
+                  // "shorten the data" would be the wrong advice there.
+                  const remedy = (piiPlan && piiPlan.fields[c.srcField])
+                    ? 'These are the MASKED values the PII policy writes — widen the target field or switch the field\'s rule to "null" or a shorter "fixed" value.'
+                    : 'Shorten the data or widen the target field.';
+                  logRow('❌', `${obj}.${c.tgtField}: target field takes ${c.tgtMeta.length} chars but ${hits} of ${rows.length} sampled record(s) exceed that (longest ${worst}) — the real run fails with STRING_TOO_LONG. ${remedy}`, 'ds-prog-err');
                 }
                 continue;
               }
@@ -1238,6 +1428,10 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
                 const list = [...bad.entries()].slice(0, 6).map(([v, n]) => `“${v}” (${n}×)`).join(', ');
                 if (c.kind === 'state') {
                   logRow('❌', `${obj}.${c.tgtField}: the target enforces State/Country picklists and these sampled value(s) match neither a code nor a label there: ${list}${bad.size > 6 ? '…' : ''} — the real run fails with FIELD_INTEGRITY_EXCEPTION. Fix the source data or align the target's integration values.`, 'ds-prog-err');
+                } else if (piiPlan && piiPlan.fields[c.srcField]) {
+                  // Masked variant: a hashed value can NEVER be in the value
+                  // set, and "fix the source data" would be the wrong advice.
+                  logRow('❌', `${obj}.${c.tgtField}: restricted picklist in the target — this field is masked by the PII policy, and its masked value(s) can never be in the target's active value set: ${list}${bad.size > 6 ? '…' : ''} — the real run fails with INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST. Point the field's rule at "null" or a "fixed" allowed value instead of hashing.`, 'ds-prog-err');
                 } else {
                   logRow('❌', `${obj}.${c.tgtField}: restricted picklist in the target — sampled value(s) not in its active value set: ${list}${bad.size > 6 ? '…' : ''} — the real run fails with INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST. Add the value(s) in the target via the Picklist Manager, or remap the data first.`, 'ds-prog-err');
                 }
@@ -1304,11 +1498,40 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
         )];
         if (!anchorValues.length) continue;
 
+        // PII MASKING v1 — the engine compares a hash-covered anchor
+        // masked-to-masked (raw-to-masked can never match), so the probe
+        // must too — and a covered field's RAW values must never ride into
+        // a target-org query from here either. Null/fixed-covered anchors
+        // collapse: the engine skips that bridge (warned above), so probing
+        // it would validate a query the real run never makes — skip.
+        let probeValues = anchorValues;
+        if (piiKeys.length) {
+          const anchorRule = sftkPiiRuleFor(piiPolicy, res.matchObject, res.matchField);
+          if (anchorRule) {
+            if (anchorRule.strategy !== 'hash') continue;
+            const anchorDesc = await sendBg({
+              type: 'SF_REST_GET',
+              orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+              path: `services/data/v62.0/sobjects/${res.matchObject}/describe`
+            });
+            const anchorField = anchorDesc.error ? null : (anchorDesc.fields || [])
+              .find(f => f.name.toLowerCase() === res.matchField.toLowerCase());
+            // Hash on a non-maskable anchor nulls it in the target — the
+            // engine skips that bridge too; nothing honest to probe.
+            if (!anchorField || !sftkPiiMaskable(anchorField)) continue;
+            probeValues = [];
+            for (const av of anchorValues) {
+              const mres = await sftkPiiMaskValue(av, anchorField, piiSalt, anchorRule);
+              probeValues.push(mres.action === 'kept' ? av : mres.value);
+            }
+          }
+        }
+
         // Match against target
         // Use soqlStrLit so values like O'Brien (or anything containing
         // a backslash) are safely escaped — the old inline escape only
         // handled single quotes, leaving backslashes to corrupt the query.
-        const valList = anchorValues.map(soqlStrLit).join(',');
+        const valList = probeValues.map(soqlStrLit).join(',');
         const tgtLookup = await sendBg({
           type: 'SF_QUERY', tooling: false,
           orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
@@ -1384,6 +1607,24 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
     logRow('⚠', 'Owner matching is ON but no fallback user is picked — owners with no name match get the target default on inserts, and keep their current owner on updates.', 'ds-prog-warn');
   }
 
+  // PII MASKING v1 — masking vs matching collisions. Deterministic masking
+  // only matches targets seeded with the SAME salt, so a match key that is
+  // itself masked silently stops matching unmasked targets. Warnings, never
+  // issues: re-seeding into a same-salt masked target works by design.
+  if (piiKeys.length) {
+    if (ownerMapping?.mode === 'match') {
+      for (const ownerField of (ownerMapping.matching?.fields || ['Name'])) {
+        if (sftkPiiRuleFor(piiPolicy, 'User', ownerField)) {
+          logRow('⚠', `Owner matching uses User.${ownerField}, which this policy masks — deterministic masking only matches targets seeded with the same salt, so against an unmasked target no owner matches and every record falls back.`, 'ds-prog-warn');
+        }
+      }
+    }
+    const piiRootObj = profileTree ? (profileTree.objectType || profileTree.childSObject) : null;
+    if (upsertField && sftkPiiRuleFor(piiPolicy, piiRootObj, upsertField)) {
+      logRow('⚠', `Upsert matches on ${piiRootObj}.${upsertField}, which this policy masks — deterministic masking only matches targets seeded with the same salt, so against an unmasked target no row matches and every record inserts as new.`, 'ds-prog-warn');
+    }
+  }
+
   await dryRunNode(profileTree);
   return { issues, checked, unchecked };
 }
@@ -1421,7 +1662,12 @@ async function runTransfer() {
     logRow('🧪', `DRY RUN — validating "${_transferProfile.name}" (nothing will be written)…`);
     const dryRes = await sftkDryRunAgainst(
       buildTransferProfile().tree, _transferSrc, _transferTgt, logRow,
-      _transferProfile?.ownerMapping);
+      _transferProfile?.ownerMapping,
+      // PII MASKING v1 — the policy+salt ride on the profile the same way
+      // ownerMapping does; the upsert External-ID only matters here when the
+      // run would actually upsert on it.
+      _transferProfile?.piiPolicy, _transferProfile?.piiSalt,
+      _transferWriteMode === 'upsert' ? (_transferUpsertField || null) : null);
 
     // Same three-state verdict the fan-out uses. The old branch read
     // `issues` alone — a run whose target describe FAILED had issues:0 and
@@ -1907,7 +2153,11 @@ async function dryRunFanOut(p, srcUrl, targets) {
     }
     let res;
     try {
-      res = await sftkDryRunAgainst(tree, srcSess, tgtSess, line, p.ownerMapping);
+      // PII MASKING v1 — p.piiPolicy/p.piiSalt are exactly what the real
+      // fan-out leg sends (runFanOut spreads {...p}); fan-out never upserts,
+      // so there is no External-ID to check.
+      res = await sftkDryRunAgainst(tree, srcSess, tgtSess, line, p.ownerMapping,
+        p.piiPolicy, p.piiSalt, null);
     } catch (e) {
       const fe = (typeof sftkFriendlyError === 'function')
         ? sftkFriendlyError(e.message) : { message: e.message };
@@ -2016,6 +2266,16 @@ window.openFanOut = async function (profileId, opts = {}) {
   const ownerLabel = p.ownerMapping?.mode === 'match'
     ? `matched by ${(p.ownerMapping.matching?.fields || ['Name']).join(' + ')}, unmatched → fallback user`
     : 'not copied — each target assigns its own default owner';
+  // PII MASKING v1 — disclosed BEFORE the run is authorized, like every
+  // other row in this grid. runFanOut sends the profile AS SAVED ({...p}
+  // spread per leg), so p.piiPolicy/p.piiSalt are exactly what the engine
+  // will enforce — verified against runFanOut, not assumed. Copy says
+  // "masked" (pseudonymized), never a stronger claim.
+  const piiFieldCount = (p.piiPolicy && typeof p.piiPolicy === 'object')
+    ? Object.keys(p.piiPolicy).filter(k => p.piiPolicy[k]).length : 0;
+  const piiLabel = piiFieldCount
+    ? `${piiFieldCount} field(s) masked before writing${p.piiSalt ? '' : ' — ⚠ no salt yet: every leg fails until this deployment is opened once in the builder'}`
+    : 'no masking configured';
   const now = Date.now();
   const scanFor = t => (p.ringScans || {})[`${_orgKey(srcUrl)}|${_orgKey(t)}`] || null;
 
@@ -2053,6 +2313,7 @@ window.openFanOut = async function (profileId, opts = {}) {
           <span>From</span><strong>${esc(orgLabel(srcUrl))}${fromRing ? ' 👑' : ''}</strong>
           <span>Write mode</span><strong>${esc(modeLabel)}</strong>
           <span>Owners</span><strong>${esc(ownerLabel)}</strong>
+          <span>PII</span><strong>${esc(piiLabel)}</strong>
           <span>Deletes</span><strong>never — a deploy only adds and updates</strong>
         </div>
         <div class="ds-fanout-what-note">Targets run one after another, each with its own History entry. These are <strong>real writes</strong> — use <strong>🧪 Dry run all targets</strong> first to validate every ticked org without writing anything.</div>
