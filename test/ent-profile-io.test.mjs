@@ -31,7 +31,16 @@ function realisticProfile() {
       fallbackUserName: 'Integration User',
       matching: { fields: ['Email', 'Name'], normalize: { emailLower: true, caseFold: false, trim: true } }
     },
+    // PII masking: the POLICY is config and travels; the SALT is machine-
+    // local (a teammate's masked values must not be linkable to ours) and
+    // must strip like runtime state.
+    piiPolicy: {
+      'Contact.Email': { strategy: 'hash' },
+      'Contact.Birthdate': { strategy: 'hash' },
+      'Account.Description': { strategy: 'fixed', value: 'masked' }
+    },
     // ── runtime state (must be stripped) ──
+    piiSalt: 'a3f1c9d200aa11bb22cc33dd44ee55ff',
     lastScan: {
       status: 'success', runAt: '2026-07-19T08:00:00.000Z', objectType: 'Account',
       sourceOrg: 'https://golden.my.salesforce.com', targetOrg: 'https://uat.my.salesforce.com',
@@ -101,16 +110,27 @@ describe('bldProfileExportPayload — envelope + strip list', () => {
     expect(p.tree.children[0].fieldMappings.LastName).toBe('');
   });
 
-  it('strips EVERY runtime field (lastScan, matchMemory, ringScans, schedule, ephemeral, importedFrom)', () => {
+  it('strips EVERY runtime field (lastScan, matchMemory, ringScans, schedule, ephemeral, importedFrom, piiSalt)', () => {
     const p = { ...realisticProfile(), ephemeral: true };
     const out = bldProfileExportPayload(p, '1.0.0').profile;
     for (const f of bldProfileRuntimeFields()) {
       expect(out[f], `runtime field "${f}" must not export`).toBeUndefined();
     }
-    // and the strip list is exactly the documented six — a new runtime field
-    // must be added HERE consciously, not leak silently
+    // and the strip list is exactly the documented seven — a new machine-local
+    // field must be added HERE consciously, not leak silently
     expect(bldProfileRuntimeFields().sort()).toEqual(
-      ['ephemeral', 'importedFrom', 'lastScan', 'matchMemory', 'ringScans', 'schedule']);
+      ['ephemeral', 'importedFrom', 'lastScan', 'matchMemory', 'piiSalt', 'ringScans', 'schedule']);
+  });
+
+  it('PII: the masking POLICY exports, the machine-local SALT never does', () => {
+    const out = bldProfileExportPayload(realisticProfile(), '1.0.0').profile;
+    expect(out.piiPolicy).toEqual({
+      'Contact.Email': { strategy: 'hash' },
+      'Contact.Birthdate': { strategy: 'hash' },
+      'Account.Description': { strategy: 'fixed', value: 'masked' }
+    });
+    expect(out.piiSalt).toBeUndefined();
+    expect(JSON.stringify(out)).not.toContain('a3f1c9d200aa11bb22cc33dd44ee55ff');
   });
 
   it('strips per-node _meta at every tree depth', () => {
@@ -178,6 +198,10 @@ describe('bldProfileImportParse — round trip', () => {
     // the enterprise-config crown jewels survive intact
     expect(p.tree.fieldMappingOverrides).toEqual({ 'uat.my.salesforce.com': { Industry: 'Industry_UAT__c' } });
     expect(p.ownerMapping.matching).toEqual({ fields: ['Email', 'Name'], normalize: { emailLower: true, caseFold: false, trim: true } });
+    // masking rules travel; the exporter's salt does NOT (the import flow
+    // mints a fresh machine-local one, so masked values differ per machine)
+    expect(p.piiPolicy).toEqual(realisticProfile().piiPolicy);
+    expect(p.piiSalt).toBeUndefined();
   });
 
   it('targetOrgs: null (follow-the-ring) survives the round trip as null, not [] or absent', () => {
@@ -230,6 +254,17 @@ describe('bldProfileImportParse — round trip', () => {
     expect(res.profile.matchMemory).toBeUndefined();
     expect(res.profile.tree._meta).toBeUndefined();
     expect(res.stripped.sort()).toEqual(['lastScan', 'matchMemory']);
+  });
+
+  it("a hand-edited file smuggling the EXPORTER'S salt gets it stripped AND reported — never adopted", () => {
+    const payload = bldProfileExportPayload(realisticProfile(), '2.4.1');
+    payload.profile.piiSalt = 'deadbeefdeadbeefdeadbeefdeadbeef';   // forged machine-local salt
+    const res = bldProfileImportParse(JSON.stringify(payload), [], 'edited.json');
+    expect(res.error).toBeUndefined();
+    expect(res.profile.piiSalt).toBeUndefined();
+    expect(res.stripped).toEqual(['piiSalt']);
+    // the policy still travels — stripping the salt must not eat the rules
+    expect(res.profile.piiPolicy).toEqual(realisticProfile().piiPolicy);
   });
 });
 

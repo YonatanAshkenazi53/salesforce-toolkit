@@ -82,6 +82,131 @@ function sftkBuildOwnerIndex(users, matching) {
   return { byKey, dups: [...dup] };
 }
 
+// sftkPii* — PII masking library (PII MASKING v1). These are BYTE-FOR-BYTE
+// copies of the canonical implementations in sftk-pii.js (which studio loads
+// as a classic script), inlined for the same reason as sftkOrgKey above
+// (importScripts is a Trusted-Types sink under this worker's CSP). Masking
+// MUST behave identically on every surface — determinism is what preserves
+// cross-object joins and re-seed idempotence — so a parity unit test
+// (test/pii-mask.test.mjs) fails the build if these copies and the canonical
+// ones ever diverge.
+
+// Lowercase-hex SHA-256 of salt + "|" + value. The deterministic core: same
+// value + same salt → same digest, always, on every surface. WebCrypto only
+// (globalThis.crypto.subtle) — available in the studio page, the service
+// worker, and Node 18+ test scope without polyfill.
+async function sftkPiiHashHex(value, salt) {
+  const bytes = new TextEncoder().encode(String(salt) + '|' + String(value));
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Whether a hashed value can be re-rendered as a plausible string for this
+// field. Any OTHER type under a hash rule must be nulled and COUNTED as
+// nulled — a hex-derived string is never a valid date/number/picklist/
+// reference, and silently skipping the field would write the raw value.
+function sftkPiiMaskable(fieldDesc) {
+  const t = fieldDesc ? fieldDesc.type : null;
+  return t === 'string' || t === 'textarea' || t === 'email' || t === 'phone' || t === 'url';
+}
+
+// Deterministic type-aware masked string from a hash hex. Output ALWAYS fits
+// fieldDesc.length when present — an oversized write is a rejected row, and
+// a rejected row invites a raw retry. Emails and URLs land on masked.invalid
+// (.invalid is RFC 2606-reserved, undeliverable) so sandbox automations can
+// never reach a real mailbox or host; an email's local part shrinks to fit
+// before its domain is ever cut.
+function sftkPiiFormat(hex, fieldDesc) {
+  const d = fieldDesc || {};
+  const max = (typeof d.length === 'number' && d.length > 0) ? d.length : null;
+  const n = BigInt('0x' + hex);
+  const b36 = n.toString(36);
+  let out;
+  if (d.type === 'email') {
+    const domain = '@masked.invalid';
+    let local = b36.padStart(10, '0').slice(0, 10);
+    if (max !== null && local.length + domain.length > max) {
+      local = local.slice(0, Math.max(1, max - domain.length));
+    }
+    out = local + domain;
+  } else if (d.type === 'phone') {
+    out = (n % 10000000000n).toString().padStart(10, '0');
+  } else if (d.type === 'url') {
+    out = 'https://masked.invalid/' + b36.padStart(8, '0').slice(0, 8);
+  } else {
+    out = b36.slice(0, max === null ? 255 : max);
+  }
+  if (max !== null && out.length > max) out = out.slice(0, max);
+  return out;
+}
+
+// Apply one piiPolicy rule to one source value.
+// → { value, action } with action ∈ "hashed" | "nulled" | "fixed" | "kept".
+// kept: null/empty source passthrough — nothing to mask, nothing to count.
+// Hash on a NON-maskable type nulls the value and reports "nulled" so the
+// caller's disclosure counts stay honest. Unrecognized strategies also null:
+// this function must never return the raw value of a covered field.
+async function sftkPiiMaskValue(value, fieldDesc, salt, rule) {
+  if (value === null || value === undefined || value === '') {
+    return { value, action: 'kept' };
+  }
+  const strategy = rule ? rule.strategy : null;
+  if (strategy === 'fixed') {
+    return { value: rule.value === undefined ? null : rule.value, action: 'fixed' };
+  }
+  if (strategy === 'hash' && sftkPiiMaskable(fieldDesc)) {
+    // A field too short for its masked FORMAT would truncate the reserved
+    // masked.invalid domain ('x@masked.inv' looks routable) — the
+    // undeliverability guarantee outranks keeping a value: null instead.
+    const lim = (fieldDesc && typeof fieldDesc.length === 'number' && fieldDesc.length > 0) ? fieldDesc.length : null;
+    if (lim !== null && ((fieldDesc.type === 'email' && lim < 16) || (fieldDesc.type === 'url' && lim < 24))) {
+      return { value: null, action: 'nulled' };
+    }
+    const hex = await sftkPiiHashHex(value, salt);
+    return { value: sftkPiiFormat(hex, fieldDesc), action: 'hashed' };
+  }
+  return { value: null, action: 'nulled' };
+}
+
+// Rank an object's fields as masking candidates — heuristics, not policy;
+// the user confirms every row. Entries carry BARE field API names: policy
+// keys are objectApi + "." + field, built by the caller (objectApi sits in
+// the signature so call sites read symmetrically). complianceByField maps
+// FieldApi → FieldDefinition.ComplianceGroup, a semicolon-joined picklist
+// (e.g. "PII;GDPR"). sure:false marks fields flagged only because they
+// COULD hold PII (uninspectable free text), not because they look like it.
+function sftkPiiSuggest(objectApi, fields, complianceByField) {
+  const nameRx = /ssn|social.?sec|birth|dob|passport|driver|licen[cs]e|national.?id|tax.?id|salary|gender|ethnic|religion|medical|health|maiden/i;
+  const compRx = /(^|;)\s*(PII|GDPR|HIPAA|CCPA|COPPA)\s*(;|$)/i;
+  const out = [];
+  for (const f of (fields || [])) {
+    if (!f || !f.name) continue;
+    const reasons = [];
+    let sure = false;
+    if (f.type === 'email' || f.type === 'phone') { reasons.push(f.type + ' field'); sure = true; }
+    if (f.nameField) { reasons.push('name field'); sure = true; }
+    // Person-name PARTS: the compound Name carries nameField but is not
+    // createable — FirstName/LastName are what the payload actually sends,
+    // so they must be suggestable in their own right (adversarial review).
+    if (/^((first|last|middle|maiden|nick)_?name|salutation|suffix)(__c)?$/i.test(f.name)) {
+      reasons.push('person name part'); sure = true;
+    }
+    if (nameRx.test(f.name) || nameRx.test(f.label || '')) {
+      reasons.push('name/label suggests personal data'); sure = true;
+    }
+    const comp = complianceByField ? complianceByField[f.name] : null;
+    if (comp && compRx.test(String(comp))) {
+      reasons.push('ComplianceGroup: ' + String(comp)); sure = true;
+    }
+    if (f.type === 'textarea' && typeof f.length === 'number' && f.length >= 1000) {
+      reasons.push('free text — cannot be inspected, consider masking or null');
+    }
+    if (!reasons.length) continue;
+    out.push({ field: f.name, reason: reasons.join('; '), sure });
+  }
+  return out;
+}
+
 const API_VERSION = 'v62.0';
 
 // ── Per-org read-only gate ───────────────────────────────────────────────────
@@ -172,6 +297,109 @@ chrome.action.onClicked.addListener(async () => {
 });
 
 
+// ── PII MASKING v1 — engine-side policy plumbing ────────────────────────────
+// The sftkPii* library above is the byte-for-byte shared copy; the three
+// helpers below are ENGINE-ONLY (no parity copy, they live outside the
+// banner region) and column-0 pure so test/pii-engine.test.mjs can extract
+// them. profile.piiPolicy keys are SOURCE "<ObjectApi>.<FieldApi>" names —
+// masking resolves against the SOURCE describe and runs BEFORE field
+// renames, so a mapped field lands its masked value under the target name
+// and no write path ever sees the raw value.
+
+// Policy → { <FieldApi>: { rule, desc } } for ONE object, or null when no
+// rule touches it. Object/field parts compare case-insensitively (API names
+// are case-insensitive in Salesforce, and policy keys may come from a
+// describe cased differently than this run's). Fields the engine resolves
+// itself (Id / RecordTypeId / OwnerId / audit fields) are excluded: their
+// branches write TARGET-org ids, never the source value, so a rule on them
+// cannot change what lands and must not inflate the disclosure counts.
+// Fields absent from the describe are excluded too — never fetched, nothing
+// to mask.
+function sftkPiiRulesForObject(policy, objectApi, describeFields) {
+  if (!policy || !objectApi) return null;
+  const RESOLVED = new Set(['id', 'recordtypeid', 'ownerid', 'createdbyid',
+    'lastmodifiedbyid', 'createddate', 'lastmodifieddate', 'systemmodstamp', 'isdeleted']);
+  const descByLower = Object.create(null);
+  for (const f of (describeFields || [])) if (f && f.name) descByLower[f.name.toLowerCase()] = f;
+  const objLower = String(objectApi).toLowerCase();
+  let out = null;
+  for (const [key, rule] of Object.entries(policy)) {
+    if (!rule) continue;
+    const dot = key.indexOf('.');
+    if (dot <= 0) continue;
+    if (key.slice(0, dot).toLowerCase() !== objLower) continue;
+    const fLower = key.slice(dot + 1).toLowerCase();
+    if (RESOLVED.has(fLower)) continue;
+    const desc = descByLower[fLower];
+    if (!desc) continue;
+    if (!out) out = Object.create(null);
+    out[desc.name] = { rule, desc };
+  }
+  return out;
+}
+
+// Mask every covered field of every fetched record BEFORE payloads, History
+// labels or the upsert-injection read them. rows[i] maps FieldApi →
+// { value, action } for record i; counts tally every non-kept application
+// (kept = empty source — nothing masked, nothing counted). cache is ONE Map
+// per RUN keyed "<salt>|<Object>.<Field>|<value>" so a 50k-record org hashes
+// each distinct (field, value) once, not 50k times — the key includes the
+// object+field because the FORMATTED value depends on that field's describe
+// (type/length), not just the digest. kept results are never cached: their
+// value IS the original and caching would gain nothing.
+async function sftkPiiMaskRows(recs, objectApi, rules, salt, cache) {
+  const counts = { hashed: 0, nulled: 0, fixed: 0 };
+  const rows = [];
+  const fields = rules ? Object.keys(rules) : [];
+  for (const r of (recs || [])) {
+    const row = Object.create(null);
+    for (const fn of fields) {
+      const v = r ? r[fn] : undefined;
+      let res;
+      if (v === null || v === undefined || v === '') {
+        res = { value: v, action: 'kept' };
+      } else {
+        const ck = String(salt) + '|' + objectApi + '.' + fn + '|' + String(v);
+        res = cache ? cache.get(ck) : undefined;
+        if (!res) {
+          res = await sftkPiiMaskValue(v, rules[fn].desc, salt, rules[fn].rule);
+          if (cache) cache.set(ck, res);
+        }
+      }
+      if (res.action === 'hashed') counts.hashed++;
+      else if (res.action === 'nulled') counts.nulled++;
+      else if (res.action === 'fixed') counts.fixed++;
+      row[fn] = res;
+    }
+    rows.push(row);
+  }
+  return { rows, counts };
+}
+
+// Lookup-match bridges compare anchor values against target records that a
+// masked seed created — a policy-covered anchor field must be compared
+// masked-to-masked. Raw-to-masked can never match, and raw values must not
+// ride into a target query once a rule covers the field. Only a hash rule on
+// a maskable type preserves the join (null/fixed collapse every anchor, a
+// non-maskable type is nulled in the target); anything else returns
+// { map: null, degraded: <reason> } and the caller must SKIP the bridge.
+// kept entries (empty anchors) pass through unchanged.
+async function sftkPiiMaskAnchorMap(anchorMap, rule, fieldDesc, salt) {
+  const strategy = rule ? rule.strategy : null;
+  if (strategy !== 'hash') {
+    return { map: null, degraded: `its "${strategy}" rule collapses every anchor to one value` };
+  }
+  if (!sftkPiiMaskable(fieldDesc)) {
+    return { map: null, degraded: `type "${fieldDesc ? fieldDesc.type : 'unknown'}" cannot hold a hashed value — masked targets have null there` };
+  }
+  const out = new Map();
+  for (const [srcId, val] of (anchorMap || new Map())) {
+    const res = await sftkPiiMaskValue(val, fieldDesc, salt, rule);
+    out.set(srcId, res.action === 'kept' ? val : res.value);
+  }
+  return { map: out, degraded: null };
+}
+
 // Execute a profile transfer between two orgs.
 // Returns a summary object for the history log.
 // sharedIdMap (optional): when running a SEQUENCE of profiles, the caller
@@ -196,6 +424,19 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   // Declared once here on purpose: a second hard-coded constant further down
   // is exactly how reads and writes drift apart.
   const BULK_MIN = Number(profile?.bulkThreshold) > 0 ? Number(profile.bulkThreshold) : 2000;
+
+  // PII MASKING v1 — resolved ONCE per run, before anything is read or
+  // written. A non-empty policy without its machine-local salt is a HARD
+  // ERROR: falling back would write raw PII, and raw-once in a sandbox
+  // others can read is unrecoverable. piiCache spans the whole run (every
+  // node) so a value repeated across records/objects is hashed once.
+  const piiPolicy     = (profile && profile.piiPolicy && typeof profile.piiPolicy === 'object') ? profile.piiPolicy : null;
+  const piiPolicyKeys = piiPolicy ? Object.keys(piiPolicy) : [];
+  if (piiPolicyKeys.length && !profile.piiSalt) {
+    throw new Error('PII policy has no salt — open the deployment in the builder once');
+  }
+  const piiSalt  = piiPolicyKeys.length ? String(profile.piiSalt) : null;
+  const piiCache = new Map();   // "<salt>|<Object>.<Field>|<value>" → mask result
 
   // Track source IDs fetched per tree node so each child node's WHERE clause
   // only references its direct parent's records.
@@ -330,6 +571,18 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       }
 
       const fields = buildCopyFields(descRes);
+
+      // PII MASKING v1 — this node's SOURCE-name rules. A rule on a field
+      // the payload can never send (not createable — e.g. a compound Name)
+      // is called out: that data usually flows through OTHER writable fields
+      // (FirstName/LastName) that need their own rules to be covered.
+      const piiRules = piiPolicyKeys.length ? sftkPiiRulesForObject(piiPolicy, objType, descRes.fields) : null;
+      if (piiRules) {
+        const unwritable = Object.values(piiRules).filter(x => !x.desc.createable).map(x => x.desc.name);
+        if (unwritable.length) {
+          diagnostics.push(`${objType}: the PII policy covers [${unwritable.join(', ')}] which the payload never sends (not createable in the source) — make sure the writable field(s) carrying that data have their own rules (a compound Name writes through FirstName/LastName).`);
+        }
+      }
 
       // Owner matching needs the source owner's display name — only when the
       // object actually has owners (children like OpportunityLineItem don't).
@@ -602,9 +855,35 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           }
           if (!srcAnchorMap.size) continue;
 
+          // PII MASKING v1 — a covered anchor field means the target was
+          // seeded MASKED: compare masked-to-masked, or skip the bridge. Raw
+          // anchor values must not ride into a target query once a rule
+          // covers them; a failed describe read also skips (fail closed).
+          const anchorKey = piiPolicyKeys.find(k =>
+            k.toLowerCase() === (res.matchObject + '.' + res.matchField).toLowerCase());
+          let anchorMap = srcAnchorMap;
+          if (anchorKey) {
+            let aFieldDesc = null;
+            try {
+              const aDesc = await sfRestGet(srcOrgUrl, srcSid,
+                `services/data/${API_VERSION}/sobjects/${res.matchObject}/describe`);
+              aFieldDesc = (aDesc && !aDesc.error && Array.isArray(aDesc.fields))
+                ? aDesc.fields.find(f => f && f.name && f.name.toLowerCase() === String(res.matchField).toLowerCase()) || null
+                : null;
+            } catch (_) { aFieldDesc = null; }
+            const bridged = aFieldDesc
+              ? await sftkPiiMaskAnchorMap(srcAnchorMap, piiPolicy[anchorKey], aFieldDesc, piiSalt)
+              : { map: null, degraded: `the ${res.matchObject} describe could not be read` };
+            if (!bridged.map) {
+              diagnostics.push(`${objType}.${fieldName}: lookup matching anchors on ${res.matchObject}.${res.matchField}, which the PII policy covers — ${bridged.degraded}; the bridge was skipped (those lookups stay null) instead of comparing raw values.`);
+              continue;
+            }
+            anchorMap = bridged.map;
+          }
+
           // 3. Query TARGET for matching records: anchorValue → tgtId
           //    Only keep the FIRST match if duplicates exist (deterministic)
-          const anchorValues = [...new Set(srcAnchorMap.values())];
+          const anchorValues = [...new Set(anchorMap.values())];
           const VAL_CHUNK = 100;
           const tgtAnchorMap = new Map();
           for (let ci = 0; ci < anchorValues.length; ci += VAL_CHUNK) {
@@ -623,7 +902,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
 
           // 4. Build bridge: srcId → tgtId (via shared anchor value)
           const bridge = new Map();
-          for (const [srcId, anchorVal] of srcAnchorMap) {
+          for (const [srcId, anchorVal] of anchorMap) {
             const tgtId = tgtAnchorMap.get(anchorVal);
             if (tgtId) bridge.set(srcId, tgtId);
           }
@@ -640,6 +919,44 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           }
         }
       }
+
+      // PII MASKING v1 — mask every covered value of every fetched record
+      // NOW, before payloads, History labels or the upsert-injection read
+      // them. rows align with recs; counts land in the summary as the
+      // masking disclosure for this object.
+      const piiRows = piiRules ? await sftkPiiMaskRows(recs, objType, piiRules, piiSalt, piiCache) : null;
+      if (piiRows && recs.length) {
+        const pc = piiRows.counts;
+        diagnostics.push(`${objType}: PII masking applied — ${pc.hashed} value(s) hashed, ${pc.nulled} nulled, ${pc.fixed} fixed (deterministic: the same salt re-seeds to the same masked values).`);
+      }
+      // History labels persist to chrome.storage — a covered name field must
+      // land there masked exactly as it lands in the target org. A nulled
+      // mask falls through to the next candidate, then the caller's fallback.
+      // COMPOUND-NAME TRAP (adversarial review): when the policy covers
+      // FirstName/LastName but not the read-only compound Name — the exact
+      // config the unwritable-field diagnostic above steers users toward —
+      // the compound has no mask row yet concatenates the raw parts. Any
+      // name-part rule therefore disqualifies raw name candidates entirely.
+      const piiNamePartCovered = !!(piiRules && Object.keys(piiRules).some(k => {
+        const kl = k.toLowerCase();
+        return kl === 'firstname' || kl === 'lastname' || kl === 'name' ||
+          (nameFld && kl === nameFld.toLowerCase());
+      }));
+      const recLabel = (idx, fallback) => {
+        const r0 = recs[idx] || {};
+        for (const fld of (nameFld && nameFld !== 'Name' ? [nameFld, 'Name'] : ['Name'])) {
+          const raw = r0[fld];
+          if (raw == null || raw === '') continue;
+          const mv = piiRows ? piiRows.rows[idx][fld] : undefined;
+          if (mv && mv.action !== 'kept') {
+            if (mv.value != null) return String(mv.value);
+            continue;
+          }
+          if (piiNamePartCovered) continue;   // raw name may embed masked parts
+          return raw;
+        }
+        return fallback;
+      };
 
       // Fields the source has but the target can't accept — collected once for
       // reporting (so a partial/empty copy isn't a mystery).
@@ -662,7 +979,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       let ownerFellBack = 0, ownerDefaulted = 0, ownerKeyMatched = 0, ownerKeyDup = 0;
 
       // ── Build payloads with field mapping ────────────────────────────────
-      const payloads = recs.map(r => {
+      const payloads = recs.map((r, recIdx) => {
         const p = {};
         for (const f of (descRes.fields || [])) {
           if (!f.createable) continue;
@@ -680,6 +997,17 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           // "dry run passes, real transfer fails" case. If the target describe
           // failed to load, tgtCreatable is empty → keep all fields (best effort).
           if (tgtCreatable.size && !tgtCreatable.has(tgtField)) { skippedForTarget.add(tgtField); continue; }
+          // PII MASKING v1 — a covered field may land ONLY its masked value,
+          // under whatever name the mapping resolved (tgtField): rules match
+          // SOURCE names, renames land the masked value. Sits BEFORE the
+          // reference branch on purpose — a covered reference is nulled,
+          // never remapped or deferred. kept (empty source) falls through
+          // unchanged. A nulled mask is written EXPLICITLY (JSON null; #N/A
+          // in the Bulk CSV) so an upsert clears whatever the target held.
+          if (piiRows) {
+            const mv = piiRows.rows[recIdx][f.name];
+            if (mv && mv.action !== 'kept') { p[tgtField] = mv.value; continue; }
+          }
           if (f.type === 'reference') {
             // Child-first: this node's own parent-link field is deliberately
             // deferred — the parent doesn't exist yet; the connect step patches
@@ -792,7 +1120,13 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // external-Id field. When on, existing target records (matched on that
       // field) are UPDATED instead of duplicated; new ones are inserted.
       const useUpsert   = !!(profile.upsert?.field) && node === profile.tree;
-      const upsertField = useUpsert ? profile.upsert.field : null;
+      // Canonicalize to the describe's casing: every other surface matches
+      // api names case-insensitively, and the masked-value injection below
+      // looks rows up by this exact key — a user-typed 'external_id__c'
+      // must find the describe's 'External_Id__c' row, not silently miss.
+      const upsertField = useUpsert
+        ? ((descRes.fields.find(f => f.name.toLowerCase() === String(profile.upsert.field).toLowerCase())?.name) || profile.upsert.field)
+        : null;
       // Phase B — Bulk API 2.0 above the threshold. One async job instead of
       // N synchronous 200-record calls: far fewer round trips and no API-call
       // limit pressure at volume. Below it, Collections stays faster and
@@ -816,9 +1150,14 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         const chunk = payloads.slice(i, i + STEP).map((p, k) => {
           const rec = { attributes: { type: objType }, ...p };
           // The external-Id value must be present for Salesforce to match on
-          // upsert — inject it from the source record if the mapping dropped it.
+          // upsert — inject it from the source record if the mapping dropped
+          // it. PII MASKING v1: a covered external-Id injects the SAME masked
+          // value the payload path writes (a masked seed matches a masked
+          // target); the raw value never rides along. A mask of null injects
+          // nothing — there is no key to match on.
           if (useUpsert && upsertField) {
-            const v = recs[i + k]?.[upsertField];
+            const mv = piiRows ? piiRows.rows[i + k][upsertField] : undefined;
+            const v = (mv && mv.action !== 'kept') ? mv.value : recs[i + k]?.[upsertField];
             if (v != null) rec[upsertField] = v;
           }
           return rec;
@@ -851,7 +1190,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             transferredSourceIds.push(recs[i + j].Id);
             if (isRootNode && idPairs.length < 2000) idPairs.push([recs[i + j].Id, result.id]);
             if (targetRecords.length < 200) {
-              targetRecords.push({ id: result.id, label: (nameFld && recs[i + j][nameFld]) || recs[i + j].Name || result.id });
+              targetRecords.push({ id: result.id, label: recLabel(i + j, result.id) });
             }
           }
           else {
@@ -900,7 +1239,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
               // for the cancelled case (including the "we can't tell" one) —
               // never paper over it with a generic string.
               error: msg,
-              label: (nameFld && recs[i + j][nameFld]) || recs[i + j].Name || recs[i + j].Id,
+              label: recLabel(i + j, recs[i + j].Id),
               ...(fieldNotes ? { fields: fieldNotes } : {}),
               ...(notRun ? { notProcessed: true } : {}),
             });
@@ -938,18 +1277,24 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
                 }
                 if (!srcFieldForMissing) srcFieldForMissing = missing;
 
-                const srcVal       = sampleRec[srcFieldForMissing];
+                // PII MASKING v1 — diagnostics may quote only what was (or
+                // would be) PUSHED for a covered field, never the raw fetch.
+                const diagMv     = piiRows ? piiRows.rows[i + j][srcFieldForMissing] : undefined;
+                const diagMasked = !!(diagMv && diagMv.action !== 'kept');
+                const srcVal     = diagMasked ? diagMv.value : sampleRec[srcFieldForMissing];
                 const inTgtCreate  = tgtCreatable.has(missing);
                 const explicitNull = node.fieldMappings && node.fieldMappings[srcFieldForMissing] === null;
                 const inSentKeys   = sentKeys.includes(missing);
 
                 let reason;
                 if (inSentKeys) {
-                  reason = `payload INCLUDED ${missing}=${JSON.stringify(srcVal)} — target rejected anyway (validation rule? person-account override? required-criteria-based field?)`;
+                  reason = `payload INCLUDED ${missing}=${JSON.stringify(samplePayload[missing])} — target rejected anyway (validation rule? person-account override? required-criteria-based field?)`;
                 } else if (explicitNull) {
                   reason = `field mapping for source.${srcFieldForMissing} is "Set null" — change it to identity passthrough`;
                 } else if (!inTgtCreate) {
                   reason = `target says ${missing} is not createable for this user. Check FLS + Profile/PermSet on target org.`;
+                } else if (diagMasked && srcVal == null) {
+                  reason = `the PII policy writes null for source.${srcFieldForMissing} (a "${piiRules[srcFieldForMissing].rule.strategy}" rule on this field type) — a required field cannot be nulled; use a hash rule on a text field or a fixed value instead`;
                 } else if (srcVal == null || srcVal === '') {
                   reason = `source.${srcFieldForMissing} is ${JSON.stringify(srcVal)} for at least one record — the executor drops null values before send. Source records lack this field's value.`;
                 } else {
@@ -965,9 +1310,14 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           done: Math.min(i + STEP, payloads.length), total: payloads.length,
           created: ok, failed: fail });
       }
+      // PII MASKING v1 — the write disclosure: how many values this object's
+      // payloads carried hashed / nulled / fixed. Present whenever the policy
+      // covers this object, even at zero (masking was ACTIVE, values may all
+      // have been empty) — History and the run log read it from here.
       summary[objType] = { created: ok, failed: fail,
         ...(usedBulk ? { viaBulk: true } : {}),
-        ...(notProcessed ? { notProcessed } : {}) };
+        ...(notProcessed ? { notProcessed } : {}),
+        ...(piiRows ? { masked: piiRows.counts } : {}) };
       // B3 — one line for everything the aborted Bulk job did not confirm.
       // "not confirmed written" rather than "never attempted": when the job's
       // result files are unreadable after an abort we genuinely cannot tell,

@@ -1780,6 +1780,20 @@ async function runReconcile(profile, objType, buckets) {
       const pmNorm   = pm?.normalize || {};
       const tgtMatch = pmTgtFields[0];
 
+      // PII fail-closed: relink embeds RAW source parent-key values in a
+      // target-org SOQL IN-list (visible in that org's API/event logs). When
+      // any match component is under the profile's PII policy, skip this
+      // object's relink and say so — the deployment engine's masked anchor
+      // bridge is the supported path for masked seeds.
+      const piiPol = profile?.piiPolicy || {};
+      const piiCoveredAnchor = pmSrcFields.find(f => Object.keys(piiPol).some(k =>
+        piiPol[k] && k.toLowerCase() === `${String(relParentObj)}.${String(f)}`.toLowerCase()));
+      if (piiCoveredAnchor) {
+        const mW = `🔒 relink ${obj}: parent matching uses ${relParentObj}.${piiCoveredAnchor}, which is under the PII policy — skipped so raw values never reach the target org; deploy through the engine's masked bridge instead`;
+        allErrors.push(mW); log('🔒', mW, 'ds-prog-warn');
+        continue;
+      }
+
       // Full source-side parent key per child row. linkMismatch rows carry
       // only the FIRST component (parentKeySrc), so for composite configs
       // every component is re-read via the link's dot-path. Any failure
@@ -2038,6 +2052,26 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
 
   const node = profile.tree;
   const fm   = node.fieldMappings || {};
+
+  // PII policy applies to EVERY write path. This function sends
+  // SF_COLLECTIONS_UPDATE itself instead of going through the engine, and
+  // the adversarial review confirmed it as THE leak: masked deploys, raw
+  // overwrites. Same contract as executeProfileTransfer — a non-empty
+  // policy without a salt is a hard error BEFORE any read, and a covered
+  // value never leaves unmasked (the caller's try/catch degrades the throw
+  // to a logged failure, which is the correct fail-closed outcome).
+  const piiRules = {};   // FieldApi (lowercased) → rule, for THIS object
+  for (const [k, rule] of Object.entries(profile?.piiPolicy || {})) {
+    if (!rule) continue;
+    const dot = k.indexOf('.');
+    if (dot < 0 || k.slice(0, dot).toLowerCase() !== String(objType).toLowerCase()) continue;
+    piiRules[k.slice(dot + 1).toLowerCase()] = rule;
+  }
+  const piiActive = Object.keys(piiRules).length > 0;
+  if (piiActive && !profile.piiSalt) {
+    throw new Error('PII policy has no salt — open the deployment in the builder once');
+  }
+  const piiCounts = { hashed: 0, nulled: 0, fixed: 0 };
   // Source fields to read = the mapped source field names (those that map to
   // a non-null target). Drop system fields.
   // OwnerId excluded from the mapping-driven fields — owners are handled by
@@ -2069,6 +2103,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const warnings = [];
   let refPairs = [];   // [{sf, tf, relName, matchField, parentObj, unresolved}]
   let srcNameFld = null;   // the object's name field — fetched for link labels only
+  let descByLower = {};    // source field describe by lowercased name — masking needs type/length
   try {
     const [d, dt] = await Promise.all([
       sendBg({ type: 'SF_REST_GET', orgUrl: srcSess.orgUrl, sid: srcSess.sid,
@@ -2080,6 +2115,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       const srcNames = new Set(d.fields.map(f => f.name));
       wantOwners = ownerMode && srcNames.has('OwnerId');
       srcNameFld = d.fields.find(f => f.nameField)?.name || null;
+      for (const f of d.fields) descByLower[f.name.toLowerCase()] = f;
       const stale    = srcFields.filter(k => !srcNames.has(k));
       if (stale.length) {
         warnings.push(`⚠ skipped ${stale.length} mapped field(s) that no longer exist on ${objType} in the source org: ${stale.join(', ')} — open ✏ Edit → Fields & mapping to clean them up`);
@@ -2248,6 +2284,19 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
         if (!mapped) continue;
         v = mapped;
       }
+      // Mask BEFORE the mapped target name receives the value (policy keys
+      // are source api names). An UPDATE writes the null explicitly rather
+      // than skipping the field: leaving it unchanged would preserve raw
+      // PII a pre-policy seed may have planted in the target.
+      const piiRule = piiActive && sf !== 'RecordTypeId' ? piiRules[sf.toLowerCase()] : null;
+      if (piiRule) {
+        const m = await sftkPiiMaskValue(v, descByLower[sf.toLowerCase()] || {}, profile.piiSalt, piiRule);
+        if (m.action !== 'kept') {
+          piiCounts[m.action] = (piiCounts[m.action] || 0) + 1;
+          p[tf] = m.value == null ? null : m.value;
+          continue;
+        }
+      }
       p[tf] = v;
     }
     // Lookups: write the resolved TARGET parent id. Unresolvable parents
@@ -2272,9 +2321,18 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       }
     }
     payloads.push(p);
-    rowMeta.push({ id: tgtId, label: (srcNameFld && sr[srcNameFld]) || sr.Name || tgtId });
+    // History/audit outlive the run — a raw label for a record whose name
+    // (or name parts) are under policy would leak the exact data the
+    // masking exists to keep out of persistent storage. Fall back to the id.
+    const piiNameCovered = piiActive && (
+      (srcNameFld && piiRules[srcNameFld.toLowerCase()]) ||
+      piiRules['name'] || piiRules['firstname'] || piiRules['lastname']);
+    rowMeta.push({ id: tgtId, label: piiNameCovered ? tgtId : ((srcNameFld && sr[srcNameFld]) || sr.Name || tgtId) });
   }
 
+  if (piiActive) {
+    warnings.push(`🔒 PII: ${piiCounts.hashed + piiCounts.nulled + piiCounts.fixed} value(s) masked before writing (${piiCounts.hashed} hashed, ${piiCounts.nulled} nulled${piiCounts.fixed ? `, ${piiCounts.fixed} fixed` : ''})`);
+  }
   if (ownerFellBack) warnings.push(`⚠ owners: ${ownerFellBack} record(s) reassigned to the fallback user (owner had no name match in the target)`);
   if (ownerKept)     warnings.push(`⚠ owners: ${ownerKept} record(s) kept their current target owner (no name match and no fallback user set)`);
 
