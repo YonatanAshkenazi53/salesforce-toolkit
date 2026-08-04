@@ -578,3 +578,27 @@ describe('sftkCookieSessFor refuses foreign parent-domain cookies', () => {
     expect(fn).toMatch(/if \(!v \|\| v\.sid !== s\.sid\) s = null/);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// Child-node feature discoverability (user report 2026-08-04:
+// "couldn't locate the child records picker … also the deploy before
+// parent"). Both existed and worked — they were just invisible in two
+// states: a COLLAPSED tree node hides its whole config row, and the Run
+// page's per-node 🎯 Filter button silently vanished without a source
+// session.
+// ══════════════════════════════════════════════════════════════════
+describe('picked records and child-first are never invisible', () => {
+  it('a collapsed node shows state chips that expand on click', () => {
+    expect(BUILDER).toMatch(/data-expand-chip="\$\{esc\(pathKey\)\}"/);
+    expect(BUILDER).toMatch(/bits\.push\(`🎯 \$\{node\.recordIds\.length\}`\)/);
+    expect(BUILDER).toMatch(/bits\.push\('⤴ child-first'\)/);
+    expect(BUILDER).toMatch(/\[data-expand-chip\]/);   // wiring exists
+    expect(CSS).toMatch(/\.ds-tree-collapsed-chips\s*\{/);
+  });
+
+  it('the Run page renders a DISABLED filter button with the unlock hint instead of nothing', () => {
+    const TRANSFER = read('studio-transfer.js');
+    expect(TRANSFER).toMatch(/Record filtering needs the source org/);
+    expect(TRANSFER).not.toMatch(/const filterBtn = canFilter\s*\?[\s\S]{0,400}?:\s*'';/);
+  });
+});
