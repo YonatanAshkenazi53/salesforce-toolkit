@@ -1076,6 +1076,22 @@ function renderTreeNode(node, path, isRoot, depth = 0) {
           <span class="ds-tree-obj-name">${esc(objName)}</span>
           ${relBadge}
           ${countBadge}${loadingBadge}
+          ${!meta.expanded && (node.recordIds?.length || node.insertOrder === 'childFirst') ? (() => {
+            // Collapsing a node hides its whole config row (🎯 Records,
+            // mapping, insert order) — state the user set must never become
+            // invisible (user report 2026-08-04: "couldn't locate the child
+            // records picker"). These chips survive the collapse and click
+            // through to expand.
+            const bits = [];
+            if (node.recordIds?.length) bits.push(`🎯 ${node.recordIds.length}`);
+            if (node.insertOrder === 'childFirst') bits.push('⤴ child-first');
+            const what = [
+              node.recordIds?.length ? `${node.recordIds.length} hand-picked record(s)` : '',
+              node.insertOrder === 'childFirst' ? 'child-first insert order' : '',
+            ].filter(Boolean).join(' and ');
+            return `<button class="ds-tree-collapsed-chips" data-expand-chip="${esc(pathKey)}"
+              title="Collapsed — this node still has ${esc(what)}. Click to expand and edit.">${bits.join(' · ')}</button>`;
+          })() : ''}
           <div class="ds-tree-node-actions">
             <button class="ds-btn ds-btn-xs" data-preview="${esc(pathKey)}" title="Count records">👁 Preview</button>
             ${!isRoot ? `<button class="ds-btn ds-btn-xs ds-btn-danger" data-remove="${esc(pathKey)}" aria-label="Remove ${esc(objName)} from the tree" title="Remove">${dsIcon('x')}</button>` : ''}
@@ -1207,6 +1223,15 @@ function wireTreeEvents() {
     btn.addEventListener('click', () => {
       const node = getNodeByPath(_editingProfile.tree, btn.dataset.path);
       if (node) { node._meta.expanded = !node._meta.expanded; refreshTree(); }
+    });
+  });
+
+  // Collapsed-state chips (🎯 N · ⤴) — click expands so the config row the
+  // chip stands in for is one click away.
+  area.querySelectorAll('[data-expand-chip]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const node = getNodeByPath(_editingProfile.tree, btn.dataset.expandChip);
+      if (node) { node._meta.expanded = true; refreshTree(); }
     });
   });
 

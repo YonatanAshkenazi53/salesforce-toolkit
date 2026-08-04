@@ -806,7 +806,13 @@ function updateTransferPreview(counts = null) {
            title="${hasFilter ? `Edit which ${esc(name)} records transfer` : `Choose which ${esc(name)} records transfer (pick records or set a WHERE clause)`}">
            ${hasFilter ? `🎯 Edit filter: ${esc(name)}` : `🎯 Filter ${esc(name)}`}
          </button>`
-      : '';
+      // No source session ≠ no feature: a silently ABSENT button reads as
+      // "record picking doesn't exist" (user report 2026-08-04). Render it
+      // disabled and say exactly what unlocks it.
+      : `<button class="ds-btn ds-btn-xs ds-tr-filter-btn" disabled
+           title="Record filtering needs the source org — open ${esc(orgLabel(_transferProfile?.sourceOrg || '') || 'the source org')} in a Chrome tab, then reopen this page">
+           🎯 Filter ${esc(name)}
+         </button>`;
 
     const children = (node.children || []).map((c, i) =>
       renderNode(c, depth + 1, [...path, i], countsNode?.children?.[i])
