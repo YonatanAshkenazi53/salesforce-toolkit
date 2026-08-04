@@ -630,3 +630,37 @@ describe('the child record picker reads its OWN scan bucket', () => {
     expect(MODALS).toMatch(/scanReconcileChild\(_editingProfile, pathStr\)/);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// Hover help (user request 2026-08-04: "we should add help text on
+// hoover" after the scan/reconcile/tree-diff trio confused them). The
+// SFTKOnboard (?) bubble existed but was adopted NOWHERE — dsViewHeader
+// now carries it and the three compare surfaces explain themselves AND
+// name their siblings.
+// ══════════════════════════════════════════════════════════════════
+describe('the compare trio explains itself on hover', () => {
+  it('dsViewHeader renders a help badge and setMain/showModal wire it', () => {
+    expect(CORE).toMatch(/dsViewHeader\(\{ icon, title, subtitle, count, actions, back, cls, help \}/);
+    expect(CORE).toMatch(/SFTKOnboard\.help\(help\)/);
+    expect(CORE.match(/SFTKOnboard\?\.wireHelp\?\./g)?.length).toBe(2);
+  });
+
+  it('each surface names its role AND its siblings', () => {
+    const RECONCILE = read('studio-reconcile.js');
+    const TREEDIFF  = read('studio-treediff.js');
+    // Reconcile = fix one pair, points at Tree diff
+    expect(RECONCILE).toMatch(/help: 'The repair shop of the compare trio/);
+    expect(RECONCILE).toMatch(/help: '[^']*Tree diff/);
+    // Tree diff = overview, executes nothing, points at Reconcile + scan
+    expect(TREEDIFF).toMatch(/help: 'The overview of the compare trio/);
+    expect(TREEDIFF).toMatch(/help: '[^']*Reconcile/);
+    // Ring = source of truth + reading-not-live-state honesty
+    expect(RING).toMatch(/help: '[^']*a reading, not live state/);
+  });
+
+  it('the deployment-card buttons carry the measure/fix/overview story', () => {
+    expect(PROFILES).toContain('MEASURE this pair');
+    expect(PROFILES).toContain('FIX this source → target pair');
+    expect(PROFILES).toContain("The OVERVIEW: this deployment's whole record tree");
+  });
+});

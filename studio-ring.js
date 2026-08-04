@@ -52,6 +52,7 @@ function renderRing() {
       icon: 'repeat',
       title: 'Sync Ring',
       subtitle: 'One source of truth → every ring org. Scan to see drift; fan out to fix it.',
+      help: 'One org is the 👑 source of truth; every other ring org is measured against it. Matrix cells are root-object counts from each pair’s last 🔎 scan (missing · changed · only-in-target) — a reading, not live state. Fix one org with ⚖ Reconcile from its cell; preview a multi-org push with ▶ Sync Plan; deep-dive one deployment across all environments with 🌳 Tree diff.',
       // ring.orgs is the configured ring — the same array the configuration
       // panel below counts. Not "orgs known", not "orgs open".
       count: `${ring.orgs.length} org${ring.orgs.length !== 1 ? 's' : ''} in the ring`,
