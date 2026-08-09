@@ -29,6 +29,9 @@ window.openReconcile = function(profileId) {
 //   overwrite/updSrc per drift row, pull/del per target-only row.
 let _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
 let _recLastProfileId = null;
+// Auto-refresh guard: `${profileId}|${runId}` of the newest run already
+// re-scanned for — pins the run id so a failing scan can't refresh-loop.
+let _recAutoRefreshKey = '';
 // Child-aware reconcile (v2: children + grandchildren; Insert, Relink,
 // Overwrite drift, Delete extras). Selections and UI state are keyed by tree
 // pathKey ('0', '1', '0.1' for grandchildren, …).
@@ -153,6 +156,37 @@ async function renderReconcile() {
 
   // 🎯 — how trustworthy this scan's matching was (fields + confidence %).
   const _acc = (scanFresh && typeof sftkScanAccuracy === 'function') ? sftkScanAccuracy(scan) : null;
+
+  // A run ANYWHERE that touched either org of this pair AFTER the scan makes
+  // the stored buckets fiction — refresh WITHOUT being asked (user
+  // 2026-08-09: "i need to see the current state updates after every run").
+  // The stale view still paints first below so the page is never blank; the
+  // fresh scan re-renders over it when it lands.
+  if (scanFresh && scan.runAt) {
+    let staleRun = null;
+    try {
+      const okey = u => sftkOrgKey(u);
+      const pair = new Set([okey(p.sourceOrg), okey(p.targetOrg)]);
+      for (let i = (_history || []).length - 1; i >= 0; i--) {
+        const h = _history[i];
+        const done = h && (h.completedAt || h.startedAt);
+        if (done && done > scan.runAt &&
+            (pair.has(okey(h.sourceOrg)) || pair.has(okey(h.targetOrg)))) { staleRun = h; break; }
+      }
+    } catch (_) { staleRun = null; }
+    if (staleRun && _recAutoRefreshKey !== `${p.id}|${staleRun.id}`) {
+      _recAutoRefreshKey = `${p.id}|${staleRun.id}`;
+      showToast('↻ A run changed these orgs — refreshing state…', 'info', 2500);
+      (async () => {
+        try {
+          await window.refreshProfileState(p.id);
+          const _fp = _profiles.find(x => x.id === p.id);
+          if (_fp) _reconcileProfile = _fp;
+          if (_recLastProfileId === p.id) renderReconcile();
+        } catch (_) { /* the stale view stays up — the 🔄 button still works */ }
+      })();
+    }
+  }
 
   // Header with back link + refresh.
   const headerHtml = dsViewHeader({
