@@ -1040,6 +1040,61 @@ function renderMatchFieldSelect(refObj, currentMatchField, fieldName, pathKey) {
   return `<select class="ds-select-sm ds-lkp-match-select" ${dataAttrs}>${options}</select>`;
 }
 
+// 🔍 Parent alignment check from the Builder (user 2026-08-10). Ephemeral
+// scan of the parent object across the deployment's org pair; verdict in a
+// modal so the Builder's unsaved in-memory edits are never blown away. The
+// north star this serves: every org aligned to the source of truth —
+// parents must align BEFORE children can.
+async function bldCompareParent(refObj, btn) {
+  const p = _editingProfile;
+  if (!p?.sourceOrg || !p?.targetOrg) {
+    showToast('Set this deployment’s source and target orgs first — the compare needs the pair', 'warning', 4500);
+    return;
+  }
+  const prev = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ scanning…'; }
+  try {
+    const eph = {
+      id: `gap_${Date.now()}`,
+      name: `${refObj} — parents first`,
+      sourceOrg: p.sourceOrg, targetOrg: p.targetOrg,
+      ephemeral: true,
+      scanConfig: { matchField: 'Name', compareFields: [] },
+      tree: { objectType: refObj, where: '', children: [] },
+    };
+    const res = await runDiffScan(eph);
+    if (res?.error) { showToast(`Scan failed: ${res.error}`, 'error', 6000); return; }
+    eph.lastScan = res;
+    const nMiss = (res.missingInTarget || []).length;
+    const nChg  = (res.changed || []).length;
+    const nExt  = (res.onlyInTarget || []).length;
+    const nSame = (res.identical || []).length;
+    const aligned = !nMiss && !nChg;
+    showModal(`
+      <div class="ds-modal-hdr">🔍 ${esc(refObj)} — ${esc(orgLabel(p.sourceOrg))} → ${esc(orgLabel(p.targetOrg))}</div>
+      <div style="padding:14px 16px; font-size:13px; line-height:1.7">
+        ${aligned
+          ? `<div style="font-weight:600; color:#067647">✓ Parents aligned — ${nSame} record(s) match${nExt ? `, ${nExt} extra in target (review if unexpected)` : ''}. Safe to deploy objects that point at ${esc(refObj)}.</div>`
+          : `<div style="font-weight:600; color:#b45309">Not aligned yet:</div>
+             <div>🔴 ${nMiss} missing in target · 🟡 ${nChg} changed · 🔵 ${nExt} only in target · 🟢 ${nSame} in sync</div>
+             <div style="margin-top:6px">Fix these BEFORE deploying — lookups pointing at missing/drifted parents land empty or wrong.</div>`}
+        <div style="margin-top:12px; display:flex; gap:8px; align-items:center">
+          ${aligned ? '' : `<button class="ds-btn ds-btn-sm ds-btn-primary" id="bldParentCmpOpen">⚖ Open Reconcile to fix</button>`}
+          <button class="ds-btn ds-btn-sm" id="bldParentCmpClose">Close</button>
+          ${aligned ? '' : `<span style="font-size:11px; color:var(--subtext)">unsaved Builder edits stay in memory — 💾 Save first if you want them persisted</span>`}
+        </div>
+      </div>`);
+    eid('bldParentCmpClose')?.addEventListener('click', closeModal);
+    eid('bldParentCmpOpen')?.addEventListener('click', () => {
+      closeModal();
+      _reconcileProfile = eph;
+      renderReconcile();
+    });
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = prev; }
+  }
+}
+
 // Render the full Lookup Resolution section for a tree node
 function renderLookupSection(node, pathKey) {
   const resolvable = getResolvableReferenceFields(node);
@@ -1078,6 +1133,8 @@ function renderLookupSection(node, pathKey) {
         <option value="match" ${effectiveStrategy === 'match' ? 'selected' : ''}>🔍 Match by field</option>
       </select>
       ${effectiveStrategy === 'match' ? matchSelHtml : ''}${hintHtml}
+      <button class="ds-btn ds-btn-xs ds-lkp-parentcmp" data-lkp-parentcmp="${esc(refObj)}"
+        title="Scan ${esc(refObj)} across this deployment's org pair RIGHT NOW and see whether the parents are aligned — missing or drifted parents there are exactly what makes lookups on ${esc(node.objectType || node.childSObject || 'this object')} land empty. Fix them first, then deploy this object.">🔍 compare parents</button>
     </div>`;
   });
 
@@ -1405,6 +1462,16 @@ function wireTreeEvents() {
       if (sel.value === 'match') loadRefObjectFields(ref);
       refreshTree();
     });
+  });
+
+  // 🔍 compare parents (user 2026-08-10: "we dont offer it here… when
+  // selecting the root") — the parents are VISIBLE right here the moment a
+  // root is picked, so the alignment check lives here too. Scans the parent
+  // object across the pair and reports in a MODAL (never navigates away —
+  // the Builder holds unsaved in-memory edits); the modal's CTA opens the
+  // full Reconcile for a conscious jump.
+  area.querySelectorAll('[data-lkp-parentcmp]').forEach(btn => {
+    btn.addEventListener('click', () => bldCompareParent(btn.dataset.lkpParentcmp, btn));
   });
 
   // Match-field select (or text input fallback) — update without full re-render
