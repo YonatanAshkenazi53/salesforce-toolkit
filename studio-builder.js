@@ -1076,9 +1076,9 @@ async function bldCompareParent(refObj, btn) {
     // Feed the session sync map so the row chip (and the reconcile panel)
     // SHOW this verdict from now on.
     try {
-      _parentSyncVerdicts[sftkParentSyncKey(p.sourceOrg, p.targetOrg, refObj)] = {
+      sftkParentSyncPut(p.sourceOrg, p.targetOrg, refObj, {
         missing: nMiss, changed: nChg, extra: nExt, at: res.runAt || new Date().toISOString(),
-      };
+      });
       sftkBldFillParentSync();
     } catch (_) { /* advisory map only */ }
     const aligned = !nMiss && !nChg;
@@ -1112,9 +1112,10 @@ async function bldCompareParent(refObj, btn) {
 // come from any reconcile scan of that object on this org pair — including
 // the parents-first flow the user just ran. No probe, no cost: it shows
 // what the session already learned; blank until a scan has run.
-function sftkBldFillParentSync() {
+async function sftkBldFillParentSync() {
   const p = _editingProfile;
   if (!p?.sourceOrg || !p?.targetOrg) return;
+  try { await sftkParentSyncLoad(); } catch (_) {}   // persisted verdicts survive reloads
   document.querySelectorAll('[data-lkp-syncstate]').forEach(elm => {
     let vd = null;
     try { vd = _parentSyncVerdicts[sftkParentSyncKey(p.sourceOrg, p.targetOrg, elm.dataset.lkpSyncstate)]; } catch (_) { vd = null; }
