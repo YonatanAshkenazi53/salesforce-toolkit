@@ -1931,10 +1931,27 @@ const FieldCleaner = (() => {
 
   // ── Fix individual flow ────────────────────────────────────
   async function fixOne(type, componentId, componentName, fieldId) {
+    const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
+    // W6 (user 2026-08-05: "ask before any delete operation") — ✂ Remove
+    // DEPLOYS metadata on one click, and for flows also permanently DELETES
+    // old versions that still reference the field. Confirm first, stating
+    // exactly what will happen; flows get the deliberate checkbox because
+    // deleted flow versions cannot be restored.
+    const sure = await sftkConfirmDestructive({
+      title: `Remove field reference — ${cfg.label || type}`,
+      items: [{ label: componentName, sub: type }],
+      revOverride: {
+        html: type === 'Flow'
+          ? '⚠ <strong>Deploys and activates a new flow version</strong> with the reference removed, and <strong>permanently deletes old versions</strong> that still reference the field (Salesforce holds the dependency lock per version). Deleted flow versions cannot be restored.'
+          : `✏ ${cfg.note || 'The field reference is removed from this component.'} The change deploys immediately; there is no undo besides re-adding the field by hand.`,
+        needsCheckbox: type === 'Flow',
+      },
+      confirmLabel: '✂ Remove reference',
+    });
+    if (!sure) return;
+
     const btn = document.querySelector(`.fc-fix-btn[data-id="${componentId}"]`);
     if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
-
-    const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
     try {
       let label = cfg.doneLabel || '✅ Done';
       let doneLinks = '';
