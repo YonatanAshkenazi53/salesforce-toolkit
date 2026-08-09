@@ -1558,13 +1558,23 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
 
         const matched = (tgtLookup.records || []).length;
         const total   = anchorValues.length;
+        // W2 — 🔗 hand-picks bypass this bridge per record, so a probe that
+        // ignores them OVERSTATES "will be null". Disclose rather than
+        // re-compute: the probe is a 50-row sample, picks are per-record
+        // surgery, and mixing the two would fake precision.
+        let pickNote = '';
+        if (typeof sftkLkpOvBucket === 'function') {
+          const bkt = sftkLkpOvBucket(node, tgtSess.orgUrl);
+          const nPicks = bkt ? Object.values(bkt).filter(r2 => r2 && r2[fieldName]).length : 0;
+          if (nPicks) pickNote = ` · ${nPicks} record(s) carry a 🔗 hand-pick for this lookup and skip matching entirely`;
+        }
         if (matched === 0) {
-          logRow('❌', `  ${fieldName} → ${res.matchObject}.${res.matchField}: no matches found in target — all will be null`, 'ds-prog-err');
+          logRow('❌', `  ${fieldName} → ${res.matchObject}.${res.matchField}: no matches found in target — all will be null${pickNote}`, 'ds-prog-err');
           issues++;
         } else if (matched < total) {
-          logRow('⚠️', `  ${fieldName} → ${res.matchObject}.${res.matchField}: ${matched}/${total} sampled values found in target — some will be null`, 'ds-prog-warn');
+          logRow('⚠️', `  ${fieldName} → ${res.matchObject}.${res.matchField}: ${matched}/${total} sampled values found in target — some will be null${pickNote}`, 'ds-prog-warn');
         } else {
-          logRow('✅', `  ${fieldName} → ${res.matchObject}.${res.matchField}: all ${total} sampled values resolve in target ✓`);
+          logRow('✅', `  ${fieldName} → ${res.matchObject}.${res.matchField}: all ${total} sampled values resolve in target ✓${pickNote}`);
         }
       }
     }
