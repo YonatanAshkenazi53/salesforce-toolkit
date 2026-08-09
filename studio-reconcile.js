@@ -2104,8 +2104,27 @@ async function runReconcile(profile, objType, buckets) {
   if (counts.deleted)       toastParts.push(`${counts.deleted} deleted`);
   const toastMsg = `Reconcile: ${toastParts.join(' · ') || 'no actions'}` +
     (totalFail ? ` · ${totalFail} failed` : '');
-  showToast(toastMsg, totalFail ? 'warning' : 'success', 4500);
+  // TOTAL failure must be unmissable — the user ran 401 doomed inserts and
+  // walked away believing they succeeded (2026-08-09). toastParts only gets
+  // entries for non-zero success counts, so empty + failures = nothing landed.
+  if (!toastParts.length && totalFail) {
+    showToast(`Nothing was written — all ${totalFail} action(s) failed. The run log above has the first error per record; fix the cause and run again.`, 'error', 9000);
+  } else {
+    showToast(toastMsg, totalFail ? 'warning' : 'success', 4500);
+  }
   try { recPort?.disconnect(); } catch (_) {}
+  // Re-scan so the buckets reflect what ACTUALLY happened (user: records
+  // "not deducted from the view" — the old render replayed the PRE-run
+  // scan). This also makes the columns the RETRY QUEUE for leftovers:
+  // whatever failed is still missing/drifted, stays listed, and re-seeds
+  // selected — running again IS the retry.
+  try {
+    await window.refreshProfileState(profile.id);
+    const _fp = _profiles.find(x => x.id === profile.id);
+    if (_fp) _reconcileProfile = _fp;
+    _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
+    _recChildSel = {};
+  } catch (_) { /* stale view is still better than no view */ }
   renderReconcile();
 }
 
@@ -2670,47 +2689,54 @@ async function renderLkpOverridePanel(p, objType, srcId, host, tgtRecId) {
                : (id != null && id !== '') ? String(id) : null;
     return { text, id };
   };
-  const valHtml = (side, orgUrl, rec, f, title) => {
+  const valHtml = (orgUrl, rec, f, title) => {
     const v = valOf(rec, f);
     const label = v.text == null ? '∅ empty' : v.text;
-    const inner = v.id
-      ? `<a href="${esc(recHref(orgUrl, v.id))}" target="_blank" rel="noopener" class="ds-lkp-vallink" title="${esc(title)} — click to open the record in ${esc(orgLabel(orgUrl || ''))}">${esc(label)}</a>`
-      : esc(label);
-    return `<span class="ds-lkp-src">${side} → ${inner}</span>`;
+    return v.id
+      ? `<a href="${esc(recHref(orgUrl, v.id))}" target="_blank" rel="noopener" class="ds-lkpo-vallink" title="${esc(title)} — click to open the record in ${esc(orgLabel(orgUrl || ''))}">${esc(label)}</a>`
+      : `<span class="ds-lkpo-valempty">${esc(label)}</span>`;
   };
   const rowsHtml = refs.map(f => {
     const refObjs = f.referenceTo || [];
     const picked = cur[f.name];
     const pickedNm = picked ? (_lkpNameCache.get(picked) || picked) : null;
     const sv = valOf(srcRec, f), tv = valOf(tgtRec, f);
-    const differs = tgtRec && String(sv.text ?? '') !== String(tv.text ?? '');
-    return `<div class="ds-lkp-row" data-lkp-field="${esc(f.name)}" data-lkp-objs="${esc(refObjs.join(','))}">
-      <span class="ds-lkp-field" title="${esc(f.name)}">${esc(f.label || f.name)}<span class="ds-lkp-type">Lookup(${esc(refObjs.join('/'))})</span></span>
-      <span class="ds-lkp-vals${differs ? ' ds-lkp-vals-diff' : ''}">
-        ${valHtml('src', p.sourceOrg, srcRec, f, 'What the SOURCE record points at right now')}
-        ${tgtRecId ? valHtml('tgt', p.targetOrg, tgtRec, f, 'What the TARGET record points at right now — an overwrite/pick changes this') : ''}
-        ${differs ? `<span class="ds-lkp-diffchip" title="The two orgs point at different related records — this is the drift">≠</span>` : ''}
-      </span>
-      <span class="ds-lkp-pick">
+    const differs = !!tgtRec && String(sv.text ?? '') !== String(tv.text ?? '');
+    const same    = !!tgtRec && !differs;
+    return `<div class="ds-lkpo-row${differs ? ' ds-lkpo-row-diff' : ''}" data-lkp-field="${esc(f.name)}" data-lkp-objs="${esc(refObjs.join(','))}">
+      <div class="ds-lkpo-hd">
+        <span class="ds-lkpo-field" title="${esc(f.name)}">${esc(f.label || f.name)}</span>
+        <span class="ds-lkpo-type">Lookup(${esc(refObjs.join('/'))})</span>
+        ${differs ? `<span class="ds-lkpo-diffchip" title="The two orgs point at different related records — this is the drift an overwrite or a hand-pick fixes">≠ differs</span>` : ''}
+        ${same ? `<span class="ds-lkpo-samechip" title="Both orgs point at the same related record (by name)">= in sync</span>` : ''}
+      </div>
+      <div class="ds-lkpo-valgrid">
+        <span class="ds-lkpo-sidetag" title="What the SOURCE record points at right now">SRC</span>
+        <span class="ds-lkpo-val">${valHtml(p.sourceOrg, srcRec, f, 'What the SOURCE record points at right now')}</span>
+        ${tgtRecId ? `
+        <span class="ds-lkpo-sidetag ds-lkpo-sidetag-tgt" title="What the TARGET record points at right now — an overwrite or pick changes this">TGT</span>
+        <span class="ds-lkpo-val">${valHtml(p.targetOrg, tgtRec, f, 'What the TARGET record points at right now')}</span>` : ''}
+      </div>
+      <span class="ds-lkpo-pick">
         ${picked
-          ? `<span class="ds-lkp-chip" title="Hand-picked target record (${esc(picked)}) — for THIS record in ${esc(orgLabel(p.targetOrg || ''))} the engine writes this exact Id, beating name-matching.">→ <a href="${esc(recHref(p.targetOrg, picked))}" target="_blank" rel="noopener" class="ds-lkp-vallink" title="Open the picked record in ${esc(orgLabel(p.targetOrg || ''))}">${esc(pickedNm)}</a> <button class="ds-lkp-clear" data-lkp-clear="${esc(f.name)}" title="Remove the pick — the engine falls back to matching by name">✕</button></span>`
-          : `${refObjs.length > 1 ? `<select class="ds-lkp-objsel" title="Polymorphic lookup — pick which object to search">${refObjs.map(o => `<option>${esc(o)}</option>`).join('')}</select>` : ''}
-             <input type="text" class="ds-lkp-search" data-lkp-search="${esc(f.name)}" placeholder="🔍 search ${esc(refObjs[0] || '')} in ${esc(orgLabel(p.targetOrg || 'target'))}…">
-             <div class="ds-lkp-results" style="display:none"></div>`}
+          ? `<span class="ds-lkpo-chip" title="Hand-picked target record (${esc(picked)}) — for THIS record in ${esc(orgLabel(p.targetOrg || ''))} the engine writes this exact Id, beating name-matching.">→ <a href="${esc(recHref(p.targetOrg, picked))}" target="_blank" rel="noopener" class="ds-lkpo-vallink" title="Open the picked record in ${esc(orgLabel(p.targetOrg || ''))}">${esc(pickedNm)}</a> <button class="ds-lkpo-clear" data-lkp-clear="${esc(f.name)}" title="Remove the pick — the engine falls back to matching by name">✕</button></span>`
+          : `${refObjs.length > 1 ? `<select class="ds-lkpo-objsel" title="Polymorphic lookup — pick which object to search">${refObjs.map(o => `<option>${esc(o)}</option>`).join('')}</select>` : ''}
+             <input type="text" class="ds-lkpo-search" data-lkp-search="${esc(f.name)}" placeholder="🔍 search ${esc(refObjs[0] || '')} in ${esc(orgLabel(p.targetOrg || 'target'))}…">
+             <div class="ds-lkpo-results" style="display:none"></div>`}
       </span>
     </div>`;
   }).join('');
-  host.innerHTML = `<div class="ds-lkp-panel">
-    <div class="ds-lkp-hdr" title="Hand-pick the exact target record each lookup should point at AFTER deploy — per record, per target org. Picks are saved on the deployment (never exported) and beat name-matching in the engine.">🔗 Lookup targets for this record <span class="ds-lkp-hdr-sub">saved per target org · overrides name-matching</span></div>
+  host.innerHTML = `<div class="ds-lkpo-panel">
+    <div class="ds-lkpo-hdr" title="Hand-pick the exact target record each lookup should point at AFTER deploy — per record, per target org. Picks are saved on the deployment (never exported) and beat name-matching in the engine.">🔗 Lookup targets for this record <span class="ds-lkpo-hdr-sub">saved per target org · overrides name-matching</span></div>
     ${rowsHtml}</div>`;
 
   host.querySelectorAll('[data-lkp-search]').forEach(inp => {
-    const row = inp.closest('.ds-lkp-row');
-    const res = row.querySelector('.ds-lkp-results');
+    const row = inp.closest('.ds-lkpo-row');
+    const res = row.querySelector('.ds-lkpo-results');
     let timer = null;
     const run = async () => {
       const term = inp.value.trim();
-      const obj = row.querySelector('.ds-lkp-objsel')?.value || (row.dataset.lkpObjs || '').split(',')[0];
+      const obj = row.querySelector('.ds-lkpo-objsel')?.value || (row.dataset.lkpObjs || '').split(',')[0];
       if (!obj) return;
       res.style.display = 'block';
       res.innerHTML = `<div class="ds-drift-compare-loading">Searching…</div>`;
@@ -2720,7 +2746,7 @@ async function renderLkpOverridePanel(p, objType, srcId, host, tgtRecId) {
       if (r?.error) { res.innerHTML = `<div class="ds-drift-compare-err">⚠ ${esc(r.error)}</div>`; return; }
       const recs = r?.records || [];
       res.innerHTML = recs.length
-        ? recs.map(x => `<button class="ds-lkp-hit" data-lkp-hit="${esc(x.Id)}" title="${esc(x.Id)}">${esc(x.Name != null ? x.Name : x.Id)}</button>`).join('')
+        ? recs.map(x => `<button class="ds-lkpo-hit" data-lkp-hit="${esc(x.Id)}" title="${esc(x.Id)}">${esc(x.Name != null ? x.Name : x.Id)}</button>`).join('')
         : `<div class="ds-drift-compare-empty">No ${esc(obj)} record matches ${term ? `“${esc(term)}”` : 'that'} in the target.</div>`;
       res.querySelectorAll('[data-lkp-hit]').forEach(b => b.addEventListener('click', async () => {
         const field = row.dataset.lkpField;

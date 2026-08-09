@@ -5971,29 +5971,58 @@ body.ds-pro {
 .ds-dark .ds-pii-sug-null { background: #3a2e10; color: #fcd34d; }
 .ds-pii-sug-legend { font-size: 11px; color: var(--subtext); margin-right: auto; }
 
-/* ── W2-UI — 🔗 per-record lookup override panel (Reconcile) ──────────── */
+/* ── W2-UI — 🔗 per-record lookup override panel (Reconcile) ────────────
+   ds-lkpo-* namespace — ds-lkp-* belongs to the BUILDER's lookup-resolution
+   section (line ~1194) and the earlier shared names leaked between the two.
+   Layout: one card per lookup — header line (field · type · ≠/= chip),
+   aligned SRC/TGT value grid, then the pick chip or target-org search. */
 .ds-lkp-on { color: var(--brand); font-weight: 700; }
-.ds-lkp-panel { padding: 2px 0 4px; }
-.ds-lkp-hdr { font-size: 11.5px; font-weight: 600; margin: 2px 0 4px; }
-.ds-lkp-hdr-sub { font-weight: 400; color: var(--subtext); margin-left: 6px; font-size: 10.5px; }
-.ds-lkp-row { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; border-top: 1px solid var(--border-light); flex-wrap: wrap; }
-.ds-lkp-field { min-width: 150px; max-width: 220px; font-size: 11.5px; font-weight: 600; overflow-wrap: anywhere; }
-.ds-lkp-type { display: block; font-size: 10px; color: var(--subtext); font-weight: 400; }
-.ds-lkp-src { font-size: 11px; color: var(--subtext); min-width: 130px; max-width: 220px; overflow-wrap: anywhere; padding-top: 1px; }
-.ds-lkp-pick { flex: 1; min-width: 200px; }
-.ds-lkp-search { width: 100%; box-sizing: border-box; font-size: 11.5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
-.ds-lkp-results { margin-top: 4px; border: 1px solid var(--border); border-radius: 6px; max-height: 180px; overflow-y: auto; background: var(--surface); }
-.ds-lkp-hit { display: block; width: 100%; text-align: left; font-size: 11.5px; padding: 5px 8px; border: 0; background: transparent; color: var(--text); cursor: pointer; overflow-wrap: anywhere; }
-.ds-lkp-hit:hover { background: var(--brand-bg); }
-.ds-lkp-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; padding: 3px 9px; border-radius: 999px; background: #ecfdf3; color: #067647; border: 1px solid #abefc6; overflow-wrap: anywhere; }
-.ds-dark .ds-lkp-chip { background: #10281c; color: #75dfa6; border-color: #1f5138; }
-.ds-lkp-clear { border: 0; background: transparent; cursor: pointer; color: inherit; font-size: 11px; padding: 0 1px; line-height: 1; }
-.ds-lkp-clear:hover { color: #b42318; }
-.ds-lkp-objsel { font-size: 11.5px; margin-bottom: 4px; max-width: 100%; }
-.ds-lkp-vals { display: flex; flex-direction: column; gap: 2px; min-width: 150px; max-width: 240px; }
-.ds-lkp-vals-diff .ds-lkp-src { font-weight: 600; }
-.ds-lkp-diffchip { font-size: 11px; color: #b45309; font-weight: 700; }
-.ds-lkp-vallink { color: var(--brand); text-decoration: none; }
-.ds-lkp-vallink:hover { text-decoration: underline; }
+.ds-lkpo-panel { padding: 4px 0 6px; }
+.ds-lkpo-hdr { font-size: 11.5px; font-weight: 700; margin: 2px 0 8px; letter-spacing: .02em; }
+.ds-lkpo-hdr-sub { font-weight: 400; color: var(--subtext); margin-left: 6px; font-size: 10.5px; letter-spacing: 0; }
+.ds-lkpo-row {
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 8px 10px 9px;
+  margin: 6px 0;
+  background: var(--surface);
+}
+.ds-lkpo-row-diff { border-left: 3px solid #f59e0b; background: rgba(254, 243, 199, 0.22); }
+.ds-dark .ds-lkpo-row-diff { background: rgba(120, 85, 12, 0.14); }
+.ds-lkpo-hd { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; margin-bottom: 5px; }
+.ds-lkpo-field { font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
+.ds-lkpo-type { font-size: 9.5px; color: var(--subtext); background: var(--surface2); border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
+.ds-lkpo-diffchip { font-size: 9.5px; font-weight: 700; color: #b45309; background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
+.ds-dark .ds-lkpo-diffchip { color: #fbbf24; }
+.ds-lkpo-samechip { font-size: 9.5px; font-weight: 600; color: #067647; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.32); border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
+.ds-dark .ds-lkpo-samechip { color: #6ee7b7; }
+.ds-lkpo-valgrid {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  column-gap: 8px;
+  row-gap: 3px;
+  align-items: baseline;
+  margin-bottom: 6px;
+  font-size: 11.5px;
+}
+.ds-lkpo-sidetag {
+  font-size: 8.5px; font-weight: 800; letter-spacing: .08em; text-align: center;
+  color: var(--subtext); background: var(--surface2); border-radius: 4px; padding: 2px 0;
+}
+.ds-lkpo-sidetag-tgt { color: var(--brand); }
+.ds-lkpo-val { overflow-wrap: anywhere; }
+.ds-lkpo-valempty { color: var(--subtext); font-style: italic; }
+.ds-lkpo-vallink { color: var(--brand); text-decoration: none; font-weight: 600; }
+.ds-lkpo-vallink:hover { text-decoration: underline; }
+.ds-lkpo-pick { display: block; }
+.ds-lkpo-search { width: 100%; box-sizing: border-box; font-size: 11.5px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+.ds-lkpo-results { margin-top: 4px; border: 1px solid var(--border); border-radius: 6px; max-height: 180px; overflow-y: auto; background: var(--surface); }
+.ds-lkpo-hit { display: block; width: 100%; text-align: left; font-size: 11.5px; padding: 5px 9px; border: 0; background: transparent; color: var(--text); cursor: pointer; overflow-wrap: anywhere; }
+.ds-lkpo-hit:hover { background: var(--brand-bg); }
+.ds-lkpo-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; padding: 3px 10px; border-radius: 999px; background: #ecfdf3; color: #067647; border: 1px solid #abefc6; overflow-wrap: anywhere; }
+.ds-dark .ds-lkpo-chip { background: #10281c; color: #75dfa6; border-color: #1f5138; }
+.ds-lkpo-clear { border: 0; background: transparent; cursor: pointer; color: inherit; font-size: 11px; padding: 0 1px; line-height: 1; }
+.ds-lkpo-clear:hover { color: #b42318; }
+.ds-lkpo-objsel { font-size: 11.5px; margin-bottom: 4px; max-width: 100%; }
 #dsOledToggle { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; }
 .ds-oled-on { outline: 1.5px solid var(--brand); outline-offset: 1px; }
