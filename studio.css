@@ -1316,7 +1316,14 @@ html, body {
 .ds-pick-row:last-child { border-bottom: none; }
 .ds-pick-row:hover { background: var(--brand-bg); }
 .ds-pick-row input[type=checkbox] { flex-shrink: 0; accent-color: var(--brand); }
-.ds-pick-label { flex: 1; font-size: 12px; font-weight: 500; }
+.ds-pick-label {
+  flex: 1; min-width: 0; font-size: 12px; font-weight: 500;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
 .ds-pick-api {
   font-size: 10px;
   color: var(--subtext-lt);
@@ -2222,7 +2229,17 @@ html, body {
 }
 .ds-rec-col-row:hover { background: var(--brand-bg); }
 .ds-rec-col-row input[type=checkbox] { flex-shrink: 0; accent-color: var(--brand); }
-.ds-rec-col-key { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Long names/composite keys were single-line ellipsized with no way to
+   read the rest — records truncating identically were "impossible to pick"
+   (user 2026-08-05). Two clamped lines; the full value rides in title. */
+.ds-rec-col-key {
+  flex: 1; min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
 .ds-rec-drift-why {
   font-size: 10px; color: var(--subtext); font-style: italic;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

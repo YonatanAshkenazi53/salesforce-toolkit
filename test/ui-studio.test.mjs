@@ -713,3 +713,28 @@ describe('the root-object picker is a real combobox', () => {
     expect(BUILDER).toContain('Set Root still accepts a raw API name');
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// Long names stay pickable (user 2026-08-05: "we can't see long text
+// fields and long records names which makes them impossible to pick").
+// ══════════════════════════════════════════════════════════════════
+describe('reconcile/picker rows never hide a long name irretrievably', () => {
+  it('every reconcile key span carries the FULL value as a tooltip', () => {
+    const REC = read('studio-reconcile.js');
+    const plain = REC.match(/<span class="ds-rec-col-key">(?!.*title=)/g) || [];
+    expect(plain).toEqual([]);
+    expect(REC.match(/ds-rec-col-key" title="\$\{keyLbl\(r\.matchKey\)\}"/g)?.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('picker labels carry tooltips too', () => {
+    const MOD = read('studio-builder-modals.js');
+    expect(MOD).toMatch(/ds-pick-label" title="\$\{esc\(label\)\}/);
+    expect(MOD).toMatch(/ds-pick-label" title="\$\{esc\(lbl\)\}/);
+  });
+
+  it('keys clamp to two lines instead of one blind ellipsis', () => {
+    expect(CSS).toMatch(/\.ds-rec-col-key \{[^}]*-webkit-line-clamp: 2/s);
+    expect(CSS).toMatch(/\.ds-pick-label \{[^}]*-webkit-line-clamp: 2/s);
+    expect(CSS).toMatch(/\.ds-rec-col-key \{[^}]*word-break: break-word/s);
+  });
+});

@@ -272,7 +272,7 @@ async function renderReconcile() {
       const sel = _recSel[kind].has(id);
       return `<label class="ds-rec-col-row">
         <input type="checkbox" data-rec-kind="${kind}" data-rec-id="${esc(id)}" ${sel ? 'checked' : ''}>
-        <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
+        <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${keyLbl(r.matchKey)}</span>
         ${nearChip(r.nearMiss)}
         ${kind === 'overwrite' ? `<span class="ds-rec-drift-link" data-rec-drift="${esc(r.sourceId)}|${esc(r.targetId)}" title="See which fields differ">▸ fields</span>` : ''}
       </label>
@@ -318,7 +318,7 @@ async function renderReconcile() {
                   data-rec-driftdir="updSrc" data-rec-id="${esc(sid)}"
                   title="Update the SOURCE record with the target's values">←</button>
         </span>
-        <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
+        <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${keyLbl(r.matchKey)}</span>
         ${why}
         <span class="ds-rec-drift-link" data-rec-drift="${esc(r.sourceId)}|${esc(r.targetId)}" title="See which fields differ">▸ fields</span>
       </div>
@@ -366,7 +366,7 @@ async function renderReconcile() {
                   data-rec-extra="del" data-rec-id="${esc(tgtId)}"
                   title="Delete this record from the target org">🗑 Delete</button>
         </span>
-        <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
+        <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${keyLbl(r.matchKey)}</span>
       </div>`;
     }).join('');
     const pullCount = items.filter(r => _recSel.pull.has(r.targetId)).length;
@@ -454,7 +454,7 @@ async function renderReconcile() {
       const disabled = !!(r.parentSrcId && !pMissing && !pExists) || deepBlock;
       return `<label class="ds-rec-col-row ${disabled ? 'ds-rec-row-disabled' : ''}">
         <input type="checkbox" data-recc-push="${pathKey}" data-rec-id="${esc(r.sourceId)}" ${!disabled && sel.push.has(r.sourceId) ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
-        <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
+        <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${keyLbl(r.matchKey)}</span>
         ${nearChip(r.nearMiss)}
         ${pNote}
       </label>`;
@@ -470,7 +470,7 @@ async function renderReconcile() {
       return `<div class="ds-rec-col-row ds-rec-row-link">
         <button class="ds-rec-extra-btn ${on ? 'ds-rec-extra-on-push' : ''}" data-recc-relink="${pathKey}" data-rec-id="${esc(r.targetId)}" ${relinkBlocked ? 'disabled' : ''}
           title="${relinkBlocked ? relinkBlockTitle : `Update this target record so ${esc(node.field || 'its parent link')} points at the parent the source says it belongs to. This is a real update — the child's triggers/flows fire.`}">⇄ Relink</button>
-        <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
+        <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${keyLbl(r.matchKey)}</span>
         <span class="ds-rec-link-detail" title="currently → should be">${esc(r.parentKeyTgt || '∅')} → ${esc(r.parentKeySrc || '∅')}</span>
       </div>`;
     }).join('') || `<div class="ds-rec-col-empty">none</div>`;
@@ -485,7 +485,7 @@ async function renderReconcile() {
       return `<div class="ds-rec-col-row ds-rec-row-drift">
         <button class="ds-rec-extra-btn ${on ? 'ds-rec-extra-on-push' : ''}" data-recc-ovw="${pathKey}" data-rec-id="${esc(r.sourceId)}"
           title="Update the TARGET record with the source's values (fields from this node's field mapping)">→</button>
-        <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
+        <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${keyLbl(r.matchKey)}</span>
         ${why}
       </div>`;
     }).join('') || `<div class="ds-rec-col-empty">none</div>`;
@@ -499,7 +499,7 @@ async function renderReconcile() {
       return `<div class="ds-rec-col-row ds-rec-row-extra">
         <button class="ds-rec-extra-btn ${on ? 'ds-rec-extra-on-del' : ''}" data-recc-del="${pathKey}" data-rec-id="${esc(r.targetId)}"
           title="Delete this record from the target org (honors the Delete mode below)">🗑</button>
-        <span class="ds-rec-col-key">${keyLbl(r.matchKey)}</span>
+        <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${keyLbl(r.matchKey)}</span>
         ${r.orphan ? `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="Its ${esc(node.field || 'link')} field is empty in the target — a prior partial run may have created it, then failed to reconnect it. ⇄ Relink can re-attach it to the right parent instead of deleting. Excluded from '🗑 All' — select it individually if you're sure.">⚠ orphan</span>` : ''}
       </div>`;
     }).join('') || `<div class="ds-rec-col-empty">none</div>`;
