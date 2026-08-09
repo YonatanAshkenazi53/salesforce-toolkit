@@ -1156,7 +1156,7 @@ async function openRecordPickerModal(pathStr) {
                 return `<div class="ds-pick-row-container">
                   <label class="ds-pick-row${rowCls}">
                     <input type="checkbox" value="${esc(r.Id)}" ${selected.has(r.Id) ? 'checked' : ''}>
-                    <span class="ds-pick-label">${esc(label)}</span>
+                    <span class="ds-pick-label" title="${esc(label)}${sub ? ` — ${esc(sub)}` : ''}">${esc(label)}</span>
                     ${badgeHtml}
                     ${sub ? `<span class="ds-pick-api ds-pick-id">${esc(sub)}</span>` : ''}
                   </label>
@@ -1649,7 +1649,7 @@ async function openTransferRecordFilterModal(pathKey, objType) {
                   const sub = displayField && r[displayField] ? r.Id : '';
                   return `<label class="ds-pick-row">
                     <input type="checkbox" value="${esc(r.Id)}" ${selected.has(r.Id) ? 'checked' : ''}>
-                    <span class="ds-pick-label">${esc(lbl)}</span>
+                    <span class="ds-pick-label" title="${esc(lbl)}">${esc(lbl)}</span>
                     ${sub ? `<span class="ds-pick-api ds-pick-id">${esc(sub)}</span>` : ''}
                   </label>`;
                 }).join('')}
