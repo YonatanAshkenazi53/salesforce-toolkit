@@ -181,6 +181,33 @@ async function saveProfile() {
 // Backward compat: if a profile has the old scanConfig values set explicitly,
 // they still take effect — we don't want to silently change behavior for
 // existing profiles that had custom config.
+// PURE — the field pairs a scan must COMPARE (and Overwrite must WRITE) to
+// be honest about what a RUN does. Mirrors the engine's buildCopyFields
+// semantics: fieldMappings is an EXCLUDE/RENAME overlay (null = excluded,
+// ''/absent = copy under the same name) and the engine copies EVERY
+// createable field — so comparing only the mapping's keys let drift in any
+// unmapped field pass as "in sync" (user 2026-08-05: changed records "not
+// captured by the engine"). Reference fields are left OUT here: lookups
+// compare through the resolution plan (org-local Ids never match), and
+// base64/address/location shapes can't be value-diffed honestly.
+function sftkEngineCompareSet(describeFields, fieldMappings) {
+  const SKIP = new Set(['Id', 'CreatedDate', 'LastModifiedDate', 'SystemModstamp',
+    'CreatedById', 'LastModifiedById', 'IsDeleted', 'OwnerId',
+    'LastActivityDate', 'LastViewedDate', 'LastReferencedDate',
+    'MasterRecordId', 'IsArchived']);
+  const fm = fieldMappings || {};
+  const out = [];
+  for (const f of (describeFields || [])) {
+    if (!f || !f.name || SKIP.has(f.name)) continue;
+    if (!f.createable) continue;
+    if (f.type === 'reference' || f.type === 'base64' || f.type === 'address' || f.type === 'location') continue;
+    if (fm[f.name] === null) continue;
+    const tgt = (fm[f.name] && fm[f.name] !== '') ? fm[f.name] : f.name;
+    out.push({ srcField: f.name, tgtField: tgt });
+  }
+  return out;
+}
+
 function deriveScanConfig(profile, node) {
   const legacyMatch   = profile?.scanConfig?.matchField;
   const legacyCompare = (profile?.scanConfig?.compareFields || []).filter(Boolean);
@@ -729,6 +756,24 @@ async function runDiffScan(profile, node = null, scope = null) {
   const tgtTypes = new Map((tgtDescFull?.fields || []).map(f => [f.name, f.type]));
   const srcNameFld = (srcDescFull?.fields || []).find(f => f.nameField === true)?.name || null;
   const tgtNameFld = (tgtDescFull?.fields || []).find(f => f.nameField === true)?.name || null;
+
+  // W4 — expand the compare set to the ENGINE's copy set (see
+  // sftkEngineCompareSet). Without this, template profiles (all-'' mappings)
+  // compared NOTHING and any drift in an unmapped field was invisible. A
+  // legacy profile whose ONLY config is an explicit scanConfig.compareFields
+  // keeps its deliberate choice. The pair-validation and reference handling
+  // below apply to the expanded set unchanged.
+  const hasLegacyOnlyCompare = !Object.keys(node?.fieldMappings || {}).length
+    && (profile?.scanConfig?.compareFields || []).filter(Boolean).length > 0;
+  let compareExpanded = false;
+  if (!hasLegacyOnlyCompare && (srcDescFull?.fields || []).length) {
+    const enginePairs = sftkEngineCompareSet(srcDescFull.fields, node?.fieldMappings);
+    if (enginePairs.length) {
+      srcCompare = enginePairs.map(p => p.srcField);
+      tgtCompare = enginePairs.map(p => p.tgtField);
+      compareExpanded = true;
+    }
+  }
   if (!hasMatchingCfg) {
     // Legacy single-field path — silent nameField auto-correct (unchanged).
     if (srcTypes.size && !srcTypes.has(srcMatchField) && srcNameFld) { srcMatchField = srcNameFld; srcKeyFields = [srcMatchField]; }
@@ -1318,6 +1363,9 @@ async function runDiffScan(profile, node = null, scope = null) {
     },
     // M3a — rows excluded because every key component was blank.
     ...((_blankSrc + _blankTgt) ? { blankKeys: { rows: _blankSrc + _blankTgt, src: _blankSrc, tgt: _blankTgt } } : {}),
+    // W4 — what this scan actually compared: the engine copy set (expanded)
+    // or a legacy explicit list. Consumers can say "compared N fields".
+    ...(compareExpanded ? { compareExpanded: true } : {}),
     // Missing↔extra pairs whose keys differ only by whitespace/case — the
     // per-row detail rides on the rows themselves (row.nearMiss).
     ...(nearMissCount ? { nearMisses: nearMissCount } : {}),
