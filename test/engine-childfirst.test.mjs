@@ -176,6 +176,31 @@ describe('child-first + picked child records, end to end', () => {
     expect(diag).toContain('1 of 2');
   });
 
+  it('W1 CHILD-LEVEL UPSERT: a child node with node.upsert routes through sfCollectionsUpsert', async () => {
+    let upsertCalls = [];
+    globalThis.sfCollectionsUpsert = async (orgUrl, sid, objType, field, chunk) => {
+      upsertCalls.push([objType, field, chunk.map(r => ({ ...r }))]);
+      let i = 0;
+      return chunk.map(() => ({ success: true, id: 'NU' + (++i), created: false }));
+    };
+    const p = PROFILE();
+    delete p.tree.children[0].insertOrder;
+    p.tree.children[0].upsert = { field: 'Email' };
+    const result = await eng.executeProfileTransfer(p, SRC, 'SID_S', TGT, 'SID_T');
+
+    // Accounts still INSERT; Contacts went through upsert on Email.
+    const createOrder = calls.filter(([k]) => k === 'create').map(([, c]) => c[0]?.attributes?.type);
+    expect(createOrder).toEqual(['Account']);
+    expect(upsertCalls).toHaveLength(1);
+    expect(upsertCalls[0][0]).toBe('Contact');
+    expect(upsertCalls[0][1]).toBe('Email');
+    // the external-Id value rides in every record
+    for (const rec of upsertCalls[0][2]) expect(rec.Email).toMatch(/@x\.com$/);
+    expect(result.summary.Contact.viaUpsert).toBe('Email');
+    expect(result.summary.Contact.created).toBe(2);
+    expect(result.status).toBe('success');
+  });
+
   it('default order (no childFirst): parent first, child scoped to parents that made it, link present at insert', async () => {
     const p = PROFILE();
     delete p.tree.children[0].insertOrder;

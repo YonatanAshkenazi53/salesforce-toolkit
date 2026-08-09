@@ -492,11 +492,12 @@ describe('openFanOut write-mode claim', () => {
     return TRANSFER.slice(i, TRANSFER.indexOf('\n};', i) + 3);
   })();
 
-  it('claims INSERT — runFanOut sends the profile as saved, the Transfer-tab Upsert toggle never rides along', () => {
-    // The dialog previously displayed _transferWriteMode as "Write mode",
-    // promising upserts the engine never performed on fan-out.
-    expect(openFanOutSrc).toContain("const mode = 'insert'");
-    expect(openFanOutSrc).not.toMatch(/modeLabel = mode === 'upsert'/);
+  it('states the SAVED write behavior — per-node upserts ride, the Transfer-tab toggle never does', () => {
+    // The dialog once displayed _transferWriteMode as "Write mode",
+    // promising upserts the engine never performed on fan-out. W1: per-node
+    // upsert configs DO ride the saved profile, so the label counts them.
+    expect(openFanOutSrc).toContain('upsertNodeCount');
+    expect(openFanOutSrc).toMatch(/mode = \(p\.tree && p\.tree\.upsert && p\.tree\.upsert\.field\) \? 'upsert' : 'insert'/);
     expect(openFanOutSrc).toContain('applies to single-target runs only');
   });
 

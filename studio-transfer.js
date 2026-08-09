@@ -1119,6 +1119,11 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
     // run; what IS new is the `unchecked` counter, which lets a caller
     // refuse to call this target clean. Fix the message in a separate change.
     //
+    // W1 — say when a node UPSERTS: the single biggest behavior difference
+    // a run can have (re-runs update instead of duplicate).
+    if (node.upsert?.field) {
+      logRow('⬆', `${obj}: upserts on ${node.upsert.field} — records whose key already exists in the target are UPDATED, not duplicated.`);
+    }
     // A node lands in exactly ONE bucket: `checked` only when its target
     // describe was readable (pre-fix it got checked++ AND unchecked++, so
     // one describe-failed node inflated both counters at once).
@@ -2265,8 +2270,17 @@ window.openFanOut = async function (profileId, opts = {}) {
   // for single-target runs ONLY and does not ride along here. This dialog
   // used to display that toggle's mode, promising upserts the fan-out never
   // performed. Advice rows below get the same truth.
-  const mode = 'insert';
-  const modeLabel = 'Insert — always create; existing records are NOT updated'
+  // W1 — per-node upsert configs RIDE the saved profile into runFanOut, so
+  // the dialog states them; the Transfer tab's run-time toggle still never
+  // rides along. Advice tone follows the ROOT's behavior (ring scans are
+  // root-level).
+  const upsertNodeCount = (function cnt(n) {
+    return n ? ((n.upsert && n.upsert.field ? 1 : 0) + (n.children || []).reduce((s, c) => s + cnt(c), 0)) : 0;
+  })(p.tree);
+  const mode = (p.tree && p.tree.upsert && p.tree.upsert.field) ? 'upsert' : 'insert';
+  const modeLabel = (upsertNodeCount
+    ? `Insert + Upsert — ${upsertNodeCount} object(s) upsert on their External ID (existing records UPDATE; configured in 🎯 Pick Records)`
+    : 'Insert — always create; existing records are NOT updated')
     + ((typeof _transferWriteMode === 'string' && _transferWriteMode === 'upsert')
       ? ' (your Upsert setting on the Transfer tab applies to single-target runs only)' : '');
   const ownerLabel = p.ownerMapping?.mode === 'match'
