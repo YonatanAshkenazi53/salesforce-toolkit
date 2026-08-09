@@ -32,6 +32,10 @@ let _recLastProfileId = null;
 // Auto-refresh guard: `${profileId}|${runId}` of the newest run already
 // re-scanned for — pins the run id so a failing scan can't refresh-loop.
 let _recAutoRefreshKey = '';
+// ⛓ Parent-gap advisor cache — probe once per (profile, scan), reuse the
+// rendered banner on repaints so navigation doesn't re-query the target.
+let _recParentGapKey  = '';
+let _recParentGapHtml = '';
 // Child-aware reconcile (v2: children + grandchildren; Insert, Relink,
 // Overwrite drift, Delete extras). Selections and UI state are keyed by tree
 // pathKey ('0', '1', '0.1' for grandchildren, …).
@@ -741,6 +745,7 @@ async function renderReconcile() {
 
   setMain(`${headerHtml}
     ${_sessNote}
+    <div id="dsRecParentGaps"></div>
     <div class="ds-op-banner ds-op-banner-write">
       <span class="ds-op-banner-icon">⚖</span>
       <div class="ds-op-banner-body">
@@ -1015,6 +1020,10 @@ async function renderReconcile() {
 
   // T6 — 🎚 Fix in Picklist Manager buttons (root + every child section).
   sftkWirePicklistFixButtons();
+
+  // ⛓ Parent-gap advisor — recognizes tonight's 401-failure pattern before
+  // it happens and offers the fix as one click. Async; never blocks paint.
+  sftkRecParentGapAdvisor(p, scan, objType, missing);
 
   // ── Child section wiring ────────────────────────────────────────────
   document.querySelectorAll('[data-recc-toggle]').forEach(b => b.addEventListener('click', () => {
@@ -2620,6 +2629,86 @@ function sftkLkpRefFields(descFields) {
 // SOQL LIKE-literal escape: quote + backslash plus the LIKE wildcards.
 function sftkLkpSoqlLike(term) {
   return String(term || '').replace(/([\\'%_])/g, '\\$1');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// ⛓ PARENT-GAP ADVISOR (user 2026-08-09: "How can we suggest this operation
+// to the user if we recognize this pattern?"). The recognizable pattern:
+// the scanned object has a lookup whose referenced object has ZERO records
+// in the target org — every name-bridge must resolve nothing, and when the
+// field is also required in the target, every insert is doomed (tonight's
+// 401 × "Required field missing"). Probe once per scan (one LIMIT-1 query
+// per referenced object), cache the verdict, and offer the fix as ONE
+// CLICK: an ephemeral parents-first deployment on the same org pair,
+// opened straight in Reconcile with its missing records pre-selected (the
+// ring / tree-diff ephemeral recipe). Advisory only — any failure inside
+// leaves the page untouched.
+async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
+  const host = eid('dsRecParentGaps');
+  if (!host) return;
+  const key = `${p.id}|${scan.runAt}`;
+  const wire = () => host.querySelectorAll('[data-recgap]').forEach(b => b.addEventListener('click', async () => {
+    const refObj = b.dataset.recgap;
+    b.disabled = true; b.textContent = '⏳ scanning…';
+    const eph = {
+      id: `gap_${Date.now()}`,
+      name: `${refObj} — parents first`,
+      sourceOrg: p.sourceOrg, targetOrg: p.targetOrg,
+      ephemeral: true,
+      scanConfig: { matchField: 'Name', compareFields: [] },
+      tree: { objectType: refObj, where: '', children: [] },
+    };
+    const res = await runDiffScan(eph);
+    if (res?.error) {
+      showToast(`Scan failed: ${res.error}`, 'error', 6000);
+      b.disabled = false; b.textContent = `➕ Deploy ${refObj} first`;
+      return;
+    }
+    eph.lastScan = res;
+    _reconcileProfile = eph;
+    renderReconcile();
+    showToast(`Push these ${(res.missingInTarget || []).length} record(s), then head back — the ${objType} view refreshes itself after the run.`, 'info', 6500);
+  }));
+  // Same scan → same verdict; reuse the cached banner without re-probing.
+  if (_recParentGapKey === key) {
+    if (_recParentGapHtml) { host.innerHTML = _recParentGapHtml; wire(); }
+    return;
+  }
+  if (!(missing || []).length) return;   // nothing to insert → nothing doomed
+  _recParentGapKey = key; _recParentGapHtml = '';   // claim BEFORE awaiting (no double-probe)
+  try {
+    const all = _buildAllSessions();
+    const srcSess = _resolveSession(p.sourceOrg, all);
+    const tgtSess = _resolveSession(p.targetOrg, all);
+    if (!srcSess?.sid || !tgtSess?.sid) return;
+    const desc = await describe(objType, srcSess.orgUrl, srcSess.sid);
+    let tdesc = null;
+    try { tdesc = await describe(objType, tgtSess.orgUrl, tgtSess.sid); } catch (_) { tdesc = null; }
+    // Objects the profile itself deploys are the engine's job, not a gap.
+    const treeObjs = new Set([p.tree?.objectType,
+      ...(p.tree?.children || []).map(c => c.objectType || c.childSObject)].filter(Boolean));
+    const seen = new Set(); const gaps = [];
+    for (const f of sftkLkpRefFields(desc?.fields)) {
+      const refObj = (f.referenceTo || [])[0];
+      if (!refObj || treeObjs.has(refObj) || seen.has(refObj)) continue;
+      seen.add(refObj);
+      const probe = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+        _suppressError: true, query: `SELECT Id FROM ${refObj} LIMIT 1` });
+      if (probe?.error || (probe?.records || []).length) continue;   // has records (or unknowable) → not this gap
+      const tf = (tdesc?.fields || []).find(x => x.name === f.name);
+      gaps.push({ field: f.name, refObj, required: !!tf && tf.nillable === false });
+    }
+    if (!gaps.length) return;
+    _recParentGapHtml = `<div class="ds-op-banner" style="border-left:3px solid #f59e0b">
+      <span class="ds-op-banner-icon">⛓</span>
+      <div class="ds-op-banner-body">
+        <div class="ds-op-banner-title">Deploy the parent object${gaps.length > 1 ? 's' : ''} first</div>
+        ${gaps.map(g => `<div class="ds-op-banner-desc">${esc(objType)}.<strong>${esc(g.field)}</strong> points at <strong>${esc(g.refObj)}</strong>, but ${esc(orgLabel(p.targetOrg))} has <strong>no ${esc(g.refObj)} records at all</strong> — every lookup would land empty${g.required ? ', and the field is REQUIRED there, so every insert would FAIL' : ''}. <button class="ds-btn ds-btn-xs ds-btn-primary" data-recgap="${esc(g.refObj)}" title="Creates a ready-made ${esc(g.refObj)} deployment on this org pair (match by Name) and opens it here — push it, come back, run this one.">➕ Deploy ${esc(g.refObj)} first</button></div>`).join('')}
+      </div>
+    </div>`;
+    host.innerHTML = _recParentGapHtml;
+    wire();
+  } catch (_) { /* advisory only — never break the page */ }
 }
 
 // tgtId → Name, learned from picks + panel-open resolution this session —
