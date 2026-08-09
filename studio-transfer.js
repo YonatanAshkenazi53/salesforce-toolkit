@@ -414,6 +414,7 @@ async function renderTransfer() {
 
       <div class="ds-transfer-footer">
         <button class="ds-btn" id="dsTrPreviewBtn" title="Re-count the records in scope">👁 Refresh counts</button>
+        <button class="ds-btn" id="dsTrRecPreviewBtn" title="A record-by-record table of what this run will DO — every in-scope record with its operation (Insert / Update / duplicate warning), read from the last 🔄 scan.">📋 Records preview</button>
         <span id="dsTrValidHint" class="ds-tr-valid-hint"></span>
         <button class="ds-btn ds-btn-lg" id="dsTrValidateBtn" disabled
           title="Run every safety check — required fields, lookups, record types, child-first feasibility — without writing anything.">🧪 Validate (dry run)</button>
@@ -453,6 +454,7 @@ async function renderTransfer() {
     if (_transferProfile?.id) window.editProfile?.(_transferProfile.id);
   });
   eid('dsTrPreviewBtn')?.addEventListener('click', previewTransfer);
+  eid('dsTrRecPreviewBtn')?.addEventListener('click', openRunRecordsPreview);
   eid('dsTrRunBtn')?.addEventListener('click', runTransfer);
   // Validate = a one-off dry run, without touching the persistent checkbox.
   eid('dsTrValidateBtn')?.addEventListener('click', async () => {
@@ -1638,6 +1640,92 @@ async function sftkDryRunAgainst(profileTree, srcSess, tgtSess, log, ownerMappin
 
   await dryRunNode(profileTree);
   return { issues, checked, unchecked };
+}
+
+// PURE — the operation ONE record gets from this run, derived from its scan
+// state and whether its node upserts. Insert mode on an already-existing
+// record is named for what it is: a DUPLICATE.
+function sftkRunOpFor(state, hasUpsert) {
+  if (state === 'missing') return { op: '➕ Insert', cls: 'ds-diff-missing' };
+  if (hasUpsert) {
+    return state === 'changed'
+      ? { op: '✏ Update', cls: 'ds-diff-drift' }
+      : { op: '✏ Update (no changes)', cls: 'ds-diff-sync' };
+  }
+  return { op: '⚠ Insert — would DUPLICATE (exists in target)', cls: 'ds-diff-drift' };
+}
+
+// W5 (user 2026-08-04: "displaying a table of the records and child records
+// to be deployed could be cool along with the operation") — a per-record
+// table of what THIS run will do, read from the last scan. Point-in-time by
+// construction and says so; extras are omitted because a run never touches
+// them.
+function openRunRecordsPreview() {
+  const p = _transferProfile;
+  const scan = p?.lastScan;
+  const rootObj = p?.tree?.objectType;
+  const fresh = !!(scan && scan.status === 'success' && scan.objectType === rootObj
+    && (!scan.sourceOrg || scan.sourceOrg === p.sourceOrg)
+    && (!scan.targetOrg || scan.targetOrg === p.targetOrg));
+  if (!fresh) {
+    showModal(`<div class="ds-modal-header">📋 Records preview</div>
+      <div class="ds-modal-body">No fresh scan for this deployment — the preview reads the last 🔄 scan to know each record's state in the target. Run <strong>🔄 Refresh state</strong> on the deployment card, then reopen.</div>
+      <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Close</button></div>`);
+    return;
+  }
+  const ROW_CAP = 200;
+  const rootUpsert = (_transferWriteMode === 'upsert' && _transferUpsertField) || !!p.tree?.upsert?.field;
+  const keyL = k => esc(typeof sftkMatchKeyLabel === 'function' ? sftkMatchKeyLabel(k) : String(k ?? ''));
+
+  function sectionHtml(node, pathKey, cs, hasUpsert, label) {
+    const ef = effectiveFilter(node, pathKey);
+    const picks = ef.recordIds?.length ? new Set(ef.recordIds) : null;
+    const rows = [];
+    for (const [state, bucket] of [['missing', cs.missingInTarget], ['changed', cs.changed], ['insync', cs.identical]]) {
+      for (const r of (bucket || [])) {
+        if (picks && !picks.has(r.sourceId)) continue;
+        rows.push({ r, state });
+      }
+    }
+    const shown = rows.slice(0, ROW_CAP);
+    const body = shown.map(({ r, state }) => {
+      const o = sftkRunOpFor(state, hasUpsert);
+      return `<div class="ds-runprev-row">
+        <span class="ds-rec-col-key" title="${keyL(r.matchKey)}">${keyL(r.matchKey)}</span>
+        ${r.nearMiss ? `<span class="ds-rec-pnote ds-rec-pnote-missing" title="A target record differs only by ${esc(r.nearMiss.reason)} — see Reconcile">≈ near match</span>` : ''}
+        <span class="ds-runprev-op ${o.cls}">${o.op}</span>
+      </div>`;
+    }).join('') || '<div class="ds-rec-col-empty">nothing in scope</div>';
+    const capNote = rows.length > shown.length
+      ? `<div class="ds-pk-hint">+${rows.length - shown.length} more record(s) not listed — the run includes them all.</div>` : '';
+    const pickNote = picks
+      ? `<div class="ds-pk-hint">Scoped to the ${picks.size} hand-picked record(s); picked records missing from the scan are not listed.</div>` : '';
+    return `<div class="ds-runprev-section">
+      <div class="ds-runprev-hdr"><strong>${esc(label)}</strong>
+        <span class="ds-pk-hint">${hasUpsert ? '⬆ upserts — existing records update' : 'insert mode — existing records would duplicate'}</span>
+      </div>
+      ${pickNote}${body}${capNote}
+    </div>`;
+  }
+
+  let html = sectionHtml(p.tree, '', scan, rootUpsert, `${rootObj} (root)`);
+  (p.tree.children || []).forEach((c, i) => {
+    const pathKey = String(i);
+    const cs = scan.children?.[pathKey];
+    const obj = c.objectType || c.childSObject;
+    if (cs && cs.status === 'success' && cs.rootRunAt === scan.runAt) {
+      html += sectionHtml(c, pathKey, cs, !!c.upsert?.field, `${obj} (child)`);
+    } else {
+      html += `<div class="ds-runprev-section"><div class="ds-runprev-hdr"><strong>${esc(obj)} (child)</strong>
+        <span class="ds-pk-hint">no fresh child scan — open its 🎯 picker and 🔎 Compare with target</span></div></div>`;
+    }
+  });
+  showModal(`<div class="ds-modal-header">📋 Records preview — ${esc(p.name)}</div>
+    <div class="ds-modal-body">
+      <div class="ds-pk-hint" style="margin-bottom:8px">Read from the scan of ${esc(timeAgo(scan.runAt))} — a point-in-time reading, not live state. Records that exist ONLY in the target are never touched by a run and aren't listed.</div>
+      ${html}
+    </div>
+    <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Close</button></div>`);
 }
 
 async function runTransfer() {
