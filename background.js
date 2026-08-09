@@ -1636,6 +1636,11 @@ function buildCopyFields(describe) {
   // already only returns FLS-visible fields, so no access check is needed.
   return ['Id', ...describe.fields
     .filter(f => !SKIP.has(f.name) &&
+      // W7 pattern audit — classic-encryption fields read back MASKED
+      // ('XXXX-1234') unless the running user holds "View Encrypted Data";
+      // copying them writes the literal mask into the target as data.
+      // Silent corruption loses to a visibly empty field: never copy them.
+      f.type !== 'encryptedstring' &&
       (f.createable || f.type === 'reference'))
     .map(f => f.name)];
 }
