@@ -2687,23 +2687,36 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
     // Objects the profile itself deploys are the engine's job, not a gap.
     const treeObjs = new Set([p.tree?.objectType,
       ...(p.tree?.children || []).map(c => c.objectType || c.childSObject)].filter(Boolean));
-    const seen = new Set(); const gaps = [];
+    const seen = new Set(); const parents = [];
     for (const f of sftkLkpRefFields(desc?.fields)) {
       const refObj = (f.referenceTo || [])[0];
       if (!refObj || treeObjs.has(refObj) || seen.has(refObj)) continue;
       seen.add(refObj);
       const probe = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
         _suppressError: true, query: `SELECT Id FROM ${refObj} LIMIT 1` });
-      if (probe?.error || (probe?.records || []).length) continue;   // has records (or unknowable) → not this gap
+      if (probe?.error) continue;   // unknowable → say nothing rather than guess
       const tf = (tdesc?.fields || []).find(x => x.name === f.name);
-      gaps.push({ field: f.name, refObj, required: !!tf && tf.nillable === false });
+      parents.push({ field: f.name, refObj,
+        empty: !(probe?.records || []).length,
+        required: !!tf && tf.nillable === false });
     }
-    if (!gaps.length) return;
-    _recParentGapHtml = `<div class="ds-op-banner" style="border-left:3px solid #f59e0b">
+    if (!parents.length) return;
+    const anyEmpty = parents.some(g => g.empty);
+    // Two tiers, one flow (user 2026-08-10: "offer the user to compare
+    // parent records per orgs first and fix them and then only transfer
+    // the childs"): an EMPTY parent object is urgent — deploy it or every
+    // lookup lands null; an existing one still deserves a compare-first
+    // pass (missing rows / drift there break the children's bridges too).
+    // Both buttons run the same one-click: scan the parent pair, open its
+    // Reconcile, fix, come back — this view refreshes itself.
+    const rowHtml = g => g.empty
+      ? `<div class="ds-op-banner-desc">${esc(objType)}.<strong>${esc(g.field)}</strong> points at <strong>${esc(g.refObj)}</strong>, but ${esc(orgLabel(p.targetOrg))} has <strong>no ${esc(g.refObj)} records at all</strong> — every lookup would land empty${g.required ? ', and the field is REQUIRED there, so every insert would FAIL' : ''}. <button class="ds-btn ds-btn-xs ds-btn-primary" data-recgap="${esc(g.refObj)}" title="Creates a ready-made ${esc(g.refObj)} deployment on this org pair (match by Name) and opens it here — push it, come back, run this one.">➕ Deploy ${esc(g.refObj)} first</button></div>`
+      : `<div class="ds-op-banner-desc"><strong>${esc(g.refObj)}</strong> (via ${esc(g.field)}) exists in both orgs — compare it BEFORE pushing these records, so the name-bridges have complete, in-sync parents to land on. <button class="ds-btn ds-btn-xs" data-recgap="${esc(g.refObj)}" title="Scans ${esc(g.refObj)} across this org pair and opens its Reconcile — fix what's missing or drifted, come back, run this one.">🔍 Compare &amp; fix ${esc(g.refObj)} first</button></div>`;
+    _recParentGapHtml = `<div class="ds-op-banner" style="border-left:3px solid ${anyEmpty ? '#f59e0b' : 'var(--brand)'}">
       <span class="ds-op-banner-icon">⛓</span>
       <div class="ds-op-banner-body">
-        <div class="ds-op-banner-title">Deploy the parent object${gaps.length > 1 ? 's' : ''} first</div>
-        ${gaps.map(g => `<div class="ds-op-banner-desc">${esc(objType)}.<strong>${esc(g.field)}</strong> points at <strong>${esc(g.refObj)}</strong>, but ${esc(orgLabel(p.targetOrg))} has <strong>no ${esc(g.refObj)} records at all</strong> — every lookup would land empty${g.required ? ', and the field is REQUIRED there, so every insert would FAIL' : ''}. <button class="ds-btn ds-btn-xs ds-btn-primary" data-recgap="${esc(g.refObj)}" title="Creates a ready-made ${esc(g.refObj)} deployment on this org pair (match by Name) and opens it here — push it, come back, run this one.">➕ Deploy ${esc(g.refObj)} first</button></div>`).join('')}
+        <div class="ds-op-banner-title">Parents first${anyEmpty ? ` — ${parents.filter(g => g.empty).length} parent object(s) missing from the target` : ''}</div>
+        ${parents.map(rowHtml).join('')}
       </div>
     </div>`;
     host.innerHTML = _recParentGapHtml;
