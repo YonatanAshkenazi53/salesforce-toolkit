@@ -768,9 +768,24 @@ async function runDiffScan(profile, node = null, scope = null) {
   let compareExpanded = false;
   if (!hasLegacyOnlyCompare && (srcDescFull?.fields || []).length) {
     const enginePairs = sftkEngineCompareSet(srcDescFull.fields, node?.fieldMappings);
-    if (enginePairs.length) {
-      srcCompare = enginePairs.map(p => p.srcField);
-      tgtCompare = enginePairs.map(p => p.tgtField);
+    // Lookups are NOT in the engine set (its comment says "compare through
+    // the resolution plan") — but this expansion REPLACED the compare lists,
+    // so the reference branch below never received a field to resolve and
+    // lookup-only drift was filed as "identical" (user record-pair report
+    // 2026-08-09: same Name, different Step_Order_Name__c lookup, in no
+    // bucket). Append every steerable reference; the plan builder still
+    // decides per field — dot-path compare by related name when BOTH sides
+    // resolve, honest skip (no raw-Id compare) when not.
+    const fmRef = node?.fieldMappings || {};
+    const refPairs = (srcDescFull.fields || []).filter(f =>
+      f && f.type === 'reference' && f.createable && fmRef[f.name] !== null &&
+      !['OwnerId', 'CreatedById', 'LastModifiedById', 'RecordTypeId'].includes(f.name)
+    ).map(f => ({ srcField: f.name,
+      tgtField: (fmRef[f.name] && fmRef[f.name] !== '') ? fmRef[f.name] : f.name }));
+    const allPairs = [...enginePairs, ...refPairs];
+    if (allPairs.length) {
+      srcCompare = allPairs.map(p => p.srcField);
+      tgtCompare = allPairs.map(p => p.tgtField);
       compareExpanded = true;
     }
   }
