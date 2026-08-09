@@ -684,7 +684,29 @@ async function renderReconcile() {
     </div>`;
   }
 
+  // Session visibility (user 2026-08-09: "When an org is not currently
+  // authenticated the user needs to know — i have an error because of that
+  // that was misleading"). Say it HERE, before any action fails weirdly.
+  let _sessNote = '';
+  try {
+    const _all = _buildAllSessions();
+    const _deadOrgs = [
+      !_resolveSession(p.sourceOrg, _all)?.sid ? orgLabel(p.sourceOrg) : null,
+      !_resolveSession(p.targetOrg, _all)?.sid ? orgLabel(p.targetOrg) : null,
+    ].filter(Boolean);
+    if (_deadOrgs.length) {
+      _sessNote = `<div class="ds-op-banner ds-op-banner-danger" style="border-left:3px solid #dc2626">
+        <span class="ds-op-banner-icon">🔒</span>
+        <div class="ds-op-banner-body">
+          <div class="ds-op-banner-title">${esc(_deadOrgs.join(' and '))} ${_deadOrgs.length > 1 ? 'are' : 'is'} not signed in</div>
+          <div class="ds-op-banner-desc">The numbers below come from the last scan, but every button that reads or writes ${_deadOrgs.length > 1 ? 'these orgs' : 'this org'} will fail until you open ${_deadOrgs.length > 1 ? 'them' : 'it'} in a Chrome tab and sign in. Then click 🔄 Refresh state.</div>
+        </div>
+      </div>`;
+    }
+  } catch (_) { _sessNote = ''; }
+
   setMain(`${headerHtml}
+    ${_sessNote}
     <div class="ds-op-banner ds-op-banner-write">
       <span class="ds-op-banner-icon">⚖</span>
       <div class="ds-op-banner-body">
