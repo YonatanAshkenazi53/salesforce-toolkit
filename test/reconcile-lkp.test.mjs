@@ -164,3 +164,38 @@ describe('reconcileOverwrite honors 🔗 hand-picks (engine Priority-0 parity)',
     expect(ovwSrc).toContain('lookup value(s) written from hand-picked targets');
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// W7 — retry must cover EVERY failed record (user 2026-08-10: "Retry
+// failed (200)" on a 401-failure run). sftkCapFailedIds keeps the first
+// 200 entries rich and the rest as bare id strings up to 2000 — the
+// History consumer reads both shapes.
+// ══════════════════════════════════════════════════════════════════
+const cap = extractFunctions('studio-reconcile.js', ['sftkCapFailedIds']);
+
+describe('sftkCapFailedIds — retry covers everything', () => {
+  const entry = i => ({ id: `S${i}`, error: 'Required field missing', label: `SO-${i}`, fields: [{ field: 'X', sent: 'y' }] });
+
+  it('401 failures → 200 rich + 201 bare ids (the user run)', () => {
+    const out = cap.sftkCapFailedIds(Array.from({ length: 401 }, (_, i) => entry(i)));
+    expect(out).toHaveLength(401);
+    expect(out[199]).toHaveProperty('error');
+    expect(out[200]).toBe('S200');
+    expect(out[400]).toBe('S400');
+    // The History count/retry mapping sees every id.
+    expect(out.map(f => typeof f === 'string' ? f : f.id).filter(Boolean)).toHaveLength(401);
+  });
+
+  it('small lists pass through untouched', () => {
+    const out = cap.sftkCapFailedIds([entry(1), entry(2)]);
+    expect(out).toHaveLength(2);
+    expect(out[1]).toHaveProperty('label', 'SO-2');
+  });
+
+  it('caps at 2000 total and tolerates mixed/bad shapes', () => {
+    const big = Array.from({ length: 2500 }, (_, i) => (i % 3 === 0 ? `S${i}` : i % 3 === 1 ? entry(i) : null));
+    const out = cap.sftkCapFailedIds(big);
+    expect(out.length).toBeLessThanOrEqual(2000);
+    expect(out.every(f => f !== null || typeof f === 'object')).toBe(true);
+  });
+});

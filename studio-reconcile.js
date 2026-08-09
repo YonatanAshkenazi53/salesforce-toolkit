@@ -2191,7 +2191,7 @@ async function runReconcile(profile, objType, buckets) {
         purged:   counts.purged,
         deleteMode: _recDeleteMode,
         ...(rootTargets.length ? { targetRecords: rootTargets.slice(0, 200) } : {}),
-        ...(rootFailedInserts.length ? { failedSourceIds: rootFailedInserts.slice(0, 200) } : {}),
+        ...(rootFailedInserts.length ? { failedSourceIds: sftkCapFailedIds(rootFailedInserts) } : {}),
         ...(rootFailedUpdates.length ? { failedRecords: rootFailedUpdates.slice(0, 200) } : {})
       },
       // Child objects — inserted/linked/relinked counts per relationship.
@@ -2205,7 +2205,7 @@ async function runReconcile(profile, objType, buckets) {
           overwritten: c.overwritten || 0, overwrittenFailed: c.overwriteFailed || 0,
           deleted: c.deleted || 0, deletedFailed: c.deleteFailed || 0,
           ...(c.targetRecords?.length ? { targetRecords: c.targetRecords.slice(0, 200) } : {}),
-          ...(c.failedSourceIds?.length ? { failedSourceIds: c.failedSourceIds.slice(0, 200) } : {})
+          ...(c.failedSourceIds?.length ? { failedSourceIds: sftkCapFailedIds(c.failedSourceIds) } : {})
         }]))
     },
     errors: allErrors.slice(0, 50)
@@ -2753,6 +2753,24 @@ function sftkLkpRefFields(descFields) {
 // SOQL LIKE-literal escape: quote + backslash plus the LIKE wildcards.
 function sftkLkpSoqlLike(term) {
   return String(term || '').replace(/([\\'%_])/g, '\\$1');
+}
+
+// History cap for failed-record lists (user 2026-08-10: "Retry failed (200)"
+// on a 401-failure run — 201 records had NO retry path). Detail is what
+// costs storage, ids are cheap: keep the first 200 entries rich (error,
+// label, captured field values) and store the remainder as BARE ID STRINGS
+// up to the engine's own 2000 cap. The History consumer already reads both
+// shapes (`typeof f === 'string' ? f : f.id`), so Retry covers everything
+// while storage stays sane. PURE — unit-tested.
+function sftkCapFailedIds(list, richCap, idCap) {
+  const rc = Number(richCap) > 0 ? Math.floor(Number(richCap)) : 200;
+  const ic = Number(idCap) > 0 ? Math.floor(Number(idCap)) : 2000;
+  const arr = Array.isArray(list) ? list : [];
+  if (arr.length <= rc) return arr.slice();
+  return [
+    ...arr.slice(0, rc),
+    ...arr.slice(rc, ic).map(f => (typeof f === 'string' ? f : (f && f.id) || null)).filter(Boolean),
+  ];
 }
 
 // ═════════════════════════════════════════════════════════════════════════
