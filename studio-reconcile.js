@@ -2946,9 +2946,16 @@ async function renderLkpOverridePanel(p, objType, srcId, host, tgtRecId) {
       res.style.display = 'block';
       res.innerHTML = `<div class="ds-drift-compare-loading">Searching…</div>`;
       const where = term ? ` WHERE Name LIKE '%${sftkLkpSoqlLike(term)}%'` : '';
-      const r = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
-        _suppressError: true, query: `SELECT Id, Name FROM ${obj}${where} ORDER BY LastModifiedDate DESC LIMIT 15` });
-      if (r?.error) { res.innerHTML = `<div class="ds-drift-compare-err">⚠ ${esc(r.error)}</div>`; return; }
+      // Never fail SILENTLY here — an exception without this catch left the
+      // dropdown blank with no explanation (user 2026-08-10: "blank").
+      let r;
+      try {
+        r = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+          _suppressError: true, query: `SELECT Id, Name FROM ${obj}${where} ORDER BY LastModifiedDate DESC LIMIT 15` });
+      } catch (e) {
+        r = { error: e?.message || String(e) };
+      }
+      if (r?.error) { res.innerHTML = `<div class="ds-drift-compare-err">⚠ Search failed: ${esc(r.error)} — is ${esc(orgLabel(p.targetOrg || ''))} still signed in?</div>`; return; }
       const recs = r?.records || [];
       res.innerHTML = recs.length
         ? recs.map(x => `<button class="ds-lkpo-hit" data-lkp-hit="${esc(x.Id)}" title="${esc(x.Id)}">${esc(x.Name != null ? x.Name : x.Id)}</button>`).join('')

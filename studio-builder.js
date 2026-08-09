@@ -1009,8 +1009,11 @@ async function loadRefObjectFields(objType) {
     ]);
     _refFieldCache[objType] = (desc.fields || [])
       .filter(f => f.filterable && ANCHOR_TYPES.has(f.type) && !SKIP_FIELDS.has(f.name))
-      .map(f => ({ name: f.name, label: f.label || f.name, type: f.type }))
-      .sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name));
+      .map(f => ({ name: f.name, label: f.label || f.name, type: f.type, externalId: f.externalId === true }))
+      // External-ID fields FIRST — they're the reliable cross-org anchors
+      // (user 2026-08-10: "inside the field picker we should mark them and
+      // suggest them"); alphabetical within each group.
+      .sort((a, b) => (b.externalId - a.externalId) || (a.label || a.name).localeCompare(b.label || b.name));
   } catch (_) {
     _refFieldCache[objType] = null;
   }
@@ -1035,7 +1038,7 @@ function renderMatchFieldSelect(refObj, currentMatchField, fieldName, pathKey) {
       value="${esc(currentMatchField || 'Name')}" placeholder="API field name, e.g. Name">`;
   }
   const options = cached.map(cf =>
-    `<option value="${esc(cf.name)}" ${(currentMatchField || 'Name') === cf.name ? 'selected' : ''}>${esc(cf.label)} <span style="opacity:.55">(${esc(cf.name)})</span></option>`
+    `<option value="${esc(cf.name)}" ${(currentMatchField || 'Name') === cf.name ? 'selected' : ''}>${cf.externalId ? '⚡ ' : ''}${esc(cf.label)} (${esc(cf.name)})${cf.externalId ? ' · External ID' : ''}</option>`
   ).join('');
   return `<select class="ds-select-sm ds-lkp-match-select" ${dataAttrs}>${options}</select>`;
 }
@@ -1127,6 +1130,53 @@ function sftkBldFillParentSync() {
   });
 }
 
+// ⚡ External-ID suggestion (user 2026-08-10: "if we detect external id
+// field with data we should offer it"). For every match-strategy lookup
+// row: if the referenced object has an External ID field, probe the SOURCE
+// org once for actual data in it (cached per org+object+field) and upgrade
+// the passive tip line into an ACTIVE one-click offer. Already matching by
+// an External ID → say so with a ✓. Empty External ID field → say that
+// too, honestly, instead of suggesting an anchor that matches nothing.
+const _extIdDataCache = {};
+async function sftkBldSuggestExtIds() {
+  const sess = _builderSession();
+  if (!sess.orgUrl || !sess.sid) return;
+  for (const slot of document.querySelectorAll('[data-lkp-extid-slot]')) {
+    const [refObj, fieldName, pathKey] = (slot.dataset.lkpExtidSlot || '').split('|');
+    const cached = _refFieldCache[refObj];
+    if (!Array.isArray(cached)) continue;
+    const extFields = cached.filter(cf => cf.externalId);
+    if (!extFields.length) continue;
+    const node = getNodeByPath(_editingProfile?.tree, pathKey);
+    const current = node?.lookupResolutions?.[fieldName]?.matchField || 'Name';
+    if (extFields.some(cf => cf.name === current)) {
+      slot.innerHTML = `<span class="ds-psync ds-psync-ok" title="External IDs are stable across orgs — the most reliable anchor there is.">⚡ matching by External ID ✓</span>`;
+      continue;
+    }
+    const ext = extFields[0];
+    const ck = `${sftkOrgKey(sess.orgUrl)}|${refObj}|${ext.name}`;
+    if (!(ck in _extIdDataCache)) {
+      const probe = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
+        _suppressError: true, query: `SELECT Id FROM ${refObj} WHERE ${ext.name} != null LIMIT 1` });
+      _extIdDataCache[ck] = probe?.error ? null : (probe?.records || []).length > 0;
+    }
+    if (_extIdDataCache[ck] === true) {
+      slot.innerHTML = `⚡ <strong>${esc(ext.label)}</strong> is an External ID with data — <button class="ds-btn ds-btn-xs ds-btn-primary" data-lkp-useext="${esc(refObj)}|${esc(fieldName)}|${esc(pathKey)}|${esc(ext.name)}" title="Match ${esc(refObj)} records by ${esc(ext.name)} instead of Name — External IDs survive renames and duplicates.">use it</button>`;
+      slot.querySelector('[data-lkp-useext]')?.addEventListener('click', btn2 => {
+        const [ro, fn, pk, ef] = btn2.currentTarget.dataset.lkpUseext.split('|');
+        const n = getNodeByPath(_editingProfile?.tree, pk);
+        if (!n) return;
+        if (!n.lookupResolutions) n.lookupResolutions = {};
+        n.lookupResolutions[fn] = { ...(n.lookupResolutions[fn] || {}), strategy: 'match', matchObject: ro, matchField: ef };
+        refreshTree();
+        showToast(`⚡ ${ro} now matches by ${ef}`, 'success', 3000);
+      });
+    } else if (_extIdDataCache[ck] === false) {
+      slot.innerHTML = `<span class="ds-lkp-hint" title="An External ID anchor only helps when it holds values — matching on an empty field finds nothing.">⚡ ${esc(ext.label)} is an External ID but has NO data in the source — fill it, or keep matching by Name</span>`;
+    }
+  }
+}
+
 // Render the full Lookup Resolution section for a tree node
 function renderLookupSection(node, pathKey) {
   const resolvable = getResolvableReferenceFields(node);
@@ -1150,7 +1200,7 @@ function renderLookupSection(node, pathKey) {
       effectiveStrategy === 'skip'
         ? `<span class="ds-lkp-hint">field will be null in target — safe default</span>`
       : effectiveStrategy === 'match'
-        ? `<span class="ds-lkp-hint">tip: pick an External ID field for reliable cross-org matching</span>`
+        ? `<span class="ds-lkp-hint" data-lkp-extid-slot="${esc(refObj)}|${esc(f.name)}|${esc(pathKey)}">tip: pick an External ID field for reliable cross-org matching</span>`
       : '';
 
     return `<div class="ds-lkp-row">
@@ -1507,6 +1557,7 @@ function wireTreeEvents() {
     btn.addEventListener('click', () => bldCompareParent(btn.dataset.lkpParentcmp, btn));
   });
   sftkBldFillParentSync();
+  sftkBldSuggestExtIds();
 
   // Match-field select (or text input fallback) — update without full re-render
   area.querySelectorAll('.ds-lkp-match-select').forEach(el => {
