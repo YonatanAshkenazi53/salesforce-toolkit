@@ -568,6 +568,11 @@ async function _loadUpsertFieldOptions() {
   if (!ext.length) {   // no External-ID fields → keep the free-text input
     sel.style.display = '';
     sel.innerHTML = `<option value="">⚠ No External ID fields on ${esc(obj)} in target</option>`;
+    // Say what to DO, not just what's missing (user 2026-08-09: "upsert can
+    // work with regular id field too"): true — but a SOURCE record's Id
+    // doesn't exist in the target org, so Id-keyed upsert needs the match
+    // key to translate first. That flow exists today: Reconcile.
+    sel.title = `Salesforce upsert needs a key the TARGET org can match on. It does accept Id — but a source record's Id doesn't exist in the target, so cross-org Id-upsert needs the match key to translate first. That flow exists today: run a scan and use Reconcile — it updates matched records by their target Id and inserts the rest (exact upsert semantics, no External ID field needed). Or add an External ID field to ${obj} in both orgs for direct upsert here.`;
     sel.disabled = true;
     inp.style.display = '';
     return;

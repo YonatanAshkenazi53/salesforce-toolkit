@@ -722,6 +722,33 @@ anchor-based plan edit accidentally deleted it)
   multi-select over the log, sequential recreate+reimport with per-field
   results. Confirmations + honesty copy throughout (recreated ≠ restored:
   new field Id, FLS/layouts need re-adding — say so).
+- [ ] W9 CONTENTVERSION / FILES DEPLOYMENT (user 2026-08-09: "we need to
+  support content version and all its related objects"). Files break the
+  sObject model three ways: ContentDocument is auto-created by the first
+  ContentVersion (never inserted directly); VersionData is a per-file REST
+  download (SOQL returns a URL, not the blob); ContentDocumentLink is
+  polymorphic. Design: per-node `node.includeFiles` → AFTER a node's
+  records land (src→tgt idMap known), a FILES PASS: query source CDLs for
+  the transferred records → latest ContentVersion per document → download
+  body → insert in target with FirstPublishLocationId = mapped record
+  (auto-creates document + first link); extra in-scope links = explicit
+  CDL inserts. Idempotent by ContentVersion.Checksum (MD5) — same file on
+  the same record is skipped, re-runs never duplicate. Size cap ~35MB
+  (REST base64 limit) → skip WITH disclosure. PII fail-closed: file
+  bodies can't be masked, so an active PII policy skips the files pass
+  entirely and says why. Engine core flag-gated first (no UI = zero
+  behavior change), then builder checkbox + run summary counts. v2:
+  ContentNote, legacy Attachment, multi-version history, libraries.
+- [ ] W10 UPSERT BY MATCH KEY — Transfer write mode that works WITHOUT an
+  External ID field (user 2026-08-10: "upsert can work with regular id
+  field too"). Salesforce Id-keyed upsert is real but source Ids don't
+  exist in the target — so the MATCH KEY translates first: engine resolves
+  the node's matching config against the target (same key machinery as
+  scan/owner matching), splits records into UPDATE (matched → target Id)
+  + INSERT (unmatched) batches, per-batch accounting in the summary.
+  Semantics identical to Reconcile's Changed+Insert run, packaged as a
+  one-click write mode. Until then the write-mode dropdown's no-external-id
+  state points at Reconcile (shipped with the dry-run merge commit).
 - [~] W7 QA + REGRESSION CAMPAIGN (user 2026-08-05: "After we implement all we
   need a lot of qa and regression") — IN PROGRESS 2026-08-09. Method:
   trace-the-feature adversarial passes, inline on Fable (workflow
