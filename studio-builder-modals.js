@@ -1149,7 +1149,7 @@ async function openRecordPickerModal(pathStr) {
         <div class="ds-picker-note" id="dsRecNote">${noteHtml()}</div>
         ${scanFresh ? `
           <div class="ds-pick-diff-legend">
-            Live diff (${esc(timeAgo(liveScan.runAt))}):
+            Live diff vs <strong>${esc(orgLabel(liveScan.targetOrg || _editingProfile?.targetOrg || 'target'))}</strong> (${esc(timeAgo(liveScan.runAt))}) — a multi-target deployment can be in sync with one target and missing from another; these badges are ONLY against the org named here:
             <span class="ds-pick-leg ds-diff-missing">🔴 Missing in target</span>
             <span class="ds-pick-leg ds-diff-drift">🟡 Changed</span>
             <span class="ds-pick-leg ds-diff-sync">🟢 In sync</span>

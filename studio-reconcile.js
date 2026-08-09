@@ -36,6 +36,12 @@ let _recAutoRefreshKey = '';
 // rendered banner on repaints so navigation doesn't re-query the target.
 let _recParentGapKey  = '';
 let _recParentGapHtml = '';
+// What the advisor's probe found for the CURRENT scan — consulted by
+// runReconcile as a RUN GATE (user 2026-08-10: "the recommendation to sync
+// parents first is not strong enough"): doomed = empty parent behind a
+// REQUIRED field (inserts guaranteed to fail); empties = lookups that
+// would land null. Keyed to profile+scan so a stale verdict never gates.
+let _recParentGapState = null;   // { key, doomed: [obj], empties: [obj] }
 // Session-wide sync verdicts: `${srcKey}|${tgtKey}|${objType}` → { missing,
 // changed, extra, at }. EVERY fresh reconcile scan deposits its verdict here,
 // and every surface that mentions a parent object reads it — so once the
@@ -45,6 +51,41 @@ let _recParentGapHtml = '';
 let _parentSyncVerdicts = {};
 function sftkParentSyncKey(srcOrg, tgtOrg, obj) {
   return `${sftkOrgKey(srcOrg)}|${sftkOrgKey(tgtOrg)}|${obj}`;
+}
+// Verdicts PERSIST (user 2026-08-10: "i want it to update after the correct
+// insert of a parent tree", without clicking) — the flow is run → post-run
+// auto-rescan → deposit → every later render shows it; storage makes that
+// survive reloads, and saved profiles' lastScans hydrate pairs scanned in
+// earlier sessions. Newest runAt wins everywhere.
+let _parentSyncLoaded = false;
+async function sftkParentSyncLoad() {
+  if (_parentSyncLoaded) return;
+  _parentSyncLoaded = true;
+  try {
+    const d = await chrome.storage.local.get('sftk_parent_sync');
+    for (const [k, v] of Object.entries(d?.sftk_parent_sync || {})) {
+      if (!_parentSyncVerdicts[k] || (v?.at || '') > (_parentSyncVerdicts[k].at || '')) _parentSyncVerdicts[k] = v;
+    }
+  } catch (_) { /* storage unavailable — session map still works */ }
+  try {
+    for (const pr of (_profiles || [])) {
+      const s = pr?.lastScan;
+      if (!s || s.status !== 'success' || !s.objectType) continue;
+      const src = s.sourceOrg || pr.sourceOrg, tgt = s.targetOrg || pr.targetOrg;
+      if (!src || !tgt) continue;
+      const k = sftkParentSyncKey(src, tgt, s.objectType);
+      if (!_parentSyncVerdicts[k] || (s.runAt || '') > (_parentSyncVerdicts[k].at || '')) {
+        _parentSyncVerdicts[k] = { missing: (s.missingInTarget || []).length,
+          changed: (s.changed || []).length, extra: (s.onlyInTarget || []).length, at: s.runAt };
+      }
+    }
+  } catch (_) { /* hydration is best-effort */ }
+}
+function sftkParentSyncPut(srcOrg, tgtOrg, obj, v) {
+  try {
+    _parentSyncVerdicts[sftkParentSyncKey(srcOrg, tgtOrg, obj)] = v;
+    chrome.storage.local.set({ sftk_parent_sync: _parentSyncVerdicts });
+  } catch (_) { /* advisory map only */ }
 }
 // Child-aware reconcile (v2: children + grandchildren; Insert, Relink,
 // Overwrite drift, Delete extras). Selections and UI state are keyed by tree
@@ -174,14 +215,12 @@ async function renderReconcile() {
   // Deposit this scan's verdict in the session sync map — the Builder's
   // lookup rows and other objects' parents-first panels read it.
   if (scanFresh) {
-    try {
-      _parentSyncVerdicts[sftkParentSyncKey(p.sourceOrg, p.targetOrg, objType)] = {
-        missing: (scan.missingInTarget || []).length,
-        changed: (scan.changed || []).length,
-        extra:   (scan.onlyInTarget || []).length,
-        at:      scan.runAt || new Date().toISOString(),
-      };
-    } catch (_) { /* advisory map only */ }
+    sftkParentSyncPut(p.sourceOrg, p.targetOrg, objType, {
+      missing: (scan.missingInTarget || []).length,
+      changed: (scan.changed || []).length,
+      extra:   (scan.onlyInTarget || []).length,
+      at:      scan.runAt || new Date().toISOString(),
+    });
   }
 
   // ⛓ Journey-back banner — this reconcile was opened as a PARENTS-FIRST
@@ -1358,6 +1397,19 @@ function openMatchReview(p) {
 // modal (destructive). Push reuses the transfer engine (root-only profile
 // clone). Overwrite uses SF_COLLECTIONS_UPDATE.
 async function runReconcile(profile, objType, buckets) {
+  // ⛔ RUN GATE (user 2026-08-10: "the recommendation to sync parents first
+  // is not strong enough") — the advisor's probe already knows when the
+  // selected inserts are DOOMED (empty parent object behind a required
+  // field) or will land with EMPTY lookups. A banner is advice; this is a
+  // stop. Keyed to the current scan so a stale probe never gates.
+  const _gap = (_recParentGapState && _recParentGapState.key === `${profile.id}|${profile.lastScan?.runAt}`)
+    ? _recParentGapState : null;
+  const _pushN = _recSel.push.size;
+  if (_pushN && _gap?.doomed?.length) {
+    if (!confirm(`⛔ STOP — all ${_pushN} selected insert(s) are GUARANTEED to fail.\n\n${_gap.doomed.join(' and ')} has NO records in ${orgLabel(profile.targetOrg)} and the lookup pointing there is REQUIRED.\n\nUse the numbered plan at the top: deploy the parent object first (one click), then run this.\n\nRun anyway? (every insert will fail)`)) return;
+  } else if (_pushN && _gap?.empties?.length) {
+    if (!confirm(`⚠ ${_gap.empties.join(' and ')} has NO records in ${orgLabel(profile.targetOrg)} — the lookups pointing there will land EMPTY on all ${_pushN} inserted record(s).\n\nDeploy the parents first (numbered plan up top) to get connected records.\n\nContinue anyway?`)) return;
+  }
   const pushIds   = [..._recSel.push];
   const ovwIds    = [..._recSel.overwrite];
   const updSrcIds = [..._recSel.updSrc];
@@ -2218,6 +2270,27 @@ async function runReconcile(profile, objType, buckets) {
     if (_fp) _reconcileProfile = _fp;
     _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
     _recChildSel = {};
+    // Ring tiles must reflect the run too (user 2026-08-10: after inserting
+    // all the children, the ring still said stale until a manual scan).
+    // Only when the ring's source IS this profile's source — a tile scanned
+    // from a different golden org must never be overwritten with this pair.
+    try {
+      const fs = _fp?.lastScan;
+      const ringSrcOk = typeof _ring !== 'undefined' && _ring?.sourceUrl &&
+        sftkOrgKey(_ring.sourceUrl) === sftkOrgKey(_fp?.sourceOrg);
+      if (_fp && !_fp.ephemeral && fs?.status === 'success' && ringSrcOk &&
+          typeof _ringScanKey === 'function' && _fp.ringScans) {
+        const rk = _ringScanKey(_fp.targetOrg);
+        if (_fp.ringScans[rk]) {
+          _fp.ringScans[rk] = { runAt: fs.runAt,
+            missing: (fs.missingInTarget || []).length,
+            changed: (fs.changed || []).length,
+            extra:   (fs.onlyInTarget || []).length,
+            status:  'success' };
+          await storageSaveProfiles();
+        }
+      }
+    } catch (_) { /* tile refresh is best-effort */ }
   } catch (_) { /* stale view is still better than no view */ }
   renderReconcile();
 }
@@ -2729,9 +2802,10 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
     if (_recParentGapHtml) { host.innerHTML = _recParentGapHtml; wire(); }
     return;
   }
-  if (!(missing || []).length) return;   // nothing to insert → nothing doomed
+  if (!(missing || []).length) { _recParentGapState = { key, doomed: [], empties: [] }; return; }
   _recParentGapKey = key; _recParentGapHtml = '';   // claim BEFORE awaiting (no double-probe)
   try {
+    await sftkParentSyncLoad();
     const all = _buildAllSessions();
     const srcSess = _resolveSession(p.sourceOrg, all);
     const tgtSess = _resolveSession(p.targetOrg, all);
@@ -2755,7 +2829,7 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
         empty: !(probe?.records || []).length,
         required: !!tf && tf.nillable === false });
     }
-    if (!parents.length) return;
+    if (!parents.length) { _recParentGapState = { key, doomed: [], empties: [] }; return; }
     // Numbered plan (user 2026-08-10: "its very unclear what is the correct
     // order") — the panel is now an explicit ordered checklist: every parent
     // is a numbered step with live status from the session sync map; this
@@ -2775,6 +2849,10 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
     // Reconcile, fix, come back — this view refreshes itself.
     const nextIdx = steps.findIndex(s => !s.done);
     const allDone = nextIdx === -1;
+    // Feed the RUN GATE — a banner is advice; guaranteed failure gets a stop.
+    const doomed = steps.filter(s => s.empty && s.required).map(s => s.refObj);
+    _recParentGapState = { key, doomed,
+      empties: steps.filter(s => s.empty && !s.required).map(s => s.refObj) };
     const stepHtml = (s, i) => {
       const isNext = i === nextIdx;
       const status = s.done
@@ -2788,10 +2866,10 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
         ${status}${isNext ? '<span class="ds-ordstep-arrow">← next</span>' : ''}
       </div>`;
     };
-    _recParentGapHtml = `<div class="ds-op-banner" style="border-left:3px solid ${anyEmpty ? '#f59e0b' : 'var(--brand)'}">
+    _recParentGapHtml = `<div class="ds-op-banner" style="border-left:3px solid ${doomed.length ? '#dc2626' : anyEmpty ? '#f59e0b' : 'var(--brand)'}">
       <span class="ds-op-banner-icon">⛓</span>
       <div class="ds-op-banner-body">
-        <div class="ds-op-banner-title">The correct order for this deployment</div>
+        <div class="ds-op-banner-title">${doomed.length ? '⛔ STOP — inserts here are guaranteed to fail until the parents exist. ' : ''}The correct order for this deployment</div>
         ${steps.map(stepHtml).join('')}
         <div class="ds-ordstep${allDone ? ' ds-ordstep-next' : ''}">
           <span class="ds-ordstep-num">${steps.length + 1}</span>
