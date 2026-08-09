@@ -252,6 +252,17 @@ async function renderReconcile() {
   // match and both fixes.
   const nearChip = nm => nm ? `<span class="ds-rec-pnote ds-rec-pnote-missing" title="A ${nm.targetId ? 'target' : 'source'} record has the same key except for ${esc(nm.reason)} — exact matching kept them apart, so pushing would DUPLICATE (and deleting would strand the twin). Fix: enable Trim spaces / Case-insensitive under 🎯 Pick Records → Matching, or correct the value in one org.">≈ near match — ${esc(nm.reason)}</span>` : '';
 
+  // W2-UI — 🔗 hand-pick lookup targets for one record (missing + changed
+  // rows). Link opens a lazy panel (renderLkpOverridePanel); the badge is
+  // how many picks the record carries for the CURRENT target org.
+  const lkpN = id => Object.keys(sftkLkpOvGet(p.tree, p.targetOrg, id)).length;
+  const lkpLink = id => {
+    if (!id) return '';
+    const n = lkpN(id);
+    return `<span class="ds-rec-drift-link${n ? ' ds-lkp-on' : ''}" data-rec-lkp="${esc(id)}" title="Hand-pick which TARGET record each lookup field should point at for THIS record — saved per target org, beats name-matching in the engine.">🔗<span class="ds-lkp-count">${n ? ` ${n}` : ''}</span></span>`;
+  };
+  const lkpExpand = id => id ? `<div class="ds-rec-drift-expand ds-rec-lkp-expand" data-lkp-expand="${esc(id)}" style="display:none"></div>` : '';
+
   // Default-select all missing + all drift for push (the common intent:
   // bring target up to match source). Extras default UNCHECKED — deletion
   // is destructive, opt-in only. Only seed defaults on first load.
@@ -275,7 +286,9 @@ async function renderReconcile() {
         <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${keyLbl(r.matchKey)}</span>
         ${nearChip(r.nearMiss)}
         ${kind === 'overwrite' ? `<span class="ds-rec-drift-link" data-rec-drift="${esc(r.sourceId)}|${esc(r.targetId)}" title="See which fields differ">▸ fields</span>` : ''}
+        ${kind === 'push' ? lkpLink(r.sourceId) : ''}
       </label>
+      ${kind === 'push' ? lkpExpand(r.sourceId) : ''}
       ${kind === 'overwrite' ? `<div class="ds-rec-drift-expand" data-drift-expand="${esc(r.sourceId)}" style="display:none"></div>` : ''}`;
     }).join('') : `<div class="ds-rec-col-empty">none</div>`;
     return `
@@ -321,7 +334,9 @@ async function renderReconcile() {
         <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${keyLbl(r.matchKey)}</span>
         ${why}
         <span class="ds-rec-drift-link" data-rec-drift="${esc(r.sourceId)}|${esc(r.targetId)}" title="See which fields differ">▸ fields</span>
+        ${lkpLink(sid)}
       </div>
+      ${lkpExpand(sid)}
       <div class="ds-rec-drift-expand" data-drift-expand="${esc(r.sourceId)}" style="display:none"></div>`;
     }).join('');
     const pushCount = items.filter(r => _recSel.overwrite.has(r.sourceId)).length;
@@ -921,6 +936,24 @@ async function renderReconcile() {
         expand.innerHTML = renderDriftCompareTable(res.srcRec, res.tgtRec, srcFields, tgtFields, res.lookupMap || {}, res.types || null);
       }
       expand.dataset.loaded = '1';
+    });
+  });
+
+  // W2-UI — 🔗 lookup override panel toggles (missing + changed rows).
+  // preventDefault matters on the missing rows: the link sits inside the
+  // row's <label>, and a plain click would also toggle its push checkbox.
+  document.querySelectorAll('[data-rec-lkp]').forEach(link => {
+    link.addEventListener('click', (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      const srcId = link.dataset.recLkp;
+      const expand = document.querySelector(`.ds-rec-lkp-expand[data-lkp-expand="${CSS.escape(srcId)}"]`);
+      if (!expand) return;
+      const wasOpen = expand.style.display !== 'none';
+      expand.style.display = wasOpen ? 'none' : 'block';
+      if (!wasOpen && expand.dataset.loaded !== '1') {
+        expand.dataset.loaded = '1';
+        renderLkpOverridePanel(p, objType, srcId, expand);
+      }
     });
   });
 
@@ -2394,5 +2427,218 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   }
   for (const [m, c] of failCounts) errors.push(c > 1 ? `${m}  (×${c})` : m);
   return { ok, failed: arr.length - ok, errors, updatedRecords, failedRecords };
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// W2-UI — per-record lookup overrides (user 2026-08-07: "select lookups
+// manually for every lookup of the record… for every record and for
+// multiple org targets"). Stored at node.lookupOverrides[orgKey][srcId]
+// [FieldApi] = target record Id. The engine reads them as Priority 0 in
+// its payload builder (background.js) and profile export strips them —
+// they're org-local target ids. Keys match by org IDENTITY (sftkOrgKey)
+// on both the read and write side, so casing/alias drift can't fork or
+// orphan a bucket.
+
+// The per-source-record map for tgtOrgUrl, or null. Mirrors the engine's
+// reader exactly: any stored key resolving to the same org identity counts.
+function sftkLkpOvBucket(node, tgtOrgUrl) {
+  const all = node?.lookupOverrides;
+  if (!all || typeof all !== 'object') return null;
+  const want = sftkOrgKey(tgtOrgUrl);
+  for (const [k, v] of Object.entries(all)) {
+    if (sftkOrgKey(k) === want && v && typeof v === 'object') return v;
+  }
+  return null;
+}
+
+function sftkLkpOvGet(node, tgtOrgUrl, srcId) {
+  const b = sftkLkpOvBucket(node, tgtOrgUrl);
+  return (b && b[srcId] && typeof b[srcId] === 'object') ? b[srcId] : {};
+}
+
+// Write one override. Reuses an existing bucket whose key matches the
+// target's identity — never forks two buckets for one org; the first
+// write for an org creates the bucket under the canonical key.
+function sftkLkpOvSet(node, tgtOrgUrl, srcId, field, tgtId) {
+  if (!node || !srcId || !field || !tgtId) return;
+  if (!node.lookupOverrides || typeof node.lookupOverrides !== 'object') node.lookupOverrides = {};
+  const all = node.lookupOverrides;
+  const want = sftkOrgKey(tgtOrgUrl);
+  let key = Object.keys(all).find(k => sftkOrgKey(k) === want);
+  if (!key) key = want;
+  const bucket = all[key] = (all[key] && typeof all[key] === 'object') ? all[key] : {};
+  const rec = bucket[srcId] = (bucket[srcId] && typeof bucket[srcId] === 'object') ? bucket[srcId] : {};
+  rec[field] = tgtId;
+}
+
+// Remove one override and prune every branch it leaves empty — a profile
+// with no picks carries no lookupOverrides key at all.
+function sftkLkpOvClear(node, tgtOrgUrl, srcId, field) {
+  const all = node?.lookupOverrides;
+  if (!all || typeof all !== 'object') return;
+  const want = sftkOrgKey(tgtOrgUrl);
+  for (const k of Object.keys(all)) {
+    if (sftkOrgKey(k) !== want) continue;
+    const bucket = all[k];
+    if (bucket && bucket[srcId] && typeof bucket[srcId] === 'object') {
+      delete bucket[srcId][field];
+      if (!Object.keys(bucket[srcId]).length) delete bucket[srcId];
+    }
+    if (bucket && typeof bucket === 'object' && !Object.keys(bucket).length) delete all[k];
+  }
+  if (!Object.keys(all).length) delete node.lookupOverrides;
+}
+
+// Reference fields a hand-pick can actually STEER. The engine skips audit
+// fields, resolves OwnerId through owner matching and RecordTypeId through
+// the RT map — a pick on those would be stored and silently ignored, so
+// they're not offered.
+function sftkLkpRefFields(descFields) {
+  const ENGINE_OWNED = new Set(['Id', 'OwnerId', 'CreatedById', 'LastModifiedById', 'RecordTypeId']);
+  return (descFields || []).filter(f =>
+    f && f.type === 'reference' && f.createable &&
+    !ENGINE_OWNED.has(f.name) && (f.referenceTo || []).length > 0);
+}
+
+// SOQL LIKE-literal escape: quote + backslash plus the LIKE wildcards.
+function sftkLkpSoqlLike(term) {
+  return String(term || '').replace(/([\\'%_])/g, '\\$1');
+}
+
+// tgtId → Name, learned from picks + panel-open resolution this session —
+// keeps the chip readable without re-querying on every re-render.
+const _lkpNameCache = new Map();
+
+// Repaint every 🔗 badge for one record after a pick/clear — cheaper than
+// a full renderReconcile, and it doesn't lose scroll position or selection.
+function sftkLkpBadgeRefresh(p, srcId) {
+  const n = Object.keys(sftkLkpOvGet(p.tree, p.targetOrg, srcId)).length;
+  document.querySelectorAll(`[data-rec-lkp="${CSS.escape(srcId)}"]`).forEach(el => {
+    el.classList.toggle('ds-lkp-on', n > 0);
+    const c = el.querySelector('.ds-lkp-count');
+    if (c) c.textContent = n ? ` ${n}` : '';
+  });
+}
+
+// The expandable panel behind the 🔗 link: one row per steerable lookup,
+// with what the SOURCE currently points at and a target-org search box.
+// Picks persist immediately — they're profile config, not run-scoped
+// selection state.
+async function renderLkpOverridePanel(p, objType, srcId, host) {
+  host.innerHTML = `<div class="ds-drift-compare-loading">Loading lookups…</div>`;
+  const allSess = _buildAllSessions();
+  const srcSess = _resolveSession(p.sourceOrg, allSess);
+  const tgtSess = _resolveSession(p.targetOrg, allSess);
+  if (!tgtSess?.sid) {
+    host.innerHTML = `<div class="ds-drift-compare-err">⚠ Open ${esc(orgLabel(p.targetOrg || ''))} in a Chrome tab to search its records.</div>`;
+    return;
+  }
+  let desc = null;
+  try {
+    const d = srcSess?.sid ? srcSess : tgtSess;
+    desc = await describe(objType, d.orgUrl, d.sid);
+  } catch (_) { desc = null; }
+  const refs = sftkLkpRefFields(desc?.fields);
+  if (!refs.length) {
+    host.innerHTML = `<div class="ds-drift-compare-empty">${esc(objType)} has no lookup fields a hand-pick can steer (audit fields, owner and record type are resolved by the engine itself).</div>`;
+    return;
+  }
+  const cur = sftkLkpOvGet(p.tree, p.targetOrg, srcId);
+
+  // Source-side context — what each lookup points at NOW, by the related
+  // record's Name when the relationship exposes one. Same enhanced-select-
+  // with-plain-fallback pattern as fetchDriftRowDetail.
+  let srcRec = null;
+  if (srcSess?.sid) {
+    const enh = ['Id'], plain = ['Id'];
+    for (const f of refs) {
+      plain.push(f.name); enh.push(f.name);
+      if (f.relationshipName) enh.push(`${f.relationshipName}.Name`);
+    }
+    const q = sel => sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+      _suppressError: true, query: `SELECT ${[...new Set(sel)].join(',')} FROM ${objType} WHERE Id = '${srcId}'` });
+    let r = await q(enh);
+    if (r?.error) r = await q(plain);
+    srcRec = r?.records?.[0] || null;
+  }
+
+  // Resolve Names for already-picked target ids (one query per ref object;
+  // failures degrade to showing the raw id).
+  const byObj = {};
+  for (const f of refs) {
+    const id = cur[f.name];
+    if (id && !_lkpNameCache.has(id)) {
+      const obj = (f.referenceTo || [])[0];
+      if (obj) (byObj[obj] = byObj[obj] || []).push(id);
+    }
+  }
+  await Promise.all(Object.entries(byObj).map(async ([obj, ids]) => {
+    const r = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+      _suppressError: true, query: `SELECT Id, Name FROM ${obj} WHERE Id IN ('${ids.join("','")}')` });
+    for (const rec of (r?.records || [])) { if (rec.Name != null) _lkpNameCache.set(rec.Id, rec.Name); }
+  }));
+
+  const rowsHtml = refs.map(f => {
+    const refObjs = f.referenceTo || [];
+    let srcVal = '—';
+    if (srcRec) {
+      const rel = f.relationshipName ? srcRec[f.relationshipName] : null;
+      srcVal = (rel && rel.Name != null) ? String(rel.Name)
+             : (srcRec[f.name] != null && srcRec[f.name] !== '') ? String(srcRec[f.name]) : '∅ empty';
+    }
+    const picked = cur[f.name];
+    const pickedNm = picked ? (_lkpNameCache.get(picked) || picked) : null;
+    return `<div class="ds-lkp-row" data-lkp-field="${esc(f.name)}" data-lkp-objs="${esc(refObjs.join(','))}">
+      <span class="ds-lkp-field" title="${esc(f.name)}">${esc(f.label || f.name)}<span class="ds-lkp-type">Lookup(${esc(refObjs.join('/'))})</span></span>
+      <span class="ds-lkp-src" title="What the SOURCE record points at right now — without a pick, the engine matches it into the target by name.">src → ${esc(srcVal)}</span>
+      <span class="ds-lkp-pick">
+        ${picked
+          ? `<span class="ds-lkp-chip" title="Hand-picked target record (${esc(picked)}) — for THIS record in ${esc(orgLabel(p.targetOrg || ''))} the engine writes this exact Id, beating name-matching.">→ ${esc(pickedNm)} <button class="ds-lkp-clear" data-lkp-clear="${esc(f.name)}" title="Remove the pick — the engine falls back to matching by name">✕</button></span>`
+          : `${refObjs.length > 1 ? `<select class="ds-lkp-objsel" title="Polymorphic lookup — pick which object to search">${refObjs.map(o => `<option>${esc(o)}</option>`).join('')}</select>` : ''}
+             <input type="text" class="ds-lkp-search" data-lkp-search="${esc(f.name)}" placeholder="🔍 search ${esc(refObjs[0] || '')} in ${esc(orgLabel(p.targetOrg || 'target'))}…">
+             <div class="ds-lkp-results" style="display:none"></div>`}
+      </span>
+    </div>`;
+  }).join('');
+  host.innerHTML = `<div class="ds-lkp-panel">
+    <div class="ds-lkp-hdr" title="Hand-pick the exact target record each lookup should point at AFTER deploy — per record, per target org. Picks are saved on the deployment (never exported) and beat name-matching in the engine.">🔗 Lookup targets for this record <span class="ds-lkp-hdr-sub">saved per target org · overrides name-matching</span></div>
+    ${rowsHtml}</div>`;
+
+  host.querySelectorAll('[data-lkp-search]').forEach(inp => {
+    const row = inp.closest('.ds-lkp-row');
+    const res = row.querySelector('.ds-lkp-results');
+    let timer = null;
+    const run = async () => {
+      const term = inp.value.trim();
+      const obj = row.querySelector('.ds-lkp-objsel')?.value || (row.dataset.lkpObjs || '').split(',')[0];
+      if (!obj) return;
+      res.style.display = 'block';
+      res.innerHTML = `<div class="ds-drift-compare-loading">Searching…</div>`;
+      const where = term ? ` WHERE Name LIKE '%${sftkLkpSoqlLike(term)}%'` : '';
+      const r = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+        _suppressError: true, query: `SELECT Id, Name FROM ${obj}${where} ORDER BY LastModifiedDate DESC LIMIT 15` });
+      if (r?.error) { res.innerHTML = `<div class="ds-drift-compare-err">⚠ ${esc(r.error)}</div>`; return; }
+      const recs = r?.records || [];
+      res.innerHTML = recs.length
+        ? recs.map(x => `<button class="ds-lkp-hit" data-lkp-hit="${esc(x.Id)}" title="${esc(x.Id)}">${esc(x.Name != null ? x.Name : x.Id)}</button>`).join('')
+        : `<div class="ds-drift-compare-empty">No ${esc(obj)} record matches ${term ? `“${esc(term)}”` : 'that'} in the target.</div>`;
+      res.querySelectorAll('[data-lkp-hit]').forEach(b => b.addEventListener('click', async () => {
+        const field = row.dataset.lkpField;
+        sftkLkpOvSet(p.tree, p.targetOrg, srcId, field, b.dataset.lkpHit);
+        _lkpNameCache.set(b.dataset.lkpHit, b.textContent);
+        if (!p.ephemeral) await storageSaveProfiles();
+        sftkLkpBadgeRefresh(p, srcId);
+        renderLkpOverridePanel(p, objType, srcId, host);
+      }));
+    };
+    inp.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 300); });
+    inp.addEventListener('focus', () => { if (res.style.display === 'none') run(); });
+  });
+  host.querySelectorAll('[data-lkp-clear]').forEach(b => b.addEventListener('click', async () => {
+    sftkLkpOvClear(p.tree, p.targetOrg, srcId, b.dataset.lkpClear);
+    if (!p.ephemeral) await storageSaveProfiles();
+    sftkLkpBadgeRefresh(p, srcId);
+    renderLkpOverridePanel(p, objType, srcId, host);
+  }));
 }
 
