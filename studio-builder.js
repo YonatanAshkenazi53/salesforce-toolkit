@@ -1084,8 +1084,8 @@ function renderLookupSection(node, pathKey) {
   return `<div class="ds-lkp-section">
     <div class="ds-lkp-hdr">
       <span class="ds-lkp-hdr-icon">🔗</span>
-      <span class="ds-lkp-hdr-label">Lookup Resolution</span>
-      <span class="ds-lkp-hdr-hint">How to resolve foreign-key IDs when they differ between orgs</span>
+      <span class="ds-lkp-hdr-label">Lookup Resolution <span class="ds-lkp-hdr-role" title="Direction: these lookups point UP at parent records. The records they point at must already exist in the target org when this object deploys — deploy the parent objects first (or hand-pick targets in Reconcile 🔗). Child objects are the opposite direction: they point AT this object and are added below with + Add child relationship — the engine orders those automatically.">⬆ these are this object's PARENTS</span></span>
+      <span class="ds-lkp-hdr-hint">Each row is a record this object points at — it must exist in the target BEFORE this object deploys, or the lookup lands empty</span>
     </div>
     <div class="ds-lkp-rows">${rows.join('')}</div>
   </div>`;
@@ -1135,7 +1135,7 @@ function renderTreeNode(node, path, isRoot, depth = 0) {
           const candidates = meta.availableRels.filter(r =>
             !(node.children || []).some(c => c.relationshipName === r.relationshipName));
           return `<details class="ds-tree-rels-details">
-            <summary class="ds-tree-rels-summary">+ Add child relationship <span class="ds-tree-rels-count">${candidates.length} available</span></summary>
+            <summary class="ds-tree-rels-summary" title="Direction: CHILDREN point AT this object (the opposite of the Lookup Resolution parents above). A child added here deploys WITH this object — the engine inserts in the right order and wires the links automatically.">+ Add child relationship <span class="ds-tree-rels-role">⬇ objects that point AT this one — deploy together, auto-ordered</span> <span class="ds-tree-rels-count">${candidates.length} available</span></summary>
             <div class="ds-tree-rels-list">
               ${candidates.map(r => `
                   <div class="ds-tree-rel-row"

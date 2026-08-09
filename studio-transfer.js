@@ -390,12 +390,6 @@ async function renderTransfer() {
 
       <div class="ds-transfer-options">
         <div class="ds-transfer-option">
-          <label class="ds-transfer-option-label">
-            <input type="checkbox" id="dsTrDryRun" ${_transferDryRun ? 'checked' : ''}>
-            <span>🧪 Dry Run <span class="ds-option-hint">Simulate without writing records</span></span>
-          </label>
-        </div>
-        <div class="ds-transfer-option">
           <label class="ds-transfer-option-label" for="dsTrWriteMode">Write mode:</label>
           <select id="dsTrWriteMode" class="ds-select ds-select-sm" style="width:auto">
             <option value="insert" ${_transferWriteMode === 'insert' ? 'selected' : ''}>Insert (always create)</option>
@@ -417,7 +411,7 @@ async function renderTransfer() {
         <button class="ds-btn" id="dsTrRecPreviewBtn" title="A record-by-record table of what this run will DO — every in-scope record with its operation (Insert / Update / duplicate warning), read from the last 🔄 scan.">📋 Records preview</button>
         <span id="dsTrValidHint" class="ds-tr-valid-hint"></span>
         <button class="ds-btn ds-btn-lg" id="dsTrValidateBtn" disabled
-          title="Run every safety check — required fields, lookups, record types, child-first feasibility — without writing anything.">🧪 Validate (dry run)</button>
+          title="Runs every safety check WITHOUT writing anything — required fields, lookup bridges (with live target probes), record types, child-first feasibility, value-level checks against sampled data. Honest limits: target validation rules, triggers and duplicate rules only fire on real writes, so a passing dry run can't vouch for those.">🧪 Dry Run (validate — no writes)</button>
         <button class="ds-btn ds-btn-lg" id="dsTrRunBtn" disabled>▶ Run Transfer</button>
       </div>
       <!-- E3: API-cost estimate + each org's daily-budget meter (informs, never blocks) -->
@@ -456,17 +450,14 @@ async function renderTransfer() {
   eid('dsTrPreviewBtn')?.addEventListener('click', previewTransfer);
   eid('dsTrRecPreviewBtn')?.addEventListener('click', openRunRecordsPreview);
   eid('dsTrRunBtn')?.addEventListener('click', runTransfer);
-  // Validate = a one-off dry run, without touching the persistent checkbox.
+  // ONE dry-run control (user 2026-08-09: "we have two dry run buttons why
+  // do we need both" — the old checkbox merely relabelled ▶ Run into the
+  // SAME validator this button triggers; two doors, one room). The flag
+  // flips only for the duration of this click.
   eid('dsTrValidateBtn')?.addEventListener('click', async () => {
-    const chk = eid('dsTrDryRun');
-    const prev = _transferDryRun;
     _transferDryRun = true;
     try { await runTransfer(); }
-    finally { _transferDryRun = chk ? chk.checked : prev; _syncRunButtons(); }
-  });
-  eid('dsTrDryRun')?.addEventListener('change', e => {
-    _transferDryRun = e.target.checked;
-    _syncRunButtons();
+    finally { _transferDryRun = false; _syncRunButtons(); }
   });
   eid('dsTrWriteMode')?.addEventListener('change', e => {
     _transferWriteMode = e.target.value;
