@@ -123,3 +123,44 @@ describe('sftkLkpSoqlLike — LIKE-literal escaping', () => {
     expect(lkp.sftkLkpSoqlLike(null)).toBe('');
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// W7 finding #1 (2026-08-09): reconcileOverwrite predates W2 and only
+// resolved lookups BY KEY (refPairs) — a hand-pick made on the very row
+// being overwritten silently lost to name-matching. Source-anchored
+// checks (same style as the PII fail-closed suite) that the fix is
+// present AND ordered so picks win.
+// ══════════════════════════════════════════════════════════════════
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const RECONCILE = readFileSync(join(root, 'studio-reconcile.js'), 'utf8');
+const ovwStart = RECONCILE.indexOf('async function reconcileOverwrite(');
+const ovwSrc = RECONCILE.slice(ovwStart, RECONCILE.indexOf('\n}', ovwStart));
+
+describe('reconcileOverwrite honors 🔗 hand-picks (engine Priority-0 parity)', () => {
+  it('reads the org bucket through the SAME helper the panel writes with', () => {
+    expect(ovwSrc).toContain('sftkLkpOvBucket(node, profile.targetOrg)');
+  });
+
+  it('applies picks AFTER the by-key refPairs loop — a pick must win', () => {
+    const refPairsWrite = ovwSrc.indexOf('p[rp.tf] = pid;');
+    const pickWrite     = ovwSrc.indexOf('p[tf] = pickId;');
+    expect(refPairsWrite).toBeGreaterThan(-1);
+    expect(pickWrite).toBeGreaterThan(refPairsWrite);
+  });
+
+  it('gates picks on the target describe — never PATCH a missing/read-only field', () => {
+    expect(ovwSrc).toContain("tgtUpdMap.get(tf) !== true) continue;");
+  });
+
+  it('excludes engine-owned refs from pick application', () => {
+    expect(ovwSrc).toMatch(/\['OwnerId', 'RecordTypeId', 'CreatedById', 'LastModifiedById'\]\.includes\(f\.name\)/);
+  });
+
+  it('discloses the applied-pick count in the summary', () => {
+    expect(ovwSrc).toContain('lookup value(s) written from hand-picked targets');
+  });
+});

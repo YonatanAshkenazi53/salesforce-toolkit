@@ -2099,6 +2099,18 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const node = profile.tree;
   const fm   = node.fieldMappings || {};
 
+  // W2 — hand-picked lookup targets for THIS target org (the Reconcile 🔗
+  // panel). Applied LAST in the payload build: a pick is already a
+  // target-org id, so it needs no by-key resolution and beats the
+  // name-matching refPairs below — the same Priority-0 the run engine
+  // gives node.lookupOverrides. Without this, a pick made on the very row
+  // being overwritten would silently lose to name-matching.
+  const lkpOv = (typeof sftkLkpOvBucket === 'function')
+    ? sftkLkpOvBucket(node, profile.targetOrg) : null;
+  let lkpOvUsed = 0;
+  let lkpOvEligible = null;   // srcField → mapped target field (built from describe)
+  let tgtUpdMap = null;       // target field → updateable (null = describe unavailable)
+
   // PII policy applies to EVERY write path. This function sends
   // SF_COLLECTIONS_UPDATE itself instead of going through the engine, and
   // the adversarial review confirmed it as THE leak: masked deploys, raw
@@ -2196,6 +2208,18 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       }
       const refs = new Set(d.fields.filter(f => f.type === 'reference' && f.name !== 'RecordTypeId').map(f => f.name));
       srcFields = srcFields.filter(k => srcNames.has(k) && !refs.has(k));
+      // W2 — every non-engine-owned reference can take a hand-pick, even
+      // ones refPairs skips (polymorphic without a configured matchObject,
+      // no relationshipName): the pick IS the target id, no resolution
+      // needed. Same rename rule as the plain-field loop.
+      if (lkpOv) {
+        lkpOvEligible = {};
+        for (const f of d.fields) {
+          if (f.type !== 'reference') continue;
+          if (['OwnerId', 'RecordTypeId', 'CreatedById', 'LastModifiedById'].includes(f.name)) continue;
+          lkpOvEligible[f.name] = (fm[f.name] && fm[f.name] !== null) ? fm[f.name] : f.name;
+        }
+      }
     }
     // TARGET-side validation — the PATCH writes the MAPPED names into the
     // target org; a mapped name that's missing there (e.g. test__c, or
@@ -2203,6 +2227,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     // the source) or read-only fails EVERY row with "No such column".
     if (dt && !dt.error && Array.isArray(dt.fields) && dt.fields.length) {
       const tgtUpd = new Map(dt.fields.map(f => [f.name, f.updateable !== false]));
+      tgtUpdMap = tgtUpd;   // W2 — pick application checks the same map
       const badTgt = [];
       srcFields = srcFields.filter(sf => {
         const tf = (sf === 'RecordTypeId') ? 'RecordTypeId' : (fm[sf] || sf);
@@ -2368,6 +2393,19 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       if (!pid) { rp.unresolved++; continue; }
       p[rp.tf] = pid;
     }
+    // W2 — hand-picks are the FINAL word on lookups (after refPairs, so a
+    // pick beats by-key matching). Target-side gate mirrors the mapped-field
+    // filter above: never PATCH a field the target lacks or can't update.
+    const ovForRec = (lkpOv && lkpOv[sr.Id] && typeof lkpOv[sr.Id] === 'object') ? lkpOv[sr.Id] : null;
+    if (ovForRec && lkpOvEligible) {
+      for (const [sf, pickId] of Object.entries(ovForRec)) {
+        const tf = lkpOvEligible[sf];
+        if (!tf || !pickId) continue;
+        if (tgtUpdMap && tgtUpdMap.get(tf) !== true) continue;
+        p[tf] = pickId;
+        lkpOvUsed++;
+      }
+    }
     // Owners: matched name → that user; unmatched → fallback; no fallback →
     // the target's current owner stays untouched.
     if (wantOwners) {
@@ -2400,6 +2438,10 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       warnings.push(`⚠ ${rp.sf}: ${rp.unresolved} record(s) point at a ${rp.parentObj} with no match in the target (by ${rp.matchField}) — left unchanged; insert the parent first or pick a better match field`);
     }
   }
+
+  // W2 — disclose applied hand-picks the way the run engine does, so the
+  // user can tell name-matching results from their own overrides.
+  if (lkpOvUsed) warnings.push(`🔗 ${lkpOvUsed} lookup value(s) written from hand-picked targets (your Reconcile 🔗 picks — they beat name-matching)`);
 
   const res = await sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: payloads });
   const arr = Array.isArray(res) ? res : [];
