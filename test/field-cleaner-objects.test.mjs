@@ -540,3 +540,25 @@ describe('dropdown keyboard state survives what the UI does around it', () => {
     expect(SRC).toMatch(/input\?\.removeAttribute\('aria-activedescendant'\)/);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// W6 (user 2026-08-05: "ask before any delete operation") — ✂ Remove
+// deploys metadata and (for flows) permanently deletes old versions;
+// it must confirm first.
+// ══════════════════════════════════════════════════════════════════
+describe('metadata-mutating fixes confirm before acting', () => {
+  it('fixOne gates on sftkConfirmDestructive with the flow-version-deletion truth', () => {
+    const i = SRC.indexOf('async function fixOne(');
+    const fn = SRC.slice(i, SRC.indexOf('\n  }', i));
+    expect(fn).toContain('await sftkConfirmDestructive({');
+    expect(fn).toContain('permanently deletes old versions');
+    expect(fn).toMatch(/needsCheckbox: type === 'Flow'/);
+    expect(fn).toMatch(/if \(!sure\) return;/);
+    // the confirm happens BEFORE the button flips to ⏳
+    expect(fn.indexOf('sftkConfirmDestructive')).toBeLessThan(fn.indexOf("textContent = '⏳'"));
+  });
+
+  it('the field delete itself still runs through the shared destructive confirm', () => {
+    expect(SRC).toMatch(/async function confirmDelete\(fieldId\) \{[\s\S]{0,400}?sftkConfirmDestructive\(/);
+  });
+});
