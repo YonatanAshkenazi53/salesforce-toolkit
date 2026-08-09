@@ -837,6 +837,22 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         }
       }
 
+      // W2 — per-record lookup overrides for THIS target org: the user's
+      // hand-picked target record per (source record, field), set from
+      // Reconcile and stored at node.lookupOverrides[orgKey][srcId][field].
+      // Org-local target ids — stripped on profile export. Matched by org
+      // IDENTITY like every other surface.
+      let lkpOverridesUsed = 0;
+      const lkpOverrides = (() => {
+        const all = node.lookupOverrides;
+        if (!all || typeof all !== 'object') return null;
+        const want = sftkOrgKey(tgtOrgUrl);
+        for (const [k, v] of Object.entries(all)) {
+          if (sftkOrgKey(k) === want && v && typeof v === 'object') return v;
+        }
+        return null;
+      })();
+
       // ── Lookup Resolution bridges ─────────────────────────────────────────
       // For each reference field configured with strategy 'match', build a
       // srcId → tgtId bridge by querying both orgs on a shared anchor field.
@@ -1031,6 +1047,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             // step would re-point it — a transient wrong link).
             const isCf           = node.insertOrder === 'childFirst';
             const isDeferredLink = isCf && f.name === parentField;
+            // W2 — Priority 0: the user's PER-RECORD hand-pick outranks every
+            // automatic resolution. The child-first tree link is exempt: its
+            // parent is created in THIS run and the connect step owns it.
+            const lkpOv = !isDeferredLink && lkpOverrides
+              ? (lkpOverrides[r.Id] && lkpOverrides[r.Id][f.name]) : null;
+            if (lkpOv) { p[tgtField] = lkpOv; lkpOverridesUsed++; continue; }
             // Priority 1: idMap — record was transferred earlier in this same session
             if (idMap[v]) {
               p[tgtField] = idMap[v];
@@ -1336,6 +1358,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // payloads carried hashed / nulled / fixed. Present whenever the policy
       // covers this object, even at zero (masking was ACTIVE, values may all
       // have been empty) — History and the run log read it from here.
+      if (lkpOverridesUsed) {
+        diagnostics.push(`${objType}: ${lkpOverridesUsed} lookup value(s) set from per-record hand-picks (Reconcile → lookup overrides).`);
+      }
       summary[objType] = { created: ok, failed: fail,
         ...(usedBulk ? { viaBulk: true } : {}),
         ...(useUpsert ? { viaUpsert: upsertField } : {}),

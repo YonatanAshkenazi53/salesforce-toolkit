@@ -1728,6 +1728,10 @@ function bldProfileStrip(profile) {
   (function walk(node) {
     if (!node || typeof node !== 'object') return;
     delete node._meta;
+    // W2 — per-record lookup overrides hold org-local TARGET record ids
+    // keyed by org identity: meaningless (and misleading) on a teammate's
+    // machine. Config they should rebuild against their own orgs.
+    delete node.lookupOverrides;
     (Array.isArray(node.children) ? node.children : []).forEach(walk);
   })(clean.tree);
   return clean;
