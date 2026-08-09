@@ -420,10 +420,12 @@
            '<div class="lp-robot-msg">' + msg + '</div></div>';
   };
 
-  // ── Reusable kitty mascot ───────────────────────────────────────────────────
-  // Inline SVG cat face themed entirely via the --cat-* CSS variables (defined
-  // in styles.css / studio.css, with dark-mode variants), so it recolors with
-  // the theme for free. Moods:
+  // ── Ninja, the mascot ───────────────────────────────────────────────────────
+  // This cat is Ninja (…–2026), the developer's grey tabby — she sat beside
+  // this Toolkit while it was built. Warm grey coat, darker tabby stripes,
+  // big yellow-green eyes, white muzzle, pink-brown nose: her real colors,
+  // carried by the --cat-* CSS variables (styles.css / studio.css, with
+  // dark-mode variants). In loving memory. Moods:
   //   'load'  blinking eyes (loading) — gets the .sftk-cat-load breathing anim
   //   'happy' closed ^^ eyes (success / all-clear)
   //   'sad'   half-lidded + downturned mouth (errors)
@@ -434,35 +436,38 @@
     const s = size || 56;
     const eyes =
       mood === 'happy' || mood === 'sleep'
-        ? '<path d="M20 30 q4 4 8 0" fill="none" stroke="var(--cat-eye,#1565C0)" stroke-width="2.2" stroke-linecap="round"/>' +
-          '<path d="M36 30 q4 4 8 0" fill="none" stroke="var(--cat-eye,#1565C0)" stroke-width="2.2" stroke-linecap="round"/>'
+        ? '<path d="M20 30 q4 4 8 0" fill="none" stroke="var(--cat-eye,#8F8A2B)" stroke-width="2.2" stroke-linecap="round"/>' +
+          '<path d="M36 30 q4 4 8 0" fill="none" stroke="var(--cat-eye,#8F8A2B)" stroke-width="2.2" stroke-linecap="round"/>'
       : mood === 'sad'
-        ? '<circle cx="24" cy="31" r="2.6" fill="var(--cat-eye,#1565C0)"/><circle cx="40" cy="31" r="2.6" fill="var(--cat-eye,#1565C0)"/>'
-        : '<circle cx="24" cy="31" r="3.4" fill="var(--cat-eye,#1565C0)" class="sftk-cat-eye"/><circle cx="40" cy="31" r="3.4" fill="var(--cat-eye,#1565C0)" class="sftk-cat-eye"/>';
+        ? '<circle cx="24" cy="31" r="2.6" fill="var(--cat-eye,#8F8A2B)"/><circle cx="40" cy="31" r="2.6" fill="var(--cat-eye,#8F8A2B)"/>'
+        : '<circle cx="24" cy="31" r="3.4" fill="var(--cat-eye,#8F8A2B)" class="sftk-cat-eye"/><circle cx="40" cy="31" r="3.4" fill="var(--cat-eye,#8F8A2B)" class="sftk-cat-eye"/>';
     const mouth =
       mood === 'sad'
-        ? '<path d="M27 41 q5 -4 10 0" fill="none" stroke="var(--cat-nose,#EF9A9A)" stroke-width="1.8" stroke-linecap="round"/>'
-        : '<path d="M32 37 v3 M27 40 q5 4 10 0" fill="none" stroke="var(--cat-nose,#EF9A9A)" stroke-width="1.6" stroke-linecap="round"/>';
+        ? '<path d="M30 34.6 L34 34.6 L32 37 Z" fill="var(--cat-nose,#B4786C)"/>' +
+          '<path d="M27 41 q5 -4 10 0" fill="none" stroke="var(--cat-nose,#B4786C)" stroke-width="1.8" stroke-linecap="round"/>'
+        : '<path d="M30 34.6 L34 34.6 L32 37 Z" fill="var(--cat-nose,#B4786C)"/>' +
+          '<path d="M32 37 v3 M27 40 q5 4 10 0" fill="none" stroke="var(--cat-nose,#B4786C)" stroke-width="1.6" stroke-linecap="round"/>';
     const zzz = mood === 'sleep'
       ? '<text x="48" y="18" font-size="11" fill="var(--cat-fur-dark,#78909C)" font-family="system-ui">z</text>' +
         '<text x="54" y="11" font-size="8" fill="var(--cat-fur-dark,#78909C)" font-family="system-ui">z</text>'
       : '';
     return '<svg class="sftk-cat sftk-cat-' + mood + '" width="' + s + '" height="' + s +
       '" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+        '<title>In loving memory of Ninja — the beautiful grey cat behind this Toolkit 🐾</title>' +
         '<g class="sftk-cat-body">' +
           // ears
-          '<path d="M14 22 L12 6 L28 16 Z" fill="var(--cat-fur,#B0BEC5)"/>' +
-          '<path d="M50 22 L52 6 L36 16 Z" fill="var(--cat-fur,#B0BEC5)"/>' +
-          '<path d="M16 19 L15 10 L24 16 Z" fill="var(--cat-inner,#FFCDD2)"/>' +
-          '<path d="M48 19 L49 10 L40 16 Z" fill="var(--cat-inner,#FFCDD2)"/>' +
+          '<path d="M14 22 L12 6 L28 16 Z" fill="var(--cat-fur,#A89A8C)"/>' +
+          '<path d="M50 22 L52 6 L36 16 Z" fill="var(--cat-fur,#A89A8C)"/>' +
+          '<path d="M16 19 L15 10 L24 16 Z" fill="var(--cat-inner,#D9B8AC)"/>' +
+          '<path d="M48 19 L49 10 L40 16 Z" fill="var(--cat-inner,#D9B8AC)"/>' +
           // head
-          '<ellipse cx="32" cy="33" rx="22" ry="20" fill="var(--cat-fur,#B0BEC5)"/>' +
-          '<ellipse cx="32" cy="38" rx="13" ry="11" fill="var(--cat-belly,#F8F4EE)"/>' +
-          // stripes
-          '<path d="M32 13 v8 M24 14 l2 7 M40 14 l-2 7" stroke="var(--cat-stripe,#90A4AE)" stroke-width="2" stroke-linecap="round" fill="none"/>' +
+          '<ellipse cx="32" cy="33" rx="22" ry="20" fill="var(--cat-fur,#A89A8C)"/>' +
+          '<ellipse cx="32" cy="38" rx="13" ry="11" fill="var(--cat-belly,#F4EFE7)"/>' +
+          // tabby stripes — Ninja had them
+          '<path d="M32 13 v8 M24 14 l2 7 M40 14 l-2 7" stroke="var(--cat-stripe,#6F665C)" stroke-width="2" stroke-linecap="round" fill="none"/>' +
           eyes + mouth +
           // whiskers
-          '<path d="M10 34 h10 M10 39 h10 M54 34 h-10 M54 39 h-10" stroke="var(--cat-stripe,#90A4AE)" stroke-width="1" stroke-linecap="round" opacity="0.7"/>' +
+          '<path d="M10 34 h10 M10 39 h10 M54 34 h-10 M54 39 h-10" stroke="var(--cat-stripe,#6F665C)" stroke-width="1" stroke-linecap="round" opacity="0.7"/>' +
         '</g>' + zzz +
       '</svg>';
   };

@@ -118,13 +118,16 @@
   --warning-bg:     var(--c-warn-bg);
 
   /* kitty mascot palette — illustration colours, outside the system */
-  --cat-fur:      #B0BEC5;
-  --cat-fur-dark: #78909C;
-  --cat-belly:    #F8F4EE;
-  --cat-inner:    #FFCDD2;
-  --cat-eye:      #1565C0;
-  --cat-nose:     #EF9A9A;
-  --cat-stripe:   #90A4AE;
+  /* The mascot is Ninja (…–2026), the developer's grey tabby — these are her
+     real colors from her photo: warm grey coat, darker tabby stripes, big
+     yellow-green eyes, white muzzle, pink-brown nose. In loving memory. */
+  --cat-fur:      #A89A8C;
+  --cat-fur-dark: #7E7266;
+  --cat-belly:    #F4EFE7;
+  --cat-inner:    #D9B8AC;
+  --cat-eye:      #8F8A2B;
+  --cat-nose:     #B4786C;
+  --cat-stripe:   #6F665C;
 
   /* shape + elevation.  studio.css used to say --radius:8px and
      --shadow-md:0 6px 24px; the popup said 6px / 0 4px 16px.  One value now. */
@@ -211,13 +214,14 @@ body.sftk-dark {
   --warning-bg:     #3A2A10;
 
   /* Night kitty 🐱 */
-  --cat-fur:      #546E7A;
-  --cat-fur-dark: #37474F;
-  --cat-belly:    #B0BEC5;
-  --cat-inner:    #B07A80;
-  --cat-eye:      #82B1FF;
-  --cat-nose:     #C98A8A;
-  --cat-stripe:   #455A64;
+  /* Ninja in dark mode — same warm grey tabby, lifted so she reads on dark. */
+  --cat-fur:      #8A7D70;
+  --cat-fur-dark: #665B50;
+  --cat-belly:    #D8D0C4;
+  --cat-inner:    #A98578;
+  --cat-eye:      #C9C554;
+  --cat-nose:     #C08A7D;
+  --cat-stripe:   #574E44;
   color-scheme: dark;
   --shadow:       0 2px 8px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.04);
   --shadow-md:    0 4px 16px rgba(0,0,0,.55);
