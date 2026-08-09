@@ -5970,3 +5970,28 @@ body.ds-pro {
 .ds-lkp-clear { border: 0; background: transparent; cursor: pointer; color: inherit; font-size: 11px; padding: 0 1px; line-height: 1; }
 .ds-lkp-clear:hover { color: #b42318; }
 .ds-lkp-objsel { font-size: 11.5px; margin-bottom: 4px; max-width: 100%; }
+.ds-lkp-vals { display: flex; flex-direction: column; gap: 2px; min-width: 150px; max-width: 240px; }
+.ds-lkp-vals-diff .ds-lkp-src { font-weight: 600; }
+.ds-lkp-diffchip { font-size: 11px; color: #b45309; font-weight: 700; }
+.ds-lkp-vallink { color: var(--brand); text-decoration: none; }
+.ds-lkp-vallink:hover { text-decoration: underline; }
+
+/* ── OLED — absolute black (user 2026-08-09: "dark for oled screens") ────
+   Rides ON TOP of .ds-dark: same accents, surfaces dropped to true black /
+   near-black so OLED pixels switch off. §B literals restated because they
+   are literals in .ds-dark (same reason that block restates them). */
+.ds-dark.ds-oled {
+  --c-bg:            #000000;
+  --c-surface:       #0A0B0E;
+  --c-surface-sunk:  #101216;
+  --c-surface-nav:   #000000;
+  --c-border:        #23262E;
+  --c-border-subtle: #191C22;
+  --bg:              #000000;
+  --surface:         #0A0B0E;
+  --surface2:        #101216;
+  --card:            #0A0B0E;
+  --header-bg:       #000000;
+}
+#dsOledToggle { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; }
+.ds-oled-on { outline: 1.5px solid var(--brand); outline-offset: 1px; }

@@ -256,10 +256,10 @@ async function renderReconcile() {
   // rows). Link opens a lazy panel (renderLkpOverridePanel); the badge is
   // how many picks the record carries for the CURRENT target org.
   const lkpN = id => Object.keys(sftkLkpOvGet(p.tree, p.targetOrg, id)).length;
-  const lkpLink = id => {
+  const lkpLink = (id, tgtId) => {
     if (!id) return '';
     const n = lkpN(id);
-    return `<span class="ds-rec-drift-link${n ? ' ds-lkp-on' : ''}" data-rec-lkp="${esc(id)}" title="Hand-pick which TARGET record each lookup field should point at for THIS record — saved per target org, beats name-matching in the engine.">🔗<span class="ds-lkp-count">${n ? ` ${n}` : ''}</span></span>`;
+    return `<span class="ds-rec-drift-link${n ? ' ds-lkp-on' : ''}" data-rec-lkp="${esc(id)}"${tgtId ? ` data-rec-lkp-tgt="${esc(tgtId)}"` : ''} title="Hand-pick which TARGET record each lookup field should point at for THIS record — saved per target org, beats name-matching in the engine.">🔗<span class="ds-lkp-count">${n ? ` ${n}` : ''}</span></span>`;
   };
   const lkpExpand = id => id ? `<div class="ds-rec-drift-expand ds-rec-lkp-expand" data-lkp-expand="${esc(id)}" style="display:none"></div>` : '';
 
@@ -334,7 +334,7 @@ async function renderReconcile() {
         <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${keyLbl(r.matchKey)}</span>
         ${why}
         <span class="ds-rec-drift-link" data-rec-drift="${esc(r.sourceId)}|${esc(r.targetId)}" title="See which fields differ">▸ fields</span>
-        ${lkpLink(sid)}
+        ${lkpLink(sid, r.targetId)}
       </div>
       ${lkpExpand(sid)}
       <div class="ds-rec-drift-expand" data-drift-expand="${esc(r.sourceId)}" style="display:none"></div>`;
@@ -688,8 +688,8 @@ async function renderReconcile() {
     <div class="ds-op-banner ds-op-banner-write">
       <span class="ds-op-banner-icon">⚖</span>
       <div class="ds-op-banner-body">
-        <div class="ds-op-banner-title">Reconcile is bidirectional</div>
-        <div class="ds-op-banner-desc">→ actions write to <strong>${esc(orgLabel(p.targetOrg))}</strong> (target); ← actions write to <strong>${esc(orgLabel(p.sourceOrg))}</strong> (source). On drifted records, pick a winner per row: <strong>→</strong> source values overwrite target, <strong>←</strong> target values overwrite source. Delete permanently removes records from target. Review your selections before running.</div>
+        <div class="ds-op-banner-title">Pushing <strong>${esc(orgLabel(p.sourceOrg))}</strong> → <strong>${esc(orgLabel(p.targetOrg))}</strong></div>
+        <div class="ds-op-banner-desc"><strong>→</strong> writes FROM ${esc(orgLabel(p.sourceOrg))} INTO <strong>${esc(orgLabel(p.targetOrg))}</strong> (the normal direction). <strong>←</strong> writes back FROM ${esc(orgLabel(p.targetOrg))} INTO <strong>${esc(orgLabel(p.sourceOrg))}</strong> — opt-in, per row. On changed records pick a winner per row with those arrows. Delete permanently removes records from ${esc(orgLabel(p.targetOrg))}. Review your selections before running.</div>
       </div>
     </div>
 
@@ -952,7 +952,7 @@ async function renderReconcile() {
       expand.style.display = wasOpen ? 'none' : 'block';
       if (!wasOpen && expand.dataset.loaded !== '1') {
         expand.dataset.loaded = '1';
-        renderLkpOverridePanel(p, objType, srcId, expand);
+        renderLkpOverridePanel(p, objType, srcId, expand, link.dataset.recLkpTgt || null);
       }
     });
   });
@@ -2566,7 +2566,7 @@ function sftkLkpBadgeRefresh(p, srcId) {
 // with what the SOURCE currently points at and a target-org search box.
 // Picks persist immediately — they're profile config, not run-scoped
 // selection state.
-async function renderLkpOverridePanel(p, objType, srcId, host) {
+async function renderLkpOverridePanel(p, objType, srcId, host, tgtRecId) {
   host.innerHTML = `<div class="ds-drift-compare-loading">Loading lookups…</div>`;
   const allSess = _buildAllSessions();
   const srcSess = _resolveSession(p.sourceOrg, allSess);
@@ -2587,22 +2587,28 @@ async function renderLkpOverridePanel(p, objType, srcId, host) {
   }
   const cur = sftkLkpOvGet(p.tree, p.targetOrg, srcId);
 
-  // Source-side context — what each lookup points at NOW, by the related
-  // record's Name when the relationship exposes one. Same enhanced-select-
-  // with-plain-fallback pattern as fetchDriftRowDetail.
-  let srcRec = null;
-  if (srcSess?.sid) {
+  // Current values on BOTH sides — what each lookup points at NOW, by the
+  // related record's Name when the relationship exposes one (user 2026-08-09:
+  // "Why we don't see the actual values of the fields"). Same enhanced-
+  // select-with-plain-fallback pattern as fetchDriftRowDetail. The target
+  // side only exists for CHANGED rows (missing rows have no target record).
+  const fetchRecWithRels = async (sess, recId) => {
+    if (!sess?.sid || !recId) return null;
     const enh = ['Id'], plain = ['Id'];
     for (const f of refs) {
       plain.push(f.name); enh.push(f.name);
       if (f.relationshipName) enh.push(`${f.relationshipName}.Name`);
     }
-    const q = sel => sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid,
-      _suppressError: true, query: `SELECT ${[...new Set(sel)].join(',')} FROM ${objType} WHERE Id = '${srcId}'` });
+    const q = sel => sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
+      _suppressError: true, query: `SELECT ${[...new Set(sel)].join(',')} FROM ${objType} WHERE Id = '${recId}'` });
     let r = await q(enh);
     if (r?.error) r = await q(plain);
-    srcRec = r?.records?.[0] || null;
-  }
+    return r?.records?.[0] || null;
+  };
+  const [srcRec, tgtRec] = await Promise.all([
+    fetchRecWithRels(srcSess, srcId),
+    fetchRecWithRels(tgtSess, tgtRecId),
+  ]);
 
   // Resolve Names for already-picked target ids (one query per ref object;
   // failures degrade to showing the raw id).
@@ -2620,22 +2626,42 @@ async function renderLkpOverridePanel(p, objType, srcId, host) {
     for (const rec of (r?.records || [])) { if (rec.Name != null) _lkpNameCache.set(rec.Id, rec.Name); }
   }));
 
+  // Record deep-link — lets the user jump from a value straight to the
+  // actual record in its org (user: "we should be able to go to the next
+  // level"). Plain Lightning URL; opens in a new tab.
+  const recHref = (orgUrl, id) => `${String(orgUrl || '').replace(/\/$/, '')}/lightning/r/${id}/view`;
+  const valOf = (rec, f) => {
+    if (!rec) return { text: null, id: null };
+    const rel = f.relationshipName ? rec[f.relationshipName] : null;
+    const id = rec[f.name] || null;
+    const text = (rel && rel.Name != null) ? String(rel.Name)
+               : (id != null && id !== '') ? String(id) : null;
+    return { text, id };
+  };
+  const valHtml = (side, orgUrl, rec, f, title) => {
+    const v = valOf(rec, f);
+    const label = v.text == null ? '∅ empty' : v.text;
+    const inner = v.id
+      ? `<a href="${esc(recHref(orgUrl, v.id))}" target="_blank" rel="noopener" class="ds-lkp-vallink" title="${esc(title)} — click to open the record in ${esc(orgLabel(orgUrl || ''))}">${esc(label)}</a>`
+      : esc(label);
+    return `<span class="ds-lkp-src">${side} → ${inner}</span>`;
+  };
   const rowsHtml = refs.map(f => {
     const refObjs = f.referenceTo || [];
-    let srcVal = '—';
-    if (srcRec) {
-      const rel = f.relationshipName ? srcRec[f.relationshipName] : null;
-      srcVal = (rel && rel.Name != null) ? String(rel.Name)
-             : (srcRec[f.name] != null && srcRec[f.name] !== '') ? String(srcRec[f.name]) : '∅ empty';
-    }
     const picked = cur[f.name];
     const pickedNm = picked ? (_lkpNameCache.get(picked) || picked) : null;
+    const sv = valOf(srcRec, f), tv = valOf(tgtRec, f);
+    const differs = tgtRec && String(sv.text ?? '') !== String(tv.text ?? '');
     return `<div class="ds-lkp-row" data-lkp-field="${esc(f.name)}" data-lkp-objs="${esc(refObjs.join(','))}">
       <span class="ds-lkp-field" title="${esc(f.name)}">${esc(f.label || f.name)}<span class="ds-lkp-type">Lookup(${esc(refObjs.join('/'))})</span></span>
-      <span class="ds-lkp-src" title="What the SOURCE record points at right now — without a pick, the engine matches it into the target by name.">src → ${esc(srcVal)}</span>
+      <span class="ds-lkp-vals${differs ? ' ds-lkp-vals-diff' : ''}">
+        ${valHtml('src', p.sourceOrg, srcRec, f, 'What the SOURCE record points at right now')}
+        ${tgtRecId ? valHtml('tgt', p.targetOrg, tgtRec, f, 'What the TARGET record points at right now — an overwrite/pick changes this') : ''}
+        ${differs ? `<span class="ds-lkp-diffchip" title="The two orgs point at different related records — this is the drift">≠</span>` : ''}
+      </span>
       <span class="ds-lkp-pick">
         ${picked
-          ? `<span class="ds-lkp-chip" title="Hand-picked target record (${esc(picked)}) — for THIS record in ${esc(orgLabel(p.targetOrg || ''))} the engine writes this exact Id, beating name-matching.">→ ${esc(pickedNm)} <button class="ds-lkp-clear" data-lkp-clear="${esc(f.name)}" title="Remove the pick — the engine falls back to matching by name">✕</button></span>`
+          ? `<span class="ds-lkp-chip" title="Hand-picked target record (${esc(picked)}) — for THIS record in ${esc(orgLabel(p.targetOrg || ''))} the engine writes this exact Id, beating name-matching.">→ <a href="${esc(recHref(p.targetOrg, picked))}" target="_blank" rel="noopener" class="ds-lkp-vallink" title="Open the picked record in ${esc(orgLabel(p.targetOrg || ''))}">${esc(pickedNm)}</a> <button class="ds-lkp-clear" data-lkp-clear="${esc(f.name)}" title="Remove the pick — the engine falls back to matching by name">✕</button></span>`
           : `${refObjs.length > 1 ? `<select class="ds-lkp-objsel" title="Polymorphic lookup — pick which object to search">${refObjs.map(o => `<option>${esc(o)}</option>`).join('')}</select>` : ''}
              <input type="text" class="ds-lkp-search" data-lkp-search="${esc(f.name)}" placeholder="🔍 search ${esc(refObjs[0] || '')} in ${esc(orgLabel(p.targetOrg || 'target'))}…">
              <div class="ds-lkp-results" style="display:none"></div>`}
