@@ -2756,6 +2756,15 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
         required: !!tf && tf.nillable === false });
     }
     if (!parents.length) return;
+    // Numbered plan (user 2026-08-10: "its very unclear what is the correct
+    // order") — the panel is now an explicit ordered checklist: every parent
+    // is a numbered step with live status from the session sync map; this
+    // deployment is always the LAST step, and the first unfinished step
+    // carries a "← next" marker. No more inferring the order.
+    const steps = parents.map(g => {
+      const vd = _parentSyncVerdicts[sftkParentSyncKey(p.sourceOrg, p.targetOrg, g.refObj)];
+      return { ...g, vd, done: !g.empty && !!vd && !vd.missing && !vd.changed };
+    });
     const anyEmpty = parents.some(g => g.empty);
     // Two tiers, one flow (user 2026-08-10: "offer the user to compare
     // parent records per orgs first and fix them and then only transfer
@@ -2764,28 +2773,33 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
     // pass (missing rows / drift there break the children's bridges too).
     // Both buttons run the same one-click: scan the parent pair, open its
     // Reconcile, fix, come back — this view refreshes itself.
-    const rowHtml = g => {
-      if (g.empty) {
-        return `<div class="ds-op-banner-desc">${esc(objType)}.<strong>${esc(g.field)}</strong> points at <strong>${esc(g.refObj)}</strong>, but ${esc(orgLabel(p.targetOrg))} has <strong>no ${esc(g.refObj)} records at all</strong> — every lookup would land empty${g.required ? ', and the field is REQUIRED there, so every insert would FAIL' : ''}. <button class="ds-btn ds-btn-xs ds-btn-primary" data-recgap="${esc(g.refObj)}" title="Creates a ready-made ${esc(g.refObj)} deployment on this org pair (match by Name) and opens it here — push it, come back, run this one.">➕ Deploy ${esc(g.refObj)} first</button></div>`;
-      }
-      // Known verdict from an earlier scan of this parent on this pair —
-      // SHOW the sync state instead of hiding it behind a click.
-      const vd = _parentSyncVerdicts[sftkParentSyncKey(p.sourceOrg, p.targetOrg, g.refObj)];
-      const inSync = vd && !vd.missing && !vd.changed;
-      const vdChip = !vd ? ''
-        : inSync
-          ? `<span class="ds-psync ds-psync-ok" title="Last ${esc(g.refObj)} scan on this org pair found nothing missing and nothing changed.">✓ in sync · checked ${esc(timeAgo(vd.at))}</span>`
-          : `<span class="ds-psync ds-psync-bad" title="Last ${esc(g.refObj)} scan on this org pair still had work to do.">🔴 ${vd.missing} missing · 🟡 ${vd.changed} changed · ${esc(timeAgo(vd.at))}</span>`;
-      const body = inSync
-        ? `<strong>${esc(g.refObj)}</strong> (via ${esc(g.field)}) ${vdChip} — the name-bridges have parents to land on. Re-check if the orgs changed since.`
-        : `<strong>${esc(g.refObj)}</strong> (via ${esc(g.field)}) ${vdChip || 'exists in both orgs'} — compare it BEFORE pushing these records, so the name-bridges have complete, in-sync parents to land on.`;
-      return `<div class="ds-op-banner-desc">${body} <button class="ds-btn ds-btn-xs" data-recgap="${esc(g.refObj)}" title="Scans ${esc(g.refObj)} across this org pair and opens its Reconcile — fix what's missing or drifted, come back, run this one.">${inSync ? '↻ Re-check' : `🔍 Compare &amp; fix ${esc(g.refObj)} first`}</button></div>`;
+    const nextIdx = steps.findIndex(s => !s.done);
+    const allDone = nextIdx === -1;
+    const stepHtml = (s, i) => {
+      const isNext = i === nextIdx;
+      const status = s.done
+        ? `<span class="ds-psync ds-psync-ok" title="Last ${esc(s.refObj)} scan on this org pair found nothing missing and nothing changed.">✓ in sync${s.vd ? ` · ${esc(timeAgo(s.vd.at))}` : ''}</span> <button class="ds-btn ds-btn-xs" data-recgap="${esc(s.refObj)}" title="Re-scan ${esc(s.refObj)} if the orgs changed since.">↻</button>`
+        : s.empty
+          ? `<span class="ds-psync ds-psync-bad">missing from target entirely${s.required ? ` · ${esc(objType)}.${esc(s.field)} is REQUIRED` : ''}</span> <button class="ds-btn ds-btn-xs ds-btn-primary" data-recgap="${esc(s.refObj)}" title="Creates a ready-made ${esc(s.refObj)} deployment on this org pair (match by Name) and opens it here — push it, come back, run this one.">➕ Deploy ${esc(s.refObj)}</button>`
+          : `${s.vd ? `<span class="ds-psync ds-psync-bad">🔴 ${s.vd.missing} missing · 🟡 ${s.vd.changed} changed · ${esc(timeAgo(s.vd.at))}</span>` : `<span class="ds-lkp-hint">not compared yet</span>`} <button class="ds-btn ds-btn-xs${isNext ? ' ds-btn-primary' : ''}" data-recgap="${esc(s.refObj)}" title="Scans ${esc(s.refObj)} across this org pair and opens its Reconcile — fix, come back, continue down the list.">🔍 Compare &amp; fix</button>`;
+      return `<div class="ds-ordstep${s.done ? ' ds-ordstep-done' : ''}${isNext ? ' ds-ordstep-next' : ''}">
+        <span class="ds-ordstep-num">${i + 1}</span>
+        <strong>${esc(s.refObj)}</strong> <span class="ds-lkp-hint">(via ${esc(s.field)})</span>
+        ${status}${isNext ? '<span class="ds-ordstep-arrow">← next</span>' : ''}
+      </div>`;
     };
     _recParentGapHtml = `<div class="ds-op-banner" style="border-left:3px solid ${anyEmpty ? '#f59e0b' : 'var(--brand)'}">
       <span class="ds-op-banner-icon">⛓</span>
       <div class="ds-op-banner-body">
-        <div class="ds-op-banner-title">Parents first${anyEmpty ? ` — ${parents.filter(g => g.empty).length} parent object(s) missing from the target` : ''}</div>
-        ${parents.map(rowHtml).join('')}
+        <div class="ds-op-banner-title">The correct order for this deployment</div>
+        ${steps.map(stepHtml).join('')}
+        <div class="ds-ordstep${allDone ? ' ds-ordstep-next' : ''}">
+          <span class="ds-ordstep-num">${steps.length + 1}</span>
+          <strong>${esc(objType)}</strong> <span class="ds-lkp-hint">— this deployment</span>
+          ${allDone
+            ? `<span class="ds-psync ds-psync-ok">parents ready — run the columns below ✓</span><span class="ds-ordstep-arrow">← next</span>`
+            : `<span class="ds-lkp-hint">waits for the steps above — its lookups land on those records by name</span>`}
+        </div>
       </div>
     </div>`;
     host.innerHTML = _recParentGapHtml;
@@ -2866,6 +2880,30 @@ async function renderLkpOverridePanel(p, objType, srcId, host, tgtRecId) {
     fetchRecWithRels(tgtSess, tgtRecId),
   ]);
 
+  // SUGGESTED target records (user 2026-08-10: "I mean the suggested lookup
+  // records") — the panel previews what the engine's name-bridge will pick
+  // at run time: for each lookup whose source parent has a Name, find the
+  // target record with that exact Name. One row → confident suggestion
+  // (pinnable); several → ambiguity warning (first match wins — pin to be
+  // sure); none → the lookup would land EMPTY, say it loudly.
+  const suggestions = {};
+  if (tgtSess?.sid && srcRec) {
+    await Promise.all(refs.map(async f => {
+      const relName = f.relationshipName && srcRec[f.relationshipName] ? srcRec[f.relationshipName].Name : null;
+      const refObj = (f.referenceTo || [])[0];
+      if (relName == null || !refObj) return;
+      try {
+        const q = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+          _suppressError: true,
+          query: `SELECT Id, Name FROM ${refObj} WHERE Name = '${String(relName).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' LIMIT 2` });
+        if (q?.error) return;
+        const recs = q?.records || [];
+        suggestions[f.name] = { srcName: relName, count: recs.length, id: recs[0]?.Id || null };
+        if (recs[0]?.Name != null) _lkpNameCache.set(recs[0].Id, recs[0].Name);
+      } catch (_) { /* suggestion is advisory — silence is the fallback */ }
+    }));
+  }
+
   // Resolve Names for already-picked target ids (one query per ref object;
   // failures degrade to showing the raw id).
   const byObj = {};
@@ -2905,6 +2943,13 @@ async function renderLkpOverridePanel(p, objType, srcId, host, tgtRecId) {
     const refObjs = f.referenceTo || [];
     const picked = cur[f.name];
     const pickedNm = picked ? (_lkpNameCache.get(picked) || picked) : null;
+    const sug = picked ? null : suggestions[f.name];
+    const sugHtml = !sug ? ''
+      : sug.count === 1 && sug.id
+        ? `<div class="ds-lkpo-suggest">will connect → <a href="${esc(recHref(p.targetOrg, sug.id))}" target="_blank" rel="noopener" class="ds-lkpo-vallink">${esc(_lkpNameCache.get(sug.id) || sug.srcName)}</a> <span class="ds-psync ds-psync-ok" title="Exactly one ${esc((f.referenceTo || [])[0] || '')} record with this name exists in the target — the engine's name-bridge lands here at run time.">✓ name match</span> <button class="ds-btn ds-btn-xs" data-lkp-pin="${esc(f.name)}|${esc(sug.id)}" title="Pin this exact record — identical to what the engine would do, but explicit and immune to future renames or duplicate names.">📌 pin</button></div>`
+      : sug.count >= 2
+        ? `<div class="ds-lkpo-suggest"><span class="ds-psync ds-psync-bad">⚠ ${sug.count}+ records named “${esc(sug.srcName)}” in the target</span> — first match wins at run time; pin the right one from the search below.</div>`
+        : `<div class="ds-lkpo-suggest"><span class="ds-psync ds-psync-bad">no “${esc(sug.srcName)}” in the target</span> — this lookup would land EMPTY at run time. Deploy the parents first, or pick a record below.</div>`;
     const sv = valOf(srcRec, f), tv = valOf(tgtRec, f);
     const differs = !!tgtRec && String(sv.text ?? '') !== String(tv.text ?? '');
     const same    = !!tgtRec && !differs;
@@ -2923,6 +2968,7 @@ async function renderLkpOverridePanel(p, objType, srcId, host, tgtRecId) {
         <span class="ds-lkpo-val">${valHtml(p.targetOrg, tgtRec, f, 'What the TARGET record points at right now')}</span>` : ''}
       </div>
       <span class="ds-lkpo-pick">
+        ${sugHtml}
         ${picked
           ? `<span class="ds-lkpo-chip" title="Hand-picked target record (${esc(picked)}) — for THIS record in ${esc(orgLabel(p.targetOrg || ''))} the engine writes this exact Id, beating name-matching.">→ <a href="${esc(recHref(p.targetOrg, picked))}" target="_blank" rel="noopener" class="ds-lkpo-vallink" title="Open the picked record in ${esc(orgLabel(p.targetOrg || ''))}">${esc(pickedNm)}</a> <button class="ds-lkpo-clear" data-lkp-clear="${esc(f.name)}" title="Remove the pick — the engine falls back to matching by name">✕</button></span>`
           : `${refObjs.length > 1 ? `<select class="ds-lkpo-objsel" title="Polymorphic lookup — pick which object to search">${refObjs.map(o => `<option>${esc(o)}</option>`).join('')}</select>` : ''}
@@ -2974,6 +3020,15 @@ async function renderLkpOverridePanel(p, objType, srcId, host, tgtRecId) {
   });
   host.querySelectorAll('[data-lkp-clear]').forEach(b => b.addEventListener('click', async () => {
     sftkLkpOvClear(p.tree, p.targetOrg, srcId, b.dataset.lkpClear);
+    if (!p.ephemeral) await storageSaveProfiles();
+    sftkLkpBadgeRefresh(p, srcId);
+    renderLkpOverridePanel(p, objType, srcId, host, tgtRecId);
+  }));
+  // 📌 pin the suggested name-match as an explicit pick.
+  host.querySelectorAll('[data-lkp-pin]').forEach(b => b.addEventListener('click', async () => {
+    const [field, id] = (b.dataset.lkpPin || '').split('|');
+    if (!field || !id) return;
+    sftkLkpOvSet(p.tree, p.targetOrg, srcId, field, id);
     if (!p.ephemeral) await storageSaveProfiles();
     sftkLkpBadgeRefresh(p, srcId);
     renderLkpOverridePanel(p, objType, srcId, host, tgtRecId);

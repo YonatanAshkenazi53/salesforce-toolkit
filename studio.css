@@ -6039,3 +6039,12 @@ body.ds-pro {
 .ds-dark .ds-psync-ok { color: #6ee7b7; }
 .ds-psync-bad { color: #b45309; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); }
 .ds-dark .ds-psync-bad { color: #fbbf24; }
+/* Ordered deploy checklist (parents-first panel) + suggested lookup rows */
+.ds-ordstep { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 5px 0; font-size: 12.5px; }
+.ds-ordstep-num { width: 20px; height: 20px; border-radius: 50%; background: var(--surface2); color: var(--subtext); font-size: 11px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ds-ordstep-done { opacity: 0.78; }
+.ds-ordstep-done .ds-ordstep-num { background: rgba(16, 185, 129, 0.16); color: #067647; }
+.ds-dark .ds-ordstep-done .ds-ordstep-num { color: #6ee7b7; }
+.ds-ordstep-next .ds-ordstep-num { background: var(--brand); color: #fff; }
+.ds-ordstep-arrow { font-size: 11px; font-weight: 800; color: var(--brand); white-space: nowrap; }
+.ds-lkpo-suggest { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; margin-bottom: 6px; }
