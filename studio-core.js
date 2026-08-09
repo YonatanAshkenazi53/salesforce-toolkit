@@ -61,6 +61,7 @@ let _workingPair = { src: '', tgt: '' };
 
 // Feature 15 — Dark mode
 let _darkMode    = false;
+let _oledMode    = false;   // absolute-black variant, only active with dark
 
 // Feature 14 — Activity log { viewKey: ISO timestamp }
 let _activityLog = {};
@@ -411,7 +412,7 @@ async function storageLoad() {
   await runStorageMigrations();
   const d = await chrome.storage.local.get([
     'sftk_profiles','sftk_history','sftk_orgs',
-    'ds_dark_mode','sftk_dark','ds_activity_log','sftk_sequences','sftk_active_run',
+    'ds_dark_mode','sftk_dark','sftk_oled','ds_activity_log','sftk_sequences','sftk_active_run',
     'ds_working_pair','ds_settings','ds_ring'
   ]);
   _profiles     = d.sftk_profiles   || [];
@@ -421,6 +422,7 @@ async function storageLoad() {
   // key (sftk_dark, also used by the popup + log viewer), falling back to the
   // legacy studio-only key for users who set it before unification.
   _darkMode     = (d.sftk_dark ?? d.ds_dark_mode) || false;
+  _oledMode     = d.sftk_oled || false;
   _activityLog  = d.ds_activity_log || {};
   _sequences    = d.sftk_sequences  || [];
   _workingPair  = d.ds_working_pair || { src: '', tgt: '' };
@@ -705,11 +707,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Apply persisted dark mode immediately
+  // Apply persisted dark mode immediately (OLED variant rides on it)
   applyDarkMode(_darkMode);
+  applyOledMode(_oledMode);
 
-  // Wire dark mode toggle
+  // Wire dark mode + OLED toggles
   eid('dsDarkToggle')?.addEventListener('click', () => applyDarkMode(!_darkMode));
+  eid('dsOledToggle')?.addEventListener('click', () => applyOledMode(!_oledMode));
 
   // E4: professional-mode toggle — persists in ds_settings, then re-renders
   // the current view so JS-baked glyphs update (views are stateless full
@@ -841,6 +845,11 @@ function showToast(message, type = 'info', durationMs = 3500) {
 function applyDarkMode(on) {
   _darkMode = on;
   document.documentElement.classList.toggle('ds-dark', on);
+  // OLED rides on dark: the class pair is only ever applied together, and
+  // the OLED pill only shows while dark is on (it's a no-op in light mode).
+  document.documentElement.classList.toggle('ds-oled', on && _oledMode);
+  const oledBtn = eid('dsOledToggle');
+  if (oledBtn) oledBtn.style.display = on ? '' : 'none';
   const btn = eid('dsDarkToggle');
   if (btn) {
     // E4: plain-text label in professional mode (window.sftkGlyph).
@@ -860,6 +869,23 @@ function applyDarkMode(on) {
   // X5: write the canonical shared key (sftk_dark) so the popup + log viewer
   // pick up the same choice; keep ds_dark_mode in sync for back-compat.
   chrome.storage.local.set({ sftk_dark: on, ds_dark_mode: on });
+}
+
+// OLED — absolute black riding on dark mode (user 2026-08-09: "dark for
+// oled screens"). Pure-black token overrides live in .ds-dark.ds-oled; the
+// class pair is only applied together, so light mode never carries it.
+function applyOledMode(on) {
+  _oledMode = on;
+  document.documentElement.classList.toggle('ds-oled', _darkMode && on);
+  const ob = eid('dsOledToggle');
+  if (ob) {
+    ob.classList.toggle('ds-oled-on', on);
+    ob.setAttribute('aria-pressed', on ? 'true' : 'false');
+    ob.title = on
+      ? 'OLED black is on — switch back to standard dark surfaces'
+      : 'Absolute black for OLED screens — pure-black surfaces (rides on dark mode)';
+  }
+  chrome.storage.local.set({ sftk_oled: on });
 }
 
 // ════════════════════════════════════════════════════════════════
