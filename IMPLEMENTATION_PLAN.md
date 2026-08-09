@@ -669,6 +669,52 @@ anchor-based plan edit accidentally deleted it)
   test/studio-dark-css.test.mjs; verified with a dark capture of the packed build.
 - [ ] V4b (post-1.3.0): full Pro-mode emoji sweep (~1300 sites in view files) —
   opt-in feature, coverage documented as phased; no user input needed.
+  CANDIDATE FOR SONNET (mechanical, test-locked, Fable-reviewed — per the
+  2026-08-05 model policy).
+
+## Phase W — Data Deployment flagship hardening (user session 2026-08-05:
+## "it's our strongest feature … must work flawlessly" + four concrete asks)
+- [ ] W1 CHILD-LEVEL UPSERT — the headliner. Root upsert exists (Run Transfer →
+  write mode Upsert + External ID); children always INSERT, so re-running any
+  parent+child deployment duplicates children. Engine: per-node upsert config
+  (node.matching/external-Id already exists as identity) driving Collections
+  upsert per child level; dry run + fan-out disclosure; absorbs the user's
+  "if record doesn't exist create him, if not update him" for the whole tree.
+  Also SURFACE upsert in the builder (user didn't find the Transfer-page
+  toggle — discoverability failure).
+- [ ] W2 PER-RECORD LOOKUP OVERRIDES, multi-target (user: "select lookups
+  manually for every lookup of the record … for every record and for multiple
+  org targets"). Design: node.lookupOverrides = { [orgKey]: { [srcRecordId]:
+  { [FieldApi]: tgtRecordId } } } — engine consults BEFORE match-field
+  resolution; UI = per-record "resolve lookup" picker (search the target's
+  candidates like the record picker) reachable from Reconcile rows + the
+  picker's expanded row; export strips (org-local ids).
+- [ ] W3 CHILD RECORD PICKER UX — "pick them like you pick lookup field
+  records": per-parent grouping + typeahead search in the child 🎯 picker
+  (reuse the new combobox pattern), showing parent context per row.
+- [ ] W4 INVESTIGATE drift-capture gap (user: "items that were need to be
+  updated in real time where not captured by the engine"). Prime suspect:
+  drift detection compares ONLY the mapped/compare-plan fields — a changed
+  field outside the plan is invisible. Verify, then either compare all
+  writable fields or disclose the compared-field subset loudly. NEEDS the
+  user's example field to confirm.
+- [ ] W5 RECORDS+OPERATIONS PREVIEW TABLE (user 2026-08-04): before a run,
+  a table of records + child records with the operation each will get
+  (insert/update/skip) — essentially the scan buckets rendered per node on
+  the Run page.
+- [ ] W6 FIELD CLEANER: links to all fetched metadata (open in Salesforce
+  Setup) + VERIFY every delete path confirms first (C4 shared confirm modal
+  adoption check).
+- [ ] W7 QA + REGRESSION CAMPAIGN (user 2026-08-05: "After we implement all we
+  need a lot of qa and regression"). Runs AFTER W1-W6 land: (a) engine
+  scenario-matrix expansion (upsert idempotence incl. children, owner queues,
+  lookup overrides, record types, bulk path, cancel, failure accounting);
+  (b) director-driven harness walkthroughs of every Data Deployment surface;
+  (c) Fable-subagent adversarial review passes (the highest-ROI bug catcher
+  in this project — reserve capacity for it); (d) full gate + boot smoke +
+  fresh screenshot sweep; release only when the ship-blocker list is empty.
+  The parked ship-audit findings fold in here (workflow wf_850eda7e-ff3 died
+  on Fable limits; redo as targeted inline passes per surface).
 
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.
