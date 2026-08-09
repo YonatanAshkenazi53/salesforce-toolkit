@@ -739,6 +739,25 @@ anchor-based plan edit accidentally deleted it)
   entirely and says why. Engine core flag-gated first (no UI = zero
   behavior change), then builder checkbox + run summary counts. v2:
   ContentNote, legacy Attachment, multi-version history, libraries.
+- [ ] W11 DEPLOYMENT PLANNER (deferred by the user 2026-08-10: "we can even
+  create a plan for complex data deployments and seedings operations. but
+  that might be for another day"). NORTH STAR it serves — the user's own
+  words (2026-08-10): "help the user to align orgs data by a source of
+  truth org. thats our main mission." … "So ALL orgs are aligned to a
+  source of truth data. Which is a very hard mission. but thats our top
+  mission." Every Data Deployment feature is judged by this: does it move
+  every org closer to the golden org's data, safely and visibly?
+  Design sketch: given the objects in scope (or
+  a profile tree), walk the describes into a dependency graph (lookups +
+  master-detail = edges), topologically order it, and generate an
+  EXECUTABLE PLAN — a sequence of deployments (parents → children, side-
+  lookup objects as pre-steps) with per-step scan/reconcile checkpoints,
+  driven from the Sync Ring's source-of-truth org. The parents-first
+  advisor (2e17778) is this feature's single-edge special case; the
+  planner is the whole graph. Also covers SEEDING (empty-target bootstrap)
+  as the degenerate all-inserts plan. Cycles (e.g. PD.First_Step__c ↔ SO)
+  break into insert-then-relink second passes — the engine's reconnect
+  machinery already models that.
 - [ ] W10 UPSERT BY MATCH KEY — Transfer write mode that works WITHOUT an
   External ID field (user 2026-08-10: "upsert can work with regular id
   field too"). Salesforce Id-keyed upsert is real but source Ids don't
