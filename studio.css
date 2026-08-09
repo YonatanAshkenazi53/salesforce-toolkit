@@ -4167,13 +4167,15 @@ html, body {
      unchanged, so each one must be restated or dark Studio keeps the
      light-tuned value. Values mirror body.sftk-dark in styles.css so both
      apps draw the same night kitty and the same dark elevation. */
-  --cat-fur:      #546E7A;
-  --cat-fur-dark: #37474F;
-  --cat-belly:    #B0BEC5;
-  --cat-inner:    #B07A80;
-  --cat-eye:      #82B1FF;
-  --cat-nose:     #C98A8A;
-  --cat-stripe:   #455A64;
+  /* Ninja (…–2026) in dark mode — the developer's grey tabby, her real
+     colors lifted to read on dark. In loving memory. */
+  --cat-fur:      #8A7D70;
+  --cat-fur-dark: #665B50;
+  --cat-belly:    #D8D0C4;
+  --cat-inner:    #A98578;
+  --cat-eye:      #C9C554;
+  --cat-nose:     #C08A7D;
+  --cat-stripe:   #574E44;
   --shadow:       0 2px 8px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.04);
   --shadow-md:    0 4px 16px rgba(0,0,0,.55);
   /* §A6 elevation/focus foundation tokens — styles.css restates these under
