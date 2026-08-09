@@ -682,13 +682,18 @@ anchor-based plan edit accidentally deleted it)
   "if record doesn't exist create him, if not update him" for the whole tree.
   Also SURFACE upsert in the builder (user didn't find the Transfer-page
   toggle — discoverability failure).
-- [~] W2 PER-RECORD LOOKUP OVERRIDES (ENGINE DONE 49a13d7 — Priority-0 in payload builder, per-orgKey, export-stripped, matrix-tested; REMAINING: the Reconcile UI picker that writes node.lookupOverrides), multi-target (user: "select lookups
-  manually for every lookup of the record … for every record and for multiple
-  org targets"). Design: node.lookupOverrides = { [orgKey]: { [srcRecordId]:
-  { [FieldApi]: tgtRecordId } } } — engine consults BEFORE match-field
-  resolution; UI = per-record "resolve lookup" picker (search the target's
-  candidates like the record picker) reachable from Reconcile rows + the
-  picker's expanded row; export strips (org-local ids).
+- [x] W2 PER-RECORD LOOKUP OVERRIDES (DONE — engine 49a13d7, UI 20c5d0f), multi-target
+  (user: "select lookups manually for every lookup of the record … for every
+  record and for multiple org targets"). node.lookupOverrides = { [orgKey]:
+  { [srcRecordId]: { [FieldApi]: tgtRecordId } } } — engine reads it as
+  Priority 0 in the payload builder, export strips (org-local ids). UI:
+  Reconcile missing+changed rows carry a 🔗 link → per-lookup panel (source's
+  current value by name, target-org Name-LIKE search, pick chip + ✕ clear,
+  polymorphic object selector, pick-count badge). Engine-owned refs
+  (OwnerId/RecordTypeId/audit) not offered. Helpers sftkLkpOv* are pure +
+  tested (reconcile-lkp.test.mjs, 14 tests: cross-domain-form org identity,
+  no bucket forking, prune-on-clear). Root-level rows v1; child-section rows
+  can reuse renderLkpOverridePanel later if asked.
 - [x] W3 CHILD RECORD PICKER UX (DONE 80c54a9) — "pick them like you pick lookup field
   records": per-parent grouping + typeahead search in the child 🎯 picker
   (reuse the new combobox pattern), showing parent context per row.
