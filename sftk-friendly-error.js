@@ -97,7 +97,15 @@ function sftkFriendlyError(raw) {
   if (m) {
     out.type = 'required-missing';
     out.message = `Required field${m[1].includes(',') ? 's' : ''} ${m[1]} ${m[1].includes(',') ? 'are' : 'is'} empty in the target org`;
-    out.hint = 'The target org requires these fields. Map them from a source field, or relax the requirement in the target.';
+    // The MOST COMMON cause when the missing field is a lookup: the records
+    // it should point at don't exist in the target yet, so name-matching
+    // resolved nothing and the field landed empty (user 2026-08-09: 401
+    // Step Orders failed because Procedure Definitions weren't deployed
+    // first). Lead with the deploy-order fix; the mapping advice stays for
+    // genuinely unmapped data fields.
+    out.hint = m[1].endsWith('__c') || /Id$/.test(m[1].trim())
+      ? 'If this is a lookup, the records it points at usually don\'t exist in the target yet — deploy the referenced object FIRST (parents before children), or hand-pick targets via the 🔗 panel in Reconcile. For a plain data field: map it from a source field, or relax the requirement in the target.'
+      : 'The target org requires these fields. Map them from a source field, or relax the requirement in the target.';
     return out;
   }
   if (/FIELD_CUSTOM_VALIDATION_EXCEPTION/i.test(s)) {
