@@ -315,7 +315,7 @@ async function openFieldMappingModal(pathStr) {
           <span class="ds-fm-ov-org">${esc(orgLabel(u))}</span>
           <input class="ds-input ds-input-sm ds-fm-ov-input" type="text"
                  value="${esc(has && v !== null ? v : '')}" placeholder="${esc(base)}"
-                 ${has && v === null ? 'disabled' : ''} autocomplete="off">
+                 ${has && v === null ? 'disabled' : ''} autocomplete="off" list="dsFmTgtList">
           <label class="ds-fm-ov-skip"><input type="checkbox" class="ds-fm-ov-skipcb" ${has && v === null ? 'checked' : ''}> skip here</label>
         </div>`;
       }).join('')}
