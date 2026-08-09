@@ -1146,7 +1146,13 @@ async function sftkBldSuggestExtIds() {
     const cached = _refFieldCache[refObj];
     if (!Array.isArray(cached)) continue;
     const extFields = cached.filter(cf => cf.externalId);
-    if (!extFields.length) continue;
+    if (!extFields.length) {
+      // Telling the user to "pick an External ID field" when the object has
+      // NONE was misleading (user 2026-08-10: "they dont show the suggested
+      // state?") — say the true state and the way out.
+      slot.innerHTML = `<span class="ds-lkp-hint" title="External IDs survive renames and duplicates, which makes them the most reliable cross-org anchor. Create one on ${esc(refObj)} in BOTH orgs (Setup → Object Manager → Fields — Text, ✓ External ID, ideally ✓ Unique), fill it in the source, and this row will offer it automatically.">no External ID field on ${esc(refObj)} yet — matching by Name (create one in both orgs for bulletproof matching)</span>`;
+      continue;
+    }
     const node = getNodeByPath(_editingProfile?.tree, pathKey);
     const current = node?.lookupResolutions?.[fieldName]?.matchField || 'Name';
     if (extFields.some(cf => cf.name === current)) {
