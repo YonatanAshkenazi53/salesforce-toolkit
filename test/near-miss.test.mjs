@@ -100,3 +100,65 @@ describe('the scan pass and its surfacing', () => {
     expect(MOD).toMatch(/matchNormalize\.trim = true;\s+matchNormalize\.caseFold = true;/);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// W4 — the scan compares (and Overwrite writes) what the RUN writes
+// (user 2026-08-05: "items that were need to be updated in real time
+// where not captured by the engine"). fieldMappings is an EXCLUDE/
+// RENAME overlay; the engine copies every createable field — but the
+// scan compared only the mapping's keys and Overwrite wrote only them.
+// ══════════════════════════════════════════════════════════════════
+describe('sftkEngineCompareSet mirrors the engine copy set', () => {
+  const { sftkEngineCompareSet } = extractFunctions('studio-scan.js', ['sftkEngineCompareSet']);
+  const F = (name, type, extra) => Object.assign({ name, type, createable: true }, extra);
+  const DESC = [
+    F('Id', 'id', { createable: false }),
+    F('Name', 'string'),
+    F('Industry', 'string'),
+    F('Legacy__c', 'string'),
+    F('AccountId', 'reference'),
+    F('Body', 'base64'),
+    F('BillingAddress', 'address'),
+    F('Formula__c', 'string', { createable: false }),
+    F('OwnerId', 'reference'),
+    F('CreatedDate', 'datetime', { createable: false }),
+  ];
+
+  it('unmapped createable data fields ARE compared (the reported gap)', () => {
+    const out = sftkEngineCompareSet(DESC, {});
+    expect(out.map(p => p.srcField)).toEqual(['Name', 'Industry', 'Legacy__c']);
+    expect(out.every(p => p.srcField === p.tgtField)).toBe(true);
+  });
+
+  it("'' and identity mappings mean copy-same-name; null excludes; renames map", () => {
+    const out = sftkEngineCompareSet(DESC, { Name: '', Industry: 'Sector__c', Legacy__c: null });
+    expect(out).toEqual([
+      { srcField: 'Name', tgtField: 'Name' },
+      { srcField: 'Industry', tgtField: 'Sector__c' },
+    ]);
+  });
+
+  it('references, blobs, compound shapes, formulas and system fields never enter', () => {
+    const names = sftkEngineCompareSet(DESC, {}).map(p => p.srcField);
+    for (const bad of ['AccountId', 'Body', 'BillingAddress', 'Formula__c', 'OwnerId', 'CreatedDate', 'Id']) {
+      expect(names).not.toContain(bad);
+    }
+  });
+});
+
+describe('the scan and Overwrite consume the engine set', () => {
+  const SCAN = readFileSync(join(root, 'studio-scan.js'), 'utf8');
+  const REC  = readFileSync(join(root, 'studio-reconcile.js'), 'utf8');
+
+  it('runDiffScan expands compare fields from the source describe and discloses it', () => {
+    expect(SCAN).toMatch(/enginePairs = sftkEngineCompareSet\(srcDescFull\.fields, node\?\.fieldMappings\)/);
+    expect(SCAN).toMatch(/compareExpanded: true/);
+    // a legacy explicit compareFields config (no mappings) keeps its choice
+    expect(SCAN).toMatch(/hasLegacyOnlyCompare/);
+  });
+
+  it('reconcileOverwrite writes the engine set, unmapped fields under their own name', () => {
+    expect(REC).toMatch(/for \(const p of sftkEngineCompareSet\(d\.fields, fm\)\) keep\.add\(p\.srcField\)/);
+    expect(REC).toMatch(/const tf = \(fm\[sf\] && fm\[sf\] !== null\) \? fm\[sf\] : sf;/);
+  });
+});

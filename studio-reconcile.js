@@ -2133,6 +2133,17 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       if (stale.length) {
         warnings.push(`⚠ skipped ${stale.length} mapped field(s) that no longer exist on ${objType} in the source org: ${stale.join(', ')} — open ✏ Edit → Fields & mapping to clean them up`);
       }
+      // W4 (user 2026-08-05: updated values "not captured") — Overwrite used
+      // to write ONLY the mapping's keys, while the run engine copies EVERY
+      // createable field. A drifted unmapped field was detected by the
+      // (expanded) scan yet silently NOT fixed here. Union in the engine's
+      // data-field set; reference fields keep their existing fm-driven
+      // resolution path below, byte-for-byte.
+      if (typeof sftkEngineCompareSet === 'function') {
+        const keep = new Set(srcFields.filter(k => srcNames.has(k)));
+        for (const p of sftkEngineCompareSet(d.fields, fm)) keep.add(p.srcField);
+        srcFields = [...keep];
+      }
       // Mapped lookups → resolve-by-key pairs (mirrors buildLookupCompareMap).
       const lkpCfg = (node.lookupResolutions || {});
       for (const f of d.fields) {
@@ -2287,7 +2298,9 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     if (!tgtId) continue;
     const p = { attributes: { type: objType }, Id: tgtId };
     for (const sf of srcFields) {
-      const tf = fm[sf];
+      // Unmapped fields (the engine-set expansion) write under their own
+      // name; a non-empty mapping renames, exactly like the run engine.
+      const tf = (fm[sf] && fm[sf] !== null) ? fm[sf] : sf;
       let v    = sr[sf];
       if (v == null) continue;
       // Remap RecordTypeId by DeveloperName; drop it if there's no target
