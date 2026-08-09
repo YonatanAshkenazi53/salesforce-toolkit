@@ -25,21 +25,30 @@ const f = (name, type, extra) => Object.assign({
   length: 255, referenceTo: [],
 }, extra || {});
 
-// The user's object: standard Name + an empty custom text field + a lookup.
+// The user's REAL object shape (verified in-org 2026-08-09): standard Name
+// plus TWO custom lookups — Step_Order_Name__c is a LOOKUP to a third
+// object, NOT text. The first version of this file modeled it as a string
+// field; the harness passed while the real bug (lookup-only drift filed as
+// "identical" because references never entered the expanded compare set)
+// shipped right past it. Model the describe the way the org actually is.
 const STEP_DESC = { name: 'Step_Order__c', fields: [
   f('Id', 'id', { createable: false }),
   f('Name', 'string', { nameField: true }),
-  f('Step_Order_Name__c', 'string'),
+  f('Step_Order_Name__c', 'reference', { referenceTo: ['Step_Order_Name__c'], relationshipName: 'Step_Order_Name__r' }),
   f('Procedure_Definition__c', 'reference', { referenceTo: ['Procedure_Definition__c'], relationshipName: 'Procedure_Definition__r' }),
 ] };
 
 const SRC_ROWS = [
-  { Id: 'S_A', Name: 'A', Step_Order_Name__c: null, Procedure_Definition__c: 'PD1' },
-  { Id: 'S_B', Name: 'B', Step_Order_Name__c: null, Procedure_Definition__c: 'PD1' },
+  { Id: 'S_A', Name: 'A', Step_Order_Name__c: 'SN_1', Step_Order_Name__r: { Name: 'SN-001' },
+    Procedure_Definition__c: 'PD1', Procedure_Definition__r: { Name: 'PD-001' } },
+  { Id: 'S_B', Name: 'B', Step_Order_Name__c: 'SN_1', Step_Order_Name__r: { Name: 'SN-001' },
+    Procedure_Definition__c: 'PD1', Procedure_Definition__r: { Name: 'PD-001' } },
 ];
-// Target has A too — with DIFFERENT data (the lookup points elsewhere).
+// Target has A too — same Name, but its LOOKUP points at a different
+// related record (the user's exact repro: a00aj00003EQaW7 ↔ a05aj00000aytJR).
 const TGT_ROWS = [
-  { Id: 'T_A', Name: 'A', Step_Order_Name__c: 'changed here', Procedure_Definition__c: 'PD9' },
+  { Id: 'T_A', Name: 'A', Step_Order_Name__c: 'SN_9', Step_Order_Name__r: { Name: 'SN-777' },
+    Procedure_Definition__c: 'PD1x', Procedure_Definition__r: { Name: 'PD-001' } },
 ];
 
 let queries;
@@ -93,7 +102,10 @@ describe('a record present in BOTH orgs can never vanish from every bucket', () 
     // B: source only.
     expect(inBucket('S_B').missing).toBe(true);
 
-    // A: exists on both sides with a differing custom field → changed.
+    // A: exists on both sides; the ONLY difference is which related record
+    // the Step_Order_Name__c LOOKUP points at (SN-001 vs SN-777 by name).
+    // Must land in changed — filing it as identical is the user's bug
+    // ("both are not showing it under the changed tab in reconcile").
     const a = inBucket('S_A');
     const somewhere = a.missing || a.changed || a.identical;
     expect(somewhere,
@@ -101,6 +113,13 @@ describe('a record present in BOTH orgs can never vanish from every bucket', () 
       `buckets: missing=${JSON.stringify(res.missingInTarget)} changed=${JSON.stringify(res.changed)} ` +
       `identical=${JSON.stringify(res.identical)} blankKeys=${JSON.stringify(res.blankKeys)} ` +
       `dupKeys=${JSON.stringify(res.dupKeys)} error=${res.error}`).toBe(true);
-    expect(a.changed, 'A has a differing compared field → changed bucket').toBe(true);
+    expect(a.changed,
+      `lookup-only drift must be CHANGED, not identical — changed=${JSON.stringify(res.changed)} ` +
+      `identical=${JSON.stringify(res.identical)}`).toBe(true);
+
+    // The changed row names the lookup as the differing field.
+    const row = (res.changed || []).find(r => r.sourceId === 'S_A');
+    expect((row?.fields || []).join(','), 'differing field list names the lookup')
+      .toContain('Step_Order_Name__c');
   });
 });
