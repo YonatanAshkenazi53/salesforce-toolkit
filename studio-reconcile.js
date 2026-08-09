@@ -2589,6 +2589,16 @@ function sftkLkpBadgeRefresh(p, srcId) {
 // Picks persist immediately — they're profile config, not run-scoped
 // selection state.
 async function renderLkpOverridePanel(p, objType, srcId, host, tgtRecId) {
+  // Self-heal the target id from the scan instead of trusting the caller:
+  // the DOM-threaded attribute went missing on internal re-renders (pick/
+  // clear called with 4 args) and the tgt → line silently vanished (user
+  // 2026-08-09: "Still doesn't show the target record value"). The changed
+  // bucket already knows this record's pair.
+  if (!tgtRecId) {
+    try {
+      tgtRecId = (p.lastScan?.changed || []).find(r => r.sourceId === srcId)?.targetId || null;
+    } catch (_) { tgtRecId = null; }
+  }
   host.innerHTML = `<div class="ds-drift-compare-loading">Loading lookups…</div>`;
   const allSess = _buildAllSessions();
   const srcSess = _resolveSession(p.sourceOrg, allSess);
@@ -2718,7 +2728,7 @@ async function renderLkpOverridePanel(p, objType, srcId, host, tgtRecId) {
         _lkpNameCache.set(b.dataset.lkpHit, b.textContent);
         if (!p.ephemeral) await storageSaveProfiles();
         sftkLkpBadgeRefresh(p, srcId);
-        renderLkpOverridePanel(p, objType, srcId, host);
+        renderLkpOverridePanel(p, objType, srcId, host, tgtRecId);
       }));
     };
     inp.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 300); });
@@ -2728,7 +2738,7 @@ async function renderLkpOverridePanel(p, objType, srcId, host, tgtRecId) {
     sftkLkpOvClear(p.tree, p.targetOrg, srcId, b.dataset.lkpClear);
     if (!p.ephemeral) await storageSaveProfiles();
     sftkLkpBadgeRefresh(p, srcId);
-    renderLkpOverridePanel(p, objType, srcId, host);
+    renderLkpOverridePanel(p, objType, srcId, host, tgtRecId);
   }));
 }
 
