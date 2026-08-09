@@ -36,6 +36,16 @@ let _recAutoRefreshKey = '';
 // rendered banner on repaints so navigation doesn't re-query the target.
 let _recParentGapKey  = '';
 let _recParentGapHtml = '';
+// Session-wide sync verdicts: `${srcKey}|${tgtKey}|${objType}` → { missing,
+// changed, extra, at }. EVERY fresh reconcile scan deposits its verdict here,
+// and every surface that mentions a parent object reads it — so once the
+// parents have been scanned anywhere, the Builder rows and the parents-first
+// panel SHOW "✓ in sync" instead of making the user click to find out
+// (user 2026-08-10: "since the parents are synced we need to show it").
+let _parentSyncVerdicts = {};
+function sftkParentSyncKey(srcOrg, tgtOrg, obj) {
+  return `${sftkOrgKey(srcOrg)}|${sftkOrgKey(tgtOrg)}|${obj}`;
+}
 // Child-aware reconcile (v2: children + grandchildren; Insert, Relink,
 // Overwrite drift, Delete extras). Selections and UI state are keyed by tree
 // pathKey ('0', '1', '0.1' for grandchildren, …).
@@ -160,6 +170,40 @@ async function renderReconcile() {
 
   // 🎯 — how trustworthy this scan's matching was (fields + confidence %).
   const _acc = (scanFresh && typeof sftkScanAccuracy === 'function') ? sftkScanAccuracy(scan) : null;
+
+  // Deposit this scan's verdict in the session sync map — the Builder's
+  // lookup rows and other objects' parents-first panels read it.
+  if (scanFresh) {
+    try {
+      _parentSyncVerdicts[sftkParentSyncKey(p.sourceOrg, p.targetOrg, objType)] = {
+        missing: (scan.missingInTarget || []).length,
+        changed: (scan.changed || []).length,
+        extra:   (scan.onlyInTarget || []).length,
+        at:      scan.runAt || new Date().toISOString(),
+      };
+    } catch (_) { /* advisory map only */ }
+  }
+
+  // ⛓ Journey-back banner — this reconcile was opened as a PARENTS-FIRST
+  // step for another deployment; once aligned, walk the user back to the
+  // children (user 2026-08-10: "we deployed the parents. now we need to be
+  // able to deploy the childrens and match them to their parents").
+  let _journeyHtml = '';
+  if (p._parentOf?.objType) {
+    const aligned = scanFresh && !(scan.missingInTarget || []).length && !(scan.changed || []).length;
+    const orig = _profiles.find(x => x.id === p._parentOf.profileId);
+    _journeyHtml = `<div class="ds-op-banner" style="border-left:3px solid ${aligned ? '#16a34a' : 'var(--brand)'}">
+      <span class="ds-op-banner-icon">⛓</span>
+      <div class="ds-op-banner-body">
+        <div class="ds-op-banner-title">${aligned ? '✓ Parents aligned' : 'Parents-first step'} — for <strong>${esc(p._parentOf.objType)}</strong></div>
+        <div class="ds-op-banner-desc">${aligned
+          ? `These records now exist in the target. Continue to the children: deploy <strong>${esc(p._parentOf.objType)}</strong> — its lookups match onto these records by name.`
+          : `Align this object first (push missing, fix changed), then continue to <strong>${esc(p._parentOf.objType)}</strong>.`}
+          ${orig ? ` <button class="ds-btn ds-btn-sm ${aligned ? 'ds-btn-primary' : ''}" id="dsRecJourneyBack" title="Back to the ${esc(p._parentOf.objType)} deployment — its view refreshes itself with these new parents in place.">→ Continue to ${esc(p._parentOf.objType)}</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }
 
   // A run ANYWHERE that touched either org of this pair AFTER the scan makes
   // the stored buckets fiction — refresh WITHOUT being asked (user
@@ -745,6 +789,7 @@ async function renderReconcile() {
 
   setMain(`${headerHtml}
     ${_sessNote}
+    ${_journeyHtml}
     <div id="dsRecParentGaps"></div>
     <div class="ds-op-banner ds-op-banner-write">
       <span class="ds-op-banner-icon">⚖</span>
@@ -1024,6 +1069,12 @@ async function renderReconcile() {
   // ⛓ Parent-gap advisor — recognizes tonight's 401-failure pattern before
   // it happens and offers the fix as one click. Async; never blocks paint.
   sftkRecParentGapAdvisor(p, scan, objType, missing);
+  eid('dsRecJourneyBack')?.addEventListener('click', () => {
+    const orig = _profiles.find(x => x.id === p._parentOf?.profileId);
+    if (!orig) return;
+    _reconcileProfile = orig;
+    renderReconcile();   // stale-run detection re-scans it with the new parents
+  });
 
   // ── Child section wiring ────────────────────────────────────────────
   document.querySelectorAll('[data-recc-toggle]').forEach(b => b.addEventListener('click', () => {
@@ -2657,6 +2708,10 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
       ephemeral: true,
       scanConfig: { matchField: 'Name', compareFields: [] },
       tree: { objectType: refObj, where: '', children: [] },
+      // The journey back (user 2026-08-10: "we deployed the parents. now we
+      // need to be able to deploy the childrens") — the parent view offers
+      // "Continue to <child>" once aligned.
+      _parentOf: { profileId: p.id, objType },
     };
     const res = await runDiffScan(eph);
     if (res?.error) {
@@ -2667,7 +2722,7 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
     eph.lastScan = res;
     _reconcileProfile = eph;
     renderReconcile();
-    showToast(`Push these ${(res.missingInTarget || []).length} record(s), then head back — the ${objType} view refreshes itself after the run.`, 'info', 6500);
+    showToast(`Push these ${(res.missingInTarget || []).length} record(s), then continue back to ${objType} — the banner up top takes you there.`, 'info', 6500);
   }));
   // Same scan → same verdict; reuse the cached banner without re-probing.
   if (_recParentGapKey === key) {
@@ -2709,9 +2764,23 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
     // pass (missing rows / drift there break the children's bridges too).
     // Both buttons run the same one-click: scan the parent pair, open its
     // Reconcile, fix, come back — this view refreshes itself.
-    const rowHtml = g => g.empty
-      ? `<div class="ds-op-banner-desc">${esc(objType)}.<strong>${esc(g.field)}</strong> points at <strong>${esc(g.refObj)}</strong>, but ${esc(orgLabel(p.targetOrg))} has <strong>no ${esc(g.refObj)} records at all</strong> — every lookup would land empty${g.required ? ', and the field is REQUIRED there, so every insert would FAIL' : ''}. <button class="ds-btn ds-btn-xs ds-btn-primary" data-recgap="${esc(g.refObj)}" title="Creates a ready-made ${esc(g.refObj)} deployment on this org pair (match by Name) and opens it here — push it, come back, run this one.">➕ Deploy ${esc(g.refObj)} first</button></div>`
-      : `<div class="ds-op-banner-desc"><strong>${esc(g.refObj)}</strong> (via ${esc(g.field)}) exists in both orgs — compare it BEFORE pushing these records, so the name-bridges have complete, in-sync parents to land on. <button class="ds-btn ds-btn-xs" data-recgap="${esc(g.refObj)}" title="Scans ${esc(g.refObj)} across this org pair and opens its Reconcile — fix what's missing or drifted, come back, run this one.">🔍 Compare &amp; fix ${esc(g.refObj)} first</button></div>`;
+    const rowHtml = g => {
+      if (g.empty) {
+        return `<div class="ds-op-banner-desc">${esc(objType)}.<strong>${esc(g.field)}</strong> points at <strong>${esc(g.refObj)}</strong>, but ${esc(orgLabel(p.targetOrg))} has <strong>no ${esc(g.refObj)} records at all</strong> — every lookup would land empty${g.required ? ', and the field is REQUIRED there, so every insert would FAIL' : ''}. <button class="ds-btn ds-btn-xs ds-btn-primary" data-recgap="${esc(g.refObj)}" title="Creates a ready-made ${esc(g.refObj)} deployment on this org pair (match by Name) and opens it here — push it, come back, run this one.">➕ Deploy ${esc(g.refObj)} first</button></div>`;
+      }
+      // Known verdict from an earlier scan of this parent on this pair —
+      // SHOW the sync state instead of hiding it behind a click.
+      const vd = _parentSyncVerdicts[sftkParentSyncKey(p.sourceOrg, p.targetOrg, g.refObj)];
+      const inSync = vd && !vd.missing && !vd.changed;
+      const vdChip = !vd ? ''
+        : inSync
+          ? `<span class="ds-psync ds-psync-ok" title="Last ${esc(g.refObj)} scan on this org pair found nothing missing and nothing changed.">✓ in sync · checked ${esc(timeAgo(vd.at))}</span>`
+          : `<span class="ds-psync ds-psync-bad" title="Last ${esc(g.refObj)} scan on this org pair still had work to do.">🔴 ${vd.missing} missing · 🟡 ${vd.changed} changed · ${esc(timeAgo(vd.at))}</span>`;
+      const body = inSync
+        ? `<strong>${esc(g.refObj)}</strong> (via ${esc(g.field)}) ${vdChip} — the name-bridges have parents to land on. Re-check if the orgs changed since.`
+        : `<strong>${esc(g.refObj)}</strong> (via ${esc(g.field)}) ${vdChip || 'exists in both orgs'} — compare it BEFORE pushing these records, so the name-bridges have complete, in-sync parents to land on.`;
+      return `<div class="ds-op-banner-desc">${body} <button class="ds-btn ds-btn-xs" data-recgap="${esc(g.refObj)}" title="Scans ${esc(g.refObj)} across this org pair and opens its Reconcile — fix what's missing or drifted, come back, run this one.">${inSync ? '↻ Re-check' : `🔍 Compare &amp; fix ${esc(g.refObj)} first`}</button></div>`;
+    };
     _recParentGapHtml = `<div class="ds-op-banner" style="border-left:3px solid ${anyEmpty ? '#f59e0b' : 'var(--brand)'}">
       <span class="ds-op-banner-icon">⛓</span>
       <div class="ds-op-banner-body">

@@ -1061,6 +1061,7 @@ async function bldCompareParent(refObj, btn) {
       ephemeral: true,
       scanConfig: { matchField: 'Name', compareFields: [] },
       tree: { objectType: refObj, where: '', children: [] },
+      _parentOf: { profileId: p.id, objType: p.tree?.objectType || p.tree?.childSObject },
     };
     const res = await runDiffScan(eph);
     if (res?.error) { showToast(`Scan failed: ${res.error}`, 'error', 6000); return; }
@@ -1069,6 +1070,14 @@ async function bldCompareParent(refObj, btn) {
     const nChg  = (res.changed || []).length;
     const nExt  = (res.onlyInTarget || []).length;
     const nSame = (res.identical || []).length;
+    // Feed the session sync map so the row chip (and the reconcile panel)
+    // SHOW this verdict from now on.
+    try {
+      _parentSyncVerdicts[sftkParentSyncKey(p.sourceOrg, p.targetOrg, refObj)] = {
+        missing: nMiss, changed: nChg, extra: nExt, at: res.runAt || new Date().toISOString(),
+      };
+      sftkBldFillParentSync();
+    } catch (_) { /* advisory map only */ }
     const aligned = !nMiss && !nChg;
     showModal(`
       <div class="ds-modal-hdr">🔍 ${esc(refObj)} — ${esc(orgLabel(p.sourceOrg))} → ${esc(orgLabel(p.targetOrg))}</div>
@@ -1093,6 +1102,29 @@ async function bldCompareParent(refObj, btn) {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = prev; }
   }
+}
+
+// Fill every lookup row's sync chip from the session verdict map (user
+// 2026-08-10: "since the parents are synced we need to show it"). Verdicts
+// come from any reconcile scan of that object on this org pair — including
+// the parents-first flow the user just ran. No probe, no cost: it shows
+// what the session already learned; blank until a scan has run.
+function sftkBldFillParentSync() {
+  const p = _editingProfile;
+  if (!p?.sourceOrg || !p?.targetOrg) return;
+  document.querySelectorAll('[data-lkp-syncstate]').forEach(elm => {
+    let vd = null;
+    try { vd = _parentSyncVerdicts[sftkParentSyncKey(p.sourceOrg, p.targetOrg, elm.dataset.lkpSyncstate)]; } catch (_) { vd = null; }
+    if (!vd) { elm.textContent = ''; elm.className = 'ds-psync'; return; }
+    const inSync = !vd.missing && !vd.changed;
+    elm.className = `ds-psync ${inSync ? 'ds-psync-ok' : 'ds-psync-bad'}`;
+    elm.textContent = inSync
+      ? `✓ in sync · ${timeAgo(vd.at)}`
+      : `🔴 ${vd.missing} missing · 🟡 ${vd.changed} changed · ${timeAgo(vd.at)}`;
+    elm.title = inSync
+      ? `Last ${elm.dataset.lkpSyncstate} scan on this org pair found nothing missing and nothing changed — the name-bridges have parents to land on.`
+      : `Last ${elm.dataset.lkpSyncstate} scan on this org pair still had work to do — compare & fix before deploying this object.`;
+  });
 }
 
 // Render the full Lookup Resolution section for a tree node
@@ -1133,6 +1165,7 @@ function renderLookupSection(node, pathKey) {
         <option value="match" ${effectiveStrategy === 'match' ? 'selected' : ''}>🔍 Match by field</option>
       </select>
       ${effectiveStrategy === 'match' ? matchSelHtml : ''}${hintHtml}
+      <span class="ds-psync" data-lkp-syncstate="${esc(refObj)}"></span>
       <button class="ds-btn ds-btn-xs ds-lkp-parentcmp" data-lkp-parentcmp="${esc(refObj)}"
         title="Scan ${esc(refObj)} across this deployment's org pair RIGHT NOW and see whether the parents are aligned — missing or drifted parents there are exactly what makes lookups on ${esc(node.objectType || node.childSObject || 'this object')} land empty. Fix them first, then deploy this object.">🔍 compare parents</button>
     </div>`;
@@ -1473,6 +1506,7 @@ function wireTreeEvents() {
   area.querySelectorAll('[data-lkp-parentcmp]').forEach(btn => {
     btn.addEventListener('click', () => bldCompareParent(btn.dataset.lkpParentcmp, btn));
   });
+  sftkBldFillParentSync();
 
   // Match-field select (or text input fallback) — update without full re-render
   area.querySelectorAll('.ds-lkp-match-select').forEach(el => {
