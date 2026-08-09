@@ -1316,6 +1316,18 @@ html, body {
 .ds-pick-row:last-child { border-bottom: none; }
 .ds-pick-row:hover { background: var(--brand-bg); }
 .ds-pick-row input[type=checkbox] { flex-shrink: 0; accent-color: var(--brand); }
+/* W5 — Records preview modal (Run page). */
+.ds-runprev-section { margin-top: 10px; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
+.ds-runprev-hdr {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 7px 12px; background: var(--c-surface-sunk); border-bottom: 1px solid var(--border); font-size: 12px;
+}
+.ds-runprev-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 12px; border-top: 1px solid var(--border-light); font-size: 12px;
+}
+.ds-runprev-op { margin-left: auto; font-size: 11px; font-weight: 700; white-space: nowrap; padding: 1px 8px; border-radius: var(--r-pill); }
+
 /* W3 — child-picker parent groups (lookup-style picking). */
 .ds-pick-group-hdr {
   display: flex;

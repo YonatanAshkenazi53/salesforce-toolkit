@@ -763,3 +763,30 @@ describe('the child record picker is parent-aware', () => {
     expect(MOD).toMatch(/if \(!pickerParentPicks\) return list\.map\(rowHtml\)\.join\(''\)/);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// W5 — Records preview: a per-record table of what THIS run will do
+// (user 2026-08-04), honest about point-in-time, duplicates and scope.
+// ══════════════════════════════════════════════════════════════════
+describe('the Run page records preview', () => {
+  const TRANSFER = read('studio-transfer.js');
+  const { sftkRunOpFor } = extractFunctions('studio-transfer.js', ['sftkRunOpFor']);
+
+  it('derives the honest operation per record state', () => {
+    expect(sftkRunOpFor('missing', false).op).toBe('➕ Insert');
+    expect(sftkRunOpFor('missing', true).op).toBe('➕ Insert');
+    expect(sftkRunOpFor('changed', true).op).toBe('✏ Update');
+    expect(sftkRunOpFor('insync', true).op).toContain('no changes');
+    // insert mode on an existing record is named for what it is
+    expect(sftkRunOpFor('changed', false).op).toContain('DUPLICATE');
+    expect(sftkRunOpFor('insync', false).op).toContain('DUPLICATE');
+  });
+
+  it('the modal is honest: point-in-time note, extras omitted, caps and scope named', () => {
+    expect(TRANSFER).toContain('a point-in-time reading, not live state');
+    expect(TRANSFER).toContain("never touched by a run and aren't listed");
+    expect(TRANSFER).toContain('more record(s) not listed — the run includes them all');
+    expect(TRANSFER).toContain('no fresh child scan');
+    expect(TRANSFER).toMatch(/Run <strong>🔄 Refresh state<\/strong>/);
+  });
+});
