@@ -674,7 +674,7 @@ anchor-based plan edit accidentally deleted it)
 
 ## Phase W — Data Deployment flagship hardening (user session 2026-08-05:
 ## "it's our strongest feature … must work flawlessly" + four concrete asks)
-- [ ] W1 CHILD-LEVEL UPSERT — the headliner. Root upsert exists (Run Transfer →
+- [x] W1 CHILD-LEVEL UPSERT (DONE 603e764) — the headliner. Root upsert exists (Run Transfer →
   write mode Upsert + External ID); children always INSERT, so re-running any
   parent+child deployment duplicates children. Engine: per-node upsert config
   (node.matching/external-Id already exists as identity) driving Collections
@@ -682,27 +682,27 @@ anchor-based plan edit accidentally deleted it)
   "if record doesn't exist create him, if not update him" for the whole tree.
   Also SURFACE upsert in the builder (user didn't find the Transfer-page
   toggle — discoverability failure).
-- [ ] W2 PER-RECORD LOOKUP OVERRIDES, multi-target (user: "select lookups
+- [~] W2 PER-RECORD LOOKUP OVERRIDES (ENGINE DONE 49a13d7 — Priority-0 in payload builder, per-orgKey, export-stripped, matrix-tested; REMAINING: the Reconcile UI picker that writes node.lookupOverrides), multi-target (user: "select lookups
   manually for every lookup of the record … for every record and for multiple
   org targets"). Design: node.lookupOverrides = { [orgKey]: { [srcRecordId]:
   { [FieldApi]: tgtRecordId } } } — engine consults BEFORE match-field
   resolution; UI = per-record "resolve lookup" picker (search the target's
   candidates like the record picker) reachable from Reconcile rows + the
   picker's expanded row; export strips (org-local ids).
-- [ ] W3 CHILD RECORD PICKER UX — "pick them like you pick lookup field
+- [x] W3 CHILD RECORD PICKER UX (DONE 80c54a9) — "pick them like you pick lookup field
   records": per-parent grouping + typeahead search in the child 🎯 picker
   (reuse the new combobox pattern), showing parent context per row.
-- [ ] W4 INVESTIGATE drift-capture gap (user: "items that were need to be
+- [x] W4 drift-capture gap FIXED (1e8b5ac — sftkEngineCompareSet: scan compares + Overwrite writes the engine copy set) (user: "items that were need to be
   updated in real time where not captured by the engine"). Prime suspect:
   drift detection compares ONLY the mapped/compare-plan fields — a changed
   field outside the plan is invisible. Verify, then either compare all
   writable fields or disclose the compared-field subset loudly. NEEDS the
   user's example field to confirm.
-- [ ] W5 RECORDS+OPERATIONS PREVIEW TABLE (user 2026-08-04): before a run,
+- [x] W5 RECORDS+OPERATIONS PREVIEW TABLE (DONE 173c259 — 📋 Records preview modal on the Run page) (user 2026-08-04): before a run,
   a table of records + child records with the operation each will get
   (insert/update/skip) — essentially the scan buckets rendered per node on
   the Run page.
-- [ ] W6 FIELD CLEANER: links to all fetched metadata (open in Salesforce
+- [x] W6 FIELD CLEANER (DONE 2ba82a8 — fixOne confirm gate incl. flow-version-deletion truth; Setup links verified across TYPE_CFG): links to all fetched metadata (open in Salesforce
   Setup) + VERIFY every delete path confirms first (C4 shared confirm modal
   adoption check).
 - [ ] W7 QA + REGRESSION CAMPAIGN (user 2026-08-05: "After we implement all we
