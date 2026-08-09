@@ -1366,6 +1366,12 @@ async function runDiffScan(profile, node = null, scope = null) {
     // W4 — what this scan actually compared: the engine copy set (expanded)
     // or a legacy explicit list. Consumers can say "compared N fields".
     ...(compareExpanded ? { compareExpanded: true } : {}),
+    // Per-side fetch counts + the WHERE that scoped them — the record-A
+    // triage (2026-08-09): a record in NO bucket almost always means a
+    // filter excluded it BEFORE matching, and without these numbers that
+    // failure mode is indistinguishable from a matching bug.
+    fetched: { src: (srcRes.records || []).length, tgt: (tgtRes.records || []).length },
+    ...(where ? { where } : {}),
     // Missing↔extra pairs whose keys differ only by whitespace/case — the
     // per-row detail rides on the rows themselves (row.nearMiss).
     ...(nearMissCount ? { nearMisses: nearMissCount } : {}),
