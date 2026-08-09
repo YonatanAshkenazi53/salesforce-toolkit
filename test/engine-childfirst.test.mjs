@@ -294,3 +294,20 @@ describe('⛔ pre-flight abort — dead bridge under a required field', () => {
     expect(calls.filter(c => c[0] === 'update').length, 'nothing may be updated').toBe(0);
   });
 });
+
+// W7 pattern audit — classic-encryption fields read back MASKED for most
+// users; copying them writes literal 'XXXX-1234' garbage into the target.
+describe('buildCopyFields — encrypted fields are never copied', () => {
+  it('drops encryptedstring, keeps normal data fields', () => {
+    const desc = { name: 'X__c', fields: [
+      f('Id', 'ID', 'id', { createable: false }),
+      f('Name', 'Name', 'string', { nameField: true }),
+      f('SSN__c', 'SSN', 'encryptedstring'),
+      f('Notes__c', 'Notes', 'string'),
+    ] };
+    const out = eng.buildCopyFields(desc);
+    expect(out).toContain('Name');
+    expect(out).toContain('Notes__c');
+    expect(out).not.toContain('SSN__c');
+  });
+});

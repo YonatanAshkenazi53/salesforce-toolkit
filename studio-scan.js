@@ -1068,6 +1068,17 @@ async function runDiffScan(profile, node = null, scope = null) {
   const memPairedTgt = new Set();
   let memRows = [];                 // [{ sr, tr }] — classified with the buckets below
   const memWarnings = [];
+  // AUTONUMBER match key (W7 pattern audit) — the values are org-generated
+  // sequence numbers: 'A-0042' in two orgs are DIFFERENT records that happen
+  // to share a counter position. Matching by them pairs records arbitrarily,
+  // so every scan says so instead of letting the buckets look authoritative.
+  try {
+    const _autoKeys = (srcKeyFields || []).filter(k =>
+      (srcDescFull?.fields || []).find(f => f && f.name === k)?.autoNumber === true);
+    if (_autoKeys.length) {
+      memWarnings.push(`match key ${_autoKeys.join(', ')} is an AUTONUMBER field — its values are org-generated sequence numbers, so cross-org matching by them pairs records arbitrarily. Match by a real data field or an External ID instead (🎯 Pick Records → Matching).`);
+    }
+  } catch (_) { /* advisory only */ }
   if (isRootScan) {
     try {
       const mem = (profile.matchMemory && typeof profile.matchMemory === 'object'
