@@ -705,6 +705,18 @@ anchor-based plan edit accidentally deleted it)
 - [x] W6 FIELD CLEANER (DONE 2ba82a8 — fixOne confirm gate incl. flow-version-deletion truth; Setup links verified across TYPE_CFG): links to all fetched metadata (open in Salesforce
   Setup) + VERIFY every delete path confirms first (C4 shared confirm modal
   adoption check).
+- [ ] W8 FIELD CLEANER UNDO + MASS UNDO (user 2026-08-09). Honest design:
+  Salesforce exposes NO API to undelete a custom field (Setup → Deleted
+  Fields only, 15-day grace). Two-track feature: (a) DELETION LOG — every
+  field delete records {org, object, field, describe snapshot, backup-CSV
+  reference, deletedAt} locally; an Undo panel lists them with ↗ deep-link
+  to the org's Deleted Fields Setup page while the grace window lasts
+  (countdown shown); (b) TRUE RECREATE for post-grace/mass cases — rebuild
+  the field from the stored describe via Metadata API + offer re-import of
+  the backup CSV values (extends the existing F4 backup). Mass undo =
+  multi-select over the log, sequential recreate+reimport with per-field
+  results. Confirmations + honesty copy throughout (recreated ≠ restored:
+  new field Id, FLS/layouts need re-adding — say so).
 - [ ] W7 QA + REGRESSION CAMPAIGN (user 2026-08-05: "After we implement all we
   need a lot of qa and regression"). Runs AFTER W1-W6 land: (a) engine
   scenario-matrix expansion (upsert idempotence incl. children, owner queues,
