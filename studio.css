@@ -5948,3 +5948,23 @@ body.ds-pro {
 .ds-dark .ds-pii-sug-note { background: #26304d; color: #a5b4fc; }
 .ds-dark .ds-pii-sug-null { background: #3a2e10; color: #fcd34d; }
 .ds-pii-sug-legend { font-size: 11px; color: var(--subtext); margin-right: auto; }
+
+/* ── W2-UI — 🔗 per-record lookup override panel (Reconcile) ──────────── */
+.ds-lkp-on { color: var(--brand); font-weight: 700; }
+.ds-lkp-panel { padding: 2px 0 4px; }
+.ds-lkp-hdr { font-size: 11.5px; font-weight: 600; margin: 2px 0 4px; }
+.ds-lkp-hdr-sub { font-weight: 400; color: var(--subtext); margin-left: 6px; font-size: 10.5px; }
+.ds-lkp-row { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; border-top: 1px solid var(--border-light); flex-wrap: wrap; }
+.ds-lkp-field { min-width: 150px; max-width: 220px; font-size: 11.5px; font-weight: 600; overflow-wrap: anywhere; }
+.ds-lkp-type { display: block; font-size: 10px; color: var(--subtext); font-weight: 400; }
+.ds-lkp-src { font-size: 11px; color: var(--subtext); min-width: 130px; max-width: 220px; overflow-wrap: anywhere; padding-top: 1px; }
+.ds-lkp-pick { flex: 1; min-width: 200px; }
+.ds-lkp-search { width: 100%; box-sizing: border-box; font-size: 11.5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+.ds-lkp-results { margin-top: 4px; border: 1px solid var(--border); border-radius: 6px; max-height: 180px; overflow-y: auto; background: var(--surface); }
+.ds-lkp-hit { display: block; width: 100%; text-align: left; font-size: 11.5px; padding: 5px 8px; border: 0; background: transparent; color: var(--text); cursor: pointer; overflow-wrap: anywhere; }
+.ds-lkp-hit:hover { background: var(--brand-bg); }
+.ds-lkp-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; padding: 3px 9px; border-radius: 999px; background: #ecfdf3; color: #067647; border: 1px solid #abefc6; overflow-wrap: anywhere; }
+.ds-dark .ds-lkp-chip { background: #10281c; color: #75dfa6; border-color: #1f5138; }
+.ds-lkp-clear { border: 0; background: transparent; cursor: pointer; color: inherit; font-size: 11px; padding: 0 1px; line-height: 1; }
+.ds-lkp-clear:hover { color: #b42318; }
+.ds-lkp-objsel { font-size: 11.5px; margin-bottom: 4px; max-width: 100%; }
