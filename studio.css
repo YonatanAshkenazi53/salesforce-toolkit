@@ -1316,6 +1316,22 @@ html, body {
 .ds-pick-row:last-child { border-bottom: none; }
 .ds-pick-row:hover { background: var(--brand-bg); }
 .ds-pick-row input[type=checkbox] { flex-shrink: 0; accent-color: var(--brand); }
+/* W3 — child-picker parent groups (lookup-style picking). */
+.ds-pick-group-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--c-surface-sunk);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  position: sticky;
+  top: 0;
+}
+.ds-pick-group-hdr label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.ds-pick-group-cnt { font-size: 11px; color: var(--subtext); font-variant-numeric: tabular-nums; }
+
 .ds-pick-label {
   flex: 1; min-width: 0; font-size: 12px; font-weight: 500;
   overflow: hidden;

@@ -738,3 +738,28 @@ describe('reconcile/picker rows never hide a long name irretrievably', () => {
     expect(CSS).toMatch(/\.ds-rec-col-key \{[^}]*word-break: break-word/s);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// W3 — child picker scopes to the parent's picks and groups by parent
+// (user 2026-08-05: "when we pick sub records we need to be able to
+// pick them like you pick lookup field records").
+// ══════════════════════════════════════════════════════════════════
+describe('the child record picker is parent-aware', () => {
+  const MOD = read('studio-builder-modals.js');
+
+  it('a child picker with parent picks scopes its fetch exactly like the run', () => {
+    expect(MOD).toMatch(/pickerParentPicks \? `\$\{node\.field\} IN \(/);
+    expect(MOD).toContain('the run fetches exactly this scope');
+  });
+
+  it('rows group under parent headers with a per-parent select-all', () => {
+    expect(MOD).toContain('ds-pick-group-hdr');
+    expect(MOD).toMatch(/data-group-parent/);
+    expect(MOD).toMatch(/parentLabelById\.get\(pid\)/);
+    expect(CSS).toMatch(/\.ds-pick-group-hdr \{/);
+  });
+
+  it('no parent picks → the flat whole-table list is unchanged', () => {
+    expect(MOD).toMatch(/if \(!pickerParentPicks\) return list\.map\(rowHtml\)\.join\(''\)/);
+  });
+});

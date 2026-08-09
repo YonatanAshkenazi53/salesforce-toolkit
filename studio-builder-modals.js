@@ -916,15 +916,39 @@ async function openRecordPickerModal(pathStr) {
   let hideDeployed   = false;   // user-toggleable filter — hides in-sync rows
   let showOnlyTodo   = false;   // user-toggleable filter — shows ONLY missing+drift rows (Phase 2.5)
 
+  // W3 (user 2026-08-05: "when we pick sub records we need to be able to
+  // pick them like you pick lookup field records") — a CHILD picker whose
+  // parent has hand-picked records scopes its list to THOSE parents' children
+  // (the run is scoped identically, so anything else invites the silent-drop
+  // trap) and groups rows under each parent with a per-parent select-all.
+  const pickerParentNode  = !isRootPick ? getNodeByPath(_editingProfile.tree, String(pathStr).split('.').slice(0, -1).join('.')) : null;
+  const pickerParentPicks = (pickerParentNode && Array.isArray(pickerParentNode.recordIds) && pickerParentNode.recordIds.length && node.field)
+    ? pickerParentNode.recordIds.filter(Boolean) : null;
+  let parentLabelById = new Map();   // parent Id → display label (best effort)
+
   async function fetchRecords() {
     const fld  = displayField && displayField !== 'Id' ? displayField : null;
-    const soql = `SELECT Id${fld ? `,${fld}` : ''} FROM ${objType}${node.where ? ' WHERE ' + node.where : ''} ORDER BY ${fld || 'Id'} LIMIT 200`;
+    const linkSel = pickerParentPicks ? `,${node.field}` : '';
+    const scopeW  = pickerParentPicks ? `${node.field} IN (${pickerParentPicks.map(id => `'${id}'`).join(',')})` : '';
+    const w = [node.where, scopeW].filter(Boolean).map(x => `(${x})`).join(' AND ');
+    const soql = `SELECT Id${fld ? `,${fld}` : ''}${linkSel} FROM ${objType}${w ? ' WHERE ' + w : ''} ORDER BY ${pickerParentPicks ? node.field + ',' : ''}${fld || 'Id'} LIMIT 200`;
     const res  = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, query: soql });
     queryError = res.error || null;
     records    = res.error ? [] : (res.records || []);
   }
 
   await fetchRecords();
+
+  // Parent display labels for the group headers — best effort, ids on failure.
+  if (pickerParentPicks) {
+    try {
+      const pObj = pickerParentNode.objectType || pickerParentNode.childSObject;
+      const pFld = pickerParentNode.matchField || 'Name';
+      const pr = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
+        query: `SELECT Id,${pFld} FROM ${pObj} WHERE Id IN (${pickerParentPicks.map(id => `'${id}'`).join(',')})` });
+      for (const r of (pr?.records || [])) parentLabelById.set(r.Id, String(r[pFld] ?? r.Id));
+    } catch (_) { /* headers fall back to raw ids */ }
+  }
 
   // ── Render helpers ────────────────────────────────────────────
   function noteHtml() {
@@ -1140,7 +1164,8 @@ async function openRecordPickerModal(pathStr) {
         <div class="ds-picker-list" id="dsRecList">
           ${!records.length
             ? `<div class="ds-picker-empty">${queryError ? 'Query failed.' : 'No records found.'}</div>`
-            : list.map(r => {
+            : (() => {
+              const rowHtml = r => {
                 const label = (displayField && r[displayField]) ? r[displayField] : r.Id;
                 const sub   = displayField && r[displayField] ? r.Id : '';
                 // Live-scan state takes priority over history when available
@@ -1180,8 +1205,30 @@ async function openRecordPickerModal(pathStr) {
                   </label>
                   ${isDrift ? `<div class="ds-pick-row-expand" data-expand-for="${esc(r.Id)}" style="display:none"></div>` : ''}
                 </div>`;
-              }).join('')}
+              };
+              if (!pickerParentPicks) return list.map(rowHtml).join('');
+              // W3 — group by parent with a per-parent select-all, the way a
+              // lookup picker reads: parent context first, children under it.
+              const groups = new Map();
+              for (const r of list) {
+                const k = r[node.field] || '';
+                if (!groups.has(k)) groups.set(k, []);
+                groups.get(k).push(r);
+              }
+              return [...groups].map(([pid, rows]) => {
+                const selN = rows.filter(r => selected.has(r.Id)).length;
+                const pLbl = pid ? (parentLabelById.get(pid) || pid) : '(no parent set)';
+                return `<div class="ds-pick-group-hdr">
+                  <label title="Select every listed child of this parent">
+                    <input type="checkbox" data-group-parent="${esc(pid)}" ${rows.length && selN === rows.length ? 'checked' : ''}>
+                    <strong>${esc(pLbl)}</strong>
+                  </label>
+                  <span class="ds-pick-group-cnt">${selN}/${rows.length} selected</span>
+                </div>` + rows.map(rowHtml).join('');
+              }).join('');
+            })()}
         </div>
+        ${pickerParentPicks ? `<div class="ds-picker-note">Scoped to children of the ${pickerParentPicks.length} picked ${esc(pickerParentNode.objectType || pickerParentNode.childSObject || 'parent')} record(s) — the run fetches exactly this scope.</div>` : ''}
         ${records.length >= 200 ? `<div class="ds-picker-limit">Showing first 200 — use WHERE filter to narrow results.</div>` : ''}
       </div>
       <div class="ds-modal-footer">
@@ -1498,6 +1545,17 @@ async function openRecordPickerModal(pathStr) {
       }
       closeModal();
       openRecordPickerModal(pathStr);
+    });
+
+    // W3 — per-parent select-all toggles every listed child of that parent.
+    eid('dsRecList')?.querySelectorAll('input[data-group-parent]').forEach(gcb => {
+      gcb.addEventListener('change', () => {
+        const pid = gcb.dataset.groupParent;
+        const ids = records.filter(r => String(r[node.field] || '') === pid).map(r => r.Id);
+        for (const id of ids) { if (gcb.checked) selected.add(id); else selected.delete(id); }
+        const box = eid('dsModalBox');
+        if (box) { box.innerHTML = renderModal(eid('dsRecSearch')?.value || ''); wireModal(eid('dsRecSearch')?.value || ''); }
+      });
     });
 
     eid('dsRecSave')?.addEventListener('click', async () => {
