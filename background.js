@@ -945,6 +945,26 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
               `${res.matchObject}.${res.matchField} — ${total - matched} record(s) will have null ${fieldName}`
             );
           }
+          // ⛔ PRE-FLIGHT ABORT (user 2026-08-10, after 401 × "Required field
+          // missing": "the recommendation … is not strong enough"). A bridge
+          // that resolved NOTHING onto a field the TARGET requires means
+          // every inserted row dies one by one — so refuse to push at all
+          // and name the fix, instead of collecting hundreds of identical
+          // per-row failures. (Update-only rows would survive — the field is
+          // simply omitted — but this engine path exists to create records;
+          // a fully dead bridge under a required field is never intended.)
+          if (matched === 0 && total > 0) {
+            const fmMapPre = node.fieldMappings || {};
+            const tfPre = (fmMapPre[fieldName] && fmMapPre[fieldName] !== null) ? fmMapPre[fieldName] : fieldName;
+            const tdescPre = tgtDescFields.find(f => f && f.name === tfPre);
+            if (tdescPre && tdescPre.nillable === false && tdescPre.createable) {
+              throw new Error(
+                `PRE-FLIGHT STOP — ${objType}.${fieldName}: 0/${total} lookups resolved via ` +
+                `${res.matchObject}.${res.matchField}, and ${tfPre} is REQUIRED in the target, so every ` +
+                `insert would fail. Nothing was pushed. Fix: deploy ${res.matchObject} records to the ` +
+                `target first (the numbered plan in Reconcile does it in one click), then run again.`);
+            }
+          }
         }
       }
 

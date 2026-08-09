@@ -235,3 +235,62 @@ describe('W2 — per-record lookup overrides (engine)', () => {
     expect((result.errors || []).some(e => /1 lookup value\(s\) set from per-record hand-picks/.test(e))).toBe(true);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// ⛔ PRE-FLIGHT ABORT (user 2026-08-10, after 401 × "Required field
+// missing"): a lookup bridge that resolves NOTHING onto a field the
+// TARGET requires must stop the run BEFORE any write — one clear error
+// naming the fix, zero per-row failures, zero records pushed.
+// ══════════════════════════════════════════════════════════════════
+describe('⛔ pre-flight abort — dead bridge under a required field', () => {
+  it('0/N resolution onto a target-REQUIRED lookup fails the run before any write', async () => {
+    const STEP_DESC = { name: 'Step__c', fields: [
+      f('Id', 'ID', 'id', { createable: false, updateable: false }),
+      f('Name', 'Name', 'string', { nameField: true }),
+      f('Blueprint__c', 'Blueprint', 'reference', { referenceTo: ['Blueprint__c'], nillable: false }),
+    ] };
+    const BP_DESC = { name: 'Blueprint__c', fields: [
+      f('Id', 'ID', 'id', { createable: false, updateable: false }),
+      f('Name', 'Name', 'string', { nameField: true }),
+    ] };
+    const SRC_STEPS = [
+      { Id: 'S1', Name: 'Step 1', Blueprint__c: 'BP1' },
+      { Id: 'S2', Name: 'Step 2', Blueprint__c: 'BP1' },
+    ];
+    globalThis.sfRestGet = async (orgUrl, sid, path) => {
+      if (/sobjects\/Step__c\/describe/.test(path)) return STEP_DESC;
+      if (/sobjects\/Blueprint__c\/describe/.test(path)) return BP_DESC;
+      return { error: 'unexpected ' + path };
+    };
+    globalThis.sfQueryAll = async (orgUrl, sid, q) => {
+      calls.push(['queryAll', orgUrl, q]);
+      if (/FROM Step__c/.test(q)) {
+        if (/SELECT COUNT\(\)/.test(q)) return { totalSize: SRC_STEPS.length, records: [] };
+        return { records: SRC_STEPS, totalSize: SRC_STEPS.length, serverTotal: SRC_STEPS.length };
+      }
+      if (/FROM Blueprint__c/.test(q)) {
+        // Source resolves anchors fine; the TARGET (queried by anchor VALUE)
+        // has no Blueprint records at all — the user's exact situation.
+        if (orgUrl === SRC) return { records: [{ Id: 'BP1', Name: 'Master plan' }], totalSize: 1 };
+        return { records: [], totalSize: 0 };
+      }
+      return { records: [], totalSize: 0 };
+    };
+    globalThis.sfQuery = globalThis.sfQueryAll;
+
+    const profile = { id: 'px', name: 'doomed run', tree: {
+      objectType: 'Step__c', recordIds: ['S1', 'S2'],
+      lookupResolutions: { Blueprint__c: { strategy: 'match', matchObject: 'Blueprint__c', matchField: 'Name' } },
+      children: [],
+    } };
+
+    let result = null, threw = null;
+    try { result = await eng.executeProfileTransfer(profile, SRC, 'SID_S', TGT, 'SID_T'); }
+    catch (e) { threw = e; }
+    const msg = threw ? String(threw.message || threw) : JSON.stringify(result);
+    expect(msg).toContain('PRE-FLIGHT STOP');
+    expect(msg).toContain('deploy Blueprint__c records to the target first');
+    expect(calls.filter(c => c[0] === 'create').length, 'nothing may be written').toBe(0);
+    expect(calls.filter(c => c[0] === 'update').length, 'nothing may be updated').toBe(0);
+  });
+});
