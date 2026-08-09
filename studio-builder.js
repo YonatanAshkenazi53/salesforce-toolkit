@@ -241,11 +241,18 @@ function renderBuilder() {
         <div class="ds-builder-root-picker">
           <label class="ds-lbl">Root Object Type</label>
           <div class="ds-builder-root-row">
-            <!-- Prepopulated from the SOURCE org (user 2026-07-20: "select
-                 objects from a prepopulated list") — the text input is only
-                 the fallback when the source org isn't open in a tab. -->
-            <select id="dsRootObjSel" class="ds-select" aria-label="Root object type" style="display:none"></select>
-            <input id="dsRootObj" class="ds-input" aria-label="Root object API name" placeholder="Loading objects from the source org…">
+            <!-- ONE combobox (user 2026-08-05: "the best experience is to
+                 type in the box and get suggestions"). Typing filters the
+                 source org's object list; the same box accepts a raw API
+                 name when the org isn't open. The old flow HID this input
+                 behind a 1000-option native <select> once the list loaded —
+                 which is exactly "you can't really type in the box". -->
+            <div class="ds-autocomplete-wrap" style="flex:1">
+              <input id="dsRootObj" class="ds-input" autocomplete="off" role="combobox"
+                     aria-label="Root object — type to search" aria-expanded="false" aria-controls="dsRootObjAC"
+                     placeholder="Loading objects from the source org…">
+              <div id="dsRootObjAC" class="ds-autocomplete-list" role="listbox" style="display:none"></div>
+            </div>
             <button class="ds-btn ds-btn-primary" id="dsSetRoot">Set Root</button>
           </div>
         </div>` : `
@@ -260,6 +267,7 @@ function renderBuilder() {
   eid('dsBuilderCancel')?.addEventListener('click', () => renderProfiles());
   eid('dsBuilderSave')?.addEventListener('click', () => saveProfile());
   eid('dsSetRoot')?.addEventListener('click', () => setRootObject());
+  _bldWireRootCombo();
   eid('dsPreviewAllBtn')?.addEventListener('click', () => previewAll());
   eid('dsBldCheckTargets')?.addEventListener('click', () => _bldCheckAllTargets());
   eid('dsBldSuggestPii')?.addEventListener('click', () => bldOpenPiiSuggestModal());
@@ -699,14 +707,15 @@ function bldOwnerFallbackHint(list, orgName, saved) {
   }
 }
 
-// Populate the root-object PICKLIST from the source org's object list.
-// Cached per org key; falls back to the free-text input when the source
-// org has no live session.
+// Load the root-object list from the source org for the combobox.
+// Cached per org key; the SAME input keeps accepting a raw API name when
+// the source org has no live session (the list just stays empty).
 let _bldObjCache = {};
+let _bldRootObjList = [];
 async function _bldLoadRootObjects() {
-  const sel = eid('dsRootObjSel');
   const inp = eid('dsRootObj');
-  if (!sel || !inp) return;   // tree already set — no root picker on screen
+  if (!inp) return;   // tree already set — no root picker on screen
+  _bldRootObjList = [];
   const srcUrl = _editingProfile?.sourceOrg;
   const fallback = msg => { inp.placeholder = msg; };
   if (!srcUrl) { fallback('Pick a source org first — or type the API name (Account, Case__c…)'); return; }
@@ -724,16 +733,95 @@ async function _bldLoadRootObjects() {
       .sort((a, b) => a.label.localeCompare(b.label));
     _bldObjCache[key] = list;
   }
-  if (!eid('dsRootObjSel')) return;   // view changed while loading
-  sel.innerHTML = `<option value="">— Pick the root object —</option>` +
-    list.map(o => `<option value="${esc(o.name)}">${esc(o.label)} (${esc(o.name)})</option>`).join('');
-  sel.style.display = '';
-  inp.style.display = 'none';
+  if (!eid('dsRootObj')) return;   // view changed while loading
+  _bldRootObjList = list;
+  inp.placeholder = `Type to search ${list.length} objects — Account, Case__c…`;
+}
+
+// PURE — rank the object list for the combobox. Prefix hits on the API name
+// outrank prefix hits on the label, which outrank contains-hits; ties stay
+// alphabetical by label. Empty term → the whole list (the renderer caps).
+function bldRankObjects(list, term) {
+  const t = String(term || '').trim().toLowerCase();
+  if (!t) return (list || []).slice();
+  const tier = o => {
+    const n = String(o.name || '').toLowerCase();
+    const l = String(o.label || '').toLowerCase();
+    if (n.startsWith(t)) return 0;
+    if (l.startsWith(t)) return 1;
+    if (n.includes(t) || l.includes(t)) return 2;
+    return 3;
+  };
+  return (list || []).map(o => [tier(o), o]).filter(p => p[0] < 3)
+    .sort((a, b) => a[0] - b[0] || String(a[1].label).localeCompare(String(b[1].label)))
+    .map(p => p[1]);
+}
+
+// The combobox behavior: type → ranked suggestions, arrow keys + Enter,
+// mousedown pick (fires before the input's blur), Escape/blur close. Enter
+// with the list CLOSED and a value typed = Set Root (one less click).
+function _bldWireRootCombo() {
+  const inp = eid('dsRootObj');
+  const ac  = eid('dsRootObjAC');
+  if (!inp || !ac) return;
+  const AC_CAP = 50;
+  const close = () => { ac.style.display = 'none'; inp.setAttribute('aria-expanded', 'false'); };
+  const rows  = () => [...ac.querySelectorAll('.ds-autocomplete-item')];
+  const paint = () => {
+    if (!_bldRootObjList.length) { close(); return; }   // no list — plain typing mode
+    const ranked = bldRankObjects(_bldRootObjList, inp.value);
+    const shown  = ranked.slice(0, AC_CAP);
+    ac.innerHTML = shown.map(o =>
+      `<div class="ds-autocomplete-item" role="option" data-name="${esc(o.name)}">
+         <span class="ds-autocomplete-item-api">${esc(o.name)}</span>
+         <span class="ds-autocomplete-item-label">${esc(o.label)}</span>
+       </div>`).join('')
+      + (ranked.length > shown.length ? `<div class="ds-autocomplete-note">+${ranked.length - shown.length} more — keep typing</div>` : '')
+      + (!ranked.length ? `<div class="ds-autocomplete-note">No object matches — Set Root still accepts a raw API name.</div>` : '');
+    ac.style.display = '';
+    inp.setAttribute('aria-expanded', 'true');
+    rows().forEach(el => el.addEventListener('mousedown', e => {
+      e.preventDefault();
+      inp.value = el.dataset.name;
+      close();
+    }));
+  };
+  const move = dir => {
+    const list = rows();
+    if (!list.length) return;
+    const cur = list.findIndex(el => el.classList.contains('active'));
+    const next = cur < 0 ? (dir > 0 ? 0 : list.length - 1)
+      : Math.min(list.length - 1, Math.max(0, cur + dir));
+    list.forEach(el => el.classList.remove('active'));
+    list[next].classList.add('active');
+    try { list[next].scrollIntoView({ block: 'nearest' }); } catch (_) {}
+  };
+  inp.addEventListener('input', paint);
+  inp.addEventListener('focus', paint);
+  inp.addEventListener('blur', close);
+  inp.addEventListener('keydown', e => {
+    const open = ac.style.display !== 'none';
+    if (e.key === 'Escape' && open) { e.preventDefault(); close(); return; }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!open) paint();
+      move(e.key === 'ArrowDown' ? 1 : -1);
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (open) {
+        const act = rows().find(el => el.classList.contains('active'));
+        if (act) { inp.value = act.dataset.name; close(); return; }
+        close();
+      }
+      if (inp.value.trim()) setRootObject();
+    }
+  });
 }
 
 function setRootObject() {
-  const selVal = (eid('dsRootObjSel')?.value || '').trim();
-  const objType = selVal || (eid('dsRootObj')?.value || '').trim();
+  const objType = (eid('dsRootObj')?.value || '').trim();
   if (!objType) return;
   _editingProfile.tree = {
     objectType: objType,

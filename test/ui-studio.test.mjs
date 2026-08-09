@@ -664,3 +664,52 @@ describe('the compare trio explains itself on hover', () => {
     expect(PROFILES).toContain("The OVERVIEW: this deployment's whole record tree");
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// Root-object combobox (user 2026-08-05: "you can't really type in the
+// box … best experience is to type and get suggestions"). The old flow
+// HID the text input behind a 1000-option native <select> once the
+// object list loaded.
+// ══════════════════════════════════════════════════════════════════
+describe('the root-object picker is a real combobox', () => {
+  const { bldRankObjects } = extractFunctions('studio-builder.js', ['bldRankObjects']);
+  const L = [
+    { name: 'Account', label: 'Account' },
+    { name: 'Case__c', label: 'Custom Case' },
+    { name: 'Contact', label: 'Contact' },
+    { name: 'Asset_Case__c', label: 'Asset Case' },
+  ];
+
+  it('API-name prefix beats label prefix beats contains; ties alphabetical', () => {
+    expect(bldRankObjects(L, 'case').map(o => o.name)).toEqual(['Case__c', 'Asset_Case__c']);
+    // tier 0 (API-name prefix) sorts by LABEL: 'Contact' < 'Custom Case'
+    expect(bldRankObjects(L, 'c').map(o => o.name)).toEqual(['Contact', 'Case__c', 'Account', 'Asset_Case__c']);
+  });
+
+  it('empty term returns the whole list; no match returns empty', () => {
+    expect(bldRankObjects(L, '').length).toBe(4);
+    expect(bldRankObjects(L, 'zzz')).toEqual([]);
+    expect(bldRankObjects(null, 'x')).toEqual([]);
+  });
+
+  it('the <select> is gone and the input is never hidden', () => {
+    expect(BUILDER).not.toContain('dsRootObjSel');
+    expect(BUILDER).toMatch(/id="dsRootObj"[^>]*role="combobox"/);
+    expect(BUILDER).toContain('id="dsRootObjAC"');
+    // the loader must never hide the input again (the upsert picker
+    // elsewhere in this file legitimately swaps its own controls)
+    const loader = BUILDER.slice(BUILDER.indexOf('async function _bldLoadRootObjects('),
+                                 BUILDER.indexOf('function bldRankObjects('));
+    expect(loader).not.toContain(".style.display = 'none'");
+  });
+
+  it('keyboard support and the raw-API-name escape hatch are wired', () => {
+    const combo = BUILDER.slice(BUILDER.indexOf('function _bldWireRootCombo('),
+                                BUILDER.indexOf('\n}', BUILDER.indexOf('function _bldWireRootCombo(')));
+    expect(combo).toContain("e.key === 'ArrowDown'");
+    expect(combo).toContain("e.key === 'Escape'");
+    expect(combo).toMatch(/mousedown/);
+    expect(combo).toContain('if (inp.value.trim()) setRootObject()');
+    expect(BUILDER).toContain('Set Root still accepts a raw API name');
+  });
+});
