@@ -722,16 +722,26 @@ anchor-based plan edit accidentally deleted it)
   multi-select over the log, sequential recreate+reimport with per-field
   results. Confirmations + honesty copy throughout (recreated ≠ restored:
   new field Id, FLS/layouts need re-adding — say so).
-- [ ] W7 QA + REGRESSION CAMPAIGN (user 2026-08-05: "After we implement all we
-  need a lot of qa and regression"). Runs AFTER W1-W6 land: (a) engine
-  scenario-matrix expansion (upsert idempotence incl. children, owner queues,
-  lookup overrides, record types, bulk path, cancel, failure accounting);
-  (b) director-driven harness walkthroughs of every Data Deployment surface;
-  (c) Fable-subagent adversarial review passes (the highest-ROI bug catcher
-  in this project — reserve capacity for it); (d) full gate + boot smoke +
-  fresh screenshot sweep; release only when the ship-blocker list is empty.
-  The parked ship-audit findings fold in here (workflow wf_850eda7e-ff3 died
-  on Fable limits; redo as targeted inline passes per surface).
+- [~] W7 QA + REGRESSION CAMPAIGN (user 2026-08-05: "After we implement all we
+  need a lot of qa and regression") — IN PROGRESS 2026-08-09. Method:
+  trace-the-feature adversarial passes, inline on Fable (workflow
+  wf_850eda7e-ff3 died on Fable limits; targeted inline passes per surface).
+  FOUND+FIXED so far:
+  - #1 (ffa7dd7) reconcileOverwrite predated W2 — a 🔗 hand-pick on the very
+    row being overwritten silently lost to refPairs name-matching. Picks now
+    applied LAST (Priority-0 parity), target-describe gated, count disclosed;
+    also makes polymorphic/rel-less lookups writable when picked. +5 tests.
+  - #2 (2c5f5d5) dry-run bridge probe overstated "will be null" for records
+    carrying picks — verdict lines now disclose the node's pick count.
+  VERIFIED SAFE in the same pass: updSrc direction (inverted profile keys the
+  bucket to the org actually being written — id-space always correct); child
+  overwrite (synthetic tree carries no lookupOverrides → clean no-op).
+  REMAINING QUEUE: (a) engine scenario-matrix expansion (upsert idempotence
+  incl. children, owner queues, record types, bulk path, cancel, failure
+  accounting); (b) director-driven harness walkthroughs of every Data
+  Deployment surface (incl. the new 🔗 panel); (c) trace-the-feature passes
+  over W1/W3/W5/W6 like the W2 one above; (d) full gate + boot smoke +
+  fresh screenshot sweep + repack/zip; release only when ship-blockers = 0.
 
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.
