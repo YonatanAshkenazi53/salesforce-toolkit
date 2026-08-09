@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { extractFunctions } from './extract.mjs';
 
 const eng = extractFunctions('background.js', [
-  'executeProfileTransfer', 'buildCopyFields', 'sftkFieldsFromError',
+  'executeProfileTransfer', 'buildCopyFields', 'sftkFieldsFromError', 'sftkOrgKey',
   'sftkTruncValue', 'sftkBuildOwnerIndex', 'sftkMatchKey',
   'sftkPiiHashHex', 'sftkPiiMaskable', 'sftkPiiFormat', 'sftkPiiMaskValue',
   'sftkPiiRulesForObject', 'sftkPiiMaskRows', 'sftkPiiMaskAnchorMap',
@@ -216,5 +216,22 @@ describe('child-first + picked child records, end to end', () => {
     }
     expect(result.summary.Contact.created).toBe(2);
     expect(result.status).toBe('success');
+  });
+});
+
+describe('W2 — per-record lookup overrides (engine)', () => {
+  it("a hand-picked target id wins over idMap and bridges, and the run discloses it", async () => {
+    const p = PROFILE();
+    delete p.tree.children[0].insertOrder;   // default order: link written at insert
+    p.tree.children[0].lookupOverrides = {
+      [TGT]: { C2: { AccountId: 'HANDPICKED1' } },
+    };
+    const result = await eng.executeProfileTransfer(p, SRC, 'SID_S', TGT, 'SID_T');
+    const contactChunk = calls.find(([k, c]) => k === 'create' && c[0]?.attributes?.type === 'Contact')[1];
+    const c1 = contactChunk.find(r => r.LastName === 'Lee');
+    const c2 = contactChunk.find(r => r.LastName === 'Kim');
+    expect(c1.AccountId).toMatch(/^NA/);            // automatic resolution
+    expect(c2.AccountId).toBe('HANDPICKED1');       // the user's pick wins
+    expect((result.errors || []).some(e => /1 lookup value\(s\) set from per-record hand-picks/.test(e))).toBe(true);
   });
 });
