@@ -237,6 +237,14 @@ html, body {
 }
 .ds-autocomplete-item:hover, .ds-autocomplete-item.active { background: #f0f4ff; }
 .ds-autocomplete-item-api  { font-family: monospace; flex: 1; }
+/* Non-interactive footer rows (overflow count, no-match hint). */
+.ds-autocomplete-note {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--subtext);
+  font-style: italic;
+  border-top: 1px dashed var(--border);
+}
 .ds-autocomplete-item-label { font-size: 11px; color: #888; }
 
 /* ── Layout ──────────────────────────────────────────────────── */
