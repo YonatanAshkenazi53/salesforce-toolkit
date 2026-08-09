@@ -6033,3 +6033,9 @@ body.ds-pro {
 .ds-tree-rels-role { font-size: 9.5px; font-weight: 700; letter-spacing: .04em; color: #1d4ed8; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 999px; padding: 1px 8px; margin-left: 6px; white-space: nowrap; vertical-align: middle; }
 .ds-dark .ds-tree-rels-role { color: #93c5fd; }
 .ds-lkp-parentcmp { flex-shrink: 0; margin-left: auto; }
+.ds-psync { font-size: 10px; font-weight: 600; border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+.ds-psync:empty { display: none; }
+.ds-psync-ok  { color: #067647; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.32); }
+.ds-dark .ds-psync-ok { color: #6ee7b7; }
+.ds-psync-bad { color: #b45309; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); }
+.ds-dark .ds-psync-bad { color: #fbbf24; }
