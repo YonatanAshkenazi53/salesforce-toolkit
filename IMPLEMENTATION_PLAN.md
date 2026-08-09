@@ -782,12 +782,23 @@ anchor-based plan edit accidentally deleted it)
   VERIFIED SAFE in the same pass: updSrc direction (inverted profile keys the
   bucket to the org actually being written — id-space always correct); child
   overwrite (synthetic tree carries no lookupOverrides → clean no-op).
-  REMAINING QUEUE: (a) engine scenario-matrix expansion (upsert idempotence
-  incl. children, owner queues, record types, bulk path, cancel, failure
-  accounting); (b) director-driven harness walkthroughs of every Data
-  Deployment surface (incl. the new 🔗 panel); (c) trace-the-feature passes
-  over W1/W3/W5/W6 like the W2 one above; (d) full gate + boot smoke +
-  fresh screenshot sweep + repack/zip; release only when ship-blockers = 0.
+  AUTONOMOUS BLOCK (2026-08-10 ~01:00-02:00, c1c5967..f76a584): #5 engine
+  PRE-FLIGHT ABORT (dead bridge + target-required field → run stops before
+  any write; matrix scenario proven fail→pass); #6 ↻ Retry covers ALL
+  failed ids (sftkCapFailedIds: 200 rich + bare ids to 2000 — reconcile
+  history sliced at 200 and stranded 201 of the user's 401); #7 autonumber
+  match-key warning on every scan; #8 encryptedstring fields never copied
+  (masked-value corruption). PII byte-parity test caught a git-stash CRLF
+  corruption of background.js — normalize LF after any stash round-trip.
+  REMAINING QUEUE: (a) pattern audit continues — RecordType drift compare
+  by DeveloperName, owner-drift disclosure, multiselect picklist order-
+  insensitive compare, rich-text org-local image disclosure; (b) engine
+  scenario-matrix expansion (upsert idempotence incl. children, owner
+  queues, bulk path, cancel, failure accounting); (c) director harness
+  walkthroughs of every surface (incl. 🔗 panel + ordered checklist);
+  (d) staleness audit — every sync-state surface refreshes from runs;
+  (e) full gate + smoke + screenshot sweep + repack/zip; release only
+  when ship-blockers = 0.
 
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.
