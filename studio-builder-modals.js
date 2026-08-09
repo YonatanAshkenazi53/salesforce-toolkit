@@ -802,6 +802,9 @@ async function openRecordPickerModal(pathStr) {
     caseFold: false, trim: false, collapseWs: false, emailLower: false, phoneDigits: false,
     ...(initialMatching.normalize || {})
   };
+  // W1 — per-node upsert rides the external-Id key. Session state mirrors
+  // node.upsert; persisted on Apply alongside the matching config.
+  let upsertOn = !!(node.upsert && node.upsert.field);
   if (node.matching?.fields?.[0]) displayField = node.matching.fields[0];
   // External-ID candidates from the source describe. The user's orgs may
   // have NONE — the strategy stays visible (greyed) with a Setup hint.
@@ -833,6 +836,14 @@ async function openRecordPickerModal(pathStr) {
     // Composite/external-ID target-side names derive from the Field Mapping;
     // an explicit single-field target pick only applies to 'field' strategy.
     if (matchStrategy !== 'field') node.matchFieldTgt = null;
+    // W1 — per-node upsert rides the external-Id key: config follows the
+    // CURRENT key field, and leaving the externalId strategy clears it (an
+    // upsert without an external Id is not a thing Salesforce can run).
+    if (upsertOn && matchStrategy === 'externalId' && fields[0]) {
+      node.upsert = { field: fields[0] };
+    } else {
+      delete node.upsert;
+    }
   }
 
   // ── Step 3: query helper — fetches records using current displayField ─
@@ -1002,6 +1013,13 @@ async function openRecordPickerModal(pathStr) {
           <span class="ds-subtext" title="Applied to every key component on BOTH sides before comparing — normalization is part of the key itself.">Normalize:</span>
           ${NORM_OPTS.map(([k, lbl]) => `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" data-match-norm="${esc(k)}" ${matchNormalize[k] ? 'checked' : ''}> ${lbl}</label>`).join('')}
         </div>
+        ${matchStrategy === 'externalId' ? `
+        <div style="margin-top:7px">
+          <label style="display:inline-flex;align-items:flex-start;gap:6px;cursor:pointer;font-size:12px" title="Runs use the Salesforce upsert API on this External ID: a record whose key already exists in the target is UPDATED in place; only genuinely new keys insert. Without this, every run INSERTS — re-running a deployment duplicates records. The Run page's write-mode toggle overrides this for the root object only.">
+            <input type="checkbox" id="dsMatchUpsert" ${upsertOn ? 'checked' : ''}>
+            <span><strong>⬆ Upsert on this key</strong> — existing records update instead of duplicate on re-runs</span>
+          </label>
+        </div>` : ''}
         ${(() => {
           // Per-target key resolution (user 2026-07-26: "what will happen if
           // the target field is different on two orgs?") — show EXACTLY which
@@ -1284,6 +1302,12 @@ async function openRecordPickerModal(pathStr) {
       if (out) out.innerHTML = '';
       document.querySelectorAll('[data-match-grade-out]').forEach(el => { el.innerHTML = ''; });
     }));
+
+    // W1 — the per-node upsert toggle persists with the matching config.
+    eid('dsMatchUpsert')?.addEventListener('change', () => {
+      upsertOn = !!eid('dsMatchUpsert')?.checked;
+      persistMatching();
+    });
 
     // ── M3b — key-quality analyzer ("Test this key") ─────────────────────
     eid('dsMatchTestBtn')?.addEventListener('click', async () => {

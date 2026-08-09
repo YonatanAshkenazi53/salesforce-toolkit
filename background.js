@@ -1131,13 +1131,23 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // Upsert mode (v1): applies to the ROOT object only, keyed by an
       // external-Id field. When on, existing target records (matched on that
       // field) are UPDATED instead of duplicated; new ones are inserted.
-      const useUpsert   = !!(profile.upsert?.field) && node === profile.tree;
+      // W1 — CHILD-LEVEL UPSERT. Per-node config (node.upsert = { field },
+      // set in the 🎯 picker's Matching section) lets ANY node upsert on its
+      // external Id, so re-running a parent+child deployment stops
+      // duplicating children. Precedence: the Transfer page's run-time
+      // toggle (profile.upsert) wins for the ROOT; a node's own saved
+      // config covers everything else — including the root when the toggle
+      // is off, which finally makes upsert configurable from the BUILDER.
+      const upsertFieldRaw = (node === profile.tree && profile.upsert?.field)
+        ? profile.upsert.field
+        : (node.upsert && node.upsert.field ? String(node.upsert.field) : null);
+      const useUpsert   = !!upsertFieldRaw;
       // Canonicalize to the describe's casing: every other surface matches
       // api names case-insensitively, and the masked-value injection below
       // looks rows up by this exact key — a user-typed 'external_id__c'
       // must find the describe's 'External_Id__c' row, not silently miss.
       const upsertField = useUpsert
-        ? ((descRes.fields.find(f => f.name.toLowerCase() === String(profile.upsert.field).toLowerCase())?.name) || profile.upsert.field)
+        ? ((descRes.fields.find(f => f.name.toLowerCase() === String(upsertFieldRaw).toLowerCase())?.name) || upsertFieldRaw)
         : null;
       // Phase B — Bulk API 2.0 above the threshold. One async job instead of
       // N synchronous 200-record calls: far fewer round trips and no API-call
@@ -1328,6 +1338,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // have been empty) — History and the run log read it from here.
       summary[objType] = { created: ok, failed: fail,
         ...(usedBulk ? { viaBulk: true } : {}),
+        ...(useUpsert ? { viaUpsert: upsertField } : {}),
         ...(notProcessed ? { notProcessed } : {}),
         ...(piiRows ? { masked: piiRows.counts } : {}) };
       // B3 — one line for everything the aborted Bulk job did not confirm.
