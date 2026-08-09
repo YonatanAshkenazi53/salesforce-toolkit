@@ -11,6 +11,7 @@ const scan = extractFunctions('studio-scan.js', [
   '_lookupSelectExpr', '_lookupResolvedVal', 'sftkPhantomStateCountry',
   'sftkEngineCompareSet', 'sftkParentScopeCap', 'sftkParentScopeNote',
   'sftkOrphanLabel', 'sftkOrphanCapNote', 'sftkBucketCap', 'sftkBucketCapNote',
+  'sftkScanBucketInfo', 'sftkBucketCapShipped', 'sftkBucketCountLabel',
 ], { 'sftk-matching.js': [
   'sftkMatchingFromNode', 'sftkMatchingFields', 'sftkMatchingTgtFields',
   'sftkMatchKey', 'sftkNormalizeValue', 'sftkNearMissFold', 'sftkNearMissReason',
@@ -121,5 +122,17 @@ describe('a record present in BOTH orgs can never vanish from every bucket', () 
     const row = (res.changed || []).find(r => r.sourceId === 'S_A');
     expect((row?.fields || []).join(','), 'differing field list names the lookup')
       .toContain('Step_Order_Name__c');
+
+    // HEADER COUNTS (user screenshot 2026-08-09: "Insert 0" over 401 rows,
+    // "Changed 0" over a visible row) — run the exact label pipeline the
+    // Reconcile headers use against this scan result.
+    const lbl = k => {
+      const i = scan.sftkScanBucketInfo(res, k);
+      return scan.sftkBucketCountLabel(i.shown, i.total, i.capped, i.totalIsFloor);
+    };
+    expect(lbl('missingInTarget'), 'Insert header count').toBe('1');
+    expect(lbl('changed'),         'Changed header count').toBe('1');
+    expect(lbl('identical'),       'in-sync count').toBe('0');
+    expect(lbl('onlyInTarget'),    'target-only count').toBe('0');
   });
 });

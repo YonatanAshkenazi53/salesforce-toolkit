@@ -428,7 +428,11 @@ function sftkBucketCountLabel(shown, total, capped, totalIsFloor) {
   const group = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   const s = Number(shown) > 0 ? Math.floor(Number(shown)) : 0;
   const t = Number(total);
-  const known = Number.isFinite(t) && t >= 0;
+  // total == null means "not measured" — guard it BEFORE Number(), because
+  // Number(null) is 0, which read as a KNOWN total of zero and printed "0"
+  // over a visibly populated column (user screenshots 2026-08-09: "Insert 0"
+  // above 401 rows, "Changed 0" above a drift row).
+  const known = total != null && Number.isFinite(t) && t >= 0;
   if (!capped) return known ? `${group(t)}${totalIsFloor ? '+' : ''}` : group(s);
   if (known && t > s) return `${group(s)} of ${group(t)}${totalIsFloor ? '+' : ''}`;
   return `${group(s)}+`;
