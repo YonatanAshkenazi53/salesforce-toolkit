@@ -748,6 +748,17 @@ anchor-based plan edit accidentally deleted it)
   objects (User/big common data) → compare, don't blind-deploy; optional
   lookups → advisory, never a gate; engine-owned refs excluded. W11 is
   this principle made TOTAL (graph → numbered plan up front).
+- [x] RING STALENESS ROOT CAUSE (user-found 2026-08-10, commit a2b2917):
+  ring cell gave native lastScan absolute priority on rows whose own pair
+  IS the ring flow, so the 🔎 button could never update the flagship cell
+  ("21 · 55m ago" survived a successful scan; "suddenly synced" = a later
+  reconcile scan writing lastScan). sftkRingCellPick freshest-wins + both
+  ring scan paths deposit p.lastScan on native pairs. Same commit:
+  Matching help text, 💡 Suggestions auto-grade top-3 + ★ best key
+  (sftkMatchKeyScore worst-org populated×unique), log-viewer "Report .md"
+  / "Raw .log" rename + DML op pills, popup OLED cycle (light→dark→OLED,
+  shared sftk_oled key). Follow-up candidate: apex-log-viewer.html
+  standalone page doesn't apply sftk-oled yet.
 - [ ] BUG (W7 queue, user-found 2026-08-10): popup Lightning Pages →
   "Who sees what?" → Show users fails HTTP 404 (EMPTY response) on a
   well-formed /services/data/v62.0/query User query against ashkenazy7.
