@@ -530,11 +530,25 @@ describe('studio-ring.js — sftkRingCellPick freshest-wins', () => {
   it('the cell render actually routes through the picker, and a native-pair ring scan deposits lastScan', () => {
     const src = codeOnly(srcOf('studio-ring.js'));
     expect(src).toMatch(/sftkRingCellPick\(nat,\s*\(p\.ringScans \|\| \{\}\)/);
-    // Both ring scan paths (🔎 and ⚖) write p.lastScan when the ring flow is
-    // the profile's own pair — that's what keeps Reconcile and the ring in
-    // the same moment.
-    const deposits = src.match(/p\.lastScan = res;/g) || [];
+    // Both ring scan paths (🔎 and ⚖) deposit p.lastScan when the ring flow
+    // is the profile's own pair — that's what keeps Reconcile and the ring
+    // in the same moment.
+    const deposits = src.match(/p\.lastScan = dep;/g) || [];
     expect(deposits.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('the deposit is stripped and restamped (QA sweep 2026-08-10)', () => {
+    const src = codeOnly(srcOf('studio-ring.js'));
+    // learnedPairs live in matchMemory, NEVER in lastScan (mirrors the
+    // native strip in refreshProfileDiff — 5,000 id pairs of dead weight
+    // against the chrome.storage quota otherwise)…
+    const strips = src.match(/delete dep\.learnedPairs;/g) || [];
+    expect(strips.length).toBeGreaterThanOrEqual(2);
+    // …and the stamps must be the PROFILE's own URL strings: freshness
+    // consumers compare res.sourceOrg with ===, and the ring may hold a
+    // different string form of the same org.
+    const restamps = src.match(/\{ \.\.\.res, sourceOrg: p\.sourceOrg, targetOrg: p\.targetOrg \}/g) || [];
+    expect(restamps.length).toBeGreaterThanOrEqual(2);
   });
 });
 

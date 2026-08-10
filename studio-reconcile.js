@@ -107,6 +107,12 @@ function sftkRingTileFromScan(p) {
     if (typeof _ringScanKey !== 'function') return;
     const rk = _ringScanKey(p.targetOrg);
     if (!p.ringScans[rk]) return;
+    // Freshest wins here too — a ▶ Sync Plan may have JUST written a newer
+    // ringScans summary that this profile-scan deposit must not roll back
+    // (QA sweep 2026-08-10; same law as sftkRingCellPick on the read side).
+    const prev = p.ringScans[rk];
+    if (prev.runAt && fs.runAt
+        && new Date(prev.runAt).getTime() > new Date(fs.runAt).getTime()) return;
     p.ringScans[rk] = { runAt: fs.runAt,
       missing: (fs.missingInTarget || []).length,
       changed: (fs.changed || []).length,
