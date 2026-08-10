@@ -984,7 +984,26 @@ const UserCopy = (() => {
           }
         }
 
-        if (toEnable.length === 0 && toDisable.length === 0 && sameOn.length === 0) {
+        // "Off for both" used to be invisible ("not informative") — but the
+        // absence read as "the tool doesn't know Flow User exists" (user
+        // 2026-08-10: "some fields here are missing, like a flow user
+        // permission"). A COPY tool can't enable what the source lacks, but
+        // it must SHOW everything it saw, or missing looks like broken.
+        const bothOff = userPermFields.filter(f =>
+          !sourceUserPerms[f.name] && !targetUserPerms[f.name]);
+        if (bothOff.length > 0) {
+          html += `
+            <details class="uc-bothoff">
+              <summary class="uc-group-label uc-muted-label">Off for both users <span class="uc-count">${bothOff.length}</span> <span class="uc-field-val">— nothing to copy; enable on the source first if you want them copied</span></summary>
+              ${bothOff.map(f => `
+                <div class="uc-row uc-row-muted">
+                  <span class="uc-row-icon">—</span>
+                  <span class="uc-row-name">${esc(f.label)}</span>
+                </div>`).join('')}
+            </details>`;
+        }
+
+        if (toEnable.length === 0 && toDisable.length === 0 && sameOn.length === 0 && bothOff.length === 0) {
           html += `<div class="uc-empty-msg">Source user has no user permissions enabled.</div>`;
         }
       }
