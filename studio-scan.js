@@ -1010,23 +1010,31 @@ async function runDiffScan(profile, node = null, scope = null) {
       // M3a — collision detection runs on the SAME keys the indexes use
       // (sftkMatchKey; normalization included), so "two different raw values
       // that normalize to the same key" counts as a collision too.
-      const countKeys = (recs, cfg) => {
+      // Collect IDS per key, not just counts — the UI must be able to show
+      // WHICH records collide, linked, or the warning is unactionable
+      // (user 2026-08-10: "where are the records").
+      const collectKeys = (recs, cfg) => {
         const m = new Map();
         for (const r of recs) {
           const k = sftkMatchKey(r, cfg);
-          if (k !== '') m.set(k, (m.get(k) || 0) + 1);
+          if (k !== '') { if (!m.has(k)) m.set(k, []); m.get(k).push(r.Id); }
         }
         return m;
       };
-      const sCnt = countKeys(srcRes.records || [], srcMatching);
-      const tCnt = countKeys(tgtRes.records || [], tgtMatching);
-      for (const [k, n] of sCnt) if (n > 1) _dupKeys.add(k);
-      for (const [k, n] of tCnt) if (n > 1) _dupKeys.add(k);
+      const sMap = collectKeys(srcRes.records || [], srcMatching);
+      const tMap = collectKeys(tgtRes.records || [], tgtMatching);
+      for (const [k, ids] of sMap) if (ids.length > 1) _dupKeys.add(k);
+      for (const [k, ids] of tMap) if (ids.length > 1) _dupKeys.add(k);
       if (_dupKeys.size) {
         let rows = 0;
-        for (const [k, n] of sCnt) if (_dupKeys.has(k)) rows += n;
-        for (const [k, n] of tCnt) if (_dupKeys.has(k)) rows += n;
-        _keyCollisions = { rows, keys: [..._dupKeys].slice(0, 50) };
+        for (const [k, ids] of sMap) if (_dupKeys.has(k)) rows += ids.length;
+        for (const [k, ids] of tMap) if (_dupKeys.has(k)) rows += ids.length;
+        _keyCollisions = { rows, keys: [..._dupKeys].slice(0, 50),
+          // First few colliding keys WITH their record ids on each side —
+          // capped to keep stored scans small.
+          examples: [..._dupKeys].slice(0, 5).map(k => ({ key: k,
+            src: (sMap.get(k) || []).slice(0, 5),
+            tgt: (tMap.get(k) || []).slice(0, 5) })) };
       }
     } catch (_) { _dupKeys = new Set(); _keyCollisions = null; }
   }
