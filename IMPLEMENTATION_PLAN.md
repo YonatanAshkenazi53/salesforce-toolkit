@@ -748,6 +748,16 @@ anchor-based plan edit accidentally deleted it)
   objects (User/big common data) → compare, don't blind-deploy; optional
   lookups → advisory, never a gate; engine-owned refs excluded. W11 is
   this principle made TOTAL (graph → numbered plan up front).
+- [ ] BUG (W7 queue, user-found 2026-08-10): popup Lightning Pages →
+  "Who sees what?" → Show users fails HTTP 404 (EMPTY response) on a
+  well-formed /services/data/v62.0/query User query against ashkenazy7.
+  Code path: lightning-pages.js ~1575 uses popup globals _orgUrl/_sid.
+  404-empty on correct URL = session-type suspect: stale/rotated sid, or
+  a Lightning-context (non-API) session id. REPRO QUESTIONS: does it also
+  fail on ashkenazy6? does closing/reopening the popup fix it? FIX SHAPE:
+  friendly-error mapping for 404-empty ("session likely stale — reopen
+  the org tab"), plus fresh-cookie re-read on 404 like the engine's
+  tier-1 does.
 - [ ] W13 SCAN TIMELINE — "the app shows the net difference, never the
   story" (user 2026-08-10: records deleted behind the scenes are invisible
   — after a re-mirror even the diff vanishes). Each scan keeps a compact
