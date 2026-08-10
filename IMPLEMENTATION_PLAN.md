@@ -722,7 +722,7 @@ anchor-based plan edit accidentally deleted it)
   multi-select over the log, sequential recreate+reimport with per-field
   results. Confirmations + honesty copy throughout (recreated ≠ restored:
   new field Id, FLS/layouts need re-adding — say so).
-- [ ] W9 CONTENTVERSION / FILES DEPLOYMENT (user 2026-08-09: "we need to
+- [~] W9 CONTENTVERSION / FILES DEPLOYMENT (ENGINE+UI SHIPPED a0ddd00+ca723a9 2026-08-10 ~03:30 — sftkFilePlan pure planner 8 tests, chunked b64, sftkTransferFilesForNode IO, per-node 📎 Files toggle; NEEDS FIRST LIVE-ORG RUN to validate the IO layer; v2 remainder: ContentNote, legacy Attachment, version history, libraries) (user 2026-08-09: "we need to
   support content version and all its related objects"). Files break the
   sObject model three ways: ContentDocument is auto-created by the first
   ContentVersion (never inserted directly); VersionData is a per-file REST
