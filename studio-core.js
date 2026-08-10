@@ -223,6 +223,82 @@ window.sftkGlyph = (emoji, label) => sftkGlyphFor(!!_settings.proMode, emoji, la
 // Normalize the persisted ds_settings blob: defaults for missing keys,
 // unknown keys preserved (forward/backward compat across agents' features),
 // proMode coerced to a real boolean.
+// ═══ W12 — MASS EDIT: the PURE planner ═══════════════════════════════════
+// Validates + coerces ONE new value against the field's describe, then
+// plans per-record updates: records already holding the value are SKIPPED
+// (idempotent by construction — a re-run touches nothing), everything else
+// gets { id, before } so the CSV backup and the before→after preview both
+// come straight from the plan. A bad value fails HERE, not 3,000 rows deep.
+//   records:   [{ Id, <field>: currentValue, ... }]
+//   fieldDesc: the describe entry for the field being set
+//   rawValue:  what the user typed ('' + setNull:true → explicit null)
+//   opts:      { setNull }
+// Returns { ok, value, updates: [{id, before}], unchanged, errors, warnings }
+function sftkMassEditPlan(records, fieldDesc, rawValue, opts) {
+  const out = { ok: false, value: null, updates: [], unchanged: 0, errors: [], warnings: [] };
+  if (!fieldDesc || !fieldDesc.name) { out.errors.push('no field selected'); return out; }
+  if (fieldDesc.updateable === false) {
+    out.errors.push(`${fieldDesc.name} is not updateable — Salesforce will reject every row`);
+    return out;
+  }
+  const t = fieldDesc.type;
+  let value = null;
+  if (opts?.setNull) {
+    if (fieldDesc.nillable === false) {
+      out.errors.push(`${fieldDesc.name} is REQUIRED — it cannot be set to empty`);
+      return out;
+    }
+    value = null;
+  } else {
+    const s = String(rawValue ?? '').trim();
+    if (s === '') { out.errors.push('no value entered — use "set to empty" to clear the field deliberately'); return out; }
+    if (t === 'boolean') {
+      if (!/^(true|false)$/i.test(s)) { out.errors.push(`${fieldDesc.name} is a checkbox — the value must be true or false`); return out; }
+      value = /^true$/i.test(s);
+    } else if (['double', 'currency', 'percent', 'int', 'integer'].includes(t)) {
+      const n = Number(s);
+      if (!Number.isFinite(n)) { out.errors.push(`"${s}" is not a number (${fieldDesc.name} is ${t})`); return out; }
+      if ((t === 'int' || t === 'integer') && !Number.isInteger(n)) { out.errors.push(`${fieldDesc.name} takes whole numbers only`); return out; }
+      value = n;
+    } else if (t === 'date') {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) { out.errors.push(`${fieldDesc.name} is a date — use YYYY-MM-DD`); return out; }
+      value = s;
+    } else if (t === 'datetime') {
+      if (Number.isNaN(Date.parse(s))) { out.errors.push(`"${s}" is not a valid date/time (${fieldDesc.name})`); return out; }
+      value = new Date(s).toISOString();
+    } else if (t === 'reference') {
+      if (!/^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$/.test(s)) { out.errors.push(`${fieldDesc.name} is a lookup — the value must be a 15/18-character record Id FROM THIS ORG`); return out; }
+      value = s;
+      out.warnings.push(`${fieldDesc.name} is a lookup — make sure ${s} is an Id in the org being edited (Ids never transfer between orgs)`);
+    } else if (t === 'picklist' || t === 'multipicklist') {
+      const allowed = (fieldDesc.picklistValues || []).filter(v => v.active !== false).map(v => v.value);
+      const parts = t === 'multipicklist' ? s.split(';').map(x => x.trim()).filter(Boolean) : [s];
+      const bad = allowed.length ? parts.filter(pv => !allowed.includes(pv)) : [];
+      if (bad.length && fieldDesc.restrictedPicklist) {
+        out.errors.push(`"${bad.join('", "')}" is not an active value of ${fieldDesc.name} (restricted picklist) — every row would fail`);
+        return out;
+      }
+      if (bad.length) out.warnings.push(`"${bad.join('", "')}" is not currently a value of ${fieldDesc.name} — Salesforce will accept it (unrestricted) but filters and reports won't know it`);
+      value = t === 'multipicklist' ? parts.join(';') : s;
+    } else {
+      if (fieldDesc.length && s.length > fieldDesc.length) {
+        out.errors.push(`the value is ${s.length} characters but ${fieldDesc.name} holds at most ${fieldDesc.length}`);
+        return out;
+      }
+      value = s;
+    }
+  }
+  const norm = v => (v == null || v === '') ? '' : String(v);
+  for (const r of (records || [])) {
+    if (!r || !r.Id) continue;
+    if (norm(r[fieldDesc.name]) === norm(value)) { out.unchanged++; continue; }
+    out.updates.push({ id: r.Id, before: r[fieldDesc.name] ?? null });
+  }
+  out.ok = true;
+  out.value = value;
+  return out;
+}
+
 function sftkSettingsShape(raw) {
   const s = { historyDays: 30, countsOnly: false, proMode: false, ...(raw || {}) };
   s.proMode = !!s.proMode;

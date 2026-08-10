@@ -748,6 +748,19 @@ anchor-based plan edit accidentally deleted it)
   objects (User/big common data) → compare, don't blind-deploy; optional
   lookups → advisory, never a gate; engine-owned refs excluded. W11 is
   this principle made TOTAL (graph → numbered plan up front).
+- [~] W12 MASS EDIT (user 2026-08-10: mass-changing record values "is one
+  by one manually and can be hard if you have thousands"). Flow: org →
+  object → WHERE (existing query machinery) → field + new value / set-null
+  → PREVIEW ALWAYS (W5-style before→after table, unchanged skipped =
+  idempotent) → engine batches (Collections 200 / Bulk above threshold) →
+  History + per-record results + ↻ Retry. SAFETY: prod guard; typed count
+  confirmation above threshold; AUTOMATIC CSV BACKUP of old values before
+  writing (F4 pattern) = every mass edit restorable — never a mass write
+  without a way back. Validation BEFORE running: sftkMassEditPlan coerces
+  + checks value vs describe (type, length, restricted picklist, id
+  shape); bad value fails the plan, not 3000 rows. PII-covered field →
+  disclose. STATUS: pure planner + tests shipped (night 2026-08-10); UI +
+  write path = first daylight arc.
 - [ ] W11 DEPLOYMENT PLANNER (deferred by the user 2026-08-10: "we can even
   create a plan for complex data deployments and seedings operations. but
   that might be for another day"). NORTH STAR it serves — the user's own
