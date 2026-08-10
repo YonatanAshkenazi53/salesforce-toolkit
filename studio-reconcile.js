@@ -36,6 +36,10 @@ let _recAutoRefreshKey = '';
 // rendered banner on repaints so navigation doesn't re-query the target.
 let _recParentGapKey  = '';
 let _recParentGapHtml = '';
+// Auto-verify attempts — `${key}|${refObj}` scanned in the background once
+// per (profile, scan); a failed scan falls back to the manual button
+// instead of retrying forever.
+let _recParentGapChecked = new Set();
 // What the advisor's probe found for the CURRENT scan — consulted by
 // runReconcile as a RUN GATE (user 2026-08-10: "the recommendation to sync
 // parents first is not strong enough"): doomed = empty parent behind a
@@ -2855,7 +2859,13 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
     // carries a "← next" marker. No more inferring the order.
     const steps = parents.map(g => {
       const vd = _parentSyncVerdicts[sftkParentSyncKey(p.sourceOrg, p.targetOrg, g.refObj)];
-      return { ...g, vd, done: !g.empty && !!vd && !vd.missing && !vd.changed };
+      return { ...g, vd, done: !g.empty && !!vd && !vd.missing && !vd.changed,
+        // AUTO-VERIFY (user 2026-08-10: "two first steps here should be done
+        // automatically on load and not route the user to a reconcile screen
+        // without nothing if its aligned") — a parent that EXISTS but has no
+        // verdict yet gets scanned in the BACKGROUND below; the checklist
+        // fills itself and navigation only appears when there's work to do.
+        checking: !g.empty && !vd && !_recParentGapChecked.has(`${key}|${g.refObj}`) };
     });
     const anyEmpty = parents.some(g => g.empty);
     // Two tiers, one flow (user 2026-08-10: "offer the user to compare
@@ -2877,7 +2887,11 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
         ? `<span class="ds-psync ds-psync-ok" title="Last ${esc(s.refObj)} scan on this org pair found nothing missing and nothing changed.">✓ in sync${s.vd ? ` · ${esc(timeAgo(s.vd.at))}` : ''}</span> <button class="ds-btn ds-btn-xs" data-recgap="${esc(s.refObj)}" title="Re-scan ${esc(s.refObj)} if the orgs changed since.">↻</button>`
         : s.empty
           ? `<span class="ds-psync ds-psync-bad">missing from target entirely${s.required ? ` · ${esc(objType)}.${esc(s.field)} is REQUIRED` : ''}</span> <button class="ds-btn ds-btn-xs ds-btn-primary" data-recgap="${esc(s.refObj)}" title="Creates a ready-made ${esc(s.refObj)} deployment on this org pair (match by Name) and opens it here — push it, come back, run this one.">➕ Deploy ${esc(s.refObj)}</button>`
-          : `${s.vd ? `<span class="ds-psync ds-psync-bad">🔴 ${s.vd.missing} missing · 🟡 ${s.vd.changed} changed · ${esc(timeAgo(s.vd.at))}</span>` : `<span class="ds-lkp-hint">not compared yet</span>`} <button class="ds-btn ds-btn-xs${isNext ? ' ds-btn-primary' : ''}" data-recgap="${esc(s.refObj)}" title="Scans ${esc(s.refObj)} across this org pair and opens its Reconcile — fix, come back, continue down the list.">🔍 Compare &amp; fix</button>`;
+        : s.checking
+          ? `<span class="ds-lkp-hint">⏳ checking alignment…</span>`
+          : s.vd
+            ? `<span class="ds-psync ds-psync-bad">🔴 ${s.vd.missing} missing · 🟡 ${s.vd.changed} changed · ${esc(timeAgo(s.vd.at))}</span> <button class="ds-btn ds-btn-xs${isNext ? ' ds-btn-primary' : ''}" data-recgap="${esc(s.refObj)}" title="Opens the ${esc(s.refObj)} Reconcile with this work waiting — fix, come back, continue down the list.">⚖ Open &amp; fix</button>`
+            : `<span class="ds-lkp-hint">couldn't check automatically</span> <button class="ds-btn ds-btn-xs" data-recgap="${esc(s.refObj)}" title="Scans ${esc(s.refObj)} across this org pair and opens its Reconcile.">🔍 Compare &amp; fix</button>`;
       return `<div class="ds-ordstep${s.done ? ' ds-ordstep-done' : ''}${isNext ? ' ds-ordstep-next' : ''}">
         <span class="ds-ordstep-num">${i + 1}</span>
         <strong>${esc(s.refObj)}</strong> <span class="ds-lkp-hint">(via ${esc(s.field)})</span>
@@ -2900,6 +2914,38 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
     </div>`;
     host.innerHTML = _recParentGapHtml;
     wire();
+    // Background auto-verify: scan unchecked parents sequentially (parents
+    // are reference-sized in a deployment context; the scan has its own
+    // 5,000 caps regardless), deposit verdicts, then repaint this panel if
+    // it's still on screen. One attempt per parent per scan — a failure
+    // falls back to the manual button, never a retry loop.
+    const toCheck = steps.filter(s => s.checking);
+    if (toCheck.length) {
+      (async () => {
+        for (const s of toCheck) {
+          _recParentGapChecked.add(`${key}|${s.refObj}`);
+          try {
+            const eph = { id: `chk_${Date.now()}`, name: `${s.refObj} check`,
+              sourceOrg: p.sourceOrg, targetOrg: p.targetOrg, ephemeral: true,
+              scanConfig: { matchField: 'Name', compareFields: [] },
+              tree: { objectType: s.refObj, where: '', children: [] } };
+            const res = await runDiffScan(eph);
+            if (!res?.error) {
+              sftkParentSyncPut(p.sourceOrg, p.targetOrg, s.refObj, {
+                missing: (res.missingInTarget || []).length,
+                changed: (res.changed || []).length,
+                extra:   (res.onlyInTarget || []).length,
+                at:      res.runAt || new Date().toISOString(),
+              });
+            }
+          } catch (_) { /* manual button remains */ }
+        }
+        if (_recParentGapKey === key && eid('dsRecParentGaps')) {
+          _recParentGapKey = ''; _recParentGapHtml = '';
+          sftkRecParentGapAdvisor(p, scan, objType, missing);
+        }
+      })();
+    }
   } catch (_) { /* advisory only — never break the page */ }
 }
 
