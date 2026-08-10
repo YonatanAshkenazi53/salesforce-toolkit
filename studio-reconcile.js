@@ -91,6 +91,30 @@ function sftkParentSyncPut(srcOrg, tgtOrg, obj, v) {
     chrome.storage.local.set({ sftk_parent_sync: _parentSyncVerdicts });
   } catch (_) { /* advisory map only */ }
 }
+
+// Ring tiles refresh from ANY fresh scan of the pair, not just from runs —
+// the user aligned the orgs via console Apex + a manual re-scan and the
+// ring kept showing a 44-minute-old "21" (2026-08-10: "still in sync but
+// not in sync"). Guarded: only when the ring's golden source IS this
+// profile's source, so a tile scanned from a different golden org is
+// never overwritten.
+function sftkRingTileFromScan(p) {
+  try {
+    const fs = p?.lastScan;
+    if (!p || p.ephemeral || !fs || fs.status !== 'success' || !p.ringScans) return;
+    if (typeof _ring === 'undefined' || !_ring?.sourceUrl) return;
+    if (sftkOrgKey(_ring.sourceUrl) !== sftkOrgKey(p.sourceOrg)) return;
+    if (typeof _ringScanKey !== 'function') return;
+    const rk = _ringScanKey(p.targetOrg);
+    if (!p.ringScans[rk]) return;
+    p.ringScans[rk] = { runAt: fs.runAt,
+      missing: (fs.missingInTarget || []).length,
+      changed: (fs.changed || []).length,
+      extra:   (fs.onlyInTarget || []).length,
+      status:  'success' };
+    storageSaveProfiles();
+  } catch (_) { /* tile refresh is best-effort */ }
+}
 // Child-aware reconcile (v2: children + grandchildren; Insert, Relink,
 // Overwrite drift, Delete extras). Selections and UI state are keyed by tree
 // pathKey ('0', '1', '0.1' for grandchildren, …).
@@ -225,6 +249,7 @@ async function renderReconcile() {
       extra:   (scan.onlyInTarget || []).length,
       at:      scan.runAt || new Date().toISOString(),
     });
+    sftkRingTileFromScan(p);
   }
 
   // ⛓ Journey-back banner — this reconcile was opened as a PARENTS-FIRST
