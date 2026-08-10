@@ -830,10 +830,34 @@ async function renderReconcile() {
     }
   } catch (_) { _sessNote = ''; }
 
+  // SYNC CONTRACT strip (user 2026-08-10: "you are not showing the user
+  // what he needs to do to be considered In Sync") — state the definition
+  // and the exact remaining work, instead of implying it through columns.
+  const _syncStrip = (!missing.length && !drift.length && !extras.length)
+    ? `<div class="ds-op-banner" style="border-left:3px solid #16a34a">
+        <span class="ds-op-banner-icon">✅</span>
+        <div class="ds-op-banner-body">
+          <div class="ds-op-banner-title">IN SYNC — nothing to do</div>
+          <div class="ds-op-banner-desc">${inSync.length} record pair(s) verified matching. In sync means: nothing missing in the target, nothing changed between the orgs, nothing extra in the target. Runs that touch these orgs re-check this view automatically.</div>
+        </div>
+      </div>`
+    : `<div class="ds-op-banner" style="border-left:3px solid #f59e0b">
+        <span class="ds-op-banner-icon">🎯</span>
+        <div class="ds-op-banner-body">
+          <div class="ds-op-banner-title">To be IN SYNC, this pair still needs:</div>
+          <div class="ds-op-banner-desc">${[
+            missing.length ? `<strong>${missing.length}</strong> record(s) pushed into the target (Insert column)` : null,
+            drift.length ? `<strong>${drift.length}</strong> changed record(s) resolved — pick a winner per row (→ source wins · ← target wins)` : null,
+            extras.length ? `<strong>${extras.length}</strong> target-only record(s) DECIDED — 🗑 delete the unwanted, or ← pull the legitimate ones INTO YOUR SOURCE (pull rewrites the source of truth — be sure that's what you mean)` : null,
+          ].filter(Boolean).join(' · ')}. Select below, ▶ Run, and this strip re-checks itself.</div>
+        </div>
+      </div>`;
+
   setMain(`${headerHtml}
     ${_sessNote}
     ${_journeyHtml}
     <div id="dsRecParentGaps"></div>
+    ${_syncStrip}
     <div class="ds-op-banner ds-op-banner-write">
       <span class="ds-op-banner-icon">⚖</span>
       <div class="ds-op-banner-body">
