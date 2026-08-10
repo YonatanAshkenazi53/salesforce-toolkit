@@ -497,6 +497,47 @@ describe('studio-ring.js — Sync Plan cap disclosure (write path)', () => {
   });
 });
 
+// ── Ring cell: freshest scan wins ────────────────────────────────────
+// The cell used to give the profile's native lastScan ABSOLUTE priority
+// whenever the profile's own pair equals the ring flow — so on exactly the
+// flagship row, the 🔎 button scanned successfully, wrote ringScans… and the
+// cell kept rendering the stale lastScan forever (user 2026-08-10: cell stuck
+// at "21 · 55m ago" with two successful queries in the debug log).
+describe('studio-ring.js — sftkRingCellPick freshest-wins', () => {
+  const { sftkRingCellPick } = extractFunctions('studio-ring.js', ['sftkRingCellPick']);
+  const at = (iso, missing) => ({ runAt: iso, missing, changed: 0, extra: 0, status: 'success' });
+
+  it('newer ring scan beats older native lastScan (the reported bug)', () => {
+    const nat = at('2026-08-10T20:19:00Z', 21);      // 55m-old "21"
+    const rs  = at('2026-08-10T21:14:19Z', 0);       // fresh 🔎 result
+    expect(sftkRingCellPick(nat, rs)).toBe(rs);
+  });
+
+  it('newer native lastScan beats an older ring scan', () => {
+    const nat = at('2026-08-10T21:30:00Z', 0);
+    const rs  = at('2026-08-10T21:14:19Z', 21);
+    expect(sftkRingCellPick(nat, rs)).toBe(nat);
+  });
+
+  it('single-source and empty cases degrade to whatever exists', () => {
+    const only = at('2026-08-10T21:14:19Z', 3);
+    expect(sftkRingCellPick(only, null)).toBe(only);
+    expect(sftkRingCellPick(null, only)).toBe(only);
+    expect(sftkRingCellPick(null, null)).toBe(null);
+    expect(sftkRingCellPick(undefined, undefined)).toBe(null);
+  });
+
+  it('the cell render actually routes through the picker, and a native-pair ring scan deposits lastScan', () => {
+    const src = codeOnly(srcOf('studio-ring.js'));
+    expect(src).toMatch(/sftkRingCellPick\(nat,\s*\(p\.ringScans \|\| \{\}\)/);
+    // Both ring scan paths (🔎 and ⚖) write p.lastScan when the ring flow is
+    // the profile's own pair — that's what keeps Reconcile and the ring in
+    // the same moment.
+    const deposits = src.match(/p\.lastScan = res;/g) || [];
+    expect(deposits.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
 // ── sfQueryAll keeps the server's own total ──────────────────────────
 describe('background.js sfQueryAll — serverTotal preserved', () => {
   const src = srcOf('background.js');

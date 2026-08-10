@@ -86,30 +86,37 @@ function maybeRunFirstRunTour() {
   ]);
 }
 
-// ── Dark theme — body.sftk-dark, persisted in chrome.storage.local ──
-// styles.css is fully CSS-variable-driven, so the class flip restyles
-// every component. Shared key with the standalone log viewer.
+// ── Theme — light → dark → OLED black, persisted in chrome.storage.local ──
+// styles.css is fully CSS-variable-driven, so the class flips restyle every
+// component. sftk_dark is shared with the standalone log viewer; sftk_oled is
+// THE SAME preference Data Studio's ⚫ toggle writes (one OLED setting for the
+// whole toolkit — user 2026-08-10: "no OLED mode for toolkit?").
 function initDarkTheme() {
-  const KEY = 'sftk_dark';
+  const KEY = 'sftk_dark', OLED = 'sftk_oled';
   const btn = document.getElementById('sftkDarkToggle');
-  const apply = on => {
+  const apply = (on, oled) => {
     document.body.classList.toggle('sftk-dark', !!on);
+    document.body.classList.toggle('sftk-oled', !!on && !!oled);
     if (btn) {
       // The glyph is a masked icon on a child span, swapped by name. It used
       // to be the button's own textContent, which is why the control had no
       // accessible name beyond "crescent moon".
       const icon = document.getElementById('sftkDarkIcon');
-      if (icon) icon.dataset.i = on ? 'sun' : 'moon';
-      const label = on ? 'Switch to light mode' : 'Switch to dark mode';
+      if (icon) icon.dataset.i = (on && oled) ? 'sun' : 'moon';
+      const label = !on ? 'Switch to dark mode'
+        : (!oled ? 'Switch to OLED black — pure-black dark for OLED screens'
+                 : 'Switch to light mode');
       btn.title = label;
       btn.setAttribute('aria-label', label);
     }
   };
-  chrome.storage?.local?.get(KEY).then(d => apply(d?.[KEY])).catch(() => {});
+  chrome.storage?.local?.get([KEY, OLED]).then(d => apply(d?.[KEY], d?.[OLED])).catch(() => {});
   btn?.addEventListener('click', () => {
-    const on = !document.body.classList.contains('sftk-dark');
-    apply(on);
-    chrome.storage?.local?.set({ [KEY]: on });
+    const dark = document.body.classList.contains('sftk-dark');
+    const oled = document.body.classList.contains('sftk-oled');
+    const next = !dark ? [true, false] : (!oled ? [true, true] : [false, false]);
+    apply(next[0], next[1]);
+    chrome.storage?.local?.set({ [KEY]: next[0], [OLED]: next[1] });
   });
 }
 

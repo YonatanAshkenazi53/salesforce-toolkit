@@ -222,14 +222,24 @@ describe('accessible names — an icon-only control must still announce itself',
     expect(RENDER).toContain('aria-haspopup="true"');
   });
 
-  it('the dark-mode toggle keeps a name when its glyph changes', () => {
+  it('the theme toggle keeps a name when its glyph changes', () => {
     const init = slice(JS, 'function initDarkTheme()', 'function setupTabs()', 'initDarkTheme');
     // The glyph is an attribute swap on a child span. It used to be
     // `btn.textContent = '🌙'`, which made the button's whole accessible
     // name "crescent moon".
     expect(init).not.toMatch(/btn\.textContent/);
-    expect(init).toContain("icon.dataset.i = on ? 'sun' : 'moon'");
+    expect(init).toContain("icon.dataset.i = (on && oled) ? 'sun' : 'moon'");
     expect(init).toContain("btn.setAttribute('aria-label', label)");
+  });
+
+  it('the theme toggle cycles light → dark → OLED and shares the Studio OLED key', () => {
+    const init = slice(JS, 'function initDarkTheme()', 'function setupTabs()', 'initDarkTheme');
+    // OLED is ONE toolkit-wide preference (sftk_oled) — the popup must read
+    // and write the same key the Studio's ⚫ toggle uses, and the pure-black
+    // class must only ever apply ON TOP of dark.
+    expect(init).toContain("OLED = 'sftk_oled'");
+    expect(init).toContain("classList.toggle('sftk-oled', !!on && !!oled)");
+    expect(init).toMatch(/!dark \? \[true, false\] : \(!oled \? \[true, true\] : \[false, false\]\)/);
   });
 });
 

@@ -1030,7 +1030,14 @@ async function openRecordPickerModal(pathStr) {
             : 'No external ID fields in this org — add one in Setup to enable')}
           <span style="flex:1"></span>
           <button class="ds-btn ds-btn-xs" id="dsMatchTestBtn" title="Grade this key against BOTH live orgs: populated% + unique% per org and a cross-org match preview">🧪 Test this key</button>
-          <button class="ds-btn ds-btn-xs" id="dsMatchSuggestBtn" title="Ranked match-key suggestions from this object's schema (external IDs → unique fields → name → composites)">💡 Suggestions</button>
+          <button class="ds-btn ds-btn-xs" id="dsMatchSuggestBtn" title="Ranked match-key suggestions — the top 3 are graded against LIVE data in both orgs automatically (populated% + unique% + ★ best key); the rest grade on demand">💡 Suggestions</button>
+        </div>
+        <div class="ds-subtext ds-match-help" style="font-size:11.5px;line-height:1.5;margin-top:5px">
+          The match key is how two records are recognized as <strong>the same record</strong> across orgs — it decides missing / changed / extra in every scan, and what an upsert updates.
+          <strong>Single field</strong>: one column is the identity (classic: Name).
+          <strong>Composite</strong>: several columns together (junction objects: the two parent lookups).
+          <strong>External ID</strong>: a dedicated unique field — the strongest key; survives renames and enables ⬆ upsert.
+          Normalize forgives formatting-only differences (case, spaces) on both sides. 🧪 grades your key against live data · 💡 ranks this object's candidates.
         </div>
         <div class="ds-match-fields-row" style="margin-top:6px">${body}</div>
         <div class="ds-match-norm-row" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;font-size:12px;align-items:center">
@@ -1082,6 +1089,7 @@ async function openRecordPickerModal(pathStr) {
           <button class="ds-btn ds-btn-xs" data-match-adopt="${esc(s.sig)}" title="Use this as the matching config">Use</button>
           <button class="ds-btn ds-btn-xs" data-match-grade="${esc(s.sig)}" title="Run the key-quality analysis for this candidate (queries both orgs)">Grade</button>
           <strong>${esc(s.label)}</strong>
+          <span data-match-score="${esc(s.sig)}"></span>
           <span class="ds-subtext">${esc(s.why)}${Object.keys(s.normalize || {}).some(k => s.normalize[k]) ? ' · normalized' : ''}</span>
           <div data-match-grade-out="${esc(s.sig)}" style="flex-basis:100%">${gradeCache.get(s.sig) || ''}</div>
         </div>`).join('')}
@@ -1413,19 +1421,68 @@ async function openRecordPickerModal(pathStr) {
         if (!outEl) return;
         b.disabled = true; b.textContent = '⏳';
         outEl.innerHTML = `<div class="ds-subtext" style="font-size:11px">Grading…</div>`;
-        try {
-          const fm   = node.fieldMappings || {};
-          const tgtF = s.fields.map(f => (fm[f] !== null && fm[f] !== undefined && fm[f] !== '') ? fm[f] : f);
-          const res  = await sftkAnalyzeMatchKey(objType, _editingProfile, s.fields, tgtF, s.normalize || {}, s.strategy);
-          gradeCache.set(s.sig, _matchAnalysisHtml(res, _editingProfile, true));
-        } catch (e) {
-          gradeCache.set(s.sig, `<div class="ds-drift-compare-err">⚠ ${esc(e?.message || String(e))}</div>`);
-        }
+        await _gradeSuggestion(s);
         outEl.innerHTML = gradeCache.get(s.sig);
         b.disabled = false; b.textContent = 'Grade';
+        _refreshSuggestBadges();
       }));
+      _refreshSuggestBadges();
     }
+
+    // One suggestion → live evidence. Sets s.score for the ★ ranking; grade
+    // failures land in the cache as a note, never throw.
+    async function _gradeSuggestion(s) {
+      try {
+        const fm   = node.fieldMappings || {};
+        const tgtF = s.fields.map(f => (fm[f] !== null && fm[f] !== undefined && fm[f] !== '') ? fm[f] : f);
+        const res  = await sftkAnalyzeMatchKey(objType, _editingProfile, s.fields, tgtF, s.normalize || {}, s.strategy);
+        s.score = (typeof sftkMatchKeyScore === 'function') ? sftkMatchKeyScore(res) : null;
+        gradeCache.set(s.sig, _matchAnalysisHtml(res, _editingProfile, true));
+      } catch (e) {
+        s.score = null;
+        gradeCache.set(s.sig, `<div class="ds-drift-compare-err">⚠ ${esc(e?.message || String(e))}</div>`);
+      }
+    }
+
+    // Score chips + ★ best key on the strongest GRADED candidate. ★ needs a
+    // real score (≥60) — a field can top the list and still be a bad key;
+    // "least bad" must not read as an endorsement.
+    function _refreshSuggestBadges() {
+      const scored = suggestions.filter(s => typeof s.score === 'number');
+      const best = scored.length ? scored.reduce((a, b) => (b.score > a.score ? b : a)) : null;
+      suggestions.forEach(s => {
+        const el = [...document.querySelectorAll('[data-match-score]')].find(x => x.dataset.matchScore === s.sig);
+        if (!el) return;
+        el.innerHTML = typeof s.score === 'number'
+          ? `${s === best && s.score >= 60 ? `<b style="color:var(--ok,#16a34a)" title="Highest data-graded score of the candidates tried so far">★ best key</b> ` : ''}<span class="ds-subtext" title="populated% × unique%, worst org counts — 100 = every record has this value and no two share it">${s.score}/100</span>`
+          : '';
+      });
+    }
+
+    // M3b+ (user 2026-08-10: "key suggestion should be a stronger feature")
+    // — opening 💡 grades the top 3 candidates against LIVE data in both orgs
+    // automatically (sequential, ≤2 queries each, cached), so the list opens
+    // as evidence, not just schema guesswork. The rest stay lazy per row.
+    let _autoGrading = false;
+    async function _autoGradeTop() {
+      if (_autoGrading) return;
+      _autoGrading = true;
+      try {
+        for (const s of suggestions.slice(0, 3)) {
+          if (!matchSuggestOpen) break;
+          if (gradeCache.has(s.sig)) continue;
+          const busy = [...document.querySelectorAll('[data-match-grade-out]')].find(x => x.dataset.matchGradeOut === s.sig);
+          if (busy) busy.innerHTML = `<div class="ds-subtext" style="font-size:11px">⏳ grading against live data…</div>`;
+          await _gradeSuggestion(s);
+          const outEl = [...document.querySelectorAll('[data-match-grade-out]')].find(x => x.dataset.matchGradeOut === s.sig);
+          if (outEl) outEl.innerHTML = gradeCache.get(s.sig) || '';
+          _refreshSuggestBadges();
+        }
+      } finally { _autoGrading = false; }
+    }
+
     wireSuggestRows();
+    if (matchSuggestOpen) _autoGradeTop();
 
     eid('dsMatchSuggestBtn')?.addEventListener('click', () => {
       matchSuggestOpen = !matchSuggestOpen;
@@ -1433,7 +1490,7 @@ async function openRecordPickerModal(pathStr) {
       if (boxEl) {
         boxEl.style.display = matchSuggestOpen ? 'block' : 'none';
         boxEl.innerHTML = matchSuggestOpen ? suggestListHtml() : '';
-        if (matchSuggestOpen) wireSuggestRows();
+        if (matchSuggestOpen) { wireSuggestRows(); _autoGradeTop(); }
       }
     });
 

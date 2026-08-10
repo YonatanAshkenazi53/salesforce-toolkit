@@ -203,13 +203,14 @@ function _ringRenderMatrix() {
     const native = _orgKey(p.targetOrg || '') === k
       && _orgKey(p.sourceOrg || '') === _orgKey(ring.sourceUrl || '')
       && p.lastScan?.runAt;
-    const s = native
+    const nat = native
       ? { runAt: p.lastScan.runAt,
           missing: (p.lastScan.missingInTarget || []).length,
           changed: (p.lastScan.changed || []).length,
           extra: (p.lastScan.onlyInTarget || []).length,
           status: p.lastScan.status }
-      : (p.ringScans || {})[`${_orgKey(ring.sourceUrl || '')}|${k}`];
+      : null;
+    const s = sftkRingCellPick(nat, (p.ringScans || {})[`${_orgKey(ring.sourceUrl || '')}|${k}`]);
     const live = !lsKnown || [...ls].some(u => _orgKey(u) === k);
     const badge = live ? '' : `<span class="ds-ring-offline" title="Org not open in a Chrome tab — open it to scan or push">⚫</span>`;
     if (!s) return `<div class="ds-ring-cell ds-ring-cell-unknown" data-ring-cell="${esc(p.id)}|${esc(tUrl)}">
@@ -280,6 +281,19 @@ function _ringScanKey(tgtUrl) {
   return `${_orgKey(_ring?.sourceUrl || '')}|${_orgKey(tgtUrl)}`;
 }
 
+// Freshest-wins between a profile's native lastScan summary and its ring-scan
+// summary for the same cell. Native used to have absolute priority, so on a
+// row whose own pair IS the ring flow the 🔎 button scanned successfully,
+// wrote ringScans… and the cell kept rendering the old lastScan forever
+// (user 2026-08-10: "still in sync but not in sync" → "i clicked" → cell
+// stuck at "21 · 55m ago" with two successful queries in the debug log).
+function sftkRingCellPick(nat, rs) {
+  if (!nat || !rs) return nat || rs || null;
+  const tn = new Date(nat.runAt || 0).getTime();
+  const tr = new Date(rs.runAt || 0).getTime();
+  return tn >= tr ? nat : rs;
+}
+
 async function _ringScanOne(profileId, tgtUrl, btn) {
   const p = _profiles.find(x => x.id === profileId);
   if (!p) return;
@@ -306,6 +320,13 @@ async function _ringScanOne(profileId, tgtUrl, btn) {
     if (typeof window.sftkLearnPairs === 'function' && res.learnedPairs?.length
         && _orgKey(p.sourceOrg || '') === _orgKey(_ring.sourceUrl || '')) {
       window.sftkLearnPairs(p.id, tgtUrl, res.learnedPairs);
+    }
+    // Ring flow == the profile's own pair → this IS a native scan of that
+    // profile. Deposit it as lastScan too, so Reconcile's "scanned Xm ago"
+    // header and the ring cell describe the same moment (staleness law).
+    if (_orgKey(p.sourceOrg || '') === _orgKey(_ring.sourceUrl || '')
+        && _orgKey(p.targetOrg || '') === _orgKey(tgtUrl)) {
+      p.lastScan = res;
     }
     await storageSaveProfiles();
   } catch (e) {
@@ -366,6 +387,11 @@ async function _ringOpenReconcile(profileId, tgtUrl) {
   if (typeof window.sftkLearnPairs === 'function' && res.learnedPairs?.length
       && _orgKey(p.sourceOrg || '') === _orgKey(_ring.sourceUrl || '')) {
     window.sftkLearnPairs(p.id, tgtUrl, res.learnedPairs);
+  }
+  // Native pair → deposit into the real profile too (same rule as _ringScanOne).
+  if (_orgKey(p.sourceOrg || '') === _orgKey(_ring.sourceUrl || '')
+      && _orgKey(p.targetOrg || '') === _orgKey(tgtUrl)) {
+    p.lastScan = res;
   }
   storageSaveProfiles().catch(() => {});
   _reconcileProfile = ephemeral;
