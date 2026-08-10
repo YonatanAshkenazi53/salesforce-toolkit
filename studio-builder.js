@@ -1374,6 +1374,12 @@ function renderTreeNode(node, path, isRoot, depth = 0) {
           ${!isRoot ? `<button class="ds-btn ds-btn-xs ds-btn-config ${cfOn ? 'ds-btn-config--active' : ''}" data-order-btn="${esc(pathKey)}" title="${esc(cfTitle)}">
             ${cfOn ? '⤴ Created before parent' : '⤵ Created after parent'}
           </button>` : ''}
+          <button class="ds-btn ds-btn-xs ds-btn-config ${node.includeFiles ? 'ds-btn-config--active' : ''}" data-files-btn="${esc(pathKey)}"
+            title="${node.includeFiles
+    ? 'Files ON: after these records land, their attached Files (latest version each) are copied and linked to the new records. Idempotent — a re-run skips files the target record already holds (same checksum). Files over ~35MB are skipped with a note; with a PII policy active, files are skipped entirely (bodies can’t be masked). Click to turn off.'
+    : 'Also copy each record’s attached Files (Salesforce Files / ContentVersion, latest version each) and link them to the new records in the target. Click to turn on.'}">
+            📎 Files${node.includeFiles ? ' ✓' : ''}
+          </button>
         </div>${warnHtml}${renderLookupSection(node, pathKey)}`;
         })() : ''}
         ${childrenHtml}
@@ -1528,6 +1534,17 @@ function wireTreeEvents() {
       if (!node) return;
       if (node.insertOrder === 'childFirst') delete node.insertOrder;
       else node.insertOrder = 'childFirst';
+      refreshTree();
+    });
+  });
+
+  // 📎 Files toggle (W9) — per-node flag the engine's files pass reads.
+  area.querySelectorAll('[data-files-btn]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const node = getNodeByPath(_editingProfile.tree, btn.dataset.filesBtn);
+      if (!node) return;
+      if (node.includeFiles) delete node.includeFiles;
+      else node.includeFiles = true;
       refreshTree();
     });
   });
