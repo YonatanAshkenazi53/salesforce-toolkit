@@ -28,7 +28,13 @@ function sftkFriendlyError(raw) {
     'dry-run': 'validating',
   };
   let s = String(raw ?? '').trim();
-  const kind = s.includes('⚠') ? 'note' : 'error';
+  // Notes are ⚠-marked by the composers — but DISCLOSURE lines (🔗 hand-pick
+  // counts, 📎 file stats, ℹ anything) are good news, and rendering them
+  // with a red ✗ made a fully successful run read as broken (user
+  // 2026-08-10: "I have these two errors, but when i go back to reconcile
+  // i see nothing" — because nothing was wrong).
+  const kind = (s.includes('⚠') || s.includes('🔗') || s.includes('📎') || s.includes('ℹ')
+    || /hand-pick/i.test(s)) ? 'note' : 'error';
   s = s.replace(/^[⚠❌✖✕x]\s*/i, '').trim();
 
   // "(×17)" duplicate-count suffix — preserve, strip for parsing.
