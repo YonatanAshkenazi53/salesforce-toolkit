@@ -840,7 +840,17 @@ async function renderReconcile() {
   // memory instead of keys.
   const _health = [];
   if (scan.dupKeys?.rows) {
-    _health.push(`⚠ <strong>${scan.dupKeys.rows} record(s) share a match key</strong> (e.g. “${keyLbl(scan.dupKeys.keys?.[0])}”) — identity matching tolerates duplicates, but name-based lookups, bridges and future key matching become AMBIGUOUS. Review these records and rename or delete the copies you don't mean to keep.`);
+    // Plain speech + THE RECORDS THEMSELVES, linked in both orgs (user
+    // 2026-08-10: "where are the records. and the issue is not
+    // understandable") — a warning without its suspects is unactionable.
+    const _rl = (org, id, i) => `<a href="${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view" target="_blank" rel="noopener" class="ds-lkpo-vallink" title="${esc(id)}">copy ${i + 1}</a>`;
+    const _exHtml = (scan.dupKeys.examples || []).map(ex => {
+      const parts = [];
+      if ((ex.src || []).length > 1) parts.push(`${ex.src.length}× in ${esc(orgLabel(p.sourceOrg))}: ${ex.src.map((id, i) => _rl(p.sourceOrg, id, i)).join(' · ')}`);
+      if ((ex.tgt || []).length > 1) parts.push(`${ex.tgt.length}× in ${esc(orgLabel(p.targetOrg))}: ${ex.tgt.map((id, i) => _rl(p.targetOrg, id, i)).join(' · ')}`);
+      return `<div style="margin-top:4px">“<strong>${keyLbl(ex.key)}</strong>” exists ${parts.join(' and ')}</div>`;
+    }).join('');
+    _health.push(`⚠ <strong>The same name is used by more than one record.</strong> Anything that finds records by this name — matching, lookups, other deployments — can land on EITHER copy, so results become a coin flip. Open the copies below, decide which one is real, and rename or delete the others (in both orgs):${_exHtml}`);
   }
   if (scan.memoryMatched) {
     _health.push(`ℹ ${scan.memoryMatched} pair(s) matched by remembered identity rather than by key — rename-proof, but it also means key-level oddities${scan.dupKeys?.rows ? ' (like the duplicates above)' : ''} don't block matching. If names matter to you, review them deliberately.`);
