@@ -1457,7 +1457,15 @@ async function openRecordPickerModal(pathStr) {
       if (gradeInFlight.has(s.sig)) return gradeInFlight.get(s.sig);
       const job = (async () => {
         try {
-          const fm   = node.fieldMappings || {};
+          // Resolve ⚙ per-target field-mapping exceptions for the graded
+          // (primary) target — the 🧪 flow already does this; grading with
+          // base names against an org whose key field is renamed would
+          // measure the wrong column (QA sweep 2026-08-10).
+          const tk = _orgKey(_editingProfile?.targetOrg || '');
+          const fm = (node.fieldMappingOverrides && node.fieldMappingOverrides[tk]
+                      && typeof sftkResolveMappings === 'function')
+            ? sftkResolveMappings(node.fieldMappings, node.fieldMappingOverrides, tk)
+            : (node.fieldMappings || {});
           const tgtF = s.fields.map(f => (fm[f] !== null && fm[f] !== undefined && fm[f] !== '') ? fm[f] : f);
           const res  = await sftkAnalyzeMatchKey(objType, _editingProfile, s.fields, tgtF, s.normalize || {}, s.strategy);
           s.score = (typeof sftkMatchKeyScore === 'function') ? sftkMatchKeyScore(res) : null;

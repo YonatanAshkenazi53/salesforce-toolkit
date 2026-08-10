@@ -390,6 +390,11 @@ async function _ringOpenReconcile(profileId, tgtUrl) {
   const ephemeral = {
     ...p,
     id: `ring_${Date.now()}_${p.id}`,
+    // Origin stamp (mirrors _parentOf): runReconcile's post-run writeback
+    // resolves the REAL profile through this — the clone's ring_* id isn't
+    // in _profiles, so without it the ring cell stayed red after its own
+    // ⚖ repair until a manual 🔎 (QA sweep 2026-08-10).
+    _ringOf: { profileId: p.id },
     name: `${p.name} · ${orgLabel(ringSrc)} → ${orgLabel(tgtUrl)}`,
     sourceOrg: ringSrc,   // ring flow, not the profile's birth pair
     targetOrg: tgtUrl,

@@ -87,7 +87,16 @@ async function sftkParentSyncLoad() {
 }
 function sftkParentSyncPut(srcOrg, tgtOrg, obj, v) {
   try {
-    _parentSyncVerdicts[sftkParentSyncKey(srcOrg, tgtOrg, obj)] = v;
+    const k = sftkParentSyncKey(srcOrg, tgtOrg, obj);
+    // Newest runAt wins EVERYWHERE — the two load paths above already
+    // enforce this, but the runtime write path didn't, so re-rendering an
+    // OLD reconcile (every accordion toggle re-renders) resurrected a stale
+    // verdict over a fresher one — a stale "in sync" could green-light a
+    // parents-first step whose parents were freshly missing (QA sweep
+    // 2026-08-10). Ties keep the existing entry: same scan, same verdict.
+    const prev = _parentSyncVerdicts[k];
+    if (prev && (v?.at || '') <= (prev.at || '')) return;
+    _parentSyncVerdicts[k] = v;
     chrome.storage.local.set({ sftk_parent_sync: _parentSyncVerdicts });
   } catch (_) { /* advisory map only */ }
 }
@@ -2361,21 +2370,39 @@ async function runReconcile(profile, objType, buckets) {
     _recChildSel = {};
     // Ring tiles must reflect the run too (user 2026-08-10: after inserting
     // all the children, the ring still said stale until a manual scan).
-    // Only when the ring's source IS this profile's source — a tile scanned
+    // Only when the ring's source IS the RUN's source — a tile scanned
     // from a different golden org must never be overwritten with this pair.
+    // QA sweep 2026-08-10: a ⚖ ring clone's ring_* id isn't in _profiles,
+    // so _fp is undefined there and this block no-op'd on the ring's own
+    // repair path — resolve the REAL profile via the clone's _ringOf stamp;
+    // the post-run rescan lives on _reconcileProfile in that case.
     try {
-      const fs = _fp?.lastScan;
+      const realP = (_fp && !_fp.ephemeral) ? _fp
+        : (profile._ringOf ? _profiles.find(x => x.id === profile._ringOf.profileId && !x.ephemeral) : null);
+      const fs = _fp ? _fp.lastScan : _reconcileProfile?.lastScan;
+      const runSrc = profile.sourceOrg, runTgt = profile.targetOrg;
       const ringSrcOk = typeof _ring !== 'undefined' && _ring?.sourceUrl &&
-        sftkOrgKey(_ring.sourceUrl) === sftkOrgKey(_fp?.sourceOrg);
-      if (_fp && !_fp.ephemeral && fs?.status === 'success' && ringSrcOk &&
-          typeof _ringScanKey === 'function' && _fp.ringScans) {
-        const rk = _ringScanKey(_fp.targetOrg);
-        if (_fp.ringScans[rk]) {
-          _fp.ringScans[rk] = { runAt: fs.runAt,
+        sftkOrgKey(_ring.sourceUrl) === sftkOrgKey(runSrc);
+      if (realP && fs?.status === 'success' && ringSrcOk &&
+          typeof _ringScanKey === 'function' && realP.ringScans) {
+        const rk = _ringScanKey(runTgt, runSrc);
+        if (realP.ringScans[rk]) {
+          realP.ringScans[rk] = { runAt: fs.runAt,
             missing: (fs.missingInTarget || []).length,
             changed: (fs.changed || []).length,
             extra:   (fs.onlyInTarget || []).length,
             status:  'success' };
+          // ⚖ clone whose ring flow IS the real profile's own pair → the
+          // post-run scan is a native scan; deposit it (stripped, restamped
+          // — same contract as _ringScanOne). The direct-_fp case already
+          // holds this scan as its lastScan.
+          if (realP !== _fp
+              && sftkOrgKey(runSrc) === sftkOrgKey(realP.sourceOrg || '')
+              && sftkOrgKey(runTgt) === sftkOrgKey(realP.targetOrg || '')) {
+            const dep = { ...fs, sourceOrg: realP.sourceOrg, targetOrg: realP.targetOrg };
+            delete dep.learnedPairs;
+            realP.lastScan = dep;
+          }
           await storageSaveProfiles();
         }
       }

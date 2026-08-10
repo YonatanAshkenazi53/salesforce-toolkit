@@ -199,3 +199,52 @@ describe('sftkCapFailedIds — retry covers everything', () => {
     expect(out.every(f => f !== null || typeof f === 'object')).toBe(true);
   });
 });
+
+// ── sftkParentSyncPut — newest wins on the WRITE path too ────────────
+// QA sweep 2026-08-10: both LOAD paths compared runAt, but the only runtime
+// write path overwrote blindly — re-rendering an old reconcile (every
+// accordion toggle re-renders) resurrected a stale "in sync" over a fresh
+// "12 missing", green-lighting a parents-first step onto missing parents.
+import { extractFunctions as _xf } from './extract.mjs';
+const psync = _xf('studio-reconcile.js', ['sftkParentSyncKey', 'sftkParentSyncPut'],
+  { 'sftk-org-identity.js': ['sftkOrgKey'] });
+
+describe('sftkParentSyncPut — freshest verdict survives', () => {
+  const SRC = 'https://six.develop.my.salesforce.com';
+  const TGT = 'https://seven.develop.my.salesforce.com';
+  const withWorld = (fn) => {
+    globalThis._parentSyncVerdicts = {};
+    globalThis.chrome = { storage: { local: { set: () => {} } } };
+    try { fn(globalThis._parentSyncVerdicts); }
+    finally { delete globalThis._parentSyncVerdicts; delete globalThis.chrome; }
+  };
+
+  it('an older verdict cannot overwrite a fresher one', () => {
+    withWorld(map => {
+      const k = psync.sftkParentSyncKey(SRC, TGT, 'Step_Order__c');
+      psync.sftkParentSyncPut(SRC, TGT, 'Step_Order__c', { missing: 12, changed: 0, extra: 0, at: '2026-08-10T21:00:00Z' });
+      psync.sftkParentSyncPut(SRC, TGT, 'Step_Order__c', { missing: 0,  changed: 0, extra: 0, at: '2026-08-10T20:00:00Z' });
+      expect(map[k].missing).toBe(12);
+      expect(map[k].at).toBe('2026-08-10T21:00:00Z');
+    });
+  });
+
+  it('a newer verdict replaces; ties keep the existing entry', () => {
+    withWorld(map => {
+      const k = psync.sftkParentSyncKey(SRC, TGT, 'Step_Order__c');
+      psync.sftkParentSyncPut(SRC, TGT, 'Step_Order__c', { missing: 12, at: '2026-08-10T20:00:00Z' });
+      psync.sftkParentSyncPut(SRC, TGT, 'Step_Order__c', { missing: 0,  at: '2026-08-10T21:00:00Z' });
+      expect(map[k].missing).toBe(0);
+      const same = { missing: 99, at: '2026-08-10T21:00:00Z' };
+      psync.sftkParentSyncPut(SRC, TGT, 'Step_Order__c', same);
+      expect(map[k].missing).toBe(0);   // tie → existing survives
+    });
+  });
+
+  it('first write for a pair always lands', () => {
+    withWorld(map => {
+      psync.sftkParentSyncPut(SRC, TGT, 'Proc_Def__c', { missing: 3, at: '2026-08-10T19:00:00Z' });
+      expect(map[psync.sftkParentSyncKey(SRC, TGT, 'Proc_Def__c')].missing).toBe(3);
+    });
+  });
+});

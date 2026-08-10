@@ -236,6 +236,9 @@ body.sftk-dark {
    same <body> element. */
 body.sftk-dark.sftk-oled {
   --c-bg:            #000000;
+  /* The two deliberate "terminal" surfaces (.adbg-log-view #1e1e2e,
+     .dbg-entries-wrap #0F1117) collapse below — without it, OLED's darkest
+     mode showed its LIGHTEST panel in the main reading surface. */
   --c-surface:       #0A0C10;
   --c-surface-sunk:  #101318;
   --c-surface-nav:   #04070D;
@@ -247,6 +250,9 @@ body.sftk-dark.sftk-oled {
   --shadow:    0 2px 8px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.06);
   --shadow-md: 0 4px 16px rgba(0,0,0,.75);
 }
+body.sftk-dark.sftk-oled .adbg-log-view { background: #05060A; }
+body.sftk-dark.sftk-oled .dbg-entries-wrap,
+body.sftk-dark.sftk-oled .dbg-entries-wrap::-webkit-scrollbar-track { background: #030408; }
 
 /* ── Reset ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1391,7 +1397,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   font-size: 14px;
   transition: background .15s, color .15s;
 }
-.btn-icon:hover { background: var(--brand-bg); color: var(--brand); border-color: #C5DBF0; }
+.btn-icon:hover { background: var(--brand-bg); color: var(--brand); border-color: var(--c-brand-border); }
 
 .btn-small {
   background: var(--bg);
@@ -1446,7 +1452,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   color: var(--brand-dark);
   display: flex;
   align-items: center;
-  border-bottom: 1px solid #C5DBF0;
+  border-bottom: 1px solid var(--c-brand-border);
 }
 
 /* ============================================================
@@ -1516,7 +1522,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   font-size: 10px;
   color: var(--brand);
   background: var(--brand-bg);
-  border: 1px solid #C5DBF0;
+  border: 1px solid var(--c-brand-border);
   padding: 1px 6px;
   border-radius: 10px;
   white-space: nowrap;
@@ -1572,10 +1578,13 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .status-obsolete  { color: var(--obsolete-color); }
 .status-invaliddraft { color: var(--invalid-color); }
 
-.badge-active   { background: #EEF7EF; color: var(--active-color); border: 1px solid #B3DEB8; }
-.badge-draft    { background: var(--brand-bg); color: var(--brand); border: 1px solid #C5DBF0; }
-.badge-obsolete { background: #F3F3F3; color: var(--subtext); border: 1px solid var(--border); }
-.badge-danger   { background: #FEF0EE; color: var(--danger); border: 1px solid #FFB3B3; }
+/* Status chips speak the token vocabulary — the literals were the light
+   palette's exact values, but hardcoded they survived into dark/OLED as
+   near-white slabs with illegible theme-colored text (QA sweep 2026-08-10). */
+.badge-active   { background: var(--c-good-bg); color: var(--active-color); border: 1px solid var(--c-good-border); }
+.badge-draft    { background: var(--brand-bg); color: var(--brand); border: 1px solid var(--c-brand-border); }
+.badge-obsolete { background: var(--c-surface-sunk); color: var(--subtext); border: 1px solid var(--border); }
+.badge-danger   { background: var(--c-critical-bg); color: var(--danger); border: 1px solid var(--c-critical-border); }
 .dep-type-badge { background: var(--brand-bg); color: var(--brand); font-size: 10px; }
 
 /* ============================================================
@@ -1657,7 +1666,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 
 .info-banner {
   background: var(--brand-bg);
-  border: 1px solid #C5DBF0;
+  border: 1px solid var(--c-brand-border);
   border-radius: var(--radius);
   margin: 8px 10px;
   padding: 8px 12px;
@@ -2036,8 +2045,8 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .modal-list li { margin-bottom: 3px; }
 
 .modal-warning-text {
-  background: #FEF0EE;
-  border: 1px solid #FFB3B3;
+  background: var(--c-critical-bg);
+  border: 1px solid var(--c-critical-border);
   border-radius: var(--radius);
   padding: 8px;
   color: var(--danger);
@@ -2163,7 +2172,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   font-size: 12px;
   color: var(--brand);
   background: var(--brand-bg);
-  border-bottom: 1px solid #C5DBF0;
+  border-bottom: 1px solid var(--c-brand-border);
   cursor: pointer;
   user-select: none;
 }
@@ -2242,7 +2251,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .mode-btn.active { background: var(--brand); color: #fff; }
 .mode-btn[data-mode="delete"].active  { background: var(--c-critical-bg); color: var(--danger); }
 .mode-btn[data-mode="backup"].active  { background: var(--brand-bg); color: var(--brand-dark); }
-.mode-btn[data-mode="restore"].active { background: #EEF7EF; color: var(--active-color); }
+.mode-btn[data-mode="restore"].active { background: var(--c-good-bg); color: var(--active-color); }
 
 /* ============================================================
    Restore Panel
@@ -2543,7 +2552,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .lp-section-hdr .lp-badge {
   background: var(--brand-bg);
   color: var(--brand);
-  border: 1px solid #C5DBF0;
+  border: 1px solid var(--c-brand-border);
 }
 
 /* ── Assignment rows ── */
@@ -4236,7 +4245,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .fp-panel-count  { color: var(--brand); }
 .fp-mini-btn {
   background: var(--brand-bg);
-  border: 1px solid #C5DBF0;
+  border: 1px solid var(--c-brand-border);
   color: var(--brand);
   padding: 1px 6px;
   border-radius: 10px;
@@ -4294,7 +4303,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .fp-item-sel .fp-item-api  { color: var(--brand); }
 .fp-ps-badge {
   background: var(--brand-bg);
-  border: 1px solid #C5DBF0;
+  border: 1px solid var(--c-brand-border);
   color: var(--brand);
   padding: 1px 5px;
   border-radius: 8px;
@@ -4744,7 +4753,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   font-size: 10px;
   background: var(--brand-bg);
   color: var(--brand);
-  border: 1px solid #C5DBF0;
+  border: 1px solid var(--c-brand-border);
   border-radius: 10px;
   padding: 1px 7px;
 }
@@ -5036,7 +5045,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   align-items: center;
   gap: 8px;
   background: var(--brand-bg);
-  border: 1.5px solid #C5DBF0;
+  border: 1.5px solid var(--c-brand-border);
   border-radius: 8px;
   padding: 7px 10px;
 }
@@ -5057,7 +5066,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   font-size: 10px;
   color: var(--brand);
   background: #fff;
-  border: 1px solid #C5DBF0;
+  border: 1px solid var(--c-brand-border);
   border-radius: 10px;
   padding: 2px 7px;
   white-space: nowrap;
@@ -5069,7 +5078,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .uc-chip-change,
 .uc-chip-clear {
   background: transparent;
-  border: 1px solid #C5DBF0;
+  border: 1px solid var(--c-brand-border);
   color: var(--brand);
   border-radius: 4px;
   padding: 2px 7px;
@@ -5191,7 +5200,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .uc-count {
   background: var(--brand-bg);
   color: var(--brand);
-  border: 1px solid #C5DBF0;
+  border: 1px solid var(--c-brand-border);
   border-radius: 9px;
   padding: 0 6px;
   font-size: 10px;
@@ -5237,7 +5246,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   font-size: 11px;
   color: var(--brand);
   background: var(--brand-bg);
-  border: 1px solid #C5DBF0;
+  border: 1px solid var(--c-brand-border);
   border-radius: 9px;
   padding: 1px 7px;
   flex-shrink: 0;
@@ -5417,7 +5426,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   color: var(--subtext);
   line-height: 1.6;
   background: var(--brand-bg);
-  border-bottom: 1px solid #C5DBF0;
+  border-bottom: 1px solid var(--c-brand-border);
   flex-shrink: 0;
 }
 
@@ -5505,7 +5514,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   font-size: 9.5px;
   background: var(--brand-bg);
   color: var(--brand);
-  border: 1px solid #C5DBF0;
+  border: 1px solid var(--c-brand-border);
   border-radius: 10px;
   padding: 1px 6px;
   white-space: nowrap;
@@ -5612,7 +5621,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   font-size: 9.5px;
   color: var(--brand);
   background: var(--brand-bg);
-  border: 1px solid #C5DBF0;
+  border: 1px solid var(--c-brand-border);
   border-radius: 9px;
   padding: 1px 6px;
   white-space: nowrap;
@@ -5628,7 +5637,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 
 .lm-license-preview {
   background: var(--brand-bg);
-  border: 1px solid #C5DBF0;
+  border: 1px solid var(--c-brand-border);
   border-radius: var(--radius);
   padding: 8px 12px;
   font-size: 12px;
@@ -5763,7 +5772,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   align-items: center;
   gap: 6px;
   background: var(--brand-bg);
-  border: 1.5px solid #C5DBF0;
+  border: 1.5px solid var(--c-brand-border);
   border-radius: 20px;
   padding: 4px 10px 4px 8px;
   font-size: 12px;
@@ -6159,7 +6168,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 }
 .cs-pill-critical { background: var(--c-critical-bg); color: var(--danger); border: 1px solid var(--c-critical-border); }
 .cs-pill-warning  { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--c-warn-border); }
-.cs-pill-info     { background: var(--brand-bg); color: var(--brand); border: 1px solid #C5DBF0; }
+.cs-pill-info     { background: var(--brand-bg); color: var(--brand); border: 1px solid var(--c-brand-border); }
 
 .cs-scan-meta {
   margin-left: auto;
@@ -6212,7 +6221,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   font-size: 11px;
   color: var(--brand-dark);
   background: var(--brand-bg);
-  border: 1px solid #C5DBF0;
+  border: 1px solid var(--c-brand-border);
   border-radius: var(--radius);
   padding: 5px 8px;
   margin-bottom: 7px;
