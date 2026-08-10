@@ -739,6 +739,15 @@ anchor-based plan edit accidentally deleted it)
   entirely and says why. Engine core flag-gated first (no UI = zero
   behavior change), then builder checkbox + run summary counts. v2:
   ContentNote, legacy Attachment, multi-version history, libraries.
+- DESIGN PRINCIPLE (user 2026-08-10: "should we always look for a root
+  object's parent as a guideline?" — YES): parents-first is the ordering
+  LAW of data deployment — a record can only point at what already exists.
+  Enforcement today is RECURSIVE-BY-NAVIGATION (every parents-first hop
+  opens a reconcile whose own advisor checks the next level up). Honest
+  boundaries: cycles → insert-then-relink two-pass; shared reference
+  objects (User/big common data) → compare, don't blind-deploy; optional
+  lookups → advisory, never a gate; engine-owned refs excluded. W11 is
+  this principle made TOTAL (graph → numbered plan up front).
 - [ ] W11 DEPLOYMENT PLANNER (deferred by the user 2026-08-10: "we can even
   create a plan for complex data deployments and seedings operations. but
   that might be for another day"). NORTH STAR it serves — the user's own
