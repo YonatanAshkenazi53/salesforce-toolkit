@@ -833,12 +833,27 @@ async function renderReconcile() {
   // SYNC CONTRACT strip (user 2026-08-10: "you are not showing the user
   // what he needs to do to be considered In Sync") — state the definition
   // and the exact remaining work, instead of implying it through columns.
+  // HEALTH NOTES (user 2026-08-10: "the user doesn't even know what he
+  // needs to fix in this state") — hazards the scan KNOWS but a green
+  // light would otherwise swallow: duplicate match keys inside an org
+  // (name-ambiguity survives identity matching), and verdicts resting on
+  // memory instead of keys.
+  const _health = [];
+  if (scan.dupKeys?.rows) {
+    _health.push(`⚠ <strong>${scan.dupKeys.rows} record(s) share a match key</strong> (e.g. “${keyLbl(scan.dupKeys.keys?.[0])}”) — identity matching tolerates duplicates, but name-based lookups, bridges and future key matching become AMBIGUOUS. Review these records and rename or delete the copies you don't mean to keep.`);
+  }
+  if (scan.memoryMatched) {
+    _health.push(`ℹ ${scan.memoryMatched} pair(s) matched by remembered identity rather than by key — rename-proof, but it also means key-level oddities${scan.dupKeys?.rows ? ' (like the duplicates above)' : ''} don't block matching. If names matter to you, review them deliberately.`);
+  }
+  const _healthHtml = _health.length
+    ? `<div class="ds-op-banner-desc" style="margin-top:6px">${_health.join('<br>')}</div>` : '';
   const _syncStrip = (!missing.length && !drift.length && !extras.length)
-    ? `<div class="ds-op-banner" style="border-left:3px solid #16a34a">
+    ? `<div class="ds-op-banner" style="border-left:3px solid ${_health.length ? '#f59e0b' : '#16a34a'}">
         <span class="ds-op-banner-icon">✅</span>
         <div class="ds-op-banner-body">
-          <div class="ds-op-banner-title">IN SYNC — nothing to do</div>
+          <div class="ds-op-banner-title">IN SYNC${_health.length ? ' — with warnings worth reading' : ' — nothing to do'}</div>
           <div class="ds-op-banner-desc">${inSync.length} record pair(s) verified matching. In sync means: nothing missing in the target, nothing changed between the orgs, nothing extra in the target. Runs that touch these orgs re-check this view automatically.</div>
+          ${_healthHtml}
         </div>
       </div>`
     : `<div class="ds-op-banner" style="border-left:3px solid #f59e0b">
@@ -850,6 +865,7 @@ async function renderReconcile() {
             drift.length ? `<strong>${drift.length}</strong> changed record(s) resolved — pick a winner per row (→ source wins · ← target wins)` : null,
             extras.length ? `<strong>${extras.length}</strong> target-only record(s) DECIDED — 🗑 delete the unwanted, or ← pull the legitimate ones INTO YOUR SOURCE (pull rewrites the source of truth — be sure that's what you mean)` : null,
           ].filter(Boolean).join(' · ')}. Select below, ▶ Run, and this strip re-checks itself.</div>
+          ${_healthHtml}
         </div>
       </div>`;
 
