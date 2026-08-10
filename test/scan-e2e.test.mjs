@@ -12,6 +12,7 @@ const scan = extractFunctions('studio-scan.js', [
   'sftkEngineCompareSet', 'sftkParentScopeCap', 'sftkParentScopeNote',
   'sftkOrphanLabel', 'sftkOrphanCapNote', 'sftkBucketCap', 'sftkBucketCapNote',
   'sftkScanBucketInfo', 'sftkBucketCapShipped', 'sftkBucketCountLabel',
+  'sftkMultiSelNorm',
 ], { 'sftk-matching.js': [
   'sftkMatchingFromNode', 'sftkMatchingFields', 'sftkMatchingTgtFields',
   'sftkMatchKey', 'sftkNormalizeValue', 'sftkNearMissFold', 'sftkNearMissReason',
@@ -134,5 +135,54 @@ describe('a record present in BOTH orgs can never vanish from every bucket', () 
     expect(lbl('changed'),         'Changed header count').toBe('1');
     expect(lbl('identical'),       'in-sync count').toBe('0');
     expect(lbl('onlyInTarget'),    'target-only count').toBe('0');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════
+// W7 pattern audit — two more silent-wrongness classes, same disease as
+// the lookup bug: RECORD TYPE drift was invisible (engine-owned for
+// writes, but the scan must SEE it — compared by DeveloperName now),
+// and multi-select picklists false-drifted on selection ORDER.
+// ══════════════════════════════════════════════════════════════════
+describe('RecordType drift is visible', () => {
+  it('same Name, different RecordType.DeveloperName → changed names RecordTypeId', async () => {
+    const RT_DESC = { name: 'Step_Order__c', fields: [
+      ...STEP_DESC.fields,
+      f('RecordTypeId', 'reference', { referenceTo: ['RecordType'], relationshipName: 'RecordType' }),
+    ] };
+    globalThis.describe = async () => RT_DESC;
+    const srcRows = [{ Id: 'S_A', Name: 'A', RecordTypeId: 'RT1', RecordType: { DeveloperName: 'Standard' },
+      Step_Order_Name__c: 'SN_1', Step_Order_Name__r: { Name: 'SN-001' },
+      Procedure_Definition__c: 'PD1', Procedure_Definition__r: { Name: 'PD-001' } }];
+    const tgtRows = [{ Id: 'T_A', Name: 'A', RecordTypeId: 'RT9x', RecordType: { DeveloperName: 'Special' },
+      Step_Order_Name__c: 'SN_1x', Step_Order_Name__r: { Name: 'SN-001' },
+      Procedure_Definition__c: 'PD1x', Procedure_Definition__r: { Name: 'PD-001' } }];
+    globalThis.sendBg = async msg => {
+      if (msg.type === 'SF_QUERY_ALL' || msg.type === 'SF_QUERY') {
+        if (/= null/.test(String(msg.query || ''))) return { records: [], totalSize: 0, done: true };
+        const rows = msg.orgUrl === SRC_ORG ? srcRows : tgtRows;
+        return { records: rows.map(r => ({ ...r })), totalSize: rows.length, done: true };
+      }
+      return { error: 'unexpected ' + msg.type };
+    };
+    const p = PROFILE();
+    const res = await scan.runDiffScan(p, p.tree, null);
+    expect(res.error, res.error).toBeFalsy();
+    const row = (res.changed || []).find(r => r.sourceId === 'S_A');
+    expect(row, `RT-only drift must be CHANGED — changed=${JSON.stringify(res.changed)} identical=${JSON.stringify(res.identical)}`).toBeTruthy();
+    expect((row.fields || []).join(',')).toContain('RecordTypeId');
+  });
+});
+
+describe('sftkMultiSelNorm — selection order is not drift', () => {
+  it('sorts parts so A;B equals B;A, trims, drops empties', () => {
+    expect(scan.sftkMultiSelNorm('B;A')).toBe('A;B');
+    expect(scan.sftkMultiSelNorm('A; B ;')).toBe('A;B');
+    expect(scan.sftkMultiSelNorm('A;B')).toBe(scan.sftkMultiSelNorm('B;A'));
+  });
+  it('leaves null/empty untouched and differing selections differing', () => {
+    expect(scan.sftkMultiSelNorm(null)).toBe(null);
+    expect(scan.sftkMultiSelNorm('')).toBe('');
+    expect(scan.sftkMultiSelNorm('A;C')).not.toBe(scan.sftkMultiSelNorm('A;B'));
   });
 });
