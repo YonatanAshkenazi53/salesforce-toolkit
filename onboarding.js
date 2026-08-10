@@ -38,7 +38,11 @@
   }
   .sftk-tour-card {
     position: fixed; width: 300px; box-sizing: border-box;
-    background: #fff; color: #1e293b;
+    /* Token vocabulary with light fallbacks — styles.css is always loaded
+       where the tour runs, so the card follows dark AND OLED instead of
+       floating as a pure-white slab over a black UI (QA sweep 2026-08-10). */
+    background: var(--card, #fff); color: var(--text, #1e293b);
+    border: 1px solid var(--border, transparent);
     border-radius: 10px; padding: 14px 16px; z-index: 2147483001;
     box-shadow: 0 12px 44px rgba(0,0,0,0.38);
     font-family: inherit; transition: top .2s ease, left .2s ease;
@@ -48,10 +52,10 @@
   .sftk-tour-card:focus { outline: none; }
   .sftk-tour-step {
     font-size: 10px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .06em; color: #64748b;
+    letter-spacing: .06em; color: var(--subtext, #64748b);
   }
-  .sftk-tour-title { font-size: 15px; font-weight: 700; margin: 3px 0 5px; color: #0f172a; }
-  .sftk-tour-text  { font-size: 12.5px; line-height: 1.5; color: #475569; }
+  .sftk-tour-title { font-size: 15px; font-weight: 700; margin: 3px 0 5px; color: var(--text, #0f172a); }
+  .sftk-tour-text  { font-size: 12.5px; line-height: 1.5; color: var(--subtext, #475569); }
   .sftk-tour-actions {
     display: flex; justify-content: space-between; align-items: center; margin-top: 13px;
   }
@@ -61,11 +65,12 @@
   .sftk-tour-nav { display: flex; gap: 6px; margin-left: auto; }
   .sftk-tour-card button {
     font-size: 12px; padding: 5px 13px; border-radius: 6px; cursor: pointer;
-    border: 1px solid #cbd5e1; background: #fff; color: #475569; font-weight: 600;
+    border: 1px solid var(--border, #cbd5e1); background: var(--card, #fff);
+    color: var(--subtext, #475569); font-weight: 600;
   }
   .sftk-tour-card button:hover { filter: brightness(0.97); }
   .sftk-tour-skip { border: none !important; color: #94a3b8 !important; font-weight: 500 !important; }
-  .sftk-tour-next { background: #2563eb !important; color: #fff !important; border-color: #2563eb !important; }
+  .sftk-tour-next { background: var(--brand, #2563eb) !important; color: #fff !important; border-color: var(--brand, #2563eb) !important; }
 
   .sftk-help {
     display: inline-flex; align-items: center; justify-content: center;

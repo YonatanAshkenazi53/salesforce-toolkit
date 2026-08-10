@@ -111,6 +111,17 @@ function initDarkTheme() {
     }
   };
   chrome.storage?.local?.get([KEY, OLED]).then(d => apply(d?.[KEY], d?.[OLED])).catch(() => {});
+  // Live-sync with the Studio's toggles: popup.html can live for hours as a
+  // popped-out tab, and cycling from a stale snapshot would silently clobber
+  // a newer preference the Studio wrote (QA sweep 2026-08-10).
+  try {
+    chrome.storage?.onChanged?.addListener((ch, area) => {
+      if (area !== 'local' || (!(KEY in ch) && !(OLED in ch))) return;
+      const dark = KEY in ch ? ch[KEY].newValue : document.body.classList.contains('sftk-dark');
+      const oled = OLED in ch ? ch[OLED].newValue : document.body.classList.contains('sftk-oled');
+      apply(dark, oled);
+    });
+  } catch (_) {}
   btn?.addEventListener('click', () => {
     const dark = document.body.classList.contains('sftk-dark');
     const oled = document.body.classList.contains('sftk-oled');
