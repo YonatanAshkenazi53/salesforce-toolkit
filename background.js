@@ -1434,6 +1434,21 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       if (failedSourceIds.length) {
         summary[objType].failedSourceIds = failedSourceIds.slice(0, 2000);
       }
+      // W9 — 📎 FILES PASS (flag-gated: no UI sets node.includeFiles yet).
+      // Runs after this node's records landed so FirstPublishLocationId can
+      // point at the mapped target records. Failures are per-file, never
+      // fatal to the run.
+      if (node.includeFiles === true && transferredSourceIds.length) {
+        try {
+          const nodeIdMap = {};
+          for (const sId of transferredSourceIds) { if (idMap[sId]) nodeIdMap[sId] = idMap[sId]; }
+          const fileStats = await sftkTransferFilesForNode(objType, srcOrgUrl, srcSid,
+            tgtOrgUrl, tgtSid, nodeIdMap, (piiPolicyKeys || []).length > 0, errors, diagnostics);
+          summary[objType].files = fileStats;
+        } catch (e) {
+          errors.push(`${objType}: 📎 files pass failed: ${e?.message || e}`);
+        }
+      }
       if (skippedForTarget.size) {
         // Non-fatal: surfaced in the result so the UI can show what was skipped,
         // without marking the whole transfer as failed/partial.
@@ -1615,6 +1630,185 @@ async function executeProfileSequence(profiles, srcOrgUrl, srcSid, tgtOrgUrl, tg
     ...(_runCancelled ? { cancelled: true } : {}),
     status, steps, idMapSize: Object.keys(sharedIdMap).length
   };
+}
+
+// ═══ W9 — FILES (ContentVersion) ════════════════════════════════════════
+// Files break the sObject model three ways: ContentDocument is auto-created
+// by its first ContentVersion (never inserted directly), the binary body is
+// a per-file REST download (SOQL returns a URL, not the blob), and
+// ContentDocumentLink is polymorphic. So files travel in their own PASS,
+// after a node's records land, gated on node.includeFiles (no UI sets it
+// yet — flag-gated, zero behavior change until then).
+
+// sftkFilePlan — the PURE planner. Decides with no IO what the pass does:
+//   srcFiles:    [{ verId, docId, title, pathOnClient, checksum, size,
+//                   linkedTo: [srcRecordId, …] }] (latest version per doc)
+//   tgtByRecord: { tgtRecordId: [checksum, …] } — files already on each
+//                   mapped target record (idempotence by MD5 Checksum)
+//   idMap:       { srcRecordId: tgtRecordId } for THIS run
+//   opts:        { maxBytes } — REST base64 ceiling (default ~35MB)
+// Returns { creates: [{ verId, title, pathOnClient, firstPublishTo,
+//                       extraLinkTo: […] }], skippedExisting,
+//           skippedSize: [{title,size}], unmappedLinks }
+function sftkFilePlan(srcFiles, tgtByRecord, idMap, opts) {
+  const maxBytes = Number(opts?.maxBytes) > 0 ? Number(opts.maxBytes) : 35 * 1024 * 1024;
+  const out = { creates: [], skippedExisting: 0, skippedSize: [], unmappedLinks: 0 };
+  for (const fdoc of (srcFiles || [])) {
+    if (!fdoc || !fdoc.verId) continue;
+    // Map links into the target; links to records outside this run are
+    // counted, never silently dropped (same rule as picked-children).
+    const tgtIds = [];
+    for (const sid of (fdoc.linkedTo || [])) {
+      const t = idMap ? idMap[sid] : null;
+      if (t) tgtIds.push(t); else out.unmappedLinks++;
+    }
+    if (!tgtIds.length) continue;
+    // Idempotence PER RECORD: only create for records that lack this exact
+    // file (checksum match = same bytes) — re-runs never duplicate.
+    const need = tgtIds.filter(t => !((tgtByRecord || {})[t] || []).includes(fdoc.checksum));
+    if (!need.length) { out.skippedExisting++; continue; }
+    if (Number(fdoc.size) > maxBytes) {
+      out.skippedSize.push({ title: fdoc.title, size: Number(fdoc.size) || 0 });
+      continue;
+    }
+    out.creates.push({ verId: fdoc.verId, title: fdoc.title,
+      pathOnClient: fdoc.pathOnClient || fdoc.title,
+      firstPublishTo: need[0], extraLinkTo: need.slice(1) });
+  }
+  return out;
+}
+
+// Chunked base64 — String.fromCharCode over a whole buffer blows the arg
+// stack on big files; 32KB slices keep it flat. PURE.
+function sftkB64FromBuffer(buf) {
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
+// Binary download with Bearer auth — sfFetchWithProxy reads text and would
+// corrupt binary bodies, so files use a minimal direct fetch.
+async function sftkFetchBinary(orgUrl, sid, url) {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${sid}` } });
+  if (!res.ok) throw new Error(`HTTP ${res.status} downloading file body`);
+  return res.arrayBuffer();
+}
+
+// The files pass for one node. PII fail-closed: bodies can't be masked, so
+// an active policy skips the whole pass and says why. Every failure is
+// per-file (counted + first few named), never fatal to the run.
+async function sftkTransferFilesForNode(objType, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid, idMap, piiActive, errors, diagnostics) {
+  const stats = { copied: 0, linksCreated: 0, skippedExisting: 0, skippedSize: 0, failed: 0 };
+  if (piiActive) {
+    diagnostics.push(`${objType}: 📎 files NOT transferred — a PII policy is active and file bodies cannot be masked (fail-closed).`);
+    return stats;
+  }
+  const srcIds = Object.keys(idMap || {});
+  if (!srcIds.length) return stats;
+
+  // 1. Source links for the transferred records.
+  const links = [];
+  for (let i = 0; i < srcIds.length; i += 200) {
+    const lit = srcIds.slice(i, i + 200).map(id => `'${id}'`).join(',');
+    const q = await sfQueryAll(srcOrgUrl, srcSid,
+      `SELECT ContentDocumentId, LinkedEntityId FROM ContentDocumentLink WHERE LinkedEntityId IN (${lit})`, false);
+    for (const r of (q.records || [])) links.push({ docId: r.ContentDocumentId, srcRecordId: r.LinkedEntityId });
+  }
+  if (!links.length) return stats;
+
+  // 2. Latest version per source document.
+  const docIds = [...new Set(links.map(l => l.docId))];
+  const byDoc = {};
+  for (let i = 0; i < docIds.length; i += 100) {
+    const lit = docIds.slice(i, i + 100).map(id => `'${id}'`).join(',');
+    const q = await sfQueryAll(srcOrgUrl, srcSid,
+      `SELECT Id, ContentDocumentId, Title, PathOnClient, Checksum, ContentSize, VersionData FROM ContentVersion WHERE ContentDocumentId IN (${lit}) AND IsLatest = true`, false);
+    for (const r of (q.records || [])) byDoc[r.ContentDocumentId] = r;
+  }
+  const srcFiles = docIds.map(d => byDoc[d]).filter(Boolean).map(v => ({
+    verId: v.Id, docId: v.ContentDocumentId, title: v.Title,
+    pathOnClient: v.PathOnClient, checksum: v.Checksum, size: v.ContentSize,
+    dataUrl: v.VersionData,
+    linkedTo: links.filter(l => l.docId === v.ContentDocumentId).map(l => l.srcRecordId),
+  }));
+
+  // 3. Checksums already on the mapped target records (idempotence).
+  const tgtIds = [...new Set(Object.values(idMap))];
+  const tgtByRecord = {};
+  for (let i = 0; i < tgtIds.length; i += 200) {
+    const lit = tgtIds.slice(i, i + 200).map(id => `'${id}'`).join(',');
+    let q = null;
+    try {
+      q = await sfQueryAll(tgtOrgUrl, tgtSid,
+        `SELECT ContentDocumentId, LinkedEntityId FROM ContentDocumentLink WHERE LinkedEntityId IN (${lit})`, false);
+    } catch (_) { q = null; }
+    const tDocIds = [...new Set((q?.records || []).map(r => r.ContentDocumentId))];
+    const sums = {};
+    for (let j = 0; j < tDocIds.length; j += 100) {
+      const dl = tDocIds.slice(j, j + 100).map(id => `'${id}'`).join(',');
+      try {
+        const vq = await sfQueryAll(tgtOrgUrl, tgtSid,
+          `SELECT ContentDocumentId, Checksum FROM ContentVersion WHERE ContentDocumentId IN (${dl}) AND IsLatest = true`, false);
+        for (const r of (vq.records || [])) sums[r.ContentDocumentId] = r.Checksum;
+      } catch (_) { /* unknown checksums → treated as absent → copy (safe) */ }
+    }
+    for (const r of (q?.records || [])) {
+      (tgtByRecord[r.LinkedEntityId] = tgtByRecord[r.LinkedEntityId] || []).push(sums[r.ContentDocumentId]);
+    }
+  }
+
+  // 4. Plan, disclose, execute.
+  const plan = sftkFilePlan(srcFiles, tgtByRecord, idMap, {});
+  stats.skippedExisting = plan.skippedExisting;
+  stats.skippedSize = plan.skippedSize.length;
+  if (plan.unmappedLinks) {
+    diagnostics.push(`${objType}: 📎 ${plan.unmappedLinks} file link(s) point at records outside this run — those links were not carried (deploy those records to bring their files).`);
+  }
+  if (plan.skippedSize.length) {
+    diagnostics.push(`${objType}: 📎 ${plan.skippedSize.length} file(s) skipped — larger than the ~35MB REST ceiling: ${plan.skippedSize.slice(0, 5).map(s => s.title).join(', ')}${plan.skippedSize.length > 5 ? '…' : ''}`);
+  }
+  for (const c of plan.creates) {
+    try {
+      const vRow = srcFiles.find(s => s.verId === c.verId);
+      const buf = await sftkFetchBinary(srcOrgUrl, srcSid, `${srcOrgUrl}${vRow.dataUrl}`);
+      const post = await sfFetchWithProxy(tgtOrgUrl, tgtSid,
+        `${tgtOrgUrl}/services/data/${API_VERSION}/sobjects/ContentVersion`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ Title: c.title, PathOnClient: c.pathOnClient,
+            VersionData: sftkB64FromBuffer(buf), FirstPublishLocationId: c.firstPublishTo }),
+        });
+      if (!post.ok) throw new Error(sfErrorMsg(post.status, post.body, 'ContentVersion'));
+      stats.copied++; stats.linksCreated++;
+      // Extra in-scope links need the NEW document id, then explicit CDLs.
+      if (c.extraLinkTo.length) {
+        const newVerId = JSON.parse(post.body).id;
+        const dq = await sfQueryAll(tgtOrgUrl, tgtSid,
+          `SELECT ContentDocumentId FROM ContentVersion WHERE Id = '${newVerId}'`, false);
+        const newDocId = dq.records?.[0]?.ContentDocumentId;
+        for (const extra of c.extraLinkTo) {
+          const lr = await sfFetchWithProxy(tgtOrgUrl, tgtSid,
+            `${tgtOrgUrl}/services/data/${API_VERSION}/sobjects/ContentDocumentLink`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ContentDocumentId: newDocId, LinkedEntityId: extra, ShareType: 'V' }),
+            });
+          if (lr.ok) stats.linksCreated++;
+          else { stats.failed++; if (stats.failed <= 5) errors.push(`${objType}: 📎 link failed for "${c.title}": ${sfErrorMsg(lr.status, lr.body, 'ContentDocumentLink')}`); }
+        }
+      }
+    } catch (e) {
+      stats.failed++;
+      if (stats.failed <= 5) errors.push(`${objType}: 📎 file "${c.title}" failed: ${e?.message || e}`);
+    }
+  }
+  if (stats.copied || stats.skippedExisting || stats.failed) {
+    diagnostics.push(`${objType}: 📎 files — ${stats.copied} copied, ${stats.linksCreated} link(s) created, ${stats.skippedExisting} already present (checksum match), ${stats.failed} failed.`);
+  }
+  return stats;
 }
 
 function buildCopyFields(describe) {
