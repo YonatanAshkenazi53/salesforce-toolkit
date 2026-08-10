@@ -852,8 +852,12 @@ async function renderReconcile() {
     }).join('');
     _health.push(`⚠ <strong>The same name is used by more than one record.</strong> Anything that finds records by this name — matching, lookups, other deployments — can land on EITHER copy, so results become a coin flip. Open the copies below, decide which one is real, and rename or delete the others (in both orgs):${_exHtml}`);
   }
-  if (scan.memoryMatched) {
-    _health.push(`ℹ ${scan.memoryMatched} pair(s) matched by remembered identity rather than by key — rename-proof, but it also means key-level oddities${scan.dupKeys?.rows ? ' (like the duplicates above)' : ''} don't block matching. If names matter to you, review them deliberately.`);
+  // The memory note earns its place ONLY next to actual key oddities it is
+  // excusing — "review them deliberately" with nothing shown to review is a
+  // call to action without objects (user 2026-08-10: "yea but i shows
+  // nothing"). A clean state speaks for itself.
+  if (scan.memoryMatched && scan.dupKeys?.rows) {
+    _health.push(`ℹ ${scan.memoryMatched} pair(s) matched by remembered identity rather than by key — rename-proof, and it's why the duplicates above didn't block matching. Fix the duplicates; matching itself is fine.`);
   }
   const _healthHtml = _health.length
     ? `<div class="ds-op-banner-desc" style="margin-top:6px">${_health.join('<br>')}</div>` : '';
