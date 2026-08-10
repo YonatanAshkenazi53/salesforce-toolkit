@@ -47,11 +47,25 @@
     return '';
   }
 
+  // DML op pill — same treatment as the inline panel (apex-debugger.js
+  // _logDmlOp); this page advertises "the same controls", so a log must not
+  // lose its pills the moment the user pops it out.
+  function _logDmlOp(line) {
+    const i = line.indexOf('|');
+    if (i === -1) return null;
+    const rest = line.slice(i + 1);
+    const j = rest.indexOf('|');
+    if (j === -1 || rest.slice(0, j) !== 'DML_BEGIN') return null;
+    const m = rest.slice(j).match(/\|Op:([A-Za-z]+)/);
+    return m ? m[1].toUpperCase() : null;
+  }
+
   function _oneLogLine(ln, i) {
     const cls = _logLineClass(ln);
+    const op  = _logDmlOp(ln);
     return `<div class="adbg-log-line${cls ? ' ' + cls : ''}" data-ln="${i}">` +
            `<span class="adbg-ln-num">${i + 1}</span>` +
-           `<span class="adbg-ln-txt">${_esc(ln) || '&nbsp;'}</span></div>`;
+           `<span class="adbg-ln-txt">${op ? `<span class="adbg-op adbg-op-${op.toLowerCase()}" title="DML operation">${op}</span>` : ''}${_esc(ln) || '&nbsp;'}</span></div>`;
   }
 
   function _logLinesHtml(lines, from, to) {
@@ -204,7 +218,11 @@
     for (const [ln, ms] of byLine) {
       const lineEl = view.querySelector(`.adbg-log-line[data-ln="${ln}"] .adbg-ln-txt`);
       if (!lineEl) continue;
-      const text = lineEl.textContent;
+      // Offsets were computed against the RAW line — DOM text carries the
+      // DML pill prefix, which would shift offsets and lose the pill on
+      // rebuild (same fix as the inline panel, QA sweep 2026-08-10).
+      const pill = lineEl.querySelector('.adbg-op');
+      const text = (_state && _state.lines[ln] != null) ? _state.lines[ln] : lineEl.textContent;
       const frag = document.createDocumentFragment();
       let cursor = 0;
       const sorted = [...ms].sort((a, b) => a.start - b.start);
@@ -218,6 +236,7 @@
       }
       if (cursor < text.length) frag.appendChild(document.createTextNode(text.slice(cursor)));
       lineEl.innerHTML = '';
+      if (pill) lineEl.appendChild(pill);
       lineEl.appendChild(frag);
     }
   }
@@ -384,10 +403,15 @@
 
   // ── Boot ────────────────────────────────────────────────
   async function boot() {
-    // Honor the Toolkit's persisted dark theme (shared styles.css palette).
+    // Honor the Toolkit's persisted theme (shared styles.css palette) —
+    // including OLED: one toolkit-wide preference, and this page must not be
+    // the lone gray-dark surface in an otherwise pure-black toolkit.
     try {
-      const d = await chrome.storage.local.get('sftk_dark');
-      if (d?.sftk_dark) document.body.classList.add('sftk-dark');
+      const d = await chrome.storage.local.get(['sftk_dark', 'sftk_oled']);
+      if (d?.sftk_dark) {
+        document.body.classList.add('sftk-dark');
+        if (d?.sftk_oled) document.body.classList.add('sftk-oled');
+      }
     } catch (_) {}
     const params = new URLSearchParams(location.search);
     const key = params.get('key');

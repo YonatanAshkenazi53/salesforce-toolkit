@@ -816,6 +816,17 @@ async function openRecordPickerModal(pathStr) {
   let matchSuggestOpen = false;
   const gradeCache     = new Map();   // suggestion sig → rendered mini-grade
   const suggestions    = _matchSuggestionsFromDescribe(desc);
+  // QA sweep 2026-08-10 — grading concurrency lives at MODAL scope, not
+  // render scope: re-renders create new closures, and per-render guards let
+  // two auto-grade loops issue duplicate live-org queries.
+  const gradeInFlight  = new Map();   // sig → in-flight promise (dedupe)
+  const gradeFailed    = new Set();   // sigs whose grade errored — retryable
+  let _autoGradeActive = false;
+  const gradeReset = () => {
+    gradeCache.clear(); gradeInFlight.clear(); gradeFailed.clear();
+    // Scores without their evidence panels would still paint badges.
+    suggestions.forEach(s => { delete s.score; });
+  };
 
   const NORM_OPTS = [
     ['caseFold',    'Ignore case'],
@@ -1093,7 +1104,15 @@ async function openRecordPickerModal(pathStr) {
           <span class="ds-subtext">${esc(s.why)}${Object.keys(s.normalize || {}).some(k => s.normalize[k]) ? ' · normalized' : ''}</span>
           <div data-match-grade-out="${esc(s.sig)}" style="flex-basis:100%">${gradeCache.get(s.sig) || ''}</div>
         </div>`).join('')}
-    </div>`;
+    </div>${(() => {
+      // Honesty: grades run against the profile's PRIMARY target only —
+      // with several targets, a key can be strong in one org and weak in
+      // another, and 🧪 is the tool that grades them all.
+      const tgts = (typeof profileTargets === 'function') ? (profileTargets(_editingProfile) || []) : [];
+      return tgts.length > 1
+        ? `<div class="ds-subtext" style="font-size:11px;margin-top:4px">Grades cover ${esc(orgLabel(_editingProfile?.targetOrg || ''))} only — this deployment has ${tgts.length} targets; use 🧪 Test this key to grade EVERY target's data.</div>`
+        : '';
+    })()}`;
   }
 
   function renderModal(filter = '') {
@@ -1257,7 +1276,7 @@ async function openRecordPickerModal(pathStr) {
     async function matchCfgChanged(requery) {
       persistMatching();
       matchTestHtml = '';
-      gradeCache.clear();
+      gradeReset();
       const box = eid('dsModalBox');
       const filterVal = eid('dsRecSearch')?.value || '';
       const first = node.matching.fields[0];
@@ -1274,7 +1293,7 @@ async function openRecordPickerModal(pathStr) {
       displayField = e.target.value;
       matchFields  = [displayField];
       persistMatching();   // keeps node.matchField (legacy) + node.matching in sync
-      matchTestHtml = ''; gradeCache.clear();
+      matchTestHtml = ''; gradeReset();
       // If the user hasn't explicitly picked a target match field, follow the source choice
       if (!node.matchFieldTgt || node.matchFieldTgt === '') {
         tgtMatchField = deriveTgtMatchDefault(displayField);
@@ -1292,7 +1311,7 @@ async function openRecordPickerModal(pathStr) {
       const v = (e.target.value || '').trim();
       tgtMatchField        = v || displayField;       // empty → mirror source
       node.matchFieldTgt   = v || null;               // null = "use source-side name on target too"
-      matchTestHtml = ''; gradeCache.clear();
+      matchTestHtml = ''; gradeReset();
     });
 
     // ── M3a — matching strategy / composite fields / normalization ───────
@@ -1352,7 +1371,7 @@ async function openRecordPickerModal(pathStr) {
       matchNormalize[cb.dataset.matchNorm] = cb.checked;
       persistMatching();
       // Analyzer output is stale the moment the key definition changes.
-      matchTestHtml = ''; gradeCache.clear();
+      matchTestHtml = ''; gradeReset();
       const out = eid('dsMatchTestResults');
       if (out) out.innerHTML = '';
       document.querySelectorAll('[data-match-grade-out]').forEach(el => { el.innerHTML = ''; });
@@ -1430,18 +1449,31 @@ async function openRecordPickerModal(pathStr) {
     }
 
     // One suggestion → live evidence. Sets s.score for the ★ ranking; grade
-    // failures land in the cache as a note, never throw.
+    // failures land in the cache as a note, never throw. In-flight grades
+    // are deduped at modal scope: the manual Grade button racing the
+    // auto-loop (or two auto-loops from successive re-renders) awaits the
+    // SAME promise instead of re-querying the orgs.
     async function _gradeSuggestion(s) {
-      try {
-        const fm   = node.fieldMappings || {};
-        const tgtF = s.fields.map(f => (fm[f] !== null && fm[f] !== undefined && fm[f] !== '') ? fm[f] : f);
-        const res  = await sftkAnalyzeMatchKey(objType, _editingProfile, s.fields, tgtF, s.normalize || {}, s.strategy);
-        s.score = (typeof sftkMatchKeyScore === 'function') ? sftkMatchKeyScore(res) : null;
-        gradeCache.set(s.sig, _matchAnalysisHtml(res, _editingProfile, true));
-      } catch (e) {
-        s.score = null;
-        gradeCache.set(s.sig, `<div class="ds-drift-compare-err">⚠ ${esc(e?.message || String(e))}</div>`);
-      }
+      if (gradeInFlight.has(s.sig)) return gradeInFlight.get(s.sig);
+      const job = (async () => {
+        try {
+          const fm   = node.fieldMappings || {};
+          const tgtF = s.fields.map(f => (fm[f] !== null && fm[f] !== undefined && fm[f] !== '') ? fm[f] : f);
+          const res  = await sftkAnalyzeMatchKey(objType, _editingProfile, s.fields, tgtF, s.normalize || {}, s.strategy);
+          s.score = (typeof sftkMatchKeyScore === 'function') ? sftkMatchKeyScore(res) : null;
+          // An org that wasn't reachable is a RETRYABLE state, not a verdict
+          // — without this, a closed tab poisoned the cache forever and
+          // auto-grade never tried again.
+          if (res.srcErr || res.tgtErr) gradeFailed.add(s.sig); else gradeFailed.delete(s.sig);
+          gradeCache.set(s.sig, _matchAnalysisHtml(res, _editingProfile, true));
+        } catch (e) {
+          s.score = null;
+          gradeFailed.add(s.sig);
+          gradeCache.set(s.sig, `<div class="ds-drift-compare-err">⚠ ${esc(e?.message || String(e))}</div>`);
+        }
+      })();
+      gradeInFlight.set(s.sig, job);
+      try { await job; } finally { gradeInFlight.delete(s.sig); }
     }
 
     // Score chips + ★ best key on the strongest GRADED candidate. ★ needs a
@@ -1463,14 +1495,16 @@ async function openRecordPickerModal(pathStr) {
     // — opening 💡 grades the top 3 candidates against LIVE data in both orgs
     // automatically (sequential, ≤2 queries each, cached), so the list opens
     // as evidence, not just schema guesswork. The rest stay lazy per row.
-    let _autoGrading = false;
     async function _autoGradeTop() {
-      if (_autoGrading) return;
-      _autoGrading = true;
+      if (_autoGradeActive) return;   // modal-scope guard — survives re-renders
+      _autoGradeActive = true;
       try {
         for (const s of suggestions.slice(0, 3)) {
           if (!matchSuggestOpen) break;
-          if (gradeCache.has(s.sig)) continue;
+          // Modal closed (element gone from the document) → stop issuing
+          // live-org queries for a UI nobody is looking at.
+          if (!document.getElementById('dsMatchSuggestBox')) break;
+          if (gradeCache.has(s.sig) && !gradeFailed.has(s.sig)) continue;
           const busy = [...document.querySelectorAll('[data-match-grade-out]')].find(x => x.dataset.matchGradeOut === s.sig);
           if (busy) busy.innerHTML = `<div class="ds-subtext" style="font-size:11px">⏳ grading against live data…</div>`;
           await _gradeSuggestion(s);
@@ -1478,7 +1512,7 @@ async function openRecordPickerModal(pathStr) {
           if (outEl) outEl.innerHTML = gradeCache.get(s.sig) || '';
           _refreshSuggestBadges();
         }
-      } finally { _autoGrading = false; }
+      } finally { _autoGradeActive = false; }
     }
 
     wireSuggestRows();

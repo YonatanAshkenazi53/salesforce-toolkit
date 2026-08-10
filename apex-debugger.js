@@ -1499,8 +1499,15 @@ const ApexDebugger = (() => {
   // jumps out of a wall of same-coloured data lines instead of hiding in
   // pipe-delimited text.
   function _logDmlOp(line) {
-    if (!line.includes('|DML_BEGIN|')) return null;
-    const m = line.match(/\|Op:([A-Za-z]+)/);
+    // Parse the actual EVENT token (like _logLineClass does) — substring
+    // containment would pill a USER_DEBUG line whose message merely QUOTES
+    // '|DML_BEGIN|' text (QA sweep 2026-08-10).
+    const i = line.indexOf('|');
+    if (i === -1) return null;
+    const rest = line.slice(i + 1);
+    const j = rest.indexOf('|');
+    if (j === -1 || rest.slice(0, j) !== 'DML_BEGIN') return null;
+    const m = rest.slice(j).match(/\|Op:([A-Za-z]+)/);
     return m ? m[1].toUpperCase() : null;
   }
 
@@ -2400,7 +2407,14 @@ const ApexDebugger = (() => {
     for (const [ln, ms] of byLine) {
       const lineEl = view.querySelector(`.adbg-log-line[data-ln="${ln}"] .adbg-ln-txt`);
       if (!lineEl) continue; // line not rendered yet
-      const text = lineEl.textContent;
+      // Match offsets were computed against the RAW line (search loop above)
+      // — the DOM text now carries the DML op pill prefix, so slicing
+      // textContent would shift every offset on DML lines AND destroy the
+      // pill on rebuild (QA sweep 2026-08-10). Slice the raw line; keep the
+      // pill element and re-attach it after the rebuild.
+      const pill = lineEl.querySelector('.adbg-op');
+      const text = (_logViewState && _logViewState.lines[ln] != null)
+        ? _logViewState.lines[ln] : lineEl.textContent;
       // Build a fragment with <span> highlights at each match span
       const frag = document.createDocumentFragment();
       let cursor = 0;
@@ -2415,6 +2429,7 @@ const ApexDebugger = (() => {
       }
       if (cursor < text.length) frag.appendChild(document.createTextNode(text.slice(cursor)));
       lineEl.innerHTML = '';
+      if (pill) lineEl.appendChild(pill);
       lineEl.appendChild(frag);
     }
   }

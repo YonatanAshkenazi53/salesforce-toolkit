@@ -202,7 +202,12 @@ function _ringRenderMatrix() {
     // different source org describes a different flow entirely.
     const native = _orgKey(p.targetOrg || '') === k
       && _orgKey(p.sourceOrg || '') === _orgKey(ring.sourceUrl || '')
-      && p.lastScan?.runAt;
+      && p.lastScan?.runAt
+      // A lastScan stamped with DIFFERENT orgs than the profile's current
+      // pair describes an older configuration, not this cell — the stamps
+      // exist precisely so consumers can detect a re-pointed profile.
+      && (!p.lastScan.sourceOrg || _orgKey(p.lastScan.sourceOrg) === _orgKey(p.sourceOrg || ''))
+      && (!p.lastScan.targetOrg || _orgKey(p.lastScan.targetOrg) === _orgKey(p.targetOrg || ''));
     const nat = native
       ? { runAt: p.lastScan.runAt,
           missing: (p.lastScan.missingInTarget || []).length,
@@ -277,8 +282,13 @@ function _ringRenderMatrix() {
 // Ring scans reuse runDiffScan on a shallow clone with the target swapped —
 // full matching-config fidelity (M3a: the clone carries the same tree, so
 // scan.matching resolves identically). Only summary counts are persisted.
-function _ringScanKey(tgtUrl) {
-  return `${_orgKey(_ring?.sourceUrl || '')}|${_orgKey(tgtUrl)}`;
+function _ringScanKey(tgtUrl, srcUrl) {
+  // srcUrl lets in-flight scans key by the source they actually SCANNED —
+  // the ring radios stay operable during a long scan-all, and re-reading
+  // _ring.sourceUrl after the await would file old-source results under the
+  // new source's key (QA sweep 2026-08-10).
+  const src = srcUrl != null ? srcUrl : (_ring?.sourceUrl || '');
+  return `${_orgKey(src)}|${_orgKey(tgtUrl)}`;
 }
 
 // Freshest-wins between a profile's native lastScan summary and its ring-scan
@@ -298,16 +308,19 @@ async function _ringScanOne(profileId, tgtUrl, btn) {
   const p = _profiles.find(x => x.id === profileId);
   if (!p) return;
   if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+  // Capture the source ONCE — everything after the await must describe the
+  // flow that was actually scanned, not whatever the radios say by then.
+  const ringSrc = _ring.sourceUrl;
   try {
     // THE RING'S PREMISE: data flows FROM the source of truth. The clone
     // overrides the deployment's own sourceOrg — a deployment created months
     // ago against a different pair still scans golden-org → target here
     // (user bug: a profile born on org A errored "open org A in a tab" even
     // though the ring source was org B and the header said "FROM B").
-    const res = await runDiffScan({ ...p, sourceOrg: _ring.sourceUrl, targetOrg: tgtUrl, ephemeral: true });
+    const res = await runDiffScan({ ...p, sourceOrg: ringSrc, targetOrg: tgtUrl, ephemeral: true });
     if (res?.error) throw new Error(res.error);
     p.ringScans = p.ringScans || {};
-    p.ringScans[_ringScanKey(tgtUrl)] = {
+    p.ringScans[_ringScanKey(tgtUrl, ringSrc)] = {
       runAt: res.runAt || new Date().toISOString(),
       missing: (res.missingInTarget || []).length,
       changed: (res.changed || []).length,
@@ -318,15 +331,25 @@ async function _ringScanOne(profileId, tgtUrl, btn) {
     // pairs into the REAL profile's match memory. ONLY when the ring flow's
     // source equals the profile's own source (memory pairs are src-specific).
     if (typeof window.sftkLearnPairs === 'function' && res.learnedPairs?.length
-        && _orgKey(p.sourceOrg || '') === _orgKey(_ring.sourceUrl || '')) {
+        && _orgKey(p.sourceOrg || '') === _orgKey(ringSrc || '')) {
       window.sftkLearnPairs(p.id, tgtUrl, res.learnedPairs);
     }
     // Ring flow == the profile's own pair → this IS a native scan of that
     // profile. Deposit it as lastScan too, so Reconcile's "scanned Xm ago"
     // header and the ring cell describe the same moment (staleness law).
-    if (_orgKey(p.sourceOrg || '') === _orgKey(_ring.sourceUrl || '')
+    // QA sweep 2026-08-10, two traps in the naive `p.lastScan = res`:
+    //  · learnedPairs live in matchMemory, NEVER in lastScan (mirrors the
+    //    native strip in refreshProfileDiff — ~200KB of duplicate ids
+    //    against the chrome.storage quota otherwise);
+    //  · the stamps must be the PROFILE's own URL strings — freshness
+    //    consumers compare res.sourceOrg with ===, and the ring may hold a
+    //    different string form of the same org, which would make every
+    //    consumer reject this fresh scan as "stale (orgs changed)".
+    if (_orgKey(p.sourceOrg || '') === _orgKey(ringSrc || '')
         && _orgKey(p.targetOrg || '') === _orgKey(tgtUrl)) {
-      p.lastScan = res;
+      const dep = { ...res, sourceOrg: p.sourceOrg, targetOrg: p.targetOrg };
+      delete dep.learnedPairs;
+      p.lastScan = dep;
     }
     await storageSaveProfiles();
   } catch (e) {
@@ -346,7 +369,13 @@ async function _ringScanAll(profileId, btn) {
   let done = 0;
   for (const t of targets) {
     if (lsKnown && ![...ls].some(u => _orgKey(u) === _orgKey(t))) continue;   // known-closed org
-    if (btn) btn.textContent = `⏳ ${++done}/${targets.length}`;
+    // _ringScanOne re-renders the matrix, destroying the button we disabled
+    // — re-find it each pass so progress stays visible and the freshly
+    // rendered button stays disabled (no concurrent scan-all from a
+    // double click; QA sweep 2026-08-10).
+    btn = document.querySelector(`[data-ring-scanall="${profileId}"]`) || btn;
+    if (btn) { btn.disabled = true; btn.textContent = `⏳ ${++done}/${targets.length}`; }
+    else ++done;
     await _ringScanOne(profileId, t, null);
   }
   _ringRenderMatrix();
@@ -357,11 +386,12 @@ async function _ringScanAll(profileId, btn) {
 async function _ringOpenReconcile(profileId, tgtUrl) {
   const p = _profiles.find(x => x.id === profileId);
   if (!p) return;
+  const ringSrc = _ring.sourceUrl;   // capture once — see _ringScanKey note
   const ephemeral = {
     ...p,
     id: `ring_${Date.now()}_${p.id}`,
-    name: `${p.name} · ${orgLabel(_ring.sourceUrl)} → ${orgLabel(tgtUrl)}`,
-    sourceOrg: _ring.sourceUrl,   // ring flow, not the profile's birth pair
+    name: `${p.name} · ${orgLabel(ringSrc)} → ${orgLabel(tgtUrl)}`,
+    sourceOrg: ringSrc,   // ring flow, not the profile's birth pair
     targetOrg: tgtUrl,
     lastScan: null,
     ringScans: undefined,
@@ -377,7 +407,7 @@ async function _ringOpenReconcile(profileId, tgtUrl) {
   ephemeral.lastScan = res;
   // Refresh the summary cell from this fresh scan too.
   p.ringScans = p.ringScans || {};
-  p.ringScans[_ringScanKey(tgtUrl)] = {
+  p.ringScans[_ringScanKey(tgtUrl, ringSrc)] = {
     runAt: res.runAt || new Date().toISOString(),
     missing: (res.missingInTarget || []).length,
     changed: (res.changed || []).length,
@@ -385,13 +415,17 @@ async function _ringOpenReconcile(profileId, tgtUrl) {
     status: res.status || 'success',
   };
   if (typeof window.sftkLearnPairs === 'function' && res.learnedPairs?.length
-      && _orgKey(p.sourceOrg || '') === _orgKey(_ring.sourceUrl || '')) {
+      && _orgKey(p.sourceOrg || '') === _orgKey(ringSrc || '')) {
     window.sftkLearnPairs(p.id, tgtUrl, res.learnedPairs);
   }
-  // Native pair → deposit into the real profile too (same rule as _ringScanOne).
-  if (_orgKey(p.sourceOrg || '') === _orgKey(_ring.sourceUrl || '')
+  // Native pair → deposit into the real profile too (same rule — and same
+  // strip + restamp — as _ringScanOne; the ephemeral clone keeps the full
+  // res because its OWN orgs are the ring URLs, so its === checks pass).
+  if (_orgKey(p.sourceOrg || '') === _orgKey(ringSrc || '')
       && _orgKey(p.targetOrg || '') === _orgKey(tgtUrl)) {
-    p.lastScan = res;
+    const dep = { ...res, sourceOrg: p.sourceOrg, targetOrg: p.targetOrg };
+    delete dep.learnedPairs;
+    p.lastScan = dep;
   }
   storageSaveProfiles().catch(() => {});
   _reconcileProfile = ephemeral;
