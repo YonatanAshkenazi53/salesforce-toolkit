@@ -1488,9 +1488,20 @@ const ApexDebugger = (() => {
   // from the rendered log — with an unpaired quote, markup along with it.
   function _oneLogLine(ln, i) {
     const cls = _logLineClass(ln);
+    const op  = _logDmlOp(ln);
     return `<div class="adbg-log-line${cls ? ' ' + cls : ''}" data-ln="${i}">` +
            `<span class="adbg-ln-num">${i + 1}</span>` +
-           `<span class="adbg-ln-txt">${sftkEscLogLine(ln) || '&nbsp;'}</span></div>`;
+           `<span class="adbg-ln-txt">${op ? `<span class="adbg-op adbg-op-${op.toLowerCase()}" title="DML operation">${op}</span>` : ''}${sftkEscLogLine(ln) || '&nbsp;'}</span></div>`;
+  }
+
+  // "Mark the operation" (user 2026-08-10): a DML_BEGIN line carries
+  // Op:Delete|Type:X|Rows:N — surface the op as a coloured pill so a DELETE
+  // jumps out of a wall of same-coloured data lines instead of hiding in
+  // pipe-delimited text.
+  function _logDmlOp(line) {
+    if (!line.includes('|DML_BEGIN|')) return null;
+    const m = line.match(/\|Op:([A-Za-z]+)/);
+    return m ? m[1].toUpperCase() : null;
   }
 
   // Build the HTML for a slice of lines [from, to).
@@ -1816,9 +1827,9 @@ const ApexDebugger = (() => {
               <button class="btn btn-primary btn-sm"   id="adbgCopyReportBtn" data-adbg-icon="copy"
                 title="Copy the analysis report to the clipboard">Copy Report</button>
               <button class="btn btn-secondary btn-sm" id="adbgDlReportBtn" data-adbg-icon="doc"
-                title="Download the analysis report as a Markdown file">Download</button>
+                title="Download the ANALYSIS as a Markdown file — the parsed report you see here (SOQL, DML, limits, errors), readable anywhere">Report .md</button>
               <button class="btn btn-secondary btn-sm" id="adbgDlBtn" data-adbg-icon="download"
-                title="Download the raw, unparsed log file">Raw log</button>
+                title="Download the ORIGINAL untouched Salesforce log (.log) — exactly what the org returned, for sharing or other log tools">Raw .log</button>
               <span class="adbg-bar-sep" aria-hidden="true"></span>
               <button class="btn btn-secondary btn-sm adbg-btn-icon" id="adbgCollapseAllBtn"
                 data-adbg-icon="expand" aria-label="Collapse all sections"

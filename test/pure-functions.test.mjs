@@ -413,6 +413,42 @@ describe('match memory (M3c) — sftk-matching.js pure helpers', () => {
   });
 });
 
+// ── ★ best key score (user 2026-08-10: "key suggestion should be a stronger
+// feature") — the ranking behind auto-graded 💡 Suggestions. Worst-org-wins:
+// a key that's perfect in the source but half-blank in the target is a bad
+// key, full stop.
+describe('sftkMatchKeyScore — worst-org populated×unique', () => {
+  const { sftkMatchKeyScore } = extractFunctions('sftk-matching.js', ['sftkMatchKeyScore', 'sftkKeyStats']);
+  const counts = pairs => ({
+    keyCounts: new Map(pairs),
+    total: pairs.reduce((n, [, c]) => n + c, 0),
+    blank: 0,
+  });
+
+  it('perfect both sides → 100', () => {
+    const c = counts([['a', 1], ['b', 1]]);
+    expect(sftkMatchKeyScore({ src: c, tgt: counts([['a', 1], ['b', 1]]) })).toBe(100);
+  });
+
+  it('one weak org drags the score down to ITS product', () => {
+    const good = counts([['a', 1], ['b', 1], ['c', 1], ['d', 1]]);
+    // tgt: 4 records, 2 share a key → populated 100%, unique 50% → 50
+    const dupTgt = counts([['a', 2], ['b', 1], ['c', 1]]);
+    expect(sftkMatchKeyScore({ src: good, tgt: dupTgt })).toBe(50);
+  });
+
+  it('blanks hurt via populated%', () => {
+    // 2 of 4 blank → populated 50%; both populated keys unique → unique 100% → 50
+    const halfBlank = { keyCounts: new Map([['a', 1], ['b', 1]]), total: 4, blank: 2 };
+    expect(sftkMatchKeyScore({ src: halfBlank, tgt: null })).toBe(50);
+  });
+
+  it('nothing graded → null, not zero', () => {
+    expect(sftkMatchKeyScore({ src: null, tgt: null })).toBe(null);
+    expect(sftkMatchKeyScore(null)).toBe(null);
+  });
+});
+
 describe('scan accuracy (🎯 — user request 2026-07-17)', () => {
   const sftkScanAccuracy = extractFunction('sftk-matching.js', 'sftkScanAccuracy');
 

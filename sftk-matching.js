@@ -226,6 +226,23 @@ function sftkCrossOrgPreview(srcCounts, tgtCounts) {
   return { sourceTotal: src.total, matchedUnique, ambiguous, unmatched };
 }
 
+// Composite 0-100 quality score for a graded key — the ranking behind the
+// ★ best key badge in 💡 Suggestions. A key must be good in EVERY reachable
+// org, so the score is the MINIMUM per-org score, where each org scores
+// populatedPct × uniquePct / 100 — both must be high (100% populated but
+// 50% unique is a coin flip, not a key). Returns null when neither org
+// produced counts (nothing graded ≠ scored zero).
+function sftkMatchKeyScore(res) {
+  const sides = [res && res.src, res && res.tgt].filter(Boolean);
+  if (!sides.length) return null;
+  let min = 100;
+  for (const counts of sides) {
+    const st = sftkKeyStats(counts);
+    min = Math.min(min, Math.round(st.populatedPct * st.uniquePct / 100));
+  }
+  return min;
+}
+
 // ── Match memory (M3c) — pure so extract tests can cover them ─────────────
 
 // Merge learned [srcId, tgtId] pairs into an existing memory map (plain
@@ -327,6 +344,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkKeyCountsFromRecords = sftkKeyCountsFromRecords;
   globalThis.sftkKeyStats            = sftkKeyStats;
   globalThis.sftkCrossOrgPreview     = sftkCrossOrgPreview;
+  globalThis.sftkMatchKeyScore       = sftkMatchKeyScore;
   globalThis.sftkMemoryMerge         = sftkMemoryMerge;
   globalThis.sftkPairSimilarity      = sftkPairSimilarity;
   globalThis.sftkScanAccuracy        = sftkScanAccuracy;

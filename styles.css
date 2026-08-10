@@ -227,6 +227,27 @@ body.sftk-dark {
   --shadow-md:    0 4px 16px rgba(0,0,0,.55);
 }
 
+/* §A-OLED — pure-black dark for OLED screens (user 2026-08-10: "no OLED mode
+   for toolkit?" — the Studio's ds-oled, popup edition; same sftk_oled key,
+   toggled by cycling the ☾ button: light → dark → OLED). Applied only on top
+   of sftk-dark, so ONLY the surface ladder collapses toward true black —
+   text, brand and status tokens keep the dark palette's contrast, and every
+   legacy alias re-resolves automatically because both classes sit on the
+   same <body> element. */
+body.sftk-dark.sftk-oled {
+  --c-bg:            #000000;
+  --c-surface:       #0A0C10;
+  --c-surface-sunk:  #101318;
+  --c-surface-nav:   #04070D;
+  --c-border:        #23272F;
+  --c-border-subtle: #191C22;
+  --sh-xs: 0 0 0 1px rgba(255,255,255,.10);
+  --sh-sm: 0 1px 3px rgba(0,0,0,.70), 0 0 0 1px rgba(255,255,255,.07);
+  --sh-md: 0 4px 12px rgba(0,0,0,.75);
+  --shadow:    0 2px 8px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.06);
+  --shadow-md: 0 4px 16px rgba(0,0,0,.75);
+}
+
 /* ── Reset ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -3445,6 +3466,23 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .adbg-ll-debug { background: rgba(241,216,107,0.08); }
 .adbg-ll-debug .adbg-ln-txt { color: #f1d86b; }
 .adbg-ll-dim   .adbg-ln-txt { color: #6c6c80; }
+/* DML operation pill on DML_BEGIN lines — the op (esp. DELETE) must jump out
+   of a wall of same-coloured data lines (user 2026-08-10: "mark the op"). */
+.adbg-op {
+  display: inline-block; margin-right: 6px; padding: 0 5px;
+  border-radius: 3px; font-size: 9.5px; font-weight: 700;
+  letter-spacing: 0.4px; vertical-align: 1px;
+  background: rgba(110,231,168,0.16); color: #6ee7a8;
+  border: 1px solid rgba(110,231,168,0.35);
+}
+.adbg-op-delete, .adbg-op-undelete {
+  background: rgba(255,107,107,0.14); color: #ff8787;
+  border-color: rgba(255,107,107,0.4);
+}
+.adbg-op-update, .adbg-op-upsert, .adbg-op-merge {
+  background: rgba(255,184,108,0.14); color: #ffb86c;
+  border-color: rgba(255,184,108,0.4);
+}
 /* Chunk-load bar + empty-filter notice */
 .adbg-log-more {
   margin-top: 6px; padding: 6px 8px;
