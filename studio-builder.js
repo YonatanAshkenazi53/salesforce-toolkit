@@ -1107,6 +1107,30 @@ async function bldCompareParent(refObj, btn) {
   }
 }
 
+// ⧉ JUNCTION DETECTION (user 2026-08-10: "we might need to catch junction
+// early?" — yes, at describe time). A junction's three traps: BOTH parents
+// must exist before insert (two required edges, not one), child-first is
+// physically impossible (master-detail), and — the silent one — junction
+// rows usually carry autonumber/meaningless Names, so Name-matching is
+// wrong and every re-run duplicates; the true identity is the PARENT PAIR.
+// PURE — unit-tested.
+function sftkJunctionInfo(descFields) {
+  const fields = Array.isArray(descFields) ? descFields : [];
+  const md = fields.filter(f => f && f.type === 'reference' && f.relationshipOrder != null);
+  const reqRefs = fields.filter(f => f && f.type === 'reference' && f.createable &&
+    f.nillable === false && f.relationshipOrder == null &&
+    !['OwnerId', 'RecordTypeId', 'CreatedById', 'LastModifiedById'].includes(f.name));
+  const parents = [...md, ...reqRefs];
+  const isJunction = md.length >= 2 || (md.length + reqRefs.length) >= 2 && md.length >= 1;
+  const nameFld = fields.find(f => f && f.nameField);
+  return {
+    isJunction,
+    parents: parents.map(f => f.name),
+    masterDetails: md.length,
+    nameIsAuto: !!(nameFld && nameFld.autoNumber === true),
+  };
+}
+
 // Fill every lookup row's sync chip from the session verdict map (user
 // 2026-08-10: "since the parents are synced we need to show it"). Verdicts
 // come from any reconcile scan of that object on this org pair — including
@@ -1228,10 +1252,15 @@ function renderLookupSection(node, pathKey) {
     </div>`;
   });
 
+  // ⧉ Junction badge — caught at describe time, where it's cheapest to warn.
+  const jinfo = sftkJunctionInfo(node._meta?.availableFields);
+  const junctionChip = jinfo.isJunction
+    ? `<span class="ds-lkp-hdr-role ds-lkp-junction" title="This object joins ${jinfo.parents.slice(0, 2).join(' and ')} (many-to-many). Three things follow: BOTH parent objects must exist in the target before it deploys; child-first ordering is impossible (master-detail links are required at insert); and junction rows ${jinfo.nameIsAuto ? 'have an AUTONUMBER name, so' : 'often have meaningless names, so'} matching by Name across orgs is wrong — their true identity is the PARENT PAIR. Use Composite matching on the two parent lookups in 🎯 Pick Records → Matching, or re-runs will duplicate every row.">⧉ JUNCTION — both parents first · match by the pair, not the Name</span>`
+    : '';
   return `<div class="ds-lkp-section">
     <div class="ds-lkp-hdr">
       <span class="ds-lkp-hdr-icon">🔗</span>
-      <span class="ds-lkp-hdr-label">Lookup Resolution <span class="ds-lkp-hdr-role" title="Direction: these lookups point UP at parent records. The records they point at must already exist in the target org when this object deploys — deploy the parent objects first (or hand-pick targets in Reconcile 🔗). Child objects are the opposite direction: they point AT this object and are added below with + Add child relationship — the engine orders those automatically.">⬆ these are this object's PARENTS</span></span>
+      <span class="ds-lkp-hdr-label">Lookup Resolution <span class="ds-lkp-hdr-role" title="Direction: these lookups point UP at parent records. The records they point at must already exist in the target org when this object deploys — deploy the parent objects first (or hand-pick targets in Reconcile 🔗). Child objects are the opposite direction: they point AT this object and are added below with + Add child relationship — the engine orders those automatically.">⬆ these are this object's PARENTS</span>${junctionChip}</span>
       <span class="ds-lkp-hdr-hint">Each row is a record this object points at — it must exist in the target BEFORE this object deploys, or the lookup lands empty</span>
     </div>
     <div class="ds-lkp-rows">${rows.join('')}</div>

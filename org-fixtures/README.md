@@ -31,3 +31,25 @@ through the browser; only the Studio's own buttons need a human).
 Files testing (W9): attach any small file to a SOURCE record, flip 📎 on
 the node, run — then RUN AGAIN and expect "already present (checksum
 match)". The second run is the real test.
+
+## Schema expansion plan — the richer graph (needs Setup, BOTH orgs)
+
+More diversified data + denser connections for correct testing (user
+2026-08-10). Create in SOURCE and TARGET(s) via Setup → Object Manager;
+then the seed scripts below gain sections.
+
+1. `Resource__c` — plain object, Name Text(80). 10 records 'RES-##'.
+2. `Step_Assignment__c` — ⧉ JUNCTION: Master-Detail → Step_Order__c,
+   Master-Detail → Resource__c, autonumber Name 'SA-{0000}'. ~120 records
+   pairing steps to resources. TESTS: junction badge at describe time,
+   both-parents-first ordering, pair-identity matching (Name is useless),
+   re-run duplicate protection (W10 tie-in).
+3. `Step_Order__c.External_Id__c` — Text(32), ✓ External ID, ✓ Unique.
+   Backfill 'EXT-####'. TESTS: real upsert, ⚡ suggestions.
+4. `Step_Order__c.Previous_Step__c` — self-lookup. Chain within each PD
+   group. TESTS: self-reference resolution/relink.
+5. `Procedure_Definition__c.First_Step__c` — lookup → Step_Order__c =
+   CYCLE with SO.Procedure_Definition__c. TESTS: insert-then-relink.
+6. Variant data on existing objects: unicode/emoji names, trailing-space
+   values, 255-char strings, near-identical decimals — planted by a
+   future 06-variant-data.apex once the fields exist to hold them.

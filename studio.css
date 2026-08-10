@@ -6048,3 +6048,5 @@ body.ds-pro {
 .ds-ordstep-next .ds-ordstep-num { background: var(--brand); color: #fff; }
 .ds-ordstep-arrow { font-size: 11px; font-weight: 800; color: var(--brand); white-space: nowrap; }
 .ds-lkpo-suggest { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; margin-bottom: 6px; }
+.ds-lkp-junction { color: #7c3aed; background: rgba(139, 92, 246, 0.1); border-color: rgba(139, 92, 246, 0.35); margin-left: 6px; }
+.ds-dark .ds-lkp-junction { color: #c4b5fd; }
