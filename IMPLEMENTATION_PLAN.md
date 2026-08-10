@@ -748,6 +748,15 @@ anchor-based plan edit accidentally deleted it)
   objects (User/big common data) → compare, don't blind-deploy; optional
   lookups → advisory, never a gate; engine-owned refs excluded. W11 is
   this principle made TOTAL (graph → numbered plan up front).
+- [ ] W13 SCAN TIMELINE — "the app shows the net difference, never the
+  story" (user 2026-08-10: records deleted behind the scenes are invisible
+  — after a re-mirror even the diff vanishes). Each scan keeps a compact
+  summary snapshot (counts + key sets hash) and diffs against the PREVIOUS
+  scan of the same pair: "since yesterday: 30 records disappeared from the
+  target, 21 new records appeared in the source" — the narrative between
+  scans, not just the state. Also W7 note: IN SYNC strip now renders
+  scan.dupKeys + memoryMatched health notes (shipped); consider a dupKeys
+  chip on the header too.
 - [~] W12 MASS EDIT (user 2026-08-10: mass-changing record values "is one
   by one manually and can be hard if you have thousands"). Flow: org →
   object → WHERE (existing query machinery) → field + new value / set-null
