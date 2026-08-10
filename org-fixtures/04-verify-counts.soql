@@ -1,0 +1,5 @@
+-- Org-side truth, independent of any UI. Run each in the Query Editor.
+SELECT COUNT(Id) FROM Step_Order__c WHERE Name LIKE 'SO-%'
+SELECT COUNT(Id) FROM Procedure_Definition__c WHERE Name LIKE 'PD-%'
+SELECT COUNT(Id) FROM Step_Order_Name__c WHERE Name LIKE 'SN-%'
+SELECT COUNT(Id) FROM Step_Order__c WHERE Name LIKE 'SO-%' AND (Procedure_Definition__c = null OR Step_Order_Name__c = null)
