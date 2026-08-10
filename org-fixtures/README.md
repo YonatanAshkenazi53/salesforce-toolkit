@@ -53,3 +53,10 @@ then the seed scripts below gain sections.
 6. Variant data on existing objects: unicode/emoji names, trailing-space
    values, 255-char strings, near-identical decimals — planted by a
    future 06-variant-data.apex once the fields exist to hold them.
+
+## Lab notes
+
+- Leading/trailing-space near-miss traps CANNOT be planted via API saves —
+  Salesforce trims the whitespace on write (verified 2026-08-10: ' SO-0301'
+  saved as 'SO-0301'). CASE-FLIP renames survive and are the reliable
+  near-miss trap ('so-0302').
