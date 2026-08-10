@@ -759,6 +759,15 @@ anchor-based plan edit accidentally deleted it)
   / "Raw .log" rename + DML op pills, popup OLED cycle (light→dark→OLED,
   shared sftk_oled key). Follow-up candidate: apex-log-viewer.html
   standalone page doesn't apply sftk-oled yet.
+- [x] QA SWEEP ROUND 1 (2026-08-10, commit 92fe7fa): 14-agent adversarial
+  workflow over the a2b2917 batch — 5 confirmed bugs (learnedPairs/URL-stamp
+  poison in ring deposits, render-scoped auto-grade races + permanent
+  failure cache, search-highlight pill destruction) + 7 candidates fixed.
+- [ ] QA SWEEP DEFERRED (unverified/low, from wf_e6e4bd82): sftkParentSyncPut
+  newest-wins; ring cell refresh after its own ⚖; Tree Diff scans deposit
+  nothing to ring/verdicts; OLED hardcoded surfaces (#1e1e2e log panel,
+  ~15 × #C5DBF0 border literals, light-pastel backgrounds); popup theme
+  storage.onChanged live-sync. Re-verify what matters when limits reset.
 - [ ] BUG (W7 queue, user-found 2026-08-10): popup Lightning Pages →
   "Who sees what?" → Show users fails HTTP 404 (EMPTY response) on a
   well-formed /services/data/v62.0/query User query against ashkenazy7.
