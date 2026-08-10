@@ -790,9 +790,13 @@ anchor-based plan edit accidentally deleted it)
   match-key warning on every scan; #8 encryptedstring fields never copied
   (masked-value corruption). PII byte-parity test caught a git-stash CRLF
   corruption of background.js — normalize LF after any stash round-trip.
-  REMAINING QUEUE: (a) pattern audit continues — RecordType drift compare
-  by DeveloperName, owner-drift disclosure, multiselect picklist order-
-  insensitive compare, rich-text org-local image disclosure; (b) engine
+  BLOCK 2 (746c76b + 751a7ac): RecordType drift compared by DeveloperName
+  (scan-visible; engine-owned for writes); multiselect picklists compare
+  order-insensitively (sftkMultiSelNorm); owner drift compared by
+  Owner.Name, gated on ownerMapping 'match' (expected ≠ drift). Pattern
+  audit CLOSED except: rich-text org-local image disclosure (low
+  frequency, queued). Suite at 1700.
+  REMAINING QUEUE: (b) engine
   scenario-matrix expansion (upsert idempotence incl. children, owner
   queues, bulk path, cancel, failure accounting); (c) director harness
   walkthroughs of every surface (incl. 🔗 panel + ordered checklist);
