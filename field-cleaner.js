@@ -3045,6 +3045,24 @@ const FieldCleaner = (() => {
     const btn = eid('fcDelBtn') || eid('fcDelFreeBtn');
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Deleting…'; }
 
+    // W8 — DELETION LOG: snapshot the field's full Metadata BEFORE deleting.
+    // The log is the foundation every undo path stands on — the 15-day
+    // Setup grace window is only findable if we remember what was deleted
+    // where and when, and a post-grace recreate needs the describe. Logging
+    // starts NOW so fields deleted before the Undo panel ships are covered.
+    let _delLogEntry = null;
+    try {
+      const cur = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
+        sobject: 'CustomField', id: fieldId });
+      _delLogEntry = { at: new Date().toISOString(), orgUrl: _orgUrl,
+        object: _selObj?.api, field: _selField?.api,
+        label: _selField?.label || cur?.Metadata?.label || _selField?.api,
+        fieldId, metadata: (cur && !cur.error && cur.Metadata) ? cur.Metadata : null };
+    } catch (_) {
+      _delLogEntry = { at: new Date().toISOString(), orgUrl: _orgUrl,
+        object: _selObj?.api, field: _selField?.api, fieldId, metadata: null };
+    }
+
     const res = await bg({
       type: 'SF_TOOLING_DELETE', orgUrl: _orgUrl, sid: _sid,
       sobject: 'CustomField', id: fieldId
@@ -3057,12 +3075,27 @@ const FieldCleaner = (() => {
       errEl.innerHTML = `❌ Delete failed: ${esc(_explainDeleteError(res.error))}`;
       eid('fcResults').appendChild(errEl);
     } else {
+      // Persist the log entry (success only — a refused delete removed nothing).
+      try {
+        const d = await chrome.storage.local.get('sftk_fc_deletion_log');
+        const log = Array.isArray(d.sftk_fc_deletion_log) ? d.sftk_fc_deletion_log : [];
+        log.unshift(_delLogEntry);
+        await chrome.storage.local.set({ sftk_fc_deletion_log: log.slice(0, 100) });
+      } catch (_) { /* log is best-effort — the delete already happened */ }
+      // HONESTY FIX: "permanently deleted" was false — Salesforce keeps
+      // deleted fields restorable in Setup for ~15 days. Say the truth and
+      // link the way back while it exists.
+      const _graceEnd = new Date(Date.now() + 15 * 24 * 3600 * 1000).toISOString().slice(0, 10);
       eid('fcResults').innerHTML = `
         <div class="fc-success">
           <div class="fc-success-icon">✅</div>
           <div class="fc-success-title">Field deleted</div>
           <div class="fc-success-sub">
-            ${esc(_selObj.api)}.${esc(_selField.api)} has been permanently deleted.
+            ${esc(_selObj.api)}.${esc(_selField.api)} is deleted — and still restorable for ~15 days
+            (until about ${esc(_graceEnd)}) via
+            <a href="${esc(_orgUrl)}/lightning/setup/ObjectManager/${esc(_selObj.api)}/FieldsAndRelationships/view"
+               target="_blank" rel="noopener">Object Manager → Fields</a> → <strong>Deleted Fields</strong>.
+            After that it's permanent. A metadata snapshot was saved to the Toolkit's deletion log.
           </div>
         </div>`;
       resetFieldAndBelow();
