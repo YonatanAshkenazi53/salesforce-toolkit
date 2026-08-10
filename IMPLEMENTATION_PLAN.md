@@ -710,7 +710,7 @@ anchor-based plan edit accidentally deleted it)
 - [x] W6 FIELD CLEANER (DONE 2ba82a8 — fixOne confirm gate incl. flow-version-deletion truth; Setup links verified across TYPE_CFG): links to all fetched metadata (open in Salesforce
   Setup) + VERIFY every delete path confirms first (C4 shared confirm modal
   adoption check).
-- [ ] W8 FIELD CLEANER UNDO + MASS UNDO (user 2026-08-09). Honest design:
+- [~] W8 FIELD CLEANER UNDO + MASS UNDO (FOUNDATION SHIPPED e98a40b 2026-08-10: deletion log sftk_fc_deletion_log records full Metadata snapshot at every delete, capped 100; success message honesty-fixed — names the ~15-day grace deadline + deep-links Object Manager → Deleted Fields. REMAINING: Undo panel over the log w/ countdowns, mass-select restore guidance, post-grace Metadata-API recreate + F4 CSV re-import). Honest design:
   Salesforce exposes NO API to undelete a custom field (Setup → Deleted
   Fields only, 15-day grace). Two-track feature: (a) DELETION LOG — every
   field delete records {org, object, field, describe snapshot, backup-CSV
