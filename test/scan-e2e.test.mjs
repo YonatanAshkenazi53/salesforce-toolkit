@@ -186,3 +186,46 @@ describe('sftkMultiSelNorm — selection order is not drift', () => {
     expect(scan.sftkMultiSelNorm('A;C')).not.toBe(scan.sftkMultiSelNorm('A;B'));
   });
 });
+
+describe('owner drift — visible ONLY when the deployment matches owners', () => {
+  const OWNER_DESC = { name: 'Step_Order__c', fields: [
+    ...STEP_DESC.fields,
+    f('OwnerId', 'reference', { referenceTo: ['User', 'Group'], relationshipName: 'Owner', polymorphicForeignKey: true }),
+  ] };
+  const srcRows = [{ Id: 'S_A', Name: 'A', OwnerId: 'U1', Owner: { Name: 'Ann Admin' },
+    Step_Order_Name__c: 'SN_1', Step_Order_Name__r: { Name: 'SN-001' },
+    Procedure_Definition__c: 'PD1', Procedure_Definition__r: { Name: 'PD-001' } }];
+  const tgtRows = [{ Id: 'T_A', Name: 'A', OwnerId: 'U9x', Owner: { Name: 'Bob Builder' },
+    Step_Order_Name__c: 'SN_1x', Step_Order_Name__r: { Name: 'SN-001' },
+    Procedure_Definition__c: 'PD1x', Procedure_Definition__r: { Name: 'PD-001' } }];
+  const install = () => {
+    globalThis.describe = async () => OWNER_DESC;
+    globalThis.sendBg = async msg => {
+      if (msg.type === 'SF_QUERY_ALL' || msg.type === 'SF_QUERY') {
+        if (/= null/.test(String(msg.query || ''))) return { records: [], totalSize: 0, done: true };
+        const rows = msg.orgUrl === SRC_ORG ? srcRows : tgtRows;
+        return { records: rows.map(r => ({ ...r })), totalSize: rows.length, done: true };
+      }
+      return { error: 'unexpected ' + msg.type };
+    };
+  };
+
+  it("ownerMapping 'match' → different Owner.Name lands in changed as OwnerId", async () => {
+    install();
+    const p = { ...PROFILE(), ownerMapping: { mode: 'match' } };
+    const res = await scan.runDiffScan(p, p.tree, null);
+    expect(res.error, res.error).toBeFalsy();
+    const row = (res.changed || []).find(r => r.sourceId === 'S_A');
+    expect(row, `owner drift must be CHANGED — ${JSON.stringify(res.changed)}`).toBeTruthy();
+    expect((row.fields || []).join(',')).toContain('OwnerId');
+  });
+
+  it("no ownerMapping → owner difference is EXPECTED, record stays identical", async () => {
+    install();
+    const p = PROFILE();
+    const res = await scan.runDiffScan(p, p.tree, null);
+    expect(res.error, res.error).toBeFalsy();
+    expect((res.identical || []).some(r => r.sourceId === 'S_A'),
+      `must be identical — changed=${JSON.stringify(res.changed)}`).toBe(true);
+  });
+});

@@ -795,6 +795,13 @@ async function runDiffScan(profile, node = null, scope = null) {
         fmRef.RecordTypeId !== null) {
       refPairs.push({ srcField: 'RecordTypeId', tgtField: 'RecordTypeId' });
     }
+    // OWNER drift is only DRIFT when this deployment MATCHES owners
+    // (ownerMapping 'match') — under "don't copy owners" a different owner
+    // is expected and not actionable, so it stays out of the compare.
+    if (profile?.ownerMapping?.mode === 'match' &&
+        (srcDescFull.fields || []).some(f => f && f.name === 'OwnerId')) {
+      refPairs.push({ srcField: 'OwnerId', tgtField: 'OwnerId' });
+    }
     const allPairs = [...enginePairs, ...refPairs];
     if (allPairs.length) {
       srcCompare = allPairs.map(p => p.srcField);
@@ -1743,6 +1750,13 @@ function buildLookupCompareMap(describe, lookupResolutions) {
     // translatable label; DeveloperName is the API identity.)
     if (f.name === 'RecordTypeId') {
       map[f.name] = { relName: 'RecordType', matchField: cfg?.matchField || 'DeveloperName' };
+      continue;
+    }
+    // OwnerId is polymorphic (User/Group) but BOTH targets carry Name, so
+    // the generic poly-skip is too cautious here. Only consulted when the
+    // compare plan opts owners in (ownerMapping 'match').
+    if (f.name === 'OwnerId') {
+      map[f.name] = { relName: 'Owner', matchField: cfg?.matchField || 'Name' };
       continue;
     }
     const poly = f.polymorphicForeignKey || (f.referenceTo || []).length > 1;
