@@ -786,6 +786,15 @@ async function runDiffScan(profile, node = null, scope = null) {
       !['OwnerId', 'CreatedById', 'LastModifiedById', 'RecordTypeId'].includes(f.name)
     ).map(f => ({ srcField: f.name,
       tgtField: (fmRef[f.name] && fmRef[f.name] !== '') ? fmRef[f.name] : f.name }));
+    // W7 pattern audit — RECORD TYPE drift was invisible: two matched
+    // records with different Record Types compared as identical (the field
+    // is engine-owned for WRITES, but the SCAN must still see it). Compared
+    // by RecordType.DeveloperName via the same dot-path plan; same name on
+    // both sides → equal, regardless of the org-local ids.
+    if ((srcDescFull.fields || []).some(f => f && f.name === 'RecordTypeId') &&
+        fmRef.RecordTypeId !== null) {
+      refPairs.push({ srcField: 'RecordTypeId', tgtField: 'RecordTypeId' });
+    }
     const allPairs = [...enginePairs, ...refPairs];
     if (allPairs.length) {
       srcCompare = allPairs.map(p => p.srcField);
@@ -880,8 +889,16 @@ async function runDiffScan(profile, node = null, scope = null) {
       }
       continue;  // skip lookups never enter `plain`
     }
-    const entry = { srcField: s, tgtField: t, srcSel: s, tgtSel: t,
-      srcExtract: r => r[s], tgtExtract: r => r[t] };
+    // W7 pattern audit — multi-select picklists store 'A;B' with NO order
+    // significance: 'A;B' vs 'B;A' is the same selection, and raw string
+    // compare called it drift. Compare them normalized (sorted).
+    const isMulti = haveTypes &&
+      (srcTypes.get(s) === 'multipicklist' || tgtTypes.get(t) === 'multipicklist');
+    const entry = isMulti
+      ? { srcField: s, tgtField: t, srcSel: s, tgtSel: t,
+          srcExtract: r => sftkMultiSelNorm(r[s]), tgtExtract: r => sftkMultiSelNorm(r[t]) }
+      : { srcField: s, tgtField: t, srcSel: s, tgtSel: t,
+          srcExtract: r => r[s], tgtExtract: r => r[t] };
     enhanced.push(entry); plain.push(entry);
   }
 
@@ -1721,6 +1738,13 @@ function buildLookupCompareMap(describe, lookupResolutions) {
   for (const f of (describe?.fields || [])) {
     if (f.type !== 'reference') continue;
     const cfg  = (lookupResolutions || {})[f.name];
+    // W7 pattern audit — RecordTypeId resolves by DeveloperName, the same
+    // cross-org identity the engine's RT remap writes by. (Its Name is a
+    // translatable label; DeveloperName is the API identity.)
+    if (f.name === 'RecordTypeId') {
+      map[f.name] = { relName: 'RecordType', matchField: cfg?.matchField || 'DeveloperName' };
+      continue;
+    }
     const poly = f.polymorphicForeignKey || (f.referenceTo || []).length > 1;
     // No relationship to traverse, or polymorphic without an explicit match
     // field (parent name field varies per type) → can't safely resolve a name.
@@ -1728,6 +1752,14 @@ function buildLookupCompareMap(describe, lookupResolutions) {
     map[f.name] = { relName: f.relationshipName, matchField: cfg?.matchField || 'Name' };
   }
   return map;
+}
+
+// Multi-select picklist values compare ORDER-INSENSITIVELY: Salesforce
+// stores 'A;B' semicolon-joined in selection order, but the selection
+// {A,B} === {B,A}. Sort the parts before comparing. PURE — unit-tested.
+function sftkMultiSelNorm(v) {
+  if (v == null || v === '') return v;
+  return String(v).split(';').map(t => t.trim()).filter(Boolean).sort().join(';');
 }
 
 // SOQL dot-path for a reference field's resolved value, e.g. "Account.Name" or
