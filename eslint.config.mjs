@@ -21,6 +21,7 @@ const AMBIENT = Object.fromEntries([
   'FileReader', 'FormData', 'TextEncoder', 'TextDecoder', 'atob', 'btoa',
   'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame',
   'localStorage', 'sessionStorage', 'crypto', 'structuredClone', 'DOMParser', 'XMLHttpRequest',
+  'indexedDB', 'IDBKeyRange',
   'CustomEvent', 'Event', 'MutationObserver', 'IntersectionObserver', 'ResizeObserver',
   'alert', 'confirm', 'prompt', 'getComputedStyle', 'matchMedia', 'screen',
   'AbortController', 'AbortSignal', 'Image', 'Node', 'Element', 'HTMLElement',

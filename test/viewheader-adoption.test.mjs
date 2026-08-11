@@ -102,8 +102,13 @@ describe('the conversion preserved each view\'s behaviour surface', () => {
     });
   }
 
-  it('History\'s header count is computed from the same array the list renders', () => {
-    expect(SRC['studio-history.js']).toMatch(/count: `\$\{sorted\.length\} run/);
+  it('History\'s header count is computed from the arrays the list renders', () => {
+    // Two-tier history (📦 archive): the header states the hot count and,
+    // when archived runs are loaded into the view, the archived count — the
+    // list renders exactly _history + _archShown, so the numbers agree.
+    expect(SRC['studio-history.js']).toMatch(/count: `\$\{_history\.length\} run/);
+    expect(SRC['studio-history.js']).toMatch(/\$\{_archShown\.length\} archived shown/);
+    expect(SRC['studio-history.js']).toMatch(/\[\.\.\._history, \.\.\._archShown\]\.sort/);
   });
 
   it('the empty-state History header exists alongside the main one', () => {
