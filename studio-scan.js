@@ -735,8 +735,16 @@ async function runDiffScan(profile, node = null, scope = null) {
     ? sftkMatchingFromNode(node)
     : { strategy: 'field', fields: [derived.matchField], normalize: {} };
   let srcKeyFields = sftkMatchingFields(nodeMatching);
+  // ⚙ per-target field-mapping exceptions apply to the KEY too — the pair
+  // being scanned is profile.targetOrg, and a key field renamed for THAT
+  // org must be measured under its name there (matching audit 2026-08-11:
+  // sftkMatchingTgtFields read only the base mappings, so a chooser/ring
+  // scan against a renamed-key target compared the wrong column).
+  const nodeForTgt = (node && node.fieldMappingOverrides && typeof sftkResolveMappings === 'function')
+    ? { ...node, fieldMappings: sftkResolveMappings(node.fieldMappings, node.fieldMappingOverrides, _orgKey(profile.targetOrg)) }
+    : node;
   let tgtKeyFields = hasMatchingCfg
-    ? sftkMatchingTgtFields(node, nodeMatching)
+    ? sftkMatchingTgtFields(nodeForTgt, nodeMatching)
     : [derived.matchFieldTgt];
   let srcMatchField  = srcKeyFields[0];
   let tgtMatchField  = tgtKeyFields[0];
@@ -1716,8 +1724,20 @@ async function refreshProfileDiff(profileId) {
   // is then stripped from the stored scan: it lives in matchMemory, not in
   // lastScan (keeps chrome.storage payloads lean).
   try {
-    if (!profile.ephemeral && Array.isArray(res.learnedPairs) && res.learnedPairs.length) {
-      await window.sftkLearnPairs?.(profile.id, profile.targetOrg, res.learnedPairs);
+    // Match memory is PER TARGET and SOURCE-SPECIFIC. Ephemeral pair clones
+    // (⚖ ring cells, the Reconcile target chooser) carry _ringOf — their
+    // confirmed pairs belong to the REAL profile's memory for that target,
+    // but ONLY when the clone scanned from the profile's own source org
+    // (a ring clone from a different golden org must not seed it).
+    const memProfileId = (() => {
+      if (!profile.ephemeral) return profile.id;
+      const realId = profile._ringOf?.profileId;
+      if (!realId) return null;
+      const realP = _profiles.find(x => x.id === realId);
+      return (realP && _orgKey(realP.sourceOrg || '') === _orgKey(profile.sourceOrg || '')) ? realId : null;
+    })();
+    if (memProfileId && Array.isArray(res.learnedPairs) && res.learnedPairs.length) {
+      await window.sftkLearnPairs?.(memProfileId, profile.targetOrg, res.learnedPairs);
     }
   } catch (e) {
     window.SFToolkitDebug?.log('scan', 'warn', 'match-memory auto-learn failed', e?.message || String(e));
@@ -1745,7 +1765,32 @@ async function refreshProfileDiff(profileId) {
         at: res.runAt,
       });
     }
-    if (!profile.ephemeral && typeof sftkRingTileFromScan === 'function') sftkRingTileFromScan(profile);
+    if (!profile.ephemeral && typeof sftkRingTileFromScan === 'function') {
+      sftkRingTileFromScan(profile);
+    } else if (profile.ephemeral && profile._ringOf && res.status === 'success'
+               && typeof _ringScanKey === 'function') {
+      // Ephemeral pair clones (⚖ cells, target chooser, the 📎 move's own
+      // rescan) must update the REAL profile's ring tile in real time —
+      // "after i ran the file transfer, the ring sync status wasn't updated
+      // directly" (user 2026-08-11). Freshest-wins, same as everywhere.
+      const realP = _profiles.find(x => x.id === profile._ringOf.profileId);
+      if (realP && typeof _ring !== 'undefined' && _ring?.sourceUrl
+          && _orgKey(_ring.sourceUrl) === _orgKey(profile.sourceOrg || '')) {
+        realP.ringScans = realP.ringScans || {};
+        const rk = _ringScanKey(profile.targetOrg, profile.sourceOrg);
+        const prev = realP.ringScans[rk];
+        if (!(prev?.runAt && res.runAt && new Date(prev.runAt).getTime() > new Date(res.runAt).getTime())) {
+          realP.ringScans[rk] = {
+            runAt: res.runAt, status: 'success',
+            missing: (res.missingInTarget || []).length,
+            changed: (res.changed || []).length,
+            extra:   (res.onlyInTarget || []).length,
+            ...(res.fileDrift && !res.fileDrift.error && res.fileDrift.records ? { fileMiss: res.fileDrift.records } : {}),
+          };
+          storageSaveProfiles().catch(() => {});
+        }
+      }
+    }
   } catch (_) { /* advisory surfaces only */ }
 
   // Keep the in-memory transfer profile aligned, mirroring commitEditingProfile.
@@ -1769,6 +1814,8 @@ async function refreshProfileDiff(profileId) {
   else if (_currentView === 'reconcile' && typeof renderReconcile === 'function'
            && _reconcileProfile && _reconcileProfile.id === profile.id) {
     renderReconcile();
+  } else if (_currentView === 'ring' && typeof _ringRenderMatrix === 'function') {
+    _ringRenderMatrix();   // a scan landing while the ring is open repaints its cells
   }
   return res;
 }
