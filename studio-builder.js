@@ -143,7 +143,10 @@ function renderBuilder() {
                   : ''}
               </select>
               ${ringSrc && p.sourceOrg && _orgKey(p.sourceOrg) !== _orgKey(ringSrc)
-                ? `<div class="ds-bld-src-warn">${dsIcon('warn')}not your source of truth (${esc(orgLabel(ringSrc))}) — this deployment will show as off-ring</div>` : ''}`}
+                ? `<div class="ds-bld-src-warn">${dsIcon('warn')}not your source of truth (${esc(orgLabel(ringSrc))}) — this deployment will show as off-ring
+                     <button class="ds-btn ds-btn-xs" id="dsBldPromoteSrc"
+                       title="Move the 👑: make ${esc(orgLabel(p.sourceOrg))} the ring's source of truth. EVERY ring surface — matrix rows, sync plans, tree diffs, the topbar chip — will measure from it, and ring-following deployments will flow FROM it. The global setting never moves silently; this button IS the explicit move.">👑 make it the source of truth</button>
+                   </div>` : ''}`}
         </div>
         <!-- The direction statement. Two of the recent bug reports came from
              this row reading as two unrelated columns; the slot is now always
@@ -293,6 +296,23 @@ function renderBuilder() {
   // The unsaved name lives only in the DOM until Save; every renderBuilder()
   // below would discard it. Bind it live so re-rendering is always safe.
   eid('dsProfileName')?.addEventListener('input', e => { _editingProfile.name = e.target.value; });
+
+  // 👑 Explicit promotion (user 2026-08-11: "when we change the source here,
+  // it should also change the source in general, no?") — the ring's source
+  // of truth NEVER moves silently (user ruling 2026-07-31: surprise crown
+  // moves are how orgs get overwritten from the wrong direction). Changing a
+  // profile's source offers the promotion in one labeled click instead.
+  eid('dsBldPromoteSrc')?.addEventListener('click', async () => {
+    const src = _editingProfile?.sourceOrg;
+    if (!src || typeof _ring !== 'object' || !_ring) return;
+    if (!confirm(`👑 Make ${orgLabel(src)} the ring's source of truth?\n\nEvery ring surface — matrix rows, sync plans, tree diffs, the topbar SOURCE chip — will measure FROM it, and deployments that follow the ring will flow FROM it.\n\nThe current crown (${orgLabel(_ring.sourceUrl)}) becomes a regular ring org.`)) return;
+    _ring.sourceUrl = src;
+    if (!(_ring.orgs || []).some(u => _orgKey(u) === _orgKey(src))) (_ring.orgs = _ring.orgs || []).push(src);
+    try { await chrome.storage.local.set({ ds_ring: _ring }); } catch (_) {}
+    if (typeof syncRingFollowers === 'function') syncRingFollowers();
+    showToast(`👑 ${orgLabel(src)} is now the source of truth — every ring surface follows it`, 'success', 4500);
+    renderBuilder();   // the source column re-locks onto the new crown
+  });
 
   eid('dsProfileSrcOrg')?.addEventListener('change', e => {
     _editingProfile.sourceOrg = e.target.value || '';
