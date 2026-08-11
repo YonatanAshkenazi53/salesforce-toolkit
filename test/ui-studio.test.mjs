@@ -452,7 +452,8 @@ describe('empty live set = unknown, not closed', () => {
   it('every liveness consumer branches on _liveKnown(), not set size', () => {
     const TRANSFER = read('studio-transfer.js');
     expect(TRANSFER).toMatch(/liveKnown = \(typeof _liveKnown === 'function'\) \? _liveKnown\(\)/);
-    expect(RING.match(/typeof _liveKnown === 'function'/g)?.length).toBe(3);
+    // 4th consumer 2026-08-11: sftkRingRebaseline (👑 crown-move auto-rescan)
+    expect(RING.match(/typeof _liveKnown === 'function'/g)?.length).toBe(4);
     expect(CORE).toMatch(/function _liveKnown\(\) \{ return _allSessionsOk; \}/);
   });
 
