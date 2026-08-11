@@ -4,6 +4,7 @@
 // idempotence per record, size ceiling with disclosure, link fan-out with
 // first-publish + explicit extras, out-of-scope links counted never dropped.
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { extractFunctions } from './extract.mjs';
 
 const eng = extractFunctions('background.js', ['sftkFilePlan', 'sftkB64FromBuffer']);
@@ -74,5 +75,41 @@ describe('sftkB64FromBuffer — chunked encoder', () => {
     const decoded = atob(eng.sftkB64FromBuffer(big.buffer));
     expect(decoded.length).toBe(big.length);
     expect(decoded.charCodeAt(0x8000 * 2 + 16)).toBe((0x8000 * 2 + 16) % 256);
+  });
+});
+
+// ── W7 disclosure — rich-text org-local images (rtaImage) ────────────
+// The field text copies; the blob behind <img src=".../servlet/rtaImage?...">
+// lives only in the source org, so the target renders broken images. The
+// engine counts affected RECORDS and discloses as an ℹ note.
+describe('sftkRtaImageCount — org-local rich-text image detector', () => {
+  const { sftkRtaImageCount } = extractFunctions('background.js', ['sftkRtaImageCount']);
+  const RTA = '<p>steps</p><img src="https://six.develop.file.force.com/servlet/rtaImage?eid=a01&refid=0EM1x" alt="wiring">';
+
+  it('counts records, not occurrences', () => {
+    const recs = [
+      { Id: 'r1', Notes__c: RTA + RTA },              // two images, one record
+      { Id: 'r2', Notes__c: '<p>plain rich text</p>' },
+      { Id: 'r3', Body__c: RTA, Other__c: RTA },      // two fields, one record
+      { Id: 'r4', Name: 'SO-1' },
+    ];
+    expect(sftkRtaImageCount(recs)).toBe(2);
+  });
+
+  it('ignores non-strings, attributes objects, and junk rows', () => {
+    const recs = [
+      { Id: 'r1', attributes: { type: 'X', url: '/services/data/v62.0/sobjects/X/r1' }, N__c: 7 },
+      null, 'nope',
+      { Id: 'r2', T__c: 'mentions rtaImage without the servlet path' },
+    ];
+    expect(sftkRtaImageCount(recs)).toBe(0);
+    expect(sftkRtaImageCount([])).toBe(0);
+    expect(sftkRtaImageCount(null)).toBe(0);
+  });
+
+  it('the engine actually discloses it as an ℹ note', () => {
+    const src = readFileSync(new URL('../background.js', import.meta.url), 'utf8');
+    expect(src).toMatch(/sftkRtaImageCount\(recs\)/);
+    expect(src).toMatch(/ℹ \$\{objType\}: \$\{rtaCount\} record\(s\) embed org-local rich-text images/);
   });
 });
