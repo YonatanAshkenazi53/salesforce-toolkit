@@ -1105,7 +1105,8 @@ async function openRecordPickerModal(pathStr) {
         A candidate's overall score is the <strong>lowest org's score</strong>, because matching runs in every org — a key that's blank or duplicated in ONE org will mis-match there no matter how clean it looks elsewhere.
         <strong>100/100</strong> means: every record has a value and no two records share it, in every graded org.
         The ★ best key badge only appears at 60+ — "least bad of the candidates" is not a recommendation.
-        Normalize options (ignore case, trim spaces…) are applied <em>before</em> counting, so the score reflects the key exactly as the scan and every run will use it.
+        Normalize options (ignore case, trim spaces…) are applied <em>before</em> counting, so the score reflects the key exactly as the scan and every run will use it.<br>
+        <strong>Do more fields make matching better?</strong> Only up to uniqueness. Each field multiplies distinctiveness — but the key IS the record's identity, so a key field that <em>drifts</em> between orgs stops the records from matching at all: instead of honest yellow "changed" drift you get a phantom missing + extra pair. Past 100% unique, an extra field adds zero matching power and one more way to break (blanks, formatting, drift). Rule of thumb: the FEWEST <em>stable</em> fields that reach uniqueness — External ID first, then a stable business key, composites only where identity genuinely spans fields (junction parent pairs, Name + Email).
       </div>
     </details>`;
   }
