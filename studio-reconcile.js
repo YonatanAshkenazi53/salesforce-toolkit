@@ -101,6 +101,67 @@ function sftkParentSyncPut(srcOrg, tgtOrg, obj, v) {
   } catch (_) { /* advisory map only */ }
 }
 
+// 🗂 "I want a new tab or something — show the ACTUAL records" (user
+// 2026-08-11): the in-sync fold's key list wasn't enough. Opens the matched
+// records as a real table — field VALUES read fresh from the source org
+// (never from the scan snapshot), one row per pair, links to both orgs.
+// Columns: the match key field(s) + up to 6 mapped fields; if a mapped field
+// no longer exists the fetch falls back to key columns only.
+async function sftkShowInSyncRecords(p, scan) {
+  const rowsAll = (scan?.identical || []).filter(r => r.sourceId);
+  const CAP = 500;
+  const rows = rowsAll.slice(0, CAP);
+  const tgtBySrc = {};
+  rowsAll.forEach(r => { tgtBySrc[r.sourceId] = r.targetId; });
+  const objType = scan?.objectType || p?.tree?.objectType || '';
+  showModal(`
+    <div class="ds-modal-header">🟢 In-sync records — ${esc(objType)} <span style="font-weight:400;font-size:12px;opacity:.75">${esc(orgLabel(p.sourceOrg))} ↔ ${esc(orgLabel(p.targetOrg))}</span></div>
+    <div class="ds-modal-body" id="dsInSyncBody" style="max-height:62vh;overflow:auto;font-size:12px">Reading live values from the source org…</div>
+    <div class="ds-modal-footer">
+      <span style="margin-right:auto;font-size:11px;opacity:.75">${rowsAll.length > CAP ? `first ${CAP} of ${rowsAll.length} pairs — the scan count is the truth` : `${rowsAll.length} pair(s)`} · values are read LIVE, not replayed from the scan</span>
+      <button class="ds-btn" data-dsaction="closeModal">Close</button>
+    </div>`);
+  const body = eid('dsInSyncBody');
+  if (!body) return;
+  try {
+    const sess = await getOrgSession(p.sourceOrg);
+    if (!sess?.sid) {
+      body.innerHTML = `<div class="ds-drift-compare-err">Source org not open — open ${esc(orgLabel(p.sourceOrg))} in a Chrome tab.</div>`;
+      return;
+    }
+    const keyFields = (scan?.matching?.fields?.length ? scan.matching.fields : [p?.tree?.matchField || 'Name']);
+    const mapped = Object.keys(p?.tree?.fieldMappings || {}).filter(f => f && f !== 'Id').slice(0, 6);
+    const wanted = [...new Set(['Id', ...keyFields, ...mapped])];
+    const ids = rows.map(r => r.sourceId);
+    const fetchWith = async (flds) => {
+      const out = [];
+      for (let i = 0; i < ids.length; i += 200) {
+        const lit = ids.slice(i, i + 200).map(id => `'${id}'`).join(',');
+        const q = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
+          query: `SELECT ${flds.join(',')} FROM ${objType} WHERE Id IN (${lit})` });
+        if (q?.error) throw new Error(q.error);
+        out.push(...(q.records || []));
+      }
+      return out;
+    };
+    let used = wanted, recs;
+    try { recs = await fetchWith(wanted); }
+    catch (_) { used = [...new Set(['Id', ...keyFields])]; recs = await fetchWith(used); }
+    const cols = used.filter(f => f !== 'Id');
+    const cell = v => { const s = v == null ? '' : String(v); return `<td style="padding:3px 8px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s)}">${esc(s)}</td>`; };
+    const rhref = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
+    body.innerHTML = `<div style="overflow:auto"><table style="border-collapse:collapse;width:100%">
+      <thead><tr>${cols.map(c => `<th style="text-align:left;padding:3px 8px;border-bottom:1px solid var(--border,#3A3F4B);position:sticky;top:0;background:var(--card,#20232B)">${esc(c)}</th>`).join('')}
+        <th style="border-bottom:1px solid var(--border,#3A3F4B)"></th></tr></thead>
+      <tbody>${recs.map(r => `<tr>
+        ${cols.map(c => cell(r[c])).join('')}
+        <td style="white-space:nowrap;padding:3px 8px"><a href="${rhref(p.sourceOrg, r.Id)}" target="_blank" rel="noopener">source ↗</a>${tgtBySrc[r.Id] ? ` · <a href="${rhref(p.targetOrg, tgtBySrc[r.Id])}" target="_blank" rel="noopener">target ↗</a>` : ''}</td>
+      </tr>`).join('')}</tbody></table></div>`;
+  } catch (e) {
+    body.innerHTML = `<div class="ds-drift-compare-err">Could not read the records: ${esc(e?.message || String(e))}</div>`;
+  }
+}
+
 // Ring tiles refresh from ANY fresh scan of the pair, not just from runs —
 // the user aligned the orgs via console Apex + a manual re-scan and the
 // ring kept showing a 44-minute-old "21" (2026-08-10: "still in sync but
@@ -973,10 +1034,30 @@ async function renderReconcile() {
           </div>`).join('')}
           ${idsRows.length > shown.length ? `<div style="font-size:11px;opacity:.75">…and ${idsRows.length - shown.length} more — display capped at 200; the count above is the truth.</div>` : ''}
         </div>
+        <div style="margin:6px 0 0 18px"><button class="ds-btn ds-btn-xs" id="dsInSyncTableBtn"
+          title="Open the matched records as a real table — field values read LIVE from the source org, one row per pair, links to both orgs">🗂 Open as table — live field values</button></div>
         <div style="margin:6px 0 0 18px;font-size:11.5px;opacity:.85">${filesOn
           ? `📎 Files is ON for this object — a ▶ Run Transfer also carries attachments (ContentVersion + links) for these records, matched by key; checksum-skip keeps re-runs duplicate-free.`
           : `📎 In sync covers FIELD VALUES only — attached files (ContentVersion &amp; friends) are neither compared nor copied by this view. To carry them: Builder → this object → <strong>📎 Files</strong> toggle → ▶ Run Transfer. Already-in-sync records get their files too (matched by key).`}</div>
       </details>`;
+    })()}
+    ${(() => {
+      // 📎 FILE VERDICT (scan-time compare, runs only when the Files toggle
+      // is ON): "they should say the file records are missing and suggest to
+      // move them" (user 2026-08-11). Never a warning without its suspects,
+      // never a call to action without its objects.
+      const fd = scan.fileDrift;
+      if (!fd) return '';
+      if (fd.error) return `<div class="ds-rec-child-info" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">📎 File comparison could not run (${esc(fd.error)}) — file differences are UNKNOWN, not zero.</div>`;
+      if (!fd.records) return `<div class="ds-rec-child-info" style="border-left:3px solid var(--ok,#16a34a);padding-left:8px;margin:6px 0">📎 Files compared for ${fd.pairsChecked} matched pair(s) — every source file already exists in the target.${fd.capped ? ` (first ${fd.pairsChecked} of ${fd.pairsTotal} pairs checked)` : ''}</div>`;
+      const rhref = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
+      return `<div class="ds-rec-child-info" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">
+        📎 <strong>${fd.missingFiles} file(s) on ${fd.records} record(s) are missing in the target</strong> — the records match, their attachments don't.${fd.capped ? ` First ${fd.pairsChecked} of ${fd.pairsTotal} pairs checked.` : ''}
+        <br>➡ <strong>▶ Run Transfer</strong> on this deployment moves them — 📎 is ON, already-synced records are matched by key, and the checksum skip keeps re-runs duplicate-free.
+        <div style="margin-top:4px;font-size:11.5px">${(fd.rows || []).slice(0, 10).map(r =>
+          `<span style="display:inline-block;margin-right:10px;white-space:nowrap">${r.missing} file(s): <a href="${rhref(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener">source ↗</a> → <a href="${rhref(p.targetOrg, r.targetId)}" target="_blank" rel="noopener">target ↗</a></span>`).join('')}
+          ${fd.records > 10 ? `<span style="opacity:.7">…and ${fd.records - 10} more record(s).</span>` : ''}</div>
+      </div>`;
     })()}
     ${sftkPhantomDriftNote(scan)}
     ${scan.blankKeys ? `<div class="ds-rec-child-info ds-match-blank-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">⚠ ${scan.blankKeys.rows} row(s) have a blank match key — excluded from matching (${scan.blankKeys.src} source, ${scan.blankKeys.tgt} target). Pick a better-populated match field in 🎯 Pick Records (🧪 Test this key grades candidates).</div>` : ''}
@@ -1349,6 +1430,7 @@ async function renderReconcile() {
   eid('dsRecDeleteMode')?.addEventListener('change', e => { _recDeleteMode = e.target.value; });
   eid('dsRecRunBtn')?.addEventListener('click', () => runReconcile(p, objType, { missing, drift, extras }));
   eid('dsMatchReviewBtn')?.addEventListener('click', () => openMatchReview(p));
+  eid('dsInSyncTableBtn')?.addEventListener('click', () => sftkShowInSyncRecords(p, scan));
 }
 
 // ════════════════════════════════════════════════════════════════

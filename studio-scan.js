@@ -676,6 +676,30 @@ function sftkPicklistGaps(records, comparePlanOrFields, tgtDescribeFieldsMap, op
 //           different (or no) parent in the target. Missing rows also carry
 //           parentSrcId + parentKey for the dependency UI.
 // Root behavior with node/scope omitted is unchanged.
+// 📎 Pure file-drift comparator: for matched record pairs, count source
+// files (latest-version checksums) ABSENT from the paired target record.
+// Push-directional on purpose — extra target files are not drift when the
+// flow is source-of-truth → target. Multiset compare: two copies of the
+// same checksum in the source need two in the target.
+function sftkFileDriftCompare(pairs, srcFilesByRec, tgtFilesByRec) {
+  const rows = []; let missingFiles = 0;
+  for (const p of (pairs || [])) {
+    const src = (srcFilesByRec && srcFilesByRec[p.sourceId]) || [];
+    if (!src.length) continue;
+    const tgt = new Map();
+    for (const c of ((tgtFilesByRec && tgtFilesByRec[p.targetId]) || [])) {
+      tgt.set(c, (tgt.get(c) || 0) + 1);
+    }
+    let miss = 0;
+    for (const c of src) {
+      const n = tgt.get(c) || 0;
+      if (n > 0) tgt.set(c, n - 1); else miss++;
+    }
+    if (miss > 0) { rows.push({ sourceId: p.sourceId, targetId: p.targetId, missing: miss }); missingFiles += miss; }
+  }
+  return { rows, records: rows.length, missingFiles };
+}
+
 async function runDiffScan(profile, node = null, scope = null) {
   if (!profile)                  return { error: 'no profile' };
   if (!profile.sourceOrg)        return { error: 'profile has no source org set' };
@@ -1368,6 +1392,57 @@ async function runDiffScan(profile, node = null, scope = null) {
     } catch (_) { learnedPairs = []; }
   }
 
+  // ── 📎 FILE COMPARISON (opt-in via the node's Files toggle) ───────────
+  // "They should say the file records are missing and suggest to move them"
+  // (user 2026-08-11): field-identical records can still differ in ATTACHED
+  // FILES, and a green "in sync" that hides that is a lie of omission. With
+  // 📎 ON, compare latest-version checksums for every matched pair
+  // (identical + changed), capped at 1,000 pairs with the cap disclosed.
+  // Query cost only when opted in: 2 chunked queries per side.
+  let fileDrift = null;
+  if (profile?.tree?.includeFiles === true && (identical.length + changed.length)) {
+    try {
+      const pairsAll = [...identical, ...changed]
+        .filter(r => r.sourceId && r.targetId)
+        .map(r => ({ sourceId: r.sourceId, targetId: r.targetId }));
+      const FILE_PAIR_CAP = 1000;
+      const fPairs = pairsAll.slice(0, FILE_PAIR_CAP);
+      const filesByRec = async (sess, recIds) => {
+        const out = {}; const docIds = new Set(); const docOwner = [];
+        for (let i = 0; i < recIds.length; i += 200) {
+          const lit = recIds.slice(i, i + 200).map(id => `'${id}'`).join(',');
+          const q = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false,
+            query: `SELECT ContentDocumentId, LinkedEntityId FROM ContentDocumentLink WHERE LinkedEntityId IN (${lit})` });
+          if (q?.error) throw new Error(q.error);
+          for (const l of (q.records || [])) { docIds.add(l.ContentDocumentId); docOwner.push([l.LinkedEntityId, l.ContentDocumentId]); }
+        }
+        const sumByDoc = {}; const ids = [...docIds];
+        for (let i = 0; i < ids.length; i += 200) {
+          const lit = ids.slice(i, i + 200).map(id => `'${id}'`).join(',');
+          const q = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false,
+            query: `SELECT ContentDocumentId, Checksum FROM ContentVersion WHERE IsLatest = true AND ContentDocumentId IN (${lit})` });
+          if (q?.error) throw new Error(q.error);
+          for (const v of (q.records || [])) sumByDoc[v.ContentDocumentId] = v.Checksum;
+        }
+        for (const [rec, doc] of docOwner) (out[rec] = out[rec] || []).push(sumByDoc[doc] || doc);
+        return out;
+      };
+      const srcFiles = await filesByRec(srcSess, fPairs.map(fp => fp.sourceId));
+      // No source files at all → nothing can be missing; skip the target read.
+      const tgtFiles = Object.keys(srcFiles).length
+        ? await filesByRec(tgtSess, fPairs.map(fp => fp.targetId)) : {};
+      const cmp = sftkFileDriftCompare(fPairs, srcFiles, tgtFiles);
+      fileDrift = { records: cmp.records, missingFiles: cmp.missingFiles,
+        rows: cmp.rows.slice(0, 200),   // display slice — records/missingFiles are the truth
+        pairsChecked: fPairs.length,
+        ...(pairsAll.length > fPairs.length ? { capped: true, pairsTotal: pairsAll.length } : {}) };
+    } catch (e) {
+      // A failed file probe must not fail the scan — but it must SAY so,
+      // never render as "no file drift".
+      fileDrift = { error: e?.message || String(e) };
+    }
+  }
+
   // ── L6 — MEASURED BUCKET CAPS ─────────────────────────────────────────
   // Measured against the FULL arrays, one line before they are sliced, so
   // `total` is the number this scan actually counted — never estimated,
@@ -1443,6 +1518,9 @@ async function runDiffScan(profile, node = null, scope = null) {
     ...(memoryMatched ? { memoryMatched } : {}),
     ...(learnedPairs.length ? { learnedPairs } : {}),
     ...(memWarnings.length ? { warnings: memWarnings.slice(0, 10) } : {}),
+    // 📎 file comparison result (only when the node's Files toggle is ON):
+    // records whose source files are absent from the paired target record.
+    ...(fileDrift ? { fileDrift } : {}),
     // Duplicate-key info for ROOT scans — info-only (the rows stayed matched,
     // arbitrarily); child scans exclude instead and report keyCollisions below.
     ...((!scope && _keyCollisions) ? { dupKeys: _keyCollisions } : {}),
