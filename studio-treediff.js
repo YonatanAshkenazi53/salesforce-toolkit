@@ -156,11 +156,52 @@ async function _tdRunScans(p) {
       for (const k of childKeys) await scanReconcileChild(clone, k);
       for (const k of grandKeys) await scanReconcileChild(clone, k);
       _tdResults.push({ url, label, clone });
+      // Staleness law — Tree Diff is the DEEPEST scan in the app and used to
+      // deposit NOTHING (QA sweep 2026-08-11): the ring matrix and parent
+      // verdicts stayed older than the truth the user just watched being
+      // computed. Freshest-wins summaries land on the real profile, and the
+      // per-object verdicts (root AND every child node) feed the Builder
+      // chips / advisor checklists for this exact pair.
+      try {
+        if (!p.ephemeral && root.status === 'success' && typeof _ringScanKey === 'function'
+            && typeof _ring !== 'undefined' && _ring?.sourceUrl
+            && _orgKey(_ring.sourceUrl) === _orgKey(srcUrl)) {
+          p.ringScans = p.ringScans || {};
+          const rk = _ringScanKey(url, srcUrl);
+          const prev = p.ringScans[rk];
+          if (!(prev?.runAt && root.runAt && new Date(prev.runAt).getTime() > new Date(root.runAt).getTime())) {
+            p.ringScans[rk] = { runAt: root.runAt, status: 'success',
+              missing: (root.missingInTarget || []).length,
+              changed: (root.changed || []).length,
+              extra:   (root.onlyInTarget || []).length,
+              ...(root.fileDrift && !root.fileDrift.error && root.fileDrift.records ? { fileMiss: root.fileDrift.records } : {}) };
+          }
+        }
+        if (typeof sftkParentSyncPut === 'function' && root.status === 'success' && root.objectType) {
+          sftkParentSyncPut(srcUrl, url, root.objectType, {
+            missing: (root.missingInTarget || []).length,
+            changed: (root.changed || []).length,
+            extra:   (root.onlyInTarget || []).length,
+            at: root.runAt });
+          for (const k of [...childKeys, ...grandKeys]) {
+            const cs = clone.lastScan?.children?.[k];
+            if (cs && cs.status === 'success' && cs.objectType) {
+              sftkParentSyncPut(srcUrl, url, cs.objectType, {
+                missing: (cs.missingInTarget || []).length,
+                changed: (cs.changed || []).length,
+                extra:   (cs.onlyInTarget || []).length,
+                at: cs.runAt || root.runAt });
+            }
+          }
+        }
+      } catch (_) { /* advisory surfaces only */ }
     } catch (e) {
       const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
       _tdResults.push({ url, label, error: fe.message });
     }
   }
+  // One save for the whole sweep — the ring summaries deposited above.
+  try { storageSaveProfiles(); } catch (_) {}
   _tdRenderMatrix(p);
 }
 
