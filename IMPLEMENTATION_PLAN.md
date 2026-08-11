@@ -862,15 +862,18 @@ anchor-based plan edit accidentally deleted it)
   (scan-visible; engine-owned for writes); multiselect picklists compare
   order-insensitively (sftkMultiSelNorm); owner drift compared by
   Owner.Name, gated on ownerMapping 'match' (expected ≠ drift). Pattern
-  audit CLOSED except: rich-text org-local image disclosure (low
-  frequency, queued). Suite at 1700.
+  audit CLOSED — rich-text org-local image disclosure SHIPPED 2026-08-11
+  (449ed0b: sftkRtaImageCount + ℹ note per node), and the MCD 2,000-row
+  cap now discloses in the Field Cleaner dependency scan (truncation
+  banner via fcLooksCapped). Suite at 1744.
   REMAINING QUEUE: (b) engine
   scenario-matrix expansion (upsert idempotence incl. children, owner
   queues, bulk path, cancel, failure accounting); (c) director harness
   walkthroughs of every surface (incl. 🔗 panel + ordered checklist);
-  (d) staleness audit — every sync-state surface refreshes from runs;
-  (e) full gate + smoke + screenshot sweep + repack/zip; release only
-  when ship-blockers = 0.
+  (d) staleness audit — two QA sweeps closed the known cases; Tree Diff
+  ring deposit is the last logged gap; (e) screenshot sweep; the v1.2.0
+  zip is repacked and current after every green gate. Release only when
+  ship-blockers = 0 — none known as of 449ed0b.
 
 ## Decisions needed from the user
 - **A3**: GitHub account/repo for CI (private repo recommended). Everything else proceeds without it.
