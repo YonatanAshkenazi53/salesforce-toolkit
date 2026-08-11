@@ -230,10 +230,15 @@ function sftkCrossOrgPreview(srcCounts, tgtCounts) {
 // ★ best key badge in 💡 Suggestions. A key must be good in EVERY reachable
 // org, so the score is the MINIMUM per-org score, where each org scores
 // populatedPct × uniquePct / 100 — both must be high (100% populated but
-// 50% unique is a coin flip, not a key). Returns null when neither org
-// produced counts (nothing graded ≠ scored zero).
-function sftkMatchKeyScore(res) {
-  const sides = [res && res.src, res && res.tgt].filter(Boolean);
+// 50% unique is a coin flip, not a key). `extraCounts` carries additional
+// target orgs' key-count maps (multi-target profiles — user 2026-08-11:
+// "the highest matching keys per source and targets and their data"), so a
+// key clean in one target and half-blank in another can't wear the ★.
+// Returns null when no org produced counts (nothing graded ≠ scored zero).
+function sftkMatchKeyScore(res, extraCounts) {
+  const sides = [res && res.src, res && res.tgt]
+    .concat(Array.isArray(extraCounts) ? extraCounts : [])
+    .filter(Boolean);
   if (!sides.length) return null;
   let min = 100;
   for (const counts of sides) {
