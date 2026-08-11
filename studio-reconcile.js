@@ -9,12 +9,57 @@
 // Root object only in v1. Bulk actions execute in one Run with a
 // confirmation modal before any destructive delete.
 
-window.openReconcile = function(profileId) {
-  _reconcileProfile = _profiles.find(p => p.id === profileId) || null;
+window.openReconcile = function(profileId, targetUrl) {
+  const p = _profiles.find(x => x.id === profileId) || null;
+  if (!p) { _reconcileProfile = null; renderReconcile(); return; }
+  // Reconcile is PER PAIR (user 2026-08-11: "reconcile occurs per target,
+  // no?") — a multi-target deployment must say WHICH target this session
+  // fixes. One target → straight in, exactly as before.
+  const tgts = (typeof profileTargets === 'function' ? profileTargets(p) : []).filter(Boolean);
+  if (tgts.length > 1 && !targetUrl) {
+    showModal(`
+      <div class="ds-modal-header">⚖ Reconcile — pick the target</div>
+      <div class="ds-modal-body" style="font-size:12.5px">
+        <div style="margin-bottom:8px">Reconcile fixes <strong>one source → target pair</strong> at a time. ${esc(orgLabel(p.sourceOrg))} pushes to ${tgts.length} targets — which one is this session about?</div>
+        ${tgts.map(u => {
+          let rs = null;
+          try { rs = (p.ringScans || {})[(typeof _ringScanKey === 'function') ? _ringScanKey(u) : ''] || null; } catch (_) {}
+          const drift = rs ? (rs.missing || 0) + (rs.changed || 0) + (rs.extra || 0) : null;
+          const st = !rs ? 'not scanned yet'
+            : drift === 0 ? (rs.fileMiss ? `📎 ${rs.fileMiss} missing files` : '✓ in sync')
+            : `${rs.missing} missing · ${rs.changed} changed · ${rs.extra} extra`;
+          return `<button class="ds-btn" style="display:flex;width:100%;margin:4px 0;justify-content:space-between;align-items:center" data-rec-target="${esc(u)}">
+            <span>${esc(orgLabel(u))} ${prodBadge(u)}</span>
+            <span style="font-size:11px;opacity:.75">${st}${rs?.runAt ? ` · ${timeAgo(rs.runAt)}` : ''}</span>
+          </button>`;
+        }).join('')}
+      </div>
+      <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Cancel</button></div>`);
+    document.querySelectorAll('[data-rec-target]').forEach(b =>
+      b.addEventListener('click', () => { closeModal(); window.openReconcile(profileId, b.dataset.recTarget); }));
+    return;
+  }
+  const tgt = targetUrl || tgts[0] || p.targetOrg;
+  if (tgt && _orgKey(tgt) !== _orgKey(p.targetOrg || '')) {
+    // Non-primary target → ephemeral clone, the org-compare pattern (same
+    // as the ring's ⚖). The _ringOf stamp lets the post-run writeback and
+    // ring tiles credit the REAL profile; the saved pair stays untouched.
+    _reconcileProfile = { ...p, id: `pair_${Date.now()}_${p.id}`, _ringOf: { profileId: p.id },
+      name: `${p.name} · ${orgLabel(p.sourceOrg)} → ${orgLabel(tgt)}`,
+      targetOrg: tgt, lastScan: null, ringScans: undefined, ephemeral: true };
+  } else {
+    _reconcileProfile = p;
+  }
   document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
   document.querySelector('[data-view="profiles"]')?.classList.add('active');
   _currentView = 'reconcile';
   renderReconcile();
+  if (_reconcileProfile.ephemeral && !_reconcileProfile.lastScan) {
+    // Fresh pair → scan it now; the chokepoint's auto-reload repaints this
+    // view (and deposits verdicts + ring tiles) when the scan lands.
+    showToast(`Scanning ${orgLabel(tgt)}…`, 'info', 2500);
+    window.refreshProfileState?.(_reconcileProfile.id);
+  }
 };
 
 // Module-scope selection sets so re-renders (after an action) preserve picks
