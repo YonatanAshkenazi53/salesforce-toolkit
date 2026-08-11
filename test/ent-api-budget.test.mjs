@@ -58,6 +58,25 @@ describe('sftkEstimateRunCalls', () => {
     expect(est.known).toBe(true);
   });
 
+  // Engine controls (user 2026-08-11) — the estimate must shift exactly as
+  // the engine shifts, or the budget meter lies about forced modes.
+  it("apiMode 'sync' keeps Collections math even far above the threshold", () => {
+    const est = sftkEstimateRunCalls({ apiMode: 'sync', nodes: [{ records: 5000, isRoot: true }] });
+    expect(est.source).toBe(3 + 2);  // describe + COUNT + ceil(5000/2000)=3 REST pages
+    expect(est.target).toBe(26);     // describe + ceil(5000/200)=25 collections calls
+  });
+
+  it("apiMode 'bulk' prices the job floors even for tiny sets", () => {
+    const est = sftkEstimateRunCalls({ apiMode: 'bulk', nodes: [{ records: 5, isRoot: true }] });
+    expect(est.source).toBe(6);      // describe + COUNT + 4-call bulk-query floor
+    expect(est.target).toBe(8);      // describe + 7-call bulk-ingest floor
+  });
+
+  it('batchSize divides the Collections call count', () => {
+    const est = sftkEstimateRunCalls({ batchSize: 50, nodes: [{ records: 400, isRoot: true }] });
+    expect(est.target).toBe(9);      // describe + ceil(400/50)=8 collections calls
+  });
+
   it('records AT the threshold route to Bulk on both sides (>= not >)', () => {
     const est = sftkEstimateRunCalls({ nodes: [{ records: 2000, isRoot: true }] });
     expect(est.source).toBe(6);   // describe + COUNT + 4-call bulk-query floor

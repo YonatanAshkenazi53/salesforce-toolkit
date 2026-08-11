@@ -424,6 +424,17 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   // Declared once here on purpose: a second hard-coded constant further down
   // is exactly how reads and writes drift apart.
   const BULK_MIN = Number(profile?.bulkThreshold) > 0 ? Number(profile.bulkThreshold) : 2000;
+  // Inspector-style engine controls (user 2026-08-11):
+  //  · apiMode — 'sync' pins the run to synchronous Collections (immediate
+  //    per-record errors) no matter the volume; 'bulk' forces a Bulk API 2.0
+  //    async job even for small sets; 'auto'/absent lets BULK_MIN decide.
+  //  · batchSize — records per Collections call (1-200; 200 is the API max
+  //    and the historical hard-coded value). Smaller batches are slower but
+  //    isolate failures and duck per-transaction trigger CPU / row-lock
+  //    limits in the target. Bulk jobs ignore it — Salesforce chunks those
+  //    internally.
+  const API_MODE   = (profile?.apiMode === 'sync' || profile?.apiMode === 'bulk') ? profile.apiMode : 'auto';
+  const BATCH_SIZE = Math.max(1, Math.min(200, Number(profile?.batchSize) || 200));
 
   // PII MASKING v1 — resolved ONCE per run, before anything is read or
   // written. A non-empty policy without its machine-local salt is a HARD
@@ -732,7 +743,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         } catch (_) { /* count is a routing hint only — never fatal */ }
 
         let bulkRead = null;
-        if (srcCount != null && srcCount >= BULK_MIN) {
+        if (srcCount != null && (API_MODE === 'bulk' || (API_MODE !== 'sync' && srcCount >= BULK_MIN))) {
           try {
             // Bulk query hands back CSV (all strings, '' for blanks, dotted
             // parent columns) — the source describe types drive the reshape
@@ -756,7 +767,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
                 `record(s) (${bulkRead.truncated.reason}) — discarded it and re-read through the REST pager so no record is missed.`);
               bulkRead = null;
             } else {
-              diagnostics.push(`${objType}: ${srcCount} record(s) ≥ ${BULK_MIN} — read with one Bulk API 2.0 query job instead of ${Math.ceil(srcCount / 2000)} REST page(s).`);
+              diagnostics.push(srcCount >= BULK_MIN
+                ? `${objType}: ${srcCount} record(s) ≥ ${BULK_MIN} — read with one Bulk API 2.0 query job instead of ${Math.ceil(srcCount / 2000)} REST page(s).`
+                : `${objType}: Bulk API read forced by engine settings (${srcCount} record(s), one query job).`);
             }
           } catch (e) {
             diagnostics.push(`${objType}: Bulk API read failed (${e.message}) — falling back to the REST pager; no record set was taken from the failed job.`);
@@ -1206,11 +1219,18 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // records either way, so everything downstream is unchanged.
       // BULK_MIN is the run-level threshold declared at the top of this
       // function — the same number gates the Bulk READ (B2) above.
-      const useBulk  = payloads.length >= BULK_MIN;
-      const STEP     = useBulk ? payloads.length : 200;
+      const useBulk  = API_MODE === 'bulk' || (API_MODE !== 'sync' && payloads.length >= BULK_MIN);
+      const STEP     = useBulk ? payloads.length : BATCH_SIZE;
       if (useBulk) {
-        diagnostics.push(`${objType}: ${payloads.length} record(s) ≥ ${BULK_MIN} — using Bulk API 2.0 (one async job).`);
+        diagnostics.push(payloads.length >= BULK_MIN
+          ? `${objType}: ${payloads.length} record(s) ≥ ${BULK_MIN} — using Bulk API 2.0 (one async job).`
+          : `${objType}: Bulk API 2.0 forced by engine settings — one async job for ${payloads.length} record(s).`);
         usedBulk = true;
+      } else if (payloads.length >= BULK_MIN) {
+        diagnostics.push(`${objType}: kept on synchronous Collections by engine settings (${payloads.length} record(s) would normally go Bulk at ≥ ${BULK_MIN}) — slower, but per-record errors are immediate.`);
+      }
+      if (!useBulk && BATCH_SIZE !== 200) {
+        diagnostics.push(`${objType}: batch size ${BATCH_SIZE} (engine settings) — ${Math.ceil(payloads.length / BATCH_SIZE)} Collections call(s) instead of ${Math.ceil(payloads.length / 200)}.`);
       }
       for (let i = 0; i < payloads.length; i += STEP) {
         // Cancel between batches — records already written stay written
@@ -1519,11 +1539,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           }
         }
 
-        // Patch in 200-chunks with PER-CHUNK error containment: one bad chunk
-        // (HTTP 500, session drop) must not mark records patched by earlier
-        // chunks as failed — and must never erase this parent's own summary.
-        for (let ci = 0; ci < updates.length; ci += 200) {
-          const slice = updates.slice(ci, ci + 200);
+        // Patch in BATCH_SIZE chunks (engine settings; historically 200) with
+        // PER-CHUNK error containment: one bad chunk (HTTP 500, session drop)
+        // must not mark records patched by earlier chunks as failed — and
+        // must never erase this parent's own summary.
+        for (let ci = 0; ci < updates.length; ci += BATCH_SIZE) {
+          const slice = updates.slice(ci, ci + BATCH_SIZE);
           try {
             const res = await sfCollectionsUpdate(tgtOrgUrl, tgtSid, slice);
             (Array.isArray(res) ? res : []).forEach((rr, j) => {

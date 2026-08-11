@@ -71,7 +71,7 @@ function _trProgressHandler(logEl) {
 // plus the index-parallel profile tree into the estimator's plan shape.
 // A null count (COUNT() failed) stays null — the estimator then reports
 // known:false instead of inventing a number.
-function sftkPlanFromCounts(counts, tree, bulkThreshold, ownerMatch) {
+function sftkPlanFromCounts(counts, tree, bulkThreshold, ownerMatch, engine) {
   const nodes = [];
   (function walk(c, t, parentRecords, isRoot) {
     if (!c) return;
@@ -86,7 +86,8 @@ function sftkPlanFromCounts(counts, tree, bulkThreshold, ownerMatch) {
     const tkids = (t && t.children) || [];
     for (let i = 0; i < kids.length; i++) walk(kids[i], tkids[i], records, false);
   })(counts, tree, null, true);
-  return { bulkThreshold, ownerMatch: !!ownerMatch, nodes };
+  return { bulkThreshold, ownerMatch: !!ownerMatch, nodes,
+    apiMode: engine?.apiMode, batchSize: engine?.batchSize };
 }
 
 // Pure — same plan shape, but from a finished run's summary (actuals).
@@ -94,7 +95,7 @@ function sftkPlanFromCounts(counts, tree, bulkThreshold, ownerMatch) {
 // ABSENT from the summary is unknown (→ known:false downstream), never zero.
 // viaBulk from the summary pins the write path (bulkWrite true/false) so the
 // post-run figure reflects what the engine actually did, not the threshold.
-function sftkPlanFromRunSummary(tree, summary, bulkThreshold, ownerMatch) {
+function sftkPlanFromRunSummary(tree, summary, bulkThreshold, ownerMatch, engine) {
   const nodes = [];
   (function walk(t, parentRecords, isRoot) {
     if (!t) return;
@@ -110,7 +111,8 @@ function sftkPlanFromRunSummary(tree, summary, bulkThreshold, ownerMatch) {
     });
     for (const c of (t.children || [])) walk(c, records, false);
   })(tree, null, true);
-  return { bulkThreshold, ownerMatch: !!ownerMatch, nodes };
+  return { bulkThreshold, ownerMatch: !!ownerMatch, nodes,
+    apiMode: engine?.apiMode, batchSize: engine?.batchSize };
 }
 
 // Pure — estimate the API calls a run will make, derived from what
@@ -140,6 +142,12 @@ function sftkPlanFromRunSummary(tree, summary, bulkThreshold, ownerMatch) {
 // be weighed against ITS OWN remaining daily budget.
 function sftkEstimateRunCalls(plan) {
   const thr = Number(plan && plan.bulkThreshold) > 0 ? Number(plan.bulkThreshold) : 2000;
+  // Engine settings shift the estimate exactly as they shift the engine:
+  // apiMode 'bulk' → every read/write is a job (threshold 0); 'sync' → no
+  // job ever (threshold ∞); batchSize divides the Collections call count.
+  const mode   = (plan && (plan.apiMode === 'sync' || plan.apiMode === 'bulk')) ? plan.apiMode : 'auto';
+  const bulkAt = mode === 'bulk' ? 0 : mode === 'sync' ? Infinity : thr;
+  const bs     = Math.max(1, Math.min(200, Number(plan && plan.batchSize) || 200));
   const BULK_READ_CALLS = 4, BULK_WRITE_CALLS = 7;
   let source = 0, target = 0, known = true, anyRecords = false;
   for (const node of ((plan && plan.nodes) || [])) {
@@ -151,7 +159,7 @@ function sftkEstimateRunCalls(plan) {
     if (node.isRoot) {
       source += 1;                                  // COUNT() routing call
       if (n === null) source += 1;                  // at least one read page
-      else if (n >= thr) source += BULK_READ_CALLS;
+      else if (n >= bulkAt) source += BULK_READ_CALLS;
       else source += Math.max(1, Math.ceil(n / 2000));
     } else {
       const pn = Number.isFinite(node && node.parentRecords) ? Math.max(0, node.parentRecords) : null;
@@ -162,9 +170,9 @@ function sftkEstimateRunCalls(plan) {
     if (!nodeSkipped) {
       if (n === null) target += 1;                  // at least one write attempt
       else if (n > 0) {
-        const bulk = node.bulkWrite === true || (node.bulkWrite == null && n >= thr);
-        target += bulk ? BULK_WRITE_CALLS : Math.ceil(n / 200);
-        if (node.childFirst) target += Math.ceil(n / 200);   // connect-step updates
+        const bulk = node.bulkWrite === true || (node.bulkWrite == null && n >= bulkAt);
+        target += bulk ? BULK_WRITE_CALLS : Math.ceil(n / bs);
+        if (node.childFirst) target += Math.ceil(n / bs);    // connect-step updates
       }
     }
   }
@@ -280,7 +288,8 @@ async function _trUpdateApiBudget() {
   if (!_transferProfile?.tree || !_trLastCounts) { el.textContent = ''; return; }
   const tok = ++_trBudgetToken;
   const plan = sftkPlanFromCounts(_trLastCounts, buildTransferProfile().tree,
-    _transferProfile.bulkThreshold, _transferProfile?.ownerMapping?.mode === 'match');
+    _transferProfile.bulkThreshold, _transferProfile?.ownerMapping?.mode === 'match',
+    { apiMode: _transferProfile?.apiMode, batchSize: _transferProfile?.batchSize });
   const est = sftkEstimateRunCalls(plan);
   el.textContent = sftkApiBudgetLine(est, []).text;   // estimate now, meters next
   const [sb, tb] = await Promise.all([
@@ -404,6 +413,20 @@ async function renderTransfer() {
             title="The external-Id field on the ROOT object used to match existing target records. Insert if no match, update if matched."
             value="${esc(_transferUpsertField)}">
         </div>
+        <div class="ds-transfer-option">
+          <label class="ds-transfer-option-label" for="dsTrApiMode">Engine:</label>
+          <select id="dsTrApiMode" class="ds-select ds-select-sm" style="width:auto"
+            title="How records are written. Auto: synchronous Collections calls (immediate per-record errors) below the threshold, one async Bulk API 2.0 job at or above it. Synchronous: always Collections, any volume — slower at scale but every error is immediate and per-record. Async: always a Bulk API 2.0 job, even for small sets — one job, results collected when Salesforce finishes.">
+            <option value="auto" ${(_transferProfile?.apiMode || 'auto') === 'auto' ? 'selected' : ''}>Auto — Bulk job at ≥ ${Number(_transferProfile?.bulkThreshold) > 0 ? Number(_transferProfile.bulkThreshold).toLocaleString() : '2,000'}</option>
+            <option value="sync" ${_transferProfile?.apiMode === 'sync' ? 'selected' : ''}>Synchronous — Collections only</option>
+            <option value="bulk" ${_transferProfile?.apiMode === 'bulk' ? 'selected' : ''}>Async — Bulk API 2.0 job</option>
+          </select>
+          <label class="ds-transfer-option-label" for="dsTrBatchSize" style="margin-left:10px"
+            title="Records per synchronous Collections call (1-200; 200 is the Salesforce maximum and the default). Smaller batches are slower but isolate failures and can duck per-transaction trigger CPU / row-lock limits in a busy target. Bulk jobs ignore this — Salesforce chunks those internally.">Batch size:</label>
+          <input id="dsTrBatchSize" class="ds-input ds-input-sm" type="number" min="1" max="200" step="1"
+            style="width:76px" value="${Math.max(1, Math.min(200, Number(_transferProfile?.batchSize) || 200))}">
+          <span class="ds-subtext" style="font-size:11px" id="dsTrEngineNote">${_transferProfile?.apiMode === 'bulk' ? 'batch size does not apply to Bulk jobs' : ''}</span>
+        </div>
       </div>
 
       <div class="ds-transfer-footer">
@@ -467,6 +490,26 @@ async function renderTransfer() {
     else { const sel = eid('dsTrUpsertSelect'); if (sel) sel.style.display = 'none'; }
   });
   eid('dsTrUpsertField')?.addEventListener('input', e => { _transferUpsertField = e.target.value.trim(); });
+  // Engine controls persist ON THE PROFILE — the engine reads
+  // profile.apiMode / profile.batchSize at run time, so a saved choice
+  // applies to scheduled/fan-out runs of this deployment too.
+  eid('dsTrApiMode')?.addEventListener('change', async e => {
+    if (!_transferProfile) return;
+    const v = e.target.value;
+    if (v === 'sync' || v === 'bulk') _transferProfile.apiMode = v;
+    else delete _transferProfile.apiMode;
+    const note = eid('dsTrEngineNote');
+    if (note) note.textContent = v === 'bulk' ? 'batch size does not apply to Bulk jobs' : '';
+    await storageSaveProfiles();
+  });
+  eid('dsTrBatchSize')?.addEventListener('change', async e => {
+    if (!_transferProfile) return;
+    const n = Math.max(1, Math.min(200, parseInt(e.target.value, 10) || 200));
+    e.target.value = n;
+    if (n === 200) delete _transferProfile.batchSize;   // default stays implicit
+    else _transferProfile.batchSize = n;
+    await storageSaveProfiles();
+  });
   eid('dsGoToProfiles')?.addEventListener('click', () => {
     document.querySelectorAll('.ds-nav-btn').forEach(b =>
       b.classList.toggle('active', b.dataset.view === 'profiles'));
@@ -1937,7 +1980,8 @@ async function runTransfer() {
   // reported (its cost is unknown, not zero). Purely informational.
   try {
     const usedPlan = sftkPlanFromRunSummary(buildTransferProfile().tree, result.summary,
-      _transferProfile?.bulkThreshold, _transferProfile?.ownerMapping?.mode === 'match');
+      _transferProfile?.bulkThreshold, _transferProfile?.ownerMapping?.mode === 'match',
+      { apiMode: _transferProfile?.apiMode, batchSize: _transferProfile?.batchSize });
     const used = sftkEstimateRunCalls(usedPlan);
     if (Number.isFinite(used.total)) {
       const plus = used.known === false ? '+' : '';
@@ -2451,7 +2495,8 @@ window.openFanOut = async function (profileId, opts = {}) {
     const box = eid('dsFanoutBudget');
     if (!box) return;
     const est = (typeof sftkEstimateRunCalls === 'function' && _trLastCounts)
-      ? sftkEstimateRunCalls(sftkPlanFromCounts(_trLastCounts, p.tree, p.bulkThreshold, p.ownerMapping?.mode === 'match'))
+      ? sftkEstimateRunCalls(sftkPlanFromCounts(_trLastCounts, p.tree, p.bulkThreshold, p.ownerMapping?.mode === 'match',
+          { apiMode: p.apiMode, batchSize: p.batchSize }))
       : null;
     const per = est && Number.isFinite(est.total) ? est.total : null;
     const head = per == null
