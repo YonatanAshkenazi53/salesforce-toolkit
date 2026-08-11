@@ -932,6 +932,8 @@ html, body {
 .ds-diff-drift   { background: #FEF3C7; color: #92400E; }
 .ds-diff-sync    { background: #D1FAE5; color: #065F46; }
 .ds-diff-extra   { background: #DBEAFE; color: #1E40AF; }
+/* 🟢 the fourth bucket — Synced (user 2026-08-11: "do a green tab") */
+.ds-diff-sync    { background: #DCFCE7; color: #166534; }
 .ds-diff-stale   { font-size: 10.5px; color: var(--subtext); margin-left: auto; }
 .ds-profile-card-diff-empty { background: transparent; border-style: dashed; }
 .ds-diff-empty-hint { font-size: 11px; color: var(--subtext); font-style: italic; }
@@ -939,6 +941,7 @@ html, body {
 .ds-dark .ds-diff-drift   { background: #3F2701; color: #FCD34D; }
 .ds-dark .ds-diff-sync    { background: #052E1A; color: #6EE7B7; }
 .ds-dark .ds-diff-extra   { background: #1E2C4D; color: #93C5FD; }
+.ds-dark .ds-diff-sync    { background: #14301D; color: #86EFAC; }
 
 /* Make the result-panel scrollbar visible in dark mode (the default
    semi-transparent black thumb disappears on a dark background). */
@@ -2198,6 +2201,8 @@ html, body {
      grid keeps the bar below the columns and each list scrolls inside. */
   height: clamp(320px, calc(100vh - 360px), 700px);
 }
+/* Root reconcile carries the 🟢 Synced tab as a fourth column. */
+.ds-rec-cols-4 { grid-template-columns: repeat(4, 1fr); }
 .ds-rec-col {
   border: 1px solid var(--border);
   border-radius: 8px;

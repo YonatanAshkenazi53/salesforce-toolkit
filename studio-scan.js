@@ -681,21 +681,28 @@ function sftkPicklistGaps(records, comparePlanOrFields, tgtDescribeFieldsMap, op
 // Push-directional on purpose — extra target files are not drift when the
 // flow is source-of-truth → target. Multiset compare: two copies of the
 // same checksum in the source need two in the target.
+// Entries may be plain checksum strings (legacy/tests) or { checksum, title }
+// — the UI needs titles so the user can SELECT individual files to move.
 function sftkFileDriftCompare(pairs, srcFilesByRec, tgtFilesByRec) {
+  const norm = e => (typeof e === 'string' ? { checksum: e, title: '' } : (e || { checksum: '', title: '' }));
   const rows = []; let missingFiles = 0;
   for (const p of (pairs || [])) {
-    const src = (srcFilesByRec && srcFilesByRec[p.sourceId]) || [];
+    const src = ((srcFilesByRec && srcFilesByRec[p.sourceId]) || []).map(norm);
     if (!src.length) continue;
     const tgt = new Map();
-    for (const c of ((tgtFilesByRec && tgtFilesByRec[p.targetId]) || [])) {
-      tgt.set(c, (tgt.get(c) || 0) + 1);
+    for (const e of ((tgtFilesByRec && tgtFilesByRec[p.targetId]) || []).map(norm)) {
+      tgt.set(e.checksum, (tgt.get(e.checksum) || 0) + 1);
     }
-    let miss = 0;
-    for (const c of src) {
-      const n = tgt.get(c) || 0;
-      if (n > 0) tgt.set(c, n - 1); else miss++;
+    const files = [];
+    for (const e of src) {
+      const n = tgt.get(e.checksum) || 0;
+      if (n > 0) tgt.set(e.checksum, n - 1);
+      else files.push({ checksum: e.checksum, title: e.title });
     }
-    if (miss > 0) { rows.push({ sourceId: p.sourceId, targetId: p.targetId, missing: miss }); missingFiles += miss; }
+    if (files.length) {
+      rows.push({ sourceId: p.sourceId, targetId: p.targetId, missing: files.length, files });
+      missingFiles += files.length;
+    }
   }
   return { rows, records: rows.length, missingFiles };
 }
@@ -1420,11 +1427,13 @@ async function runDiffScan(profile, node = null, scope = null) {
         for (let i = 0; i < ids.length; i += 200) {
           const lit = ids.slice(i, i + 200).map(id => `'${id}'`).join(',');
           const q = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false,
-            query: `SELECT ContentDocumentId, Checksum FROM ContentVersion WHERE IsLatest = true AND ContentDocumentId IN (${lit})` });
+            query: `SELECT ContentDocumentId, Checksum, Title FROM ContentVersion WHERE IsLatest = true AND ContentDocumentId IN (${lit})` });
           if (q?.error) throw new Error(q.error);
-          for (const v of (q.records || [])) sumByDoc[v.ContentDocumentId] = v.Checksum;
+          for (const v of (q.records || [])) sumByDoc[v.ContentDocumentId] = { checksum: v.Checksum, title: v.Title || '' };
         }
-        for (const [rec, doc] of docOwner) (out[rec] = out[rec] || []).push(sumByDoc[doc] || doc);
+        for (const [rec, doc] of docOwner) {
+          (out[rec] = out[rec] || []).push(sumByDoc[doc] || { checksum: doc, title: '' });
+        }
         return out;
       };
       const srcFiles = await filesByRec(srcSess, fPairs.map(fp => fp.sourceId));
