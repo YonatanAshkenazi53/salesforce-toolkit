@@ -769,6 +769,16 @@ anchor-based plan edit accidentally deleted it)
   auto-displays it (load-older pagination + full-archive JSON export);
   quota-spill retry on storage.set failure; retention/Clear delete BOTH
   tiers; counts-only strips both tiers. New test/history-archive.test.mjs.
+- [ ] RING v2 CANDIDATE (live-data find 2026-08-11): the ring watches the
+  ROOT object only — a 2-day-old parent-object drift (extra junk SN in
+  ashkenazy7) sat invisible until a raw API query found it. Options: ring
+  cells aggregate the TREE (parents included, like Tree diff), or the
+  crown-change re-baseline also runs compare-parents per deployment.
+- [ ] DATA-QUALITY CANDIDATE (live-data find 2026-08-11): junk-named
+  records in the source of truth replicate faithfully to every org
+  (SN "zxczxc…" now lives in 3 orgs). A Field-Audit-style pass could
+  flag suspicious names (keyboard-mash entropy, test-y patterns) before
+  they ride a deployment.
 - [x] QA SWEEP ROUND 2 (2026-08-11, commit 8b85d6b): the four
   verify-orphaned findings re-verified inline — all real, all fixed
   (sftkParentSyncPut newest-wins + tests; ⚖ repair updates its own ring
