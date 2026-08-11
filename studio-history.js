@@ -206,8 +206,8 @@ function histExportPayload(entries, settings, opts) {
     };
   });
   const retentionNote = (days > 0
-    ? `This file contains the ${runs.length} run(s) currently retained. Runs older than ${days} day(s) are purged automatically per the retention setting, and history keeps at most the last 100 runs — anything already purged is NOT in this file.`
-    : `This file contains the ${runs.length} run(s) currently retained. Retention is set to "keep forever", but history still keeps at most the last 100 runs — older runs beyond that cap are NOT in this file.`)
+    ? `This file contains the ${runs.length} run(s) passed to this export. Runs older than ${days} day(s) are DELETED automatically per the retention setting (from the hot tier AND the on-PC archive) and cannot appear in any export.`
+    : `This file contains the ${runs.length} run(s) passed to this export. Retention is "keep forever": the newest 100 runs stay hot, older runs move to the on-PC 📦 archive — the History page's "Export all (incl. archive)" bundles both.`)
     + (s.countsOnly ? ' Counts-only mode is ON: per-record ids and labels are stripped from history at write time, so runs carry counts and errors but no record-level detail.' : '');
   return {
     format: 'sftk-history-export',
@@ -234,20 +234,25 @@ function histExportFilename(entry) {
 
 // History filters — module state so they survive re-renders within a session.
 let _histFilter = { status: '', profileId: '' };
+// 📦 Archived runs the user loaded into the view this session (IndexedDB
+// tier — see sftk-archive.js). Cleared with the archive itself.
+let _archShown = [];
 
 function renderHistory() {
-  if (!_history.length) {
+  if (!_history.length && !_archShown.length) {
     setMain(`
       ${dsViewHeader({ icon: 'scroll', title: 'History' })}
       <div class="ds-empty-page">
         <div class="ds-empty-icon">${window.sftkCatSvg('sleep', 72)}</div>
         <div class="ds-empty-title">No transfers yet</div>
         <div class="ds-empty-sub">Run a transfer and the results will appear here.</div>
-      </div>`);
+      </div>
+      <div id="dsArchBar" class="ds-pk-note" style="margin:0 auto;max-width:640px"></div>`);
+    _histFillArchBar();
     return;
   }
 
-  const sorted = [..._history].sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
+  const sorted = [..._history, ..._archShown].sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
 
   // Apply filters (status chip + profile dropdown).
   const filtered = sorted.filter(run =>
@@ -266,9 +271,9 @@ function renderHistory() {
     ${dsViewHeader({
       icon: 'scroll',
       title: 'History',
-      // sorted is the full retained set — the filter row below counts against
-      // the same array, so the two numbers can never disagree.
-      count: `${sorted.length} run${sorted.length !== 1 ? 's' : ''} retained`,
+      // sorted is the full displayed set — the filter row below counts
+      // against the same array, so the two numbers can never disagree.
+      count: `${_history.length} run${_history.length !== 1 ? 's' : ''} retained${_archShown.length ? ` · 📦 ${_archShown.length} archived shown` : ''}`,
       actions: `<select id="dsRetentionDays" class="ds-select ds-select-sm" title="Runs older than this are purged automatically when the Studio opens">
           ${[[7, 'Keep 7 days'], [30, 'Keep 30 days'], [90, 'Keep 90 days'], [0, 'Keep forever']].map(([v, lbl]) =>
             `<option value="${v}" ${_settings.historyDays === v ? 'selected' : ''}>${lbl}</option>`).join('')}
@@ -317,6 +322,7 @@ function renderHistory() {
               ${run.status === 'success' ? '✅' : run.status === 'partial' ? '⚠' : '❌'} ${run.status}
             </span>
             <span class="ds-history-profile-name">${esc(run.profileName || 'Unknown profile')}</span>
+            ${run._archived ? '<span class="ds-chip" title="Loaded from the 📦 on-PC archive (IndexedDB) — runs that aged past the 100-run hot cap live there instead of being deleted">📦 archived</span>' : ''}
             ${run.scheduledRun ? '<span class="ds-chip">📅 scheduled</span>' : ''}
             <span class="ds-history-time">${timeAgo(run.startedAt)}</span>
             ${retryable ? `<button class="ds-btn ds-btn-xs ds-btn-primary" data-dsaction="retryFailed" data-arg="${esc(run.id)}"
@@ -535,7 +541,9 @@ function renderHistory() {
         </div>`;
       }).join('')}
     </div>
+    <div id="dsArchBar" class="ds-pk-note" style="margin-top:10px"></div>
   `);
+  _histFillArchBar();
 
   // Retention controls (Security S5)
   eid('dsRetentionDays')?.addEventListener('change', async e => {
@@ -603,10 +611,12 @@ function renderHistory() {
       // The in-memory dependency map would otherwise keep serving the data we
       // just deleted from disk until the popup is reopened.
       try { window.DependencyMap?.clearCache?.(); } catch (_) {}
+      _archShown = [];
       await Promise.all([
         storageSaveHistory(),
         storageSaveProfiles(),
         chrome.storage.local.set({ ds_activity_log: {} }),
+        (typeof sftkArchClear === 'function') ? sftkArchClear() : Promise.resolve(),
       ]);
       showToast(`Cleared: history, ${scans} scan result${scans !== 1 ? 's' : ''}, match memory on ${mems} deployment${mems !== 1 ? 's' : ''}, activity log, ${cachedKeys.length} cached org-data entr${cachedKeys.length !== 1 ? 'ies' : 'y'}`, 'success');
       renderHistory();
@@ -624,6 +634,8 @@ function renderHistory() {
     eid('dsConfirmClearHistory')?.addEventListener('click', async () => {
       closeModal();
       _history = [];
+      _archShown = [];
+      if (typeof sftkArchClear === 'function') await sftkArchClear();   // "all" includes the 📦 archive
       await storageSaveHistory();
       renderHistory();
     });
@@ -640,7 +652,8 @@ function renderHistory() {
   eid('dsHistExportAll')?.addEventListener('click', _histShowExportAllModal);
   document.querySelectorAll('[data-hist-export]').forEach(b =>
     b.addEventListener('click', () => {
-      const run = _history.find(r => r.id === b.dataset.histExport);
+      const run = _history.find(r => r.id === b.dataset.histExport)
+        || _archShown.find(r => r.id === b.dataset.histExport);
       if (run) _histShowRunExportModal(run);
     }));
 }
@@ -720,6 +733,56 @@ function _histShowRunExportModal(run) {
   });
 }
 
+// ── 📦 Archive bar (user 2026-08-11: "auto download, and auto display it
+// from PC storage — we can hit limits there very fast") ──────────────────
+// Runs that age past the 100-run hot cap move to IndexedDB (sftk-archive.js)
+// instead of being deleted; this bar surfaces them: count, load-older
+// pagination into the same card list, and a full export that walks the
+// entire archive. Filled async — IndexedDB never blocks first paint.
+async function _histFillArchBar() {
+  const bar = eid('dsArchBar');
+  if (!bar || typeof sftkArchCount !== 'function') return;
+  let total = 0;
+  try { total = await sftkArchCount(); } catch (_) { return; }
+  if (!total) { bar.innerHTML = ''; bar.style.display = 'none'; return; }
+  bar.style.display = '';
+  const remaining = Math.max(0, total - _archShown.length);
+  bar.innerHTML = `📦 <strong>${total}</strong> older run${total !== 1 ? 's' : ''} archived on this PC
+    <span class="ds-subtext">(IndexedDB — outside the extension's ~10MB quota; runs land here instead of being deleted when they age past the 100-run cap)</span>${_archShown.length ? ` · ${_archShown.length} shown above` : ''}
+    ${remaining ? `<button class="ds-btn ds-btn-xs" id="dsArchLoad" style="margin-left:8px">⬇ Show ${Math.min(50, remaining)} older</button>` : ''}
+    <button class="ds-btn ds-btn-xs" id="dsArchExport" style="margin-left:4px"
+      title="Download ONE JSON audit file containing the retained runs above plus every archived run">⬇ Export all (incl. archive)</button>`;
+  eid('dsArchLoad')?.addEventListener('click', async () => {
+    const shown = [..._history, ..._archShown];
+    const oldest = shown.reduce((m, h) => (h.startedAt && (!m || h.startedAt < m)) ? h.startedAt : m, null);
+    try {
+      const page = await sftkArchList(oldest, 50);
+      const have = new Set(shown.map(h => h.id));
+      _archShown.push(...page.filter(e => !have.has(e.id)).map(e => ({ ...e, _archived: true })));
+      renderHistory();
+    } catch (e) {
+      showToast(`Could not read the archive: ${e?.message || e}`, 'error', 5000);
+    }
+  });
+  eid('dsArchExport')?.addEventListener('click', async () => {
+    try {
+      // One cursor walk gets everything — no pagination seams to lose
+      // same-second entries between pages.
+      const arch = await sftkArchList(null, 1e9);
+      const archIds = new Set(arch.map(h => h.id));
+      const entries = [...arch, ..._history.filter(h => !archIds.has(h.id))]
+        .sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
+      const nowIso = new Date().toISOString();
+      const stamp = `${nowIso.slice(0, 10)}-${nowIso.slice(11, 19).replace(/:/g, '')}`;
+      const payload = histExportPayload(entries, _settings, { labels: _histLabelsMap(entries), nowIso });
+      _histDownload(`sftk-history-full-${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
+      showToast(`Exported ${entries.length} run(s) — retained + archived`, 'success', 4000);
+    } catch (e) {
+      showToast(`Archive export failed: ${e?.message || e}`, 'error', 5000);
+    }
+  });
+}
+
 function _histShowExportAllModal() {
   const sorted = [..._history].sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
   const days = _settings.historyDays || 0;
@@ -734,7 +797,7 @@ function _histShowExportAllModal() {
     <div class="ds-modal-header">⬇ Export run history</div>
     <div class="ds-modal-body" style="font-size:12.5px">
       <div>${esc(retentionLine)}</div>
-      <div style="margin-top:4px;opacity:.85">History always keeps at most the last 100 runs — anything beyond that cap is gone and cannot be exported.</div>
+      <div style="margin-top:4px;opacity:.85">This exports the RETAINED (newest 100) runs only — runs past that cap live in the 📦 on-PC archive; use "⬇ Export all (incl. archive)" in the 📦 bar below the list to get everything in one file.</div>
       ${_settings.countsOnly ? `<div style="margin-top:4px;opacity:.85">⚠ Counts-only mode is ON: entries carry counts and errors but no per-record ids or labels.</div>` : ''}
       <div style="margin-top:8px">
         <strong>JSON</strong> — every retained run in full detail (an array, one element per run).<br>

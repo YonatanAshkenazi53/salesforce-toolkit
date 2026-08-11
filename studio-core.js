@@ -534,15 +534,22 @@ async function storageLoad() {
   syncRingFollowers();
 
   // Retention (S5): purge history entries older than the configured window.
-  if (_settings.historyDays > 0 && _history.length) {
+  // "Delete after N days" means DELETE — the on-PC archive purges too, not
+  // just the hot tier (the archive must never become a hidden copy).
+  if (_settings.historyDays > 0) {
     const cutoff = Date.now() - _settings.historyDays * 86400000;
-    const kept = _history.filter(h => {
-      const t = new Date(h.startedAt || h.finishedAt || 0).getTime();
-      return !Number.isFinite(t) || t === 0 || t >= cutoff;   // keep undated entries
-    });
-    if (kept.length !== _history.length) {
-      _history = kept;
-      storageSaveHistory().catch(() => {});
+    if (_history.length) {
+      const kept = _history.filter(h => {
+        const t = new Date(h.startedAt || h.finishedAt || 0).getTime();
+        return !Number.isFinite(t) || t === 0 || t >= cutoff;   // keep undated entries
+      });
+      if (kept.length !== _history.length) {
+        _history = kept;
+        storageSaveHistory().catch(() => {});
+      }
+    }
+    if (typeof sftkArchDeleteOlderThan === 'function') {
+      sftkArchDeleteOlderThan(new Date(cutoff).toISOString()).catch(() => {});
     }
   }
 
@@ -591,21 +598,50 @@ async function storageSaveWorkingPair() {
   await chrome.storage.local.set({ ds_working_pair: _workingPair });
 }
 
-async function storageSaveHistory() {
-  if (_history.length > 100) _history = _history.slice(-100);
-  // Counts-only mode (S5): strip per-record ids/labels before anything hits
-  // disk. Counts, errors, and org URLs stay; record links disappear.
-  if (_settings.countsOnly) {
-    for (const h of _history) {
-      delete h.failedSourceIds;
-      if (h.summary) for (const obj of Object.values(h.summary)) {
-        if (obj && typeof obj === 'object') {
-          delete obj.targetRecords; delete obj.failedRecords; delete obj.failedSourceIds;
-        }
+// Counts-only mode (S5): strip per-record ids/labels before anything hits
+// disk. Counts, errors, and org URLs stay; record links disappear. Applied
+// to BOTH tiers — the archive stores exactly what the hot tier would.
+function _historyStripCountsOnly(entries) {
+  if (!_settings.countsOnly) return;
+  for (const h of (entries || [])) {
+    delete h.failedSourceIds;
+    if (h.summary) for (const obj of Object.values(h.summary)) {
+      if (obj && typeof obj === 'object') {
+        delete obj.targetRecords; delete obj.failedRecords; delete obj.failedSourceIds;
       }
     }
   }
-  await chrome.storage.local.set({ sftk_history: _history });
+}
+
+async function storageSaveHistory() {
+  // Two tiers (user 2026-08-11: "we can hit limits there very fast") — the
+  // hot tier stays the newest 100 in chrome.storage; overflow runs are
+  // ARCHIVED to IndexedDB (on-PC, GB-scale) instead of deleted forever.
+  const split = (typeof sftkHistorySplit === 'function')
+    ? sftkHistorySplit(_history, 100)
+    : { keep: _history.slice(-100), overflow: [] };
+  _history = split.keep;
+  _historyStripCountsOnly(_history);
+  if (split.overflow.length && typeof sftkArchPut === 'function') {
+    _historyStripCountsOnly(split.overflow);
+    sftkArchPut(split.overflow).catch(() => { /* archive is best-effort */ });
+  }
+  try {
+    await chrome.storage.local.set({ sftk_history: _history });
+  } catch (e) {
+    // QUOTA path: spill the older half of the hot tier to the archive and
+    // retry ONCE — losing the newest runs silently is the one outcome this
+    // feature exists to prevent.
+    const spill = _history.slice(0, Math.ceil(_history.length / 2));
+    _history = _history.slice(spill.length);
+    if (typeof sftkArchPut === 'function') { try { await sftkArchPut(spill); } catch (_) {} }
+    try {
+      await chrome.storage.local.set({ sftk_history: _history });
+      showToast?.('Storage quota hit — older runs were moved to the on-PC archive (History page → 📦).', 'warning', 6000);
+    } catch (e2) {
+      showToast?.(`History could not be saved (${e2?.message || 'storage quota'}) — export it from the History page before it is lost.`, 'error', 8000);
+    }
+  }
 }
 
 async function storageSaveSettings() {

@@ -314,21 +314,24 @@ describe('histExportPayload — JSON export with honest retention note', () => {
     'https://tgt.my.salesforce.com': 'UAT',
   };
 
-  it('states the retained count and the N-day purge in the note', () => {
+  it('states the run count and the N-day purge in the note', () => {
     const p = histExportPayload([FULL_RUN, RECONCILE_RUN], { historyDays: 30, countsOnly: false },
       { labels, nowIso: '2026-07-29T15:00:00.000Z' });
     expect(p.runCount).toBe(2);
-    expect(p.note).toMatch(/2 run\(s\) currently retained/);
-    expect(p.note).toMatch(/older than 30 day\(s\) are purged/);
-    expect(p.note).toMatch(/NOT in this file/);
+    expect(p.note).toMatch(/2 run\(s\) passed to this export/);
+    // Retention now DELETES from both tiers (hot + 📦 archive) — the note
+    // must say the purge is unrecoverable, not imply an archive copy.
+    expect(p.note).toMatch(/older than 30 day\(s\) are DELETED/);
+    expect(p.note).toMatch(/hot tier AND the on-PC archive/);
     expect(p.retention).toEqual({ historyDays: 30, countsOnly: false, maxRuns: 100 });
     expect(p.exportedAt).toBe('2026-07-29T15:00:00.000Z');
   });
 
-  it('keep-forever setting still discloses the 100-run cap', () => {
+  it('keep-forever setting discloses the two-tier layout (hot cap + 📦 archive)', () => {
     const p = histExportPayload([FULL_RUN], { historyDays: 0, countsOnly: false }, {});
     expect(p.note).toMatch(/keep forever/);
-    expect(p.note).toMatch(/at most the last 100 runs/);
+    expect(p.note).toMatch(/newest 100 runs stay hot/);
+    expect(p.note).toMatch(/on-PC 📦 archive/);
   });
 
   it('counts-only mode is disclosed in the note and per-run recordDetailNote', () => {
