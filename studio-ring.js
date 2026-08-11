@@ -155,7 +155,8 @@ function renderRing() {
       _workingPair.src = r.value;
       await chrome.storage.local.set({ ds_ring: _ring });
       storageSaveWorkingPair();
-      if (typeof syncRingFollowers === 'function') syncRingFollowers();
+      const moved = (typeof syncRingFollowers === 'function') ? syncRingFollowers() : null;
+      if (moved?.srcMoved) showToast(`👑 ${moved.srcMoved} deployment(s) now flow FROM ${orgLabel(r.value)} — their earlier compares are marked stale and rescan automatically.`, 'info', 6000);
       renderWorkingPair();
       renderRing();
       sftkRingRebaseline('the source of truth changed');

@@ -1541,12 +1541,29 @@ function treeForTarget(tree, tgtUrl) {
 
 function syncRingFollowers() {
   let changed = false;
+  let srcMoved = 0;
+  const crown = (typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2)
+    ? _ring.sourceUrl : '';
   for (const p of (_profiles || [])) {
+    if (!p || p.ephemeral) continue;
+    // SOURCE follows the crown DYNAMICALLY (user 2026-08-11: "if the source
+    // is changed in the toolkit, it needs to be changed here as well…
+    // handle it all dynamically") — unless the user PINNED a custom source
+    // in the Builder (p.sourcePinned). Every move is stamped so the Builder
+    // can warn that compares made before it measured FROM the old source;
+    // the Reconcile stale-guard and the crown-change re-baseline handle the
+    // scans themselves.
+    if (crown && !p.sourcePinned && p.sourceOrg && _orgKey(p.sourceOrg) !== _orgKey(crown)) {
+      p._srcCrownMoved = { from: p.sourceOrg, to: crown, at: new Date().toISOString() };
+      p.sourceOrg = crown;
+      srcMoved++; changed = true;
+    }
     if (!profileFollowsRing(p)) continue;
     const first = profileTargets(p)[0];
     if (first && _orgKey(first) !== _orgKey(p.targetOrg || '')) { p.targetOrg = first; changed = true; }
   }
   if (changed) { try { storageSaveProfiles().catch(() => {}); } catch (_) {} }
+  return { srcMoved };
 }
 
 function renderView(view) {
@@ -1664,9 +1681,8 @@ function renderOrgsPanel() {
           <button class="ds-btn ds-btn-sm" data-dsaction="compareOrgFrom" data-arg="${esc(url)}" title="Compare this org's data against another org (opens Org Compare with this org as the source)">${window.sftkGlyph('🔍 ', '')}Compare with…</button>
           <button class="ds-btn ds-btn-sm" data-dsaction="editOrgLabel" data-arg="${esc(url)}">${window.sftkGlyph('✏ ', '')}Rename</button>
           <button class="ds-btn ds-btn-sm" data-dsaction="toggleReadOnly" data-arg="${esc(url)}" title="${orgData.readOnly ? 'Allow writes to this org again' : 'Block ALL writes to this org (inserts, updates, deletes, deploys)'}">${orgData.readOnly ? `${window.sftkGlyph('🔓 ', '')}Unlock` : `${window.sftkGlyph('🔒 ', '')}Read-only`}</button>
-          ${isOnline
-            ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="startTransferFrom" data-arg="${esc(url)}" title="Copy data INTO this org — opens Run Transfer with this org as the target">${window.sftkGlyph('🚀 ', '')}Transfer into</button>`
-            : `<button class="ds-btn ds-btn-sm ds-btn-danger" data-dsaction="removeOrg" data-arg="${esc(url)}">✕</button>`}
+          ${!isOnline
+            ? `<button class="ds-btn ds-btn-sm ds-btn-danger" data-dsaction="removeOrg" data-arg="${esc(url)}">✕</button>` : ''}
         </div>
       </div>`;
   }).join('');
