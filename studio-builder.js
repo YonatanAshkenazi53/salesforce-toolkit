@@ -1143,7 +1143,17 @@ async function sftkBldFillParentSync() {
   document.querySelectorAll('[data-lkp-syncstate]').forEach(elm => {
     let vd = null;
     try { vd = _parentSyncVerdicts[sftkParentSyncKey(p.sourceOrg, p.targetOrg, elm.dataset.lkpSyncstate)]; } catch (_) { vd = null; }
-    if (!vd) { elm.textContent = ''; elm.className = 'ds-psync'; return; }
+    if (!vd) {
+      // A blank chip read as "not synced" (user 2026-08-11: "parents are not
+      // showing synced but they are synced") — but blank really means NO
+      // SCAN OF THIS PAIR IS ON RECORD. Say that, and say the one-click way
+      // to verify; 🔍 compare parents deposits the verdict for this exact
+      // source→target pair.
+      elm.className = 'ds-psync';
+      elm.textContent = 'state unknown for this org pair — 🔍 compare parents verifies it';
+      elm.title = 'No scan of this object against THIS source→target pair is on record. Synced against a different target does not count — each pair is verified separately. Click 🔍 compare parents (one scan) and this chip fills in.';
+      return;
+    }
     const inSync = !vd.missing && !vd.changed;
     elm.className = `ds-psync ${inSync ? 'ds-psync-ok' : 'ds-psync-bad'}`;
     elm.textContent = inSync

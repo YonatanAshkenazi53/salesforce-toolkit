@@ -213,6 +213,7 @@ function _ringRenderMatrix() {
           missing: (p.lastScan.missingInTarget || []).length,
           changed: (p.lastScan.changed || []).length,
           extra: (p.lastScan.onlyInTarget || []).length,
+          fileMiss: (p.lastScan.fileDrift && !p.lastScan.fileDrift.error && p.lastScan.fileDrift.records) || 0,
           status: p.lastScan.status }
       : null;
     const s = sftkRingCellPick(nat, (p.ringScans || {})[`${_orgKey(ring.sourceUrl || '')}|${k}`]);
@@ -223,14 +224,17 @@ function _ringRenderMatrix() {
       <button class="ds-btn ds-btn-xs" data-ring-scan1="${esc(p.id)}|${esc(tUrl)}" ${live ? '' : 'disabled'}>🔎</button>
     </div>`;
     const drift = (s.missing || 0) + (s.changed || 0) + (s.extra || 0);
+    const fMiss = s.fileMiss || 0;
     const age = s.runAt ? timeAgo(s.runAt) : '';
     const stale = s.runAt && (now - new Date(s.runAt).getTime() > 86400000);
-    return `<div class="ds-ring-cell ${drift === 0 ? 'ds-ring-ok' : 'ds-ring-drift'}" data-ring-cell="${esc(p.id)}|${esc(tUrl)}">
+    return `<div class="ds-ring-cell ${drift === 0 && !fMiss ? 'ds-ring-ok' : 'ds-ring-drift'}" data-ring-cell="${esc(p.id)}|${esc(tUrl)}">
       ${badge}
       ${drift === 0
-        ? `<span class="ds-ring-clean">✓ in sync</span>`
-        : `<span class="ds-ring-counts" title="${s.missing} missing · ${s.changed} changed · ${s.extra} only in target">
-             ${s.missing ? `<b class="ds-ring-m">${s.missing}</b>` : ''}${s.changed ? `<b class="ds-ring-c">${s.changed}</b>` : ''}${s.extra ? `<b class="ds-ring-e">${s.extra}</b>` : ''}
+        ? (fMiss
+          ? `<span class="ds-ring-counts" title="Fields in sync — 📎 ${fMiss} record(s) missing files. NOT fully synced until they move: ⚖ → 🟢 Synced tab → select & move."><b class="ds-ring-c">📎${fMiss}</b></span>`
+          : `<span class="ds-ring-clean">✓ in sync</span>`)
+        : `<span class="ds-ring-counts" title="${s.missing} missing · ${s.changed} changed · ${s.extra} only in target${fMiss ? ` · 📎 ${fMiss} missing files` : ''}">
+             ${s.missing ? `<b class="ds-ring-m">${s.missing}</b>` : ''}${s.changed ? `<b class="ds-ring-c">${s.changed}</b>` : ''}${s.extra ? `<b class="ds-ring-e">${s.extra}</b>` : ''}${fMiss ? `<b class="ds-ring-c">📎</b>` : ''}
            </span>`}
       <span class="ds-ring-age${stale ? ' ds-ring-stale' : ''}" title="${stale ? 'Scan is over a day old' : ''}">${esc(age)}</span>
       <span class="ds-ring-cell-acts">
@@ -326,6 +330,7 @@ async function _ringScanOne(profileId, tgtUrl, btn) {
       changed: (res.changed || []).length,
       extra: (res.onlyInTarget || []).length,
       status: res.status || 'success',
+      ...(res.fileDrift && !res.fileDrift.error && res.fileDrift.records ? { fileMiss: res.fileDrift.records } : {}),
     };
     // M3c: ring scans run on clones — persist this scan's confirmed 1:1
     // pairs into the REAL profile's match memory. ONLY when the ring flow's
@@ -418,6 +423,7 @@ async function _ringOpenReconcile(profileId, tgtUrl) {
     changed: (res.changed || []).length,
     extra: (res.onlyInTarget || []).length,
     status: res.status || 'success',
+    ...(res.fileDrift && !res.fileDrift.error && res.fileDrift.records ? { fileMiss: res.fileDrift.records } : {}),
   };
   if (typeof window.sftkLearnPairs === 'function' && res.learnedPairs?.length
       && _orgKey(p.sourceOrg || '') === _orgKey(ringSrc || '')) {
@@ -515,6 +521,7 @@ async function _ringOpenPlan(profileId) {
           changed: (res.changed || []).length,
           extra: (res.onlyInTarget || []).length,
           status: res.status || 'success',
+          ...(res.fileDrift && !res.fileDrift.error && res.fileDrift.records ? { fileMiss: res.fileDrift.records } : {}),
         };
       }
     } catch (e) { plans.push({ tgt, error: e.message }); }
