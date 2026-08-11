@@ -1090,6 +1090,26 @@ async function openRecordPickerModal(pathStr) {
       </div>`;
   }
 
+  // Plain-language score math (user 2026-08-11: "explain to the user how the
+  // algorithm is calculating the percentage") — ONE shared explainer, shown
+  // under both the 💡 grades and the 🧪 analysis. Collapsible so it teaches
+  // without burying the numbers.
+  function _matchScoreHelp() {
+    return `<details class="ds-subtext" style="font-size:11px;margin-top:6px">
+      <summary style="cursor:pointer">ⓘ How the match score is calculated</summary>
+      <div style="margin-top:4px;line-height:1.55">
+        For every org, two numbers are measured from that org's <strong>live data</strong> (not the schema):<br>
+        · <strong>populated %</strong> — how many records have a value in the key field(s). A blank key can never match anything.<br>
+        · <strong>unique %</strong> — of the populated records, how many hold a value no other record shares. A duplicated value is a coin flip, not an identity.<br>
+        The org's score is <strong>populated % × unique %</strong> — both must be high: 100% populated but 50% unique still mis-matches half the org.
+        A candidate's overall score is the <strong>lowest org's score</strong>, because matching runs in every org — a key that's blank or duplicated in ONE org will mis-match there no matter how clean it looks elsewhere.
+        <strong>100/100</strong> means: every record has a value and no two records share it, in every graded org.
+        The ★ best key badge only appears at 60+ — "least bad of the candidates" is not a recommendation.
+        Normalize options (ignore case, trim spaces…) are applied <em>before</em> counting, so the score reflects the key exactly as the scan and every run will use it.
+      </div>
+    </details>`;
+  }
+
   // M3b — ranked suggestion rows; mini-grades are computed lazily per row
   // (never auto-run N analyses — API cost).
   function suggestListHtml() {
@@ -1109,7 +1129,7 @@ async function openRecordPickerModal(pathStr) {
       return tgts.length > 1
         ? `<div class="ds-subtext" style="font-size:11px;margin-top:4px">Each grade covers the source + all ${tgts.length} targets — the score is the WORST org's, so one weak org drags the ★ away from a key that only looks good somewhere.</div>`
         : '';
-    })()}`;
+    })()}${_matchScoreHelp()}`;
   }
 
   function renderModal(filter = '') {
@@ -1410,7 +1430,8 @@ async function openRecordPickerModal(pathStr) {
             + _matchAnalysisHtml(res, clone, false));
         }
         matchTestHtml = blocks.join('')
-          + (list.length > 1 ? `<div class="ds-subtext" style="font-size:11px;margin-top:4px">Graded against all ${list.length} targets — a key can be strong in one org and weak in another (different data, different duplicates).</div>` : '');
+          + (list.length > 1 ? `<div class="ds-subtext" style="font-size:11px;margin-top:4px">Graded against all ${list.length} targets — a key can be strong in one org and weak in another (different data, different duplicates).</div>` : '')
+          + _matchScoreHelp();
       } catch (e) {
         const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e?.message || String(e)) : { message: String(e?.message || e) };
         matchTestHtml = `<div class="ds-drift-compare-err" style="margin-top:6px">⚠ Key test failed: ${esc(fe.message)}</div>`;
