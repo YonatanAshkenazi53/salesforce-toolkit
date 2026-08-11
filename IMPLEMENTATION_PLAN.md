@@ -763,6 +763,12 @@ anchor-based plan edit accidentally deleted it)
   workflow over the a2b2917 batch — 5 confirmed bugs (learnedPairs/URL-stamp
   poison in ring deposits, render-scoped auto-grade races + permanent
   failure cache, search-highlight pill destruction) + 7 candidates fixed.
+- [x] HISTORY ARCHIVE (user 2026-08-11, commit 1a172ca): two-tier run
+  history — newest 100 hot in chrome.storage, overflow auto-archives to
+  IndexedDB (sftk-archive.js) instead of being deleted; 📦 bar in History
+  auto-displays it (load-older pagination + full-archive JSON export);
+  quota-spill retry on storage.set failure; retention/Clear delete BOTH
+  tiers; counts-only strips both tiers. New test/history-archive.test.mjs.
 - [x] QA SWEEP ROUND 2 (2026-08-11, commit 8b85d6b): the four
   verify-orphaned findings re-verified inline — all real, all fixed
   (sftkParentSyncPut newest-wins + tests; ⚖ repair updates its own ring
