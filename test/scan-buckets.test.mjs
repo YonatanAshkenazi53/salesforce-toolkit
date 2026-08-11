@@ -565,3 +565,47 @@ describe('background.js sfQueryAll — serverTotal preserved', () => {
     expect(src).toMatch(/totalSize: records\.length/);
   });
 });
+
+// ── 📎 file drift (user 2026-08-11: "they should say the file records are
+// missing and to suggest to move them") — with the Files toggle ON, the scan
+// compares latest-version checksums across matched pairs. Multiset,
+// push-directional: source files absent from the paired target are drift;
+// extra target files are not.
+describe('sftkFileDriftCompare — checksum multiset, push-directional', () => {
+  const { sftkFileDriftCompare } = extractFunctions('studio-scan.js', ['sftkFileDriftCompare']);
+
+  it('flags source files the target lacks, counts per record and total', () => {
+    const pairs = [
+      { sourceId: 'S1', targetId: 'T1' },   // has both files ✓
+      { sourceId: 'S2', targetId: 'T2' },   // missing one
+      { sourceId: 'S3', targetId: 'T3' },   // no source files → never drift
+    ];
+    const src = { S1: ['a', 'b'], S2: ['c', 'd'] };
+    const tgt = { T1: ['b', 'a'], T2: ['c'] };
+    const out = sftkFileDriftCompare(pairs, src, tgt);
+    expect(out.records).toBe(1);
+    expect(out.missingFiles).toBe(1);
+    expect(out.rows).toEqual([{ sourceId: 'S2', targetId: 'T2', missing: 1 }]);
+  });
+
+  it('MULTISET: two copies of the same checksum need two in the target', () => {
+    const out = sftkFileDriftCompare([{ sourceId: 'S1', targetId: 'T1' }], { S1: ['a', 'a'] }, { T1: ['a'] });
+    expect(out.missingFiles).toBe(1);
+  });
+
+  it('extra target files are NOT drift; junk degrades to zero', () => {
+    const out = sftkFileDriftCompare([{ sourceId: 'S1', targetId: 'T1' }], { S1: ['a'] }, { T1: ['a', 'zzz'] });
+    expect(out.records).toBe(0);
+    expect(sftkFileDriftCompare(null, null, null)).toEqual({ rows: [], records: 0, missingFiles: 0 });
+  });
+
+  it('the scan runs it only when the Files toggle is ON, and failure is disclosed', () => {
+    const src = codeOnly(srcOf('studio-scan.js'));
+    expect(src).toMatch(/profile\?\.tree\?\.includeFiles === true && \(identical\.length \+ changed\.length\)/);
+    expect(src).toMatch(/fileDrift = \{ error: e\?\.message \|\| String\(e\) \}/);
+    // The reconcile surface renders drift WITH suspects and the suggestion.
+    const rec = codeOnly(srcOf('studio-reconcile.js'));
+    expect(rec).toMatch(/missing in the target<\/strong> — the records match, their attachments don't/);
+    expect(rec).toMatch(/file differences are UNKNOWN, not zero/);
+  });
+});
