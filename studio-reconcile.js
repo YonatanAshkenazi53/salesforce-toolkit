@@ -953,7 +953,31 @@ async function renderReconcile() {
         title="Manually pair 'in source only' rows with 'in target only' rows that are actually the same record (renamed, typo'd, …). Pairs are remembered per target org and match by identity on every future scan.${(capInfo('missingInTarget').capped || capInfo('onlyInTarget').capped) ? ' Both lists are truncated by this scan — only the rows it carries can be paired here.' : ''}">🔗 Match review (${missing.length} + ${extras.length} listed${(capInfo('missingInTarget').capped || capInfo('onlyInTarget').capped) ? ', truncated' : ' unmatched'})</button>
       <span style="font-size:11.5px;color:var(--subtext)">same record on both sides under different keys? Pair them once — matching then survives renames.</span>
     </div>` : ''}
-    <div class="ds-rec-insync-note"${capAttr('identical', 'in sync')}>🟢 ${capLbl('identical')} record(s) already in sync — no action needed.</div>
+    ${(() => {
+      // "I don't see a list of the synced records" (user 2026-08-11) — the
+      // in-sync count opens into the actual matched pairs, and carries the
+      // 📎 suggestion: in-sync means FIELD VALUES; files ride a Run with the
+      // 📎 toggle (which now also covers already-in-target records by key).
+      const idsRows = scan.identical || [];
+      const shown = idsRows.slice(0, 200);
+      const href = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
+      const keyLbl = r => esc(typeof sftkMatchKeyLabel === 'function' ? sftkMatchKeyLabel(r.matchKey || r.sourceId || '') : String(r.matchKey || r.sourceId || ''));
+      const filesOn = !!p?.tree?.includeFiles;
+      return `<details class="ds-rec-insync-note"${capAttr('identical', 'in sync')}>
+        <summary style="cursor:pointer">🟢 ${capLbl('identical')} record(s) already in sync — no action needed. <span style="font-size:11px;opacity:.75">view the matched pairs</span></summary>
+        <div style="margin:6px 0 0 18px;max-height:260px;overflow:auto;font-size:12px">
+          ${shown.map(r => `<div style="display:flex;gap:8px;align-items:center;padding:1px 0">
+            <span>${keyLbl(r)}</span>${r.viaMemory ? '<span class="ds-chip" title="Matched by remembered identity (🧠 match memory), not by key">🧠</span>' : ''}
+            <a href="${href(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener">source ↗</a>
+            <a href="${href(p.targetOrg, r.targetId)}" target="_blank" rel="noopener">target ↗</a>
+          </div>`).join('')}
+          ${idsRows.length > shown.length ? `<div style="font-size:11px;opacity:.75">…and ${idsRows.length - shown.length} more — display capped at 200; the count above is the truth.</div>` : ''}
+        </div>
+        <div style="margin:6px 0 0 18px;font-size:11.5px;opacity:.85">${filesOn
+          ? `📎 Files is ON for this object — a ▶ Run Transfer also carries attachments (ContentVersion + links) for these records, matched by key; checksum-skip keeps re-runs duplicate-free.`
+          : `📎 In sync covers FIELD VALUES only — attached files (ContentVersion &amp; friends) are neither compared nor copied by this view. To carry them: Builder → this object → <strong>📎 Files</strong> toggle → ▶ Run Transfer. Already-in-sync records get their files too (matched by key).`}</div>
+      </details>`;
+    })()}
     ${sftkPhantomDriftNote(scan)}
     ${scan.blankKeys ? `<div class="ds-rec-child-info ds-match-blank-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">⚠ ${scan.blankKeys.rows} row(s) have a blank match key — excluded from matching (${scan.blankKeys.src} source, ${scan.blankKeys.tgt} target). Pick a better-populated match field in 🎯 Pick Records (🧪 Test this key grades candidates).</div>` : ''}
     ${(scan.warnings || []).length ? `<div class="ds-rec-child-info ds-mm-warn-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">⚠ ${esc(scan.warnings.join(' · '))}</div>` : ''}

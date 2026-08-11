@@ -1640,6 +1640,27 @@ async function refreshProfileDiff(profileId) {
   profile.updatedAt = new Date().toISOString();
   if (!profile.ephemeral) await storageSaveProfiles();
 
+  // Staleness law — this is the ONE chokepoint every native scan flows
+  // through (reconcile refresh, POST-RUN auto-rescan, profile-card refresh).
+  // Feed every sync surface from it: parent-sync verdicts (Builder chips,
+  // advisor checklist) and the ring tile. User 2026-08-11: ran a transfer,
+  // returned to the Builder, "the app didn't know we are synced" — the run's
+  // own rescan HAD the fresh verdict and nothing consumed it. Ephemeral
+  // scans deposit the verdict too (the pair they measured is real knowledge;
+  // sftkParentSyncPut is newest-wins so double deposits are harmless);
+  // the ring tile keeps its own non-ephemeral path.
+  try {
+    if (res.status === 'success' && res.objectType && typeof sftkParentSyncPut === 'function') {
+      sftkParentSyncPut(profile.sourceOrg, profile.targetOrg, res.objectType, {
+        missing: (res.missingInTarget || []).length,
+        changed: (res.changed || []).length,
+        extra:   (res.onlyInTarget || []).length,
+        at: res.runAt,
+      });
+    }
+    if (!profile.ephemeral && typeof sftkRingTileFromScan === 'function') sftkRingTileFromScan(profile);
+  } catch (_) { /* advisory surfaces only */ }
+
   // Keep the in-memory transfer profile aligned, mirroring commitEditingProfile.
   if (_transferProfile && _transferProfile.id === profile.id) _transferProfile = profile;
 

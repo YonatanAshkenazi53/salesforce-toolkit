@@ -113,3 +113,47 @@ describe('sftkRtaImageCount — org-local rich-text image detector', () => {
     expect(src).toMatch(/ℹ \$\{objType\}: \$\{rtaCount\} record\(s\) embed org-local rich-text images/);
   });
 });
+
+// ── 📎 files for ALREADY-IN-TARGET records (user 2026-08-11 live run:
+// "It didn't catch the file" — 402 in sync, run wrote nothing, files pass
+// never fired). Leftover records are matched to target rows by ONE key
+// field; ambiguity and blanks fail closed and are counted.
+describe('sftkFileKeyPairs — key pairing for unwritten records', () => {
+  const { sftkFileKeyPairs } = extractFunctions('background.js', ['sftkFileKeyPairs']);
+  const recs = [
+    { Id: 'S1', Name: 'SO-1' },
+    { Id: 'S2', Name: 'SO-2' },
+    { Id: 'S3', Name: 'SO-DUP' },
+    { Id: 'S4', Name: '' },
+    { Id: 'S5', Name: 'SO-GONE' },
+  ];
+  const tgt = [
+    { Id: 'T1', Name: 'SO-1' },
+    { Id: 'T2', Name: 'SO-2' },
+    { Id: 'TD1', Name: 'SO-DUP' },
+    { Id: 'TD2', Name: 'SO-DUP' },
+  ];
+
+  it('pairs by key, skips written records, fails closed on dup/blank/no-match', () => {
+    const out = sftkFileKeyPairs(recs, { S2: 'T2-written' }, 'Name', tgt);
+    expect(out.pairs).toEqual({ S1: 'T1' });   // S2 written → skipped here
+    expect(out.ambiguous).toBe(1);             // SO-DUP on two target rows
+    expect(out.unmatched).toBe(2);             // blank + SO-GONE
+  });
+
+  it('degrades safely on junk', () => {
+    expect(sftkFileKeyPairs(null, null, 'Name', null)).toEqual({ pairs: {}, ambiguous: 0, unmatched: 0 });
+  });
+
+  it('the engine hook covers synced records and fails closed where it must', () => {
+    const src = readFileSync(new URL('../background.js', import.meta.url), 'utf8');
+    // Gate is the fetched record set, NOT the written set.
+    expect(src).toMatch(/node\.includeFiles === true && recs\.length/);
+    // Leftovers = fetched minus written; paired via sftkFileKeyPairs.
+    expect(src).toMatch(/const leftover = recs\.filter\(r => r\?\.Id && !nodeIdMap\[r\.Id\]\)/);
+    expect(src).toMatch(/sftkFileKeyPairs\(recs, nodeIdMap, keyField, tgtRows\)/);
+    // PII and composite keys fail CLOSED with a note, never silently.
+    expect(src).toMatch(/PII masking is active, so matching them by raw key values is unsafe/);
+    expect(src).toMatch(/composite match keys aren't supported for the files pass yet/);
+  });
+});

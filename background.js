@@ -1466,13 +1466,48 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // Runs after this node's records landed so FirstPublishLocationId can
       // point at the mapped target records. Failures are per-file, never
       // fatal to the run.
-      if (node.includeFiles === true && transferredSourceIds.length) {
+      if (node.includeFiles === true && recs.length) {
         try {
           const nodeIdMap = {};
           for (const sId of transferredSourceIds) { if (idMap[sId]) nodeIdMap[sId] = idMap[sId]; }
-          const fileStats = await sftkTransferFilesForNode(objType, srcOrgUrl, srcSid,
-            tgtOrgUrl, tgtSid, nodeIdMap, (piiPolicyKeys || []).length > 0, errors, diagnostics);
-          summary[objType].files = fileStats;
+          // 📎 Records that already exist in the target never enter
+          // transferredSourceIds, so v1 silently skipped their files (user
+          // 2026-08-11 live run: 402 in sync → "It didn't catch the file").
+          // Match the leftovers to their target rows by the node's key field
+          // — single-field keys only, ambiguity fails closed, and a masked
+          // key is never matched raw (PII fail-closed).
+          const leftover = recs.filter(r => r?.Id && !nodeIdMap[r.Id]);
+          if (leftover.length) {
+            const strat = node.matching && node.matching.strategy;
+            if ((piiPolicyKeys || []).length > 0) {
+              diagnostics.push(`ℹ ${objType}: 📎 ${leftover.length} already-in-target record(s) skipped for files — PII masking is active, so matching them by raw key values is unsafe.`);
+            } else if (strat === 'composite') {
+              diagnostics.push(`ℹ ${objType}: 📎 ${leftover.length} already-in-target record(s) skipped for files — composite match keys aren't supported for the files pass yet (single-field keys only).`);
+            } else {
+              const keyField = (node.matching && Array.isArray(node.matching.fields) && node.matching.fields[0])
+                || node.matchField || 'Name';
+              const esc = v => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+              const vals = [...new Set(leftover.map(r => r[keyField]).filter(v => v != null && v !== ''))];
+              const tgtRows = [];
+              for (let vi = 0; vi < vals.length; vi += 200) {
+                const lits = vals.slice(vi, vi + 200).map(v => `'${esc(v)}'`).join(',');
+                const q = await sfQueryAll(tgtOrgUrl, tgtSid,
+                  `SELECT Id, ${keyField} FROM ${objType} WHERE ${keyField} IN (${lits})`, false);
+                tgtRows.push(...(q.records || []));
+              }
+              const kp = sftkFileKeyPairs(recs, nodeIdMap, keyField, tgtRows);
+              Object.assign(nodeIdMap, kp.pairs);
+              const matched = Object.keys(kp.pairs).length;
+              if (matched || kp.ambiguous || kp.unmatched) {
+                diagnostics.push(`ℹ ${objType}: 📎 ${matched} already-in-target record(s) matched by ${keyField} for the files pass${kp.ambiguous ? ` · ${kp.ambiguous} ambiguous (same ${keyField} on several target records — skipped)` : ''}${kp.unmatched ? ` · ${kp.unmatched} with no target match` : ''}.`);
+              }
+            }
+          }
+          if (Object.keys(nodeIdMap).length) {
+            const fileStats = await sftkTransferFilesForNode(objType, srcOrgUrl, srcSid,
+              tgtOrgUrl, tgtSid, nodeIdMap, (piiPolicyKeys || []).length > 0, errors, diagnostics);
+            summary[objType].files = fileStats;
+          }
         } catch (e) {
           errors.push(`${objType}: 📎 files pass failed: ${e?.message || e}`);
         }
@@ -1684,6 +1719,34 @@ async function executeProfileSequence(profiles, srcOrgUrl, srcSid, tgtOrgUrl, tg
 // ONLY in the org it was uploaded to — the text transfers, the image cannot,
 // so it renders broken in the target until re-uploaded there. Counts RECORDS
 // (not occurrences) by scanning every string value — no describe round-trip.
+// 📎 pairing for records the run did NOT write because they already exist in
+// the target (user 2026-08-11 live run: 402 in sync → "It didn't catch the
+// file" — v1 only carried files on records written this run). Match by ONE
+// key field against fetched target rows. Ambiguity fails closed: attaching a
+// file to a guessed record is worse than skipping, and the skip is counted.
+// Returns { pairs: {srcId → tgtId}, ambiguous, unmatched }.
+function sftkFileKeyPairs(recs, writtenMap, keyField, tgtRows) {
+  const byVal = new Map();
+  for (const t of (tgtRows || [])) {
+    const v = t && t[keyField];
+    if (v == null || v === '') continue;
+    const k = String(v);
+    byVal.set(k, byVal.has(k) ? 'DUP' : t.Id);
+  }
+  const pairs = {}; let ambiguous = 0, unmatched = 0;
+  for (const r of (recs || [])) {
+    if (!r || !r.Id || (writtenMap && writtenMap[r.Id])) continue;
+    const v = r[keyField];
+    const k = (v == null) ? '' : String(v);
+    if (!k) { unmatched++; continue; }
+    const hit = byVal.get(k);
+    if (hit === 'DUP') ambiguous++;
+    else if (hit) pairs[r.Id] = hit;
+    else unmatched++;
+  }
+  return { pairs, ambiguous, unmatched };
+}
+
 function sftkRtaImageCount(records) {
   let n = 0;
   for (const r of (records || [])) {
