@@ -598,10 +598,15 @@ describe('sftkFileDriftCompare — checksum multiset, push-directional', () => {
     expect(out.missingFiles).toBe(1);
   });
 
-  it('extra target files are NOT drift; junk degrades to zero', () => {
+  it('extra target files are NOT drift but ARE counted for disclosure', () => {
+    // Live find 2026-08-11: a leftover manual upload sat invisible in a
+    // target because extras were silently ignored — now they're counted.
     const out = sftkFileDriftCompare([{ sourceId: 'S1', targetId: 'T1' }], { S1: ['a'] }, { T1: ['a', 'zzz'] });
-    expect(out.records).toBe(0);
-    expect(sftkFileDriftCompare(null, null, null)).toEqual({ rows: [], records: 0, missingFiles: 0 });
+    expect(out.records).toBe(0);          // still not drift
+    expect(out.extraFiles).toBe(1);       // …but said out loud
+    expect(out.extraRecords).toBe(1);
+    expect(sftkFileDriftCompare(null, null, null))
+      .toEqual({ rows: [], records: 0, missingFiles: 0, extraFiles: 0, extraRecords: 0 });
   });
 
   it('the scan runs it only when the Files toggle is ON, and failure is disclosed', () => {
