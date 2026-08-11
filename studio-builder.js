@@ -147,7 +147,17 @@ function renderBuilder() {
                      <button class="ds-btn ds-btn-xs" id="dsBldPromoteSrc"
                        title="Move the 👑: make ${esc(orgLabel(p.sourceOrg))} the ring's source of truth. EVERY ring surface — matrix rows, sync plans, tree diffs, the topbar chip — will measure from it, and ring-following deployments will flow FROM it. The global setting never moves silently; this button IS the explicit move.">👑 make it the source of truth</button>
                    </div>` : ''}`}
-          ${p._srcCrownMoved ? `<div class="ds-bld-src-warn">⚠ the source of truth moved — this deployment now flows FROM <strong>${esc(orgLabel(p._srcCrownMoved.to))}</strong> (was ${esc(orgLabel(p._srcCrownMoved.from))}, ${timeAgo(p._srcCrownMoved.at)}). Compares made before the move measured FROM the old source — Reconcile marks them stale, and the crown-change rescan re-baselines open orgs automatically. <a href="#" id="dsBldSrcMovedAck">got it ✕</a></div>` : ''}
+          ${p._srcCrownMoved ? `
+          <div style="margin-top:6px;padding:8px 10px;border:1px solid var(--c-warn-border,#6B4A15);border-left-width:3px;border-radius:6px;font-size:12px;line-height:1.55">
+            ⚠ <strong>The source of truth moved.</strong>
+            This deployment now flows FROM <strong>${esc(orgLabel(p._srcCrownMoved.to))}</strong> — it was <strong>${esc(orgLabel(p._srcCrownMoved.from))}</strong> until ${timeAgo(p._srcCrownMoved.at)}.
+            Compares made before the move measured FROM the old source; Reconcile marks them stale, and the crown-change rescan re-baselines open orgs automatically.
+            <div style="display:flex;gap:8px;margin-top:7px;flex-wrap:wrap">
+              <button class="ds-btn ds-btn-xs ds-btn-primary" id="dsBldSrcMovedAck">✓ got it — follow the new source</button>
+              <button class="ds-btn ds-btn-xs" id="dsBldSrcMovedRevert"
+                title="Keep this deployment flowing FROM ${esc(orgLabel(p._srcCrownMoved.from))}. Pins it as an off-ring source — the crown stops moving it, and its compares keep measuring FROM ${esc(orgLabel(p._srcCrownMoved.from))}.">↩ keep using ${esc(orgLabel(p._srcCrownMoved.from))}</button>
+            </div>
+          </div>` : ''}
         </div>
         <!-- The direction statement. Two of the recent bug reports came from
              this row reading as two unrelated columns; the slot is now always
@@ -307,10 +317,24 @@ function renderBuilder() {
     const src = _editingProfile?.sourceOrg;
     if (!src || typeof _ring !== 'object' || !_ring) return;
     if (!confirm(`👑 Make ${orgLabel(src)} the ring's source of truth?\n\nEvery ring surface — matrix rows, sync plans, tree diffs, the topbar SOURCE chip — will measure FROM it, and deployments that follow the ring will flow FROM it.\n\nThe current crown (${orgLabel(_ring.sourceUrl)}) becomes a regular ring org.`)) return;
+    // Crown history — the ring config offers ↩ restore of the previous crown.
+    if (_ring.sourceUrl && _orgKey(_ring.sourceUrl) !== _orgKey(src)) {
+      _ring.prevSourceUrl = _ring.sourceUrl;
+      _ring.prevSourceAt  = new Date().toISOString();
+    }
     _ring.sourceUrl = src;
     if (!(_ring.orgs || []).some(u => _orgKey(u) === _orgKey(src))) (_ring.orgs = _ring.orgs || []).push(src);
     try { await chrome.storage.local.set({ ds_ring: _ring }); } catch (_) {}
+    // QA sweep 2026-08-11: clear the pin on the SAVED copy too — the editing
+    // clone only lands on Save, but the promote's other effects persist now;
+    // a cancel would otherwise strand the saved profile pinned to nothing.
     delete _editingProfile.sourcePinned;   // this profile's source IS the crown now
+    const savedP = _profiles.find(x => x.id === _editingProfile.id);
+    if (savedP) { delete savedP.sourcePinned; }
+    // The topbar chip follows the crown — every crown path must repaint it.
+    _workingPair.src = src;
+    try { storageSaveWorkingPair(); } catch (_) {}
+    if (typeof renderWorkingPair === 'function') renderWorkingPair();
     const moved = (typeof syncRingFollowers === 'function') ? syncRingFollowers() : null;
     showToast(`👑 ${orgLabel(src)} is now the source of truth — every ring surface follows it${moved?.srcMoved ? ` · ${moved.srcMoved} deployment(s) re-pointed (their earlier compares are marked stale)` : ''}`, 'success', 5500);
     renderBuilder();   // the source column re-locks onto the new crown
