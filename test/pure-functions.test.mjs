@@ -447,6 +447,17 @@ describe('sftkMatchKeyScore — worst-org populated×unique', () => {
     expect(sftkMatchKeyScore({ src: null, tgt: null })).toBe(null);
     expect(sftkMatchKeyScore(null)).toBe(null);
   });
+
+  // Multi-target (user 2026-08-11: "the highest matching keys per source
+  // AND TARGETS and their data") — extra targets join the worst-org pool.
+  it('an extra target with duplicate keys drags the score down', () => {
+    const clean = counts([['a', 1], ['b', 1], ['c', 1], ['d', 1]]);
+    const dupey = counts([['a', 2], ['b', 1], ['c', 1]]);   // 50
+    expect(sftkMatchKeyScore({ src: clean, tgt: clean }, [dupey])).toBe(50);
+    // …and unreachable extras (nulls filtered by the caller) change nothing.
+    expect(sftkMatchKeyScore({ src: clean, tgt: clean }, [])).toBe(100);
+    expect(sftkMatchKeyScore({ src: clean, tgt: clean })).toBe(100);
+  });
 });
 
 describe('scan accuracy (🎯 — user request 2026-07-17)', () => {

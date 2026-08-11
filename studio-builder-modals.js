@@ -1041,7 +1041,7 @@ async function openRecordPickerModal(pathStr) {
             : 'No external ID fields in this org — add one in Setup to enable')}
           <span style="flex:1"></span>
           <button class="ds-btn ds-btn-xs" id="dsMatchTestBtn" title="Grade this key against BOTH live orgs: populated% + unique% per org and a cross-org match preview">🧪 Test this key</button>
-          <button class="ds-btn ds-btn-xs" id="dsMatchSuggestBtn" title="Ranked match-key suggestions — the top 3 are graded against LIVE data in both orgs automatically (populated% + unique% + ★ best key); the rest grade on demand">💡 Suggestions</button>
+          <button class="ds-btn ds-btn-xs" id="dsMatchSuggestBtn" title="Ranked match-key suggestions — the top 3 are graded against LIVE data in the source and EVERY target automatically (populated% + unique% per org, worst org scores, ★ best key); the rest grade on demand">💡 Suggestions</button>
         </div>
         <div class="ds-subtext ds-match-help" style="font-size:11.5px;line-height:1.5;margin-top:5px">
           The match key is how two records are recognized as <strong>the same record</strong> across orgs — it decides missing / changed / extra in every scan, and what an upsert updates.
@@ -1105,12 +1105,9 @@ async function openRecordPickerModal(pathStr) {
           <div data-match-grade-out="${esc(s.sig)}" style="flex-basis:100%">${gradeCache.get(s.sig) || ''}</div>
         </div>`).join('')}
     </div>${(() => {
-      // Honesty: grades run against the profile's PRIMARY target only —
-      // with several targets, a key can be strong in one org and weak in
-      // another, and 🧪 is the tool that grades them all.
-      const tgts = (typeof profileTargets === 'function') ? (profileTargets(_editingProfile) || []) : [];
+      const tgts = (typeof profileTargets === 'function') ? (profileTargets(_editingProfile) || []).filter(Boolean) : [];
       return tgts.length > 1
-        ? `<div class="ds-subtext" style="font-size:11px;margin-top:4px">Grades cover ${esc(orgLabel(_editingProfile?.targetOrg || ''))} only — this deployment has ${tgts.length} targets; use 🧪 Test this key to grade EVERY target's data.</div>`
+        ? `<div class="ds-subtext" style="font-size:11px;margin-top:4px">Each grade covers the source + all ${tgts.length} targets — the score is the WORST org's, so one weak org drags the ★ away from a key that only looks good somewhere.</div>`
         : '';
     })()}`;
   }
@@ -1457,23 +1454,53 @@ async function openRecordPickerModal(pathStr) {
       if (gradeInFlight.has(s.sig)) return gradeInFlight.get(s.sig);
       const job = (async () => {
         try {
-          // Resolve ⚙ per-target field-mapping exceptions for the graded
-          // (primary) target — the 🧪 flow already does this; grading with
-          // base names against an org whose key field is renamed would
-          // measure the wrong column (QA sweep 2026-08-10).
-          const tk = _orgKey(_editingProfile?.targetOrg || '');
-          const fm = (node.fieldMappingOverrides && node.fieldMappingOverrides[tk]
-                      && typeof sftkResolveMappings === 'function')
-            ? sftkResolveMappings(node.fieldMappings, node.fieldMappingOverrides, tk)
-            : (node.fieldMappings || {});
-          const tgtF = s.fields.map(f => (fm[f] !== null && fm[f] !== undefined && fm[f] !== '') ? fm[f] : f);
-          const res  = await sftkAnalyzeMatchKey(objType, _editingProfile, s.fields, tgtF, s.normalize || {}, s.strategy);
-          s.score = (typeof sftkMatchKeyScore === 'function') ? sftkMatchKeyScore(res) : null;
+          // "The highest matching keys per source AND TARGETS and their
+          // data" (user 2026-08-11): grade against EVERY effective target,
+          // resolving ⚙ per-target field renames like the 🧪 flow — the
+          // score is worst-org-wins, so a key clean in one target and
+          // half-blank in another can't wear the ★. The source is queried
+          // ONCE (first analyze); extra targets add one counts query each.
+          const tgtsAll = (typeof profileTargets === 'function'
+            ? profileTargets(_editingProfile) : []).filter(Boolean);
+          const list = tgtsAll.length ? tgtsAll
+            : (_editingProfile?.targetOrg ? [_editingProfile.targetOrg] : []);
+          const GRADE_TGT_CAP = 5;
+          const capped = list.slice(0, GRADE_TGT_CAP);
+          const tgtFieldsFor = (u) => {
+            const fm = (node.fieldMappingOverrides && typeof sftkResolveMappings === 'function')
+              ? sftkResolveMappings(node.fieldMappings, node.fieldMappingOverrides, _orgKey(u))
+              : (node.fieldMappings || {});
+            return s.fields.map(f => (fm[f] !== null && fm[f] !== undefined && fm[f] !== '') ? fm[f] : f);
+          };
+          const first = capped[0] || '';
+          const clone = { ..._editingProfile, targetOrg: first };
+          const res   = await sftkAnalyzeMatchKey(objType, clone, s.fields, tgtFieldsFor(first), s.normalize || {}, s.strategy);
+          const extras = [];
+          for (const u of capped.slice(1)) {
+            try {
+              const sess = await getOrgSession(u);
+              if (!sess?.sid) { extras.push({ org: u, counts: null, err: `org not open — open ${orgLabel(u)} in a Chrome tab` }); continue; }
+              const c = await _matchOrgKeyCounts(objType, sess, tgtFieldsFor(u), s.normalize || {}, s.strategy);
+              extras.push(c.error ? { org: u, counts: null, err: c.error } : { org: u, counts: c, err: null });
+            } catch (e) {
+              extras.push({ org: u, counts: null, err: e?.message || String(e) });
+            }
+          }
+          s.score = (typeof sftkMatchKeyScore === 'function')
+            ? sftkMatchKeyScore(res, extras.map(x => x.counts).filter(Boolean)) : null;
           // An org that wasn't reachable is a RETRYABLE state, not a verdict
           // — without this, a closed tab poisoned the cache forever and
           // auto-grade never tried again.
-          if (res.srcErr || res.tgtErr) gradeFailed.add(s.sig); else gradeFailed.delete(s.sig);
-          gradeCache.set(s.sig, _matchAnalysisHtml(res, _editingProfile, true));
+          if (res.srcErr || res.tgtErr || extras.some(x => x.err)) gradeFailed.add(s.sig);
+          else gradeFailed.delete(s.sig);
+          let html = _matchAnalysisHtml(res, clone, true);
+          for (const x of extras) {
+            html += `<div class="ds-match-test-out" style="margin-top:2px;padding:4px 8px;background:rgba(148,163,184,.12);border-radius:6px">${_matchStatsHtml(`Target · ${orgLabel(x.org)}`, x.counts, x.err)}</div>`;
+          }
+          if (list.length > capped.length) {
+            html += `<div class="ds-subtext" style="font-size:11px">…${list.length - capped.length} more target(s) not auto-graded (cap ${GRADE_TGT_CAP}) — 🧪 Test this key grades them all.</div>`;
+          }
+          gradeCache.set(s.sig, html);
         } catch (e) {
           s.score = null;
           gradeFailed.add(s.sig);
@@ -1494,7 +1521,7 @@ async function openRecordPickerModal(pathStr) {
         const el = [...document.querySelectorAll('[data-match-score]')].find(x => x.dataset.matchScore === s.sig);
         if (!el) return;
         el.innerHTML = typeof s.score === 'number'
-          ? `${s === best && s.score >= 60 ? `<b style="color:var(--ok,#16a34a)" title="Highest data-graded score of the candidates tried so far">★ best key</b> ` : ''}<span class="ds-subtext" title="populated% × unique%, worst org counts — 100 = every record has this value and no two share it">${s.score}/100</span>`
+          ? `${s === best && s.score >= 60 ? `<b style="color:var(--ok,#16a34a)" title="Highest data-graded score of the candidates tried so far">★ best key</b> ` : ''}<span class="ds-subtext" title="populated% × unique% — the WORST org counts, across the source and every graded target. 100 = every record has this value and no two share it, in every org">${s.score}/100</span>`
           : '';
       });
     }
