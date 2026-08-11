@@ -401,11 +401,14 @@ async function renderReconcile() {
   // object changed after the last scan, the old scan's buckets carry record
   // Ids of a DIFFERENT object — and Delete passes those raw Ids to
   // SF_COLLECTIONS_DELETE, which deletes by Id regardless of type.
+  // Org identity, not string identity — a crown move or ring-follow rewrite
+  // can change the URL FORM of the same org and must not fake-stale the scan
+  // (same trap the QA sweep confirmed in the ring deposits, 2026-08-10).
   const scanFresh = !!(
     scan && scan.status === 'success' &&
     (!scan.objectType || scan.objectType === objType) &&
-    (!scan.sourceOrg || scan.sourceOrg === p.sourceOrg) &&
-    (!scan.targetOrg || scan.targetOrg === p.targetOrg)
+    (!scan.sourceOrg || sftkOrgKey(scan.sourceOrg) === sftkOrgKey(p.sourceOrg || '')) &&
+    (!scan.targetOrg || sftkOrgKey(scan.targetOrg) === sftkOrgKey(p.targetOrg || ''))
   );
 
   // 🎯 — how trustworthy this scan's matching was (fields + confidence %).
@@ -757,7 +760,7 @@ async function renderReconcile() {
     } else if (fd) {
       const selCount = _recFileSel.size;
       filesHtml = `<div class="ds-rec-files-block" style="margin:4px 6px;padding:6px;border:1px solid var(--c-warn-border,#6B4A15);border-radius:6px">
-        <div style="font-size:12px;margin-bottom:4px">📎 <strong>${fd.missingFiles} file(s)</strong> missing in the target${fd.capped ? ` · first ${fd.pairsChecked} of ${fd.pairsTotal} pairs checked` : ''} — select &amp; move:</div>
+        <div style="font-size:12px;margin-bottom:4px">📎 <strong>${fd.missingFiles} file(s)</strong> in <strong>${esc(orgLabel(p.sourceOrg))}</strong> that <strong>${esc(orgLabel(p.targetOrg))}</strong> doesn't have${fd.capped ? ` · first ${fd.pairsChecked} of ${fd.pairsTotal} pairs checked` : ''} — select &amp; move:</div>
         ${fileRows.slice(0, 100).map(r => (r.files || []).map(f => {
           const k = `${r.sourceId}|${f.checksum}`;
           return `<label style="display:flex;gap:6px;align-items:center;font-size:12px;padding:1px 0;cursor:pointer">
@@ -1135,7 +1138,7 @@ async function renderReconcile() {
           <span class="ds-op-banner-icon">${_fdRecs ? '📎' : '⚠'}</span>
           <div class="ds-op-banner-body">
             <div class="ds-op-banner-title">${_fdRecs ? 'Fields in sync — files still missing' : 'Warnings worth reading'}</div>
-            ${_fdRecs ? `<div class="ds-op-banner-desc">📎 ${scan.fileDrift.missingFiles} file(s) on ${_fdRecs} record(s) haven't reached the target — this pair is NOT fully synced until they move. 🟢 Synced tab → select &amp; move.</div>` : ''}
+            ${_fdRecs ? `<div class="ds-op-banner-desc">📎 ${scan.fileDrift.missingFiles} file(s) exist in <strong>${esc(orgLabel(p.sourceOrg))}</strong> but not on the matched records in <strong>${esc(orgLabel(p.targetOrg))}</strong> — this pair is NOT fully synced until they move (🟢 Synced tab → select &amp; move). Just changed the source or direction? Then this is the SAME files measured the other way around, not new work.</div>` : ''}
             ${_healthHtml}
           </div>
         </div>`
