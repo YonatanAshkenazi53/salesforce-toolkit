@@ -312,6 +312,10 @@ function renderBuilder() {
     if (typeof syncRingFollowers === 'function') syncRingFollowers();
     showToast(`👑 ${orgLabel(src)} is now the source of truth — every ring surface follows it`, 'success', 4500);
     renderBuilder();   // the source column re-locks onto the new crown
+    // A crown move redefines every pair — rescan them all automatically
+    // (user 2026-08-11: "every time you switch a source of truth it needs
+    // to rescan both orgs and update sync status").
+    if (typeof sftkRingRebaseline === 'function') sftkRingRebaseline(`${orgLabel(src)} became the source of truth`);
   });
 
   eid('dsProfileSrcOrg')?.addEventListener('change', e => {

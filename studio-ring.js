@@ -158,9 +158,52 @@ function renderRing() {
       if (typeof syncRingFollowers === 'function') syncRingFollowers();
       renderWorkingPair();
       renderRing();
+      sftkRingRebaseline('the source of truth changed');
     }));
 
   _ringRenderMatrix();
+}
+
+// ── 👑 Re-baseline after a source-of-truth change ────────────────────
+// "Every time you switch a source of truth it needs to rescan both orgs and
+// update sync status and target orgs, etc." (user 2026-08-11). A crown move
+// redefines EVERY pair in the ring — the old summaries describe flows that
+// no longer exist (they stay parked under their old source-keyed entries),
+// so every deployment × OPEN ring target rescans automatically and the
+// deposits flow through the normal paths: ring tiles, parent-sync verdicts,
+// match memory, lastScan — no surface waits for a click. Closed orgs are
+// skipped honestly (they scan on next open, same as 🔎).
+let _ringRebaselining = false;
+async function sftkRingRebaseline(reason) {
+  if (_ringRebaselining) return;
+  _ringRebaselining = true;
+  try {
+    const profiles = _profiles.filter(p => p.tree && !p.ephemeral);
+    const targets  = _ringTargets();
+    if (!profiles.length || !targets.length) return;
+    const ls = _liveOrgSet();
+    const lsKnown = (typeof _liveKnown === 'function') ? _liveKnown() : ls.size > 0;
+    const open = targets.filter(t => !lsKnown || [...ls].some(u => _orgKey(u) === _orgKey(t)));
+    const skipped = targets.length - open.length;
+    if (!open.length) {
+      showToast(`👑 ${reason} — no ring targets are open in Chrome tabs, so nothing could rescan. Open them and 🔎 Scan.`, 'warning', 6000);
+      return;
+    }
+    showToast(`👑 ${reason} — rescanning ${profiles.length} deployment(s) × ${open.length} open target(s)…${skipped ? ` (${skipped} closed org(s) skipped)` : ''}`, 'info', 5000);
+    let done = 0;
+    for (const p of profiles) {
+      for (const t of open) {
+        await _ringScanOne(p.id, t, null);
+        done++;
+      }
+    }
+    showToast(`👑 Re-baseline complete — ${done} pair(s) rescanned against the new source of truth.${skipped ? ` ${skipped} closed org(s) still need a 🔎 when opened.` : ''}`, 'success', 5500);
+    if (_currentView === 'ring') _ringRenderMatrix();
+  } catch (e) {
+    showToast(`Re-baseline stopped: ${e?.message || e}`, 'error', 6000);
+  } finally {
+    _ringRebaselining = false;
+  }
 }
 
 // ── The deployment × target-org matrix ──────────────────────────
