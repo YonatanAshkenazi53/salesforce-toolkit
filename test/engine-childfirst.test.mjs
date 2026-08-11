@@ -312,3 +312,60 @@ describe('buildCopyFields — encrypted fields are never copied', () => {
     expect(out).not.toContain('SSN__c');
   });
 });
+
+// ── Engine controls (user 2026-08-11: "async data deployment option" +
+// "control the batch sizes like inspector does") — apiMode pins the write
+// path, batchSize dials the Collections chunk. Proven against the same
+// canned world: the bulk stubs THROW unless a test replaces them, so a pin
+// that leaks to the wrong path fails loudly.
+describe('engine controls — apiMode + batchSize', () => {
+  it('batchSize=1 splits every Collections write into per-record calls', async () => {
+    const p = PROFILE();
+    p.batchSize = 1;
+    const result = await eng.executeProfileTransfer(p, SRC, 'SID_S', TGT, 'SID_T');
+    expect(result.summary.Account.created).toBe(2);
+    expect(result.summary.Contact.created).toBe(2);
+    const creates = calls.filter(([k]) => k === 'create');
+    // 2 Accounts + 2 Contacts, one record per call.
+    expect(creates).toHaveLength(4);
+    expect(creates.every(([, chunk]) => chunk.length === 1)).toBe(true);
+    expect(result.errors.join('\n')).toMatch(/batch size 1 \(engine settings\)/);
+  });
+
+  it("apiMode 'sync' pins Collections even above the bulk threshold", async () => {
+    const p = PROFILE();
+    p.bulkThreshold = 1;      // everything would normally go Bulk…
+    p.apiMode = 'sync';       // …but the pin keeps it synchronous
+    // The world's sfBulkIngest/sfBulkQuery stubs THROW — reaching them at
+    // all would fail this test, which is exactly the point.
+    const result = await eng.executeProfileTransfer(p, SRC, 'SID_S', TGT, 'SID_T');
+    expect(result.summary.Account.created).toBe(2);
+    expect(result.errors.join('\n')).toMatch(/kept on synchronous Collections by engine settings/);
+  });
+
+  it("apiMode 'bulk' forces the async job even for tiny sets", async () => {
+    const p = PROFILE();
+    p.apiMode = 'bulk';
+    // Recording bulk stubs: read returns REST-shaped records, write returns
+    // Collections-aligned results (the engine consumes both identically).
+    const bulkCalls = [];
+    globalThis.sfBulkQuery = async (orgUrl, sid, soql) => {
+      bulkCalls.push(['bulkQuery', soql]);
+      const obj = /FROM\s+(\w+)/.exec(soql)?.[1];
+      return { records: obj === 'Account' ? SRC_ACCOUNTS : SRC_CONTACTS };
+    };
+    let seq = 100;
+    globalThis.sfBulkIngest = async (orgUrl, sid, opts) => {
+      bulkCalls.push(['bulkIngest', opts.objectType, opts.records.length]);
+      return opts.records.map(() => ({ success: true, id: 'B' + (++seq) }));
+    };
+    const result = await eng.executeProfileTransfer(p, SRC, 'SID_S', TGT, 'SID_T');
+    expect(result.summary.Account.created).toBe(2);
+    expect(result.summary.Contact.created).toBe(2);
+    expect(bulkCalls.some(c => c[0] === 'bulkIngest' && c[1] === 'Account')).toBe(true);
+    expect(bulkCalls.some(c => c[0] === 'bulkIngest' && c[1] === 'Contact')).toBe(true);
+    // No synchronous Collections inserts happened at all.
+    expect(calls.filter(([k]) => k === 'create')).toHaveLength(0);
+    expect(result.errors.join('\n')).toMatch(/forced by engine settings/);
+  });
+});
