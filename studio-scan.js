@@ -1761,8 +1761,15 @@ async function refreshProfileDiff(profileId) {
   showToast(
     `Diff refreshed — ${_lbl('missingInTarget')} missing, ${_lbl('changed')} drift, ${_lbl('identical')} in sync${res.bucketCaps ? ' · list truncated, see the ⚠ note in Reconcile' : ''}`,
     'success', res.bucketCaps ? 7000 : 4000);
-  // Re-render whichever view is open
+  // Re-render whichever view is open. Reconcile included (user 2026-08-11:
+  // "after an upsert operation, we need to show them… auto reload there") —
+  // a post-run rescan that lands while Reconcile is open repaints it, so
+  // freshly-synced records appear in the 🟢 Synced tab without a click.
   if (_currentView === 'profiles') renderProfiles();
+  else if (_currentView === 'reconcile' && typeof renderReconcile === 'function'
+           && _reconcileProfile && _reconcileProfile.id === profile.id) {
+    renderReconcile();
+  }
   return res;
 }
 window.refreshProfileDiff = refreshProfileDiff;
