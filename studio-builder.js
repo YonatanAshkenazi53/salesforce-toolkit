@@ -108,7 +108,7 @@ function renderBuilder() {
         // 🌐 Multi-org, Sync Ring, 🌳 Tree diff).
         const ls = _liveOrgSet();
         const ringSrc = (typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2) ? _ring.sourceUrl : '';
-        const srcLocked = !!ringSrc && !window._bldSrcOverride &&
+        const srcLocked = !!ringSrc && !window._bldSrcOverride && !p.sourcePinned &&
           (!p.sourceOrg || _orgKey(p.sourceOrg) === _orgKey(ringSrc));
         if (srcLocked) p.sourceOrg = ringSrc;
         // TARGETS: follow the ring unless pinned (user decision 2026-07-20).
@@ -143,10 +143,11 @@ function renderBuilder() {
                   : ''}
               </select>
               ${ringSrc && p.sourceOrg && _orgKey(p.sourceOrg) !== _orgKey(ringSrc)
-                ? `<div class="ds-bld-src-warn">${dsIcon('warn')}not your source of truth (${esc(orgLabel(ringSrc))}) — this deployment will show as off-ring
+                ? `<div class="ds-bld-src-warn">${dsIcon('warn')}pinned off-ring: compares in this deployment measure FROM <strong>${esc(orgLabel(p.sourceOrg))}</strong> — NOT from the ring's source of truth (${esc(orgLabel(ringSrc))})
                      <button class="ds-btn ds-btn-xs" id="dsBldPromoteSrc"
                        title="Move the 👑: make ${esc(orgLabel(p.sourceOrg))} the ring's source of truth. EVERY ring surface — matrix rows, sync plans, tree diffs, the topbar chip — will measure from it, and ring-following deployments will flow FROM it. The global setting never moves silently; this button IS the explicit move.">👑 make it the source of truth</button>
                    </div>` : ''}`}
+          ${p._srcCrownMoved ? `<div class="ds-bld-src-warn">⚠ the source of truth moved — this deployment now flows FROM <strong>${esc(orgLabel(p._srcCrownMoved.to))}</strong> (was ${esc(orgLabel(p._srcCrownMoved.from))}, ${timeAgo(p._srcCrownMoved.at)}). Compares made before the move measured FROM the old source — Reconcile marks them stale, and the crown-change rescan re-baselines open orgs automatically. <a href="#" id="dsBldSrcMovedAck">got it ✕</a></div>` : ''}
         </div>
         <!-- The direction statement. Two of the recent bug reports came from
              this row reading as two unrelated columns; the slot is now always
@@ -309,8 +310,9 @@ function renderBuilder() {
     _ring.sourceUrl = src;
     if (!(_ring.orgs || []).some(u => _orgKey(u) === _orgKey(src))) (_ring.orgs = _ring.orgs || []).push(src);
     try { await chrome.storage.local.set({ ds_ring: _ring }); } catch (_) {}
-    if (typeof syncRingFollowers === 'function') syncRingFollowers();
-    showToast(`👑 ${orgLabel(src)} is now the source of truth — every ring surface follows it`, 'success', 4500);
+    delete _editingProfile.sourcePinned;   // this profile's source IS the crown now
+    const moved = (typeof syncRingFollowers === 'function') ? syncRingFollowers() : null;
+    showToast(`👑 ${orgLabel(src)} is now the source of truth — every ring surface follows it${moved?.srcMoved ? ` · ${moved.srcMoved} deployment(s) re-pointed (their earlier compares are marked stale)` : ''}`, 'success', 5500);
     renderBuilder();   // the source column re-locks onto the new crown
     // A crown move redefines every pair — rescan them all automatically
     // (user 2026-08-11: "every time you switch a source of truth it needs
@@ -318,8 +320,25 @@ function renderBuilder() {
     if (typeof sftkRingRebaseline === 'function') sftkRingRebaseline(`${orgLabel(src)} became the source of truth`);
   });
 
+  eid('dsBldSrcMovedAck')?.addEventListener('click', async e => {
+    e.preventDefault();
+    delete _editingProfile._srcCrownMoved;
+    try { await storageSaveProfiles(); } catch (_) {}
+    renderBuilder();
+  });
+
   eid('dsProfileSrcOrg')?.addEventListener('change', e => {
     _editingProfile.sourceOrg = e.target.value || '';
+    // Dynamic-source contract (user 2026-08-11): a hand-picked source that
+    // differs from the crown is a PIN — the crown stops moving it. Picking
+    // the crown itself re-joins follow mode.
+    const _crown = (typeof _ring === 'object' && _ring?.sourceUrl) ? _ring.sourceUrl : '';
+    if (_crown && _editingProfile.sourceOrg && _orgKey(_editingProfile.sourceOrg) !== _orgKey(_crown)) {
+      _editingProfile.sourcePinned = true;
+    } else {
+      delete _editingProfile.sourcePinned;
+    }
+    delete _editingProfile._srcCrownMoved;   // a deliberate pick supersedes the move notice
     // An org can't deploy to itself. Drop the new source from a PINNED target
     // set — the render-time filter only cleans the display, so without this
     // the stale entry survives in targetOrgs and the next checkbox tick
