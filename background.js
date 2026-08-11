@@ -977,6 +977,14 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         const pc = piiRows.counts;
         diagnostics.push(`${objType}: PII masking applied — ${pc.hashed} value(s) hashed, ${pc.nulled} nulled, ${pc.fixed} fixed (deterministic: the same salt re-seeds to the same masked values).`);
       }
+      // W7 disclosure — rich-text org-local images: the field text copies,
+      // the image blob it points at doesn't (it lives only in the source
+      // org), so the target renders a broken image until it's re-uploaded
+      // there. ℹ prefix = the friendly-error classifier files it as a NOTE.
+      const rtaCount = sftkRtaImageCount(recs);
+      if (rtaCount > 0) {
+        diagnostics.push(`ℹ ${objType}: ${rtaCount} record(s) embed org-local rich-text images (rtaImage) — the text copies but the image blobs stay in the source org, so they'll render broken in the target until re-uploaded there (📎 Files covers attached files, NOT rtaImage blobs).`);
+      }
       // History labels persist to chrome.storage — a covered name field must
       // land there masked exactly as it lands in the target org. A nulled
       // mask falls through to the next candidate, then the caller's fallback.
@@ -1650,6 +1658,22 @@ async function executeProfileSequence(profiles, srcOrgUrl, srcSid, tgtOrgUrl, tg
 // Returns { creates: [{ verId, title, pathOnClient, firstPublishTo,
 //                       extraLinkTo: […] }], skippedExisting,
 //           skippedSize: [{title,size}], unmappedLinks }
+// Rich-text org-local image detector (W7 disclosure). A rich-text value that
+// embeds <img src="…/servlet/rtaImage?…refid=…"> references a blob that lives
+// ONLY in the org it was uploaded to — the text transfers, the image cannot,
+// so it renders broken in the target until re-uploaded there. Counts RECORDS
+// (not occurrences) by scanning every string value — no describe round-trip.
+function sftkRtaImageCount(records) {
+  let n = 0;
+  for (const r of (records || [])) {
+    if (!r || typeof r !== 'object') continue;
+    for (const v of Object.values(r)) {
+      if (typeof v === 'string' && v.includes('/servlet/rtaImage')) { n++; break; }
+    }
+  }
+  return n;
+}
+
 function sftkFilePlan(srcFiles, tgtByRecord, idMap, opts) {
   const maxBytes = Number(opts?.maxBytes) > 0 ? Number(opts.maxBytes) : 35 * 1024 * 1024;
   const out = { creates: [], skippedExisting: 0, skippedSize: [], unmappedLinks: 0 };

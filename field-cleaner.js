@@ -355,6 +355,7 @@ const FieldCleaner = (() => {
   // user asks for them in the picker.
   let _objShowSystem = false;
   let _groups    = {};     // type → [dep records] — kept for fixAll
+  let _mcdCapped = false;  // last MCD query landed on the 2,000-row cap
 
   // Picker completeness state. The bug this guards: EntityDefinition caps
   // server-side, so a big managed-package org silently loses objects off the
@@ -1019,6 +1020,11 @@ const FieldCleaner = (() => {
       }
 
       const deps = depRes.records || [];
+      // MetadataComponentDependency is a BETA Tooling object with a hard
+      // 2,000-row server cap that stops paginating silently — a full page
+      // means the list may be truncated, and "N dependencies" would read as
+      // a total when it is a floor (W7 disclosure).
+      _mcdCapped = fcLooksCapped(deps.length);
 
       // ── 3. Supplemental Lightning Page scan ───────────────
       // MetadataComponentDependency does NOT reliably return Lightning Page
@@ -1479,6 +1485,13 @@ const FieldCleaner = (() => {
           ${manualCount > 0 ? `<span class="fc-badge-manual">${manualCount} manual</span>` : ''}
         </span>
       </div>
+      ${_mcdCapped ? `
+      <div class="fc-unscanned-note">
+        ⚠ <strong>This list may be truncated.</strong> Salesforce caps the dependency
+        index (MetadataComponentDependency, beta) at 2,000 rows and stops silently —
+        the scan landed on that boundary, so treat the count as a FLOOR, not a total.
+        Fix what's listed, re-scan, and repeat until the count drops below the cap.
+      </div>` : ''}
       <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">${sftkCatSm('Measuring how much data is stored in this field…')}</div>
       <div id="fcDepZone"></div>
       <div id="fcFlsPanel"></div>

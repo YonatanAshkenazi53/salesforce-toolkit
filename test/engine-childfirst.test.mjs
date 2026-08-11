@@ -17,6 +17,7 @@ const eng = extractFunctions('background.js', [
   'sftkTruncValue', 'sftkBuildOwnerIndex', 'sftkMatchKey',
   'sftkPiiHashHex', 'sftkPiiMaskable', 'sftkPiiFormat', 'sftkPiiMaskValue',
   'sftkPiiRulesForObject', 'sftkPiiMaskRows', 'sftkPiiMaskAnchorMap',
+  'sftkRtaImageCount',   // W7 rich-text image disclosure — engine calls it per node
 ]);
 
 const SRC = 'https://src.my.salesforce.com', TGT = 'https://tgt.my.salesforce.com';

@@ -562,3 +562,17 @@ describe('metadata-mutating fixes confirm before acting', () => {
     expect(SRC).toMatch(/async function confirmDelete\(fieldId\) \{[\s\S]{0,400}?sftkConfirmDestructive\(/);
   });
 });
+
+// ── W7 disclosure — the MCD 2,000-row cap reaches the scan RESULTS ───
+// fcLooksCapped existed for the object list; the dependency scan itself
+// never disclosed that MetadataComponentDependency (beta) stops silently at
+// 2,000 rows — "N dependencies" read as a total when it was a floor.
+describe('dependency scan discloses the MCD cap', () => {
+  it('the MCD result is cap-checked and the banner renders in the results header', () => {
+    expect(SRC).toMatch(/_mcdCapped = fcLooksCapped\(deps\.length\)/);
+    expect(SRC).toMatch(/This list may be truncated\.<\/strong>/);
+    expect(SRC).toMatch(/FLOOR, not a total/);
+    // The banner sits with the results header, not buried below the groups.
+    expect(SRC.indexOf('This list may be truncated')).toBeLessThan(SRC.indexOf('fc-badge-auto">${autoCount}') + 2000);
+  });
+});
