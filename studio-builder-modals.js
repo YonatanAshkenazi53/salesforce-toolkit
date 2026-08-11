@@ -937,15 +937,26 @@ async function openRecordPickerModal(pathStr) {
     ? pickerParentNode.recordIds.filter(Boolean) : null;
   let parentLabelById = new Map();   // parent Id → display label (best effort)
 
-  async function fetchRecords() {
+  // Pagination (user 2026-08-11: "hide in-sync is not checked — so why won't
+  // they show?" — records past the first page were never FETCHED, which read
+  // as a filter bug). OFFSET pages preserve the alphabetical ordering; SOQL
+  // caps OFFSET at 2000, so the view tops out at 2,200 rows with the cap
+  // said out loud.
+  let recordsMore    = false;   // last page was full → more likely exist
+  let recordsAtCap   = false;   // SOQL OFFSET ceiling reached
+  async function fetchRecords(append) {
     const fld  = displayField && displayField !== 'Id' ? displayField : null;
     const linkSel = pickerParentPicks ? `,${node.field}` : '';
     const scopeW  = pickerParentPicks ? `${node.field} IN (${pickerParentPicks.map(id => `'${id}'`).join(',')})` : '';
     const w = [node.where, scopeW].filter(Boolean).map(x => `(${x})`).join(' AND ');
-    const soql = `SELECT Id${fld ? `,${fld}` : ''}${linkSel} FROM ${objType}${w ? ' WHERE ' + w : ''} ORDER BY ${pickerParentPicks ? node.field + ',' : ''}${fld || 'Id'} LIMIT 200`;
+    const offset = append ? records.length : 0;
+    const soql = `SELECT Id${fld ? `,${fld}` : ''}${linkSel} FROM ${objType}${w ? ' WHERE ' + w : ''} ORDER BY ${pickerParentPicks ? node.field + ',' : ''}${fld || 'Id'} LIMIT 200${offset ? ` OFFSET ${offset}` : ''}`;
     const res  = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, query: soql });
     queryError = res.error || null;
-    records    = res.error ? [] : (res.records || []);
+    const page = res.error ? [] : (res.records || []);
+    records    = append ? records.concat(page) : page;
+    recordsAtCap = !res.error && page.length === 200 && records.length > 2000;
+    recordsMore  = !res.error && page.length === 200 && !recordsAtCap;
   }
 
   await fetchRecords();
@@ -1274,7 +1285,13 @@ async function openRecordPickerModal(pathStr) {
             })()}
         </div>
         ${pickerParentPicks ? `<div class="ds-picker-note">Scoped to children of the ${pickerParentPicks.length} picked ${esc(pickerParentNode.objectType || pickerParentNode.childSObject || 'parent')} record(s) — the run fetches exactly this scope.</div>` : ''}
-        ${records.length >= 200 ? `<div class="ds-picker-limit">Showing first 200 — use WHERE filter to narrow results.</div>` : ''}
+        ${recordsMore
+          ? `<div class="ds-picker-limit">Showing the first ${records.length} —
+              <button class="ds-btn ds-btn-xs" id="dsRecMore">⬇ Load 200 more</button>
+              or narrow with a WHERE filter.</div>`
+          : recordsAtCap
+            ? `<div class="ds-picker-limit">Showing ${records.length} — Salesforce caps this pager at ~2,200 rows; use a WHERE filter to reach the rest.</div>`
+            : records.length > 200 ? `<div class="ds-picker-limit">All ${records.length} record(s) loaded.</div>` : ''}
       </div>
       <div class="ds-modal-footer">
         <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
@@ -1596,6 +1613,13 @@ async function openRecordPickerModal(pathStr) {
       }
     });
 
+    eid('dsRecMore')?.addEventListener('click', async () => {
+      const b = eid('dsRecMore');
+      if (b) { b.disabled = true; b.textContent = '⏳ loading…'; }
+      await fetchRecords(true);
+      const box = eid('dsModalBox');
+      if (box) { box.innerHTML = renderModal(filter); wireModal(filter); }
+    });
     eid('dsRecAll')?.addEventListener('click', () => {
       selected = new Set(records.map(r => r.Id));
       const box = eid('dsModalBox');

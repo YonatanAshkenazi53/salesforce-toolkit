@@ -233,7 +233,8 @@ function sftkRingTileFromScan(p) {
       missing: (fs.missingInTarget || []).length,
       changed: (fs.changed || []).length,
       extra:   (fs.onlyInTarget || []).length,
-      status:  'success' };
+      status:  'success',
+      ...(fs.fileDrift && !fs.fileDrift.error && fs.fileDrift.records ? { fileMiss: fs.fileDrift.records } : {}) };
     storageSaveProfiles();
   } catch (_) { /* tile refresh is best-effort */ }
 }
@@ -735,7 +736,9 @@ async function renderReconcile() {
       <div class="ds-rec-col">
         <div class="ds-rec-col-hdr ds-diff-sync"${capAttr('identical', 'synced')}>
           🟢 <strong>Synced ${capLbl('identical', info)}</strong>
-          <span class="ds-rec-col-sub">verified matching${info.capped ? ' · list truncated' : ''}</span>
+          <span class="ds-rec-col-sub">${fd && fd.records
+            ? `📎 ${fd.records} of them missing files — not fully synced`
+            : `verified matching${info.capped ? ' · list truncated' : ''}`}</span>
         </div>
         <div class="ds-rec-col-actions">
           <button class="ds-btn ds-btn-xs" id="dsInSyncTableBtn"
@@ -1078,12 +1081,16 @@ async function renderReconcile() {
   // In-sync + clean → NO banner: the green Synced tab IS the message (user
   // 2026-08-11: "remove the message. It will be under the new tab"). Health
   // warnings still surface — a warning must never be swallowed by a redesign.
+  // 📎 With the Files toggle ON, missing files BLOCK the silent-clean state:
+  // "it should be considered as synced only after the file is transferred".
+  const _fdRecs = (scan.fileDrift && !scan.fileDrift.error) ? (scan.fileDrift.records || 0) : 0;
   const _syncStrip = (!missing.length && !drift.length && !extras.length)
-    ? (_health.length
+    ? ((_health.length || _fdRecs)
       ? `<div class="ds-op-banner" style="border-left:3px solid #f59e0b">
-          <span class="ds-op-banner-icon">⚠</span>
+          <span class="ds-op-banner-icon">${_fdRecs ? '📎' : '⚠'}</span>
           <div class="ds-op-banner-body">
-            <div class="ds-op-banner-title">Warnings worth reading</div>
+            <div class="ds-op-banner-title">${_fdRecs ? 'Fields in sync — files still missing' : 'Warnings worth reading'}</div>
+            ${_fdRecs ? `<div class="ds-op-banner-desc">📎 ${scan.fileDrift.missingFiles} file(s) on ${_fdRecs} record(s) haven't reached the target — this pair is NOT fully synced until they move. 🟢 Synced tab → select &amp; move.</div>` : ''}
             ${_healthHtml}
           </div>
         </div>`
@@ -1096,6 +1103,7 @@ async function renderReconcile() {
             missing.length ? `<strong>${missing.length}</strong> record(s) pushed into the target (Insert column)` : null,
             drift.length ? `<strong>${drift.length}</strong> changed record(s) resolved — pick a winner per row (→ source wins · ← target wins)` : null,
             extras.length ? `<strong>${extras.length}</strong> target-only record(s) DECIDED — 🗑 delete the unwanted, or ← pull the legitimate ones INTO YOUR SOURCE (pull rewrites the source of truth — be sure that's what you mean)` : null,
+            _fdRecs ? `📎 <strong>${scan.fileDrift.missingFiles}</strong> file(s) moved onto ${_fdRecs} record(s) (🟢 Synced tab → select &amp; move)` : null,
           ].filter(Boolean).join(' · ')}. Select below, ▶ Run, and this strip re-checks itself.</div>
           ${_healthHtml}
         </div>
@@ -2591,7 +2599,8 @@ async function runReconcile(profile, objType, buckets) {
             missing: (fs.missingInTarget || []).length,
             changed: (fs.changed || []).length,
             extra:   (fs.onlyInTarget || []).length,
-            status:  'success' };
+            status:  'success',
+            ...(fs.fileDrift && !fs.fileDrift.error && fs.fileDrift.records ? { fileMiss: fs.fileDrift.records } : {}) };
           // ⚖ clone whose ring flow IS the real profile's own pair → the
           // post-run scan is a native scan; deposit it (stripped, restamped
           // — same contract as _ringScanOne). The direct-_fp case already
