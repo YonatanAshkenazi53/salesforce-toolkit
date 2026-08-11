@@ -369,3 +369,49 @@ describe('engine controls — apiMode + batchSize', () => {
     expect(result.errors.join('\n')).toMatch(/forced by engine settings/);
   });
 });
+
+// ── W7 matrix expansion: failure accounting + cancel ──────────────────
+// The two run outcomes no scenario covered: a per-record write failure
+// (must land in summary.failed + failedSourceIds and turn the run partial,
+// never silently shrink `created`) and a mid-run cancel (records already
+// written STAY written, the run says where it stopped).
+describe('engine matrix — failure accounting and cancel', () => {
+  it('one failed record → partial status, counted, and retryable by id', async () => {
+    let call = 0;
+    globalThis.sfCollectionsCreate = async (orgUrl, sid, chunk) => {
+      calls.push(['create', chunk.map(r => ({ ...r }))]);
+      return chunk.map(r => {
+        // Fail exactly one Contact (the second record of the child chunk).
+        if (r.attributes?.type === 'Contact' && ++call === 2) {
+          return { success: false, errors: [{ message: 'REQUIRED_FIELD_MISSING: [LastName]' }] };
+        }
+        return { success: true, id: 'NX' + (call + Math.random().toString(36).slice(2, 6)) };
+      });
+    };
+    const result = await eng.executeProfileTransfer(PROFILE(), SRC, 'SID_S', TGT, 'SID_T');
+    expect(result.status).toBe('partial');
+    expect(result.summary.Contact.created).toBe(1);
+    expect(result.summary.Contact.failed).toBe(1);
+    const failedIds = (result.summary.Contact.failedSourceIds || [])
+      .map(f => (typeof f === 'string' ? f : f.id));
+    expect(failedIds).toContain('C2');
+    expect(result.errors.join('\n')).toMatch(/REQUIRED_FIELD_MISSING/);
+  });
+
+  it('cancel between batches: written records stay, the run says where it stopped', async () => {
+    const p = PROFILE();
+    p.batchSize = 1;   // per-record calls so the cancel lands BETWEEN records
+    globalThis.sfCollectionsCreate = async (orgUrl, sid, chunk) => {
+      calls.push(['create', chunk.map(r => ({ ...r }))]);
+      // Flip the cancel flag after the FIRST successful write.
+      globalThis._runCancelled = true;
+      let seq2 = 0;
+      return chunk.map(() => ({ success: true, id: 'NC_cancel' + (++seq2) }));
+    };
+    const result = await eng.executeProfileTransfer(p, SRC, 'SID_S', TGT, 'SID_T');
+    expect(result.cancelled).toBe(true);
+    // Child-first: Contacts write first; exactly one landed before the flag.
+    expect(result.summary.Contact.created).toBe(1);
+    expect(result.errors.join('\n')).toMatch(/cancelled after 1 of 2/);
+  });
+});
