@@ -1808,7 +1808,7 @@ async function sftkFetchBinary(orgUrl, sid, url) {
 // The files pass for one node. PII fail-closed: bodies can't be masked, so
 // an active policy skips the whole pass and says why. Every failure is
 // per-file (counted + first few named), never fatal to the run.
-async function sftkTransferFilesForNode(objType, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid, idMap, piiActive, errors, diagnostics) {
+async function sftkTransferFilesForNode(objType, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid, idMap, piiActive, errors, diagnostics, only) {
   const stats = { copied: 0, linksCreated: 0, skippedExisting: 0, skippedSize: 0, failed: 0 };
   if (piiActive) {
     diagnostics.push(`${objType}: 📎 files NOT transferred — a PII policy is active and file bodies cannot be masked (fail-closed).`);
@@ -1816,6 +1816,10 @@ async function sftkTransferFilesForNode(objType, srcOrgUrl, srcSid, tgtOrgUrl, t
   }
   const srcIds = Object.keys(idMap || {});
   if (!srcIds.length) return stats;
+  // `only` — Reconcile's per-file selection: { srcRecordId: [checksum, …] }.
+  // When present, ONLY those checksums move; everything else is untouched.
+  const onlyWanted = (only && typeof only === 'object')
+    ? new Set(Object.values(only).flat().filter(Boolean)) : null;
 
   // 1. Source links for the transferred records.
   const links = [];
@@ -1841,7 +1845,7 @@ async function sftkTransferFilesForNode(objType, srcOrgUrl, srcSid, tgtOrgUrl, t
     pathOnClient: v.PathOnClient, checksum: v.Checksum, size: v.ContentSize,
     dataUrl: v.VersionData,
     linkedTo: links.filter(l => l.docId === v.ContentDocumentId).map(l => l.srcRecordId),
-  }));
+  })).filter(f => !onlyWanted || onlyWanted.has(f.checksum));
 
   // 3. Checksums already on the mapped target records (idempotence).
   const tgtIds = [...new Set(Object.values(idMap))];
@@ -2116,6 +2120,22 @@ async function dispatchMessage(message) {
       return sfHardDelete(orgUrl, sid, message.ids);
     case 'SF_COLLECTIONS_UPDATE':
       return sfCollectionsUpdate(orgUrl, sid, message.records);
+    case 'SFTK_TRANSFER_FILES': {
+      // Reconcile's 📎 "Move selected files" — the direct path for records
+      // that are already in sync (nothing to run, only attachments to move).
+      // idMap: { srcRecordId → tgtRecordId } for the SELECTED records;
+      // only:  { srcRecordId → [checksum, …] } for the SELECTED files.
+      const errs = [], diags = [];
+      try {
+        const stats = await sftkTransferFilesForNode(
+          message.objType, message.srcOrgUrl, message.srcSid,
+          message.tgtOrgUrl, message.tgtSid,
+          message.idMap || {}, false, errs, diags, message.only || null);
+        return { stats, errors: errs, diagnostics: diags };
+      } catch (e) {
+        return { error: e?.message || String(e), errors: errs, diagnostics: diags };
+      }
+    }
     case 'SF_EXECUTE_PROFILE_TRANSFER': {
       _beginRun('transfer');
       try {

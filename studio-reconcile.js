@@ -162,6 +162,52 @@ async function sftkShowInSyncRecords(p, scan) {
   }
 }
 
+// 📎 Move the files SELECTED in the Synced tab — the direct path when the
+// records are already in sync and only attachments differ ("you said run
+// transfer but there's nothing to run", user 2026-08-11). Reuses the
+// engine's file pass via SFTK_TRANSFER_FILES with a per-file checksum
+// filter; the post-move rescan re-runs the file comparison so the tab
+// tells the truth without another click.
+async function sftkMoveSelectedFiles(p, scan) {
+  const fd = scan?.fileDrift;
+  if (!fd || !_recFileSel.size) return;
+  const idMap = {}; const only = {};
+  for (const r of (fd.rows || [])) {
+    for (const f of (r.files || [])) {
+      if (_recFileSel.has(`${r.sourceId}|${f.checksum}`)) {
+        idMap[r.sourceId] = r.targetId;
+        (only[r.sourceId] = only[r.sourceId] || []).push(f.checksum);
+      }
+    }
+  }
+  if (!Object.keys(idMap).length) return;
+  const btn = eid('dsRecMoveFiles');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ moving…'; }
+  try {
+    const [srcSess, tgtSess] = await Promise.all([getOrgSession(p.sourceOrg), getOrgSession(p.targetOrg)]);
+    if (!srcSess?.sid || !tgtSess?.sid) {
+      showToast('Open both orgs in Chrome tabs to move files.', 'error', 5000);
+      if (btn) { btn.disabled = false; btn.textContent = `📎 Move ${_recFileSel.size} selected`; }
+      return;
+    }
+    const res = await sendBg({ type: 'SFTK_TRANSFER_FILES',
+      objType: scan.objectType || p.tree?.objectType,
+      srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
+      tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid,
+      idMap, only });
+    if (res?.error) throw new Error(res.error);
+    const s = res?.stats || {};
+    showToast(`📎 ${s.copied || 0} file(s) moved${s.linksCreated ? ` · ${s.linksCreated} link(s)` : ''}${s.skippedExisting ? ` · ${s.skippedExisting} already existed` : ''}${s.failed ? ` · ${s.failed} FAILED` : ''}`,
+      s.failed ? 'warning' : 'success', 5500);
+    _recFileSel.clear();
+    await window.refreshProfileState?.(p.id);
+    renderReconcile();
+  } catch (e) {
+    showToast(`📎 move failed: ${e?.message || String(e)}`, 'error', 6000);
+    if (btn) { btn.disabled = false; btn.textContent = `📎 Move ${_recFileSel.size} selected`; }
+  }
+}
+
 // Ring tiles refresh from ANY fresh scan of the pair, not just from runs —
 // the user aligned the orgs via console Apex + a manual re-scan and the
 // ring kept showing a 44-minute-old "21" (2026-08-10: "still in sync but
@@ -201,6 +247,9 @@ let _recChildOpen     = {};   // pathKey → bool (accordion expanded)
 //   'recycle' — DELETE → Recycle Bin (recoverable 15 days)
 //   'hard'    — DELETE then SOAP emptyRecycleBin (permanent)
 let _recDeleteMode = 'recycle';
+// 📎 Synced-tab file selection — `${sourceId}|${checksum}` keys. Cleared
+// after a successful move; stale keys simply stop matching rows on rescan.
+let _recFileSel = new Set();
 
 // ── T7 — phantom State/Country drift note ────────────────────────────────
 // runDiffScan drops field differences where BOTH orgs hold the same
@@ -633,6 +682,70 @@ async function renderReconcile() {
       </div>`;
   }
 
+  // ── 🟢 SYNCED column (user 2026-08-11: "i want the synced in a tab named
+  // synced like the tabs in red yellow and blue") — the fourth bucket:
+  // verified-matching pairs with links, the 🗂 live-values table, and the
+  // 📎 file-drift block where every missing file is a SELECTABLE row with a
+  // direct "Move selected" action — no Run detour when the buckets are
+  // empty and only attachments differ.
+  function syncedColHtml(items, scan, p) {
+    const fd = scan.fileDrift;
+    const info = capInfo('identical');
+    const fileRows = (fd && !fd.error) ? (fd.rows || []) : [];
+    const missByRec = {};
+    fileRows.forEach(r => { missByRec[r.sourceId] = r; });
+    const rhref = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
+    const empty = !items.length;
+    const rows = empty ? `<div class="ds-rec-col-empty">none</div>` : items.map(r => `
+      <div class="ds-rec-col-row ds-rec-row-sync">
+        <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${missByRec[r.sourceId] ? '📎 ' : ''}${keyLbl(r.matchKey)}</span>
+        <span style="margin-left:auto;white-space:nowrap;font-size:11px">
+          <a href="${rhref(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener">src</a> ·
+          <a href="${rhref(p.targetOrg, r.targetId)}" target="_blank" rel="noopener">tgt</a></span>
+      </div>`).join('');
+    let filesHtml = '';
+    if (fd?.error) {
+      filesHtml = `<div style="margin:4px 8px;font-size:11.5px">📎 file check failed (${esc(fd.error)}) — differences are UNKNOWN, not zero.</div>`;
+    } else if (fd && !fd.records) {
+      filesHtml = `<div style="margin:4px 8px;font-size:11px;opacity:.75">📎 files verified for ${fd.pairsChecked} pair(s) — none missing.</div>`;
+    } else if (fd) {
+      const selCount = _recFileSel.size;
+      filesHtml = `<div class="ds-rec-files-block" style="margin:4px 6px;padding:6px;border:1px solid var(--c-warn-border,#6B4A15);border-radius:6px">
+        <div style="font-size:12px;margin-bottom:4px">📎 <strong>${fd.missingFiles} file(s)</strong> missing in the target${fd.capped ? ` · first ${fd.pairsChecked} of ${fd.pairsTotal} pairs checked` : ''} — select &amp; move:</div>
+        ${fileRows.slice(0, 100).map(r => (r.files || []).map(f => {
+          const k = `${r.sourceId}|${f.checksum}`;
+          return `<label style="display:flex;gap:6px;align-items:center;font-size:12px;padding:1px 0;cursor:pointer">
+            <input type="checkbox" data-rec-fsel="${esc(k)}" ${_recFileSel.has(k) ? 'checked' : ''}>
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.title || f.checksum)}">${esc(f.title || '(untitled)')}</span>
+            <a href="${rhref(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener" style="margin-left:auto;font-size:11px;white-space:nowrap">record ↗</a>
+          </label>`;
+        }).join('')).join('')}
+        ${fd.records > 100 ? `<div style="font-size:11px;opacity:.7">…more records with missing files beyond the first 100 shown.</div>` : ''}
+        <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">
+          <button class="ds-btn ds-btn-xs" data-rec-fsel-all="1">✓ All</button>
+          <button class="ds-btn ds-btn-xs" data-rec-fsel-none="1">✗ None</button>
+          <button class="ds-btn ds-btn-xs ds-btn-primary" id="dsRecMoveFiles" ${selCount ? '' : 'disabled'}
+            title="Copy the selected files (latest versions) onto their matched target records — checksum skip keeps this idempotent">📎 Move ${selCount || ''} selected</button>
+        </div>
+      </div>`;
+    } else if (items.length && !p?.tree?.includeFiles) {
+      filesHtml = `<div style="margin:4px 8px;font-size:11px;opacity:.75">📎 files not compared — toggle 📎 Files on this object in the Builder, rescan, and missing attachments appear here.</div>`;
+    }
+    return `
+      <div class="ds-rec-col">
+        <div class="ds-rec-col-hdr ds-diff-sync"${capAttr('identical', 'synced')}>
+          🟢 <strong>Synced ${capLbl('identical', info)}</strong>
+          <span class="ds-rec-col-sub">verified matching${info.capped ? ' · list truncated' : ''}</span>
+        </div>
+        <div class="ds-rec-col-actions">
+          <button class="ds-btn ds-btn-xs" id="dsInSyncTableBtn"
+            title="Open these records as a table — field values read LIVE from the source org, links to both orgs">🗂 Table</button>
+        </div>
+        ${filesHtml}
+        <div class="ds-rec-col-list">${rows}</div>
+      </div>`;
+  }
+
   // ── Child-aware reconcile (v1) — direct children of the root ──────────
   // Each child renders as a collapsible section: Scan → buckets. Actionable
   // in v1: Insert (delegates to the transfer engine, which handles ordering
@@ -962,15 +1075,19 @@ async function renderReconcile() {
   }
   const _healthHtml = _health.length
     ? `<div class="ds-op-banner-desc" style="margin-top:6px">${_health.join('<br>')}</div>` : '';
+  // In-sync + clean → NO banner: the green Synced tab IS the message (user
+  // 2026-08-11: "remove the message. It will be under the new tab"). Health
+  // warnings still surface — a warning must never be swallowed by a redesign.
   const _syncStrip = (!missing.length && !drift.length && !extras.length)
-    ? `<div class="ds-op-banner" style="border-left:3px solid ${_health.length ? '#f59e0b' : '#16a34a'}">
-        <span class="ds-op-banner-icon">✅</span>
-        <div class="ds-op-banner-body">
-          <div class="ds-op-banner-title">IN SYNC${_health.length ? ' — with warnings worth reading' : ' — nothing to do'}</div>
-          <div class="ds-op-banner-desc">${inSync.length} record pair(s) verified matching. In sync means: nothing missing in the target, nothing changed between the orgs, nothing extra in the target. Runs that touch these orgs re-check this view automatically.</div>
-          ${_healthHtml}
-        </div>
-      </div>`
+    ? (_health.length
+      ? `<div class="ds-op-banner" style="border-left:3px solid #f59e0b">
+          <span class="ds-op-banner-icon">⚠</span>
+          <div class="ds-op-banner-body">
+            <div class="ds-op-banner-title">Warnings worth reading</div>
+            ${_healthHtml}
+          </div>
+        </div>`
+      : '')
     : `<div class="ds-op-banner" style="border-left:3px solid #f59e0b">
         <span class="ds-op-banner-icon">🎯</span>
         <div class="ds-op-banner-body">
@@ -1002,10 +1119,11 @@ async function renderReconcile() {
 
     ${sftkPicklistGapNote(scan, p.targetOrg, objType)}
 
-    <div class="ds-rec-cols">
+    <div class="ds-rec-cols ds-rec-cols-4">
       ${colHtml('Insert', 'in source only', 'ds-diff-missing', '🔴', missing, 'push', 'missingInTarget')}
       ${driftColHtml(drift)}
       ${extrasColHtml(extras)}
+      ${syncedColHtml(inSync, scan, p)}
     </div>
 
     ${!p.ephemeral && (missing.length || extras.length) ? `
@@ -1014,51 +1132,8 @@ async function renderReconcile() {
         title="Manually pair 'in source only' rows with 'in target only' rows that are actually the same record (renamed, typo'd, …). Pairs are remembered per target org and match by identity on every future scan.${(capInfo('missingInTarget').capped || capInfo('onlyInTarget').capped) ? ' Both lists are truncated by this scan — only the rows it carries can be paired here.' : ''}">🔗 Match review (${missing.length} + ${extras.length} listed${(capInfo('missingInTarget').capped || capInfo('onlyInTarget').capped) ? ', truncated' : ' unmatched'})</button>
       <span style="font-size:11.5px;color:var(--subtext)">same record on both sides under different keys? Pair them once — matching then survives renames.</span>
     </div>` : ''}
-    ${(() => {
-      // "I don't see a list of the synced records" (user 2026-08-11) — the
-      // in-sync count opens into the actual matched pairs, and carries the
-      // 📎 suggestion: in-sync means FIELD VALUES; files ride a Run with the
-      // 📎 toggle (which now also covers already-in-target records by key).
-      const idsRows = scan.identical || [];
-      const shown = idsRows.slice(0, 200);
-      const href = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
-      const keyLbl = r => esc(typeof sftkMatchKeyLabel === 'function' ? sftkMatchKeyLabel(r.matchKey || r.sourceId || '') : String(r.matchKey || r.sourceId || ''));
-      const filesOn = !!p?.tree?.includeFiles;
-      return `<details class="ds-rec-insync-note"${capAttr('identical', 'in sync')}>
-        <summary style="cursor:pointer">🟢 ${capLbl('identical')} record(s) already in sync — no action needed. <span style="font-size:11px;opacity:.75">view the matched pairs</span></summary>
-        <div style="margin:6px 0 0 18px;max-height:260px;overflow:auto;font-size:12px">
-          ${shown.map(r => `<div style="display:flex;gap:8px;align-items:center;padding:1px 0">
-            <span>${keyLbl(r)}</span>${r.viaMemory ? '<span class="ds-chip" title="Matched by remembered identity (🧠 match memory), not by key">🧠</span>' : ''}
-            <a href="${href(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener">source ↗</a>
-            <a href="${href(p.targetOrg, r.targetId)}" target="_blank" rel="noopener">target ↗</a>
-          </div>`).join('')}
-          ${idsRows.length > shown.length ? `<div style="font-size:11px;opacity:.75">…and ${idsRows.length - shown.length} more — display capped at 200; the count above is the truth.</div>` : ''}
-        </div>
-        <div style="margin:6px 0 0 18px"><button class="ds-btn ds-btn-xs" id="dsInSyncTableBtn"
-          title="Open the matched records as a real table — field values read LIVE from the source org, one row per pair, links to both orgs">🗂 Open as table — live field values</button></div>
-        <div style="margin:6px 0 0 18px;font-size:11.5px;opacity:.85">${filesOn
-          ? `📎 Files is ON for this object — a ▶ Run Transfer also carries attachments (ContentVersion + links) for these records, matched by key; checksum-skip keeps re-runs duplicate-free.`
-          : `📎 In sync covers FIELD VALUES only — attached files (ContentVersion &amp; friends) are neither compared nor copied by this view. To carry them: Builder → this object → <strong>📎 Files</strong> toggle → ▶ Run Transfer. Already-in-sync records get their files too (matched by key).`}</div>
-      </details>`;
-    })()}
-    ${(() => {
-      // 📎 FILE VERDICT (scan-time compare, runs only when the Files toggle
-      // is ON): "they should say the file records are missing and suggest to
-      // move them" (user 2026-08-11). Never a warning without its suspects,
-      // never a call to action without its objects.
-      const fd = scan.fileDrift;
-      if (!fd) return '';
-      if (fd.error) return `<div class="ds-rec-child-info" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">📎 File comparison could not run (${esc(fd.error)}) — file differences are UNKNOWN, not zero.</div>`;
-      if (!fd.records) return `<div class="ds-rec-child-info" style="border-left:3px solid var(--ok,#16a34a);padding-left:8px;margin:6px 0">📎 Files compared for ${fd.pairsChecked} matched pair(s) — every source file already exists in the target.${fd.capped ? ` (first ${fd.pairsChecked} of ${fd.pairsTotal} pairs checked)` : ''}</div>`;
-      const rhref = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
-      return `<div class="ds-rec-child-info" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">
-        📎 <strong>${fd.missingFiles} file(s) on ${fd.records} record(s) are missing in the target</strong> — the records match, their attachments don't.${fd.capped ? ` First ${fd.pairsChecked} of ${fd.pairsTotal} pairs checked.` : ''}
-        <br>➡ <strong>▶ Run Transfer</strong> on this deployment moves them — 📎 is ON, already-synced records are matched by key, and the checksum skip keeps re-runs duplicate-free.
-        <div style="margin-top:4px;font-size:11.5px">${(fd.rows || []).slice(0, 10).map(r =>
-          `<span style="display:inline-block;margin-right:10px;white-space:nowrap">${r.missing} file(s): <a href="${rhref(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener">source ↗</a> → <a href="${rhref(p.targetOrg, r.targetId)}" target="_blank" rel="noopener">target ↗</a></span>`).join('')}
-          ${fd.records > 10 ? `<span style="opacity:.7">…and ${fd.records - 10} more record(s).</span>` : ''}</div>
-      </div>`;
-    })()}
+
+
     ${sftkPhantomDriftNote(scan)}
     ${scan.blankKeys ? `<div class="ds-rec-child-info ds-match-blank-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">⚠ ${scan.blankKeys.rows} row(s) have a blank match key — excluded from matching (${scan.blankKeys.src} source, ${scan.blankKeys.tgt} target). Pick a better-populated match field in 🎯 Pick Records (🧪 Test this key grades candidates).</div>` : ''}
     ${(scan.warnings || []).length ? `<div class="ds-rec-child-info ds-mm-warn-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">⚠ ${esc(scan.warnings.join(' · '))}</div>` : ''}
@@ -1431,6 +1506,25 @@ async function renderReconcile() {
   eid('dsRecRunBtn')?.addEventListener('click', () => runReconcile(p, objType, { missing, drift, extras }));
   eid('dsMatchReviewBtn')?.addEventListener('click', () => openMatchReview(p));
   eid('dsInSyncTableBtn')?.addEventListener('click', () => sftkShowInSyncRecords(p, scan));
+  // 📎 Synced-tab file selection + direct move.
+  const _fselBtnSync = () => {
+    const btn = eid('dsRecMoveFiles');
+    if (btn) { btn.disabled = !_recFileSel.size; btn.textContent = `📎 Move ${_recFileSel.size || ''} selected`; }
+  };
+  document.querySelectorAll('[data-rec-fsel]').forEach(cb => cb.addEventListener('change', () => {
+    if (cb.checked) _recFileSel.add(cb.dataset.recFsel); else _recFileSel.delete(cb.dataset.recFsel);
+    _fselBtnSync();
+  }));
+  document.querySelector('[data-rec-fsel-all]')?.addEventListener('click', () => {
+    document.querySelectorAll('[data-rec-fsel]').forEach(cb => { cb.checked = true; _recFileSel.add(cb.dataset.recFsel); });
+    _fselBtnSync();
+  });
+  document.querySelector('[data-rec-fsel-none]')?.addEventListener('click', () => {
+    _recFileSel.clear();
+    document.querySelectorAll('[data-rec-fsel]').forEach(cb => { cb.checked = false; });
+    _fselBtnSync();
+  });
+  eid('dsRecMoveFiles')?.addEventListener('click', () => sftkMoveSelectedFiles(p, scan));
 }
 
 // ════════════════════════════════════════════════════════════════

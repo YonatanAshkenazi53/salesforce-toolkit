@@ -434,7 +434,9 @@ describe('every display site reads the label, not the shipped length', () => {
     expect(rec).toMatch(/<strong>\$\{dml\} \$\{capLbl\(/);
     expect(rec).toMatch(/<strong>Changed \$\{capLbl\('changed', info\)\}<\/strong>/);
     expect(rec).toMatch(/<strong>In target only \$\{capLbl\('onlyInTarget', info\)\}<\/strong>/);
-    expect(rec).toMatch(/\$\{capLbl\('identical'\)\} record\(s\) already in sync/);
+    // The in-sync count moved into the 🟢 Synced column header (2026-08-11)
+    // — same label discipline, fourth bucket.
+    expect(rec).toMatch(/<strong>Synced \$\{capLbl\('identical', info\)\}<\/strong>/);
   });
 
   it('child columns and the collapsed-section chips', () => {
@@ -574,18 +576,21 @@ describe('background.js sfQueryAll — serverTotal preserved', () => {
 describe('sftkFileDriftCompare — checksum multiset, push-directional', () => {
   const { sftkFileDriftCompare } = extractFunctions('studio-scan.js', ['sftkFileDriftCompare']);
 
-  it('flags source files the target lacks, counts per record and total', () => {
+  it('flags source files the target lacks, counts per record and total, carries the FILES', () => {
     const pairs = [
       { sourceId: 'S1', targetId: 'T1' },   // has both files ✓
       { sourceId: 'S2', targetId: 'T2' },   // missing one
       { sourceId: 'S3', targetId: 'T3' },   // no source files → never drift
     ];
-    const src = { S1: ['a', 'b'], S2: ['c', 'd'] };
+    const src = { S1: ['a', 'b'], S2: [{ checksum: 'c', title: 'kept.pdf' }, { checksum: 'd', title: 'wiring.png' }] };
     const tgt = { T1: ['b', 'a'], T2: ['c'] };
     const out = sftkFileDriftCompare(pairs, src, tgt);
     expect(out.records).toBe(1);
     expect(out.missingFiles).toBe(1);
-    expect(out.rows).toEqual([{ sourceId: 'S2', targetId: 'T2', missing: 1 }]);
+    // The missing FILE rides the row — the Synced tab renders it as a
+    // selectable object, never a bare count.
+    expect(out.rows).toEqual([{ sourceId: 'S2', targetId: 'T2', missing: 1,
+      files: [{ checksum: 'd', title: 'wiring.png' }] }]);
   });
 
   it('MULTISET: two copies of the same checksum need two in the target', () => {
@@ -603,9 +608,21 @@ describe('sftkFileDriftCompare — checksum multiset, push-directional', () => {
     const src = codeOnly(srcOf('studio-scan.js'));
     expect(src).toMatch(/profile\?\.tree\?\.includeFiles === true && \(identical\.length \+ changed\.length\)/);
     expect(src).toMatch(/fileDrift = \{ error: e\?\.message \|\| String\(e\) \}/);
-    // The reconcile surface renders drift WITH suspects and the suggestion.
+  });
+
+  it('the 🟢 Synced tab renders files as SELECTABLE rows with a direct move', () => {
     const rec = codeOnly(srcOf('studio-reconcile.js'));
-    expect(rec).toMatch(/missing in the target<\/strong> — the records match, their attachments don't/);
-    expect(rec).toMatch(/file differences are UNKNOWN, not zero/);
+    // Fourth column exists and the grid knows it.
+    expect(rec).toMatch(/syncedColHtml\(inSync, scan, p\)/);
+    expect(rec).toMatch(/ds-rec-cols ds-rec-cols-4/);
+    expect(codeOnly(srcOf('studio.css'))).toMatch(/\.ds-rec-cols-4 \{ grid-template-columns: repeat\(4, 1fr\); \}/);
+    // Every missing file is a checkbox row; the move is direct (no Run detour)
+    // through the engine's file pass with a per-file checksum filter.
+    expect(rec).toMatch(/data-rec-fsel="\$\{esc\(k\)\}"/);
+    expect(rec).toMatch(/type: 'SFTK_TRANSFER_FILES'/);
+    expect(rec).toMatch(/differences are UNKNOWN, not zero/);
+    const bg = codeOnly(srcOf('background.js'));
+    expect(bg).toMatch(/case 'SFTK_TRANSFER_FILES':/);
+    expect(bg).toMatch(/onlyWanted\.has\(f\.checksum\)/);
   });
 });
