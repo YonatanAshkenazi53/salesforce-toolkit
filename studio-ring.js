@@ -72,7 +72,10 @@ function renderRing() {
         // these radios are unrelated to the chip they already set.
         const wp = (typeof _workingPair === 'object' && _workingPair?.src) || '';
         if (ring.sourceUrl) {
-          return `<div class="ds-ring-sot-explain">👑 <strong>${esc(orgLabel(ring.sourceUrl))}</strong> is this ring's source of truth — every org below is compared against it, and the topbar SOURCE chip follows it.</div>`;
+          const prev = ring.prevSourceUrl && _orgKey(ring.prevSourceUrl) !== _orgKey(ring.sourceUrl) ? ring.prevSourceUrl : '';
+          return `<div class="ds-ring-sot-explain">👑 <strong>${esc(orgLabel(ring.sourceUrl))}</strong> is this ring's source of truth — every org below is compared against it, and the topbar SOURCE chip follows it.
+            ${prev ? `<br><span style="font-size:11.5px;color:var(--subtext)">Previously <strong>${esc(orgLabel(prev))}</strong>${ring.prevSourceAt ? ` (until ${timeAgo(ring.prevSourceAt)})` : ''}.</span>
+              <button class="ds-btn ds-btn-xs" id="dsRingRestoreCrown" title="Move the 👑 back to ${esc(orgLabel(prev))} — every ring surface re-points and every pair rescans, exactly like any crown change.">↩ restore ${esc(orgLabel(prev))} as the source of truth</button>` : ''}</div>`;
         }
         return `<div class="ds-ring-sot-explain ds-ring-sot-unset">
           No source of truth yet — pick one with the ⦿ buttons above. It is what every other ring org gets compared against.
@@ -151,6 +154,13 @@ function renderRing() {
   document.querySelectorAll('input[name="dsRingSrc"]').forEach(r =>
     r.addEventListener('change', async () => {
       if (!_ring) return;
+      // Remember the outgoing crown (user 2026-08-11: "it forgot that my
+      // original source of truth was ashkenazy6") — the config panel offers
+      // a one-click ↩ restore for as long as the crown sits elsewhere.
+      if (_ring.sourceUrl && _orgKey(_ring.sourceUrl) !== _orgKey(r.value)) {
+        _ring.prevSourceUrl = _ring.sourceUrl;
+        _ring.prevSourceAt  = new Date().toISOString();
+      }
       _ring.sourceUrl = r.value;
       _workingPair.src = r.value;
       await chrome.storage.local.set({ ds_ring: _ring });
@@ -161,6 +171,25 @@ function renderRing() {
       renderRing();
       sftkRingRebaseline('the source of truth changed');
     }));
+
+  eid('dsRingRestoreCrown')?.addEventListener('click', async () => {
+    const prev = _ring?.prevSourceUrl;
+    if (!prev) return;
+    if (_ring.sourceUrl && _orgKey(_ring.sourceUrl) !== _orgKey(prev)) {
+      _ring.prevSourceUrl = _ring.sourceUrl;
+      _ring.prevSourceAt  = new Date().toISOString();
+    }
+    _ring.sourceUrl = prev;
+    if (!(_ring.orgs || []).some(u => _orgKey(u) === _orgKey(prev))) (_ring.orgs = _ring.orgs || []).push(prev);
+    _workingPair.src = prev;
+    await chrome.storage.local.set({ ds_ring: _ring });
+    storageSaveWorkingPair();
+    const moved = (typeof syncRingFollowers === 'function') ? syncRingFollowers() : null;
+    if (moved?.srcMoved) showToast(`👑 ${moved.srcMoved} deployment(s) now flow FROM ${orgLabel(prev)} again — their compares from the interim crown are marked stale.`, 'info', 6000);
+    renderWorkingPair();
+    renderRing();
+    sftkRingRebaseline(`${orgLabel(prev)} restored as the source of truth`);
+  });
 
   _ringRenderMatrix();
 }
@@ -188,6 +217,13 @@ async function sftkRingRebaseline(reason) {
     const skipped = targets.length - open.length;
     if (!open.length) {
       showToast(`👑 ${reason} — no ring targets are open in Chrome tabs, so nothing could rescan. Open them and 🔎 Scan.`, 'warning', 6000);
+      return;
+    }
+    // QA sweep 2026-08-11: an uncapped auto-sweep on a big ring is a silent
+    // API storm — above a dozen pairs the user confirms the bill first.
+    const pairCount = profiles.length * open.length;
+    if (pairCount > 12 && !confirm(`👑 ${reason}.\n\nRe-baselining means ${pairCount} full scans (${profiles.length} deployment(s) × ${open.length} open target(s)) run now, back to back.\n\nRun them all? (Cancel = no rescan; cells re-scan individually via 🔎 as you need them.)`)) {
+      showToast('Re-baseline skipped — ring cells keep their pre-move readings until scanned (🔎).', 'info', 6000);
       return;
     }
     showToast(`👑 ${reason} — rescanning ${profiles.length} deployment(s) × ${open.length} open target(s)…${skipped ? ` (${skipped} closed org(s) skipped)` : ''}`, 'info', 5000);

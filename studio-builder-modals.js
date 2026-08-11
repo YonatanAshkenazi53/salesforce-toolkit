@@ -891,6 +891,7 @@ async function openRecordPickerModal(pathStr) {
   );
   const idsMissingInTarget = new Set();  // source-only — need to deploy
   const idsInSync          = new Set();  // present in both, no drift
+  const idsFileMiss        = new Set();  // 📎 field-identical but files missing in target
   const idsDrift           = new Set();  // present in both, fields differ
   // Drift→target-Id map so the click-to-expand can fetch from BOTH orgs.
   // Source Id alone (idsDrift) isn't enough — we need the matching target Id
@@ -904,6 +905,13 @@ async function openRecordPickerModal(pathStr) {
       if (r.nearMiss) nearMissById.set(r.sourceId, r.nearMiss);
     }
     for (const r of (liveScan.identical       || [])) if (r.sourceId) idsInSync.add(r.sourceId);
+    // 📎 Files gate the sync verdict HERE too (QA sweep 2026-08-11): a
+    // field-identical record whose files haven't reached the target must
+    // not read "no action needed", be hidden by Hide in-sync, or vanish
+    // from Only needs-deploy.
+    if (liveScan.fileDrift && !liveScan.fileDrift.error) {
+      for (const r of (liveScan.fileDrift.rows || [])) if (r.sourceId) idsFileMiss.add(r.sourceId);
+    }
     for (const r of (liveScan.changed         || [])) {
       if (r.sourceId) {
         idsDrift.add(r.sourceId);
@@ -1156,7 +1164,10 @@ async function openRecordPickerModal(pathStr) {
     // "Hide in-sync" filter — when a live diff exists, hide records that
     // match between source and target. Falls back to legacy history-derived
     // "deployed" filter for unscanned profiles.
-    const hideSet = scanFresh ? idsInSync : deployedIds;
+    // 📎 file-drifted records are NOT "in sync" — Hide in-sync keeps them.
+    const hideSet = scanFresh
+      ? new Set([...idsInSync].filter(id => !idsFileMiss.has(id)))
+      : deployedIds;
     if (hideDeployed && hideSet.size) {
       list = list.filter(r => !hideSet.has(r.Id));
     }
@@ -1165,7 +1176,7 @@ async function openRecordPickerModal(pathStr) {
     // live diff; without one, falls back to "anything not previously deployed".
     if (showOnlyTodo) {
       if (scanFresh) {
-        list = list.filter(r => idsMissingInTarget.has(r.Id) || idsDrift.has(r.Id));
+        list = list.filter(r => idsMissingInTarget.has(r.Id) || idsDrift.has(r.Id) || idsFileMiss.has(r.Id));
       } else {
         list = list.filter(r => !deployedIds.has(r.Id));
       }
@@ -1244,6 +1255,8 @@ async function openRecordPickerModal(pathStr) {
                       ? `Differs at last scan: ${dFields.join(', ')} — click for field-by-field comparison`
                       : 'Click to see field-by-field comparison';
                     badgeHtml = `<span class="ds-pick-state-badge ds-diff-drift ds-pick-drift-clickable" data-drift-id="${esc(r.Id)}" title="${esc(dTip)}">🟡 changed ▸</span>`;
+                  } else if (idsFileMiss.has(r.Id)) {
+                    badgeHtml = '<span class="ds-pick-state-badge ds-diff-drift" title="Fields match, but this record has file(s) the target lacks — NOT fully synced. Reconcile → 🟢 Synced tab → select & move, or a 📎 Run carries them.">🟢📎 files missing</span>';
                   } else if (idsInSync.has(r.Id)) {
                     rowCls = ' ds-pick-row-deployed';
                     badgeHtml = '<span class="ds-pick-state-badge ds-diff-sync" title="Present in target and all compare fields match — no action needed">🟢 in sync</span>';
@@ -1622,6 +1635,12 @@ async function openRecordPickerModal(pathStr) {
     });
     eid('dsRecAll')?.addEventListener('click', () => {
       selected = new Set(records.map(r => r.Id));
+      // "All" is fetch-bounded (QA sweep 2026-08-11): with pages unloaded it
+      // silently converts "everything" into "whatever happens to be loaded"
+      // — and an EMPTY selection would run the full WHERE scope. Say it.
+      if (recordsMore || recordsAtCap) {
+        showToast(`Selected the ${records.length} LOADED record(s) — more exist that aren't loaded. ⬇ Load more first, or select NONE to run the full WHERE scope instead.`, 'warning', 7000);
+      }
       const box = eid('dsModalBox');
       if (box) { box.innerHTML = renderModal(filter); wireModal(filter); }
     });

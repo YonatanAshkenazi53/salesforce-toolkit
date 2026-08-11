@@ -23,7 +23,21 @@ window.openReconcile = function(profileId, targetUrl) {
         <div style="margin-bottom:8px">Reconcile fixes <strong>one source → target pair</strong> at a time. ${esc(orgLabel(p.sourceOrg))} pushes to ${tgts.length} targets — which one is this session about?</div>
         ${tgts.map(u => {
           let rs = null;
-          try { rs = (p.ringScans || {})[(typeof _ringScanKey === 'function') ? _ringScanKey(u) : ''] || null; } catch (_) {}
+          try {
+            rs = (p.ringScans || {})[(typeof _ringScanKey === 'function') ? _ringScanKey(u) : ''] || null;
+            // Freshest-wins with the native lastScan for the profile's own
+            // pair — the chooser said "not scanned yet" while a fresh native
+            // scan sat on lastScan (QA sweep 2026-08-11).
+            if (_orgKey(u) === _orgKey(p.targetOrg || '') && p.lastScan?.runAt
+                && (!p.lastScan.sourceOrg || _orgKey(p.lastScan.sourceOrg) === _orgKey(p.sourceOrg || ''))) {
+              const nat = { runAt: p.lastScan.runAt,
+                missing: (p.lastScan.missingInTarget || []).length,
+                changed: (p.lastScan.changed || []).length,
+                extra:   (p.lastScan.onlyInTarget || []).length,
+                fileMiss: (p.lastScan.fileDrift && !p.lastScan.fileDrift.error && p.lastScan.fileDrift.records) || 0 };
+              rs = (typeof sftkRingCellPick === 'function') ? sftkRingCellPick(nat, rs) : (rs || nat);
+            }
+          } catch (_) {}
           const drift = rs ? (rs.missing || 0) + (rs.changed || 0) + (rs.extra || 0) : null;
           const st = !rs ? 'not scanned yet'
             : drift === 0 ? (rs.fileMiss ? `📎 ${rs.fileMiss} missing files` : '✓ in sync')
