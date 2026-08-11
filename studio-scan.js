@@ -685,14 +685,12 @@ function sftkPicklistGaps(records, comparePlanOrFields, tgtDescribeFieldsMap, op
 // — the UI needs titles so the user can SELECT individual files to move.
 function sftkFileDriftCompare(pairs, srcFilesByRec, tgtFilesByRec) {
   const norm = e => (typeof e === 'string' ? { checksum: e, title: '' } : (e || { checksum: '', title: '' }));
-  const rows = []; let missingFiles = 0;
+  const rows = []; let missingFiles = 0; let extraFiles = 0; let extraRecords = 0;
   for (const p of (pairs || [])) {
     const src = ((srcFilesByRec && srcFilesByRec[p.sourceId]) || []).map(norm);
-    if (!src.length) continue;
+    const tgtList = ((tgtFilesByRec && tgtFilesByRec[p.targetId]) || []).map(norm);
     const tgt = new Map();
-    for (const e of ((tgtFilesByRec && tgtFilesByRec[p.targetId]) || []).map(norm)) {
-      tgt.set(e.checksum, (tgt.get(e.checksum) || 0) + 1);
-    }
+    for (const e of tgtList) tgt.set(e.checksum, (tgt.get(e.checksum) || 0) + 1);
     const files = [];
     for (const e of src) {
       const n = tgt.get(e.checksum) || 0;
@@ -703,8 +701,15 @@ function sftkFileDriftCompare(pairs, srcFilesByRec, tgtFilesByRec) {
       rows.push({ sourceId: p.sourceId, targetId: p.targetId, missing: files.length, files });
       missingFiles += files.length;
     }
+    // Files the TARGET holds that the source doesn't — NOT drift (push never
+    // deletes files), but staying silent hides real state: a leftover manual
+    // upload sat invisible in a target for hours on 2026-08-11 until a raw
+    // API query found it. Counted for the ℹ disclosure line.
+    let leftover = 0;
+    for (const n of tgt.values()) leftover += n;
+    if (leftover > 0) { extraFiles += leftover; extraRecords++; }
   }
-  return { rows, records: rows.length, missingFiles };
+  return { rows, records: rows.length, missingFiles, extraFiles, extraRecords };
 }
 
 async function runDiffScan(profile, node = null, scope = null) {
@@ -1452,6 +1457,7 @@ async function runDiffScan(profile, node = null, scope = null) {
       fileDrift = { records: cmp.records, missingFiles: cmp.missingFiles,
         rows: cmp.rows.slice(0, 200),   // display slice — records/missingFiles are the truth
         pairsChecked: fPairs.length,
+        ...(cmp.extraFiles ? { extraFiles: cmp.extraFiles, extraRecords: cmp.extraRecords } : {}),
         ...(pairsAll.length > fPairs.length ? { capped: true, pairsTotal: pairsAll.length } : {}) };
     } catch (e) {
       // A failed file probe must not fail the scan — but it must SAY so,

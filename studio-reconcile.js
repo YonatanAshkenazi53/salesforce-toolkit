@@ -770,7 +770,7 @@ async function renderReconcile() {
     if (fd?.error) {
       filesHtml = `<div style="margin:4px 8px;font-size:11.5px">📎 file check failed (${esc(fd.error)}) — differences are UNKNOWN, not zero.</div>`;
     } else if (fd && !fd.records) {
-      filesHtml = `<div style="margin:4px 8px;font-size:11px;opacity:.75">📎 files verified for ${fd.pairsChecked} pair(s) — none missing.</div>`;
+      filesHtml = `<div style="margin:4px 8px;font-size:11px;opacity:.75">📎 files verified for ${fd.pairsChecked} pair(s) — none missing.${fd.extraFiles ? `<br>ℹ the target holds ${fd.extraFiles} file(s) on ${fd.extraRecords} matched record(s) that the source doesn't — not drift (a push never deletes files), listed so it can't hide.` : ''}</div>`;
     } else if (fd) {
       const selCount = _recFileSel.size;
       filesHtml = `<div class="ds-rec-files-block" style="margin:4px 6px;padding:6px;border:1px solid var(--c-warn-border,#6B4A15);border-radius:6px">
@@ -790,6 +790,7 @@ async function renderReconcile() {
           <button class="ds-btn ds-btn-xs ds-btn-primary" id="dsRecMoveFiles" ${selCount ? '' : 'disabled'}
             title="Copy the selected files (latest versions) onto their matched target records — checksum skip keeps this idempotent">📎 Move ${selCount || ''} selected</button>
         </div>
+        ${fd.extraFiles ? `<div style="font-size:11px;opacity:.75;margin-top:4px">ℹ the target also holds ${fd.extraFiles} file(s) on ${fd.extraRecords} matched record(s) that the source doesn't — not drift (a push never deletes files), said so it can't hide.</div>` : ''}
       </div>`;
     } else if (items.length && !p?.tree?.includeFiles) {
       filesHtml = `<div style="margin:4px 8px;font-size:11px;opacity:.75">📎 files not compared — toggle 📎 Files on this object in the Builder, rescan, and missing attachments appear here.</div>`;
