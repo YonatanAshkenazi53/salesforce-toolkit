@@ -779,6 +779,24 @@ anchor-based plan edit accidentally deleted it)
   (SN "zxczxc…" now lives in 3 orgs). A Field-Audit-style pass could
   flag suspicious names (keyboard-mash entropy, test-y patterns) before
   they ride a deployment.
+- [ ] SOURCE-OF-TRUTH CONTROL CONSOLIDATION (user 2026-08-13): "I want to
+  be able to change source org only in the upper menu. everything should
+  calculate by it." Three surfaces currently set the ring's source of truth
+  independently — the topbar SOURCE dropdown (studio-core.js
+  renderWorkingPair), Sync Ring's ⚙ config radios (studio-ring.js), and the
+  Builder's 👑 promote button (studio-builder.js dsBldPromoteSrc). User wants
+  ONE authoritative control (the topbar) with everything else calculating
+  from it. Real design decisions needed, not a mechanical fix: (a) what
+  happens to the other two surfaces — removed, read-only display, or
+  redirect into the topbar control? (b) the topbar dropdown's candidate list
+  is currently SCOPED TO _ring.orgs (ring membership) — today's live
+  confusion (user: "issue in the release, its showing only 1 org open" —
+  turned out to be an unfinished ring config, not a bug, but it exposed that
+  the dropdown can't promote an org to source before it's a ring member).
+  If the topbar becomes the sole entry point, it likely needs to list every
+  KNOWN org (allMapOrgs()), not just current ring members, so a brand-new
+  org can become source directly. User explicitly deferred this to Fable
+  ("maybe leave this for fable?") — do not implement on Sonnet.
 - [x] QA SWEEP ROUND 2 (2026-08-11, commit 8b85d6b): the four
   verify-orphaned findings re-verified inline — all real, all fixed
   (sftkParentSyncPut newest-wins + tests; ⚖ repair updates its own ring
