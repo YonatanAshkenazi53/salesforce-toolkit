@@ -1199,17 +1199,17 @@ async function openRecordPickerModal(pathStr) {
           <input id="dsRecSearch" class="ds-input ds-input-sm" placeholder="Search…" value="${esc(filter)}" autocomplete="off">
           <button class="ds-btn ds-btn-xs" id="dsRecAll">All</button>
           <button class="ds-btn ds-btn-xs" id="dsRecNone">None</button>
-          ${(scanFresh ? idsInSync.size : deployedIds.size) ? `
+          ${(scanFresh ? hideSet.size : deployedIds.size) ? `
             <label class="ds-pick-toggle" title="${scanFresh ? 'Hide records that already match between source and target according to the latest diff scan' : 'Hide records that were already successfully transferred to this target'}">
               <input type="checkbox" id="dsRecHideDeployed" ${hideDeployed ? 'checked' : ''}>
               <span>${scanFresh ? 'Hide in-sync' : 'Hide already deployed'}</span>
-              <span class="ds-pick-deployed-count">${scanFresh ? idsInSync.size : deployedIds.size}</span>
+              <span class="ds-pick-deployed-count">${scanFresh ? hideSet.size : deployedIds.size}</span>
             </label>` : ''}
-          ${scanFresh && (idsMissingInTarget.size || idsDrift.size) ? `
-            <label class="ds-pick-toggle" title="Show only records that need to be deployed — missing in target OR present-but-drifted. Hides everything that's already in sync.">
+          ${scanFresh && (idsMissingInTarget.size || idsDrift.size || idsFileMiss.size) ? `
+            <label class="ds-pick-toggle" title="Show only records that need to be deployed — missing in target, present-but-drifted, or field-synced with files still missing (📎). Hides everything fully in sync.">
               <input type="checkbox" id="dsRecShowOnlyTodo" ${showOnlyTodo ? 'checked' : ''}>
               <span>Only needs-deploy</span>
-              <span class="ds-pick-deployed-count ds-pick-todo-count">${idsMissingInTarget.size + idsDrift.size}</span>
+              <span class="ds-pick-deployed-count ds-pick-todo-count">${new Set([...idsMissingInTarget, ...idsDrift, ...idsFileMiss]).size}</span>
             </label>` : ''}
         </div>
 
