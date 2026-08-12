@@ -586,16 +586,21 @@ async function _ringOpenPlan(profileId) {
       <button class="ds-btn ds-btn-primary" id="dsPlanRun" disabled>▶ Run selected</button>
     </div>`);
 
-  // Fresh scans — full buckets kept in memory for the run step.
+  // Fresh scans — full buckets kept in memory for the run step. Capture the
+  // crown ONCE before the loop: re-reading _ring.sourceUrl after each await
+  // is the exact trap _ringScanKey's own contract warns about (QA sweep
+  // round 2) — a crown change mid-plan would file an old-source scan under
+  // the NEW source's key, painting a wrong matrix cell.
+  const planSrc = _ring.sourceUrl;
   const plans = [];
   for (const tgt of open) {
     try {
-      const res = await runDiffScan({ ...p, sourceOrg: _ring.sourceUrl, targetOrg: tgt, ephemeral: true });
+      const res = await runDiffScan({ ...p, sourceOrg: planSrc, targetOrg: tgt, ephemeral: true });
       if (res?.error) plans.push({ tgt, error: res.error });
       else {
         plans.push({ tgt, res });
         p.ringScans = p.ringScans || {};
-        p.ringScans[_ringScanKey(tgt)] = {
+        p.ringScans[_ringScanKey(tgt, planSrc)] = {
           runAt: res.runAt || new Date().toISOString(),
           missing: (res.missingInTarget || []).length,
           changed: (res.changed || []).length,

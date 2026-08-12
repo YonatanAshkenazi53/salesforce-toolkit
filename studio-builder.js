@@ -335,6 +335,11 @@ function renderBuilder() {
     _workingPair.src = src;
     try { storageSaveWorkingPair(); } catch (_) {}
     if (typeof renderWorkingPair === 'function') renderWorkingPair();
+    // QA sweep round 2: the un-pin above only lands on disk when
+    // syncRingFollowers finds something else to move (it saves only `if
+    // (changed)`) — when THIS profile was the only thing to change, the
+    // pin's removal stayed in-memory and reappeared after a reload.
+    try { await storageSaveProfiles(); } catch (_) {}
     const moved = (typeof syncRingFollowers === 'function') ? syncRingFollowers() : null;
     showToast(`👑 ${orgLabel(src)} is now the source of truth — every ring surface follows it${moved?.srcMoved ? ` · ${moved.srcMoved} deployment(s) re-pointed (their earlier compares are marked stale)` : ''}`, 'success', 5500);
     renderBuilder();   // the source column re-locks onto the new crown
@@ -347,6 +352,13 @@ function renderBuilder() {
   eid('dsBldSrcMovedAck')?.addEventListener('click', async e => {
     e.preventDefault();
     delete _editingProfile._srcCrownMoved;
+    // QA sweep round 2: this deletes the stamp on the unsaved EDITING CLONE
+    // only — storageSaveProfiles() persists _profiles, where the saved copy
+    // (written by syncRingFollowers) still carried it, so the banner came
+    // back on every reopen until the user separately hit Save. Clear it on
+    // the saved object too.
+    const savedP = _profiles.find(x => x.id === _editingProfile.id);
+    if (savedP) delete savedP._srcCrownMoved;
     try { await storageSaveProfiles(); } catch (_) {}
     renderBuilder();
   });

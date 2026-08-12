@@ -24,7 +24,13 @@ window.openReconcile = function(profileId, targetUrl) {
         ${tgts.map(u => {
           let rs = null;
           try {
-            rs = (p.ringScans || {})[(typeof _ringScanKey === 'function') ? _ringScanKey(u) : ''] || null;
+            // QA sweep round 2: _ringScanKey(u) with no srcUrl DEFAULTS to
+            // the ring's current crown — for a profile that follows the
+            // ring that's correct (p.sourceOrg === crown), but a
+            // sourcePinned profile's source can differ from the crown, and
+            // this preview must describe THIS profile's own source→target
+            // flow, never a different pair wearing its label.
+            rs = (p.ringScans || {})[(typeof _ringScanKey === 'function') ? _ringScanKey(u, p.sourceOrg) : ''] || null;
             // Freshest-wins with the native lastScan for the profile's own
             // pair — the chooser said "not scanned yet" while a fresh native
             // scan sat on lastScan (QA sweep 2026-08-11).

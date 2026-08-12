@@ -468,6 +468,56 @@ describe('empty live set = unknown, not closed', () => {
   });
 });
 
+// ── QA sweep round 2 (2026-08-11) — five crown/pin/preview fixes ──────────
+describe('crown & pin persistence — sweep round 2 fixes', () => {
+  const MODALS = read('studio-builder-modals.js');
+  const RECONCILE = read('studio-reconcile.js');
+
+  it('promote persists the un-pin unconditionally, not only when syncRingFollowers moves something else', () => {
+    const src = BUILDER.slice(BUILDER.indexOf("eid('dsBldPromoteSrc')"), BUILDER.indexOf("eid('dsBldSrcMovedAck')"));
+    expect(src).toMatch(/if \(savedP\) \{ delete savedP\.sourcePinned; \}/);
+    // The save call must come BEFORE syncRingFollowers's own conditional
+    // save — it must not depend on that save firing.
+    const saveAt = src.indexOf('await storageSaveProfiles()');
+    const followersAt = src.indexOf('syncRingFollowers()');
+    expect(saveAt).toBeGreaterThan(-1);
+    expect(saveAt).toBeLessThan(followersAt);
+  });
+
+  it('the "got it" ack clears the crown-moved stamp on the SAVED profile too, not just the editing clone', () => {
+    const src = BUILDER.slice(BUILDER.indexOf("eid('dsBldSrcMovedAck')"), BUILDER.indexOf("eid('dsProfileSrcOrg')"));
+    expect(src).toMatch(/const savedP = _profiles\.find\(x => x\.id === _editingProfile\.id\)/);
+    expect(src).toMatch(/if \(savedP\) delete savedP\._srcCrownMoved/);
+  });
+
+  it('the target chooser previews THIS profile\'s own source, never the ring crown\'s, for a pinned source', () => {
+    const src = RECONCILE.slice(RECONCILE.indexOf('window.openReconcile'), RECONCILE.indexOf('window.openReconcile') + 3000);
+    expect(src).toMatch(/_ringScanKey\(u, p\.sourceOrg\)/);
+  });
+
+  it('Sync Plan captures the crown ONCE before its scan loop — a mid-plan crown change cannot mislabel a scan', () => {
+    const start = RING.indexOf('async function _ringOpenPlan');
+    const src = RING.slice(start, RING.indexOf('\n}', RING.indexOf('storageSaveProfiles', start)));
+    expect(src).toMatch(/const planSrc = _ring\.sourceUrl;/);
+    // Both the scan clone and the deposit key must use the captured value —
+    // re-reading _ring.sourceUrl after the await is the exact trap
+    // _ringScanKey's own contract warns about.
+    expect(src).toMatch(/sourceOrg: planSrc, targetOrg: tgt/);
+    expect(src).toMatch(/_ringScanKey\(tgt, planSrc\)/);
+  });
+
+  it('picker toolbar counts match what their toggles actually do', () => {
+    // "Hide in-sync" must count hideSet (in-sync MINUS file-drifted), not
+    // the raw in-sync set — file-drifted records survive that hide.
+    expect(MODALS).toMatch(/\$\{scanFresh \? hideSet\.size : deployedIds\.size\}/);
+    // "Only needs-deploy" must render (and count) file-only drift too —
+    // otherwise the toggle vanishes exactly when fields are synced but
+    // files aren't, the scenario the 📎 comparison exists for.
+    expect(MODALS).toMatch(/idsMissingInTarget\.size \|\| idsDrift\.size \|\| idsFileMiss\.size/);
+    expect(MODALS).toMatch(/new Set\(\[\.\.\.idsMissingInTarget, \.\.\.idsDrift, \.\.\.idsFileMiss\]\)\.size/);
+  });
+});
+
 // ══════════════════════════════════════════════════════════════════
 // Fable recheck — behaviour/functional confirmed fixes
 // ══════════════════════════════════════════════════════════════════
