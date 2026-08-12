@@ -13,7 +13,78 @@ lives in `CHANGELOG_HISTORY.md` (repo only, never shipped — the packer only sh
 `CHANGELOG.md` itself; no leading underscore, Chrome refuses to load unpacked
 extensions containing root files that start with `_`).
 
-## 1.2.0 — 2026-08-13
+## 1.3.0 — 2026-08-13
+
+The Sync Ring grows into a real multi-org sync tool: attached files are now part
+of what "in sync" means, one source of truth now governs every deployment
+automatically (with a clear warning and a one-click way back whenever it moves),
+and every screen that shows sync status updates itself the moment fresher
+information exists — no more stale checkmarks after a run.
+
+### Added
+- **Attached files are now part of staying in sync.** Turn on Files for an
+  object and every scan compares attachments too — matching records with
+  different files show exactly which files are missing, on which record, with
+  a checkbox next to each one and a one-click "Move selected" that copies them
+  straight across without running a full deploy. Files already on the target
+  are never touched or duplicated; a second move is always a no-op. Records
+  that were already in sync before you turned Files on get checked too, matched
+  by their existing key — not just records from a fresh transfer.
+- **A real "Synced" view.** Reconcile grows a fourth column alongside Insert /
+  Changed / In target only: every record verified matching, with links to both
+  copies, an "open as table" view showing live field values side by side, and
+  (when Files is on) exactly which of those synced records still need a file.
+- **Match-key grading, automatically.** Opening the key suggestions panel now
+  grades the top candidates against live data in your source *and every
+  target* — populated%, duplicate%, and a plain-language explanation of how
+  the score is calculated — so the best key for a cross-org match is a
+  measurement, not a guess.
+- **Older run history moves to on-PC storage instead of disappearing.** History
+  used to silently drop runs once you had more than 100 — now the oldest
+  runs move to local browser storage automatically, stay listed (with an
+  "archived" tag), and are included in a full export. Nothing is ever lost to
+  the cap again.
+- **Choose sync vs. async for large deploys, Inspector-style.** A new Engine
+  control on the Run page lets you force every write through the fast async
+  path (or force it off), and set the exact batch size per request — useful
+  when a target org's automation needs smaller batches to avoid timing out.
+
+### Changed
+- **The source of truth is now dynamic, with a safety net.** When you change
+  which org is the source of truth, every deployment that hasn't been
+  explicitly pinned to a different org follows automatically — with a clear
+  notice on any affected deployment ("this now flows from X, was Y") and a
+  one-click way to keep the old source instead, or restore the previous
+  source of truth entirely. Deployments you *have* pinned to a specific org
+  say so plainly, instead of just looking out of sync.
+- **Reconcile now asks which target, when there's more than one.** Opening
+  Reconcile on a deployment with several targets shows each one's last-known
+  status and lets you pick — instead of guessing which pair you're about to
+  fix.
+- **True black for OLED screens, everywhere.** The OLED toggle now reaches
+  every surface — status badges, warning dialogs, the Apex log panel, and the
+  standalone log viewer — instead of leaving a few components in regular dark
+  mode.
+- **Clearer Apex log viewer.** Insert/Update/Delete operations in a log are
+  now color-coded so a delete can't hide in a wall of similar-looking lines,
+  and the two download buttons are labeled for what they actually contain
+  (the readable report vs. the raw log file) instead of both saying "Download."
+
+### Fixed
+- **Sync status now updates itself everywhere, immediately.** Running a
+  transfer, moving a file, or comparing environments in Tree Diff used to
+  leave the Sync Ring and other screens showing stale counts until you
+  manually rescanned — every one of those now refreshes the moment fresher
+  information exists, including a ring cell you just repaired by hand.
+- **Field Cleaner now says when a dependency list might be incomplete**,
+  instead of quietly showing a partial count as if it were the whole picture
+  (Salesforce's own dependency index caps out on very large objects).
+- Records with rich-text fields containing images copied from another org now
+  come with a note explaining the image won't display until it's re-uploaded
+  in the target — the text field copies correctly, but the image file itself
+  can't cross orgs automatically.
+
+## 1.2.0 — 2026-08-03
 
 Built for teams and big orgs — and built on trust. Everything here went
 through a full independent re-verification pass (dozens of audit runs over
@@ -21,11 +92,6 @@ the code), and everything found was fixed. Share your work, prove what ran,
 know what an operation costs before you start it, and validate multi-org
 deploys before a single record is written. Still no server — everything runs
 in your browser, and nothing ever leaves it.
-
-This release also grew the Sync Ring into a real multi-org sync tool: attached
-files are now part of what "in sync" means, one source of truth now governs
-every deployment automatically, and every screen that shows sync status
-updates itself the moment new information exists — no more stale checkmarks.
 
 ### Added
 - **Share deployment profiles as files.** Export any deployment profile to JSON and a
@@ -59,32 +125,6 @@ updates itself the moment new information exists — no more stale checkmarks.
   closes with Escape and keeps focus inside its card, screen readers get
   proper navigation landmarks, and animations respect your system's
   reduced-motion setting.
-- **Attached files are now part of staying in sync.** Turn on Files for an
-  object and every scan compares attachments too — matching records with
-  different files show exactly which files are missing, on which record, with
-  a checkbox next to each one and a one-click "Move selected" that copies them
-  straight across without running a full deploy. Files already on the target
-  are never touched or duplicated; a second move is always a no-op. Records
-  that were already in sync before you turned Files on get checked too, matched
-  by their existing key — not just records from a fresh transfer.
-- **A real "Synced" view.** Reconcile grows a fourth column alongside Insert /
-  Changed / In target only: every record verified matching, with links to both
-  copies, an "open as table" view showing live field values side by side, and
-  (when Files is on) exactly which of those synced records still need a file.
-- **Match-key grading, automatically.** Opening the key suggestions panel now
-  grades the top candidates against live data in your source *and every
-  target* — populated%, duplicate%, and a plain-language explanation of how
-  the score is calculated — so the best key for a cross-org match is a
-  measurement, not a guess.
-- **Older run history moves to on-PC storage instead of disappearing.** History
-  used to silently drop runs once you had more than 100 — now the oldest
-  runs move to local browser storage automatically, stay listed (with an
-  "archived" tag), and are included in a full export. Nothing is ever lost to
-  the cap again.
-- **Choose sync vs. async for large deploys, Inspector-style.** A new Engine
-  control on the Run page lets you force every write through the fast async
-  path (or force it off), and set the exact batch size per request — useful
-  when a target org's automation needs smaller batches to avoid timing out.
 
 ### Changed
 - **A calmer, more consistent look.** One design system across the Toolkit and
@@ -104,25 +144,6 @@ updates itself the moment new information exists — no more stale checkmarks.
   of target lists — an org can never be its own target.
 - **The popout window is gone.** The Toolkit now opens as a regular browser
   tab instead — the popout was unreliable and added nothing.
-- **The source of truth is now dynamic, with a safety net.** When you change
-  which org is the source of truth, every deployment that hasn't been
-  explicitly pinned to a different org follows automatically — with a clear
-  notice on any affected deployment ("this now flows from X, was Y") and a
-  one-click way to keep the old source instead, or restore the previous
-  source of truth entirely. Deployments you *have* pinned to a specific org
-  say so plainly, instead of just looking out of sync.
-- **Reconcile now asks which target, when there's more than one.** Opening
-  Reconcile on a deployment with several targets shows each one's last-known
-  status and lets you pick — instead of guessing which pair you're about to
-  fix.
-- **True black for OLED screens, everywhere.** The OLED toggle now reaches
-  every surface — status badges, warning dialogs, the Apex log panel, and the
-  standalone log viewer — instead of leaving a few components in regular dark
-  mode.
-- **Clearer Apex log viewer.** Insert/Update/Delete operations in a log are
-  now color-coded so a delete can't hide in a wall of similar-looking lines,
-  and the two download buttons are labeled for what they actually contain
-  (the readable report vs. the raw log file) instead of both saying "Download."
 
 ### Fixed
 - **A dry run can no longer say "passed" when it couldn't check everything.**
@@ -143,18 +164,6 @@ updates itself the moment new information exists — no more stale checkmarks.
   objects, the fan-out "Back" button keeps your target selection, removing an
   org also removes it from the sync ring instead of leaving a phantom source,
   and a batch of smaller fixes from the verification pass.
-- **Sync status now updates itself everywhere, immediately.** Running a
-  transfer, moving a file, or comparing environments in Tree Diff used to
-  leave the Sync Ring and other screens showing stale counts until you
-  manually rescanned — every one of those now refreshes the moment fresher
-  information exists, including a ring cell you just repaired by hand.
-- **Field Cleaner now says when a dependency list might be incomplete**,
-  instead of quietly showing a partial count as if it were the whole picture
-  (Salesforce's own dependency index caps out on very large objects).
-- Records with rich-text fields containing images copied from another org now
-  come with a note explaining the image won't display until it's re-uploaded
-  in the target — the text field copies correctly, but the image file itself
-  can't cross orgs automatically.
 
 ## 1.1.0 — 2026-07-29
 
