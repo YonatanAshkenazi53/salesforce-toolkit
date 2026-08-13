@@ -797,6 +797,27 @@ anchor-based plan edit accidentally deleted it)
   KNOWN org (allMapOrgs()), not just current ring members, so a brand-new
   org can become source directly. User explicitly deferred this to Fable
   ("maybe leave this for fable?") — do not implement on Sonnet.
+- [ ] SILENT MATCH-FIELD FALLBACK HAS NO DISCLOSURE (user 2026-08-13, live
+  demo w/ friend): "we picked a custom object from a package object, and he
+  didn't recognize he needed to insert step orders. i saw them under changed
+  instead." Root-caused via studio-scan.js:857-859 — the LEGACY (no explicit
+  Matching config) path silently swaps to the org's own Name field when the
+  configured/default match field doesn't exist on one side ("silent
+  nameField auto-correct (unchanged)" per its own comment) — ZERO user-facing
+  warning. The EXPLICIT matching-config path (M3a) already fails loudly for
+  the same condition (studio-scan.js ~848-853) — the legacy path is the only
+  gap. Package objects are the exact scenario this bites: package versions
+  commonly differ between orgs, so a configured/default field can silently
+  vanish on one side, and if the resulting Name-based key isn't unique, a
+  brand-new record key-matches onto an unrelated existing record and shows
+  as "changed" instead of "missing" — the record never gets inserted, and
+  nothing tells the user why. FIX SHAPE: either (a) make the legacy path
+  disclose the fallback the same way the M3a path already fails loudly
+  (violates the codebase's own "never silently..." law otherwise), or (b)
+  retire the legacy path entirely now that M3a matching config covers single
+  field / composite / external ID — every profile could default into an
+  explicit config instead of the implicit one. Needs the actual object/field
+  names from the user's live incident to write a repro test first.
 - [x] QA SWEEP ROUND 2 (2026-08-11, commit 8b85d6b): the four
   verify-orphaned findings re-verified inline — all real, all fixed
   (sftkParentSyncPut newest-wins + tests; ⚖ repair updates its own ring
