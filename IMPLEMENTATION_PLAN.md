@@ -818,6 +818,22 @@ anchor-based plan edit accidentally deleted it)
   field / composite / external ID — every profile could default into an
   explicit config instead of the implicit one. Needs the actual object/field
   names from the user's live incident to write a repro test first.
+- [ ] MULTI-TARGET DEPLOYMENTS CAN'T REACH RUN TRANSFER / ENGINE CONTROL
+  (found 2026-08-13 while user tried to test the async engine setting):
+  window.runProfile (studio-profiles.js:553) routes ANY profile with
+  profileTargets(p).length > 1 straight into the Fan-out modal, never
+  renderTransfer() — so the Engine row (apiMode/batchSize, studio-transfer.js)
+  is UNREACHABLE for multi-target deployments via ▶ Run. ⚖ Reconcile never
+  had it either. The only other renderTransfer() entry points (runAgain,
+  the scan.js retry path) require a PAST run to already exist — a brand-new
+  multi-target profile has NO path to Run Transfer at all. Today's
+  "Transfer into" button removal (studio-core.js, commit 941a50f) also
+  orphaned startTransferFrom, the last other route in. Workaround given to
+  user: pin the deployment to a single target to unlock ▶ Run → Run
+  Transfer. Real fix needs a design call (Fable): does Fan-out need its own
+  Engine control, or does Run Transfer need to be reachable independently
+  of target count (e.g., "run against ONE target" as an explicit option
+  distinct from "run against all targets")?
 - [x] QA SWEEP ROUND 2 (2026-08-11, commit 8b85d6b): the four
   verify-orphaned findings re-verified inline — all real, all fixed
   (sftkParentSyncPut newest-wins + tests; ⚖ repair updates its own ring
