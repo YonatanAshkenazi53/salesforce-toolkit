@@ -837,6 +837,22 @@ anchor-based plan edit accidentally deleted it)
   Engine control, or does Run Transfer need to be reachable independently
   of target count (e.g., "run against ONE target" as an explicit option
   distinct from "run against all targets")?
+- [ ] PICK RECORDS MODAL: record list starves for height (user 2026-08-13:
+  "this page doesn't have enough space to show the records"). Root cause
+  found (not fixed, user said "also for fable"): studio.css .ds-picker-body
+  has `max-height: 55vh; overflow: hidden`, and .ds-picker-list is the only
+  flexible section (`flex: 1`) inside it — everything ABOVE the list
+  (Matching config block, search/toolbar, the Live-diff legend) competes for
+  that same fixed 55vh. Today's session added real height to the Matching
+  block specifically (the plain-language help text under Matching, the
+  match-score explainer, the multi-target grading disclosure) — none of
+  that existed when 55vh was originally tuned, so the list now renders as
+  ~1 visible row before scrolling on a 402-record object, defeating the
+  picker's purpose. FIX SHAPE: either raise max-height (e.g. 70-80vh, most
+  screens can afford it), or make the Matching config collapsible/collapsed-
+  by-default so it doesn't permanently tax the list's share of the height,
+  or give the list an explicit min-height so it can never shrink below N
+  visible rows regardless of what's above it.
 - [x] QA SWEEP ROUND 2 (2026-08-11, commit 8b85d6b): the four
   verify-orphaned findings re-verified inline — all real, all fixed
   (sftkParentSyncPut newest-wins + tests; ⚖ repair updates its own ring
