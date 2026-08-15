@@ -795,7 +795,10 @@ anchor-based plan edit accidentally deleted it)
   the dropdown can't promote an org to source before it's a ring member).
   If the topbar becomes the sole entry point, it likely needs to list every
   KNOWN org (allMapOrgs()), not just current ring members, so a brand-new
-  org can become source directly. User explicitly deferred this to Fable
+  org can become source directly. Reconfirmed live 2026-08-13
+  (fresh test session): topbar dropdown showed ONLY orgfarm while the Ring
+  config panel correctly listed all 3 known orgs (ashkenazy6/7 unticked) —
+  concrete repro for exactly this scoping gap, user-labeled "fixes for fable." User explicitly deferred this to Fable
   ("maybe leave this for fable?") — do not implement on Sonnet.
 - [ ] SILENT MATCH-FIELD FALLBACK HAS NO DISCLOSURE (user 2026-08-13, live
   demo w/ friend): "we picked a custom object from a package object, and he
