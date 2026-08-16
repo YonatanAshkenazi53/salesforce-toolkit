@@ -2470,6 +2470,18 @@ window.openFanOut = async function (profileId, opts = {}) {
           <span>Records</span><strong>${esc(objs.join(' → ') || 'this deployment’s tree')}</strong>
           <span>From</span><strong>${esc(orgLabel(srcUrl))}${fromRing ? ' 👑' : ''}</strong>
           <span>Write mode</span><strong>${esc(modeLabel)}</strong>
+          <span>Engine</span><strong style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <select id="dsFanoutApiMode" class="ds-select ds-select-sm" style="width:auto;font-weight:400"
+              title="How records are written to EVERY ticked target. Auto: synchronous Collections below the threshold, one async Bulk API 2.0 job at or above it. Synchronous: always Collections — slower at scale, every error immediate and per-record. Async: always a Bulk job, even for small sets. Saved on the deployment — single-target runs use the same setting.">
+              <option value="auto" ${(p.apiMode || 'auto') === 'auto' ? 'selected' : ''}>Auto — Bulk job at ≥ ${(Number(p.bulkThreshold) > 0 ? Number(p.bulkThreshold) : 2000).toLocaleString()}</option>
+              <option value="sync" ${p.apiMode === 'sync' ? 'selected' : ''}>Synchronous — Collections only</option>
+              <option value="bulk" ${p.apiMode === 'bulk' ? 'selected' : ''}>Async — Bulk API 2.0 job</option>
+            </select>
+            <input id="dsFanoutBatchSize" class="ds-input ds-input-sm" type="number" min="1" max="200" step="1"
+              style="width:64px;font-weight:400" value="${Math.max(1, Math.min(200, Number(p.batchSize) || 200))}"
+              title="Records per synchronous Collections call (1-200; 200 is the Salesforce maximum). Smaller batches isolate failures and duck per-transaction trigger limits. Bulk jobs ignore this — Salesforce chunks those internally.">
+            <span style="font-weight:400;font-size:11px;opacity:.7">batch</span>
+          </strong>
           <span>Owners</span><strong>${esc(ownerLabel)}</strong>
           <span>PII</span><strong>${esc(piiLabel)}</strong>
           <span>Deletes</span><strong>never — a deploy only adds and updates</strong>
@@ -2490,10 +2502,12 @@ window.openFanOut = async function (profileId, opts = {}) {
 
   // E3b — what the whole fan-out costs, and what each target's own daily pool
   // has left. Each org meters separately, so they are listed per org rather
-  // than summed. Renders after the modal so the meters fill in async.
-  (async () => {
+  // than summed. Meters fill in async; the cost head depends on the engine
+  // settings, so paintBudget re-runs whenever those change.
+  const _budgetMeters = [];   // { label, remaining, max } per live org
+  const paintBudget = () => {
     const box = eid('dsFanoutBudget');
-    if (!box) return;
+    if (!box || !box.isConnected) return;
     const est = (typeof sftkEstimateRunCalls === 'function' && _trLastCounts)
       ? sftkEstimateRunCalls(sftkPlanFromCounts(_trLastCounts, p.tree, p.bulkThreshold, p.ownerMapping?.mode === 'match',
           { apiMode: p.apiMode, batchSize: p.batchSize }))
@@ -2502,17 +2516,40 @@ window.openFanOut = async function (profileId, opts = {}) {
     const head = per == null
       ? 'API cost: run a 👁 Preview on this deployment to estimate it.'
       : `API cost: ≈${per.toLocaleString()} call(s) per target.`;
-    const parts = [];
+    const parts = _budgetMeters.map(m =>
+      `${esc(m.label)}: ${m.remaining.toLocaleString()}/${m.max.toLocaleString()} left${per != null && per > m.remaining ? ' ⚠' : ''}`);
+    box.innerHTML = `${esc(head)}${parts.length ? ` Remaining today — ${parts.join(' · ')}` : ''}`;
+  };
+  paintBudget();
+  (async () => {
     for (const o of candidates.filter(c => isLive(c.url))) {
       const b = await (typeof window.sftkApiBudget === 'function'
         ? window.sftkApiBudget(o.url, (await getOrgSession(o.url))?.sid) : null);
-      if (!box.isConnected) return;
+      if (!eid('dsFanoutBudget')?.isConnected) return;   // modal closed mid-fetch
       if (!b) continue;
-      const over = per != null && per > b.remaining;
-      parts.push(`${esc(orgLabel(o.url))}: ${b.remaining.toLocaleString()}/${b.max.toLocaleString()} left${over ? ' ⚠' : ''}`);
+      _budgetMeters.push({ label: orgLabel(o.url), remaining: b.remaining, max: b.max });
+      paintBudget();
     }
-    box.innerHTML = `${esc(head)}${parts.length ? ` Remaining today — ${parts.join(' · ')}` : ''}`;
   })();
+
+  // Engine controls (user 2026-08-13: multi-target deployments had NO route
+  // to these — ▶ Run goes straight to this dialog, never the Run page).
+  // Same persistence contract as the Run page: saved ON THE PROFILE, so the
+  // engine (which already reads profile.apiMode/batchSize per leg) obeys
+  // them here and everywhere else.
+  eid('dsFanoutApiMode')?.addEventListener('change', async e => {
+    const v = e.target.value;
+    if (v === 'sync' || v === 'bulk') p.apiMode = v; else delete p.apiMode;
+    paintBudget();
+    try { await storageSaveProfiles(); } catch (_) {}
+  });
+  eid('dsFanoutBatchSize')?.addEventListener('change', async e => {
+    const n = Math.max(1, Math.min(200, parseInt(e.target.value, 10) || 200));
+    e.target.value = n;
+    if (n === 200) delete p.batchSize; else p.batchSize = n;
+    paintBudget();
+    try { await storageSaveProfiles(); } catch (_) {}
+  });
 
   // 🧪 Dry run all targets — same checks as the single-target dry run, run
   // against every ticked org in turn. No prod confirm and no no-op guard

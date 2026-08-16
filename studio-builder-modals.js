@@ -1190,7 +1190,26 @@ async function openRecordPickerModal(pathStr) {
              normalization toggles + M3b key-quality analyzer. Drives what's
              displayed AND how records match across orgs (Salesforce IDs
              differ between orgs, so a non-Id key is the cross-org identity). -->
-        ${matchCfgHtml()}
+        ${(() => {
+          // The Matching block grew a lot of legitimate height (help text,
+          // score explainer, per-target grading) and starved the record list
+          // to ~1 visible row (user 2026-08-13: "this page doesn't have
+          // enough space to show the records"). An ALREADY-CONFIGURED node
+          // collapses it to a one-line summary — the config is a decision
+          // already made; the list is what this modal is FOR. Unconfigured
+          // nodes keep it open: choosing the key is step one there.
+          const cfgd = !!(node.matching && node.matching.fields && node.matching.fields.length);
+          const summary = cfgd
+            ? `${node.matching.strategy === 'externalId' ? '⚡ External ID' : node.matching.strategy === 'composite' ? 'Composite' : 'Single field'}: <strong>${esc(node.matching.fields.join(' + '))}</strong>${node.upsert || upsertOn ? ' · ⬆ upsert' : ''}`
+            : 'not configured — matching by Name';
+          return `<details class="ds-match-fold" ${cfgd ? '' : 'open'}>
+            <summary style="cursor:pointer;font-size:12.5px;padding:4px 0">
+              <strong>Matching:</strong> <span>${summary}</span>
+              <span style="opacity:.6;font-size:11px"> — click to ${cfgd ? 'review or change' : 'configure'}</span>
+            </summary>
+            ${matchCfgHtml()}
+          </details>`;
+        })()}
 
         ${queryError ? `<div class="ds-error-banner" style="margin-bottom:8px">${esc(queryError)}</div>` : ''}
 
