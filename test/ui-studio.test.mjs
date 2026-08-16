@@ -841,3 +841,75 @@ describe('the Run page records preview', () => {
     expect(TRANSFER).toMatch(/Run <strong>🔄 Refresh state<\/strong>/);
   });
 });
+
+// ── QA sweep 2026-08-16 — confirmed-finding guards ──────────────────────
+describe('sweep 2026-08-16: stale state can never drive a write or wear a verdict', () => {
+  const REC    = read('studio-reconcile.js');
+  const SCAN   = read('studio-scan.js');
+  const MODALS = read('studio-builder-modals.js');
+
+  it('the Reconcile reset block clears the file selection too', () => {
+    // `sourceId|checksum` keys carry no target — pairs sharing a source org
+    // produce identical keys, so a survivor would arm 📎 Move against a
+    // DIFFERENT target with pre-checked rows.
+    const i = REC.indexOf('if (_recLastProfileId !== p.id) {');
+    expect(i).toBeGreaterThan(-1);
+    expect(REC.slice(i, i + 500)).toContain('_recFileSel = new Set();');
+  });
+
+  it('the target chooser checks BOTH lastScan stamps, like the ring matrix', () => {
+    const i = REC.indexOf('data-rec-target');
+    const guard = REC.slice(0, i);
+    expect(guard).toContain("_orgKey(p.lastScan.sourceOrg) === _orgKey(p.sourceOrg || '')");
+    expect(guard).toContain("_orgKey(p.lastScan.targetOrg) === _orgKey(p.targetOrg || '')");
+  });
+
+  it('a failed file check renders as UNKNOWN on chooser and ring cell, never ✓ in sync', () => {
+    const RINGSRC = read('studio-ring.js');
+    expect(REC).toContain('📎 file check failed');
+    expect(RINGSRC).toContain('file check FAILED');
+    // every ring-summary write site stamps fileErr beside fileMiss
+    expect((RINGSRC.match(/fileErr: true/g) || []).length).toBeGreaterThanOrEqual(4);
+    expect(SCAN).toContain('fileErr: true');
+    expect(read('studio-treediff.js')).toContain('fileErr: true');
+  });
+
+  it('runDiffScan refuses source === target', () => {
+    expect(SCAN).toContain("return { error: 'source and target are the same org' };");
+  });
+
+  it('a crown change mid-rebaseline queues and aborts, never drops silently', () => {
+    const RINGSRC = read('studio-ring.js');
+    const i = RINGSRC.indexOf('async function sftkRingRebaseline');
+    const fn = RINGSRC.slice(i, RINGSRC.indexOf('\n}', RINGSRC.indexOf('finally', i)) + 2);
+    expect(fn).toContain('_ringRebaselineQueued = reason; return;');
+    expect(fn).toMatch(/interrupted = true; break outer;/);
+    expect(fn).toMatch(/continue; *\/\/ never scan the crown against itself/);
+    expect(fn).toContain('sftkRingRebaseline(r);');
+  });
+
+  it('Builder Save carries forward machine-written scan state from the saved copy', () => {
+    const i = SCAN.indexOf('async function commitEditingProfile');
+    const fn = SCAN.slice(i, i + 2200);
+    expect(fn).toMatch(/toSave\.ringScans = \{ \.\.\.\(toSave\.ringScans \|\| \{\}\), \.\.\.\(prev\.ringScans \|\| \{\}\) \}/);
+    expect(fn).toContain('if (prev.matchMemory) toSave.matchMemory = prev.matchMemory;');
+    expect(fn).toMatch(/prev\.lastScan\?\.runAt \|\| 0.*>.*toSave\.lastScan\?\.runAt \|\| 0/s);
+  });
+
+  it('fileDrift persists the FULL drifted-id list and the picker reads it', () => {
+    expect(SCAN).toMatch(/driftIds: cmp\.rows\.map\(r => r\.sourceId\)/);
+    expect(MODALS).toMatch(/liveScan\.fileDrift\.driftIds\s*\n?\s*\|\| \(liveScan\.fileDrift\.rows \|\| \[\]\)\.map\(r => r\.sourceId\)/);
+    // and the capped file check is disclosed in the diff legend
+    expect(MODALS).toContain('does NOT verify their files');
+  });
+
+  it('picker pagination is deterministic and dedup-safe', () => {
+    // ,Id tiebreaker in BOTH ORDER BY variants; OFFSET advances by rows
+    // FETCHED; appended pages dedup by Id.
+    expect(MODALS).toMatch(/ORDER BY \$\{pickerParentPicks \? node\.field \+ ',' : ''\}\$\{fld \? `\$\{fld\},Id` : 'Id'\}/);
+    expect(MODALS).toContain('const offset = append ? fetchedOffset : 0;');
+    expect(MODALS).toMatch(/records\.concat\(page\.filter\(r => !seen\.has\(r\.Id\)\)\)/);
+    // a failed Load-more keeps pagination state (retry, not "All N loaded")
+    expect(MODALS).toContain('if (res.error && append) {');
+  });
+});

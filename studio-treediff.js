@@ -174,7 +174,8 @@ async function _tdRunScans(p) {
               missing: (root.missingInTarget || []).length,
               changed: (root.changed || []).length,
               extra:   (root.onlyInTarget || []).length,
-              ...(root.fileDrift && !root.fileDrift.error && root.fileDrift.records ? { fileMiss: root.fileDrift.records } : {}) };
+              ...(root.fileDrift && !root.fileDrift.error && root.fileDrift.records ? { fileMiss: root.fileDrift.records } : {}),
+              ...(root.fileDrift?.error ? { fileErr: true } : {}) };
           }
         }
         if (typeof sftkParentSyncPut === 'function' && root.status === 'success' && root.objectType) {

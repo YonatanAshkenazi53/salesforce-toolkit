@@ -1817,9 +1817,15 @@ async function sftkTransferFilesForNode(objType, srcOrgUrl, srcSid, tgtOrgUrl, t
   const srcIds = Object.keys(idMap || {});
   if (!srcIds.length) return stats;
   // `only` — Reconcile's per-file selection: { srcRecordId: [checksum, …] }.
-  // When present, ONLY those checksums move; everything else is untouched.
-  const onlyWanted = (only && typeof only === 'object')
-    ? new Set(Object.values(only).flat().filter(Boolean)) : null;
+  // When present, ONLY those (record, checksum) combinations move. The
+  // scoping must stay PER RECORD: a flattened global checksum set would
+  // also move an unselected same-checksum copy linked to a different
+  // record (QA sweep 2026-08-16 — multi-linked docs are a supported case,
+  // that's what extraLinkTo exists for).
+  const onlyByRec = (only && typeof only === 'object')
+    ? Object.fromEntries(Object.entries(only).map(([sid, arr]) =>
+        [sid, new Set((arr || []).filter(Boolean))]))
+    : null;
 
   // 1. Source links for the transferred records.
   const links = [];
@@ -1845,7 +1851,13 @@ async function sftkTransferFilesForNode(objType, srcOrgUrl, srcSid, tgtOrgUrl, t
     pathOnClient: v.PathOnClient, checksum: v.Checksum, size: v.ContentSize,
     dataUrl: v.VersionData,
     linkedTo: links.filter(l => l.docId === v.ContentDocumentId).map(l => l.srcRecordId),
-  })).filter(f => !onlyWanted || onlyWanted.has(f.checksum));
+  })).map(f => onlyByRec
+      // Narrow linkedTo to the records whose checkbox actually carried this
+      // checksum — sftkFilePlan's need/firstPublishTo/extraLinkTo fan-out
+      // can then only reach selected records' targets.
+      ? { ...f, linkedTo: (f.linkedTo || []).filter(sid => onlyByRec[sid] && onlyByRec[sid].has(f.checksum)) }
+      : f)
+    .filter(f => !onlyByRec || (f.linkedTo || []).length);
 
   // 3. Checksums already on the mapped target records (idempotence).
   const tgtIds = [...new Set(Object.values(idMap))];
@@ -2127,10 +2139,13 @@ async function dispatchMessage(message) {
       // only:  { srcRecordId → [checksum, …] } for the SELECTED files.
       const errs = [], diags = [];
       try {
+        // piiActive rides from the caller — hard-coding false here bypassed
+        // the fail-closed gate the engine path enforces (QA sweep
+        // 2026-08-16: "PII policy applies to EVERY write path").
         const stats = await sftkTransferFilesForNode(
           message.objType, message.srcOrgUrl, message.srcSid,
           message.tgtOrgUrl, message.tgtSid,
-          message.idMap || {}, false, errs, diags, message.only || null);
+          message.idMap || {}, !!message.piiActive, errs, diags, message.only || null);
         return { stats, errors: errs, diagnostics: diags };
       } catch (e) {
         return { error: e?.message || String(e), errors: errs, diagnostics: diags };

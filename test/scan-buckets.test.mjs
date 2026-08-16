@@ -628,6 +628,8 @@ describe('sftkFileDriftCompare — checksum multiset, push-directional', () => {
     expect(rec).toMatch(/differences are UNKNOWN, not zero/);
     const bg = codeOnly(srcOf('background.js'));
     expect(bg).toMatch(/case 'SFTK_TRANSFER_FILES':/);
-    expect(bg).toMatch(/onlyWanted\.has\(f\.checksum\)/);
+    // Per-record selection (QA sweep 2026-08-16) — the old global checksum
+    // set also moved unselected same-checksum copies on OTHER records.
+    expect(bg).toMatch(/onlyByRec\[sid\]\.has\(f\.checksum\)/);
   });
 });

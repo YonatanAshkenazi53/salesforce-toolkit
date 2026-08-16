@@ -34,19 +34,32 @@ window.openReconcile = function(profileId, targetUrl) {
             // Freshest-wins with the native lastScan for the profile's own
             // pair — the chooser said "not scanned yet" while a fresh native
             // scan sat on lastScan (QA sweep 2026-08-11).
+            // BOTH stamps, same as the ring matrix (studio-ring.js) — the
+            // stamps exist precisely so consumers can detect a re-pointed
+            // profile. Checking only sourceOrg let a lastScan measured
+            // against the OLD primary target wear the NEW target's row
+            // (QA sweep 2026-08-16: unticking the primary ring org or a
+            // pin-mode target edit re-points p.targetOrg without clearing
+            // lastScan).
             if (_orgKey(u) === _orgKey(p.targetOrg || '') && p.lastScan?.runAt
-                && (!p.lastScan.sourceOrg || _orgKey(p.lastScan.sourceOrg) === _orgKey(p.sourceOrg || ''))) {
+                && (!p.lastScan.sourceOrg || _orgKey(p.lastScan.sourceOrg) === _orgKey(p.sourceOrg || ''))
+                && (!p.lastScan.targetOrg || _orgKey(p.lastScan.targetOrg) === _orgKey(p.targetOrg || ''))) {
               const nat = { runAt: p.lastScan.runAt,
                 missing: (p.lastScan.missingInTarget || []).length,
                 changed: (p.lastScan.changed || []).length,
                 extra:   (p.lastScan.onlyInTarget || []).length,
-                fileMiss: (p.lastScan.fileDrift && !p.lastScan.fileDrift.error && p.lastScan.fileDrift.records) || 0 };
+                fileMiss: (p.lastScan.fileDrift && !p.lastScan.fileDrift.error && p.lastScan.fileDrift.records) || 0,
+                ...(p.lastScan.fileDrift?.error ? { fileErr: true } : {}) };
               rs = (typeof sftkRingCellPick === 'function') ? sftkRingCellPick(nat, rs) : (rs || nat);
             }
           } catch (_) {}
           const drift = rs ? (rs.missing || 0) + (rs.changed || 0) + (rs.extra || 0) : null;
+          // A FAILED file check must never read as "✓ in sync" — file state
+          // is unknown, not zero (same contract as the Synced tab's error
+          // line; QA sweep 2026-08-16).
           const st = !rs ? 'not scanned yet'
-            : drift === 0 ? (rs.fileMiss ? `📎 ${rs.fileMiss} missing files` : '✓ in sync')
+            : drift === 0 ? (rs.fileMiss ? `📎 ${rs.fileMiss} missing files`
+                : rs.fileErr ? '✓ fields in sync · 📎 file check failed' : '✓ in sync')
             : `${rs.missing} missing · ${rs.changed} changed · ${rs.extra} extra`;
           return `<button class="ds-btn" style="display:flex;width:100%;margin:4px 0;justify-content:space-between;align-items:center" data-rec-target="${esc(u)}">
             <span>${esc(orgLabel(u))} ${prodBadge(u)}</span>
@@ -233,9 +246,26 @@ async function sftkShowInSyncRecords(p, scan) {
 // engine's file pass via SFTK_TRANSFER_FILES with a per-file checksum
 // filter; the post-move rescan re-runs the file comparison so the tab
 // tells the truth without another click.
+let _fileMoveInFlight = false;
 async function sftkMoveSelectedFiles(p, scan) {
   const fd = scan?.fileDrift;
   if (!fd || !_recFileSel.size) return;
+  if (_fileMoveInFlight) return;   // checkbox handlers re-arm the button mid-flight
+  // PII fail-closed — file bodies cannot be masked, so an active policy
+  // blocks EVERY file write path, this direct move included (same gate the
+  // engine's files pass and the relink path enforce; QA sweep 2026-08-16
+  // found this path hard-coding piiActive=false).
+  if (Object.keys(p?.piiPolicy || {}).length) {
+    showToast('📎 blocked: a PII policy is active on this deployment and file bodies cannot be masked (fail-closed).', 'error', 6000);
+    return;
+  }
+  // The scan must describe THIS pair — org identity, not object identity,
+  // is what a crown move / ring-follow rewrite changes under an open view.
+  if ((scan.sourceOrg && sftkOrgKey(scan.sourceOrg) !== sftkOrgKey(p.sourceOrg || ''))
+      || (scan.targetOrg && sftkOrgKey(scan.targetOrg) !== sftkOrgKey(p.targetOrg || ''))) {
+    showToast('📎 blocked: this file list came from a different org pair — rescan first.', 'error', 6000);
+    return;
+  }
   const idMap = {}; const only = {};
   for (const r of (fd.rows || [])) {
     for (const f of (r.files || [])) {
@@ -248,6 +278,7 @@ async function sftkMoveSelectedFiles(p, scan) {
   if (!Object.keys(idMap).length) return;
   const btn = eid('dsRecMoveFiles');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ moving…'; }
+  _fileMoveInFlight = true;
   try {
     const [srcSess, tgtSess] = await Promise.all([getOrgSession(p.sourceOrg), getOrgSession(p.targetOrg)]);
     if (!srcSess?.sid || !tgtSess?.sid) {
@@ -259,6 +290,7 @@ async function sftkMoveSelectedFiles(p, scan) {
       objType: scan.objectType || p.tree?.objectType,
       srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
       tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid,
+      piiActive: Object.keys(p?.piiPolicy || {}).length > 0,
       idMap, only });
     if (res?.error) throw new Error(res.error);
     const s = res?.stats || {};
@@ -270,6 +302,8 @@ async function sftkMoveSelectedFiles(p, scan) {
   } catch (e) {
     showToast(`📎 move failed: ${e?.message || String(e)}`, 'error', 6000);
     if (btn) { btn.disabled = false; btn.textContent = `📎 Move ${_recFileSel.size} selected`; }
+  } finally {
+    _fileMoveInFlight = false;
   }
 }
 
@@ -299,7 +333,8 @@ function sftkRingTileFromScan(p) {
       changed: (fs.changed || []).length,
       extra:   (fs.onlyInTarget || []).length,
       status:  'success',
-      ...(fs.fileDrift && !fs.fileDrift.error && fs.fileDrift.records ? { fileMiss: fs.fileDrift.records } : {}) };
+      ...(fs.fileDrift && !fs.fileDrift.error && fs.fileDrift.records ? { fileMiss: fs.fileDrift.records } : {}),
+      ...(fs.fileDrift?.error ? { fileErr: true } : {}) };
     storageSaveProfiles();
   } catch (_) { /* tile refresh is best-effort */ }
 }
@@ -314,7 +349,9 @@ let _recChildOpen     = {};   // pathKey → bool (accordion expanded)
 //   'hard'    — DELETE then SOAP emptyRecycleBin (permanent)
 let _recDeleteMode = 'recycle';
 // 📎 Synced-tab file selection — `${sourceId}|${checksum}` keys. Cleared
-// after a successful move; stale keys simply stop matching rows on rescan.
+// after a successful move AND on profile switch (renderReconcile's reset
+// block): the keys carry no target component, so pairs sharing a source
+// org would otherwise inherit each other's selections.
 let _recFileSel = new Set();
 
 // ── T7 — phantom State/Country drift note ────────────────────────────────
@@ -408,10 +445,15 @@ async function renderReconcile() {
   const p = _reconcileProfile;
   if (!p) { renderProfiles(); return; }
 
-  // Reset selection when switching to a different profile.
+  // Reset selection when switching to a different profile. _recFileSel MUST
+  // reset here too: its keys are source-side only (`sourceId|checksum`), so
+  // two pairs sharing a source org produce IDENTICAL keys — a selection made
+  // for target A would render pre-checked and arm 📎 Move against target B
+  // (QA sweep 2026-08-16, confirmed HIGH).
   if (_recLastProfileId !== p.id) {
     _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
     _recChildSel = {}; _recOrderOverride = {}; _recChildOpen = {};
+    _recFileSel = new Set();
     _recLastProfileId = p.id;
   }
 
@@ -781,6 +823,7 @@ async function renderReconcile() {
       const selCount = _recFileSel.size;
       filesHtml = `<div class="ds-rec-files-block" style="margin:4px 6px;padding:6px;border:1px solid var(--c-warn-border,#6B4A15);border-radius:6px">
         <div style="font-size:12px;margin-bottom:4px">📎 <strong>${fd.missingFiles} file(s)</strong> in <strong>${esc(orgLabel(p.sourceOrg))}</strong> that <strong>${esc(orgLabel(p.targetOrg))}</strong> doesn't have${fd.capped ? ` · first ${fd.pairsChecked} of ${fd.pairsTotal} pairs checked` : ''} — select &amp; move:</div>
+        <div style="max-height:200px;overflow-y:auto;min-height:0;scrollbar-width:thin">
         ${fileRows.slice(0, 100).map(r => (r.files || []).map(f => {
           const k = `${r.sourceId}|${f.checksum}`;
           return `<label style="display:flex;gap:6px;align-items:center;font-size:12px;padding:1px 0;cursor:pointer">
@@ -790,6 +833,7 @@ async function renderReconcile() {
           </label>`;
         }).join('')).join('')}
         ${fd.records > 100 ? `<div style="font-size:11px;opacity:.7">…more records with missing files beyond the first 100 shown.</div>` : ''}
+        </div>
         <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">
           <button class="ds-btn ds-btn-xs" data-rec-fsel-all="1">✓ All</button>
           <button class="ds-btn ds-btn-xs" data-rec-fsel-none="1">✗ None</button>
@@ -806,7 +850,7 @@ async function renderReconcile() {
         <div class="ds-rec-col-hdr ds-diff-sync"${capAttr('identical', 'synced')}>
           🟢 <strong>Synced ${capLbl('identical', info)}</strong>
           <span class="ds-rec-col-sub">${fd && fd.records
-            ? `📎 ${fd.records} of them missing files — not fully synced`
+            ? `📎 ${fd.records} matched record(s) missing files — not fully synced`
             : `verified matching${info.capped ? ' · list truncated' : ''}`}</span>
         </div>
         <div class="ds-rec-col-actions">
@@ -1586,7 +1630,10 @@ async function renderReconcile() {
   // 📎 Synced-tab file selection + direct move.
   const _fselBtnSync = () => {
     const btn = eid('dsRecMoveFiles');
-    if (btn) { btn.disabled = !_recFileSel.size; btn.textContent = `📎 Move ${_recFileSel.size || ''} selected`; }
+    // Never re-arm mid-flight — a checkbox change during a move would
+    // otherwise re-enable the button and allow a concurrent transfer whose
+    // target-checksum snapshot predates the first run's writes (dup files).
+    if (btn && !_fileMoveInFlight) { btn.disabled = !_recFileSel.size; btn.textContent = `📎 Move ${_recFileSel.size || ''} selected`; }
   };
   document.querySelectorAll('[data-rec-fsel]').forEach(cb => cb.addEventListener('change', () => {
     if (cb.checked) _recFileSel.add(cb.dataset.recFsel); else _recFileSel.delete(cb.dataset.recFsel);
@@ -2669,7 +2716,8 @@ async function runReconcile(profile, objType, buckets) {
             changed: (fs.changed || []).length,
             extra:   (fs.onlyInTarget || []).length,
             status:  'success',
-            ...(fs.fileDrift && !fs.fileDrift.error && fs.fileDrift.records ? { fileMiss: fs.fileDrift.records } : {}) };
+            ...(fs.fileDrift && !fs.fileDrift.error && fs.fileDrift.records ? { fileMiss: fs.fileDrift.records } : {}),
+            ...(fs.fileDrift?.error ? { fileErr: true } : {}) };
           // ⚖ clone whose ring flow IS the real profile's own pair → the
           // post-run scan is a native scan; deposit it (stripped, restamped
           // — same contract as _ringScanOne). The direct-_fp case already

@@ -910,7 +910,13 @@ async function openRecordPickerModal(pathStr) {
     // not read "no action needed", be hidden by Hide in-sync, or vanish
     // from Only needs-deploy.
     if (liveScan.fileDrift && !liveScan.fileDrift.error) {
-      for (const r of (liveScan.fileDrift.rows || [])) if (r.sourceId) idsFileMiss.add(r.sourceId);
+      // driftIds is the FULL list; rows is a 200-row display slice — a
+      // record cut by the slice must not downgrade to "🟢 in sync"
+      // (QA sweep 2026-08-16). rows fallback covers pre-driftIds scans.
+      for (const id of (liveScan.fileDrift.driftIds
+          || (liveScan.fileDrift.rows || []).map(r => r.sourceId))) {
+        if (id) idsFileMiss.add(id);
+      }
     }
     for (const r of (liveScan.changed         || [])) {
       if (r.sourceId) {
@@ -952,18 +958,38 @@ async function openRecordPickerModal(pathStr) {
   // said out loud.
   let recordsMore    = false;   // last page was full → more likely exist
   let recordsAtCap   = false;   // SOQL OFFSET ceiling reached
+  let fetchedOffset  = 0;       // raw rows FETCHED (not kept) — OFFSET must
+                                // advance by this, or a dedup-dropped row
+                                // shifts every later page (QA 2026-08-16)
   async function fetchRecords(append) {
     const fld  = displayField && displayField !== 'Id' ? displayField : null;
     const linkSel = pickerParentPicks ? `,${node.field}` : '';
     const scopeW  = pickerParentPicks ? `${node.field} IN (${pickerParentPicks.map(id => `'${id}'`).join(',')})` : '';
     const w = [node.where, scopeW].filter(Boolean).map(x => `(${x})`).join(' AND ');
-    const offset = append ? records.length : 0;
-    const soql = `SELECT Id${fld ? `,${fld}` : ''}${linkSel} FROM ${objType}${w ? ' WHERE ' + w : ''} ORDER BY ${pickerParentPicks ? node.field + ',' : ''}${fld || 'Id'} LIMIT 200${offset ? ` OFFSET ${offset}` : ''}`;
+    const offset = append ? fetchedOffset : 0;
+    // `,Id` tiebreaker: the display field (usually Name) is NOT unique, and
+    // Salesforce guarantees no tie order across separate queries — without a
+    // unique final sort key, OFFSET pages can re-serve or skip rows on ties
+    // (QA sweep 2026-08-16).
+    const soql = `SELECT Id${fld ? `,${fld}` : ''}${linkSel} FROM ${objType}${w ? ' WHERE ' + w : ''} ORDER BY ${pickerParentPicks ? node.field + ',' : ''}${fld ? `${fld},Id` : 'Id'} LIMIT 200${offset ? ` OFFSET ${offset}` : ''}`;
     const res  = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, query: soql });
     queryError = res.error || null;
+    if (res.error && append) {
+      // A failed Load-more must not erase the pagination state — keeping
+      // recordsMore lets the button render again as a retry path instead of
+      // the footer asserting "All N loaded" over a partial list.
+      return;
+    }
     const page = res.error ? [] : (res.records || []);
-    records    = append ? records.concat(page) : page;
-    recordsAtCap = !res.error && page.length === 200 && records.length > 2000;
+    if (append) {
+      fetchedOffset += page.length;
+      const seen = new Set(records.map(r => r.Id));
+      records = records.concat(page.filter(r => !seen.has(r.Id)));   // concurrent-DML dup guard
+    } else {
+      fetchedOffset = page.length;
+      records = page;
+    }
+    recordsAtCap = !res.error && page.length === 200 && fetchedOffset > 2000;
     recordsMore  = !res.error && page.length === 200 && !recordsAtCap;
   }
 
@@ -1239,6 +1265,7 @@ async function openRecordPickerModal(pathStr) {
             <span class="ds-pick-leg ds-diff-missing">🔴 Missing in target</span>
             <span class="ds-pick-leg ds-diff-drift">🟡 Changed</span>
             <span class="ds-pick-leg ds-diff-sync">🟢 In sync</span>
+            ${liveScan.fileDrift?.capped ? `<br><span style="font-size:11px">📎 file check covered the first ${liveScan.fileDrift.pairsChecked} of ${liveScan.fileDrift.pairsTotal} matched pairs — 🟢 on the unchecked rest does NOT verify their files.</span>` : ''}
           </div>` : !isRootPick ? `
           <div class="ds-picker-note ds-pick-noscan">
             No source ↔ target comparison for these ${esc(objType)} records yet${rootScan?.status === 'success'
@@ -1323,7 +1350,7 @@ async function openRecordPickerModal(pathStr) {
               or narrow with a WHERE filter.</div>`
           : recordsAtCap
             ? `<div class="ds-picker-limit">Showing ${records.length} — Salesforce caps this pager at ~2,200 rows; use a WHERE filter to reach the rest.</div>`
-            : records.length > 200 ? `<div class="ds-picker-limit">All ${records.length} record(s) loaded.</div>` : ''}
+            : records.length > 200 ? `<div class="ds-picker-limit">${records.length} record(s) loaded — the full pager result.</div>` : ''}
       </div>
       <div class="ds-modal-footer">
         <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
@@ -1657,7 +1684,11 @@ async function openRecordPickerModal(pathStr) {
       // "All" is fetch-bounded (QA sweep 2026-08-11): with pages unloaded it
       // silently converts "everything" into "whatever happens to be loaded"
       // — and an EMPTY selection would run the full WHERE scope. Say it.
-      if (recordsMore || recordsAtCap) {
+      if (recordsAtCap) {
+        // No ⬇ Load-more button exists at the OFFSET ceiling — don't tell
+        // the user to click one (QA sweep 2026-08-16).
+        showToast(`Selected the ${records.length} LOADED record(s) — the pager is at Salesforce's OFFSET ceiling. Narrow with a WHERE filter, or select NONE to run the full WHERE scope instead.`, 'warning', 7000);
+      } else if (recordsMore) {
         showToast(`Selected the ${records.length} LOADED record(s) — more exist that aren't loaded. ⬇ Load more first, or select NONE to run the full WHERE scope instead.`, 'warning', 7000);
       }
       const box = eid('dsModalBox');

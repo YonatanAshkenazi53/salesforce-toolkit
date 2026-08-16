@@ -157,3 +157,50 @@ describe('sftkFileKeyPairs — key pairing for unwritten records', () => {
     expect(src).toMatch(/composite match keys aren't supported for the files pass yet/);
   });
 });
+
+// ── QA sweep 2026-08-16 — the direct 📎 Move path (SFTK_TRANSFER_FILES) ──
+describe('SFTK_TRANSFER_FILES honors PII and per-record selection', () => {
+  const BG = readFileSync(new URL('../background.js', import.meta.url), 'utf8');
+  const REC = readFileSync(new URL('../studio-reconcile.js', import.meta.url), 'utf8');
+
+  it('the dispatcher passes the caller piiActive flag, never a literal false', () => {
+    // Hard-coding false bypassed the fail-closed gate the engine path
+    // enforces — raw file bodies copied despite an active PII policy.
+    const i = BG.indexOf(`case 'SFTK_TRANSFER_FILES'`);
+    expect(i).toBeGreaterThan(-1);
+    const block = BG.slice(i, i + 1600);
+    expect(block).toContain('!!message.piiActive');
+    expect(block).not.toMatch(/idMap \|\| \{\}, false,/);
+  });
+
+  it('the caller fails closed on an active PII policy AND sends the flag', () => {
+    const i = REC.indexOf('async function sftkMoveSelectedFiles');
+    expect(i).toBeGreaterThan(-1);
+    const fn = REC.slice(i, REC.indexOf('\n}', i) + 2);
+    expect(fn).toMatch(/Object\.keys\(p\?\.piiPolicy \|\| \{\}\)\.length/);
+    expect(fn).toContain('piiActive: Object.keys(p?.piiPolicy || {}).length > 0');
+    // and refuses a scan from a different org pair
+    expect(fn).toMatch(/sftkOrgKey\(scan\.sourceOrg\) !== sftkOrgKey\(p\.sourceOrg/);
+    expect(fn).toMatch(/sftkOrgKey\(scan\.targetOrg\) !== sftkOrgKey\(p\.targetOrg/);
+  });
+
+  it('`only` stays scoped per record — never flattened to a global checksum set', () => {
+    // A global set also moved unselected same-checksum copies linked to
+    // OTHER records (multi-linked docs are a supported case).
+    expect(BG).toContain('const onlyByRec =');
+    expect(BG).not.toContain('const onlyWanted =');
+    expect(BG).toMatch(/linkedTo: \(f\.linkedTo \|\| \[\]\)\.filter\(sid => onlyByRec\[sid\] && onlyByRec\[sid\]\.has\(f\.checksum\)\)/);
+    expect(BG).toMatch(/\.filter\(f => !onlyByRec \|\| \(f\.linkedTo \|\| \[\]\)\.length\)/);
+  });
+
+  it('per-record narrowing actually prunes the plan fan-out', () => {
+    const { sftkFilePlan } = extractFunctions('background.js', ['sftkFilePlan']);
+    // File X linked to A and B; only A selected → after the caller narrows
+    // linkedTo to ['A'], the plan must not create/link on B's target.
+    const f = { verId: 'v1', docId: 'd1', checksum: 'X', size: 10, title: 't', linkedTo: ['A'] };
+    const plan = sftkFilePlan([f], {}, { A: 'tA', B: 'tB' }, {});
+    const targets = plan.creates.flatMap(c => [c.firstPublishTo, ...(c.extraLinkTo || [])]);
+    expect(targets).toContain('tA');
+    expect(targets).not.toContain('tB');
+  });
+});

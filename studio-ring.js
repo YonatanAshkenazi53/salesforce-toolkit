@@ -204,8 +204,15 @@ function renderRing() {
 // match memory, lastScan — no surface waits for a click. Closed orgs are
 // skipped honestly (they scan on next open, same as 🔎).
 let _ringRebaselining = false;
+let _ringRebaselineQueued = null;   // a crown change DURING a sweep queues, never drops
 async function sftkRingRebaseline(reason) {
-  if (_ringRebaselining) return;
+  // QA sweep 2026-08-16: a second crown change mid-sweep used to be
+  // silently dropped — while the running sweep re-read the NEW crown per
+  // scan, filing earlier pairs under a source key no reader consults (and
+  // even scanning the new crown against itself). Queue the new request and
+  // abort the stale sweep instead; the queued run rescans everything
+  // against the final crown with a fresh target list.
+  if (_ringRebaselining) { _ringRebaselineQueued = reason; return; }
   _ringRebaselining = true;
   try {
     const profiles = _profiles.filter(p => p.tree && !p.ephemeral);
@@ -227,19 +234,32 @@ async function sftkRingRebaseline(reason) {
       return;
     }
     showToast(`👑 ${reason} — rescanning ${profiles.length} deployment(s) × ${open.length} open target(s)…${skipped ? ` (${skipped} closed org(s) skipped)` : ''}`, 'info', 5000);
-    let done = 0;
+    const sweepSrc = _ring.sourceUrl;   // this sweep is FOR this crown
+    let done = 0, interrupted = false;
+    outer:
     for (const p of profiles) {
       for (const t of open) {
+        if (_orgKey(_ring.sourceUrl || '') !== _orgKey(sweepSrc || '')) { interrupted = true; break outer; }
+        if (_orgKey(t) === _orgKey(_ring.sourceUrl || '')) continue;   // never scan the crown against itself
         await _ringScanOne(p.id, t, null);
         done++;
       }
     }
-    showToast(`👑 Re-baseline complete — ${done} pair(s) rescanned against the new source of truth.${skipped ? ` ${skipped} closed org(s) still need a 🔎 when opened.` : ''}`, 'success', 5500);
+    if (interrupted) {
+      showToast(`👑 Source of truth changed again mid-sweep — restarting the re-baseline against the new crown.`, 'info', 5000);
+    } else {
+      showToast(`👑 Re-baseline complete — ${done} pair(s) rescanned against the new source of truth.${skipped ? ` ${skipped} closed org(s) still need a 🔎 when opened.` : ''}`, 'success', 5500);
+    }
     if (_currentView === 'ring') _ringRenderMatrix();
   } catch (e) {
     showToast(`Re-baseline stopped: ${e?.message || e}`, 'error', 6000);
   } finally {
     _ringRebaselining = false;
+    if (_ringRebaselineQueued) {
+      const r = _ringRebaselineQueued;
+      _ringRebaselineQueued = null;
+      sftkRingRebaseline(r);
+    }
   }
 }
 
@@ -294,6 +314,7 @@ function _ringRenderMatrix() {
           changed: (p.lastScan.changed || []).length,
           extra: (p.lastScan.onlyInTarget || []).length,
           fileMiss: (p.lastScan.fileDrift && !p.lastScan.fileDrift.error && p.lastScan.fileDrift.records) || 0,
+          ...(p.lastScan.fileDrift?.error ? { fileErr: true } : {}),
           status: p.lastScan.status }
       : null;
     const s = sftkRingCellPick(nat, (p.ringScans || {})[`${_orgKey(ring.sourceUrl || '')}|${k}`]);
@@ -305,13 +326,18 @@ function _ringRenderMatrix() {
     </div>`;
     const drift = (s.missing || 0) + (s.changed || 0) + (s.extra || 0);
     const fMiss = s.fileMiss || 0;
+    // A FAILED file check is UNKNOWN, not zero — never let it wear the
+    // clean checkmark (the scan's own contract; QA sweep 2026-08-16).
+    const fErr = !fMiss && !!s.fileErr;
     const age = s.runAt ? timeAgo(s.runAt) : '';
     const stale = s.runAt && (now - new Date(s.runAt).getTime() > 86400000);
-    return `<div class="ds-ring-cell ${drift === 0 && !fMiss ? 'ds-ring-ok' : 'ds-ring-drift'}" data-ring-cell="${esc(p.id)}|${esc(tUrl)}">
+    return `<div class="ds-ring-cell ${drift === 0 && !fMiss && !fErr ? 'ds-ring-ok' : 'ds-ring-drift'}" data-ring-cell="${esc(p.id)}|${esc(tUrl)}">
       ${badge}
       ${drift === 0
         ? (fMiss
           ? `<span class="ds-ring-counts" title="Fields in sync — 📎 ${fMiss} record(s) missing files. NOT fully synced until they move: ⚖ → 🟢 Synced tab → select & move."><b class="ds-ring-c">📎${fMiss}</b></span>`
+          : fErr
+          ? `<span class="ds-ring-counts" title="Fields in sync — but the 📎 file check FAILED, so file state is UNKNOWN, not zero. Rescan to verify."><b class="ds-ring-c">📎?</b></span>`
           : `<span class="ds-ring-clean">✓ in sync</span>`)
         : `<span class="ds-ring-counts" title="${s.missing} missing · ${s.changed} changed · ${s.extra} only in target${fMiss ? ` · 📎 ${fMiss} missing files` : ''}">
              ${s.missing ? `<b class="ds-ring-m">${s.missing}</b>` : ''}${s.changed ? `<b class="ds-ring-c">${s.changed}</b>` : ''}${s.extra ? `<b class="ds-ring-e">${s.extra}</b>` : ''}${fMiss ? `<b class="ds-ring-c">📎</b>` : ''}
@@ -411,6 +437,7 @@ async function _ringScanOne(profileId, tgtUrl, btn) {
       extra: (res.onlyInTarget || []).length,
       status: res.status || 'success',
       ...(res.fileDrift && !res.fileDrift.error && res.fileDrift.records ? { fileMiss: res.fileDrift.records } : {}),
+      ...(res.fileDrift?.error ? { fileErr: true } : {}),
     };
     // M3c: ring scans run on clones — persist this scan's confirmed 1:1
     // pairs into the REAL profile's match memory. ONLY when the ring flow's
@@ -504,6 +531,7 @@ async function _ringOpenReconcile(profileId, tgtUrl) {
     extra: (res.onlyInTarget || []).length,
     status: res.status || 'success',
     ...(res.fileDrift && !res.fileDrift.error && res.fileDrift.records ? { fileMiss: res.fileDrift.records } : {}),
+      ...(res.fileDrift?.error ? { fileErr: true } : {}),
   };
   if (typeof window.sftkLearnPairs === 'function' && res.learnedPairs?.length
       && _orgKey(p.sourceOrg || '') === _orgKey(ringSrc || '')) {
@@ -607,6 +635,7 @@ async function _ringOpenPlan(profileId) {
           extra: (res.onlyInTarget || []).length,
           status: res.status || 'success',
           ...(res.fileDrift && !res.fileDrift.error && res.fileDrift.records ? { fileMiss: res.fileDrift.records } : {}),
+      ...(res.fileDrift?.error ? { fileErr: true } : {}),
         };
       }
     } catch (e) { plans.push({ tgt, error: e.message }); }
