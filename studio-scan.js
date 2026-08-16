@@ -146,8 +146,25 @@ async function commitEditingProfile() {
   const toSave = { ..._editingProfile, tree: stripMeta(_editingProfile.tree) };
 
   const idx = _profiles.findIndex(p => p.id === toSave.id);
-  if (idx !== -1) _profiles[idx] = toSave;
-  else _profiles.push(toSave);
+  // MACHINE-WRITTEN scan state is never edited in the Builder, so the SAVED
+  // object is always the fresher truth for it — background scans (👑
+  // re-baseline, ring 🔎, post-run writebacks) deposit onto _profiles[idx]
+  // while the Builder holds a clone taken at open time; a wholesale replace
+  // would discard every deposit made since (QA sweep 2026-08-16: promote
+  // fires the re-baseline from INSIDE an open Builder, so Save right after
+  // reverted the whole N×M sweep to "not scanned").
+  if (idx !== -1) {
+    const prev = _profiles[idx];
+    toSave.ringScans = { ...(toSave.ringScans || {}), ...(prev.ringScans || {}) };
+    if (!Object.keys(toSave.ringScans).length) delete toSave.ringScans;
+    if (prev.matchMemory) toSave.matchMemory = prev.matchMemory;
+    if (new Date(prev.lastScan?.runAt || 0) > new Date(toSave.lastScan?.runAt || 0)) {
+      toSave.lastScan = prev.lastScan;
+    }
+    _profiles[idx] = toSave;
+  } else {
+    _profiles.push(toSave);
+  }
 
   // Keep the active transfer profile reference in sync so the Run button
   // picks up the change without the user re-selecting the profile.
@@ -716,6 +733,13 @@ async function runDiffScan(profile, node = null, scope = null) {
   if (!profile)                  return { error: 'no profile' };
   if (!profile.sourceOrg)        return { error: 'profile has no source org set' };
   if (!profile.targetOrg)        return { error: 'profile has no target org set' };
+  // An org compared against itself is always a mistake upstream (seen live:
+  // a mid-sweep crown change made the re-baseline scan the new crown as its
+  // own target) — refuse instead of burning API calls on a junk verdict.
+  if (typeof sftkOrgKey === 'function'
+      && sftkOrgKey(profile.sourceOrg) === sftkOrgKey(profile.targetOrg)) {
+    return { error: 'source and target are the same org' };
+  }
   // Per-target mapping overrides resolve HERE — one chokepoint for every
   // scan path (card refresh, ring, tree diff, sync plan). Shallow profile
   // shadow: lastScan stays the caller's object, only the tree is the merged
@@ -1468,6 +1492,11 @@ async function runDiffScan(profile, node = null, scope = null) {
       const cmp = sftkFileDriftCompare(fPairs, srcFiles, tgtFiles);
       fileDrift = { records: cmp.records, missingFiles: cmp.missingFiles,
         rows: cmp.rows.slice(0, 200),   // display slice — records/missingFiles are the truth
+        // The FULL drifted-id list (max FILE_PAIR_CAP ids) — consumers that
+        // classify records (the picker's idsFileMiss) must read THIS, not
+        // rows: a record cut by the 200-row display slice would otherwise
+        // downgrade to "🟢 in sync" (QA sweep 2026-08-16).
+        driftIds: cmp.rows.map(r => r.sourceId),
         pairsChecked: fPairs.length,
         ...(cmp.extraFiles ? { extraFiles: cmp.extraFiles, extraRecords: cmp.extraRecords } : {}),
         ...(pairsAll.length > fPairs.length ? { capped: true, pairsTotal: pairsAll.length } : {}) };
@@ -1804,6 +1833,7 @@ async function refreshProfileDiff(profileId) {
             changed: (res.changed || []).length,
             extra:   (res.onlyInTarget || []).length,
             ...(res.fileDrift && !res.fileDrift.error && res.fileDrift.records ? { fileMiss: res.fileDrift.records } : {}),
+            ...(res.fileDrift?.error ? { fileErr: true } : {}),
           };
           storageSaveProfiles().catch(() => {});
         }
