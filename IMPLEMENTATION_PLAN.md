@@ -877,6 +877,39 @@ anchor-based plan edit accidentally deleted it)
   strategy/fields/upsert; open when unconfigured so first-time setup stays
   discoverable); .ds-picker-body max-height 55vh → 72vh; .ds-picker-list
   min-height 180px so the records can never be squeezed below ~5 rows.
+- [x] QA SWEEP wsh1kcycp COMPLETE (2026-08-16/17, commit f919d37): the 3
+  never-completed lenses (files-pipeline, chokepoint, synced-tab) plus
+  crown-rebaseline and picker-pagination finally ran to completion —
+  15 agents, 9 confirmed / 1 refuted / 15 unverified candidates. ALL 9
+  CONFIRMED FIXED (see commit f919d37 for the full list): 📎 Move PII
+  bypass (HIGH), _recFileSel cross-pair survival (HIGH), per-record `only`
+  scoping, chooser targetOrg stamp, files-block clipping, mid-rebaseline
+  crown-change swallow (+ runDiffScan same-org refusal), Builder-Save
+  clobbering sweep deposits, fileDrift caps vs picker idsFileMiss
+  (driftIds), OFFSET pagination determinism. Plus fileErr honesty
+  threading (failed file check renders UNKNOWN, never "✓ in sync") and
+  four cheap adjacent hardenings (in-flight move guard, org-pair check,
+  toast branch at OFFSET cap, load-more failure retry).
+  REFUTED (do not re-fix): chokepoint lastScan deposit ordering — no
+  reachable interleaving lands an older scan last; the missing runAt
+  guard is an internal-consistency gap only.
+- [ ] SWEEP CANDIDATES STILL QUEUED (unverified, from wsh1kcycp — verify
+  before fixing): (a) MEDIUM files leftover-pairing resolves the key field
+  from SOURCE config and queries the TARGET with the same name, ignoring
+  fieldMappings (background.js ~1495; same wrong-column class the scan
+  fixed via sftkMatchingTgtFields) — wrong-record attachment possible on
+  renamed-key targets; (b) MEDIUM parent-grouped picker: page boundaries
+  split parents, per-parent select-all + "n/n selected" headers are
+  fetch-bounded with no warning (studio-builder-modals.js ~1764+);
+  (c) LOW fileDrift gate reads the ROOT toggle for child scans (dead file
+  queries; child-only 📎 toggles never gate the verdict) — studio-scan.js
+  includeFiles gate; (d) LOW missing-CV fallback substitutes the org-local
+  ContentDocumentId as the checksum → permanent phantom drift rows the
+  Move can never clear (studio-scan.js filesByRec `checksum: doc`);
+  (e) LOW ephemeral ring-tile deposit crown-gated instead of gated on
+  realP.sourceOrg — pinned-source/ring-less chooser scans never update the
+  tiles the chooser reads (studio-scan.js chokepoint deposit; two lenses
+  sighted this independently).
 - [x] QA SWEEP ROUND 2 (2026-08-11, commit 8b85d6b): the four
   verify-orphaned findings re-verified inline — all real, all fixed
   (sftkParentSyncPut newest-wins + tests; ⚖ repair updates its own ring
