@@ -800,7 +800,7 @@ anchor-based plan edit accidentally deleted it)
   config panel correctly listed all 3 known orgs (ashkenazy6/7 unticked) —
   concrete repro for exactly this scoping gap, user-labeled "fixes for fable." User explicitly deferred this to Fable
   ("maybe leave this for fable?") — do not implement on Sonnet.
-- [ ] SILENT MATCH-FIELD FALLBACK HAS NO DISCLOSURE (user 2026-08-13, live
+- [x] SILENT MATCH-FIELD FALLBACK HAS NO DISCLOSURE (user 2026-08-13, live
   demo w/ friend): "we picked a custom object from a package object, and he
   didn't recognize he needed to insert step orders. i saw them under changed
   instead." Root-caused via studio-scan.js:857-859 — the LEGACY (no explicit
@@ -821,7 +821,15 @@ anchor-based plan edit accidentally deleted it)
   field / composite / external ID — every profile could default into an
   explicit config instead of the implicit one. Needs the actual object/field
   names from the user's live incident to write a repro test first.
-- [ ] MULTI-TARGET DEPLOYMENTS CAN'T REACH RUN TRANSFER / ENGINE CONTROL
+  FIXED 2026-08-16 (Fable, commit 37d993a) via shape (a): both legacy
+  fallback branches push a warning (missing field, substitute, mispair
+  risk, pointer to 🎯 Matching) into keyFallbackWarnings, which seeds
+  memWarnings → the scan result's warnings channel (renders in Reconcile).
+  The auto-correct itself stays so pre-Matching profiles keep scanning.
+  Guard: near-miss.test.mjs "legacy match-field fallback is disclosed".
+  Shape (b) — retiring the legacy path into M3a config — remains open as
+  a future cleanup, tracked by this entry's history.
+- [x] MULTI-TARGET DEPLOYMENTS CAN'T REACH RUN TRANSFER / ENGINE CONTROL
   (found 2026-08-13 while user tried to test the async engine setting):
   window.runProfile (studio-profiles.js:553) routes ANY profile with
   profileTargets(p).length > 1 straight into the Fan-out modal, never
@@ -837,7 +845,17 @@ anchor-based plan edit accidentally deleted it)
   Engine control, or does Run Transfer need to be reachable independently
   of target count (e.g., "run against ONE target" as an explicit option
   distinct from "run against all targets")?
-- [ ] PICK RECORDS MODAL: record list starves for height (user 2026-08-13:
+  FIXED 2026-08-16 (Fable, commit 37d993a): design call — the engine
+  settings are PROFILE-persisted and the engine already reads them per
+  leg, so the gap was visibility, not behavior. The Fan-out dialog's
+  what-grid gained an Engine row (dsFanoutApiMode select + dsFanoutBatchSize,
+  same persist/delete-on-default contract as the Run page's dsTrApiMode/
+  dsTrBatchSize), and the API-cost budget line repaints on change
+  (paintBudget refactor: per-org meters cached, cost head recomputed).
+  Run-Transfer reachability for multi-target profiles NOT changed — the
+  dialog now covers the engine need. Guard: fanout-dryrun.test.mjs
+  "engine controls are reachable and persist to the profile".
+- [x] PICK RECORDS MODAL: record list starves for height (user 2026-08-13:
   "this page doesn't have enough space to show the records"). Root cause
   found (not fixed, user said "also for fable"): studio.css .ds-picker-body
   has `max-height: 55vh; overflow: hidden`, and .ds-picker-list is the only
@@ -853,6 +871,12 @@ anchor-based plan edit accidentally deleted it)
   by-default so it doesn't permanently tax the list's share of the height,
   or give the list an explicit min-height so it can never shrink below N
   visible rows regardless of what's above it.
+  FIXED 2026-08-16 (Fable, commit 37d993a) — all three shapes at once:
+  Matching config wrapped in <details class="ds-match-fold"> (collapsed
+  when the node already HAS a matching config, with a one-line summary of
+  strategy/fields/upsert; open when unconfigured so first-time setup stays
+  discoverable); .ds-picker-body max-height 55vh → 72vh; .ds-picker-list
+  min-height 180px so the records can never be squeezed below ~5 rows.
 - [x] QA SWEEP ROUND 2 (2026-08-11, commit 8b85d6b): the four
   verify-orphaned findings re-verified inline — all real, all fixed
   (sftkParentSyncPut newest-wins + tests; ⚖ repair updates its own ring
