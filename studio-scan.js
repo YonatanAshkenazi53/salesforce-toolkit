@@ -853,10 +853,22 @@ async function runDiffScan(profile, node = null, scope = null) {
       compareExpanded = true;
     }
   }
+  const keyFallbackWarnings = [];
   if (!hasMatchingCfg) {
-    // Legacy single-field path — silent nameField auto-correct (unchanged).
-    if (srcTypes.size && !srcTypes.has(srcMatchField) && srcNameFld) { srcMatchField = srcNameFld; srcKeyFields = [srcMatchField]; }
-    if (tgtTypes.size && !tgtTypes.has(tgtMatchField) && tgtNameFld) { tgtMatchField = tgtNameFld; tgtKeyFields = [tgtMatchField]; }
+    // Legacy single-field path — nameField auto-correct. The correction
+    // itself stays (a scan that errors out here would brick pre-Matching
+    // profiles), but it must be DISCLOSED: a swapped key silently changes
+    // what "same record" means — on packaged objects whose configured field
+    // doesn't exist, records pair by Name and new rows surface as "changed"
+    // instead of "missing" (user hit exactly this in a live demo).
+    if (srcTypes.size && !srcTypes.has(srcMatchField) && srcNameFld) {
+      keyFallbackWarnings.push(`match field ${srcMatchField} doesn't exist on ${objType} in the source org — matched by ${srcNameFld} instead. If those values aren't unique, records can pair wrongly (new records may show as "changed" instead of "missing"). Set an explicit key in 🎯 Pick Records → Matching.`);
+      srcMatchField = srcNameFld; srcKeyFields = [srcMatchField];
+    }
+    if (tgtTypes.size && !tgtTypes.has(tgtMatchField) && tgtNameFld) {
+      keyFallbackWarnings.push(`match field ${tgtMatchField} doesn't exist on ${objType} in the target org — matched by ${tgtNameFld} instead. If those values aren't unique, records can pair wrongly (new records may show as "changed" instead of "missing"). Set an explicit key in 🎯 Pick Records → Matching.`);
+      tgtMatchField = tgtNameFld; tgtKeyFields = [tgtMatchField];
+    }
   } else {
     // Explicit matching config — a missing component would silently change
     // the key definition mid-scan, so fail loudly instead of auto-correcting.
@@ -1143,7 +1155,7 @@ async function runDiffScan(profile, node = null, scope = null) {
   const memPairedSrc = new Set();
   const memPairedTgt = new Set();
   let memRows = [];                 // [{ sr, tr }] — classified with the buckets below
-  const memWarnings = [];
+  const memWarnings = [...keyFallbackWarnings];
   // AUTONUMBER match key (W7 pattern audit) — the values are org-generated
   // sequence numbers: 'A-0042' in two orgs are DIFFERENT records that happen
   // to share a counter position. Matching by them pairs records arbitrarily,

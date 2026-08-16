@@ -162,3 +162,26 @@ describe('the scan and Overwrite consume the engine set', () => {
     expect(REC).toMatch(/const tf = \(fm\[sf\] && fm\[sf\] !== null\) \? fm\[sf\] : sf;/);
   });
 });
+
+describe('legacy match-field fallback is disclosed, never silent', () => {
+  const SCAN = readFileSync(join(root, 'studio-scan.js'), 'utf8');
+
+  it('both fallback branches push a warning naming old and new key', () => {
+    // The auto-correct itself stays (erroring would brick pre-Matching
+    // profiles) but a swapped key changes what "same record" means, so
+    // each branch must disclose before it corrects.
+    const m = SCAN.match(/const keyFallbackWarnings = \[\];[\s\S]{0,2200}?\} else \{/);
+    expect(m).toBeTruthy();
+    const block = m[0];
+    const pushes = block.match(/keyFallbackWarnings\.push\(/g) || [];
+    expect(pushes.length).toBe(2);
+    expect(block).toMatch(/doesn't exist on \$\{objType\} in the source org — matched by \$\{srcNameFld\} instead/);
+    expect(block).toMatch(/doesn't exist on \$\{objType\} in the target org — matched by \$\{tgtNameFld\} instead/);
+    // each push happens BEFORE its corresponding field swap
+    expect(block.indexOf('keyFallbackWarnings.push')).toBeLessThan(block.indexOf('srcMatchField = srcNameFld'));
+  });
+
+  it('fallback warnings seed the result warnings channel', () => {
+    expect(SCAN).toMatch(/const memWarnings = \[\.\.\.keyFallbackWarnings\];/);
+  });
+});

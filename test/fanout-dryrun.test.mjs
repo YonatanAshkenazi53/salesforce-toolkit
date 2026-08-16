@@ -511,4 +511,15 @@ describe('openFanOut write-mode claim', () => {
     // reopening with the original opts silently reverted to A ticked.
     expect(openFanOutSrc).toMatch(/openFanOut\(profileId, \{ \.\.\.opts, preselect: targets \}\)/);
   });
+
+  it('engine controls are reachable and persist to the profile', () => {
+    // ▶ Run on a multi-target deployment goes straight to this dialog —
+    // without these controls apiMode/batchSize had NO route on that path.
+    expect(openFanOutSrc).toContain('id="dsFanoutApiMode"');
+    expect(openFanOutSrc).toContain('id="dsFanoutBatchSize"');
+    // same persistence contract as the Run page: profile-saved, auto/200
+    // are the absent-key defaults so they delete rather than store
+    expect(openFanOutSrc).toMatch(/if \(v === 'sync' \|\| v === 'bulk'\) p\.apiMode = v; else delete p\.apiMode;/);
+    expect(openFanOutSrc).toMatch(/if \(n === 200\) delete p\.batchSize; else p\.batchSize = n;/);
+  });
 });

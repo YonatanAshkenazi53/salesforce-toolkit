@@ -1280,7 +1280,11 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 55vh;
+  /* 55vh was tuned before the Matching block grew (help text, score
+     explainer, per-target grading) — at 55vh those additions squeezed the
+     record list to ~1 visible row. 72vh + the list's min-height below
+     guarantee the records always get real space. */
+  max-height: 72vh;
   overflow: hidden;
 }
 .ds-picker-toolbar {
@@ -1303,6 +1307,9 @@ html, body {
 .ds-picker-list {
   overflow-y: auto;
   flex: 1;
+  /* The list is what this modal is FOR — it may never shrink below ~6
+     rows no matter how tall the sections above it get. */
+  min-height: 180px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface2);
