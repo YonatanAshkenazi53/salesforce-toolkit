@@ -812,7 +812,14 @@ anchor-based plan edit accidentally deleted it)
   promote KEPT as an explicit confirmed shortcut through the same setter
   (rerender:false + renderBuilder) — it was user-requested 2026-08-11 and
   is contextual, not a competing control. 4 new ui-studio guards.
-  Adversarial review of the change running as workflow w703wnvrm.
+  REVIEW w703wnvrm CLOSED (commit c175ae1): 10 confirmed / 1 refuted, all
+  fixed — re-baseline gate widened (hadCrown || srcMoved || surviving
+  ringScans; pristine first crown still skips), setter repaints an OPEN
+  Builder in place instead of renderView (topbar is always visible, a
+  crown flick mid-edit destroyed the session), removeOrg clears the
+  _workingPair src/tgt mirrors + repaints the chip (ghost-source
+  impersonation), and 8 dead pointers to the removed ⦿ control swept
+  (ring empty state, 5 tooltips, topbar unset tooltip, adopt comment).
 - [x] SILENT MATCH-FIELD FALLBACK HAS NO DISCLOSURE (user 2026-08-13, live
   demo w/ friend): "we picked a custom object from a package object, and he
   didn't recognize he needed to insert step orders. i saw them under changed
