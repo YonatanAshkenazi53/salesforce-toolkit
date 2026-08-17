@@ -101,13 +101,17 @@ async function sftkPiiHashHex(value, salt) {
   return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Whether a hashed value can be re-rendered as a plausible string for this
-// field. Any OTHER type under a hash rule must be nulled and COUNTED as
-// nulled — a hex-derived string is never a valid date/number/picklist/
-// reference, and silently skipping the field would write the raw value.
+// Whether a hashed value can be re-rendered as a plausible value for this
+// field. Number types derive DIGITS (like phone) — a nulled Number trips
+// required-field / positive-amount automations in the target (user
+// 2026-08-17: "it can fail automations if its empty"). Any OTHER type
+// under a hash rule must be nulled and COUNTED as nulled — a hex-derived
+// string is never a valid date/picklist/reference, and silently skipping
+// the field would write the raw value.
 function sftkPiiMaskable(fieldDesc) {
   const t = fieldDesc ? fieldDesc.type : null;
-  return t === 'string' || t === 'textarea' || t === 'email' || t === 'phone' || t === 'url';
+  return t === 'string' || t === 'textarea' || t === 'email' || t === 'phone' || t === 'url'
+    || t === 'int' || t === 'double' || t === 'currency' || t === 'percent';
 }
 
 // Deterministic type-aware masked string from a hash hex. Output ALWAYS fits
@@ -131,6 +135,17 @@ function sftkPiiFormat(hex, fieldDesc) {
     out = local + domain;
   } else if (d.type === 'phone') {
     out = (n % 10000000000n).toString().padStart(10, '0');
+  } else if (d.type === 'int' || d.type === 'double' || d.type === 'currency' || d.type === 'percent') {
+    // Digits that always fit the field's INTEGER portion and are never 0 —
+    // integer output is valid at any scale, and a zero would trip
+    // positive-amount validations as surely as a null trips required-field
+    // ones. int describes carry `digits`; double/currency/percent carry
+    // precision/scale.
+    const intDigits = d.type === 'int'
+      ? (Number(d.digits) || 9)
+      : ((Number(d.precision) || 9) - (Number(d.scale) || 0));
+    const span = Math.max(1, Math.min(15, intDigits));
+    out = ((n % (10n ** BigInt(span) - 1n)) + 1n).toString();
   } else if (d.type === 'url') {
     out = 'https://masked.invalid/' + b36.padStart(8, '0').slice(0, 8);
   } else {
@@ -160,6 +175,13 @@ async function sftkPiiMaskValue(value, fieldDesc, salt, rule) {
     // undeliverability guarantee outranks keeping a value: null instead.
     const lim = (fieldDesc && typeof fieldDesc.length === 'number' && fieldDesc.length > 0) ? fieldDesc.length : null;
     if (lim !== null && ((fieldDesc.type === 'email' && lim < 16) || (fieldDesc.type === 'url' && lim < 24))) {
+      return { value: null, action: 'nulled' };
+    }
+    // A number whose integer portion holds no digits (e.g. percent(2,2),
+    // max 0.99) can't take a non-zero integer derivation — null (counted)
+    // beats a rejected row, and a rejected row invites a raw retry.
+    if (fieldDesc && (fieldDesc.type === 'double' || fieldDesc.type === 'currency' || fieldDesc.type === 'percent')
+        && ((Number(fieldDesc.precision) || 9) - (Number(fieldDesc.scale) || 0)) < 1) {
       return { value: null, action: 'nulled' };
     }
     const hex = await sftkPiiHashHex(value, salt);

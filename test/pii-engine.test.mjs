@@ -83,18 +83,22 @@ describe('sftkPiiMaskRows — every covered value of every fetched record', () =
     expect(counts).toEqual({ hashed: 1, nulled: 0, fixed: 0 });
   });
 
-  it('nulls (and COUNTS) hash on a non-maskable type — 0/false are values, not empties', async () => {
+  it('nulls (and COUNTS) hash on a non-derivable type — 0/false are values, not empties', async () => {
+    // Score__c is a NUMBER — since 2026-08-17 numbers derive digits (a
+    // nulled Number trips target automations), so 0 hashes instead of
+    // nulling; booleans and dates still null.
     const rules = {
       Birthdate: RULES.Birthdate,
-      Score__c:  { rule: { strategy: 'hash' }, desc: { type: 'double' } },
+      Score__c:  { rule: { strategy: 'hash' }, desc: { type: 'double', precision: 9, scale: 0 } },
       Flag__c:   { rule: { strategy: 'hash' }, desc: { type: 'boolean' } },
     };
     const { rows, counts } = await eng.sftkPiiMaskRows(
       [{ Birthdate: '1990-04-01', Score__c: 0, Flag__c: false }], 'Contact', rules, SALT, new Map());
     expect(rows[0].Birthdate).toEqual({ value: null, action: 'nulled' });
-    expect(rows[0].Score__c).toEqual({ value: null, action: 'nulled' });
+    expect(rows[0].Score__c.action).toBe('hashed');
+    expect(String(rows[0].Score__c.value)).toMatch(/^[0-9]{1,9}$/);
     expect(rows[0].Flag__c).toEqual({ value: null, action: 'nulled' });
-    expect(counts).toEqual({ hashed: 0, nulled: 3, fixed: 0 });
+    expect(counts).toEqual({ hashed: 1, nulled: 2, fixed: 0 });
   });
 
   it('keeps null / undefined / empty-string sources untouched and UNCOUNTED', async () => {
