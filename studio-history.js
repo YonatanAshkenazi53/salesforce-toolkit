@@ -523,7 +523,7 @@ function renderHistory() {
               </div>`).join('');
 
             const noteBlock = otherNotes.map(n => `
-              <div class="ds-history-err-row" title="${esc(n.raw)}">⚠ ${esc(n.message)}
+              <div class="ds-history-err-row" title="${esc(n.raw)}">${/^ℹ/.test(n.message) ? '' : '⚠ '}${esc(n.message)}
                 ${n.hint ? `<div class="ds-err-hint">💡 ${esc(n.hint)}</div>` : ''}
               </div>`).join('');
 

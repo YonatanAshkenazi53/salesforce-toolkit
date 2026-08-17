@@ -906,29 +906,79 @@ async function renderReconcile() {
     pMissingSet = pMissingSet || rootMissingBySrc;
     pExistsSet  = pExistsSet  || rootExistsSrc;
     depth       = depth || 1;
-    const missingRows = (cs.missingInTarget || []).map(r => {
-      const pMissing = r.parentSrcId && pMissingSet.has(r.parentSrcId);
-      const pExists  = r.parentSrcId && pExistsSet.has(r.parentSrcId);
-      // R5 — grandchildren only support push-with-existing-parent: a row
-      // whose parent is ALSO missing can't tree-ride at this depth.
-      const deepBlock = depth > 1 && pMissing;
-      const pNote = !r.parentSrcId
-        ? `<span class="ds-rec-pnote ds-rec-pnote-none" title="No parent in the source either — inserts unlinked.">no parent</span>`
-        : pMissing
-          ? (deepBlock
-            ? `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="Its parent is missing in the target too, and tree-ride inserts aren't supported at this depth (v2) — insert the parent level first, rescan this section, then insert this row.">parent ${esc(r.parentKey || '?')} ✗ missing — insert parent level first</span>`
-            : `<span class="ds-rec-pnote ds-rec-pnote-missing" title="Its parent is missing in the target too — selecting this row also inserts the parent (added automatically at run time).">parent ${esc(r.parentKey || '?')} ✗ missing</span>`)
-          : pExists
+    // Insert bucket readability (user 2026-08-17: "the view there of the
+    // child is kinda messy"). Three rules:
+    //   1. GROUPING — past 30 rows, records collapse under their parent
+    //      (the picker's W3 pattern); the parent chip lives ONCE on the
+    //      group header instead of once per row. The state is derived from
+    //      the PARENT, so every row in a group shares it by construction.
+    //   2. EXCEPTION-ONLY CHIPS — when ≥90% of rows share one parent state,
+    //      that state is said ONCE in a banner and chips mark only the
+    //      outliers. 1,850 identical amber chips are one fact, not 1,850.
+    //   3. LIVE COUNT — the actions row carries "n/N selected" (wired in
+    //      the recc handlers below).
+    const mRows = cs.missingInTarget || [];
+    const rowState = r => {
+      if (!r.parentSrcId) return 'none';
+      if (pMissingSet.has(r.parentSrcId)) return depth > 1 ? 'deepblock' : 'missing';
+      if (pExistsSet.has(r.parentSrcId)) return 'exists';
+      return 'untracked';
+    };
+    const chipFor = (st, r) => st === 'none'
+      ? `<span class="ds-rec-pnote ds-rec-pnote-none" title="No parent in the source either — inserts unlinked.">no parent</span>`
+      : st === 'deepblock'
+        ? `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="Its parent is missing in the target too, and tree-ride inserts aren't supported at this depth (v2) — insert the parent level first, rescan this section, then insert this row.">parent ${esc(r.parentKey || '?')} ✗ missing — insert parent level first</span>`
+        : st === 'missing'
+          ? `<span class="ds-rec-pnote ds-rec-pnote-missing" title="Its parent is missing in the target too — selecting this row also inserts the parent (added automatically at run time).">parent ${esc(r.parentKey || '?')} ✗ missing</span>`
+          : st === 'exists'
             ? `<span class="ds-rec-pnote ds-rec-pnote-ok" title="Its parent already exists in the target — this record attaches to it at insert, matched by the parent's key.">parent ${esc(r.parentKey || '?')} ✓ exists</span>`
             : `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="Its parent isn't tracked by the ${depth > 1 ? 'parent child scan' : 'root scan'} (outside its scope or a key collision) — can't be safely inserted.">parent untracked</span>`;
-      const disabled = !!(r.parentSrcId && !pMissing && !pExists) || deepBlock;
+    const stCount = {};
+    for (const r of mRows) { const s = rowState(r); stCount[s] = (stCount[s] || 0) + 1; }
+    const domEntry = Object.entries(stCount).sort((a, b) => b[1] - a[1])[0] || null;
+    const domState = (mRows.length >= 20 && domEntry && domEntry[1] / mRows.length >= 0.9
+      && (domEntry[0] === 'missing' || domEntry[0] === 'exists')) ? domEntry[0] : null;
+    const pnoteBanner = domState
+      ? `<div class="ds-rec-child-info ds-rec-pnote-banner">ℹ ${domEntry[1] === mRows.length ? `all ${mRows.length}` : `${domEntry[1]} of ${mRows.length}`} record(s): ${domState === 'missing'
+          ? 'their parents are missing in the target too — selecting a record also inserts its parent automatically at run time'
+          : 'their parents already exist in the target — records attach at insert, matched by the parent\'s key'}.${domEntry[1] === mRows.length ? '' : ' Chips below mark only the exceptions.'}</div>`
+      : '';
+    const selectableN = mRows.filter(r => { const s = rowState(r); return s !== 'deepblock' && s !== 'untracked'; }).length;
+    const rowHtml = (r, st, withChip) => {
+      const disabled = st === 'deepblock' || st === 'untracked';
       return `<label class="ds-rec-col-row ${disabled ? 'ds-rec-row-disabled' : ''}">
-        <input type="checkbox" data-recc-push="${pathKey}" data-rec-id="${esc(r.sourceId)}" ${!disabled && sel.push.has(r.sourceId) ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+        <input type="checkbox" data-recc-push="${pathKey}" data-rec-id="${esc(r.sourceId)}" data-rec-pgroup="${esc(r.parentSrcId || '')}" ${!disabled && sel.push.has(r.sourceId) ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
         <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${keyLbl(r.matchKey)}</span>
         ${nearChip(r.nearMiss)}
-        ${pNote}
+        ${withChip ? chipFor(st, r) : ''}
       </label>`;
-    }).join('') || `<div class="ds-rec-col-empty">none</div>`;
+    };
+    const distinctParents = new Set(mRows.map(r => r.parentSrcId || '')).size;
+    let missingRows;
+    if (mRows.length >= 30 && distinctParents > 1) {
+      const groups = new Map();   // parentSrcId → { label, state, rows }
+      for (const r of mRows) {
+        const gid = r.parentSrcId || '';
+        if (!groups.has(gid)) groups.set(gid, { label: r.parentKey || (gid ? '?' : '(no parent)'), state: rowState(r), rows: [] });
+        groups.get(gid).rows.push(r);
+      }
+      const openAttr = groups.size <= 6 ? ' open' : '';
+      missingRows = [...groups.entries()].map(([gid, g]) => {
+        const gDisabled = g.state === 'deepblock' || g.state === 'untracked';
+        return `<details class="ds-rec-pgroup"${openAttr}>
+          <summary class="ds-rec-pgroup-sum">
+            <button type="button" class="ds-btn ds-btn-xs" data-recc-gall="${pathKey}" data-rec-pgroup="${esc(gid)}" ${gDisabled ? 'disabled' : ''} title="Select every listed record under this parent">✓</button>
+            <button type="button" class="ds-btn ds-btn-xs" data-recc-gnone="${pathKey}" data-rec-pgroup="${esc(gid)}" title="Unselect this parent's records">✗</button>
+            <strong class="ds-rec-pgroup-name">${esc(g.label)}</strong>
+            <span class="ds-rec-pgroup-cnt">${g.rows.length} record(s)</span>
+            ${g.state !== domState ? chipFor(g.state, g.rows[0]) : ''}
+          </summary>
+          ${g.rows.map(r => rowHtml(r, g.state, false)).join('')}
+        </details>`;
+      }).join('');
+    } else {
+      missingRows = mRows.map(r => { const st = rowState(r); return rowHtml(r, st, st !== domState); }).join('') || `<div class="ds-rec-col-empty">none</div>`;
+    }
 
     // R2 — master-detail links can be re-parented only when the field is
     // reparentable (updateable on the describe). Otherwise disable Relink
@@ -1031,7 +1081,9 @@ async function renderReconcile() {
           <div class="ds-rec-col-actions">
             <button class="ds-btn ds-btn-xs" data-recc-all="${pathKey}"${csInfo(cs, 'missingInTarget').capped ? ` title="Selects the ${csInfo(cs, 'missingInTarget').shown} record(s) listed here — NOT every record in this bucket. The scan was truncated."` : ''}>✓ All</button>
             <button class="ds-btn ds-btn-xs" data-recc-none="${pathKey}">✗ None</button>
+            <span class="ds-rec-selcount" data-recc-count="${pathKey}">${sel.push.size}/${selectableN} selected</span>
           </div>
+          ${pnoteBanner}
           <div class="ds-rec-col-list">${missingRows}</div>
         </div>
         <div class="ds-rec-col">
@@ -1535,21 +1587,45 @@ async function renderReconcile() {
     _recOrderOverride[k] = cur ? 'parentFirst' : 'childFirst';   // run-scoped, never saved
     renderReconcile();
   }));
+  // Live "n/N selected" — repainted on every selection change so the count
+  // stays true while the list scrolls (part of the messy-child-view fix).
+  const _reccCount = k => {
+    const el = document.querySelector(`[data-recc-count="${k}"]`);
+    if (!el) return;
+    const total = document.querySelectorAll(`[data-recc-push="${k}"]:not(:disabled)`).length;
+    el.textContent = `${childSel(k).push.size}/${total} selected`;
+  };
   document.querySelectorAll('[data-recc-push]').forEach(cb => cb.addEventListener('change', () => {
     const sel = childSel(cb.dataset.reccPush);
     if (cb.checked) sel.push.add(cb.dataset.recId); else sel.push.delete(cb.dataset.recId);
-    updateSummary();
+    updateSummary(); _reccCount(cb.dataset.reccPush);
   }));
   document.querySelectorAll('[data-recc-all]').forEach(b => b.addEventListener('click', () => {
     const k = b.dataset.reccAll, sel = childSel(k);
     document.querySelectorAll(`[data-recc-push="${k}"]:not(:disabled)`).forEach(cb => { cb.checked = true; sel.push.add(cb.dataset.recId); });
-    updateSummary();
+    updateSummary(); _reccCount(k);
   }));
   document.querySelectorAll('[data-recc-none]').forEach(b => b.addEventListener('click', () => {
     const k = b.dataset.reccNone, sel = childSel(k);
     document.querySelectorAll(`[data-recc-push="${k}"]`).forEach(cb => { cb.checked = false; });
     sel.push.clear();
-    updateSummary();
+    updateSummary(); _reccCount(k);
+  }));
+  // Per-parent-group select/clear — the buttons live inside a <summary>, so
+  // preventDefault keeps a click from also toggling the fold.
+  document.querySelectorAll('[data-recc-gall]').forEach(b => b.addEventListener('click', e => {
+    e.preventDefault();
+    const k = b.dataset.reccGall, sel = childSel(k);
+    document.querySelectorAll(`[data-recc-push="${k}"][data-rec-pgroup="${b.dataset.recPgroup}"]:not(:disabled)`)
+      .forEach(cb => { cb.checked = true; sel.push.add(cb.dataset.recId); });
+    updateSummary(); _reccCount(k);
+  }));
+  document.querySelectorAll('[data-recc-gnone]').forEach(b => b.addEventListener('click', e => {
+    e.preventDefault();
+    const k = b.dataset.reccGnone, sel = childSel(k);
+    document.querySelectorAll(`[data-recc-push="${k}"][data-rec-pgroup="${b.dataset.recPgroup}"]`)
+      .forEach(cb => { cb.checked = false; sel.push.delete(cb.dataset.recId); });
+    updateSummary(); _reccCount(k);
   }));
   document.querySelectorAll('[data-recc-relink]').forEach(b => b.addEventListener('click', e => {
     e.preventDefault();
@@ -2590,7 +2666,13 @@ async function runReconcile(profile, objType, buckets) {
   const childFail = Object.values(childCounts).reduce((s, c) => s + c.failed + c.connectFailed + c.relinkFailed + (c.overwriteFailed || 0) + (c.deleteFailed || 0), 0);
   const totalOk   = counts.inserted + counts.updated + counts.deleted + counts.pulled + counts.updatedSource + childOk;
   const totalFail = counts.insertedFailed + counts.updatedFailed + counts.deletedFailed + counts.pulledFailed + counts.updatedSourceFailed + childFail;
-  const status   = totalFail === 0 ? 'success' : (totalOk > 0 ? 'partial' : 'failed');
+  // Fail counts alone lied (load test 2026-08-17): a child pass that DIED
+  // wholesale (HTTP 431, zero rows attempted) contributes zero per-record
+  // failures, and the card wore a green "success" over 1,850 unwritten
+  // records. Any HARD error (the ℹ marker tags engine notes) blocks
+  // 'success' — the failed rescue is real work not done.
+  const hardErrs = allErrors.filter(e => !/(^|: )ℹ /.test(String(e))).length;
+  const status   = (totalFail === 0 && hardErrs === 0) ? 'success' : (totalOk > 0 ? 'partial' : 'failed');
   _history.push({
     id:           genId('run'),
     kind:         'reconcile',

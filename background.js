@@ -666,6 +666,24 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         : (node.where || '');
       let recs = [];
 
+      // 431 GUARD (load test 2026-08-17): a Reconcile "✓ All" run rides
+      // EVERY selected id in node.recordIds — 1,850 picked children built an
+      // `Id IN (…)` of ~39KB into a GET query string and Salesforce's edge
+      // answered HTTP 431 (Request Header Fields Too Large), zero rows
+      // written. Any picked-id read past one chunk must fetch by Id chunks
+      // (bounded URLs); scoping filters apply in memory — same semantics.
+      const RID_CHUNK = 200;
+      const fetchByIdChunks = async ids => {
+        const out = [];
+        for (let ci = 0; ci < ids.length; ci += RID_CHUNK) {
+          const lit = ids.slice(ci, ci + RID_CHUNK).map(id => `'${id}'`).join(',');
+          const r = await sfQueryAll(srcOrgUrl, srcSid,
+            `SELECT ${fields.join(',')} FROM ${objType} WHERE Id IN (${lit}) ORDER BY Id`, false);
+          out.push(...(r.records || []));
+        }
+        return out;
+      };
+
       if (parentField && parentNode) {
         // Which parent SOURCE ids scope this child's fetch?
         //  - Parent already processed (default order): only the parents that
@@ -690,19 +708,26 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           continue;
         }
 
-        // Chunk parent IDs to keep each SOQL IN clause within safe limits.
-        // Salesforce can reject very long IN lists; 200 IDs per chunk is safe.
-        const CHUNK = 200;
-        for (let ci = 0; ci < parentScopeIds.length; ci += CHUNK) {
-          const sliceLiteral = parentScopeIds.slice(ci, ci + CHUNK)
-            .map(id => `'${id}'`).join(',');
-          const chunkWhere = baseWhere
-            ? `(${baseWhere}) AND ${parentField} IN (${sliceLiteral})`
-            : `${parentField} IN (${sliceLiteral})`;
-          // ORDER BY Id ensures deterministic pagination across large result sets
-          const chunkSoql = `SELECT ${fields.join(',')} FROM ${objType} WHERE ${chunkWhere} ORDER BY Id`;
-          const chunkRes  = await sfQueryAll(srcOrgUrl, srcSid, chunkSoql, false);
-          recs = recs.concat(chunkRes.records || []);
+        if (ridList && ridList.length > RID_CHUNK) {
+          // Big picked set: fetch by Id chunks, apply the parent scope in
+          // memory — embedding both IN lists in one URL is the 431 trap.
+          const scopeSet = new Set(parentScopeIds);
+          recs = (await fetchByIdChunks(ridList)).filter(r => scopeSet.has(r[parentField]));
+        } else {
+          // Chunk parent IDs to keep each SOQL IN clause within safe limits.
+          // Salesforce can reject very long IN lists; 200 IDs per chunk is safe.
+          const CHUNK = 200;
+          for (let ci = 0; ci < parentScopeIds.length; ci += CHUNK) {
+            const sliceLiteral = parentScopeIds.slice(ci, ci + CHUNK)
+              .map(id => `'${id}'`).join(',');
+            const chunkWhere = baseWhere
+              ? `(${baseWhere}) AND ${parentField} IN (${sliceLiteral})`
+              : `${parentField} IN (${sliceLiteral})`;
+            // ORDER BY Id ensures deterministic pagination across large result sets
+            const chunkSoql = `SELECT ${fields.join(',')} FROM ${objType} WHERE ${chunkWhere} ORDER BY Id`;
+            const chunkRes  = await sfQueryAll(srcOrgUrl, srcSid, chunkSoql, false);
+            recs = recs.concat(chunkRes.records || []);
+          }
         }
 
         // Deduplicate in case the same record matches multiple parent chunks
@@ -720,6 +745,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           const parentObj = parentNode.objectType || parentNode.childSObject || 'parent';
           diagnostics.push(`${objType}: ${dropped.length} of ${ridList.length} hand-picked record(s) are NOT in this run — their parent (${parentField}) is outside the run's ${parentObj} scope, or they no longer match the filter. Include their parents in the ${parentObj} selection, or clear the child's 🎯 picks to copy every child of the selected parents. Dropped: ${dropped.slice(0, 10).join(', ')}${dropped.length > 10 ? '…' : ''}`);
         }
+      } else if (ridList && ridList.length > RID_CHUNK) {
+        // Root node with a BIG picked set — same 431 trap as the child
+        // branch: baseWhere carries every picked id, and both the COUNT
+        // routing probe and the REST pager would embed it in a GET query
+        // string. A picked set is exact — fetch it by Id chunks directly.
+        recs = await fetchByIdChunks(ridList);
       } else {
         // Root node — no parent filter.
         // ORDER BY Id ensures deterministic pagination across large result sets.
@@ -1638,8 +1669,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
 
   // Diagnostics first — they're the actionable bit. With slice(0, 50) below,
   // any dedupedErrors that exceed the cap get trimmed, but diagnostics
-  // remain visible regardless.
-  const finalErrors = [...diagnostics, ...dedupedErrors];
+  // remain visible regardless. The 'ℹ ' marker is a CONTRACT (2026-08-17,
+  // user: "the errors are weird" — engine-settings notes wore red ✗ marks):
+  // merged into one list for transport, but every downstream renderer and
+  // status computation can tell a note from a failure by the marker.
+  const finalErrors = [...diagnostics.map(d => `ℹ ${d}`), ...dedupedErrors];
 
   return {
     profileId: profile.id, profileName: profile.name,
