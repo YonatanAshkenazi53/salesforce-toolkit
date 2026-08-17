@@ -151,7 +151,7 @@ describe('bldPiiMaskTitle — what the 🎭 control may claim', () => {
   });
 
   it('disabled for non-maskable types, and the title says the honest consequence: a hash rule writes NULL', () => {
-    for (const type of ['date', 'datetime', 'double', 'picklist', 'boolean', 'reference', 'id', undefined]) {
+    for (const type of ['date', 'datetime', 'picklist', 'boolean', 'reference', 'id', undefined]) {
       const t = bldPiiMaskTitle(type, false);
       expect(t.enabled, String(type)).toBe(false);
       expect(t.title).toMatch(/NULL/);

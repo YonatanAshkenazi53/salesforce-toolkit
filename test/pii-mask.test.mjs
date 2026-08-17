@@ -51,12 +51,60 @@ describe('sftkPiiMaskable — which types a hash can re-render', () => {
     }
   });
 
-  it('rejects every non-string type (those get nulled under a hash rule)', () => {
-    for (const type of ['date', 'datetime', 'double', 'currency', 'int',
+  it('accepts number types — a nulled Number trips target automations (2026-08-17)', () => {
+    for (const type of ['int', 'double', 'currency', 'percent']) {
+      expect(pii.sftkPiiMaskable({ type })).toBe(true);
+    }
+  });
+
+  it('rejects every non-derivable type (those get nulled under a hash rule)', () => {
+    for (const type of ['date', 'datetime',
                         'picklist', 'multipicklist', 'boolean', 'reference', 'id']) {
       expect(pii.sftkPiiMaskable({ type })).toBe(false);
     }
     expect(pii.sftkPiiMaskable(null)).toBe(false);
+  });
+});
+
+describe('number masking — plausible digits, never empty, never zero', () => {
+  const hexOf = v => pii.sftkPiiHashHex(v, SALT);
+
+  it('a Number(9,0) SSN derives ≤9 digits, non-zero, no decimal point', async () => {
+    const out = pii.sftkPiiFormat(await hexOf('304839624'), { type: 'double', precision: 9, scale: 0 });
+    expect(out).toMatch(/^[0-9]{1,9}$/);
+    expect(Number(out)).toBeGreaterThan(0);
+  });
+
+  it('deterministic, and distinct inputs derive distinct values', async () => {
+    const d = { type: 'double', precision: 9, scale: 0 };
+    expect(pii.sftkPiiFormat(await hexOf('304839624'), d))
+      .toBe(pii.sftkPiiFormat(await hexOf('304839624'), d));
+    expect(pii.sftkPiiFormat(await hexOf('304839624'), d))
+      .not.toBe(pii.sftkPiiFormat(await hexOf('304839625'), d));
+  });
+
+  it('currency(16,2) fits its INTEGER portion; int fields use `digits`', async () => {
+    const cur = pii.sftkPiiFormat(await hexOf('99123.45'), { type: 'currency', precision: 16, scale: 2 });
+    expect(cur).toMatch(/^[0-9]{1,14}$/);
+    const int8 = pii.sftkPiiFormat(await hexOf('304839624'), { type: 'int', digits: 8 });
+    expect(int8).toMatch(/^[0-9]{1,8}$/);
+    expect(Number(int8)).toBeGreaterThan(0);
+  });
+
+  it('maskValue hashes a Number field end to end', async () => {
+    const r = await pii.sftkPiiMaskValue('304839624', { type: 'double', precision: 9, scale: 0 }, SALT, { strategy: 'hash' });
+    expect(r.action).toBe('hashed');
+    expect(String(r.value)).toMatch(/^[0-9]{1,9}$/);
+  });
+
+  it('a number with NO integer digits (percent(2,2)) is nulled, not rejected-row bait', async () => {
+    const r = await pii.sftkPiiMaskValue('0.42', { type: 'percent', precision: 2, scale: 2 }, SALT, { strategy: 'hash' });
+    expect(r).toEqual({ value: null, action: 'nulled' });
+  });
+
+  it('dates still null — a hash is never a valid date', async () => {
+    const r = await pii.sftkPiiMaskValue('1988-04-12', { type: 'date' }, SALT, { strategy: 'hash' });
+    expect(r).toEqual({ value: null, action: 'nulled' });
   });
 });
 
@@ -138,7 +186,7 @@ describe('sftkPiiMaskValue — one rule applied to one value', () => {
   });
 
   it('hash on a NON-maskable type → nulled and COUNTED as nulled, never raw', async () => {
-    for (const type of ['date', 'double', 'picklist', 'reference', 'boolean']) {
+    for (const type of ['date', 'picklist', 'reference', 'boolean']) {
       const res = await pii.sftkPiiMaskValue('1990-04-01', { type }, SALT, { strategy: 'hash' });
       expect(res).toEqual({ value: null, action: 'nulled' });
     }
