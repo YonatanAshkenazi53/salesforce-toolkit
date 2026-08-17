@@ -935,8 +935,32 @@ describe('one crown writer: dsSetSourceOfTruth', () => {
     expect(fn).toMatch(/if \(!_ring\.orgs\.some\(u => _orgKey\(u\) === _orgKey\(url\)\)\) _ring\.orgs\.push\(url\);/);
     expect(fn).toContain('_workingPair.src = url;');
     expect(fn).toContain('syncRingFollowers');
-    // first-ever crown = ring being born → nothing to re-baseline
-    expect(fn).toMatch(/if \(hadCrown && typeof sftkRingRebaseline === 'function'\)/);
+    // Re-baseline skips ONLY a pristine first crown (review w703wnvrm):
+    // hadCrown alone missed re-crowning after removeOrg tore the crown
+    // down (baselines survive) and a first crown that re-pointed
+    // followers (their scans measured FROM old sources).
+    expect(fn).toMatch(/const hadBaselines = hadCrown \|\| moved\?\.srcMoved/);
+    expect(fn).toMatch(/p\.ringScans && Object\.keys\(p\.ringScans\)\.length/);
+    expect(fn).toMatch(/if \(hadBaselines && typeof sftkRingRebaseline === 'function'\)/);
+    // The ALWAYS-VISIBLE topbar must not blow away an open Builder
+    // session — repaint the editor in place instead of renderView.
+    expect(fn).toMatch(/if \(eid\('dsProfileName'\) && typeof renderBuilder === 'function'\) renderBuilder\(\);/);
+  });
+
+  it('review w703wnvrm follow-ups hold: teardown clears the mirror, no dead crown pointers', () => {
+    // removeOrg must fell the topbar mirror with the crown, or the closed
+    // <select> impersonates whichever candidate sorts first.
+    const rm = CORE.slice(CORE.indexOf("eid('dsOrgRemoveConfirm')"), CORE.indexOf("eid('dsOrgRemoveConfirm')") + 1800);
+    expect(rm).toMatch(/_workingPair\.src = ''; wpDirty = true;/);
+    expect(rm).toContain('renderWorkingPair();');
+    // No surface may still direct the user to change the crown in the ring.
+    for (const [name, src] of [['studio-builder.js', BUILDER], ['studio-ring.js', RING],
+                               ['studio-core.js', CORE], ['studio-picklists.js', PICKLISTS],
+                               ['studio-treediff.js', read('studio-treediff.js')],
+                               ['studio-readiness.js', read('studio-readiness.js')]]) {
+      expect(src, `${name} still points at the removed ring crown control`)
+        .not.toMatch(/Sync Ring or the topbar|mark one ⦿|pick one here or in the Sync Ring/);
+    }
   });
 
   it('every crown path routes through the setter — no stray sourceUrl writes remain', () => {

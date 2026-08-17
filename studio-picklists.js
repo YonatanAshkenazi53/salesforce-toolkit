@@ -549,7 +549,7 @@ function _pkRenderCompareConfig() {
   // and offer the one click that fixes it — an absent explanation reads as a
   // bug, and the matrix genuinely behaves differently without a golden org.
   const sotLine = sotOrg
-    ? `<div class="ds-pk-sot-line" title="Always part of the comparison — every org below is compared against it. Change it in 🔄 Sync Ring or the topbar chip.">
+    ? `<div class="ds-pk-sot-line" title="Always part of the comparison — every org below is compared against it. Change it in the topbar SOURCE menu.">
         Source of truth: <strong>${esc(orgOptionLabel(sotOrg.url, sotOrg.label))}</strong>
         ${(!_liveOrgSet().has(_orgKey(sotOrg.url))) ? '<span class="ds-pk-sot-warn">— open it in a Chrome tab, the matrix reads from it</span>' : ''}
       </div>`
@@ -2246,7 +2246,7 @@ async function _pkOpenSyncPlan() {
         <div class="ds-plan-op" style="margin-bottom:10px">
           Source of truth:
           ${srcLocked
-            ? `<strong>${esc(loaded[srcIdx].label)}</strong> <span class="ds-pk-mx-sot" title="Locked to your Sync Ring's source of truth — every sync flows FROM it. Change it in 🔄 Sync Ring or the topbar chip.">👑 source of truth</span>`
+            ? `<strong>${esc(loaded[srcIdx].label)}</strong> <span class="ds-pk-mx-sot" title="Locked to your Sync Ring's source of truth — every sync flows FROM it. Change it in the topbar SOURCE menu.">👑 source of truth</span>`
             : `<select id="dsPkSyncSrc" class="ds-select ds-select-sm">
                 ${loaded.map((r, i) => `<option value="${i}" ${i === srcIdx ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}
               </select>${ringSrcKey ? ` <span style="font-size:11px;color:var(--warning)">⚠ your 👑 source of truth isn't loaded in this matrix — reload the matrix with it, or pick a source explicitly</span>` : ''}`}

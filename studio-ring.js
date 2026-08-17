@@ -61,12 +61,13 @@ function renderRing() {
       </summary>
       <div class="ds-ring-orgs">${orgRows || '<div class="ds-seq-empty">No orgs known — open them in Chrome tabs first.</div>'}</div>
       ${(() => {
-        // The topbar SOURCE chip and the ring's source of truth are two
-        // different things that look identical (user 2026-07-30: "it doesn't
-        // tell you who is the source of truth that you selected in the menu
-        // above"). State which is which, and when the ring has none, offer the
-        // topbar's org in one click instead of leaving the user to guess that
-        // these radios are unrelated to the chip they already set.
+        // With no crown, the topbar chip can still point at a working org
+        // (_workingPair.src outlives ring teardown) — state the difference
+        // and offer that org in one click. Historic note: this block predates
+        // the consolidation, when the chip and the ring radios were two
+        // different-looking controls for the same thing; the radios are gone
+        // and the topbar is THE control now, but the one-click adopt stays
+        // as a convenience (it routes through dsSetSourceOfTruth).
         const wp = (typeof _workingPair === 'object' && _workingPair?.src) || '';
         if (ring.sourceUrl) {
           const prev = ring.prevSourceUrl && _orgKey(ring.prevSourceUrl) !== _orgKey(ring.sourceUrl) ? ring.prevSourceUrl : '';
@@ -238,7 +239,7 @@ function _ringRenderMatrix() {
     body.innerHTML = `<div class="ds-empty-page">
       <div class="ds-empty-icon">${window.sftkCatSvg ? window.sftkCatSvg('sleep', 64) : '🔄'}</div>
       <div class="ds-empty-title">Configure the ring first</div>
-      <div class="ds-empty-sub">Pick at least two orgs above and mark one ⦿ source of truth.</div>
+      <div class="ds-empty-sub">Tick at least two orgs above, and pick the source of truth in the topbar SOURCE menu.</div>
     </div>`;
     return;
   }
