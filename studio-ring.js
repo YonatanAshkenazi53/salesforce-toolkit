@@ -27,23 +27,20 @@ function renderRing() {
     const inRing  = ring.orgs.some(u => _orgKey(u) === _orgKey(o.url));
     const isSrc   = _orgKey(o.url) === _orgKey(ring.sourceUrl || '');
     // The source of truth is PRESELECTED AND LOCKED in the ring (user
-    // 2026-07-31: "if ashkenazy6 is the source it shouldn't be available in
-    // the ring sync picklist... maybe it should be preselected and locked").
-    // Unticking it used to silently hand the crown to whichever org happened
-    // to sort first — a surprising, unannounced change of the one setting
-    // every other view flows from. To move the source you now pick a new one.
+    // 2026-07-31 ruling), and — consolidation, user 2026-08-13: "change
+    // source org only in the upper menu" — this panel no longer carries its
+    // own ⦿ source radios. Membership (which orgs are IN the ring) lives
+    // here; the crown moves ONLY via the topbar SOURCE menu (or its
+    // explicit shortcuts: ↩ restore below, 👑 promote in the Builder — all
+    // three call the same dsSetSourceOfTruth).
     return `
       <label class="ds-ring-org${inRing ? ' ds-ring-org-in' : ''}${isSrc ? ' ds-ring-org-locked' : ''}"
-             ${isSrc ? 'title="This is the ring\'s source of truth, so it is always part of the ring. Pick a different ⦿ source to move it."' : ''}>
+             ${isSrc ? 'title="This is the ring\'s source of truth, so it is always part of the ring. Pick a different source in the topbar SOURCE menu to move it."' : ''}>
         <input type="checkbox" class="ds-ring-cb" value="${esc(o.url)}" ${isSrc || inRing ? 'checked' : ''} ${isSrc ? 'disabled' : ''}>
         <span class="ds-ring-org-name">${esc(orgOptionLabel(o.url, o.label, ls))}</span>
-        ${isSrc ? '<span class="ds-ring-src-lock">source — always in the ring</span>' : ''}
+        ${isSrc ? '<span class="ds-ring-src-lock">👑 source — always in the ring</span>' : ''}
         ${prodBadge(o.url)}
         <span style="flex:1"></span>
-        <label class="ds-ring-src-pick" title="Data flows FROM the source of truth to every other ring org">
-          <input type="radio" name="dsRingSrc" value="${esc(o.url)}" ${isSrc ? 'checked' : ''} ${inRing ? '' : 'disabled'}>
-          source of truth
-        </label>
       </label>`;
   }).join('');
 
@@ -78,7 +75,7 @@ function renderRing() {
               <button class="ds-btn ds-btn-xs" id="dsRingRestoreCrown" title="Move the 👑 back to ${esc(orgLabel(prev))} — every ring surface re-points and every pair rescans, exactly like any crown change.">↩ restore ${esc(orgLabel(prev))} as the source of truth</button>` : ''}</div>`;
         }
         return `<div class="ds-ring-sot-explain ds-ring-sot-unset">
-          No source of truth yet — pick one with the ⦿ buttons above. It is what every other ring org gets compared against.
+          No source of truth yet — pick one in the topbar <strong>SOURCE</strong> menu. It is what every other ring org gets compared against.
           ${wp ? `<br><span style="color:var(--subtext)">The topbar <strong>SOURCE</strong> chip currently points at <strong>${esc(orgLabel(wp))}</strong>; that's your working org for one-off comparisons, which is a separate setting.</span>
             <button class="ds-btn ds-btn-xs" id="dsRingAdoptWp" style="margin-left:6px">Use ${esc(orgLabel(wp))} as the source of truth</button>` : ''}
         </div>`;
@@ -119,31 +116,27 @@ function renderRing() {
   });
   _ringRenderSchedPanel();
 
-  // Adopt the topbar SOURCE as the ring's source of truth — also joins it to
-  // the ring if it isn't a member yet, since a non-member source would leave
-  // the ring in the same unconfigured state it was in.
+  // Adopt the topbar SOURCE as the ring's source of truth — the shared
+  // setter joins it to the ring if it isn't a member yet.
   eid('dsRingAdoptWp')?.addEventListener('click', async () => {
     const url = (typeof _workingPair === 'object' && _workingPair?.src) || '';
     if (!url) return;
-    if (!_ring) _ring = { orgs: [], sourceUrl: '' };
-    if (!_ring.orgs.some(u => _orgKey(u) === _orgKey(url))) _ring.orgs.push(url);
-    _ring.sourceUrl = url;
-    await chrome.storage.local.set({ ds_ring: _ring });
-    if (typeof syncRingFollowers === 'function') syncRingFollowers();
-    renderWorkingPair();
-    renderRing();
-    showToast(`${orgLabel(url)} is now the ring's source of truth — tick the other orgs to compare against it.`, 'success', 5000);
+    await dsSetSourceOfTruth(url, `${orgLabel(url)} became the source of truth`);
   });
 
-  // Config wiring — checkbox membership + source radio, persisted immediately.
+  // Config wiring — checkbox MEMBERSHIP only; the crown itself moves solely
+  // through dsSetSourceOfTruth (topbar / ↩ restore / Builder 👑 promote).
   document.querySelectorAll('.ds-ring-cb').forEach(cb =>
     cb.addEventListener('change', async () => {
       const url = cb.value;
       if (!_ring) _ring = { orgs: [], sourceUrl: '' };
       if (cb.checked) { if (!_ring.orgs.some(u => _orgKey(u) === _orgKey(url))) _ring.orgs.push(url); }
       else {
+        // The crown's own checkbox is disabled, so an untick can never be
+        // the source — no silent-crown-fallback here (the old
+        // `sourceUrl = orgs[0]` line was exactly the surprise move the
+        // 2026-07-31 ruling banned; the setter is the only crown writer).
         _ring.orgs = _ring.orgs.filter(u => _orgKey(u) !== _orgKey(url));
-        if (_orgKey(_ring.sourceUrl || '') === _orgKey(url)) _ring.sourceUrl = _ring.orgs[0] || '';
       }
       await chrome.storage.local.set({ ds_ring: _ring });
       if (_ring.sourceUrl) { _workingPair.src = _ring.sourceUrl; storageSaveWorkingPair(); }
@@ -151,44 +144,10 @@ function renderRing() {
       renderWorkingPair();
       renderRing();
     }));
-  document.querySelectorAll('input[name="dsRingSrc"]').forEach(r =>
-    r.addEventListener('change', async () => {
-      if (!_ring) return;
-      // Remember the outgoing crown (user 2026-08-11: "it forgot that my
-      // original source of truth was ashkenazy6") — the config panel offers
-      // a one-click ↩ restore for as long as the crown sits elsewhere.
-      if (_ring.sourceUrl && _orgKey(_ring.sourceUrl) !== _orgKey(r.value)) {
-        _ring.prevSourceUrl = _ring.sourceUrl;
-        _ring.prevSourceAt  = new Date().toISOString();
-      }
-      _ring.sourceUrl = r.value;
-      _workingPair.src = r.value;
-      await chrome.storage.local.set({ ds_ring: _ring });
-      storageSaveWorkingPair();
-      const moved = (typeof syncRingFollowers === 'function') ? syncRingFollowers() : null;
-      if (moved?.srcMoved) showToast(`👑 ${moved.srcMoved} deployment(s) now flow FROM ${orgLabel(r.value)} — their earlier compares are marked stale and rescan automatically.`, 'info', 6000);
-      renderWorkingPair();
-      renderRing();
-      sftkRingRebaseline('the source of truth changed');
-    }));
-
   eid('dsRingRestoreCrown')?.addEventListener('click', async () => {
     const prev = _ring?.prevSourceUrl;
     if (!prev) return;
-    if (_ring.sourceUrl && _orgKey(_ring.sourceUrl) !== _orgKey(prev)) {
-      _ring.prevSourceUrl = _ring.sourceUrl;
-      _ring.prevSourceAt  = new Date().toISOString();
-    }
-    _ring.sourceUrl = prev;
-    if (!(_ring.orgs || []).some(u => _orgKey(u) === _orgKey(prev))) (_ring.orgs = _ring.orgs || []).push(prev);
-    _workingPair.src = prev;
-    await chrome.storage.local.set({ ds_ring: _ring });
-    storageSaveWorkingPair();
-    const moved = (typeof syncRingFollowers === 'function') ? syncRingFollowers() : null;
-    if (moved?.srcMoved) showToast(`👑 ${moved.srcMoved} deployment(s) now flow FROM ${orgLabel(prev)} again — their compares from the interim crown are marked stale.`, 'info', 6000);
-    renderWorkingPair();
-    renderRing();
-    sftkRingRebaseline(`${orgLabel(prev)} restored as the source of truth`);
+    await dsSetSourceOfTruth(prev, `${orgLabel(prev)} restored as the source of truth`);
   });
 
   _ringRenderMatrix();

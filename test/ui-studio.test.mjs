@@ -386,7 +386,11 @@ describe('the ring source of truth is preselected and locked', () => {
   it('the lock is explained, not silent', () => {
     expect(RING).toMatch(/ds-ring-src-lock/);
     expect(RING).toMatch(/source — always in the ring/);
-    expect(RING).toMatch(/Pick a different ⦿ source to move it/);
+    // Consolidation (user 2026-08-13): the crown moves ONLY via the topbar
+    // SOURCE menu — the ring panel's own ⦿ radios are gone, and the lock
+    // text points at the one real control.
+    expect(RING).toMatch(/Pick a different source in the topbar SOURCE menu to move it/);
+    expect(RING).not.toMatch(/name="dsRingSrc"/);
   });
 
   it('studio.css styles the locked row', () => {
@@ -476,12 +480,14 @@ describe('crown & pin persistence — sweep round 2 fixes', () => {
   it('promote persists the un-pin unconditionally, not only when syncRingFollowers moves something else', () => {
     const src = BUILDER.slice(BUILDER.indexOf("eid('dsBldPromoteSrc')"), BUILDER.indexOf("eid('dsBldSrcMovedAck')"));
     expect(src).toMatch(/if \(savedP\) \{ delete savedP\.sourcePinned; \}/);
-    // The save call must come BEFORE syncRingFollowers's own conditional
-    // save — it must not depend on that save firing.
+    // The save call must come BEFORE the crown setter (whose
+    // syncRingFollowers pass saves only `if (changed)`) — the un-pin must
+    // not depend on that conditional save firing.
     const saveAt = src.indexOf('await storageSaveProfiles()');
-    const followersAt = src.indexOf('syncRingFollowers()');
+    const setterAt = src.indexOf('await dsSetSourceOfTruth(');
     expect(saveAt).toBeGreaterThan(-1);
-    expect(saveAt).toBeLessThan(followersAt);
+    expect(setterAt).toBeGreaterThan(-1);
+    expect(saveAt).toBeLessThan(setterAt);
   });
 
   it('the "got it" ack clears the crown-moved stamp on the SAVED profile too, not just the editing clone', () => {
@@ -911,5 +917,59 @@ describe('sweep 2026-08-16: stale state can never drive a write or wear a verdic
     expect(MODALS).toMatch(/records\.concat\(page\.filter\(r => !seen\.has\(r\.Id\)\)\)/);
     // a failed Load-more keeps pagination state (retry, not "All N loaded")
     expect(MODALS).toContain('if (res.error && append) {');
+  });
+});
+
+// ── Source-of-truth consolidation (user 2026-08-13: "change source org
+// only in the upper menu — everything should calculate by it") ──────────
+describe('one crown writer: dsSetSourceOfTruth', () => {
+  const RECONCILE = read('studio-reconcile.js');
+
+  it('the setter carries the WHOLE contract: history, membership, chip, followers, re-baseline', () => {
+    const i = CORE.indexOf('async function dsSetSourceOfTruth');
+    expect(i).toBeGreaterThan(-1);
+    const fn = CORE.slice(i, i + 2600);
+    expect(CORE).toContain('window.dsSetSourceOfTruth = dsSetSourceOfTruth;');
+    expect(fn).toContain('_ring.prevSourceUrl = _ring.sourceUrl;');
+    expect(fn).toContain('_ring.prevSourceAt');
+    expect(fn).toMatch(/if \(!_ring\.orgs\.some\(u => _orgKey\(u\) === _orgKey\(url\)\)\) _ring\.orgs\.push\(url\);/);
+    expect(fn).toContain('_workingPair.src = url;');
+    expect(fn).toContain('syncRingFollowers');
+    // first-ever crown = ring being born → nothing to re-baseline
+    expect(fn).toMatch(/if \(hadCrown && typeof sftkRingRebaseline === 'function'\)/);
+  });
+
+  it('every crown path routes through the setter — no stray sourceUrl writes remain', () => {
+    // topbar, ring adopt, ring restore, Builder promote:
+    expect(CORE).toMatch(/dsSotSel'\)\?\.addEventListener\('change', async e => \{\s*[^]{0,220}?dsSetSourceOfTruth\(e\.target\.value/);
+    expect(RING).toMatch(/dsRingAdoptWp[^]{0,260}?dsSetSourceOfTruth\(url/);
+    expect(RING).toMatch(/dsRingRestoreCrown[^]{0,260}?dsSetSourceOfTruth\(prev/);
+    expect(BUILDER).toMatch(/dsBldPromoteSrc[^]{0,2200}?dsSetSourceOfTruth\(src/);
+    // the ONLY direct `_ring.sourceUrl = <org>` assignment left is inside
+    // the setter itself; org-removal clears to '' which is teardown, not a
+    // crown move. The ring view and Builder write none at all.
+    expect(RING).not.toMatch(/_ring\.sourceUrl = /);
+    expect(BUILDER).not.toMatch(/_ring\.sourceUrl = /);
+    expect((CORE.match(/_ring\.sourceUrl = [^'']/g) || []).length).toBe(1);
+  });
+
+  it("the topbar dropdown lists EVERY known org — a non-member can be crowned directly", () => {
+    const i = CORE.indexOf('function renderWorkingPair()');
+    const fn = CORE.slice(i, i + 2600);
+    // candidates come from allMapOrgs(), never scoped to _ring.orgs
+    // (user repro 2026-08-13: dropdown showed ONLY orgfarm while the ring
+    // config listed all 3 known orgs)
+    expect(fn).toMatch(/const candidates = \[\.\.\.orgs\.map\(o => o\.url\)\]/);
+    expect(fn).not.toMatch(/_ring\?\.orgs\?\.length \? _ring\.orgs/);
+    // non-members are labeled, ring members sort first
+    expect(fn).toContain("' — not in the ring yet'");
+    expect(fn).toMatch(/sort\(\(a, b\) => \(inRing\(b\) - inRing\(a\)\)\)/);
+  });
+
+  it('the ring config carries no source radios and no silent crown fallback', () => {
+    expect(RING).not.toMatch(/name="dsRingSrc"/);
+    expect(RING).not.toMatch(/sourceUrl = _ring\.orgs\[0\]/);
+    // membership handler still exists (checkboxes are the panel's job)
+    expect(RING).toMatch(/\.ds-ring-cb'\)/);
   });
 });

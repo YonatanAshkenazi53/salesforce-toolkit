@@ -317,36 +317,22 @@ function renderBuilder() {
     const src = _editingProfile?.sourceOrg;
     if (!src || typeof _ring !== 'object' || !_ring) return;
     if (!confirm(`👑 Make ${orgLabel(src)} the ring's source of truth?\n\nEvery ring surface — matrix rows, sync plans, tree diffs, the topbar SOURCE chip — will measure FROM it, and deployments that follow the ring will flow FROM it.\n\nThe current crown (${orgLabel(_ring.sourceUrl)}) becomes a regular ring org.`)) return;
-    // Crown history — the ring config offers ↩ restore of the previous crown.
-    if (_ring.sourceUrl && _orgKey(_ring.sourceUrl) !== _orgKey(src)) {
-      _ring.prevSourceUrl = _ring.sourceUrl;
-      _ring.prevSourceAt  = new Date().toISOString();
-    }
-    _ring.sourceUrl = src;
-    if (!(_ring.orgs || []).some(u => _orgKey(u) === _orgKey(src))) (_ring.orgs = _ring.orgs || []).push(src);
-    try { await chrome.storage.local.set({ ds_ring: _ring }); } catch (_) {}
     // QA sweep 2026-08-11: clear the pin on the SAVED copy too — the editing
     // clone only lands on Save, but the promote's other effects persist now;
     // a cancel would otherwise strand the saved profile pinned to nothing.
+    // Must happen BEFORE the setter's syncRingFollowers pass so this profile
+    // follows the new crown in the same sweep.
     delete _editingProfile.sourcePinned;   // this profile's source IS the crown now
     const savedP = _profiles.find(x => x.id === _editingProfile.id);
     if (savedP) { delete savedP.sourcePinned; }
-    // The topbar chip follows the crown — every crown path must repaint it.
-    _workingPair.src = src;
-    try { storageSaveWorkingPair(); } catch (_) {}
-    if (typeof renderWorkingPair === 'function') renderWorkingPair();
-    // QA sweep round 2: the un-pin above only lands on disk when
-    // syncRingFollowers finds something else to move (it saves only `if
-    // (changed)`) — when THIS profile was the only thing to change, the
-    // pin's removal stayed in-memory and reappeared after a reload.
+    // QA sweep round 2: persist unconditionally — syncRingFollowers saves
+    // only `if (changed)`, so a lone un-pin would otherwise evaporate.
     try { await storageSaveProfiles(); } catch (_) {}
-    const moved = (typeof syncRingFollowers === 'function') ? syncRingFollowers() : null;
-    showToast(`👑 ${orgLabel(src)} is now the source of truth — every ring surface follows it${moved?.srcMoved ? ` · ${moved.srcMoved} deployment(s) re-pointed (their earlier compares are marked stale)` : ''}`, 'success', 5500);
+    // The one crown writer: history, membership, topbar chip, followers,
+    // persist, re-baseline. rerender:false — renderView has no 'builder'
+    // case and would navigate away mid-edit; repaint explicitly instead.
+    await dsSetSourceOfTruth(src, `${orgLabel(src)} became the source of truth`, { rerender: false });
     renderBuilder();   // the source column re-locks onto the new crown
-    // A crown move redefines every pair — rescan them all automatically
-    // (user 2026-08-11: "every time you switch a source of truth it needs
-    // to rescan both orgs and update sync status").
-    if (typeof sftkRingRebaseline === 'function') sftkRingRebaseline(`${orgLabel(src)} became the source of truth`);
   });
 
   eid('dsBldSrcMovedAck')?.addEventListener('click', async e => {
