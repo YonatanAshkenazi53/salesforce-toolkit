@@ -1331,6 +1331,17 @@ async function renderReconcile() {
 
     <div class="ds-rec-action-bar">
       <div class="ds-rec-action-summary" id="dsRecSummary"></div>
+      <label class="ds-rec-delmode" title="How records are written for THIS pair's actions. Auto: synchronous Collections below the threshold, one async Bulk API 2.0 job at or above it. Synchronous: always Collections — slower at scale, every error immediate and per-record. Async: always a Bulk job. Saved on the deployment — the Run page and fan-out use the same setting.">
+        <span>Engine:</span>
+        <select id="dsRecApiMode" class="ds-select ds-select-sm">
+          <option value="auto" ${(p.apiMode || 'auto') === 'auto' ? 'selected' : ''}>Auto — Bulk at ≥ ${(Number(p.bulkThreshold) > 0 ? Number(p.bulkThreshold) : 2000).toLocaleString()}</option>
+          <option value="sync" ${p.apiMode === 'sync' ? 'selected' : ''}>Synchronous — Collections</option>
+          <option value="bulk" ${p.apiMode === 'bulk' ? 'selected' : ''}>Async — Bulk API 2.0 job</option>
+        </select>
+        <input id="dsRecBatchSize" class="ds-input ds-input-sm" type="number" min="1" max="200" step="1"
+          style="width:60px" value="${Math.max(1, Math.min(200, Number(p.batchSize) || 200))}"
+          title="Records per synchronous Collections call (1-200; 200 is the Salesforce maximum). Smaller batches isolate failures and duck per-transaction trigger limits. Bulk jobs ignore this — Salesforce chunks those internally.">
+      </label>
       <label class="ds-rec-delmode" title="Recycle Bin: deleted records recoverable for 15 days. Hard delete: permanently purged, not recoverable.">
         <span>Delete mode:</span>
         <select id="dsRecDeleteMode" class="ds-select ds-select-sm">
@@ -1698,6 +1709,32 @@ async function renderReconcile() {
     _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
     _recChildSel = {};   // child buckets changed too — selections are stale
     renderReconcile();
+  });
+  // Engine controls (user 2026-08-17: "since we deploy to each target
+  // separately, i want to select bulk api / batch size in reconcile").
+  // Same persistence contract as the Run page and the fan-out: saved ON THE
+  // PROFILE (the engine reads profile.apiMode/batchSize at run start, and
+  // Reconcile's push spreads this profile object into the engine message).
+  // For an ephemeral chooser pair, mirror onto the REAL profile via _ringOf
+  // so the choice survives the session — the clone alone would evaporate.
+  const _recEnginePersist = async () => {
+    const realP = p._ringOf?.profileId ? _profiles.find(x => x.id === p._ringOf.profileId) : null;
+    if (realP) {
+      if (p.apiMode) realP.apiMode = p.apiMode; else delete realP.apiMode;
+      if (p.batchSize) realP.batchSize = p.batchSize; else delete realP.batchSize;
+    }
+    try { await storageSaveProfiles(); } catch (_) {}
+  };
+  eid('dsRecApiMode')?.addEventListener('change', async e => {
+    const v = e.target.value;
+    if (v === 'sync' || v === 'bulk') p.apiMode = v; else delete p.apiMode;
+    await _recEnginePersist();
+  });
+  eid('dsRecBatchSize')?.addEventListener('change', async e => {
+    const n = Math.max(1, Math.min(200, parseInt(e.target.value, 10) || 200));
+    e.target.value = n;
+    if (n === 200) delete p.batchSize; else p.batchSize = n;
+    await _recEnginePersist();
   });
   eid('dsRecDeleteMode')?.addEventListener('change', e => { _recDeleteMode = e.target.value; });
   eid('dsRecRunBtn')?.addEventListener('click', () => runReconcile(p, objType, { missing, drift, extras }));
