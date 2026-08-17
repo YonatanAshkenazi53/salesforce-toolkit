@@ -102,7 +102,7 @@ function renderTreeDiffPage() {
       icon: 'nodes',
       title: `Tree diff — ${esc(p.name)}`,
       help: 'The overview of the compare trio. Rows are this deployment’s record tree; columns are environments. Each cell shows that node’s scan buckets in that environment (missing / changed / extra / link) plus a suggested operation. Nothing runs from this screen — opening an environment launches ⚖ Reconcile pre-loaded with these scans, where every suggestion executes with the usual guards. Same scans as 🔄 Refresh state, so the numbers always agree.',
-      subtitle: `The record tree from <strong>${esc(orgLabel(srcUrl))}</strong>${fromRing ? ` <span class="ds-td-sot" title="This is your Sync Ring's source of truth — every multi-org surface (ring scans, pushes, tree diff) reads FROM it. Change it in 🔄 Sync Ring or the topbar chip.">👑 source of truth</span>` : ''}, compared node-by-node across environments — with suggested operations`,
+      subtitle: `The record tree from <strong>${esc(orgLabel(srcUrl))}</strong>${fromRing ? ` <span class="ds-td-sot" title="This is your Sync Ring's source of truth — every multi-org surface (ring scans, pushes, tree diff) reads FROM it. Change it in the topbar SOURCE menu.">👑 source of truth</span>` : ''}, compared node-by-node across environments — with suggested operations`,
       actions: `<button class="ds-btn" data-dsaction="switchView" data-arg="profiles">‹ Back</button>`,
     })}
     <details class="ds-ring-cfg" ${_tdResults ? '' : 'open'}>

@@ -60,7 +60,7 @@ async function renderReadiness() {
       </div>`;
         const ls = _liveOrgSet();
         return `
-      <div class="ds-pk-sot-line" title="Every target below is checked against this org's schema. Change it in 🔄 Sync Ring or the topbar chip.">
+      <div class="ds-pk-sot-line" title="Every target below is checked against this org's schema. Change it in the topbar SOURCE menu.">
         👑 Source of truth: <strong>${esc(orgOptionLabel(ring.src, orgLabel(ring.src), ls))}</strong>
         ${!ls.has(_orgKey(ring.src)) ? '<span style="color:#92400e">— open it in a Chrome tab, schemas are read from it</span>' : ''}
       </div>

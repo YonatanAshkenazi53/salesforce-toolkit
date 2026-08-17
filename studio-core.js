@@ -1816,9 +1816,20 @@ window.removeOrg = function(orgUrl) {
       if (_ring.sourceUrl && _orgKey(_ring.sourceUrl) === _orgKey(orgUrl)) _ring.sourceUrl = '';
       try { await chrome.storage.local.set({ ds_ring: _ring }); } catch (_) {}
     }
+    // The topbar mirror must fall with the crown (review w703wnvrm): a
+    // surviving _workingPair.src keeps currentSourceOrg() returning the
+    // removed org — the closed <select> then displays whichever candidate
+    // sorts first (impersonation), and new deployments seed from a ghost.
+    if (typeof _workingPair === 'object' && _workingPair) {
+      let wpDirty = false;
+      if (_workingPair.src && _orgKey(_workingPair.src) === _orgKey(orgUrl)) { _workingPair.src = ''; wpDirty = true; }
+      if (_workingPair.tgt && _orgKey(_workingPair.tgt) === _orgKey(orgUrl)) { _workingPair.tgt = ''; wpDirty = true; }
+      if (wpDirty) { try { await storageSaveWorkingPair(); } catch (_) {} }
+    }
     await storageSaveOrgs();
     closeModal();
     renderOrgsPanel();
+    renderWorkingPair();
   });
 };
 
@@ -1932,10 +1943,25 @@ async function dsSetSourceOfTruth(url, reason, opts = {}) {
   const moved = (typeof syncRingFollowers === 'function') ? syncRingFollowers() : null;
   showToast(`👑 ${orgLabel(url)} is now the source of truth — every ring surface follows it${moved?.srcMoved ? ` · ${moved.srcMoved} deployment(s) re-pointed (their earlier compares are marked stale)` : ''}`, 'success', 5500);
   renderWorkingPair();
-  if (opts.rerender !== false) renderView(_currentView);
-  // First-ever crown = the ring being born — no pair was measured against a
-  // previous crown, so there is nothing to re-baseline.
-  if (hadCrown && typeof sftkRingRebaseline === 'function') {
+  if (opts.rerender !== false) {
+    // A crown change from the ALWAYS-VISIBLE topbar must not blow away an
+    // open Builder session — renderView has no 'builder' case, so a full
+    // view render would replace the editor with the profiles list and
+    // discard unsaved edits (review w703wnvrm). The Builder's name input
+    // exists only while the editor is on screen; repaint it in place so
+    // the source column re-locks onto the new crown instead.
+    if (eid('dsProfileName') && typeof renderBuilder === 'function') renderBuilder();
+    else renderView(_currentView);
+  }
+  // Skip the re-baseline ONLY for a pristine first crown — the ring being
+  // born, nothing measured yet. hadCrown alone was the wrong gate (review
+  // w703wnvrm): removing the crown org clears sourceUrl while every
+  // profile's ringScans baselines survive, and a FIRST crown can still
+  // re-point existing deployments (srcMoved) whose scans were measured
+  // FROM their old sources — both states must rescan like any crown move.
+  const hadBaselines = hadCrown || moved?.srcMoved
+    || (_profiles || []).some(p => p && !p.ephemeral && p.ringScans && Object.keys(p.ringScans).length);
+  if (hadBaselines && typeof sftkRingRebaseline === 'function') {
     sftkRingRebaseline(reason || 'the source of truth changed');
   }
   return { changed: true, moved };
@@ -1974,7 +2000,7 @@ function renderWorkingPair() {
     `<option value="" selected disabled>— none set —</option>`;
   el.innerHTML = `
     <span class="ds-pair-lbl" title="Source of truth — new deployments, compares and picklist loads all start from this org. Configure the full ring with the gear.">Source</span>
-    <select id="dsSotSel" class="ds-pair-sel${srcUrl ? '' : ' ds-pair-sel-unset'}" aria-label="Source of truth — the org data flows FROM" title="${srcUrl ? 'The golden org data flows FROM' : 'No source of truth is set yet — pick one here or in the Sync Ring'}">${placeholder}${opts}</select>
+    <select id="dsSotSel" class="ds-pair-sel${srcUrl ? '' : ' ds-pair-sel-unset'}" aria-label="Source of truth — the org data flows FROM" title="${srcUrl ? 'The golden org data flows FROM' : 'No source of truth is set yet — pick one here'}">${placeholder}${opts}</select>
     <button id="dsSotRingBtn" class="ds-pair-swap" aria-label="Configure the Sync Ring" title="Configure the Sync Ring (which orgs stay in sync)">${dsIcon('gear')}</button>`;
   eid('dsSotSel')?.addEventListener('change', async e => {
     // THE control — full crown contract (history, membership, followers,

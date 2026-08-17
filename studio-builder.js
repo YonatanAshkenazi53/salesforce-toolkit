@@ -131,7 +131,7 @@ function renderBuilder() {
         <div class="ds-builder-org-col ds-bld-col-src">
           <div class="ds-lbl ds-bld-col-hd">${dsIcon('database')}Source <span class="ds-builder-org-hint">where records come FROM</span></div>
           ${srcLocked
-            ? `<div class="ds-bld-src-locked" title="Locked to your Sync Ring's source of truth — every multi-org surface flows FROM it. Change it in 🔄 Sync Ring or the topbar chip.">
+            ? `<div class="ds-bld-src-locked" title="Locked to your Sync Ring's source of truth — every multi-org surface flows FROM it. Change it in the topbar SOURCE menu.">
                  ${dsIcon('crown')}<strong>${esc(orgLabel(ringSrc))}</strong>
                  <span class="ds-bld-src-note">your source of truth</span>
                  <a href="#" id="dsBldSrcUnlock" class="ds-bld-src-note">use a different source…</a>
