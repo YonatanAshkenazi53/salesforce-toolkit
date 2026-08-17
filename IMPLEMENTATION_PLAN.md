@@ -779,7 +779,7 @@ anchor-based plan edit accidentally deleted it)
   (SN "zxczxc…" now lives in 3 orgs). A Field-Audit-style pass could
   flag suspicious names (keyboard-mash entropy, test-y patterns) before
   they ride a deployment.
-- [ ] SOURCE-OF-TRUTH CONTROL CONSOLIDATION (user 2026-08-13): "I want to
+- [x] SOURCE-OF-TRUTH CONTROL CONSOLIDATION (user 2026-08-13): "I want to
   be able to change source org only in the upper menu. everything should
   calculate by it." Three surfaces currently set the ring's source of truth
   independently — the topbar SOURCE dropdown (studio-core.js
@@ -800,6 +800,19 @@ anchor-based plan edit accidentally deleted it)
   config panel correctly listed all 3 known orgs (ashkenazy6/7 unticked) —
   concrete repro for exactly this scoping gap, user-labeled "fixes for fable." User explicitly deferred this to Fable
   ("maybe leave this for fable?") — do not implement on Sonnet.
+  FIXED 2026-08-17 (Fable, commit e056383). Design calls: (a) ONE crown
+  writer — dsSetSourceOfTruth(url, reason, {rerender}) in studio-core.js
+  carries the whole contract (history stamp, membership add, topbar chip,
+  persist, syncRingFollowers+toast, repaint, hadCrown-gated re-baseline);
+  (b) topbar dropdown lists ALL known orgs (allMapOrgs), ring members
+  first, non-members labeled "not in the ring yet", crowning one adds it
+  to the ring; (c) ring config ⦿ radios REMOVED — membership checkboxes +
+  read-only 👑 marker + ↩ restore (routes through the setter) remain;
+  the silent sourceUrl=orgs[0] untick fallback deleted; (d) Builder 👑
+  promote KEPT as an explicit confirmed shortcut through the same setter
+  (rerender:false + renderBuilder) — it was user-requested 2026-08-11 and
+  is contextual, not a competing control. 4 new ui-studio guards.
+  Adversarial review of the change running as workflow w703wnvrm.
 - [x] SILENT MATCH-FIELD FALLBACK HAS NO DISCLOSURE (user 2026-08-13, live
   demo w/ friend): "we picked a custom object from a package object, and he
   didn't recognize he needed to insert step orders. i saw them under changed
