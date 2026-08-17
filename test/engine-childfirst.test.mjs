@@ -415,3 +415,75 @@ describe('engine matrix — failure accounting and cancel', () => {
     expect(result.errors.join('\n')).toMatch(/cancelled after 1 of 2/);
   });
 });
+
+// ── 431 guard (load test 2026-08-17): a Reconcile "✓ All" run rides EVERY
+// selected id in node.recordIds — 1,850 picked children built a ~39KB
+// `Id IN (…)` GET query string and Salesforce answered HTTP 431 with zero
+// rows written. Picked-id reads must chunk like every other IN list.
+describe('big picked record sets never build an oversized IN clause', () => {
+  const maxIdsInAnyIn = () => Math.max(0, ...calls
+    .filter(c => c[0] === 'query' || c[0] === 'queryAll')
+    .map(c => Math.max(0, ...[...String(c[2]).matchAll(/IN \(([^)]*)\)/g)]
+      .map(m => (m[1].match(/'/g) || []).length / 2))));
+
+  it('child node with 400 picked ids: fetch chunks at 200, parent scope applies in memory, all 400 insert', async () => {
+    const accounts = [1, 2, 3].map(i => ({ Id: `A${i}`, Name: `Acct ${i}`, Industry: 'Tech' }));
+    const contacts = Array.from({ length: 400 }, (_, i) => ({
+      Id: `C${i}`, FirstName: `F${i}`, LastName: `L${i}`, Email: `u${i}@x.com`,
+      AccountId: `A${(i % 3) + 1}` }));
+    SRC_ACCOUNTS.length = 0; SRC_ACCOUNTS.push(...accounts);
+    SRC_CONTACTS.length = 0; SRC_CONTACTS.push(...contacts);
+    const profile = {
+      id: 'p431', name: '431 guard',
+      tree: {
+        objectType: 'Account', recordIds: accounts.map(a => a.Id),
+        children: [{ relationshipName: 'Contacts', childSObject: 'Contact', field: 'AccountId',
+          recordIds: contacts.map(c => c.Id), children: [] }],
+      },
+    };
+    const res = await eng.executeProfileTransfer(profile, SRC, 'sid1', TGT, 'sid2');
+    expect(maxIdsInAnyIn()).toBeLessThanOrEqual(200);
+    const createdContacts = calls.filter(c => c[0] === 'create')
+      .flatMap(c => c[1]).filter(r => r.attributes?.type === 'Contact').length;
+    expect(createdContacts).toBe(400);
+    expect(res.summary.Contact.created).toBe(400);
+  });
+
+  it('root node with 250 picked ids: chunked reads, all 250 insert', async () => {
+    const accounts = Array.from({ length: 250 }, (_, i) => ({ Id: `A${i}`, Name: `Acct ${i}`, Industry: 'Tech' }));
+    SRC_ACCOUNTS.length = 0; SRC_ACCOUNTS.push(...accounts);
+    SRC_CONTACTS.length = 0;
+    const profile = { id: 'p431r', name: '431 root guard',
+      tree: { objectType: 'Account', recordIds: accounts.map(a => a.Id), children: [] } };
+    const res = await eng.executeProfileTransfer(profile, SRC, 'sid1', TGT, 'sid2');
+    expect(maxIdsInAnyIn()).toBeLessThanOrEqual(200);
+    expect(res.summary.Account.created).toBe(250);
+  });
+});
+
+// ── the ℹ marker contract (2026-08-17, user: "the errors are weird"):
+// diagnostics merge into result.errors for transport, but every renderer
+// and status computation can tell a note from a failure by the marker.
+describe('engine notes are marked, never dressed as failures', () => {
+  it('the merge prefixes diagnostics with ℹ', async () => {
+    const { readFileSync } = await import('node:fs');
+    const BG = readFileSync(new URL('../background.js', import.meta.url), 'utf8');
+    expect(BG).toContain('const finalErrors = [...diagnostics.map(d => `ℹ ${d}`), ...dedupedErrors];');
+  });
+
+  it('sftkFriendlyError classifies ℹ lines as notes, with or without a phase prefix', () => {
+    const { sftkFriendlyError } = extractFunctions('sftk-friendly-error.js', ['sftkFriendlyError']);
+    expect(sftkFriendlyError('ℹ Load_Parent__c: Bulk API 2.0 forced by engine settings — one async job for 50 record(s).').kind).toBe('note');
+    expect(sftkFriendlyError('push: ℹ Load_Parent__c: Bulk API read forced by engine settings (50 record(s), one query job).').kind).toBe('note');
+    expect(sftkFriendlyError('push: Load_Child__c: HTTP 431: Request Header Fields Too Large').kind).toBe('error');
+  });
+
+  it('a Reconcile run cannot report success over a hard error', async () => {
+    const { readFileSync } = await import('node:fs');
+    const REC = readFileSync(new URL('../studio-reconcile.js', import.meta.url), 'utf8');
+    // A child pass that dies wholesale contributes zero per-record fails —
+    // the ℹ filter is what keeps the card honest.
+    expect(REC).toMatch(/const hardErrs = allErrors\.filter\(e => !\/\(\^\|: \)ℹ \/\.test\(String\(e\)\)\)\.length;/);
+    expect(REC).toMatch(/const status\s+= \(totalFail === 0 && hardErrs === 0\) \? 'success'/);
+  });
+});
