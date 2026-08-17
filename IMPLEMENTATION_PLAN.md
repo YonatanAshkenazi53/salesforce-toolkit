@@ -897,6 +897,24 @@ anchor-based plan edit accidentally deleted it)
   strategy/fields/upsert; open when unconfigured so first-time setup stays
   discoverable); .ds-picker-body max-height 55vh → 72vh; .ds-picker-list
   min-height 180px so the records can never be squeezed below ~5 rows.
+- [x] LOAD TEST ROUND 1 FINDINGS (2026-08-17, commit 3eba1ec): the live
+  ~1,900-record test caught 3 real defects on its FIRST run (Reconcile
+  ✓-All push a6→a7: 50 parents in via Bulk job, children dead): (1) HTTP
+  431 — node.recordIds rode UNCHUNKED into `Id IN (…)` GET query strings
+  (1,850 ids ≈ 39KB URL); both engine read branches now chunk picked ids
+  at 200 (child branch fetches by Id chunks + parent scope in memory;
+  root branch skips COUNT probe + single-query for big picks); behavioral
+  guards (400-child / 250-root) assert no IN clause exceeds 200 ids.
+  (2) Reconcile status counted only per-record failures → green "success"
+  over a wholesale-dead child pass; any hard error now blocks 'success'.
+  (3) Engine diagnostics wore red ✗ — merge now prefixes 'ℹ ' as a
+  CONTRACT (sftkFriendlyError already classifies ℹ as notes → history
+  header reads "N errors · M notes" automatically; reconcile status
+  filter keys off the same marker). Plus the child-view cleanup (user
+  picked all 3): parent-grouped Insert rows (≥30), exception-only chips
+  (≥90% dominant state → one banner), live n/N selected count +
+  per-group ✓/✗. Load-test state: objects+FLS in all 3 orgs, a6 seeded
+  50+1,850, a7 has parents only, orgfarm empty — rerun pending.
 - [x] QA SWEEP wsh1kcycp COMPLETE (2026-08-16/17, commit f919d37): the 3
   never-completed lenses (files-pipeline, chokepoint, synced-tab) plus
   crown-rebaseline and picker-pagination finally ran to completion —
