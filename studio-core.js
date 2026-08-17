@@ -1903,6 +1903,45 @@ function currentSourceOrg() {
     || '';
 }
 
+// ── THE crown setter — every source-of-truth change flows through here ──
+// (user 2026-08-13: "I want to be able to change source org only in the
+// upper menu. everything should calculate by it.") Before this, FIVE paths
+// wrote _ring.sourceUrl with different subsets of the contract — the topbar
+// (the control the user actually wants) was the weakest: no crown history,
+// no re-baseline, no re-point disclosure. One writer, whole contract:
+// history stamp → membership → follower re-point → persist → repaint →
+// re-baseline. Returns { changed, moved }.
+// opts.rerender=false lets the Builder keep its own repaint (renderView has
+// no 'builder' case — a full view render would navigate away mid-edit).
+async function dsSetSourceOfTruth(url, reason, opts = {}) {
+  if (!url) return { changed: false };
+  if (!_ring) _ring = { orgs: [], sourceUrl: '' };
+  if (_ring.sourceUrl && _orgKey(_ring.sourceUrl) === _orgKey(url)) return { changed: false };
+  const hadCrown = !!_ring.sourceUrl;
+  // Crown history (user 2026-08-11: "it forgot that my original source of
+  // truth was ashkenazy6") — the ring config offers ↩ restore.
+  if (hadCrown) {
+    _ring.prevSourceUrl = _ring.sourceUrl;
+    _ring.prevSourceAt  = new Date().toISOString();
+  }
+  _ring.sourceUrl = url;
+  if (!_ring.orgs.some(u => _orgKey(u) === _orgKey(url))) _ring.orgs.push(url);
+  _workingPair.src = url;   // the topbar chip IS the crown — always in step
+  try { await chrome.storage.local.set({ ds_ring: _ring }); } catch (_) {}
+  try { storageSaveWorkingPair(); } catch (_) {}
+  const moved = (typeof syncRingFollowers === 'function') ? syncRingFollowers() : null;
+  showToast(`👑 ${orgLabel(url)} is now the source of truth — every ring surface follows it${moved?.srcMoved ? ` · ${moved.srcMoved} deployment(s) re-pointed (their earlier compares are marked stale)` : ''}`, 'success', 5500);
+  renderWorkingPair();
+  if (opts.rerender !== false) renderView(_currentView);
+  // First-ever crown = the ring being born — no pair was measured against a
+  // previous crown, so there is nothing to re-baseline.
+  if (hadCrown && typeof sftkRingRebaseline === 'function') {
+    sftkRingRebaseline(reason || 'the source of truth changed');
+  }
+  return { changed: true, moved };
+}
+window.dsSetSourceOfTruth = dsSetSourceOfTruth;
+
 function renderWorkingPair() {
   const el = eid('dsWorkingPair');
   if (!el) return;
@@ -1910,10 +1949,19 @@ function renderWorkingPair() {
   if (!orgs.length) { el.innerHTML = ''; return; }
   const ls = _liveOrgSet();
   const srcUrl = currentSourceOrg();
-  const candidates = (_ring?.orgs?.length ? _ring.orgs : orgs.map(o => o.url));
+  // EVERY known org, ring members first — not just _ring.orgs. The dropdown
+  // is THE control now, so it must be able to crown an org that isn't a
+  // ring member yet (user repro 2026-08-13: topbar showed ONLY orgfarm
+  // while the ring config listed all 3 known orgs — a brand-new org had no
+  // path to become source here). Crowning a non-member adds it to the ring.
+  const inRing = u => (_ring?.orgs || []).some(x => _orgKey(x) === _orgKey(u));
+  const candidates = [...orgs.map(o => o.url)]
+    .sort((a, b) => (inRing(b) - inRing(a)));
+  const ringExists = (_ring?.orgs?.length || 0) > 0;
   const opts = candidates.map(u => {
     const o = orgs.find(x => _orgKey(x.url) === _orgKey(u));
-    return `<option value="${esc(u)}" ${_orgKey(u) === _orgKey(srcUrl) ? 'selected' : ''}>${esc(orgOptionLabel(u, o?.label, ls))}</option>`;
+    const outside = ringExists && !inRing(u);
+    return `<option value="${esc(u)}" ${_orgKey(u) === _orgKey(srcUrl) ? 'selected' : ''}>${esc(orgOptionLabel(u, o?.label, ls))}${outside ? ' — not in the ring yet' : ''}</option>`;
   }).join('');
   // With no source set, NOTHING carries `selected` and a <select> silently
   // falls back to displaying its FIRST option — so this chip asserted an org
@@ -1929,15 +1977,9 @@ function renderWorkingPair() {
     <select id="dsSotSel" class="ds-pair-sel${srcUrl ? '' : ' ds-pair-sel-unset'}" aria-label="Source of truth — the org data flows FROM" title="${srcUrl ? 'The golden org data flows FROM' : 'No source of truth is set yet — pick one here or in the Sync Ring'}">${placeholder}${opts}</select>
     <button id="dsSotRingBtn" class="ds-pair-swap" aria-label="Configure the Sync Ring" title="Configure the Sync Ring (which orgs stay in sync)">${dsIcon('gear')}</button>`;
   eid('dsSotSel')?.addEventListener('change', async e => {
-    const v = e.target.value;
-    if (!_ring) _ring = { orgs: [v], sourceUrl: v };
-    _ring.sourceUrl = v;
-    syncRingFollowers();   // follow-mode deployments track the new source's targets
-    if (!_ring.orgs.some(u => _orgKey(u) === _orgKey(v))) _ring.orgs.push(v);
-    _workingPair.src = v;
-    await chrome.storage.local.set({ ds_ring: _ring });
-    storageSaveWorkingPair();
-    renderView(_currentView);
+    // THE control — full crown contract (history, membership, followers,
+    // re-baseline) via the one shared setter.
+    await dsSetSourceOfTruth(e.target.value, 'the source of truth changed');
   });
   eid('dsSotRingBtn')?.addEventListener('click', () => navigateToView('ring'));
 }

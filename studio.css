@@ -5018,7 +5018,6 @@ html, body {
 .ds-ring-orgs { padding: 6px 14px 12px; display: flex; flex-direction: column; gap: 6px; }
 .ds-ring-org { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
 .ds-ring-org-in { border-color: var(--brand); }
-.ds-ring-src-pick { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--subtext); cursor: pointer; }
 .ds-ring-matrix { border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
 .ds-ring-head, .ds-ring-row { display: grid; grid-template-columns: minmax(220px, 1.4fr) repeat(var(--ring-cols, 3), minmax(150px, 1fr)); gap: 8px; padding: 8px 12px; align-items: center; }
 .ds-ring-head { background: var(--panel-bg, rgba(128,128,128,.08)); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--subtext); }
