@@ -997,3 +997,27 @@ describe('one crown writer: dsSetSourceOfTruth', () => {
     expect(RING).toMatch(/\.ds-ring-cb'\)/);
   });
 });
+
+// ── Engine controls reach Reconcile (user 2026-08-17: per-target deploys
+// need bulk/batch control on the Reconcile page) ─────────────────────────
+describe('Reconcile carries the engine controls with profile persistence', () => {
+  const REC = read('studio-reconcile.js');
+
+  it('the action bar renders apiMode + batchSize with the shared contract', () => {
+    expect(REC).toContain('id="dsRecApiMode"');
+    expect(REC).toContain('id="dsRecBatchSize"');
+    // same delete-on-default persistence as the Run page / fan-out
+    expect(REC).toMatch(/if \(v === 'sync' \|\| v === 'bulk'\) p\.apiMode = v; else delete p\.apiMode;/);
+    expect(REC).toMatch(/if \(n === 200\) delete p\.batchSize; else p\.batchSize = n;/);
+  });
+
+  it('an ephemeral chooser pair mirrors the choice onto the REAL profile', () => {
+    // The clone evaporates with the session — without the _ringOf mirror the
+    // user's engine choice would silently vanish on the next open.
+    const i = REC.indexOf('const _recEnginePersist');
+    expect(i).toBeGreaterThan(-1);
+    const fn = REC.slice(i, i + 700);
+    expect(fn).toMatch(/p\._ringOf\?\.profileId \? _profiles\.find\(x => x\.id === p\._ringOf\.profileId\)/);
+    expect(fn).toMatch(/if \(p\.apiMode\) realP\.apiMode = p\.apiMode; else delete realP\.apiMode;/);
+  });
+});
