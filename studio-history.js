@@ -388,9 +388,17 @@ function renderHistory() {
             const out = [];
             for (const [obj, s] of Object.entries(run.summary || {})) {
               if (tgtBase && s.targetRecords?.length) {
+                // The links list is CAPPED at 200 (storage quota) — the label
+                // must state the REAL write count, or "200 record(s) written"
+                // reads as a partial run (load test 2026-08-18: user
+                // "inserted only 200" over a fully successful 1,850-row job).
+                const written = (s.created || 0) + (s.inserted || 0) + (s.updated || 0)
+                  + (s.overwritten || 0) + (s.relinked || 0) + (s.pulled || 0);
+                const capNote = written > s.targetRecords.length
+                  ? ` (first ${s.targetRecords.length} listed)` : '';
                 out.push(`
               <details class="ds-history-links">
-                <summary>🔗 ${esc(obj)}: ${s.targetRecords.length} record(s) written — open in ${esc(orgLabel(tgtBase))}</summary>
+                <summary>🔗 ${esc(obj)}: ${Math.max(written, s.targetRecords.length)} record(s) written — open in ${esc(orgLabel(tgtBase))}${capNote}</summary>
                 <div class="ds-history-links-list">
                   ${s.targetRecords.map(tr =>
                     `<a href="${esc(tgtBase)}/${esc(tr.id)}" target="_blank" rel="noopener">${esc(tr.label || tr.id)}</a>`
