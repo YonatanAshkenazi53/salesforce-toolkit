@@ -487,3 +487,55 @@ describe('engine notes are marked, never dressed as failures', () => {
     expect(REC).toMatch(/const status\s+= \(totalFail === 0 && hardErrs === 0\) \? 'success'/);
   });
 });
+
+// ── URI-limit backstop (load test round 2: HTTP 414 after the 431 —
+// oversized query strings die at the Salesforce edge before parsing).
+// Long SOQL reroutes through POST /composite; short stays a direct GET.
+describe('oversized SOQL routes through POST /composite', () => {
+  const q = extractFunctions('background.js',
+    ['sfQueryAll', 'sfQueryViaComposite', 'sfErrorMsg']);
+  let fetches;
+  beforeEach(() => {
+    fetches = [];
+    globalThis.API_VERSION = 'v62.0';
+    globalThis.SFTK_URL_MAX = 11000;
+    globalThis.sfQueryViaComposite = q.sfQueryViaComposite;
+    globalThis.sfFetchWithProxy = async (orgUrl, sid, url, opts) => {
+      fetches.push({ url, method: opts?.method || 'GET', body: opts?.body });
+      if (url.endsWith('/composite')) {
+        const sub = JSON.parse(opts.body).compositeRequest[0];
+        return { ok: true, status: 200, body: JSON.stringify({ compositeResponse: [
+          { referenceId: sub.referenceId, httpStatusCode: 200,
+            body: { records: [{ Id: 'X1' }], totalSize: 1, done: true } }] }) };
+      }
+      return { ok: true, status: 200, body: JSON.stringify({ records: [{ Id: 'S1' }], totalSize: 1, done: true }) };
+    };
+  });
+  afterEach(() => {
+    for (const k of ['API_VERSION', 'SFTK_URL_MAX', 'sfQueryViaComposite', 'sfFetchWithProxy']) delete globalThis[k];
+  });
+
+  it('a short query stays a plain GET', async () => {
+    const res = await q.sfQueryAll('https://o.my.salesforce.com', 'sid', 'SELECT Id FROM Account', false);
+    expect(fetches).toHaveLength(1);
+    expect(fetches[0].method).toBe('GET');
+    expect(res.records.map(r => r.Id)).toEqual(['S1']);
+  });
+
+  it('an oversized query becomes ONE composite POST with the SOQL in the body', async () => {
+    const giant = `SELECT Id FROM Load_Child__c WHERE Id IN (${Array.from({ length: 1850 }, (_, i) => `'a0X${String(i).padStart(12, '0')}'`).join(',')})`;
+    const res = await q.sfQueryAll('https://o.my.salesforce.com', 'sid', giant, false);
+    expect(fetches).toHaveLength(1);
+    expect(fetches[0].method).toBe('POST');
+    expect(fetches[0].url).toMatch(/\/composite$/);
+    // the query rides inside the JSON body, off the request line
+    expect(JSON.parse(fetches[0].body).compositeRequest[0].url).toContain('query');
+    expect(res.records.map(r => r.Id)).toEqual(['X1']);
+  });
+
+  it('tooling queries never reroute (composite does not carry tooling)', async () => {
+    const giant = `SELECT Id FROM ApexLog WHERE Id IN (${Array.from({ length: 1850 }, (_, i) => `'x${i}'`).join(',')})`;
+    await q.sfQueryAll('https://o.my.salesforce.com', 'sid', giant, true);
+    expect(fetches[0].method).toBe('GET');
+  });
+});
