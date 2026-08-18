@@ -1374,9 +1374,14 @@ async function renderReconcile() {
           <option value="sync" ${p.apiMode === 'sync' ? 'selected' : ''}>Synchronous — Collections</option>
           <option value="bulk" ${p.apiMode === 'bulk' ? 'selected' : ''}>Async — Bulk API 2.0 job</option>
         </select>
-        <input id="dsRecBatchSize" class="ds-input ds-input-sm" type="number" min="1" max="200" step="1"
-          style="width:60px" value="${Math.max(1, Math.min(200, Number(p.batchSize) || 200))}"
-          title="Records per synchronous Collections call (1-200; 200 is the Salesforce maximum). Smaller batches isolate failures and duck per-transaction trigger limits. Bulk jobs ignore this — Salesforce chunks those internally.">
+        <span id="dsRecBatchWrap" style="display:inline-flex;align-items:center;gap:4px${p.apiMode === 'bulk' ? ';opacity:.45' : ''}"
+          title="Records per synchronous Collections call (1-200; 200 is the Salesforce maximum). Smaller batches isolate failures and duck per-transaction trigger limits. ONLY the synchronous engine batches on the client — a Bulk API 2.0 job uploads everything at once and Salesforce chunks it internally, so this is disabled in Async mode.">
+          <span>batch</span>
+          <input id="dsRecBatchSize" class="ds-input ds-input-sm" type="number" min="1" max="200" step="1"
+            style="width:72px;text-align:right" value="${Math.max(1, Math.min(200, Number(p.batchSize) || 200))}"
+            ${p.apiMode === 'bulk' ? 'disabled' : ''}>
+          <span>per call</span>
+        </span>
       </label>
       <label class="ds-rec-delmode" title="Recycle Bin: deleted records recoverable for 15 days. Hard delete: permanently purged, not recoverable.">
         <span>Delete mode:</span>
@@ -1764,6 +1769,12 @@ async function renderReconcile() {
   eid('dsRecApiMode')?.addEventListener('change', async e => {
     const v = e.target.value;
     if (v === 'sync' || v === 'bulk') p.apiMode = v; else delete p.apiMode;
+    // Batch size is a SYNCHRONOUS-engine knob — Bulk jobs ignore it, so the
+    // input goes inert the moment Async is picked (user 2026-08-18: "user
+    // has no idea what he is selecting").
+    const bi = eid('dsRecBatchSize'), bw = eid('dsRecBatchWrap');
+    if (bi) bi.disabled = v === 'bulk';
+    if (bw) bw.style.opacity = v === 'bulk' ? '.45' : '';
     await _recEnginePersist();
   });
   eid('dsRecBatchSize')?.addEventListener('change', async e => {
