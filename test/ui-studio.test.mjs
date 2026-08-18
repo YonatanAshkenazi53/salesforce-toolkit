@@ -1052,3 +1052,28 @@ describe('a clean root never claims full sync over unverified or missing childre
     expect(REC).toContain("'✓ root in sync · children unverified'");
   });
 });
+
+// ── The landing-page sync tiles obey every verdict law (user 2026-08-18,
+// live: a tile said "✓ in sync" over 463 wrong child links) ──────────────
+describe('sync-status tiles: root-only scans can never overclaim', () => {
+  const fn = CORE.slice(CORE.indexOf('function _syncStatusStripHtml'),
+                        CORE.indexOf('function renderOrgsPanel'));
+
+  it('children gate the tile — fresh child work counts, unscanned = unverified', () => {
+    expect(fn).toMatch(/cs\.rootRunAt === s\.runAt && cs\.objectType === obj/);
+    expect(fn).toContain('kidNeed += (cs.missingInTarget || []).length');
+    expect(fn).toContain('✓ root · children unverified');
+    expect(fn).toMatch(/const clean = !t\.stale && t\.drift === 0 && !t\.kidNeed && !t\.fMiss;/);
+  });
+
+  it('files and file-check failures gate it too', () => {
+    expect(fn).toMatch(/fMiss = \(s\.fileDrift && !s\.fileDrift\.error && s\.fileDrift\.records\) \|\| 0/);
+    expect(fn).toContain('📎 file check failed');
+    expect(fn).toContain('📎 ${t.fMiss} missing files');
+  });
+
+  it('a lastScan stamped for a different pair renders as stale, never as counts', () => {
+    expect(fn).toMatch(/sftkOrgKey\(s\.sourceOrg\) !== sftkOrgKey\(p\.sourceOrg \|\| ''\)/);
+    expect(fn).toContain('scan is for a different org pair — rescan');
+  });
+});

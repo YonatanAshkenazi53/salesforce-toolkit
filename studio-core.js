@@ -1603,32 +1603,69 @@ function _syncStatusStripHtml() {
   for (const p of _profiles) {
     const s = p.lastScan;
     if (!s || !s.runAt) continue;
+    // A lastScan stamped for a DIFFERENT pair describes an older
+    // configuration — its counts must never render under the current
+    // pair's label (same stamp law as the ring matrix and the chooser).
+    const stale = !!((s.sourceOrg && sftkOrgKey(s.sourceOrg) !== sftkOrgKey(p.sourceOrg || ''))
+      || (s.targetOrg && sftkOrgKey(s.targetOrg) !== sftkOrgKey(p.targetOrg || '')));
     const missing = (s.missingInTarget || []).length;
     const changed = (s.changed || []).length;
     const extra   = (s.onlyInTarget || []).length;
     const drift   = missing + changed + extra;
+    // CHILDREN gate this tile too (user 2026-08-18, live: the tile said
+    // "✓ in sync" over 463 wrong child links — it read ROOT buckets only).
+    // Fresh child scans with work count against sync; child sections with
+    // no fresh scan make the pair UNVERIFIED, never silently clean.
+    let kidNeed = 0, kidUnscanned = 0;
+    const walkKid = (node, pathKey) => {
+      const obj = node.objectType || node.childSObject || '?';
+      const cs = s.children?.[pathKey];
+      const fresh = !!(cs && cs.status === 'success' && cs.rootRunAt === s.runAt && cs.objectType === obj);
+      if (!fresh) kidUnscanned++;
+      else kidNeed += (cs.missingInTarget || []).length + (cs.changed || []).length
+        + (cs.linkMismatch || []).length + (cs.onlyInTarget || []).length;
+      (node.children || []).forEach((g, j) => walkKid(g, `${pathKey}.${j}`));
+    };
+    (p.tree?.children || []).forEach((c, i) => walkKid(c, String(i)));
+    // 📎 Files gate the verdict everywhere — this tile included.
+    const fMiss = (s.fileDrift && !s.fileDrift.error && s.fileDrift.records) || 0;
+    const fErr  = !!s.fileDrift?.error;
     tiles.push({ id: p.id, name: p.name, missing, changed, extra, drift,
+      kidNeed, kidUnscanned, fMiss, fErr, stale,
       src: p.sourceOrg, tgt: p.targetOrg, at: s.runAt });
   }
   if (!tiles.length) return '';
-  tiles.sort((a, b) => b.drift - a.drift);
+  tiles.sort((a, b) => (b.drift + b.kidNeed + b.fMiss) - (a.drift + a.kidNeed + a.fMiss));
   return `
     <div class="ds-sync-strip">
       <div class="ds-sync-strip-title">Sync status <span class="ds-sync-strip-sub">from your last scans</span></div>
       <div class="ds-sync-tiles">
-        ${tiles.slice(0, 6).map(t => `
-          <div class="ds-sync-tile${t.drift === 0 ? ' ds-sync-ok' : ''}" data-sync-profile="${esc(t.id)}"
+        ${tiles.slice(0, 6).map(t => {
+          const clean = !t.stale && t.drift === 0 && !t.kidNeed && !t.fMiss;
+          let stats;
+          if (t.stale) {
+            stats = '<span class="ds-sync-c">scan is for a different org pair — rescan</span>';
+          } else if (clean) {
+            stats = t.fErr ? '<span class="ds-sync-c">✓ fields · 📎 file check failed</span>'
+              : t.kidUnscanned
+                ? `<span class="ds-sync-clean" title="Root object in sync — ${t.kidUnscanned} child section(s) have no fresh scan, so child records are UNVERIFIED. Open Reconcile and scan them.">✓ root · children unverified</span>`
+                : '<span class="ds-sync-clean">✓ in sync</span>';
+          } else {
+            stats = `${t.missing ? `<span class="ds-sync-m">${t.missing} missing</span>` : ''}
+                   ${t.changed ? `<span class="ds-sync-c">${t.changed} changed</span>` : ''}
+                   ${t.extra ? `<span class="ds-sync-e">${t.extra} only in target</span>` : ''}
+                   ${t.kidNeed ? `<span class="ds-sync-c">${t.kidNeed} child record(s)</span>` : ''}
+                   ${t.fMiss ? `<span class="ds-sync-c">📎 ${t.fMiss} missing files</span>` : ''}`;
+          }
+          return `
+          <div class="ds-sync-tile${clean && !t.kidUnscanned && !t.fErr ? ' ds-sync-ok' : ''}" data-sync-profile="${esc(t.id)}"
                title="Open Reconcile for ${esc(t.name)}">
             <div class="ds-sync-tile-name">${esc(t.name)}</div>
             <div class="ds-sync-tile-pair">${esc(orgLabel(t.src))} → ${esc(orgLabel(t.tgt))}</div>
-            <div class="ds-sync-tile-stats">
-              ${t.drift === 0 ? '<span class="ds-sync-clean">✓ in sync</span>'
-                : `${t.missing ? `<span class="ds-sync-m">${t.missing} missing</span>` : ''}
-                   ${t.changed ? `<span class="ds-sync-c">${t.changed} changed</span>` : ''}
-                   ${t.extra ? `<span class="ds-sync-e">${t.extra} only in target</span>` : ''}`}
-            </div>
+            <div class="ds-sync-tile-stats">${stats}</div>
             <div class="ds-sync-tile-age">${t.at ? esc(timeAgo(t.at)) : ''}</div>
-          </div>`).join('')}
+          </div>`;
+        }).join('')}
       </div>
     </div>`;
 }
