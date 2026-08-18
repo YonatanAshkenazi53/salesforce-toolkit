@@ -2442,10 +2442,19 @@ async function runReconcile(profile, objType, buckets) {
         }
         delete s.idPairs;
       } catch (_) { /* memory is an optimization — never fail the run */ }
-      counts.inserted += (s.created || 0); counts.insertedFailed += (s.failed || 0);
+      // Upsert split (engine reports Salesforce's per-row verdict): rows the
+      // upsert UPDATED land in the updated count, not "inserted" — an
+      // 1,850-row pure-update run must never read "1850 inserted".
+      if (s.upsertCreated != null || s.upsertUpdated != null) {
+        counts.inserted += (s.upsertCreated || 0);
+        counts.updated  += (s.upsertUpdated || 0);
+      } else {
+        counts.inserted += (s.created || 0);
+      }
+      counts.insertedFailed += (s.failed || 0);
       rootTargets.push(...(s.targetRecords || []));
       rootFailedInserts.push(...(s.failedSourceIds || []));
-      log(s.failed ? '⚠' : '✅', `Inserted ${s.created || 0} ${objType}${s.failed ? `, ${s.failed} failed` : ''}`, s.failed ? 'ds-prog-err' : '');
+      log(s.failed ? '⚠' : '✅', `${s.upsertUpdated ? `Upserted ${s.created || 0} ${objType} (${s.upsertCreated || 0} created, ${s.upsertUpdated} updated)` : `Inserted ${s.created || 0} ${objType}`}${s.failed ? `, ${s.failed} failed` : ''}`, s.failed ? 'ds-prog-err' : '');
       for (const a of childActs) {
         if (!a.groupA.length) continue;
         const obj  = a.node.objectType || a.node.childSObject;
@@ -2514,7 +2523,13 @@ async function runReconcile(profile, objType, buckets) {
         tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid
       });
       const s2 = res.summary?.[obj] || {};
-      bumpChild(obj, 'created', s2.created || 0);
+      // Same upsert split as the root push — upsert-updates are not creates.
+      if (s2.upsertCreated != null || s2.upsertUpdated != null) {
+        bumpChild(obj, 'created', s2.upsertCreated || 0);
+        bumpChild(obj, 'overwritten', s2.upsertUpdated || 0);
+      } else {
+        bumpChild(obj, 'created', s2.created || 0);
+      }
       bumpChild(obj, 'failed',  s2.failed  || 0);
       if (s2.targetRecords?.length) {
         childCounts[obj].targetRecords = (childCounts[obj].targetRecords || []).concat(s2.targetRecords);

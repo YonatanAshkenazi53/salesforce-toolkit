@@ -353,6 +353,7 @@ function renderHistory() {
                 if (s.connected)     parts.push(`<span class="ds-rec-tag ds-rec-tag-ins">🔗 ${s.connected} linked</span>`);
                 if (s.relinked)      parts.push(`<span class="ds-rec-tag ds-rec-tag-upd">⇄ ${s.relinked} relinked</span>`);
                 if (s.updated)       parts.push(`<span class="ds-rec-tag ds-rec-tag-upd">${s.updated} updated</span>`);
+                if (s.overwritten)   parts.push(`<span class="ds-rec-tag ds-rec-tag-upd">${s.overwritten} updated</span>`);
                 if (s.updatedSource) parts.push(`<span class="ds-rec-tag ds-rec-tag-pull">← ${s.updatedSource} updated in source</span>`);
                 if (s.pulled)        parts.push(`<span class="ds-rec-tag ds-rec-tag-pull">← ${s.pulled} pulled</span>`);
                 if (s.deleted)       parts.push(`<span class="ds-rec-tag ds-rec-tag-del">${s.deleted} deleted${s.deleteMode === 'hard' ? ' (hard)' : ''}</span>`);
@@ -367,14 +368,23 @@ function renderHistory() {
               // left unconfirmed (⏸) belong on the chip: they are neither
               // created nor failed, and hiding them makes a cancelled run look
               // like a clean small run.
+              // Upsert split: Salesforce says per row whether the upsert
+              // CREATED or UPDATED — show both arms instead of lumping
+              // updates in as inserts ("1850 inserted" over a pure-update
+              // run, load test 2026-08-18).
+              const hasSplit = s.upsertCreated != null || s.upsertUpdated != null;
               const chipTitle = [
-                `${s.created || 0} created`,
+                hasSplit ? `upsert: ${s.upsertCreated || 0} created · ${s.upsertUpdated || 0} updated`
+                         : `${s.created || 0} created`,
                 s.failed ? `${s.failed} failed` : '',
                 s.notProcessed ? `${s.notProcessed} not confirmed written — the Bulk job was aborted when the run was cancelled` : '',
                 s.connected ? `${s.connected} linked to parent` : '',
                 s.viaBulk ? 'written with one Bulk API 2.0 job' : '',
               ].filter(Boolean).join(' · ');
-              return `<span class="ds-summary-chip" title="${esc(chipTitle)}">${esc(obj)}: ${s.created || 0}↑${s.failed ? ' '+s.failed+'✗' : ''}${s.notProcessed ? ' '+s.notProcessed+'⏸' : ''}${s.connected ? ' '+s.connected+'🔗' : ''}${s.viaBulk ? ' <span style="opacity:.75">⚡ via Bulk API</span>' : ''}</span>`;
+              const headCounts = hasSplit
+                ? `${s.upsertCreated || 0}↑ ${s.upsertUpdated || 0}↻`
+                : `${s.created || 0}↑`;
+              return `<span class="ds-summary-chip" title="${esc(chipTitle)}">${esc(obj)}: ${headCounts}${s.failed ? ' '+s.failed+'✗' : ''}${s.notProcessed ? ' '+s.notProcessed+'⏸' : ''}${s.connected ? ' '+s.connected+'🔗' : ''}${s.viaBulk ? ' <span style="opacity:.75">⚡ via Bulk API</span>' : ''}</span>`;
             }).join('')}
           </div>
           ${(() => {

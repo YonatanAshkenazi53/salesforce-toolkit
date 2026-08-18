@@ -1215,6 +1215,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
 
       // ── Batch create (200 records/batch, allOrNone:false) ────────────────
       let ok = 0, fail = 0, usedBulk = false;
+      // Upsert arms — Salesforce says per row whether it CREATED or UPDATED
+      // (`created` on Collections upsert rows, `sf__Created` on Bulk result
+      // CSVs). Counted so the summary can say "N created · M updated"
+      // instead of lumping updates in as inserts (load test 2026-08-18).
+      let upsCreated = 0, upsUpdated = 0;
       // B3 — records a cancelled Bulk job never even attempted. They are NOT
       // failures (nothing was rejected; the job was aborted before reaching
       // them) so they are counted and reported separately. They still land in
@@ -1332,6 +1337,8 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         results.forEach((result, j) => {
           if (result.success) {
             idMap[recs[i + j].Id] = result.id; ok++;
+            if (result.created === true) upsCreated++;
+            else if (result.created === false) upsUpdated++;
             transferredSourceIds.push(recs[i + j].Id);
             if (isRootNode && idPairs.length < 2000) idPairs.push([recs[i + j].Id, result.id]);
             if (targetRecords.length < 200) {
@@ -1465,6 +1472,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       summary[objType] = { created: ok, failed: fail,
         ...(usedBulk ? { viaBulk: true } : {}),
         ...(useUpsert ? { viaUpsert: upsertField } : {}),
+        // The upsert split, when Salesforce reported it — `created` stays
+        // the TOTAL written (every consumer reads it that way); these two
+        // let displays break it into arms.
+        ...(useUpsert && (upsCreated || upsUpdated)
+          ? { upsertCreated: upsCreated, upsertUpdated: upsUpdated } : {}),
         ...(notProcessed ? { notProcessed } : {}),
         ...(piiRows ? { masked: piiRows.counts } : {}) };
       // B3 — one line for everything the aborted Bulk job did not confirm.
@@ -3311,7 +3323,14 @@ function sftkCorrelateBulkResults(uploadRows, columns, successRows, failedRows, 
     const k = key(r);
     if (!buckets.has(k)) buckets.set(k, []);
     buckets.get(k).push(success
-      ? { id: r['sf__Id'] || null, success: true, errors: [] }
+      // sf__Created — Salesforce's own created/updated verdict per upserted
+      // row ('true'/'false'). Carried through so an upsert's summary can say
+      // "N created · M updated" instead of lumping updates in as inserts
+      // (load test 2026-08-18: an 1,850-row pure-update upsert read
+      // "1850 inserted"). Absent on plain inserts → undefined, not false.
+      ? { id: r['sf__Id'] || null, success: true, errors: [],
+          ...(r['sf__Created'] !== undefined && r['sf__Created'] !== null && r['sf__Created'] !== ''
+            ? { created: String(r['sf__Created']).toLowerCase() === 'true' } : {}) }
       : { id: r['sf__Id'] || null, success: false,
           errors: [{ message: r['sf__Error'] || 'Bulk API row failed', statusCode: 'BULK_ROW_ERROR' }] });
   };
