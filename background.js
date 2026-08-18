@@ -2516,9 +2516,37 @@ function normalizePath(path) {
   return path.replace(/services\/data\/v[\d.]+\//gi, `services/data/${API_VERSION}/`);
 }
 
+// ── Oversized-SOQL backstop (load test 2026-08-17/18: HTTP 431 then 414 —
+// a query string past the edge's URI limit kills the request before
+// Salesforce even parses it, and the caller's whole node dies). Callers are
+// expected to chunk their IN-lists; this is the TRANSPORT guard that turns
+// a missed chunk into a working call: long queries route through
+// POST /composite, where the subrequest URL travels in the JSON body
+// instead of the request line. Standard REST only — composite doesn't
+// carry tooling subrequests (tooling queries in this app are all short).
+const SFTK_URL_MAX = 11000;
+async function sfQueryViaComposite(orgUrl, sid, subUrl) {
+  const compUrl = `${orgUrl}/services/data/${API_VERSION}/composite`;
+  const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, compUrl, {
+    method: 'POST',
+    body: JSON.stringify({ compositeRequest: [{ method: 'GET', url: subUrl, referenceId: 'q' }] }),
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!ok) throw new Error(sfErrorMsg(status, body, compUrl));
+  const sub = (JSON.parse(body).compositeResponse || [])[0];
+  if (!sub || sub.httpStatusCode < 200 || sub.httpStatusCode >= 300) {
+    const b = sub ? JSON.stringify(sub.body).slice(0, 300) : 'no subresponse';
+    throw new Error(`HTTP ${sub ? sub.httpStatusCode : '?'} (composite query): ${b}`);
+  }
+  return sub.body;   // same shape as a direct /query response
+}
+
 async function sfQuery(orgUrl, sid, query, tooling = true) {
   const base = tooling ? `services/data/${API_VERSION}/tooling` : `services/data/${API_VERSION}`;
   const url = `${orgUrl}/${base}/query?q=${encodeURIComponent(query)}`;
+  if (!tooling && url.length > SFTK_URL_MAX) {
+    return await sfQueryViaComposite(orgUrl, sid, url.slice(orgUrl.length));
+  }
   const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url);
   if (!ok) throw new Error(sfErrorMsg(status, body, url));
   return JSON.parse(body);
@@ -2531,10 +2559,17 @@ async function sfQueryAll(orgUrl, sid, query, tooling = true) {
   let serverTotal = null;
 
   while (url) {
-    // sfFetchWithProxy handles Bearer → proxy fallback transparently
-    const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url);
-    if (!ok) throw new Error(sfErrorMsg(status, body, url));
-    const data = JSON.parse(body);
+    let data;
+    if (!tooling && url.length > SFTK_URL_MAX) {
+      // First page of an oversized query — the URI-limit backstop. Later
+      // pages ride nextRecordsUrl, which is always short.
+      data = await sfQueryViaComposite(orgUrl, sid, url.slice(orgUrl.length));
+    } else {
+      // sfFetchWithProxy handles Bearer → proxy fallback transparently
+      const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url);
+      if (!ok) throw new Error(sfErrorMsg(status, body, url));
+      data = JSON.parse(body);
+    }
     // The FIRST page carries the server's own count of every matching record.
     // Keep it: callers that need a true total (cap reconciliation) would
     // otherwise have to spend a second round-trip on SELECT COUNT() to
