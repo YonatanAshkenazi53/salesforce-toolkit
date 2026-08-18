@@ -172,3 +172,35 @@ describe('sftkCorrelateBulkResults (background.js) — cancelled rows are not re
     expect(res[2].errors[0].message).toBe('Not processed — the run was cancelled');
   });
 });
+
+// ── Upsert arms (load test 2026-08-18: an 1,850-row pure-update upsert
+// read "1850 inserted") — sf__Created is Salesforce's own per-row verdict
+// and must survive correlation so summaries can split created/updated.
+describe('sftkCorrelateBulkResults carries the sf__Created verdict', () => {
+  const sftkCorrelateBulkResults = extractFunction('background.js', 'sftkCorrelateBulkResults');
+  const cols = ['Ext_Id__c', 'Name'];
+  const up = [{ Ext_Id__c: 'A', Name: 'a' }, { Ext_Id__c: 'B', Name: 'b' }, { Ext_Id__c: 'C', Name: 'c' }];
+
+  it('true → created:true, false → created:false, absent → no created key', () => {
+    const out = sftkCorrelateBulkResults(up, cols,
+      [{ Ext_Id__c: 'A', Name: 'a', 'sf__Id': '1', 'sf__Created': 'true' },
+       { Ext_Id__c: 'B', Name: 'b', 'sf__Id': '2', 'sf__Created': 'false' },
+       { Ext_Id__c: 'C', Name: 'c', 'sf__Id': '3' }], []);
+    expect(out[0].created).toBe(true);
+    expect(out[1].created).toBe(false);
+    expect('created' in out[2]).toBe(false);
+  });
+
+  it('the engine counts the arms and the summary carries the split', async () => {
+    const { readFileSync } = await import('node:fs');
+    const BG = readFileSync(new URL('../background.js', import.meta.url), 'utf8');
+    expect(BG).toContain('if (result.created === true) upsCreated++;');
+    expect(BG).toContain('else if (result.created === false) upsUpdated++;');
+    expect(BG).toMatch(/useUpsert && \(upsCreated \|\| upsUpdated\)\s*\n?\s*\? \{ upsertCreated: upsCreated, upsertUpdated: upsUpdated \}/);
+    // reconcile splits the same way, and History renders both arms
+    const REC = readFileSync(new URL('../studio-reconcile.js', import.meta.url), 'utf8');
+    expect(REC).toContain('counts.updated  += (s.upsertUpdated || 0);');
+    const HIST = readFileSync(new URL('../studio-history.js', import.meta.url), 'utf8');
+    expect(HIST).toContain('upsert: ${s.upsertCreated || 0} created · ${s.upsertUpdated || 0} updated');
+  });
+});
