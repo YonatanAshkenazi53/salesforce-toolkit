@@ -424,7 +424,8 @@ async function renderTransfer() {
           <label class="ds-transfer-option-label" for="dsTrBatchSize" style="margin-left:10px"
             title="Records per synchronous Collections call (1-200; 200 is the Salesforce maximum and the default). Smaller batches are slower but isolate failures and can duck per-transaction trigger CPU / row-lock limits in a busy target. Bulk jobs ignore this — Salesforce chunks those internally.">Batch size:</label>
           <input id="dsTrBatchSize" class="ds-input ds-input-sm" type="number" min="1" max="200" step="1"
-            style="width:76px" value="${Math.max(1, Math.min(200, Number(_transferProfile?.batchSize) || 200))}">
+            style="width:76px;text-align:right" value="${Math.max(1, Math.min(200, Number(_transferProfile?.batchSize) || 200))}"
+            ${_transferProfile?.apiMode === 'bulk' ? 'disabled' : ''}>
           <span class="ds-subtext" style="font-size:11px" id="dsTrEngineNote">${_transferProfile?.apiMode === 'bulk' ? 'batch size does not apply to Bulk jobs' : ''}</span>
         </div>
       </div>
@@ -500,6 +501,11 @@ async function renderTransfer() {
     else delete _transferProfile.apiMode;
     const note = eid('dsTrEngineNote');
     if (note) note.textContent = v === 'bulk' ? 'batch size does not apply to Bulk jobs' : '';
+    // Only the SYNCHRONOUS engine batches on the client — the input goes
+    // inert in Async mode so an editable-but-ignored number can't mislead
+    // (user 2026-08-18).
+    const bi = eid('dsTrBatchSize');
+    if (bi) bi.disabled = v === 'bulk';
     await storageSaveProfiles();
   });
   eid('dsTrBatchSize')?.addEventListener('change', async e => {
@@ -2478,9 +2484,10 @@ window.openFanOut = async function (profileId, opts = {}) {
               <option value="bulk" ${p.apiMode === 'bulk' ? 'selected' : ''}>Async — Bulk API 2.0 job</option>
             </select>
             <input id="dsFanoutBatchSize" class="ds-input ds-input-sm" type="number" min="1" max="200" step="1"
-              style="width:64px;font-weight:400" value="${Math.max(1, Math.min(200, Number(p.batchSize) || 200))}"
-              title="Records per synchronous Collections call (1-200; 200 is the Salesforce maximum). Smaller batches isolate failures and duck per-transaction trigger limits. Bulk jobs ignore this — Salesforce chunks those internally.">
-            <span style="font-weight:400;font-size:11px;opacity:.7">batch</span>
+              style="width:72px;font-weight:400;text-align:right" value="${Math.max(1, Math.min(200, Number(p.batchSize) || 200))}"
+              ${p.apiMode === 'bulk' ? 'disabled' : ''}
+              title="Records per synchronous Collections call (1-200; 200 is the Salesforce maximum). Smaller batches isolate failures and duck per-transaction trigger limits. ONLY the synchronous engine batches on the client — Bulk jobs upload everything at once and Salesforce chunks internally, so this is disabled in Async mode.">
+            <span style="font-weight:400;font-size:11px;opacity:.7">batch per call</span>
           </strong>
           <span>Owners</span><strong>${esc(ownerLabel)}</strong>
           <span>PII</span><strong>${esc(piiLabel)}</strong>
@@ -2540,6 +2547,8 @@ window.openFanOut = async function (profileId, opts = {}) {
   eid('dsFanoutApiMode')?.addEventListener('change', async e => {
     const v = e.target.value;
     if (v === 'sync' || v === 'bulk') p.apiMode = v; else delete p.apiMode;
+    const bi = eid('dsFanoutBatchSize');
+    if (bi) bi.disabled = v === 'bulk';   // sync-engine knob — inert on Bulk
     paintBudget();
     try { await storageSaveProfiles(); } catch (_) {}
   });

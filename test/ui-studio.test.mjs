@@ -1077,3 +1077,31 @@ describe('sync-status tiles: root-only scans can never overclaim', () => {
     expect(fn).toContain('scan is for a different org pair — rescan');
   });
 });
+
+// ── Batch size is a SYNC-engine knob (user 2026-08-18: "in case i use
+// async, i shouldn't be able to select batch size") ──────────────────────
+describe('the batch-size input goes inert in Async mode, on every surface', () => {
+  const REC = read('studio-reconcile.js');
+  const TRANSFER = read('studio-transfer.js');
+
+  it('renders disabled when the profile is already on bulk', () => {
+    for (const [name, src, id] of [['reconcile', REC, 'dsRecBatchSize'],
+                                   ['run page', TRANSFER, 'dsTrBatchSize'],
+                                   ['fan-out', TRANSFER, 'dsFanoutBatchSize']]) {
+      const i = src.indexOf(`id="${id}"`);
+      expect(i, `${name} input exists`).toBeGreaterThan(-1);
+      expect(src.slice(i, i + 450), `${name} disables on bulk`)
+        .toMatch(/apiMode === 'bulk' \? 'disabled' : ''/);
+    }
+  });
+
+  it('the apiMode change handlers toggle it live', () => {
+    expect(REC).toMatch(/bi\.disabled = v === 'bulk'/);
+    expect((TRANSFER.match(/\.disabled = v === 'bulk'/g) || []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('the input is labeled — never a bare number', () => {
+    expect(REC).toContain('<span>batch</span>');
+    expect(REC).toContain('<span>per call</span>');
+  });
+});
