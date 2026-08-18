@@ -298,6 +298,12 @@ function _ringRenderMatrix() {
           ? `<span class="ds-ring-counts" title="Fields in sync — 📎 ${fMiss} record(s) missing files. NOT fully synced until they move: ⚖ → 🟢 Synced tab → select & move."><b class="ds-ring-c">📎${fMiss}</b></span>`
           : fErr
           ? `<span class="ds-ring-counts" title="Fields in sync — but the 📎 file check FAILED, so file state is UNKNOWN, not zero. Rescan to verify."><b class="ds-ring-c">📎?</b></span>`
+          : (p.tree?.children || []).length
+          // Ring scans check the ROOT object only — a deployment with child
+          // objects must never wear an unqualified checkmark here (user
+          // 2026-08-18: "when childs are not deployed, it must not show as
+          // synced"; load test: 50 parents clean, 1,850 children missing).
+          ? `<span class="ds-ring-clean" title="ROOT object in sync. Ring scans do NOT check this deployment's ${(p.tree.children || []).length} child object(s) — open ⚖ Reconcile and scan the child sections to verify them.">✓ root</span>`
           : `<span class="ds-ring-clean">✓ in sync</span>`)
         : `<span class="ds-ring-counts" title="${s.missing} missing · ${s.changed} changed · ${s.extra} only in target${fMiss ? ` · 📎 ${fMiss} missing files` : ''}">
              ${s.missing ? `<b class="ds-ring-m">${s.missing}</b>` : ''}${s.changed ? `<b class="ds-ring-c">${s.changed}</b>` : ''}${s.extra ? `<b class="ds-ring-e">${s.extra}</b>` : ''}${fMiss ? `<b class="ds-ring-c">📎</b>` : ''}

@@ -1021,3 +1021,34 @@ describe('Reconcile carries the engine controls with profile persistence', () =>
     expect(fn).toMatch(/if \(p\.apiMode\) realP\.apiMode = p\.apiMode; else delete realP\.apiMode;/);
   });
 });
+
+// ── Children gate the sync verdict (user 2026-08-18: "when childs are not
+// deployed, it must not show as synced") — the strip read ROOT buckets only,
+// so 1,850 missing children hid behind a silent-clean state; ring cells and
+// chooser tiles are root-only scans and must SAY so. ─────────────────────
+describe('a clean root never claims full sync over unverified or missing children', () => {
+  const REC = read('studio-reconcile.js');
+  const RINGSRC = read('studio-ring.js');
+
+  it('fresh child scans with work feed the needs-list; unscanned sections block silent-clean', () => {
+    expect(REC).toContain('const _kids = [];');
+    expect(REC).toMatch(/cs\.rootRunAt === scan\.runAt && cs\.objectType === obj/);
+    // needs-banner carries per-child line items
+    expect(REC).toContain('(child section below)');
+    // silent-clean requires: root clean AND no child work…
+    expect(REC).toMatch(/const _syncStrip = \(_rootClean && !_kids\.length\)/);
+    // …and an unscanned child section forces the UNVERIFIED banner instead
+    expect(REC).toContain('Root object in sync — children UNVERIFIED');
+    expect(REC).toMatch(/_health\.length \|\| _fdRecs \|\| _kidsUnscanned/);
+  });
+
+  it('ring cells qualify the checkmark when the deployment has child objects', () => {
+    expect(RINGSRC).toMatch(/\(p\.tree\?\.children \|\| \[\]\)\.length/);
+    expect(RINGSRC).toContain('>✓ root</span>');
+    expect(RINGSRC).toContain("Ring scans do NOT check this deployment's");
+  });
+
+  it('the target chooser qualifies too — its tiles are root-only summaries', () => {
+    expect(REC).toContain("'✓ root in sync · children unverified'");
+  });
+});
