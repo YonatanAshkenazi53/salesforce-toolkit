@@ -1296,11 +1296,32 @@ async function runDiffScan(profile, node = null, scope = null) {
       }
       missingInTarget.push(row);
     } else {
+      // Link check (child scans): same record on both sides — does it point
+      // at the same parent? Compared by the parent's KEY, never by raw Id.
+      let linkDiff = false;
+      if (linkTrackable) {
+        const pkS = String(_lookupResolvedVal(sr, linkInfoSrc) ?? '');
+        const pkT = String(_lookupResolvedVal(tr, linkInfoTgt) ?? '');
+        // M3a — compare NORMALIZED (per the parent's matching config) so a
+        // case-only parent-name difference isn't flagged as a wrong link.
+        if (pkNorm(pkS) !== pkNorm(pkT)) {
+          linkDiff = true;
+          linkMismatch.push({ matchKey: k, sourceId: sr.Id, targetId: tr.Id,
+            parentKeySrc: pkS, parentKeyTgt: pkT });
+        }
+      }
       // Record WHICH fields differ (capped) — this is what lets the UI
       // answer "why is this drift?" without a live re-fetch, including
       // when one org isn't open in a tab.
       const diffFields = [];
       for (const p of comparePlan) {
+        // A TRACKABLE link belongs to the Link-differs column ALONE (user
+        // 2026-08-18: "I can select both" — one wrong parent double-listed
+        // as changed AND link differs, inviting a double fix of a single
+        // defect). Excluded from the field compare here, so every matched
+        // pair lands in exactly one state bucket, and a record shows in
+        // both columns only when BOTH defects genuinely exist.
+        if (linkTrackable && scope?.parentField && p.srcField === scope.parentField) continue;
         if (String(p.srcExtract(sr) ?? '') !== String(p.tgtExtract(tr) ?? '')) {
           // T7 — phantom State/Country normalization (see above): same code,
           // different label. A row whose ONLY differences are phantom lands
@@ -1311,19 +1332,9 @@ async function runDiffScan(profile, node = null, scope = null) {
         }
       }
       if (diffFields.length) changed.push({ matchKey: k, sourceId: sr.Id, targetId: tr.Id, fields: diffFields });
-      else                   identical.push({ matchKey: k, sourceId: sr.Id, targetId: tr.Id });
-      // Link check (child scans): same record on both sides — does it point
-      // at the same parent? Compared by the parent's KEY, never by raw Id.
-      if (linkTrackable) {
-        const pkS = String(_lookupResolvedVal(sr, linkInfoSrc) ?? '');
-        const pkT = String(_lookupResolvedVal(tr, linkInfoTgt) ?? '');
-        // M3a — compare NORMALIZED (per the parent's matching config) so a
-        // case-only parent-name difference isn't flagged as a wrong link.
-        if (pkNorm(pkS) !== pkNorm(pkT)) {
-          linkMismatch.push({ matchKey: k, sourceId: sr.Id, targetId: tr.Id,
-            parentKeySrc: pkS, parentKeyTgt: pkT });
-        }
-      }
+      // Link-only rows go to linkMismatch ONLY — never "changed" (no field
+      // work to do), never "identical" (the connection is wrong).
+      else if (!linkDiff)    identical.push({ matchKey: k, sourceId: sr.Id, targetId: tr.Id });
     }
   }
   for (const [k, tr] of tgtByKey) {

@@ -633,3 +633,14 @@ describe('sftkFileDriftCompare — checksum multiset, push-directional', () => {
     expect(bg).toMatch(/onlyByRec\[sid\]\.has\(f\.checksum\)/);
   });
 });
+
+// ── One defect, one bucket (user 2026-08-18: "I can select both") ────────
+describe('a wrong parent link lands in linkMismatch alone', () => {
+  it('the trackable link is excluded from the field compare, and link-only rows are neither changed nor identical', () => {
+    const src = codeOnly(srcOf('studio-scan.js'));
+    expect(src).toMatch(/if \(linkTrackable && scope\?\.parentField && p\.srcField === scope\.parentField\) continue;/);
+    expect(src).toMatch(/else if \(!linkDiff\)\s+identical\.push/);
+    // the link check runs BEFORE the field compare so linkDiff can gate it
+    expect(src.indexOf('linkDiff = true')).toBeLessThan(src.indexOf('const diffFields = []'));
+  });
+});
