@@ -57,9 +57,13 @@ window.openReconcile = function(profileId, targetUrl) {
           // A FAILED file check must never read as "✓ in sync" — file state
           // is unknown, not zero (same contract as the Synced tab's error
           // line; QA sweep 2026-08-16).
+          // A ring/native summary knows the ROOT only — with child objects on
+          // the tree, an unqualified "✓ in sync" would overclaim (children
+          // are verified by the child sections inside, never by these tiles).
+          const kidQ = (p.tree?.children || []).length ? '✓ root in sync · children unverified' : '✓ in sync';
           const st = !rs ? 'not scanned yet'
             : drift === 0 ? (rs.fileMiss ? `📎 ${rs.fileMiss} missing files`
-                : rs.fileErr ? '✓ fields in sync · 📎 file check failed' : '✓ in sync')
+                : rs.fileErr ? '✓ fields in sync · 📎 file check failed' : kidQ)
             : `${rs.missing} missing · ${rs.changed} changed · ${rs.extra} extra`;
           return `<button class="ds-btn" style="display:flex;width:100%;margin:4px 0;justify-content:space-between;align-items:center" data-rec-target="${esc(u)}">
             <span>${esc(orgLabel(u))} ${prodBadge(u)}</span>
@@ -1249,13 +1253,43 @@ async function renderReconcile() {
   // 📎 With the Files toggle ON, missing files BLOCK the silent-clean state:
   // "it should be considered as synced only after the file is transferred".
   const _fdRecs = (scan.fileDrift && !scan.fileDrift.error) ? (scan.fileDrift.records || 0) : 0;
-  const _syncStrip = (!missing.length && !drift.length && !extras.length)
-    ? ((_health.length || _fdRecs)
+  // CHILDREN gate the verdict too (user 2026-08-18: "when childs are not
+  // deployed, it must not show as synced") — this strip previously read the
+  // ROOT buckets only, so a clean root hid 1,850 missing children behind a
+  // silent-clean state (load test: parents upserted, children dead). Fresh
+  // child scans feed the needs-list; child sections WITHOUT a fresh scan
+  // make the pair UNVERIFIED, never silently clean.
+  const _kids = [];        // fresh child scans that still carry work
+  let _kidsUnscanned = 0;  // child sections with no fresh scan for THIS root scan
+  {
+    const walkKid = (node, pathKey) => {
+      const obj = node.objectType || node.childSObject || '?';
+      const cs = scan.children?.[pathKey];
+      const fresh = !!(cs && cs.status === 'success' && cs.rootRunAt === scan.runAt && cs.objectType === obj);
+      if (!fresh) {
+        _kidsUnscanned++;
+      } else {
+        const m = (cs.missingInTarget || []).length, c = (cs.changed || []).length,
+              l = (cs.linkMismatch || []).length,  e = (cs.onlyInTarget || []).length;
+        if (m + c + l + e) _kids.push({ obj, m, c, l, e });
+      }
+      (node.children || []).forEach((g, j) => walkKid(g, `${pathKey}.${j}`));
+    };
+    (p.tree?.children || []).forEach((c, i) => walkKid(c, String(i)));
+  }
+  const _kidItems = _kids.map(k => `<strong>${esc(k.obj)}</strong>: ${[
+    k.m ? `${k.m} pushed` : null, k.c ? `${k.c} resolved` : null,
+    k.l ? `${k.l} relinked` : null, k.e ? `${k.e} target-only decided` : null,
+  ].filter(Boolean).join(', ')} (child section below)`);
+  const _rootClean = !missing.length && !drift.length && !extras.length;
+  const _syncStrip = (_rootClean && !_kids.length)
+    ? ((_health.length || _fdRecs || _kidsUnscanned)
       ? `<div class="ds-op-banner" style="border-left:3px solid #f59e0b">
-          <span class="ds-op-banner-icon">${_fdRecs ? '📎' : '⚠'}</span>
+          <span class="ds-op-banner-icon">${_fdRecs ? '📎' : _kidsUnscanned ? '🔎' : '⚠'}</span>
           <div class="ds-op-banner-body">
-            <div class="ds-op-banner-title">${_fdRecs ? 'Fields in sync — files still missing' : 'Warnings worth reading'}</div>
+            <div class="ds-op-banner-title">${_fdRecs ? 'Fields in sync — files still missing' : _kidsUnscanned ? 'Root object in sync — children UNVERIFIED' : 'Warnings worth reading'}</div>
             ${_fdRecs ? `<div class="ds-op-banner-desc">📎 ${scan.fileDrift.missingFiles} file(s) exist in <strong>${esc(orgLabel(p.sourceOrg))}</strong> but not on the matched records in <strong>${esc(orgLabel(p.targetOrg))}</strong> — this pair is NOT fully synced until they move (🟢 Synced tab → select &amp; move). Just changed the source or direction? Then this is the SAME files measured the other way around, not new work.</div>` : ''}
+            ${_kidsUnscanned ? `<div class="ds-op-banner-desc">${_kidsUnscanned} child section(s) below ${_kidsUnscanned === 1 ? 'has' : 'have'} no fresh scan against this target — child records are UNKNOWN, not verified. Open each section and 🔎 Scan; only then can this pair claim full sync.</div>` : ''}
             ${_healthHtml}
           </div>
         </div>`
@@ -1269,7 +1303,9 @@ async function renderReconcile() {
             drift.length ? `<strong>${drift.length}</strong> changed record(s) resolved — pick a winner per row (→ source wins · ← target wins)` : null,
             extras.length ? `<strong>${extras.length}</strong> target-only record(s) DECIDED — 🗑 delete the unwanted, or ← pull the legitimate ones INTO YOUR SOURCE (pull rewrites the source of truth — be sure that's what you mean)` : null,
             _fdRecs ? `📎 <strong>${scan.fileDrift.missingFiles}</strong> file(s) moved onto ${_fdRecs} record(s) (🟢 Synced tab → select &amp; move)` : null,
+            ..._kidItems,
           ].filter(Boolean).join(' · ')}. Select below, ▶ Run, and this strip re-checks itself.</div>
+          ${_kidsUnscanned ? `<div class="ds-op-banner-desc">Plus ${_kidsUnscanned} child section(s) not scanned against this target yet — their state is unknown until scanned.</div>` : ''}
           ${_healthHtml}
         </div>
       </div>`;
