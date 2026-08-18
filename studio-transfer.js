@@ -2486,7 +2486,7 @@ window.openFanOut = async function (profileId, opts = {}) {
             <input id="dsFanoutBatchSize" class="ds-input ds-input-sm" type="number" min="1" max="200" step="1"
               style="width:72px;font-weight:400;text-align:right" value="${Math.max(1, Math.min(200, Number(p.batchSize) || 200))}"
               ${p.apiMode === 'bulk' ? 'disabled' : ''}
-              title="Records per synchronous Collections call (1-200; 200 is the Salesforce maximum). Smaller batches isolate failures and duck per-transaction trigger limits. ONLY the synchronous engine batches on the client — Bulk jobs upload everything at once and Salesforce chunks internally, so this is disabled in Async mode.">
+              title="Records per synchronous Collections call (1-200; 200 is the Salesforce maximum). Smaller batches isolate failures and duck per-transaction trigger limits. ONLY the synchronous engine batches on the client — Bulk jobs upload everything at once and Salesforce chunks internally, so this is disabled in Async mode. One exception rides along: with child-first children, the reconnect step always patches links via synchronous calls in batches of the saved value, even on Async runs.">
             <span style="font-weight:400;font-size:11px;opacity:.7">batch per call</span>
           </strong>
           <span>Owners</span><strong>${esc(ownerLabel)}</strong>

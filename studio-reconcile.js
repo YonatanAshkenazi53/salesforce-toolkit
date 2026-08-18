@@ -1375,7 +1375,7 @@ async function renderReconcile() {
           <option value="bulk" ${p.apiMode === 'bulk' ? 'selected' : ''}>Async — Bulk API 2.0 job</option>
         </select>
         <span id="dsRecBatchWrap" style="display:inline-flex;align-items:center;gap:4px${p.apiMode === 'bulk' ? ';opacity:.45' : ''}"
-          title="Records per synchronous Collections call (1-200; 200 is the Salesforce maximum). Smaller batches isolate failures and duck per-transaction trigger limits. ONLY the synchronous engine batches on the client — a Bulk API 2.0 job uploads everything at once and Salesforce chunks it internally, so this is disabled in Async mode.">
+          title="Records per synchronous Collections call (1-200; 200 is the Salesforce maximum). Smaller batches isolate failures and duck per-transaction trigger limits. ONLY the synchronous engine batches on the client — a Bulk API 2.0 job uploads everything at once and Salesforce chunks it internally, so this is disabled in Async mode. One exception rides along: with child-first children, the reconnect step always patches links via synchronous calls in batches of the saved value, even on Async runs.">
           <span>batch</span>
           <input id="dsRecBatchSize" class="ds-input ds-input-sm" type="number" min="1" max="200" step="1"
             style="width:72px;text-align:right" value="${Math.max(1, Math.min(200, Number(p.batchSize) || 200))}"
