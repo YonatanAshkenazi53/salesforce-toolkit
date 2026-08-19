@@ -255,8 +255,12 @@ describe('page-list dots resolve or say n/a — never pulse forever', () => {
   const LP = _rfs(new URL('../lightning-pages.js', import.meta.url), 'utf8');
   const CSSHARED = _rfs(new URL('../styles.css', import.meta.url), 'utf8');
 
-  it('no-activation types are declared and get the neutral dot + collapsed fold', () => {
-    expect(LP).toContain("LP_TYPES_NO_ACTIVATION = new Set(['UtilityBar', 'FlowPage', 'LoginPage'])");
+  it('utility bars are filtered out at load — none of the page tooling applies to them', () => {
+    expect(LP).toContain(".filter(p => p.Type !== 'UtilityBar')");
+    expect(LP).toContain("LP_TYPES_NO_ACTIVATION = new Set(['FlowPage', 'LoginPage'])");
+  });
+
+  it('no-activation types get the neutral dot + collapsed fold', () => {
     expect(LP).toMatch(/isNA && !ps\s+\? 'lp-dot-na'/);
     expect(LP).toContain('<details class="lp-group">');
     expect(LP).toContain('activation lives in each app — collapsed');
@@ -264,12 +268,29 @@ describe('page-list dots resolve or say n/a — never pulse forever', () => {
     expect(CSSHARED).toMatch(/\.lp-dot-na\s+\{ background: var\(--subtext\); opacity: \.55; \}/);
   });
 
-  it('pass 3 resolves publish status from page Metadata for everything else', () => {
+  it('pass 3 derives status from ASSIGNMENTS — Metadata.publishStatus is a phantom field', () => {
+    // Verified live 2026-08-19: FlexiPage metadata has no publishStatus; a
+    // page's only activation truth is pageAssignments (org default / app /
+    // profile alike). Any read of the phantom would silently be undefined.
+    // The LIST and MAP paths never read the phantom (the detail view keeps
+    // its own multi-fallback probes — publishStatus can surface there via a
+    // different endpoint after activation writes).
+    expect(LP).not.toContain('meta?.Metadata?.publishStatus');
+    expect(LP).not.toContain('|| meta.Metadata?.publishStatus');
     expect(LP).toContain('const statusTargets = allPages.filter(p =>');
     expect(LP).toMatch(/!p\.PublishStatus && !LP_TYPES_NO_ACTIVATION\.has\(p\.Type\) && !_odStatusDone\.has\(p\.Id\)/);
     expect(LP).toMatch(/sobject: 'FlexiPage', id: pg\.Id/);
+    expect(LP).toMatch(/asg = Array\.isArray\(r\.Metadata\.pageAssignments\) \? r\.Metadata\.pageAssignments\.length : 0/);
+    expect(LP).toContain("syncPageStatus(pg.Id, asg ? 'Active' : 'Unassigned')");
     expect(LP).toContain('p1.complete && p2.complete && p3.complete');
     // …and the strip's quoted cost includes those retrieves
     expect(LP).toMatch(/extraCalls:\s+Math\.ceil\(pendingIds\.length \/ LP_ENTITY_CHUNK\) \+ statusReads/);
+  });
+
+  it('Unassigned renders as a calm n/a state with an honest title, everywhere', () => {
+    expect((LP.match(/ps === 'unassigned'\s+\? 'lp-dot-na'/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(LP).toContain('Not activated — no org default, app, or profile assignment points at this page.');
+    // the map view derives from assignments too
+    expect(LP).toMatch(/d\.page\.PublishStatus \|\| \(\(d\.assignments \|\| \[\]\)\.length \? 'active' : 'unassigned'\)/);
   });
 });
