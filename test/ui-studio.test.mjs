@@ -1127,3 +1127,29 @@ describe('the batch-size input goes inert in Async mode, on every surface', () =
     expect(REC).toMatch(/Synced \$\{csLbl\(cs, 'identical'\)\}/);
   });
 });
+
+// ── Professional surface: user-visible text never names other products
+// (user 2026-08-19, pre-public-release: "don't mention inspector and other
+// things… needs to look professional"). Code comments are exempt — they
+// ship to no one. ─────────────────────────────────────────────────────────
+describe('no competitor names in user-visible strings', () => {
+  const SHIPPED = ['popup.js', 'studio-core.js', 'studio-transfer.js',
+    'studio-reconcile.js', 'studio-builder.js', 'studio-builder-modals.js',
+    'studio-ring.js', 'studio-scan.js', 'studio-history.js', 'studio-profiles.js',
+    'lightning-pages.js', 'field-cleaner.js', 'CHANGELOG.md', 'studio.html', 'popup.html'];
+  const NAMES = /(Inspector|Gearset|Workbench|SFDMU)/i;
+
+  it('no title/tooltip attribute carries a product name', () => {
+    for (const f of SHIPPED) {
+      const src = read(f);
+      for (const m of src.matchAll(/title="([^"]{0,400})"/g)) {
+        expect(m[1], `${f}: tooltip mentions a product: "${m[1].slice(0, 80)}…"`)
+          .not.toMatch(NAMES);
+      }
+    }
+  });
+
+  it('the shipped changelog carries none either', () => {
+    expect(read('CHANGELOG.md')).not.toMatch(/Inspector-style|like Inspector|Gearset|SFDMU/);
+  });
+});

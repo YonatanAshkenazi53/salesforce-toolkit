@@ -1405,7 +1405,7 @@ async function renderReconcile() {
           <span>per call</span>
         </span>
         <span id="dsRecThreadsWrap" style="display:inline-flex;align-items:center;gap:4px${p.apiMode === 'bulk' ? ';opacity:.45' : ''}"
-          title="How many batches fly in PARALLEL (1-6, like Inspector's concurrency). Faster at scale, but parallel writes can hit row locks when records share a parent — lower it if you see UNABLE_TO_LOCK_ROW. Synchronous engine only; a Bulk job is one upload, so this is disabled in Async mode.">
+          title="How many batches run in parallel (1-6). Higher values are faster at scale, but parallel writes can hit row locks when records share a parent — lower this if you see UNABLE_TO_LOCK_ROW. Applies to the synchronous engine only; a Bulk job is a single upload, so this is disabled in Async mode.">
           <span>threads</span>
           <input id="dsRecThreads" class="ds-input ds-input-sm" type="number" min="1" max="6" step="1"
             style="width:56px;text-align:right" value="${Math.max(1, Math.min(6, Number(p.threads) || 1))}"
