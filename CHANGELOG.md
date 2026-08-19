@@ -43,6 +43,13 @@ one job, with every defect it surfaced fixed and regression-tested.
 - **PII masking for Number fields.** SSN-type numbers now derive consistent
   fake digits instead of blanking — required-field and positive-amount
   automations in the target keep working, and joins survive.
+- **Lightning Pages tells the truth about activation.** Page status now
+  derives from the real signal — a page's assignments (org default, app,
+  profile) — instead of a status field Salesforce doesn't actually return.
+  Pages nobody can see show a new honest state, **Unassigned** ("no
+  assignment points at this page — users never see it"): instant cleanup
+  candidates. Utility bars are out of the list entirely — their activation
+  lives in app definitions, and none of the page tooling applies to them.
 
 ### Fixed
 - Very large hand-picked runs could die with "URI too long" (HTTP 431/414)
