@@ -13,6 +13,53 @@ lives in `CHANGELOG_HISTORY.md` (repo only, never shipped — the packer only sh
 `CHANGELOG.md` itself; no leading underscore, Chrome refuses to load unpacked
 extensions containing root files that start with `_`).
 
+## 1.4.0 — 2026-08-19
+
+Battle-tested at scale: this release was hardened by a live ~1,900-record
+load test across three orgs — bulk-upsert insert, update, and both arms in
+one job, with every defect it surfaced fixed and regression-tested.
+
+### Added
+- **Live runs.** The multi-org run dialog now streams progress per target in
+  real time: records read, batches written (updating in place), Bulk API job
+  state, and ❌ error rows the moment Salesforce rejects a record — plus a
+  ✋ Cancel that stops between batches. The Run Transfer page gets the same
+  live error feed.
+- **Engine controls everywhere.** Choose the write engine (Auto /
+  Synchronous Collections / Async Bulk API 2.0), batch size, and new
+  **parallel threads** (1–6, Inspector-style) — on the Run page, the
+  Reconcile action bar, and the multi-org run dialog. Controls that don't
+  apply to Bulk jobs disable themselves and say why.
+- **Honest upsert reporting.** Run cards and History now split the arms:
+  "100 created · 1,750 updated" instead of lumping updates in as inserts.
+- **Reconcile, readable at scale.** Child records group under collapsible
+  parent headers with per-parent select-all and a live "n/N selected"
+  count; repeated parent warnings collapse into one banner; child sections
+  gained their own 🟢 Synced list with links into both orgs.
+- **One source of truth.** The topbar SOURCE menu is now the single control:
+  it lists every known org, crowns your pick, re-points deployments, keeps
+  crown history with one-click restore, and automatically re-baselines
+  every pair.
+- **PII masking for Number fields.** SSN-type numbers now derive consistent
+  fake digits instead of blanking — required-field and positive-amount
+  automations in the target keep working, and joins survive.
+
+### Fixed
+- Very large hand-picked runs could die with "URI too long" (HTTP 431/414)
+  and write nothing — reads are now chunked, and a transport backstop
+  reroutes any oversized query safely through a POST body.
+- A run can no longer report **success** over an object that failed
+  wholesale, and informational engine notes no longer masquerade as errors
+  ("1 error · 2 notes", not "3 errors").
+- "In sync" now means the whole tree: child records, attached files, and
+  failed file checks gate the verdict on every surface — Reconcile, ring
+  cells, the target chooser, the home-page tiles, and the run dialog's
+  per-target advice. Unverified is stated as unverified, never as clean.
+- A child pointing at the wrong parent is one problem in one place (Link
+  differs) — no longer double-counted as "changed" too.
+- History's record-links list no longer presents its 200-link display cap
+  as the write count.
+
 ## 1.3.0 — 2026-08-13
 
 The Sync Ring grows into a real multi-org sync tool: attached files are now part
