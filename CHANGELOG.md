@@ -27,7 +27,7 @@ one job, with every defect it surfaced fixed and regression-tested.
   live error feed.
 - **Engine controls everywhere.** Choose the write engine (Auto /
   Synchronous Collections / Async Bulk API 2.0), batch size, and new
-  **parallel threads** (1–6, Inspector-style) — on the Run page, the
+  **parallel threads** (1–6) — on the Run page, the
   Reconcile action bar, and the multi-org run dialog. Controls that don't
   apply to Bulk jobs disable themselves and say why.
 - **Honest upsert reporting.** Run cards and History now split the arms:
@@ -98,7 +98,7 @@ information exists — no more stale checkmarks after a run.
   runs move to local browser storage automatically, stay listed (with an
   "archived" tag), and are included in a full export. Nothing is ever lost to
   the cap again.
-- **Choose sync vs. async for large deploys, Inspector-style.** A new Engine
+- **Choose sync vs. async for large deploys.** A new Engine
   control on the Run page lets you force every write through the fast async
   path (or force it off), and set the exact batch size per request — useful
   when a target org's automation needs smaller batches to avoid timing out.

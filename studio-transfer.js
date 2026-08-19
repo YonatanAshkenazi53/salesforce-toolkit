@@ -445,7 +445,7 @@ async function renderTransfer() {
             style="width:76px;text-align:right" value="${Math.max(1, Math.min(200, Number(_transferProfile?.batchSize) || 200))}"
             ${_transferProfile?.apiMode === 'bulk' ? 'disabled' : ''}>
           <label class="ds-transfer-option-label" for="dsTrThreads" style="margin-left:10px"
-            title="How many batches fly in PARALLEL (1-6, like Inspector's concurrency). Faster at scale, but parallel writes can hit row locks when records share a parent — lower it if you see UNABLE_TO_LOCK_ROW. Synchronous engine only; a Bulk job is one upload.">Threads:</label>
+            title="How many batches run in parallel (1-6). Higher values are faster at scale, but parallel writes can hit row locks when records share a parent — lower this if you see UNABLE_TO_LOCK_ROW. Applies to the synchronous engine only; a Bulk job is a single upload.">Threads:</label>
           <input id="dsTrThreads" class="ds-input ds-input-sm" type="number" min="1" max="6" step="1"
             style="width:56px;text-align:right" value="${Math.max(1, Math.min(6, Number(_transferProfile?.threads) || 1))}"
             ${_transferProfile?.apiMode === 'bulk' ? 'disabled' : ''}>

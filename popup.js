@@ -1903,7 +1903,7 @@ async function showActiveWarningModal(activeFlows) {
     const rows = activeFlows.map((f, i) =>
       `<li class="backup-row">
         <span>${escHtml(f.MasterLabel)} — v${f.VersionNumber}</span>
-        <button class="btn btn-secondary btn-sm backup-one-btn" data-idx="${i}" title="Download a Metadata-XML backup zip (deployable via Workbench / sf CLI)">⬇ Backup</button>
+        <button class="btn btn-secondary btn-sm backup-one-btn" data-idx="${i}" title="Download a Metadata-XML backup zip — deployable as-is with the Salesforce CLI">⬇ Backup</button>
       </li>`
     ).join('');
 
