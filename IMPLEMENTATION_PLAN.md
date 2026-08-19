@@ -897,6 +897,20 @@ anchor-based plan edit accidentally deleted it)
   strategy/fields/upsert; open when unconfigured so first-time setup stays
   discoverable); .ds-picker-body max-height 55vh → 72vh; .ds-picker-list
   min-height 180px so the records can never be squeezed below ~5 rows.
+- [x] 🏁 LOAD TEST COMPLETE (2026-08-19): ~1,900 records × 3 orgs through
+  5 upsert runs, ZERO duplicates, every record verified by direct REST
+  audit. Proven: bulk-upsert insert at scale (a7: 1,850 children in one
+  job), pure update-at-scale (orgfarm: 463 drifted links repaired), and
+  BOTH-ARMS upsert in one job (orgfarm after a 100-record delete:
+  100 created + 1,750 updated, jobs verified extIdField=Ext_Id__c,
+  0 failed). The test also surfaced and fixed en route: HTTP 431/414
+  oversized-URL class (chunking + composite transport backstop), green
+  "success" over dead child passes, diagnostics-as-errors, five
+  root-only "in sync" surfaces, upsert-arms reporting, batch/threads
+  engine controls on all surfaces, live fan-out with real-time errors
+  (5d686f5). Residual note: reconcile Group-B child pushes run INSERT
+  (bProfile drops node.upsert) — correct for missing-bucket records,
+  revisit only if Group B ever feeds non-missing rows.
 - [x] LOAD TEST ROUND 1 FINDINGS (2026-08-17, commit 3eba1ec): the live
   ~1,900-record test caught 3 real defects on its FIRST run (Reconcile
   ✓-All push a6→a7: 50 parents in via Bulk job, children dead): (1) HTTP
