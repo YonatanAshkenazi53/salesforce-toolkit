@@ -426,7 +426,12 @@ async function renderTransfer() {
           <input id="dsTrBatchSize" class="ds-input ds-input-sm" type="number" min="1" max="200" step="1"
             style="width:76px;text-align:right" value="${Math.max(1, Math.min(200, Number(_transferProfile?.batchSize) || 200))}"
             ${_transferProfile?.apiMode === 'bulk' ? 'disabled' : ''}>
-          <span class="ds-subtext" style="font-size:11px" id="dsTrEngineNote">${_transferProfile?.apiMode === 'bulk' ? 'batch size does not apply to Bulk jobs' : ''}</span>
+          <label class="ds-transfer-option-label" for="dsTrThreads" style="margin-left:10px"
+            title="How many batches fly in PARALLEL (1-6, like Inspector's concurrency). Faster at scale, but parallel writes can hit row locks when records share a parent — lower it if you see UNABLE_TO_LOCK_ROW. Synchronous engine only; a Bulk job is one upload.">Threads:</label>
+          <input id="dsTrThreads" class="ds-input ds-input-sm" type="number" min="1" max="6" step="1"
+            style="width:56px;text-align:right" value="${Math.max(1, Math.min(6, Number(_transferProfile?.threads) || 1))}"
+            ${_transferProfile?.apiMode === 'bulk' ? 'disabled' : ''}>
+          <span class="ds-subtext" style="font-size:11px" id="dsTrEngineNote">${_transferProfile?.apiMode === 'bulk' ? 'batch size / threads do not apply to Bulk jobs' : ''}</span>
         </div>
       </div>
 
@@ -500,12 +505,22 @@ async function renderTransfer() {
     if (v === 'sync' || v === 'bulk') _transferProfile.apiMode = v;
     else delete _transferProfile.apiMode;
     const note = eid('dsTrEngineNote');
-    if (note) note.textContent = v === 'bulk' ? 'batch size does not apply to Bulk jobs' : '';
-    // Only the SYNCHRONOUS engine batches on the client — the input goes
-    // inert in Async mode so an editable-but-ignored number can't mislead
+    if (note) note.textContent = v === 'bulk' ? 'batch size / threads do not apply to Bulk jobs' : '';
+    // Only the SYNCHRONOUS engine batches on the client — the inputs go
+    // inert in Async mode so editable-but-ignored numbers can't mislead
     // (user 2026-08-18).
     const bi = eid('dsTrBatchSize');
     if (bi) bi.disabled = v === 'bulk';
+    const ti = eid('dsTrThreads');
+    if (ti) ti.disabled = v === 'bulk';
+    await storageSaveProfiles();
+  });
+  eid('dsTrThreads')?.addEventListener('change', async e => {
+    if (!_transferProfile) return;
+    const n = Math.max(1, Math.min(6, parseInt(e.target.value, 10) || 1));
+    e.target.value = n;
+    if (n === 1) delete _transferProfile.threads;   // default stays implicit
+    else _transferProfile.threads = n;
     await storageSaveProfiles();
   });
   eid('dsTrBatchSize')?.addEventListener('change', async e => {
@@ -2125,7 +2140,7 @@ async function runTransfer() {
 // only ADD, so a target whose only difference is `changed` gets nothing from
 // a run — saying so beforehand is the whole point.
 // Returns { tone, headline, detail, actionable }.
-function sftkFanoutTargetAdvice(scan, live, writeMode, now) {
+function sftkFanoutTargetAdvice(scan, live, writeMode, now, kids) {
   if (!live) {
     return { tone: 'skip', actionable: false,
       headline: 'no open tab — will be skipped',
@@ -2142,6 +2157,21 @@ function sftkFanoutTargetAdvice(scan, live, writeMode, now) {
   const age = sftkFanoutScanAge(scan.runAt, now);
   const extraNote = extra ? ` ${extra} record(s) exist only here and are never touched by a deploy.` : '';
   if (!miss && !chg) {
+    // CHILDREN gate this verdict too (user 2026-08-18: a7 showed "in sync —
+    // nothing to write" over 1,850 never-pushed children; ring summaries
+    // cover the ROOT object only). kids: { need, unscanned } from the
+    // caller — need counted from fresh child scans, unscanned = child
+    // sections this summary knows nothing about.
+    if (kids && Number(kids.need) > 0) {
+      return { tone: 'act', actionable: true,
+        headline: `root in sync — will write ${kids.need} child record(s) (scanned ${age})`,
+        detail: `The root object matches, but child sections carry work. Counts are from the last scan.${extraNote}` };
+    }
+    if (kids && kids.unscanned > 0) {
+      return { tone: 'unknown', actionable: true,
+        headline: `root in sync as of ${age} — child records not checked here`,
+        detail: `This summary covers the root object only; ${kids.unscanned} child section(s) have no fresh scan for this target. A run upserts everything in scope, children included — scan the pair in ⚖ Reconcile to see child counts first.${extraNote}` };
+    }
     return { tone: 'clean', actionable: false,
       headline: `in sync as of ${age} — nothing to write`,
       detail: `Running this target would write nothing.${extraNote}` };
@@ -2442,9 +2472,34 @@ window.openFanOut = async function (profileId, opts = {}) {
     : 'no masking configured';
   const now = Date.now();
   const scanFor = t => (p.ringScans || {})[`${_orgKey(srcUrl)}|${_orgKey(t)}`] || null;
+  // Child info per target for the advice tiles (child-verdict law): fresh
+  // child scans exist only on the profile's own lastScan for its own pair —
+  // ring summaries never carry children, so other targets count every child
+  // section as unscanned.
+  const kidsFor = t => {
+    const kn = (p.tree?.children || []).length;
+    if (!kn) return null;
+    let need = 0, unscanned = 0;
+    const s = p.lastScan;
+    const nativeMatch = s?.runAt
+      && _orgKey(t) === _orgKey(p.targetOrg || '')
+      && (!s.sourceOrg || _orgKey(s.sourceOrg) === _orgKey(p.sourceOrg || ''))
+      && (!s.targetOrg || _orgKey(s.targetOrg) === _orgKey(t));
+    const walk = (node, pathKey) => {
+      const obj = node.objectType || node.childSObject || '?';
+      const cs = nativeMatch ? s.children?.[pathKey] : null;
+      const fresh = !!(cs && cs.status === 'success' && cs.rootRunAt === s.runAt && cs.objectType === obj);
+      if (!fresh) unscanned++;
+      else need += (cs.missingInTarget || []).length + (cs.changed || []).length
+        + (cs.linkMismatch || []).length + (cs.onlyInTarget || []).length;
+      (node.children || []).forEach((g, j) => walk(g, `${pathKey}.${j}`));
+    };
+    (p.tree?.children || []).forEach((c, i) => walk(c, String(i)));
+    return { need, unscanned };
+  };
 
   const rows = candidates.map(o => {
-    const adv = sftkFanoutTargetAdvice(scanFor(o.url), isLive(o.url), mode, now);
+    const adv = sftkFanoutTargetAdvice(scanFor(o.url), isLive(o.url), mode, now, kidsFor(o.url));
     const icon = { skip: '⏭', unknown: '❔', clean: '✓', warn: '⚠', act: '⬆' }[adv.tone] || '•';
     // A 🧪 dry run of THIS profile against THIS pair came back clean earlier
     // in the session — same fingerprinted key dryRunFanOut writes, so the
@@ -2487,7 +2542,12 @@ window.openFanOut = async function (profileId, opts = {}) {
               style="width:72px;font-weight:400;text-align:right" value="${Math.max(1, Math.min(200, Number(p.batchSize) || 200))}"
               ${p.apiMode === 'bulk' ? 'disabled' : ''}
               title="Records per synchronous Collections call (1-200; 200 is the Salesforce maximum). Smaller batches isolate failures and duck per-transaction trigger limits. ONLY the synchronous engine batches on the client — Bulk jobs upload everything at once and Salesforce chunks internally, so this is disabled in Async mode. One exception rides along: with child-first children, the reconnect step always patches links via synchronous calls in batches of the saved value, even on Async runs.">
-            <span style="font-weight:400;font-size:11px;opacity:.7">batch per call</span>
+            <span style="font-weight:400;font-size:11px;opacity:.7">batch size</span>
+            <input id="dsFanoutThreads" class="ds-input ds-input-sm" type="number" min="1" max="6" step="1"
+              style="width:52px;font-weight:400;text-align:right" value="${Math.max(1, Math.min(6, Number(p.threads) || 1))}"
+              ${p.apiMode === 'bulk' ? 'disabled' : ''}
+              title="How many batches fly in PARALLEL (1-6). Synchronous engine only — a Bulk job is one upload. Parallel writes can hit row locks on shared parents.">
+            <span style="font-weight:400;font-size:11px;opacity:.7">threads</span>
           </strong>
           <span>Owners</span><strong>${esc(ownerLabel)}</strong>
           <span>PII</span><strong>${esc(piiLabel)}</strong>
@@ -2548,8 +2608,16 @@ window.openFanOut = async function (profileId, opts = {}) {
     const v = e.target.value;
     if (v === 'sync' || v === 'bulk') p.apiMode = v; else delete p.apiMode;
     const bi = eid('dsFanoutBatchSize');
-    if (bi) bi.disabled = v === 'bulk';   // sync-engine knob — inert on Bulk
+    if (bi) bi.disabled = v === 'bulk';   // sync-engine knobs — inert on Bulk
+    const ti = eid('dsFanoutThreads');
+    if (ti) ti.disabled = v === 'bulk';
     paintBudget();
+    try { await storageSaveProfiles(); } catch (_) {}
+  });
+  eid('dsFanoutThreads')?.addEventListener('change', async e => {
+    const n = Math.max(1, Math.min(6, parseInt(e.target.value, 10) || 1));
+    e.target.value = n;
+    if (n === 1) delete p.threads; else p.threads = n;
     try { await storageSaveProfiles(); } catch (_) {}
   });
   eid('dsFanoutBatchSize')?.addEventListener('change', async e => {
@@ -2575,7 +2643,7 @@ window.openFanOut = async function (profileId, opts = {}) {
     if (!targets.length) { showToast('Pick at least one target org', 'warning'); return; }
     // A target the advice says will write nothing is almost always a misclick.
     const noop = targets.filter(t => {
-      const a = sftkFanoutTargetAdvice(scanFor(t), isLive(t), mode, Date.now());
+      const a = sftkFanoutTargetAdvice(scanFor(t), isLive(t), mode, Date.now(), kidsFor(t));
       return a.tone === 'clean' || a.tone === 'warn';
     });
     if (noop.length === targets.length) {

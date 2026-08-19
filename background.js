@@ -1290,13 +1290,21 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       if (!useBulk && BATCH_SIZE !== 200) {
         diagnostics.push(`${objType}: batch size ${BATCH_SIZE} (engine settings) — ${Math.ceil(payloads.length / BATCH_SIZE)} Collections call(s) instead of ${Math.ceil(payloads.length / 200)}.`);
       }
-      for (let i = 0; i < payloads.length; i += STEP) {
-        // Cancel between batches — records already written stay written
-        // (allOrNone:false per batch); the summary reports the partial count.
-        if (_runCancelled) {
-          errors.push(`${objType}: cancelled after ${ok} of ${payloads.length} record(s).`);
-          break;
-        }
+      // Threads — how many Collections batches fly in PARALLEL (user
+      // 2026-08-18: "we can also add threads like inspector has"). Sync
+      // engine only — a Bulk run is one job. Default 1 keeps today's
+      // sequential behavior. Parallel writes can hit row locks when records
+      // share a parent — the diagnostic and the UI tooltip both say so.
+      const THREADS = (!useBulk && Number(profile.threads) >= 2)
+        ? Math.min(6, Math.floor(Number(profile.threads))) : 1;
+      if (THREADS > 1) {
+        diagnostics.push(`${objType}: ${THREADS} batches in parallel (engine settings) — parallel writes can hit row locks on shared parents; lower Threads if you see UNABLE_TO_LOCK_ROW.`);
+      }
+      // One batch build+send, indexed from `i` — a closure so a wave of
+      // THREADS batches can fly together while results are still processed
+      // strictly in upload order below (idMap/labels/failure capture all
+      // assume it).
+      const sendChunk = async (i) => {
         const chunk = payloads.slice(i, i + STEP).map((p, k) => {
           const rec = { attributes: { type: objType }, ...p };
           // The external-Id value must be present for Salesforce to match on
@@ -1333,7 +1341,21 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             ? await sfCollectionsUpsert(tgtOrgUrl, tgtSid, objType, upsertField, chunk)
             : await sfCollectionsCreate(tgtOrgUrl, tgtSid, chunk);
         }
-        const results = Array.isArray(res) ? res : [];
+        return Array.isArray(res) ? res : [];
+      };
+      for (let w = 0; w < payloads.length; w += STEP * THREADS) {
+        // Cancel between waves — records already written stay written
+        // (allOrNone:false per batch); the summary reports the partial count.
+        if (_runCancelled) {
+          errors.push(`${objType}: cancelled after ${ok} of ${payloads.length} record(s).`);
+          break;
+        }
+        const starts = [];
+        for (let t = 0; t < THREADS && w + t * STEP < payloads.length; t++) starts.push(w + t * STEP);
+        const waveRes = await Promise.all(starts.map(s => sendChunk(s)));
+        for (let wi = 0; wi < starts.length; wi++) {
+        const i = starts[wi];
+        const results = waveRes[wi];
         results.forEach((result, j) => {
           if (result.success) {
             idMap[recs[i + j].Id] = result.id; ok++;
@@ -1461,6 +1483,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         postRunProgress({ phase: 'batch', obj: objType,
           done: Math.min(i + STEP, payloads.length), total: payloads.length,
           created: ok, failed: fail });
+        }
       }
       // PII MASKING v1 — the write disclosure: how many values this object's
       // payloads carried hashed / nulled / fixed. Present whenever the policy

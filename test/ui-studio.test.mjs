@@ -1101,7 +1101,29 @@ describe('the batch-size input goes inert in Async mode, on every surface', () =
   });
 
   it('the input is labeled — never a bare number', () => {
-    expect(REC).toContain('<span>batch</span>');
+    expect(REC).toContain('<span>batch size</span>');
     expect(REC).toContain('<span>per call</span>');
+  });
+
+  it('threads (parallel batches) exists on all three surfaces, sync-only like batch size', () => {
+    // Engine gate: parallel waves only when the profile asks and the run is
+    // synchronous — Bulk is one job.
+    const BG = read('background.js');
+    expect(BG).toMatch(/const THREADS = \(!useBulk && Number\(profile\.threads\) >= 2\)/);
+    expect(BG).toMatch(/Math\.min\(6, Math\.floor\(Number\(profile\.threads\)\)\)/);
+    expect(BG).toContain('starts.map(s => sendChunk(s))');
+    for (const [name, src, id] of [['reconcile', REC, 'dsRecThreads'],
+                                   ['run page', TRANSFER, 'dsTrThreads'],
+                                   ['fan-out', TRANSFER, 'dsFanoutThreads']]) {
+      const i = src.indexOf(`id="${id}"`);
+      expect(i, `${name} threads input exists`).toBeGreaterThan(-1);
+      expect(src.slice(i, i + 450), `${name} disables on bulk`)
+        .toMatch(/apiMode === 'bulk' \? 'disabled' : ''/);
+    }
+  });
+
+  it('children get a 🟢 Synced fold with pair rows, not just a header count', () => {
+    expect(REC).toContain('ds-rec-child-syncfold');
+    expect(REC).toMatch(/Synced \$\{csLbl\(cs, 'identical'\)\}/);
   });
 });

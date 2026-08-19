@@ -539,3 +539,32 @@ describe('oversized SOQL routes through POST /composite', () => {
     expect(fetches[0].method).toBe('GET');
   });
 });
+
+// ── THREADS: parallel Collections waves keep results aligned to input ────
+describe('engine threads — wave parallelism, order preserved', () => {
+  it('5 records, batch 2, threads 3: one wave of 3 chunks, all created, ids aligned', async () => {
+    const accounts = Array.from({ length: 5 }, (_, i) => ({ Id: `A${i}`, Name: `Acct ${i}`, Industry: 'Tech' }));
+    SRC_ACCOUNTS.length = 0; SRC_ACCOUNTS.push(...accounts);
+    SRC_CONTACTS.length = 0;
+    const profile = { id: 'pthr', name: 'threads', apiMode: 'sync', batchSize: 2, threads: 3,
+      tree: { objectType: 'Account', recordIds: accounts.map(a => a.Id), children: [] } };
+    const res = await eng.executeProfileTransfer(profile, SRC, 'sid1', TGT, 'sid2');
+    expect(res.summary.Account.created).toBe(5);
+    const creates = calls.filter(c => c[0] === 'create');
+    expect(creates.length).toBe(3);
+    expect(creates.map(c => c[1].length)).toEqual([2, 2, 1]);
+    // the parallel-batches diagnostic disclosed it
+    expect(res.errors.join('\n')).toContain('3 batches in parallel');
+  });
+
+  it('threads is ignored on bulk and below 2', async () => {
+    const accounts = [{ Id: 'A1', Name: 'One', Industry: 'T' }];
+    SRC_ACCOUNTS.length = 0; SRC_ACCOUNTS.push(...accounts);
+    SRC_CONTACTS.length = 0;
+    const profile = { id: 'pthr2', name: 't1', apiMode: 'sync', threads: 1,
+      tree: { objectType: 'Account', recordIds: ['A1'], children: [] } };
+    const res = await eng.executeProfileTransfer(profile, SRC, 'sid1', TGT, 'sid2');
+    expect(res.summary.Account.created).toBe(1);
+    expect(res.errors.join('\n')).not.toContain('batches in parallel');
+  });
+});
