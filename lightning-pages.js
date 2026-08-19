@@ -79,12 +79,11 @@ const LightningPages = (() => {
   let _odRepaintAt = 0;           // throttle for the incremental list repaint
 
   // Page types with NO activation concept the org-default check could ever
-  // resolve: a utility bar is active wherever an app includes it, flow/login
-  // pages likewise live in their own assignment worlds. They get a neutral
-  // dot and a collapsed group instead of a forever-orange "not checked"
-  // (user 2026-08-19: "some lightning pages won't resolve and stay orange" /
-  // "not sure we need to show utility bar items").
-  const LP_TYPES_NO_ACTIVATION = new Set(['UtilityBar', 'FlowPage', 'LoginPage']);
+  // resolve: flow/login pages live in their own assignment worlds. They get
+  // a neutral dot and a collapsed group instead of a forever-orange "not
+  // checked". (Utility bars — same class — are filtered out of the tool
+  // entirely at load; user 2026-08-19: "utility bar is useless for admins".)
+  const LP_TYPES_NO_ACTIVATION = new Set(['FlowPage', 'LoginPage']);
 
   function _odResetState(status) {
     _odRunToken++;
@@ -375,7 +374,12 @@ const LightningPages = (() => {
       return;
     }
 
-    allPages = res.records || [];
+    // Utility bars are OUT of this tool entirely (user 2026-08-19: "utility
+    // bar is useless for admins — we don't need it"): their activation lives
+    // in app definitions, none of the page tooling here applies to them, and
+    // they were half the list in a stock org. Filtered at the source so
+    // every count, plan, and scan downstream agrees.
+    allPages = (res.records || []).filter(p => p.Type !== 'UtilityBar');
     _odResetState('idle');
 
     // P2 — org-default resolution is now SIZE-AWARE.
@@ -683,8 +687,14 @@ const LightningPages = (() => {
         const r = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
           sobject: 'FlexiPage', id: pg.Id });
         calls++;
-        const st = String(r?.Metadata?.publishStatus || '');
-        if (st) syncPageStatus(pg.Id, st.charAt(0).toUpperCase() + st.slice(1).toLowerCase());
+        if (r?.error || !r?.Metadata) return false;
+        // FlexiPage has NO publishStatus anywhere (verified live 2026-08-19 —
+        // the field is a phantom). A Lightning page's only activation truth
+        // is its ASSIGNMENTS: Metadata.pageAssignments carries org-default,
+        // app, and profile activations alike. Present → the page is live
+        // somewhere; absent → nothing in the org points at it.
+        const asg = Array.isArray(r.Metadata.pageAssignments) ? r.Metadata.pageAssignments.length : 0;
+        syncPageStatus(pg.Id, asg ? 'Active' : 'Unassigned');
         _odStatusDone.add(pg.Id);
         return true;
       } catch (_) { return false; }   // stays unknown — the strip counts it
@@ -851,16 +861,18 @@ const LightningPages = (() => {
         const obj = p.EntityDefinitionId
           ? `<span class="lp-obj-tag">${esc(_lpEntityName(p.EntityDefinitionId) || p.EntityDefinitionId)}</span>` : '';
         const ps  = (p.PublishStatus || '').toLowerCase();
-        const dotCls = isNA && !ps       ? 'lp-dot-na'
-                     : ps === 'active'   ? 'lp-dot-active'
-                     : ps === 'obsolete' ? 'lp-dot-obsolete'
-                     : ps === 'draft'    ? 'lp-dot-draft'
+        const dotCls = isNA && !ps          ? 'lp-dot-na'
+                     : ps === 'active'      ? 'lp-dot-active'
+                     : ps === 'unassigned'  ? 'lp-dot-na'
+                     : ps === 'obsolete'    ? 'lp-dot-obsolete'
+                     : ps === 'draft'       ? 'lp-dot-draft'
                      : 'lp-dot-unknown'; // null/empty = not established yet
         // "Checking…" is only true while a check is actually running. When the
         // org-default run was never started or was stopped, nothing is checking
         // and the status is simply not known — say that instead.
-        const dotTitle = isNA && !ps ? `Org-default activation doesn't apply to this page type — a ${humanType(typeKey).toLowerCase()} is active wherever its app includes it.`
+        const dotTitle = isNA && !ps ? `Org-default activation doesn't apply to this page type — it is active wherever its app includes it.`
                        : ps === 'active' ? 'Active' : ps === 'obsolete' ? 'Obsolete'
+                       : ps === 'unassigned' ? 'Not activated — no org default, app, or profile assignment points at this page. Safe to edit; users never see it.'
                        : ps === 'draft'  ? 'Draft'
                        : _odState.status === 'running' ? 'Checking…'
                        : 'Status not checked';
@@ -962,12 +974,15 @@ const LightningPages = (() => {
 
       // Helper: render one page card
       const renderCard = ({ page, meta, assignments, orgDefaults, orgDefaultDebug, scanError }) => {
-        // Use direct PublishStatus field from SOQL list as the primary source — it's more
-        // reliable than the compound Metadata field which returns null for managed pages.
-        const ps     = (page.PublishStatus || meta?.Metadata?.publishStatus || '').toLowerCase();
-        const dotCls = ps === 'active'   ? 'lp-dot-active'
-                     : ps === 'obsolete' ? 'lp-dot-obsolete'
-                     : ps === 'draft'    ? 'lp-dot-draft'
+        // PublishStatus (when a pass established it) wins; otherwise the
+        // ASSIGNMENTS are the truth — Metadata.publishStatus is a phantom
+        // (verified live 2026-08-19: FlexiPage metadata has no such field),
+        // so the old fallback always read undefined and dots stuck orange.
+        const ps     = (page.PublishStatus || (assignments.length ? 'Active' : 'Unassigned')).toLowerCase();
+        const dotCls = ps === 'active'      ? 'lp-dot-active'
+                     : ps === 'unassigned'  ? 'lp-dot-na'
+                     : ps === 'obsolete'    ? 'lp-dot-obsolete'
+                     : ps === 'draft'       ? 'lp-dot-draft'
                      : 'lp-dot-unknown'; // empty string = genuinely unknown
         const isOrgDefault = orgDefaults.length > 0 ||
                              assignments.some(a => !a.profile && !a.app);
@@ -1151,8 +1166,9 @@ const LightningPages = (() => {
         </div>`;
       };
 
-      // Separate active vs draft/inactive — prefer direct SOQL PublishStatus over Metadata compound
-      const getStatus = d => (d.page.PublishStatus || d.meta?.Metadata?.publishStatus || '').toLowerCase();
+      // Separate active vs unassigned — PublishStatus when established, else
+      // assignments are the truth (Metadata.publishStatus is a phantom field).
+      const getStatus = d => (d.page.PublishStatus || ((d.assignments || []).length ? 'active' : 'unassigned')).toLowerCase();
       const activePages   = pageDataArr.filter(d => getStatus(d) === 'active');
       const inactivePages = pageDataArr.filter(d => getStatus(d) !== 'active');
 
@@ -1396,9 +1412,11 @@ const LightningPages = (() => {
       // EntityDefinitionId from the initial SOQL list — critical for custom Record
       // Pages where Metadata.sobjectType may return null.
       const sobjectType = meta.Metadata?.sobjectType || p.EntityDefinitionId || null;
-      // Prefer direct PublishStatus from SOQL list (more reliable than compound Metadata
-      // field, which returns null for managed/system pages even when they are active).
-      const pageStatus  = (p.PublishStatus || meta.Metadata?.publishStatus || '').toLowerCase();
+      // PublishStatus when a pass established it, else the assignments are
+      // the truth (the Metadata GET does not return publishStatus —
+      // verified live 2026-08-19; Salesforce computes it FROM assignments).
+      const pageStatus  = (p.PublishStatus
+        || ((meta.Metadata?.pageAssignments || []).length ? 'active' : 'unassigned')).toLowerCase();
       return {
         page: p, meta,
         assignments: [...(meta.Metadata?.pageAssignments || [])],
@@ -1538,7 +1556,7 @@ const LightningPages = (() => {
   function lpBuildObjectIndex(pageDataArr) {
     const idx = new Map();
     for (const d of (pageDataArr || [])) {
-      const st = (d.page?.PublishStatus || d.meta?.Metadata?.publishStatus || '').toLowerCase();
+      const st = (d.page?.PublishStatus || ((d.assignments || []).length ? 'active' : 'unassigned')).toLowerCase();
       if (st !== 'active') continue;
       const key = lpObjectKeyOf(d);
       if (!idx.has(key)) idx.set(key, []);
