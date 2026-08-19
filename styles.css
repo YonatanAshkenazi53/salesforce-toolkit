@@ -2442,6 +2442,9 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .lp-dot-draft    { background: var(--brand); }
 .lp-dot-obsolete { background: var(--subtext); }
 .lp-dot-unknown  { background: #f0ad4e; animation: pulse 1.2s ease-in-out infinite; }
+/* No-activation page types (utility bars etc.) — a calm n/a, never the
+   pulsing "still checking" orange they can never resolve out of. */
+.lp-dot-na       { background: var(--subtext); opacity: .55; }
 
 .lp-row-info {
   flex: 1;

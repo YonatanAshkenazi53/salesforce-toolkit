@@ -74,14 +74,24 @@ const LightningPages = (() => {
   let _odAbort     = false;       // user pressed Stop
   let _odPassDone  = new Set();   // FlexiPage ids whose Pass-1 GET has settled
   let _odObjDone   = new Set();   // EntityDefinitionIds whose describe has settled
+  let _odStatusDone = new Set();  // FlexiPage ids whose Pass-3 status read has settled
   let _odState     = null;        // see _odResetState()
   let _odRepaintAt = 0;           // throttle for the incremental list repaint
+
+  // Page types with NO activation concept the org-default check could ever
+  // resolve: a utility bar is active wherever an app includes it, flow/login
+  // pages likewise live in their own assignment worlds. They get a neutral
+  // dot and a collapsed group instead of a forever-orange "not checked"
+  // (user 2026-08-19: "some lightning pages won't resolve and stay orange" /
+  // "not sure we need to show utility bar items").
+  const LP_TYPES_NO_ACTIVATION = new Set(['UtilityBar', 'FlowPage', 'LoginPage']);
 
   function _odResetState(status) {
     _odRunToken++;
     _odAbort    = false;
     _odPassDone = new Set();
     _odObjDone  = new Set();
+    _odStatusDone = new Set();
     _odRepaintAt = 0;
     _odState = {
       status: status || 'idle',   // idle | skipped | running | partial | done
@@ -404,11 +414,16 @@ const LightningPages = (() => {
     const objects = [...new Set(allPages.filter(p => p.EntityDefinitionId).map(p => p.EntityDefinitionId))]
       .filter(t => !remaining || !_odObjDone.has(t));
     const pendingIds = _lpPendingEntityIds(objects);
+    // Pass 3 (status retrieves for still-unknown pages) is part of the same
+    // run, so it must be part of the same quoted cost.
+    const statusReads = allPages.filter(p =>
+      !p.PublishStatus && !LP_TYPES_NO_ACTIVATION.has(p.Type)
+      && (!remaining || !_odStatusDone.has(p.Id))).length;
     return lpOrgDefaultsPlan(pageTargets.length, objects.length, {
       autoMax:     LP_OD_AUTO_MAX,
       concurrency: LP_OD_CONCURRENCY,
       msPerCall:   _odState.msPerCall || undefined,
-      extraCalls:  Math.ceil(pendingIds.length / LP_ENTITY_CHUNK)
+      extraCalls:  Math.ceil(pendingIds.length / LP_ENTITY_CHUNK) + statusReads
     });
   }
 
@@ -653,11 +668,38 @@ const LightningPages = (() => {
     });
     if (myToken !== _odRunToken) return;
 
+    // ── Pass 3: publish-status resolution ────────────────────────────────
+    // The list query can't SELECT PublishStatus (400s in some org types), so
+    // any page the first two passes didn't prove Active kept an orange
+    // "not checked" dot forever (user 2026-08-19: "some lightning pages
+    // won't resolve and stay orange"). The page's own Metadata carries
+    // publishStatus — one retrieve per still-unknown page settles the dot
+    // for good. No-activation types are excluded: they get the neutral dot.
+    const statusTargets = allPages.filter(p =>
+      !p.PublishStatus && !LP_TYPES_NO_ACTIVATION.has(p.Type) && !_odStatusDone.has(p.Id));
+    const p3 = await lpRunPool(statusTargets, async (pg) => {
+      if (myToken !== _odRunToken) return false;
+      try {
+        const r = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
+          sobject: 'FlexiPage', id: pg.Id });
+        calls++;
+        const st = String(r?.Metadata?.publishStatus || '');
+        if (st) syncPageStatus(pg.Id, st.charAt(0).toUpperCase() + st.slice(1).toLowerCase());
+        _odStatusDone.add(pg.Id);
+        return true;
+      } catch (_) { return false; }   // stays unknown — the strip counts it
+    }, {
+      concurrency: LP_OD_CONCURRENCY,
+      shouldStop:  stop,
+      onProgress:  () => { if (myToken === _odRunToken) odRepaint(); }
+    });
+    if (myToken !== _odRunToken) return;
+
     // `complete` is decided by the pools' own counts, never by the absence of a
     // Stop press: a cancel that landed after the last item still covered
     // everything, and calling that partial would under-report coverage just as
     // dishonestly as over-reporting it.
-    _odState.status = (p1.complete && p2.complete && !unresolvedIds) ? 'done' : 'partial';
+    _odState.status = (p1.complete && p2.complete && p3.complete && !unresolvedIds) ? 'done' : 'partial';
     _odAbort = false;
     if (calls > 0) {
       // Feed the next estimate this org's REAL latency instead of the default.
@@ -787,7 +829,18 @@ const LightningPages = (() => {
     let html = odStripHtml();
     for (const typeKey of keys) {
       const pages = groups[typeKey];
-      html += `
+      // No-activation types collapse into a closed fold — they're reference
+      // material, not pages to manage (user 2026-08-19: "not sure we need to
+      // show utility bar items"). Rows stay reachable inside.
+      const isNA = LP_TYPES_NO_ACTIVATION.has(typeKey);
+      html += isNA ? `
+        <details class="lp-group">
+          <summary class="lp-group-hdr" style="cursor:pointer">
+            <span class="lp-type-icon">${typeIcon(typeKey)}</span>
+            <span class="lp-type-label">${esc(humanType(typeKey))}</span>
+            <span class="lp-type-count">${pages.length}</span>
+            <span style="font-weight:400;font-size:11px;color:var(--subtext);margin-left:6px">activation lives in each app — collapsed</span>
+          </summary>` : `
         <div class="lp-group">
           <div class="lp-group-hdr">
             <span class="lp-type-icon">${typeIcon(typeKey)}</span>
@@ -798,14 +851,16 @@ const LightningPages = (() => {
         const obj = p.EntityDefinitionId
           ? `<span class="lp-obj-tag">${esc(_lpEntityName(p.EntityDefinitionId) || p.EntityDefinitionId)}</span>` : '';
         const ps  = (p.PublishStatus || '').toLowerCase();
-        const dotCls = ps === 'active'   ? 'lp-dot-active'
+        const dotCls = isNA && !ps       ? 'lp-dot-na'
+                     : ps === 'active'   ? 'lp-dot-active'
                      : ps === 'obsolete' ? 'lp-dot-obsolete'
                      : ps === 'draft'    ? 'lp-dot-draft'
                      : 'lp-dot-unknown'; // null/empty = not established yet
         // "Checking…" is only true while a check is actually running. When the
         // org-default run was never started or was stopped, nothing is checking
         // and the status is simply not known — say that instead.
-        const dotTitle = ps === 'active' ? 'Active' : ps === 'obsolete' ? 'Obsolete'
+        const dotTitle = isNA && !ps ? `Org-default activation doesn't apply to this page type — a ${humanType(typeKey).toLowerCase()} is active wherever its app includes it.`
+                       : ps === 'active' ? 'Active' : ps === 'obsolete' ? 'Obsolete'
                        : ps === 'draft'  ? 'Draft'
                        : _odState.status === 'running' ? 'Checking…'
                        : 'Status not checked';
@@ -829,7 +884,7 @@ const LightningPages = (() => {
             <span class="lp-row-arrow">›</span>
           </div>`;
       }
-      html += `</div>`;
+      html += isNA ? `</details>` : `</div>`;
     }
 
     content.innerHTML = html;

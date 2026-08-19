@@ -246,3 +246,30 @@ describe('lpSoqlLit / lpSoqlLike', () => {
     expect(lpSoqlLike("O'B")).toBe("'%O\\'B%'");
   });
 });
+
+// ── Lightning Pages list: dots settle, no-activation types fold (2026-08-19:
+// "some lightning pages won't resolve and stay orange" / "not sure we need
+// to show utility bar items") ────────────────────────────────────────────
+import { readFileSync as _rfs } from 'node:fs';
+describe('page-list dots resolve or say n/a — never pulse forever', () => {
+  const LP = _rfs(new URL('../lightning-pages.js', import.meta.url), 'utf8');
+  const CSSHARED = _rfs(new URL('../styles.css', import.meta.url), 'utf8');
+
+  it('no-activation types are declared and get the neutral dot + collapsed fold', () => {
+    expect(LP).toContain("LP_TYPES_NO_ACTIVATION = new Set(['UtilityBar', 'FlowPage', 'LoginPage'])");
+    expect(LP).toMatch(/isNA && !ps\s+\? 'lp-dot-na'/);
+    expect(LP).toContain('<details class="lp-group">');
+    expect(LP).toContain('activation lives in each app — collapsed');
+    // the n/a dot is calm — no pulse animation
+    expect(CSSHARED).toMatch(/\.lp-dot-na\s+\{ background: var\(--subtext\); opacity: \.55; \}/);
+  });
+
+  it('pass 3 resolves publish status from page Metadata for everything else', () => {
+    expect(LP).toContain('const statusTargets = allPages.filter(p =>');
+    expect(LP).toMatch(/!p\.PublishStatus && !LP_TYPES_NO_ACTIVATION\.has\(p\.Type\) && !_odStatusDone\.has\(p\.Id\)/);
+    expect(LP).toMatch(/sobject: 'FlexiPage', id: pg\.Id/);
+    expect(LP).toContain('p1.complete && p2.complete && p3.complete');
+    // …and the strip's quoted cost includes those retrieves
+    expect(LP).toMatch(/extraCalls:\s+Math\.ceil\(pendingIds\.length \/ LP_ENTITY_CHUNK\) \+ statusReads/);
+  });
+});
