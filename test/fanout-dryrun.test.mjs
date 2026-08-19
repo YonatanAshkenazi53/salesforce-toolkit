@@ -523,3 +523,30 @@ describe('openFanOut write-mode claim', () => {
     expect(openFanOutSrc).toMatch(/if \(n === 200\) delete p\.batchSize; else p\.batchSize = n;/);
   });
 });
+
+// ── Child-verdict law reaches the fan-out advice (user 2026-08-18: a7
+// showed "in sync — nothing to write" over 1,850 never-pushed children) ──
+describe('sftkFanoutTargetAdvice — children gate the clean verdict', () => {
+  const advice = extractFunctions('studio-transfer.js',
+    ['sftkFanoutTargetAdvice', 'sftkFanoutScanAge']).sftkFanoutTargetAdvice;
+  const cleanScan = { missing: 0, changed: 0, extra: 0, runAt: new Date(Date.now() - 60000).toISOString(), status: 'success' };
+
+  it('clean root + unscanned children → unknown, actionable, never "nothing to write"', () => {
+    const a = advice(cleanScan, true, 'upsert', Date.now(), { need: 0, unscanned: 1 });
+    expect(a.tone).toBe('unknown');
+    expect(a.actionable).toBe(true);
+    expect(a.headline).toContain('child records not checked here');
+  });
+
+  it('clean root + fresh child work → act, with the count', () => {
+    const a = advice(cleanScan, true, 'upsert', Date.now(), { need: 1850, unscanned: 0 });
+    expect(a.tone).toBe('act');
+    expect(a.headline).toContain('1850 child record(s)');
+  });
+
+  it('clean root + fresh clean children (or no children) → clean, as before', () => {
+    expect(advice(cleanScan, true, 'upsert', Date.now(), { need: 0, unscanned: 0 }).tone).toBe('clean');
+    expect(advice(cleanScan, true, 'upsert', Date.now(), null).tone).toBe('clean');
+    expect(advice(cleanScan, true, 'upsert', Date.now()).tone).toBe('clean');
+  });
+});

@@ -1120,6 +1120,28 @@ async function renderReconcile() {
           <div class="ds-rec-col-list">${extraRows}</div>
         </div>
       </div>
+      ${(() => {
+        // 🟢 Synced fold for CHILDREN (user 2026-08-18: "we don't show
+        // synced for the childs") — matched pairs were only a header count;
+        // the root's green column never covers child objects. Same pair
+        // rows + both-org links, collapsed so the action buckets stay the
+        // focus.
+        const idn = cs.identical || [];
+        const rh = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
+        const syncRows = idn.slice(0, 200).map(r => `
+          <div class="ds-rec-col-row ds-rec-row-sync">
+            <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${keyLbl(r.matchKey)}</span>
+            <span style="margin-left:auto;white-space:nowrap;font-size:11px">
+              <a href="${rh(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener">src</a> ·
+              <a href="${rh(p.targetOrg, r.targetId)}" target="_blank" rel="noopener">tgt</a></span>
+          </div>`).join('');
+        return `<details class="ds-rec-child-syncfold">
+          <summary class="ds-rec-col-hdr ds-diff-sync" style="cursor:pointer"${csAttr(cs, 'identical', 'synced')}>🟢 <strong>Synced ${csLbl(cs, 'identical')}</strong>
+            <span class="ds-rec-col-sub">verified matching — records in both orgs with equal values${csInfo(cs, 'identical').capped ? ' · list truncated' : ''}</span></summary>
+          <div class="ds-rec-col-list" style="max-height:240px;overflow-y:auto">${syncRows || '<div class="ds-rec-col-empty">none</div>'}</div>
+          ${idn.length > 200 ? `<div class="ds-rec-child-info">first 200 of ${idn.length} pair(s) listed — the header count is the truth.</div>` : ''}
+        </details>`;
+      })()}
     </div>`;
   }
 
@@ -1376,11 +1398,18 @@ async function renderReconcile() {
         </select>
         <span id="dsRecBatchWrap" style="display:inline-flex;align-items:center;gap:4px${p.apiMode === 'bulk' ? ';opacity:.45' : ''}"
           title="Records per synchronous Collections call (1-200; 200 is the Salesforce maximum). Smaller batches isolate failures and duck per-transaction trigger limits. ONLY the synchronous engine batches on the client — a Bulk API 2.0 job uploads everything at once and Salesforce chunks it internally, so this is disabled in Async mode. One exception rides along: with child-first children, the reconnect step always patches links via synchronous calls in batches of the saved value, even on Async runs.">
-          <span>batch</span>
+          <span>batch size</span>
           <input id="dsRecBatchSize" class="ds-input ds-input-sm" type="number" min="1" max="200" step="1"
             style="width:72px;text-align:right" value="${Math.max(1, Math.min(200, Number(p.batchSize) || 200))}"
             ${p.apiMode === 'bulk' ? 'disabled' : ''}>
           <span>per call</span>
+        </span>
+        <span id="dsRecThreadsWrap" style="display:inline-flex;align-items:center;gap:4px${p.apiMode === 'bulk' ? ';opacity:.45' : ''}"
+          title="How many batches fly in PARALLEL (1-6, like Inspector's concurrency). Faster at scale, but parallel writes can hit row locks when records share a parent — lower it if you see UNABLE_TO_LOCK_ROW. Synchronous engine only; a Bulk job is one upload, so this is disabled in Async mode.">
+          <span>threads</span>
+          <input id="dsRecThreads" class="ds-input ds-input-sm" type="number" min="1" max="6" step="1"
+            style="width:56px;text-align:right" value="${Math.max(1, Math.min(6, Number(p.threads) || 1))}"
+            ${p.apiMode === 'bulk' ? 'disabled' : ''}>
         </span>
       </label>
       <label class="ds-rec-delmode" title="Recycle Bin: deleted records recoverable for 15 days. Hard delete: permanently purged, not recoverable.">
@@ -1763,6 +1792,7 @@ async function renderReconcile() {
     if (realP) {
       if (p.apiMode) realP.apiMode = p.apiMode; else delete realP.apiMode;
       if (p.batchSize) realP.batchSize = p.batchSize; else delete realP.batchSize;
+      if (p.threads) realP.threads = p.threads; else delete realP.threads;
     }
     try { await storageSaveProfiles(); } catch (_) {}
   };
@@ -1775,6 +1805,15 @@ async function renderReconcile() {
     const bi = eid('dsRecBatchSize'), bw = eid('dsRecBatchWrap');
     if (bi) bi.disabled = v === 'bulk';
     if (bw) bw.style.opacity = v === 'bulk' ? '.45' : '';
+    const ti = eid('dsRecThreads'), tw = eid('dsRecThreadsWrap');
+    if (ti) ti.disabled = v === 'bulk';
+    if (tw) tw.style.opacity = v === 'bulk' ? '.45' : '';
+    await _recEnginePersist();
+  });
+  eid('dsRecThreads')?.addEventListener('change', async e => {
+    const n = Math.max(1, Math.min(6, parseInt(e.target.value, 10) || 1));
+    e.target.value = n;
+    if (n === 1) delete p.threads; else p.threads = n;
     await _recEnginePersist();
   });
   eid('dsRecBatchSize')?.addEventListener('change', async e => {
