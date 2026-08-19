@@ -550,3 +550,30 @@ describe('sftkFanoutTargetAdvice — children gate the clean verdict', () => {
     expect(advice(cleanScan, true, 'upsert', Date.now()).tone).toBe('clean');
   });
 });
+
+// ── Live fan-out view (user 2026-08-18: "see the run in real time…
+// like inspector shows, with errors in real time") ───────────────────────
+describe('the fan-out streams live progress and errors', () => {
+  it('each leg connects the run Port into a per-target progress log, and disconnects after', () => {
+    const src = sourceOf('runFanOut');
+    expect(src).toContain("_openRunPort === 'function') ? _openRunPort(_trProgressHandler(liveEl)) : null");
+    expect(src).toMatch(/finally \{\s*\n?\s*try \{ _foPort\?\.disconnect\(\); \} catch \(_\) \{\}/);
+  });
+
+  it('✋ Cancel posts the engine cancel command and stops further targets', () => {
+    const src = sourceOf('runFanOut');
+    expect(src).toContain("_foPort?.postMessage({ cmd: 'cancel' })");
+    expect(src).toMatch(/if \(_foCancelled\) \{ skipOrgs\+\+;/);
+  });
+
+  it('_trProgressHandler renders errs events as appended red rows', () => {
+    expect(TRANSFER).toMatch(/evt\.phase === 'errs' && Array\.isArray\(evt\.lines\)/);
+    expect(TRANSFER).toContain("row.className = 'ds-prog-row ds-prog-err';");
+  });
+
+  it('the completion line splits upsert arms', () => {
+    const src = sourceOf('runFanOut');
+    expect(src).toContain('s.upsertCreated || 0');
+    expect(src).toMatch(/\$\{upsC\} created · \$\{upsU\} updated/);
+  });
+});

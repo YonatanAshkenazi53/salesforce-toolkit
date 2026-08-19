@@ -44,6 +44,24 @@ function _trProgressHandler(logEl) {
       _trRenderBulkRow(logEl, evt);
       return;
     }
+    // Real-time error feed (user 2026-08-18) — red rows as failures land,
+    // appended (not updated in place) so nothing scrolls out of history.
+    if (evt && evt.phase === 'errs' && Array.isArray(evt.lines) && logEl?.isConnected) {
+      for (const ln of evt.lines) {
+        const row = document.createElement('div');
+        row.className = 'ds-prog-row ds-prog-err';
+        row.textContent = `❌ ${ln}`;
+        logEl.appendChild(row);
+      }
+      if (evt.more) {
+        const r = document.createElement('div');
+        r.className = 'ds-prog-row ds-prog-err';
+        r.textContent = `…and ${evt.more} more error(s) in this batch — the full list lands in History.`;
+        logEl.appendChild(r);
+      }
+      logEl.scrollTop = logEl.scrollHeight;
+      return;
+    }
     base(evt);
   };
 }
@@ -2689,7 +2707,9 @@ async function runFanOut(p, srcUrl, targets) {
   const host = eid('dsMain');
   const panel = document.createElement('div');
   panel.className = 'ds-fanout-panel';
-  panel.innerHTML = `<div class="ds-pk-res-title">🌐 Fan-out: ${esc(p.name)} — ${targets.length} target(s)</div>
+  panel.innerHTML = `<div class="ds-pk-res-title" style="display:flex;align-items:center;gap:10px">🌐 Fan-out: ${esc(p.name)} — ${targets.length} target(s)
+      <button class="ds-btn ds-btn-xs" id="dsFanoutCancel" style="margin-left:auto" title="Stops between batches — records already written stay written; the running target's History entry reports the partial count.">✋ Cancel</button>
+    </div>
     <div id="dsFanoutLog"></div>`;
   host?.prepend(panel);
   const log = (org, icon, msg) => {
@@ -2702,15 +2722,35 @@ async function runFanOut(p, srcUrl, targets) {
       : `<span>${icon}</span><span><strong>${esc(msg)}</strong></span>`;
     el.appendChild(row);
   };
+  // ✋ — cancels the CURRENT leg's run (engine honors {cmd:'cancel'} between
+  // batches) and stops the loop from starting further targets.
+  let _foCancelled = false, _foPort = null;
+  panel.querySelector('#dsFanoutCancel')?.addEventListener('click', () => {
+    _foCancelled = true;
+    try { _foPort?.postMessage({ cmd: 'cancel' }); } catch (_) {}
+    const b = panel.querySelector('#dsFanoutCancel');
+    if (b) { b.disabled = true; b.textContent = '✋ cancelling…'; }
+  });
 
   const srcSess = await getOrgSession(srcUrl);
   if (!srcSess) { log(srcUrl, '❌', 'Source org has no open tab — aborted'); return; }
 
   let okOrgs = 0, failOrgs = 0, skipOrgs = 0;
   for (const tgtUrl of targets) {
+    if (_foCancelled) { skipOrgs++; log(tgtUrl, '⏭', 'skipped — fan-out cancelled'); continue; }
     const tgtSess = await getOrgSession(tgtUrl);
     if (!tgtSess) { skipOrgs++; log(tgtUrl, '⏭', 'skipped — org not open in a tab'); continue; }
     log(tgtUrl, '⏳', 'running…');
+    // LIVE view per target (user 2026-08-18: "it would be nice to see the
+    // run in real time… like inspector shows, with errors in real time") —
+    // a progress log fed by the engine's Port events: per-object read/write
+    // lines updating in place, Bulk job state, and ❌ error rows as they
+    // happen. The port also keeps the MV3 worker alive during long runs.
+    const liveEl = document.createElement('div');
+    liveEl.className = 'ds-prog-log';
+    liveEl.style.cssText = 'max-height:200px;overflow-y:auto;margin:2px 0 8px 18px;font-size:12px';
+    panel.querySelector('#dsFanoutLog')?.appendChild(liveEl);
+    _foPort = (typeof _openRunPort === 'function') ? _openRunPort(_trProgressHandler(liveEl)) : null;
     try {
       const result = await sendBg({
         type: 'SF_EXECUTE_PROFILE_TRANSFER',
@@ -2746,14 +2786,23 @@ async function runFanOut(p, srcUrl, targets) {
       });
       const created = Object.values(result.summary || {}).reduce((n, s) => n + (s.created || 0), 0);
       const failed  = Object.values(result.summary || {}).reduce((n, s) => n + (s.failed || 0), 0);
-      if (result.status === 'success') { okOrgs++; log(tgtUrl, '✅', `${created} record(s) written`); }
-      else { failOrgs++; log(tgtUrl, '⚠', `${created} written, ${failed} failed — see History`); }
+      // Upsert arms, when Salesforce reported them — "1900 written" alone
+      // reads as 1900 new records over a mostly-synced target.
+      const upsC = Object.values(result.summary || {}).reduce((n, s) => n + (s.upsertCreated || 0), 0);
+      const upsU = Object.values(result.summary || {}).reduce((n, s) => n + (s.upsertUpdated || 0), 0);
+      const wrote = upsU ? `${created} record(s) written — ${upsC} created · ${upsU} updated` : `${created} record(s) written`;
+      if (result.status === 'success') { okOrgs++; log(tgtUrl, '✅', wrote); }
+      else { failOrgs++; log(tgtUrl, '⚠', `${wrote}, ${failed} failed — see History`); }
     } catch (e) {
       failOrgs++;
       const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
       log(tgtUrl, '❌', fe.message);
+    } finally {
+      try { _foPort?.disconnect(); } catch (_) {}
+      _foPort = null;
     }
   }
+  { const b = panel.querySelector('#dsFanoutCancel'); if (b) b.remove(); }
   await storageSaveHistory();
   log('', '🏁', `done — ${okOrgs} ok · ${failOrgs} with failures · ${skipOrgs} skipped`);
   showToast(`Fan-out complete: ${okOrgs}/${targets.length} orgs clean`, failOrgs ? 'warning' : 'success', 6000);

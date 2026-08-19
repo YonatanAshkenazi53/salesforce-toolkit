@@ -568,3 +568,25 @@ describe('engine threads — wave parallelism, order preserved', () => {
     expect(res.errors.join('\n')).not.toContain('batches in parallel');
   });
 });
+
+// ── Real-time error feed: failures stream as phase:'errs' events ─────────
+describe('the engine streams error lines per wave', () => {
+  it('a failing row produces an errs event with the error text', async () => {
+    const events = [];
+    globalThis.postRunProgress = e => events.push(e);
+    globalThis.sfCollectionsCreate = async (orgUrl, sid, chunk) => chunk.map((r, i) =>
+      i === 0 ? { success: false, errors: [{ message: 'REQUIRED_FIELD_MISSING: boom' }] }
+              : { success: true, id: 'N' + i });
+    SRC_ACCOUNTS.length = 0;
+    SRC_ACCOUNTS.push({ Id: 'A1', Name: 'One', Industry: 'T' }, { Id: 'A2', Name: 'Two', Industry: 'T' });
+    SRC_CONTACTS.length = 0;
+    const profile = { id: 'perr', name: 'errs', apiMode: 'sync',
+      tree: { objectType: 'Account', recordIds: ['A1', 'A2'], children: [] } };
+    const res = await eng.executeProfileTransfer(profile, SRC, 'sid1', TGT, 'sid2');
+    expect(res.summary.Account.failed).toBe(1);
+    const errEvts = events.filter(e => e && e.phase === 'errs');
+    expect(errEvts.length).toBe(1);
+    expect(errEvts[0].lines.join('\n')).toContain('REQUIRED_FIELD_MISSING: boom');
+    expect(errEvts[0].more).toBe(0);
+  });
+});

@@ -1352,6 +1352,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         }
         const starts = [];
         for (let t = 0; t < THREADS && w + t * STEP < payloads.length; t++) starts.push(w + t * STEP);
+        const errBefore = errors.length;   // stream NEW error lines after this wave
         const waveRes = await Promise.all(starts.map(s => sendChunk(s)));
         for (let wi = 0; wi < starts.length; wi++) {
         const i = starts[wi];
@@ -1483,6 +1484,15 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         postRunProgress({ phase: 'batch', obj: objType,
           done: Math.min(i + STEP, payloads.length), total: payloads.length,
           created: ok, failed: fail });
+        }
+        // Real-time error feed (user 2026-08-18: "like inspector shows,
+        // with errors in real time") — every error line this wave produced
+        // streams to whatever progress surface is listening, capped per
+        // wave; History still carries the full list.
+        if (errors.length > errBefore) {
+          postRunProgress({ phase: 'errs', obj: objType,
+            lines: errors.slice(errBefore, errBefore + 20),
+            more: Math.max(0, errors.length - errBefore - 20) });
         }
       }
       // PII MASKING v1 — the write disclosure: how many values this object's
