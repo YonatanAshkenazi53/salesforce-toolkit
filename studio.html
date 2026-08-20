@@ -79,6 +79,13 @@
             <span class="ds-nav-desc">All orgs vs the source of truth</span>
           </span>
         </button>
+        <button class="ds-nav-btn" data-view="seed">
+          <span class="ds-nav-icon ds-i" data-i="upload" aria-hidden="true"></span>
+          <span class="ds-nav-label">
+            <span class="ds-nav-name">Org Seeder</span>
+            <span class="ds-nav-desc">Reset &amp; seed targets from the source</span>
+          </span>
+        </button>
         <button class="ds-nav-btn" data-view="picklists">
           <span class="ds-nav-icon ds-i" data-i="sliders" aria-hidden="true"></span>
           <span class="ds-nav-label">
@@ -191,6 +198,7 @@
   <script src="studio-picklists.js"></script>
   <script src="studio-ring.js"></script>
   <script src="studio-treediff.js"></script>
+  <script src="studio-seed.js"></script>
   <!-- T10 What's New — renders the committed CHANGELOG.md. Must load AFTER
        studio-core.js (it uses setMain/renderView wiring from there) and is
        shared verbatim with popup.html, so it carries its own HTML escaper. -->

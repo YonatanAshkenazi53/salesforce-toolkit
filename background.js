@@ -1909,6 +1909,49 @@ async function sftkFetchBinary(orgUrl, sid, url) {
 // The files pass for one node. PII fail-closed: bodies can't be masked, so
 // an active policy skips the whole pass and says why. Every failure is
 // per-file (counted + first few named), never fatal to the run.
+// Org Seeder wipe — every row of one object, 200 per chunk, cancellable
+// between chunks, progress + error lines streamed like any run. 'hard'
+// routes through the SOAP hard-delete (delete + emptyRecycleBin); default
+// leaves rows recoverable in the Recycle Bin for 15 days.
+async function sftkWipeObject(orgUrl, sid, objType, mode) {
+  const out = { deleted: 0, failed: 0, total: 0, errors: [] };
+  const q = await sfQueryAll(orgUrl, sid, `SELECT Id FROM ${objType}`, false);
+  const ids = (q.records || []).map(r => r.Id);
+  out.total = ids.length;
+  postRunProgress({ phase: 'fetched', obj: `🧹 ${objType}`, count: ids.length });
+  for (let i = 0; i < ids.length; i += 200) {
+    if (_runCancelled) {
+      out.errors.push(`${objType}: wipe cancelled after ${out.deleted} of ${ids.length} record(s).`);
+      break;
+    }
+    const chunk = ids.slice(i, i + 200);
+    const errBefore = out.errors.length;
+    if (mode === 'hard') {
+      const r = await sfHardDelete(orgUrl, sid, chunk);
+      out.deleted += r.ok || 0;
+      out.failed += Math.max(0, chunk.length - (r.ok || 0));
+      for (const e of (r.errors || [])) if (out.errors.length < 20) out.errors.push(`${objType}: ${e}`);
+    } else {
+      const res = await sfCollectionsDelete(orgUrl, sid, chunk);
+      for (const row of (Array.isArray(res) ? res : [])) {
+        if (row.success) out.deleted++;
+        else {
+          out.failed++;
+          if (out.errors.length < 20) out.errors.push(`${objType}: ${(row.errors || []).map(e => e.message).join('; ')}`);
+        }
+      }
+    }
+    postRunProgress({ phase: 'batch', obj: `🧹 ${objType}`,
+      done: Math.min(i + 200, ids.length), total: ids.length,
+      created: out.deleted, failed: out.failed });
+    if (out.errors.length > errBefore) {
+      postRunProgress({ phase: 'errs', obj: objType,
+        lines: out.errors.slice(errBefore, errBefore + 10), more: 0 });
+    }
+  }
+  return out;
+}
+
 async function sftkTransferFilesForNode(objType, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid, idMap, piiActive, errors, diagnostics, only) {
   const stats = { copied: 0, linksCreated: 0, skippedExisting: 0, skippedSize: 0, failed: 0 };
   if (piiActive) {
@@ -2233,6 +2276,18 @@ async function dispatchMessage(message) {
       return sfHardDelete(orgUrl, sid, message.ids);
     case 'SF_COLLECTIONS_UPDATE':
       return sfCollectionsUpdate(orgUrl, sid, message.records);
+    case 'SFTK_WIPE_OBJECT': {
+      // Org Seeder — delete EVERY row of one object in the target org.
+      // Read-only orgs are rejected by the write chokepoint; the view gates
+      // this behind a typed confirmation with live counts; cancel between
+      // chunks via the run port. mode: 'recycle' (default) | 'hard'.
+      _beginRun('wipe');
+      try {
+        return await sftkWipeObject(orgUrl, sid, message.objType, message.mode);
+      } catch (e) {
+        return { error: e?.message || String(e) };
+      }
+    }
     case 'SFTK_TRANSFER_FILES': {
       // Reconcile's 📎 "Move selected files" — the direct path for records
       // that are already in sync (nothing to run, only attachments to move).

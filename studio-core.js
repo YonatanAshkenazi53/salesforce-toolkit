@@ -1590,6 +1590,7 @@ function renderView(view) {
     case 'compare':   renderOrgCompare(); break;
     case 'picklists': renderPicklists();  break;
     case 'ring':      renderRing();       break;
+    case 'seed':      window.renderSeed?.(); break;
     case 'treediff':  renderTreeDiffPage(); break;
     case 'whatsnew':  renderWhatsNew();     break;   // T10 — studio-whatsnew.js
   }
