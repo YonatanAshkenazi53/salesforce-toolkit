@@ -13,7 +13,10 @@ import { extractFunctions } from './extract.mjs';
 
 // sftkPiiMaskValue → sftkPiiMaskable/HashHex/Format: one shared scope.
 const NAMES = ['sftkPiiHashHex', 'sftkPiiMaskable', 'sftkPiiFormat',
-               'sftkPiiMaskValue', 'sftkPiiSuggest'];
+               'sftkPiiMaskValue', 'sftkPiiSuggest',
+               // format-preserving patterns — same byte-parity contract
+               'sftkPiiPatternList', 'sftkPiiIlIdValid', 'sftkPiiLuhn',
+               'sftkPiiDetectPattern', 'sftkPiiPatternFormat'];
 const pii = extractFunctions('sftk-pii.js', NAMES);
 
 const SALT = 'a3f1c9d200aa11bb22cc33dd44ee55ff';

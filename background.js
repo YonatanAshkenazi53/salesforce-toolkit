@@ -169,6 +169,13 @@ async function sftkPiiMaskValue(value, fieldDesc, salt, rule) {
   if (strategy === 'fixed') {
     return { value: rule.value === undefined ? null : rule.value, action: 'fixed' };
   }
+  // Format-preserving: same salted hash, shaped to the pattern so the
+  // target's validation rules and formulas still accept it. A shape the
+  // field can't hold comes back null and COUNTED, never truncated.
+  if (strategy === 'pattern' && rule.pattern) {
+    const shaped = sftkPiiPatternFormat(await sftkPiiHashHex(value, salt), rule.pattern, fieldDesc, value);
+    return shaped == null ? { value: null, action: 'nulled' } : { value: shaped, action: 'hashed' };
+  }
   if (strategy === 'hash' && sftkPiiMaskable(fieldDesc)) {
     // A field too short for its masked FORMAT would truncate the reserved
     // masked.invalid domain ('x@masked.inv' looks routable) — the
@@ -197,14 +204,32 @@ async function sftkPiiMaskValue(value, fieldDesc, salt, rule) {
 // FieldApi → FieldDefinition.ComplianceGroup, a semicolon-joined picklist
 // (e.g. "PII;GDPR"). sure:false marks fields flagged only because they
 // COULD hold PII (uninspectable free text), not because they look like it.
-function sftkPiiSuggest(objectApi, fields, complianceByField) {
-  const nameRx = /ssn|social.?sec|birth|dob|passport|driver|licen[cs]e|national.?id|tax.?id|salary|gender|ethnic|religion|medical|health|maiden/i;
+function sftkPiiSuggest(objectApi, fields, complianceByField, samplesByField) {
+  const nameRx = /ssn|social.?sec|birth|dob|passport|driver|licen[cs]e|national.?id|tax.?id|salary|gender|ethnic|religion|medical|health|maiden|teudat|tz|id.?number/i;
   const compRx = /(^|;)\s*(PII|GDPR|HIPAA|CCPA|COPPA)\s*(;|$)/i;
+  // Address components are personal data on person-shaped objects; on
+  // Account a Billing address is usually business data, so it is offered
+  // without the "sure" flag rather than not offered at all.
+  const addrRx = /(street|city|postal|zipcode|zip$|address)/i;
+  const personObj = /^(Contact|Lead|Person.*|.*__c)$/i.test(String(objectApi || ''));
   const out = [];
   for (const f of (fields || [])) {
     if (!f || !f.name) continue;
     const reasons = [];
     let sure = false;
+    // VALUES over names — the strongest signal there is. A field called
+    // Custom_Field_12__c holding ת״ז numbers is PII that no heuristic on
+    // its name could ever catch, and the detected pattern doubles as the
+    // masking strategy the UI should propose.
+    const det = samplesByField ? sftkPiiDetectPattern(samplesByField[f.name]) : null;
+    if (det) {
+      reasons.push(`values look like ${det.pattern} (${Math.round(det.rate * 100)}% of ${det.sampled} sampled)`);
+      sure = true;
+    }
+    if (addrRx.test(f.name) && f.type !== 'reference') {
+      reasons.push('address component');
+      if (personObj || /mailing|home|personal|other/i.test(f.name)) sure = true;
+    }
     if (f.type === 'email' || f.type === 'phone') { reasons.push(f.type + ' field'); sure = true; }
     if (f.nameField) { reasons.push('name field'); sure = true; }
     // Person-name PARTS: the compound Name carries nameField but is not
@@ -224,8 +249,117 @@ function sftkPiiSuggest(objectApi, fields, complianceByField) {
       reasons.push('free text — cannot be inspected, consider masking or null');
     }
     if (!reasons.length) continue;
-    out.push({ field: f.name, reason: reasons.join('; '), sure });
+    out.push({ field: f.name, reason: reasons.join('; '), sure,
+      ...(det ? { pattern: det.pattern } : {}) });
   }
+  return out;
+}
+
+function sftkPiiPatternList() {
+  return [
+    { id: 'il-id', label: 'Israeli ID (ת״ז)', sample: '039128053',
+      caveat: 'Check digit recomputed, so target validation rules accept it. Israel reserves no test range — a generated number can coincide with a real ID.' },
+    { id: 'il-mobile', label: 'Israeli mobile', sample: '052-8461930',
+      caveat: 'Valid 05X shape. Israel reserves no test range, so a generated number can belong to a real line — use Null where the target sends SMS.' },
+    { id: 'il-phone', label: 'Israeli landline', sample: '03-7241905',
+      caveat: 'Valid area-code shape. Israel reserves no test range.' },
+    { id: 'email', label: 'Email', sample: 'k3f9x2q1a7@masked.invalid',
+      caveat: '.invalid is RFC-2606 reserved — undeliverable by design, so a target automation can never reach a real mailbox.' },
+    { id: 'us-ssn', label: 'US SSN', sample: '912-45-8830',
+      caveat: 'Uses the 900-999 area the SSA never issues — shape-valid, and never a real SSN.' },
+    { id: 'credit-card', label: 'Credit card', sample: '4539578763621486',
+      caveat: 'Luhn-valid so payment validation passes; derived from the hash, never a live card.' },
+    { id: 'digits', label: 'Digits (keep length)', sample: '4820193',
+      caveat: 'Same digit count as the source value — for identifiers with no published scheme.' },
+  ];
+}
+
+function sftkPiiIlIdValid(value) {
+  const s = String(value == null ? '' : value).trim();
+  if (!/^\d{9}$/.test(s)) return false;
+  let sum = 0;
+  for (let i = 0; i < 9; i++) {
+    let d = Number(s[i]) * ((i % 2) + 1);
+    if (d > 9) d -= 9;
+    sum += d;
+  }
+  return sum % 10 === 0;
+}
+
+function sftkPiiLuhn(value) {
+  const s = String(value == null ? '' : value).replace(/[\s-]/g, '');
+  if (!/^\d{12,19}$/.test(s)) return false;
+  let sum = 0, dbl = false;
+  for (let i = s.length - 1; i >= 0; i--) {
+    let d = Number(s[i]);
+    if (dbl) { d *= 2; if (d > 9) d -= 9; }
+    sum += d; dbl = !dbl;
+  }
+  return sum % 10 === 0;
+}
+
+function sftkPiiDetectPattern(values) {
+  const vals = (values || []).map(v => String(v == null ? '' : v).trim()).filter(Boolean);
+  if (vals.length < 3) return null;   // too few to call a shape a pattern
+  const tests = [
+    ['il-id', v => sftkPiiIlIdValid(v)],
+    ['credit-card', v => sftkPiiLuhn(v)],
+    ['us-ssn', v => /^\d{3}-\d{2}-\d{4}$/.test(v)],
+    ['il-mobile', v => /^(\+972[- ]?|0)5\d[- ]?\d{3}[- ]?\d{4}$/.test(v)],
+    ['il-phone', v => /^(\+972[- ]?|0)[2-4689][- ]?\d{3}[- ]?\d{4}$/.test(v)],
+    ['email', v => /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(v)],
+  ];
+  let best = null;
+  for (const pair of tests) {
+    let hits = 0;
+    for (const v of vals) { try { if (pair[1](v)) hits++; } catch (_) { /* a bad value is a miss */ } }
+    const rate = hits / vals.length;
+    if (rate >= 0.8 && (!best || rate > best.rate)) {
+      best = { pattern: pair[0], rate, hits, sampled: vals.length };
+    }
+  }
+  return best;
+}
+
+function sftkPiiPatternFormat(hex, patternId, fieldDesc, srcValue) {
+  const n = BigInt('0x' + String(hex || '0'));
+  const digits = (count, shift) =>
+    String((n / (10n ** BigInt(shift))) % (10n ** BigInt(count))).padStart(count, '0');
+  const choose = (arr, shift) => arr[Number((n / (10n ** BigInt(shift))) % BigInt(arr.length))];
+  let out = null;
+  if (patternId === 'il-id') {
+    const base = digits(8, 0);
+    let sum = 0;
+    for (let i = 0; i < 8; i++) {
+      let d = Number(base[i]) * ((i % 2) + 1);
+      if (d > 9) d -= 9;
+      sum += d;
+    }
+    out = base + String((10 - (sum % 10)) % 10);
+  } else if (patternId === 'il-mobile') {
+    out = choose(['050', '052', '053', '054', '055', '058'], 12) + '-' + digits(7, 0);
+  } else if (patternId === 'il-phone') {
+    out = choose(['02', '03', '04', '08', '09'], 12) + '-' + digits(7, 0);
+  } else if (patternId === 'us-ssn') {
+    out = String(900 + Number((n / 100000000000000n) % 100n)) + '-' + digits(2, 8) + '-' + digits(4, 0);
+  } else if (patternId === 'credit-card') {
+    const body = '4' + digits(14, 0);
+    let sum = 0, dbl = true;   // the check digit sits to the right of body
+    for (let i = body.length - 1; i >= 0; i--) {
+      let d = Number(body[i]);
+      if (dbl) { d *= 2; if (d > 9) d -= 9; }
+      sum += d; dbl = !dbl;
+    }
+    out = body + String((10 - (sum % 10)) % 10);
+  } else if (patternId === 'email') {
+    out = n.toString(36).padStart(10, '0').slice(0, 10) + '@masked.invalid';
+  } else if (patternId === 'digits') {
+    const srcDigits = String(srcValue == null ? '' : srcValue).replace(/\D/g, '').length;
+    out = digits(Math.max(1, Math.min(18, srcDigits || 6)), 0);
+  }
+  if (out == null) return null;
+  const max = (fieldDesc && typeof fieldDesc.length === 'number' && fieldDesc.length > 0) ? fieldDesc.length : null;
+  if (max !== null && out.length > max) return null;   // never truncate a shape
   return out;
 }
 
