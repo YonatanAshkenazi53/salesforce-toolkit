@@ -66,6 +66,189 @@ let _seedLoadedTargets = new Set();
 let _seedCancelled = false;        // ✋ — checked between objects and targets
 let _seedPort = null;              // current leg's run port (cancel channel)
 
+// ── Seed-level PII policy ──────────────────────────────────────────────
+// The Seeder IS the seeding product masking was built for, but rules used
+// to arrive only when a saved deployment happened to exist for an object —
+// so whole-org seeds of profile-less objects went out RAW and silent. This
+// policy covers every object in the seed, and ONE salt covers them all:
+// that is what keeps masked values joinable across objects (a masked email
+// on Contact matches the masked anchor wherever it is referenced) and
+// re-seeds idempotent. Machine-local by contract, exactly like piiSalt.
+let _seedPii = { salt: '', policy: {} };   // policy keyed "Object.Field"
+let _seedPiiLoaded = false;
+let _seedPiiScanning = false;
+
+async function sftkSeedPiiLoad() {
+  if (_seedPiiLoaded) return _seedPii;
+  try {
+    const r = await chrome.storage.local.get('sftk_seed_pii');
+    const v = r && r.sftk_seed_pii;
+    if (v) _seedPii = { salt: v.salt || '', policy: v.policy || {} };
+  } catch (_) { /* first run — defaults stand */ }
+  _seedPiiLoaded = true;
+  return _seedPii;
+}
+
+async function sftkSeedPiiSave() {
+  // Mint the salt the moment a rule exists — the engine hard-errors on a
+  // policy without one, and that error must never reach a seed.
+  if (!_seedPii.salt && Object.keys(_seedPii.policy).length) {
+    _seedPii.salt = Array.from(crypto.getRandomValues(new Uint8Array(16)),
+      b => b.toString(16).padStart(2, '0')).join('');
+  }
+  try { await chrome.storage.local.set({ sftk_seed_pii: _seedPii }); } catch (_) {}
+}
+
+// The masking rules that apply to ONE object, as the engine wants them.
+function sftkSeedPiiForObject(obj) {
+  const out = {};
+  const pre = String(obj || '').toLowerCase() + '.';
+  for (const k of Object.keys(_seedPii.policy || {})) {
+    if (k.toLowerCase().startsWith(pre)) out[k] = _seedPii.policy[k];
+  }
+  return out;
+}
+
+// Text-ish fields worth sampling — the only ones a pattern can be read from.
+function sftkSeedSampleFields(desc) {
+  return (desc.fields || []).filter(f =>
+    f && f.name && f.createable &&
+    (f.type === 'string' || f.type === 'textarea' || f.type === 'email' ||
+     f.type === 'phone' || f.type === 'url')).slice(0, 40);
+}
+
+// 🎭 Scan the selected objects for PII — reads sampled VALUES (patterns
+// beat field names) plus the org's own compliance tags. Cost is quoted
+// BEFORE it runs and progress ticks per object: enterprise orgs make a
+// silent multi-minute sweep unacceptable (No Silent Waits).
+async function sftkSeedPiiScan() {
+  if (_seedPiiScanning) { _seedCancelled = true; return; }
+  const objs = [..._seedSel];
+  if (!objs.length) { showToast('Select at least one object first', 'warning'); return; }
+  await sftkSeedPiiLoad();
+  const srcUrl = currentSourceOrg();
+  const srcSess = await getOrgSession(srcUrl);
+  if (!srcSess?.sid) { showToast(`${orgLabel(srcUrl)} is not open in a Chrome tab`, 'error', 6000); return; }
+  const calls = objs.length * 2 + objs.filter(o => !_seedDesc[o]).length;
+  const secs = Math.max(1, Math.round(calls * 0.6));
+  if (!confirm(`🎭 Scan ${objs.length} object(s) in ${orgLabel(srcUrl)} for personal data?\n\n` +
+      `~${calls} API call(s), roughly ${secs < 60 ? `${secs}s` : `${Math.round(secs / 60)} min`}: for each object one sample read (50 rows of its text fields) and one compliance-tag query.\n\n` +
+      `Nothing is written and no value leaves your browser — the sample is read, judged, and dropped.`)) return;
+  _seedPiiScanning = true;
+  _seedCancelled = false;
+  const prog = eid('dsSeedPiiProg');
+  let done = 0;
+  try {
+    for (const o of objs) {
+      if (_seedCancelled) break;
+      if (prog) prog.textContent = `🎭 scanning ${o} — ${done}/${objs.length} object(s)…`;
+      try {
+        if (!_seedDesc[o]) {
+          const d = await sendBg({ type: 'SF_REST_GET', orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+            path: `/services/data/v62.0/sobjects/${o}/describe` });
+          if (d?.error) throw new Error(d.error);
+          _seedDesc[o] = d;
+        }
+        const fields = sftkSeedSampleFields(_seedDesc[o]);
+        const samples = {};
+        if (fields.length) {
+          const q = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+            query: `SELECT ${fields.map(f => f.name).join(',')} FROM ${o} LIMIT 50` });
+          for (const f of fields) {
+            samples[f.name] = (q && !q.error ? (q.records || []) : []).map(r => r[f.name]);
+          }
+        }
+        let compliance = null;
+        try {
+          const c = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+            query: `SELECT QualifiedApiName, ComplianceGroup FROM FieldDefinition WHERE EntityDefinitionId = '${o}'` });
+          if (c && !c.error) {
+            compliance = {};
+            for (const r of (c.records || [])) compliance[r.QualifiedApiName] = r.ComplianceGroup;
+          }
+        } catch (_) { /* orgs without the tag are common — heuristics still run */ }
+        const row = (_seedRows || []).find(r => r.name === o);
+        if (row) row.pii = sftkPiiSuggest(o, _seedDesc[o].fields || [], compliance, samples);
+      } catch (e) {
+        const row = (_seedRows || []).find(r => r.name === o);
+        if (row) row.piiError = e?.message || String(e);
+      }
+      done++;
+    }
+  } finally {
+    _seedPiiScanning = false;
+    const stopped = _seedCancelled;
+    _seedCancelled = false;
+    sftkSeedRenderRows();
+    showToast(stopped
+      ? `🎭 PII scan stopped after ${done} of ${objs.length} object(s) — what was scanned is shown.`
+      : `🎭 PII scan finished — ${done} object(s) examined.`, stopped ? 'warning' : 'success', 5000);
+  }
+}
+
+// The accept-or-refuse modal: every suggestion across the whole seed, with
+// the proposed strategy (a detected pattern when values gave one away) and
+// the honest caveat for that pattern.
+function sftkSeedPiiModal() {
+  const rows = (_seedRows || []).filter(r => _seedSel.has(r.name) && (r.pii || []).length);
+  if (!rows.length) {
+    showToast('No PII suggestions yet — run 🎭 Scan for PII first.', 'info', 5000);
+    return;
+  }
+  const patterns = (typeof sftkPiiPatternList === 'function') ? sftkPiiPatternList() : [];
+  const patternOpts = patterns.map(p => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
+  const strategyFor = (obj, s) => {
+    const cur = _seedPii.policy[`${obj}.${s.field}`];
+    if (cur) return cur.strategy === 'pattern' ? cur.pattern : cur.strategy;
+    return s.pattern || 'hash';
+  };
+  const body = rows.map(r => `
+    <div style="margin:10px 0 4px"><strong>${esc(r.name)}</strong> <span class="ds-oc-sub">${r.pii.length} suggestion(s)</span></div>
+    ${r.pii.map(s => {
+      const key = `${r.name}.${s.field}`;
+      const sel = strategyFor(r.name, s);
+      return `<label style="display:flex;gap:8px;align-items:center;padding:2px 0;font-size:12.5px">
+        <input type="checkbox" data-seed-pii="${esc(key)}" ${_seedPii.policy[key] ? 'checked' : (s.sure ? 'checked' : '')}>
+        <span style="min-width:190px"><code>${esc(s.field)}</code></span>
+        <select class="ds-select ds-select-sm" data-seed-pii-strat="${esc(key)}" style="width:auto">
+          <option value="hash" ${sel === 'hash' ? 'selected' : ''}>Hash (pseudonymize)</option>
+          <option value="null" ${sel === 'null' ? 'selected' : ''}>Null (blank it)</option>
+          ${patternOpts.replace(`value="${sel}"`, `value="${sel}" selected`)}
+        </select>
+        <span class="ds-oc-sub" style="flex:1" title="${esc(s.reason)}">${esc(s.reason)}</span>
+      </label>`;
+    }).join('')}`).join('');
+  const caveats = patterns.map(p => `<div style="margin:2px 0"><strong>${esc(p.label)}</strong> — ${esc(p.caveat)}</div>`).join('');
+  showModal(`
+    <div class="ds-modal-header">🎭 Mask personal data in this seed</div>
+    <div class="ds-modal-body" style="font-size:12.5px;max-height:60vh;overflow:auto">
+      <div class="ds-pk-note">Masked values are <strong>pseudonymized, not anonymized</strong>: the same source value always produces the same fake, so records still join across objects and a re-seed stays idempotent. Patterns keep the value's SHAPE so the target's validation rules still accept it.</div>
+      ${body}
+      <details style="margin-top:10px"><summary style="cursor:pointer">What each pattern guarantees — and what it doesn't</summary>
+        <div style="margin-top:6px">${caveats}</div>
+      </details>
+    </div>
+    <div class="ds-modal-footer">
+      <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
+      <button class="ds-btn ds-btn-primary" id="dsSeedPiiApply">✓ Apply masking rules</button>
+    </div>`);
+  eid('dsSeedPiiApply')?.addEventListener('click', async () => {
+    const next = { ..._seedPii.policy };
+    document.querySelectorAll('[data-seed-pii]').forEach(cb => {
+      const key = cb.dataset.seedPii;
+      const strat = document.querySelector(`[data-seed-pii-strat="${CSS.escape(key)}"]`)?.value || 'hash';
+      if (!cb.checked) { delete next[key]; return; }
+      next[key] = (strat === 'hash' || strat === 'null')
+        ? { strategy: strat } : { strategy: 'pattern', pattern: strat };
+    });
+    _seedPii.policy = next;
+    await sftkSeedPiiSave();
+    closeModal();
+    sftkSeedRenderRows();
+    showToast(`🎭 ${Object.keys(next).length} field(s) will be masked in every seed from this machine.`, 'success', 5000);
+  });
+}
+
 window.renderSeed = function renderSeed() {
   const srcUrl = (typeof currentSourceOrg === 'function') ? currentSourceOrg() : '';
   const orgs = allMapOrgs().filter(o => _orgKey(o.url) !== _orgKey(srcUrl));
@@ -102,6 +285,9 @@ window.renderSeed = function renderSeed() {
     if (cb.checked) _seedTargets.add(cb.value); else _seedTargets.delete(cb.value);
   }));
   eid('dsSeedLoad')?.addEventListener('click', () => sftkSeedLoad());
+  // Masking rules are machine-local and persist across sessions — load them
+  // before the table can claim an object is unmasked.
+  sftkSeedPiiLoad().then(() => { if (_seedRows) sftkSeedRenderRows(); });
   if (_seedRows) sftkSeedRenderRows();
 };
 
@@ -171,12 +357,19 @@ function sftkSeedRenderRows() {
         <button class="ds-btn ds-btn-xs" id="dsSeedAll">✓ All listed</button>
         <button class="ds-btn ds-btn-xs" id="dsSeedNone">✗ None</button>
         <span class="ds-oc-sub" id="dsSeedSelCount">${_seedSel.size} selected</span>
+        <span style="flex:1"></span>
+        <button class="ds-btn ds-btn-xs" id="dsSeedPiiScan"
+          title="Reads a 50-row sample of each selected object's text fields and the org's compliance tags, then suggests what to mask. Values decide, not field names — a field called Custom_Field_12__c holding ID numbers is caught. Cost is quoted before it runs; nothing is written.">${_seedPiiScanning ? '⏹ Stop scan' : '🎭 Scan for PII'}</button>
+        <button class="ds-btn ds-btn-xs" id="dsSeedPiiRules"
+          title="Review and accept the masking rules for this seed.">🎭 Masking rules…</button>
+        <span class="ds-oc-sub" id="dsSeedPiiProg"></span>
       </div>
       <div style="overflow-x:auto;margin-top:8px">
       <table style="border-collapse:collapse;width:100%;font-size:12.5px">
         <tr>
           <th style="text-align:left;padding:4px 8px"></th>
           <th style="text-align:left;padding:4px 8px">Object</th>
+          <th style="text-align:left;padding:4px 8px">PII</th>
           <th style="text-align:right;padding:4px 8px">${esc(orgLabel(currentSourceOrg()))} (source)</th>
           ${targets.map(t => `<th style="text-align:right;padding:4px 8px">${esc(orgLabel(t))}</th>`).join('')}
         </tr>
@@ -184,6 +377,14 @@ function sftkSeedRenderRows() {
           <tr style="border-top:1px solid var(--c-border, #333)">
             <td style="padding:3px 8px"><input type="checkbox" class="ds-seed-obj" value="${esc(r.name)}" ${_seedSel.has(r.name) ? 'checked' : ''}></td>
             <td style="padding:3px 8px">${esc(r.name)}${r.custom ? '' : ' <span class="ds-oc-sub">standard</span>'}</td>
+            <td style="padding:3px 8px;font-size:11.5px">${(() => {
+              const masked = Object.keys(sftkSeedPiiForObject(r.name)).length;
+              if (masked) return `<span style="color:var(--c-ok-text, #16a34a)" title="These fields are pseudonymized at write time.">✓ ${masked} masked</span>`;
+              if (r.piiError) return `<span style="color:var(--c-warn-text, #d97706)" title="${esc(r.piiError)}">scan failed — UNKNOWN</span>`;
+              if (r.pii && r.pii.length) return `<span style="color:var(--c-warn-text, #d97706)" title="${esc(r.pii.map(s => s.field).join(', '))}">🎭 ${r.pii.length} suggested</span>`;
+              if (r.pii) return '<span class="ds-oc-sub" title="Nothing matched the value patterns, compliance tags or name heuristics.">none found</span>';
+              return '<span class="ds-oc-sub" title="Run 🎭 Scan for PII to check this object.">not scanned</span>';
+            })()}</td>
             <td style="padding:3px 8px;text-align:right;font-variant-numeric:tabular-nums">${n(r.srcCount)}</td>
             ${targets.map(t => {
               const tc = r.tgtCounts[t];
@@ -220,9 +421,67 @@ function sftkSeedRenderRows() {
   eid('dsSeedAll')?.addEventListener('click', () => { _seedSel = new Set(_seedRows.map(r => r.name)); sftkSeedRenderRows(); });
   eid('dsSeedNone')?.addEventListener('click', () => { _seedSel = new Set(); sftkSeedRenderRows(); });
   eid('dsSeedDelMode')?.addEventListener('change', e => { _seedDelMode = e.target.value; });
+  eid('dsSeedPiiScan')?.addEventListener('click', () => sftkSeedPiiScan());
+  eid('dsSeedPiiRules')?.addEventListener('click', () => sftkSeedPiiModal());
   eid('dsSeedWipe')?.addEventListener('click', () => sftkSeedConfirmAndRun({ wipe: true, seed: false }));
   eid('dsSeedGo')?.addEventListener('click', () => sftkSeedConfirmAndRun({ wipe: false, seed: true }));
   eid('dsSeedReset')?.addEventListener('click', () => sftkSeedConfirmAndRun({ wipe: true, seed: true }));
+}
+
+// The fail-safe: contactable fields (email, phone) that NO rule covers.
+// Seeding those raw is how a sandbox's automation emails or texts real
+// customers — the exact accident masking exists to prevent. Not a hard
+// block (plenty of sandboxes have deliverability off), but never silent.
+// Resolves true to proceed.
+function sftkSeedRawPiiGate(objs) {
+  const raw = [];
+  let unscanned = 0;
+  for (const o of objs) {
+    const d = _seedDesc[o];
+    if (!d) { unscanned++; continue; }
+    const covered = new Set(Object.keys(sftkSeedPiiForObject(o)).map(k => k.toLowerCase()));
+    for (const f of (d.fields || [])) {
+      if (!f || !f.createable) continue;
+      if (f.type !== 'email' && f.type !== 'phone') continue;
+      if (covered.has(`${o}.${f.name}`.toLowerCase())) continue;
+      raw.push({ obj: o, field: f.name, type: f.type });
+    }
+  }
+  if (!raw.length && !unscanned) return Promise.resolve(true);
+  return new Promise(resolve => {
+    const emails = raw.filter(r => r.type === 'email');
+    const phones = raw.filter(r => r.type === 'phone');
+    showModal(`
+      <div class="ds-modal-header">⚠ Contactable data will be copied RAW</div>
+      <div class="ds-modal-body" style="font-size:12.5px">
+        ${raw.length ? `<div>${emails.length ? `<strong>${emails.length} email field(s)</strong>` : ''}${emails.length && phones.length ? ' and ' : ''}${phones.length ? `<strong>${phones.length} phone field(s)</strong>` : ''} are not covered by a masking rule. Automations in the target org can reach real people through them.</div>
+        <div style="margin-top:6px;max-height:130px;overflow:auto">${raw.slice(0, 40).map(r => `<code>${esc(r.obj)}.${esc(r.field)}</code>`).join(' · ')}${raw.length > 40 ? ` <span class="ds-oc-sub">…and ${raw.length - 40} more</span>` : ''}</div>` : ''}
+        ${unscanned ? `<div class="ds-pk-note" style="margin-top:8px">${unscanned} selected object(s) were never scanned for PII — their fields are <strong>UNKNOWN</strong>, not clean.</div>` : ''}
+      </div>
+      <div class="ds-modal-footer">
+        <button class="ds-btn" data-dsaction="closeModal" id="dsSeedRawCancel">Cancel</button>
+        ${raw.length ? `<button class="ds-btn ds-btn-primary" id="dsSeedRawMask">🎭 Mask them, then continue</button>` : ''}
+        <button class="ds-btn" id="dsSeedRawGo">Continue with raw values</button>
+      </div>`);
+    eid('dsSeedRawCancel')?.addEventListener('click', () => resolve(false));
+    eid('dsSeedRawGo')?.addEventListener('click', () => { closeModal(); resolve(true); });
+    eid('dsSeedRawMask')?.addEventListener('click', async () => {
+      for (const r of raw) {
+        // A pattern the scan actually detected wins; otherwise email keeps
+        // its undeliverable shape and phone falls back to the hash's digits.
+        const sugg = ((_seedRows || []).find(x => x.name === r.obj)?.pii || [])
+          .find(s => s.field === r.field);
+        _seedPii.policy[`${r.obj}.${r.field}`] = sugg && sugg.pattern
+          ? { strategy: 'pattern', pattern: sugg.pattern }
+          : (r.type === 'email' ? { strategy: 'pattern', pattern: 'email' } : { strategy: 'hash' });
+      }
+      await sftkSeedPiiSave();
+      closeModal();
+      sftkSeedRenderRows();
+      showToast(`🎭 ${raw.length} contactable field(s) will be masked.`, 'success', 5000);
+      resolve(true);
+    });
+  });
 }
 
 // ── Confirmation — typed, with the exact counts on the table ───────────
@@ -262,6 +521,7 @@ async function sftkSeedConfirmAndRun(what) {
     return true;
   };
   if (!what.wipe) {
+    if (what.seed && !(await sftkSeedRawPiiGate(objs))) return;
     if (!(await prodConfirms())) return;
     sftkSeedRun(what, objs, targets);
     return;
@@ -283,6 +543,10 @@ async function sftkSeedConfirmAndRun(what) {
       <div>You are about to delete the selected objects' rows in:</div>
       ${lines}
       <div class="ds-pk-note" style="margin-top:6px">Counts are the loaded totals per object. Master-detail children of deleted records cascade-delete too. ${what.seed ? 'Seeding runs right after each wipe.' : ''}</div>
+      ${(() => {
+        const masked = objs.reduce((n, o) => n + Object.keys(sftkSeedPiiForObject(o)).length, 0);
+        return masked ? `<div class="ds-pk-note" style="margin-top:4px">🎭 ${masked} field(s) will be pseudonymized on the way in — masked, never anonymized.</div>` : '';
+      })()}
       <div style="margin-top:10px">Type <strong>RESET</strong> to confirm:</div>
       <input id="dsSeedConfirmInput" class="ds-input" style="margin-top:4px" autocomplete="off" placeholder="RESET">
     </div>
@@ -295,6 +559,7 @@ async function sftkSeedConfirmAndRun(what) {
   inp?.focus();
   go?.addEventListener('click', async () => {
     closeModal();
+    if (what.seed && !(await sftkSeedRawPiiGate(objs))) return;
     if (!(await prodConfirms())) return;
     sftkSeedRun(what, objs, targets);
   });
@@ -474,7 +739,14 @@ function sftkSeedProfileFor(obj, srcUrl, tgtUrl, selected) {
     ...(saved?.apiMode ? { apiMode: saved.apiMode } : {}),
     ...(saved?.batchSize ? { batchSize: saved.batchSize } : {}),
     ...(saved?.threads ? { threads: saved.threads } : {}),
-    ...(saved?.piiPolicy ? { piiPolicy: saved.piiPolicy, piiSalt: saved.piiSalt } : {}),
+    // Masking: the seed's own policy for this object merged over anything
+    // the saved deployment already carried, under ONE salt for the whole
+    // seed so masked values stay joinable across objects.
+    ...(() => {
+      const merged = { ...(saved?.piiPolicy || {}), ...sftkSeedPiiForObject(obj) };
+      if (!Object.keys(merged).length) return {};
+      return { piiPolicy: merged, piiSalt: _seedPii.salt || saved?.piiSalt };
+    })(),
     tree: {
       objectType: obj, where: '', children: [],
       fieldMappings: saved?.tree?.fieldMappings || {},

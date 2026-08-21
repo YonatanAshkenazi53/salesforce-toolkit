@@ -10,6 +10,85 @@ import { extractFunctions } from './extract.mjs';
 const SEED = readFileSync(new URL('../studio-seed.js', import.meta.url), 'utf8');
 const BG   = readFileSync(new URL('../background.js', import.meta.url), 'utf8');
 
+// ── The seed's PII layer (user 2026-08-20: whole-org seeds of objects with
+// no saved deployment used to go out RAW and silent) ────────────────────
+describe('seed-level PII policy', () => {
+  const { sftkSeedPiiForObject, sftkSeedSampleFields } =
+    extractFunctions('studio-seed.js', ['sftkSeedPiiForObject', 'sftkSeedSampleFields']);
+
+  it('resolves an object\'s rules case-insensitively, and only its own', () => {
+    globalThis._seedPii = { salt: 'abc', policy: {
+      'Contact.Email': { strategy: 'pattern', pattern: 'email' },
+      'contact.SSN__c': { strategy: 'pattern', pattern: 'il-id' },
+      'Lead.Email': { strategy: 'hash' },
+    } };
+    const out = sftkSeedPiiForObject('Contact');
+    expect(Object.keys(out).sort()).toEqual(['Contact.Email', 'contact.SSN__c']);
+    expect(sftkSeedPiiForObject('Account')).toEqual({});
+    delete globalThis._seedPii;
+  });
+
+  it('samples only text-ish createable fields — the ones a pattern can be read from', () => {
+    const desc = { fields: [
+      { name: 'Name', type: 'string', createable: true },
+      { name: 'Email', type: 'email', createable: true },
+      { name: 'Phone', type: 'phone', createable: true },
+      { name: 'Bio__c', type: 'textarea', createable: true },
+      { name: 'Site', type: 'url', createable: true },
+      { name: 'Amount__c', type: 'currency', createable: true },
+      { name: 'Born__c', type: 'date', createable: true },
+      { name: 'Id', type: 'id', createable: false },
+      { name: 'Formula__c', type: 'string', createable: false },
+    ] };
+    expect(sftkSeedSampleFields(desc).map(f => f.name))
+      .toEqual(['Name', 'Email', 'Phone', 'Bio__c', 'Site']);
+  });
+
+  it('the scan quotes its cost and ticks per object (No Silent Waits)', () => {
+    expect(SEED).toMatch(/const calls = objs\.length \* 2/);
+    expect(SEED).toContain('API call(s), roughly');
+    expect(SEED).toContain('scanning ${o} —');
+    expect(SEED).toContain('⏹ Stop scan');
+    // and it reads VALUES, not just names
+    expect(SEED).toMatch(/sftkPiiSuggest\(o, _seedDesc\[o\]\.fields \|\| \[\], compliance, samples\)/);
+    expect(SEED).toMatch(/LIMIT 50/);
+  });
+
+  it('one salt covers the whole seed, minted the moment a rule exists', () => {
+    expect(SEED).toMatch(/if \(!_seedPii\.salt && Object\.keys\(_seedPii\.policy\)\.length\)/);
+    expect(SEED).toContain('crypto.getRandomValues(new Uint8Array(16))');
+    expect(SEED).toMatch(/piiSalt: _seedPii\.salt \|\| saved\?\.piiSalt/);
+    // seed rules merge OVER a saved deployment's own policy
+    expect(SEED).toMatch(/\.\.\.\(saved\?\.piiPolicy \|\| \{\}\), \.\.\.sftkSeedPiiForObject\(obj\)/);
+  });
+
+  it('raw contactable fields are gated before any write, with a one-click fix', () => {
+    expect(SEED).toContain('Contactable data will be copied RAW');
+    expect(SEED).toMatch(/f\.type !== 'email' && f\.type !== 'phone'/);
+    expect(SEED).toContain('dsSeedRawMask');
+    expect(SEED).toContain('Continue with raw values');
+    // unscanned objects are UNKNOWN, never assumed clean
+    expect(SEED).toContain('their fields are <strong>UNKNOWN</strong>, not clean');
+    // both write paths pass through the gate
+    expect((SEED.match(/await sftkSeedRawPiiGate\(objs\)/g) || []).length).toBe(2);
+  });
+
+  it('the table states masked / suggested / not-scanned distinctly', () => {
+    expect(SEED).toContain('masked</span>');
+    expect(SEED).toContain('suggested</span>');
+    expect(SEED).toContain('not scanned');
+    expect(SEED).toContain('scan failed — UNKNOWN');
+  });
+
+  it('the modal never claims more than pseudonymization, and shows caveats', () => {
+    expect(SEED).toContain('pseudonymized, not anonymized');
+    expect(SEED).toContain('masked, never anonymized');
+    // never the stronger claim as a CAPABILITY — only ever as a disclaimer
+    expect(SEED).not.toMatch(/\banonymi[sz]es\b|fully anonymi[sz]ed/i);
+    expect(SEED).toContain("What each pattern guarantees — and what it doesn't");
+  });
+});
+
 describe('sftkSeedOrder — parents first, wipes reversed, cycles named', () => {
   const { sftkSeedOrder } = extractFunctions('studio-seed.js', ['sftkSeedOrder']);
 
@@ -129,7 +208,9 @@ describe('the view keeps the safety rails', () => {
 
   it('seeds inherit saved deployment config and bridge selected-object lookups', () => {
     expect(SEED).toMatch(/p\.tree\?\.objectType === obj/);
-    expect(SEED).toContain('piiPolicy: saved.piiPolicy, piiSalt: saved.piiSalt');
+    // the saved profile's policy still rides — now merged under the seed's
+    // own rules and one shared salt (see the seed-level PII suite)
+    expect(SEED).toMatch(/\.\.\.\(saved\?\.piiPolicy \|\| \{\}\), \.\.\.sftkSeedPiiForObject\(obj\)/);
     expect(SEED).toMatch(/strategy: 'match', matchObject: ref, matchField: matchFieldOf\(ref\)/);
   });
 
@@ -162,8 +243,8 @@ describe('production and unknown-count rails on the destructive path', () => {
     expect(SEED).toContain("_seedDelMode === 'hard' && prodTargets.length");
     expect(SEED).toContain('🔥 Hard delete is disabled against PRODUCTION orgs');
     expect(SEED).toMatch(/await confirmTypedProd\(orgLabel\(t\), summary\)/);
-    // the seed-only path confirms prod targets too, matching the fan-out
-    expect(SEED).toMatch(/if \(!what\.wipe\) \{\s*\n\s*if \(!\(await prodConfirms\(\)\)\) return;/);
+    // the seed-only path gates raw PII and confirms prod targets too
+    expect(SEED).toMatch(/if \(!what\.wipe\) \{\s*\n\s*if \(what\.seed && !\(await sftkSeedRawPiiGate\(objs\)\)\) return;\s*\n\s*if \(!\(await prodConfirms\(\)\)\) return;/);
   });
 
   it('unknown counts stay UNKNOWN in the RESET dialog — never coerced to 0', () => {
