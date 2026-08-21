@@ -1927,10 +1927,24 @@ async function sftkWipeObject(orgUrl, sid, objType, mode) {
     const chunk = ids.slice(i, i + 200);
     const errBefore = out.errors.length;
     if (mode === 'hard') {
+      // sfHardDelete returns { deleteResults, purgedOk, purgeErrors } — the
+      // first cut read a phantom r.ok and reported TOTAL FAILURE over a
+      // fully successful permanent deletion (Seeder review wt02z57at:
+      // exactly the wrong direction to lie in).
       const r = await sfHardDelete(orgUrl, sid, chunk);
-      out.deleted += r.ok || 0;
-      out.failed += Math.max(0, chunk.length - (r.ok || 0));
-      for (const e of (r.errors || [])) if (out.errors.length < 20) out.errors.push(`${objType}: ${e}`);
+      let delOk = 0;
+      for (const row of (r.deleteResults || [])) {
+        if (row.success) { out.deleted++; delOk++; }
+        else {
+          out.failed++;
+          if (out.errors.length < 20) out.errors.push(`${objType}: ${(row.errors || []).map(e => e.message).join('; ')}`);
+        }
+      }
+      // A purge shortfall means rows sit in the Recycle Bin — SAFER than
+      // promised (recoverable), but "hard" must not overclaim: say it.
+      if ((r.purgedOk || 0) < delOk && out.errors.length < 20) {
+        out.errors.push(`${objType}: ${delOk - (r.purgedOk || 0)} deleted record(s) could not be purged — they remain in the Recycle Bin${(r.purgeErrors || []).length ? ` (${r.purgeErrors[0]})` : ''}.`);
+      }
     } else {
       const res = await sfCollectionsDelete(orgUrl, sid, chunk);
       for (const row of (Array.isArray(res) ? res : [])) {
@@ -2283,9 +2297,26 @@ async function dispatchMessage(message) {
       // chunks via the run port. mode: 'recycle' (default) | 'hard'.
       _beginRun('wipe');
       try {
+        // PRODUCTION BELT (Seeder review wt02z57at, HIGH): hard delete is
+        // disabled against production orgs at the ENGINE — no present or
+        // future view can reach sfHardDelete against prod without this
+        // gate. One Organization query; trial orgs count as non-prod.
+        if (message.mode === 'hard') {
+          const org = await sfQuery(orgUrl, sid,
+            'SELECT IsSandbox, TrialExpirationDate FROM Organization', false);
+          const rec = org?.records?.[0];
+          if (rec && rec.IsSandbox === false && !rec.TrialExpirationDate) {
+            return { error: 'Hard delete is disabled against PRODUCTION orgs — switch Delete mode to Recycle Bin.' };
+          }
+        }
         return await sftkWipeObject(orgUrl, sid, message.objType, message.mode);
       } catch (e) {
         return { error: e?.message || String(e) };
+      } finally {
+        // Without this the run heartbeat outlives the wipe and
+        // sftk_active_run sticks (review finding — verify wave confirmed
+        // the shape by inspection here).
+        _endRun();
       }
     }
     case 'SFTK_TRANSFER_FILES': {

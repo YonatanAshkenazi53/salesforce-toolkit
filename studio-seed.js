@@ -59,6 +59,12 @@ let _seedSel     = new Set();      // selected object api names
 let _seedDesc    = {};             // source describes by object (fields)
 let _seedBusy    = false;
 let _seedDelMode = 'recycle';
+// Targets whose counts were ACTUALLY loaded — a target ticked after Load has
+// no counts and must never reach the wipe confirm as "~0 record(s)"
+// (Seeder review wt02z57at, HIGH).
+let _seedLoadedTargets = new Set();
+let _seedCancelled = false;        // ✋ — checked between objects and targets
+let _seedPort = null;              // current leg's run port (cancel channel)
 
 window.renderSeed = function renderSeed() {
   const srcUrl = (typeof currentSourceOrg === 'function') ? currentSourceOrg() : '';
@@ -141,6 +147,7 @@ async function sftkSeedLoad() {
       rows.push(row);
     }
     _seedRows = rows;
+    _seedLoadedTargets = new Set(targets);
     // Default selection: custom objects that hold source data.
     _seedSel = new Set(rows.filter(r => r.custom && (r.srcCount || 0) > 0).map(r => r.name));
     sftkSeedRenderRows();
@@ -219,7 +226,7 @@ function sftkSeedRenderRows() {
 }
 
 // ── Confirmation — typed, with the exact counts on the table ───────────
-function sftkSeedConfirmAndRun(what) {
+async function sftkSeedConfirmAndRun(what) {
   if (_seedBusy) return;
   const objs = [..._seedSel];
   const targets = [..._seedTargets];
@@ -228,11 +235,47 @@ function sftkSeedConfirmAndRun(what) {
   if (targets.some(t => _orgKey(t) === _orgKey(currentSourceOrg()))) {
     showToast('The source of truth can never be a target.', 'error', 6000); return;
   }
-  if (!what.wipe) { sftkSeedRun(what, objs, targets); return; }
+  // A target ticked AFTER "Load objects & counts" has no counts at all —
+  // it must never reach the confirm dialog as "~0 record(s)".
+  const unloaded = targets.filter(t => !_seedLoadedTargets.has(t));
+  if (unloaded.length) {
+    showToast(`Counts were never loaded for ${unloaded.map(orgLabel).join(', ')} — click 🔍 Load objects & counts again first.`, 'error', 7000);
+    return;
+  }
+  // Production gates — same laws as Reconcile and the fan-out: hard delete
+  // is flatly refused against prod; every OTHER prod write demands the
+  // typed-org-name confirmation (the promise the PROD badge itself makes).
+  const orgTypes = {};
+  for (const t of targets) orgTypes[t] = await ensureOrgType(t);
+  const prodTargets = targets.filter(t => orgTypes[t] === 'production');
+  if (what.wipe && _seedDelMode === 'hard' && prodTargets.length) {
+    showToast('🔥 Hard delete is disabled against PRODUCTION orgs — switch Delete mode to Recycle Bin.', 'error', 7000);
+    return;
+  }
+  const prodConfirms = async () => {
+    for (const t of prodTargets) {
+      const summary = what.wipe
+        ? `wipe ${what.seed ? 'and re-seed ' : ''}${objs.length} object(s)`
+        : `seed ${objs.length} object(s)`;
+      if (!(await confirmTypedProd(orgLabel(t), summary))) return false;
+    }
+    return true;
+  };
+  if (!what.wipe) {
+    if (!(await prodConfirms())) return;
+    sftkSeedRun(what, objs, targets);
+    return;
+  }
   const rowsByName = Object.fromEntries((_seedRows || []).map(r => [r.name, r]));
   const lines = targets.map(t => {
-    const total = objs.reduce((s, o) => s + (rowsByName[o]?.tgtCounts?.[t] || 0), 0);
-    return `<div style="margin:2px 0"><strong>${esc(orgLabel(t))}</strong> ${prodBadge(t)}: ~${total.toLocaleString()} record(s) across ${objs.length} object(s)${_seedDelMode === 'hard' ? ' — <strong>permanently</strong>' : ' → Recycle Bin'}</div>`;
+    // Unknown counts stay UNKNOWN — coercing them to 0 on the single most
+    // destructive dialog in the product was the review's other HIGH.
+    let total = 0, unknown = 0;
+    for (const o of objs) {
+      const v = rowsByName[o]?.tgtCounts?.[t];
+      if (v == null) unknown++; else total += v;
+    }
+    return `<div style="margin:2px 0"><strong>${esc(orgLabel(t))}</strong> ${prodBadge(t)}: ~${total.toLocaleString()} record(s) across ${objs.length - unknown} object(s)${unknown ? ` <strong>+ ${unknown} object(s) with UNKNOWN count — ALL of their rows will be deleted</strong>` : ''}${_seedDelMode === 'hard' ? ' — <strong>permanently</strong>' : ' → Recycle Bin'}</div>`;
   }).join('');
   showModal(`
     <div class="ds-modal-header">🧹 ${what.seed ? 'Reset & Seed' : 'Wipe targets'} — this DELETES data</div>
@@ -250,19 +293,32 @@ function sftkSeedConfirmAndRun(what) {
   const inp = eid('dsSeedConfirmInput'), go = eid('dsSeedConfirmGo');
   inp?.addEventListener('input', () => { if (go) go.disabled = inp.value.trim() !== 'RESET'; });
   inp?.focus();
-  go?.addEventListener('click', () => { closeModal(); sftkSeedRun(what, objs, targets); });
+  go?.addEventListener('click', async () => {
+    closeModal();
+    if (!(await prodConfirms())) return;
+    sftkSeedRun(what, objs, targets);
+  });
 }
 
 // ── The run: per target, wipe (children-first) then seed (parents-first) ─
 async function sftkSeedRun(what, objs, targets) {
   if (_seedBusy) return;
   _seedBusy = true;
+  _seedCancelled = false;
   const srcUrl = currentSourceOrg();
   const logHost = eid('dsSeedLog');
   const panel = document.createElement('div');
   panel.className = 'ds-fanout-panel';
-  panel.innerHTML = `<div class="ds-pk-res-title">🌱 ${what.wipe && what.seed ? 'Reset & Seed' : what.wipe ? 'Wipe' : 'Seed'}: ${objs.length} object(s) → ${targets.length} target(s)</div><div class="ds-seed-runlog"></div>`;
+  panel.innerHTML = `<div class="ds-pk-res-title" style="display:flex;align-items:center;gap:10px">🌱 ${what.wipe && what.seed ? 'Reset & Seed' : what.wipe ? 'Wipe' : 'Seed'}: ${objs.length} object(s) → ${targets.length} target(s)
+      <button class="ds-btn ds-btn-xs" id="dsSeedCancel" style="margin-left:auto" title="Stops between chunks/objects — work already done stays done; the log reports honest partial counts.">✋ Cancel</button>
+    </div><div class="ds-seed-runlog"></div>`;
   logHost?.prepend(panel);
+  panel.querySelector('#dsSeedCancel')?.addEventListener('click', () => {
+    _seedCancelled = true;
+    try { _seedPort?.postMessage({ cmd: 'cancel' }); } catch (_) {}
+    const b = panel.querySelector('#dsSeedCancel');
+    if (b) { b.disabled = true; b.textContent = '✋ cancelling…'; }
+  });
   const runlog = panel.querySelector('.ds-seed-runlog');
   const line = (icon, msg) => {
     const el = document.createElement('div');
@@ -292,6 +348,7 @@ async function sftkSeedRun(what, objs, targets) {
     if (cycle.length) line('⚠', `Reference cycle between ${cycle.join(', ')} — seeding them in listed order; some lookups may need a second Seed pass to connect.`);
 
     for (const t of targets) {
+      if (_seedCancelled) { line('✋', `${orgLabel(t)}: skipped — run cancelled`); continue; }
       const tgtSess = await getOrgSession(t);
       if (!tgtSess?.sid) { line('⏭', `${orgLabel(t)}: skipped — org not open in a tab`); continue; }
       line('🎯', `${orgLabel(t)} — starting`);
@@ -299,10 +356,11 @@ async function sftkSeedRun(what, objs, targets) {
       liveEl.className = 'ds-prog-log';
       liveEl.style.cssText = 'max-height:220px;overflow-y:auto;margin:2px 0 8px 18px;font-size:12px';
       runlog.appendChild(liveEl);
-      const port = (typeof _openRunPort === 'function') ? _openRunPort(_trProgressHandler(liveEl)) : null;
+      _seedPort = (typeof _openRunPort === 'function') ? _openRunPort(_trProgressHandler(liveEl)) : null;
       try {
         if (what.wipe) {
           for (const o of [...order].reverse()) {
+            if (_seedCancelled) { line('✋', `${orgLabel(t)} · wipe ${o}: skipped — cancelled`); continue; }
             const res = await sendBg({ type: 'SFTK_WIPE_OBJECT',
               orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, objType: o, mode: _seedDelMode });
             if (res?.error) { line('❌', `${orgLabel(t)} · wipe ${o}: ${res.error}`); continue; }
@@ -310,12 +368,12 @@ async function sftkSeedRun(what, objs, targets) {
           }
         }
         if (what.seed) {
-          for (const o of order) {
+          const seedOne = async (o, label) => {
             const prof = sftkSeedProfileFor(o, srcUrl, t, objs);
             const result = await sendBg({ type: 'SF_EXECUTE_PROFILE_TRANSFER', profile: prof,
               srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
               tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid });
-            if (result?.error) { line('❌', `${orgLabel(t)} · seed ${o}: ${result.error}`); continue; }
+            if (result?.error) { line('❌', `${orgLabel(t)} · ${label}: ${result.error}`); return null; }
             const s = result.summary?.[o] || {};
             delete (result.summary?.[o] || {}).idPairs;
             _history.push({ id: genId('run'), profileId: prof.id,
@@ -325,7 +383,37 @@ async function sftkSeedRun(what, objs, targets) {
               profileName: `Seed ${o}` });
             const arm = (s.upsertCreated != null || s.upsertUpdated != null)
               ? ` (${s.upsertCreated || 0} created · ${s.upsertUpdated || 0} updated)` : '';
-            line(s.failed ? '⚠' : '✅', `${orgLabel(t)} · ${o}: ${s.created || 0} written${arm}${s.failed ? `, ${s.failed} failed — see History` : ''}`);
+            // A leg whose node DIED wholesale has 0 per-record failures —
+            // status is the truth (same lie the reconcile card once told).
+            const dead = result.status && result.status !== 'success';
+            line((s.failed || dead) ? (dead && !(s.created || 0) ? '❌' : '⚠') : '✅',
+              `${orgLabel(t)} · ${label}: ${s.created || 0} written${arm}${s.failed ? `, ${s.failed} failed` : ''}${dead ? ` — run ${result.status}, see History` : ''}`);
+            return prof;
+          };
+          for (const o of order) {
+            if (_seedCancelled) { line('✋', `${orgLabel(t)} · seed ${o}: skipped — cancelled`); continue; }
+            // Bridges matched by Name are a guess, not an identity — say so
+            // BEFORE the write (review: silent mis-linking on dup names).
+            const probe = sftkSeedProfileFor(o, srcUrl, t, objs);
+            const nameBridges = Object.entries(probe.tree.lookupResolutions || {})
+              .filter(([, r]) => r && r.matchField === 'Name').map(([f]) => f);
+            if (nameBridges.length) {
+              line('⚠', `${o}: bridging ${nameBridges.join(', ')} by Name — duplicate names can mis-link; an External ID on the referenced object makes this exact.`);
+            }
+            const prof = await seedOne(o, `seed ${o}`);
+            // SELF-referencing lookups (hierarchies) can't resolve while
+            // their targets are still being inserted. With upsert matching
+            // a second idempotent pass connects them; without it, a rerun
+            // would duplicate — disclose instead.
+            const selfBridge = prof && Object.values(prof.tree.lookupResolutions || {}).some(r => r && r.matchObject === o);
+            if (selfBridge && !_seedCancelled) {
+              if (prof.tree.upsert?.field) {
+                line('🔁', `${o}: self-referencing lookup detected — running the reconnect pass (idempotent upsert).`);
+                await seedOne(o, `reconnect ${o}`);
+              } else {
+                line('⚠', `${o}: self-referencing lookup could NOT fully connect — without an External ID a second pass would duplicate rows. Add an External ID and re-seed to wire the hierarchy.`);
+              }
+            }
           }
           // Verification: recount every object — the "compare" that closes the loop.
           for (const o of order) {
@@ -337,9 +425,10 @@ async function sftkSeedRun(what, objs, targets) {
               `${orgLabel(t)} · ${o}: source ${sc ?? '?'} → target ${tc ?? '?'}${tc != null && sc != null && tc !== sc ? ' — counts differ; 🔍 scan the pair for the row-level truth' : ''}`);
           }
         }
-        line('🏁', `${orgLabel(t)} — done`);
+        line('🏁', `${orgLabel(t)} — ${_seedCancelled ? 'stopped by cancel' : 'done'}`);
       } finally {
-        try { port?.disconnect(); } catch (_) {}
+        try { _seedPort?.disconnect(); } catch (_) {}
+        _seedPort = null;
       }
     }
     await storageSaveHistory();
