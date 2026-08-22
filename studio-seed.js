@@ -77,6 +77,8 @@ let _seedPort = null;              // current leg's run port (cancel channel)
 let _seedPii = { salt: '', policy: {} };   // policy keyed "Object.Field"
 let _seedPiiLoaded = false;
 let _seedPiiScanning = false;
+let _seedLoading = false;          // counts sweep in flight
+let _seedLoadCancel = false;       // stop pressed during the sweep
 
 async function sftkSeedPiiLoad() {
   if (_seedPiiLoaded) return _seedPii;
@@ -87,6 +89,36 @@ async function sftkSeedPiiLoad() {
   } catch (_) { /* first run — defaults stand */ }
   _seedPiiLoaded = true;
   return _seedPii;
+}
+
+// Previews must show what the seed will ACTUALLY write, so the salt has to
+// exist before the first preview — not only once a rule is saved.
+async function sftkSeedEnsureSalt() {
+  if (_seedPii.salt) return _seedPii.salt;
+  _seedPii.salt = Array.from(crypto.getRandomValues(new Uint8Array(16)),
+    b => b.toString(16).padStart(2, '0')).join('');
+  try { await chrome.storage.local.set({ sftk_seed_pii: _seedPii }); } catch (_) {}
+  return _seedPii.salt;
+}
+
+// One field's real before → after, computed with the SAME functions the
+// engine uses at write time.
+async function sftkSeedPiiPreview(obj, field, strat) {
+  const row = (_seedRows || []).find(r => r.name === obj);
+  const sg = ((row && row.pii) || []).find(x => x.field === field);
+  const desc = ((_seedDesc[obj] && _seedDesc[obj].fields) || [])
+    .find(f => f.name === field) || { type: 'string', length: 255 };
+  const src = sg && sg.sample;
+  if (src == null || src === '') return { text: 'no sample value found in this org — nothing to preview' };
+  const rule = (strat === 'hash' || strat === 'null')
+    ? { strategy: strat } : { strategy: 'pattern', pattern: strat };
+  const r = await sftkPiiMaskValue(src, desc, await sftkSeedEnsureSalt(), rule);
+  const cut = v => { const t = String(v); return t.length > 44 ? t.slice(0, 44) + '…' : t; };
+  return {
+    before: cut(src),
+    after: r.value == null ? '(blank)' : cut(r.value),
+    nulled: r.value == null,
+  };
 }
 
 async function sftkSeedPiiSave() {
@@ -168,7 +200,17 @@ async function sftkSeedPiiScan() {
           }
         } catch (_) { /* orgs without the tag are common — heuristics still run */ }
         const row = (_seedRows || []).find(r => r.name === o);
-        if (row) row.pii = sftkPiiSuggest(o, _seedDesc[o].fields || [], compliance, samples);
+        if (row) {
+          row.pii = sftkPiiSuggest(o, _seedDesc[o].fields || [], compliance, samples);
+          // Keep ONE real value per suggested field: the masking modal shows
+          // "before → after" with the user's own data, which is the only way
+          // "Hash (pseudonymize)" ever means anything (user 2026-08-20:
+          // "give example, this is il ssn before masking and after").
+          for (const sg of row.pii) {
+            const v = (samples[sg.field] || []).find(x => x != null && String(x).trim() !== '');
+            if (v != null) sg.sample = String(v);
+          }
+        }
       } catch (e) {
         const row = (_seedRows || []).find(r => r.name === o);
         if (row) row.piiError = e?.message || String(e);
@@ -189,8 +231,9 @@ async function sftkSeedPiiScan() {
 // The accept-or-refuse modal: every suggestion across the whole seed, with
 // the proposed strategy (a detected pattern when values gave one away) and
 // the honest caveat for that pattern.
-function sftkSeedPiiModal() {
-  const rows = (_seedRows || []).filter(r => _seedSel.has(r.name) && (r.pii || []).length);
+function sftkSeedPiiModal(onlyObj) {
+  const rows = (_seedRows || []).filter(r =>
+    (onlyObj ? r.name === onlyObj : _seedSel.has(r.name)) && (r.pii || []).length);
   if (!rows.length) {
     showToast('No PII suggestions yet — run 🎭 Scan for PII first.', 'info', 5000);
     return;
@@ -203,26 +246,37 @@ function sftkSeedPiiModal() {
     return s.pattern || 'hash';
   };
   const body = rows.map(r => `
-    <div style="margin:10px 0 4px"><strong>${esc(r.name)}</strong> <span class="ds-oc-sub">${r.pii.length} suggestion(s)</span></div>
+    <div style="margin:12px 0 4px"><strong>${esc(r.name)}</strong> <span class="ds-oc-sub">${r.pii.length} suggestion(s)</span></div>
     ${r.pii.map(s => {
       const key = `${r.name}.${s.field}`;
       const sel = strategyFor(r.name, s);
-      return `<label style="display:flex;gap:8px;align-items:center;padding:2px 0;font-size:12.5px">
-        <input type="checkbox" data-seed-pii="${esc(key)}" ${_seedPii.policy[key] ? 'checked' : (s.sure ? 'checked' : '')}>
-        <span style="min-width:190px"><code>${esc(s.field)}</code></span>
-        <select class="ds-select ds-select-sm" data-seed-pii-strat="${esc(key)}" style="width:auto">
-          <option value="hash" ${sel === 'hash' ? 'selected' : ''}>Hash (pseudonymize)</option>
-          <option value="null" ${sel === 'null' ? 'selected' : ''}>Null (blank it)</option>
-          ${patternOpts.replace(`value="${sel}"`, `value="${sel}" selected`)}
-        </select>
-        <span class="ds-oc-sub" style="flex:1" title="${esc(s.reason)}">${esc(s.reason)}</span>
-      </label>`;
+      return `<div style="padding:5px 0;border-top:1px solid var(--c-border, #333)">
+        <label style="display:flex;gap:8px;align-items:center;font-size:12.5px;cursor:pointer">
+          <input type="checkbox" data-seed-pii="${esc(key)}" ${_seedPii.policy[key] ? 'checked' : (s.sure ? 'checked' : '')}>
+          <span style="min-width:180px"><code>${esc(s.field)}</code></span>
+          <select class="ds-select ds-select-sm" data-seed-pii-strat="${esc(key)}" style="width:auto">
+            <option value="hash" ${sel === 'hash' ? 'selected' : ''}>Hash (pseudonymize)</option>
+            <option value="null" ${sel === 'null' ? 'selected' : ''}>Null (blank it)</option>
+            ${patternOpts.replace(`value="${sel}"`, `value="${sel}" selected`)}
+          </select>
+          <span class="ds-oc-sub" style="flex:1" title="${esc(s.reason)}">${esc(s.reason)}</span>
+        </label>
+        <div class="ds-oc-sub" data-seed-pii-prev="${esc(key)}"
+             style="margin:2px 0 0 26px;font-family:Consolas,monospace;font-size:11.5px">reading a real value from your org…</div>
+      </div>`;
     }).join('')}`).join('');
   const caveats = patterns.map(p => `<div style="margin:2px 0"><strong>${esc(p.label)}</strong> — ${esc(p.caveat)}</div>`).join('');
   showModal(`
-    <div class="ds-modal-header">🎭 Mask personal data in this seed</div>
+    <div class="ds-modal-header">🎭 Mask personal data ${onlyObj ? `in ${esc(onlyObj)}` : 'in this seed'}</div>
     <div class="ds-modal-body" style="font-size:12.5px;max-height:60vh;overflow:auto">
-      <div class="ds-pk-note">Masked values are <strong>pseudonymized, not anonymized</strong>: the same source value always produces the same fake, so records still join across objects and a re-seed stays idempotent. Patterns keep the value's SHAPE so the target's validation rules still accept it.</div>
+      <div class="ds-pk-note">Every line below shows a <strong>real value from your source org</strong> and exactly what the target will receive.
+        <div style="margin-top:5px;font-family:Consolas,monospace;font-size:11.5px">
+          Israeli ID &nbsp;<code>039128053</code> → <code>284617035</code> <span class="ds-oc-sub">— a different number that still passes the ת״ז check digit, so validation rules accept it</span><br>
+          Email &nbsp;<code>dana@acme.co.il</code> → <code>k3f9x2q1a7@masked.invalid</code> <span class="ds-oc-sub">— undeliverable by design</span><br>
+          Hash &nbsp;<code>Dana Levi</code> → <code>4n98bcncg23</code> <span class="ds-oc-sub">— scrambled, no shape kept: use it where nothing validates the format</span>
+        </div>
+        <div style="margin-top:5px">The same source value always produces the same fake, so records still join across objects and a re-seed stays idempotent. This is <strong>pseudonymization, not anonymization</strong>.</div>
+      </div>
       ${body}
       <details style="margin-top:10px"><summary style="cursor:pointer">What each pattern guarantees — and what it doesn't</summary>
         <div style="margin-top:6px">${caveats}</div>
@@ -232,6 +286,25 @@ function sftkSeedPiiModal() {
       <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
       <button class="ds-btn ds-btn-primary" id="dsSeedPiiApply">✓ Apply masking rules</button>
     </div>`);
+  // Fill every preview with the user's OWN data, then keep each one in step
+  // with its dropdown — a strategy name means nothing until you see what it
+  // does to a value you recognize.
+  const paintPrev = async (key) => {
+    const el = document.querySelector(`[data-seed-pii-prev="${CSS.escape(key)}"]`);
+    if (!el) return;
+    const dot = key.indexOf('.');
+    const obj = key.slice(0, dot), field = key.slice(dot + 1);
+    const strat = document.querySelector(`[data-seed-pii-strat="${CSS.escape(key)}"]`)?.value || 'hash';
+    try {
+      const p = await sftkSeedPiiPreview(obj, field, strat);
+      if (p.text) { el.textContent = p.text; return; }
+      el.innerHTML = `<span style="opacity:.8">${esc(p.before)}</span> → <strong style="color:${p.nulled ? 'var(--c-warn-text, #d97706)' : 'var(--c-ok-text, #16a34a)'}">${esc(p.after)}</strong>` +
+        (p.nulled ? ' <span class="ds-oc-sub">— this field type can\'t hold that shape, so it is blanked and counted</span>' : '');
+    } catch (e) { el.textContent = `preview failed: ${e?.message || e}`; }
+  };
+  document.querySelectorAll('[data-seed-pii-prev]').forEach(el => paintPrev(el.dataset.seedPiiPrev));
+  document.querySelectorAll('[data-seed-pii-strat]').forEach(sel =>
+    sel.addEventListener('change', () => paintPrev(sel.dataset.seedPiiStrat)));
   eid('dsSeedPiiApply')?.addEventListener('click', async () => {
     const next = { ..._seedPii.policy };
     document.querySelectorAll('[data-seed-pii]').forEach(cb => {
@@ -275,7 +348,8 @@ window.renderSeed = function renderSeed() {
       </div>
       <div style="margin-top:8px">
         <button class="ds-btn ds-btn-primary" id="dsSeedLoad"
-          title="Reads the object list (source describe) and LIVE record counts — 1 count query per object per org.">🔍 Load objects &amp; counts</button>
+          title="Reads the object list (source describe) and LIVE record counts — one COUNT() per object per org. The cost is quoted before the sweep starts, the table fills as counts land, and you can stop at any point.">🔍 Load objects &amp; counts</button>
+        <span class="ds-oc-sub" id="dsSeedLoadProg" style="margin-left:8px"></span>
       </div>
     </div>
     <div id="dsSeedBody">${_seedRows ? '' : '<div class="ds-pk-note">Tick at least one target, then load objects. Custom objects are listed first; system objects are excluded.</div>'}</div>
@@ -293,12 +367,20 @@ window.renderSeed = function renderSeed() {
 
 // ── Load objects + live counts ─────────────────────────────────────────
 async function sftkSeedLoad() {
+  // While a sweep runs the button IS the Stop control (No Silent Waits:
+  // quote → run → tick → stop).
+  if (_seedLoading) { _seedLoadCancel = true; return; }
   const srcUrl = currentSourceOrg();
   const targets = [..._seedTargets];
   if (!targets.length) { showToast('Tick at least one target org first', 'warning'); return; }
   const btn = eid('dsSeedLoad');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ reading…'; }
+  const say = t => { const p = eid('dsSeedLoadProg'); if (p) p.textContent = t; };
+  _seedLoading = true;
+  _seedLoadCancel = false;
+  if (btn) btn.textContent = '⏹ Stop';
+  let counted = 0;
   try {
+    say('reading the object list…');
     const srcSess = await getOrgSession(srcUrl);
     if (!srcSess?.sid) throw new Error(`${orgLabel(srcUrl)} is not open in a Chrome tab`);
     const gd = await sendBg({ type: 'SF_REST_GET', orgUrl: srcSess.orgUrl, sid: srcSess.sid,
@@ -313,7 +395,34 @@ async function sftkSeedLoad() {
       .map(s => ({ name: s.name, custom: !!s.custom }))
       .sort((a, b) => (a.custom === b.custom) ? a.name.localeCompare(b.name) : (a.custom ? -1 : 1));
 
-    // Live counts: source once + each target. Sequential, disclosed cost.
+    const tgtSess = {};
+    for (const t of targets) {
+      tgtSess[t] = await getOrgSession(t);
+      if (!tgtSess[t]?.sid) throw new Error(`${orgLabel(t)} is not open in a Chrome tab`);
+    }
+
+    // State the cost BEFORE spending it. One COUNT() per object per org is
+    // instant on a dev org and minutes on an enterprise one, so the number
+    // is always shown — and above a threshold the user approves it first.
+    const planned = names.length * (1 + targets.length);
+    const secs = Math.max(1, Math.round(planned * 0.4));
+    const est = secs < 60 ? `${secs}s` : `${Math.round(secs / 60)} min`;
+    if (planned > 150 && !confirm(`Count ${names.length} object(s) across ${1 + targets.length} org(s)?\n\n` +
+        `~${planned} read-only COUNT() calls, roughly ${est}. Nothing is written.\n\n` +
+        `You can stop at any point and keep what was already counted.`)) {
+      say('');
+      return;
+    }
+
+    // The table appears IMMEDIATELY with every object listed and its counts
+    // pending, then each cell fills as its query lands — a blank screen for
+    // the length of the sweep is exactly what this replaces.
+    _seedRows = names.map(o => ({ ...o, srcCount: undefined, tgtCounts: {} }));
+    _seedLoadedTargets = new Set(targets);
+    _seedSel = new Set();
+    sftkSeedRenderRows();
+    say(`0 / ${names.length} objects · ~${planned} calls (~${est})`);
+
     const count = async (sess, obj) => {
       try {
         const r = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
@@ -321,26 +430,47 @@ async function sftkSeedLoad() {
         return (r && !r.error && Number.isFinite(r.totalSize)) ? r.totalSize : null;
       } catch (_) { return null; }
     };
-    const tgtSess = {};
-    for (const t of targets) {
-      tgtSess[t] = await getOrgSession(t);
-      if (!tgtSess[t]?.sid) throw new Error(`${orgLabel(t)} is not open in a Chrome tab`);
+    const paint = (obj, key, v) => {
+      const cell = document.querySelector(`[data-seed-cell="${CSS.escape(obj + '|' + key)}"]`);
+      if (cell) cell.textContent = v == null ? '?' : Number(v).toLocaleString();
+    };
+
+    for (const row of _seedRows) {
+      if (_seedLoadCancel) break;
+      say(`counting ${row.name} — ${counted} / ${names.length} object(s)`);
+      row.srcCount = await count(srcSess, row.name);
+      paint(row.name, 'src', row.srcCount);
+      for (const t of targets) {
+        if (_seedLoadCancel) break;
+        row.tgtCounts[t] = await count(tgtSess[t], row.name);
+        paint(row.name, _orgKey(t), row.tgtCounts[t]);
+      }
+      counted++;
+      // The default selection grows as data arrives: custom objects that
+      // actually hold source rows.
+      if (row.custom && (row.srcCount || 0) > 0) {
+        _seedSel.add(row.name);
+        const cb = document.querySelector(`.ds-seed-obj[value="${CSS.escape(row.name)}"]`);
+        if (cb) cb.checked = true;
+        const el = eid('dsSeedSelCount');
+        if (el) el.textContent = `${_seedSel.size} selected`;
+      }
     }
-    const rows = [];
-    for (const o of names) {
-      const row = { ...o, srcCount: await count(srcSess, o.name), tgtCounts: {} };
-      for (const t of targets) row.tgtCounts[t] = await count(tgtSess[t], o.name);
-      rows.push(row);
+    if (_seedLoadCancel) {
+      say(`stopped — ${counted} of ${names.length} object(s) counted; the rest stay UNKNOWN.`);
+      showToast(`Stopped after ${counted} of ${names.length} object(s). Uncounted objects stay UNKNOWN — never assumed empty.`, 'warning', 6500);
+    } else {
+      say(`${counted} object(s) counted.`);
     }
-    _seedRows = rows;
-    _seedLoadedTargets = new Set(targets);
-    // Default selection: custom objects that hold source data.
-    _seedSel = new Set(rows.filter(r => r.custom && (r.srcCount || 0) > 0).map(r => r.name));
     sftkSeedRenderRows();
   } catch (e) {
+    say('');
     showToast(`Load failed: ${e?.message || e}`, 'error', 6000);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔍 Load objects & counts'; }
+    _seedLoading = false;
+    _seedLoadCancel = false;
+    const b = eid('dsSeedLoad');
+    if (b) { b.disabled = false; b.textContent = '🔍 Load objects & counts'; }
   }
 }
 
@@ -348,7 +478,11 @@ function sftkSeedRenderRows() {
   const body = eid('dsSeedBody');
   if (!body || !_seedRows) return;
   const targets = [..._seedTargets];
-  const n = v => v == null ? '<span title="count unavailable">?</span>' : String(v);
+  // '…' = not counted YET (sweep in flight) · '?' = counted and FAILED.
+  // Both are unknown, but only one is final — never render either as 0.
+  const n = v => v === undefined ? '<span title="not counted yet">…</span>'
+    : v == null ? '<span title="count unavailable — treated as UNKNOWN">?</span>'
+    : Number(v).toLocaleString();
   body.innerHTML = `
     <div class="ds-ring-cfg" style="padding:12px 14px;margin-top:10px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -379,17 +513,17 @@ function sftkSeedRenderRows() {
             <td style="padding:3px 8px">${esc(r.name)}${r.custom ? '' : ' <span class="ds-oc-sub">standard</span>'}</td>
             <td style="padding:3px 8px;font-size:11.5px">${(() => {
               const masked = Object.keys(sftkSeedPiiForObject(r.name)).length;
-              if (masked) return `<span style="color:var(--c-ok-text, #16a34a)" title="These fields are pseudonymized at write time.">✓ ${masked} masked</span>`;
+              if (masked) return `<button class="ds-btn ds-btn-xs" data-seed-pii-open="${esc(r.name)}" style="color:var(--c-ok-text, #16a34a)" title="Review or change what is masked on ${esc(r.name)}.">✓ ${masked} masked</button>`;
               if (r.piiError) return `<span style="color:var(--c-warn-text, #d97706)" title="${esc(r.piiError)}">scan failed — UNKNOWN</span>`;
-              if (r.pii && r.pii.length) return `<span style="color:var(--c-warn-text, #d97706)" title="${esc(r.pii.map(s => s.field).join(', '))}">🎭 ${r.pii.length} suggested</span>`;
+              if (r.pii && r.pii.length) return `<button class="ds-btn ds-btn-xs" data-seed-pii-open="${esc(r.name)}" style="color:var(--c-warn-text, #d97706)" title="Click to review and accept: ${esc(r.pii.map(s => s.field).join(', '))}">🎭 ${r.pii.length} suggested</button>`;
               if (r.pii) return '<span class="ds-oc-sub" title="Nothing matched the value patterns, compliance tags or name heuristics.">none found</span>';
               return '<span class="ds-oc-sub" title="Run 🎭 Scan for PII to check this object.">not scanned</span>';
             })()}</td>
-            <td style="padding:3px 8px;text-align:right;font-variant-numeric:tabular-nums">${n(r.srcCount)}</td>
+            <td style="padding:3px 8px;text-align:right;font-variant-numeric:tabular-nums" data-seed-cell="${esc(r.name)}|src">${n(r.srcCount)}</td>
             ${targets.map(t => {
               const tc = r.tgtCounts[t];
               const same = r.srcCount != null && tc != null && r.srcCount === tc;
-              return `<td style="padding:3px 8px;text-align:right;font-variant-numeric:tabular-nums;${same ? 'opacity:.65' : 'color:var(--c-warn-text, #d97706)'}">${n(tc)}</td>`;
+              return `<td style="padding:3px 8px;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;${same ? 'opacity:.65' : 'color:var(--c-warn-text, #d97706)'}"><span data-seed-cell="${esc(r.name)}|${esc(_orgKey(t))}">${n(tc)}</span> <button class="ds-btn ds-btn-xs" data-seed-rec="${esc(r.name)}|${esc(t)}" title="Open ⚖ Reconcile for ${esc(r.name)} against ${esc(orgLabel(t))} — compare row by row and pick exactly which records to push, overwrite or delete.">⚖</button></td>`;
             }).join('')}
           </tr>`).join('')}
       </table>
@@ -423,9 +557,53 @@ function sftkSeedRenderRows() {
   eid('dsSeedDelMode')?.addEventListener('change', e => { _seedDelMode = e.target.value; });
   eid('dsSeedPiiScan')?.addEventListener('click', () => sftkSeedPiiScan());
   eid('dsSeedPiiRules')?.addEventListener('click', () => sftkSeedPiiModal());
+  body.querySelectorAll('[data-seed-pii-open]').forEach(b => b.addEventListener('click', () =>
+    sftkSeedPiiModal(b.dataset.seedPiiOpen)));
+  body.querySelectorAll('[data-seed-rec]').forEach(b => b.addEventListener('click', () => {
+    const [obj, tgt] = String(b.dataset.seedRec).split('|');
+    sftkSeedOpenReconcile(obj, tgt);
+  }));
   eid('dsSeedWipe')?.addEventListener('click', () => sftkSeedConfirmAndRun({ wipe: true, seed: false }));
   eid('dsSeedGo')?.addEventListener('click', () => sftkSeedConfirmAndRun({ wipe: false, seed: true }));
   eid('dsSeedReset')?.addEventListener('click', () => sftkSeedConfirmAndRun({ wipe: true, seed: true }));
+}
+
+// ⚖ — the door from the bulldozer to the scalpel (user 2026-08-20: "we
+// need a way for the user to reconcile against one target, to select the
+// records he wants to seed"). Builds the same ephemeral pair the ring's ⚖
+// uses, scans it, and hands it to Reconcile: from there every bucket is
+// per-record. Works for objects with NO saved deployment — the seed's own
+// derived config (matching, lookup bridges, masking) carries it.
+async function sftkSeedOpenReconcile(obj, tgtUrl) {
+  const srcUrl = currentSourceOrg();
+  if (!obj || !tgtUrl) return;
+  if (_orgKey(tgtUrl) === _orgKey(srcUrl)) {
+    showToast('That org IS the source of truth — nothing to reconcile against itself.', 'warning', 5000);
+    return;
+  }
+  const saved = (_profiles || []).find(p => p && !p.ephemeral && p.tree?.objectType === obj);
+  const pair = {
+    ...sftkSeedProfileFor(obj, srcUrl, tgtUrl, [..._seedSel]),
+    id: `seedpair_${Date.now()}_${obj}`,
+    name: `${obj} · ${orgLabel(srcUrl)} → ${orgLabel(tgtUrl)}`,
+    // Origin stamp so a post-run writeback credits the REAL deployment when
+    // one exists (same contract as the ring's ⚖ clone).
+    ...(saved ? { _ringOf: { profileId: saved.id } } : {}),
+    lastScan: null, ringScans: undefined, ephemeral: true,
+  };
+  showToast(`Scanning ${obj} in ${orgLabel(tgtUrl)}…`, 'info', 3000);
+  const res = await runDiffScan(pair);
+  if (res?.error) {
+    const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(res.error) : { message: res.error };
+    showToast(`Scan failed: ${fe.message}`, 'error', 6500);
+    return;
+  }
+  pair.lastScan = res;
+  _reconcileProfile = pair;
+  _currentView = 'reconcile';
+  document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('[data-view="seed"]')?.classList.add('active');
+  renderReconcile();
 }
 
 // The fail-safe: contactable fields (email, phone) that NO rule covers.
@@ -576,7 +754,14 @@ async function sftkSeedRun(what, objs, targets) {
   panel.className = 'ds-fanout-panel';
   panel.innerHTML = `<div class="ds-pk-res-title" style="display:flex;align-items:center;gap:10px">🌱 ${what.wipe && what.seed ? 'Reset & Seed' : what.wipe ? 'Wipe' : 'Seed'}: ${objs.length} object(s) → ${targets.length} target(s)
       <button class="ds-btn ds-btn-xs" id="dsSeedCancel" style="margin-left:auto" title="Stops between chunks/objects — work already done stays done; the log reports honest partial counts.">✋ Cancel</button>
-    </div><div class="ds-seed-runlog"></div>`;
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;padding:4px 10px 8px">
+      <div style="flex:1;height:8px;border-radius:4px;background:var(--c-surface-sunk, #23262d);overflow:hidden">
+        <div id="dsSeedBarFill" style="width:0%;height:100%;background:var(--c-brand, #3b82f6);transition:width .2s"></div>
+      </div>
+      <span class="ds-oc-sub" id="dsSeedBarText" style="min-width:230px;text-align:right">starting…</span>
+    </div>
+    <div class="ds-seed-runlog"></div>`;
   logHost?.prepend(panel);
   panel.querySelector('#dsSeedCancel')?.addEventListener('click', () => {
     _seedCancelled = true;
@@ -610,6 +795,22 @@ async function sftkSeedRun(what, objs, targets) {
         .flatMap(f => f.referenceTo || []))];
     }
     const { order, cycle } = sftkSeedOrder(objs, refs);
+
+    // Overall progress — a run this long must never be a wall of log lines
+    // with no sense of how far in it is (user 2026-08-20).
+    const perObject = (what.wipe ? 1 : 0) + (what.seed ? 1 : 0);
+    const totalSteps = Math.max(1, targets.length * order.length * perObject);
+    let step = 0;
+    const bar = (label) => {
+      const fill = panel.querySelector('#dsSeedBarFill');
+      const txt = panel.querySelector('#dsSeedBarText');
+      const pct = Math.min(100, Math.round((step / totalSteps) * 100));
+      if (fill) fill.style.width = `${pct}%`;
+      if (txt) txt.textContent = `${pct}% · ${label}`;
+    };
+    // An object that simply doesn't exist in a target is a SKIP, not an
+    // error — Salesforce answers with a raw HTTP 400 that reads like a bug.
+    const notPresent = e => /is not supported|INVALID_TYPE|no such column|does not exist/i.test(String(e || ''));
     if (cycle.length) line('⚠', `Reference cycle between ${cycle.join(', ')} — seeding them in listed order; some lookups may need a second Seed pass to connect.`);
 
     for (const t of targets) {
@@ -625,11 +826,20 @@ async function sftkSeedRun(what, objs, targets) {
       try {
         if (what.wipe) {
           for (const o of [...order].reverse()) {
-            if (_seedCancelled) { line('✋', `${orgLabel(t)} · wipe ${o}: skipped — cancelled`); continue; }
+            if (_seedCancelled) { line('✋', `${orgLabel(t)} · wipe ${o}: skipped — cancelled`); step++; bar('cancelled'); continue; }
+            bar(`${orgLabel(t)} · wiping ${o}`);
             const res = await sendBg({ type: 'SFTK_WIPE_OBJECT',
               orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, objType: o, mode: _seedDelMode });
-            if (res?.error) { line('❌', `${orgLabel(t)} · wipe ${o}: ${res.error}`); continue; }
+            step++;
+            if (res?.error) {
+              line(notPresent(res.error) ? '⏭' : '❌', notPresent(res.error)
+                ? `${orgLabel(t)} · ${o}: not present in this org — nothing to wipe`
+                : `${orgLabel(t)} · wipe ${o}: ${res.error}`);
+              bar(`${orgLabel(t)} · ${o}`);
+              continue;
+            }
             line(res.failed ? '⚠' : '🧹', `${orgLabel(t)} · ${o}: ${res.deleted} deleted${res.failed ? `, ${res.failed} failed` : ''}${_seedDelMode === 'hard' ? ' (hard)' : ''}`);
+            bar(`${orgLabel(t)} · ${o} wiped`);
           }
         }
         if (what.seed) {
@@ -656,7 +866,8 @@ async function sftkSeedRun(what, objs, targets) {
             return prof;
           };
           for (const o of order) {
-            if (_seedCancelled) { line('✋', `${orgLabel(t)} · seed ${o}: skipped — cancelled`); continue; }
+            if (_seedCancelled) { line('✋', `${orgLabel(t)} · seed ${o}: skipped — cancelled`); step++; bar('cancelled'); continue; }
+            bar(`${orgLabel(t)} · seeding ${o}`);
             // Bridges matched by Name are a guess, not an identity — say so
             // BEFORE the write (review: silent mis-linking on dup names).
             const probe = sftkSeedProfileFor(o, srcUrl, t, objs);
@@ -666,6 +877,8 @@ async function sftkSeedRun(what, objs, targets) {
               line('⚠', `${o}: bridging ${nameBridges.join(', ')} by Name — duplicate names can mis-link; an External ID on the referenced object makes this exact.`);
             }
             const prof = await seedOne(o, `seed ${o}`);
+            step++;
+            bar(`${orgLabel(t)} · ${o} seeded`);
             // SELF-referencing lookups (hierarchies) can't resolve while
             // their targets are still being inserted. With upsert matching
             // a second idempotent pass connects them; without it, a rerun
@@ -690,12 +903,37 @@ async function sftkSeedRun(what, objs, targets) {
               `${orgLabel(t)} · ${o}: source ${sc ?? '?'} → target ${tc ?? '?'}${tc != null && sc != null && tc !== sc ? ' — counts differ; 🔍 scan the pair for the row-level truth' : ''}`);
           }
         }
+        // VERIFY, then refresh the table. Counts loaded before a run are
+        // stale the moment it starts — leaving them on screen is what made a
+        // finished wipe look like it did nothing (user 2026-08-20). One
+        // recount per object closes the loop and doubles as the honest
+        // answer to "did everything actually go?".
+        bar(`${orgLabel(t)} · verifying`);
+        const leftovers = [];
+        for (const o of order) {
+          const r = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+            query: `SELECT COUNT() FROM ${o}` });
+          const now = (r && !r.error && Number.isFinite(r.totalSize)) ? r.totalSize : null;
+          const row = (_seedRows || []).find(x => x.name === o);
+          if (row) {
+            row.tgtCounts[t] = now;
+            const cell = document.querySelector(`[data-seed-cell="${CSS.escape(o + '|' + _orgKey(t))}"]`);
+            if (cell) cell.textContent = now == null ? '?' : Number(now).toLocaleString();
+          }
+          if (what.wipe && !what.seed && now) leftovers.push(`${o} (${now})`);
+        }
+        if (leftovers.length) {
+          line('ℹ', `${orgLabel(t)}: ${leftovers.length} object(s) still hold rows Salesforce refused to delete — ${leftovers.slice(0, 6).join(', ')}${leftovers.length > 6 ? '…' : ''}. Standard records (the standard Pricebook), records linked to portal users, and rows locked by approvals cannot be deleted by any tool.`);
+        }
         line('🏁', `${orgLabel(t)} — ${_seedCancelled ? 'stopped by cancel' : 'done'}`);
       } finally {
         try { _seedPort?.disconnect(); } catch (_) {}
         _seedPort = null;
       }
     }
+    { const fill = panel.querySelector('#dsSeedBarFill'); const txt = panel.querySelector('#dsSeedBarText');
+      if (fill) fill.style.width = '100%';
+      if (txt) txt.textContent = _seedCancelled ? 'stopped — partial work kept' : 'done · counts above refreshed'; }
     await storageSaveHistory();
     showToast('Org Seeder finished — counts are in the log; run 🔍 scans for row-level verification.', 'success', 6000);
   } catch (e) {

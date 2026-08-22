@@ -74,14 +74,81 @@ describe('seed-level PII policy', () => {
   });
 
   it('the table states masked / suggested / not-scanned distinctly', () => {
-    expect(SEED).toContain('masked</span>');
-    expect(SEED).toContain('suggested</span>');
+    // the chips are the way IN to the suggestions, so they are buttons
+    expect(SEED).toContain('masked</button>');
+    expect(SEED).toContain('suggested</button>');
     expect(SEED).toContain('not scanned');
     expect(SEED).toContain('scan failed — UNKNOWN');
   });
 
+  it('the load sweep quotes, ticks, fills live and can be stopped', () => {
+    expect(SEED).toMatch(/if \(_seedLoading\) \{ _seedLoadCancel = true; return; \}/);
+    expect(SEED).toContain("btn.textContent = '⏹ Stop'");
+    expect(SEED).toMatch(/const planned = names\.length \* \(1 \+ targets\.length\)/);
+    expect(SEED).toContain('read-only COUNT() calls, roughly');
+    expect(SEED).toContain('counting ${row.name}');
+    // the table renders BEFORE the counts land, then each cell is patched
+    expect(SEED).toMatch(/srcCount: undefined, tgtCounts: \{\}/);
+    expect(SEED).toContain('data-seed-cell=');
+    expect(SEED).toMatch(/const paint = \(obj, key, v\)/);
+    // pending and failed read differently — neither is ever 0
+    expect(SEED).toContain('not counted yet');
+    expect(SEED).toContain('treated as UNKNOWN');
+    expect(SEED).toContain('the rest stay UNKNOWN');
+  });
+
+  it('runs show a real progress bar and refresh the counts they invalidated', () => {
+    // A finished wipe LOOKED like it did nothing: no progress, and the table
+    // still showed pre-run counts (user 2026-08-20).
+    expect(SEED).toContain('dsSeedBarFill');
+    expect(SEED).toMatch(/const totalSteps = Math\.max\(1, targets\.length \* order\.length \* perObject\)/);
+    expect(SEED).toMatch(/const bar = \(label\)/);
+    expect(SEED).toContain("bar(`${orgLabel(t)} · wiping ${o}`)");
+    expect(SEED).toContain("bar(`${orgLabel(t)} · seeding ${o}`)");
+    expect(SEED).toContain("bar(`${orgLabel(t)} · verifying`)");
+    // post-run recount patches the very cells the run invalidated
+    expect(SEED).toMatch(/row\.tgtCounts\[t\] = now;/);
+    expect(SEED).toContain('done · counts above refreshed');
+  });
+
+  it('an object missing in a target is a SKIP, and undeletable rows are explained', () => {
+    expect(SEED).toMatch(/const notPresent = e =>/);
+    expect(SEED).toContain('not present in this org — nothing to wipe');
+    expect(SEED).toContain('cannot be deleted by any tool');
+  });
+
+  it('suggestions are reachable from the row chip, per object', () => {
+    expect(SEED).toContain('data-seed-pii-open=');
+    expect(SEED).toMatch(/function sftkSeedPiiModal\(onlyObj\)/);
+    expect(SEED).toMatch(/onlyObj \? r\.name === onlyObj : _seedSel\.has\(r\.name\)/);
+  });
+
+  it('every suggestion previews REAL before → after, from the org itself', () => {
+    // A strategy name means nothing without a value the user recognizes.
+    expect(SEED).toMatch(/async function sftkSeedPiiPreview\(obj, field, strat\)/);
+    expect(SEED).toMatch(/sftkPiiMaskValue\(src, desc, await sftkSeedEnsureSalt\(\), rule\)/);
+    expect(SEED).toContain('data-seed-pii-prev=');
+    expect(SEED).toContain('sg.sample = String(v)');
+    // previews follow the dropdown
+    expect(SEED).toMatch(/sel\.addEventListener\('change', \(\) => paintPrev\(sel\.dataset\.seedPiiStrat\)\)/);
+    // and the header teaches with a concrete ת״ז example
+    expect(SEED).toContain('039128053');
+    expect(SEED).toContain('284617035');
+  });
+
+  it('⚖ opens Reconcile for ONE object against ONE target, even with no saved deployment', () => {
+    expect(SEED).toMatch(/async function sftkSeedOpenReconcile\(obj, tgtUrl\)/);
+    expect(SEED).toContain('data-seed-rec=');
+    expect(SEED).toMatch(/\.\.\.sftkSeedProfileFor\(obj, srcUrl, tgtUrl, \[\.\.\._seedSel\]\)/);
+    expect(SEED).toMatch(/id: `seedpair_\$\{Date\.now\(\)\}_\$\{obj\}`/);
+    expect(SEED).toContain('_reconcileProfile = pair;');
+    expect(SEED).toMatch(/saved \? \{ _ringOf: \{ profileId: saved\.id \} \} : \{\}/);
+    // never against the source itself
+    expect(SEED).toContain('nothing to reconcile against itself');
+  });
+
   it('the modal never claims more than pseudonymization, and shows caveats', () => {
-    expect(SEED).toContain('pseudonymized, not anonymized');
+    expect(SEED).toContain('pseudonymization, not anonymization');
     expect(SEED).toContain('masked, never anonymized');
     // never the stronger claim as a CAPABILITY — only ever as a disclaimer
     expect(SEED).not.toMatch(/\banonymi[sz]es\b|fully anonymi[sz]ed/i);
