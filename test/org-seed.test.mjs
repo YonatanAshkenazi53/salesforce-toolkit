@@ -111,6 +111,24 @@ describe('seed-level PII policy', () => {
     expect(SEED).toContain('done · counts above refreshed');
   });
 
+  it('seeding without deleting warns before duplicating, and proves it after', () => {
+    // "Seed targets" leaves target data alone — but only an object with a
+    // match key can UPDATE instead of insert (user 2026-08-21).
+    expect(SEED).toContain('(no delete)');
+    expect(SEED).toMatch(/function sftkSeedMatchKeyFor\(obj, tgtUrl\)/);
+    // pre-flight gate: no key + non-empty target = duplicates
+    expect(SEED).toMatch(/if \(what\.seed && !what\.wipe\)/);
+    expect(SEED).toContain('These objects would DUPLICATE');
+    expect(SEED).toContain('cancelled before anything was written');
+    // the target's OWN aggregate is the source of truth for dupes
+    expect(SEED).toMatch(/GROUP BY \$\{keyField\} HAVING COUNT\(Id\) > 1/);
+    expect(SEED).toContain('sftkSeedDupeReport');
+    // and the verdict is stated in every case, including none and unknown
+    expect(SEED).toContain('No duplicate key values in any target');
+    expect(SEED).toContain('duplicate state is UNKNOWN, not clean');
+    expect(SEED).toContain('no match key — duplicates cannot be identified');
+  });
+
   it('an object missing in a target is a SKIP, and undeletable rows are explained', () => {
     expect(SEED).toMatch(/const notPresent = e =>/);
     expect(SEED).toContain('not present in this org — nothing to wipe');

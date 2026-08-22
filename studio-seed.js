@@ -539,7 +539,7 @@ function sftkSeedRenderRows() {
         </label>
         <span style="flex:1"></span>
         <button class="ds-btn" id="dsSeedWipe" title="Delete the selected objects' rows in EVERY ticked target — children-first, typed confirmation with exact counts.">🧹 Wipe targets…</button>
-        <button class="ds-btn" id="dsSeedGo" title="Deploy every source row of the selected objects into every ticked target — parents-first, through the normal engine (Bulk API, matching, PII masking, live progress).">⬆ Seed targets</button>
+        <button class="ds-btn" id="dsSeedGo" title="Seed WITHOUT deleting anything: matching records are updated, missing ones inserted, and the target keeps whatever else it holds. Objects with no match key can only insert — you are warned before, and every duplicate the run leaves is listed after.">⬆ Seed targets <span class="ds-oc-sub">(no delete)</span></button>
         <button class="ds-btn ds-btn-primary" id="dsSeedReset" title="Wipe, then seed: the clean full copy of the source's data.">🔄 Reset &amp; Seed…</button>
       </div>
     </div>`;
@@ -566,6 +566,77 @@ function sftkSeedRenderRows() {
   eid('dsSeedWipe')?.addEventListener('click', () => sftkSeedConfirmAndRun({ wipe: true, seed: false }));
   eid('dsSeedGo')?.addEventListener('click', () => sftkSeedConfirmAndRun({ wipe: false, seed: true }));
   eid('dsSeedReset')?.addEventListener('click', () => sftkSeedConfirmAndRun({ wipe: true, seed: true }));
+}
+
+// ── Merge safety: seeding WITHOUT deleting ─────────────────────────────
+// "Seed targets" leaves the target's data alone: rows that match are
+// UPDATED, missing ones inserted. That only holds when the engine has a key
+// to match ON. With no key every source row is INSERTED — into a non-empty
+// target that means duplicates, silently. So: warn before, and prove it
+// after (user 2026-08-21: "if duplication occur we will tell the user the
+// list of dupes").
+function sftkSeedMatchKeyFor(obj, tgtUrl) {
+  const prof = sftkSeedProfileFor(obj, currentSourceOrg(), tgtUrl || '', [..._seedSel]);
+  return (prof.tree.upsert && prof.tree.upsert.field)
+    || ((prof.tree.matching && prof.tree.matching.fields) || [])[0]
+    || null;
+}
+
+// Duplicate key values living in a target RIGHT NOW. Pure SOQL aggregate —
+// no assumptions, no sampling: this is the target's own answer.
+async function sftkSeedFindDupes(sess, obj, keyField) {
+  if (!keyField) return { unknown: 'no match key — duplicates cannot be identified' };
+  try {
+    const r = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
+      query: `SELECT ${keyField} k, COUNT(Id) c FROM ${obj} GROUP BY ${keyField} HAVING COUNT(Id) > 1 LIMIT 200` });
+    if (r?.error) return { unknown: r.error };
+    const rows = (r.records || []).map(x => ({ key: x.k, count: x.c })).filter(x => x.key != null);
+    return { rows, extra: rows.reduce((n, x) => n + (x.count - 1), 0) };
+  } catch (e) { return { unknown: e?.message || String(e) }; }
+}
+
+// The pre-flight for a no-wipe seed. Resolves true to proceed.
+function sftkSeedDupeGate(risky) {
+  if (!risky.length) return Promise.resolve(true);
+  return new Promise(resolve => {
+    showModal(`
+      <div class="ds-modal-header">⚠ These objects would DUPLICATE</div>
+      <div class="ds-modal-body" style="font-size:12.5px">
+        <div>Seeding without deleting only avoids duplicates when the engine can match existing records. These objects have <strong>no match key</strong>, so every source row is inserted — on top of what the target already holds:</div>
+        <div style="margin-top:6px;max-height:180px;overflow:auto">
+          ${risky.map(r => `<div style="margin:2px 0"><code>${esc(r.obj)}</code> → ${r.holders.map(h => `${esc(orgLabel(h.url))} <strong>already holds ${Number(h.count).toLocaleString()}</strong>`).join(' · ')}</div>`).join('')}
+        </div>
+        <div class="ds-pk-note" style="margin-top:8px">Fixes, cheapest first: add an <strong>External ID</strong> field on the object (the engine then upserts instead of inserting) · configure Matching in a saved deployment for it · or use <strong>Reset &amp; Seed</strong> to wipe first. You can also proceed and review the duplicate list this run will produce.</div>
+      </div>
+      <div class="ds-modal-footer">
+        <button class="ds-btn" data-dsaction="closeModal" id="dsSeedDupeCancel">Cancel</button>
+        <button class="ds-btn" id="dsSeedDupeGo">Seed anyway — show me the duplicates after</button>
+      </div>`);
+    eid('dsSeedDupeCancel')?.addEventListener('click', () => resolve(false));
+    eid('dsSeedDupeGo')?.addEventListener('click', () => { closeModal(); resolve(true); });
+  });
+}
+
+// The after-the-fact proof: every duplicate key the run left behind.
+function sftkSeedDupeReport(found) {
+  const body = found.map(f => `
+    <div style="margin:10px 0 3px"><strong>${esc(f.obj)}</strong> in ${esc(orgLabel(f.target))}
+      <span class="ds-oc-sub">— matched on <code>${esc(f.key || '—')}</code></span></div>
+    ${f.unknown
+      ? `<div class="ds-oc-sub">could not be checked: ${esc(f.unknown)}</div>`
+      : `<div class="ds-oc-sub">${f.rows.length} duplicated key value(s) · ${f.extra} extra record(s)</div>
+         <div style="max-height:150px;overflow:auto;font-family:Consolas,monospace;font-size:11.5px;margin-top:3px">
+           ${f.rows.slice(0, 100).map(r => `<div>${esc(String(r.key))} <span class="ds-oc-sub">×${r.count}</span></div>`).join('')}
+           ${f.rows.length > 100 ? `<div class="ds-oc-sub">…and ${f.rows.length - 100} more key(s)</div>` : ''}
+         </div>`}`).join('');
+  showModal(`
+    <div class="ds-modal-header">🔎 Duplicates in the target${found.length > 1 ? 's' : ''}</div>
+    <div class="ds-modal-body" style="font-size:12.5px;max-height:60vh;overflow:auto">
+      <div class="ds-pk-note">These key values appear more than once in the target. Each row shows the value and how many records carry it.</div>
+      ${body}
+      <div class="ds-pk-note" style="margin-top:10px">To clean them up: open ⚖ Reconcile for the object and target (the ⚖ button on its row), where "In target only" lists the extras record by record and you choose what to delete.</div>
+    </div>
+    <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Close</button></div>`);
 }
 
 // ⚖ — the door from the bulldozer to the scalpel (user 2026-08-20: "we
@@ -811,6 +882,26 @@ async function sftkSeedRun(what, objs, targets) {
     // An object that simply doesn't exist in a target is a SKIP, not an
     // error — Salesforce answers with a raw HTTP 400 that reads like a bug.
     const notPresent = e => /is not supported|INVALID_TYPE|no such column|does not exist/i.test(String(e || ''));
+
+    // Seeding WITHOUT deleting: warn before writing when an object has no
+    // match key and the target already holds rows — that combination is
+    // what produces duplicates.
+    if (what.seed && !what.wipe) {
+      const risky = [];
+      for (const o of order) {
+        if (sftkSeedMatchKeyFor(o, targets[0])) continue;
+        const row = (_seedRows || []).find(r => r.name === o);
+        const holders = targets
+          .map(t => ({ url: t, count: (row && row.tgtCounts && row.tgtCounts[t]) || 0 }))
+          .filter(h => h.count > 0);
+        if (holders.length) risky.push({ obj: o, holders });
+      }
+      if (risky.length && !(await sftkSeedDupeGate(risky))) {
+        line('✋', 'cancelled before anything was written');
+        return;
+      }
+    }
+    const dupeFindings = [];
     if (cycle.length) line('⚠', `Reference cycle between ${cycle.join(', ')} — seeding them in listed order; some lookups may need a second Seed pass to connect.`);
 
     for (const t of targets) {
@@ -921,6 +1012,16 @@ async function sftkSeedRun(what, objs, targets) {
             if (cell) cell.textContent = now == null ? '?' : Number(now).toLocaleString();
           }
           if (what.wipe && !what.seed && now) leftovers.push(`${o} (${now})`);
+          // Did this seed leave duplicates behind? Ask the TARGET, not our
+          // own bookkeeping — an aggregate over the match key is the only
+          // answer that can't be wrong.
+          if (what.seed && now) {
+            const key = sftkSeedMatchKeyFor(o, t);
+            const d = await sftkSeedFindDupes(tgtSess, o, key);
+            if (d && ((d.rows && d.rows.length) || d.unknown)) {
+              dupeFindings.push({ obj: o, target: t, key, ...d });
+            }
+          }
         }
         if (leftovers.length) {
           line('ℹ', `${orgLabel(t)}: ${leftovers.length} object(s) still hold rows Salesforce refused to delete — ${leftovers.slice(0, 6).join(', ')}${leftovers.length > 6 ? '…' : ''}. Standard records (the standard Pricebook), records linked to portal users, and rows locked by approvals cannot be deleted by any tool.`);
@@ -929,6 +1030,26 @@ async function sftkSeedRun(what, objs, targets) {
       } finally {
         try { _seedPort?.disconnect(); } catch (_) {}
         _seedPort = null;
+      }
+    }
+    // The duplicate verdict — stated even when it is "none", because
+    // "did this duplicate anything?" is the question a no-wipe seed always
+    // raises and silence is not an answer.
+    if (what.seed) {
+      const real = dupeFindings.filter(f => f.rows && f.rows.length);
+      const unknown = dupeFindings.filter(f => f.unknown);
+      if (real.length) {
+        const extra = real.reduce((n, f) => n + (f.extra || 0), 0);
+        line('⚠', `${extra} duplicate record(s) across ${real.length} object/target pair(s) — see the list.`);
+        const btn = document.createElement('button');
+        btn.className = 'ds-btn ds-btn-xs';
+        btn.textContent = `🔎 View ${extra} duplicate(s)`;
+        btn.addEventListener('click', () => sftkSeedDupeReport(dupeFindings));
+        runlog.appendChild(btn);
+      } else if (unknown.length) {
+        line('ℹ', `Duplicate check could not run for ${unknown.length} object(s) — ${esc(unknown[0].unknown)}. Their duplicate state is UNKNOWN, not clean.`);
+      } else {
+        line('✔', 'No duplicate key values in any target — every seeded record matched or was new.');
       }
     }
     { const fill = panel.querySelector('#dsSeedBarFill'); const txt = panel.querySelector('#dsSeedBarText');
