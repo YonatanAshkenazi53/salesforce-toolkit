@@ -37,10 +37,42 @@ function sftkXmlNode(name, value, depth) {
   return `${pad}<${name}>${sftkXmlEscape(value)}</${name}>\n`;
 }
 
+// Salesforce accepts "62.0" and REJECTS "62" for a flow's apiVersion. The
+// Tooling API hands the value back as a NUMBER, so a plain serialize emits
+// the rejected form and the deploy fails with a message that does not
+// mention the version at all. Field Cleaner learned this the hard way and
+// special-cased it locally; it belongs here, where every caller gets it.
+// Returns null for anything unreadable rather than a wrong guess.
+function sftkFlowApiVersionStr(v) {
+  const m = String(v == null ? '' : v).match(/(\d+(?:\.\d+)?)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n.toFixed(1) : null;
+}
+
+// A COPY of a flow's Tooling metadata with its apiVersion changed. Pure:
+// the caller's object is never mutated, so a failed deploy leaves nothing
+// half-edited. Returns { meta, from, to } or { error }.
+function sftkFlowSetApiVersion(meta, target) {
+  const to = sftkFlowApiVersionStr(target);
+  if (!to) return { error: `“${target}” is not a version Salesforce would accept` };
+  if (!meta || typeof meta !== 'object') return { error: 'no flow metadata to change' };
+  const from = sftkFlowApiVersionStr(meta.apiVersion);
+  return { meta: { ...meta, apiVersion: to }, from, to };
+}
+
 // Full .flow document from a Tooling Flow.Metadata JSON object.
 function sftkFlowToXml(meta) {
   const body = Object.keys(meta || {}).sort()
-    .map(k => sftkXmlNode(k, meta[k], 1)).join('');
+    .map(k => {
+      // apiVersion is the one key whose SHAPE matters to Salesforce, not
+      // just its value — "62" is rejected where "62.0" is accepted.
+      if (k === 'apiVersion') {
+        const v = sftkFlowApiVersionStr(meta[k]);
+        return v == null ? '' : `    <apiVersion>${v}</apiVersion>\n`;
+      }
+      return sftkXmlNode(k, meta[k], 1);
+    }).join('');
   return `<?xml version="1.0" encoding="UTF-8"?>\n`
     + `<Flow xmlns="http://soap.sforce.com/2006/04/metadata">\n`
     + body
@@ -62,5 +94,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkXmlEscape = sftkXmlEscape;
   globalThis.sftkXmlNode = sftkXmlNode;
   globalThis.sftkFlowToXml = sftkFlowToXml;
+  globalThis.sftkFlowApiVersionStr = sftkFlowApiVersionStr;
+  globalThis.sftkFlowSetApiVersion = sftkFlowSetApiVersion;
   globalThis.sftkFlowPackageXml = sftkFlowPackageXml;
 }

@@ -1971,6 +1971,7 @@ html, body {
 
 .ds-transfer-footer {
   display: flex;
+  flex-wrap: wrap;            /* the Run button used to hang outside the card */
   gap: 10px;
   align-items: center;
   border-top: 1px solid var(--border-light);
@@ -2482,6 +2483,52 @@ html, body {
   border-top: 1px dashed var(--border);
   margin-top: 2px;
 }
+/* ── Field-value compare v2 (ds-dc-*) — fresh namespace so no stale
+   ds-drift-compare-* rule can bleed in (the ds-lkp collision lesson).
+   Differences first, matching folded, values in mono, push footer. */
+.ds-dc { border: 1px solid var(--border, #dddbda); border-radius: 8px; overflow: hidden; font-size: 12px; background: var(--bg, #fff); }
+.ds-dc-hdr { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--bg-alt, #f7f8fa); border-bottom: 1px solid var(--border, #dddbda); }
+.ds-dc-pill { font-weight: 700; font-size: 11.5px; padding: 2px 9px; border-radius: 999px; }
+.ds-dc-pill-diff { background: rgba(217, 119, 6, .14); color: #b45309; }
+.ds-dc-pill-ok { background: rgba(46, 132, 74, .14); color: #2e844a; }
+.ds-dc-sub { color: var(--subtext, #706e6b); font-size: 11px; }
+.ds-dc-legend { margin-left: auto; color: var(--subtext, #706e6b); font-size: 10.5px; letter-spacing: .02em; text-transform: uppercase; }
+.ds-dc-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border-light, #f0f0f0); }
+.ds-dc-row:last-child { border-bottom: 0; }
+.ds-dc-row:hover { background: var(--bg-hover, rgba(0, 0, 0, .025)); }
+.ds-dc-diff { background: rgba(217, 119, 6, .05); border-left: 3px solid #f59e0b; padding-left: 7px; }
+.ds-dc-diff:hover { background: rgba(217, 119, 6, .09); }
+.ds-dc-cb, .ds-dc-cb-slot { flex: 0 0 16px; width: 16px; text-align: center; color: var(--subtext, #706e6b); }
+.ds-dc-cb { cursor: pointer; accent-color: #0b5cab; }
+.ds-dc-field { flex: 1 1 38%; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ds-dc-fname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-dc-rename { font-weight: 400; color: var(--subtext, #706e6b); }
+.ds-dc-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.ds-dc-tag { font-size: 10px; padding: 0 5px; border-radius: 3px; border: 1px solid var(--border, #dddbda); color: var(--subtext, #706e6b); background: var(--bg-alt, #f7f8fa); cursor: help; }
+.ds-dc-tag-lkp { color: #0b5cab; border-color: #b8d4f1; background: rgba(11, 92, 171, .07); }
+.ds-dc-tag-warn { color: #b45309; border-color: #f6d3a6; background: rgba(217, 119, 6, .08); }
+.ds-dc-tag-phantom { color: #4338ca; border-color: #c7d2fe; background: #eef2ff; }
+.ds-dc-tag-subtle { color: #b45309; }
+.ds-dc-tag-mute { opacity: .75; }
+.ds-dc-vals { flex: 1 1 58%; display: flex; align-items: center; gap: 8px; min-width: 0; justify-content: flex-end; }
+.ds-dc-v { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 11.5px; padding: 2px 7px; border-radius: 4px; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-dc-v-src { background: rgba(11, 92, 171, .07); }
+.ds-dc-v-tgt { background: rgba(0, 0, 0, .05); }
+.ds-dc-diff .ds-dc-v-tgt { background: rgba(217, 119, 6, .12); }
+.ds-dc-empty { font-size: 10px; font-style: italic; color: var(--subtext, #706e6b); border: 1px dashed var(--border, #dddbda); border-radius: 4px; padding: 1px 6px; }
+.ds-dc-arrow { color: var(--subtext, #706e6b); font-size: 11px; flex: 0 0 auto; }
+.ds-dc-diff .ds-dc-arrow { color: #b45309; font-weight: 700; }
+.ds-dc-types { font-size: 10px; color: var(--subtext, #706e6b); white-space: nowrap; }
+.ds-dc-fold { border-top: 1px solid var(--border, #dddbda); }
+.ds-dc-fold > summary { padding: 6px 10px; font-size: 11px; color: var(--subtext, #706e6b); cursor: pointer; user-select: none; background: var(--bg-alt, #f7f8fa); }
+.ds-dc-fold > summary:hover { color: var(--text, #181818); }
+.ds-dc-foot { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-top: 1px solid var(--border, #dddbda); background: var(--bg-alt, #f7f8fa); }
+.ds-dc-count { font-size: 11px; color: var(--subtext, #706e6b); margin-right: auto; }
+.sftk-dark .ds-dc { background: var(--bg, #1b1b1f); }
+.sftk-dark .ds-dc-v-tgt { background: rgba(255, 255, 255, .07); }
+.sftk-dark .ds-dc-row:hover { background: rgba(255, 255, 255, .04); }
+.sftk-dark .ds-dc-diff { background: rgba(217, 119, 6, .09); }
+
 .ds-drift-compare-loading { font-size: 11px; color: var(--subtext); padding: 8px; font-style: italic; }
 .ds-drift-compare-err     { font-size: 11px; color: #b45309; background: rgba(234, 88, 12, 0.08); padding: 8px 10px; border-radius: 4px; border-left: 3px solid #ea580c; }
 /* Scan-time "which fields differed" fallback shown when the live fetch can't run */
@@ -6061,3 +6108,169 @@ body.ds-pro {
 .ds-lkpo-suggest { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; margin-bottom: 6px; }
 .ds-lkp-junction { color: #7c3aed; background: rgba(139, 92, 246, 0.1); border-color: rgba(139, 92, 246, 0.35); margin-left: 6px; }
 .ds-dark .ds-lkp-junction { color: #c4b5fd; }
+
+
+/* ── Reconcile header cards (2026-09-15 UI pass) — same facts, less prose ── */
+.ds-rec-card { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px; border: 1px solid var(--border); border-left: 3px solid var(--brand); border-radius: 8px; background: var(--surface); margin-bottom: 10px; max-width: 960px; font-size: 12.5px; line-height: 1.45; color: var(--text); }
+.ds-rec-card-warn { border-left-color: var(--warning); }
+.ds-rec-card-bad  { border-left-color: var(--danger); }
+.ds-rec-card-tight { flex-direction: row; gap: 8px; align-items: flex-start; padding: 8px 12px; color: var(--subtext); font-size: 12px; }
+.ds-rec-card-hd { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.ds-rec-card-ico { font-size: 15px; line-height: 1; }
+.ds-rec-card-title { font-weight: 700; font-size: 13px; }
+.ds-rec-card-hint { font-size: 11px; color: var(--subtext); margin-left: auto; }
+.ds-rec-card-line { font-size: 12px; color: var(--subtext); }
+.ds-rec-card-line b { color: var(--text); }
+.ds-rec-card-body { display: flex; flex-direction: column; }
+.ds-rec-stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.ds-rec-stat { display: inline-flex; gap: 5px; align-items: baseline; padding: 3px 10px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface2); font-size: 12px; }
+.ds-rec-stat b { font-variant-numeric: tabular-nums; }
+.ds-rec-stat-sub { font-size: 10.5px; color: var(--subtext); }
+.ds-rec-stat-ins { border-color: var(--danger); }
+.ds-rec-stat-chg { border-color: var(--warning); background: var(--warning-bg); }
+.ds-rec-stat-ext { border-color: var(--brand); background: var(--brand-bg); }
+.ds-rec-stat-kid { border-style: dashed; }
+.ds-rec-dups { margin-top: 2px; font-size: 12px; }
+.ds-rec-dups summary { cursor: pointer; font-weight: 600; color: var(--c-warn-fg); }
+.ds-rec-dup-rows { margin: 6px 0 2px 14px; display: flex; flex-direction: column; gap: 3px; }
+.ds-rec-dup-row { font-size: 12px; }
+.ds-rec-dup-note { margin-top: 6px; font-size: 11.5px; color: var(--subtext); }
+.ds-rec-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 8px 14px; border: 1px dashed var(--border); border-radius: 8px; margin-bottom: 10px; font-size: 12px; color: var(--subtext); max-width: 960px; }
+.ds-rec-legend-dir { color: var(--text); font-size: 12.5px; }
+.ds-rec-legend-item b { color: var(--text); }
+
+
+/* ── Field compare in a wide modal (2026-09-16: "too small" inside the column) ── */
+.ds-modal-box:has(.ds-dc-modal-body) { max-width: 1100px; width: min(1100px, 94vw); }
+.ds-dc-modal-sub { font-weight: 400; font-size: 12px; color: var(--subtext); margin-left: 8px; }
+.ds-dc-modal-close { margin-left: auto; }
+.ds-dc-modal-body { padding: 0 12px 12px; }
+.ds-dc-modal-body .ds-dc-v { max-width: 46%; white-space: normal; word-break: break-word; }
+
+/* Run page footer (2026-09-18): nothing in it breaks across lines */
+.ds-transfer-footer .ds-btn, .ds-transfer-footer .ds-transfer-option-label { white-space: nowrap; }
+.ds-transfer-footer #dsTrRunBtn { margin-left: auto; }
+
+/* Child bucket grids (2026-09-18): the root grid is viewport-bounded so huge
+   lists scroll inside; a child section stacks TWO grids, so the same bound
+   cost two screens even when every bucket said "none". Children size to
+   their content, capped, and still scroll inside. */
+.ds-rec-cols.ds-rec-cols-child { height: auto; align-items: start; margin: 10px 0; }
+.ds-rec-cols-child .ds-rec-col { max-height: clamp(220px, 52vh, 480px); }
+.ds-rec-cols-hide { display: none; }
+.ds-rec-card-good { border-left-color: var(--success); }
+
+/* ── Deploy view (beta, 2026-09-19) — one page beside Run Transfer + Reconcile ── */
+.ds-dep-beta { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 1px 7px; border-radius: 999px; background: var(--warning-bg); color: var(--c-warn-fg); vertical-align: middle; }
+.ds-dep-stat-same { border-color: var(--success); }
+.ds-rec-stat[data-dep-tab] { cursor: pointer; }
+.ds-rec-stat[data-dep-tab]:hover { border-color: var(--brand); }
+.ds-dep-tblwrap { overflow-x: auto; }
+.ds-dep-plan { border-collapse: collapse; width: 100%; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.ds-dep-plan th { text-align: left; font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--subtext); font-weight: 600; padding: 5px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.ds-dep-plan td { padding: 7px 8px; border-bottom: 1px solid var(--border-light); vertical-align: middle; }
+.ds-dep-plan tr:last-child td { border-bottom: 0; }
+.ds-dep-num { text-align: right !important; white-space: nowrap; }
+td.ds-dep-num[data-dep-tab] { cursor: pointer; }
+td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underline; }
+.ds-dep-muted { color: var(--subtext); }
+.ds-dep-objlink { background: none; border: 0; font: inherit; font-weight: 600; color: var(--text); cursor: pointer; padding: 0; }
+.ds-dep-objlink:hover { color: var(--brand); text-decoration: underline; }
+.ds-dep-sub { display: block; font-size: 11px; color: var(--subtext); }
+.ds-dep-rec { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); margin-bottom: 12px; max-width: 1200px; }
+.ds-dep-objsw { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--border); background: var(--surface2); border-radius: 8px 8px 0 0; }
+.ds-dep-lbl { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--subtext); font-weight: 600; margin-right: 4px; }
+.ds-dep-objbtn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 4px 11px; font: inherit; font-weight: 600; cursor: pointer; }
+.ds-dep-objbtn small { font-weight: 400; color: var(--subtext); font-size: 11px; margin-left: 4px; }
+.ds-dep-objbtn[aria-pressed="true"] { border-color: var(--brand); background: var(--brand-bg); color: var(--brand-dark); }
+.ds-dep-tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
+.ds-dep-tabs button { border: 0; background: transparent; color: var(--subtext); padding: 8px 14px; font: inherit; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.ds-dep-tabs button[aria-selected="true"] { color: var(--brand); border-bottom-color: var(--brand); }
+.ds-dep-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border-light); font-size: 12.5px; color: var(--subtext); }
+.ds-dep-filter { border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; font: inherit; font-size: 13px; background: var(--surface); color: var(--text); min-width: 220px; }
+.ds-dep-sp { margin-left: auto; }
+.ds-dep-list { max-height: clamp(260px, 56vh, 620px); overflow: auto; scrollbar-width: thin; }
+.ds-dep-row { display: grid; grid-template-columns: auto minmax(0, 1.1fr) minmax(0, 1.4fr) auto; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border-light); font-size: 13px; }
+.ds-dep-row:last-child { border-bottom: 0; }
+.ds-dep-row:hover { background: var(--surface2); }
+.ds-dep-key { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-dep-mid { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; font-size: 12px; color: var(--subtext); }
+.ds-dep-tail { display: inline-flex; gap: 10px; align-items: center; white-space: nowrap; font-size: 12px; }
+.ds-dep-open a { color: var(--subtext); }
+.ds-dep-link { background: none; border: 0; padding: 0; font: inherit; font-size: 12px; color: var(--brand); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.ds-dep-link.ds-lkp-on { font-weight: 700; }
+.ds-dep-empty { padding: 18px 12px; color: var(--subtext); font-size: 13px; }
+.ds-dep-note { padding: 7px 12px; font-size: 12px; color: var(--subtext); border-bottom: 1px solid var(--border-light); }
+.ds-dep-actionbar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); position: sticky; bottom: 0; max-width: 1200px; box-shadow: var(--shadow); }
+.ds-dep-summary { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 320px; font-size: 12.5px; }
+.ds-dep-delmode { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--subtext); }
+.ds-dep-foot { font-size: 11.5px; color: var(--subtext); margin: 8px 2px 12px; max-width: 1200px; }
+@media (max-width: 900px) { .ds-dep-row { grid-template-columns: auto 1fr; } .ds-dep-mid, .ds-dep-tail { grid-column: 2; } }
+
+/* Deploy view polish (2026-09-19, first live look): one column with one width;
+   the Deploy bar sits UNDER a list that is bounded to the viewport instead of
+   floating over it; totals are coloured in the table, not repeated as chips. */
+.ds-dep-page { max-width: none; display: flex; flex-direction: column; gap: 12px; }   /* same width as the view header above it */
+.ds-dep-page > .ds-rec-card, .ds-dep-page > .ds-dep-rec, .ds-dep-page > .ds-dep-actionbar, .ds-dep-page > .ds-dep-foot { max-width: none; margin: 0; }
+.ds-dep-page > #dsRecParentGaps:empty, .ds-dep-page > #dsRecProgress:empty { display: none; }
+.ds-dep-page > #dsRecParentGaps > .ds-rec-card { max-width: none; margin: 0; }
+.ds-dep-actionbar { position: static; box-shadow: none; }
+.ds-dep-list { max-height: clamp(220px, calc(100vh - 360px), 640px); }
+.ds-dep-plan td.ds-dep-n-ins  { color: var(--c-critical-fg, var(--danger)); font-weight: 700; }
+.ds-dep-plan td.ds-dep-n-chg  { color: var(--c-warn-fg, var(--warning)); font-weight: 700; }
+.ds-dep-plan td.ds-dep-n-ext  { color: var(--brand); font-weight: 700; }
+.ds-dep-plan td.ds-dep-n-link { color: var(--brand); font-weight: 700; }
+.ds-dep-plan td.ds-dep-n-same { color: var(--c-good-fg, var(--success)); font-weight: 600; }
+.ds-dep-plan tr.ds-dep-total td { border-top: 1px solid var(--border); border-bottom: 0; font-weight: 700; color: var(--subtext); }
+.ds-dep-plan th { cursor: help; }
+
+/* Deploy view — ⛓ Start with parents first (2026-09-21) */
+.ds-dep-page > #dsDepOrder:empty { display: none; }
+.ds-dep-page > #dsDepOrder > .ds-rec-card { max-width: none; margin: 0; }
+.ds-dep-ordwhat { min-width: 0; }
+
+/* duplicate names: the fixes, in order (2026-09-21) */
+.ds-rec-dup-fix { margin-top: 8px; font-size: 12px; color: var(--text); }
+.ds-rec-dup-fix ol { margin: 4px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 5px; color: var(--subtext); }
+.ds-rec-dup-fix ol b { color: var(--text); }
+.ds-dep-engine { display: inline-flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+
+/* Deploy view — parents verdict at first sight (2026-09-21) */
+.ds-dep-pchip { font-size: 11.5px; font-weight: 600; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+.ds-dep-pchip-ok   { color: var(--c-good-fg, var(--success)); border-color: var(--success); }
+.ds-dep-pchip-bad  { color: var(--c-critical-fg, var(--danger)); border-color: var(--danger); }
+.ds-dep-pchip-wait { color: var(--subtext); }
+.ds-dep-journey { border-left-color: var(--brand); }
+
+/* Deploy view — 🌳 the deployment as a tree (2026-09-21) */
+.ds-dep-page > #dsDepTree:empty { display: none; }
+.ds-dep-page > #dsDepTree > .ds-rec-card { max-width: none; margin: 0; }
+.ds-tree { overflow-x: auto; padding: 4px 2px 8px; }
+.ds-tree ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; position: relative; }
+.ds-tree > ul > li { padding-left: 0; }
+.ds-tree li { display: flex; align-items: center; position: relative; padding: 6px 0 6px 30px; }
+.ds-tree > ul > li::before, .ds-tree > ul > li::after { display: none; }
+.ds-tree li::before { content: ''; position: absolute; left: 0; top: 50%; width: 30px; border-top: 1.5px solid var(--border); }
+.ds-tree li::after { content: ''; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1.5px solid var(--border); }
+.ds-tree li:first-child::after { top: 50%; }
+.ds-tree li:last-child::after { bottom: 50%; }
+.ds-tree li:only-child::after { display: none; }
+.ds-tree li > ul { margin-left: 30px; }
+.ds-tree li > ul::before { content: ''; position: absolute; left: -30px; top: 50%; width: 30px; border-top: 1.5px solid var(--border); }
+.ds-tree-node { flex: 0 0 auto; min-width: 210px; max-width: 300px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface2); padding: 8px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.ds-tree-node:hover, .ds-tree-node:focus-visible { border-color: var(--brand); outline: none; }
+.ds-tree-node-on { border-color: var(--brand); background: var(--brand-bg); }
+.ds-tree-name { font-weight: 700; font-size: 13.5px; color: var(--text); }
+.ds-tree-role { font-weight: 400; font-size: 11px; color: var(--subtext); margin-left: 4px; }
+.ds-tree-line { color: var(--subtext); }
+.ds-tree-line b { color: var(--text); }
+.ds-tree-id { font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+.ds-tree-id-ok { border-color: var(--success); color: var(--c-good-fg, var(--success)); }
+.ds-tree-id-no { border-color: var(--warning); color: var(--c-warn-fg, var(--warning)); }
+.ds-tree-work { color: var(--c-critical-fg, var(--danger)); }
+.ds-tree-sync { color: var(--c-good-fg, var(--success)); font-weight: 600; }
+.ds-tree-needs { font-size: 11px; color: var(--subtext); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.ds-tree-need { border: 1px dashed var(--border); border-radius: 6px; padding: 0 5px; }
+.ds-tree-need-bad { border-color: var(--danger); color: var(--c-critical-fg, var(--danger)); }
+.ds-tree-need-off { opacity: .55; }
+.ds-tree-foot { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }

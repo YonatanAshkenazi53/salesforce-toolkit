@@ -1,0 +1,46 @@
+{
+  "records": [
+    {
+      "attributes": { "type": "Account", "referenceId": "AlphaRef" },
+      "Name": "SFTK Rollback Fixture - Alpha",
+      "Industry": "Technology",
+      "Phone": "+972-3-000-0001",
+      "Website": "https://alpha.sftk.test",
+      "Description": "sftk-rollback-fixture | SOURCE value. Exists in the target too, with different Industry/Phone (drift) - the Reconcile overwrite + rollback test.",
+      "Contacts": {
+        "records": [
+          { "attributes": { "type": "Contact", "referenceId": "AlphaC1" }, "FirstName": "Alpha", "LastName": "One (SFTK fixture)", "Email": "alpha.one@sftk.test", "Title": "sftk-rollback-fixture" },
+          { "attributes": { "type": "Contact", "referenceId": "AlphaC2" }, "FirstName": "Alpha", "LastName": "Two (SFTK fixture)", "Email": "alpha.two@sftk.test", "Title": "sftk-rollback-fixture" }
+        ]
+      }
+    },
+    {
+      "attributes": { "type": "Account", "referenceId": "BetaRef" },
+      "Name": "SFTK Rollback Fixture - Beta",
+      "Industry": "Education",
+      "Phone": "+972-3-000-0002",
+      "Website": "https://beta.sftk.test",
+      "Description": "sftk-rollback-fixture | SOURCE value. Not in the target - the insert + rollback (delete) test.",
+      "Contacts": {
+        "records": [
+          { "attributes": { "type": "Contact", "referenceId": "BetaC1" }, "FirstName": "Beta", "LastName": "One (SFTK fixture)", "Email": "beta.one@sftk.test", "Title": "sftk-rollback-fixture" },
+          { "attributes": { "type": "Contact", "referenceId": "BetaC2" }, "FirstName": "Beta", "LastName": "Two (SFTK fixture)", "Email": "beta.two@sftk.test", "Title": "sftk-rollback-fixture" }
+        ]
+      }
+    },
+    {
+      "attributes": { "type": "Account", "referenceId": "GammaRef" },
+      "Name": "SFTK Rollback Fixture - Gamma",
+      "Industry": "Manufacturing",
+      "Phone": "+972-3-000-0003",
+      "Website": "https://gamma.sftk.test",
+      "Description": "sftk-rollback-fixture | SOURCE value. Not in the target - the insert + rollback (delete) test; a child is added under it AFTER the run to prove the parent is KEPT.",
+      "Contacts": {
+        "records": [
+          { "attributes": { "type": "Contact", "referenceId": "GammaC1" }, "FirstName": "Gamma", "LastName": "One (SFTK fixture)", "Email": "gamma.one@sftk.test", "Title": "sftk-rollback-fixture" },
+          { "attributes": { "type": "Contact", "referenceId": "GammaC2" }, "FirstName": "Gamma", "LastName": "Two (SFTK fixture)", "Email": "gamma.two@sftk.test", "Title": "sftk-rollback-fixture" }
+        ]
+      }
+    }
+  ]
+}

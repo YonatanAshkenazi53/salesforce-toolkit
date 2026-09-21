@@ -1,0 +1,702 @@
+'use strict';
+// ════════════════════════════════════════════════════════════════════════
+// DEPLOY VIEW (BETA) — one page instead of "Run Transfer" + "⚖ Reconcile"
+// ════════════════════════════════════════════════════════════════════════
+// User 2026-09-19: "Can you implement it with the option for us to go back to
+// the current view?" — so this page sits BESIDE the classic pages, behind a
+// switch (Data Deployment → ✨ New Deploy view), and replaces nothing.
+//
+// THE RULE OF THIS FILE: it is a PRESENTATION. It owns no engine, no scan and
+// no selection state of its own:
+//   • the scan        → p.lastScan / scan.children[pathKey]   (runDiffScan, scanReconcileChild)
+//   • the selection   → _recSel / _recChildSel                (the Sets ⚖ Reconcile uses)
+//   • the run         → runReconcile(p, objType, buckets)     (unchanged)
+//   • the compare     → sftkOpenDriftCompare, renderLkpOverridePanel
+//   • the advisor     → sftkRecParentGapAdvisor               (paints #dsRecParentGaps)
+// A record ticked here is written by exactly the code the classic page runs.
+// Design + parity checklist: docs/deploy-merge-parity.md, docs/mockups/deploy-merged.html.
+
+// ── the switch ────────────────────────────────────────────────────────────
+function sftkDeployViewOn() {
+  return !!(typeof _settings === 'object' && _settings && _settings.deployViewBeta === true);
+}
+async function sftkDeployViewSet(on) {
+  _settings.deployViewBeta = !!on;
+  await storageSaveSettings();
+}
+
+// ── PURE helpers (tested in test/deploy-view-0919.test.mjs) ───────────────
+// Every object in the deployment, root first, with its tree path.
+function sftkDeployObjects(tree) {
+  const out = [];
+  (function walk(node, path, depth, parentObj) {
+    if (!node) return;
+    const obj = node.objectType || node.childSObject || '?';
+    out.push({ pathKey: path.join('.'), obj, depth, parentObj: parentObj || null, field: node.field || null });
+    (node.children || []).forEach((c, i) => walk(c, [...path, i], depth + 1, obj));
+  })(tree, [], 0, null);
+  return out;
+}
+
+// Is this child scan usable for the CURRENT root scan? Same three conditions
+// the classic page checks: it succeeded, it belongs to this root scan, and it
+// is for this object (a tree edit can put another object on the same path).
+function sftkDeployChildFresh(scan, pathKey, obj) {
+  const cs = scan && scan.children ? scan.children[pathKey] : null;
+  return !!(cs && cs.status === 'success' && cs.rootRunAt === scan.runAt && cs.objectType === obj);
+}
+
+// The scan to read for one object: the root scan itself, or its fresh child
+// scan; null when that object has no usable scan yet.
+function sftkDeployScanFor(scan, o) {
+  if (!scan || !o) return null;
+  if (o.depth === 0) return scan;
+  return sftkDeployChildFresh(scan, o.pathKey, o.obj) ? scan.children[o.pathKey] : null;
+}
+
+// Today's Reconcile vocabulary, colours and order (user 2026-09-18).
+const SFTK_DEPLOY_TABS = [
+  { k: 'ins',  bucket: 'missingInTarget', label: '🔴 Insert',         noun: 'to insert',      childOnly: false },
+  { k: 'chg',  bucket: 'changed',         label: '🟡 Changed',        noun: 'changed',        childOnly: false },
+  { k: 'ext',  bucket: 'onlyInTarget',    label: '🔵 In target only', noun: 'in target only', childOnly: false },
+  { k: 'link', bucket: 'linkMismatch',    label: '⇄ Link differs',    noun: 'point at a different parent', childOnly: true },
+  { k: 'same', bucket: 'identical',       label: '🟢 Synced',         noun: 'synced',         childOnly: false },
+];
+
+// One plan row per object. `info(scanLike, bucket)` is sftkScanBucketInfo —
+// the measured TOTAL even when the stored list is capped; `label(...)` is
+// sftkBucketCountLabel. Both injected so this stays pure.
+function sftkDeployPlanRows(tree, scan, info, label) {
+  return sftkDeployObjects(tree).map(o => {
+    const s = sftkDeployScanFor(scan, o);
+    const row = { ...o, scanned: !!s, src: null, tgt: null, cells: {} };
+    if (!s) return row;
+    row.src = s.fetched && Number.isFinite(s.fetched.src) ? s.fetched.src : null;
+    row.tgt = s.fetched && Number.isFinite(s.fetched.tgt) ? s.fetched.tgt : null;
+    for (const t of SFTK_DEPLOY_TABS) {
+      if (t.childOnly && o.depth === 0) continue;
+      const i = info(s, t.bucket);
+      const n = i.total != null ? i.total : i.shown;
+      row.cells[t.k] = { n, shown: i.shown, capped: !!i.capped, text: label(i.shown, i.total, i.capped, i.totalIsFloor) };
+    }
+    return row;
+  });
+}
+
+// What is selected, in words and as one number — from the SAME Sets the
+// classic page fills. objByPath: { pathKey → object name }.
+function sftkDeploySelection(recSel, recChildSel, rootObj, objByPath) {
+  const parts = [];
+  let total = 0;
+  const add = (n, txt) => { if (n) { parts.push(`${n.toLocaleString()} ${txt}`); total += n; } };
+  const r = recSel || {};
+  const size = s => (s && typeof s.size === 'number') ? s.size : 0;
+  add(size(r.push),      `${rootObj} to insert`);
+  add(size(r.overwrite), `${rootObj} to update (source wins)`);
+  add(size(r.updSrc),    `${rootObj} to update in the SOURCE (target wins)`);
+  add(size(r.pull),      `${rootObj} to pull into the source`);
+  add(size(r.del),       `${rootObj} to delete`);
+  for (const [k, s] of Object.entries(recChildSel || {})) {
+    const o = (objByPath && objByPath[k]) || 'child';
+    add(size(s && s.push),      `${o} to insert`);
+    add(size(s && s.relink),    `${o} to relink`);
+    add(size(s && s.overwrite), `${o} to update`);
+    add(size(s && s.del),       `${o} to delete`);
+  }
+  return { parts, total };
+}
+
+// PURE. The deployment as a nested tree (root → children → grandchildren).
+function sftkDeployTreeNodes(tree) {
+  return (function walk(node, path, depth) {
+    if (!node) return null;
+    return { pathKey: path.join('.'), obj: node.objectType || node.childSObject || '?', depth, field: node.field || null,
+      children: (node.children || []).map((c, i) => walk(c, [...path, i], depth + 1)).filter(Boolean) };
+  })(tree, [], 0);
+}
+
+// ── page state (presentation only) ────────────────────────────────────────
+let _depObjPath = '';      // which object the records panel shows ('' = root)
+let _depTab     = 'ins';
+let _depFilter  = '';
+let _depForProfile = null;
+const SFTK_DEPLOY_WINDOW = 300;   // rows painted per tab; the count is the truth
+
+function _depChildSel(pathKey) {
+  if (!_recChildSel[pathKey]) _recChildSel[pathKey] = { push: new Set(), relink: new Set(), overwrite: new Set(), del: new Set() };
+  return _recChildSel[pathKey];
+}
+
+// ── entry points ──────────────────────────────────────────────────────────
+// Classic page → this page (the ✨ button in the Reconcile header).
+window.sftkOpenDeployView = function () {
+  if (!_reconcileProfile) return;
+  _currentView = 'deploy';
+  renderReconcile();            // the seam at the top of renderReconcile routes here
+};
+// This page → classic Reconcile, for this visit only (the switch stays on).
+window.sftkDeployToClassic = function () {
+  _currentView = 'reconcile';
+  renderReconcile();
+};
+
+// ▶ on a deployment card opens THIS page while the switch is on — it is the
+// merged page. With the switch off, ▶ is exactly what it was.
+(function () {
+  const classicRun = window.runProfile;
+  window.sftkClassicRunProfile = classicRun;
+  window.runProfile = function (profileId, targetUrl) {
+    if (sftkDeployViewOn() && typeof window.openReconcile === 'function') return window.openReconcile(profileId, targetUrl);
+    return typeof classicRun === 'function' ? classicRun.apply(this, arguments) : undefined;
+  };
+})();
+
+// ── the page ──────────────────────────────────────────────────────────────
+async function renderDeploy() {
+  const p = _reconcileProfile;
+  if (!p) { _currentView = 'profiles'; renderProfiles(); return; }
+  sftkRecResetSelectionFor(p);
+  if (_depForProfile !== p.id) { _depForProfile = p.id; _depObjPath = ''; _depTab = 'ins'; _depFilter = ''; }
+
+  const objType = p.tree?.objectType || p.tree?.childSObject || '?';
+  const scan = p.lastScan;
+  const fresh = sftkRecScanFresh(p);
+  const srcL = orgLabel(p.sourceOrg || ''), tgtL = orgLabel(p.targetOrg || '');
+
+  // A parents-first step was opened FROM another deployment — the way back is
+  // to that deployment, not to the list (user 2026-09-21).
+  const origin = p._parentOf?.profileId ? _profiles.find(x => x.id === p._parentOf.profileId) : null;
+  const header = dsViewHeader({
+    icon: 'swap',
+    back: origin
+      ? `<button class="ds-back-link" id="dsDepBackOrigin" title="Return to the deployment this parents-first step was opened from">‹ Back to ${esc(origin.name || p._parentOf.objType)}</button>`
+      : `<button class="ds-back-link" id="dsDepBack" title="Back to Data Deployment">‹ Back to deployments</button>`,
+    title: `Deploy — <span style="color:var(--brand)">${esc(p.name || objType)}</span> <span class="ds-dep-beta" title="New view, in beta. The classic pages are one click away and nothing about them changed.">beta</span>`,
+    help: 'One page instead of Run Transfer + Reconcile. It reads both orgs, says what is already in the target, and writes only what you select — through the same engine as the classic pages. Nothing is selected until you select it.',
+    subtitle: `${esc(srcL)} → ${esc(tgtL)} ${prodBadge(p.targetOrg)}${fresh ? ` · scanned ${esc(timeAgo(scan.runAt))}` : ''}${fresh ? ' · <span id="dsDepParentsChip" class="ds-dep-pchip ds-dep-pchip-wait" title="Are the objects this deployment points at aligned between the two orgs? Details in the card below.">⏳ parents…</span>' : ''}`,
+    actions: `<button class="ds-btn ds-btn-sm" data-dsaction="deployToClassic" title="Open this deployment in the classic ⚖ Reconcile page. The switch stays on — this is for this visit only.">↩ Classic view</button>
+      <button class="ds-btn ds-btn-sm" id="dsDepRefresh">🔄 Refresh state</button>`,
+  });
+
+  if (!fresh) {
+    setMain(`${header}<div class="ds-dep-page">
+      <div class="ds-rec-card ds-rec-card-warn">
+        <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">🔄</span><span class="ds-rec-card-title">${scan ? 'The last scan does not match this deployment any more' : 'Nothing has been read yet'}</span></div>
+        <div class="ds-rec-card-line">This page shows what is in <b>${esc(srcL)}</b>, what is already in <b>${esc(tgtL)}</b>, and what differs. It needs one read of both orgs first. Nothing is written.</div>
+        <div><button class="ds-btn ds-btn-primary" id="dsDepScan">🔄 Read both orgs now</button></div>
+      </div></div>`);
+    _depWireChrome(p);
+    eid('dsDepScan')?.addEventListener('click', () => _depRescan(p));
+    return;
+  }
+
+  const objects = sftkDeployObjects(p.tree);
+  const objByPath = Object.fromEntries(objects.map(o => [o.pathKey, o.obj]));
+  const plan = sftkDeployPlanRows(p.tree, scan, sftkScanBucketInfo, sftkBucketCountLabel);
+  if (!objects.some(o => o.pathKey === _depObjPath)) _depObjPath = '';
+
+  // ── plan card ──
+  const sum = k => plan.reduce((n, r) => n + ((r.cells[k] && r.cells[k].n) || 0), 0);
+  const unscanned = plan.filter(r => !r.scanned);
+  const cell = (r, k) => r.cells[k]
+    ? `<td class="ds-dep-num${r.cells[k].n ? ` ds-dep-n-${k}` : ' ds-dep-muted'}" data-dep-obj="${esc(r.pathKey)}" data-dep-tab="${k}" title="${r.cells[k].capped ? 'The stored list is truncated — this is the measured total' : 'Show these records'}">${esc(r.cells[k].text)}</td>`
+    : `<td class="ds-dep-num ds-dep-muted">${r.scanned ? '—' : ''}</td>`;
+  const planHtml = `
+    <div class="ds-rec-card">
+      <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">📋</span><span class="ds-rec-card-title">What the two orgs hold</span>
+        <span class="ds-rec-card-hint">every number opens its records · nothing is selected until you select it</span></div>
+      <div class="ds-dep-tblwrap"><table class="ds-dep-plan">
+        <thead><tr><th>Object</th><th class="ds-dep-num" title="Records read from the source for this deployment">In source</th><th class="ds-dep-num" title="Records read from the target">In target</th>
+          <th class="ds-dep-num" title="In the source only — inserted when you select them">🔴 Insert</th><th class="ds-dep-num" title="In both orgs with different values — pick a winner per row">🟡 Changed</th>
+          <th class="ds-dep-num" title="In the target only — never deleted unless you choose it">🔵 In target only</th><th class="ds-dep-num" title="Child records that exist in both orgs but point at a different parent">⇄ Link differs</th>
+          <th class="ds-dep-num" title="In both orgs with equal values — left alone">🟢 Synced</th><th></th></tr></thead>
+        <tbody>${plan.map(r => `<tr>
+          <td><button class="ds-dep-objlink" data-dep-obj="${esc(r.pathKey)}" data-dep-tab="ins" style="padding-left:${r.depth * 16}px">${r.depth ? '↳ ' : ''}${esc(r.obj)}</button>
+            <span class="ds-dep-sub">${r.depth ? `under ${esc(r.parentObj || '')}` : 'root'}</span></td>
+          <td class="ds-dep-num">${r.src == null ? '' : r.src.toLocaleString()}</td><td class="ds-dep-num">${r.tgt == null ? '' : r.tgt.toLocaleString()}</td>
+          ${cell(r, 'ins')}${cell(r, 'chg')}${cell(r, 'ext')}${r.depth ? cell(r, 'link') : '<td class="ds-dep-num ds-dep-muted"></td>'}${cell(r, 'same')}
+          <td>${r.depth ? `<button class="ds-btn ds-btn-xs" data-dep-scan="${esc(r.pathKey)}" title="${r.scanned ? 'Read this object again, under the records of the scan above' : 'This object has not been read against this target yet — its records are unknown, not zero'}">${r.scanned ? '🔎 Rescan' : '🔎 Scan'}</button>` : ''}</td>
+        </tr>`).join('')}
+        ${plan.length > 1 ? `<tr class="ds-dep-total"><td>All objects</td><td></td><td></td>${['ins', 'chg', 'ext', 'link', 'same'].map(k => `<td class="ds-dep-num${sum(k) ? ` ds-dep-n-${k}` : ' ds-dep-muted'}">${sum(k).toLocaleString()}</td>`).join('')}<td></td></tr>` : ''}</tbody></table></div>
+      ${unscanned.length ? `<div class="ds-rec-card-line">🔎 <b>${unscanned.map(r => esc(r.obj)).join(', ')}</b> not read against this target yet — unknown, not zero. Scan ${unscanned.length === 1 ? 'it' : 'them'} before calling this pair in sync.</div>` : ''}
+    </div>`;
+
+  // ── notes: the same facts the classic header shows ──
+  const notes = [];
+  const locked = u => (typeof window.sftkOrgLocked === 'function') && window.sftkOrgLocked(u);
+  const srcLocked = locked(p.sourceOrg), tgtLocked = locked(p.targetOrg);
+  if (srcLocked) notes.push(`🔒 Writes to <b>${esc(srcL)}</b> are locked — every ← control is off.`);
+  if (tgtLocked) notes.push(`🔒 Writes to <b>${esc(tgtL)}</b> are locked — ▶ Deploy will refuse anything that writes into it.`);
+  // The full sanctioned wording lives on the truncated tab itself; here, one line.
+  if (scan.bucketCapNote) notes.push(`⚠ ${esc(String(scan.bucketCapNote).replace(/^[⚠\s]+/, '').split(/\. /)[0])}. Open that tab for what it means for ▶ Deploy.`);
+  if (scan.dupKeys?.rows) notes.push(sftkRecDupsHtml(scan, p));
+  if (scan.nearMisses) notes.push(`≈ ${scan.nearMisses} record pair(s) almost matched — keys differ only by whitespace or case (marked ≈ on the rows).`);
+  if (scan.personContacts) { const l = sftkPaContactsLine(scan.personContacts, srcL, tgtL); if (l) notes.push(esc(l)); }
+  for (const w of (scan.warnings || [])) notes.push(`⚠ ${esc(String(w).replace(/^[⚠\s]+/, ''))}`);
+  const notesHtml = notes.length ? `<div class="ds-rec-card ds-rec-card-warn"><div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⚠</span><span class="ds-rec-card-title">Worth reading before you deploy</span></div>${notes.map(n => `<div class="ds-rec-card-line">${n}</div>`).join('')}</div>` : '';
+
+  // ── records panel ──
+  const cur = objects.find(o => o.pathKey === _depObjPath) || objects[0];
+  const curScan = sftkDeployScanFor(scan, cur);
+  const tabs = SFTK_DEPLOY_TABS.filter(t => !t.childOnly || cur.depth > 0);
+  if (!tabs.some(t => t.k === _depTab)) _depTab = 'ins';
+  const tabDef = tabs.find(t => t.k === _depTab);
+  const planRow = plan.find(r => r.pathKey === cur.pathKey);
+  const recordsHtml = `
+    <div class="ds-dep-rec" id="dsDepRecords">
+      <div class="ds-dep-objsw"><span class="ds-dep-lbl">Object</span>${objects.map(o => {
+        const pr = plan.find(r => r.pathKey === o.pathKey);
+        const work = pr && pr.scanned ? ['ins', 'chg', 'ext', 'link'].reduce((n, k) => n + ((pr.cells[k] && pr.cells[k].n) || 0), 0) : null;
+        return `<button class="ds-dep-objbtn" data-dep-obj="${esc(o.pathKey)}" aria-pressed="${o.pathKey === cur.pathKey}">${o.depth ? '↳ '.repeat(o.depth) : ''}${esc(o.obj)} <small>${work == null ? 'not scanned' : `${work.toLocaleString()} to act on`}</small></button>`;
+      }).join('')}</div>
+      <div class="ds-dep-tabs" role="tablist">${tabs.map(t => `<button role="tab" data-dep-tab="${t.k}" aria-selected="${t.k === _depTab}">${t.label} <b>${planRow && planRow.cells[t.k] ? esc(planRow.cells[t.k].text) : '—'}</b></button>`).join('')}</div>
+      <div id="dsDepList"></div>
+    </div>`;
+
+  setMain(`${header}<div class="ds-dep-page">
+    ${p._parentOf?.objType ? `<div class="ds-rec-card ds-dep-journey"><div class="ds-rec-card-line">⛓ Parents-first step: you opened this to align <b>${esc(objType)}</b> before deploying <b>${esc(p._parentOf.objType)}</b>. When it reads in sync — or when there is nothing to align — go back. <button class="ds-btn ds-btn-sm ds-btn-primary" id="dsDepJourneyBack">‹ Back to ${esc(origin ? (origin.name || p._parentOf.objType) : p._parentOf.objType)}</button></div></div>` : ''}
+    <div id="dsDepTree"></div>
+    ${planHtml}
+    <div id="dsDepOrder"></div>
+    ${notesHtml}
+    ${recordsHtml}
+    <div class="ds-dep-actionbar">
+      <div class="ds-dep-summary" id="dsDepSummary"></div>
+      <span class="ds-dep-engine" title="How records are written. Auto: synchronous Collections calls below the threshold, one async Bulk API 2.0 job at or above it. Saved on the deployment — the classic pages use the same setting.">
+        <label class="ds-dep-delmode">Engine
+          <select id="dsDepApiMode" class="ds-select ds-select-sm">
+            <option value="auto" ${(p.apiMode || 'auto') === 'auto' ? 'selected' : ''}>Auto — Bulk at ≥ ${(Number(p.bulkThreshold) > 0 ? Number(p.bulkThreshold) : 2000).toLocaleString()}</option>
+            <option value="sync" ${p.apiMode === 'sync' ? 'selected' : ''}>Synchronous — Collections</option>
+            <option value="bulk" ${p.apiMode === 'bulk' ? 'selected' : ''}>Async — Bulk API 2.0 job</option>
+          </select></label>
+        <label class="ds-dep-delmode" style="${p.apiMode === 'bulk' ? 'opacity:.45' : ''}" title="Records per synchronous call (1–200). Smaller batches isolate failures and duck per-transaction trigger limits. Bulk jobs ignore it.">batch size
+          <input id="dsDepBatch" class="ds-input ds-input-sm" type="number" min="1" max="200" step="1" style="width:68px;text-align:right" value="${Math.max(1, Math.min(200, Number(p.batchSize) || 200))}" ${p.apiMode === 'bulk' ? 'disabled' : ''}></label>
+        <label class="ds-dep-delmode" style="${p.apiMode === 'bulk' ? 'opacity:.45' : ''}" title="How many batches run in parallel (1–6). Faster at scale, but parallel writes can hit row locks when records share a parent — lower it if you see UNABLE_TO_LOCK_ROW. Bulk jobs ignore it.">threads
+          <input id="dsDepThreads" class="ds-input ds-input-sm" type="number" min="1" max="6" step="1" style="width:52px;text-align:right" value="${Math.max(1, Math.min(6, Number(p.threads) || 1))}" ${p.apiMode === 'bulk' ? 'disabled' : ''}></label>
+      </span>
+      <label class="ds-dep-delmode" title="How 🗑 selections are deleted">Delete mode
+        <select id="dsDepDeleteMode" class="ds-select ds-select-sm">
+          <option value="recycle" ${_recDeleteMode === 'recycle' ? 'selected' : ''}>🗑 Recycle Bin</option>
+          <option value="hard" ${_recDeleteMode === 'hard' ? 'selected' : ''}>🔥 Hard delete</option>
+        </select></label>
+      <button class="ds-btn ds-btn-lg ds-btn-primary" id="dsRecRunBtn" disabled>▶ Deploy</button>
+    </div>
+    <div class="ds-dep-foot">The real, rolled-back 🧪 dry run is the next step of this page and is not built yet.</div>
+    <div id="dsRecProgress" class="ds-rec-progress"></div></div>`);
+
+  _depWireChrome(p);
+  _depPaintList(p, scan, cur, curScan, tabDef, { srcLocked });
+  _depSummary(p, objType, objByPath);
+
+  // plan numbers, chips, object buttons and tabs all navigate the records panel
+  document.querySelectorAll('[data-dep-tab]').forEach(el => {
+    const go = () => {
+      if (el.dataset.depObj != null) _depObjPath = el.dataset.depObj;
+      _depTab = el.dataset.depTab; _depFilter = '';
+      renderDeploy().then(() => eid('dsDepRecords')?.scrollIntoView({ block: 'nearest' }));
+    };
+    el.addEventListener('click', go);
+    el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+  });
+  document.querySelectorAll('.ds-dep-objbtn').forEach(b => b.addEventListener('click', () => { _depObjPath = b.dataset.depObj; _depTab = 'ins'; _depFilter = ''; renderDeploy(); }));
+  document.querySelectorAll('[data-dep-scan]').forEach(b => b.addEventListener('click', async () => {
+    b.disabled = true; b.textContent = '⏳ reading…';
+    const res = await scanReconcileChild(p, b.dataset.depScan);
+    if (res?.error) showToast(`Child scan: ${res.error}`, 'error', 7000);
+    else _depObjPath = b.dataset.depScan;
+    renderDeploy();
+  }));
+  eid('dsDepDeleteMode')?.addEventListener('change', e => { _recDeleteMode = e.target.value; });
+  // Engine settings: the same rules and the same save as the classic page.
+  eid('dsDepApiMode')?.addEventListener('change', async e => { await sftkRecSetEngine(p, 'apiMode', e.target.value); renderDeploy(); });
+  eid('dsDepBatch')?.addEventListener('change', async e => { e.target.value = await sftkRecSetEngine(p, 'batchSize', e.target.value); });
+  eid('dsDepThreads')?.addEventListener('change', async e => { e.target.value = await sftkRecSetEngine(p, 'threads', e.target.value); });
+  sftkRecWireDupFix(document, p, scan);
+  eid('dsRecRunBtn')?.addEventListener('click', () => runReconcile(p, objType,
+    { missing: scan.missingInTarget || [], drift: scan.changed || [], extras: scan.onlyInTarget || [] }));
+  eid('dsDepJourneyBack')?.addEventListener('click', () => {
+    const orig = _profiles.find(x => x.id === p._parentOf?.profileId);
+    if (orig) window.openReconcile(orig.id);
+  });
+  // 🌳 the shape of the deployment, then ⛓ what it points at outside itself
+  _depPaintTree(p, scan);
+  _depPaintOrder(p, scan);
+}
+
+// ── 🌳 The deployment as a tree ───────────────────────────────────────────
+// User 2026-09-21: "i see data deployment also as a tool for defining cross
+// org data … the user should be presented with the trees also in visual way".
+// One node per object: how it hangs under its parent, how records are
+// recognised, whether each org can hold an identity, what is left to do, and
+// which outside objects it points at.
+let _depIdKey = '', _depIdData = null;
+window.sftkDeployIdentityChanged = function () { _depIdKey = ''; _depIdData = null; if (_currentView === 'deploy' && _reconcileProfile) _depPaintTree(_reconcileProfile, _reconcileProfile.lastScan); };
+
+async function _depPaintTree(p, scan) {
+  const host = eid('dsDepTree');
+  if (!host || !scan) return;
+  const key = `${p.id}|${sftkOrgKey(p.targetOrg || '')}`;
+  const plan = sftkDeployPlanRows(p.tree, scan, sftkScanBucketInfo, sftkBucketCountLabel);
+  const order = (_depOrderKey === `${p.id}|${scan.runAt}` && _depOrderData) ? (_depOrderData.objects || []) : [];
+  const idOf = pathKey => (_depIdKey === key && _depIdData) ? (_depIdData.objects || []).find(o => o.pathKey === pathKey) : null;
+  const idPill = (v, lbl) => v === 'yes' ? `<span class="ds-tree-id ds-tree-id-ok" title="${esc(lbl)} has the identity field">🪪 ${esc(lbl)} ✓</span>`
+    : v === 'no' ? `<span class="ds-tree-id ds-tree-id-no" title="${esc(lbl)} has no visible identity field on this object">🪪 ${esc(lbl)} ✗</span>`
+    : `<span class="ds-tree-id" title="not checked yet">🪪 ${esc(lbl)} …</span>`;
+  const nodeHtml = n => {
+    const pr = plan.find(r => r.pathKey === n.pathKey) || {};
+    const s = sftkDeployScanFor(scan, n);
+    const keyFields = s ? ((s.matching && s.matching.fields && s.matching.fields.length) ? s.matching.fields : [s.matchField || 'Name']) : null;
+    const work = pr.scanned ? ['ins', 'chg', 'ext', 'link'].reduce((t, k) => t + ((pr.cells[k] && pr.cells[k].n) || 0), 0) : null;
+    const id = idOf(n.pathKey);
+    const needs = (order.find(o => o.pathKey === n.pathKey) || {}).parents || [];
+    return `<li><div class="ds-tree-node${n.pathKey === _depObjPath ? ' ds-tree-node-on' : ''}" data-tree-obj="${esc(n.pathKey)}" role="button" tabindex="0" title="Show this object's records below">
+        <div class="ds-tree-name">${esc(n.obj)} <span class="ds-tree-role">${n.depth ? `via ${esc(n.field || '?')}` : 'root'}</span></div>
+        <div class="ds-tree-line">${keyFields ? `recognised by <b>${esc(keyFields.join(' + '))}</b>` : '<span class="ds-dep-muted">not scanned yet</span>'}</div>
+        <div class="ds-tree-line">${idPill(id ? id.src : null, 'source')} ${idPill(id ? id.tgt : null, 'target')}</div>
+        <div class="ds-tree-line">${work == null ? '<span class="ds-dep-muted">unknown — scan it</span>' : work ? `<b class="ds-tree-work">${work.toLocaleString()} to act on</b>` : '<span class="ds-tree-sync">✓ in sync</span>'}</div>
+        ${needs.length ? `<div class="ds-tree-needs" title="Objects outside this deployment that these records point at">points at ${needs.map(g => `<span class="ds-tree-need${g.srcCount === 0 ? ' ds-tree-need-off' : g.empty ? ' ds-tree-need-bad' : ''}">${esc(g.refObj)}</span>`).join(' ')}</div>` : ''}
+      </div>${n.children.length ? `<ul>${n.children.map(nodeHtml).join('')}</ul>` : ''}</li>`;
+  };
+  const root = sftkDeployTreeNodes(p.tree);
+  const missingTgt = (_depIdKey === key && _depIdData) ? sftkIdCreatable(_depIdData.objects, 'tgt') : [];
+  host.innerHTML = `<div class="ds-rec-card">
+    <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">🌳</span><span class="ds-rec-card-title">This deployment</span>
+      <span class="ds-rec-card-hint">the shape of the data you are defining across ${esc(orgLabel(p.sourceOrg || ''))} and ${esc(orgLabel(p.targetOrg || ''))} — click an object to see its records</span></div>
+    <div class="ds-tree"><ul>${root ? nodeHtml(root) : ''}</ul></div>
+    <div class="ds-tree-foot"><button class="ds-btn ds-btn-sm" id="dsDepIdBtn" title="See which objects carry the identity field in each org, create it where it is missing, and stamp matched pairs">🪪 Identity…</button>
+      ${missingTgt.length ? `<span class="ds-rec-card-line">${missingTgt.length} object(s) cannot be recognised exactly in ${esc(orgLabel(p.targetOrg || ''))} yet — <b>${esc(missingTgt.join(', '))}</b> ${missingTgt.length === 1 ? 'has' : 'have'} no identity field. The Toolkit can create it.</span>` : ''}</div>
+  </div>`;
+  host.querySelectorAll('[data-tree-obj]').forEach(el => {
+    const go = () => { _depObjPath = el.dataset.treeObj; _depTab = 'ins'; _depFilter = ''; renderDeploy().then(() => eid('dsDepRecords')?.scrollIntoView({ block: 'nearest' })); };
+    el.addEventListener('click', go);
+    el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+  });
+  eid('dsDepIdBtn')?.addEventListener('click', () => sftkOpenIdentityModal(p, scan));
+  if (_depIdKey !== key) {
+    _depIdKey = key; _depIdData = null;
+    let data = null;
+    try { data = await sftkIdStatusFor(p); } catch (_) { data = null; }
+    if (_depIdKey !== key) return;
+    _depIdData = data || { objects: [] };
+    if (_currentView === 'deploy' && _reconcileProfile === p && eid('dsDepTree')) _depPaintTree(p, scan);
+  }
+}
+
+// ── ⛓ Start with parents first ───────────────────────────────────────────
+// User 2026-09-21: "where is the start with parents first. of both root and
+// its childs?" The classic advisor speaks only when the ROOT has inserts, and
+// only about the ROOT's lookups. This card is always there and covers every
+// object. The data comes from studio-reconcile.js (sftkParentOrderFor); this
+// function only draws it and feeds the same run gate.
+let _depOrderKey = '', _depOrderData = null;
+const _depOrderChecked = new Set();
+// A parent object is checked for alignment ON LOAD when that is cheap: up to
+// this many source records (the scan's own list cap). Above it the page asks.
+const SFTK_DEPLOY_AUTOCHECK_MAX = 5000;
+
+// PURE. The one-glance verdict for the card title and the page header.
+function sftkDeployParentsVerdict(steps) {
+  const s = steps || [];
+  if (!s.length) return { cls: 'ok', text: '✓ no outside parents' };
+  const n = k => s.filter(x => x.state === k).length;
+  const bad = n('empty') + n('behind'), checking = n('checking'), ask = n('large') + n('unknown');
+  if (bad) return { cls: 'bad', text: `⚠ ${bad} of ${s.length} parent object(s) not aligned` };
+  if (checking) return { cls: 'wait', text: `⏳ checking ${checking} of ${s.length} parent object(s)…` };
+  if (ask) return { cls: 'wait', text: `? ${ask} of ${s.length} parent object(s) not checked yet` };
+  return { cls: 'ok', text: `✓ all ${s.length} parent object(s) aligned` };
+}
+
+// PURE. One numbered step per OUTSIDE object, in first-seen order, naming every
+// object.field of the deployment that needs it.
+function sftkDeployOrderSteps(objects) {
+  const byRef = new Map();
+  for (const o of (objects || [])) for (const g of (o.parents || [])) {
+    if (!byRef.has(g.refObj)) byRef.set(g.refObj, { refObj: g.refObj, empty: !!g.empty, required: false, neededBy: [], forObj: o.obj,
+      srcCount: (g.srcCount === undefined ? null : g.srcCount) });
+    const s = byRef.get(g.refObj);
+    s.neededBy.push({ obj: o.obj, field: g.field, required: !!g.required });
+    if (g.required) s.required = true;
+  }
+  return [...byRef.values()];
+}
+
+async function _depPaintOrder(p, scan) {
+  const host = eid('dsDepOrder');
+  if (!host) return;
+  const key = `${p.id}|${scan.runAt}`;
+  const tgtL = orgLabel(p.targetOrg || '');
+  if (_depOrderKey !== key || !_depOrderData) {
+    host.innerHTML = `<div class="ds-rec-card"><div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span><span class="ds-rec-card-title">Start with parents first</span>
+      <span class="ds-rec-card-hint">⏳ reading what each object points at — one describe per object, one 1-row probe per parent object</span></div></div>`;
+    _depOrderKey = key; _depOrderData = null;
+    let data = null;
+    try { data = await sftkParentOrderFor(p); } catch (_) { data = null; }
+    if (_depOrderKey !== key) return;          // a newer scan took over while we were reading
+    _depOrderData = data || { offline: false, objects: [], failed: true };
+  }
+  const h = eid('dsDepOrder');
+  if (!h) return;                               // the user left the page
+  if (eid('dsDepTree') && !eid('dsDepTree').dataset.needs) { eid('dsDepTree').dataset.needs = '1'; _depPaintTree(p, scan); }
+  const data = _depOrderData;
+  const objects = data.objects || [];
+  const chain = sftkDeployObjects(p.tree).map(o => esc(o.obj)).join(' → ');
+  if (data.offline || data.failed) {
+    h.innerHTML = `<div class="ds-rec-card ds-rec-card-warn"><div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span><span class="ds-rec-card-title">Start with parents first</span></div>
+      <div class="ds-rec-card-line">${data.offline ? 'Both orgs must be open and signed in to check which parent objects these records point at.' : 'Could not read the objects’ lookups — 🔄 Refresh state to try again.'} Until then the order is unknown, not fine.</div></div>`;
+    return;
+  }
+  const steps = sftkDeployOrderSteps(objects).map(s => {
+    const vd = _parentSyncVerdicts[sftkParentSyncKey(p.sourceOrg, p.targetOrg, s.refObj)];
+    let state = sftkParentStepState(s, vd);
+    // Checked on load when it is cheap; a big object waits for a click.
+    if (state === 'unknown' && !_depOrderChecked.has(`${key}|${s.refObj}`)) {
+      state = (s.srcCount != null && s.srcCount <= SFTK_DEPLOY_AUTOCHECK_MAX) ? 'checking' : 'large';
+    }
+    return { ...s, vd, state };
+  });
+  const verdict = sftkDeployParentsVerdict(steps);
+  const chip = eid('dsDepParentsChip');
+  if (chip) { chip.textContent = verdict.text; chip.className = `ds-dep-pchip ds-dep-pchip-${verdict.cls}`; }
+  // feed the SAME run gate the classic advisor feeds (root inserts only)
+  const rootObj = objects.find(o => o.depth === 0);
+  sftkParentGapSetGate(p, scan, rootObj ? rootObj.parents : [], (scan.missingInTarget || []).length > 0);
+
+  const settled = s => s.state === 'done' || s.state === 'notneeded';
+  const nextIdx = steps.findIndex(s => !settled(s));
+  const anyDoomed = steps.some(s => s.state === 'empty' && s.required);
+  const anyEmpty = steps.some(s => s.state === 'empty');
+  const need = s => s.neededBy.map(n => `${esc(n.obj)}.${esc(n.field)}${n.required ? ' <b>(required)</b>' : ''}`).join(' · ');
+  const stepHtml = (s, i) => {
+    const isNext = i === nextIdx;
+    const btn = (label, primary) => `<button class="ds-btn ds-btn-xs${primary ? ' ds-btn-primary' : ''}" data-dep-gap="${esc(s.refObj)}" data-dep-gap-for="${esc(s.forObj)}" title="Scans ${esc(s.refObj)} across this org pair and opens it here — align it, then the banner brings you back.">${label}</button>`;
+    const status = s.state === 'notneeded' ? `<span class="ds-psync ds-psync-ok" title="${esc(orgLabel(p.sourceOrg || ''))} holds no ${esc(s.refObj)} records, so none of these records can point at one.">✓ not needed — the source has none</span>`
+      : s.state === 'large' ? `<span class="ds-lkp-hint">${s.srcCount == null ? 'size unknown' : `${s.srcCount.toLocaleString()} records`} — too large to check on its own</span> ${btn('🔍 Check now', isNext)}`
+      : s.state === 'done' ? `<span class="ds-psync ds-psync-ok">✓ in sync${s.vd ? ` · ${esc(timeAgo(s.vd.at))}` : ''}</span> ${btn('⚖ Open', false)}`
+      : s.state === 'empty' ? `<span class="ds-psync ds-psync-bad">${esc(tgtL)} has none at all${s.required ? ' — and a field above requires it' : ''}</span> ${btn(`➕ Deploy ${esc(s.refObj)} first`, true)}`
+      : s.state === 'checking' ? `<span class="ds-lkp-hint">⏳ checking alignment…</span>`
+      : s.state === 'behind' ? `<span class="ds-psync ds-psync-bad">🔴 ${s.vd.missing} missing · 🟡 ${s.vd.changed} changed · ${esc(timeAgo(s.vd.at))}</span> ${btn('⚖ Open & fix', isNext)}`
+      : `<span class="ds-lkp-hint">couldn't check automatically</span> ${btn('🔍 Compare & fix', false)}`;
+    return `<div class="ds-ordstep${settled(s) ? ' ds-ordstep-done' : ''}${isNext ? ' ds-ordstep-next' : ''}">
+      <span class="ds-ordstep-num">${i + 1}</span>
+      <span class="ds-dep-ordwhat"><strong>${esc(s.refObj)}</strong> <span class="ds-lkp-hint">needed by ${need(s)}</span></span>
+      ${status}${isNext ? '<span class="ds-ordstep-arrow">← next</span>' : ''}
+    </div>`;
+  };
+  const allDone = nextIdx === -1;
+  h.innerHTML = `<div class="ds-rec-card ${anyDoomed ? 'ds-rec-card-bad' : anyEmpty ? 'ds-rec-card-warn' : allDone ? 'ds-rec-card-good' : ''}">
+    <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span>
+      <span class="ds-rec-card-title">${anyDoomed ? '⛔ Stop — some inserts here fail until their parents exist · ' : ''}Start with parents first</span>
+      <span class="ds-dep-pchip ds-dep-pchip-${verdict.cls}">${esc(verdict.text)}</span>
+      <span class="ds-rec-card-hint">every object in this deployment, and what it points at outside it — those records must be in ${esc(tgtL)} first, lookups land on them by name</span></div>
+    <div class="ds-rec-card-body">
+      ${steps.length ? steps.map(stepHtml).join('') : `<div class="ds-ordstep ds-ordstep-done"><span class="ds-ordstep-num">✓</span><span class="ds-dep-ordwhat">None of ${chain} points at an object outside this deployment — there is nothing to deploy first.</span></div>`}
+      <div class="ds-ordstep${allDone ? ' ds-ordstep-next' : ''}">
+        <span class="ds-ordstep-num">${steps.length + 1}</span>
+        <span class="ds-dep-ordwhat"><strong>${chain}</strong> <span class="ds-lkp-hint">— this deployment, in this order: a parent object goes in before the object under it</span></span>
+        ${allDone ? '<span class="ds-psync ds-psync-ok">parents ready ✓</span><span class="ds-ordstep-arrow">← next</span>' : '<span class="ds-lkp-hint">waits for the steps above</span>'}
+      </div>
+    </div></div>`;
+  h.querySelectorAll('[data-dep-gap]').forEach(b => b.addEventListener('click', async () => {
+    const label = b.textContent; b.disabled = true; b.textContent = '⏳ scanning…';
+    if (!(await sftkOpenParentsFirst(p, b.dataset.depGap, b.dataset.depGapFor))) { b.disabled = false; b.textContent = label; }
+  }));
+  // background alignment check, one attempt per parent per scan, then repaint
+  const toCheck = steps.filter(s => s.state === 'checking');
+  if (toCheck.length) {
+    (async () => {
+      for (const s of toCheck) { _depOrderChecked.add(`${key}|${s.refObj}`); await sftkParentVerifyOne(p, s.refObj); }
+      if (_depOrderKey === key && _currentView === 'deploy' && _reconcileProfile === p) _depPaintOrder(p, scan);
+    })();
+  }
+}
+
+function _depWireChrome(p) {
+  eid('dsDepBack')?.addEventListener('click', () => { _currentView = 'profiles'; renderProfiles(); });
+  eid('dsDepBackOrigin')?.addEventListener('click', () => {
+    const orig = _profiles.find(x => x.id === p._parentOf?.profileId);
+    if (orig) window.openReconcile(orig.id); else { _currentView = 'profiles'; renderProfiles(); }
+  });
+  eid('dsDepRefresh')?.addEventListener('click', () => _depRescan(p));
+}
+
+async function _depRescan(p) {
+  const b = eid('dsDepRefresh') || eid('dsDepScan');
+  if (b) { b.disabled = true; b.textContent = '⏳ reading both orgs…'; }
+  // same reset the classic 🔄 does: a new scan invalidates every selection
+  _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
+  _recChildSel = {};
+  await window.refreshProfileState?.(p.id);
+  if (_currentView === 'deploy') renderDeploy();
+}
+
+// ── one bucket of one object ──────────────────────────────────────────────
+function _depPaintList(p, scan, cur, s, tabDef, opts) {
+  const host = eid('dsDepList');
+  if (!host) return;
+  if (!s) {
+    host.innerHTML = `<div class="ds-dep-empty">${esc(cur.obj)} has not been read against ${esc(orgLabel(p.targetOrg))} yet, so its records are unknown — not zero.
+      <div style="margin-top:8px"><button class="ds-btn ds-btn-sm ds-btn-primary" data-dep-scan-here="${esc(cur.pathKey)}">🔎 Scan ${esc(cur.obj)}</button></div></div>`;
+    host.querySelector('[data-dep-scan-here]')?.addEventListener('click', async e => {
+      e.target.disabled = true; e.target.textContent = '⏳ reading…';
+      const res = await scanReconcileChild(p, cur.pathKey);
+      if (res?.error) showToast(`Child scan: ${res.error}`, 'error', 7000);
+      renderDeploy();
+    });
+    return;
+  }
+  const isRoot = cur.depth === 0;
+  const node = isRoot ? p.tree : getNodeByPath(p.tree, cur.pathKey);
+  // The profile a row's helpers read: the deployment itself, or a VIEW of it
+  // rooted at the child node (not a clone — a 🔗 pick lands on the real node).
+  const prof = isRoot ? p : { ...p, tree: node, lastScan: s };
+  const sel = isRoot ? null : _depChildSel(cur.pathKey);
+  const all = s[tabDef.bucket] || [];
+  const info = sftkScanBucketInfo(s, tabDef.bucket);
+  const key = r => (typeof sftkMatchKeyLabel === 'function') ? sftkMatchKeyLabel(r.matchKey) : String(r.matchKey ?? '');
+  const q = _depFilter.trim().toLowerCase();
+  const rows = q ? all.filter(r => key(r).toLowerCase().includes(q) || String(r.parentKeySrc || '').toLowerCase().includes(q)) : all;
+  const shown = rows.slice(0, SFTK_DEPLOY_WINDOW);
+  const recUrl = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
+
+  // child Insert rows: the SAME parent rule the classic page applies
+  let pMissing = new Set(), pExists = new Set();
+  if (!isRoot) {
+    const parentKey = cur.depth > 1 ? cur.pathKey.split('.').slice(0, -1).join('.') : null;
+    const ps = parentKey === null ? scan : (scan.children?.[parentKey] || {});
+    pMissing = new Set((ps.missingInTarget || []).map(r => r.sourceId));
+    pExists  = new Set([...(ps.changed || []).map(r => r.sourceId), ...(ps.identical || []).map(r => r.sourceId)]);
+  }
+  const relinkBlocked = !isRoot && !!(s.linkMasterDetail && s.linkUpdateable === false);
+  const lkpN = id => Object.keys(sftkLkpOvGet(node, p.targetOrg, id)).length;
+  const lkpBtn = (id, tgtId) => id ? `<button class="ds-dep-link${lkpN(id) ? ' ds-lkp-on' : ''}" data-rec-lkp="${esc(id)}" data-dep-lkp="1"${tgtId ? ` data-rec-lkp-tgt="${esc(tgtId)}"` : ''} title="Hand-pick which TARGET record each lookup field should point at for THIS record — saved per target org, beats name matching in the run.">🔗 lookups<span class="ds-lkp-count">${lkpN(id) ? ` ${lkpN(id)}` : ''}</span></button>` : '';
+  const srcLockTip = `🔒 Writes to ${orgLabel(p.sourceOrg)} are locked (Connected Orgs → Unlock writes)`;
+
+  const rowHtml = r => {
+    const k = esc(key(r));
+    const near = r.nearMiss ? `<span class="ds-rec-pnote ds-rec-pnote-missing" title="A record on the other side has the same key except for ${esc(r.nearMiss.reason || 'spacing/case')} — acting on it as-is would duplicate or delete the wrong thing.">≈ near match</span>` : '';
+    const links = `${r.sourceId ? `<a href="${recUrl(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener">src ↗</a>` : ''}${r.sourceId && r.targetId ? ' · ' : ''}${r.targetId ? `<a href="${recUrl(p.targetOrg, r.targetId)}" target="_blank" rel="noopener">tgt ↗</a>` : ''}`;
+    let ctl = '', extra = '', tail = '';
+    if (tabDef.k === 'ins') {
+      const st = isRoot ? 'ok' : sftkRecChildRowState(r, cur.depth, pMissing, pExists);
+      const blocked = st === 'deepblock' || st === 'untracked';
+      const on = isRoot ? _recSel.push.has(r.sourceId) : sel.push.has(r.sourceId);
+      ctl = `<input type="checkbox" data-dep-push="${esc(r.sourceId)}" ${on && !blocked ? 'checked' : ''} ${blocked ? 'disabled' : ''} aria-label="insert ${k}">`;
+      if (!isRoot) extra = st === 'missing' ? `<span class="ds-rec-pnote ds-rec-pnote-missing" title="Its parent is missing in the target too — selecting this row also inserts the parent, automatically, at run time.">parent ${esc(r.parentKeySrc || '')} ✗ missing — comes along</span>`
+        : st === 'exists' ? `<span class="ds-rec-pnote ds-rec-pnote-ok" title="Its parent already exists in the target — this record attaches to it at insert.">parent ${esc(r.parentKeySrc || '')} ✓ exists</span>`
+        : st === 'deepblock' ? `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="Its parent is missing in the target too, and inserting both in one run is not supported at this depth — insert the parent level first, then rescan.">parent missing — insert the parent level first</span>`
+        : st === 'untracked' ? `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="Its parent is outside the scan above (scope or a duplicate key) — it cannot be attached safely.">parent untracked</span>`
+        : `<span class="ds-rec-pnote ds-rec-pnote-none">no parent</span>`;
+      tail = lkpBtn(r.sourceId, null);
+    } else if (tabDef.k === 'chg') {
+      const push = isRoot ? _recSel.overwrite.has(r.sourceId) : sel.overwrite.has(r.sourceId);
+      const pull = isRoot && _recSel.updSrc.has(r.sourceId);
+      ctl = `<span class="ds-rec-extra-actions">
+        <button class="ds-rec-extra-btn ${push ? 'ds-rec-extra-on-push' : ''}" data-dep-dir="overwrite" data-dep-id="${esc(r.sourceId)}" title="Update the TARGET record with the source's values">→</button>
+        ${isRoot ? `<button class="ds-rec-extra-btn ${pull ? 'ds-rec-extra-on-pull' : ''}" data-dep-dir="updSrc" data-dep-id="${esc(r.sourceId)}" ${opts.srcLocked ? 'disabled' : ''} title="${opts.srcLocked ? esc(srcLockTip) : 'Update the SOURCE record with the target\'s values'}">←</button>` : ''}</span>`;
+      extra = (r.fields || []).length ? `<span class="ds-rec-drift-why" title="Differs on: ${esc(r.fields.join(', '))}">${esc(r.fields.slice(0, 3).join(', '))}${r.fields.length > 3 ? ` +${r.fields.length - 3}` : ''}</span>` : '';
+      tail = `<button class="ds-dep-link" data-dep-fields="${esc(r.sourceId)}|${esc(r.targetId)}" title="The whole record, both orgs side by side — tick fields to update on the target">▸ record</button> ${lkpBtn(r.sourceId, r.targetId)}`;
+    } else if (tabDef.k === 'ext') {
+      const del = isRoot ? _recSel.del.has(r.targetId) : sel.del.has(r.targetId);
+      const pull = isRoot && _recSel.pull.has(r.targetId);
+      ctl = `<span class="ds-rec-extra-actions">
+        <button class="ds-rec-extra-btn ${del ? 'ds-rec-extra-on-del' : ''}" data-dep-ext="del" data-dep-id="${esc(r.targetId)}" title="Delete this record from the target org">🗑</button>
+        ${isRoot ? `<button class="ds-rec-extra-btn ${pull ? 'ds-rec-extra-on-pull' : ''}" data-dep-ext="pull" data-dep-id="${esc(r.targetId)}" ${opts.srcLocked ? 'disabled' : ''} title="${opts.srcLocked ? esc(srcLockTip) : 'Pull this record into the source org'}">← Pull</button>` : ''}</span>`;
+      extra = r.orphan ? `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="Its link field is empty in the target — possibly left by a partial run. Left out of ‘select all’; ⇄ Relink can re-attach it instead.">⚠ orphan</span>` : '';
+    } else if (tabDef.k === 'link') {
+      const on = !relinkBlocked && sel.relink.has(r.targetId);
+      ctl = `<button class="ds-rec-extra-btn ${on ? 'ds-rec-extra-on-push' : ''}" data-dep-relink="${esc(r.targetId)}" ${relinkBlocked ? 'disabled title="Master-detail and not reparentable — Salesforce blocks changing it after insert"' : 'title="Point this target record at the parent the source says it belongs to"'}>⇄ Relink</button>`;
+      extra = `<span class="ds-rec-link-detail" title="currently → should be">${esc(r.parentKeyTgt || '∅')} → ${esc(r.parentKeySrc || '∅')}</span>`;
+      tail = `<button class="ds-dep-link" data-dep-fields="${esc(r.sourceId)}|${esc(r.targetId)}">▸ record</button>`;
+    } else {
+      extra = r.personAccount ? '<span class="ds-rec-pnote" title="The Contact behind a Person Account — Salesforce creates and owns it.">👤 person account</span>' : '';
+      // Synced = the COMPARED fields are equal. ▸ compare reads both records
+      // live and shows every compared field side by side (user 2026-09-21).
+      tail = `<button class="ds-dep-link" data-dep-fields="${esc(r.sourceId)}|${esc(r.targetId)}" title="Reads this record live from both orgs and shows every compared field side by side — what is equal, and anything that changed since the scan">▸ compare</button>`;
+    }
+    return `<div class="ds-dep-row">${ctl || '<span></span>'}<span class="ds-dep-key" title="${k}">${k}</span><span class="ds-dep-mid">${near}${extra}</span><span class="ds-dep-tail">${tail} <span class="ds-dep-open">${links}</span></span></div>`;
+  };
+
+  const bulk = tabDef.k === 'ins' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all">✓ All listed</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
+    : tabDef.k === 'chg' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all">→ all listed</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
+    : tabDef.k === 'ext' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all">🗑 all listed${!isRoot ? ' (no orphans)' : ''}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
+    : tabDef.k === 'link' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" ${relinkBlocked ? 'disabled' : ''}>⇄ all listed</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>` : '';
+  host.innerHTML = `
+    <div class="ds-dep-tools">
+      <input type="search" id="dsDepFilter" class="ds-dep-filter" placeholder="🔍 filter by name${isRoot ? '' : ' or parent'}…" value="${esc(_depFilter)}" aria-label="Filter records">
+      <span>${esc(sftkBucketCountLabel(info.shown, info.total, info.capped, info.totalIsFloor))} ${esc(cur.obj)} ${esc(tabDef.noun)}</span>
+      <span class="ds-dep-sp"></span>${bulk}
+    </div>
+    ${info.capped ? `<div class="ds-dep-note">⚠ This list is truncated — ${tabDef.k === 'same'
+      ? `${info.shown.toLocaleString()} of the synced records are listed; the rest exist and are in sync, they were just not loaded into this result.`
+      : `only the ${info.shown.toLocaleString()} listed record(s) exist in this result, so “all listed” means those, not every record. Run what is listed, 🔄 Refresh state, and repeat — or narrow the deployment.`}</div>` : ''}
+    ${!isRoot && s.personContacts ? `<div class="ds-dep-note">${esc(sftkPaContactsLine(s.personContacts, orgLabel(p.sourceOrg), orgLabel(p.targetOrg)))}</div>` : ''}
+    <div class="ds-dep-list">${shown.length ? shown.map(rowHtml).join('') : `<div class="ds-dep-empty">${q ? 'No record matches that filter.' : `Nothing ${esc(tabDef.noun)}.`}</div>`}</div>
+    ${rows.length > shown.length ? `<div class="ds-dep-note">Showing ${shown.length.toLocaleString()} of ${rows.length.toLocaleString()} — the count is the truth, the list is a window. Filter to find a record.</div>` : ''}`;
+
+  // ── wiring: every control writes into the classic Sets ──
+  const repaint = () => { _depPaintList(p, scan, cur, s, tabDef, opts); _depSummary(p, p.tree?.objectType || p.tree?.childSObject || '?', null); };
+  const fEl = eid('dsDepFilter');
+  fEl?.addEventListener('input', () => { _depFilter = fEl.value; const pos = fEl.selectionStart; repaint(); const n = eid('dsDepFilter'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (_) {} } });
+  const selectable = r => isRoot || (() => { const st = sftkRecChildRowState(r, cur.depth, pMissing, pExists); return st !== 'deepblock' && st !== 'untracked'; })();
+  host.querySelectorAll('[data-dep-push]').forEach(cb => cb.addEventListener('change', () => {
+    const set = isRoot ? _recSel.push : sel.push;
+    if (cb.checked) set.add(cb.dataset.depPush); else set.delete(cb.dataset.depPush);
+    _depSummary(p, null, null);
+  }));
+  host.querySelectorAll('[data-dep-dir]').forEach(b => b.addEventListener('click', () => {
+    const id = b.dataset.depId, dir = b.dataset.depDir;
+    if (isRoot) {
+      const other = dir === 'overwrite' ? 'updSrc' : 'overwrite';
+      if (_recSel[dir].has(id)) _recSel[dir].delete(id); else { _recSel[dir].add(id); _recSel[other].delete(id); }
+    } else if (sel.overwrite.has(id)) sel.overwrite.delete(id); else sel.overwrite.add(id);
+    repaint();
+  }));
+  host.querySelectorAll('[data-dep-ext]').forEach(b => b.addEventListener('click', () => {
+    const id = b.dataset.depId, act = b.dataset.depExt;
+    if (isRoot) {
+      const other = act === 'del' ? 'pull' : 'del';
+      if (_recSel[act].has(id)) _recSel[act].delete(id); else { _recSel[act].add(id); _recSel[other].delete(id); }
+    } else if (sel.del.has(id)) sel.del.delete(id); else sel.del.add(id);
+    repaint();
+  }));
+  host.querySelectorAll('[data-dep-relink]').forEach(b => b.addEventListener('click', () => {
+    const id = b.dataset.depRelink;
+    if (sel.relink.has(id)) sel.relink.delete(id); else sel.relink.add(id);
+    repaint();
+  }));
+  host.querySelectorAll('[data-dep-bulk]').forEach(b => b.addEventListener('click', () => {
+    const on = b.dataset.depBulk === 'all';
+    for (const r of shown) {
+      if (tabDef.k === 'ins') { if (!selectable(r)) continue; const set = isRoot ? _recSel.push : sel.push; on ? set.add(r.sourceId) : set.delete(r.sourceId); }
+      else if (tabDef.k === 'chg') { const set = isRoot ? _recSel.overwrite : sel.overwrite; on ? set.add(r.sourceId) : set.delete(r.sourceId); if (isRoot) _recSel.updSrc.delete(r.sourceId); }
+      else if (tabDef.k === 'ext') { if (on && r.orphan) continue; const set = isRoot ? _recSel.del : sel.del; on ? set.add(r.targetId) : set.delete(r.targetId); if (isRoot) _recSel.pull.delete(r.targetId); }
+      else if (tabDef.k === 'link') { on ? sel.relink.add(r.targetId) : sel.relink.delete(r.targetId); }
+    }
+    repaint();
+  }));
+  host.querySelectorAll('[data-dep-fields]').forEach(b => b.addEventListener('click', () => {
+    const [srcId, tgtId] = b.dataset.depFields.split('|');
+    const row = all.find(r => r.sourceId === srcId);
+    sftkOpenDriftCompare(prof, cur.obj, srcId, tgtId, s.compareFields || [], s.compareFieldsTgt || s.compareFields || [], row ? key(row) : srcId, row?.fields || []);
+  }));
+  host.querySelectorAll('[data-dep-lkp]').forEach(b => b.addEventListener('click', () => {
+    const srcId = b.dataset.recLkp;
+    const row = all.find(r => r.sourceId === srcId);
+    showModal(`<div class="ds-modal-header">🔗 Lookups · ${esc(cur.obj)} · ${esc(row ? key(row) : srcId)}
+        <span class="ds-dc-modal-sub">where each lookup lands in ${esc(orgLabel(p.targetOrg))} — pick a record to override name matching</span>
+        <button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button></div>
+      <div class="ds-modal-body ds-dc-modal-body"><div id="dsDepLkpHost" style="padding:12px 0"></div></div>`);
+    const h = eid('dsDepLkpHost');
+    if (h) renderLkpOverridePanel(prof, cur.obj, srcId, h, b.dataset.recLkpTgt || null);
+  }));
+}
+
+// ── the action bar: what ▶ Deploy will do, in words ───────────────────────
+function _depSummary(p, objTypeOrNull, objByPathOrNull) {
+  const objType = objTypeOrNull || p.tree?.objectType || p.tree?.childSObject || '?';
+  const objByPath = objByPathOrNull || Object.fromEntries(sftkDeployObjects(p.tree).map(o => [o.pathKey, o.obj]));
+  const s = sftkDeploySelection(_recSel, _recChildSel, objType, objByPath);
+  const el = eid('dsDepSummary'), run = eid('dsRecRunBtn');
+  if (el) el.innerHTML = s.total ? s.parts.map(x => `<span class="ds-diff-chip">${esc(x)}</span>`).join(' ') : '<span class="ds-dep-muted">Nothing selected — tick records above. ▶ Deploy writes only what you select.</span>';
+  if (run) { run.disabled = !s.total; run.textContent = s.total ? `▶ Deploy ${s.total.toLocaleString()} selected into ${orgLabel(p.targetOrg)}` : '▶ Deploy'; }
+}

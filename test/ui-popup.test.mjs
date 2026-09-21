@@ -482,7 +482,8 @@ describe('humanProcessType — every flow type reads as words', () => {
 
   it('the dependency map renders badges through the translator, never raw', () => {
     const DEP = read('dependency-map.js');
-    expect(DEP.match(/dep-type-badge">\$\{escHtml\(humanProcessType\(/g)?.length).toBe(2);
+    // tree node, "what uses" hit, and the 🔒 managed-flow row (2026-09-03) all go through it
+    expect(DEP.match(/dep-type-badge">\$\{escHtml\(humanProcessType\(/g)?.length).toBe(3);
     expect(DEP).not.toMatch(/dep-type-badge">\$\{escHtml\((?:f|flow)\.ProcessType/);
   });
 

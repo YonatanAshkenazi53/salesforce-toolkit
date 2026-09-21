@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Admin Toolkit test fixture for Field Cleaner: grants access to Account.SFTK_FC_Test_Status__c. Safe to delete.</description>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.SFTK_FC_Test_Status__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <hasActivationRequired>false</hasActivationRequired>
+    <label>SFTK FC Test Access</label>
+</PermissionSet>

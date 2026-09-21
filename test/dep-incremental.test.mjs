@@ -251,9 +251,12 @@ describe('depBatchApply — which failures count as COVERED', () => {
     }
   });
 
-  it('ignores a body with no Metadata rather than absorbing undefined', () => {
+  it('a body with no Metadata field is UNREAD — never absorbed as "no subflows" (2026-09-14)', () => {
+    // This pin used to say "covered" — exactly the verdict that hid a blind
+    // map for weeks when the batch endpoint stopped returning Metadata.
     const r = depBatchApply([flow('a')], [{ ...okItem(0, null), body: { Id: 'a' } }]);
-    expect(r.covered).toHaveLength(1);
+    expect(r.covered).toHaveLength(0);
+    expect(r.unread.map(f => f.Id)).toEqual(['a']);
     expect(r.metas).toEqual([]);
   });
 });
@@ -1151,7 +1154,9 @@ describe('the QA F1–F7 wiring is really in the source', () => {
   });
 
   it('F4: the re-check query carries DefinitionId, without which a merged parent could never be deactivated', () => {
-    expect(dep).toMatch(/SELECT Id,MasterLabel,Definition\.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,LastModifiedDate FROM Flow/);
+    // ApiVersion joined the select 2026-08-30 ("all flows must have api
+    // version" — the list cannot show what the scan never reads).
+    expect(dep).toMatch(/SELECT Id,MasterLabel,Definition\.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,ApiVersion,LastModifiedDate FROM Flow/);
   });
 
   it('F5: the cache-primed path surfaces the cache note (e.g. dropped blast-radius detail)', () => {
@@ -1160,5 +1165,25 @@ describe('the QA F1–F7 wiring is really in the source', () => {
 
   it('F6: the pre-delete gate distinguishes restored-from-cache from scanned-live', () => {
     expect(pop).toMatch(/restored from the stored cache/);
+  });
+});
+
+// 2026-09-14 — a 200 with no Metadata field proves nothing about what a version
+// calls: it is UNREAD, never "no subflows". (The general batch endpoint answered
+// exactly like this and the whole map went blind.)
+describe('depBatchApply — a 200 without Metadata is NOT covered', () => {
+  const chunk = [flow('a'), flow('b')];
+  it('marks the version unread and counts the missing metadata', () => {
+    const noMeta = { index: 0, method: 'GET', url: 'v62.0/tooling/sobjects/Flow/a', ok: true, status: 200, body: { Id: 'a', Status: 'Active' }, error: undefined, batchError: false };
+    const r = depBatchApply(chunk, [noMeta, okItem(1, { subflows: [] })]);
+    expect(r.covered.map(f => f.Id)).toEqual(['b']);
+    expect(r.unread.map(f => f.Id)).toEqual(['a']);
+    expect(r.noMetadata).toBe(1);
+    expect(r.metas.map(m => m.flow.Id)).toEqual(['b']);
+  });
+  it('a real (possibly empty) Metadata object still counts as read', () => {
+    const r = depBatchApply(chunk, [okItem(0, {}), okItem(1, { subflows: [] })]);
+    expect(r.covered.map(f => f.Id)).toEqual(['a', 'b']);
+    expect(r.noMetadata).toBeUndefined();
   });
 });

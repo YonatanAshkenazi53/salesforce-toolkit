@@ -6749,3 +6749,61 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
    theirs inward instead. */
 .lm-pp-search:focus-visible,
 .tk-cmd-input:focus-visible { outline-offset: -2px; }
+
+
+/* ── ⚙ API versions / ⏻ Flow switches — single-org list UI (2026-09-14) ── */
+.dep-tool-sum { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; color: var(--text); margin: 6px 0 8px; }
+.dep-tool-apply[hidden] { display: none; }
+.dep-list { border: 1px solid var(--border); border-radius: 8px; overflow-y: auto; max-height: 440px; background: var(--surface); }
+.dep-list-grp + .dep-list-grp { border-top: 1px solid var(--border); }
+.dep-list-grp-hd { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--c-surface-sunk); font-weight: 600; font-size: 12px; position: sticky; top: 0; z-index: 1; }
+.dep-list-grp-n { font-weight: 400; color: var(--subtext); font-size: 11px; }
+.dep-list-grp-acts { margin-left: auto; display: flex; gap: 4px; }
+.dep-list-grp-acts .btn-small { font-size: 10px; padding: 0 6px; line-height: 18px; }
+.dep-list-row { display: grid; grid-template-columns: 18px minmax(200px, 1fr) auto; gap: 8px; align-items: center; padding: 5px 10px; font-size: 12px; cursor: pointer; border-top: 1px solid var(--border-light); }
+.dep-list-row:hover { background: var(--brand-bg); }
+.dep-list-row-drift { background: var(--warning-bg); }
+.dep-list-name { display: flex; gap: 6px; align-items: baseline; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dep-list-name .dep-fb-open, .dep-list-name [data-open-url] { color: var(--brand); cursor: pointer; }
+.dep-list-name .dep-fb-open:hover, .dep-list-name [data-open-url]:hover { text-decoration: underline; }
+.dep-list-kind, .dep-list-api { font-size: 10.5px; color: var(--subtext); }
+.dep-list-state { display: flex; gap: 4px; align-items: center; white-space: nowrap; justify-self: end; }
+.dep-list-state [data-open-url] { cursor: pointer; }
+.dep-pill { display: inline-block; font-size: 10.5px; line-height: 16px; padding: 0 7px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface2); color: var(--subtext); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dep-pill-on, .dep-pill-ok { background: var(--c-good-bg); color: var(--active-color); border-color: var(--c-good-border); font-weight: 600; }
+.dep-pill-off { font-weight: 600; }
+.dep-pill-warn { background: var(--warning-bg); color: var(--c-warn-fg); border-color: var(--warning); font-weight: 600; }
+.dep-pill-bad { background: var(--warning-bg); color: var(--danger); border-color: var(--danger); font-weight: 600; }
+.dep-pill-api { background: var(--brand-bg); color: var(--brand); border-color: var(--c-brand-border); }
+.dep-pill-absent { opacity: .6; font-style: italic; }
+.dep-pill-hint { cursor: help; opacity: .8; }
+.dep-tool-foot { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+.dep-tool-sp { flex: 1; }
+.dep-tool-count { font-size: 11px; color: var(--subtext); }
+.dep-btn-primary { background: var(--brand); color: var(--c-text-inverse); border-color: var(--brand); }
+.dep-btn-primary:hover { background: var(--brand-dark); border-color: var(--brand-dark); color: var(--c-text-inverse); }
+.dep-btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+.dep-tool-out { margin-top: 8px; font-size: 11.5px; }
+.dep-tool-note { margin-top: 6px; font-size: 11px; color: var(--subtext); }
+
+/* ⚙ API versions (2026-09-21): rows that cannot be changed, and the bulk suggestion */
+.dep-list-row-locked { opacity: .6; cursor: not-allowed; }
+.dep-list-row-locked input { cursor: not-allowed; }
+.dep-tool-suggest { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; margin: 8px 0; padding: 10px 12px; border: 1px solid var(--border, #d9dde3); border-left: 3px solid var(--warn, #d97706); border-radius: 8px; font-size: 12.5px; }
+.dep-tool-suggest > div { flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+
+/* Field Cleaner — what an automatic flow fix would do, and the choice (2026-09-21) */
+.fc-prev { margin: 8px 0 10px; font-size: 12.5px; display: flex; flex-direction: column; gap: 6px; }
+.fc-prev-hd { font-weight: 700; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; opacity: .75; margin-top: 4px; }
+.fc-prev-sec { padding: 7px 10px; border-radius: 6px; border: 1px solid var(--border, #d9dde3); border-left-width: 3px; }
+.fc-prev-ok { border-left-color: var(--success, #2e844a); }
+.fc-prev-bad { border-left-color: var(--danger, #c23934); }
+.fc-prev-warn { border-left-color: var(--warn, #d97706); }
+.fc-prev-list { margin: 4px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.fc-prev-list code, .fc-prev-sec code { font-size: 11.5px; }
+.fc-prev-note { font-size: 11.5px; opacity: .8; margin-top: 3px; }
+.fc-prev-opt { display: flex; gap: 8px; align-items: flex-start; padding: 7px 10px; border: 1px solid var(--border, #d9dde3); border-radius: 6px; cursor: pointer; }
+.fc-prev-opt input { margin-top: 3px; }
+.fc-prev-opt em { display: block; font-style: normal; opacity: .85; font-size: 11.5px; margin-top: 2px; }
+.fc-prev-opt-off { opacity: .6; cursor: not-allowed; }
+.fc-prev-open { font-weight: 600; margin-right: 6px; }

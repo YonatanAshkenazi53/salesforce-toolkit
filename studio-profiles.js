@@ -56,7 +56,8 @@ function renderProfiles() {
       // _profiles is the exact array rendered as cards below — the count and
       // the list can never disagree.
       count: `${_profiles.length} profile${_profiles.length !== 1 ? 's' : ''}`,
-      actions: `<button class="ds-btn" id="dsImportProfile" title="Import a deployment profile from a teammate's exported .json file — config only; you'll be prompted to validate it against your own targets">${dsIcon('upload')}Import</button>
+      actions: `<button class="ds-btn${(typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) ? ' ds-btn-config--active' : ''}" id="dsDeployViewSwitch" title="${(typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) ? 'ON — ▶ and ⚖ open the new Deploy view (beta). Click to go back to the classic Run Transfer and Reconcile pages. Nothing else changes: same scan, same engine, same history.' : 'OFF — ▶ and ⚖ open the classic pages. Click to try the new Deploy view (beta): one page instead of two. You can switch back any time, here.'}">✨ New Deploy view: ${(typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) ? 'ON' : 'off'}</button>
+        <button class="ds-btn" id="dsImportProfile" title="Import a deployment profile from a teammate's exported .json file — config only; you'll be prompted to validate it against your own targets">${dsIcon('upload')}Import</button>
         <button class="ds-btn ds-btn-primary" id="dsNewProfile">${dsIcon('plus')}New Profile</button>`,
     })}
 
@@ -95,6 +96,13 @@ function renderProfiles() {
   eid('dsNewProfile')?.addEventListener('click', () => openProfileBuilder(null));
   // E1: profile file import/export — implementations live in studio-builder.js.
   eid('dsImportProfile')?.addEventListener('click', () => window.importProfileFromFile?.());
+  eid('dsDeployViewSwitch')?.addEventListener('click', async () => {
+    if (typeof sftkDeployViewSet !== 'function') return;
+    const on = !sftkDeployViewOn();
+    await sftkDeployViewSet(on);
+    showToast(on ? '✨ New Deploy view is ON — ▶ and ⚖ now open it. This button switches back.' : 'Classic pages are back — ▶ opens Run Transfer, ⚖ opens Reconcile.', 'info', 6000);
+    renderProfiles();
+  });
   document.querySelectorAll('[data-prof-export]').forEach(b =>
     b.addEventListener('click', () => window.exportProfile?.(b.dataset.profExport)));
   eid('dsNewSequence')?.addEventListener('click', () => openSequenceBuilder(null));
@@ -348,11 +356,41 @@ async function runSequence(seqId) {
 
   // Live progress: step + per-batch lines stream into the modal log.
   const seqPort = _openRunPort(_runProgressHandler(eid('dsSeqRunLog')));
+  // ✋ a cancel clicked while the restore point is being read must stop the
+  // sequence BEFORE the engine starts — the port cancel alone would be reset
+  // by the engine's own start.
+  let seqCancelled = false;
   eid('seqRunCancel')?.addEventListener('click', () => {
+    seqCancelled = true;
     try { seqPort?.postMessage({ cmd: 'cancel' }); } catch (_) {}
     const cb = eid('seqRunCancel');
     if (cb) { cb.disabled = true; cb.textContent = '⏳ cancelling…'; }
   });
+
+  // ↩ RESTORE POINT for the WHOLE sequence (studio-undo.js) — one image of
+  // every object any step can write, shared by every step's History entry:
+  // rolling back any step rolls back the sequence, and the card says so.
+  const seqRunId = genId('seq');
+  const seqUndoLog = (icon, msg, cls = '') => {
+    const el = eid('dsSeqRunLog'); if (!el) return;
+    const row = document.createElement('div');
+    row.className = `ds-prog-row ${cls}`;
+    row.textContent = `${icon} ${msg}`;
+    el.appendChild(row);
+  };
+  const seqUndoStub = await sftkUndoCaptureForRun({
+    evidenceId: seqRunId, scope: 'sequence', profileName: seq.name,
+    legs: [{ orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+      objects: sftkUndoMergeObjects(profiles.map(p => sftkUndoTreeObjects(p.tree, p.upsert?.field ? 'upsert' : 'insert'))) }],
+  }, seqUndoLog);
+  if (seqCancelled) {
+    try { seqPort?.disconnect(); } catch (_) {}
+    seqUndoLog('✋', 'Cancelled before any write — nothing was written.', 'ds-prog-warn');
+    eid('seqRunCancel')?.remove();
+    const cb0 = eid('seqRunClose');
+    if (cb0) { cb0.disabled = false; cb0.textContent = 'Close'; cb0.addEventListener('click', closeModal); }
+    return;
+  }
 
   const result = await sendBg({
     type:      'SF_EXECUTE_SEQUENCE',
@@ -370,6 +408,17 @@ async function runSequence(seqId) {
   if (result?.error) {
     if (body) body.innerHTML = `<div class="ds-prog-err">❌ ${esc(result.error)}</div>`;
     showToast('Sequence failed: ' + result.error, 'error', 6000);
+    // ↩ steps may have written before the failure — keep the restore point reachable.
+    if (seqUndoStub.status !== 'none') {
+      const seqEnd = await sftkUndoRunEnd(tgtSess.orgUrl, tgtSess.sid, seqUndoStub.objects);
+      _history.push({
+        id: genId('run'), sequenceId: seq.id, sequenceName: seq.name, profileName: `${seq.name} (sequence)`,
+        srcOrgUrl: srcSess.orgUrl, tgtOrgUrl: tgtSess.orgUrl, sourceOrg: srcSess.orgUrl, targetOrg: tgtSess.orgUrl,
+        startedAt: new Date().toISOString(), status: 'failed', summary: {}, errors: [String(result.error)],
+        undo: { ...seqUndoStub, ...seqEnd },
+      });
+      await storageSaveHistory();
+    }
     return;
   }
 
@@ -402,13 +451,16 @@ async function runSequence(seqId) {
   // with the sequence so they read as a group.
   recordActivity('transfer');
   const nowIso = new Date().toISOString();
+  // ↩ end-of-run boundary from Salesforce's own clock (studio-undo.js).
+  const seqEnd = await sftkUndoRunEnd(tgtSess.orgUrl, tgtSess.sid, seqUndoStub.objects);
   for (const step of (result.steps || [])) {
     _history.push({
       id: genId('run'), profileId: step.profileId, profileName: step.profileName,
       sequenceId: seq.id, sequenceName: seq.name,
       srcOrgUrl: srcSess.orgUrl, tgtOrgUrl: tgtSess.orgUrl,
       sourceOrg: srcSess.orgUrl, targetOrg: tgtSess.orgUrl,
-      startedAt: nowIso, status: step.status, summary: step.summary, errors: step.errors
+      startedAt: nowIso, status: step.status, summary: step.summary, errors: step.errors,
+      undo: { ...seqUndoStub, ...seqEnd }
     });
   }
   await storageSaveHistory();
@@ -434,7 +486,7 @@ function profileCard(p) {
   const sotChip = !hasOrgs || !_ringOn ? ''
     : _orgKey(p.sourceOrg) === _orgKey(_ring.sourceUrl)
       ? `<span class="ds-td-sot" title="This deployment's source IS your Sync Ring's source of truth.">👑</span>`
-      : `<span class="ds-profile-sot-diff" title="This deployment's source (${esc(orgLabel(p.sourceOrg))}) is NOT your Sync Ring's source of truth (${esc(orgLabel(_ring.sourceUrl))}). ▶ Run and 🔄 Refresh state here use the deployment's own pair; ring flows (Sync Ring, 🌳 Tree diff, 🌐 Multi-org) flow from the source of truth.">⚠ off-ring source</span>`;
+      : `<span class="ds-profile-sot-diff" title="This deployment's source (${esc(orgLabel(p.sourceOrg))}) is NOT your Sync Ring's source of truth (${esc(orgLabel(_ring.sourceUrl))}). ▶ Run and 🔄 Refresh state here use the deployment's own pair; the Sync Ring flows from the source of truth.">⚠ off-ring source</span>`;
   const orgRow  = hasOrgs
     ? `<div class="ds-profile-card-orgs">
          <span class="ds-profile-card-org">${esc(orgLabel(p.sourceOrg))}</span>${sotChip}
@@ -495,15 +547,9 @@ function profileCard(p) {
       <div class="ds-profile-card-actions">
         <button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="runProfile" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs in Edit first"'}>▶ Run</button>
-        <button class="ds-btn ds-btn-sm" data-dsaction="openTreeDiff" data-arg="${p.id}"
-          ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
-          title="The OVERVIEW: this deployment's whole record tree compared across every environment, node by node, with suggested operations. Executes nothing itself — opens ⚖ Reconcile per environment.">🌳 Tree diff</button>
-        <button class="ds-btn ds-btn-sm" data-dsaction="openFanOut" data-arg="${p.id}"
-          ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
-          title="Run this deployment against SEVERAL target orgs in one go — one History entry per org (M1)">🌐 Multi-org…</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="refreshState" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
-          title="MEASURE this pair: query both orgs and sort records into missing / changed / in sync by your match key. Writes nothing — ⚖ Reconcile and 🌳 Tree diff both read this measurement.">🔄 Refresh state</button>
+          title="MEASURE this pair: query both orgs and sort records into missing / changed / in sync by your match key. Writes nothing — ⚖ Reconcile reads this measurement.">🔄 Refresh state</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="openReconcile" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
           title="FIX this source → target pair: review the scan buckets and push what's missing, overwrite what drifted, relink children — per-bucket control, nothing writes until you act.">⚖ Reconcile</button>
@@ -550,18 +596,28 @@ function _findTreeNode(node, objType) {
   return null;
 }
 
-window.runProfile = function(profileId) {
+window.runProfile = function(profileId, targetUrl) {
   const p = _profiles.find(x => x.id === profileId) || null;
-  // Multi-target deployment: ▶ Run means "deploy to ALL its targets" — the
-  // fan-out runner (per-org runs, prod confirms, per-org history) with the
-  // declared targets pre-checked.
+  // ONE target per run (user 2026-09-14: "you do it one by one"). A
+  // deployment whose ring has several targets asks which one this run is
+  // for — the same question ⚖ Reconcile asks — and never fans out.
   const _tgts = p ? profileTargets(p) : [];
-  if (_tgts.length > 1 && typeof window.openFanOut === 'function') {
-    window.openFanOut(profileId, { preselect: _tgts });
+  if (p && _tgts.length > 1 && !targetUrl) {
+    showModal(`
+      <div class="ds-modal-header">▶ Run — pick the target</div>
+      <div class="ds-modal-body" style="font-size:12.5px">
+        <div style="margin-bottom:8px">A run writes to <strong>one target</strong> at a time. ${esc(orgLabel(p.sourceOrg))} deploys to ${_tgts.length} targets — which one is this run for?</div>
+        ${_tgts.map(u => `<button class="ds-btn" style="display:flex;width:100%;margin:4px 0;justify-content:space-between;align-items:center" data-run-target="${esc(u)}">
+            <span>${esc(orgLabel(u))} ${prodBadge(u)}</span></button>`).join('')}
+      </div>
+      <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Cancel</button></div>`);
+    document.querySelectorAll('[data-run-target]').forEach(b =>
+      b.addEventListener('click', () => { closeModal(); window.runProfile(profileId, b.dataset.runTarget); }));
     return;
   }
   _transferProfile = p;
-  _transferOrgOverride = { src: null, tgt: null };   // fresh launch → profile's own orgs
+  // fresh launch → the profile's source; the picked target, or its first one
+  _transferOrgOverride = { src: null, tgt: (p && targetUrl && _orgKey(targetUrl) !== _orgKey(p.targetOrg || '')) ? targetUrl : null };
   // Stay on the "Data Deployment" nav item — the Run view is conceptually a
   // sub-page of the deployment page, not a separate top-level destination.
   document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));

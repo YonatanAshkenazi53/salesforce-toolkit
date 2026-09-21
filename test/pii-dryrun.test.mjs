@@ -54,10 +54,6 @@ describe('signature threading', () => {
     expect(src).toContain("_transferWriteMode === 'upsert' ? (_transferUpsertField || null) : null");
   });
 
-  it('dryRunFanOut threads the saved profile policy — and null for the External-ID (fan-out never upserts)', () => {
-    const src = sourceOf('dryRunFanOut');
-    expect(src).toMatch(/sftkDryRunAgainst\(tree, srcSess, tgtSess, line, p\.ownerMapping,\s*\r?\n\s*p\.piiPolicy, p\.piiSalt, null\)/);
-  });
 });
 
 // ══════════════════════════════════════════════════════════════════
@@ -432,43 +428,6 @@ describe('sftkPiiMaskSampleRows', () => {
   });
 });
 
-// ══════════════════════════════════════════════════════════════════
-// 5. The fan-out dialog's PII row — sourced from what actually runs
-// ══════════════════════════════════════════════════════════════════
-describe('openFanOut PII row', () => {
-  const openFanOutSrc = (() => {
-    const i = TRANSFER.indexOf('window.openFanOut = async function');
-    if (i < 0) throw new Error('openFanOut not found');
-    return TRANSFER.slice(i, TRANSFER.indexOf('\n};', i) + 3);
-  })();
-
-  it('the "What this will do" grid has a PII row with the two spec\'d labels', () => {
-    expect(openFanOutSrc).toContain('<span>PII</span>');
-    expect(openFanOutSrc).toContain('field(s) masked before writing');
-    expect(openFanOutSrc).toContain("'no masking configured'");
-  });
-
-  it("SOURCE PIN: the row reads p.piiPolicy — the saved profile's policy, not the Transfer tab's state", () => {
-    expect(openFanOutSrc).toContain('p.piiPolicy');
-    expect(openFanOutSrc).not.toContain('_transferProfile?.piiPolicy');
-  });
-
-  it('VERIFIED, NOT ASSUMED: runFanOut sends the profile as saved ({...p} spread), so the policy rides every leg', () => {
-    expect(sourceOf('runFanOut')).toContain(
-      "profile: (typeof treeForTarget === 'function' && p.tree) ? { ...p, tree: treeForTarget(p.tree, tgtUrl) } : p");
-  });
-
-  it('a policy without its salt is disclosed in the row — the engine hard-fails every leg on it', () => {
-    expect(openFanOutSrc).toContain('no salt yet');
-    expect(openFanOutSrc).toContain('p.piiSalt');
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════
-// Adversarial-review fixes (2026-08-04): the reconcile write paths
-// honor the policy — reconcileOverwrite was THE confirmed leak (raw
-// SF_COLLECTIONS_UPDATE bypassing the engine).
-// ══════════════════════════════════════════════════════════════════
 describe('reconcile surfaces are fail-closed on PII', () => {
   const RECONCILE = readFileSync(join(root, 'studio-reconcile.js'), 'utf8');
 

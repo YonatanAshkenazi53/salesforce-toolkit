@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>64.0</apiVersion>
+    <assignments>
+        <name>Set_Marker</name>
+        <label>Set Marker</label>
+        <locationX>176</locationX>
+        <locationY>134</locationY>
+        <assignmentItems>
+            <assignToReference>marker</assignToReference>
+            <operator>Assign</operator>
+            <value>
+                <stringValue>reached level 4</stringValue>
+            </value>
+        </assignmentItems>
+    </assignments>
+    <description>Admin Toolkit test fixture: the deepest of four subflow levels. Does nothing but set a variable. Safe to delete.</description>
+    <interviewLabel>SFTK Dep Test L4 {!$Flow.CurrentDateTime}</interviewLabel>
+    <label>SFTK Dep Test - Level 4</label>
+    <processType>AutoLaunchedFlow</processType>
+    <start>
+        <locationX>50</locationX>
+        <locationY>0</locationY>
+        <connector>
+            <targetReference>Set_Marker</targetReference>
+        </connector>
+    </start>
+    <status>Active</status>
+    <variables>
+        <name>marker</name>
+        <dataType>String</dataType>
+        <isCollection>false</isCollection>
+        <isInput>false</isInput>
+        <isOutput>false</isOutput>
+    </variables>
+</Flow>

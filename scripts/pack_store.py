@@ -25,7 +25,12 @@ LABS_JS = {'studio-schema.js', 'studio-fields.js'}
 # loaded by any page — no reason to ship it. content.js is likewise a
 # comment-only placeholder (no content_scripts key, nothing injects it) —
 # shipping an unregistered "content script" just invites reviewer questions.
-EXCLUDE_JS = LABS_JS | {'studio-tools.js', 'content.js'}
+# Org Seeder: held back from the STORE build while it is hardened (user
+# 2026-08-31: "we need to test it more") — it wipes and reseeds whole orgs,
+# so it graduates only after the dev-org test plan passes. The dev build
+# keeps it; the packer strips the file, its script tag and its nav button.
+HELD_BACK_JS = {'studio-seed.js'}
+EXCLUDE_JS = LABS_JS | HELD_BACK_JS | {'studio-tools.js', 'content.js'}
 
 def fail(msg):
     print(f'❌ PACK FAILED: {msg}')
@@ -45,7 +50,10 @@ def main():
         p = os.path.join(ROOT, name)
         if os.path.isfile(p):
             ext = os.path.splitext(name)[1].lower()
-            if name in ('manifest.json', 'CHANGELOG.md') or ext in ('.html', '.css', '.png'):
+            # LICENSE/EULA/PRIVACY ship so the in-app licence gate can link
+            # to them: a gate pointing at a 404 is not an agreement.
+            if name in ('manifest.json', 'CHANGELOG.md', 'LICENSE', 'EULA.md', 'PRIVACY.md') \
+                    or ext in ('.html', '.css', '.png'):
                 pass
             elif ext == '.js':
                 if name in EXCLUDE_JS or name.startswith('_') or name.startswith('eslint'):
@@ -61,8 +69,14 @@ def main():
     # ── Strip Labs from studio.html ──────────────────────────────────────
     sh_path = os.path.join(STAGE, 'studio.html')
     html = io.open(sh_path, encoding='utf-8').read()
-    for js in LABS_JS:
+    for js in (LABS_JS | HELD_BACK_JS):
         html = re.sub(rf'[ \t]*<script src="{re.escape(js)}"></script>\r?\n?', '', html)
+    # The Seeder's nav button — a button for a stripped view would open a
+    # blank page (the router falls back, but the button must not exist).
+    m = re.search(r'[ \t]*<button class="ds-nav-btn" data-view="seed">.*?</button>\r?\n?', html, re.S)
+    if not m:
+        fail('Org Seeder nav button not found in studio.html — nav layout changed?')
+    html = html[:m.start()] + html[m.end():]
     i_labs = html.find('<!-- Labs:')
     i_footer = html.find('<!-- Nav footer -->')
     if i_labs == -1 or i_footer == -1 or i_footer < i_labs:
@@ -115,7 +129,8 @@ def main():
     for js in EXCLUDE_JS:
         if os.path.exists(os.path.join(STAGE, js)):
             fail(f'{js} leaked into staging')
-    for needle in ['studio-schema.js', 'studio-fields.js',
+    for needle in ['studio-seed.js', 'data-view="seed"',
+                   'studio-schema.js', 'studio-fields.js',
                    'data-view="schema"', 'data-view="fields"']:
         if needle in html:
             fail(f'packed studio.html still contains {needle}')
@@ -127,7 +142,9 @@ def main():
         for ref in re.findall(r'(?:src|href)="([^"]+)"', doc):
             if ref.startswith(('http', 'chrome', '#', 'data:')):
                 continue
-            if not os.path.exists(os.path.join(STAGE, ref)):
+            # a query string / fragment addresses the same file (legal.html?doc=eula)
+            path = re.split(r'[?#]', ref, 1)[0]
+            if not path or not os.path.exists(os.path.join(STAGE, path)):
                 fail(f'{name} references missing file: {ref}')
     sw = manifest.get('background', {}).get('service_worker')
     if sw and not os.path.exists(os.path.join(STAGE, sw)):

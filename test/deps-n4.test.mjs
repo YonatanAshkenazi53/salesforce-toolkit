@@ -1,4 +1,4 @@
-// N4c / N4d / N4e — the pure half of the dependency-map work.
+// N4d / N4e — the pure half of the dependency-map work.
 //
 // Everything under test is a top-level, column-0 function in dependency-map.js
 // with no free variables, so extract.mjs can materialise it standalone.
@@ -9,8 +9,6 @@ import { extractFunction } from './extract.mjs';
 
 const depChain         = extractFunction('dependency-map.js', 'depChain');
 const depDeadSubflows  = extractFunction('dependency-map.js', 'depDeadSubflows');
-const depRefsMissingIn = extractFunction('dependency-map.js', 'depRefsMissingIn');
-const depMissingNames  = extractFunction('dependency-map.js', 'depMissingNames');
 const depReportMarkdown = extractFunction('dependency-map.js', 'depReportMarkdown');
 const depReportCsv      = extractFunction('dependency-map.js', 'depReportCsv');
 
@@ -166,7 +164,7 @@ describe('depDeadSubflows (dependency-map.js) — dead / missing / inactive subf
   });
 
   it('counts everything it found', () => {
-    expect(res.counts).toEqual({ subflowTargets: 4, dead: 1, missing: 1, inactiveTargets: 1 });
+    expect(res.counts).toEqual({ subflowTargets: 4, dead: 1, missing: 1, inactiveTargets: 1, managed: 0 });
   });
 
   it('an inactive target with only inactive callers lands in BOTH buckets', () => {
@@ -179,108 +177,8 @@ describe('depDeadSubflows (dependency-map.js) — dead / missing / inactive subf
   });
 
   it('survives empty / junk input', () => {
-    expect(depDeadSubflows(null, null).counts).toEqual({ subflowTargets: 0, dead: 0, missing: 0, inactiveTargets: 0 });
+    expect(depDeadSubflows(null, null).counts).toEqual({ subflowTargets: 0, dead: 0, missing: 0, inactiveTargets: 0, managed: 0 });
     expect(depDeadSubflows({}, {}).dead).toEqual([]);
-  });
-});
-
-describe('depRefsMissingIn (dependency-map.js) — references vs another org\'s schema', () => {
-  const refs = {
-    objects: [
-      { name: 'Account', ops: ['read'] },
-      { name: 'Gone__c', ops: ['create'] },
-      { name: 'Flaky__c', ops: ['read'] },
-      { name: 'Never__c', ops: ['read'] },
-    ],
-    fields: [
-      'Account.Name',          // present in target
-      'Account.Nope__c',       // MISSING in target
-      'Gone__c.Whatever__c',   // object itself missing
-      'Account.Owner.Email',   // relationship traversal — cannot check
-      '$Record.Foo__c',        // formula reference — cannot check
-      'Flaky__c.X__c',         // describe errored — cannot check
-      'Never__c.Y__c',         // never described — cannot check
-      'NoDot',                 // no object context — cannot check
-    ],
-    subflows: [], apex: [], labels: [],
-  };
-  const describes = {
-    Account: { fields: [{ name: 'Id' }, { name: 'Name' }] },
-    Gone__c: null,                              // confirmed absent
-    Flaky__c: { error: 'INVALID_SESSION_ID' },  // could not check
-    // Never__c deliberately absent from the map
-  };
-  const r = depRefsMissingIn(refs, describes);
-
-  it('names the objects that are genuinely absent in the target', () => {
-    expect(r.missingObjects.map(o => o.name)).toEqual(['Gone__c']);
-    expect(r.missingObjects[0].ops).toEqual(['create']);
-  });
-
-  it('names the fields that are absent in the target', () => {
-    expect(r.missingFields.map(f => f.ref)).toEqual(['Account.Nope__c', 'Gone__c.Whatever__c']);
-    expect(r.missingFields.find(f => f.ref === 'Gone__c.Whatever__c').reason).toMatch(/object itself is missing/i);
-  });
-
-  it('does NOT report a field that exists in the target', () => {
-    expect(r.missingFields.map(f => f.ref)).not.toContain('Account.Name');
-  });
-
-  it('matches field names case-insensitively', () => {
-    const x = depRefsMissingIn({ objects: [], fields: ['Account.NAME'] },
-      { Account: { fields: [{ name: 'Name' }] } });
-    expect(x.missingFields).toEqual([]);
-  });
-
-  it('keeps "could not check" strictly separate from "missing"', () => {
-    expect(r.uncheckedObjects.map(o => o.name)).toEqual(['Flaky__c', 'Never__c']);
-    expect(r.uncheckedObjects.find(o => o.name === 'Flaky__c').reason).toBe('INVALID_SESSION_ID');
-    const un = r.uncheckedFields.map(f => f.ref);
-    expect(un).toContain('Account.Owner.Email');
-    expect(un).toContain('$Record.Foo__c');
-    expect(un).toContain('Flaky__c.X__c');
-    expect(un).toContain('Never__c.Y__c');
-    expect(un).toContain('NoDot');
-    // none of the unchecked ones leaked into the "would break" list
-    for (const ref of un) expect(r.missingFields.map(f => f.ref)).not.toContain(ref);
-  });
-
-  it('explains WHY each unchecked reference could not be checked', () => {
-    expect(r.uncheckedFields.find(f => f.ref === 'Account.Owner.Email').reason).toMatch(/relationship traversal/i);
-    expect(r.uncheckedFields.find(f => f.ref === '$Record.Foo__c').reason).toMatch(/no resolvable object/i);
-    expect(r.uncheckedFields.find(f => f.ref === 'NoDot').reason).toMatch(/no object context/i);
-  });
-
-  it('reports the tallies and the ok flag', () => {
-    expect(r.checkedObjects).toEqual(['Account']);
-    expect(r.breakCount).toBe(3);
-    expect(r.uncheckedCount).toBe(7);
-    expect(r.ok).toBe(false);
-  });
-
-  it('is ok when everything resolves', () => {
-    const x = depRefsMissingIn(
-      { objects: [{ name: 'Account', ops: ['read'] }], fields: ['Account.Name'] },
-      { Account: { fields: [{ name: 'Name' }] } });
-    expect(x.ok).toBe(true);
-    expect(x.breakCount).toBe(0);
-  });
-
-  it('survives empty / junk input', () => {
-    expect(depRefsMissingIn(null, null).ok).toBe(true);
-    expect(depRefsMissingIn({}, {}).missingObjects).toEqual([]);
-  });
-});
-
-describe('depMissingNames (dependency-map.js)', () => {
-  it('returns the names absent from the target, case-insensitively and sorted', () => {
-    expect(depMissingNames(['Zeta', 'Alpha', 'beta'], ['ALPHA', 'Gamma'])).toEqual(['Zeta', 'beta']);
-  });
-  it('de-duplicates and skips falsy entries', () => {
-    expect(depMissingNames(['A', 'A', '', null, 'B'], [])).toEqual(['A', 'B']);
-  });
-  it('survives junk input', () => {
-    expect(depMissingNames(null, null)).toEqual([]);
   });
 });
 
@@ -311,7 +209,6 @@ const REPORT = {
     callers: [{ apiName: 'Root', masterLabel: 'Root', status: 'Active' }],
     refs: { objects: [{ name: 'Account', ops: ['read', 'update'] }], fields: ['Account.Name'], subflows: ['B'], apex: [], labels: [] },
   }],
-  crossOrg: null,
 };
 
 describe('depReportMarkdown (dependency-map.js) — N4e export text', () => {
@@ -353,34 +250,9 @@ describe('depReportMarkdown (dependency-map.js) — N4e export text', () => {
     expect(md).toContain('**Calls subflows (1):** B');
   });
 
-  it('says the cross-org diff was NOT run rather than omitting the section', () => {
-    expect(md).toContain('## 4. Cross-org dependency diff');
-    expect(md).toMatch(/Not run/);
-  });
-
-  it('renders the cross-org diff when it HAS been run, naming each breakage', () => {
-    const withXo = depReportMarkdown({ ...REPORT, crossOrg: {
-      target: { url: 'https://uat.my.salesforce.com', label: 'UAT' },
-      notes: ['Custom labels are NOT compared.'],
-      rows: [
-        { apiName: 'A', masterLabel: 'Flow A', status: 'Active', presence: 'ok',
-          missingObjects: [{ name: 'Widget__c', ops: ['read'] }],
-          missingFields: [{ ref: 'Account.SLA__c', reason: 'field not present on that object in the comparison org' }],
-          missingSubflows: ['B'], missingApex: [], apexChecked: true,
-          uncheckedObjects: [], uncheckedFields: [], refsAvailable: true },
-        { apiName: 'C', masterLabel: 'Flow C', status: 'Active', presence: 'missing',
-          missingObjects: [], missingFields: [], missingSubflows: [], missingApex: [],
-          apexChecked: false, uncheckedObjects: [], uncheckedFields: [], refsAvailable: true },
-      ],
-    } });
-    expect(withXo).toContain('**Comparison org:** UAT');
-    expect(withXo).toContain('Custom labels are NOT compared.');
-    expect(withXo).toMatch(/2 of 2 flow\(s\) have a problem/);
-    expect(withXo).toContain('Objects missing there: Widget__c');
-    expect(withXo).toContain('Account.SLA__c');
-    expect(withXo).toContain('Subflows missing there: B');
-    expect(withXo).toContain('**Does not exist in the comparison org.**');
-    expect(withXo).toMatch(/Apex references were NOT checked/);
+  it('has no cross-org section — the diff was retired 2026-09-12', () => {
+    expect(md).not.toContain('Cross-org');
+    expect(md).not.toContain('## 4.');
   });
 
   it('shouts when the scan was incomplete', () => {
@@ -426,8 +298,8 @@ describe('depReportCsv (dependency-map.js) — N4e tabular export', () => {
     expect(csv).toContain('A calls B');
   });
 
-  it('says the cross-org diff was not run', () => {
-    expect(csv).toContain('Cross-org,,,,Not run,');
+  it('has no cross-org rows — the diff was retired 2026-09-12', () => {
+    expect(csv).not.toContain('Cross-org');
   });
 
   it('quotes cells containing commas or quotes', () => {

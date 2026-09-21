@@ -209,7 +209,7 @@ function dsViewHeader({ icon, title, subtitle, count, actions, back, cls, help }
 // studio-builder.js + studio-builder-modals.js, studio-transfer.js (progress
 // rows, run buttons), studio-history.js, studio-reconcile.js,
 // studio-scan.js, studio-compare.js, studio-readiness.js, studio-schema.js,
-// studio-fields.js, studio-picklists.js, studio-ring.js, studio-treediff.js,
+// studio-fields.js, studio-picklists.js, studio-ring.js,
 // studio-whatsnew.js (🎉 view header), sftk-confirm.js, debug-modal.js
 // (#dbgBtn 🐛 label — it rewrites the button text itself), and the popup app
 // (separate shell, out of studio scope). Intentionally KEPT in both modes:
@@ -300,7 +300,9 @@ function sftkMassEditPlan(records, fieldDesc, rawValue, opts) {
 }
 
 function sftkSettingsShape(raw) {
-  const s = { historyDays: 30, countsOnly: false, proMode: false, ...(raw || {}) };
+  // undoCapture: read a restore point before every data deployment (↩ Roll
+  // back in History). Default ON — a production mistake is the case it exists for.
+  const s = { historyDays: 30, countsOnly: false, proMode: false, undoCapture: true, ...(raw || {}) };
   s.proMode = !!s.proMode;
   return s;
 }
@@ -551,6 +553,10 @@ async function storageLoad() {
     if (typeof sftkArchDeleteOlderThan === 'function') {
       sftkArchDeleteOlderThan(new Date(cutoff).toISOString()).catch(() => {});
     }
+    // ↩ restore points hold record data about the orgs — same retention.
+    if (typeof sftkUndoStoreDeleteOlderThan === 'function') {
+      sftkUndoStoreDeleteOlderThan(new Date(cutoff).toISOString()).catch(() => {});
+    }
   }
 
   // Retention (S5): drop stale apex-log-viewer handoff payloads (raw log
@@ -664,6 +670,9 @@ function showModal(html) {
 }
 
 function closeModal() {
+  // ↩ A rollback (or any flow that sets the lock) is writing: Escape and
+  // stray close calls must not hide a destructive operation in flight.
+  if (window._sftkModalLock) return;
   const overlay = eid('dsModal');
   if (overlay) overlay.style.display = 'none';
 }
@@ -736,6 +745,11 @@ async function describe(objectType, orgUrl = null, sid = null) {
 
 // ── Init ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  // Licence gate first — before storage, before any org session, before a
+  // single API call. Declining leaves the page blocked and the orgs
+  // untouched (user 2026-08-26).
+  if (typeof sftkTermsGate === 'function' && !(await sftkTermsGate())) return;
+
   // ── Debug recorder (shared debug-modal.js) ────────────────
   // initDebugMode looks for #dbgBtn (added to studio.html top bar).
   // debug-modal.js reads window._orgUrl for the org label in exports.
@@ -797,8 +811,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'startTransferFrom':     window.startTransferFrom?.(arg); break;
       case 'removeOrg':             window.removeOrg?.(arg); break;
       case 'runProfile':            window.runProfile?.(arg); break;
-      case 'openFanOut':            window.openFanOut?.(arg); break;
-      case 'openTreeDiff':          window.openTreeDiff?.(arg); break;
       case 'editProfile':           window.editProfile?.(arg); break;
       case 'cloneProfile':          window.cloneProfile?.(arg); break;
       case 'deleteProfile':         window.deleteProfile?.(arg); break;
@@ -806,11 +818,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'openReconcile':         window.openReconcile?.(arg); break;
       case 'retryFailed':           window.retryFailedRun?.(arg); break;
       case 'runAgain':              window.runAgain?.(arg); break;
+      case 'rollbackRun':           window.rollbackRun?.(arg); break;
       case 'openOrgTab':            chrome.tabs.create({ url: arg }); break;
       case 'compareOrgFrom':        window.compareOrgFrom?.(arg); break;
       case 'toggleReadOnly':        window.toggleOrgReadOnly?.(arg); break;
       case 'saveEphemeralProfile':  window.saveEphemeralProfile?.(); break;
+      case 'openDeployView':        window.sftkOpenDeployView?.(); break;
+      case 'deployToClassic':       window.sftkDeployToClassic?.(); break;
       case 'showSecurity':          showSecurityModal(); break;
+      case 'showTerms':             if (typeof sftkTermsShow === 'function') sftkTermsShow(); break;
       case 'switchView': {
         // Generic data-dsaction view switcher — routes through the hash (U6).
         if (arg) navigateToView(arg);
@@ -1318,6 +1334,7 @@ function showSecurityModal() {
     </div>
 
     <div class="ds-modal-footer">
+      <button class="ds-btn" data-dsaction="showTerms" title="Read the licence agreement and privacy notes you accepted">📜 Licence &amp; privacy</button>
       <button class="ds-btn ds-btn-primary" data-dsaction="closeModal">Got it — I trust this tool</button>
     </div>`);
 }
@@ -1587,11 +1604,19 @@ function renderView(view) {
     case 'schema':    renderSchemaView();  break;
     case 'fields':    renderFieldAudit();  break;
     case 'reconcile': renderReconcile();   break;
+    case 'deploy':    renderReconcile();   break;   // the seam in renderReconcile routes to renderDeploy
     case 'compare':   renderOrgCompare(); break;
     case 'picklists': renderPicklists();  break;
     case 'ring':      renderRing();       break;
-    case 'seed':      window.renderSeed?.(); break;
-    case 'treediff':  renderTreeDiffPage(); break;
+    // The Org Seeder ships only in the dev build while it is hardened
+    // (user 2026-08-31: "I dont want the org seeder to be available now.
+    // we need to test it more") — the packer strips its file and nav. A
+    // remembered last-view of 'seed' must land somewhere real, not on a
+    // blank page.
+    case 'seed':
+      if (typeof window.renderSeed === 'function') window.renderSeed();
+      else { _currentView = 'profiles'; renderProfiles(); }
+      break;
     case 'whatsnew':  renderWhatsNew();     break;   // T10 — studio-whatsnew.js
   }
 }
@@ -1672,7 +1697,7 @@ function _syncStatusStripHtml() {
 }
 
 // ════════════════════════════════════════════════════════════════
-// CONNECTED ORGS PANEL (Gearset / SF CLI style)
+// CONNECTED ORGS PANEL
 // ════════════════════════════════════════════════════════════════
 function renderOrgsPanel() {
   // Orgs are detected purely from open Salesforce browser tabs now —
@@ -1703,7 +1728,7 @@ function renderOrgsPanel() {
           <div class="ds-org-row-label">
             ${esc(label)}
             ${prodBadge(url)}
-            ${orgData.readOnly ? `<span class="ds-org-badge-current ds-badge-warn" title="All writes to this org are blocked">${dsIcon('lock')}read-only</span>` : ''}
+            ${orgData.readOnly ? `<span class="ds-org-badge-current ds-badge-warn" title="Writes are locked: no tool in this extension can insert, update, delete or deploy into this org until you unlock it">${dsIcon('lock')}writes locked</span>` : ''}
             ${isCurrent ? '<span class="ds-org-badge-current">current tab</span>' : ''}
           </div>
           <div class="ds-org-row-url">${esc(host)}</div>
@@ -1718,7 +1743,7 @@ function renderOrgsPanel() {
           ${!isOnline ? `<button class="ds-btn ds-btn-sm" data-dsaction="openOrgTab" data-arg="${esc(url)}" title="Open this org in a new Chrome tab — refreshes its session so the Studio can reach it">↗ Open</button>` : ''}
           <button class="ds-btn ds-btn-sm" data-dsaction="compareOrgFrom" data-arg="${esc(url)}" title="Compare this org's data against another org (opens Org Compare with this org as the source)">${window.sftkGlyph('🔍 ', '')}Compare with…</button>
           <button class="ds-btn ds-btn-sm" data-dsaction="editOrgLabel" data-arg="${esc(url)}">${window.sftkGlyph('✏ ', '')}Rename</button>
-          <button class="ds-btn ds-btn-sm" data-dsaction="toggleReadOnly" data-arg="${esc(url)}" title="${orgData.readOnly ? 'Allow writes to this org again' : 'Block ALL writes to this org (inserts, updates, deletes, deploys)'}">${orgData.readOnly ? `${window.sftkGlyph('🔓 ', '')}Unlock` : `${window.sftkGlyph('🔒 ', '')}Read-only`}</button>
+          <button class="ds-btn ds-btn-sm" data-dsaction="toggleReadOnly" data-arg="${esc(url)}" title="${orgData.readOnly ? 'Allow writes to this org again' : 'A safety lock, not a mode: while it is on, NOTHING in this extension can write to this org — not a deployment, not ← “target wins” into a source, not a delete, not a picklist or metadata deploy. Use it on production and on any org you only ever read from.'}">${orgData.readOnly ? `${window.sftkGlyph('🔓 ', '')}Unlock writes` : `${window.sftkGlyph('🔒 ', '')}Lock writes`}</button>
           ${!isOnline
             ? `<button class="ds-btn ds-btn-sm ds-btn-danger" data-dsaction="removeOrg" data-arg="${esc(url)}">✕</button>` : ''}
         </div>
@@ -1824,13 +1849,22 @@ window.editOrgLabel = function(orgUrl) {
 // enforcement is in the service worker at the fetch chokepoint (any non-GET
 // to a locked org throws), so every write path — transfers, reconcile,
 // deletes, metadata deploys, popup tools — is covered by one gate.
+// Is this org write-locked? Matched by org IDENTITY (a profile may store the
+// URL in another domain form than Connected Orgs does). Pages use it to say so
+// up front; the service-worker chokepoint stays the enforcement.
+window.sftkOrgLocked = function(orgUrl) {
+  const want = _orgKey(orgUrl);
+  if (!want) return false;
+  return Object.entries(_orgs || {}).some(([u, o]) => o && o.readOnly && _orgKey(u) === want);
+};
+
 window.toggleOrgReadOnly = async function(orgUrl) {
   if (!_orgs[orgUrl]) _orgs[orgUrl] = {};
   const on = !_orgs[orgUrl].readOnly;
   _orgs[orgUrl].readOnly = on;
   await storageSaveOrgs();
   showToast(on
-    ? `${window.sftkGlyph('🔒 ', '')}${orgLabel(orgUrl)} is now read-only — all writes are blocked`
+    ? `${window.sftkGlyph('🔒 ', '')}Writes to ${orgLabel(orgUrl)} are locked — nothing in this extension can change it until you unlock`
     : `${window.sftkGlyph('🔓 ', '')}${orgLabel(orgUrl)} is writable again`, on ? 'warning' : 'success');
   renderOrgsPanel();
 };

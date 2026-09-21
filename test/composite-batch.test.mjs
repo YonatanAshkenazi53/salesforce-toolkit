@@ -433,7 +433,9 @@ describe('sfCompositeBatch — call reduction with the order guarantee intact', 
   it('POSTs the documented payload to the documented endpoint', async () => {
     await sfCompositeBatch(ORG, SID, [{ url: '/services/data/v62.0/tooling/sobjects/Flow/301x' }]);
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe(BATCH_URL);
+    // 2026-09-14: a Tooling subrequest is documented at the TOOLING batch
+    // endpoint — the general one answers it 200 without the Metadata field.
+    expect(calls[0].url).toBe(`${ORG}/services/data/v62.0/tooling/composite/batch`);
     expect(calls[0].method).toBe('POST');
     expect(calls[0].batchRequests).toEqual([{ method: 'GET', url: 'v62.0/tooling/sobjects/Flow/301x' }]);
   });
@@ -767,5 +769,45 @@ describe('sfCompositeBatch — a cross-org url is refused, never silently re-poi
     expect(out).toHaveLength(2);
     expect(out.every(r => r.ok === false && r.batchError === false)).toBe(true);
     expect(seen).toEqual([[2, 2]]);              // settled with a verdict, honestly
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// 2026-09-14 — ROOT CAUSE of "subflows don't show": the general
+// /composite/batch answers a Tooling sobjects/Flow subrequest with 200 but
+// WITHOUT the Metadata field (reproduced with the CLI on a real org). Tooling
+// subrequests must go to /tooling/composite/batch.
+describe('sfCompositeBatch — Tooling subrequests go to the Tooling batch endpoint', () => {
+  it('an all-Tooling batch posts to …/tooling/composite/batch', async () => {
+    server();
+    await sfCompositeBatch(ORG, SID, [
+      { method: 'GET', url: 'tooling/sobjects/Flow/301A' },
+      { method: 'GET', url: '/services/data/v62.0/tooling/sobjects/Flow/301B' },
+    ]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe(`${ORG}/services/data/v62.0/tooling/composite/batch`);
+    expect(calls[0].batchRequests.map(r => r.url)).toEqual(['v62.0/tooling/sobjects/Flow/301A', 'v62.0/tooling/sobjects/Flow/301B']);
+  });
+
+  it('a REST batch still posts to …/composite/batch', async () => {
+    server();
+    await sfCompositeBatch(ORG, SID, [{ method: 'GET', url: 'sobjects/Account/001A' }]);
+    expect(calls[0].url).toBe(BATCH_URL);
+  });
+
+  it('a mixed batch is refused rather than sent half to the wrong endpoint', async () => {
+    server();
+    await expect(sfCompositeBatch(ORG, SID, [
+      { method: 'GET', url: 'sobjects/Account/001A' },
+      { method: 'GET', url: 'tooling/sobjects/Flow/301A' },
+    ])).rejects.toThrow('cannot share one batch');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('the write guard still recognises the Tooling batch url as a batch to inspect', () => {
+    const TOOLING_URL = `${ORG}/services/data/v62.0/tooling/composite/batch`;
+    const batchBody = (...methods) => JSON.stringify({ batchRequests: methods.map(m => ({ method: m, url: 'v62.0/tooling/x' })) });
+    expect(sftkIsWriteRequest('POST', TOOLING_URL, batchBody('GET', 'GET'))).toBe(false);
+    expect(sftkIsWriteRequest('POST', TOOLING_URL, batchBody('GET', 'PATCH'))).toBe(true);
   });
 });

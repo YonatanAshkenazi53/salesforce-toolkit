@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>64.0</apiVersion>
+    <assignments>
+        <name>Remember_Status</name>
+        <label>Remember Status</label>
+        <locationX>176</locationX>
+        <locationY>350</locationY>
+        <assignmentItems>
+            <assignToReference>remembered</assignToReference>
+            <operator>Assign</operator>
+            <value>
+                <elementReference>acct.SFTK_FC_Test_Status__c</elementReference>
+            </value>
+        </assignmentItems>
+        <connector>
+            <targetReference>Create_Broken_Account</targetReference>
+        </connector>
+    </assignments>
+    <decisions>
+        <name>Check_Status</name>
+        <label>Check Status</label>
+        <locationX>176</locationX>
+        <locationY>134</locationY>
+        <defaultConnector>
+            <targetReference>Remember_Status</targetReference>
+        </defaultConnector>
+        <defaultConnectorLabel>Anything else</defaultConnectorLabel>
+        <rules>
+            <name>Is_New</name>
+            <conditionLogic>and</conditionLogic>
+            <conditions>
+                <leftValueReference>acct.SFTK_FC_Test_Status__c</leftValueReference>
+                <operator>EqualTo</operator>
+                <rightValue>
+                    <stringValue>New</stringValue>
+                </rightValue>
+            </conditions>
+            <connector>
+                <targetReference>Remember_Status</targetReference>
+            </connector>
+            <label>Is New</label>
+        </rules>
+    </decisions>
+    <description>Admin Toolkit test fixture for Field Cleaner (version 2 of 4). Every version references Account.SFTK_FC_Test_Status__c. It FAILS on purpose (creates an Account with no name) so that failed interviews exist. Nothing calls it. Safe to delete.</description>
+    <interviewLabel>SFTK FC Test Flow {!$Flow.CurrentDateTime}</interviewLabel>
+    <label>SFTK FC Test Flow</label>
+    <processType>AutoLaunchedFlow</processType>
+    <recordCreates>
+        <name>Create_Broken_Account</name>
+        <label>Create Broken Account (fails on purpose)</label>
+        <locationX>176</locationX>
+        <locationY>566</locationY>
+        <inputAssignments>
+            <field>SFTK_FC_Test_Status__c</field>
+            <value>
+                <stringValue>New</stringValue>
+            </value>
+        </inputAssignments>
+        <object>Account</object>
+        <storeOutputAutomatically>true</storeOutputAutomatically>
+    </recordCreates>
+    <start>
+        <locationX>50</locationX>
+        <locationY>0</locationY>
+        <connector>
+            <targetReference>Check_Status</targetReference>
+        </connector>
+    </start>
+    <status>Active</status>
+    <variables>
+        <name>acct</name>
+        <dataType>SObject</dataType>
+        <isCollection>false</isCollection>
+        <isInput>true</isInput>
+        <isOutput>false</isOutput>
+        <objectType>Account</objectType>
+    </variables>
+    <variables>
+        <name>remembered</name>
+        <dataType>String</dataType>
+        <isCollection>false</isCollection>
+        <isInput>false</isInput>
+        <isOutput>false</isOutput>
+    </variables>
+</Flow>

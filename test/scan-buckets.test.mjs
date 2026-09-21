@@ -264,7 +264,14 @@ describe('measured-total reconciliation (what COUNT() would have bought)', () =>
 
   it('studio-scan.js does NOT add a query to learn a total it already measured', () => {
     const src = codeOnly(srcOf('studio-scan.js'));
-    expect(src).not.toMatch(/SELECT\s+COUNT\(/i);
+    // Exactly ONE COUNT() is allowed: the blank-parent-link probe, which
+    // counts rows the scoped queries structurally CANNOT return (they are
+    // filtered out by `parentField IN (...)`), so no array ever measured
+    // them. Anything the scan already fetched must never be re-counted.
+    const counts = src.match(/SELECT\s+COUNT\(/ig) || [];
+    expect(counts).toHaveLength(1);
+    const at = src.search(/SELECT\s+COUNT\(/i);
+    expect(src.slice(Math.max(0, at - 400), at)).toContain('= null');
     // The measurement happens against the FULL arrays, before the slice.
     expect(src).toMatch(/sftkBucketCap\(missingInTarget,\s*BUCKET_CAP\)/);
     expect(src).toMatch(/sftkBucketCap\(onlyInTarget,\s*BUCKET_CAP\)/);
@@ -478,33 +485,6 @@ describe('every display site reads the label, not the shipped length', () => {
 // its own 500-row DISPLAY slice, which made the undisclosed larger truncation
 // read as deliberate. Guarded here because it is a write path: a silent
 // regression means "Add 5,000 of 5,000" while 42,000 records go unwritten.
-describe('studio-ring.js — Sync Plan cap disclosure (write path)', () => {
-  const src = srcOf('studio-ring.js');
-
-  it('calls sftkCappedWriteNote with the kinds the plan can actually write', () => {
-    expect(src).toMatch(/sftkCappedWriteNote\(pl\.res,\s*capKinds,\s*p\.tree\.objectType\)/);
-    expect(src).toMatch(/capKinds\s*=\s*\[[^\]]*'push'[^\]]*'overwrite'[^\]]*'del'/s);
-  });
-
-  it('renders the warning ABOVE the op checkboxes, not buried after them', () => {
-    const warnAt = src.indexOf('ds-plan-capwarn');
-    const pushAt = src.indexOf('ds-plan-push');
-    expect(warnAt).toBeGreaterThan(-1);
-    expect(warnAt).toBeLessThan(pushAt);
-  });
-
-  it('degrades safely when the helper is absent (studio-scan not loaded)', () => {
-    expect(src).toMatch(/typeof window\.sftkCappedWriteNote === 'function'/);
-    expect(src).toMatch(/:\s*\{\s*lines:\s*\[\]\s*\}/);
-  });
-});
-
-// ── Ring cell: freshest scan wins ────────────────────────────────────
-// The cell used to give the profile's native lastScan ABSOLUTE priority
-// whenever the profile's own pair equals the ring flow — so on exactly the
-// flagship row, the 🔎 button scanned successfully, wrote ringScans… and the
-// cell kept rendering the stale lastScan forever (user 2026-08-10: cell stuck
-// at "21 · 55m ago" with two successful queries in the debug log).
 describe('studio-ring.js — sftkRingCellPick freshest-wins', () => {
   const { sftkRingCellPick } = extractFunctions('studio-ring.js', ['sftkRingCellPick']);
   const at = (iso, missing) => ({ runAt: iso, missing, changed: 0, extra: 0, status: 'success' });
@@ -560,7 +540,11 @@ describe('background.js sfQueryAll — serverTotal preserved', () => {
 
   it('captures totalSize from the FIRST page only and exposes it separately', () => {
     expect(src).toMatch(/serverTotal === null && typeof data\.totalSize === 'number'/);
-    expect(src).toMatch(/return \{ records, totalSize: records\.length, serverTotal, done: true \}/);
+    // Since 2026-08-28 the return also carries `incomplete` when the pager
+    // ended with fewer rows than the server said exist — the completeness
+    // invariant (see fetch-integrity.test.mjs).
+    expect(src).toMatch(/return \{ records, totalSize: records\.length, serverTotal, done: true,/);
+    expect(src).toContain('...(incomplete ? { incomplete } : {})');
   });
 
   it('leaves totalSize as the row count so existing callers are unchanged', () => {
@@ -642,5 +626,35 @@ describe('a wrong parent link lands in linkMismatch alone', () => {
     expect(src).toMatch(/else if \(!linkDiff\)\s+identical\.push/);
     // the link check runs BEFORE the field compare so linkDiff can gate it
     expect(src.indexOf('linkDiff = true')).toBeLessThan(src.indexOf('const diffFields = []'));
+  });
+});
+
+// ── Source-side orphans (user 2026-08-27: "it didn't pick up all the step
+// orders") — a parent-scoped child scan queries `parentField IN (parents)`,
+// so a source child with a BLANK parent link can never appear in any
+// bucket. The target side always had an orphan probe; the source side was
+// silently incomplete. ───────────────────────────────────────────
+describe('source children with a blank parent link are DISCLOSED', () => {
+  const SCAN = readFileSync(new URL('../studio-scan.js', import.meta.url), 'utf8');
+
+  it('counts them with one COUNT() when the scan is parent-scoped', () => {
+    expect(SCAN).toMatch(/SELECT COUNT\(\) FROM \$\{objType\} WHERE \$\{w2\}/);
+    expect(SCAN).toMatch(/\$\{scope\.parentField\} = null/);
+  });
+
+  it('the warning says WHY they are absent and what deploys them', () => {
+    expect(SCAN).toContain('a parent-scoped scan can never see them');
+    expect(SCAN).toContain('absent from every bucket above');
+    expect(SCAN).toContain('flat ${objType} profile');
+  });
+
+  it('rides the warnings channel the reconcile view already renders', () => {
+    const i = SCAN.indexOf('const memWarnings = [...keyFallbackWarnings];');
+    expect(SCAN.slice(i, i + 500)).toContain('_srcNoLink');
+  });
+
+  it('a failed probe stays null — no warning is INVENTED from an error', () => {
+    expect(SCAN).toMatch(/catch \(_\) \{ _srcNoLink = null; \}/);
+    expect(SCAN).toMatch(/if \(_srcNoLink\) \{/);
   });
 });

@@ -16,7 +16,7 @@ import { extractFunctions } from './extract.mjs';
 const P = extractFunctions('sftk-pii.js', [
   'sftkPiiHashHex', 'sftkPiiPatternList', 'sftkPiiIlIdValid', 'sftkPiiLuhn',
   'sftkPiiDetectPattern', 'sftkPiiPatternFormat', 'sftkPiiMaskValue',
-  'sftkPiiMaskable', 'sftkPiiFormat', 'sftkPiiSuggest',
+  'sftkPiiMaskable', 'sftkPiiFormat', 'sftkPiiSuggest', 'sftkPiiNameLists',
 ]);
 const SALT = 'a3f1c9d200aa11bb22cc33dd44ee55ff';
 const hexOf = v => P.sftkPiiHashHex(v, SALT);
@@ -206,5 +206,64 @@ describe('sftkPiiSuggest — pattern-aware suggestions', () => {
   it('name/label heuristics still fire without samples (backward compatible)', () => {
     const out = P.sftkPiiSuggest('Contact', [F('SSN__c'), F('Email', { type: 'email' })], null);
     expect(out.map(o => o.field).sort()).toEqual(['Email', 'SSN__c']);
+  });
+});
+
+// ── Names mask to NAMES (user 2026-08-21: "i didn't understand how name
+// hashing works, it looks weird") ───────────────────────────────────────
+describe('name-shaped patterns keep a sandbox readable', () => {
+  it('a person name masks to a different, real-looking name', async () => {
+    const out = P.sftkPiiPatternFormat(await hexOf('Dana Levi'), 'person-name', { type: 'string', length: 121 });
+    expect(out).toMatch(/^[A-Z][a-zA-Z]+ [A-Z][a-zA-Z]+$/);
+    expect(out).not.toBe('Dana Levi');
+    const L = P.sftkPiiNameLists();
+    const [f, l] = out.split(' ');
+    expect(L.first).toContain(f);
+    expect(L.last).toContain(l);
+  });
+
+  it('first and last name parts mask to the RIGHT kind of name', async () => {
+    const L = P.sftkPiiNameLists();
+    const f = P.sftkPiiPatternFormat(await hexOf('Dana'), 'first-name', { type: 'string', length: 40 });
+    const l = P.sftkPiiPatternFormat(await hexOf('Levi'), 'last-name', { type: 'string', length: 40 });
+    expect(L.first).toContain(f);
+    expect(L.last).toContain(l);
+    // masking a first name into a surname reads as broken — never happens
+    expect(L.last).not.toContain(f);
+  });
+
+  it('company names mask to invented companies with a suffix', async () => {
+    const out = P.sftkPiiPatternFormat(await hexOf('Acme Corp'), 'company', { type: 'string', length: 255 });
+    expect(out).toMatch(/^[A-Z][A-Za-z ]+ (Ltd|Inc|LLC|Group|Holdings|Systems|Solutions|Industries)$/);
+  });
+
+  it('deterministic and spread across the lists, never collapsing to one name', async () => {
+    const a = P.sftkPiiPatternFormat(await hexOf('same person'), 'person-name', { type: 'string', length: 121 });
+    const b = P.sftkPiiPatternFormat(await hexOf('same person'), 'person-name', { type: 'string', length: 121 });
+    expect(a).toBe(b);
+    const seen = new Set();
+    for (let i = 0; i < 40; i++) {
+      seen.add(P.sftkPiiPatternFormat(await hexOf(`person ${i}`), 'person-name', { type: 'string', length: 121 }));
+    }
+    expect(seen.size).toBeGreaterThan(30);
+  });
+
+  it('a short field cannot hold a name — nulled, never a half name', async () => {
+    expect(P.sftkPiiPatternFormat(await hexOf('Dana Levi'), 'person-name', { type: 'string', length: 4 })).toBeNull();
+  });
+
+  it('suggest proposes the name pattern for the field it fits', () => {
+    const F = (name, extra) => ({ name, label: name, type: 'string', length: 255, ...(extra || {}) });
+    const c = P.sftkPiiSuggest('Contact', [F('FirstName'), F('LastName'), F('Name', { nameField: true })], null);
+    const by = Object.fromEntries(c.map(o => [o.field, o.pattern]));
+    expect(by.FirstName).toBe('first-name');
+    expect(by.LastName).toBe('last-name');
+    expect(by.Name).toBe('person-name');
+  });
+
+  it('the catalog carries the honest collision caveat for names', () => {
+    const p = P.sftkPiiPatternList().find(x => x.id === 'person-name');
+    expect(p).toBeTruthy();
+    expect(p.caveat).toMatch(/identify nobody|repeat/i);
   });
 });

@@ -30,8 +30,6 @@ const SWEEP = {
                            ids: ['dsRecBackBtn', 'dsRecRefreshBtn'], hooks: ['data-dsaction="saveEphemeralProfile"'], back: true },
   'studio-transfer.js':  { calls: 1, icon: 'play',      titleSrc: "title: 'Run Transfer'",
                            ids: ['dsTrBackBtn'], back: true },
-  'studio-treediff.js':  { calls: 1, icon: 'nodes',     titleSrc: 'title: `Tree diff — ',
-                           hooks: ['data-dsaction="switchView" data-arg="profiles"'] },
   'studio-whatsnew.js':  { calls: 1, icon: 'megaphone', titleSrc: "title: `What's New`" },
 };
 

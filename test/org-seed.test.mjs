@@ -28,7 +28,7 @@ describe('seed-level PII policy', () => {
     delete globalThis._seedPii;
   });
 
-  it('samples only text-ish createable fields — the ones a pattern can be read from', () => {
+  it('samples text AND number createable fields — both can hold identifiers', () => {
     const desc = { fields: [
       { name: 'Name', type: 'string', createable: true },
       { name: 'Email', type: 'email', createable: true },
@@ -40,8 +40,10 @@ describe('seed-level PII policy', () => {
       { name: 'Id', type: 'id', createable: false },
       { name: 'Formula__c', type: 'string', createable: false },
     ] };
+    // Numbers included: an ID or a salary stored as a Number is just as
+    // sensitive as one stored as Text (user 2026-08-21).
     expect(sftkSeedSampleFields(desc).map(f => f.name))
-      .toEqual(['Name', 'Email', 'Phone', 'Bio__c', 'Site']);
+      .toEqual(['Name', 'Email', 'Phone', 'Bio__c', 'Site', 'Amount__c']);
   });
 
   it('the scan quotes its cost and ticks per object (No Silent Waits)', () => {
@@ -90,7 +92,13 @@ describe('seed-level PII policy', () => {
     // the table renders BEFORE the counts land, then each cell is patched
     expect(SEED).toMatch(/srcCount: undefined, tgtCounts: \{\}/);
     expect(SEED).toContain('data-seed-cell=');
-    expect(SEED).toMatch(/const paint = \(obj, key, v\)/);
+    expect(SEED).toMatch(/const paint = \(obj, key, v, why\)/);
+    // A '?' carries Salesforce's OWN reason, so it is actionable rather
+    // than a dead end (user 2026-08-22: "i have some with question mark").
+    expect(SEED).toContain('function sftkSeedCountWhy');
+    expect(SEED).toContain('does not exist in this org');
+    expect(SEED).toContain('lacks read access in this org');
+    expect(SEED).toMatch(/row\.srcWhy = sc\.why/);
     // pending and failed read differently — neither is ever 0
     expect(SEED).toContain('not counted yet');
     expect(SEED).toContain('treated as UNKNOWN');
@@ -138,7 +146,11 @@ describe('seed-level PII policy', () => {
   it('suggestions are reachable from the row chip, per object', () => {
     expect(SEED).toContain('data-seed-pii-open=');
     expect(SEED).toMatch(/function sftkSeedPiiModal\(onlyObj\)/);
-    expect(SEED).toMatch(/onlyObj \? r\.name === onlyObj : _seedSel\.has\(r\.name\)/);
+    expect(SEED).toMatch(/onlyObj \? r\.name === onlyObj : \(_seedSel\.has\(r\.name\) && \(r\.pii \|\| \[\]\)\.length\)/);
+    // an object with NO findings still opens, so a field can be added by hand
+    expect(SEED).toMatch(/function sftkSeedMaskableFields\(obj\)/);
+    expect(SEED).toContain('＋ Add a field by hand');
+    expect(SEED).toContain('only suggested on person-shaped objects');
   });
 
   it('every suggestion previews REAL before → after, from the org itself', () => {
@@ -157,7 +169,12 @@ describe('seed-level PII policy', () => {
   it('⚖ opens Reconcile for ONE object against ONE target, even with no saved deployment', () => {
     expect(SEED).toMatch(/async function sftkSeedOpenReconcile\(obj, tgtUrl\)/);
     expect(SEED).toContain('data-seed-rec=');
-    expect(SEED).toMatch(/\.\.\.sftkSeedProfileFor\(obj, srcUrl, tgtUrl, \[\.\.\._seedSel\]\)/);
+    expect(SEED).toMatch(/const base = sftkSeedProfileFor\(obj, srcUrl, tgtUrl, \[\.\.\._seedSel\]\)/);
+    // COMPARING always includes attached files, even when the seed-time
+    // file toggle is off: a comparison that omits attachments reports
+    // "in sync" for records whose files are missing (user 2026-08-22:
+    // "don't see the files in the comparison").
+    expect(SEED).toMatch(/tree: \{ \.\.\.base\.tree, includeFiles: true \}/);
     expect(SEED).toMatch(/id: `seedpair_\$\{Date\.now\(\)\}_\$\{obj\}`/);
     expect(SEED).toContain('_reconcileProfile = pair;');
     expect(SEED).toMatch(/saved \? \{ _ringOf: \{ profileId: saved\.id \} \} : \{\}/);
@@ -328,8 +345,12 @@ describe('production and unknown-count rails on the destructive path', () => {
     expect(SEED).toContain("_seedDelMode === 'hard' && prodTargets.length");
     expect(SEED).toContain('🔥 Hard delete is disabled against PRODUCTION orgs');
     expect(SEED).toMatch(/await confirmTypedProd\(orgLabel\(t\), summary\)/);
-    // the seed-only path gates raw PII and confirms prod targets too
-    expect(SEED).toMatch(/if \(!what\.wipe\) \{\s*\n\s*if \(what\.seed && !\(await sftkSeedRawPiiGate\(objs\)\)\) return;\s*\n\s*if \(!\(await prodConfirms\(\)\)\) return;/);
+    // The seed-only path gates raw PII, then the Custom Setting REPLACE
+    // (it deletes the target's rows), then confirms prod targets. Order
+    // matters: every gate must run before the first write, and prod is the
+    // last thing standing between the user and it.
+    expect(SEED).toMatch(/if \(!what\.wipe\) \{\s*\n\s*if \(what\.seed && !\(await sftkSeedRawPiiGate\(objs\)\)\) return;/);
+    expect(SEED).toMatch(/if \(what\.config && !\(await sftkSeedCfgReplaceGate\(\)\)\) return;\s*\n\s*if \(!\(await prodConfirms\(\)\)\) return;/);
   });
 
   it('unknown counts stay UNKNOWN in the RESET dialog — never coerced to 0', () => {
@@ -366,5 +387,277 @@ describe('run-loop honesty from the unverified review candidates', () => {
     expect(SEED).toContain('a second pass would duplicate rows');
     expect(SEED).toMatch(/selfBridge && !_seedCancelled/);
     expect(SEED).toMatch(/prof\.tree\.upsert\?\.field/);
+  });
+});
+
+// ── Which key identifies a record? (user 2026-08-22: "in case we choose to
+// seed without reseting, how do we know which key is selected for every
+// object?") The key used to be derived silently inside the profile
+// builder; nothing on screen said which field a run would match on. ────
+describe('the match key is visible, choosable, and matches what runs', () => {
+  const { sftkSeedKeyInfo, sftkSeedExtIdFields } =
+    extractFunctions('studio-seed.js', ['sftkSeedKeyInfo', 'sftkSeedExtIdFields']);
+
+  const setup = (desc, keys = {}, profiles = []) => {
+    globalThis._seedDesc = desc;
+    globalThis._seedKeys = keys;
+    globalThis._profiles = profiles;
+  };
+  afterEach(() => {
+    delete globalThis._seedDesc; delete globalThis._seedKeys; delete globalThis._profiles;
+  });
+
+  it('only counts External IDs that can actually be written', () => {
+    setup({ Acc: { fields: [
+      { name: 'Ext__c', externalId: true, createable: true },
+      { name: 'Locked__c', externalId: true, createable: false },
+      { name: 'Plain__c', externalId: false, createable: true },
+    ] } });
+    expect(sftkSeedExtIdFields('Acc')).toEqual(['Ext__c']);
+  });
+
+  it('reports UNKNOWN — never "no key" — for an object it has not read', () => {
+    // Claiming "this object has no External ID" without having looked is
+    // exactly the lie the whole project forbids.
+    setup({});
+    const info = sftkSeedKeyInfo('Acc');
+    expect(info.unknown).toBe(true);
+    expect(info.field).toBe(null);
+    expect(info.source).toBe('not read yet');
+  });
+
+  it('auto-picks a sole External ID and calls it merge-safe', () => {
+    setup({ Acc: { fields: [{ name: 'Ext__c', externalId: true, createable: true }] } });
+    const info = sftkSeedKeyInfo('Acc');
+    expect(info.field).toBe('Ext__c');
+    expect(info.merge).toBe(true);
+  });
+
+  it('refuses to guess between several External IDs', () => {
+    setup({ Acc: { fields: [
+      { name: 'A__c', externalId: true, createable: true },
+      { name: 'B__c', externalId: true, createable: true },
+    ] } });
+    const info = sftkSeedKeyInfo('Acc');
+    expect(info.field).toBe(null);
+    expect(info.candidates).toEqual(['A__c', 'B__c']);
+    expect(info.source).toMatch(/pick one/);
+  });
+
+  it('says plainly when the object simply has no External ID', () => {
+    setup({ Acc: { fields: [{ name: 'Name', externalId: false, createable: true }] } });
+    const info = sftkSeedKeyInfo('Acc');
+    expect(info.field).toBe(null);
+    expect(info.merge).toBe(false);
+    expect(info.source).toMatch(/no External ID/);
+  });
+
+  it('a saved deployment\u2019s key wins over the object\u2019s own guess, and is attributed', () => {
+    setup(
+      { Acc: { fields: [{ name: 'Ext__c', externalId: true, createable: true }] } },
+      {},
+      [{ name: 'Nightly', tree: { objectType: 'Acc', upsert: { field: 'Legacy__c' } } }],
+    );
+    const info = sftkSeedKeyInfo('Acc');
+    expect(info.field).toBe('Legacy__c');
+    expect(info.source).toContain('Nightly');
+  });
+
+  it('the user\u2019s explicit pick outranks everything, including a deployment', () => {
+    setup(
+      { Acc: { fields: [
+        { name: 'Ext__c', externalId: true, createable: true },
+        { name: 'Other__c', externalId: true, createable: true },
+      ] } },
+      { Acc: 'Other__c' },
+      [{ name: 'Nightly', tree: { objectType: 'Acc', upsert: { field: 'Legacy__c' } } }],
+    );
+    const info = sftkSeedKeyInfo('Acc');
+    expect(info.field).toBe('Other__c');
+    expect(info.chosen).toBe(true);
+    expect(info.merge).toBe(true);
+  });
+
+  it('honours a deliberate "no key" — insert-only is a valid choice', () => {
+    setup({ Acc: { fields: [{ name: 'Ext__c', externalId: true, createable: true }] } },
+      { Acc: '__none__' });
+    const info = sftkSeedKeyInfo('Acc');
+    expect(info.field).toBe(null);
+    expect(info.merge).toBe(false);
+    expect(info.source).toMatch(/you chose/);
+  });
+
+  it('the profile builder applies the SAME precedence the column shows', () => {
+    // The column and the run must never disagree — that is the whole point
+    // of showing it.
+    const prof = SEED.slice(SEED.indexOf('function sftkSeedProfileFor'));
+    expect(prof).toContain('const ov = _seedKeys[obj];');
+    expect(prof).toMatch(/const auto = overridden\s*\n\s*\? \(ov !== '__none__' && extIds\.some\(f => f\.name === ov\) \? ov : null\)/);
+    expect(prof).toMatch(/saved\?\.tree\?\.upsert\?\.field \|\| \(extIds\.length === 1 \? extIds\[0\]\.name : null\)/);
+  });
+
+  it('an explicit pick also discards a saved deployment\u2019s matching rule', () => {
+    // Otherwise "no key" would still silently match on the old rule.
+    const prof = SEED.slice(SEED.indexOf('function sftkSeedProfileFor'));
+    expect(prof).toMatch(/\(!overridden && saved\?\.tree\?\.matching\) \? \{ matching: saved\.tree\.matching \}/);
+  });
+
+  it('the table renders the key per object and flags the insert-only case', () => {
+    expect(SEED).toContain('>Match key</th>');
+    expect(SEED).toContain('data-seed-key-open=');
+    expect(SEED).toContain('none — inserts only');
+    expect(SEED).toContain('sftkSeedKeyPicker(b.dataset.seedKeyOpen)');
+  });
+
+  it('saved picks load before the table can claim what a run will do', () => {
+    expect(SEED).toMatch(/sftkSeedKeysLoad\(\)\.then\(\(\) => \{ if \(_seedRows\) sftkSeedRenderRows\(\); \}\)/);
+  });
+
+  it('the picker offers only External IDs — nothing else can drive an upsert', () => {
+    const pick = SEED.slice(SEED.indexOf('async function sftkSeedKeyPicker'));
+    const body = pick.slice(0, pick.indexOf('\n}\n'));
+    expect(body).toContain('extIds.map(fname =>');
+    expect(body).toContain('has no External ID field');
+    // and it can read an object that was never scanned, rather than refusing
+    expect(body).toContain("path: `/services/data/v62.0/sobjects/${obj}/describe`");
+  });
+});
+
+// ── Files, archived rows, and the email history that needs both ────────
+describe('files and archived rows are opt-in and disclosed', () => {
+  const { sftkSeedIsArchivable } = extractFunctions('studio-seed.js', ['sftkSeedIsArchivable']);
+  afterEach(() => { delete globalThis._seedDesc; });
+
+  it('detects archivability from the describe, not from a hard-coded list', () => {
+    globalThis._seedDesc = {
+      Task: { fields: [{ name: 'IsArchived' }] },
+      Account: { fields: [{ name: 'Name' }] },
+    };
+    expect(sftkSeedIsArchivable('Task')).toBe(true);
+    expect(sftkSeedIsArchivable('Account')).toBe(false);
+    expect(sftkSeedIsArchivable('NeverRead')).toBe(false);
+  });
+
+  it('the archived pass filters IsArchived = true — normal SOQL hides them', () => {
+    expect(SEED).toContain("where: 'IsArchived = true'");
+    // A distinct profile id: the archived leg is its own run in History.
+    expect(SEED).toContain("idSuffix: '_arch'");
+  });
+
+  it('both toggles default OFF and are wired to re-render', () => {
+    expect(SEED).toMatch(/let _seedFiles = false;/);
+    expect(SEED).toMatch(/let _seedArchived = false;/);
+    expect(SEED).toContain("eid('dsSeedFiles')?.addEventListener");
+    expect(SEED).toContain("eid('dsSeedArchived')?.addEventListener");
+  });
+
+  it('files ride the engine pass, which fails closed under masking', () => {
+    expect(SEED).toMatch(/\.\.\.\(_seedFiles \? \{ includeFiles: true \} : \{\}\)/);
+    expect(SEED).toContain('(blocked by masking)');
+    // the engine end of the contract, unchanged
+    expect(BG).toContain('files NOT transferred — a PII policy is active');
+  });
+
+  it('email history is seedable, including the recipient junction', () => {
+    expect(SEED).toContain("'EmailMessage'");
+    expect(SEED).toContain('function sftkSeedInsertOnlyStd');
+    expect(SEED).toMatch(/return \['EmailMessageRelation'\]/);
+    // insert-only objects bypass the updateable requirement DELIBERATELY
+    expect(SEED).toMatch(/&& \(s\.updateable \|\| insertOnly\.has\(s\.name\)\)/);
+  });
+});
+
+// ── Custom Setting owners cannot be carried by Id ──────────────────────
+describe('hierarchy custom setting owners resolve by NAME', () => {
+  const { sftkSeedResolveOwner, sftkSeedSettingFlavour, sftkSeedSettingFields } =
+    extractFunctions('studio-seed.js',
+      ['sftkSeedResolveOwner', 'sftkSeedSettingFlavour', 'sftkSeedSettingFields']);
+
+  const TGT = { orgId: '00Dtarget', profilesByName: { Admin: '00eTGT' }, usersByName: { 'a@b.com': '005TGT' } };
+
+  it('maps the org-default row onto the TARGET org id', () => {
+    const owners = { '00Dsource': { type: 'Organization', name: 'Organization' } };
+    expect(sftkSeedResolveOwner('00Dsource', owners, TGT)).toEqual({ id: '00Dtarget', why: null });
+  });
+
+  it('matches a profile row by profile name', () => {
+    const owners = { '00eSRC': { type: 'Profile', name: 'Admin' } };
+    expect(sftkSeedResolveOwner('00eSRC', owners, TGT).id).toBe('00eTGT');
+  });
+
+  it('refuses to guess when the target has no such profile — and says which', () => {
+    const owners = { '00eSRC': { type: 'Profile', name: 'Custom Sales' } };
+    const r = sftkSeedResolveOwner('00eSRC', owners, TGT);
+    expect(r.id).toBe(null);
+    expect(r.why).toContain('Custom Sales');
+  });
+
+  it('matches users by username, and names the ones the target lacks', () => {
+    const owners = { '005SRC': { type: 'User', name: 'a@b.com' }, '005X': { type: 'User', name: 'gone@b.com' } };
+    expect(sftkSeedResolveOwner('005SRC', owners, TGT).id).toBe('005TGT');
+    expect(sftkSeedResolveOwner('005X', owners, TGT).why).toContain('gone@b.com');
+  });
+
+  it('an unreadable owner is UNKNOWN, not silently dropped', () => {
+    expect(sftkSeedResolveOwner('00eSRC', {}, TGT).why).toMatch(/not readable/);
+    expect(sftkSeedResolveOwner('', {}, TGT).why).toMatch(/no SetupOwnerId/);
+  });
+
+  it('tells hierarchy from list by the presence of SetupOwnerId', () => {
+    expect(sftkSeedSettingFlavour({ fields: [{ name: 'SetupOwnerId' }] })).toBe('hierarchy');
+    expect(sftkSeedSettingFlavour({ fields: [{ name: 'Name' }] })).toBe('list');
+  });
+
+  it('never copies SetupOwnerId raw — that id belongs to the source org', () => {
+    const fields = sftkSeedSettingFields({ fields: [
+      { name: 'Id', createable: false },
+      { name: 'Name', createable: true },
+      { name: 'SetupOwnerId', createable: true },
+      { name: 'Rate__c', createable: true },
+      { name: 'CreatedById', createable: true },
+    ] });
+    expect(fields).toEqual(['Name', 'Rate__c']);
+  });
+
+  it('a row whose owner cannot be resolved is skipped and NAMED, never mis-owned', () => {
+    const fn = SEED.slice(SEED.indexOf('async function sftkSeedCfgSyncSetting'));
+    expect(fn).toMatch(/if \(!res\.id\) \{ out\.skipped\.push\(`\$\{r\.Id\}: \$\{res\.why\}`\); continue; \}/);
+    expect(fn).toContain('not written - ');
+  });
+});
+
+// ── Filling the Match key column (user 2026-08-22: "i still can't see by
+// what field they are matched") — the column can only name a field once
+// the object is DESCRIBED, and load-time counting never describes. ─────
+describe('the match-key sweep makes the column answerable', () => {
+  it('exists as one explicit, quoted, cancellable sweep', () => {
+    expect(SEED).toContain('async function sftkSeedKeyScan');
+    expect(SEED).toContain('dsSeedKeyScan');
+    expect(SEED).toContain('Find match keys');
+    expect(SEED).toMatch(/Read \$\{todo\.length\} object\(s\) to find their match keys/);
+    expect(SEED).toContain('read-only call(s), roughly');
+  });
+
+  it('charges only for objects it has not already read', () => {
+    // A re-run after a PII scan is nearly free, and the quote says so
+    // instead of re-charging for work already done.
+    expect(SEED).toMatch(/const todo = _seedRows\.map\(r => r\.name\)\.filter\(o => !_seedDesc\[o\]\)/);
+    expect(SEED).toContain('was already read');
+  });
+
+  it('a describe that FAILS leaves the object UNKNOWN, never "no key"', () => {
+    expect(SEED).toMatch(/if \(d\?\.error\) \{ failed\+\+; \} else \{ _seedDesc\[o\] = d; \}/);
+    expect(SEED).toContain('Unread objects stay UNKNOWN');
+  });
+
+  it('reports the split at the end — with a key vs insert-only', () => {
+    expect(SEED).toMatch(/const withKey = _seedRows\.filter/);
+    expect(SEED).toMatch(/const noKey = _seedRows\.filter/);
+    expect(SEED).toContain('those can only INSERT');
+  });
+
+  it('can be stopped mid-sweep, like every other long read', () => {
+    expect(SEED).toMatch(/if \(_seedKeyScanning\) \{ _seedCancelled = true; return; \}/);
+    expect(SEED).toContain("b.textContent = '\u{1F511} Find match keys'");
   });
 });

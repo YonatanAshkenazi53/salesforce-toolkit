@@ -403,6 +403,9 @@
 
   // ── Boot ────────────────────────────────────────────────
   async function boot() {
+    // Licence gate — this page opens directly in its own tab, so it carries
+    // its own gate rather than trusting whoever opened it (user 2026-08-26).
+    if (typeof sftkTermsGate === 'function' && !(await sftkTermsGate())) return;
     // Honor the Toolkit's persisted theme (shared styles.css palette) —
     // including OLED: one toolkit-wide preference, and this page must not be
     // the lone gray-dark surface in an otherwise pure-black toolkit.

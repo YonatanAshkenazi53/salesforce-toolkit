@@ -500,7 +500,10 @@ describe('field-cleaner.js query shape', () => {
   });
 
   it('paginates the FieldDefinition list instead of capping it at 1000', () => {
-    expect(SRC).not.toContain('FROM FieldDefinition ` +\n             `WHERE');
+    // (An older exact-string pin here embedded a hard-coded newline and
+    // began matching a DIFFERENT, legitimate per-object query when the
+    // file's line endings normalised — the LIMIT-1000 pin below is the
+    // real guard.)
     expect(SRC).toMatch(/SF_QUERY_ALL[\s\S]{0,200}FROM FieldDefinition/);
     expect(SRC).not.toMatch(/FieldDefinition[\s\S]{0,200}LIMIT 1000/);
   });
@@ -551,7 +554,7 @@ describe('metadata-mutating fixes confirm before acting', () => {
     const i = SRC.indexOf('async function fixOne(');
     const fn = SRC.slice(i, SRC.indexOf('\n  }', i));
     expect(fn).toContain('await sftkConfirmDestructive({');
-    expect(fn).toContain('permanently deletes old versions');
+    expect(fn).toContain('permanently deletes flow versions');   // 2026-09-21: the active version may go too, so not only "old" ones
     expect(fn).toMatch(/needsCheckbox: type === 'Flow'/);
     expect(fn).toMatch(/if \(!sure\) return;/);
     // the confirm happens BEFORE the button flips to ⏳

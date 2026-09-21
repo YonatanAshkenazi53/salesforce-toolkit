@@ -1,0 +1,24 @@
+{
+  "records": [
+    {
+      "attributes": { "type": "Account", "referenceId": "AlphaTargetRef" },
+      "Name": "SFTK Rollback Fixture - Alpha",
+      "Industry": "Retail",
+      "Phone": "+972-3-999-9999",
+      "Website": "https://alpha-old.sftk.test",
+      "Description": "sftk-rollback-fixture | TARGET value before any run. Industry/Phone/Website differ from the source on purpose (drift). After the Reconcile overwrite they become the source's; after the rollback they must be exactly these again.",
+      "Contacts": {
+        "records": [
+          { "attributes": { "type": "Contact", "referenceId": "AlphaExisting" }, "FirstName": "Alpha", "LastName": "Existing (SFTK fixture)", "Email": "alpha.existing@sftk.test", "Title": "sftk-rollback-fixture | was here before every run - must survive everything" }
+        ]
+      }
+    },
+    {
+      "attributes": { "type": "Account", "referenceId": "ControlRef" },
+      "Name": "SFTK Control - Do Not Touch",
+      "Industry": "Banking",
+      "Phone": "+972-3-777-7777",
+      "Description": "sftk-rollback-fixture | CONTROL. No run and no rollback may change or delete this record. If it changes, the feature is broken."
+    }
+  ]
+}

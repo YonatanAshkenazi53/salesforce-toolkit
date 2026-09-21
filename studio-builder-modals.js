@@ -1766,8 +1766,15 @@ async function openRecordPickerModal(pathStr) {
           expand.innerHTML = `${fieldsNote}<div class="ds-drift-compare-err">⚠ ${esc(result.error)}</div>`;
           return;
         }
-        expand.innerHTML = renderDriftCompareTable(
-          result.srcRec, result.tgtRec, srcFields, tgtFields, result.lookupMap || {}, result.types || null);
+        const paint = r => {
+          expand.innerHTML = renderDriftCompareTable(
+            r.srcRec, r.tgtRec, srcFields, tgtFields, r.lookupMap || {}, r.types || null, { selectable: true });
+          sftkWireDriftCompare(expand, _editingProfile, objType, recId, driftInfo.targetId, async () => {
+            const fresh = await fetchDriftRowDetail(_editingProfile, objType, recId, driftInfo.targetId, srcFields, tgtFields);
+            if (!fresh.error) paint(fresh);
+          });
+        };
+        paint(result);
         expand.dataset.loaded = '1';
       });
     });

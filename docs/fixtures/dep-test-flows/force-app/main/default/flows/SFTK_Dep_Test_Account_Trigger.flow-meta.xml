@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>64.0</apiVersion>
+    <description>Admin Toolkit test fixture: a record-triggered flow that calls four levels of subflows (L1 to L4), to test the Dependencies map. Its entry condition matches no real record, so it never runs. Safe to delete.</description>
+    <interviewLabel>SFTK Dep Test Root {!$Flow.CurrentDateTime}</interviewLabel>
+    <label>SFTK Dep Test - Account Trigger (4 subflow levels)</label>
+    <processType>AutoLaunchedFlow</processType>
+    <start>
+        <locationX>50</locationX>
+        <locationY>0</locationY>
+        <connector>
+            <targetReference>Call_Level_1</targetReference>
+        </connector>
+        <filterLogic>and</filterLogic>
+        <filters>
+            <field>Name</field>
+            <operator>EqualTo</operator>
+            <value>
+                <stringValue>SFTK_DEP_TEST_NEVER_MATCHES_A_REAL_ACCOUNT</stringValue>
+            </value>
+        </filters>
+        <object>Account</object>
+        <recordTriggerType>CreateAndUpdate</recordTriggerType>
+        <triggerType>RecordAfterSave</triggerType>
+    </start>
+    <status>Active</status>
+    <subflows>
+        <name>Call_Level_1</name>
+        <label>Call Level 1</label>
+        <locationX>176</locationX>
+        <locationY>323</locationY>
+        <flowName>SFTK_Dep_Test_L1</flowName>
+    </subflows>
+</Flow>

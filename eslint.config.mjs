@@ -39,7 +39,9 @@ const perFileConfigs = Object.entries(FILE_GLOBALS).map(([file, names]) => ({
 
 export default [
   {
-    ignores: ['node_modules/**', '_harness*', '_smoketest*', '*.min.js', 'eslint-globals.json'],
+    ignores: ['node_modules/**', '_harness*', '_smoketest*', '*.min.js', 'eslint-globals.json',
+      'Saleforce Toolkit/**',   // stale nested copy (June 2026) — not part of the build
+      'dist/**'],
   },
   {
     files: ['**/*.js'],

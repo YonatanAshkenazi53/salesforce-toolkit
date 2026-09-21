@@ -1059,7 +1059,7 @@ const FieldCleaner = (() => {
         }
       }
 
-      renderResults([...deps, ...flexiHits, ...supHits], fieldId);
+      await renderResults([...deps, ...flexiHits, ...supHits], fieldId);
     } catch (e) {
       const fe = sftkFriendlyError(e.message);
       showScanError(`Unexpected error: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`);
@@ -1129,8 +1129,9 @@ const FieldCleaner = (() => {
   // field they use breaks them without warning: list views, compact layouts,
   // quick actions, matching rules, workflow field updates. All five are
   // cheap because they're scoped to the field's own object. Reports and
-  // approval processes can't be scanned affordably — renderResults shows a
-  // static "check manually" note for those.
+  // report types ARE in the dependency index (they are TYPE_CFG entries);
+  // approval processes and email templates still can't be scanned
+  // affordably — renderResults shows a static "check manually" note.
   function _fieldTokenRe() {
     const fl = (_selField?.api || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`(^|[^a-zA-Z0-9_])${fl}([^a-zA-Z0-9_]|$)`, 'i');
@@ -1417,6 +1418,22 @@ const FieldCleaner = (() => {
                       note: 'Update the Apex trigger to remove the field reference.' },
     WorkflowRule:   { icon: '🔁', label: 'Workflow Rules',   fixable: false, sev: 'blocker',
                       note: 'Edit or deactivate the workflow rule in Setup.' },
+    // Both come from Salesforce's own dependency index — the same one behind
+    // "Where is this used?" — so they cost nothing extra to find (user
+    // 2026-09-01: "one of the metadata items that we scan everytime").
+    Report:         { icon: '📊', label: 'Reports',          fixable: true, sev: 'silent',
+                      note: 'The field is removed from the report’s columns, filters and groupings (a restore point is saved first). Formulas and buckets are never auto-edited and stay listed as manual; an edit that would break the report (its only column or only grouping) is refused with the fix.',
+                      doneLabel: '✅ Report updated' },
+    ReportType:     { icon: '📑', label: 'Report Types',     fixable: false, sev: 'blocker',
+                      note: 'Salesforce exposes no modern API for editing report-type columns — remove the field’s column in Setup → Report Types, then re-scan.' },
+    // Live 2026-09-03: the dependency index ACCEPTS these two types, but it
+    // is not guaranteed to hold a row for every template or approval that
+    // uses a field — so they are listed when reported, and the note below
+    // still says to check them by hand.
+    EmailTemplate:  { icon: '✉️', label: 'Email Templates',  fixable: false, sev: 'blocker',
+                      note: 'Edit the template in Setup and remove the merge field, then re-scan. Templates are listed only when Salesforce’s dependency index reports them.' },
+    ApprovalProcess:{ icon: '✅', label: 'Approval Processes', fixable: false, sev: 'blocker',
+                      note: 'Edit the approval process in Setup (entry criteria, field updates, step criteria), then re-scan. Listed only when Salesforce’s dependency index reports it.' },
   };
   const TYPE_CFG_DEFAULT = { icon: '🔧', label: 'Other', fixable: false, sev: 'blocker',
     note: 'Review this dependency in Setup before deleting the field.' };
@@ -1428,19 +1445,65 @@ const FieldCleaner = (() => {
   // F8: honest disclosure of what the scan does NOT cover — the Tooling
   // dependency index doesn't track these, so silent breakage hides here.
   function _unscannedNoteHtml() {
-    const reportsUrl = _orgUrl
-      ? _orgUrl.replace(/\/$/, '') + '/lightning/o/Report/home'
-      : null;
     return `
       <div class="fc-unscanned-note">
-        ℹ️ <strong>Not scanned</strong> (no affordable API): Reports, Email Templates,
-        approval processes, and criteria-based sharing rules — these break silently if
+        \u2139\ufe0f <strong>Reports and report types</strong> are covered by the scan above \u2014 they come
+        from Salesforce\u2019s own dependency index, the same one behind \u201cWhere is this used?\u201d.
+        <strong>Email Templates and Approval Processes</strong> appear above only when that index reports
+        them \u2014 Salesforce does not guarantee it does for every template or approval, so check them by hand.
+        <strong>Not scanned at all</strong> (no API): criteria-based sharing rules \u2014 these break silently if
         the field is removed. Check them before deleting.
-        ${reportsUrl ? `<a class="fc-unscanned-link" href="${esc(reportsUrl)}" target="_blank" rel="noopener">↗ Open Reports</a>` : ''}
       </div>`;
   }
 
-  function renderResults(deps, fieldId) {
+  // \U0001F4CA Report fix \u2014 rides the everyday dependency scan (user 2026-09-01:
+  // "one of the metadata items that we scan everytime"). Per the user's
+  // rule (latest Salesforce tech, SOAP last-resort) this is the MODERN
+  // Analytics REST API end to end: describe \u2192 pure surgical strip
+  // (sftk-reportclean.js) \u2192 restore point \u2192 PATCH \u2192 re-describe to verify.
+  // Returns the label fixOne shows; throws with the reason when nothing
+  // could be removed.
+  async function fixReport(reportId, reportName) {
+    const obj = _selObj.api, field = _selField.api;
+    const d = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
+      path: `services/data/v62.0/analytics/reports/${reportId}/describe` });
+    if (d?.error || !d?.reportMetadata) {
+      const err = new Error(d?.error || 'the report could not be read');
+      err.setupUrl = `${_orgUrl.replace(/\/$/, '')}/lightning/r/Report/${reportId}/view`;
+      throw err;
+    }
+    const res = sftkRptStripField(d.reportMetadata, obj, field);
+    if (!res.changed) {
+      const err = new Error(`nothing auto-removable \u2014 ${res.manual.join('; ') || 'no editable reference found'}`);
+      err.setupUrl = `${_orgUrl.replace(/\/$/, '')}/lightning/r/Report/${reportId}/view`;
+      throw err;
+    }
+    // Restore point FIRST \u2014 the fix is only offered with a way back.
+    await _snapshotFix('Report', reportId, reportName, null, d.reportMetadata);
+    const patch = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+      path: `services/data/v62.0/analytics/reports/${reportId}`,
+      body: { reportMetadata: res.meta } });
+    if (patch?.error) {
+      const err = new Error(patch.error);
+      err.setupUrl = `${_orgUrl.replace(/\/$/, '')}/lightning/r/Report/${reportId}/view`;
+      throw err;
+    }
+    // VERIFY \u2014 re-read and state what remains, never assume clean.
+    const after = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+      path: `services/data/v62.0/analytics/reports/${reportId}/describe` });
+    const left = after?.reportMetadata ? sftkRptFieldHits(after.reportMetadata, obj, field) : null;
+    const parts = [];
+    if (res.removed.columns) parts.push(`${res.removed.columns} column(s)`);
+    if (res.removed.filters) parts.push(`${res.removed.filters} filter(s)`);
+    if (res.removed.groupings) parts.push(`${res.removed.groupings} grouping(s)`);
+    let label = `\u2705 Report updated \u00b7 removed ${parts.join(', ')}`;
+    if (res.manual.length) label += ` \u00b7 \u26a0 still manual: ${res.manual.join('; ')}`;
+    else if (left && left.any) label += ' \u00b7 \u26a0 some references remain \u2014 re-scan';
+    else label += ' \u00b7 verified: no references remain';
+    return label;
+  }
+
+  async function renderResults(deps, fieldId) {
     const results = eid('fcResults');
     if (!results) return;
 
@@ -1470,6 +1533,11 @@ const FieldCleaner = (() => {
       if (!_groups[t]) _groups[t] = [];
       _groups[t].push(d);
     }
+
+    // Flow rows are per VERSION (the dependency index reports each version
+    // that mentions the field). Read their number/status once so every row
+    // says which version it is and what ✂ will do to it.
+    if (_groups.Flow) await _loadFlowVersionInfo(_groups.Flow);
 
     const autoCount   = Object.entries(_groups)
       .filter(([t]) => (TYPE_CFG[t] || TYPE_CFG_DEFAULT).fixable)
@@ -1898,9 +1966,32 @@ const FieldCleaner = (() => {
     return `${(months / 12).toFixed(1)} year(s) ago`;
   }
 
+  // version id (15-char) → { defId, num, status } for the flow rows of the
+  // current scan. Filled by _loadFlowVersionInfo before rendering.
+  let _flowVerInfo = {};
+
+  async function _loadFlowVersionInfo(rows) {
+    _flowVerInfo = {};
+    const ids = [...new Set((rows || []).map(r => String(r.MetadataComponentId || '').substring(0, 15)).filter(Boolean))];
+    for (let i = 0; i < ids.length; i += 100) {
+      const lit = ids.slice(i, i + 100).map(x => `'${x}'`).join(',');
+      const r = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
+        query: `SELECT Id, DefinitionId, VersionNumber, Status FROM Flow WHERE Id IN (${lit})` });
+      for (const v of (r?.records || [])) {
+        _flowVerInfo[String(v.Id).substring(0, 15)] = { defId: v.DefinitionId, num: Number(v.VersionNumber) || 0, status: v.Status || '' };
+      }
+    }
+  }
+
   function renderItem(dep, fixable, type) {
     const id      = dep.MetadataComponentId;
     const name    = esc(dep.MetadataComponentName || id);
+    const vinfo   = type === 'Flow' ? _flowVerInfo[String(id).substring(0, 15)] : null;
+    const verBadge = vinfo
+      ? ` <span class="fc-ver-badge" style="margin-left:6px;font-size:10.5px;padding:0 5px;border-radius:8px;border:1px solid var(--border,#dddbda);${vinfo.status === 'Active' ? 'color:var(--active-color,#2E844A)' : 'opacity:.75'}" title="${vinfo.status === 'Active'
+          ? 'The ACTIVE version references the field: ✂ deploys a new version without it, verifies the new one is active, then deletes this one.'
+          : 'An inactive version references the field: ✂ deletes this version (after an optional backup) — no new version is needed for it.'}">v${vinfo.num} · ${esc(vinfo.status)}</span>`
+      : '';
     const canInsp = Object.prototype.hasOwnProperty.call(_INSPECT_SOBJECT, type);
     const inspBtn = canInsp
       ? `<button class="btn btn-sm fc-inspect-btn" title="View XML metadata"
@@ -1921,7 +2012,7 @@ const FieldCleaner = (() => {
     if (fixable) {
       return `
         <div class="fc-item" id="fcItem_${esc(id)}">
-          <span class="fc-item-name">${name}</span>
+          <span class="fc-item-name">${name}${verBadge}</span>
           <span class="fc-item-btns">
             ${depsLink}
             ${inspBtn}
@@ -1947,19 +2038,81 @@ const FieldCleaner = (() => {
     const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
     // W6 (user 2026-08-05: "ask before any delete operation") — ✂ Remove
     // DEPLOYS metadata on one click, and for flows also permanently DELETES
-    // old versions that still reference the field. Confirm first, stating
+    // versions that still reference the field. Confirm first, stating
     // exactly what will happen; flows get the deliberate checkbox because
     // deleted flow versions cannot be restored.
+    //
+    // Flows (user 2026-09-13): the plan is read BEFORE the confirm — every
+    // version of the flow, which of them mention the field, whether the
+    // active one does (→ new version, verified active, then delete) or only
+    // inactive ones do (→ delete just those), and the paused interviews that
+    // must go first. The dialog states that exact plan, offers a backup zip,
+    // and nothing is deleted before a new version is verified active.
+    let flowPlan = null;
+    if (type === 'Flow') {
+      const pbtn = document.querySelector(`.fc-fix-btn[data-id="${componentId}"]`);
+      if (pbtn) { pbtn.disabled = true; pbtn.textContent = '🔎 reading versions…'; }
+      try { flowPlan = await fixFlowPlan(componentId, componentName); }
+      catch (e) {
+        if (pbtn) { pbtn.disabled = false; pbtn.textContent = '✂ Remove'; }
+        appendInlineError(componentId, e.message, e.setupUrl, '↗ Open in Flow Builder');
+        return;
+      }
+      if (pbtn) { pbtn.disabled = false; pbtn.textContent = '✂ Remove'; }
+      if (flowPlan.plan.mode === 'none') {
+        markFixed(componentId, '✅ No version of this flow references the field any more');
+        _markFlowSiblings(componentId, flowPlan.defId, '✅ No version of this flow references the field any more', '');
+        return;
+      }
+    }
+    let wantBackup = true;
+    // An ACTIVE version that references the field can be dealt with two ways;
+    // the user chooses (2026-09-21). 'replace' is only offered when the
+    // automatic fix can actually take something out.
+    const hasChoice = type === 'Flow' && flowPlan.plan.mode === 'active' && !!flowPlan.planDelete;
+    const pv = hasChoice ? flowPlan.preview : null;
+    const canReplace = hasChoice && !!pv && pv.removed.length > 0;
+    let activeMode = hasChoice ? (canReplace ? 'replace' : '') : 'replace';
     const sure = await sftkConfirmDestructive({
       title: `Remove field reference — ${cfg.label || type}`,
-      items: [{ label: componentName, sub: type }],
+      items: type === 'Flow'
+        ? flowPlan.plan.toDelete.map(v => ({ label: `${componentName} v${v.num}`, sub: `${v.status} — deleted (${hasChoice && v.status === 'Active' ? 'the active version: replaced or removed, as you choose below' : v.why})` }))
+        : [{ label: componentName, sub: type }],
       revOverride: {
         html: type === 'Flow'
-          ? '⚠ <strong>Deploys and activates a new flow version</strong> with the reference removed, and <strong>permanently deletes old versions</strong> that still reference the field (Salesforce holds the dependency lock per version). Deleted flow versions cannot be restored.'
-          : `✏ ${cfg.note || 'The field reference is removed from this component.'} The change deploys immediately; there is no undo besides re-adding the field by hand.`,
+          ? `⚠ <strong>${hasChoice ? 'This' : (flowPlan.plan.mode === 'active' ? 'Deploys a new flow version without the reference, verifies it is ACTIVE, and then' : 'This')} permanently deletes flow versions</strong> that still reference the field (Salesforce holds the dependency lock per version, not per active version).<ol id="fcFlowLines" style="margin:6px 0 0 18px;padding:0">${(hasChoice && !activeMode ? [] : flowPlan.lines).map(l => `<li>${esc(l)}</li>`).join('')}</ol>`
+          : `✏ ${cfg.note || 'The field reference is removed from this component.'} The change deploys immediately. ${['Report', 'Layout', 'FlexiPage'].includes(type)
+              ? 'A <strong>restore point</strong> is saved first — 🧾 Cleanup history can put the previous version back.'
+              : 'There is no undo besides re-adding the field by hand.'}`,
         needsCheckbox: type === 'Flow',
       },
-      confirmLabel: '✂ Remove reference',
+      extraHtml: type === 'Flow' ? `
+        ${hasChoice ? _flowChoiceHtml(flowPlan, componentName, canReplace) : ''}
+        <label class="sftk-confirm-ack"><input type="checkbox" id="fcFlowBackup" checked> ⬇ Back up the ${flowPlan.plan.toDelete.length} version(s) as a zip before deleting (recommended — the Flows tool can restore from it)</label>
+        ${flowPlan.interviews.length ? `<div class="sftk-confirm-undo">⏸ ${esc(sftkFlowInterviewWords(sftkFlowInterviewKinds(flowPlan.interviews)).head)} that will be deleted first: ${esc(flowPlan.interviews.slice(0, 8).map(i => i.InterviewLabel || i.Name).join(', '))}${flowPlan.interviews.length > 8 ? ` … +${flowPlan.interviews.length - 8} more` : ''}</div>` : ''}` : '',
+      onRender: type === 'Flow' ? () => {
+        const cb = document.getElementById('fcFlowBackup');
+        cb?.addEventListener('change', () => { wantBackup = !!cb.checked; });
+        if (!hasChoice) return;
+        // The choice drives the numbered plan and the button; nothing can be
+        // confirmed until BOTH the acknowledgement is ticked and a way is chosen.
+        const go = document.getElementById('sftkConfirmGo'), ack = document.getElementById('sftkConfirmAck');
+        const sync = () => {
+          const lines = activeMode === 'delete' ? flowPlan.linesDelete : activeMode === 'replace' ? flowPlan.lines : [];
+          const ol = document.getElementById('fcFlowLines');
+          if (ol) ol.innerHTML = lines.length ? lines.map(l => `<li>${esc(l)}</li>`).join('') : '<li>Choose below what happens to the active version.</li>';
+          if (go) {
+            go.textContent = activeMode === 'delete' ? '🗑 Switch the flow off, then delete' : activeMode === 'replace' ? '✂ Deploy fixed version, then delete' : 'Choose an option first';
+            go.disabled = !(ack && ack.checked && activeMode);
+          }
+        };
+        document.querySelectorAll('input[name="fcActiveMode"]').forEach(r => r.addEventListener('change', () => { if (r.checked) { activeMode = r.value; sync(); } }));
+        ack?.addEventListener('change', sync);
+        sync();
+      } : null,
+      confirmLabel: type === 'Flow'
+        ? (flowPlan.plan.mode === 'active' ? '✂ Deploy fixed version, then delete' : '🗑 Delete referencing version(s)')
+        : '✂ Remove reference',
     });
     if (!sure) return;
 
@@ -1969,18 +2122,30 @@ const FieldCleaner = (() => {
       let label = cfg.doneLabel || '✅ Done';
       let doneLinks = '';
       if (type === 'Flow') {
-        const purge = await fixFlow(componentId, componentName);
-        if (purge?.purged)        label += ` · ${purge.purged} old version(s) purged`;
-        if (purge?.stillBlocking) label += ` · ⚠ ${purge.stillBlocking} old version(s) couldn't be deleted — may still block the field delete`;
-        doneLinks = _flowDoneLinks(purge);
+        if (hasChoice && !activeMode) return;   // the button is disabled without a choice; belt and braces
+        const chosen = (hasChoice && activeMode === 'delete') ? { ...flowPlan, plan: flowPlan.planDelete, lines: flowPlan.linesDelete } : flowPlan;
+        const r = await fixFlowExecute(chosen, { backup: wantBackup });
+        const bits = [];
+        if (r.mode === 'active') bits.push(`v${r.newVersion} deployed and ACTIVE (verified by re-reading the org)`);
+        if (r.mode === 'active-delete') bits.push('flow switched OFF (verified by re-reading the org) — it no longer runs');
+        if (r.deleted) bits.push(`${r.deleted} version(s) deleted`);
+        if (r.interviewsDeleted) bits.push(`${r.interviewsDeleted} flow interview(s) deleted`);
+        if (r.interviewsFailed) bits.push(`⚠ ${r.interviewsFailed} flow interview(s) couldn't be deleted`);
+        if (r.failed || r.skipped) bits.push(`⚠ ${r.failed + r.skipped} version(s) couldn't be deleted — may still block the field delete${r.errors.length ? ` (${r.errors.join('; ')})` : ''}`);
+        if (r.stillMentions) bits.push(`⚠ the new version still mentions the field in text the auto-fix does not touch (a formula or decision) — finish it in Flow Builder`);
+        label = `✅ ${bits.join(' · ')}`;
+        doneLinks = _flowDoneLinks({ stillBlocking: r.failed + r.skipped });
+        _markFlowSiblings(componentId, r.defId, label, doneLinks);
       }
       if (type === 'Layout')    await fixLayout(componentId, componentName);
       if (type === 'FlexiPage') await fixFlexiPage(componentId, componentName);
+      if (type === 'Report')    label = await fixReport(componentId, componentName);
       markFixed(componentId, label, doneLinks);
     } catch (e) {
       if (btn) { btn.disabled = false; btn.textContent = '✂ Remove'; }
       // Label the open-link button based on which builder we're sending them to.
-      const linkLabel = type === 'Flow' ? '↗ Open in Flow Builder' : '↗ Open in Setup';
+      const linkLabel = type === 'Flow' ? '↗ Open in Flow Builder'
+        : type === 'Report' ? '↗ Open report' : '↗ Open in Setup';
       // C5a: FlexiPage failures dead-end into manual App Builder work — the
       // toolkit's own Lightning Pages tool operates on these exact pages.
       const crossTab = type === 'FlexiPage'
@@ -2023,7 +2188,13 @@ const FieldCleaner = (() => {
       <span class="fc-item-ok">${esc(label)}${extraLinksHtml}</span>`;
     // Close any open XML inspector for this item
     const xmlPanel = eid(`fcXml_${componentId}`);
-    if (xmlPanel) xmlPanel.style.display = 'none';
+    if (xmlPanel) {
+      xmlPanel.style.display = 'none';
+      // The inspector's own ✂ button is a .fc-fix-btn too — left in place it
+      // keeps counting as an unresolved fix and "Delete Field" never
+      // re-enables (audit 2026-09-12).
+      xmlPanel.querySelector('.fc-xml-fix')?.remove();
+    }
     checkEnableDelete();
   }
 
@@ -2126,57 +2297,253 @@ const FieldCleaner = (() => {
   }
 
   // ── Flow fix logic ─────────────────────────────────────────
-  async function fixFlow(flowId, flowName) {
-    // Read full flow metadata
-    const flowRes = await bg({
-      type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
-      sobject: 'Flow', id: flowId
-    });
-    if (flowRes.error) throw new Error(`Could not read "${flowName}": ${_feText(flowRes.error)}`);
+  // ── Flow surgery — sftk-flowsurgery.js plans it, this executes it ──────
+  // (user 2026-09-13). Salesforce holds the field lock per flow VERSION.
 
-    const fullName = flowRes.FullName;
-    const metadata = flowRes.Metadata;
-    if (!fullName || !metadata) throw new Error(`"${flowName}" returned no metadata.`);
+  const _flowBuilderUrl = flowId => (_orgUrl && flowId)
+    ? `${_orgUrl.replace(/\/$/, '')}/builder_platform_interaction/flowBuilder.app?flowId=${flowId}` : null;
 
-    // F6: snapshot BEFORE the in-place mutation below — ↩ Restore redeploys it.
-    await _snapshotFix('Flow', flowId, flowName, fullName, metadata);
+  // Every version of the flow a version id belongs to, newest first. A
+  // partial version list is refused — deletions are never planned from it.
+  async function _flowVersionsOf(anyVersionId) {
+    const defRes = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
+      query: `SELECT DefinitionId FROM Flow WHERE Id = '${anyVersionId}'` });
+    if (defRes?.error) throw new Error(`Could not resolve the flow definition: ${_feText(defRes.error)}`);
+    const defId = defRes?.records?.[0]?.DefinitionId;
+    if (!defId) throw new Error('Could not resolve the flow definition of this version.');
+    const verRes = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
+      query: `SELECT Id, VersionNumber, Status FROM Flow WHERE DefinitionId = '${defId}' ORDER BY VersionNumber DESC` });
+    if (verRes?.error) throw new Error(`Could not list the flow's versions: ${_feText(verRes.error)}`);
+    if (verRes?.incomplete) throw new Error(`The flow's version list came back INCOMPLETE (Salesforce says ${verRes.incomplete.expected} version(s), got ${verRes.incomplete.got}) — refusing to plan deletions from a partial list.`);
+    const versions = verRes?.records || [];
+    const maxNum = versions.reduce((m, v) => Math.max(m, Number(v.VersionNumber) || 0), 0);
+    return { defId, versions, maxNum };
+  }
 
-    // Remove field references
-    const changes = removeFieldRefs(metadata, _selObj.api, _selField.api);
-    if (changes === 0) {
-      const err = new Error(
-        `Couldn't auto-remove the field from "${flowName}" — the reference is ` +
-        `in a path the auto-fix can't safely change (decision condition, ` +
-        `formula expression, or variable default). Click "Open in Flow Builder" ` +
-        `to fix it by hand.`
-      );
-      if (_orgUrl) {
-        err.setupUrl = `${_orgUrl.replace(/\/$/, '')}/builder_platform_interaction/flowBuilder.app?flowId=${flowId}`;
+  // After a deploy the org must show a NEWER version than before, and it
+  // must be ACTIVE — activated here when the org's deploy setting left it
+  // inactive — and both facts are RE-READ, never assumed. Throws (with a
+  // Flow Builder link) when that cannot be established; callers delete
+  // nothing in that case.
+  async function _verifyFlowActivation(defId, prevMax, flowName, flowIdForLink) {
+    const read = async () => {
+      const r = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
+        query: `SELECT Id, VersionNumber, Status FROM Flow WHERE DefinitionId = '${defId}' ORDER BY VersionNumber DESC` });
+      if (r?.error) throw new Error(`The deploy was accepted but the org could not be re-read to verify it (${_feText(r.error)}) — treat "${flowName}" as UNVERIFIED and check it in Flow Builder. Nothing was deleted.`);
+      return r?.records || [];
+    };
+    const link = e => { const u = _flowBuilderUrl(flowIdForLink); if (u) e.setupUrl = u; return e; };
+    let versions = await read();
+    let newest = versions[0];
+    if (!newest || (Number(newest.VersionNumber) || 0) <= prevMax) {
+      throw link(new Error(`The deploy was accepted but no new version of "${flowName}" appeared (latest is still v${prevMax}). Nothing was deleted.`));
+    }
+    if (newest.Status !== 'Active') {
+      const act = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+        path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${defId}`,
+        body: { Metadata: { activeVersionNumber: Number(newest.VersionNumber) } } });
+      const newId = newest.Id;
+      versions = await read();
+      newest = versions.find(v => v.Id === newId) || null;
+      if (!newest || newest.Status !== 'Active') {
+        throw link(new Error(`v${newest ? newest.VersionNumber : '?'} of "${flowName}" was created but could NOT be activated${act?.error ? ` — ${_feText(act.error)}` : ''}. The previous version stays active and nothing was deleted. Activate the new version in Flow Builder, then run ✂ Remove again.`));
       }
-      throw err;
+    }
+    return { newVersion: Number(newest.VersionNumber) || 0, newId: newest.Id, versions };
+  }
+
+  // Paused / waiting interviews on these versions — Salesforce refuses to
+  // delete a version while any exist. A failed check is reported, not hidden.
+  async function _flowInterviewsFor(versionIds) {
+    const ids = (versionIds || []).filter(Boolean);
+    if (!ids.length) return { interviews: [], error: null };
+    const lit = ids.map(x => `'${x}'`).join(',');
+    const r = await bg({ type: 'SF_REST_QUERY', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+      query: `SELECT Id, Name, InterviewLabel, InterviewStatus, CurrentElement, CreatedDate, FlowVersionViewId FROM FlowInterview WHERE FlowVersionViewId IN (${lit})` });
+    if (r?.error) return { interviews: [], error: _feText(r.error) };
+    return { interviews: r?.records || [], error: null };
+  }
+
+  async function _deleteFlowInterviews(interviews) {
+    const out = { deleted: 0, failed: 0, failedVersionIds: new Set(), errors: [] };
+    for (const it of (interviews || [])) {
+      const d = await bg({ type: 'SF_REST_DELETE', orgUrl: _orgUrl, sid: _sid, sobject: 'FlowInterview', id: it.Id, _suppressError: true });
+      if (d?.error) { out.failed++; out.failedVersionIds.add(it.FlowVersionViewId); if (out.errors.length < 3) out.errors.push(_feText(d.error)); }
+      else out.deleted++;
+    }
+    return out;
+  }
+
+  // Versions whose interviews could not be deleted are skipped — Salesforce
+  // would refuse them anyway, and the count says so.
+  async function _deleteFlowVersionIds(ids, skipIds) {
+    const out = { deleted: 0, failed: 0, skipped: 0, errors: [] };
+    for (const id of (ids || [])) {
+      if (skipIds && skipIds.has(id)) { out.skipped++; continue; }
+      const d = await bg({ type: 'SF_TOOLING_DELETE', orgUrl: _orgUrl, sid: _sid, sobject: 'Flow', id, _suppressError: true });
+      if (d?.error) { out.failed++; if (out.errors.length < 3) out.errors.push(_feText(d.error)); }
+      else out.deleted++;
+    }
+    return out;
+  }
+
+  // The other rows of the same flow (the index lists each version that
+  // mentions the field) are settled by the same surgery — mark them too.
+  function _markFlowSiblings(exceptId, defId, label, links) {
+    if (!defId) return;
+    const key = String(defId).substring(0, 15);
+    for (const d of (_groups.Flow || [])) {
+      const id = String(d.MetadataComponentId || '');
+      if (id === String(exceptId)) continue;
+      const info = _flowVerInfo[id.substring(0, 15)];
+      if (info && info.defId && String(info.defId).substring(0, 15) === key) markFixed(id, label, links);
+    }
+  }
+
+  // Read every version of the flow, find which mention the field, and plan.
+  // Nothing is written here.
+  // What the automatic fix would do INSIDE the active version, and the choice
+  // it leaves the user (2026-09-21). Flow Builder cannot be driven or
+  // highlighted from outside, so the manual route names every location by the
+  // element's label and API name — Flow Builder's Toolbox → Manager finds them.
+  function _flowChoiceHtml(fp, flowName, canReplace) {
+    const pv = fp.preview || { removed: [], remaining: [], emptied: [] };
+    const act = fp.plan.active;
+    const li = (x, tail) => `<li><b>${esc(x.kind)}</b> “${esc(x.label || x.name || '?')}”${x.name ? ` <code>${esc(x.name)}</code>` : ''} — ${esc(x.where)}${tail ? `: <code>${esc(tail)}</code>` : ''}</li>`;
+    const list = (arr, tailKey) => arr.length ? `<ul class="fc-prev-list">${arr.slice(0, 12).map(x => li(x, x[tailKey])).join('')}${arr.length > 12 ? `<li>… +${arr.length - 12} more</li>` : ''}</ul>` : '';
+    const open = fp.builderUrl ? `<a href="${esc(fp.builderUrl)}" target="_blank" rel="noopener" class="fc-prev-open">↗ Open v${act.num} in Flow Builder</a>` : '';
+    return `<div class="fc-prev">
+      <div class="fc-prev-hd">Inside the active v${act.num} — what an automatic fix would do</div>
+      ${pv.removed.length ? `<div class="fc-prev-sec fc-prev-ok"><b>✂ Comes out automatically (${pv.removed.length})</b>${list(pv.removed, 'what')}</div>`
+        : `<div class="fc-prev-sec fc-prev-bad"><b>✂ Nothing can be taken out automatically.</b></div>`}
+      ${pv.remaining.length ? `<div class="fc-prev-sec fc-prev-bad"><b>✋ Cannot be removed automatically (${pv.remaining.length}) — these KEEP the field locked</b>
+        <div class="fc-prev-note">Decisions and formulas decide what a flow does, so they are never rewritten for you. Until these are changed by hand, Salesforce will still refuse to delete the field.</div>${list(pv.remaining, 'value')}</div>` : ''}
+      ${pv.emptied.length ? `<div class="fc-prev-sec fc-prev-warn"><b>⚠ Left empty by the fix (${pv.emptied.length}) — Salesforce is likely to refuse the new version</b>${list(pv.emptied, '')}
+        <div class="fc-prev-note">An element with nothing left to do is invalid. If the deploy is refused, nothing is deleted and the message says so.</div></div>` : ''}
+      <div class="fc-prev-hd">The active version — choose</div>
+      <label class="fc-prev-opt${canReplace ? '' : ' fc-prev-opt-off'}"><input type="radio" name="fcActiveMode" value="replace" ${canReplace ? 'checked' : 'disabled'}>
+        <span><b>Keep the flow running</b> — deploy a new active v${fp.plan.expectNew} without what comes out above, verify it is active, then delete v${act.num}.
+        ${canReplace ? (pv.remaining.length ? `<em>The field stays locked until you also fix the ${pv.remaining.length} manual place(s) in the new version.</em>` : '') : '<em>Not available: there is nothing the automatic fix can take out of this version.</em>'}</span></label>
+      <label class="fc-prev-opt"><input type="radio" name="fcActiveMode" value="delete">
+        <span><b>Delete the active version too</b> — switch the flow off, verify nothing is active, then delete v${act.num} with the rest. <em>The flow stops running.</em></span></label>
+      <div class="fc-prev-sec"><b>Or do it yourself.</b> ${open} In Flow Builder open <i>Toolbox → Manager</i> and search each API name shown above (<code>like_this</code>); change or remove the reference, reconnect anything you delete, then Save As a new version and Activate. Run ✂ Remove here again afterwards — it will find the active version clean and only remove the old versions.</div>
+    </div>`;
+  }
+
+  async function fixFlowPlan(flowId, flowName) {
+    const { defId, versions, maxNum } = await _flowVersionsOf(flowId);
+    const metaById = {}; const referencing = [];
+    for (const v of versions) {
+      const read = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: 'Flow', id: v.Id, _suppressError: true });
+      if (read?.error || !read?.Metadata) {
+        throw new Error(`Could not read v${v.VersionNumber} of "${flowName}"${read?.error ? ` (${_feText(read.error)})` : ''} — refusing to plan deletions from a partial picture of the flow.`);
+      }
+      metaById[v.Id] = read;
+      if (flowReferencesField(read.Metadata)) referencing.push(v.Id);
+    }
+    const plan = sftkFlowSurgeryPlan(versions, referencing);
+    const { interviews, error: interviewCheckError } = await _flowInterviewsFor(plan.toDelete.map(v => v.id));
+    const kinds = sftkFlowInterviewKinds(interviews);
+    // The other way to deal with an ACTIVE version (same versions go, so the
+    // same interviews apply), and a preview of the automatic fix made by the
+    // REAL remover on a clone — it cannot disagree with the run.
+    let planDelete = null, preview = null;
+    if (plan.mode === 'active') {
+      planDelete = sftkFlowSurgeryPlan(versions, referencing, { activeMode: 'delete' });
+      try {
+        const before = metaById[plan.active.id].Metadata;
+        const after = JSON.parse(JSON.stringify(before));
+        removeFieldRefs(after, _selObj.api, _selField.api);
+        preview = sftkFlowRefPreview(before, after, _fieldStringTester());
+      } catch (_) { preview = null; }   // no preview is a missing convenience, never a wrong one
+    }
+    return { flowId, flowName, defId, versions, maxNum, metaById, plan, interviews, interviewCheckError,
+      planDelete, preview, builderUrl: plan.active ? _flowBuilderUrl(plan.active.id) : null,
+      lines: sftkFlowSurgeryLines(plan, kinds, interviewCheckError),
+      linesDelete: planDelete ? sftkFlowSurgeryLines(planDelete, kinds, interviewCheckError) : null };
+  }
+
+  // Execute a plan: backup → (new version, VERIFIED active) → interviews →
+  // versions. Every early exit leaves the org exactly as it was.
+  async function fixFlowExecute(fp, opts) {
+    const { plan, metaById, flowName, defId, maxNum } = fp;
+    const out = { mode: plan.mode, defId, newVersion: null, newId: null, deleted: 0, failed: 0, skipped: 0,
+      interviewsDeleted: 0, interviewsFailed: 0, stillMentions: false, errors: [] };
+    const apiNameOf = id => String(metaById[id]?.FullName || '').replace(/-\d+$/, '');
+
+    // 1. backup zip of every version that will be deleted — BEFORE any change
+    if (opts && opts.backup) {
+      if (typeof downloadFlowBackupZip !== 'function') {
+        throw new Error('The backup download is not available on this page — nothing was changed. Untick the backup to proceed without one.');
+      }
+      const entries = plan.toDelete.map(v => ({
+        MasterLabel: flowName, ApiName: apiNameOf(v.id), VersionNumber: v.num, Status: v.status,
+        ProcessType: metaById[v.id]?.ProcessType || metaById[v.id]?.Metadata?.processType || '',
+        FullName: metaById[v.id]?.FullName, Metadata: metaById[v.id]?.Metadata,
+      }));
+      const safe = String(flowName || 'Flow').replace(/[^a-zA-Z0-9_-]/g, '_');
+      downloadFlowBackupZip(entries, _orgUrl, `${safe}_field-cleanup_${plan.toDelete.map(v => 'v' + v.num).join('-')}_backup.zip`);
+    }
+    // 🧾 Cleanup history restore points for every version that goes
+    for (const v of plan.toDelete) {
+      await _snapshotFix('Flow', v.id, `${flowName} v${v.num}`, metaById[v.id]?.FullName, metaById[v.id]?.Metadata);
     }
 
-    // Deploy the fixed flow via the Metadata API. This creates a NEW version
-    // and activates it in one step — and unlike the Tooling API `Flow` create,
-    // it works for record-triggered flows (which reject the Tooling create
-    // with "fullName ... for Flow version is not unique"). Strip Tooling-only
-    // descriptors first so the XML validates.
-    delete metadata.fullName;
-    const flowApiName = fullName.replace(/-\d+$/, '');   // My_Flow-3 → My_Flow
-    const deployRes = await deployFlowViaMetadataApi(flowApiName, metadata);
-    if (!deployRes || !deployRes.success) {
-      const e = new Error(
-        `Couldn't deploy the fixed "${flowName}" (${deployRes?.error ? _feText(deployRes.error) : 'deploy failed'}). ` +
-        `Open in Flow Builder to remove the field reference by hand.`
-      );
-      if (_orgUrl) e.setupUrl = `${_orgUrl.replace(/\/$/, '')}/builder_platform_interaction/flowBuilder.app?flowId=${flowId}`;
-      throw e;
+    // 2. the active version → a new version without the reference, verified ACTIVE
+    if (plan.mode === 'active') {
+      const src = metaById[plan.active.id];
+      const metadata = JSON.parse(JSON.stringify(src.Metadata));
+      const changes = removeFieldRefs(metadata, _selObj.api, _selField.api);
+      if (changes === 0) {
+        const err = new Error(
+          `Couldn't auto-remove the field from the active v${plan.active.num} of "${flowName}" — the reference is ` +
+          `in a path the auto-fix can't safely change (decision condition, formula expression, or variable default). ` +
+          `Nothing was deleted. Click "Open in Flow Builder" to fix it by hand, then run ✂ Remove again for the old versions.`);
+        const u = _flowBuilderUrl(plan.active.id); if (u) err.setupUrl = u;
+        throw err;
+      }
+      delete metadata.fullName;
+      const deployRes = await deployFlowViaMetadataApi(apiNameOf(plan.active.id), metadata);
+      if (!deployRes || !deployRes.success) {
+        const e = new Error(`Couldn't deploy the fixed "${flowName}" (${deployRes?.error ? _feText(deployRes.error) : 'deploy failed'}). Nothing was deleted. Open in Flow Builder to remove the field reference by hand.`);
+        const u = _flowBuilderUrl(plan.active.id); if (u) e.setupUrl = u;
+        throw e;
+      }
+      const ver = await _verifyFlowActivation(defId, maxNum, flowName, plan.active.id);
+      out.newVersion = ver.newVersion; out.newId = ver.newId;
+      // The new version must not mention the field either — formula and
+      // decision text is outside what the auto-fix touches, so say so.
+      const check = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: 'Flow', id: ver.newId, _suppressError: true });
+      out.stillMentions = !!(check?.Metadata && flowReferencesField(check.Metadata));
     }
 
-    // Old versions of this flow can STILL reference the field and keep
-    // blocking the delete — Salesforce holds the dependency lock per
-    // VERSION, not per active version. Purge the stale ones.
-    return purgeOldFlowVersions(flowId, flowName);
+    // 2b. the OTHER way: switch the flow off, verified, before its active
+    // version may be deleted (user 2026-09-21). Every exit leaves the org as it was.
+    if (plan.mode === 'active-delete') {
+      const link = e => { const u = _flowBuilderUrl(plan.active.id); if (u) e.setupUrl = u; return e; };
+      const off = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+        path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${defId}`,
+        body: { Metadata: { activeVersionNumber: 0 } } });
+      const r = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
+        query: `SELECT Id, VersionNumber, Status FROM Flow WHERE DefinitionId = '${defId}'` });
+      if (r?.error) throw link(new Error(`"${flowName}" could not be re-read after switching it off (${_feText(r.error)}) — nothing was deleted. Check it in Flow Builder.`));
+      const stillActive = (r?.records || []).find(v => v.Status === 'Active');
+      if (stillActive) {
+        throw link(new Error(`"${flowName}" could NOT be switched off${off?.error ? ` — ${_feText(off.error)}` : ''}: v${stillActive.VersionNumber} is still active. Nothing was deleted.`));
+      }
+      out.deactivated = true;
+    }
+
+    // 3. flow interviews first, then the versions
+    const skip = new Set();
+    if (fp.interviews.length) {
+      const di = await _deleteFlowInterviews(fp.interviews);
+      out.interviewsDeleted = di.deleted; out.interviewsFailed = di.failed; out.errors.push(...di.errors);
+      for (const id of di.failedVersionIds) skip.add(id);
+    }
+    const dv = await _deleteFlowVersionIds(plan.toDelete.map(v => v.id), skip);
+    out.deleted = dv.deleted; out.failed = dv.failed; out.skipped = dv.skipped; out.errors.push(...dv.errors);
+    return out;
   }
 
   // Does this flow-version metadata reference the selected field ANYWHERE?
@@ -2184,23 +2551,22 @@ const FieldCleaner = (() => {
   // walks every string value and matches both exact reference forms
   // (via _xiIsRef) and embedded formula/template tokens like
   // "{!$Record.Field__c} > 5" that exact-match tests miss.
-  function flowReferencesField(metadata) {
+  // Does this string mention the selected field? Token-boundary regex: the
+  // field api name not preceded/followed by an identifier char, so Latest__c
+  // doesn't false-match test__c. One test for the detector AND the preview.
+  function _fieldStringTester() {
     const fl = (_selField?.api || '').toLowerCase();
-    if (!fl) return false;
-    // Token-boundary regex: field api name not preceded/followed by an
-    // identifier char, so Latest__c doesn't false-match test__c.
+    if (!fl) return null;
     const tokenRe = new RegExp(`(^|[^a-z0-9_])${fl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9_]|$)`, 'i');
-    let found = false;
-    (function walk(v) {
-      if (found || v == null) return;
-      if (typeof v === 'string') {
-        if (_xiIsRef(v) || tokenRe.test(v)) found = true;
-        return;
-      }
-      if (Array.isArray(v)) { for (const x of v) walk(x); return; }
-      if (typeof v === 'object') { for (const k of Object.keys(v)) walk(v[k]); }
-    })(metadata);
-    return found;
+    return v => _xiIsRef(v) || tokenRe.test(v);
+  }
+  // Labels and descriptions are skipped (sftkFlowRefScan): a field name TYPED
+  // into a description is not a dependency Salesforce locks on, and counting
+  // it kept a cleaned flow reading "still references the field" forever.
+  function flowReferencesField(metadata) {
+    const test = _fieldStringTester();
+    if (!test) return false;
+    return sftkFlowRefScan(metadata, test).length > 0;
   }
 
   // Delete old (non-Active) versions of a flow that still reference the
@@ -2224,6 +2590,7 @@ const FieldCleaner = (() => {
         query: `SELECT Id, Status, VersionNumber FROM Flow WHERE DefinitionId = '${defId}' ORDER BY VersionNumber DESC`
       });
       const versions = verRes?.records || [];
+      const stale = [];
       for (const v of versions) {
         if (v.Status === 'Active') continue;   // the fixed version we just deployed
         // Only delete versions that actually still reference the field —
@@ -2234,13 +2601,30 @@ const FieldCleaner = (() => {
         });
         if (read?.error || !read?.Metadata) continue;
         if (!flowReferencesField(read.Metadata)) continue;
-        const del = await bg({
-          type: 'SF_TOOLING_DELETE', orgUrl: _orgUrl, sid: _sid,
-          sobject: 'Flow', id: v.Id, _suppressError: true
-        });
-        if (del?.error) { out.failed++; out.stillBlocking++; }
-        else out.purged++;
+        stale.push(v);
       }
+      if (!stale.length) return out;
+      // Paused interviews block the delete — name them and ask, then clear
+      // them first (user 2026-09-13: "delete flow interview dependencies").
+      const skip = new Set();
+      const { interviews, error: ivErr } = await _flowInterviewsFor(stale.map(v => v.Id));
+      if (interviews.length) {
+        const ok = await sftkConfirmDestructive({
+          title: `Flow interviews on ${flowName}`,
+          items: interviews.slice(0, 12).map(i => ({ label: i.InterviewLabel || i.Name,
+            sub: /^error$/i.test(String(i.InterviewStatus || '')) ? `failed${i.CurrentElement ? ` at ${i.CurrentElement}` : ''}` : (i.CurrentElement ? `paused at ${i.CurrentElement}` : '') })),
+          revOverride: { html: (() => { const w = sftkFlowInterviewWords(sftkFlowInterviewKinds(interviews));
+            return `⏸ <strong>${w.head}</strong> sit on the old versions that still reference the field. Salesforce refuses to delete a version while they exist, so they are deleted first${w.cost ? ` — ${w.cost}` : ''}.`; })(), needsCheckbox: true },
+          confirmLabel: '🗑 Delete interviews, then the versions',
+        });
+        if (!ok) { out.stillBlocking = stale.length; return out; }
+        const di = await _deleteFlowInterviews(interviews);
+        for (const id of di.failedVersionIds) skip.add(id);
+      } else if (ivErr && window.SFToolkitDebug?.enabled) {
+        window.SFToolkitDebug.log('fields', 'warn', `Paused-interview check failed for "${flowName}"`, ivErr);
+      }
+      const dv = await _deleteFlowVersionIds(stale.map(v => v.Id), skip);
+      out.purged = dv.deleted; out.failed = dv.failed + dv.skipped; out.stillBlocking = dv.failed + dv.skipped;
     } catch (e) {
       if (window.SFToolkitDebug?.enabled) {
         window.SFToolkitDebug.log('fields', 'error',
@@ -2950,6 +3334,10 @@ const FieldCleaner = (() => {
       QuickAction:    `/lightning/setup/ObjectManager/${obj}/ButtonsLinksActions/view`,
       MatchingRule:   '/lightning/setup/MatchingRules/home',
       WorkflowFieldUpdate: '/lightning/setup/WorkflowFieldUpdates/home',
+      Report:         '/lightning/o/Report/home',
+      ReportType:     '/lightning/setup/CustomReportTypes/home',
+      EmailTemplate:  '/lightning/o/EmailTemplate/home',
+      ApprovalProcess:'/lightning/setup/ApprovalProcesses/home',
     };
     const url = _orgUrl.replace(/\/$/, '') + (paths[type] || '/lightning/setup/SetupOneHome/home');
     chrome.tabs.create({ url });
@@ -3039,16 +3427,16 @@ const FieldCleaner = (() => {
     const s = String(raw || '');
     if (/INSUFFICIENT_ACCESS_ON_CROSS_REFERENCE_ENTITY|insufficient access rights on cross-reference/i.test(s)) {
       return 'Salesforce is still blocking this field. Usually one of: (a) a ' +
-        'dependency this scan can\'t see (a report, approval process, or ' +
-        'sharing rule — see the "not scanned" note above), (b) the field is ' +
+        'dependency the index did not report (an approval process, an email ' +
+        'template, or a criteria-based sharing rule — see the note above), (b) the field is ' +
         'referenced by a MANAGED package component (read-only), or (c) your ' +
         'user lacks "Customize Application" / "Modify Metadata". Resolve the ' +
         'remaining reference, then retry.';
     }
     if (/in use|cannot delete.*because|referenced/i.test(s)) {
       return 'The field is still referenced somewhere. Fix the listed ' +
-        'dependencies above (and check Reports / approval processes / sharing ' +
-        'rules, which aren\'t scanned), then re-scan and delete again. ' +
+        'dependencies above (and check approval processes, email templates and ' +
+        'criteria-based sharing rules, which the dependency index may not report), then re-scan and delete again. ' +
         `(Raw: ${s})`;
     }
     return s;
@@ -3245,6 +3633,8 @@ const FieldCleaner = (() => {
     const removed = _removeSelectedFlowBlocks(metadata, selSet);
     if (removed === 0) throw new Error('No blocks were selected to remove.');
 
+    // The version picture BEFORE the deploy — the activation check needs it.
+    const before = await _flowVersionsOf(flowId);
     delete metadata.fullName;
     const flowApiName = fullName.replace(/-\d+$/, '');
     const deployRes = await deployFlowViaMetadataApi(flowApiName, metadata);
@@ -3256,6 +3646,10 @@ const FieldCleaner = (() => {
       if (_orgUrl) e.setupUrl = `${_orgUrl.replace(/\/$/, '')}/builder_platform_interaction/flowBuilder.app?flowId=${flowId}`;
       throw e;
     }
+    // The new version must be ACTIVE — verified by re-reading the org
+    // (activated here if the deploy left it inactive); nothing is purged
+    // before that is established.
+    await _verifyFlowActivation(before.defId, before.maxNum, flowName, flowId);
     // Stale versions still referencing the field keep the dependency lock —
     // purge them so the field delete isn't blocked (see purgeOldFlowVersions).
     return purgeOldFlowVersions(flowId, flowName);
@@ -3646,6 +4040,11 @@ const FieldCleaner = (() => {
         const r = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
           path: `services/data/v62.0/tooling/sobjects/FlexiPage/${snap.id}`,
           body: { Metadata: md } });
+        if (r?.error) throw new Error(r.error);
+      } else if (snap.type === 'Report') {
+        const r = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+          path: `services/data/v62.0/analytics/reports/${snap.id}`,
+          body: { reportMetadata: md } });
         if (r?.error) throw new Error(r.error);
       } else {
         throw new Error(`Unknown snapshot type ${snap.type}`);

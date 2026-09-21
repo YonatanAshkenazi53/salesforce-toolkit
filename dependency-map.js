@@ -52,7 +52,49 @@ function sftkFlowRefs(meta) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// N4c / N4d / N4e — PURE helpers.
+// PURE. Salesforce stores Record-Triggered, Scheduled and Platform-Event flows
+// as ProcessType 'AutoLaunchedFlow'; the TRIGGER tells them apart (Setup's own
+// list shows "Autolaunched Flow" + Trigger "Record—Run After Save"). Values are
+// those of FlowDefinitionView.TriggerType and of Metadata.start.triggerType.
+function depResolveFlowType(processType, triggerType) {
+  if (processType !== 'AutoLaunchedFlow') return processType;   // Prompt, Routing, Screen… keep their own name
+  const t = String(triggerType || '');
+  if (/^Record/i.test(t)) return 'RecordTriggeredFlow';           // Record—Run After Save / Before Save / Before Delete…
+  if (t === 'Scheduled')     return 'ScheduledFlow';
+  if (t === 'PlatformEvent') return 'PlatformEventFlow';
+  return processType;
+}
+
+// PURE. Every subflow reachable from the given flows (transitively), for a
+// whole-tree backup. The map is stored called → callers, so it is inverted
+// once. Roots themselves are not returned; cycles simply stop; `cap` bounds
+// the walk and is reported as `truncated` rather than silently applied.
+function depSubflowClosure(dependencyMap, rootApiNames, cap) {
+  const map = (dependencyMap && typeof dependencyMap === 'object') ? dependencyMap : {};
+  const limit = Number(cap) > 0 ? Number(cap) : 500;
+  const kids = {};
+  for (const called of Object.keys(map)) {
+    for (const p of (Array.isArray(map[called]) ? map[called] : [])) {
+      const pn = p && p.apiName; if (!pn) continue;
+      (kids[pn] = kids[pn] || new Set()).add(called);
+    }
+  }
+  const roots = (Array.isArray(rootApiNames) ? rootApiNames : []).filter(Boolean);
+  const seen = new Set(roots); const out = []; let truncated = false;
+  const queue = roots.slice();
+  while (queue.length) {
+    const n = queue.shift();
+    for (const c of (kids[n] ? [...kids[n]].sort() : [])) {
+      if (seen.has(c)) continue;
+      if (out.length >= limit) { truncated = true; break; }
+      seen.add(c); out.push(c); queue.push(c);
+    }
+    if (truncated) break;
+  }
+  return { names: out, truncated };
+}
+
+// N4d / N4e — PURE helpers.
 // Every function below is top-level, column-0 and references NO file-level
 // state, so test/deps-n4.test.mjs can materialise each one standalone via
 // test/extract.mjs. Keep them that way.
@@ -67,6 +109,10 @@ function sftkFlowRefs(meta) {
 // expanded, so A→B→A terminates instead of hanging the popup.
 // Depth-capped: a node sitting at the cap that still has children is flagged
 // `truncated` — the UI must say so rather than pretend the chain ends there.
+// How deep the Dependencies TREE is drawn. Loops cannot happen (each branch
+// carries its own visited set); this only bounds a pathological tree.
+const DEP_TREE_MAX_DEPTH = 25;
+
 function depChain(dependencyMap, apiName, dir, maxDepth) {
   const map = (dependencyMap && typeof dependencyMap === 'object') ? dependencyMap : {};
   const cap = (typeof maxDepth === 'number' && isFinite(maxDepth) && maxDepth > 0)
@@ -149,10 +195,18 @@ function depChain(dependencyMap, apiName, dir, maxDepth) {
 //                     runtime failure; the tree used to only mark "Not found")
 // "No active caller" is NOT proof a flow is unused — buttons, Apex, REST and
 // scheduled paths can start a flow too. Callers must say so in the UI.
-function depDeadSubflows(dependencyMap, flowsByApiName) {
+//   managedByApiName : apiName -> managed-package flow row ({ label, active })
+//                      from FlowDefinitionView — the Tooling flow list never
+//                      contains these, so without it every managed subflow
+//                      target read as "missing" (reproduced on a real org
+//                      2026-09-12). A managed target is neither missing nor
+//                      dead: it exists, and its own callers inside the package
+//                      are invisible to this map.
+function depDeadSubflows(dependencyMap, flowsByApiName, managedByApiName) {
   const map = (dependencyMap && typeof dependencyMap === 'object') ? dependencyMap : {};
   const byName = (flowsByApiName && typeof flowsByApiName === 'object') ? flowsByApiName : {};
-  const dead = [], missing = [], inactiveTargets = [];
+  const managed = (managedByApiName && typeof managedByApiName === 'object') ? managedByApiName : {};
+  const dead = [], missing = [], inactiveTargets = [], managedTargets = [];
 
   const callersOf = (arr) => {
     const out = [], seen = {};
@@ -171,6 +225,12 @@ function depDeadSubflows(dependencyMap, flowsByApiName) {
     const versions = Array.isArray(byName[called]) ? byName[called] : [];
     const activeVersion = versions.find(v => v && v.Status === 'Active') || null;
 
+    if (!versions.length && managed[called]) {
+      const m = managed[called] || {};
+      managedTargets.push({ apiName: called, masterLabel: m.label || called, active: !!m.active,
+        callers, activeCallerCount: activeCallers.length });
+      continue;   // exists in a package — never "missing", never judged "dead"
+    }
     if (!versions.length) {
       missing.push({ apiName: called, callers, activeCallerCount: activeCallers.length });
       continue;   // a flow that does not exist can't also be "dead"
@@ -200,104 +260,15 @@ function depDeadSubflows(dependencyMap, flowsByApiName) {
   }
 
   return {
-    dead, missing, inactiveTargets,
+    dead, missing, inactiveTargets, managedTargets,
     counts: {
       subflowTargets: Object.keys(map).length,
       dead: dead.length,
       missing: missing.length,
-      inactiveTargets: inactiveTargets.length
+      inactiveTargets: inactiveTargets.length,
+      managed: managedTargets.length
     }
   };
-}
-
-// N4c — compare ONE flow's references against another org's schema.
-//   refs              : sftkFlowRefs(meta) output
-//   describesByObject : { ObjectApiName: { fields:[{name}] }   → described OK
-//                       , ObjectApiName: null                  → confirmed ABSENT in target
-//                       , ObjectApiName: { error: 'why' }      → could NOT be checked
-//                       , (key absent)                         → was never described }
-// The three "could not check" cases are kept separate from real misses on
-// purpose — reporting an unchecked object as "missing" would be a lie.
-function depRefsMissingIn(refs, describesByObject) {
-  const r = (refs && typeof refs === 'object') ? refs : {};
-  const d = (describesByObject && typeof describesByObject === 'object') ? describesByObject : {};
-  const objects = Array.isArray(r.objects) ? r.objects : [];
-  const fieldRefs = Array.isArray(r.fields) ? r.fields : [];
-
-  const idx = {};   // lowercased object name -> { state, fields?, reason? }
-  for (const key of Object.keys(d)) {
-    const v = d[key];
-    const lk = String(key).toLowerCase();
-    if (v === null) { idx[lk] = { state: 'absent' }; continue; }
-    if (!v || typeof v !== 'object') { idx[lk] = { state: 'unchecked', reason: 'no describe returned' }; continue; }
-    if (v.error) { idx[lk] = { state: 'unchecked', reason: String(v.error) }; continue; }
-    const fset = {};
-    for (const f of (Array.isArray(v.fields) ? v.fields : [])) {
-      const n = f && (f.name || f.Name || f.QualifiedApiName);
-      if (n) fset[String(n).toLowerCase()] = 1;
-    }
-    idx[lk] = { state: 'ok', fields: fset };
-  }
-
-  const missingObjects = [], missingFields = [], uncheckedObjects = [], uncheckedFields = [];
-  const checkedObjects = [];
-
-  for (const o of objects) {
-    const name = o && o.name;
-    if (!name) continue;
-    const ops = Array.isArray(o.ops) ? o.ops : [];
-    const e = idx[String(name).toLowerCase()];
-    if (!e) { uncheckedObjects.push({ name: String(name), ops, reason: 'not described in the comparison org' }); continue; }
-    if (e.state === 'absent') { missingObjects.push({ name: String(name), ops }); continue; }
-    if (e.state === 'unchecked') { uncheckedObjects.push({ name: String(name), ops, reason: e.reason || 'describe failed' }); continue; }
-    checkedObjects.push(String(name));
-  }
-
-  for (const raw of fieldRefs) {
-    const ref = String(raw || '');
-    if (!ref) continue;
-    const dot = ref.indexOf('.');
-    if (dot < 1) { uncheckedFields.push({ ref, reason: 'no object context on this reference' }); continue; }
-    const objPart = ref.slice(0, dot);
-    const rest = ref.slice(dot + 1);
-    if (objPart.charAt(0) === '$') { uncheckedFields.push({ ref, reason: 'formula/template reference with no resolvable object' }); continue; }
-    if (rest.indexOf('.') !== -1) { uncheckedFields.push({ ref, reason: 'relationship traversal — needs the related object to resolve' }); continue; }
-    const e = idx[objPart.toLowerCase()];
-    if (!e) { uncheckedFields.push({ ref, reason: `${objPart} was not described in the comparison org` }); continue; }
-    if (e.state === 'absent') { missingFields.push({ ref, object: objPart, field: rest, reason: 'the object itself is missing in the comparison org' }); continue; }
-    if (e.state === 'unchecked') { uncheckedFields.push({ ref, reason: `${objPart} could not be described: ${e.reason || 'unknown'}` }); continue; }
-    if (!e.fields[rest.toLowerCase()]) {
-      missingFields.push({ ref, object: objPart, field: rest, reason: 'field not present on that object in the comparison org' });
-    }
-  }
-
-  const byName = (a, b) => String(a.name || a.ref || '').localeCompare(String(b.name || b.ref || ''));
-  missingObjects.sort(byName); missingFields.sort(byName);
-  uncheckedObjects.sort(byName); uncheckedFields.sort(byName);
-
-  return {
-    missingObjects, missingFields, uncheckedObjects, uncheckedFields,
-    checkedObjects: checkedObjects.sort(),
-    breakCount: missingObjects.length + missingFields.length,
-    uncheckedCount: uncheckedObjects.length + uncheckedFields.length,
-    ok: (missingObjects.length + missingFields.length) === 0
-  };
-}
-
-// N4c — which of `names` are absent from `presentNames` (case-insensitive).
-// Used for subflow targets and Apex class names in the comparison org.
-function depMissingNames(names, presentNames) {
-  const have = {};
-  for (const n of (Array.isArray(presentNames) ? presentNames : [])) {
-    if (n) have[String(n).toLowerCase()] = 1;
-  }
-  const out = [];
-  for (const n of (Array.isArray(names) ? names : [])) {
-    if (!n) continue;
-    const s = String(n);
-    if (!have[s.toLowerCase()] && out.indexOf(s) === -1) out.push(s);
-  }
-  return out.sort();
 }
 
 // N4e — render the whole dependency report as Markdown. Pure so the exact
@@ -372,6 +343,19 @@ function depReportMarkdown(report) {
     }
   }
   push('');
+  const mg = Array.isArray(dead.managedTargets) ? dead.managedTargets : [];
+  if (mg.length) {
+    push(`### 1.4 Subflow references into managed packages (${mg.length})`);
+    push('');
+    push('_These flows exist, but Salesforce hides their contents and their own callers inside the package — they are neither missing nor dead._');
+    push('');
+    push('| Referenced API name | Active in package | Called by |');
+    push('| --- | --- | --- |');
+    for (const x of mg) {
+      push(`| ${esc(x.apiName)} | ${x.active ? 'yes' : 'NO'} | ${esc((x.callers || []).map(c => `${c.apiName} (${c.status || '?'})`).join(', ') || '—')} |`);
+    }
+    push('');
+  }
 
   // ── 2. chains ───────────────────────────────────────────────────────
   const chains = Array.isArray(r.chains) ? r.chains : [];
@@ -436,59 +420,12 @@ function depReportMarkdown(report) {
     push('');
   }
 
-  // ── 4. cross-org diff ───────────────────────────────────────────────
-  const xo = r.crossOrg;
-  push('## 4. Cross-org dependency diff');
-  push('');
-  if (!xo) {
-    push('_Not run — open the Dependencies tab and use 🔀 Cross-org diff to compare against another org._');
-    push('');
-    return L.join('\n');
-  }
-  const tgt = xo.target || {};
-  const rows = Array.isArray(xo.rows) ? xo.rows : [];
-  push(`- **Comparison org:** ${esc(tgt.label || tgt.url || 'unknown')}`);
-  if (tgt.url) push(`- **Comparison org URL:** ${esc(tgt.url)}`);
-  push(`- **Flows compared:** ${rows.length}`);
-  push('- **Read-only:** nothing was written to either org.');
-  push('');
-  for (const n of (Array.isArray(xo.notes) ? xo.notes : [])) push(`> ⚠ ${esc(n)}`);
-  if ((xo.notes || []).length) push('');
-  const bad = rows.filter(x => x.presence !== 'ok' || (x.missingObjects || []).length
-    || (x.missingFields || []).length || (x.missingSubflows || []).length || (x.missingApex || []).length);
-  push(`### 4.1 Summary — ${bad.length} of ${rows.length} flow(s) have a problem in the comparison org`);
-  push('');
-  push('| Flow | In target | Active there | Missing objects | Missing fields | Missing subflows | Missing Apex |');
-  push('| --- | --- | --- | --- | --- | --- | --- |');
-  for (const x of rows) {
-    push(`| ${esc(x.apiName)} | ${x.presence === 'missing' ? 'NO' : 'yes'} | ${x.presence === 'ok' ? 'yes' : (x.presence === 'inactive' ? 'NO' : '—')} | ${(x.missingObjects || []).length} | ${(x.missingFields || []).length} | ${(x.missingSubflows || []).length} | ${x.apexChecked === false ? 'not checked' : (x.missingApex || []).length} |`);
-  }
-  push('');
-  push('### 4.2 Detail');
-  push('');
-  if (!bad.length) push('_Every compared flow exists, is Active, and all of its checked references resolve in the comparison org._');
-  for (const x of bad) {
-    push(`#### ${esc(x.masterLabel || x.apiName)} (\`${esc(x.apiName)}\`)`);
-    push('');
-    if (x.presence === 'missing') push('- ❌ **Does not exist in the comparison org.**');
-    else if (x.presence === 'inactive') push('- ⚠ **Exists but has no Active version in the comparison org.**');
-    else push('- ✅ Exists and is Active in the comparison org.');
-    if ((x.missingObjects || []).length) push(`- ❌ Objects missing there: ${esc(x.missingObjects.map(o => o.name).join(', '))}`);
-    if ((x.missingFields || []).length) push(`- ❌ Fields missing there: ${esc(x.missingFields.map(f => `${f.ref} (${f.reason})`).join('; '))}`);
-    if ((x.missingSubflows || []).length) push(`- ❌ Subflows missing there: ${esc(x.missingSubflows.join(', '))}`);
-    if (x.apexChecked === false) push('- ⚠ Apex references were NOT checked in the comparison org.');
-    else if ((x.missingApex || []).length) push(`- ❌ Apex missing there: ${esc(x.missingApex.join(', '))}`);
-    if ((x.uncheckedObjects || []).length) push(`- ⚠ Objects that could NOT be checked: ${esc(x.uncheckedObjects.map(o => `${o.name} (${o.reason})`).join('; '))}`);
-    if ((x.uncheckedFields || []).length) push(`- ⚠ Field references that could NOT be checked: ${esc(x.uncheckedFields.map(f => `${f.ref} (${f.reason})`).join('; '))}`);
-    if (x.refsAvailable === false) push('- ⚠ This flow\'s metadata never loaded, so NO references were compared for it.');
-    push('');
-  }
   return L.join('\n');
 }
 
 // N4e — the tabular slices of the same report as one CSV. A `Section` column
-// keeps dead subflows, chain edges and the cross-org diff in one greppable
-// file instead of forcing three downloads. Pure.
+// keeps dead subflows and chain edges in one greppable file instead of
+// forcing two downloads. Pure.
 function depReportCsv(report) {
   const r = (report && typeof report === 'object') ? report : {};
   const cell = (v) => {
@@ -518,6 +455,10 @@ function depReportCsv(report) {
     add('Inactive subflow target', x.apiName, x.masterLabel || '', x.status || '', 'No Active version',
       `called by: ${(x.callers || []).map(c => `${c.apiName} (${c.status || '?'})`).join(', ') || 'unknown'}`);
   }
+  for (const x of (dead.managedTargets || [])) {
+    add('Managed subflow target', x.apiName, x.masterLabel || '', x.active ? 'Active' : 'Inactive', 'In a managed package',
+      `contents hidden by Salesforce | called by: ${(x.callers || []).map(c => `${c.apiName} (${c.status || '?'})`).join(', ') || 'unknown'}`);
+  }
 
   const edges = (node, root, dir, acc) => {
     if (!node) return acc;
@@ -533,28 +474,6 @@ function depReportCsv(report) {
     edges(ch.up && ch.up.root, ch.apiName, 'called by', acc);
     for (const e of acc) {
       add('Chain edge', e[0], ch.masterLabel || '', '', `${e[1]} ${e[3]} ${e[2]}`, e[4]);
-    }
-  }
-
-  const xo = r.crossOrg;
-  if (!xo) {
-    add('Cross-org', '', '', '', 'Not run', 'No comparison org was selected');
-  } else {
-    const tgt = xo.target || {};
-    add('Cross-org', '', '', '', 'Comparison org', tgt.label || tgt.url || 'unknown');
-    for (const n of (Array.isArray(xo.notes) ? xo.notes : [])) add('Cross-org', '', '', '', 'Limit', n);
-    for (const x of (Array.isArray(xo.rows) ? xo.rows : [])) {
-      const lbl = x.masterLabel || '';
-      if (x.presence === 'missing') add('Cross-org', x.apiName, lbl, x.status || '', 'Missing in target', 'No flow with this API name in the comparison org');
-      else if (x.presence === 'inactive') add('Cross-org', x.apiName, lbl, x.status || '', 'Inactive in target', 'Exists but has no Active version there');
-      for (const o of (x.missingObjects || [])) add('Cross-org', x.apiName, lbl, x.status || '', 'Missing object', `${o.name} [${(o.ops || []).join(' · ')}]`);
-      for (const f of (x.missingFields || [])) add('Cross-org', x.apiName, lbl, x.status || '', 'Missing field', `${f.ref} — ${f.reason}`);
-      for (const s of (x.missingSubflows || [])) add('Cross-org', x.apiName, lbl, x.status || '', 'Missing subflow', s);
-      if (x.apexChecked === false) add('Cross-org', x.apiName, lbl, x.status || '', 'Apex NOT checked', 'Apex class list could not be read in the comparison org');
-      else for (const a of (x.missingApex || [])) add('Cross-org', x.apiName, lbl, x.status || '', 'Missing Apex', a);
-      for (const o of (x.uncheckedObjects || [])) add('Cross-org', x.apiName, lbl, x.status || '', 'Object NOT checked', `${o.name} — ${o.reason}`);
-      for (const f of (x.uncheckedFields || [])) add('Cross-org', x.apiName, lbl, x.status || '', 'Reference NOT checked', `${f.ref} — ${f.reason}`);
-      if (x.refsAvailable === false) add('Cross-org', x.apiName, lbl, x.status || '', 'No references compared', 'This flow\'s metadata never loaded during the scan');
     }
   }
 
@@ -718,6 +637,31 @@ function depBatchSubrequests(chunk) {
 //                     scanned would silently turn a transient 500 into a
 //                     permanent hole in the map.
 //   • undefined     → NOT covered. The batch was never dispatched (Stop).
+// PURE. Has THIS flow's metadata actually been read? versions: the flow's
+// version records; scannedIds: versions whose metadata GET settled (this
+// session or restored from the cache). A flow with unscanned versions has
+// UNKNOWN subflow calls — "Standalone" and "Calls no subflows" are claims
+// the map cannot make about it (user 2026-09-03: "copy of test has a
+// subflow and it wont show here. why?").
+function depFlowScanState(versions, scannedIds) {
+  const vs = Array.isArray(versions) ? versions.filter(v => v && v.Id) : [];
+  const ids = scannedIds instanceof Set ? scannedIds : new Set(scannedIds || []);
+  const scanned = vs.filter(v => ids.has(v.Id)).length;
+  const total = vs.length;
+  const state = total === 0 ? 'unscanned' : scanned === total ? 'scanned' : scanned === 0 ? 'unscanned' : 'partial';
+  return { total, scanned, unscanned: total - scanned, state };
+}
+
+// PURE. The subflows ONE version calls, read back out of the map (edges are
+// stored per called flow, so a version's own calls have to be gathered).
+function depCallsOfVersion(dependencyMap, versionId) {
+  const out = [];
+  for (const [called, parents] of Object.entries(dependencyMap || {})) {
+    if ((parents || []).some(p => p && p.id === versionId)) out.push(called);
+  }
+  return out.sort();
+}
+
 function depBatchApply(chunk, items) {
   const list = Array.isArray(chunk) ? chunk : [];
   const res  = Array.isArray(items) ? items : [];
@@ -730,6 +674,12 @@ function depBatchApply(chunk, items) {
     if (r.batchError) { out.unread.push(flow); out.callFailed = true; continue; }
     // Only a success or a definitive 404 proves anything about this version.
     if (!r.ok && Number(r.status) !== 404) { out.unread.push(flow); continue; }
+    // A 200 whose body carries no Metadata field proves NOTHING about what
+    // this version calls (the general batch endpoint answers exactly like
+    // this) — it is UNREAD, never "no subflows". Found 2026-09-14.
+    if (r.ok && !(r.body && typeof r.body === 'object' && Object.prototype.hasOwnProperty.call(r.body, 'Metadata'))) {
+      out.unread.push(flow); out.noMetadata = (out.noMetadata || 0) + 1; continue;
+    }
     out.covered.push(flow);
     const meta = (r.ok && r.body && typeof r.body === 'object') ? r.body.Metadata : null;
     if (meta) out.metas.push({ flow, meta });
@@ -1193,6 +1143,17 @@ function depDeleteTrust(state) {
 const DependencyMap = (() => {
   let dependencyMap = {}; // subflowApiName -> [{ id, masterLabel, versionNumber, status, processType }]
   let flowsByApiName = {}; // apiName -> [flow records]
+  // 🔒 Managed-package flows (user 2026-09-03: "where are the managed flows?").
+  // The Tooling Flow object that feeds everything above NEVER returns them, and
+  // the dependency index holds nothing for them either (live, both directions)
+  // — so they are LISTED from FlowDefinitionView/FlowVersionView and their
+  // dependencies are shown as UNKNOWN, never as "none". null = not read yet.
+  let _managedFlows = null;
+  // true when the tree was painted while the managed-flow list was still
+  // loading — a managed subflow target then read "Not found" (user
+  // 2026-09-18: the cached map paints instantly, the list lands later).
+  let _treePaintedBeforeManaged = false;
+  let _managedNote = '';
   let triggerTypeMap = {};   // flowId -> triggerType string from Metadata.start.triggerType
   let triggerObjectMap = {}; // flowId -> SObject API name from Metadata.start.object
   // N4 — the metadata is already downloaded per flow; keep what it references
@@ -1229,20 +1190,16 @@ const DependencyMap = (() => {
   let _cacheSaveNote = '';          // what the last write to storage did or refused to do
   let _apiMismatch = false;         // the version the batch really used ≠ the one we keyed on
   let _recheckedAt = 0;             // last live LastModifiedDate re-verification (delete path)
-  // N4c — cross-org diff state. Org list is cached per popup session; the last
-  // diff result is kept so the N4e export can include it without re-running.
-  let _xoOrgs = null;      // [{ orgUrl, sid, label, online, stored }]
-  let _xoResult = null;    // { target, rows, notes, generatedAt, scope }
-  let _xoRunning = false;
+  // Org list for the ⚙ / ⏻ cross-org pickers, cached per popup session.
   let _lastOrgUrl = '';    // org the tab was last rendered for (context menu has no orgUrl)
+  let _lastSid = '';       // …and its session — the ⚙/⏻ panels need one even when no scan ran (audit 2026-09-12)
+  let _depActiveFilter = 'all';   // process-type filter, shared with the async-painted 🔒 section
   let _scanOrgUrl = '';    // org context the current map was scanned with…
-  let _scanSid = '';       // …and its session — the N4c diff describes here too
+  let _scanSid = '';       // …and its session
 
   const DEP_CHAIN_DEPTH   = 6;    // depth cap for depChain() in the UI
   const DEP_EXPORT_BLAST  = 200;  // max flows detailed in the exported report
   const DEP_EXPORT_CHAINS = 50;   // max chains detailed in the exported report
-  const DEP_XO_FLOWS      = 200;  // max flows compared in one cross-org diff
-  const DEP_XO_OBJECTS    = 60;   // max objects described in the comparison org
   // P1 — above this many flow VERSIONS TO READ the popup stops scanning on open
   // and asks first. Deliberately UNCHANGED at 150 in v1.1.0: batching made the
   // same work cheaper, it did not make it free, and quietly raising the bar
@@ -1260,7 +1217,7 @@ const DependencyMap = (() => {
                                     // same pressure v1.0.1's 6 single GETs applied.
   // ── Persistent cache (v1.1.0) ────────────────────────────────────────────
   const DEP_CACHE_STORE   = 'sftk_dep_cache';  // ONE chrome.storage.local key
-  const DEP_CACHE_SCHEMA  = 1;                 // bump on ANY shape change → old entries dropped
+  const DEP_CACHE_SCHEMA  = 4;                 // bump on ANY shape change → old entries dropped (4: 2026-09-14, caches written by the blind general-endpoint reader are dropped)
   const DEP_CACHE_MAX_ORGS = 3;                // LRU: the orgs you actually work in
   // Budgets, in BYTES of the JSON that goes to storage and MEASURED with
   // depJsonBytes before every write — never estimated from entry counts.
@@ -1281,6 +1238,8 @@ const DependencyMap = (() => {
     _runToken++;       // any in-flight buildDependencyMap is now superseded
     dependencyMap = {};
     flowsByApiName = {};
+    _managedFlows = null;   // per org — the previous org's managed flows must not survive a switch
+    _managedNote = '';
     triggerTypeMap = {};
     triggerObjectMap = {};
     refsByFlowId = {};
@@ -1307,9 +1266,6 @@ const DependencyMap = (() => {
     _cacheSaveNote = '';
     _apiMismatch = false;
     _recheckedAt = 0;
-    _xoResult = null;   // a diff against the OLD org must never survive a switch
-    _xoOrgs = null;
-    _xoRunning = false;
     _scanOrgUrl = '';
     _scanSid = '';
   }
@@ -1330,8 +1286,7 @@ const DependencyMap = (() => {
     const resuming = _scannedIds.size > 0;
     if (!resuming) dependencyMap = {};
     flowsByApiName = {};
-    // Remember the org context this map belongs to — the N4c cross-org diff
-    // needs to describe objects in THIS org too (see runCrossOrgDiff).
+    // Remember the org context this map belongs to (cache key, delete re-check).
     _scanOrgUrl = orgUrl || '';
     _scanSid = sid || '';
 
@@ -1616,6 +1571,107 @@ const DependencyMap = (() => {
     if (fetchInProgress)  return `the metadata scan is still running (${_scanDone} / ${_scanTotal})`;
     if (_scannedIds.size) return `the metadata scan was stopped at ${_scanDone} of ${_scanTotal} flow versions`;
     return 'the dependency scan has not been run for this org';
+  }
+
+  // The caveat every "no flow uses X" answer must carry while the org has
+  // managed-package flows: their metadata is hidden by Salesforce, so the
+  // answer is "none of the flows we could read", never "none".
+  function managedCaveat() {
+    if (_managedFlows === null) return 'managed-package flows have not been listed yet, so they are not included in this answer';
+    if (!_managedFlows.length) return '';
+    return `${_managedFlows.length} managed-package flow(s) are listed but their contents are hidden by Salesforce, so they were not searched`;
+  }
+
+  // Read the org's managed flows (REST, two steps — see depFlowVersions) and
+  // paint the 🔒 section if the Dependencies tab is showing. Never throws.
+  async function loadManagedFlows(orgUrl, sid) {
+    const myToken = _runToken;
+    let rows = [], note = '';
+    try {
+      const r = await depFlowVersions(orgUrl, sid);
+      if (r && r.error) note = `managed-package flows could not be listed (${r.error})`;
+      else {
+        rows = sftkFlowVerRows((r && r.records) || []).filter(f => f.managed);
+        if (r && r.note) note = r.note;
+      }
+    } catch (e) { note = `managed-package flows could not be listed (${e && e.message ? e.message : e})`; }
+    if (myToken !== _runToken) return 0;   // the org changed under us
+    _managedFlows = rows;
+    _managedNote = note;
+    const host = document.getElementById('depManagedSection');
+    if (host) paintManagedSection(host);
+    return rows.length;
+  }
+
+  function getManagedFlows() { return _managedFlows ? _managedFlows.slice() : null; }
+  // Does the tree on screen call something "Not found" that the managed list
+  // now knows? Only then is a repaint worth it.
+  function treeStaleForManaged() {
+    if (!_treePaintedBeforeManaged || !_managedFlows) return false;
+    try { return depDeadSubflows(dependencyMap, flowsByApiName, depManagedMap()).managedTargets.length > 0; }
+    catch (_) { return false; }
+  }
+  // apiName → managed row, for every place that decides whether a subflow
+  // target EXISTS (tree, chains, dead-subflow report).
+  function depManagedRow(apiName) {
+    return (_managedFlows || []).find(f => f && f.apiName === apiName) || null;
+  }
+  function depManagedMap() {
+    const out = {};
+    for (const f of (_managedFlows || [])) if (f && f.apiName) out[f.apiName] = f;
+    return out;
+  }
+
+  // One row per managed flow: label, namespace, type, status, API version —
+  // and no link, because the platform gives its versions no record id.
+  // YYYY-MM-DD in the user's own time zone; '' for anything unreadable.
+  function depShortDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
+  function depDatesHtml(createdIso, modifiedIso) {
+    const c = depShortDate(createdIso), m = depShortDate(modifiedIso);
+    if (!c && !m) return '';
+    return `<span class="dep-node-dates" style="font-size:10.5px;color:var(--subtext,#706E6B);margin-left:4px" title="This version: created ${c || '?'} · last modified ${m || '?'}">${c ? `created ${c}` : ''}${c && m ? ' · ' : ''}${m ? `modified ${m}` : ''}</span>`;
+  }
+
+  function paintManagedSection(host) {
+    const rows = _managedFlows;
+    if (rows === null) {
+      host.innerHTML = `<div class="dep-section-header dep-standalone-header">🔒 Managed package flows — reading…</div>`;
+      return;
+    }
+    if (!rows.length) {
+      host.innerHTML = `<div class="dep-section-header dep-standalone-header" title="${escHtml(_managedNote || 'FlowDefinitionView lists no installed-package flows in this org.')}">🔒 Managed package flows (0)${_managedNote ? ' — could not be listed' : ''}</div>`;
+      return;
+    }
+    host.innerHTML = `<div class="dep-section-header dep-standalone-header" title="Flows installed by managed packages. Salesforce hides their contents from every API, so this tool cannot read what they call or which fields they use — their dependencies are UNKNOWN here, not empty.">🔒 Managed package flows (${rows.length}) <span style="font-weight:400;font-size:11px;opacity:.8">— contents hidden by Salesforce; dependencies unknown, not empty</span></div>`;
+    const list = document.createElement('div');
+    list.className = 'dep-children';
+    list.style.display = 'none';
+    for (const f of rows) {
+      const gov = sftkFlowGoverningVer(f);
+      const ns = String(f.apiName).split('__')[0];
+      const el = document.createElement('div');
+      el.className = 'dep-node dep-managed-node'
+        + (_depActiveFilter !== 'all' && (f.processType || '') !== _depActiveFilter ? ' dep-dimmed' : '');
+      el.dataset.processType = f.processType || '';
+      el.innerHTML = `<span class="dep-node-icon">🔒</span> <span class="dep-node-name">${escHtml(f.label || f.apiName)}</span>`
+        + ` <span class="badge dep-type-badge" title="Namespace of the installed package">${escHtml(ns)}</span>`
+        + ` <span class="badge dep-type-badge">${escHtml(humanProcessType(f.processType))}</span>`
+        + ` <span class="badge ${f.active ? 'badge-active' : 'badge-draft'}">${f.active ? 'Active' : (gov && gov.status) || 'Inactive'}</span>`
+        + (gov && gov.apiVersion ? ` <span class="badge dep-type-badge" title="Pinned to Salesforce API ${escHtml(gov.apiVersion)} — the package's to change, not yours.">API ${escHtml(gov.apiVersion)}</span>` : '')
+        + ` <span style="font-size:10.5px;color:var(--subtext,#706E6B)">v${escHtml(String((gov && gov.versionNumber) || '?'))}${gov && gov.lastModified && depShortDate(gov.lastModified) ? ` · modified ${escHtml(depShortDate(gov.lastModified))}` : ''} · contents hidden by Salesforce</span>`;
+      list.appendChild(el);
+    }
+    host.appendChild(list);
+    host.querySelector('.dep-section-header').addEventListener('click', () => {
+      const isOpen = list.style.display !== 'none';
+      list.style.display = isOpen ? 'none' : '';
+    });
   }
 
   // ══ Persistent incremental cache ═══════════════════════════════════════════
@@ -1925,7 +1981,7 @@ const DependencyMap = (() => {
         // DefinitionId rides along for popup.js (QA F4): versions this
         // re-check DISCOVERS get merged into its flow list, and its
         // deactivate-parent path cannot work without their DefinitionId.
-        query: 'SELECT Id,MasterLabel,Definition.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,LastModifiedDate FROM Flow',
+        query: 'SELECT Id,MasterLabel,Definition.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,ApiVersion,LastModifiedDate FROM Flow',
         _suppressError: true
       });
     } catch (e) {
@@ -2034,9 +2090,12 @@ const DependencyMap = (() => {
   function getFlowsByApiName() { return flowsByApiName; }
 
   // Render the dependency tree tab content
-  function renderDependencyTreeTab(allFlows, container, orgUrl) {
+  function renderDependencyTreeTab(allFlows, container, orgUrl, sid) {
     container.innerHTML = '';
+    _treePaintedBeforeManaged = (_managedFlows === null);
     _lastOrgUrl = orgUrl || _lastOrgUrl;
+    _lastSid = sid || _lastSid;
+    _depActiveFilter = 'all';
     // A floating blast/chain panel from a previous render (possibly a previous
     // ORG) would otherwise survive the repaint and show stale data.
     document.querySelector('.dep-blast-panel')?.remove();
@@ -2082,8 +2141,9 @@ const DependencyMap = (() => {
       // THIS session. Saying "no flow mentions X" from a 40-of-1600 index would
       // be a false negative dressed as an answer.
       const cov = searchCoverage();
-      const covWarn = cov.full ? ''
-        : `<b style="color:var(--warning,#DD7A01)"> — this search read the metadata text of ${cov.have} of ${cov.total} flow versions${isMetadataFetched() ? ' (the rest came from the stored dependency cache, which does not keep their text)' : `, and ${scanCaveat()}`}, so there may be more.</b>`;
+      const covWarn = (cov.full ? ''
+        : `<b style="color:var(--warning,#DD7A01)"> — this search read the metadata text of ${cov.have} of ${cov.total} flow versions${isMetadataFetched() ? ' (the rest came from the stored dependency cache, which does not keep their text)' : `, and ${scanCaveat()}`}, so there may be more.</b>`)
+        + (managedCaveat() ? `<b style="color:var(--warning,#DD7A01)"> 🔒 ${escHtml(managedCaveat())}.</b>` : '');
       refResults.innerHTML = hits.length
         ? `<div class="dep-ref-hdr">${hits.length} flow(s) mention “${escHtml(term)}” <span class="dep-ref-note">(literal, case-insensitive match in the flow's metadata)</span>${covWarn}</div>`
           + hits.map(h => {
@@ -2093,10 +2153,11 @@ const DependencyMap = (() => {
               <span class="dep-node-name">${escHtml(f.MasterLabel)}</span>
               <span class="badge dep-type-badge">${escHtml(humanProcessType(f.ProcessType))}</span>
               <span class="badge ${f.Status === 'Active' ? 'badge-active' : 'badge-draft'}">${escHtml(f.Status || '')}</span>
+              ${f.ApiVersion ? `<span class="badge dep-type-badge" title="Pinned to Salesforce API ${f.ApiVersion} \u2014 the flow keeps this version's behaviour regardless of the org's release. Compare and change it in \u2699 API versions.">API ${f.ApiVersion}</span>` : ''}
               <span class="dep-ref-count">×${h.count}</span>
             </div>`;
           }).join('')
-        : `<div class="dep-ref-hdr">No flow mentions “${escHtml(term)}”${isMetadataFetched() ? '' : ` — but ${scanCaveat()}, so this search covered only part of the org`}.</div>`;
+        : `<div class="dep-ref-hdr">No flow that could be read mentions “${escHtml(term)}”${isMetadataFetched() ? '' : ` — but ${scanCaveat()}, so this search covered only part of the org`}.${managedCaveat() ? ` <b style="color:var(--warning,#DD7A01)">🔒 ${escHtml(managedCaveat())}.</b>` : ''}</div>`;
       refResults.querySelectorAll('.dep-ref-hit').forEach(row =>
         row.addEventListener('click', () =>
           chrome.tabs.create({ url: `${orgUrl}/builder_platform_interaction/flowBuilder.app?flowId=${row.dataset.id}` })));
@@ -2107,15 +2168,16 @@ const DependencyMap = (() => {
       if (e.key === 'Escape') { e.target.value = ''; refResults.innerHTML = ''; }
     });
 
-    // N4c/N4d/N4e — lazy tools. Nothing here runs until the user asks for it:
-    // the cross-org diff in particular fires describes against another org.
+    // Lazy tools. Nothing here runs until the user asks for it: the ⚙ and ⏻
+    // panels read other orgs only once opened.
     const toolsRow = document.createElement('div');
     toolsRow.className = 'dep-tools-row';
     toolsRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 8px 2px';
     toolsRow.innerHTML = `
-      <button class="btn-small" id="depDeadBtn" title="Flows called as a subflow that no ACTIVE flow calls, plus subflow calls pointing at missing or inactive flows">🧟 Subflow health</button>
-      <button class="btn-small" id="depXoBtn" title="Read-only: compare these flows and their references against another org">🔀 Cross-org diff</button>
+      <button class="btn-small" id="depBulkBtn" title="Switch triggered flows off and back on in bulk, by object, in this org — record-triggered, scheduled and platform-event flows, with their active state and API version. Deactivation remembers each flow's active version so reactivation restores exactly what was running.">⏻ Flow switches</button>
+      <button class="btn-small" id="depApiVerBtn" title="Compare the API version every flow in this org is pinned to with the release the org runs, and change it: one package, behind a typed CHANGE. Comparing alone changes nothing.">⚙ API versions</button>
       <button class="btn-small" id="depExportBtn" title="Download this dependency report as Markdown + CSV">⬇ Export report</button>
+      <button class="btn-small" id="depRescanBtn" title="Drop this org's stored dependency data and read the flow list and every flow version again — use after editing flows in Flow Builder while this tab stayed open. Costs one read per flow version.">↻ Rescan</button>
       <span style="font-size:11px;color:var(--subtext,#706E6B)">Right-click a flow for 🧨 blast radius or 🔗 chains.</span>`;
     container.appendChild(toolsRow);
 
@@ -2134,12 +2196,18 @@ const DependencyMap = (() => {
       toolPanel.innerHTML = '';
       render(toolPanel);
     };
-    toolsRow.querySelector('#depDeadBtn').addEventListener('click', () =>
-      toggleTool('dead', m => renderDeadPanel(m, orgUrl)));
-    toolsRow.querySelector('#depXoBtn').addEventListener('click', () =>
-      toggleTool('xo', m => { renderCrossOrgPanel(m, orgUrl); }));
+    toolsRow.querySelector('#depApiVerBtn').addEventListener('click', () =>
+      toggleTool('apiver', m => { renderApiVerPanel(m, orgUrl); }));
+    toolsRow.querySelector('#depBulkBtn').addEventListener('click', () =>
+      toggleTool('bulk', m => { renderFlowBulkPanel(m, orgUrl); }));
     toolsRow.querySelector('#depExportBtn').addEventListener('click', () =>
       exportReport(orgUrl, exportStatus));
+    toolsRow.querySelector('#depRescanBtn').addEventListener('click', (e) => {
+      if (typeof window.sftkRescanDependencies !== 'function') return;
+      e.currentTarget.disabled = true;
+      e.currentTarget.textContent = '⏳ rescanning…';
+      window.sftkRescanDependencies();
+    });
 
     // Build parent->children map using dependency map
     const childrenMap = {}; // parentApiName -> [child apiNames]
@@ -2219,13 +2287,26 @@ const DependencyMap = (() => {
       const icon = getFlowIcon(flow.ProcessType);
       const statusClass = getStatusBadgeClass(flow.Status);
       const hasChildren = childrenMap[flow.ApiName] && childrenMap[flow.ApiName].size > 0;
+      // A flow whose metadata was never read has UNKNOWN calls — the badge
+      // says so, so its place in "Standalone" is never read as "calls nothing".
+      const sc = depFlowScanState(flowsByApiName[flow.ApiName] || [], _scannedIds);
+      const scanBadge = sc.state === 'scanned' ? ''
+        : sc.state === 'partial'
+          ? `<span class="badge badge-obsolete" title="${sc.scanned} of ${sc.total} version(s) of this flow were read by the dependency scan. The other version(s) may call subflows this map does not know about.">⏳ ${sc.scanned}/${sc.total} versions scanned</span>`
+          : '<span class="badge badge-obsolete" title="The dependency scan has not read this flow\'s metadata, so what it calls — and what calls it — is UNKNOWN here, not none. Run or resume the scan from the Flows tab (🔗 Scan dependencies).">⏳ not scanned — calls unknown</span>';
 
+      // Every row says which version it shows, its API version, status and
+      // dates (user 2026-09-13) — the same facts the 🔒 rows already carry.
       node.innerHTML = `
         <span class="dep-node-toggle">${hasChildren ? '▼' : '&nbsp;&nbsp;'}</span>
         <span class="dep-node-icon">${icon}</span>
         <span class="dep-node-name" title="Open in Salesforce">${escHtml(flow.MasterLabel)}</span>
         <span class="badge dep-type-badge">${escHtml(humanProcessType(flow.ProcessType))}</span>
+        ${flow.VersionNumber ? `<span class="badge dep-type-badge" title="The version this row shows — the Active one, or the newest when none is active. Other versions are listed in 🔗 chains.">v${escHtml(String(flow.VersionNumber))}</span>` : ''}
+        ${flow.ApiVersion ? `<span class="badge dep-type-badge" title="Pinned to Salesforce API ${flow.ApiVersion} \u2014 the flow keeps this version's behaviour regardless of the org's release. Compare and change it in \u2699 API versions.">API ${flow.ApiVersion}</span>` : ''}
         <span class="badge ${statusClass}">${flow.Status}</span>
+        ${depDatesHtml(flow.CreatedDate, flow.LastModifiedDate)}
+        ${scanBadge}
       `;
 
       node.addEventListener('contextmenu', (e) => {
@@ -2243,14 +2324,26 @@ const DependencyMap = (() => {
       const childContainer = document.createElement('div');
       childContainer.className = 'dep-children';
 
-      if (hasChildren && !visited.has(flow.ApiName)) {
+      if (hasChildren && visited.has(flow.ApiName)) {
+        // A loop: this flow is already an ancestor in THIS chain. Say it —
+        // an expand arrow with nothing under it reads as "calls nothing".
+        const loop = document.createElement('div');
+        loop.className = 'dep-deep-warning';
+        loop.style.paddingLeft = `${(depth + 1) * 20 + 8}px`;
+        loop.textContent = '↻ calls back into a flow already shown higher in this chain — a loop; not expanded again.';
+        childContainer.appendChild(loop);
+      } else if (hasChildren) {
         visited.add(flow.ApiName);
 
-        if (depth >= 3) {
+        // The per-branch `visited` set already makes a loop impossible, so
+        // depth is drawn as deep as the org goes (the old cap of 3 hid real
+        // subflows — user fixture 2026-09-21: trigger → L1 → L2 → L3 → L4).
+        // The bound only protects the page from a pathological tree.
+        if (depth >= DEP_TREE_MAX_DEPTH) {
           const warn = document.createElement('div');
           warn.className = 'dep-deep-warning';
           warn.style.paddingLeft = `${(depth + 1) * 20 + 8}px`;
-          warn.textContent = '⚠️ Dependency chain is deeper than 3 levels. Manual review recommended.';
+          warn.textContent = `⚠️ This chain goes deeper than ${DEP_TREE_MAX_DEPTH} levels — the rest is not drawn here. Right-click the flow above → 🔗 chains to follow it.`;
           childContainer.appendChild(warn);
         } else {
           for (const childApiName of childrenMap[flow.ApiName]) {
@@ -2278,10 +2371,14 @@ const DependencyMap = (() => {
               // MasterLabel key to a namesake). flowsByApiName tells them apart.
               const versions = flowsByApiName[childApiName] || [];
               const worst = versions[versions.length - 1];
+              const mrow = versions.length ? null : depManagedRow(childApiName);
               const missingNode = document.createElement('div');
-              missingNode.className = 'dep-node dep-missing';
+              missingNode.className = mrow ? 'dep-node dep-managed-node' : 'dep-node dep-missing';
               missingNode.style.paddingLeft = `${(depth + 1) * 20 + 8}px`;
-              missingNode.innerHTML = versions.length
+              if (mrow) missingNode.dataset.processType = mrow.processType || '';
+              missingNode.innerHTML = mrow
+                ? `<span class="dep-node-icon">🔒</span> <span class="dep-node-name">${escHtml(mrow.label || childApiName)}</span> <span class="badge dep-type-badge" title="Namespace of the installed package">${escHtml(String(childApiName).split('__')[0])}</span> <span class="badge ${mrow.active ? 'badge-active' : 'badge-obsolete'}">${mrow.active ? 'Active' : 'Inactive'}</span> <span style="font-size:10.5px;color:var(--subtext,#706E6B)">managed package flow — exists here; its contents and what it calls are hidden by Salesforce${mrow.active ? '' : ' · called as a subflow but not Active'}</span>`
+                : versions.length
                 ? `<span class="dep-node-icon">⚠️</span> <span class="dep-node-name">${escHtml(childApiName)}</span> <span class="badge badge-obsolete">${escHtml((worst && worst.Status) || 'Inactive')}</span> <span style="font-size:10.5px;color:var(--warning,#DD7A01)">exists but has no Active version — this subflow call fails at runtime</span>`
                 : `<span class="dep-node-icon">❓</span> <span class="dep-node-name">${escHtml(childApiName)}</span> <span class="badge badge-obsolete">Not found</span> <span style="font-size:10.5px;color:var(--subtext,#706E6B)">no flow with this API name in this org</span>`;
               childContainer.appendChild(missingNode);
@@ -2331,7 +2428,9 @@ const DependencyMap = (() => {
     if (standaloneFlows.length > 0) {
       const standalone = document.createElement('div');
       standalone.className = 'dep-section dep-standalone';
-      standalone.innerHTML = `<div class="dep-section-header dep-standalone-header">🏝 Standalone Flows (${standaloneFlows.length})</div>`;
+      const unscannedHere = standaloneFlows.filter(f => depFlowScanState(flowsByApiName[f.ApiName] || [], _scannedIds).state !== 'scanned').length;
+      standalone.innerHTML = `<div class="dep-section-header dep-standalone-header" title="Flows for which the scan found no subflow calls in either direction. A flow that was NOT scanned lands here too — its calls are unknown, not absent.">🏝 Standalone Flows (${standaloneFlows.length})${unscannedHere
+        ? ` <span style="font-weight:400;font-size:11px;color:var(--warning,#DD7A01)">— ${unscannedHere} of them not scanned: their calls are unknown, not none</span>` : ''}</div>`;
       const standaloneList = document.createElement('div');
       standaloneList.className = 'dep-children';
       standaloneList.style.display = 'none';
@@ -2354,6 +2453,14 @@ const DependencyMap = (() => {
       treeContainer.innerHTML = '<div class="empty-state">No subflow relationships found — all flows appear to be standalone.</div>';
     }
 
+    // 🔒 Managed package flows — always present (even while reading) so their
+    // absence from the list above is never mistaken for "this org has none".
+    const managedHost = document.createElement('div');
+    managedHost.className = 'dep-section dep-standalone';
+    managedHost.id = 'depManagedSection';
+    paintManagedSection(managedHost);
+    treeContainer.appendChild(managedHost);
+
     // Filter functionality
     filterBar.querySelectorAll('.dep-filter-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -2364,6 +2471,13 @@ const DependencyMap = (() => {
           const pt = node.dataset.processType;
           const match = activeFilter === 'all' || pt === activeFilter;
           node.classList.toggle('dep-dimmed', !match);
+        });
+        // 🔒 managed nodes live outside allNodes (painted later, async) —
+        // dim them by query, and remember the filter for a later repaint.
+        _depActiveFilter = activeFilter;
+        treeContainer.querySelectorAll('.dep-managed-node').forEach(node => {
+          const pt = node.dataset.processType;
+          node.classList.toggle('dep-dimmed', !(activeFilter === 'all' || pt === activeFilter));
         });
       });
     });
@@ -2493,43 +2607,20 @@ const DependencyMap = (() => {
     URL.revokeObjectURL(url);
   }
 
-  // Org list for the N4c comparison picker — the same two sources the popup's
-  // org switcher uses (live tab sessions + stored credentials).
-  async function depLoadOrgs(currentOrgUrl) {
-    if (_xoOrgs) return _xoOrgs;
-    const [r, stored] = await Promise.all([
-      chrome.runtime.sendMessage({ type: 'GET_ALL_SF_SESSIONS' }).catch(() => null),
-      chrome.storage.local.get('ds_stored_orgs').then(d => d.ds_stored_orgs || []).catch(() => [])
-    ]);
-    const seen = new Set([depOrgKey(currentOrgUrl)]);
-    const out = [];
-    for (const s of ((r && r.sessions) || [])) {
-      const k = depOrgKey(s.orgUrl);
-      if (!k || seen.has(k)) continue;
-      seen.add(k);
-      out.push({ orgUrl: s.orgUrl, sid: s.sid, label: s.label || depHost(s.orgUrl), online: true });
-    }
-    for (const o of (stored || [])) {
-      if (!o || !o.url || !o.sid) continue;
-      const k = depOrgKey(o.url);
-      if (!k || seen.has(k)) continue;
-      seen.add(k);
-      out.push({ orgUrl: o.url, sid: o.sid, label: o.label || o.username || depHost(o.url), online: false, stored: true });
-    }
-    _xoOrgs = out;
-    return out;
-  }
-
   // ── N4d — subflow chains (transitive, cycle-safe) ─────────────────────
   // Annotate a depChain() node tree with what this org actually contains, so
   // the panel and the export can both say "not found" / "no Active version".
   function annotateChain(node) {
     if (!node) return node;
     const rep = repFlowFor(node.apiName);
-    node.exists = !!rep;
-    node.selfActive = !!(flowsByApiName[node.apiName] || []).some(v => v.Status === 'Active');
-    node.status = rep ? rep.Status : node.status;
-    node.masterLabel = rep ? rep.MasterLabel : node.masterLabel;
+    const mrow = rep ? null : depManagedRow(node.apiName);
+    node.managed = !!mrow;
+    node.exists = !!rep || !!mrow;
+    node.selfActive = rep
+      ? !!(flowsByApiName[node.apiName] || []).some(v => v.Status === 'Active')
+      : !!(mrow && mrow.active);
+    node.status = rep ? rep.Status : (mrow ? (mrow.active ? 'Active' : 'Inactive') : node.status);
+    node.masterLabel = rep ? rep.MasterLabel : (mrow ? mrow.label : node.masterLabel);
     node.flowId = rep ? rep.Id : null;
     for (const c of (node.children || [])) annotateChain(c);
     return node;
@@ -2548,6 +2639,7 @@ const DependencyMap = (() => {
     const pad = indent * 16 + 8;
     const flags = [];
     if (!node.exists) flags.push('<span class="badge badge-obsolete">Not found in this org</span>');
+    else if (node.managed) flags.push(`<span class="badge dep-type-badge" title="Managed package flow — exists here; its contents and what it calls are hidden by Salesforce">🔒 managed · ${node.selfActive ? 'Active' : 'Inactive'} · contents hidden</span>`);
     else if (!node.selfActive) flags.push(`<span class="badge badge-obsolete" title="This subflow call fails at runtime">${escHtml(node.status || 'Inactive')} — no Active version</span>`);
     else flags.push('<span class="badge badge-active">Active</span>');
     if (node.cycle) flags.push('<span style="color:var(--warning,#DD7A01)">↻ cycle — already higher in this chain, not expanded</span>');
@@ -2568,6 +2660,24 @@ const DependencyMap = (() => {
     panel.style.cssText = 'top:60px;right:16px;width:400px';
     const emptyDown = !(down.root.children || []).length;
     const emptyUp = !(up.root.children || []).length;
+    const versions = (flowsByApiName[flow.ApiName] || []).slice().sort((a, b) => (Number(b.VersionNumber) || 0) - (Number(a.VersionNumber) || 0));
+    const sc = depFlowScanState(versions, _scannedIds);
+    // Per version: was it read, and what did it call? This is the evidence
+    // behind the verdict below — a user who KNOWS the flow has a subflow can
+    // see whether the map read the version that carries it.
+    const versionRows = versions.map(v => {
+      const read = _scannedIds.has(v.Id);
+      const calls = read ? depCallsOfVersion(dependencyMap, v.Id) : null;
+      return `<div class="dep-blast-item" style="font-size:11px">v${escHtml(String(v.VersionNumber || '?'))} <span class="badge ${v.Status === 'Active' ? 'badge-active' : v.Status === 'Obsolete' ? 'badge-obsolete' : 'badge-draft'}">${escHtml(v.Status || '')}</span> — ${read
+        ? (calls.length ? `calls ${calls.map(escHtml).join(', ')}` : 'no subflow calls in its metadata')
+        : '<b style="color:var(--warning,#DD7A01)">NOT scanned — calls unknown</b>'}</div>`;
+    }).join('');
+    const downEmptyText = sc.state === 'scanned'
+      ? 'Calls no subflows — none of this flow\'s scanned versions contain a subflow element.'
+      : `<b style="color:var(--warning,#DD7A01)">Unknown — ${sc.state === 'partial' ? `${sc.unscanned} of ${sc.total} versions of this flow were not read` : 'this flow\'s metadata has not been read'} by the dependency scan. Run or resume the scan in the Flows tab (🔗 Scan dependencies) and open this panel again.</b>`;
+    const upEmptyText = isMetadataFetched()
+      ? 'No flow calls this one.'
+      : `<b style="color:var(--warning,#DD7A01)">No SCANNED flow calls this one — but ${scanCaveat()}, so an unscanned flow still might.</b>`;
     panel.innerHTML = `
       <div class="dep-blast-hdr">
         🔗 ${escHtml(flow.MasterLabel)} — subflow chain
@@ -2581,13 +2691,17 @@ const DependencyMap = (() => {
       </div>
       <div class="dep-blast-sec">
         <div class="dep-blast-sec-hdr">⬇ Calls (downstream) — ${down.stats.nodes - 1} node(s), ${down.stats.cycles} cycle(s)</div>
-        ${emptyDown ? '<div class="dep-blast-item">Calls no subflows.</div>'
+        ${emptyDown ? `<div class="dep-blast-item">${downEmptyText}</div>`
     : (down.root.children || []).map(c => chainNodeHtml(c, 0)).join('')}
       </div>
       <div class="dep-blast-sec">
         <div class="dep-blast-sec-hdr">⬆ Called by (upstream) — ${up.stats.nodes - 1} node(s), ${up.stats.cycles} cycle(s)</div>
-        ${emptyUp ? '<div class="dep-blast-item">No flow calls this one.</div>'
+        ${emptyUp ? `<div class="dep-blast-item">${upEmptyText}</div>`
     : (up.root.children || []).map(c => chainNodeHtml(c, 0)).join('')}
+      </div>
+      <div class="dep-blast-sec">
+        <div class="dep-blast-sec-hdr">🧾 This flow's versions — what the scan actually read</div>
+        ${versionRows || '<div class="dep-blast-item">No versions loaded for this flow.</div>'}
       </div>`;
     document.body.appendChild(panel);
     panel.querySelector('.dep-blast-close').addEventListener('click', () => panel.remove());
@@ -2596,280 +2710,944 @@ const DependencyMap = (() => {
   }
 
   // ── N4d — dead subflow detection panel ────────────────────────────────
-  function renderDeadPanel(mount, orgUrl) {
-    const res = depDeadSubflows(dependencyMap, flowsByApiName);
-    const callerList = cs => (cs || []).length
-      ? (cs || []).map(c => `${escHtml(c.apiName)} <span class="badge ${c.status === 'Active' ? 'badge-active' : 'badge-draft'}">${escHtml(c.status || '?')}</span>`).join(', ')
-      : '<i>caller could not be identified</i>';
-    const row = (apiName, badges, detail) => {
-      const rep = repFlowFor(apiName);
-      return `<div class="dep-ref-hit" style="display:block;cursor:${rep ? 'pointer' : 'default'}"${rep ? ` data-flow-id="${escHtml(rep.Id)}"` : ''}>
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <span class="dep-node-name">${escHtml(apiName)}</span>${badges}
-        </div>
-        <div style="font-size:11px;color:var(--subtext,#706E6B);margin-top:2px">${detail}</div>
-      </div>`;
-    };
-    const sec = (title, count, body) =>
-      `<div class="dep-blast-sec"><div class="dep-blast-sec-hdr">${title} (${count})</div>${body}</div>`;
+  // 🧟 Subflow health: retired 2026-08-30 (user: "not a useful
+  // feature"). depDeadSubflows stays — the export report still uses it.
 
-    mount.innerHTML = `
-      <div class="dep-blast-verdict" style="border-top:1px solid var(--border,#DDDBDA)">
-        <b>🧟 Subflow health</b> — ${res.counts.subflowTargets} flow(s) are referenced as a subflow somewhere.
-        ${isMetadataFetched() ? '' : `<b style="color:var(--warning,#DD7A01)">These results are incomplete — ${scanCaveat()}.</b>`}
-      </div>
-      ${sec('💀 Dead subflows — no ACTIVE caller', res.counts.dead,
-    res.dead.length
-      ? `<div style="font-size:11px;color:var(--subtext,#706E6B);padding:0 0 4px 8px">
-             This is a <b>candidate list, not a verdict</b>: buttons, Apex, REST, packaged code and
-             scheduled paths can start a flow without any parent flow. Check those before deleting.</div>`
-              + res.dead.map(d => row(d.apiName,
-                `<span class="badge ${d.selfActive ? 'badge-active' : 'badge-obsolete'}">${escHtml(d.status)}</span>`,
-                `${escHtml(d.reason)} — called by: ${callerList(d.callers)}`)).join('')
-      : '<div class="dep-blast-item">None — every subflow target has at least one Active caller.</div>')}
-      ${sec('❓ Subflow calls pointing at a flow that does NOT exist', res.counts.missing,
-    res.missing.length
-      ? res.missing.map(m => row(m.apiName, '<span class="badge badge-obsolete">Not found</span>',
-        `No flow with this API name in this org — the call fails at runtime. Called by: ${callerList(m.callers)}`)).join('')
-      : '<div class="dep-blast-item">None.</div>')}
-      ${sec('⚠ Subflow calls pointing at a flow with NO Active version', res.counts.inactiveTargets,
-    res.inactiveTargets.length
-      ? res.inactiveTargets.map(m => row(m.apiName, `<span class="badge badge-obsolete">${escHtml(m.status)}</span>`,
-        `The flow exists but has no Active version — the call fails at runtime. Called by: ${callerList(m.callers)}`)).join('')
-      : '<div class="dep-blast-item">None.</div>')}`;
+  // ── ⏻ FLOW SWITCHES — bulk activate/deactivate, CROSS-ORG ────────────
+  // User 2026-08-30: "select and disable, activate flows in bulk, by
+  // object … only triggered … also scheduled" + "done here — under the
+  // feature cross org … Also the api version should be there". So this is
+  // a cross-org matrix: rows = flows grouped by object, columns = orgs,
+  // each cell showing on/off, the flow version that runs, and the API
+  // version it is pinned to. Flips apply to the flows you tick, in the
+  // orgs you tick.
+  //
+  // The dangerous half is the way BACK: Salesforce activates a VERSION,
+  // and blindly activating the latest can run logic that was never live.
+  // Deactivation stores each flow's active version PER ORG
+  // (sftk_flow_prev_active) and reactivation restores exactly that,
+  // disclosing per flow when it must fall back to latest.
+  let _fbState = null;   // { orgs:[{key,label,orgUrl,sid}], rowsByOrg, matrix, remembered:{orgKey:{}} }
+  let _fbBusy = false;
 
-    mount.querySelectorAll('[data-flow-id]').forEach(el => el.addEventListener('click', () =>
-      chrome.tabs.create({ url: `${orgUrl}/builder_platform_interaction/flowBuilder.app?flowId=${el.dataset.flowId}` })));
+  async function _fbRememberedAll() {
+    try {
+      const d = await chrome.storage.local.get('sftk_flow_prev_active');
+      return d.sftk_flow_prev_active || {};
+    } catch (_) { return {}; }
+  }
+  async function _fbRememberSave(orgKey, mutate) {
+    try {
+      const d = await chrome.storage.local.get('sftk_flow_prev_active');
+      const all = d.sftk_flow_prev_active || {};
+      all[orgKey] = mutate(all[orgKey] || {});
+      await chrome.storage.local.set({ sftk_flow_prev_active: all });
+    } catch (_) { /* best-effort — the plan disclosed the fallback */ }
   }
 
-  // ── N4c — cross-org dependency diff (READ ONLY) ───────────────────────
-  async function renderCrossOrgPanel(mount, orgUrl) {
-    mount.innerHTML = `<div class="dep-blast-verdict" style="border-top:1px solid var(--border,#DDDBDA)">
-      ${depSpin('Detecting other orgs…')}</div>`;
-    let orgs = [];
-    try { orgs = await depLoadOrgs(orgUrl); }
-    catch (e) { mount.innerHTML = depErrBox('Could not list your other orgs', e && e.message); return; }
+  // THIS ORG ONLY (user 2026-09-14: cross-org pickers here were confusing).
+  // The matrix code below still takes a list of orgs; the list is now always
+  // the org this popup is connected to.
+  function renderFlowBulkPanel(mount, orgUrl) {
+    const all = [{ orgUrl, sid: _scanSid || _lastSid, label: `This org (${depHost(orgUrl)})`, isCurrent: true }];
+    _fbOrgsAll = all;
+    mount.innerHTML = `
+      <div class="dep-panel" style="padding:8px 10px">
+        <div style="font-weight:600;margin-bottom:2px">⏻ Flow switches — ${escHtml(depHost(orgUrl))}</div>
+        <div style="font-size:11.5px;opacity:.8;margin-bottom:6px">
+          Record-triggered, scheduled and platform-event flows in this org, by object, with their
+          on/off state, running flow version and pinned <strong>API version</strong>.
+          <strong>Off</strong> stops that flow's automation for everyone in this org until reactivated —
+          records created meanwhile are never retroactively processed.
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span id="depFbProg" style="font-size:11.5px;opacity:.8"></span>
+        </div>
+        <div id="depFbBody" style="margin-top:8px"></div>
+      </div>`;
+    // Loads on open (user 2026-09-14: "why do we need the button? … load both
+    // on load") — one org, a few read-only calls, quoted in the progress line.
+    loadFlowBulk(mount);
+  }
+  let _fbOrgsAll = [];
 
-    if (!orgs.length) {
-      mount.innerHTML = `<div class="dep-blast-sec">No other org detected. Open a Salesforce tab for the
-        comparison org, or add it under Connected Orgs in Data Studio, then reopen this panel.</div>`;
+  async function loadFlowBulk(mount) {
+    const picked = _fbOrgsAll.filter(Boolean);
+    const body = mount.querySelector('#depFbBody');
+    const prog = mount.querySelector('#depFbProg');
+    if (!picked.length) { body.innerHTML = depErrBox('No org', 'Connect to an org first.'); return; }
+    // No Silent Waits: three list reads per org plus one versions page per
+    // 100 flows, said before spending them.
+    prog.textContent = `${picked.length} org(s): 3 read-only calls each, plus one per 100 flows…`;
+    const orgs = []; const rowsByOrg = {}; const apiVerByOrg = {}; const notes = [];
+    for (const o of picked) {
+      const key = depOrgKey(o.orgUrl);
+      prog.textContent = `reading ${o.label}…`;
+      const [view, defs, vers] = await Promise.all([
+        depBg({ type: 'SF_QUERY', tooling: false, orgUrl: o.orgUrl, sid: o.sid, _silentError: true,
+          query: 'SELECT ApiName, Label, NamespacePrefix, IsActive, TriggerType, TriggerObjectOrEventLabel FROM FlowDefinitionView' }),
+        // PLAIN fields only — the ActiveVersion.VersionNumber traversal
+        // failed live and painted every flow "not togglable"; the Flow
+        // query below already knows every version number.
+        depBg({ type: 'SF_QUERY', tooling: true, orgUrl: o.orgUrl, sid: o.sid, _silentError: true,
+          query: 'SELECT Id, DeveloperName, NamespacePrefix FROM FlowDefinition' }),
+        depFlowVersions(o.orgUrl, o.sid),
+      ]);
+      if (view?.error) {
+        notes.push(`${o.label}: could not be read (${view.error}) — shown as UNREAD, never as "has no flows".`);
+        continue;
+      }
+      orgs.push({ key, label: o.label, orgUrl: o.orgUrl, sid: o.sid,
+        // Definitions unreadable ⇒ states still show, switching is off for
+        // this org — ONE note here instead of a ⚠ on every row.
+        toolingDown: !!defs?.error });
+      if (defs?.error) {
+        notes.push(`${o.label}: flow definitions could not be read (${defs.error}) — states are shown, but switching is disabled for this org.`);
+      }
+      // ONE source of truth for versions: the Flow query. Active + latest
+      // numbers AND the governing API version both come from it.
+      const versByApi = {};
+      apiVerByOrg[key] = {};
+      if (!vers?.error) {
+        for (const fr of sftkFlowVerRows(vers.records || [])) {
+          versByApi[fr.apiName] = {
+            active: fr.active ? fr.active.versionNumber : null,
+            latest: fr.latest ? fr.latest.versionNumber : null,
+            activeId: fr.active ? fr.active.id : null,
+            latestId: fr.latest ? fr.latest.id : null,
+          };
+          const gov = sftkFlowGoverningVer(fr);
+          if (gov && gov.apiVersion) apiVerByOrg[key][fr.apiName] = String(gov.apiVersion);
+        }
+      } else {
+        notes.push(`${o.label}: flow versions could not be read (${vers.error}) — version and API columns stay UNKNOWN here.`);
+      }
+      rowsByOrg[key] = sftkFlowBulkRows(view.records || [], defs?.error ? [] : (defs.records || []), versByApi);
+    }
+    prog.textContent = '';
+    if (!orgs.length) { body.innerHTML = depErrBox('No org could be read', notes.join(' ')); return; }
+    const matrix = sftkFlowBulkMatrix(orgs, rowsByOrg, apiVerByOrg);
+    if (!matrix.length) { body.innerHTML = depErrBox('No triggered flows', 'These orgs have no record-triggered, scheduled or platform-event flows.'); return; }
+    _fbState = { orgs, rowsByOrg, matrix, remembered: await _fbRememberedAll(), notes };
+    renderFlowBulkMatrix(body);
+  }
+
+  function renderFlowBulkMatrix(body) {
+    const st = _fbState;
+    const groups = new Map();
+    for (const r of st.matrix) {
+      const key = /^Record/.test(r.triggerType) ? (r.object || '(unknown object)')
+        : r.triggerType === 'Scheduled' ? '\u23f0 Scheduled'
+        : '\u{1F4E1} Platform event';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+    const isRecordGroup = g => !/^[\u23f0\u{1F4E1}]/u.test(g);
+    const cell = (r, o) => {
+      const c = r.cells[o.key];
+      if (!c || !c.present) return '<span class="dep-list-state"><span class="dep-pill dep-pill-absent" title="This flow does not exist in this org \u2014 absence, not off.">not in this org</span></span>';
+      const rem = (st.remembered[o.key] || {})[r.apiName];
+      const api = c.apiVersion ? `<span class="dep-pill dep-pill-api" title="Pinned to Salesforce API ${escHtml(c.apiVersion)}">API ${escHtml(c.apiVersion)}</span>` : '';
+      const state = c.isActive
+        ? `<span class="dep-pill dep-pill-on" title="Active${c.activeVersion ? ` \u2014 version ${c.activeVersion} is running` : ''}">ON${c.activeVersion ? ` v${c.activeVersion}` : ''}</span>`
+        : `<span class="dep-pill dep-pill-off" title="No active version \u2014 this flow's automation is not running">OFF</span>${rem
+            ? `<span class="dep-pill dep-pill-hint" title="Switched off here \u2014 \u25b6 Switch ON restores v${escHtml(String(rem))}">\u21a9 v${escHtml(String(rem))}</span>`
+            : (c.defId ? `<span class="dep-pill dep-pill-hint" title="No record of which version was active before \u2014 activating here uses the LATEST version, which may differ from what previously ran.">\u2192latest</span>` : '')}`;
+      const url = depFlowOpenUrl(o.orgUrl, c.activeId || c.latestId, c.defId);
+      const pills = `${state}${api}`;
+      return `<span class="dep-list-state">${url
+        ? `<span class="dep-fb-open" data-open-url="${escHtml(url)}" title="Open this flow in Flow Builder">${pills}</span>`
+        : pills}</span>`;
+    };
+    // A flow's state in THIS org (single-org panel): 'on' | 'off' | 'absent'.
+    // Selection and the action buttons key on it (user 2026-09-14: ticking an
+    // OFF flow for "Deactivate" was a silent no-op).
+    const fbStateOf = f => {
+      const c = st.orgs.length ? f.cells[st.orgs[0].key] : null;
+      return !c || !c.present ? 'absent' : (c.isActive ? 'on' : 'off');
+    };
+    // The label opens the flow in the first org that has it — "This org"
+    // first, since that is the org the map is looking at.
+    const labelUrl = f => {
+      for (const o of st.orgs) {
+        const c = f.cells[o.key];
+        if (c && c.present) {
+          const u = depFlowOpenUrl(o.orgUrl, c.activeId || c.latestId, c.defId);
+          if (u) return { url: u, org: o.label };
+        }
+      }
+      return null;
+    };
+    const nOnAll = st.matrix.filter(f => fbStateOf(f) === 'on').length;
+    const nOffAll = st.matrix.filter(f => fbStateOf(f) === 'off').length;
+    body.innerHTML = `
+      <div class="dep-tool-sum">
+        <strong>${st.matrix.length}</strong> triggered flow(s)
+        <span class="dep-pill dep-pill-on">${nOnAll} ON</span>
+        <span class="dep-pill dep-pill-off">${nOffAll} OFF</span>
+        ${st.orgs.map(o => `<label class="dep-tool-apply" hidden title="${o.toolingDown ? 'Switching disabled \u2014 this org\u2019s flow definitions could not be read.' : 'Apply the switch in this org'}">
+          <input type="checkbox" class="dep-fb-applyorg" value="${escHtml(o.key)}" ${o.toolingDown ? 'disabled' : 'checked'}>${escHtml(o.label)}</label>`).join('')}
+        ${st.orgs.some(o => o.toolingDown) ? '<span class="dep-pill dep-pill-warn" title="This org\u2019s flow definitions could not be read \u2014 switching is disabled.">\u26a0 switching disabled</span>' : ''}
+      </div>
+      <div class="dep-list">
+        ${[...groups.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([g, flows]) => `
+          <div class="dep-list-grp">
+            <div class="dep-list-grp-hd">
+              <span class="dep-list-grp-name">${escHtml(g)}</span>
+              <span class="dep-list-grp-n">${flows.length}</span>
+              <span class="dep-list-grp-acts">
+                <button class="btn-small dep-fb-grp" data-grp="${escHtml(g)}" data-want="on" title="Tick every flow in this group that is currently ON (what \u23fb Switch OFF acts on)">all ON</button>
+                <button class="btn-small dep-fb-grp" data-grp="${escHtml(g)}" data-want="off" title="Tick every flow in this group that is currently OFF (what \u25b6 Switch ON acts on)">all OFF</button>
+              </span>
+            </div>
+            ${flows.map(f => `
+              <label class="dep-list-row">
+                <input type="checkbox" class="dep-fb-cb" value="${escHtml(f.apiName)}" data-grp="${escHtml(g)}" data-on="${fbStateOf(f)}">
+                <span class="dep-list-name">
+                  ${(() => { const lu = labelUrl(f); return lu
+                    ? `<span class="dep-fb-open" data-open-url="${escHtml(lu.url)}" title="${escHtml(f.apiName)} \u2014 open in Flow Builder">${escHtml(f.label)}</span>`
+                    : `<span title="${escHtml(f.apiName)}">${escHtml(f.label)}</span>`; })()}
+                  ${isRecordGroup(g) ? `<span class="dep-list-kind">${escHtml(f.kind)}</span>` : ''}
+                </span>
+                ${st.orgs.map(o => cell(f, o)).join('')}
+              </label>`).join('')}
+          </div>`).join('')}
+      </div>
+      ${st.notes.length ? `<div class="dep-tool-note">${st.notes.map(n => `\u2139 ${escHtml(n)}`).join('<br>')}</div>` : ''}
+      <div class="dep-tool-foot">
+        <span id="depFbCount" class="dep-tool-count">0 selected</span>
+        <span class="dep-tool-sp"></span>
+        <button class="btn-small" id="depFbOff" disabled>\u23fb Switch OFF (0 ON selected)</button>
+        <button class="btn-small dep-btn-primary" id="depFbOn" disabled>\u25b6 Switch ON (0 OFF selected)</button>
+      </div>
+      <div id="depFbOut" class="dep-tool-out"></div>`;
+    depWireOpenLinks(body);
+    const cbs = [...body.querySelectorAll('.dep-fb-cb')];
+    // The two buttons say exactly what they would switch: only ticked flows
+    // that are ON can be switched OFF, and only ticked OFF flows switched ON.
+    // A ticked flow in the other state is simply not part of that action.
+    const sync = () => {
+      const picked = cbs.filter(c => c.checked);
+      const nOn = picked.filter(c => c.dataset.on === 'on').length;
+      const nOff = picked.filter(c => c.dataset.on === 'off').length;
+      const el = body.querySelector('#depFbCount');
+      if (el) el.textContent = `${picked.length} selected \u00b7 ${nOn} ON \u00b7 ${nOff} OFF`;
+      const off = body.querySelector('#depFbOff'), on = body.querySelector('#depFbOn');
+      if (off) { off.disabled = !nOn; off.textContent = `\u23fb Switch OFF (${nOn} ON selected)`; }
+      if (on)  { on.disabled = !nOff; on.textContent = `\u25b6 Switch ON (${nOff} OFF selected)`; }
+    };
+    cbs.forEach(c => c.addEventListener('change', sync));
+    body.querySelectorAll('.dep-fb-grp').forEach(b => b.addEventListener('click', () => {
+      const mine = cbs.filter(c => c.dataset.grp === b.dataset.grp && c.dataset.on === b.dataset.want);
+      const allTicked = mine.length > 0 && mine.every(c => c.checked);
+      mine.forEach(c => { c.checked = !allTicked; });
+      sync();
+    }));
+    body.querySelector('#depFbOff').addEventListener('click', () => runFlowBulk(body, 'deactivate'));
+    body.querySelector('#depFbOn').addEventListener('click', () => runFlowBulk(body, 'activate'));
+    sync();
+  }
+
+  async function runFlowBulk(body, mode) {
+    if (_fbBusy || !_fbState) return;
+    const st = _fbState;
+    // Only the ticked flows this action can switch (the buttons count the same set).
+    const want = mode === 'deactivate' ? 'on' : 'off';
+    const picked = [...body.querySelectorAll('.dep-fb-cb')].filter(c => c.checked && c.dataset.on === want).map(c => c.value);
+    const applyOrgs = [...body.querySelectorAll('.dep-fb-applyorg')].filter(c => c.checked).map(c => c.value);
+    const out = body.querySelector('#depFbOut');
+    if (!picked.length) { out.innerHTML = depErrBox('Nothing selected', 'Tick the flows to switch first.'); return; }
+    if (!applyOrgs.length) { out.innerHTML = depErrBox('No org ticked', 'Tick, in the table header, the org(s) to apply the switch in.'); return; }
+
+    // One plan PER ORG — each org has its own current state and its own
+    // remembered versions, and the confirm shows them separately so a flip
+    // in UAT is never mistaken for a flip in prod.
+    const perOrg = [];
+    for (const key of applyOrgs) {
+      const org = st.orgs.find(o => o.key === key);
+      if (!org) continue;
+      const plan = sftkFlowBulkPlan(st.rowsByOrg[key] || [], picked, mode, st.remembered[key] || {});
+      perOrg.push({ org, plan });
+    }
+    const totalJobs = perOrg.reduce((n, x) => n + x.plan.jobs.length, 0);
+    if (!totalJobs) {
+      out.innerHTML = depErrBox('Nothing to change',
+        perOrg.flatMap(x => x.plan.skipped.map(k => `${x.org.label}: ${k.apiName} (${k.why})`)).join(' · ') || 'No eligible flow in the selection.');
       return;
     }
+    // Typed confirmation, IN the panel — the same gate as ⚙ API versions'
+    // CHANGE. A one-click OK on a browser confirm() was all that stood
+    // between the user and stopping production automation (audit 2026-09-12).
+    const orgN = perOrg.filter(x => x.plan.jobs.length).length;
+    const word = mode === 'deactivate' ? 'OFF' : 'ON';
+    const skips = perOrg.flatMap(x => x.plan.skipped.map(k => `${x.org.label}: ${k.apiName} (${k.why})`));
+    out.innerHTML = `
+      <div class="dep-blast-sec" style="border-left:3px solid var(--warn,#d97706);padding-left:8px">
+        <div style="font-weight:700">Switch ${word} ${totalJobs} flow(s) in ${orgN === 1 ? 'this org' : `${orgN} org(s)`}?</div>
+        <div style="margin-top:4px;font-size:12px">${mode === 'deactivate'
+          ? 'Their automation <strong>stops for EVERYONE</strong> in this org until switched back on. Records created while off are never retroactively processed. Active versions are remembered, so \u25b6 Activate restores exactly them.'
+          : 'Each flow is switched on at the version listed below, in every ticked org.'}</div>
+        <div style="margin-top:6px;max-height:170px;overflow:auto;font-size:11.5px">
+          ${perOrg.filter(x => x.plan.jobs.length).map(x => `
+            <div style="margin:2px 0"><strong>${escHtml(x.org.label)}</strong>: ${x.plan.jobs.map(j => `${escHtml(j.label)} — ${escHtml(j.from)}`).join(' · ')}</div>`).join('')}
+        </div>
+        ${skips.length ? `<div style="margin-top:4px;font-size:11.5px;opacity:.8">Skipped: ${escHtml(skips.join(', '))}</div>` : ''}
+        <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <span style="font-size:12px">Type <code>${word}</code> to confirm:</span>
+          <input id="depFbConfirm" style="width:90px;padding:2px 4px" autocomplete="off">
+          <button class="btn-small" id="depFbGo" disabled>\u23fb Switch ${word}</button>
+          <button class="btn-small" id="depFbNo">Cancel</button>
+        </div>
+      </div>`;
+    const inp = out.querySelector('#depFbConfirm');
+    const go = out.querySelector('#depFbGo');
+    inp.addEventListener('input', () => { go.disabled = inp.value.trim().toUpperCase() !== word; });
+    out.querySelector('#depFbNo').addEventListener('click', () => { out.innerHTML = ''; });
+    go.addEventListener('click', () => applyFlowBulk(out, mode, perOrg));
+  }
 
-    mount.innerHTML = `
-      <div class="dep-blast-verdict" style="border-top:1px solid var(--border,#DDDBDA)">
-        <b>🔀 Cross-org dependency diff</b> — read-only. For every flow here, does the same flow exist and
-        run in another org, and do the objects, fields, subflows and Apex it references exist there?
-      </div>
-      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 12px">
-        <select id="depXoSelect" style="flex:1;min-width:170px;padding:4px 6px;border:1px solid var(--border,#DDDBDA);border-radius:6px;font-size:12px;background:var(--card,#fff);color:var(--text,#181818)">
-          ${orgs.map((o, i) => `<option value="${i}">${escHtml(o.label)} — ${escHtml(depHost(o.orgUrl))}${o.online ? '' : ' (stored credentials)'}</option>`).join('')}
-        </select>
-        <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">
-          <input type="checkbox" id="depXoActiveOnly" checked> Active flows only
-        </label>
-        <button class="btn-small" id="depXoRun">Compare</button>
-      </div>
-      <div id="depXoOut"></div>`;
-
-    const out = mount.querySelector('#depXoOut');
-    // A diff from earlier in this popup session survives panel toggling; reset()
-    // clears it on an org switch so it can never describe the wrong org.
-    if (_xoResult) renderCrossOrgResult(out, _xoResult, orgUrl);
-    const runBtn = mount.querySelector('#depXoRun');
-    runBtn.addEventListener('click', async () => {
-      if (_xoRunning) return;
-      const i = Number(mount.querySelector('#depXoSelect').value || 0);
-      const activeOnly = !!mount.querySelector('#depXoActiveOnly').checked;
-      runBtn.disabled = true;
-      runBtn.textContent = 'Comparing…';
-      try { await runCrossOrgDiff(orgs[i], { activeOnly }, out, orgUrl); }
-      finally { runBtn.disabled = false; runBtn.textContent = 'Compare'; }
+  // The switch itself, org at a time — only ever reached through the typed
+  // gate above.
+  async function applyFlowBulk(out, mode, perOrg) {
+    if (_fbBusy) return;
+    _fbBusy = true;
+    const report = [];
+    for (const { org, plan } of perOrg) {
+      const done = []; const failed = [];
+      for (let i = 0; i < plan.jobs.length; i++) {
+        const j = plan.jobs[i];
+        out.innerHTML = depSpin(`${org.label}: ${mode === 'deactivate' ? 'switching off' : 'switching on'} ${i + 1} / ${plan.jobs.length}…`);
+        const r = await depBg({ type: 'SF_PATCH', orgUrl: org.orgUrl, sid: org.sid,
+          path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${j.defId}`,
+          body: { Metadata: { activeVersionNumber: j.version } } });
+        if (r?.error) failed.push(`${j.label}: ${r.error}`);
+        else done.push(j);
+      }
+      // Remember / forget only what THIS org confirmed — a failed flip must
+      // not overwrite the memory of what was truly active.
+      if (mode === 'deactivate' && Object.keys(plan.remember).length) {
+        const okNames = new Set(done.map(j => j.apiName));
+        await _fbRememberSave(org.key, m => {
+          for (const [name, v] of Object.entries(plan.remember)) if (okNames.has(name)) m[name] = v;
+          return m;
+        });
+      }
+      if (mode === 'activate' && done.length) {
+        await _fbRememberSave(org.key, m => { for (const j of done) delete m[j.apiName]; return m; });
+      }
+      if (done.length || failed.length) {
+        report.push(`${done.length ? `✅ ${org.label}: ${done.length} switched ${mode === 'deactivate' ? 'OFF' : 'ON'} (${escHtml(done.map(j => j.label).join(', '))})` : ''}${failed.length ? `${done.length ? '<br>' : ''}❌ ${org.label}: ${escHtml(failed.join(' · '))}` : ''}`);
+      }
+    }
+    _fbBusy = false;
+    out.innerHTML = `
+      <div class="dep-blast-sec"${report.some(r => r.includes('❌')) ? ' style="border-left:3px solid var(--warn,#d97706);padding-left:8px"' : ''}>
+        ${report.join('<br>')}<br>
+        <span style="opacity:.75">This table is now stale —</span>
+        <button class="btn-small" id="depFbReload">↻ Reload the fresh state</button>
+      </div>`;
+    out.querySelector('#depFbReload')?.addEventListener('click', () => {
+      const mount = out.closest('#depToolPanel');
+      if (mount) loadFlowBulk(mount);
     });
   }
 
-  async function runCrossOrgDiff(target, opts, out, orgUrl) {
-    if (!target || !target.orgUrl || !target.sid) {
-      out.innerHTML = depErrBox('That org has no usable session', 'No session id — open a Salesforce tab for it and re-scan.');
-      return;
-    }
-    _xoRunning = true;
-    const notes = [];
-    try {
-      // 1 ─ scope: one representative version per API name in THIS org.
-      let scope = [];
-      for (const apiName of Object.keys(flowsByApiName).sort()) {
-        const f = repFlowFor(apiName);
-        if (!f) continue;
-        if (opts.activeOnly && f.Status !== 'Active') continue;
-        scope.push(f);
+  // ── API VERSIONS, ACROSS ORGS ─────────────────────────────────────────
+  // User 2026-08-22: "compare api versions and change them of flows and
+  // their trees multi org" + "It should also compare the orgs api versions
+  // ofc. aand be updated when a new version is out".
+  //
+  // Two versions live here and they are NOT the same thing. The ORG's
+  // version is the release it runs — a ceiling. A FLOW's version is the
+  // semantics it is pinned to, and an old flow keeps its old behaviour in
+  // a fully upgraded org. Both are shown, side by side, because the whole
+  // point is that one does not imply the other.
+  //
+  // Nothing is hard-coded: every version and every release NAME is read
+  // from the org itself (GET /services/data/ ships both), so the day an
+  // org upgrades this reports the new release with no code change.
+  let _avState = null;   // { orgs, matrix, edges, generatedAt }
+  let _avRunning = false;
+  let _avCancel = false;
+
+  // THIS ORG ONLY (user 2026-09-14). The compare/apply code below still takes
+  // a list of orgs; it is now always the org this popup is connected to.
+  function renderApiVerPanel(mount, orgUrl) {
+    const all = [{ orgUrl, sid: _scanSid || _lastSid, label: `This org (${depHost(orgUrl)})`, online: true, isCurrent: true }];
+    mount.innerHTML = `
+      <div class="dep-panel" style="padding:8px 10px">
+        <div style="font-weight:600;margin-bottom:4px">⚙ API versions — ${escHtml(depHost(orgUrl))}</div>
+        <div style="font-size:11.5px;opacity:.8;margin-bottom:6px">
+          Compares the version each flow is <strong>pinned to</strong> with the release this org runs. A flow keeps its own version until someone changes it, so an upgraded org can still be running years-old flow behaviour. Comparing changes nothing; ⚙ Apply, below the comparison, deploys a new flow version behind a typed <code>CHANGE</code>.
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <span id="depAvProg" style="font-size:11.5px;opacity:.8"></span>
+        </div>
+        <div id="depAvOut" style="margin-top:8px"></div>
+      </div>`;
+    _avOrgsAll = all;
+    // Compares on open (user 2026-09-14) — one org, two list reads plus one
+    // per 100 flows, quoted in the progress line; nothing is written.
+    runApiVerCompare(mount);
+  }
+
+  let _avOrgsAll = [];
+
+  // The Flow Builder URL for a flow in a given org. A version id opens
+  // that exact version; a definition id opens the flow's latest; neither
+  // → no link (never a guess at a URL that would land on an error page).
+  function depFlowOpenUrl(orgUrl, versionId, defId) {
+    const base = String(orgUrl || '').replace(/\/$/, '');
+    if (!base) return '';
+    if (versionId) return `${base}/builder_platform_interaction/flowBuilder.app?flowId=${encodeURIComponent(versionId)}`;
+    if (defId) return `${base}/builder_platform_interaction/flowBuilder.app?flowDefId=${encodeURIComponent(defId)}`;
+    return '';
+  }
+  // Wires every [data-open-url] inside a container to open in a new tab —
+  // the popup's own convention (chrome.tabs.create), not target=_blank.
+  function depWireOpenLinks(container) {
+    container.querySelectorAll('[data-open-url]').forEach(el => {
+      el.addEventListener('click', e => {
+        e.preventDefault(); e.stopPropagation();
+        const url = el.dataset.openUrl;
+        if (url) chrome.tabs.create({ url });
+      });
+    });
+  }
+
+  // Flow versions via the MODERN stack (user rule 2026-08-31 + the managed
+  // flow that never appeared, 2026-09-01): REST FlowVersionView includes
+  // MANAGED flows the Tooling Flow object omits, and carries ApiVersion,
+  // status and the namespaced ApiName. Rows are mapped to the shape
+  // sftkFlowVerRows already understands. Falls back to the Tooling query
+  // (with a note) so an org that predates the view still answers.
+  // LIVE FACTS (sf CLI, 2026-09-03): FlowVersionView REFUSES an unfiltered
+  // query ("a filter on a reified column is required [FlowDefinitionViewId,
+  // DurableId]"), so the one-shot read below used to fail silently and fall
+  // back to Tooling — which returns ZERO managed flows (user: "I still dont
+  // see the managed flows"). The read is therefore two steps: every
+  // definition from FlowDefinitionView (no filter needed), then its versions
+  // from FlowVersionView filtered by FlowDefinitionViewId, 100 definitions a
+  // page. A managed definition's DurableId is 'ns__Name' and its versions'
+  // DurableIds are 'ns__Name-N' — not record Ids — so those rows carry no Id
+  // and never become a Flow Builder link that would 404.
+  // apiName → FlowDefinitionView.TriggerType for EVERY definition the org
+  // lists (managed or not) — the cheap, scan-independent source of "is this
+  // record-triggered". Filled by depFlowVersions on every load.
+  let _defTriggerByApiName = {};
+  function getDefinitionTriggerMap() { return _defTriggerByApiName; }
+
+  async function depFlowVersions(orgUrl, sid) {
+    const defs = await depBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl, sid, _silentError: true,
+      query: 'SELECT DurableId, ApiName, Label, NamespacePrefix, ManageableState, TriggerType, TriggerObjectOrEventLabel FROM FlowDefinitionView' });
+    if (defs && !defs.error) {
+      const isId = v => /^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$/.test(String(v || ''));
+      const defRows = (defs.records || []).filter(d => d && d.DurableId);
+      const trigByDef = {};
+      const trigByApi = {};
+      for (const d of defRows) {
+        const api = d.ApiName ? (d.NamespacePrefix ? `${d.NamespacePrefix}__${d.ApiName}` : d.ApiName) : null;
+        trigByDef[d.DurableId] = d.TriggerType || null;
+        if (api) trigByApi[api] = d.TriggerType || null;
       }
-      if (opts.activeOnly) notes.push('Only flows with an Active version in this org were compared.');
-      if (!scope.length) {
-        out.innerHTML = '<div class="dep-blast-sec">No flows in scope — uncheck “Active flows only” to compare drafts too.</div>';
+      _defTriggerByApiName = trigByApi;
+      const out = [];
+      let failed = null;
+      for (let i = 0; i < defRows.length && !failed; i += 100) {
+        const chunk = defRows.slice(i, i + 100);
+        const inList = chunk.map(d => `'${String(d.DurableId).replace(/'/g, '')}'`).join(',');
+        const vers = await depBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl, sid, _silentError: true,
+          query: 'SELECT DurableId, FlowDefinitionViewId, ApiVersion, VersionNumber, Status, ProcessType, LastModifiedDate,'
+            + ' FlowDefinitionView.ApiName, FlowDefinitionView.Label, FlowDefinitionView.NamespacePrefix, FlowDefinitionView.ManageableState'
+            + ` FROM FlowVersionView WHERE FlowDefinitionViewId IN (${inList})` });
+        if (!vers || vers.error) { failed = (vers && vers.error) || 'no response'; break; }
+        for (const v of (vers.records || [])) {
+          const d = v.FlowDefinitionView || {};
+          const ns = d.NamespacePrefix || null;
+          const api = d.ApiName ? (ns ? `${ns}__${d.ApiName}` : d.ApiName) : null;
+          out.push({
+            Id: isId(v.DurableId) ? v.DurableId : null,
+            DefinitionId: isId(v.FlowDefinitionViewId) ? v.FlowDefinitionViewId : null,
+            MasterLabel: d.Label || api,
+            Definition: { DeveloperName: api },
+            NamespacePrefix: ns,
+            ManageableState: d.ManageableState || null,
+            VersionNumber: v.VersionNumber, Status: v.Status,
+            ApiVersion: v.ApiVersion,
+            ProcessType: depResolveFlowType(v.ProcessType, trigByDef[v.FlowDefinitionViewId]),
+            TriggerType: trigByDef[v.FlowDefinitionViewId] || null,
+            LastModifiedDate: v.LastModifiedDate || null,
+          });
+        }
+      }
+      if (!failed) return { records: out };
+      // fall through to Tooling — with the note, never silently
+    }
+    const tool = await depBg({ type: 'SF_QUERY', tooling: true, orgUrl, sid, _silentError: true,
+      query: 'SELECT Id,MasterLabel,Definition.DeveloperName,VersionNumber,Status,ApiVersion,ProcessType FROM Flow' });
+    if (tool?.error) return { error: tool.error };
+    return { records: tool.records || [],
+      note: 'read via the older Tooling API \u2014 managed-package flows may be missing from this org\u2019s list' };
+  }
+
+  // Read one org's ceiling from the org. No version string is assumed.
+  async function avOrgMax(o) {
+    const r = await depBg({ type: 'SF_REST_GET', orgUrl: o.orgUrl, sid: o.sid, _silentError: true,
+      path: 'services/data/' });
+    if (!r || r.error) return { error: String((r && r.error) || 'no response') };
+    const max = sftkApiVerMax(r);
+    return max || { error: 'the org listed no API versions' };
+  }
+
+  async function avFlows(o) {
+    const r = await depFlowVersions(o.orgUrl, o.sid);
+    if (!r || r.error) return { error: String((r && r.error) || 'no response') };
+    return { rows: sftkFlowVerRows(r.records || []), note: r.note || null };
+  }
+
+  async function runApiVerCompare(mount) {
+    if (_avRunning) { _avCancel = true; return; }
+    const picked = _avOrgsAll.filter(Boolean);   // this org only
+    const out = mount.querySelector('#depAvOut');
+    const prog = mount.querySelector('#depAvProg');
+    const btn = mount.querySelector('#depAvGo');
+    if (!picked.length) { out.innerHTML = depErrBox('No org', 'Connect to an org first.'); return; }
+
+    // No Silent Waits: two list reads per org plus one versions page per 100
+    // flows, quoted before spending them.
+    prog.textContent = `${picked.length} org(s): 2 read-only calls each, plus one per 100 flows…`;
+    _avRunning = true; _avCancel = false;
+    if (btn) btn.textContent = '⏹ Stop';
+    const orgs = []; const rowsByOrg = {}; const notes = [];
+    try {
+      for (const o of picked) {
+        if (_avCancel) break;
+        const key = depOrgKey(o.orgUrl);
+        prog.textContent = `reading ${o.label}…`;
+        const max = await avOrgMax(o);
+        if (max.error) notes.push(`${o.label}: could not read the org's release (${max.error}) — its lag column stays UNKNOWN.`);
+        const f = await avFlows(o);
+        if (f.error) { notes.push(`${o.label}: flows could not be read (${f.error}) — this org is shown as UNREAD, never as "has no flows".`); continue; }
+        if (f.note) notes.push(`${o.label}: ${f.note}.`);
+        orgs.push({ key, label: o.label, orgUrl: o.orgUrl, sid: o.sid,
+          maxVersion: max.error ? null : max.version, release: max.error ? '' : max.label });
+        rowsByOrg[key] = f.rows;
+      }
+      // Single-org (2026-09-14): one readable org is the whole comparison —
+      // each flow's pinned version against this org's release.
+      if (!orgs.length) {
+        out.innerHTML = depErrBox('This org could not be read', notes.join(' ') || 'Open the org in a Chrome tab and try again.');
         return;
       }
-      if (scope.length > DEP_XO_FLOWS) {
-        notes.push(`Capped at the first ${DEP_XO_FLOWS} flows (of ${scope.length}) — the rest were NOT compared.`);
-        scope = scope.slice(0, DEP_XO_FLOWS);
+      // parent → children, inverted from the map's child → parents shape,
+      // so a tree can be rolled up from any root.
+      const edges = {};
+      for (const [child, parents] of Object.entries(dependencyMap || {})) {
+        for (const p of (parents || [])) {
+          const pn = p && (p.apiName || p.masterLabel);
+          if (!pn) continue;
+          (edges[pn] = edges[pn] || []).push(child);
+        }
       }
-      if (!isMetadataFetched()) notes.push(`Some flows had no references to compare — ${scanCaveat()}.`);
-
-      // 2 ─ the comparison org's flows.
-      out.innerHTML = depSpin(`Reading flows in ${target.label}…`);
-      const tf = await depBg({
-        type: 'SF_QUERY_ALL', orgUrl: target.orgUrl, sid: target.sid, tooling: true,
-        query: 'SELECT Id,MasterLabel,Definition.DeveloperName,VersionNumber,Status FROM Flow'
-      });
-      if (!tf || tf.error) { out.innerHTML = depErrBox(`Could not read flows in ${target.label}`, tf && tf.error); return; }
-      const tgtFlows = {};
-      for (const rec of (tf.records || [])) {
-        const an = (rec.Definition && rec.Definition.DeveloperName)
-          || String(rec.MasterLabel || '').replace(/[^a-zA-Z0-9_]/g, '_');
-        if (!an) continue;
-        if (!tgtFlows[an]) tgtFlows[an] = { statuses: [], hasActive: false };
-        tgtFlows[an].statuses.push(rec.Status);
-        if (rec.Status === 'Active') tgtFlows[an].hasActive = true;
-      }
-
-      // 3 ─ the comparison org's Apex class names (optional probe).
-      let apexNames = null;
-      const ac = await depBg({
-        type: 'SF_QUERY_ALL', orgUrl: target.orgUrl, sid: target.sid, tooling: true,
-        query: 'SELECT Name FROM ApexClass', _silentError: true
-      });
-      if (ac && !ac.error) apexNames = (ac.records || []).map(x => x.Name).filter(Boolean);
-      else notes.push(`Apex class list could not be read in ${target.label} — Apex references were NOT checked (${depFriendly(ac && ac.error)}).`);
-
-      // 4 ─ describe every referenced object in the comparison org, cached.
-      const objSet = new Set();
-      for (const f of scope) {
-        const refs = refsByFlowId[f.Id];
-        if (!refs) continue;
-        for (const o of (refs.objects || [])) if (o.name && o.name.indexOf('$') === -1) objSet.add(o.name);
-      }
-      let objs = [...objSet].sort();
-      if (objs.length > DEP_XO_OBJECTS) {
-        notes.push(`Capped at the first ${DEP_XO_OBJECTS} referenced objects (of ${objs.length}) — references to the rest were NOT checked.`);
-        objs = objs.slice(0, DEP_XO_OBJECTS);
-      }
-      // Describe in BOTH orgs. Without the source pass, anything that is not a
-      // real SObject (an Apex-defined variable type, say) 404s in the target and
-      // would be reported as "missing there" — a lie. Only an object that
-      // describes OK HERE can honestly be called missing over there.
-      const describeIn = async (orgUrl2, sid2, o) => {
-        const res = await depBg({
-          type: 'SF_REST_GET', orgUrl: orgUrl2, sid: sid2, _silentError: true,
-          path: `services/data/v62.0/sobjects/${encodeURIComponent(o)}/describe`
-        });
-        if (res && !res.error && Array.isArray(res.fields)) return { fields: res.fields };
-        const msg = String((res && res.error) || 'no response');
-        // A 404 / NOT_FOUND is a real answer ("absent"); anything else is "could not check".
-        return /NOT_FOUND|404|does not exist|INVALID_TYPE/i.test(msg) ? null : { error: msg };
-      };
-
-      const describes = {};
-      const canCheckHere = !!(_scanOrgUrl && _scanSid);
-      if (!canCheckHere) {
-        notes.push('This org\'s own schema could not be re-read, so a reference that is not a real SObject may show up as “missing in target”.');
-      }
-      for (let i = 0; i < objs.length; i += 5) {
-        out.innerHTML = depSpin(`Describing objects in ${target.label}… ${i} / ${objs.length}`);
-        await Promise.all(objs.slice(i, i + 5).map(async (o) => {
-          const [here, there] = await Promise.all([
-            canCheckHere ? describeIn(_scanOrgUrl, _scanSid, o) : Promise.resolve({ fields: [] }),
-            describeIn(target.orgUrl, target.sid, o)
-          ]);
-          if (canCheckHere && here === null) {
-            describes[o] = { error: 'not an SObject in this org either — probably an Apex-defined type, not compared' };
-            return;
-          }
-          describes[o] = there;
-        }));
-      }
-
-      // 5 ─ per-flow comparison (pure).
-      const rows = [];
-      const tgtFlowNames = Object.keys(tgtFlows);
-      for (const f of scope) {
-        const refs = refsByFlowId[f.Id] || null;
-        const t = tgtFlows[f.ApiName];
-        const cmp = refs ? depRefsMissingIn(refs, describes)
-          : { missingObjects: [], missingFields: [], uncheckedObjects: [], uncheckedFields: [], checkedObjects: [] };
-        rows.push({
-          apiName: f.ApiName, masterLabel: f.MasterLabel, status: f.Status, flowId: f.Id,
-          presence: !t ? 'missing' : (t.hasActive ? 'ok' : 'inactive'),
-          targetStatuses: t ? t.statuses : [],
-          refsAvailable: !!refs,
-          missingObjects: cmp.missingObjects, missingFields: cmp.missingFields,
-          uncheckedObjects: cmp.uncheckedObjects, uncheckedFields: cmp.uncheckedFields,
-          missingSubflows: refs ? depMissingNames(refs.subflows, tgtFlowNames) : [],
-          missingApex: (refs && apexNames) ? depMissingNames(refs.apex, apexNames) : [],
-          apexChecked: !!apexNames
-        });
-      }
-      notes.push('Custom labels, permissions, record types and picklist values are NOT compared here.');
-      notes.push('Only the scanned version of each flow was compared — other versions may reference different fields.');
-
-      _xoResult = {
-        target: { url: target.orgUrl, label: target.label },
-        rows, notes, generatedAt: new Date().toISOString(),
-        scope: { activeOnly: !!opts.activeOnly, compared: rows.length, describedObjects: objs.length }
-      };
-      renderCrossOrgResult(out, _xoResult, orgUrl);
+      _avState = { orgs, matrix: sftkFlowVerMatrix(orgs, rowsByOrg), edges,
+        rowsByOrg, notes, generatedAt: new Date().toISOString() };
+      renderApiVerResult(out);
     } catch (e) {
-      out.innerHTML = depErrBox('Cross-org diff failed', (e && e.message) || e);
+      out.innerHTML = depErrBox('API version comparison failed', (e && e.message) || e);
     } finally {
-      _xoRunning = false;
+      _avRunning = false;
+      if (btn) btn.textContent = '🔍 Compare';
+      prog.textContent = _avCancel ? 'stopped — partial result' : '';
     }
   }
 
-  function renderCrossOrgResult(out, res, orgUrl) {
-    const rows = res.rows || [];
-    const isBad = x => x.presence !== 'ok' || x.missingObjects.length || x.missingFields.length
-      || x.missingSubflows.length || x.missingApex.length;
-    const bad = rows.filter(isBad);
-    const line = (icon, text) => `<div class="dep-blast-item">${icon} ${text}</div>`;
-    const detail = x => {
-      const bits = [];
-      if (x.presence === 'missing') bits.push(line('❌', '<b>Does not exist in the comparison org.</b>'));
-      else if (x.presence === 'inactive') bits.push(line('⚠', `<b>Exists but has no Active version there</b> (${escHtml((x.targetStatuses || []).join(', ') || 'unknown')}).`));
-      if (x.missingObjects.length) bits.push(line('❌', `Objects missing there: ${escHtml(x.missingObjects.map(o => o.name).join(', '))}`));
-      if (x.missingFields.length) bits.push(line('❌', `Fields missing there: ${escHtml(x.missingFields.map(f => f.ref).join(', '))}`));
-      if (x.missingSubflows.length) bits.push(line('❌', `Subflows missing there: ${escHtml(x.missingSubflows.join(', '))}`));
-      if (!x.apexChecked) bits.push(line('⚠', 'Apex references were <b>not checked</b> in the comparison org.'));
-      else if (x.missingApex.length) bits.push(line('❌', `Apex missing there: ${escHtml(x.missingApex.join(', '))}`));
-      if (!x.refsAvailable) bits.push(line('⚠', 'This flow\'s metadata never loaded, so <b>no references were compared</b> for it.'));
-      if (x.uncheckedObjects.length) bits.push(line('⚠', `Objects that could NOT be checked: ${escHtml(x.uncheckedObjects.map(o => `${o.name} (${o.reason})`).join('; '))}`));
-      if (x.uncheckedFields.length) bits.push(line('⚠', `References that could NOT be checked: ${escHtml(x.uncheckedFields.map(f => `${f.ref} (${f.reason})`).join('; '))}`));
-      return bits.join('');
+  function renderApiVerResult(out) {
+    const st = _avState;
+    if (!st) return;
+    const { orgs, matrix } = st;
+    const drift = matrix.filter(r => r.drift);
+    const verOfOrg = k => {
+      const o = orgs.find(x => x.key === k);
+      return o ? o.maxVersion : null;
+    };
+    // Org header row: the RELEASE each org runs, read from the org.
+    const orgHdr = orgs.map(o => `
+      <th style="text-align:left;padding:4px 8px;font-size:11.5px">
+        ${escHtml(o.label)}<br>
+        <span style="font-weight:400;opacity:.75">${o.maxVersion
+          ? `API ${escHtml(o.maxVersion)}${o.release ? ` · ${escHtml(o.release)}` : ''}`
+          : '<span title="the org did not answer with its version list">release UNKNOWN</span>'}</span>
+      </th>`).join('');
+    const orgVers = new Set(orgs.map(o => o.maxVersion).filter(Boolean));
+
+    const cell = (r, o) => {
+      const c = r.cells[o.key];
+      if (!c || c.missing) return '<span class="dep-list-state"><span class="dep-pill dep-pill-absent" title="This flow does not exist in this org. That is absence, not version drift.">not in this org</span></span>';
+      if (!c.apiVersion) return '<span class="dep-list-state"><span class="dep-pill dep-pill-warn" title="The flow exists but did not report an API version \u2014 UNKNOWN, never assumed current.">? unknown</span></span>';
+      const lag = c.lag;
+      const cls = lag === 0 ? 'dep-pill-ok' : (lag != null && lag >= 6) ? 'dep-pill-bad' : (lag != null && lag > 0) ? 'dep-pill-warn' : 'dep-pill-off';
+      const managedChip = c.managed ? '<span class="dep-pill dep-pill-hint" title="Managed package flow \u2014 its API version ships with the package and cannot be changed here.">\ud83d\udd12 managed</span>' : '';
+      const tip = `${c.status || 'no status'} v${c.versionNumber} \u00b7 API ${c.apiVersion}`
+        + (lag == null ? ' \u00b7 lag UNKNOWN (this org\u2019s release could not be read)'
+          : lag === 0 ? ' \u00b7 current for this org'
+          : ` \u00b7 ${lag} release(s) behind this org (\u2248${(lag / 3).toFixed(1)} year(s))`);
+      const openUrl = depFlowOpenUrl(o.orgUrl, c.id, null);
+      const val = `API ${escHtml(c.apiVersion)}${lag ? ` \u00b7 ${lag} behind` : lag === 0 ? ' \u00b7 current' : ''}`;
+      const pill = `<span class="dep-pill ${cls}" title="${escHtml(tip)}${openUrl ? ' \u2014 click to open in Flow Builder' : ''}">${val}</span>`;
+      return `<span class="dep-list-state">${openUrl
+        ? `<span data-open-url="${escHtml(openUrl)}">${pill}</span>`
+        : pill}${managedChip}</span>`;
+    };
+    const avLabelUrl = r => {
+      for (const o of orgs) {
+        const c = r.cells[o.key];
+        if (c && !c.missing && c.id) return { url: depFlowOpenUrl(o.orgUrl, c.id, null), org: o.label };
+      }
+      return null;
     };
 
+    // Single-org: what matters is how far each flow sits behind THIS org's
+    // release, not drift between orgs. `behind` drives the summary, the sort
+    // and the "select" button; `drift` stays for the (now rare) multi-org case.
+    const lagOf = r => Math.max(0, ...orgs.map(o => { const c = r.cells[o.key]; return (c && !c.missing && c.lag != null) ? c.lag : 0; }));
+    const behind = matrix.filter(r => lagOf(r) > 0 || r.drift);
+    const o0 = orgs[0];
+    // Which rows can be changed from here at all (user 2026-09-21: "the user
+    // must not be able to select flows that api version can't be modified").
+    const canOf = r => { for (const o of orgs) { const s = sftkApiVerSelectable(r.cells[o.key]); if (s.ok) return s; } return sftkApiVerSelectable(r.cells[(orgs[0] || {}).key]); };
+    const fixable = behind.filter(r => canOf(r).ok);
+    const lockedBehind = behind.length - fixable.length;
     out.innerHTML = `
-      <div class="dep-blast-verdict">
-        <b>${bad.length}</b> of <b>${rows.length}</b> compared flow(s) have a problem in
-        <b>${escHtml(res.target.label)}</b>. Read-only — nothing was written to either org.
-        <div style="font-size:11px;color:var(--subtext,#706E6B);margin-top:3px">
-          ${Number(res.scope.describedObjects) || 0} object(s) described in the comparison org · run at ${escHtml(res.generatedAt)}
-        </div>
+      <div class="dep-tool-sum">
+        ${o0 ? `<span class="dep-pill dep-pill-api" title="The release this org runs, read from the org">${o0.maxVersion ? `runs API ${escHtml(o0.maxVersion)}${o0.release ? ` \u00b7 ${escHtml(o0.release)}` : ''}` : 'release UNKNOWN'}</span>` : ''}
+        <strong>${matrix.length}</strong> flow(s)
+        <span class="dep-pill ${behind.length ? 'dep-pill-warn' : 'dep-pill-ok'}">${behind.length} behind the org release</span>
+        <span class="dep-pill dep-pill-ok">${matrix.length - behind.length} current</span>
+        ${lockedBehind ? `<span class="dep-pill dep-pill-hint" title="Behind, but not yours to change: installed from a managed package, an invalid draft, or without a record id. They cannot be ticked.">\ud83d\udd12 ${lockedBehind} of those cannot be changed here</span>` : ''}
       </div>
-      ${(res.notes || []).length ? `<div class="dep-blast-sec" style="border-left:3px solid var(--warning,#DD7A01);padding-left:8px">
-        <div class="dep-blast-sec-hdr">What this diff did NOT check</div>
-        ${res.notes.map(n => `<div class="dep-blast-item">${escHtml(n)}</div>`).join('')}</div>` : ''}
-      <div class="dep-blast-sec">
-        <div class="dep-blast-sec-hdr">Flows with a problem (${bad.length})</div>
-        ${bad.length ? bad.map(x => `<div class="dep-ref-hit" style="display:block;cursor:pointer" data-flow-id="${escHtml(x.flowId)}">
-            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-              <span class="dep-node-name">${escHtml(x.masterLabel)}</span>
-              <span class="badge ${x.status === 'Active' ? 'badge-active' : 'badge-draft'}">${escHtml(x.status || '')}</span>
-              <span class="badge ${x.presence === 'ok' ? 'badge-active' : 'badge-obsolete'}">${x.presence === 'ok' ? 'in target' : (x.presence === 'inactive' ? 'inactive in target' : 'missing in target')}</span>
-            </div>
-            ${detail(x)}
-          </div>`).join('')
-    : '<div class="dep-blast-item">Every compared flow exists, is Active, and all of its checked references resolve in the comparison org.</div>'}
+      ${fixable.length && o0 && o0.maxVersion ? `<div class="dep-tool-suggest">
+        <div><strong>${fixable.length} of your flows run on an older API version than this org (API ${escHtml(o0.maxVersion)}).</strong>
+          <span class="dep-tool-count">Salesforce runs each flow with the behaviour of the version it was saved at, so old flows miss fixes and can behave differently from new ones. Updating saves a NEW version of each flow (and activates it where the flow is active) \u2014 try it in a sandbox first, and test the flows that matter.</span></div>
+        <button class="btn-small dep-btn-primary" id="depAvUpdateAll" title="Ticks the ${fixable.length} flow(s) that are behind AND can be changed, sets the target to API ${escHtml(o0.maxVersion)}, and opens the confirmation. Nothing is written until you confirm there.">\u2699 Update all ${fixable.length} to API ${escHtml(o0.maxVersion)}\u2026</button>
+      </div>` : ''}
+      <div class="dep-list">
+        ${[...matrix].sort((a, b) =>
+            (lagOf(b) - lagOf(a))
+            || (b.drift - a.drift)
+            || (a.label || a.apiName).localeCompare(b.label || b.apiName)).map(r => {
+          const roll = sftkFlowTreeRoll(r.apiName, st.edges, n => {
+            const row = r.apiName === n ? r : matrix.find(x => x.apiName === n);
+            if (!row) return null;
+            const first = orgs.map(o => row.cells[o.key]).find(c => c && c.num != null);
+            return first ? first.num : null;
+          });
+          const treeTip = roll.members <= 1
+            ? 'This flow calls no subflows.'
+            : `${roll.members} flow(s) in this tree; oldest API ${roll.oldest == null ? 'UNKNOWN' : roll.oldest}`
+              + (roll.unknown ? ` \u00b7 ${roll.unknown} could not be read` : '');
+          const isBehind = lagOf(r) > 0 || r.drift;
+          const can = canOf(r);
+          return `<label class="dep-list-row ${isBehind ? 'dep-list-row-drift' : ''}${can.ok ? '' : ' dep-list-row-locked'}"${can.ok ? '' : ` title="Cannot be changed here: ${escHtml(can.why)}"`}>
+            <input type="checkbox" class="dep-av-pick" value="${escHtml(r.apiName)}" ${can.ok ? '' : 'disabled'}>
+            <span class="dep-list-name">
+              ${(() => { const lu = avLabelUrl(r); return lu
+                ? `<span data-open-url="${escHtml(lu.url)}" title="Open in Flow Builder">${escHtml(r.label || r.apiName)}</span>`
+                : escHtml(r.label || r.apiName); })()}
+              <span class="dep-list-api">${escHtml(r.apiName)}</span>
+              ${roll.members > 1 ? `<span class="dep-pill dep-pill-hint" title="${escHtml(treeTip)}">tree ${roll.members} \u00b7 oldest ${roll.oldest == null ? '?' : roll.oldest}</span>` : ''}
+            </span>
+            ${orgs.map(o => cell(r, o)).join('')}
+          </label>`;
+        }).join('')}
+      </div>
+      ${st.notes.length ? `<div class="dep-tool-note">${st.notes.map(n => `\u2139 ${escHtml(n)}`).join('<br>')}</div>` : ''}
+      <div class="dep-tool-note">A version shown here is the <strong>governing</strong> one \u2014 the ACTIVE version where there is one, otherwise the latest. Upgrading a draft while an older version is active changes nothing at runtime.</div>
+      <div class="dep-tool-foot">
+        <button class="btn-small" id="depAvSelDrift" ${fixable.length ? '' : 'disabled'}>${fixable.length ? `\u2713 Select the ${fixable.length} behind` : (behind.length ? 'none of the flows behind can be changed here' : 'nothing behind')}</button>
+        <button class="btn-small" id="depAvSelNone">\u2717 None</button>
+        <span class="dep-tool-sp"></span>
+        <span class="dep-tool-count">Set API version to</span>
+        <select id="depAvTarget" class="btn-small">
+          ${[...new Set(orgs.map(o => o.maxVersion).filter(Boolean))]
+            .sort((a, b) => sftkApiVerNum(b) - sftkApiVerNum(a))
+            .map(v => `<option value="${escHtml(v)}">${escHtml(v)} (this org's release)</option>`).join('')}
+          ${[...new Set(matrix.flatMap(r => r.versions))].sort().reverse()
+            .map(v => `<option value="${escHtml(v)}">${escHtml(v)}</option>`).join('')}
+        </select>
+        <button class="btn-small dep-btn-primary" id="depAvApply">\u2699 Change\u2026</button>
+        <span id="depAvApplyProg" class="dep-tool-count"></span>
+      </div>
+      <div id="depAvApplyOut" class="dep-tool-out"></div>`;
+
+    depWireOpenLinks(out);
+    const tickFixable = () => out.querySelectorAll('.dep-av-pick').forEach(cb => {
+      cb.checked = !cb.disabled && fixable.some(d => d.apiName === cb.value);
+    });
+    out.querySelector('#depAvSelDrift')?.addEventListener('click', tickFixable);
+    // The suggestion is a SHORTCUT to the same confirmation, never past it.
+    out.querySelector('#depAvUpdateAll')?.addEventListener('click', () => {
+      tickFixable();
+      const sel = out.querySelector('#depAvTarget');
+      if (sel && o0 && o0.maxVersion) sel.value = o0.maxVersion;
+      confirmApiVerChange(out);
+      out.querySelector('#depAvApplyOut')?.scrollIntoView({ block: 'nearest' });
+    });
+    out.querySelector('#depAvSelNone')?.addEventListener('click', () => {
+      out.querySelectorAll('.dep-av-pick').forEach(cb => { cb.checked = false; });
+    });
+    out.querySelector('#depAvApply')?.addEventListener('click', () => confirmApiVerChange(out));
+  }
+
+  // Applying a version change WRITES to every org it touches, and it is not
+  // a cosmetic edit: Salesforce's own docs are explicit that flow behaviour
+  // can differ between API versions. A deploy also creates a NEW flow
+  // version and, for an active flow, activates it — the previous version
+  // becomes Obsolete. Everything in that sentence is stated before anything
+  // is written, per org, with the exact from→to per flow.
+  function confirmApiVerChange(out) {
+    const st = _avState;
+    if (!st) return;
+    const target = out.querySelector('#depAvTarget')?.value || '';
+    const picked = [...out.querySelectorAll('.dep-av-pick')].filter(cb => cb.checked && !cb.disabled).map(cb => cb.value);
+    const box = out.querySelector('#depAvApplyOut');
+    if (!picked.length) { box.innerHTML = depErrBox('Nothing selected', 'Tick the flows to change first.'); return; }
+
+    // Plan EVERY (flow, org) pair before showing a single number.
+    const plans = [];
+    for (const name of picked) {
+      const row = st.matrix.find(r => r.apiName === name);
+      if (!row) continue;
+      plans.push({ apiName: name, label: row.label || name, plan: sftkApiVerPlan(target, st.orgs, row.cells) });
+    }
+    const writes = plans.reduce((n, p) => n + p.plan.applicable.length, 0);
+    const noops = plans.reduce((n, p) => n + p.plan.noop.length, 0);
+    const blocked = plans.flatMap(p => p.plan.blocked.map(b => ({ ...b, apiName: p.apiName })));
+    const orgLbl = k => (st.orgs.find(o => o.key === k) || {}).label || k;
+
+    if (!writes) {
+      box.innerHTML = depErrBox('Nothing to change',
+        `Every selected flow is already at ${target} in every org that can hold it`
+        + (blocked.length ? `, and ${blocked.length} (flow, org) pair(s) cannot take it.` : '.'));
+      return;
+    }
+
+    box.innerHTML = `
+      <div class="dep-blast-sec" style="border-left:3px solid var(--warn,#d97706);padding-left:8px">
+        <div style="font-weight:700">Change ${writes} flow version(s) to API ${escHtml(target)}?</div>
+        <div style="margin-top:4px;font-size:12px">
+          This <strong>writes to ${new Set(plans.flatMap(p => p.plan.applicable.map(a => a.orgKey))).size} org(s)</strong>. Each change deploys a <strong>new version</strong> of the flow. Where the flow is Active, the tool then <strong>activates the new version</strong> and re-reads the org to confirm what is running (the previous one becomes Obsolete once the new one is active) — if the activation is refused, the previous version stays active and the result says so. Salesforce documents that <strong>flow behaviour can differ between API versions</strong> — this is a functional change, not a label.
+        </div>
+        <div style="margin-top:4px;font-size:11.5px;opacity:.85">
+          Each org is deployed as <strong>one package</strong>, all-or-nothing: if any flow in an org is rejected, none of that org's flows change. Other orgs are unaffected either way.
+        </div>
+        <div style="margin-top:6px;max-height:170px;overflow:auto;font-size:11.5px">
+          ${plans.filter(p => p.plan.applicable.length).map(p => `
+            <div style="margin:2px 0"><code>${escHtml(p.apiName)}</code> — ${p.plan.applicable
+              .map(a => `${escHtml(orgLbl(a.orgKey))} ${escHtml(a.from || '?')}→${escHtml(a.to)}${a.status === 'Active' ? ' <strong>(active)</strong>' : ` (${escHtml(a.status || 'draft')})`}`)
+              .join(' · ')}</div>`).join('')}
+        </div>
+        ${noops ? `<div style="margin-top:4px;font-size:11.5px;opacity:.8">ℹ ${noops} (flow, org) pair(s) are already at ${escHtml(target)} — skipped, not rewritten.</div>` : ''}
+        ${blocked.length ? `<div style="margin-top:4px;font-size:11.5px;color:var(--warn,#d97706)">⚠ ${blocked.length} pair(s) cannot be changed: ${escHtml([...new Set(blocked.map(b => `${b.apiName} in ${orgLbl(b.orgKey)} — ${b.why}`))].slice(0, 4).join('; '))}${blocked.length > 4 ? '…' : ''}</div>` : ''}
+        <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <span style="font-size:12px">Type <code>CHANGE</code> to confirm:</span>
+          <input id="depAvConfirm" style="width:90px;padding:2px 4px" autocomplete="off">
+          <button class="btn-small" id="depAvGo2" disabled>⚙ Apply</button>
+          <button class="btn-small" id="depAvNo">Cancel</button>
+        </div>
       </div>`;
-    out.querySelectorAll('[data-flow-id]').forEach(el => el.addEventListener('click', () =>
-      chrome.tabs.create({ url: `${orgUrl}/builder_platform_interaction/flowBuilder.app?flowId=${el.dataset.flowId}` })));
+    const inp = box.querySelector('#depAvConfirm');
+    const go = box.querySelector('#depAvGo2');
+    inp.addEventListener('input', () => { go.disabled = inp.value.trim().toUpperCase() !== 'CHANGE'; });
+    box.querySelector('#depAvNo').addEventListener('click', () => { box.innerHTML = ''; });
+    go.addEventListener('click', () => applyApiVerChange(out, plans, target));
+  }
+
+  // Applying the change, ORG AT A TIME.
+  //
+  // Two deliberate shapes here, both learned from this file's own history:
+  //   · Reads go through SF_COMPOSITE_BATCH, never one SF_GET_METADATA per
+  //     flow version. Fanning out per version is exactly what the scan was
+  //     refactored away from, and the same reasoning applies to any bulk
+  //     read this file makes.
+  //   · Each org gets ONE package holding every flow it is changing, so an
+  //     org takes one deploy rather than one per flow. The deploy runs with
+  //     rollbackOnError, which makes that package ALL-OR-NOTHING for that
+  //     org: either every flow moves or none does. That is the safer of the
+  //     two failure modes (no half-migrated org) but it has to be SAID, so
+  //     the confirmation says it and the log repeats it on failure.
+  // Post-deploy truth per flow: which version is ACTIVE now, at which API.
+  // changed: [{ apiName, wasActive, prevVersion, defId }]. Returns
+  // [{ apiName, ok, text }] — ok only when the org itself shows the new
+  // version at `target` as the governing one (active where it was active).
+  async function avVerifyAndActivate(org, changed, target, say) {
+    const want = sftkApiVerNum(target);
+    const read = async () => {
+      const r = await depFlowVersions(org.orgUrl, org.sid);
+      if (!r || r.error) return null;
+      const by = {};
+      for (const row of sftkFlowVerRows(r.records || [])) by[row.apiName] = row;
+      return by;
+    };
+    let by = await read();
+    if (!by) return changed.map(c => ({ apiName: c.apiName, ok: false, text: `${c.apiName}: the package was accepted but the org could not be re-read to verify — treat this change as UNVERIFIED and check the flow in Flow Builder.` }));
+    const out = [];
+    const toActivate = [];
+    for (const c of changed) {
+      const row = by[c.apiName];
+      const newest = row && row.latest;
+      if (!newest || newest.versionNumber <= c.prevVersion) {
+        out.push({ apiName: c.apiName, ok: false, text: `${c.apiName}: no new version appeared after the deploy (latest is still v${c.prevVersion}) — nothing changed for this flow.` });
+        continue;
+      }
+      if (newest.num !== want) {
+        out.push({ apiName: c.apiName, ok: false, text: `${c.apiName}: v${newest.versionNumber} was created but reads API ${newest.apiVersion || '?'}, not ${target} — check it in Flow Builder.` });
+        continue;
+      }
+      if (c.wasActive && !(row.active && row.active.versionNumber === newest.versionNumber)) {
+        if (!c.defId) out.push({ apiName: c.apiName, ok: false, text: `${c.apiName}: v${newest.versionNumber} at API ${target} was created but is NOT active, and its definition id is unknown so it could not be activated here — the running version is still v${row.active ? row.active.versionNumber : '?'} at API ${row.active ? row.active.apiVersion : '?'}. Activate v${newest.versionNumber} in Flow Builder.` });
+        else toActivate.push({ c, newest });
+        continue;
+      }
+      out.push({ apiName: c.apiName, ok: true, text: c.wasActive
+        ? `${c.apiName}: v${newest.versionNumber} at API ${target} is ACTIVE (verified by re-reading the org).`
+        : `${c.apiName}: v${newest.versionNumber} at API ${target} was created; the flow was not active before and is not active now (verified).` });
+    }
+    if (toActivate.length) {
+      say('\u23FB', `${org.label}: activating ${toActivate.length} new version(s) — the org did not activate them on deploy (its "Deploy processes and flows as active" setting is off)…`);
+      for (const { c, newest } of toActivate) {
+        const r = await depBg({ type: 'SF_PATCH', orgUrl: org.orgUrl, sid: org.sid, _silentError: true,
+          path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${c.defId}`,
+          body: { Metadata: { activeVersionNumber: newest.versionNumber } } });
+        c.activateError = (r && r.error) ? String(r.error) : null;
+      }
+      by = await read();
+      for (const { c, newest } of toActivate) {
+        const row = by && by[c.apiName];
+        const activeNow = row && row.active && row.active.versionNumber === newest.versionNumber && row.active.num === want;
+        if (activeNow) out.push({ apiName: c.apiName, ok: true, text: `${c.apiName}: v${newest.versionNumber} at API ${target} is now ACTIVE (activated here, then verified by re-reading the org).` });
+        else out.push({ apiName: c.apiName, ok: false, text: `${c.apiName}: v${newest.versionNumber} at API ${target} was created but could NOT be activated${c.activateError ? ` — ${c.activateError}` : ''}; the running version is still v${row && row.active ? row.active.versionNumber : '?'} at API ${row && row.active ? row.active.apiVersion : '?'}. Activate it in Flow Builder.` });
+      }
+    }
+    return out;
+  }
+
+  async function applyApiVerChange(out, plans, target) {
+    const st = _avState;
+    const box = out.querySelector('#depAvApplyOut');
+    const prog = out.querySelector('#depAvApplyProg');
+    const byOrg = new Map();
+    for (const p of plans) {
+      for (const a of p.plan.applicable) {
+        if (!byOrg.has(a.orgKey)) byOrg.set(a.orgKey, []);
+        byOrg.get(a.orgKey).push({ ...a, apiName: p.apiName });
+      }
+    }
+    const lines = [];
+    box.innerHTML = '<div class="dep-blast-sec" id="depAvLog" style="max-height:260px;overflow:auto"></div>';
+    const log = box.querySelector('#depAvLog');
+    const say = (icon, msg) => {
+      lines.push(`${icon} ${escHtml(msg)}`);
+      log.innerHTML = lines.slice(-300).join('<br>');
+      log.scrollTop = log.scrollHeight;
+    };
+    let orgsOk = 0, orgsFailed = 0, flowsOk = 0;
+    let n = 0;
+    for (const [orgKey, jobs] of byOrg) {
+      n++;
+      const org = st.orgs.find(o => o.key === orgKey);
+      prog.textContent = `org ${n} / ${byOrg.size}`;
+      if (!org || !org.sid) { orgsFailed++; say('❌', `${orgKey}: no session for this org — nothing changed here`); continue; }
+
+      // 0 — the package.xml version must be the ORG's API version. A package
+      // stamped with the TARGET version rejects any property Salesforce added
+      // after that version ("Property 'areMetricsLoggedToDataCloud' not valid
+      // in version 62.0" — reproduced 2026-09-03). Unknown ⇒ read it again;
+      // still unknown ⇒ this org is refused, never guessed.
+      if (!org.maxVersion) {
+        const mx = await avOrgMax(org);
+        if (!mx.error && mx.version) org.maxVersion = mx.version;
+      }
+      if (!org.maxVersion) { orgsFailed++; say('❌', `${org.label}: the org's own API version could not be read, so the package cannot be stamped safely — nothing changed here.`); continue; }
+
+      // 1 — batch-read every flow version this org is changing.
+      say('\u{1F4D6}', `${org.label}: reading ${jobs.length} flow version(s)…`);
+      let items = null;
+      try {
+        const resp = await depBg({
+          type: 'SF_COMPOSITE_BATCH', orgUrl: org.orgUrl, sid: org.sid,
+          subrequests: jobs.map(j => ({ method: 'GET', url: `tooling/sobjects/Flow/${j.flowVersionId || ''}` })),
+          concurrency: 1, _silentError: true,
+        });
+        if (Array.isArray(resp)) items = resp;
+        else if (resp && resp.error) { orgsFailed++; say('❌', `${org.label}: could not read the flows — ${resp.error}. Nothing changed here.`); continue; }
+      } catch (e) {
+        orgsFailed++; say('❌', `${org.label}: could not read the flows — ${(e && e.message) || e}. Nothing changed here.`); continue;
+      }
+      if (!items || items.length !== jobs.length) {
+        orgsFailed++;
+        say('❌', `${org.label}: the read came back with ${items ? items.length : 0} of ${jobs.length} flow(s) — refusing to deploy a partial package. Nothing changed here.`);
+        continue;
+      }
+
+      // 2 — set the version on each, refusing the whole org if any one of
+      // them cannot be read. A package missing a flow would silently leave
+      // that flow behind while reporting success for the rest.
+      const files = []; const members = []; const changed = []; let bad = null;
+      for (let i = 0; i < jobs.length; i++) {
+        const j = jobs[i];
+        // SF_COMPOSITE_BATCH items are { ok, status, body } with the record
+        // parsed into `body` (the scan reads them the same way) — not bare
+        // records. Audit 2026-09-12: the old `.result || item` read made
+        // every ⚙ Apply fail with "could not be read".
+        const it = items[i];
+        const rec = (it && it.ok && it.body && typeof it.body === 'object') ? it.body : null;
+        const meta = rec && rec.Metadata;
+        if (!meta) { bad = `${j.apiName} could not be read`; break; }
+        const set = sftkFlowSetApiVersion(meta, target);
+        if (set.error) { bad = `${j.apiName}: ${set.error}`; break; }
+        const fullName = (rec.FullName || rec.fullName || j.apiName);
+        const enc = new TextEncoder();
+        files.push({ name: `flows/${fullName}.flow`, data: enc.encode(sftkFlowToXml(set.meta)) });
+        members.push(fullName);
+        changed.push({ apiName: j.apiName, from: set.from, to: set.to, status: j.status,
+          wasActive: (rec.Status || j.status) === 'Active', prevVersion: Number(rec.VersionNumber) || 0,
+          defId: rec.DefinitionId || null });
+      }
+      if (bad) { orgsFailed++; say('❌', `${org.label}: ${bad} — nothing changed in this org.`); continue; }
+
+      // 3 — ONE package, ONE deploy, for this whole org.
+      try {
+        const enc = new TextEncoder();
+        const zip = sftkBuildStoredZip([
+          { name: 'package.xml', data: enc.encode(sftkFlowPackageXml(members, org.maxVersion)) },
+          ...files,
+        ]);
+        const res = await depBg({ type: 'SF_METADATA_DEPLOY', orgUrl: org.orgUrl, sid: org.sid,
+          zipBase64: zip, _silentError: true });
+        if (!res || res.error) {
+          orgsFailed++;
+          say('❌', `${org.label}: deploy failed — ${(res && res.error) || 'no response'}. This package is all-or-nothing, so NONE of its ${jobs.length} flow(s) changed.`);
+          continue;
+        }
+        say('\u{1F4E6}', `${org.label}: package accepted — ${changed.length} new flow version(s) created at API ${target}. Verifying what is actually running now…`);
+        // 4 — VERIFY. A deploy only CREATES a version. Whether it became the
+        // active one depends on the org's "Deploy processes and flows as
+        // active" setting, which this tool cannot see — so it re-reads the
+        // versions, activates the new one where the flow WAS active (the ⏻
+        // FlowDefinition primitive), re-reads again, and reports only what
+        // the org confirms. Nothing here is assumed from the deploy result.
+        const verdicts = await avVerifyAndActivate(org, changed, target, say);
+        const okAll = verdicts.every(v => v.ok);
+        if (okAll) orgsOk++; else orgsFailed++;
+        flowsOk += verdicts.filter(v => v.ok).length;
+        for (const v of verdicts) say(v.ok ? '✅' : '⚠', `${org.label}: ${v.text}`);
+      } catch (e) {
+        orgsFailed++;
+        say('❌', `${org.label}: deploy failed — ${(e && e.message) || e}. NONE of its flow(s) changed.`);
+      }
+    }
+    prog.textContent = '';
+    say('ℹ', `${flowsOk} flow(s) changed across ${orgsOk} org(s); ${orgsFailed} org(s) unchanged. The table above is now STALE — reopen ⚙ API versions (or press ↻ Rescan) to re-read the org rather than trusting it.`);
   }
 
   // ── N4e — export the whole report ─────────────────────────────────────
@@ -2934,10 +3712,9 @@ const DependencyMap = (() => {
       flowCount: reps.length,
       scanComplete: isMetadataFetched(),
       notes,
-      dead: depDeadSubflows(dependencyMap, flowsByApiName),
+      dead: depDeadSubflows(dependencyMap, flowsByApiName, depManagedMap()),
       chains,
-      blast,
-      crossOrg: _xoResult
+      blast
     };
   }
 
@@ -2953,9 +3730,7 @@ const DependencyMap = (() => {
       depDownload(`${base}.csv`, csv, 'text/csv');
       if (statusEl) {
         statusEl.innerHTML = `<span style="color:var(--active-color,#2E844A)">✔ Downloaded <b>${escHtml(base)}.md</b> and <b>.csv</b></span>
-          — ${report.flowCount} flow(s), ${report.chains.length} chain(s), ${report.dead.counts.dead} dead subflow(s)${report.crossOrg
-  ? ', cross-org diff included'
-  : '. <b>Cross-org diff NOT included</b> — it has not been run'}.
+          — ${report.flowCount} flow(s), ${report.chains.length} chain(s), ${report.dead.counts.dead} dead subflow(s).
           <button class="btn-small" id="depReDlMd">↻ .md</button>
           <button class="btn-small" id="depReDlCsv">↻ .csv</button>
           <span style="color:var(--subtext,#706E6B)">(if the browser only saved one file)</span>`;
@@ -3050,6 +3825,14 @@ const DependencyMap = (() => {
     cancelScan,
     getScanStatus,
     scanCaveat,
+    managedCaveat,
+    loadManagedFlows,
+    treeStaleForManaged,
+    getManagedFlows,
+    // Flows tab — dependencies per flow and the whole-tree backup (2026-09-14)
+    flowScanState: (apiName) => depFlowScanState(flowsByApiName[apiName] || [], _scannedIds),
+    subflowClosure: (apiNames) => depSubflowClosure(dependencyMap, apiNames),
+    getDefinitionTriggerMap,                         // apiName → FlowDefinitionView.TriggerType (every definition)
     freshness,
     searchCoverage,
     // v1.1.0 — incremental cache + the destructive-path guarantee.
@@ -3057,10 +3840,9 @@ const DependencyMap = (() => {
     clearCache,
     deleteTrust,
     recheckForDelete,
-    // N4c / N4d / N4e
+    // N4d / N4e
     chainFor,                                        // apiName -> { down, up } annotated trees
-    getDeadSubflows: () => depDeadSubflows(dependencyMap, flowsByApiName),
-    getCrossOrgResult: () => _xoResult,              // null until a diff has been run
+    getDeadSubflows: () => depDeadSubflows(dependencyMap, flowsByApiName, depManagedMap()),
     buildReportObject,                               // plain data for depReportMarkdown/depReportCsv
     exportReport,                                    // downloads the .md + .csv
     showChainPanel,
