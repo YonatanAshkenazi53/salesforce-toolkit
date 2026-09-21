@@ -56,14 +56,8 @@ describe('the dry-run path writes nothing', () => {
     for (const t of types) expect(READ_ONLY.has(t)).toBe(true);
   });
 
-  it('dryRunFanOut itself sends no messages at all — sessions come from getOrgSession', () => {
-    const src = sourceOf('dryRunFanOut');
-    expect([...typesIn(src)]).toEqual([]);
-    expect(src).toContain('getOrgSession');     // → GET_ALL_SF_SESSIONS, a read
-  });
-
-  it('neither function can reach the write engine, REST writes, or history', () => {
-    for (const name of ['sftkDryRunAgainst', 'dryRunFanOut']) {
+  it('the validator cannot reach the write engine, REST writes, or history', () => {
+    for (const name of ['sftkDryRunAgainst']) {
       const src = sourceOf(name);
       for (const forbidden of [
         'SF_EXECUTE_PROFILE_TRANSFER', 'SF_REST_POST', 'SF_REST_PATCH',
@@ -338,42 +332,6 @@ describe('sftkFanoutDrySummary', () => {
 // ══════════════════════════════════════════════════════════════════
 // 5. Honesty requirements that live in the UI strings
 // ══════════════════════════════════════════════════════════════════
-describe('the fan-out dialog tells the truth about dry runs', () => {
-  it('the old "fan-out has no dry-run mode" claim is gone', () => {
-    expect(TRANSFER).not.toContain('fan-out has no dry-run mode');
-  });
-
-  it('the dialog offers the action and calls it point-in-time', () => {
-    expect(TRANSFER).toContain('🧪 Dry run all targets');
-    expect(TRANSFER).toMatch(/point-in-time/);
-  });
-
-  it('the panel states that a dry run reads each target as it is right now', () => {
-    expect(sourceOf('dryRunFanOut')).toMatch(/AS IT IS RIGHT NOW/);
-  });
-
-  it('a skipped target is announced, not silently dropped', () => {
-    expect(sourceOf('dryRunFanOut')).toMatch(/skipped: true/);
-  });
-
-  it('the real run stays reachable after a dirty result — informs, never blocks', () => {
-    const src = sourceOf('dryRunFanOut');
-    expect(src).toContain('dsFanoutDryReal');
-    expect(src).toMatch(/Nothing is blocked/);
-  });
-
-  it('an all-skipped run never shows the green banner — nothing checked is the headline', () => {
-    const src = sourceOf('dryRunFanOut');
-    // The "clean" banner is guarded on there being at least one clean target,
-    // so N skipped + 0 checked can never render as success.
-    expect(src).toMatch(/sum\.tally\.clean === 0[\s\S]*?Nothing was checked/);
-    expect(src).toMatch(/allGood \? 'success' : 'warning'/);
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════
-// 6. The single-target path is unchanged
-// ══════════════════════════════════════════════════════════════════
 describe('runTransfer still behaves identically for one target', () => {
   const runTransferSrc = (() => {
     const i = TRANSFER.indexOf('\nasync function runTransfer() {');
@@ -476,56 +434,8 @@ describe('_validatedRuns keys are payload-fingerprinted', () => {
     expect(src).toContain('_orgKey(_transferTgt?.orgUrl');
   });
 
-  it('dryRunFanOut writes the same key shape for the per-target tree it validated, insert mode', () => {
-    const src = sourceOf('dryRunFanOut');
-    expect(src).toMatch(/valKey\s+=\s+`\$\{p\.id\}\|\$\{_orgKey\(srcUrl\)\}\|\$\{_orgKey\(tgtUrl\)\}\|\$\{sftkValFingerprint\(tree, null\)\}`/);
-  });
 });
 
-// ══════════════════════════════════════════════════════════════════
-// 9. The fan-out dialog tells the truth about write mode
-// ══════════════════════════════════════════════════════════════════
-describe('openFanOut write-mode claim', () => {
-  const openFanOutSrc = (() => {
-    const i = TRANSFER.indexOf('window.openFanOut = async function');
-    if (i < 0) throw new Error('openFanOut not found');
-    return TRANSFER.slice(i, TRANSFER.indexOf('\n};', i) + 3);
-  })();
-
-  it('states the SAVED write behavior — per-node upserts ride, the Transfer-tab toggle never does', () => {
-    // The dialog once displayed _transferWriteMode as "Write mode",
-    // promising upserts the engine never performed on fan-out. W1: per-node
-    // upsert configs DO ride the saved profile, so the label counts them.
-    expect(openFanOutSrc).toContain('upsertNodeCount');
-    expect(openFanOutSrc).toMatch(/mode = \(p\.tree && p\.tree\.upsert && p\.tree\.upsert\.field\) \? 'upsert' : 'insert'/);
-    expect(openFanOutSrc).toContain('applies to single-target runs only');
-  });
-
-  it('the ✓ chip reads the fingerprinted key for the per-target payload', () => {
-    expect(openFanOutSrc).toContain('sftkValFingerprint');
-    expect(openFanOutSrc).not.toContain('_validatedRuns.has(`${p.id}|${srcUrl}|${o.url}`)');
-  });
-
-  it("the noop-confirm Back path reopens with the user's ACTUAL ticks, not the defaults", () => {
-    // Untick A, tick B+C, hit Run, get "Nothing to write", click Back —
-    // reopening with the original opts silently reverted to A ticked.
-    expect(openFanOutSrc).toMatch(/openFanOut\(profileId, \{ \.\.\.opts, preselect: targets \}\)/);
-  });
-
-  it('engine controls are reachable and persist to the profile', () => {
-    // ▶ Run on a multi-target deployment goes straight to this dialog —
-    // without these controls apiMode/batchSize had NO route on that path.
-    expect(openFanOutSrc).toContain('id="dsFanoutApiMode"');
-    expect(openFanOutSrc).toContain('id="dsFanoutBatchSize"');
-    // same persistence contract as the Run page: profile-saved, auto/200
-    // are the absent-key defaults so they delete rather than store
-    expect(openFanOutSrc).toMatch(/if \(v === 'sync' \|\| v === 'bulk'\) p\.apiMode = v; else delete p\.apiMode;/);
-    expect(openFanOutSrc).toMatch(/if \(n === 200\) delete p\.batchSize; else p\.batchSize = n;/);
-  });
-});
-
-// ── Child-verdict law reaches the fan-out advice (user 2026-08-18: a7
-// showed "in sync — nothing to write" over 1,850 never-pushed children) ──
 describe('sftkFanoutTargetAdvice — children gate the clean verdict', () => {
   const advice = extractFunctions('studio-transfer.js',
     ['sftkFanoutTargetAdvice', 'sftkFanoutScanAge']).sftkFanoutTargetAdvice;
@@ -553,27 +463,3 @@ describe('sftkFanoutTargetAdvice — children gate the clean verdict', () => {
 
 // ── Live fan-out view (user 2026-08-18: "see the run in real time…
 // like inspector shows, with errors in real time") ───────────────────────
-describe('the fan-out streams live progress and errors', () => {
-  it('each leg connects the run Port into a per-target progress log, and disconnects after', () => {
-    const src = sourceOf('runFanOut');
-    expect(src).toContain("_openRunPort === 'function') ? _openRunPort(_trProgressHandler(liveEl)) : null");
-    expect(src).toMatch(/finally \{\s*\n?\s*try \{ _foPort\?\.disconnect\(\); \} catch \(_\) \{\}/);
-  });
-
-  it('✋ Cancel posts the engine cancel command and stops further targets', () => {
-    const src = sourceOf('runFanOut');
-    expect(src).toContain("_foPort?.postMessage({ cmd: 'cancel' })");
-    expect(src).toMatch(/if \(_foCancelled\) \{ skipOrgs\+\+;/);
-  });
-
-  it('_trProgressHandler renders errs events as appended red rows', () => {
-    expect(TRANSFER).toMatch(/evt\.phase === 'errs' && Array\.isArray\(evt\.lines\)/);
-    expect(TRANSFER).toContain("row.className = 'ds-prog-row ds-prog-err';");
-  });
-
-  it('the completion line splits upsert arms', () => {
-    const src = sourceOf('runFanOut');
-    expect(src).toContain('s.upsertCreated || 0');
-    expect(src).toMatch(/\$\{upsC\} created · \$\{upsU\} updated/);
-  });
-});

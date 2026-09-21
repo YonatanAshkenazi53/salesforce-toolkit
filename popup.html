@@ -37,6 +37,8 @@
         <!-- Label is rewritten by debug-modal.js ("Debug" / "5" / "5 ⚠"), so
              the glyph comes from #dbgBtn::before in styles.css. -->
         <button id="dbgBtn" class="dbg-btn" title="Debug Log — off">Debug</button>
+        <!-- Read the licence agreement and privacy notes again, any time. -->
+        <button id="sftkTermsBtn" class="dbg-btn" title="Licence agreement and privacy — read what you accepted" aria-label="Licence agreement and privacy"><span data-i="doc" aria-hidden="true"></span>Licence</button>
       </div>
     </div>
 
@@ -195,6 +197,10 @@
             <button id="backupBtn" class="btn btn-primary btn-delete" disabled style="display:none">
               ⬇ Backup Selected (0)
             </button>
+            <label id="backupTreeOpt" style="display:none;font-size:12px;margin-left:8px;cursor:pointer"
+                   title="Also back up every subflow the selected flows call, transitively — the active version of each (or the newest when none is active). Needs the dependency scan to have read the selected flows.">
+              <input type="checkbox" id="backupWithSubflows"> + the subflows they call (whole tree)
+            </label>
             <button id="restoreActionBtn" class="btn btn-primary btn-delete" disabled style="display:none">
               📥 Restore Selected (0) as Draft
             </button>
@@ -312,15 +318,27 @@
   <!-- Trusted Types policy MUST load first — it monkey-patches innerHTML
        et al. so every subsequent script's HTML assignment is sanitized. -->
   <script src="trusted-types-policy.js"></script>
+  <!-- The licence gate. Loads before every view so no page can start
+       work before the user has accepted. -->
+  <script src="sftk-terms.js"></script>
   <script src="debug-logger.js"></script>
   <script src="sftk-zip.js"></script>
+  <!-- Report/Report-Type cleanup: pure surgery helpers for the Analytics
+       REST API (modern stack only — user rule 2026-08-31), loaded before
+       field-cleaner.js which drives them. -->
+  <script src="sftk-reportclean.js"></script>
   <script src="sftk-flow-xml.js"></script>
+  <script src="sftk-flowsurgery.js"></script>
   <script src="sftk-org-identity.js"></script>
   <script src="sftk-friendly-error.js"></script>
   <script src="sftk-api-budget.js"></script>
   <script src="sftk-confirm.js"></script>
   <script src="onboarding.js"></script>
   <script src="debug-modal.js"></script>
+  <!-- Flow API-version comparison across orgs: pure helpers, must load
+       BEFORE dependency-map.js which calls them. -->
+  <script src="sftk-apiver.js"></script>
+  <script src="sftk-flowbulk.js"></script>
   <script src="dependency-map.js"></script>
   <script src="apex-debugger.js"></script>
   <script src="lightning-pages.js"></script>

@@ -136,7 +136,7 @@ const LightningPages = (() => {
     _odResetState('idle');   // also invalidates any org-default run still in flight
 
     // ActionOverride SOQL is never supported — keep the flag off (see decl).
-    _aoStorageKey = `sftk_ao_${orgUrl.replace(/[^a-z0-9]/gi, '_')}`;
+    _aoStorageKey = `sftk_ao_${String(orgUrl || '').replace(/[^a-z0-9]/gi, '_')}`;   // never throw on a missing org — the popup guards, this is the second line
     _actionOverrideSupported = false;
     renderShell();
     // C5c: one delegated listener for every "↗ open in X" cross-link —
@@ -857,9 +857,20 @@ const LightningPages = (() => {
             <span class="lp-type-label">${esc(humanType(typeKey))}</span>
             <span class="lp-type-count">${pages.length}</span>
           </div>`;
+      // Several pages can share one label (Nonprofit Cloud ships three
+      // "Account Record Page"s, some from packages). A row that shows only the
+      // label reads as a duplicate (user 2026-09-14) — when labels collide, the
+      // API name tells them apart, and a package page says so.
+      const labelCount = {};
+      for (const p of pages) labelCount[p.MasterLabel || ''] = (labelCount[p.MasterLabel || ''] || 0) + 1;
       for (const p of pages) {
         const obj = p.EntityDefinitionId
           ? `<span class="lp-obj-tag">${esc(_lpEntityName(p.EntityDefinitionId) || p.EntityDefinitionId)}</span>` : '';
+        const collides = labelCount[p.MasterLabel || ''] > 1;
+        const managed = (p.ManageableState || '').toLowerCase() === 'installed';
+        const devTag = collides || managed
+          ? `<span class="lp-obj-tag" style="opacity:.75" title="${collides ? 'Another page has the same label — this is the API name' : 'Installed by a managed package'}">${managed ? '🔒 ' : ''}${esc(p.DeveloperName || '')}</span>`
+          : '';
         const ps  = (p.PublishStatus || '').toLowerCase();
         const dotCls = isNA && !ps          ? 'lp-dot-na'
                      : ps === 'active'      ? 'lp-dot-active'
@@ -891,6 +902,7 @@ const LightningPages = (() => {
             <div class="lp-row-info">
               <span class="lp-row-name">${esc(p.MasterLabel)}</span>
               ${obj}
+              ${devTag}
               ${defBadge}
             </div>
             <span class="lp-row-arrow">›</span>

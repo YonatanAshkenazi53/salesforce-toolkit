@@ -7,3 +7,8 @@ dist/
 *.mp4
 *.mov
 *.gif
+
+# Stale nested copy of the repo (2026-09): never part of the project
+/Saleforce Toolkit/
+# Local preview render of a Data Studio page (scripts/dev/deploy-preview.mjs)
+_preview_*.html

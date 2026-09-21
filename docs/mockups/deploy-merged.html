@@ -1,0 +1,732 @@
+<title>Copy Meets Compare</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --surface: #ffffff; --surface2: #f8f9fb; --border: #d9dde3; --border-light: #eceff3;
+    --text: #1b1f24; --subtext: #5c6470; --brand: #0b5cab; --brand-bg: #e8f1fb; --brand-dark: #084a8a;
+    --good: #2e844a; --good-bg: #e6f4ea; --warn: #b45309; --warn-bg: #fff4e0; --bad: #c23934; --bad-bg: #fdecec;
+    --shadow: 0 1px 2px rgba(20,30,50,.06), 0 4px 14px rgba(20,30,50,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171c; --surface: #1c2027; --surface2: #222731; --border: #333a45; --border-light: #2a303a;
+      --text: #e8ebf0; --subtext: #9aa3b0; --brand: #5aa0e6; --brand-bg: #17304a; --brand-dark: #8ec0f2;
+      --good: #63c27f; --good-bg: #1b3324; --warn: #f0a24a; --warn-bg: #3a2a12; --bad: #f07a76; --bad-bg: #3d1e1e;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171c; --surface: #1c2027; --surface2: #222731; --border: #333a45; --border-light: #2a303a;
+    --text: #e8ebf0; --subtext: #9aa3b0; --brand: #5aa0e6; --brand-bg: #17304a; --brand-dark: #8ec0f2;
+    --good: #63c27f; --good-bg: #1b3324; --warn: #f0a24a; --warn-bg: #3a2a12; --bad: #f07a76; --bad-bg: #3d1e1e;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.35);
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; padding: 0 20px; padding-block: 24px 48px; }
+  .wrap { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; align-items: start; }
+  @media (max-width: 860px) { .wrap { grid-template-columns: 1fr; } }
+  h1 { font-size: 20px; margin: 0; font-weight: 700; letter-spacing: -.01em; text-wrap: balance; }
+  .eyebrow { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--subtext); font-weight: 600; }
+  .mockbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 18px; grid-column: 1 / -1; }
+  .mockbar .tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--warn-bg); color: var(--warn); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+  .seg button { border: 0; background: transparent; color: var(--subtext); padding: 6px 12px; font: inherit; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button[aria-pressed="true"] { background: var(--brand); color: #fff; }
+  .seg button:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+
+  .sc-explain { grid-column: 1 / -1; margin: -6px 0 16px; padding: 12px 16px; border: 1px dashed var(--border); border-radius: 10px; background: var(--surface); font-size: 13px; max-width: 900px; }
+  .sc-explain b.t { display: block; margin-bottom: 2px; }
+  .sc-explain p { margin: 4px 0 0; color: var(--subtext); }
+  .page { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 22px 24px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+  .head { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: baseline; justify-content: space-between; }
+  .orgs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--subtext); font-size: 13px; }
+  .orgs b { color: var(--text); }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 4px; vertical-align: middle; }
+
+  .card { border: 1px solid var(--border); border-left: 3px solid var(--brand); border-radius: 8px; padding: 14px 16px; background: var(--surface); display: flex; flex-direction: column; gap: 10px; }
+  .card.warn { border-left-color: var(--warn); }
+  .card.good { border-left-color: var(--good); }
+  .card-hd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+  .card-title { font-weight: 700; font-size: 14px; }
+  .card-hint { color: var(--subtext); font-size: 12px; margin-left: auto; }
+  .line { color: var(--subtext); font-size: 12.5px; }
+  .line b { color: var(--text); }
+
+  .stats { display: flex; flex-wrap: wrap; gap: 8px; }
+  .stat { display: inline-flex; align-items: baseline; gap: 6px; padding: 5px 12px; border-radius: 16px; border: 1px solid var(--border); background: var(--surface2); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .stat b { font-size: 15px; }
+  .stat small { color: var(--subtext); font-size: 11px; }
+  .stat.ins { border-color: var(--bad); background: var(--bad-bg); }
+  .stat.same { border-color: var(--good); background: var(--good-bg); }
+  .stat.chg { border-color: var(--warn); background: var(--warn-bg); }
+  .stat.ext { border-color: var(--brand); background: var(--brand-bg); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th { text-align: left; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--subtext); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 8px; border-bottom: 1px solid var(--border-light); vertical-align: top; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  .obj { font-weight: 600; }
+  .obj .sub { display: block; font-weight: 400; color: var(--subtext); font-size: 12px; }
+  .tbl-wrap { overflow-x: auto; }
+
+  .toggles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 18px; }
+  .tg { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border-light); border-radius: 8px; background: var(--surface2); }
+  .tg input { margin-top: 3px; accent-color: var(--brand); }
+  .tg label { cursor: pointer; }
+  .tg .t { font-weight: 600; }
+  .tg .d { display: block; color: var(--subtext); font-size: 12px; }
+  .tg[data-locked="1"] { opacity: .75; }
+
+  .exc { display: flex; flex-direction: column; gap: 6px; }
+  .exc-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+  .pill { font-size: 11px; padding: 1px 8px; border-radius: 999px; font-weight: 600; }
+  .pill.w { background: var(--warn-bg); color: var(--warn); }
+  .pill.b { background: var(--bad-bg); color: var(--bad); }
+  .pill.i { background: var(--brand-bg); color: var(--brand); }
+  .linkbtn { background: none; border: 0; color: var(--brand); font: inherit; font-size: 13px; cursor: pointer; padding: 0; text-decoration: underline; text-underline-offset: 2px; }
+
+  .foot { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; border-top: 1px solid var(--border); padding-top: 16px; }
+  .btn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 9px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+  .btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  .btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+  .btn.primary:disabled { opacity: .5; cursor: not-allowed; }
+  .btn.dry { background: var(--brand-bg); border-color: var(--brand-bg); color: var(--brand-dark); }
+  .api { margin-left: auto; color: var(--subtext); font-size: 12px; }
+
+  .stat[data-bucket], td.num[data-bucket] { cursor: pointer; }
+  .stat[data-bucket]:hover, td.num[data-bucket]:hover { border-color: var(--brand); color: var(--brand); }
+  .stat[aria-pressed="true"] { outline: 2px solid var(--brand); outline-offset: 1px; }
+  .rec { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+  .objsw { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface2); border-radius: 8px 8px 0 0; align-items: center; }
+  .objsw .lbl { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--subtext); font-weight: 600; margin-right: 4px; }
+  .objsw button { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 5px 12px; font: inherit; font-weight: 600; cursor: pointer; display: inline-flex; gap: 8px; align-items: baseline; }
+  .objsw button small { font-weight: 400; color: var(--subtext); font-size: 11.5px; }
+  .objsw button[aria-pressed="true"] { border-color: var(--brand); background: var(--brand-bg); color: var(--brand-dark); }
+  .kidtools { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border-light); font-size: 12.5px; color: var(--subtext); }
+  .kidtools .seg button { padding: 3px 10px; font-size: 12.5px; }
+  .kidtools label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  .grp { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; padding: 7px 12px; background: var(--surface2); border-bottom: 1px solid var(--border-light); font-size: 12.5px; }
+  .grp b { font-size: 13px; }
+  .grp .sp { margin-left: auto; display: inline-flex; gap: 10px; }
+  .rec-tabs { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--border); }
+  .rec-tabs button { border: 0; background: transparent; color: var(--subtext); padding: 9px 14px; font: inherit; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .rec-tabs button[aria-selected="true"] { color: var(--brand); border-bottom-color: var(--brand); }
+  .rec-tabs button b { font-variant-numeric: tabular-nums; }
+  .rec-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border-light); font-size: 12.5px; color: var(--subtext); }
+  .rec-tools input[type="search"] { border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; font: inherit; font-size: 13px; background: var(--surface); color: var(--text); min-width: 200px; }
+  .rec-tools .sp { margin-left: auto; }
+  .rec-list { display: flex; flex-direction: column; max-height: 360px; overflow: auto; }
+  .rrow { display: grid; grid-template-columns: auto minmax(0, 1.2fr) minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border-light); font-size: 13px; }
+  .rrow:last-child { border-bottom: 0; }
+  .rrow .obj { font-weight: 400; color: var(--subtext); font-size: 12px; white-space: nowrap; }
+  .rrow .k { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rrow .why { color: var(--subtext); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rrow input { accent-color: var(--brand); }
+  .rrow .act { display: inline-flex; gap: 4px; }
+  .rrow .act button { border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 1px 8px; font: inherit; font-size: 12px; cursor: pointer; }
+  .rrow .act button[aria-pressed="true"] { background: var(--brand); color: #fff; border-color: var(--brand); }
+  .rrow .open { color: var(--brand); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; background: none; border: 0; font-family: inherit; padding: 0; }
+  .rec-empty { padding: 18px 12px; color: var(--subtext); font-size: 13px; }
+  .rec-more { padding: 8px 12px; font-size: 12.5px; color: var(--subtext); border-top: 1px solid var(--border-light); }
+  @media (max-width: 600px) { .rrow { grid-template-columns: auto 1fr; } .rrow .why, .rrow .obj { grid-column: 2; } }
+  .steps { display: flex; flex-direction: column; gap: 6px; }
+  .step { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 10px; align-items: start; font-size: 13px; }
+  .step .n { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11.5px; font-weight: 700; background: var(--good-bg); color: var(--good); border: 1px solid var(--good); }
+  .step.gap .n { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+  .step.warnstep .n { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+  .step .what b { font-weight: 600; }
+  .step .what span { display: block; color: var(--subtext); font-size: 12px; }
+  .step .fix { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .btn.xs { padding: 3px 9px; font-size: 12px; border-radius: 6px; }
+  .dry { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--surface2); display: flex; flex-direction: column; gap: 8px; }
+  .dry-hd { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+  .dry-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; font-size: 13px; align-items: baseline; }
+  .dry-row .msg { color: var(--subtext); font-size: 12.5px; }
+  dialog#recdlg { width: min(1040px, 94vw); max-height: 86vh; border: 1px solid var(--border); border-radius: 12px; padding: 0; background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+  dialog#recdlg::backdrop { background: rgba(10, 15, 25, .55); }
+  .dlg { display: flex; flex-direction: column; max-height: 86vh; }
+  .dlg-hd { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .dlg-hd h2 { margin: 0; font-size: 16px; }
+  .dlg-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px 18px; border-bottom: 1px solid var(--border-light); font-size: 12.5px; color: var(--subtext); }
+  .dlg-body { overflow: auto; padding: 0 18px; }
+  .dlg-ft { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 12px 18px; border-top: 1px solid var(--border); }
+  .ftbl td { vertical-align: middle; }
+  .ftbl td.v { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; word-break: break-word; }
+  .ftbl tr.diff td { background: var(--warn-bg); }
+  .ftbl .fname { font-weight: 600; }
+  .ftbl .ftype { color: var(--subtext); font-size: 11.5px; white-space: nowrap; }
+  .ftbl .empty { color: var(--subtext); font-style: italic; font-family: inherit; }
+  .tagl { font-size: 10.5px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--brand); color: var(--brand); background: var(--brand-bg); margin-left: 6px; font-weight: 600; }
+  .res { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12.5px; }
+  .res select { border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; font: inherit; font-size: 12.5px; background: var(--surface); color: var(--text); max-width: 100%; }
+  .lk-badge { font-variant-numeric: tabular-nums; font-weight: 700; }
+  aside { display: flex; flex-direction: column; gap: 14px; }
+  .note { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; font-size: 13px; }
+  .note h2 { font-size: 13px; margin: 0 0 8px; letter-spacing: .06em; text-transform: uppercase; color: var(--subtext); }
+  .note ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+  .note li b { font-weight: 600; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12.5px; }
+  .kv dt { color: var(--subtext); }
+  .kv dd { margin: 0; }
+  .muted { color: var(--subtext); }
+  @media (prefers-reduced-motion: no-preference) { .stat, .btn { transition: background .15s, border-color .15s; } }
+</style>
+
+<div class="wrap">
+  <div class="mockbar">
+    <span class="tag">Mockup</span>
+    <span class="eyebrow">Scenario</span>
+    <div class="seg" role="group" aria-label="Scenario">
+      <button id="sc-overlap" aria-pressed="true" data-sc="overlap">Target already has some</button>
+      <button id="sc-empty" aria-pressed="false" data-sc="empty">Empty target</button>
+      <button id="sc-nokey" aria-pressed="false" data-sc="nokey">Object with no usable key</button>
+    </div>
+    <span class="muted" style="font-size:12px">Counts are from last night's trailheads2 → trailheads4 run; the rest is illustrative.</span>
+  </div>
+
+  <div class="sc-explain" id="sc-explain"></div>
+
+  <main class="page" aria-live="polite">
+    <div class="head">
+      <div>
+        <div class="eyebrow">Deploy</div>
+        <h1>Account + Contacts</h1>
+      </div>
+      <div class="orgs">
+        <span><span class="dot"></span><b>trailheads2</b> source</span>
+        <span aria-hidden="true">→</span>
+        <span><span class="dot"></span><b>trailheads4</b> target</span>
+        <span class="muted">· matched by <b id="matchkey">Name</b></span>
+      </div>
+    </div>
+
+    <section class="card" id="plancard">
+      <div class="card-hd">
+        <span class="card-title" id="plan-title">What will happen</span>
+        <span class="card-hint" id="plan-hint">read 5,058 + 5,051 from trailheads2 · compared with trailheads4 · 12 API calls · 9 s</span>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Object</th><th class="num">In source</th><th class="num">🔴 Insert</th><th class="num">🟡 Changed</th><th class="num">🔵 In target only</th><th class="num">🟢 Synced</th><th>Note</th></tr></thead>
+          <tbody id="objrows"></tbody>
+        </table>
+      </div>
+      <div class="line" id="plan-line"></div>
+    </section>
+
+    <section class="rec" id="records" aria-label="Records">
+      <div class="objsw" id="objsw"></div>
+      <div class="kidtools" id="kidtools" hidden></div>
+      <div class="rec-tabs" role="tablist" id="rec-tabs"></div>
+      <div class="rec-tools">
+        <input type="search" id="rec-search" placeholder="🔍 filter by name…" aria-label="Filter records">
+        <span id="rec-count"></span>
+        <span class="sp" id="rec-sel"></span>
+        <button class="linkbtn" id="rec-all" type="button">✓ all</button>
+        <button class="linkbtn" id="rec-none" type="button">✗ none</button>
+      </div>
+      <div class="rec-list" id="rec-list"></div>
+      <div class="rec-more" id="rec-more" hidden></div>
+    </section>
+
+    <section class="card" id="ordercard">
+      <div class="card-hd">
+        <span class="card-title" id="order-title">Deployment order — parents first</span>
+        <span class="card-hint">every lookup on these records, checked against trailheads4 before the run</span>
+      </div>
+      <div class="steps" id="order-steps"></div>
+    </section>
+
+    <section class="card" id="choices">
+      <div class="card-hd">
+        <span class="card-title">What to write</span>
+        <span class="card-hint">defaults never duplicate, never delete, never touch the source</span>
+      </div>
+      <div class="toggles">
+        <div class="tg"><input type="checkbox" id="t-new" checked><label for="t-new"><span class="t">Insert the 🔴 Insert records</span><span class="d" id="t-new-d">5,048 Account · 5,041 Contact</span></label></div>
+        <div class="tg"><input type="checkbox" id="t-chg"><label for="t-chg"><span class="t">Update the 🟡 Changed ones with source values</span><span class="d" id="t-chg-d">0 records · review each below before switching this on</span></label></div>
+        <div class="tg" data-locked="1"><input type="checkbox" id="t-del" disabled><label for="t-del"><span class="t">Delete the 🔵 In target only records</span><span class="d">never a default — pick them one by one in the detail view</span></label></div>
+        <div class="tg"><input type="checkbox" id="t-rp" checked><label for="t-rp"><span class="t">Take a restore point first</span><span class="d">so this run can be rolled back from History</span></label></div>
+      </div>
+    </section>
+
+    <section class="card warn" id="exceptions">
+      <div class="card-hd">
+        <span class="card-title" id="exc-title">3 things to look at before you run</span>
+        <span class="card-hint">none of these block the run · they are excluded from the defaults</span>
+      </div>
+      <div class="exc" id="exc-list"></div>
+    </section>
+
+    <section class="dry" id="dryres" hidden>
+      <div class="dry-hd"><b id="dry-title"></b><span class="muted" style="font-size:12px" id="dry-sub"></span>
+        <button class="linkbtn" id="dry-close" style="margin-left:auto" type="button">close</button></div>
+      <div id="dry-rows"></div>
+    </section>
+
+    <div class="foot">
+      <button class="btn" type="button">👁 Records preview</button>
+      <button class="btn dry" type="button" id="drybtn">🧪 Dry run — real write, rolled back</button>
+      <button class="btn primary" type="button" id="runbtn">▶ Deploy 10,089 records into trailheads4</button>
+      <span class="api" id="api">≈ 61 API calls · Bulk job for Account and Contact</span>
+    </div>
+  </main>
+
+  <aside>
+    <div class="note">
+      <h2>What this replaces</h2>
+      <ul>
+        <li><b>▶ Run Transfer page</b> and <b>⚖ Reconcile page</b> become one Deploy page. One button.</li>
+        <li>The plan card answers "what is already there" <b>before</b> anything is written.</li>
+        <li>Same four names and colours as today's Reconcile columns — nothing to relearn.</li>
+        <li>Per-record ticking is the drill-down for exceptions, not the front door.</li>
+        <li><b>Child objects are full citizens</b>: pick the object, get its own four buckets plus ⇄ Link differs, parent chips, group by parent, insert order.</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h2>Reused as-is</h2>
+      <ul>
+        <li>The transfer engine, Bulk path, restore point, History, PII policy.</li>
+        <li>The scan and matching — run in counting mode, no 5,000-row cap.</li>
+        <li>Reconcile's per-record view, for the exceptions strip.</li>
+        <li>The parents advisor (Deployment order) with its one-click fixes.</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h2>New work</h2>
+      <ul>
+        <li><b>Uncapped id sets</b> for the run, held in memory, never saved.</li>
+        <li><b>The plan card</b> and the three scenario states.</li>
+        <li><b>No-key rule</b>: an object without a match field says so and falls back to plain copy.</li>
+        <li><b>Real dry run</b>: a sample is truly inserted and Salesforce rolls it back, so validation rules, triggers and duplicate rules answer for themselves. Verified on npc.</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h2>Defaults, stated once</h2>
+      <dl class="kv">
+        <dt>🔴 Insert</dt><dd>inserted</dd>
+        <dt>🟡 Changed</dt><dd>left alone unless you switch it on</dd>
+        <dt>🔵 In target only</dt><dd>never deleted by default</dd>
+        <dt>🟢 Synced</dt><dd>left alone</dd>
+        <dt>Source org</dt><dd>never written unless ← chosen per row</dd>
+      </dl>
+    </div>
+  </aside>
+</div>
+
+<dialog id="recdlg" aria-labelledby="dlg-title">
+  <div class="dlg">
+    <div class="dlg-hd">
+      <h2 id="dlg-title"></h2>
+      <span class="muted" style="font-size:12.5px" id="dlg-sub"></span>
+      <button class="btn xs" id="dlg-close" type="button" style="margin-left:auto">✕ close</button>
+    </div>
+    <div class="dlg-tools">
+      <div class="seg" role="group" aria-label="Show">
+        <button id="dlg-all" type="button" aria-pressed="true">All fields</button>
+        <button id="dlg-lk" type="button" aria-pressed="false">🔗 Lookups only</button>
+        <button id="dlg-df" type="button" aria-pressed="false">≠ Differences only</button>
+      </div>
+      <span id="dlg-note"></span>
+    </div>
+    <div class="dlg-body"><div class="tbl-wrap"><table class="ftbl"><thead id="dlg-thead"></thead><tbody id="dlg-rows"></tbody></table></div></div>
+    <div class="dlg-ft">
+      <span class="muted" style="font-size:12.5px" id="dlg-ftnote"></span>
+      <button class="btn primary" id="dlg-push" type="button" style="margin-left:auto" hidden></button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+  const SC = {
+    overlap: {
+      matchkey: 'Name · 10 by SFTK_ID',
+      hint: 'read 5,058 + 5,051 from trailheads2 · compared with trailheads4 · 12 API calls · 9 s',
+      title: 'What will happen',
+      objs: [
+        { obj: 'Account', sub: 'root', src: 5058, neu: 5048, same: 10, chg: 2, ext: 0, note: '10 Person Accounts — name parts sent, not Name' },
+        { obj: 'Contact', sub: 'under Account', src: 5058, neu: 5041, same: 6, chg: 1, ext: 1, note: '⇄ 2 point at a different parent · 10 Person Account contacts left out' },
+      ],
+      line: 'Matching read both orgs once. Nothing is written until you press Deploy, and the plan re-checks itself after the run.',
+      exc: [
+        ['w', '2 names used by more than one record', 'matching can land on either copy — those 2 are excluded from the defaults', 'show them'],
+        ['i', '2 changed Account records', 'PersonEmail and Description differ — pick a winner per row or leave them', 'review'],
+        ['w', '1 near match', '“acme corp” vs “Acme Corp” — trim/case rule off, so it would insert a twin', 'fix matching'],
+      ],
+      api: (n) => `≈ ${Math.max(12, Math.ceil(n / 2000) + 12)} API calls · Bulk job for Account and Contact`,
+      order: [
+        ['ok', 'Account', 'in this deployment · inserted first', []],
+        ['gap', 'Account → Campaign (Primary_Campaign__c)', '3 of the 5,048 new Accounts point at Campaigns that do not exist in trailheads4 — those 3 inserts would fail', ['Add Campaign to this deployment', 'Show the 3']],
+        ['warn', 'Account → User (OwnerId)', '412 owners have no match in trailheads4 — those records go to you', ['Owner matching…']],
+        ['ok', 'Contact → Account', 'parents are in this deployment or already in trailheads4 · inserted second', []],
+      ],
+      dry: { title: '🧪 Dry run — 198 of 200 sampled records would save', sub: 'real insert into trailheads4, rolled back by Salesforce · 0 records written · 3 API calls',
+        rows: [['b', 'Account · Galil Dairy #4', 'FIELD_CUSTOM_VALIDATION_EXCEPTION — Billing country is required for customers (validation rule Require_Country)'],
+               ['b', 'Account · Haifa Steel #2', 'DUPLICATES_DETECTED — matches an existing Account (duplicate rule Standard_Account_Duplicate_Rule)'],
+               ['i', 'Contact', 'checked under the 198 parents that passed — all 200 would save']] },
+    },
+    empty: {
+      matchkey: 'nothing to match',
+      hint: 'read 5,058 + 5,051 from trailheads2 · trailheads4 has no Account or Contact yet · 4 API calls · 2 s',
+      title: 'Plain copy — the target is empty',
+      objs: [
+        { obj: 'Account', sub: 'root', src: 5058, neu: 5058, same: 0, chg: 0, ext: 0, note: 'target has 0 Accounts, nothing to compare' },
+        { obj: 'Contact', sub: 'under Account', src: 5051, neu: 5041, same: 0, chg: 0, ext: 0, note: '10 Person Account contacts left out' },
+      ],
+      line: 'No matching was needed: the target holds none of these objects, so every source record is new. Run it twice and the second run finds 10,099 already there.',
+      exc: [],
+      api: (n) => `≈ ${Math.max(4, Math.ceil(n / 2000) + 4)} API calls · Bulk job for Account and Contact`,
+      order: [
+        ['ok', 'Account', 'in this deployment · inserted first', []],
+        ['gap', 'Account → Campaign (Primary_Campaign__c)', 'trailheads4 has no Campaigns at all — 214 Accounts point at one and would fail', ['Add Campaign to this deployment', 'Leave that field empty']],
+        ['ok', 'Contact → Account', 'parents are in this deployment · inserted second', []],
+      ],
+      dry: { title: '🧪 Dry run — all 200 sampled records would save', sub: 'real insert into trailheads4, rolled back by Salesforce · 0 records written · 3 API calls',
+        rows: [['i', 'Account', '200 of 200 would save'], ['i', 'Contact', '200 of 200 would save under those parents']] },
+    },
+    nokey: {
+      matchkey: 'none for OrderItem',
+      hint: 'read 5,058 Account + 12,400 OrderItem from trailheads2 · OrderItem has no field that identifies a record · 10 API calls',
+      title: 'Partly a copy — OrderItem cannot be matched',
+      objs: [
+        { obj: 'Account', sub: 'root', src: 5058, neu: 5048, same: 10, chg: 2, ext: 0, note: 'matched by Name' },
+        { obj: 'OrderItem', sub: 'under Account', src: 12400, neu: 12400, same: null, chg: null, ext: null, note: 'no usable key — copied, not compared' },
+      ],
+      line: 'OrderItem has no name and no external Id, so “already there” cannot be known. It is copied under its matched parents. Give it an SFTK_ID stamp and this becomes a compare.',
+      exc: [
+        ['b', 'OrderItem cannot be compared', 'a second run would insert all 12,400 again — stamp it, or filter to what you need', 'how to stamp'],
+        ['i', '2 changed Account records', 'pick a winner per row or leave them', 'review'],
+      ],
+      api: (n) => `≈ ${Math.max(10, Math.ceil(n / 2000) + 10)} API calls · Bulk job for OrderItem`,
+      order: [
+        ['ok', 'Account', 'in this deployment · inserted first', []],
+        ['gap', 'OrderItem → Order', 'Order is not in this deployment and 12,400 OrderItems need one — every insert would fail', ['Add Order to this deployment']],
+        ['gap', 'OrderItem → PricebookEntry', '37 products have no price book entry in trailheads4', ['Open a parents-only deployment', 'Show the 37']],
+      ],
+      dry: { title: '🧪 Dry run — stopped at Account: 199 of 200 would save', sub: 'real insert into trailheads4, rolled back by Salesforce · 0 records written · 2 API calls',
+        rows: [['b', 'Account · Negev Solar #7', 'STRING_TOO_LONG — Account Name: data value too large (max length=255)'],
+               ['w', 'OrderItem', 'not checked — it needs an Order parent that is not in this deployment (see Deployment order above)']] },
+    },
+  };
+  const FIRST = ['Noa','Daniel','Maya','Yonatan','Tamar','Omer','Shira','Lior','Eden','Roni','Amit','Yael','Itai','Hila','Nadav','Michal','Ori','Dana','Eyal','Rotem'];
+  const LAST  = ['Levi','Cohen','Peretz','Mizrahi','Ben-David','Katz','Avraham','Friedman','Shalom','Azulay','Biton','Dahan','Gabay','Malka','Ohana','Amar','Hadad','Yosef','Sabag','Tal'];
+  const CO    = ['Acme Corp','Negev Solar','Carmel Wines','Galil Dairy','Jaffa Ports','Tel Aviv Robotics','Eilat Divers','Haifa Steel','Golan Farms','Dead Sea Minerals'];
+  const nm = (i, person) => person ? `${FIRST[i % 20]} ${LAST[(i * 7 + 3) % 20]}` : `${CO[i % 10]}${Math.floor(i / 10) ? ' #' + Math.floor(i / 10) : ''}`;
+  // Record lists per scenario and bucket — a name, the object, a note. Only the
+  // first page is generated; the count is the truth, the list is a window.
+  const chgRows = [{ k: 'Noa Levi', obj: 'Account', why: 'PersonEmail · Phone differ' }, { k: 'Daniel Cohen', obj: 'Account', why: 'Description differs' }];
+  const sameRows = why => FIRST.slice(0, 10).map((f, i) => ({ k: `${f} ${LAST[i]}`, obj: 'Account', why }));
+  const none = () => ({ total: 0, rows: [] });
+  const acct = n => ({ total: n, gen: i => ({ k: nm(i, i % 3 === 0), obj: 'Account', why: '' }) });
+  // A child row knows its parent and where that parent stands.
+  const kids = (n, obj, label) => ({ total: n, gen: i => {
+    const parent = nm(Math.floor(i / 3) * 2 + 1, false);
+    const pstate = Math.floor(i / 3) % 4 === 2 ? 'target' : 'run';
+    return { k: label(i), obj, parent, pstate, why: `under ${parent}` };
+  } });
+  // One set of buckets PER OBJECT — a child object is a full citizen: its own
+  // Insert / Changed / In target only / Synced, plus ⇄ Link differs.
+  const LISTS = {
+    overlap: {
+      Account: { neu: acct(5048), chg: { total: 2, rows: chgRows }, ext: none(), same: { total: 10, rows: sameRows('matched by SFTK_ID · inserted 2026-09-16') } },
+      Contact: { neu: kids(5041, 'Contact', i => nm(i + 3, true)),
+        chg: { total: 1, rows: [{ k: 'Shira Katz', obj: 'Contact', parent: 'Negev Solar', pstate: 'target', why: 'Title · Phone differ' }] },
+        ext: { total: 1, rows: [{ k: 'Test Contact (delete me)', obj: 'Contact', parent: '', pstate: 'orphan', why: 'AccountId is empty in trailheads4' }] },
+        same: { total: 6, rows: FIRST.slice(10, 16).map((f, i) => ({ k: `${f} ${LAST[i + 4]}`, obj: 'Contact', parent: nm(i * 2 + 1, false), pstate: 'target', why: `under ${nm(i * 2 + 1, false)}` })) },
+        link: { total: 2, rows: [{ k: 'Omer Katz', obj: 'Contact', parent: 'Negev Solar', was: 'Haifa Steel', pstate: 'target', why: 'Haifa Steel → Negev Solar' },
+                                 { k: 'Yael Dahan', obj: 'Contact', parent: 'Carmel Wines', was: '', pstate: 'target', why: '∅ → Carmel Wines' }] } },
+    },
+    empty: {
+      Account: { neu: acct(5058), chg: none(), ext: none(), same: none() },
+      Contact: { neu: kids(5041, 'Contact', i => nm(i + 3, true)), chg: none(), ext: none(), same: none(), link: none() },
+    },
+    nokey: {
+      Account: { neu: acct(5048), chg: { total: 2, rows: chgRows }, ext: none(), same: { total: 10, rows: sameRows('matched by Name') } },
+      OrderItem: { neu: kids(12400, 'OrderItem', i => `OrderItem ${100000 + i}`), chg: { total: null, rows: [] }, ext: { total: null, rows: [] }, same: { total: null, rows: [] }, link: { total: null, rows: [] }, nokey: true, md: true },
+    },
+  };
+  let curObj = 'Account';
+  let kidOrder = 'after', groupByParent = true;
+  const EXPLAIN = {
+    overlap: ['The target already holds some of this data.', 'The page matches records in both orgs by their key (here: the Account Name), so it knows which go under 🔴 Insert, which are 🟢 Synced, and which are 🟡 Changed. Only the Insert ones are written by default. This is the case that bit you on trailheads4. Pick ↳ Contact in the records panel to see how a child object is handled.'],
+    empty: ['The target has none of these objects yet.', 'There is nothing to compare against, so the page skips matching and says so: a plain copy. Run it a second time and it becomes the first case.'],
+    nokey: ['One object in the deployment cannot be recognised across orgs.', 'To say a record is 🟢 Synced, the page must recognise the same record in both orgs. Salesforce Ids differ per org, so it needs a key: a Name, an email, an external Id. An order line item has none — two lines reading “2 × Solar Panel at 129.00” may or may not be the same record. So those columns show a dash, not a made-up zero; the records are copied under their parents, and the page warns that a second run would copy them again. Give the object an SFTK_ID stamp (a field holding the source record’s Id) and it becomes a normal compare.'],
+  };
+  // Today's Reconcile vocabulary, colours and order (user 2026-09-18: "this one is better").
+  const BUCKETS = [['neu', '🔴 Insert', 'to insert'], ['chg', '🟡 Changed', 'changed'], ['ext', '🔵 In target only', 'in target only'], ['same', '🟢 Synced', 'synced']];
+  const PAGE = 50;
+  let tab = 'same';
+  const LINKTAB = ['link', '⇄ Link differs', 'point at a different parent'];
+  const unticked = new Set();   // Insert rows the user unticked (mock: scenario:object:index)
+  const untickedHere = () => [...unticked].filter(x => x.startsWith(cur + ':')).length;
+  const fmt = n => n == null ? '—' : n.toLocaleString('en-US');
+  const $ = id => document.getElementById(id);
+  let cur = 'overlap';
+
+  function render() {
+    const s = SC[cur];
+    $('sc-explain').innerHTML = `<b class="t">${EXPLAIN[cur][0]}</b><p>${EXPLAIN[cur][1]}</p>`;
+    $('matchkey').textContent = s.matchkey;
+    $('plan-hint').textContent = s.hint;
+    $('plan-title').textContent = s.title;
+    $('plan-line').textContent = s.line;
+    const sum = k => s.objs.reduce((a, o) => a + (o[k] || 0), 0);
+    const neu = sum('neu'), same = sum('same'), chg = sum('chg'), ext = sum('ext');
+    $('stats').innerHTML = [
+      `<span class="stat ins" data-bucket="neu" role="button" tabindex="0">🔴 <b>${fmt(neu)}</b> to insert <small>in source only</small></span>`,
+      `<span class="stat chg" data-bucket="chg" role="button" tabindex="0">🟡 <b>${fmt(chg)}</b> changed <small>left alone unless you say so</small></span>`,
+      `<span class="stat ext" data-bucket="ext" role="button" tabindex="0">🔵 <b>${fmt(ext)}</b> in target only <small>never deleted by default</small></span>`,
+      `<span class="stat same" data-bucket="same" role="button" tabindex="0">🟢 <b>${fmt(same)}</b> synced <small>already in the target, left alone</small></span>`,
+    ].join('');
+    $('objrows').innerHTML = s.objs.map(o => `<tr>
+      <td class="obj"><button class="linkbtn" type="button" data-pickobj="${o.obj}" style="font-weight:600">${o.obj}</button><span class="sub">${o.sub}</span></td>
+      <td class="num">${fmt(o.src)}</td><td class="num" data-bucket="neu" data-obj="${o.obj}">${fmt(o.neu)}</td><td class="num" data-bucket="chg" data-obj="${o.obj}">${fmt(o.chg)}</td><td class="num" data-bucket="ext" data-obj="${o.obj}">${fmt(o.ext)}</td><td class="num" data-bucket="same" data-obj="${o.obj}">${fmt(o.same)}</td>
+      <td class="muted">${o.note}</td></tr>`).join('');
+    $('t-new-d').textContent = s.objs.map(o => `${fmt(o.neu)} ${o.obj}`).join(' · ');
+    $('t-chg-d').textContent = chg ? `${fmt(chg)} records · review each below before switching this on` : 'nothing changed';
+    $('t-chg').disabled = !chg;
+    // Deployment order — the parents advisor from today's Reconcile, always on the page.
+    const gaps = s.order.filter(o => o[0] === 'gap').length;
+    $('order-title').textContent = gaps ? `Deployment order — ${gaps} parent gap${gaps === 1 ? '' : 's'} would fail inserts` : 'Deployment order — parents first, nothing missing';
+    $('ordercard').className = 'card ' + (gaps ? 'warn' : 'good');
+    $('order-steps').innerHTML = s.order.map(([st, what, why, fixes], i) => `<div class="step ${st === 'gap' ? 'gap' : st === 'warn' ? 'warnstep' : ''}">
+      <span class="n">${st === 'ok' ? '✓' : st === 'gap' ? '!' : '?'}</span>
+      <span class="what"><b>${what}</b><span>${why}</span></span>
+      <span class="fix">${fixes.map(f => `<button class="btn xs" type="button">${f}</button>`).join('')}</span>
+    </div>`).join('');
+    $('dryres').hidden = true;
+    const ex = s.exc;
+    $('exceptions').hidden = !ex.length;
+    $('exc-title').textContent = `${ex.length} thing${ex.length === 1 ? '' : 's'} to look at before you run`;
+    $('exc-list').innerHTML = ex.map(([cls, t, why, act]) => `<div class="exc-row"><span class="pill ${cls}">${cls === 'b' ? 'stop' : cls === 'w' ? 'check' : 'optional'}</span><b>${t}</b><span class="muted">— ${why}</span><button class="linkbtn" data-act="${act}">${act}</button></div>`).join('');
+    document.querySelectorAll('#exc-list [data-act="review"]').forEach(b => b.addEventListener('click', () => { curObj = 'Account'; tab = 'chg'; renderRecords(); $('records').scrollIntoView({ block: 'nearest' }); }));
+    document.querySelectorAll('[data-bucket]').forEach(el => {
+      const go = () => { if (el.dataset.obj) curObj = el.dataset.obj; tab = el.dataset.bucket; renderRecords(); $('records').scrollIntoView({ block: 'nearest' }); };
+      el.addEventListener('click', go);
+      el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    });
+    document.querySelectorAll('[data-pickobj]').forEach(b => b.addEventListener('click', () => { curObj = b.dataset.pickobj; tab = 'neu'; renderRecords(); $('records').scrollIntoView({ block: 'nearest' }); }));
+    renderRecords();
+  }
+  // The records themselves, PER OBJECT. Every count above opens its list here.
+  // A child object has the same four buckets as the root plus ⇄ Link differs,
+  // its rows name their parent, and Insert rows can be grouped by parent.
+  function renderRecords() {
+    const objs = SC[cur].objs;
+    if (!objs.some(o => o.obj === curObj)) curObj = objs[0].obj;
+    const L = LISTS[cur][curObj];
+    const isChild = objs.findIndex(o => o.obj === curObj) > 0;
+    const tabs = isChild ? [...BUCKETS.slice(0, 3), LINKTAB, BUCKETS[3]] : BUCKETS;
+    if (!tabs.some(b => b[0] === tab)) tab = 'neu';
+    const work = o => { const l = LISTS[cur][o.obj]; return (l.neu.total || 0) + (l.chg.total || 0) + (l.ext.total || 0) + ((l.link && l.link.total) || 0); };
+    $('objsw').innerHTML = `<span class="lbl">Object</span>` + objs.map((o, i) => `<button type="button" data-obj="${o.obj}" aria-pressed="${o.obj === curObj}">${i ? '↳ ' : ''}${o.obj} <small>${i ? 'child of ' + objs[0].obj : 'root'} · ${fmt(work(o))} to act on</small></button>`).join('');
+    $('objsw').querySelectorAll('button').forEach(b => b.addEventListener('click', () => { curObj = b.dataset.obj; tab = 'neu'; $('rec-search').value = ''; renderRecords(); }));
+
+    // child-only controls: insert order + group by parent
+    $('kidtools').hidden = !isChild;
+    if (isChild) {
+      $('kidtools').innerHTML = `<span>Insert order</span>
+        <div class="seg" role="group" aria-label="Insert order">
+          <button type="button" data-ord="after" aria-pressed="${kidOrder === 'after' || L.md}" title="Parents are inserted first, children attach as they go in">⤵ after parent</button>
+          <button type="button" data-ord="before" aria-pressed="${kidOrder === 'before' && !L.md}" ${L.md ? 'disabled title="Master-detail link: the parent is required at insert, so child-first is impossible"' : 'title="Children first with an empty link, then connected once the parents exist — for this run only"'}>⤴ before parent</button>
+        </div>
+        ${L.md ? '<span class="pill w">master-detail — parent first only, ⇄ Relink off</span>' : ''}
+        <label><input type="checkbox" id="grp" ${groupByParent ? 'checked' : ''}> group by parent</label>
+        <span>scanned under the ${fmt(LISTS[cur][objs[0].obj].neu.total + (LISTS[cur][objs[0].obj].same.total || 0) + (LISTS[cur][objs[0].obj].chg.total || 0))} ${objs[0].obj} records in this deployment</span>`;
+      $('kidtools').querySelectorAll('[data-ord]').forEach(b => b.addEventListener('click', () => { if (!b.disabled) { kidOrder = b.dataset.ord; renderRecords(); } }));
+      $('grp').addEventListener('change', e => { groupByParent = e.target.checked; renderRecords(); });
+    }
+
+    const q = ($('rec-search').value || '').trim().toLowerCase();
+    $('rec-tabs').innerHTML = tabs.map(([k, lbl]) => `<button role="tab" aria-selected="${tab === k}" data-tab="${k}">${lbl} <b>${L[k].total == null ? '—' : fmt(L[k].total)}</b></button>`).join('');
+    document.querySelectorAll('#rec-tabs button').forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; renderRecords(); }));
+    document.querySelectorAll('.stat[data-bucket]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.bucket === tab)));
+
+    const B = L[tab];
+    const total = B.total || 0;
+    let rows = B.rows ? B.rows.map((r, i) => ({ ...r, i })) : Array.from({ length: Math.min(total, 400) }, (_, i) => ({ ...B.gen(i), i }));
+    if (q) rows = rows.filter(r => r.k.toLowerCase().includes(q) || (r.parent || '').toLowerCase().includes(q));
+    const shown = rows.slice(0, PAGE);
+    const isNew = tab === 'neu';
+    const uk = i => `${cur}:${curObj}:${i}`;
+    const pchip = r => !isChild ? '' : r.pstate === 'run' ? `<span class="pill i" title="Its parent is 🔴 Insert too — it goes in first, in this same run">parent in this run</span>`
+      : r.pstate === 'target' ? `<span class="pill i" title="Its parent already exists in trailheads4 — the child attaches to it">parent ✓ in trailheads4</span>`
+      : r.pstate === 'orphan' ? `<span class="pill w" title="Its link field is empty in the target — a leftover of a partial run. ⇄ Relink can re-attach it; it is left out of bulk delete.">⚠ orphan</span>` : '';
+    const ctl = r => isNew
+      ? `<input type="checkbox" data-i="${r.i}" ${unticked.has(uk(r.i)) ? '' : 'checked'} aria-label="include ${r.k}">`
+      : tab === 'chg' ? `<span class="act"><button aria-pressed="false" title="Update the target with the source's values">→</button>${isChild ? '' : `<button aria-pressed="false" title="Update the source with the target's values">←</button>`}<button aria-pressed="true">skip</button></span>`
+      : tab === 'ext' ? `<span class="act"><button aria-pressed="false" title="Delete from the target">🗑</button>${isChild ? '' : '<button aria-pressed="false" title="Pull into the source">←</button>'}<button aria-pressed="true">skip</button></span>`
+      : tab === 'link' ? `<span class="act"><button aria-pressed="false" title="Update this target record so its link points at the parent the source says">⇄ Relink</button><button aria-pressed="true">skip</button></span>`
+      : '<span></span>';
+    const rowHtml = r => `<div class="rrow">
+      ${ctl(r)}
+      <span class="k" title="${r.k}">${r.k}</span>
+      <span class="why">${tab === 'link' ? `parent now → should be: ${r.why}` : (isChild && groupByParent && isNew ? '' : (r.why || ''))} ${pchip(r)}</span>
+      <span class="obj">${r.obj} · <button class="open" type="button" data-open="${r.i}" data-focus="all">▸ record</button> · <button class="open" type="button" data-open="${r.i}" data-focus="lk">🔗 lookups${pinCount(tab, r.i) ? ` <span class="lk-badge">${pinCount(tab, r.i)}</span>` : ''}</button></span>
+    </div>`;
+    let html;
+    if (L.nokey && tab !== 'neu') {
+      html = `<div class="rec-empty">${curObj} has no usable key, so records in trailheads4 cannot be recognised — this bucket cannot be filled. Everything is under 🔴 Insert. Give ${curObj} an SFTK_ID stamp to make it comparable.</div>`;
+    } else if (!shown.length) {
+      html = `<div class="rec-empty">${q ? 'No record matches that filter.' : 'Nothing here.'}</div>`;
+    } else if (isChild && isNew && groupByParent) {
+      const groups = new Map();
+      shown.forEach(r => { if (!groups.has(r.parent)) groups.set(r.parent, []); groups.get(r.parent).push(r); });
+      html = [...groups].map(([parent, rs]) => {
+        const sel = rs.filter(r => !unticked.has(uk(r.i))).length;
+        return `<div class="grp"><b>${parent}</b> ${pchip(rs[0])} <span class="muted">${sel}/${rs.length} selected</span>
+          <span class="sp"><button class="linkbtn" type="button" data-gall="${rs.map(r => r.i).join(',')}">✓ group</button><button class="linkbtn" type="button" data-gnone="${rs.map(r => r.i).join(',')}">✗ group</button></span></div>` + rs.map(rowHtml).join('');
+      }).join('');
+    } else html = shown.map(rowHtml).join('');
+    $('rec-list').innerHTML = html;
+
+    const more = total - shown.length;
+    $('rec-more').hidden = more <= 0 || (L.nokey && tab !== 'neu');
+    $('rec-more').textContent = more > 0 ? `Showing ${fmt(shown.length)} of ${fmt(total)} — the count is the truth; the list is a window. Filter by record or parent name, or narrow the deployment.` : '';
+    $('rec-count').textContent = B.total == null ? `${curObj}: cannot be compared` : `${fmt(total)} ${curObj} ${tabs.find(b => b[0] === tab)[2]}`;
+    $('rec-all').hidden = !isNew; $('rec-none').hidden = !isNew;
+    const unHere = [...unticked].filter(x => x.startsWith(`${cur}:${curObj}:`)).length;
+    $('rec-sel').textContent = isNew ? `${fmt(total - unHere)} selected to insert`
+      : tab === 'chg' ? (isChild ? 'pick → per row (source wins) — skipped by default' : 'pick a winner per row — skipped by default')
+      : tab === 'ext' ? (isChild ? 'nothing happens unless you choose 🗑 — orphans are left out of bulk delete' : 'nothing happens unless you choose 🗑 or ←')
+      : tab === 'link' ? 'nothing moves unless you choose ⇄ Relink' : 'left alone';
+
+    $('rec-list').querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () =>
+      openRecord(shown.find(x => String(x.i) === b.dataset.open), tab, b.dataset.focus)));
+    $('rec-list').querySelectorAll('input[type="checkbox"][data-i]').forEach(cb => cb.addEventListener('change', () => {
+      if (cb.checked) unticked.delete(uk(cb.dataset.i)); else unticked.add(uk(cb.dataset.i));
+      renderRecords();
+    }));
+    $('rec-list').querySelectorAll('[data-gall]').forEach(b => b.addEventListener('click', () => { b.dataset.gall.split(',').forEach(i => unticked.delete(uk(i))); renderRecords(); }));
+    $('rec-list').querySelectorAll('[data-gnone]').forEach(b => b.addEventListener('click', () => { b.dataset.gnone.split(',').forEach(i => unticked.add(uk(i))); renderRecords(); }));
+    $('rec-list').querySelectorAll('.act').forEach(g => g.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+      g.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    })));
+    updateRun();
+  }
+  // ── The whole record, on every tab — fields, and lookups you can steer ──
+  const pins = {};   // 'scenario:tab:i:field' → picked target record name
+  const pinKey = (t, i, f) => `${cur}:${curObj}:${t}:${i}:${f}`;
+  const pinCount = (t, i) => Object.keys(pins).filter(k => k.startsWith(`${cur}:${curObj}:${t}:${i}:`)).length;
+  const CAND = { Owner: ['Yonatan S (you)', 'Dana Integration', 'Sales Queue'], Campaign: ['Spring Appeal 2026', 'Spring Appeal 2026 (copy)', 'Year-End Giving'], Account: ['Negev Solar', 'Negev Solar #2', 'Carmel Wines'], Contact: ['Shira Katz', 'Omer Katz'] };
+  function fieldsFor(r, t) {
+    const person = /^[A-Z][a-z]+ [A-Z]/.test(r.k) && r.obj === 'Account' && !/Corp|Solar|Wines|Dairy|Ports|Robotics|Divers|Steel|Farms|Minerals/.test(r.k);
+    const [fn, ...ln] = r.k.split(' ');
+    const F = [];
+    const add = (f, type, src, tgt, lk) => F.push({ f, type, src, tgt: tgt === undefined ? src : tgt, lk: lk || null });
+    if (r.obj === 'Account') {
+      if (person) { add('FirstName', 'Text(40)', fn); add('LastName', 'Text(80)', ln.join(' ')); add('PersonEmail', 'Email', `${fn.toLowerCase()}@example.org`, /PersonEmail/.test(r.why) ? `${fn.toLowerCase()}.old@example.org` : undefined); }
+      else add('Name', 'Text(255)', r.k);
+      add('Phone', 'Phone', '03-555-01' + String(10 + (r.i % 89)), /Phone/.test(r.why) ? '03-555-0000' : undefined);
+      add('Industry', 'Picklist', person ? '' : 'Energy');
+      add('BillingCity', 'Text(40)', ['Tel Aviv', 'Haifa', 'Beer Sheva', 'Eilat'][r.i % 4]);
+      add('Description', 'Long text', /Description/.test(r.why) ? 'Key account since 2019. Renewal due in March; decision maker changed in August.' : '', /Description/.test(r.why) ? 'Key account since 2019.' : undefined);
+      add('RecordTypeId', 'Record type', person ? 'Person Account' : 'Business Account');
+      add('OwnerId', 'Lookup(User)', 'Dana Integration', undefined, { obj: 'Owner', state: r.i % 5 === 0 ? 'none' : 'match', to: 'Dana Integration' });
+      add('Primary_Campaign__c', 'Lookup(Campaign)', r.i % 4 === 1 ? 'Spring Appeal 2026' : '', undefined, r.i % 4 === 1 ? { obj: 'Campaign', state: r.i % 8 === 1 ? 'dup' : 'match', to: 'Spring Appeal 2026' } : null);
+      if (!person) add('ParentId', 'Lookup(Account)', r.i % 6 === 2 ? 'Negev Solar' : '', undefined, r.i % 6 === 2 ? { obj: 'Account', state: 'match', to: 'Negev Solar' } : null);
+    } else if (r.obj === 'Contact') {
+      add('FirstName', 'Text(40)', fn); add('LastName', 'Text(80)', ln.join(' '));
+      add('Email', 'Email', `${fn.toLowerCase()}@example.org`);
+      add('Phone', 'Phone', '054-555-01' + String(10 + (r.i % 89)), /Phone/.test(r.why || '') ? '054-555-0000' : undefined);
+      add('Title', 'Text(128)', 'Operations lead', /Title/.test(r.why || '') ? 'Ops' : undefined);
+      add('AccountId', 'Lookup(Account)', r.parent || 'Negev Solar', t === 'link' ? (r.was || '') : undefined,
+        r.pstate === 'run' ? { obj: 'Account', state: 'run', to: 'created in this run' } : { obj: 'Account', state: 'match', to: r.parent || 'Negev Solar' });
+      add('ReportsToId', 'Lookup(Contact)', r.i % 3 === 0 ? 'Shira Katz' : '', undefined, r.i % 3 === 0 ? { obj: 'Contact', state: 'match', to: 'Shira Katz' } : null);
+    } else {
+      add('Quantity', 'Number(10,2)', String(1 + r.i % 9)); add('UnitPrice', 'Currency', '129.00');
+      add('OrderId', 'Lookup(Order)', 'Order 00' + (2000 + r.i % 500), undefined, { obj: 'Account', state: 'none', to: '' });
+      add('PricebookEntryId', 'Lookup(PricebookEntry)', 'Solar Panel 400W · Standard', undefined, { obj: 'Account', state: 'match', to: 'Solar Panel 400W · Standard' });
+    }
+    return F;
+  }
+  let dlgState = null;
+  function openRecord(r, t, focus) {
+    if (!r) return;
+    dlgState = { r, t, show: focus === 'lk' ? 'lk' : 'all', ticked: new Set() };
+    paintRecord();
+    const d = $('recdlg'); if (!d.open) d.showModal();
+  }
+  function paintRecord() {
+    const { r, show } = dlgState;
+    const t0 = dlgState.t, t = t0 === 'link' ? 'chg' : t0;
+    const two = t === 'chg' || t === 'same';
+    const F = fieldsFor(r, t0);
+    const val = v => v ? v : '<span class="empty">empty</span>';
+    $('dlg-title').textContent = `${r.obj} · ${r.k}`;
+    $('dlg-sub').textContent = t === 'neu' ? 'in trailheads2 only — this is what will be inserted into trailheads4'
+      : t === 'chg' ? 'trailheads2 (source) vs trailheads4 (target) — tick the fields to update on the target'
+      : t === 'same' ? 'trailheads2 vs trailheads4 — matched, nothing differs' : 'exists only in trailheads4';
+    [['dlg-all', 'all'], ['dlg-lk', 'lk'], ['dlg-df', 'df']].forEach(([id, k]) => $(id).setAttribute('aria-pressed', String(show === k)));
+    $('dlg-df').hidden = t !== 'chg';
+    let rows = F.map(x => ({ ...x, differs: x.src !== x.tgt }));
+    if (show === 'lk') rows = rows.filter(x => x.lk || /^Lookup/.test(x.type));
+    if (show === 'df') rows = rows.filter(x => x.differs);
+    $('dlg-thead').innerHTML = `<tr>${t === 'chg' ? '<th></th>' : ''}<th>Field</th><th>${t === 'ext' ? 'trailheads4' : 'trailheads2 (source)'}</th>${two ? '<th></th><th>trailheads4 (target)</th>' : ''}${t === 'neu' || t === 'chg' ? '<th>In trailheads4 this lookup lands on</th>' : ''}<th>Type</th></tr>`;
+    const resolution = x => {
+      if (!x.lk || !x.src) return '';
+      const key = pinKey(t, r.i, x.f), picked = pins[key];
+      const opts = (CAND[x.lk.obj] || []).map(c => `<option ${picked === c ? 'selected' : ''}>${c}</option>`).join('');
+      const auto = x.lk.state === 'match' ? `<span class="pill i">✓ name match</span> ${x.lk.to}`
+        : x.lk.state === 'run' ? `<span class="pill i">✓ parent</span> ${x.lk.to}`
+        : x.lk.state === 'dup' ? `<span class="pill w">2 matches</span> engine will not guess — pick one`
+        : `<span class="pill b">no match</span> left empty unless you pick`;
+      return `<div class="res">${picked ? `<span class="pill w">📌 picked</span> ${picked} <button class="linkbtn" data-unpin="${x.f}" type="button">clear</button>` : auto}
+        <select data-pin="${x.f}" aria-label="Pick the target record for ${x.f}"><option value="">${picked ? 'change…' : 'pick a record in trailheads4…'}</option>${opts}</select></div>`;
+    };
+    $('dlg-rows').innerHTML = rows.length ? rows.map(x => `<tr class="${two && x.differs ? 'diff' : ''}">
+      ${t === 'chg' ? `<td>${x.differs ? `<input type="checkbox" data-f="${x.f}" ${dlgState.ticked.has(x.f) ? 'checked' : ''} aria-label="update ${x.f}">` : ''}</td>` : ''}
+      <td><span class="fname">${x.f}</span>${x.lk || /^Lookup/.test(x.type) ? '<span class="tagl">🔗 lookup</span>' : ''}</td>
+      <td class="v">${val(t === 'ext' ? x.tgt : x.src)}</td>
+      ${two ? `<td>${x.differs ? '≠' : '='}</td><td class="v">${val(x.tgt)}</td>` : ''}
+      ${t === 'neu' || t === 'chg' ? `<td>${resolution(x)}</td>` : ''}
+      <td class="ftype">${x.type}</td></tr>`).join('') : `<tr><td colspan="6" class="muted" style="padding:16px 8px">${show === 'lk' ? 'This record has no lookups.' : 'Nothing differs.'}</td></tr>`;
+    $('dlg-note').textContent = show === 'lk' ? 'A pick is saved on the deployment, per target org, and beats name matching in the run.' : `${F.length} fields · ${F.filter(x => x.lk || /^Lookup/.test(x.type)).length} lookups`;
+    const n = dlgState.ticked.size;
+    $('dlg-push').hidden = t !== 'chg';
+    $('dlg-push').disabled = !n;
+    $('dlg-push').textContent = n ? `Update ${n} field${n === 1 ? '' : 's'} on this trailheads4 record now` : 'Tick fields to update';
+    $('dlg-ftnote').textContent = t === 'chg' ? 'Only ticked fields are written, to this one record. The table re-reads both orgs afterwards.'
+      : t === 'neu' ? 'Nothing is written from here — this record goes in with the run. Lookup picks are saved immediately.'
+      : t === 'same' ? 'Read-only — both sides agree.' : 'Read-only here — choose 🗑 or ← on the row.';
+    $('dlg-rows').querySelectorAll('input[data-f]').forEach(cb => cb.addEventListener('change', () => { if (cb.checked) dlgState.ticked.add(cb.dataset.f); else dlgState.ticked.delete(cb.dataset.f); paintRecord(); }));
+    $('dlg-rows').querySelectorAll('select[data-pin]').forEach(sel => sel.addEventListener('change', () => { if (sel.value) { pins[pinKey(t, r.i, sel.dataset.pin)] = sel.value; paintRecord(); renderRecords(); } }));
+    $('dlg-rows').querySelectorAll('[data-unpin]').forEach(b => b.addEventListener('click', () => { delete pins[pinKey(t, r.i, b.dataset.unpin)]; paintRecord(); renderRecords(); }));
+  }
+  function updateRun() {
+    const s = SC[cur];
+    const sum = k => s.objs.reduce((a, o) => a + (o[k] || 0), 0);
+    let n = 0;
+    if ($('t-new').checked) n += sum('neu') - untickedHere();
+    if ($('t-chg').checked && !$('t-chg').disabled) n += sum('chg');
+    $('runbtn').textContent = n ? `▶ Deploy ${fmt(n)} record${n === 1 ? '' : 's'} into trailheads4` : '▶ Nothing selected to deploy';
+    $('runbtn').disabled = !n;
+    $('api').textContent = s.api(n);
+  }
+  document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
+    cur = b.dataset.sc;
+    document.querySelectorAll('.seg button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    $('t-chg').checked = false;
+    curObj = SC[cur].objs[0].obj;
+    tab = SC[cur].objs.some(o => o.same) ? 'same' : 'neu';
+    render();
+  }));
+  $('drybtn').addEventListener('click', () => {
+    const d = SC[cur].dry;
+    $('dry-title').textContent = d.title; $('dry-sub').textContent = d.sub;
+    $('dry-rows').innerHTML = d.rows.map(([c, k, m]) => `<div class="dry-row"><span class="pill ${c}">${c === 'b' ? 'would fail' : c === 'w' ? 'not checked' : 'ok'}</span><span><b>${k}</b> <span class="msg">— ${m}</span></span></div>`).join('');
+    $('dryres').hidden = false; $('dryres').scrollIntoView({ block: 'nearest' });
+  });
+  $('dry-close').addEventListener('click', () => { $('dryres').hidden = true; });
+  [['dlg-all', 'all'], ['dlg-lk', 'lk'], ['dlg-df', 'df']].forEach(([id, k]) => $(id).addEventListener('click', () => { dlgState.show = k; paintRecord(); }));
+  $('dlg-close').addEventListener('click', () => $('recdlg').close());
+  $('recdlg').addEventListener('click', e => { if (e.target === $('recdlg')) $('recdlg').close(); });
+  $('dlg-push').addEventListener('click', () => { dlgState.ticked.clear(); $('dlg-ftnote').textContent = '✓ Updated on trailheads4 — values re-read from both orgs.'; $('dlg-push').disabled = true; });
+  $('rec-search').addEventListener('input', renderRecords);
+  $('rec-all').addEventListener('click', () => { [...unticked].filter(x => x.startsWith(`${cur}:${curObj}:`)).forEach(x => unticked.delete(x)); renderRecords(); });
+  $('rec-none').addEventListener('click', () => { const B = LISTS[cur][curObj].neu; for (let i = 0; i < Math.min(B.total, 400); i++) unticked.add(`${cur}:${curObj}:${i}`); renderRecords(); });
+  ['t-new', 't-chg'].forEach(id => $(id).addEventListener('change', updateRun));
+  render();
+</script>

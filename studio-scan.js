@@ -993,6 +993,9 @@ async function runDiffScan(profile, node = null, scope = null) {
     const base = [
       // M3a — SELECT every key component (composite keys need them all).
       'Id', ...(side === 'src' ? srcKeyFields : tgtKeyFields),
+      // Person Account contacts are filtered out after the read (below);
+      // the flag exists only in an org with Person Accounts on.
+      ...(objType === 'Contact' && (side === 'src' ? srcTypes : tgtTypes).has('IsPersonAccount') ? ['IsPersonAccount'] : []),
       ...plan.map(p => side === 'src' ? p.srcSel : p.tgtSel)
     ];
     // Child scans also read the raw parent id + the parent's KEY (dot-path)
@@ -1033,13 +1036,33 @@ async function runDiffScan(profile, node = null, scope = null) {
         _suppressError: !!suppress,
         query: `${base} WHERE ${w}` });
       if (r?.error) return r;
+      // A chunk that lost rows poisons the whole side — carry it forward
+      // so the completeness gate below sees it, chunked or not.
+      if (r?.incomplete) return { records: [], incomplete: r.incomplete };
       recs = recs.concat(r.records || []);
     }
     const seen = new Set();
     return { records: recs.filter(x => { if (seen.has(x.Id)) return false; seen.add(x.Id); return true; }) };
   }
-  const runScanPair = (plan, suppress) => Promise.all([
-    queryAllScoped('src', plan, suppress), queryAllScoped('tgt', plan, suppress)]);
+  // THE COMPLETENESS GATE (user 2026-08-28: "we have to make sure we are
+  // first getting all the chosen records from org a, and compare them to
+  // all the records in org b"). A comparison built on a partial read calls
+  // absent-but-existing records "missing in target" — or worse, deletes
+  // them as extras. Refusing is the only honest answer.
+  const runScanPair = async (plan, suppress) => {
+    const [a, b] = await Promise.all([
+      queryAllScoped('src', plan, suppress), queryAllScoped('tgt', plan, suppress)]);
+    for (const [side, r] of [['source', a], ['target', b]]) {
+      if (r && !r.error && r.incomplete) {
+        // The refusal is returned on ITS side and flagged, so the dot-path
+        // fallback below never mistakes it for a rejected relationship query
+        // and quietly re-runs the scan without lookups (re-review 2026-09-12).
+        const err = { incomplete: true, error: `the ${side} read came back INCOMPLETE — Salesforce says ${r.incomplete.expected} record(s) match, but only ${r.incomplete.got} arrived (a dropped page, or records changing mid-read). The comparison was refused rather than built on a partial read. Re-run the scan; if it repeats, export a 🐞 debug report.` };
+        return side === 'source' ? [err, b] : [a, err];
+      }
+    }
+    return [a, b];
+  };
 
   let comparePlan = enhanced;
   let lookupCompareDegraded = false;
@@ -1051,7 +1074,7 @@ async function runDiffScan(profile, node = null, scope = null) {
     [srcRes, tgtRes] = await runScanPair(enhanced, canFallback);
     // A bad relationship/match field 400s the dot-path query → fall back to the
     // plain plan (references dropped) so the scan still produces a result.
-    if ((srcRes?.error || tgtRes?.error) && canFallback) {
+    if ((srcRes?.error || tgtRes?.error) && canFallback && !srcRes?.incomplete && !tgtRes?.incomplete) {
       // Record WHY at warn level with the FULL error — the truncated red row
       // used to hide which relationship Salesforce rejected.
       const reason = srcRes?.error || tgtRes?.error;
@@ -1067,6 +1090,20 @@ async function runDiffScan(profile, node = null, scope = null) {
   }
   if (srcRes?.error) return { error: `source query failed: ${srcRes.error}` };
   if (tgtRes?.error) return { error: `target query failed: ${tgtRes.error}` };
+
+  // Person Account CONTACTS are not records of their own: Salesforce creates
+  // the Contact behind each Person Account and refuses it as an insert
+  // (user 2026-09-16: "Cannot select a person account" ×10, right after the
+  // Accounts went in and the target created its own). They still take part
+  // in MATCHING — a matched, identical pair must read 🟢 Synced (user
+  // 2026-09-18: "i dont see the contacts as synced") — and are taken out of
+  // every ACTIONABLE bucket after the match-up (see the pass before the caps).
+  let _paContacts = null;
+  const _paSrc = new Set(), _paTgt = new Set();
+  if (objType === 'Contact') {
+    for (const r of (srcRes.records || [])) if (r && r.IsPersonAccount === true) _paSrc.add(r.Id);
+    for (const r of (tgtRes.records || [])) if (r && r.IsPersonAccount === true) _paTgt.add(r.Id);
+  }
 
   // Stored compareFields reflect the plan actually used (so the compare table
   // shows the same fields and re-resolves lookups by name on demand).
@@ -1138,6 +1175,23 @@ async function runDiffScan(profile, node = null, scope = null) {
   // query returns the same single page PLUS the true totalSize, so the cap is
   // now reported with a measured number. Same one round-trip as before; a
   // target with fewer orphans than a page sees no change at all.
+  // The SOURCE side has the mirror-image blind spot, and it is worse
+  // because nothing reported it: the scoped query is `parentField IN
+  // (parents)`, so a source child whose parent link is BLANK can never
+  // appear in any bucket — the scan looks complete while silently missing
+  // them (user 2026-08-27: "it didn't pick up all the step orders"). One
+  // COUNT() names how many exist; the warning tells the user why they are
+  // absent and what actually deploys them.
+  let _srcNoLink = null;
+  if (scope && scope.parentField) {
+    try {
+      const w2 = where ? `(${where}) AND ${scope.parentField} = null` : `${scope.parentField} = null`;
+      const q2 = await sendBg({ type: 'SF_QUERY', orgUrl: srcSess.orgUrl, sid: srcSess.sid, tooling: false,
+        _suppressError: true, query: `SELECT COUNT() FROM ${objType} WHERE ${w2}` });
+      if (q2 && !q2.error && Number.isFinite(q2.totalSize)) _srcNoLink = q2.totalSize;
+    } catch (_) { _srcNoLink = null; }
+  }
+
   const ORPHAN_ROW_CAP = 2000;
   let _orphanRecs = [];
   let _orphanTotal = null;     // measured org-side total; null = not reported
@@ -1180,6 +1234,9 @@ async function runDiffScan(profile, node = null, scope = null) {
   const memPairedTgt = new Set();
   let memRows = [];                 // [{ sr, tr }] — classified with the buckets below
   const memWarnings = [...keyFallbackWarnings];
+  if (_srcNoLink) {
+    memWarnings.push(`${_srcNoLink} source ${objType} record(s) have a BLANK ${scope.parentField} — a parent-scoped scan can never see them, so they are absent from every bucket above (they are NOT “in sync”). Populate the link, or deploy them with a flat ${objType} profile.`);
+  }
   // AUTONUMBER match key (W7 pattern audit) — the values are org-generated
   // sequence numbers: 'A-0042' in two orgs are DIFFERENT records that happen
   // to share a counter position. Matching by them pairs records arbitrarily,
@@ -1380,6 +1437,20 @@ async function runDiffScan(profile, node = null, scope = null) {
         onlyInTarget.push({ matchKey: k || '(no key)', targetId: tr.Id, orphan: true });
       }
     } catch (_) { /* degrade — orphans just don't show */ }
+  }
+  // Person Account contacts: never OFFERED. Insert would be refused ("Cannot
+  // select a person account"), and a difference on one is a difference on its
+  // Account's Person fields — resolved there. What stays visible: matched,
+  // identical pairs under Synced, tagged; everything else is counted.
+  if (_paSrc.size || _paTgt.size) {
+    const drop = (arr, isPa) => { let n = 0; for (let i = arr.length - 1; i >= 0; i--) if (isPa(arr[i])) { arr.splice(i, 1); n++; } return n; };
+    const bySrc = r => !!r && _paSrc.has(r.sourceId), byTgt = r => !!r && _paTgt.has(r.targetId);
+    const c = { src: _paSrc.size, tgt: _paTgt.size, synced: 0, waiting: 0, follows: 0, targetOnly: 0 };
+    c.waiting    = drop(missingInTarget, bySrc);                       // arrives with its Person Account
+    c.follows    = drop(changed, r => bySrc(r) || byTgt(r)) + drop(linkMismatch, r => bySrc(r) || byTgt(r));
+    c.targetOnly = drop(onlyInTarget, byTgt);
+    for (const r of identical) if (bySrc(r) || byTgt(r)) { r.personAccount = true; c.synced++; }
+    _paContacts = c;
   }
   // L6 — the per-bucket SHIP caps. The buckets above are COMPLETE (both sides
   // were paged in full by SF_QUERY_ALL); these caps only decide how much of
@@ -1582,7 +1653,11 @@ async function runDiffScan(profile, node = null, scope = null) {
     // triage (2026-08-09): a record in NO bucket almost always means a
     // filter excluded it BEFORE matching, and without these numbers that
     // failure mode is indistinguishable from a matching bug.
-    fetched: { src: (srcRes.records || []).length, tgt: (tgtRes.records || []).length },
+    fetched: { src: (srcRes.records || []).length, tgt: (tgtRes.records || []).length,
+      // The server's own totals, when the fetch path carried them — the
+      // header renders "read N of N", which is the PROOF of completeness,
+      // not just a count of what happened to arrive.
+      srcTotal: srcRes.serverTotal ?? null, tgtTotal: tgtRes.serverTotal ?? null },
     ...(where ? { where } : {}),
     // Missing↔extra pairs whose keys differ only by whitespace/case — the
     // per-row detail rides on the rows themselves (row.nearMiss).
@@ -1627,6 +1702,8 @@ async function runDiffScan(profile, node = null, scope = null) {
     // Set when the dot-path (lookup-by-name) compare 400'd and the scan fell
     // back to the plain plan — lookups are excluded from drift in this result.
     ...(lookupCompareDegraded ? { lookupCompareDegraded: true } : {}),
+    // Person Account contacts left out on each side (Contact scans only).
+    ...(_paContacts ? { personContacts: _paContacts } : {}),
     // T7 — field differences dropped as phantom State/Country normalization
     // (same code on both sides). Rows whose ONLY differences were phantom are
     // in `identical`, not `changed`.
@@ -1946,6 +2023,20 @@ window.retryFailedRun = function(runId) {
   }
   walk(profile.tree, []);
 
+  // A failed CHILD whose parents were written cannot be retried as a tree
+  // run: its ancestors carry no filter, so ▶ Run would insert the WHOLE parent
+  // object again (user 2026-09-18: 10 failed Contacts → a plan reading
+  // "Account 5,058"). Those go to ⚖ Reconcile, which attaches children to the
+  // parents that already exist in the target.
+  const split = sftkRetrySplit(filters);
+  const lost = split.unsafe.reduce((n, k) => n + (filters[k].recordIds || []).length, 0);
+  if (split.unsafe.length && !split.safe.length) {
+    showToast(`↻ These ${lost} failed record(s) are children of records that are already in ${orgLabel(run.tgtOrgUrl || run.targetOrg || profile.targetOrg)} — a tree run would insert their parents again. Opening ⚖ Reconcile: rescan, open the child section, and insert them under the existing parents.`, 'warning', 12000);
+    window.openReconcile?.(profile.id, run.tgtOrgUrl || run.targetOrg || undefined);
+    return;
+  }
+  for (const k of split.unsafe) delete filters[k];
+
   // Seed the transfer page state, then navigate.
   _transferProfile      = profile;
   _transferNodeFilters  = filters;
@@ -1953,8 +2044,25 @@ window.retryFailedRun = function(runId) {
   document.querySelector('[data-view="profiles"]')?.classList.add('active');
   _currentView = 'profiles';
   renderTransfer();
-  showToast(`Retry queued — ${Object.values(failedByObj).reduce((n,a)=>n+a.length,0)} record(s) across ${Object.keys(failedByObj).length} object(s). Click ▶ Run to retry.`, 'info', 5000);
+  const queued = Object.values(filters).reduce((n, f) => n + (f.recordIds || []).length, 0);
+  showToast(`Retry queued — ${queued} record(s) across ${Object.keys(filters).length} object(s). Click ▶ Run to retry.${lost ? ` ${lost} failed child record(s) whose parents were already written are NOT in this retry — insert them from ⚖ Reconcile.` : ''}`, lost ? 'warning' : 'info', lost ? 12000 : 5000);
 };
+
+// PURE. Which seeded retry filters are safe for a TREE run? A node is safe
+// when it is the root, or when EVERY ancestor is filtered too. Keys are tree
+// paths ('' = root, '0', '0.1', …).
+function sftkRetrySplit(filters) {
+  const keys = Object.keys(filters || {}).sort();   // '' (the root) first — object key order puts '0' before ''
+  const safe = [], unsafe = [];
+  for (const k of keys) {
+    if (k === '') { safe.push(k); continue; }
+    const parts = k.split('.');
+    const ancestors = [''];
+    for (let i = 1; i < parts.length; i++) ancestors.push(parts.slice(0, i).join('.'));
+    (ancestors.every(a => a in filters) ? safe : unsafe).push(k);
+  }
+  return { safe, unsafe };
+}
 
 // ════════════════════════════════════════════════════════════════
 // DRIFT FIELD COMPARE — used by the Pick Records picker + Reconcile view
@@ -2149,7 +2257,7 @@ function sftkFieldTypeLabel(f) {
 // captureOrgSnapshot writes them). `types` = { src: {name:describeField},
 // tgt: {…} } → each side shows its EXACT type, and a type difference is
 // called out even when the values happen to match.
-function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap = {}, types = null) {
+function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap = {}, types = null, opts = null) {
   if (!srcRec || !tgtRec) {
     return `<div class="ds-drift-compare-err">⚠ Record not found on one or both orgs — may have been deleted since the last scan. Click 🔄 Refresh state to update.</div>`;
   }
@@ -2208,31 +2316,244 @@ function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap
   if (!pairs.length) {
     return `<div class="ds-drift-compare-empty">No compareFields configured for this profile — can't show field-by-field diff. Add fields to the Field Mapping on the root node to enable.</div>`;
   }
-  return `
-    <div class="ds-drift-compare">
-      <div class="ds-drift-compare-hdr">${diffCount} of ${pairs.length} field${pairs.length !== 1 ? 's' : ''} differ${diffCount === 1 ? 's' : ''}${phantomCount ? `<span style="margin-left:8px;font-weight:400;color:#4338ca" title="State/Country label(s) rewritten by the target org's State &amp; Country Picklists — same underlying code on both sides. Not counted as drift: an overwrite can never change them.">· ${phantomCount} normalized by the target org</span>` : ''}</div>
-      <div class="ds-drift-compare-table">
-        <div class="ds-drift-compare-row ds-drift-compare-row-hdr">
-          <span class="ds-drift-compare-field">Field</span>
-          <span class="ds-drift-compare-val">Source</span>
-          <span class="ds-drift-compare-val">Target</span>
+
+  // ── v2 (user 2026-08-27: "the field value compare screen UI can be
+  // improved. it looks very old. and not intuitive" + "when updating i want
+  // to be able to select lookups as well") ───────────────────────────────
+  // Differences FIRST — they are what the user opened this for; matching
+  // fields fold away under a native <details>, so the answer is one glance
+  // with no scrolling past rows that agree. With opts.selectable, every row
+  // that CAN be pushed carries a checkbox — lookups included: their value
+  // shown and pushed is the related record's key, resolved in the target at
+  // push time, never the raw cross-org Id. Rows that cannot be pushed say
+  // WHY on the disabled control instead of silently lacking one.
+  const canPush = p => p.differs && !p.phantom
+    && !(lookupMap[p.srcField] && lookupMap[p.srcField].skip);
+  const selectable = !!(opts && opts.selectable);
+  const differing = pairs.filter(p => p.differs);
+  const agreeing  = pairs.filter(p => !p.differs);
+  const lkpOf = p => lookupMap[p.srcField] || null;
+
+  const val = (v, side) => v === '∅'
+    ? `<span class="ds-dc-empty" title="no value">empty</span>`
+    : `<span class="ds-dc-v ds-dc-v-${side}" title="${esc(v)}">${esc(v)}</span>`;
+
+  const tag = (txt, cls, tip) =>
+    `<span class="ds-dc-tag${cls ? ' ' + cls : ''}"${tip ? ` title="${esc(tip)}"` : ''}>${txt}</span>`;
+
+  const row = p => {
+    const info = lkpOf(p);
+    const pushable = selectable && canPush(p);
+    const why = !p.differs ? '' : p.phantom
+      ? 'Cannot be pushed: the target org rewrites this label from the code on every write.'
+      : (info && info.skip) ? 'Cannot be pushed: this lookup cannot be safely resolved across orgs (polymorphic with no match field configured).'
+      : '';
+    return `
+      <div class="ds-dc-row${p.differs ? ' ds-dc-diff' : ''}">
+        ${selectable ? (pushable
+          ? `<input type="checkbox" class="ds-dc-cb" data-dcp-src="${esc(p.srcField)}" data-dcp-tgt="${esc(p.tgtField)}" data-dcp-lkp="${info ? '1' : ''}" data-dcp-cur="${esc(String(p.tgtVal).slice(0, 120))}" data-dcp-new="${esc(String(p.srcVal).slice(0, 120))}" title="Select to update this field on the target record">`
+          : `<span class="ds-dc-cb-slot"${why ? ` title="${esc(why)}"` : ''}>${p.differs ? '–' : ''}</span>`) : ''}
+        <div class="ds-dc-field">
+          <span class="ds-dc-fname" title="${p.srcField !== p.tgtField ? esc(p.srcField + ' → ' + p.tgtField) : esc(p.srcField)}">${esc(p.srcField)}${p.srcField !== p.tgtField ? ` <span class="ds-dc-rename">→ ${esc(p.tgtField)}</span>` : ''}</span>
+          <span class="ds-dc-tags">
+            ${info && !info.skip ? tag(`🔗 by ${esc(info.matchField)}`, 'ds-dc-tag-lkp', `Lookup — compared and pushed by the related record's ${info.matchField}, never by the raw Id (Ids differ between orgs).`) : ''}
+            ${info && info.skip ? tag('🔗 not compared', 'ds-dc-tag-mute', 'Polymorphic lookup with no match field configured — a raw-Id comparison across orgs would always differ, so it is not counted as drift.') : ''}
+            ${p.phantom ? tag('≡ normalized by target', 'ds-dc-tag-phantom', `Both orgs hold the same code (${esc(p.phantomCode || '')}) — the target rewrites this label on every write, so it can never converge and is not drift.`) : ''}
+            ${p.subtle ? tag(`≈ ${esc(p.subtle)}`, 'ds-dc-tag-subtle', 'The values differ only subtly — easy to miss by eye.') : ''}
+            ${p.typeDiffers ? tag('⚠ type differs', 'ds-dc-tag-warn', `Defined differently in the two orgs (${esc(p.srcType)} vs ${esc(p.tgtType)}) — values can be truncated, rounded or rejected on write.`) : ''}
+          </span>
         </div>
-        ${pairs.map(p => `
-          <div class="ds-drift-compare-row${p.differs ? ' ds-drift-compare-row-diff' : ''}${(p.note || p.phantom) && !p.differs ? ' ds-drift-compare-row-lkp' : ''}">
-            <span class="ds-drift-compare-field" title="${p.srcField !== p.tgtField ? esc(p.srcField + ' → ' + p.tgtField) : esc(p.srcField)}">
-              ${esc(p.srcField)}${p.srcField !== p.tgtField ? `<span class="ds-drift-compare-rename"> → ${esc(p.tgtField)}</span>` : ''}
-              ${p.note ? `<span class="ds-drift-compare-lkptag">${esc(p.note)}</span>` : ''}
-              ${p.phantom ? `<span class="ds-drift-compare-lkptag" style="background:#eef2ff;color:#4338ca;border-color:#c7d2fe" title="Both orgs hold the same code (${esc(p.phantomCode || '')}) — the target org has State &amp; Country Picklists enabled, so it rewrites this label from the code on every write. Pushing the source label would be normalized straight back (or rejected outright), so this can never converge. Not counted as drift.">≡ normalized by the target org — same code, different label</span>` : ''}
-              ${p.subtle ? `<span class="ds-drift-compare-lkptag" title="The values differ only subtly — easy to miss by eye">≈ ${esc(p.subtle)}</span>` : ''}
-              ${p.typeDiffers ? `<span class="ds-drift-compare-lkptag ds-drift-typediff" title="This field is defined DIFFERENTLY in the two orgs (${esc(p.srcType)} vs ${esc(p.tgtType)}) — values can be truncated, rounded or rejected on write.">⚠ type differs</span>` : ''}
-            </span>
-            <span class="ds-drift-compare-val">${esc(p.srcVal)}${p.srcType ? `<span class="ds-drift-type">${esc(p.srcType)}</span>` : ''}</span>
-            <span class="ds-drift-compare-val">${esc(p.tgtVal)}${p.tgtType ? `<span class="ds-drift-type${p.typeDiffers ? ' ds-drift-type-bad' : ''}">${esc(p.tgtType)}</span>` : ''}</span>
-          </div>
-        `).join('')}
+        <div class="ds-dc-vals">
+          ${val(p.srcVal, 'src')}
+          <span class="ds-dc-arrow">${p.differs ? '≠' : '='}</span>
+          ${val(p.tgtVal, 'tgt')}
+          ${p.srcType || p.tgtType ? `<span class="ds-dc-types">${esc(p.srcType || '?')}${p.typeDiffers ? ` → <b>${esc(p.tgtType || '?')}</b>` : ''}</span>` : ''}
+        </div>
+      </div>`;
+  };
+
+  return `
+    <div class="ds-dc">
+      <div class="ds-dc-hdr">
+        <span class="ds-dc-pill${diffCount ? ' ds-dc-pill-diff' : ' ds-dc-pill-ok'}">${diffCount ? `${diffCount} field${diffCount !== 1 ? 's' : ''} differ` : 'all fields match'}</span>
+        <span class="ds-dc-sub">${agreeing.length} match${phantomCount ? ` · ${phantomCount} normalized by the target org` : ''}</span>
+        <span class="ds-dc-legend">source → target</span>
       </div>
+      ${differing.map(row).join('')}
+      ${agreeing.length ? `
+        <details class="ds-dc-fold">
+          <summary>Show the ${agreeing.length} matching field${agreeing.length !== 1 ? 's' : ''}</summary>
+          ${agreeing.map(row).join('')}
+        </details>` : ''}
+      ${selectable && differing.some(canPush) ? `
+        <div class="ds-dc-foot">
+          <span class="ds-dc-count">0 selected</span>
+          <button class="ds-btn ds-btn-xs ds-dc-all" type="button">✓ All different</button>
+          <button class="ds-btn ds-btn-xs ds-btn-primary ds-dc-push" type="button" disabled
+            title="Write the selected source values onto THIS target record. Lookups are re-pointed by matching the related record in the target — an ambiguous or missing match is reported, never guessed.">✍ Update selected on target</button>
+        </div>` : ''}
     </div>
   `;
+}
+
+// ── Per-field push — what the compare screen's checkboxes DO ────────
+// Writes ONLY the ticked fields onto ONE target record. Plain fields carry
+// the source value. Lookups are the reason this exists (user 2026-08-27):
+// the source's related-record KEY is resolved against the target — exactly
+// one match wins; zero or several is that field's ERROR, never a guess and
+// never a silent null. Production targets get the typed-name confirmation
+// every other prod write gets.
+async function sftkPushFieldsToTarget(profile, objType, srcId, tgtId, picks) {
+  const out = { ok: false, applied: [], errors: [] };
+  if (!picks || !picks.length) { out.errors.push('nothing selected'); return out; }
+  const allSess = _buildAllSessions();
+  const srcSess = _resolveSession(profile.sourceOrg, allSess);
+  const tgtSess = _resolveSession(profile.targetOrg, allSess);
+  if (!srcSess?.sid || !tgtSess?.sid) { out.errors.push('both orgs must be open (or stored) to push'); return out; }
+
+  if (await ensureOrgType(profile.targetOrg) === 'production') {
+    const okProd = await confirmTypedProd(orgLabel(profile.targetOrg), `update ${picks.length} field(s) on 1 ${objType} record`);
+    if (!okProd) { out.errors.push('cancelled'); return out; }
+  }
+
+  const desc = await describe(objType, srcSess.orgUrl, srcSess.sid);
+  const node = _findTreeNode(profile.tree, objType);
+  const lkpMap = buildLookupCompareMap(desc, node?.lookupResolutions);
+  const byName = {};
+  for (const f of (desc?.fields || [])) byName[f.name] = f;
+
+  // PII policy applies to EVERY write path (re-review 2026-09-12: this push
+  // wrote raw source values into the very target the policy protects).
+  // Same contract as Reconcile's overwrite: rules keyed by this object's
+  // field names, a policy without a salt is a hard stop, and a lookup whose
+  // match field is covered is refused — resolving it would send the raw
+  // value into a target-org SOQL.
+  const piiRules = {};
+  for (const [k, rule] of Object.entries(profile?.piiPolicy || {})) {
+    if (!rule) continue;
+    const dot = k.indexOf('.');
+    if (dot < 0 || k.slice(0, dot).toLowerCase() !== String(objType).toLowerCase()) continue;
+    piiRules[k.slice(dot + 1).toLowerCase()] = rule;
+  }
+  const piiCovered = (obj, field) => Object.keys(profile?.piiPolicy || {}).some(k =>
+    profile.piiPolicy[k] && k.toLowerCase() === `${String(obj)}.${String(field)}`.toLowerCase());
+  if (Object.keys(piiRules).length && !profile?.piiSalt) {
+    out.errors.push('PII policy has no salt — open the deployment in the builder once'); return out;
+  }
+
+  // One read covers every pick: plain fields raw, lookups via dot-path.
+  const sel = new Set(['Id']);
+  for (const p of picks) {
+    const info = p.lkp ? lkpMap[p.srcField] : null;
+    if (info && !info.skip) sel.add(`${info.relName}.${info.matchField}`);
+    else sel.add(p.srcField);
+  }
+  const sq = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+    query: `SELECT ${[...sel].join(',')} FROM ${objType} WHERE Id = '${srcId}'` });
+  if (sq?.error || !sq?.records?.length) { out.errors.push(`source read failed: ${sq?.error || 'record not found'}`); return out; }
+  const srcRec = sq.records[0];
+
+  const body = {};
+  for (const p of picks) {
+    const info = p.lkp ? lkpMap[p.srcField] : null;
+    if (!info || info.skip) {
+      let v = srcRec[p.srcField] === undefined ? null : srcRec[p.srcField];
+      const rule = piiRules[String(p.srcField).toLowerCase()];
+      if (rule) {
+        const m = await sftkPiiMaskValue(v, byName[p.srcField] || {}, profile.piiSalt, rule);
+        if (m.action !== 'kept') {
+          body[p.tgtField] = m.value;
+          out.applied.push(`${p.tgtField} (masked — ${m.action})`);
+          continue;
+        }
+      }
+      body[p.tgtField] = v;
+      out.applied.push(p.tgtField);
+      continue;
+    }
+    const rel = srcRec[info.relName];
+    const key = rel ? rel[info.matchField] : null;
+    if (key == null || key === '') {
+      // Source lookup is empty — pushing that state IS clearing the target's.
+      body[p.tgtField] = null;
+      out.applied.push(`${p.tgtField} (cleared — source is empty)`);
+      continue;
+    }
+    const f = byName[p.srcField] || {};
+    const cfg = (node?.lookupResolutions || {})[p.srcField];
+    const parentObj = cfg?.matchObject || (f.referenceTo || [])[0];
+    if (!parentObj) { out.errors.push(`${p.srcField}: cannot tell which object this lookup points at`); continue; }
+    if (piiCovered(parentObj, info.matchField)) {
+      out.errors.push(`${p.srcField}: refused — the match field ${parentObj}.${info.matchField} is under this deployment's PII policy, and resolving it would send the raw value to the target org. Match on a field that is not PII.`);
+      continue;
+    }
+    const lit = String(key).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const tq = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+      query: `SELECT Id FROM ${parentObj} WHERE ${info.matchField} = '${lit}' LIMIT 2` });
+    if (tq?.error) { out.errors.push(`${p.srcField}: target lookup failed — ${tq.error}`); continue; }
+    const hits = tq.records || [];
+    if (!hits.length) { out.errors.push(`${p.srcField}: no ${parentObj} with ${info.matchField} “${key}” exists in the target — deploy it first, or pick a different match field`); continue; }
+    if (hits.length > 1) { out.errors.push(`${p.srcField}: “${key}” matches MORE THAN ONE ${parentObj} in the target — linking to either would be a guess. Deduplicate the target or match on an External ID.`); continue; }
+    body[p.tgtField] = hits[0].Id;
+    out.applied.push(`${p.tgtField} → ${parentObj} “${key}”`);
+  }
+
+  if (!Object.keys(body).length) { return out; }
+  const pr = await sendBg({ type: 'SF_PATCH', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+    path: `services/data/v62.0/sobjects/${objType}/${tgtId}`, body });
+  if (pr?.error) { out.errors.push(`target write failed: ${pr.error}`); out.applied = []; return out; }
+  out.ok = true;
+  return out;
+}
+
+// Wires one rendered compare table: checkbox counting, select-all, and the
+// push itself. Shared by every caller so the behaviour cannot drift apart.
+function sftkWireDriftCompare(expand, profile, objType, srcId, tgtId, refetch) {
+  const cbs = [...expand.querySelectorAll('.ds-dc-cb')];
+  const pushBtn = expand.querySelector('.ds-dc-push');
+  const countEl = expand.querySelector('.ds-dc-count');
+  if (!pushBtn || !cbs.length) return;
+  const sync = () => {
+    const n = cbs.filter(c => c.checked).length;
+    if (countEl) countEl.textContent = `${n} selected`;
+    pushBtn.disabled = !n;
+  };
+  cbs.forEach(c => c.addEventListener('change', sync));
+  expand.querySelector('.ds-dc-all')?.addEventListener('click', () => {
+    cbs.forEach(c => { c.checked = true; });
+    sync();
+  });
+  pushBtn.addEventListener('click', async () => {
+    const picks = cbs.filter(c => c.checked).map(c => ({
+      srcField: c.dataset.dcpSrc, tgtField: c.dataset.dcpTgt, lkp: c.dataset.dcpLkp === '1',
+      cur: c.dataset.dcpCur, next: c.dataset.dcpNew,
+    }));
+    if (!picks.length) return;
+    // Show what each field HOLDS and what it BECOMES before writing — the
+    // insert flow's 🔗 cards set that bar, and an update that replaces a
+    // value the user never saw is below it (user 2026-08-30: "we need to
+    // see the existing value, like we did on the insert").
+    const showVal = v => (v === '∅' || v == null || v === '') ? '(empty)' : `“${v}”`;
+    const lines = picks.map(p => p.lkp
+      ? `🔗 ${p.srcField}: now → ${showVal(p.cur)}   will point at → ${showVal(p.next)} (re-matched in the target — exactly one match required)`
+      : `${p.srcField}: ${showVal(p.cur)} → ${showVal(p.next)}`);
+    if (!confirm(`Update ${picks.length} field(s) on this target record?\n\n${lines.join('\n')}\n\nOnly these fields are written. Lookups that match zero or several target records are reported, never guessed.`)) {
+      return;
+    }
+    pushBtn.disabled = true;
+    pushBtn.textContent = '⏳ updating…';
+    const res = await sftkPushFieldsToTarget(profile, objType, srcId, tgtId, picks);
+    if (res.ok && !res.errors.length) {
+      showToast(`✓ ${res.applied.length} field(s) updated on the target record.`, 'success', 5000);
+    } else if (res.ok) {
+      showToast(`⚠ ${res.applied.length} field(s) updated; ${res.errors.length} could not be: ${res.errors.join(' · ')}`, 'warning', 9000);
+    } else {
+      showToast(`❌ Nothing was written: ${res.errors.join(' · ')}`, 'error', 9000);
+    }
+    // Re-read and repaint — the values on screen are stale the moment the
+    // write lands, and showing them would claim a drift that is now fixed.
+    if (typeof refetch === 'function') await refetch();
+  });
 }
 
 // Manual "📸 Snapshot" for a single PROFILE — captures snapshots for every

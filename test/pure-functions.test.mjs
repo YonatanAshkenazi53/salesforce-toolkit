@@ -82,6 +82,12 @@ describe('buildCopyFields (background.js) — which fields a transfer reads', ()
     expect(fields).not.toContain('Formula__c');   // read-only non-reference
   });
 
+  it('reads IsPersonAccount when the object has it — read-only, but the payload must know (2026-09-15)', () => {
+    const d = { fields: [...describeRes.fields, { name: 'IsPersonAccount', createable: false, type: 'boolean' }] };
+    expect(buildCopyFields(d)).toContain('IsPersonAccount');
+    expect(buildCopyFields(describeRes)).not.toContain('IsPersonAccount');
+  });
+
   it('degrades to [Id] on a malformed describe (no .accessible regression!)', () => {
     expect(buildCopyFields(null)).toEqual(['Id']);
     expect(buildCopyFields({})).toEqual(['Id']);
@@ -308,35 +314,6 @@ describe('P5 picklist sync diffs (studio-picklists.js)', () => {
     ];
     const out = pkRtSyncDiff(srcRts, tgtRts);
     expect(out).toEqual([{ rtId: 'T1', devName: 'Partner', adds: ['Warm'], removes: ['Extra'] }]);
-  });
-});
-
-describe('tree diff helpers (studio-treediff.js)', () => {
-  const tdSuggest = extractFunction('studio-treediff.js', 'tdSuggest');
-  const tdTreeNodes = extractFunction('studio-treediff.js', 'tdTreeNodes');
-  const tdCounts = extractFunction('studio-treediff.js', 'tdCounts');
-
-  it('suggests operations in execution order, child-first annotated', () => {
-    expect(tdSuggest({ missing: 12, changed: 3, extra: 1, link: 4 }, 1, 'childFirst'))
-      .toEqual(['⬆ push 12 (child-first)', '✏ overwrite 3', '🔗 relink 4', '🔵 review 1 extra']);
-    expect(tdSuggest({ missing: 0, changed: 0, extra: 0, link: 0 }, 0)).toEqual([]);
-  });
-
-  it('flattens the tree to depth 2 with pathKeys', () => {
-    const tree = { objectType: 'Account', children: [
-      { childSObject: 'Contact', children: [{ childSObject: 'Task', children: [] }] },
-      { childSObject: 'Case', children: [] },
-    ] };
-    const nodes = tdTreeNodes(tree);
-    expect(nodes.map(n => n.pathKey)).toEqual(['', '0', '0.0', '1']);
-    expect(nodes.map(n => n.depth)).toEqual([0, 1, 2, 1]);
-  });
-
-  it('counts buckets, null for failed/absent scans', () => {
-    expect(tdCounts({ missingInTarget: [1, 2], changed: [1], onlyInTarget: [], linkMismatch: [1], identical: [1, 2, 3] }))
-      .toEqual({ missing: 2, changed: 1, extra: 0, link: 1, identical: 3 });
-    expect(tdCounts(null)).toBeNull();
-    expect(tdCounts({ error: 'x' })).toBeNull();
   });
 });
 
@@ -581,8 +558,47 @@ describe('Bulk API 2.0 codec + correlation (Phase B, background.js)', () => {
 });
 
 describe('flow XML backup (N1 — sftk-flow-xml.js + zip round-trip)', () => {
-  const { sftkFlowToXml, sftkFlowPackageXml } =
-    extractFunctions('sftk-flow-xml.js', ['sftkFlowToXml', 'sftkFlowPackageXml', 'sftkXmlNode', 'sftkXmlEscape']);
+  // sftkFlowToXml now routes apiVersion through sftkFlowApiVersionStr, so
+  // the extraction has to materialise it too (shared-scope extraction
+  // resolves a function's frees, it does not invent them).
+  const { sftkFlowToXml, sftkFlowPackageXml, sftkFlowApiVersionStr, sftkFlowSetApiVersion } =
+    extractFunctions('sftk-flow-xml.js', ['sftkFlowToXml', 'sftkFlowPackageXml', 'sftkXmlNode',
+      'sftkXmlEscape', 'sftkFlowApiVersionStr', 'sftkFlowSetApiVersion']);
+
+  // Salesforce accepts "62.0" and REJECTS "62" for a flow's apiVersion, and
+  // the Tooling API hands it back as a NUMBER — so a plain serialize emits
+  // the rejected form and the deploy fails with a message that never
+  // mentions the version (user 2026-08-22, flow API-version changer).
+  it('renders apiVersion in the one shape Salesforce accepts', () => {
+    expect(sftkFlowApiVersionStr(62)).toBe('62.0');
+    expect(sftkFlowApiVersionStr('62')).toBe('62.0');
+    expect(sftkFlowApiVersionStr('v62.0')).toBe('62.0');
+    expect(sftkFlowApiVersionStr(62.5)).toBe('62.5');
+    expect(sftkFlowToXml({ apiVersion: 58 })).toContain('<apiVersion>58.0</apiVersion>');
+  });
+
+  it('an unreadable apiVersion is dropped, never guessed at', () => {
+    expect(sftkFlowApiVersionStr('junk')).toBe(null);
+    expect(sftkFlowApiVersionStr(null)).toBe(null);
+    // Emitting <apiVersion></apiVersion> would be rejected; omitting it
+    // lets Salesforce keep the flow's existing version.
+    expect(sftkFlowToXml({ apiVersion: 'junk', label: 'X' })).not.toContain('apiVersion');
+  });
+
+  it('setting the version COPIES — a failed deploy leaves nothing half-edited', () => {
+    const before = { apiVersion: 58, label: 'X', elements: [1] };
+    const r = sftkFlowSetApiVersion(before, '62.0');
+    expect(r.meta.apiVersion).toBe('62.0');
+    expect(r.from).toBe('58.0');
+    expect(r.to).toBe('62.0');
+    expect(before.apiVersion).toBe(58);
+    expect(r.meta.elements).toBe(before.elements);
+  });
+
+  it('refuses a target Salesforce would not accept, with the reason', () => {
+    expect(sftkFlowSetApiVersion({ apiVersion: 58 }, 'latest').error).toContain('latest');
+    expect(sftkFlowSetApiVersion(null, '62.0').error).toContain('no flow metadata');
+  });
 
   it('serializes a Flow: alphabetical elements, arrays repeated, nulls omitted, text escaped', () => {
     const xml = sftkFlowToXml({

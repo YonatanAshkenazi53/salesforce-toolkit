@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>64.0</apiVersion>
+    <description>Admin Toolkit test fixture: level 1 of four subflow levels. Only calls level 2. Safe to delete.</description>
+    <interviewLabel>SFTK Dep Test L1 {!$Flow.CurrentDateTime}</interviewLabel>
+    <label>SFTK Dep Test - Level 1</label>
+    <processType>AutoLaunchedFlow</processType>
+    <start>
+        <locationX>50</locationX>
+        <locationY>0</locationY>
+        <connector>
+            <targetReference>Call_Level_2</targetReference>
+        </connector>
+    </start>
+    <status>Active</status>
+    <subflows>
+        <name>Call_Level_2</name>
+        <label>Call Level 2</label>
+        <locationX>176</locationX>
+        <locationY>134</locationY>
+        <flowName>SFTK_Dep_Test_L2</flowName>
+    </subflows>
+</Flow>

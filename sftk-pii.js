@@ -146,7 +146,12 @@ function sftkPiiSuggest(objectApi, fields, complianceByField, samplesByField) {
   // Account a Billing address is usually business data, so it is offered
   // without the "sure" flag rather than not offered at all.
   const addrRx = /(street|city|postal|zipcode|zip$|address)/i;
-  const personObj = /^(Contact|Lead|Person.*|.*__c)$/i.test(String(objectApi || ''));
+  // PERSON-SHAPED means the object is about people. Everything else — a
+  // custom object, an Account, a junction — is not, and its record Name is
+  // a label like "LC-0400", not someone's name (user 2026-08-21: "why do
+  // you suggest the name field, its not a pii").
+  const personObj = /^(contact|lead|user)$/i.test(String(objectApi || ''))
+    || /(person|people|employee|patient|customer|candidate|member|student|donor|applicant|passenger|client|guest|staff)/i.test(String(objectApi || ''));
   const out = [];
   for (const f of (fields || [])) {
     if (!f || !f.name) continue;
@@ -166,12 +171,22 @@ function sftkPiiSuggest(objectApi, fields, complianceByField, samplesByField) {
       if (personObj || /mailing|home|personal|other/i.test(f.name)) sure = true;
     }
     if (f.type === 'email' || f.type === 'phone') { reasons.push(f.type + ' field'); sure = true; }
-    if (f.nameField) { reasons.push('name field'); sure = true; }
+    // A record's Name is only a person's name on a person-shaped object.
+    // Elsewhere it is an identifier or a label, and flagging it buries the
+    // real findings in noise. Values can still catch it below.
+    let namePattern = null;
+    if (f.nameField && personObj) {
+      reasons.push('record name on a person-shaped object'); sure = true;
+      namePattern = 'person-name';
+    }
     // Person-name PARTS: the compound Name carries nameField but is not
     // createable — FirstName/LastName are what the payload actually sends,
     // so they must be suggestable in their own right (adversarial review).
     if (/^((first|last|middle|maiden|nick)_?name|salutation|suffix)(__c)?$/i.test(f.name)) {
       reasons.push('person name part'); sure = true;
+      // Masking a first name to a LAST name reads as broken — match the part.
+      if (/^last_?name|surname/i.test(f.name)) namePattern = 'last-name';
+      else if (/^(first|middle|maiden|nick)_?name/i.test(f.name)) namePattern = 'first-name';
     }
     if (nameRx.test(f.name) || nameRx.test(f.label || '')) {
       reasons.push('name/label suggests personal data'); sure = true;
@@ -185,7 +200,9 @@ function sftkPiiSuggest(objectApi, fields, complianceByField, samplesByField) {
     }
     if (!reasons.length) continue;
     out.push({ field: f.name, reason: reasons.join('; '), sure,
-      ...(det ? { pattern: det.pattern } : {}) });
+      // A pattern read from real VALUES always beats one guessed from the
+      // field's role.
+      ...(det ? { pattern: det.pattern } : namePattern ? { pattern: namePattern } : {}) });
   }
   return out;
 }
@@ -220,9 +237,52 @@ function sftkPiiPatternList() {
       caveat: 'Uses the 900-999 area the SSA never issues — shape-valid, and never a real SSN.' },
     { id: 'credit-card', label: 'Credit card', sample: '4539578763621486',
       caveat: 'Luhn-valid so payment validation passes; derived from the hash, never a live card.' },
+    { id: 'person-name', label: 'Person name', sample: 'Yael Cohen',
+      caveat: 'A different REAL-looking name, so a seeded sandbox stays readable. Names repeat across a large set — they identify nobody, but they are not unique either.' },
+    { id: 'first-name', label: 'First name only', sample: 'Yael',
+      caveat: 'For FirstName fields. Same list as Person name.' },
+    { id: 'last-name', label: 'Last name only', sample: 'Cohen',
+      caveat: 'For LastName fields. Same list as Person name.' },
+    { id: 'company', label: 'Company name', sample: 'Northwind Ltd',
+      caveat: 'For Account-style names. Invented companies — any resemblance to a real one is coincidence.' },
     { id: 'digits', label: 'Digits (keep length)', sample: '4820193',
       caveat: 'Same digit count as the source value — for identifiers with no published scheme.' },
   ];
+}
+
+// Word lists for name-shaped masking. Hashing "Dana Levi" to "4n98bcncg23"
+// is technically fine and practically useless: a seeded sandbox becomes
+// unreadable, demos look broken, and nobody can tell one record from
+// another (user 2026-08-21: "i didn't understand how name hashing works,
+// it looks weird"). A name should mask to a NAME — a different one, chosen
+// deterministically from the salted hash.
+function sftkPiiNameLists() {
+  return {
+    first: ['Dana', 'Yael', 'Noa', 'Tamar', 'Maya', 'Shira', 'Adi', 'Lior',
+      'Omer', 'Roni', 'Amit', 'Gal', 'Yuval', 'Eden', 'Tal', 'Nadav',
+      'Itai', 'Eitan', 'Guy', 'Ido', 'Alon', 'Ron', 'Erez', 'Oren',
+      'Avi', 'Yossi', 'Moshe', 'David', 'Sarah', 'Rivka', 'Esther', 'Anna',
+      'Maria', 'John', 'Emma', 'Liam', 'Olivia', 'Noah', 'Ava', 'James',
+      'Sophia', 'Daniel', 'Mia', 'Michael', 'Laura', 'Thomas', 'Julia',
+      'Peter', 'Nina', 'Marco', 'Elena', 'Ahmed', 'Layla', 'Omar', 'Fatima',
+      'Chen', 'Priya', 'Raj', 'Sofia', 'Diego', 'Ines', 'Lucas', 'Clara', 'Hugo'],
+    last: ['Levi', 'Cohen', 'Mizrahi', 'Peretz', 'Biton', 'Avraham', 'Friedman',
+      'Katz', 'Shapira', 'Barak', 'Golan', 'Sharon', 'Adler', 'Gross',
+      'Weiss', 'Klein', 'Smith', 'Johnson', 'Brown', 'Garcia', 'Martinez',
+      'Lopez', 'Wilson', 'Taylor', 'Anderson', 'Moore', 'Jackson', 'Martin',
+      'Lee', 'Nguyen', 'Kim', 'Wang', 'Singh', 'Patel', 'Rossi', 'Ferrari',
+      'Mueller', 'Schmidt', 'Dubois', 'Bernard', 'Silva', 'Santos', 'Novak',
+      'Horvath', 'Kowalski', 'Ivanov', 'Haddad', 'Khoury', 'Ali', 'Hassan',
+      'Yamamoto', 'Tanaka', 'Olsen', 'Berg', 'Fischer', 'Meyer', 'Roux',
+      'Costa', 'Reyes', 'Torres', 'Murphy', 'Kelly', 'Walsh', 'Doyle'],
+    company: ['Northwind', 'Meridian', 'Zenith', 'Harbor', 'Summit', 'Vector',
+      'Lighthouse', 'Ironwood', 'Redwood', 'Silverline', 'Blue Harbor',
+      'Copperfield', 'Granite', 'Bright Field', 'Clearwater', 'Stonebridge',
+      'Fairview', 'Highpoint', 'Riverbend', 'Northgate', 'Westmount',
+      'Cedar Park', 'Golden Vale', 'Silver Creek', 'Emerald Bay', 'Crown Point',
+      'Falcon', 'Aurora', 'Horizon', 'Pinnacle', 'Keystone', 'Anchor'],
+    suffix: ['Ltd', 'Inc', 'LLC', 'Group', 'Holdings', 'Systems', 'Solutions', 'Industries'],
+  };
 }
 
 // Israeli ת״ז check digit: weights alternate 1,2 across the 9 digits,
@@ -316,6 +376,14 @@ function sftkPiiPatternFormat(hex, patternId, fieldDesc, srcValue) {
     out = body + String((10 - (sum % 10)) % 10);
   } else if (patternId === 'email') {
     out = n.toString(36).padStart(10, '0').slice(0, 10) + '@masked.invalid';
+  } else if (patternId === 'person-name' || patternId === 'first-name'
+             || patternId === 'last-name' || patternId === 'company') {
+    const L = sftkPiiNameLists();
+    const first = choose(L.first, 0), last = choose(L.last, 8);
+    out = patternId === 'first-name' ? first
+      : patternId === 'last-name' ? last
+      : patternId === 'company' ? `${choose(L.company, 0)} ${choose(L.suffix, 8)}`
+      : `${first} ${last}`;
   } else if (patternId === 'digits') {
     const srcDigits = String(srcValue == null ? '' : srcValue).replace(/\D/g, '').length;
     out = digits(Math.max(1, Math.min(18, srcDigits || 6)), 0);

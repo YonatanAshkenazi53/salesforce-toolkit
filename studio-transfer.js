@@ -293,6 +293,7 @@ window.sftkEstimateSyncPlanCalls = sftkEstimateSyncPlanCalls;
 
 // The counts tree from the last previewTransfer — the estimator's input.
 let _trLastCounts = null;
+let _trLastTotalIsBound = false;   // true when a grandchild could not be scoped to its filtered parents (count is an upper bound)
 // Last-render-wins token for the async meter fetch below.
 let _trBudgetToken = 0;
 
@@ -456,6 +457,10 @@ async function renderTransfer() {
       <div class="ds-transfer-footer">
         <button class="ds-btn" id="dsTrPreviewBtn" title="Re-count the records in scope">👁 Refresh counts</button>
         <button class="ds-btn" id="dsTrRecPreviewBtn" title="A record-by-record table of what this run will DO — every in-scope record with its operation (Insert / Update / duplicate warning), read from the last 🔄 scan.">📋 Records preview</button>
+        <label class="ds-transfer-option-label" style="display:flex;align-items:center;gap:5px;cursor:pointer"
+          title="Before anything is written, every object in this deployment is read from the target and kept on this PC as a restore point (the newest 10 runs). History then offers ↩ Roll back: delete what the run created, restore what it overwrote — after you review the exact counts. Objects above 50,000 rows (250,000 for insert-only runs) are skipped and the run log says so.">
+          <input type="checkbox" id="dsTrUndoCapture" ${_settings.undoCapture === false ? '' : 'checked'}> 📸 restore point
+        </label>
         <span id="dsTrValidHint" class="ds-tr-valid-hint"></span>
         <button class="ds-btn ds-btn-lg" id="dsTrValidateBtn" disabled
           title="Runs every safety check WITHOUT writing anything — required fields, lookup bridges (with live target probes), record types, child-first feasibility, value-level checks against sampled data. Honest limits: target validation rules, triggers and duplicate rules only fire on real writes, so a passing dry run can't vouch for those.">🧪 Dry Run (validate — no writes)</button>
@@ -497,6 +502,13 @@ async function renderTransfer() {
   eid('dsTrPreviewBtn')?.addEventListener('click', previewTransfer);
   eid('dsTrRecPreviewBtn')?.addEventListener('click', openRunRecordsPreview);
   eid('dsTrRunBtn')?.addEventListener('click', runTransfer);
+  eid('dsTrUndoCapture')?.addEventListener('change', async e => {
+    _settings.undoCapture = !!e.target.checked;
+    await storageSaveSettings();
+    showToast(_settings.undoCapture
+      ? '📸 Restore points on — every data deployment can be rolled back from History'
+      : '📸 Restore points off — runs from now on can NOT be rolled back', _settings.undoCapture ? 'info' : 'warning', 4500);
+  });
   // ONE dry-run control (user 2026-08-09: "we have two dry run buttons why
   // do we need both" — the old checkbox merely relabelled ▶ Run into the
   // SAME validator this button triggers; two doors, one room). The flag
@@ -610,7 +622,7 @@ function _syncRunButtons() {
     run.classList.remove('ds-btn-primary');
     run.classList.add('ds-btn-primary-outline');
   } else {
-    run.textContent = `▶ Run Transfer${_trLastTotal != null ? ` (${_trLastTotal.toLocaleString()} records)` : ''}`;
+    run.textContent = `▶ Run Transfer${_trLastTotal != null ? ` (${_trLastTotalIsBound ? '≤ ' : ''}${_trLastTotal.toLocaleString()} records)` : ''}`;
     run.classList.remove('ds-btn-primary-outline');
     run.classList.toggle('ds-btn-primary', validated);
   }
@@ -694,26 +706,29 @@ function renderTrOrgPair() {
   const tgtUrl  = _transferOrgOverride.tgt || p.targetOrg || _workingPair.tgt || '';
   const overridden = !!(_transferOrgOverride.src || _transferOrgOverride.tgt);
 
-  // All orgs the studio knows about (remembered + currently open), so the
-  // user can pick any of them — reachability is shown per selection.
+  // The target is ONE of this deployment's ring targets (user 2026-09-14:
+  // "when you start a profile you select a ring: the source and targets …
+  // you do it one by one"); the source is the deployment's source. No free
+  // org pair here any more — the ring is chosen in the builder.
+  const ringTargets = (typeof profileTargets === 'function' ? profileTargets(p) : []).filter(Boolean);
+  const tgtChoices = ringTargets.slice();
+  if (tgtUrl && !tgtChoices.some(u => _orgKey(u) === _orgKey(tgtUrl))) tgtChoices.push(tgtUrl);
   const knownOrgs = allMapOrgs();
-  for (const url of [srcUrl, tgtUrl]) {   // ensure current picks are listed
-    if (url && !knownOrgs.some(o => o.url === url)) knownOrgs.push({ url, label: orgLabel(url) });
-  }
+  const labelOf = url => (knownOrgs.find(o => o.url === url) || {}).label || orgLabel(url);
 
-  function chip(url, role) {
+  function chip(url, role, choices) {
     const sess      = url ? _resolveSession(url, allSess) : null;
     const reachable = !!(sess && sess.sid);
     const liveSet   = new Set(allSess.filter(s => s.sid).map(s => _orgKey(s.orgUrl)));
-    const options = knownOrgs.map(o =>
-      `<option value="${esc(o.url)}" ${o.url === url ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label, liveSet))}</option>`
-    ).join('');
+    const picker = Array.isArray(choices)
+      ? `<select class="ds-select ds-select-sm ds-tr-org-select" data-tr-org-role="${role.toLowerCase()}" ${choices.length <= 1 ? 'disabled title="This deployment has one target — add more in ✏ Edit"' : ''}>
+          ${url ? '' : '<option value="" selected>— pick a target —</option>'}
+          ${choices.map(u => `<option value="${esc(u)}" ${u === url ? 'selected' : ''}>${esc(orgOptionLabel(u, labelOf(u), liveSet))}</option>`).join('')}
+        </select>`
+      : `<div class="ds-select ds-select-sm" style="pointer-events:none" title="The deployment's source — change it in ✏ Edit">${esc(orgOptionLabel(url, labelOf(url), liveSet))}</div>`;
     return `<div class="ds-tr-org-chip ${url && !reachable ? 'ds-tr-org-chip-unreachable' : ''}">
       <div class="ds-tr-org-chip-role">${role}</div>
-      <select class="ds-select ds-select-sm ds-tr-org-select" data-tr-org-role="${role.toLowerCase()}">
-        ${url ? '' : '<option value="" selected>— pick an org —</option>'}
-        ${options}
-      </select>
+      ${picker}
       <div class="ds-tr-org-chip-status">
         ${!url
           ? '<span style="color:#EA001E">●</span> Not set'
@@ -726,43 +741,29 @@ function renderTrOrgPair() {
 
   wrap.innerHTML = `
     <div class="ds-tr-org-pair">
-      ${chip(srcUrl, 'Source')}
-      <button class="ds-btn ds-btn-xs ds-tr-org-swap" id="dsTrOrgSwap"
-        title="Swap source and target for this run">⇄</button>
-      ${chip(tgtUrl, 'Target')}
+      ${chip(srcUrl, 'Source', null)}
+      <span class="ds-tr-org-swap" style="pointer-events:none" title="records flow from the source to the chosen target">→</span>
+      ${chip(tgtUrl, 'Target', tgtChoices)}
     </div>
     ${overridden ? `
       <div class="ds-tr-org-override-note">
-        ⚙ Org pair changed for this run only — the saved profile still has
-        <strong>${esc(orgLabel(p.sourceOrg || ''))} → ${esc(orgLabel(p.targetOrg || ''))}</strong>.
+        ⚙ Target changed for this run only — the deployment's first target is
+        <strong>${esc(orgLabel(p.targetOrg || ''))}</strong>.
         <button class="ds-btn ds-btn-xs" id="dsTrOrgReset">↺ Reset to profile</button>
       </div>` : ''}`;
 
-  // Wire: select change → set override (null when it matches the profile,
+  // Wire: target change → set override (null when it matches the profile,
   // so the override note disappears when the user dials it back manually).
   wrap.querySelectorAll('.ds-tr-org-select').forEach(sel => {
     sel.addEventListener('change', () => {
-      const role = sel.dataset.trOrgRole;            // 'source' | 'target'
       const url  = sel.value || null;
-      if (role === 'source') _transferOrgOverride.src = (url === p.sourceOrg) ? null : url;
-      else                   _transferOrgOverride.tgt = (url === p.targetOrg) ? null : url;
+      _transferOrgOverride.tgt = (url === p.targetOrg) ? null : url;
       window._dsTrRefreshOrgs?.();
       renderTrOrgPair();
       updateTransferPreview();
       updateTransferBtn();
       _trUpdateApiBudget();   // E3 — different org, different meter
     });
-  });
-  eid('dsTrOrgSwap')?.addEventListener('click', () => {
-    const curSrc = _transferOrgOverride.src || p.sourceOrg || '';
-    const curTgt = _transferOrgOverride.tgt || p.targetOrg || '';
-    _transferOrgOverride.src = (curTgt === p.sourceOrg) ? null : curTgt;
-    _transferOrgOverride.tgt = (curSrc === p.targetOrg) ? null : curSrc;
-    window._dsTrRefreshOrgs?.();
-    renderTrOrgPair();
-    updateTransferPreview();
-    updateTransferBtn();
-    _trUpdateApiBudget();   // E3
   });
   eid('dsTrOrgReset')?.addEventListener('click', () => {
     _transferOrgOverride = { src: null, tgt: null };
@@ -836,6 +837,14 @@ function buildTransferProfile() {
   // profile.upsert.field and uses the Collections upsert endpoint for root.
   if (_transferWriteMode === 'upsert' && _transferUpsertField) {
     clone.upsert = { field: _transferUpsertField };
+    // 🪪 Upserting on the identity field means the payload must carry THIS
+    // source record's Id there — the engine writes it only when the node
+    // names a stampField (re-review 2026-09-12: Run Transfer sent an empty
+    // key, so nothing could ever match).
+    if (clone.tree && typeof sftkIdFieldName === 'function'
+        && String(_transferUpsertField).toLowerCase() === sftkIdFieldName().toLowerCase()) {
+      clone.tree.stampField = sftkIdFieldName();
+    }
   }
   // Keep the clone's org fields in step with the run-time override so
   // anything downstream that inspects profile.sourceOrg/targetOrg (logging,
@@ -866,7 +875,7 @@ function updateTransferPreview(counts = null) {
     // Count badge (populated after Preview Counts)
     const countBadge = countsNode
       ? countsNode.count !== null
-        ? `<span class="ds-tr-plan-count">${countsNode.count.toLocaleString()}</span>`
+        ? `<span class="ds-tr-plan-count"${countsNode.unscoped ? ' title="Upper bound: SOQL cannot scope a grandchild to filtered parents, so this is the whole table — the run inserts only the children of the records actually in the run"' : ''}>${countsNode.unscoped ? '≤ ' : ''}${countsNode.count.toLocaleString()}</span>`
         : `<span class="ds-tr-plan-err">count failed</span>`
       : '';
 
@@ -927,6 +936,39 @@ function updateTransferPreview(counts = null) {
   });
 }
 
+// PURE. The WHERE for counting ONE tree node the way the engine will READ it.
+// The engine scopes every child to the parents actually in the run; a count
+// that ignores that (SELECT COUNT() FROM Contact with no filter) reports the
+// whole table — "I picked two records and it said 18" (user 2026-09-14).
+//   node:   { objectType|childSObject, field, recordIds?, where? }
+//   parent: null for the root, else { obj, where, semiJoin } from the parent's own count
+// Returns { where, semiJoin, unscoped }. `unscoped` = SOQL cannot express the
+// scope (a grandchild under a filtered parent — semi-joins do not nest), so
+// the number must be shown as an upper bound, never as the count.
+function sftkChildCountWhere(node, parent) {
+  const ids = node && Array.isArray(node.recordIds) ? node.recordIds.filter(Boolean) : [];
+  const own = ids.length
+    ? `Id IN (${ids.map(id => `'${String(id).replace(/'/g, "\\'")}'`).join(',')})`
+    : ((node && node.where) || null);
+  if (!parent || !parent.where) return { where: own, semiJoin: false, unscoped: false };
+  if (!node || !node.field || parent.semiJoin) return { where: own, semiJoin: false, unscoped: true };
+  const scope = `${node.field} IN (SELECT Id FROM ${parent.obj} WHERE ${parent.where})`;
+  return { where: own ? `(${own}) AND ${scope}` : scope, semiJoin: true, unscoped: false };
+}
+
+// PURE. "2 Account · ≤ 16 Contact" from a counts tree — the breakdown every
+// "N records" claim carries, so a child count is never mistaken for parents.
+function sftkCountBreakdown(counts) {
+  const parts = [];
+  (function walk(n) {
+    if (!n) return;
+    if (n.count != null) parts.push(`${n.unscoped ? '≤ ' : ''}${Number(n.count).toLocaleString()} ${n.obj}`);
+    else if (n.obj) parts.push(`? ${n.obj}`);
+    (n.children || []).forEach(walk);
+  })(counts);
+  return parts.join(' · ');
+}
+
 async function previewTransfer() {
   if (!_transferProfile || !_transferSrc) return;
   const area = eid('dsTrPreviewArea');
@@ -941,32 +983,35 @@ async function previewTransfer() {
   // Use the patched clone so overrides from _transferNodeFilters are applied
   const runProfile = buildTransferProfile();
 
-  async function countNode(node) {
+  async function countNode(node, parent) {
     const obj = node.objectType || node.childSObject;
-    const ef  = node; // already patched by buildTransferProfile
-    const where = ef.recordIds?.length
-      ? `Id IN (${ef.recordIds.map(id => `'${id}'`).join(',')})`
-      : (ef.where || null);
+    // Children are counted INSIDE their parents' scope, like the engine reads
+    // them (sftkChildCountWhere) — never the whole child table.
+    const cw = sftkChildCountWhere(node, parent);   // node already patched by buildTransferProfile
+    const where = cw.where;
     const res = await sendBg({
       type: 'SF_QUERY', tooling: false,
       orgUrl: _transferSrc.orgUrl, sid: _transferSrc.sid,
       query: `SELECT COUNT() FROM ${obj}${where ? ' WHERE ' + where : ''}`
     });
     const count    = res.error ? null : (res.totalSize ?? 0);
-    const children = await Promise.all((node.children || []).map(c => countNode(c)));
-    return { obj, count, children };
+    const children = await Promise.all((node.children || []).map(c => countNode(c, { obj, where: cw.where, semiJoin: cw.semiJoin })));
+    return { obj, count, unscoped: cw.unscoped, children };
   }
 
-  const counts = await countNode(runProfile.tree);
+  const counts = await countNode(runProfile.tree, null);
 
   // Total across the tree — feeds the Run button label + the big-run gate.
-  let total = null;
+  // An unscoped node makes the total an UPPER BOUND, and it is shown as one.
+  let total = null, bound = false;
   (function sum(n) {
     if (!n) return;
     if (n.count != null) total = (total ?? 0) + n.count;
+    if (n.unscoped) bound = true;
     (n.children || []).forEach(sum);
   })(counts);
   _trLastTotal = total;
+  _trLastTotalIsBound = bound;
   _syncRunButtons();
 
   // E3 — fresh counts → refresh the API-cost line under the footer.
@@ -1899,7 +1944,10 @@ async function runTransfer() {
   // (detected + cached via the Organization object).
   const tgtProd = (await ensureOrgType(_transferTgt.orgUrl)) === 'production';
   if ((tgtProd || (_trLastTotal != null && _trLastTotal > 2000)) && !_trBigRunConfirmed) {
-    const nTxt = _trLastTotal != null ? `${_trLastTotal.toLocaleString()} records` : 'records';
+    const nTxt = _trLastTotal != null ? `${_trLastTotalIsBound ? '≤ ' : ''}${_trLastTotal.toLocaleString()} records` : 'records';
+    // Per-object breakdown — "18 records" must never hide that 16 of them are
+    // children of the two parents actually picked (user 2026-09-14).
+    const breakdown = _trLastCounts ? sftkCountBreakdown(_trLastCounts) : '';
     showModal(`
       <div class="ds-modal-header">${tgtProd ? '🛑 Writing into PRODUCTION' : '⚠ Large transfer'}</div>
       <div class="ds-modal-body">
@@ -1908,6 +1956,7 @@ async function runTransfer() {
         You're about to write <strong>${nTxt}</strong>
         into <strong>${esc(orgLabel(_transferTgt.orgUrl))}</strong>
         (${_transferWriteMode === 'upsert' ? `upsert on ${esc(_transferUpsertField)}` : 'insert — always creates new records'}).
+        ${breakdown ? `<div style="margin-top:6px;font-size:12px;color:var(--subtext)">By object: ${esc(breakdown)}${_trLastTotalIsBound ? ' — ≤ marks an upper bound (children counted without their parent filter)' : ''}</div>` : ''}
       </div>
       <div class="ds-modal-footer">
         <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
@@ -1926,8 +1975,15 @@ async function runTransfer() {
   const modeLabel = _transferWriteMode === 'upsert' ? `upsert on ${_transferUpsertField}` : 'insert';
   logRow('📤', `Starting transfer of profile "${_transferProfile.name}" (${modeLabel})…`);
 
-  // Live progress + Cancel: the Port streams per-batch counts into the log
-  // (keeping the worker alive) and carries the cancel command back.
+  // ↩ RESTORE POINT (studio-undo.js) — the target's before-image of every
+  // object this run can write, read BEFORE the first write. The History
+  // entry is created under runId so the evidence and the run share a key.
+  const runId = genId('run');
+  // ✋ Cancel exists BEFORE the restore point is read — a large before-image
+  // (up to 50,000 rows × every field) could not be stopped until now
+  // (re-review 2026-09-12). The capture checks the flag between objects; a
+  // cancel here ends the run with nothing written and nothing recorded.
+  let captureCancelled = false;
   const titleEl = document.querySelector('#dsTrProgressArea .ds-progress-title');
   if (titleEl && !eid('dsTrCancelBtn')) {
     const cbtn = document.createElement('button');
@@ -1939,6 +1995,23 @@ async function runTransfer() {
                + 'During a Bulk API job the job itself is aborted on the org, so records it hadn\'t reached yet are never written.';
     titleEl.appendChild(cbtn);
   }
+  eid('dsTrCancelBtn')?.addEventListener('click', () => { captureCancelled = true; });
+  const undoStub = await sftkUndoCaptureForRun({
+    evidenceId: runId, scope: 'run', profileName: _transferProfile?.name,
+    legs: [{ orgUrl: _transferTgt.orgUrl, sid: _transferTgt.sid,
+      objects: sftkUndoTreeObjects(buildTransferProfile().tree, _transferWriteMode === 'upsert' ? 'upsert' : 'insert') }],
+    shouldCancel: () => captureCancelled,
+  }, logRow);
+  if (captureCancelled) {
+    eid('dsTrCancelBtn')?.remove();
+    logRow('✋', 'Cancelled while the restore point was being read — nothing was written to the target and nothing was recorded.', 'ds-prog-warn');
+    showToast('Transfer cancelled before any write', 'warning', 5000);
+    if (btn) btn.disabled = false;
+    return;
+  }
+
+  // Live progress + Cancel: the Port streams per-batch counts into the log
+  // (keeping the worker alive) and carries the cancel command back.
   const runPort = _openRunPort(_trProgressHandler(eid('dsTrProgLog')));
   eid('dsTrCancelBtn')?.addEventListener('click', () => {
     try { runPort?.postMessage({ cmd: 'cancel' }); } catch (_) {}
@@ -1971,6 +2044,20 @@ async function runTransfer() {
   if (result.error) {
     logRow('❌', result.error, 'ds-prog-err');
     showToast('Transfer failed: ' + result.error, 'error', 6000);
+    // ↩ the engine may have written before it died — the run is recorded with
+    // its restore point so ↩ Roll back in History can still reach it.
+    if (undoStub.status !== 'none') {
+      const runEnd = await sftkUndoRunEnd(_transferTgt.orgUrl, _transferTgt.sid, undoStub.objects);
+      _history.push({
+        id: runId, profileId: _transferProfile?.id, profileName: _transferProfile?.name,
+        srcOrgUrl: _transferSrc?.orgUrl, tgtOrgUrl: _transferTgt?.orgUrl,
+        sourceOrg: _transferSrc?.orgUrl, targetOrg: _transferTgt?.orgUrl,
+        startedAt: new Date().toISOString(), status: 'failed', summary: {}, errors: [String(result.error)],
+        undo: { ...undoStub, ...runEnd },
+      });
+      await storageSaveHistory();
+      logRow('↩', 'The run is recorded in History with its restore point — use ↩ Roll back there if anything was written before it failed.');
+    }
     if (btn) btn.disabled = false;
     return;
   }
@@ -2074,8 +2161,10 @@ async function runTransfer() {
 
   // Record activity & save to history (Feature 12: include org URLs for health tiles)
   recordActivity('transfer');
+  // ↩ end-of-run boundary from Salesforce's own clock (studio-undo.js).
+  const runEnd = await sftkUndoRunEnd(_transferTgt.orgUrl, _transferTgt.sid, undoStub.objects);
   _history.push({
-    id:        genId('run'),
+    id:        runId,
     profileId: _transferProfile?.id,
     profileName: _transferProfile?.name,
     // Set BOTH the *OrgUrl and sourceOrg/targetOrg keys: History (renderHistory)
@@ -2087,7 +2176,10 @@ async function runTransfer() {
     sourceOrg: _transferSrc?.orgUrl,
     targetOrg: _transferTgt?.orgUrl,
     startedAt: new Date().toISOString(),
-    ...result
+    ...result,
+    // ↩ after the spread — the engine result must not clobber it. runEndedAt
+    // lets a rollback leave records created/edited by others AFTER the run alone.
+    undo: { ...undoStub, ...runEnd }
   });
   await storageSaveHistory();
 
@@ -2138,13 +2230,10 @@ async function runTransfer() {
 
 
 // ════════════════════════════════════════════════════════════════
-// M1 — FAN-OUT RUNNER: one deployment against N target orgs
+// M1 — (RETIRED 2026-09-14) the fan-out runner is gone; what remains here is
+// the pure per-target advice helper, kept for its tests and for a future
+// per-target status line on the deployment card.
 // ════════════════════════════════════════════════════════════════
-// The engine already takes any (profile, src, tgt) — fan-out is a sequential
-// loop with per-org sessions, per-org history entries and a result log
-// (the picklist P2 bulk-apply pattern). Fresh idMap per target by design:
-// targets share nothing. Fan-out DOES have a dry run now — dryRunFanOut()
-// below runs the identical validator against every ticked target first.
 // PURE — what a fan-out will actually do to ONE target, from whatever is
 // already known about it. The fan-out modal used to list target checkboxes and
 // nothing else (user 2026-07-30: "you don't see any information about the
@@ -2223,13 +2312,10 @@ function sftkFanoutScanAge(runAt, now) {
 // ════════════════════════════════════════════════════════════════
 // M1b — FAN-OUT DRY RUN: the same validator, against every target
 // ════════════════════════════════════════════════════════════════
-// runProfile() routes the main Run button into openFanOut() whenever a
-// deployment has more than one target, so "fan out" IS what Run means for a
-// multi-org deployment. runFanOut() called SF_EXECUTE_PROFILE_TRANSFER
-// directly while the whole dry-run validator sat inside runTransfer's
-// `if (_transferDryRun)` — i.e. adding a second target silently deleted the
-// best safety feature in the product. sftkDryRunAgainst (above) is now
-// callable per target, and this is the surface that calls it.
+// HISTORY: the fan-out dialog, its multi-target dry run (dryRunFanOut) and
+// the runner (runFanOut) were RETIRED on 2026-09-14 — a run now writes to
+// ONE ring target, chosen in runProfile(). The pure verdict/summary helpers
+// below stay because Run Transfer's own dry run reports through them.
 
 // PURE — one target's dry-run outcome → the verdict shown in the panel and in
 // the summary line. THREE states, never two: a target whose validation could
@@ -2292,518 +2378,3 @@ function sftkFanoutDrySummary(rows) {
 // GET_ALL_SF_SESSIONS (via getOrgSession), SF_QUERY and SF_REST_GET — all
 // reads. There is deliberately no SF_EXECUTE_PROFILE_TRANSFER, no history
 // push and no storage write anywhere below.
-async function dryRunFanOut(p, srcUrl, targets) {
-  const host  = eid('dsMain');
-  const panel = document.createElement('div');
-  panel.className = 'ds-fanout-panel';
-  // The point-in-time caveat lives OUTSIDE the log: the log auto-scrolls to
-  // the newest line, so anything written into it as a header scrolls away
-  // exactly when the user reaches the verdict and needs it most.
-  panel.innerHTML = `<div class="ds-pk-res-title">🧪 Dry run: ${esc(p.name)} — ${targets.length} target(s), nothing is written</div>
-    <div class="ds-fanout-dry-sub">⏱ <strong>Point-in-time check.</strong> Each target is validated as it is <strong>right now</strong> — metadata, picklist values and automation can change between this and the real run, so a clean result is a reading, not a guarantee. Nothing is written: this only reads.</div>
-    <div class="ds-fanout-drylog"></div>`;
-  host?.prepend(panel);
-  const logEl = panel.querySelector('.ds-fanout-drylog');
-
-  // The validator's line writer — same (icon, msg, cls) contract as
-  // runTransfer's logRow, so the checks paint identically here.
-  const line = (icon, msg, cls = '') => {
-    if (!logEl || !logEl.isConnected) return;
-    const row = document.createElement('div');
-    row.className = `ds-prog-row ds-fanout-dry-line ${cls}`;
-    row.innerHTML = `<span class="ds-prog-icon">${icon}</span><span>${esc(msg)}</span>`;
-    logEl.appendChild(row);
-    logEl.scrollTop = logEl.scrollHeight;
-  };
-  const head = (icon, msg) => {
-    if (!logEl || !logEl.isConnected) return;
-    const row = document.createElement('div');
-    row.className = 'ds-fanout-dry-head';
-    row.innerHTML = `<span class="ds-prog-icon">${icon}</span><span>${esc(msg)}</span>`;
-    logEl.appendChild(row);
-    logEl.scrollTop = logEl.scrollHeight;
-  };
-
-  line('🧪', `Validating "${p.name}" from ${orgLabel(srcUrl)} against ${targets.length} target(s), one after another. This only READS — no record is created or updated in any org. Each target is checked AS IT IS RIGHT NOW.`);
-
-  const srcSess = await getOrgSession(srcUrl);
-  if (!srcSess) {
-    line('❌', `${orgLabel(srcUrl)} (source) has no open tab — nothing could be checked. Open it in a Chrome tab and run the dry run again.`, 'ds-prog-err');
-    showToast('Dry run aborted — the source org has no open tab', 'error', 6000);
-    return;
-  }
-
-  const rows = [];
-  for (const tgtUrl of targets) {
-    head('▸', orgLabel(tgtUrl));
-    // Validate the tree the REAL fan-out would send to THIS org —
-    // per-target field-mapping overrides included (runFanOut does the same).
-    const tree = (typeof treeForTarget === 'function' && p.tree)
-      ? treeForTarget(p.tree, tgtUrl) : p.tree;
-    // Key matches _valKey()'s shape INCLUDING the payload fingerprint: this
-    // leg validated exactly `tree` in insert mode (fan-out never upserts),
-    // and may vouch for nothing else.
-    const valKey  = `${p.id}|${_orgKey(srcUrl)}|${_orgKey(tgtUrl)}|${sftkValFingerprint(tree, null)}`;
-    const tgtSess = await getOrgSession(tgtUrl);
-    if (!tgtSess) {
-      // Exactly what the real run does with a sessionless org — and said out
-      // loud, because "skipped" must never read as "checked and fine".
-      const verdict = sftkFanoutDryVerdict({ skipped: true });
-      line('⏭', verdict.detail, 'ds-prog-warn');
-      rows.push({ url: tgtUrl, label: orgLabel(tgtUrl), issues: 0, verdict });
-      _validatedRuns.delete(valKey);
-      continue;
-    }
-    let res;
-    try {
-      // PII MASKING v1 — p.piiPolicy/p.piiSalt are exactly what the real
-      // fan-out leg sends (runFanOut spreads {...p}); fan-out never upserts,
-      // so there is no External-ID to check.
-      res = await sftkDryRunAgainst(tree, srcSess, tgtSess, line, p.ownerMapping,
-        p.piiPolicy, p.piiSalt, null);
-    } catch (e) {
-      const fe = (typeof sftkFriendlyError === 'function')
-        ? sftkFriendlyError(e.message) : { message: e.message };
-      res = { error: fe.message };
-    }
-    const verdict = sftkFanoutDryVerdict(res);
-    line(verdict.icon, `${orgLabel(tgtUrl)}: ${verdict.detail}`,
-      verdict.state === 'clean' ? '' : (verdict.state === 'dirty' ? 'ds-prog-err' : 'ds-prog-warn'));
-    rows.push({ url: tgtUrl, label: orgLabel(tgtUrl), issues: res?.issues || 0, verdict });
-    // Same key shape as _valKey() — a clean pair lights the "✓ dry run
-    // passed" hint on the Run Transfer footer and in this dialog.
-    if (verdict.state === 'clean') _validatedRuns.add(valKey);
-    else _validatedRuns.delete(valKey);
-  }
-
-  const sum = sftkFanoutDrySummary(rows);
-  head('🏁', `Dry run done — ${sum.total}`);
-  line('📋', sum.per);
-  line('ℹ️', 'A dry run can never test the target’s validation rules, Apex triggers or duplicate rules — those only fire on real writes (listed per object above when the target has them).');
-
-  // Informs, never blocks: the real run stays one click away in every case,
-  // but a dirty or unknown result gets a banner that cannot be missed.
-  const runnable = rows.filter(r => r.verdict.state !== 'skipped').map(r => r.url);
-  const { dirty, unknown, issues } = sum.tally;
-  const act = document.createElement('div');
-  act.className = 'ds-fanout-dry-act';
-  const banner = dirty
-    ? `<div class="ds-fanout-dry-banner ds-fanout-dry-banner--bad">❌ <strong>${issues} issue(s)</strong> across <strong>${dirty} target(s)</strong>${unknown ? `, and ${unknown} target(s) could not be checked` : ''}. Nothing is blocked — you can still run the fan-out, but these are what will bite.</div>`
-    : unknown
-      ? `<div class="ds-fanout-dry-banner ds-fanout-dry-banner--unknown">❔ <strong>${unknown} target(s) could not be checked</strong> — treat them as unknown, not clean. Nothing is blocked.</div>`
-      // Zero clean targets with zero failures means everything was skipped.
-      // "Every checked target came back clean" would be true-but-worthless
-      // there — nothing was checked, and that has to be the headline.
-      : sum.tally.clean === 0
-        ? `<div class="ds-fanout-dry-banner ds-fanout-dry-banner--unknown">❔ <strong>Nothing was checked.</strong> Every target you picked was skipped because it has no open Chrome tab — this is not a clean result.</div>`
-        : `<div class="ds-fanout-dry-banner ds-fanout-dry-banner--ok">✅ <strong>All ${sum.tally.clean} checked target(s) came back clean.</strong> Point-in-time — re-check if a target changes.</div>`;
-  act.innerHTML = `${banner}
-    <button class="ds-btn ${dirty || unknown ? '' : 'ds-btn-primary'}" id="dsFanoutDryReal">🌐 Run fan-out for real${runnable.length ? ` (${runnable.length} target(s))` : ''}</button>
-    <button class="ds-btn" id="dsFanoutDryClose">Dismiss</button>`;
-  panel.appendChild(act);
-  eid('dsFanoutDryReal')?.addEventListener('click', () => {
-    panel.remove();
-    window.openFanOut(p.id, { src: srcUrl, preselect: runnable });
-  });
-  eid('dsFanoutDryClose')?.addEventListener('click', () => panel.remove());
-
-  const allGood = !dirty && !unknown && sum.tally.clean > 0;
-  showToast(
-    dirty ? `Dry run: ${issues} issue(s) across ${dirty} target(s)`
-      : unknown ? `Dry run: ${unknown} target(s) could not be checked`
-        : allGood ? `Dry run passed ✓ — ${sum.tally.clean} target(s) clean`
-          : 'Dry run checked nothing — every target was skipped',
-    allGood ? 'success' : 'warning', 6000);
-}
-
-window.openFanOut = async function (profileId, opts = {}) {
-  const p = _profiles.find(x => x.id === profileId);
-  if (!p || !p.tree) { showToast('Deployment not found', 'error'); return; }
-  // opts.src: flow override — the Sync Ring passes its source of truth so a
-  // deployment born on a different pair still pushes golden-org → targets
-  // (same rule as ring scans, user bug report). opts.preselect: target urls
-  // to pre-check (the ring passes its targets).
-  // Source resolution: explicit override (the ring's 🌐 push) → the ring's
-  // source of truth when a ring is configured (user directive 2026-07-17:
-  // multi-org surfaces always flow FROM the source of truth, not from a
-  // deployment's birth pair) → the deployment's own source.
-  const ringSrc = (typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2)
-    ? _ring.sourceUrl : '';
-  const srcUrl = opts.src || ringSrc || p.sourceOrg || _workingPair.src;
-  if (!srcUrl) { showToast('Set a source org on the deployment first', 'error'); return; }
-  const fromRing = !!ringSrc && _orgKey(srcUrl) === _orgKey(ringSrc);
-  const preKeys = (opts.preselect || []).map(u => _orgKey(u));
-
-  const candidates = allMapOrgs().filter(o => _orgKey(o.url) !== _orgKey(srcUrl));
-  if (!candidates.length) { showToast('No other orgs known — open them in Chrome tabs first', 'warning', 5000); return; }
-
-  // Default pre-check: explicit preselect → the deployment's effective
-  // target set (follows the ring unless pinned).
-  const defKeys = preKeys.length ? preKeys : profileTargets(p).map(u => _orgKey(u));
-
-  // ── What this run actually DOES, stated before it is authorized ──────
-  const live = (typeof _liveOrgSet === 'function') ? _liveOrgSet() : new Set();
-  // Liveness is only KNOWLEDGE when enumeration actually completed
-  // (_liveKnown, studio-core). Treating unknown as closed disabled every
-  // target and told the user the whole run would be skipped (seen while
-  // capturing this dialog before sessions landed). Inferring knowledge from
-  // set SIZE reintroduced the same bug for the partial state: the active-tab
-  // session alone makes size 1 while GET_ALL_SF_SESSIONS may have failed.
-  // runFanOut already skips a sessionless org at run time and says so, so
-  // the honest default when we don't know is to let it through.
-  const liveKnown = (typeof _liveKnown === 'function') ? _liveKnown() : live.size > 0;
-  const isLive = u => {
-    if (!liveKnown) return true;
-    try { return live.has(_orgKey(u)) || live.has(u); } catch (_) { return true; }
-  };
-  const objs = (typeof collectTreeObjects === 'function') ? [...collectTreeObjects(p.tree)] : [];
-  // What the engine will ACTUALLY do: runFanOut sends the profile as saved —
-  // the Transfer tab's Upsert toggle is attached by buildTransferProfile()
-  // for single-target runs ONLY and does not ride along here. This dialog
-  // used to display that toggle's mode, promising upserts the fan-out never
-  // performed. Advice rows below get the same truth.
-  // W1 — per-node upsert configs RIDE the saved profile into runFanOut, so
-  // the dialog states them; the Transfer tab's run-time toggle still never
-  // rides along. Advice tone follows the ROOT's behavior (ring scans are
-  // root-level).
-  const upsertNodeCount = (function cnt(n) {
-    return n ? ((n.upsert && n.upsert.field ? 1 : 0) + (n.children || []).reduce((s, c) => s + cnt(c), 0)) : 0;
-  })(p.tree);
-  const mode = (p.tree && p.tree.upsert && p.tree.upsert.field) ? 'upsert' : 'insert';
-  const modeLabel = (upsertNodeCount
-    ? `Insert + Upsert — ${upsertNodeCount} object(s) upsert on their External ID (existing records UPDATE; configured in 🎯 Pick Records)`
-    : 'Insert — always create; existing records are NOT updated')
-    + ((typeof _transferWriteMode === 'string' && _transferWriteMode === 'upsert')
-      ? ' (your Upsert setting on the Transfer tab applies to single-target runs only)' : '');
-  const ownerLabel = p.ownerMapping?.mode === 'match'
-    ? `matched by ${(p.ownerMapping.matching?.fields || ['Name']).join(' + ')}, unmatched → fallback user`
-    : 'not copied — each target assigns its own default owner';
-  // PII MASKING v1 — disclosed BEFORE the run is authorized, like every
-  // other row in this grid. runFanOut sends the profile AS SAVED ({...p}
-  // spread per leg), so p.piiPolicy/p.piiSalt are exactly what the engine
-  // will enforce — verified against runFanOut, not assumed. Copy says
-  // "masked" (pseudonymized), never a stronger claim.
-  const piiFieldCount = (p.piiPolicy && typeof p.piiPolicy === 'object')
-    ? Object.keys(p.piiPolicy).filter(k => p.piiPolicy[k]).length : 0;
-  const piiLabel = piiFieldCount
-    ? `${piiFieldCount} field(s) masked before writing${p.piiSalt ? '' : ' — ⚠ no salt yet: every leg fails until this deployment is opened once in the builder'}`
-    : 'no masking configured';
-  const now = Date.now();
-  const scanFor = t => (p.ringScans || {})[`${_orgKey(srcUrl)}|${_orgKey(t)}`] || null;
-  // Child info per target for the advice tiles (child-verdict law): fresh
-  // child scans exist only on the profile's own lastScan for its own pair —
-  // ring summaries never carry children, so other targets count every child
-  // section as unscanned.
-  const kidsFor = t => {
-    const kn = (p.tree?.children || []).length;
-    if (!kn) return null;
-    let need = 0, unscanned = 0;
-    const s = p.lastScan;
-    const nativeMatch = s?.runAt
-      && _orgKey(t) === _orgKey(p.targetOrg || '')
-      && (!s.sourceOrg || _orgKey(s.sourceOrg) === _orgKey(p.sourceOrg || ''))
-      && (!s.targetOrg || _orgKey(s.targetOrg) === _orgKey(t));
-    const walk = (node, pathKey) => {
-      const obj = node.objectType || node.childSObject || '?';
-      const cs = nativeMatch ? s.children?.[pathKey] : null;
-      const fresh = !!(cs && cs.status === 'success' && cs.rootRunAt === s.runAt && cs.objectType === obj);
-      if (!fresh) unscanned++;
-      else need += (cs.missingInTarget || []).length + (cs.changed || []).length
-        + (cs.linkMismatch || []).length + (cs.onlyInTarget || []).length;
-      (node.children || []).forEach((g, j) => walk(g, `${pathKey}.${j}`));
-    };
-    (p.tree?.children || []).forEach((c, i) => walk(c, String(i)));
-    return { need, unscanned };
-  };
-
-  const rows = candidates.map(o => {
-    const adv = sftkFanoutTargetAdvice(scanFor(o.url), isLive(o.url), mode, now, kidsFor(o.url));
-    const icon = { skip: '⏭', unknown: '❔', clean: '✓', warn: '⚠', act: '⬆' }[adv.tone] || '•';
-    // A 🧪 dry run of THIS profile against THIS pair came back clean earlier
-    // in the session — same fingerprinted key dryRunFanOut writes, so the
-    // chip only lights for the exact payload (per-target tree, insert mode)
-    // this fan-out would send. Said, not assumed: explicitly point-in-time.
-    const dryOk = _validatedRuns.has(`${p.id}|${_orgKey(srcUrl)}|${_orgKey(o.url)}|${sftkValFingerprint(
-      (typeof treeForTarget === 'function' && p.tree) ? treeForTarget(p.tree, o.url) : p.tree, null)}`);
-    return `
-    <label class="ds-fanout-org ds-fanout-${esc(adv.tone)}">
-      <input type="checkbox" class="ds-fanout-cb" value="${esc(o.url)}"
-             ${adv.tone === 'skip' ? 'disabled' : ''}
-             ${adv.tone !== 'skip' && defKeys.includes(_orgKey(o.url)) ? 'checked' : ''}>
-      <span class="ds-fanout-org-main">
-        <span class="ds-fanout-org-name">${esc(orgOptionLabel(o.url, o.label, live))} ${prodBadge(o.url)}${dryOk
-          ? `<span class="ds-fanout-dryok" title="A 🧪 dry run against this org came back clean earlier in this session. Point-in-time — the org may have changed since.">🧪 dry run passed</span>` : ''}</span>
-        <span class="ds-fanout-advice" title="${esc(adv.detail)}">${icon} ${esc(adv.headline)}</span>
-      </span>
-    </label>`;
-  }).join('');
-
-  const anyUnscanned = candidates.some(o => isLive(o.url) && !scanFor(o.url));
-
-  showModal(`
-    <div class="ds-modal-header">🌐 Run “${esc(p.name)}” against multiple orgs</div>
-    <div class="ds-modal-body">
-      <div class="ds-fanout-what">
-        <div class="ds-fanout-what-title">What this will do to every target you tick</div>
-        <div class="ds-fanout-what-grid">
-          <span>Records</span><strong>${esc(objs.join(' → ') || 'this deployment’s tree')}</strong>
-          <span>From</span><strong>${esc(orgLabel(srcUrl))}${fromRing ? ' 👑' : ''}</strong>
-          <span>Write mode</span><strong>${esc(modeLabel)}</strong>
-          <span>Engine</span><strong style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <select id="dsFanoutApiMode" class="ds-select ds-select-sm" style="width:auto;font-weight:400"
-              title="How records are written to EVERY ticked target. Auto: synchronous Collections below the threshold, one async Bulk API 2.0 job at or above it. Synchronous: always Collections — slower at scale, every error immediate and per-record. Async: always a Bulk job, even for small sets. Saved on the deployment — single-target runs use the same setting.">
-              <option value="auto" ${(p.apiMode || 'auto') === 'auto' ? 'selected' : ''}>Auto — Bulk job at ≥ ${(Number(p.bulkThreshold) > 0 ? Number(p.bulkThreshold) : 2000).toLocaleString()}</option>
-              <option value="sync" ${p.apiMode === 'sync' ? 'selected' : ''}>Synchronous — Collections only</option>
-              <option value="bulk" ${p.apiMode === 'bulk' ? 'selected' : ''}>Async — Bulk API 2.0 job</option>
-            </select>
-            <input id="dsFanoutBatchSize" class="ds-input ds-input-sm" type="number" min="1" max="200" step="1"
-              style="width:72px;font-weight:400;text-align:right" value="${Math.max(1, Math.min(200, Number(p.batchSize) || 200))}"
-              ${p.apiMode === 'bulk' ? 'disabled' : ''}
-              title="Records per synchronous Collections call (1-200; 200 is the Salesforce maximum). Smaller batches isolate failures and duck per-transaction trigger limits. ONLY the synchronous engine batches on the client — Bulk jobs upload everything at once and Salesforce chunks internally, so this is disabled in Async mode. One exception rides along: with child-first children, the reconnect step always patches links via synchronous calls in batches of the saved value, even on Async runs.">
-            <span style="font-weight:400;font-size:11px;opacity:.7">batch size</span>
-            <input id="dsFanoutThreads" class="ds-input ds-input-sm" type="number" min="1" max="6" step="1"
-              style="width:52px;font-weight:400;text-align:right" value="${Math.max(1, Math.min(6, Number(p.threads) || 1))}"
-              ${p.apiMode === 'bulk' ? 'disabled' : ''}
-              title="How many batches fly in PARALLEL (1-6). Synchronous engine only — a Bulk job is one upload. Parallel writes can hit row locks on shared parents.">
-            <span style="font-weight:400;font-size:11px;opacity:.7">threads</span>
-          </strong>
-          <span>Owners</span><strong>${esc(ownerLabel)}</strong>
-          <span>PII</span><strong>${esc(piiLabel)}</strong>
-          <span>Deletes</span><strong>never — a deploy only adds and updates</strong>
-        </div>
-        <div class="ds-fanout-what-note">Targets run one after another, each with its own History entry. These are <strong>real writes</strong> — use <strong>🧪 Dry run all targets</strong> first to validate every ticked org without writing anything.</div>
-      </div>
-      <div class="ds-fanout-list">${rows}</div>
-      <div id="dsFanoutBudget" class="ds-pk-hint" style="margin-top:6px"></div>
-      ${anyUnscanned ? `<div class="ds-pk-hint" style="margin-top:6px">❔ Some targets were never scanned, so their outcome is unknown until the run happens. <strong>🔎 Scan</strong> them from 🔄 Sync Ring (or ⚖ Reconcile) to see the numbers first.</div>` : ''}
-      <div class="ds-pk-hint" style="margin-top:6px">💡 <strong>🧪 Dry run all targets</strong> validates every ticked org against this source — required fields, lookups, record types, picklist values, field lengths — and writes nothing. It is a <strong>point-in-time</strong> check: it reads each target as it is right now. Production targets will still ask for their typed confirmation before a real run.</div>
-    </div>
-    <div class="ds-modal-footer">
-      <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-      <button class="ds-btn" id="dsFanoutDry"
-        title="Run every safety check against each ticked target — required fields, lookups, record types, restricted picklists, field lengths — without writing a single record.">🧪 Dry run all targets</button>
-      <button class="ds-btn ds-btn-primary" id="dsFanoutGo">🌐 Run fan-out</button>
-    </div>`);
-
-  // E3b — what the whole fan-out costs, and what each target's own daily pool
-  // has left. Each org meters separately, so they are listed per org rather
-  // than summed. Meters fill in async; the cost head depends on the engine
-  // settings, so paintBudget re-runs whenever those change.
-  const _budgetMeters = [];   // { label, remaining, max } per live org
-  const paintBudget = () => {
-    const box = eid('dsFanoutBudget');
-    if (!box || !box.isConnected) return;
-    const est = (typeof sftkEstimateRunCalls === 'function' && _trLastCounts)
-      ? sftkEstimateRunCalls(sftkPlanFromCounts(_trLastCounts, p.tree, p.bulkThreshold, p.ownerMapping?.mode === 'match',
-          { apiMode: p.apiMode, batchSize: p.batchSize }))
-      : null;
-    const per = est && Number.isFinite(est.total) ? est.total : null;
-    const head = per == null
-      ? 'API cost: run a 👁 Preview on this deployment to estimate it.'
-      : `API cost: ≈${per.toLocaleString()} call(s) per target.`;
-    const parts = _budgetMeters.map(m =>
-      `${esc(m.label)}: ${m.remaining.toLocaleString()}/${m.max.toLocaleString()} left${per != null && per > m.remaining ? ' ⚠' : ''}`);
-    box.innerHTML = `${esc(head)}${parts.length ? ` Remaining today — ${parts.join(' · ')}` : ''}`;
-  };
-  paintBudget();
-  (async () => {
-    for (const o of candidates.filter(c => isLive(c.url))) {
-      const b = await (typeof window.sftkApiBudget === 'function'
-        ? window.sftkApiBudget(o.url, (await getOrgSession(o.url))?.sid) : null);
-      if (!eid('dsFanoutBudget')?.isConnected) return;   // modal closed mid-fetch
-      if (!b) continue;
-      _budgetMeters.push({ label: orgLabel(o.url), remaining: b.remaining, max: b.max });
-      paintBudget();
-    }
-  })();
-
-  // Engine controls (user 2026-08-13: multi-target deployments had NO route
-  // to these — ▶ Run goes straight to this dialog, never the Run page).
-  // Same persistence contract as the Run page: saved ON THE PROFILE, so the
-  // engine (which already reads profile.apiMode/batchSize per leg) obeys
-  // them here and everywhere else.
-  eid('dsFanoutApiMode')?.addEventListener('change', async e => {
-    const v = e.target.value;
-    if (v === 'sync' || v === 'bulk') p.apiMode = v; else delete p.apiMode;
-    const bi = eid('dsFanoutBatchSize');
-    if (bi) bi.disabled = v === 'bulk';   // sync-engine knobs — inert on Bulk
-    const ti = eid('dsFanoutThreads');
-    if (ti) ti.disabled = v === 'bulk';
-    paintBudget();
-    try { await storageSaveProfiles(); } catch (_) {}
-  });
-  eid('dsFanoutThreads')?.addEventListener('change', async e => {
-    const n = Math.max(1, Math.min(6, parseInt(e.target.value, 10) || 1));
-    e.target.value = n;
-    if (n === 1) delete p.threads; else p.threads = n;
-    try { await storageSaveProfiles(); } catch (_) {}
-  });
-  eid('dsFanoutBatchSize')?.addEventListener('change', async e => {
-    const n = Math.max(1, Math.min(200, parseInt(e.target.value, 10) || 200));
-    e.target.value = n;
-    if (n === 200) delete p.batchSize; else p.batchSize = n;
-    paintBudget();
-    try { await storageSaveProfiles(); } catch (_) {}
-  });
-
-  // 🧪 Dry run all targets — same checks as the single-target dry run, run
-  // against every ticked org in turn. No prod confirm and no no-op guard
-  // here on purpose: neither applies to a path that cannot write.
-  eid('dsFanoutDry')?.addEventListener('click', async () => {
-    const targets = [...document.querySelectorAll('.ds-fanout-cb:checked')].map(c => c.value);
-    if (!targets.length) { showToast('Pick at least one target org', 'warning'); return; }
-    closeModal();
-    await dryRunFanOut(p, srcUrl, targets);
-  });
-
-  eid('dsFanoutGo')?.addEventListener('click', async () => {
-    const targets = [...document.querySelectorAll('.ds-fanout-cb:checked')].map(c => c.value);
-    if (!targets.length) { showToast('Pick at least one target org', 'warning'); return; }
-    // A target the advice says will write nothing is almost always a misclick.
-    const noop = targets.filter(t => {
-      const a = sftkFanoutTargetAdvice(scanFor(t), isLive(t), mode, Date.now(), kidsFor(t));
-      return a.tone === 'clean' || a.tone === 'warn';
-    });
-    if (noop.length === targets.length) {
-      // Same promise-modal shape as confirmTypedProd (studio-scan.js) —
-      // sftk-confirm.js is a popup-only script and isn't loaded here.
-      const ok = await new Promise(resolve => {
-        showModal(`
-          <div class="ds-modal-header">Nothing to write</div>
-          <div class="ds-modal-body">
-            <p>Every target you picked is already in sync${mode === 'insert' ? ', or differs only in ways Insert cannot write' : ''} — as of the last scan of each one.</p>
-            <p style="margin-top:8px;font-size:12.5px;color:var(--subtext)">Running now would still re-read the source and write nothing. Scans can be stale, so this is a heads-up, not a block.</p>
-          </div>
-          <div class="ds-modal-footer">
-            <button class="ds-btn" id="dsFanoutNoopBack">Back</button>
-            <button class="ds-btn ds-btn-primary" id="dsFanoutNoopGo">Run anyway</button>
-          </div>`);
-        eid('dsFanoutNoopBack')?.addEventListener('click', () => { closeModal(); resolve(false); });
-        eid('dsFanoutNoopGo')?.addEventListener('click', () => { closeModal(); resolve(true); });
-      });
-      if (!ok) {
-        // "Back" must return to the user's ACTUAL ticks — reopening with the
-        // original opts rebuilt the checkboxes from the DEFAULT preselect,
-        // silently reverting the selection they had just made.
-        window.openFanOut(profileId, { ...opts, preselect: targets });
-        return;
-      }
-    }
-    closeModal();
-
-    // One typed confirm covering every production target up front.
-    for (const t of targets) {
-      if (cachedOrgType(t) === 'production') {
-        const ok = await confirmTypedProd(orgLabel(t), `fan-out deploy "${p.name}" into PRODUCTION`);
-        if (!ok) { showToast('Fan-out cancelled', 'info'); return; }
-      }
-    }
-    await runFanOut(p, srcUrl, targets);
-  });
-};
-
-async function runFanOut(p, srcUrl, targets) {
-  // Result surface: a modal-free inline panel at the top of the current view.
-  const host = eid('dsMain');
-  const panel = document.createElement('div');
-  panel.className = 'ds-fanout-panel';
-  panel.innerHTML = `<div class="ds-pk-res-title" style="display:flex;align-items:center;gap:10px">🌐 Fan-out: ${esc(p.name)} — ${targets.length} target(s)
-      <button class="ds-btn ds-btn-xs" id="dsFanoutCancel" style="margin-left:auto" title="Stops between batches — records already written stay written; the running target's History entry reports the partial count.">✋ Cancel</button>
-    </div>
-    <div id="dsFanoutLog"></div>`;
-  host?.prepend(panel);
-  const log = (org, icon, msg) => {
-    const el = panel.querySelector('#dsFanoutLog');
-    if (!el) return;
-    const row = document.createElement('div');
-    row.className = 'ds-pk-res-row';
-    row.innerHTML = org
-      ? `<span>${icon} <strong>${esc(orgLabel(org))}</strong></span><span>${esc(msg)}</span>`
-      : `<span>${icon}</span><span><strong>${esc(msg)}</strong></span>`;
-    el.appendChild(row);
-  };
-  // ✋ — cancels the CURRENT leg's run (engine honors {cmd:'cancel'} between
-  // batches) and stops the loop from starting further targets.
-  let _foCancelled = false, _foPort = null;
-  panel.querySelector('#dsFanoutCancel')?.addEventListener('click', () => {
-    _foCancelled = true;
-    try { _foPort?.postMessage({ cmd: 'cancel' }); } catch (_) {}
-    const b = panel.querySelector('#dsFanoutCancel');
-    if (b) { b.disabled = true; b.textContent = '✋ cancelling…'; }
-  });
-
-  const srcSess = await getOrgSession(srcUrl);
-  if (!srcSess) { log(srcUrl, '❌', 'Source org has no open tab — aborted'); return; }
-
-  let okOrgs = 0, failOrgs = 0, skipOrgs = 0;
-  for (const tgtUrl of targets) {
-    if (_foCancelled) { skipOrgs++; log(tgtUrl, '⏭', 'skipped — fan-out cancelled'); continue; }
-    const tgtSess = await getOrgSession(tgtUrl);
-    if (!tgtSess) { skipOrgs++; log(tgtUrl, '⏭', 'skipped — org not open in a tab'); continue; }
-    log(tgtUrl, '⏳', 'running…');
-    // LIVE view per target (user 2026-08-18: "it would be nice to see the
-    // run in real time… like inspector shows, with errors in real time") —
-    // a progress log fed by the engine's Port events: per-object read/write
-    // lines updating in place, Bulk job state, and ❌ error rows as they
-    // happen. The port also keeps the MV3 worker alive during long runs.
-    const liveEl = document.createElement('div');
-    liveEl.className = 'ds-prog-log';
-    liveEl.style.cssText = 'max-height:200px;overflow-y:auto;margin:2px 0 8px 18px;font-size:12px';
-    panel.querySelector('#dsFanoutLog')?.appendChild(liveEl);
-    _foPort = (typeof _openRunPort === 'function') ? _openRunPort(_trProgressHandler(liveEl)) : null;
-    try {
-      const result = await sendBg({
-        type: 'SF_EXECUTE_PROFILE_TRANSFER',
-        // Per-target mapping overrides resolve per fan-out leg.
-        profile: (typeof treeForTarget === 'function' && p.tree) ? { ...p, tree: treeForTarget(p.tree, tgtUrl) } : p,
-        srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
-        tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid,
-      });
-      if (result?.error) throw new Error(result.error);
-      // M3c — match memory per target org. Same M-followup guard as
-      // runTransfer: a ring push passes opts.src (the ring's source of
-      // truth), so only learn when that source IS the profile's own source.
-      // Strip the pairs before the history push below keeps them on disk.
-      try {
-        const mmRootObj = p.tree?.objectType || p.tree?.childSObject;
-        const mmPairs = mmRootObj ? (result.summary?.[mmRootObj]?.idPairs || []) : [];
-        if (mmPairs.length) {
-          if (_orgKey(srcSess.orgUrl) === _orgKey(p.sourceOrg || '')) {
-            await window.sftkLearnPairs?.(p.id, tgtSess.orgUrl, mmPairs);
-          }
-          delete result.summary[mmRootObj].idPairs;
-        }
-      } catch (_) { /* memory is an optimization — never fail the run for it */ }
-      _history.push({
-        id: genId('run'), profileId: p.id,
-        srcOrgUrl: srcSess.orgUrl, tgtOrgUrl: tgtSess.orgUrl,
-        sourceOrg: srcSess.orgUrl, targetOrg: tgtSess.orgUrl,
-        startedAt: new Date().toISOString(),
-        ...result,
-        // AFTER the spread — the engine result carries its own profileName
-        // and would clobber the tag otherwise.
-        profileName: `${p.name} (fan-out)`,
-      });
-      const created = Object.values(result.summary || {}).reduce((n, s) => n + (s.created || 0), 0);
-      const failed  = Object.values(result.summary || {}).reduce((n, s) => n + (s.failed || 0), 0);
-      // Upsert arms, when Salesforce reported them — "1900 written" alone
-      // reads as 1900 new records over a mostly-synced target.
-      const upsC = Object.values(result.summary || {}).reduce((n, s) => n + (s.upsertCreated || 0), 0);
-      const upsU = Object.values(result.summary || {}).reduce((n, s) => n + (s.upsertUpdated || 0), 0);
-      const wrote = upsU ? `${created} record(s) written — ${upsC} created · ${upsU} updated` : `${created} record(s) written`;
-      if (result.status === 'success') { okOrgs++; log(tgtUrl, '✅', wrote); }
-      else { failOrgs++; log(tgtUrl, '⚠', `${wrote}, ${failed} failed — see History`); }
-    } catch (e) {
-      failOrgs++;
-      const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
-      log(tgtUrl, '❌', fe.message);
-    } finally {
-      try { _foPort?.disconnect(); } catch (_) {}
-      _foPort = null;
-    }
-  }
-  { const b = panel.querySelector('#dsFanoutCancel'); if (b) b.remove(); }
-  await storageSaveHistory();
-  log('', '🏁', `done — ${okOrgs} ok · ${failOrgs} with failures · ${skipOrgs} skipped`);
-  showToast(`Fan-out complete: ${okOrgs}/${targets.length} orgs clean`, failOrgs ? 'warning' : 'success', 6000);
-}

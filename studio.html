@@ -172,6 +172,9 @@
   <!-- Trusted Types policy MUST load first — it monkey-patches innerHTML
        et al. so every subsequent script's HTML assignment is sanitized. -->
   <script src="trusted-types-policy.js"></script>
+  <!-- The licence gate. Loads before every view so no page can start
+       work before the user has accepted. -->
+  <script src="sftk-terms.js"></script>
   <script src="debug-logger.js"></script>
   <script src="onboarding.js"></script>
   <script src="debug-modal.js"></script>
@@ -183,6 +186,13 @@
   <script src="sftk-api-budget.js"></script>
   <script src="sftk-matching.js"></script>
   <script src="sftk-pii.js"></script>
+  <!-- Org Seeder deploys Custom Metadata records as a metadata package: the
+       pure XML builders live in sftk-cmdt.js, the zip builder in sftk-zip.js.
+       Both must load BEFORE studio-seed.js. -->
+  <script src="sftk-zip.js"></script>
+  <script src="sftk-cmdt.js"></script>
+  <script src="sftk-identity.js"></script>
+  <script src="sftk-undo.js"></script>
   <script src="studio-core.js"></script>
   <script src="studio-profiles.js"></script>
   <script src="studio-builder.js"></script>
@@ -192,16 +202,17 @@
   <script src="studio-reconcile.js"></script>
   <script src="studio-compare.js"></script>
   <script src="studio-history.js"></script>
+  <script src="studio-undo.js"></script>
   <script src="studio-readiness.js"></script>
   <script src="studio-schema.js"></script>
   <script src="studio-fields.js"></script>
   <script src="studio-picklists.js"></script>
   <script src="studio-ring.js"></script>
-  <script src="studio-treediff.js"></script>
   <script src="studio-seed.js"></script>
   <!-- T10 What's New — renders the committed CHANGELOG.md. Must load AFTER
        studio-core.js (it uses setMain/renderView wiring from there) and is
        shared verbatim with popup.html, so it carries its own HTML escaper. -->
+  <script src="studio-deploy.js"></script>
   <script src="studio-whatsnew.js"></script>
   <!-- Phase X note: studio-tools.js (kept in the repo, not loaded) is the
        proven host for mounting popup tools in this shell — the user chose to

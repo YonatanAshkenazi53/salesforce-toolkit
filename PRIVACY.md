@@ -1,6 +1,6 @@
 # Privacy — Admin Toolkit for Salesforce
 
-**Effective date:** July 27, 2026 · **Contact:** yonash53@gmail.com
+**Effective date:** July 27, 2026 · **Contact:** the developer contact on this extension's Chrome Web Store page
 
 **The short version: everything stays in your browser.** No servers, no analytics, no
 telemetry, no third-party services. The extension talks only to the Salesforce orgs you
@@ -51,6 +51,9 @@ not exfiltrate data past this policy.
 | `sftk_active_run` | In-progress transfer state, so a run survives closing the window |
 | `sftk_debug_enabled`, `sftk_debug_entries`, `sftk_debug_meta` | Debug mode: recent API calls with URLs and error text, for the exportable debug report. Session ids and bearer tokens are stripped before anything is written |
 | `adbg_custom_profiles`, `adbg_log_font_px` | Debugger presets and reader font size |
+| `sftk_seed_pii`, `sftk_seed_keys` | Org Seeder rules: which fields to mask and how, which field identifies a record, and the masking salt. Field **names** only — never values |
+| `sftk_terms_accepted` | The EULA version you accepted and when. Nothing else |
+| `sftk_history[].undo` | Per run: whether a restore point exists, which objects it covers, and why any were skipped. The restore point itself (record ids and the current values of every writable field, for each object a deployment can write) lives in the IndexedDB database `sftk_undo` on this PC — never in chrome.storage — for the newest 10 runs only, and it is deleted by the same retention window, by “Clear cached org data” and by “Clear All” |
 | `sftk_dark`, `sftk_tour_*`, `ds_whatsnew_seen`, `sftk_ao_*`, `sftk_schema_version` | Theme, first-run flags, last-seen release, per-view options, storage schema version |
 
 All of it is data **about your orgs, for you**, on your machine. Nothing in this
@@ -60,6 +63,55 @@ above on demand.
 
 A few short-lived values (an in-flight scan's progress, a pending modal's state)
 are held in `chrome.storage.session`, which the browser discards when it closes.
+
+## Copying data between orgs (Data Studio, Org Seeder, Reconcile)
+
+These features read records from one Salesforce org and write them into another
+org **that you choose**. This matters for privacy, so it is spelled out.
+
+- **The data goes org-to-org, through your browser.** It is never stored on any
+  server of ours, because there is no server of ours. Record data is held in
+  memory for the duration of a run.
+- **We do not see it.** No copy is kept, transmitted, or logged. The run history
+  keeps counts, errors and record ids so results stay clickable — not field values.
+- **The masking rules you set are stored locally**, at `sftk_seed_pii`
+  (which fields to mask and how) and `sftk_seed_keys` (which field identifies a
+  record). These hold field *names*, never field *values*. The masking salt is
+  generated on your machine and never leaves it.
+
+### Masking is pseudonymisation, not anonymisation
+
+The PII masking features replace values with realistic, format-preserving
+substitutes so masked data still passes validation rules. That makes data **less
+identifying**. It does **not** make it anonymous:
+
+- masking is deterministic for a given salt, so the same input always produces
+  the same output — which is what keeps records joinable, and is also exactly
+  what makes re-identification possible for someone who has both sides;
+- only the fields you select are masked. Anything you do not select is copied
+  **raw**, including free-text fields that may contain personal data;
+- relationships, dates, amounts and record structure are preserved, and those
+  alone can be enough to identify a person in a small dataset.
+
+**Deciding whether you may copy personal data into another org is your call and
+your responsibility.** If GDPR, the Israeli Privacy Protection Law, HIPAA, or any
+other regime applies to that data, you are the controller of it — we are not a
+processor, because the data never reaches us. See section 3 of [EULA.md](EULA.md).
+
+### What the extension will not let you do silently
+
+- It refuses to run a seed that would copy raw email or phone fields without
+  telling you first, and names the fields.
+- It will not copy files when a masking policy is active, because file **contents**
+  cannot be masked — it skips them and says so.
+- Objects it could not scan are reported as UNKNOWN, never as "clean".
+
+## Your acceptance record
+
+When you first run the extension it asks you to accept [EULA.md](EULA.md). It
+records **only** the version you accepted and the timestamp, at
+`sftk_terms_accepted`, in `chrome.storage.local` on your machine. No name, no
+email, no identifier, and nothing is transmitted.
 
 ## Permissions rationale
 

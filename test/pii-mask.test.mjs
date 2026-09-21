@@ -16,7 +16,7 @@ const NAMES = ['sftkPiiHashHex', 'sftkPiiMaskable', 'sftkPiiFormat',
                'sftkPiiMaskValue', 'sftkPiiSuggest',
                // format-preserving patterns — same byte-parity contract
                'sftkPiiPatternList', 'sftkPiiIlIdValid', 'sftkPiiLuhn',
-               'sftkPiiDetectPattern', 'sftkPiiPatternFormat'];
+               'sftkPiiDetectPattern', 'sftkPiiPatternFormat', 'sftkPiiNameLists'];
 const pii = extractFunctions('sftk-pii.js', NAMES);
 
 const SALT = 'a3f1c9d200aa11bb22cc33dd44ee55ff';
@@ -250,11 +250,22 @@ describe('sftkPiiSuggest — masking candidates for one object', () => {
     }
   });
 
-  it('flags the record-name field (nameField:true)', () => {
+  it('flags the record-name field ONLY on person-shaped objects', () => {
+    // A record Name is a person's name on Contact/Lead/People-ish objects.
+    // On a custom object it is a label like "LC-0400" — flagging it there
+    // buried the real findings in noise (user 2026-08-21).
+    const custom = pii.sftkPiiSuggest('Load_Child__c', [
+      { name: 'Name', label: 'Name', type: 'string', length: 80, nameField: true },
+    ], {});
+    expect(custom).toEqual([]);
+    const employee = pii.sftkPiiSuggest('Employee_Record__c', [
+      { name: 'Name', label: 'Name', type: 'string', length: 80, nameField: true },
+    ], {});
+    expect(employee.map(o => o.field)).toEqual(['Name']);
     const out = pii.sftkPiiSuggest('Contact', [
       { name: 'Name', label: 'Full Name', type: 'string', length: 121, nameField: true },
     ], {});
-    expect(out).toEqual([{ field: 'Name', reason: 'name field', sure: true }]);
+    expect(out).toEqual([{ field: 'Name', reason: 'record name on a person-shaped object', sure: true, pattern: 'person-name' }]);
   });
 
   it('flags ComplianceGroup hits (semicolon-joined) and ignores non-matches', () => {

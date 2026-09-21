@@ -39,8 +39,19 @@ const STATUS_MESSAGES = [
 // ============================================================
 // Init
 // ============================================================
+// Set only once the licence gate has been passed. Every listener that can
+// boot the page later (a cookie refresh, a deep link) checks it — the gate
+// is the only door in (audit 2026-09-12).
+let _termsOk = false;
+
 document.addEventListener('DOMContentLoaded', async () => {
   initDarkTheme();
+  // The licence gate runs BEFORE any org session is touched: declining must
+  // mean nothing happens, not "nothing happens after we already looked"
+  // (user 2026-08-26). initDarkTheme stays above it only so the dialog is
+  // not painted onto a half-themed page.
+  if (typeof sftkTermsGate === 'function' && !(await sftkTermsGate())) return;
+  _termsOk = true;
   initDebugMode();
   initActivityBar();
   setupTabs();
@@ -797,6 +808,9 @@ async function initSession(reason) {
 // message.  We know the cookie is fresh — attempt reconnect immediately.
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'SF_SESSION_REFRESHED') {
+    // A cookie refresh must not boot a page whose licence gate was declined
+    // (or is still open).
+    if (!_termsOk) return;
     clearInterval(_sessionPollTimer);
     _flowsLoaded = false;
     initSession('cookie_changed');
@@ -951,7 +965,10 @@ async function loadFlows() {
     // for, so it costs nothing — but it must NEVER cost the flow list itself:
     // if this org/API version rejects the field, retry once without it and let
     // DependencyMap disable caching rather than leave the user with no flows.
-    const FLOW_FIELDS = 'Id,MasterLabel,Definition.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,Description';
+    // ApiVersion / CreatedDate ride along for the Dependencies rows (user
+    // 2026-09-13: "version number, api version, status … last modified date
+    // and created date") — both are plain Tooling Flow fields.
+    const FLOW_FIELDS = 'Id,MasterLabel,Definition.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,Description,ApiVersion,CreatedDate';
     const order = ' ORDER BY MasterLabel ASC,VersionNumber ASC';
     let result = await sendBg({
       type: 'SF_QUERY_ALL', orgUrl: loadOrgUrl, sid: loadSid, tooling: true,
@@ -985,6 +1002,25 @@ async function loadFlows() {
     updateActionBar();
     updateSelectionSummary();
 
+    // 🔒 Managed-package flows are invisible to the Tooling query above; list
+    // them from the REST views so the Dependencies tab can show them (with
+    // their contents marked hidden). Fire-and-forget — the section paints
+    // itself when the read lands; a failure is disclosed on the section.
+    if (typeof DependencyMap.loadManagedFlows === 'function') {
+      // The same read carries FlowDefinitionView.TriggerType for EVERY flow —
+      // the scan-independent way to tell a record-triggered flow from a plain
+      // autolaunched one (user 2026-09-14, from Setup's own list).
+      DependencyMap.loadManagedFlows(loadOrgUrl, loadSid)
+        .then(() => {
+          patchFlowTypesFromDefinitions(loadOrgUrl);
+          // The cached map paints before this list lands, so a managed
+          // subflow target read "Not found" until something else repainted.
+          if (loadOrgUrl === orgUrl && DependencyMap.treeStaleForManaged?.()
+              && document.getElementById('tab-dependencies')?.style.display !== 'none') renderDependenciesTab();
+        })
+        .catch(() => {});
+    }
+
     // Scan metadata in the background if the org is small enough to make that
     // free (see fetchAllMetadataSilently) — pass the snapshotted org context so
     // the flow IDs and the session always belong together.
@@ -997,6 +1033,26 @@ async function loadFlows() {
     handleApiError(e.message || String(e));
   }
 }
+
+// ↻ Rescan (user 2026-09-13: "we need to offer rescan button"). The popup can
+// live for hours as a popped-out tab; a flow edited in Flow Builder meanwhile
+// keeps its old, now wrong, "calls no subflows" until something re-reads it.
+// This drops the org's stored dependency data, re-reads the flow list and
+// every version's metadata. The click is the consent for a large org — the
+// button's own title quotes the cost.
+window.sftkRescanDependencies = async function () {
+  if (!orgUrl || !sid) return;
+  try { await DependencyMap.clearCache(); } catch (_) { /* a missing entry is fine */ }
+  _flowsLoaded = false;
+  await loadFlows();   // resets the module, re-queries the list, decides on the auto-scan
+  // The auto-scan decision lands after one storage read — wait for it briefly.
+  for (let i = 0; i < 50 && metadataScanState === 'none'; i++) await wait(100);
+  if (metadataScanState === 'skipped') {
+    hideScanOfferBar();
+    await runDependencyScan(orgUrl, sid);
+  }
+  if (document.getElementById('tab-dependencies')?.style.display !== 'none') renderDependenciesTab();
+};
 
 // P1 — the dependency scan costs ONE metadata GET per flow VERSION. In a small
 // org that is a couple of seconds and worth paying on open (🔗 icons and refined
@@ -1202,6 +1258,24 @@ async function verifyFlowListCoverage(loadOrgUrl, loadSid, got) {
   } catch (_) { /* best-effort — a failed check must never break the load */ }
 }
 
+// Refine ProcessType from FlowDefinitionView.TriggerType (read on every load,
+// no metadata scan needed), then repaint what is showing.
+function patchFlowTypesFromDefinitions(loadOrgUrl) {
+  if (loadOrgUrl && orgUrl !== loadOrgUrl) return;       // org switched meanwhile
+  const map = (typeof DependencyMap.getDefinitionTriggerMap === 'function') ? DependencyMap.getDefinitionTriggerMap() : {};
+  let changed = 0;
+  for (const f of allFlows) {
+    const t = map[f.ApiName];
+    if (!t) continue;
+    const refined = resolveFlowType(f.ProcessType, t);
+    if (refined !== f.ProcessType) { f.ProcessType = refined; changed++; }
+  }
+  if (!changed) return;
+  groupFlows();
+  renderFlowList();
+  if (document.getElementById('tab-dependencies')?.style.display !== 'none') renderDependenciesTab();
+}
+
 function patchFlowTypesFromMetadata() {
   const triggerMap = DependencyMap.getTriggerTypeMap();
   for (const f of allFlows) {
@@ -1316,6 +1390,11 @@ function buildGroupElement(label, versions, depMap) {
     subflowIcon.title = `Used as subflow in: ${tooltip}`;
     groupInfo.appendChild(subflowIcon);
   }
+  // ↘ what this flow CALLS (user 2026-09-14: "this feature should also show
+  // dependencies"). Honest about coverage: a flow the scan has not read says
+  // "calls unknown", never "calls nothing".
+  const callsChip = buildCallsChip(apiName, depMap);
+  if (callsChip) groupInfo.appendChild(callsChip);
 
   header.appendChild(checkbox);
   header.appendChild(toggleArrow);
@@ -1343,6 +1422,33 @@ function buildGroupElement(label, versions, depMap) {
   });
 
   return group;
+}
+
+// ↘ calls N — the subflows this flow's scanned versions call (direct), with
+// the whole tree in the tooltip; or "calls ?" when the scan has not read it.
+function buildCallsChip(apiName, depMap) {
+  if (!apiName || !depMap) return null;
+  const st = (typeof DependencyMap.flowScanState === 'function') ? DependencyMap.flowScanState(apiName) : { state: 'unscanned' };
+  const chip = document.createElement('span');
+  chip.className = 'subflow-icon';
+  chip.style.fontSize = '11px';
+  if (st.state !== 'scanned') {
+    chip.textContent = '↘ calls ?';
+    chip.title = st.state === 'partial'
+      ? `${st.scanned} of ${st.total} version(s) read by the dependency scan — what the others call is unknown. Use 🔗 Resume dependency scan.`
+      : 'The dependency scan has not read this flow, so what it calls is UNKNOWN (not none). Use 🔗 Scan dependencies.';
+    return chip;
+  }
+  const direct = [];
+  for (const [called, callers] of Object.entries(depMap)) {
+    if ((callers || []).some(c => c && c.apiName === apiName)) direct.push(called);
+  }
+  if (!direct.length) return null;
+  const tree = (typeof DependencyMap.subflowClosure === 'function') ? DependencyMap.subflowClosure([apiName]) : { names: direct, truncated: false };
+  chip.textContent = `↘ calls ${direct.length}`;
+  chip.title = `Calls ${direct.length} subflow(s) directly: ${direct.sort().join(', ')}`
+    + (tree.names.length > direct.length ? `\nWhole tree (${tree.names.length}): ${tree.names.join(', ')}${tree.truncated ? ' …' : ''}` : '');
+  return chip;
 }
 
 function buildVersionRow(flow, allVersions, groupEl, depMap) {
@@ -2085,11 +2191,82 @@ function switchMode(mode) {
 // ============================================================
 // Backup — download selected versions as a bundle JSON
 // ============================================================
+// The whole-tree backup (user 2026-09-14: "back up a full tree of flows and
+// its subflows"). Returns the extra versions to add, the exclusions to
+// disclose, or { blocked } when the scan has not read enough to KNOW the
+// tree — a backup that claims "whole tree" over an unread flow would be a
+// silent gap, so it refuses rather than guesses.
+function planTreeBackup(selected) {
+  const roots = [...new Set(selected.map(f => f.ApiName).filter(Boolean))];
+  const unscanned = roots.filter(a => (DependencyMap.flowScanState(a) || {}).state !== 'scanned');
+  if (unscanned.length) return { blocked: unscanned };
+  const { names, truncated } = DependencyMap.subflowClosure(roots);
+  const unread = names.filter(a => (DependencyMap.flowScanState(a) || {}).state !== 'scanned' && (allFlows.some(f => f.ApiName === a)));
+  if (unread.length) return { blocked: unread };
+  const managed = new Set((DependencyMap.getManagedFlows() || []).map(m => m.apiName));
+  const selectedSet = new Set(selected.map(f => f.Id));
+  const add = [], excluded = [];
+  for (const a of names) {
+    const versions = allFlows.filter(f => f.ApiName === a);
+    if (!versions.length) {
+      excluded.push({ apiName: a, why: managed.has(a) ? 'managed package — contents hidden by Salesforce, cannot be backed up' : 'not in this org' });
+      continue;
+    }
+    const pick = versions.find(v => v.Status === 'Active')
+      || versions.slice().sort((x, y) => (Number(y.VersionNumber) || 0) - (Number(x.VersionNumber) || 0))[0];
+    if (!selectedSet.has(pick.Id)) add.push(pick);
+  }
+  return { add, excluded, truncated };
+}
+
+function confirmTreeBackup(selected, plan) {
+  return new Promise(resolve => {
+    const li = (t) => `<li>${escHtml(t)}</li>`;
+    showModal(`
+      <div class="modal-header">
+        <span class="modal-icon">🌳</span>
+        <h2>Back up ${selected.length} flow(s) with their subflow tree</h2>
+      </div>
+      <div class="modal-body">
+        <p><strong>${plan.add.length}</strong> subflow version(s) will be added — the active version of each, or the newest when none is active:</p>
+        <ul class="modal-list">${plan.add.map(f => li(`${f.MasterLabel} v${f.VersionNumber} (${f.Status})`)).join('') || li('none — the selected flows call no subflows that are not already selected')}</ul>
+        ${plan.excluded.length ? `<p><strong>Not included</strong> (said, not skipped silently):</p><ul class="modal-list">${plan.excluded.map(x => li(`${x.apiName} — ${x.why}`)).join('')}</ul>` : ''}
+        ${plan.truncated ? '<p class="modal-warning-text">⚠ The tree walk hit its size cap — deeper subflows are NOT included.</p>' : ''}
+        <p style="font-size:12px;opacity:.8">One zip: every flow as .flow XML plus package.xml and backup.json — restorable in 📥 Restore mode.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="modalCancel">Cancel</button>
+        <button class="btn btn-primary" id="modalConfirm">⬇ Download ${selected.length + plan.add.length} flow(s)</button>
+      </div>`);
+    document.getElementById('modalCancel').addEventListener('click', () => { closeModal(); resolve(false); });
+    document.getElementById('modalConfirm').addEventListener('click', () => { closeModal(); resolve(true); });
+  });
+}
+
 async function onBackupClick() {
-  const selected = allFlows.filter(f => selectedIds.has(f.Id));
+  let selected = allFlows.filter(f => selectedIds.has(f.Id));
   if (selected.length === 0) return;
 
   const btn = document.getElementById('backupBtn');
+  let treeMode = false;
+  if (document.getElementById('backupWithSubflows')?.checked) {
+    const plan = planTreeBackup(selected);
+    if (plan.blocked) {
+      showModal(`
+        <div class="modal-header modal-warn"><span class="modal-icon">🔗</span><h2>The tree is not known yet</h2></div>
+        <div class="modal-body">
+          <p>The dependency scan has not read ${plan.blocked.length} flow(s) in this tree, so what they call is UNKNOWN — a "whole tree" backup would silently miss subflows.</p>
+          <ul class="modal-list">${plan.blocked.slice(0, 12).map(a => `<li>${escHtml(a)}</li>`).join('')}${plan.blocked.length > 12 ? `<li>… +${plan.blocked.length - 12} more</li>` : ''}</ul>
+          <p>Run 🔗 Scan dependencies (or Resume) above, then back up again. Untick the tree option to back up only the selected versions.</p>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" id="modalCancel">Close</button></div>`);
+      document.getElementById('modalCancel').addEventListener('click', closeModal);
+      return;
+    }
+    if (!(await confirmTreeBackup(selected, plan))) return;
+    selected = selected.concat(plan.add);
+    treeMode = true;
+  }
   btn.disabled = true;
 
   showScanProgress(true, `⬇ Fetching metadata… 0 / ${selected.length}`);
@@ -2131,9 +2308,19 @@ async function onBackupClick() {
     return;
   }
 
+  if (flows.length < selected.length) {
+    // Same inline notice style as the success toast below — a shortfall in a
+    // backup must be visible where the user is looking, not only in a log.
+    const warn = document.createElement('div');
+    warn.className = 'result-toast';
+    warn.innerHTML = `<div class="toast-error">⚠ ${selected.length - flows.length} of ${selected.length} flow(s) could not be read and are NOT in the zip.</div>`;
+    const host = document.getElementById('flowList');
+    if (host) host.insertBefore(warn, host.firstChild);
+    setTimeout(() => warn.remove(), 9000);
+  }
   const date = new Date().toISOString().slice(0, 10);
   downloadFlowBackupZip(flows, orgUrl,
-    `SF_Backup_${date}_${flows.length}flow${flows.length !== 1 ? 's' : ''}.zip`);
+    `SF_Backup_${date}${treeMode ? '_tree' : ''}_${flows.length}flow${flows.length !== 1 ? 's' : ''}.zip`);
 
   // Brief success toast
   const list = document.getElementById('flowList');
@@ -2563,6 +2750,8 @@ function updateActionBar() {
 
   deleteBtn.style.display     = currentMode === 'delete'  ? '' : 'none';
   backupBtn.style.display     = currentMode === 'backup'  ? '' : 'none';
+  const treeOpt = document.getElementById('backupTreeOpt');
+  if (treeOpt) treeOpt.style.display = currentMode === 'backup' ? '' : 'none';
   restoreActBtn.style.display = currentMode === 'restore' ? '' : 'none';
 
   if (currentMode === 'delete') {
@@ -2598,10 +2787,22 @@ function updateSelectionSummary() {
   el.textContent = text;
 }
 
+// A sidebar click can land on a tool tab before any Salesforce session exists
+// (no SF tab open yet, or the session is still resolving). Every tool needs
+// orgUrl + sid: show the normal connect state, exactly as loadFlows() does,
+// instead of initialising a tool with nulls (user 2026-09-18: "Cannot read
+// properties of null (reading 'replace')" at lightning-pages.js init).
+function toolTabHasSession() {
+  if (orgUrl && sid) return true;
+  initSession();
+  return false;
+}
+
 // ============================================================
 // Lightning Pages Tab
 // ============================================================
 function initLightningPagesTab() {
+  if (!toolTabHasSession()) return;
   LightningPages.updateSession(orgUrl, sid);
   const container = document.getElementById('lpContainer');
   if (!container._lpInitialized) {
@@ -2614,6 +2815,7 @@ function initLightningPagesTab() {
 // Automation Debugger Tab
 // ============================================================
 function initDebuggerTab() {
+  if (!toolTabHasSession()) return;
   ApexDebugger.updateSession(orgUrl, sid);
   const container = document.getElementById('debuggerContainer');
   if (!container._adbgInitialized) {
@@ -2626,6 +2828,7 @@ function initDebuggerTab() {
 // Fields Tab
 // ============================================================
 function initFieldCleanerTab() {
+  if (!toolTabHasSession()) return;
   FieldCleaner.updateSession(orgUrl, sid);
   const container = document.getElementById('fieldCleanerContainer');
   if (!container._fcInitialized) {
@@ -2646,6 +2849,7 @@ function initFieldCleanerTab() {
 // Users — Copy Perms tab
 // ============================================================
 function initUserCopyTab() {
+  if (!toolTabHasSession()) return;
   UserCopy.updateSession(orgUrl, sid);
   const container = document.getElementById('userCopyContainer');
   if (!container._ucInitialized) {
@@ -2657,6 +2861,7 @@ function initUserCopyTab() {
 // Users — Licenses tab
 // ============================================================
 function initLicenseManagerTab() {
+  if (!toolTabHasSession()) return;
   LicenseManager.updateSession(orgUrl, sid);
   const container = document.getElementById('licenseManagerContainer');
   if (!container._lmInitialized) {
@@ -2668,6 +2873,7 @@ function initLicenseManagerTab() {
 // Users — Flow Access tab
 // ============================================================
 function initFlowAccessTab() {
+  if (!toolTabHasSession()) return;
   FlowPermissions.updateSession(orgUrl, sid);
   const container = document.getElementById('flowPermsContainer');
   if (!container._fpInitialized) {
@@ -2750,7 +2956,7 @@ function renderDependenciesTab() {
       container.appendChild(buildDepScanOffer());
       return;
     }
-    DependencyMap.renderDependencyTreeTab(allFlows, container, orgUrl);
+    DependencyMap.renderDependencyTreeTab(allFlows, container, orgUrl, sid);
     return;
   }
 
@@ -2763,7 +2969,7 @@ function renderDependenciesTab() {
   const banner = [coverage, freshLine].filter(Boolean).join(' ');
   noBanner.style.display = banner ? '' : 'none';
   if (banner) noBanner.textContent = banner;
-  DependencyMap.renderDependencyTreeTab(allFlows, container, orgUrl);
+  DependencyMap.renderDependencyTreeTab(allFlows, container, orgUrl, sid);
 }
 
 // The Dependencies-tab twin of showScanOfferBar: same numbers, same honesty,
@@ -3673,10 +3879,10 @@ async function sendBg(msg) {
 // all as ProcessType='AutoLaunchedFlow'. TriggerType tells them apart.
 function resolveFlowType(processType, triggerType) {
   if (processType === 'AutoLaunchedFlow') {
+    // Any Record… trigger (before save, after save, before delete, and
+    // whatever Salesforce adds next) is a record-triggered flow.
+    if (/^Record/i.test(String(triggerType || ''))) return 'RecordTriggeredFlow';
     switch (triggerType) {
-      case 'RecordBeforeSave':
-      case 'RecordAfterSave':
-        return 'RecordTriggeredFlow';
       case 'Scheduled':
         return 'ScheduledFlow';
       case 'PlatformEvent':

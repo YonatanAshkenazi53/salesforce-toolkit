@@ -433,13 +433,6 @@ describe('empty live set = unknown, not closed', () => {
     expect(off).toContain('(not open)');
   }));
 
-  it('Sync Plan attempts all targets when liveness is unknown instead of refusing', () => {
-    const src = RING.slice(RING.indexOf('async function _ringOpenPlan('),
-                           RING.indexOf('\n}', RING.indexOf('async function _ringOpenPlan(')));
-    expect(src).toMatch(/lsKnown = \(typeof _liveKnown === 'function'\) \? _liveKnown\(\)/);
-    expect(src).toMatch(/lsKnown \? targets\.filter[\s\S]*?: targets\.slice\(\)/);
-  });
-
   it('Scan-all skips only KNOWN-closed orgs', () => {
     const src = RING.slice(RING.indexOf('async function _ringScanAll('),
                            RING.indexOf('\n}', RING.indexOf('async function _ringScanAll(')));
@@ -454,10 +447,8 @@ describe('empty live set = unknown, not closed', () => {
   // session alone makes size 1 while GET_ALL_SF_SESSIONS may have failed —
   // size>0 re-disabled every open target in exactly that state.
   it('every liveness consumer branches on _liveKnown(), not set size', () => {
-    const TRANSFER = read('studio-transfer.js');
-    expect(TRANSFER).toMatch(/liveKnown = \(typeof _liveKnown === 'function'\) \? _liveKnown\(\)/);
-    // 4th consumer 2026-08-11: sftkRingRebaseline (👑 crown-move auto-rescan)
-    expect(RING.match(/typeof _liveKnown === 'function'/g)?.length).toBe(4);
+    // (the fan-out dialog and the Sync Plan — two consumers — were retired 2026-09-14)
+    expect(RING.match(/typeof _liveKnown === 'function'/g)?.length).toBe(3);
     expect(CORE).toMatch(/function _liveKnown\(\) \{ return _allSessionsOk; \}/);
   });
 
@@ -499,17 +490,6 @@ describe('crown & pin persistence — sweep round 2 fixes', () => {
   it('the target chooser previews THIS profile\'s own source, never the ring crown\'s, for a pinned source', () => {
     const src = RECONCILE.slice(RECONCILE.indexOf('window.openReconcile'), RECONCILE.indexOf('window.openReconcile') + 3000);
     expect(src).toMatch(/_ringScanKey\(u, p\.sourceOrg\)/);
-  });
-
-  it('Sync Plan captures the crown ONCE before its scan loop — a mid-plan crown change cannot mislabel a scan', () => {
-    const start = RING.indexOf('async function _ringOpenPlan');
-    const src = RING.slice(start, RING.indexOf('\n}', RING.indexOf('storageSaveProfiles', start)));
-    expect(src).toMatch(/const planSrc = _ring\.sourceUrl;/);
-    // Both the scan clone and the deposit key must use the captured value —
-    // re-reading _ring.sourceUrl after the await is the exact trap
-    // _ringScanKey's own contract warns about.
-    expect(src).toMatch(/sourceOrg: planSrc, targetOrg: tgt/);
-    expect(src).toMatch(/_ringScanKey\(tgt, planSrc\)/);
   });
 
   it('picker toolbar counts match what their toggles actually do', () => {
@@ -704,13 +684,10 @@ describe('the compare trio explains itself on hover', () => {
 
   it('each surface names its role AND its siblings', () => {
     const RECONCILE = read('studio-reconcile.js');
-    const TREEDIFF  = read('studio-treediff.js');
-    // Reconcile = fix one pair, points at Tree diff
+    // Reconcile = fix one pair, points at the Sync Ring matrix (Tree diff was
+    // retired 2026-09-14 — one target at a time is the whole model now)
     expect(RECONCILE).toMatch(/help: 'The repair shop of the compare trio/);
-    expect(RECONCILE).toMatch(/help: '[^']*Tree diff/);
-    // Tree diff = overview, executes nothing, points at Reconcile + scan
-    expect(TREEDIFF).toMatch(/help: 'The overview of the compare trio/);
-    expect(TREEDIFF).toMatch(/help: '[^']*Reconcile/);
+    expect(RECONCILE).toMatch(/help: '[^']*Sync Ring/);
     // Ring = source of truth + reading-not-live-state honesty
     expect(RING).toMatch(/help: '[^']*a reading, not live state/);
   });
@@ -718,7 +695,6 @@ describe('the compare trio explains itself on hover', () => {
   it('the deployment-card buttons carry the measure/fix/overview story', () => {
     expect(PROFILES).toContain('MEASURE this pair');
     expect(PROFILES).toContain('FIX this source → target pair');
-    expect(PROFILES).toContain("The OVERVIEW: this deployment's whole record tree");
   });
 });
 
@@ -858,7 +834,7 @@ describe('sweep 2026-08-16: stale state can never drive a write or wear a verdic
     // `sourceId|checksum` keys carry no target — pairs sharing a source org
     // produce identical keys, so a survivor would arm 📎 Move against a
     // DIFFERENT target with pre-checked rows.
-    const i = REC.indexOf('if (_recLastProfileId !== p.id) {');
+    const i = REC.indexOf('function sftkRecResetSelectionFor(p) {');   // 2026-09-19: the block became a function shared with the Deploy view
     expect(i).toBeGreaterThan(-1);
     expect(REC.slice(i, i + 500)).toContain('_recFileSel = new Set();');
   });
@@ -875,9 +851,8 @@ describe('sweep 2026-08-16: stale state can never drive a write or wear a verdic
     expect(REC).toContain('📎 file check failed');
     expect(RINGSRC).toContain('file check FAILED');
     // every ring-summary write site stamps fileErr beside fileMiss
-    expect((RINGSRC.match(/fileErr: true/g) || []).length).toBeGreaterThanOrEqual(4);
+    expect((RINGSRC.match(/fileErr: true/g) || []).length).toBeGreaterThanOrEqual(3);   // Sync Plan's sites retired 2026-09-14
     expect(SCAN).toContain('fileErr: true');
-    expect(read('studio-treediff.js')).toContain('fileErr: true');
   });
 
   it('runDiffScan refuses source === target', () => {
@@ -956,7 +931,6 @@ describe('one crown writer: dsSetSourceOfTruth', () => {
     // No surface may still direct the user to change the crown in the ring.
     for (const [name, src] of [['studio-builder.js', BUILDER], ['studio-ring.js', RING],
                                ['studio-core.js', CORE], ['studio-picklists.js', PICKLISTS],
-                               ['studio-treediff.js', read('studio-treediff.js')],
                                ['studio-readiness.js', read('studio-readiness.js')]]) {
       expect(src, `${name} still points at the removed ring crown control`)
         .not.toMatch(/Sync Ring or the topbar|mark one ⦿|pick one here or in the Sync Ring/);
@@ -1014,7 +988,7 @@ describe('Reconcile carries the engine controls with profile persistence', () =>
   it('an ephemeral chooser pair mirrors the choice onto the REAL profile', () => {
     // The clone evaporates with the session — without the _ringOf mirror the
     // user's engine choice would silently vanish on the next open.
-    const i = REC.indexOf('const _recEnginePersist');
+    const i = REC.indexOf('async function sftkRecEnginePersist(p) {');   // 2026-09-21: the save became a function shared with the Deploy view
     expect(i).toBeGreaterThan(-1);
     const fn = REC.slice(i, i + 700);
     expect(fn).toMatch(/p\._ringOf\?\.profileId \? _profiles\.find\(x => x\.id === p\._ringOf\.profileId\)/);
@@ -1038,7 +1012,7 @@ describe('a clean root never claims full sync over unverified or missing childre
     // silent-clean requires: root clean AND no child work…
     expect(REC).toMatch(/const _syncStrip = \(_rootClean && !_kids\.length\)/);
     // …and an unscanned child section forces the UNVERIFIED banner instead
-    expect(REC).toContain('Root object in sync — children UNVERIFIED');
+    expect(REC).toContain('Root object in sync — children unverified');
     expect(REC).toMatch(/_health\.length \|\| _fdRecs \|\| _kidsUnscanned/);
   });
 
@@ -1086,8 +1060,7 @@ describe('the batch-size input goes inert in Async mode, on every surface', () =
 
   it('renders disabled when the profile is already on bulk', () => {
     for (const [name, src, id] of [['reconcile', REC, 'dsRecBatchSize'],
-                                   ['run page', TRANSFER, 'dsTrBatchSize'],
-                                   ['fan-out', TRANSFER, 'dsFanoutBatchSize']]) {
+                                   ['run page', TRANSFER, 'dsTrBatchSize']]) {
       const i = src.indexOf(`id="${id}"`);
       expect(i, `${name} input exists`).toBeGreaterThan(-1);
       expect(src.slice(i, i + 450), `${name} disables on bulk`)
@@ -1113,8 +1086,7 @@ describe('the batch-size input goes inert in Async mode, on every surface', () =
     expect(BG).toMatch(/Math\.min\(6, Math\.floor\(Number\(profile\.threads\)\)\)/);
     expect(BG).toContain('starts.map(s => sendChunk(s))');
     for (const [name, src, id] of [['reconcile', REC, 'dsRecThreads'],
-                                   ['run page', TRANSFER, 'dsTrThreads'],
-                                   ['fan-out', TRANSFER, 'dsFanoutThreads']]) {
+                                   ['run page', TRANSFER, 'dsTrThreads']]) {
       const i = src.indexOf(`id="${id}"`);
       expect(i, `${name} threads input exists`).toBeGreaterThan(-1);
       expect(src.slice(i, i + 450), `${name} disables on bulk`)

@@ -10,6 +10,7 @@
 // parent WITHOUT the parent link, parent inserted, then the connect step
 // wiring each child to its parent's NEW target id.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { extractFunctions } from './extract.mjs';
 
 const eng = extractFunctions('background.js', [
@@ -588,5 +589,30 @@ describe('the engine streams error lines per wave', () => {
     expect(errEvts.length).toBe(1);
     expect(errEvts[0].lines.join('\n')).toContain('REQUIRED_FIELD_MISSING: boom');
     expect(errEvts[0].more).toBe(0);
+  });
+});
+
+// ── Ambiguous lookup anchors fail CLOSED (user 2026-08-27: "what occurs if
+// we match by name and we have two records with the same name?" — the old
+// rule silently linked to whichever duplicate Salesforce returned first,
+// a mis-link the user could not even see). ────────────────────────
+describe('duplicate anchor values in the target bridge', () => {
+  const BG = readFileSync(new URL('../background.js', import.meta.url), 'utf8');
+  const seg = BG.slice(BG.indexOf('const ambiguousAnchors = new Set()'),
+    BG.indexOf('// 4. Build bridge'));
+
+  it('collects duplicates instead of keeping the first silently', () => {
+    expect(seg).toMatch(/if \(tgtAnchorMap\.has\(v\)\) \{ ambiguousAnchors\.add\(v\); continue; \}/);
+    expect(BG).not.toContain('First match wins');
+  });
+
+  it('EXCLUDES every ambiguous anchor — linking to either would be a guess', () => {
+    expect(seg).toMatch(/for \(const v of ambiguousAnchors\) tgtAnchorMap\.delete\(v\)/);
+  });
+
+  it('names the ambiguity, with examples and the fix', () => {
+    expect(seg).toContain('match MORE THAN ONE target record');
+    expect(seg).toContain('those lookups were left null');
+    expect(seg).toContain('match on an External ID');
   });
 });

@@ -211,7 +211,12 @@ function sftkPiiSuggest(objectApi, fields, complianceByField, samplesByField) {
   // Account a Billing address is usually business data, so it is offered
   // without the "sure" flag rather than not offered at all.
   const addrRx = /(street|city|postal|zipcode|zip$|address)/i;
-  const personObj = /^(Contact|Lead|Person.*|.*__c)$/i.test(String(objectApi || ''));
+  // PERSON-SHAPED means the object is about people. Everything else — a
+  // custom object, an Account, a junction — is not, and its record Name is
+  // a label like "LC-0400", not someone's name (user 2026-08-21: "why do
+  // you suggest the name field, its not a pii").
+  const personObj = /^(contact|lead|user)$/i.test(String(objectApi || ''))
+    || /(person|people|employee|patient|customer|candidate|member|student|donor|applicant|passenger|client|guest|staff)/i.test(String(objectApi || ''));
   const out = [];
   for (const f of (fields || [])) {
     if (!f || !f.name) continue;
@@ -231,12 +236,22 @@ function sftkPiiSuggest(objectApi, fields, complianceByField, samplesByField) {
       if (personObj || /mailing|home|personal|other/i.test(f.name)) sure = true;
     }
     if (f.type === 'email' || f.type === 'phone') { reasons.push(f.type + ' field'); sure = true; }
-    if (f.nameField) { reasons.push('name field'); sure = true; }
+    // A record's Name is only a person's name on a person-shaped object.
+    // Elsewhere it is an identifier or a label, and flagging it buries the
+    // real findings in noise. Values can still catch it below.
+    let namePattern = null;
+    if (f.nameField && personObj) {
+      reasons.push('record name on a person-shaped object'); sure = true;
+      namePattern = 'person-name';
+    }
     // Person-name PARTS: the compound Name carries nameField but is not
     // createable — FirstName/LastName are what the payload actually sends,
     // so they must be suggestable in their own right (adversarial review).
     if (/^((first|last|middle|maiden|nick)_?name|salutation|suffix)(__c)?$/i.test(f.name)) {
       reasons.push('person name part'); sure = true;
+      // Masking a first name to a LAST name reads as broken — match the part.
+      if (/^last_?name|surname/i.test(f.name)) namePattern = 'last-name';
+      else if (/^(first|middle|maiden|nick)_?name/i.test(f.name)) namePattern = 'first-name';
     }
     if (nameRx.test(f.name) || nameRx.test(f.label || '')) {
       reasons.push('name/label suggests personal data'); sure = true;
@@ -250,7 +265,9 @@ function sftkPiiSuggest(objectApi, fields, complianceByField, samplesByField) {
     }
     if (!reasons.length) continue;
     out.push({ field: f.name, reason: reasons.join('; '), sure,
-      ...(det ? { pattern: det.pattern } : {}) });
+      // A pattern read from real VALUES always beats one guessed from the
+      // field's role.
+      ...(det ? { pattern: det.pattern } : namePattern ? { pattern: namePattern } : {}) });
   }
   return out;
 }
@@ -269,9 +286,46 @@ function sftkPiiPatternList() {
       caveat: 'Uses the 900-999 area the SSA never issues — shape-valid, and never a real SSN.' },
     { id: 'credit-card', label: 'Credit card', sample: '4539578763621486',
       caveat: 'Luhn-valid so payment validation passes; derived from the hash, never a live card.' },
+    { id: 'person-name', label: 'Person name', sample: 'Yael Cohen',
+      caveat: 'A different REAL-looking name, so a seeded sandbox stays readable. Names repeat across a large set — they identify nobody, but they are not unique either.' },
+    { id: 'first-name', label: 'First name only', sample: 'Yael',
+      caveat: 'For FirstName fields. Same list as Person name.' },
+    { id: 'last-name', label: 'Last name only', sample: 'Cohen',
+      caveat: 'For LastName fields. Same list as Person name.' },
+    { id: 'company', label: 'Company name', sample: 'Northwind Ltd',
+      caveat: 'For Account-style names. Invented companies — any resemblance to a real one is coincidence.' },
     { id: 'digits', label: 'Digits (keep length)', sample: '4820193',
       caveat: 'Same digit count as the source value — for identifiers with no published scheme.' },
   ];
+}
+
+function sftkPiiNameLists() {
+  return {
+    first: ['Dana', 'Yael', 'Noa', 'Tamar', 'Maya', 'Shira', 'Adi', 'Lior',
+      'Omer', 'Roni', 'Amit', 'Gal', 'Yuval', 'Eden', 'Tal', 'Nadav',
+      'Itai', 'Eitan', 'Guy', 'Ido', 'Alon', 'Ron', 'Erez', 'Oren',
+      'Avi', 'Yossi', 'Moshe', 'David', 'Sarah', 'Rivka', 'Esther', 'Anna',
+      'Maria', 'John', 'Emma', 'Liam', 'Olivia', 'Noah', 'Ava', 'James',
+      'Sophia', 'Daniel', 'Mia', 'Michael', 'Laura', 'Thomas', 'Julia',
+      'Peter', 'Nina', 'Marco', 'Elena', 'Ahmed', 'Layla', 'Omar', 'Fatima',
+      'Chen', 'Priya', 'Raj', 'Sofia', 'Diego', 'Ines', 'Lucas', 'Clara', 'Hugo'],
+    last: ['Levi', 'Cohen', 'Mizrahi', 'Peretz', 'Biton', 'Avraham', 'Friedman',
+      'Katz', 'Shapira', 'Barak', 'Golan', 'Sharon', 'Adler', 'Gross',
+      'Weiss', 'Klein', 'Smith', 'Johnson', 'Brown', 'Garcia', 'Martinez',
+      'Lopez', 'Wilson', 'Taylor', 'Anderson', 'Moore', 'Jackson', 'Martin',
+      'Lee', 'Nguyen', 'Kim', 'Wang', 'Singh', 'Patel', 'Rossi', 'Ferrari',
+      'Mueller', 'Schmidt', 'Dubois', 'Bernard', 'Silva', 'Santos', 'Novak',
+      'Horvath', 'Kowalski', 'Ivanov', 'Haddad', 'Khoury', 'Ali', 'Hassan',
+      'Yamamoto', 'Tanaka', 'Olsen', 'Berg', 'Fischer', 'Meyer', 'Roux',
+      'Costa', 'Reyes', 'Torres', 'Murphy', 'Kelly', 'Walsh', 'Doyle'],
+    company: ['Northwind', 'Meridian', 'Zenith', 'Harbor', 'Summit', 'Vector',
+      'Lighthouse', 'Ironwood', 'Redwood', 'Silverline', 'Blue Harbor',
+      'Copperfield', 'Granite', 'Bright Field', 'Clearwater', 'Stonebridge',
+      'Fairview', 'Highpoint', 'Riverbend', 'Northgate', 'Westmount',
+      'Cedar Park', 'Golden Vale', 'Silver Creek', 'Emerald Bay', 'Crown Point',
+      'Falcon', 'Aurora', 'Horizon', 'Pinnacle', 'Keystone', 'Anchor'],
+    suffix: ['Ltd', 'Inc', 'LLC', 'Group', 'Holdings', 'Systems', 'Solutions', 'Industries'],
+  };
 }
 
 function sftkPiiIlIdValid(value) {
@@ -353,6 +407,14 @@ function sftkPiiPatternFormat(hex, patternId, fieldDesc, srcValue) {
     out = body + String((10 - (sum % 10)) % 10);
   } else if (patternId === 'email') {
     out = n.toString(36).padStart(10, '0').slice(0, 10) + '@masked.invalid';
+  } else if (patternId === 'person-name' || patternId === 'first-name'
+             || patternId === 'last-name' || patternId === 'company') {
+    const L = sftkPiiNameLists();
+    const first = choose(L.first, 0), last = choose(L.last, 8);
+    out = patternId === 'first-name' ? first
+      : patternId === 'last-name' ? last
+      : patternId === 'company' ? `${choose(L.company, 0)} ${choose(L.suffix, 8)}`
+      : `${first} ${last}`;
   } else if (patternId === 'digits') {
     const srcDigits = String(srcValue == null ? '' : srcValue).replace(/\D/g, '').length;
     out = digits(Math.max(1, Math.min(18, srcDigits || 6)), 0);
@@ -694,12 +756,14 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           const lit = scope.slice(ci, ci + 200).map(id => `'${id}'`).join(',');
           const w = baseWhere ? `(${baseWhere}) AND ${parentField} IN (${lit})` : `${parentField} IN (${lit})`;
           const r = await sfQueryAll(srcOrgUrl, srcSid, `SELECT Id FROM ${objType} WHERE ${w}`, false);
+          if (r.incomplete) throw sftkIncompleteErr(objType, 'parent scope', r.incomplete, 'The child object that depends on this scope was SKIPPED — nothing partial was deployed; the parent itself is written by its own step.');
           ids = ids.concat((r.records || []).map(x => x.Id));
         }
         ids = [...new Set(ids)];
       } else {
         const r = await sfQueryAll(srcOrgUrl, srcSid,
           `SELECT Id FROM ${objType}${baseWhere ? ' WHERE ' + baseWhere : ''}`, false);
+        if (r.incomplete) throw sftkIncompleteErr(objType, 'parent scope', r.incomplete, 'The child object that depends on this scope was SKIPPED — nothing partial was deployed; the parent itself is written by its own step.');
         ids = (r.records || []).map(x => x.Id);
       }
     } catch (e) {
@@ -835,6 +899,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           const lit = ids.slice(ci, ci + RID_CHUNK).map(id => `'${id}'`).join(',');
           const r = await sfQueryAll(srcOrgUrl, srcSid,
             `SELECT ${fields.join(',')} FROM ${objType} WHERE Id IN (${lit}) ORDER BY Id`, false);
+          if (r.incomplete) throw sftkIncompleteErr(objType, 'picked records', r.incomplete);
           out.push(...(r.records || []));
         }
         return out;
@@ -882,6 +947,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             // ORDER BY Id ensures deterministic pagination across large result sets
             const chunkSoql = `SELECT ${fields.join(',')} FROM ${objType} WHERE ${chunkWhere} ORDER BY Id`;
             const chunkRes  = await sfQueryAll(srcOrgUrl, srcSid, chunkSoql, false);
+            if (chunkRes.incomplete) throw sftkIncompleteErr(objType, 'child records', chunkRes.incomplete);
             recs = recs.concat(chunkRes.records || []);
           }
         }
@@ -969,10 +1035,29 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         } else {
           const qRes = await sfQueryAll(srcOrgUrl, srcSid, soql, false);
           recs = qRes.records || [];
+          // Deploying from a partial read writes PART of what the user
+          // chose and reports the run as if it were whole — fail the node
+          // instead, naming the exact shortfall.
+          if (qRes.incomplete) {
+            throw new Error(`${objType}: the source read came back INCOMPLETE — Salesforce says ${qRes.incomplete.expected} record(s) match, but only ${qRes.incomplete.got} arrived. Nothing was written for this object: deploying a partial read would silently skip the rest. Re-run; if it repeats, export a 🐞 debug report.`);
+          }
         }
       }
 
       // Store this node's source IDs so its children can build correct WHERE clauses
+      // Person Account CONTACTS (user 2026-09-16: Contact 10 × "Cannot
+      // select a person account"): every Person Account owns a hidden
+      // Contact that Salesforce creates WITH the Account and refuses as an
+      // insert. It is not a record of its own — leave it out, count it, and
+      // say so. Its details travel on the Account's Person* fields.
+      let personContactsSkipped = 0;
+      if (objType === 'Contact') {
+        personContactsSkipped = recs.filter(r => r.IsPersonAccount === true).length;
+        if (personContactsSkipped) {
+          recs = recs.filter(r => r.IsPersonAccount !== true);
+          diagnostics.push(`Contact: ${personContactsSkipped} Person Account contact(s) left out — Salesforce creates that Contact together with the Person Account and refuses a second one ("Cannot select a person account"); their details travel on the Account's Person fields.`);
+        }
+      }
       nodeSourceIds.set(node, recs.map(r => r.Id));
       postRunProgress({ phase: 'fetched', obj: objType, count: recs.length });
 
@@ -1109,11 +1194,21 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             anchorMap = bridged.map;
           }
 
-          // 3. Query TARGET for matching records: anchorValue → tgtId
-          //    Only keep the FIRST match if duplicates exist (deterministic)
+          // 3. Query TARGET for matching records: anchorValue → tgtId.
+          //    An anchor value that matches MORE THAN ONE target record is
+          //    AMBIGUOUS and is excluded — fail closed, like the files
+          //    pass's checksum pairing. The old rule ("first match wins")
+          //    silently attached the child to whichever duplicate Salesforce
+          //    happened to return first, which is a mis-link the user cannot
+          //    even see (user 2026-08-27: "what occurs if we match by name
+          //    and we have two records with the same name?" — this did).
+          //    Excluded anchors leave the lookup null, which the partial-
+          //    resolution warning below already counts — plus a diagnostic
+          //    that names the ambiguity as the reason.
           const anchorValues = [...new Set(anchorMap.values())];
           const VAL_CHUNK = 100;
           const tgtAnchorMap = new Map();
+          const ambiguousAnchors = new Set();
           for (let ci = 0; ci < anchorValues.length; ci += VAL_CHUNK) {
             const valList = anchorValues.slice(ci, ci + VAL_CHUNK)
               .map(v => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`)
@@ -1121,11 +1216,16 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             const tgtQ = await sfQueryAll(tgtOrgUrl, tgtSid,
               `SELECT Id, ${res.matchField} FROM ${res.matchObject} WHERE ${res.matchField} IN (${valList})`, false);
             for (const r of (tgtQ.records || [])) {
-              // First match wins (avoids non-deterministic overwrite)
-              if (r[res.matchField] != null && !tgtAnchorMap.has(r[res.matchField])) {
-                tgtAnchorMap.set(r[res.matchField], r.Id);
-              }
+              const v = r[res.matchField];
+              if (v == null) continue;
+              if (tgtAnchorMap.has(v)) { ambiguousAnchors.add(v); continue; }
+              tgtAnchorMap.set(v, r.Id);
             }
+          }
+          for (const v of ambiguousAnchors) tgtAnchorMap.delete(v);
+          if (ambiguousAnchors.size) {
+            const ex = [...ambiguousAnchors].slice(0, 3).map(v => `“${v}”`).join(', ');
+            diagnostics.push(`${objType}.${fieldName}: ${ambiguousAnchors.size} ${res.matchObject}.${res.matchField} value(s) match MORE THAN ONE target record (${ex}${ambiguousAnchors.size > 3 ? '…' : ''}) — linking to either would be a guess, so those lookups were left null. Deduplicate the target (or match on an External ID) and re-run to wire them.`);
           }
 
           // 4. Build bridge: srcId → tgtId (via shared anchor value)
@@ -1234,11 +1334,23 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // excluded from the index, fell back rather than guessed).
       let ownerFellBack = 0, ownerDefaulted = 0, ownerKeyMatched = 0, ownerKeyDup = 0;
 
+      // Person Accounts (user 2026-09-15, trailheads2 → trailheads4: every
+      // insert failed with "Unable to create/update fields: Name"): on a person
+      // account the Name is DERIVED from FirstName/LastName and Salesforce
+      // refuses it on insert. Send the parts, never the whole — when the
+      // target can take the parts. A target without Person Accounts gets the
+      // Name (the parts fall out below as not createable there) and the
+      // record lands as a business account, which the run says once per object.
+      let personRows = 0, personAsBusiness = 0;
       // ── Build payloads with field mapping ────────────────────────────────
       const payloads = recs.map((r, recIdx) => {
         const p = {};
         for (const f of (descRes.fields || [])) {
           if (!f.createable) continue;
+          if (f.name === 'Name' && r.IsPersonAccount === true) {
+            if (!tgtCreatable.size || tgtCreatable.has('LastName')) { personRows++; continue; }
+            personAsBusiness++;
+          }
           if (['Id','CreatedDate','LastModifiedDate','SystemModstamp',
                'CreatedById','LastModifiedById','IsDeleted','OwnerId'].includes(f.name)) continue;
           const v = r[f.name];
@@ -1335,6 +1447,16 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
               if (!matched) { if (ownerFallback) ownerFellBack++; else ownerDefaulted++; }
             }
           }
+        }
+        // 🪪 IDENTITY STAMP — the source record's own Id, written into the
+        // dedicated external-ID field so this record is EXACTLY matchable
+        // forever (user 2026-08-29: "a more reliable way to match between
+        // records between environments"). Deliberately LAST: it overrides a
+        // copied SFTK_ID__c value from the source row — in this pair the
+        // identity is THIS source record, not whatever the source org was
+        // itself stamped with when it was someone else's target.
+        if (node.stampField && (!tgtCreatable.size || tgtCreatable.has(node.stampField))) {
+          p[node.stampField] = r.Id;
         }
         return p;
       });
@@ -1447,7 +1569,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           // value the payload path writes (a masked seed matches a masked
           // target); the raw value never rides along. A mask of null injects
           // nothing — there is no key to match on.
-          if (useUpsert && upsertField) {
+          // The 🪪 identity stamp IS the upsert key when the Seeder matches on
+          // SFTK_ID__c: the payload already carries this source record's own
+          // Id there, and "injecting" the source row's copied stamp value
+          // would overwrite it with someone else's identity (audit 2026-09-12).
+          if (useUpsert && upsertField && upsertField !== node.stampField) {
             const mv = piiRows ? piiRows.rows[i + k][upsertField] : undefined;
             const v = (mv && mv.action !== 'kept') ? mv.value : recs[i + k]?.[upsertField];
             if (v != null) rec[upsertField] = v;
@@ -1636,7 +1762,14 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       if (lkpOverridesUsed) {
         diagnostics.push(`${objType}: ${lkpOverridesUsed} lookup value(s) set from per-record hand-picks (Reconcile → lookup overrides).`);
       }
+      if (personRows) {
+        diagnostics.push(`${objType}: ${personRows} Person Account(s) — Name is derived from FirstName/LastName on those, so only the name parts were sent.`);
+      }
+      if (personAsBusiness) {
+        errors.push(`${objType}: ${personAsBusiness} Person Account(s) written as BUSINESS accounts — the target org has no Person Accounts, so the whole Name was sent and the person fields (FirstName, LastName, Person*) were dropped.`);
+      }
       summary[objType] = { created: ok, failed: fail,
+        ...(personContactsSkipped ? { personContactsSkipped } : {}),
         ...(usedBulk ? { viaBulk: true } : {}),
         ...(useUpsert ? { viaUpsert: upsertField } : {}),
         // The upsert split, when Salesforce reported it — `created` stays
@@ -2050,6 +2183,12 @@ async function sftkFetchBinary(orgUrl, sid, url) {
 async function sftkWipeObject(orgUrl, sid, objType, mode) {
   const out = { deleted: 0, failed: 0, total: 0, errors: [] };
   const q = await sfQueryAll(orgUrl, sid, `SELECT Id FROM ${objType}`, false);
+  // A wipe over a partial Id list would report "every row deleted" while
+  // rows remain — the completeness invariant applies to deletes too
+  // (audit 2026-09-12).
+  if (q.incomplete) {
+    throw new Error(`${objType}: the Id read came back INCOMPLETE — Salesforce says ${q.incomplete.expected} record(s) exist, but only ${q.incomplete.got} arrived. Nothing was deleted: a wipe over a partial list would report a full wipe while rows remain. Re-run; if it repeats, export a 🐞 debug report.`);
+  }
   const ids = (q.records || []).map(r => r.Id);
   out.total = ids.length;
   postRunProgress({ phase: 'fetched', obj: `🧹 ${objType}`, count: ids.length });
@@ -2251,7 +2390,10 @@ function buildCopyFields(describe) {
       // copying them writes the literal mask into the target as data.
       // Silent corruption loses to a visibly empty field: never copy them.
       f.type !== 'encryptedstring' &&
-      (f.createable || f.type === 'reference'))
+      // IsPersonAccount is read-only, but the payload builder needs it: a
+      // person account's Name must NOT be sent (Salesforce derives it from
+      // FirstName/LastName and rejects the whole — user 2026-09-15).
+      (f.createable || f.type === 'reference' || f.name === 'IsPersonAccount'))
     .map(f => f.name)];
 }
 
@@ -2285,12 +2427,20 @@ async function handleMessage(message) {
     // If that gives a genuinely different sid, retry the whole message once.
     // No tab reload — ever.  The chrome.cookies.onChanged listener handles
     // passive reconnect when the user's SF tab refreshes on its own.
-    if (e.message === 'SESSION_EXPIRED' && message.type !== 'GET_SF_SESSION') {
-      let fresh;
-      try { fresh = await getSfSession(message.orgUrl || null); } catch (_) {}
-
-      if (fresh?.sid && fresh?.orgUrl && fresh.sid !== (message.sid || '')) {
-        return dispatchMessage({ ...message, orgUrl: fresh.orgUrl, sid: fresh.sid });
+    // ORG-PINNED (audit 2026-09-12): getSfSession(hint) falls back to ANY
+    // open Salesforce tab when the hinted org has none, so a WRITE
+    // (collections create, PATCH, metadata deploy…) re-dispatched with that
+    // session would land in a DIFFERENT org. The retry sid is read from the
+    // message's own org host only, and the retry is refused unless the org
+    // identity matches exactly. Messages without an orgUrl (the transfer
+    // and sequence runners carry src/tgt pairs) are never re-run whole —
+    // re-running a half-finished transfer is a double write, not a retry.
+    if (e.message === 'SESSION_EXPIRED' && message.type !== 'GET_SF_SESSION' && message.orgUrl) {
+      let fresh = null;
+      try { fresh = await sftkCookieSessFor(message.orgUrl); } catch (_) {}
+      const sameOrg = !!(fresh?.orgUrl && sftkOrgKey(fresh.orgUrl) === sftkOrgKey(message.orgUrl));
+      if (sameOrg && fresh?.sid && fresh.sid !== (message.sid || '')) {
+        return dispatchMessage({ ...message, sid: fresh.sid });
       }
     }
     throw e;
@@ -2304,8 +2454,8 @@ async function handleMessage(message) {
 // a confusing failure deep inside a fetch. Optional fields (tooling,
 // activeTabUrl, rootWhere, childRels, limit) are deliberately NOT listed.
 // NOTE: handleMessage's SESSION_EXPIRED retry re-dispatches
-// { ...message, orgUrl, sid } — it only ADDS/refreshes fields on an
-// already-validated message, so it always re-passes validation.
+// { ...message, sid } — it only refreshes the sid of an already-validated
+// message (same orgUrl, same org), so it always re-passes validation.
 //
 /** @typedef {{ type: 'GET_SF_SESSION', activeTabUrl?: string } |
  *            { type: 'GET_ALL_SF_SESSIONS' }} SessionMessage */
@@ -2844,9 +2994,32 @@ async function sfQueryAll(orgUrl, sid, query, tooling = true) {
     url = data.nextRecordsUrl ? `${orgUrl}${data.nextRecordsUrl}` : null;
   }
 
+  // THE COMPLETENESS INVARIANT (user 2026-08-28: "we have to make sure we
+  // are first getting all the chosen records from org a" — after records
+  // went missing at work under an ADMIN login). The first page's totalSize
+  // is the server's own count of every matching row at query start; a
+  // pager that ends with a different number LOST DATA — a dropped page, a
+  // broken nextRecordsUrl, or concurrent deletes mid-read. Every one of
+  // those makes the result unfit to compare or deploy from, so the
+  // shortfall is ATTACHED, never swallowed: critical callers (scan,
+  // engine) refuse the result outright rather than build on it.
+  const incomplete = (serverTotal !== null && records.length !== serverTotal)
+    ? { expected: serverTotal, got: records.length }
+    : null;
   // totalSize stays records.length — every existing caller reads it as
   // "rows I got". serverTotal is the separate, authoritative figure.
-  return { records, totalSize: records.length, serverTotal, done: true };
+  return { records, totalSize: records.length, serverTotal, done: true,
+    ...(incomplete ? { incomplete } : {}) };
+}
+
+// The completeness invariant's refusal, in one voice for every engine read
+// that is not the root read (child chunks, picked-id chunks, parent-scope
+// prefetch). Audit 2026-09-12: only the root read used to check
+// `.incomplete`; the others deployed from partial pages silently.
+function sftkIncompleteErr(objType, what, inc, consequence) {
+  const exp = inc && inc.expected, got = inc && inc.got;
+  const did = consequence || 'Nothing was written for this object: deploying a partial read would silently skip the rest.';
+  return new Error(`${objType}: the source read (${what}) came back INCOMPLETE — Salesforce says ${exp} record(s) match, but only ${got} arrived. ${did} Re-run; if it repeats, export a 🐞 debug report.`);
 }
 
 async function sfErrorText(res, url) {
@@ -3239,7 +3412,20 @@ async function sfCompositeBatch(orgUrl, sid, subrequests, opts) {
   const o = opts || {};
   const onProgress = typeof o.onProgress === 'function' ? o.onProgress : null;
   const shouldStop = typeof o.shouldStop === 'function' ? o.shouldStop : null;
-  const url = `${orgUrl}/services/data/${API_VERSION}/composite/batch`;
+  // TOOLING SUBREQUESTS GO TO THE TOOLING BATCH ENDPOINT. The general
+  // /composite/batch accepts a "v62.0/tooling/sobjects/Flow/<id>" subrequest
+  // and answers 200 — but WITHOUT the record's Metadata field. Every flow
+  // version therefore read as "no subflows" and the dependency map was blind
+  // (reproduced with the CLI on a real org, 2026-09-14). A batch is either
+  // all-Tooling or all-REST; a mix is refused rather than sent to the wrong
+  // endpoint for half of its items.
+  const isToolingSub = r => /^v\d+(?:\.\d+)?\/tooling\//i.test(sftkBatchSubUrl(r && r.url, API_VERSION));
+  const toolingCount = subrequests.filter(isToolingSub).length;
+  if (toolingCount && toolingCount !== subrequests.length) {
+    throw new Error('sfCompositeBatch: Tooling and REST subrequests cannot share one batch — send them separately');
+  }
+  const useTooling = toolingCount > 0;
+  const url = `${orgUrl}/services/data/${API_VERSION}/${useTooling ? 'tooling/' : ''}composite/batch`;
 
   // Cross-org guard: refuse (do not dispatch) any absolute subrequest url whose
   // host provably differs from the batch org's host. dispatchIdx maps a
@@ -3383,11 +3569,26 @@ async function sfMetadataDeploy(orgUrl, sid, zipBase64) {
   for (let i = 0; i < 40; i++) {
     await new Promise(r => setTimeout(r, 2500));
     const statusUrl = `${orgUrl}/services/data/${API_VERSION}/metadata/deployRequest/${jobId}?includeDetails=true`;
-    const statusRes = await sfFetch(statusUrl, { headers: authHeaders(sid) });
-    if (statusRes.status === 401) throw new Error('SESSION_EXPIRED');
-    if (!statusRes.ok) throw new Error(await sfErrorText(statusRes, statusUrl));
+    // The poll goes through the proxy chokepoint (fresh cookie, then the
+    // live tab) — NOT a raw-sid fetch. A 401 here used to surface as
+    // SESSION_EXPIRED, which handleMessage answers by re-running the whole
+    // message: the zip would be deployed a SECOND time while the first job
+    // was still running (audit 2026-09-12). A session loss mid-poll is
+    // therefore reported as its own, non-retryable error naming the job.
+    let statusRes;
+    try {
+      statusRes = await sfFetchWithProxy(orgUrl, sid, statusUrl, { method: 'GET' });
+    } catch (e) {
+      if (e && e.message === 'SESSION_EXPIRED') {
+        throw new Error(`Session expired while waiting for deployment ${jobId} — it was submitted and may still finish in Salesforce. Check Setup → Deployment Status before deploying again.`);
+      }
+      throw e;
+    }
+    if (!statusRes.ok) throw new Error(sfErrorMsg(statusRes.status, statusRes.body, statusUrl));
 
-    const payload      = await statusRes.json();
+    let payload;
+    try { payload = JSON.parse(statusRes.body); }
+    catch (_) { throw new Error(`Deployment ${jobId}: the status reply could not be read — check Setup → Deployment Status before deploying again.`); }
     const deployResult = payload.deployResult || payload;
 
     if (deployResult.done) {

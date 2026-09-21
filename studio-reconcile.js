@@ -89,7 +89,9 @@ window.openReconcile = function(profileId, targetUrl) {
   }
   document.querySelectorAll('.ds-nav-btn').forEach(b => b.classList.remove('active'));
   document.querySelector('[data-view="profiles"]')?.classList.add('active');
-  _currentView = 'reconcile';
+  // ✨ Deploy view (beta) — the switch on Data Deployment decides which page a
+  // deployment opens in. Off (the default) → exactly the classic page.
+  _currentView = (typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) ? 'deploy' : 'reconcile';
   renderReconcile();
   if (_reconcileProfile.ephemeral && !_reconcileProfile.lastScan) {
     // Fresh pair → scan it now; the chokepoint's auto-reload repaints this
@@ -445,21 +447,56 @@ function sftkWirePicklistFixButtons() {
   }));
 }
 
+// Selection belongs to ONE deployment pair. _recFileSel MUST reset too: its
+// keys are source-side only (`sourceId|checksum`), so two pairs sharing a
+// source org produce IDENTICAL keys — a selection made for target A would
+// render pre-checked and arm 📎 Move against target B (QA sweep 2026-08-16,
+// confirmed HIGH). Shared by ⚖ Reconcile and the Deploy view.
+function sftkRecResetSelectionFor(p) {
+  if (_recLastProfileId === p.id) return;
+  _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
+  _recChildSel = {}; _recOrderOverride = {}; _recChildOpen = {};
+  _recFileSel = new Set();
+  _recLastProfileId = p.id;
+}
+
+// Is p.lastScan usable for THIS deployment? The objectType check is
+// SAFETY-critical, not cosmetic: if the profile's root object changed after
+// the last scan, the old buckets carry record Ids of a DIFFERENT object — and
+// Delete passes those raw Ids to SF_COLLECTIONS_DELETE, which deletes by Id
+// regardless of type. Org identity, not string identity — a crown move or a
+// ring-follow rewrite can change the URL FORM of the same org and must not
+// fake-stale the scan (QA sweep 2026-08-10). Shared by both pages.
+function sftkRecScanFresh(p) {
+  const scan = p && p.lastScan;
+  const objType = p?.tree?.objectType || p?.tree?.childSObject || '?';
+  return !!(
+    scan && scan.status === 'success' &&
+    (!scan.objectType || scan.objectType === objType) &&
+    (!scan.sourceOrg || sftkOrgKey(scan.sourceOrg) === sftkOrgKey(p.sourceOrg || '')) &&
+    (!scan.targetOrg || sftkOrgKey(scan.targetOrg) === sftkOrgKey(p.targetOrg || ''))
+  );
+}
+
+// PURE. Where a child Insert row's PARENT stands — decides whether the row is
+// selectable. 'deepblock' and 'untracked' are NOT selectable. Shared by both
+// pages so the rule cannot drift.
+function sftkRecChildRowState(r, depth, pMissingSet, pExistsSet) {
+  if (!r || !r.parentSrcId) return 'none';
+  if (pMissingSet.has(r.parentSrcId)) return depth > 1 ? 'deepblock' : 'missing';
+  if (pExistsSet.has(r.parentSrcId)) return 'exists';
+  return 'untracked';
+}
+
 async function renderReconcile() {
+  // ✨ Deploy view (beta): every repaint the classic code asks for — after a
+  // run, a rescan, a child scan — lands on the page the user is actually on.
+  if (_currentView === 'deploy' && typeof renderDeploy === 'function') return renderDeploy();
   const p = _reconcileProfile;
   if (!p) { renderProfiles(); return; }
 
-  // Reset selection when switching to a different profile. _recFileSel MUST
-  // reset here too: its keys are source-side only (`sourceId|checksum`), so
-  // two pairs sharing a source org produce IDENTICAL keys — a selection made
-  // for target A would render pre-checked and arm 📎 Move against target B
-  // (QA sweep 2026-08-16, confirmed HIGH).
-  if (_recLastProfileId !== p.id) {
-    _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
-    _recChildSel = {}; _recOrderOverride = {}; _recChildOpen = {};
-    _recFileSel = new Set();
-    _recLastProfileId = p.id;
-  }
+  // Reset selection when switching to a different profile (shared rule).
+  sftkRecResetSelectionFor(p);
 
   const objType = p.tree?.objectType || p.tree?.childSObject || '?';
   const scan    = p.lastScan;
@@ -470,12 +507,7 @@ async function renderReconcile() {
   // Org identity, not string identity — a crown move or ring-follow rewrite
   // can change the URL FORM of the same org and must not fake-stale the scan
   // (same trap the QA sweep confirmed in the ring deposits, 2026-08-10).
-  const scanFresh = !!(
-    scan && scan.status === 'success' &&
-    (!scan.objectType || scan.objectType === objType) &&
-    (!scan.sourceOrg || sftkOrgKey(scan.sourceOrg) === sftkOrgKey(p.sourceOrg || '')) &&
-    (!scan.targetOrg || sftkOrgKey(scan.targetOrg) === sftkOrgKey(p.targetOrg || ''))
-  );
+  const scanFresh = sftkRecScanFresh(p);
 
   // 🎯 — how trustworthy this scan's matching was (fields + confidence %).
   const _acc = (scanFresh && typeof sftkScanAccuracy === 'function') ? sftkScanAccuracy(scan) : null;
@@ -551,10 +583,11 @@ async function renderReconcile() {
     icon: 'swap',
     back: `<button class="ds-back-link" id="dsRecBackBtn" title="Back to Data Deployment">‹ Back to deployments</button>`,
     title: `Reconcile — <span style="color:var(--brand)">${esc(objType)}</span>`,
-    help: 'The repair shop of the compare trio, for ONE source → target pair. Every number here comes from the last 🔄 scan — a point-in-time measurement, matched by your match key, never by record Id. Each bucket has its own action: push what’s missing, overwrite what changed, relink children, review extras — nothing writes until you click its action. For the same picture across EVERY environment at once, use 🌳 Tree diff on the deployment card.',
-    subtitle: `${esc(orgLabel(p.sourceOrg || ''))} → ${esc(orgLabel(p.targetOrg || ''))} ${prodBadge(p.targetOrg)}${scanFresh ? ` · scanned ${esc(timeAgo(scan.runAt))}` : ''}${scanFresh && scan.fetched ? ` · read ${scan.fetched.src} source / ${scan.fetched.tgt} target` : ''}${scanFresh && scan.where ? ` · <span class="ds-mm-chip" style="font-size:11px;padding:1px 7px;border-radius:9px;background:#fef3c7;color:#92400e" title="This WHERE scoped BOTH orgs' fetches — a record it excludes appears in NO bucket. Clear it in the builder's WHERE box if you expected that record here.">WHERE ${esc(scan.where)}</span>` : ''}${scanFresh && scan.memoryMatched ? ` · <span class="ds-mm-chip" style="font-size:11px;padding:1px 7px;border-radius:9px;background:#eef2ff;color:#4338ca;white-space:nowrap" title="${scan.memoryMatched} record pair(s) matched by remembered identity (match memory) instead of key — they survive renames on either side.">🧠 ${scan.memoryMatched} matched from memory</span>` : ''}${_acc ? ` · ${accuracyChip(_acc)}` : ''}`,
+    help: 'The repair shop of the compare trio, for ONE source → target pair. Every number here comes from the last 🔄 scan — a point-in-time measurement, matched by your match key, never by record Id. Each bucket has its own action: push what’s missing, overwrite what changed, relink children, review extras — nothing writes until you click its action. For the same measurement across every ring target, use the Sync Ring matrix — its ⚖ opens this page for that target.',
+    subtitle: `${esc(orgLabel(p.sourceOrg || ''))} → ${esc(orgLabel(p.targetOrg || ''))} ${prodBadge(p.targetOrg)}${scanFresh ? ` · scanned ${esc(timeAgo(scan.runAt))}` : ''}${scanFresh && scan.fetched ? ` · read ${scan.fetched.src}${scan.fetched.srcTotal != null ? ` of ${scan.fetched.srcTotal}` : ''} source / ${scan.fetched.tgt}${scan.fetched.tgtTotal != null ? ` of ${scan.fetched.tgtTotal}` : ''} target` : ''}${scanFresh && scan.where ? ` · <span class="ds-mm-chip" style="font-size:11px;padding:1px 7px;border-radius:9px;background:#fef3c7;color:#92400e" title="This WHERE scoped BOTH orgs' fetches — a record it excludes appears in NO bucket. Clear it in the builder's WHERE box if you expected that record here.">WHERE ${esc(scan.where)}</span>` : ''}${scanFresh && scan.memoryMatched ? ` · <span class="ds-mm-chip" style="font-size:11px;padding:1px 7px;border-radius:9px;background:#eef2ff;color:#4338ca;white-space:nowrap" title="${scan.memoryMatched} record pair(s) matched by remembered identity (match memory) instead of key — they survive renames on either side.">🧠 ${scan.memoryMatched} matched from memory</span>` : ''}${_acc ? ` · ${accuracyChip(_acc)}` : ''}`,
     actions: `${p.ephemeral ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="saveEphemeralProfile"
           title="Keep this as a saved deployment — re-run it, retry failures, and track sync from the Data Deployment page. Right now it disappears when you leave this view.">💾 Save as deployment</button>` : ''}
+        <button class="ds-btn ds-btn-sm" data-dsaction="openDeployView" title="Open this deployment in the new Deploy view (beta): one page that says what is already in the target and lists every object's records. Same scan, same selection, same engine — ↩ Classic view brings you back here.">✨ New view</button>
         <button class="ds-btn ds-btn-sm" id="dsRecRefreshBtn">🔄 Refresh state</button>`,
   });
 
@@ -645,6 +678,11 @@ async function renderReconcile() {
   // W2-UI — 🔗 hand-pick lookup targets for one record (missing + changed
   // rows). Link opens a lazy panel (renderLkpOverridePanel); the badge is
   // how many picks the record carries for the CURRENT target org.
+  // 🔒 Write locks (Connected Orgs → Lock writes). A locked SOURCE makes every
+  // ← control unavailable here; a locked TARGET is stopped at ▶ Run.
+  const _isLocked = u => (typeof window.sftkOrgLocked === 'function') && window.sftkOrgLocked(u);
+  const srcLocked = _isLocked(p.sourceOrg), tgtLocked = _isLocked(p.targetOrg);
+  const srcLockTip = `🔒 Writes to ${orgLabel(p.sourceOrg)} are locked (Connected Orgs → Unlock writes) — nothing on this page can write into it`;
   const lkpN = id => Object.keys(sftkLkpOvGet(p.tree, p.targetOrg, id)).length;
   const lkpLink = (id, tgtId) => {
     if (!id) return '';
@@ -652,16 +690,20 @@ async function renderReconcile() {
     return `<span class="ds-rec-drift-link${n ? ' ds-lkp-on' : ''}" data-rec-lkp="${esc(id)}"${tgtId ? ` data-rec-lkp-tgt="${esc(tgtId)}"` : ''} title="Hand-pick which TARGET record each lookup field should point at for THIS record — saved per target org, beats name-matching in the engine.">🔗<span class="ds-lkp-count">${n ? ` ${n}` : ''}</span></span>`;
   };
   const lkpExpand = id => id ? `<div class="ds-rec-drift-expand ds-rec-lkp-expand" data-lkp-expand="${esc(id)}" style="display:none"></div>` : '';
+  // Child rows: the same link, counting the CHILD node's picks; data-recc-lkp
+  // (the node path) routes the click to the child handler.
+  const lkpLinkC = (pathKey, node, id, tgtId) => {
+    if (!id) return '';
+    const n = Object.keys(sftkLkpOvGet(node, p.targetOrg, id)).length;
+    return `<span class="ds-rec-drift-link${n ? ' ds-lkp-on' : ''}" data-rec-lkp="${esc(id)}" data-recc-lkp="${esc(pathKey)}"${tgtId ? ` data-rec-lkp-tgt="${esc(tgtId)}"` : ''} title="Hand-pick which TARGET record each lookup field should point at for THIS record — saved per target org, beats name-matching in the engine.">🔗<span class="ds-lkp-count">${n ? ` ${n}` : ''}</span></span>`;
+  };
 
-  // Default-select all missing + all drift for push (the common intent:
-  // bring target up to match source). Extras default UNCHECKED — deletion
-  // is destructive, opt-in only. Only seed defaults on first load.
-  if (!_recSel.push.size && !_recSel.overwrite.size && !_recSel.updSrc.size && !_recSel.del.size && !_recSel.pull.size) {
-    missing.forEach(r => r.sourceId && _recSel.push.add(r.sourceId));
-    drift.forEach(r => r.sourceId && _recSel.overwrite.add(r.sourceId));
-    // updSrc + Pull + Delete left empty — writing into SOURCE (or deleting)
-    // is opt-in only; the default direction matches "bring target up to source".
-  }
+  // NOTHING is selected until the user selects it (user 2026-09-14, from a
+  // work session: "when we open the reconcile everything is checked by
+  // default. I want to make sure it's not and let the user pick every
+  // record"). The old seed also re-armed itself on every re-render once the
+  // user had unticked everything — the "✓ All" button per column is the
+  // one-click way to select a whole bucket on purpose.
 
   // dml = the plain Salesforce operation this column performs (Insert/Update/
   // Delete). subtitle = the diff state that put records here. Leading with the
@@ -718,8 +760,8 @@ async function renderReconcile() {
                   data-rec-driftdir="overwrite" data-rec-id="${esc(sid)}"
                   title="Update the TARGET record with the source's values">→</button>
           <button class="ds-rec-extra-btn ${isPull ? 'ds-rec-extra-on-pull' : ''}"
-                  data-rec-driftdir="updSrc" data-rec-id="${esc(sid)}"
-                  title="Update the SOURCE record with the target's values">←</button>
+                  data-rec-driftdir="updSrc" data-rec-id="${esc(sid)}" ${srcLocked ? 'disabled' : ''}
+                  title="${srcLocked ? esc(srcLockTip) : 'Update the SOURCE record with the target\'s values'}">←</button>
         </span>
         <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${keyLbl(r.matchKey)}</span>
         ${why}
@@ -740,7 +782,7 @@ async function renderReconcile() {
         </div>
         <div class="ds-rec-col-actions ds-rec-col-actions-extra">
           <button class="ds-btn ds-btn-xs" data-rec-driftdir-all="overwrite" title="Source wins everywhere — update all target records">→ all</button>
-          <button class="ds-btn ds-btn-xs" data-rec-driftdir-all="updSrc" title="Target wins everywhere — update all source records">← all</button>
+          <button class="ds-btn ds-btn-xs" data-rec-driftdir-all="updSrc" ${srcLocked ? 'disabled' : ''} title="${srcLocked ? esc(srcLockTip) : 'Target wins everywhere — update all source records'}">← all</button>
           <button class="ds-btn ds-btn-xs" data-rec-driftdir-clear="1">✗ None</button>
         </div>
         ${empty ? '' : `<div class="ds-rec-extra-subcounts ds-rec-drift-subcounts">
@@ -765,8 +807,8 @@ async function renderReconcile() {
       return `<div class="ds-rec-col-row ds-rec-row-extra">
         <span class="ds-rec-extra-actions">
           <button class="ds-rec-extra-btn ${isPull ? 'ds-rec-extra-on-pull' : ''}"
-                  data-rec-extra="pull" data-rec-id="${esc(tgtId)}"
-                  title="Pull this record into the source org">← Pull</button>
+                  data-rec-extra="pull" data-rec-id="${esc(tgtId)}" ${srcLocked ? 'disabled' : ''}
+                  title="${srcLocked ? esc(srcLockTip) : 'Pull this record into the source org'}">← Pull</button>
           <button class="ds-rec-extra-btn ${isDel ? 'ds-rec-extra-on-del' : ''}"
                   data-rec-extra="del" data-rec-id="${esc(tgtId)}"
                   title="Delete this record from the target org">🗑 Delete</button>
@@ -784,7 +826,7 @@ async function renderReconcile() {
           <span class="ds-rec-col-sub">pick an action per row${info.capped ? ' · list truncated' : ''}</span>
         </div>
         <div class="ds-rec-col-actions ds-rec-col-actions-extra">
-          <button class="ds-btn ds-btn-xs" data-rec-extra-all="pull" title="Pull all">← Pull all</button>
+          <button class="ds-btn ds-btn-xs" data-rec-extra-all="pull" ${srcLocked ? 'disabled' : ''} title="${srcLocked ? esc(srcLockTip) : 'Pull all'}">← Pull all</button>
           <button class="ds-btn ds-btn-xs" data-rec-extra-all="del"  title="Delete all">🗑 Delete all</button>
           <button class="ds-btn ds-btn-xs" data-rec-extra-clear="1">✗ None</button>
         </div>
@@ -847,7 +889,13 @@ async function renderReconcile() {
         ${fd.extraFiles ? `<div style="font-size:11px;opacity:.75;margin-top:4px">ℹ the target also holds ${fd.extraFiles} file(s) on ${fd.extraRecords} matched record(s) that the source doesn't — not drift (a push never deletes files), said so it can't hide.</div>` : ''}
       </div>`;
     } else if (items.length && !p?.tree?.includeFiles) {
-      filesHtml = `<div style="margin:4px 8px;font-size:11px;opacity:.75">📎 files not compared — toggle 📎 Files on this object in the Builder, rescan, and missing attachments appear here.</div>`;
+      // Point at the toggle that actually exists for THIS profile. An
+      // ephemeral pair has no Builder node, so telling its user to \"toggle
+      // it in the Builder\" sends them somewhere they cannot act.
+      const where = p?.ephemeral
+        ? 'this pair was scanned without them — re-open ⚖ from the Seeder to include attachments'
+        : 'toggle 📎 Files on this object in the Builder, rescan, and missing attachments appear here';
+      filesHtml = `<div style="margin:4px 8px;font-size:11px;opacity:.75">📎 files not compared — ${where}.</div>`;
     }
     return `
       <div class="ds-rec-col">
@@ -858,6 +906,8 @@ async function renderReconcile() {
             : `verified matching${info.capped ? ' · list truncated' : ''}`}</span>
         </div>
         <div class="ds-rec-col-actions">
+          <button class="ds-btn ds-btn-xs" id="dsStampPairsBtn"
+            title="🪪 Write each matched source record's Id into the target's SFTK_ID__c identity field. From then on these pairs match EXACTLY — renames and duplicate names can no longer confuse them. Requires the identity field in the target — ${esc(sftkIdHowToCreate())}. One quoted, chunked update; nothing else is touched.">🪪 Stamp identity</button>
           <button class="ds-btn ds-btn-xs" id="dsInSyncTableBtn"
             title="Open these records as a table — field values read LIVE from the source org, links to both orgs">🗂 Table</button>
         </div>
@@ -922,12 +972,7 @@ async function renderReconcile() {
     //   3. LIVE COUNT — the actions row carries "n/N selected" (wired in
     //      the recc handlers below).
     const mRows = cs.missingInTarget || [];
-    const rowState = r => {
-      if (!r.parentSrcId) return 'none';
-      if (pMissingSet.has(r.parentSrcId)) return depth > 1 ? 'deepblock' : 'missing';
-      if (pExistsSet.has(r.parentSrcId)) return 'exists';
-      return 'untracked';
-    };
+    const rowState = r => sftkRecChildRowState(r, depth, pMissingSet, pExistsSet);
     const chipFor = (st, r) => st === 'none'
       ? `<span class="ds-rec-pnote ds-rec-pnote-none" title="No parent in the source either — inserts unlinked.">no parent</span>`
       : st === 'deepblock'
@@ -1011,7 +1056,10 @@ async function renderReconcile() {
           title="Update the TARGET record with the source's values (fields from this node's field mapping)">→</button>
         <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${keyLbl(r.matchKey)}</span>
         ${why}
-      </div>`;
+        <span class="ds-rec-drift-link" data-recc-drift="${pathKey}" data-rec-pair="${esc(r.sourceId)}|${esc(r.targetId)}" title="See which fields differ">▸ fields</span>
+        ${lkpLinkC(pathKey, node, r.sourceId, r.targetId)}
+      </div>
+      ${r.sourceId ? `<div class="ds-rec-drift-expand ds-rec-lkp-expand" data-lkp-expand-c="${pathKey}|${esc(r.sourceId)}" style="display:none"></div>` : ''}`;
     }).join('') || `<div class="ds-rec-col-empty">none</div>`;
 
     // R4 — child target-only rows get a 🗑 delete picker. R3 — rows whose
@@ -1075,10 +1123,20 @@ async function renderReconcile() {
       phNote = sftkPhantomDriftNote(cs);
     } catch (_) { plNote = ''; phNote = ''; }
 
+    // Nothing to do in ANY bucket → one line instead of four empty columns
+    // (user 2026-09-18: a clean Contact section cost two screens of "none").
+    const kidAllEmpty = !(cs.missingInTarget || []).length && !(cs.linkMismatch || []).length
+      && !(cs.changed || []).length && !(cs.onlyInTarget || []).length;
+    const kidEmptyCls = kidAllEmpty ? ' ds-rec-cols-hide' : '';
+    const _pa = cs.personContacts;
+    const kidEmptyStrip = kidAllEmpty ? `<div class="ds-rec-card ds-rec-card-good ds-rec-card-tight"><span class="ds-rec-card-ico">✓</span><div><b>Nothing to do for ${esc(childObj)}</b> — no records to insert, relink, update or delete under these parents${(cs.identical || []).length ? ` · ${(cs.identical || []).length.toLocaleString()} synced (listed below)` : ''}.${_pa && (_pa.src || _pa.tgt) ? ` ${esc(sftkPaContactsLine(_pa, orgLabel(p.sourceOrg), orgLabel(p.targetOrg)))}` : ''}</div></div>` : '';
+
     return `
     <div class="ds-rec-child-body">
       ${scopeNote}${capNote}${collisionNote}${nearNote}${blankNote}${orphanNote}${plNote}${phNote}
-      <div class="ds-rec-cols ds-rec-cols-child">
+      ${kidEmptyStrip}
+      ${!kidAllEmpty && _pa && (_pa.src || _pa.tgt) ? `<div class="ds-rec-child-info">${esc(sftkPaContactsLine(_pa, orgLabel(p.sourceOrg), orgLabel(p.targetOrg)))}</div>` : ''}
+      <div class="ds-rec-cols ds-rec-cols-child${kidEmptyCls}">
         <div class="ds-rec-col">
           <div class="ds-rec-col-hdr ds-diff-missing"${csAttr(cs, 'missingInTarget', 'in source only')}>🔴 <strong>Insert ${csLbl(cs, 'missingInTarget')}</strong>
             <span class="ds-rec-col-sub">in source only${csInfo(cs, 'missingInTarget').capped ? ' · list truncated' : ''}</span></div>
@@ -1100,7 +1158,7 @@ async function renderReconcile() {
           <div class="ds-rec-col-list">${linkRows}</div>
         </div>
       </div>
-      <div class="ds-rec-cols ds-rec-cols-child">
+      <div class="ds-rec-cols ds-rec-cols-child${kidEmptyCls}">
         <div class="ds-rec-col">
           <div class="ds-rec-col-hdr ds-diff-drift"${csAttr(cs, 'changed', 'changed')}>🟡 <strong>Changed ${csLbl(cs, 'changed')}</strong>
             <span class="ds-rec-col-sub">values differ — → updates target${csInfo(cs, 'changed').capped ? ' · list truncated' : ''}</span></div>
@@ -1131,6 +1189,7 @@ async function renderReconcile() {
         const syncRows = idn.slice(0, 200).map(r => `
           <div class="ds-rec-col-row ds-rec-row-sync">
             <span class="ds-rec-col-key" title="${keyLbl(r.matchKey)}">${keyLbl(r.matchKey)}</span>
+            ${r.personAccount ? '<span class="ds-rec-pnote" title="The Contact behind a Person Account — Salesforce creates and owns it. Shown because it matches; never offered for insert, update or delete.">👤 person account</span>' : ''}
             <span style="margin-left:auto;white-space:nowrap;font-size:11px">
               <a href="${rh(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener">src</a> ·
               <a href="${rh(p.targetOrg, r.targetId)}" target="_blank" rel="noopener">tgt</a></span>
@@ -1248,27 +1307,21 @@ async function renderReconcile() {
   // memory instead of keys.
   const _health = [];
   if (scan.dupKeys?.rows) {
-    // Plain speech + THE RECORDS THEMSELVES, linked in both orgs (user
-    // 2026-08-10: "where are the records. and the issue is not
-    // understandable") — a warning without its suspects is unactionable.
-    const _rl = (org, id, i) => `<a href="${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view" target="_blank" rel="noopener" class="ds-lkpo-vallink" title="${esc(id)}">copy ${i + 1}</a>`;
-    const _exHtml = (scan.dupKeys.examples || []).map(ex => {
-      const parts = [];
-      if ((ex.src || []).length > 1) parts.push(`${ex.src.length}× in ${esc(orgLabel(p.sourceOrg))}: ${ex.src.map((id, i) => _rl(p.sourceOrg, id, i)).join(' · ')}`);
-      if ((ex.tgt || []).length > 1) parts.push(`${ex.tgt.length}× in ${esc(orgLabel(p.targetOrg))}: ${ex.tgt.map((id, i) => _rl(p.targetOrg, id, i)).join(' · ')}`);
-      return `<div style="margin-top:4px">“<strong>${keyLbl(ex.key)}</strong>” exists ${parts.join(' and ')}</div>`;
-    }).join('');
-    _health.push(`⚠ <strong>The same name is used by more than one record.</strong> Anything that finds records by this name — matching, lookups, other deployments — can land on EITHER copy, so results become a coin flip. Open the copies below, decide which one is real, and rename or delete the others (in both orgs):${_exHtml}`);
+    _health.push(sftkRecDupsHtml(scan, p));
   }
   // The memory note earns its place ONLY next to actual key oddities it is
   // excusing — "review them deliberately" with nothing shown to review is a
   // call to action without objects (user 2026-08-10: "yea but i shows
   // nothing"). A clean state speaks for itself.
   if (scan.memoryMatched && scan.dupKeys?.rows) {
-    _health.push(`ℹ ${scan.memoryMatched} pair(s) matched by remembered identity rather than by key — rename-proof, and it's why the duplicates above didn't block matching. Fix the duplicates; matching itself is fine.`);
+    _health.push(`<div class="ds-rec-card-line">🧠 ${scan.memoryMatched} pair(s) matched by remembered identity, not by name — that is why the duplicates did not block matching. Fix the duplicates; matching itself is fine.</div>`);
   }
-  const _healthHtml = _health.length
-    ? `<div class="ds-op-banner-desc" style="margin-top:6px">${_health.join('<br>')}</div>` : '';
+  if (srcLocked) _health.push(`<div class="ds-rec-card-line">🔒 Writes to <b>${esc(orgLabel(p.sourceOrg))}</b> are locked — every ← control on this page is off. Unlock it in Connected Orgs if you really mean to write into the source.</div>`);
+  if (tgtLocked) _health.push(`<div class="ds-rec-card-line">🔒 Writes to <b>${esc(orgLabel(p.targetOrg))}</b> are locked — ▶ Run will refuse anything that writes into it. Unlock it in Connected Orgs first.</div>`);
+  if (scan.personContacts && (scan.personContacts.src || scan.personContacts.tgt)) {
+    _health.push(`<div class="ds-rec-card-line">${esc(sftkPaContactsLine(scan.personContacts, orgLabel(p.sourceOrg), orgLabel(p.targetOrg)))}</div>`);
+  }
+  const _healthHtml = _health.length ? _health.join('') : '';
   // In-sync + clean → NO banner: the green Synced tab IS the message (user
   // 2026-08-11: "remove the message. It will be under the new tab"). Health
   // warnings still surface — a warning must never be swallowed by a redesign.
@@ -1304,32 +1357,35 @@ async function renderReconcile() {
     k.l ? `${k.l} relinked` : null, k.e ? `${k.e} target-only decided` : null,
   ].filter(Boolean).join(', ')} (child section below)`);
   const _rootClean = !missing.length && !drift.length && !extras.length;
+  // Compact cards (user 2026-09-15: "can we improve the following ui
+  // section"): counts as chips, one hint line, warnings folded — same facts.
+  const _kidChips = _kids.map(k => `<span class="ds-rec-stat ds-rec-stat-kid"><b>${esc(k.obj)}</b> ${[
+    k.m ? `${k.m} to insert` : null, k.c ? `${k.c} changed` : null,
+    k.l ? `${k.l} to relink` : null, k.e ? `${k.e} target-only` : null,
+  ].filter(Boolean).join(' · ')} <span class="ds-rec-stat-sub">child section below</span></span>`);
   const _syncStrip = (_rootClean && !_kids.length)
     ? ((_health.length || _fdRecs || _kidsUnscanned)
-      ? `<div class="ds-op-banner" style="border-left:3px solid #f59e0b">
-          <span class="ds-op-banner-icon">${_fdRecs ? '📎' : _kidsUnscanned ? '🔎' : '⚠'}</span>
-          <div class="ds-op-banner-body">
-            <div class="ds-op-banner-title">${_fdRecs ? 'Fields in sync — files still missing' : _kidsUnscanned ? 'Root object in sync — children UNVERIFIED' : 'Warnings worth reading'}</div>
-            ${_fdRecs ? `<div class="ds-op-banner-desc">📎 ${scan.fileDrift.missingFiles} file(s) exist in <strong>${esc(orgLabel(p.sourceOrg))}</strong> but not on the matched records in <strong>${esc(orgLabel(p.targetOrg))}</strong> — this pair is NOT fully synced until they move (🟢 Synced tab → select &amp; move). Just changed the source or direction? Then this is the SAME files measured the other way around, not new work.</div>` : ''}
-            ${_kidsUnscanned ? `<div class="ds-op-banner-desc">${_kidsUnscanned} child section(s) below ${_kidsUnscanned === 1 ? 'has' : 'have'} no fresh scan against this target — child records are UNKNOWN, not verified. Open each section and 🔎 Scan; only then can this pair claim full sync.</div>` : ''}
-            ${_healthHtml}
-          </div>
+      ? `<div class="ds-rec-card ds-rec-card-warn">
+          <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">${_fdRecs ? '📎' : _kidsUnscanned ? '🔎' : '⚠'}</span>
+            <span class="ds-rec-card-title">${_fdRecs ? 'Fields in sync — files still missing' : _kidsUnscanned ? 'Root object in sync — children unverified' : 'Worth reading before you run'}</span></div>
+          ${_fdRecs ? `<div class="ds-rec-card-line">📎 <b>${scan.fileDrift.missingFiles}</b> file(s) exist in <b>${esc(orgLabel(p.sourceOrg))}</b> but not on the matched records in <b>${esc(orgLabel(p.targetOrg))}</b> — not fully synced until they move (🟢 Synced tab → select &amp; move). Changed the source or direction just now? Then these are the same files measured the other way, not new work.</div>` : ''}
+          ${_kidsUnscanned ? `<div class="ds-rec-card-line">🔎 ${_kidsUnscanned} child section(s) below ${_kidsUnscanned === 1 ? 'has' : 'have'} no fresh scan against this target — child records are unknown, not verified. Open each section and Scan.</div>` : ''}
+          ${_healthHtml}
         </div>`
       : '')
-    : `<div class="ds-op-banner" style="border-left:3px solid #f59e0b">
-        <span class="ds-op-banner-icon">🎯</span>
-        <div class="ds-op-banner-body">
-          <div class="ds-op-banner-title">To be IN SYNC, this pair still needs:</div>
-          <div class="ds-op-banner-desc">${[
-            missing.length ? `<strong>${missing.length}</strong> record(s) pushed into the target (Insert column)` : null,
-            drift.length ? `<strong>${drift.length}</strong> changed record(s) resolved — pick a winner per row (→ source wins · ← target wins)` : null,
-            extras.length ? `<strong>${extras.length}</strong> target-only record(s) DECIDED — 🗑 delete the unwanted, or ← pull the legitimate ones INTO YOUR SOURCE (pull rewrites the source of truth — be sure that's what you mean)` : null,
-            _fdRecs ? `📎 <strong>${scan.fileDrift.missingFiles}</strong> file(s) moved onto ${_fdRecs} record(s) (🟢 Synced tab → select &amp; move)` : null,
-            ..._kidItems,
-          ].filter(Boolean).join(' · ')}. Select below, ▶ Run, and this strip re-checks itself.</div>
-          ${_kidsUnscanned ? `<div class="ds-op-banner-desc">Plus ${_kidsUnscanned} child section(s) not scanned against this target yet — their state is unknown until scanned.</div>` : ''}
-          ${_healthHtml}
+    : `<div class="ds-rec-card ds-rec-card-warn">
+        <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">🎯</span>
+          <span class="ds-rec-card-title">Still needed to be in sync</span>
+          <span class="ds-rec-card-hint">select below → ▶ Run → this re-checks itself</span></div>
+        <div class="ds-rec-stats">
+          ${missing.length ? `<span class="ds-rec-stat ds-rec-stat-ins"><b>${missing.length}</b> to insert <span class="ds-rec-stat-sub">Insert column</span></span>` : ''}
+          ${drift.length ? `<span class="ds-rec-stat ds-rec-stat-chg"><b>${drift.length}</b> changed <span class="ds-rec-stat-sub">pick a winner per row · → source · ← target</span></span>` : ''}
+          ${extras.length ? `<span class="ds-rec-stat ds-rec-stat-ext"><b>${extras.length}</b> target-only <span class="ds-rec-stat-sub">🗑 delete, or ← pull into the source (rewrites the source of truth)</span></span>` : ''}
+          ${_fdRecs ? `<span class="ds-rec-stat">📎 <b>${scan.fileDrift.missingFiles}</b> file(s) on ${_fdRecs} record(s) <span class="ds-rec-stat-sub">Synced tab</span></span>` : ''}
+          ${_kidChips.join('')}
         </div>
+        ${_kidsUnscanned ? `<div class="ds-rec-card-line">🔎 ${_kidsUnscanned} child section(s) not scanned against this target yet — unknown until scanned.</div>` : ''}
+        ${_healthHtml}
       </div>`;
 
   setMain(`${headerHtml}
@@ -1337,16 +1393,16 @@ async function renderReconcile() {
     ${_journeyHtml}
     <div id="dsRecParentGaps"></div>
     ${_syncStrip}
-    <div class="ds-op-banner ds-op-banner-write">
-      <span class="ds-op-banner-icon">⚖</span>
-      <div class="ds-op-banner-body">
-        <div class="ds-op-banner-title">Pushing <strong>${esc(orgLabel(p.sourceOrg))}</strong> → <strong>${esc(orgLabel(p.targetOrg))}</strong></div>
-        <div class="ds-op-banner-desc"><strong>→</strong> writes FROM ${esc(orgLabel(p.sourceOrg))} INTO <strong>${esc(orgLabel(p.targetOrg))}</strong> (the normal direction). <strong>←</strong> writes back FROM ${esc(orgLabel(p.targetOrg))} INTO <strong>${esc(orgLabel(p.sourceOrg))}</strong> — opt-in, per row. On changed records pick a winner per row with those arrows. Delete permanently removes records from ${esc(orgLabel(p.targetOrg))}. Review your selections before running.</div>
-      </div>
+    <div class="ds-rec-legend" title="What each control on this page writes, and where">
+      <span class="ds-rec-legend-dir">⚖ <b>${esc(orgLabel(p.sourceOrg))}</b> → <b>${esc(orgLabel(p.targetOrg))}</b></span>
+      <span class="ds-rec-legend-item"><b>→</b> writes into ${esc(orgLabel(p.targetOrg))}</span>
+      <span class="ds-rec-legend-item"><b>←</b> writes back into ${esc(orgLabel(p.sourceOrg))} — opt-in, per row</span>
+      <span class="ds-rec-legend-item"><b>🗑</b> deletes from ${esc(orgLabel(p.targetOrg))}</span>
+      <span class="ds-rec-legend-item">nothing writes until you ▶ Run</span>
     </div>
 
-    ${_recCapNote ? `<div class="ds-rec-child-info ds-rec-cap-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">${esc(_recCapNote)}</div>` : ''}
-    ${scan.nearMisses ? `<div class="ds-rec-child-info" style="border-left:3px solid #f59e0b;padding-left:8px;margin:6px 0">≈ ${scan.nearMisses} record pair(s) almost matched — their keys differ only by whitespace/case (marked ≈ on the rows below). Enable Trim spaces / Case-insensitive in 🎯 Pick Records → Matching, or fix the values, then rescan.</div>` : ''}
+    ${_recCapNote ? `<div class="ds-rec-card ds-rec-card-warn ds-rec-card-tight"><span class="ds-rec-card-ico">⚠</span><div>${esc(_recCapNote)}</div></div>` : ''}
+    ${scan.nearMisses ? `<div class="ds-rec-card ds-rec-card-warn ds-rec-card-tight"><span class="ds-rec-card-ico">≈</span><div>${scan.nearMisses} record pair(s) almost matched — keys differ only by whitespace or case (marked ≈ below). Enable Trim spaces / Case-insensitive in 🎯 Pick Records → Matching, or fix the values, then rescan.</div></div>` : ''}
 
     ${sftkPicklistGapNote(scan, p.targetOrg, objType)}
 
@@ -1585,41 +1641,63 @@ async function renderReconcile() {
     });
     updateSummary();
   });
-  // Drift "fields" expander — reuse fetchDriftRowDetail + renderDriftCompareTable
+  // Drift "▸ fields" — the field-by-field compare opens in a wide modal
+  // (sftkOpenDriftCompare); the inline expander was too narrow to read.
+  const rawKey = r => r ? (typeof sftkMatchKeyLabel === 'function' ? sftkMatchKeyLabel(r.matchKey) : String(r.matchKey ?? '')) : '';
   document.querySelectorAll('[data-rec-drift]').forEach(link => {
-    link.addEventListener('click', async (ev) => {
+    link.addEventListener('click', (ev) => {
       ev.preventDefault(); ev.stopPropagation();
       const [srcId, tgtId] = (link.dataset.recDrift || '').split('|');
-      const expand = document.querySelector(`.ds-rec-drift-expand[data-drift-expand="${srcId}"]`);
+      const row = drift.find(r => r.sourceId === srcId);
+      sftkOpenDriftCompare(p, objType, srcId, tgtId,
+        scan.compareFields || [], scan.compareFieldsTgt || scan.compareFields || [],
+        rawKey(row) || srcId, row?.fields || []);
+    });
+  });
+
+  // Child changed rows: the same ▸ fields and 🔗 the root rows have, driven
+  // by the CHILD's object, node and scan (user 2026-09-16: "On child records
+  // who are changed you can't open them and see their lookups").
+  const childView = (pathKey) => {
+    const node = getNodeByPath(p.tree, pathKey);
+    const cs = scan.children?.[pathKey];
+    const obj = node?.objectType || node?.childSObject;
+    if (!node || !cs || !obj) return null;
+    // A view of the profile rooted at the child node — NOT a clone: a pick
+    // made through it lands on the real node and is saved with the profile.
+    return { node, cs, obj, prof: { ...p, tree: node, lastScan: cs } };
+  };
+  document.querySelectorAll('[data-recc-drift]').forEach(link => {
+    link.addEventListener('click', (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      const v = childView(link.dataset.reccDrift); if (!v) return;
+      const [srcId, tgtId] = (link.dataset.recPair || '').split('|');
+      const row = (v.cs.changed || []).find(r => r.sourceId === srcId);
+      sftkOpenDriftCompare(v.prof, v.obj, srcId, tgtId,
+        v.cs.compareFields || [], v.cs.compareFieldsTgt || v.cs.compareFields || [],
+        rawKey(row) || srcId, row?.fields || []);
+    });
+  });
+  document.querySelectorAll('[data-recc-lkp]').forEach(link => {
+    link.addEventListener('click', (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      const v = childView(link.dataset.reccLkp); if (!v) return;
+      const srcId = link.dataset.recLkp;
+      const expand = document.querySelector(`.ds-rec-lkp-expand[data-lkp-expand-c="${CSS.escape(link.dataset.reccLkp + '|' + srcId)}"]`);
       if (!expand) return;
-      if (expand.dataset.loaded === '1') {
-        expand.style.display = expand.style.display === 'none' ? 'block' : 'none';
-        return;
+      const wasOpen = expand.style.display !== 'none';
+      expand.style.display = wasOpen ? 'none' : 'block';
+      if (!wasOpen && expand.dataset.loaded !== '1') {
+        expand.dataset.loaded = '1';
+        renderLkpOverridePanel(v.prof, v.obj, srcId, expand, link.dataset.recLkpTgt || null);
       }
-      expand.style.display = 'block';
-      expand.innerHTML = `<div class="ds-drift-compare-loading">Loading…</div>`;
-      const srcFields = scan.compareFields || [];
-      const tgtFields = scan.compareFieldsTgt || scan.compareFields || [];
-      const res = await fetchDriftRowDetail(p, objType, srcId, tgtId, srcFields, tgtFields);
-      if (res.error) {
-        // Fall back to the scan-time answer when the live fetch can't run.
-        const row = drift.find(r => r.sourceId === srcId);
-        const fieldsNote = (row?.fields || []).length
-          ? `<div class="ds-drift-compare-fallback">At the last scan these field(s) differed:
-               <strong>${esc(row.fields.join(', '))}</strong></div>`
-          : '';
-        expand.innerHTML = `${fieldsNote}<div class="ds-drift-compare-err">⚠ ${esc(res.error)}</div>`;
-      } else {
-        expand.innerHTML = renderDriftCompareTable(res.srcRec, res.tgtRec, srcFields, tgtFields, res.lookupMap || {}, res.types || null);
-      }
-      expand.dataset.loaded = '1';
     });
   });
 
   // W2-UI — 🔗 lookup override panel toggles (missing + changed rows).
   // preventDefault matters on the missing rows: the link sits inside the
   // row's <label>, and a plain click would also toggle its push checkbox.
-  document.querySelectorAll('[data-rec-lkp]').forEach(link => {
+  document.querySelectorAll('[data-rec-lkp]:not([data-recc-lkp])').forEach(link => {
     link.addEventListener('click', (ev) => {
       ev.preventDefault(); ev.stopPropagation();
       const srcId = link.dataset.recLkp;
@@ -1787,15 +1865,7 @@ async function renderReconcile() {
   // Reconcile's push spreads this profile object into the engine message).
   // For an ephemeral chooser pair, mirror onto the REAL profile via _ringOf
   // so the choice survives the session — the clone alone would evaporate.
-  const _recEnginePersist = async () => {
-    const realP = p._ringOf?.profileId ? _profiles.find(x => x.id === p._ringOf.profileId) : null;
-    if (realP) {
-      if (p.apiMode) realP.apiMode = p.apiMode; else delete realP.apiMode;
-      if (p.batchSize) realP.batchSize = p.batchSize; else delete realP.batchSize;
-      if (p.threads) realP.threads = p.threads; else delete realP.threads;
-    }
-    try { await storageSaveProfiles(); } catch (_) {}
-  };
+  const _recEnginePersist = () => sftkRecEnginePersist(p);
   eid('dsRecApiMode')?.addEventListener('change', async e => {
     const v = e.target.value;
     if (v === 'sync' || v === 'bulk') p.apiMode = v; else delete p.apiMode;
@@ -1824,8 +1894,10 @@ async function renderReconcile() {
   });
   eid('dsRecDeleteMode')?.addEventListener('change', e => { _recDeleteMode = e.target.value; });
   eid('dsRecRunBtn')?.addEventListener('click', () => runReconcile(p, objType, { missing, drift, extras }));
+  sftkRecWireDupFix(document, p, scan);
   eid('dsMatchReviewBtn')?.addEventListener('click', () => openMatchReview(p));
   eid('dsInSyncTableBtn')?.addEventListener('click', () => sftkShowInSyncRecords(p, scan));
+  eid('dsStampPairsBtn')?.addEventListener('click', () => reconcileStampPairs(p, scan));
   // 📎 Synced-tab file selection + direct move.
   const _fselBtnSync = () => {
     const btn = eid('dsRecMoveFiles');
@@ -2037,6 +2109,21 @@ async function runReconcile(profile, objType, buckets) {
   const delIds    = [..._recSel.del];
   const pullIds   = [..._recSel.pull];
 
+  // 🔒 Write locks: refuse here, by org and direction, instead of letting the
+  // engine chokepoint fail every write half-way through a run.
+  {
+    const locked = u => (typeof window.sftkOrgLocked === 'function') && window.sftkOrgLocked(u);
+    const childWrites = Object.values(_recChildSel).some(s => s && (s.push.size || s.relink.size || s.overwrite.size || s.del.size));
+    if (locked(profile.targetOrg) && (pushIds.length || ovwIds.length || delIds.length || childWrites)) {
+      showToast(`🔒 Writes to ${orgLabel(profile.targetOrg)} are locked — nothing was written. Unlock it in Connected Orgs, or clear the selections that write into it.`, 'error', 9000);
+      return;
+    }
+    if (locked(profile.sourceOrg) && (updSrcIds.length || pullIds.length)) {
+      showToast(`🔒 Writes to ${orgLabel(profile.sourceOrg)} are locked — ← selections write into it, so nothing was written. Unlock it in Connected Orgs, or clear the ← selections.`, 'error', 9000);
+      return;
+    }
+  }
+
   // ── Child-aware selections (v1: Insert + Relink) ──────────────────────
   // Each selected child insert is partitioned by where its parent lives:
   //   group A — parent is missing in target too → the child rides a TREE
@@ -2150,8 +2237,16 @@ async function runReconcile(profile, objType, buckets) {
   // Hard delete is flatly disabled against production; regular deletes into
   // production require typing the org name (after the standard confirm).
   const tgtOrgType = await ensureOrgType(profile.targetOrg);
-  if (tgtOrgType === 'production' && isHard && (delIds.length || childDelTotal)) {
-    showToast('🔥 Hard delete is disabled against PRODUCTION orgs — switch Delete mode to Recycle Bin.', 'error', 7000);
+  // Only a CONFIRMED sandbox / dev org escapes the production guards. An org
+  // whose type could not be read is treated like production — ambiguity fails
+  // closed, exactly as 🪪 Stamp identity and the rollback already do (parity
+  // inventory 2026-09-18: these two guards checked `=== 'production'` only, so
+  // an unreadable org type allowed hard deletes with no typed confirmation).
+  const tgtGuarded = tgtOrgType !== 'sandbox' && tgtOrgType !== 'dev';
+  if (tgtGuarded && isHard && (delIds.length || childDelTotal)) {
+    showToast(tgtOrgType === 'production'
+      ? '🔥 Hard delete is disabled against PRODUCTION orgs — switch Delete mode to Recycle Bin.'
+      : `🔥 Hard delete is disabled: ${orgLabel(profile.targetOrg)} could not be confirmed as a sandbox or dev org, so it is treated like production. Switch Delete mode to Recycle Bin, or open the org in a tab and 🔄 Refresh state.`, 'error', 9000);
     return;
   }
 
@@ -2259,7 +2354,7 @@ async function runReconcile(profile, objType, buckets) {
 
   // Deletes into a PRODUCTION org additionally require typing the org name.
   // Child deletes (R4) go through the SAME typed confirmation as root deletes.
-  if ((delIds.length || childDelTotal) && tgtOrgType === 'production') {
+  if ((delIds.length || childDelTotal) && tgtGuarded) {
     const what = [
       delIds.length ? `${delIds.length} ${objType}` : null,
       childDelTotal ? `${childDelTotal} child` : null
@@ -2291,6 +2386,14 @@ async function runReconcile(profile, objType, buckets) {
   // Stream the engine's per-batch progress into the reconcile log (also
   // keeps the worker alive across the multi-phase pipeline).
   const recPort = _openRunPort(_runProgressHandler(prog));
+
+  // ↩ RESTORE POINT (studio-undo.js) — the target's before-image of every
+  // object this run can write, plus the SOURCE's root object when the run
+  // writes there (pull / ← update). Read before phase 0; never blocks the run.
+  const runId = genId('run');
+  const undoLegs = [{ orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, objects: sftkUndoTreeObjects(profile.tree, 'reconcile') }];
+  if (pullIds.length || updSrcIds.length) undoLegs.push({ orgUrl: srcSess.orgUrl, sid: srcSess.sid, objects: [{ objType, depth: 0, mode: 'reconcile' }] });
+  const undoStub = await sftkUndoCaptureForRun({ evidenceId: runId, scope: 'run', profileName: profile.name, legs: undoLegs }, log);
 
   // Per-action counters — captured into a History entry at the end so the
   // History view can show what was actually inserted/updated/deleted, not
@@ -2550,6 +2653,7 @@ async function runReconcile(profile, objType, buckets) {
         recordIds: a.groupB,
         children: [],
         fieldMappings: a.node.fieldMappings || {},
+        lookupOverrides: a.node.lookupOverrides || {},   // 🔗 hand-picks made on child rows
         lookupResolutions: {
           ...(a.node.lookupResolutions || {}),
           [a.node.field]: { strategy: 'match', matchObject: pObj, matchField: pMatch }
@@ -2742,7 +2846,8 @@ async function runReconcile(profile, objType, buckets) {
         where: '',
         children: [],
         fieldMappings: a.node.fieldMappings || {},
-        lookupResolutions: a.node.lookupResolutions || {}
+        lookupResolutions: a.node.lookupResolutions || {},
+        lookupOverrides: a.node.lookupOverrides || {}     // 🔗 hand-picks made on child rows
       };
       const result = await reconcileOverwrite(cProfile, obj, a.ovwIds, a.cs.changed || [], srcSess, tgtSess);
       bumpChild(obj, 'overwritten',     result.ok     || 0);
@@ -2811,8 +2916,14 @@ async function runReconcile(profile, objType, buckets) {
   // 'success' — the failed rescue is real work not done.
   const hardErrs = allErrors.filter(e => !/(^|: )ℹ /.test(String(e))).length;
   const status   = (totalFail === 0 && hardErrs === 0) ? 'success' : (totalOk > 0 ? 'partial' : 'failed');
+  // ↩ end-of-run boundary from Salesforce's own clock (studio-undo.js) —
+  // PER ORG: the target's last write says nothing about when the SOURCE was
+  // written (pull / ← update is the run's last phase, into the other org).
+  const runEnd = await sftkUndoRunEnd(tgtSess.orgUrl, tgtSess.sid, undoStub.objects);
+  const runEndByOrg = { [tgtSess.orgUrl]: runEnd };
+  if (undoLegs.length > 1) runEndByOrg[srcSess.orgUrl] = await sftkUndoRunEnd(srcSess.orgUrl, srcSess.sid, [objType]);
   _history.push({
-    id:           genId('run'),
+    id:           runId,
     kind:         'reconcile',
     profileId:    profile.id,
     profileName:  profile.name,
@@ -2823,6 +2934,7 @@ async function runReconcile(profile, objType, buckets) {
     startedAt,
     completedAt:  new Date().toISOString(),
     status,
+    undo: { ...undoStub, ...runEnd, runEndByOrg },
     summary: {
       [objType]: {
         inserted: counts.inserted, insertedFailed: counts.insertedFailed,
@@ -2961,6 +3073,222 @@ async function runReconcile(profile, objType, buckets) {
 // records' mapped fields, builds PATCH payloads keyed by the TARGET Id, and
 // sends via SF_COLLECTIONS_UPDATE. Honors fieldMappings (src→tgt rename) and
 // skips system/non-writable fields. Returns { ok, failed, errors }.
+// 🪪 Make a scan's fuzzy matches PERMANENT. identical+changed pairs are
+// the one moment name-matching is verified by a human-visible scan — write
+// each source Id into the target's identity field and those pairs never
+// depend on fuzzy matching again (user 2026-08-29: "a more reliable way to
+// match between records between environments").
+// How to get SFTK_ID__c into an org — the Seeder's one-click deploy exists
+// only in the dev build (studio-seed.js is held back from the store), so the
+// store build must say the Setup path instead of pointing at a view that is
+// not there (re-review 2026-09-12).
+function sftkIdHowToCreate() {
+  const here = 'use 🪪 Identity on this page (creates the field and your access in one click)';
+  return (typeof window.renderSeed === 'function')
+    ? `${here}, or create it from the Org Seeder's Match key picker (deploys the field + your access in one click)`
+    : `${here}, or create ${sftkIdFieldName()} on the object in Setup — a Text(18) field marked External ID, visible to your profile`;
+}
+
+// ── 🪪 Identity for a WHOLE deployment tree ───────────────────────────────
+// User 2026-09-21: "we should offer the field creation and do it ourselves for
+// the selected trees". The recipe used to live only in the Org Seeder, which
+// the store build does not ship. Same recipe, same gates, every object of the
+// tree, shipped.
+
+// Does each object of the tree have a VISIBLE identity field, per org, and
+// can it take one? 'no' = missing or not visible to you (both read the same).
+async function sftkIdStatusFor(p) {
+  const all = _buildAllSessions();
+  const srcSess = _resolveSession(p.sourceOrg, all), tgtSess = _resolveSession(p.targetOrg, all);
+  const objects = [];
+  (function walk(node, path, depth, parentObj) {
+    if (!node) return;
+    const obj = node.objectType || node.childSObject;
+    if (obj) objects.push({ pathKey: path.join('.'), obj, depth, parentObj, src: 'unknown', tgt: 'unknown', customizable: null });
+    (node.children || []).forEach((c, i) => walk(c, [...path, i], depth + 1, obj));
+  })(p.tree, [], 0, null);
+  const probe = async (sess, obj) => {
+    if (!sess?.sid) return 'unknown';
+    const q = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
+      query: `SELECT ${sftkIdFieldName()} FROM ${obj} LIMIT 1` });
+    if (q && !q.error) return 'yes';
+    return /INVALID_FIELD|No such column/i.test(String(q?.error || '')) ? 'no' : 'unknown';
+  };
+  const cache = new Map();
+  for (const o of objects) {
+    if (!cache.has(o.obj)) cache.set(o.obj, { src: await probe(srcSess, o.obj), tgt: await probe(tgtSess, o.obj) });
+    Object.assign(o, cache.get(o.obj));
+  }
+  const names = [...new Set(objects.map(o => o.obj))];
+  const anySess = tgtSess?.sid ? tgtSess : srcSess;
+  if (anySess?.sid && names.length) {
+    const lit = names.map(n => `'${String(n).replace(/'/g, '')}'`).join(',');
+    const q = await sendBg({ type: 'SF_QUERY', tooling: true, orgUrl: anySess.orgUrl, sid: anySess.sid, _suppressError: true,
+      query: `SELECT QualifiedApiName, IsCustomizable FROM EntityDefinition WHERE QualifiedApiName IN (${lit})` });
+    if (q && !q.error) for (const r of (q.records || [])) for (const o of objects) if (o.obj === r.QualifiedApiName) o.customizable = r.IsCustomizable !== false;
+  }
+  return { srcOnline: !!srcSess?.sid, tgtOnline: !!tgtSess?.sid, objects };
+}
+
+// Create the identity field on `objects` in each of `orgUrls`: field + the
+// SFTK_Identity permission set (a field deployed with no access is invisible
+// even to an admin) + assign it to the running user. Production, or an org
+// whose type cannot be confirmed, gets the typed confirmation BEFORE anything
+// is built. The permission set is deployed with every object it ALREADY
+// covers in that org, so granting access for one tree never narrows another.
+async function sftkIdDeployTo(orgUrls, objects) {
+  const out = { ok: 0, errors: [], perOrg: [] };
+  const objs = [...new Set((objects || []).filter(Boolean))];
+  const orgs = [...new Set((orgUrls || []).filter(Boolean))];
+  if (!objs.length || !orgs.length) return out;
+  for (const orgUrl of orgs) {
+    const t = await ensureOrgType(orgUrl);
+    if (t !== 'sandbox' && t !== 'dev') {
+      const okProd = await confirmTypedProd(orgLabel(orgUrl),
+        `create the ${sftkIdFieldName()} field on ${objs.length} object(s) (${objs.join(', ')}) and assign the "${sftkIdPermSetName()}" permission set to you`);
+      if (!okProd) { out.errors.push('cancelled — nothing was deployed to any org'); return out; }
+    }
+  }
+  const enc = new TextEncoder();
+  for (const orgUrl of orgs) {
+    const label = orgLabel(orgUrl);
+    const sess = await getOrgSession(orgUrl);
+    if (!sess?.sid) { out.errors.push(`${label}: not open in a Chrome tab`); continue; }
+    // what the permission set already grants here
+    let covered = [];
+    const fp = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
+      query: `SELECT Field FROM FieldPermissions WHERE Parent.Name = '${sftkIdPermSetName()}'` });
+    if (fp && !fp.error) covered = (fp.records || []).map(r => String(r.Field || '')).filter(f => f.endsWith('.' + sftkIdFieldName())).map(f => f.split('.')[0]);
+    const { files, packageXml } = sftkIdPackageFiles(objs, '62.0');
+    const psFile = { name: `permissionsets/${sftkIdPermSetName()}.permissionset`, text: sftkIdPermSetXml([...new Set([...covered, ...objs])]) };
+    const zipBase64 = window.sftkBuildStoredZip([
+      { name: 'package.xml', data: enc.encode(packageXml) },
+      ...files.filter(f => !/^permissionsets\//.test(f.name)).map(f => ({ name: f.name, data: enc.encode(f.text) })),
+      { name: psFile.name, data: enc.encode(psFile.text) },
+    ]);
+    const dep = await sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: sess.orgUrl, sid: sess.sid, zipBase64 });
+    if (dep?.error) { out.errors.push(`${label}: deploy failed — ${dep.error}`); out.perOrg.push({ orgUrl, ok: false }); continue; }
+    try {
+      const ps = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
+        query: `SELECT Id FROM PermissionSet WHERE Name = '${sftkIdPermSetName()}' LIMIT 1` });
+      const psId = ps?.records?.[0]?.Id;
+      const root = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid, path: 'services/data/v62.0/' });
+      const userId = sftkIdUserFromIdentity(root?.identity);
+      if (!psId || !userId) throw new Error('could not resolve the permission set or your user');
+      const asg = await sendBg({ type: 'SF_REST_POST', orgUrl: sess.orgUrl, sid: sess.sid,
+        path: 'services/data/v62.0/sobjects/PermissionSetAssignment', body: { AssigneeId: userId, PermissionSetId: psId } });
+      if (asg?.error && !/DUPLICATE_VALUE|already assigned/i.test(String(asg.error))) throw new Error(asg.error);
+      out.ok++; out.perOrg.push({ orgUrl, ok: true });
+    } catch (e) {
+      out.perOrg.push({ orgUrl, ok: false });
+      out.errors.push(`${label}: the field was created but the permission set could not be assigned (${e?.message || e}) — assign "SFTK Identity" to yourself in Setup, or the field stays invisible`);
+    }
+  }
+  _describeCache = {};   // a new field must be visible to the next describe
+  return out;
+}
+
+// The dialog: every object of the tree × both orgs, what is there, what can
+// be created, and — where the target has the field and pairs are matched —
+// the stamp.
+async function sftkOpenIdentityModal(p, scan) {
+  const srcL = orgLabel(p.sourceOrg || ''), tgtL = orgLabel(p.targetOrg || '');
+  showModal(`<div class="ds-modal-header">🪪 Identity — ${esc(p.name || '')}
+      <button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button></div>
+    <div class="ds-modal-body ds-dc-modal-body"><div id="dsIdBody" style="padding:12px 0">⏳ checking each object in ${esc(srcL)} and ${esc(tgtL)} — one 1-row read per object per org…</div></div>`);
+  const paint = async () => {
+    const host = eid('dsIdBody'); if (!host) return;
+    let st; try { st = await sftkIdStatusFor(p); } catch (e) { host.textContent = `Could not check: ${e?.message || e}`; return; }
+    if (!eid('dsIdBody')) return;
+    const pill = v => v === 'yes' ? '<span class="ds-psync ds-psync-ok">✓ has it</span>' : v === 'no' ? '<span class="ds-psync ds-psync-bad">✗ missing</span>' : '<span class="ds-lkp-hint">? not checked</span>';
+    const scanOf = o => o.depth === 0 ? scan : ((scan?.children?.[o.pathKey]?.status === 'success' && scan.children[o.pathKey].rootRunAt === scan.runAt) ? scan.children[o.pathKey] : null);
+    const canT = sftkIdCreatable(st.objects, 'tgt'), canS = sftkIdCreatable(st.objects, 'src');
+    host.innerHTML = `
+      <div class="ds-rec-card-line" style="margin-bottom:8px">The identity field <code>${esc(sftkIdFieldName())}</code> stores, on each target record, the Id of the source record it came from. With it a record is recognised across orgs <b>exactly</b> — renames and duplicate names stop mattering, and an object with no usable name becomes comparable.</div>
+      <div class="ds-dep-tblwrap"><table class="ds-dep-plan"><thead><tr><th>Object</th><th>${esc(srcL)} (source)</th><th>${esc(tgtL)} (target)</th><th class="ds-dep-num">Matched pairs</th><th></th></tr></thead><tbody>
+      ${st.objects.map(o => { const s = scanOf(o); const pairs = s ? sftkIdBackfillPairs(s).length : null;
+        return `<tr><td><span style="padding-left:${o.depth * 16}px">${o.depth ? '↳ ' : ''}<b>${esc(o.obj)}</b></span>${o.customizable === false ? ' <span class="ds-lkp-hint" title="Salesforce does not allow custom fields on this object, so it cannot carry an identity.">cannot take custom fields</span>' : ''}</td>
+          <td>${pill(o.src)}</td><td>${pill(o.tgt)}</td><td class="ds-dep-num">${pairs == null ? '<span class="ds-dep-muted">not scanned</span>' : pairs.toLocaleString()}</td>
+          <td>${o.tgt === 'yes' && pairs ? `<button class="ds-btn ds-btn-xs" data-id-stamp="${esc(o.pathKey)}" title="Write each matched source record's Id onto its target record — do this only when the pairs are right">🪪 Stamp ${pairs.toLocaleString()}</button>` : ''}</td></tr>`; }).join('')}
+      </tbody></table></div>
+      <div class="ds-rec-card-line" style="margin-top:10px"><b>Create the field</b> — a Text(18) External ID field, unique and case-sensitive, plus the permission set <code>${esc(sftkIdPermSetName())}</code> assigned to you (a field without access is invisible even to an admin). Nothing else in the org changes. Production asks you to type its name first.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin-top:6px">
+        <label><input type="checkbox" id="dsIdT" ${canT.length ? 'checked' : 'disabled'}> in <b>${esc(tgtL)}</b> — ${canT.length ? `${canT.length} object(s): ${esc(canT.join(', '))}` : 'nothing to create'}</label>
+        <label title="Needed when this org is later a SOURCE for another org, or for ← pulls: the identity travels with the record."><input type="checkbox" id="dsIdS" ${canS.length ? '' : 'disabled'}> also in <b>${esc(srcL)}</b> (the source) — ${canS.length ? `${canS.length} object(s)` : 'nothing to create'}</label>
+        <button class="ds-btn ds-btn-primary" id="dsIdGo">🪪 Create the field</button>
+        <span id="dsIdProg" class="ds-lkp-hint"></span>
+      </div>
+      ${scan?.dupKeys?.rows ? '<div class="ds-rec-card-line" style="margin-top:8px">⚠ This scan found names used by more than one record. Stamp only after those are sorted out — stamping cements whichever pairing the names happened to give.</div>' : ''}
+      <div id="dsIdOut" style="margin-top:8px"></div>`;
+    const sync = () => { const b = eid('dsIdGo'); if (b) b.disabled = !((eid('dsIdT')?.checked) || (eid('dsIdS')?.checked)); };
+    eid('dsIdT')?.addEventListener('change', sync); eid('dsIdS')?.addEventListener('change', sync); sync();
+    eid('dsIdGo')?.addEventListener('click', async () => {
+      const jobs = [];
+      if (eid('dsIdT')?.checked && canT.length) jobs.push([p.targetOrg, canT]);
+      if (eid('dsIdS')?.checked && canS.length) jobs.push([p.sourceOrg, canS]);
+      if (!jobs.length) return;
+      eid('dsIdGo').disabled = true;
+      const lines = [];
+      for (const [org, objs] of jobs) {
+        eid('dsIdProg').textContent = `⏳ creating on ${objs.length} object(s) in ${orgLabel(org)} — one metadata deploy…`;
+        const r = await sftkIdDeployTo([org], objs);
+        lines.push(r.errors.length ? `⚠ ${esc(orgLabel(org))}: ${esc(r.errors.join(' · '))}` : `✓ ${esc(orgLabel(org))}: field created on ${esc(objs.join(', '))} and access granted`);
+      }
+      eid('dsIdProg').textContent = '';
+      await paint();
+      const o = eid('dsIdOut'); if (o) o.innerHTML = lines.map(l => `<div class="ds-rec-card-line">${l}</div>`).join('');
+      try { window.sftkDeployIdentityChanged?.(); } catch (_) {}
+    });
+    host.querySelectorAll('[data-id-stamp]').forEach(b => b.addEventListener('click', () => {
+      const o = st.objects.find(x => x.pathKey === b.dataset.idStamp); if (!o) return;
+      const node = o.depth === 0 ? p.tree : getNodeByPath(p.tree, o.pathKey);
+      // reconcileStampPairs reads p.tree.objectType — a child node may name itself childSObject
+      reconcileStampPairs({ ...p, tree: { ...node, objectType: o.obj } }, scanOf(o));
+    }));
+  };
+  await paint();
+}
+
+async function reconcileStampPairs(p, scan) {
+  const objType = p?.tree?.objectType;
+  const pairs = sftkIdBackfillPairs(scan);
+  if (!pairs.length) { showToast('No matched pairs to stamp — run a scan first.', 'warning', 5000); return; }
+  const allSess = _buildAllSessions();
+  const tgtSess = _resolveSession(p.targetOrg, allSess);
+  if (!tgtSess?.sid) { showToast(`${orgLabel(p.targetOrg)} is not reachable`, 'error', 6000); return; }
+  // The field must exist AND be visible — an invisible field would make
+  // every chunk fail with "No such column" and no hint of the real cause.
+  const probe = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+    _suppressError: true, query: `SELECT ${sftkIdFieldName()} FROM ${objType} LIMIT 1` });
+  if (probe?.error) {
+    showToast(`🪪 ${objType} in ${orgLabel(p.targetOrg)} has no visible ${sftkIdFieldName()} field — ${sftkIdHowToCreate()} first.`, 'warning', 9000);
+    if (!eid('dsIdBody')) sftkOpenIdentityModal(p, scan);
+    return;
+  }
+  // Production — or an org whose type could not be confirmed — gets the typed
+  // confirmation; ambiguity fails closed, as the rollback does.
+  const tgtType = await ensureOrgType(p.targetOrg);
+  if (tgtType !== 'sandbox' && tgtType !== 'dev') {
+    if (!(await confirmTypedProd(orgLabel(p.targetOrg), `stamp ${pairs.length} record(s) with their source identity`))) return;
+  } else if (!confirm(`🪪 Stamp ${pairs.length} matched ${objType} record(s) in ${orgLabel(p.targetOrg)}?\n\nWrites each source record's Id into ${sftkIdFieldName()} — ${Math.ceil(pairs.length / 200)} update call(s). Nothing else is changed. These pairs then match EXACTLY on every future scan and seed.`)) {
+    return;
+  }
+  let ok = 0, failed = 0; const errs = [];
+  for (let i = 0; i < pairs.length; i += 200) {
+    const recs = sftkIdStampPayload(objType, pairs.slice(i, i + 200));
+    const r = await sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: recs });
+    if (r?.error) { failed += recs.length; errs.push(r.error); continue; }
+    for (const x of (r?.results || r || [])) {
+      if (x && x.success) ok++;
+      else { failed++; if (errs.length < 3) errs.push((x?.errors || []).map(e => e.message).join('; ') || 'rejected'); }
+    }
+  }
+  showToast(failed
+    ? `🪪 ${ok} stamped, ${failed} failed: ${errs.join(' · ')}`
+    : `🪪 ${ok} record(s) stamped — these pairs now match exactly, forever. Re-scan to see matching ride the identity field.`,
+    failed ? 'warning' : 'success', 8000);
+}
+
 async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcSess, tgtSess) {
   // Map sourceId → targetId from the drift bucket.
   const srcToTgt = new Map();
@@ -3059,14 +3387,26 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
         for (const p of sftkEngineCompareSet(d.fields, fm)) keep.add(p.srcField);
         srcFields = [...keep];
       }
-      // Mapped lookups → resolve-by-key pairs (mirrors buildLookupCompareMap).
+      // Lookups → resolve-by-key pairs (mirrors buildLookupCompareMap).
+      // They ride by DEFAULT now, not only when hand-mapped: the scan
+      // compares lookups by the related record's key, so an overwrite that
+      // skipped unmapped ones left that drift permanently unfixable — the
+      // user could SEE the wrong parent and not select it (user 2026-08-27:
+      // "when updating i want to be able to select lookups as well"). An
+      // explicit exclusion (fm[f] === null) still wins, and engine-owned /
+      // audit references never ride.
       const lkpCfg = (node.lookupResolutions || {});
+      const LKP_NEVER = new Set(['OwnerId', 'CreatedById', 'LastModifiedById']);
+      const lkpAuto = [];
       for (const f of d.fields) {
-        if (f.type !== 'reference' || f.name === 'RecordTypeId') continue;
-        if (!srcFields.includes(f.name)) continue;
+        if (f.type !== 'reference' || f.name === 'RecordTypeId' || LKP_NEVER.has(f.name)) continue;
+        if (fm[f.name] === null) continue;
+        const mapped = srcFields.includes(f.name);
         const cfg  = lkpCfg[f.name];
         const poly = f.polymorphicForeignKey || (f.referenceTo || []).length > 1;
         if (!f.relationshipName || (poly && !cfg?.matchObject)) continue;
+        if (!f.updateable) continue;
+        if (!mapped) lkpAuto.push(`${f.name} (by ${cfg?.matchField || 'Name'})`);
         refPairs.push({
           sf: f.name,
           tf: fm[f.name] || f.name,
@@ -3078,6 +3418,9 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       }
       const refs = new Set(d.fields.filter(f => f.type === 'reference' && f.name !== 'RecordTypeId').map(f => f.name));
       srcFields = srcFields.filter(k => srcNames.has(k) && !refs.has(k));
+      if (lkpAuto.length) {
+        warnings.push(`🔗 ${lkpAuto.length} lookup(s) included and resolved by matching: ${lkpAuto.join(', ')} — exclude one in Fields & mapping (✕) if it must not be touched.`);
+      }
       // W2 — every non-engine-owned reference can take a hand-pick, even
       // ones refPairs skips (polymorphic without a configured matchObject,
       // no relationshipName): the pick IS the target id, no resolution
@@ -3131,7 +3474,10 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     'Id', ...srcFields,
     ...refPairs.map(rp => `${rp.relName}.${rp.matchField}`),
     ...(wantOwners ? ['Owner.Name'] : []),
-    ...(srcNameFld ? [srcNameFld] : [])   // labels for History links only
+    ...(srcNameFld ? [srcNameFld] : []),   // labels for History links only
+    // A person account's Name cannot be written (derived from its parts) —
+    // the flag lets the loop below leave it out (user 2026-09-15).
+    ...(descByLower['ispersonaccount'] ? ['IsPersonAccount'] : [])
   ])];
   const srcRecs = [];
   for (let i = 0; i < idList.length; i += 200) {
@@ -3166,8 +3512,19 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       }
       for (const rec of (q.records || [])) {
         const k = String(rec[rp.matchField] ?? '');
-        if (k && !rp.byKey.has(k)) rp.byKey.set(k, rec.Id);
+        if (!k) continue;
+        // A key matching MORE THAN ONE target parent is ambiguous — linking
+        // to either would be a guess, so it is EXCLUDED (fail closed, same
+        // rule as the engine bridge since 2026-08-27). Those lookups stay
+        // unchanged and the warning names the values.
+        if (rp.byKey.has(k)) { (rp.dupKeys = rp.dupKeys || new Set()).add(k); continue; }
+        rp.byKey.set(k, rec.Id);
       }
+    }
+    if (rp.dupKeys && rp.dupKeys.size) {
+      for (const k of rp.dupKeys) rp.byKey.delete(k);
+      const ex = [...rp.dupKeys].slice(0, 3).map(v => `“${v}”`).join(', ');
+      warnings.push(`⚠ ${rp.sf}: ${rp.dupKeys.size} ${rp.parentObj}.${rp.matchField} value(s) match MORE THAN ONE target record (${ex}${rp.dupKeys.size > 3 ? '…' : ''}) — linking to either would be a guess, so those lookups were left unchanged. Deduplicate the target or match on an External ID.`);
     }
   }
 
@@ -3226,6 +3583,9 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     if (!tgtId) continue;
     const p = { attributes: { type: objType }, Id: tgtId };
     for (const sf of srcFields) {
+      // Person Account: Salesforce refuses the whole Name ("Unable to
+      // create/update fields: Name") — FirstName/LastName carry the change.
+      if (sf === 'Name' && sr.IsPersonAccount === true) continue;
       // Unmapped fields (the engine-set expansion) write under their own
       // name; a non-empty mapping renames, exactly like the run engine.
       const tf = (fm[sf] && fm[sf] !== null) ? fm[sf] : sf;
@@ -3353,6 +3713,59 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
 
 // The per-source-record map for tgtOrgUrl, or null. Mirrors the engine's
 // reader exactly: any stored key resolving to the same org identity counts.
+// The field-by-field compare opens in a WIDE modal, never inside a column
+// (user 2026-09-16: "you can't see the field values because it's too
+// small"). Root and child rows share it. `prof` is the profile — or, for a
+// child row, a view of it whose tree is the child node — so field mapping,
+// lookups and the per-field push all read the right node.
+async function sftkOpenDriftCompare(prof, obj, srcId, tgtId, srcFields, tgtFields, keyLabel, fallbackFields) {
+  showModal(`
+    <div class="ds-modal-header">▸ ${esc(obj)} · ${esc(keyLabel || srcId)}
+      <span class="ds-dc-modal-sub">${esc(orgLabel(prof.sourceOrg || ''))} (source) vs ${esc(orgLabel(prof.targetOrg || ''))} (target)</span>
+      <button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button>
+    </div>
+    <div class="ds-modal-body ds-dc-modal-body"><div class="ds-drift-compare-loading">Loading…</div></div>`);
+  const box = eid('dsModalBox');
+  const body = box ? box.querySelector('.ds-dc-modal-body') : null;
+  if (!body) return;
+  const res = await fetchDriftRowDetail(prof, obj, srcId, tgtId, srcFields, tgtFields);
+  if (!body.isConnected) return;   // closed while loading
+  if (res.error) {
+    // Fall back to the scan-time answer when the live fetch can't run.
+    const fieldsNote = (fallbackFields || []).length
+      ? `<div class="ds-drift-compare-fallback">At the last scan these field(s) differed: <strong>${esc(fallbackFields.join(', '))}</strong></div>`
+      : '';
+    body.innerHTML = `${fieldsNote}<div class="ds-drift-compare-err">⚠ ${esc(res.error)}</div>`;
+    return;
+  }
+  // selectable: ticked fields (lookups included) push straight onto THIS
+  // target record — the refetch repaints from live values so a fixed field
+  // never keeps showing as drifted.
+  const paint = r => {
+    body.innerHTML = renderDriftCompareTable(r.srcRec, r.tgtRec, srcFields, tgtFields, r.lookupMap || {}, r.types || null, { selectable: true });
+    // A synced record has no differing rows — then the matching fields ARE the
+    // answer, so show them instead of a folded line (user 2026-09-21).
+    if (!body.querySelector('.ds-dc-diff')) body.querySelector('details.ds-dc-fold')?.setAttribute('open', '');
+    sftkWireDriftCompare(body, prof, obj, srcId, tgtId, async () => {
+      const fresh = await fetchDriftRowDetail(prof, obj, srcId, tgtId, srcFields, tgtFields);
+      if (!fresh.error && body.isConnected) paint(fresh);
+    });
+  };
+  paint(res);
+}
+
+// PURE. The Person Account contacts line — what happened to them, in words.
+//   pa: scan.personContacts = { src, tgt, synced, waiting, follows, targetOnly }
+function sftkPaContactsLine(pa, srcLabel, tgtLabel) {
+  if (!pa || !(pa.src || pa.tgt)) return '';
+  const parts = [];
+  if (pa.synced)     parts.push(`${pa.synced} synced (listed under 🟢 Synced, tagged 👤)`);
+  if (pa.waiting)    parts.push(`${pa.waiting} arrive with their Person Account — never inserted on their own`);
+  if (pa.follows)    parts.push(`${pa.follows} differ — they follow their Account: resolve the Account's 🟡 Changed row`);
+  if (pa.targetOnly) parts.push(`${pa.targetOnly} exist only in ${tgtLabel} — delete the Person Account, not its contact`);
+  return `👤 Person Account contacts (${pa.src} in ${srcLabel}, ${pa.tgt} in ${tgtLabel}): ${parts.length ? parts.join(' · ') : 'none matched'}. Salesforce creates and owns them, so they are never offered for insert, update or delete.`;
+}
+
 function sftkLkpOvBucket(node, tgtOrgUrl) {
   const all = node?.lookupOverrides;
   if (!all || typeof all !== 'object') return null;
@@ -3447,6 +3860,206 @@ function sftkCapFailedIds(list, richCap, idCap) {
 // opened straight in Reconcile with its missing records pre-selected (the
 // ring / tree-diff ephemeral recipe). Advisory only — any failure inside
 // leaves the page untouched.
+// The duplicate-name warning: WHO they are (linked in both orgs — user
+// 2026-08-10 "where are the records", 2026-09-21 "who are they?") and WHAT to
+// do about it, in the order that is safe (user 2026-09-21: "What operations we
+// can suggest in order to fix"). Shared by ⚖ Reconcile and the Deploy view.
+// Buttons carry data-rec-dupfix; each page wires them (sftkRecWireDupFix).
+function sftkRecDupsHtml(scan, p) {
+  const ex = (scan && scan.dupKeys && scan.dupKeys.examples) || [];
+  if (!scan || !scan.dupKeys || !scan.dupKeys.rows) return '';
+  const key = k => esc(typeof sftkMatchKeyLabel === 'function' ? sftkMatchKeyLabel(k) : String(k ?? ''));
+  const rl = (org, id, i) => `<a href="${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view" target="_blank" rel="noopener" class="ds-lkpo-vallink" title="${esc(id)}">copy ${i + 1}</a>`;
+  const rows = ex.map(e => {
+    const parts = [];
+    if ((e.src || []).length > 1) parts.push(`${e.src.length}× in ${esc(orgLabel(p.sourceOrg))}: ${e.src.map((id, i) => rl(p.sourceOrg, id, i)).join(' · ')}`);
+    if ((e.tgt || []).length > 1) parts.push(`${e.tgt.length}× in ${esc(orgLabel(p.targetOrg))}: ${e.tgt.map((id, i) => rl(p.targetOrg, id, i)).join(' · ')}`);
+    return `<div class="ds-rec-dup-row">“<strong>${key(e.key)}</strong>” ${parts.join(' and ')}</div>`;
+  }).join('');
+  const more = (scan.dupKeys.keys || []).length > ex.length ? `<div class="ds-rec-dup-note">Showing ${ex.length} of ${(scan.dupKeys.keys || []).length} duplicated name(s).</div>` : '';
+  const saved = !p.ephemeral && !!p.id;
+  // Match review only has something to do when BOTH unmatched buckets hold rows
+  // (user 2026-09-21: followed the advice, the dialog was empty).
+  const unS = (scan.missingInTarget || []).length, unT = (scan.onlyInTarget || []).length;
+  return `<details class="ds-rec-dups">
+      <summary>⚠ ${ex.length} name(s) used by more than one record — matching can land on either copy</summary>
+      <div class="ds-rec-dup-rows">${rows}</div>${more}
+      <div class="ds-rec-dup-note"><b>Why it matters:</b> records are matched by this name. With two “same” names the pairing is a coin flip, and so is anything else that finds records by name — lookups, other deployments.</div>
+      <div class="ds-rec-dup-fix"><b>How to fix it, safest first</b>
+        <ol>
+          <li><b>Make the copies one record.</b> Open the copies above. If they are the same real thing, merge them in Salesforce (Accounts, Contacts and Leads have Merge — it keeps one record and moves the related records onto it). If one is junk, delete or rename it. Do it in <i>both</i> orgs, then 🔄 Refresh state.</li>
+          <li><b>Or make the match key unique.</b> If both records are legitimate, the name alone cannot tell them apart — add a second field to the key (for example Name + Billing City, or an account number). ${saved ? `<button class="ds-btn ds-btn-xs" data-dsaction="editProfile" data-arg="${esc(p.id)}" title="Opens this deployment in the builder — Pick Records → Matching">✏ Change the match key</button>` : '<span class="ds-lkp-hint">Save this pair as a deployment to change its match key.</span>'}</li>
+          ${unS && unT
+            ? `<li><b>Or pair them by hand.</b> <button class="ds-btn ds-btn-xs" data-rec-dupfix="review" title="Pick, for each unmatched source record, the target record it really is — remembered for this org pair">🔗 Match review</button> pairs the ${unS.toLocaleString()} unmatched source record(s) with the ${unT.toLocaleString()} unmatched target record(s) — you say which is which.</li>`
+            : `<li><b>Pairing by hand is not possible here.</b> 🔗 Match review pairs records the scan could <i>not</i> match, and this scan left none unmatched: every copy above already got a partner — by name, in whatever order Salesforce returned them, which is exactly the coin flip. Matched records cannot be re-paired from here, so use step 1 or 2.</li>`}
+          <li><b>Then make it stick.</b> Once the pairs are right, <button class="ds-btn ds-btn-xs" data-rec-dupfix="stamp" title="Writes each source record's Id into SFTK_ID__c on its matched target record — future scans match on that, whatever the names are">🪪 Stamp identity</button> writes each source record’s Id onto its target record, so later scans match on that and never on the name again. <i>Do this last</i> — stamping while copies are still ambiguous would cement a coin flip.</li>
+        </ol>
+      </div>
+    </details>`;
+}
+function sftkRecWireDupFix(root, p, scan) {
+  (root || document).querySelectorAll('[data-rec-dupfix]').forEach(b => b.addEventListener('click', e => {
+    e.preventDefault();
+    if (b.dataset.recDupfix === 'review') openMatchReview(p);
+    else if (b.dataset.recDupfix === 'stamp') reconcileStampPairs(p, scan);
+  }));
+}
+
+// Engine settings live ON THE PROFILE (the engine reads profile.apiMode /
+// batchSize / threads at run start). For an ephemeral chooser pair, mirror
+// onto the REAL profile via _ringOf so the choice survives the session.
+async function sftkRecEnginePersist(p) {
+  const realP = p._ringOf?.profileId ? _profiles.find(x => x.id === p._ringOf.profileId) : null;
+  if (realP) {
+    if (p.apiMode) realP.apiMode = p.apiMode; else delete realP.apiMode;
+    if (p.batchSize) realP.batchSize = p.batchSize; else delete realP.batchSize;
+    if (p.threads) realP.threads = p.threads; else delete realP.threads;
+  }
+  try { await storageSaveProfiles(); } catch (_) {}
+}
+// One engine setting, the SAME rules the classic controls apply: auto = no
+// key; batch size 1–200 with 200 the implicit default; threads 1–6 with 1 the
+// implicit default. Returns the value actually stored.
+async function sftkRecSetEngine(p, key, raw) {
+  let out;
+  if (key === 'apiMode') { if (raw === 'sync' || raw === 'bulk') p.apiMode = raw; else delete p.apiMode; out = p.apiMode || 'auto'; }
+  else if (key === 'batchSize') { const n = Math.max(1, Math.min(200, parseInt(raw, 10) || 200)); if (n === 200) delete p.batchSize; else p.batchSize = n; out = n; }
+  else if (key === 'threads') { const n = Math.max(1, Math.min(6, parseInt(raw, 10) || 1)); if (n === 1) delete p.threads; else p.threads = n; out = n; }
+  await sftkRecEnginePersist(p);
+  return out;
+}
+
+// ── Parents-first: the shared data side (classic advisor + Deploy view) ──
+// PURE. Where one parent object stands for this org pair.
+//   g:  { empty }                       from the LIMIT-1 probe
+//   vd: { missing, changed, at } | null from the session verdict map
+function sftkParentStepState(g, vd) {
+  // The SOURCE has none of this object → no record can point at one → it is
+  // not a gap, whatever the target holds (user 2026-09-21: sent to "deploy
+  // Individual first" with 0 Individuals in both orgs).
+  if (g && g.srcCount === 0) return 'notneeded';
+  if (g && g.empty) return 'empty';
+  if (!vd) return 'unknown';
+  return (!vd.missing && !vd.changed) ? 'done' : 'behind';
+}
+
+// Which objects OUTSIDE this deployment does `objType` point at, and does the
+// target hold any of them? One LIMIT-1 probe per referenced object; an
+// unknowable probe says nothing rather than guess. `probeCache` (optional) lets
+// a caller that walks several objects probe each referenced object once.
+async function sftkParentGapsFor(objType, desc, tdesc, treeObjs, tgtSess, probeCache) {
+  const seen = new Set(); const parents = [];
+  for (const f of sftkLkpRefFields(desc?.fields)) {
+    const refObj = (f.referenceTo || [])[0];
+    if (!refObj || treeObjs.has(refObj) || seen.has(refObj)) continue;
+    seen.add(refObj);
+    let empty;
+    if (probeCache && probeCache.has(refObj)) empty = probeCache.get(refObj);
+    else {
+      const probe = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+        _suppressError: true, query: `SELECT Id FROM ${refObj} LIMIT 1` });
+      empty = probe?.error ? null : !(probe?.records || []).length;
+      if (probeCache) probeCache.set(refObj, empty);
+    }
+    if (empty === null) continue;   // unknowable → say nothing rather than guess
+    const tf = (tdesc?.fields || []).find(x => x.name === f.name);
+    parents.push({ field: f.name, refObj, empty, required: !!tf && tf.nillable === false });
+  }
+  return parents;
+}
+
+// EVERY object of the deployment (root, children, grandchildren) with the
+// outside objects it points at — the Deploy view's "Start with parents first".
+async function sftkParentOrderFor(p) {
+  await sftkParentSyncLoad();
+  const all = _buildAllSessions();
+  const srcSess = _resolveSession(p.sourceOrg, all), tgtSess = _resolveSession(p.targetOrg, all);
+  if (!srcSess?.sid || !tgtSess?.sid) return { offline: true, objects: [] };
+  const objects = [];
+  (function walk(node, path, depth, parentObj) {
+    if (!node) return;
+    const obj = node.objectType || node.childSObject;
+    if (obj) objects.push({ pathKey: path.join('.'), obj, depth, parentObj, parents: [] });
+    (node.children || []).forEach((c, i) => walk(c, [...path, i], depth + 1, obj));
+  })(p.tree, [], 0, null);
+  const treeObjs = new Set(objects.map(o => o.obj));
+  const probeCache = new Map();
+  for (const o of objects) {
+    let desc = null, tdesc = null;
+    try { desc = await describe(o.obj, srcSess.orgUrl, srcSess.sid); } catch (_) { desc = null; }
+    try { tdesc = await describe(o.obj, tgtSess.orgUrl, tgtSess.sid); } catch (_) { tdesc = null; }
+    try { o.parents = await sftkParentGapsFor(o.obj, desc, tdesc, treeObjs, tgtSess, probeCache); } catch (_) { o.parents = []; }
+  }
+  // How many of each parent object the SOURCE holds — one COUNT() per object.
+  // 0 means nothing can point at one; the number also decides whether the
+  // page may check alignment on its own or should ask first. null = unknown.
+  const counts = new Map();
+  for (const o of objects) for (const g of o.parents) {
+    if (!counts.has(g.refObj)) {
+      const c = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: srcSess.orgUrl, sid: srcSess.sid,
+        _suppressError: true, query: `SELECT COUNT() FROM ${g.refObj}` });
+      counts.set(g.refObj, (c && !c.error && Number.isFinite(c.totalSize)) ? c.totalSize : null);
+    }
+    g.srcCount = counts.get(g.refObj);
+  }
+  return { offline: false, objects };
+}
+
+// One background alignment check of a parent object: scan it across this org
+// pair and deposit the verdict. Never throws.
+async function sftkParentVerifyOne(p, refObj) {
+  try {
+    const eph = { id: `chk_${Date.now()}`, name: `${refObj} check`,
+      sourceOrg: p.sourceOrg, targetOrg: p.targetOrg, ephemeral: true,
+      scanConfig: { matchField: 'Name', compareFields: [] },
+      tree: { objectType: refObj, where: '', children: [] } };
+    const res = await runDiffScan(eph);
+    if (res?.error) return false;
+    sftkParentSyncPut(p.sourceOrg, p.targetOrg, refObj, {
+      missing: (res.missingInTarget || []).length,
+      changed: (res.changed || []).length,
+      extra:   (res.onlyInTarget || []).length,
+      at:      res.runAt || new Date().toISOString(),
+    });
+    return true;
+  } catch (_) { return false; }
+}
+
+// The one-click journey: scan the parent object across this pair and open it,
+// stamped so the page offers "Continue to <child>" once it is aligned (user
+// 2026-08-10: "we deployed the parents. now we need to be able to deploy the
+// childrens"). Returns false when the scan failed.
+async function sftkOpenParentsFirst(p, refObj, forObj) {
+  const eph = {
+    id: `gap_${Date.now()}`,
+    name: `${refObj} — parents first`,
+    sourceOrg: p.sourceOrg, targetOrg: p.targetOrg,
+    ephemeral: true,
+    scanConfig: { matchField: 'Name', compareFields: [] },
+    tree: { objectType: refObj, where: '', children: [] },
+    _parentOf: { profileId: p.id, objType: forObj },
+  };
+  const res = await runDiffScan(eph);
+  if (res?.error) { showToast(`Scan failed: ${res.error}`, 'error', 6000); return false; }
+  eph.lastScan = res;
+  _reconcileProfile = eph;
+  renderReconcile();
+  showToast(`Push these ${(res.missingInTarget || []).length} record(s), then continue back to ${forObj} — the banner up top takes you there.`, 'info', 6500);
+  return true;
+}
+
+// The RUN GATE the advisor feeds (runReconcile reads it): a required lookup
+// into an object the target has NONE of dooms the root inserts.
+function sftkParentGapSetGate(p, scan, rootParents, rootHasMissing) {
+  const key = `${p.id}|${scan.runAt}`;
+  // an object the source has none of cannot doom anything
+  const ps = rootHasMissing ? (rootParents || []).filter(s => s.srcCount !== 0) : [];
+  _recParentGapState = { key,
+    doomed:  ps.filter(s => s.empty && s.required).map(s => s.refObj),
+    empties: ps.filter(s => s.empty && !s.required).map(s => s.refObj) };
+  return _recParentGapState;
+}
+
 async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
   const host = eid('dsRecParentGaps');
   if (!host) return;
@@ -3454,28 +4067,7 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
   const wire = () => host.querySelectorAll('[data-recgap]').forEach(b => b.addEventListener('click', async () => {
     const refObj = b.dataset.recgap;
     b.disabled = true; b.textContent = '⏳ scanning…';
-    const eph = {
-      id: `gap_${Date.now()}`,
-      name: `${refObj} — parents first`,
-      sourceOrg: p.sourceOrg, targetOrg: p.targetOrg,
-      ephemeral: true,
-      scanConfig: { matchField: 'Name', compareFields: [] },
-      tree: { objectType: refObj, where: '', children: [] },
-      // The journey back (user 2026-08-10: "we deployed the parents. now we
-      // need to be able to deploy the childrens") — the parent view offers
-      // "Continue to <child>" once aligned.
-      _parentOf: { profileId: p.id, objType },
-    };
-    const res = await runDiffScan(eph);
-    if (res?.error) {
-      showToast(`Scan failed: ${res.error}`, 'error', 6000);
-      b.disabled = false; b.textContent = `➕ Deploy ${refObj} first`;
-      return;
-    }
-    eph.lastScan = res;
-    _reconcileProfile = eph;
-    renderReconcile();
-    showToast(`Push these ${(res.missingInTarget || []).length} record(s), then continue back to ${objType} — the banner up top takes you there.`, 'info', 6500);
+    if (!(await sftkOpenParentsFirst(p, refObj, objType))) { b.disabled = false; b.textContent = `➕ Deploy ${refObj} first`; }
   }));
   // Same scan → same verdict; reuse the cached banner without re-probing.
   if (_recParentGapKey === key) {
@@ -3496,19 +4088,7 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
     // Objects the profile itself deploys are the engine's job, not a gap.
     const treeObjs = new Set([p.tree?.objectType,
       ...(p.tree?.children || []).map(c => c.objectType || c.childSObject)].filter(Boolean));
-    const seen = new Set(); const parents = [];
-    for (const f of sftkLkpRefFields(desc?.fields)) {
-      const refObj = (f.referenceTo || [])[0];
-      if (!refObj || treeObjs.has(refObj) || seen.has(refObj)) continue;
-      seen.add(refObj);
-      const probe = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
-        _suppressError: true, query: `SELECT Id FROM ${refObj} LIMIT 1` });
-      if (probe?.error) continue;   // unknowable → say nothing rather than guess
-      const tf = (tdesc?.fields || []).find(x => x.name === f.name);
-      parents.push({ field: f.name, refObj,
-        empty: !(probe?.records || []).length,
-        required: !!tf && tf.nillable === false });
-    }
+    const parents = await sftkParentGapsFor(objType, desc, tdesc, treeObjs, tgtSess);
     if (!parents.length) { _recParentGapState = { key, doomed: [], empties: [] }; return; }
     // Numbered plan (user 2026-08-10: "its very unclear what is the correct
     // order") — the panel is now an explicit ordered checklist: every parent
@@ -3517,7 +4097,7 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
     // carries a "← next" marker. No more inferring the order.
     const steps = parents.map(g => {
       const vd = _parentSyncVerdicts[sftkParentSyncKey(p.sourceOrg, p.targetOrg, g.refObj)];
-      return { ...g, vd, done: !g.empty && !!vd && !vd.missing && !vd.changed,
+      return { ...g, vd, done: sftkParentStepState(g, vd) === 'done',
         // AUTO-VERIFY (user 2026-08-10: "two first steps here should be done
         // automatically on load and not route the user to a reconcile screen
         // without nothing if its aligned") — a parent that EXISTS but has no
@@ -3556,10 +4136,11 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
         ${status}${isNext ? '<span class="ds-ordstep-arrow">← next</span>' : ''}
       </div>`;
     };
-    _recParentGapHtml = `<div class="ds-op-banner" style="border-left:3px solid ${doomed.length ? '#dc2626' : anyEmpty ? '#f59e0b' : 'var(--brand)'}">
-      <span class="ds-op-banner-icon">⛓</span>
-      <div class="ds-op-banner-body">
-        <div class="ds-op-banner-title">${doomed.length ? '⛔ STOP — inserts here are guaranteed to fail until the parents exist. ' : ''}The correct order for this deployment</div>
+    _recParentGapHtml = `<div class="ds-rec-card ${doomed.length ? 'ds-rec-card-bad' : anyEmpty ? 'ds-rec-card-warn' : ''}">
+      <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span>
+        <span class="ds-rec-card-title">${doomed.length ? '⛔ Stop — inserts here fail until the parents exist · ' : ''}Deployment order</span>
+        <span class="ds-rec-card-hint">parents first — this deployment's lookups land on them by name</span></div>
+      <div class="ds-rec-card-body">
         ${steps.map(stepHtml).join('')}
         <div class="ds-ordstep${allDone ? ' ds-ordstep-next' : ''}">
           <span class="ds-ordstep-num">${steps.length + 1}</span>
@@ -3583,19 +4164,7 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
         for (const s of toCheck) {
           _recParentGapChecked.add(`${key}|${s.refObj}`);
           try {
-            const eph = { id: `chk_${Date.now()}`, name: `${s.refObj} check`,
-              sourceOrg: p.sourceOrg, targetOrg: p.targetOrg, ephemeral: true,
-              scanConfig: { matchField: 'Name', compareFields: [] },
-              tree: { objectType: s.refObj, where: '', children: [] } };
-            const res = await runDiffScan(eph);
-            if (!res?.error) {
-              sftkParentSyncPut(p.sourceOrg, p.targetOrg, s.refObj, {
-                missing: (res.missingInTarget || []).length,
-                changed: (res.changed || []).length,
-                extra:   (res.onlyInTarget || []).length,
-                at:      res.runAt || new Date().toISOString(),
-              });
-            }
+            await sftkParentVerifyOne(p, s.refObj);
           } catch (_) { /* manual button remains */ }
         }
         if (_recParentGapKey === key && eid('dsRecParentGaps')) {

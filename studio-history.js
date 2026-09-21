@@ -105,7 +105,9 @@ function histRunToCsvRows(entry, opts) {
       recRows++;
     }
     for (const fr of (s.failedRecords || [])) {
-      rows.push(mk(obj, 'failed-update', fr && fr.id, fr && fr.label, fr && fr.error,
+      // ↩ a rollback tags the refused operation (delete / restore) — the audit
+      // row must not call a refused delete a failed update.
+      rows.push(mk(obj, fr && fr.op ? `failed-${fr.op}` : 'failed-update', fr && fr.id, fr && fr.label, fr && fr.error,
         histFieldContext(fr && fr.fields), bulk, ''));
       recRows++;
     }
@@ -315,6 +317,9 @@ function renderHistory() {
         const profExists = !!(run.profileId && _profiles.some(p => p.id === run.profileId));
         const retryable  = totalFailed > 0 && profExists;
         const isRecRun   = run.kind === 'reconcile';
+        const isRollback = run.kind === 'rollback';
+        // ↩ one state function decides what the card offers (studio-undo.js).
+        const undoSt = (typeof sftkUndoCardState === 'function') ? sftkUndoCardState(run) : { show: false };
         return `
         <div class="ds-history-card">
           <div class="ds-history-card-header">
@@ -327,7 +332,9 @@ function renderHistory() {
             <span class="ds-history-time">${timeAgo(run.startedAt)}</span>
             ${retryable ? `<button class="ds-btn ds-btn-xs ds-btn-primary" data-dsaction="retryFailed" data-arg="${esc(run.id)}"
               title="Re-run this profile transferring ONLY the ${totalFailed} record(s) that failed before. Skips records that already succeeded so you don't double-create.">↻ Retry failed (${totalFailed})</button>` : ''}
-            ${profExists && !isRecRun ? `<button class="ds-btn ds-btn-xs" data-dsaction="runAgain" data-arg="${esc(run.id)}"
+            ${undoSt.show ? `<button class="ds-btn ds-btn-xs ${undoSt.disabled ? '' : 'ds-btn-danger'}" ${undoSt.disabled ? 'disabled' : ''} data-dsaction="rollbackRun" data-arg="${esc(run.id)}"
+              title="${esc(undoSt.title || '')}">${esc(undoSt.label)}</button>` : ''}
+            ${profExists && !isRecRun && !isRollback ? `<button class="ds-btn ds-btn-xs" data-dsaction="runAgain" data-arg="${esc(run.id)}"
               title="Open Run Transfer for this deployment against the same org pair this run used.">↻ Run again</button>` : ''}
             ${profExists && isRecRun ? `<button class="ds-btn ds-btn-xs" data-dsaction="openReconcile" data-arg="${esc(run.profileId)}"
               title="Open the Reconcile view for this deployment.">⚖ Reconcile</button>` : ''}
@@ -339,6 +346,7 @@ function renderHistory() {
           <div class="ds-history-orgs">
             ${esc(orgLabel(run.sourceOrg || ''))} → ${esc(orgLabel(run.targetOrg || ''))}
             ${run.kind === 'reconcile' ? '<span class="ds-chip" style="margin-left:6px">⚖ reconcile</span>' : ''}
+            ${isRollback ? '<span class="ds-chip" style="margin-left:6px" title="Deleted what a run created and restored what it overwrote, from the restore point taken before that run.">↩ rollback</span>' : ''}
           </div>
           <div class="ds-history-summary">
             ${Object.entries(run.summary || {}).map(([obj, s]) => {
@@ -352,7 +360,7 @@ function renderHistory() {
                 if (s.inserted)      parts.push(`<span class="ds-rec-tag ds-rec-tag-ins">${s.inserted} inserted</span>`);
                 if (s.connected)     parts.push(`<span class="ds-rec-tag ds-rec-tag-ins">🔗 ${s.connected} linked</span>`);
                 if (s.relinked)      parts.push(`<span class="ds-rec-tag ds-rec-tag-upd">⇄ ${s.relinked} relinked</span>`);
-                if (s.updated)       parts.push(`<span class="ds-rec-tag ds-rec-tag-upd">${s.updated} updated</span>`);
+                if (s.updated)       parts.push(`<span class="ds-rec-tag ds-rec-tag-upd">${s.updated} ${isRollback ? 'restored' : 'updated'}</span>`);
                 if (s.overwritten)   parts.push(`<span class="ds-rec-tag ds-rec-tag-upd">${s.overwritten} updated</span>`);
                 if (s.updatedSource) parts.push(`<span class="ds-rec-tag ds-rec-tag-pull">← ${s.updatedSource} updated in source</span>`);
                 if (s.pulled)        parts.push(`<span class="ds-rec-tag ds-rec-tag-pull">← ${s.pulled} pulled</span>`);
@@ -360,7 +368,17 @@ function renderHistory() {
                 const failTot = (s.insertedFailed || 0) + (s.updatedFailed || 0) + (s.deletedFailed || 0) + (s.pulledFailed || 0) + (s.updatedSourceFailed || 0) + (s.connectFailed || 0) + (s.relinkFailed || 0);
                 if (failTot)    parts.push(`<span class="ds-rec-tag ds-rec-tag-fail">${failTot} failed</span>`);
                 if (s.notProcessed) parts.push(`<span class="ds-rec-tag ds-rec-tag-fail" title="The Bulk job was aborted when the run was cancelled — these records were not confirmed written.">${s.notProcessed} not confirmed</span>`);
+                if (s.personContactsSkipped) parts.push(`<span class="ds-rec-tag" title="Salesforce creates the Contact behind each Person Account together with the Account and refuses a second one — these were left out on purpose.">👤 ${s.personContactsSkipped} Person Account contact(s) left out</span>`);
                 if (s.viaBulk)  parts.push('<span class="ds-rec-tag" title="Written with one Bulk API 2.0 job instead of 200-record REST batches.">⚡ via Bulk API</span>');
+                // ↩ a rollback's verification state is part of the result, never a footnote.
+                if (isRollback) parts.push(s.remaining === 0
+                  ? '<span class="ds-rec-tag ds-rec-tag-ins" title="Re-read after the rollback: nothing from the run remains.">✓ verified</span>'
+                  : s.remaining == null
+                    ? '<span class="ds-rec-tag ds-rec-tag-fail" title="The verification re-read failed — the outcome was NOT confirmed.">unverified</span>'
+                    : `<span class="ds-rec-tag ds-rec-tag-fail" title="Records that still differ from the restore point after the rollback.">${s.remaining} still differ</span>`);
+                if (isRollback && s.leftAlone) parts.push(`<span class="ds-rec-tag" title="Deliberately not touched: created or edited after the run, or parents of records added later. They may still hold the run’s values.">${s.leftAlone} left alone</span>`);
+                if (isRollback && s.stillGone) parts.push(`<span class="ds-rec-tag ds-rec-tag-del" title="${s.goneHard ? 'Hard-deleted by the run — gone permanently; a rollback cannot re-create them.' : 'Deleted by the run and not re-created by the rollback — restore them from the Recycle Bin within 15 days.'}">${s.stillGone} still gone${s.goneHard ? ' (permanent)' : ''}</span>`);
+                if (isRollback && s.unconfirmed) parts.push(`<span class="ds-rec-tag ds-rec-tag-fail" title="A write got no per-record answer from Salesforce — it may or may not have been applied. The verification re-read is the truth.">${s.unconfirmed} unconfirmed</span>`);
                 if (!parts.length) parts.push('<span class="ds-rec-tag">no changes</span>');
                 return `<span class="ds-summary-chip"><strong>${esc(obj)}</strong> · ${parts.join(' ')}</span>`;
               }
@@ -378,13 +396,14 @@ function renderHistory() {
                          : `${s.created || 0} created`,
                 s.failed ? `${s.failed} failed` : '',
                 s.notProcessed ? `${s.notProcessed} not confirmed written — the Bulk job was aborted when the run was cancelled` : '',
+                s.personContactsSkipped ? `${s.personContactsSkipped} Person Account contact(s) left out — Salesforce creates them with the Account` : '',
                 s.connected ? `${s.connected} linked to parent` : '',
                 s.viaBulk ? 'written with one Bulk API 2.0 job' : '',
               ].filter(Boolean).join(' · ');
               const headCounts = hasSplit
                 ? `${s.upsertCreated || 0}↑ ${s.upsertUpdated || 0}↻`
                 : `${s.created || 0}↑`;
-              return `<span class="ds-summary-chip" title="${esc(chipTitle)}">${esc(obj)}: ${headCounts}${s.failed ? ' '+s.failed+'✗' : ''}${s.notProcessed ? ' '+s.notProcessed+'⏸' : ''}${s.connected ? ' '+s.connected+'🔗' : ''}${s.viaBulk ? ' <span style="opacity:.75">⚡ via Bulk API</span>' : ''}</span>`;
+              return `<span class="ds-summary-chip" title="${esc(chipTitle)}">${esc(obj)}: ${headCounts}${s.failed ? ' '+s.failed+'✗' : ''}${s.notProcessed ? ' '+s.notProcessed+'⏸' : ''}${s.personContactsSkipped ? ' '+s.personContactsSkipped+'👤' : ''}${s.connected ? ' '+s.connected+'🔗' : ''}${s.viaBulk ? ' <span style="opacity:.75">⚡ via Bulk API</span>' : ''}</span>`;
             }).join('')}
           </div>
           ${(() => {
@@ -416,13 +435,16 @@ function renderHistory() {
                 </div>
               </details>`);
               }
-              if (tgtBase && s.failedRecords?.length) {
+              // ↩ a rollback entry names the org it wrote in (two-leg reconcile
+              // rollbacks touch the source too) — link there, not blindly to the target.
+              const failBase = s.orgUrl ? String(s.orgUrl).replace(/\/+$/, '') : tgtBase;
+              if (failBase && s.failedRecords?.length) {
                 out.push(`
               <details class="ds-history-links ds-history-links-failed">
-                <summary>✗ ${esc(obj)}: ${s.failedRecords.length} failed update(s) — open in ${esc(orgLabel(tgtBase))}</summary>
+                <summary>✗ ${esc(obj)}: ${s.failedRecords.length} failed ${isRollback ? 'rollback write(s)' : 'update(s)'} — open in ${esc(orgLabel(failBase))}</summary>
                 <div class="ds-history-links-list">
                   ${s.failedRecords.map(fr =>
-                    `<a href="${esc(tgtBase)}/${esc(fr.id)}" target="_blank" rel="noopener" title="${esc(fr.error || '')}">${esc(fr.label || fr.id)}</a>`
+                    `<a href="${esc(failBase)}/${esc(fr.id)}" target="_blank" rel="noopener" title="${esc(fr.error || '')}">${esc(fr.label || fr.id)}</a>`
                   ).join('')}
                 </div>
               </details>`);
@@ -593,6 +615,7 @@ function renderHistory() {
           <li>remembered match pairs (🧠 match memory — record-id pairs learned from transfers and Match Review)</li>
           <li>activity log and cached Apex log bodies</li>
           <li>the flow dependency cache, Field Cleaner undo snapshots and field-dependency scans, and the last scheduled drift result</li>
+          <li>↩ restore points taken before data deployments (record images kept on this PC for Roll back)</li>
         </ul>
         Deployment configurations, org labels, read-only locks, and settings are kept.
       </div>
@@ -635,6 +658,7 @@ function renderHistory() {
         storageSaveProfiles(),
         chrome.storage.local.set({ ds_activity_log: {} }),
         (typeof sftkArchClear === 'function') ? sftkArchClear() : Promise.resolve(),
+        (typeof sftkUndoStoreClear === 'function') ? sftkUndoStoreClear() : Promise.resolve(),
       ]);
       showToast(`Cleared: history, ${scans} scan result${scans !== 1 ? 's' : ''}, match memory on ${mems} deployment${mems !== 1 ? 's' : ''}, activity log, ${cachedKeys.length} cached org-data entr${cachedKeys.length !== 1 ? 'ies' : 'y'}`, 'success');
       renderHistory();
@@ -654,6 +678,7 @@ function renderHistory() {
       _history = [];
       _archShown = [];
       if (typeof sftkArchClear === 'function') await sftkArchClear();   // "all" includes the 📦 archive
+      if (typeof sftkUndoStoreClear === 'function') await sftkUndoStoreClear();   // …and the ↩ restore points
       await storageSaveHistory();
       renderHistory();
     });

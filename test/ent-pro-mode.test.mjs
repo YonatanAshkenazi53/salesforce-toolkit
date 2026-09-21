@@ -136,13 +136,13 @@ describe('E4 sftkSettingsShape — ds_settings persistence shape', () => {
   it('fills defaults for a missing/empty blob (proMode default OFF)', () => {
     for (const raw of [undefined, null, {}]) {
       const s = sftkSettingsShape(raw);
-      expect(s).toEqual({ historyDays: 30, countsOnly: false, proMode: false });
+      expect(s).toEqual({ historyDays: 30, countsOnly: false, proMode: false, undoCapture: true });
     }
   });
 
   it('keeps explicit values', () => {
     const s = sftkSettingsShape({ historyDays: 0, countsOnly: true, proMode: true });
-    expect(s).toEqual({ historyDays: 0, countsOnly: true, proMode: true });
+    expect(s).toEqual({ historyDays: 0, countsOnly: true, proMode: true, undoCapture: true });
   });
 
   it('coerces proMode to a real boolean', () => {

@@ -13,6 +13,344 @@ lives in `CHANGELOG_HISTORY.md` (repo only, never shipped — the packer only sh
 `CHANGELOG.md` itself; no leading underscore, Chrome refuses to load unpacked
 extensions containing root files that start with `_`).
 
+## 1.4.3 — 2026-08-31
+
+### Added
+- **📜 Read the licence again, any time.** The agreement you accepted on
+  first start is one click away: the Licence button in the Toolkit top bar,
+  or Data Studio → security → Licence & privacy. It shows the same points,
+  the full EULA and privacy links, and the version and date you accepted.
+- **Terms version 2.** The acceptance statement now says outright that any
+  consequence of using both the Toolkit and Data Studio, and every one of
+  their components, is your responsibility. Everyone is asked to accept it
+  once more on the next start.
+- **↩ Roll back a data deployment.** Before Run Transfer, fan-out, a
+  sequence or a Reconcile run writes anything, Data Studio reads a
+  **restore point** of every object the run can touch (📸 checkbox on the
+  Run Transfer page, on by default; the newest 10 runs keep one, on your PC).
+  History then offers **↩ Roll back**: it re-reads the target, shows exactly
+  what it will do — delete what the run created, restore what it overwrote,
+  leave anything others created or edited *after* the run alone — together
+  with the validation rules, duplicate rules, triggers and flows that could
+  reject or re-fire, asks you to type ROLLBACK (the org name for production),
+  writes, then re-reads to **verify** and records the result as its own
+  History entry. Deletes go to the Recycle Bin, never a hard delete. A run
+  that could not get a restore point (an object above the row limit, an
+  incomplete read, restore points switched off) says so on its card instead
+  of hiding the button. What a rollback cannot undo — automation that already
+  ran, hard deletes, copied files, owner changes — is listed on the screen
+  before you confirm.
+- **Field Cleaner now lists Reports and Report Types** among a field’s
+  dependencies — straight from Salesforce’s own dependency index (the one
+  behind “Where is this used?”), so it costs nothing extra. Reports get a
+  **✂ Remove** fix: a restore point is saved first, the field is stripped
+  from columns, filters and groupings, edits that would break the report
+  (its only column or grouping) are refused with the fix, formulas and
+  buckets stay listed as manual, and the result is re-read to verify.
+  Report types deep-link Setup — Salesforce exposes no modern API for
+  editing their columns.
+  Email Templates and Approval Processes are listed the same way whenever
+  the index reports them — it is not guaranteed to for every one, and the
+  Field Cleaner says so instead of implying they were checked.
+
+### Added
+- **⚙ API versions and ⏻ Flow switches now work on the org you are connected
+  to, only.** The org pickers are gone: Compare shows how far each flow in
+  this org is behind the org's release, and Flow switches lists this org's
+  triggered flows. (User feedback: comparing against other orgs here was
+  confusing.)
+- **Lightning Pages: pages that share a label are told apart.** Nonprofit
+  Cloud ships several pages called "Account Record Page"; the list showed
+  them as identical rows. When labels collide the row now also shows the
+  page's API name, and a page installed by a managed package is marked 🔒.
+- **The licence agreement and privacy policy open as a proper page.** The
+  links in the licence gate and the Licence button now open a rendered page
+  with correct punctuation and headings, instead of the raw text file.
+- **Flows tab: what each flow calls, and a whole-tree backup.** Every flow
+  group shows "↘ calls N" with the subflows it calls (the full tree in the
+  tooltip), or "calls ?" when the dependency scan has not read it. In
+  ⬇ Backup mode, tick "+ the subflows they call (whole tree)" to back up the
+  selected flows together with every subflow they reach, one zip, with the
+  active version of each subflow. It says which subflows could not be
+  included (managed packages, not in this org) and refuses to claim a whole
+  tree when the scan has not read part of it.
+- **Record-triggered, scheduled and platform-event flows are labelled as such
+  everywhere, with or without a scan.** Salesforce stores them all as
+  "Autolaunched" and only the trigger tells them apart; the Toolkit now reads
+  that trigger for every flow on load, so the Flows tab, the Dependencies
+  rows, the filter buttons and the 🔒 managed rows all say Record-Triggered
+  where Setup's own list says "Record — Run After Save".
+- **Dependencies: ↻ Rescan, and every row says which version it is.** The
+  tools row has a Rescan button that drops the stored dependency data and
+  reads the flow list and every version again — for a popped-out tab that
+  stayed open while flows were edited in Flow Builder. Every flow row
+  (standalone ones included) now shows the version it represents, its API
+  version, status, and created / last-modified dates; managed-package rows
+  show their last-modified date too. A subflow that lives in a managed
+  package is now shown as a 🔒 node instead of "Not found".
+- **Field Cleaner removes a field from flows version by version.** Every
+  flow row now shows which version references the field (v3 · Active,
+  v2 · Obsolete…). ✂ Remove reads every version first and states the exact
+  plan before asking: if only inactive versions reference the field, just
+  those versions are deleted; if the active version does, a new version
+  without the reference is deployed, verified active by re-reading the org
+  (activated by the tool if the org's deploy setting left it inactive), and
+  only then is the replaced version deleted. Paused flow interviews on a
+  version to be deleted are listed and deleted first, because Salesforce
+  refuses the deletion while they exist. A backup zip of every deleted
+  version is offered (ticked by default) and restorable from the Flows tool,
+  and every deleted version also gets a 🧾 Cleanup history restore point.
+  Nothing is deleted if the new version cannot be confirmed active.
+
+### Removed
+- **Data Studio: 🌳 Tree diff and 🌐 Multi-org fan-out are gone**, and so are
+  the Sync Ring's "Push…" and "Sync plan…" buttons. Deploying to several
+  orgs at once was confusing. The model is now: a deployment has a ring
+  (its source and its targets, set in ✏ Edit); ▶ Run and ⚖ Reconcile ask
+  which target this time and work on that one target. The Sync Ring keeps
+  its drift matrix and its per-cell ⚖, which opens Reconcile for that
+  target.
+
+### Added
+- **⚙ API versions: update everything that is behind, in one go.** When your
+  flows run on an older API version than the org, the panel says how many
+  and offers "Update all N to API x" — it ticks them, sets the target to this
+  org's release and opens the usual confirmation; nothing is written before
+  you confirm. Flows that cannot be changed from here can no longer be
+  ticked, and the row says why: installed from a managed package (read from
+  Salesforce's own ManageableState, not guessed from a namespace), an invalid
+  draft, or a version without a record id.
+
+### Added
+- **🪪 Identity for a whole deployment, created for you.** The identity field
+  (SFTK_ID__c) is what lets a record be recognised exactly across orgs. The
+  Toolkit can now create it on every object of a deployment, in the target
+  and optionally the source, together with the access you need to see it —
+  production asks you to type its name first. Available from 🪪 Identity on
+  the new Deploy view, and whenever 🪪 Stamp identity finds the field missing.
+- **Field Cleaner shows what a flow fix will do before it does it.** For an
+  active flow version it lists what comes out automatically, what cannot
+  (Decisions and formulas are never rewritten for you — those keep the field
+  locked), and what the fix would leave empty. You choose: keep the flow
+  running on a new version, or switch it off and delete the active version
+  too — or open it in Flow Builder with every location named.
+
+### Added — beta, off by default
+- **✨ New Deploy view.** One page instead of Run Transfer + ⚖ Reconcile:
+  it reads both orgs, shows per object what is 🔴 to insert, 🟡 changed,
+  🔵 only in the target and 🟢 synced (true totals, even when a list is
+  truncated), and lists every object's records — children included, with
+  their parents, ⇄ Link differs and the same selection rules. Turn it on with
+  the switch on Data Deployment; the same switch, or ↩ Classic view, brings
+  the current pages back. It uses the same scan, the same selection and the
+  same engine as the classic pages, and nothing is selected until you select
+  it. Not in it yet: the real rolled-back dry run, and engine settings
+  (those stay on the classic page for now).
+
+### Fixed
+- **Dependencies draws the whole subflow chain.** The tree stopped at three
+  levels with "manual review recommended", hiding real subflows below that.
+  It now follows a chain as deep as the org goes, and a flow that calls back
+  into its own chain is labelled as a loop instead of showing an empty arrow.
+- **↻ Retry failed is safe for child records.** Retrying failed child
+  records whose parents had been written opened a run with the parent object
+  unfiltered — it would have inserted every parent again. Those retries now
+  open ⚖ Reconcile, which attaches the children to the parents that exist;
+  a mixed retry leaves them out and says so.
+- **Dependencies: managed subflows no longer flash "Not found".** When the
+  map came from the cache, the tree painted before the managed-package list
+  had loaded and never repainted.
+- **Tool tabs opened before a Salesforce session exists** show the connect
+  screen instead of crashing (Lightning Pages threw on a missing org).
+- The Run page's buttons no longer overflow their card.
+- ⚖ Reconcile: a child section with nothing to do is one line instead of
+  four empty buckets two screens tall; child buckets size to their content.
+- **🔒 Lock writes** (was "Read-only") on Connected Orgs now says what it
+  is: a safety lock that stops every tool in the extension from writing to
+  that org. ⚖ Reconcile shows a locked source or target up front, switches
+  the ← controls off for a locked source, and ▶ Run refuses by name before
+  anything is written.
+- **⚖ Reconcile deletes fail closed.** When the Toolkit cannot confirm that
+  the target is a sandbox or dev org, deletes now ask for the typed
+  confirmation and hard delete is refused — the same rule production gets.
+  Before, only a confirmed production org was guarded.
+- **⚖ Reconcile child rows.** A changed child record now has the same
+  "▸ fields" compare and 🔗 lookup hand-pick the root rows have, driven by
+  the child's own object and mapping; picks made there are honoured by the
+  run. The field-by-field compare opens in a wide window instead of inside
+  the narrow column, values wrap there, and every value shows its full
+  text on hover.
+- **Person Accounts deploy.** Salesforce refuses the whole Name on a person
+  account ("Unable to create/update fields: Name"), so every such insert
+  failed. The engine and ⚖ Reconcile overwrites now send FirstName/LastName
+  and leave Name out on those records, and the run says how many. A target
+  without Person Accounts gets them as business accounts, and says so. The
+  hidden Contact behind each Person Account, which Salesforce creates with
+  the Account and refuses as an insert ("Cannot select a person account"),
+  is never offered for insert, update or delete; a matched pair still shows
+  under 🟢 Synced, tagged 👤, and the header says what happened to the rest.
+- **History no longer offers ↩ Roll back for a run that wrote nothing.**
+  When Salesforce confirmed every record failed, the button reads "Nothing
+  to roll back". A run with an error, an unanswered write or no counts
+  keeps the button — unknown is not nothing.
+- **Data Deployment, from a live work session:** ⚖ Reconcile no longer
+  pre-selects every missing and changed record — nothing is selected until
+  you select it (✓ All per column selects a whole bucket on purpose). And
+  the Run page counted child objects without the parent filter, so picking
+  two parents could read "18 records"; children are now counted inside
+  their parents' scope, the confirm shows the count by object, and a count
+  SOQL cannot scope is shown as "≤ N", never as the number.
+- **The Dependencies map finds subflows again.** The batched metadata read
+  the scan moved to was answered by Salesforce with status 200 but without
+  the flow's metadata, so every version counted as read with "calls no
+  subflows" — the tree showed flows with subflows as Standalone, and ⚙
+  Apply reported "could not be read". The read now goes to the Tooling
+  batch endpoint, which returns the metadata, and a read that comes back
+  without metadata now counts as NOT scanned (⏳) rather than as an answer.
+  Use ↻ Rescan once after updating.
+- **A retried call can no longer land in a different org.** When a session
+  had just expired, the retry used to pick up whichever Salesforce tab was
+  open — which could be another org — and re-send the call there. The retry
+  now uses only the session of the org the call was made for, and gives up
+  otherwise. A transfer is never re-run whole.
+- **⚙ API versions — Apply works.** Every apply failed with "could not be
+  read" because the flow read was unpacked at the wrong depth. Fixed and
+  pinned by a test.
+- **⏻ Flow switches ask you to type OFF or ON** in the panel before
+  changing anything, the same way ⚙ API versions asks you to type CHANGE
+  — a browser OK button is not enough to stop production automation.
+- **⚙ / ⏻ work without a dependency scan.** In a large org where the scan
+  was skipped, "This org" had no session and every call for it was refused.
+- **A metadata deploy is never submitted twice.** If the session dropped
+  while the tool was waiting for a deployment to finish, the whole request
+  was retried — including the deploy. The wait now reports the job instead.
+- **Partial reads are refused everywhere in the transfer engine** — child
+  records, hand-picked records and parent scopes, not just the root read —
+  and the Seeder wipe refuses a partial Id list rather than reporting a
+  full wipe.
+- **Seeder with SFTK_ID__c as the match key** no longer overwrites the
+  identity stamp with the source row's copied value.
+- **Licence gate:** declining, then "Read the terms again", then accepting
+  now unblocks the page; and a session refresh can no longer boot a page
+  whose licence was declined.
+- **Field Cleaner:** "Delete Field" re-enables after a fix started from the
+  XML inspector; the delete-error hint no longer says reports are unscanned;
+  the confirm for report, layout and Lightning page fixes says a restore
+  point is saved (it is) instead of "no undo".
+- 🔒 managed flows in the Dependencies list now follow the process-type
+  filter buttons.
+- **Data Studio, from the re-review of the same audit:** the compare
+  screen's per-field push now masks values under the deployment's PII
+  policy and refuses a lookup whose match field is PII; an incomplete scan
+  read no longer quietly re-runs as a scan without lookups; Run Transfer
+  upserting on SFTK_ID__c now writes the identity stamp; a sync-plan job
+  that pushes and overwrites takes one restore point and can roll back
+  both (an overwrite-only job now takes one too); a fan-out counts as one
+  run for the ten-run restore-point cap, so a large fan-out no longer
+  evicts its own early legs; ✋ Cancel is available while the restore point
+  is being read; retention marks the History cards whose restore point it
+  removed; 🪪 Stamp identity and the Seeder's identity-field deploy treat an
+  org of unknown type as production; a Custom Setting replace refuses to
+  delete the target's rows on any partial or unresolvable read; and the
+  rollback limits text now says exactly which later edits are kept.
+- **Changing a flow’s API version now takes effect, and says what is running.**
+  The deploy package is stamped with the org’s own API version (a package
+  stamped with the target version was rejected by Salesforce for any newer
+  flow property — reproduced with a check-only deploy). And because a deploy
+  only creates a new version, the tool now activates it where the flow was
+  active, re-reads the org, and reports the version that is actually running
+  — never “activated” from the deploy result alone.
+- **Managed-package flows really appear now** in ⚙ API versions and ⏻ Flow
+  switches. Salesforce refuses to list flow versions without a filter, so
+  the previous read had been failing quietly and falling back to the older
+  API, which never returns managed flows. The list is now read per
+  definition (one page per 100 flows); a managed flow shows its versions and
+  API version with a 🔒 chip, and never gets a Flow Builder link that
+  would break (the platform gives those versions no record id). The main
+  Dependencies list shows them too, in their own 🔒 section — with the
+  plain statement that Salesforce hides their contents from every API, so
+  their dependencies are unknown, not empty, and "What uses…" says it could
+  not search them.
+- **Managed-package flows now appear** in ⚙ API versions and ⏻ Flow
+  switches — the panels read the modern FlowVersionView, which includes
+  them (the older API omitted them entirely). Their versions are marked
+  🔒 managed and are never offered for change: they ship with the package.
+
+### Changed
+- **Org Seeder is not included in this release.** It is being hardened
+  against larger orgs and will return once its test plan passes — a tool
+  that can wipe and reseed whole orgs earns its place with testing, not
+  promises. (Data Deployment, Reconcile and the Sync Ring are unaffected.)
+- **⏻ Flow switches** and **⚙ API versions** got a visual overhaul:
+  compact tables, differences first, clearer on/off and version chips —
+  and Flow switches no longer depends on a Salesforce query that failed
+  silently in some orgs (every flow falsely showed as not togglable).
+- The **Org Seeder's target list** (dev build) now refreshes live sessions
+  on every visit, so an org you just logged into appears immediately.
+
+## 1.4.2 — 2026-08-30
+
+### Added
+- **⏻ Flow switches** (flow dependency map): switch record-triggered,
+  scheduled and platform-event flows off and back on **in bulk, grouped by
+  object** — the classic move around a big data load. Deactivation
+  remembers each flow's active version, so reactivation restores exactly
+  what was running — not blindly the latest — and says so per flow.
+- **See before you overwrite.** Updating fields from the record comparison
+  now confirms with each field's current value → new value — lookups
+  included — before anything is written.
+
+## 1.4.1 — 2026-08-29
+
+The reliability release. Built after real-world runs at scale surfaced
+matching and completeness gaps — every fix here makes the tool refuse to
+guess rather than quietly be wrong.
+
+### Added
+- **🪪 Identity stamp — exact cross-org matching.** One click in the Org
+  Seeder's Match key picker deploys a tiny `SFTK_ID__c` field (Text 18 ·
+  External ID · unique) to the source and every target, with a permission
+  set granting you access. Every deployed record is stamped with its source
+  record's own Id — matching becomes exact, immune to renames, duplicate
+  names and autonumbers. In Reconcile, **🪪 Stamp identity** makes a
+  scan's matched pairs permanent, so records that already exist in the
+  target never depend on fuzzy matching again.
+- **Field compare, rebuilt.** The per-record comparison shows differences
+  first, folds matching fields away, and every pushable row — **lookups
+  included** — has a checkbox: tick fields and **✍ Update selected on
+  target** writes just those onto that record. Lookups are re-pointed by
+  matching the related record in the target; an ambiguous or missing match
+  is that field's error, never a guess.
+- **Lookups ride updates by default.** Reconcile's Overwrite now resolves
+  and writes every safely-resolvable lookup (excluded fields still win), so
+  lookup drift the scan flags can actually converge.
+- **Match key column + 🔑 Find match keys** in the Org Seeder: see and
+  choose the field every object matches on before seeding without deleting.
+- **⚙ API versions across orgs** (flow dependency map): compare the version
+  every flow is pinned to — and each org's own release — across several
+  orgs; change them per flow, per org, with a typed confirmation.
+- **Org Seeder configuration pass**: Custom Metadata records, Custom Labels
+  (with translations) and Custom Settings seed alongside data, before it.
+- **Licence gate.** First run asks you to accept the terms — the tool can
+  delete data, and using it is your responsibility. Full EULA + privacy
+  policy ship inside the extension.
+
+### Fixed
+- **Fetch completeness is now enforced.** If Salesforce says N records
+  match but fewer arrive (a dropped page, records changing mid-read), the
+  scan refuses to compare and the engine refuses to deploy — with the exact
+  numbers. The Reconcile header now proves it: “read N of N source / M of M
+  target”.
+- **Duplicate names can no longer mis-link.** Everywhere a lookup is
+  resolved by matching (engine bridge, Overwrite, per-field push), a value
+  matching more than one target record is excluded and named — previously
+  the first match silently won.
+- **Invisible child records are disclosed.** Children whose parent link is
+  blank can never appear in a parent-scoped scan; the scan now counts them
+  and says exactly why they are absent.
+- A failed count shows Salesforce's actual reason in the cell tooltip
+  instead of a bare “?”.
+
 ## 1.4.0 — 2026-08-19
 
 Battle-tested at scale: this release was hardened by a live ~1,900-record
