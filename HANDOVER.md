@@ -56,7 +56,10 @@ Store currently has **1.4.2** — 1.4.3 has NOT been uploaded yet.
 > destructiveChanges deploy (Tooling DELETE of CustomField is refused in BOTH orgs — even a fresh
 > field nothing references); the "Field deleted" card is no longer wiped. Verified end to end
 > by CLI. Fixture rebuilt on trailheads2, ready. Harness gained `h.popup(tab)`.
-> - NEXT in campaign 2: Sequences live run (scripts/dev/live/sequences.mjs — Leads then Campaigns into trailheads4, then reset the target), then Lightning Pages / Flow Access / Copy Permissions (popup write tools not yet exercised). Then the user decides on the 1.5.0 release. (was: Dependencies
+> - **CAMPAIGN 2 COMPLETE (2026-09-23)** — every tool in the proposal was run live and verified by CLI: Field Cleaner (flow fix, interviews, field delete via Metadata API, Deprecate/Undo), ⚙ API versions, ⏻ Flow switches, Dependencies + flow delete, Picklist Manager (single + compare + sync + bulk), Org Compare, Sync Ring, Sequences (run + rollback). 20 fixes, all pinned. Last live commit `c95bcbe` + the History sequence chip. Gate 108 files / ~2666 tests.
+> - NOT exercised (popup write tools): Lightning Pages, Flow Access, Copy Permissions, Licenses; standard/global value sets; the typed production gates end to end (needs 🛑 Guard as production — the harness could set `_settings` and type the name with TYPE_IT=1 in picklists.mjs).
+> - Org state: trailheads2 fixtures rebuilt (FC field all-active, dep chain, AV flows at 65, FS flows on); trailheads4 re-seeded (4 CX accounts, catalogue), plus 24,000 SFTK VOL rows still there (`cleanup-volume.apex`); Deleted Fields hold several `SFTK_FC_Test_Status_del*` twins (15-day purge).
+> - NEXT: the user decides on the 1.5.0 release (CHANGELOG 1.5.0 = store notes; zip in dist/). The 🪪 chips question (A/B/C) is still open. (was: Dependencies
 > (fixture `SFTK_Dep_Test_*`), Picklist Manager (typed prod gates), Sync Ring + Org Compare
 > consistency, Sequences. Then the user decides on the 1.5.0 release.
 > - NEXT: the user decides on release (upload dist/salesforce-toolkit-v1.5.0-store.zip;
