@@ -69,6 +69,14 @@ extensions containing root files that start with `_`).
   retries anything refused once its callers are gone; a refused delete switches the flow back
   on instead of leaving it off silently; the reason names the calling flows; the parents dialog
   explains the rule.
+- **Picklist Manager and Field Cleaner metadata changes work again.** Salesforce refused every
+  value-set, record-type and field PATCH ("Cannot deserialize instance of complexvalue from
+  VALUE_NULL") because the metadata was sent back exactly as read, null keys included. They are
+  stripped now. The data fix had already run — the tool said the metadata step failed.
+- **Picklist Manager tells the truth about 🗑 Delete value.** Salesforce's API cannot delete a
+  picklist value; it keeps it as inactive. The tool re-reads the field and says so, with the
+  Setup path for deleting it for good, instead of "Value deleted". A value no record holds
+  reads 0, not "not counted".
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run

@@ -66,3 +66,28 @@ with `SCAN_ONLY=1` (nothing written), `ACTIVE=replace|delete` (the active-versio
 - Not exercised yet: "Keep the flow running" on a flow whose fix leaves nothing empty
   (needs a fixture flow where the field sits in a filter, not an assignment), the XML
   inspector's selective removal, 🕐 Deprecate first, the CSV value backup, the deletion log.
+
+## Picklist Manager on this field (campaign 2, 2026-09-23)
+
+Seed records: `sf apex run -f docs/fixtures/field-cleaner-fixture/seed-pk.apex -o npc` (8 Accounts
+"SFTK PK Account N": 5 on Closed, 3 on Reviewed). Live run:
+`node scripts/dev/headless-studio.mjs scripts/dev/live/picklists.mjs` with `ACTION=none|toggle|delete|fix`,
+`VALUE=Closed`, `FIX=remap|clear|skip`, `TARGET=New`, `TYPE_IT=1` (type the org name at a production gate).
+The view opens in the mode last used (compare by default) - the script clicks "Single org".
+
+- verified: inventory (3 values, usage counts, record types, notes), the wizard (automation scan
+  first, then remap / clear / skip), the data fix (5 records moved Closed to New, 3 cleared; History
+  entries "Picklist fix: ..."), Activate, Deactivate - all confirmed by CLI.
+- fixed: a value nobody holds read "-" (the "not counted" mark) - a counted zero reads 0.
+- fixed: EVERY metadata PATCH (CustomField, RecordType, StandardValueSet, GlobalValueSet, and the
+  Field Cleaner Deprecate / Undo deprecate) sent the Metadata back as read, nulls and all, and
+  Salesforce refused it: "Cannot deserialize instance of complexvalue from VALUE_NULL value null".
+  Proven by CLI (same body, nulls stripped = accepted). sftkMetaForPatch (sftk-zip.js) strips
+  null keys and urls before every such PATCH (pins: meta-for-patch-0923). The data fix had
+  already moved the records when the metadata step failed - the tool said so, nothing hidden.
+- fixed: "Delete value" claimed "Value deleted from the value set" while Salesforce KEPT the
+  value as inactive - its API cannot delete a picklist value (only Setup can). The tool re-reads
+  the field and says "kept as INACTIVE ... Setup > Object Manager > ... > Values > Del"; the wizards
+  say so up front; the bulk summary counts values Salesforce kept (pins: picklists-live-0923).
+- Not exercised: multi-org compare / bulk / Sync from source (next), record-type matrix edits,
+  standard and global value sets, the typed production gate (needs Guard as production).

@@ -8,6 +8,32 @@
 // Metadata REST deployRequest endpoint accepts. files: [{ name, data }]
 // where data is a Uint8Array or a string.
 
+// ── Metadata for a Tooling PATCH ─────────────────────────────────────────
+// A Tooling GET hands back every property of the Metadata object, most of
+// them null ("lookupFilter": null, "valueSettings": null, value "color":
+// null …). Sent back as-is, Salesforce refuses the PATCH: "Cannot deserialize
+// instance of complexvalue from VALUE_NULL value null" (live 2026-09-23,
+// CustomField value set — proven by CLI: the same body with the nulls
+// removed is accepted). So every Metadata PATCH goes through this: a deep
+// copy with null-valued keys and the read-only "urls" dropped, false / 0 /
+// "" kept (they are real values), arrays kept in order. The input is never
+// touched.
+function sftkMetaForPatch(md) {
+  const walk = x => {
+    if (Array.isArray(x)) return x.map(walk);
+    if (x && typeof x === 'object') {
+      const out = {};
+      for (const [k, v] of Object.entries(x)) {
+        if (v === null || v === undefined || k === 'urls') continue;
+        out[k] = walk(v);
+      }
+      return out;
+    }
+    return x;
+  };
+  return walk(md);
+}
+
 function sftkCrc32(bytes) {
   if (!sftkCrc32._t) {
     sftkCrc32._t = new Uint32Array(256);
