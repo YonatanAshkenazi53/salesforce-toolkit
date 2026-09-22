@@ -1604,12 +1604,15 @@ async function onDeleteClick() {
   // The depProceed can be an array of extra flows to deactivate+delete
   const extraToDelete = Array.isArray(depProceed) ? depProceed : [];
 
-  // Final deletion set
-  const toDelete = [...selected];
-  for (const extra of extraToDelete) {
-    if (!toDelete.find(f => f.Id === extra.Id)) {
-      toDelete.push(extra);
-    }
+  // Final deletion set — the PARENTS first (live 2026-09-23: Salesforce
+  // refuses to delete a flow while another flow's subflow element still
+  // references it, so the child went first and failed while its four
+  // parents were deleted after it). performDeletion also retries such
+  // refusals once the parents are gone, whatever the order.
+  const selectedIdSet = new Set(selected.map(f => f.Id));
+  const toDelete = [...extraToDelete.filter(f => !selectedIdSet.has(f.Id))];
+  for (const f of selected) {
+    if (!toDelete.find(x => x.Id === f.Id)) toDelete.push(f);
   }
 
   // Step 4 (C4): ONE final summary confirm that names every version going
@@ -1946,7 +1949,7 @@ function showSubflowDependencyModal(problematic, allFlowsList, deletingIds, reso
       <h2>Subflow Dependencies Detected</h2>
     </div>
     <div class="modal-body">
-      <p>Some flows you are deleting are called as subflows by other flows. Deleting them will break those parent flows.</p>
+      <p>Some flows you are deleting are called as subflows by other flows. Deleting them will break those parent flows — and Salesforce refuses to delete a flow while another flow's subflow element still calls it, so "Proceed anyway" only works once those parents no longer call it. Ticking a parent deletes the parents first, then the flow.</p>
       <div class="dep-table-controls">
         <label><input type="checkbox" id="selectAllParents"> Select all parent flows</label>
       </div>
@@ -2598,7 +2601,23 @@ async function deleteOneFlow(flow, done, total) {
   await wait(800);
 
   updateProgressBar(done, total, `Deleting: ${flow.MasterLabel} v${flow.VersionNumber}...`);
-  await doDelete(); // throws if still fails — caller captures error
+  try {
+    await doDelete();
+  } catch (e) {
+    // The delete was refused AFTER the flow was switched off (live
+    // 2026-09-23: "0 deleted, 1 failed" while the flow was now OFF). Put it
+    // back the way it was and say what happened either way.
+    let back = '';
+    try {
+      const r = await sendBg({ type: 'SF_PATCH', orgUrl, sid,
+        path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${flow.DefinitionId}`,
+        body: { Metadata: { activeVersionNumber: flow.VersionNumber } } });
+      back = (r && r.error) ? ` It was switched OFF for the attempt and could NOT be switched back on (${r.error}) — switch it on in ⏻ Flow switches.` : ' It was switched OFF for the attempt and is switched back ON.';
+    } catch (e2) {
+      back = ` It was switched OFF for the attempt and could NOT be switched back on (${e2.message || e2}) — switch it on in ⏻ Flow switches.`;
+    }
+    throw new Error(`${e.message || e}${back}`);
+  }
 }
 
 // ============================================================
@@ -2636,6 +2655,27 @@ async function performDeletion(toDelete, toDeactivate) {
         errors.push({ flow, msg: `${flow.MasterLabel} v${flow.VersionNumber}: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}` });
       }
     }
+  }
+
+  // Retry what Salesforce refused for a subflow reference, now that the
+  // flows deleted above (its callers) are gone — as many passes as make
+  // progress, so a chain of any depth ends up deleted whatever the order.
+  for (let pass = 0; pass < 6; pass++) {
+    const again = errors.filter(e => /DEPENDENCY_EXISTS|subflow element/i.test(e.msg));
+    if (!again.length || !successes.length) break;
+    let progressed = false;
+    for (const e of again) {
+      updateProgressBar(deleted, total, `Retrying: ${e.flow.MasterLabel} v${e.flow.VersionNumber} (its callers are gone now)...`);
+      try {
+        await deleteOneFlow(e.flow, deleted, total);
+        deleted++; successes.push(e.flow); selectedIds.delete(e.flow.Id);
+        errors.splice(errors.indexOf(e), 1); progressed = true;
+      } catch (e2) {
+        const fe = sftkFriendlyError(e2.message || String(e2));
+        e.msg = `${e.flow.MasterLabel} v${e.flow.VersionNumber}: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`;
+      }
+    }
+    if (!progressed) break;
   }
 
   clearInterval(msgInterval);

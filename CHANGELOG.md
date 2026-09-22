@@ -64,6 +64,11 @@ extensions containing root files that start with `_`).
 - **⏻ Flow switches say only what the org confirms.** After switching flows off or on the
   tool re-reads the org; a flow Salesforce still reads the other way is reported as not
   switched (and is not remembered for ▶ Switch ON) instead of a ✅ taken from the request.
+- **Deleting a flow that other flows call.** Salesforce refuses to delete a flow while another
+  flow's subflow element still calls it. The delete now removes the ticked parents first and
+  retries anything refused once its callers are gone; a refused delete switches the flow back
+  on instead of leaving it off silently; the reason names the calling flows; the parents dialog
+  explains the rule.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run

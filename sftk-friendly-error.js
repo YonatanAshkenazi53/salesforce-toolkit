@@ -121,6 +121,16 @@ function sftkFriendlyError(raw) {
     out.hint = 'Fix the data to satisfy the rule, or temporarily deactivate the validation rule while migrating.';
     return out;
   }
+  // Flow delete refused because another flow still calls it as a subflow
+  // (Tooling DELETE on Flow, live 2026-09-23).
+  if (/DEPENDENCY_EXISTS/i.test(s) && /subflow element/i.test(s)) {
+    const m2 = s.match(/following flows?:\s*([^."]+)/i);
+    const callers = m2 ? m2[1].split(/\s*,\s*/).map(x => x.trim()).filter(Boolean) : [];
+    out.type = 'flow-subflow-ref';
+    out.message = `Salesforce refuses to delete this flow: ${callers.length ? `${callers.length === 1 ? 'another flow still calls it as a subflow' : `${callers.length} flows still call it as a subflow`} (${callers.join(', ')})` : 'another flow still calls it as a subflow'}`;
+    out.hint = 'Delete or change those calling flows first — in the delete dialog, tick them under "Also delete" and they go before this one.';
+    return out;
+  }
   // Flow version delete refused by a paused / failed interview (Tooling
   // DELETE on Flow, live 2026-09-22). The raw text repeats itself per interview.
   if (/DEPENDENCY_EXISTS/i.test(s) && /flow interview/i.test(s)) {
