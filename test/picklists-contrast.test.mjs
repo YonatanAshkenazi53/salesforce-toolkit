@@ -52,7 +52,8 @@ describe('the safety surfaces use the token that matches their meaning', () => {
   });
 
   it('the clean verdict is --success, the records-still-hold-it caveat --warning', () => {
-    expect(PICKLISTS).toContain('style="color:var(--success)">✓ no flow or validation rule');
+    // the verdict text depends on whether the scan was partial (live 2026-09-23); the token does not
+    expect(PICKLISTS).toContain(`style="color:var(--success)">✓ \${partial ? 'nothing that was scanned in' : 'no flow or validation rule in'}`);
     expect(PICKLISTS).toContain('style="color:var(--warning)"> · still unticked:');
   });
 
