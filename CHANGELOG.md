@@ -86,6 +86,13 @@ extensions containing root files that start with `_`).
   step: it is named in the banner, the deprecation is recorded and Undo is offered. Undo
   re-creates the stripped grants (Salesforce deletes a field permission set to no access) and
   names anything it could not give back. The description is stamped once.
+- **A scan no longer learns a match on an ambiguous key.** Two source records with the same
+  key and one target: the Sync Ring's scan pinned one of them as "the" match, and the next
+  scan counted the other as a confident insert — a duplicate waiting to happen, and the Ring
+  and the Deploy page disagreeing (7 vs 8). Such keys stay flagged; Match Review can pin them.
+- **Sequences ask before they write.** ▶ Run lists every step (object, children, insert or
+  upsert), says that a sequence writes every matching record with no per-record selection,
+  needs an acknowledgement, and asks for the org name when the target is production.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run
