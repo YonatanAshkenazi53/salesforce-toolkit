@@ -1665,7 +1665,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           ? `${objType}: ${payloads.length} record(s) ≥ ${BULK_MIN} — using Bulk API 2.0 (one async job).`
           : `${objType}: Bulk API 2.0 forced by engine settings — one async job for ${payloads.length} record(s).`);
         usedBulk = true;
-      } else if (payloads.length >= BULK_MIN) {
+      } else if (payloads.length >= BULK_MIN && !dupBypass) {
         diagnostics.push(`${objType}: kept on synchronous Collections by engine settings (${payloads.length} record(s) would normally go Bulk at ≥ ${BULK_MIN}) — slower, but per-record errors are immediate.`);
       }
       if (!useBulk && BATCH_SIZE !== 200) {
