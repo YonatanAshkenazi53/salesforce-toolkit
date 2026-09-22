@@ -58,6 +58,11 @@ extensions containing root files that start with `_`).
 - On the Deploy page's tree the 🪪 identity chips name the org (trailheads2 ✗)
   instead of saying "source" / "target"; with Bulk API 2.0 selected the batch
   size and threads inputs disappear and a line says Bulk splits the job itself.
+- **Children of a record that already exists in the target attach to it
+  exactly.** They used to be attached by matching the parent's key again with
+  one exact value — an order item lost its order once Order was told apart by
+  a composite key. The scan's own parent pairing is used now; key matching is
+  only the fallback.
 - **Line items deploy.** Salesforce takes UnitPrice or TotalPrice on a line
   item, never both; a copied row carries both, so every line item used to be
   rejected. TotalPrice is now left out (the target computes it) and the run

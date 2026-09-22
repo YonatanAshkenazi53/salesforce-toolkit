@@ -2133,6 +2133,30 @@ function sftkRunLineIsError(line) {
   return true;
 }
 
+// PURE. Per-record lookup overrides that attach group-B children (parent
+// already in the target) to their parent by the parent's SCANNED identity —
+// the srcId→tgtId pair the parent scan established — instead of re-matching
+// the parent's key by one exact value (live run 2026-09-22: OrderItem lost
+// its Order because Order's key is a composite). A hand-pick already on the
+// row wins. Returns { overrides, exact, missing }.
+function sftkRecParentOverrides(groupB, rows, pairs, field, existing, orgKey) {
+  const ov = JSON.parse(JSON.stringify(existing || {}));
+  const keys = Object.keys(ov);
+  const sameOrg = k => (typeof sftkOrgKey === 'function' ? sftkOrgKey(k) : String(k)) === (typeof sftkOrgKey === 'function' ? sftkOrgKey(orgKey) : String(orgKey));
+  const bucket = keys.find(sameOrg) || orgKey;
+  let exact = 0, missing = 0;
+  for (const id of (groupB || [])) {
+    const row = (rows || []).find(r => r && r.sourceId === id);
+    const tgt = row && row.parentSrcId ? (pairs instanceof Map ? pairs.get(row.parentSrcId) : (pairs || {})[row.parentSrcId]) : null;
+    if (!tgt) { if (row && row.parentSrcId) missing++; continue; }
+    ov[bucket] = ov[bucket] || {};
+    const cur = ov[bucket][id] || {};
+    if (cur[field]) continue;                    // the user's hand-pick stands
+    ov[bucket][id] = { ...cur, [field]: tgt }; exact++;
+  }
+  return { overrides: ov, exact, missing };
+}
+
 async function runReconcile(profile, objType, buckets) {
   // ⛔ RUN GATE (user 2026-08-10: "the recommendation to sync parents first
   // is not strong enough") — the advisor's probe already knows when the
@@ -2697,7 +2721,13 @@ async function runReconcile(profile, objType, buckets) {
     // silently pretending full fidelity.
     const pScanM = (a.parentScan || rootScan).matching || null;
     const pMatch = pScanM?.fields?.[0] || (a.parentScan || rootScan).matchField || 'Name';
-    if (pScanM && ((pScanM.fields || []).length > 1 || Object.values(pScanM.normalize || {}).some(Boolean))) {
+    // Attach by the parent's scanned identity (exact); the key bridge below is
+    // only the fallback for a row whose parent pair the scan did not record.
+    const _pScan = a.parentScan || rootScan;
+    const _pairs = new Map([...(_pScan.changed || []), ...(_pScan.identical || [])].filter(r => r && r.sourceId && r.targetId).map(r => [r.sourceId, r.targetId]));
+    const _att = sftkRecParentOverrides(a.groupB, a.cs.missingInTarget || [], _pairs, a.node.field, a.node.lookupOverrides || {}, profile.targetOrg);
+    if (_att.exact) log('🔗', `${obj}: ${_att.exact} of ${a.groupB.length} attached to their existing ${pObj} by the scan's own pairing${_att.missing ? ` — ${_att.missing} fall back to matching by ${pMatch}` : ''}`);
+    if (_att.missing && pScanM && ((pScanM.fields || []).length > 1 || Object.values(pScanM.normalize || {}).some(Boolean))) {
       const mW = `⚠ ${obj}: parent matching uses ${(pScanM.fields || []).length > 1 ? 'a composite key' : 'normalization'} — the insert bridge attaches by ${pMatch} with exact values (engine limit), so parents that differ only ${(pScanM.fields || []).length > 1 ? 'in later key components' : 'by case/spacing'} may not attach`;
       allErrors.push(mW); log('⚠', mW, 'ds-prog-warn');
     }
@@ -2711,7 +2741,7 @@ async function runReconcile(profile, objType, buckets) {
         recordIds: a.groupB,
         children: [],
         fieldMappings: a.node.fieldMappings || {},
-        lookupOverrides: a.node.lookupOverrides || {},   // 🔗 hand-picks made on child rows
+        lookupOverrides: _att.overrides,                 // 🔗 hand-picks + the scan's own parent pairing
         lookupResolutions: {
           ...(a.node.lookupResolutions || {}),
           [a.node.field]: { strategy: 'match', matchObject: pObj, matchField: pMatch }
