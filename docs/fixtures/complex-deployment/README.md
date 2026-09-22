@@ -67,6 +67,6 @@ the Contact buckets, the child-scan error path, and the source-only pages.
 - ✅ fixed (huge tree, run vol1): "✓ All listed" over "5,000 of 6,000" selected the 300 painted rows — now the whole list; the target's fuzzy name duplicate rule blocked 100/300 Accounts — Duplicate rules engine setting (Respect / Bypass) + the friendly error names it.
 - ✅ fixed (huge tree, run vol2): Bulk API 2.0 runs duplicate rules and has no bypass header → a bypass run stays on Collections; and Bulk result rows never correlated ("no result row" ×5,000 while failedResults held every error) — Salesforce echoes "200000" as "200000.0"; values are compared as values now.
 - ✅ fixed: in-tree lookups shown as informational rows in the builder.
-- ⏳ huge tree run 3 (two passes, bypass → Collections): see vol3.log in the shots folder; expect 6,000 / 12,000 / 6,000 in trailheads4.
+- ✅ verified (huge tree, run vol3, two passes): 6,000 Accounts, 6,000 Opportunities, 10,250 of 12,000 Contacts (5,000-per-pass cap; a third pass takes the rest), every child linked, both runs success, ~2.5 min per 15,000 records on synchronous calls with duplicate rules bypassed.
 - 🔴 open: builder hides in-tree lookups from Lookup Resolution — should show them as informational rows ("connected after insert").
 - ⏳ not yet run: Campaigns / Products / Leads / Price books deployments, parents-first flow, Retry failed, rollback of a run, huge trees (thousands of records, >5,000 per list).

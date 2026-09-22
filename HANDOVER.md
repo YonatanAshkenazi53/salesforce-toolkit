@@ -43,7 +43,8 @@ Store currently has **1.4.2** — 1.4.3 has NOT been uploaded yet.
 > - DONE round 6: Deploy UX (scan all, refresh re-reads children, run log kept), whole-list ✓ All,
 > duplicate-rules Respect/Bypass. Volume fixture seeded (24,000 rows on trailheads2).
 > - DONE round 7: Bulk result correlation by value; bypass ⇒ Collections; in-tree lookup rows.
-> - NEXT: (2b) read vol3.log; verify 6,000/12,000/6,000 in trailheads4; then run
+> - DONE: huge tree verified live (vol3: 6,000/6,000/10,250 after two passes, all linked).
+> - NEXT: read retry-rollback.log; run
 > scripts/dev/live/retry-and-rollback.mjs (Retry failed + ↩ Roll back live);
 > then (3) Retry failed, rollback, parents-first; then UX; then release. (Campaigns /
 > Products / Leads / Price books deployments; (3) parents-first flow, Retry failed,
