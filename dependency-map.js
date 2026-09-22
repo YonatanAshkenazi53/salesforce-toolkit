@@ -3495,8 +3495,16 @@ const DependencyMap = (() => {
     for (const c of changed) {
       const row = by[c.apiName];
       const newest = row && row.latest;
+      // A version that is NOT active (Draft, Obsolete…) is overwritten in
+      // place by the deploy — no new version appears (live 2026-09-22: a
+      // Draft at API 58 read API 67 afterwards, same v1, and was reported as
+      // "nothing changed"). The org's re-read is the proof either way.
+      if (newest && !c.wasActive && newest.versionNumber === c.prevVersion && newest.num === want) {
+        out.push({ apiName: c.apiName, ok: true, text: `${c.apiName}: v${newest.versionNumber} (${newest.status || 'not active'}) was rewritten in place at API ${target} — Salesforce overwrites a version that is not active instead of adding one (verified by re-reading the org).` });
+        continue;
+      }
       if (!newest || newest.versionNumber <= c.prevVersion) {
-        out.push({ apiName: c.apiName, ok: false, text: `${c.apiName}: no new version appeared after the deploy (latest is still v${c.prevVersion}) — nothing changed for this flow.` });
+        out.push({ apiName: c.apiName, ok: false, text: `${c.apiName}: no new version appeared after the deploy (latest is still v${c.prevVersion}${newest ? ` at API ${newest.apiVersion || '?'}` : ''}) — nothing changed for this flow.` });
         continue;
       }
       if (newest.num !== want) {
@@ -3550,7 +3558,7 @@ const DependencyMap = (() => {
       log.innerHTML = lines.slice(-300).join('<br>');
       log.scrollTop = log.scrollHeight;
     };
-    let orgsOk = 0, orgsFailed = 0, flowsOk = 0;
+    let orgsOk = 0, orgsFailed = 0, flowsOk = 0, flowsWarn = 0;
     let n = 0;
     for (const [orgKey, jobs] of byOrg) {
       n++;
@@ -3629,7 +3637,7 @@ const DependencyMap = (() => {
           say('❌', `${org.label}: deploy failed — ${(res && res.error) || 'no response'}. This package is all-or-nothing, so NONE of its ${jobs.length} flow(s) changed.`);
           continue;
         }
-        say('\u{1F4E6}', `${org.label}: package accepted — ${changed.length} new flow version(s) created at API ${target}. Verifying what is actually running now…`);
+        say('\u{1F4E6}', `${org.label}: package accepted — ${changed.length} flow version(s) written at API ${target}. Verifying what is actually running now…`);
         // 4 — VERIFY. A deploy only CREATES a version. Whether it became the
         // active one depends on the org's "Deploy processes and flows as
         // active" setting, which this tool cannot see — so it re-reads the
@@ -3637,9 +3645,13 @@ const DependencyMap = (() => {
         // FlowDefinition primitive), re-reads again, and reports only what
         // the org confirms. Nothing here is assumed from the deploy result.
         const verdicts = await avVerifyAndActivate(org, changed, target, say);
-        const okAll = verdicts.every(v => v.ok);
-        if (okAll) orgsOk++; else orgsFailed++;
-        flowsOk += verdicts.filter(v => v.ok).length;
+        // The package was accepted: this org DID change. A flow whose
+        // verification raised a warning is counted as such — not as an
+        // unchanged org (live 2026-09-22: "2 flow(s) changed across 0 org(s);
+        // 1 org(s) unchanged" after two flows had verifiably changed).
+        orgsOk++;
+        const okN = verdicts.filter(v => v.ok).length;
+        flowsOk += okN; flowsWarn += verdicts.length - okN;
         for (const v of verdicts) say(v.ok ? '✅' : '⚠', `${org.label}: ${v.text}`);
       } catch (e) {
         orgsFailed++;
@@ -3647,7 +3659,7 @@ const DependencyMap = (() => {
       }
     }
     prog.textContent = '';
-    say('ℹ', `${flowsOk} flow(s) changed across ${orgsOk} org(s); ${orgsFailed} org(s) unchanged. The table above is now STALE — reopen ⚙ API versions (or press ↻ Rescan) to re-read the org rather than trusting it.`);
+    say('ℹ', `${flowsOk} flow(s) changed and verified${flowsWarn ? `, ${flowsWarn} with a warning above` : ''}, across ${orgsOk} org(s); ${orgsFailed} org(s) refused the package (unchanged). The table above is now STALE — reopen ⚙ API versions (or press ↻ Rescan) to re-read the org rather than trusting it.`);
   }
 
   // ── N4e — export the whole report ─────────────────────────────────────
