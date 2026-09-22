@@ -153,6 +153,19 @@ describe('Deploy page: scan all, refresh re-reads children, the run log stays', 
   });
 });
 
+// 2026-09-22 — the builder hid lookups that point into the deployment, so a
+// user could not tell whether an Account hierarchy travels.
+describe('the builder shows in-tree lookups as informational rows', () => {
+  const BL = readFileSync(new URL('../studio-builder.js', import.meta.url), 'utf8');
+  it('lists them next to the configurable ones, with no strategy to set', () => {
+    expect(BL).toContain('function getInTreeReferenceFields(node) {');
+    expect(BL).toContain("if (!resolvable.length && !inTree.length) return '';");
+    expect(BL).toContain('class="ds-lkp-row ds-lkp-row-intree"');
+    expect(BL).toContain('points at another record of this same object');
+    expect(BL).toContain('connected after insert when this run creates it. Nothing to set.');
+  });
+});
+
 describe('load order', () => {
   it('the script is loaded after the pages it builds on', () => {
     expect(HT.indexOf('studio-reconcile.js')).toBeLessThan(HT.indexOf('studio-deploy.js'));

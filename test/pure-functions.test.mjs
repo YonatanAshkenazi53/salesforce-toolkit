@@ -506,7 +506,7 @@ describe('exact per-org field types (drift compare table)', () => {
 describe('Bulk API 2.0 codec + correlation (Phase B, background.js)', () => {
   const { sftkCsvField, sftkRecordsToCsv, sftkParseCsv } =
     extractFunctions('background.js', ['sftkCsvField', 'sftkRecordsToCsv', 'sftkParseCsv']);
-  const sftkCorrelateBulkResults = extractFunction('background.js', 'sftkCorrelateBulkResults');
+  const sftkCorrelateBulkResults = extractFunctions('background.js', ['sftkCorrelateBulkResults', 'sftkBulkKeyNorm', 'sftkBulkKeyNorm']).sftkCorrelateBulkResults;
 
   it('CSV escaping: quotes, commas, newlines; null → #N/A (the Bulk null token)', () => {
     expect(sftkCsvField('plain')).toBe('plain');

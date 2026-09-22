@@ -2690,6 +2690,8 @@ html, body {
 .ds-history-err-row { font-size: 11px; color: var(--danger); padding: 3px 0; }
 /* notes: something to know, not something that failed (2026-09-22) */
 .ds-history-note-row { font-size: 11px; color: var(--warning, #f59e0b); padding: 3px 0; }
+.ds-lkp-row-intree { opacity: .85; }
+.ds-lkp-row-intree .ds-lkp-hint { font-style: italic; }
 .ds-history-errors--notes summary { color: var(--warning, #f59e0b); }
 
 /* ── Orgs Panel (Gearset/CLI style) ─────────────────────────── */

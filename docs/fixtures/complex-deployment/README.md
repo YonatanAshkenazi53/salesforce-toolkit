@@ -65,6 +65,8 @@ the Contact buckets, the child-scan error path, and the source-only pages.
 - 🟡 by design, worth revisiting for big trees: grandchildren (line items, contact roles, comments, order items) are not selectable while their parent is still missing in the target — a two-pass deployment (R5 rule).
 - ✅ fixed: 🔎 Scan all children; 🔄 Refresh re-reads children read before; the run log stays after the post-run repaint.
 - ✅ fixed (huge tree, run vol1): "✓ All listed" over "5,000 of 6,000" selected the 300 painted rows — now the whole list; the target's fuzzy name duplicate rule blocked 100/300 Accounts — Duplicate rules engine setting (Respect / Bypass) + the friendly error names it.
-- ⏳ huge tree run 2 (two passes, bypass on): pending — see vol2.log in the shots folder.
+- ✅ fixed (huge tree, run vol2): Bulk API 2.0 runs duplicate rules and has no bypass header → a bypass run stays on Collections; and Bulk result rows never correlated ("no result row" ×5,000 while failedResults held every error) — Salesforce echoes "200000" as "200000.0"; values are compared as values now.
+- ✅ fixed: in-tree lookups shown as informational rows in the builder.
+- ⏳ huge tree run 3 (two passes, bypass → Collections): see vol3.log in the shots folder; expect 6,000 / 12,000 / 6,000 in trailheads4.
 - 🔴 open: builder hides in-tree lookups from Lookup Resolution — should show them as informational rows ("connected after insert").
 - ⏳ not yet run: Campaigns / Products / Leads / Price books deployments, parents-first flow, Retry failed, rollback of a run, huge trees (thousands of records, >5,000 per list).

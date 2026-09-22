@@ -63,10 +63,18 @@ extensions containing root files that start with `_`).
   one exact value — an order item lost its order once Order was told apart by
   a composite key. The scan's own parent pairing is used now; key matching is
   only the fallback.
+- The builder's Lookup Resolution now lists lookups that point inside the
+  deployment (an Account's parent Account, a Contact's ReportsTo) as
+  informational rows: nothing to set, they travel.
 - **"✓ All" selects the whole list.** Over a list of 5,000 the button selected
   the 300 rows painted on screen. It now selects every record in the list and
   says how many.
-- **Duplicate rules in the target can be bypassed for a deployment.** A fuzzy
+- **Bulk runs report their real errors.** Salesforce echoes uploaded values
+  in its own spelling ("200000" back as "200000.0"), and the result rows of a
+  Bulk API job never matched the uploaded records — every record read "no
+  result row". Values are compared as values now.
+- **Duplicate rules in the target can be bypassed for a deployment.** Bulk
+  API 2.0 cannot bypass them, so a bypass run uses synchronous calls. A fuzzy
   name rule blocked 100 of 300 accounts in a test migration with nothing to
   do about it. Next to ▶ Deploy: Respect (default — flagged records fail and
   the run says so) or Bypass for this deployment.

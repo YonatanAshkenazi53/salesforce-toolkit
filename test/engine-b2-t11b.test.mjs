@@ -8,7 +8,7 @@
 // B3   — sftkCorrelateBulkResults' cancelled-job override: rows an aborted
 //        job never reached must not read as rejections.
 import { describe, it, expect } from 'vitest';
-import { extractFunction } from './extract.mjs';
+import { extractFunction, extractFunctions } from './extract.mjs';
 
 describe('sftkFieldsFromError (background.js) — which field did Salesforce blame?', () => {
   const sftkFieldsFromError = extractFunction('background.js', 'sftkFieldsFromError');
@@ -155,7 +155,7 @@ describe('sftkBulkRowsToRecords (background.js) — Bulk-query CSV → REST-shap
 });
 
 describe('sftkCorrelateBulkResults (background.js) — cancelled rows are not rejections', () => {
-  const sftkCorrelateBulkResults = extractFunction('background.js', 'sftkCorrelateBulkResults');
+  const sftkCorrelateBulkResults = extractFunctions('background.js', ['sftkCorrelateBulkResults', 'sftkBulkKeyNorm', 'sftkBulkKeyNorm']).sftkCorrelateBulkResults;
 
   it('default missing-result text is unchanged', () => {
     const res = sftkCorrelateBulkResults([{ Name: 'Z' }], ['Name'], [], []);
@@ -177,7 +177,7 @@ describe('sftkCorrelateBulkResults (background.js) — cancelled rows are not re
 // read "1850 inserted") — sf__Created is Salesforce's own per-row verdict
 // and must survive correlation so summaries can split created/updated.
 describe('sftkCorrelateBulkResults carries the sf__Created verdict', () => {
-  const sftkCorrelateBulkResults = extractFunction('background.js', 'sftkCorrelateBulkResults');
+  const sftkCorrelateBulkResults = extractFunctions('background.js', ['sftkCorrelateBulkResults', 'sftkBulkKeyNorm', 'sftkBulkKeyNorm']).sftkCorrelateBulkResults;
   const cols = ['Ext_Id__c', 'Name'];
   const up = [{ Ext_Id__c: 'A', Name: 'a' }, { Ext_Id__c: 'B', Name: 'b' }, { Ext_Id__c: 'C', Name: 'c' }];
 

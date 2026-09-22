@@ -1283,10 +1283,25 @@ async function sftkBldSuggestExtIds() {
   }
 }
 
+// Lookups that point INTO this deployment (the object itself included —
+// Account.ParentId, Contact.ReportsToId — or a sibling object). Nothing to
+// configure: the engine matches them at insert when the record is already in
+// the target and connects them after insert when this run creates it. They
+// used to be hidden, so a user could not tell whether a hierarchy travels.
+function getInTreeReferenceFields(node) {
+  if (!node || !node._meta || !Array.isArray(node._meta.availableFields)) return [];
+  const treeObjs = _editingProfile?.tree ? collectTreeObjects(_editingProfile.tree) : new Set();
+  const SYS = new Set(['OwnerId', 'CreatedById', 'LastModifiedById', 'RecordTypeId', 'MasterRecordId']);
+  return node._meta.availableFields
+    .filter(f => f && f.type === 'reference' && !SYS.has(f.name) && f.createable !== false && (f.referenceTo || []).some(r => treeObjs.has(r)))
+    .map(f => ({ name: f.name, label: f.label || f.name, refObj: (f.referenceTo || []).find(r => treeObjs.has(r)), self: (f.referenceTo || []).includes(node.objectType || node.childSObject) }));
+}
+
 // Render the full Lookup Resolution section for a tree node
 function renderLookupSection(node, pathKey) {
   const resolvable = getResolvableReferenceFields(node);
-  if (!resolvable.length) return '';
+  const inTree = getInTreeReferenceFields(node);
+  if (!resolvable.length && !inTree.length) return '';
 
   const rows = resolvable.map(f => {
     // Primary non-system referenced object
@@ -1343,7 +1358,12 @@ function renderLookupSection(node, pathKey) {
       <span class="ds-lkp-hdr-label">Lookup Resolution <span class="ds-lkp-hdr-role" title="Direction: these lookups point UP at parent records. The records they point at must already exist in the target org when this object deploys — deploy the parent objects first (or hand-pick targets in Reconcile 🔗). Child objects are the opposite direction: they point AT this object and are added below with + Add child relationship — the engine orders those automatically.">⬆ these are this object's PARENTS</span>${junctionChip}</span>
       <span class="ds-lkp-hdr-hint">Each row is a record this object points at — it must exist in the target BEFORE this object deploys, or the lookup lands empty</span>
     </div>
-    <div class="ds-lkp-rows">${rows.join('')}</div>
+    <div class="ds-lkp-rows">${rows.join('')}${inTree.map(f => `<div class="ds-lkp-row ds-lkp-row-intree">
+      <span class="ds-lkp-field-pill" title="${esc(f.name)}">${esc(f.label)}</span>
+      <span class="ds-lkp-arrow">→</span>
+      <span class="ds-lkp-ref-pill">${esc(f.refObj)}</span>
+      <span class="ds-lkp-hint">${f.self ? 'points at another record of this same object' : 'in this deployment'} — matched at insert when the record is already in the target, connected after insert when this run creates it. Nothing to set.</span>
+    </div>`).join('')}</div>
   </div>`;
 }
 

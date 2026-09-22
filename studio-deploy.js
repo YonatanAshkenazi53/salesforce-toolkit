@@ -383,7 +383,7 @@ async function renderDeploy() {
         <label class="ds-dep-delmode" title="How many Collections batches run in parallel (1–6). Faster at scale, but parallel writes can hit row locks when records share a parent — lower it if you see UNABLE_TO_LOCK_ROW.${(p.apiMode || 'auto') === 'auto' ? ' In Auto, used below the Bulk threshold.' : ''}">threads
           <input id="dsDepThreads" class="ds-input ds-input-sm" type="number" min="1" max="6" step="1" style="width:52px;text-align:right" value="${Math.max(1, Math.min(6, Number(p.threads) || 1))}"></label>`}
       </span>
-      <label class="ds-dep-delmode" title="Duplicate rules in the target org. Respect: a record a rule flags is NOT written and the run says so. Bypass: the records are written with Salesforce's duplicate-rule header (they are copies of existing records — a fuzzy name rule would block most of a migration). Saved on the deployment.">Duplicate rules
+      <label class="ds-dep-delmode" title="Duplicate rules in the target org. Respect: a record a rule flags is NOT written and the run says so. Bypass: the records are written with Salesforce's duplicate-rule header (they are copies of existing records — a fuzzy name rule would block most of a migration). Bulk API 2.0 cannot bypass rules, so a bypass run uses synchronous Collections calls whatever the Engine setting says. Saved on the deployment.">Duplicate rules
         <select id="dsDepDupRules" class="ds-select ds-select-sm">
           <option value="respect" ${p.duplicateRules === 'bypass' ? '' : 'selected'}>Respect — blocked records fail</option>
           <option value="bypass" ${p.duplicateRules === 'bypass' ? 'selected' : ''}>Bypass for this deployment</option>
