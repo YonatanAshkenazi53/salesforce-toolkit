@@ -63,6 +63,16 @@ extensions containing root files that start with `_`).
   one exact value — an order item lost its order once Order was told apart by
   a composite key. The scan's own parent pairing is used now; key matching is
   only the fallback.
+- **"✓ All" selects the whole list.** Over a list of 5,000 the button selected
+  the 300 rows painted on screen. It now selects every record in the list and
+  says how many.
+- **Duplicate rules in the target can be bypassed for a deployment.** A fuzzy
+  name rule blocked 100 of 300 accounts in a test migration with nothing to
+  do about it. Next to ▶ Deploy: Respect (default — flagged records fail and
+  the run says so) or Bypass for this deployment.
+- On the Deploy page: **🔎 Scan all** reads every unread child object in one
+  click, 🔄 Refresh state re-reads the children it had read before, and the
+  run log stays on the page after the post-run refresh.
 - **Line items deploy.** Salesforce takes UnitPrice or TotalPrice on a line
   item, never both; a copied row carries both, so every line item used to be
   rejected. TotalPrice is now left out (the target computes it) and the run

@@ -4029,6 +4029,7 @@ async function sftkRecSetEngine(p, key, raw) {
   if (key === 'apiMode') { if (raw === 'sync' || raw === 'bulk') p.apiMode = raw; else delete p.apiMode; out = p.apiMode || 'auto'; }
   else if (key === 'batchSize') { const n = Math.max(1, Math.min(200, parseInt(raw, 10) || 200)); if (n === 200) delete p.batchSize; else p.batchSize = n; out = n; }
   else if (key === 'threads') { const n = Math.max(1, Math.min(6, parseInt(raw, 10) || 1)); if (n === 1) delete p.threads; else p.threads = n; out = n; }
+  else if (key === 'duplicateRules') { if (raw === 'bypass') p.duplicateRules = 'bypass'; else delete p.duplicateRules; out = p.duplicateRules || 'respect'; }
   await sftkRecEnginePersist(p);
   return out;
 }
