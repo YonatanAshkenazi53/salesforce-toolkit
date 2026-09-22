@@ -56,6 +56,11 @@ extensions containing root files that start with `_`).
   leave a flow element empty (Salesforce refuses such a version), "Keep the flow running"
   is no longer preselected and says why; a refusal quotes Salesforce and points at
   "Delete the active version too" or Flow Builder.
+- **⚙ API versions — a Draft flow counts as changed.** Salesforce rewrites a version that
+  is not active in place instead of adding one; the tool used to report "no new version
+  appeared … nothing changed" for it. It now verifies the rewritten version at the new API.
+  The closing line counts what happened ("3 flow(s) changed and verified, across 1 org(s)")
+  instead of calling an org unchanged because one flow raised a warning.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run
