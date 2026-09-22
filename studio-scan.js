@@ -1251,6 +1251,10 @@ async function runDiffScan(profile, node = null, scope = null) {
   if (_srcNoLink) {
     memWarnings.push(`${_srcNoLink} source ${objType} record(s) have a BLANK ${scope.parentField} — a parent-scoped scan can never see them, so they are absent from every bucket above (they are NOT “in sync”). Populate the link, or deploy them with a flat ${objType} profile.`);
   }
+  if (scope && _keyCollisions && _keyCollisions.rows) {
+    const ks = (_keyCollisions.keys || []).slice(0, 3).map(k => `“${k}”`).join(', ') + ((_keyCollisions.keys || []).length > 3 ? ', …' : '');
+    memWarnings.push(`${_keyCollisions.rows} ${objType} record(s) share a match key with another record (${ks}) — a child scan cannot tell the copies apart, so they are in NO bucket above and are never deployed from here. Add a second field to the match key (✏ Edit → Records → Matching), or rename one copy.`);
+  }
   // AUTONUMBER match key (W7 pattern audit) — the values are org-generated
   // sequence numbers: 'A-0042' in two orgs are DIFFERENT records that happen
   // to share a counter position. Matching by them pairs records arbitrarily,
@@ -1687,7 +1691,10 @@ async function runDiffScan(profile, node = null, scope = null) {
     ...(fileDrift ? { fileDrift } : {}),
     // Duplicate-key info for ROOT scans — info-only (the rows stayed matched,
     // arbitrarily); child scans exclude instead and report keyCollisions below.
-    ...((!scope && _keyCollisions) ? { dupKeys: _keyCollisions } : {}),
+    // Root scans keep the copies matched (arbitrarily); child scans EXCLUDE
+    // them — either way the user must be told who they are (live run
+    // 2026-09-22: two same-name Contacts were in no bucket and nothing said so).
+    ...(_keyCollisions ? { dupKeys: _keyCollisions } : {}),
     compareFields: srcCompare,
     compareFieldsTgt: tgtCompare,
     sourceCount:   srcByKey.size + memoryMatched,

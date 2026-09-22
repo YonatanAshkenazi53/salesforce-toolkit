@@ -460,6 +460,22 @@ function sftkRecResetSelectionFor(p) {
   _recLastProfileId = p.id;
 }
 
+// PURE. The newest History entry (a run OR a rollback — both write) that
+// finished after the scan and touched either org of this pair, or null.
+// Shared by the classic page, the Deploy page and the record picker.
+function sftkScanStaleRun(history, p, scanRunAt) {
+  if (!p || !scanRunAt) return null;
+  const okey = u => sftkOrgKey(u);
+  const pair = new Set([okey(p.sourceOrg), okey(p.targetOrg)]);
+  for (let i = (history || []).length - 1; i >= 0; i--) {
+    const h = history[i];
+    const done = h && (h.completedAt || h.startedAt);
+    if (done && done > scanRunAt &&
+        (pair.has(okey(h.sourceOrg || h.srcOrgUrl)) || pair.has(okey(h.targetOrg || h.tgtOrgUrl)))) return h;
+  }
+  return null;
+}
+
 // Is p.lastScan usable for THIS deployment? The objectType check is
 // SAFETY-critical, not cosmetic: if the profile's root object changed after
 // the last scan, the old buckets carry record Ids of a DIFFERENT object — and
@@ -555,16 +571,7 @@ async function renderReconcile() {
   // fresh scan re-renders over it when it lands.
   if (scanFresh && scan.runAt) {
     let staleRun = null;
-    try {
-      const okey = u => sftkOrgKey(u);
-      const pair = new Set([okey(p.sourceOrg), okey(p.targetOrg)]);
-      for (let i = (_history || []).length - 1; i >= 0; i--) {
-        const h = _history[i];
-        const done = h && (h.completedAt || h.startedAt);
-        if (done && done > scan.runAt &&
-            (pair.has(okey(h.sourceOrg)) || pair.has(okey(h.targetOrg)))) { staleRun = h; break; }
-      }
-    } catch (_) { staleRun = null; }
+    try { staleRun = sftkScanStaleRun(_history, p, scan.runAt); } catch (_) { staleRun = null; }
     if (staleRun && _recAutoRefreshKey !== `${p.id}|${staleRun.id}`) {
       _recAutoRefreshKey = `${p.id}|${staleRun.id}`;
       showToast('↻ A run changed these orgs — refreshing state…', 'info', 2500);

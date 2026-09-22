@@ -39,6 +39,7 @@ describe('Deploy view — the page actually runs', () => {
   _parentSyncVerdicts: { 'k|Campaign': { missing: 0, changed: 0, at: '2026-09-21T10:00:00Z' } }, sftkParentSyncKey: (s, t, o) => 'k|' + o,
   sftkParentGapSetGate: (p, scan, ps, has) => { ctx.__gate = { ps, has }; }, sftkParentVerifyOne: async () => true, sftkOpenParentsFirst: async () => true,
   sftkRecWireDupFix() {}, sftkRecSetEngine: async () => 'auto',
+  _buildAllSessions: () => [], _resolveSession: () => ({ sid: 'stub' }),
   sftkOrgKey: u => String(u), sftkOpenIdentityModal() {},
   sftkIdStatusFor: async () => ({ srcOnline: true, tgtOnline: true, objects: [
     { pathKey: '', obj: 'Account', depth: 0, src: 'no', tgt: 'yes', customizable: true }, { pathKey: '0', obj: 'Contact', depth: 1, src: 'no', tgt: 'no', customizable: true }] }),
@@ -123,9 +124,9 @@ describe('Deploy view — the page actually runs', () => {
     // 🌳 the visual tree, with identity per org and outside parents per object
     await new Promise(r => setTimeout(r, 0));
     const tree = els.get('dsDepTree').innerHTML;
-    need(tree.includes('This deployment') && (tree.match(/class="ds-tree-node/g) || []).length === 2, 'the tree draws one node per object');
+    need(tree.includes('This deployment') && (tree.match(/class="ds-dtree-node/g) || []).length === 2, 'the tree draws one node per object');
     need(tree.includes('via AccountId') && tree.includes('recognised by'), 'a child says how it hangs under its parent, and every node how its records are recognised');
-    need(tree.includes('🪪 target ✓') && tree.includes('🪪 target ✗'), 'each node shows whether each org holds the identity field');
+    need(tree.includes('🪪 trailheads4 ✓') && tree.includes('🪪 trailheads4 ✗') && !tree.includes('🪪 target'), 'each node names the ORG that holds (or lacks) the identity field');
     need(tree.includes('points at') && tree.includes('Campaign'), 'a node names the outside objects it points at');
     need(tree.includes('no identity field'), 'the tree says which objects cannot be recognised exactly yet');
     // duplicate names: who they are + the fixes

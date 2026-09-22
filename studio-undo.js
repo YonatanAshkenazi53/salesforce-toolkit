@@ -374,6 +374,7 @@ function _sftkUndoPlanHtml(ctx) {
   if (anyWork) {
     confirm = `<div style="margin-top:10px">
       ${refused.length ? `<div style="margin-bottom:6px;color:#b91c1c">⚠ ${refused.length} object(s) could not be read (${esc(refused.map(r => r.objType).join(', '))}) — they will NOT be touched; roll back again after fixing the read.</div>` : ''}
+      ${typedWord !== 'ROLLBACK' ? `<div style="margin-bottom:4px">🛑 <strong>${esc(typedWord)}</strong> is production, or guarded as production, so the word to type is its name.</div>` : ''}
       Type <code>${esc(typedWord)}</code> to confirm:
       <input id="dsUndoTyped" class="ds-input" autocomplete="off" placeholder="${esc(typedWord)}" style="margin-top:4px"></div>`;
   } else if (refused.length) {
@@ -481,6 +482,11 @@ window.rollbackRun = async function(runId) {
       legs.push({ orgUrl: sess.orgUrl, sid: sess.sid, objects: leg.objects, automation: null, evOrgUrl: leg.orgUrl, end: endFor(leg.orgUrl) });
     }
     if (!legs.length) { log('❌', 'The restore point holds no objects.', 'ds-prog-err'); return abandon(); }
+    // 🔒 A locked org is refused HERE, before the re-read — not at the first
+    // delete, half-way through (user 2026-09-22, testing the guards). The
+    // background chokepoint still blocks the write if this check is bypassed.
+    const lockedLeg = legs.find(l => typeof window.sftkOrgLocked === 'function' && window.sftkOrgLocked(l.evOrgUrl || l.orgUrl));
+    if (lockedLeg) { log('🔒', `Writes to ${orgLabel(lockedLeg.evOrgUrl || lockedLeg.orgUrl)} are locked (Connected Orgs → Unlock writes) — a rollback writes there, so nothing was read or written.`, 'ds-prog-err'); return abandon(); }
     // Production — or an org whose type could not be confirmed — gets the
     // production-grade confirmation. Ambiguity fails closed.
     for (const leg of legs) {

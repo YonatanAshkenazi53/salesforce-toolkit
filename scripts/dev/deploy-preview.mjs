@@ -22,6 +22,7 @@ const ctx = { console, Set, Map, Object, Number, String, Array, JSON, Math, Prom
   sftkRecResetSelectionFor() {}, sftkRecScanFresh: () => true, sftkOpenDriftCompare() {}, renderLkpOverridePanel() {},
   _parentSyncVerdicts: { 'k|Campaign': { missing: 0, changed: 0, at: new Date(Date.now() - 120000).toISOString() }, 'k|Pricebook2': { missing: 3, changed: 1, at: new Date(Date.now() - 300000).toISOString() } }, sftkParentSyncKey: (a, b, o) => 'k|' + o,
   sftkParentGapSetGate() {}, sftkParentVerifyOne: async () => true, sftkOpenParentsFirst: async () => true, sftkRecWireDupFix() {}, sftkRecSetEngine: async () => 'auto',
+  _buildAllSessions: () => [], _resolveSession: () => ({ sid: 'stub' }),
   sftkOrgKey: u => String(u), sftkOpenIdentityModal() {},
   sftkIdStatusFor: async () => ({ srcOnline: true, tgtOnline: true, objects: [
     { pathKey: '', obj: 'Account', depth: 0, src: 'no', tgt: 'yes', customizable: true }, { pathKey: '0', obj: 'Contact', depth: 1, src: 'no', tgt: 'no', customizable: true }] }),
