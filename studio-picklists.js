@@ -780,6 +780,12 @@ async function _pkLoadUsage(sess, obj, field, isMulti, rawValues) {
       if (v == null) nullCount = c; else usage.set(String(v), c);
     }
     if ((agg.records || []).length >= 2000) usageNote = 'Object has >2000 distinct values — counts may be partial.';
+    // A value no record holds is absent from the GROUP BY answer — that is a
+    // counted ZERO, not "not counted" (live 2026-09-23: "New" read "—", the
+    // same mark as a failed count, while 0 records held it).
+    if (!agg.error && (agg.records || []).length < 2000) {
+      for (const v of (rawValues || [])) { const name = pkValueName(v); if (!usage.has(name)) usage.set(name, 0); }
+    }
   } else {
     const CAP = 30;
     for (const v of rawValues.slice(0, CAP)) {
@@ -1054,7 +1060,7 @@ async function _pkApplyRtCore(inv, rtId, adds, removes) {
   const present = new Set(entry.values.map(v => pkValueName(v)));
   for (const a of adds) if (!present.has(a)) entry.values.push({ valueName: a });
   const res = await sendBg({ type: 'SF_PATCH', orgUrl: inv.orgUrl, sid: inv.sid,
-    path: `services/data/v62.0/tooling/sobjects/RecordType/${rtId}`, body: { Metadata: md } });
+    path: `services/data/v62.0/tooling/sobjects/RecordType/${rtId}`, body: { Metadata: sftkMetaForPatch(md) } });
   if (res?.error) throw new Error(res.error);
   return true;
 }
@@ -1278,8 +1284,7 @@ async function _pkOpenWizard(idx, mode) {
         </div>
         ${_pkImpactHtml(impact, count, literal)}
       ` : `<p>No records hold this value — no data fix is needed.</p>${_pkLiteralOnlyHtml(literal, name)}`}
-      ${mode === 'delete' ? `<div class="ds-pk-delwarn">⛔ Deleting removes the value from the value set permanently
-        (records already fixed above are unaffected). Prefer <strong>Deactivate</strong> unless you're sure.</div>` : ''}
+      ${mode === 'delete' ? `<div class="ds-pk-delwarn">⛔ Salesforce's API cannot delete a picklist value: this removes it from the value set and Salesforce keeps it as <strong>inactive</strong> — the tool re-reads the field afterwards and says which. Deleting it for good is a click in Setup (Object Manager → Fields &amp; Relationships → the field → Values → Del). Records already fixed above are unaffected. Prefer <strong>Deactivate</strong> unless you need it out of the list.</div>` : ''}
     </div>
     <div class="ds-modal-footer">
       <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
@@ -1393,9 +1398,20 @@ async function _pkApplyMetadataCore(inv, idx, op) {
   }
   const res = await sendBg({ type: 'SF_PATCH', orgUrl: inv.orgUrl, sid: inv.sid,
     path: `services/data/v62.0/tooling/sobjects/CustomField/${inv.fieldId}`,
-    body: { Metadata: md } });
+    body: { Metadata: sftkMetaForPatch(md) } });
   if (res?.error) throw new Error(res.error);
-  return true;
+  if (!op.remove) return { ok: true };
+  // A value left out of the PATCHed value set is not deleted by Salesforce —
+  // it is kept as INACTIVE (live 2026-09-23, verified by CLI: "Reviewed"
+  // still in the value set, isActive false, after "🗑 Value deleted"). The
+  // API cannot delete a picklist value; only Setup can. Re-read and say which.
+  const name = pkValueName(inv.rawValues[idx]);
+  const back = await sendBg({ type: 'SF_TOOLING_GET', orgUrl: inv.orgUrl, sid: inv.sid,
+    sobject: 'CustomField', id: inv.fieldId, _suppressError: true });
+  const list2 = back?.Metadata?.valueSet?.valueSetDefinition?.value;
+  if (back?.error || !Array.isArray(list2)) return { ok: true, verified: false, name };
+  const kept = list2.find(v => pkValueName(v) === name);
+  return { ok: true, verified: true, name, removed: !kept, keptInactive: !!kept && kept.isActive === false };
 }
 
 async function _pkApplyMetadata(idx, op) {
@@ -1406,9 +1422,15 @@ async function _pkApplyMetadata(idx, op) {
       const nm = pkValueName(inv.rawValues[idx]);
       _pkPendingRtCheck = { name: nm, pre: inv.rts.filter(rt => rt.values.has(nm)).length };
     }
-    await _pkApplyMetadataCore(inv, idx, op);
-    showToast(op.remove ? '🗑 Value deleted from the value set'
-      : op.activate ? '▶ Value activated' : '⏸ Value deactivated', 'success');
+    const r = await _pkApplyMetadataCore(inv, idx, op);
+    if (op.remove && r && r.verified === false) {
+      showToast(`⚠ The value set was saved without “${r.name}”, but the field could not be re-read to confirm what Salesforce kept — check it in Setup`, 'warning', 9000);
+    } else if (op.remove && r && !r.removed) {
+      showToast(`⚠ Salesforce kept “${r.name}” as INACTIVE — its API cannot delete a picklist value. To delete it for good: Setup → Object Manager → ${inv.obj} → Fields & Relationships → ${inv.field} → Values → Del.`, 'warning', 12000);
+    } else {
+      showToast(op.remove ? '🗑 Value deleted from the value set (verified by re-reading the field)'
+        : op.activate ? '▶ Value activated' : '⏸ Value deactivated', 'success');
+    }
     loadPicklistInventory();
   } catch (e) {
     _pkPendingRtCheck = null;
@@ -1699,7 +1721,7 @@ async function _pkApplyBulk(values, orgs, mode, fixMode, remap) {
     const inv = o.inv;
     inv.orgUrl = sess.orgUrl; inv.sid = sess.sid;   // refresh the SID for a long run
     const startedAt = new Date().toISOString();
-    let updated = 0, failed = 0, metaOk = 0, metaFail = 0, skippedVals = 0;
+    let updated = 0, failed = 0, metaOk = 0, metaFail = 0, metaKept = 0, skippedVals = 0;
     const errors = [];
 
     for (const val of values) {
@@ -1724,10 +1746,12 @@ async function _pkApplyBulk(values, orgs, mode, fixMode, remap) {
       }
 
       try {
-        await _pkApplyMetadataCore(inv, idx, mode === 'delete' ? { remove: true } : { deactivate: true });
+        const r = await _pkApplyMetadataCore(inv, idx, mode === 'delete' ? { remove: true } : { deactivate: true });
         metaOk++;
+        const keptByOrg = mode === 'delete' && r && r.verified && !r.removed;
+        if (keptByOrg) metaKept++;
         // Keep the local value list in sync so later findIndex lookups stay valid.
-        if (mode === 'delete') inv.metadata.valueSet.valueSetDefinition.value.splice(idx, 1);
+        if (mode === 'delete' && !keptByOrg) inv.metadata.valueSet.valueSetDefinition.value.splice(idx, 1);
         else inv.metadata.valueSet.valueSetDefinition.value[idx].isActive = false;
       } catch (e) {
         metaFail++; errors.push(e.message);
@@ -1745,7 +1769,7 @@ async function _pkApplyBulk(values, orgs, mode, fixMode, remap) {
       errors: pkDedupeErrors(errors),
     });
 
-    append(`${(failed === 0 && metaFail === 0) ? '✅' : '⚠'} <strong>${esc(o.label)}</strong>: ${updated} record(s) fixed, ${metaOk} value(s) ${mode === 'delete' ? 'deleted' : 'deactivated'}${failed ? `, ${failed} record failure(s)` : ''}${metaFail ? `, ${metaFail} metadata failure(s)` : ''}${skippedVals ? `, ${skippedVals} absent/skipped` : ''}`);
+    append(`${(failed === 0 && metaFail === 0) ? '✅' : '⚠'} <strong>${esc(o.label)}</strong>: ${updated} record(s) fixed, ${metaOk} value(s) ${mode === 'delete' ? (metaKept ? `removed from the list — ${metaKept} kept INACTIVE by Salesforce (its API cannot delete a picklist value; Setup can)` : 'deleted') : 'deactivated'}${failed ? `, ${failed} record failure(s)` : ''}${metaFail ? `, ${metaFail} metadata failure(s)` : ''}${skippedVals ? `, ${skippedVals} absent/skipped` : ''}`);
   }
 
   await storageSaveHistory();
@@ -1851,7 +1875,7 @@ async function _pkValueSetWizard(ctx, idx, mode, applyFn, reloadFn) {
         </div>
         ${_pkImpactHtml(impact, count, literal)}
       ` : `<p>No records hold this value — no data fix is needed.</p>${_pkLiteralOnlyHtml(literal, name)}`}
-      ${mode === 'delete' ? `<div class="ds-pk-delwarn">⛔ Deleting removes the value permanently. Prefer <strong>Deactivate</strong> unless you're sure.</div>` : ''}
+      ${mode === 'delete' ? `<div class="ds-pk-delwarn">⛔ Salesforce's API may keep a removed value as <strong>inactive</strong> rather than delete it (it does for custom picklists) — check the value set in Setup afterwards; deleting for good is a Setup click. Prefer <strong>Deactivate</strong> unless you need it out of the list.</div>` : ''}
     </div>
     <div class="ds-modal-footer">
       <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
@@ -1989,7 +2013,7 @@ async function _pkStdApplyCore(std, idx, op) {
   list[idx].isActive = !op.deactivate;   // activate → true, deactivate → false
   if (op.deactivate && list[idx].default) list[idx].default = false;
   const res = await sendBg({ type: 'SF_PATCH', orgUrl: std.orgUrl, sid: std.sid,
-    path: `services/data/v62.0/tooling/sobjects/StandardValueSet/${std.svsId}`, body: { Metadata: md } });
+    path: `services/data/v62.0/tooling/sobjects/StandardValueSet/${std.svsId}`, body: { Metadata: sftkMetaForPatch(md) } });
   if (res?.error) throw new Error(res.error);
   return true;
 }
@@ -2055,7 +2079,7 @@ async function _pkGvsApplyCore(gvs, idx, op) {
     if (op.deactivate && list[idx].default) list[idx].default = false;
   }
   const res = await sendBg({ type: 'SF_PATCH', orgUrl: gvs.orgUrl, sid: gvs.sid,
-    path: `services/data/v62.0/tooling/sobjects/GlobalValueSet/${gvs.gvsId}`, body: { Metadata: md } });
+    path: `services/data/v62.0/tooling/sobjects/GlobalValueSet/${gvs.gvsId}`, body: { Metadata: sftkMetaForPatch(md) } });
   if (res?.error) throw new Error(res.error);
   return true;
 }
@@ -2082,7 +2106,7 @@ async function _pkApplySyncCore(tgt, sel) {
   }
   const res = await sendBg({ type: 'SF_PATCH', orgUrl: tgt.inv.orgUrl, sid: tgt.inv.sid,
     path: `services/data/v62.0/tooling/sobjects/CustomField/${tgt.inv.fieldId}`,
-    body: { Metadata: md } });
+    body: { Metadata: sftkMetaForPatch(md) } });
   if (res?.error) throw new Error(res.error);
   return true;
 }

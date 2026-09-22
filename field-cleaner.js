@@ -1791,7 +1791,7 @@ const FieldCleaner = (() => {
       md.description = `[DEPRECATED ${new Date().toISOString().slice(0, 10)} by Salesforce Toolkit — pending delete] ${prevDesc}`.slice(0, 1000);
       const patch = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
         path: `services/data/v62.0/tooling/sobjects/CustomField/${fieldId}`,
-        body: { Metadata: md } });
+        body: { Metadata: sftkMetaForPatch(md) } });
       if (patch?.error) throw new Error(patch.error);
 
       // 3. Strip FLS everywhere (snapshot first for undo).
@@ -1831,10 +1831,11 @@ const FieldCleaner = (() => {
       const cur = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
         sobject: 'CustomField', id: dep.fieldId });
       if (cur.error || !cur.Metadata) throw new Error(cur.error || 'Could not read field metadata');
-      const md = { ...cur.Metadata, label: dep.prevLabel, description: dep.prevDesc || null };
+      // '' (not null) so the deprecation stamp is really cleared — a null key is dropped from the PATCH
+      const md = { ...cur.Metadata, label: dep.prevLabel, description: dep.prevDesc || '' };
       const patch = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
         path: `services/data/v62.0/tooling/sobjects/CustomField/${dep.fieldId}`,
-        body: { Metadata: md } });
+        body: { Metadata: sftkMetaForPatch(md) } });
       if (patch?.error) throw new Error(patch.error);
 
       // 2. Restore the FLS grants from the snapshot.
