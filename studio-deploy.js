@@ -122,6 +122,7 @@ let _depObjPath = '';      // which object the records panel shows ('' = root)
 let _depTab     = 'ins';
 let _depFilter  = '';
 let _depForProfile = null;
+let _depLastRunLog = null;   // { pid, html } — the last run's log, kept across the post-run repaint
 const SFTK_DEPLOY_WINDOW = 300;   // rows painted per tab; the count is the truth
 
 function _depChildSel(pathKey) {
@@ -222,7 +223,11 @@ async function renderDeploy() {
   const p = _reconcileProfile;
   if (!p) { _currentView = 'profiles'; renderProfiles(); return; }
   sftkRecResetSelectionFor(p);
-  if (_depForProfile !== p.id) { _depForProfile = p.id; _depObjPath = ''; _depTab = 'ins'; _depFilter = ''; if (!_depRetry) _depRetryNote = ''; }
+  if (_depForProfile !== p.id) { _depForProfile = p.id; _depObjPath = ''; _depTab = 'ins'; _depFilter = ''; if (!_depRetry) _depRetryNote = ''; _depLastRunLog = null; }
+  // The post-run refresh repaints this page and used to wipe the run log with
+  // it (live run 2026-09-22) — keep the last one and show it under the bar.
+  { const cur = eid('dsRecProgress'); if (cur && cur.innerText && cur.innerText.trim()) _depLastRunLog = { pid: p.id, html: cur.innerHTML }; }
+  if (_depLastRunLog && _depLastRunLog.pid !== p.id) _depLastRunLog = null;
 
   const objType = p.tree?.objectType || p.tree?.childSObject || '?';
   const scan = p.lastScan;
@@ -310,7 +315,7 @@ async function renderDeploy() {
           <td>${r.depth ? `<button class="ds-btn ds-btn-xs" data-dep-scan="${esc(r.pathKey)}" title="${r.scanned ? 'Read this object again, under the records of the scan above' : 'This object has not been read against this target yet — its records are unknown, not zero'}">${r.scanned ? '🔎 Rescan' : '🔎 Scan'}</button>` : ''}</td>
         </tr>`).join('')}
         ${plan.length > 1 ? `<tr class="ds-dep-total"><td>All objects</td><td></td><td></td>${['ins', 'chg', 'ext', 'link', 'same'].map(k => `<td class="ds-dep-num${sum(k) ? ` ds-dep-n-${k}` : ' ds-dep-muted'}">${sum(k).toLocaleString()}</td>`).join('')}<td></td></tr>` : ''}</tbody></table></div>
-      ${unscanned.length ? `<div class="ds-rec-card-line">🔎 <b>${unscanned.map(r => esc(r.obj)).join(', ')}</b> not read against this target yet — unknown, not zero. Scan ${unscanned.length === 1 ? 'it' : 'them'} before calling this pair in sync.</div>` : ''}
+      ${unscanned.length ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs ds-btn-primary" id="dsDepScanAll" title="Read every object below against the target, one after the other, parents before their children">🔎 Scan all ${unscanned.length}</button> <b>${unscanned.map(r => esc(r.obj)).join(', ')}</b> not read against this target yet — unknown, not zero. Scan ${unscanned.length === 1 ? 'it' : 'them'} before calling this pair in sync.</div>` : ''}
     </div>`;
 
   // ── notes: the same facts the classic header shows ──
@@ -378,6 +383,11 @@ async function renderDeploy() {
         <label class="ds-dep-delmode" title="How many Collections batches run in parallel (1–6). Faster at scale, but parallel writes can hit row locks when records share a parent — lower it if you see UNABLE_TO_LOCK_ROW.${(p.apiMode || 'auto') === 'auto' ? ' In Auto, used below the Bulk threshold.' : ''}">threads
           <input id="dsDepThreads" class="ds-input ds-input-sm" type="number" min="1" max="6" step="1" style="width:52px;text-align:right" value="${Math.max(1, Math.min(6, Number(p.threads) || 1))}"></label>`}
       </span>
+      <label class="ds-dep-delmode" title="Duplicate rules in the target org. Respect: a record a rule flags is NOT written and the run says so. Bypass: the records are written with Salesforce's duplicate-rule header (they are copies of existing records — a fuzzy name rule would block most of a migration). Saved on the deployment.">Duplicate rules
+        <select id="dsDepDupRules" class="ds-select ds-select-sm">
+          <option value="respect" ${p.duplicateRules === 'bypass' ? '' : 'selected'}>Respect — blocked records fail</option>
+          <option value="bypass" ${p.duplicateRules === 'bypass' ? 'selected' : ''}>Bypass for this deployment</option>
+        </select></label>
       <label class="ds-dep-delmode" style="cursor:pointer" title="Before anything is written, every object this run can touch is read from the target and kept on this PC as a restore point (the newest 10 runs). History then offers ↩ Roll back. One setting for every deployment.">
         <input type="checkbox" id="dsDepUndoCapture" ${_settings.undoCapture === false ? '' : 'checked'}> 📸 restore point</label>
       <label class="ds-dep-delmode" title="How 🗑 selections are deleted">Delete mode
@@ -388,7 +398,8 @@ async function renderDeploy() {
       <button class="ds-btn ds-btn-lg ds-btn-primary" id="dsRecRunBtn" disabled>▶ Deploy</button>
     </div>
     <div class="ds-dep-foot">The real, rolled-back 🧪 dry run is the next step of this page and is not built yet.</div>
-    <div id="dsRecProgress" class="ds-rec-progress"></div></div>`);
+    <div id="dsRecProgress" class="ds-rec-progress"></div></div>
+    ${_depLastRunLog ? `<details open class="ds-rec-card ds-dep-lastlog"><summary class="ds-rec-card-title">📜 Last run on this page — the numbers above are already refreshed; History keeps this run too</summary><div class="ds-rec-progress">${_depLastRunLog.html}</div></details>` : ''}`);
 
   _depWireChrome(p);
   _depPaintList(p, scan, cur, curScan, tabDef, { srcLocked });
@@ -405,6 +416,7 @@ async function renderDeploy() {
     el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
   });
   document.querySelectorAll('.ds-dep-objbtn').forEach(b => b.addEventListener('click', () => { _depObjPath = b.dataset.depObj; _depTab = 'ins'; _depFilter = ''; renderDeploy(); }));
+  eid('dsDepScanAll')?.addEventListener('click', () => _depScanAll(p, unscanned.map(r => r.pathKey)));
   document.querySelectorAll('[data-dep-scan]').forEach(b => b.addEventListener('click', async () => {
     b.disabled = true; b.textContent = '⏳ reading…';
     const res = await scanReconcileChild(p, b.dataset.depScan);
@@ -417,6 +429,7 @@ async function renderDeploy() {
   eid('dsDepApiMode')?.addEventListener('change', async e => { await sftkRecSetEngine(p, 'apiMode', e.target.value); renderDeploy(); });
   eid('dsDepBatch')?.addEventListener('change', async e => { e.target.value = await sftkRecSetEngine(p, 'batchSize', e.target.value); });
   eid('dsDepThreads')?.addEventListener('change', async e => { e.target.value = await sftkRecSetEngine(p, 'threads', e.target.value); });
+  eid('dsDepDupRules')?.addEventListener('change', async e => { await sftkRecSetEngine(p, 'duplicateRules', e.target.value); });
   eid('dsDepUndoCapture')?.addEventListener('change', async e => {
     _settings.undoCapture = !!e.target.checked;
     await storageSaveSettings();
@@ -642,8 +655,40 @@ async function _depRescan(p) {
   // same reset the classic 🔄 does: a new scan invalidates every selection
   _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
   _recChildSel = {}; _depRetryNote = '';
+  // children read before are read again — a root refresh alone left every one
+  // of them "🔎 Scan" (live run 2026-09-22: 11 clicks after each run)
+  const kids = sftkDeployChildOrder(Object.keys((p.lastScan && p.lastScan.children) || {}));
   await window.refreshProfileState?.(p.id);
+  const fp = _profiles.find(x => x.id === p.id) || p;
+  const failed = [];
+  for (let i = 0; i < kids.length; i++) {
+    const bb = eid('dsDepRefresh') || eid('dsDepScan');
+    if (bb) { bb.disabled = true; bb.textContent = `⏳ reading children ${i + 1}/${kids.length}…`; }
+    try { const res = await scanReconcileChild(fp, kids[i]); if (res?.error) failed.push(`${_depObjName(fp, kids[i])}: ${res.error}`); }
+    catch (e) { failed.push(`${_depObjName(fp, kids[i])}: ${e?.message || e}`); }
+  }
+  if (failed.length) showToast(`Child scan: ${failed.join(' · ')}`, 'error', 9000);
   if (_currentView === 'deploy') renderDeploy();
+}
+
+// PURE. Child path keys in read order: parents before their children ('0', '1', '1.0', '1.1', '2').
+function sftkDeployChildOrder(keys) {
+  return [...(keys || [])].filter(k => k !== '').sort((a, b) => (a.split('.').length - b.split('.').length) || (a < b ? -1 : a > b ? 1 : 0));
+}
+function _depObjName(p, pathKey) { const n = getNodeByPath(p.tree, pathKey); return (n && (n.objectType || n.childSObject)) || pathKey; }
+
+// 🔎 Scan all: every unread child, one after the other, parents first.
+async function _depScanAll(p, keys) {
+  const order = sftkDeployChildOrder(keys);
+  const b = eid('dsDepScanAll');
+  const failed = [];
+  for (let i = 0; i < order.length; i++) {
+    if (b) { b.disabled = true; b.textContent = `⏳ ${i + 1}/${order.length} ${_depObjName(p, order[i])}…`; }
+    try { const res = await scanReconcileChild(p, order[i]); if (res?.error) failed.push(`${_depObjName(p, order[i])}: ${res.error}`); }
+    catch (e) { failed.push(`${_depObjName(p, order[i])}: ${e?.message || e}`); }
+  }
+  if (failed.length) showToast(`Child scan: ${failed.join(' · ')}`, 'error', 9000);
+  renderDeploy();
 }
 
 // ── one bucket of one object ──────────────────────────────────────────────
@@ -733,10 +778,11 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     return `<div class="ds-dep-row">${ctl || '<span></span>'}<span class="ds-dep-key" title="${k}">${k}</span><span class="ds-dep-mid">${near}${extra}</span><span class="ds-dep-tail">${tail} <span class="ds-dep-open">${links}</span></span></div>`;
   };
 
-  const bulk = tabDef.k === 'ins' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all">✓ All listed</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
-    : tabDef.k === 'chg' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all">→ all listed</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
-    : tabDef.k === 'ext' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all">🗑 all listed${!isRoot ? ' (no orphans)' : ''}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
-    : tabDef.k === 'link' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" ${relinkBlocked ? 'disabled' : ''}>⇄ all listed</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>` : '';
+  const nAll = rows.length.toLocaleString();
+  const bulk = tabDef.k === 'ins' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list${rows.length > SFTK_DEPLOY_WINDOW ? ` — the list below paints the first ${SFTK_DEPLOY_WINDOW.toLocaleString()}, the count is the truth` : ''}">✓ All ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
+    : tabDef.k === 'chg' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Overwrite every ${nAll} changed record(s) in this list with the source's values">→ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
+    : tabDef.k === 'ext' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list for deletion">🗑 all ${nAll}${!isRoot ? ' (no orphans)' : ''}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
+    : tabDef.k === 'link' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" ${relinkBlocked ? 'disabled' : ''}>⇄ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>` : '';
   host.innerHTML = `
     <div class="ds-dep-tools">
       <input type="search" id="dsDepFilter" class="ds-dep-filter" placeholder="🔍 filter by name${isRoot ? '' : ' or parent'}…" value="${esc(_depFilter)}" aria-label="Filter records">
@@ -784,7 +830,9 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   }));
   host.querySelectorAll('[data-dep-bulk]').forEach(b => b.addEventListener('click', () => {
     const on = b.dataset.depBulk === 'all';
-    for (const r of shown) {
+    // the WHOLE list (every row that matches the filter), not the 300-row
+    // window painted below — "5,000 of 6,000" + All gave 300 (live run 2026-09-22)
+    for (const r of rows) {
       if (tabDef.k === 'ins') { if (!selectable(r)) continue; const set = isRoot ? _recSel.push : sel.push; on ? set.add(r.sourceId) : set.delete(r.sourceId); }
       else if (tabDef.k === 'chg') { const set = isRoot ? _recSel.overwrite : sel.overwrite; on ? set.add(r.sourceId) : set.delete(r.sourceId); if (isRoot) _recSel.updSrc.delete(r.sourceId); }
       else if (tabDef.k === 'ext') { if (on && r.orphan) continue; const set = isRoot ? _recSel.del : sel.del; on ? set.add(r.targetId) : set.delete(r.targetId); if (isRoot) _recSel.pull.delete(r.targetId); }

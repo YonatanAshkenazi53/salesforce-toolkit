@@ -40,7 +40,9 @@ Store currently has **1.4.2** — 1.4.3 has NOT been uploaded yet.
 > roles / comments / line items deploy under existing parents. Gate 94 / 2582.
 > - DONE round 4: group-B children attach by the scan's parent pairing (OrderItem fixed).
 > - DONE round 5: the four other deployments ran live; PricebookEntry re-key.
-> - NEXT: (2b) huge trees (docs/fixtures/complex-deployment/seed-volume.apex, profile 'SFTK VOL — Accounts');
+> - DONE round 6: Deploy UX (scan all, refresh re-reads children, run log kept), whole-list ✓ All,
+> duplicate-rules Respect/Bypass. Volume fixture seeded (24,000 rows on trailheads2).
+> - NEXT: (2b) read vol2.log (two-pass huge tree with bypass); verify 6,000/12,000/6,000 in trailheads4;
 > then (3) Retry failed, rollback, parents-first; then UX; then release. (Campaigns /
 > Products / Leads / Price books deployments; (3) parents-first flow, Retry failed,
 > rollback; (4) huge trees (Apex loops, thousands of records, >5,000 per list);

@@ -698,7 +698,13 @@ function sftkVanillaPayloadRules(objType, payload) {
   return dropped;
 }
 
+// Duplicate rules (live run 2026-09-22: a fuzzy name rule blocked 100 of 300
+// Accounts — "Use one of these records?"). One run at a time in this worker,
+// so a run-scoped flag is enough; the writers add Salesforce's header.
+function _runDupHeaders() { return globalThis.__sftkRunDupBypass ? { 'Sforce-Duplicate-Rule-Header': 'allowSave=true' } : {}; }
+
 async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid, sharedIdMap = null, ledger = null) {
+  globalThis.__sftkRunDupBypass = !!(profile && profile.duplicateRules === 'bypass');
   const startedAt    = new Date().toISOString();
   const idMap        = sharedIdMap || {};  // srcId → tgtId (all objects — used for reference field remapping)
   const summary      = {};
@@ -805,6 +811,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   // the run (live run 2026-09-22: a 3-level Account hierarchy arrived flat
   // at level 2, and nothing said so).
   const treeObjSet   = new Set(ordered.map(e => e.node.objectType || e.node.childSObject).filter(Boolean));
+  if (globalThis.__sftkRunDupBypass) diagnostics.push('Duplicate rules in the target were bypassed for this run (engine setting) — records a rule would have flagged were written.');
   const nodeLateRefs = new Map();   // node → deferredRefs that point INTO the tree
 
   // SOURCE-org record ids defining a node's scope, used to filter its
@@ -3853,6 +3860,7 @@ async function sfCollectionsUpsert(orgUrl, sid, objectType, extIdField, records)
   const bodyStr = JSON.stringify({ allOrNone: false, records });
   const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url, {
     method: 'PATCH',
+    headers: _runDupHeaders(),
     body: bodyStr
   });
   if (!ok) throw new Error(sfErrorMsg(status, body, url));
@@ -4592,6 +4600,7 @@ async function sfCollectionsCreate(orgUrl, sid, records) {
   const bodyStr = JSON.stringify({ allOrNone: false, records });
   const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url, {
     method: 'POST',
+    headers: _runDupHeaders(),
     body: bodyStr
   });
   if (!ok) throw new Error(sfErrorMsg(status, body, url));
@@ -4698,6 +4707,7 @@ async function sfCollectionsUpdate(orgUrl, sid, records) {
     const bodyStr = JSON.stringify({ allOrNone: false, records: chunk });
     const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url, {
       method: 'PATCH',
+    headers: _runDupHeaders(),
       body: bodyStr
     });
     if (!ok) throw new Error(sfErrorMsg(status, body, url));

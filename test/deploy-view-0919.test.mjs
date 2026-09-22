@@ -131,6 +131,28 @@ describe('identity chips name the org; Bulk hides the Collections knobs', () => 
   });
 });
 
+// 2026-09-22 — live runs: 11 clicks to read the children, 11 more after every
+// refresh, and the run log wiped by the post-run repaint.
+describe('Deploy page: scan all, refresh re-reads children, the run log stays', () => {
+  const order = extractFunction('studio-deploy.js', 'sftkDeployChildOrder');
+  it('children are read parents-first, in tree order', () => {
+    expect(order(['2', '1.1', '0', '1', '1.0', '2.0', ''])).toEqual(['0', '1', '2', '1.0', '1.1', '2.0']);
+    expect(order(null)).toEqual([]);
+  });
+  it('one button reads every unread child; Refresh re-reads the ones read before', () => {
+    expect(DV).toContain('id="dsDepScanAll"');
+    expect(DV).toContain("eid('dsDepScanAll')?.addEventListener('click', () => _depScanAll(p, unscanned.map(r => r.pathKey)));");
+    const rescan = DV.slice(DV.indexOf('async function _depRescan(p) {'), DV.indexOf('function sftkDeployChildOrder'));
+    expect(rescan.indexOf('const kids = sftkDeployChildOrder(Object.keys((p.lastScan && p.lastScan.children) || {}));')).toBeLessThan(rescan.indexOf('await window.refreshProfileState?.(p.id);'));
+    expect(rescan).toContain('const res = await scanReconcileChild(fp, kids[i]);');
+  });
+  it('the last run log is kept across the repaint and shown under the bar, per deployment', () => {
+    expect(DV).toContain("_depLastRunLog = { pid: p.id, html: cur.innerHTML };");
+    expect(DV).toContain('if (_depLastRunLog && _depLastRunLog.pid !== p.id) _depLastRunLog = null;');
+    expect(DV).toContain('class="ds-rec-card ds-dep-lastlog"');
+  });
+});
+
 describe('load order', () => {
   it('the script is loaded after the pages it builds on', () => {
     expect(HT.indexOf('studio-reconcile.js')).toBeLessThan(HT.indexOf('studio-deploy.js'));

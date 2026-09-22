@@ -24,6 +24,7 @@ Both are trials → the Toolkit classifies them `dev`; use **🛑 Guard as produ
 | `target-metadata/` | two target-only validation rules that reject exactly one Account (Retail, no Website) and one Contact (Lab lead, no Phone). Deploy: `cd target-metadata && sf project deploy start --source-dir force-app --test-level NoTestRun -o npc2` |
 | `profiles.json` | five deployments in `sftk-profile` export format, imported by the harness (`h.importProfiles`) |
 | `cleanup.apex` | removes everything `SFTK CX` from an org (children first) |
+| `seed-volume.apex` / `cleanup-volume.apex` | the HUGE tree: 6,000 Accounts × 2 Contacts × 1 Opportunity (`SFTK VOL`), seeded in four transactions (substitute `__PASS__`/`__FROM__`/`__TO__`: acc 0 6000 · con 0 3000 · con 3000 6000 · opp 0 6000); profile `SFTK VOL — Accounts` |
 
 ## Reset the target between runs
 
@@ -62,6 +63,8 @@ the Contact buckets, the child-scan error path, and the source-only pages.
 - ✅ fixed: PricebookEntry (Name = product name, shared by every price book) fell out of every bucket — a child scan whose single key collides for most rows re-keys by the parents (Product2.ProductCode + Pricebook2.Name) and says so.
 - ✅ verified: Price books, Products & prices, Campaigns (+members, parent link connected after insert), Leads deploy; CampaignMember needs Leads deployed first — the parents card says so.
 - 🟡 by design, worth revisiting for big trees: grandchildren (line items, contact roles, comments, order items) are not selectable while their parent is still missing in the target — a two-pass deployment (R5 rule).
-- 🔴 open: no "scan all children" on the Deploy page; 🔄 Refresh does not re-scan previously scanned children; the run log is wiped by the post-run repaint.
+- ✅ fixed: 🔎 Scan all children; 🔄 Refresh re-reads children read before; the run log stays after the post-run repaint.
+- ✅ fixed (huge tree, run vol1): "✓ All listed" over "5,000 of 6,000" selected the 300 painted rows — now the whole list; the target's fuzzy name duplicate rule blocked 100/300 Accounts — Duplicate rules engine setting (Respect / Bypass) + the friendly error names it.
+- ⏳ huge tree run 2 (two passes, bypass on): pending — see vol2.log in the shots folder.
 - 🔴 open: builder hides in-tree lookups from Lookup Resolution — should show them as informational rows ("connected after insert").
 - ⏳ not yet run: Campaigns / Products / Leads / Price books deployments, parents-first flow, Retry failed, rollback of a run, huge trees (thousands of records, >5,000 per list).

@@ -121,10 +121,10 @@ function sftkFriendlyError(raw) {
     out.hint = 'Fix the data to satisfy the rule, or temporarily deactivate the validation rule while migrating.';
     return out;
   }
-  if (/DUPLICATES_DETECTED/i.test(s)) {
+  if (/DUPLICATES_DETECTED|Use one of these records\?/i.test(s)) {
     out.type = 'duplicate';
-    out.message = 'The target org\'s duplicate rules matched an existing record and blocked the write';
-    out.hint = 'Use Upsert with an external-id match field, or relax the duplicate rule during migration.';
+    out.message = 'A duplicate rule in the target org flagged this record and blocked the write';
+    out.hint = 'These are copies of existing records — set Duplicate rules to "Bypass for this deployment" next to ▶ Deploy and run again, or relax the rule in the target for the migration.';
     return out;
   }
   if (/INSUFFICIENT_ACCESS/i.test(s)) {

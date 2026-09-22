@@ -20,7 +20,7 @@ export default async function (h) {
   h.log('offline card:', await h.eval(`!!document.querySelector('.ds-rec-card-warn') && document.querySelector('.ds-rec-card-warn').innerText.includes('not open')`));
   // first visit: "Read both orgs now"; later visits open on the last scan → Refresh
   await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
-  await h.waitFor("!!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", 120000, 1000);
+  await h.waitFor("!!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", Number(process.env.SCAN_WAIT || 120000), 1000);
   await h.sleep(2500);
   h.log('PLAN:', await dump(h, '.ds-dep-plan', 1600));
   // children are scanned on demand: scan each one via its "Scan" button until none is left
@@ -31,7 +31,7 @@ export default async function (h) {
     if (which === null) break;
     await h.eval(`(() => { const b = document.querySelector('[data-dep-scan="${which}"]'); b.click(); })()`);
     h.log('scanning child', which);
-    await h.waitFor(`(() => { const b = document.querySelector('[data-dep-scan="${which}"]'); return !b || !b.disabled; })()`, 90000, 1000);
+    await h.waitFor(`(() => { const b = document.querySelector('[data-dep-scan="${which}"]'); return !b || !b.disabled; })()`, Number(process.env.SCAN_WAIT || 90000), 1000);
     await h.sleep(800);
     const ok = await h.eval(`/Rescan/.test(document.querySelector('[data-dep-scan="${which}"]')?.textContent || '')`);
     if (!ok) { scanFailed.push(which); h.log('  scan FAILED for', which, '| toast:', (await h.eval(`[...document.querySelectorAll('.ds-toast')].map(t => t.innerText).join(' || ')`)).slice(0, 400)); }
@@ -77,7 +77,7 @@ export default async function (h) {
   // complete"); the post-run refresh then wipes the progress log, so keep the
   // last text seen while waiting
   let lastLog = '';
-  for (let i = 0; i < 300; i++) {
+  for (let i = 0; i < Number(process.env.RUN_WAIT || 300); i++) {
     const t = await h.eval(`document.querySelector('#dsRecProgress')?.innerText || ''`);
     if (t) lastLog = t;
     if (await h.eval(`_history.length > ${histBefore}`)) break;
