@@ -70,4 +70,7 @@ the Contact buckets, the child-scan error path, and the source-only pages.
 - ✅ verified (huge tree, run vol3, two passes): 6,000 Accounts, 6,000 Opportunities, 10,250 of 12,000 Contacts (5,000-per-pass cap; a third pass takes the rest), every child linked, both runs success, ~2.5 min per 15,000 records on synchronous calls with duplicate rules bypassed.
 - 🔴 open: builder hides in-tree lookups from Lookup Resolution — should show them as informational rows ("connected after insert").
 - ✅ verified live: ↻ Retry failed ticks the failed record on the Deploy page; the parents-first journey (➕ Deploy Individual first → journey page → deploy → ‹ Back) returns with the parent ✓ in sync and the count down by one.
-- ⏳ pending: rollback of a real run (rollback4.log).
+- ✅ verified live: ↩ Roll back of a run that inserted 6 Accounts — typed ROLLBACK, "Account · 6 deleted ✓ verified", target back to its seeded 4. Two findings fixed on the way: a child object Salesforce refuses to query (ActionableListMember, implementation restriction) kept every created parent — now reported without blocking, with "delete these anyway — I checked" for truly unreadable children; person-account contacts were counted as failed deletions — they go with their Account.
+- ✅ final rerun: rollback ✅ success, "Contact · ✓ verified 2 left alone", Account · 6 deleted ✓ verified.
+
+Campaign complete 2026-09-22. Note: trailheads4 still holds the SFTK VOL volume data (6,000 Accounts etc.) — `cleanup-volume.apex` removes it in 9,000-account passes.

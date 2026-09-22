@@ -44,7 +44,11 @@ Store currently has **1.4.2** — 1.4.3 has NOT been uploaded yet.
 > duplicate-rules Respect/Bypass. Volume fixture seeded (24,000 rows on trailheads2).
 > - DONE round 7: Bulk result correlation by value; bypass ⇒ Collections; in-tree lookup rows.
 > - DONE: huge tree verified live (vol3: 6,000/6,000/10,250 after two passes, all linked).
-> - NEXT: read retry-rollback.log; run
+> - DONE: Retry failed, parents-first journey, rollback all verified live (rollback fixes:
+> restricted child objects don't block; 'delete anyway' choice; person contacts skipped).
+> - DONE: rollback8 clean. **LIVE CAMPAIGN COMPLETE.** Gate 96 files / 2601 tests, zip packed.
+> - NEXT: the user decides on release (upload dist/salesforce-toolkit-v1.5.0-store.zip;
+> CHANGELOG 1.5.0 section = store notes); 🪪 chips question still open. (old: read retry-rollback.log; run
 > scripts/dev/live/retry-and-rollback.mjs (Retry failed + ↩ Roll back live);
 > then (3) Retry failed, rollback, parents-first; then UX; then release. (Campaigns /
 > Products / Leads / Price books deployments; (3) parents-first flow, Retry failed,
