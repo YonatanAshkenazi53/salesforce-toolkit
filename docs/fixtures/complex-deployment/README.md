@@ -69,4 +69,5 @@ the Contact buckets, the child-scan error path, and the source-only pages.
 - ✅ fixed: in-tree lookups shown as informational rows in the builder.
 - ✅ verified (huge tree, run vol3, two passes): 6,000 Accounts, 6,000 Opportunities, 10,250 of 12,000 Contacts (5,000-per-pass cap; a third pass takes the rest), every child linked, both runs success, ~2.5 min per 15,000 records on synchronous calls with duplicate rules bypassed.
 - 🔴 open: builder hides in-tree lookups from Lookup Resolution — should show them as informational rows ("connected after insert").
-- ⏳ not yet run: Campaigns / Products / Leads / Price books deployments, parents-first flow, Retry failed, rollback of a run, huge trees (thousands of records, >5,000 per list).
+- ✅ verified live: ↻ Retry failed ticks the failed record on the Deploy page; the parents-first journey (➕ Deploy Individual first → journey page → deploy → ‹ Back) returns with the parent ✓ in sync and the count down by one.
+- ⏳ pending: rollback of a real run (rollback4.log).
