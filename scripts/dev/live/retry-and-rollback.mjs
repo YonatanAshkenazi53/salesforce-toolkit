@@ -8,8 +8,10 @@ export default async function (h) {
   await h.login('npc'); await h.login('npc2'); await h.studio(''); await h.watchErrors();
   await h.importProfiles('docs/fixtures/complex-deployment/profiles.json');
   const NAME = process.env.PROFILE || 'SFTK CX — Accounts tree';
-  // a fresh profile has no History: run the deployment once, quickly (root only, first 20 inserts)
+  // a fresh profile has no History: run the deployment once (root inserts only) — SKIP_RUN=1 skips it
   const id = await h.eval(`_profiles.find(p => p.name === ${JSON.stringify(NAME)})?.id`);
+  if (process.env.SKIP_RUN === '1') { h.log('SKIP_RUN: no deployment run'); }
+  else {
   await h.eval(`window.runProfile(${JSON.stringify(id)})`); await h.sleep(1500);
   await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
   await h.waitFor("!!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000);
@@ -24,6 +26,7 @@ export default async function (h) {
   for (let i = 0; i < 600; i++) { if (await h.eval(`_history.length > ${histBefore}`)) break; await h.sleep(1000); }
   await h.sleep(6000);
   await h.waitFor("!document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000);
+  }
 
   // ── ↻ Retry failed ──
   await h.eval(`document.querySelector('[data-view="history"]')?.click()`);
@@ -43,12 +46,15 @@ export default async function (h) {
   if (process.env.ROLLBACK === '0') return;
   await h.eval(`document.querySelector('[data-view="history"]')?.click()`);
   await h.waitFor("!!document.querySelector('[data-dsaction=\"rollbackRun\"]')", 20000, 500); await h.sleep(500);
-  const rbDisabled = await h.eval(`document.querySelector('[data-dsaction="rollbackRun"]')?.disabled`);
-  h.log('Roll back button disabled:', rbDisabled);
+  // the newest run that CAN be rolled back (a run that wrote nothing offers a disabled button)
+  const rbDisabled = !(await h.eval(`!!document.querySelector('[data-dsaction="rollbackRun"]:not([disabled])')`));
+  h.log('Roll back available:', !rbDisabled);
   if (rbDisabled) return;
-  await h.eval(`document.querySelector('[data-dsaction="rollbackRun"]').click()`);
-  await h.waitFor("!!document.querySelector('#dsUndoTyped') || /nothing to|could not|cannot/i.test(document.querySelector('#dsUndoPlan')?.innerText || '')", 300000, 1000);
-  h.log('ROLLBACK PLAN:', await dump(h, '#dsUndoPlan', 1600));
+  await h.eval(`document.querySelector('[data-dsaction="rollbackRun"]:not([disabled])').click()`);
+  // the plan is complete when the typed input exists, or when the Go button was removed (nothing to do)
+  await h.waitFor("!!document.querySelector('#dsUndoTyped') || (!!document.querySelector('#dsUndoPlan')?.innerText && !document.querySelector('#dsUndoGo'))", 300000, 1000);
+  await h.sleep(1000);
+  h.log('ROLLBACK PLAN:', await dump(h, '#dsUndoPlan', 6000));
   h.log('ROLLBACK LOG (pre):', await dump(h, '#dsUndoLog', 800));
   const word = await h.eval(`(document.querySelector('#dsUndoTyped')?.placeholder || '')`);
   h.log('typed word asked:', JSON.stringify(word));
