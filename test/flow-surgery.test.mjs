@@ -283,7 +283,7 @@ describe('field-cleaner.js: the preview comes from the REAL remover, and the cho
   });
   it('replace is offered only when something can come out; otherwise nothing is pre-chosen', () => {
     expect(FC2).toContain("const canReplace = hasChoice && !!pv && pv.removed.length > 0;");
-    expect(FC2).toContain("let activeMode = hasChoice ? (canReplace ? 'replace' : '') : 'replace';");
+    expect(FC2).toContain("let activeMode = hasChoice ? (canReplace && !replaceLikelyRefused ? 'replace' : '') : 'replace';");
     expect(FC2).toContain('go.disabled = !(ack && ack.checked && activeMode);');
     expect(FC2).toContain("if (hasChoice && !activeMode) return;");
   });
