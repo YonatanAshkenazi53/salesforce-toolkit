@@ -39,7 +39,9 @@ Store currently has **1.4.2** — 1.4.3 has NOT been uploaded yet.
 > deploy (TotalPrice rule); autonumber-named objects no longer double; contact
 > roles / comments / line items deploy under existing parents. Gate 94 / 2582.
 > - DONE round 4: group-B children attach by the scan's parent pairing (OrderItem fixed).
-> - NEXT: (2) Campaigns /
+> - DONE round 5: the four other deployments ran live; PricebookEntry re-key.
+> - NEXT: (2b) huge trees (docs/fixtures/complex-deployment/seed-volume.apex, profile 'SFTK VOL — Accounts');
+> then (3) Retry failed, rollback, parents-first; then UX; then release. (Campaigns /
 > Products / Leads / Price books deployments; (3) parents-first flow, Retry failed,
 > rollback; (4) huge trees (Apex loops, thousands of records, >5,000 per list);
 > (5) UX: scan-all-children, Refresh re-scans children, run log survives the

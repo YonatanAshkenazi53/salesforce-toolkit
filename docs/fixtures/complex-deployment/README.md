@@ -59,6 +59,8 @@ the Contact buckets, the child-scan error path, and the source-only pages.
 - ✅ fixed: every line item was rejected ("specify either unit price or total price, not both") — TotalPrice is left out, the target computes it.
 - ✅ fixed: Contract and Order were inserted again on every pass (autonumber-only name) — an autonumber name is not a usable key; the scan falls back to parent + subject-like field and points to the 🪪 identity field. Two passes now leave 1 Contract, 1 Order.
 - ✅ fixed: a child inserted under an EXISTING parent was attached by re-matching the parent's key with one exact value (OrderItem lost its Order once Order had a composite key) — attached by the scan's own srcId→tgtId pairing now; key matching is the fallback.
+- ✅ fixed: PricebookEntry (Name = product name, shared by every price book) fell out of every bucket — a child scan whose single key collides for most rows re-keys by the parents (Product2.ProductCode + Pricebook2.Name) and says so.
+- ✅ verified: Price books, Products & prices, Campaigns (+members, parent link connected after insert), Leads deploy; CampaignMember needs Leads deployed first — the parents card says so.
 - 🟡 by design, worth revisiting for big trees: grandchildren (line items, contact roles, comments, order items) are not selectable while their parent is still missing in the target — a two-pass deployment (R5 rule).
 - 🔴 open: no "scan all children" on the Deploy page; 🔄 Refresh does not re-scan previously scanned children; the run log is wiped by the post-run repaint.
 - 🔴 open: builder hides in-tree lookups from Lookup Resolution — should show them as informational rows ("connected after insert").

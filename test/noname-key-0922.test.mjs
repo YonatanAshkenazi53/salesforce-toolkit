@@ -56,6 +56,21 @@ describe('sftkMatchingFallback picks the key a describe offers', () => {
   });
 });
 
+describe('a child scan that collides on most rows re-keys with the composite, once', () => {
+  it('is guarded: child scans only, nothing configured, not already re-keyed, half or more colliding', () => {
+    expect(SC).toContain("if (scope && !hasMatchingCfg && !scope._rekeyed && _keyCollisions && (srcRes.records || []).length) {");
+    expect(SC).toContain('if (collidingSrc * 2 >= srcRowsN) {');
+    expect(SC).toContain("const res2 = await runDiffScan(profile, { ...node, matching: { strategy: fb.strategy, fields: fb.fields, normalize: fb.normalize } }, { ...scope, _rekeyed: true });");
+    expect(SC).toContain('source records share the same ${srcKeyFields.join(\' + \')} — matched by ${fb.fields.join(\' + \')} instead for this scan.');
+  });
+  it('the fallback used for it skips the (non-unique) name field, so a PricebookEntry keys on its two parents', () => {
+    const PBE = [f('Name', 'string', { nameField: true }), f('Pricebook2Id', 'reference', { relationshipName: 'Pricebook2', referenceTo: ['Pricebook2'], nillable: false }),
+      f('Product2Id', 'reference', { relationshipName: 'Product2', referenceTo: ['Product2'], nillable: false }), f('UnitPrice', 'currency')];
+    const fb = sftkMatchingFallback(PBE.filter(x => !(x.nameField && !x.autoNumber)), { parentField: 'Product2Id', parentKeyPath: 'Product2.ProductCode' });
+    expect(fb.fields).toEqual(['Product2.ProductCode', 'Pricebook2.Name']);
+  });
+});
+
 describe('the scan uses it, says so, and validates path keys', () => {
   it('no Name and no config → fallback with a warning; nothing usable → a plain error with the fix', () => {
     expect(SC).toContain("if (!hasMatchingCfg && srcTypes.size && !srcTypes.has(srcMatchField) && (!srcNameFld || _srcNameIsAuto)) {");

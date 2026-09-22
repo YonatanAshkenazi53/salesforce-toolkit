@@ -1197,6 +1197,28 @@ async function runDiffScan(profile, node = null, scope = null) {
       }
     } catch (_) { _dupKeys = new Set(); _keyCollisions = null; }
   }
+  // R1b — a CHILD scan whose single key collides for most rows, with nothing
+  // configured, is a junction-like object (PricebookEntry: Name is the
+  // product's name, shared by every price book's entry). Excluding every row
+  // helps no one — re-key with the describe's composite (the parents by
+  // name), once, and say so (live run 2026-09-22: 6 entries, zero in any bucket).
+  if (scope && !hasMatchingCfg && !scope._rekeyed && _keyCollisions && (srcRes.records || []).length) {
+    const srcRowsN = (srcRes.records || []).length;
+    const collidingSrc = (srcRes.records || []).filter(r => _dupKeys.has(sftkMatchKey(r, srcMatching))).length;
+    if (collidingSrc * 2 >= srcRowsN) {
+      const parentRel = scope.parentField ? (srcDescFull?.fields || []).find(f => f && f.name === scope.parentField)?.relationshipName : null;
+      const parentKeyPath = parentRel && parentMatchingForKey ? `${parentRel}.${parentMatchingForKey.fields[0]}` : null;
+      const fb = sftkMatchingFallback((srcDescFull?.fields || []).filter(f => !(f && f.nameField && !f.autoNumber)),
+        { lookupResolutions: node?.lookupResolutions, parentField: scope.parentField, parentKeyPath });
+      if (fb && fb.fields.length > 1 && fb.fields.join('|') !== srcKeyFields.join('|')) {
+        const res2 = await runDiffScan(profile, { ...node, matching: { strategy: fb.strategy, fields: fb.fields, normalize: fb.normalize } }, { ...scope, _rekeyed: true });
+        if (res2 && !res2.error) {
+          res2.warnings = [`${objType}: ${collidingSrc} of ${srcRowsN} source records share the same ${srcKeyFields.join(' + ')} — matched by ${fb.fields.join(' + ')} instead for this scan. Keep it: ✏ Edit → Records → Matching → 💡 Suggestions.`, ...(res2.warnings || [])].slice(0, 10);
+          return res2;
+        }
+      }
+    }
+  }
 
   // R3 — orphan detection (child scans only). The scoped target query can
   // only see children whose link field points at a tracked parent — children
