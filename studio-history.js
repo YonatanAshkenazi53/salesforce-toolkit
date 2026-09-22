@@ -340,6 +340,7 @@ function renderHistory() {
               ${run.status === 'success' ? '✅' : run.status === 'partial' ? '⚠' : '❌'} ${run.status}
             </span>
             <span class="ds-history-profile-name">${esc(run.profileName || 'Unknown profile')}</span>
+            ${run.sequenceName && !isRollback ? `<span class="ds-chip" title="This run was one step of the sequence “${esc(run.sequenceName)}”. ↩ Roll back sequence undoes EVERY step of that sequence run, not only this one (live 2026-09-23).">🔗 step of “${esc(run.sequenceName)}”</span>` : ''}
             ${run._archived ? '<span class="ds-chip" title="Loaded from the 📦 on-PC archive (IndexedDB) — runs that aged past the 100-run hot cap live there instead of being deleted">📦 archived</span>' : ''}
             ${run.scheduledRun ? '<span class="ds-chip">📅 scheduled</span>' : ''}
             <span class="ds-history-time">${timeAgo(run.startedAt)}</span>

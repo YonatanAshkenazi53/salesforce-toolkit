@@ -93,6 +93,8 @@ extensions containing root files that start with `_`).
 - **Sequences ask before they write.** ▶ Run lists every step (object, children, insert or
   upsert), says that a sequence writes every matching record with no per-record selection,
   needs an acknowledgement, and asks for the org name when the target is production.
+- **History says which sequence a run belongs to.** A sequence writes one card per step; each
+  card now carries "🔗 step of …" and says that ↩ Roll back sequence undoes every step.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run
