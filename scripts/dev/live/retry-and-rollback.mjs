@@ -65,7 +65,9 @@ export default async function (h) {
   await h.sleep(300);
   h.log('Go enabled:', await h.eval(`!document.querySelector('#dsUndoGo')?.disabled`));
   await h.eval(`document.querySelector('#dsUndoGo')?.click()`);
-  for (let i = 0; i < 900; i++) { const t = await h.eval(`document.querySelector('#dsUndoLog')?.innerText || ''`); if (/rolled back|Rollback (complete|finished|done)|✅.*verified|❌/i.test(t) && !/⏳/.test(t.slice(-200))) break; await h.sleep(1000); }
+  // the rollback writes its own History entry on success AND on failure — that is the end marker
+  const rbBefore = await h.eval(`_history.filter(x => x.kind === 'rollback').length`);
+  for (let i = 0; i < 1500; i++) { if (await h.eval(`_history.filter(x => x.kind === 'rollback').length > ${rbBefore}`)) break; await h.sleep(1000); }
   await h.sleep(2000);
   h.log('ROLLBACK LOG:', await dump(h, '#dsUndoLog', 2500));
   await h.shot(h.shots + '/rollback.png');

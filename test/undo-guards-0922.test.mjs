@@ -25,6 +25,14 @@ describe('rollback: child objects Salesforce refuses to query do not keep the pa
   });
 });
 
+describe('rollback: person-account contacts go with their Account', () => {
+  it('excludes them from the Contact deletions and says so in the log and the plan', () => {
+    expect(U).toContain("const pa = new Set((res.records || []).filter(r => r && r.IsPersonAccount === true).map(r => r.Id));");
+    expect(U).toContain('person-account contact(s) go with their Account — not deleted on their own');
+    expect(U).toContain('keptIds: [], personSkipped };');
+  });
+});
+
 describe('rollback and the org guards', () => {
   it('refuses a locked org before the re-read, and says so', () => {
     const i = U.indexOf('const lockedLeg = legs.find(l => typeof window.sftkOrgLocked === ');

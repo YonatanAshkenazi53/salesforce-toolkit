@@ -313,6 +313,7 @@ function _sftkUndoPlanHtml(ctx) {
     }
     if (it.kept && it.cascadeUnknown && it.cascadeUnknown.length && it.keptIds && it.keptIds.length) bits.push(`<label class="ds-undo-force" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" data-undo-force="${esc(it.objType)}"> delete these ${it.kept.toLocaleString()} anyway — I checked what hangs under them</label>`);
     if (it.cascadeUnchecked && it.cascadeUnchecked.length) bits.push(`<span class="ds-subtext">${it.cascadeUnchecked.length} child object(s) could not be checked because Salesforce restricts querying them (${esc(it.cascadeUnchecked.join(', '))}) — they did not stop the deletion</span>`);
+    if (it.personSkipped) bits.push(`${it.personSkipped.toLocaleString()} person-account contact(s) go with their Account — not deleted on their own`);
     if (s.createdLater) bits.push(`${s.createdLater.toLocaleString()} created AFTER the run → left alone`);
     if (s.changedLater) bits.push(`${s.changedLater.toLocaleString()} edited AFTER the run → left alone`);
     if (p.goneCount) {
@@ -553,9 +554,18 @@ window.rollbackRun = async function(runId) {
         const before = sftkUndoCapture(o.rows, Number.MAX_SAFE_INTEGER);
         const diff = sftkUndoDiff(before, res.records || []);
         const scoped = sftkUndoScopeByTime(diff, res.records || [], legEnd);
+        // Person Account contacts are Salesforce's own: they cannot be deleted
+        // on their own and go with their Account (live rollback 2026-09-22:
+        // "Contact · 2 failed" that were nothing of the kind).
+        let personSkipped = 0;
+        if (o.objType === 'Contact' && scoped.created.length) {
+          const pa = new Set((res.records || []).filter(r => r && r.IsPersonAccount === true).map(r => r.Id));
+          if (pa.size) { const keep = scoped.created.filter(id => !pa.has(id)); personSkipped = scoped.created.length - keep.length; scoped.created = keep; }
+          if (personSkipped) log('👤', `Contact: ${personSkipped.toLocaleString()} person-account contact(s) go with their Account — not deleted on their own.`);
+        }
         const p = sftkUndoPlan(diff);
         const item = { leg, ...o, before, diff, scoped, p, runEndedAt: legEnd, nowCount: (res.records || []).length,
-          kept: 0, keptForChildren: 0, cascadeNotes: [], cascadeUnknown: [], cascadeUnchecked: [], keptIds: [] };
+          kept: 0, keptForChildren: 0, cascadeNotes: [], cascadeUnknown: [], cascadeUnchecked: [], keptIds: [], personSkipped };
         // What hangs under the records we would delete? Deleting a parent
         // cascade-deletes its children — including ones someone added AFTER
         // the run, which the plan promises to leave alone. Those parents are
