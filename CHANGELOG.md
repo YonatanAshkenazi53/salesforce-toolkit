@@ -61,6 +61,9 @@ extensions containing root files that start with `_`).
   appeared … nothing changed" for it. It now verifies the rewritten version at the new API.
   The closing line counts what happened ("3 flow(s) changed and verified, across 1 org(s)")
   instead of calling an org unchanged because one flow raised a warning.
+- **⏻ Flow switches say only what the org confirms.** After switching flows off or on the
+  tool re-reads the org; a flow Salesforce still reads the other way is reported as not
+  switched (and is not remembered for ▶ Switch ON) instead of a ✅ taken from the request.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run

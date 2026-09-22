@@ -3023,6 +3023,29 @@ const DependencyMap = (() => {
         if (r?.error) failed.push(`${j.label}: ${r.error}`);
         else done.push(j);
       }
+      // VERIFY by re-reading the org (live 2026-09-22): a PATCH that came
+      // back clean is not the same as the flow being off / on. One query of
+      // FlowDefinitionView tells what is active NOW; a flow the org does not
+      // confirm moves from done to failed, and is never "remembered".
+      if (done.length) {
+        const names = done.map(j => j.apiName);
+        const q = await depBg({ type: 'SF_QUERY', tooling: false, orgUrl: org.orgUrl, sid: org.sid, _silentError: true,
+          query: `SELECT ApiName, ActiveVersionId, IsActive FROM FlowDefinitionView WHERE ApiName IN (${names.map(n => `'${String(n).replace(/'/g, "\\'")}'`).join(',')})` });
+        if (!q || q.error) {
+          failed.push(...done.map(j => `${j.label}: the switch was accepted but the org could not be re-read to confirm it (${(q && q.error) || 'no answer'}) — check it in Setup`));
+          done.length = 0;
+        } else {
+          const nowActive = new Map((q.records || []).map(r => [r.ApiName, !!r.ActiveVersionId]));
+          const confirmed = [];
+          for (const j of done) {
+            const isOn = nowActive.get(j.apiName);
+            const wantOn = mode !== 'deactivate';
+            if (isOn === wantOn) confirmed.push(j);
+            else failed.push(`${j.label}: the switch was accepted but the org still reads it ${isOn === undefined ? 'unknown (not listed)' : (isOn ? 'ON' : 'OFF')} — nothing to rely on here, check it in Setup`);
+          }
+          done.length = 0; done.push(...confirmed);
+        }
+      }
       // Remember / forget only what THIS org confirmed — a failed flip must
       // not overwrite the memory of what was truly active.
       if (mode === 'deactivate' && Object.keys(plan.remember).length) {
@@ -3036,7 +3059,7 @@ const DependencyMap = (() => {
         await _fbRememberSave(org.key, m => { for (const j of done) delete m[j.apiName]; return m; });
       }
       if (done.length || failed.length) {
-        report.push(`${done.length ? `✅ ${org.label}: ${done.length} switched ${mode === 'deactivate' ? 'OFF' : 'ON'} (${escHtml(done.map(j => j.label).join(', '))})` : ''}${failed.length ? `${done.length ? '<br>' : ''}❌ ${org.label}: ${escHtml(failed.join(' · '))}` : ''}`);
+        report.push(`${done.length ? `✅ ${org.label}: ${done.length} switched ${mode === 'deactivate' ? 'OFF' : 'ON'} — verified by re-reading the org (${escHtml(done.map(j => j.label).join(', '))})` : ''}${failed.length ? `${done.length ? '<br>' : ''}❌ ${org.label}: ${escHtml(failed.join(' · '))}` : ''}`);
       }
     }
     _fbBusy = false;

@@ -47,7 +47,7 @@ Store currently has **1.4.2** — 1.4.3 has NOT been uploaded yet.
 > - DONE: Retry failed, parents-first journey, rollback all verified live (rollback fixes:
 > restricted child objects don't block; 'delete anyway' choice; person contacts skipped).
 > - DONE: rollback8 clean. **LIVE CAMPAIGN COMPLETE.** Gate 96 files / 2601 tests, zip packed.
-> - **CAMPAIGN 2 (write-capable tools) started 2026-09-22 — Field Cleaner DONE, ⚙ API versions DONE** (fixture + findings: `docs/fixtures/apiver-fixture/README.md`, script `scripts/dev/live/api-versions.mjs`, pins apiver-live-0922; Draft rewritten in place now verified; summary counts fixed). Field Cleaner runbook +
+> - **CAMPAIGN 2 (write-capable tools) started 2026-09-22 — Field Cleaner DONE, ⚙ API versions DONE, ⏻ Flow switches DONE** (`docs/fixtures/flowswitch-fixture/README.md`, script `scripts/dev/live/flow-switches.mjs` MODE=off|on|cycle; switch now verified by re-reading FlowDefinitionView, pins flowswitch-live-0922) (fixture + findings: `docs/fixtures/apiver-fixture/README.md`, script `scripts/dev/live/api-versions.mjs`, pins apiver-live-0922; Draft rewritten in place now verified; summary counts fixed). Field Cleaner runbook +
 > findings: `docs/fixtures/field-cleaner-fixture/README.md` (rebuild.sh, live script
 > `scripts/dev/live/field-cleaner.mjs`, env SCAN_ONLY / ACTIVE / DELETE_FIELD). Four fixes,
 > all pinned (fc-flow-refusal-0922, fc-interviews-0922, fc-field-delete-0922): flow-fix dialog
@@ -56,7 +56,7 @@ Store currently has **1.4.2** — 1.4.3 has NOT been uploaded yet.
 > destructiveChanges deploy (Tooling DELETE of CustomField is refused in BOTH orgs — even a fresh
 > field nothing references); the "Field deleted" card is no longer wiped. Verified end to end
 > by CLI. Fixture rebuilt on trailheads2, ready. Harness gained `h.popup(tab)`.
-> - NEXT in campaign 2: Flow switches (⏻ bulk panel, same Dependencies tab), Dependencies
+> - NEXT in campaign 2: Dependencies
 > (fixture `SFTK_Dep_Test_*`), Picklist Manager (typed prod gates), Sync Ring + Org Compare
 > consistency, Sequences. Then the user decides on the 1.5.0 release.
 > - NEXT: the user decides on release (upload dist/salesforce-toolkit-v1.5.0-store.zip;
