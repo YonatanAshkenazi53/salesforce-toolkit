@@ -18,10 +18,12 @@
 
 // ── the switch ────────────────────────────────────────────────────────────
 function sftkDeployViewOn() {
-  return !!(typeof _settings === 'object' && _settings && _settings.deployViewBeta === true);
+  // 1.5.0: this page IS Data Deployment's page — every door opens it. The one
+  // way out is a settings key with no button (support fallback): deployViewClassic.
+  return !(typeof _settings === 'object' && _settings && _settings.deployViewClassic === true);
 }
 async function sftkDeployViewSet(on) {
-  _settings.deployViewBeta = !!on;
+  _settings.deployViewClassic = !on;
   await storageSaveSettings();
 }
 
@@ -127,6 +129,56 @@ function _depChildSel(pathKey) {
   return _recChildSel[pathKey];
 }
 
+// ↻ Retry failed (History) lands here: the failed records that are still under
+// 🔴 Insert get ticked, the rest are reported — never guessed at.
+let _depRetry = null;        // { profileId, byPath: { pathKey: [sourceId] } }
+let _depRetryNote = '';
+
+// PURE. Which of a failed run's records can be ticked on this page right now?
+// Only Insert rows, and for a child only rows the page would let the user tick
+// (rowState is the classic parent rule). Changed rows are counted, not ticked:
+// which org wins a row is the user's call.
+function sftkDeployRetryPicks(scan, byPath, rowState) {
+  const out = { picks: {}, found: 0, inChanged: 0, lost: 0, total: 0 };
+  for (const [pathKey, ids] of Object.entries(byPath || {})) {
+    const want = new Set(ids || []);
+    out.total += want.size;
+    const isRoot = pathKey === '';
+    const s = isRoot ? scan : (scan && scan.children && scan.children[pathKey]);
+    if (!s || !want.size) { out.lost += want.size; continue; }
+    const depth = isRoot ? 0 : pathKey.split('.').length;
+    let pMissing = new Set(), pExists = new Set();
+    if (!isRoot) {
+      const pk = depth > 1 ? pathKey.split('.').slice(0, -1).join('.') : null;
+      const ps = pk === null ? scan : ((scan.children && scan.children[pk]) || {});
+      pMissing = new Set((ps.missingInTarget || []).map(r => r.sourceId));
+      pExists  = new Set([...(ps.changed || []).map(r => r.sourceId), ...(ps.identical || []).map(r => r.sourceId)]);
+    }
+    const ok = r => {
+      if (isRoot || typeof rowState !== 'function') return isRoot;
+      const st = rowState(r, depth, pMissing, pExists);
+      return st !== 'deepblock' && st !== 'untracked';
+    };
+    const hit = (s.missingInTarget || []).filter(r => want.has(r.sourceId) && ok(r)).map(r => r.sourceId);
+    const chg = (s.changed || []).filter(r => want.has(r.sourceId)).length;
+    if (hit.length) out.picks[pathKey] = hit;
+    out.found += hit.length; out.inChanged += chg;
+    out.lost += Math.max(0, want.size - hit.length - chg);
+  }
+  return out;
+}
+function sftkDeployRetryLine(r) {
+  if (!r || !r.total) return '';
+  return `↻ Retry: ${r.found} of ${r.total} failed record(s) are ticked under 🔴 Insert — check them, then ▶ Run.`
+    + (r.inChanged ? ` ${r.inChanged} are under 🟡 Changed — pick which org wins each row.` : '')
+    + (r.lost ? ` ${r.lost} are not in an Insert list of the last scan (already in the target, outside the scan, or an object not scanned yet) — 🔄 Refresh state measures again.` : '');
+}
+window.sftkDeployRetry = function (profileId, byPath, targetUrl) {
+  _depRetry = { profileId, byPath: byPath || {} };
+  _depRetryNote = '';
+  window.openReconcile?.(profileId, targetUrl);
+};
+
 // ── entry points ──────────────────────────────────────────────────────────
 // Classic page → this page (the ✨ button in the Reconcile header).
 window.sftkOpenDeployView = function () {
@@ -156,7 +208,7 @@ async function renderDeploy() {
   const p = _reconcileProfile;
   if (!p) { _currentView = 'profiles'; renderProfiles(); return; }
   sftkRecResetSelectionFor(p);
-  if (_depForProfile !== p.id) { _depForProfile = p.id; _depObjPath = ''; _depTab = 'ins'; _depFilter = ''; }
+  if (_depForProfile !== p.id) { _depForProfile = p.id; _depObjPath = ''; _depTab = 'ins'; _depFilter = ''; if (!_depRetry) _depRetryNote = ''; }
 
   const objType = p.tree?.objectType || p.tree?.childSObject || '?';
   const scan = p.lastScan;
@@ -171,10 +223,11 @@ async function renderDeploy() {
     back: origin
       ? `<button class="ds-back-link" id="dsDepBackOrigin" title="Return to the deployment this parents-first step was opened from">‹ Back to ${esc(origin.name || p._parentOf.objType)}</button>`
       : `<button class="ds-back-link" id="dsDepBack" title="Back to Data Deployment">‹ Back to deployments</button>`,
-    title: `Deploy — <span style="color:var(--brand)">${esc(p.name || objType)}</span> <span class="ds-dep-beta" title="New view, in beta. The classic pages are one click away and nothing about them changed.">beta</span>`,
-    help: 'One page instead of Run Transfer + Reconcile. It reads both orgs, says what is already in the target, and writes only what you select — through the same engine as the classic pages. Nothing is selected until you select it.',
+    title: `Deploy — <span style="color:var(--brand)">${esc(p.name || objType)}</span>`,
+    help: 'Reads both orgs, says what is already in the target, and writes only what you select. Nothing is selected until you select it. More than 5,000 records in one list? Run what is listed, 🔄 Refresh state, repeat.',
     subtitle: `${esc(srcL)} → ${esc(tgtL)} ${prodBadge(p.targetOrg)}${fresh ? ` · scanned ${esc(timeAgo(scan.runAt))}` : ''}${fresh ? ' · <span id="dsDepParentsChip" class="ds-dep-pchip ds-dep-pchip-wait" title="Are the objects this deployment points at aligned between the two orgs? Details in the card below.">⏳ parents…</span>' : ''}`,
-    actions: `<button class="ds-btn ds-btn-sm" data-dsaction="deployToClassic" title="Open this deployment in the classic ⚖ Reconcile page. The switch stays on — this is for this visit only.">↩ Classic view</button>
+    actions: `${p.ephemeral ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="saveEphemeralProfile" title="Keep this as a saved deployment — right now it disappears when you leave this page.">💾 Save as deployment</button>` : ''}
+      ${fresh && !p.ephemeral && (scan.missingInTarget || []).length && (scan.onlyInTarget || []).length ? `<button class="ds-btn ds-btn-sm" id="dsDepMatchReview" title="The same record on both sides under different names? Pair a 🔴 Insert row with a 🔵 In target only row once — the pair is remembered for this target.">🔗 Match review</button>` : ''}
       <button class="ds-btn ds-btn-sm" id="dsDepRefresh">🔄 Refresh state</button>`,
   });
 
@@ -190,6 +243,12 @@ async function renderDeploy() {
     return;
   }
 
+  if (_depRetry && (_depRetry.profileId === p.id || _depRetry.profileId === p._ringOf?.profileId)) {
+    const rp = sftkDeployRetryPicks(scan, _depRetry.byPath, sftkRecChildRowState);
+    for (const [k, ids] of Object.entries(rp.picks)) { const set = k === '' ? _recSel.push : _depChildSel(k).push; ids.forEach(id => set.add(id)); }
+    _depRetryNote = sftkDeployRetryLine(rp);
+    _depRetry = null;
+  }
   const objects = sftkDeployObjects(p.tree);
   const objByPath = Object.fromEntries(objects.map(o => [o.pathKey, o.obj]));
   const plan = sftkDeployPlanRows(p.tree, scan, sftkScanBucketInfo, sftkBucketCountLabel);
@@ -255,6 +314,7 @@ async function renderDeploy() {
 
   setMain(`${header}<div class="ds-dep-page">
     ${p._parentOf?.objType ? `<div class="ds-rec-card ds-dep-journey"><div class="ds-rec-card-line">⛓ Parents-first step: you opened this to align <b>${esc(objType)}</b> before deploying <b>${esc(p._parentOf.objType)}</b>. When it reads in sync — or when there is nothing to align — go back. <button class="ds-btn ds-btn-sm ds-btn-primary" id="dsDepJourneyBack">‹ Back to ${esc(origin ? (origin.name || p._parentOf.objType) : p._parentOf.objType)}</button></div></div>` : ''}
+    ${_depRetryNote ? `<div class="ds-rec-card"><div class="ds-rec-card-line">${esc(_depRetryNote)}</div></div>` : ''}
     <div id="dsDepTree"></div>
     ${planHtml}
     <div id="dsDepOrder"></div>
@@ -274,6 +334,8 @@ async function renderDeploy() {
         <label class="ds-dep-delmode" style="${p.apiMode === 'bulk' ? 'opacity:.45' : ''}" title="How many batches run in parallel (1–6). Faster at scale, but parallel writes can hit row locks when records share a parent — lower it if you see UNABLE_TO_LOCK_ROW. Bulk jobs ignore it.">threads
           <input id="dsDepThreads" class="ds-input ds-input-sm" type="number" min="1" max="6" step="1" style="width:52px;text-align:right" value="${Math.max(1, Math.min(6, Number(p.threads) || 1))}" ${p.apiMode === 'bulk' ? 'disabled' : ''}></label>
       </span>
+      <label class="ds-dep-delmode" style="cursor:pointer" title="Before anything is written, every object this run can touch is read from the target and kept on this PC as a restore point (the newest 10 runs). History then offers ↩ Roll back. One setting for every deployment.">
+        <input type="checkbox" id="dsDepUndoCapture" ${_settings.undoCapture === false ? '' : 'checked'}> 📸 restore point</label>
       <label class="ds-dep-delmode" title="How 🗑 selections are deleted">Delete mode
         <select id="dsDepDeleteMode" class="ds-select ds-select-sm">
           <option value="recycle" ${_recDeleteMode === 'recycle' ? 'selected' : ''}>🗑 Recycle Bin</option>
@@ -311,6 +373,13 @@ async function renderDeploy() {
   eid('dsDepApiMode')?.addEventListener('change', async e => { await sftkRecSetEngine(p, 'apiMode', e.target.value); renderDeploy(); });
   eid('dsDepBatch')?.addEventListener('change', async e => { e.target.value = await sftkRecSetEngine(p, 'batchSize', e.target.value); });
   eid('dsDepThreads')?.addEventListener('change', async e => { e.target.value = await sftkRecSetEngine(p, 'threads', e.target.value); });
+  eid('dsDepUndoCapture')?.addEventListener('change', async e => {
+    _settings.undoCapture = !!e.target.checked;
+    await storageSaveSettings();
+    showToast(_settings.undoCapture
+      ? '📸 Restore points on — every data deployment can be rolled back from History'
+      : '📸 Restore points off — runs from now on can NOT be rolled back', _settings.undoCapture ? 'info' : 'warning', 4500);
+  });
   sftkRecWireDupFix(document, p, scan);
   eid('dsRecRunBtn')?.addEventListener('click', () => runReconcile(p, objType,
     { missing: scan.missingInTarget || [], drift: scan.changed || [], extras: scan.onlyInTarget || [] }));
@@ -517,6 +586,7 @@ function _depWireChrome(p) {
     if (orig) window.openReconcile(orig.id); else { _currentView = 'profiles'; renderProfiles(); }
   });
   eid('dsDepRefresh')?.addEventListener('click', () => _depRescan(p));
+  eid('dsDepMatchReview')?.addEventListener('click', () => openMatchReview(p));
 }
 
 async function _depRescan(p) {
@@ -524,7 +594,7 @@ async function _depRescan(p) {
   if (b) { b.disabled = true; b.textContent = '⏳ reading both orgs…'; }
   // same reset the classic 🔄 does: a new scan invalidates every selection
   _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
-  _recChildSel = {};
+  _recChildSel = {}; _depRetryNote = '';
   await window.refreshProfileState?.(p.id);
   if (_currentView === 'deploy') renderDeploy();
 }

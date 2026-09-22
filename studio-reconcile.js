@@ -18,7 +18,7 @@ window.openReconcile = function(profileId, targetUrl) {
   const tgts = (typeof profileTargets === 'function' ? profileTargets(p) : []).filter(Boolean);
   if (tgts.length > 1 && !targetUrl) {
     showModal(`
-      <div class="ds-modal-header">⚖ Reconcile — pick the target</div>
+      <div class="ds-modal-header">🚀 Deploy — pick the target</div>
       <div class="ds-modal-body" style="font-size:12.5px">
         <div style="margin-bottom:8px">Reconcile fixes <strong>one source → target pair</strong> at a time. ${esc(orgLabel(p.sourceOrg))} pushes to ${tgts.length} targets — which one is this session about?</div>
         ${tgts.map(u => {
@@ -491,6 +491,9 @@ function sftkRecChildRowState(r, depth, pMissingSet, pExistsSet) {
 async function renderReconcile() {
   // ✨ Deploy view (beta): every repaint the classic code asks for — after a
   // run, a rescan, a child scan — lands on the page the user is actually on.
+  // 1.5.0 — every door into this page (cards, History, Compare, Ring, Seeder)
+  // opens the Deploy view; they all end in renderReconcile(), so this is the one seam.
+  if (typeof renderDeploy === 'function' && typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) { _currentView = 'deploy'; return renderDeploy(); }
   if (_currentView === 'deploy' && typeof renderDeploy === 'function') return renderDeploy();
   const p = _reconcileProfile;
   if (!p) { renderProfiles(); return; }
@@ -2089,6 +2092,40 @@ function openMatchReview(p) {
 // Execute the selected reconcile actions. Deletes require a confirmation
 // modal (destructive). Push reuses the transfer engine (root-only profile
 // clone). Overwrite uses SF_COLLECTIONS_UPDATE.
+// What a run is about to write, per org, in the words the typed confirmation
+// shows. Pure. An empty string means "this run writes nothing into that org".
+// 2026-09-21: the typed gate covered deletes only, so a plain insert or
+// overwrite into a production target ran on a single click.
+function sftkRecGuardedWrites(c, objType) {
+  const n = v => Number(v) || 0;
+  const join = a => { const l = a.filter(Boolean); return l.length ? l.join(' + ') + ' record(s)' : ''; };
+  return {
+    tgt: join([
+      n(c.ins)      ? `insert ${n(c.ins)} ${objType}` : null,
+      n(c.ovw)      ? `overwrite ${n(c.ovw)} ${objType}` : null,
+      n(c.childIns) ? `insert ${n(c.childIns)} child` : null,
+      n(c.childOvw) ? `overwrite ${n(c.childOvw)} child` : null,
+      n(c.relink)   ? `re-link ${n(c.relink)} child` : null,
+      n(c.del)      ? `delete ${n(c.del)} ${objType}` : null,
+      n(c.childDel) ? `delete ${n(c.childDel)} child` : null
+    ]),
+    src: join([
+      n(c.pull)   ? `insert ${n(c.pull)} ${objType}` : null,
+      n(c.updSrc) ? `update ${n(c.updSrc)} ${objType}` : null
+    ])
+  };
+}
+
+// PURE. Is a run log line a real error (work not done), or a note? One
+// reading, shared with History's card: the friendly classifier decides; the
+// ℹ marker stays honoured on its own in case the classifier is not loaded.
+function sftkRunLineIsError(line) {
+  const s = String(line == null ? '' : line);
+  if (/(^|: )ℹ /.test(s)) return false;
+  if (typeof sftkFriendlyError === 'function') { try { return sftkFriendlyError(s).kind === 'error'; } catch (_) {} }
+  return true;
+}
+
 async function runReconcile(profile, objType, buckets) {
   // ⛔ RUN GATE (user 2026-08-10: "the recommendation to sync parents first
   // is not strong enough") — the advisor's probe already knows when the
@@ -2352,15 +2389,29 @@ async function runReconcile(profile, objType, buckets) {
     if (!ok) return;
   }
 
-  // Deletes into a PRODUCTION org additionally require typing the org name.
-  // Child deletes (R4) go through the SAME typed confirmation as root deletes.
-  if ((delIds.length || childDelTotal) && tgtGuarded) {
-    const what = [
-      delIds.length ? `${delIds.length} ${objType}` : null,
-      childDelTotal ? `${childDelTotal} child` : null
-    ].filter(Boolean).join(' + ');
-    const okProd = await confirmTypedProd(orgLabel(profile.targetOrg), `delete ${what} record(s)`);
+  // ANY write into a production org requires typing the org name — inserts,
+  // overwrites and re-links as well as deletes, children included. One typed
+  // confirmation per org, naming everything the run will do there. The source
+  // org gets the same gate when the run writes back into it (← pull / update).
+  // Same fail-closed rule as above: only a confirmed sandbox / dev org is exempt.
+  const guardedWrites = sftkRecGuardedWrites({
+    ins: pushIds.length + childActs.reduce((t, a) => t + a.autoParents.size, 0),
+    ovw: ovwIds.length, del: delIds.length, childDel: childDelTotal,
+    childIns: childActs.reduce((t, a) => t + a.groupA.length + a.groupB.length, 0),
+    childOvw: childActs.reduce((t, a) => t + a.ovwIds.length, 0),
+    relink:   childActs.reduce((t, a) => t + a.sel.relink.size, 0),
+    pull: pullIds.length, updSrc: updSrcIds.length
+  }, objType);
+  if (guardedWrites.tgt && tgtGuarded) {
+    const okProd = await confirmTypedProd(orgLabel(profile.targetOrg), guardedWrites.tgt);
     if (!okProd) return;
+  }
+  if (guardedWrites.src) {
+    const srcOrgType = await ensureOrgType(profile.sourceOrg);
+    if (srcOrgType !== 'sandbox' && srcOrgType !== 'dev') {
+      const okSrc = await confirmTypedProd(orgLabel(profile.sourceOrg), guardedWrites.src);
+      if (!okSrc) return;
+    }
   }
 
   const prog = eid('dsRecProgress');
@@ -2914,7 +2965,11 @@ async function runReconcile(profile, objType, buckets) {
   // failures, and the card wore a green "success" over 1,850 unwritten
   // records. Any HARD error (the ℹ marker tags engine notes) blocks
   // 'success' — the failed rescue is real work not done.
-  const hardErrs = allErrors.filter(e => !/(^|: )ℹ /.test(String(e))).length;
+  // 2026-09-22 (user's card: 2 updated, 0 failed, "partial"): ⚠ / 🔗 lines are
+  // NOTES — a skipped field, a lookup resolved by name — and History already
+  // reads them so through sftkFriendlyError. Status must use the same reading,
+  // or a run that wrote every record wears "partial" over a note.
+  const hardErrs = allErrors.filter(e => sftkRunLineIsError(e)).length;
   const status   = (totalFail === 0 && hardErrs === 0) ? 'success' : (totalOk > 0 ? 'partial' : 'failed');
   // ↩ end-of-run boundary from Salesforce's own clock (studio-undo.js) —
   // PER ORG: the target's last write says nothing about when the SOURCE was

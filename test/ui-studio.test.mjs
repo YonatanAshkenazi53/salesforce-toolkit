@@ -694,7 +694,7 @@ describe('the compare trio explains itself on hover', () => {
 
   it('the deployment-card buttons carry the measure/fix/overview story', () => {
     expect(PROFILES).toContain('MEASURE this pair');
-    expect(PROFILES).toContain('FIX this source → target pair');
+    expect(PROFILES).toContain('Nothing writes until you select it.');   // 1.5.0: ▶ Run + ⚖ Reconcile became 🚀 Deploy
   });
 });
 

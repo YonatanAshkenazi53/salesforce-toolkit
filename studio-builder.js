@@ -172,7 +172,7 @@ function renderBuilder() {
         </div>
         <div class="ds-builder-org-col ds-bld-col-tgt">
           <div class="ds-lbl ds-bld-col-hd">${dsIcon('box')}Targets <span class="ds-builder-org-hint">where records are written</span></div>
-          <div class="ds-bld-tgt-hint">This is the deployment's ring: ▶ Run and ⚖ Reconcile ask <strong>which target</strong>, one at a time · field mapping previews use the first target's schema · Check all targets validates the rest</div>
+          <div class="ds-bld-tgt-hint">This is the deployment's ring: 🚀 Deploy asks <strong>which target</strong>, one at a time · field mapping previews use the first target's schema · Check all targets validates the rest</div>
           ${ringSrc ? `
           <label class="ds-pk-orgchk" title="The deployment's targets are ALWAYS whatever the ring's targets are — add an org to the ring and this deployment covers it automatically.">
             <input type="radio" name="dsBldTgtMode" value="follow" ${followMode ? 'checked' : ''}>

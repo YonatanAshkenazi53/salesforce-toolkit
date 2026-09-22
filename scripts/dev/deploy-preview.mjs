@@ -11,7 +11,7 @@ const els = new Map();
 const mkEl = id => ({ id, innerHTML: '', textContent: '', disabled: false, dataset: {}, addEventListener() {}, querySelector() { return null; }, querySelectorAll() { return []; }, scrollIntoView() {} });
 let mainHtml = '';
 const ctx = { console, Set, Map, Object, Number, String, Array, JSON, Math, Promise,
-  _settings: { deployViewBeta: true }, storageSaveSettings: async () => {}, _currentView: 'deploy', _profiles: [], _recDeleteMode: 'recycle',
+  _settings: {}, storageSaveSettings: async () => {}, _currentView: 'deploy', _profiles: [], _recDeleteMode: 'recycle',
   _recSel: { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() }, _recChildSel: {}, _reconcileProfile: null,
   window: { runProfile() {}, openReconcile() {}, sftkOrgLocked: () => false }, document: { querySelectorAll: () => [], querySelector: () => null },
   eid: id => { if (!els.has(id)) els.set(id, mkEl(id)); return els.get(id); }, setMain: h => { mainHtml = h; },

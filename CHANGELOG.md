@@ -13,7 +13,56 @@ lives in `CHANGELOG_HISTORY.md` (repo only, never shipped — the packer only sh
 `CHANGELOG.md` itself; no leading underscore, Chrome refuses to load unpacked
 extensions containing root files that start with `_`).
 
-## 1.4.3 — 2026-08-31
+## 1.5.0 — 2026-09-21
+
+### Changed — Data Deployment has one page now
+- **🚀 Deploy replaces ▶ Run Transfer and ⚖ Reconcile.** Every deployment
+  opens on one page: it reads both orgs, shows per object what is 🔴 to
+  insert, 🟡 changed, 🔵 only in the target, ⇄ linked differently and
+  🟢 synced (true totals, even when a list is truncated), and lists every
+  object's records — children included. Nothing is selected until you select
+  it, and only what you select is written. The deployment card, History
+  (↻ Run again, ↻ Retry failed), Org Compare, the Sync Ring and the command
+  palette all open this page. The engine underneath is the one that was
+  already moving your records — it did not change.
+- **↻ Retry failed ticks the failed records for you.** The ones still under
+  🔴 Insert are selected; the ones under 🟡 Changed are counted and left for
+  you to decide; anything the last scan cannot place is reported, not guessed.
+- On the page: a visual tree of the deployment, "Start with parents first"
+  for every object (checked on load when that is cheap), 🪪 identity field
+  creation for the whole tree, 🔗 Match review, 💾 Save as deployment for a
+  one-off pair, engine / batch size / threads, delete mode, and the
+  📸 restore point switch.
+- **More than 5,000 records in one list?** The page lists the first 5,000 and
+  says so. Run what is listed, 🔄 Refresh state, and repeat.
+- **Not on the new page:** the old 🧪 Dry Run (it could not see validation
+  rules, triggers or duplicate rules, so a pass meant little — a real,
+  rolled-back dry run is being built), the run-time record filter (select the
+  records instead, or narrow the deployment), Upsert mode (match on an
+  External ID and use 🟡 Changed → overwrite), and the API-call estimate.
+  Sequences still run whole deployments as before.
+
+### Fixed
+- **Writing into production always asks you to type the org name.** Until now
+  only deletes did; an insert or overwrite into production from Reconcile ran
+  on one click. One typed confirmation per org now names everything the run
+  will do there — inserts, overwrites, re-links and deletes, children
+  included — and an org whose type cannot be read is treated like production.
+  The source org gets the same gate when a run writes back into it.
+- A scan that finished while the new page was open (after a run, or the first
+  scan of a new org pair) did not repaint it.
+- **A run that wrote every record no longer shows as "partial"** because of a
+  note (a field skipped, a lookup resolved by name). Notes on the History card
+  are amber, not red, and the hint for a skipped field now matches its reason
+  — a field missing in the target says "create it or exclude it", not "clean
+  up stale entries".
+
+### Added
+- **🛑 Guard as production** (Connected Orgs). Treat any org like production:
+  every write asks you to type its name, hard delete is refused, the badge
+  shows. For a full-copy or UAT sandbox — or to see the production gates
+  before you have a production org.
+
 
 ### Added
 - **📜 Read the licence again, any time.** The agreement you accepted on
@@ -26,8 +75,8 @@ extensions containing root files that start with `_`).
   once more on the next start.
 - **↩ Roll back a data deployment.** Before Run Transfer, fan-out, a
   sequence or a Reconcile run writes anything, Data Studio reads a
-  **restore point** of every object the run can touch (📸 checkbox on the
-  Run Transfer page, on by default; the newest 10 runs keep one, on your PC).
+  **restore point** of every object the run can touch (📸 checkbox next to
+  ▶ Deploy, on by default; the newest 10 runs keep one, on your PC).
   History then offers **↩ Roll back**: it re-reads the target, shows exactly
   what it will do — delete what the run created, restore what it overwrote,
   leave anything others created or edited *after* the run alone — together
@@ -134,18 +183,6 @@ extensions containing root files that start with `_`).
   locked), and what the fix would leave empty. You choose: keep the flow
   running on a new version, or switch it off and delete the active version
   too — or open it in Flow Builder with every location named.
-
-### Added — beta, off by default
-- **✨ New Deploy view.** One page instead of Run Transfer + ⚖ Reconcile:
-  it reads both orgs, shows per object what is 🔴 to insert, 🟡 changed,
-  🔵 only in the target and 🟢 synced (true totals, even when a list is
-  truncated), and lists every object's records — children included, with
-  their parents, ⇄ Link differs and the same selection rules. Turn it on with
-  the switch on Data Deployment; the same switch, or ↩ Classic view, brings
-  the current pages back. It uses the same scan, the same selection and the
-  same engine as the classic pages, and nothing is selected until you select
-  it. Not in it yet: the real rolled-back dry run, and engine settings
-  (those stay on the classic page for now).
 
 ### Fixed
 - **Dependencies draws the whole subflow chain.** The tree stopped at three

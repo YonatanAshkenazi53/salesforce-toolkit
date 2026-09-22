@@ -822,6 +822,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'openOrgTab':            chrome.tabs.create({ url: arg }); break;
       case 'compareOrgFrom':        window.compareOrgFrom?.(arg); break;
       case 'toggleReadOnly':        window.toggleOrgReadOnly?.(arg); break;
+      case 'toggleGuardProd':       window.toggleOrgGuardProd?.(arg); break;
       case 'saveEphemeralProfile':  window.saveEphemeralProfile?.(); break;
       case 'openDeployView':        window.sftkOpenDeployView?.(); break;
       case 'deployToClassic':       window.sftkDeployToClassic?.(); break;
@@ -1743,6 +1744,7 @@ function renderOrgsPanel() {
           ${!isOnline ? `<button class="ds-btn ds-btn-sm" data-dsaction="openOrgTab" data-arg="${esc(url)}" title="Open this org in a new Chrome tab — refreshes its session so the Studio can reach it">↗ Open</button>` : ''}
           <button class="ds-btn ds-btn-sm" data-dsaction="compareOrgFrom" data-arg="${esc(url)}" title="Compare this org's data against another org (opens Org Compare with this org as the source)">${window.sftkGlyph('🔍 ', '')}Compare with…</button>
           <button class="ds-btn ds-btn-sm" data-dsaction="editOrgLabel" data-arg="${esc(url)}">${window.sftkGlyph('✏ ', '')}Rename</button>
+          <button class="ds-btn ds-btn-sm${orgData.guardAsProd ? ' ds-btn-config--active' : ''}" data-dsaction="toggleGuardProd" data-arg="${esc(url)}" title="${orgData.guardAsProd ? 'Stop treating this org like production (its real type is used again)' : 'Treat this org like PRODUCTION everywhere: every write asks you to type the org name, hard delete is refused, the badge shows. For a full-copy or UAT sandbox — or to see the production gates before you have a production org.'}">${orgData.guardAsProd ? '🛑 Guarded as production' : '🛑 Guard as production'}</button>
           <button class="ds-btn ds-btn-sm" data-dsaction="toggleReadOnly" data-arg="${esc(url)}" title="${orgData.readOnly ? 'Allow writes to this org again' : 'A safety lock, not a mode: while it is on, NOTHING in this extension can write to this org — not a deployment, not ← “target wins” into a source, not a delete, not a picklist or metadata deploy. Use it on production and on any org you only ever read from.'}">${orgData.readOnly ? `${window.sftkGlyph('🔓 ', '')}Unlock writes` : `${window.sftkGlyph('🔒 ', '')}Lock writes`}</button>
           ${!isOnline
             ? `<button class="ds-btn ds-btn-sm ds-btn-danger" data-dsaction="removeOrg" data-arg="${esc(url)}">✕</button>` : ''}
@@ -1866,6 +1868,17 @@ window.toggleOrgReadOnly = async function(orgUrl) {
   showToast(on
     ? `${window.sftkGlyph('🔒 ', '')}Writes to ${orgLabel(orgUrl)} are locked — nothing in this extension can change it until you unlock`
     : `${window.sftkGlyph('🔓 ', '')}${orgLabel(orgUrl)} is writable again`, on ? 'warning' : 'success');
+  renderOrgsPanel();
+};
+
+window.toggleOrgGuardProd = async function(orgUrl) {
+  if (!_orgs[orgUrl]) _orgs[orgUrl] = {};
+  const on = !_orgs[orgUrl].guardAsProd;
+  _orgs[orgUrl].guardAsProd = on;
+  await storageSaveOrgs();
+  showToast(on
+    ? `🛑 ${orgLabel(orgUrl)} is now treated like PRODUCTION — every write will ask you to type its name`
+    : `${orgLabel(orgUrl)} is back to its real org type`, on ? 'warning' : 'success');
   renderOrgsPanel();
 };
 
@@ -2100,6 +2113,10 @@ async function getOrgSession(orgUrl) {
 // so it survives renderTransfer's profile-org resolution. The user can still
 // switch or swap orgs on the Run Transfer page.
 window.startTransferFrom = function(targetOrg) {
+  if (typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) {
+    _currentView = 'profiles'; renderProfiles();
+    return showToast(`Pick a deployment and press 🚀 Deploy — ${orgLabel(targetOrg)} can be chosen as its target there.`, 'info', 7000);
+  }
   _transferOrgOverride = { src: null, tgt: targetOrg };
   // Transfer is now reachable as a sub-page of Data Deployment, not as
   // its own sidebar item. Highlight Data Deployment so the nav stays

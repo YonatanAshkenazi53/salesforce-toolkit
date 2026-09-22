@@ -13,28 +13,92 @@ const PR = readFileSync(new URL('../studio-profiles.js', import.meta.url), 'utf8
 const HT = readFileSync(new URL('../studio.html', import.meta.url), 'utf8');
 const code = DV.replace(/\/\/[^\n]*/g, '');   // comments may NAME what the code must not do
 
-describe('the switch: off by default, and the classic pages are untouched when it is off', () => {
-  it('the setting is an explicit true, so an absent key means classic', () => {
-    expect(DV).toContain('_settings.deployViewBeta === true');
+// 1.5.0 (user 2026-09-21: "i want to use the new view on it … and only the new view").
+describe('the Deploy view is the page: every door opens it', () => {
+  it('on unless the no-button fallback key says classic', () => {
+    expect(DV).toContain('return !(typeof _settings === \'object\' && _settings && _settings.deployViewClassic === true);');
+    expect(DV).not.toContain('deployViewBeta');
   });
-  it('openReconcile picks the page from the switch; the seam routes every classic repaint', () => {
-    expect(RC).toContain("_currentView = (typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) ? 'deploy' : 'reconcile';");
+  it('ONE seam: anything that ends in renderReconcile() lands on the Deploy view', () => {
     const i = RC.indexOf('async function renderReconcile() {');
-    expect(RC.slice(i, i + 420)).toContain("if (_currentView === 'deploy' && typeof renderDeploy === 'function') return renderDeploy();");
+    expect(RC.slice(i, i + 700)).toContain("if (typeof renderDeploy === 'function' && typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) { _currentView = 'deploy'; return renderDeploy(); }");
+    // Compare, Ring and the Seeder set 'reconcile' and call renderReconcile() — the seam covers them
+    for (const file of ['studio-compare.js', 'studio-ring.js', 'studio-seed.js']) {
+      const src = readFileSync(new URL('../' + file, import.meta.url), 'utf8');
+      const k = src.indexOf("_currentView = 'reconcile';");
+      expect(k).toBeGreaterThan(0);
+      expect(src.slice(k, k + 400)).toContain('renderReconcile();');
+    }
   });
-  it('▶ opens the merged page only while the switch is on, and keeps the classic function', () => {
+  it('a scan that lands while the page is open repaints it (post-run refresh, first scan of a new pair)', () => {
+    const SC = readFileSync(new URL('../studio-scan.js', import.meta.url), 'utf8');
+    expect(SC).toContain("else if ((_currentView === 'reconcile' || _currentView === 'deploy') && typeof renderReconcile === 'function'");
+  });
+  it('the card has ONE way in, and no switch', () => {
+    expect(PR).not.toContain('dsDeployViewSwitch');
+    expect(PR).toContain('>🚀 Deploy</button>');
+    expect(PR).not.toContain('data-dsaction="openReconcile" data-arg="${p.id}"');
+    expect(PR).not.toContain('>⚖ Reconcile</button>');
+    expect(DV).not.toContain('data-dsaction="deployToClassic"');
+    expect(DV).not.toContain('ds-dep-beta');
+  });
+  it('▶ (palette, builder) still routes through the wrapped runProfile', () => {
     expect(DV).toContain('window.sftkClassicRunProfile = classicRun;');
     expect(DV).toContain('if (sftkDeployViewOn() && typeof window.openReconcile === \'function\') return window.openReconcile(profileId, targetUrl);');
-    expect(DV).toContain('classicRun.apply(this, arguments)');
   });
-  it('both directions are one click: the switch on Data Deployment, ✨ in Reconcile, ↩ on the new page', () => {
-    expect(PR).toContain('id="dsDeployViewSwitch"');
-    expect(PR).toContain('await sftkDeployViewSet(on);');
-    expect(RC).toContain('data-dsaction="openDeployView"');
-    expect(DV).toContain('data-dsaction="deployToClassic"');
-    expect(CO).toContain("case 'openDeployView':        window.sftkOpenDeployView?.(); break;");
-    expect(CO).toContain("case 'deployToClassic':       window.sftkDeployToClassic?.(); break;");
+  it('History never opens the old Run page: Run again and Retry failed both land here', () => {
+    const SC = readFileSync(new URL('../studio-scan.js', import.meta.url), 'utf8');
+    const retry = SC.slice(SC.indexOf('window.retryFailedRun = function(runId) {'), SC.indexOf('function sftkRetrySplit(filters) {'));
+    expect(retry.indexOf('return window.sftkDeployRetry(profile.id, byPath,')).toBeGreaterThan(0);
+    expect(retry.indexOf('return window.sftkDeployRetry(profile.id, byPath,')).toBeLessThan(retry.indexOf('renderTransfer();'));
+    const again = PR.slice(PR.indexOf('window.runAgain = function(runId) {'));
+    expect(again.indexOf('return window.openReconcile?.(prof.id, runTgt || undefined);')).toBeLessThan(again.indexOf('renderTransfer();'));
+    expect(CO.slice(CO.indexOf('window.startTransferFrom = function(targetOrg) {')).indexOf('renderProfiles();')).toBeLessThan(CO.slice(CO.indexOf('window.startTransferFrom = function(targetOrg) {')).indexOf('renderTransfer();'));
   });
+  it('what the classic header offered is on the page: save a one-off pair, pair records by hand', () => {
+    expect(DV).toContain('data-dsaction="saveEphemeralProfile"');
+    expect(DV).toContain("eid('dsDepMatchReview')?.addEventListener('click', () => openMatchReview(p));");
+    // offered only when there is something on BOTH sides to pair (the empty-dialog bug of 2026-09-21)
+    expect(DV).toContain("(scan.missingInTarget || []).length && (scan.onlyInTarget || []).length ? `<button class=\"ds-btn ds-btn-sm\" id=\"dsDepMatchReview\"");
+  });
+});
+
+describe('↻ Retry failed ticks what it can prove, and reports the rest', () => {
+  const picks = extractFunction('studio-deploy.js', 'sftkDeployRetryPicks');
+  const line = extractFunction('studio-deploy.js', 'sftkDeployRetryLine');
+  const scan = {
+    missingInTarget: [{ sourceId: 'A1' }, { sourceId: 'A2' }], changed: [{ sourceId: 'A3' }], identical: [{ sourceId: 'A4' }],
+    children: { '0': { missingInTarget: [{ sourceId: 'C1', p: 'A4' }, { sourceId: 'C2', p: 'ZZ' }], changed: [{ sourceId: 'C3' }] } }
+  };
+  const rowState = (r, depth, pMissing, pExists) => (pExists.has(r.p) || pMissing.has(r.p)) ? 'ok' : 'untracked';
+  it('root: Insert rows are ticked, Changed rows are counted, the rest is reported', () => {
+    const r = picks(scan, { '': ['A1', 'A3', 'A9'] }, rowState);
+    expect(r.picks).toEqual({ '': ['A1'] });
+    expect(r).toMatchObject({ found: 1, inChanged: 1, lost: 1, total: 3 });
+  });
+  it('child: only rows the page would let the user tick', () => {
+    const r = picks(scan, { '0': ['C1', 'C2', 'C3'] }, rowState);
+    expect(r.picks).toEqual({ '0': ['C1'] });          // C2's parent is unknown in the target → not ticked
+    expect(r).toMatchObject({ found: 1, inChanged: 1, lost: 1 });
+  });
+  it('fails closed: an unscanned object, or no parent rule, ticks nothing', () => {
+    expect(picks(scan, { '1': ['X1'] }, rowState)).toMatchObject({ picks: {}, lost: 1 });
+    expect(picks(scan, { '0': ['C1'] }, null).picks).toEqual({});
+    expect(picks(null, { '': ['A1'] }, rowState)).toMatchObject({ picks: {}, lost: 1 });
+  });
+  it('the line says all three numbers and never claims more', () => {
+    const t = line({ found: 1, inChanged: 1, lost: 2, total: 4 });
+    expect(t).toContain('1 of 4 failed record(s) are ticked');
+    expect(t).toContain('1 are under 🟡 Changed');
+    expect(t).toContain('2 are not in an Insert list');
+    expect(line({ total: 0 })).toBe('');
+  });
+  it('a rescan empties the selection, so it drops the line too', () => {
+    expect(DV).toContain("_recChildSel = {}; _depRetryNote = '';");
+  });
+});
+
+describe('load order', () => {
   it('the script is loaded after the pages it builds on', () => {
     expect(HT.indexOf('studio-reconcile.js')).toBeLessThan(HT.indexOf('studio-deploy.js'));
     expect(HT.indexOf('studio-profiles.js')).toBeLessThan(HT.indexOf('studio-deploy.js'));

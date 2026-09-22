@@ -49,7 +49,7 @@ function renderRing() {
       icon: 'repeat',
       title: 'Sync Ring',
       subtitle: 'One source of truth → every ring org. Scan to see drift; fan out to fix it.',
-      help: 'One org is the 👑 source of truth; every other ring org is measured against it. Matrix cells are root-object counts from each pair’s last 🔎 scan (missing · changed · only-in-target) — a reading, not live state. Fix one org with ⚖ Reconcile from its cell; preview a multi-org push with ▶ Sync Plan; deep-dive one deployment across all environments with 🌳 Tree diff.',
+      help: 'One org is the 👑 source of truth; every other ring org is measured against it. Matrix cells are root-object counts from each pair’s last 🔎 scan (missing · changed · only-in-target) — a reading, not live state. Fix one org with ⚖ from its cell (it opens that pair on the Deploy page); preview a multi-org push with ▶ Sync Plan; deep-dive one deployment across all environments with 🌳 Tree diff.',
       // ring.orgs is the configured ring — the same array the configuration
       // panel below counts. Not "orgs known", not "orgs open".
       count: `${ring.orgs.length} org${ring.orgs.length !== 1 ? 's' : ''} in the ring`,
@@ -303,7 +303,7 @@ function _ringRenderMatrix() {
           // objects must never wear an unqualified checkmark here (user
           // 2026-08-18: "when childs are not deployed, it must not show as
           // synced"; load test: 50 parents clean, 1,850 children missing).
-          ? `<span class="ds-ring-clean" title="ROOT object in sync. Ring scans do NOT check this deployment's ${(p.tree.children || []).length} child object(s) — open ⚖ Reconcile and scan the child sections to verify them.">✓ root</span>`
+          ? `<span class="ds-ring-clean" title="ROOT object in sync. Ring scans do NOT check this deployment's ${(p.tree.children || []).length} child object(s) — open 🚀 Deploy and scan the child objects to verify them.">✓ root</span>`
           : `<span class="ds-ring-clean">✓ in sync</span>`)
         : `<span class="ds-ring-counts" title="${s.missing} missing · ${s.changed} changed · ${s.extra} only in target${fMiss ? ` · 📎 ${fMiss} missing files` : ''}">
              ${s.missing ? `<b class="ds-ring-m">${s.missing}</b>` : ''}${s.changed ? `<b class="ds-ring-c">${s.changed}</b>` : ''}${s.extra ? `<b class="ds-ring-e">${s.extra}</b>` : ''}${fMiss ? `<b class="ds-ring-c">📎</b>` : ''}

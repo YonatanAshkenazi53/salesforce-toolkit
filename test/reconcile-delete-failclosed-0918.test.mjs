@@ -16,7 +16,7 @@ describe('Reconcile deletes fail closed on an unknown org type', () => {
     expect(run).toContain('could not be confirmed as a sandbox or dev org, so it is treated like production');
   });
   it('the typed confirmation covers the same set', () => {
-    expect(run).toContain('if ((delIds.length || childDelTotal) && tgtGuarded) {');
+    expect(run).toContain('if (guardedWrites.tgt && tgtGuarded) {');
     expect(run).not.toMatch(/childDelTotal\) && tgtOrgType === 'production'/);
   });
 });

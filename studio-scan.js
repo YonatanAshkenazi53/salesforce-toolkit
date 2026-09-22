@@ -4,8 +4,20 @@
 // a trial. Detected once per org via the Organization object and cached on
 // _orgs[url] for a week. Everything reads the CACHE synchronously (badges);
 // destructive paths await ensureOrgType before writing.
+// PURE. Has the user asked for this org to be treated like production
+// (Connected Orgs → 🛑 Guard as production)? Matched by org identity, like
+// the write lock. A full-copy UAT sandbox earns the same typed gates as
+// production; it is also the only way to exercise those gates without one
+// (user 2026-09-22: "i dont have production org").
+function sftkOrgGuardedAsProd(orgs, orgUrl) {
+  const want = _orgKey(orgUrl);
+  if (!want) return false;
+  return Object.entries(orgs || {}).some(([u, o]) => o && o.guardAsProd === true && _orgKey(u) === want);
+}
+
 async function ensureOrgType(orgUrl) {
   if (!orgUrl) return 'unknown';
+  if (sftkOrgGuardedAsProd(_orgs, orgUrl)) return 'production';
   const key = _orgKey(orgUrl);
   const hit = Object.entries(_orgs).find(([u, v]) =>
     _orgKey(u) === key && v.orgType && (Date.now() - (v.orgTypeAt || 0)) < 7 * 864e5);
@@ -28,12 +40,14 @@ async function ensureOrgType(orgUrl) {
 // Cache-only read (synchronous) — for badges in render paths.
 function cachedOrgType(orgUrl) {
   if (!orgUrl) return 'unknown';
+  if (sftkOrgGuardedAsProd(_orgs, orgUrl)) return 'production';
   const key = _orgKey(orgUrl);
   const hit = Object.entries(_orgs).find(([u, v]) => _orgKey(u) === key && v.orgType);
   return hit ? hit[1].orgType : 'unknown';
 }
 function prodBadge(orgUrl) {
   const t = cachedOrgType(orgUrl);
+  if (t === 'production' && sftkOrgGuardedAsProd(_orgs, orgUrl)) return '<span class="ds-org-badge-prod" title="You asked for this org to be GUARDED like production (Connected Orgs) — every write asks you to type its name, hard delete is refused.">guarded</span>';
   if (t === 'production') return '<span class="ds-org-badge-prod" title="This is a PRODUCTION org — writes here affect real users. Destructive operations require typed confirmation; hard delete is disabled.">PROD</span>';
   if (t === 'sandbox')    return '<span class="ds-org-badge-sbx" title="Sandbox org">sandbox</span>';
   return '';
@@ -1940,14 +1954,14 @@ async function refreshProfileDiff(profileId) {
     return sftkBucketCountLabel(i.shown, i.total, i.capped, i.totalIsFloor);
   };
   showToast(
-    `Diff refreshed — ${_lbl('missingInTarget')} missing, ${_lbl('changed')} drift, ${_lbl('identical')} in sync${res.bucketCaps ? ' · list truncated, see the ⚠ note in Reconcile' : ''}`,
+    `Diff refreshed — ${_lbl('missingInTarget')} missing, ${_lbl('changed')} drift, ${_lbl('identical')} in sync${res.bucketCaps ? ' · list truncated, see the ⚠ note on the Deploy page' : ''}`,
     'success', res.bucketCaps ? 7000 : 4000);
   // Re-render whichever view is open. Reconcile included (user 2026-08-11:
   // "after an upsert operation, we need to show them… auto reload there") —
   // a post-run rescan that lands while Reconcile is open repaints it, so
   // freshly-synced records appear in the 🟢 Synced tab without a click.
   if (_currentView === 'profiles') renderProfiles();
-  else if (_currentView === 'reconcile' && typeof renderReconcile === 'function'
+  else if ((_currentView === 'reconcile' || _currentView === 'deploy') && typeof renderReconcile === 'function'
            && _reconcileProfile && _reconcileProfile.id === profile.id) {
     renderReconcile();
   } else if (_currentView === 'ring' && typeof _ringRenderMatrix === 'function') {
@@ -2028,6 +2042,10 @@ window.retryFailedRun = function(runId) {
   // object again (user 2026-09-18: 10 failed Contacts → a plan reading
   // "Account 5,058"). Those go to ⚖ Reconcile, which attaches children to the
   // parents that already exist in the target.
+  if (typeof sftkDeployViewOn === 'function' && sftkDeployViewOn() && typeof window.sftkDeployRetry === 'function') {
+    const byPath = Object.fromEntries(Object.entries(filters).map(([k, f]) => [k, f.recordIds || []]));
+    return window.sftkDeployRetry(profile.id, byPath, run.tgtOrgUrl || run.targetOrg || undefined);
+  }
   const split = sftkRetrySplit(filters);
   const lost = split.unsafe.reduce((n, k) => n + (filters[k].recordIds || []).length, 0);
   if (split.unsafe.length && !split.safe.length) {
