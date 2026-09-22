@@ -87,6 +87,10 @@ extensions containing root files that start with `_`).
   the run says how many it connected and which ones point at records that
   neither exist in the target nor were created (and what to do) — across
   every step of one Deploy run, not per step.
+- **Price book entries (and other junction-like children whose Name is not
+  unique) can be recognised.** When most rows of a child object share the
+  same key, the scan re-keys by the records they point at (Product2 +
+  Pricebook2) and says so; they used to fall out of every list.
 - **Objects without a Name (contact roles, case comments, order items,
   campaign members) can be recognised.** A match key can now be the related
   records' names (Opportunity.Name + Contact.Name). When nothing is

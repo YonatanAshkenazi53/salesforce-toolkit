@@ -1,4 +1,4 @@
-// First end-to-end run: "SFTK CX — Accounts tree" trailheads2 → trailheads4.
+// End-to-end run of one fixture deployment (PROFILE env, default the Accounts tree), PASSES env for repeats.
 // Read both orgs, report what the page says, select every Insert row on every
 // object (+ every Changed row → overwrite), deploy, wait, report the log.
 const SHOTS = process.env.LOCALAPPDATA + '/Temp/sftk-headless-shots/';
@@ -8,7 +8,9 @@ export default async function (h) {
   await h.login('npc2');
   await h.studio('');
   await h.importProfiles('docs/fixtures/complex-deployment/profiles.json');
-  const id = await h.eval(`_profiles.find(p => p.name === 'SFTK CX — Accounts tree')?.id`);
+  const NAME = process.env.PROFILE || 'SFTK CX — Accounts tree';
+  const id = await h.eval(`_profiles.find(p => p.name === ${JSON.stringify(NAME)})?.id`);
+  h.log('deployment:', NAME);
   if (!id) throw new Error('fixture profile missing');
   const passes = Number(process.env.PASSES || 1);
   for (let pass = 1; pass <= passes; pass++) {
