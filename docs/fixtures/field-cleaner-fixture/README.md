@@ -91,3 +91,44 @@ The view opens in the mode last used (compare by default) - the script clicks "S
   say so up front; the bulk summary counts values Salesforce kept (pins: picklists-live-0923).
 - Not exercised: multi-org compare / bulk / Sync from source (next), record-type matrix edits,
   standard and global value sets, the typed production gate (needs Guard as production).
+
+## Picklist Manager, compare mode (2026-09-23)
+
+The field also exists in trailheads4 (`base` deployed there; permission set assigned - without
+FLS the org's describe does not list the field and the matrix says "not found ... or hidden from
+your user by field-level security"). trailheads4 got a fourth value "Archived" (scratchpad deploy)
+so the orgs drift. Live: `node scripts/dev/headless-studio.mjs scripts/dev/live/picklists-compare.mjs`
+with `MODE=matrix|sync|bulk`, `VALUE=Archived`, `FIX=skip|clear|remap`, `SCAN_ONLY=1`.
+
+- verified: the 2-org matrix (active / inactive / absent per org, usage counts), the sync plan
+  (source = trailheads2; deactivate Closed + Reviewed in the target, "Deactivate extra: Archived -
+  never deleted automatically" unticked by default, record-type alignment, automation check with
+  its honest caps) and the run: target values match the source, CLI agrees, matrix re-read agrees.
+- verified: bulk deactivate of Archived across both orgs - "not present - skipped" where absent,
+  deactivated where present, one History entry per org; CLI agrees.
+- fixed: the automation verdict said "no flow or validation rule ... names this value" next to
+  "scanned 40 of 147 active flows - the other 107 were NOT checked" - a partial scan now says
+  "nothing that was scanned ... names this value".
+- fixed: the bulk wizard's Apply was clickable while the automation check was still running;
+  it waits for every org's answer now, like the sync plan's Run.
+- fixed: "not found on Account" for a field the user cannot see now mentions field-level security.
+
+## Field Cleaner - Deprecate first / Undo (2026-09-23)
+
+Live: `DEPRECATE=1 [UNDO=0] node scripts/dev/headless-studio.mjs scripts/dev/live/field-cleaner.mjs`
+(Deprecate, then Undo in the SAME session - the record lives in the extension's storage and the
+harness starts a fresh profile per run). Restore by hand: redeploy `base` (label, description,
+permission-set grant).
+
+- fixed: the label rename PATCH itself was refused (nulls - see sftkMetaForPatch above).
+- fixed: one grant Salesforce refuses to strip - the "Slack Integration User" session permission
+  set (sfdcInternalInt, nobody can edit it) - made the whole step "fail": the field was renamed
+  and the permission set's grant stripped, but nothing was recorded and no Undo was offered; a
+  second click stamped the description twice. Now the refusing grant is named in the banner
+  ("1 could NOT be: Slack Integration User ... the field stays visible there"), the record is
+  saved, Undo exists, the description is stamped once.
+- fixed: Undo did not bring the grant back - Salesforce DELETES a FieldPermissions row once both
+  permissions are false, so the update by the old Id did nothing. Undo re-creates each grant
+  (insert; update by Id as the fallback) and names anything that did not come back.
+- verified end to end: Deprecate (label zz_DEPRECATED..., description stamped, permission set's
+  grant gone, Slack kept) then Undo (label, description and the grant read+edit back) - CLI agrees.

@@ -48,6 +48,40 @@ describe('the delete wizards and the bulk summary say what the API can do', () =
   });
 });
 
+// 3. Compare mode said "trailheads4 skipped: SFTK_FC_Test_Status__c not found on
+//    Account" for a field that existed there — the running user had no
+//    field-level security on it yet, so the describe did not list it.
+describe('_pkFetchInventory — a field the describe does not list may be hidden by FLS', () => {
+  it('says so', () => {
+    expect(SRC).toContain("throw new Error(`${field} not found on ${obj} — or hidden from your user by field-level security (the org's describe does not list it)`);");
+  });
+});
+
+// 4. The sync plan's automation verdict read "✓ no flow or validation rule in
+//    trailheads4 names this value" right next to "scanned 40 of 147 active
+//    flows — the other 107 were NOT checked". A partial scan vouches only for
+//    what it scanned.
+describe('sync plan — the automation verdict does not outrun the scan', () => {
+  it('says "nothing that was scanned" when the scan carries notes (cap / not enumerated)', () => {
+    const i = SRC.indexOf("const partial = (lit.notes || []).length > 0;");
+    expect(i).toBeGreaterThan(0);
+    expect(SRC.slice(i, i + 400)).toMatch(/\$\{partial \? 'nothing that was scanned in' : 'no flow or validation rule in'\} \$\{esc\(tgt\.label\)\} names this value/);
+  });
+});
+
+// 5. The bulk wizard's Apply was clickable while "scanned 0 of 2 org(s)…" was
+//    still on screen; the sync plan's Run waits for its check. Same rule now.
+describe('bulk wizard — Apply waits for the automation check', () => {
+  const fn = between('async function _pkOpenBulkWizard(', 'async function _pkApplyBulk(');
+  it('renders Apply disabled with "checking automation" and enables it only after every org answered', () => {
+    expect(fn).toContain('id="dsPkBulkGo" disabled title="Enabled once the automation check has run in every org">⏳ checking automation…</button>');
+    const i = fn.indexOf("const go = eid('dsPkBulkGo');");
+    expect(i).toBeGreaterThan(fn.indexOf('for (const o of orgs) {'));
+    expect(fn.slice(i, i + 300)).toMatch(/go\.disabled = false; go\.textContent = mode === 'delete' \? '🗑 Apply to all orgs' : '⏸ Apply to all orgs';/);
+    expect(fn.slice(i - 120, i)).toMatch(/if \(pkScanSuperseded\(scanToken, _pkBulkScanToken\)\) return;/);
+  });
+});
+
 describe('_pkLoadUsage — a value no record holds is a counted zero', () => {
   const fn = between('async function _pkLoadUsage(', 'async function _pkLoadRecordTypes(');
   it('fills 0 for every value absent from a successful, complete GROUP BY answer', () => {
