@@ -38,7 +38,8 @@ Store currently has **1.4.2** — 1.4.3 has NOT been uploaded yet.
 > - DONE round 3 (2026-09-22): two-pass live runs work (PASSES=2); line items
 > deploy (TotalPrice rule); autonumber-named objects no longer double; contact
 > roles / comments / line items deploy under existing parents. Gate 94 / 2582.
-> - NEXT: (1) OrderItem failure in pass 2 (read run11.log RAW lines); (2) Campaigns /
+> - DONE round 4: group-B children attach by the scan's parent pairing (OrderItem fixed).
+> - NEXT: (2) Campaigns /
 > Products / Leads / Price books deployments; (3) parents-first flow, Retry failed,
 > rollback; (4) huge trees (Apex loops, thousands of records, >5,000 per list);
 > (5) UX: scan-all-children, Refresh re-scans children, run log survives the

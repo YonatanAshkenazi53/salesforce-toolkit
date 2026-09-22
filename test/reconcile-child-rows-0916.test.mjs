@@ -46,6 +46,7 @@ describe('child changed rows have ▸ fields and 🔗, driven by the child node'
     expect(RC).toContain('renderLkpOverridePanel(v.prof, v.obj, srcId, expand, link.dataset.recLkpTgt || null);');
   });
   it('both child run clones hand the picks to the engine / overwrite', () => {
-    expect(RC.split('lookupOverrides: a.node.lookupOverrides || {}').length - 1).toBe(2);
+    expect(RC.split('lookupOverrides: a.node.lookupOverrides || {}').length - 1).toBe(1);   // cProfile; bProfile carries the scan's parent pairing too (2026-09-22)
+    expect(RC).toContain('lookupOverrides: _att.overrides,');
   });
 });
