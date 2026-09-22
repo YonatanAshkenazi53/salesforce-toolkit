@@ -221,7 +221,7 @@ describe('picklist P2/P3 pure helpers (studio-picklists.js)', () => {
 
 describe('smart matching (sftk-matching.js) — the ONE shared key builder', () => {
   const { sftkNormalizeValue, sftkMatchKey, sftkMatchingFromNode } =
-    extractFunctions('sftk-matching.js', ['sftkNormalizeValue', 'sftkMatchKey', 'sftkMatchingFromNode']);
+    extractFunctions('sftk-matching.js', ['sftkNormalizeValue', 'sftkMatchKey', 'sftkMatchingFromNode', 'sftkPathValue']);
   const sftkCrossOrgPreview = (() => {
     try { return extractFunction('sftk-matching.js', 'sftkCrossOrgPreview'); } catch { return null; }
   })();

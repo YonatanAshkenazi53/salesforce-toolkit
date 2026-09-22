@@ -2626,7 +2626,7 @@ async function runReconcile(profile, objType, buckets) {
       }).filter(Boolean);
       const res = await sendBg({
         type: 'SF_EXECUTE_PROFILE_TRANSFER',
-        profile: pushProfile,
+        profile: pushProfile, runId,
         srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
         tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid
       });
@@ -2719,7 +2719,7 @@ async function runReconcile(profile, objType, buckets) {
       };
       const res = await sendBg({
         type: 'SF_EXECUTE_PROFILE_TRANSFER',
-        profile: bProfile,
+        profile: bProfile, runId,
         srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
         tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid
       });
@@ -2961,6 +2961,18 @@ async function runReconcile(profile, objType, buckets) {
       (result.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
     } catch (e) { allErrors.push(`Source update failed: ${e?.message || e}`); log('❌', `Source update failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
+
+  // 🔗 Lookups still waiting at the end of the run: every step that wrote into
+  // the target shared one ledger, so what is left points at records nothing
+  // in this run created. Said once, with the fix. (The ← pull step writes into
+  // the SOURCE and never shares the ledger.)
+  try {
+    const closed = await sendBg({ type: 'SF_RUN_LEDGER_CLOSE', runId });
+    for (const u of ((closed && closed.unresolved) || [])) {
+      const line = `⚠ ${u.objType}: ${u.n} lookup value(s) left empty (${u.field}) — the ${u.refObj} record they point at is neither in the target nor created by this run. Deploy it first, or widen this deployment to include it.`;
+      allErrors.push(line); log('⚠', line, 'ds-prog-warn');
+    }
+  } catch (_) { /* advisory */ }
 
   // ── 5. Save to History so the run is visible later ───────────────────
   const childOk   = Object.values(childCounts).reduce((s, c) => s + c.created + c.relinked + (c.overwritten || 0) + (c.deleted || 0), 0);

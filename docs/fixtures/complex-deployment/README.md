@@ -53,7 +53,10 @@ the Contact buckets, the child-scan error path, and the source-only pages.
 - ✅ fixed: same-name child records (two "Mia Schmidt") vanished from every bucket with no word — child scans now record `dupKeys` and warn.
 - ✅ fixed: Field Mapping said "No connected orgs" above the connected source's fields.
 - ✅ fixed: Deploy page silent on an offline target; the builder tree squeezed by a CSS class collision.
-- 🔴 open: objects with no `Name` field (OpportunityContactRole, CaseComment, OrderItem, CampaignMember) fail the child scan with a raw HTTP 400 — the scan needs a describe-based fallback key and a plain message.
+- ✅ fixed: objects with no `Name` field failed the child scan with a raw HTTP 400 — keys can be relationship paths now (Opportunity.Name + Contact.Name); the scan picks that fallback from the describe and says so.
+- ✅ fixed: unconfigured lookups at objects outside the deployment were dropped on insert (every Opportunity lost its Pricebook) — they match by Name like ← update; only createable, non-polymorphic, named objects; a broken bridge is a note, not a dead object.
+- ✅ fixed: a child Case and its parent Case inserted by two STEPS of one Deploy run were never linked — one run ledger (shared id map + waiting lookups) across all steps that write into the target, closed before History.
+- 🟡 by design, worth revisiting for big trees: grandchildren (line items, contact roles, comments, order items) are not selectable while their parent is still missing in the target — a two-pass deployment (R5 rule).
 - 🔴 open: no "scan all children" on the Deploy page; 🔄 Refresh does not re-scan previously scanned children; the run log is wiped by the post-run repaint.
 - 🔴 open: builder hides in-tree lookups from Lookup Resolution — should show them as informational rows ("connected after insert").
 - ⏳ not yet run: Campaigns / Products / Leads / Price books deployments, parents-first flow, Retry failed, rollback of a run, huge trees (thousands of records, >5,000 per list).

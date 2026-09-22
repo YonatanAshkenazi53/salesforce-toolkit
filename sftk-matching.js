@@ -58,12 +58,68 @@ function sftkNormalizeValue(v, normalize) {
 // separator text). A record whose components are ALL blank returns '' —
 // callers must treat '' as UNMATCHABLE (excluded from key indexes), never
 // as a valid key.
+// The engine's default for an UNCONFIGURED lookup at an object outside the
+// deployment: match by Name, unless that object has nothing to match by. The
+// worker keeps its own copy of this list (background.js) — keep them equal.
+function sftkLookupDefaultStrategy(refObj) {
+  const NO_NAME = new Set(['Case', 'Order', 'Contract', 'Task', 'Event', 'CaseComment', 'OrderItem', 'OpportunityContactRole',
+    'CampaignMember', 'ContentDocumentLink', 'Attachment', 'EmailMessage', 'FeedItem', 'Note', 'ContentDocument', 'ContentVersion', 'Quote', 'ReturnOrder', 'WorkOrder',
+    'OpportunityHistory', 'ActivityHistory', 'OpportunityFieldHistory', 'AccountHistory', 'ContactHistory', 'CaseHistory']);
+  return NO_NAME.has(String(refObj || '')) ? 'skip' : 'match';
+}
+
+// A key component may be a relationship path ('Opportunity.Name'): SOQL
+// returns it nested ({ Opportunity: { Name } }). Lookups hold org-local Ids
+// and can never match across orgs — the related record's NAME can (live run
+// 2026-09-22: OpportunityContactRole has no Name at all).
+function sftkPathValue(record, path) {
+  if (!record || !path) return undefined;
+  const p = String(path);
+  if (p in record) return record[p];
+  if (!p.includes('.')) return undefined;
+  let cur = record;
+  for (const seg of p.split('.')) { if (cur === null || cur === undefined || typeof cur !== 'object') return undefined; cur = cur[seg]; }
+  return cur;
+}
+
+// PURE. The best key a describe offers when the node has none configured and
+// the object has no usable Name: external ID → unique field → non-autonumber
+// name field → the records it points at, BY NAME (a junction's two parents),
+// with a text field added when that is still a single component. `opts`:
+// lookupResolutions (per-lookup match field), parentField (a child scan's
+// link — its parent's KEY comes first as parentKeyPath). null = no key.
+function sftkMatchingFallback(fields, opts) {
+  const o = opts || {};
+  const fs = Array.isArray(fields) ? fields.filter(Boolean) : [];
+  const SYS = new Set(['OwnerId', 'CreatedById', 'LastModifiedById', 'RecordTypeId', 'MasterRecordId']);
+  const ext = fs.find(f => f.externalId === true && f.name !== 'Id');
+  if (ext) return { strategy: 'externalId', fields: [ext.name], normalize: {}, why: 'external ID' };
+  const uniq = fs.find(f => f.unique === true && f.type !== 'id' && f.name !== 'Id');
+  if (uniq) return { strategy: 'field', fields: [uniq.name], normalize: {}, why: 'unique field' };
+  const nameF = fs.find(f => f.nameField === true && !f.autoNumber);
+  if (nameF) return { strategy: 'field', fields: [nameF.name], normalize: {}, why: 'name field' };
+  const lr = o.lookupResolutions || {};
+  const refs = fs.filter(f => f.type === 'reference' && f.relationshipName && !SYS.has(f.name) && f.name !== o.parentField
+    && !(f.polymorphicForeignKey || (f.referenceTo || []).length > 1) && f.createable !== false);
+  const ordered = [...refs.filter(f => f.nillable === false), ...refs.filter(f => f.nillable !== false)];
+  const comps = [];
+  if (o.parentField && o.parentKeyPath) comps.push(o.parentKeyPath);
+  for (const f of ordered) { if (comps.length >= 3) break; comps.push(`${f.relationshipName}.${(lr[f.name] && lr[f.name].matchField) || 'Name'}`); }
+  if (comps.length < 2) {
+    const txt = fs.find(f => ['string', 'textarea', 'email', 'phone'].includes(f.type) && f.createable !== false && !f.autoNumber && !SYS.has(f.name) && !f.calculated);
+    if (txt) comps.push(txt.name);
+  }
+  if (!comps.length) return null;
+  return { strategy: comps.length > 1 ? 'composite' : 'field', fields: comps.slice(0, 4), normalize: { trim: true, collapseWs: true },
+    why: 'the records it points at, by name — this object has no Name field' };
+}
+
 function sftkMatchKey(record, matching) {
   const m = matching || {};
   const fields = Array.isArray(m.fields) ? m.fields.filter(Boolean) : [];
   if (!record || !fields.length) return '';
   const norm = m.normalize || {};
-  const parts = fields.map(f => sftkNormalizeValue(record[f], norm));
+  const parts = fields.map(f => sftkNormalizeValue(sftkPathValue(record, f), norm));
   if (!parts.some(p => p !== '')) return '';
   return parts.join(String.fromCharCode(1));
 }

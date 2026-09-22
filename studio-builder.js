@@ -1289,11 +1289,14 @@ function renderLookupSection(node, pathKey) {
   if (!resolvable.length) return '';
 
   const rows = resolvable.map(f => {
-    const res = (node.lookupResolutions || {})[f.name] || { strategy: 'skip' };
-    const strategy = res.strategy || 'skip';
-    const matchField = res.matchField || 'Name';
     // Primary non-system referenced object
     const refObj = f.referenceTo.find(r => !SYSTEM_LOOKUP_OBJS.has(r)) || f.referenceTo[0] || '?';
+    // Nothing configured = the engine's default: matched by Name in the target
+    // (🚫 Set null only when that object has nothing to match by).
+    const res = (node.lookupResolutions || {})[f.name]
+      || { strategy: (typeof sftkLookupDefaultStrategy === 'function' ? sftkLookupDefaultStrategy(refObj) : 'skip'), matchField: 'Name', defaulted: true };
+    const strategy = res.strategy || 'skip';
+    const matchField = res.matchField || 'Name';
 
     const matchSelHtml = strategy === 'match'
       ? `<span class="ds-lkp-by">by</span>${renderMatchFieldSelect(refObj, matchField, f.name, pathKey)}`
@@ -1306,7 +1309,9 @@ function renderLookupSection(node, pathKey) {
       effectiveStrategy === 'skip'
         ? `<span class="ds-lkp-hint">field will be null in target — safe default</span>`
       : effectiveStrategy === 'match'
-        ? `<span class="ds-lkp-hint" data-lkp-extid-slot="${esc(refObj)}|${esc(f.name)}|${esc(pathKey)}">tip: pick an External ID field for reliable cross-org matching</span>`
+        ? (res.defaulted
+          ? `<span class="ds-lkp-hint">default — matched by Name in the target; choose 🚫 Set null if this field must not be touched</span>`
+          : `<span class="ds-lkp-hint" data-lkp-extid-slot="${esc(refObj)}|${esc(f.name)}|${esc(pathKey)}">tip: pick an External ID field for reliable cross-org matching</span>`)
       : '';
 
     return `<div class="ds-lkp-row">

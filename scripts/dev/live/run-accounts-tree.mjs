@@ -55,6 +55,7 @@ export default async function (h) {
   const runDisabled = await h.eval(`document.querySelector('#dsRecRunBtn')?.disabled`);
   h.log('run button disabled:', runDisabled);
   if (runDisabled) return;
+  const histBefore = await h.eval('_history.length');
   await h.click('#dsRecRunBtn');
   await h.sleep(2500);
   // confirms: the combined plan modal (Proceed), then possibly typed (dev org → none expected)
@@ -67,14 +68,27 @@ export default async function (h) {
     h.log('clicked:', ok);
     await h.sleep(2000);
   }
-  await h.waitFor(`/Done|Finished|complete|failed|✅|❌/.test(document.querySelector('#dsRecProgress')?.innerText || '') && !/Running|⏳/.test(document.querySelector('#dsRecRunBtn')?.innerText || '')`, 240000, 2000);
-  await h.sleep(3000);
-  h.log('RUN LOG:', await dump(h, '#dsRecProgress', 3500));
+  // the run is over when its History entry exists (written before "Reconcile
+  // complete"); the post-run refresh then wipes the progress log, so keep the
+  // last text seen while waiting
+  let lastLog = '';
+  for (let i = 0; i < 300; i++) {
+    const t = await h.eval(`document.querySelector('#dsRecProgress')?.innerText || ''`);
+    if (t) lastLog = t;
+    if (await h.eval(`_history.length > ${histBefore}`)) break;
+    await h.sleep(1000);
+  }
+  await h.sleep(2000);
+  h.log('RUN LOG (last seen):', lastLog.split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ').slice(-3500));
   await h.shot(SHOTS + 'run1-done.png');
-  await h.sleep(6000);   // post-run auto refresh
+  // the post-run auto refresh repaints the page; wait until it has landed before leaving
+  await h.sleep(4000);
+  await h.waitFor("!document.querySelector('#dsDepRefresh')?.disabled && /scanned (just now|\d+ ?s)/.test(document.querySelector('.ds-view-header, .ds-dep-page')?.innerText || 'scanned just now')", 60000, 1000);
+  await h.sleep(1500);
   h.log('PLAN after run:', await dump(h, '.ds-dep-plan', 1600));
   await h.eval(`document.querySelector('[data-view="history"]')?.click()`);
-  await h.sleep(2000);
+  await h.waitFor("!!document.querySelector('.ds-history-card, .ds-history-item')", 20000, 500);
+  await h.sleep(1000);
   h.log('HISTORY:', await dump(h, '.ds-history-card, .ds-history-item, #dsMain', 1800));
   await h.eval(`document.querySelectorAll('details').forEach(d => d.open = true)`);
   h.log('RAW LINES:', (await h.eval(`(document.querySelector('.ds-history-card .ds-err-raw, .ds-history-item .ds-err-raw')?.innerText || '')`)).split(String.fromCharCode(10)).join(' | ').slice(0, 3000));
