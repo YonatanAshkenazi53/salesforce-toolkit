@@ -311,6 +311,8 @@ function _sftkUndoPlanHtml(ctx) {
         bits.push(`<strong>${it.kept.toLocaleString()}</strong> kept — other records were added under them after the run (${esc(it.cascadeNotes.join(', '))}) and would be deleted with them; delete those parents by hand after moving what hangs under them`);
       }
     }
+    if (it.kept && it.cascadeUnknown && it.cascadeUnknown.length && it.keptIds && it.keptIds.length) bits.push(`<label class="ds-undo-force" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" data-undo-force="${esc(it.objType)}"> delete these ${it.kept.toLocaleString()} anyway — I checked what hangs under them</label>`);
+    if (it.cascadeUnchecked && it.cascadeUnchecked.length) bits.push(`<span class="ds-subtext">${it.cascadeUnchecked.length} child object(s) could not be checked because Salesforce restricts querying them (${esc(it.cascadeUnchecked.join(', '))}) — they did not stop the deletion</span>`);
     if (s.createdLater) bits.push(`${s.createdLater.toLocaleString()} created AFTER the run → left alone`);
     if (s.changedLater) bits.push(`${s.changedLater.toLocaleString()} edited AFTER the run → left alone`);
     if (p.goneCount) {
@@ -553,7 +555,7 @@ window.rollbackRun = async function(runId) {
         const scoped = sftkUndoScopeByTime(diff, res.records || [], legEnd);
         const p = sftkUndoPlan(diff);
         const item = { leg, ...o, before, diff, scoped, p, runEndedAt: legEnd, nowCount: (res.records || []).length,
-          kept: 0, keptForChildren: 0, cascadeNotes: [], cascadeUnknown: [] };
+          kept: 0, keptForChildren: 0, cascadeNotes: [], cascadeUnknown: [], cascadeUnchecked: [], keptIds: [] };
         // What hangs under the records we would delete? Deleting a parent
         // cascade-deletes its children — including ones someone added AFTER
         // the run, which the plan promises to leave alone. Those parents are
@@ -575,7 +577,17 @@ window.rollbackRun = async function(runId) {
             const where = `${rel.field} != null${sinceIso ? ` AND CreatedDate > ${sinceIso}` : ''}`;
             const r = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: leg.orgUrl, sid: leg.sid,
               query: `SELECT Id, ${rel.field} FROM ${rel.childSObject} WHERE ${where}` });
-            if (r?.error || r?.incomplete) { item.cascadeUnknown.push(rel.childSObject); continue; }
+            if (r?.error || r?.incomplete) {
+              // A child object Salesforce itself refuses to query this way
+              // (ActionableListMember: "Implementation restriction: … filter
+              // using ActionableListId", live rollback 2026-09-22) cannot hide
+              // a person's work under a record this run created — it is said,
+              // and it does not keep the parents. Anything else stays unknown.
+              const msg = String(r?.error || 'incomplete read');
+              if (/Implementation restriction|not supported|INVALID_TYPE|is not supported|cannot be filtered|entity type .* does not support query/i.test(msg)) item.cascadeUnchecked.push(`${rel.childSObject} (${msg.split(':')[0].trim().slice(0, 60)})`);
+              else item.cascadeUnknown.push(`${rel.childSObject}: ${msg.slice(0, 90)}`);
+              continue;
+            }
             let hit = 0;
             for (const row of (r.records || [])) { const pid = row && row[rel.field]; if (pid && createdSet.has(pid)) { kept.add(pid); hit++; } }
             if (hit) item.cascadeNotes.push(`${hit.toLocaleString()} ${rel.childSObject}`);
@@ -585,6 +597,7 @@ window.rollbackRun = async function(runId) {
           if (item.cascadeUnknown.length) { for (const id of createdSet) kept.add(id); }
           if (kept.size) {
             item.kept = kept.size;
+            item.keptIds = [...kept];
             scoped.created = scoped.created.filter(id => !kept.has(id));
             log('⚠', `${o.objType}: ${kept.size.toLocaleString()} created record(s) KEPT — ${item.cascadeUnknown.length
               ? `could not check what hangs under them (${item.cascadeUnknown.join(', ')})`
@@ -609,9 +622,12 @@ window.rollbackRun = async function(runId) {
   const typedWord = prod ? orgLabel(prodLeg.orgUrl) : 'ROLLBACK';
   const planEl = eid('dsUndoPlan');
   if (!alive() || !planEl) return abandon();
-  planEl.innerHTML = _sftkUndoPlanHtml({ legs, plan, typedWord, anyWork, ev, run, prodUnknown });
+  // Parents kept only because a child object could not be READ are the
+  // user's call: the plan offers "delete these anyway — I checked".
+  const forceable = plan.some(it => !it.refused && it.keptIds && it.keptIds.length && it.cascadeUnknown && it.cascadeUnknown.length);
+  planEl.innerHTML = _sftkUndoPlanHtml({ legs, plan, typedWord, anyWork: anyWork || forceable, ev, run, prodUnknown });
   const go = eid('dsUndoGo');
-  if (!anyWork) { if (go) go.remove(); return abandon(); }
+  if (!anyWork && !forceable) { if (go) go.remove(); return abandon(); }
   const inp = eid('dsUndoTyped');
   inp?.addEventListener('input', () => { if (go) go.disabled = inp.value.trim() !== typedWord; });
   inp?.focus();
@@ -644,6 +660,13 @@ window.rollbackRun = async function(runId) {
   go?.addEventListener('click', async () => {
     if (executing || _sftkUndoBusy !== token) return;
     executing = true;
+    // "delete these anyway — I checked": the kept parents the user took
+    // responsibility for join the deletion; nothing else changes.
+    for (const it of plan) {
+      const box = document.querySelector(`[data-undo-force="${(window.CSS && CSS.escape) ? CSS.escape(it.objType) : it.objType}"]`);
+      if (box && box.checked && it.keptIds && it.keptIds.length) { it.scoped.created.push(...it.keptIds); it.forced = it.keptIds.length; it.keptIds = []; it.kept = Math.max(0, (it.kept || 0) - it.forced); log('✋', `${it.objType}: ${it.forced.toLocaleString()} kept record(s) will be deleted on your say-so.`); }
+    }
+    if (!plan.some(it => !it.refused && (it.scoped.created.length || it.scoped.changed.length))) { showToast('Nothing to roll back — tick "delete these anyway" for the kept records, or close.', 'warning', 6000); executing = false; return; }
     window._sftkModalLock = true;
     try { obs.disconnect(); } catch (_) {}
     go.disabled = true; go.textContent = '⏳ Rolling back…';

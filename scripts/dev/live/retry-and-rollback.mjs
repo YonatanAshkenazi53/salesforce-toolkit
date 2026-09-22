@@ -56,6 +56,8 @@ export default async function (h) {
   await h.sleep(1000);
   h.log('ROLLBACK PLAN:', await dump(h, '#dsUndoPlan', 6000));
   h.log('ROLLBACK LOG (pre):', await dump(h, '#dsUndoLog', 800));
+  const forced = await h.eval(`(() => { let n = 0; document.querySelectorAll('[data-undo-force]').forEach(c => { c.checked = true; n++; }); return n; })()`);
+  h.log('force boxes ticked:', forced);
   const word = await h.eval(`(document.querySelector('#dsUndoTyped')?.placeholder || '')`);
   h.log('typed word asked:', JSON.stringify(word));
   if (!word) return;

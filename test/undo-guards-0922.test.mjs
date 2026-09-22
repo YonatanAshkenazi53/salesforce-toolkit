@@ -6,6 +6,25 @@ import { readFileSync } from 'node:fs';
 
 const U = readFileSync(new URL('../studio-undo.js', import.meta.url), 'utf8');
 
+// 2026-09-22 — live rollback: 6 Accounts the run created were KEPT because
+// ActionableListMember cannot be queried without an ActionableListId (a
+// Salesforce implementation restriction) — no way through for the user.
+describe('rollback: child objects Salesforce refuses to query do not keep the parents; unreadable ones offer a choice', () => {
+  it('classifies the probe error and records why', () => {
+    expect(U).toContain("if (/Implementation restriction|not supported|INVALID_TYPE|is not supported|cannot be filtered|entity type .* does not support query/i.test(msg)) item.cascadeUnchecked.push(");
+    expect(U).toContain('else item.cascadeUnknown.push(`${rel.childSObject}: ${msg.slice(0, 90)}`);');
+    expect(U).toContain('item.keptIds = [...kept];');
+  });
+  it('the plan offers "delete these anyway" only for unreadable children, keeps the typed word, and the Go applies it', () => {
+    expect(U).toContain("const forceable = plan.some(it => !it.refused && it.keptIds && it.keptIds.length && it.cascadeUnknown && it.cascadeUnknown.length);");
+    expect(U).toContain('anyWork: anyWork || forceable');
+    expect(U).toContain('data-undo-force="${esc(it.objType)}"> delete these ${it.kept.toLocaleString()} anyway — I checked what hangs under them');
+    expect(U).toContain('they did not stop the deletion');
+    expect(U).toContain("it.scoped.created.push(...it.keptIds); it.forced = it.keptIds.length;");
+    expect(U).toContain('Nothing to roll back — tick "delete these anyway" for the kept records, or close.');
+  });
+});
+
 describe('rollback and the org guards', () => {
   it('refuses a locked org before the re-read, and says so', () => {
     const i = U.indexOf('const lockedLeg = legs.find(l => typeof window.sftkOrgLocked === ');

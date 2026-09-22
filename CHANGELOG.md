@@ -69,6 +69,10 @@ extensions containing root files that start with `_`).
 - **"✓ All" selects the whole list.** Over a list of 5,000 the button selected
   the 300 rows painted on screen. It now selects every record in the list and
   says how many.
+- **↩ Roll back no longer refuses because of a child object Salesforce will
+  not let it query.** Such objects (an implementation restriction) are named
+  and do not keep the parents; a child object that truly could not be read
+  still keeps them, and the plan now offers "delete these anyway — I checked".
 - **Bulk runs report their real errors.** Salesforce echoes uploaded values
   in its own spelling ("200000" back as "200000.0"), and the result rows of a
   Bulk API job never matched the uploaded records — every record read "no
