@@ -73,6 +73,19 @@ function histRecordDetailNote(entry, countsOnly) {
 }
 
 // One run → per-record CSV rows. opts: { countsOnly, sourceLabel, targetLabel }.
+// PURE. One hint per KIND of skipped field, from the reasons the engine gave
+// — "🧹 removes stale entries" was printed for every skip, including a field
+// that simply does not exist in the target (user's card 2026-09-22).
+function sftkSkipHints(skips) {
+  const reasons = (skips || []).flatMap(n => n.fields || []).map(f => String(f.reason || '').toLowerCase());
+  const out = [];
+  if (reasons.some(r => r.includes('no longer exist'))) out.push('Deleted from the source org: open ✏ Edit → Fields & mapping and remove the stale entries (🧹).');
+  if (reasons.some(r => r.includes('missing in target'))) out.push('Missing in the target org: create the field there, or exclude it (✕) in ✏ Edit → Fields & mapping. Until then its values are left out of every record.');
+  if (reasons.some(r => r.includes('read-only'))) out.push('Read-only in the target: Salesforce never accepts a write to it — exclude it (✕) in ✏ Edit → Fields & mapping to silence this note.');
+  if (!out.length && reasons.length) out.push('Open ✏ Edit → Fields & mapping to review these fields.');
+  return out;
+}
+
 // Returns { header, rows, notes }. One row per record outcome where record
 // detail exists (written / failed-update / failed-insert with T11b context);
 // objects whose detail is missing get an explicit summary-only row, and
@@ -331,13 +344,13 @@ function renderHistory() {
             ${run.scheduledRun ? '<span class="ds-chip">📅 scheduled</span>' : ''}
             <span class="ds-history-time">${timeAgo(run.startedAt)}</span>
             ${retryable ? `<button class="ds-btn ds-btn-xs ds-btn-primary" data-dsaction="retryFailed" data-arg="${esc(run.id)}"
-              title="Re-run this profile transferring ONLY the ${totalFailed} record(s) that failed before. Skips records that already succeeded so you don't double-create.">↻ Retry failed (${totalFailed})</button>` : ''}
+              title="Open this deployment with the ${totalFailed} failed record(s) ticked under 🔴 Insert. Records that already succeeded are not touched.">↻ Retry failed (${totalFailed})</button>` : ''}
             ${undoSt.show ? `<button class="ds-btn ds-btn-xs ${undoSt.disabled ? '' : 'ds-btn-danger'}" ${undoSt.disabled ? 'disabled' : ''} data-dsaction="rollbackRun" data-arg="${esc(run.id)}"
               title="${esc(undoSt.title || '')}">${esc(undoSt.label)}</button>` : ''}
             ${profExists && !isRecRun && !isRollback ? `<button class="ds-btn ds-btn-xs" data-dsaction="runAgain" data-arg="${esc(run.id)}"
-              title="Open Run Transfer for this deployment against the same org pair this run used.">↻ Run again</button>` : ''}
+              title="Open this deployment against the same target this run used. Nothing is selected for you.">↻ Run again</button>` : ''}
             ${profExists && isRecRun ? `<button class="ds-btn ds-btn-xs" data-dsaction="openReconcile" data-arg="${esc(run.profileId)}"
-              title="Open the Reconcile view for this deployment.">⚖ Reconcile</button>` : ''}
+              title="Open this deployment.">🚀 Deploy</button>` : ''}
             ${profExists ? `<button class="ds-btn ds-btn-xs" data-dsaction="editProfile" data-arg="${esc(run.profileId)}"
               title="Open this deployment in the builder.">✏ Profile</button>` : ''}
             <button class="ds-btn ds-btn-xs" data-hist-export="${esc(run.id)}"
@@ -553,7 +566,7 @@ function renderHistory() {
                 <div class="ds-err-skiphead">⚠ Fields not copied (mapping issues) — records themselves were still written:</div>
                 ${skips.flatMap(n => n.fields || []).map(f => `
                   <div class="ds-err-fieldrow"><code>${esc(f.field)}</code><span class="ds-err-fieldreason">${esc(f.reason)}</span></div>`).join('')}
-                <div class="ds-err-hint">💡 Open ✏ Edit → Fields &amp; mapping to clean these up (🧹 removes stale entries).</div>
+                ${sftkSkipHints(skips).map(h => `<div class="ds-err-hint">💡 ${esc(h)}</div>`).join('')}
               </div>` : '';
 
             const failBlock = [...failGroups.values()].map(f => `
@@ -563,17 +576,17 @@ function renderHistory() {
               </div>`).join('');
 
             const noteBlock = otherNotes.map(n => `
-              <div class="ds-history-err-row" title="${esc(n.raw)}">${/^ℹ/.test(n.message) ? '' : '⚠ '}${esc(n.message)}
+              <div class="ds-history-note-row" title="${esc(n.raw)}">${/^ℹ/.test(n.message) ? '' : '⚠ '}${esc(n.message)}
                 ${n.hint ? `<div class="ds-err-hint">💡 ${esc(n.hint)}</div>` : ''}
               </div>`).join('');
 
             return `
-            <details class="ds-history-errors">
+            <details class="ds-history-errors${fails.length ? '' : ' ds-history-errors--notes'}">
               <summary>${summary.join(' · ')}</summary>
               ${failBlock}
               ${skipBlock}
               ${noteBlock}
-              <details class="ds-err-raw"><summary>raw error text (for support / copy-paste)</summary>
+              <details class="ds-err-raw"><summary>raw lines (for support / copy-paste)</summary>
                 ${run.errors.map(e => `<div class="ds-err-rawline">${esc(e)}</div>`).join('')}
               </details>
             </details>`;

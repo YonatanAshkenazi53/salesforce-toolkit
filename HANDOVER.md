@@ -14,6 +14,49 @@ Store currently has **1.4.2** — 1.4.3 has NOT been uploaded yet.
 
 ---
 
+> **UPDATE 2026-09-21 — RELEASE 1.5.0 PREPARED (user: "i want to use the new view
+> on it … and only the new view").** manifest 1.5.0, zip
+> `dist/salesforce-toolkit-v1.5.0-store.zip` (63 files), gate 86 files /
+> **2541 tests**, boot smoke 1/1/1, page rendered once with
+> `scripts/dev/deploy-preview.mjs`. Store still has 1.4.2 (1.4.3 was never
+> uploaded; its notes sit under 1.5.0 in CHANGELOG). Last commit `37819ec` on
+> branch `work/1.4.3-deploy-view`; the 1.5.0 work below is UNCOMMITTED.
+> - **The Deploy view is the only page.** `sftkDeployViewOn()` is true unless the
+>   no-button fallback key `_settings.deployViewClassic === true`. ONE seam: the
+>   first line of `renderReconcile()` sends everything to `renderDeploy()`, so
+>   the card (🚀 Deploy — ▶ Run and ⚖ Reconcile are gone), palette, builder,
+>   History ↻ Run again / ↻ Retry failed, Org Compare, Ring ⚖ and the Seeder
+>   all land there. The switch, the beta badge, ↩ Classic view are removed.
+>   Classic code is still shipped (the engine and shared functions live in it)
+>   but no button reaches `renderTransfer()` except Sequences' own runner.
+> - **↻ Retry failed** → `window.sftkDeployRetry` → pure `sftkDeployRetryPicks`:
+>   ticks failed ids still under 🔴 Insert (children only when the row is
+>   selectable), counts 🟡 Changed, reports the rest.
+> - **SAFETY FIX:** `runReconcile` typed-confirmed production DELETES only; a
+>   plain insert/overwrite into production ran on one click. Now
+>   `sftkRecGuardedWrites` names every write per org and `confirmTypedProd`
+>   gates target AND source, fail-closed on an unknown org type.
+> - Scan chokepoint (studio-scan.js) now repaints when `_currentView==='deploy'`.
+> - Added to the page: 💾 Save as deployment, 🔗 Match review (only when both
+>   sides have rows), 📸 restore point checkbox.
+> - **Knowingly NOT on the page (said in CHANGELOG):** old 🧪 Dry Run, run-time
+>   record filter, Upsert mode, API-call estimate, records preview; >5,000 per
+>   list = run, refresh, repeat. Still missing from classic Reconcile: 📎 file
+>   drift move, 🗂 table, group-by-parent, insert-order toggle, picklist-gap
+>   notes, accuracy chip, auto-refresh on a stale run. NEXT: the real
+>   rolled-back dry run (`docs/deploy-merge-parity.md` §A).
+> - 2026-09-22: **🛑 Guard as production** on the Connected Orgs card
+> (`_orgs[url].guardAsProd`, pure `sftkOrgGuardedAsProd` wins inside
+> `ensureOrgType`/`cachedOrgType`). Both of the user's orgs are trials = 'dev',
+> so without it the typed gates could never be seen. Gate now 87 files / 2545.
+> - 2026-09-22: **false 'partial' fixed** — `runReconcile` counted every ⚠/🔗
+> warning as a hard error (only ℹ exempt) while History called them notes. Now
+> `sftkRunLineIsError` (= sftkFriendlyError kind) decides for both. History notes
+> amber (`.ds-history-note-row`), skip hints per reason (`sftkSkipHints`).
+> Gate 88 files / 2549.
+> - NOTHING here was exercised in a live org by Claude — the user must run the
+>   smoke list before uploading.
+
 ## 1. What was done this session (short)
 
 **Data Studio**

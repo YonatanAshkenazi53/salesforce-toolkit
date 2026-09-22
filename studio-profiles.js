@@ -52,12 +52,11 @@ function renderProfiles() {
     ${dsViewHeader({
       icon: 'box',
       title: 'Data Deployment',
-      subtitle: 'Define a profile (objects + orgs), then run it',
+      subtitle: 'Define a deployment (objects + orgs), then 🚀 Deploy it',
       // _profiles is the exact array rendered as cards below — the count and
       // the list can never disagree.
       count: `${_profiles.length} profile${_profiles.length !== 1 ? 's' : ''}`,
-      actions: `<button class="ds-btn${(typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) ? ' ds-btn-config--active' : ''}" id="dsDeployViewSwitch" title="${(typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) ? 'ON — ▶ and ⚖ open the new Deploy view (beta). Click to go back to the classic Run Transfer and Reconcile pages. Nothing else changes: same scan, same engine, same history.' : 'OFF — ▶ and ⚖ open the classic pages. Click to try the new Deploy view (beta): one page instead of two. You can switch back any time, here.'}">✨ New Deploy view: ${(typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) ? 'ON' : 'off'}</button>
-        <button class="ds-btn" id="dsImportProfile" title="Import a deployment profile from a teammate's exported .json file — config only; you'll be prompted to validate it against your own targets">${dsIcon('upload')}Import</button>
+      actions: `        <button class="ds-btn" id="dsImportProfile" title="Import a deployment profile from a teammate's exported .json file — config only; you'll be prompted to validate it against your own targets">${dsIcon('upload')}Import</button>
         <button class="ds-btn ds-btn-primary" id="dsNewProfile">${dsIcon('plus')}New Profile</button>`,
     })}
 
@@ -96,13 +95,6 @@ function renderProfiles() {
   eid('dsNewProfile')?.addEventListener('click', () => openProfileBuilder(null));
   // E1: profile file import/export — implementations live in studio-builder.js.
   eid('dsImportProfile')?.addEventListener('click', () => window.importProfileFromFile?.());
-  eid('dsDeployViewSwitch')?.addEventListener('click', async () => {
-    if (typeof sftkDeployViewSet !== 'function') return;
-    const on = !sftkDeployViewOn();
-    await sftkDeployViewSet(on);
-    showToast(on ? '✨ New Deploy view is ON — ▶ and ⚖ now open it. This button switches back.' : 'Classic pages are back — ▶ opens Run Transfer, ⚖ opens Reconcile.', 'info', 6000);
-    renderProfiles();
-  });
   document.querySelectorAll('[data-prof-export]').forEach(b =>
     b.addEventListener('click', () => window.exportProfile?.(b.dataset.profExport)));
   eid('dsNewSequence')?.addEventListener('click', () => openSequenceBuilder(null));
@@ -546,13 +538,11 @@ function profileCard(p) {
       ${p.importedFrom ? `<div class="ds-profile-card-meta" title="Imported from a teammate's export file${p.importedFrom.exportedBy ? ` (written by Toolkit v${esc(p.importedFrom.exportedBy)})` : ''}${p.importedFrom.exportedAt ? `, exported ${esc(String(p.importedFrom.exportedAt).slice(0, 10))}` : ''}. Scan state was not part of the file — run 🔄 Refresh state to compare against your orgs.">⬆ imported from ${esc(p.importedFrom.fileName || 'file')} on ${esc(String(p.importedFrom.importedAt || '').slice(0, 10))}</div>` : ''}
       <div class="ds-profile-card-actions">
         <button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="runProfile" data-arg="${p.id}"
-          ${hasOrgs ? '' : 'disabled title="Set source and target orgs in Edit first"'}>▶ Run</button>
+          ${hasOrgs ? '' : 'disabled title="Set source and target orgs in Edit first"'}
+          ${hasOrgs ? 'title="Open this deployment: see what is already in the target, select what to insert, overwrite, re-link or remove, then run. Nothing writes until you select it."' : ''}>🚀 Deploy</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="refreshState" data-arg="${p.id}"
           ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
-          title="MEASURE this pair: query both orgs and sort records into missing / changed / in sync by your match key. Writes nothing — ⚖ Reconcile reads this measurement.">🔄 Refresh state</button>
-        <button class="ds-btn ds-btn-sm" data-dsaction="openReconcile" data-arg="${p.id}"
-          ${hasOrgs ? '' : 'disabled title="Set source and target orgs first"'}
-          title="FIX this source → target pair: review the scan buckets and push what's missing, overwrite what drifted, relink children — per-bucket control, nothing writes until you act.">⚖ Reconcile</button>
+          title="MEASURE this pair: query both orgs and sort records into missing / changed / in sync by your match key. Writes nothing — 🚀 Deploy reads this measurement.">🔄 Refresh state</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="editProfile" data-arg="${p.id}">✏ Edit</button>
         <button class="ds-btn ds-btn-sm" data-dsaction="cloneProfile" data-arg="${p.id}">⧉ Clone</button>
         <button class="ds-btn ds-btn-sm" data-prof-export="${esc(p.id)}"
@@ -604,7 +594,7 @@ window.runProfile = function(profileId, targetUrl) {
   const _tgts = p ? profileTargets(p) : [];
   if (p && _tgts.length > 1 && !targetUrl) {
     showModal(`
-      <div class="ds-modal-header">▶ Run — pick the target</div>
+      <div class="ds-modal-header">🚀 Deploy — pick the target</div>
       <div class="ds-modal-body" style="font-size:12.5px">
         <div style="margin-bottom:8px">A run writes to <strong>one target</strong> at a time. ${esc(orgLabel(p.sourceOrg))} deploys to ${_tgts.length} targets — which one is this run for?</div>
         ${_tgts.map(u => `<button class="ds-btn" style="display:flex;width:100%;margin:4px 0;justify-content:space-between;align-items:center" data-run-target="${esc(u)}">
@@ -639,6 +629,11 @@ window.runAgain = function(runId) {
   if (!run?.profileId) return;
   const prof = _profiles.find(p => p.id === run.profileId);
   if (!prof) return showToast('That deployment no longer exists — cannot re-run.', 'error', 4000);
+  if (typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) {
+    const runSrc = run.sourceOrg || run.srcOrgUrl, runTgt = run.targetOrg || run.tgtOrgUrl;
+    if (runSrc && _orgKey(runSrc) !== _orgKey(prof.sourceOrg || '')) showToast(`That run read from ${orgLabel(runSrc)}; this deployment reads from ${orgLabel(prof.sourceOrg)} now — opening it as it is today.`, 'info', 7000);
+    return window.openReconcile?.(prof.id, runTgt || undefined);
+  }
   _transferProfile     = prof;
   _transferNodeFilters = {};
   _transferOrgOverride = {

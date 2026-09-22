@@ -519,7 +519,7 @@ function _ocRenderResults() {
           <td>${r.extras  ? `<strong>${r.extras.toLocaleString()}</strong>`  : '0'}</td>
           <td class="ds-oc-pct"><strong>${r.matchPct}%</strong></td>
           <td style="white-space:nowrap">
-            <button class="ds-btn ds-btn-xs ds-btn-primary" data-oc-reconcile="${esc(r.name)}">⚖ Reconcile</button>
+            <button class="ds-btn ds-btn-xs ds-btn-primary" data-oc-reconcile="${esc(r.name)}">🚀 Deploy</button>
             <button class="ds-btn ds-btn-xs" data-oc-deploy="${esc(r.name)}" data-oc-mf="${esc(r.matchField || '')}"
               title="Create a saved deployment pre-configured for ${esc(r.name)} with this org pair and match field">📦 Deploy</button>
           </td>

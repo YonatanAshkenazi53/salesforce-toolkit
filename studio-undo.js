@@ -159,7 +159,7 @@ async function sftkUndoCaptureForRun(opts, log) {
   const evidenceId = (opts && opts.evidenceId) || genId('undo');
   const scope = (opts && opts.scope) || 'run';
   if (_settings?.undoCapture === false) {
-    say('📸', 'Restore point skipped — switched off (📸 checkbox on the Run Transfer page). This run will NOT be rollback-able.', 'ds-prog-warn');
+    say('📸', 'Restore point skipped — switched off (📸 checkbox next to ▶ Deploy). This run will NOT be rollback-able.', 'ds-prog-warn');
     return sftkUndoEntryFor(evidenceId, [{ orgUrl: null, objects: {}, skipped: { 'all objects': 'restore points are switched off' } }], scope, capturedAt);
   }
   const legsOut = [];

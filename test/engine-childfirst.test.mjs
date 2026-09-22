@@ -484,7 +484,7 @@ describe('engine notes are marked, never dressed as failures', () => {
     const REC = readFileSync(new URL('../studio-reconcile.js', import.meta.url), 'utf8');
     // A child pass that dies wholesale contributes zero per-record fails —
     // the ℹ filter is what keeps the card honest.
-    expect(REC).toMatch(/const hardErrs = allErrors\.filter\(e => !\/\(\^\|: \)ℹ \/\.test\(String\(e\)\)\)\.length;/);
+    expect(REC).toContain('const hardErrs = allErrors.filter(e => sftkRunLineIsError(e)).length;');   // 2026-09-22: one classifier with History
     expect(REC).toMatch(/const status\s+= \(totalFail === 0 && hardErrs === 0\) \? 'success'/);
   });
 });
