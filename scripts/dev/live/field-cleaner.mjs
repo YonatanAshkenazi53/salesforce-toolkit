@@ -47,6 +47,23 @@ export default async function (h) {
   h.log('DATA VERDICT:', await dump(h, '#fcDataVerdict', 400));
   h.log('DELETE ZONE:', await dump(h, '#fcDeleteZone', 600));
   await h.shot(h.shots + '/fc-results.png');
+  if (process.env.DEPRECATE === '1') {
+    // 🕐 Deprecate first (label → zz_DEPRECATED…, FLS stripped), then ↩ Undo — nothing else
+    h.log('DEP ZONE:', await dump(h, '#fcDepZone', 400));
+    await h.eval(`document.querySelector('#fcDepBtn')?.click()`);
+    await h.waitFor("!!document.querySelector('#fcDepUndo') || /❌|failed/i.test(document.querySelector('#fcDepZone')?.innerText || '')", 120000, 1000);
+    await h.sleep(1000);
+    h.log('AFTER DEPRECATE:', await dump(h, '#fcDepZone', 600));
+    h.log('errors under zone:', JSON.stringify(await h.eval(`[...document.querySelectorAll('#fcDepZone .fc-error-msg, #fcDepZone [class*=err]')].map(e => e.innerText.slice(0, 300))`)));
+    await h.shot(h.shots + '/fc-deprecated.png');
+    if (process.env.UNDO !== '0' && await h.eval(`!!document.querySelector('#fcDepUndo')`)) {
+      await h.eval(`document.querySelector('#fcDepUndo').click()`);
+      await h.waitFor("!!document.querySelector('#fcDepBtn') || /❌|failed/i.test(document.querySelector('#fcDepZone')?.innerText || '')", 120000, 1000);
+      await h.sleep(1000);
+      h.log('AFTER UNDO:', await dump(h, '#fcDepZone', 600));
+    }
+    return;
+  }
   const fixBtns = await h.eval(`[...document.querySelectorAll('.fc-fix-btn')].map(b => (b.dataset.type || '?') + ':' + (b.dataset.name || b.dataset.id) + (b.disabled ? '(off)' : ''))`);
   h.log('fix buttons:', JSON.stringify(fixBtns));
   // the flow first

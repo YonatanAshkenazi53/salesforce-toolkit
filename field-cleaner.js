@@ -1681,7 +1681,7 @@ const FieldCleaner = (() => {
   // read or edit. Per-row ✂ strips that grant (PermissionsRead/Edit → false).
   async function _queryFls() {
     const res = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
-      query: `SELECT Id, Parent.Label, Parent.IsOwnedByProfile, Parent.Profile.Name, ` +
+      query: `SELECT Id, ParentId, SobjectType, Field, Parent.Label, Parent.IsOwnedByProfile, Parent.Profile.Name, ` +
              `PermissionsRead, PermissionsEdit FROM FieldPermissions ` +
              `WHERE SobjectType = '${_selObj.api}' AND Field = '${_selObj.api}.${_selField.api}'` });
     if (res.error) return { error: res.error };
@@ -1758,7 +1758,7 @@ const FieldCleaner = (() => {
       el.innerHTML = `
         <div class="fc-dep-banner">
           🕐 <strong>Deprecated ${days === 0 ? 'today' : days + ' day(s) ago'}</strong> —
-          label renamed and ${dep.fls.length} access grant(s) stripped. No complaints so far?
+          label renamed and ${dep.fls.length} access grant(s) stripped${(dep.flsFailed || []).length ? ` — ⚠ ${dep.flsFailed.length} could NOT be: ${esc(dep.flsFailed.map(x => x.who).join(', '))} (a Salesforce-managed permission set cannot be edited; the field stays visible there)` : ''}. No complaints so far?
           It's safe to delete. Changed your mind?
           <button class="btn btn-sm" id="fcDepUndo">↩ Undo deprecation</button>
         </div>`;
@@ -1788,7 +1788,8 @@ const FieldCleaner = (() => {
       // 2. Rename label + stamp description.
       const md = { ...cur.Metadata };
       if (!/^zz_DEPRECATED/i.test(md.label || '')) md.label = `zz_DEPRECATED ${md.label || _selField.api}`;
-      md.description = `[DEPRECATED ${new Date().toISOString().slice(0, 10)} by Salesforce Toolkit — pending delete] ${prevDesc}`.slice(0, 1000);
+      // Already stamped (a second click after a partial run) → keep it once
+      if (!/^\[DEPRECATED /.test(prevDesc)) md.description = `[DEPRECATED ${new Date().toISOString().slice(0, 10)} by Salesforce Toolkit — pending delete] ${prevDesc}`.slice(0, 1000);
       const patch = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
         path: `services/data/v62.0/tooling/sobjects/CustomField/${fieldId}`,
         body: { Metadata: sftkMetaForPatch(md) } });
@@ -1797,18 +1798,32 @@ const FieldCleaner = (() => {
       // 3. Strip FLS everywhere (snapshot first for undo).
       const { rows, error } = await _queryFls();
       if (error) throw new Error('FLS query failed: ' + error);
-      const flsSnapshot = rows.map(r => ({ id: r.Id, read: !!r.PermissionsRead, edit: !!r.PermissionsEdit }));
+      const flsSnapshot = rows.map(r => ({ id: r.Id, read: !!r.PermissionsRead, edit: !!r.PermissionsEdit,
+        parentId: r.ParentId, sobject: r.SobjectType, field: r.Field,
+        who: r.Parent?.Label || r.Parent?.Profile?.Name || r.Id }));
+      // Grants Salesforce refused to strip (live 2026-09-23: the "Slack
+      // Integration User" session permission set, sfdcInternalInt — not
+      // editable by anyone). The label is renamed and every other grant is
+      // gone by now, so this is NOT a failure that forgets the record: it is
+      // recorded, Undo exists, and the names are shown.
+      const flsFailed = [];
+      const flsStripped = [];
       if (rows.length) {
         const res = await bg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: _orgUrl, sid: _sid,
           records: rows.map(r => ({ attributes: { type: 'FieldPermissions' }, Id: r.Id,
                                     PermissionsRead: false, PermissionsEdit: false })) });
-        const fails = (Array.isArray(res) ? res : []).filter(x => !x.success).length;
-        if (fails) throw new Error(`${fails} FLS strip(s) failed — field renamed but still partially visible`);
+        const results = Array.isArray(res) ? res : [];
+        flsSnapshot.forEach((f, i) => {
+          const x = results[i];
+          if (x && x.success) flsStripped.push(f);
+          else flsFailed.push({ who: f.who, why: ((x && x.errors) || []).map(e => e.message || e.statusCode).filter(Boolean).join('; ') });
+        });
+        if (!results.length) flsFailed.push(...flsSnapshot.map(f => ({ who: f.who, why: 'no answer from the org' })));
       }
 
-      // 4. Record the stage + undo snapshot.
+      // 4. Record the stage + undo snapshot (only what was really stripped is restored by Undo).
       await chrome.storage.local.set({ [_depKey()]: {
-        at: Date.now(), fieldId, prevLabel, prevDesc, fls: flsSnapshot } });
+        at: Date.now(), fieldId, prevLabel, prevDesc, fls: flsStripped, flsFailed } });
       renderDeprecationZone(fieldId);
       renderFlsPanel();
     } catch (e) {
@@ -1838,15 +1853,37 @@ const FieldCleaner = (() => {
         body: { Metadata: sftkMetaForPatch(md) } });
       if (patch?.error) throw new Error(patch.error);
 
-      // 2. Restore the FLS grants from the snapshot.
-      if (dep.fls.length) {
-        await bg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: _orgUrl, sid: _sid,
-          records: dep.fls.map(f => ({ attributes: { type: 'FieldPermissions' }, Id: f.id,
-                                       PermissionsRead: f.read, PermissionsEdit: f.edit })) });
+      // 2. Restore the FLS grants from the snapshot. Salesforce DELETES a
+      // FieldPermissions row when both permissions are set false (live
+      // 2026-09-23: the update by the old Id did nothing and the permission
+      // set's grant never came back), so each grant is re-created; the update
+      // by Id is the fallback for a row that still exists. Every failure is
+      // named — Undo never reports a restore it did not see.
+      const notBack = [];
+      for (const f of (dep.fls || [])) {
+        const rec = { ParentId: f.parentId, SobjectType: f.sobject || _selObj?.api, Field: f.field || `${_selObj?.api}.${_selField?.api}`,
+                      PermissionsRead: f.read, PermissionsEdit: f.edit };
+        let ok = false, why = '';
+        if (rec.ParentId) {
+          const ins = await bg({ type: 'SF_REST_POST', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+            path: 'services/data/v62.0/sobjects/FieldPermissions', body: rec });
+          ok = !!(ins && !ins.error && ins.success !== false); if (!ok) why = String(ins?.error || '');
+        }
+        if (!ok && f.id) {
+          const up = await bg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: _orgUrl, sid: _sid,
+            records: [{ attributes: { type: 'FieldPermissions' }, Id: f.id, PermissionsRead: f.read, PermissionsEdit: f.edit }] });
+          const r0 = Array.isArray(up) ? up[0] : null;
+          ok = !!(r0 && r0.success); if (!ok) why = why || ((r0 && r0.errors) || []).map(e => e.message || e.statusCode).join('; ') || (up && up.error) || 'no answer';
+        }
+        if (!ok) notBack.push(`${f.who}${why ? ` (${why})` : ''}`);
       }
       await chrome.storage.local.remove(key);
       renderDeprecationZone(dep.fieldId);
       renderFlsPanel();
+      if (notBack.length) {
+        eid('fcDepZone')?.insertAdjacentHTML('beforeend',
+          `<div class="fc-error-msg">⚠ Label and description restored, but ${notBack.length} access grant(s) could not be given back: ${esc(notBack.join(', '))}. Grant them again in Setup (Object Manager → the field → Set Field-Level Security).</div>`);
+      }
     } catch (e) {
       if (btn) {
         btn.disabled = false; btn.textContent = '↩ Undo deprecation';

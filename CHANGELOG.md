@@ -77,6 +77,15 @@ extensions containing root files that start with `_`).
   picklist value; it keeps it as inactive. The tool re-reads the field and says so, with the
   Setup path for deleting it for good, instead of "Value deleted". A value no record holds
   reads 0, not "not counted".
+- **Picklist Manager, compare mode.** The bulk wizard's Apply waits for the automation check
+  in every org (it could be clicked while "scanned 0 of 2 org(s)" was still on screen); a
+  partial scan says "nothing that was scanned names this value" instead of "no flow"; a
+  field the user cannot see is reported as possibly hidden by field-level security.
+- **Field Cleaner — Deprecate first and Undo work again, and tell the truth.** A grant Salesforce
+  refuses to strip (its own Slack Integration User permission set) no longer voids the whole
+  step: it is named in the banner, the deprecation is recorded and Undo is offered. Undo
+  re-creates the stripped grants (Salesforce deletes a field permission set to no access) and
+  names anything it could not give back. The description is stamped once.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run

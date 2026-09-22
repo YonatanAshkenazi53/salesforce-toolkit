@@ -830,7 +830,9 @@ async function _pkFetchInventory(sess, obj, field, opts) {
   const o = opts || {};
   const desc = await describe(obj, sess.orgUrl, sess.sid);
   const fieldMeta = (desc?.fields || []).find(f => f.name === field);
-  if (!fieldMeta) throw new Error(`${field} not found on ${obj}`);
+  // The describe lists only fields the running user can see (live 2026-09-23:
+  // a field deployed by the Metadata API, no FLS yet, read "not found").
+  if (!fieldMeta) throw new Error(`${field} not found on ${obj} — or hidden from your user by field-level security (the org's describe does not list it)`);
   const isMulti = fieldMeta.type === 'multipicklist';
 
   // Standard picklists have no Tooling CustomField — route to the StandardValueSet path.
@@ -1616,7 +1618,7 @@ async function _pkOpenBulkWizard(mode) {
     </div>
     <div class="ds-modal-footer">
       <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-      <button class="ds-btn ${mode === 'delete' ? 'ds-btn-danger' : 'ds-btn-primary'}" id="dsPkBulkGo">${mode === 'delete' ? '🗑 Apply to all orgs' : '⏸ Apply to all orgs'}</button>
+      <button class="ds-btn ${mode === 'delete' ? 'ds-btn-danger' : 'ds-btn-primary'}" id="dsPkBulkGo" disabled title="Enabled once the automation check has run in every org">⏳ checking automation…</button>
     </div>`);
 
   if (single) {
@@ -1688,6 +1690,12 @@ async function _pkOpenBulkWizard(mode) {
       const h = scanHead();
       if (h) h.textContent = pkScanProgressText(done, orgs.length, failed, scanSubject);
     }
+    // The check is over (every org answered or failed): Apply opens now —
+    // it used to be clickable from the start, while "scanned 0 of 2 org(s)…"
+    // was still on screen (live 2026-09-23). Same rule as the sync plan's Run.
+    if (pkScanSuperseded(scanToken, _pkBulkScanToken)) return;
+    const go = eid('dsPkBulkGo');
+    if (go) { go.disabled = false; go.textContent = mode === 'delete' ? '🗑 Apply to all orgs' : '⏸ Apply to all orgs'; go.removeAttribute('title'); }
   })();
 
   eid('dsPkBulkGo')?.addEventListener('click', async () => {
@@ -2173,7 +2181,11 @@ async function _pkSyncAutomationPass(plans, guards, obj, field, token) {
         if (s) s.innerHTML = `<span style="color:var(--danger)">⛔ UNTICKED — ${lit.mentions} automation(s) in ${esc(tgt.label)} name “${esc(g.val)}”: </span>${links}${(lit.items || []).length > 6 ? ' …' : ''}${(lit.notes || []).length ? `<span style="color:var(--warning)"> · ⚠ ${esc(lit.notes.join(' · '))}</span>` : ''}`;
       } else {
         defaultTick();
-        if (s) s.innerHTML = `<span style="color:var(--success)">✓ no flow or validation rule in ${esc(tgt.label)} names this value</span>`
+        // A capped or partial scan cannot vouch for "no flow" — say what was
+        // scanned (live 2026-09-23: "✓ no flow … names this value" sat next
+        // to "the other 107 were NOT checked").
+        const partial = (lit.notes || []).length > 0;
+        if (s) s.innerHTML = `<span style="color:var(--success)">✓ ${partial ? 'nothing that was scanned in' : 'no flow or validation rule in'} ${esc(tgt.label)} names this value</span>`
           + (g.usage ? `<span style="color:var(--warning)"> · still unticked: ${g.usage.toLocaleString()} record(s) hold it</span>` : '')
           + ((lit.notes || []).length ? `<span style="color:var(--warning)"> · ⚠ ${esc(lit.notes.join(' · '))}</span>` : '');
       }
