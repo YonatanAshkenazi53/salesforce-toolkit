@@ -687,6 +687,17 @@ function _runLedgerClose(runId) {
   return { unresolved: [...by].map(([k, n]) => { const [objType, field, refObj] = k.split('|'); return { objType, field, refObj, n }; }), idMapSize: Object.keys(l.idMap).length };
 }
 
+// PURE. Vanilla Salesforce rules the payload must honour or the insert dies
+// for every row. Returns the fields dropped (for the note). Line items
+// (OpportunityLineItem, OrderItem, QuoteLineItem, WorkOrderLineItem): Salesforce
+// takes UnitPrice OR TotalPrice, never both — a copied row has both (TotalPrice
+// is computed from UnitPrice × Quantity), so TotalPrice goes.
+function sftkVanillaPayloadRules(objType, payload) {
+  const dropped = [];
+  if (/LineItem$|^OrderItem$/.test(String(objType)) && payload && payload.UnitPrice != null && payload.TotalPrice != null) { delete payload.TotalPrice; dropped.push('TotalPrice'); }
+  return dropped;
+}
+
 async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid, sharedIdMap = null, ledger = null) {
   const startedAt    = new Date().toISOString();
   const idMap        = sharedIdMap || {};  // srcId → tgtId (all objects — used for reference field remapping)
@@ -1438,6 +1449,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // Name (the parts fall out below as not createable there) and the
       // record lands as a business account, which the run says once per object.
       let personRows = 0, personAsBusiness = 0;
+      const vanillaDropped = new Map();   // field → rows it was dropped from (sftkVanillaPayloadRules)
       // ── Build payloads with field mapping ────────────────────────────────
       const payloads = recs.map((r, recIdx) => {
         const p = {};
@@ -1518,6 +1530,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           }
           p[tgtField] = v;
         }
+        // Vanilla Salesforce rules (live run 2026-09-22: every line item died
+        // with "specify either unit price or total price, not both").
+        for (const d of sftkVanillaPayloadRules(objType, p)) vanillaDropped.set(d, (vanillaDropped.get(d) || 0) + 1);
         // Owner mapping: matched name → that user; unmatched → fallback user;
         // no fallback → omit (target org default), counted for the summary.
         // O1 field-based path: rebuild this record's key from Owner.<field>
@@ -1862,6 +1877,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       }
       if (personRows) {
         diagnostics.push(`${objType}: ${personRows} Person Account(s) — Name is derived from FirstName/LastName on those, so only the name parts were sent.`);
+      for (const [fld, n] of vanillaDropped) diagnostics.push(`${objType}: ${fld} left out of ${n} record(s) — Salesforce takes UnitPrice or TotalPrice on a line item, never both; the target computes TotalPrice from UnitPrice × Quantity.`);
       }
       if (personAsBusiness) {
         errors.push(`${objType}: ${personAsBusiness} Person Account(s) written as BUSINESS accounts — the target org has no Person Accounts, so the whole Name was sent and the person fields (FirstName, LastName, Person*) were dropped.`);

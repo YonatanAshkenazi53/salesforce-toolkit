@@ -35,8 +35,10 @@ Store currently has **1.4.2** — 1.4.3 has NOT been uploaded yet.
 > bridge = note), one run LEDGER across Deploy steps (runId → SF_RUN_LEDGER_CLOSE).
 > Live run 8: 12-object tree deployed; hierarchy, case parents, pricebook, task
 > who/what all correct in trailheads4. Gate 94 / 2580.
-> - NEXT (in order): (1) second pass on the same target (no reset) so grandchildren
-> deploy under existing parents — OCR/OLI/CaseComment/OrderItem; (2) Campaigns /
+> - DONE round 3 (2026-09-22): two-pass live runs work (PASSES=2); line items
+> deploy (TotalPrice rule); autonumber-named objects no longer double; contact
+> roles / comments / line items deploy under existing parents. Gate 94 / 2582.
+> - NEXT: (1) OrderItem failure in pass 2 (read run11.log RAW lines); (2) Campaigns /
 > Products / Leads / Price books deployments; (3) parents-first flow, Retry failed,
 > rollback; (4) huge trees (Apex loops, thousands of records, >5,000 per list);
 > (5) UX: scan-all-children, Refresh re-scans children, run log survives the
