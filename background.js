@@ -1653,7 +1653,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // records either way, so everything downstream is unchanged.
       // BULK_MIN is the run-level threshold declared at the top of this
       // function — the same number gates the Bulk READ (B2) above.
-      const useBulk  = API_MODE === 'bulk' || (API_MODE !== 'sync' && payloads.length >= BULK_MIN);
+      // Bulk API 2.0 runs duplicate rules and has no header to bypass them
+      // (huge-tree run 2026-09-22: 5,000 of 5,000 DUPLICATES_DETECTED) — a
+      // bypass run stays on synchronous Collections, whatever the settings.
+      const dupBypass = !!globalThis.__sftkRunDupBypass;
+      const useBulk  = !dupBypass && (API_MODE === 'bulk' || (API_MODE !== 'sync' && payloads.length >= BULK_MIN));
+      if (dupBypass && (API_MODE === 'bulk' || payloads.length >= BULK_MIN)) diagnostics.push(`${objType}: duplicate rules are bypassed for this run, and Bulk API 2.0 cannot bypass them — ${payloads.length} record(s) go through synchronous Collections calls instead (${Math.ceil(payloads.length / BATCH_SIZE)} call(s) of ${BATCH_SIZE}).`);
       const STEP     = useBulk ? payloads.length : BATCH_SIZE;
       if (useBulk) {
         diagnostics.push(payloads.length >= BULK_MIN
@@ -3953,8 +3958,21 @@ function sftkParseCsv(text) {
 // reported as a failure rather than silently dropped. Pure — unit-testable.
 // missingMsg/missingCode override the "no result row" text: a CANCELLED job
 // leaves most rows unprocessed, and those must not read as rejections.
+// Salesforce echoes the uploaded columns in its own formatting: "200000" comes
+// back "200000.0", datetimes re-rendered — a byte-for-byte tuple never matched
+// and every Bulk row read "no result row" (huge-tree run 2026-09-22: 5,000
+// real DUPLICATES_DETECTED errors lost). Compare values, not spellings.
+function sftkBulkKeyNorm(v) {
+  if (v === undefined || v === null) return '';
+  const s = String(v).trim();
+  if (s === '') return '';
+  if (/^-?\d+(\.\d+)?$/.test(s)) { const n = Number(s); if (Number.isFinite(n)) return String(n); }
+  if (/^(true|false)$/i.test(s)) return s.toLowerCase();
+  if (/^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|[+-]\d{2}:?\d{2})?)?$/.test(s)) { const t = Date.parse(s); if (Number.isFinite(t)) return 'd' + t; }
+  return s;
+}
 function sftkCorrelateBulkResults(uploadRows, columns, successRows, failedRows, missingMsg, missingCode) {
-  const key = r => (columns || []).map(c => String(r && r[c] !== undefined && r[c] !== null ? r[c] : '')).join('');
+  const key = r => (columns || []).map(c => sftkBulkKeyNorm(r ? r[c] : undefined)).join(String.fromCharCode(1));
   const buckets = new Map();
   const push = (r, success) => {
     const k = key(r);

@@ -9,7 +9,7 @@ const DV = readFileSync(new URL('../studio-deploy.js', import.meta.url), 'utf8')
 const BG = readFileSync(new URL('../background.js', import.meta.url), 'utf8');
 const RC = readFileSync(new URL('../studio-reconcile.js', import.meta.url), 'utf8');
 const { sftkFriendlyError } = extractFunctions('sftk-friendly-error.js', ['sftkFriendlyError', 'sftkDecodeEntities']);
-const { _runDupHeaders } = extractFunctions('background.js', ['_runDupHeaders']);
+const { _runDupHeaders, sftkBulkKeyNorm, sftkCorrelateBulkResults } = extractFunctions('background.js', ['_runDupHeaders', 'sftkBulkKeyNorm', 'sftkCorrelateBulkResults']);
 
 describe('bulk select covers the whole list', () => {
   it('iterates the filtered rows, not the painted window, and says how many', () => {
@@ -18,6 +18,33 @@ describe('bulk select covers the whole list', () => {
     expect(h).not.toContain('for (const r of shown) {');
     expect(DV).toContain('>✓ All ${nAll}</button>');
     expect(DV).toContain('the count is the truth');
+  });
+});
+
+describe('Bulk results correlate by VALUE, the way Salesforce echoes them', () => {
+  it('numbers, booleans, dates and blanks compare equal across spellings', () => {
+    expect(sftkBulkKeyNorm('200000')).toBe(sftkBulkKeyNorm('200000.0'));
+    expect(sftkBulkKeyNorm(200)).toBe(sftkBulkKeyNorm('200'));
+    expect(sftkBulkKeyNorm('TRUE')).toBe(sftkBulkKeyNorm(true));
+    expect(sftkBulkKeyNorm('2026-09-22T10:00:00.000+0000')).toBe(sftkBulkKeyNorm('2026-09-22T10:00:00.000Z'));
+    expect(sftkBulkKeyNorm(null)).toBe(sftkBulkKeyNorm(''));
+    expect(sftkBulkKeyNorm('City 6')).toBe('City 6');
+    expect(sftkBulkKeyNorm('00200')).toBe(sftkBulkKeyNorm('200'));       // numeric spellings fold together (a text column is echoed verbatim on both sides anyway)
+  });
+  it('the huge-tree rows: a failedResults echo with "200000.0" finds its uploaded "200000" record and keeps the real error', () => {
+    const cols = ['Name', 'BillingCity', 'AnnualRevenue', 'NumberOfEmployees'];
+    const up = [{ Name: 'SFTK VOL Account 00200', BillingCity: 'City 6', AnnualRevenue: 200000, NumberOfEmployees: 200 },
+                { Name: 'SFTK VOL Account 00201', BillingCity: 'City 7', AnnualRevenue: 201000, NumberOfEmployees: 201 }];
+    const bad = [{ sf__Id: '', sf__Error: 'DUPLICATES_DETECTED:Use one of these records?:--', Name: 'SFTK VOL Account 00200', BillingCity: 'City 6', AnnualRevenue: '200000.0', NumberOfEmployees: '200' }];
+    const ok  = [{ sf__Id: '001X', sf__Created: 'true', Name: 'SFTK VOL Account 00201', BillingCity: 'City 7', AnnualRevenue: '201000.0', NumberOfEmployees: '201' }];
+    const r = sftkCorrelateBulkResults(up, cols, ok, bad);
+    expect(r[0].success).toBe(false);
+    expect(r[0].errors[0].message).toContain('DUPLICATES_DETECTED');
+    expect(r[1]).toMatchObject({ id: '001X', success: true, created: true });
+  });
+  it('a bypass run never goes Bulk (no header there), and says so', () => {
+    expect(BG).toContain("const useBulk  = !dupBypass && (API_MODE === 'bulk' || (API_MODE !== 'sync' && payloads.length >= BULK_MIN));");
+    expect(BG).toContain('Bulk API 2.0 cannot bypass them');
   });
 });
 
