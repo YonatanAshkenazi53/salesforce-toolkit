@@ -58,6 +58,12 @@ extensions containing root files that start with `_`).
 - On the Deploy page's tree the 🪪 identity chips name the org (trailheads2 ✗)
   instead of saying "source" / "target"; with Bulk API 2.0 selected the batch
   size and threads inputs disappear and a line says Bulk splits the job itself.
+- **Lookups keep their targets.** A lookup at an object outside the
+  deployment (an Opportunity's price book, a Case's referral, a Contract's
+  signer) with nothing configured is matched by Name in the target — the
+  rule ← update always had; inserts used to drop it. Lookup Resolution shows
+  this default and 🚫 Set null stays your choice. Objects that have no Name to
+  match by are left empty, and the run says so.
 - **Hierarchies arrive whole.** A lookup that points at the object itself
   (Account → parent Account, Contact → ReportsTo, a Case's parent Case, a
   Campaign's parent, an Asset's parent) or at another object in the same
@@ -65,7 +71,14 @@ extensions containing root files that start with `_`).
   was created later in the same run — a 3-level account hierarchy arrived
   flat at level 2. Such lookups are now connected at the end of the run, and
   the run says how many it connected and which ones point at records that
-  neither exist in the target nor were created (and what to do).
+  neither exist in the target nor were created (and what to do) — across
+  every step of one Deploy run, not per step.
+- **Objects without a Name (contact roles, case comments, order items,
+  campaign members) can be recognised.** A match key can now be the related
+  records' names (Opportunity.Name + Contact.Name). When nothing is
+  configured the scan picks that key from the object's definition and says so;
+  it used to send `Name` regardless and fail with a raw HTTP 400. 💡 Suggestions
+  offers the same key in the builder.
 - **Same-name records in a child object are no longer invisible.** A child
   scan cannot tell two "Mia Schmidt" contacts apart, so it leaves both out
   of every list — that is still the rule, but the page now says so, names

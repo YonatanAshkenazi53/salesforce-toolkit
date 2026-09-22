@@ -1096,6 +1096,7 @@ async function openRecordPickerModal(pathStr) {
         sels.push(`<select class="ds-select ds-select-sm" data-match-comp="${i}" title="Key component ${i + 1}${i === 0 ? ' — also drives the record list below' : ''}">
           <option value="">${val ? '— remove —' : '+ add field'}</option>
           ${candidateFields.map(f => `<option value="${esc(f.name)}" ${val === f.name ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})</option>`).join('')}
+          ${val && !candidateFields.some(f => f.name === val) ? `<option value="${esc(val)}" selected>${esc(val)} — a related record's field</option>` : ''}
         </select>`);
       }
       body = `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -2166,6 +2167,11 @@ function _matchSuggestionsFromDescribe(desc) {
     if (emailFld) push(`${nameFld} + ${emailFld}`, 'composite', [nameFld, emailFld], { ...baseNorm, emailLower: true }, 'composite: name + email');
     if (phoneFld) push(`${nameFld} + ${phoneFld}`, 'composite', [nameFld, phoneFld], { ...baseNorm, phoneDigits: true }, 'composite: name + phone');
     if (cityFld)  push(`${nameFld} + ${cityFld}`,  'composite', [nameFld, cityFld],  { ...baseNorm }, 'composite: name + city');
+  }
+  // No Name at all → the records it points at, by name (a junction's parents)
+  if (!nameFld && typeof sftkMatchingFallback === 'function') {
+    const fb = sftkMatchingFallback(fields, {});
+    if (fb && fb.fields.length) push(fb.fields.join(' + '), fb.strategy, fb.fields, fb.normalize, fb.why);
   }
   return out.slice(0, 8);
 }

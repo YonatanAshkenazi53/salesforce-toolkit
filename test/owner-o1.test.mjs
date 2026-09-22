@@ -8,7 +8,7 @@ import { extractFunctions } from './extract.mjs';
 
 // sftkBuildOwnerIndex → sftkMatchKey → sftkNormalizeValue: one shared scope.
 const { sftkBuildOwnerIndex } = extractFunctions('background.js',
-  ['sftkNormalizeValue', 'sftkMatchKey', 'sftkBuildOwnerIndex']);
+  ['sftkNormalizeValue', 'sftkMatchKey', 'sftkPathValue', 'sftkBuildOwnerIndex']);
 
 const SEP = String.fromCharCode(1);   // the composite-key component separator
 
@@ -88,8 +88,8 @@ describe('PARITY: background.js inline match-key copies vs canonical sftk-matchi
   // carries inline copies. Keys MUST be built identically on both sides —
   // normalization is part of the key — so the batteries sweep the toggle and
   // value space rather than a couple of happy paths.
-  const lib = extractFunctions('sftk-matching.js', ['sftkNormalizeValue', 'sftkMatchKey']);
-  const bg  = extractFunctions('background.js',   ['sftkNormalizeValue', 'sftkMatchKey']);
+  const lib = extractFunctions('sftk-matching.js', ['sftkNormalizeValue', 'sftkMatchKey', 'sftkPathValue']);
+  const bg  = extractFunctions('background.js',   ['sftkNormalizeValue', 'sftkMatchKey', 'sftkPathValue']);
 
   const VALUES = [
     null, undefined, '', '   ', '  Padded  ', 'a  b\t c',

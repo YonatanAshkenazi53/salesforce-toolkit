@@ -53,12 +53,24 @@ function sftkNormalizeValue(v, normalize) {
   return s;
 }
 
+// A key component may be a relationship path ('Opportunity.Name') — the same
+// reader as sftk-matching.js (the worker keeps its own copy of the builder).
+function sftkPathValue(record, path) {
+  if (!record || !path) return undefined;
+  const p = String(path);
+  if (p in record) return record[p];
+  if (!p.includes('.')) return undefined;
+  let cur = record;
+  for (const seg of p.split('.')) { if (cur === null || cur === undefined || typeof cur !== 'object') return undefined; cur = cur[seg]; }
+  return cur;
+}
+
 function sftkMatchKey(record, matching) {
   const m = matching || {};
   const fields = Array.isArray(m.fields) ? m.fields.filter(Boolean) : [];
   if (!record || !fields.length) return '';
   const norm = m.normalize || {};
-  const parts = fields.map(f => sftkNormalizeValue(record[f], norm));
+  const parts = fields.map(f => sftkNormalizeValue(sftkPathValue(record, f), norm));
   if (!parts.some(p => p !== '')) return '';
   return parts.join(String.fromCharCode(1));
 }
@@ -625,7 +637,57 @@ async function sftkPiiMaskAnchorMap(anchorMap, rule, fieldDesc, salt) {
 // lookup field that points at a record created by an earlier profile is
 // remapped to the new target Id (priority-1 path in the payload builder).
 // Omitted for a standalone run → a fresh per-run map, identical to before.
-async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid, sharedIdMap = null) {
+// PURE. What every reference field of a node resolves by. Configured entries
+// win. An UNCONFIGURED lookup at an object outside the deployment matches by
+// Name — the rule ← update always had (live run 2026-09-22: every inserted
+// Opportunity lost its Pricebook because insert dropped unconfigured lookups
+// while the parents card promised "lookups land on them by name"). No default
+// for: system fields, in-tree objects (idMap + late links), polymorphic
+// lookups, and related objects with no Name to match by. 🚫 Set null stays
+// what the user chose.
+function sftkEffectiveLookupResolutions(configured, fields, treeObjSet) {
+  const SFTK_LOOKUP_SYS = new Set(['OwnerId', 'CreatedById', 'LastModifiedById', 'RecordTypeId', 'MasterRecordId']);
+  const out = {};
+  for (const [k, v] of Object.entries(configured || {})) if (v && typeof v === 'object') out[k] = v;
+  for (const f of (fields || [])) {
+    if (!f || f.type !== 'reference' || out[f.name] || !f.relationshipName) continue;
+    if (f.createable === false) continue;      // never written on insert (history lookups, system refs)
+    if (SFTK_LOOKUP_SYS.has(f.name)) continue;
+    const refs = f.referenceTo || [];
+    if (refs.length !== 1 || f.polymorphicForeignKey) continue;
+    const obj = refs[0];
+    if (treeObjSet && treeObjSet.has(obj)) continue;
+    if (sftkLookupDefaultStrategy(obj) !== 'match') continue;
+    out[f.name] = { strategy: 'match', matchField: 'Name', matchObject: obj, defaulted: true };
+  }
+  return out;
+}
+// Objects whose records cannot be matched by Name (no Name, or an autonumber
+// one): an unconfigured lookup at them stays empty, as before, and says so.
+function sftkLookupDefaultStrategy(refObj) {
+  const SFTK_NO_NAME_OBJECTS = new Set(['Case', 'Order', 'Contract', 'Task', 'Event', 'CaseComment', 'OrderItem', 'OpportunityContactRole',
+  'CampaignMember', 'ContentDocumentLink', 'Attachment', 'EmailMessage', 'FeedItem', 'Note', 'ContentDocument', 'ContentVersion', 'Quote', 'ReturnOrder', 'WorkOrder',
+    'OpportunityHistory', 'ActivityHistory', 'OpportunityFieldHistory', 'AccountHistory', 'ContactHistory', 'CaseHistory']);
+  return SFTK_NO_NAME_OBJECTS.has(String(refObj || '')) ? 'skip' : 'match';
+}
+
+// One ledger per multi-step run (a Deploy run = several engine calls): the
+// shared srcId→tgtId map and the lookups still waiting for a record a LATER
+// step may create. Closed by the page when the run ends (SF_RUN_LEDGER_CLOSE)
+// — live run 2026-09-22: a child Case and its parent Case were inserted by
+// two steps of one run and never linked.
+// (kept on the global so the test extractor, which pulls functions only, sees the same store)
+function _runLedgerStore() { const g = (typeof globalThis === 'object') ? globalThis : self; if (!g.__sftkRunLedgers) g.__sftkRunLedgers = new Map(); return g.__sftkRunLedgers; }
+function _runLedger(runId) { const m = _runLedgerStore(); if (!m.has(runId)) m.set(runId, { idMap: {}, lateRefs: [], at: Date.now() }); return m.get(runId); }
+function _runLedgerClose(runId) {
+  const m = _runLedgerStore(); const l = m.get(runId); m.delete(runId);
+  if (!l) return { unresolved: [], idMapSize: 0 };
+  const by = new Map();
+  for (const it of l.lateRefs) { const k = `${it.objType}|${it.tgtField}|${it.refObj}`; by.set(k, (by.get(k) || 0) + 1); }
+  return { unresolved: [...by].map(([k, n]) => { const [objType, field, refObj] = k.split('|'); return { objType, field, refObj, n }; }), idMapSize: Object.keys(l.idMap).length };
+}
+
+async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid, sharedIdMap = null, ledger = null) {
   const startedAt    = new Date().toISOString();
   const idMap        = sharedIdMap || {};  // srcId → tgtId (all objects — used for reference field remapping)
   const summary      = {};
@@ -1151,9 +1213,14 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // srcId → tgtId bridge by querying both orgs on a shared anchor field.
       // Priority order in payload builder: idMap > lkpBridges > strategy fallback.
       const lkpBridges = {};  // { fieldName: Map(srcId → tgtId) }
+      const effLkp = sftkEffectiveLookupResolutions(node.lookupResolutions, descRes.fields, treeObjSet);
+      {
+        const defaulted = Object.entries(effLkp).filter(([, v]) => v && v.defaulted).map(([k]) => k);
+        if (defaulted.length && recs.length) diagnostics.push(`${objType}: 🔗 lookups matched by Name in the target: ${defaulted.join(', ')} — choose 🚫 Set null in Lookup Resolution for any that must not be touched.`);
+      }
 
-      if (node.lookupResolutions && recs.length > 0) {
-        for (const [fieldName, res] of Object.entries(node.lookupResolutions)) {
+      if (recs.length > 0) {
+        for (const [fieldName, res] of Object.entries(effLkp)) {
           if (res.strategy !== 'match') continue;
           if (!res.matchField || !res.matchObject) continue;
 
@@ -1166,13 +1233,24 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           // 2. Query SOURCE for anchor values: srcId → anchorValue
           const CHUNK = 200;
           const srcAnchorMap = new Map();
-          for (let ci = 0; ci < srcIds.length; ci += CHUNK) {
+          // A bridge that cannot be read (no such column, no access) is a NOTE
+          // about that one lookup — it used to throw and take the whole object
+          // down with it (live run 2026-09-22: OpportunityHistory has no Name).
+          let bridgeErr = null;
+          for (let ci = 0; ci < srcIds.length && !bridgeErr; ci += CHUNK) {
             const idList = srcIds.slice(ci, ci + CHUNK).map(id => `'${id}'`).join(',');
-            const srcQ = await sfQueryAll(srcOrgUrl, srcSid,
-              `SELECT Id, ${res.matchField} FROM ${res.matchObject} WHERE Id IN (${idList})`, false);
+            let srcQ;
+            try { srcQ = await sfQueryAll(srcOrgUrl, srcSid, `SELECT Id, ${res.matchField} FROM ${res.matchObject} WHERE Id IN (${idList})`, false); }
+            catch (e) { srcQ = { error: e && e.message ? e.message : String(e) }; }
+            if (srcQ && srcQ.error) { bridgeErr = `in the source: ${srcQ.error}`; break; }
             for (const r of (srcQ.records || [])) {
               if (r[res.matchField] != null) srcAnchorMap.set(r.Id, r[res.matchField]);
             }
+          }
+          if (bridgeErr) {
+            diagnostics.push(`${objType}.${fieldName}: could not read ${res.matchObject}.${res.matchField} ${bridgeErr} — those lookups are left empty${res.defaulted ? '' : '. Pick another match field in Lookup Resolution'}.`);
+            if (res.defaulted) delete effLkp[fieldName];
+            continue;
           }
           if (!srcAnchorMap.size) continue;
 
@@ -1217,12 +1295,14 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           const VAL_CHUNK = 100;
           const tgtAnchorMap = new Map();
           const ambiguousAnchors = new Set();
-          for (let ci = 0; ci < anchorValues.length; ci += VAL_CHUNK) {
+          for (let ci = 0; ci < anchorValues.length && !bridgeErr; ci += VAL_CHUNK) {
             const valList = anchorValues.slice(ci, ci + VAL_CHUNK)
               .map(v => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`)
               .join(',');
-            const tgtQ = await sfQueryAll(tgtOrgUrl, tgtSid,
-              `SELECT Id, ${res.matchField} FROM ${res.matchObject} WHERE ${res.matchField} IN (${valList})`, false);
+            let tgtQ;
+            try { tgtQ = await sfQueryAll(tgtOrgUrl, tgtSid, `SELECT Id, ${res.matchField} FROM ${res.matchObject} WHERE ${res.matchField} IN (${valList})`, false); }
+            catch (e) { tgtQ = { error: e && e.message ? e.message : String(e) }; }
+            if (tgtQ && tgtQ.error) { bridgeErr = `in the target: ${tgtQ.error}`; break; }
             for (const r of (tgtQ.records || [])) {
               const v = r[res.matchField];
               if (v == null) continue;
@@ -1236,6 +1316,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             diagnostics.push(`${objType}.${fieldName}: ${ambiguousAnchors.size} ${res.matchObject}.${res.matchField} value(s) match MORE THAN ONE target record (${ex}${ambiguousAnchors.size > 3 ? '…' : ''}) — linking to either would be a guess, so those lookups were left null. Deduplicate the target (or match on an External ID) and re-run to wire them.`);
           }
 
+          if (bridgeErr) {
+            diagnostics.push(`${objType}.${fieldName}: could not read ${res.matchObject}.${res.matchField} ${bridgeErr} — those lookups are left empty${res.defaulted ? '' : '. Pick another match field in Lookup Resolution'}.`);
+            if (res.defaulted) delete effLkp[fieldName];
+            continue;
+          }
           // 4. Build bridge: srcId → tgtId (via shared anchor value)
           const bridge = new Map();
           for (const [srcId, anchorVal] of anchorMap) {
@@ -1417,7 +1502,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
               continue;
             }
             // Priority 2: lookup resolution bridge (skip / match by field)
-            const lkpRes = node.lookupResolutions?.[f.name];
+            const lkpRes = effLkp[f.name];
             if (lkpRes?.strategy === 'match' && lkpBridges[f.name]?.has(v)) {
               p[tgtField] = lkpBridges[f.name].get(v);
               continue;
@@ -2001,21 +2086,28 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
 
   // ── 🔗 Late links ─────────────────────────────────────────────────────────
   // Lookups deferred at insert because the record they point at was not in
-  // the target yet and was created LATER in this run. One PATCH per record,
-  // per object, allOrNone:false, never fatal. Records whose own insert failed
-  // are skipped (already counted); a pointed-at record that this run never
-  // created is said, with what to do.
-  if (nodeLateRefs.size && !_runCancelled) {
+  // the target yet and was created LATER — in this run, or in an earlier step
+  // of the same multi-step run (the ledger). One PATCH per record, per object,
+  // allOrNone:false, never fatal. Records whose own insert failed are skipped
+  // (already counted). What still waits goes back to the ledger; with no
+  // ledger it is said now, with what to do.
+  const lateItems = [];
+  for (const [node, refs] of nodeLateRefs) {
+    const o = node.objectType || node.childSObject;
+    for (const d of refs) if (!d.done && !d.isParentLink && d.inTree) lateItems.push({ objType: o, srcId: d.srcId, tgtField: d.tgtField, srcVal: d.srcVal, refObj: d.refObj });
+  }
+  if (ledger && Array.isArray(ledger.lateRefs)) { lateItems.push(...ledger.lateRefs); ledger.lateRefs = []; }
+  if (lateItems.length && !_runCancelled) {
     const LATE_BATCH = 200;
-    for (const [node, refs] of nodeLateRefs) {
-      const objType = node.objectType || node.childSObject;
-      const byId = new Map(), fieldsHit = new Map(), unresolved = new Map(), unresolvedObj = new Map();
-      for (const d of refs) {
-        if (d.done || d.isParentLink || !d.inTree) continue;
+    const byObj = new Map();
+    for (const it of lateItems) { if (!byObj.has(it.objType)) byObj.set(it.objType, []); byObj.get(it.objType).push(it); }
+    for (const [objType, items] of byObj) {
+      const byId = new Map(), fieldsHit = new Map(), unresolved = new Map(), unresolvedObj = new Map(), waiting = [];
+      for (const d of items) {
         const me = idMap[d.srcId];
         if (!me) continue;
         const to = idMap[d.srcVal];
-        if (!to) { unresolved.set(d.tgtField, (unresolved.get(d.tgtField) || 0) + 1); unresolvedObj.set(d.tgtField, d.refObj); continue; }
+        if (!to) { waiting.push(d); unresolved.set(d.tgtField, (unresolved.get(d.tgtField) || 0) + 1); unresolvedObj.set(d.tgtField, d.refObj); continue; }
         const p = byId.get(me) || { attributes: { type: objType }, Id: me };
         p[d.tgtField] = to; byId.set(me, p);
         fieldsHit.set(d.tgtField, (fieldsHit.get(d.tgtField) || 0) + 1);
@@ -2034,13 +2126,16 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       }
       const fl = m => [...m].map(([f, n]) => `${f} ×${n}`).join(', ');
       if (ok || failed) {
-        if (summary[objType]) summary[objType].lateLinked = ok;
+        if (summary[objType]) summary[objType].lateLinked = (summary[objType].lateLinked || 0) + ok;
         diagnostics.push(`${objType}: 🔗 ${ok} record(s) connected after insert (${fl(fieldsHit)}) — the records they point at were created later in this run${failed ? `; ${failed} could not be connected` : ''}.`);
       }
-      if (unresolved.size) {
-        const n = [...unresolved.values()].reduce((a, b) => a + b, 0);
-        const objs = [...new Set(unresolvedObj.values())].join(', ');
-        errors.push(`⚠ ${objType}: ${n} lookup value(s) left empty (${fl(unresolved)}) — the ${objs} record they point at is neither in the target nor created by this run. Deploy it first, or widen this deployment to include it.`);
+      if (waiting.length) {
+        if (ledger) ledger.lateRefs.push(...waiting);
+        else {
+          const n = waiting.length;
+          const objs = [...new Set(unresolvedObj.values())].join(', ');
+          errors.push(`⚠ ${objType}: ${n} lookup value(s) left empty (${fl(unresolved)}) — the ${objs} record they point at is neither in the target nor created by this run. Deploy it first, or widen this deployment to include it.`);
+        }
       }
     }
   }
@@ -2685,13 +2780,17 @@ async function dispatchMessage(message) {
     case 'SF_EXECUTE_PROFILE_TRANSFER': {
       _beginRun('transfer');
       try {
+        const ledger = message.runId ? _runLedger(String(message.runId)) : null;
         return await executeProfileTransfer(
           message.profile,
           message.srcOrgUrl, message.srcSid,
-          message.tgtOrgUrl, message.tgtSid
+          message.tgtOrgUrl, message.tgtSid,
+          ledger ? ledger.idMap : null, ledger
         );
       } finally { _endRun(); }
     }
+    case 'SF_RUN_LEDGER_CLOSE':
+      return _runLedgerClose(String(message.runId || ''));
     case 'SF_EXECUTE_SEQUENCE': {
       _beginRun('sequence');
       try {

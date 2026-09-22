@@ -15,7 +15,7 @@ const scan = extractFunctions('studio-scan.js', [
   'sftkMultiSelNorm',
 ], { 'sftk-matching.js': [
   'sftkMatchingFromNode', 'sftkMatchingFields', 'sftkMatchingTgtFields',
-  'sftkMatchKey', 'sftkNormalizeValue', 'sftkNearMissFold', 'sftkNearMissReason',
+  'sftkMatchKey', 'sftkPathValue', 'sftkNormalizeValue', 'sftkNearMissFold', 'sftkNearMissReason',
   'sftkMatchKeyLabel',
 ] });
 

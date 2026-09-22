@@ -30,15 +30,17 @@ Store currently has **1.4.2** — 1.4.3 has NOT been uploaded yet.
 > - DONE this campaign: engine late-link pass (self/in-tree lookups connected
 >   after insert, proven live: Berlin Lab → Europe → Holding), child dupKeys +
 >   warning, Field Mapping org list, Deploy offline banner, builder CSS collision.
-> - NEXT (in order): (1) child scan of objects with no Name field → describe-based
->   fallback key (`_matchSuggestionsFromDescribe` in studio-builder-modals.js ranks
->   candidates; studio-scan.js ~268 resolves matchField) + a plain error; (2) rerun
->   `run-accounts-tree.mjs` with all 11 children scanned/selected, verify every
->   object in the target by CLI; (3) Campaigns / Products / Leads / Price books
->   deployments; (4) parents-first flow, Retry failed, rollback; (5) huge trees:
->   generate thousands of records (Apex loops) and prove the >5,000-per-list path;
->   (6) UX: "scan all children", Refresh re-scans children, run log survives the
->   repaint; builder shows in-tree lookups as info rows. (7) then release.
+> - DONE 2026-09-22 late: no-Name objects (path keys + describe fallback), default
+> match-by-Name for unconfigured out-of-tree lookups (createable only; broken
+> bridge = note), one run LEDGER across Deploy steps (runId → SF_RUN_LEDGER_CLOSE).
+> Live run 8: 12-object tree deployed; hierarchy, case parents, pricebook, task
+> who/what all correct in trailheads4. Gate 94 / 2580.
+> - NEXT (in order): (1) second pass on the same target (no reset) so grandchildren
+> deploy under existing parents — OCR/OLI/CaseComment/OrderItem; (2) Campaigns /
+> Products / Leads / Price books deployments; (3) parents-first flow, Retry failed,
+> rollback; (4) huge trees (Apex loops, thousands of records, >5,000 per list);
+> (5) UX: scan-all-children, Refresh re-scans children, run log survives the
+> repaint, builder shows in-tree lookups as info rows; (6) release.
 > - Open UI question for the user: 🪪 chips — A (target only) / B (both, only when
 >   missing) / C. Unanswered.
 

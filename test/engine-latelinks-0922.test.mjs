@@ -10,8 +10,8 @@ import { readFileSync } from 'node:fs';
 import { extractFunctions } from './extract.mjs';
 
 const eng = extractFunctions('background.js', [
-  'executeProfileTransfer', 'buildCopyFields', 'sftkFieldsFromError', 'sftkOrgKey',
-  'sftkTruncValue', 'sftkBuildOwnerIndex', 'sftkMatchKey',
+  'executeProfileTransfer', 'sftkEffectiveLookupResolutions', 'sftkLookupDefaultStrategy', 'buildCopyFields', 'sftkFieldsFromError', 'sftkOrgKey',
+  'sftkTruncValue', 'sftkBuildOwnerIndex', 'sftkMatchKey', 'sftkPathValue',
   'sftkPiiHashHex', 'sftkPiiMaskable', 'sftkPiiFormat', 'sftkPiiMaskValue',
   'sftkPiiRulesForObject', 'sftkPiiMaskRows', 'sftkPiiMaskAnchorMap', 'sftkRtaImageCount',
 ]);

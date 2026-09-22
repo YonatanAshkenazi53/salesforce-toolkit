@@ -774,7 +774,7 @@ async function runDiffScan(profile, node = null, scope = null) {
   // single derived matchField pair (identical to pre-M3a behavior).
   const hasMatchingCfg = !!(node?.matching && Array.isArray(node.matching.fields)
     && node.matching.fields.filter(Boolean).length);
-  const nodeMatching = hasMatchingCfg
+  let nodeMatching = hasMatchingCfg
     ? sftkMatchingFromNode(node)
     : { strategy: 'field', fields: [derived.matchField], normalize: {} };
   let srcKeyFields = sftkMatchingFields(nodeMatching);
@@ -842,6 +842,14 @@ async function runDiffScan(profile, node = null, scope = null) {
   const tgtTypes = new Map((tgtDescFull?.fields || []).map(f => [f.name, f.type]));
   const srcNameFld = (srcDescFull?.fields || []).find(f => f.nameField === true)?.name || null;
   const tgtNameFld = (tgtDescFull?.fields || []).find(f => f.nameField === true)?.name || null;
+  // The parent's key (child scans) — a no-Name child's fallback key starts with it.
+  let parentMatchingForKey = null;
+  if (scope?.parentField) {
+    try {
+      const pm = scope.parentMatching || null;
+      if (pm && Array.isArray(pm.fields) && pm.fields[0] && !String(pm.fields[0]).includes('.')) parentMatchingForKey = pm;
+    } catch (_) { parentMatchingForKey = null; }
+  }
 
   // W4 — expand the compare set to the ENGINE's copy set (see
   // sftkEngineCompareSet). Without this, template profiles (all-'' mappings)
@@ -891,6 +899,11 @@ async function runDiffScan(profile, node = null, scope = null) {
       compareExpanded = true;
     }
   }
+  // A key component may be a relationship path ('Opportunity.Name'): it is
+  // valid when the relationship exists on that side's describe.
+  const srcRels = new Set((srcDescFull?.fields || []).map(f => f && f.relationshipName).filter(Boolean));
+  const tgtRels = new Set((tgtDescFull?.fields || []).map(f => f && f.relationshipName).filter(Boolean));
+  const sideHas = (types, rels, f) => String(f).includes('.') ? rels.has(String(f).split('.')[0]) : types.has(f);
   const keyFallbackWarnings = [];
   if (!hasMatchingCfg) {
     // Legacy single-field path — nameField auto-correct. The correction
@@ -910,11 +923,25 @@ async function runDiffScan(profile, node = null, scope = null) {
   } else {
     // Explicit matching config — a missing component would silently change
     // the key definition mid-scan, so fail loudly instead of auto-correcting.
-    const missSrc = srcTypes.size ? srcKeyFields.filter(f => !srcTypes.has(f)) : [];
-    const missTgt = tgtTypes.size ? tgtKeyFields.filter(f => !tgtTypes.has(f)) : [];
+    const missSrc = srcTypes.size ? srcKeyFields.filter(f => !sideHas(srcTypes, srcRels, f)) : [];
+    const missTgt = tgtTypes.size ? tgtKeyFields.filter(f => !sideHas(tgtTypes, tgtRels, f)) : [];
     if (missSrc.length || missTgt.length) {
       return { error: `matching field(s) ${[...new Set([...missSrc, ...missTgt])].join(', ')} don't exist on ${objType} in the ${missSrc.length ? 'source' : 'target'} org — fix the Matching setup in 🎯 Pick Records` };
     }
+  }
+  // No Name at all (OpportunityContactRole, CaseComment, CampaignMember…):
+  // the old path sent `Name` anyway and the scan died with an HTTP 400 in
+  // the user's face (live run 2026-09-22). Pick the key the describe
+  // offers — a junction's parents by name — and SAY so; with nothing
+  // usable, stop with the fix instead of a raw error.
+  if (!hasMatchingCfg && srcTypes.size && !srcTypes.has(srcMatchField) && !srcNameFld) {
+    const parentRel = scope?.parentField ? (srcDescFull?.fields || []).find(f => f && f.name === scope.parentField)?.relationshipName : null;
+    const parentKeyPath = parentRel && parentMatchingForKey ? `${parentRel}.${parentMatchingForKey.fields[0]}` : null;
+    const fb = sftkMatchingFallback(srcDescFull?.fields, { lookupResolutions: node?.lookupResolutions, parentField: scope?.parentField, parentKeyPath });
+    if (!fb) return { error: `${objType} has no Name field and no usable key — set a match key in ✏ Edit → Records → Matching (💡 Suggestions), then scan again` };
+    nodeMatching = { strategy: fb.strategy, fields: fb.fields, normalize: fb.normalize };
+    srcKeyFields = [...fb.fields]; tgtKeyFields = [...fb.fields]; srcMatchField = srcKeyFields[0]; tgtMatchField = tgtKeyFields[0];
+    keyFallbackWarnings.push(`${objType} has no Name field — matched by ${fb.fields.join(' + ')} for this scan (${fb.why}). Keep it, or pick another: ✏ Edit → Records → Matching → 💡 Suggestions.`);
   }
   // Per-side key configs — same strategy + normalization, only the field
   // NAMES differ per side. Every key below comes from sftkMatchKey with one
