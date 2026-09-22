@@ -99,19 +99,28 @@ function sftkMatchingFallback(fields, opts) {
   const nameF = fs.find(f => f.nameField === true && !f.autoNumber);
   if (nameF) return { strategy: 'field', fields: [nameF.name], normalize: {}, why: 'name field' };
   const lr = o.lookupResolutions || {};
+  const canName = obj => (typeof sftkLookupDefaultStrategy === 'function') ? sftkLookupDefaultStrategy(obj) === 'match' : true;
   const refs = fs.filter(f => f.type === 'reference' && f.relationshipName && !SYS.has(f.name) && f.name !== o.parentField
-    && !(f.polymorphicForeignKey || (f.referenceTo || []).length > 1) && f.createable !== false);
+    && !(f.polymorphicForeignKey || (f.referenceTo || []).length > 1) && f.createable !== false
+    && ((lr[f.name] && lr[f.name].matchField) || canName((f.referenceTo || [])[0])));   // a parent with no Name cannot be a key part
   const ordered = [...refs.filter(f => f.nillable === false), ...refs.filter(f => f.nillable !== false)];
   const comps = [];
   if (o.parentField && o.parentKeyPath) comps.push(o.parentKeyPath);
+  // A subject-like text field first (Subject, Title, Description…): it is what
+  // a human calls the record — Case, Contract and Order have an autonumber
+  // name and are told apart by it.
+  const textish = f => ['string', 'textarea', 'email', 'phone'].includes(f.type) && f.createable !== false && !f.autoNumber && !SYS.has(f.name) && !f.calculated;
+  const subject = fs.find(f => textish(f) && /^(Subject|Title|Description|Name)$/.test(f.name)) || null;
+  if (subject) comps.push(subject.name);
   for (const f of ordered) { if (comps.length >= 3) break; comps.push(`${f.relationshipName}.${(lr[f.name] && lr[f.name].matchField) || 'Name'}`); }
   if (comps.length < 2) {
-    const txt = fs.find(f => ['string', 'textarea', 'email', 'phone'].includes(f.type) && f.createable !== false && !f.autoNumber && !SYS.has(f.name) && !f.calculated);
+    const txt = fs.find(f => textish(f) && !comps.includes(f.name));
     if (txt) comps.push(txt.name);
   }
   if (!comps.length) return null;
+  const auto = fs.find(f => f.nameField === true && f.autoNumber);
   return { strategy: comps.length > 1 ? 'composite' : 'field', fields: comps.slice(0, 4), normalize: { trim: true, collapseWs: true },
-    why: 'the records it points at, by name — this object has no Name field' };
+    why: auto ? `${auto.name} is an org-generated number, so the record is told apart by what a person would use` : 'the records it points at, by name — this object has no Name field' };
 }
 
 function sftkMatchKey(record, matching) {

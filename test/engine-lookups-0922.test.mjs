@@ -13,7 +13,7 @@ const eng = extractFunctions('background.js', [
   'sftkTruncValue', 'sftkBuildOwnerIndex', 'sftkMatchKey', 'sftkPathValue',
   'sftkPiiHashHex', 'sftkPiiMaskable', 'sftkPiiFormat', 'sftkPiiMaskValue',
   'sftkPiiRulesForObject', 'sftkPiiMaskRows', 'sftkPiiMaskAnchorMap', 'sftkRtaImageCount',
-  'sftkEffectiveLookupResolutions', 'sftkLookupDefaultStrategy', '_runLedger', '_runLedgerClose', '_runLedgerStore',
+  'sftkEffectiveLookupResolutions', 'sftkLookupDefaultStrategy', '_runLedger', '_runLedgerClose', '_runLedgerStore', 'sftkVanillaPayloadRules',
 ]);
 const BG = readFileSync(new URL('../background.js', import.meta.url), 'utf8');
 const RC = readFileSync(new URL('../studio-reconcile.js', import.meta.url), 'utf8');
@@ -78,6 +78,24 @@ describe('a bridge that cannot be read is a note, never a dead object', () => {
     expect(r.summary.Opportunity.created).toBe(1);
     expect(r.errors.some(e => /ℹ Opportunity.Weird__c: could not read Weird__c.Name in the source: HTTP 400/.test(e))).toBe(true);
     expect(r.errors.some(e => /^Opportunity: HTTP 400/.test(e))).toBe(false);
+  });
+});
+
+describe('vanilla Salesforce payload rules', () => {
+  it('a line item keeps UnitPrice and drops TotalPrice; other objects are untouched', () => {
+    const p = { UnitPrice: 100, TotalPrice: 1000, Quantity: 10 };
+    expect(eng.sftkVanillaPayloadRules('OpportunityLineItem', p)).toEqual(['TotalPrice']);
+    expect(p).toEqual({ UnitPrice: 100, Quantity: 10 });
+    const q = { UnitPrice: 5, TotalPrice: 5 };
+    expect(eng.sftkVanillaPayloadRules('OrderItem', q)).toEqual(['TotalPrice']);
+    expect(eng.sftkVanillaPayloadRules('OrderItem', { TotalPrice: 5 })).toEqual([]);   // one of the two is fine
+    const a = { UnitPrice: 1, TotalPrice: 1 };
+    expect(eng.sftkVanillaPayloadRules('Account', a)).toEqual([]);
+    expect(a).toEqual({ UnitPrice: 1, TotalPrice: 1 });
+  });
+  it('the engine applies it per record and says so once per object', () => {
+    expect(BG).toContain('for (const d of sftkVanillaPayloadRules(objType, p)) vanillaDropped.set(d, (vanillaDropped.get(d) || 0) + 1);');
+    expect(BG).toContain('Salesforce takes UnitPrice or TotalPrice on a line item, never both');
   });
 });
 

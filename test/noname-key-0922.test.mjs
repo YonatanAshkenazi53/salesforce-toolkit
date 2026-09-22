@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { extractFunctions } from './extract.mjs';
 
 const { sftkPathValue, sftkMatchKey, sftkMatchingFallback, sftkNormalizeValue } =
-  extractFunctions('sftk-matching.js', ['sftkPathValue', 'sftkMatchKey', 'sftkMatchingFallback', 'sftkNormalizeValue']);
+  extractFunctions('sftk-matching.js', ['sftkPathValue', 'sftkMatchKey', 'sftkMatchingFallback', 'sftkNormalizeValue', 'sftkLookupDefaultStrategy']);
 const SC = readFileSync(new URL('../studio-scan.js', import.meta.url), 'utf8');
 const BM = readFileSync(new URL('../studio-builder-modals.js', import.meta.url), 'utf8');
 const f = (name, type, x) => ({ name, type, createable: true, nillable: true, referenceTo: [], ...x });
@@ -37,9 +37,18 @@ describe('sftkMatchingFallback picks the key a describe offers', () => {
   it('one lookup only → add a text field; autonumber names are skipped; external id / unique / name win', () => {
     const CC = [f('ParentId', 'reference', { relationshipName: 'Parent', referenceTo: ['Case'], nillable: false }), f('CommentBody', 'textarea'), f('IsPublished', 'boolean')];
     expect(sftkMatchingFallback(CC, { parentField: 'ParentId', parentKeyPath: 'Parent.Subject' }).fields).toEqual(['Parent.Subject', 'CommentBody']);
+    // Case: an autonumber name → what a person uses (Subject) next to the parent key; a lookup at a no-Name object is never a key part
+    const CASE = [f('CaseNumber', 'string', { nameField: true, autoNumber: true }), f('Subject', 'string'), f('AccountId', 'reference', { relationshipName: 'Account', referenceTo: ['Account'] }),
+      f('ContactId', 'reference', { relationshipName: 'Contact', referenceTo: ['Contact'] }), f('ParentId', 'reference', { relationshipName: 'Parent', referenceTo: ['Case'] })];
+    const cs = sftkMatchingFallback(CASE, { parentField: 'AccountId', parentKeyPath: 'Account.Name' });
+    expect(cs.fields).toEqual(['Account.Name', 'Subject', 'Contact.Name']);
+    expect(cs.why).toContain('CaseNumber is an org-generated number');
+    // Contract: autonumber name, no subject-like field except Description
+    const CTR = [f('ContractNumber', 'string', { nameField: true, autoNumber: true }), f('AccountId', 'reference', { relationshipName: 'Account', referenceTo: ['Account'] }), f('Description', 'textarea'), f('StartDate', 'date')];
+    expect(sftkMatchingFallback(CTR, { parentField: 'AccountId', parentKeyPath: 'Account.Name' }).fields).toEqual(['Account.Name', 'Description']);
     const OI = [f('OrderItemNumber', 'string', { nameField: true, autoNumber: true }), f('OrderId', 'reference', { relationshipName: 'Order', referenceTo: ['Order'], nillable: false }),
       f('PricebookEntryId', 'reference', { relationshipName: 'PricebookEntry', referenceTo: ['PricebookEntry'], nillable: false }), f('Product2Id', 'reference', { relationshipName: 'Product2', referenceTo: ['Product2'] })];
-    expect(sftkMatchingFallback(OI, {}).fields).toEqual(['Order.Name', 'PricebookEntry.Name', 'Product2.Name']);
+    expect(sftkMatchingFallback(OI, {}).fields).toEqual(['PricebookEntry.Name', 'Product2.Name']);   // Order has no Name to match by, so it is not a key part
     expect(sftkMatchingFallback([f('Ext__c', 'string', { externalId: true }), ...OCR], {})).toMatchObject({ strategy: 'externalId', fields: ['Ext__c'] });
     expect(sftkMatchingFallback([f('Code__c', 'string', { unique: true }), ...OCR], {})).toMatchObject({ strategy: 'field', fields: ['Code__c'] });
     expect(sftkMatchingFallback([f('Name', 'string', { nameField: true }), ...OCR], {})).toMatchObject({ strategy: 'field', fields: ['Name'] });
@@ -49,9 +58,10 @@ describe('sftkMatchingFallback picks the key a describe offers', () => {
 
 describe('the scan uses it, says so, and validates path keys', () => {
   it('no Name and no config → fallback with a warning; nothing usable → a plain error with the fix', () => {
-    expect(SC).toContain("if (!hasMatchingCfg && srcTypes.size && !srcTypes.has(srcMatchField) && !srcNameFld) {");
+    expect(SC).toContain("if (!hasMatchingCfg && srcTypes.size && !srcTypes.has(srcMatchField) && (!srcNameFld || _srcNameIsAuto)) {");
+    expect(SC).toContain('the 🪪 identity field (Identity… on the Deploy page) makes it exact');
     expect(SC).toContain('has no Name field and no usable key — set a match key in ✏ Edit → Records → Matching (💡 Suggestions), then scan again');
-    expect(SC).toContain('has no Name field — matched by ${fb.fields.join(\' + \')} for this scan (${fb.why}).');
+    expect(SC).toContain("has no ${_srcNameIsAuto ? 'usable' : ''} Name field — matched by ${fb.fields.join(' + ')} for this scan (${fb.why}).");
     expect(SC).toContain('const sideHas = (types, rels, f) => String(f).includes(\'.\') ? rels.has(String(f).split(\'.\')[0]) : types.has(f);');
     expect(SC).toContain('srcKeyFields.filter(f => !sideHas(srcTypes, srcRels, f))');
   });

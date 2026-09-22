@@ -33,10 +33,11 @@ const EXT     = resolve(process.env.SFTK_EXT || '.');
 const SHOTS   = join(process.env.LOCALAPPDATA, 'Temp', 'sftk-headless-shots');
 const PROFILE = process.env.SFTK_PROFILE || join(process.env.LOCALAPPDATA, 'Temp', `sftk-headless-${process.pid}`);
 mkdirSync(PROFILE, { recursive: true }); mkdirSync(SHOTS, { recursive: true });
-process.on('exit', () => { if (!process.env.SFTK_PROFILE) { try { rmSync(PROFILE, { recursive: true, force: true }); } catch (_) {} } });
+process.on('exit', () => { if (!process.env.SFTK_PROFILE && !process.env.SFTK_KEEP) { try { rmSync(PROFILE, { recursive: true, force: true }); } catch (_) {} } });
 
 const t0 = Date.now();
 const log = (...a) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s]`, ...a);
+log('profile:', PROFILE, process.env.SFTK_KEEP ? '(kept)' : '(deleted on exit)');
 
 const chrome = spawn(CHROME, [
   '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--hide-scrollbars',

@@ -912,11 +912,11 @@ async function runDiffScan(profile, node = null, scope = null) {
     // what "same record" means — on packaged objects whose configured field
     // doesn't exist, records pair by Name and new rows surface as "changed"
     // instead of "missing" (user hit exactly this in a live demo).
-    if (srcTypes.size && !srcTypes.has(srcMatchField) && srcNameFld) {
+    if (srcTypes.size && !srcTypes.has(srcMatchField) && srcNameFld && !((srcDescFull?.fields || []).find(f => f && f.name === srcNameFld)?.autoNumber)) {
       keyFallbackWarnings.push(`match field ${srcMatchField} doesn't exist on ${objType} in the source org — matched by ${srcNameFld} instead. If those values aren't unique, records can pair wrongly (new records may show as "changed" instead of "missing"). Set an explicit key in 🎯 Pick Records → Matching.`);
       srcMatchField = srcNameFld; srcKeyFields = [srcMatchField];
     }
-    if (tgtTypes.size && !tgtTypes.has(tgtMatchField) && tgtNameFld) {
+    if (tgtTypes.size && !tgtTypes.has(tgtMatchField) && tgtNameFld && !((tgtDescFull?.fields || []).find(f => f && f.name === tgtNameFld)?.autoNumber)) {
       keyFallbackWarnings.push(`match field ${tgtMatchField} doesn't exist on ${objType} in the target org — matched by ${tgtNameFld} instead. If those values aren't unique, records can pair wrongly (new records may show as "changed" instead of "missing"). Set an explicit key in 🎯 Pick Records → Matching.`);
       tgtMatchField = tgtNameFld; tgtKeyFields = [tgtMatchField];
     }
@@ -934,14 +934,15 @@ async function runDiffScan(profile, node = null, scope = null) {
   // the user's face (live run 2026-09-22). Pick the key the describe
   // offers — a junction's parents by name — and SAY so; with nothing
   // usable, stop with the fix instead of a raw error.
-  if (!hasMatchingCfg && srcTypes.size && !srcTypes.has(srcMatchField) && !srcNameFld) {
+  const _srcNameIsAuto = !!(srcNameFld && (srcDescFull?.fields || []).find(f => f && f.name === srcNameFld)?.autoNumber);
+  if (!hasMatchingCfg && srcTypes.size && !srcTypes.has(srcMatchField) && (!srcNameFld || _srcNameIsAuto)) {
     const parentRel = scope?.parentField ? (srcDescFull?.fields || []).find(f => f && f.name === scope.parentField)?.relationshipName : null;
     const parentKeyPath = parentRel && parentMatchingForKey ? `${parentRel}.${parentMatchingForKey.fields[0]}` : null;
     const fb = sftkMatchingFallback(srcDescFull?.fields, { lookupResolutions: node?.lookupResolutions, parentField: scope?.parentField, parentKeyPath });
     if (!fb) return { error: `${objType} has no Name field and no usable key — set a match key in ✏ Edit → Records → Matching (💡 Suggestions), then scan again` };
     nodeMatching = { strategy: fb.strategy, fields: fb.fields, normalize: fb.normalize };
     srcKeyFields = [...fb.fields]; tgtKeyFields = [...fb.fields]; srcMatchField = srcKeyFields[0]; tgtMatchField = tgtKeyFields[0];
-    keyFallbackWarnings.push(`${objType} has no Name field — matched by ${fb.fields.join(' + ')} for this scan (${fb.why}). Keep it, or pick another: ✏ Edit → Records → Matching → 💡 Suggestions.`);
+    keyFallbackWarnings.push(`${objType} has no ${_srcNameIsAuto ? 'usable' : ''} Name field — matched by ${fb.fields.join(' + ')} for this scan (${fb.why}). Keep it, or pick another: ✏ Edit → Records → Matching → 💡 Suggestions${_srcNameIsAuto ? '; the 🪪 identity field (Identity… on the Deploy page) makes it exact' : ''}.`);
   }
   // Per-side key configs — same strategy + normalization, only the field
   // NAMES differ per side. Every key below comes from sftkMatchKey with one
@@ -1290,7 +1291,7 @@ async function runDiffScan(profile, node = null, scope = null) {
     const _autoKeys = (srcKeyFields || []).filter(k =>
       (srcDescFull?.fields || []).find(f => f && f.name === k)?.autoNumber === true);
     if (_autoKeys.length) {
-      memWarnings.push(`match key ${_autoKeys.join(', ')} is an AUTONUMBER field — its values are org-generated sequence numbers, so cross-org matching by them pairs records arbitrarily. Match by a real data field or an External ID instead (🎯 Pick Records → Matching).`);
+      memWarnings.push(`match key ${_autoKeys.join(', ')} is an AUTONUMBER field — its values are org-generated sequence numbers, so the two orgs can never agree on them: a record deployed once shows as missing again on the next scan and would be inserted a second time (live run 2026-09-22: Contract and Order doubled). Create the 🪪 identity field (Identity… on the Deploy page) and stamp after deploying, or match by a field you control (🎯 Pick Records → Matching).`);
     }
   } catch (_) { /* advisory only */ }
   if (isRootScan) {

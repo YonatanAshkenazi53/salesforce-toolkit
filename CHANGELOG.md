@@ -58,6 +58,15 @@ extensions containing root files that start with `_`).
 - On the Deploy page's tree the 🪪 identity chips name the org (trailheads2 ✗)
   instead of saying "source" / "target"; with Bulk API 2.0 selected the batch
   size and threads inputs disappear and a line says Bulk splits the job itself.
+- **Line items deploy.** Salesforce takes UnitPrice or TotalPrice on a line
+  item, never both; a copied row carries both, so every line item used to be
+  rejected. TotalPrice is now left out (the target computes it) and the run
+  says so.
+- **Records with an autonumber name (Case, Contract, Order) are told apart
+  by what a person uses.** Their number is org-generated, so matching by it
+  inserted them again on every run. With nothing configured they are now
+  matched by their parent plus a subject-like field (Subject, Description),
+  the scan says so, and the 🪪 identity field makes it exact.
 - **Lookups keep their targets.** A lookup at an object outside the
   deployment (an Opportunity's price book, a Case's referral, a Contract's
   signer) with nothing configured is matched by Name in the target — the

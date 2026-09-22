@@ -10,6 +10,9 @@ export default async function (h) {
   await h.importProfiles('docs/fixtures/complex-deployment/profiles.json');
   const id = await h.eval(`_profiles.find(p => p.name === 'SFTK CX — Accounts tree')?.id`);
   if (!id) throw new Error('fixture profile missing');
+  const passes = Number(process.env.PASSES || 1);
+  for (let pass = 1; pass <= passes; pass++) {
+  h.log(`===== PASS ${pass} of ${passes} =====`);
   await h.eval(`window.runProfile(${JSON.stringify(id)})`);
   await h.sleep(1500);
   h.log('offline card:', await h.eval(`!!document.querySelector('.ds-rec-card-warn') && document.querySelector('.ds-rec-card-warn').innerText.includes('not open')`));
@@ -54,7 +57,7 @@ export default async function (h) {
   await h.shot(SHOTS + 'run1-selected.png');
   const runDisabled = await h.eval(`document.querySelector('#dsRecRunBtn')?.disabled`);
   h.log('run button disabled:', runDisabled);
-  if (runDisabled) return;
+  if (runDisabled) continue;
   const histBefore = await h.eval('_history.length');
   await h.click('#dsRecRunBtn');
   await h.sleep(2500);
@@ -91,6 +94,8 @@ export default async function (h) {
   await h.sleep(1000);
   h.log('HISTORY:', await dump(h, '.ds-history-card, .ds-history-item, #dsMain', 1800));
   await h.eval(`document.querySelectorAll('details').forEach(d => d.open = true)`);
-  h.log('RAW LINES:', (await h.eval(`(document.querySelector('.ds-history-card .ds-err-raw, .ds-history-item .ds-err-raw')?.innerText || '')`)).split(String.fromCharCode(10)).join(' | ').slice(0, 3000));
+  const raw = (await h.eval(`(document.querySelector('.ds-history-card .ds-err-raw, .ds-history-item .ds-err-raw')?.innerText || '')`)).split(String.fromCharCode(10)).filter(Boolean);
+  for (const line of raw) h.log('RAW:', line.slice(0, 700));
   await h.shot(SHOTS + 'run1-history.png');
+  }
 }
