@@ -98,6 +98,39 @@ describe('↻ Retry failed ticks what it can prove, and reports the rest', () =>
   });
 });
 
+// 2026-09-22 — the Deploy tree reused the builder's .ds-tree-node class; the
+// appended rule (max-width 300px, flex item) squeezed the builder's object
+// tree into a narrow column with its lookup hint spilling beside it.
+describe('the Deploy tree has its own class prefix', () => {
+  it('never reuses a builder tree class', () => {
+    expect(DV).not.toMatch(/ds-tree[-"' ]/);
+    expect(DV).toContain('class="ds-dtree-node');
+  });
+  it('the stylesheet keeps one .ds-tree-node rule, the builder one', () => {
+    const CSS = readFileSync(new URL('../studio.css', import.meta.url), 'utf8');
+    expect((CSS.match(/^\.ds-tree-node \{/gm) || []).length).toBe(1);
+    expect(CSS).toContain('.ds-dtree-node {');
+  });
+});
+
+// 2026-09-22 — "we see the tag of both source and target here, while there's
+// only one of each": the chips name the org. And Bulk API 2.0 has no batch
+// size or threads — say so instead of dimming two inputs.
+describe('identity chips name the org; Bulk hides the Collections knobs', () => {
+  it('the chips are labelled with orgLabel(), never "source"/"target"', () => {
+    expect(DV).toContain("const srcOrgL = orgLabel(p.sourceOrg || '') || 'source', tgtOrgL = orgLabel(p.targetOrg || '') || 'target';");
+    expect(DV).toContain('${idPill(id ? id.src : null, srcOrgL)} ${idPill(id ? id.tgt : null, tgtOrgL)}');
+    expect(DV).not.toContain("idPill(id ? id.src : null, 'source')");
+  });
+  it('with Bulk selected the batch/threads inputs are not rendered, and the line says why', () => {
+    expect(DV).toContain('Bulk API 2.0 splits the job itself — no batch size or threads');
+    const bar = DV.slice(DV.indexOf('${p.apiMode === \'bulk\''), DV.indexOf('id="dsDepUndoCapture"'));
+    expect(bar).toContain('? `<span class="ds-dep-sub"');
+    expect(bar).toContain('id="dsDepBatch"');
+    expect(bar).not.toContain("${p.apiMode === 'bulk' ? 'disabled' : ''}");
+  });
+});
+
 describe('load order', () => {
   it('the script is loaded after the pages it builds on', () => {
     expect(HT.indexOf('studio-reconcile.js')).toBeLessThan(HT.indexOf('studio-deploy.js'));

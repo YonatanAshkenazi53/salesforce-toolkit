@@ -14,6 +14,34 @@ Store currently has **1.4.2** — 1.4.3 has NOT been uploaded yet.
 
 ---
 
+> **RESUME HERE (2026-09-22, live test campaign in progress).** Read
+> `docs/fixtures/complex-deployment/README.md` first — it is the runbook and the
+> findings log. State: 1.5.0 built and gated (92 files / 2568 tests), NOT
+> uploaded, NOT released. Branch `work/1.4.3-deploy-view`; everything committed
+> at the end of each round (see git log). The user's standing order: "test every
+> feature of the data deployment in the open orgs … huge trees … see if records
+> really drift, if we catch all the data and advise the user what to do … vanilla
+> Salesforce scenarios like person accounts" — BEFORE releasing to the public.
+> - Harness: `node scripts/dev/headless-studio.mjs scripts/dev/live/<script>.mjs`
+>   (fresh profile per run; both orgs via CLI frontdoor; see README). Orgs:
+>   `npc` = trailheads2 (source), `npc2` = trailheads4 (target), both in the CLI.
+> - Fixture seeded on trailheads2. Target reset = cleanup.apex + seed-target.apex
+>   on npc2 (validation rules already deployed there).
+> - DONE this campaign: engine late-link pass (self/in-tree lookups connected
+>   after insert, proven live: Berlin Lab → Europe → Holding), child dupKeys +
+>   warning, Field Mapping org list, Deploy offline banner, builder CSS collision.
+> - NEXT (in order): (1) child scan of objects with no Name field → describe-based
+>   fallback key (`_matchSuggestionsFromDescribe` in studio-builder-modals.js ranks
+>   candidates; studio-scan.js ~268 resolves matchField) + a plain error; (2) rerun
+>   `run-accounts-tree.mjs` with all 11 children scanned/selected, verify every
+>   object in the target by CLI; (3) Campaigns / Products / Leads / Price books
+>   deployments; (4) parents-first flow, Retry failed, rollback; (5) huge trees:
+>   generate thousands of records (Apex loops) and prove the >5,000-per-list path;
+>   (6) UX: "scan all children", Refresh re-scans children, run log survives the
+>   repaint; builder shows in-tree lookups as info rows. (7) then release.
+> - Open UI question for the user: 🪪 chips — A (target only) / B (both, only when
+>   missing) / C. Unanswered.
+
 > **UPDATE 2026-09-21 — RELEASE 1.5.0 PREPARED (user: "i want to use the new view
 > on it … and only the new view").** manifest 1.5.0, zip
 > `dist/salesforce-toolkit-v1.5.0-store.zip` (63 files), gate 86 files /
@@ -54,6 +82,33 @@ Store currently has **1.4.2** — 1.4.3 has NOT been uploaded yet.
 > `sftkRunLineIsError` (= sftkFriendlyError kind) decides for both. History notes
 > amber (`.ds-history-note-row`), skip hints per reason (`sftkSkipHints`).
 > Gate 88 files / 2549.
+> - 2026-09-22 after commit: the Deploy tree's CSS reused the builder's `.ds-tree-node`
+> and squeezed the builder's object tree — renamed to `.ds-dtree-*` (test pins it).
+> - 2026-09-22 smoke-test fixes (uncommitted): rollback refuses a locked org up front
+> (`lockedLeg`) and says why the typed word is the org name; picker's Only
+> needs-deploy loads the scan's ids by Id (`fetchTodoRecords`); pure
+> `sftkScanStaleRun` (rollbacks count) drives classic + Deploy auto-refresh and a
+> 🔄 button in the picker. Gate 90 files / 2558.
+> - 2026-09-22: tree 🪪 chips name the org (orgLabel) not source/target; Bulk mode
+> hides batch/threads and says Bulk splits the job itself. Gate 90 / 2560.
+> - 2026-09-22 **LIVE TESTING NOW POSSIBLE**: `scripts/dev/headless-studio.mjs` drives the
+> unpacked extension in headless Chrome (CDP Extensions.loadUnpacked over the pipe;
+> `--load-extension` is ignored by branded Chrome 137+) with sessions from `sf org open
+> --url-only`. Complex fixture seeded on trailheads2 (docs/fixtures/complex-deployment:
+> 10 Accounts incl. 2 person accounts, hierarchies, ReportsTo, opps+OLI+OCR, cases+
+> comments, campaigns+members, leads, tasks/events, assets, contract/order/items,
+> individual, files); 5 deployments imported via bldProfileImportParse. Source-only pass
+> found+fixed: Field Mapping 'No connected orgs' (allOrgs ignored _orgUrl), Deploy page
+> silent on an offline target (now `sftkDeployOffline` banner + Read disabled).
+> **OPEN DESIGN GAP to prove live:** self-lookups (Account.ParentId, Contact.ReportsToId,
+> Case/Campaign/Asset.ParentId) — builder hides lookups to in-tree objects
+> (studio-builder.js ~1028) and the engine only remaps them via idMap when the referenced
+> record was inserted EARLIER in the run; otherwise the field is omitted with no note
+> (background.js ~1404-1420). Fix = post-insert self-link pass + a diagnostic.
+> BLOCKED on the target: trailheads4 is not in the CLI (`sf org login web --alias npc2`).
+> Then: seed-target.apex + deploy target-metadata (2 validation rules), run the 5
+> deployments headlessly, check drift/advice/rollback. Gate 91 / 2563.
+> - Committed as `b731fb0` on `work/1.4.3-deploy-view` (2026-09-22); nothing pushed.
 > - NOTHING here was exercised in a live org by Claude — the user must run the
 >   smoke list before uploading.
 

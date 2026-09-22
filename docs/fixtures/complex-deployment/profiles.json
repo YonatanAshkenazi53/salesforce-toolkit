@@ -1,0 +1,87 @@
+[
+  {
+    "format": "sftk-profile", "schema": 1, "exportedBy": "fixture", "exportedAt": "2026-09-22T00:00:00.000Z",
+    "profile": {
+      "name": "SFTK CX — Accounts tree",
+      "sourceOrg": "https://trailheads2.my.salesforce.com",
+      "targetOrg": "https://trailheads4.my.salesforce.com",
+      "tree": {
+        "objectType": "Account", "where": "Name LIKE '%SFTK CX%'", "matchField": "Name",
+        "lookupResolutions": { "ParentId": { "strategy": "match", "matchField": "Name", "matchObject": "Account" } },
+        "children": [
+          { "childSObject": "Contact", "field": "AccountId", "matchField": "Name",
+            "lookupResolutions": { "ReportsToId": { "strategy": "match", "matchField": "Name", "matchObject": "Contact" } } },
+          { "childSObject": "Opportunity", "field": "AccountId", "matchField": "Name",
+            "children": [
+              { "childSObject": "OpportunityLineItem", "field": "OpportunityId" },
+              { "childSObject": "OpportunityContactRole", "field": "OpportunityId",
+                "lookupResolutions": { "ContactId": { "strategy": "match", "matchField": "Name", "matchObject": "Contact" } } }
+            ] },
+          { "childSObject": "Case", "field": "AccountId", "matchField": "Subject",
+            "lookupResolutions": { "ContactId": { "strategy": "match", "matchField": "Name", "matchObject": "Contact" },
+                                   "ParentId":  { "strategy": "match", "matchField": "Subject", "matchObject": "Case" } },
+            "children": [ { "childSObject": "CaseComment", "field": "ParentId", "matchField": "CommentBody" } ] },
+          { "childSObject": "Asset", "field": "AccountId", "matchField": "SerialNumber",
+            "lookupResolutions": { "ContactId": { "strategy": "match", "matchField": "Name", "matchObject": "Contact" },
+                                   "Product2Id": { "strategy": "match", "matchField": "ProductCode", "matchObject": "Product2" },
+                                   "ParentId": { "strategy": "match", "matchField": "SerialNumber", "matchObject": "Asset" } } },
+          { "childSObject": "Contract", "field": "AccountId" },
+          { "childSObject": "Order", "field": "AccountId",
+            "children": [ { "childSObject": "OrderItem", "field": "OrderId" } ] },
+          { "childSObject": "Task", "field": "WhatId", "matchField": "Subject",
+            "lookupResolutions": { "WhoId": { "strategy": "match", "matchField": "Name", "matchObject": "Contact" } } }
+        ]
+      }
+    }
+  },
+  {
+    "format": "sftk-profile", "schema": 1, "exportedBy": "fixture", "exportedAt": "2026-09-22T00:00:00.000Z",
+    "profile": {
+      "name": "SFTK CX — Campaigns",
+      "sourceOrg": "https://trailheads2.my.salesforce.com",
+      "targetOrg": "https://trailheads4.my.salesforce.com",
+      "tree": {
+        "objectType": "Campaign", "where": "Name LIKE 'SFTK CX%'", "matchField": "Name",
+        "lookupResolutions": { "ParentId": { "strategy": "match", "matchField": "Name", "matchObject": "Campaign" } },
+        "children": [
+          { "childSObject": "CampaignMember", "field": "CampaignId",
+            "lookupResolutions": { "ContactId": { "strategy": "match", "matchField": "Name", "matchObject": "Contact" },
+                                   "LeadId": { "strategy": "match", "matchField": "Name", "matchObject": "Lead" } } }
+        ]
+      }
+    }
+  },
+  {
+    "format": "sftk-profile", "schema": 1, "exportedBy": "fixture", "exportedAt": "2026-09-22T00:00:00.000Z",
+    "profile": {
+      "name": "SFTK CX — Products & prices",
+      "sourceOrg": "https://trailheads2.my.salesforce.com",
+      "targetOrg": "https://trailheads4.my.salesforce.com",
+      "tree": {
+        "objectType": "Product2", "where": "Name LIKE 'SFTK CX%'", "matchField": "ProductCode",
+        "children": [
+          { "childSObject": "PricebookEntry", "field": "Product2Id",
+            "lookupResolutions": { "Pricebook2Id": { "strategy": "match", "matchField": "Name", "matchObject": "Pricebook2" } } }
+        ]
+      }
+    }
+  },
+  {
+    "format": "sftk-profile", "schema": 1, "exportedBy": "fixture", "exportedAt": "2026-09-22T00:00:00.000Z",
+    "profile": {
+      "name": "SFTK CX — Leads",
+      "sourceOrg": "https://trailheads2.my.salesforce.com",
+      "targetOrg": "https://trailheads4.my.salesforce.com",
+      "tree": { "objectType": "Lead", "where": "LastName LIKE 'SFTK CX%'", "matchField": "Email" }
+    }
+  },
+  {
+    "format": "sftk-profile", "schema": 1, "exportedBy": "fixture", "exportedAt": "2026-09-22T00:00:00.000Z",
+    "profile": {
+      "name": "SFTK CX — Price books",
+      "sourceOrg": "https://trailheads2.my.salesforce.com",
+      "targetOrg": "https://trailheads4.my.salesforce.com",
+      "tree": { "objectType": "Pricebook2", "where": "Name LIKE 'SFTK CX%'", "matchField": "Name" }
+    }
+  }
+]

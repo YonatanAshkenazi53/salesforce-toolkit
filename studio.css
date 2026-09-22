@@ -6248,32 +6248,32 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 /* Deploy view — 🌳 the deployment as a tree (2026-09-21) */
 .ds-dep-page > #dsDepTree:empty { display: none; }
 .ds-dep-page > #dsDepTree > .ds-rec-card { max-width: none; margin: 0; }
-.ds-tree { overflow-x: auto; padding: 4px 2px 8px; }
-.ds-tree ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; position: relative; }
-.ds-tree > ul > li { padding-left: 0; }
-.ds-tree li { display: flex; align-items: center; position: relative; padding: 6px 0 6px 30px; }
-.ds-tree > ul > li::before, .ds-tree > ul > li::after { display: none; }
-.ds-tree li::before { content: ''; position: absolute; left: 0; top: 50%; width: 30px; border-top: 1.5px solid var(--border); }
-.ds-tree li::after { content: ''; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1.5px solid var(--border); }
-.ds-tree li:first-child::after { top: 50%; }
-.ds-tree li:last-child::after { bottom: 50%; }
-.ds-tree li:only-child::after { display: none; }
-.ds-tree li > ul { margin-left: 30px; }
-.ds-tree li > ul::before { content: ''; position: absolute; left: -30px; top: 50%; width: 30px; border-top: 1.5px solid var(--border); }
-.ds-tree-node { flex: 0 0 auto; min-width: 210px; max-width: 300px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface2); padding: 8px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
-.ds-tree-node:hover, .ds-tree-node:focus-visible { border-color: var(--brand); outline: none; }
-.ds-tree-node-on { border-color: var(--brand); background: var(--brand-bg); }
-.ds-tree-name { font-weight: 700; font-size: 13.5px; color: var(--text); }
-.ds-tree-role { font-weight: 400; font-size: 11px; color: var(--subtext); margin-left: 4px; }
-.ds-tree-line { color: var(--subtext); }
-.ds-tree-line b { color: var(--text); }
-.ds-tree-id { font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
-.ds-tree-id-ok { border-color: var(--success); color: var(--c-good-fg, var(--success)); }
-.ds-tree-id-no { border-color: var(--warning); color: var(--c-warn-fg, var(--warning)); }
-.ds-tree-work { color: var(--c-critical-fg, var(--danger)); }
-.ds-tree-sync { color: var(--c-good-fg, var(--success)); font-weight: 600; }
-.ds-tree-needs { font-size: 11px; color: var(--subtext); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-.ds-tree-need { border: 1px dashed var(--border); border-radius: 6px; padding: 0 5px; }
-.ds-tree-need-bad { border-color: var(--danger); color: var(--c-critical-fg, var(--danger)); }
-.ds-tree-need-off { opacity: .55; }
-.ds-tree-foot { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.ds-dtree { overflow-x: auto; padding: 4px 2px 8px; }
+.ds-dtree ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; position: relative; }
+.ds-dtree > ul > li { padding-left: 0; }
+.ds-dtree li { display: flex; align-items: center; position: relative; padding: 6px 0 6px 30px; }
+.ds-dtree > ul > li::before, .ds-dtree > ul > li::after { display: none; }
+.ds-dtree li::before { content: ''; position: absolute; left: 0; top: 50%; width: 30px; border-top: 1.5px solid var(--border); }
+.ds-dtree li::after { content: ''; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1.5px solid var(--border); }
+.ds-dtree li:first-child::after { top: 50%; }
+.ds-dtree li:last-child::after { bottom: 50%; }
+.ds-dtree li:only-child::after { display: none; }
+.ds-dtree li > ul { margin-left: 30px; }
+.ds-dtree li > ul::before { content: ''; position: absolute; left: -30px; top: 50%; width: 30px; border-top: 1.5px solid var(--border); }
+.ds-dtree-node { flex: 0 0 auto; min-width: 210px; max-width: 300px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface2); padding: 8px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.ds-dtree-node:hover, .ds-dtree-node:focus-visible { border-color: var(--brand); outline: none; }
+.ds-dtree-node-on { border-color: var(--brand); background: var(--brand-bg); }
+.ds-dtree-name { font-weight: 700; font-size: 13.5px; color: var(--text); }
+.ds-dtree-role { font-weight: 400; font-size: 11px; color: var(--subtext); margin-left: 4px; }
+.ds-dtree-line { color: var(--subtext); }
+.ds-dtree-line b { color: var(--text); }
+.ds-dtree-id { font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+.ds-dtree-id-ok { border-color: var(--success); color: var(--c-good-fg, var(--success)); }
+.ds-dtree-id-no { border-color: var(--warning); color: var(--c-warn-fg, var(--warning)); }
+.ds-dtree-work { color: var(--c-critical-fg, var(--danger)); }
+.ds-dtree-sync { color: var(--c-good-fg, var(--success)); font-weight: 600; }
+.ds-dtree-needs { font-size: 11px; color: var(--subtext); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.ds-dtree-need { border: 1px dashed var(--border); border-radius: 6px; padding: 0 5px; }
+.ds-dtree-need-bad { border-color: var(--danger); color: var(--c-critical-fg, var(--danger)); }
+.ds-dtree-need-off { opacity: .55; }
+.ds-dtree-foot { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }

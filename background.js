@@ -725,6 +725,14 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   // would otherwise throw on `node.children` of undefined.
   const ordered = profile && profile.tree ? flattenTree(profile.tree) : [];
   const entryByNode = new Map(ordered.map(e => [e.node, e]));
+  // 🔗 Objects in this deployment. A lookup that points at one of them — the
+  // object ITSELF included (Account.ParentId, Contact.ReportsToId,
+  // Case/Campaign/Asset.ParentId) — may aim at a record this run creates
+  // LATER. Such a lookup is deferred at insert and connected at the end of
+  // the run (live run 2026-09-22: a 3-level Account hierarchy arrived flat
+  // at level 2, and nothing said so).
+  const treeObjSet   = new Set(ordered.map(e => e.node.objectType || e.node.childSObject).filter(Boolean));
+  const nodeLateRefs = new Map();   // node → deferredRefs that point INTO the tree
 
   // SOURCE-org record ids defining a node's scope, used to filter its
   // children's fetches. For an already-processed node that's its fetched ids;
@@ -1240,10 +1248,13 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           const matched = bridge.size;
           const total   = srcIds.length;
           if (matched < total) {
-            errors.push(
-              `${objType}.${fieldName}: ${matched}/${total} lookups resolved via ` +
-              `${res.matchObject}.${res.matchField} — ${total - matched} record(s) will have null ${fieldName}`
-            );
+            // When the referenced object is part of this deployment the rest
+            // may be created later in this run — the late-link pass connects
+            // them then, so this is a note, not a verdict.
+            errors.push(treeObjSet.has(res.matchObject)
+              ? `ℹ ${objType}.${fieldName}: ${matched}/${total} lookups resolved via ${res.matchObject}.${res.matchField} in the target — the other ${total - matched} are inserted with an empty ${fieldName} and connected after insert if this run creates the ${res.matchObject} they point at`
+              : `${objType}.${fieldName}: ${matched}/${total} lookups resolved via ` +
+                `${res.matchObject}.${res.matchField} — ${total - matched} record(s) will have null ${fieldName}`);
           }
           // ⛔ PRE-FLIGHT ABORT (user 2026-08-10, after 401 × "Required field
           // missing": "the recommendation … is not strong enough"). A bridge
@@ -1415,7 +1426,8 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             // connect step retries once the parent (and anything else created
             // in between) exists, so lookups OTHER than the tree link that
             // point at the parent aren't silently lost.
-            if (isCf) deferredRefs.push({ srcId: r.Id, tgtField, srcVal: v, isParentLink: false });
+            const inTree = (f.referenceTo || []).some(o => treeObjSet.has(o));
+            if (isCf || inTree) deferredRefs.push({ srcId: r.Id, tgtField, srcVal: v, isParentLink: false, inTree, refObj: (f.referenceTo || [])[0] || '?' });
             // skip / no config / legacy passthrough → field omitted — safe default
             continue;
           }
@@ -1468,6 +1480,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         nodePreLinked.set(node, preLinked);
         nodeDeferredRefs.set(node, deferredRefs);
       }
+      if (deferredRefs.some(d => d.inTree && !d.isParentLink)) nodeLateRefs.set(node, deferredRefs);
 
       // ── Batch create (200 records/batch, allOrNone:false) ────────────────
       let ok = 0, fail = 0, usedBulk = false;
@@ -1920,6 +1933,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             const resolved = idMap[d.srcVal];
             if (!resolved) { if (d.isParentLink) orphaned++; continue; }
             patch[d.tgtField] = resolved;   // tgtField is already the mapped name
+            d.done = true;                  // the late-link pass must not patch it again
             if (d.isParentLink) patchHasLink = true;
           }
           // Linked at insert (idMap hit) — re-point only if the parent was
@@ -1981,6 +1995,52 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         .map(c => c.objectType || c.childSObject);
       if (cfKids.length) {
         errors.push(`${objType}: failed before its child-first children could be linked — ${cfKids.join(', ')} records were created but remain unconnected.`);
+      }
+    }
+  }
+
+  // ── 🔗 Late links ─────────────────────────────────────────────────────────
+  // Lookups deferred at insert because the record they point at was not in
+  // the target yet and was created LATER in this run. One PATCH per record,
+  // per object, allOrNone:false, never fatal. Records whose own insert failed
+  // are skipped (already counted); a pointed-at record that this run never
+  // created is said, with what to do.
+  if (nodeLateRefs.size && !_runCancelled) {
+    const LATE_BATCH = 200;
+    for (const [node, refs] of nodeLateRefs) {
+      const objType = node.objectType || node.childSObject;
+      const byId = new Map(), fieldsHit = new Map(), unresolved = new Map(), unresolvedObj = new Map();
+      for (const d of refs) {
+        if (d.done || d.isParentLink || !d.inTree) continue;
+        const me = idMap[d.srcId];
+        if (!me) continue;
+        const to = idMap[d.srcVal];
+        if (!to) { unresolved.set(d.tgtField, (unresolved.get(d.tgtField) || 0) + 1); unresolvedObj.set(d.tgtField, d.refObj); continue; }
+        const p = byId.get(me) || { attributes: { type: objType }, Id: me };
+        p[d.tgtField] = to; byId.set(me, p);
+        fieldsHit.set(d.tgtField, (fieldsHit.get(d.tgtField) || 0) + 1);
+      }
+      const updates = [...byId.values()];
+      let ok = 0, failed = 0;
+      for (let ci = 0; ci < updates.length; ci += LATE_BATCH) {
+        const slice = updates.slice(ci, ci + LATE_BATCH);
+        try {
+          const res = await sfCollectionsUpdate(tgtOrgUrl, tgtSid, slice);
+          (Array.isArray(res) ? res : []).forEach(rr => {
+            if (rr.success) ok++;
+            else { failed++; errors.push(`${objType}: connecting a lookup after insert failed — ${(rr.errors || []).map(x => x.message).join('; ')}`); }
+          });
+        } catch (e) { failed += slice.length; errors.push(`${objType}: connecting lookups after insert failed — ${e?.message || e}`); }
+      }
+      const fl = m => [...m].map(([f, n]) => `${f} ×${n}`).join(', ');
+      if (ok || failed) {
+        if (summary[objType]) summary[objType].lateLinked = ok;
+        diagnostics.push(`${objType}: 🔗 ${ok} record(s) connected after insert (${fl(fieldsHit)}) — the records they point at were created later in this run${failed ? `; ${failed} could not be connected` : ''}.`);
+      }
+      if (unresolved.size) {
+        const n = [...unresolved.values()].reduce((a, b) => a + b, 0);
+        const objs = [...new Set(unresolvedObj.values())].join(', ');
+        errors.push(`⚠ ${objType}: ${n} lookup value(s) left empty (${fl(unresolved)}) — the ${objs} record they point at is neither in the target nor created by this run. Deploy it first, or widen this deployment to include it.`);
       }
     }
   }

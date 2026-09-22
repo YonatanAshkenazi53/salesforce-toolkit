@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ValidationRule xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>SFTK_CX_Lab_Lead_Needs_Phone</fullName>
+    <active>true</active>
+    <description>SFTK complex-deployment fixture: rejects exactly one source Contact (the Lab lead has no Phone).</description>
+    <errorConditionFormula>AND(Title = "Lab lead", ISBLANK(Phone), CONTAINS(LastName, "SFTK CX"))</errorConditionFormula>
+    <errorMessage>SFTK CX fixture: a Lab lead needs a Phone in this org.</errorMessage>
+</ValidationRule>

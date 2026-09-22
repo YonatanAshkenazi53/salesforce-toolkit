@@ -33,7 +33,11 @@ async function openFieldMappingModal(pathStr) {
   function allOrgs() {
     const orgs = [];
     const seen = new Set();
-    for (const s of _allSessions) {
+    // _buildAllSessions() puts the CURRENT tab's org first; reading _allSessions
+    // alone said "No connected orgs" while 46 fields of that very org were
+    // listed underneath (headless live test 2026-09-22).
+    const sessions = (typeof _buildAllSessions === 'function') ? _buildAllSessions() : _allSessions;
+    for (const s of sessions) {
       if (!seen.has(s.orgUrl)) {
         seen.add(s.orgUrl);
         orgs.push({ url: s.orgUrl, sid: s.sid, label: s.label || s.orgUrl });
@@ -995,6 +999,41 @@ async function openRecordPickerModal(pathStr) {
 
   await fetchRecords();
 
+  // "Only needs-deploy" must show the records that need deploying — not the
+  // ones that happen to sit in the first pages (user 2026-09-22: the one
+  // changed Account was past row 400, so the filter showed nothing). The
+  // scan knows their Ids; fetch them by Id and merge them into the list.
+  let todoLoaded = false, todoNote = '';
+  async function fetchTodoRecords() {
+    const want = [...new Set([...idsMissingInTarget, ...idsDrift, ...idsFileMiss])];
+    const have = new Set(records.map(r => r.Id));
+    const missing = want.filter(id => !have.has(id));
+    const CAP = 2000;
+    const fld  = displayField && displayField !== 'Id' ? displayField : null;
+    const linkSel = pickerParentPicks ? `,${node.field}` : '';
+    const scopeW  = pickerParentPicks ? `${node.field} IN (${pickerParentPicks.map(id => `'${id}'`).join(',')})` : '';
+    const w = [node.where, scopeW].filter(Boolean).map(x => `(${x})`).join(' AND ');
+    let got = 0, failed = null;
+    for (let i = 0; i < Math.min(missing.length, CAP); i += 200) {
+      const ids = missing.slice(i, i + 200);
+      const soql = `SELECT Id${fld ? `,${fld}` : ''}${linkSel} FROM ${objType} WHERE Id IN (${ids.map(id => `'${id}'`).join(',')})${w ? ` AND ${w}` : ''}`;
+      const res = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, query: soql });
+      if (res?.error) { failed = res.error; break; }
+      const page = (res.records || []).filter(r => !have.has(r.Id));
+      page.forEach(r => have.add(r.Id));
+      records = records.concat(page); got += page.length;
+    }
+    todoLoaded = true;
+    todoNote = failed
+      ? `⚠ Could not load the needs-deploy records by Id: ${failed}`
+      : `${want.length.toLocaleString()} record(s) need deploying according to the scan${got ? ` — ${got.toLocaleString()} loaded by Id` : ''}${missing.length > CAP ? ` (the first ${CAP.toLocaleString()} of ${missing.length.toLocaleString()} missing from the pages; narrow with a WHERE filter for the rest)` : ''}.`;
+  }
+  // A run or a rollback after this scan means these badges are stale. The
+  // builder edits a copy, so the refresh writes to the saved deployment and
+  // the picker reopens on the new scan.
+  const staleRun  = scanFresh ? (() => { try { return sftkScanStaleRun(_history, _editingProfile, rootScan?.runAt); } catch (_) { return null; } })() : null;
+  const canRescan = !!(staleRun && _profiles.some(x => x.id === _editingProfile?.id));
+
   // Parent display labels for the group headers — best effort, ids on failure.
   if (pickerParentPicks) {
     try {
@@ -1265,6 +1304,8 @@ async function openRecordPickerModal(pathStr) {
             <span class="ds-pick-leg ds-diff-missing">🔴 Missing in target</span>
             <span class="ds-pick-leg ds-diff-drift">🟡 Changed</span>
             <span class="ds-pick-leg ds-diff-sync">🟢 In sync</span>
+            ${staleRun ? `<div class="ds-picker-note" style="margin-top:6px">↻ ${staleRun.kind === 'rollback' ? 'A rollback' : 'A run'} changed these orgs ${esc(timeAgo(staleRun.completedAt || staleRun.startedAt))}, after this scan — these badges are older than the data.
+              ${canRescan ? `<button class="ds-btn ds-btn-xs" id="dsRecRescan">🔄 Refresh state</button>` : 'Save the deployment, then 🔄 Refresh state.'}</div>` : ''}
             ${liveScan.fileDrift?.capped ? `<br><span style="font-size:11px">📎 file check covered the first ${liveScan.fileDrift.pairsChecked} of ${liveScan.fileDrift.pairsTotal} matched pairs — 🟢 on the unchecked rest does NOT verify their files.</span>` : ''}
           </div>` : !isRootPick ? `
           <div class="ds-picker-note ds-pick-noscan">
@@ -1274,6 +1315,7 @@ async function openRecordPickerModal(pathStr) {
               : ' — run 🔄 Refresh state on the root object first, then reopen this picker.'}
           </div>` : ''}
 
+        ${showOnlyTodo && todoNote ? `<div class="ds-picker-note">${esc(todoNote)}</div>` : ''}
         <div class="ds-picker-list" id="dsRecList">
           ${!records.length
             ? `<div class="ds-picker-empty">${queryError ? 'Query failed.' : 'No records found.'}</div>`
@@ -1713,11 +1755,23 @@ async function openRecordPickerModal(pathStr) {
     // Show only records that need to be deployed (missing or drift). Inverse
     // of Hide in-sync — picks them by inclusion instead of exclusion. Useful
     // for "select what to transfer" in one click.
-    eid('dsRecShowOnlyTodo')?.addEventListener('change', e => {
+    eid('dsRecShowOnlyTodo')?.addEventListener('change', async e => {
       showOnlyTodo = e.target.checked;
       if (showOnlyTodo && hideDeployed) hideDeployed = false;
+      if (showOnlyTodo && !todoLoaded) { e.target.disabled = true; await fetchTodoRecords(); }
       const box = eid('dsModalBox');
       if (box) { box.innerHTML = renderModal(filter); wireModal(filter); }
+    });
+    eid('dsRecRescan')?.addEventListener('click', async () => {
+      const b = eid('dsRecRescan');
+      if (b) { b.disabled = true; b.textContent = '⏳ reading both orgs…'; }
+      try {
+        await window.refreshProfileState(_editingProfile.id);
+        const saved = _profiles.find(x => x.id === _editingProfile.id);
+        if (saved?.lastScan) _editingProfile.lastScan = JSON.parse(JSON.stringify(saved.lastScan));
+      } catch (err) { showToast(`Refresh failed: ${err?.message || err}`, 'error', 6000); if (b) { b.disabled = false; b.textContent = '🔄 Refresh state'; } return; }
+      closeModal();
+      openRecordPickerModal(pathStr);
     });
 
     eid('dsRecList')?.querySelectorAll('input[type=checkbox]').forEach(cb => {

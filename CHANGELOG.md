@@ -49,6 +49,33 @@ extensions containing root files that start with `_`).
   will do there — inserts, overwrites, re-links and deletes, children
   included — and an org whose type cannot be read is treated like production.
   The source org gets the same gate when a run writes back into it.
+- **🎯 Pick records → Only needs-deploy** showed nothing when the records
+  that need deploying were not in the first pages. They are now loaded by Id
+  from the scan, and the picker offers 🔄 Refresh state when a run or a
+  rollback changed the orgs after that scan.
+- The Deploy page refreshes its state on its own after a run or a rollback,
+  as the classic page did.
+- On the Deploy page's tree the 🪪 identity chips name the org (trailheads2 ✗)
+  instead of saying "source" / "target"; with Bulk API 2.0 selected the batch
+  size and threads inputs disappear and a line says Bulk splits the job itself.
+- **Hierarchies arrive whole.** A lookup that points at the object itself
+  (Account → parent Account, Contact → ReportsTo, a Case's parent Case, a
+  Campaign's parent, an Asset's parent) or at another object in the same
+  deployment used to be dropped without a word when the record it points at
+  was created later in the same run — a 3-level account hierarchy arrived
+  flat at level 2. Such lookups are now connected at the end of the run, and
+  the run says how many it connected and which ones point at records that
+  neither exist in the target nor were created (and what to do).
+- **Same-name records in a child object are no longer invisible.** A child
+  scan cannot tell two "Mia Schmidt" contacts apart, so it leaves both out
+  of every list — that is still the rule, but the page now says so, names
+  the keys, and tells you the fix (a second match field, or a rename).
+- The Deploy page says up front when the source or the target is not open in a
+  Chrome tab and keeps 🔄 Read disabled until it is, instead of failing on the
+  click. Field Mapping no longer says "No connected orgs" when the only open
+  org is the current tab's.
+- The deployment builder's object tree was squeezed into a narrow column
+  (a style from the new page's tree leaked into it).
 - A scan that finished while the new page was open (after a run, or the first
   scan of a new org pair) did not repaint it.
 - **A run that wrote every record no longer shows as "partial"** because of a
