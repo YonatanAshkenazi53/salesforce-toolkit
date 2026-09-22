@@ -47,6 +47,18 @@ Store currently has **1.4.2** — 1.4.3 has NOT been uploaded yet.
 > - DONE: Retry failed, parents-first journey, rollback all verified live (rollback fixes:
 > restricted child objects don't block; 'delete anyway' choice; person contacts skipped).
 > - DONE: rollback8 clean. **LIVE CAMPAIGN COMPLETE.** Gate 96 files / 2601 tests, zip packed.
+> - **CAMPAIGN 2 (write-capable tools) started 2026-09-22 — Field Cleaner DONE.** Runbook +
+> findings: `docs/fixtures/field-cleaner-fixture/README.md` (rebuild.sh, live script
+> `scripts/dev/live/field-cleaner.mjs`, env SCAN_ONLY / ACTIVE / DELETE_FIELD). Four fixes,
+> all pinned (fc-flow-refusal-0922, fc-interviews-0922, fc-field-delete-0922): flow-fix dialog
+> no longer preselects a replace that leaves elements empty; FlowInterview lookup by 15-char id
+> (refused versions are NOT marked done any more); 🗑 Delete Field falls back to a Metadata API
+> destructiveChanges deploy (Tooling DELETE of CustomField is refused in BOTH orgs — even a fresh
+> field nothing references); the "Field deleted" card is no longer wiped. Verified end to end
+> by CLI. Fixture rebuilt on trailheads2, ready. Harness gained `h.popup(tab)`.
+> - NEXT in campaign 2: API versions bulk update (Flows tool), Flow switches, Dependencies
+> (fixture `SFTK_Dep_Test_*`), Picklist Manager (typed prod gates), Sync Ring + Org Compare
+> consistency, Sequences. Then the user decides on the 1.5.0 release.
 > - NEXT: the user decides on release (upload dist/salesforce-toolkit-v1.5.0-store.zip;
 > CHANGELOG 1.5.0 section = store notes); 🪪 chips question still open. (old: read retry-rollback.log; run
 > scripts/dev/live/retry-and-rollback.mjs (Retry failed + ↩ Roll back live);

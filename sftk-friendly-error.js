@@ -121,6 +121,15 @@ function sftkFriendlyError(raw) {
     out.hint = 'Fix the data to satisfy the rule, or temporarily deactivate the validation rule while migrating.';
     return out;
   }
+  // Flow version delete refused by a paused / failed interview (Tooling
+  // DELETE on Flow, live 2026-09-22). The raw text repeats itself per interview.
+  if (/DEPENDENCY_EXISTS/i.test(s) && /flow interview/i.test(s)) {
+    const ids = [...new Set((s.match(/Flow Interview - [0-9A-Za-z]{15,18}/g) || []).map(x => x.replace(/^Flow Interview - /, '')))];
+    out.type = 'flow-interview';
+    out.message = `Salesforce refuses to delete this flow version: ${ids.length || 'a'} paused or failed flow interview${ids.length === 1 ? '' : 's'} still reference${ids.length === 1 ? 's' : ''} it${ids.length ? ` (${ids.join(', ')})` : ''}`;
+    out.hint = 'Delete those interviews first (Setup → Paused And Failed Flow Interviews), then try again.';
+    return out;
+  }
   if (/DUPLICATES_DETECTED|Use one of these records\?/i.test(s)) {
     out.type = 'duplicate';
     out.message = 'A duplicate rule in the target org flagged this record and blocked the write';

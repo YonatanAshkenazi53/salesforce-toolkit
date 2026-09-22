@@ -2072,7 +2072,11 @@ const FieldCleaner = (() => {
     const hasChoice = type === 'Flow' && flowPlan.plan.mode === 'active' && !!flowPlan.planDelete;
     const pv = hasChoice ? flowPlan.preview : null;
     const canReplace = hasChoice && !!pv && pv.removed.length > 0;
-    let activeMode = hasChoice ? (canReplace ? 'replace' : '') : 'replace';
+    // Elements the fix leaves empty make Salesforce refuse the new version
+    // (live 2026-09-22: offered and preselected, refused, nothing deleted —
+    // correct, but a wasted round). Then nothing is preselected: the user picks.
+    const replaceLikelyRefused = canReplace && !!pv && (pv.emptied || []).length > 0;
+    let activeMode = hasChoice ? (canReplace && !replaceLikelyRefused ? 'replace' : '') : 'replace';
     const sure = await sftkConfirmDestructive({
       title: `Remove field reference — ${cfg.label || type}`,
       items: type === 'Flow'
@@ -2131,8 +2135,17 @@ const FieldCleaner = (() => {
         if (r.deleted) bits.push(`${r.deleted} version(s) deleted`);
         if (r.interviewsDeleted) bits.push(`${r.interviewsDeleted} flow interview(s) deleted`);
         if (r.interviewsFailed) bits.push(`⚠ ${r.interviewsFailed} flow interview(s) couldn't be deleted`);
-        if (r.failed || r.skipped) bits.push(`⚠ ${r.failed + r.skipped} version(s) couldn't be deleted — may still block the field delete${r.errors.length ? ` (${r.errors.join('; ')})` : ''}`);
+        if (r.failed || r.skipped) bits.push(`⚠ ${r.failed + r.skipped} version(s) couldn't be deleted — still blocking the field delete${r.errors.length ? ` (${[...new Set(r.errors)].join('; ')})` : ''}`);
         if (r.stillMentions) bits.push(`⚠ the new version still mentions the field in text the auto-fix does not touch (a formula or decision) — finish it in Flow Builder`);
+        // Not finished is not done (live 2026-09-22: three versions Salesforce
+        // refused were marked ✅ and the delete zone read "All dependencies
+        // resolved"). A refused version keeps its ✂ button and says why.
+        const stuck = (r.failed || 0) + (r.skipped || 0) + (r.interviewsFailed || 0);
+        if (stuck) {
+          const e = new Error(`Not finished: ${bits.join(' · ')}. The field stays locked until every version that references it is gone — clear the cause, then press ✂ Remove again (what was deleted stays deleted).`);
+          if (flowPlan.builderUrl) e.setupUrl = flowPlan.builderUrl;
+          throw e;
+        }
         label = `✅ ${bits.join(' · ')}`;
         doneLinks = _flowDoneLinks({ stillBlocking: r.failed + r.skipped });
         _markFlowSiblings(componentId, r.defId, label, doneLinks);
@@ -2355,7 +2368,11 @@ const FieldCleaner = (() => {
   // Paused / waiting interviews on these versions — Salesforce refuses to
   // delete a version while any exist. A failed check is reported, not hidden.
   async function _flowInterviewsFor(versionIds) {
-    const ids = (versionIds || []).filter(Boolean);
+    // FlowVersionViewId matches the 15-character id only (live 2026-09-22: the
+    // 18-character form found nothing, so every version then failed with
+    // DEPENDENCY_EXISTS naming the very interviews this query had missed).
+    // Both forms are asked for; the results carry the 15-character one.
+    const ids = [...new Set((versionIds || []).filter(Boolean).flatMap(x => { const s = String(x); return s.length === 18 ? [s, s.substring(0, 15)] : [s]; }))];
     if (!ids.length) return { interviews: [], error: null };
     const lit = ids.map(x => `'${x}'`).join(',');
     const r = await bg({ type: 'SF_REST_QUERY', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
@@ -2368,7 +2385,7 @@ const FieldCleaner = (() => {
     const out = { deleted: 0, failed: 0, failedVersionIds: new Set(), errors: [] };
     for (const it of (interviews || [])) {
       const d = await bg({ type: 'SF_REST_DELETE', orgUrl: _orgUrl, sid: _sid, sobject: 'FlowInterview', id: it.Id, _suppressError: true });
-      if (d?.error) { out.failed++; out.failedVersionIds.add(it.FlowVersionViewId); if (out.errors.length < 3) out.errors.push(_feText(d.error)); }
+      if (d?.error) { out.failed++; out.failedVersionIds.add(String(it.FlowVersionViewId || '').substring(0, 15)); if (out.errors.length < 3) out.errors.push(_feText(d.error)); }
       else out.deleted++;
     }
     return out;
@@ -2379,7 +2396,7 @@ const FieldCleaner = (() => {
   async function _deleteFlowVersionIds(ids, skipIds) {
     const out = { deleted: 0, failed: 0, skipped: 0, errors: [] };
     for (const id of (ids || [])) {
-      if (skipIds && skipIds.has(id)) { out.skipped++; continue; }
+      if (skipIds && (skipIds.has(id) || skipIds.has(String(id).substring(0, 15)))) { out.skipped++; continue; }
       const d = await bg({ type: 'SF_TOOLING_DELETE', orgUrl: _orgUrl, sid: _sid, sobject: 'Flow', id, _suppressError: true });
       if (d?.error) { out.failed++; if (out.errors.length < 3) out.errors.push(_feText(d.error)); }
       else out.deleted++;
@@ -2421,9 +2438,9 @@ const FieldCleaner = (() => {
       ${pv.emptied.length ? `<div class="fc-prev-sec fc-prev-warn"><b>⚠ Left empty by the fix (${pv.emptied.length}) — Salesforce is likely to refuse the new version</b>${list(pv.emptied, '')}
         <div class="fc-prev-note">An element with nothing left to do is invalid. If the deploy is refused, nothing is deleted and the message says so.</div></div>` : ''}
       <div class="fc-prev-hd">The active version — choose</div>
-      <label class="fc-prev-opt${canReplace ? '' : ' fc-prev-opt-off'}"><input type="radio" name="fcActiveMode" value="replace" ${canReplace ? 'checked' : 'disabled'}>
+      <label class="fc-prev-opt${canReplace ? '' : ' fc-prev-opt-off'}"><input type="radio" name="fcActiveMode" value="replace" ${canReplace ? (pv.emptied.length ? '' : 'checked') : 'disabled'}>
         <span><b>Keep the flow running</b> — deploy a new active v${fp.plan.expectNew} without what comes out above, verify it is active, then delete v${act.num}.
-        ${canReplace ? (pv.remaining.length ? `<em>The field stays locked until you also fix the ${pv.remaining.length} manual place(s) in the new version.</em>` : '') : '<em>Not available: there is nothing the automatic fix can take out of this version.</em>'}</span></label>
+        ${canReplace && pv.emptied.length ? `<em>Likely refused: ${pv.emptied.length} element(s) would be left empty. Pick this only if you will fix them in Flow Builder; otherwise choose delete.</em> ` : ''}${canReplace ? (pv.remaining.length ? `<em>The field stays locked until you also fix the ${pv.remaining.length} manual place(s) in the new version.</em>` : '') : '<em>Not available: there is nothing the automatic fix can take out of this version.</em>'}</span></label>
       <label class="fc-prev-opt"><input type="radio" name="fcActiveMode" value="delete">
         <span><b>Delete the active version too</b> — switch the flow off, verify nothing is active, then delete v${act.num} with the rest. <em>The flow stops running.</em></span></label>
       <div class="fc-prev-sec"><b>Or do it yourself.</b> ${open} In Flow Builder open <i>Toolbox → Manager</i> and search each API name shown above (<code>like_this</code>); change or remove the reference, reconnect anything you delete, then Save As a new version and Activate. Run ✂ Remove here again afterwards — it will find the active version clean and only remove the old versions.</div>
@@ -2505,7 +2522,7 @@ const FieldCleaner = (() => {
       delete metadata.fullName;
       const deployRes = await deployFlowViaMetadataApi(apiNameOf(plan.active.id), metadata);
       if (!deployRes || !deployRes.success) {
-        const e = new Error(`Couldn't deploy the fixed "${flowName}" (${deployRes?.error ? _feText(deployRes.error) : 'deploy failed'}). Nothing was deleted. Open in Flow Builder to remove the field reference by hand.`);
+        const e = new Error(`Salesforce refused the fixed "${flowName}": ${deployRes?.error ? String(deployRes.error).replace(/\s+/g, ' ').slice(0, 300) : 'deploy failed'}. Nothing was deleted. Choose “Delete the active version too”, or open in Flow Builder to remove the field reference by hand.`);
         const u = _flowBuilderUrl(plan.active.id); if (u) e.setupUrl = u;
         throw e;
       }
@@ -3431,7 +3448,7 @@ const FieldCleaner = (() => {
         'template, or a criteria-based sharing rule — see the note above), (b) the field is ' +
         'referenced by a MANAGED package component (read-only), or (c) your ' +
         'user lacks "Customize Application" / "Modify Metadata". Resolve the ' +
-        'remaining reference, then retry.';
+        'remaining reference, then retry. (Salesforce said: ' + s.replace(/\s+/g, ' ').slice(0, 400) + ')';
     }
     if (/in use|cannot delete.*because|referenced/i.test(s)) {
       return 'The field is still referenced somewhere. Fix the listed ' +
@@ -3440,6 +3457,36 @@ const FieldCleaner = (() => {
         `(Raw: ${s})`;
     }
     return s;
+  }
+
+  // Delete one custom field through the Metadata API: a deploy whose
+  // destructiveChanges.xml names the field and whose package.xml is empty.
+  // Returns { success } or { error } — the deploy's own words on failure.
+  async function _deleteFieldViaMetadata(fullName) {
+    const enc = new TextEncoder();
+    const pkg = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<Package xmlns="http://soap.sforce.com/2006/04/metadata">',
+      '    <version>62.0</version>',
+      '</Package>',
+    ].join('\n');
+    const del = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<Package xmlns="http://soap.sforce.com/2006/04/metadata">',
+      '    <types>',
+      `        <members>${_lxEsc(fullName)}</members>`,
+      '        <name>CustomField</name>',
+      '    </types>',
+      '    <version>62.0</version>',
+      '</Package>',
+    ].join('\n');
+    if (typeof window.sftkBuildStoredZip !== 'function') return { error: 'The zip builder is not loaded on this page' };
+    const zipBase64 = window.sftkBuildStoredZip([
+      { name: 'package.xml',            data: enc.encode(pkg) },
+      { name: 'destructiveChanges.xml', data: enc.encode(del) },
+    ]);
+    const r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64, _suppressError: true });
+    return r?.error ? { error: r.error } : { success: true };
   }
 
   async function doDelete(fieldId) {
@@ -3464,16 +3511,31 @@ const FieldCleaner = (() => {
         object: _selObj?.api, field: _selField?.api, fieldId, metadata: null };
     }
 
-    const res = await bg({
+    let res = await bg({
       type: 'SF_TOOLING_DELETE', orgUrl: _orgUrl, sid: _sid,
-      sobject: 'CustomField', id: fieldId
+      sobject: 'CustomField', id: fieldId, _suppressError: true
     });
+    // A Tooling DELETE of a CustomField came back INSUFFICIENT_ACCESS_ON_
+    // CROSS_REFERENCE_ENTITY in every org tried (live 2026-09-22: two orgs,
+    // even a brand-new text field nothing references), while the Metadata
+    // API deleted the same field at once. So the Metadata API is the second
+    // try for ANY refusal — and when it refuses too, its component failure
+    // names the real blocker, which the Tooling text never did.
+    let via = 'tooling';
+    if (res?.error) {
+      if (btn) btn.textContent = '⏳ Deleting (Metadata API)…';
+      const md = await _deleteFieldViaMetadata(`${_selObj?.api}.${_selField?.api}`);
+      if (md.error) res = { error: md.error, toolingError: res.error };
+      else { res = { success: true }; via = 'metadata'; }
+    }
+    if (_delLogEntry) _delLogEntry.via = via;
 
     if (res.error) {
       if (btn) { btn.disabled = false; btn.textContent = '🗑 Delete Field'; }
       const errEl = document.createElement('div');
       errEl.className = 'fc-error-msg';
       errEl.innerHTML = `❌ Delete failed: ${esc(_explainDeleteError(res.error))}`;
+      if (res.toolingError) errEl.title = `Tooling API said: ${String(res.toolingError).slice(0, 300)}`;
       eid('fcResults').appendChild(errEl);
     } else {
       // Persist the log entry (success only — a refused delete removed nothing).
@@ -3487,21 +3549,24 @@ const FieldCleaner = (() => {
       // deleted fields restorable in Setup for ~15 days. Say the truth and
       // link the way back while it exists.
       const _graceEnd = new Date(Date.now() + 15 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      const objApi = _selObj.api, fldApi = _selField.api;
+      // resetFieldAndBelow() empties the results area and forgets the field —
+      // it used to run AFTER the card below and erased it (live 2026-09-22: a
+      // blank page after a successful delete). Reset first, then the card.
+      resetFieldAndBelow();
+      const fi = eid('fcFieldInput'); if (fi) fi.value = '';
       eid('fcResults').innerHTML = `
         <div class="fc-success">
           <div class="fc-success-icon">✅</div>
-          <div class="fc-success-title">Field deleted</div>
+          <div class="fc-success-title">Field deleted${via === 'metadata' ? ' (through the Metadata API — the Tooling API refused)' : ''}</div>
           <div class="fc-success-sub">
-            ${esc(_selObj.api)}.${esc(_selField.api)} is deleted — and still restorable for ~15 days
+            ${esc(objApi)}.${esc(fldApi)} is deleted — and still restorable for ~15 days
             (until about ${esc(_graceEnd)}) via
-            <a href="${esc(_orgUrl)}/lightning/setup/ObjectManager/${esc(_selObj.api)}/FieldsAndRelationships/view"
+            <a href="${esc(_orgUrl)}/lightning/setup/ObjectManager/${esc(objApi)}/FieldsAndRelationships/view"
                target="_blank" rel="noopener">Object Manager → Fields</a> → <strong>Deleted Fields</strong>.
             After that it's permanent. A metadata snapshot was saved to the Toolkit's deletion log.
           </div>
         </div>`;
-      resetFieldAndBelow();
-      if (eid('fcPill'))    eid('fcPill').style.display    = 'none';
-      if (eid('fcScanBtn')) eid('fcScanBtn').style.display = 'none';
     }
   }
 
@@ -3794,7 +3859,9 @@ const FieldCleaner = (() => {
               if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open');
               let label = '✅ Done';
               if (purge?.purged)        label += ` · ${purge.purged} old version(s) purged`;
-              if (purge?.stillBlocking) label += ` · ⚠ ${purge.stillBlocking} old version(s) couldn't be deleted — may still block the field delete`;
+              // Same rule as the one-click fix: a refused old version is not
+              // done — the row keeps its button and the field stays locked.
+              if (purge?.stillBlocking) throw new Error(`Not finished: ${purge.stillBlocking} old version(s) couldn't be deleted — still blocking the field delete${purge.purged ? ` (${purge.purged} purged)` : ''}. Clear the cause (paused or failed interviews, usually), then try again.`);
               markFixed(componentId, label, _flowDoneLinks(purge));
             }
           } catch (e) {

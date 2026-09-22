@@ -43,6 +43,19 @@ extensions containing root files that start with `_`).
   Sequences still run whole deployments as before.
 
 ### Fixed
+- **Field Cleaner — the field delete works again.** Salesforce's Tooling API now refuses
+  to delete a custom field ("insufficient access rights on cross-reference id") even
+  when nothing references it; the Toolkit deletes it through the Metadata API instead
+  and, when that refuses too, shows Salesforce's own reason. The "Field deleted" card
+  stays on screen (it used to be wiped at once).
+- **Field Cleaner — failed flow interviews are found and deleted.** The interview check
+  looked them up by the long id and found none, so every flow version with a failed run
+  was refused — and still shown as ✅ done with "Safe to delete". A refused version now
+  keeps its ✂ button and says which interviews block it.
+- **Field Cleaner — the flow fix dialog steers you right.** When the automatic fix would
+  leave a flow element empty (Salesforce refuses such a version), "Keep the flow running"
+  is no longer preselected and says why; a refusal quotes Salesforce and points at
+  "Delete the active version too" or Flow Builder.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run

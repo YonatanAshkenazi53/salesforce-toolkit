@@ -173,6 +173,24 @@ const h = {
     await this.eval(`(() => { if (!window.__sftkTourKiller) window.__sftkTourKiller = setInterval(() => { const b = [...document.querySelectorAll('button, a')].find(b => /skip tour/i.test(b.textContent)); if (b) b.click(); }, 400); return true; })()`);
     log('studio open:', await this.eval('document.title'));
   },
+  // The Toolkit popup as a full page (popup.html?tab=<id>): it takes its org
+  // from the most recently used Salesforce tab in the window — log in ONLY
+  // the org the tool should work on. Accepts the licence like studio().
+  async popup(tab = 'flows') {
+    await this.navigate(`chrome-extension://${this.extId}/popup.html?tab=${encodeURIComponent(tab)}`);
+    await this.sleep(1500);
+    if (await this.eval(`/I confirm that any consequence/.test(document.body.innerText)`)) {
+      await this.eval(`(() => { for (const cb of document.querySelectorAll('input[type=checkbox]')) if (!cb.checked) cb.click(); return true; })()`);
+      await this.sleep(200);
+      await this.eval(`(() => { const b = [...document.querySelectorAll('button')].find(b => !b.disabled && /accept|agree|continue|start/i.test(b.textContent)); if (b) b.click(); return !!b; })()`);
+      await this.sleep(1200);
+    }
+    await this.waitFor(`!!document.querySelector('.tab-btn[data-tab="${tab}"]')`, 20000);
+    await this.eval(`(() => { const b = document.querySelector('.tab-btn[data-tab="${tab}"]'); if (b && !b.classList.contains('active')) b.click(); return true; })()`);
+    await this.eval(`(() => { if (!window.__sftkTourKiller) window.__sftkTourKiller = setInterval(() => { const b = [...document.querySelectorAll('button, a')].find(b => /skip tour/i.test(b.textContent)); if (b) b.click(); }, 400); return true; })()`);
+    await this.sleep(1500);
+    log('popup open:', tab, '|', (await this.eval('document.title')));
+  },
   // open whatever modal a click produced, return its text (head) — closes it when `close` is true
   async modalText(n = 900) { return (await this.eval(`(() => { const b = document.querySelector('#dsModalBox'); if (!b || !b.offsetParent) return ''; return b.innerText || ''; })()`)).slice(0, n).replace(/\n+/g, ' | '); },
   async closeModal() { await this.eval(`(() => { if (typeof closeModal === 'function') closeModal(); return true; })()`); await this.sleep(300); },
