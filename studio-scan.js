@@ -1582,16 +1582,23 @@ async function runDiffScan(profile, node = null, scope = null) {
   // clones, so CALLERS merge scan.learnedPairs into the real profile's
   // matchMemory (refreshProfileDiff / window.sftkLearnPairs). Root only, cap
   // 5000 to match the memory-map cap.
+  // A pair on an AMBIGUOUS key (two source rows "SFTK CX Duplicate Name", one
+  // target) is a guess, not a confirmed match — learning it pinned one twin
+  // and turned the other into a confident "insert" on the next scan (live
+  // 2026-09-23: the Ring said 7 missing, the Deploy page a minute later 8,
+  // and that 8th would have created a duplicate). Ambiguous keys stay
+  // flagged (dupKeys) and are never learned; Match Review can pin them by hand.
   let learnedPairs = [];
   if (isRootScan) {
     try {
+      const learnable = r => r.sourceId && r.targetId && !_dupKeys.has(r.matchKey);
       for (const r of identical) {
-        if (r.sourceId && r.targetId) learnedPairs.push([r.sourceId, r.targetId]);
+        if (learnable(r)) learnedPairs.push([r.sourceId, r.targetId]);
         if (learnedPairs.length >= 5000) break;
       }
       if (learnedPairs.length < 5000) {
         for (const r of changed) {
-          if (r.sourceId && r.targetId) learnedPairs.push([r.sourceId, r.targetId]);
+          if (learnable(r)) learnedPairs.push([r.sourceId, r.targetId]);
           if (learnedPairs.length >= 5000) break;
         }
       }

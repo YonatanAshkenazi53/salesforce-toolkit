@@ -74,3 +74,42 @@ the Contact buckets, the child-scan error path, and the source-only pages.
 - ✅ final rerun: rollback ✅ success, "Contact · ✓ verified 2 left alone", Account · 6 deleted ✓ verified.
 
 Campaign complete 2026-09-22. Note: trailheads4 still holds the SFTK VOL volume data (6,000 Accounts etc.) — `cleanup-volume.apex` removes it in 9,000-account passes.
+
+## Campaign 2 - Org Compare, Sync Ring and the Deploy page on the same data (2026-09-23)
+
+Scripts: `scripts/dev/live/consistency.mjs` (SKIP_OC=1 skips Org Compare; PROFILE=...) and
+`scripts/dev/live/bucket-dump.mjs` (the engine's buckets next to the Deploy page's).
+
+- verified: Org Compare (no filter, by Name) on Account / Contact / Opportunity: 10,892 vs 10,879
+  Accounts, 15 missing, 2 only in target, 100%; Contact 16,874 vs 15,118, 1,756 missing; the
+  🚀 Deploy button per row. Its scope is the whole object, so its numbers are not the profile's.
+- verified: the Sync Ring needs a source of truth (topbar SOURCE) and a ticked target; the
+  Accounts-tree cell then reads "7 missing · 2 changed · 2 only in target", and the Deploy page's
+  root buckets for the same deployment read 7 / 2 / 2 in the same session.
+- fixed: they did NOT agree at first - Ring 7, Deploy 8 a minute later. The ring scan had
+  auto-learned a match on an AMBIGUOUS key (two source Accounts "SFTK CX Duplicate Name", one in
+  the target): the pinned twin matched, the other twin became a confident "to insert" - and that
+  insert would have created a duplicate. Pairs on keys the scan lists in dupKeys are never learned
+  now (pins: scan-learn-dupkeys-0923); Match Review can pin them by hand.
+- note: the root scan still pairs ONE of the twins as "changed" and warns (dupKeys: 3 rows); the
+  other twin is in no bucket, as before. Person accounts "Person SFTK CX One/Two" match the
+  `%SFTK CX%` filter and count among the 7 missing.
+
+## Campaign 2 - Sequences (2026-09-23)
+
+Script: `scripts/dev/live/sequences.mjs` (STEPS="SFTK CX - Leads,SFTK CX - Campaigns", SCAN_ONLY=1,
+ROLLBACK=1 rolls the run back from History in the same session). Reset the target afterwards
+with cleanup.apex + seed-target.apex.
+
+- fixed: "Run" wrote on the click - no summary, no acknowledgement, no typed org name for a
+  production target, while a sequence takes NO per-record selection. It now confirms (steps with
+  object / children / insert-or-upsert, the stakes, an acknowledgement box) and asks for the org
+  name when the target is production (pins: sequence-confirm-0923).
+- verified: Leads (3 created) then Campaigns (2 campaigns, parent connected after insert; 2 of 5
+  members created, 3 refused by Salesforce because their Contacts are not in the target - the
+  result says which lookups were null and quotes Salesforce; status "partial"); CLI agrees.
+- verified: "Roll back sequence" from History: plan lists CampaignMember (permanent, no Recycle
+  Bin), Campaign, Lead with the duplicate rule that could reject it; typed ROLLBACK; every object
+  deleted and re-read ("verified - nothing from the run remains"); CLI 0 / 0 / 0.
+- note: the History card of a sequence run carries the FIRST step's name ("SFTK CX - Leads"),
+  not the sequence's name and step count.
