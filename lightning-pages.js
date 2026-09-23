@@ -1168,7 +1168,7 @@ const LightningPages = (() => {
 
         return `<div class="lp-wsw-card">
           <div class="lp-wsw-card-hdr">
-            <span class="lp-status-dot ${dotCls}" title="${ps === 'active' ? 'Active' : ps === 'obsolete' ? 'Obsolete' : ps === 'draft' ? 'Draft' : 'Unknown'}"></span>
+            <span class="lp-status-dot ${dotCls}" title="${ps === 'active' ? 'Active' : ps === 'obsolete' ? 'Obsolete' : ps === 'draft' ? 'Draft' : ps === 'unassigned' ? 'Not assigned — shown to nobody' : 'Unknown'}"></span>
             <span class="lp-wsw-page-name">${esc(page.MasterLabel)}</span>
             ${orgBadge}${objTag}${badgeUsers}
             <span class="lp-wsw-type">${esc(humanType(page.Type))}</span>
@@ -2132,7 +2132,13 @@ const LightningPages = (() => {
 
   // pageId: FlexiPage record Id (15 or 18 char) — used to match describe actionOverrides
   //         and ActionOverride.Content (which can be either devName or pageId depending on org)
+  // Set by fetchCustomObjectOrgDefaults: null when the probe answered (even
+  // with nothing), the reason when it could not — the detail tells the two
+  // apart (live 2026-09-23: a page with no assignment read "Unknown … could
+  // not determine assignments", which an admin reads as a broken tool).
+  let _lpProbeFailed = null;
   async function fetchCustomObjectOrgDefaults(sObjectType, devName, pageId = null) {
+    _lpProbeFailed = null;
     if (!sObjectType || !devName) return [];
     _orgDefaultDebug = null;
     const log = {};
@@ -2181,6 +2187,7 @@ const LightningPages = (() => {
         }
         // Not conclusive — fall through to Strategy 1.
       } catch (descErr) {
+        _lpProbeFailed = (descErr && descErr.message) || String(descErr);
         log.describeException = descErr.message;
         // Describe failed entirely — fall through to SOQL strategy
       }
@@ -2416,6 +2423,10 @@ const LightningPages = (() => {
       if (coOrgDefaults.length > 0) {
         page = { ...page, PublishStatus: 'Active' };
         syncPageStatus(page.Id, 'Active');
+      } else if (!toolingStatus && assignments.length === 0 && !_lpProbeFailed) {
+        // Salesforce keeps no publish status for a Lightning page — its
+        // activation IS its assignments. Every read answered and found none.
+        page = { ...page, PublishStatus: 'Unassigned' };
       }
     }
 
@@ -2534,6 +2545,7 @@ const LightningPages = (() => {
     const rawStatus   = page.PublishStatus || metaRes.Metadata?.publishStatus || metaRes?.PublishStatus || null;
     const normStatus  = rawStatus ? rawStatus.toLowerCase() : null; // null = unknown
     const isActive    = normStatus === 'active';
+    const isUnassigned = normStatus === 'unassigned';
     const statusKnown = normStatus !== null;
 
     // Profiles already assigned (profile-specific only; org-default has no profile name)
@@ -2548,7 +2560,7 @@ const LightningPages = (() => {
     let html = '<div class="lp-status-bar">';
     if (!statusKnown) {
       html += '<span class="lp-status-dot lp-dot-unknown" title="Status could not be determined"></span>';
-      html += '<span class="lp-status-text lp-status-unknown">Unknown</span>';
+      html += '<span class="lp-status-text lp-status-unknown" title="The org-default check failed, so whether this page is assigned could not be read">Unknown — check failed</span>';
       // For unmanaged pages where status couldn't be determined, still show Activate
       // so the user isn't blocked — they may need to activate a page we can't read.
       if (canEdit) {
@@ -2556,7 +2568,8 @@ const LightningPages = (() => {
       }
     } else {
       const statusLabel = normStatus === 'active' ? 'Active'
-                        : normStatus === 'obsolete' ? 'Obsolete' : 'Draft';
+                        : normStatus === 'obsolete' ? 'Obsolete'
+                        : isUnassigned ? 'Not assigned' : 'Draft';
       const dotCls = normStatus === 'active' ? 'lp-dot-active'
                    : normStatus === 'obsolete' ? 'lp-dot-obsolete' : 'lp-dot-draft';
       html += '<span class="lp-status-dot ' + dotCls + '" title="' + statusLabel + '"></span>';
@@ -2595,10 +2608,12 @@ const LightningPages = (() => {
 
     if (assignments.length === 0) {
       const emptyMsg = !statusKnown
-        ? '⚠️ Could not determine assignments — status unknown for this page type.'
-        : isActive
-          ? 'No profile assignments — all users see the org-default page.'
-          : 'No profile assignments — this page is inactive and not shown to any users.';
+        ? '⚠️ The org-default check failed' + (_lpProbeFailed ? ' (' + esc(_lpProbeFailed) + ')' : '') + ' — org-default assignments are unknown here; app and profile assignments were read and there are none.'
+        : isUnassigned
+          ? 'No assignments — this page is not shown to anyone yet. Add one below: org default, app default, or app + record type + profile.'
+          : isActive
+            ? 'No profile assignments — all users see the org-default page.'
+            : 'No profile assignments — this page is inactive and not shown to any users.';
       html += '<div class="lp-empty-sm">' + emptyMsg + '</div>';
     } else {
       for (let i = 0; i < assignments.length; i++) {

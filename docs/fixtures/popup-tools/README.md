@@ -32,8 +32,12 @@ Scripts (all `node scripts/dev/headless-studio.mjs scripts/dev/live/<name>.mjs`)
 - verified: Lightning Pages - detail of the fixture page, Set as Org Default (Desktop) deploys a
   CustomObject.actionOverrides View override (CLI shows it), the detail re-reads "Active, Org
   Default, Desktop"; removing the assignment asks, deploys, and the override is gone (CLI).
-- note: before any assignment the page's detail reads "Unknown / Could not determine assignments
-  - status unknown for this page type" for a plain RecordPage; after the first assignment the
-  status is read fine. Worth a look.
+- fixed (user 2026-09-23: "if there's no assignment you should say no assignments"): before any
+  assignment the detail read "Unknown / Could not determine assignments - status unknown for this
+  page type". Salesforce has NO publish status for a FlexiPage (the Tooling field does not exist;
+  activation IS the assignments), so every untouched page read that way. It now reads "Not
+  assigned - this page is not shown to anyone yet. Add one below: ..."; "Unknown - check failed"
+  is kept only when the org-default probe itself failed, with the reason (pins: lp-unassigned-0923).
+  Verified live on the fixture page.
 - not exercised: Change License, permission set groups, App default / App+RecordType+Profile
   assignments, Clone, Deactivate page, the user-lens pages.
