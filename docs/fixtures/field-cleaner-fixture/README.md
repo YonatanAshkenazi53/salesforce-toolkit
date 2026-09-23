@@ -132,3 +132,15 @@ permission-set grant).
   (insert; update by Id as the fallback) and names anything that did not come back.
 - verified end to end: Deprecate (label zz_DEPRECATED..., description stamped, permission set's
   grant gone, Slack kept) then Undo (label, description and the grant read+edit back) - CLI agrees.
+
+## Pass 2 - "Keep the flow running" succeeds (2026-09-23)
+
+`flow2/` holds `SFTK_FC_Test_Flow2` (Active): the field is ONE of two filters of a record lookup,
+so the automatic fix leaves nothing empty. Deploy: `cd flow2 && sf project deploy start -o npc --source-dir force-app`.
+Live: `ACTIVE=replace FLOW="SFTK FC Test Flow 2" node scripts/dev/headless-studio.mjs scripts/dev/live/field-cleaner.mjs`
+(FLOW picks that flow's button; without it the first flow's button is taken).
+
+- verified: the dialog preselects "Keep the flow running" (nothing left empty); the run deploys
+  v2, verifies it ACTIVE by re-reading the org, deletes v1; CLI: only v2 Active, the lookup keeps
+  its Name filter. The old fixture flow (v3 Active with assignments) is still refused on replace
+  and left untouched, as in pass 1.

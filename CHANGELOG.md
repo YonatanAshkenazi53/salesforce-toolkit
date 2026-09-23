@@ -95,6 +95,10 @@ extensions containing root files that start with `_`).
   needs an acknowledgement, and asks for the org name when the target is production.
 - **History says which sequence a run belongs to.** A sequence writes one card per step; each
   card now carries "🔗 step of …" and says that ↩ Roll back sequence undoes every step.
+- **Copy Permissions asks before it writes.** 📋 Copy lists the profile change, permission sets,
+  groups and user fields it is about to write to the target user and needs an acknowledgement.
+- **Licenses says where a deactivated user went.** The list shows active users by default, so
+  the result now points at the Inactive filter instead of the user just vanishing.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run
