@@ -99,6 +99,10 @@ extensions containing root files that start with `_`).
   groups and user fields it is about to write to the target user and needs an acknowledgement.
 - **Licenses says where a deactivated user went.** The list shows active users by default, so
   the result now points at the Inactive filter instead of the user just vanishing.
+- **Lightning Pages says "Not assigned" instead of "Unknown".** Salesforce keeps no publish
+  status for a Lightning page; a page's activation is its assignments. A page with none now
+  reads "Not assigned — this page is not shown to anyone yet" with how to add one; "Unknown"
+  is kept for the one case it is true, when the org-default check itself failed (with the reason).
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run
