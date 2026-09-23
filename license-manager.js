@@ -441,7 +441,9 @@ const LicenseManager = (() => {
     let resultMsg = '';
     let isErr = false;
     if (errors.length === 0) {
-      resultMsg = `✅ ${doneCount} user${doneCount > 1 ? 's' : ''} ${isDeactivate ? 'deactivated' : 'reactivated'}.`;
+      // The list filters by Active by default, so a user just deactivated
+      // vanishes from it (live 2026-09-23) — say where they went.
+      resultMsg = `✅ ${doneCount} user${doneCount > 1 ? 's' : ''} ${isDeactivate ? 'deactivated' : 'reactivated'}.${isDeactivate && currentFilter === 'active' ? ' They now show under the <strong>Inactive</strong> filter (the list shows active users by default).' : ''}`;
     } else {
       const errHtml  = errors.map(e => `<li>${esc(e)}</li>`).join('');
       const hintHtml = [...errorHints].map(h => `<div style="margin-top:4px;font-size:11px">💡 ${esc(h)}</div>`).join('');

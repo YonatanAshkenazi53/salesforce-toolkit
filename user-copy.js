@@ -1046,6 +1046,27 @@ const UserCopy = (() => {
   async function executeCopy() {
     const opts = getOptions();
     const btn  = document.getElementById('ucCopyBtn');
+    // 📋 Copy used to write on the click (live 2026-09-23): profile change,
+    // permission-set and group memberships, user fields — with no summary and
+    // no acknowledgement. Access changes are the kind users notice late, so
+    // one confirmation names every operation before anything is written.
+    if (typeof sftkConfirmDestructive === 'function' && sourceUser && targetUser) {
+      const planned = [];
+      if (opts.profile && document.getElementById('ucProfileCb')?.checked) planned.push({ label: `Profile → ${sourceUser.Profile?.Name || sourceUser.ProfileId || '?'}`, sub: 'replaces the current profile' });
+      const labelOf = (cb, fallback) => (cb.closest('label')?.textContent || '').replace(/\s+/g, ' ').trim() || fallback;
+      document.querySelectorAll('.uc-ps-cb:checked').forEach(cb => planned.push({ label: labelOf(cb, cb.dataset.psid), sub: 'permission set' }));
+      document.querySelectorAll('.uc-psg-cb:checked').forEach(cb => planned.push({ label: cb.dataset.psglabel || labelOf(cb, cb.dataset.psgid), sub: 'permission set group' }));
+      document.querySelectorAll('.uc-grp-cb:checked').forEach(cb => planned.push({ label: labelOf(cb, cb.dataset.groupid), sub: 'public group / queue' }));
+      if (opts.userPerms) planned.push({ label: 'User permissions', sub: 'the ticked user-level permission fields' });
+      if (opts.settings) planned.push({ label: 'User settings', sub: 'the ticked settings fields' });
+      const sure = await sftkConfirmDestructive({
+        title: `Copy access from ${sourceUser.Name} to ${targetUser.Name}`,
+        items: planned.length ? planned : [{ label: 'Nothing ticked', sub: 'no operation would run' }],
+        revOverride: { html: `Writes into <strong>${esc(targetUser.Name)}</strong>'s user record and assignments in this org. A profile change replaces the old profile; permission sets and groups are ADDED (nothing is removed from ${esc(targetUser.Name)}). Undo by hand in Setup → Users.`, needsCheckbox: true },
+        confirmLabel: '📋 Copy access',
+      });
+      if (!sure) return;
+    }
     btn.disabled    = true;
     btn.textContent = '⏳ Copying…';
 

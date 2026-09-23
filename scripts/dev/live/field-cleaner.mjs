@@ -67,10 +67,13 @@ export default async function (h) {
   const fixBtns = await h.eval(`[...document.querySelectorAll('.fc-fix-btn')].map(b => (b.dataset.type || '?') + ':' + (b.dataset.name || b.dataset.id) + (b.disabled ? '(off)' : ''))`);
   h.log('fix buttons:', JSON.stringify(fixBtns));
   // the flow first
-  const flowBtn = await h.eval(`!!document.querySelector('.fc-fix-btn[data-type="Flow"]:not([disabled])')`);
-  if (!flowBtn) h.log('no flow fix button — straight to the other fixes / the delete');
+  // FLOW=<label> picks that flow's ✂ button (several flows may reference the field); default: the first
+  const flowSel = process.env.FLOW ? `.fc-fix-btn[data-type="Flow"][data-name="${process.env.FLOW}"]:not([disabled])` : '.fc-fix-btn[data-type="Flow"]:not([disabled])';
+  const flowBtn = await h.eval(`!!document.querySelector(${JSON.stringify(flowSel)})`);
+  if (!flowBtn) h.log('no flow fix button for', flowSel, '— straight to the other fixes / the delete');
   else {
-  await h.eval(`document.querySelector('.fc-fix-btn[data-type="Flow"]:not([disabled])').click()`);
+  h.log('flow button:', await h.eval(`(() => { const b = document.querySelector(${JSON.stringify(flowSel)}); return b.dataset.name + ' (' + b.closest('.fc-item')?.innerText.replace(/\\s+/g, ' ').slice(0, 80) + ')'; })()`));
+  await h.eval(`document.querySelector(${JSON.stringify(flowSel)}).click()`);
   const ok = await confirmDialog(h, process.env.ACTIVE);
   if (process.env.SCAN_ONLY === '1' || !ok) { h.log('SCAN_ONLY / not confirmable — cancelling'); await h.eval(`(() => { const c = [...document.querySelectorAll('button')].find(b => /cancel/i.test(b.textContent)); if (c) c.click(); return true; })()`); return; }
   await h.eval(`document.querySelector('#sftkConfirmGo').click()`);
