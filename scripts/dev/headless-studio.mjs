@@ -154,6 +154,9 @@ const h = {
     await this.sleep(2500);
     log('logged in via CLI frontdoor:', new URL(url).host, '→', await this.eval('location.host'), '(tab kept open)');
     this.orgTabs[alias] = this.session;
+    // login order = role order (every script logs the SOURCE in first): importProfiles
+    // re-points a fixture whose orgs no longer exist (trailheads2 expired 2026-09-26)
+    (this.orgUrls ||= []).push(new URL(url).origin);
     this.session = main;
   },
   async studio(hash = '') {
@@ -204,6 +207,19 @@ const h = {
   async importProfiles(file) {
     const raw = JSON.parse(readFileSync(file, 'utf8'));
     const payloads = Array.isArray(raw) ? raw : [raw];
+    // A fixture names the orgs it was exported from. When those are not the
+    // orgs logged in for this run (a trial expired and was replaced), the
+    // first login stands in for the source and the second for the target.
+    const live = this.orgUrls || [];
+    const repoint = (u, i) => (u && live.length && !live.includes(u) && live[Math.min(i, live.length - 1)]) || u;
+    let moved = 0;
+    for (const p of payloads) {
+      const prof = p && p.profile ? p.profile : p;
+      if (!prof || typeof prof !== 'object') continue;
+      const s = repoint(prof.sourceOrg, 0), t = repoint(prof.targetOrg, 1);
+      if (s !== prof.sourceOrg || t !== prof.targetOrg) { moved++; prof.sourceOrg = s; prof.targetOrg = t; }
+    }
+    if (moved) log(`re-pointed ${moved} deployment(s) to the logged-in orgs: ${live.join(' → ')}`);
     const out = await this.eval(`(async () => {
       const out = [];
       for (const payload of ${JSON.stringify(payloads)}) {

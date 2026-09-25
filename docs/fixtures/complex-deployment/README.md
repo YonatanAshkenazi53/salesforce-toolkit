@@ -9,7 +9,7 @@ trial orgs, driven headlessly by Claude (or by hand).
 
 | alias | org | role | CLI |
 |---|---|---|---|
-| `npc`  | trailheads2.my.salesforce.com | source | `sf org login web --alias npc` |
+| `npc`  | trailheads2.my.salesforce.com — **EXPIRED 2026-09-26**; log a new trial in under the same alias and run `bash docs/fixtures/rebuild-source.sh npc` | source | `sf org login web --alias npc` |
 | `npc2` | trailheads4.my.salesforce.com | target | `sf org login web --alias npc2 --instance-url https://trailheads4.my.salesforce.com` |
 
 Both are trials → the Toolkit classifies them `dev`; use **🛑 Guard as production**
