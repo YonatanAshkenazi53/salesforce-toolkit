@@ -24,7 +24,7 @@ export default async function (h) {
   await h.waitFor("!!document.querySelector('#dsPkOrg')", 60000, 500);
   await h.sleep(800);
   h.log('org options:', JSON.stringify(await h.eval(`[...document.querySelectorAll('#dsPkOrg option')].map(o => o.textContent.trim() + '=' + o.value)`)));
-  h.log('org:', await setSelect(h, '#dsPkOrg', process.env.ORG === 'npc2' ? 'trailheads4' : 'trailheads2'));
+  h.log('org:', await setSelect(h, '#dsPkOrg', process.env.ORG === 'npc2' ? 'trailheads4' : 'trailheads5'));
   await h.waitFor("document.querySelectorAll('#dsPkObj option').length > 2", 120000, 500);
   h.log('object:', await setSelect(h, '#dsPkObj', process.env.OBJ || 'Account'));
   await h.waitFor("document.querySelectorAll('#dsPkField option').length > 1 && !/Loading/.test(document.querySelector('#dsPkField')?.innerText || '')", 120000, 500);

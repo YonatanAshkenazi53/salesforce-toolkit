@@ -1,5 +1,5 @@
 // Live: 🔗 Sequences — a two-step sequence of fixture deployments (Leads, then Campaigns —
-// CampaignMember needs the Leads first), trailheads2 → trailheads4: the run confirmation,
+// CampaignMember needs the Leads first), trailheads5 → trailheads4: the run confirmation,
 // the run itself, the result. Then CLI-verify the target. Reset the target afterwards with
 // cleanup.apex + seed-target.apex (docs/fixtures/complex-deployment/README.md).
 //   STEPS="SFTK CX — Leads,SFTK CX — Campaigns"   profile names, in order
@@ -10,7 +10,7 @@ export default async function (h) {
   await h.studio(''); await h.watchErrors();
   await h.importProfiles('docs/fixtures/complex-deployment/profiles.json');
   const names = (process.env.STEPS || 'SFTK CX — Leads,SFTK CX — Campaigns').split(',').map(x => x.trim());
-  const made = await h.eval(`(async () => { const ids = ${JSON.stringify(names)}.map(n => _profiles.find(p => p.name === n)?.id); if (ids.some(x => !x)) return 'missing profile: ' + JSON.stringify(ids); const seq = { id: 'seq_live_' + Date.now(), name: 'SFTK CX live sequence', sourceOrg: 'https://trailheads2.my.salesforce.com', targetOrg: 'https://trailheads4.my.salesforce.com', steps: ids, createdAt: new Date().toISOString() }; _sequences = (_sequences || []).filter(s => s.name !== seq.name); _sequences.push(seq); await storageSaveSequences(); if (typeof renderProfiles === 'function') renderProfiles(); return seq.id; })()`);
+  const made = await h.eval(`(async () => { const ids = ${JSON.stringify(names)}.map(n => _profiles.find(p => p.name === n)?.id); if (ids.some(x => !x)) return 'missing profile: ' + JSON.stringify(ids); const seq = { id: 'seq_live_' + Date.now(), name: 'SFTK CX live sequence', sourceOrg: 'https://trailheads5.my.salesforce.com', targetOrg: 'https://trailheads4.my.salesforce.com', steps: ids, createdAt: new Date().toISOString() }; _sequences = (_sequences || []).filter(s => s.name !== seq.name); _sequences.push(seq); await storageSaveSequences(); if (typeof renderProfiles === 'function') renderProfiles(); return seq.id; })()`);
   h.log('sequence:', made);
   if (!String(made).startsWith('seq_')) return;
   await h.eval(`document.querySelector('[data-view="profiles"]')?.click()`);

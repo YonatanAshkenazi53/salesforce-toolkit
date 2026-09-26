@@ -1,5 +1,5 @@
 // Live: Field Cleaner on the fixture field Account.SFTK_FC_Test_Status__c
-// (trailheads2). Scan → references → the flow fix dialog (replace or delete the
+// (trailheads5). Scan → references → the flow fix dialog (replace or delete the
 // active version) → execute → the permission-set reference → delete the field.
 //   SCAN_ONLY=1   stop after the scan and the first fix dialog (nothing written)
 //   ACTIVE=replace|delete   which way for the active version (default: replace when offered)
