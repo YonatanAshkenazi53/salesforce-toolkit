@@ -1,5 +1,5 @@
 // Live: 🔑 Flow Access (popup) — grant the fixture flow SFTK_AV_Test_A to the permission set
-// SFTK_FC_Test_Access in trailheads2 (a Metadata deploy of <flowAccesses>), then CLI-verify.
+// SFTK_FC_Test_Access in trailheads5 (a Metadata deploy of <flowAccesses>), then CLI-verify.
 //   FLOW="SFTK AV Test A"  PS="SFTK FC Test Access"  SCAN_ONLY=1
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 async function tick(h, cbClass, searchId, label) {

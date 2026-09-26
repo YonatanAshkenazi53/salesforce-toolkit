@@ -1,5 +1,5 @@
 // Live: do Org Compare, the Sync Ring and the Deploy page agree about the same data?
-// Fixture: docs/fixtures/complex-deployment (profiles.json), trailheads2 → trailheads4.
+// Fixture: docs/fixtures/complex-deployment (profiles.json), trailheads5 → trailheads4.
 //   1. Org Compare (whole objects, no profile filter): Account, Contact, Opportunity.
 //   2. Sync Ring: scan the PROFILE deployment's cell for trailheads4 (missing / changed / extra).
 //   3. Deploy page: the same deployment's scan (to insert / changed / only in target / synced).
@@ -22,7 +22,7 @@ export default async function (h) {
   if (process.env.SKIP_OC !== '1') {
   await h.eval(`document.querySelector('[data-view="compare"]')?.click()`);
   await h.waitFor("!!document.querySelector('#dsOCSrc')", 60000, 500); await h.sleep(500);
-  h.log('src:', await setSelect(h, '#dsOCSrc', 'trailheads2'), '| tgt:', await setSelect(h, '#dsOCTgt', 'trailheads4'));
+  h.log('src:', await setSelect(h, '#dsOCSrc', 'trailheads5'), '| tgt:', await setSelect(h, '#dsOCTgt', 'trailheads4'));
   await h.waitFor("document.querySelectorAll('[data-oc-obj]').length > 5", 180000, 1000); await h.sleep(500);
   await h.eval(`document.querySelector('#dsOCSelNone')?.click()`); await h.sleep(300);
   const ticked = await h.eval(`(() => { let n = 0; for (const o of ['Account', 'Contact', 'Opportunity']) { const c = document.querySelector('[data-oc-obj="' + o + '"]'); if (c) { c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); n++; } } return n; })()`);
@@ -35,7 +35,7 @@ export default async function (h) {
   }
 
   // ── 2. Sync Ring — needs a source of truth (topbar SOURCE) and at least one more org ticked ──
-  h.log('SOURCE menu:', await setSelect(h, '#dsSotSel', 'trailheads2'));
+  h.log('SOURCE menu:', await setSelect(h, '#dsSotSel', 'trailheads5'));
   await h.sleep(1200);
   await h.eval(`document.querySelector('[data-view="ring"]')?.click()`);
   await h.waitFor("!!document.querySelector('#dsRingBody')", 60000, 500); await h.sleep(1000);

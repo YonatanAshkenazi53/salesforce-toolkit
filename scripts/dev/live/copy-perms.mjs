@@ -1,4 +1,4 @@
-// Live: 👥 Copy Permissions (popup) — copy user A's access to user B in trailheads2.
+// Live: 👥 Copy Permissions (popup) — copy user A's access to user B in trailheads5.
 // Fixture: users sftk.test.a / sftk.test.b (Identity User), A holds the permission set
 // SFTK_FC_Test_Access and the public group SFTK Test Group (created by CLI, 2026-09-23).
 //   SRC="SFTK Test A" TGT="SFTK Test B"   names typed into the pickers

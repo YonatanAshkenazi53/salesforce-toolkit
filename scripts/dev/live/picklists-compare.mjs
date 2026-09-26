@@ -1,8 +1,8 @@
 // Live: Picklist Manager, "Compare across orgs" — the value×org matrix for
-// Account.SFTK_FC_Test_Status__c in trailheads2 (New active; Closed, Reviewed inactive) and
+// Account.SFTK_FC_Test_Status__c in trailheads5 (New active; Closed, Reviewed inactive) and
 // trailheads4 (New, Reviewed, Closed, Archived all active), then one action:
 //   MODE=matrix   load and report the matrix only (default)
-//   MODE=sync     🔄 Sync from source: source = trailheads2, plan → run → matrix after
+//   MODE=sync     🔄 Sync from source: source = trailheads5, plan → run → matrix after
 //   MODE=bulk     ⏸ Deactivate… the value in VALUE (default Archived) in every org that has it,
 //                 FIX=clear|remap|skip (default skip)
 //   SCAN_ONLY=1   stop before the run
@@ -45,7 +45,7 @@ export default async function (h) {
     await h.eval(`document.querySelector('#dsPkSyncBtn')?.click()`);
     await h.waitFor("!!document.querySelector('#dsPkSyncRun') || !!document.querySelector('.ds-toast')", 60000, 500);
     await h.sleep(800);
-    if (await h.eval(`!!document.querySelector('#dsPkSyncSrc')`)) h.log('source:', await setSelect(h, '#dsPkSyncSrc', 'trailheads2'));
+    if (await h.eval(`!!document.querySelector('#dsPkSyncSrc')`)) h.log('source:', await setSelect(h, '#dsPkSyncSrc', 'trailheads5'));
     await h.sleep(800);
     h.log('PLAN:', await dump(h, '#dsModalBox', 3000));
     await h.waitFor("!document.querySelector('#dsPkSyncRun')?.disabled || /nothing to|no change|identical/i.test(document.querySelector('#dsModalBox')?.innerText || '')", 180000, 1000);
