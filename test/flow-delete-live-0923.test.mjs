@@ -70,3 +70,12 @@ describe('friendly error — DEPENDENCY_EXISTS from a subflow element', () => {
     expect(sftkFriendlyError('[{"message":"This flow version is referenced in a flow interview. : Flow Interview - 0Fo9k000000E7ZV.","errorCode":"DEPENDENCY_EXISTS"}]').type).toBe('flow-interview');
   });
 });
+
+describe('performDeletion — the result toast survives the list re-render', () => {
+  it('renders the list first, then the toast (the toast lives inside #flowList)', () => {
+    const fn = between('async function performDeletion(', 'function showProgressPanel(');
+    const i = fn.indexOf('renderFlowList();'), j = fn.indexOf('showResultToast(successes.length, errors);');
+    expect(i).toBeGreaterThan(0); expect(j).toBeGreaterThan(i);
+    expect(fn.slice(j)).not.toMatch(/renderFlowList\(\)/);
+  });
+});

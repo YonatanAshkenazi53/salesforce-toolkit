@@ -3545,19 +3545,31 @@ const DependencyMap = (() => {
     }
     if (toActivate.length) {
       say('\u23FB', `${org.label}: activating ${toActivate.length} new version(s) — the org did not activate them on deploy (its "Deploy processes and flows as active" setting is off)…`);
-      for (const { c, newest } of toActivate) {
-        const r = await depBg({ type: 'SF_PATCH', orgUrl: org.orgUrl, sid: org.sid, _silentError: true,
-          path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${c.defId}`,
-          body: { Metadata: { activeVersionNumber: newest.versionNumber } } });
-        c.activateError = (r && r.error) ? String(r.error) : null;
-      }
-      by = await read();
-      for (const { c, newest } of toActivate) {
-        const row = by && by[c.apiName];
-        const activeNow = row && row.active && row.active.versionNumber === newest.versionNumber && row.active.num === want;
-        if (activeNow) out.push({ apiName: c.apiName, ok: true, text: `${c.apiName}: v${newest.versionNumber} at API ${target} is now ACTIVE (activated here, then verified by re-reading the org).` });
-        else out.push({ apiName: c.apiName, ok: false, text: `${c.apiName}: v${newest.versionNumber} at API ${target} was created but could NOT be activated${c.activateError ? ` — ${c.activateError}` : ''}; the running version is still v${row && row.active ? row.active.versionNumber : '?'} at API ${row && row.active ? row.active.apiVersion : '?'}. Activate it in Flow Builder.` });
-      }
+      // The write discipline (sftk-write.js): the PATCHes are one write
+      // batch, the re-read is ONE call for all of them (verifyAll), and
+      // `ok` is only what the org shows afterward — never the PATCH answer.
+      const actBatch = await sftkWriteVerifiedAll(toActivate.map(({ c, newest }) => ({
+        describe: c.apiName,
+        write: async () => {
+          const r = await depBg({ type: 'SF_PATCH', orgUrl: org.orgUrl, sid: org.sid, _silentError: true,
+            path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${c.defId}`,
+            body: { Metadata: { activeVersionNumber: newest.versionNumber } } });
+          c.activateError = (r && r.error) ? String(r.error) : null;
+          return r;
+        },
+      })), {
+        verifyAll: async () => {
+          by = await read();
+          return toActivate.map(({ c, newest }) => {
+            const row = by && by[c.apiName];
+            const activeNow = row && row.active && row.active.versionNumber === newest.versionNumber && row.active.num === want;
+            return { ok: !!activeNow, text: activeNow
+              ? `${c.apiName}: v${newest.versionNumber} at API ${target} is now ACTIVE (activated here, then verified by re-reading the org).`
+              : `${c.apiName}: v${newest.versionNumber} at API ${target} was created but could NOT be activated${c.activateError ? ` — ${c.activateError}` : ''}; the running version is still v${row && row.active ? row.active.versionNumber : '?'} at API ${row && row.active ? row.active.apiVersion : '?'}. Activate it in Flow Builder.` };
+          });
+        },
+      });
+      toActivate.forEach(({ c }, i) => out.push({ apiName: c.apiName, ok: actBatch.results[i].ok, text: actBatch.results[i].text }));
     }
     return out;
   }
@@ -3653,21 +3665,33 @@ const DependencyMap = (() => {
           { name: 'package.xml', data: enc.encode(sftkFlowPackageXml(members, org.maxVersion)) },
           ...files,
         ]);
-        const res = await depBg({ type: 'SF_METADATA_DEPLOY', orgUrl: org.orgUrl, sid: org.sid,
-          zipBase64: zip, _silentError: true });
-        if (!res || res.error) {
+        // The write discipline (sftk-write.js): the deploy is the write,
+        // avVerifyAndActivate (step 4) is the re-read — `ok` is only what
+        // the org shows afterward, never the deploy's own answer.
+        let verdicts = null;
+        const wr = await sftkWriteVerified({
+          describe: `${org.label}: deploy`,
+          write: async () => depBg({ type: 'SF_METADATA_DEPLOY', orgUrl: org.orgUrl, sid: org.sid,
+            zipBase64: zip, _silentError: true }),
+          verify: async () => {
+            say('\u{1F4E6}', `${org.label}: package accepted — ${changed.length} flow version(s) written at API ${target}. Verifying what is actually running now…`);
+            // 4 — VERIFY. A deploy only CREATES a version. Whether it became the
+            // active one depends on the org's "Deploy processes and flows as
+            // active" setting, which this tool cannot see — so it re-reads the
+            // versions, activates the new one where the flow WAS active (the ⏻
+            // FlowDefinition primitive), re-reads again, and reports only what
+            // the org confirms. Nothing here is assumed from the deploy result.
+            const verdicts = await avVerifyAndActivate(org, changed, target, say);
+            const okN = verdicts.filter(v => v.ok).length;
+            return { ok: okN === verdicts.length, detail: verdicts };
+          },
+        });
+        if (!wr.accepted) {
           orgsFailed++;
-          say('❌', `${org.label}: deploy failed — ${(res && res.error) || 'no response'}. This package is all-or-nothing, so NONE of its ${jobs.length} flow(s) changed.`);
+          say('❌', `${org.label}: deploy failed — ${(wr.raw && wr.raw.error) || 'no response'}. This package is all-or-nothing, so NONE of its ${jobs.length} flow(s) changed.`);
           continue;
         }
-        say('\u{1F4E6}', `${org.label}: package accepted — ${changed.length} flow version(s) written at API ${target}. Verifying what is actually running now…`);
-        // 4 — VERIFY. A deploy only CREATES a version. Whether it became the
-        // active one depends on the org's "Deploy processes and flows as
-        // active" setting, which this tool cannot see — so it re-reads the
-        // versions, activates the new one where the flow WAS active (the ⏻
-        // FlowDefinition primitive), re-reads again, and reports only what
-        // the org confirms. Nothing here is assumed from the deploy result.
-        const verdicts = await avVerifyAndActivate(org, changed, target, say);
+        verdicts = wr.detail;
         // The package was accepted: this org DID change. A flow whose
         // verification raised a warning is counted as such — not as an
         // unchanged org (live 2026-09-22: "2 flow(s) changed across 0 org(s);

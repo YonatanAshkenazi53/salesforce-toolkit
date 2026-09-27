@@ -413,11 +413,16 @@ function renderHistory() {
                 s.personContactsSkipped ? `${s.personContactsSkipped} Person Account contact(s) left out — Salesforce creates them with the Account` : '',
                 s.connected ? `${s.connected} linked to parent` : '',
                 s.viaBulk ? 'written with one Bulk API 2.0 job' : '',
+                // post-run re-read (engine, campaign 3): what the target showed AFTER the run
+                s.verified ? (s.verified.found === s.verified.checked
+                  ? `✓ ${s.verified.checked} re-read in the target after the run${s.verified.sampled ? ' (the first 2,000)' : ''}`
+                  : `⚠ re-read after the run found ${s.verified.found} of ${s.verified.checked} written record(s)`) : "not re-read after the run — counts are Salesforce's answers to the writes",
               ].filter(Boolean).join(' · ');
+              const verifiedMark = s.verified ? (s.verified.found === s.verified.checked ? ' ✓' : ` ⚠${s.verified.found}/${s.verified.checked}`) : '';
               const headCounts = hasSplit
                 ? `${s.upsertCreated || 0}↑ ${s.upsertUpdated || 0}↻`
                 : `${s.created || 0}↑`;
-              return `<span class="ds-summary-chip" title="${esc(chipTitle)}">${esc(obj)}: ${headCounts}${s.failed ? ' '+s.failed+'✗' : ''}${s.notProcessed ? ' '+s.notProcessed+'⏸' : ''}${s.personContactsSkipped ? ' '+s.personContactsSkipped+'👤' : ''}${s.connected ? ' '+s.connected+'🔗' : ''}${s.viaBulk ? ' <span style="opacity:.75">⚡ via Bulk API</span>' : ''}</span>`;
+              return `<span class="ds-summary-chip" title="${esc(chipTitle)}">${esc(obj)}: ${headCounts}${verifiedMark}${s.failed ? ' '+s.failed+'✗' : ''}${s.notProcessed ? ' '+s.notProcessed+'⏸' : ''}${s.personContactsSkipped ? ' '+s.personContactsSkipped+'👤' : ''}${s.connected ? ' '+s.connected+'🔗' : ''}${s.viaBulk ? ' <span style="opacity:.75">⚡ via Bulk API</span>' : ''}</span>`;
             }).join('')}
           </div>
           ${(() => {

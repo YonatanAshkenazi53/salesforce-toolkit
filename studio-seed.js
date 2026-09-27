@@ -774,8 +774,22 @@ async function sftkSeedIdDeploy(obj) {
     const label = orgLabel(orgUrl);
     const sess = await getOrgSession(orgUrl);
     if (!sess?.sid) { out.errors.push(`${label}: not open in a Chrome tab`); continue; }
-    const dep = await sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: sess.orgUrl, sid: sess.sid, zipBase64 });
-    if (dep?.error) { out.errors.push(`${label}: deploy failed — ${dep.error}`); continue; }
+    // The one write discipline (sftk-write.js): a deploy job's "done" used to
+    // BE the report — one probe read of the field it was meant to create
+    // closes the same gap a PATCH accepted-but-unchanged taught elsewhere
+    // (a deploy can report success with the field still invisible to FLS).
+    const dw = await sftkWriteVerified({
+      describe: `${sftkIdFieldName()} on ${obj} in ${label}`,
+      write: () => sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: sess.orgUrl, sid: sess.sid, zipBase64 }),
+      verify: async () => {
+        const probe = await sendBg({ type: 'SF_QUERY', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false, _suppressError: true,
+          query: `SELECT ${sftkIdFieldName()} FROM ${obj} LIMIT 1` });
+        return probe?.error
+          ? { ok: false, text: `${sftkIdFieldName()} on ${obj} in ${label}: accepted by Salesforce, but the field could not be re-read (${probe.error})` }
+          : { ok: true };
+      },
+    });
+    if (!dw.ok) { out.errors.push(`${label}: deploy failed — ${dw.raw?.error || dw.text}`); continue; }
     // FLS: find the permission set, find ME, assign. An already-assigned
     // error is SUCCESS — the goal is the grant existing, not the insert.
     try {
@@ -786,10 +800,18 @@ async function sftkSeedIdDeploy(obj) {
         path: 'services/data/v62.0/' });
       const userId = sftkIdUserFromIdentity(root?.identity);
       if (!psId || !userId) throw new Error('could not resolve the permission set or your user');
-      const asg = await sendBg({ type: 'SF_REST_POST', orgUrl: sess.orgUrl, sid: sess.sid,
-        path: 'services/data/v62.0/sobjects/PermissionSetAssignment',
-        body: { AssigneeId: userId, PermissionSetId: psId } });
-      if (asg?.error && !/DUPLICATE_VALUE|already assigned/i.test(String(asg.error))) throw new Error(asg.error);
+      const aw = await sftkWriteVerified({
+        describe: `${sftkIdPermSetName()} assignment in ${label}`,
+        write: async () => {
+          const r = await sendBg({ type: 'SF_REST_POST', orgUrl: sess.orgUrl, sid: sess.sid,
+            path: 'services/data/v62.0/sobjects/PermissionSetAssignment',
+            body: { AssigneeId: userId, PermissionSetId: psId } });
+          if (r?.error && !/DUPLICATE_VALUE|already assigned/i.test(String(r.error))) throw new Error(r.error);
+          return { success: true };
+        },
+        noVerify: 'an insert returns the new row, and "already assigned" already means the grant exists',
+      });
+      if (!aw.accepted) throw new Error(aw.text);
       out.ok++;
     } catch (e) {
       out.errors.push(`${label}: field deployed but the permission set could not be assigned (${e?.message || e}) — assign "SFTK Identity" to yourself in Setup, or the field stays invisible`);
@@ -1400,6 +1422,9 @@ async function sftkSeedRun(what, objs, targets) {
         if (what.seed) {
           const seedOne = async (o, label, opts) => {
             const prof = sftkSeedProfileFor(o, srcUrl, t, objs, opts);
+            // verified-by: the recount loop below ("Verification: recount
+            // every object") re-reads COUNT() per object after every seedOne()
+            // in this pass and reports source vs. target.
             const result = await sendBg({ type: 'SF_EXECUTE_PROFILE_TRANSFER', profile: prof,
               srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
               tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid });
@@ -1795,6 +1820,7 @@ async function sftkSeedCfgLoad() {
 // updates instead of duplicating and no wipe is ever needed.
 async function sftkSeedCfgDeployMdt(srcSess, tgtSess, types, line) {
   const files = [], members = [];
+  const devNamesByType = {};
   for (const t of types) {
     if (_seedCancelled) return { cancelled: true };
     let desc = _seedDesc[t];
@@ -1814,6 +1840,7 @@ async function sftkSeedCfgDeployMdt(srcSess, tgtSess, types, line) {
     if (q?.incomplete) { line('X', `${t}: read INCOMPLETE (Salesforce says ${q.incomplete.expected}, got ${q.incomplete.got}) - skipped, not deployed from a partial read.`); continue; }
     const built = sftkCmdtBuildFiles(t, q.records || [], plan);
     files.push(...built.files); members.push(...built.members);
+    devNamesByType[t] = (q.records || []).map(r => r.DeveloperName).filter(Boolean);
     line('R', `${t}: ${built.members.length} record(s) read.`);
   }
   if (!members.length) return { deployed: 0, note: 'nothing to deploy' };
@@ -1823,8 +1850,32 @@ async function sftkSeedCfgDeployMdt(srcSess, tgtSess, types, line) {
     ...files.map(f => ({ name: f.name, data: enc.encode(f.text) })),
   ];
   const zipBase64 = window.sftkBuildStoredZip(zipFiles);
-  const res = await sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, zipBase64 });
-  if (res?.error) return { deployed: 0, error: res.error, attempted: members.length };
+  // The one write discipline (sftk-write.js): a deploy job's own "done" used
+  // to BE the report — one re-read PER TYPE (bounded, not per record) of the
+  // Developer Names it was meant to carry closes the same gap a PATCH
+  // accepted-but-unchanged taught elsewhere.
+  const dw = await sftkWriteVerified({
+    describe: 'Custom Metadata deploy',
+    write: () => sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, zipBase64 }),
+    verify: async () => {
+      const missing = [];
+      for (const [t, names] of Object.entries(devNamesByType)) {
+        if (!names.length) continue;
+        const lit = names.map(n => `'${String(n).replace(/'/g, "\\'")}'`).join(',');
+        const q2 = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true,
+          query: `SELECT DeveloperName FROM ${t} WHERE DeveloperName IN (${lit})` });
+        if (q2?.error) { missing.push(`${t} could not be re-read (${q2.error})`); continue; }
+        const got = new Set((q2.records || []).map(r => r.DeveloperName));
+        const gone = names.filter(n => !got.has(n));
+        if (gone.length) missing.push(`${t}: ${gone.length} record(s) not found after deploy`);
+      }
+      return missing.length
+        ? { ok: false, text: `Custom Metadata deploy: accepted by Salesforce, but ${missing.join('; ')}` }
+        : { ok: true };
+    },
+  });
+  if (!dw.accepted) return { deployed: 0, error: dw.raw?.error || dw.text, attempted: members.length };
+  if (!dw.ok) return { deployed: 0, error: dw.text, attempted: members.length };
   return { deployed: members.length };
 }
 
@@ -1919,9 +1970,29 @@ async function sftkSeedCfgSyncSetting(srcSess, tgtSess, obj, line) {
   if (existing?.incomplete) { line('X', `${obj}: the target's row list came back INCOMPLETE (Salesforce says ${existing.incomplete.expected}, got ${existing.incomplete.got}) - a replace over a partial list would leave stray rows. Nothing removed, nothing written.`); return out; }
   const oldIds = (existing?.records || []).map(r => r.Id);
   for (let i = 0; i < oldIds.length; i += 200) {
-    const del = await sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
-      ids: oldIds.slice(i, i + 200) });
-    for (const d of (del?.results || del || [])) if (d && d.success) out.deleted++;
+    const delIds = oldIds.slice(i, i + 200);
+    // The one write discipline (sftk-write.js): Collections' per-record
+    // success used to BE "removed" — one re-read of exactly this slice's
+    // Ids confirms the org actually shows them gone.
+    const dw = await sftkWriteVerified({
+      describe: `${obj} replace`,
+      write: () => sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds }),
+      verify: async (writeRes) => {
+        const del = Array.isArray(writeRes) ? writeRes : (writeRes?.results || []);
+        const okIds = del.filter(d => d && d.success).map(d => d.id);
+        out.deleted += okIds.length;
+        if (!okIds.length) return { ok: true };
+        const vq = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true,
+          query: `SELECT Id FROM ${obj} WHERE Id IN (${okIds.map(id => soqlStrLit(id)).join(',')})` });
+        if (vq?.error) return { ok: false, text: `${obj} replace: accepted by Salesforce, but the org could not be re-read to confirm the delete (${vq.error})` };
+        const stillThere = (vq.records || []).length;
+        return stillThere
+          ? { ok: false, text: `${obj} replace: accepted by Salesforce, but ${stillThere} record(s) still show in the org` }
+          : { ok: true };
+      },
+    });
+    if (!dw.accepted) { line('X', `${obj}: delete failed - ${dw.raw?.error || dw.text}`); }
+    else if (!dw.ok) { line('!', dw.text); }
   }
   for (let i = 0; i < payload.length; i += 200) {
     const slice = payload.slice(i, i + 200);
@@ -1992,8 +2063,28 @@ async function sftkSeedCfgDeployLabels(srcSess, tgtSess, wanted, line) {
     { name: 'labels/CustomLabels.labels', data: enc.encode(sftkLabelsFileXml(split.deployable)) },
     ...langs.map(l => ({ name: `translations/${l}.translation`, data: enc.encode(sftkLabelTransFileXml(byLang[l])) })),
   ]);
-  const res = await sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, zipBase64 });
-  if (res?.error) return { deployed: 0, error: res.error, attempted: split.deployable.length };
+  // The one write discipline (sftk-write.js): a deploy job's own "done" used
+  // to BE the report — one re-read of the label names it was meant to carry
+  // closes the same gap a PATCH accepted-but-unchanged taught elsewhere.
+  const names = split.deployable.map(r => r.Name);
+  const dw = await sftkWriteVerified({
+    describe: 'Custom Labels deploy',
+    write: () => sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, zipBase64 }),
+    verify: async () => {
+      if (!names.length) return { ok: true };
+      const lit = names.map(n => `'${String(n).replace(/'/g, "\\'")}'`).join(',');
+      const q2 = await sendBg({ type: 'SF_QUERY_ALL', tooling: true, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true,
+        query: `SELECT Name FROM ExternalString WHERE Name IN (${lit})` });
+      if (q2?.error) return { ok: false, text: `Custom Labels deploy: accepted by Salesforce, but the org could not be re-read to confirm it (${q2.error})` };
+      const got = new Set((q2.records || []).map(r => r.Name));
+      const gone = names.filter(n => !got.has(n));
+      return gone.length
+        ? { ok: false, text: `Custom Labels deploy: accepted by Salesforce, but ${gone.length} label(s) not found after deploy` }
+        : { ok: true };
+    },
+  });
+  if (!dw.accepted) return { deployed: 0, error: dw.raw?.error || dw.text, attempted: split.deployable.length };
+  if (!dw.ok) return { deployed: 0, error: dw.text, attempted: split.deployable.length };
   return { deployed: split.deployable.length, translations: transCount, languages: langs.length };
 }
 

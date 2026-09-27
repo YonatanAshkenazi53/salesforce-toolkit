@@ -3347,21 +3347,29 @@ const LightningPages = (() => {
     const cloneMetaRes = { FullName: newApiName, Metadata: cloneMeta };
     const zipBase64    = buildFlexiPageZip(cloneMetaRes);
 
-    // ── 2. Deploy via Metadata Deploy ───────────────────────
+    // ── 2. Deploy via Metadata Deploy, verified by finding the new page ────
+    // The write discipline (sftk-write.js): the deploy is the write, the
+    // FlexiPage lookup below is the verify — never trust the deploy's own
+    // answer for whether the clone actually exists.
     cloneStep('Deploying cloned page…');
-    const deployRes = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64 });
-    if (deployRes.error) throw new Error('Deploy failed: ' + deployRes.error);
-
-    // ── 3. Find the new page record ─────────────────────────
-    cloneStep('Locating new page…');
-    const findRes = await bg({
-      type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
-      query: `SELECT Id,DeveloperName,MasterLabel,Type,EntityDefinitionId,ManageableState ` +
-             `FROM FlexiPage WHERE DeveloperName='${newApiName}'`
+    let newPage = null;
+    const wr = await sftkWriteVerified({
+      describe: `"${newApiName}" clone`,
+      write: () => bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64 }),
+      verify: async () => {
+        cloneStep('Locating new page…');
+        const findRes = await bg({
+          type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
+          query: `SELECT Id,DeveloperName,MasterLabel,Type,EntityDefinitionId,ManageableState ` +
+                 `FROM FlexiPage WHERE DeveloperName='${newApiName}'`
+        });
+        if (findRes.error) return { ok: false, text: 'Could not locate cloned page: ' + findRes.error };
+        newPage = findRes.records?.[0] || null;
+        return { ok: !!newPage, text: newPage ? null : `Cloned page "${newApiName}" not found after deploy — it may have been created under a different namespace.` };
+      },
     });
-    if (findRes.error) throw new Error('Could not locate cloned page: ' + findRes.error);
-    const newPage = findRes.records?.[0];
-    if (!newPage) throw new Error(`Cloned page "${newApiName}" not found after deploy — it may have been created under a different namespace.`);
+    if (!wr.accepted) throw new Error('Deploy failed: ' + ((wr.raw && wr.raw.error) || 'refused'));
+    if (!wr.ok) throw new Error(wr.text);
 
     // Add to the in-memory list so it appears without a full reload
     allPages.push({ ...newPage, PublishStatus: 'Draft', _isOrgDefault: false });
@@ -3611,8 +3619,17 @@ const LightningPages = (() => {
       { name: `objects/${sobjectType}.object`,         data: enc.encode(lines.join('\n'))   },
     ]);
 
-    const r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64 });
-    if (r.error) throw new Error(r.error);
+    // The write discipline (sftk-write.js): routed through the helper, but
+    // not re-read here — a CustomObject actionOverride has no simple
+    // queryable sObject to re-read (it is Metadata-only). Every caller
+    // reloads the real, current assignment state via openDetail() right
+    // after this returns, which is the actual confirmation shown to the user.
+    const wr = await sftkWriteVerified({
+      describe: `${sobjectType} view override`,
+      write: () => bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64 }),
+      noVerify: 'no queryable sObject for a CustomObject actionOverride — openDetail() re-reads the real assignment state right after',
+    });
+    if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
   }
 
   // Set a FlexiPage as the View override for an sObject type.
@@ -3723,12 +3740,25 @@ const LightningPages = (() => {
       ...appMeta.Metadata,
       profileActionOverrides: updatedOverrides
     });
-    const r = await bg({
-      type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
-      path: `services/data/v62.0/tooling/sobjects/CustomApplication/${appId}`,
-      body: { Metadata: cleanMeta }
+    // The write discipline (sftk-write.js): the PATCH is the write, a
+    // re-read of the app's own overrides count is the verify.
+    const wr = await sftkWriteVerified({
+      describe: 'app assignment',
+      write: () => bg({
+        type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+        path: `services/data/v62.0/tooling/sobjects/CustomApplication/${appId}`,
+        body: { Metadata: cleanMeta }
+      }),
+      verify: async () => {
+        const chk = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+          sobject: 'CustomApplication', id: appId });
+        if (!chk || chk.error || !chk.Metadata) return { ok: false, text: null };
+        const now = (chk.Metadata.profileActionOverrides || []).length;
+        return { ok: now === updatedOverrides.length, text: null };
+      },
     });
-    if (r.error) throw new Error(r.error);
+    if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
+    if (!wr.ok) throw new Error('the assignment was saved, but the org still shows a different set of overrides on re-read — check it in App Builder.');
   }
 
   // Prepare a CustomApplication Metadata object for Tooling API PATCH.

@@ -53,6 +53,12 @@ describe('field delete — Metadata API after a Tooling refusal', () => {
     expect(ok).toMatch(/\$\{esc\(objApi\)\}\.\$\{esc\(fldApi\)\} is deleted/);
     expect(ok).toMatch(/const fi = eid\('fcFieldInput'\); if \(fi\) fi\.value = '';/);
   });
+  it('the post-delete re-read treats a row renamed X_del as deleted (Salesforce keeps it for 15 days)', () => {
+    // live 2026-09-27: the delete had worked; the re-read by Id still found the row and called it refused
+    const dd = between('async function doDelete(', "if (res.error) {");
+    expect(dd).toContain("const wantName = String(_selField?.api || '').replace(/__c$/, '');");
+    expect(dd).toContain("const stillThere = !!(chk && !chk.error) && devName === wantName;");
+  });
   it('the INSUFFICIENT_ACCESS explanation quotes Salesforce', () => {
     const ex = between('function _explainDeleteError(raw)', 'async function _deleteFieldViaMetadata(');
     expect(ex).toMatch(/\(Salesforce said: ' \+ s\.replace\(\/\\s\+\/g, ' '\)\.slice\(0, 400\) \+ '\)'/);

@@ -704,6 +704,9 @@ window.rollbackRun = async function(runId) {
           for (let i = 0; i < item.scoped.created.length; i += SLICE) {
             const slice = item.scoped.created.slice(i, i + SLICE);
             try {
+              // verified-by: the VERIFY re-read further down this same item
+              // loop (SF_QUERY_ALL + sftkUndoDiff/sftkUndoVerifyCounts,
+              // ~line 780) re-reads this object and reports r.remaining.
               const res = await sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: leg.orgUrl, sid: leg.sid, ids: slice });
               if (res?.error) throw new Error(res.error);
               if (!Array.isArray(res)) throw new Error('no per-record answer');
@@ -731,6 +734,9 @@ window.rollbackRun = async function(runId) {
           for (let i = 0; i < payload.length; i += SLICE) {
             const slice = payload.slice(i, i + SLICE);
             try {
+              // verified-by: the same VERIFY re-read further down this item
+              // loop (SF_QUERY_ALL + sftkUndoDiff/sftkUndoVerifyCounts,
+              // ~line 780) re-reads this object and reports r.remaining.
               const res = await sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: leg.orgUrl, sid: leg.sid, records: slice });
               if (res?.error) throw new Error(res.error);
               if (!Array.isArray(res)) throw new Error('no per-record answer');

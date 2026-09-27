@@ -18,7 +18,10 @@ const between = (a, b) => { const i = SRC.indexOf(a); expect(i, a).toBeGreaterTh
 describe('_pkApplyMetadataCore — a removal is verified by re-reading the field', () => {
   const fn = between('async function _pkApplyMetadataCore(', 'async function _pkApplyMetadata(');
   it('re-reads the CustomField after a remove and reports removed / keptInactive', () => {
-    expect(fn).toMatch(/if \(!op\.remove\) return \{ ok: true \};/);
+    // campaign 3: activate / deactivate go through sftkWriteVerified and re-read the field too;
+    // a remove is judged by the re-read below
+    expect(fn).toMatch(/verify: op\.remove \? undefined : async \(\) => \{/);
+    expect(fn).toMatch(/if \(!op\.remove\) return \{ ok: w\.ok, verified: w\.verified, text: w\.text \};/);
     expect(fn).toMatch(/sobject: 'CustomField', id: inv\.fieldId, _suppressError: true/);
     expect(fn).toMatch(/return \{ ok: true, verified: true, name, removed: !kept, keptInactive: !!kept && kept\.isActive === false \};/);
     expect(fn).toMatch(/return \{ ok: true, verified: false, name \};/);

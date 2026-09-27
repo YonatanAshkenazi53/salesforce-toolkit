@@ -73,7 +73,7 @@ describe('the per-field push', () => {
   });
 
   it('a failed write reports NOTHING as applied', () => {
-    expect(fn).toMatch(/out\.errors\.push\(`target write failed: \$\{pr\.error\}`\); out\.applied = \[\]/);
+    expect(fn).toMatch(/out\.errors\.push\(`target write failed: \$\{w\.raw\?\.error \|\| w\.text\}`\); out\.applied = \[\]/);
   });
 
   it('both callers repaint from a FRESH read after a push', () => {

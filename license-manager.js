@@ -416,21 +416,40 @@ const LicenseManager = (() => {
     const errorHints = new Set();
     let doneCount = 0;
     let i = 0;
-    for (const u of selected) {
-      i++;
-      loadingEl.innerHTML = sftkCatSm(`${verbIng} ${i}/${selected.length}…`);
-      loadingEl.style.display = '';
-      const r = await bg({
-        type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
-        path: `services/data/v62.0/sobjects/User/${u.Id}`,
-        body: { IsActive: !isDeactivate }
-      });
-      if (r.error) {
-        const fe = lmFriendly(r.error);
-        errors.push(`${u.Name}: ${fe.message}`);
-        if (fe.hint) errorHints.add(fe.hint);
-      } else doneCount++;
-    }
+    const wantActive = !isDeactivate;
+    // The write discipline (sftk-write.js): one PATCH per user, ONE re-read
+    // for the whole batch (verifyAll) — User.IsActive by Id, never the
+    // PATCH's own answer.
+    const batch = await sftkWriteVerifiedAll(selected.map(u => ({
+      describe: u.Name,
+      write: () => {
+        i++;
+        loadingEl.innerHTML = sftkCatSm(`${verbIng} ${i}/${selected.length}…`);
+        loadingEl.style.display = '';
+        return bg({
+          type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+          path: `services/data/v62.0/sobjects/User/${u.Id}`,
+          body: { IsActive: wantActive }
+        });
+      },
+    })), {
+      verifyAll: async results => {
+        const ids = selected.filter((u, idx) => results[idx] && results[idx].accepted).map(u => u.Id);
+        if (!ids.length) return [];
+        const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
+          query: `SELECT Id, IsActive FROM User WHERE Id IN (${ids.map(x => `'${x}'`).join(',')})` });
+        if (!q || q.error) return null;
+        const byId = new Map((q.records || []).map(r => [r.Id, !!r.IsActive]));
+        return selected.map(u => ({ ok: byId.get(u.Id) === wantActive, text: null }));
+      },
+    });
+    selected.forEach((u, idx) => {
+      const r = batch.results[idx];
+      if (r.ok) { doneCount++; return; }
+      const fe = lmFriendly((r.raw && r.raw.error) || r.text || 'not confirmed on re-read');
+      errors.push(`${u.Name}: ${fe.message}`);
+      if (fe.hint) errorHints.add(fe.hint);
+    });
 
     loadingEl.style.display = 'none';
     loadingEl.innerHTML = sftkCatSm('Loading users…');  // restore for doSearch()
@@ -614,23 +633,41 @@ const LicenseManager = (() => {
       const errorHints = new Set();
       let doneCount = 0;
       let i = 0;
-      for (const u of selected) {
-        i++;
-        if (progEl) {
-          progEl.innerHTML = sftkCatSm(`Applying ${i}/${selected.length}…`);
-          progEl.style.display = '';
-        }
-        const r = await bg({
-          type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
-          path: `services/data/v62.0/sobjects/User/${u.Id}`,
-          body: { ProfileId: profileId }
-        });
-        if (r.error) {
-          const fe = lmFriendly(r.error);
-          errors.push(`${u.Name}: ${fe.message}`);
-          if (fe.hint) errorHints.add(fe.hint);
-        } else doneCount++;
-      }
+      // The write discipline (sftk-write.js): one PATCH per user, ONE
+      // re-read for the whole batch (verifyAll) — User.ProfileId by Id,
+      // never the PATCH's own answer.
+      const batch = await sftkWriteVerifiedAll(selected.map(u => ({
+        describe: u.Name,
+        write: () => {
+          i++;
+          if (progEl) {
+            progEl.innerHTML = sftkCatSm(`Applying ${i}/${selected.length}…`);
+            progEl.style.display = '';
+          }
+          return bg({
+            type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+            path: `services/data/v62.0/sobjects/User/${u.Id}`,
+            body: { ProfileId: profileId }
+          });
+        },
+      })), {
+        verifyAll: async results => {
+          const ids = selected.filter((u, idx) => results[idx] && results[idx].accepted).map(u => u.Id);
+          if (!ids.length) return [];
+          const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
+            query: `SELECT Id, ProfileId FROM User WHERE Id IN (${ids.map(x => `'${x}'`).join(',')})` });
+          if (!q || q.error) return null;
+          const byId = new Map((q.records || []).map(r => [r.Id, r.ProfileId]));
+          return selected.map(u => ({ ok: byId.get(u.Id) === profileId, text: null }));
+        },
+      });
+      selected.forEach((u, idx) => {
+        const r = batch.results[idx];
+        if (r.ok) { doneCount++; return; }
+        const fe = lmFriendly((r.raw && r.raw.error) || r.text || 'not confirmed on re-read');
+        errors.push(`${u.Name}: ${fe.message}`);
+        if (fe.hint) errorHints.add(fe.hint);
+      });
 
       closeLmModal();
 

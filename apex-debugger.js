@@ -896,10 +896,22 @@ const ApexDebugger = (() => {
       const id = qRes.records[0].Id;
       // Custom levels can be edited — re-apply current levels so edits take effect.
       if (prof.custom) {
-        await _bg({
-          type: 'SF_PATCH',
-          path: `${TAPI}/sobjects/DebugLevel/${id}`,
-          body: catBody
+        // The write discipline (sftk-write.js): the PATCH is the write, a
+        // re-read of the level is the verify. Best-effort (as before): a
+        // failure here does not block the trace, but it is no longer silent.
+        await sftkWriteVerified({
+          describe: 'DebugLevel',
+          write: () => _bg({
+            type: 'SF_PATCH',
+            path: `${TAPI}/sobjects/DebugLevel/${id}`,
+            body: catBody
+          }),
+          verify: async () => {
+            const chk = await _bg({ type: 'SF_TOOLING_GET', tooling: true, _suppressError: true,
+              sobject: 'DebugLevel', id });
+            if (!chk || chk.error) return { ok: false, text: null };
+            return { ok: chk.ApexCode === catBody.ApexCode, text: null };
+          },
         });
       }
       _debugLevels[_selProfile] = id;
@@ -907,17 +919,29 @@ const ApexDebugger = (() => {
     }
 
     // Create it.
-    const cRes = await _bg({
-      type: 'SF_REST_POST',
-      path: `${TAPI}/sobjects/DebugLevel`,
-      body: {
-        MasterLabel:   `SF Toolkit — ${(prof.label || 'Custom').replace(/[^\w\s-]/g, '').trim() || 'Custom'}`,
-        DeveloperName: devName,
-        ...catBody
-      }
+    // The write discipline (sftk-write.js): the create is the write, the
+    // same existence query used above is the verify.
+    const wr = await sftkWriteVerified({
+      describe: 'DebugLevel',
+      write: () => _bg({
+        type: 'SF_REST_POST',
+        path: `${TAPI}/sobjects/DebugLevel`,
+        body: {
+          MasterLabel:   `SF Toolkit — ${(prof.label || 'Custom').replace(/[^\w\s-]/g, '').trim() || 'Custom'}`,
+          DeveloperName: devName,
+          ...catBody
+        }
+      }),
+      verify: async () => {
+        const q = await _bg({ type: 'SF_QUERY', tooling: true, _suppressError: true,
+          query: `SELECT Id FROM DebugLevel WHERE DeveloperName='${devName}' LIMIT 1` });
+        if (!q || q.error || !q.records?.length) return { ok: false, text: null };
+        return { ok: true, detail: q.records[0].Id, text: null };
+      },
     });
-    if (cRes.error) throw new Error('Could not create DebugLevel: ' + cRes.error);
-    _debugLevels[_selProfile] = cRes.id || cRes.Id;
+    if (!wr.accepted) throw new Error('Could not create DebugLevel: ' + ((wr.raw && wr.raw.error) || 'refused'));
+    if (!wr.ok) throw new Error('DebugLevel was created but could not be confirmed on re-read — try again.');
+    _debugLevels[_selProfile] = wr.detail || (wr.raw && (wr.raw.id || wr.raw.Id));
     return _debugLevels[_selProfile];
   }
 
@@ -948,30 +972,54 @@ const ApexDebugger = (() => {
         // Extend existing flag. QA 2026-07-26: the result MUST be checked —
         // an ignored PATCH failure (expired session, bad DebugLevelId) used
         // to fake a live 60-minute countdown while the org captured nothing.
-        const pRes = await _bg({
-          type: 'SF_PATCH',
-          path: `${TAPI}/sobjects/TraceFlag/${existing.records[0].Id}`,
-          body: { DebugLevelId: debugLevelId,
-                  StartDate: now.toISOString(),
-                  ExpirationDate: exp.toISOString() }
+        // The write discipline (sftk-write.js): the PATCH is the write, a
+        // re-read of the flag's own ExpirationDate is the verify.
+        const pWr = await sftkWriteVerified({
+          describe: 'TraceFlag',
+          write: () => _bg({
+            type: 'SF_PATCH',
+            path: `${TAPI}/sobjects/TraceFlag/${existing.records[0].Id}`,
+            body: { DebugLevelId: debugLevelId,
+                    StartDate: now.toISOString(),
+                    ExpirationDate: exp.toISOString() }
+          }),
+          verify: async () => {
+            const chk = await _bg({ type: 'SF_QUERY', tooling: true, _suppressError: true,
+              query: `SELECT ExpirationDate FROM TraceFlag WHERE Id = '${existing.records[0].Id}'` });
+            if (!chk || chk.error || !chk.records?.length) return { ok: false, text: null };
+            return { ok: chk.records[0].ExpirationDate === exp.toISOString(), text: null };
+          },
         });
-        if (pRes?.error) throw new Error(pRes.error);
+        if (!pWr.accepted) throw new Error((pWr.raw && pWr.raw.error) || 'refused');
+        if (!pWr.ok) throw new Error('the trace extension was accepted, but the org still shows the old expiration on re-read — treat this as UNVERIFIED.');
         _traceFlag = { Id: existing.records[0].Id, ExpirationDate: exp.toISOString() };
       } else {
-        // Create new
-        const cRes = await _bg({
-          type: 'SF_REST_POST',
-          path: `${TAPI}/sobjects/TraceFlag`,
-          body: {
-            TracedEntityId: _selUser.Id,
-            LogType:        'USER_DEBUG',
-            DebugLevelId:   debugLevelId,
-            StartDate:      now.toISOString(),
-            ExpirationDate: exp.toISOString()
-          }
+        // Create new. The write discipline (sftk-write.js): the create is
+        // the write, a re-read of the new flag by Id is the verify.
+        const cWr = await sftkWriteVerified({
+          describe: 'TraceFlag',
+          write: () => _bg({
+            type: 'SF_REST_POST',
+            path: `${TAPI}/sobjects/TraceFlag`,
+            body: {
+              TracedEntityId: _selUser.Id,
+              LogType:        'USER_DEBUG',
+              DebugLevelId:   debugLevelId,
+              StartDate:      now.toISOString(),
+              ExpirationDate: exp.toISOString()
+            }
+          }),
+          verify: async cRes => {
+            const newId = cRes && (cRes.id || cRes.Id);
+            if (!newId) return { ok: false, text: null };
+            const chk = await _bg({ type: 'SF_QUERY', tooling: true, _suppressError: true,
+              query: `SELECT Id FROM TraceFlag WHERE Id = '${newId}'` });
+            return { ok: !!(chk && !chk.error && chk.records?.length), detail: newId, text: null };
+          },
         });
-        if (cRes.error) throw new Error(cRes.error);
-        _traceFlag = { Id: cRes.id || cRes.Id, ExpirationDate: exp.toISOString() };
+        if (!cWr.accepted) throw new Error((cWr.raw && cWr.raw.error) || 'refused');
+        if (!cWr.ok) throw new Error('the trace was accepted, but the new TraceFlag could not be confirmed on re-read — treat this as UNVERIFIED.');
+        _traceFlag = { Id: cWr.detail, ExpirationDate: exp.toISOString() };
       }
 
       _traceUser = _selUser;
@@ -1002,10 +1050,21 @@ const ApexDebugger = (() => {
       // swallowed delete failure left the TraceFlag ACTIVE in the org (still
       // generating FINEST logs) while the UI claimed the trace was stopped,
       // and nulling _traceFlag threw away the only handle for a retry.
-      const dRes = await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'TraceFlag', id: _traceFlag.Id });
+      // The write discipline (sftk-write.js): the DELETE is the write, a
+      // Tooling re-query of the flag id is the verify — gone = ok.
+      const dWr = await sftkWriteVerified({
+        describe: 'TraceFlag',
+        write: () => _bg({ type: 'SF_TOOLING_DELETE', sobject: 'TraceFlag', id: _traceFlag.Id }),
+        verify: async () => {
+          const chk = await _bg({ type: 'SF_QUERY', tooling: true, _suppressError: true,
+            query: `SELECT Id FROM TraceFlag WHERE Id = '${_traceFlag.Id}'` });
+          if (!chk || chk.error) return { ok: false, text: null };
+          return { ok: !(chk.records && chk.records.length), text: null };
+        },
+      });
       if (stopping) { stopping.disabled = false; stopping.textContent = 'Stop'; }
-      if (dRes?.error) {
-        const fe = sftkFriendlyError(dRes.error);
+      if (!dWr.ok) {
+        const fe = sftkFriendlyError((dWr.raw && dWr.raw.error) || dWr.text || 'not confirmed stopped on re-read');
         _renderStatus(`Couldn't stop the trace: ${fe.message} — the flag is STILL ACTIVE in the org${_traceFlag?.ExpirationDate ? ` until ${new Date(_traceFlag.ExpirationDate).toLocaleTimeString()}` : ''}. Fix the session (open the org tab) and click Stop again.`, 'error');
         _startCountdown();   // keep showing the truth: it IS still running
         _startPolling();
@@ -3015,16 +3074,16 @@ const ApexDebugger = (() => {
     const listEl = document.getElementById('adbgLogList');
     if (listEl) listEl.innerHTML = '<div class="adbg-list-ph">' + sftkCatSm('Purging old logs…') + '</div>';
     const cnt = document.getElementById('adbgLogCount');
-    let done = 0, failed = 0, firstErr = null;
-    for (const id of ids) {
-      const dRes = await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id });
-      done++;
-      if (dRes?.error) {
+    let failed = 0, firstErr = null;
+    const results = await _deleteApexLogsVerified(ids, (done, total) => {
+      if (cnt) cnt.textContent = `Deleting ${done}/${total}`;
+    });
+    results.forEach(r => {
+      if (!r.ok) {
         failed++;
-        if (!firstErr) firstErr = dRes.error;
+        if (!firstErr) firstErr = (r.raw && r.raw.error) || r.text || 'not confirmed deleted on re-read';
       }
-      if (cnt) cnt.textContent = `Deleting ${done}/${ids.length}`;
-    }
+    });
     btn.disabled = false; btn.dataset.adbgIcon = 'clock'; btn.textContent = 'Purge >24h';
     if (failed) _showErrorModal(`Purge: ${ids.length - failed} deleted, ${failed} failed`, firstErr);
     _loadLogs();   // reloads from the org, so surviving rows reappear
@@ -3099,16 +3158,44 @@ const ApexDebugger = (() => {
   }
 
   // ── Delete operations ─────────────────────────────────────
+  // The write discipline (sftk-write.js): one DELETE per log, ONE re-read
+  // for the whole batch (verifyAll) — a Tooling query of the ids: gone = ok,
+  // never the DELETE's own answer. onProgress(done, total) is called after
+  // each delete request so callers can keep their live n/N counter.
+  async function _deleteApexLogsVerified(ids, onProgress) {
+    let done = 0;
+    const batch = await sftkWriteVerifiedAll(ids.map(id => ({
+      describe: id,
+      write: async () => {
+        const r = await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id });
+        done++;
+        if (onProgress) onProgress(done, ids.length);
+        return r;
+      },
+    })), {
+      verifyAll: async results => {
+        const okIds = ids.filter((id, i) => results[i] && results[i].accepted);
+        if (!okIds.length) return [];
+        const q = await _bg({ type: 'SF_QUERY_ALL', tooling: true, _suppressError: true,
+          query: `SELECT Id FROM ApexLog WHERE Id IN (${okIds.map(x => `'${x}'`).join(',')})` });
+        if (!q || q.error) return null;
+        const stillThere = new Set((q.records || []).map(r => r.Id));
+        return ids.map(id => ({ ok: !stillThere.has(id), text: null }));
+      },
+    });
+    return batch.results;   // aligned with `ids`; each { ok, accepted, raw, text }
+  }
+
   async function _deleteLog(id) {
     const row = document.querySelector(`.adbg-log-row[data-id="${id}"]`);
     if (row) row.style.opacity = '0.35';
     // _bg never rejects — failures come back as {error}. QA 2026-07-27: the
     // old .catch() was dead code and the row was pruned even when the org
     // still holds the log.
-    const res = await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id });
-    if (res?.error) {
+    const [r] = await _deleteApexLogsVerified([id]);
+    if (!r.ok) {
       if (row) row.style.opacity = '';
-      _showErrorModal('Could not delete log', res.error);
+      _showErrorModal('Could not delete log', (r.raw && r.raw.error) || r.text || 'not confirmed deleted on re-read');
       return;
     }
     _logs = _logs.filter(l => l.Id !== id);
@@ -3134,13 +3221,15 @@ const ApexDebugger = (() => {
     // Per-record results ARE checked (QA 2026-07-27): a failed delete keeps
     // its row (and checkbox) so the user can see + retry what's still there.
     const cnt = document.getElementById('adbgLogCount');
-    let done = 0, failed = 0, firstErr = null;
-    for (const id of ids) {
-      const res = await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id });
-      done++;
-      if (res?.error) {
+    let failed = 0, firstErr = null;
+    const results = await _deleteApexLogsVerified(ids, (done, total) => {
+      if (cnt) cnt.textContent = `Deleting ${done}/${total}`;
+    });
+    ids.forEach((id, i) => {
+      const r = results[i];
+      if (!r.ok) {
         failed++;
-        if (!firstErr) firstErr = res.error;
+        if (!firstErr) firstErr = (r.raw && r.raw.error) || r.text || 'not confirmed deleted on re-read';
       } else {
         _logs = _logs.filter(l => l.Id !== id);
         _checked.delete(id);
@@ -3152,8 +3241,7 @@ const ApexDebugger = (() => {
           if (d) d.innerHTML = '<div class="adbg-detail-empty"><div class="adbg-detail-icon adbg-i" data-i="trash" aria-hidden="true"></div><div>Logs deleted</div></div>';
         }
       }
-      if (cnt) cnt.textContent = `Deleting ${done}/${ids.length}`;
-    }
+    });
     _renderLogList();
     _updateCount();
     _updateDelBtn();
@@ -3195,13 +3283,15 @@ const ApexDebugger = (() => {
     const cnt = document.getElementById('adbgLogCount');
     // Per-record results ARE checked (QA 2026-07-27): rows whose delete
     // failed stay in the list instead of vanishing while the org keeps them.
-    let done = 0, failed = 0, firstErr = null;
-    for (const id of ids) {
-      const res = await _bg({ type: 'SF_TOOLING_DELETE', sobject: 'ApexLog', id });
-      done++;
-      if (res?.error) {
+    let failed = 0, firstErr = null;
+    const results = await _deleteApexLogsVerified(ids, (done, total) => {
+      if (cnt) cnt.textContent = `Deleting ${done}/${total}`;
+    });
+    ids.forEach((id, i) => {
+      const r = results[i];
+      if (!r.ok) {
         failed++;
-        if (!firstErr) firstErr = res.error;
+        if (!firstErr) firstErr = (r.raw && r.raw.error) || r.text || 'not confirmed deleted on re-read';
       } else {
         _logs = _logs.filter(l => l.Id !== id);
         _checked.delete(id);
@@ -3209,8 +3299,7 @@ const ApexDebugger = (() => {
         delete _bodyCache[id];
         if (_selLogId === id) _selLogId = null;
       }
-      if (cnt) cnt.textContent = `Deleting ${done}/${ids.length}`;
-    }
+    });
 
     if (!_selLogId) {
       const d = document.getElementById('adbgDetail');
