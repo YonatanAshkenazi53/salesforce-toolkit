@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { extractFunctions } from './extract.mjs';
 
-const { sftkWriteVerified, sftkWriteVerifiedAll } = extractFunctions('sftk-write.js', ['sftkWriteVerified', 'sftkWriteVerifiedAll']);
+const { sftkWriteVerified, sftkWriteVerifiedAll } = extractFunctions('sftk-write.js', ['sftkWriteVerified', '_sftkWriteVerifiedCore', 'sftkWriteVerifiedAll']);
 
 describe('sftkWriteVerified', () => {
   it('ok only when the write was accepted AND the re-read saw the intended state', async () => {

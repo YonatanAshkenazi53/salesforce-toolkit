@@ -3026,6 +3026,11 @@ const DependencyMap = (() => {
       // reported as the switch).
       const wantOn = mode !== 'deactivate';
       let i = 0;
+      // History (sftk-history.js): one entry per org, undoable — a switch-off
+      // is undone by re-activating the version that was running (the plan
+      // remembered it), a switch-on by switching off again.
+      const journal = sftkHistoryBegin({ tool: 'Flow switches',
+        title: `⏻ ${plan.jobs.length} flow${plan.jobs.length === 1 ? '' : 's'} ${wantOn ? 'ON' : 'OFF'} — ${String(org.label || '').replace(/^This org \((.+)\)$/, '$1')}`, orgUrl: org.orgUrl });
       // confirmed-by: the ⏻ Switch OFF/ON sftkConfirmDestructive in
       // runFlowBulk (the only caller of applyFlowBulk)
       const batch = await sftkWriteVerifiedAll(plan.jobs.map(j => ({
@@ -3037,6 +3042,7 @@ const DependencyMap = (() => {
             body: { Metadata: { activeVersionNumber: j.version } } });
         },
       })), {
+        journal,
         verifyAll: async results => {
           const names = plan.jobs.filter((j, k) => results[k] && results[k].accepted).map(j => j.apiName);
           if (!names.length) return [];
@@ -3065,6 +3071,28 @@ const DependencyMap = (() => {
       if (mode === 'activate' && done.length) {
         await _fbRememberSave(org.key, m => { for (const j of done) delete m[j.apiName]; return m; });
       }
+      // The undo steps are data (see sftk-history.js): a PATCH per flow that
+      // was confirmed switched, judged by a FlowDefinitionView re-read.
+      const soql = v => String(v).replace(/'/g, "\\'");
+      const noPrev = wantOn ? [] : done.filter(j => !plan.remember[j.apiName]);
+      const steps = done.filter(j => wantOn || plan.remember[j.apiName]).map(j => {
+        const prev = plan.remember[j.apiName];
+        return {
+          describe: wantOn ? `${j.label}: switch OFF again` : `${j.label}: switch ON again at v${prev}`,
+          // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+          msg: { type: 'SF_PATCH', path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${j.defId}`,
+            body: { Metadata: { activeVersionNumber: wantOn ? 0 : prev } } },
+          verify: { query: `SELECT ActiveVersionId FROM FlowDefinitionView WHERE ApiName = '${soql(j.apiName)}'`, tooling: false,
+            pick: 'records.0', field: 'ActiveVersionId', ...(wantOn ? { equals: null } : { notNull: true }),
+            text: { ok: `${j.label}: switched ${wantOn ? 'OFF' : `ON at v${prev}`} — verified by re-reading the org`,
+                    bad: `${j.label}: accepted by Salesforce, but the org still reads it ${wantOn ? 'ON' : 'OFF'}` } },
+        };
+      });
+      await sftkHistoryEnd(journal, {
+        undo: steps.length
+          ? { steps, note: noPrev.length ? `${noPrev.length} flow(s) had no remembered version and are not in the undo: ${noPrev.map(j => j.label).join(', ')}` : '' }
+          : { none: done.length ? 'no version was remembered for these flows, so there is nothing to switch back to — activate them from ⏻ Flow switches' : 'nothing was switched' },
+      });
       if (done.length || failed.length) {
         report.push(`${done.length ? `✅ ${org.label}: ${done.length} switched ${mode === 'deactivate' ? 'OFF' : 'ON'} — verified by re-reading the org (${escHtml(done.map(j => j.label).join(', '))})` : ''}${failed.length ? `${done.length ? '<br>' : ''}❌ ${org.label}: ${escHtml(failed.join(' · '))}` : ''}`);
       }
@@ -3073,7 +3101,7 @@ const DependencyMap = (() => {
     out.innerHTML = `
       <div class="dep-blast-sec"${report.some(r => r.includes('❌')) ? ' style="border-left:3px solid var(--warn,#d97706);padding-left:8px"' : ''}>
         ${report.join('<br>')}<br>
-        <span style="opacity:.75">This table is now stale —</span>
+        <span style="opacity:.75">Recorded in Data Studio › History, where ↩ Undo switches them back. This table is now stale —</span>
         <button class="btn-small" id="depFbReload">↻ Reload the fresh state</button>
       </div>`;
     out.querySelector('#depFbReload')?.addEventListener('click', () => {

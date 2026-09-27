@@ -6,6 +6,8 @@
 //   PICK=<regex>       rows to tick (default ^SFTK_FS_Test)
 //   ORGS=npc[,npc2]    (default npc)
 //   SCAN_ONLY=1        stop after the confirmation text (nothing written)
+//   UNDO=1             afterwards: Data Studio › History › ↩ Undo the newest entry (TYPE_IT=1 for a guarded org)
+import { undoNewest } from './_undo.mjs';
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 const PICK = () => process.env.PICK || '^SFTK_FS_Test';
 
@@ -70,4 +72,5 @@ export default async function (h) {
   const mode = (process.env.MODE || 'off').toLowerCase();
   if (mode === 'cycle') { if (await switchOnce(h, 'off')) await switchOnce(h, 'on'); }
   else await switchOnce(h, mode);
+  if (process.env.UNDO === '1') await undoNewest(h);
 }

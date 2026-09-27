@@ -4,6 +4,7 @@
 //   ORG=npc            org alias to log in (its label is matched in the org select)
 //   OBJ=Account FIELD=SFTK_FC_Test_Status__c
 //   ACTION=none|toggle|delete|fix   (default none = inventory only)
+//   UNDO=1   afterwards: Data Studio › History › ↩ Undo the newest entry (TYPE_IT=1 for a guarded org)
 //   VALUE=Closed       the value the action is for
 //   FIX=remap|clear|skip  TARGET=New   the data-fix choice inside the wizard
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
@@ -13,6 +14,8 @@ async function setSelect(h, sel, match) {
 async function rows(h) {
   return h.eval(`[...document.querySelectorAll('#dsPkBody .ds-pk-row')].map(r => (r.dataset.pkVal || '?') + (r.classList.contains('ds-pk-row-inactive') ? ' [inactive]' : '') + ' records=' + (r.querySelector('.ds-pk-count')?.textContent || r.querySelector('.ds-pk-uncounted')?.textContent || '?') + ' rts=' + [...r.querySelectorAll('.ds-pk-rt')].map(e => e.textContent).join('/') + ' btns=' + [...r.querySelectorAll('button')].map(b => b.textContent.trim()).join('|'))`);
 }
+import { undoNewest } from './_undo.mjs';
+
 export default async function (h) {
   await h.login(process.env.ORG || 'npc');
   await h.studio('');
@@ -84,4 +87,5 @@ export default async function (h) {
   h.log('NOTES after:', JSON.stringify(await h.eval(`[...document.querySelectorAll('#dsPkBody .ds-pk-note')].map(e => e.innerText)`)));
   h.log('HISTORY newest:', await h.eval(`(() => { const x = (typeof _history !== 'undefined' && _history[0]) || null; return x ? JSON.stringify(x).slice(0, 500) : '(none)'; })()`));
   await h.shot(h.shots + '/pk-after.png');
+  if (process.env.UNDO === '1') await undoNewest(h);
 }

@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const UI_FILES = readdirSync(root).filter(f => f.endsWith('.js') && !f.startsWith('_') && !f.startsWith('eslint')
-  && !['background.js', 'content.js', 'trusted-types-policy.js', 'sftk-write.js', 'sftk-confirm.js'].includes(f));
+  && !['background.js', 'content.js', 'trusted-types-policy.js', 'sftk-write.js', 'sftk-confirm.js', 'sftk-history.js'].includes(f));   // sftk-history asks with the dialog inside sftkHistoryUndo
 
 const BASELINE = {
   // 2026-09-27, end of phase 2: zero everywhere. Every verified write is asked

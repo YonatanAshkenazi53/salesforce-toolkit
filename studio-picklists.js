@@ -1460,7 +1460,7 @@ async function _pkRunDataFix(value, fixMode, target, ctx = _pkInv) {
 // ── Metadata apply (activate / deactivate / remove a value) ─────
 // Core: mutate a CLONE of the field's value set + PATCH. No toast / reload —
 // reused by single-org apply AND bulk apply (P2). Throws on failure.
-async function _pkApplyMetadataCore(inv, idx, op) {
+async function _pkApplyMetadataCore(inv, idx, op, journal) {
   const md = JSON.parse(JSON.stringify(inv.metadata));
   const list = md.valueSet.valueSetDefinition.value;
   if (op.remove) list.splice(idx, 1);
@@ -1481,6 +1481,7 @@ async function _pkApplyMetadataCore(inv, idx, op) {
     write: () => sendBg({ type: 'SF_PATCH', orgUrl: inv.orgUrl, sid: inv.sid,
       path: `services/data/v62.0/tooling/sobjects/CustomField/${inv.fieldId}`,
       body: { Metadata: sftkMetaForPatch(md) } }),
+    journal: journal || null,   // history-by: the caller's entry (single: _pkApplyMetadata; bulk: the picklist-fix entry)
     verify: op.remove ? undefined : async () => {
       const back = await readBack();
       const list2 = back?.Metadata?.valueSet?.valueSetDefinition?.value;
@@ -1513,7 +1514,29 @@ async function _pkApplyMetadata(idx, op) {
       const nm = pkValueName(inv.rawValues[idx]);
       _pkPendingRtCheck = { name: nm, pre: inv.rts.filter(rt => rt.values.has(nm)).length };
     }
-    const r = await _pkApplyMetadataCore(inv, idx, op);
+    // History (sftk-history.js): the undo writes the PREVIOUS value set back
+    // (a value removed by the API is only ever kept inactive — writing the
+    // old set re-activates it), judged by re-reading the field.
+    const name = pkValueName(inv.rawValues[idx]);
+    const before = sftkMetaForPatch(JSON.parse(JSON.stringify(inv.metadata)));
+    const wasActive = inv.rawValues[idx].isActive !== false;
+    const nameField = ('fullName' in inv.rawValues[idx]) ? 'fullName' : ('valueName' in inv.rawValues[idx]) ? 'valueName' : 'label';
+    const verb = op.remove ? 'deleted' : op.activate ? 'activated' : 'deactivated';
+    const journal = sftkHistoryBegin({ tool: 'Picklist Manager', title: `${op.remove ? '🗑' : op.activate ? '▶' : '⏸'} ${inv.obj}.${inv.field} “${name}” ${verb}`, orgUrl: inv.orgUrl });
+    let r;
+    try { r = await _pkApplyMetadataCore(inv, idx, op, journal); }
+    finally { await sftkHistoryEnd(journal, {
+      undo: { steps: [{
+        describe: `${inv.obj}.${inv.field}: write the previous value set back (“${name}” ${wasActive ? 'active' : 'inactive'} again)`,
+        // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+        msg: { type: 'SF_PATCH', path: `services/data/v62.0/tooling/sobjects/CustomField/${inv.fieldId}`, body: { Metadata: before } },
+        verify: { query: `SELECT Id, Metadata FROM CustomField WHERE Id = '${inv.fieldId}'`, tooling: true,
+          pick: 'records.0.Metadata.valueSet.valueSetDefinition.value', where: { field: nameField, equals: name },
+          field: 'isActive', ...(wasActive ? { notFalse: true } : { equals: false }),
+          text: { ok: `${inv.obj}.${inv.field} “${name}” is ${wasActive ? 'active' : 'inactive'} again — verified by re-reading the field`,
+                  bad: `${inv.obj}.${inv.field}: the previous value set was accepted, but the field still does not read “${name}” as ${wasActive ? 'active' : 'inactive'}` } },
+      }] },
+    }); }
     if (op.remove && r && r.verified === false) {
       showToast(`⚠ The value set was saved without “${r.name}”, but the field could not be re-read to confirm what Salesforce kept — check it in Setup`, 'warning', 9000);
     } else if (op.remove && r && !r.removed) {
