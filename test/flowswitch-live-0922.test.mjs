@@ -25,11 +25,16 @@ describe('applyFlowBulk — verified by re-reading the org', () => {
     expect(i).toBeLessThan(fn.indexOf('_fbRememberSave(org.key'));
     expect(i).toBeGreaterThan(fn.indexOf("body: { Metadata: { activeVersionNumber: j.version } }"));
   });
-  it('an unconfirmed flow moves from done to failed; an unreadable org fails every flow', () => {
-    expect(fn).toMatch(/if \(isOn === wantOn\) confirmed\.push\(j\);/);
+  it('runs through sftkWriteVerifiedAll with one batched re-read; done = ok only, everything else named in failed', () => {
+    // campaign 3, phase 1: the write discipline helper replaces the hand-written re-read
+    expect(fn).toMatch(/const batch = await sftkWriteVerifiedAll\(plan\.jobs\.map\(j => \(\{/);
+    expect(fn).toMatch(/verifyAll: async results => \{/);
+    expect(fn).toMatch(/return \{ ok: isOn === wantOn, text: /);
     expect(fn).toMatch(/the switch was accepted but the org still reads it/);
-    expect(fn).toMatch(/the switch was accepted but the org could not be re-read to confirm it/);
-    expect(fn).toMatch(/done\.length = 0; done\.push\(\.\.\.confirmed\);/);
+    expect(fn).toMatch(/const done = plan\.jobs\.filter\(\(j, k\) => batch\.results\[k\] && batch\.results\[k\]\.ok\);/);
+    expect(fn).toMatch(/const failed = batch\.results\.filter\(r => !r\.ok\)\.map\(r => r\.text\);/);
+    // an unreadable org: the helper marks every accepted item unverified (its own sentence); none is "done"
+    expect(fn).toMatch(/if \(!q \|\| q\.error\) throw new Error\(\(q && q\.error\) \|\| 'no answer'\);/);
   });
   it('the ✅ line says it was verified', () => {
     expect(fn).toContain("switched ${mode === 'deactivate' ? 'OFF' : 'ON'} — verified by re-reading the org (");
