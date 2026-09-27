@@ -3013,39 +3013,39 @@ const DependencyMap = (() => {
     _fbBusy = true;
     const report = [];
     for (const { org, plan } of perOrg) {
-      const done = []; const failed = [];
-      for (let i = 0; i < plan.jobs.length; i++) {
-        const j = plan.jobs[i];
-        out.innerHTML = depSpin(`${org.label}: ${mode === 'deactivate' ? 'switching off' : 'switching on'} ${i + 1} / ${plan.jobs.length}…`);
-        const r = await depBg({ type: 'SF_PATCH', orgUrl: org.orgUrl, sid: org.sid,
-          path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${j.defId}`,
-          body: { Metadata: { activeVersionNumber: j.version } } });
-        if (r?.error) failed.push(`${j.label}: ${r.error}`);
-        else done.push(j);
-      }
-      // VERIFY by re-reading the org (live 2026-09-22): a PATCH that came
-      // back clean is not the same as the flow being off / on. One query of
-      // FlowDefinitionView tells what is active NOW; a flow the org does not
-      // confirm moves from done to failed, and is never "remembered".
-      if (done.length) {
-        const names = done.map(j => j.apiName);
-        const q = await depBg({ type: 'SF_QUERY', tooling: false, orgUrl: org.orgUrl, sid: org.sid, _silentError: true,
-          query: `SELECT ApiName, ActiveVersionId, IsActive FROM FlowDefinitionView WHERE ApiName IN (${names.map(n => `'${String(n).replace(/'/g, "\\'")}'`).join(',')})` });
-        if (!q || q.error) {
-          failed.push(...done.map(j => `${j.label}: the switch was accepted but the org could not be re-read to confirm it (${(q && q.error) || 'no answer'}) — check it in Setup`));
-          done.length = 0;
-        } else {
+      // The one write discipline (sftk-write.js): every switch is a write +
+      // a re-read, the re-read done ONCE for the whole batch (one
+      // FlowDefinitionView query). A flow is "done" only when the org shows
+      // it in the wanted state; anything else is named in `failed` and is
+      // never remembered (live 2026-09-22 — the PATCH's answer used to be
+      // reported as the switch).
+      const wantOn = mode !== 'deactivate';
+      let i = 0;
+      const batch = await sftkWriteVerifiedAll(plan.jobs.map(j => ({
+        describe: j.label,
+        write: async () => {
+          out.innerHTML = depSpin(`${org.label}: ${mode === 'deactivate' ? 'switching off' : 'switching on'} ${++i} / ${plan.jobs.length}…`);
+          return depBg({ type: 'SF_PATCH', orgUrl: org.orgUrl, sid: org.sid, _silentError: true,
+            path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${j.defId}`,
+            body: { Metadata: { activeVersionNumber: j.version } } });
+        },
+      })), {
+        verifyAll: async results => {
+          const names = plan.jobs.filter((j, k) => results[k] && results[k].accepted).map(j => j.apiName);
+          if (!names.length) return [];
+          const q = await depBg({ type: 'SF_QUERY', tooling: false, orgUrl: org.orgUrl, sid: org.sid, _silentError: true,
+            query: `SELECT ApiName, ActiveVersionId, IsActive FROM FlowDefinitionView WHERE ApiName IN (${names.map(n => `'${String(n).replace(/'/g, "\\'")}'`).join(',')})` });
+          if (!q || q.error) throw new Error((q && q.error) || 'no answer');
           const nowActive = new Map((q.records || []).map(r => [r.ApiName, !!r.ActiveVersionId]));
-          const confirmed = [];
-          for (const j of done) {
+          return plan.jobs.map(j => {
             const isOn = nowActive.get(j.apiName);
-            const wantOn = mode !== 'deactivate';
-            if (isOn === wantOn) confirmed.push(j);
-            else failed.push(`${j.label}: the switch was accepted but the org still reads it ${isOn === undefined ? 'unknown (not listed)' : (isOn ? 'ON' : 'OFF')} — nothing to rely on here, check it in Setup`);
-          }
-          done.length = 0; done.push(...confirmed);
-        }
-      }
+            return { ok: isOn === wantOn, text: isOn === wantOn ? `${j.label}: switched ${wantOn ? 'ON' : 'OFF'} — verified by re-reading the org`
+              : `${j.label}: the switch was accepted but the org still reads it ${isOn === undefined ? 'unknown (not listed)' : (isOn ? 'ON' : 'OFF')} — nothing to rely on here, check it in Setup` };
+          });
+        },
+      });
+      const done = plan.jobs.filter((j, k) => batch.results[k] && batch.results[k].ok);
+      const failed = batch.results.filter(r => !r.ok).map(r => r.text);
       // Remember / forget only what THIS org confirmed — a failed flip must
       // not overwrite the memory of what was truly active.
       if (mode === 'deactivate' && Object.keys(plan.remember).length) {
