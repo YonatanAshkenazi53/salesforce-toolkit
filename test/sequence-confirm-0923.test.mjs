@@ -22,20 +22,23 @@ describe('runSequence — the confirmation comes before the run', () => {
   });
 });
 
-describe('_seqConfirmRun — what it says and gates', () => {
+// Campaign 3, phase 2: the sequence's own dialog became the shared one
+// (sftkConfirmDestructive) — acknowledgement box, and the typed org name when
+// sftkOrgWriteGate says the target is production or guarded as production.
+describe('_seqConfirmRun — the shared confirmation', () => {
   const fn = between('function _seqConfirmRun(seq, profiles, tgtSess) {', 'async function runSequence(seqId) {');
   it('lists every step with object, child count and insert / upsert, and names the target', () => {
-    expect(fn).toMatch(/profiles\.map\(p => `<li><strong>\$\{esc\(p\.name\)\}<\/strong>/);
-    expect(fn).toMatch(/p\.upsert\?\.field \? `upsert on \$\{esc\(p\.upsert\.field\)\}` : 'insert'/);
+    expect(fn).toMatch(/items: profiles\.map\(p => \(\{ label: p\.name, sub: `\$\{p\.tree\?\.objectType \|\| '\?'\}/);
+    expect(fn).toMatch(/p\.upsert\?\.field \? `upsert on \$\{p\.upsert\.field\}` : 'insert'/);
     expect(fn).toContain('A sequence takes <strong>no per-record selection</strong>');
     expect(fn).toContain('↩ Roll back in History removes what this run inserted.');
+    expect(fn).toMatch(/title: `▶ Run “\$\{seq\.name\}” — \$\{profiles\.length\} step\(s\) into \$\{tgtLabel\}`/);
   });
-  it('▶ Run sequence is disabled until the acknowledgement is ticked; Cancel resolves false', () => {
-    expect(fn).toContain('<button class="ds-btn ds-btn-primary" id="dsSeqGo" disabled>▶ Run sequence</button>');
-    expect(fn).toMatch(/ack\?\.addEventListener\('change', \(\) => \{ if \(go\) go\.disabled = !ack\.checked; \}\);/);
-    expect(fn).toMatch(/eid\('dsSeqNo'\)\?\.addEventListener\('click', \(\) => \{ closeModal\(\); resolve\(false\); \}\);/);
-  });
-  it('a production target asks for its typed name after the acknowledgement', () => {
-    expect(fn).toMatch(/if \(typeof cachedOrgType === 'function' && cachedOrgType\(seq\.targetOrg\) === 'production'\) \{\s*const okProd = await confirmTypedProd\(tgtLabel, `run the sequence “\$\{seq\.name\}” — \$\{profiles\.length\} deployment\(s\) — into PRODUCTION`\);\s*if \(!okProd\) return resolve\(false\);/);
+  it('needs the acknowledgement (needsCheckbox) and asks the org gate for the typed step', () => {
+    expect(fn).toMatch(/needsCheckbox: true/);
+    expect(fn).toMatch(/const gate = await sftkOrgWriteGate\(seq\.targetOrg, _orgs\);/);
+    expect(fn).toMatch(/production: gate\.production \? \{ label: gate\.label \|\| tgtLabel \} : null,/);
+    expect(fn).toMatch(/confirmLabel: '▶ Run sequence'/);
+    expect(fn).not.toContain('dsSeqGo');
   });
 });

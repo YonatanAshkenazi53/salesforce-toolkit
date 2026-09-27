@@ -6279,3 +6279,17 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 .ds-dtree-need-bad { border-color: var(--danger); color: var(--c-critical-fg, var(--danger)); }
 .ds-dtree-need-off { opacity: .55; }
 .ds-dtree-foot { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+
+/* ── Shared confirmation dialog (sftk-confirm.js) — same rules as the popup (styles.css); campaign 3 phase 2 ── */
+.sftk-confirm-items { margin: 0 0 10px; padding-left: 20px; font-size: 12.5px; max-height: 180px; overflow-y: auto; }
+.sftk-confirm-items li { padding: 1px 0; }
+.sftk-confirm-items small { color: var(--subtext); margin-left: 5px; }
+.sftk-confirm-more { color: var(--subtext); font-style: italic; }
+.sftk-confirm-rev { padding: 8px 11px; border-radius: 6px; font-size: 12px; line-height: 1.5; margin: 8px 0; border: 1px solid var(--border); }
+.sftk-rev-permanent { background: rgba(234, 0, 30, 0.07); border-color: var(--danger); }
+.sftk-rev-recycle   { background: rgba(46, 132, 74, 0.08); border-color: var(--active-color); }
+.sftk-rev-newver    { background: rgba(1, 118, 211, 0.07); border-color: var(--brand); }
+.sftk-confirm-undo { font-size: 11.5px; color: var(--subtext); margin: 6px 0; }
+.sftk-confirm-ack { display: flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 12.5px; cursor: pointer; font-weight: 600; }
+.sftk-confirm-word { margin-top: 8px; }
+.sftk-confirm-prodnote { margin-top: 8px; font-size: 12px; color: var(--danger, #ea001e); }

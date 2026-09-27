@@ -308,33 +308,20 @@ function deleteSequence(seqId) {
 // acknowledgement box is ticked and ▶ Run sequence is pressed (and, for a
 // production target, its name was typed). Cancel / close → false.
 function _seqConfirmRun(seq, profiles, tgtSess) {
-  return new Promise(resolve => {
-    const tgtLabel = orgLabel(seq.targetOrg);
-    const items = profiles.map(p => `<li><strong>${esc(p.name)}</strong> <span style="color:var(--subtext)">${esc(p.tree?.objectType || '?')}${(p.tree?.children || []).length ? ` +${(p.tree.children || []).length} child object(s)` : ''} · ${p.upsert?.field ? `upsert on ${esc(p.upsert.field)}` : 'insert'}</span></li>`).join('');
-    showModal(`
-      <div class="ds-modal-header">▶ Run “${esc(seq.name)}” — ${profiles.length} step(s)</div>
-      <div class="ds-modal-body">
-        <div class="ds-seq-run-meta">${esc(orgLabel(seq.sourceOrg))} → <strong>${esc(tgtLabel)}</strong></div>
-        <ol class="ds-seq-confirm-steps">${items}</ol>
-        <div class="ds-pk-note" style="margin-top:8px">⚠ A sequence takes <strong>no per-record selection</strong>: every record each deployment matches is written into ${esc(tgtLabel)}, step after step. Records a step already wrote stay written if a later step fails. ↩ Roll back in History removes what this run inserted.</div>
-        <label class="ds-plan-op" style="margin-top:10px;display:block"><input type="checkbox" id="dsSeqAck"> I understand this writes every matching record of ${profiles.length} deployment(s) into ${esc(tgtLabel)}.</label>
-      </div>
-      <div class="ds-modal-footer">
-        <button class="ds-btn" id="dsSeqNo">Cancel</button>
-        <button class="ds-btn ds-btn-primary" id="dsSeqGo" disabled>▶ Run sequence</button>
-      </div>`);
-    const ack = eid('dsSeqAck'), go = eid('dsSeqGo');
-    ack?.addEventListener('change', () => { if (go) go.disabled = !ack.checked; });
-    eid('dsSeqNo')?.addEventListener('click', () => { closeModal(); resolve(false); });
-    go?.addEventListener('click', async () => {
-      closeModal();
-      if (typeof cachedOrgType === 'function' && cachedOrgType(seq.targetOrg) === 'production') {
-        const okProd = await confirmTypedProd(tgtLabel, `run the sequence “${seq.name}” — ${profiles.length} deployment(s) — into PRODUCTION`);
-        if (!okProd) return resolve(false);
-      }
-      resolve(true);
+  // The one confirmation (sftk-confirm.js, campaign 3 phase 2): the steps as
+  // items, the stakes, the acknowledgement box, and — when the target is a
+  // production org or guarded as one — the org's name typed in a second step.
+  const tgtLabel = orgLabel(seq.targetOrg);
+  return (async () => {
+    const gate = await sftkOrgWriteGate(seq.targetOrg, _orgs);
+    return sftkConfirmDestructive({
+      title: `▶ Run “${seq.name}” — ${profiles.length} step(s) into ${tgtLabel}`,
+      items: profiles.map(p => ({ label: p.name, sub: `${p.tree?.objectType || '?'}${(p.tree?.children || []).length ? ` +${(p.tree.children || []).length} child object(s)` : ''} · ${p.upsert?.field ? `upsert on ${p.upsert.field}` : 'insert'}` })),
+      revOverride: { html: `⚠ A sequence takes <strong>no per-record selection</strong>: every record each deployment matches is written into <strong>${esc(tgtLabel)}</strong>, step after step. Records a step already wrote stay written if a later step fails. ↩ Roll back in History removes what this run inserted.`, needsCheckbox: true },
+      confirmLabel: '▶ Run sequence',
+      production: gate.production ? { label: gate.label || tgtLabel } : null,
     });
-  });
+  })();
 }
 
 async function runSequence(seqId) {
