@@ -562,30 +562,21 @@ const FlowPermissions = (() => {
     await doAssign(flows, permSets);
   }
 
-  function showConfirmModal(flows, permSets) {
-    return new Promise(resolve => {
-      const flowList = flows.map(f => `<li>${esc(f.MasterLabel)}</li>`).join('');
-      const psList   = permSets.map(p => `<li>${esc(p.Label)}</li>`).join('');
-
-      showModal(`
-        <div class="modal-header" style="color:var(--draft-color)">
-          <span class="modal-icon">🔑</span>
-          <h2>Confirm Assignment</h2>
-        </div>
-        <div class="modal-body">
-          <p style="margin:0 0 8px;font-size:12px">Grant <strong>Flow Access</strong> (permission to run these flows) to the selected permission sets:</p>
-          <p style="margin:8px 0 3px;font-weight:700;font-size:12px">Flows (${flows.length}):</p>
-          <ul class="modal-list" style="max-height:90px;overflow-y:auto;font-size:11px">${flowList}</ul>
-          <p style="margin:8px 0 3px;font-weight:700;font-size:12px">Permission sets (${permSets.length}):</p>
-          <ul class="modal-list" style="max-height:70px;overflow-y:auto;font-size:11px">${psList}</ul>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" id="modalCancel">Cancel</button>
-          <button class="btn btn-primary" id="modalConfirm">🔑 Assign</button>
-        </div>
-      `);
-      document.getElementById('modalCancel').addEventListener('click', () => { closeModal(); resolve(false); });
-      document.getElementById('modalConfirm').addEventListener('click', () => { closeModal(); resolve(true); });
+  async function showConfirmModal(flows, permSets) {
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    return sftkConfirmDestructive({
+      title: 'Confirm Assignment',
+      icon: '🔑',
+      items: [
+        ...flows.map(f => ({ label: f.MasterLabel, sub: 'Flow' })),
+        ...permSets.map(p => ({ label: p.Label, sub: 'Permission set' })),
+      ],
+      revOverride: {
+        html: `Grant <strong>Flow Access</strong> (permission to run these flows) to the selected permission sets — ${flows.length} flow(s) → ${permSets.length} permission set(s). Additive: existing object/field/Apex permissions on the sets are left untouched, and the grant can be revoked again any time.`,
+        needsCheckbox: false,
+      },
+      confirmLabel: '🔑 Assign',
+      production: gate.production ? { label: gate.label } : null,
     });
   }
 
@@ -664,6 +655,7 @@ const FlowPermissions = (() => {
     if (summary) summary.innerHTML = sftkCatSm(`Deploying flow access to ${permSets.length} permission set(s)…`);
 
     const flowApiNames = flows.map(f => f.DeveloperName).filter(Boolean);
+    // confirmed-by: onAssign's showConfirmModal (the only caller of doAssign)
     // The write discipline (sftk-write.js): the deploy is the write; the
     // verify is the same SetupEntityAccess read loadData() already performs
     // — never the deploy's own answer (a REST insert here used to return

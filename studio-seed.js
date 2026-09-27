@@ -756,13 +756,27 @@ async function sftkSeedIdDeploy(obj) {
   // This deploys metadata and grants a permission set in EVERY listed org —
   // production, or an org whose type cannot be confirmed, gets the typed
   // confirmation every other seeder write gets (re-review 2026-09-12).
+  // The one confirmation (sftk-confirm.js, campaign 3 phase 2): one combined
+  // dialog naming every guarded org, replacing the per-org confirmTypedProd()
+  // loop. Same fail-closed rule as before — ensureOrgType decides which orgs
+  // are guarded; sftkOrgWriteGate supplies only the display label.
+  const guarded = [];
   for (const orgUrl of orgs) {
     const t = await ensureOrgType(orgUrl);
-    if (t !== 'sandbox' && t !== 'dev') {
-      const okProd = await confirmTypedProd(orgLabel(orgUrl),
-        `deploy the ${sftkIdFieldName()} field on ${obj} and assign the "${sftkIdPermSetName()}" permission set to you`);
-      if (!okProd) { out.errors.push('cancelled — nothing was deployed to any org'); return out; }
-    }
+    if (t !== 'sandbox' && t !== 'dev') { guarded.push(orgUrl); }
+  }
+  if (guarded.length) {
+    const gates = await Promise.all(guarded.map(u => sftkOrgWriteGate(u, _orgs)));
+    const prodLabel = guarded.map((u, i) => gates[i].label || orgLabel(u)).join(', ');
+    const ok = await sftkConfirmDestructive({
+      title: `Deploy the ${sftkIdFieldName()} field on ${obj}`,
+      icon: '🪪',
+      items: [{ label: obj, sub: `and assign the "${sftkIdPermSetName()}" permission set to you` }],
+      revOverride: { html: '🔁 <strong>Reversible</strong> — the field and permission set can be removed again in Setup.', needsCheckbox: false },
+      confirmLabel: 'Deploy',
+      production: { label: prodLabel },
+    });
+    if (!ok) { out.errors.push('cancelled — nothing was deployed to any org'); return out; }
   }
   const { files, packageXml } = sftkIdPackageFiles([obj], '62.0');
   const enc = new TextEncoder();
@@ -778,6 +792,7 @@ async function sftkSeedIdDeploy(obj) {
     // BE the report — one probe read of the field it was meant to create
     // closes the same gap a PATCH accepted-but-unchanged taught elsewhere
     // (a deploy can report success with the field still invisible to FLS).
+    // confirmed-by: sftkSeedIdDeploy's sftkConfirmDestructive above (before this loop).
     const dw = await sftkWriteVerified({
       describe: `${sftkIdFieldName()} on ${obj} in ${label}`,
       write: () => sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: sess.orgUrl, sid: sess.sid, zipBase64 }),
@@ -800,6 +815,7 @@ async function sftkSeedIdDeploy(obj) {
         path: 'services/data/v62.0/' });
       const userId = sftkIdUserFromIdentity(root?.identity);
       if (!psId || !userId) throw new Error('could not resolve the permission set or your user');
+      // confirmed-by: sftkSeedIdDeploy's sftkConfirmDestructive above (before this loop).
       const aw = await sftkWriteVerified({
         describe: `${sftkIdPermSetName()} assignment in ${label}`,
         write: async () => {
@@ -1231,16 +1247,14 @@ async function sftkSeedConfirmAndRun(what) {
     showToast('🔥 Hard delete is disabled against PRODUCTION orgs — switch Delete mode to Recycle Bin.', 'error', 7000);
     return;
   }
-  const prodConfirms = async () => {
-    for (const t of prodTargets) {
-      const summary = cfgOnly
-        ? `deploy ${_seedCfgSel.size} configuration item(s)`
-        : what.wipe
-          ? `wipe ${what.seed ? 'and re-seed ' : ''}${objs.length} object(s)`
-          : `seed ${objs.length} object(s)`;
-      if (!(await confirmTypedProd(orgLabel(t), summary))) return false;
-    }
-    return true;
+  // The one confirmation (sftk-confirm.js, campaign 3 phase 2): one combined
+  // production typed-name step naming every production target, replacing the
+  // confirmTypedProd() loop. sftkOrgWriteGate supplies only the display label —
+  // which targets are guarded is still decided by ensureOrgType above.
+  const prodLabelFor = async () => {
+    if (!prodTargets.length) return '';
+    const gates = await Promise.all(prodTargets.map(t => sftkOrgWriteGate(t, _orgs)));
+    return prodTargets.map((t, i) => gates[i].label || orgLabel(t)).join(', ');
   };
   if (!what.wipe) {
     if (what.seed && !(await sftkSeedRawPiiGate(objs))) return;
@@ -1248,7 +1262,18 @@ async function sftkSeedConfirmAndRun(what) {
     // honest semantic for configuration, but it is still a delete and the
     // user has to know before it happens, not after.
     if (what.config && !(await sftkSeedCfgReplaceGate())) return;
-    if (!(await prodConfirms())) return;
+    if (prodTargets.length) {
+      const summary = cfgOnly ? `deploy ${_seedCfgSel.size} configuration item(s)` : `seed ${objs.length} object(s)`;
+      const ok = await sftkConfirmDestructive({
+        title: '🛑 Confirm writes into production',
+        icon: '🛑',
+        items: [{ label: summary }],
+        revOverride: { html: '⚠ This writes into org(s) treated as PRODUCTION — their type could not be confirmed as sandbox or dev.', needsCheckbox: false },
+        confirmLabel: 'Proceed',
+        production: { label: await prodLabelFor() },
+      });
+      if (!ok) return;
+    }
     sftkSeedRun(what, objs, targets);
     return;
   }
@@ -1263,32 +1288,30 @@ async function sftkSeedConfirmAndRun(what) {
     }
     return `<div style="margin:2px 0"><strong>${esc(orgLabel(t))}</strong> ${prodBadge(t)}: ~${total.toLocaleString()} record(s) across ${objs.length - unknown} object(s)${unknown ? ` <strong>+ ${unknown} object(s) with UNKNOWN count — ALL of their rows will be deleted</strong>` : ''}${_seedDelMode === 'hard' ? ' — <strong>permanently</strong>' : ' → Recycle Bin'}</div>`;
   }).join('');
-  showModal(`
-    <div class="ds-modal-header">🧹 ${what.seed ? 'Reset & Seed' : 'Wipe targets'} — this DELETES data</div>
-    <div class="ds-modal-body" style="font-size:12.5px">
-      <div>You are about to delete the selected objects' rows in:</div>
-      ${lines}
-      <div class="ds-pk-note" style="margin-top:6px">Counts are the loaded totals per object. Master-detail children of deleted records cascade-delete too. ${what.seed ? 'Seeding runs right after each wipe.' : ''}</div>
-      ${(() => {
-        const masked = objs.reduce((n, o) => n + Object.keys(sftkSeedPiiForObject(o)).length, 0);
-        return masked ? `<div class="ds-pk-note" style="margin-top:4px">🎭 ${masked} field(s) will be pseudonymized on the way in — masked, never anonymized.</div>` : '';
-      })()}
-      <div style="margin-top:10px">Type <strong>RESET</strong> to confirm:</div>
-      <input id="dsSeedConfirmInput" class="ds-input" style="margin-top:4px" autocomplete="off" placeholder="RESET">
-    </div>
-    <div class="ds-modal-footer">
-      <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-      <button class="ds-btn ds-btn-danger" id="dsSeedConfirmGo" disabled>🧹 ${what.seed ? 'Reset & Seed' : 'Wipe'} ${targets.length} org(s)</button>
-    </div>`);
-  const inp = eid('dsSeedConfirmInput'), go = eid('dsSeedConfirmGo');
-  inp?.addEventListener('input', () => { if (go) go.disabled = inp.value.trim() !== 'RESET'; });
-  inp?.focus();
-  go?.addEventListener('click', async () => {
-    closeModal();
-    if (what.seed && !(await sftkSeedRawPiiGate(objs))) return;
-    if (!(await prodConfirms())) return;
-    sftkSeedRun(what, objs, targets);
+  const bodyHtml = `
+    <div>You are about to delete the selected objects' rows in:</div>
+    ${lines}
+    <div class="ds-pk-note" style="margin-top:6px">Counts are the loaded totals per object. Master-detail children of deleted records cascade-delete too. ${what.seed ? 'Seeding runs right after each wipe.' : ''}</div>
+    ${(() => {
+      const masked = objs.reduce((n, o) => n + Object.keys(sftkSeedPiiForObject(o)).length, 0);
+      return masked ? `<div class="ds-pk-note" style="margin-top:4px">🎭 ${masked} field(s) will be pseudonymized on the way in — masked, never anonymized.</div>` : '';
+    })()}`;
+  // The RESET word and the production typed-name step now live in the SAME
+  // shared dialog (sftk-confirm.js) — same wording, same typed word.
+  const ok = await sftkConfirmDestructive({
+    title: `🧹 ${what.seed ? 'Reset & Seed' : 'Wipe targets'} — this DELETES data`,
+    icon: '🧹',
+    revOverride: _seedDelMode === 'hard'
+      ? { html: '🔥 <strong>Permanent</strong> — hard-deleted records are purged from the Recycle Bin and cannot be recovered.', needsCheckbox: true }
+      : { html: '♻ <strong>Recoverable</strong> — deleted records go to the Recycle Bin and can be restored for 15 days.', needsCheckbox: false },
+    typedWord: 'RESET',
+    confirmLabel: `🧹 ${what.seed ? 'Reset & Seed' : 'Wipe'} ${targets.length} org(s)`,
+    extraHtml: bodyHtml,
+    production: prodTargets.length ? { label: await prodLabelFor() } : null,
   });
+  if (!ok) return;
+  if (what.seed && !(await sftkSeedRawPiiGate(objs))) return;
+  sftkSeedRun(what, objs, targets);
 }
 
 // ── The run: per target, wipe (children-first) then seed (parents-first) ─
@@ -1645,25 +1668,22 @@ function sftkSeedCfgReplaceGate() {
   if (!settings.length) return Promise.resolve(true);
   const targets = [..._seedTargets];
   const rows = (_seedCfgRows || []).filter(r => settings.includes(r.name));
-  return new Promise(resolve => {
-    showModal(`
-      <div class="ds-modal-header">Custom Settings will be REPLACED</div>
-      <div class="ds-modal-body" style="font-size:12.5px">
-        <div>A Custom Setting is configuration, so it is copied whole: each target's existing rows are <strong>deleted</strong>, then the source's rows are written. What the target ends up with is exactly what the source has — nothing merges.</div>
-        <div style="margin-top:8px;max-height:200px;overflow:auto">
-          ${rows.map(r => `<div style="margin:2px 0"><code>${esc(r.name)}</code> — ${targets.map(t => {
-            const c = r.tgtCounts[t];
-            return `${esc(orgLabel(t))} loses ${c == null ? '<strong>an unknown number of</strong>' : `<strong>${Number(c).toLocaleString()}</strong>`} row(s)`;
-          }).join(' &middot; ')}</div>`).join('') || '<div class="ds-oc-sub">Counts were not loaded — the row totals are UNKNOWN.</div>'}
-        </div>
-        <div class="ds-pk-note" style="margin-top:8px">Custom Setting rows do not go to the Recycle Bin the way records do — treat this as permanent. Untick a setting above if you only meant to deploy metadata.</div>
-      </div>
-      <div class="ds-modal-footer">
-        <button class="ds-btn" data-dsaction="closeModal" id="dsCfgGateNo">Cancel</button>
-        <button class="ds-btn ds-btn-primary" id="dsCfgGateYes">Replace them</button>
-      </div>`);
-    eid('dsCfgGateNo')?.addEventListener('click', () => resolve(false));
-    eid('dsCfgGateYes')?.addEventListener('click', () => { closeModal(); resolve(true); });
+  // The one confirmation (sftk-confirm.js, campaign 3 phase 2) — same wording,
+  // moved into the shared shape.
+  const bodyHtml = `
+    <div>A Custom Setting is configuration, so it is copied whole: each target's existing rows are <strong>deleted</strong>, then the source's rows are written. What the target ends up with is exactly what the source has — nothing merges.</div>
+    <div style="margin-top:8px;max-height:200px;overflow:auto">
+      ${rows.map(r => `<div style="margin:2px 0"><code>${esc(r.name)}</code> — ${targets.map(t => {
+        const c = r.tgtCounts[t];
+        return `${esc(orgLabel(t))} loses ${c == null ? '<strong>an unknown number of</strong>' : `<strong>${Number(c).toLocaleString()}</strong>`} row(s)`;
+      }).join(' &middot; ')}</div>`).join('') || '<div class="ds-oc-sub">Counts were not loaded — the row totals are UNKNOWN.</div>'}
+    </div>`;
+  return sftkConfirmDestructive({
+    title: 'Custom Settings will be REPLACED',
+    icon: '⚠',
+    revOverride: { html: 'Custom Setting rows do not go to the Recycle Bin the way records do — treat this as permanent. Untick a setting above if you only meant to deploy metadata.', needsCheckbox: true },
+    confirmLabel: 'Replace them',
+    extraHtml: bodyHtml,
   });
 }
 
@@ -1854,6 +1874,8 @@ async function sftkSeedCfgDeployMdt(srcSess, tgtSess, types, line) {
   // to BE the report — one re-read PER TYPE (bounded, not per record) of the
   // Developer Names it was meant to carry closes the same gap a PATCH
   // accepted-but-unchanged taught elsewhere.
+  // confirmed-by: sftkSeedConfirmAndRun's sftkConfirmDestructive (RESET or
+  // production step) before sftkSeedRun ever calls into this.
   const dw = await sftkWriteVerified({
     describe: 'Custom Metadata deploy',
     write: () => sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, zipBase64 }),
@@ -1974,6 +1996,9 @@ async function sftkSeedCfgSyncSetting(srcSess, tgtSess, obj, line) {
     // The one write discipline (sftk-write.js): Collections' per-record
     // success used to BE "removed" — one re-read of exactly this slice's
     // Ids confirms the org actually shows them gone.
+    // confirmed-by: sftkSeedConfirmAndRun's sftkConfirmDestructive (RESET or
+    // production step, plus sftkSeedCfgReplaceGate's own delete warning)
+    // before sftkSeedRun ever calls into this.
     const dw = await sftkWriteVerified({
       describe: `${obj} replace`,
       write: () => sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds }),
@@ -2066,6 +2091,8 @@ async function sftkSeedCfgDeployLabels(srcSess, tgtSess, wanted, line) {
   // The one write discipline (sftk-write.js): a deploy job's own "done" used
   // to BE the report — one re-read of the label names it was meant to carry
   // closes the same gap a PATCH accepted-but-unchanged taught elsewhere.
+  // confirmed-by: sftkSeedConfirmAndRun's sftkConfirmDestructive (RESET or
+  // production step) before sftkSeedRun ever calls into this.
   const names = split.deployable.map(r => r.Name);
   const dw = await sftkWriteVerified({
     describe: 'Custom Labels deploy',

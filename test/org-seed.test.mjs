@@ -293,7 +293,9 @@ describe('sftkWipeObject — the delete engine', () => {
 
 describe('the view keeps the safety rails', () => {
   it('wipes demand the typed RESET confirmation with per-target counts', () => {
-    expect(SEED).toContain("inp.value.trim() !== 'RESET'");
+    // Campaign 3 phase 2: the typed word moved onto the shared confirm
+    // dialog's own typedWord mechanism (sftk-confirm.js).
+    expect(SEED).toMatch(/typedWord: 'RESET'/);
     expect(SEED).toContain('this DELETES data');
     expect(SEED).toContain('Master-detail children of deleted records cascade-delete too.');
   });
@@ -344,13 +346,17 @@ describe('production and unknown-count rails on the destructive path', () => {
     expect(SEED).toMatch(/orgTypes\[t\] = await ensureOrgType\(t\)/);
     expect(SEED).toContain("_seedDelMode === 'hard' && prodTargets.length");
     expect(SEED).toContain('🔥 Hard delete is disabled against PRODUCTION orgs');
-    expect(SEED).toMatch(/await confirmTypedProd\(orgLabel\(t\), summary\)/);
+    // Campaign 3 phase 2: the per-org confirmTypedProd() loop became one
+    // combined sftkConfirmDestructive production step (still gated by the
+    // same prodTargets list, computed from ensureOrgType above).
+    expect(SEED).toMatch(/production: \{ label: await prodLabelFor\(\) \}/);
+    expect(SEED).toMatch(/sftkConfirmDestructive\(/);
     // The seed-only path gates raw PII, then the Custom Setting REPLACE
     // (it deletes the target's rows), then confirms prod targets. Order
     // matters: every gate must run before the first write, and prod is the
     // last thing standing between the user and it.
     expect(SEED).toMatch(/if \(!what\.wipe\) \{\s*\n\s*if \(what\.seed && !\(await sftkSeedRawPiiGate\(objs\)\)\) return;/);
-    expect(SEED).toMatch(/if \(what\.config && !\(await sftkSeedCfgReplaceGate\(\)\)\) return;\s*\n\s*if \(!\(await prodConfirms\(\)\)\) return;/);
+    expect(SEED).toMatch(/if \(what\.config && !\(await sftkSeedCfgReplaceGate\(\)\)\) return;\s*\n\s*if \(prodTargets\.length\) \{/);
   });
 
   it('unknown counts stay UNKNOWN in the RESET dialog — never coerced to 0', () => {

@@ -10,10 +10,10 @@ const sftkOrgWriteGate = extractFunction('sftk-confirm.js', 'sftkOrgWriteGate');
 
 describe('sftkOrgWriteGate — which orgs need the typed name', () => {
   const orgs = {
-    'https://prod.my.salesforce.com': { label: 'Prod', orgType: 'production' },
-    'https://sbx.my.salesforce.com': { label: 'Sandbox', orgType: 'sandbox' },
+    'https://prod.my.salesforce.com': { label: 'Prod', orgType: 'production', orgTypeAt: Date.now() },
+    'https://sbx.my.salesforce.com': { label: 'Sandbox', orgType: 'sandbox', orgTypeAt: Date.now() },
     'https://trial.my.salesforce.com': { label: 'Trial', orgType: 'dev', guardAsProd: true },
-    'https://plain.my.salesforce.com': { label: 'Plain', orgType: 'dev' },
+    'https://plain.my.salesforce.com': { label: 'Plain', orgType: 'dev', orgTypeAt: Date.now() },
   };
   it('a production org, by its type', async () => {
     expect(await sftkOrgWriteGate('https://prod.my.salesforce.com', orgs)).toEqual({ production: true, label: 'Prod', why: 'production org' });
@@ -25,10 +25,33 @@ describe('sftkOrgWriteGate — which orgs need the typed name', () => {
     expect((await sftkOrgWriteGate('https://sbx.my.salesforce.com', orgs)).production).toBe(false);
     expect((await sftkOrgWriteGate('https://plain.my.salesforce.com', orgs)).production).toBe(false);
   });
-  it('matches the lightning host to the my.salesforce.com entry; an unknown org is not production and says so', async () => {
+  it('matches the lightning host to the my.salesforce.com entry', async () => {
     expect((await sftkOrgWriteGate('https://prod.lightning.force.com/lightning/page', orgs)).production).toBe(true);
-    expect(await sftkOrgWriteGate('https://nobody.my.salesforce.com', orgs)).toEqual({ production: false, label: 'nobody', why: 'org not remembered' });
     expect((await sftkOrgWriteGate('', orgs)).production).toBe(false);
+  });
+  it('an org it cannot classify is treated as PRODUCTION (fail closed), and says why', async () => {
+    delete globalThis.chrome;   // no background to ask
+    expect(await sftkOrgWriteGate('https://nobody.my.salesforce.com', orgs)).toEqual({ production: true, label: 'nobody', why: 'org type unknown — treated as production' });
+  });
+  it('a stale or missing type is re-read from the org through the background session and stored for both pages', async () => {
+    const stored = [];
+    const orgs2 = { 'https://old.my.salesforce.com': { label: 'Old', orgType: 'production', orgTypeAt: Date.now() - 30 * 864e5 } };
+    globalThis.chrome = { runtime: { sendMessage: (msg, cb) => cb(msg.type === 'GET_ALL_SF_SESSIONS'
+        ? { sessions: [{ orgUrl: 'https://old.my.salesforce.com', sid: 'S', label: 'Old' }] }
+        : { records: [{ IsSandbox: true, OrganizationType: 'Enterprise Edition', TrialExpirationDate: null }] }) },
+      storage: { local: { set: async v => { stored.push(v); }, get: async () => ({}) } } };
+    const r = await sftkOrgWriteGate('https://old.my.salesforce.com', orgs2);
+    expect(r).toEqual({ production: false, label: 'Old', why: 'sandbox' });
+    expect(stored[0].sftk_orgs['https://old.my.salesforce.com'].orgType).toBe('sandbox');
+    delete globalThis.chrome;
+  });
+  it('a fresh remembered type is trusted without asking', async () => {
+    let asked = 0;
+    globalThis.chrome = { runtime: { sendMessage: (msg, cb) => { asked++; cb({}); } }, storage: { local: { set: async () => {}, get: async () => ({}) } } };
+    const orgs3 = { 'https://fresh.my.salesforce.com': { label: 'Fresh', orgType: 'dev', orgTypeAt: Date.now() } };
+    expect((await sftkOrgWriteGate('https://fresh.my.salesforce.com', orgs3)).production).toBe(false);
+    expect(asked).toBe(0);
+    delete globalThis.chrome;
   });
 });
 

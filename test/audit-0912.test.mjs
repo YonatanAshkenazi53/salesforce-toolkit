@@ -191,11 +191,12 @@ describe('7 · ⏻ Flow switches sit behind a typed confirmation', () => {
     expect(noComments(apply)).not.toMatch(/\bconfirm\(/);
   });
 
-  it('the user types OFF or ON, in the panel, before the button enables', () => {
+  it('the user types OFF or ON before the shared dialog’s Go enables', () => {
+    // Campaign 3 phase 2: moved into the shared sftkConfirmDestructive
+    // dialog (sftk-confirm.js) — the typed word is now that dialog's own gate.
     expect(plan).toContain("const word = mode === 'deactivate' ? 'OFF' : 'ON'");
-    expect(plan).toContain('id="depFbConfirm"');
-    expect(plan).toMatch(/id="depFbGo" disabled/);
-    expect(plan).toMatch(/go\.disabled = inp\.value\.trim\(\)\.toUpperCase\(\) !== word/);
+    expect(plan).toContain('sftkConfirmDestructive(');
+    expect(plan).toContain('typedWord: word');
   });
 
   it('the write lives only past the gate', () => {

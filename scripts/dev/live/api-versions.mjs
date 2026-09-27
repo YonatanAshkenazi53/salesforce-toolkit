@@ -32,17 +32,23 @@ export default async function (h) {
   h.log('target set to:', target, '→ select now reads', await h.eval(`document.querySelector('#depAvTarget')?.value`));
   h.log('apply button:', await h.eval(`(() => { const b = document.querySelector('#depAvApply'); return b ? b.textContent.trim() + (b.disabled ? ' (off)' : '') : null; })()`));
   await h.eval(`document.querySelector('#depAvApply')?.click()`);
-  await h.waitFor("!!document.querySelector('#depAvConfirm') || /nothing to|no change|already/i.test(document.querySelector('#depAvApplyOut')?.innerText || '')", 120000, 500);
+  await h.waitFor("!!document.querySelector('#sftkConfirmGo') || /nothing to|no change|already/i.test(document.querySelector('#depAvApplyOut')?.innerText || '')", 120000, 500);
   await h.sleep(500);
-  h.log('CONFIRM:', await dump(h, '#depAvApplyOut', 2500));
+  h.log('CONFIRM:', await dump(h, '#modalBox', 2500));
   await h.shot(h.shots + '/apiver-confirm.png');
-  if (process.env.SCAN_ONLY === '1') { h.log('SCAN_ONLY — cancelling'); await h.eval(`document.querySelector('#depAvNo')?.click()`); return; }
-  const hasInp = await h.eval(`!!document.querySelector('#depAvConfirm')`);
+  if (process.env.SCAN_ONLY === '1') { h.log('SCAN_ONLY — cancelling'); await h.eval(`document.querySelector('#sftkConfirmCancel')?.click()`); return; }
+  const hasInp = await h.eval(`!!document.querySelector('#sftkConfirmWord')`);
   if (!hasInp) { h.log('no confirmation input — stopping'); return; }
-  await h.eval(`(() => { const i = document.querySelector('#depAvConfirm'); i.value = 'CHANGE'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+  await h.eval(`(() => { const i = document.querySelector('#sftkConfirmWord'); i.value = 'CHANGE'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
   await h.sleep(300);
-  h.log('Apply enabled:', await h.eval(`!document.querySelector('#depAvGo2')?.disabled`));
-  await h.eval(`document.querySelector('#depAvGo2')?.click()`);
+  h.log('Apply enabled:', await h.eval(`!document.querySelector('#sftkConfirmGo')?.disabled`));
+  await h.eval(`document.querySelector('#sftkConfirmGo')?.click()`);
+  await h.sleep(400);
+  if (await h.eval(`!!document.querySelector('#sftkConfirmProd')`)) {
+    h.log('TYPED GATE (production):', await dump(h, '#modalBox', 500));
+    await h.eval(`(() => { const i = document.querySelector('#sftkConfirmProd'); i.value = i.placeholder; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    await h.eval(`document.querySelector('#sftkConfirmProdGo')?.click()`);
+  }
   // the last log line is the ℹ summary ("… changed and verified … refused the package …")
   await h.waitFor("/refused the package|changed across/.test(document.querySelector('#depAvLog')?.innerText || '')", 600000, 1500);
   await h.sleep(1000);

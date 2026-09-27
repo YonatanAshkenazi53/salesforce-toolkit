@@ -68,8 +68,15 @@ describe('the per-field push', () => {
   });
 
   it('a production target gets the typed-name confirmation', () => {
-    expect(fn).toMatch(/await ensureOrgType\(profile\.targetOrg\) === 'production'/);
-    expect(fn).toMatch(/confirmTypedProd\(/);
+    // Campaign 3 phase 2: the confirm — including the production typed-name
+    // step — moved to the CALLER (sftkWireDriftCompare's pushBtn), via the
+    // shared sftkConfirmDestructive dialog; this function just says so and
+    // trusts it ran.
+    expect(fn).toMatch(/confirmed-by: sftkWireDriftCompare's pushBtn confirms via sftkConfirmDestructive/);
+    const wire = SCAN.slice(SCAN.indexOf('function sftkWireDriftCompare'), SCAN.indexOf('function _buildAllSessions'));
+    expect(wire).toMatch(/const gate = await sftkOrgWriteGate\(profile\.targetOrg, _orgs\)/);
+    expect(wire).toMatch(/sftkConfirmDestructive\(/);
+    expect(wire).toMatch(/production: gate\.production \? \{ label: gate\.label \} : null/);
   });
 
   it('a failed write reports NOTHING as applied', () => {

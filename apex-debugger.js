@@ -899,6 +899,7 @@ const ApexDebugger = (() => {
         // The write discipline (sftk-write.js): the PATCH is the write, a
         // re-read of the level is the verify. Best-effort (as before): a
         // failure here does not block the trace, but it is no longer silent.
+        // not-destructive: starting / extending / stopping a debug trace (TraceFlag, DebugLevel) is temporary, expires on its own and is undone by the same button — no confirmation, by design
         await sftkWriteVerified({
           describe: 'DebugLevel',
           write: () => _bg({
@@ -921,6 +922,7 @@ const ApexDebugger = (() => {
     // Create it.
     // The write discipline (sftk-write.js): the create is the write, the
     // same existence query used above is the verify.
+    // not-destructive: starting / extending / stopping a debug trace (TraceFlag, DebugLevel) is temporary, expires on its own and is undone by the same button — no confirmation, by design
     const wr = await sftkWriteVerified({
       describe: 'DebugLevel',
       write: () => _bg({
@@ -974,6 +976,7 @@ const ApexDebugger = (() => {
         // to fake a live 60-minute countdown while the org captured nothing.
         // The write discipline (sftk-write.js): the PATCH is the write, a
         // re-read of the flag's own ExpirationDate is the verify.
+        // not-destructive: starting / extending / stopping a debug trace (TraceFlag, DebugLevel) is temporary, expires on its own and is undone by the same button — no confirmation, by design
         const pWr = await sftkWriteVerified({
           describe: 'TraceFlag',
           write: () => _bg({
@@ -996,6 +999,7 @@ const ApexDebugger = (() => {
       } else {
         // Create new. The write discipline (sftk-write.js): the create is
         // the write, a re-read of the new flag by Id is the verify.
+        // not-destructive: starting / extending / stopping a debug trace (TraceFlag, DebugLevel) is temporary, expires on its own and is undone by the same button — no confirmation, by design
         const cWr = await sftkWriteVerified({
           describe: 'TraceFlag',
           write: () => _bg({
@@ -1052,6 +1056,7 @@ const ApexDebugger = (() => {
       // and nulling _traceFlag threw away the only handle for a retry.
       // The write discipline (sftk-write.js): the DELETE is the write, a
       // Tooling re-query of the flag id is the verify — gone = ok.
+      // not-destructive: starting / extending / stopping a debug trace (TraceFlag, DebugLevel) is temporary, expires on its own and is undone by the same button — no confirmation, by design
       const dWr = await sftkWriteVerified({
         describe: 'TraceFlag',
         write: () => _bg({ type: 'SF_TOOLING_DELETE', sobject: 'TraceFlag', id: _traceFlag.Id }),
@@ -3045,30 +3050,33 @@ const ApexDebugger = (() => {
   async function _purgeOld() {
     const btn = document.getElementById('adbgPurgeOldBtn');
     if (!btn) return;
-    if (!btn.dataset.armed) {   // two-click confirm, same pattern as Delete All
-      btn.dataset.armed = '1';
-      btn.dataset.adbgIcon = 'warn';
-      btn.textContent   = 'Confirm purge';
-      btn.classList.add('adbg-btn-armed');
-      setTimeout(() => {
-        if (btn.dataset.armed) { delete btn.dataset.armed; btn.dataset.adbgIcon = 'clock'; btn.textContent = 'Purge >24h'; btn.classList.remove('adbg-btn-armed'); }
-      }, 3500);
-      return;
-    }
-    delete btn.dataset.armed;
-    btn.classList.remove('adbg-btn-armed');
-    btn.disabled = true; btn.textContent = 'Purging…';
+    btn.disabled = true;
     const cutoff = new Date(Date.now() - 86400000).toISOString().replace(/\.\d+Z$/, 'Z');
     const res = await _bg({ type: 'SF_QUERY_ALL', tooling: true,
       query: `SELECT Id FROM ApexLog WHERE StartTime < ${cutoff}` });
     // QA 2026-07-27: a FAILED list query used to read as "0 logs to purge"
     // and report silent success — surface it instead.
     if (res?.error) {
-      btn.disabled = false; btn.dataset.adbgIcon = 'clock'; btn.textContent = 'Purge >24h';
+      btn.disabled = false;
       _showErrorModal('Could not query old logs', res.error);
       return;
     }
     const ids = (res.records || []).map(r => r.Id);
+    btn.disabled = false;
+    if (!ids.length) { _loadLogs(); return; }
+
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    const sure = await sftkConfirmDestructive({
+      title: `Purge ${ids.length} log(s) older than 24h`,
+      items: [{ label: `${ids.length} Apex debug log(s)`, sub: 'older than 24 hours' }],
+      reversibility: 'permanent',
+      confirmLabel: 'Confirm purge',
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!sure) return;
+
+    // confirmed-by: the sftkConfirmDestructive right above
+    btn.disabled = true; btn.textContent = 'Purging…';
     // Deletes run one-by-one and can far exceed the 200 listed — show a busy
     // cat in the list plus a live n/N counter so it never looks frozen.
     const listEl = document.getElementById('adbgLogList');
@@ -3164,6 +3172,9 @@ const ApexDebugger = (() => {
   // each delete request so callers can keep their live n/N counter.
   async function _deleteApexLogsVerified(ids, onProgress) {
     let done = 0;
+    // confirmed-by: every caller confirms first — _deleteLog's, _deleteSelected's,
+    // _deleteAll's, or _purgeOld's sftkConfirmDestructive (each is the only
+    // caller of its own delete path)
     const batch = await sftkWriteVerifiedAll(ids.map(id => ({
       describe: id,
       write: async () => {
@@ -3187,8 +3198,19 @@ const ApexDebugger = (() => {
   }
 
   async function _deleteLog(id) {
+    const meta = _logs.find(l => l.Id === id);
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    const sure = await sftkConfirmDestructive({
+      title: 'Delete log',
+      items: [{ label: (meta && meta.Operation) || id, sub: meta && meta.StartTime ? new Date(meta.StartTime).toLocaleString() : '' }],
+      reversibility: 'permanent',
+      confirmLabel: 'Delete',
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!sure) return;
     const row = document.querySelector(`.adbg-log-row[data-id="${id}"]`);
     if (row) row.style.opacity = '0.35';
+    // confirmed-by: the sftkConfirmDestructive right above
     // _bg never rejects — failures come back as {error}. QA 2026-07-27: the
     // old .catch() was dead code and the row was pruned even when the org
     // still holds the log.
@@ -3216,7 +3238,20 @@ const ApexDebugger = (() => {
     const ids = [..._checked];
     if (!ids.length) return;
     const btn = document.getElementById('adbgDelSelBtn');
+
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    const sure = await sftkConfirmDestructive({
+      title: `Delete ${ids.length} log(s)`,
+      items: ids.map(id => { const l = _logs.find(x => x.Id === id);
+        return { label: (l && l.Operation) || id, sub: l && l.StartTime ? new Date(l.StartTime).toLocaleString() : '' }; }),
+      reversibility: 'permanent',
+      confirmLabel: 'Delete Selected',
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!sure) return;
+
     if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+    // confirmed-by: the sftkConfirmDestructive right above
     // Live n/N progress in the count span — deletes run sequentially.
     // Per-record results ARE checked (QA 2026-07-27): a failed delete keeps
     // its row (and checkbox) so the user can see + retry what's still there.
@@ -3253,25 +3288,17 @@ const ApexDebugger = (() => {
     const btn = document.getElementById('adbgDelAllBtn');
     if (!btn) return;
 
-    // Two-click confirm: first click arms the button; second click executes
-    if (!btn.dataset.armed) {
-      btn.dataset.armed    = '1';
-      btn.dataset.adbgIcon = 'warn';
-      btn.textContent      = 'Confirm Delete All';
-      btn.classList.add('adbg-btn-armed');
-      setTimeout(() => {
-        if (btn.dataset.armed) {
-          delete btn.dataset.armed;
-          btn.dataset.adbgIcon = 'trash'; btn.textContent = 'Delete All';
-          btn.classList.remove('adbg-btn-armed');
-        }
-      }, 3500);
-      return;
-    }
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    const sure = await sftkConfirmDestructive({
+      title: `Delete All — ${_logs.length} log(s)`,
+      items: [{ label: `${_logs.length} Apex debug log(s)` }],
+      reversibility: 'permanent',
+      confirmLabel: 'Delete All',
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!sure) return;
 
-    // Execute
-    delete btn.dataset.armed;
-    btn.classList.remove('adbg-btn-armed');
+    // confirmed-by: the sftkConfirmDestructive right above
     btn.disabled    = true;
     btn.textContent = 'Deleting…';
 

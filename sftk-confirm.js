@@ -173,11 +173,40 @@ async function sftkOrgWriteGate(orgUrl, orgs) {
   const key = u => String(u || '').toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/\.lightning\.force\.com$/, '.my.salesforce.com');
   const want = key(url);
   const hit = Object.entries(all || {}).find(([u]) => key(u) === want);
-  const o = hit ? hit[1] : null;
+  let o = hit ? hit[1] : null;
   const label = (o && o.label) || want.replace(/\.my\.salesforce\.com$/, '');
   if (o && o.guardAsProd === true) return { production: true, label, why: 'guarded as production' };
-  if (o && o.orgType === 'production') return { production: true, label, why: 'production org' };
-  return { production: false, label, why: o ? (o.orgType || 'unknown type') : 'org not remembered' };
+  const fresh = !!(o && o.orgType && (Date.now() - (o.orgTypeAt || 0)) < 7 * 864e5);
+  // Not remembered, or remembered too long ago: ask the org itself, the way
+  // Data Studio's Connected Orgs page does (IsSandbox / trial / Developer
+  // Edition → not production; anything else → production), through the live
+  // session the background already holds for that tab. Stored for both pages.
+  if (!fresh && typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+    try {
+      const ask = msg => new Promise(res => chrome.runtime.sendMessage(msg, r => res(r)));
+      const sessions = (await ask({ type: 'GET_ALL_SF_SESSIONS' }))?.sessions || [];
+      const sess = sessions.find(x => key(x.orgUrl) === want);
+      if (sess && sess.sid) {
+        const q = await ask({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
+          query: 'SELECT IsSandbox, OrganizationType, TrialExpirationDate FROM Organization' });
+        const rec = q && q.records && q.records[0];
+        if (rec) {
+          const type = rec.IsSandbox ? 'sandbox' : (rec.OrganizationType === 'Developer Edition' || rec.TrialExpirationDate) ? 'dev' : 'production';
+          const storeUrl = hit ? hit[0] : sess.orgUrl;
+          all = all || {};
+          all[storeUrl] = { ...(all[storeUrl] || {}), label: (all[storeUrl] && all[storeUrl].label) || sess.label || label, orgType: type, orgTypeAt: Date.now() };
+          try { await chrome.storage.local.set({ sftk_orgs: all }); } catch (_) {}
+          o = all[storeUrl];
+        }
+      }
+    } catch (_) { /* fall through to the fail-closed answer below */ }
+  }
+  if (o && o.orgType === 'production') return { production: true, label: (o.label || label), why: 'production org' };
+  if (o && (o.orgType === 'sandbox' || o.orgType === 'dev')) return { production: false, label: (o.label || label), why: o.orgType };
+  // Fail closed (the project's rule): an org whose type could not be read is
+  // treated as production — the typed name costs a few seconds, a blind
+  // write into production costs a lot more.
+  return { production: true, label, why: 'org type unknown — treated as production' };
 }
 
 if (typeof globalThis !== 'undefined') {

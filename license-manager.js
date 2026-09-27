@@ -395,15 +395,18 @@ const LicenseManager = (() => {
     const isDeactivate = action === 'deactivate';
     const icon  = isDeactivate ? '⛔' : '✅';
     const verb  = isDeactivate ? 'Deactivate' : 'Reactivate';
-    const cls   = isDeactivate ? 'btn-warning' : 'btn-primary';
-    const nameList = selected.map(u =>
-      `<li>${esc(u.Name)} <span class="lm-license-pill">${esc(u.Profile?.UserLicense?.Name || '')}</span></li>`
-    ).join('');
 
-    const ok = await confirmModal(icon,
-      `${verb} ${selected.length} user${selected.length > 1 ? 's' : ''}?`,
-      `<ul class="modal-list">${nameList}</ul>`,
-      verb, cls);
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    const ok = await sftkConfirmDestructive({
+      title: `${verb} ${selected.length} user${selected.length > 1 ? 's' : ''}?`,
+      icon,
+      items: selected.map(u => ({ label: u.Name, sub: u.Profile?.UserLicense?.Name || '' })),
+      revOverride: { html: isDeactivate
+        ? '⛔ Deactivated users immediately lose the ability to log in. Reversible any time with ✅ Reactivate.'
+        : '✅ Reactivated users can log in again immediately.', needsCheckbox: false },
+      confirmLabel: verb,
+      production: gate.production ? { label: gate.label } : null,
+    });
     if (!ok) return;
 
     // Progress: the sequential per-user PATCH loop can take many seconds
@@ -417,6 +420,7 @@ const LicenseManager = (() => {
     let doneCount = 0;
     let i = 0;
     const wantActive = !isDeactivate;
+    // confirmed-by: the sftkConfirmDestructive above (the only caller of this batch)
     // The write discipline (sftk-write.js): one PATCH per user, ONE re-read
     // for the whole batch (verifyAll) — User.IsActive by Id, never the
     // PATCH's own answer.
@@ -505,7 +509,7 @@ const LicenseManager = (() => {
     showChangeLicenseModal(selected);
   }
 
-  function showChangeLicenseModal(selected) {
+  async function showChangeLicenseModal(selected) {
     // Group profiles by license name
     const byLicense = {};
     for (const p of allProfiles) {
@@ -521,46 +525,6 @@ const LicenseManager = (() => {
         profileOptions.push({ id: p.Id, name: p.Name, license: lic });
       }
     }
-
-    const nameList = selected.map(u =>
-      `<li>${esc(u.Name)} <span class="lm-license-pill">${esc(u.Profile?.UserLicense?.Name || '—')}</span></li>`
-    ).join('');
-
-    showLmModal(`
-      <div class="modal-header" style="color:var(--draft-color)">
-        <span class="modal-icon">🔑</span>
-        <h2>Change License / Profile</h2>
-      </div>
-      <div class="modal-body">
-        <p style="margin-bottom:8px;font-size:12px">
-          Select the new <strong>Profile</strong> (the license follows the profile). Applies to:
-        </p>
-        <ul class="modal-list" style="margin-bottom:12px">${nameList}</ul>
-        <label class="uc-picker-label" style="margin-bottom:4px">Target Profile</label>
-
-        <!-- Custom searchable profile picker -->
-        <div class="lm-pp-wrap" id="lmProfilePicker">
-          <div class="lm-pp-search-row">
-            <span class="lm-pp-search-icon">🔍</span>
-            <input class="lm-pp-search" id="lmProfileSearch" type="text"
-                   placeholder="Search profiles or licenses…" autocomplete="off" spellcheck="false">
-          </div>
-          <div class="lm-pp-list" id="lmProfileList"></div>
-        </div>
-        <!-- Hidden input carries the selected profile id -->
-        <input type="hidden" id="lmProfileSelect" value="">
-
-        <div id="lmLicensePreview" class="lm-license-preview" style="display:none"></div>
-        <div class="lm-change-warn">
-          ⚠️ Make sure sufficient licenses are available. Users may lose access to features tied to their current license.
-        </div>
-        <div id="lmApplyProgress" class="uc-loading" style="display:none"></div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" id="lmModalCancel">Cancel</button>
-        <button class="btn btn-primary" id="lmModalConfirm" disabled>Apply</button>
-      </div>
-    `);
 
     // ── Picker logic ──────────────────────────────────────────
     let selectedProfileId  = '';
@@ -601,111 +565,113 @@ const LicenseManager = (() => {
         row.addEventListener('click', () => {
           selectedProfileId   = row.dataset.id;
           selectedLicenseName = row.dataset.license;
-          document.getElementById('lmProfileSelect').value = selectedProfileId;
-          // Update preview + button
+          const hidden = document.getElementById('lmProfileSelect');
+          if (hidden) hidden.value = selectedProfileId;
+          // Update preview + the shared dialog's Go button
           const preview = document.getElementById('lmLicensePreview');
-          const btn     = document.getElementById('lmModalConfirm');
+          const go = document.getElementById('sftkConfirmGo');
           if (preview) { preview.textContent = `New license: ${selectedLicenseName}`; preview.style.display = ''; }
-          if (btn)     btn.disabled = false;
+          if (go)      go.disabled = false;
           // Re-render to highlight selection
           renderProfileList(document.getElementById('lmProfileSearch')?.value || '');
         });
       });
     }
 
-    renderProfileList('');
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    const sure = await sftkConfirmDestructive({
+      title: 'Change License / Profile',
+      icon: '🔑',
+      items: selected.map(u => ({ label: u.Name, sub: u.Profile?.UserLicense?.Name || '—' })),
+      revOverride: { html: '⚠️ Make sure sufficient licenses are available. Users may lose access to features tied to their current license. Select the new Profile below (the license follows the profile) — this can be changed back any time.', needsCheckbox: false },
+      confirmLabel: 'Apply',
+      extraHtml: `
+        <label class="uc-picker-label" style="margin-bottom:4px">Target Profile</label>
+        <!-- Custom searchable profile picker -->
+        <div class="lm-pp-wrap" id="lmProfilePicker">
+          <div class="lm-pp-search-row">
+            <span class="lm-pp-search-icon">🔍</span>
+            <input class="lm-pp-search" id="lmProfileSearch" type="text"
+                   placeholder="Search profiles or licenses…" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="lm-pp-list" id="lmProfileList"></div>
+        </div>
+        <!-- Hidden input carries the selected profile id -->
+        <input type="hidden" id="lmProfileSelect" value="">
+        <div id="lmLicensePreview" class="lm-license-preview" style="display:none"></div>`,
+      onRender: () => {
+        // Nothing is selected yet — the Go button stays off until a profile is chosen.
+        const go = document.getElementById('sftkConfirmGo');
+        if (go) go.disabled = true;
+        renderProfileList('');
+        document.getElementById('lmProfileSearch')?.addEventListener('input', e => {
+          renderProfileList(e.target.value);
+        });
+      },
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!sure || !selectedProfileId) return;
+    const profileId = selectedProfileId;
 
-    document.getElementById('lmProfileSearch').addEventListener('input', e => {
-      renderProfileList(e.target.value);
+    // Progress: sequential per-user PATCH loop — the confirm modal is closed
+    // by now, so progress shows in the page's own result area.
+    const resultEl = document.getElementById('lmResult');
+    if (resultEl) { resultEl.className = 'uc-loading'; resultEl.style.display = ''; }
+    const errors = [];
+    const errorHints = new Set();
+    let doneCount = 0;
+    let i = 0;
+    // confirmed-by: the sftkConfirmDestructive above (the only caller)
+    // The write discipline (sftk-write.js): one PATCH per user, ONE
+    // re-read for the whole batch (verifyAll) — User.ProfileId by Id,
+    // never the PATCH's own answer.
+    const batch = await sftkWriteVerifiedAll(selected.map(u => ({
+      describe: u.Name,
+      write: () => {
+        i++;
+        if (resultEl) resultEl.innerHTML = sftkCatSm(`Applying ${i}/${selected.length}…`);
+        return bg({
+          type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+          path: `services/data/v62.0/sobjects/User/${u.Id}`,
+          body: { ProfileId: profileId }
+        });
+      },
+    })), {
+      verifyAll: async results => {
+        const ids = selected.filter((u, idx) => results[idx] && results[idx].accepted).map(u => u.Id);
+        if (!ids.length) return [];
+        const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
+          query: `SELECT Id, ProfileId FROM User WHERE Id IN (${ids.map(x => `'${x}'`).join(',')})` });
+        if (!q || q.error) return null;
+        const byId = new Map((q.records || []).map(r => [r.Id, r.ProfileId]));
+        return selected.map(u => ({ ok: byId.get(u.Id) === profileId, text: null }));
+      },
+    });
+    selected.forEach((u, idx) => {
+      const r = batch.results[idx];
+      if (r.ok) { doneCount++; return; }
+      const fe = lmFriendly((r.raw && r.raw.error) || r.text || 'not confirmed on re-read');
+      errors.push(`${u.Name}: ${fe.message}`);
+      if (fe.hint) errorHints.add(fe.hint);
     });
 
-    document.getElementById('lmModalCancel').addEventListener('click', closeLmModal);
-
-    document.getElementById('lmModalConfirm').addEventListener('click', async () => {
-      const profileId = document.getElementById('lmProfileSelect').value;
-      if (!profileId) return;
-      const btn = document.getElementById('lmModalConfirm');
-      btn.disabled = true;
-
-      // Progress: sequential per-user PATCH loop, counted in the modal body
-      const progEl = document.getElementById('lmApplyProgress');
-      const errors = [];
-      const errorHints = new Set();
-      let doneCount = 0;
-      let i = 0;
-      // The write discipline (sftk-write.js): one PATCH per user, ONE
-      // re-read for the whole batch (verifyAll) — User.ProfileId by Id,
-      // never the PATCH's own answer.
-      const batch = await sftkWriteVerifiedAll(selected.map(u => ({
-        describe: u.Name,
-        write: () => {
-          i++;
-          if (progEl) {
-            progEl.innerHTML = sftkCatSm(`Applying ${i}/${selected.length}…`);
-            progEl.style.display = '';
-          }
-          return bg({
-            type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
-            path: `services/data/v62.0/sobjects/User/${u.Id}`,
-            body: { ProfileId: profileId }
-          });
-        },
-      })), {
-        verifyAll: async results => {
-          const ids = selected.filter((u, idx) => results[idx] && results[idx].accepted).map(u => u.Id);
-          if (!ids.length) return [];
-          const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
-            query: `SELECT Id, ProfileId FROM User WHERE Id IN (${ids.map(x => `'${x}'`).join(',')})` });
-          if (!q || q.error) return null;
-          const byId = new Map((q.records || []).map(r => [r.Id, r.ProfileId]));
-          return selected.map(u => ({ ok: byId.get(u.Id) === profileId, text: null }));
-        },
-      });
-      selected.forEach((u, idx) => {
-        const r = batch.results[idx];
-        if (r.ok) { doneCount++; return; }
-        const fe = lmFriendly((r.raw && r.raw.error) || r.text || 'not confirmed on re-read');
-        errors.push(`${u.Name}: ${fe.message}`);
-        if (fe.hint) errorHints.add(fe.hint);
-      });
-
-      closeLmModal();
-
-      // Build result first — doSearch() hides #lmResult, so refresh then show
-      let resultMsg = '';
-      let isErr = false;
-      if (errors.length === 0) {
-        resultMsg = `✅ License/Profile updated for ${doneCount} user${doneCount > 1 ? 's' : ''}.`;
-      } else {
-        const errHtml  = errors.map(e => `<li>${esc(e)}</li>`).join('');
-        const hintHtml = [...errorHints].map(h => `<div style="margin-top:4px;font-size:11px">💡 ${esc(h)}</div>`).join('');
-        resultMsg = `⚠️ ${doneCount} succeeded, ${errors.length} failed:<ul style="margin-top:4px;padding-left:14px">${errHtml}</ul>${hintHtml}`;
-        isErr = true;
-      }
-      await doSearch();
-      showLmResult(resultMsg, isErr);
-    });
+    // Build result first — doSearch() hides #lmResult, so refresh then show
+    let resultMsg = '';
+    let isErr = false;
+    if (errors.length === 0) {
+      resultMsg = `✅ License/Profile updated for ${doneCount} user${doneCount > 1 ? 's' : ''}.`;
+    } else {
+      const errHtml  = errors.map(e => `<li>${esc(e)}</li>`).join('');
+      const hintHtml = [...errorHints].map(h => `<div style="margin-top:4px;font-size:11px">💡 ${esc(h)}</div>`).join('');
+      resultMsg = `⚠️ ${doneCount} succeeded, ${errors.length} failed:<ul style="margin-top:4px;padding-left:14px">${errHtml}</ul>${hintHtml}`;
+      isErr = true;
+    }
+    if (resultEl) resultEl.style.display = 'none';
+    await doSearch();
+    showLmResult(resultMsg, isErr);
   }
 
   // ── Modal helpers ────────────────────────────────────────
-  function confirmModal(icon, title, bodyHtml, confirmText, confirmClass) {
-    return new Promise(resolve => {
-      showLmModal(`
-        <div class="modal-header modal-warn">
-          <span class="modal-icon">${icon}</span>
-          <h2>${title}</h2>
-        </div>
-        <div class="modal-body">${bodyHtml}</div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" id="lmModalCancel">Cancel</button>
-          <button class="btn ${confirmClass}" id="lmModalConfirm">${confirmText}</button>
-        </div>
-      `);
-      document.getElementById('lmModalCancel').addEventListener('click', () => { closeLmModal(); resolve(false); });
-      document.getElementById('lmModalConfirm').addEventListener('click', () => { closeLmModal(); resolve(true); });
-    });
-  }
-
   function showLmModal(html) {
     const overlay = document.getElementById('modalOverlay');
     document.getElementById('modalBox').innerHTML = html;

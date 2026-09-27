@@ -42,26 +42,30 @@ export default async function (h) {
   if (mode === 'matrix') return;
 
   if (mode === 'sync') {
+    // Campaign 3 phase 2: the plan's Run became the shared confirm dialog's
+    // own #sftkConfirmGo footer button; Cancel is #sftkConfirmCancel; the
+    // typed production step is #sftkConfirmProd / #sftkConfirmProdCancel.
+    // Once confirmed, a SEPARATE progress modal (#dsPkSyncClose) shows the run.
     await h.eval(`document.querySelector('#dsPkSyncBtn')?.click()`);
-    await h.waitFor("!!document.querySelector('#dsPkSyncRun') || !!document.querySelector('.ds-toast')", 60000, 500);
+    await h.waitFor("!!document.querySelector('#sftkConfirmGo') || !!document.querySelector('.ds-toast')", 60000, 500);
     await h.sleep(800);
     if (await h.eval(`!!document.querySelector('#dsPkSyncSrc')`)) h.log('source:', await setSelect(h, '#dsPkSyncSrc', 'trailheads5'));
     await h.sleep(800);
     h.log('PLAN:', await dump(h, '#dsModalBox', 3000));
-    await h.waitFor("!document.querySelector('#dsPkSyncRun')?.disabled || /nothing to|no change|identical/i.test(document.querySelector('#dsModalBox')?.innerText || '')", 180000, 1000);
+    await h.waitFor("!document.querySelector('#sftkConfirmGo')?.disabled || /nothing to|no change|identical/i.test(document.querySelector('#dsModalBox')?.innerText || '')", 180000, 1000);
     h.log('AUTO NOTE:', await dump(h, '#dsPkSyncAutoNote', 600));
     h.log('ops:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.ds-sync-one, .ds-sync-op')].map(c => (c.dataset.op || '?') + ':' + (c.dataset.val || '') + (c.checked ? '*' : '') + (c.disabled ? '(off)' : ''))`)));
-    h.log('Run:', await h.eval(`(() => { const b = document.querySelector('#dsPkSyncRun'); return b ? b.textContent.trim() + (b.disabled ? ' (off)' : '') : 'missing'; })()`));
+    h.log('Run:', await h.eval(`(() => { const b = document.querySelector('#sftkConfirmGo'); return b ? b.textContent.trim() + (b.disabled ? ' (off)' : '') : 'missing'; })()`));
     await h.shot(h.shots + '/pk-sync-plan.png');
-    if (process.env.SCAN_ONLY === '1') { h.log('SCAN_ONLY — cancelling'); await h.eval(`document.querySelector('[data-dsaction="closeModal"]')?.click()`); return; }
-    await h.eval(`(() => { window.__mxOld = document.querySelector('.ds-pk-mx-row'); document.querySelector('#dsPkSyncRun')?.click(); return true; })()`);
+    if (process.env.SCAN_ONLY === '1') { h.log('SCAN_ONLY — cancelling'); await h.eval(`document.querySelector('#sftkConfirmCancel')?.click()`); return; }
+    await h.eval(`(() => { window.__mxOld = document.querySelector('.ds-pk-mx-row'); document.querySelector('#sftkConfirmGo')?.click(); return true; })()`);
     await h.sleep(1500);
-    if (await h.eval(`!!document.querySelector('#dsProdConfirmInput')`)) { h.log('TYPED GATE:', await dump(h, '#dsModalBox', 500)); await h.eval(`document.querySelector('#dsProdCancel')?.click()`); return; }
+    if (await h.eval(`!!document.querySelector('#sftkConfirmProd')`)) { h.log('TYPED GATE:', await dump(h, '#dsModalBox', 500)); await h.eval(`document.querySelector('#sftkConfirmProdCancel')?.click()`); return; }
     await h.waitFor("(document.querySelector('.ds-pk-mx-row') && document.querySelector('.ds-pk-mx-row') !== window.__mxOld) || /done|finished|applied|failed/i.test((document.querySelector('#dsModalBox')?.innerText || '') + [...document.querySelectorAll('.ds-toast')].map(t => t.innerText).join(' '))", 300000, 1000);
     await h.sleep(3000);
     h.log('MODAL after:', await dump(h, '#dsModalBox', 2000));
     h.log('TOASTS:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.ds-toast')].map(t => t.innerText.replace(/\\s+/g, ' ').slice(0, 300))`)));
-    await h.eval(`document.querySelector('[data-dsaction="closeModal"]')?.click()`); await h.sleep(500);
+    await h.eval(`document.querySelector('#dsPkSyncClose')?.click()`); await h.sleep(500);
     await h.eval(`document.querySelector('#dsPkCmpLoad')?.click()`);
     await h.waitFor("document.querySelectorAll('.ds-pk-mx-row').length > 1", 180000, 1000); await h.sleep(2500);
     const m2 = await matrix(h); h.log('MATRIX after:', JSON.stringify(m2.rows));
@@ -74,20 +78,23 @@ export default async function (h) {
     await h.eval(`(() => { const c = document.querySelector('.ds-pk-mx-valchk[data-val=' + JSON.stringify(${JSON.stringify(value)}) + ']'); if (c && !c.checked) { c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); } return !!c; })()`);
     h.log('orgs in matrix:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.ds-pk-mx-orgchk')].map(c => c.dataset.org + (c.checked ? '*' : '') + (c.disabled ? '(off)' : ''))`)));
     await h.eval(`document.querySelector('#dsPkBulkDeact')?.click()`);
-    await h.waitFor("!!document.querySelector('#dsPkBulkGo') || !!document.querySelector('.ds-toast')", 60000, 500);
+    // Campaign 3 phase 2: Apply became the shared confirm dialog's own
+    // #sftkConfirmGo footer button; Cancel is #sftkConfirmCancel; the typed
+    // production step is #sftkConfirmProd / #sftkConfirmProdCancel.
+    await h.waitFor("!!document.querySelector('#sftkConfirmGo') || !!document.querySelector('.ds-toast')", 60000, 500);
     await h.sleep(800);
     h.log('BULK WIZARD:', await dump(h, '#dsModalBox', 1800));
-    h.log('Apply before the check:', await h.eval(`(() => { const b = document.querySelector('#dsPkBulkGo'); return b ? b.textContent.trim() + (b.disabled ? ' (off)' : ' (ENABLED)') : 'missing'; })()`));
+    h.log('Apply before the check:', await h.eval(`(() => { const b = document.querySelector('#sftkConfirmGo'); return b ? b.textContent.trim() + (b.disabled ? ' (off)' : ' (ENABLED)') : 'missing'; })()`));
     // Apply opens only once every org's automation check answered
-    await h.waitFor("!document.querySelector('#dsPkBulkGo')?.disabled", 240000, 1000);
+    await h.waitFor("!document.querySelector('#sftkConfirmGo')?.disabled", 240000, 1000);
     h.log('IMPACT:', await dump(h, '#dsPkBulkImpact', 800));
-    h.log('Apply after the check:', await h.eval(`document.querySelector('#dsPkBulkGo')?.textContent.trim()`));
+    h.log('Apply after the check:', await h.eval(`document.querySelector('#sftkConfirmGo')?.textContent.trim()`));
     const fix = (process.env.FIX || 'skip').toLowerCase();
     await h.eval(`(() => { const r = document.querySelector('input[name="dsPkBulkFix"][value=' + JSON.stringify(${JSON.stringify(fix)}) + ']'); if (r) { r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); } return !!r; })()`);
-    if (process.env.SCAN_ONLY === '1') { h.log('SCAN_ONLY — cancelling'); await h.eval(`document.querySelector('[data-dsaction="closeModal"]')?.click()`); return; }
-    await h.eval(`document.querySelector('#dsPkBulkGo')?.click()`);
+    if (process.env.SCAN_ONLY === '1') { h.log('SCAN_ONLY — cancelling'); await h.eval(`document.querySelector('#sftkConfirmCancel')?.click()`); return; }
+    await h.eval(`document.querySelector('#sftkConfirmGo')?.click()`);
     await h.sleep(1500);
-    if (await h.eval(`!!document.querySelector('#dsProdConfirmInput')`)) { h.log('TYPED GATE:', await dump(h, '#dsModalBox', 500)); await h.eval(`document.querySelector('#dsProdCancel')?.click()`); return; }
+    if (await h.eval(`!!document.querySelector('#sftkConfirmProd')`)) { h.log('TYPED GATE:', await dump(h, '#dsModalBox', 500)); await h.eval(`document.querySelector('#sftkConfirmProdCancel')?.click()`); return; }
     await h.waitFor("/Done|finished/i.test(document.querySelector('#dsPkBulkResult')?.innerText || '')", 300000, 1000);
     await h.sleep(1000);
     h.log('BULK RESULT:', await dump(h, '#dsPkBulkResult', 2000));

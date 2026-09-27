@@ -48,6 +48,8 @@ DELETE_FIELD), copy-perms, licenses, flow-access, lightning-pages. Expect identi
 
 ## Phase 2 — one confirmation, both pages
 
+**DONE 2026-09-27** (commit follows): `sftk-confirm.js` renders in both pages (`typedWord`, `production: { label }` as a second step in the same dialog, `icon`), `sftkOrgWriteGate` classifies an org through the background when it is not remembered and fails closed (unknown = production); `test/confirm-discipline.test.mjs` at baseline zero (`// confirmed-by:` for dialogs living in callers, `// not-destructive:` for the five debug-trace writes); every popup dialog and every Data Studio wizard moved onto it by two Sonnet sweeps, Fable review; the typed production step reached live (sequence run into a guarded target, wrong name refused).
+
 **Problem.** `sftk-confirm.js` (checkbox acknowledgement) is popup-only; Data Studio uses
 `showModal` and each tool writes its own dialog (Picklist Manager, Sequences, Copy Permissions
 had none until this week). The typed production gate exists only in Data Studio

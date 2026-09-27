@@ -63,13 +63,14 @@ export default async function (h) {
   const histBefore = await h.eval('_history.length');
   await h.click('#dsRecRunBtn');
   await h.sleep(2500);
-  // confirms: the combined plan modal (Proceed), then possibly typed (dev org → none expected)
+  // confirms: the combined plan modal (Proceed, now sftkConfirmDestructive —
+  // campaign 3 phase 2), then possibly typed (dev org → none expected)
   for (let i = 0; i < 4; i++) {
     const m = await h.modalText(900);
     if (!m) break;
     h.log('MODAL:', m);
-    if (await h.eval(`!!document.querySelector('#dsProdConfirmInput')`)) { h.log('typed gate shown — org is dev, unexpected'); break; }
-    const ok = await h.eval(`(() => { const b = document.querySelector('#dsRecDelOk') || [...document.querySelectorAll('#dsModalBox button')].find(b => /proceed|deploy|confirm|ok/i.test(b.textContent) && !b.disabled); if (b) { b.click(); return b.textContent.trim(); } return null; })()`);
+    if (await h.eval(`!!document.querySelector('#sftkConfirmProd')`)) { h.log('typed gate shown — org is dev, unexpected'); break; }
+    const ok = await h.eval(`(() => { const b = document.querySelector('#sftkConfirmGo') || document.querySelector('#dsRecDelOk') || [...document.querySelectorAll('#dsModalBox button')].find(b => /proceed|deploy|confirm|ok/i.test(b.textContent) && !b.disabled); if (b) { b.click(); return b.textContent.trim(); } return null; })()`);
     h.log('clicked:', ok);
     await h.sleep(2000);
   }

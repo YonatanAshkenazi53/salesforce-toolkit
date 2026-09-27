@@ -2975,35 +2975,40 @@ const DependencyMap = (() => {
         perOrg.flatMap(x => x.plan.skipped.map(k => `${x.org.label}: ${k.apiName} (${k.why})`)).join(' · ') || 'No eligible flow in the selection.');
       return;
     }
-    // Typed confirmation, IN the panel — the same gate as ⚙ API versions'
-    // CHANGE. A one-click OK on a browser confirm() was all that stood
-    // between the user and stopping production automation (audit 2026-09-12).
+    // Typed confirmation — the same gate as ⚙ API versions' CHANGE. A
+    // one-click OK on a browser confirm() was all that stood between the
+    // user and stopping production automation (audit 2026-09-12).
     const orgN = perOrg.filter(x => x.plan.jobs.length).length;
     const word = mode === 'deactivate' ? 'OFF' : 'ON';
     const skips = perOrg.flatMap(x => x.plan.skipped.map(k => `${x.org.label}: ${k.apiName} (${k.why})`));
-    out.innerHTML = `
-      <div class="dep-blast-sec" style="border-left:3px solid var(--warn,#d97706);padding-left:8px">
-        <div style="font-weight:700">Switch ${word} ${totalJobs} flow(s) in ${orgN === 1 ? 'this org' : `${orgN} org(s)`}?</div>
-        <div style="margin-top:4px;font-size:12px">${mode === 'deactivate'
-          ? 'Their automation <strong>stops for EVERYONE</strong> in this org until switched back on. Records created while off are never retroactively processed. Active versions are remembered, so \u25b6 Activate restores exactly them.'
-          : 'Each flow is switched on at the version listed below, in every ticked org.'}</div>
-        <div style="margin-top:6px;max-height:170px;overflow:auto;font-size:11.5px">
-          ${perOrg.filter(x => x.plan.jobs.length).map(x => `
-            <div style="margin:2px 0"><strong>${escHtml(x.org.label)}</strong>: ${x.plan.jobs.map(j => `${escHtml(j.label)} — ${escHtml(j.from)}`).join(' · ')}</div>`).join('')}
-        </div>
-        ${skips.length ? `<div style="margin-top:4px;font-size:11.5px;opacity:.8">Skipped: ${escHtml(skips.join(', '))}</div>` : ''}
-        <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <span style="font-size:12px">Type <code>${word}</code> to confirm:</span>
-          <input id="depFbConfirm" style="width:90px;padding:2px 4px" autocomplete="off">
-          <button class="btn-small" id="depFbGo" disabled>\u23fb Switch ${word}</button>
-          <button class="btn-small" id="depFbNo">Cancel</button>
-        </div>
-      </div>`;
-    const inp = out.querySelector('#depFbConfirm');
-    const go = out.querySelector('#depFbGo');
-    inp.addEventListener('input', () => { go.disabled = inp.value.trim().toUpperCase() !== word; });
-    out.querySelector('#depFbNo').addEventListener('click', () => { out.innerHTML = ''; });
-    go.addEventListener('click', () => applyFlowBulk(out, mode, perOrg));
+
+    // Several orgs can be ticked at once — the production step fires if ANY
+    // of them is treated as production.
+    let gateLabel = null;
+    for (const { org } of perOrg) {
+      const g = await sftkOrgWriteGate(org.orgUrl);
+      if (g.production) { gateLabel = g.label; break; }
+    }
+
+    const sure = await sftkConfirmDestructive({
+      title: `Switch ${word} ${totalJobs} flow(s) in ${orgN === 1 ? 'this org' : `${orgN} org(s)`}?`,
+      icon: '⏻',
+      items: perOrg.filter(x => x.plan.jobs.length).flatMap(x => x.plan.jobs.map(j => ({
+        label: `${x.org.label}: ${j.label}`, sub: j.from,
+      }))),
+      revOverride: {
+        html: mode === 'deactivate'
+          ? 'Their automation <strong>stops for EVERYONE</strong> in this org until switched back on. Records created while off are never retroactively processed. Active versions are remembered, so ▶ Activate restores exactly them.'
+          : 'Each flow is switched on at the version listed below, in every ticked org.',
+        needsCheckbox: false,
+      },
+      confirmLabel: `⏻ Switch ${word}`,
+      typedWord: word,
+      extraHtml: skips.length ? `<div style="margin-top:4px;font-size:11.5px;opacity:.8">Skipped: ${escHtml(skips.join(', '))}</div>` : '',
+      production: gateLabel ? { label: gateLabel } : null,
+    });
+    if (!sure) { out.innerHTML = ''; return; }
+    await applyFlowBulk(out, mode, perOrg);
   }
 
   // The switch itself, org at a time — only ever reached through the typed
@@ -3021,6 +3026,8 @@ const DependencyMap = (() => {
       // reported as the switch).
       const wantOn = mode !== 'deactivate';
       let i = 0;
+      // confirmed-by: the ⏻ Switch OFF/ON sftkConfirmDestructive in
+      // runFlowBulk (the only caller of applyFlowBulk)
       const batch = await sftkWriteVerifiedAll(plan.jobs.map(j => ({
         describe: j.label,
         write: async () => {
@@ -3427,7 +3434,7 @@ const DependencyMap = (() => {
   // version and, for an active flow, activates it — the previous version
   // becomes Obsolete. Everything in that sentence is stated before anything
   // is written, per org, with the exact from→to per flow.
-  function confirmApiVerChange(out) {
+  async function confirmApiVerChange(out) {
     const st = _avState;
     if (!st) return;
     const target = out.querySelector('#depAvTarget')?.value || '';
@@ -3454,35 +3461,36 @@ const DependencyMap = (() => {
       return;
     }
 
-    box.innerHTML = `
-      <div class="dep-blast-sec" style="border-left:3px solid var(--warn,#d97706);padding-left:8px">
-        <div style="font-weight:700">Change ${writes} flow version(s) to API ${escHtml(target)}?</div>
-        <div style="margin-top:4px;font-size:12px">
-          This <strong>writes to ${new Set(plans.flatMap(p => p.plan.applicable.map(a => a.orgKey))).size} org(s)</strong>. Each change deploys a <strong>new version</strong> of the flow. Where the flow is Active, the tool then <strong>activates the new version</strong> and re-reads the org to confirm what is running (the previous one becomes Obsolete once the new one is active) — if the activation is refused, the previous version stays active and the result says so. Salesforce documents that <strong>flow behaviour can differ between API versions</strong> — this is a functional change, not a label.
-        </div>
-        <div style="margin-top:4px;font-size:11.5px;opacity:.85">
-          Each org is deployed as <strong>one package</strong>, all-or-nothing: if any flow in an org is rejected, none of that org's flows change. Other orgs are unaffected either way.
-        </div>
-        <div style="margin-top:6px;max-height:170px;overflow:auto;font-size:11.5px">
-          ${plans.filter(p => p.plan.applicable.length).map(p => `
-            <div style="margin:2px 0"><code>${escHtml(p.apiName)}</code> — ${p.plan.applicable
-              .map(a => `${escHtml(orgLbl(a.orgKey))} ${escHtml(a.from || '?')}→${escHtml(a.to)}${a.status === 'Active' ? ' <strong>(active)</strong>' : ` (${escHtml(a.status || 'draft')})`}`)
-              .join(' · ')}</div>`).join('')}
-        </div>
+    const orgKeys = new Set(plans.flatMap(p => p.plan.applicable.map(a => a.orgKey)));
+    // Several orgs can be touched by one Apply — the production step fires
+    // if ANY of them is treated as production.
+    let gateLabel = null;
+    for (const key of orgKeys) {
+      const org = st.orgs.find(o => o.key === key) || {};
+      const g = await sftkOrgWriteGate(org.orgUrl);
+      if (g.production) { gateLabel = g.label; break; }
+    }
+
+    const sure = await sftkConfirmDestructive({
+      title: `Change ${writes} flow version(s) to API ${target}?`,
+      icon: '⚙',
+      items: plans.filter(p => p.plan.applicable.length).flatMap(p => p.plan.applicable.map(a => ({
+        label: `${p.apiName} — ${orgLbl(a.orgKey)}`,
+        sub: `${a.from || '?'}→${a.to}${a.status === 'Active' ? ' (active)' : ` (${a.status || 'draft'})`}`,
+      }))),
+      revOverride: {
+        html: `This <strong>writes to ${orgKeys.size} org(s)</strong>. Each change deploys a <strong>new version</strong> of the flow. Where the flow is Active, the tool then <strong>activates the new version</strong> and re-reads the org to confirm what is running (the previous one becomes Obsolete once the new one is active) — if the activation is refused, the previous version stays active and the result says so. Salesforce documents that <strong>flow behaviour can differ between API versions</strong> — this is a functional change, not a label. Each org is deployed as <strong>one package</strong>, all-or-nothing: if any flow in an org is rejected, none of that org's flows change. Other orgs are unaffected either way.`,
+        needsCheckbox: false,
+      },
+      confirmLabel: '⚙ Apply',
+      typedWord: 'CHANGE',
+      extraHtml: `
         ${noops ? `<div style="margin-top:4px;font-size:11.5px;opacity:.8">ℹ ${noops} (flow, org) pair(s) are already at ${escHtml(target)} — skipped, not rewritten.</div>` : ''}
-        ${blocked.length ? `<div style="margin-top:4px;font-size:11.5px;color:var(--warn,#d97706)">⚠ ${blocked.length} pair(s) cannot be changed: ${escHtml([...new Set(blocked.map(b => `${b.apiName} in ${orgLbl(b.orgKey)} — ${b.why}`))].slice(0, 4).join('; '))}${blocked.length > 4 ? '…' : ''}</div>` : ''}
-        <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <span style="font-size:12px">Type <code>CHANGE</code> to confirm:</span>
-          <input id="depAvConfirm" style="width:90px;padding:2px 4px" autocomplete="off">
-          <button class="btn-small" id="depAvGo2" disabled>⚙ Apply</button>
-          <button class="btn-small" id="depAvNo">Cancel</button>
-        </div>
-      </div>`;
-    const inp = box.querySelector('#depAvConfirm');
-    const go = box.querySelector('#depAvGo2');
-    inp.addEventListener('input', () => { go.disabled = inp.value.trim().toUpperCase() !== 'CHANGE'; });
-    box.querySelector('#depAvNo').addEventListener('click', () => { box.innerHTML = ''; });
-    go.addEventListener('click', () => applyApiVerChange(out, plans, target));
+        ${blocked.length ? `<div style="margin-top:4px;font-size:11.5px;color:var(--warn,#d97706)">⚠ ${blocked.length} pair(s) cannot be changed: ${escHtml([...new Set(blocked.map(b => `${b.apiName} in ${orgLbl(b.orgKey)} — ${b.why}`))].slice(0, 4).join('; '))}${blocked.length > 4 ? '…' : ''}</div>` : ''}`,
+      production: gateLabel ? { label: gateLabel } : null,
+    });
+    if (!sure) { box.innerHTML = ''; return; }
+    await applyApiVerChange(out, plans, target);
   }
 
   // Applying the change, ORG AT A TIME.
@@ -3545,6 +3553,9 @@ const DependencyMap = (() => {
     }
     if (toActivate.length) {
       say('\u23FB', `${org.label}: activating ${toActivate.length} new version(s) — the org did not activate them on deploy (its "Deploy processes and flows as active" setting is off)…`);
+      // confirmed-by: the ⚙ Apply / CHANGE sftkConfirmDestructive in
+      // confirmApiVerChange (avVerifyAndActivate is only reached from
+      // applyApiVerChange, which only runs after that dialog resolves true)
       // The write discipline (sftk-write.js): the PATCHes are one write
       // batch, the re-read is ONE call for all of them (verifyAll), and
       // `ok` is only what the org shows afterward — never the PATCH answer.
@@ -3665,6 +3676,8 @@ const DependencyMap = (() => {
           { name: 'package.xml', data: enc.encode(sftkFlowPackageXml(members, org.maxVersion)) },
           ...files,
         ]);
+        // confirmed-by: the ⚙ Apply / CHANGE sftkConfirmDestructive in
+        // confirmApiVerChange (the only caller of applyApiVerChange)
         // The write discipline (sftk-write.js): the deploy is the write,
         // avVerifyAndActivate (step 4) is the re-read — `ok` is only what
         // the org shows afterward, never the deploy's own answer.

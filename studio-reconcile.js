@@ -2375,72 +2375,6 @@ async function runReconcile(profile, objType, buckets) {
     if (updSrcIds.length) planLines.push(`${n++}. Update ${updSrcIds.length} ${objType} in source`);
   }
 
-  // L6 — a plain "Insert only" run used to write with NO confirmation at all.
-  // That is still true when the scan was complete; when it wasn't, the guard
-  // above has something to say, so the dialog opens to say it.
-  if (delIds.length || pullIds.length || updSrcIds.length || anyChildAct || capWarnLines.length) {
-    const ok = await new Promise(resolve => {
-      const delBlock = delIds.length ? (isHard
-        ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:4px;font-size:12px;color:#991b1b">
-             🔥 <strong>Hard-delete ${delIds.length} ${esc(objType)} record(s)</strong> from
-             <strong>${esc(orgLabel(profile.targetOrg))}</strong> — purged from the Recycle Bin and
-             <strong>cannot be recovered</strong>.</div>`
-        : `<div style="margin-top:10px;padding:10px 12px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:4px;font-size:12px;color:#92400e">
-             🗑 <strong>Delete ${delIds.length} ${esc(objType)} record(s)</strong> from
-             <strong>${esc(orgLabel(profile.targetOrg))}</strong> — recoverable from the Recycle Bin for 15 days.</div>`) : '';
-      // R4 — child deletes get their own warning block (they run FIRST).
-      const childDelBlock = childDelTotal ? (isHard
-        ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:4px;font-size:12px;color:#991b1b">
-             🔥 <strong>Hard-delete ${childDelTotal} child record(s)</strong> from
-             <strong>${esc(orgLabel(profile.targetOrg))}</strong> — purged from the Recycle Bin and
-             <strong>cannot be recovered</strong>.</div>`
-        : `<div style="margin-top:10px;padding:10px 12px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:4px;font-size:12px;color:#92400e">
-             🗑 <strong>Delete ${childDelTotal} child record(s)</strong> from
-             <strong>${esc(orgLabel(profile.targetOrg))}</strong> — recoverable from the Recycle Bin for 15 days.</div>`) : '';
-      const pullBlock = pullIds.length
-        ? `<div style="margin-top:10px;padding:10px 12px;background:#eff6ff;border-left:3px solid #2563eb;border-radius:4px;font-size:12px;color:#1e3a8a">
-             ← <strong>Pull ${pullIds.length} ${esc(objType)} record(s)</strong> into
-             <strong>${esc(orgLabel(profile.sourceOrg))}</strong> (source). New rows will be inserted there.</div>`
-        : '';
-      const updSrcBlock = updSrcIds.length
-        ? `<div style="margin-top:10px;padding:10px 12px;background:#eff6ff;border-left:3px solid #2563eb;border-radius:4px;font-size:12px;color:#1e3a8a">
-             ← <strong>Update ${updSrcIds.length} ${esc(objType)} record(s)</strong> in
-             <strong>${esc(orgLabel(profile.sourceOrg))}</strong> (source) with the target's values — the target wins those rows.</div>`
-        : '';
-      const title = (delIds.length || childDelTotal)
-        ? (isHard ? '🔥 Confirm HARD delete' : '⚠ Confirm reconcile actions')
-        : (anyChildAct && !pullIds.length && !updSrcIds.length)
-          ? '⚖ Confirm the execution plan'
-          : (!pullIds.length && !updSrcIds.length && capWarnLines.length)
-            ? '⚠ Confirm — this run is based on a truncated scan'
-            : '← Confirm writes into source';
-      const planBlock = planLines.length
-        ? `<div class="ds-rec-plan">
-             <div class="ds-rec-plan-hdr">Execution plan — steps run in this exact order:</div>
-             ${planLines.map(l => `<div class="ds-rec-plan-line">${esc(l)}</div>`).join('')}
-           </div>`
-        : '';
-      showModal(`
-        <div class="ds-modal-header">${title}</div>
-        <div class="ds-modal-body">
-          Review the changes before continuing:
-          ${capWarnBlock}
-          ${planBlock}
-          ${pullBlock}
-          ${updSrcBlock}
-          ${childDelBlock}
-          ${delBlock}
-        </div>
-        <div class="ds-modal-footer">
-          <button class="ds-btn" id="dsRecDelCancel">Cancel</button>
-          <button class="ds-btn ${(delIds.length || childDelTotal) ? 'ds-btn-danger' : 'ds-btn-primary'}" id="dsRecDelOk">Proceed</button>
-        </div>`);
-      eid('dsRecDelCancel')?.addEventListener('click', () => { closeModal(); resolve(false); });
-      eid('dsRecDelOk')?.addEventListener('click', () => { closeModal(); resolve(true); });
-    });
-    if (!ok) return;
-  }
-
   // ANY write into a production org requires typing the org name — inserts,
   // overwrites and re-links as well as deletes, children included. One typed
   // confirmation per org, naming everything the run will do there. The source
@@ -2454,14 +2388,114 @@ async function runReconcile(profile, objType, buckets) {
     relink:   childActs.reduce((t, a) => t + a.sel.relink.size, 0),
     pull: pullIds.length, updSrc: updSrcIds.length
   }, objType);
-  if (guardedWrites.tgt && tgtGuarded) {
-    const okProd = await confirmTypedProd(orgLabel(profile.targetOrg), guardedWrites.tgt);
+
+  // L6 — a plain "Insert only" run used to write with NO confirmation at all.
+  // That is still true when the scan was complete; when it wasn't, the guard
+  // above has something to say, so the dialog opens to say it.
+  // The one confirmation (sftk-confirm.js, campaign 3 phase 2): the plan's own
+  // form (capped-scan warning, numbered execution plan, per-action blocks)
+  // rides along as extraHtml, and the target's production typed-name step
+  // rides in the SAME dialog — replacing the old #dsRecDelOk showModal() and
+  // the confirmTypedProd(profile.targetOrg, …) call that used to follow it.
+  if (delIds.length || pullIds.length || updSrcIds.length || anyChildAct || capWarnLines.length) {
+    const delBlock = delIds.length ? (isHard
+      ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:4px;font-size:12px;color:#991b1b">
+           🔥 <strong>Hard-delete ${delIds.length} ${esc(objType)} record(s)</strong> from
+           <strong>${esc(orgLabel(profile.targetOrg))}</strong> — purged from the Recycle Bin and
+           <strong>cannot be recovered</strong>.</div>`
+      : `<div style="margin-top:10px;padding:10px 12px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:4px;font-size:12px;color:#92400e">
+           🗑 <strong>Delete ${delIds.length} ${esc(objType)} record(s)</strong> from
+           <strong>${esc(orgLabel(profile.targetOrg))}</strong> — recoverable from the Recycle Bin for 15 days.</div>`) : '';
+    // R4 — child deletes get their own warning block (they run FIRST).
+    const childDelBlock = childDelTotal ? (isHard
+      ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:4px;font-size:12px;color:#991b1b">
+           🔥 <strong>Hard-delete ${childDelTotal} child record(s)</strong> from
+           <strong>${esc(orgLabel(profile.targetOrg))}</strong> — purged from the Recycle Bin and
+           <strong>cannot be recovered</strong>.</div>`
+      : `<div style="margin-top:10px;padding:10px 12px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:4px;font-size:12px;color:#92400e">
+           🗑 <strong>Delete ${childDelTotal} child record(s)</strong> from
+           <strong>${esc(orgLabel(profile.targetOrg))}</strong> — recoverable from the Recycle Bin for 15 days.</div>`) : '';
+    const pullBlock = pullIds.length
+      ? `<div style="margin-top:10px;padding:10px 12px;background:#eff6ff;border-left:3px solid #2563eb;border-radius:4px;font-size:12px;color:#1e3a8a">
+           ← <strong>Pull ${pullIds.length} ${esc(objType)} record(s)</strong> into
+           <strong>${esc(orgLabel(profile.sourceOrg))}</strong> (source). New rows will be inserted there.</div>`
+      : '';
+    const updSrcBlock = updSrcIds.length
+      ? `<div style="margin-top:10px;padding:10px 12px;background:#eff6ff;border-left:3px solid #2563eb;border-radius:4px;font-size:12px;color:#1e3a8a">
+           ← <strong>Update ${updSrcIds.length} ${esc(objType)} record(s)</strong> in
+           <strong>${esc(orgLabel(profile.sourceOrg))}</strong> (source) with the target's values — the target wins those rows.</div>`
+      : '';
+    const title = (delIds.length || childDelTotal)
+      ? (isHard ? '🔥 Confirm HARD delete' : '⚠ Confirm reconcile actions')
+      : (anyChildAct && !pullIds.length && !updSrcIds.length)
+        ? '⚖ Confirm the execution plan'
+        : (!pullIds.length && !updSrcIds.length && capWarnLines.length)
+          ? '⚠ Confirm — this run is based on a truncated scan'
+          : '← Confirm writes into source';
+    const planBlock = planLines.length
+      ? `<div class="ds-rec-plan">
+           <div class="ds-rec-plan-hdr">Execution plan — steps run in this exact order:</div>
+           ${planLines.map(l => `<div class="ds-rec-plan-line">${esc(l)}</div>`).join('')}
+         </div>`
+      : '';
+    const bodyHtml = `
+      Review the changes before continuing:
+      ${capWarnBlock}
+      ${planBlock}
+      ${pullBlock}
+      ${updSrcBlock}
+      ${childDelBlock}
+      ${delBlock}`;
+    const isDeleting = !!(delIds.length || childDelTotal);
+    // Fail-closed exactly as before: tgtGuarded (computed above from
+    // ensureOrgType, above) — not sftkOrgWriteGate's stored-org lookup —
+    // decides whether the typed-name step fires; an org whose type could not
+    // be confirmed is guarded like production. sftkOrgWriteGate supplies only
+    // the display label.
+    const tgtGate = tgtGuarded ? await sftkOrgWriteGate(profile.targetOrg, _orgs) : null;
+    const ok = await sftkConfirmDestructive({
+      title,
+      icon: isDeleting ? (isHard ? '🔥' : '⚠') : '⚖',
+      revOverride: isDeleting
+        ? (isHard
+          ? { html: '🔥 <strong>Permanent</strong> — hard-deleted records are purged from the Recycle Bin and cannot be recovered.', needsCheckbox: true }
+          : { html: '♻ <strong>Recoverable</strong> — deleted records go to the Recycle Bin and can be restored for 15 days.', needsCheckbox: false })
+        : { html: '↩ A restore point is captured before anything writes — this run can be rolled back afterward from History.', needsCheckbox: false },
+      confirmLabel: 'Proceed',
+      extraHtml: bodyHtml,
+      production: (guardedWrites.tgt && tgtGuarded) ? { label: tgtGate?.label || orgLabel(profile.targetOrg) } : null,
+    });
+    if (!ok) return;
+  } else if (guardedWrites.tgt && tgtGuarded) {
+    // No Proceed dialog was needed (plain insert-only, complete scan) but the
+    // target is still production (or unconfirmed) — the typed-name step
+    // alone, in the shared shape.
+    const tgtGate = await sftkOrgWriteGate(profile.targetOrg, _orgs);
+    const okProd = await sftkConfirmDestructive({
+      title: '🛑 Confirm writes into a production org',
+      icon: '🛑',
+      items: [{ label: guardedWrites.tgt }],
+      revOverride: { html: '↩ A restore point is captured before anything writes — this run can be rolled back afterward from History.', needsCheckbox: false },
+      confirmLabel: 'Proceed',
+      production: { label: tgtGate.label || orgLabel(profile.targetOrg) },
+    });
     if (!okProd) return;
   }
+
   if (guardedWrites.src) {
     const srcOrgType = await ensureOrgType(profile.sourceOrg);
     if (srcOrgType !== 'sandbox' && srcOrgType !== 'dev') {
-      const okSrc = await confirmTypedProd(orgLabel(profile.sourceOrg), guardedWrites.src);
+      // Same fail-closed rule: entry into this block already means
+      // "unconfirmed sandbox/dev" — sftkOrgWriteGate only supplies the label.
+      const srcGate = await sftkOrgWriteGate(profile.sourceOrg, _orgs);
+      const okSrc = await sftkConfirmDestructive({
+        title: '← Confirm writes into source',
+        icon: '←',
+        items: [{ label: guardedWrites.src }],
+        revOverride: { html: '⚠ This run also writes into the SOURCE org.', needsCheckbox: false },
+        confirmLabel: 'Proceed',
+        production: { label: srcGate.label || orgLabel(profile.sourceOrg) },
+      });
       if (!okSrc) return;
     }
   }
@@ -2541,6 +2575,7 @@ async function runReconcile(profile, objType, buckets) {
         // per-record success used to BE "deleted" — one re-read of exactly
         // these Ids (chunked, same as every other Id-list query here) closes
         // the same gap a PATCH accepted-but-unchanged taught elsewhere.
+        // confirmed-by: runReconcile's Proceed/production sftkConfirmDestructive above.
         const dw = await sftkWriteVerified({
           describe: `${obj} hard delete`,
           write: () => sendBg({ type: 'SF_HARD_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: a.delIds }),
@@ -2561,6 +2596,7 @@ async function runReconcile(profile, objType, buckets) {
         });
       } else {
         log('🗑', `Deleting ${a.delIds.length} ${obj} from target (→ Recycle Bin)…`);
+        // confirmed-by: runReconcile's Proceed/production sftkConfirmDestructive above.
         const dw = await sftkWriteVerified({
           describe: `${obj} delete`,
           write: () => sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: a.delIds }),
@@ -2590,6 +2626,7 @@ async function runReconcile(profile, objType, buckets) {
         // per-record success used to BE "deleted" — one re-read of exactly
         // these Ids (chunked, same as every other Id-list query here) closes
         // the same gap a PATCH accepted-but-unchanged taught elsewhere.
+        // confirmed-by: runReconcile's Proceed/production sftkConfirmDestructive above.
         const dw = await sftkWriteVerified({
           describe: `${objType} hard delete`,
           write: () => sendBg({ type: 'SF_HARD_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds }),
@@ -2611,6 +2648,7 @@ async function runReconcile(profile, objType, buckets) {
     } else {
       log('🗑', `Deleting ${delIds.length} record(s) from target (→ Recycle Bin)…`);
       try {
+        // confirmed-by: runReconcile's Proceed/production sftkConfirmDestructive above.
         const dw = await sftkWriteVerified({
           describe: `${objType} delete`,
           write: () => sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds }),
@@ -2965,6 +3003,7 @@ async function runReconcile(profile, objType, buckets) {
           // slice's Ids, comparing the link field to the parent it was meant
           // to point at, closes the same gap a PATCH accepted-but-unchanged
           // taught elsewhere.
+          // confirmed-by: runReconcile's Proceed/production sftkConfirmDestructive above.
           const dw = await sftkWriteVerified({
             describe: `relink ${obj}`,
             write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: slice }),
@@ -3329,13 +3368,26 @@ async function sftkIdDeployTo(orgUrls, objects) {
   const objs = [...new Set((objects || []).filter(Boolean))];
   const orgs = [...new Set((orgUrls || []).filter(Boolean))];
   if (!objs.length || !orgs.length) return out;
+
+  // The one confirmation (sftk-confirm.js, campaign 3 phase 2): one combined
+  // dialog naming every guarded org, replacing the per-org confirmTypedProd() loop.
+  const guarded = [];
   for (const orgUrl of orgs) {
     const t = await ensureOrgType(orgUrl);
-    if (t !== 'sandbox' && t !== 'dev') {
-      const okProd = await confirmTypedProd(orgLabel(orgUrl),
-        `create the ${sftkIdFieldName()} field on ${objs.length} object(s) (${objs.join(', ')}) and assign the "${sftkIdPermSetName()}" permission set to you`);
-      if (!okProd) { out.errors.push('cancelled — nothing was deployed to any org'); return out; }
-    }
+    if (t !== 'sandbox' && t !== 'dev') { guarded.push(orgUrl); }
+  }
+  if (guarded.length) {
+    const gates = await Promise.all(guarded.map(u => sftkOrgWriteGate(u, _orgs)));
+    const prodLabel = guarded.map((u, i) => gates[i].label || orgLabel(u)).join(', ');
+    const ok = await sftkConfirmDestructive({
+      title: `Create the ${sftkIdFieldName()} field on ${objs.length} object(s)`,
+      icon: '🪪',
+      items: [{ label: objs.join(', '), sub: `and assign the "${sftkIdPermSetName()}" permission set to you` }],
+      revOverride: { html: '🔁 <strong>Reversible</strong> — the field and permission set can be removed again in Setup.', needsCheckbox: false },
+      confirmLabel: 'Deploy',
+      production: { label: prodLabel },
+    });
+    if (!ok) { out.errors.push('cancelled — nothing was deployed to any org'); return out; }
   }
   const enc = new TextEncoder();
   for (const orgUrl of orgs) {
@@ -3359,6 +3411,7 @@ async function sftkIdDeployTo(orgUrls, objects) {
     // meant to create closes the same gap a PATCH accepted-but-unchanged
     // taught elsewhere (a deploy can report success with the field still
     // invisible to this user's FLS).
+    // confirmed-by: sftkIdDeployTo's sftkConfirmDestructive above (before this loop).
     const dw = await sftkWriteVerified({
       describe: `${sftkIdFieldName()} in ${label}`,
       write: () => sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: sess.orgUrl, sid: sess.sid, zipBase64 }),
@@ -3382,6 +3435,7 @@ async function sftkIdDeployTo(orgUrls, objects) {
       const root = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid, path: 'services/data/v62.0/' });
       const userId = sftkIdUserFromIdentity(root?.identity);
       if (!psId || !userId) throw new Error('could not resolve the permission set or your user');
+      // confirmed-by: sftkIdDeployTo's sftkConfirmDestructive above (before this loop).
       const aw = await sftkWriteVerified({
         describe: `${sftkIdPermSetName()} assignment in ${label}`,
         write: async () => {
@@ -3480,14 +3534,26 @@ async function reconcileStampPairs(p, scan) {
     if (!eid('dsIdBody')) sftkOpenIdentityModal(p, scan);
     return;
   }
-  // Production — or an org whose type could not be confirmed — gets the typed
-  // confirmation; ambiguity fails closed, as the rollback does.
+  // The one confirmation (sftk-confirm.js, campaign 3 phase 2) — production,
+  // or an org whose type could not be confirmed, gets the typed-name step in
+  // the SAME dialog, replacing the confirmTypedProd() / window.confirm() pair
+  // that used to live here. Same fail-closed rule as before: only a
+  // CONFIRMED sandbox / dev org is exempt (ensureOrgType decides; sftkOrgWriteGate
+  // supplies only the display label).
+  let gate = null;
   const tgtType = await ensureOrgType(p.targetOrg);
   if (tgtType !== 'sandbox' && tgtType !== 'dev') {
-    if (!(await confirmTypedProd(orgLabel(p.targetOrg), `stamp ${pairs.length} record(s) with their source identity`))) return;
-  } else if (!confirm(`🪪 Stamp ${pairs.length} matched ${objType} record(s) in ${orgLabel(p.targetOrg)}?\n\nWrites each source record's Id into ${sftkIdFieldName()} — ${Math.ceil(pairs.length / 200)} update call(s). Nothing else is changed. These pairs then match EXACTLY on every future scan and seed.`)) {
-    return;
+    gate = await sftkOrgWriteGate(p.targetOrg, _orgs);
   }
+  const stampOk = await sftkConfirmDestructive({
+    title: `🪪 Stamp ${pairs.length} matched ${objType} record(s)`,
+    icon: '🪪',
+    items: [{ label: orgLabel(p.targetOrg), sub: `${Math.ceil(pairs.length / 200)} update call(s)` }],
+    revOverride: { html: `⚠ Writes each source record's Id into <code>${esc(sftkIdFieldName())}</code> — nothing else is changed. These pairs then match EXACTLY on every future scan and seed.`, needsCheckbox: false },
+    confirmLabel: '🪪 Stamp',
+    production: gate ? { label: gate.label || orgLabel(p.targetOrg) } : null,
+  });
+  if (!stampOk) return;
   let ok = 0, failed = 0; const errs = [];
   const idField = sftkIdFieldName();
   for (let i = 0; i < pairs.length; i += 200) {
@@ -3497,6 +3563,7 @@ async function reconcileStampPairs(p, scan) {
     // Ids, comparing the identity field to the source Id it was meant to
     // carry, closes the same gap a PATCH accepted-but-unchanged taught
     // elsewhere.
+    // confirmed-by: reconcileStampPairs's sftkConfirmDestructive above.
     const dw = await sftkWriteVerified({
       describe: `${objType} identity stamp`,
       write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: recs }),
@@ -3918,6 +3985,8 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   // masking, lookups, owner reassignment), closes the same gap a PATCH
   // accepted-but-unchanged taught elsewhere.
   const writeFields = [...new Set(payloads.flatMap(p => Object.keys(p).filter(k => k !== 'Id' && k !== 'attributes')))];
+  // confirmed-by: every caller (runReconcile's root/inverse/child overwrite
+  // paths) confirms via runReconcile's Proceed/production sftkConfirmDestructive first.
   const dw = await sftkWriteVerified({
     describe: `${objType} overwrite`,
     write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: payloads }),
