@@ -619,6 +619,20 @@ function _historyStripCountsOnly(entries) {
   }
 }
 
+// Phase 3 — the popup's tools write History entries (kind 'tool') straight
+// to chrome.storage while this page may hold its own copy in memory. Merge
+// what arrives from elsewhere so the next storageSaveHistory keeps it and
+// the History view shows it without a reload.
+try {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.sftk_history) return;
+    const incoming = (changes.sftk_history.newValue || []).filter(e => e && e.kind === 'tool' && !_history.some(h => h && h.id === e.id));
+    if (!incoming.length) return;
+    _history.push(...incoming);
+    if (_currentView === 'history' && typeof renderHistory === 'function') renderHistory();
+  });
+} catch (_) { /* no storage events outside the extension page */ }
+
 async function storageSaveHistory() {
   // Two tiers (user 2026-08-11: "we can hit limits there very fast") — the
   // hot tier stays the newest 100 in chrome.storage; overflow runs are
@@ -819,6 +833,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'retryFailed':           window.retryFailedRun?.(arg); break;
       case 'runAgain':              window.runAgain?.(arg); break;
       case 'rollbackRun':           window.rollbackRun?.(arg); break;
+      case 'undoTool':              window.undoTool?.(arg); break;
       case 'openOrgTab':            chrome.tabs.create({ url: arg }); break;
       case 'compareOrgFrom':        window.compareOrgFrom?.(arg); break;
       case 'toggleReadOnly':        window.toggleOrgReadOnly?.(arg); break;

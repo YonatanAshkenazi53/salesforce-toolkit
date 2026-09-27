@@ -25,7 +25,7 @@
 //     ok        accepted AND verified AND the org shows the intended state
 //   ok is never true without verified — a caller that shows ✅ on ok alone
 //   can only be right.
-async function sftkWriteVerified(spec) {
+async function _sftkWriteVerifiedCore(spec) {
   const describe = String((spec && spec.describe) || 'the change');
   const out = { ok: false, accepted: false, verified: false, text: '', detail: null, raw: null };
   if (!spec || typeof spec.write !== 'function') {
@@ -81,6 +81,16 @@ async function sftkWriteVerified(spec) {
   return out;
 }
 
+// Phase 3 — every write reaches History: `journal` (from sftkHistoryBegin)
+// receives this write's verdict, so the entry says what was written and
+// what the org showed afterwards. test/history-discipline fails the build
+// on a write that names no journal (or marks `// history-by:`).
+async function sftkWriteVerified(spec) {
+  const out = await _sftkWriteVerifiedCore(spec);
+  if (spec && spec.journal && typeof sftkHistoryNote === 'function') sftkHistoryNote(spec.journal, out, spec.describe);
+  return out;
+}
+
 // Many writes in one go (one org, several records): the same discipline per
 // item, one summary. items: [{ describe, write, verify, noVerify }].
 // Returns { results, ok, accepted, verified, failed, text }.
@@ -93,7 +103,7 @@ async function sftkWriteVerifiedAll(items, opts) {
   const results = [];
   const batched = opts && typeof opts.verifyAll === 'function';
   for (const it of list) {
-    results.push(await sftkWriteVerified(batched ? { describe: it.describe, write: it.write, noVerify: 'checked below for the whole batch' } : it));
+    results.push(await sftkWriteVerified(batched ? { describe: it.describe, write: it.write, noVerify: 'checked below for the whole batch' } : (it.journal || !(opts && opts.journal) ? it : { ...it, journal: opts.journal })));
     if (opts && opts.stopOnRefusal && !results[results.length - 1].accepted) break;
   }
   if (batched) {
@@ -111,6 +121,11 @@ async function sftkWriteVerifiedAll(items, opts) {
       r.text = v.text ? String(v.text) : (v.ok ? `${d} — verified by re-reading the org` : `${d}: accepted by Salesforce, but the org still shows the old state`);
     });
   }
+  // The journal hears each item once, after the batch verdict.
+  if (batched && typeof sftkHistoryNote === 'function') results.forEach((r, i) => {
+    const j = list[i].journal || (opts && opts.journal);
+    if (j) sftkHistoryNote(j, r, list[i].describe);
+  });
   const ok = results.filter(r => r.ok).length;
   const accepted = results.filter(r => r.accepted).length;
   const verified = results.filter(r => r.verified).length;

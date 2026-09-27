@@ -19,7 +19,7 @@ const WRITE_TYPES = /type:\s*'(SF_PATCH|SF_TOOLING_DELETE|SF_REST_DELETE|SF_HARD
 
 // UI files only: background.js is the transport, not a caller.
 const UI_FILES = readdirSync(root).filter(f => f.endsWith('.js') && !f.startsWith('_') && !f.startsWith('eslint')
-  && !['background.js', 'content.js', 'trusted-types-policy.js'].includes(f));
+  && !['background.js', 'content.js', 'trusted-types-policy.js', 'sftk-history.js'].includes(f));   // sftk-history runs undo steps THROUGH sftkWriteVerified
 
 const BASELINE = {
   // 2026-09-27, end of phase 1: zero everywhere. The engine call sites are

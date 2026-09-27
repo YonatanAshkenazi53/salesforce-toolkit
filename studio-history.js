@@ -316,6 +316,9 @@ function renderHistory() {
     ${!filtered.length ? `<div class="ds-seq-empty">No runs match the current filters.</div>` : ''}
     <div class="ds-history-list">
       ${filtered.map(run => {
+        // Phase 3 — a Toolkit tool's change (kind 'tool') has its own card:
+        // what was written, what the org showed, and ↩ Undo.
+        if (run.kind === 'tool') return _histToolCard(run);
         // Aggregate failed source IDs across all objects in this run.
         // The retry button only appears when we actually have IDs to retry.
         const failedByObj = {};
@@ -719,6 +722,50 @@ function renderHistory() {
       if (run) _histShowRunExportModal(run);
     }));
 }
+
+// ── Phase 3: a tool entry's card (sftk-history.js) ──────────────────────
+// One line per write, the verdict icon in front (✅ verified · ⚠ accepted
+// but not confirmed · ❌ refused), the org, and the ↩ Undo button whose
+// state comes from sftkToolUndoState — disabled buttons say why.
+function _histToolCard(run) {
+  const st = (typeof sftkToolUndoState === 'function') ? sftkToolUndoState(run) : { show: false };
+  const what = Array.isArray(run.what) ? run.what : [];
+  const icon = w => w.ok ? '✅' : w.accepted ? '⚠' : '❌';
+  const st4 = run.status === 'success' ? '✅' : run.status === 'partial' ? '⚠' : '❌';
+  return `
+        <div class="ds-history-card ds-history-card-tool">
+          <div class="ds-history-card-header">
+            <span class="ds-run-status-badge ds-run-status-${esc(run.status)}">${st4} ${esc(run.status)}</span>
+            <span class="ds-history-profile-name">${esc(run.profileName || run.tool || 'change')}</span>
+            <span class="ds-chip" title="A change made by a Toolkit tool — not a data deployment.">🧰 ${esc(run.tool || 'tool')}</span>
+            ${run.undoOf ? '<span class="ds-chip" title="This entry is the undo of an earlier tool change.">↩ undo</span>' : ''}
+            ${run._archived ? '<span class="ds-chip" title="Loaded from the 📦 on-PC archive (IndexedDB).">📦 archived</span>' : ''}
+            <span class="ds-history-time">${timeAgo(run.startedAt)}</span>
+            ${st.show ? `<button class="ds-btn ds-btn-xs ${st.disabled ? '' : 'ds-btn-danger'}" ${st.disabled ? 'disabled' : ''} data-dsaction="undoTool" data-arg="${esc(run.id)}"
+              title="${esc(st.title || '')}">${esc(st.label)}</button>` : ''}
+            <button class="ds-btn ds-btn-xs" data-hist-export="${esc(run.id)}"
+              title="Download this entry as a JSON audit report — what was written, where, when, and what the org showed.">⬇ Report</button>
+          </div>
+          <div class="ds-history-orgs">${esc(orgLabel(run.targetOrg || ''))}</div>
+          <div class="ds-hist-what">
+            ${what.length ? what.map(w => `<div class="ds-hist-what-line">${icon(w)} ${esc(w.text || w.describe)}</div>`).join('') : '<div class="ds-hist-what-line">— nothing was written</div>'}
+            ${run.toolUndo && run.toolUndo.none ? `<div class="ds-hist-what-line ds-subtext">↩ no undo: ${esc(run.toolUndo.none)}</div>` : ''}
+            ${run.toolUndo && run.toolUndo.done ? `<div class="ds-hist-what-line ds-subtext">↩ ${run.toolUndo.done.ok ? 'undone and verified' : 'undo attempted — not every step confirmed'} on ${esc(run.toolUndo.done.at)}</div>` : ''}
+          </div>
+        </div>`;
+}
+
+// ↩ Undo on a tool entry: the shared dialog (word UNDO, the org's name when
+// it is treated as production), the steps through the write discipline, a
+// History entry for the undo, the original marked. sftk-history.js does it;
+// this only shows the sentence and repaints.
+window.undoTool = async function(id) {
+  if (typeof sftkHistoryUndo !== 'function') return;
+  const r = await sftkHistoryUndo(id, {});
+  if (r.cancelled) return;
+  showToast(r.text, r.ok ? 'success' : 'warning', r.ok ? 6000 : 9000);
+  renderHistory();
+};
 
 // ── E2: audit-export UI (impure — modal, blob download) ─────────
 
