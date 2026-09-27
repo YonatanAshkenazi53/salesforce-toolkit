@@ -2973,6 +2973,34 @@ const LightningPages = (() => {
 
     const addBtn = document.getElementById(btnId);
     const errEl  = document.getElementById(errId);
+
+    // A new assignment changes who sees the page (and, for a Draft page, also
+    // activates it) — confirm before writing, showing what was selected.
+    let confirmItems = [{ label: page.MasterLabel, sub: mode === 'orgdefault' ? 'Org Default' : mode === 'appdefault' ? 'App Default' : 'App + Record Type + Profile' }];
+    if (mode === 'appdefault') {
+      confirmItems = [...document.querySelectorAll('#lpAppDefList .lp-appdef-cb:checked')]
+        .map(cb => ({ label: cb.closest('.lp-app-item')?.querySelector('.lp-app-item-lbl')?.textContent?.trim() || cb.value, sub: 'App Default' }));
+    } else if (mode === 'artp') {
+      const apps = [...document.querySelectorAll('#lpARTPAppList .lp-artp-app-cb:checked')]
+        .map(cb => cb.closest('.lp-app-item')?.querySelector('.lp-app-item-lbl')?.textContent?.trim() || cb.value || 'All Apps');
+      const profiles = [...document.querySelectorAll('#lpARTPProfileList .lp-artp-profile-cb:checked')].map(cb => cb.value);
+      confirmItems = [{ label: page.MasterLabel, sub: `${apps.join(', ')} → ${profiles.join(', ')}` }];
+    } else if (mode === 'orgdefault') {
+      const desktop = document.getElementById('lpOrgDefDesktop')?.checked !== false;
+      const mobile  = document.getElementById('lpOrgDefMobile')?.checked  === true;
+      confirmItems = [{ label: page.MasterLabel, sub: `Org Default — ${[desktop && 'Desktop', mobile && 'Mobile'].filter(Boolean).join(', ')}` }];
+    }
+    const addGate = await sftkOrgWriteGate(_orgUrl);
+    const addSure = await sftkConfirmDestructive({
+      title: (addBtn?.textContent || origLabel).trim(),
+      icon: mode === 'orgdefault' ? '🌐' : mode === 'appdefault' ? '⚡' : '📋',
+      items: confirmItems,
+      revOverride: { html: `Assigns <strong>${esc(page.MasterLabel)}</strong> as the Lightning page shown to the selected audience${!isActive && sobjectType && mode !== 'orgdefault' ? ' — the Draft page will also be activated' : ''}. Reversible any time with the ✕ remove button on the assignment.`, needsCheckbox: false },
+      confirmLabel: origLabel,
+      production: addGate.production ? { label: addGate.label } : null,
+    });
+    if (!addSure) return;
+
     if (errEl) errEl.style.display = 'none';
     if (addBtn) { addBtn.disabled = true; addBtn.textContent = '⏳ Saving…'; }
 
@@ -3110,7 +3138,7 @@ const LightningPages = (() => {
   }
 
   // ── Remove profile assignment (Metadata Deploy) ───────────
-  function confirmRemove(page, metaRes, assignments, idx) {
+  async function confirmRemove(page, metaRes, assignments, idx) {
     if (typeof showModal !== 'function') return;
     const a          = assignments[idx];
     const isOrgDef   = !a.profile;
@@ -3125,28 +3153,17 @@ const LightningPages = (() => {
         ? `👥 <strong>${cached.length}</strong> user${cached.length !== 1 ? 's' : ''} on this profile will fall back to the org-default page.`
         : 'Users on this profile will fall back to the org-default page.';
 
-    showModal(`
-      <div class="modal-header modal-warn">
-        <span class="modal-icon">⚠️</span>
-        <h2>Remove Assignment?</h2>
-      </div>
-      <div class="modal-body">
-        <p>Remove <strong>${esc(label)}</strong> from
-           <strong>${esc(page.MasterLabel)}</strong>?</p>
-        <p style="margin-top:8px;font-size:11px;color:var(--subtext)">${impactNote}</p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" id="modalCancel">Cancel</button>
-        <button class="btn btn-danger"    id="modalConfirm">Remove</button>
-      </div>
-    `);
-    document.getElementById('modalCancel').addEventListener('click', () => {
-      if (typeof closeModal === 'function') closeModal();
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    const sure = await sftkConfirmDestructive({
+      title: 'Remove Assignment?',
+      icon: '⚠️',
+      items: [{ label: page.MasterLabel, sub: label }],
+      revOverride: { html: impactNote, needsCheckbox: false },
+      confirmLabel: 'Remove',
+      production: gate.production ? { label: gate.label } : null,
     });
-    document.getElementById('modalConfirm').addEventListener('click', async () => {
-      if (typeof closeModal === 'function') closeModal();
-      await doRemove(page, metaRes, assignments, idx);
-    });
+    if (!sure) return;
+    await doRemove(page, metaRes, assignments, idx);
   }
 
   async function doRemove(page, metaRes, assignments, idx) {
@@ -3347,6 +3364,8 @@ const LightningPages = (() => {
     const cloneMetaRes = { FullName: newApiName, Metadata: cloneMeta };
     const zipBase64    = buildFlexiPageZip(cloneMetaRes);
 
+    // confirmed-by: openCloneDialog's Clone Page form (the only caller —
+    // label/API name are reviewed there before the Clone Page button writes)
     // ── 2. Deploy via Metadata Deploy, verified by finding the new page ────
     // The write discipline (sftk-write.js): the deploy is the write, the
     // FlexiPage lookup below is the verify — never trust the deploy's own
@@ -3433,63 +3452,39 @@ const LightningPages = (() => {
   // Purely changes publishStatus. Org-default assignment is managed via the
   // "🌐 Org Default" tab in the Add Assignment form — no longer mixed into
   // this modal (which caused confusion when page was already active).
-  function doActivate(page, metaRes, assignments, activate) {
+  async function doActivate(page, metaRes, assignments, activate) {
     if (typeof showModal !== 'function') return;
     // N3: activation flips whether this page reaches anyone at all, so the
     // cached scan (which keys audiences off PublishStatus) must be rebuilt.
     _wswScan = null;
 
+    const gate = await sftkOrgWriteGate(_orgUrl);
     if (!activate) {
       // Deactivate confirmation
-      showModal(`
-        <div class="modal-header modal-warn">
-          <span class="modal-icon">⚠️</span>
-          <h2>Deactivate Page?</h2>
-        </div>
-        <div class="modal-body">
-          <p>Deactivating <strong>${esc(page.MasterLabel)}</strong> will set it back to Draft.
-             Users will no longer see this page.</p>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" id="modalCancel">Cancel</button>
-          <button class="btn btn-danger"    id="modalConfirm">Deactivate</button>
-        </div>
-      `);
-      document.getElementById('modalCancel').addEventListener('click', () => {
-        if (typeof closeModal === 'function') closeModal();
+      const sure = await sftkConfirmDestructive({
+        title: 'Deactivate Page?',
+        icon: '⚠️',
+        items: [{ label: page.MasterLabel }],
+        revOverride: { html: 'Deactivating will set the page back to Draft. Users will no longer see this page. Reversible any time with ▶ Activate.', needsCheckbox: false },
+        confirmLabel: 'Deactivate',
+        production: gate.production ? { label: gate.label } : null,
       });
-      document.getElementById('modalConfirm').addEventListener('click', async () => {
-        if (typeof closeModal === 'function') closeModal();
-        await runDeploy(page, metaRes, assignments, 'Draft');
-      });
+      if (!sure) return;
+      await runDeploy(page, metaRes, assignments, 'Draft');
       return;
     }
 
     // Activate confirmation — org default is handled by the "🌐 Org Default" tab
-    showModal(`
-      <div class="modal-header">
-        <span class="modal-icon">▶</span>
-        <h2>Activate Page</h2>
-      </div>
-      <div class="modal-body">
-        <p>Activate <strong>${esc(page.MasterLabel)}</strong>?</p>
-        <p style="margin-top:10px;font-size:11px;color:var(--subtext);line-height:1.5">
-          To assign this page as org default, use the
-          <strong>🌐 Org Default</strong> tab in the assignment form after activating.
-        </p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" id="modalCancel">Cancel</button>
-        <button class="btn btn-primary"   id="modalConfirm">Activate</button>
-      </div>
-    `);
-    document.getElementById('modalCancel').addEventListener('click', () => {
-      if (typeof closeModal === 'function') closeModal();
+    const sure = await sftkConfirmDestructive({
+      title: 'Activate Page',
+      icon: '▶',
+      items: [{ label: page.MasterLabel }],
+      revOverride: { html: 'To assign this page as org default, use the 🌐 Org Default tab in the assignment form after activating. Reversible any time with ⚠️ Deactivate.', needsCheckbox: false },
+      confirmLabel: 'Activate',
+      production: gate.production ? { label: gate.label } : null,
     });
-    document.getElementById('modalConfirm').addEventListener('click', async () => {
-      if (typeof closeModal === 'function') closeModal();
-      await runDeploy(page, metaRes, assignments, 'Active');
-    });
+    if (!sure) return;
+    await runDeploy(page, metaRes, assignments, 'Active');
   }
 
   // Activates or deactivates the page by updating publishStatus via Tooling API PATCH.
@@ -3619,6 +3614,9 @@ const LightningPages = (() => {
       { name: `objects/${sobjectType}.object`,         data: enc.encode(lines.join('\n'))   },
     ]);
 
+    // confirmed-by: every caller confirms first — doActivate's, confirmRemove's,
+    // or doAdd's sftkConfirmDestructive (saveActionOverride/deleteActionOverride
+    // are only reached from activatePage, doAdd's orgdefault mode, or doRemove)
     // The write discipline (sftk-write.js): routed through the helper, but
     // not re-read here — a CustomObject actionOverride has no simple
     // queryable sObject to re-read (it is Metadata-only). Every caller
@@ -3740,6 +3738,9 @@ const LightningPages = (() => {
       ...appMeta.Metadata,
       profileActionOverrides: updatedOverrides
     });
+    // confirmed-by: every caller confirms first — doAdd's or confirmRemove's
+    // sftkConfirmDestructive (patchCustomApp is only reached from
+    // saveAppAssignment/deleteAppAssignment, called by doAdd or doRemove)
     // The write discipline (sftk-write.js): the PATCH is the write, a
     // re-read of the app's own overrides count is the verify.
     const wr = await sftkWriteVerified({

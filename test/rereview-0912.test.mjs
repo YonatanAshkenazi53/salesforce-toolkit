@@ -169,7 +169,11 @@ describe('B2 · deploying the identity field is gated like every other seeder wr
   it('every listed org is typed for, production or unknown, BEFORE the zip is built', () => {
     const fn = slice(SD, 'async function sftkSeedIdDeploy(obj)');
     before(fn, "const t = await ensureOrgType(orgUrl);", "sftkIdPackageFiles([obj], '62.0')");
-    expect(fn).toMatch(/if \(t !== 'sandbox' && t !== 'dev'\) \{\s*const okProd = await confirmTypedProd\(orgLabel\(orgUrl\)/);
+    // Campaign 3 phase 2: the per-org confirmTypedProd() loop became one
+    // combined sftkConfirmDestructive dialog naming every guarded org — the
+    // list of which orgs are guarded is still built the same fail-closed way.
+    expect(fn).toMatch(/if \(t !== 'sandbox' && t !== 'dev'\) \{ guarded\.push\(orgUrl\); \}/);
+    expect(fn).toMatch(/sftkConfirmDestructive\(/);
     expect(fn).toContain('cancelled — nothing was deployed to any org');
   });
 });

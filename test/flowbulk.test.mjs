@@ -169,7 +169,9 @@ describe('the panel keeps the project laws', () => {
     expect(SCAN).toContain('data-dcp-cur');
     expect(SCAN).toContain('data-dcp-new');
     expect(SCAN).toMatch(/will point at/);
-    expect(SCAN).toMatch(/Update \$\{picks\.length\} field\(s\) on this target record\?/);
+    // Campaign 3 phase 2: the confirm moved onto sftkConfirmDestructive (its
+    // title dropped the trailing "?" to match the shared dialog's convention).
+    expect(SCAN).toMatch(/Update \$\{picks\.length\} field\(s\) on this target record/);
   });
 });
 

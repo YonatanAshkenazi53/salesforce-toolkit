@@ -37,6 +37,11 @@ export default async function (h) {
   await h.sleep(300);
   h.log('Go enabled:', await h.eval(`!document.querySelector('#sftkConfirmGo')?.disabled`));
   await h.eval(`document.querySelector('#sftkConfirmGo').click()`);
+  await h.sleep(400);
+  if (await h.eval(`!!document.querySelector('#sftkConfirmProd')`)) {
+    await h.eval(`(() => { const i = document.querySelector('#sftkConfirmProd'); i.value = i.placeholder; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    await h.eval(`document.querySelector('#sftkConfirmProdGo')?.click()`);
+  }
   await h.waitFor("!!document.querySelector('#ucResult')?.innerText && !/Copying/.test(document.querySelector('#ucCopyBtn')?.textContent || '')", 180000, 1000);
   await h.sleep(1000);
   h.log('RESULT:', await dump(h, '#ucResult', 1500));

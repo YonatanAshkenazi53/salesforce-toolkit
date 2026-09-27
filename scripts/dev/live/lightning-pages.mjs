@@ -13,10 +13,15 @@ async function openDetail(h, page) {
   return clicked;
 }
 async function modalGo(h, tag) {
-  await h.waitFor("!!document.querySelector('#modalConfirm')", 30000, 300); await h.sleep(300);
+  await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 30000, 300); await h.sleep(300);
   h.log(`CONFIRM (${tag}):`, await h.eval(`(document.querySelector('#modalBox')?.innerText || '').replace(/\\s+/g, ' ').slice(0, 600)`));
-  if (process.env.SCAN_ONLY === '1') { await h.eval(`document.querySelector('#modalCancel')?.click()`); h.log('SCAN_ONLY — cancelled'); return false; }
-  await h.eval(`document.querySelector('#modalConfirm').click()`);
+  if (process.env.SCAN_ONLY === '1') { await h.eval(`document.querySelector('#sftkConfirmCancel')?.click()`); h.log('SCAN_ONLY — cancelled'); return false; }
+  await h.eval(`document.querySelector('#sftkConfirmGo').click()`);
+  await h.sleep(400);
+  if (await h.eval(`!!document.querySelector('#sftkConfirmProd')`)) {
+    await h.eval(`(() => { const i = document.querySelector('#sftkConfirmProd'); i.value = i.placeholder; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    await h.eval(`document.querySelector('#sftkConfirmProdGo')?.click()`);
+  }
   return true;
 }
 export default async function (h) {
@@ -39,7 +44,7 @@ export default async function (h) {
     h.log('add button:', await h.eval(`(() => { const b = document.querySelector('#lpAddBtnOrgDef'); return b ? b.textContent.trim() + (b.disabled ? ' (off)' : '') : 'missing'; })()`));
     await h.eval(`document.querySelector('#lpAddBtnOrgDef')?.click()`);
     await h.sleep(1500);
-    if (await h.eval(`!!document.querySelector('#modalConfirm')`)) { if (!(await modalGo(h, 'org default'))) return; }
+    if (await h.eval(`!!document.querySelector('#sftkConfirmGo')`)) { if (!(await modalGo(h, 'org default'))) return; }
     await h.waitFor("!/Deploying|⏳/.test((document.querySelector('#lpDetailBody')?.innerText || '') + (document.querySelector('#lpAddErrOrgDef')?.innerText || ''))", 300000, 1000);
     await h.sleep(1500);
     h.log('add error:', await dump(h, '#lpAddErrOrgDef', 400));

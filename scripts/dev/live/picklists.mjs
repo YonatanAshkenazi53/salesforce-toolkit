@@ -47,31 +47,34 @@ export default async function (h) {
   // an automation scan (T8) runs in a modal before the wizard itself appears
   await h.sleep(1500);
   h.log('interim modal:', await dump(h, '#dsModalBox', 400));
-  await h.waitFor("!!document.querySelector('#dsPkGo')", 240000, 1000);
+  // Campaign 3 phase 2: the wizard's Go became the shared confirm dialog's
+  // own #sftkConfirmGo footer button (sftk-confirm.js); the typed production
+  // step is now #sftkConfirmProd / #sftkConfirmProdGo / #sftkConfirmProdCancel.
+  await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 240000, 1000);
   await h.sleep(800);
-  const wiz = await h.eval(`(() => { const box = document.querySelector('#dsPkGo')?.closest('#dsModalBox, .ds-modal, [class*=modal]'); return box ? box.innerText.replace(/\\s+/g, ' ').slice(0, 1600) : '(no wizard: ' + [...document.querySelectorAll('.ds-toast, [class*=toast]')].map(t => t.innerText).join(' | ') + ')'; })()`);
+  const wiz = await h.eval(`(() => { const box = document.querySelector('#sftkConfirmGo')?.closest('#dsModalBox, .ds-modal, [class*=modal]'); return box ? box.innerText.replace(/\\s+/g, ' ').slice(0, 1600) : '(no wizard: ' + [...document.querySelectorAll('.ds-toast, [class*=toast]')].map(t => t.innerText).join(' | ') + ')'; })()`);
   h.log('WIZARD:', wiz);
   await h.shot(h.shots + '/pk-wizard.png');
-  if (!(await h.eval(`!!document.querySelector('#dsPkGo')`))) return;
+  if (!(await h.eval(`!!document.querySelector('#sftkConfirmGo')`))) return;
   const fix = (process.env.FIX || 'remap').toLowerCase();
   h.log('fix modes offered:', JSON.stringify(await h.eval(`[...document.querySelectorAll('input[name="dsPkFixMode"]')].map(r => r.value + (r.checked ? '*' : '') + (r.disabled ? '(off)' : ''))`)));
   await h.eval(`(() => { const r = document.querySelector('input[name="dsPkFixMode"][value=' + JSON.stringify(${JSON.stringify(fix)}) + ']'); if (r) { r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); } return !!r; })()`);
   if (fix === 'remap') h.log('remap target:', await setSelect(h, '#dsPkRemapTarget', process.env.TARGET || 'New'));
   await h.sleep(300);
-  h.log('Go:', await h.eval(`(() => { const b = document.querySelector('#dsPkGo'); return b.textContent.trim() + (b.disabled ? ' (off)' : ''); })()`));
+  h.log('Go:', await h.eval(`(() => { const b = document.querySelector('#sftkConfirmGo'); return b.textContent.trim() + (b.disabled ? ' (off)' : ''); })()`));
   const before = await h.eval(`document.querySelector('#dsPkBody .ds-pk-row')`) ? await h.eval(`(() => { window.__pkOld = document.querySelector('#dsPkBody .ds-pk-row'); return true; })()`) : null;
-  await h.eval(`document.querySelector('#dsPkGo').click()`);
+  await h.eval(`document.querySelector('#sftkConfirmGo').click()`);
   // typed production confirm, if the org is guarded
   await h.sleep(1500);
-  const typed = await h.eval(`(() => { const i = document.querySelector('#dsProdConfirmInput'); return i ? (i.placeholder || 'typed input') : ''; })()`);
+  const typed = await h.eval(`(() => { const i = document.querySelector('#sftkConfirmProd'); return i ? (i.placeholder || 'typed input') : ''; })()`);
   if (typed) {
     h.log('TYPED GATE (org name to type):', JSON.stringify(typed), '| modal:', await dump(h, '#dsModalBox', 600));
     if (process.env.TYPE_IT === '1') {
-      await h.eval(`(() => { const i = document.querySelector('#dsProdConfirmInput'); i.value = i.placeholder; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+      await h.eval(`(() => { const i = document.querySelector('#sftkConfirmProd'); i.value = i.placeholder; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
       await h.sleep(300);
-      h.log('Proceed enabled after typing:', await h.eval(`!document.querySelector('#dsProdGo')?.disabled`));
-      await h.eval(`document.querySelector('#dsProdGo')?.click()`);
-    } else { h.log('TYPE_IT not set — cancelling at the typed gate'); await h.eval(`document.querySelector('#dsProdCancel')?.click()`); return; }
+      h.log('Proceed enabled after typing:', await h.eval(`!document.querySelector('#sftkConfirmProdGo')?.disabled`));
+      await h.eval(`document.querySelector('#sftkConfirmProdGo')?.click()`);
+    } else { h.log('TYPE_IT not set — cancelling at the typed gate'); await h.eval(`document.querySelector('#sftkConfirmProdCancel')?.click()`); return; }
   }
   // done = the inventory re-rendered (new row elements) or an error toast
   await h.waitFor("(document.querySelector('#dsPkBody .ds-pk-row') && document.querySelector('#dsPkBody .ds-pk-row') !== window.__pkOld) || /❌/.test([...document.querySelectorAll('.ds-toast, [class*=toast]')].map(t => t.innerText).join(' '))", 300000, 1000);

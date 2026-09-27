@@ -74,13 +74,16 @@ describe('sync plan — the automation verdict does not outrun the scan', () => 
 
 // 5. The bulk wizard's Apply was clickable while "scanned 0 of 2 org(s)…" was
 //    still on screen; the sync plan's Run waits for its check. Same rule now.
+//    Campaign 3 phase 2: Apply became the shared confirm dialog's own
+//    #sftkConfirmGo footer button (sftk-confirm.js) — still held disabled with
+//    the same wording by the wizard itself until every org has answered.
 describe('bulk wizard — Apply waits for the automation check', () => {
   const fn = between('async function _pkOpenBulkWizard(', 'async function _pkApplyBulk(');
   it('renders Apply disabled with "checking automation" and enables it only after every org answered', () => {
-    expect(fn).toContain('id="dsPkBulkGo" disabled title="Enabled once the automation check has run in every org">⏳ checking automation…</button>');
-    const i = fn.indexOf("const go = eid('dsPkBulkGo');");
+    expect(fn).toMatch(/const go = eid\('sftkConfirmGo'\);\s*\n\s*if \(go\) \{ go\.disabled = true; go\.title = 'Enabled once the automation check has run in every org'; go\.textContent = '⏳ checking automation…'; \}/);
+    const i = fn.indexOf("const go2 = eid('sftkConfirmGo');");
     expect(i).toBeGreaterThan(fn.indexOf('for (const o of orgs) {'));
-    expect(fn.slice(i, i + 300)).toMatch(/go\.disabled = false; go\.textContent = mode === 'delete' \? '🗑 Apply to all orgs' : '⏸ Apply to all orgs';/);
+    expect(fn.slice(i, i + 300)).toMatch(/go2\.disabled = false; go2\.textContent = mode === 'delete' \? '🗑 Apply to all orgs' : '⏸ Apply to all orgs';/);
     expect(fn.slice(i - 120, i)).toMatch(/if \(pkScanSuperseded\(scanToken, _pkBulkScanToken\)\) return;/);
   });
 });

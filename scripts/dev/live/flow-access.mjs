@@ -19,11 +19,17 @@ export default async function (h) {
   await h.sleep(500);
   h.log('summary:', await dump(h, '#fpActionSummary', 300), '| assign:', await h.eval(`(() => { const b = document.querySelector('#fpAssignBtn'); return b.textContent.trim() + (b.disabled ? ' (off)' : ''); })()`));
   await h.eval(`document.querySelector('#fpAssignBtn').click()`);
-  await h.waitFor("!!document.querySelector('#modalConfirm')", 30000, 300); await h.sleep(300);
+  await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 30000, 300); await h.sleep(300);
   h.log('CONFIRM:', await h.eval(`(document.querySelector('#modalBox')?.innerText || '').replace(/\\s+/g, ' ').slice(0, 800)`));
   await h.shot(h.shots + '/fa-confirm.png');
-  if (process.env.SCAN_ONLY === '1') { await h.eval(`document.querySelector('#modalCancel')?.click()`); h.log('SCAN_ONLY — cancelled'); return; }
-  await h.eval(`document.querySelector('#modalConfirm').click()`);
+  if (process.env.SCAN_ONLY === '1') { await h.eval(`document.querySelector('#sftkConfirmCancel')?.click()`); h.log('SCAN_ONLY — cancelled'); return; }
+  await h.eval(`document.querySelector('#sftkConfirmGo').click()`);
+  await h.sleep(400);
+  if (await h.eval(`!!document.querySelector('#sftkConfirmProd')`)) {
+    h.log('TYPED GATE (production):', await dump(h, '#modalBox', 500));
+    await h.eval(`(() => { const i = document.querySelector('#sftkConfirmProd'); i.value = i.placeholder; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    await h.eval(`document.querySelector('#sftkConfirmProdGo')?.click()`);
+  }
   await h.waitFor("/Assigned|assigned|failed/.test(document.querySelector('#modalBox')?.innerText || '') && !/Deploying/.test(document.querySelector('#fpActionSummary')?.innerText || '')", 300000, 1000);
   await h.sleep(800);
   h.log('RESULT:', await h.eval(`(document.querySelector('#modalBox')?.innerText || '').replace(/\\s+/g, ' ').slice(0, 800)`));

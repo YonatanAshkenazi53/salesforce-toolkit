@@ -19,18 +19,8 @@ const UI_FILES = readdirSync(root).filter(f => f.endsWith('.js') && !f.startsWit
   && !['background.js', 'content.js', 'trusted-types-policy.js', 'sftk-write.js', 'sftk-confirm.js'].includes(f));
 
 const BASELINE = {
-  'apex-debugger.js': 6,
-  'dependency-map.js': 3,
-  'field-cleaner.js': 14,
-  'flow-permissions.js': 1,
-  'license-manager.js': 2,
-  'lightning-pages.js': 3,
-  'popup.js': 3,
-  'studio-picklists.js': 6,
-  'studio-reconcile.js': 9,
-  'studio-scan.js': 1,
-  'studio-seed.js': 5,
-  'user-copy.js': 5,
+  // 2026-09-27, end of phase 2: zero everywhere. Every verified write is asked
+  // by the shared dialog, names its dialog, or is marked not-destructive with a reason.
 };
 
 function offenders(file) {
@@ -39,7 +29,9 @@ function offenders(file) {
   lines.forEach((line, i) => {
     if (!/\bsftkWriteVerified(All)?\(/.test(line)) return;
     const above = lines.slice(Math.max(0, i - 8), i).join('\n');
-    if (/sftkConfirmDestructive\(|confirmed-by:/.test(above)) return;
+    // `// not-destructive: <why>` is the visible exception for a write that needs no
+    // dialog (a debug trace that expires on its own); a reviewer reads the reason.
+    if (/sftkConfirmDestructive\(|confirmed-by:|not-destructive:/.test(above)) return;
     out.push(`${file}:${i + 1}  ${line.trim().slice(0, 90)}`);
   });
   return out;

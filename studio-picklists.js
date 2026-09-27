@@ -1023,19 +1023,33 @@ function _pkWireRtMatrix(inv, body) {
     if (dirtyEl) dirtyEl.textContent = n ? `${n} pending change(s) across ${diffs.length} record type(s)` : '';
   };
   body.querySelectorAll('.ds-pk-rtm-chk').forEach(c => c.addEventListener('change', refresh));
-  applyBtn.addEventListener('click', () => {
+  // The one confirmation (sftk-confirm.js, campaign 3 phase 2): names each
+  // changed record type and its adds/removes; a production target asks for
+  // its name, replacing the old confirmTypedProd() call.
+  applyBtn.addEventListener('click', async () => {
     const diffs = pkRtMatrixDiff(inv.rts, _pkReadRtMatrix(body));
-    if (diffs.length) _pkApplyRt(inv, diffs);
+    if (!diffs.length) return;
+    const rtNameById = new Map((inv.rts || []).map(rt => [rt.id, rt.name]));
+    const items = diffs.map(d => ({
+      label: rtNameById.get(d.rtId) || d.rtId,
+      sub: [d.adds.length ? `+${d.adds.join(', ')}` : '', d.removes.length ? `-${d.removes.join(', ')}` : ''].filter(Boolean).join(' · '),
+    }));
+    const gate = await sftkOrgWriteGate(inv.orgUrl, _orgs);
+    const ok = await sftkConfirmDestructive({
+      title: `Apply record-type picklist assignments — ${inv.obj}.${inv.field}`,
+      icon: '🧩',
+      items,
+      revOverride: { html: '🔁 <strong>Reversible</strong> — record-type assignments can be changed again the same way.', needsCheckbox: false },
+      confirmLabel: 'Apply record-type changes',
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!ok) return;
+    _pkApplyRt(inv, diffs);
   });
 }
 
 // Apply RT assignment diffs — one RecordType Metadata PATCH per changed RT.
 async function _pkApplyRt(inv, diffs) {
-  if (cachedOrgType(inv.orgUrl) === 'production') {
-    const ok = await confirmTypedProd(orgLabel(inv.orgUrl),
-      `edit record-type picklist assignments on ${inv.obj}.${inv.field}`);
-    if (!ok) return;
-  }
   let ok = 0, fail = 0;
   const errs = [];
   for (const d of diffs) {
@@ -1066,6 +1080,8 @@ async function _pkApplyRtCore(inv, rtId, adds, removes) {
   // report — a RecordType Metadata write that Salesforce silently dropped
   // (or partially applied) would still have shown "Updated". One re-read of
   // the same RecordType's Metadata closes that gap.
+  // confirmed-by: _pkWireRtMatrix's Apply button, and _pkOpenSyncPlan's Run
+  // (via _pkRunSyncPlan) — both confirm via sftkConfirmDestructive first.
   const w = await sftkWriteVerified({
     describe: `${inv.obj}.${inv.field} on record type ${rtId}`,
     write: () => sendBg({ type: 'SF_PATCH', orgUrl: inv.orgUrl, sid: inv.sid,
@@ -1283,56 +1299,62 @@ async function _pkOpenWizard(idx, mode) {
   const impact = needsFix ? await _pkImpact(inv) : null;
   const literal = wantScan ? await _pkValueLiteralScan(inv, name) : null;
 
-  showModal(`
-    <div class="ds-modal-header">${mode === 'delete' ? '🗑' : mode === 'fix' ? '🔧' : '⏸'} ${esc(title)}</div>
-    <div class="ds-modal-body">
-      ${needsFix ? `
-        <p><strong>${count.toLocaleString()}</strong> record${count !== 1 ? 's' : ''} currently hold${count === 1 ? 's' : ''} this value.
-        ${mode === 'delete' ? 'Deleting without a fix leaves ORPHAN text — filters and reports silently stop matching it.'
-          : mode === 'toggle' ? 'Deactivating keeps the stored value but users can no longer select it.' : ''}</p>
-        <div class="ds-pk-fixchoice">
-          <label><input type="radio" name="dsPkFixMode" value="remap" checked>
-            Move them to:
-            <select id="dsPkRemapTarget" class="ds-select ds-select-sm">
-              ${others.map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('')}
-            </select>
-          </label>
-          <label><input type="radio" name="dsPkFixMode" value="clear"> Clear the value (${inv.isMulti ? 'remove it from each record’s selection' : 'set the field blank'})</label>
-          ${fixRequired ? '' : `<label><input type="radio" name="dsPkFixMode" value="skip"> Skip the data fix${mode === 'toggle' ? ' — records keep the value' : ''}</label>`}
-        </div>
-        ${_pkImpactHtml(impact, count, literal)}
-      ` : `<p>No records hold this value — no data fix is needed.</p>${_pkLiteralOnlyHtml(literal, name)}`}
-      ${mode === 'delete' ? `<div class="ds-pk-delwarn">⛔ Salesforce's API cannot delete a picklist value: this removes it from the value set and Salesforce keeps it as <strong>inactive</strong> — the tool re-reads the field afterwards and says which. Deleting it for good is a click in Setup (Object Manager → Fields &amp; Relationships → the field → Values → Del). Records already fixed above are unaffected. Prefer <strong>Deactivate</strong> unless you need it out of the list.</div>` : ''}
-    </div>
-    <div class="ds-modal-footer">
-      <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-      <button class="ds-btn ${mode === 'delete' ? 'ds-btn-danger' : 'ds-btn-primary'}" id="dsPkGo">
-        ${mode === 'delete' ? '🗑 Delete value' : mode === 'fix' ? '🔧 Run data fix' : '⏸ Deactivate'}
-      </button>
-    </div>`);
+  // The one confirmation (sftk-confirm.js, campaign 3 phase 2): the wizard's
+  // own form (fix choice + impact panel) rides along as extraHtml; the
+  // production typed-name step replaces the old confirmTypedProd() call.
+  const bodyHtml = `
+    ${needsFix ? `
+      <p><strong>${count.toLocaleString()}</strong> record${count !== 1 ? 's' : ''} currently hold${count === 1 ? 's' : ''} this value.
+      ${mode === 'delete' ? 'Deleting without a fix leaves ORPHAN text — filters and reports silently stop matching it.'
+        : mode === 'toggle' ? 'Deactivating keeps the stored value but users can no longer select it.' : ''}</p>
+      <div class="ds-pk-fixchoice">
+        <label><input type="radio" name="dsPkFixMode" value="remap" checked>
+          Move them to:
+          <select id="dsPkRemapTarget" class="ds-select ds-select-sm">
+            ${others.map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('')}
+          </select>
+        </label>
+        <label><input type="radio" name="dsPkFixMode" value="clear"> Clear the value (${inv.isMulti ? 'remove it from each record’s selection' : 'set the field blank'})</label>
+        ${fixRequired ? '' : `<label><input type="radio" name="dsPkFixMode" value="skip"> Skip the data fix${mode === 'toggle' ? ' — records keep the value' : ''}</label>`}
+      </div>
+      ${_pkImpactHtml(impact, count, literal)}
+    ` : `<p>No records hold this value — no data fix is needed.</p>${_pkLiteralOnlyHtml(literal, name)}`}`;
 
-  eid('dsPkGo')?.addEventListener('click', async () => {
-    const fixMode = needsFix
-      ? (document.querySelector('input[name="dsPkFixMode"]:checked')?.value || 'skip')
-      : 'skip';
-    const target = fixMode === 'remap' ? eid('dsPkRemapTarget')?.value : null;
-    closeModal();
+  let fixMode = 'skip', target = null;
+  const readFix = () => {
+    fixMode = needsFix ? (document.querySelector('input[name="dsPkFixMode"]:checked')?.value || 'skip') : 'skip';
+    target = fixMode === 'remap' ? eid('dsPkRemapTarget')?.value : null;
+  };
 
-    // Production guard — one typed confirm covers data fix + metadata change.
-    if (cachedOrgType(inv.orgUrl) === 'production') {
-      const okProd = await confirmTypedProd(orgLabel(inv.orgUrl),
-        `${mode} picklist value "${name}" on ${inv.obj}.${inv.field}`);
-      if (!okProd) return;
-    }
-
-    if (fixMode !== 'skip' && count > 0) {
-      const fixOk = await _pkRunDataFix(name, fixMode, target);
-      if (!fixOk) return;   // fix failed/partial — leave metadata untouched
-    }
-    if (mode === 'toggle') await _pkApplyMetadata(idx, { deactivate: true });
-    if (mode === 'delete') await _pkApplyMetadata(idx, { remove: true });
-    if (mode === 'fix') loadPicklistInventory();
+  const gate = await sftkOrgWriteGate(inv.orgUrl, _orgs);
+  const ok = await sftkConfirmDestructive({
+    title,
+    icon: mode === 'delete' ? '🗑' : mode === 'fix' ? '🔧' : '⏸',
+    items: [{ label: name, sub: needsFix ? `${count.toLocaleString()} record(s) currently hold this value` : 'no records hold this value' }],
+    revOverride: mode === 'delete'
+      ? { html: "⛔ Salesforce's API cannot delete a picklist value: this removes it from the value set and Salesforce keeps it as <strong>inactive</strong> — the tool re-reads the field afterwards and says which. Deleting it for good is a click in Setup (Object Manager → Fields &amp; Relationships → the field → Values → Del). Records already fixed above are unaffected. Prefer <strong>Deactivate</strong> unless you need it out of the list.", needsCheckbox: true }
+      : mode === 'toggle'
+      ? { html: '🔁 <strong>Reversible</strong> — deactivating keeps the stored value; it can be reactivated anytime from this page.', needsCheckbox: false }
+      : { html: '⚠ <strong>Not reversible by this tool</strong> — records are updated directly; there is no automatic rollback for a data fix.', needsCheckbox: true },
+    confirmLabel: mode === 'delete' ? '🗑 Delete value' : mode === 'fix' ? '🔧 Run data fix' : '⏸ Deactivate',
+    extraHtml: bodyHtml,
+    production: gate.production ? { label: gate.label } : null,
+    onRender: () => {
+      readFix();
+      document.querySelectorAll('input[name="dsPkFixMode"]').forEach(r => r.addEventListener('change', readFix));
+      eid('dsPkRemapTarget')?.addEventListener('change', readFix);
+    },
   });
+  if (!ok) return;
+
+  if (fixMode !== 'skip' && count > 0) {
+    // confirmed-by: _pkOpenWizard (sftkConfirmDestructive above)
+    const fixOk = await _pkRunDataFix(name, fixMode, target);
+    if (!fixOk) return;   // fix failed/partial — leave metadata untouched
+  }
+  if (mode === 'toggle') await _pkApplyMetadata(idx, { deactivate: true });
+  if (mode === 'delete') await _pkApplyMetadata(idx, { remove: true });
+  if (mode === 'fix') loadPicklistInventory();
 }
 
 // ── Data fix runner ─────────────────────────────────────────────
@@ -1360,6 +1382,8 @@ async function _pkDataFixCore(ctx, value, fixMode, target, onProgress) {
     // success flag used to BE "moved off the value" — one re-read of exactly
     // the Ids it accepted closes the same gap a PATCH accepted-but-unchanged
     // taught elsewhere in this app.
+    // confirmed-by: every caller of this core (_pkOpenWizard, _pkValueSetWizard,
+    // _pkApplyBulk, _pkOpenSyncPlan's Run) confirms via sftkConfirmDestructive first.
     const w = await sftkWriteVerified({
       describe: `${ctx.obj}.${ctx.field} data fix`,
       write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: ctx.orgUrl, sid: ctx.sid, records: chunk }),
@@ -1451,6 +1475,7 @@ async function _pkApplyMetadataCore(inv, idx, op) {
   const name = pkValueName(inv.rawValues[idx]);
   const readBack = () => sendBg({ type: 'SF_TOOLING_GET', orgUrl: inv.orgUrl, sid: inv.sid,
     sobject: 'CustomField', id: inv.fieldId, _suppressError: true });
+  // confirmed-by: _pkOpenWizard / _pkApplyBulk confirm via sftkConfirmDestructive before calling this core.
   const w = await sftkWriteVerified({
     describe: `${inv.obj}.${inv.field} value “${name}”`,
     write: () => sendBg({ type: 'SF_PATCH', orgUrl: inv.orgUrl, sid: inv.sid,
@@ -1665,111 +1690,135 @@ async function _pkOpenBulkWizard(mode) {
   if (!orgs.length) return showToast('Tick at least one org column.', 'warning');
   const single = values.length === 1;
 
-  showModal(`
-    <div class="ds-modal-header">${mode === 'delete' ? '🗑' : '⏸'} Bulk ${mode === 'delete' ? 'delete' : 'deactivate'} — ${values.length} value(s) × ${orgs.length} org(s)</div>
-    <div class="ds-modal-body">
-      <p>Values: <strong>${esc(values.join(', '))}</strong></p>
-      <p>Orgs: ${esc(orgs.map(o => o.label).join(', '))}</p>
-      <div class="ds-pk-fixchoice">
-        <label><input type="radio" name="dsPkBulkFix" value="clear" checked> Clear the value on affected records first (recommended)</label>
-        ${single ? `<label><input type="radio" name="dsPkBulkFix" value="remap"> Move records to:
-          <select id="dsPkBulkRemap" class="ds-select ds-select-sm"></select></label>` : ''}
-        <label><input type="radio" name="dsPkBulkFix" value="skip"> Skip data fix${mode === 'delete' ? ' — leaves orphan text' : ''}</label>
-      </div>
-      ${!single ? '<div class="ds-pk-note-inline">Remap is available when a single value is selected; multi-value bulk offers clear or skip.</div>' : ''}
-      <div id="dsPkBulkImpact" class="ds-pk-note">
-        <div class="ds-pk-imp-title" id="dsPkBulkImpactHead">⏳ Checking automation impact per org…</div>
-        <div id="dsPkBulkImpactRows"></div>
-      </div>
+  // The one confirmation (sftk-confirm.js, campaign 3 phase 2): the wizard's
+  // own form (fix choice + per-org automation-impact panel) rides along as
+  // extraHtml. Go — now the dialog's own #sftkConfirmGo — stays disabled with
+  // the same "checking automation" wording until every org has answered; the
+  // gate is enforced here (the dialog's own sync only handles the checkbox/word,
+  // which this dialog doesn't use, precisely so the scan gate can't be raced).
+  const bodyHtml = `
+    <p>Values: <strong>${esc(values.join(', '))}</strong></p>
+    <p>Orgs: ${esc(orgs.map(o => o.label).join(', '))}</p>
+    <div class="ds-pk-fixchoice">
+      <label><input type="radio" name="dsPkBulkFix" value="clear" checked> Clear the value on affected records first (recommended)</label>
+      ${single ? `<label><input type="radio" name="dsPkBulkFix" value="remap"> Move records to:
+        <select id="dsPkBulkRemap" class="ds-select ds-select-sm"></select></label>` : ''}
+      <label><input type="radio" name="dsPkBulkFix" value="skip"> Skip data fix${mode === 'delete' ? ' — leaves orphan text' : ''}</label>
     </div>
-    <div class="ds-modal-footer">
-      <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-      <button class="ds-btn ${mode === 'delete' ? 'ds-btn-danger' : 'ds-btn-primary'}" id="dsPkBulkGo" disabled title="Enabled once the automation check has run in every org">⏳ checking automation…</button>
-    </div>`);
+    ${!single ? '<div class="ds-pk-note-inline">Remap is available when a single value is selected; multi-value bulk offers clear or skip.</div>' : ''}
+    <div id="dsPkBulkImpact" class="ds-pk-note">
+      <div class="ds-pk-imp-title" id="dsPkBulkImpactHead">⏳ Checking automation impact per org…</div>
+      <div id="dsPkBulkImpactRows"></div>
+    </div>`;
 
-  if (single) {
-    const alt = new Set();
-    for (const o of orgs) for (const v of o.inv.rawValues) {
-      const n = pkValueName(v);
-      if (n !== values[0] && v.isActive !== false) alt.add(n);
-    }
-    const sel = eid('dsPkBulkRemap');
-    if (sel) sel.innerHTML = [...alt].map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
-  }
+  let fixMode = 'clear', remap = null;
+  const readFix = () => {
+    fixMode = document.querySelector('input[name="dsPkBulkFix"]:checked')?.value || 'skip';
+    remap = fixMode === 'remap' ? eid('dsPkBulkRemap')?.value : null;
+  };
 
-  // Per-org impact + value-literal automation scan (before apply — required).
-  //
-  // Deliberately NOT awaited — the modal has to paint instantly. But this pass
-  // is expensive per org (_pkValueLiteralScan alone is a ValidationRule Tooling
-  // query plus one Flow query per active flow), and it runs the orgs
-  // SEQUENTIALLY, so with several orgs it lasts a long time. Two consequences
-  // are handled here:
-  //   · it used to build parts[] and paint ONCE at the end, so the panel sat on
-  //     a frozen "Computing…" the whole time. Each org's line is now appended
-  //     AS IT COMPLETES, with a running "scanned x of n org(s)…" header, so what
-  //     is on screen is always exactly what has actually been measured.
-  //   · re-opening the wizard used to leave the previous run alive and racing;
-  //     it could land after the new one and paint stale orgs over fresh results.
-  //     The pass now captures a token (same guard as _pkSyncScanToken) and
-  //     abandons quietly the moment a newer run supersedes it.
-  const scanToken   = ++_pkBulkScanToken;
-  const scanSubject = single ? 'this value' : 'the first value';
-  const scanHead    = () => eid('dsPkBulkImpactHead');
-  const scanRows    = () => eid('dsPkBulkImpactRows');
-  { const h0 = scanHead(); if (h0) h0.textContent = pkScanProgressText(0, orgs.length, 0, scanSubject); }
-  (async () => {
-    let done = 0, failed = 0;
-    for (const o of orgs) {
-      let inner, bad = false;
-      try {
-        const imp = await _pkImpact(o.inv);
-        const lit = await _pkValueLiteralScan(o.inv, values[0]);
-        // lit.notes carries whatever the scan could NOT cover (its own 40-flow
-        // cap, an enumeration that failed). Dropping it — as this line used to
-        // — turned a partial scan into a confident "N mentions" verdict. Same
-        // treatment as _pkSyncAutomationPass gives it.
-        inner = `<strong>${esc(o.label)}</strong>: ${_pkImpactSummaryLine(imp)}
-          · ${lit.mentions} automation(s) mention “${esc(values[0])}” by name${lit.hits.length ? ` (${esc(lit.hits.slice(0, 3).join(', '))})` : ''}`
-          // E4 — what this org's scan just cost, counted from what actually ran
-          // (4 impact queries + VR scan + 2 flow enumerations + 1 read per
-          // scanned flow). "≈" because paginated query results add calls.
-          + ` <span style="color:var(--subtext)">· ≈${pkBulkScanCalls(lit.scan)} API calls</span>`
-          + ((lit.notes || []).length ? `<span style="color:var(--warning)"> · ⚠ ${esc(lit.notes.join(' · '))}</span>` : '');
-      } catch (e) {
-        // A thrown org must never vanish from the panel: an org with no line
-        // would read as "nothing to worry about here".
-        bad = true;
-        failed++;
-        inner = `<strong>${esc(o.label)}</strong>: ⚠ automation could NOT be checked (${esc(e?.message || String(e))}) — treat this org as UNKNOWN, not clean`;
+  const gates = await Promise.all(orgs.map(o => sftkOrgWriteGate(o.orgUrl, _orgs)));
+  const prodOrgs = orgs.map((o, i) => ({ o, gate: gates[i] })).filter(x => x.gate.production);
+
+  const okPromise = sftkConfirmDestructive({
+    title: `${mode === 'delete' ? '🗑' : '⏸'} Bulk ${mode === 'delete' ? 'delete' : 'deactivate'} — ${values.length} value(s) × ${orgs.length} org(s)`,
+    icon: mode === 'delete' ? '🗑' : '⏸',
+    revOverride: mode === 'delete'
+      ? { html: '⛔ <strong>Permanent</strong> — Salesforce cannot undo this. There is no Recycle Bin for this type.', needsCheckbox: false }
+      : { html: '🔁 <strong>Reversible</strong> — deactivating keeps the stored value in each org; it can be reactivated anytime.', needsCheckbox: false },
+    confirmLabel: mode === 'delete' ? '🗑 Apply to all orgs' : '⏸ Apply to all orgs',
+    extraHtml: bodyHtml,
+    production: prodOrgs.length ? { label: prodOrgs.map(x => x.gate.label || x.o.label).join(', ') } : null,
+    onRender: () => {
+      readFix();
+      document.querySelectorAll('input[name="dsPkBulkFix"]').forEach(r => r.addEventListener('change', readFix));
+      eid('dsPkBulkRemap')?.addEventListener('change', readFix);
+
+      if (single) {
+        const alt = new Set();
+        for (const o of orgs) for (const v of o.inv.rawValues) {
+          const n = pkValueName(v);
+          if (n !== values[0] && v.isActive !== false) alt.add(n);
+        }
+        const sel = eid('dsPkBulkRemap');
+        if (sel) { sel.innerHTML = [...alt].map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join(''); readFix(); }
       }
-      done++;
-      // Superseded by a newer wizard run, or the modal is gone — stop, and
-      // above all do NOT paint into whatever is on screen now.
-      if (pkScanSuperseded(scanToken, _pkBulkScanToken)) return;
-      const rows = scanRows();
-      if (!rows) return;
-      const row = document.createElement('div');
-      row.className = 'ds-pk-imp-org';
-      if (bad) row.style.color = 'var(--warning)';
-      row.innerHTML = inner;
-      rows.appendChild(row);
-      const h = scanHead();
-      if (h) h.textContent = pkScanProgressText(done, orgs.length, failed, scanSubject);
-    }
-    // The check is over (every org answered or failed): Apply opens now —
-    // it used to be clickable from the start, while "scanned 0 of 2 org(s)…"
-    // was still on screen (live 2026-09-23). Same rule as the sync plan's Run.
-    if (pkScanSuperseded(scanToken, _pkBulkScanToken)) return;
-    const go = eid('dsPkBulkGo');
-    if (go) { go.disabled = false; go.textContent = mode === 'delete' ? '🗑 Apply to all orgs' : '⏸ Apply to all orgs'; go.removeAttribute('title'); }
-  })();
 
-  eid('dsPkBulkGo')?.addEventListener('click', async () => {
-    const fixMode = document.querySelector('input[name="dsPkBulkFix"]:checked')?.value || 'skip';
-    const remap = fixMode === 'remap' ? eid('dsPkBulkRemap')?.value : null;
-    closeModal();
-    await _pkApplyBulk(values, orgs, mode, fixMode, remap);
+      const go = eid('sftkConfirmGo');
+      if (go) { go.disabled = true; go.title = 'Enabled once the automation check has run in every org'; go.textContent = '⏳ checking automation…'; }
+
+      // Per-org impact + value-literal automation scan (before apply — required).
+      //
+      // Deliberately NOT awaited — the modal has to paint instantly. But this pass
+      // is expensive per org (_pkValueLiteralScan alone is a ValidationRule Tooling
+      // query plus one Flow query per active flow), and it runs the orgs
+      // SEQUENTIALLY, so with several orgs it lasts a long time. Two consequences
+      // are handled here:
+      //   · it used to build parts[] and paint ONCE at the end, so the panel sat on
+      //     a frozen "Computing…" the whole time. Each org's line is now appended
+      //     AS IT COMPLETES, with a running "scanned x of n org(s)…" header, so what
+      //     is on screen is always exactly what has actually been measured.
+      //   · re-opening the wizard used to leave the previous run alive and racing;
+      //     it could land after the new one and paint stale orgs over fresh results.
+      //     The pass now captures a token (same guard as _pkSyncScanToken) and
+      //     abandons quietly the moment a newer run supersedes it.
+      const scanToken   = ++_pkBulkScanToken;
+      const scanSubject = single ? 'this value' : 'the first value';
+      const scanHead    = () => eid('dsPkBulkImpactHead');
+      const scanRows    = () => eid('dsPkBulkImpactRows');
+      { const h0 = scanHead(); if (h0) h0.textContent = pkScanProgressText(0, orgs.length, 0, scanSubject); }
+      (async () => {
+        let done = 0, failed = 0;
+        for (const o of orgs) {
+          let inner, bad = false;
+          try {
+            const imp = await _pkImpact(o.inv);
+            const lit = await _pkValueLiteralScan(o.inv, values[0]);
+            // lit.notes carries whatever the scan could NOT cover (its own 40-flow
+            // cap, an enumeration that failed). Dropping it — as this line used to
+            // — turned a partial scan into a confident "N mentions" verdict. Same
+            // treatment as _pkSyncAutomationPass gives it.
+            inner = `<strong>${esc(o.label)}</strong>: ${_pkImpactSummaryLine(imp)}
+              · ${lit.mentions} automation(s) mention “${esc(values[0])}” by name${lit.hits.length ? ` (${esc(lit.hits.slice(0, 3).join(', '))})` : ''}`
+              // E4 — what this org's scan just cost, counted from what actually ran
+              // (4 impact queries + VR scan + 2 flow enumerations + 1 read per
+              // scanned flow). "≈" because paginated query results add calls.
+              + ` <span style="color:var(--subtext)">· ≈${pkBulkScanCalls(lit.scan)} API calls</span>`
+              + ((lit.notes || []).length ? `<span style="color:var(--warning)"> · ⚠ ${esc(lit.notes.join(' · '))}</span>` : '');
+          } catch (e) {
+            // A thrown org must never vanish from the panel: an org with no line
+            // would read as "nothing to worry about here".
+            bad = true;
+            failed++;
+            inner = `<strong>${esc(o.label)}</strong>: ⚠ automation could NOT be checked (${esc(e?.message || String(e))}) — treat this org as UNKNOWN, not clean`;
+          }
+          done++;
+          // Superseded by a newer wizard run, or the modal is gone — stop, and
+          // above all do NOT paint into whatever is on screen now.
+          if (pkScanSuperseded(scanToken, _pkBulkScanToken)) return;
+          const rows = scanRows();
+          if (!rows) return;
+          const row = document.createElement('div');
+          row.className = 'ds-pk-imp-org';
+          if (bad) row.style.color = 'var(--warning)';
+          row.innerHTML = inner;
+          rows.appendChild(row);
+          const h = scanHead();
+          if (h) h.textContent = pkScanProgressText(done, orgs.length, failed, scanSubject);
+        }
+        // The check is over (every org answered or failed): Apply opens now —
+        // it used to be clickable from the start, while "scanned 0 of 2 org(s)…"
+        // was still on screen (live 2026-09-23). Same rule as the sync plan's Run.
+        if (pkScanSuperseded(scanToken, _pkBulkScanToken)) return;
+        const go2 = eid('sftkConfirmGo');
+        if (go2) { go2.disabled = false; go2.textContent = mode === 'delete' ? '🗑 Apply to all orgs' : '⏸ Apply to all orgs'; go2.removeAttribute('title'); }
+      })();
+    },
   });
+
+  const ok = await okPromise;
+  if (!ok) return;
+  await _pkApplyBulk(values, orgs, mode, fixMode, remap);
 }
 
 // Apply the bulk operation sequentially per org (so progress stays legible),
@@ -1780,14 +1829,8 @@ async function _pkApplyBulk(values, orgs, mode, fixMode, remap) {
   const log = resBox?.querySelector('.ds-pk-reslog');
   const append = html => { if (log) { const d = document.createElement('div'); d.className = 'ds-pk-res-row'; d.innerHTML = html; log.appendChild(d); } };
 
-  // Typed confirm once per production org (covers its whole batch).
-  for (const o of orgs) {
-    if (cachedOrgType(o.orgUrl) === 'production') {
-      const ok = await confirmTypedProd(o.label, `bulk ${mode} ${values.length} picklist value(s) on ${_pkMatrix.obj}.${_pkMatrix.field}`);
-      if (!ok) { append(`⏭ <strong>${esc(o.label)}</strong>: cancelled (production confirm declined)`); o._cancelled = true; }
-    }
-  }
-
+  // confirmed-by: _pkOpenBulkWizard (sftkConfirmDestructive, one production
+  // step naming every production org ticked, before this ever runs).
   for (const o of orgs) {
     if (o._cancelled) continue;
     const sess = await getOrgSession(o.orgUrl);
@@ -1936,48 +1979,62 @@ async function _pkValueSetWizard(ctx, idx, mode, applyFn, reloadFn) {
   const impact = needsFix ? await _pkImpact(ctx) : null;
   const literal = wantScan ? await _pkValueLiteralScan(ctx, name) : null;
 
-  showModal(`
-    <div class="ds-modal-header">${mode === 'delete' ? '🗑' : mode === 'fix' ? '🔧' : '⏸'} ${esc(title)}</div>
-    <div class="ds-modal-body">
-      ${needsFix ? `
-        <p><strong>${count.toLocaleString()}</strong> record(s) currently hold this value.</p>
-        <div class="ds-pk-fixchoice">
-          <label><input type="radio" name="dsVsFix" value="remap" ${others.length ? 'checked' : 'disabled'}> Move them to:
-            <select id="dsVsRemap" class="ds-select ds-select-sm">${others.map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('')}</select></label>
-          <label><input type="radio" name="dsVsFix" value="clear" ${others.length ? '' : 'checked'}> Clear the value (${ctx.isMulti ? 'remove it from each record’s selection' : 'set the field blank'})</label>
-          ${fixRequired ? '' : `<label><input type="radio" name="dsVsFix" value="skip"> Skip the data fix</label>`}
-        </div>
-        ${_pkImpactHtml(impact, count, literal)}
-      ` : `<p>No records hold this value — no data fix is needed.</p>${_pkLiteralOnlyHtml(literal, name)}`}
-      ${mode === 'delete' ? `<div class="ds-pk-delwarn">⛔ Salesforce's API may keep a removed value as <strong>inactive</strong> rather than delete it (it does for custom picklists) — check the value set in Setup afterwards; deleting for good is a Setup click. Prefer <strong>Deactivate</strong> unless you need it out of the list.</div>` : ''}
-    </div>
-    <div class="ds-modal-footer">
-      <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-      <button class="ds-btn ${mode === 'delete' ? 'ds-btn-danger' : 'ds-btn-primary'}" id="dsVsGo">${mode === 'delete' ? '🗑 Delete value' : mode === 'fix' ? '🔧 Run data fix' : '⏸ Deactivate'}</button>
-    </div>`);
+  // The one confirmation (sftk-confirm.js, campaign 3 phase 2) — mirrors
+  // _pkOpenWizard's conversion: same form as extraHtml, production typed-name
+  // step replaces the old confirmTypedProd() call.
+  const bodyHtml = `
+    ${needsFix ? `
+      <p><strong>${count.toLocaleString()}</strong> record(s) currently hold this value.</p>
+      <div class="ds-pk-fixchoice">
+        <label><input type="radio" name="dsVsFix" value="remap" ${others.length ? 'checked' : 'disabled'}> Move them to:
+          <select id="dsVsRemap" class="ds-select ds-select-sm">${others.map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('')}</select></label>
+        <label><input type="radio" name="dsVsFix" value="clear" ${others.length ? '' : 'checked'}> Clear the value (${ctx.isMulti ? 'remove it from each record’s selection' : 'set the field blank'})</label>
+        ${fixRequired ? '' : `<label><input type="radio" name="dsVsFix" value="skip"> Skip the data fix</label>`}
+      </div>
+      ${_pkImpactHtml(impact, count, literal)}
+    ` : `<p>No records hold this value — no data fix is needed.</p>${_pkLiteralOnlyHtml(literal, name)}`}`;
 
-  eid('dsVsGo')?.addEventListener('click', async () => {
-    const fixMode = needsFix ? (document.querySelector('input[name="dsVsFix"]:checked')?.value || 'skip') : 'skip';
-    const target = fixMode === 'remap' ? eid('dsVsRemap')?.value : null;
-    closeModal();
-    if (cachedOrgType(ctx.orgUrl) === 'production') {
-      const ok = await confirmTypedProd(orgLabel(ctx.orgUrl), `${mode} value "${name}" on ${ctx.obj}.${ctx.field}`);
-      if (!ok) return;
-    }
-    if (fixMode !== 'skip' && count > 0) {
-      const ok = await _pkRunDataFix(name, fixMode, target, ctx);
-      if (!ok) return;   // fix failed/partial — leave metadata untouched
-    }
-    if (mode === 'fix') { reloadFn(); return; }
-    try {
-      await applyFn(idx, mode === 'delete' ? { remove: true } : { deactivate: true });
-      showToast(mode === 'delete' ? '🗑 Value deleted' : '⏸ Value deactivated', 'success');
-    } catch (e) {
-      const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
-      showToast(`❌ Metadata update failed: ${fe.message}`, 'error', 8000);
-    }
-    reloadFn();
+  let fixMode = 'skip', target = null;
+  const readFix = () => {
+    fixMode = needsFix ? (document.querySelector('input[name="dsVsFix"]:checked')?.value || 'skip') : 'skip';
+    target = fixMode === 'remap' ? eid('dsVsRemap')?.value : null;
+  };
+
+  const gate = await sftkOrgWriteGate(ctx.orgUrl, _orgs);
+  const ok = await sftkConfirmDestructive({
+    title,
+    icon: mode === 'delete' ? '🗑' : mode === 'fix' ? '🔧' : '⏸',
+    items: [{ label: name, sub: needsFix ? `${count.toLocaleString()} record(s) currently hold this value` : 'no records hold this value' }],
+    revOverride: mode === 'delete'
+      ? { html: "⛔ Salesforce's API may keep a removed value as <strong>inactive</strong> rather than delete it (it does for custom picklists) — check the value set in Setup afterwards; deleting for good is a Setup click. Prefer <strong>Deactivate</strong> unless you need it out of the list.", needsCheckbox: true }
+      : mode === 'toggle'
+      ? { html: '🔁 <strong>Reversible</strong> — deactivating keeps the stored value; it can be reactivated anytime from this page.', needsCheckbox: false }
+      : { html: '⚠ <strong>Not reversible by this tool</strong> — records are updated directly; there is no automatic rollback for a data fix.', needsCheckbox: true },
+    confirmLabel: mode === 'delete' ? '🗑 Delete value' : mode === 'fix' ? '🔧 Run data fix' : '⏸ Deactivate',
+    extraHtml: bodyHtml,
+    production: gate.production ? { label: gate.label } : null,
+    onRender: () => {
+      readFix();
+      document.querySelectorAll('input[name="dsVsFix"]').forEach(r => r.addEventListener('change', readFix));
+      eid('dsVsRemap')?.addEventListener('change', readFix);
+    },
   });
+  if (!ok) return;
+
+  if (fixMode !== 'skip' && count > 0) {
+    // confirmed-by: _pkValueSetWizard (sftkConfirmDestructive above)
+    const fixOk = await _pkRunDataFix(name, fixMode, target, ctx);
+    if (!fixOk) return;   // fix failed/partial — leave metadata untouched
+  }
+  if (mode === 'fix') { reloadFn(); return; }
+  try {
+    await applyFn(idx, mode === 'delete' ? { remove: true } : { deactivate: true });
+    showToast(mode === 'delete' ? '🗑 Value deleted' : '⏸ Value deactivated', 'success');
+  } catch (e) {
+    const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
+    showToast(`❌ Metadata update failed: ${fe.message}`, 'error', 8000);
+  }
+  reloadFn();
 }
 
 // ── P4a: Standard picklists (StandardValueSet) ──────────────────
@@ -2092,6 +2149,7 @@ async function _pkStdApplyCore(std, idx, op) {
   // StandardValueSet closes the same gap a PATCH accepted-but-unchanged
   // taught elsewhere — the toggle used to be "done" the moment Salesforce
   // returned 204.
+  // confirmed-by: _pkValueSetWizard confirms via sftkConfirmDestructive before calling this core.
   const w = await sftkWriteVerified({
     describe: `${std.field} value "${name}"`,
     write: () => sendBg({ type: 'SF_PATCH', orgUrl: std.orgUrl, sid: std.sid,
@@ -2176,6 +2234,7 @@ async function _pkGvsApplyCore(gvs, idx, op) {
   // GlobalValueSet closes the same gap a PATCH accepted-but-unchanged taught
   // elsewhere — a remove that Salesforce keeps as inactive (same API limit
   // as a CustomField's value set) is reported as what the org actually shows.
+  // confirmed-by: _pkValueSetWizard confirms via sftkConfirmDestructive before calling this core.
   const w = await sftkWriteVerified({
     describe: `${gvs.gvsName} value "${name}"`,
     write: () => sendBg({ type: 'SF_PATCH', orgUrl: gvs.orgUrl, sid: gvs.sid,
@@ -2224,6 +2283,7 @@ async function _pkApplySyncCore(tgt, sel) {
   // value operations into one call — one re-read of the field's Metadata,
   // spot-checking each operation, catches a partial apply the 204 alone
   // would have hidden (the same shape of lie a flow switch once told).
+  // confirmed-by: _pkOpenSyncPlan's Run button confirms via sftkConfirmDestructive first.
   const w = await sftkWriteVerified({
     describe: `${tgt.inv.obj}.${tgt.inv.field} sync`,
     write: () => sendBg({ type: 'SF_PATCH', orgUrl: tgt.inv.orgUrl, sid: tgt.inv.sid,
@@ -2262,7 +2322,10 @@ async function _pkApplySyncCore(tgt, sel) {
 // change) abandon an in-flight pass.
 async function _pkSyncAutomationPass(plans, guards, obj, field, token) {
   const CAP = 20;   // hard cap on scans per plan — each one is several queries
-  const runBtn = () => eid('dsPkSyncRun');
+  // The Go button is now the shared confirm dialog's own footer button
+  // (sftk-confirm.js, campaign 3 phase 2) — kept disabled by the caller until
+  // this pass finishes, same "Run waits for the check" gating as before.
+  const runBtn = () => eid('sftkConfirmGo');
   const noteEl = () => eid('dsPkSyncAutoNote');
   const finishBtn = () => { const b = runBtn(); if (b) { b.disabled = false; b.textContent = '🔄 Sync selected'; } };
 
@@ -2410,180 +2473,216 @@ async function _pkOpenSyncPlan() {
         </select>
       </div>`;
 
-    showModal(`
-      <div class="ds-modal-header">🔄 Sync ${esc(M.obj)}.${esc(M.field)} from source</div>
-      <div class="ds-modal-body">
-        <div class="ds-plan-op" style="margin-bottom:10px">
-          Source of truth:
-          ${srcLocked
-            ? `<strong>${esc(loaded[srcIdx].label)}</strong> <span class="ds-pk-mx-sot" title="Locked to your Sync Ring's source of truth — every sync flows FROM it. Change it in the topbar SOURCE menu.">👑 source of truth</span>`
-            : `<select id="dsPkSyncSrc" class="ds-select ds-select-sm">
-                ${loaded.map((r, i) => `<option value="${i}" ${i === srcIdx ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}
-              </select>${ringSrcKey ? ` <span style="font-size:11px;color:var(--warning)">⚠ your 👑 source of truth isn't loaded in this matrix — reload the matrix with it, or pick a source explicitly</span>` : ''}`}
-          <span class="ds-pk-hint">every other loaded org becomes a target</span>
-        </div>
-        ${plans.map((pl, pi) => {
-          const d = pl.diff;
-          const nothing = !d.adds.length && !d.labelChanges.length && !d.activate.length
-            && !d.deactivate.length && !d.extras.length && !d.defaultChange;
-          return `
-          <div class="ds-plan-org" data-sync-idx="${pi}">
-            <div class="ds-plan-org-hdr"><strong>${esc(pl.tgt.label)}</strong> ${prodBadge(pl.tgt.orgUrl)}
-              ${nothing ? '<span class="ds-ring-clean">✓ matches the source — nothing to do</span>' : ''}</div>
-            ${d.adds.length ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="adds" checked>
-              ➕ Add <strong>${d.adds.length}</strong> value${d.adds.length !== 1 ? 's' : ''}: ${esc(d.adds.slice(0, 6).map(a => a.name).join(', '))}${d.adds.length > 6 ? '…' : ''}</label>` : ''}
-            ${d.labelChanges.length ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="labels" checked>
-              ✏ Align <strong>${d.labelChanges.length}</strong> label${d.labelChanges.length !== 1 ? 's' : ''} (${esc(d.labelChanges.slice(0, 3).map(l => `${l.from}→${l.to}`).join(', '))}${d.labelChanges.length > 3 ? '…' : ''})</label>` : ''}
-            ${d.activate.length ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="activate" checked>
-              ▶ Activate <strong>${d.activate.length}</strong>: ${esc(d.activate.slice(0, 6).join(', '))}</label>` : ''}
-            ${d.deactivate.map(n => {
-              const u = usageOf(pl.tgt, n);
-              const k = gi(pi, 'deactivate', n);
-              // The automation note sits OUTSIDE the <label> on purpose — a link
-              // inside a label would toggle the checkbox when clicked.
-              return `<div><label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="deactivate" data-g="${k}" data-val="${esc(n)}" disabled>
-                ⏸ Deactivate <strong>${esc(n)}</strong> (inactive in source)${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s) still hold it</span>` : ''}</label>
-                <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:var(--subtext);margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div>${fixCtl(k, n, u)}</div>`;
-            }).join('')}
-            ${d.extras.map(n => {
-              const u = usageOf(pl.tgt, n);
-              const k = gi(pi, 'extrasOff', n);
-              return `<div><label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="extrasOff" data-g="${k}" data-val="${esc(n)}" disabled>
-                🔵 Deactivate extra <strong>${esc(n)}</strong> (not in source${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s)</span>` : ''}) — never deleted automatically</label>
-                <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:var(--subtext);margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div>${fixCtl(k, n, u)}</div>`;
-            }).join('')}
-            ${d.defaultChange ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="alignDefault" checked>
-              ⭐ Default: ${esc(d.defaultChange.from || '—')} → <strong>${esc(d.defaultChange.to || '—')}</strong></label>` : ''}
-            <label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="rts" checked>
-              🎛 Align record-type assignments to the source (matched by developer name — computed on run)</label>
-          </div>`;
-        }).join('')}
-        <div class="ds-pk-note" id="dsPkSyncAutoNote" style="margin-top:8px">⏳ Checking each target org's flows and validation rules for the values this plan would switch off…</div>
-        <div class="ds-pk-hint">Adds copy the source's label and active state. Value ORDER isn't synced. Standard picklists and global value sets can't be written by this sync — compare them in the matrix.</div>
+    // The one confirmation (sftk-confirm.js, campaign 3 phase 2): the plan's
+    // own form (source picker, per-target checkboxes, per-value data-fix
+    // selects) rides along as extraHtml; Go — the dialog's own #sftkConfirmGo —
+    // stays disabled with the same "checking automation" wording until every
+    // guarded row has been scanned (same "Run waits for the check" gating as
+    // before; the dialog's own sync only handles the checkbox/word, which this
+    // dialog doesn't use, so the scan gate can't be raced by it).
+    const bodyHtml = `
+      <div class="ds-plan-op" style="margin-bottom:10px">
+        Source of truth:
+        ${srcLocked
+          ? `<strong>${esc(loaded[srcIdx].label)}</strong> <span class="ds-pk-mx-sot" title="Locked to your Sync Ring's source of truth — every sync flows FROM it. Change it in the topbar SOURCE menu.">👑 source of truth</span>`
+          : `<select id="dsPkSyncSrc" class="ds-select ds-select-sm">
+              ${loaded.map((r, i) => `<option value="${i}" ${i === srcIdx ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}
+            </select>${ringSrcKey ? ` <span style="font-size:11px;color:var(--warning)">⚠ your 👑 source of truth isn't loaded in this matrix — reload the matrix with it, or pick a source explicitly</span>` : ''}`}
+        <span class="ds-pk-hint">every other loaded org becomes a target</span>
       </div>
-      <div class="ds-modal-footer">
-        <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-        <button class="ds-btn ds-btn-primary" id="dsPkSyncRun" disabled>⏳ checking automation…</button>
-      </div>`);
+      ${plans.map((pl, pi) => {
+        const d = pl.diff;
+        const nothing = !d.adds.length && !d.labelChanges.length && !d.activate.length
+          && !d.deactivate.length && !d.extras.length && !d.defaultChange;
+        return `
+        <div class="ds-plan-org" data-sync-idx="${pi}">
+          <div class="ds-plan-org-hdr"><strong>${esc(pl.tgt.label)}</strong> ${prodBadge(pl.tgt.orgUrl)}
+            ${nothing ? '<span class="ds-ring-clean">✓ matches the source — nothing to do</span>' : ''}</div>
+          ${d.adds.length ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="adds" checked>
+            ➕ Add <strong>${d.adds.length}</strong> value${d.adds.length !== 1 ? 's' : ''}: ${esc(d.adds.slice(0, 6).map(a => a.name).join(', '))}${d.adds.length > 6 ? '…' : ''}</label>` : ''}
+          ${d.labelChanges.length ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="labels" checked>
+            ✏ Align <strong>${d.labelChanges.length}</strong> label${d.labelChanges.length !== 1 ? 's' : ''} (${esc(d.labelChanges.slice(0, 3).map(l => `${l.from}→${l.to}`).join(', '))}${d.labelChanges.length > 3 ? '…' : ''})</label>` : ''}
+          ${d.activate.length ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="activate" checked>
+            ▶ Activate <strong>${d.activate.length}</strong>: ${esc(d.activate.slice(0, 6).join(', '))}</label>` : ''}
+          ${d.deactivate.map(n => {
+            const u = usageOf(pl.tgt, n);
+            const k = gi(pi, 'deactivate', n);
+            // The automation note sits OUTSIDE the <label> on purpose — a link
+            // inside a label would toggle the checkbox when clicked.
+            return `<div><label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="deactivate" data-g="${k}" data-val="${esc(n)}" disabled>
+              ⏸ Deactivate <strong>${esc(n)}</strong> (inactive in source)${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s) still hold it</span>` : ''}</label>
+              <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:var(--subtext);margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div>${fixCtl(k, n, u)}</div>`;
+          }).join('')}
+          ${d.extras.map(n => {
+            const u = usageOf(pl.tgt, n);
+            const k = gi(pi, 'extrasOff', n);
+            return `<div><label class="ds-plan-op"><input type="checkbox" class="ds-sync-one" data-p="${pi}" data-op="extrasOff" data-g="${k}" data-val="${esc(n)}" disabled>
+              🔵 Deactivate extra <strong>${esc(n)}</strong> (not in source${u ? ` — <span class="ds-ring-m">${u.toLocaleString()} record(s)</span>` : ''}) — never deleted automatically</label>
+              <div class="ds-sync-auto" data-g="${k}" style="font-size:11px;color:var(--subtext);margin:-2px 0 6px 22px">⏳ checking this org's automation for “${esc(n)}”…</div>${fixCtl(k, n, u)}</div>`;
+          }).join('')}
+          ${d.defaultChange ? `<label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="alignDefault" checked>
+            ⭐ Default: ${esc(d.defaultChange.from || '—')} → <strong>${esc(d.defaultChange.to || '—')}</strong></label>` : ''}
+          <label class="ds-plan-op"><input type="checkbox" class="ds-sync-op" data-p="${pi}" data-op="rts" checked>
+            🎛 Align record-type assignments to the source (matched by developer name — computed on run)</label>
+        </div>`;
+      }).join('')}
+      <div class="ds-pk-note" id="dsPkSyncAutoNote" style="margin-top:8px">⏳ Checking each target org's flows and validation rules for the values this plan would switch off…</div>
+      <div class="ds-pk-hint">Adds copy the source's label and active state. Value ORDER isn't synced. Standard picklists and global value sets can't be written by this sync — compare them in the matrix.</div>`;
 
-    // T8c — no deactivation may start ticked until THAT target's automation has
-    // been checked. Runs after the modal is up so the plan renders instantly.
-    _pkSyncAutomationPass(plans, guards, M.obj, M.field, ++_pkSyncScanToken);
+    (async () => {
+      const gates = await Promise.all(plans.map(pl => sftkOrgWriteGate(pl.tgt.orgUrl, _orgs)));
+      const prodPlans = plans.filter((pl, i) => gates[i].production);
 
-    // Data-fix gating: a switch-off with records behind it can only be ticked
-    // once a fix is chosen; clearing the fix unticks it again.
-    const box = eid('dsModalBox');
-    box?.addEventListener('change', e => {
-      const cb = e.target.closest?.('.ds-sync-one');
-      if (cb && cb.checked) {
-        const g = guards[+cb.dataset.g];
-        if (g && g.usage > 0) {
-          const fix = box.querySelector(`.ds-sync-fixsel[data-g="${cb.dataset.g}"]`)?.value || '';
-          if (!fix) {
-            cb.checked = false;
-            showToast(`${g.usage.toLocaleString()} record(s) still hold “${g.val}” — pick a data fix on that row first`, 'warning', 5000);
-          }
-        }
-      }
-      const sel = e.target.closest?.('.ds-sync-fixsel');
-      if (sel && !sel.value) {
-        const row = box.querySelector(`.ds-sync-one[data-g="${sel.dataset.g}"]`);
-        if (row) row.checked = false;
-      }
-    });
+      const ok = await sftkConfirmDestructive({
+        title: `🔄 Sync ${esc(M.obj)}.${esc(M.field)} from source`,
+        icon: '🔄',
+        revOverride: { html: '🔁 <strong>Reversible</strong> — values, labels and record-type assignments in each ticked target are overwritten to match the source; deactivating a value keeps it recoverable by reactivating. Nothing here is deleted.', needsCheckbox: false },
+        confirmLabel: '🔄 Sync selected',
+        extraHtml: bodyHtml,
+        production: prodPlans.length ? { label: prodPlans.map((pl, i) => gates[plans.indexOf(pl)].label || pl.tgt.label).join(', ') } : null,
+        onRender: () => {
+          const go = eid('sftkConfirmGo');
+          if (go) { go.disabled = true; go.title = 'Enabled once the automation check has run in every org'; go.textContent = '⏳ checking automation…'; }
 
-    eid('dsPkSyncSrc')?.addEventListener('change', e => { srcIdx = +e.target.value; render(); });
-    eid('dsPkSyncRun')?.addEventListener('click', async () => {
-      const btn = eid('dsPkSyncRun');
-      btn.disabled = true;
+          // T8c — no deactivation may start ticked until THAT target's automation
+          // has been checked. Runs after the modal is up so the plan renders instantly.
+          _pkSyncAutomationPass(plans, guards, M.obj, M.field, ++_pkSyncScanToken);
 
-      // Prod confirms up front, one per production target with anything ticked.
-      for (let pi = 0; pi < plans.length; pi++) {
-        const anyTicked = !!document.querySelector(`.ds-sync-op[data-p="${pi}"]:checked, .ds-sync-one[data-p="${pi}"]:checked`);
-        if (anyTicked && cachedOrgType(plans[pi].tgt.orgUrl) === 'production') {
-          const ok = await confirmTypedProd(orgLabel(plans[pi].tgt.orgUrl), 'sync picklist values into PRODUCTION');
-          if (!ok) { btn.disabled = false; return; }
-        }
-      }
+          // Data-fix gating: a switch-off with records behind it can only be
+          // ticked once a fix is chosen; clearing the fix unticks it again.
+          const box = eid('dsModalBox');
+          box?.addEventListener('change', e => {
+            const cb = e.target.closest?.('.ds-sync-one');
+            if (cb && cb.checked) {
+              const g = guards[+cb.dataset.g];
+              if (g && g.usage > 0) {
+                const fix = box.querySelector(`.ds-sync-fixsel[data-g="${cb.dataset.g}"]`)?.value || '';
+                if (!fix) {
+                  cb.checked = false;
+                  showToast(`${g.usage.toLocaleString()} record(s) still hold “${g.val}” — pick a data fix on that row first`, 'warning', 5000);
+                }
+              }
+            }
+            const sel = e.target.closest?.('.ds-sync-fixsel');
+            if (sel && !sel.value) {
+              const row = box.querySelector(`.ds-sync-one[data-g="${sel.dataset.g}"]`);
+              if (row) row.checked = false;
+            }
+          });
 
-      const srcSess = await getOrgSession(src.orgUrl);
-      for (let pi = 0; pi < plans.length; pi++) {
-        const pl = plans[pi];
-        const hdr = document.querySelector(`.ds-plan-org[data-sync-idx="${pi}"] .ds-plan-org-hdr`);
-        const note = document.createElement('span');
-        note.className = 'ds-plan-status';
+          eid('dsPkSyncSrc')?.addEventListener('change', e => { srcIdx = +e.target.value; render(); });
+        },
+      });
+      if (!ok) return;
+
+      // Snapshot every tick + data-fix choice from the (now hidden, but not
+      // yet cleared — closeModal only hides the overlay) dialog body, the
+      // same values the old Go handler read, before the progress view below
+      // replaces this content.
+      const selPerPlan = plans.map((pl, pi) => {
         const on = op => !!document.querySelector(`.ds-sync-op[data-p="${pi}"][data-op="${op}"]:checked`);
         const ones = op => [...document.querySelectorAll(`.ds-sync-one[data-p="${pi}"][data-op="${op}"]:checked`)].map(c => c.dataset.val);
-        const sel = {
-          adds: on('adds') ? pl.diff.adds : [],
-          labels: on('labels') ? pl.diff.labelChanges : [],
-          activate: on('activate') ? pl.diff.activate : [],
-          deactivate: ones('deactivate'),
-          extrasOff: ones('extrasOff'),
-          alignDefault: on('alignDefault') ? pl.diff.defaultChange : null,
+        const fixRows = [...document.querySelectorAll(`.ds-sync-one[data-p="${pi}"]:checked`)]
+          .map(cb => ({ val: cb.dataset.val,
+            fix: document.querySelector(`.ds-sync-fixsel[data-g="${cb.dataset.g}"]`)?.value || '' }))
+          .filter(x => x.fix);
+        return {
+          sel: {
+            adds: on('adds') ? pl.diff.adds : [],
+            labels: on('labels') ? pl.diff.labelChanges : [],
+            activate: on('activate') ? pl.diff.activate : [],
+            deactivate: ones('deactivate'),
+            extrasOff: ones('extrasOff'),
+            alignDefault: on('alignDefault') ? pl.diff.defaultChange : null,
+          },
+          wantRts: on('rts'),
+          fixRows,
         };
-        const anyValueOp = sel.adds.length || sel.labels.length || sel.activate.length
-          || sel.deactivate.length || sel.extrasOff.length || sel.alignDefault;
-        const wantRts = on('rts');
-        if (!anyValueOp && !wantRts) continue;
-        note.textContent = ' ⏳ syncing…';
-        hdr?.appendChild(note);
-        try {
-          // Data fixes FIRST — records must stop holding a value before the
-          // plan switches it off. Same core the wizards use, in THIS target.
-          let fixedRecs = 0, fixFailed = 0;
-          const fixRows = [...document.querySelectorAll(`.ds-sync-one[data-p="${pi}"]:checked`)]
-            .map(cb => ({ val: cb.dataset.val,
-              fix: document.querySelector(`.ds-sync-fixsel[data-g="${cb.dataset.g}"]`)?.value || '' }))
-            .filter(x => x.fix);
-          for (const f of fixRows) {
-            note.textContent = ` ⏳ moving records off “${f.val}”…`;
-            const ctx = { orgUrl: pl.tgt.inv.orgUrl, sid: pl.tgt.inv.sid,
-              obj: M.obj, field: M.field, isMulti: !!pl.tgt.inv.isMulti };
-            try {
-              const out = await _pkDataFixCore(ctx, f.val,
-                f.fix === '__clear__' ? 'clear' : 'remap',
-                f.fix === '__clear__' ? null : f.fix, null);
-              fixedRecs += out.updated; fixFailed += out.failed;
-            } catch (e) {
-              fixFailed++;
-              showToast(`${pl.tgt.label}: data fix for “${f.val}” failed — ${e.message}. The value will still be deactivated; its records keep the old value.`, 'error', 7000);
-            }
-          }
-          note.textContent = ' ⏳ syncing…';
-          if (anyValueOp) await _pkApplySyncCore(pl.tgt, sel);
-          let rtDone = 0, rtFail = 0;
-          if (wantRts && srcSess) {
-            const tgtSess = await getOrgSession(pl.tgt.orgUrl);
-            const [srcRts, tgtRts] = await Promise.all([
-              _pkLoadRecordTypes(srcSess, M.obj, M.field, M.field.replace(/__c$/i, '')),
-              tgtSess ? _pkLoadRecordTypes(tgtSess, M.obj, M.field, M.field.replace(/__c$/i, '')) : Promise.resolve({ rts: [] }),
-            ]);
-            const rtPlans = pkRtSyncDiff(srcRts.rts, tgtRts.rts);
-            for (const rp of rtPlans) {
-              try {
-                await _pkApplyRtCore({ orgUrl: pl.tgt.inv.orgUrl, sid: pl.tgt.inv.sid,
-                  field: M.field, devName: M.field.replace(/__c$/i, '') }, rp.rtId, rp.adds, rp.removes);
-                rtDone++;
-              } catch (_) { rtFail++; }
-            }
-          }
-          note.textContent = ` ✅ synced${fixedRecs || fixFailed ? ` · 🔧 ${fixedRecs} record(s) moved${fixFailed ? ` (${fixFailed} failed)` : ''}` : ''}${wantRts ? ` · ${rtDone} record type${rtDone !== 1 ? 's' : ''} aligned${rtFail ? ` (${rtFail} failed)` : ''}` : ''}`;
-        } catch (e) {
-          const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
-          note.textContent = ` ❌ ${fe.message}`;
-        }
-      }
-      btn.textContent = '✓ Done — reload the matrix to verify';
-      _history.push({ id: genId('run'), kind: 'picklist-sync',
-        profileName: `Picklist sync: ${M.obj}.${M.field} from ${src.label}`,
-        startedAt: new Date().toISOString(), completedAt: new Date().toISOString(),
-        status: 'success', sourceOrg: src.orgUrl, targetOrg: '',
-        summary: {}, errors: [] });
-      storageSaveHistory().catch(() => {});
-    });
+      });
+
+      await _pkRunSyncPlan(M, src, plans, selPerPlan);
+    })();
   };
   render();
+}
+
+// Runs the confirmed sync plan — a fresh progress view (mirrors runSequence's
+// pattern in studio-profiles.js: confirm first, then a separate modal shows
+// live per-target status while the writes happen).
+async function _pkRunSyncPlan(M, src, plans, selPerPlan) {
+  showModal(`
+    <div class="ds-modal-header">🔄 Syncing ${esc(M.obj)}.${esc(M.field)} from ${esc(src.label)}</div>
+    <div class="ds-modal-body">
+      ${plans.map((pl, pi) => `<div class="ds-plan-org" data-sync-idx="${pi}">
+        <div class="ds-plan-org-hdr"><strong>${esc(pl.tgt.label)}</strong> ${prodBadge(pl.tgt.orgUrl)}</div>
+      </div>`).join('')}
+    </div>
+    <div class="ds-modal-footer">
+      <button class="ds-btn ds-btn-primary" id="dsPkSyncClose" disabled>Running…</button>
+    </div>`);
+
+  const srcSess = await getOrgSession(src.orgUrl);
+  for (let pi = 0; pi < plans.length; pi++) {
+    const pl = plans[pi];
+    const { sel, wantRts, fixRows } = selPerPlan[pi];
+    const hdr = document.querySelector(`.ds-plan-org[data-sync-idx="${pi}"] .ds-plan-org-hdr`);
+    const note = document.createElement('span');
+    note.className = 'ds-plan-status';
+    const anyValueOp = sel.adds.length || sel.labels.length || sel.activate.length
+      || sel.deactivate.length || sel.extrasOff.length || sel.alignDefault;
+    if (!anyValueOp && !wantRts) { note.textContent = ' — nothing ticked'; hdr?.appendChild(note); continue; }
+    note.textContent = ' ⏳ syncing…';
+    hdr?.appendChild(note);
+    try {
+      // Data fixes FIRST — records must stop holding a value before the
+      // plan switches it off. Same core the wizards use, in THIS target.
+      let fixedRecs = 0, fixFailed = 0;
+      for (const f of fixRows) {
+        note.textContent = ` ⏳ moving records off “${f.val}”…`;
+        const ctx = { orgUrl: pl.tgt.inv.orgUrl, sid: pl.tgt.inv.sid,
+          obj: M.obj, field: M.field, isMulti: !!pl.tgt.inv.isMulti };
+        try {
+          const out = await _pkDataFixCore(ctx, f.val,
+            f.fix === '__clear__' ? 'clear' : 'remap',
+            f.fix === '__clear__' ? null : f.fix, null);
+          fixedRecs += out.updated; fixFailed += out.failed;
+        } catch (e) {
+          fixFailed++;
+          showToast(`${pl.tgt.label}: data fix for “${f.val}” failed — ${e.message}. The value will still be deactivated; its records keep the old value.`, 'error', 7000);
+        }
+      }
+      note.textContent = ' ⏳ syncing…';
+      if (anyValueOp) await _pkApplySyncCore(pl.tgt, sel);
+      let rtDone = 0, rtFail = 0;
+      if (wantRts && srcSess) {
+        const tgtSess = await getOrgSession(pl.tgt.orgUrl);
+        const [srcRts, tgtRts] = await Promise.all([
+          _pkLoadRecordTypes(srcSess, M.obj, M.field, M.field.replace(/__c$/i, '')),
+          tgtSess ? _pkLoadRecordTypes(tgtSess, M.obj, M.field, M.field.replace(/__c$/i, '')) : Promise.resolve({ rts: [] }),
+        ]);
+        const rtPlans = pkRtSyncDiff(srcRts.rts, tgtRts.rts);
+        for (const rp of rtPlans) {
+          try {
+            await _pkApplyRtCore({ orgUrl: pl.tgt.inv.orgUrl, sid: pl.tgt.inv.sid,
+              field: M.field, devName: M.field.replace(/__c$/i, '') }, rp.rtId, rp.adds, rp.removes);
+            rtDone++;
+          } catch (_) { rtFail++; }
+        }
+      }
+      note.textContent = ` ✅ synced${fixedRecs || fixFailed ? ` · 🔧 ${fixedRecs} record(s) moved${fixFailed ? ` (${fixFailed} failed)` : ''}` : ''}${wantRts ? ` · ${rtDone} record type${rtDone !== 1 ? 's' : ''} aligned${rtFail ? ` (${rtFail} failed)` : ''}` : ''}`;
+    } catch (e) {
+      const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
+      note.textContent = ` ❌ ${fe.message}`;
+    }
+  }
+  const closeBtn = eid('dsPkSyncClose');
+  if (closeBtn) { closeBtn.disabled = false; closeBtn.textContent = '✓ Done — reload the matrix to verify'; closeBtn.addEventListener('click', closeModal); }
+  _history.push({ id: genId('run'), kind: 'picklist-sync',
+    profileName: `Picklist sync: ${M.obj}.${M.field} from ${src.label}`,
+    startedAt: new Date().toISOString(), completedAt: new Date().toISOString(),
+    status: 'success', sourceOrg: src.orgUrl, targetOrg: '',
+    summary: {}, errors: [] });
+  storageSaveHistory().catch(() => {});
 }
 
 // ════════════════════════════════════════════════════════════════

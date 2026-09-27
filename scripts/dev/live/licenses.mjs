@@ -12,14 +12,19 @@ async function act(h, action) {
   h.log('button:', await h.eval(`(() => { const b = document.querySelector(${JSON.stringify(btnSel)}); return b ? b.textContent.trim() + (b.disabled ? ' (off)' : '') + (getComputedStyle(b).display === 'none' ? ' (hidden)' : '') : 'missing'; })()`));
   await h.eval(`document.querySelector(${JSON.stringify(btnSel)})?.click()`);
   await h.sleep(1500);
-  if (!(await h.eval(`!!document.querySelector('#lmModalConfirm')`))) {
+  if (!(await h.eval(`!!document.querySelector('#sftkConfirmGo')`))) {
     h.log(`no modal after ${action} — hint:`, await dump(h, '#lmHint', 300), '| result:', await dump(h, '#lmResult', 300), '| toasts:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.toast, [class*=toast]')].map(t => t.innerText.replace(/\\s+/g, ' ').slice(0, 200))`)), '| rows:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.lm-user-cb')].map(c => (c.checked ? '[x] ' : '[ ] ') + (c.closest('.lm-user-row, tr, div')?.innerText || '').replace(/\\s+/g, ' ').slice(0, 100))`)));
     return false;
   }
   await h.sleep(300);
-  h.log(`CONFIRM (${action}):`, await h.eval(`(document.querySelector('#lmModalConfirm')?.closest('.lm-modal, .modal, [class*=modal]')?.innerText || '').replace(/\\s+/g, ' ').slice(0, 800)`));
-  if (process.env.SCAN_ONLY === '1') { await h.eval(`document.querySelector('#lmModalCancel')?.click()`); h.log('SCAN_ONLY — cancelled'); return false; }
-  await h.eval(`document.querySelector('#lmModalConfirm').click()`);
+  h.log(`CONFIRM (${action}):`, await h.eval(`(document.querySelector('#sftkConfirmGo')?.closest('.lm-modal, .modal, [class*=modal]')?.innerText || '').replace(/\\s+/g, ' ').slice(0, 800)`));
+  if (process.env.SCAN_ONLY === '1') { await h.eval(`document.querySelector('#sftkConfirmCancel')?.click()`); h.log('SCAN_ONLY — cancelled'); return false; }
+  await h.eval(`document.querySelector('#sftkConfirmGo').click()`);
+  await h.sleep(400);
+  if (await h.eval(`!!document.querySelector('#sftkConfirmProd')`)) {
+    await h.eval(`(() => { const i = document.querySelector('#sftkConfirmProd'); i.value = i.placeholder; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    await h.eval(`document.querySelector('#sftkConfirmProdGo')?.click()`);
+  }
   await h.waitFor("!!document.querySelector('#lmResult')?.innerText && !/⏳/.test(document.querySelector('#lmLoading')?.innerText || '')", 120000, 1000);
   await h.sleep(800);
   h.log(`RESULT (${action}):`, await dump(h, '#lmResult', 800));

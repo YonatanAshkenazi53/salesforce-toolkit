@@ -1478,6 +1478,7 @@ const FieldCleaner = (() => {
       err.setupUrl = `${_orgUrl.replace(/\/$/, '')}/lightning/r/Report/${reportId}/view`;
       throw err;
     }
+    // confirmed-by: fixOne's sftkConfirmDestructive (the only caller)
     // Restore point FIRST \u2014 the fix is only offered with a way back.
     await _snapshotFix('Report', reportId, reportName, null, d.reportMetadata);
     // The write discipline (sftk-write.js): the PATCH is the write, the
@@ -1738,7 +1739,21 @@ const FieldCleaner = (() => {
       </details>`;
     el.querySelectorAll('.fc-fls-strip').forEach(btn => {
       btn.addEventListener('click', async () => {
+        const row = btn.closest('.fc-fls-row');
+        const who = row?.querySelector('.fc-fls-name')?.textContent || '';
+        const kind = row?.querySelector('.fc-fls-kind')?.textContent || '';
+        const gate = await sftkOrgWriteGate(_orgUrl);
+        const sure = await sftkConfirmDestructive({
+          title: 'Strip field visibility',
+          icon: '👁',
+          items: [{ label: who, sub: kind }],
+          revOverride: { html: 'Remove this grant — the field disappears for these users. The grant can be given back any time in Setup → Field-Level Security.', needsCheckbox: false },
+          confirmLabel: '✂ Strip',
+          production: gate.production ? { label: gate.label } : null,
+        });
+        if (!sure) return;
         btn.disabled = true; btn.textContent = '⏳';
+        // confirmed-by: the sftkConfirmDestructive right above
         // The write discipline (sftk-write.js): the update is the write, a
         // re-query of this FieldPermissions row is the verify — Salesforce's
         // own success flag on the response is not trusted alone.
@@ -1789,7 +1804,19 @@ const FieldCleaner = (() => {
           It's safe to delete. Changed your mind?
           <button class="btn btn-sm" id="fcDepUndo">↩ Undo deprecation</button>
         </div>`;
-      eid('fcDepUndo')?.addEventListener('click', e => undoDeprecation(e.currentTarget));
+      eid('fcDepUndo')?.addEventListener('click', async e => {
+        const btn = e.currentTarget;
+        const gate = await sftkOrgWriteGate(_orgUrl);
+        const sure = await sftkConfirmDestructive({
+          title: 'Undo deprecation',
+          icon: '↩',
+          items: [{ label: `${_selObj?.api}.${_selField?.api}` }],
+          revOverride: { html: `Restores the previous label and re-grants the ${dep.fls.length} access grant(s) that were stripped.`, needsCheckbox: false },
+          confirmLabel: '↩ Undo deprecation',
+          production: gate.production ? { label: gate.label } : null,
+        });
+        if (sure) undoDeprecation(btn);
+      });
     } else {
       el.innerHTML = `
         <div class="fc-dep-offer">
@@ -1797,7 +1824,19 @@ const FieldCleaner = (() => {
           <span class="fc-dep-hint">renames the label to <code>zz_DEPRECATED…</code> and hides the field from everyone —
           wait for complaints, then delete (or undo) with one click.</span>
         </div>`;
-      eid('fcDepBtn')?.addEventListener('click', e => deprecateField(fieldId, e.currentTarget));
+      eid('fcDepBtn')?.addEventListener('click', async e => {
+        const btn = e.currentTarget;
+        const gate = await sftkOrgWriteGate(_orgUrl);
+        const sure = await sftkConfirmDestructive({
+          title: 'Deprecate field',
+          icon: '🕐',
+          items: [{ label: `${_selObj.api}.${_selField.api}`, sub: _selField?.type }],
+          revOverride: { html: 'Renames the label to <code>zz_DEPRECATED…</code> and hides the field from everyone — wait for complaints, then delete (or undo) with one click. Fully reversible with ↩ Undo deprecation.', needsCheckbox: false },
+          confirmLabel: '🕐 Deprecate',
+          production: gate.production ? { label: gate.label } : null,
+        });
+        if (sure) deprecateField(fieldId, btn);
+      });
     }
   }
 
@@ -1817,6 +1856,7 @@ const FieldCleaner = (() => {
       if (!/^zz_DEPRECATED/i.test(md.label || '')) md.label = `zz_DEPRECATED ${md.label || _selField.api}`;
       // Already stamped (a second click after a partial run) → keep it once
       if (!/^\[DEPRECATED /.test(prevDesc)) md.description = `[DEPRECATED ${new Date().toISOString().slice(0, 10)} by Salesforce Toolkit — pending delete] ${prevDesc}`.slice(0, 1000);
+      // confirmed-by: the Deprecate field sftkConfirmDestructive (the only caller)
       // The write discipline (sftk-write.js): the PATCH is the write, a
       // re-read of the field's own label is the verify.
       const patchWr = await sftkWriteVerified({
@@ -1848,6 +1888,7 @@ const FieldCleaner = (() => {
       const flsFailed = [];
       const flsStripped = [];
       if (rows.length) {
+        // confirmed-by: the Deprecate field sftkConfirmDestructive (the only caller)
         // The write discipline (sftk-write.js): routed through the helper,
         // but not re-read — Salesforce's Collections response is per-record
         // authoritative (each row carries its own success/errors), unlike a
@@ -1896,6 +1937,7 @@ const FieldCleaner = (() => {
       if (cur.error || !cur.Metadata) throw new Error(cur.error || 'Could not read field metadata');
       // '' (not null) so the deprecation stamp is really cleared — a null key is dropped from the PATCH
       const md = { ...cur.Metadata, label: dep.prevLabel, description: dep.prevDesc || '' };
+      // confirmed-by: the Undo deprecation sftkConfirmDestructive (the only caller)
       // The write discipline (sftk-write.js): the PATCH is the write, a
       // re-read of the field's own label is the verify.
       const patchWr = await sftkWriteVerified({
@@ -1924,6 +1966,7 @@ const FieldCleaner = (() => {
         const rec = { ParentId: f.parentId, SobjectType: f.sobject || _selObj?.api, Field: f.field || `${_selObj?.api}.${_selField?.api}`,
                       PermissionsRead: f.read, PermissionsEdit: f.edit };
         let ok = false, why = '';
+        // confirmed-by: the Undo deprecation sftkConfirmDestructive (the only caller)
         // The write discipline (sftk-write.js): routed through the helper,
         // but not re-read — the insert/update response already names
         // success and, on failure, the exact reason per grant.
@@ -2186,6 +2229,7 @@ const FieldCleaner = (() => {
     // correct, but a wasted round). Then nothing is preselected: the user picks.
     const replaceLikelyRefused = canReplace && !!pv && (pv.emptied || []).length > 0;
     let activeMode = hasChoice ? (canReplace && !replaceLikelyRefused ? 'replace' : '') : 'replace';
+    const gate = await sftkOrgWriteGate(_orgUrl);
     const sure = await sftkConfirmDestructive({
       title: `Remove field reference — ${cfg.label || type}`,
       items: type === 'Flow'
@@ -2226,6 +2270,7 @@ const FieldCleaner = (() => {
       confirmLabel: type === 'Flow'
         ? (flowPlan.plan.mode === 'active' ? '✂ Deploy fixed version, then delete' : '🗑 Delete referencing version(s)')
         : '✂ Remove reference',
+      production: gate.production ? { label: gate.label } : null,
     });
     if (!sure) return;
 
@@ -2462,6 +2507,8 @@ const FieldCleaner = (() => {
     }
     if (newest.Status !== 'Active') {
       const newId = newest.Id;
+      // confirmed-by: fixOne's or the ✂ Remove selected dialog's
+      // sftkConfirmDestructive — every caller of this function confirms first
       // The write discipline (sftk-write.js): the PATCH is the write, the
       // re-read below (the same `read()` this whole function verifies with)
       // is the verify — never trust the PATCH's own answer.
@@ -2504,6 +2551,8 @@ const FieldCleaner = (() => {
     const list = interviews || [];
     const out = { deleted: 0, failed: 0, failedVersionIds: new Set(), errors: [] };
     if (!list.length) return out;
+    // confirmed-by: every caller confirms first — fixOne's sftkConfirmDestructive,
+    // the ✂ Remove selected dialog, or purgeOldFlowVersions's own interviews dialog
     // The write discipline (sftk-write.js): one batch, one re-read
     // (verifyAll) confirming the interviews are actually gone — never the
     // DELETE's own answer.
@@ -2540,6 +2589,8 @@ const FieldCleaner = (() => {
       todo.push(id);
     }
     if (!todo.length) return out;
+    // confirmed-by: every caller confirms first — fixOne's sftkConfirmDestructive
+    // or the ✂ Remove selected dialog (via purgeOldFlowVersions)
     // The write discipline (sftk-write.js): one batch, one re-read
     // (verifyAll) confirming the versions are actually gone — never the
     // DELETE's own answer.
@@ -2700,6 +2751,7 @@ const FieldCleaner = (() => {
     // version may be deleted (user 2026-09-21). Every exit leaves the org as it was.
     if (plan.mode === 'active-delete') {
       const link = e => { const u = _flowBuilderUrl(plan.active.id); if (u) e.setupUrl = u; return e; };
+      // confirmed-by: fixOne's sftkConfirmDestructive (the only caller of fixFlowExecute)
       // The write discipline (sftk-write.js): the PATCH is the write, the
       // re-read right below is the verify.
       let off = null;
@@ -2799,6 +2851,7 @@ const FieldCleaner = (() => {
       const skip = new Set();
       const { interviews, error: ivErr } = await _flowInterviewsFor(stale.map(v => v.Id));
       if (interviews.length) {
+        const gate = await sftkOrgWriteGate(_orgUrl);
         const ok = await sftkConfirmDestructive({
           title: `Flow interviews on ${flowName}`,
           items: interviews.slice(0, 12).map(i => ({ label: i.InterviewLabel || i.Name,
@@ -2806,6 +2859,7 @@ const FieldCleaner = (() => {
           revOverride: { html: (() => { const w = sftkFlowInterviewWords(sftkFlowInterviewKinds(interviews));
             return `⏸ <strong>${w.head}</strong> sit on the old versions that still reference the field. Salesforce refuses to delete a version while they exist, so they are deleted first${w.cost ? ` — ${w.cost}` : ''}.`; })(), needsCheckbox: true },
           confirmLabel: '🗑 Delete interviews, then the versions',
+          production: gate.production ? { label: gate.label } : null,
         });
         if (!ok) { out.stillBlocking = stale.length; return out; }
         const di = await _deleteFlowInterviews(interviews);
@@ -3311,6 +3365,7 @@ const FieldCleaner = (() => {
     // 0 changes left to make means the field is really gone.
     const fullName = res.FullName || res.fullName;
     let patchRes = null, deployErr;
+    // confirmed-by: fixOne's sftkConfirmDestructive (the only caller)
     const wr = await sftkWriteVerified({
       describe: `"${componentName}" layout`,
       write: async () => {
@@ -3396,6 +3451,7 @@ const FieldCleaner = (() => {
       );
     }
 
+    // confirmed-by: fixOne's sftkConfirmDestructive (the only caller)
     // The write discipline (sftk-write.js): the PATCH is the write; the
     // verify re-reads the FlexiPage and runs the same remover on a clone —
     // 0 changes left to make means the field is really gone.
@@ -3577,6 +3633,7 @@ const FieldCleaner = (() => {
   async function confirmDelete(fieldId) {
     if (!fieldId || !_selObj || !_selField) return;
     const hasValues = _dataVerdict && !_dataVerdict.formula && _dataVerdict.filled > 0;
+    const gate = await sftkOrgWriteGate(_orgUrl);
     const ok = await sftkConfirmDestructive({
       title: 'Delete field',
       items: [{ label: `${_selObj.api}.${_selField.api}`, sub: _selField.type }],
@@ -3594,6 +3651,7 @@ const FieldCleaner = (() => {
       onRender: () => {
         eid('fcBackupBtn')?.addEventListener('click', e => backupFieldValues(e.currentTarget));
       },
+      production: gate.production ? { label: gate.label } : null,
     });
     if (ok) doDelete(fieldId);
   }
@@ -4074,8 +4132,19 @@ const FieldCleaner = (() => {
           );
           if (!selSet.size) return;
           const isPartial = selSet.size < totalDeletable;
+          const gate = await sftkOrgWriteGate(_orgUrl);
+          const sure = await sftkConfirmDestructive({
+            title: `Remove ${selSet.size} block(s) — ${componentName}`,
+            icon: '✂',
+            items: [{ label: componentName, sub: `${selSet.size} of ${totalDeletable} reference(s) selected` }],
+            revOverride: { html: '🔁 Deploys a new flow version without the selected blocks (the previous version remains and can be re-activated). ⚠ Any OLD, INACTIVE versions of this flow that still reference the field are then <strong>permanently deleted</strong> to clear the dependency lock — Salesforce holds no Recycle Bin for flow versions.', needsCheckbox: true },
+            confirmLabel: '✂ Remove selected',
+            production: gate.production ? { label: gate.label } : null,
+          });
+          if (!sure) return;
           selBtn.disabled = true; selBtn.textContent = '⏳ Removing…';
           try {
+            // confirmed-by: the sftkConfirmDestructive right above
             const purge = await fixFlowSelective(componentId, componentName, selSet);
             if (isPartial) {
               // Don't mark the dependency as resolved — the flow still
@@ -4311,9 +4380,19 @@ const FieldCleaner = (() => {
         </div>
       </details>`;
     el.querySelectorAll('.fc-snap-restore').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const snap = mine.find(s => String(s.at) === btn.dataset.snapAt);
-        if (snap) restoreSnapshot(snap, btn);
+        if (!snap) return;
+        const gate = await sftkOrgWriteGate(_orgUrl);
+        const sure = await sftkConfirmDestructive({
+          title: `Restore ${snap.type} — ${snap.name}`,
+          icon: '↩',
+          items: [{ label: snap.name, sub: snap.type }],
+          revOverride: { html: `Redeploys the previous ${esc(snap.type)} metadata exactly as it was before this fix — this re-introduces the removed reference(s) to the field.`, needsCheckbox: false },
+          confirmLabel: '↩ Restore',
+          production: gate.production ? { label: gate.label } : null,
+        });
+        if (sure) restoreSnapshot(snap, btn);
       });
     });
   }
@@ -4334,6 +4413,7 @@ const FieldCleaner = (() => {
           if (!r || !r.success) throw new Error(r?.error || patchRes.error);
         }
       } else if (snap.type === 'FlexiPage') {
+        // confirmed-by: the ↩ Restore sftkConfirmDestructive (the only caller)
         // The write discipline (sftk-write.js): the PATCH is the write, a
         // re-read of the FlexiPage is the verify.
         const wr = await sftkWriteVerified({
@@ -4350,6 +4430,7 @@ const FieldCleaner = (() => {
         if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
         if (!wr.ok) throw new Error('restored, but the org could not be re-read to confirm it — check it in App Builder');
       } else if (snap.type === 'Report') {
+        // confirmed-by: the ↩ Restore sftkConfirmDestructive (the only caller)
         // The write discipline (sftk-write.js): the PATCH is the write, a
         // re-describe of the report is the verify.
         const wr = await sftkWriteVerified({

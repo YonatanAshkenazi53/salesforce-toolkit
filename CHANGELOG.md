@@ -110,6 +110,13 @@ extensions containing root files that start with `_`).
   were found again in the target, or ⚠ found/checked when they were not. A flow delete's result
   message no longer vanishes behind the list refresh; a field delete is no longer called refused
   because Salesforce keeps the deleted field's row for 15 days.
+- **One confirmation everywhere, and the org name for production.** Every change now asks with
+  the same dialog in the Toolkit and in Data Studio: what will change, what it means, an
+  acknowledgement, the required word where one applies (CHANGE, OFF, RESET, ROLLBACK), and,
+  when the target is a production org or one you guarded as production, its name typed exactly.
+  An org whose type cannot be read is treated as production. Three actions that had no
+  confirmation at all now ask: adding a Lightning page assignment, deleting debug logs one by
+  one or by selection, and the Field Cleaner's strip, deprecate, undo and restore.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run

@@ -2493,11 +2493,6 @@ async function sftkPushFieldsToTarget(profile, objType, srcId, tgtId, picks) {
   const tgtSess = _resolveSession(profile.targetOrg, allSess);
   if (!srcSess?.sid || !tgtSess?.sid) { out.errors.push('both orgs must be open (or stored) to push'); return out; }
 
-  if (await ensureOrgType(profile.targetOrg) === 'production') {
-    const okProd = await confirmTypedProd(orgLabel(profile.targetOrg), `update ${picks.length} field(s) on 1 ${objType} record`);
-    if (!okProd) { out.errors.push('cancelled'); return out; }
-  }
-
   const desc = await describe(objType, srcSess.orgUrl, srcSess.sid);
   const node = _findTreeNode(profile.tree, objType);
   const lkpMap = buildLookupCompareMap(desc, node?.lookupResolutions);
@@ -2586,6 +2581,8 @@ async function sftkPushFieldsToTarget(profile, objType, srcId, tgtId, picks) {
   // shape of lie the flow switches told. One re-read of exactly the fields
   // just pushed closes that gap.
   const fields = Object.keys(body);
+  // confirmed-by: sftkWireDriftCompare's pushBtn confirms via sftkConfirmDestructive
+  // (including the production typed-name step) before this ever runs.
   const w = await sftkWriteVerified({
     describe: `push to ${objType}`,
     write: () => sendBg({ type: 'SF_PATCH', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
@@ -2635,12 +2632,25 @@ function sftkWireDriftCompare(expand, profile, objType, srcId, tgtId, refetch) {
     // value the user never saw is below it (user 2026-08-30: "we need to
     // see the existing value, like we did on the insert").
     const showVal = v => (v === '∅' || v == null || v === '') ? '(empty)' : `“${v}”`;
-    const lines = picks.map(p => p.lkp
-      ? `🔗 ${p.srcField}: now → ${showVal(p.cur)}   will point at → ${showVal(p.next)} (re-matched in the target — exactly one match required)`
-      : `${p.srcField}: ${showVal(p.cur)} → ${showVal(p.next)}`);
-    if (!confirm(`Update ${picks.length} field(s) on this target record?\n\n${lines.join('\n')}\n\nOnly these fields are written. Lookups that match zero or several target records are reported, never guessed.`)) {
-      return;
-    }
+    // The one confirmation (sftk-confirm.js, campaign 3 phase 2) — replaces the
+    // hand-rolled window.confirm() and the confirmTypedProd() call that used to
+    // live inside sftkPushFieldsToTarget itself.
+    const items = picks.map(p => ({
+      label: p.srcField,
+      sub: p.lkp
+        ? `🔗 now → ${showVal(p.cur)} · will point at → ${showVal(p.next)} (re-matched in the target — exactly one match required)`
+        : `${showVal(p.cur)} → ${showVal(p.next)}`,
+    }));
+    const gate = await sftkOrgWriteGate(profile.targetOrg, _orgs);
+    const ok = await sftkConfirmDestructive({
+      title: `Update ${picks.length} field(s) on this target record`,
+      icon: '✏',
+      items,
+      revOverride: { html: '⚠ <strong>Not reversible by this tool</strong> — only these fields are written on the target record. Lookups that match zero or several target records are reported, never guessed.', needsCheckbox: true },
+      confirmLabel: 'Update',
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!ok) return;
     pushBtn.disabled = true;
     pushBtn.textContent = '⏳ updating…';
     const res = await sftkPushFieldsToTarget(profile, objType, srcId, tgtId, picks);

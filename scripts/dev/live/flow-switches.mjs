@@ -29,17 +29,23 @@ async function switchOnce(h, mode) {
   const btnSel = mode === 'on' ? '#depFbOn' : '#depFbOff';
   h.log('button:', await h.eval(`(() => { const b = document.querySelector(${JSON.stringify(btnSel)}); return b ? b.textContent.trim() + (b.disabled ? ' (off)' : '') : null; })()`));
   await h.eval(`document.querySelector(${JSON.stringify(btnSel)})?.click()`);
-  await h.waitFor("!!document.querySelector('#depFbConfirm') || /nothing|none of|already/i.test(document.querySelector('#depFbOut')?.innerText || '')", 120000, 500);
+  await h.waitFor("!!document.querySelector('#sftkConfirmGo') || /nothing|none of|already/i.test(document.querySelector('#depFbOut')?.innerText || '')", 120000, 500);
   await h.sleep(500);
-  h.log('CONFIRM:', await dump(h, '#depFbOut', 2500));
+  h.log('CONFIRM:', await dump(h, '#modalBox', 2500));
   await h.shot(h.shots + `/fs-confirm-${mode}.png`);
-  if (process.env.SCAN_ONLY === '1') { h.log('SCAN_ONLY — cancelling'); await h.eval(`document.querySelector('#depFbNo')?.click()`); return false; }
-  if (!(await h.eval(`!!document.querySelector('#depFbConfirm')`))) { h.log('no confirmation input — stopping'); return false; }
+  if (process.env.SCAN_ONLY === '1') { h.log('SCAN_ONLY — cancelling'); await h.eval(`document.querySelector('#sftkConfirmCancel')?.click()`); return false; }
+  if (!(await h.eval(`!!document.querySelector('#sftkConfirmWord')`))) { h.log('no confirmation input — stopping'); return false; }
   const word = mode === 'on' ? 'ON' : 'OFF';
-  await h.eval(`(() => { const i = document.querySelector('#depFbConfirm'); i.value = ${JSON.stringify(word)}; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+  await h.eval(`(() => { const i = document.querySelector('#sftkConfirmWord'); i.value = ${JSON.stringify(word)}; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
   await h.sleep(300);
-  h.log('Go enabled:', await h.eval(`!document.querySelector('#depFbGo')?.disabled`));
-  await h.eval(`document.querySelector('#depFbGo')?.click()`);
+  h.log('Go enabled:', await h.eval(`!document.querySelector('#sftkConfirmGo')?.disabled`));
+  await h.eval(`document.querySelector('#sftkConfirmGo')?.click()`);
+  await h.sleep(400);
+  if (await h.eval(`!!document.querySelector('#sftkConfirmProd')`)) {
+    h.log('TYPED GATE (production):', await dump(h, '#modalBox', 500));
+    await h.eval(`(() => { const i = document.querySelector('#sftkConfirmProd'); i.value = i.placeholder; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    await h.eval(`document.querySelector('#sftkConfirmProdGo')?.click()`);
+  }
   await h.waitFor("/switched (OFF|ON)|❌|stale/.test(document.querySelector('#depFbOut')?.innerText || '')", 600000, 1000);
   await h.sleep(800);
   h.log('REPORT:', await dump(h, '#depFbOut', 3000));

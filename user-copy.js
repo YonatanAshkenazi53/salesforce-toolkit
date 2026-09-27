@@ -1059,11 +1059,13 @@ const UserCopy = (() => {
       document.querySelectorAll('.uc-grp-cb:checked').forEach(cb => planned.push({ label: labelOf(cb, cb.dataset.groupid), sub: 'public group / queue' }));
       if (opts.userPerms) planned.push({ label: 'User permissions', sub: 'the ticked user-level permission fields' });
       if (opts.settings) planned.push({ label: 'User settings', sub: 'the ticked settings fields' });
+      const gate = await sftkOrgWriteGate(_orgUrl);
       const sure = await sftkConfirmDestructive({
         title: `Copy access from ${sourceUser.Name} to ${targetUser.Name}`,
         items: planned.length ? planned : [{ label: 'Nothing ticked', sub: 'no operation would run' }],
         revOverride: { html: `Writes into <strong>${esc(targetUser.Name)}</strong>'s user record and assignments in this org. A profile change replaces the old profile; permission sets and groups are ADDED (nothing is removed from ${esc(targetUser.Name)}). Undo by hand in Setup → Users.`, needsCheckbox: true },
         confirmLabel: '📋 Copy access',
+        production: gate.production ? { label: gate.label } : null,
       });
       if (!sure) return;
     }
@@ -1129,6 +1131,8 @@ const UserCopy = (() => {
     // re-reading the org — PermissionSetAssignment / GroupMember / User by
     // Id — never trusted from the write's own answer alone.
 
+    // confirmed-by: executeCopy's sftkConfirmDestructive above (the "Copy
+    // access" dialog) — every write below runs only after it resolves true
     // 1. Profile
     if (doProfile) {
       const wr = await sftkWriteVerified({
@@ -1150,6 +1154,7 @@ const UserCopy = (() => {
       done++; tickProgress();
     }
 
+    // confirmed-by: executeCopy's sftkConfirmDestructive above
     // 2. Permission Sets — one write per set, ONE re-read for the whole
     // batch (verifyAll).
     if (psIds.length) {
@@ -1187,6 +1192,7 @@ const UserCopy = (() => {
     // Assigning the GROUP is not the same as assigning its member permission
     // sets: Salesforce keeps the group link, so later changes to the group
     // follow through to the user. One re-read for the whole batch.
+    // confirmed-by: executeCopy's sftkConfirmDestructive above
     if (psgPicks.length) {
       const batch = await sftkWriteVerifiedAll(psgPicks.map(g => ({
         describe: g.id,
@@ -1217,6 +1223,7 @@ const UserCopy = (() => {
       });
     }
 
+    // confirmed-by: executeCopy's sftkConfirmDestructive above
     // 4. Public Groups — one re-read for the whole batch.
     if (groupIds.length) {
       const batch = await sftkWriteVerifiedAll(groupIds.map(groupId => ({
@@ -1249,6 +1256,7 @@ const UserCopy = (() => {
       });
     }
 
+    // confirmed-by: executeCopy's sftkConfirmDestructive above
     // 5. Combined User PATCH (user permissions + locale & timezone)
     if (Object.keys(userPatch).length > 0) {
       const patchKeys = Object.keys(userPatch);

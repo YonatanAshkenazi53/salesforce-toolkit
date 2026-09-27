@@ -1618,6 +1618,7 @@ async function onDeleteClick() {
   // Step 4 (C4): ONE final summary confirm that names every version going
   // away and states the true stakes — flow-version deletes are PERMANENT
   // (Tooling deletes skip the Recycle Bin), so it requires the checkbox.
+  const gate = await sftkOrgWriteGate(orgUrl);
   const finalOk = await sftkConfirmDestructive({
     title: `Delete ${toDelete.length} flow version${toDelete.length !== 1 ? 's' : ''}`,
     items: toDelete.map(f => ({
@@ -1631,6 +1632,7 @@ async function onDeleteClick() {
     // here rather than let the summary imply an all-clear it did not earn.
     undoHint: deleteCheckProvenance()
       + 'Only flows you backed up (⬇) can come back — via Restore mode in this tab.',
+    production: gate.production ? { label: gate.label } : null,
   });
   if (!finalOk) return;
 
@@ -2577,6 +2579,8 @@ async function deactivateFlow(flow) {
   const defId = flow.DefinitionId;
   if (!defId) throw new Error(`No DefinitionId on flow "${flow.MasterLabel}" — cannot deactivate`);
 
+  // confirmed-by: onDeleteClick's sftkConfirmDestructive (the only path that
+  // reaches deactivateFlow — via deleteOneFlow, via performDeletion)
   // Tooling API FlowDefinition requires a Metadata wrapper — activeVersionNumber 0 = deactivate.
   // The write discipline (sftk-write.js): the PATCH is the write, a re-read
   // of the flow's versions is the verify.
@@ -2602,6 +2606,8 @@ async function deactivateFlow(flow) {
 
 async function deleteOneFlow(flow, done, total) {
   const doDelete = async () => {
+    // confirmed-by: onDeleteClick's sftkConfirmDestructive (the only caller
+    // of deleteOneFlow, via performDeletion)
     // The write discipline (sftk-write.js): the DELETE is the write, a
     // Tooling re-query of the version id is the verify — gone = ok.
     const wr = await sftkWriteVerified({
@@ -2643,6 +2649,8 @@ async function deleteOneFlow(flow, done, total) {
     // back the way it was and say what happened either way.
     let back = '';
     try {
+      // confirmed-by: onDeleteClick's sftkConfirmDestructive (the only path
+      // that reaches this retry — via deleteOneFlow, via performDeletion)
       // The write discipline (sftk-write.js): the PATCH is the write, a
       // re-query of this exact version's Status is the verify.
       const wr = await sftkWriteVerified({

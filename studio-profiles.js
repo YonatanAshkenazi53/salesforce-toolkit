@@ -318,6 +318,7 @@ function _seqConfirmRun(seq, profiles, tgtSess) {
       title: `▶ Run “${seq.name}” — ${profiles.length} step(s) into ${tgtLabel}`,
       items: profiles.map(p => ({ label: p.name, sub: `${p.tree?.objectType || '?'}${(p.tree?.children || []).length ? ` +${(p.tree.children || []).length} child object(s)` : ''} · ${p.upsert?.field ? `upsert on ${p.upsert.field}` : 'insert'}` })),
       revOverride: { html: `⚠ A sequence takes <strong>no per-record selection</strong>: every record each deployment matches is written into <strong>${esc(tgtLabel)}</strong>, step after step. Records a step already wrote stay written if a later step fails. ↩ Roll back in History removes what this run inserted.`, needsCheckbox: true },
+      icon: '▶',
       confirmLabel: '▶ Run sequence',
       production: gate.production ? { label: gate.label || tgtLabel } : null,
     });
