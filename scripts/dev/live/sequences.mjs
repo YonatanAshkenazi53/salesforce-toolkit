@@ -17,21 +17,34 @@ export default async function (h) {
   await h.waitFor(`!!document.querySelector('[data-seq-run="${made}"]')`, 60000, 500); await h.sleep(500);
   h.log('card:', await h.eval(`document.querySelector('[data-seq-run="${made}"]')?.closest('.ds-seq-card, [class*=seq]')?.innerText.replace(/\\s+/g, ' ').slice(0, 300)`));
   h.log('run button:', await h.eval(`(() => { const b = document.querySelector('[data-seq-run="${made}"]'); return b.textContent.trim() + (b.disabled ? ' (off)' : ''); })()`));
+  // GUARD=1: mark the target as 🛑 guarded-as-production first, so the typed-name step must appear
+  if (process.env.GUARD === '1') {
+    h.log('guard:', await h.eval(`(async () => { const u = 'https://trailheads4.my.salesforce.com'; _orgs[u] = { ...(_orgs[u] || {}), guardAsProd: true }; await storageSaveOrgs(); return 'guarded ' + u; })()`));
+  }
   await h.eval(`document.querySelector('[data-seq-run="${made}"]').click()`);
-  await h.waitFor("!!document.querySelector('#dsSeqGo') || !!document.querySelector('#seqRunBody')", 60000, 500);
+  await h.waitFor("!!document.querySelector('#sftkConfirmGo') || !!document.querySelector('#seqRunBody')", 60000, 500);
   await h.sleep(500);
-  const gate = await h.eval(`!!document.querySelector('#dsSeqGo')`);
+  const gate = await h.eval(`!!document.querySelector('#sftkConfirmGo')`);
   h.log('CONFIRM shown:', gate, '|', await dump(h, '#dsModalBox', 1500));
   if (!gate) { h.log('❌ NO CONFIRMATION — the run started on the click'); return; }
-  h.log('Go before ack:', await h.eval(`document.querySelector('#dsSeqGo')?.disabled ? 'disabled' : 'ENABLED'`));
+  h.log('Go before ack:', await h.eval(`document.querySelector('#sftkConfirmGo')?.disabled ? 'disabled' : 'ENABLED'`));
   await h.shot(h.shots + '/seq-confirm.png');
-  if (process.env.SCAN_ONLY === '1') { await h.eval(`document.querySelector('#dsSeqNo')?.click()`); h.log('SCAN_ONLY — cancelled'); return; }
-  await h.eval(`(() => { const a = document.querySelector('#dsSeqAck'); a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+  if (process.env.SCAN_ONLY === '1' && process.env.GUARD !== '1') { await h.eval(`document.querySelector('#sftkConfirmCancel')?.click()`); h.log('SCAN_ONLY — cancelled'); return; }
+  await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
   await h.sleep(300);
-  h.log('Go after ack:', await h.eval(`document.querySelector('#dsSeqGo')?.disabled ? 'disabled' : 'enabled'`));
-  await h.eval(`document.querySelector('#dsSeqGo')?.click()`);
-  await h.sleep(1500);
-  if (await h.eval(`!!document.querySelector('#dsProdConfirmInput')`)) { h.log('TYPED GATE:', await dump(h, '#dsModalBox', 400)); await h.eval(`document.querySelector('#dsProdCancel')?.click()`); return; }
+  h.log('Go after ack:', await h.eval(`document.querySelector('#sftkConfirmGo')?.disabled ? 'disabled' : 'enabled'`));
+  await h.eval(`document.querySelector('#sftkConfirmGo')?.click()`);
+  await h.sleep(800);
+  if (await h.eval(`!!document.querySelector('#sftkConfirmProd')`)) {
+    h.log('TYPED GATE:', await dump(h, '#dsModalBox', 500));
+    h.log('Proceed before typing:', await h.eval(`document.querySelector('#sftkConfirmProdGo')?.disabled ? 'disabled' : 'ENABLED'`));
+    await h.eval(`(() => { const i = document.querySelector('#sftkConfirmProd'); i.value = 'wrong name'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    h.log('Proceed after a wrong name:', await h.eval(`document.querySelector('#sftkConfirmProdGo')?.disabled ? 'disabled' : 'ENABLED'`));
+    if (process.env.TYPE_IT !== '1') { await h.eval(`document.querySelector('#sftkConfirmProdCancel')?.click()`); h.log('cancelled at the typed gate (TYPE_IT not set)'); return; }
+    await h.eval(`(() => { const i = document.querySelector('#sftkConfirmProd'); i.value = i.placeholder; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    h.log('Proceed after the right name:', await h.eval(`document.querySelector('#sftkConfirmProdGo')?.disabled ? 'disabled' : 'enabled'`));
+    await h.eval(`document.querySelector('#sftkConfirmProdGo')?.click()`);
+  } else if (process.env.GUARD === '1') { h.log('❌ NO TYPED GATE although the target is guarded'); return; }
   await h.waitFor("!!document.querySelector('#seqRunClose') && !document.querySelector('#seqRunClose')?.disabled", 900000, 2000);
   await h.sleep(1000);
   h.log('RUN LOG:', await dump(h, '#dsSeqRunLog', 3000));
