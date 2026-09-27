@@ -37,6 +37,15 @@ process.on('exit', () => { if (!process.env.SFTK_PROFILE && !process.env.SFTK_KE
 
 const t0 = Date.now();
 const log = (...a) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s]`, ...a);
+// Stray headless Chromes from a run that died keep their profile locked —
+// kill ONLY those (command line carries 'sftk-headless'). Never the user's
+// Chrome: a blanket `taskkill /IM chrome.exe` closed their browser every run
+// (user 2026-09-27: "why claude keeps closing?").
+try {
+  execFileSync('powershell.exe', ['-NoProfile', '-Command',
+    "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Where-Object { $_.CommandLine -match 'sftk-headless' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"],
+    { stdio: 'ignore', timeout: 15000 });
+} catch (_) { /* best effort */ }
 log('profile:', PROFILE, process.env.SFTK_KEEP ? '(kept)' : '(deleted on exit)');
 
 const chrome = spawn(CHROME, [
