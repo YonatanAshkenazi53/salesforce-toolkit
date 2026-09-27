@@ -36,7 +36,7 @@ describe('applyApiVerChange — the summary counts what happened', () => {
   it('an accepted package counts its org as changed; warnings are counted per flow, not per org', () => {
     expect(fn).toContain('let orgsOk = 0, orgsFailed = 0, flowsOk = 0, flowsWarn = 0;');
     const i = fn.indexOf('const verdicts = await avVerifyAndActivate(org, changed, target, say);');
-    const after = fn.slice(i, i + 700);
+    const after = fn.slice(i, i + 1000);
     expect(after).toMatch(/orgsOk\+\+;/);
     expect(after).not.toMatch(/if \(okAll\) orgsOk\+\+; else orgsFailed\+\+;/);
     expect(after).toMatch(/flowsOk \+= okN; flowsWarn \+= verdicts\.length - okN;/);

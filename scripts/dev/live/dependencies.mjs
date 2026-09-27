@@ -62,7 +62,14 @@ export default async function (h) {
       h.log('Go enabled:', await h.eval(`!document.querySelector('#sftkConfirmGo')?.disabled`));
       await h.eval(`document.querySelector('#sftkConfirmGo')?.click()`);
       // deactivate → delete → 2 s victory → a toast (success) or a modal (errors)
-      await h.waitFor("!!document.querySelector('.result-toast') || (document.querySelector('#modalOverlay') && getComputedStyle(document.querySelector('#modalOverlay')).display !== 'none' && /Close/.test(document.querySelector('#modalBox')?.innerText || ''))", 180000, 1000);
+      // deactivate → delete → re-read → (retry passes) → 2 s victory → a toast (success) or a modal (errors);
+      // logged every 20 s so a slow or stuck run shows WHERE it is
+      for (let t = 0; t < 540; t += 20) {
+        const done = await h.eval(`!!document.querySelector('.result-toast') || (document.querySelector('#modalOverlay') && getComputedStyle(document.querySelector('#modalOverlay')).display !== 'none' && /Close/.test(document.querySelector('#modalBox')?.innerText || ''))`);
+        if (done) break;
+        h.log(`  …${t}s progress:`, await h.eval(`(document.querySelector('#progressStatus')?.innerText || '') + ' | ' + (document.querySelector('#progressLabel, .progress-label')?.innerText || '') + ' | modal: ' + ((document.querySelector('#modalOverlay') && getComputedStyle(document.querySelector('#modalOverlay')).display !== 'none') ? (document.querySelector('#modalBox')?.innerText || '').replace(/\\s+/g, ' ').slice(0, 200) : 'none')`));
+        await h.sleep(20000);
+      }
       await h.sleep(800);
       h.log('TOAST:', await h.eval(`[...document.querySelectorAll('.result-toast')].map(e => e.innerText.replace(/\\s+/g, ' ').slice(0, 400)).join(' || ')`));
       h.log('RESULT MODAL:', await h.eval(`(() => { const o = document.querySelector('#modalOverlay'); return (o && getComputedStyle(o).display !== 'none') ? (document.querySelector('#modalBox')?.innerText || '').replace(/\\s+/g, ' ').slice(0, 1200) : ''; })()`));

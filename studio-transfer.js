@@ -2026,6 +2026,7 @@ async function runTransfer() {
   });
 
   const result = await sendBg({
+    // verified-by: the engine's post-run re-read — summary[obj].verified = { checked, found } (background.js, campaign 3 phase 1)
     type:             'SF_EXECUTE_PROFILE_TRANSFER',
     profile:          buildTransferProfile(),   // patched clone — incl. upsert config if set
     srcOrgUrl:        _transferSrc.orgUrl,

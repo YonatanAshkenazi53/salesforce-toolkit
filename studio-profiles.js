@@ -426,6 +426,7 @@ async function runSequence(seqId) {
   }
 
   const result = await sendBg({
+    // verified-by: the engine's post-run re-read — summary[obj].verified = { checked, found } (background.js, campaign 3 phase 1)
     type:      'SF_EXECUTE_SEQUENCE',
     profiles,
     srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,

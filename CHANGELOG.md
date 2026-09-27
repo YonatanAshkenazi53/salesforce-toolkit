@@ -103,6 +103,13 @@ extensions containing root files that start with `_`).
   status for a Lightning page; a page's activation is its assignments. A page with none now
   reads "Not assigned — this page is not shown to anyone yet" with how to add one; "Unknown"
   is kept for the one case it is true, when the org-default check itself failed (with the reason).
+- **Every change is read back from the org before it is called done.** Every write the
+  extension makes — flows, fields, picklist values, permissions, licences, page assignments,
+  deployments — now re-reads Salesforce afterwards and reports what the org shows, never what
+  the request answered. A deployment's History carries ✓ per object when the written records
+  were found again in the target, or ⚠ found/checked when they were not. A flow delete's result
+  message no longer vanishes behind the list refresh; a field delete is no longer called refused
+  because Salesforce keeps the deleted field's row for 15 days.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run

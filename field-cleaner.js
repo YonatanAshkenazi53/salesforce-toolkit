@@ -1480,27 +1480,41 @@ const FieldCleaner = (() => {
     }
     // Restore point FIRST \u2014 the fix is only offered with a way back.
     await _snapshotFix('Report', reportId, reportName, null, d.reportMetadata);
-    const patch = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
-      path: `services/data/v62.0/analytics/reports/${reportId}`,
-      body: { reportMetadata: res.meta } });
-    if (patch?.error) {
-      const err = new Error(patch.error);
+    // The write discipline (sftk-write.js): the PATCH is the write, the
+    // re-describe below is the verify \u2014 never assume clean.
+    const wr = await sftkWriteVerified({
+      describe: `"${reportName}" report`,
+      write: async () => {
+        const patch = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+          path: `services/data/v62.0/analytics/reports/${reportId}`,
+          body: { reportMetadata: res.meta } });
+        return patch?.error ? { error: patch.error } : patch;
+      },
+      verify: async () => {
+        // VERIFY \u2014 re-read and state what remains, never assume clean.
+        const after = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+          path: `services/data/v62.0/analytics/reports/${reportId}/describe` });
+        if (!after || after.error || !after.reportMetadata) {
+          return { ok: false, text: `"${reportName}": the report was updated, but the org could not be re-read to confirm what remains \u2014 treat this as unverified.` };
+        }
+        const left = sftkRptFieldHits(after.reportMetadata, obj, field);
+        const parts = [];
+        if (res.removed.columns) parts.push(`${res.removed.columns} column(s)`);
+        if (res.removed.filters) parts.push(`${res.removed.filters} filter(s)`);
+        if (res.removed.groupings) parts.push(`${res.removed.groupings} grouping(s)`);
+        let label = `\u2705 Report updated \u00b7 removed ${parts.join(', ')}`;
+        if (res.manual.length) label += ` \u00b7 \u26a0 still manual: ${res.manual.join('; ')}`;
+        else if (left && left.any) label += ' \u00b7 \u26a0 some references remain \u2014 re-scan';
+        else label += ' \u00b7 verified: no references remain';
+        return { ok: !res.manual.length && !(left && left.any), text: label };
+      },
+    });
+    if (!wr.accepted) {
+      const err = new Error((wr.raw && wr.raw.error) || 'refused');
       err.setupUrl = `${_orgUrl.replace(/\/$/, '')}/lightning/r/Report/${reportId}/view`;
       throw err;
     }
-    // VERIFY \u2014 re-read and state what remains, never assume clean.
-    const after = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
-      path: `services/data/v62.0/analytics/reports/${reportId}/describe` });
-    const left = after?.reportMetadata ? sftkRptFieldHits(after.reportMetadata, obj, field) : null;
-    const parts = [];
-    if (res.removed.columns) parts.push(`${res.removed.columns} column(s)`);
-    if (res.removed.filters) parts.push(`${res.removed.filters} filter(s)`);
-    if (res.removed.groupings) parts.push(`${res.removed.groupings} grouping(s)`);
-    let label = `\u2705 Report updated \u00b7 removed ${parts.join(', ')}`;
-    if (res.manual.length) label += ` \u00b7 \u26a0 still manual: ${res.manual.join('; ')}`;
-    else if (left && left.any) label += ' \u00b7 \u26a0 some references remain \u2014 re-scan';
-    else label += ' \u00b7 verified: no references remain';
-    return label;
+    return wr.text;
   }
 
   async function renderResults(deps, fieldId) {
@@ -1725,11 +1739,24 @@ const FieldCleaner = (() => {
     el.querySelectorAll('.fc-fls-strip').forEach(btn => {
       btn.addEventListener('click', async () => {
         btn.disabled = true; btn.textContent = '⏳';
-        const res = await bg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: _orgUrl, sid: _sid,
-          records: [{ attributes: { type: 'FieldPermissions' }, Id: btn.dataset.flsId,
-                      PermissionsRead: false, PermissionsEdit: false }] });
-        const ok = Array.isArray(res) ? res[0]?.success : !res.error;
-        if (ok) {
+        // The write discipline (sftk-write.js): the update is the write, a
+        // re-query of this FieldPermissions row is the verify — Salesforce's
+        // own success flag on the response is not trusted alone.
+        const flsId = btn.dataset.flsId;
+        const wr = await sftkWriteVerified({
+          describe: 'field-level security grant',
+          write: () => bg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: _orgUrl, sid: _sid,
+            records: [{ attributes: { type: 'FieldPermissions' }, Id: flsId,
+                        PermissionsRead: false, PermissionsEdit: false }] }),
+          verify: async () => {
+            const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+              query: `SELECT PermissionsRead, PermissionsEdit FROM FieldPermissions WHERE Id = '${flsId}'` });
+            if (!q || q.error) return { ok: false, text: null };
+            const row = (q.records || [])[0];
+            return { ok: !!row && !row.PermissionsRead && !row.PermissionsEdit, text: null };
+          },
+        });
+        if (wr.ok) {
           const row = btn.closest('.fc-fls-row');
           if (row) { row.classList.add('fc-fls-stripped'); btn.replaceWith(Object.assign(document.createElement('span'), { textContent: '✅ stripped', className: 'fc-fls-done' })); }
         } else {
@@ -1790,10 +1817,22 @@ const FieldCleaner = (() => {
       if (!/^zz_DEPRECATED/i.test(md.label || '')) md.label = `zz_DEPRECATED ${md.label || _selField.api}`;
       // Already stamped (a second click after a partial run) → keep it once
       if (!/^\[DEPRECATED /.test(prevDesc)) md.description = `[DEPRECATED ${new Date().toISOString().slice(0, 10)} by Salesforce Toolkit — pending delete] ${prevDesc}`.slice(0, 1000);
-      const patch = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
-        path: `services/data/v62.0/tooling/sobjects/CustomField/${fieldId}`,
-        body: { Metadata: sftkMetaForPatch(md) } });
-      if (patch?.error) throw new Error(patch.error);
+      // The write discipline (sftk-write.js): the PATCH is the write, a
+      // re-read of the field's own label is the verify.
+      const patchWr = await sftkWriteVerified({
+        describe: `${_selObj.api}.${_selField.api}`,
+        write: () => bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+          path: `services/data/v62.0/tooling/sobjects/CustomField/${fieldId}`,
+          body: { Metadata: sftkMetaForPatch(md) } }),
+        verify: async () => {
+          const chk = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+            sobject: 'CustomField', id: fieldId });
+          if (!chk || chk.error || !chk.Metadata) return { ok: false, text: null };
+          return { ok: chk.Metadata.label === md.label, text: null };
+        },
+      });
+      if (!patchWr.accepted) throw new Error((patchWr.raw && patchWr.raw.error) || 'the label change was refused');
+      if (!patchWr.ok) throw new Error(`the label was renamed but the org still shows the old label on re-read — check "${_selObj.api}.${_selField.api}" in Setup`);
 
       // 3. Strip FLS everywhere (snapshot first for undo).
       const { rows, error } = await _queryFls();
@@ -1809,9 +1848,18 @@ const FieldCleaner = (() => {
       const flsFailed = [];
       const flsStripped = [];
       if (rows.length) {
-        const res = await bg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: _orgUrl, sid: _sid,
-          records: rows.map(r => ({ attributes: { type: 'FieldPermissions' }, Id: r.Id,
-                                    PermissionsRead: false, PermissionsEdit: false })) });
+        // The write discipline (sftk-write.js): routed through the helper,
+        // but not re-read — Salesforce's Collections response is per-record
+        // authoritative (each row carries its own success/errors), unlike a
+        // single ambiguous "accepted" flag, so the answer below is that.
+        const stripWr = await sftkWriteVerified({
+          describe: `${rows.length} field-level security grant(s)`,
+          write: () => bg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: _orgUrl, sid: _sid,
+            records: rows.map(r => ({ attributes: { type: 'FieldPermissions' }, Id: r.Id,
+                                      PermissionsRead: false, PermissionsEdit: false })) }),
+          noVerify: 'the Collections response already names success/failure per grant',
+        });
+        const res = stripWr.raw;
         const results = Array.isArray(res) ? res : [];
         flsSnapshot.forEach((f, i) => {
           const x = results[i];
@@ -1848,10 +1896,22 @@ const FieldCleaner = (() => {
       if (cur.error || !cur.Metadata) throw new Error(cur.error || 'Could not read field metadata');
       // '' (not null) so the deprecation stamp is really cleared — a null key is dropped from the PATCH
       const md = { ...cur.Metadata, label: dep.prevLabel, description: dep.prevDesc || '' };
-      const patch = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
-        path: `services/data/v62.0/tooling/sobjects/CustomField/${dep.fieldId}`,
-        body: { Metadata: sftkMetaForPatch(md) } });
-      if (patch?.error) throw new Error(patch.error);
+      // The write discipline (sftk-write.js): the PATCH is the write, a
+      // re-read of the field's own label is the verify.
+      const patchWr = await sftkWriteVerified({
+        describe: `${_selObj?.api}.${_selField?.api}`,
+        write: () => { return bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+          path: `services/data/v62.0/tooling/sobjects/CustomField/${dep.fieldId}`,
+          body: { Metadata: sftkMetaForPatch(md) } }); },
+        verify: async () => {
+          const chk = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+            sobject: 'CustomField', id: dep.fieldId });
+          if (!chk || chk.error || !chk.Metadata) return { ok: false, text: null };
+          return { ok: chk.Metadata.label === md.label, text: null };
+        },
+      });
+      if (!patchWr.accepted) throw new Error((patchWr.raw && patchWr.raw.error) || 'refused');
+      if (!patchWr.ok) throw new Error('the label was restored but the org still shows the deprecated label on re-read — check it in Setup');
 
       // 2. Restore the FLS grants from the snapshot. Salesforce DELETES a
       // FieldPermissions row when both permissions are set false (live
@@ -1864,17 +1924,28 @@ const FieldCleaner = (() => {
         const rec = { ParentId: f.parentId, SobjectType: f.sobject || _selObj?.api, Field: f.field || `${_selObj?.api}.${_selField?.api}`,
                       PermissionsRead: f.read, PermissionsEdit: f.edit };
         let ok = false, why = '';
-        if (rec.ParentId) {
-          const ins = await bg({ type: 'SF_REST_POST', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
-            path: 'services/data/v62.0/sobjects/FieldPermissions', body: rec });
-          ok = !!(ins && !ins.error && ins.success !== false); if (!ok) why = String(ins?.error || '');
-        }
-        if (!ok && f.id) {
-          const up = await bg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: _orgUrl, sid: _sid,
-            records: [{ attributes: { type: 'FieldPermissions' }, Id: f.id, PermissionsRead: f.read, PermissionsEdit: f.edit }] });
-          const r0 = Array.isArray(up) ? up[0] : null;
-          ok = !!(r0 && r0.success); if (!ok) why = why || ((r0 && r0.errors) || []).map(e => e.message || e.statusCode).join('; ') || (up && up.error) || 'no answer';
-        }
+        // The write discipline (sftk-write.js): routed through the helper,
+        // but not re-read — the insert/update response already names
+        // success and, on failure, the exact reason per grant.
+        const restoreWr = await sftkWriteVerified({
+          describe: f.who,
+          write: async () => {
+            if (rec.ParentId) {
+              const ins = await bg({ type: 'SF_REST_POST', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+                path: 'services/data/v62.0/sobjects/FieldPermissions', body: rec });
+              ok = !!(ins && !ins.error && ins.success !== false); if (!ok) why = String(ins?.error || '');
+            }
+            if (!ok && f.id) {
+              const up = await bg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: _orgUrl, sid: _sid,
+                records: [{ attributes: { type: 'FieldPermissions' }, Id: f.id, PermissionsRead: f.read, PermissionsEdit: f.edit }] });
+              const r0 = Array.isArray(up) ? up[0] : null;
+              ok = !!(r0 && r0.success); if (!ok) why = why || ((r0 && r0.errors) || []).map(e => e.message || e.statusCode).join('; ') || (up && up.error) || 'no answer';
+            }
+            return { success: true };   // per-grant ok/why already resolved above; never trip the helper's own refusal path
+          },
+          noVerify: 'the insert/update response already names success or the reason per grant',
+        });
+        void restoreWr;
         if (!ok) notBack.push(`${f.who}${why ? ` (${why})` : ''}`);
       }
       await chrome.storage.local.remove(key);
@@ -2390,13 +2461,23 @@ const FieldCleaner = (() => {
       throw link(new Error(`The deploy was accepted but no new version of "${flowName}" appeared (latest is still v${prevMax}). Nothing was deleted.`));
     }
     if (newest.Status !== 'Active') {
-      const act = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
-        path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${defId}`,
-        body: { Metadata: { activeVersionNumber: Number(newest.VersionNumber) } } });
       const newId = newest.Id;
-      versions = await read();
-      newest = versions.find(v => v.Id === newId) || null;
-      if (!newest || newest.Status !== 'Active') {
+      // The write discipline (sftk-write.js): the PATCH is the write, the
+      // re-read below (the same `read()` this whole function verifies with)
+      // is the verify — never trust the PATCH's own answer.
+      const actWr = await sftkWriteVerified({
+        describe: `"${flowName}" activation`,
+        write: () => bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+          path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${defId}`,
+          body: { Metadata: { activeVersionNumber: Number(newest.VersionNumber) } } }),
+        verify: async () => {
+          versions = await read();
+          newest = versions.find(v => v.Id === newId) || null;
+          return { ok: !!newest && newest.Status === 'Active', text: null };
+        },
+      });
+      if (!actWr.ok) {
+        const act = actWr.raw;
         throw link(new Error(`v${newest ? newest.VersionNumber : '?'} of "${flowName}" was created but could NOT be activated${act?.error ? ` — ${_feText(act.error)}` : ''}. The previous version stays active and nothing was deleted. Activate the new version in Flow Builder, then run ✂ Remove again.`));
       }
     }
@@ -2420,12 +2501,32 @@ const FieldCleaner = (() => {
   }
 
   async function _deleteFlowInterviews(interviews) {
+    const list = interviews || [];
     const out = { deleted: 0, failed: 0, failedVersionIds: new Set(), errors: [] };
-    for (const it of (interviews || [])) {
-      const d = await bg({ type: 'SF_REST_DELETE', orgUrl: _orgUrl, sid: _sid, sobject: 'FlowInterview', id: it.Id, _suppressError: true });
-      if (d?.error) { out.failed++; out.failedVersionIds.add(String(it.FlowVersionViewId || '').substring(0, 15)); if (out.errors.length < 3) out.errors.push(_feText(d.error)); }
+    if (!list.length) return out;
+    // The write discipline (sftk-write.js): one batch, one re-read
+    // (verifyAll) confirming the interviews are actually gone — never the
+    // DELETE's own answer.
+    const batch = await sftkWriteVerifiedAll(list.map(it => ({
+      describe: it.Id,
+      write: () => bg({ type: 'SF_REST_DELETE', orgUrl: _orgUrl, sid: _sid, sobject: 'FlowInterview', id: it.Id, _suppressError: true }),
+    })), {
+      verifyAll: async results => {
+        const ids = list.filter((it, i) => results[i] && results[i].accepted).map(it => it.Id);
+        if (!ids.length) return [];
+        const lit = ids.map(x => `'${x}'`).join(',');
+        const q = await bg({ type: 'SF_REST_QUERY', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+          query: `SELECT Id FROM FlowInterview WHERE Id IN (${lit})` });
+        if (!q || q.error) return null;
+        const stillThere = new Set((q.records || []).map(r => r.Id));
+        return list.map(it => ({ ok: !stillThere.has(it.Id), text: null }));
+      },
+    });
+    list.forEach((it, i) => {
+      const r = batch.results[i];
+      if (!r.ok) { out.failed++; out.failedVersionIds.add(String(it.FlowVersionViewId || '').substring(0, 15)); if (out.errors.length < 3) out.errors.push(_feText((r.raw && r.raw.error) || r.text || 'not confirmed deleted')); }
       else out.deleted++;
-    }
+    });
     return out;
   }
 
@@ -2433,12 +2534,35 @@ const FieldCleaner = (() => {
   // would refuse them anyway, and the count says so.
   async function _deleteFlowVersionIds(ids, skipIds) {
     const out = { deleted: 0, failed: 0, skipped: 0, errors: [] };
+    const todo = [];
     for (const id of (ids || [])) {
       if (skipIds && (skipIds.has(id) || skipIds.has(String(id).substring(0, 15)))) { out.skipped++; continue; }
-      const d = await bg({ type: 'SF_TOOLING_DELETE', orgUrl: _orgUrl, sid: _sid, sobject: 'Flow', id, _suppressError: true });
-      if (d?.error) { out.failed++; if (out.errors.length < 3) out.errors.push(_feText(d.error)); }
-      else out.deleted++;
+      todo.push(id);
     }
+    if (!todo.length) return out;
+    // The write discipline (sftk-write.js): one batch, one re-read
+    // (verifyAll) confirming the versions are actually gone — never the
+    // DELETE's own answer.
+    const batch = await sftkWriteVerifiedAll(todo.map(id => ({
+      describe: id,
+      write: () => bg({ type: 'SF_TOOLING_DELETE', orgUrl: _orgUrl, sid: _sid, sobject: 'Flow', id, _suppressError: true }),
+    })), {
+      verifyAll: async results => {
+        const okIds = todo.filter((id, i) => results[i] && results[i].accepted);
+        if (!okIds.length) return [];
+        const lit = okIds.map(x => `'${x}'`).join(',');
+        const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
+          query: `SELECT Id FROM Flow WHERE Id IN (${lit})` });
+        if (!q || q.error) return null;
+        const stillThere = new Set((q.records || []).map(r => r.Id));
+        return todo.map(id => ({ ok: !stillThere.has(id), text: null }));
+      },
+    });
+    todo.forEach((id, i) => {
+      const r = batch.results[i];
+      if (!r.ok) { out.failed++; if (out.errors.length < 3) out.errors.push(_feText((r.raw && r.raw.error) || r.text || 'not confirmed deleted')); }
+      else out.deleted++;
+    });
     return out;
   }
 
@@ -2576,13 +2700,24 @@ const FieldCleaner = (() => {
     // version may be deleted (user 2026-09-21). Every exit leaves the org as it was.
     if (plan.mode === 'active-delete') {
       const link = e => { const u = _flowBuilderUrl(plan.active.id); if (u) e.setupUrl = u; return e; };
-      const off = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
-        path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${defId}`,
-        body: { Metadata: { activeVersionNumber: 0 } } });
-      const r = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
-        query: `SELECT Id, VersionNumber, Status FROM Flow WHERE DefinitionId = '${defId}'` });
-      if (r?.error) throw link(new Error(`"${flowName}" could not be re-read after switching it off (${_feText(r.error)}) — nothing was deleted. Check it in Flow Builder.`));
-      const stillActive = (r?.records || []).find(v => v.Status === 'Active');
+      // The write discipline (sftk-write.js): the PATCH is the write, the
+      // re-read right below is the verify.
+      let off = null;
+      const offWr = await sftkWriteVerified({
+        describe: `"${flowName}" deactivation`,
+        write: async () => { off = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+          path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${defId}`,
+          body: { Metadata: { activeVersionNumber: 0 } } }); return off; },
+        verify: async () => {
+          const r = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
+            query: `SELECT Id, VersionNumber, Status FROM Flow WHERE DefinitionId = '${defId}'` });
+          if (r?.error) throw new Error(`"${flowName}" could not be re-read after switching it off (${_feText(r.error)}) — nothing was deleted. Check it in Flow Builder.`);
+          const stillActive = (r?.records || []).find(v => v.Status === 'Active');
+          return { ok: !stillActive, detail: stillActive, text: null };
+        },
+      });
+      if (!offWr.verified) throw link(new Error(offWr.text));
+      const stillActive = offWr.detail;
       if (stillActive) {
         throw link(new Error(`"${flowName}" could NOT be switched off${off?.error ? ` — ${_feText(off.error)}` : ''}: v${stillActive.VersionNumber} is still active. Nothing was deleted.`));
       }
@@ -2888,6 +3023,8 @@ const FieldCleaner = (() => {
   async function patchLayoutMetadata(componentId, metadata) {
     const body = metadata;
     for (let attempt = 0; attempt < 14; attempt++) {
+      // verified-by: fixLayout (the only caller) re-reads the Layout after
+      // whichever path here it accepts.
       const res = await bg({
         type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
         path: `services/data/v62.0/tooling/sobjects/Layout/${componentId}`,
@@ -3040,6 +3177,8 @@ const FieldCleaner = (() => {
   //      sub-trees omitted. They're frequently rejected because the GET still
   //      returns enum values that newer API versions no longer accept.
   async function deployLayoutViaMetadataApi(fullName, metadata) {
+    // verified-by: fixLayout (the only caller) re-reads the Layout after
+    // whichever attempt below it accepts.
     const first = await bg({
       type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid,
       zipBase64: buildLayoutZip(fullName, metadata),
@@ -3051,6 +3190,7 @@ const FieldCleaner = (() => {
     const rejectedActions = first && first.error &&
       /ActionListContext|platformActionList|quickActionList|action list|quick action/i.test(first.error);
     if (rejectedActions) {
+      // verified-by: fixLayout re-reads the Layout after this attempt too.
       const second = await bg({
         type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid,
         zipBase64: buildLayoutZip(fullName, metadata, {
@@ -3116,6 +3256,8 @@ const FieldCleaner = (() => {
   // version AND activate it (the old version becomes Obsolete) in one step.
   async function deployFlowViaMetadataApi(fullName, metadata) {
     metadata.status = 'Active';
+    // verified-by: fixFlowExecute (the only caller) calls
+    // _verifyFlowActivation right after this returns.
     return bg({
       type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid,
       zipBase64: buildFlowZip(fullName, metadata)
@@ -3132,6 +3274,8 @@ const FieldCleaner = (() => {
     const md = { ...(metadata || {}) };
     delete md.fullName;               // Tooling-only descriptor; breaks the XML
     md.status = status || 'Draft';    // restore → inactive Draft, user activates
+    // verified-by: performRestore (popup.js, the only caller) re-reads the
+    // flow's versions after this returns.
     return bg({
       type: 'SF_METADATA_DEPLOY', orgUrl, sid,
       zipBase64: buildFlowZip(fullName, md)
@@ -3160,21 +3304,35 @@ const FieldCleaner = (() => {
     }
 
     // Path 1: Tooling API PATCH with progressive retry for VALUE_STRING errors.
-    // Succeeds for most layouts and is fast (~1 round-trip).
-    const patchRes = await patchLayoutMetadata(componentId, sanitizeLayoutMetadata(metadata));
-    if (!patchRes.error) return;
-
-    // Path 2: Tooling API rejected this layout (typical for layouts with
-    // activity-related quick actions). Fall back to Metadata API zip-deploy,
-    // which is the route mature SF tooling uses and isn't subject to the
-    // Tooling API's `Metadata` compound PATCH quirks.
+    // Succeeds for most layouts and is fast (~1 round-trip). Path 2 (Metadata
+    // API zip-deploy) is the fallback when Salesforce rejects the PATCH.
+    // The write discipline (sftk-write.js): whichever path is accepted, the
+    // verify re-reads the Layout and re-runs the same remover on a clone —
+    // 0 changes left to make means the field is really gone.
     const fullName = res.FullName || res.fullName;
-    if (fullName) {
-      const deployRes = await deployLayoutViaMetadataApi(fullName, metadata);
-      if (deployRes && deployRes.success) return;
-      // Fall through to surface a clear error if the Metadata API also failed.
-      var deployErr = deployRes && deployRes.error;
-    }
+    let patchRes = null, deployErr;
+    const wr = await sftkWriteVerified({
+      describe: `"${componentName}" layout`,
+      write: async () => {
+        patchRes = await patchLayoutMetadata(componentId, sanitizeLayoutMetadata(metadata));
+        if (!patchRes.error) return patchRes;
+        if (fullName) {
+          const deployRes = await deployLayoutViaMetadataApi(fullName, metadata);
+          if (deployRes && deployRes.success) return deployRes;
+          deployErr = deployRes && deployRes.error;
+        }
+        return { error: patchRes.error };
+      },
+      verify: async () => {
+        const after = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+          sobject: 'Layout', id: componentId });
+        if (!after || after.error || !after.Metadata) return { ok: false, text: null };
+        const left = removeFieldFromLayout(JSON.parse(JSON.stringify(after.Metadata)), _selField.api);
+        return { ok: left === 0, text: null };
+      },
+    });
+    if (wr.accepted && wr.ok) return;
+    if (wr.accepted) throw new Error(`"${componentName}" was saved but still references the field on re-read — check it in Setup.`);
 
     // Both paths failed — surface a clean message *with* a one-click deep link
     // to the layout in Setup, so the manual fix is 30 seconds, not a hunt.
@@ -3238,12 +3396,26 @@ const FieldCleaner = (() => {
       );
     }
 
-    const patchRes = await bg({
-      type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
-      path: `services/data/v62.0/tooling/sobjects/FlexiPage/${componentId}`,
-      body: { Metadata: metadata }
+    // The write discipline (sftk-write.js): the PATCH is the write; the
+    // verify re-reads the FlexiPage and runs the same remover on a clone —
+    // 0 changes left to make means the field is really gone.
+    const wr = await sftkWriteVerified({
+      describe: `"${componentName}" FlexiPage`,
+      write: () => bg({
+        type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+        path: `services/data/v62.0/tooling/sobjects/FlexiPage/${componentId}`,
+        body: { Metadata: metadata }
+      }),
+      verify: async () => {
+        const after = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+          sobject: 'FlexiPage', id: componentId });
+        if (!after || after.error || !after.Metadata) return { ok: false, text: null };
+        const left = removeFieldFromFlexiPage(JSON.parse(JSON.stringify(after.Metadata)), _selObj.api, _selField.api);
+        return { ok: left === 0, text: null };
+      },
     });
-    if (patchRes.error) throw new Error(`Could not save "${componentName}": ${_feText(patchRes.error)}`);
+    if (!wr.accepted) throw new Error(`Could not save "${componentName}": ${_feText((wr.raw && wr.raw.error) || 'refused')}`);
+    if (!wr.ok) throw new Error(`"${componentName}" was saved but still references the field on re-read — check it in App Builder.`);
   }
 
   // Remove field references from a FlexiPage metadata object.
@@ -3523,6 +3695,8 @@ const FieldCleaner = (() => {
       { name: 'package.xml',            data: enc.encode(pkg) },
       { name: 'destructiveChanges.xml', data: enc.encode(del) },
     ]);
+    // verified-by: doDelete (the only caller) re-reads the field after any
+    // delete this function reports successful.
     const r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64, _suppressError: true });
     return r?.error ? { error: r.error } : { success: true };
   }
@@ -3549,6 +3723,8 @@ const FieldCleaner = (() => {
         object: _selObj?.api, field: _selField?.api, fieldId, metadata: null };
     }
 
+    // verified-by: the re-read below (before "if (res.error)"), which
+    // reports the delete refused if the field can still be read back.
     let res = await bg({
       type: 'SF_TOOLING_DELETE', orgUrl: _orgUrl, sid: _sid,
       sobject: 'CustomField', id: fieldId, _suppressError: true
@@ -3567,6 +3743,22 @@ const FieldCleaner = (() => {
       else { res = { success: true }; via = 'metadata'; }
     }
     if (_delLogEntry) _delLogEntry.via = via;
+
+    // The write discipline (sftk-write.js): the delete above is the write,
+    // this re-read is the verify — never trust the DELETE/deploy's own
+    // answer. Costs one query, only when the write claimed success.
+    if (!res.error) {
+      const chk = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+        sobject: 'CustomField', id: fieldId });
+      // A deleted custom field is NOT gone from the Tooling API: Salesforce
+      // keeps its row for the 15-day grace period under the name X_del (live
+      // 2026-09-27: the delete had worked and this read judged it refused).
+      // Deleted = unreadable, or readable under a _del name / another name.
+      const devName = chk && !chk.error ? String(chk.DeveloperName || chk.FullName || '').replace(/^.*\./, '') : '';
+      const wantName = String(_selField?.api || '').replace(/__c$/, '');
+      const stillThere = !!(chk && !chk.error) && devName === wantName;
+      if (stillThere) res = { error: `Salesforce (${via === 'metadata' ? 'Metadata API' : 'Tooling API'}) said the field was deleted, but it can still be read back — treat this as unverified and check it in Object Manager.` };
+    }
 
     if (res.error) {
       if (btn) { btn.disabled = false; btn.textContent = '🗑 Delete Field'; }
@@ -4142,15 +4334,37 @@ const FieldCleaner = (() => {
           if (!r || !r.success) throw new Error(r?.error || patchRes.error);
         }
       } else if (snap.type === 'FlexiPage') {
-        const r = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
-          path: `services/data/v62.0/tooling/sobjects/FlexiPage/${snap.id}`,
-          body: { Metadata: md } });
-        if (r?.error) throw new Error(r.error);
+        // The write discipline (sftk-write.js): the PATCH is the write, a
+        // re-read of the FlexiPage is the verify.
+        const wr = await sftkWriteVerified({
+          describe: 'FlexiPage restore',
+          write: () => bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+            path: `services/data/v62.0/tooling/sobjects/FlexiPage/${snap.id}`,
+            body: { Metadata: md } }),
+          verify: async () => {
+            const chk = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+              sobject: 'FlexiPage', id: snap.id });
+            return { ok: !!(chk && !chk.error && chk.Metadata), text: null };
+          },
+        });
+        if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
+        if (!wr.ok) throw new Error('restored, but the org could not be re-read to confirm it — check it in App Builder');
       } else if (snap.type === 'Report') {
-        const r = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
-          path: `services/data/v62.0/analytics/reports/${snap.id}`,
-          body: { reportMetadata: md } });
-        if (r?.error) throw new Error(r.error);
+        // The write discipline (sftk-write.js): the PATCH is the write, a
+        // re-describe of the report is the verify.
+        const wr = await sftkWriteVerified({
+          describe: 'Report restore',
+          write: () => bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+            path: `services/data/v62.0/analytics/reports/${snap.id}`,
+            body: { reportMetadata: md } }),
+          verify: async () => {
+            const chk = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+              path: `services/data/v62.0/analytics/reports/${snap.id}/describe` });
+            return { ok: !!(chk && !chk.error && chk.reportMetadata), text: null };
+          },
+        });
+        if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
+        if (!wr.ok) throw new Error('restored, but the org could not be re-read to confirm it — check the report in Salesforce');
       } else {
         throw new Error(`Unknown snapshot type ${snap.type}`);
       }

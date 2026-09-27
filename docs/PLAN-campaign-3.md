@@ -12,6 +12,8 @@ Before any phase: a source org again (`sf org login web --alias npc`, then
 
 ## Phase 1 — one write discipline (`sftkWriteVerified`)
 
+**DONE 2026-09-27** (commit follows): `sftk-write.js` (`sftkWriteVerified`, `sftkWriteVerifiedAll` with a batched `verifyAll`), `test/write-discipline.test.mjs` at baseline zero, every UI write migrated (two Sonnet sweeps, Fable review), the ENGINE given a post-run re-read (`summary[obj].verified`, History ✓/⚠), and every migrated tool re-run live on trailheads5. Found on the way: the flow-delete toast was erased by the list re-render; a deleted field stays readable under `X_del`.
+
 **Problem.** Five tools reported success from the request result. Each was fixed by hand this
 week; the next tool will repeat it.
 

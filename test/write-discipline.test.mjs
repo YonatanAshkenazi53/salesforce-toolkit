@@ -22,21 +22,8 @@ const UI_FILES = readdirSync(root).filter(f => f.endsWith('.js') && !f.startsWit
   && !['background.js', 'content.js', 'trusted-types-policy.js'].includes(f));
 
 const BASELINE = {
-  'apex-debugger.js': 9,
-  'dependency-map.js': 2,     // ⏻ flow switches migrated 2026-09-27; ⚙ API versions deploy + activation still to go
-  'field-cleaner.js': 21,
-  'flow-permissions.js': 1,
-  'license-manager.js': 2,
-  'lightning-pages.js': 3,
-  'popup.js': 3,
-  'studio-picklists.js': 6,
-  'studio-profiles.js': 1,
-  'studio-reconcile.js': 12,
-  'studio-scan.js': 1,
-  'studio-seed.js': 6,
-  'studio-transfer.js': 1,
-  'studio-undo.js': 2,
-  'user-copy.js': 5,
+  // 2026-09-27, end of phase 1: zero everywhere. The engine call sites are
+  // covered by executeProfileTransfer's own post-run re-read (summary[obj].verified).
 };
 
 function offenders(file) {

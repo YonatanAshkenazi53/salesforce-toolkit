@@ -2157,6 +2157,27 @@ function sftkRecParentOverrides(groupB, rows, pairs, field, existing, orgKey) {
   return { overrides: ov, exact, missing };
 }
 
+// The one write discipline (sftk-write.js) — the shared `verify` for every
+// delete in this file: re-read exactly the Ids the write claimed to delete,
+// chunked the same way every other Id-list query here is (SOQL IN-list
+// limits), and report which ones the org still shows. Never throws on a
+// normal "some still there" answer — only on a read failure, so the helper's
+// own "could not be re-read to confirm it" wording carries it.
+async function sftkReconcileVerifyGone(sess, obj, okIds) {
+  if (!okIds.length) return { ok: true, detail: [] };
+  const stillThere = [];
+  for (let i = 0; i < okIds.length; i += 200) {
+    const lit = okIds.slice(i, i + 200).map(id => soqlStrLit(id)).join(',');
+    const q = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false, _suppressError: true,
+      query: `SELECT Id FROM ${obj} WHERE Id IN (${lit})` });
+    if (q?.error) throw new Error(q.error);
+    stillThere.push(...(q.records || []).map(r => r.Id));
+  }
+  return stillThere.length
+    ? { ok: false, detail: stillThere, text: `${obj} delete: accepted by Salesforce, but ${stillThere.length} record(s) still show in the org` }
+    : { ok: true, detail: [] };
+}
+
 async function runReconcile(profile, objType, buckets) {
   // ⛔ RUN GATE (user 2026-08-10: "the recommendation to sync parents first
   // is not strong enough") — the advisor's probe already knows when the
@@ -2516,12 +2537,23 @@ async function runReconcile(profile, objType, buckets) {
     try {
       if (isHard) {
         log('🔥', `Hard-deleting ${a.delIds.length} ${obj} from target…`);
-        const res = await sendBg({ type: 'SF_HARD_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: a.delIds });
+        // The one write discipline (sftk-write.js): the delete response's own
+        // per-record success used to BE "deleted" — one re-read of exactly
+        // these Ids (chunked, same as every other Id-list query here) closes
+        // the same gap a PATCH accepted-but-unchanged taught elsewhere.
+        const dw = await sftkWriteVerified({
+          describe: `${obj} hard delete`,
+          write: () => sendBg({ type: 'SF_HARD_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: a.delIds }),
+          verify: (r) => sftkReconcileVerifyGone(tgtSess, obj, (r.deleteResults || []).filter(x => x.success).map(x => x.id)),
+        });
+        if (!dw.accepted) { allErrors.push(`Delete ${obj} failed: ${dw.raw?.error || dw.text}`); log('❌', `Delete ${obj} failed: ${dw.raw?.error || dw.text}`, 'ds-prog-err'); continue; }
+        const res = dw.raw || {};
         const okN   = (res.deleteResults || []).filter(r => r.success).length;
         const failN = (res.deleteResults || []).length - okN;
         bumpChild(obj, 'deleted', okN); bumpChild(obj, 'deleteFailed', failN);
         counts.purged += (res.purgedOk || 0);
-        log(failN ? '⚠' : '✅', `${obj}: deleted ${okN}${failN ? `, ${failN} failed` : ''} → purged ${res.purgedOk || 0} from Recycle Bin`, failN ? 'ds-prog-err' : '');
+        log(failN ? '⚠' : (dw.ok ? '✅' : '⚠'), `${obj}: deleted ${okN}${failN ? `, ${failN} failed` : ''} → purged ${res.purgedOk || 0} from Recycle Bin`, (failN || !dw.ok) ? 'ds-prog-err' : '');
+        if (!dw.ok) { allErrors.push(dw.text); log('  ⚠', dw.text, 'ds-prog-warn'); }
         (res.purgeErrors || []).slice(0, 3).forEach(e => { allErrors.push(`purge ${obj}: ${e}`); log('  ⚠', `purge: ${e}`, 'ds-prog-warn'); });
         (res.deleteResults || []).filter(r => !r.success).slice(0, 5).forEach(r => {
           const m = (r.errors || []).map(x => x.message).join('; ');
@@ -2529,11 +2561,18 @@ async function runReconcile(profile, objType, buckets) {
         });
       } else {
         log('🗑', `Deleting ${a.delIds.length} ${obj} from target (→ Recycle Bin)…`);
-        const res = await sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: a.delIds });
+        const dw = await sftkWriteVerified({
+          describe: `${obj} delete`,
+          write: () => sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: a.delIds }),
+          verify: (r) => sftkReconcileVerifyGone(tgtSess, obj, (Array.isArray(r) ? r : []).filter(x => x.success).map(x => x.id)),
+        });
+        if (!dw.accepted) { allErrors.push(`Delete ${obj} failed: ${dw.raw?.error || dw.text}`); log('❌', `Delete ${obj} failed: ${dw.raw?.error || dw.text}`, 'ds-prog-err'); continue; }
+        const res = dw.raw || [];
         const okN   = (res || []).filter(r => r.success).length;
         const failN = (res || []).length - okN;
         bumpChild(obj, 'deleted', okN); bumpChild(obj, 'deleteFailed', failN);
-        log(failN ? '⚠' : '✅', `${obj}: deleted ${okN}${failN ? `, ${failN} failed` : ''}`, failN ? 'ds-prog-err' : '');
+        log(failN ? '⚠' : (dw.ok ? '✅' : '⚠'), `${obj}: deleted ${okN}${failN ? `, ${failN} failed` : ''}`, (failN || !dw.ok) ? 'ds-prog-err' : '');
+        if (!dw.ok) { allErrors.push(dw.text); log('  ⚠', dw.text, 'ds-prog-warn'); }
         (res || []).filter(r => !r.success).slice(0, 5).forEach(r => {
           const m = (r.errors || []).map(x => x.message).join('; ');
           if (m) allErrors.push(`delete ${obj} ${r.id || ''}: ${m}`);
@@ -2547,11 +2586,22 @@ async function runReconcile(profile, objType, buckets) {
     if (isHard) {
       log('🔥', `Hard-deleting ${delIds.length} record(s) from target…`);
       try {
-        const res = await sendBg({ type: 'SF_HARD_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds });
+        // The one write discipline (sftk-write.js): the delete response's own
+        // per-record success used to BE "deleted" — one re-read of exactly
+        // these Ids (chunked, same as every other Id-list query here) closes
+        // the same gap a PATCH accepted-but-unchanged taught elsewhere.
+        const dw = await sftkWriteVerified({
+          describe: `${objType} hard delete`,
+          write: () => sendBg({ type: 'SF_HARD_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds }),
+          verify: (r) => sftkReconcileVerifyGone(tgtSess, objType, (r.deleteResults || []).filter(x => x.success).map(x => x.id)),
+        });
+        if (!dw.accepted) throw new Error(dw.raw?.error || dw.text);
+        const res = dw.raw || {};
         const delOk   = (res.deleteResults || []).filter(r => r.success).length;
         const delFail = (res.deleteResults || []).length - delOk;
         counts.deleted += delOk; counts.deletedFailed += delFail; counts.purged += (res.purgedOk || 0);
-        log(delFail ? '⚠' : '✅', `Deleted ${delOk}${delFail ? `, ${delFail} failed` : ''} → purged ${res.purgedOk || 0} from Recycle Bin`, delFail ? 'ds-prog-err' : '');
+        log(delFail ? '⚠' : (dw.ok ? '✅' : '⚠'), `Deleted ${delOk}${delFail ? `, ${delFail} failed` : ''} → purged ${res.purgedOk || 0} from Recycle Bin`, (delFail || !dw.ok) ? 'ds-prog-err' : '');
+        if (!dw.ok) { allErrors.push(dw.text); log('  ⚠', dw.text, 'ds-prog-warn'); }
         (res.purgeErrors || []).slice(0, 3).forEach(e => { allErrors.push(`purge: ${e}`); log('  ⚠', `purge: ${e}`, 'ds-prog-warn'); });
         (res.deleteResults || []).filter(r => !r.success).slice(0, 5).forEach(r => {
           const m = (r.errors || []).map(x => x.message).join('; ');
@@ -2561,11 +2611,18 @@ async function runReconcile(profile, objType, buckets) {
     } else {
       log('🗑', `Deleting ${delIds.length} record(s) from target (→ Recycle Bin)…`);
       try {
-        const res = await sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds });
+        const dw = await sftkWriteVerified({
+          describe: `${objType} delete`,
+          write: () => sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds }),
+          verify: (r) => sftkReconcileVerifyGone(tgtSess, objType, (Array.isArray(r) ? r : []).filter(x => x.success).map(x => x.id)),
+        });
+        if (!dw.accepted) throw new Error(dw.raw?.error || dw.text);
+        const res = dw.raw || [];
         const ok = (res || []).filter(r => r.success).length;
         const fail = (res || []).length - ok;
         counts.deleted += ok; counts.deletedFailed += fail;
-        log(fail ? '⚠' : '✅', `Deleted ${ok}${fail ? `, ${fail} failed` : ''}`, fail ? 'ds-prog-err' : '');
+        log(fail ? '⚠' : (dw.ok ? '✅' : '⚠'), `Deleted ${ok}${fail ? `, ${fail} failed` : ''}`, (fail || !dw.ok) ? 'ds-prog-err' : '');
+        if (!dw.ok) { allErrors.push(dw.text); log('  ⚠', dw.text, 'ds-prog-warn'); }
         (res || []).filter(r => !r.success).slice(0, 5).forEach(r => {
           const m = (r.errors || []).map(x => x.message).join('; ');
           if (m) allErrors.push(`delete ${r.id || ''}: ${m}`);
@@ -2600,6 +2657,7 @@ async function runReconcile(profile, objType, buckets) {
       pullProfile.sourceOrg = profile.targetOrg;
       pullProfile.targetOrg = profile.sourceOrg;
       const res = await sendBg({
+        // verified-by: the engine's post-run re-read — summary[obj].verified = { checked, found } (background.js, campaign 3 phase 1)
         type: 'SF_EXECUTE_PROFILE_TRANSFER',
         profile: pullProfile,
         srcOrgUrl: tgtSess.orgUrl, srcSid: tgtSess.sid,   // read from TARGET
@@ -2649,6 +2707,7 @@ async function runReconcile(profile, objType, buckets) {
         return cc;
       }).filter(Boolean);
       const res = await sendBg({
+        // verified-by: the engine's post-run re-read — summary[obj].verified = { checked, found } (background.js, campaign 3 phase 1)
         type: 'SF_EXECUTE_PROFILE_TRANSFER',
         profile: pushProfile, runId,
         srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
@@ -2748,6 +2807,7 @@ async function runReconcile(profile, objType, buckets) {
         }
       };
       const res = await sendBg({
+        // verified-by: the engine's post-run re-read — summary[obj].verified = { checked, found } (background.js, campaign 3 phase 1)
         type: 'SF_EXECUTE_PROFILE_TRANSFER',
         profile: bProfile, runId,
         srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
@@ -2898,11 +2958,35 @@ async function runReconcile(profile, objType, buckets) {
       }
       let ok = 0, fail = 0;
       for (let ci = 0; ci < updates.length; ci += 200) {
+        const slice = updates.slice(ci, ci + 200);
         try {
-          const res = await sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
-            records: updates.slice(ci, ci + 200) });
+          // The one write discipline (sftk-write.js): Collections' per-record
+          // success used to BE "relinked" — one re-read of exactly this
+          // slice's Ids, comparing the link field to the parent it was meant
+          // to point at, closes the same gap a PATCH accepted-but-unchanged
+          // taught elsewhere.
+          const dw = await sftkWriteVerified({
+            describe: `relink ${obj}`,
+            write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: slice }),
+            verify: async (res) => {
+              const okIds = (Array.isArray(res) ? res : []).filter(rr => rr.success).map(rr => rr.id);
+              if (!okIds.length) return { ok: true, detail: [] };
+              const wantById = new Map(slice.map(u => [u.Id, u[tgtLinkField]]));
+              const vq = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, _suppressError: true,
+                query: `SELECT Id, ${tgtLinkField} FROM ${obj} WHERE Id IN (${okIds.map(id => soqlStrLit(id)).join(',')})` });
+              if (vq?.error) return { ok: false, text: `relink ${obj}: accepted by Salesforce, but the org could not be re-read to confirm it (${vq.error})` };
+              const stale = (vq.records || []).filter(r => String(r[tgtLinkField] || '') !== String(wantById.get(r.Id) || ''));
+              return stale.length
+                ? { ok: false, detail: stale.map(r => r.Id), text: `relink ${obj}: accepted by Salesforce, but ${stale.length} record(s) still point at the old parent` }
+                : { ok: true, detail: [] };
+            },
+          });
+          if (!dw.accepted) { fail += slice.length; allErrors.push(`relink ${obj}: ${dw.raw?.error || dw.text}`); continue; }
+          const res = dw.raw || [];
+          const staleSet = new Set(Array.isArray(dw.detail) ? dw.detail : []);
           (Array.isArray(res) ? res : []).forEach(rr => {
-            if (rr.success) ok++;
+            if (rr.success && !staleSet.has(rr.id)) ok++;
+            else if (rr.success) { fail++; allErrors.push(`relink ${obj}: accepted by Salesforce, but the org still shows the old parent for ${rr.id}`); }
             else { fail++; allErrors.push(`relink ${obj}: ${(rr.errors || []).map(x => x.message).join('; ')}`); }
           });
         } catch (e2) {
@@ -3270,8 +3354,27 @@ async function sftkIdDeployTo(orgUrls, objects) {
       ...files.filter(f => !/^permissionsets\//.test(f.name)).map(f => ({ name: f.name, data: enc.encode(f.text) })),
       { name: psFile.name, data: enc.encode(psFile.text) },
     ]);
-    const dep = await sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: sess.orgUrl, sid: sess.sid, zipBase64 });
-    if (dep?.error) { out.errors.push(`${label}: deploy failed — ${dep.error}`); out.perOrg.push({ orgUrl, ok: false }); continue; }
+    // The one write discipline (sftk-write.js): a deploy job's own "done"
+    // used to BE the report — one probe read per object of the field it was
+    // meant to create closes the same gap a PATCH accepted-but-unchanged
+    // taught elsewhere (a deploy can report success with the field still
+    // invisible to this user's FLS).
+    const dw = await sftkWriteVerified({
+      describe: `${sftkIdFieldName()} in ${label}`,
+      write: () => sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: sess.orgUrl, sid: sess.sid, zipBase64 }),
+      verify: async () => {
+        const missing = [];
+        for (const o of objs) {
+          const probe = await sendBg({ type: 'SF_QUERY', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false, _suppressError: true,
+            query: `SELECT ${sftkIdFieldName()} FROM ${o} LIMIT 1` });
+          if (probe?.error) missing.push(o);
+        }
+        return missing.length
+          ? { ok: false, text: `${sftkIdFieldName()} in ${label}: accepted by Salesforce, but could not be re-read on ${missing.join(', ')}` }
+          : { ok: true };
+      },
+    });
+    if (!dw.ok) { out.errors.push(`${label}: deploy failed — ${dw.raw?.error || dw.text}`); out.perOrg.push({ orgUrl, ok: false }); continue; }
     try {
       const ps = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
         query: `SELECT Id FROM PermissionSet WHERE Name = '${sftkIdPermSetName()}' LIMIT 1` });
@@ -3279,9 +3382,17 @@ async function sftkIdDeployTo(orgUrls, objects) {
       const root = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid, path: 'services/data/v62.0/' });
       const userId = sftkIdUserFromIdentity(root?.identity);
       if (!psId || !userId) throw new Error('could not resolve the permission set or your user');
-      const asg = await sendBg({ type: 'SF_REST_POST', orgUrl: sess.orgUrl, sid: sess.sid,
-        path: 'services/data/v62.0/sobjects/PermissionSetAssignment', body: { AssigneeId: userId, PermissionSetId: psId } });
-      if (asg?.error && !/DUPLICATE_VALUE|already assigned/i.test(String(asg.error))) throw new Error(asg.error);
+      const aw = await sftkWriteVerified({
+        describe: `${sftkIdPermSetName()} assignment in ${label}`,
+        write: async () => {
+          const r = await sendBg({ type: 'SF_REST_POST', orgUrl: sess.orgUrl, sid: sess.sid,
+            path: 'services/data/v62.0/sobjects/PermissionSetAssignment', body: { AssigneeId: userId, PermissionSetId: psId } });
+          if (r?.error && !/DUPLICATE_VALUE|already assigned/i.test(String(r.error))) throw new Error(r.error);
+          return { success: true };
+        },
+        noVerify: 'an insert returns the new row, and "already assigned" already means the grant exists',
+      });
+      if (!aw.accepted) throw new Error(aw.text);
       out.ok++; out.perOrg.push({ orgUrl, ok: true });
     } catch (e) {
       out.perOrg.push({ orgUrl, ok: false });
@@ -3378,12 +3489,36 @@ async function reconcileStampPairs(p, scan) {
     return;
   }
   let ok = 0, failed = 0; const errs = [];
+  const idField = sftkIdFieldName();
   for (let i = 0; i < pairs.length; i += 200) {
     const recs = sftkIdStampPayload(objType, pairs.slice(i, i + 200));
-    const r = await sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: recs });
-    if (r?.error) { failed += recs.length; errs.push(r.error); continue; }
-    for (const x of (r?.results || r || [])) {
-      if (x && x.success) ok++;
+    // The one write discipline (sftk-write.js): Collections' per-record
+    // success used to BE "stamped" — one re-read of exactly this slice's
+    // Ids, comparing the identity field to the source Id it was meant to
+    // carry, closes the same gap a PATCH accepted-but-unchanged taught
+    // elsewhere.
+    const dw = await sftkWriteVerified({
+      describe: `${objType} identity stamp`,
+      write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: recs }),
+      verify: async (r) => {
+        const okIds = (Array.isArray(r) ? r : (r?.results || [])).filter(x => x && x.success).map(x => x.id);
+        if (!okIds.length) return { ok: true, detail: [] };
+        const wantById = new Map(recs.map(rec => [rec.Id, rec[idField]]));
+        const vq = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, _suppressError: true,
+          query: `SELECT Id, ${idField} FROM ${objType} WHERE Id IN (${okIds.map(id => soqlStrLit(id)).join(',')})` });
+        if (vq?.error) return { ok: false, text: `${objType} identity stamp: accepted by Salesforce, but the org could not be re-read to confirm it (${vq.error})` };
+        const stale = (vq.records || []).filter(rec => String(rec[idField] || '') !== String(wantById.get(rec.Id) || ''));
+        return stale.length
+          ? { ok: false, detail: stale.map(rec => rec.Id), text: `${objType} identity stamp: accepted by Salesforce, but ${stale.length} record(s) still show the old value` }
+          : { ok: true, detail: [] };
+      },
+    });
+    if (!dw.accepted) { failed += recs.length; errs.push(dw.raw?.error || dw.text); continue; }
+    const r = dw.raw;
+    const staleSet = new Set(Array.isArray(dw.detail) ? dw.detail : []);
+    for (const x of (Array.isArray(r) ? r : (r?.results || []))) {
+      if (x && x.success && !staleSet.has(x.id)) ok++;
+      else if (x && x.success) { failed++; if (errs.length < 3) errs.push('accepted by Salesforce, but the org still shows the old value'); }
       else { failed++; if (errs.length < 3) errs.push((x?.errors || []).map(e => e.message).join('; ') || 'rejected'); }
     }
   }
@@ -3777,10 +3912,45 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   // user can tell name-matching results from their own overrides.
   if (lkpOvUsed) warnings.push(`🔗 ${lkpOvUsed} lookup value(s) written from hand-picked targets (your Reconcile 🔗 picks — they beat name-matching)`);
 
-  const res = await sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: payloads });
+  // The one write discipline (sftk-write.js): Collections' per-record
+  // success used to BE "updated" — one re-read of exactly the accepted Ids,
+  // comparing each record's OWN written fields (they vary per row — PII
+  // masking, lookups, owner reassignment), closes the same gap a PATCH
+  // accepted-but-unchanged taught elsewhere.
+  const writeFields = [...new Set(payloads.flatMap(p => Object.keys(p).filter(k => k !== 'Id' && k !== 'attributes')))];
+  const dw = await sftkWriteVerified({
+    describe: `${objType} overwrite`,
+    write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: payloads }),
+    verify: async (r) => {
+      const arr0 = Array.isArray(r) ? r : [];
+      const okById = new Map();
+      arr0.forEach((x, i) => { if (x && x.success && payloads[i]) okById.set(payloads[i].Id, payloads[i]); });
+      if (!okById.size || !writeFields.length) return { ok: true, detail: [] };
+      const ids = [...okById.keys()];
+      const stale = [];
+      for (let i = 0; i < ids.length; i += 200) {
+        const chunk = ids.slice(i, i + 200);
+        const vq = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, _suppressError: true,
+          query: `SELECT Id, ${writeFields.join(', ')} FROM ${objType} WHERE Id IN (${chunk.map(id => soqlStrLit(id)).join(',')})` });
+        if (vq?.error) return { ok: false, text: `${objType} overwrite: accepted by Salesforce, but the org could not be re-read to confirm it (${vq.error})` };
+        for (const rec of (vq.records || [])) {
+          const want = okById.get(rec.Id);
+          const mism = Object.keys(want).filter(k => k !== 'Id' && k !== 'attributes' && String(rec[k] ?? '') !== String(want[k] ?? ''));
+          if (mism.length) stale.push(rec.Id);
+        }
+      }
+      return stale.length
+        ? { ok: false, detail: stale, text: `${objType} overwrite: accepted by Salesforce, but ${stale.length} record(s) still show a different value` }
+        : { ok: true, detail: [] };
+    },
+  });
+  const res = dw.accepted ? dw.raw : { error: dw.raw?.error || dw.text };
   const arr = Array.isArray(res) ? res : [];
-  const ok = arr.filter(r => r.success).length;
+  const staleSet = new Set(Array.isArray(dw.detail) ? dw.detail : []);
+  const ok = arr.filter((r, i) => r.success && !(payloads[i] && staleSet.has(payloads[i].Id))).length;
   const errors = [...warnings, ...ovwErrors];
+  if (!dw.accepted) errors.push(`${objType}: ${dw.raw?.error || dw.text}`);
+  else if (!dw.ok) errors.push(dw.text);
   // Per-record outcomes with labels — History renders both as links:
   // updated → the target record; failed update → also the target record
   // (it exists — the PATCH was refused), with the error on hover.
@@ -3788,17 +3958,19 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const failedRecords  = [];
   arr.forEach((r, i) => {
     if (!rowMeta[i]) return;
-    if (r.success) { if (updatedRecords.length < 200) updatedRecords.push(rowMeta[i]); }
+    const stale = r.success && payloads[i] && staleSet.has(payloads[i].Id);
+    if (r.success && !stale) { if (updatedRecords.length < 200) updatedRecords.push(rowMeta[i]); }
     else if (failedRecords.length < 200) {
-      failedRecords.push({ ...rowMeta[i], error: (r.errors || []).map(e => e.message).join('; ') });
+      failedRecords.push({ ...rowMeta[i], error: stale ? 'accepted by Salesforce, but the org still shows a different value' : (r.errors || []).map(e => e.message).join('; ') });
     }
   });
   // Dedupe identical per-record failures — 20 rows all failing with the same
   // "No such column 'X'" should read as ONE line with a count, not a wall.
   const failCounts = new Map();
-  for (const r of arr) {
-    if (r.success) continue;
-    const m = `${objType}: ${(r.errors || []).map(e => e.message).join('; ')}`;
+  for (const [i, r] of arr.entries()) {
+    const stale = r.success && payloads[i] && staleSet.has(payloads[i].Id);
+    if (r.success && !stale) continue;
+    const m = stale ? `${objType}: accepted by Salesforce, but the org still shows a different value` : `${objType}: ${(r.errors || []).map(e => e.message).join('; ')}`;
     failCounts.set(m, (failCounts.get(m) || 0) + 1);
   }
   for (const [m, c] of failCounts) errors.push(c > 1 ? `${m}  (×${c})` : m);

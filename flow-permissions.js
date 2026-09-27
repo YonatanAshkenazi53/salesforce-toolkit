@@ -642,6 +642,7 @@ const FlowPermissions = (() => {
         data: enc.encode(buildPermSetXml(ps.Label, flowApiNames))
       });
     }
+    // verified-by: doAssign's sftkWriteVerified — its verify re-reads SetupEntityAccess for every (flow, permission set) pair
     return sendBg({
       type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid,
       zipBase64: _fpBuildStoredZip(files)
@@ -663,28 +664,40 @@ const FlowPermissions = (() => {
     if (summary) summary.innerHTML = sftkCatSm(`Deploying flow access to ${permSets.length} permission set(s)…`);
 
     const flowApiNames = flows.map(f => f.DeveloperName).filter(Boolean);
-    let deployErr = null;
-    try {
-      const res = await deployFlowAccess(permSets, flowApiNames);
-      if (res?.error) deployErr = res.error;
-      else if (res && res.success === false) deployErr = res.errorMessage || 'Deployment failed';
-    } catch (e) {
-      deployErr = e.message || String(e);
-    }
+    // The write discipline (sftk-write.js): the deploy is the write; the
+    // verify is the same SetupEntityAccess read loadData() already performs
+    // — never the deploy's own answer (a REST insert here used to return
+    // HTTP 200 with NO usable grant, which is exactly what this checks for).
+    const wr = await sftkWriteVerified({
+      describe: `flow access for ${permSets.length} permission set(s)`,
+      write: () => deployFlowAccess(permSets, flowApiNames),
+      verify: async () => {
+        // Reload so the SetupEntityAccess read (now matched by flow Id)
+        // surfaces the real grants the deploy created.
+        await loadData();
+        const missing = [];
+        for (const f of flows) for (const ps of permSets) {
+          if (!(_accessMap[f.Id] || []).some(g => g.permSetId === ps.Id)) missing.push(`${f.MasterLabel} → ${ps.Label}`);
+        }
+        return { ok: missing.length === 0, detail: missing, text: null };
+      },
+    });
+    if (!wr.accepted) await loadData();   // verify never ran — refresh the table anyway
 
     if (btn) btn.textContent = '🔑 Assign';
     if (summary) summary.textContent = '';
 
     // Deploy is all-or-nothing (rollbackOnError) → every flow either landed
     // on every selected PS, or none did.
+    const deployErr = !wr.accepted
+      ? ((wr.raw && (wr.raw.error || wr.raw.errorMessage)) || 'Deployment failed')
+      : (!wr.ok
+          ? `accepted, but the org does not yet show ${wr.detail.length} expected grant(s) after re-reading: ${wr.detail.slice(0, 5).join('; ')}${wr.detail.length > 5 ? '…' : ''}`
+          : null);
     const errors    = deployErr
       ? [{ label: 'Deployment', fe: sftkFriendlyError(deployErr), raw: deployErr }]
       : [];
     const successes = deployErr ? [] : flows;
-
-    // Reload so the SetupEntityAccess read (now matched by flow Id) surfaces
-    // the real grants the deploy created.
-    await loadData();
 
     // Show result
     if (errors.length === 0) {

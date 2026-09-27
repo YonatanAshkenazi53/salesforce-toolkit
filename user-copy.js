@@ -1125,80 +1125,160 @@ const UserCopy = (() => {
     const psgResults = [];   // [{ label, ok, msg }]
     let profileOk = false, psOk = 0, grpOk = 0, fieldsOk = false, permsOk = 0;
 
+    // The write discipline (sftk-write.js): every write below is verified by
+    // re-reading the org — PermissionSetAssignment / GroupMember / User by
+    // Id — never trusted from the write's own answer alone.
+
     // 1. Profile
     if (doProfile) {
-      const r = await bg({
-        type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
-        path: `services/data/v62.0/sobjects/User/${targetUser.Id}`,
-        body: { ProfileId: sourceUser.Profile.Id }
+      const wr = await sftkWriteVerified({
+        describe: 'profile',
+        write: () => bg({
+          type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+          path: `services/data/v62.0/sobjects/User/${targetUser.Id}`,
+          body: { ProfileId: sourceUser.Profile.Id }
+        }),
+        verify: async () => {
+          const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
+            query: `SELECT ProfileId FROM User WHERE Id = '${targetUser.Id}'` });
+          if (!q || q.error || !(q.records && q.records.length)) return { ok: false, text: null };
+          return { ok: q.records[0].ProfileId === sourceUser.Profile.Id, text: null };
+        },
       });
-      if (r.error) errors.push(`Profile: ${friendlyMsg(r.error)}`);
+      if (!wr.ok) errors.push(`Profile: ${friendlyMsg((wr.raw && wr.raw.error) || wr.text || 'not confirmed on re-read')}`);
       else profileOk = true;
       done++; tickProgress();
     }
 
-    // 2. Permission Sets
-    for (const psId of psIds) {
-      const r = await bg({
-        type: 'SF_REST_POST', orgUrl: _orgUrl, sid: _sid,
-        path: 'services/data/v62.0/sobjects/PermissionSetAssignment',
-        body: { AssigneeId: targetUser.Id, PermissionSetId: psId }
+    // 2. Permission Sets — one write per set, ONE re-read for the whole
+    // batch (verifyAll).
+    if (psIds.length) {
+      const batch = await sftkWriteVerifiedAll(psIds.map(psId => ({
+        describe: psId,
+        write: async () => {
+          const r = await bg({
+            type: 'SF_REST_POST', orgUrl: _orgUrl, sid: _sid,
+            path: 'services/data/v62.0/sobjects/PermissionSetAssignment',
+            body: { AssigneeId: targetUser.Id, PermissionSetId: psId }
+          });
+          done++; tickProgress();
+          return r;
+        },
+      })), {
+        verifyAll: async results => {
+          const ids = psIds.filter((id, i) => results[i] && results[i].accepted);
+          if (!ids.length) return [];
+          const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
+            query: `SELECT PermissionSetId FROM PermissionSetAssignment WHERE AssigneeId = '${targetUser.Id}' AND PermissionSetId IN (${ids.map(x => `'${x}'`).join(',')})` });
+          if (!q || q.error) return null;
+          const have = new Set((q.records || []).map(r => r.PermissionSetId));
+          return psIds.map(id => ({ ok: have.has(id), text: null }));
+        },
       });
-      if (r.error) {
+      psIds.forEach((psId, i) => {
+        const r = batch.results[i];
+        if (r.ok) { psOk++; return; }
         const name = sourcePermSets.find(p => p.PermissionSetId === psId)?.PermissionSet?.Label || psId;
-        errors.push(`Permission set "${name}": ${friendlyMsg(r.error)}`);
-      } else psOk++;
-      done++; tickProgress();
+        errors.push(`Permission set "${name}": ${friendlyMsg((r.raw && r.raw.error) || r.text || 'not confirmed on re-read')}`);
+      });
     }
 
     // 3. Permission Set Groups — one PermissionSetAssignment per group.
     // Assigning the GROUP is not the same as assigning its member permission
     // sets: Salesforce keeps the group link, so later changes to the group
-    // follow through to the user.
-    for (const g of psgPicks) {
-      const r = await bg({
-        type: 'SF_REST_POST', orgUrl: _orgUrl, sid: _sid,
-        path: 'services/data/v62.0/sobjects/PermissionSetAssignment',
-        body: { AssigneeId: targetUser.Id, PermissionSetGroupId: g.id }
+    // follow through to the user. One re-read for the whole batch.
+    if (psgPicks.length) {
+      const batch = await sftkWriteVerifiedAll(psgPicks.map(g => ({
+        describe: g.id,
+        write: async () => {
+          const r = await bg({
+            type: 'SF_REST_POST', orgUrl: _orgUrl, sid: _sid,
+            path: 'services/data/v62.0/sobjects/PermissionSetAssignment',
+            body: { AssigneeId: targetUser.Id, PermissionSetGroupId: g.id }
+          });
+          done++; tickProgress();
+          return r;
+        },
+      })), {
+        verifyAll: async results => {
+          const ids = psgPicks.filter((g, i) => results[i] && results[i].accepted).map(g => g.id);
+          if (!ids.length) return [];
+          const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
+            query: `SELECT PermissionSetGroupId FROM PermissionSetAssignment WHERE AssigneeId = '${targetUser.Id}' AND PermissionSetGroupId IN (${ids.map(x => `'${x}'`).join(',')})` });
+          if (!q || q.error) return null;
+          const have = new Set((q.records || []).map(r => r.PermissionSetGroupId));
+          return psgPicks.map(g => ({ ok: have.has(g.id), text: null }));
+        },
       });
-      if (r.error) psgResults.push({ label: g.label, ok: false, msg: friendlyMsg(r.error) });
-      else psgResults.push({ label: g.label, ok: true, msg: '' });
-      done++; tickProgress();
+      psgPicks.forEach((g, i) => {
+        const r = batch.results[i];
+        if (r.ok) psgResults.push({ label: g.label, ok: true, msg: '' });
+        else psgResults.push({ label: g.label, ok: false, msg: friendlyMsg((r.raw && r.raw.error) || r.text || 'not confirmed on re-read') });
+      });
     }
 
-    // 4. Public Groups
-    for (const groupId of groupIds) {
-      const r = await bg({
-        type: 'SF_REST_POST', orgUrl: _orgUrl, sid: _sid,
-        path: 'services/data/v62.0/sobjects/GroupMember',
-        body: { GroupId: groupId, UserOrGroupId: targetUser.Id }
+    // 4. Public Groups — one re-read for the whole batch.
+    if (groupIds.length) {
+      const batch = await sftkWriteVerifiedAll(groupIds.map(groupId => ({
+        describe: groupId,
+        write: async () => {
+          const r = await bg({
+            type: 'SF_REST_POST', orgUrl: _orgUrl, sid: _sid,
+            path: 'services/data/v62.0/sobjects/GroupMember',
+            body: { GroupId: groupId, UserOrGroupId: targetUser.Id }
+          });
+          done++; tickProgress();
+          return r;
+        },
+      })), {
+        verifyAll: async results => {
+          const ids = groupIds.filter((id, i) => results[i] && results[i].accepted);
+          if (!ids.length) return [];
+          const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
+            query: `SELECT GroupId FROM GroupMember WHERE UserOrGroupId = '${targetUser.Id}' AND GroupId IN (${ids.map(x => `'${x}'`).join(',')})` });
+          if (!q || q.error) return null;
+          const have = new Set((q.records || []).map(r => r.GroupId));
+          return groupIds.map(id => ({ ok: have.has(id), text: null }));
+        },
       });
-      if (r.error) {
+      groupIds.forEach((groupId, i) => {
+        const r = batch.results[i];
+        if (r.ok) { grpOk++; return; }
         const name = sourceGroups.find(g => g.GroupId === groupId)?.Group?.Name || groupId;
-        errors.push(`Group "${name}": ${friendlyMsg(r.error)}`);
-      } else grpOk++;
-      done++; tickProgress();
+        errors.push(`Group "${name}": ${friendlyMsg((r.raw && r.raw.error) || r.text || 'not confirmed on re-read')}`);
+      });
     }
 
     // 5. Combined User PATCH (user permissions + locale & timezone)
     if (Object.keys(userPatch).length > 0) {
-      const r = await bg({
-        type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
-        path: `services/data/v62.0/sobjects/User/${targetUser.Id}`,
-        body: userPatch
+      const patchKeys = Object.keys(userPatch);
+      const wr = await sftkWriteVerified({
+        describe: 'user fields',
+        write: () => bg({
+          type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+          path: `services/data/v62.0/sobjects/User/${targetUser.Id}`,
+          body: userPatch
+        }),
+        verify: async () => {
+          const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
+            query: `SELECT ${patchKeys.join(', ')} FROM User WHERE Id = '${targetUser.Id}'` });
+          if (!q || q.error || !(q.records && q.records.length)) return { ok: false, text: null };
+          const row = q.records[0];
+          return { ok: patchKeys.every(k => row[k] === userPatch[k]), text: null };
+        },
       });
-      if (r.error) {
+      if (!wr.ok) {
         // One PATCH bundles both categories — name which one(s) were in it
         // so the failure isn't cryptic.
-        const permCount = Object.keys(userPatch).filter(k => k.startsWith('UserPermissions')).length;
+        const permCount = patchKeys.filter(k => k.startsWith('UserPermissions')).length;
         const cats = [];
         if (permCount > 0) cats.push('user permissions');
-        if (permCount < Object.keys(userPatch).length) cats.push('locale & timezone');
-        errors.push(`User update (${cats.join(' + ')}): ${friendlyMsg(r.error)}`);
+        if (permCount < patchKeys.length) cats.push('locale & timezone');
+        errors.push(`User update (${cats.join(' + ')}): ${friendlyMsg((wr.raw && wr.raw.error) || wr.text || 'not confirmed on re-read')}`);
       } else {
         // Count which categories landed for the result message.
-        const permCount = Object.keys(userPatch).filter(k => k.startsWith('UserPermissions')).length;
-        const settingCount = Object.keys(userPatch).length - permCount;
+        const permCount = patchKeys.filter(k => k.startsWith('UserPermissions')).length;
+        const settingCount = patchKeys.length - permCount;
         permsOk  = permCount;
         fieldsOk = settingCount > 0;
       }

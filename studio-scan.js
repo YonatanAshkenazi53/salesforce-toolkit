@@ -2581,9 +2581,28 @@ async function sftkPushFieldsToTarget(profile, objType, srcId, tgtId, picks) {
   }
 
   if (!Object.keys(body).length) { return out; }
-  const pr = await sendBg({ type: 'SF_PATCH', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
-    path: `services/data/v62.0/sobjects/${objType}/${tgtId}`, body });
-  if (pr?.error) { out.errors.push(`target write failed: ${pr.error}`); out.applied = []; return out; }
+  // The one write discipline (sftk-write.js): the PATCH's own answer used to
+  // BE the report ("written" the moment Salesforce accepted it) — the same
+  // shape of lie the flow switches told. One re-read of exactly the fields
+  // just pushed closes that gap.
+  const fields = Object.keys(body);
+  const w = await sftkWriteVerified({
+    describe: `push to ${objType}`,
+    write: () => sendBg({ type: 'SF_PATCH', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+      path: `services/data/v62.0/sobjects/${objType}/${tgtId}`, body }),
+    verify: async () => {
+      const vq = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
+        query: `SELECT ${fields.join(',')} FROM ${objType} WHERE Id = '${tgtId}'` });
+      if (vq?.error || !vq?.records?.length) return { ok: false, text: `push to ${objType}: accepted by Salesforce, but the org could not be re-read to confirm it (${vq?.error || 'record not found'})` };
+      const rec = vq.records[0];
+      const stale = fields.filter(f => String(rec[f] ?? '') !== String(body[f] ?? ''));
+      return stale.length
+        ? { ok: false, text: `push to ${objType}: accepted by Salesforce, but the target still shows the old value for ${stale.join(', ')}` }
+        : { ok: true, text: `push to ${objType} — verified by re-reading the org` };
+    },
+  });
+  if (!w.accepted) { out.errors.push(`target write failed: ${w.raw?.error || w.text}`); out.applied = []; return out; }
+  if (!w.ok) { out.errors.push(w.text); out.applied = []; return out; }
   out.ok = true;
   return out;
 }

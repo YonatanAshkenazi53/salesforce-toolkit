@@ -1061,9 +1061,25 @@ async function _pkApplyRtCore(inv, rtId, adds, removes) {
   entry.values = entry.values.filter(v => !remSet.has(pkValueName(v)));
   const present = new Set(entry.values.map(v => pkValueName(v)));
   for (const a of adds) if (!present.has(a)) entry.values.push({ valueName: a });
-  const res = await sendBg({ type: 'SF_PATCH', orgUrl: inv.orgUrl, sid: inv.sid,
-    path: `services/data/v62.0/tooling/sobjects/RecordType/${rtId}`, body: { Metadata: sftkMetaForPatch(md) } });
-  if (res?.error) throw new Error(res.error);
+  const wantNames = new Set(entry.values.map(v => pkValueName(v)));
+  // The one write discipline (sftk-write.js): the PATCH's 204 used to BE the
+  // report — a RecordType Metadata write that Salesforce silently dropped
+  // (or partially applied) would still have shown "Updated". One re-read of
+  // the same RecordType's Metadata closes that gap.
+  const w = await sftkWriteVerified({
+    describe: `${inv.obj}.${inv.field} on record type ${rtId}`,
+    write: () => sendBg({ type: 'SF_PATCH', orgUrl: inv.orgUrl, sid: inv.sid,
+      path: `services/data/v62.0/tooling/sobjects/RecordType/${rtId}`, body: { Metadata: sftkMetaForPatch(md) } }),
+    verify: async () => {
+      const m2 = await sendBg({ type: 'SF_TOOLING_GET', orgUrl: inv.orgUrl, sid: inv.sid, sobject: 'RecordType', id: rtId });
+      if (m2?.error || !m2?.Metadata) return { ok: false, text: `${inv.obj}.${inv.field} on record type ${rtId}: accepted by Salesforce, but the org could not be re-read to confirm it (${m2?.error || 'no metadata'})` };
+      const e2 = (m2.Metadata.picklistValues || []).find(p => p.picklist === inv.field || p.picklist === inv.devName);
+      const nowNames = new Set((e2?.values || []).map(v => pkValueName(v)));
+      const match = nowNames.size === wantNames.size && [...wantNames].every(n => nowNames.has(n));
+      return match ? { ok: true } : { ok: false, text: `${inv.obj}.${inv.field} on record type ${rtId}: accepted by Salesforce, but the org still shows different values assigned` };
+    },
+  });
+  if (!w.ok) throw new Error(w.raw?.error || w.text || 'RecordType update refused');
   return true;
 }
 
@@ -1340,11 +1356,41 @@ async function _pkDataFixCore(ctx, value, fixMode, target, onProgress) {
         ? (pkMultiRemap(r[ctx.field], value, fixMode === 'remap' ? target : null) || null)
         : (fixMode === 'remap' ? target : null),
     }));
-    const out = await sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: ctx.orgUrl, sid: ctx.sid, records: chunk });
-    if (out?.error) throw new Error(out.error);
-    (Array.isArray(out) ? out : []).forEach(r => {
-      if (r.success) updated++;
-      else { failed++; if (errors.length < 20) errors.push((r.errors || []).map(e => e.message).join('; ')); }
+    // The one write discipline (sftk-write.js): Collections' per-record
+    // success flag used to BE "moved off the value" — one re-read of exactly
+    // the Ids it accepted closes the same gap a PATCH accepted-but-unchanged
+    // taught elsewhere in this app.
+    const w = await sftkWriteVerified({
+      describe: `${ctx.obj}.${ctx.field} data fix`,
+      write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: ctx.orgUrl, sid: ctx.sid, records: chunk }),
+      verify: async (writeRes) => {
+        const okIds = (Array.isArray(writeRes) ? writeRes : []).filter(r => r.success).map(r => r.id);
+        if (!okIds.length) return { ok: true, detail: [] };
+        const vq = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: ctx.orgUrl, sid: ctx.sid, tooling: false,
+          query: `SELECT Id, ${ctx.field} FROM ${ctx.obj} WHERE Id IN (${okIds.map(id => soqlStrLit(id)).join(',')})` });
+        if (vq?.error) return { ok: false, text: `${ctx.obj}.${ctx.field} data fix: accepted by Salesforce, but the org could not be re-read to confirm it (${vq.error})` };
+        const byId = new Map((vq.records || []).map(r => [r.Id, r]));
+        const stillHas = okIds.filter(id => {
+          const now = byId.get(id);
+          if (!now) return true;
+          const v = now[ctx.field];
+          return ctx.isMulti ? String(v || '').split(';').includes(value) : String(v || '') === value;
+        });
+        return stillHas.length
+          ? { ok: false, detail: stillHas, text: `${ctx.obj}.${ctx.field} data fix: accepted by Salesforce, but ${stillHas.length} record(s) still show “${value}”` }
+          : { ok: true, detail: [] };
+      },
+    });
+    if (!w.accepted) throw new Error(w.raw?.error || w.text);
+    const stillHasSet = new Set(w.detail || []);
+    (Array.isArray(w.raw) ? w.raw : []).forEach(r => {
+      if (r.success && !stillHasSet.has(r.id)) updated++;
+      else {
+        failed++;
+        if (errors.length < 20) errors.push(r.success
+          ? 'accepted by Salesforce, but the org still shows the old value'
+          : (r.errors || []).map(e => e.message).join('; '));
+      }
     });
     onProgress?.(Math.min(i + 200, recs.length), recs.length, failed);
   }
@@ -1398,18 +1444,36 @@ async function _pkApplyMetadataCore(inv, idx, op) {
     list[idx].isActive = !!op.activate;
     if (op.deactivate && list[idx].default) list[idx].default = false;   // inactive default is invalid
   }
-  const res = await sendBg({ type: 'SF_PATCH', orgUrl: inv.orgUrl, sid: inv.sid,
-    path: `services/data/v62.0/tooling/sobjects/CustomField/${inv.fieldId}`,
-    body: { Metadata: sftkMetaForPatch(md) } });
-  if (res?.error) throw new Error(res.error);
-  if (!op.remove) return { ok: true };
+  // The one write discipline (sftk-write.js): the PATCH, then the field
+  // re-read. Activate / deactivate is verified by the value's isActive after
+  // the re-read; a remove is judged just below (Salesforce keeps the value
+  // inactive rather than deleting it — the re-read tells which).
+  const name = pkValueName(inv.rawValues[idx]);
+  const readBack = () => sendBg({ type: 'SF_TOOLING_GET', orgUrl: inv.orgUrl, sid: inv.sid,
+    sobject: 'CustomField', id: inv.fieldId, _suppressError: true });
+  const w = await sftkWriteVerified({
+    describe: `${inv.obj}.${inv.field} value “${name}”`,
+    write: () => sendBg({ type: 'SF_PATCH', orgUrl: inv.orgUrl, sid: inv.sid,
+      path: `services/data/v62.0/tooling/sobjects/CustomField/${inv.fieldId}`,
+      body: { Metadata: sftkMetaForPatch(md) } }),
+    verify: op.remove ? undefined : async () => {
+      const back = await readBack();
+      const list2 = back?.Metadata?.valueSet?.valueSetDefinition?.value;
+      if (back?.error || !Array.isArray(list2)) throw new Error(back?.error || 'the field could not be re-read');
+      const v = list2.find(x => pkValueName(x) === name);
+      const isOn = !!v && v.isActive !== false;
+      const wantOn = !!op.activate;
+      return { ok: !!v && isOn === wantOn, text: !v ? `“${name}” is no longer in the value set` : (isOn === wantOn ? `“${name}” ${wantOn ? 'activated' : 'deactivated'} — verified by re-reading the field` : `“${name}”: accepted by Salesforce, but the field still reads it ${isOn ? 'active' : 'inactive'}`) };
+    },
+    noVerify: op.remove ? 'judged by the re-read below' : undefined,
+  });
+  if (!w.accepted) throw new Error(w.raw?.error || w.text);
+  if (!op.remove) return { ok: w.ok, verified: w.verified, text: w.text };
   // A value left out of the PATCHed value set is not deleted by Salesforce —
   // it is kept as INACTIVE (live 2026-09-23, verified by CLI: "Reviewed"
   // still in the value set, isActive false, after "🗑 Value deleted"). The
   // API cannot delete a picklist value; only Setup can. Re-read and say which.
-  const name = pkValueName(inv.rawValues[idx]);
-  const back = await sendBg({ type: 'SF_TOOLING_GET', orgUrl: inv.orgUrl, sid: inv.sid,
-    sobject: 'CustomField', id: inv.fieldId, _suppressError: true });
+  const back = await readBack();
   const list2 = back?.Metadata?.valueSet?.valueSetDefinition?.value;
   if (back?.error || !Array.isArray(list2)) return { ok: true, verified: false, name };
   const kept = list2.find(v => pkValueName(v) === name);
@@ -1431,7 +1495,9 @@ async function _pkApplyMetadata(idx, op) {
       showToast(`⚠ Salesforce kept “${r.name}” as INACTIVE — its API cannot delete a picklist value. To delete it for good: Setup → Object Manager → ${inv.obj} → Fields & Relationships → ${inv.field} → Values → Del.`, 'warning', 12000);
     } else {
       showToast(op.remove ? '🗑 Value deleted from the value set (verified by re-reading the field)'
-        : op.activate ? '▶ Value activated' : '⏸ Value deactivated', 'success');
+        : (r && r.verified === false) ? `⚠ ${op.activate ? '▶' : '⏸'} ${r.text || 'accepted by Salesforce — not confirmed'}`
+        : (r && r.ok === false) ? `⚠ ${r.text}`
+        : op.activate ? '▶ Value activated (verified by re-reading the field)' : '⏸ Value deactivated (verified by re-reading the field)', (r && (r.ok === false || r.verified === false)) ? 'warning' : 'success');
     }
     loadPicklistInventory();
   } catch (e) {
@@ -2020,9 +2086,28 @@ async function _pkStdApplyCore(std, idx, op) {
   const list = md.standardValue || [];
   list[idx].isActive = !op.deactivate;   // activate → true, deactivate → false
   if (op.deactivate && list[idx].default) list[idx].default = false;
-  const res = await sendBg({ type: 'SF_PATCH', orgUrl: std.orgUrl, sid: std.sid,
-    path: `services/data/v62.0/tooling/sobjects/StandardValueSet/${std.svsId}`, body: { Metadata: sftkMetaForPatch(md) } });
-  if (res?.error) throw new Error(res.error);
+  const name = pkValueName(list[idx]);
+  const wantActive = !op.deactivate;
+  // The one write discipline (sftk-write.js): one re-read of this
+  // StandardValueSet closes the same gap a PATCH accepted-but-unchanged
+  // taught elsewhere — the toggle used to be "done" the moment Salesforce
+  // returned 204.
+  const w = await sftkWriteVerified({
+    describe: `${std.field} value "${name}"`,
+    write: () => sendBg({ type: 'SF_PATCH', orgUrl: std.orgUrl, sid: std.sid,
+      path: `services/data/v62.0/tooling/sobjects/StandardValueSet/${std.svsId}`, body: { Metadata: sftkMetaForPatch(md) } }),
+    verify: async () => {
+      const back = await sendBg({ type: 'SF_TOOLING_GET', orgUrl: std.orgUrl, sid: std.sid, sobject: 'StandardValueSet', id: std.svsId, _suppressError: true });
+      const list2 = back?.Metadata?.standardValue;
+      if (back?.error || !Array.isArray(list2)) throw new Error(back?.error || 'the value set could not be re-read');
+      const now = list2.find(v => pkValueName(v) === name);
+      const nowActive = now ? now.isActive !== false : null;
+      return { ok: nowActive === wantActive,
+        text: nowActive === wantActive ? undefined
+          : `${std.field} value "${name}": accepted by Salesforce, but the org still shows it ${nowActive ? 'active' : 'inactive'}` };
+    },
+  });
+  if (!w.ok) throw new Error(w.raw?.error || w.text);
   return true;
 }
 
@@ -2081,14 +2166,37 @@ function _pkRenderGlobal() {
 async function _pkGvsApplyCore(gvs, idx, op) {
   const md = JSON.parse(JSON.stringify(gvs.metadata));
   const list = md.customValue || [];
+  const name = pkValueName((gvs.metadata.customValue || [])[idx]);
   if (op.remove) list.splice(idx, 1);
   else {
     list[idx].isActive = !!op.activate;
     if (op.deactivate && list[idx].default) list[idx].default = false;
   }
-  const res = await sendBg({ type: 'SF_PATCH', orgUrl: gvs.orgUrl, sid: gvs.sid,
-    path: `services/data/v62.0/tooling/sobjects/GlobalValueSet/${gvs.gvsId}`, body: { Metadata: sftkMetaForPatch(md) } });
-  if (res?.error) throw new Error(res.error);
+  // The one write discipline (sftk-write.js): one re-read of this
+  // GlobalValueSet closes the same gap a PATCH accepted-but-unchanged taught
+  // elsewhere — a remove that Salesforce keeps as inactive (same API limit
+  // as a CustomField's value set) is reported as what the org actually shows.
+  const w = await sftkWriteVerified({
+    describe: `${gvs.gvsName} value "${name}"`,
+    write: () => sendBg({ type: 'SF_PATCH', orgUrl: gvs.orgUrl, sid: gvs.sid,
+      path: `services/data/v62.0/tooling/sobjects/GlobalValueSet/${gvs.gvsId}`, body: { Metadata: sftkMetaForPatch(md) } }),
+    verify: async () => {
+      const back = await sendBg({ type: 'SF_TOOLING_GET', orgUrl: gvs.orgUrl, sid: gvs.sid, sobject: 'GlobalValueSet', id: gvs.gvsId, _suppressError: true });
+      const list2 = back?.Metadata?.customValue;
+      if (back?.error || !Array.isArray(list2)) throw new Error(back?.error || 'the value set could not be re-read');
+      const now = list2.find(v => pkValueName(v) === name);
+      // A remove has no pass/fail here — Salesforce's API keeps a removed
+      // value as inactive rather than deleting it (same limit as a
+      // CustomField's value set), and that is expected, not a failure.
+      if (op.remove) return { ok: true };
+      const nowActive = now ? now.isActive !== false : null;
+      const wantActive = !!op.activate;
+      return { ok: nowActive === wantActive,
+        text: nowActive === wantActive ? undefined
+          : `${gvs.gvsName} value "${name}": accepted by Salesforce, but the org still shows it ${nowActive ? 'active' : 'inactive'}` };
+    },
+  });
+  if (!w.ok) throw new Error(w.raw?.error || w.text);
   return true;
 }
 
@@ -2112,10 +2220,36 @@ async function _pkApplySyncCore(tgt, sel) {
     const dv = by.get(sel.alignDefault.to) || list.find(v => pkValueName(v) === sel.alignDefault.to);
     if (dv && dv.isActive !== false) dv.default = true;
   }
-  const res = await sendBg({ type: 'SF_PATCH', orgUrl: tgt.inv.orgUrl, sid: tgt.inv.sid,
-    path: `services/data/v62.0/tooling/sobjects/CustomField/${tgt.inv.fieldId}`,
-    body: { Metadata: sftkMetaForPatch(md) } });
-  if (res?.error) throw new Error(res.error);
+  // The one write discipline (sftk-write.js): this PATCH bundles several
+  // value operations into one call — one re-read of the field's Metadata,
+  // spot-checking each operation, catches a partial apply the 204 alone
+  // would have hidden (the same shape of lie a flow switch once told).
+  const w = await sftkWriteVerified({
+    describe: `${tgt.inv.obj}.${tgt.inv.field} sync`,
+    write: () => sendBg({ type: 'SF_PATCH', orgUrl: tgt.inv.orgUrl, sid: tgt.inv.sid,
+      path: `services/data/v62.0/tooling/sobjects/CustomField/${tgt.inv.fieldId}`,
+      body: { Metadata: sftkMetaForPatch(md) } }),
+    verify: async () => {
+      const back = await sendBg({ type: 'SF_TOOLING_GET', orgUrl: tgt.inv.orgUrl, sid: tgt.inv.sid, sobject: 'CustomField', id: tgt.inv.fieldId, _suppressError: true });
+      const list2 = back?.Metadata?.valueSet?.valueSetDefinition?.value;
+      if (back?.error || !Array.isArray(list2)) throw new Error(back?.error || 'the field could not be re-read');
+      const by2 = new Map(list2.map(v => [pkValueName(v), v]));
+      const mismatches = [];
+      for (const a of sel.adds)       if (!by2.has(a.name)) mismatches.push(`${a.name} not added`);
+      for (const lc of sel.labels)    { const v = by2.get(lc.name); if (v && v.label !== lc.to) mismatches.push(`${lc.name} label not updated`); }
+      for (const n of sel.activate)   { const v = by2.get(n); if (!v || v.isActive === false) mismatches.push(`${n} not active`); }
+      for (const n of sel.deactivate) { const v = by2.get(n); if (v && v.isActive !== false) mismatches.push(`${n} not deactivated`); }
+      for (const n of sel.extrasOff)  { const v = by2.get(n); if (v && v.isActive !== false) mismatches.push(`${n} not deactivated`); }
+      if (sel.alignDefault && sel.alignDefault.to) {
+        const dv = by2.get(sel.alignDefault.to);
+        if (dv && dv.isActive !== false && dv.default !== true) mismatches.push(`${sel.alignDefault.to} not set as default`);
+      }
+      return mismatches.length
+        ? { ok: false, text: `${tgt.inv.obj}.${tgt.inv.field} sync: accepted by Salesforce, but the org still doesn't match on ${mismatches.slice(0, 5).join(', ')}${mismatches.length > 5 ? '…' : ''}` }
+        : { ok: true };
+    },
+  });
+  if (!w.ok) throw new Error(w.raw?.error || w.text);
   return true;
 }
 

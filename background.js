@@ -2184,6 +2184,38 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
     if (c > 1) dedupedErrors[i] = `${dedupedErrors[i]}  (×${c})`;
   }
 
+  // POST-RUN VERIFICATION (campaign 3, phase 1 — the one write discipline).
+  // Every count above comes from the Collections / Bulk SaveResults. Nothing
+  // had re-read the org (the studio sweep found this on 2026-09-27), so a
+  // record that a trigger deleted, or a write that did not persist, was still
+  // "created". One query per 200 written records per object, the first 2,000
+  // per object (History keeps at most that many ids anyway). The result
+  // carries summary[obj].verified = { checked, found, sampled }; a shortfall
+  // is an ℹ note — the counts stay Salesforce's answer, the note says what
+  // the org shows now. Callers show "verified" only from this field.
+  try {
+    for (const [obj, s] of Object.entries(summary)) {
+      if (!s || s.error || s.skipped) continue;
+      const tgtIds = (s.transferredSourceIds || []).map(id => idMap[id]).filter(Boolean);
+      if (!tgtIds.length) continue;
+      const CAP = 2000;
+      const check = tgtIds.slice(0, CAP);
+      let found = 0;
+      for (let i = 0; i < check.length; i += 200) {
+        const lit = check.slice(i, i + 200).map(id => `'${String(id).replace(/'/g, '')}'`).join(',');
+        const q = await sfQueryAll(tgtOrgUrl, tgtSid, `SELECT Id FROM ${obj} WHERE Id IN (${lit})`, false);
+        if (q && q.error) throw new Error(`${obj}: ${q.error}`);
+        found += (q && Array.isArray(q.records)) ? q.records.length : 0;
+      }
+      s.verified = { checked: check.length, found, sampled: tgtIds.length > CAP };
+      if (found < check.length) {
+        diagnostics.push(`${obj}: re-read after the run found ${found} of ${check.length} written record(s) in the target — ${check.length - found} not there now (deleted by automation, or the write did not persist)`);
+      }
+    }
+  } catch (e) {
+    diagnostics.push(`post-run re-read could not finish (${(e && e.message) || e}) — the counts above are Salesforce's answers to the writes, not a re-read`);
+  }
+
   // Diagnostics first — they're the actionable bit. With slice(0, 50) below,
   // any dedupedErrors that exceed the cap get trimmed, but diagnostics
   // remain visible regardless. The 'ℹ ' marker is a CONTRACT (2026-08-17,

@@ -2557,6 +2557,16 @@ async function performRestore(backup) {
 
   if (result?.error)    throw new Error(result.error);
   if (!result?.success) throw new Error('Deploy did not report success.');
+
+  // The write discipline (sftk-write.js): the deploy above is the write —
+  // this re-read is the verify. A Draft restore adds a new version, so a
+  // freshly-created Draft with a higher number than any this session saw
+  // before is the confirmation (cheap: one Tooling query).
+  const q = await sendBg({ type: 'SF_QUERY', orgUrl, sid, tooling: true, _suppressError: true,
+    query: `SELECT Id FROM Flow WHERE FullName = '${String(fullName).replace(/'/g, "\\'")}' AND Status = 'Draft'` });
+  if (!q || q.error || !(q.records && q.records.length)) {
+    throw new Error('The restore was accepted by Salesforce, but the new Draft version could not be found on re-read — check Flow Builder before relying on it.');
+  }
   return result;
 }
 
@@ -2567,21 +2577,45 @@ async function deactivateFlow(flow) {
   const defId = flow.DefinitionId;
   if (!defId) throw new Error(`No DefinitionId on flow "${flow.MasterLabel}" — cannot deactivate`);
 
-  // Tooling API FlowDefinition requires a Metadata wrapper — activeVersionNumber 0 = deactivate
-  const patchResult = await sendBg({
-    type: 'SF_PATCH',
-    orgUrl,
-    sid,
-    path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${defId}`,
-    body: { Metadata: { activeVersionNumber: 0 } }
+  // Tooling API FlowDefinition requires a Metadata wrapper — activeVersionNumber 0 = deactivate.
+  // The write discipline (sftk-write.js): the PATCH is the write, a re-read
+  // of the flow's versions is the verify.
+  const wr = await sftkWriteVerified({
+    describe: `${flow.MasterLabel} deactivation`,
+    write: () => sendBg({
+      type: 'SF_PATCH',
+      orgUrl,
+      sid,
+      path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${defId}`,
+      body: { Metadata: { activeVersionNumber: 0 } }
+    }),
+    verify: async () => {
+      const q = await sendBg({ type: 'SF_QUERY', orgUrl, sid, tooling: true, _suppressError: true,
+        query: `SELECT Id FROM Flow WHERE DefinitionId = '${defId}' AND Status = 'Active'` });
+      if (!q || q.error) return { ok: false, text: null };
+      return { ok: !(q.records && q.records.length), text: null };
+    },
   });
-  if (patchResult.error) throw new Error(`Deactivation failed for "${flow.MasterLabel}": ${patchResult.error}`);
+  if (!wr.accepted) throw new Error(`Deactivation failed for "${flow.MasterLabel}": ${(wr.raw && wr.raw.error) || 'refused'}`);
+  if (!wr.ok) throw new Error(`Deactivation failed for "${flow.MasterLabel}": accepted but the org still shows an active version on re-read`);
 }
 
 async function deleteOneFlow(flow, done, total) {
   const doDelete = async () => {
-    const r = await sendBg({ type: 'SF_TOOLING_DELETE', orgUrl, sid, sobject: 'Flow', id: flow.Id });
-    if (r.error) throw new Error(r.error);
+    // The write discipline (sftk-write.js): the DELETE is the write, a
+    // Tooling re-query of the version id is the verify — gone = ok.
+    const wr = await sftkWriteVerified({
+      describe: `${flow.MasterLabel} v${flow.VersionNumber}`,
+      write: () => sendBg({ type: 'SF_TOOLING_DELETE', orgUrl, sid, sobject: 'Flow', id: flow.Id }),
+      verify: async () => {
+        const q = await sendBg({ type: 'SF_QUERY', orgUrl, sid, tooling: true, _suppressError: true,
+          query: `SELECT Id FROM Flow WHERE Id = '${flow.Id}'` });
+        if (!q || q.error) return { ok: false, text: null };
+        return { ok: !(q.records && q.records.length), text: null };
+      },
+    });
+    if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
+    if (!wr.ok) throw new Error('deleted, but the org still shows this flow version on re-read');
   };
 
   if (flow.Status !== 'Active') {
@@ -2609,10 +2643,23 @@ async function deleteOneFlow(flow, done, total) {
     // back the way it was and say what happened either way.
     let back = '';
     try {
-      const r = await sendBg({ type: 'SF_PATCH', orgUrl, sid,
-        path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${flow.DefinitionId}`,
-        body: { Metadata: { activeVersionNumber: flow.VersionNumber } } });
-      back = (r && r.error) ? ` It was switched OFF for the attempt and could NOT be switched back on (${r.error}) — switch it on in ⏻ Flow switches.` : ' It was switched OFF for the attempt and is switched back ON.';
+      // The write discipline (sftk-write.js): the PATCH is the write, a
+      // re-query of this exact version's Status is the verify.
+      const wr = await sftkWriteVerified({
+        describe: `${flow.MasterLabel} reactivation`,
+        write: () => sendBg({ type: 'SF_PATCH', orgUrl, sid,
+          path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${flow.DefinitionId}`,
+          body: { Metadata: { activeVersionNumber: flow.VersionNumber } } }),
+        verify: async () => {
+          const q = await sendBg({ type: 'SF_QUERY', orgUrl, sid, tooling: true, _suppressError: true,
+            query: `SELECT Id FROM Flow WHERE DefinitionId = '${flow.DefinitionId}' AND VersionNumber = ${Number(flow.VersionNumber) || 0} AND Status = 'Active'` });
+          if (!q || q.error) return { ok: false, text: null };
+          return { ok: !!(q.records && q.records.length), text: null };
+        },
+      });
+      if (!wr.accepted) back = ` It was switched OFF for the attempt and could NOT be switched back on (${(wr.raw && wr.raw.error) || 'refused'}) — switch it on in ⏻ Flow switches.`;
+      else if (!wr.ok) back = ` It was switched OFF for the attempt and could NOT be switched back on (accepted, but not confirmed active on re-read) — switch it on in ⏻ Flow switches.`;
+      else back = ' It was switched OFF for the attempt and is switched back ON.';
     } catch (e2) {
       back = ` It was switched OFF for the attempt and could NOT be switched back on (${e2.message || e2}) — switch it on in ⏻ Flow switches.`;
     }
@@ -2700,12 +2747,15 @@ async function performDeletion(toDelete, toDeactivate) {
   allFlows = allFlows.filter(f => !deletedIds.has(f.Id));
   groupFlows();
 
-  // Show result toast
-  showResultToast(successes.length, errors);
-
+  // Re-render the list FIRST, then the result toast: showResultToast puts
+  // the toast inside #flowList, and renderFlowList() rebuilt that list right
+  // after it — the "✅ N flow versions deleted" message was erased before
+  // anyone could see it (live 2026-09-27: every delete run ended on the
+  // progress panel with no result; the org was fine).
   renderFlowList();
   updateActionBar();
   updateSelectionSummary();
+  showResultToast(successes.length, errors);
 }
 
 // ============================================================
