@@ -43,3 +43,5 @@ oldest — always pass it), `PICK=^SFTK_AV_Test` (rows to tick), `ORGS=npc,npc2`
   "Deploy processes and flows as active" setting is off (the ⏻ activation path).
 
 State after the campaign: A v4 Active 65, B v4 Active 65, C v1 Draft 65 (older versions Obsolete).
+
+**Finding 2026-09-28 (phase 3, undo):** after ↩ Undo re-activates the previous version, Salesforce refuses every further Metadata deploy of that flow (`The version of the flow you're updating is active and can't be overwritten`) while the newer, now-inactive version is still its latest — so the History undo deletes the version the deploy made (Tooling DELETE Flow, verified by re-read). Repair a stuck fixture with `sf data delete record -s Flow -i <v4 id> --use-tooling-api`. The Draft C is rewritten in place by each Apply (its API version follows the last target).
