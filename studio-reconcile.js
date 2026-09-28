@@ -2576,6 +2576,7 @@ async function runReconcile(profile, objType, buckets) {
         // these Ids (chunked, same as every other Id-list query here) closes
         // the same gap a PATCH accepted-but-unchanged taught elsewhere.
         // confirmed-by: runReconcile's Proceed/production sftkConfirmDestructive above.
+        // history-by: the deployment's own History entry (rollback in studio-undo.js)
         const dw = await sftkWriteVerified({
           describe: `${obj} hard delete`,
           write: () => sendBg({ type: 'SF_HARD_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: a.delIds }),
@@ -2597,6 +2598,7 @@ async function runReconcile(profile, objType, buckets) {
       } else {
         log('🗑', `Deleting ${a.delIds.length} ${obj} from target (→ Recycle Bin)…`);
         // confirmed-by: runReconcile's Proceed/production sftkConfirmDestructive above.
+        // history-by: the deployment's own History entry (rollback in studio-undo.js)
         const dw = await sftkWriteVerified({
           describe: `${obj} delete`,
           write: () => sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: a.delIds }),
@@ -2627,6 +2629,7 @@ async function runReconcile(profile, objType, buckets) {
         // these Ids (chunked, same as every other Id-list query here) closes
         // the same gap a PATCH accepted-but-unchanged taught elsewhere.
         // confirmed-by: runReconcile's Proceed/production sftkConfirmDestructive above.
+        // history-by: the deployment's own History entry (rollback in studio-undo.js)
         const dw = await sftkWriteVerified({
           describe: `${objType} hard delete`,
           write: () => sendBg({ type: 'SF_HARD_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds }),
@@ -2649,6 +2652,7 @@ async function runReconcile(profile, objType, buckets) {
       log('🗑', `Deleting ${delIds.length} record(s) from target (→ Recycle Bin)…`);
       try {
         // confirmed-by: runReconcile's Proceed/production sftkConfirmDestructive above.
+        // history-by: the deployment's own History entry (rollback in studio-undo.js)
         const dw = await sftkWriteVerified({
           describe: `${objType} delete`,
           write: () => sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds }),
@@ -3004,6 +3008,7 @@ async function runReconcile(profile, objType, buckets) {
           // to point at, closes the same gap a PATCH accepted-but-unchanged
           // taught elsewhere.
           // confirmed-by: runReconcile's Proceed/production sftkConfirmDestructive above.
+          // history-by: the deployment's own History entry (rollback in studio-undo.js)
           const dw = await sftkWriteVerified({
             describe: `relink ${obj}`,
             write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: slice }),
@@ -3406,51 +3411,76 @@ async function sftkIdDeployTo(orgUrls, objects) {
       ...files.filter(f => !/^permissionsets\//.test(f.name)).map(f => ({ name: f.name, data: enc.encode(f.text) })),
       { name: psFile.name, data: enc.encode(psFile.text) },
     ]);
-    // The one write discipline (sftk-write.js): a deploy job's own "done"
-    // used to BE the report — one probe read per object of the field it was
-    // meant to create closes the same gap a PATCH accepted-but-unchanged
-    // taught elsewhere (a deploy can report success with the field still
-    // invisible to this user's FLS).
-    // confirmed-by: sftkIdDeployTo's sftkConfirmDestructive above (before this loop).
-    const dw = await sftkWriteVerified({
-      describe: `${sftkIdFieldName()} in ${label}`,
-      write: () => sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: sess.orgUrl, sid: sess.sid, zipBase64 }),
-      verify: async () => {
-        const missing = [];
-        for (const o of objs) {
-          const probe = await sendBg({ type: 'SF_QUERY', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false, _suppressError: true,
-            query: `SELECT ${sftkIdFieldName()} FROM ${o} LIMIT 1` });
-          if (probe?.error) missing.push(o);
-        }
-        return missing.length
-          ? { ok: false, text: `${sftkIdFieldName()} in ${label}: accepted by Salesforce, but could not be re-read on ${missing.join(', ')}` }
-          : { ok: true };
-      },
-    });
-    if (!dw.ok) { out.errors.push(`${label}: deploy failed — ${dw.raw?.error || dw.text}`); out.perOrg.push({ orgUrl, ok: false }); continue; }
+    // History (sftk-history.js): one journal per org — done here (outside
+    // runReconcile) because it is an identity-stamp setup step, not a step
+    // of a deployment run. The field deploy has no verified undo (see the
+    // note below); the permission set assignment does, when this run
+    // created it.
+    const journal = sftkHistoryBegin({ tool: 'Reconcile', title: `🪪 ${sftkIdFieldName()} + ${sftkIdPermSetName()} — ${label}`, orgUrl: sess.orgUrl });
+    const undoSteps = [];
+    let undoNote = `the ${sftkIdFieldName()} field can be removed again in Setup (Object Manager → the object → Fields & Relationships) — deleting a field here has no honest re-read: a successful removal makes the same probe query fail, indistinguishable from a broken one`;
     try {
-      const ps = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
-        query: `SELECT Id FROM PermissionSet WHERE Name = '${sftkIdPermSetName()}' LIMIT 1` });
-      const psId = ps?.records?.[0]?.Id;
-      const root = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid, path: 'services/data/v62.0/' });
-      const userId = sftkIdUserFromIdentity(root?.identity);
-      if (!psId || !userId) throw new Error('could not resolve the permission set or your user');
+      // The one write discipline (sftk-write.js): a deploy job's own "done"
+      // used to BE the report — one probe read per object of the field it was
+      // meant to create closes the same gap a PATCH accepted-but-unchanged
+      // taught elsewhere (a deploy can report success with the field still
+      // invisible to this user's FLS).
       // confirmed-by: sftkIdDeployTo's sftkConfirmDestructive above (before this loop).
-      const aw = await sftkWriteVerified({
-        describe: `${sftkIdPermSetName()} assignment in ${label}`,
-        write: async () => {
-          const r = await sendBg({ type: 'SF_REST_POST', orgUrl: sess.orgUrl, sid: sess.sid,
-            path: 'services/data/v62.0/sobjects/PermissionSetAssignment', body: { AssigneeId: userId, PermissionSetId: psId } });
-          if (r?.error && !/DUPLICATE_VALUE|already assigned/i.test(String(r.error))) throw new Error(r.error);
-          return { success: true };
+      const dw = await sftkWriteVerified({
+        describe: `${sftkIdFieldName()} in ${label}`,
+        write: () => sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: sess.orgUrl, sid: sess.sid, zipBase64 }),
+        journal,
+        verify: async () => {
+          const missing = [];
+          for (const o of objs) {
+            const probe = await sendBg({ type: 'SF_QUERY', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false, _suppressError: true,
+              query: `SELECT ${sftkIdFieldName()} FROM ${o} LIMIT 1` });
+            if (probe?.error) missing.push(o);
+          }
+          return missing.length
+            ? { ok: false, text: `${sftkIdFieldName()} in ${label}: accepted by Salesforce, but could not be re-read on ${missing.join(', ')}` }
+            : { ok: true };
         },
-        noVerify: 'an insert returns the new row, and "already assigned" already means the grant exists',
       });
-      if (!aw.accepted) throw new Error(aw.text);
-      out.ok++; out.perOrg.push({ orgUrl, ok: true });
-    } catch (e) {
-      out.perOrg.push({ orgUrl, ok: false });
-      out.errors.push(`${label}: the field was created but the permission set could not be assigned (${e?.message || e}) — assign "SFTK Identity" to yourself in Setup, or the field stays invisible`);
+      if (!dw.ok) { out.errors.push(`${label}: deploy failed — ${dw.raw?.error || dw.text}`); out.perOrg.push({ orgUrl, ok: false }); undoNote = 'the field deploy did not verify — nothing to undo'; continue; }
+      try {
+        const ps = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
+          query: `SELECT Id FROM PermissionSet WHERE Name = '${sftkIdPermSetName()}' LIMIT 1` });
+        const psId = ps?.records?.[0]?.Id;
+        const root = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid, path: 'services/data/v62.0/' });
+        const userId = sftkIdUserFromIdentity(root?.identity);
+        if (!psId || !userId) throw new Error('could not resolve the permission set or your user');
+        // confirmed-by: sftkIdDeployTo's sftkConfirmDestructive above (before this loop).
+        const aw = await sftkWriteVerified({
+          describe: `${sftkIdPermSetName()} assignment in ${label}`,
+          write: async () => {
+            const r = await sendBg({ type: 'SF_REST_POST', orgUrl: sess.orgUrl, sid: sess.sid,
+              path: 'services/data/v62.0/sobjects/PermissionSetAssignment', body: { AssigneeId: userId, PermissionSetId: psId } });
+            if (r?.error && !/DUPLICATE_VALUE|already assigned/i.test(String(r.error))) throw new Error(r.error);
+            return { success: true, id: r?.id || null, alreadyAssigned: !!r?.error };
+          },
+          journal,
+          noVerify: 'an insert returns the new row, and "already assigned" already means the grant exists',
+        });
+        if (!aw.accepted) throw new Error(aw.text);
+        out.ok++; out.perOrg.push({ orgUrl, ok: true });
+        // History: undo removes the assignment ONLY when THIS run created it.
+        if (aw.raw && aw.raw.id && !aw.raw.alreadyAssigned) {
+          undoSteps.push({
+            describe: `${label}: remove the ${sftkIdPermSetName()} assignment this created`,
+            // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+            msg: { type: 'SF_COLLECTIONS_DELETE', ids: [aw.raw.id] },
+            verify: { query: `SELECT Id FROM PermissionSetAssignment WHERE Id = '${aw.raw.id}'`, tooling: false, count: 0,
+              text: { ok: `${label}: the permission set assignment was removed — verified by re-reading the org`,
+                      bad: `${label}: the removal was accepted, but the org still shows the assignment` } },
+          });
+        }
+      } catch (e) {
+        out.perOrg.push({ orgUrl, ok: false });
+        out.errors.push(`${label}: the field was created but the permission set could not be assigned (${e?.message || e}) — assign "SFTK Identity" to yourself in Setup, or the field stays invisible`);
+      }
+    } finally {
+      await sftkHistoryEnd(journal, { undo: undoSteps.length ? { steps: undoSteps, note: undoNote } : { none: undoNote } });
     }
   }
   _describeCache = {};   // a new field must be visible to the next describe
@@ -3556,38 +3586,83 @@ async function reconcileStampPairs(p, scan) {
   if (!stampOk) return;
   let ok = 0, failed = 0; const errs = [];
   const idField = sftkIdFieldName();
-  for (let i = 0; i < pairs.length; i += 200) {
-    const recs = sftkIdStampPayload(objType, pairs.slice(i, i + 200));
-    // The one write discipline (sftk-write.js): Collections' per-record
-    // success used to BE "stamped" — one re-read of exactly this slice's
-    // Ids, comparing the identity field to the source Id it was meant to
-    // carry, closes the same gap a PATCH accepted-but-unchanged taught
-    // elsewhere.
-    // confirmed-by: reconcileStampPairs's sftkConfirmDestructive above.
-    const dw = await sftkWriteVerified({
-      describe: `${objType} identity stamp`,
-      write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: recs }),
-      verify: async (r) => {
-        const okIds = (Array.isArray(r) ? r : (r?.results || [])).filter(x => x && x.success).map(x => x.id);
-        if (!okIds.length) return { ok: true, detail: [] };
-        const wantById = new Map(recs.map(rec => [rec.Id, rec[idField]]));
-        const vq = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, _suppressError: true,
-          query: `SELECT Id, ${idField} FROM ${objType} WHERE Id IN (${okIds.map(id => soqlStrLit(id)).join(',')})` });
-        if (vq?.error) return { ok: false, text: `${objType} identity stamp: accepted by Salesforce, but the org could not be re-read to confirm it (${vq.error})` };
-        const stale = (vq.records || []).filter(rec => String(rec[idField] || '') !== String(wantById.get(rec.Id) || ''));
-        return stale.length
-          ? { ok: false, detail: stale.map(rec => rec.Id), text: `${objType} identity stamp: accepted by Salesforce, but ${stale.length} record(s) still show the old value` }
-          : { ok: true, detail: [] };
-      },
-    });
-    if (!dw.accepted) { failed += recs.length; errs.push(dw.raw?.error || dw.text); continue; }
-    const r = dw.raw;
-    const staleSet = new Set(Array.isArray(dw.detail) ? dw.detail : []);
-    for (const x of (Array.isArray(r) ? r : (r?.results || []))) {
-      if (x && x.success && !staleSet.has(x.id)) ok++;
-      else if (x && x.success) { failed++; if (errs.length < 3) errs.push('accepted by Salesforce, but the org still shows the old value'); }
-      else { failed++; if (errs.length < 3) errs.push((x?.errors || []).map(e => e.message).join('; ') || 'rejected'); }
+  // History (sftk-history.js): one journal for this button press — done
+  // here (outside runReconcile) because it is an identity-stamp step, not a
+  // deployment run. The before-value of the identity field is read first so
+  // a confirmed stamp can be undone by writing it back.
+  const journal = sftkHistoryBegin({ tool: 'Reconcile', title: `🪪 ${pairs.length} ${objType} record(s) stamped — ${orgLabel(p.targetOrg)}`, orgUrl: p.targetOrg });
+  const undoSteps = [];
+  try {
+    const oldValById = new Map();
+    for (let i = 0; i < pairs.length; i += 200) {
+      const ids = pairs.slice(i, i + 200).map(pr => pr.targetId).filter(Boolean);
+      if (!ids.length) continue;
+      const oq = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, _suppressError: true,
+        query: `SELECT Id, ${idField} FROM ${objType} WHERE Id IN (${ids.map(id => soqlStrLit(id)).join(',')})` });
+      if (!oq?.error) for (const r of (oq.records || [])) oldValById.set(r.Id, r[idField] ?? null);
     }
+    for (let i = 0; i < pairs.length; i += 200) {
+      const recs = sftkIdStampPayload(objType, pairs.slice(i, i + 200));
+      // The one write discipline (sftk-write.js): Collections' per-record
+      // success used to BE "stamped" — one re-read of exactly this slice's
+      // Ids, comparing the identity field to the source Id it was meant to
+      // carry, closes the same gap a PATCH accepted-but-unchanged taught
+      // elsewhere.
+      // confirmed-by: reconcileStampPairs's sftkConfirmDestructive above.
+      const dw = await sftkWriteVerified({
+        describe: `${objType} identity stamp`,
+        write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: recs }),
+        journal,
+        verify: async (r) => {
+          const okIds = (Array.isArray(r) ? r : (r?.results || [])).filter(x => x && x.success).map(x => x.id);
+          if (!okIds.length) return { ok: true, detail: [] };
+          const wantById = new Map(recs.map(rec => [rec.Id, rec[idField]]));
+          const vq = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, _suppressError: true,
+            query: `SELECT Id, ${idField} FROM ${objType} WHERE Id IN (${okIds.map(id => soqlStrLit(id)).join(',')})` });
+          if (vq?.error) return { ok: false, text: `${objType} identity stamp: accepted by Salesforce, but the org could not be re-read to confirm it (${vq.error})` };
+          const stale = (vq.records || []).filter(rec => String(rec[idField] || '') !== String(wantById.get(rec.Id) || ''));
+          return stale.length
+            ? { ok: false, detail: stale.map(rec => rec.Id), text: `${objType} identity stamp: accepted by Salesforce, but ${stale.length} record(s) still show the old value` }
+            : { ok: true, detail: [] };
+        },
+      });
+      if (!dw.accepted) { failed += recs.length; errs.push(dw.raw?.error || dw.text); continue; }
+      const r = dw.raw;
+      const staleSet = new Set(Array.isArray(dw.detail) ? dw.detail : []);
+      const doneIds = [];
+      for (const x of (Array.isArray(r) ? r : (r?.results || []))) {
+        if (x && x.success && !staleSet.has(x.id)) { ok++; doneIds.push(x.id); }
+        else if (x && x.success) { failed++; if (errs.length < 3) errs.push('accepted by Salesforce, but the org still shows the old value'); }
+        else { failed++; if (errs.length < 3) errs.push((x?.errors || []).map(e => e.message).join('; ') || 'rejected'); }
+      }
+      if (doneIds.length) {
+        // Bucket by their OWN previous value — records in this chunk can
+        // have different previous values (a mix of first-ever stamps, which
+        // were blank, and re-stamps of an already-stamped record), and the
+        // verify below can only check "this bucket's Ids now share this ONE
+        // value again" — so each bucket becomes its own undo step.
+        const buckets = new Map();   // String(oldVal) → { val, ids: [] }
+        for (const id of doneIds) {
+          const v = oldValById.get(id) ?? null;
+          const key = v === null ? '\u0000null' : String(v);
+          if (!buckets.has(key)) buckets.set(key, { val: v, ids: [] });
+          buckets.get(key).ids.push(id);
+        }
+        for (const { val, ids } of buckets.values()) {
+          undoSteps.push({
+            describe: `${objType}: restore the previous ${idField} value (${val === null ? 'blank' : val}) on ${ids.length} record(s)`,
+            // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+            msg: { type: 'SF_COLLECTIONS_UPDATE', records: ids.map(id => ({ attributes: { type: objType }, Id: id, [idField]: val })) },
+            verify: { query: `SELECT Id FROM ${objType} WHERE Id IN (${ids.map(id => soqlStrLit(id)).join(',')}) AND ${idField} ${val === null ? '= null' : `= ${soqlStrLit(val)}`}`, tooling: false,
+              count: ids.length,
+              text: { ok: `${objType}: ${ids.length} record(s) back to their previous ${idField} — verified by re-reading the org`,
+                      bad: `${objType}: the restore was accepted, but the org doesn't show all ${ids.length} record(s) back on their previous value` } },
+          });
+        }
+      }
+    }
+  } finally {
+    await sftkHistoryEnd(journal, { undo: undoSteps.length ? { steps: undoSteps, note: 'each step restores the exact records it stamped, whether their previous identity value was blank or already set' } : { none: 'nothing was confirmed stamped' } });
   }
   showToast(failed
     ? `🪪 ${ok} stamped, ${failed} failed: ${errs.join(' · ')}`
@@ -3987,6 +4062,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const writeFields = [...new Set(payloads.flatMap(p => Object.keys(p).filter(k => k !== 'Id' && k !== 'attributes')))];
   // confirmed-by: every caller (runReconcile's root/inverse/child overwrite
   // paths) confirms via runReconcile's Proceed/production sftkConfirmDestructive first.
+  // history-by: the deployment's own History entry (rollback in studio-undo.js)
   const dw = await sftkWriteVerified({
     describe: `${objType} overwrite`,
     write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: payloads }),

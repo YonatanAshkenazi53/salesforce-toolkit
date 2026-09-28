@@ -117,9 +117,11 @@ describe('field-cleaner.js executes the plan in the safe order', () => {
     const at = s => { const i = exec.indexOf(s); expect(i).toBeGreaterThan(-1); return i; };
     const backup = at('downloadFlowBackupZip(entries');
     const deploy = at('deployFlowViaMetadataApi(apiNameOf(plan.active.id), metadata)');
-    const verify = at('await _verifyFlowActivation(defId, maxNum, flowName, plan.active.id)');
-    const ivs    = at('await _deleteFlowInterviews(fp.interviews)');
-    const vers   = at('await _deleteFlowVersionIds(plan.toDelete.map(v => v.id), skip)');
+    // Phase 3 (History with undo): these three now also carry the caller's
+    // journal, so a write's verdict lands in the button-press's History entry.
+    const verify = at('await _verifyFlowActivation(defId, maxNum, flowName, plan.active.id, journal)');
+    const ivs    = at('await _deleteFlowInterviews(fp.interviews, journal)');
+    const vers   = at('await _deleteFlowVersionIds(plan.toDelete.map(v => v.id), skip, journal)');
     expect(backup).toBeLessThan(deploy);
     expect(deploy).toBeLessThan(verify);
     expect(verify).toBeLessThan(ivs);
@@ -133,12 +135,14 @@ describe('field-cleaner.js executes the plan in the safe order', () => {
   it('every failure before the deletions says "Nothing was deleted"', () => {
     const nothing = (exec.match(/Nothing was deleted/g) || []).length;
     expect(nothing).toBeGreaterThanOrEqual(2);
-    const verify = slice(FC, 'async function _verifyFlowActivation(defId, prevMax, flowName, flowIdForLink)');
+    // Phase 3 (History with undo): _verifyFlowActivation now also takes the
+    // caller's journal, so its write's verdict lands in the right entry.
+    const verify = slice(FC, 'async function _verifyFlowActivation(defId, prevMax, flowName, flowIdForLink, journal)');
     expect((verify.match(/Nothing was deleted|nothing was deleted/g) || []).length).toBeGreaterThanOrEqual(3);
   });
 
   it('activation is re-read, activated by the tool if needed, and re-read again', () => {
-    const verify = slice(FC, 'async function _verifyFlowActivation(defId, prevMax, flowName, flowIdForLink)');
+    const verify = slice(FC, 'async function _verifyFlowActivation(defId, prevMax, flowName, flowIdForLink, journal)');
     expect(verify).toMatch(/\(Number\(newest\.VersionNumber\) \|\| 0\) <= prevMax/);
     expect(verify).toContain("body: { Metadata: { activeVersionNumber: Number(newest.VersionNumber) } }");
     expect(verify).toMatch(/versions = await read\(\);\s*newest = versions\.find\(v => v\.Id === newId\)/);
@@ -167,9 +171,10 @@ describe('field-cleaner.js executes the plan in the safe order', () => {
   it('the XML-inspector path verifies activation too, and its purge clears interviews first', () => {
     const sel = slice(FC, 'async function fixFlowSelective(flowId, flowName, selSet)');
     expect(sel.indexOf('const before = await _flowVersionsOf(flowId);')).toBeLessThan(sel.indexOf('deployFlowViaMetadataApi('));
-    expect(sel.indexOf('_verifyFlowActivation(before.defId, before.maxNum, flowName, flowId)')).toBeLessThan(sel.indexOf('purgeOldFlowVersions(flowId, flowName)'));
-    const purge = slice(FC, 'async function purgeOldFlowVersions(anyVersionId, flowName)');
-    expect(purge.indexOf('_flowInterviewsFor(stale.map(v => v.Id))')).toBeLessThan(purge.indexOf('_deleteFlowVersionIds(stale.map(v => v.Id), skip)'));
+    // Phase 3 (History with undo): both now carry fixFlowSelective's own journal.
+    expect(sel.indexOf('_verifyFlowActivation(before.defId, before.maxNum, flowName, flowId, journal)')).toBeLessThan(sel.indexOf('purgeOldFlowVersions(flowId, flowName, journal)'));
+    const purge = slice(FC, 'async function purgeOldFlowVersions(anyVersionId, flowName, journal)');
+    expect(purge.indexOf('_flowInterviewsFor(stale.map(v => v.Id))')).toBeLessThan(purge.indexOf('_deleteFlowVersionIds(stale.map(v => v.Id), skip, journal)'));
     expect(purge).toContain("confirmLabel: '🗑 Delete interviews, then the versions'");
   });
 
@@ -291,7 +296,8 @@ describe('field-cleaner.js: the preview comes from the REAL remover, and the cho
     const ex = FC2.slice(FC2.indexOf('async function fixFlowExecute('));
     const off = ex.indexOf('body: { Metadata: { activeVersionNumber: 0 } }');
     expect(off).toBeGreaterThan(0);
-    expect(off).toBeLessThan(ex.indexOf('_deleteFlowInterviews(fp.interviews)'));
+    // Phase 3 (History with undo): now carries fixFlowExecute's journal too.
+    expect(off).toBeLessThan(ex.indexOf('_deleteFlowInterviews(fp.interviews, journal)'));
     expect(ex).toContain('is still active. Nothing was deleted.');
     expect(ex.indexOf('const stillActive =')).toBeLessThan(ex.indexOf('_deleteFlowVersionIds(plan.toDelete'));
   });

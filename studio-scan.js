@@ -2581,12 +2581,19 @@ async function sftkPushFieldsToTarget(profile, objType, srcId, tgtId, picks) {
   // shape of lie the flow switches told. One re-read of exactly the fields
   // just pushed closes that gap.
   const fields = Object.keys(body);
+  // History (sftk-history.js): one journal for this push. Its fields are a
+  // mix of raw values, PII-masked values and lookup Ids resolved in THIS
+  // target — the "current" values shown in the compare table are display
+  // strings, not captured as raw API values, so writing them back could
+  // itself corrupt a lookup or a masked field. See the `none` below.
+  const journal = sftkHistoryBegin({ tool: 'Scan & Compare', title: `🔀 push ${fields.length} field(s) to ${objType} — ${orgLabel(tgtSess.orgUrl)}`, orgUrl: tgtSess.orgUrl });
   // confirmed-by: sftkWireDriftCompare's pushBtn confirms via sftkConfirmDestructive
   // (including the production typed-name step) before this ever runs.
   const w = await sftkWriteVerified({
     describe: `push to ${objType}`,
     write: () => sendBg({ type: 'SF_PATCH', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
       path: `services/data/v62.0/sobjects/${objType}/${tgtId}`, body }),
+    journal,
     verify: async () => {
       const vq = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
         query: `SELECT ${fields.join(',')} FROM ${objType} WHERE Id = '${tgtId}'` });
@@ -2598,6 +2605,7 @@ async function sftkPushFieldsToTarget(profile, objType, srcId, tgtId, picks) {
         : { ok: true, text: `push to ${objType} — verified by re-reading the org` };
     },
   });
+  await sftkHistoryEnd(journal, { undo: { none: `this push writes ${fields.join(', ')} on ${objType} ${tgtId} — some fields may be PII-masked or resolved lookup Ids rather than the source's raw values, so this tool does not attempt to write the target's previous values back; check the field(s) in Setup if the push was a mistake` } });
   if (!w.accepted) { out.errors.push(`target write failed: ${w.raw?.error || w.text}`); out.applied = []; return out; }
   if (!w.ok) { out.errors.push(w.text); out.applied = []; return out; }
   out.ok = true;

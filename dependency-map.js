@@ -3538,7 +3538,7 @@ const DependencyMap = (() => {
   // changed: [{ apiName, wasActive, prevVersion, defId }]. Returns
   // [{ apiName, ok, text }] — ok only when the org itself shows the new
   // version at `target` as the governing one (active where it was active).
-  async function avVerifyAndActivate(org, changed, target, say) {
+  async function avVerifyAndActivate(org, changed, target, say, journal) {
     const want = sftkApiVerNum(target);
     const read = async () => {
       const r = await depFlowVersions(org.orgUrl, org.sid);
@@ -3558,8 +3558,10 @@ const DependencyMap = (() => {
       // place by the deploy — no new version appears (live 2026-09-22: a
       // Draft at API 58 read API 67 afterwards, same v1, and was reported as
       // "nothing changed"). The org's re-read is the proof either way.
+      // History: a Draft rewritten in place has no previous copy — the undo
+      // builder below (applyApiVerChange) reads the rewrittenInPlace flag.
       if (newest && !c.wasActive && newest.versionNumber === c.prevVersion && newest.num === want) {
-        out.push({ apiName: c.apiName, ok: true, text: `${c.apiName}: v${newest.versionNumber} (${newest.status || 'not active'}) was rewritten in place at API ${target} — Salesforce overwrites a version that is not active instead of adding one (verified by re-reading the org).` });
+        out.push({ apiName: c.apiName, ok: true, text: `${c.apiName}: v${newest.versionNumber} (${newest.status || 'not active'}) was rewritten in place at API ${target} — Salesforce overwrites a version that is not active instead of adding one (verified by re-reading the org).`, rewrittenInPlace: true });
         continue;
       }
       if (!newest || newest.versionNumber <= c.prevVersion) {
@@ -3575,7 +3577,7 @@ const DependencyMap = (() => {
         else toActivate.push({ c, newest });
         continue;
       }
-      out.push({ apiName: c.apiName, ok: true, text: c.wasActive
+      out.push({ apiName: c.apiName, ok: true, newId: newest.id, newVersion: newest.versionNumber, text: c.wasActive
         ? `${c.apiName}: v${newest.versionNumber} at API ${target} is ACTIVE (verified by re-reading the org).`
         : `${c.apiName}: v${newest.versionNumber} at API ${target} was created; the flow was not active before and is not active now (verified).` });
     }
@@ -3597,6 +3599,7 @@ const DependencyMap = (() => {
           return r;
         },
       })), {
+        journal,
         verifyAll: async () => {
           by = await read();
           return toActivate.map(({ c, newest }) => {
@@ -3608,7 +3611,7 @@ const DependencyMap = (() => {
           });
         },
       });
-      toActivate.forEach(({ c }, i) => out.push({ apiName: c.apiName, ok: actBatch.results[i].ok, text: actBatch.results[i].text }));
+      toActivate.forEach(({ c, newest }, i) => out.push({ apiName: c.apiName, ok: actBatch.results[i].ok, text: actBatch.results[i].text, newId: newest.id, newVersion: newest.versionNumber }));
     }
     return out;
   }
@@ -3634,6 +3637,16 @@ const DependencyMap = (() => {
     };
     let orgsOk = 0, orgsFailed = 0, flowsOk = 0, flowsWarn = 0;
     let n = 0;
+    // History (sftk-history.js): one journal for this whole Apply — a
+    // button press can touch several orgs. Undo steps are built as each
+    // org's deploy is verified, below.
+    const totalJobs = [...byOrg.values()].reduce((s, j) => s + j.length, 0);
+    const firstOrg = st.orgs.find(o => o.key === [...byOrg.keys()][0]) || {};
+    const journal = sftkHistoryBegin({ tool: 'API versions',
+      title: `⚙ ${totalJobs} flow version(s) → API ${target} — ${byOrg.size} org(s)`, orgUrl: firstOrg.orgUrl || '' });
+    const undoCandidates = [];   // { apiName, defId, orgUrl, wasActive, prevVersion }
+    const undoSkipped = [];      // apiNames with no previous copy to restore
+    try {
     for (const [orgKey, jobs] of byOrg) {
       n++;
       const org = st.orgs.find(o => o.key === orgKey);
@@ -3714,6 +3727,7 @@ const DependencyMap = (() => {
           describe: `${org.label}: deploy`,
           write: async () => depBg({ type: 'SF_METADATA_DEPLOY', orgUrl: org.orgUrl, sid: org.sid,
             zipBase64: zip, _silentError: true }),
+          journal,
           verify: async () => {
             say('\u{1F4E6}', `${org.label}: package accepted — ${changed.length} flow version(s) written at API ${target}. Verifying what is actually running now…`);
             // 4 — VERIFY. A deploy only CREATES a version. Whether it became the
@@ -3722,7 +3736,7 @@ const DependencyMap = (() => {
             // versions, activates the new one where the flow WAS active (the ⏻
             // FlowDefinition primitive), re-reads again, and reports only what
             // the org confirms. Nothing here is assumed from the deploy result.
-            const verdicts = await avVerifyAndActivate(org, changed, target, say);
+            const verdicts = await avVerifyAndActivate(org, changed, target, say, journal);
             const okN = verdicts.filter(v => v.ok).length;
             return { ok: okN === verdicts.length, detail: verdicts };
           },
@@ -3741,10 +3755,63 @@ const DependencyMap = (() => {
         const okN = verdicts.filter(v => v.ok).length;
         flowsOk += okN; flowsWarn += verdicts.length - okN;
         for (const v of verdicts) say(v.ok ? '✅' : '⚠', `${org.label}: ${v.text}`);
+        // History: only a CONFIRMED change (ok) can be undone, and only when
+        // there is a previous state to write back — a Draft rewritten in
+        // place (avVerifyAndActivate flags it) or a flow with no known
+        // definition id has no previous copy.
+        const vByName = new Map(verdicts.map(v => [v.apiName, v]));
+        for (const c of changed) {
+          const v = vByName.get(c.apiName);
+          if (!v || !v.ok) continue;
+          if (v.rewrittenInPlace || !c.defId) { undoSkipped.push(c.apiName); continue; }
+          undoCandidates.push({ apiName: c.apiName, defId: c.defId, orgUrl: org.orgUrl, wasActive: c.wasActive, prevVersion: c.prevVersion, newId: v.newId || null, newVersion: v.newVersion || null });
+        }
       } catch (e) {
         orgsFailed++;
         say('❌', `${org.label}: deploy failed — ${(e && e.message) || e}. NONE of its flow(s) changed.`);
       }
+    }
+    } finally {
+      // The deploy leaves the OLD version in place (Obsolete, not deleted):
+      // the undo re-activates it, THEN deletes the version the deploy made.
+      // Live 2026-09-28: once an older version is active again, Salesforce
+      // refuses every further Metadata deploy of that flow ("The version of
+      // the flow you're updating is active and can't be overwritten") while
+      // the newer, now-inactive version is still its latest — so the undo
+      // must remove it, or the flow is stuck for this tool and the CLI alike.
+      // A flow that was not active before has nothing to re-activate —
+      // activeVersionNumber: 0 puts it back to no active version.
+      const steps = undoCandidates.flatMap(c => [{
+        describe: c.wasActive ? `${c.apiName}: re-activate v${c.prevVersion}` : `${c.apiName}: deactivate again`,
+        // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+        msg: { type: 'SF_PATCH', path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${c.defId}`,
+          body: { Metadata: { activeVersionNumber: c.wasActive ? c.prevVersion : 0 } } },
+        orgUrl: c.orgUrl,
+        // Live 2026-09-28: FlowDefinitionView has no ActiveVersion relationship
+        // (HTTP 400) — the Tooling Flow rows say which version is Active.
+        verify: c.wasActive
+          ? { query: `SELECT Id FROM Flow WHERE DefinitionId = '${c.defId}' AND VersionNumber = ${Number(c.prevVersion) || 0} AND Status = 'Active'`, tooling: true,
+              count: 1,
+              text: { ok: `${c.apiName}: v${c.prevVersion} is active again — verified by re-reading the org`,
+                      bad: `${c.apiName}: accepted by Salesforce, but the org still does not show v${c.prevVersion} as active` } }
+          : { query: `SELECT Id FROM Flow WHERE DefinitionId = '${c.defId}' AND Status = 'Active'`, tooling: true,
+              count: 0,
+              text: { ok: `${c.apiName}: deactivated again — verified by re-reading the org`,
+                      bad: `${c.apiName}: accepted by Salesforce, but the org still shows a version active` } },
+      }, ...(c.newId ? [{
+        describe: `${c.apiName}: delete v${c.newVersion} (the API ${target} version this made) so the flow can be deployed again`,
+        // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+        msg: { type: 'SF_TOOLING_DELETE', sobject: 'Flow', id: c.newId },
+        orgUrl: c.orgUrl,
+        verify: { query: `SELECT Id FROM Flow WHERE Id = '${c.newId}'`, tooling: true, count: 0,
+          text: { ok: `${c.apiName}: v${c.newVersion} deleted — verified by re-reading the org`,
+                  bad: `${c.apiName}: the delete was accepted, but the org still lists v${c.newVersion}` } },
+      }] : [])]);
+      await sftkHistoryEnd(journal, {
+        undo: steps.length
+          ? { steps, note: undoSkipped.length ? `${undoSkipped.length} flow(s) have no previous copy to restore (rewritten in place, or no definition id known): ${undoSkipped.join(', ')}` : '' }
+          : (undoSkipped.length ? { none: 'the Draft was rewritten in place — there is no previous copy to restore' } : { none: 'nothing was changed' }),
+      });
     }
     prog.textContent = '';
     say('ℹ', `${flowsOk} flow(s) changed and verified${flowsWarn ? `, ${flowsWarn} with a warning above` : ''}, across ${orgsOk} org(s); ${orgsFailed} org(s) refused the package (unchanged). The table above is now STALE — reopen ⚙ API versions (or press ↻ Rescan) to re-read the org rather than trusting it.`);

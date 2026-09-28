@@ -1,6 +1,7 @@
 // Live: 🔑 Flow Access (popup) — grant the fixture flow SFTK_AV_Test_A to the permission set
 // SFTK_FC_Test_Access in trailheads5 (a Metadata deploy of <flowAccesses>), then CLI-verify.
 //   FLOW="SFTK AV Test A"  PS="SFTK FC Test Access"  SCAN_ONLY=1
+import { undoNewest } from './_undo.mjs';   // UNDO=1: Data Studio › History › ↩ Undo the newest entry afterwards (TYPE_IT=1 for a guarded org)
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 async function tick(h, cbClass, searchId, label) {
   await h.eval(`(() => { const i = document.querySelector('#${searchId}'); if (i) { i.value = ${JSON.stringify(label)}; i.dispatchEvent(new Event('input', { bubbles: true })); } return true; })()`);
@@ -34,4 +35,5 @@ export default async function (h) {
   await h.sleep(800);
   h.log('RESULT:', await h.eval(`(document.querySelector('#modalBox')?.innerText || '').replace(/\\s+/g, ' ').slice(0, 800)`));
   await h.shot(h.shots + '/fa-result.png');
+  if (process.env.UNDO === '1') await undoNewest(h);
 }

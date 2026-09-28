@@ -2575,7 +2575,7 @@ async function performRestore(backup) {
 // ============================================================
 // Deactivation
 // ============================================================
-async function deactivateFlow(flow) {
+async function deactivateFlow(flow, journal, track) {
   const defId = flow.DefinitionId;
   if (!defId) throw new Error(`No DefinitionId on flow "${flow.MasterLabel}" — cannot deactivate`);
 
@@ -2586,6 +2586,7 @@ async function deactivateFlow(flow) {
   // of the flow's versions is the verify.
   const wr = await sftkWriteVerified({
     describe: `${flow.MasterLabel} deactivation`,
+    journal,
     write: () => sendBg({
       type: 'SF_PATCH',
       orgUrl,
@@ -2602,9 +2603,13 @@ async function deactivateFlow(flow) {
   });
   if (!wr.accepted) throw new Error(`Deactivation failed for "${flow.MasterLabel}": ${(wr.raw && wr.raw.error) || 'refused'}`);
   if (!wr.ok) throw new Error(`Deactivation failed for "${flow.MasterLabel}": accepted but the org still shows an active version on re-read`);
+  // History: this flow is now OFF where it was ON — track it so
+  // performDeletion's undo can reactivate it if it never ends up deleted
+  // and is never switched back on below.
+  if (track) track.deactivated.set(flow.Id, flow);
 }
 
-async function deleteOneFlow(flow, done, total) {
+async function deleteOneFlow(flow, done, total, journal, track) {
   const doDelete = async () => {
     // confirmed-by: onDeleteClick's sftkConfirmDestructive (the only caller
     // of deleteOneFlow, via performDeletion)
@@ -2612,6 +2617,7 @@ async function deleteOneFlow(flow, done, total) {
     // Tooling re-query of the version id is the verify — gone = ok.
     const wr = await sftkWriteVerified({
       describe: `${flow.MasterLabel} v${flow.VersionNumber}`,
+      journal,
       write: () => sendBg({ type: 'SF_TOOLING_DELETE', orgUrl, sid, sobject: 'Flow', id: flow.Id }),
       verify: async () => {
         const q = await sendBg({ type: 'SF_QUERY', orgUrl, sid, tooling: true, _suppressError: true,
@@ -2622,6 +2628,9 @@ async function deleteOneFlow(flow, done, total) {
     });
     if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
     if (!wr.ok) throw new Error('deleted, but the org still shows this flow version on re-read');
+    // History: a deleted flow version is gone for good — no undo can bring
+    // it back. Tracked so the journal's undo can say which are permanent.
+    if (track) track.deleted.add(flow.Id);
   };
 
   if (flow.Status !== 'Active') {
@@ -2637,7 +2646,7 @@ async function deleteOneFlow(flow, done, total) {
 
   // Step 2: deactivate via FlowDefinition, then retry
   updateProgressBar(done, total, `Deactivating: ${flow.MasterLabel} v${flow.VersionNumber}...`);
-  await deactivateFlow(flow);
+  await deactivateFlow(flow, journal, track);
   await wait(800);
 
   updateProgressBar(done, total, `Deleting: ${flow.MasterLabel} v${flow.VersionNumber}...`);
@@ -2655,6 +2664,7 @@ async function deleteOneFlow(flow, done, total) {
       // re-query of this exact version's Status is the verify.
       const wr = await sftkWriteVerified({
         describe: `${flow.MasterLabel} reactivation`,
+        journal,
         write: () => sendBg({ type: 'SF_PATCH', orgUrl, sid,
           path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${flow.DefinitionId}`,
           body: { Metadata: { activeVersionNumber: flow.VersionNumber } } }),
@@ -2667,7 +2677,7 @@ async function deleteOneFlow(flow, done, total) {
       });
       if (!wr.accepted) back = ` It was switched OFF for the attempt and could NOT be switched back on (${(wr.raw && wr.raw.error) || 'refused'}) — switch it on in ⏻ Flow switches.`;
       else if (!wr.ok) back = ` It was switched OFF for the attempt and could NOT be switched back on (accepted, but not confirmed active on re-read) — switch it on in ⏻ Flow switches.`;
-      else back = ' It was switched OFF for the attempt and is switched back ON.';
+      else { back = ' It was switched OFF for the attempt and is switched back ON.'; if (track) track.reactivated.add(flow.Id); }
     } catch (e2) {
       back = ` It was switched OFF for the attempt and could NOT be switched back on (${e2.message || e2}) — switch it on in ⏻ Flow switches.`;
     }
@@ -2684,6 +2694,14 @@ async function performDeletion(toDelete, toDeactivate) {
   const errors = [];
   const successes = [];
 
+  // History (sftk-history.js): one journal for this whole Delete button
+  // press. deleteOneFlow / deactivateFlow write into it as they go; the
+  // undo (built in the finally below) reactivates any flow left switched
+  // off when it was never actually deleted — a deleted version itself has
+  // no undo (Tooling deletes skip the Recycle Bin).
+  const journal = sftkHistoryBegin({ tool: 'Flow delete', title: `🗑 ${total} flow version${total === 1 ? '' : 's'}`, orgUrl });
+  const track = { deleted: new Set(), deactivated: new Map(), reactivated: new Set() };
+
   showProgressPanel(true);
   const statusMessages = [...STATUS_MESSAGES];
   let msgIdx = 0;
@@ -2693,11 +2711,12 @@ async function performDeletion(toDelete, toDeactivate) {
     if (el) el.textContent = statusMessages[msgIdx];
   }, 1500);
 
+  try {
   for (const flow of toDelete) {
     updateProgressBar(deleted, total, `Deleting: ${flow.MasterLabel} v${flow.VersionNumber}...`);
 
     try {
-      await deleteOneFlow(flow, deleted, total);
+      await deleteOneFlow(flow, deleted, total, journal, track);
       deleted++;
       successes.push(flow);
       selectedIds.delete(flow.Id);
@@ -2722,7 +2741,7 @@ async function performDeletion(toDelete, toDeactivate) {
     for (const e of again) {
       updateProgressBar(deleted, total, `Retrying: ${e.flow.MasterLabel} v${e.flow.VersionNumber} (its callers are gone now)...`);
       try {
-        await deleteOneFlow(e.flow, deleted, total);
+        await deleteOneFlow(e.flow, deleted, total, journal, track);
         deleted++; successes.push(e.flow); selectedIds.delete(e.flow.Id);
         errors.splice(errors.indexOf(e), 1); progressed = true;
       } catch (e2) {
@@ -2731,6 +2750,27 @@ async function performDeletion(toDelete, toDeactivate) {
       }
     }
     if (!progressed) break;
+  }
+  } finally {
+    // Undo: only a flow left DEACTIVATED (never deleted, never switched
+    // back on by the reactivation rescue above) has a previous state worth
+    // restoring — reactivate it. A deleted flow version is gone for good.
+    const stillOff = [...track.deactivated.values()].filter(f => !track.deleted.has(f.Id) && !track.reactivated.has(f.Id));
+    const steps = stillOff.map(f => ({
+      describe: `${f.MasterLabel} v${f.VersionNumber}: switch back ON`,
+      // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+      msg: { type: 'SF_PATCH', path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${f.DefinitionId}`,
+        body: { Metadata: { activeVersionNumber: f.VersionNumber } } },
+      verify: { query: `SELECT Id FROM Flow WHERE DefinitionId = '${f.DefinitionId}' AND VersionNumber = ${Number(f.VersionNumber) || 0} AND Status = 'Active'`,
+        tooling: true, count: 1,
+        text: { ok: `${f.MasterLabel} v${f.VersionNumber}: active again — verified by re-reading the org`,
+                bad: `${f.MasterLabel} v${f.VersionNumber}: accepted by Salesforce, but the org still does not show it active` } },
+    }));
+    await sftkHistoryEnd(journal, {
+      undo: steps.length
+        ? { steps, note: track.deleted.size ? `${track.deleted.size} flow version(s) were deleted permanently and cannot be restored` : '' }
+        : { none: 'deleted flow versions cannot be re-created' },
+    });
   }
 
   clearInterval(msgInterval);

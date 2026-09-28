@@ -1131,12 +1131,22 @@ const UserCopy = (() => {
     // re-reading the org — PermissionSetAssignment / GroupMember / User by
     // Id — never trusted from the write's own answer alone.
 
+    // History (sftk-history.js): one journal for this whole Copy run — the
+    // undo (built in the finally below) deletes every PermissionSetAssignment
+    // / GroupMember row this run confirmed it created, and puts the target
+    // user's PREVIOUS profile back.
+    const prevProfileId = (targetUser.Profile && targetUser.Profile.Id) || targetUser.ProfileId || null;
+    const journal = sftkHistoryBegin({ tool: 'Copy Permissions', title: `📋 Copy access: ${sourceUser.Name} → ${targetUser.Name}`, orgUrl: _orgUrl });
+    const createdRows = [];   // [{ sobject: 'PermissionSetAssignment'|'GroupMember', id }]
+    try {
+
     // confirmed-by: executeCopy's sftkConfirmDestructive above (the "Copy
     // access" dialog) — every write below runs only after it resolves true
     // 1. Profile
     if (doProfile) {
       const wr = await sftkWriteVerified({
         describe: 'profile',
+        journal,
         write: () => bg({
           type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
           path: `services/data/v62.0/sobjects/User/${targetUser.Id}`,
@@ -1158,7 +1168,8 @@ const UserCopy = (() => {
     // 2. Permission Sets — one write per set, ONE re-read for the whole
     // batch (verifyAll).
     if (psIds.length) {
-      const batch = await sftkWriteVerifiedAll(psIds.map(psId => ({
+      const psCreatedIds = new Array(psIds.length).fill(null);
+      const batch = await sftkWriteVerifiedAll(psIds.map((psId, i) => ({
         describe: psId,
         write: async () => {
           const r = await bg({
@@ -1166,10 +1177,10 @@ const UserCopy = (() => {
             path: 'services/data/v62.0/sobjects/PermissionSetAssignment',
             body: { AssigneeId: targetUser.Id, PermissionSetId: psId }
           });
-          done++; tickProgress();
-          return r;
+          if (r && r.id) psCreatedIds[i] = r.id;
+          done++; tickProgress(); return r;
         },
-      })), {
+      })), { journal,
         verifyAll: async results => {
           const ids = psIds.filter((id, i) => results[i] && results[i].accepted);
           if (!ids.length) return [];
@@ -1182,7 +1193,7 @@ const UserCopy = (() => {
       });
       psIds.forEach((psId, i) => {
         const r = batch.results[i];
-        if (r.ok) { psOk++; return; }
+        if (r.ok) { psOk++; if (psCreatedIds[i]) createdRows.push({ sobject: 'PermissionSetAssignment', id: psCreatedIds[i] }); return; }
         const name = sourcePermSets.find(p => p.PermissionSetId === psId)?.PermissionSet?.Label || psId;
         errors.push(`Permission set "${name}": ${friendlyMsg((r.raw && r.raw.error) || r.text || 'not confirmed on re-read')}`);
       });
@@ -1194,7 +1205,8 @@ const UserCopy = (() => {
     // follow through to the user. One re-read for the whole batch.
     // confirmed-by: executeCopy's sftkConfirmDestructive above
     if (psgPicks.length) {
-      const batch = await sftkWriteVerifiedAll(psgPicks.map(g => ({
+      const psgCreatedIds = new Array(psgPicks.length).fill(null);
+      const batch = await sftkWriteVerifiedAll(psgPicks.map((g, i) => ({
         describe: g.id,
         write: async () => {
           const r = await bg({
@@ -1202,10 +1214,10 @@ const UserCopy = (() => {
             path: 'services/data/v62.0/sobjects/PermissionSetAssignment',
             body: { AssigneeId: targetUser.Id, PermissionSetGroupId: g.id }
           });
-          done++; tickProgress();
-          return r;
+          if (r && r.id) psgCreatedIds[i] = r.id;
+          done++; tickProgress(); return r;
         },
-      })), {
+      })), { journal,
         verifyAll: async results => {
           const ids = psgPicks.filter((g, i) => results[i] && results[i].accepted).map(g => g.id);
           if (!ids.length) return [];
@@ -1218,7 +1230,7 @@ const UserCopy = (() => {
       });
       psgPicks.forEach((g, i) => {
         const r = batch.results[i];
-        if (r.ok) psgResults.push({ label: g.label, ok: true, msg: '' });
+        if (r.ok) { psgResults.push({ label: g.label, ok: true, msg: '' }); if (psgCreatedIds[i]) createdRows.push({ sobject: 'PermissionSetAssignment', id: psgCreatedIds[i] }); }
         else psgResults.push({ label: g.label, ok: false, msg: friendlyMsg((r.raw && r.raw.error) || r.text || 'not confirmed on re-read') });
       });
     }
@@ -1226,7 +1238,8 @@ const UserCopy = (() => {
     // confirmed-by: executeCopy's sftkConfirmDestructive above
     // 4. Public Groups — one re-read for the whole batch.
     if (groupIds.length) {
-      const batch = await sftkWriteVerifiedAll(groupIds.map(groupId => ({
+      const grpCreatedIds = new Array(groupIds.length).fill(null);
+      const batch = await sftkWriteVerifiedAll(groupIds.map((groupId, i) => ({
         describe: groupId,
         write: async () => {
           const r = await bg({
@@ -1234,10 +1247,10 @@ const UserCopy = (() => {
             path: 'services/data/v62.0/sobjects/GroupMember',
             body: { GroupId: groupId, UserOrGroupId: targetUser.Id }
           });
-          done++; tickProgress();
-          return r;
+          if (r && r.id) grpCreatedIds[i] = r.id;
+          done++; tickProgress(); return r;
         },
-      })), {
+      })), { journal,
         verifyAll: async results => {
           const ids = groupIds.filter((id, i) => results[i] && results[i].accepted);
           if (!ids.length) return [];
@@ -1250,7 +1263,7 @@ const UserCopy = (() => {
       });
       groupIds.forEach((groupId, i) => {
         const r = batch.results[i];
-        if (r.ok) { grpOk++; return; }
+        if (r.ok) { grpOk++; if (grpCreatedIds[i]) createdRows.push({ sobject: 'GroupMember', id: grpCreatedIds[i] }); return; }
         const name = sourceGroups.find(g => g.GroupId === groupId)?.Group?.Name || groupId;
         errors.push(`Group "${name}": ${friendlyMsg((r.raw && r.raw.error) || r.text || 'not confirmed on re-read')}`);
       });
@@ -1262,6 +1275,7 @@ const UserCopy = (() => {
       const patchKeys = Object.keys(userPatch);
       const wr = await sftkWriteVerified({
         describe: 'user fields',
+        journal,
         write: () => bg({
           type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
           path: `services/data/v62.0/sobjects/User/${targetUser.Id}`,
@@ -1291,6 +1305,37 @@ const UserCopy = (() => {
         fieldsOk = settingCount > 0;
       }
       done++; tickProgress();
+    }
+
+    } finally {
+      // Undo: delete every permission-set / group assignment row this run
+      // CONFIRMED it created, and put the target's previous profile back —
+      // nothing else here (user permissions / locale fields) is undoable
+      // per-field without capturing every old value, which this run does not.
+      const steps = createdRows.map(row => ({
+        describe: `${row.sobject === 'GroupMember' ? 'Remove from group' : 'Remove permission set assignment'} (${row.id})`,
+        // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+        msg: { type: 'SF_REST_DELETE', sobject: row.sobject, id: row.id },
+        verify: { query: `SELECT Id FROM ${row.sobject} WHERE Id = '${row.id}'`, tooling: false, count: 0,
+          text: { ok: `${row.sobject} assignment removed — verified by re-reading the org`,
+                  bad: `accepted by Salesforce, but the org still shows this ${row.sobject} row` } },
+      }));
+      if (profileOk && prevProfileId) {
+        steps.push({
+          describe: `${targetUser.Name}: restore the previous profile`,
+          // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+          msg: { type: 'SF_PATCH', path: `services/data/v62.0/sobjects/User/${targetUser.Id}`, body: { ProfileId: prevProfileId } },
+          verify: { query: `SELECT ProfileId FROM User WHERE Id = '${targetUser.Id}'`, tooling: false,
+            pick: 'records.0', field: 'ProfileId', equals: prevProfileId,
+            text: { ok: `${targetUser.Name}: previous profile restored — verified by re-reading the org`,
+                    bad: `${targetUser.Name}: accepted by Salesforce, but the org still shows the new profile` } },
+        });
+      }
+      await sftkHistoryEnd(journal, {
+        undo: steps.length
+          ? { steps, note: (permsOk > 0 || fieldsOk) ? 'user permission / locale-timezone fields changed by this run are not undoable from here — set them back by hand' : '' }
+          : { none: 'nothing was confirmed written, so there is nothing to undo' },
+      });
     }
 
     // Hide the progress block and restore its default content for the

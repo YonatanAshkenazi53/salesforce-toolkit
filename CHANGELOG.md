@@ -117,6 +117,15 @@ extensions containing root files that start with `_`).
   An org whose type cannot be read is treated as production. Three actions that had no
   confirmation at all now ask: adding a Lightning page assignment, deleting debug logs one by
   one or by selection, and the Field Cleaner's strip, deprecate, undo and restore.
+- **Every tool change is in History, with ↩ Undo.** A picklist value deactivated, a flow's API
+  version changed, a flow switched off, a permission copied, a licence toggled, a page assigned,
+  a trace flag set: each now has an entry on Data Studio's History page saying what was written
+  and what the org showed afterwards, next to the deployments. ↩ Undo writes the earlier state
+  back (the remembered flow version, the previous value set, the row that was created…), asks
+  with the same dialog (the word UNDO, the org's name for production), re-reads the org before
+  saying "undone", and records the undo as its own entry. Where a change cannot be reversed —
+  a deleted flow version, a deleted debug log, a Draft rewritten in place — the entry says so
+  in plain words instead of offering a button.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run

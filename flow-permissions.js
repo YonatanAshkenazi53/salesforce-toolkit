@@ -655,13 +655,23 @@ const FlowPermissions = (() => {
     if (summary) summary.innerHTML = sftkCatSm(`Deploying flow access to ${permSets.length} permission set(s)…`);
 
     const flowApiNames = flows.map(f => f.DeveloperName).filter(Boolean);
+    // History (sftk-history.js): one journal for this Assign click. Snapshot
+    // which (flow, permission set) pairs ALREADY had a grant before the
+    // deploy — the deploy is additive, so re-running it over an existing
+    // grant must not make the undo delete something this run didn't create.
+    const journal = sftkHistoryBegin({ tool: 'Flow Access', title: `🔑 Flow access: ${flows.length} flow(s) → ${permSets.length} permission set(s)`, orgUrl: _orgUrl });
+    const before = new Set();
+    for (const f of flows) for (const g of (_accessMap[f.Id] || [])) if (permSets.some(ps => ps.Id === g.permSetId)) before.add(`${f.Id}|${g.permSetId}`);
+    let wr;
+    try {
     // confirmed-by: onAssign's showConfirmModal (the only caller of doAssign)
     // The write discipline (sftk-write.js): the deploy is the write; the
     // verify is the same SetupEntityAccess read loadData() already performs
     // — never the deploy's own answer (a REST insert here used to return
     // HTTP 200 with NO usable grant, which is exactly what this checks for).
-    const wr = await sftkWriteVerified({
+    wr = await sftkWriteVerified({
       describe: `flow access for ${permSets.length} permission set(s)`,
+      journal,
       write: () => deployFlowAccess(permSets, flowApiNames),
       verify: async () => {
         // Reload so the SetupEntityAccess read (now matched by flow Id)
@@ -675,6 +685,25 @@ const FlowPermissions = (() => {
       },
     });
     if (!wr.accepted) await loadData();   // verify never ran — refresh the table anyway
+    } finally {
+      // Undo: delete only the SetupEntityAccess rows this run CREATED (not
+      // in `before`) and that the re-read now confirms exist.
+      const steps = [];
+      for (const f of flows) for (const g of (_accessMap[f.Id] || [])) {
+        if (!permSets.some(ps => ps.Id === g.permSetId)) continue;
+        if (before.has(`${f.Id}|${g.permSetId}`)) continue;
+        if (!g.accessId) continue;
+        steps.push({
+          describe: `${f.MasterLabel} → ${g.label}: remove flow access`,
+          // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+          msg: { type: 'SF_REST_DELETE', sobject: 'SetupEntityAccess', id: g.accessId },
+          verify: { query: `SELECT Id FROM SetupEntityAccess WHERE Id = '${g.accessId}'`, tooling: false, count: 0,
+            text: { ok: `${f.MasterLabel} → ${g.label}: flow access removed — verified by re-reading the org`,
+                    bad: `${f.MasterLabel} → ${g.label}: accepted by Salesforce, but the org still shows this grant` } },
+        });
+      }
+      await sftkHistoryEnd(journal, { undo: steps.length ? { steps } : { none: 'nothing was confirmed granted, so there is nothing to undo' } });
+    }
 
     if (btn) btn.textContent = '🔑 Assign';
     if (summary) summary.textContent = '';

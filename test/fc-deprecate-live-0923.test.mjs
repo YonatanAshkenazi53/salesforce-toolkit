@@ -18,7 +18,11 @@ const between = (a, b) => { const i = SRC.indexOf(a); expect(i, a).toBeGreaterTh
 describe('deprecateField — a grant Salesforce refuses to strip is recorded, not fatal', () => {
   const fn = between('async function deprecateField(', 'async function undoDeprecation(');
   it('splits the collection results into stripped / failed by position and records both', () => {
-    expect(fn).toMatch(/const flsFailed = \[\];\s*const flsStripped = \[\];/);
+    // flsStripped now starts as [] in the hoisted let-block (visible to the
+    // History journal's finally) instead of a const right above flsFailed —
+    // Phase 3 (History with undo) moved its declaration up.
+    expect(fn).toMatch(/flsStripped = \[\]/);
+    expect(fn).toMatch(/const flsFailed = \[\];/);
     expect(fn).toMatch(/flsSnapshot\.forEach\(\(f, i\) => \{\s*const x = results\[i\];\s*if \(x && x\.success\) flsStripped\.push\(f\);/);
     expect(fn).toMatch(/at: Date\.now\(\), fieldId, prevLabel, prevDesc, fls: flsStripped, flsFailed \}/);
     expect(fn).not.toContain('FLS strip(s) failed — field renamed but still partially visible');

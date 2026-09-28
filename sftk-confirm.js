@@ -68,10 +68,11 @@ function sftkConfirmDestructive(opts) {
   };
   // Callers with a nuance the three presets can't express (e.g. custom fields:
   // restorable from Setup's "Deleted Fields" for 15 days, THEN permanent) pass
-  // revOverride: { html, needsCheckbox, cls? }.
+  // revOverride: { html, needsCheckbox, cls?, ack? } — ack: the acknowledgement's
+  // own words when "permanent" is not the truth (an ↩ Undo writes a state back).
   const rev = opts.revOverride
     ? { cls: opts.revOverride.cls || 'sftk-rev-permanent', html: opts.revOverride.html,
-        needsCheckbox: opts.revOverride.needsCheckbox !== false }
+        needsCheckbox: opts.revOverride.needsCheckbox !== false, ack: opts.revOverride.ack || '' }
     : (REV[reversibility] || REV.permanent);
 
   const MAX_SHOWN = 12;
@@ -105,7 +106,7 @@ function sftkConfirmDestructive(opts) {
         ${rev.needsCheckbox ? `
           <label class="sftk-confirm-ack">
             <input type="checkbox" id="sftkConfirmAck">
-            I understand this is permanent
+            ${esc(rev.ack || 'I understand this is permanent')}
           </label>` : ''}
         ${word ? `
           <label class="sftk-confirm-ack sftk-confirm-word">Type <code>${esc(word)}</code> to confirm:

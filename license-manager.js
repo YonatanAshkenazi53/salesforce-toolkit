@@ -420,6 +420,11 @@ const LicenseManager = (() => {
     let doneCount = 0;
     let i = 0;
     const wantActive = !isDeactivate;
+    // History (sftk-history.js): one journal for this whole button press —
+    // the undo (below) flips IsActive back for every user this run
+    // CONFIRMED it changed. A re-activation can be refused on licence caps;
+    // the undo's own re-read verdict says so when it happens.
+    const journal = sftkHistoryBegin({ tool: 'License Manager', title: `${icon} ${verb} ${selected.length} user${selected.length > 1 ? 's' : ''}`, orgUrl: _orgUrl });
     // confirmed-by: the sftkConfirmDestructive above (the only caller of this batch)
     // The write discipline (sftk-write.js): one PATCH per user, ONE re-read
     // for the whole batch (verifyAll) — User.IsActive by Id, never the
@@ -428,15 +433,14 @@ const LicenseManager = (() => {
       describe: u.Name,
       write: () => {
         i++;
-        loadingEl.innerHTML = sftkCatSm(`${verbIng} ${i}/${selected.length}…`);
-        loadingEl.style.display = '';
+        loadingEl.innerHTML = sftkCatSm(`${verbIng} ${i}/${selected.length}…`); loadingEl.style.display = '';
         return bg({
           type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
           path: `services/data/v62.0/sobjects/User/${u.Id}`,
           body: { IsActive: wantActive }
         });
       },
-    })), {
+    })), { journal,
       verifyAll: async results => {
         const ids = selected.filter((u, idx) => results[idx] && results[idx].accepted).map(u => u.Id);
         if (!ids.length) return [];
@@ -454,6 +458,19 @@ const LicenseManager = (() => {
       errors.push(`${u.Name}: ${fe.message}`);
       if (fe.hint) errorHints.add(fe.hint);
     });
+    {
+      const changed = selected.filter((u, idx) => batch.results[idx] && batch.results[idx].ok);
+      const steps = changed.map(u => ({
+        describe: `${u.Name}: switch back to ${wantActive ? 'inactive' : 'active'}`,
+        // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+        msg: { type: 'SF_PATCH', path: `services/data/v62.0/sobjects/User/${u.Id}`, body: { IsActive: !wantActive } },
+        verify: { query: `SELECT IsActive FROM User WHERE Id = '${u.Id}'`, tooling: false,
+          pick: 'records.0', field: 'IsActive', equals: !wantActive,
+          text: { ok: `${u.Name}: ${wantActive ? 'deactivated' : 'reactivated'} again — verified by re-reading the org`,
+                  bad: `${u.Name}: accepted by Salesforce, but the org still shows the other state${wantActive ? ' (re-activation can be refused when the org is at its licence cap)' : ''}` } },
+      }));
+      await sftkHistoryEnd(journal, { undo: steps.length ? { steps } : { none: 'nothing was confirmed changed, so there is nothing to undo' } });
+    }
 
     loadingEl.style.display = 'none';
     loadingEl.innerHTML = sftkCatSm('Loading users…');  // restore for doSearch()
@@ -621,6 +638,9 @@ const LicenseManager = (() => {
     const errorHints = new Set();
     let doneCount = 0;
     let i = 0;
+    // History (sftk-history.js): one journal for this whole Apply — the
+    // undo (below) puts each confirmed user's PREVIOUS ProfileId back.
+    const journal = sftkHistoryBegin({ tool: 'License Manager', title: `🔑 Change License / Profile — ${selected.length} user${selected.length > 1 ? 's' : ''}`, orgUrl: _orgUrl });
     // confirmed-by: the sftkConfirmDestructive above (the only caller)
     // The write discipline (sftk-write.js): one PATCH per user, ONE
     // re-read for the whole batch (verifyAll) — User.ProfileId by Id,
@@ -636,7 +656,7 @@ const LicenseManager = (() => {
           body: { ProfileId: profileId }
         });
       },
-    })), {
+    })), { journal,
       verifyAll: async results => {
         const ids = selected.filter((u, idx) => results[idx] && results[idx].accepted).map(u => u.Id);
         if (!ids.length) return [];
@@ -654,6 +674,19 @@ const LicenseManager = (() => {
       errors.push(`${u.Name}: ${fe.message}`);
       if (fe.hint) errorHints.add(fe.hint);
     });
+    {
+      const changed = selected.filter((u, idx) => batch.results[idx] && batch.results[idx].ok);
+      const steps = changed.filter(u => u.Profile && u.Profile.Id).map(u => ({
+        describe: `${u.Name}: restore the previous profile`,
+        // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+        msg: { type: 'SF_PATCH', path: `services/data/v62.0/sobjects/User/${u.Id}`, body: { ProfileId: u.Profile.Id } },
+        verify: { query: `SELECT ProfileId FROM User WHERE Id = '${u.Id}'`, tooling: false,
+          pick: 'records.0', field: 'ProfileId', equals: u.Profile.Id,
+          text: { ok: `${u.Name}: previous profile restored — verified by re-reading the org`,
+                  bad: `${u.Name}: accepted by Salesforce, but the org still shows the new profile` } },
+      }));
+      await sftkHistoryEnd(journal, { undo: steps.length ? { steps } : { none: 'nothing was confirmed changed, so there is nothing to undo' } });
+    }
 
     // Build result first — doSearch() hides #lmResult, so refresh then show
     let resultMsg = '';

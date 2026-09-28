@@ -5,6 +5,7 @@
 //   PICK=<regex>      which flow API names to tick (default ^SFTK_AV_Test)
 //   TARGET=67.0       target API version option (default: the newest option offered)
 //   SCAN_ONLY=1       stop after the confirmation text (nothing written)
+import { undoNewest } from './_undo.mjs';   // UNDO=1: Data Studio › History › ↩ Undo the newest entry afterwards (TYPE_IT=1 for a guarded org)
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 export default async function (h) {
   for (const o of (process.env.ORGS || 'npc').split(',')) await h.login(o.trim());
@@ -55,4 +56,5 @@ export default async function (h) {
   h.log('LOG:', await dump(h, '#depAvLog', 4000));
   h.log('PROG:', await dump(h, '#depAvApplyProg', 100));
   await h.shot(h.shots + '/apiver-log.png');
+  if (process.env.UNDO === '1') await undoNewest(h);
 }
