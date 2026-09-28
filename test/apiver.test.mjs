@@ -331,7 +331,7 @@ describe('⚙ apply — what a checkOnly deploy against a real org taught us (20
   });
 
   it('never says "activated" from the deploy result — it re-reads the org, activates where needed, and re-reads again', () => {
-    expect(fn).toContain('const verdicts = await avVerifyAndActivate(org, changed, target, say)');
+    expect(fn).toContain('const verdicts = await avVerifyAndActivate(org, changed, target, say, journal)');
     expect(fn).not.toContain('(new version activated)');
     expect(fn).toMatch(/tooling\/sobjects\/FlowDefinition\/\$\{c\.defId\}/);
     expect(fn).toMatch(/Metadata: \{ activeVersionNumber: newest\.versionNumber \}/);

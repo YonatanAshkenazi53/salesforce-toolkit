@@ -1052,9 +1052,29 @@ function _pkWireRtMatrix(inv, body) {
 async function _pkApplyRt(inv, diffs) {
   let ok = 0, fail = 0;
   const errs = [];
-  for (const d of diffs) {
-    try { await _pkApplyRtCore(inv, d.rtId, d.adds, d.removes); ok++; }
-    catch (e) { fail++; if (errs.length < 5) errs.push(e.message); }
+  // History (sftk-history.js): one journal for this button press, even
+  // though it can touch several record types — each successful PATCH's
+  // previous assignment becomes one undo step.
+  const journal = sftkHistoryBegin({ tool: 'Picklist Manager',
+    title: `🧩 ${inv.obj}.${inv.field} record-type assignments (${diffs.length} type${diffs.length === 1 ? '' : 's'})`, orgUrl: inv.orgUrl });
+  const applied = [];
+  try {
+    for (const d of diffs) {
+      try { const r = await _pkApplyRtCore(inv, d.rtId, d.adds, d.removes, journal); ok++; applied.push(r); }
+      catch (e) { fail++; if (errs.length < 5) errs.push(e.message); }
+    }
+  } finally {
+    const steps = applied.map(r => ({
+      describe: `${inv.obj}.${inv.field}: write record type ${r.rtName || r.rtId}'s previous assignments back`,
+      // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+      msg: { type: 'SF_PATCH', path: `services/data/v62.0/tooling/sobjects/RecordType/${r.rtId}`, body: { Metadata: r.before } },
+      verify: { query: `SELECT Id, Metadata FROM RecordType WHERE Id = '${r.rtId}'`, tooling: true,
+        pick: 'records.0.Metadata.picklistValues', where: { field: 'picklist', equals: inv.field },
+        field: 'values', notNull: true,
+        text: { ok: `Record type ${r.rtName || r.rtId}: previous ${inv.field} assignments written back — verified by re-reading the record type`,
+                bad: `Record type ${r.rtName || r.rtId}: the previous assignments were accepted, but the record type could not be re-read to confirm ${inv.field} is still assigned` } },
+    }));
+    await sftkHistoryEnd(journal, { undo: steps.length ? { steps } : { none: 'nothing was applied' } });
   }
   showToast(fail === 0
     ? `✅ Updated ${ok} record type(s)`
@@ -1063,9 +1083,11 @@ async function _pkApplyRt(inv, diffs) {
 }
 
 // Add/remove a field's values on one record type via its Tooling Metadata.
-async function _pkApplyRtCore(inv, rtId, adds, removes) {
+async function _pkApplyRtCore(inv, rtId, adds, removes, journal) {
   const meta = await sendBg({ type: 'SF_TOOLING_GET', orgUrl: inv.orgUrl, sid: inv.sid, sobject: 'RecordType', id: rtId });
   if (meta?.error || !meta?.Metadata) throw new Error(meta?.error || 'RecordType metadata unavailable');
+  // History (sftk-history.js): the undo writes this snapshot back.
+  const before = JSON.parse(JSON.stringify(meta.Metadata));
   const md = JSON.parse(JSON.stringify(meta.Metadata));
   md.picklistValues = md.picklistValues || [];
   let entry = md.picklistValues.find(p => p.picklist === inv.field || p.picklist === inv.devName);
@@ -1086,6 +1108,7 @@ async function _pkApplyRtCore(inv, rtId, adds, removes) {
     describe: `${inv.obj}.${inv.field} on record type ${rtId}`,
     write: () => sendBg({ type: 'SF_PATCH', orgUrl: inv.orgUrl, sid: inv.sid,
       path: `services/data/v62.0/tooling/sobjects/RecordType/${rtId}`, body: { Metadata: sftkMetaForPatch(md) } }),
+    journal: journal || null,   // history-by: the caller's entry (RT matrix: _pkApplyRt; sync plan: _pkRunSyncPlan)
     verify: async () => {
       const m2 = await sendBg({ type: 'SF_TOOLING_GET', orgUrl: inv.orgUrl, sid: inv.sid, sobject: 'RecordType', id: rtId });
       if (m2?.error || !m2?.Metadata) return { ok: false, text: `${inv.obj}.${inv.field} on record type ${rtId}: accepted by Salesforce, but the org could not be re-read to confirm it (${m2?.error || 'no metadata'})` };
@@ -1096,7 +1119,7 @@ async function _pkApplyRtCore(inv, rtId, adds, removes) {
     },
   });
   if (!w.ok) throw new Error(w.raw?.error || w.text || 'RecordType update refused');
-  return true;
+  return { ok: true, rtId, before };
 }
 
 // ── Automation-impact panel data ────────────────────────────────
@@ -1361,7 +1384,7 @@ async function _pkOpenWizard(idx, mode) {
 // Core: fetch + remap/clear records in 200-batches. No DOM / history / toast —
 // reused by the single-org runner AND the multi-org bulk apply (P2).
 // Returns { updated, failed, errors }.
-async function _pkDataFixCore(ctx, value, fixMode, target, onProgress) {
+async function _pkDataFixCore(ctx, value, fixMode, target, onProgress, journal) {
   let updated = 0, failed = 0;
   const errors = [];
   const lit = soqlStrLit(value);
@@ -1371,6 +1394,13 @@ async function _pkDataFixCore(ctx, value, fixMode, target, onProgress) {
   const res = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: ctx.orgUrl, sid: ctx.sid, tooling: false, query: q });
   if (res.error) throw new Error(res.error);
   const recs = res.records || [];
+  // History (sftk-history.js): the before-value per record, captured BEFORE
+  // any write, so a CONFIRMED change (never an attempted one) can be written
+  // back. Capped at 5,000 — beyond that the entry says why there is no undo
+  // list instead of carrying a huge one.
+  const beforeMap = new Map(recs.map(r => [r.Id, ctx.isMulti ? (r[ctx.field] || null) : value]));
+  const undoRecords = [];
+  const UNDO_CAP = 5000;
   for (let i = 0; i < recs.length; i += 200) {
     const chunk = recs.slice(i, i + 200).map(r => ({
       attributes: { type: ctx.obj }, Id: r.Id,
@@ -1387,6 +1417,7 @@ async function _pkDataFixCore(ctx, value, fixMode, target, onProgress) {
     const w = await sftkWriteVerified({
       describe: `${ctx.obj}.${ctx.field} data fix`,
       write: () => sendBg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: ctx.orgUrl, sid: ctx.sid, records: chunk }),
+      journal: journal || null,   // history-by: the caller's entry (single: _pkRunDataFix; bulk: _pkApplyBulk; sync: _pkRunSyncPlan)
       verify: async (writeRes) => {
         const okIds = (Array.isArray(writeRes) ? writeRes : []).filter(r => r.success).map(r => r.id);
         if (!okIds.length) return { ok: true, detail: [] };
@@ -1408,8 +1439,10 @@ async function _pkDataFixCore(ctx, value, fixMode, target, onProgress) {
     if (!w.accepted) throw new Error(w.raw?.error || w.text);
     const stillHasSet = new Set(w.detail || []);
     (Array.isArray(w.raw) ? w.raw : []).forEach(r => {
-      if (r.success && !stillHasSet.has(r.id)) updated++;
-      else {
+      if (r.success && !stillHasSet.has(r.id)) {
+        updated++;
+        if (undoRecords.length < UNDO_CAP) undoRecords.push({ Id: r.id, [ctx.field]: beforeMap.get(r.id) ?? null });
+      } else {
         failed++;
         if (errors.length < 20) errors.push(r.success
           ? 'accepted by Salesforce, but the org still shows the old value'
@@ -1418,7 +1451,30 @@ async function _pkDataFixCore(ctx, value, fixMode, target, onProgress) {
     });
     onProgress?.(Math.min(i + 200, recs.length), recs.length, failed);
   }
-  return { updated, failed, errors };
+  // History (sftk-history.js): undo restores the captured before-values, in
+  // 200-record steps, each verified by re-reading exactly those Ids.
+  let undo;
+  if (updated > UNDO_CAP) {
+    undo = { none: `more than 5,000 records were changed — too many to keep an undo copy on this PC (${updated.toLocaleString()} changed)` };
+  } else if (!undoRecords.length) {
+    undo = { none: 'no records were changed' };
+  } else {
+    const steps = [];
+    for (let i = 0; i < undoRecords.length; i += 200) {
+      const chunk = undoRecords.slice(i, i + 200);
+      steps.push({
+        describe: `${ctx.obj}.${ctx.field}: restore ${chunk.length} record(s) to “${value}”${undoRecords.length > 200 ? ` (${Math.floor(i / 200) + 1}/${Math.ceil(undoRecords.length / 200)})` : ''}`,
+        // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+        msg: { type: 'SF_COLLECTIONS_UPDATE', records: chunk.map(r => ({ attributes: { type: ctx.obj }, Id: r.Id, [ctx.field]: r[ctx.field] })) },
+        verify: { query: `SELECT Id FROM ${ctx.obj} WHERE Id IN (${chunk.map(r => soqlStrLit(r.Id)).join(',')}) AND ${ctx.isMulti ? `${ctx.field} INCLUDES (${lit})` : `${ctx.field} = ${lit}`}`,
+          tooling: false, count: chunk.length,
+          text: { ok: `${ctx.obj}.${ctx.field}: ${chunk.length} record(s) restored to “${value}” — verified by re-reading the org`,
+                  bad: `${ctx.obj}.${ctx.field}: the restore was accepted, but the org doesn't show all ${chunk.length} record(s) back on “${value}”` } },
+      });
+    }
+    undo = { steps };
+  }
+  return { updated, failed, errors, undo };
 }
 
 // Single-org data fix — wraps the core with progress DOM, a history entry and a
@@ -1430,11 +1486,19 @@ async function _pkRunDataFix(value, fixMode, target, ctx = _pkInv) {
   prog.innerHTML = window.sftkCatSm ? sftkCatSm('Fetching records…') : 'Fetching records…';
   body?.prepend(prog);
   const startedAt = new Date().toISOString();
+  // History (sftk-history.js): one journal for this fix action; the legacy
+  // `_history.push({ kind: 'picklist-fix' … })` summary below stays as is —
+  // it's the pre-existing per-run log, this journal is the new undoable entry.
+  const journal = sftkHistoryBegin({ tool: 'Picklist Manager',
+    title: `🔧 ${ctx.obj}.${ctx.field} “${value}” → ${fixMode === 'remap' ? `“${target}”` : 'cleared'}`, orgUrl: ctx.orgUrl });
+  let undo = { none: 'nothing was changed' };
   try {
-    const { updated, failed, errors } = await _pkDataFixCore(ctx, value, fixMode, target,
+    const r = await _pkDataFixCore(ctx, value, fixMode, target,
       (done, total, f) => { prog.innerHTML = window.sftkCatSm
         ? sftkCatSm(`Fixing… ${done} / ${total} (${f} failed)`)
-        : `Fixing… ${done} / ${total}`; });
+        : `Fixing… ${done} / ${total}`; }, journal);
+    const { updated, failed, errors } = r;
+    undo = r.undo || undo;
     _history.push({
       id: genId('run'), kind: 'picklist-fix',
       profileName: `Picklist fix: ${ctx.obj}.${ctx.field} “${value}” → ${fixMode === 'remap' ? `“${target}”` : 'cleared'}`,
@@ -1453,6 +1517,7 @@ async function _pkRunDataFix(value, fixMode, target, ctx = _pkInv) {
     showToast(`❌ Data fix failed: ${e.message}`, 'error', 7000);
     return false;
   } finally {
+    await sftkHistoryEnd(journal, { undo });
     prog.remove();
   }
 }
@@ -1863,20 +1928,35 @@ async function _pkApplyBulk(values, orgs, mode, fixMode, remap) {
     const startedAt = new Date().toISOString();
     let updated = 0, failed = 0, metaOk = 0, metaFail = 0, metaKept = 0, skippedVals = 0;
     const errors = [];
+    // History (sftk-history.js): one journal per org — this button press can
+    // touch several orgs, and each org's undo only makes sense against that
+    // org. The legacy `_history.push({ kind: 'picklist-fix' … })` below stays.
+    const journal = sftkHistoryBegin({ tool: 'Picklist Manager',
+      title: `${mode === 'delete' ? '🗑' : '⏸'} ${_pkMatrix.obj}.${_pkMatrix.field} bulk ${mode} [${values.join(', ')}] — ${o.label}`, orgUrl: o.orgUrl });
+    const metaUndoSteps = [];
+    const dataUndoSteps = [];
+    let dataUndoNone = '';
 
     for (const val of values) {
       // rawValues === metadata value list (same array ref) — findIndex tracks splices.
       const idx = inv.rawValues.findIndex(v => pkValueName(v) === val);
       if (idx < 0) { skippedVals++; append(`· <strong>${esc(o.label)}</strong>: “${esc(val)}” not present — skipped`); continue; }
       const count = inv.usage.get(val) || 0;
+      // History: capture this value's state before either write touches it.
+      const name = pkValueName(inv.rawValues[idx]);
+      const beforeMeta = sftkMetaForPatch(JSON.parse(JSON.stringify(inv.metadata)));
+      const wasActive = inv.rawValues[idx].isActive !== false;
+      const nameField = ('fullName' in inv.rawValues[idx]) ? 'fullName' : ('valueName' in inv.rawValues[idx]) ? 'valueName' : 'label';
 
       if (fixMode !== 'skip' && count > 0) {
         const hasRemap = fixMode === 'remap' && inv.rawValues.some(v => pkValueName(v) === remap && v.isActive !== false);
         const effMode = hasRemap ? 'remap' : 'clear';
         const target = hasRemap ? remap : null;
         try {
-          const r = await _pkDataFixCore(inv, val, effMode, target, null);
+          const r = await _pkDataFixCore(inv, val, effMode, target, null, journal);
           updated += r.updated; failed += r.failed; errors.push(...r.errors);
+          if (r.undo && Array.isArray(r.undo.steps)) dataUndoSteps.push(...r.undo.steps);
+          else if (r.undo && r.undo.none) dataUndoNone = dataUndoNone ? `${dataUndoNone}; ${r.undo.none}` : r.undo.none;
           if (fixMode === 'remap' && !hasRemap) append(`⚠ <strong>${esc(o.label)}</strong>: remap target “${esc(remap)}” absent here — cleared “${esc(val)}” instead`);
         } catch (e) {
           errors.push(e.message);
@@ -1886,13 +1966,25 @@ async function _pkApplyBulk(values, orgs, mode, fixMode, remap) {
       }
 
       try {
-        const r = await _pkApplyMetadataCore(inv, idx, mode === 'delete' ? { remove: true } : { deactivate: true });
+        const r = await _pkApplyMetadataCore(inv, idx, mode === 'delete' ? { remove: true } : { deactivate: true }, journal);
         metaOk++;
         const keptByOrg = mode === 'delete' && r && r.verified && !r.removed;
         if (keptByOrg) metaKept++;
         // Keep the local value list in sync so later findIndex lookups stay valid.
         if (mode === 'delete' && !keptByOrg) inv.metadata.valueSet.valueSetDefinition.value.splice(idx, 1);
         else inv.metadata.valueSet.valueSetDefinition.value[idx].isActive = false;
+        // History: the undo writes this value's PREVIOUS value set back —
+        // same pattern as the single-value _pkApplyMetadata.
+        metaUndoSteps.push({
+          describe: `${inv.obj}.${inv.field}: write the previous value set back (“${name}” ${wasActive ? 'active' : 'inactive'} again)`,
+          // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+          msg: { type: 'SF_PATCH', path: `services/data/v62.0/tooling/sobjects/CustomField/${inv.fieldId}`, body: { Metadata: beforeMeta } },
+          verify: { query: `SELECT Id, Metadata FROM CustomField WHERE Id = '${inv.fieldId}'`, tooling: true,
+            pick: 'records.0.Metadata.valueSet.valueSetDefinition.value', where: { field: nameField, equals: name },
+            field: 'isActive', ...(wasActive ? { notFalse: true } : { equals: false }),
+            text: { ok: `${inv.obj}.${inv.field} “${name}” is ${wasActive ? 'active' : 'inactive'} again — verified by re-reading the field`,
+                    bad: `${inv.obj}.${inv.field}: the previous value set was accepted, but the field still does not read “${name}” as ${wasActive ? 'active' : 'inactive'}` } },
+        });
       } catch (e) {
         metaFail++; errors.push(e.message);
         append(`❌ <strong>${esc(o.label)}</strong>: metadata “${esc(val)}” failed — ${esc(e.message)}`);
@@ -1907,6 +1999,12 @@ async function _pkApplyBulk(values, orgs, mode, fixMode, remap) {
       sourceOrg: o.orgUrl, targetOrg: o.orgUrl,
       summary: { [_pkMatrix.obj]: { created: 0, failed, updated } },
       errors: pkDedupeErrors(errors),
+    });
+
+    await sftkHistoryEnd(journal, {
+      undo: (metaUndoSteps.length || dataUndoSteps.length)
+        ? { steps: [...metaUndoSteps, ...dataUndoSteps], note: dataUndoNone || undefined }
+        : { none: dataUndoNone || 'nothing was applied in this org' },
     });
 
     append(`${(failed === 0 && metaFail === 0) ? '✅' : '⚠'} <strong>${esc(o.label)}</strong>: ${updated} record(s) fixed, ${metaOk} value(s) ${mode === 'delete' ? (metaKept ? `removed from the list — ${metaKept} kept INACTIVE by Salesforce (its API cannot delete a picklist value; Setup can)` : 'deleted') : 'deactivated'}${failed ? `, ${failed} record failure(s)` : ''}${metaFail ? `, ${metaFail} metadata failure(s)` : ''}${skippedVals ? `, ${skippedVals} absent/skipped` : ''}`);
@@ -1985,8 +2083,17 @@ async function _pkValueSetWizard(ctx, idx, mode, applyFn, reloadFn) {
   const count = ctx.usage.get(name) || 0;
 
   if (mode === 'toggle' && !active) {
-    try { await applyFn(idx, { activate: true }); showToast('▶ Value activated', 'success'); reloadFn(); }
+    // History (sftk-history.js): one journal for this button press; the
+    // core (std/global) returns the undo that writes the value back off.
+    const journal = sftkHistoryBegin({ tool: 'Picklist Manager', title: `▶ ${ctx.obj}.${ctx.field} “${name}” activated`, orgUrl: ctx.orgUrl });
+    let undo = { none: 'nothing was changed' };
+    try {
+      const r = await applyFn(idx, { activate: true }, journal);
+      undo = (r && r.undo) || undo;
+      showToast('▶ Value activated', 'success'); reloadFn();
+    }
     catch (e) { showToast(`❌ ${e.message}`, 'error', 7000); }
+    finally { await sftkHistoryEnd(journal, { undo }); }
     return;
   }
 
@@ -2050,12 +2157,20 @@ async function _pkValueSetWizard(ctx, idx, mode, applyFn, reloadFn) {
     if (!fixOk) return;   // fix failed/partial — leave metadata untouched
   }
   if (mode === 'fix') { reloadFn(); return; }
+  // History (sftk-history.js): a separate journal from the data fix above
+  // (same split _pkOpenWizard uses: _pkRunDataFix journals its own entry).
+  const journal = sftkHistoryBegin({ tool: 'Picklist Manager',
+    title: `${mode === 'delete' ? '🗑' : '⏸'} ${ctx.obj}.${ctx.field} “${name}” ${mode === 'delete' ? 'deleted' : 'deactivated'}`, orgUrl: ctx.orgUrl });
+  let undo = { none: 'nothing was changed' };
   try {
-    await applyFn(idx, mode === 'delete' ? { remove: true } : { deactivate: true });
+    const r = await applyFn(idx, mode === 'delete' ? { remove: true } : { deactivate: true }, journal);
+    undo = (r && r.undo) || undo;
     showToast(mode === 'delete' ? '🗑 Value deleted' : '⏸ Value deactivated', 'success');
   } catch (e) {
     const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
     showToast(`❌ Metadata update failed: ${fe.message}`, 'error', 8000);
+  } finally {
+    await sftkHistoryEnd(journal, { undo });
   }
   reloadFn();
 }
@@ -2155,13 +2270,17 @@ function _pkRenderStandard() {
     title: `Standard picklist ${std.field}`,
     banner: `<div class="ds-pk-banner">🔧 Editing the <strong>${esc(std.svsName)}</strong> standard value set — this affects the value on every object that uses it. <a href="${esc(url)}" target="_blank" rel="noopener">↗ Setup</a></div>`,
     allowDelete: false,   // standard values can't be hard-deleted safely — deactivate only
-    applyFn: (idx, op) => _pkStdApplyCore(std, idx, op),
+    applyFn: (idx, op, journal) => _pkStdApplyCore(std, idx, op, journal),
     reloadFn: () => loadPicklistInventory(),
   });
 }
 
 // StandardValueSet metadata uses `standardValue[].isActive`. Toggle + PATCH back.
-async function _pkStdApplyCore(std, idx, op) {
+async function _pkStdApplyCore(std, idx, op, journal) {
+  // History (sftk-history.js): the undo writes this snapshot back.
+  const before = sftkMetaForPatch(JSON.parse(JSON.stringify(std.metadata)));
+  const wasActive = std.metadata.standardValue[idx].isActive !== false;
+  const nameField = ('fullName' in std.metadata.standardValue[idx]) ? 'fullName' : ('valueName' in std.metadata.standardValue[idx]) ? 'valueName' : 'label';
   const md = JSON.parse(JSON.stringify(std.metadata));
   const list = md.standardValue || [];
   list[idx].isActive = !op.deactivate;   // activate → true, deactivate → false
@@ -2177,6 +2296,7 @@ async function _pkStdApplyCore(std, idx, op) {
     describe: `${std.field} value "${name}"`,
     write: () => sendBg({ type: 'SF_PATCH', orgUrl: std.orgUrl, sid: std.sid,
       path: `services/data/v62.0/tooling/sobjects/StandardValueSet/${std.svsId}`, body: { Metadata: sftkMetaForPatch(md) } }),
+    journal: journal || null,   // history-by: _pkValueSetWizard's journal (the button press)
     verify: async () => {
       const back = await sendBg({ type: 'SF_TOOLING_GET', orgUrl: std.orgUrl, sid: std.sid, sobject: 'StandardValueSet', id: std.svsId, _suppressError: true });
       const list2 = back?.Metadata?.standardValue;
@@ -2189,7 +2309,16 @@ async function _pkStdApplyCore(std, idx, op) {
     },
   });
   if (!w.ok) throw new Error(w.raw?.error || w.text);
-  return true;
+  return { ok: true, undo: { steps: [{
+    describe: `${std.field}: write the previous standard value back (“${name}” ${wasActive ? 'active' : 'inactive'} again)`,
+    // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+    msg: { type: 'SF_PATCH', path: `services/data/v62.0/tooling/sobjects/StandardValueSet/${std.svsId}`, body: { Metadata: before } },
+    verify: { query: `SELECT Id, Metadata FROM StandardValueSet WHERE Id = '${std.svsId}'`, tooling: true,
+      pick: 'records.0.Metadata.standardValue', where: { field: nameField, equals: name },
+      field: 'isActive', ...(wasActive ? { notFalse: true } : { equals: false }),
+      text: { ok: `${std.field} “${name}” is ${wasActive ? 'active' : 'inactive'} again — verified by re-reading the value set`,
+              bad: `${std.field}: the previous value was accepted, but the value set still does not read “${name}” as ${wasActive ? 'active' : 'inactive'}` } },
+  }] } };
 }
 
 // ── P4b: Global value sets (GlobalValueSet) ─────────────────────
@@ -2238,13 +2367,20 @@ function _pkRenderGlobal() {
     title: `Global value set ${gvs.gvsName}`,
     banner,
     allowDelete: true,
-    applyFn: (idx, op) => _pkGvsApplyCore(gvs, idx, op),
+    applyFn: (idx, op, journal) => _pkGvsApplyCore(gvs, idx, op, journal),
     reloadFn: () => loadPicklistInventory(),
   });
 }
 
 // GlobalValueSet metadata uses `customValue[]`. Activate/deactivate/remove + PATCH.
-async function _pkGvsApplyCore(gvs, idx, op) {
+async function _pkGvsApplyCore(gvs, idx, op, journal) {
+  // History (sftk-history.js): the undo writes this snapshot back — a
+  // remove is only ever kept INACTIVE by Salesforce (see below), so writing
+  // the previous set back re-activates it, same as _pkApplyMetadata.
+  const before = sftkMetaForPatch(JSON.parse(JSON.stringify(gvs.metadata)));
+  const beforeEntry = (gvs.metadata.customValue || [])[idx];
+  const wasActive = beforeEntry ? beforeEntry.isActive !== false : true;
+  const nameField = beforeEntry && ('fullName' in beforeEntry) ? 'fullName' : beforeEntry && ('valueName' in beforeEntry) ? 'valueName' : 'label';
   const md = JSON.parse(JSON.stringify(gvs.metadata));
   const list = md.customValue || [];
   const name = pkValueName((gvs.metadata.customValue || [])[idx]);
@@ -2262,6 +2398,7 @@ async function _pkGvsApplyCore(gvs, idx, op) {
     describe: `${gvs.gvsName} value "${name}"`,
     write: () => sendBg({ type: 'SF_PATCH', orgUrl: gvs.orgUrl, sid: gvs.sid,
       path: `services/data/v62.0/tooling/sobjects/GlobalValueSet/${gvs.gvsId}`, body: { Metadata: sftkMetaForPatch(md) } }),
+    journal: journal || null,   // history-by: _pkValueSetWizard's journal (the button press)
     verify: async () => {
       const back = await sendBg({ type: 'SF_TOOLING_GET', orgUrl: gvs.orgUrl, sid: gvs.sid, sobject: 'GlobalValueSet', id: gvs.gvsId, _suppressError: true });
       const list2 = back?.Metadata?.customValue;
@@ -2279,7 +2416,16 @@ async function _pkGvsApplyCore(gvs, idx, op) {
     },
   });
   if (!w.ok) throw new Error(w.raw?.error || w.text);
-  return true;
+  return { ok: true, undo: { steps: [{
+    describe: `${gvs.gvsName}: write the previous value set back (“${name}” ${wasActive ? 'active' : 'inactive'} again)`,
+    // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+    msg: { type: 'SF_PATCH', path: `services/data/v62.0/tooling/sobjects/GlobalValueSet/${gvs.gvsId}`, body: { Metadata: before } },
+    verify: { query: `SELECT Id, Metadata FROM GlobalValueSet WHERE Id = '${gvs.gvsId}'`, tooling: true,
+      pick: 'records.0.Metadata.customValue', where: { field: nameField, equals: name },
+      field: 'isActive', ...(wasActive ? { notFalse: true } : { equals: false }),
+      text: { ok: `${gvs.gvsName} “${name}” is ${wasActive ? 'active' : 'inactive'} again — verified by re-reading the value set`,
+              bad: `${gvs.gvsName}: the previous value set was accepted, but it still does not read “${name}” as ${wasActive ? 'active' : 'inactive'}` } },
+  }] } };
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2288,7 +2434,13 @@ async function _pkGvsApplyCore(gvs, idx, op) {
 // One full-Metadata PATCH per target field applies every ticked value
 // operation; record-type assignments align per shared DeveloperName.
 // Deactivations that would strand data show usage counts and start unticked.
-async function _pkApplySyncCore(tgt, sel) {
+async function _pkApplySyncCore(tgt, sel, journal) {
+  // History (sftk-history.js): the undo writes this snapshot back, verified
+  // by the value count returning to what it was (a sync can touch several
+  // values at once — a per-value re-check like _pkApplyMetadata's isn't
+  // generic here, so the count is the honest, generic check available).
+  const before = sftkMetaForPatch(JSON.parse(JSON.stringify(tgt.inv.metadata)));
+  const beforeCount = (tgt.inv.metadata.valueSet?.valueSetDefinition?.value || []).length;
   const md = JSON.parse(JSON.stringify(tgt.inv.metadata));
   const list = md.valueSet.valueSetDefinition.value;
   const by = new Map(list.map(v => [pkValueName(v), v]));
@@ -2312,6 +2464,7 @@ async function _pkApplySyncCore(tgt, sel) {
     write: () => sendBg({ type: 'SF_PATCH', orgUrl: tgt.inv.orgUrl, sid: tgt.inv.sid,
       path: `services/data/v62.0/tooling/sobjects/CustomField/${tgt.inv.fieldId}`,
       body: { Metadata: sftkMetaForPatch(md) } }),
+    journal: journal || null,   // history-by: the caller's entry (_pkRunSyncPlan's per-target journal)
     verify: async () => {
       const back = await sendBg({ type: 'SF_TOOLING_GET', orgUrl: tgt.inv.orgUrl, sid: tgt.inv.sid, sobject: 'CustomField', id: tgt.inv.fieldId, _suppressError: true });
       const list2 = back?.Metadata?.valueSet?.valueSetDefinition?.value;
@@ -2333,7 +2486,15 @@ async function _pkApplySyncCore(tgt, sel) {
     },
   });
   if (!w.ok) throw new Error(w.raw?.error || w.text);
-  return true;
+  return { ok: true, undo: { steps: [{
+    describe: `${tgt.inv.obj}.${tgt.inv.field}: write the pre-sync value set back`,
+    // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+    msg: { type: 'SF_PATCH', path: `services/data/v62.0/tooling/sobjects/CustomField/${tgt.inv.fieldId}`, body: { Metadata: before } },
+    verify: { query: `SELECT Id, Metadata FROM CustomField WHERE Id = '${tgt.inv.fieldId}'`, tooling: true,
+      pick: 'records.0.Metadata.valueSet.valueSetDefinition.value', count: beforeCount,
+      text: { ok: `${tgt.inv.obj}.${tgt.inv.field}: pre-sync value set written back (${beforeCount} value(s)) — verified by re-reading the field`,
+              bad: `${tgt.inv.obj}.${tgt.inv.field}: the pre-sync value set was accepted, but the field doesn't show ${beforeCount} value(s) again — check it in Setup` } },
+  }] } };
 }
 
 // T8c — the sync plan used to align values across orgs with NO automation check
@@ -2656,6 +2817,16 @@ async function _pkRunSyncPlan(M, src, plans, selPerPlan) {
     if (!anyValueOp && !wantRts) { note.textContent = ' — nothing ticked'; hdr?.appendChild(note); continue; }
     note.textContent = ' ⏳ syncing…';
     hdr?.appendChild(note);
+    // History (sftk-history.js): one journal per target org — each target's
+    // undo (data restores + the pre-sync value set + RT assignments) only
+    // makes sense written back to that same org.
+    const journal = sftkHistoryBegin({ tool: 'Picklist Manager',
+      title: `🔄 ${M.obj}.${M.field} synced from ${src.label} — ${pl.tgt.label}`, orgUrl: pl.tgt.orgUrl || pl.tgt.inv?.orgUrl });
+    const dataUndoSteps = [];
+    const syncUndoSteps = [];
+    const rtUndoSteps = [];
+    let dataUndoNone = '';
+    let syncErr = null;
     try {
       // Data fixes FIRST — records must stop holding a value before the
       // plan switches it off. Same core the wizards use, in THIS target.
@@ -2667,15 +2838,20 @@ async function _pkRunSyncPlan(M, src, plans, selPerPlan) {
         try {
           const out = await _pkDataFixCore(ctx, f.val,
             f.fix === '__clear__' ? 'clear' : 'remap',
-            f.fix === '__clear__' ? null : f.fix, null);
+            f.fix === '__clear__' ? null : f.fix, null, journal);
           fixedRecs += out.updated; fixFailed += out.failed;
+          if (out.undo && Array.isArray(out.undo.steps)) dataUndoSteps.push(...out.undo.steps);
+          else if (out.undo && out.undo.none) dataUndoNone = dataUndoNone ? `${dataUndoNone}; ${out.undo.none}` : out.undo.none;
         } catch (e) {
           fixFailed++;
           showToast(`${pl.tgt.label}: data fix for “${f.val}” failed — ${e.message}. The value will still be deactivated; its records keep the old value.`, 'error', 7000);
         }
       }
       note.textContent = ' ⏳ syncing…';
-      if (anyValueOp) await _pkApplySyncCore(pl.tgt, sel);
+      if (anyValueOp) {
+        const syncR = await _pkApplySyncCore(pl.tgt, sel, journal);
+        if (syncR && syncR.undo && Array.isArray(syncR.undo.steps)) syncUndoSteps.push(...syncR.undo.steps);
+      }
       let rtDone = 0, rtFail = 0;
       if (wantRts && srcSess) {
         const tgtSess = await getOrgSession(pl.tgt.orgUrl);
@@ -2686,16 +2862,32 @@ async function _pkRunSyncPlan(M, src, plans, selPerPlan) {
         const rtPlans = pkRtSyncDiff(srcRts.rts, tgtRts.rts);
         for (const rp of rtPlans) {
           try {
-            await _pkApplyRtCore({ orgUrl: pl.tgt.inv.orgUrl, sid: pl.tgt.inv.sid,
-              field: M.field, devName: M.field.replace(/__c$/i, '') }, rp.rtId, rp.adds, rp.removes);
+            const rr = await _pkApplyRtCore({ orgUrl: pl.tgt.inv.orgUrl, sid: pl.tgt.inv.sid,
+              field: M.field, devName: M.field.replace(/__c$/i, '') }, rp.rtId, rp.adds, rp.removes, journal);
             rtDone++;
+            rtUndoSteps.push({
+              describe: `${M.field}: write record type ${rr.rtId}'s previous assignments back`,
+              // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+              msg: { type: 'SF_PATCH', path: `services/data/v62.0/tooling/sobjects/RecordType/${rr.rtId}`, body: { Metadata: rr.before } },
+              verify: { query: `SELECT Id, Metadata FROM RecordType WHERE Id = '${rr.rtId}'`, tooling: true,
+                pick: 'records.0.Metadata.picklistValues', where: { field: 'picklist', equals: M.field },
+                field: 'values', notNull: true,
+                text: { ok: `Record type ${rr.rtId}: previous ${M.field} assignments written back — verified by re-reading the record type`,
+                        bad: `Record type ${rr.rtId}: the previous assignments were accepted, but the record type could not be re-read to confirm ${M.field} is still assigned` } },
+            });
           } catch (_) { rtFail++; }
         }
       }
       note.textContent = ` ✅ synced${fixedRecs || fixFailed ? ` · 🔧 ${fixedRecs} record(s) moved${fixFailed ? ` (${fixFailed} failed)` : ''}` : ''}${wantRts ? ` · ${rtDone} record type${rtDone !== 1 ? 's' : ''} aligned${rtFail ? ` (${rtFail} failed)` : ''}` : ''}`;
     } catch (e) {
+      syncErr = e;
       const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
       note.textContent = ` ❌ ${fe.message}`;
+    } finally {
+      const steps = [...syncUndoSteps, ...rtUndoSteps, ...dataUndoSteps];
+      await sftkHistoryEnd(journal, {
+        nothingToDo: (!syncErr && !journal.what.length) ? 'already in sync — nothing needed writing in this target' : undefined,
+        undo: steps.length ? { steps, note: dataUndoNone || undefined } : { none: dataUndoNone || 'nothing was applied to this target' } });
     }
   }
   const closeBtn = eid('dsPkSyncClose');

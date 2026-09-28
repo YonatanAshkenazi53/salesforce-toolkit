@@ -866,7 +866,7 @@ const ApexDebugger = (() => {
   }
 
   // ── Trace management ──────────────────────────────────────
-  async function _ensureDebugLevel() {
+  async function _ensureDebugLevel(journal) {
     if (_debugLevels[_selProfile]) return _debugLevels[_selProfile];
 
     const prof = _getProfile(_selProfile);
@@ -900,8 +900,12 @@ const ApexDebugger = (() => {
         // re-read of the level is the verify. Best-effort (as before): a
         // failure here does not block the trace, but it is no longer silent.
         // not-destructive: starting / extending / stopping a debug trace (TraceFlag, DebugLevel) is temporary, expires on its own and is undone by the same button — no confirmation, by design
+        // History (sftk-history.js): a step of _startTrace's journal — its
+        // undo (below _startTrace) covers the whole "Start Trace" action;
+        // the DebugLevel itself is reusable config, left as configured.
         await sftkWriteVerified({
           describe: 'DebugLevel',
+          journal,
           write: () => _bg({
             type: 'SF_PATCH',
             path: `${TAPI}/sobjects/DebugLevel/${id}`,
@@ -923,8 +927,12 @@ const ApexDebugger = (() => {
     // The write discipline (sftk-write.js): the create is the write, the
     // same existence query used above is the verify.
     // not-destructive: starting / extending / stopping a debug trace (TraceFlag, DebugLevel) is temporary, expires on its own and is undone by the same button — no confirmation, by design
+    // History (sftk-history.js): a step of _startTrace's journal (see the
+    // undo built there) — the DebugLevel itself is reusable config, left as
+    // configured.
     const wr = await sftkWriteVerified({
       describe: 'DebugLevel',
+      journal,
       write: () => _bg({
         type: 'SF_REST_POST',
         path: `${TAPI}/sobjects/DebugLevel`,
@@ -958,8 +966,15 @@ const ApexDebugger = (() => {
     const statusCell = document.getElementById('adbgStatusCell');
     if (statusCell) statusCell.innerHTML = sftkCatSm('Starting trace…');
 
+    // History (sftk-history.js): one journal for this whole Start Trace
+    // click (DebugLevel setup + the TraceFlag write are both steps of it —
+    // see the `journal,` passed into each above/below). The undo (in the
+    // finally below) deletes the TraceFlag; the DebugLevel is left as
+    // configured, since it is reusable, inert config, not itself a trace.
+    const journal = sftkHistoryBegin({ tool: 'Apex Debugger', title: `Trace for ${_selUser.Name || _selUser.Username || _selUser.Id}`, orgUrl: _orgUrl });
+    let confirmedThisCall = false;
     try {
-      const debugLevelId = await _ensureDebugLevel();
+      const debugLevelId = await _ensureDebugLevel(journal);
       const now = new Date();
       const exp = new Date(now.getTime() + TRACE_HOURS * 3600_000);
 
@@ -979,6 +994,7 @@ const ApexDebugger = (() => {
         // not-destructive: starting / extending / stopping a debug trace (TraceFlag, DebugLevel) is temporary, expires on its own and is undone by the same button — no confirmation, by design
         const pWr = await sftkWriteVerified({
           describe: 'TraceFlag',
+          journal,
           write: () => _bg({
             type: 'SF_PATCH',
             path: `${TAPI}/sobjects/TraceFlag/${existing.records[0].Id}`,
@@ -996,12 +1012,14 @@ const ApexDebugger = (() => {
         if (!pWr.accepted) throw new Error((pWr.raw && pWr.raw.error) || 'refused');
         if (!pWr.ok) throw new Error('the trace extension was accepted, but the org still shows the old expiration on re-read — treat this as UNVERIFIED.');
         _traceFlag = { Id: existing.records[0].Id, ExpirationDate: exp.toISOString() };
+        confirmedThisCall = true;
       } else {
         // Create new. The write discipline (sftk-write.js): the create is
         // the write, a re-read of the new flag by Id is the verify.
         // not-destructive: starting / extending / stopping a debug trace (TraceFlag, DebugLevel) is temporary, expires on its own and is undone by the same button — no confirmation, by design
         const cWr = await sftkWriteVerified({
           describe: 'TraceFlag',
+          journal,
           write: () => _bg({
             type: 'SF_REST_POST',
             path: `${TAPI}/sobjects/TraceFlag`,
@@ -1024,6 +1042,7 @@ const ApexDebugger = (() => {
         if (!cWr.accepted) throw new Error((cWr.raw && cWr.raw.error) || 'refused');
         if (!cWr.ok) throw new Error('the trace was accepted, but the new TraceFlag could not be confirmed on re-read — treat this as UNVERIFIED.');
         _traceFlag = { Id: cWr.detail, ExpirationDate: exp.toISOString() };
+        confirmedThisCall = true;
       }
 
       _traceUser = _selUser;
@@ -1040,6 +1059,20 @@ const ApexDebugger = (() => {
       if (cell) cell.title = fe.raw;   // raw error kept for copy/paste
       startBtn.disabled    = false;
       startBtn.textContent = 'Start Trace';
+    } finally {
+      // Undo: stop the trace this call confirmed started/extended — the
+      // DebugLevel config it may also have written is left in place (it is
+      // reusable, inert config; not itself a running trace).
+      await sftkHistoryEnd(journal, {
+        undo: (confirmedThisCall && _traceFlag && _traceFlag.Id) ? { steps: [{
+          describe: `Stop the trace for ${_selUser.Name || _selUser.Username || _selUser.Id}`,
+          // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+          msg: { type: 'SF_TOOLING_DELETE', sobject: 'TraceFlag', id: _traceFlag.Id },
+          verify: { query: `SELECT Id FROM TraceFlag WHERE Id = '${_traceFlag.Id}'`, tooling: true, count: 0,
+            text: { ok: 'trace stopped — verified by re-reading the org',
+                    bad: 'accepted by Salesforce, but the org still shows this TraceFlag' } },
+        }] } : { none: 'nothing was confirmed started, so there is nothing to undo' },
+      });
     }
   }
 
@@ -1057,8 +1090,13 @@ const ApexDebugger = (() => {
       // The write discipline (sftk-write.js): the DELETE is the write, a
       // Tooling re-query of the flag id is the verify — gone = ok.
       // not-destructive: starting / extending / stopping a debug trace (TraceFlag, DebugLevel) is temporary, expires on its own and is undone by the same button — no confirmation, by design
+      // History (sftk-history.js): one journal for this Stop click. Undo is
+      // `none` — the same TraceFlag row cannot be recreated; starting a new
+      // trace from the tool does the same job.
+      const journal = sftkHistoryBegin({ tool: 'Apex Debugger', title: `Trace stopped for ${_traceUser?.Name || _traceUser?.Username || _traceUser?.Id || ''}`, orgUrl: _orgUrl });
       const dWr = await sftkWriteVerified({
         describe: 'TraceFlag',
+        journal,
         write: () => _bg({ type: 'SF_TOOLING_DELETE', sobject: 'TraceFlag', id: _traceFlag.Id }),
         verify: async () => {
           const chk = await _bg({ type: 'SF_QUERY', tooling: true, _suppressError: true,
@@ -1067,6 +1105,7 @@ const ApexDebugger = (() => {
           return { ok: !(chk.records && chk.records.length), text: null };
         },
       });
+      await sftkHistoryEnd(journal, { undo: { none: 'stopping a trace is undone by starting a new one from the tool — the same TraceFlag row cannot be recreated' } });
       if (stopping) { stopping.disabled = false; stopping.textContent = 'Stop'; }
       if (!dWr.ok) {
         const fe = sftkFriendlyError((dWr.raw && dWr.raw.error) || dWr.text || 'not confirmed stopped on re-read');
@@ -3067,7 +3106,7 @@ const ApexDebugger = (() => {
 
     const gate = await sftkOrgWriteGate(_orgUrl);
     const sure = await sftkConfirmDestructive({
-      title: `Purge ${ids.length} log(s) older than 24h`,
+      title: `Purge ${ids.length} log(s) older than 24h`,
       items: [{ label: `${ids.length} Apex debug log(s)`, sub: 'older than 24 hours' }],
       reversibility: 'permanent',
       confirmLabel: 'Confirm purge',
@@ -3172,6 +3211,11 @@ const ApexDebugger = (() => {
   // each delete request so callers can keep their live n/N counter.
   async function _deleteApexLogsVerified(ids, onProgress) {
     let done = 0;
+    // History (sftk-history.js): one journal for this whole delete click —
+    // deleted debug logs are gone for good (Tooling deletes skip the
+    // Recycle Bin, and Salesforce keeps no separate copy of a log), so the
+    // undo is always `none`.
+    const journal = sftkHistoryBegin({ tool: 'Apex Debugger', title: `${ids.length} debug log${ids.length === 1 ? '' : 's'} deleted`, orgUrl: _orgUrl });
     // confirmed-by: every caller confirms first — _deleteLog's, _deleteSelected's,
     // _deleteAll's, or _purgeOld's sftkConfirmDestructive (each is the only
     // caller of its own delete path)
@@ -3183,7 +3227,7 @@ const ApexDebugger = (() => {
         if (onProgress) onProgress(done, ids.length);
         return r;
       },
-    })), {
+    })), { journal,
       verifyAll: async results => {
         const okIds = ids.filter((id, i) => results[i] && results[i].accepted);
         if (!okIds.length) return [];
@@ -3194,6 +3238,7 @@ const ApexDebugger = (() => {
         return ids.map(id => ({ ok: !stillThere.has(id), text: null }));
       },
     });
+    await sftkHistoryEnd(journal, { undo: { none: 'deleted debug logs are gone — Salesforce keeps no copy' } });
     return batch.results;   // aligned with `ids`; each { ok, accepted, raw, text }
   }
 
@@ -3201,7 +3246,7 @@ const ApexDebugger = (() => {
     const meta = _logs.find(l => l.Id === id);
     const gate = await sftkOrgWriteGate(_orgUrl);
     const sure = await sftkConfirmDestructive({
-      title: 'Delete log',
+      title: 'Delete log',
       items: [{ label: (meta && meta.Operation) || id, sub: meta && meta.StartTime ? new Date(meta.StartTime).toLocaleString() : '' }],
       reversibility: 'permanent',
       confirmLabel: 'Delete',
@@ -3241,7 +3286,7 @@ const ApexDebugger = (() => {
 
     const gate = await sftkOrgWriteGate(_orgUrl);
     const sure = await sftkConfirmDestructive({
-      title: `Delete ${ids.length} log(s)`,
+      title: `Delete ${ids.length} log(s)`,
       items: ids.map(id => { const l = _logs.find(x => x.Id === id);
         return { label: (l && l.Operation) || id, sub: l && l.StartTime ? new Date(l.StartTime).toLocaleString() : '' }; }),
       reversibility: 'permanent',
@@ -3290,7 +3335,7 @@ const ApexDebugger = (() => {
 
     const gate = await sftkOrgWriteGate(_orgUrl);
     const sure = await sftkConfirmDestructive({
-      title: `Delete All — ${_logs.length} log(s)`,
+      title: `Delete All — ${_logs.length} log(s)`,
       items: [{ label: `${_logs.length} Apex debug log(s)` }],
       reversibility: 'permanent',
       confirmLabel: 'Delete All',

@@ -6,6 +6,7 @@
 //   MODE=bulk     ⏸ Deactivate… the value in VALUE (default Archived) in every org that has it,
 //                 FIX=clear|remap|skip (default skip)
 //   SCAN_ONLY=1   stop before the run
+import { undoNewest } from './_undo.mjs';   // UNDO=1: Data Studio › History › ↩ Undo the newest entry afterwards
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 async function setSelect(h, sel, match) {
   return h.eval(`(() => { const s = document.querySelector(${JSON.stringify(sel)}); if (!s) return 'no select'; const o = [...s.options].find(o => o.value === ${JSON.stringify(match)}) || [...s.options].find(o => (o.textContent + ' ' + o.value).includes(${JSON.stringify(match)})); if (!o) return 'no option for ' + ${JSON.stringify(match)}; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return 'set ' + o.value; })()`);
@@ -70,6 +71,7 @@ export default async function (h) {
     await h.waitFor("document.querySelectorAll('.ds-pk-mx-row').length > 1", 180000, 1000); await h.sleep(2500);
     const m2 = await matrix(h); h.log('MATRIX after:', JSON.stringify(m2.rows));
     await h.shot(h.shots + '/pk-sync-after.png');
+    if (process.env.UNDO === '1') await undoNewest(h);
     return;
   }
 
@@ -103,4 +105,5 @@ export default async function (h) {
     await h.waitFor("document.querySelectorAll('.ds-pk-mx-row').length > 1", 180000, 1000); await h.sleep(2500);
     const m3 = await matrix(h); h.log('MATRIX after:', JSON.stringify(m3.rows));
   }
+  if (process.env.UNDO === '1') await undoNewest(h);
 }

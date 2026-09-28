@@ -103,16 +103,23 @@ function _sftkHistStatus(j) {
 // a missing undo is recorded as such, loudly). opts.status overrides the
 // verdict derived from the writes; opts.errors adds lines. Steps for an
 // action that wrote NOTHING successfully are dropped — there is nothing to
-// undo, and the entry says so.
+// undo, and the entry says so. opts.nothingToDo: the sentence for an action
+// that looked and found nothing to write (a sync already in sync) — a
+// success with that one line, never a "failed" (live 2026-09-28).
 async function sftkHistoryEnd(j, opts) {
   if (!j || j.kind !== 'tool') return null;
   const o = opts || {};
   j.completedAt = new Date().toISOString();
+  if (o.nothingToDo && !(j.what || []).length) {
+    j.what.push({ describe: 'nothing to write', ok: true, accepted: true, verified: true, text: String(o.nothingToDo) });
+    j.nothingToDo = true;
+  }
   j.status = o.status || _sftkHistStatus(j);
   if (Array.isArray(o.errors)) j.errors.push(...o.errors.map(String));
   if (o.undoOf) j.undoOf = String(o.undoOf);
   let undo = _sftkHistNormalizeUndo(o.undo);
-  if (!('none' in undo) && !(j.what || []).some(x => x.accepted)) undo = { none: 'nothing was accepted by Salesforce, so there is nothing to undo' };
+  if (j.nothingToDo) undo = { none: 'nothing was written' };
+  else if (!('none' in undo) && !(j.what || []).some(x => x.accepted)) undo = { none: 'nothing was accepted by Salesforce, so there is nothing to undo' };
   if (o.undo === undefined) { try { console.warn('[SFTK] sftkHistoryEnd without an undo statement:', j.tool, j.profileName); } catch (_) {} }
   j.toolUndo = undo;
   await sftkHistoryAppend(j);
@@ -235,6 +242,7 @@ async function sftkHistoryUndo(entryId, opts) {
       revOverride: {
         html: `Writes the previous state back in <strong>${(sess.label || _sftkHistOrgKey(orgUrl)).replace(/</g, '&lt;')}</strong>, step by step; each step is re-read to confirm it and the whole undo is recorded in History. An undo has no undo — to redo the change, use the tool again.${entry.toolUndo.note ? `<br>${String(entry.toolUndo.note).replace(/</g, '&lt;')}` : ''}`,
         needsCheckbox: true,
+        ack: 'I understand this writes the earlier state back over whatever is there now',
       },
       confirmLabel: '↩ Undo',
       typedWord: 'UNDO',

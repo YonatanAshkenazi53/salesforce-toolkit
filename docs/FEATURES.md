@@ -78,6 +78,7 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 ### History
 - A log of every past deployment and sequence run: the org pair, per-object counts (created, updated, deleted, failed), and a status of success, partial, or failed. Filter by status or deployment, and export any run — or all of them — as CSV or JSON.
 - ↩ **Roll back**, launched from a run's card, undoes it: typing ROLLBACK (or the org's name for production) deletes what the run created and restores what it overwrote to its prior values, then re-reads the target and only reports "verified" for what it actually confirmed gone or restored.
+- Every change made by a Toolkit tool — a picklist value deactivated, a flow switched off or moved to a new API version, a permission copied, a licence toggled, a Lightning page assigned — has its own entry here too, saying what was written and what the org showed afterwards. ↩ **Undo** on that entry writes the earlier state back, asks with the same dialog (the word UNDO, and the org's name for production), re-reads the org before it says "undone", and records the undo as an entry of its own. When a change cannot be reversed, the entry says why instead of offering the button.
 - Limit: a rollback cannot undo automation that already ran because of the original write — emails already sent, records other flows or triggers created, or owner changes all stay as they are; hard-deleted records can't come back; and only the most recent runs keep enough information to be rolled back at all.
 
 ### Org Compare

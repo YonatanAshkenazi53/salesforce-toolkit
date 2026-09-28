@@ -3,6 +3,7 @@
 // the org default for Desktop (a CustomObject.actionOverrides deploy), read the assignment back,
 // then remove it again. CLI-verify between steps.
 //   PAGE="SFTK LP Test Account Page"   STEP=detail|orgdefault|remove|cycle (default cycle)   SCAN_ONLY=1
+import { undoNewest } from './_undo.mjs';   // UNDO=1: Data Studio › History › ↩ Undo the newest entry afterwards (TYPE_IT=1 for a guarded org)
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 async function openDetail(h, page) {
   await h.eval(`(() => { const i = document.querySelector('#lpSearch'); if (i) { i.value = ${JSON.stringify(page)}; i.dispatchEvent(new Event('input', { bubbles: true })); } return true; })()`);
@@ -50,7 +51,7 @@ export default async function (h) {
     h.log('add error:', await dump(h, '#lpAddErrOrgDef', 400));
     h.log('DETAIL after add:', await dump(h, '#lpDetailBody', 1800));
     await h.shot(h.shots + '/lp-after-add.png');
-    if (step === 'orgdefault') return;
+    if (step === 'orgdefault') { if (process.env.UNDO === '1') await undoNewest(h); return; }
   }
   if (step === 'remove' || step === 'cycle') {
     const rm = await h.eval(`(() => { const b = [...document.querySelectorAll('#lpDetailBody button')].find(x => /remove|✕|🗑/i.test(x.textContent) && !/tab|add/i.test(x.id || '')); if (!b) return 'no remove button; buttons: ' + [...document.querySelectorAll('#lpDetailBody button')].map(x => (x.id || '') + ':' + x.textContent.trim()).join(' | ').slice(0, 300); b.click(); return 'clicked ' + b.textContent.trim(); })()`);
@@ -62,4 +63,5 @@ export default async function (h) {
     h.log('DETAIL after remove:', await dump(h, '#lpDetailBody', 1200));
     await h.shot(h.shots + '/lp-after-remove.png');
   }
+  if (process.env.UNDO === '1') await undoNewest(h);
 }

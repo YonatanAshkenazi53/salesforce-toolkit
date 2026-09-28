@@ -1,5 +1,6 @@
 // Live: 🔑 Licenses (popup) — find the fixture user B, deactivate, then reactivate.
 //   USER="SFTK Test B"   ACTION=deactivate|reactivate|cycle (default cycle)   SCAN_ONLY=1
+import { undoNewest } from './_undo.mjs';   // UNDO=1: Data Studio › History › ↩ Undo the newest entry afterwards (TYPE_IT=1 for a guarded org)
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 async function search(h, name) {
   await h.eval(`(() => { const i = document.querySelector('#lmSearch'); i.value = ${JSON.stringify(name)}; i.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#lmSearchBtn')?.click(); return true; })()`);
@@ -54,4 +55,5 @@ export default async function (h) {
     await act(h, 'reactivate');
   } else await act(h, action);
   await h.shot(h.shots + '/lm-result.png');
+  if (process.env.UNDO === '1') await undoNewest(h);
 }

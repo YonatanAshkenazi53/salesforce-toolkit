@@ -3,6 +3,7 @@
 // SFTK_FC_Test_Access and the public group SFTK Test Group (created by CLI, 2026-09-23).
 //   SRC="SFTK Test A" TGT="SFTK Test B"   names typed into the pickers
 //   SCAN_ONLY=1   stop at the confirmation (nothing written)
+import { undoNewest } from './_undo.mjs';   // UNDO=1: Data Studio › History › ↩ Undo the newest entry afterwards (TYPE_IT=1 for a guarded org)
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 async function pick(h, role, name) {
   const P = 'uc' + role[0].toUpperCase() + role.slice(1);   // ucSource / ucTarget
@@ -46,4 +47,5 @@ export default async function (h) {
   await h.sleep(1000);
   h.log('RESULT:', await dump(h, '#ucResult', 1500));
   await h.shot(h.shots + '/uc-result.png');
+  if (process.env.UNDO === '1') await undoNewest(h);
 }

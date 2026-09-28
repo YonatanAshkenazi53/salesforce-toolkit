@@ -4,6 +4,7 @@
 //   SCAN_ONLY=1   stop after the scan and the first fix dialog (nothing written)
 //   ACTIVE=replace|delete   which way for the active version (default: replace when offered)
 //   DELETE_FIELD=1          finish by deleting the field itself
+import { undoNewest } from './_undo.mjs';   // UNDO=1: Data Studio › History › ↩ Undo the newest entry afterwards (TYPE_IT=1 for a guarded org)
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 async function pick(h, inputSel, dropSel, api) {
   // the list loads on focus (async) — wait for it before typing, like a user does
@@ -32,6 +33,22 @@ async function confirmDialog(h, activeMode) {
   h.log('Go enabled:', goOk);
   return goOk;
 }
+// The shared confirmation (sftk-confirm.js): acknowledge, the word when one is asked, Go, the typed org name when guarded.
+async function passConfirm(h, what) {
+  await h.waitFor("!!document.querySelector('#sftkConfirmGo') || !!document.querySelector('#fcDepUndo')", 60000, 500);
+  if (!(await h.eval(`!!document.querySelector('#sftkConfirmGo')`))) return;
+  await h.sleep(300);
+  h.log(`CONFIRM (${what}):`, (await h.eval(`(document.querySelector('#modalBox')?.innerText || '')`)).replace(/\s+/g, ' ').slice(0, 500));
+  await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } const w = document.querySelector('#sftkConfirmWord'); if (w) { w.value = (document.querySelector('#modalBox')?.innerText.match(/Type\\s+(\\S+)\\s+to confirm/) || [])[1] || ''; w.dispatchEvent(new Event('input', { bubbles: true })); } return true; })()`);
+  await h.sleep(300);
+  await h.eval(`document.querySelector('#sftkConfirmGo')?.click()`);
+  await h.sleep(600);
+  if (await h.eval(`!!document.querySelector('#sftkConfirmProd')`)) {
+    await h.eval(`(() => { const i = document.querySelector('#sftkConfirmProd'); i.value = i.placeholder; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    await h.eval(`document.querySelector('#sftkConfirmProdGo')?.click()`);
+  }
+}
+
 export default async function (h) {
   await h.login('npc');
   await h.popup('fields');
@@ -51,13 +68,16 @@ export default async function (h) {
     // 🕐 Deprecate first (label → zz_DEPRECATED…, FLS stripped), then ↩ Undo — nothing else
     h.log('DEP ZONE:', await dump(h, '#fcDepZone', 400));
     await h.eval(`document.querySelector('#fcDepBtn')?.click()`);
+    await passConfirm(h, 'deprecate');
     await h.waitFor("!!document.querySelector('#fcDepUndo') || /❌|failed/i.test(document.querySelector('#fcDepZone')?.innerText || '')", 120000, 1000);
     await h.sleep(1000);
     h.log('AFTER DEPRECATE:', await dump(h, '#fcDepZone', 600));
     h.log('errors under zone:', JSON.stringify(await h.eval(`[...document.querySelectorAll('#fcDepZone .fc-error-msg, #fcDepZone [class*=err]')].map(e => e.innerText.slice(0, 300))`)));
     await h.shot(h.shots + '/fc-deprecated.png');
+    if (process.env.UNDO === '1') { await undoNewest(h); return; }   // phase 3: Data Studio › History › ↩ Undo
     if (process.env.UNDO !== '0' && await h.eval(`!!document.querySelector('#fcDepUndo')`)) {
       await h.eval(`document.querySelector('#fcDepUndo').click()`);
+      await passConfirm(h, 'undo deprecation');
       await h.waitFor("!!document.querySelector('#fcDepBtn') || /❌|failed/i.test(document.querySelector('#fcDepZone')?.innerText || '')", 120000, 1000);
       await h.sleep(1000);
       h.log('AFTER UNDO:', await dump(h, '#fcDepZone', 600));
@@ -118,4 +138,5 @@ export default async function (h) {
   h.log('DELETE ZONE after:', await dump(h, '#fcDeleteZone', 600));
   h.log('DELETE ERROR:', await dump(h, '.fc-error-msg', 600));
   await h.shot(h.shots + '/fc-after-delete.png');
+  if (process.env.UNDO === '1') await undoNewest(h);
 }

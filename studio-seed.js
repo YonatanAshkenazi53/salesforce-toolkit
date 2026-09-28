@@ -788,49 +788,73 @@ async function sftkSeedIdDeploy(obj) {
     const label = orgLabel(orgUrl);
     const sess = await getOrgSession(orgUrl);
     if (!sess?.sid) { out.errors.push(`${label}: not open in a Chrome tab`); continue; }
-    // The one write discipline (sftk-write.js): a deploy job's "done" used to
-    // BE the report — one probe read of the field it was meant to create
-    // closes the same gap a PATCH accepted-but-unchanged taught elsewhere
-    // (a deploy can report success with the field still invisible to FLS).
-    // confirmed-by: sftkSeedIdDeploy's sftkConfirmDestructive above (before this loop).
-    const dw = await sftkWriteVerified({
-      describe: `${sftkIdFieldName()} on ${obj} in ${label}`,
-      write: () => sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: sess.orgUrl, sid: sess.sid, zipBase64 }),
-      verify: async () => {
-        const probe = await sendBg({ type: 'SF_QUERY', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false, _suppressError: true,
-          query: `SELECT ${sftkIdFieldName()} FROM ${obj} LIMIT 1` });
-        return probe?.error
-          ? { ok: false, text: `${sftkIdFieldName()} on ${obj} in ${label}: accepted by Salesforce, but the field could not be re-read (${probe.error})` }
-          : { ok: true };
-      },
-    });
-    if (!dw.ok) { out.errors.push(`${label}: deploy failed — ${dw.raw?.error || dw.text}`); continue; }
-    // FLS: find the permission set, find ME, assign. An already-assigned
-    // error is SUCCESS — the goal is the grant existing, not the insert.
+    // History (sftk-history.js): one journal per org — the field deploy has
+    // no verified undo (see the note below); the permission set assignment
+    // does, when this run is the one that created it.
+    const journal = sftkHistoryBegin({ tool: 'Org Seeder', title: `🪪 ${sftkIdFieldName()} + ${sftkIdPermSetName()} — ${label}`, orgUrl: sess.orgUrl });
+    const undoSteps = [];
+    let undoNote = `the ${sftkIdFieldName()} field on ${obj} can be removed again in Setup (Object Manager → ${obj} → Fields & Relationships) — deleting a field here has no honest re-read: a successful removal makes the same probe query fail, indistinguishable from a broken one`;
     try {
-      const ps = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
-        query: `SELECT Id FROM PermissionSet WHERE Name = '${sftkIdPermSetName()}' LIMIT 1` });
-      const psId = ps?.records?.[0]?.Id;
-      const root = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid,
-        path: 'services/data/v62.0/' });
-      const userId = sftkIdUserFromIdentity(root?.identity);
-      if (!psId || !userId) throw new Error('could not resolve the permission set or your user');
+      // The one write discipline (sftk-write.js): a deploy job's "done" used to
+      // BE the report — one probe read of the field it was meant to create
+      // closes the same gap a PATCH accepted-but-unchanged taught elsewhere
+      // (a deploy can report success with the field still invisible to FLS).
       // confirmed-by: sftkSeedIdDeploy's sftkConfirmDestructive above (before this loop).
-      const aw = await sftkWriteVerified({
-        describe: `${sftkIdPermSetName()} assignment in ${label}`,
-        write: async () => {
-          const r = await sendBg({ type: 'SF_REST_POST', orgUrl: sess.orgUrl, sid: sess.sid,
-            path: 'services/data/v62.0/sobjects/PermissionSetAssignment',
-            body: { AssigneeId: userId, PermissionSetId: psId } });
-          if (r?.error && !/DUPLICATE_VALUE|already assigned/i.test(String(r.error))) throw new Error(r.error);
-          return { success: true };
+      const dw = await sftkWriteVerified({
+        describe: `${sftkIdFieldName()} on ${obj} in ${label}`,
+        write: () => sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: sess.orgUrl, sid: sess.sid, zipBase64 }),
+        journal,
+        verify: async () => {
+          const probe = await sendBg({ type: 'SF_QUERY', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false, _suppressError: true,
+            query: `SELECT ${sftkIdFieldName()} FROM ${obj} LIMIT 1` });
+          return probe?.error
+            ? { ok: false, text: `${sftkIdFieldName()} on ${obj} in ${label}: accepted by Salesforce, but the field could not be re-read (${probe.error})` }
+            : { ok: true };
         },
-        noVerify: 'an insert returns the new row, and "already assigned" already means the grant exists',
       });
-      if (!aw.accepted) throw new Error(aw.text);
-      out.ok++;
-    } catch (e) {
-      out.errors.push(`${label}: field deployed but the permission set could not be assigned (${e?.message || e}) — assign "SFTK Identity" to yourself in Setup, or the field stays invisible`);
+      if (!dw.ok) { out.errors.push(`${label}: deploy failed — ${dw.raw?.error || dw.text}`); undoNote = 'the field deploy did not verify — nothing to undo'; continue; }
+      // FLS: find the permission set, find ME, assign. An already-assigned
+      // error is SUCCESS — the goal is the grant existing, not the insert.
+      try {
+        const ps = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
+          query: `SELECT Id FROM PermissionSet WHERE Name = '${sftkIdPermSetName()}' LIMIT 1` });
+        const psId = ps?.records?.[0]?.Id;
+        const root = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid,
+          path: 'services/data/v62.0/' });
+        const userId = sftkIdUserFromIdentity(root?.identity);
+        if (!psId || !userId) throw new Error('could not resolve the permission set or your user');
+        // confirmed-by: sftkSeedIdDeploy's sftkConfirmDestructive above (before this loop).
+        const aw = await sftkWriteVerified({
+          describe: `${sftkIdPermSetName()} assignment in ${label}`,
+          write: async () => {
+            const r = await sendBg({ type: 'SF_REST_POST', orgUrl: sess.orgUrl, sid: sess.sid,
+              path: 'services/data/v62.0/sobjects/PermissionSetAssignment',
+              body: { AssigneeId: userId, PermissionSetId: psId } });
+            if (r?.error && !/DUPLICATE_VALUE|already assigned/i.test(String(r.error))) throw new Error(r.error);
+            return { success: true, id: r?.id || null, alreadyAssigned: !!r?.error };
+          },
+          journal,
+          noVerify: 'an insert returns the new row, and "already assigned" already means the grant exists',
+        });
+        if (!aw.accepted) throw new Error(aw.text);
+        out.ok++;
+        // History: undo removes the assignment ONLY when THIS run created it —
+        // one that already existed (DUPLICATE_VALUE) is not ours to remove.
+        if (aw.raw && aw.raw.id && !aw.raw.alreadyAssigned) {
+          undoSteps.push({
+            describe: `${label}: remove the ${sftkIdPermSetName()} assignment this created`,
+            // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+            msg: { type: 'SF_COLLECTIONS_DELETE', ids: [aw.raw.id] },
+            verify: { query: `SELECT Id FROM PermissionSetAssignment WHERE Id = '${aw.raw.id}'`, tooling: false, count: 0,
+              text: { ok: `${label}: the permission set assignment was removed — verified by re-reading the org`,
+                      bad: `${label}: the removal was accepted, but the org still shows the assignment` } },
+          });
+        }
+      } catch (e) {
+        out.errors.push(`${label}: field deployed but the permission set could not be assigned (${e?.message || e}) — assign "SFTK Identity" to yourself in Setup, or the field stays invisible`);
+      }
+    } finally {
+      await sftkHistoryEnd(journal, { undo: undoSteps.length ? { steps: undoSteps, note: undoNote } : { none: undoNote } });
     }
   }
   return out;
@@ -1870,35 +1894,45 @@ async function sftkSeedCfgDeployMdt(srcSess, tgtSess, types, line) {
     ...files.map(f => ({ name: f.name, data: enc.encode(f.text) })),
   ];
   const zipBase64 = window.sftkBuildStoredZip(zipFiles);
-  // The one write discipline (sftk-write.js): a deploy job's own "done" used
-  // to BE the report — one re-read PER TYPE (bounded, not per record) of the
-  // Developer Names it was meant to carry closes the same gap a PATCH
-  // accepted-but-unchanged taught elsewhere.
-  // confirmed-by: sftkSeedConfirmAndRun's sftkConfirmDestructive (RESET or
-  // production step) before sftkSeedRun ever calls into this.
-  const dw = await sftkWriteVerified({
-    describe: 'Custom Metadata deploy',
-    write: () => sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, zipBase64 }),
-    verify: async () => {
-      const missing = [];
-      for (const [t, names] of Object.entries(devNamesByType)) {
-        if (!names.length) continue;
-        const lit = names.map(n => `'${String(n).replace(/'/g, "\\'")}'`).join(',');
-        const q2 = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true,
-          query: `SELECT DeveloperName FROM ${t} WHERE DeveloperName IN (${lit})` });
-        if (q2?.error) { missing.push(`${t} could not be re-read (${q2.error})`); continue; }
-        const got = new Set((q2.records || []).map(r => r.DeveloperName));
-        const gone = names.filter(n => !got.has(n));
-        if (gone.length) missing.push(`${t}: ${gone.length} record(s) not found after deploy`);
-      }
-      return missing.length
-        ? { ok: false, text: `Custom Metadata deploy: accepted by Salesforce, but ${missing.join('; ')}` }
-        : { ok: true };
-    },
-  });
-  if (!dw.accepted) return { deployed: 0, error: dw.raw?.error || dw.text, attempted: members.length };
-  if (!dw.ok) return { deployed: 0, error: dw.text, attempted: members.length };
-  return { deployed: members.length };
+  // History (sftk-history.js): one journal for this deploy. It always writes
+  // the SOURCE's current values, and this tool does not read the target's
+  // prior values first — so there is nothing here to write back; see `none`.
+  const journal = sftkHistoryBegin({ tool: 'Org Seeder', title: `⚙ Custom Metadata deploy (${types.length} type${types.length === 1 ? '' : 's'}) — ${orgLabel(tgtSess.orgUrl)}`, orgUrl: tgtSess.orgUrl });
+  let dw;
+  try {
+    // The one write discipline (sftk-write.js): a deploy job's own "done" used
+    // to BE the report — one re-read PER TYPE (bounded, not per record) of the
+    // Developer Names it was meant to carry closes the same gap a PATCH
+    // accepted-but-unchanged taught elsewhere.
+    // confirmed-by: sftkSeedConfirmAndRun's sftkConfirmDestructive (RESET or
+    // production step) before sftkSeedRun ever calls into this.
+    dw = await sftkWriteVerified({
+      describe: 'Custom Metadata deploy',
+      write: () => sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, zipBase64 }),
+      journal,
+      verify: async () => {
+        const missing = [];
+        for (const [t, names] of Object.entries(devNamesByType)) {
+          if (!names.length) continue;
+          const lit = names.map(n => `'${String(n).replace(/'/g, "\\'")}'`).join(',');
+          const q2 = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true,
+            query: `SELECT DeveloperName FROM ${t} WHERE DeveloperName IN (${lit})` });
+          if (q2?.error) { missing.push(`${t} could not be re-read (${q2.error})`); continue; }
+          const got = new Set((q2.records || []).map(r => r.DeveloperName));
+          const gone = names.filter(n => !got.has(n));
+          if (gone.length) missing.push(`${t}: ${gone.length} record(s) not found after deploy`);
+        }
+        return missing.length
+          ? { ok: false, text: `Custom Metadata deploy: accepted by Salesforce, but ${missing.join('; ')}` }
+          : { ok: true };
+      },
+    });
+    if (!dw.accepted) return { deployed: 0, error: dw.raw?.error || dw.text, attempted: members.length };
+    if (!dw.ok) return { deployed: 0, error: dw.text, attempted: members.length };
+    return { deployed: members.length };
+  } finally {
+    await sftkHistoryEnd(journal, { undo: { none: 'this deploy writes the source org\'s current values; the target\'s previous values were never read, so there is nothing to write back — re-deploy from a backup, or fix the record(s) by hand in Setup' } });
+  }
 }
 
 // Replace one Custom Setting's rows in a target. REPLACE, not merge: a
@@ -1986,57 +2020,119 @@ async function sftkSeedCfgSyncSetting(srcSess, tgtSess, obj, line) {
     line('X', `${obj}: none of the ${rows.length} source row(s) could be re-owned in the target - nothing removed, nothing written.`);
     return out;
   }
+  // Full rows (not just Id) — captured so a confirmed delete can be undone
+  // by re-inserting the same values (History, sftk-history.js).
   const existing = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid,
-    query: `SELECT Id FROM ${obj}` });
+    query: `SELECT ${[...new Set(cols)].join(', ')} FROM ${obj}` });
   if (existing?.error) { line('X', `${obj}: the target's rows could not be listed - ${existing.error}. Nothing removed, nothing written.`); return out; }
   if (existing?.incomplete) { line('X', `${obj}: the target's row list came back INCOMPLETE (Salesforce says ${existing.incomplete.expected}, got ${existing.incomplete.got}) - a replace over a partial list would leave stray rows. Nothing removed, nothing written.`); return out; }
-  const oldIds = (existing?.records || []).map(r => r.Id);
-  for (let i = 0; i < oldIds.length; i += 200) {
-    const delIds = oldIds.slice(i, i + 200);
-    // The one write discipline (sftk-write.js): Collections' per-record
-    // success used to BE "removed" — one re-read of exactly this slice's
-    // Ids confirms the org actually shows them gone.
-    // confirmed-by: sftkSeedConfirmAndRun's sftkConfirmDestructive (RESET or
-    // production step, plus sftkSeedCfgReplaceGate's own delete warning)
-    // before sftkSeedRun ever calls into this.
-    const dw = await sftkWriteVerified({
-      describe: `${obj} replace`,
-      write: () => sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds }),
-      verify: async (writeRes) => {
-        const del = Array.isArray(writeRes) ? writeRes : (writeRes?.results || []);
-        const okIds = del.filter(d => d && d.success).map(d => d.id);
-        out.deleted += okIds.length;
-        if (!okIds.length) return { ok: true };
-        const vq = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true,
-          query: `SELECT Id FROM ${obj} WHERE Id IN (${okIds.map(id => soqlStrLit(id)).join(',')})` });
-        if (vq?.error) return { ok: false, text: `${obj} replace: accepted by Salesforce, but the org could not be re-read to confirm the delete (${vq.error})` };
-        const stillThere = (vq.records || []).length;
-        return stillThere
-          ? { ok: false, text: `${obj} replace: accepted by Salesforce, but ${stillThere} record(s) still show in the org` }
-          : { ok: true };
-      },
-    });
-    if (!dw.accepted) { line('X', `${obj}: delete failed - ${dw.raw?.error || dw.text}`); }
-    else if (!dw.ok) { line('!', dw.text); }
-  }
-  for (let i = 0; i < payload.length; i += 200) {
-    const slice = payload.slice(i, i + 200);
-    const ins = await sendBg({ type: 'SF_COLLECTIONS_CREATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: slice });
-    if (ins?.error) { out.failed += slice.length; line('X', `${obj}: insert failed - ${ins.error}`); continue; }
-    for (const r of (ins?.results || ins || [])) {
-      if (r && r.success) out.inserted++;
-      else {
-        out.failed++;
-        if (out.failed <= 3) line('!', `${obj}: ${(r?.errors || []).map(e => e.message).join('; ') || 'insert rejected'}`);
+  const oldRows = existing?.records || [];
+  const oldRowById = new Map(oldRows.map(r => [r.Id, r]));
+  const oldIds = oldRows.map(r => r.Id);
+  // History (sftk-history.js): one journal for the whole replace (delete +
+  // insert) — undo restores the deleted rows' own values, then removes
+  // whatever this run created, same "restore what was confirmed" rule as
+  // everywhere else.
+  const journal = sftkHistoryBegin({ tool: 'Org Seeder', title: `🔁 ${obj} replaced — ${orgLabel(tgtSess.orgUrl)}`, orgUrl: tgtSess.orgUrl });
+  const restoreRows = [];    // old rows confirmed deleted — re-insert to undo
+  const createdIds = [];     // new rows confirmed created — delete to undo
+  try {
+    for (let i = 0; i < oldIds.length; i += 200) {
+      const delIds = oldIds.slice(i, i + 200);
+      // The one write discipline (sftk-write.js): Collections' per-record
+      // success used to BE "removed" — one re-read of exactly this slice's
+      // Ids confirms the org actually shows them gone.
+      // confirmed-by: sftkSeedConfirmAndRun's sftkConfirmDestructive (RESET or
+      // production step, plus sftkSeedCfgReplaceGate's own delete warning)
+      // before sftkSeedRun ever calls into this.
+      const dw = await sftkWriteVerified({
+        describe: `${obj} replace`,
+        write: () => sendBg({ type: 'SF_COLLECTIONS_DELETE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, ids: delIds }),
+        journal,
+        verify: async (writeRes) => {
+          const del = Array.isArray(writeRes) ? writeRes : (writeRes?.results || []);
+          const okIds = del.filter(d => d && d.success).map(d => d.id);
+          out.deleted += okIds.length;
+          for (const id of okIds) { const r = oldRowById.get(id); if (r) restoreRows.push(r); }
+          if (!okIds.length) return { ok: true };
+          const vq = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true,
+            query: `SELECT Id FROM ${obj} WHERE Id IN (${okIds.map(id => soqlStrLit(id)).join(',')})` });
+          if (vq?.error) return { ok: false, text: `${obj} replace: accepted by Salesforce, but the org could not be re-read to confirm the delete (${vq.error})` };
+          const stillThere = (vq.records || []).length;
+          return stillThere
+            ? { ok: false, text: `${obj} replace: accepted by Salesforce, but ${stillThere} record(s) still show in the org` }
+            : { ok: true };
+        },
+      });
+      if (!dw.accepted) { line('X', `${obj}: delete failed - ${dw.raw?.error || dw.text}`); }
+      else if (!dw.ok) { line('!', dw.text); }
+    }
+    for (let i = 0; i < payload.length; i += 200) {
+      const slice = payload.slice(i, i + 200);
+      // History (sftk-history.js): the Org Seeder's inserts — undo deletes
+      // exactly the Ids Salesforce confirmed creating.
+      // confirmed-by: sftkSeedConfirmAndRun's sftkConfirmDestructive (RESET or
+      // production step) before sftkSeedRun ever calls into this.
+      const iw = await sftkWriteVerified({
+        describe: `${obj} replace insert`,
+        write: () => sendBg({ type: 'SF_COLLECTIONS_CREATE', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, records: slice }),
+        journal,
+        verify: async (writeRes) => {
+          const ins = Array.isArray(writeRes) ? writeRes : (writeRes?.results || writeRes || []);
+          const okIds = ins.filter(r => r && r.success).map(r => r.id);
+          out.inserted += okIds.length;
+          createdIds.push(...okIds);
+          for (const r of ins) {
+            if (!(r && r.success)) { out.failed++; if (out.failed <= 3) line('!', `${obj}: ${(r?.errors || []).map(e => e.message).join('; ') || 'insert rejected'}`); }
+          }
+          if (!okIds.length) return { ok: ins.length === 0 };
+          const vq = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true,
+            query: `SELECT Id FROM ${obj} WHERE Id IN (${okIds.map(id => soqlStrLit(id)).join(',')})` });
+          if (vq?.error) return { ok: false, text: `${obj} replace insert: accepted by Salesforce, but the org could not be re-read to confirm it (${vq.error})` };
+          const found = (vq.records || []).length;
+          return found === okIds.length ? { ok: true } : { ok: false, text: `${obj} replace insert: accepted by Salesforce, but only ${found} of ${okIds.length} record(s) re-read back` };
+        },
+      });
+      if (!iw.accepted) { out.failed += slice.length; line('X', `${obj}: insert failed - ${iw.raw?.error || iw.text}`); }
+    }
+    line(out.failed ? '!' : 'OK',
+      `${obj} (${flavour}): ${out.deleted} removed, ${out.inserted} written${out.failed ? `, ${out.failed} failed` : ''}${out.skipped.length ? `, ${out.skipped.length} skipped` : ''}`);
+    if (out.skipped.length) {
+      line('i', `${obj}: not written - ${out.skipped.slice(0, 5).join(' | ')}${out.skipped.length > 5 ? ` | +${out.skipped.length - 5} more` : ''}`);
+    }
+    return out;
+  } finally {
+    const steps = [];
+    if (restoreRows.length) {
+      let cum = 0;
+      for (let i = 0; i < restoreRows.length; i += 200) {
+        const chunk = restoreRows.slice(i, i + 200);
+        cum += chunk.length;
+        steps.push({
+          describe: `${obj}: restore ${chunk.length} deleted row(s) (${i + 1}-${i + chunk.length} of ${restoreRows.length})`,
+          // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+          msg: { type: 'SF_COLLECTIONS_CREATE', records: chunk.map(r => { const rec = { attributes: { type: obj } }; for (const f of fields) if (r[f] !== undefined) rec[f] = r[f]; if (flavour === 'hierarchy' && r.SetupOwnerId) rec.SetupOwnerId = r.SetupOwnerId; return rec; }) },
+          verify: { query: `SELECT Id FROM ${obj}`, tooling: false, count: cum,
+            text: { ok: `${obj}: ${cum} row(s) now in the object — the deleted rows appear restored (re-inserted rows get new Ids, so this checks the count, not identity)`,
+                    bad: `${obj}: the restore was accepted, but the object doesn't show ${cum} row(s) yet` } },
+        });
       }
     }
+    if (createdIds.length) {
+      for (let i = 0; i < createdIds.length; i += 200) {
+        const chunk = createdIds.slice(i, i + 200);
+        steps.push({
+          describe: `${obj}: remove ${chunk.length} row(s) this replace created`,
+          // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+          msg: { type: 'SF_COLLECTIONS_DELETE', ids: chunk },
+          verify: { query: `SELECT Id FROM ${obj} WHERE Id IN (${chunk.map(id => soqlStrLit(id)).join(',')})`, tooling: false, count: 0,
+            text: { ok: `${obj}: ${chunk.length} created row(s) removed — verified by re-reading the org`,
+                    bad: `${obj}: the removal was accepted, but the org still shows some of these rows` } },
+        });
+      }
+    }
+    await sftkHistoryEnd(journal, { undo: steps.length ? { steps, note: 'restoring deleted rows re-inserts them with new record Ids' } : { none: 'nothing was confirmed changed' } });
   }
-  line(out.failed ? '!' : 'OK',
-    `${obj} (${flavour}): ${out.deleted} removed, ${out.inserted} written${out.failed ? `, ${out.failed} failed` : ''}${out.skipped.length ? `, ${out.skipped.length} skipped` : ''}`);
-  if (out.skipped.length) {
-    line('i', `${obj}: not written - ${out.skipped.slice(0, 5).join(' | ')}${out.skipped.length > 5 ? ` | +${out.skipped.length - 5} more` : ''}`);
-  }
-  return out;
 }
 
 // Custom Labels. Read through the Tooling API (they are ExternalString
@@ -2088,31 +2184,40 @@ async function sftkSeedCfgDeployLabels(srcSess, tgtSess, wanted, line) {
     { name: 'labels/CustomLabels.labels', data: enc.encode(sftkLabelsFileXml(split.deployable)) },
     ...langs.map(l => ({ name: `translations/${l}.translation`, data: enc.encode(sftkLabelTransFileXml(byLang[l])) })),
   ]);
-  // The one write discipline (sftk-write.js): a deploy job's own "done" used
-  // to BE the report — one re-read of the label names it was meant to carry
-  // closes the same gap a PATCH accepted-but-unchanged taught elsewhere.
-  // confirmed-by: sftkSeedConfirmAndRun's sftkConfirmDestructive (RESET or
-  // production step) before sftkSeedRun ever calls into this.
-  const names = split.deployable.map(r => r.Name);
-  const dw = await sftkWriteVerified({
-    describe: 'Custom Labels deploy',
-    write: () => sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, zipBase64 }),
-    verify: async () => {
-      if (!names.length) return { ok: true };
-      const lit = names.map(n => `'${String(n).replace(/'/g, "\\'")}'`).join(',');
-      const q2 = await sendBg({ type: 'SF_QUERY_ALL', tooling: true, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true,
-        query: `SELECT Name FROM ExternalString WHERE Name IN (${lit})` });
-      if (q2?.error) return { ok: false, text: `Custom Labels deploy: accepted by Salesforce, but the org could not be re-read to confirm it (${q2.error})` };
-      const got = new Set((q2.records || []).map(r => r.Name));
-      const gone = names.filter(n => !got.has(n));
-      return gone.length
-        ? { ok: false, text: `Custom Labels deploy: accepted by Salesforce, but ${gone.length} label(s) not found after deploy` }
-        : { ok: true };
-    },
-  });
-  if (!dw.accepted) return { deployed: 0, error: dw.raw?.error || dw.text, attempted: split.deployable.length };
-  if (!dw.ok) return { deployed: 0, error: dw.text, attempted: split.deployable.length };
-  return { deployed: split.deployable.length, translations: transCount, languages: langs.length };
+  // History (sftk-history.js): one journal for this deploy. Like the Custom
+  // Metadata deploy above, it writes the SOURCE's current label text and
+  // never reads the target's prior text first — nothing here to write back.
+  const journal = sftkHistoryBegin({ tool: 'Org Seeder', title: `🏷 Custom Labels deploy (${split.deployable.length}) — ${orgLabel(tgtSess.orgUrl)}`, orgUrl: tgtSess.orgUrl });
+  try {
+    // The one write discipline (sftk-write.js): a deploy job's own "done" used
+    // to BE the report — one re-read of the label names it was meant to carry
+    // closes the same gap a PATCH accepted-but-unchanged taught elsewhere.
+    // confirmed-by: sftkSeedConfirmAndRun's sftkConfirmDestructive (RESET or
+    // production step) before sftkSeedRun ever calls into this.
+    const names = split.deployable.map(r => r.Name);
+    const dw = await sftkWriteVerified({
+      describe: 'Custom Labels deploy',
+      write: () => sendBg({ type: 'SF_METADATA_DEPLOY', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, zipBase64 }),
+      journal,
+      verify: async () => {
+        if (!names.length) return { ok: true };
+        const lit = names.map(n => `'${String(n).replace(/'/g, "\\'")}'`).join(',');
+        const q2 = await sendBg({ type: 'SF_QUERY_ALL', tooling: true, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true,
+          query: `SELECT Name FROM ExternalString WHERE Name IN (${lit})` });
+        if (q2?.error) return { ok: false, text: `Custom Labels deploy: accepted by Salesforce, but the org could not be re-read to confirm it (${q2.error})` };
+        const got = new Set((q2.records || []).map(r => r.Name));
+        const gone = names.filter(n => !got.has(n));
+        return gone.length
+          ? { ok: false, text: `Custom Labels deploy: accepted by Salesforce, but ${gone.length} label(s) not found after deploy` }
+          : { ok: true };
+      },
+    });
+    if (!dw.accepted) return { deployed: 0, error: dw.raw?.error || dw.text, attempted: split.deployable.length };
+    if (!dw.ok) return { deployed: 0, error: dw.text, attempted: split.deployable.length };
+    return { deployed: split.deployable.length, translations: transCount, languages: langs.length };
+  } finally {
+    await sftkHistoryEnd(journal, { undo: { none: 'this deploy writes the source org\'s current label text; the target\'s previous text was never read, so there is nothing to write back — re-deploy from a backup, or fix the label(s) by hand in Setup' } });
+  }
 }
 
 // The configuration pass for ONE target: metadata deploys first (they are

@@ -3364,16 +3364,22 @@ const LightningPages = (() => {
     const cloneMetaRes = { FullName: newApiName, Metadata: cloneMeta };
     const zipBase64    = buildFlexiPageZip(cloneMetaRes);
 
+    // History: one journal for this Clone Page click. Undo is `none` —
+    // cloning only ever CREATES a page; there is no previous copy to go
+    // back to.
+    const journal = sftkHistoryBegin({ tool: 'Lightning Pages', title: `📋 Clone → "${newApiName}"`, orgUrl: _orgUrl });
+    cloneStep('Deploying cloned page…');
+    let newPage = null;
+    let wr;
+    try {
     // confirmed-by: openCloneDialog's Clone Page form (the only caller —
     // label/API name are reviewed there before the Clone Page button writes)
-    // ── 2. Deploy via Metadata Deploy, verified by finding the new page ────
     // The write discipline (sftk-write.js): the deploy is the write, the
     // FlexiPage lookup below is the verify — never trust the deploy's own
     // answer for whether the clone actually exists.
-    cloneStep('Deploying cloned page…');
-    let newPage = null;
-    const wr = await sftkWriteVerified({
+    wr = await sftkWriteVerified({
       describe: `"${newApiName}" clone`,
+      journal,
       write: () => bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64 }),
       verify: async () => {
         cloneStep('Locating new page…');
@@ -3387,6 +3393,9 @@ const LightningPages = (() => {
         return { ok: !!newPage, text: newPage ? null : `Cloned page "${newApiName}" not found after deploy — it may have been created under a different namespace.` };
       },
     });
+    } finally {
+      await sftkHistoryEnd(journal, { undo: { none: `cloning creates a new page — there is no previous copy to undo to; delete "${newApiName}" by hand in Lightning App Builder if you no longer want it` } });
+    }
     if (!wr.accepted) throw new Error('Deploy failed: ' + ((wr.raw && wr.raw.error) || 'refused'));
     if (!wr.ok) throw new Error(wr.text);
 
@@ -3614,6 +3623,15 @@ const LightningPages = (() => {
       { name: `objects/${sobjectType}.object`,         data: enc.encode(lines.join('\n'))   },
     ]);
 
+    // History (sftk-history.js): one journal per deploy. Undo is `none` —
+    // a CustomObject actionOverride has no reliable per-slot read (the
+    // describe endpoint reflects only the current user's own effective
+    // view, not every profile's), so the state before THIS deploy cannot
+    // be captured with confidence; faking it risks writing back the wrong
+    // page. Reset it by hand in Setup if it needs reversing.
+    const journal = sftkHistoryBegin({ tool: 'Lightning Pages', title: `🔧 ${sobjectType} view override`, orgUrl: _orgUrl });
+    let wr;
+    try {
     // confirmed-by: every caller confirms first — doActivate's, confirmRemove's,
     // or doAdd's sftkConfirmDestructive (saveActionOverride/deleteActionOverride
     // are only reached from activatePage, doAdd's orgdefault mode, or doRemove)
@@ -3622,11 +3640,15 @@ const LightningPages = (() => {
     // queryable sObject to re-read (it is Metadata-only). Every caller
     // reloads the real, current assignment state via openDetail() right
     // after this returns, which is the actual confirmation shown to the user.
-    const wr = await sftkWriteVerified({
+    wr = await sftkWriteVerified({
       describe: `${sobjectType} view override`,
+      journal,
       write: () => bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64 }),
       noVerify: 'no queryable sObject for a CustomObject actionOverride — openDetail() re-reads the real assignment state right after',
     });
+    } finally {
+      await sftkHistoryEnd(journal, { undo: { none: `the previous ${sobjectType} view override could not be read back reliably before writing — reset it by hand in Setup → Object Manager → ${sobjectType} → Buttons, Links, and Actions if this needs to be undone` } });
+    }
     if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
   }
 
@@ -3738,13 +3760,21 @@ const LightningPages = (() => {
       ...appMeta.Metadata,
       profileActionOverrides: updatedOverrides
     });
+    // History (sftk-history.js): appMeta.Metadata.profileActionOverrides,
+    // read by the caller BEFORE this PATCH, is the previous state — the
+    // undo (below) PATCHes it straight back.
+    const prevOverrides = appMeta.Metadata.profileActionOverrides || [];
+    const journal = sftkHistoryBegin({ tool: 'Lightning Pages', title: `📱 App assignment — ${appId}`, orgUrl: _orgUrl });
+    let wr;
+    try {
     // confirmed-by: every caller confirms first — doAdd's or confirmRemove's
     // sftkConfirmDestructive (patchCustomApp is only reached from
     // saveAppAssignment/deleteAppAssignment, called by doAdd or doRemove)
     // The write discipline (sftk-write.js): the PATCH is the write, a
     // re-read of the app's own overrides count is the verify.
-    const wr = await sftkWriteVerified({
+    wr = await sftkWriteVerified({
       describe: 'app assignment',
+      journal,
       write: () => bg({
         type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
         path: `services/data/v62.0/tooling/sobjects/CustomApplication/${appId}`,
@@ -3758,6 +3788,20 @@ const LightningPages = (() => {
         return { ok: now === updatedOverrides.length, text: null };
       },
     });
+    } finally {
+      const prevMeta = prepareCustomAppMetadata({ ...appMeta.Metadata, profileActionOverrides: prevOverrides });
+      await sftkHistoryEnd(journal, {
+        undo: (wr && wr.ok) ? { steps: [{
+          describe: `App ${appId}: restore the previous assignment(s) (${prevOverrides.length})`,
+          // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+          msg: { type: 'SF_PATCH', path: `services/data/v62.0/tooling/sobjects/CustomApplication/${appId}`, body: { Metadata: prevMeta } },
+          verify: { query: `SELECT Id, Metadata FROM CustomApplication WHERE Id = '${appId}'`, tooling: true,
+            pick: 'records.0.Metadata.profileActionOverrides', count: prevOverrides.length,
+            text: { ok: `App ${appId}: previous assignment(s) restored — verified by re-reading the org`,
+                    bad: `App ${appId}: accepted by Salesforce, but the org still shows a different set of overrides` } },
+        }] } : { none: 'nothing was confirmed changed, so there is nothing to undo' },
+      });
+    }
     if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
     if (!wr.ok) throw new Error('the assignment was saved, but the org still shows a different set of overrides on re-read — check it in App Builder.');
   }

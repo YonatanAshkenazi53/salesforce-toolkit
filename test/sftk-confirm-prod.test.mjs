@@ -73,6 +73,10 @@ describe('sftkConfirmDestructive — the production step and the required word',
     expect(SRC).toContain("document.getElementById('sftkConfirmProdCancel')?.addEventListener('click', () => done(false));");
     expect(SRC).toContain('is treated as a <strong>PRODUCTION</strong> org — what you change here affects real users now.');
   });
+  it('the acknowledgement takes its own words through revOverride.ack (an undo is not "permanent")', () => {
+    expect(SRC).toContain("${esc(rev.ack || 'I understand this is permanent')}");
+    expect(SRC).toContain("ack: opts.revOverride.ack || ''");
+  });
   it('the first step announces the coming production step', () => {
     expect(SRC).toContain('is treated as a PRODUCTION org — one more step asks for its name.');
   });

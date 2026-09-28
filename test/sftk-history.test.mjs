@@ -53,6 +53,17 @@ describe('journal → entry', () => {
     // persisted through the popup path (no _history in scope)
     expect(fs.store.sftk_history.map(x => x.id)).toEqual([j.id]);
   });
+  it('an action that found nothing to write is a success that says so (nothingToDo), with no undo', async () => {
+    const H = load(fakeStorage());
+    const j = H.sftkHistoryBegin({ tool: 'Picklist Manager', title: 'sync' });
+    const e = await H.sftkHistoryEnd(j, { nothingToDo: 'already in sync — nothing needed writing', undo: { none: 'x' } });
+    expect(e.status).toBe('success');
+    expect(e.what).toEqual([{ describe: 'nothing to write', ok: true, accepted: true, verified: true, text: 'already in sync — nothing needed writing' }]);
+    expect(e.toolUndo).toEqual({ none: 'nothing was written' });
+    // with writes present, the sentence is ignored — the writes speak
+    const k = H.sftkHistoryBegin({ tool: 't' }); H.sftkHistoryNote(k, { ok: false, accepted: false, verified: false, text: 'refused' }, 'w');
+    expect((await H.sftkHistoryEnd(k, { nothingToDo: 'no', undo: { none: 'x' } })).status).toBe('failed');
+  });
   it('status: all ok → success; none accepted → failed; nothing written → failed', async () => {
     const H = load(fakeStorage());
     const a = H.sftkHistoryBegin({ tool: 't' }); H.sftkHistoryNote(a, { ok: true, accepted: true, verified: true, text: 'x' }, 'x');
@@ -173,6 +184,7 @@ describe('sftkHistoryUndo — the steps run through the write discipline', () =>
     const dialog = sent.find(x => x.dialog).dialog;
     expect(dialog).toMatchObject({ typedWord: 'UNDO', confirmLabel: '↩ Undo', items: [{ label: 'F back on (v3)' }], production: { label: 'A' } });
     expect(dialog.revOverride.needsCheckbox).toBe(true);
+    expect(dialog.revOverride.ack).toBe('I understand this writes the earlier state back over whatever is there now');
     const patch = sent.find(x => x.type === 'SF_PATCH');
     expect(patch).toMatchObject({ orgUrl: 'https://a.my.salesforce.com', sid: 'S1', path: 'p', _suppressError: true });
     expect(sent.find(x => x.type === 'SF_QUERY')).toMatchObject({ tooling: false, sid: 'S1' });

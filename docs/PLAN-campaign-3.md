@@ -82,6 +82,8 @@ until typed). This closes the "typed gate never reached live" gap.
 
 ## Phase 3 — History with undo for every write
 
+**DONE 2026-09-27** (commits f1fe928 + the sweep commit): `sftk-history.js` in both pages — a journal per tool action (`sftkHistoryBegin` → `sftkWriteVerified({ journal })` → `sftkHistoryEnd(j, { undo })`), undo steps as data (message + re-read spec judged by `sftkUndoVerifyEval`), `kind:'tool'` entries in the shared History with `_histToolCard` and ↩ Undo through the shared dialog (word UNDO, typed org name); `test/history-discipline.test.mjs` at baseline zero; two Sonnet sweeps, Fable review; live with `UNDO=1` (scripts/dev/live/_undo.mjs) on flow switches, API versions, picklists (single, sync), copy permissions, licences, flow access, lightning pages, field cleaner — the CLI showed the original state after each undo. Not undoable, and said so: deleted flow versions, deleted debug logs, a Draft rewritten in place, a wipe.
+
 **Problem.** Deploy has a verified rollback; Field Cleaner has restore points. A picklist value
 deactivated, a flow's API version changed, a flow switched off, a permission copied, a licence
 toggled, a page assigned: no History entry, no way back — though each is cheaply reversible.

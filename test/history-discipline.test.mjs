@@ -20,18 +20,8 @@ const UI_FILES = readdirSync(root).filter(f => f.endsWith('.js') && !f.startsWit
   && !['background.js', 'content.js', 'trusted-types-policy.js', 'sftk-write.js', 'sftk-history.js', 'sftk-confirm.js'].includes(f));
 
 const BASELINE = {
-  'apex-debugger.js': 6,
-  'dependency-map.js': 2,
-  'field-cleaner.js': 14,
-  'flow-permissions.js': 1,
-  'license-manager.js': 2,
-  'lightning-pages.js': 3,
-  'popup.js': 3,
-  'studio-picklists.js': 5,
-  'studio-reconcile.js': 9,
-  'studio-scan.js': 1,
-  'studio-seed.js': 5,
-  'user-copy.js': 5,
+  // 2026-09-28, end of phase 3: zero everywhere. Every verified write names its
+  // journal (or the entry that records it) and every End states its undo.
 };
 
 export function offenders(src, file) {
@@ -77,6 +67,14 @@ describe('every verified write names its History journal; every End states its u
       }
     }
   });
+  it('the API-versions undo re-activates the previous version AND deletes the version it made (Salesforce refuses further deploys otherwise — live 2026-09-28)', () => {
+    const src = readFileSync(join(root, 'dependency-map.js'), 'utf8');
+    expect(src).toContain("msg: { type: 'SF_TOOLING_DELETE', sobject: 'Flow', id: c.newId },");
+    expect(src).toContain("verify: { query: `SELECT Id FROM Flow WHERE Id = '${c.newId}'`, tooling: true, count: 0,");
+    expect(src).toContain("newId: newest.id, newVersion: newest.versionNumber");
+    // the re-read of a re-activation asks the Tooling Flow rows, not FlowDefinitionView (no ActiveVersion relationship there)
+    expect(src).toContain("query: `SELECT Id FROM Flow WHERE DefinitionId = '${c.defId}' AND VersionNumber = ${Number(c.prevVersion) || 0} AND Status = 'Active'`, tooling: true,");
+  });
   it('the write helper hands every verdict to the journal (single and batched)', () => {
     const src = readFileSync(join(root, 'sftk-write.js'), 'utf8');
     expect(src).toContain("if (spec && spec.journal && typeof sftkHistoryNote === 'function') sftkHistoryNote(spec.journal, out, spec.describe);");
@@ -88,5 +86,7 @@ describe('every verified write names its History journal; every End states its u
     expect(hist).toContain('data-dsaction="undoTool"');
     expect(hist).toContain('sftkToolUndoState(run)');
     expect(readFileSync(join(root, 'studio-core.js'), 'utf8')).toContain("case 'undoTool':              window.undoTool?.(arg); break;");
+    // entries the popup writes while Data Studio is open are merged, not lost on the next save
+    expect(readFileSync(join(root, 'studio-core.js'), 'utf8')).toMatch(/changes\.sftk_history\.newValue \|\| \[\]\)\.filter\(e => e && e\.kind === 'tool' && !_history\.some/);
   });
 });
