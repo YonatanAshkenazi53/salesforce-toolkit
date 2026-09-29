@@ -138,7 +138,7 @@ describe('one icon treatment, no inline colour', () => {
   it('the feature table carries an icon NAME, not an emoji and a hex', () => {
     expect(FEATURES).not.toMatch(/\bicon:/);
     expect(FEATURES).not.toMatch(/\bcolor:/);
-    expect((FEATURES.match(/\bi: '[a-z-]+'/g) || []).length).toBe(8);
+    expect((FEATURES.match(/\bi: '[a-z-]+'/g) || []).length).toBe(9);
   });
 
   it('the home renderer emits no inline style attributes at all', () => {

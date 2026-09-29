@@ -221,6 +221,13 @@ const HOME_FEATURES = [
     title: 'Flow Access',
     desc: 'Control which users and profiles can run each flow',
     action() { navigateToTab('flow-access'); initFlowAccessTab(); }
+  },
+  {
+    id: 'health',
+    i: 'chart',
+    title: 'Org health',
+    desc: 'Licences at the cap, idle users, flows left off — in Data Studio',
+    action() { chrome.tabs.create({ url: chrome.runtime.getURL('studio.html#/orghealth') }); }
   }
 ];
 
@@ -236,7 +243,7 @@ const HOME_SECTIONS = [
   },
   {
     title: 'Users & Records',
-    ids: ['copy-perms', 'licenses', 'flow-access']
+    ids: ['copy-perms', 'licenses', 'flow-access', 'health']
   },
 ];
 

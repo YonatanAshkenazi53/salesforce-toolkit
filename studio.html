@@ -119,6 +119,15 @@
           </span>
         </button>
 
+        <!-- Campaign 3 phase 8: what the tools know about one org, together. -->
+        <button class="ds-nav-btn" data-view="orghealth">
+          <span class="ds-nav-icon ds-i" data-i="chart" aria-hidden="true"></span>
+          <span class="ds-nav-label">
+            <span class="ds-nav-name">Org health</span>
+            <span class="ds-nav-desc">What needs attention in one org</span>
+          </span>
+        </button>
+
         <!-- Labs: early previews, demoted from Inspect until strengthened
              (user 2026-07-18: "not very strong, some not even functional…
              ship them when we are ready" — plan Phase N5 is the exit bar). -->
@@ -217,6 +226,7 @@
        shared verbatim with popup.html, so it carries its own HTML escaper. -->
   <script src="studio-deploy.js"></script>
   <script src="studio-whatsnew.js"></script>
+  <script src="studio-orghealth.js"></script>
   <!-- Phase X note: studio-tools.js (kept in the repo, not loaded) is the
        proven host for mounting popup tools in this shell — the user chose to
        keep the Debugger popup-only (2026-07-13). To mount a tool: add its

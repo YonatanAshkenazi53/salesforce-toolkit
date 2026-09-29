@@ -112,7 +112,7 @@ describe('palette icon names are pinned to their counterparts', () => {
   const cmdToolkit = parseTable(toolkitBlock, 'tab');
 
   it('both tables parsed completely', () => {
-    expect(Object.keys(cmdViews).length).toBe(9);
+    expect(Object.keys(cmdViews).length).toBe(10);   // + Org health (campaign 3 phase 8)
     expect(Object.keys(cmdToolkit).length).toBe(8);
   });
 
@@ -139,7 +139,7 @@ describe('palette icon names are pinned to their counterparts', () => {
                            POPUP.indexOf('const HOME_SECTIONS'));
     const popupIcons = {};
     for (const m of hf.matchAll(/id: '([a-z-]+)',\s*i: '([a-z-]+)'/g)) popupIcons[m[1]] = m[2];
-    expect(Object.keys(popupIcons).length).toBe(8);
+    expect(Object.keys(popupIcons).length).toBe(9);   // + the Org health tile (opens Data Studio)
     for (const [tab, name] of Object.entries(cmdToolkit)) {
       expect(name, `palette icon for toolkit tab "${tab}" must match HOME_FEATURES`)
         .toBe(popupIcons[tab]);
