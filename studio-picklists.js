@@ -2964,6 +2964,68 @@ function _pkRtsForField(bundle, field) {
   }));
 }
 
+// ── The sweep's reads, with no DOM (shared with Org health's "drifting picklists" card) ──
+// Sessions + the object's describe for every org URL. An org that isn't open,
+// or can't describe the object, is REPORTED (skip = the reason), never dropped.
+async function _pkSweepOpenOrgs(urls, obj) {
+  const orgs = [];
+  for (const url of (urls || [])) {
+    const sess = await getOrgSession(url);
+    orgs.push({ orgUrl: url, orgKey: _orgKey(url), label: orgLabel(url), sess: sess || null,
+      skip: sess ? '' : 'not open in a Chrome tab' });
+  }
+  for (const o of orgs) {
+    if (!o.sess) continue;
+    o.desc = await describe(obj, o.sess.orgUrl, o.sess.sid);
+    if (!o.desc) { o.skip = `${obj} could not be described here (object missing, or no access)`; o.sess = null; }
+  }
+  return orgs;
+}
+
+// The ring's source of truth, when a ring of 2+ orgs is loaded and that org is
+// among the usable ones; else the first usable org. → { srcOrg, ringKey }.
+function _pkSweepPickSource(usable) {
+  const ringKey = _orgKey((typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2) ? _ring.sourceUrl : '');
+  const srcOrg = (ringKey && usable.find(o => o.orgKey === ringKey)) || usable[0];
+  return { srcOrg, ringKey };
+}
+
+// Field list = UNION of the picklist / multi-picklist fields across the usable
+// orgs (a field that exists only in a target is drift too), source org first.
+function _pkSweepFieldUnion(usable, srcOrg) {
+  const seenF = new Set(), allFields = [];
+  for (const o of [srcOrg, ...usable.filter(x => x !== srcOrg)]) {
+    for (const f of (o.desc.fields || [])) {
+      if ((f.type === 'picklist' || f.type === 'multipicklist') && !seenF.has(f.name)) {
+        seenF.add(f.name);
+        allFields.push({ name: f.name, label: f.label, isMulti: f.type === 'multipicklist' });
+      }
+    }
+  }
+  return allFields;
+}
+
+// ONE field in ONE usable org → { inv, rts } shaped for pkFieldVerdict
+// (inv = perOrgInv[i], rts = perOrgRts[i]). A read that throws is kind:'error'.
+async function _pkSweepReadField(o, obj, fieldName, rtBundle) {
+  if (!(o.desc.fields || []).some(x => x.name === fieldName)) {
+    return { inv: { orgKey: o.orgKey, label: o.label, kind: 'missing' }, rts: null };
+  }
+  try {
+    const r = await _pkFetchInventory(o.sess, obj, fieldName, { skipUsage: true, skipRts: true });
+    if (r.kind === 'standard') return { inv: { orgKey: o.orgKey, label: o.label, kind: 'standard', valueSetName: fieldName }, rts: null };
+    if (r.kind === 'global')   return { inv: { orgKey: o.orgKey, label: o.label, kind: 'global',   valueSetName: r.name  }, rts: null };
+    return {
+      inv: { orgKey: o.orgKey, label: o.label, kind: 'local',
+        values: r.inv.rawValues.map(v => ({ name: pkValueName(v), label: v.label || pkValueName(v),
+          active: v.isActive !== false, isDefault: !!v.default })) },
+      rts: _pkRtsForField(rtBundle, fieldName),
+    };
+  } catch (e) {
+    return { inv: { orgKey: o.orgKey, label: o.label, kind: 'error', error: e.message }, rts: null };
+  }
+}
+
 async function _pkSweepObject() {
   const body = eid('dsPkBody');
   if (!body || !_pkCmpObj) return;
@@ -2976,19 +3038,8 @@ async function _pkSweepObject() {
 
   try {
     // 1) Sessions — an org that isn't open is REPORTED, never silently dropped.
-    const orgs = [];
-    for (const url of _pkCmpOrgs) {
-      const sess = await getOrgSession(url);
-      orgs.push({ orgUrl: url, orgKey: _orgKey(url), label: orgLabel(url), sess: sess || null,
-        skip: sess ? '' : 'not open in a Chrome tab' });
-    }
-
-    // 2) Describe the object in each live org.
-    for (const o of orgs) {
-      if (!o.sess) continue;
-      o.desc = await describe(obj, o.sess.orgUrl, o.sess.sid);
-      if (!o.desc) { o.skip = `${obj} could not be described here (object missing, or no access)`; o.sess = null; }
-    }
+    //    2) Describe the object in each live org. (_pkSweepOpenOrgs does both.)
+    const orgs = await _pkSweepOpenOrgs(_pkCmpOrgs, obj);
     const usable = orgs.filter(o => o.sess && o.desc);
     const skipped = orgs.filter(o => o.skip);
     if (usable.length < 2) {
@@ -2999,17 +3050,8 @@ async function _pkSweepObject() {
 
     // 3) Field list = UNION across orgs (a field that exists only in a target
     //    is drift too), ordered from the source of truth when it's readable.
-    const ringKey = _orgKey((typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2) ? _ring.sourceUrl : '');
-    const srcOrg = (ringKey && usable.find(o => o.orgKey === ringKey)) || usable[0];
-    const seenF = new Set(), allFields = [];
-    for (const o of [srcOrg, ...usable.filter(x => x !== srcOrg)]) {
-      for (const f of (o.desc.fields || [])) {
-        if ((f.type === 'picklist' || f.type === 'multipicklist') && !seenF.has(f.name)) {
-          seenF.add(f.name);
-          allFields.push({ name: f.name, label: f.label, isMulti: f.type === 'multipicklist' });
-        }
-      }
-    }
+    const { srcOrg, ringKey } = _pkSweepPickSource(usable);
+    const allFields = _pkSweepFieldUnion(usable, srcOrg);
     if (!allFields.length) {
       body.innerHTML = `<div class="ds-seq-empty">${esc(obj)} has no picklist or multi-picklist fields in the readable orgs.</div>`;
       return;
@@ -3071,21 +3113,8 @@ async function _pkSweepObject() {
 
       const perOrg = [], perRts = [];
       await Promise.all(usable.map(async (o, oi) => {
-        if (!(o.desc.fields || []).some(x => x.name === f.name)) {
-          perOrg[oi] = { orgKey: o.orgKey, label: o.label, kind: 'missing' }; perRts[oi] = null; return;
-        }
-        try {
-          const r = await _pkFetchInventory(o.sess, obj, f.name, { skipUsage: true, skipRts: true });
-          if (r.kind === 'standard') { perOrg[oi] = { orgKey: o.orgKey, label: o.label, kind: 'standard', valueSetName: f.name }; perRts[oi] = null; return; }
-          if (r.kind === 'global')   { perOrg[oi] = { orgKey: o.orgKey, label: o.label, kind: 'global',   valueSetName: r.name  }; perRts[oi] = null; return; }
-          perOrg[oi] = { orgKey: o.orgKey, label: o.label, kind: 'local',
-            values: r.inv.rawValues.map(v => ({ name: pkValueName(v), label: v.label || pkValueName(v),
-              active: v.isActive !== false, isDefault: !!v.default })) };
-          perRts[oi] = _pkRtsForField(rtBundles[o.orgKey], f.name);
-        } catch (e) {
-          perOrg[oi] = { orgKey: o.orgKey, label: o.label, kind: 'error', error: e.message };
-          perRts[oi] = null;
-        }
+        const r = await _pkSweepReadField(o, obj, f.name, rtBundles[o.orgKey]);
+        perOrg[oi] = r.inv; perRts[oi] = r.rts;
       }));
 
       const verdict = pkFieldVerdict(perOrg, perRts, f.name);

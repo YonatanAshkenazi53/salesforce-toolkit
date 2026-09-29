@@ -64,3 +64,17 @@ describe('the page keeps the budget-first rules', () => {
     expect(readFileSync(join(root, 'studio-history.js'), 'utf8')).toContain("'sftk_orghealth',");
   });
 });
+
+describe('live 2026-09-29 fixes', () => {
+  it('pages that share a label are told apart by their API name', () => {
+    const pages = extractFunction('studio-orghealth.js', 'sftkOhPagesVerdict');
+    const v = pages([{ label: 'Account Record Page', devName: 'Account_Record_Page1', type: 'RecordPage', object: 'Account', state: 'unassigned' },
+                     { label: 'Account Record Page', devName: 'Account_Record_Page2', type: 'RecordPage', object: 'Account', state: 'unassigned' }], 0);
+    expect(v.lines.slice(0, 2)).toEqual(['Account Record Page [Account_Record_Page1] (RecordPage · Account) — assigned to nobody',
+                                          'Account Record Page [Account_Record_Page2] (RecordPage · Account) — assigned to nobody']);
+  });
+  it('Check all keeps the "+" when some cards cost depends on what the org holds', () => {
+    expect(SRC).toContain("(${plusN} of them depend on what the org holds, so more than this)");
+    expect(SRC).toContain(String.raw`line.text.replace(/^≈(\d[\d,]*)/, plus ? '≈$1+' : '≈$1')`);
+  });
+});

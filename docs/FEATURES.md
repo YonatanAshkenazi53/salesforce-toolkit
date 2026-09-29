@@ -91,6 +91,12 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 - Every result states exactly which org pair and when it was checked; an inconclusive check is shown as unknown, never quietly counted as fine.
 - Limit: this checks the *shape* of the data — fields, values, rules — not who can see or edit it.
 
+### Org health
+- One org at a time, one card per finding, each with a button into the tool that fixes it: licence types at their cap, active users who have not logged in for 90 days (integration users left out), flows switched off with ⏻ Flow switches and still off, your own flows three or more releases below the org's release, Lightning pages assigned to nobody, picklists that differ between the Sync Ring's orgs (for the object you name), and custom fields on an object that no record fills and nothing references.
+- Nothing is read until you press Check or Check all; each card shows its API cost first, and Check all shows the org's remaining daily API budget. Answers are kept on this PC per org with the time they were checked.
+- A check that could not read everything says so — "could not be checked", "NOT an all-clear" — and never shows a green result for something it did not read.
+- Limit: the unused-fields card relies on Salesforce's dependency index, which does not cover reports, list views or Lightning pages, so its list is candidates to confirm in Field Cleaner before deleting anything.
+
 ### Schema View (Labs)
 - An early preview: a visual map of how an org's objects relate to each other, optionally layered with which flows touch which objects, plus an on-demand overlay comparing that map against a second org. Read-only.
 - Limit: an early preview that may not be fully reliable yet; a large org is capped to a portion of its objects unless you name the rest yourself.

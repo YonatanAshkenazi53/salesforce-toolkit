@@ -44,6 +44,7 @@ not exfiltrate data past this policy.
 | `ds_scans`, `ds_scan_results` | Saved comparison results: record ids and match-key values for the records a scan found on each side |
 | `ds_ring`, `ds_connections`, `ds_stored_orgs` | Your multi-org setup: which orgs are grouped, which is the source of truth, your labels for them |
 | `ds_sched_drift` | Latest scheduled drift-check result: per-org record counts and any errors |
+| `sftk_orghealth` | Org health: the last answer of each check per org — counts, and the names of the licences, users, flows, pages, picklist fields or custom fields it found |
 | `ds_readiness_state`, `ds_settings` | Deploy-readiness selections and Data Studio preferences |
 | `fc_fix_snapshots` | Field Cleaner undo data: the **full metadata** of flows, layouts and Lightning pages captured before it edits them, so a change can be rolled back |
 | `fc_dep\|<org>\|<field>` | Cached field-dependency scan results per org and field |

@@ -4,7 +4,13 @@
 // README / the commit for the queries).
 const dump = async (h, sel, n = 3000) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 export default async function (h) {
-  await h.login(process.env.ORG || 'npc'); await h.studio('#/orghealth'); await h.watchErrors();
+  // RING=1: both fixture orgs, trailheads5 as the source — the picklist card compares them.
+  await h.login(process.env.ORG || 'npc'); if (process.env.RING === '1') await h.login('npc2');
+  await h.studio('#/orghealth'); await h.watchErrors();
+  if (process.env.RING === '1') {
+    await h.eval(`(() => { _ring = { orgs: ['https://trailheads5.my.salesforce.com', 'https://trailheads4.my.salesforce.com'], sourceUrl: 'https://trailheads5.my.salesforce.com' }; _ohOrg = 'https://trailheads5.my.salesforce.com'; renderOrgHealth(); return true; })()`);
+    await h.sleep(1500);
+  }
   await h.waitFor("!!document.querySelector('[data-oh-card]')", 30000, 500);
   await h.sleep(2500);
   h.log('BEFORE CHECK:', await dump(h, '#dsMain', 1500));

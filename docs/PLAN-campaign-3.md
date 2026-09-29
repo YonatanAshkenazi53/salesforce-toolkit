@@ -228,6 +228,8 @@ laptop must be on) or a small cloud VM.
 
 ## Phase 8 — org health page
 
+**DONE 2026-09-29** (commits d98d62c + the cards commit): `studio-orghealth.js` — view `orghealth` (nav, `#/orghealth`, command palette, popup Home tile), the card contract (`calls` shown before Check — a number or a formula; `run` → tone / headline / lines / fix; optional `input`), answers kept per org in `sftk_orghealth` (in 🧹 Clear cached org data and PRIVACY.md). Seven cards: licences at the cap, idle users (integration licences left out, said), flows left off, flows ≥ 3 releases below the org's release (`sftk-apiver.js` now loaded in Data Studio), Lightning pages assigned to nobody (a faithful port of the Lightning Pages reads; a parity test runs its describe matcher against `lpOrgDefaultsFromDescribe`), picklist drift across the ring (the Picklist Manager's sweep split into reusable readers `_pkSweepOpenOrgs/_pkSweepPickSource/_pkSweepFieldUnion/_pkSweepReadField`), custom fields with no data and no references (candidates — the dependency index misses reports / list views / pages). Tests `orghealth-0929`, `orghealth-cards-0929`. Live (`scripts/dev/live/orghealth.mjs RING=1`, trailheads5 + trailheads4): all seven answered — 2 full licence types, 2 idle users (+2 integration users said), 62 flows ≥ 3 releases behind, 43 pages assigned to nobody + 4 could not be checked, the fixture picklist drifting between the two orgs, the Account field card honest about 3 FLS-hidden fields. Live fixes: pages that share a label named by API name; the Check-all total keeps its “+”.
+
 **Problem.** The tools know the answers; nothing shows them together.
 
 **Build.** Data Studio view "Org health" (and the popup Home tile): one card per finding, each
