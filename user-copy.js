@@ -1,5 +1,5 @@
 // ============================================================
-// User Copy Module — copy profile, permission sets,
+// User Copy Module — copy profile, role, permission sets,
 // permission set groups, public groups & user settings
 // between Salesforce users
 // ============================================================
@@ -58,7 +58,7 @@ const UserCopy = (() => {
   // permission-set license-compatibility check, UserType for the chip).
   const USER_FIELDS =
     'Id,Name,Username,Email,Alias,IsActive,Profile.Name,Profile.Id,' +
-    'Profile.UserLicense.Id,Profile.UserLicense.Name,UserType';
+    'Profile.UserLicense.Id,Profile.UserLicense.Name,UserType,UserRoleId,UserRole.Name';
 
   // Selected users
   let sourceUser = null;
@@ -260,6 +260,10 @@ const UserCopy = (() => {
               👤 Profile
             </label>
             <label class="uc-opt-label">
+              <input type="checkbox" class="uc-opt-cb" id="ucOptRole" checked>
+              🏢 Role
+            </label>
+            <label class="uc-opt-label">
               <input type="checkbox" class="uc-opt-cb" id="ucOptPermSets" checked>
               🔑 Permission Sets
             </label>
@@ -354,6 +358,7 @@ const UserCopy = (() => {
   function getOptions() {
     return {
       profile:   !!document.getElementById('ucOptProfile')?.checked,
+      role:      !!document.getElementById('ucOptRole')?.checked,
       permSets:  !!document.getElementById('ucOptPermSets')?.checked,
       permSetGroups: !!document.getElementById('ucOptPermSetGroups')?.checked,
       groups:    !!document.getElementById('ucOptGroups')?.checked,
@@ -757,6 +762,33 @@ const UserCopy = (() => {
       }
     }
 
+    // ── Role section ─────────────────────────────────────
+    // User request 2026-09-29: "user copy should also be able to copy role".
+    // One field on the user (UserRoleId). A source with no role has nothing
+    // to copy — clearing the target's role is not offered from here.
+    if (opts.role) {
+      const srcRoleId = sourceUser?.UserRoleId || null;
+      const tgtRoleId = targetUser?.UserRoleId || null;
+      const srcRole = sourceUser?.UserRole?.Name || '';
+      const tgtRole = targetUser?.UserRole?.Name || '';
+      const sameRole = srcRoleId === tgtRoleId;
+      const noSrcRole = !srcRoleId;
+      html += `<div class="uc-section-title" style="margin-top:10px">🏢 Role</div>`;
+      html += `
+        <label class="uc-row uc-row-check ${sameRole || noSrcRole ? 'uc-row-muted' : ''}">
+          <input type="checkbox" id="ucRoleCb" ${sameRole || noSrcRole ? 'disabled' : 'checked'}>
+          <span class="uc-row-name">
+            ${noSrcRole ? `${esc(sourceUser?.Name || 'The source user')} has no role — nothing to copy` : `Change role to <strong>${esc(srcRole || srcRoleId)}</strong>`}
+          </span>
+          ${sameRole
+            ? '<span class="uc-row-badge uc-badge-same">same</span>'
+            : `<span class="uc-field-val">currently: ${esc(tgtRole || 'no role')}</span>`}
+        </label>`;
+      if (!sameRole && !noSrcRole) {
+        html += `<div class="uc-license-note">ℹ️ The role decides which records ${esc(targetUser?.Name || 'the user')} can see through the role hierarchy and sharing rules.</div>`;
+      }
+    }
+
     // ── Permission Sets section ──────────────────────────
     if (opts.permSets) {
       html += `<div class="uc-section-title" style="margin-top:10px">🔑 Permission Sets</div>`;
@@ -1034,7 +1066,7 @@ const UserCopy = (() => {
       }
     }
 
-    if (!opts.profile && !opts.permSets && !opts.permSetGroups && !opts.groups &&
+    if (!opts.profile && !opts.role && !opts.permSets && !opts.permSetGroups && !opts.groups &&
         !opts.userPerms && !opts.settings) {
       html = `<div class="uc-empty-msg" style="padding:12px 6px">Select at least one category above to see the preview.</div>`;
     }
@@ -1053,6 +1085,7 @@ const UserCopy = (() => {
     if (typeof sftkConfirmDestructive === 'function' && sourceUser && targetUser) {
       const planned = [];
       if (opts.profile && document.getElementById('ucProfileCb')?.checked) planned.push({ label: `Profile → ${sourceUser.Profile?.Name || sourceUser.ProfileId || '?'}`, sub: 'replaces the current profile' });
+      if (opts.role && document.getElementById('ucRoleCb')?.checked) planned.push({ label: `Role → ${sourceUser.UserRole?.Name || sourceUser.UserRoleId || '?'}`, sub: `replaces the current role (${targetUser.UserRole?.Name || 'none'}) — changes what records they can see` });
       const labelOf = (cb, fallback) => (cb.closest('label')?.textContent || '').replace(/\s+/g, ' ').trim() || fallback;
       document.querySelectorAll('.uc-ps-cb:checked').forEach(cb => planned.push({ label: labelOf(cb, cb.dataset.psid), sub: 'permission set' }));
       document.querySelectorAll('.uc-psg-cb:checked').forEach(cb => planned.push({ label: cb.dataset.psglabel || labelOf(cb, cb.dataset.psgid), sub: 'permission set group' }));
@@ -1063,7 +1096,7 @@ const UserCopy = (() => {
       const sure = await sftkConfirmDestructive({
         title: `Copy access from ${sourceUser.Name} to ${targetUser.Name}`,
         items: planned.length ? planned : [{ label: 'Nothing ticked', sub: 'no operation would run' }],
-        revOverride: { html: `Writes into <strong>${esc(targetUser.Name)}</strong>'s user record and assignments in this org. A profile change replaces the old profile; permission sets and groups are ADDED (nothing is removed from ${esc(targetUser.Name)}). Undo by hand in Setup → Users.`, needsCheckbox: true },
+        revOverride: { html: `Writes into <strong>${esc(targetUser.Name)}</strong>'s user record and assignments in this org. A profile or role change replaces the old one; permission sets and groups are ADDED (nothing is removed from ${esc(targetUser.Name)}). Recorded in Data Studio › History, where ↩ Undo reverses it.`, needsCheckbox: true },
         confirmLabel: '📋 Copy access',
         production: gate.production ? { label: gate.label } : null,
       });
@@ -1075,6 +1108,7 @@ const UserCopy = (() => {
     // Collect every selected operation up-front so the progress counter
     // knows the real total before the first API call fires.
     const doProfile = opts.profile && !!document.getElementById('ucProfileCb')?.checked;
+    const doRole = opts.role && !!document.getElementById('ucRoleCb')?.checked && !!sourceUser.UserRoleId;
     const psIds = opts.permSets
       ? [...document.querySelectorAll('.uc-ps-cb:checked')].map(cb => cb.dataset.psid)
       : [];
@@ -1110,7 +1144,7 @@ const UserCopy = (() => {
     // (profile PATCH + each perm-set POST + each perm-set-GROUP POST + each
     // public-group POST + the combined User PATCH), so long copies don't
     // look hung.
-    const total = (doProfile ? 1 : 0) + psIds.length + psgPicks.length + groupIds.length +
+    const total = (doProfile ? 1 : 0) + (doRole ? 1 : 0) + psIds.length + psgPicks.length + groupIds.length +
       (Object.keys(userPatch).length > 0 ? 1 : 0);
     let done = 0;
     const loadingEl = document.getElementById('ucLoading');
@@ -1125,7 +1159,7 @@ const UserCopy = (() => {
     // their failures live here rather than in the flat `errors` list (which
     // would duplicate them). They still count toward the error total.
     const psgResults = [];   // [{ label, ok, msg }]
-    let profileOk = false, psOk = 0, grpOk = 0, fieldsOk = false, permsOk = 0;
+    let profileOk = false, roleOk = false, psOk = 0, grpOk = 0, fieldsOk = false, permsOk = 0;
 
     // The write discipline (sftk-write.js): every write below is verified by
     // re-reading the org — PermissionSetAssignment / GroupMember / User by
@@ -1136,6 +1170,7 @@ const UserCopy = (() => {
     // / GroupMember row this run confirmed it created, and puts the target
     // user's PREVIOUS profile back.
     const prevProfileId = (targetUser.Profile && targetUser.Profile.Id) || targetUser.ProfileId || null;
+    const prevRoleId = targetUser.UserRoleId || null;   // null = the target had no role
     const journal = sftkHistoryBegin({ tool: 'Copy Permissions', title: `📋 Copy access: ${sourceUser.Name} → ${targetUser.Name}`, orgUrl: _orgUrl });
     const createdRows = [];   // [{ sobject: 'PermissionSetAssignment'|'GroupMember', id }]
     try {
@@ -1161,6 +1196,30 @@ const UserCopy = (() => {
       });
       if (!wr.ok) errors.push(`Profile: ${friendlyMsg((wr.raw && wr.raw.error) || wr.text || 'not confirmed on re-read')}`);
       else profileOk = true;
+      done++; tickProgress();
+    }
+
+    // confirmed-by: executeCopy's sftkConfirmDestructive above
+    // 1b. Role — one field on the user, re-read like the profile.
+    if (doRole) {
+      const wr = await sftkWriteVerified({
+        describe: 'role',
+        journal,
+        write: () => bg({
+          type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
+          path: `services/data/v62.0/sobjects/User/${targetUser.Id}`,
+          body: { UserRoleId: sourceUser.UserRoleId }
+        }),
+        verify: async () => {
+          const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
+            query: `SELECT UserRoleId FROM User WHERE Id = '${targetUser.Id}'` });
+          if (!q || q.error || !(q.records && q.records.length)) return { ok: false, text: null };
+          const ok = q.records[0].UserRoleId === sourceUser.UserRoleId;
+          return { ok, text: ok ? `role set to ${sourceUser.UserRole?.Name || sourceUser.UserRoleId} — verified by re-reading the org` : 'accepted by Salesforce, but the user still shows the old role' };
+        },
+      });
+      if (!wr.ok) errors.push(`Role: ${friendlyMsg((wr.raw && wr.raw.error) || wr.text || 'not confirmed on re-read')}`);
+      else roleOk = true;
       done++; tickProgress();
     }
 
@@ -1331,6 +1390,17 @@ const UserCopy = (() => {
                     bad: `${targetUser.Name}: accepted by Salesforce, but the org still shows the new profile` } },
         });
       }
+      if (roleOk) {
+        steps.push({
+          describe: `${targetUser.Name}: restore the previous role (${targetUser.UserRole?.Name || 'no role'})`,
+          // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+          msg: { type: 'SF_PATCH', path: `services/data/v62.0/sobjects/User/${targetUser.Id}`, body: { UserRoleId: prevRoleId } },
+          verify: { query: `SELECT UserRoleId FROM User WHERE Id = '${targetUser.Id}'`, tooling: false,
+            pick: 'records.0', field: 'UserRoleId', equals: prevRoleId,
+            text: { ok: `${targetUser.Name}: previous role restored — verified by re-reading the org`,
+                    bad: `${targetUser.Name}: accepted by Salesforce, but the org still shows the copied role` } },
+        });
+      }
       await sftkHistoryEnd(journal, {
         undo: steps.length
           ? { steps, note: (permsOk > 0 || fieldsOk) ? 'user permission / locale-timezone fields changed by this run are not undoable from here — set them back by hand' : '' }
@@ -1350,7 +1420,7 @@ const UserCopy = (() => {
     const psgFail = psgResults.length - psgOk;
     const errCount = errors.length + psgFail;
 
-    const nothingDone = !profileOk && psOk === 0 && psgResults.length === 0 && grpOk === 0 &&
+    const nothingDone = !profileOk && !roleOk && psOk === 0 && psgResults.length === 0 && grpOk === 0 &&
       permsOk === 0 && !fieldsOk && errors.length === 0;
     if (nothingDone) {
       showResult('Nothing was selected to copy.', false);
@@ -1376,6 +1446,7 @@ const UserCopy = (() => {
     if (errCount === 0) {
       const parts = [];
       if (profileOk)  parts.push('profile updated');
+      if (roleOk)     parts.push('role updated');
       if (psOk > 0)   parts.push(`${psOk} permission set${psOk > 1 ? 's' : ''} assigned`);
       if (psgOk > 0)  parts.push(`${psgOk} permission set group${psgOk > 1 ? 's' : ''} assigned`);
       if (grpOk > 0)  parts.push(`added to ${grpOk} group${grpOk > 1 ? 's' : ''}`);

@@ -35,8 +35,8 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 - Limit: some references, like criteria-based sharing rules, can't be scanned by Salesforce's API at all, and the tool says so; picklist *values* are handled by Picklist Manager, not here.
 
 ### Copy Permissions
-- Pick a source user and a target user, then choose what to copy: profile, permission sets, permission set groups, public groups, individual user permissions, and locale/timezone. Anything already matching is shown as such, so you don't overwrite it.
-- Every planned change is listed and requires a checkbox before it writes anything; a profile change replaces the old one, but everything else only adds access — nothing is removed from the target user. It reports Salesforce's answer for each operation — what was assigned, what was refused and why.
+- Pick a source user and a target user, then choose what to copy: profile, role, permission sets, permission set groups, public groups, individual user permissions, and locale/timezone. Anything already matching is shown as such, so you don't overwrite it.
+- Every planned change is listed and requires a checkbox before it writes anything; a profile or role change replaces the old one, but everything else only adds access — nothing is removed from the target user. It reports Salesforce's answer for each operation — what was assigned, what was refused and why.
 - Limit: a permission set whose license doesn't match the target user's is shown but never force-assigned.
 
 ### Licenses
