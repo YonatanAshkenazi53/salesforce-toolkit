@@ -145,6 +145,13 @@ extensions containing root files that start with `_`).
   reads every one of the org's own active flows, 25 at a time, record-triggered flows on the
   object first. Flows from installed packages are counted and named as not checked, because
   Salesforce does not expose them.
+- **Org health.** A new Data Studio page (and a Home tile in the Toolkit) shows, for one org,
+  what the tools already know, one card per finding, each with a button into the tool that fixes
+  it: licences at the cap, active users who stopped logging in, flows left switched off, flows
+  pinned years below the org's release, Lightning pages assigned to nobody, picklists drifting
+  between the Sync Ring's orgs, and custom fields that no record fills and nothing references.
+  Nothing is read until you press Check; every card shows its API cost first, every answer says
+  when it was checked, and a check that could not finish says so instead of showing all-clear.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run
