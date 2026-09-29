@@ -1025,7 +1025,8 @@ anchor-based plan edit accidentally deleted it)
   as the degenerate all-inserts plan. Cycles (e.g. PD.First_Step__c ↔ SO)
   break into insert-then-relink second passes — the engine's reconnect
   machinery already models that.
-- [ ] W10 UPSERT BY MATCH KEY — Transfer write mode that works WITHOUT an
+- [x] W10 UPSERT BY MATCH KEY — COVERED by the 🚀 Deploy page (user 2026-09-29: "i think we did it already"): the scan pairs records by the match key, and one run inserts the missing (🔴 Insert) and updates the changed (🟡 Changed → target) — the upsert result without an External ID. Not built as a separate write mode on Run Transfer; its Upsert option still says "No External ID fields" and points to the Deploy flow. Original note:
+  Transfer write mode that works WITHOUT an
   External ID field (user 2026-08-10: "upsert can work with regular id
   field too"). Salesforce Id-keyed upsert is real but source Ids don't
   exist in the target — so the MATCH KEY translates first: engine resolves
