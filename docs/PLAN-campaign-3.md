@@ -271,3 +271,15 @@ About three weeks of sessions. Release 1.5.0 first (it is gated and packed); thi
 Rule of thumb: Fable writes the primitive and the first migration of one tool as the pattern,
 Sonnet repeats the pattern across the other tools with the tests as the lock, Fable reviews
 the diff and runs it live.
+
+---
+
+## Backlog (after campaign 3)
+
+- **Copy Permissions: copy the role too** (user request 2026-09-29, parked by the user until campaign 3 is done). Design, ready to build (~1 hour + live):
+  - `user-copy.js`: add `UserRoleId,UserRole.Name` to `USER_FIELDS`; a 🏢 Role option next to 👤 Profile (`#ucOptRole`, `getOptions().role`).
+  - Preview: a Role row like the Profile row (`#ucRoleCb`); disabled with "same" when the roles match; disabled with "has no role — nothing to copy" when the source has none (clearing a role is not offered); an ℹ️ line that the role decides which records the user sees through the hierarchy and sharing rules.
+  - The Copy access confirmation lists `Role → <name>` ("replaces the current role (<name|none>)"); its text says profile OR role is replaced and that ↩ Undo lives in History.
+  - Write: `SF_PATCH` User `{ UserRoleId }` through `sftkWriteVerified` (journal, verify `SELECT UserRoleId FROM User WHERE Id=…`); `roleOk` in the result sentence ("role updated").
+  - Undo: PATCH the previous `UserRoleId` back (null when the target had no role), verify `equals` the previous value.
+  - Live: give SFTK Test A a role by CLI, run `copy-perms.mjs UNDO=1`, CLI shows B's role before/after. Check first whether the fixture users' licence (Identity) accepts a role at all — if Salesforce refuses, the result quotes it; test with a Salesforce-licence user instead.
