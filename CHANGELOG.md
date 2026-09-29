@@ -156,6 +156,13 @@ extensions containing root files that start with `_`).
   the preview; it is named in the confirmation, written and re-read, and ↩ Undo in History puts
   the target's previous role back (or none). A source user with no role has nothing to copy —
   clearing a role is not offered from here.
+- **Deploy with record-triggered flows paused.** A new option next to ▶ Deploy, off by default —
+  deploying with every flow active stays the normal way. Ticked, it lists the active
+  record-triggered flows on the deployment's objects in the target; the run's confirmation names
+  them; they are switched off before the first write and back on at their exact versions as soon
+  as the writes end, even when the run fails or is stopped, each switch re-read before it counts.
+  If a flow will not switch off, the run does not start. If the page closes mid-run, the Deploy
+  page and Org health say which flows are still off, with a button to switch them back on.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run

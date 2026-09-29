@@ -368,6 +368,7 @@ async function renderDeploy() {
     ${_depRetryNote ? `<div class="ds-rec-card"><div class="ds-rec-card-line">${esc(_depRetryNote)}</div></div>` : ''}
     ${offlineHtml}
     <div id="dsDepTree"></div>
+    <div id="dsDepFlowLeft"></div>
     ${planHtml}
     <div id="dsDepOrder"></div>
     ${notesHtml}
@@ -400,8 +401,11 @@ async function renderDeploy() {
           <option value="recycle" ${_recDeleteMode === 'recycle' ? 'selected' : ''}>🗑 Recycle Bin</option>
           <option value="hard" ${_recDeleteMode === 'hard' ? 'selected' : ''}>🔥 Hard delete</option>
         </select></label>
+      <label class="ds-dep-delmode" style="cursor:pointer" title="Off (the default): the run writes with every flow active, as usual. On: the record-triggered flows on this deployment's objects in the target are switched off after the confirmation, and back on at their exact versions when the run ends — even if it fails. Records written while they are off are never processed by them.">
+        <input type="checkbox" id="dsDepFlowPause" ${_depFlowPause.on ? 'checked' : ''}> ⏸ pause record-triggered flows</label>
       <button class="ds-btn ds-btn-lg ds-btn-primary" id="dsRecRunBtn" disabled>▶ Deploy</button>
     </div>
+    <div id="dsDepFlowPauseList" class="ds-dep-foot"></div>
     <div class="ds-dep-foot">The real, rolled-back 🧪 dry run is the next step of this page and is not built yet.</div>
     <div id="dsRecProgress" class="ds-rec-progress"></div></div>
     ${_depLastRunLog ? `<details open class="ds-rec-card ds-dep-lastlog"><summary class="ds-rec-card-title">📜 Last run on this page — the numbers above are already refreshed; History keeps this run too</summary><div class="ds-rec-progress">${_depLastRunLog.html}</div></details>` : ''}`);
@@ -443,8 +447,9 @@ async function renderDeploy() {
       : '📸 Restore points off — runs from now on can NOT be rolled back', _settings.undoCapture ? 'info' : 'warning', 4500);
   });
   sftkRecWireDupFix(document, p, scan);
-  eid('dsRecRunBtn')?.addEventListener('click', () => runReconcile(p, objType,
+  eid('dsRecRunBtn')?.addEventListener('click', () => _depRun(p, objType,
     { missing: scan.missingInTarget || [], drift: scan.changed || [], extras: scan.onlyInTarget || [] }));
+  _depFlowPauseWire(p);
   eid('dsDepJourneyBack')?.addEventListener('click', () => {
     const orig = _profiles.find(x => x.id === p._parentOf?.profileId);
     if (orig) window.openReconcile(orig.id);
@@ -885,6 +890,120 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     const h = eid('dsDepLkpHost');
     if (h) renderLkpOverridePanel(prof, cur.obj, srcId, h, b.dataset.recLkpTgt || null);
   }));
+}
+
+// ── ⏸ pause record-triggered flows during the run (user 2026-09-29) ───────
+// An option, off by default ("this or just deploy regularly with flows
+// active"). The list is read when the box is ticked, so the user sees exactly
+// which flows go off before pressing ▶ Deploy; the run's confirmation lists
+// them again; they come back on when the run ends (sftk-flowpause.js).
+let _depFlowPause = { on: false, key: '', list: null, error: '' };
+
+async function _depFlowPauseWire(p) {
+  const objects = sftkDeployObjects(p.tree).map(o => o.obj);
+  const key = `${p.targetOrg}|${objects.join(',')}`;
+  const box = eid('dsDepFlowPause'), host = eid('dsDepFlowPauseList');
+  const paint = () => {
+    if (!host) return;
+    const fp = _depFlowPause;
+    if (!fp.on) { host.innerHTML = ''; return; }
+    if (fp.error) { host.innerHTML = `⚠ The flows could not be listed — ${esc(fp.error)}. Untick to deploy with flows active, or open ${esc(orgLabel(p.targetOrg))} and tick again.`; return; }
+    if (!fp.list) { host.textContent = `⏳ reading the record-triggered flows on ${objects.join(', ')} in ${orgLabel(p.targetOrg)}…`; return; }
+    const l = fp.list;
+    host.innerHTML = !l.flows.length
+      ? `No active record-triggered flow on ${esc(objects.join(', '))} in ${esc(orgLabel(p.targetOrg))} — nothing to pause; the run writes as usual.${l.managed.length ? ` (${l.managed.length} from installed packages cannot be switched: ${esc(l.managed.join(', '))})` : ''}`
+      : `⏸ ${l.flows.length} flow(s) will be switched off during the run and back on when it ends: ${l.flows.map(f => `${esc(f.label)} <span class="ds-subtext">(${esc(f.object)})</span>`).join(', ')}.${l.managed.length ? ` Installed-package flows stay on: ${esc(l.managed.join(', '))}.` : ''}`;
+  };
+  const load = async () => {
+    _depFlowPause = { on: true, key, list: null, error: '' };
+    paint();
+    try {
+      const sess = await getOrgSession(p.targetOrg);
+      if (!sess) throw new Error(`${orgLabel(p.targetOrg)} is not open in a Chrome tab`);
+      const list = await sftkFlowPauseList(sess, objects);
+      if (_depFlowPause.key === key && _depFlowPause.on) _depFlowPause.list = list;
+    } catch (e) { if (_depFlowPause.key === key) _depFlowPause.error = (e && e.message) || String(e); }
+    paint();
+  };
+  box?.addEventListener('change', () => { if (box.checked) load(); else { _depFlowPause = { on: false, key: '', list: null, error: '' }; paint(); } });
+  if (_depFlowPause.on && _depFlowPause.key !== key) load(); else paint();
+  _depFlowLeftovers(p);
+}
+
+// Flows a run paused and never switched back on (the tab closed mid-run):
+// said at the top of the page, with the one button that fixes it.
+async function _depFlowLeftovers(p) {
+  const host = eid('dsDepFlowLeft');
+  if (!host || typeof sftkFlowPausedLeftovers !== 'function') return;
+  const left = await sftkFlowPausedLeftovers(p.targetOrg);
+  const names = Object.keys(left);
+  if (!names.length) { host.innerHTML = ''; return; }
+  host.innerHTML = `<div class="ds-rec-card ds-rec-card-bad"><div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⏸</span><span class="ds-rec-card-title">${names.length} record-triggered flow(s) in ${esc(orgLabel(p.targetOrg))} are still OFF</span></div>
+    <div class="ds-rec-card-line">A deployment switched them off and did not get to switch them back on (the page closed during the run): ${names.map(n => `${esc(left[n].label || n)} <span class="ds-subtext">(${esc(left[n].object || '')} · v${esc(String(left[n].version))})</span>`).join(', ')}.</div>
+    <div class="ds-rec-card-line"><button class="ds-btn ds-btn-sm ds-btn-primary" id="dsDepFlowLeftOn">▶ Switch them back on</button></div></div>`;
+  eid('dsDepFlowLeftOn')?.addEventListener('click', async () => {
+    const flows = names.map(n => ({ apiName: n, label: left[n].label || n, object: left[n].object || '', version: left[n].version, defId: left[n].defId || '' }));
+    const gate = await sftkOrgWriteGate(p.targetOrg, _orgs);
+    const sure = await sftkConfirmDestructive({
+      title: `▶ Switch ${flows.length} flow(s) back on in ${orgLabel(p.targetOrg)}`, icon: '▶',
+      items: flows.map(f => ({ label: `${f.label} (${f.object}) → v${f.version}` })),
+      revOverride: { html: 'Each flow is switched back on at the version that was active before the deployment paused it, and re-read.', needsCheckbox: false },
+      confirmLabel: '▶ Switch back on',
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!sure) return;
+    const sess = await getOrgSession(p.targetOrg);
+    if (!sess) { showToast(`${orgLabel(p.targetOrg)} is not open in a Chrome tab — open it first`, 'warning', 6000); return; }
+    const r = await sftkFlowPauseOn(sess, flows);
+    showToast(r.failed.length ? `⚠ ${r.done.length} back on; ${r.failed.length} NOT: ${r.failed.join(' · ')}` : `▶ ${r.done.length} flow(s) back on — verified by re-reading the org`, r.failed.length ? 'error' : 'success', r.failed.length ? 15000 : 7000);
+    _depFlowLeftovers(p);
+  });
+}
+
+// ▶ Deploy: as always — or, with ⏸ ticked and flows found, the run pauses them
+// after its confirmation and they are switched back on when it returns, in a
+// finally (a failed or stopped run switches them back too).
+async function _depRun(p, objType, buckets) {
+  const fp = _depFlowPause.on && _depFlowPause.list && _depFlowPause.list.flows.length ? _depFlowPause.list : null;
+  if (!fp) return runReconcile(p, objType, buckets);
+  let paused = null, tgtSess = null, back = null;
+  const resume = async () => {
+    if (back || !paused || !paused.ok || !paused.off.length) return back;
+    const sess = (await getOrgSession(p.targetOrg)) || tgtSess;
+    back = await sftkFlowPauseOn(sess, paused.off);
+    return back;
+  };
+  try {
+    await runReconcile(p, objType, buckets, { flowPause: fp,
+      beforeWrites: async (sess, log) => {
+        tgtSess = sess;
+        log('⏸', `Switching off ${fp.flows.length} record-triggered flow(s) in ${orgLabel(sess.orgUrl)}…`);
+        paused = await sftkFlowPauseOff(sess, fp.flows);
+        if (!paused.ok) {
+          log('❌', `Not every flow could be switched off, so the run did not start: ${paused.failed.join(' · ')}${paused.restored.length ? ` — ${paused.restored.length} already off switched back on` : ''}${paused.restoreFailed.length ? ` — STILL OFF: ${paused.restoreFailed.join(' · ')}` : ''}`, 'ds-prog-err');
+          return false;
+        }
+        log('✅', `${paused.off.length} flow(s) switched off — verified by re-reading the org; they go back on as soon as the writes end`);
+        return true;
+      },
+      afterWrites: async log => {
+        if (!paused || !paused.ok || !paused.off.length) return;
+        log('▶', `Switching ${paused.off.length} record-triggered flow(s) back on…`);
+        const r = await resume();
+        log(r.failed.length ? '⚠' : '✅', r.failed.length
+          ? `${r.done.length} back on; NOT: ${r.failed.join(' · ')} — the Deploy page lists them with a button`
+          : `${r.done.length} flow(s) back on at their versions — verified by re-reading the org`, r.failed.length ? 'ds-prog-err' : '');
+      },
+    });
+  } finally {
+    // the safety net: a run that failed or stopped before its last write
+    if (paused && paused.ok && paused.off.length) {
+      const r = await resume();
+      if (r.failed.length) showToast(`⚠ ${r.failed.length} flow(s) could NOT be switched back on in ${orgLabel(p.targetOrg)}: ${r.failed.join(' · ')} — the Deploy page lists them with a button to switch them on.`, 'error', 20000);
+      else showToast(`▶ ${r.done.length} record-triggered flow(s) back on in ${orgLabel(p.targetOrg)} — verified by re-reading the org`, 'success', 8000);
+      if (_currentView === 'deploy') _depFlowLeftovers(p);
+    }
+  }
 }
 
 // ── the action bar: what ▶ Deploy will do, in words ───────────────────────
