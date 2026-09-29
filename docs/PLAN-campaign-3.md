@@ -174,6 +174,8 @@ becomes an insert, deploy, CLI shows two records in the target with distinct Ids
 
 ## Phase 6 — complete safety scans
 
+**DONE 2026-09-29** (commit follows): the record-triggered listing had filtered on `TriggerObjectOrEventApiName`, a column FlowDefinitionView does not have — it failed on every org. Now ONE listing (`ApiName, Label, ProcessType, TriggerType, TriggerObjectOrEventId, ActiveVersionId, ManageableState`), record-triggered on the object first (`TriggerObjectOrEventId` = API name, or the entity Id for a custom object), the Metadata read 25 per Tooling composite/batch call, `FLOW_CAP` removed, `pkBulkScanCalls` = 6 + ⌈flows/25⌉. Managed-package flows (`ManageableState = installed`) are counted and said, never requested — Salesforce does not expose their Metadata (their ActiveVersionId is not a record Id). Step 1 (reuse the Dependencies cache) was not needed: Data Studio reads 63 flows in 3 calls. Test `picklists-fullscan-0929`. Live (`scripts/dev/live/picklists-fullscan.mjs`, trailheads5): 63 of 63 own active flows read (4 record-triggered on Account), the fixture flow naming “Closed” found, 100 installed flows named.
+
 **Problem.** The automation check before switching off a picklist value scans 40 of 147 active
 flows (`FLOW_CAP = 40` in studio-picklists.js) and says so; record-triggered flows "could not
 be enumerated".

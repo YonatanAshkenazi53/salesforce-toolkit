@@ -264,12 +264,13 @@ function pkMatrixCallEstimate(opts) {
 
 // Per-org cost of the bulk wizard's automation scan, computed AFTER the org
 // finished so the number is real, not guessed: 4 impact queries (_pkImpact)
-// + 1 validation-rule scan + 2 flow enumerations + one Metadata read per
-// scanned flow (scan.flowsScanned, capped at 40 upstream). Still "≈" in the
-// UI because >2000-row query results paginate into extra calls.
+// + 1 validation-rule scan + 1 flow listing (with the active version Ids) +
+// one Tooling composite/batch call per 25 flows read (campaign 3 phase 6 —
+// no cap, no per-flow query). Still "≈" in the UI because >2000-row query
+// results paginate into extra calls.
 function pkBulkScanCalls(scan) {
   const flows = (scan && Number.isFinite(+scan.flowsScanned)) ? Math.max(0, Math.floor(+scan.flowsScanned)) : 0;
-  return 7 + flows;
+  return 6 + Math.ceil(flows / 25);
 }
 
 // The one-line cost display. est: { total, perOrg, known, moreIf, scope } —
@@ -1167,18 +1168,25 @@ function _pkImpactHtml(impact, recordCount, literal) {
 }
 
 // Supplemental "N automations mention this value by name" scan (P2, widened +
-// made actionable in T8). Greps the serialized Metadata of:
+// made actionable in T8, made COMPLETE in campaign 3 phase 6). Greps the
+// serialized Metadata of:
 //   · every ACTIVE validation rule on the object, and
-//   · every ACTIVE flow — record-triggered on this object FIRST, then
-//     autolaunched + screen flows org-wide (they reference picklist values in
-//     decisions, assignments and choices too) — capped at FLOW_CAP.
+//   · every ACTIVE flow (autolaunched — record-triggered and scheduled flows
+//     are autolaunched — and screen flows), record-triggered on THIS object
+//     listed first. No cap: before 2026-09-29 only the first 40 were read, one
+//     query each, and the record-triggered listing filtered on a column
+//     FlowDefinitionView does not have (TriggerObjectOrEventApiName — "could
+//     NOT be enumerated" on every org). Now ONE listing, ONE query for the
+//     active version Ids, and the Metadata read 25 flows per Tooling
+//     composite/batch call.
 // Every hit carries the component's Id so the UI can deep-link it (Flow Builder
-// / Setup). Nothing degrades silently: whatever could NOT be scanned, and
-// whatever the cap left out, comes back in `notes` for the UI to print.
+// / Setup). Nothing degrades silently: whatever could NOT be read comes back in
+// `notes` for the UI to print. onProgress(text) is optional.
 // Returns { mentions, hits:[label], items:[{kind,id,label,sub,url}], notes:[], scan:{…} }.
-async function _pkValueLiteralScan(ctx, valueName) {
+async function _pkValueLiteralScan(ctx, valueName, onProgress) {
   const lit = soqlStrLit(ctx.obj);
-  const FLOW_CAP = 40;
+  const BATCH = 25;
+  const say = t => { try { if (typeof onProgress === 'function') onProgress(t); } catch (_) {} };
   const hits = [], items = [], notes = [];
   let mentions = 0;
 
@@ -1196,53 +1204,64 @@ async function _pkValueLiteralScan(ctx, valueName) {
     }
   }
 
-  // 2) Flows — two enumerations, deduped by ApiName, record-triggered first so
-  //    the cap (if it bites) always keeps the most relevant ones.
-  const seenFlows = new Set();
+  // 2) Every active flow, ONE listing, with its active version Id.
+  //    TriggerObjectOrEventId carries the object's API name for a standard
+  //    object ("Account") and its entity Id for a custom one — both accepted.
+  //    Managed-package (installed) flows: Salesforce does not expose their
+  //    Metadata (their ActiveVersionId is not even a record Id, e.g.
+  //    "PgmApps__CreaApplnAndActnPln-1" — live 2026-09-29, 100 of 163 in an
+  //    NPC org) and they cannot be edited in the org; they are counted and
+  //    said, never requested.
+  const objIds = new Set([ctx.obj]);
+  if (/__(c|mdt|e|x|b)$/i.test(ctx.obj)) {
+    const ent = await sendBg({ type: 'SF_QUERY', orgUrl: ctx.orgUrl, sid: ctx.sid, tooling: true,
+      query: `SELECT DurableId FROM EntityDefinition WHERE QualifiedApiName = ${lit}`, _silentError: true });
+    for (const r of ((ent && ent.records) || [])) if (r.DurableId) objIds.add(r.DurableId);
+  }
+  const defs = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: ctx.orgUrl, sid: ctx.sid, tooling: false,
+    query: `SELECT ApiName, Label, ProcessType, TriggerType, TriggerObjectOrEventId, ActiveVersionId, ManageableState FROM FlowDefinitionView WHERE IsActive = true AND ProcessType IN ('AutoLaunchedFlow','Flow')`, _silentError: true });
   const queue = [];
-  const trg = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: ctx.orgUrl, sid: ctx.sid, tooling: false,
-    query: `SELECT ApiName, Label, ProcessType FROM FlowDefinitionView WHERE IsActive = true AND TriggerObjectOrEventApiName = ${lit}`, _silentError: true });
-  if (!trg || trg.error) notes.push('record-triggered flows could NOT be enumerated');
-  else for (const f of (trg.records || [])) {
-    if (f.ApiName && !seenFlows.has(f.ApiName)) {
-      seenFlows.add(f.ApiName);
-      queue.push({ apiName: f.ApiName, label: f.Label, why: `record-triggered on ${ctx.obj}` });
-    }
+  let installedN = 0;
+  if (!defs || defs.error) notes.push(`active flows could NOT be listed${defs?.error ? ` (${defs.error})` : ''} — no flow was checked`);
+  else {
+    const all = (defs.records || []).filter(f => f && f.ApiName);
+    installedN = all.filter(f => f.ManageableState === 'installed').length;
+    const own = all.filter(f => f.ManageableState !== 'installed');
+    const onObj = f => /^Record/.test(String(f.TriggerType || '')) && objIds.has(String(f.TriggerObjectOrEventId || ''));
+    const why = f => onObj(f) ? `record-triggered on ${ctx.obj}` : /^Record/.test(String(f.TriggerType || '')) ? 'record-triggered flow'
+      : f.TriggerType === 'Scheduled' ? 'scheduled flow' : f.ProcessType === 'Flow' ? 'screen flow' : 'autolaunched flow';
+    for (const f of [...own.filter(onObj), ...own.filter(f => !onObj(f))]) queue.push({ apiName: f.ApiName, label: f.Label, why: why(f), verId: f.ActiveVersionId || null });
   }
-  const triggeredN = queue.length;
-  const wide = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: ctx.orgUrl, sid: ctx.sid, tooling: false,
-    query: `SELECT ApiName, Label, ProcessType FROM FlowDefinitionView WHERE IsActive = true AND ProcessType IN ('AutoLaunchedFlow','Flow')`, _silentError: true });
-  if (!wide || wide.error) notes.push('autolaunched + screen flows could NOT be enumerated — ONLY record-triggered flows on this object were scanned');
-  else for (const f of (wide.records || [])) {
-    if (f.ApiName && !seenFlows.has(f.ApiName)) {
-      seenFlows.add(f.ApiName);
-      queue.push({ apiName: f.ApiName, label: f.Label, why: f.ProcessType === 'Flow' ? 'screen flow' : 'autolaunched flow' });
-    }
-  }
+  const triggeredN = queue.filter(q => q.why === `record-triggered on ${ctx.obj}`).length;
 
-  const toScan = queue.slice(0, FLOW_CAP);
-  let flowErrors = 0;
-  for (const f of toScan) {
-    const fq = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: ctx.orgUrl, sid: ctx.sid, tooling: true,
-      query: `SELECT Id, Metadata FROM Flow WHERE Status = 'Active' AND Definition.DeveloperName = ${soqlStrLit(f.apiName)}`, _silentError: true });
-    if (!fq || fq.error) { flowErrors++; continue; }
-    for (const fr of (fq.records || [])) {
-      if (pkValueMentions(JSON.stringify(fr.Metadata || {}), valueName) > 0) {
+  // 3) The Metadata of each active version, 25 per Tooling composite/batch call.
+  let flowsRead = 0, flowErrors = queue.filter(f => !f.verId).length;
+  const readable = queue.filter(f => f.verId);
+  for (let k = 0; k < readable.length; k += BATCH) {
+    const chunk = readable.slice(k, k + BATCH);
+    say(`reading flow metadata ${Math.min(k + chunk.length, readable.length)} / ${readable.length}…`);
+    const res = await sendBg({ type: 'SF_COMPOSITE_BATCH', orgUrl: ctx.orgUrl, sid: ctx.sid, concurrency: 1, _suppressError: true,
+      subrequests: chunk.map(f => ({ method: 'GET', url: `tooling/sobjects/Flow/${f.verId}` })) });
+    if (!Array.isArray(res)) { flowErrors += chunk.length; continue; }
+    chunk.forEach((f, n) => {
+      const it = res[n];
+      const meta = it && it.ok && it.body && typeof it.body === 'object' ? it.body.Metadata : null;
+      if (!meta) { flowErrors++; return; }
+      flowsRead++;
+      if (pkValueMentions(JSON.stringify(meta), valueName) > 0) {
         mentions++;
         hits.push('Flow: ' + (f.label || f.apiName));
-        items.push({ kind: 'flow', id: fr.Id, label: f.label || f.apiName, sub: f.why,
-          url: pkAutomationUrl(ctx.orgUrl, ctx.obj, 'flow', fr.Id) });
-        break;
+        items.push({ kind: 'flow', id: f.verId, label: f.label || f.apiName, sub: f.why,
+          url: pkAutomationUrl(ctx.orgUrl, ctx.obj, 'flow', f.verId) });
       }
-    }
+    });
   }
-  const notScanned = queue.length - toScan.length;
-  if (notScanned > 0) notes.push(`scanned ${toScan.length} of ${queue.length} active flows (cap ${FLOW_CAP}) — the other ${notScanned} were NOT checked`);
-  if (flowErrors) notes.push(`${flowErrors} flow(s) returned no readable metadata — NOT checked`);
+  if (flowErrors) notes.push(`scanned ${flowsRead} of ${queue.length} of this org's active flows — ${flowErrors} returned no readable metadata and were NOT checked`);
+  if (installedN) notes.push(`${installedN} active flow(s) come from installed packages — Salesforce does not expose their metadata, so they were NOT checked (they cannot be edited in this org either)`);
 
   return { mentions, hits, items, notes,
     scan: { vrOk, vrCount: vrOk ? (vr.records || []).length : 0,
-      flowsScanned: toScan.length, flowsFound: queue.length, triggeredN, cap: FLOW_CAP } };
+      flowsScanned: flowsRead, flowsFound: queue.length, installed: installedN, triggeredN, cap: null } };
 }
 
 // Render literal-scan hits as ACTIONABLE rows — each one deep-links into Flow

@@ -106,17 +106,18 @@ describe('pkMatrixCallEstimate', () => {
 // ── pkBulkScanCalls — bulk wizard per-org automation scan ───────
 describe('pkBulkScanCalls', () => {
   it('fixed part is 7: 4 impact queries + 1 VR scan + 2 flow enumerations', () => {
-    expect(pkBulkScanCalls({ flowsScanned: 0 })).toBe(7);
+    expect(pkBulkScanCalls({ flowsScanned: 0 })).toBe(6);
   });
   it('adds one read per scanned flow', () => {
-    expect(pkBulkScanCalls({ flowsScanned: 5 })).toBe(12);
-    expect(pkBulkScanCalls({ flowsScanned: 40 })).toBe(47);   // FLOW_CAP upstream
+    expect(pkBulkScanCalls({ flowsScanned: 5 })).toBe(7);     // phase 6: one batch call per 25 flows
+    expect(pkBulkScanCalls({ flowsScanned: 40 })).toBe(8);
+    expect(pkBulkScanCalls({ flowsScanned: 147 })).toBe(12);  // no cap any more
   });
   it('missing / garbage scan stats degrade to the fixed part, never NaN', () => {
-    expect(pkBulkScanCalls(null)).toBe(7);
-    expect(pkBulkScanCalls({})).toBe(7);
-    expect(pkBulkScanCalls({ flowsScanned: 'x' })).toBe(7);
-    expect(pkBulkScanCalls({ flowsScanned: -2 })).toBe(7);
+    expect(pkBulkScanCalls(null)).toBe(6);
+    expect(pkBulkScanCalls({})).toBe(6);
+    expect(pkBulkScanCalls({ flowsScanned: 'x' })).toBe(6);
+    expect(pkBulkScanCalls({ flowsScanned: -2 })).toBe(6);
   });
 });
 

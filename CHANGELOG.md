@@ -139,6 +139,12 @@ extensions containing root files that start with `_`).
   with your choice remembered. Copies that have no counterpart on the other side are ordinary
   inserts. The plan table and the Sync Ring show the count as ⚠N, and a ring cell with ambiguous
   records no longer reads as in sync.
+- **The automation check reads every flow.** Before a picklist value is switched off, Picklist
+  Manager searches the org's automation for anything that names it. It used to read only the
+  first 40 active flows, one at a time, and could never list the record-triggered ones. It now
+  reads every one of the org's own active flows, 25 at a time, record-triggered flows on the
+  object first. Flows from installed packages are counted and named as not checked, because
+  Salesforce does not expose them.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run
