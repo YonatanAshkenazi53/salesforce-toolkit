@@ -1014,6 +1014,13 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         if (parentScopeIds.length === 0) {
           nodeSourceIds.set(node, []);
           summary[objType] = { created: 0, failed: 0, skipped: true };
+          // Campaign 3 phase 4 (whole tree in one pass): picked records whose
+          // parents ALL failed used to vanish without a word. Nothing is ever
+          // inserted without its parent — and now the run says which.
+          if (ridList && ridList.length) {
+            const parentObj = parentNode.objectType || parentNode.childSObject || 'parent';
+            errors.push(`⚠ ${objType}: ${ridList.length} selected record(s) not inserted — none of their ${parentObj} parent(s) made it into the target in this run (see ${parentObj} above); nothing was inserted without its parent. Not inserted: ${ridList.slice(0, 10).join(', ')}${ridList.length > 10 ? '…' : ''}`);
+          }
           continue;
         }
 
@@ -1053,7 +1060,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           const got = new Set(recs.map(r => r.Id));
           const dropped = ridList.filter(id => !got.has(id));
           const parentObj = parentNode.objectType || parentNode.childSObject || 'parent';
-          diagnostics.push(`${objType}: ${dropped.length} of ${ridList.length} hand-picked record(s) are NOT in this run — their parent (${parentField}) is outside the run's ${parentObj} scope, or they no longer match the filter. Include their parents in the ${parentObj} selection, or clear the child's 🎯 picks to copy every child of the selected parents. Dropped: ${dropped.slice(0, 10).join(', ')}${dropped.length > 10 ? '…' : ''}`);
+          // Phase 4 (live 2026-09-29): with the whole tree in one run, the usual
+          // reason is a parent that FAILED earlier in this run — say that, as a
+          // warning, instead of blaming the selection.
+          if ((summary[parentObj] && summary[parentObj].failed) > 0) {
+            errors.push(`⚠ ${objType}: ${dropped.length} of ${ridList.length} selected record(s) not inserted — their ${parentObj} parent failed to insert in this run (see ${parentObj} above), or is outside the run's scope; nothing was inserted without its parent. Not inserted: ${dropped.slice(0, 10).join(', ')}${dropped.length > 10 ? '…' : ''}`);
+          } else diagnostics.push(`${objType}: ${dropped.length} of ${ridList.length} hand-picked record(s) are NOT in this run — their parent (${parentField}) is outside the run's ${parentObj} scope, or they no longer match the filter. Include their parents in the ${parentObj} selection, or clear the child's 🎯 picks to copy every child of the selected parents. Dropped: ${dropped.slice(0, 10).join(', ')}${dropped.length > 10 ? '…' : ''}`);
         }
       } else if (ridList && ridList.length > RID_CHUNK) {
         // Root node with a BIG picked set — same 431 trap as the child
