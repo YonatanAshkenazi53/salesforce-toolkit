@@ -203,6 +203,8 @@ with no cap note; the run log must show the full count.
 
 ## Phase 7 — nightly live runs
 
+**SKIPPED 2026-09-29 — the user's decision ("i think i will skip this feature").** The live scripts stay runnable by hand (`scripts/dev/live/*.mjs`, each with its CLI checks); nothing below is planned.
+
 **Problem.** The live scripts run only when Claude runs them; a regression (something that used
 to work and stops after a later change) surfaces at work, from a user.
 
