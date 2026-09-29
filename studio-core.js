@@ -1058,6 +1058,7 @@ const CMD_VIEWS = [
   { i: 'scroll',    label: 'History',          view: 'history',   desc: 'Past transfer runs' },
   { i: 'search',    label: 'Org Compare',      view: 'compare',   desc: 'Diff data across many objects' },
   { i: 'shield',    label: 'Deploy Readiness', view: 'readiness', desc: 'Schema compatibility' },
+  { i: 'chart',     label: 'Org health',       view: 'orghealth', desc: 'What needs attention in one org' },
   { i: 'flow',      label: 'Schema View',      view: 'schema',    desc: 'Flow & object graph' },
   { i: 'megaphone', label: "What's New",       view: 'whatsnew',  desc: 'Changelog — what shipped, per version' },
 ];
@@ -1485,7 +1486,7 @@ function _getStartedHtml() {
 // reconcile/builder are NOT hash-routed).
 const DS_HASH_VIEWS = new Set([
   'orgs', 'profiles', 'ring', 'picklists', 'history', 'compare', 'readiness', 'schema', 'fields', 'transfer',
-  'whatsnew',
+  'whatsnew', 'orghealth',
 ]);
 
 function _viewFromHash() {
@@ -1521,7 +1522,7 @@ function navigateToView(view) {
 // Palette/hash entries for absent views are filtered by this same check.
 function _viewAvailable(view) {
   const need = { readiness: 'renderReadiness', schema: 'renderSchemaView', fields: 'renderFieldAudit',
-                 whatsnew: 'renderWhatsNew' };
+                 whatsnew: 'renderWhatsNew', orghealth: 'renderOrgHealth' };
   return !need[view] || typeof window[need[view]] === 'function';
 }
 
@@ -1634,6 +1635,7 @@ function renderView(view) {
       else { _currentView = 'profiles'; renderProfiles(); }
       break;
     case 'whatsnew':  renderWhatsNew();     break;   // T10 — studio-whatsnew.js
+    case 'orghealth': renderOrgHealth();    break;   // campaign 3 phase 8 — studio-orghealth.js
   }
 }
 

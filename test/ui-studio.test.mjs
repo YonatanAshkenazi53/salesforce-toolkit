@@ -95,7 +95,7 @@ describe('one icon dialect, shared with the Apex Debugger', () => {
   it('the sidebar nav paints masks, not emoji', () => {
     const nav = HTML.slice(HTML.indexOf('<nav class="ds-nav"'), HTML.indexOf('</nav>'));
     expect(nav).not.toMatch(/\p{Extended_Pictographic}/u);
-    expect((nav.match(/class="ds-nav-icon ds-i" data-i="/g) || []).length).toBe(10);
+    expect((nav.match(/class="ds-nav-icon ds-i" data-i="/g) || []).length).toBe(11);   // + Org health (campaign 3 phase 8)
   });
 
   it('the dark toggle carries its glyph as an ATTRIBUTE — its label is rewritten by JS', () => {

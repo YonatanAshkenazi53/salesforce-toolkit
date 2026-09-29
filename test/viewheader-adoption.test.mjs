@@ -31,6 +31,7 @@ const SWEEP = {
   'studio-transfer.js':  { calls: 1, icon: 'play',      titleSrc: "title: 'Run Transfer'",
                            ids: ['dsTrBackBtn'], back: true },
   'studio-whatsnew.js':  { calls: 1, icon: 'megaphone', titleSrc: "title: `What's New`" },
+  'studio-orghealth.js': { calls: 1, icon: 'chart',     titleSrc: 'title: `Org health`' },
 };
 
 const SRC = Object.fromEntries(Object.keys(SWEEP).map(f => [f, read(f)]));

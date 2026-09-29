@@ -666,6 +666,7 @@ function renderHistory() {
         'fc_fix_snapshots',   // Field Cleaner undo: full metadata of edited components
         'fc_dep|',            // per-org/per-field dependency scans
         'ds_sched_drift',     // last scheduled drift-check result
+        'sftk_orghealth',     // Org health: the last answer of each check, per org
         'ds_scans', 'ds_scan_results',
         'sftk_debug_entries', 'sftk_debug_meta',   // captured API calls (already sid-redacted)
       ];
