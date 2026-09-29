@@ -99,7 +99,7 @@ describe('child scans say who the duplicate-name copies are', () => {
   it('the child result carries dupKeys and a warning naming the keys', () => {
     expect(SC).toContain('...(_keyCollisions ? { dupKeys: _keyCollisions } : {}),');
     expect(SC).not.toContain("...((!scope && _keyCollisions) ? { dupKeys: _keyCollisions } : {}),");
-    expect(SC).toContain('a child scan cannot tell the copies apart, so they are in NO bucket above and are never deployed from here.');
+    expect(SC).toContain('where both orgs hold the key, the scan cannot tell the copies apart, so they are under ⚠ Ambiguous and are never deployed from here.');
   });
   it('the Deploy page shows a card per child with duplicates, and the child warnings on its list', () => {
     expect(DV).toContain('for (const [pk, cs] of Object.entries(scan.children || {})) {');

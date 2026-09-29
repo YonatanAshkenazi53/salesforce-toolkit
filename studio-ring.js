@@ -272,7 +272,7 @@ function _ringRenderMatrix() {
       ? { runAt: p.lastScan.runAt,
           missing: (p.lastScan.missingInTarget || []).length,
           changed: (p.lastScan.changed || []).length,
-          extra: (p.lastScan.onlyInTarget || []).length,
+          extra: (p.lastScan.onlyInTarget || []).length, ambiguous: (p.lastScan.ambiguous || []).length,
           fileMiss: (p.lastScan.fileDrift && !p.lastScan.fileDrift.error && p.lastScan.fileDrift.records) || 0,
           ...(p.lastScan.fileDrift?.error ? { fileErr: true } : {}),
           status: p.lastScan.status }
@@ -284,7 +284,7 @@ function _ringRenderMatrix() {
       ${badge}<span class="ds-ring-unknown">not scanned</span>
       <button class="ds-btn ds-btn-xs" data-ring-scan1="${esc(p.id)}|${esc(tUrl)}" ${live ? '' : 'disabled'}>🔎</button>
     </div>`;
-    const drift = (s.missing || 0) + (s.changed || 0) + (s.extra || 0);
+    const drift = (s.missing || 0) + (s.changed || 0) + (s.extra || 0) + (s.ambiguous || 0);
     const fMiss = s.fileMiss || 0;
     // A FAILED file check is UNKNOWN, not zero — never let it wear the
     // clean checkmark (the scan's own contract; QA sweep 2026-08-16).
@@ -305,8 +305,8 @@ function _ringRenderMatrix() {
           // synced"; load test: 50 parents clean, 1,850 children missing).
           ? `<span class="ds-ring-clean" title="ROOT object in sync. Ring scans do NOT check this deployment's ${(p.tree.children || []).length} child object(s) — open 🚀 Deploy and scan the child objects to verify them.">✓ root</span>`
           : `<span class="ds-ring-clean">✓ in sync</span>`)
-        : `<span class="ds-ring-counts" title="${s.missing} missing · ${s.changed} changed · ${s.extra} only in target${fMiss ? ` · 📎 ${fMiss} missing files` : ''}">
-             ${s.missing ? `<b class="ds-ring-m">${s.missing}</b>` : ''}${s.changed ? `<b class="ds-ring-c">${s.changed}</b>` : ''}${s.extra ? `<b class="ds-ring-e">${s.extra}</b>` : ''}${fMiss ? `<b class="ds-ring-c">📎</b>` : ''}
+        : `<span class="ds-ring-counts" title="${s.missing} missing · ${s.changed} changed · ${s.extra} only in target${s.ambiguous ? ` · ⚠ ${s.ambiguous} ambiguous — resolve in 🚀 Deploy → ⚠ Ambiguous` : ''}${fMiss ? ` · 📎 ${fMiss} missing files` : ''}">
+             ${s.missing ? `<b class="ds-ring-m">${s.missing}</b>` : ''}${s.changed ? `<b class="ds-ring-c">${s.changed}</b>` : ''}${s.extra ? `<b class="ds-ring-e">${s.extra}</b>` : ''}${s.ambiguous ? `<b class="ds-ring-a">⚠${s.ambiguous}</b>` : ''}${fMiss ? `<b class="ds-ring-c">📎</b>` : ''}
            </span>`}
       <span class="ds-ring-age${stale ? ' ds-ring-stale' : ''}" title="${stale ? 'Scan is over a day old' : ''}">${esc(age)}</span>
       <span class="ds-ring-cell-acts">
@@ -391,7 +391,7 @@ async function _ringScanOne(profileId, tgtUrl, btn) {
       runAt: res.runAt || new Date().toISOString(),
       missing: (res.missingInTarget || []).length,
       changed: (res.changed || []).length,
-      extra: (res.onlyInTarget || []).length,
+      extra: (res.onlyInTarget || []).length, ambiguous: (res.ambiguous || []).length,
       status: res.status || 'success',
       ...(res.fileDrift && !res.fileDrift.error && res.fileDrift.records ? { fileMiss: res.fileDrift.records } : {}),
       ...(res.fileDrift?.error ? { fileErr: true } : {}),
@@ -485,7 +485,7 @@ async function _ringOpenReconcile(profileId, tgtUrl) {
     runAt: res.runAt || new Date().toISOString(),
     missing: (res.missingInTarget || []).length,
     changed: (res.changed || []).length,
-    extra: (res.onlyInTarget || []).length,
+    extra: (res.onlyInTarget || []).length, ambiguous: (res.ambiguous || []).length,
     status: res.status || 'success',
     ...(res.fileDrift && !res.fileDrift.error && res.fileDrift.records ? { fileMiss: res.fileDrift.records } : {}),
       ...(res.fileDrift?.error ? { fileErr: true } : {}),

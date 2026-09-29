@@ -14,14 +14,16 @@ Prepared 2026-09-23. Everything below is in place; nothing else needs seeding.
 1. Open both orgs in Chrome (any tab in each), then open Data Studio from the Toolkit.
 2. Data Deployment → import `docs/fixtures/complex-deployment/profiles.json` (6 deployments arrive).
 3. Open **SFTK CX — Accounts tree** → 🚀 Deploy. Expected after the scan, root object Account:
-   **7 to insert · 2 changed · 2 only in target** (the Sync Ring cell shows the same 7 · 2 · 2).
+   **7 to insert · 1 changed · 2 only in target · ⚠ 2 ambiguous** (the Sync Ring cell shows the same 7 · 1 · 2 · ⚠2 —
+   before campaign 3 phase 5 it read 7 · 2 · 2, one duplicate copy paired arbitrarily).
    Nothing is ticked for you.
 4. Tick what you want. A good first run: every insert on Account, then 🔎 Scan all children and
    tick the Contacts and Opportunities. Deploy. Expect:
    - the Retail Account without a Website and the Lab lead Contact without a Phone to be REFUSED
      by the target's validation rules, named in the result with Salesforce's text;
    - the hierarchy connected after insert (Berlin Lab → Europe → Holding);
-   - the two "SFTK CX Duplicate Name" Accounts flagged as an ambiguous key (dupKeys), not guessed.
+   - the two "SFTK CX Duplicate Name" Accounts listed under ⚠ Ambiguous, not guessed: 📌 pair one with
+     the target's copy and the other becomes an insert (live 2026-09-29: two target records, distinct Ids).
 5. History → ↻ Retry failed (fix the two records in the source first, or accept the refusal).
 6. History → ↩ Roll back the run: type ROLLBACK; expect every inserted object deleted and
    "verified — nothing from the run remains"; person-account Contacts are left alone (they go

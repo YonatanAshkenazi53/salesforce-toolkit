@@ -132,6 +132,13 @@ extensions containing root files that start with `_`).
   added so the records below them have a parent"), writes every level parents first, and links
   each record to the id its parent just got. When a parent is refused, its children are not
   inserted without it, and the run names them instead of leaving them silently out.
+- **Duplicate keys are listed, never guessed.** When both orgs hold the same match key more than
+  once, the copies used to be paired arbitrarily — one "changed", the other in no list at all.
+  They now appear under a new ⚠ Ambiguous tab on the Deploy page, each with the target records
+  it could be: 📌 pair a copy with its target, or ➕ mark it as new, and both orgs are read again
+  with your choice remembered. Copies that have no counterpart on the other side are ordinary
+  inserts. The plan table and the Sync Ring show the count as ⚠N, and a ring cell with ambiguous
+  records no longer reads as in sync.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run
