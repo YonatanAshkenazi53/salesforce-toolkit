@@ -1297,13 +1297,14 @@ async function runDiffScan(profile, node = null, scope = null) {
   const memPairedSrc = new Set();
   const memPairedTgt = new Set();
   let memRows = [];                 // [{ sr, tr }] — classified with the buckets below
+  let forcedNew = [];               // phase 5 — source rows the user marked ➕ insert as new (memory value SFTK_MEM_NEW)
   const memWarnings = [...keyFallbackWarnings];
   if (_srcNoLink) {
     memWarnings.push(`${_srcNoLink} source ${objType} record(s) have a BLANK ${scope.parentField} — a parent-scoped scan can never see them, so they are absent from every bucket above (they are NOT “in sync”). Populate the link, or deploy them with a flat ${objType} profile.`);
   }
   if (scope && _keyCollisions && _keyCollisions.rows) {
     const ks = (_keyCollisions.keys || []).slice(0, 3).map(k => `“${k}”`).join(', ') + ((_keyCollisions.keys || []).length > 3 ? ', …' : '');
-    memWarnings.push(`${_keyCollisions.rows} ${objType} record(s) share a match key with another record (${ks}) — a child scan cannot tell the copies apart, so they are in NO bucket above and are never deployed from here. Add a second field to the match key (✏ Edit → Records → Matching), or rename one copy.`);
+    memWarnings.push(`${_keyCollisions.rows} ${objType} record(s) share a match key with another record (${ks}) — copies with no counterpart on the other side are listed normally; where both orgs hold the key, the scan cannot tell the copies apart, so they are under ⚠ Ambiguous and are never deployed from here. Add a second field to the match key (✏ Edit → Records → Matching), or rename one copy.`);
   }
   // AUTONUMBER match key (W7 pattern audit) — the values are org-generated
   // sequence numbers: 'A-0042' in two orgs are DIFFERENT records that happen
@@ -1325,6 +1326,9 @@ async function runDiffScan(profile, node = null, scope = null) {
         for (const sr of (srcRes.records || [])) {
           const tgtId = mem[sr.Id];
           if (!tgtId) continue;
+          // Phase 5 — "insert as new" (⚠ Ambiguous): out of key matching,
+          // straight into Insert below. A deploy later learns its real pair.
+          if (tgtId === SFTK_MEM_NEW) { if (!memPairedSrc.has(sr.Id)) { memPairedSrc.add(sr.Id); forcedNew.push(sr); } continue; }
           const tr = tgtById.get(tgtId);
           // Target record gone (deleted) → the source row falls back to key
           // matching this scan. A tgt already claimed by an earlier src (bad
@@ -1337,7 +1341,7 @@ async function runDiffScan(profile, node = null, scope = null) {
         }
       }
     } catch (e) {
-      memPairedSrc.clear(); memPairedTgt.clear(); memRows = []; memoryMatched = 0;
+      memPairedSrc.clear(); memPairedTgt.clear(); memRows = []; memoryMatched = 0; forcedNew = [];
       memWarnings.push(`match memory skipped (fell back to key matching): ${e?.message || e}`);
       window.SFToolkitDebug?.log('scan', 'warn',
         'M3c memory pre-pass failed — falling back to key matching', e?.message || String(e));
@@ -1352,21 +1356,38 @@ async function runDiffScan(profile, node = null, scope = null) {
   // M3a — blank keys (ALL components empty) are unmatchable: excluded from
   // the indexes and COUNTED so the UI can say why rows are missing.
   let _blankSrc = 0, _blankTgt = 0;
-  const srcByKey = new Map();
+  // Campaign 3 phase 5 — group each side by key FIRST, then decide per key
+  // (sftkScanKeyClasses). Before, the indexes were "last copy wins": on a
+  // root scan one twin paired arbitrarily and the other vanished from every
+  // bucket; a child scan dropped every twin. Now a key held once is matched
+  // as before, copies with no counterpart are listed normally, and a key
+  // both orgs hold more than once goes to ⚠ Ambiguous — never guessed.
+  const _sGrp = new Map(), _tGrp = new Map();
   for (const r of (srcRes.records || [])) {
-    if (memPairedSrc.has(r.Id)) continue;     // M3c — matched from memory
+    if (memPairedSrc.has(r.Id)) continue;     // M3c — matched from memory (or ➕ insert as new)
     const k = sftkMatchKey(r, srcMatching);
     if (k === '') { _blankSrc++; continue; }
-    if (scope && _dupKeys.has(k)) continue;   // R1 — ambiguous key, excluded
-    srcByKey.set(k, r);
+    if (!_sGrp.has(k)) _sGrp.set(k, []);
+    _sGrp.get(k).push(r);
   }
-  const tgtByKey = new Map();
   for (const r of (tgtRes.records || [])) {
     if (memPairedTgt.has(r.Id)) continue;     // M3c — matched from memory
     const k = sftkMatchKey(r, tgtMatching);
     if (k === '') { _blankTgt++; continue; }
-    if (scope && _dupKeys.has(k)) continue;   // R1 — ambiguous key, excluded
-    tgtByKey.set(k, r);
+    if (!_tGrp.has(k)) _tGrp.set(k, []);
+    _tGrp.get(k).push(r);
+  }
+  const _keyClass = sftkScanKeyClasses(new Map([..._sGrp].map(([k, a]) => [k, a.length])), new Map([..._tGrp].map(([k, a]) => [k, a.length])));
+  const srcByKey = new Map();
+  const tgtByKey = new Map();
+  const _twinsNew = [], _twinsExtra = [], _ambKeys = [];
+  for (const [k, cls] of _keyClass) {
+    if (cls === 'pair') {
+      if (_sGrp.has(k)) srcByKey.set(k, _sGrp.get(k)[0]);
+      if (_tGrp.has(k)) tgtByKey.set(k, _tGrp.get(k)[0]);
+    } else if (cls === 'insertAll') { for (const r of _sGrp.get(k)) _twinsNew.push([k, r]); }
+    else if (cls === 'extraAll') { for (const r of _tGrp.get(k)) _twinsExtra.push([k, r]); }
+    else _ambKeys.push(k);
   }
 
   const missingInTarget = []; // present in source, absent in target → "deploy"
@@ -1409,17 +1430,21 @@ async function runDiffScan(profile, node = null, scope = null) {
   // Pair-aligned compare driven by comparePlan: each entry extracts the value
   // to compare (raw field for data fields, related record's match field for
   // resolved lookups). diffFields records the SOURCE field name for the UI.
+  // One source row as the Insert column (and ⚠ Ambiguous) shows it.
+  const _srcRow = (k, sr) => {
+    const row = { matchKey: k, sourceId: sr.Id };
+    if (scope?.parentField) {
+      // Dependency context for the child Insert column: which parent does
+      // this record belong to, and by what key?
+      row.parentSrcId = sr[scope.parentField] || null;
+      if (linkInfoSrc) row.parentKey = String(_lookupResolvedVal(sr, linkInfoSrc) ?? '');
+    }
+    return row;
+  };
   for (const [k, sr] of srcByKey) {
     const tr = tgtByKey.get(k);
     if (!tr) {
-      const row = { matchKey: k, sourceId: sr.Id };
-      if (scope?.parentField) {
-        // Dependency context for the child Insert column: which parent does
-        // this record belong to, and by what key?
-        row.parentSrcId = sr[scope.parentField] || null;
-        if (linkInfoSrc) row.parentKey = String(_lookupResolvedVal(sr, linkInfoSrc) ?? '');
-      }
-      missingInTarget.push(row);
+      missingInTarget.push(_srcRow(k, sr));
     } else {
       // Link check (child scans): same record on both sides — does it point
       // at the same parent? Compared by the parent's KEY, never by raw Id.
@@ -1464,6 +1489,22 @@ async function runDiffScan(profile, node = null, scope = null) {
   }
   for (const [k, tr] of tgtByKey) {
     if (!srcByKey.has(k)) onlyInTarget.push({ matchKey: k, targetId: tr.Id });
+  }
+  // Phase 5 — copies with no counterpart are ordinary records: every one is
+  // an insert (source) or in-target-only (target); the user's ➕ insert-as-new
+  // records join the inserts; a key both orgs hold more than once is listed
+  // under ⚠ Ambiguous with its candidate target records, and nothing else.
+  for (const [k, sr] of _twinsNew) missingInTarget.push({ ..._srcRow(k, sr), dupKey: true });
+  for (const sr of forcedNew) missingInTarget.push({ ..._srcRow(sftkMatchKey(sr, srcMatching) || '(insert as new)', sr), forcedNew: true });
+  for (const [k, tr] of _twinsExtra) onlyInTarget.push({ matchKey: k, targetId: tr.Id, dupKey: true });
+  const ambiguous = [];
+  for (const k of _ambKeys) {
+    const srcs = _sGrp.get(k) || [], tgts = _tGrp.get(k) || [];
+    for (const sr of srcs) {
+      const row = { ..._srcRow(k, sr), candidates: tgts.map(t => t.Id) };
+      if (srcs.length > 1) row.twins = srcs.filter(x => x !== sr).map(x => x.Id);
+      ambiguous.push(row);
+    }
   }
 
   // NEAR-MISS pass (user bug 2026-08-04: one child's external-Id value
@@ -1754,8 +1795,12 @@ async function runDiffScan(profile, node = null, scope = null) {
     ...(_keyCollisions ? { dupKeys: _keyCollisions } : {}),
     compareFields: srcCompare,
     compareFieldsTgt: tgtCompare,
-    sourceCount:   srcByKey.size + memoryMatched,
-    targetCount:   tgtByKey.size + memoryMatched,
+    sourceCount:   srcByKey.size + memoryMatched + _twinsNew.length + forcedNew.length + ambiguous.length,
+    targetCount:   tgtByKey.size + memoryMatched + _twinsExtra.length + new Set(ambiguous.flatMap(r => r.candidates)).size,
+    // Phase 5 — ⚠ Ambiguous: one row per source copy of a key both orgs hold
+    // more than once, with the target records it could be (candidates) and
+    // its source twins. In no other bucket; never deployed until resolved.
+    ambiguous:     ambiguous.slice(0, BUCKET_CAP),
     // Caps to keep chrome.storage payload reasonable on big orgs. The
     // picker only needs source IDs to badge rows, and "extras in target"
     // is just informational for now.

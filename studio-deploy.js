@@ -63,6 +63,8 @@ const SFTK_DEPLOY_TABS = [
   { k: 'ext',  bucket: 'onlyInTarget',    label: '🔵 In target only', noun: 'in target only', childOnly: false },
   { k: 'link', bucket: 'linkMismatch',    label: '⇄ Link differs',    noun: 'point at a different parent', childOnly: true },
   { k: 'same', bucket: 'identical',       label: '🟢 Synced',         noun: 'synced',         childOnly: false },
+  // Campaign 3 phase 5 — a key both orgs hold more than once: never guessed.
+  { k: 'amb',  bucket: 'ambiguous',       label: '⚠ Ambiguous',       noun: 'ambiguous — not deployed until you choose', childOnly: false },
 ];
 
 // One plan row per object. `info(scanLike, bucket)` is sftkScanBucketInfo —
@@ -306,15 +308,15 @@ async function renderDeploy() {
         <thead><tr><th>Object</th><th class="ds-dep-num" title="Records read from the source for this deployment">In source</th><th class="ds-dep-num" title="Records read from the target">In target</th>
           <th class="ds-dep-num" title="In the source only — inserted when you select them">🔴 Insert</th><th class="ds-dep-num" title="In both orgs with different values — pick a winner per row">🟡 Changed</th>
           <th class="ds-dep-num" title="In the target only — never deleted unless you choose it">🔵 In target only</th><th class="ds-dep-num" title="Child records that exist in both orgs but point at a different parent">⇄ Link differs</th>
-          <th class="ds-dep-num" title="In both orgs with equal values — left alone">🟢 Synced</th><th></th></tr></thead>
+          <th class="ds-dep-num" title="In both orgs with equal values — left alone">🟢 Synced</th><th class="ds-dep-num" title="The match key is held more than once where both orgs have it — the scan cannot tell which copy is which, so nothing is deployed for these until you pair each copy with its target or mark it as new">⚠ Ambiguous</th><th></th></tr></thead>
         <tbody>${plan.map(r => `<tr>
           <td><button class="ds-dep-objlink" data-dep-obj="${esc(r.pathKey)}" data-dep-tab="ins" style="padding-left:${r.depth * 16}px">${r.depth ? '↳ ' : ''}${esc(r.obj)}</button>
             <span class="ds-dep-sub">${r.depth ? `under ${esc(r.parentObj || '')}` : 'root'}</span></td>
           <td class="ds-dep-num">${r.src == null ? '' : r.src.toLocaleString()}</td><td class="ds-dep-num">${r.tgt == null ? '' : r.tgt.toLocaleString()}</td>
-          ${cell(r, 'ins')}${cell(r, 'chg')}${cell(r, 'ext')}${r.depth ? cell(r, 'link') : '<td class="ds-dep-num ds-dep-muted"></td>'}${cell(r, 'same')}
+          ${cell(r, 'ins')}${cell(r, 'chg')}${cell(r, 'ext')}${r.depth ? cell(r, 'link') : '<td class="ds-dep-num ds-dep-muted"></td>'}${cell(r, 'same')}${cell(r, 'amb')}
           <td>${r.depth ? `<button class="ds-btn ds-btn-xs" data-dep-scan="${esc(r.pathKey)}" title="${r.scanned ? 'Read this object again, under the records of the scan above' : 'This object has not been read against this target yet — its records are unknown, not zero'}">${r.scanned ? '🔎 Rescan' : '🔎 Scan'}</button>` : ''}</td>
         </tr>`).join('')}
-        ${plan.length > 1 ? `<tr class="ds-dep-total"><td>All objects</td><td></td><td></td>${['ins', 'chg', 'ext', 'link', 'same'].map(k => `<td class="ds-dep-num${sum(k) ? ` ds-dep-n-${k}` : ' ds-dep-muted'}">${sum(k).toLocaleString()}</td>`).join('')}<td></td></tr>` : ''}</tbody></table></div>
+        ${plan.length > 1 ? `<tr class="ds-dep-total"><td>All objects</td><td></td><td></td>${['ins', 'chg', 'ext', 'link', 'same', 'amb'].map(k => `<td class="ds-dep-num${sum(k) ? ` ds-dep-n-${k}` : ' ds-dep-muted'}">${sum(k).toLocaleString()}</td>`).join('')}<td></td></tr>` : ''}</tbody></table></div>
       ${unscanned.length ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs ds-btn-primary" id="dsDepScanAll" title="Read every object below against the target, one after the other, parents before their children">🔎 Scan all ${unscanned.length}</button> <b>${unscanned.map(r => esc(r.obj)).join(', ')}</b> not read against this target yet — unknown, not zero. Scan ${unscanned.length === 1 ? 'it' : 'them'} before calling this pair in sync.</div>` : ''}
     </div>`;
 
@@ -327,6 +329,9 @@ async function renderDeploy() {
   // The full sanctioned wording lives on the truncated tab itself; here, one line.
   if (scan.bucketCapNote) notes.push(`⚠ ${esc(String(scan.bucketCapNote).replace(/^[⚠\s]+/, '').split(/\. /)[0])}. Open that tab for what it means for ▶ Deploy.`);
   if (scan.dupKeys?.rows) notes.push(sftkRecDupsHtml(scan, p));
+  // Phase 5 — the ambiguous copies are listed, not guessed: say where.
+  { const nAmb = (scan.ambiguous || []).length;
+    if (nAmb) notes.push(`⚠ <b>${nAmb.toLocaleString()} ${esc(p.tree?.objectType || p.tree?.childSObject || '')} record(s) are ambiguous</b> — both orgs hold their match key more than once, so the scan cannot tell which copy is which. Nothing is deployed for them until you choose: open <b>⚠ Ambiguous</b> below to 📌 pair each copy with its target record, or ➕ mark it as new.`); }
   // child objects: the same card, without the root's fix buttons (they act on the root's key)
   for (const [pk, cs] of Object.entries(scan.children || {})) {
     if (!cs || !cs.dupKeys || !cs.dupKeys.rows) continue;
@@ -351,7 +356,7 @@ async function renderDeploy() {
     <div class="ds-dep-rec" id="dsDepRecords">
       <div class="ds-dep-objsw"><span class="ds-dep-lbl">Object</span>${objects.map(o => {
         const pr = plan.find(r => r.pathKey === o.pathKey);
-        const work = pr && pr.scanned ? ['ins', 'chg', 'ext', 'link'].reduce((n, k) => n + ((pr.cells[k] && pr.cells[k].n) || 0), 0) : null;
+        const work = pr && pr.scanned ? ['ins', 'chg', 'ext', 'link', 'amb'].reduce((n, k) => n + ((pr.cells[k] && pr.cells[k].n) || 0), 0) : null;
         return `<button class="ds-dep-objbtn" data-dep-obj="${esc(o.pathKey)}" aria-pressed="${o.pathKey === cur.pathKey}">${o.depth ? '↳ '.repeat(o.depth) : ''}${esc(o.obj)} <small>${work == null ? 'not scanned' : `${work.toLocaleString()} to act on`}</small></button>`;
       }).join('')}</div>
       <div class="ds-dep-tabs" role="tablist">${tabs.map(t => `<button role="tab" data-dep-tab="${t.k}" aria-selected="${t.k === _depTab}">${t.label} <b>${planRow && planRow.cells[t.k] ? esc(planRow.cells[t.k].text) : '—'}</b></button>`).join('')}</div>
@@ -769,6 +774,14 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
       ctl = `<button class="ds-rec-extra-btn ${on ? 'ds-rec-extra-on-push' : ''}" data-dep-relink="${esc(r.targetId)}" ${relinkBlocked ? 'disabled title="Master-detail and not reparentable — Salesforce blocks changing it after insert"' : 'title="Point this target record at the parent the source says it belongs to"'}>⇄ Relink</button>`;
       extra = `<span class="ds-rec-link-detail" title="currently → should be">${esc(r.parentKeyTgt || '∅')} → ${esc(r.parentKeySrc || '∅')}</span>`;
       tail = `<button class="ds-dep-link" data-dep-fields="${esc(r.sourceId)}|${esc(r.targetId)}">▸ record</button>`;
+    } else if (tabDef.k === 'amb') {
+      // Phase 5 — the copies and the target records each could be. A choice is
+      // remembered (match memory, per target org) and the orgs are read again.
+      const cands = r.candidates || [];
+      extra = `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="The same match key is held by ${(r.twins || []).length + 1} source and ${cands.length} target record(s) — which is which cannot be told from the key.">${(r.twins || []).length ? `${(r.twins || []).length + 1} copies in ${esc(orgLabel(p.sourceOrg))} · ` : ''}${cands.length} possible in ${esc(orgLabel(p.targetOrg))}</span>`;
+      tail = isRoot
+        ? `${cands.map((t, i) => `<button class="ds-dep-link" data-dep-amb-pin="${esc(r.sourceId)}|${esc(t)}" title="Remember: this source record IS that target record — the next scan compares them as a pair">📌 pair with #${i + 1}</button> <a class="ds-dep-open" href="${recUrl(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open target record #${i + 1}">#${i + 1} ↗</a>`).join(' · ')} · <button class="ds-dep-link" data-dep-amb-new="${esc(r.sourceId)}" title="Remember: this source record has no counterpart in the target — the next scan lists it under 🔴 Insert">➕ insert as new</button>`
+        : `<span class="ds-rec-pnote" title="Pairing by hand is for the root object; a child object needs a match key that tells the copies apart">add a second match field (✏ Edit → Records → Matching)</span>`;
     } else {
       extra = r.personAccount ? '<span class="ds-rec-pnote" title="The Contact behind a Person Account — Salesforce creates and owns it.">👤 person account</span>' : '';
       // Synced = the COMPARED fields are equal. ▸ compare reads both records
@@ -802,6 +815,23 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   const fEl = eid('dsDepFilter');
   fEl?.addEventListener('input', () => { _depFilter = fEl.value; const pos = fEl.selectionStart; repaint(); const n = eid('dsDepFilter'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (_) {} } });
   const selectable = r => isRoot || (() => { const st = sftkRecChildRowState(r, cur.depth, pMissing, pExists); return st !== 'deepblock' && st !== 'untracked'; })();
+  // Phase 5 — ⚠ Ambiguous choices: remembered in match memory (a pair, or
+  // SFTK_MEM_NEW for "insert as new"), then both orgs are read again so every
+  // bucket reflects the choice. Nothing is written to Salesforce here.
+  const ambChoose = async (pairs, what) => {
+    await window.sftkLearnPairs?.(p.id, p.targetOrg, pairs);
+    showToast(`${what} — remembered for ${orgLabel(p.targetOrg)}; reading both orgs again…`, 'success', 5000);
+    await _depRescan(p);
+  };
+  host.querySelectorAll('[data-dep-amb-pin]').forEach(b => b.addEventListener('click', () => {
+    const [sid, tid] = String(b.dataset.depAmbPin).split('|');
+    host.querySelectorAll('[data-dep-amb-pin], [data-dep-amb-new]').forEach(x => { x.disabled = true; });
+    ambChoose([[sid, tid]], '📌 Paired');
+  }));
+  host.querySelectorAll('[data-dep-amb-new]').forEach(b => b.addEventListener('click', () => {
+    host.querySelectorAll('[data-dep-amb-pin], [data-dep-amb-new]').forEach(x => { x.disabled = true; });
+    ambChoose([[b.dataset.depAmbNew, SFTK_MEM_NEW]], '➕ Marked as new');
+  }));
   host.querySelectorAll('[data-dep-push]').forEach(cb => cb.addEventListener('change', () => {
     const set = isRoot ? _recSel.push : sel.push;
     if (cb.checked) set.add(cb.dataset.depPush); else set.delete(cb.dataset.depPush);

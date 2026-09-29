@@ -5083,7 +5083,7 @@ html, body {
 .ds-ring-cell { display: flex; align-items: center; gap: 7px; font-size: 12px; min-height: 26px; }
 .ds-ring-clean { color: var(--active-color); font-weight: 600; }
 .ds-ring-counts b { font-weight: 700; margin-right: 6px; font-variant-numeric: tabular-nums; }
-.ds-ring-m { color: #C23934; } .ds-ring-c { color: #DD7A01; } .ds-ring-e { color: var(--subtext); }
+.ds-ring-m { color: #C23934; } .ds-ring-c { color: #DD7A01; } .ds-ring-e { color: var(--subtext); } .ds-ring-a { color: #B45309; }
 .ds-ring-age { font-size: 10.5px; color: var(--subtext); }
 .ds-ring-stale { color: #DD7A01; font-weight: 600; }
 .ds-ring-unknown { color: var(--subtext); font-style: italic; }

@@ -16,7 +16,7 @@ const scan = extractFunctions('studio-scan.js', [
 ], { 'sftk-matching.js': [
   'sftkMatchingFromNode', 'sftkMatchingFields', 'sftkMatchingTgtFields',
   'sftkMatchKey', 'sftkPathValue', 'sftkNormalizeValue', 'sftkNearMissFold', 'sftkNearMissReason',
-  'sftkMatchKeyLabel',
+  'sftkMatchKeyLabel', 'sftkScanKeyClasses',
 ] });
 
 const SRC_ORG = 'https://six.develop.my.salesforce.com';
@@ -227,5 +227,66 @@ describe('owner drift — visible ONLY when the deployment matches owners', () =
     expect(res.error, res.error).toBeFalsy();
     expect((res.identical || []).some(r => r.sourceId === 'S_A'),
       `must be identical — changed=${JSON.stringify(res.changed)}`).toBe(true);
+  });
+});
+
+// Campaign 3 phase 5 — ambiguous keys as a bucket, through the real runDiffScan.
+describe('duplicate keys: listed, never guessed (⚠ Ambiguous)', () => {
+  const DUP_DESC = { name: 'Account', fields: [f('Id', 'id', { createable: false }), f('Name', 'string', { nameField: true }), f('City__c', 'string')] };
+  const run = async (src, tgt, memory) => {
+    globalThis.describe = async () => DUP_DESC;
+    globalThis.SFTK_MEM_NEW = '__insert_as_new__';
+    globalThis.sendBg = async msg => {
+      const q = String(msg.query || '');
+      if (/= null/.test(q)) return { records: [], totalSize: 0, done: true };
+      const rows = msg.orgUrl === SRC_ORG ? src : tgt;
+      return { records: rows.map(r => ({ ...r })), totalSize: rows.length, done: true };
+    };
+    const p = { id: 'pd', name: 'dups', sourceOrg: SRC_ORG, targetOrg: TGT_ORG,
+      scanConfig: { matchField: 'Name', compareFields: ['City__c'] },
+      tree: { objectType: 'Account', where: '', children: [] },
+      ...(memory ? { matchMemory: { [TGT_ORG.toLowerCase()]: memory } } : {}) };
+    const res = await scan.runDiffScan(p, p.tree, null);
+    delete globalThis.SFTK_MEM_NEW;
+    expect(res.error, res.error).toBeFalsy();
+    const where = id => ['missingInTarget', 'changed', 'identical', 'onlyInTarget', 'ambiguous']
+      .filter(b => (res[b] || []).some(r => r.sourceId === id || (b === 'onlyInTarget' && r.targetId === id)));
+    return { res, where };
+  };
+  const SRC = [{ Id: 'S_D1', Name: 'SFTK CX Duplicate Name', City__c: 'Haifa' }, { Id: 'S_D2', Name: 'SFTK CX Duplicate Name', City__c: 'Eilat' },
+               { Id: 'S_U', Name: 'Unique', City__c: 'X' }];
+  const TGT = [{ Id: 'T_D', Name: 'SFTK CX Duplicate Name', City__c: 'Target twin' }, { Id: 'T_U', Name: 'Unique', City__c: 'X' }];
+
+  it('two source copies and one target: both copies under ⚠ Ambiguous with the candidate — in no other bucket, the target not "only in target"', async () => {
+    const { res, where } = await run(SRC, TGT);
+    expect(where('S_D1')).toEqual(['ambiguous']);
+    expect(where('S_D2')).toEqual(['ambiguous']);
+    expect(where('T_D')).toEqual([]);
+    expect(res.ambiguous.find(r => r.sourceId === 'S_D1')).toMatchObject({ candidates: ['T_D'], twins: ['S_D2'] });
+    expect(where('S_U')).toEqual(['identical']);
+    expect(res.sourceCount).toBe(3);
+    expect(res.targetCount).toBe(2);
+  });
+  it('copies with NO counterpart are ordinary records: every source copy is an insert, every target copy is "only in target"', async () => {
+    const { res, where } = await run(
+      [{ Id: 'S_X1', Name: 'Twin', City__c: 'a' }, { Id: 'S_X2', Name: 'Twin', City__c: 'b' }],
+      [{ Id: 'T_Y1', Name: 'Other', City__c: 'a' }, { Id: 'T_Y2', Name: 'Other', City__c: 'b' }]);
+    expect(where('S_X1')).toEqual(['missingInTarget']);
+    expect(where('S_X2')).toEqual(['missingInTarget']);
+    expect(where('T_Y1')).toEqual(['onlyInTarget']);
+    expect(where('T_Y2')).toEqual(['onlyInTarget']);
+    expect(res.ambiguous).toEqual([]);
+  });
+  it('📌 pairing one copy (match memory) settles the key: that copy is compared with its target, the other becomes an insert', async () => {
+    const { where } = await run(SRC, TGT, { S_D1: 'T_D' });
+    expect(where('S_D1')).toEqual(['changed']);
+    expect(where('S_D2')).toEqual(['missingInTarget']);
+  });
+  it('➕ insert as new (memory value SFTK_MEM_NEW): that copy is an insert, the other pairs with the one target', async () => {
+    const { res, where } = await run(SRC, TGT, { S_D2: '__insert_as_new__' });
+    expect(where('S_D2')).toEqual(['missingInTarget']);
+    expect(res.missingInTarget.find(r => r.sourceId === 'S_D2').forcedNew).toBe(true);
+    expect(where('S_D1')).toEqual(['changed']);
+    expect(res.ambiguous).toEqual([]);
   });
 });

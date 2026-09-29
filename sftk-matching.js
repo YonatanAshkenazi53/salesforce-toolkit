@@ -381,14 +381,51 @@ function sftkPairSimilarity(keyA, keyB) {
 //     root scans paired them arbitrarily (dupKeys) — untrustworthy either way
 // Memory-matched pairs (M3c) are Id-exact; they always count as confident.
 // Returns null when there is nothing to grade (error scan / both sides empty).
+// Campaign 3 phase 5 — the match-memory value that means "this source record
+// has NO counterpart in the target: list it under Insert" (⚠ Ambiguous →
+// ➕ insert as new). Stored in profile.matchMemory like a pair, so it is kept,
+// exported and cleared with the pairs; a later deploy of the record learns
+// its real target id over it. Never a valid Salesforce Id.
+const SFTK_MEM_NEW = '__insert_as_new__';
+
+// PURE. Campaign 3 phase 5 — what one match key means once the memory pairs
+// are out, given how many rows hold it on each side (Maps key → count):
+//   'pair'      one source and at most one target, or no source and one target
+//               — matched / missing / only-in-target exactly as before
+//   'insertAll' two or more source copies and NO target row: distinct records
+//               the target simply lacks → every copy is an insert
+//   'extraAll'  two or more target copies and NO source row → every copy is
+//               "in target only"
+//   'ambiguous' the key is on both sides and duplicated on at least one: the
+//               scan cannot tell which copy is which → the ⚠ Ambiguous bucket,
+//               never guessed (before: last copy won, the other vanished)
+function sftkScanKeyClasses(srcCounts, tgtCounts) {
+  const out = new Map();
+  const keys = [...(srcCounts ? srcCounts.keys() : []), ...(tgtCounts ? tgtCounts.keys() : [])];
+  for (const k of keys) {
+    if (out.has(k)) continue;
+    const sN = (srcCounts && srcCounts.get(k)) || 0, tN = (tgtCounts && tgtCounts.get(k)) || 0;
+    out.set(k, sN <= 1 && tN <= 1 ? 'pair'
+      : tN === 0 ? 'insertAll'
+      : sN === 0 ? 'extraAll'
+      : 'ambiguous');
+  }
+  return out;
+}
+
 function sftkScanAccuracy(scan) {
   if (!scan || scan.error) return null;
   const matched  = (scan.identical || []).length + (scan.changed || []).length;
   const missing  = (scan.missingInTarget || []).length;
   const extra    = (scan.onlyInTarget || []).length;
   const blank    = (scan.blankKeys && scan.blankKeys.rows) || 0;
-  const excluded = (scan.keyCollisions && scan.keyCollisions.rows) || 0; // child: rows NOT in buckets
-  const dupRoot  = (scan.dupKeys && scan.dupKeys.rows) || 0;            // root: rows still in buckets
+  // Phase 5 scans carry the ⚠ Ambiguous bucket: its source copies AND their
+  // candidate targets are in no other bucket — they extend the total and are
+  // the uncertain part. Older stored scans keep the old reading below.
+  const amb      = Array.isArray(scan.ambiguous) ? scan.ambiguous : null;
+  const ambRows  = amb ? amb.length + new Set(amb.flatMap(r => (r && r.candidates) || [])).size : 0;
+  const excluded = amb ? ambRows : ((scan.keyCollisions && scan.keyCollisions.rows) || 0); // child: rows NOT in buckets
+  const dupRoot  = amb ? 0 : ((scan.dupKeys && scan.dupKeys.rows) || 0);                  // root (old scans): rows still in buckets
   const total    = matched * 2 + missing + extra + blank + excluded;
   if (!total) return null;
   const uncertain = Math.min(total, blank + excluded + dupRoot);
@@ -418,4 +455,6 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkMemoryMerge         = sftkMemoryMerge;
   globalThis.sftkPairSimilarity      = sftkPairSimilarity;
   globalThis.sftkScanAccuracy        = sftkScanAccuracy;
+  globalThis.sftkScanKeyClasses      = sftkScanKeyClasses;
+  globalThis.SFTK_MEM_NEW            = SFTK_MEM_NEW;
 }

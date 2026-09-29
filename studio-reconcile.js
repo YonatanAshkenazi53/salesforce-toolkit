@@ -47,7 +47,7 @@ window.openReconcile = function(profileId, targetUrl) {
               const nat = { runAt: p.lastScan.runAt,
                 missing: (p.lastScan.missingInTarget || []).length,
                 changed: (p.lastScan.changed || []).length,
-                extra:   (p.lastScan.onlyInTarget || []).length,
+                extra:   (p.lastScan.onlyInTarget || []).length, ambiguous: (p.lastScan.ambiguous || []).length,
                 fileMiss: (p.lastScan.fileDrift && !p.lastScan.fileDrift.error && p.lastScan.fileDrift.records) || 0,
                 ...(p.lastScan.fileDrift?.error ? { fileErr: true } : {}) };
               rs = (typeof sftkRingCellPick === 'function') ? sftkRingCellPick(nat, rs) : (rs || nat);
@@ -164,7 +164,7 @@ async function sftkParentSyncLoad() {
       const k = sftkParentSyncKey(src, tgt, s.objectType);
       if (!_parentSyncVerdicts[k] || (s.runAt || '') > (_parentSyncVerdicts[k].at || '')) {
         _parentSyncVerdicts[k] = { missing: (s.missingInTarget || []).length,
-          changed: (s.changed || []).length, extra: (s.onlyInTarget || []).length, at: s.runAt };
+          changed: (s.changed || []).length, extra: (s.onlyInTarget || []).length, ambiguous: (s.ambiguous || []).length, at: s.runAt };
       }
     }
   } catch (_) { /* hydration is best-effort */ }
@@ -337,7 +337,7 @@ function sftkRingTileFromScan(p) {
     p.ringScans[rk] = { runAt: fs.runAt,
       missing: (fs.missingInTarget || []).length,
       changed: (fs.changed || []).length,
-      extra:   (fs.onlyInTarget || []).length,
+      extra:   (fs.onlyInTarget || []).length, ambiguous: (fs.ambiguous || []).length,
       status:  'success',
       ...(fs.fileDrift && !fs.fileDrift.error && fs.fileDrift.records ? { fileMiss: fs.fileDrift.records } : {}),
       ...(fs.fileDrift?.error ? { fileErr: true } : {}) };
@@ -629,7 +629,7 @@ async function renderReconcile() {
     sftkParentSyncPut(p.sourceOrg, p.targetOrg, objType, {
       missing: (scan.missingInTarget || []).length,
       changed: (scan.changed || []).length,
-      extra:   (scan.onlyInTarget || []).length,
+      extra:   (scan.onlyInTarget || []).length, ambiguous: (scan.ambiguous || []).length,
       at:      scan.runAt || new Date().toISOString(),
     });
     sftkRingTileFromScan(p);
@@ -3416,7 +3416,7 @@ async function runReconcile(profile, objType, buckets) {
           realP.ringScans[rk] = { runAt: fs.runAt,
             missing: (fs.missingInTarget || []).length,
             changed: (fs.changed || []).length,
-            extra:   (fs.onlyInTarget || []).length,
+            extra:   (fs.onlyInTarget || []).length, ambiguous: (fs.ambiguous || []).length,
             status:  'success',
             ...(fs.fileDrift && !fs.fileDrift.error && fs.fileDrift.records ? { fileMiss: fs.fileDrift.records } : {}),
             ...(fs.fileDrift?.error ? { fileErr: true } : {}) };
@@ -4441,7 +4441,7 @@ function sftkRecDupsHtml(scan, p) {
   // (user 2026-09-21: followed the advice, the dialog was empty).
   const unS = (scan.missingInTarget || []).length, unT = (scan.onlyInTarget || []).length;
   return `<details class="ds-rec-dups">
-      <summary>⚠ ${ex.length} name(s) used by more than one record — matching can land on either copy</summary>
+      <summary>⚠ ${ex.length} name(s) used by more than one record — the scan never guesses which copy is which</summary>
       <div class="ds-rec-dup-rows">${rows}</div>${more}
       <div class="ds-rec-dup-note"><b>Why it matters:</b> records are matched by this name. With two “same” names the pairing is a coin flip, and so is anything else that finds records by name — lookups, other deployments.</div>
       <div class="ds-rec-dup-fix"><b>How to fix it, safest first</b>
@@ -4578,7 +4578,7 @@ async function sftkParentVerifyOne(p, refObj) {
     sftkParentSyncPut(p.sourceOrg, p.targetOrg, refObj, {
       missing: (res.missingInTarget || []).length,
       changed: (res.changed || []).length,
-      extra:   (res.onlyInTarget || []).length,
+      extra:   (res.onlyInTarget || []).length, ambiguous: (res.ambiguous || []).length,
       at:      res.runAt || new Date().toISOString(),
     });
     return true;

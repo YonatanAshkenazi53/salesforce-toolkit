@@ -148,6 +148,8 @@ every line item under its opportunity under its account. Then the huge tree (`vo
 
 ## Phase 5 — ambiguous keys as a bucket
 
+**DONE 2026-09-29** (commit follows): `sftkScanKeyClasses` decides per key (pair / insertAll / extraAll / ambiguous) after memory pairs are out — the old last-copy-wins indexes are gone, root and child alike; bucket `ambiguous` rows carry `candidates` and `twins`; "insert as new" is the match-memory value `SFTK_MEM_NEW`, so it is kept, exported and cleared with the pairs; Deploy tab ⚠ Ambiguous (root: 📌 pair / ➕ insert as new → remember + rescan; child: add a second match field), plan column, notes line; all ring summaries + the ring cell count it; the accuracy grade reads it. Tests `ambiguous-bucket-0929` + four real-scan cases in `scan-e2e`. Live (`scripts/dev/live/ambiguous.mjs`): Account 7 · 1 · 2 · ⚠2 → pin one copy → 8 · 2 · ⚠0 → deploy the other → CLI two target records with distinct Ids → ↩ Roll back → CLI one.
+
 **Problem.** Two source rows with the same key: one lands in "changed", the other in no bucket,
 plus a warning. Users cannot see, choose or fix it where they are.
 
@@ -211,7 +213,7 @@ laptop must be on) or a small cloud VM.
 1. `scripts/dev/nightly.mjs`: runs the scripts in order (each with its known env), resets the
    orgs between them (cleanup + seed apex, fixture redeploys — all exist), and writes
    `dist/nightly/<date>.json` with each script's key lines and the CLI counts after it.
-2. `scripts/dev/nightly-expect.json`: the expected values (7·2·2, "3 version(s) deleted",
+2. `scripts/dev/nightly-expect.json`: the expected values (7·1·2·⚠2, "3 version(s) deleted",
    0/0/0 after rollback, …), taken from the fixture READMEs.
 3. A diff step: expected vs actual → `dist/nightly/<date>.md` with ✅ / ❌ per script, and a
    Windows toast (or an email through `sf`'s org? no — a plain file plus the toast).
