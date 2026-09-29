@@ -409,11 +409,16 @@ const OH_CARDS = [
   },
   {
     id: 'flowsoff', icon: '⏻', title: 'Flows left switched off',
-    what: 'Flows switched off with ⏻ Flow switches (their active version is remembered on this PC) that are still off in the org.',
+    what: 'Flows switched off with ⏻ Flow switches, or paused by a deployment that did not finish, that are still off in the org (their active version is remembered on this PC).',
     calls: () => 1,
     async run(sess, ctx) {
       let remembered = {};
-      try { remembered = ((await chrome.storage.local.get('sftk_flow_prev_active')).sftk_flow_prev_active || {})[ctx.orgKey] || {}; } catch (_) { remembered = {}; }
+      try {
+        const d = await chrome.storage.local.get(['sftk_flow_prev_active', 'sftk_flow_run_paused']);
+        remembered = { ...((d.sftk_flow_prev_active || {})[ctx.orgKey] || {}) };
+        // flows a deployment paused and never switched back on (closed tab)
+        for (const [n, v] of Object.entries((d.sftk_flow_run_paused || {})[ctx.orgKey] || {})) remembered[n] = (v && v.version) || v;
+      } catch (_) { remembered = {}; }
       const names = Object.keys(remembered);
       if (!names.length) return sftkOhFlowsOffVerdict({}, null);
       const lit = names.map(n => `'${String(n).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',');

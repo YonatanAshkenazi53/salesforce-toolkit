@@ -34,3 +34,5 @@ live in the extension's storage, and the harness starts a fresh profile per run,
   before" (honest); after ON the CLI shows the versions active again.
 - Not exercised: two orgs at once, a flow with several versions where the remembered one is not
   the latest (would prove the "restores vN" path chooses the remembered version), a refused PATCH.
+
+**Also in the target (2026-09-29):** deployed to trailheads4 (`-o npc2`) for the ⏸ pause-flows deployment option — `scripts/dev/live/flowpause.mjs` pauses them (plus the org's own `Synch_Account_Address`, a real record-triggered flow on Account), deploys the Accounts tree's root inserts, checks by CLI that all four are back on, and rolls back.
