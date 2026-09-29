@@ -18,7 +18,7 @@ describe('executeCopy — the confirmation comes first', () => {
     expect(fn).toMatch(/document\.querySelectorAll\('\.uc-ps-cb:checked'\)\.forEach\(cb => planned\.push\(\{ label: labelOf\(cb, cb\.dataset\.psid\), sub: 'permission set' \}\)\);/);
     expect(fn).toMatch(/\.uc-psg-cb:checked/);
     expect(fn).toMatch(/\.uc-grp-cb:checked/);
-    expect(fn).toContain("permission sets and groups are ADDED (nothing is removed from ${esc(targetUser.Name)}). Undo by hand in Setup → Users.");
+    expect(fn).toContain("permission sets and groups are ADDED (nothing is removed from ${esc(targetUser.Name)}). Recorded in Data Studio › History, where ↩ Undo reverses it.");   // campaign 3 phase 3: History undo
     expect(fn).toMatch(/needsCheckbox: true/);
     expect(fn).toMatch(/confirmLabel: '📋 Copy access'/);
     expect(fn).toMatch(/if \(!sure\) return;/);

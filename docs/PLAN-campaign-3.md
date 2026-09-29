@@ -284,7 +284,7 @@ the diff and runs it live.
 
 ## Backlog (after campaign 3)
 
-- **Copy Permissions: copy the role too** (user request 2026-09-29, parked by the user until campaign 3 is done). Design, ready to build (~1 hour + live):
+- **Copy Permissions: copy the role too** — **DONE 2026-09-29** (built after phases 1–6 and 8; live on trailheads5: SFTK Test A → B, role set and re-read, ↩ Undo back to no role, CLI agrees; test `user-copy-role-0929`). The design as built:
   - `user-copy.js`: add `UserRoleId,UserRole.Name` to `USER_FIELDS`; a 🏢 Role option next to 👤 Profile (`#ucOptRole`, `getOptions().role`).
   - Preview: a Role row like the Profile row (`#ucRoleCb`); disabled with "same" when the roles match; disabled with "has no role — nothing to copy" when the source has none (clearing a role is not offered); an ℹ️ line that the role decides which records the user sees through the hierarchy and sharing rules.
   - The Copy access confirmation lists `Role → <name>` ("replaces the current role (<name|none>)"); its text says profile OR role is replaced and that ↩ Undo lives in History.

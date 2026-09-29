@@ -152,6 +152,10 @@ extensions containing root files that start with `_`).
   between the Sync Ring's orgs, and custom fields that no record fills and nothing references.
   Nothing is read until you press Check; every card shows its API cost first, every answer says
   when it was checked, and a check that could not finish says so instead of showing all-clear.
+- **Copy Permissions copies the role too.** The role sits next to the profile in the options and
+  the preview; it is named in the confirmation, written and re-read, and ↩ Undo in History puts
+  the target's previous role back (or none). A source user with no role has nothing to copy —
+  clearing a role is not offered from here.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run

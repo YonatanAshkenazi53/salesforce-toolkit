@@ -41,3 +41,5 @@ Scripts (all `node scripts/dev/headless-studio.mjs scripts/dev/live/<name>.mjs`)
   Verified live on the fixture page.
 - not exercised: Change License, permission set groups, App default / App+RecordType+Profile
   assignments, Clone, Deactivate page, the user-lens pages.
+
+**Role (2026-09-29):** trailheads5 has one role, `SFTK Test Role` (00E9k0000002CmfEAE), held by SFTK Test A; SFTK Test B has none — `copy-perms.mjs UNDO=1` copies it to B and the History undo takes it off again. Identity-licence users accept a role.
