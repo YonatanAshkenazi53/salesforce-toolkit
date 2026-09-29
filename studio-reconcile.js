@@ -495,13 +495,105 @@ function sftkRecScanFresh(p) {
 }
 
 // PURE. Where a child Insert row's PARENT stands — decides whether the row is
-// selectable. 'deepblock' and 'untracked' are NOT selectable. Shared by both
-// pages so the rule cannot drift.
+// selectable. 'untracked' is NOT selectable ('deepblock' is kept as a state
+// name for the callers, but is no longer returned). Shared by both pages so
+// the rule cannot drift.
+// Campaign 3 phase 4 (2026-09-29): a parent missing in the target no longer
+// blocks a grandchild — the run inserts the missing ancestors first, in the
+// same run (sftkRecOnePassPlan), so every depth answers 'missing'
+// ("comes along"). The `depth` argument stays for the callers' signature.
 function sftkRecChildRowState(r, depth, pMissingSet, pExistsSet) {
   if (!r || !r.parentSrcId) return 'none';
-  if (pMissingSet.has(r.parentSrcId)) return depth > 1 ? 'deepblock' : 'missing';
+  if (pMissingSet.has(r.parentSrcId)) return 'missing';
   if (pExistsSet.has(r.parentSrcId)) return 'exists';
   return 'untracked';
+}
+
+// PURE. Campaign 3 phase 4 — the whole tree in ONE pass. Before this a
+// grandchild whose parent was missing in the target could not be selected:
+// a real hierarchy took two or three runs (insert, rescan, insert…).
+// Input:
+//   rootSel      root source ids ticked for insert
+//   rootMissing  Set of root source ids missing in the target
+//   nodes        { [pathKey '0', '0.1'…]: { missing: Map(srcId → parentSrcId|null),
+//                  parentMissing: Set, parentExists: Set } }  (the parent's scan)
+//   sel          { [pathKey]: Set of ticked source ids }
+// 1. Closure, deepest level first: a ticked record whose parent is missing in
+//    the target pulls that parent into the run (counted in `auto`), and so on
+//    up to the root.
+// 2. Anchors, shallowest first: each record rides under the TOPMOST ancestor
+//    this run inserts. Anchor '' = the root tree call; anchor = its own path
+//    when its parent already exists in the target (a call rooted there, the
+//    parent attached by the scan's pairing); a record whose parent can be
+//    neither found nor inserted is `dropped` (named in the run log).
+// 3. Calls: root = { recordIds, rides: {path: ids} }; b[path] = the call
+//    rooted at that path with its own rides. Inside one call the engine
+//    writes parents before children and links each child to the id its
+//    parent got moments earlier (the run's id map).
+function sftkRecOnePassPlan(input) {
+  const { rootSel, rootMissing, nodes, sel } = input || {};
+  const parentPath = k => String(k).split('.').slice(0, -1).join('.');
+  const depth = k => (k === '' ? 0 : String(k).split('.').length);
+  const paths = Object.keys(nodes || {});
+  const ins = { '': new Set(rootSel || []) };
+  const auto = { '': 0 };
+  for (const k of paths) {
+    ins[k] = new Set(); auto[k] = 0;
+    for (const id of ((sel && sel[k]) || [])) if (nodes[k].missing.has(id)) ins[k].add(id);
+  }
+  for (const k of [...paths].sort((a, b) => depth(b) - depth(a))) {
+    const pk = parentPath(k);
+    for (const id of ins[k]) {
+      const p = nodes[k].missing.get(id);
+      if (!p || !nodes[k].parentMissing.has(p)) continue;
+      if (pk === '') {
+        if (rootMissing && rootMissing.has(p) && !ins[''].has(p)) { ins[''].add(p); auto['']++; }
+      } else if (nodes[pk] && nodes[pk].missing.has(p) && !ins[pk].has(p)) { ins[pk].add(p); auto[pk]++; }
+    }
+  }
+  const anchor = { '': new Map([...ins['']].map(id => [id, ''])) };
+  const dropped = {};
+  for (const k of [...paths].sort((a, b) => depth(a) - depth(b))) {
+    const pk = parentPath(k);
+    anchor[k] = new Map(); dropped[k] = 0;
+    for (const id of ins[k]) {
+      const p = nodes[k].missing.get(id);
+      if (p && anchor[pk] && anchor[pk].has(p)) anchor[k].set(id, anchor[pk].get(p));
+      else if (!p || nodes[k].parentExists.has(p)) anchor[k].set(id, k);
+      else dropped[k]++;
+    }
+  }
+  const root = { recordIds: [...ins['']], rides: {} };
+  const b = {};
+  for (const k of paths) {
+    for (const [id, at] of anchor[k]) {
+      if (at === '') (root.rides[k] = root.rides[k] || []).push(id);
+      else {
+        const call = (b[at] = b[at] || { recordIds: [], rides: {} });
+        if (at === k) call.recordIds.push(id);
+        else (call.rides[k] = call.rides[k] || []).push(id);
+      }
+    }
+  }
+  return { ins, auto, anchor, dropped, root, b };
+}
+
+// PURE. The tree for one engine call: only the child nodes that carry rides
+// in this call, each with exactly those records (never "every child of the
+// parents" — a node without picks would copy the whole child table), at any
+// depth. `decorate(copy, path)` applies the run's per-node choices (insert
+// order). `children` are the profile's nodes under `basePath` ('' = root).
+function sftkRecPruneTree(children, basePath, rides, decorate) {
+  return (children || []).map((c, i) => {
+    const p = basePath === '' ? String(i) : `${basePath}.${i}`;
+    const ids = rides && rides[p];
+    if (!ids || !ids.length) return null;
+    const cc = JSON.parse(JSON.stringify(c));
+    cc.recordIds = ids;
+    cc.children = sftkRecPruneTree(c.children, p, rides, decorate);
+    if (typeof decorate === 'function') decorate(cc, p);
+    return cc;
+  }).filter(Boolean);
 }
 
 async function renderReconcile() {
@@ -2228,8 +2320,31 @@ async function runReconcile(profile, objType, buckets) {
     .map(([k, sel]) => ({ pathKey: k, node: getNodeByPath(profile.tree, k), sel,
                           cs: rootScan.children?.[k] }))
     .filter(a => a.node && a.cs && (a.sel.push.size || a.sel.relink.size || a.sel.overwrite?.size || a.sel.del?.size));
+  // Campaign 3 phase 4 — the whole tree in one pass (sftkRecOnePassPlan):
+  // ticked records pull their missing ancestors into the run, at any depth,
+  // and each record rides the call of its topmost ancestor being inserted.
+  const _opNodes = {};
+  for (const [k, cs] of Object.entries(rootScan.children || {})) {
+    if (!cs || !getNodeByPath(profile.tree, k)) continue;
+    const pk = String(k).split('.').slice(0, -1).join('.');
+    const ps = pk ? rootScan.children?.[pk] : rootScan;
+    if (!ps) continue;
+    _opNodes[k] = {
+      missing: new Map((cs.missingInTarget || []).map(r => [r.sourceId, r.parentSrcId || null])),
+      parentMissing: new Set((ps.missingInTarget || []).map(r => r.sourceId)),
+      parentExists: new Set([...(ps.changed || []), ...(ps.identical || [])].map(r => r.sourceId)),
+    };
+  }
+  const onePass = sftkRecOnePassPlan({ rootSel: pushIds, rootMissing: rootMissingSrc, nodes: _opNodes,
+    sel: Object.fromEntries(Object.entries(_recChildSel).map(([k, v]) => [k, (v && v.push) || new Set()])) });
+  // A level nobody ticked can still receive ancestors pulled in by a deeper pick.
+  for (const k of Object.keys(onePass.ins)) {
+    if (!k || !onePass.ins[k].size || childActs.some(a => a.pathKey === k)) continue;
+    const node = getNodeByPath(profile.tree, k), cs = rootScan.children?.[k];
+    if (node && cs) childActs.push({ pathKey: k, node, cs, sel: { push: new Set(), relink: new Set(), overwrite: new Set(), del: new Set() } });
+  }
   for (const a of childActs) {
-    a.groupA = []; a.groupB = []; a.autoParents = new Set(); a.skippedDeep = 0;
+    a.groupA = []; a.groupB = []; a.groupC = []; a.autoParents = new Set(); a.skippedDeep = 0;
     // R5 — depth + parent context. Direct children ('0') use the ROOT scan's
     // buckets (v1, unchanged). Grandchildren ('0.1') use their PARENT child
     // scan's buckets, and only support push-with-existing-parent + relink —
@@ -2249,25 +2364,26 @@ async function runReconcile(profile, objType, buckets) {
                                 ...(a.parentScan.identical || []).map(r => r.sourceId)]);
       } catch (_) { a.parentObj = objType; a.parentScan = rootScan; }
     }
-    for (const id of a.sel.push) {
-      const row = (a.cs.missingInTarget || []).find(r => r.sourceId === id);
-      if (!row) continue;
-      if (row.parentSrcId && pMissingSet.has(row.parentSrcId)) {
-        if (a.depth > 1) { a.skippedDeep++; continue; }   // R5 — no tree-ride at this depth
-        a.groupA.push(id);
-        if (!_recSel.push.has(row.parentSrcId)) a.autoParents.add(row.parentSrcId);
-      } else if (!row.parentSrcId || pExistsSet.has(row.parentSrcId)) {
-        a.groupB.push(id);   // parent exists in target (or record has no parent)
-      }
-      // parent untracked → row was disabled in the UI; unreachable here
+    // Phase 4: the partition comes from the one-pass plan. groupA rides the
+    // root tree call; groupB is rooted here (its parent already exists in the
+    // target); groupC rides a call rooted at an ancestor level that is itself
+    // being inserted under an existing parent. skippedDeep = records whose
+    // parent can be neither found in the target nor inserted by this run.
+    void pMissingSet; void pExistsSet;   // parent context above still feeds parentObj / parentScan
+    for (const [id, at] of (onePass.anchor[a.pathKey] || new Map())) {
+      if (at === '') a.groupA.push(id);
+      else if (at === a.pathKey) a.groupB.push(id);
+      else a.groupC.push(id);
     }
+    a.autoAdded   = onePass.auto[a.pathKey] || 0;
+    a.skippedDeep = onePass.dropped[a.pathKey] || 0;
     // R4 — drift overwrites + target-only deletes, validated against the
     // child scan's buckets so stray ids can never reach the writers.
     a.ovwIds = [...(a.sel.overwrite || [])].filter(id => (a.cs.changed || []).some(r => r.sourceId === id));
     a.delIds = [...(a.sel.del || [])].filter(id => (a.cs.onlyInTarget || []).some(r => r.targetId === id));
   }
   const childDelTotal = childActs.reduce((s, a) => s + a.delIds.length, 0);
-  const anyChildAct = childActs.some(a => a.groupA.length || a.groupB.length || a.sel.relink.size || a.ovwIds.length || a.delIds.length);
+  const anyChildAct = childActs.some(a => a.groupA.length || a.groupB.length || a.groupC.length || a.sel.relink.size || a.ovwIds.length || a.delIds.length);
 
   if (!pushIds.length && !ovwIds.length && !updSrcIds.length && !delIds.length && !pullIds.length && !anyChildAct) return;
 
@@ -2295,7 +2411,7 @@ async function runReconcile(profile, objType, buckets) {
     for (const a of childActs) {
       const obj = a.node.objectType || a.node.childSObject || 'child';
       const kinds = [
-        (a.groupA.length || a.groupB.length) ? 'push'      : null,
+        (a.groupA.length || a.groupB.length || a.groupC.length) ? 'push' : null,
         a.sel.relink.size                    ? 'relink'    : null,
         a.ovwIds.length                      ? 'overwrite' : null,
         a.delIds.length                      ? 'del'       : null
@@ -2344,7 +2460,7 @@ async function runReconcile(profile, objType, buckets) {
   const planLines = [];
   if (anyChildAct) {
     let n = 1;
-    const totalAutoParents = childActs.reduce((s, a) => s + a.autoParents.size, 0);
+    const totalAutoParents = onePass.auto[''] || 0;
     const rootInsertTotal  = pushIds.length + totalAutoParents;
     // R2 — for master-detail links a run-scoped child-first override is
     // silently impossible (parent required at insert); the executor below
@@ -2365,9 +2481,13 @@ async function runReconcile(profile, objType, buckets) {
       const obj  = a.node.objectType || a.node.childSObject;
       const pObj = a.parentObj || objType;
       const cf   = actCf(a);
-      if (a.groupA.length && cf)  planLines.push(`${n++}. Reconnect ${a.groupA.length} ${obj} → ${objType} (link patched after the parents exist)`);
-      if (a.groupA.length && !cf) planLines.push(`${n++}. Insert ${a.groupA.length} ${obj} under the new ${objType} (linked at insert)`);
-      if (a.groupB.length)        planLines.push(`${n++}. Insert ${a.groupB.length} ${obj} under existing ${pObj} (matched by ${((a.parentScan || rootScan).matching?.fields || [(a.parentScan || rootScan).matchField || 'Name']).join(' + ')})`);
+      // Phase 4: a level that received ancestors for deeper picks says so once.
+      let _sfxUsed = false;
+      const sfx = () => (!_sfxUsed && a.autoAdded) ? (_sfxUsed = true, ` (+${a.autoAdded} added so the records below them have a parent)`) : '';
+      if (a.groupA.length && cf)  planLines.push(`${n++}. Reconnect ${a.groupA.length} ${obj} → ${objType} (link patched after the parents exist)${sfx()}`);
+      if (a.groupA.length && !cf) planLines.push(`${n++}. Insert ${a.groupA.length} ${obj} under the new ${a.depth > 1 ? pObj : objType} (linked at insert)${sfx()}`);
+      if (a.groupB.length)        planLines.push(`${n++}. Insert ${a.groupB.length} ${obj} under existing ${pObj} (matched by ${((a.parentScan || rootScan).matching?.fields || [(a.parentScan || rootScan).matchField || 'Name']).join(' + ')})${sfx()}`);
+      if (a.groupC.length)        planLines.push(`${n++}. Insert ${a.groupC.length} ${obj} under the new ${pObj} (linked at insert, same run)${sfx()}`);
       if (a.sel.relink.size)      planLines.push(`${n++}. Relink ${a.sel.relink.size} ${obj} to the right ${pObj}`);
       if (a.ovwIds.length)        planLines.push(`${n++}. Update ${a.ovwIds.length} drifted ${obj} in target`);
     }
@@ -2381,9 +2501,9 @@ async function runReconcile(profile, objType, buckets) {
   // org gets the same gate when the run writes back into it (← pull / update).
   // Same fail-closed rule as above: only a confirmed sandbox / dev org is exempt.
   const guardedWrites = sftkRecGuardedWrites({
-    ins: pushIds.length + childActs.reduce((t, a) => t + a.autoParents.size, 0),
+    ins: onePass.ins[''].size,
     ovw: ovwIds.length, del: delIds.length, childDel: childDelTotal,
-    childIns: childActs.reduce((t, a) => t + a.groupA.length + a.groupB.length, 0),
+    childIns: childActs.reduce((t, a) => t + a.groupA.length + a.groupB.length + a.groupC.length, 0),
     childOvw: childActs.reduce((t, a) => t + a.ovwIds.length, 0),
     relink:   childActs.reduce((t, a) => t + a.sel.relink.size, 0),
     pull: pullIds.length, updSrc: updSrcIds.length
@@ -2554,11 +2674,12 @@ async function runReconcile(profile, objType, buckets) {
   const rootFailedUpdates = [];
   const allErrors = [];
 
-  // R5 — grandchild rows whose parent is missing in the target were skipped
-  // at partition time (tree-ride isn't supported at that depth). Say so.
+  // Phase 4 — a selected record whose parent can be neither found in the
+  // target nor inserted by this run (the parent's own parent is untracked by
+  // the scan) is skipped, never inserted without its parent. Say so.
   for (const a of childActs) {
     if (!a.skippedDeep) continue;
-    const m = `⚠ ${a.node.objectType || a.node.childSObject}: ${a.skippedDeep} selected row(s) skipped — their parent isn't in the target yet and tree-ride inserts aren't supported at this depth; insert the parent level first, rescan, then re-run`;
+    const m = `⚠ ${a.node.objectType || a.node.childSObject}: ${a.skippedDeep} selected row(s) skipped — their parent is missing in the target and cannot be inserted in this run (its own parent is not in the target or in the scan); rescan the level above, then re-run`;
     allErrors.push(m); log('⚠', m, 'ds-prog-warn');
   }
 
@@ -2720,7 +2841,19 @@ async function runReconcile(profile, objType, buckets) {
   // this run), per-node recordIds, and the run-scoped insert order. The
   // engine does the rest — child-first hoisting, scoping, and the reconnect
   // step — exactly like a normal deployment.
-  const treePushIds = [...new Set([...pushIds, ...childActs.flatMap(a => [...a.autoParents])])];
+  // Phase 4 — per-node choices for every call's pruned tree: child-first only
+  // for a direct child (as before), never across a master-detail link.
+  const _opDecorate = (cc, p) => {
+    const d = String(p).split('.').length;
+    const ord = _recOrderOverride[p] ?? cc.insertOrder;
+    if (ord === 'childFirst' && d === 1) {
+      if (rootScan.children?.[p]?.linkMasterDetail) {
+        allErrors.push(`⚠ ${cc.objectType || cc.childSObject}: child-first ignored — ${cc.field || 'the link'} is a master-detail relationship (parent required at insert); running parent-first instead`);
+        delete cc.insertOrder;
+      } else cc.insertOrder = 'childFirst';
+    } else delete cc.insertOrder;
+  };
+  const treePushIds = [...onePass.ins['']];
   const groupATotal = childActs.reduce((s, a) => s + a.groupA.length, 0);
   if (treePushIds.length || groupATotal) {
     const autoN = treePushIds.length - pushIds.length;
@@ -2729,25 +2862,11 @@ async function runReconcile(profile, objType, buckets) {
       const pushProfile = JSON.parse(JSON.stringify(profile));
       delete pushProfile.lastScan;
       pushProfile.tree.recordIds = treePushIds;
-      pushProfile.tree.children  = (profile.tree.children || []).map((c, i) => {
-        const a = childActs.find(x => x.pathKey === String(i));
-        if (!a || !a.groupA.length) return null;      // no group-A rows → drop node
-        const cc = JSON.parse(JSON.stringify(c));
-        cc.recordIds = a.groupA;
-        cc.children  = [];                            // tree-ride stays one level deep (grandchildren go via group B)
-        const ord = _recOrderOverride[a.pathKey] ?? c.insertOrder;
-        if (ord === 'childFirst') {
-          // R2 — master-detail links require the parent at insert: child-first
-          // is impossible, so force the default order and say why.
-          if (a.cs?.linkMasterDetail) {
-            allErrors.push(`⚠ ${cc.objectType || cc.childSObject}: child-first ignored — ${cc.field || 'the link'} is a master-detail relationship (parent required at insert); running parent-first instead`);
-            delete cc.insertOrder;
-          } else {
-            cc.insertOrder = 'childFirst';
-          }
-        } else delete cc.insertOrder;
-        return cc;
-      }).filter(Boolean);
+      // Phase 4: every level that rides this call, at any depth — the engine
+      // writes root → children → grandchildren and links each to the id its
+      // parent got earlier in the same run. R2 (master-detail ⇒ parent-first)
+      // lives in _opDecorate.
+      pushProfile.tree.children  = sftkRecPruneTree(profile.tree.children, '', onePass.root.rides, _opDecorate);
       const res = await sendBg({
         // verified-by: the engine's post-run re-read — summary[obj].verified = { checked, found } (background.js, campaign 3 phase 1)
         type: 'SF_EXECUTE_PROFILE_TRANSFER',
@@ -2780,10 +2899,13 @@ async function runReconcile(profile, objType, buckets) {
       rootTargets.push(...(s.targetRecords || []));
       rootFailedInserts.push(...(s.failedSourceIds || []));
       log(s.failed ? '⚠' : '✅', `${s.upsertUpdated ? `Upserted ${s.created || 0} ${objType} (${s.upsertCreated || 0} created, ${s.upsertUpdated} updated)` : `Inserted ${s.created || 0} ${objType}`}${s.failed ? `, ${s.failed} failed` : ''}`, s.failed ? 'ds-prog-err' : '');
+      const _seenRootObj = new Set();
       for (const a of childActs) {
         if (!a.groupA.length) continue;
         const obj  = a.node.objectType || a.node.childSObject;
         if (obj === objType) continue;   // self-relationship: counts already in root line
+        if (_seenRootObj.has(obj)) continue;   // the engine's summary is per object
+        _seenRootObj.add(obj);
         const cSum = res.summary?.[obj] || {};
         bumpChild(obj, 'created', cSum.created || 0);
         bumpChild(obj, 'failed',  cSum.failed  || 0);
@@ -2832,7 +2954,9 @@ async function runReconcile(profile, objType, buckets) {
       const mW = `⚠ ${obj}: parent matching uses ${(pScanM.fields || []).length > 1 ? 'a composite key' : 'normalization'} — the insert bridge attaches by ${pMatch} with exact values (engine limit), so parents that differ only ${(pScanM.fields || []).length > 1 ? 'in later key components' : 'by case/spacing'} may not attach`;
       allErrors.push(mW); log('⚠', mW, 'ds-prog-warn');
     }
-    log('⬆', `Inserting ${a.groupB.length} ${obj} under existing ${pObj} (matched by ${pMatch})…`);
+    const _bRides = onePass.b[a.pathKey]?.rides || {};
+    const _bRideN = Object.values(_bRides).reduce((t, ids) => t + ids.length, 0);
+    log('⬆', `Inserting ${a.groupB.length} ${obj} under existing ${pObj} (matched by ${pMatch})${_bRideN ? ` + ${_bRideN} record(s) under them` : ''}…`);
     try {
       const bProfile = JSON.parse(JSON.stringify(profile));
       delete bProfile.lastScan;
@@ -2840,7 +2964,7 @@ async function runReconcile(profile, objType, buckets) {
         objectType: obj,
         where: '',
         recordIds: a.groupB,
-        children: [],
+        children: sftkRecPruneTree(a.node.children, a.pathKey, _bRides, _opDecorate),   // phase 4: the levels below ride along
         fieldMappings: a.node.fieldMappings || {},
         lookupOverrides: _att.overrides,                 // 🔗 hand-picks + the scan's own parent pairing
         lookupResolutions: {
@@ -2871,6 +2995,20 @@ async function runReconcile(profile, objType, buckets) {
         childCounts[obj].failedSourceIds = (childCounts[obj].failedSourceIds || []).concat(s2.failedSourceIds);
       }
       log(s2.failed ? '⚠' : '✅', `${obj}: ${s2.created || 0} created under existing parents${s2.failed ? `, ${s2.failed} failed` : ''}`, s2.failed ? 'ds-prog-err' : '');
+      // Phase 4: the levels that rode this call.
+      const _seenBObj = new Set([obj]);
+      for (const rp of Object.keys(_bRides)) {
+        const rn = getNodeByPath(profile.tree, rp);
+        const rObj = rn?.objectType || rn?.childSObject;
+        if (!rObj || _seenBObj.has(rObj)) continue;
+        _seenBObj.add(rObj);
+        const rs = res.summary?.[rObj] || {};
+        bumpChild(rObj, 'created', rs.created || 0);
+        bumpChild(rObj, 'failed',  rs.failed  || 0);
+        if (rs.targetRecords?.length) childCounts[rObj].targetRecords = (childCounts[rObj].targetRecords || []).concat(rs.targetRecords);
+        if (rs.failedSourceIds?.length) childCounts[rObj].failedSourceIds = (childCounts[rObj].failedSourceIds || []).concat(rs.failedSourceIds);
+        log('  ' + (rs.failed ? '⚠' : '✅'), `${rObj}: ${rs.created || 0} created under the new ${obj}${rs.failed ? `, ${rs.failed} failed` : ''}`, rs.failed ? 'ds-prog-err' : '');
+      }
       (res.errors || []).forEach(e => allErrors.push(`insert ${obj}: ${e}`));
       (res.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
     } catch (e) { allErrors.push(`Insert ${obj} failed: ${e?.message || e}`); log('❌', `Insert ${obj} failed: ${e?.message || e}`, 'ds-prog-err'); }

@@ -32,7 +32,9 @@ describe('typed confirmation covers every write, not only deletes', () => {
     expect(gate).toBeGreaterThan(0);
     expect(gate).toBeLessThan(run.indexOf("const prog = eid('dsRecProgress');"));
     expect(run).toContain("if (srcOrgType !== 'sandbox' && srcOrgType !== 'dev') {");
-    expect(run).toContain('ins: pushIds.length + childActs.reduce((t, a) => t + a.autoParents.size, 0),');
+    // phase 4: the root inserts are the one-pass plan's root set — the ticked roots plus every parent pulled in for a deeper pick
+    expect(run).toContain("ins: onePass.ins[''].size,");
+    expect(run).toContain('const onePass = sftkRecOnePassPlan({ rootSel: pushIds, rootMissing: rootMissingSrc, nodes: _opNodes,');
   });
   it('the Deploy view runs through the same function, so it inherits the gate', () => {
     const DV = readFileSync(new URL('../studio-deploy.js', import.meta.url), 'utf8');

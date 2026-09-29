@@ -117,6 +117,8 @@ reason); a test lists callers with neither.
 
 ## Phase 4 — whole-tree deployment in one pass
 
+**DONE 2026-09-29** (commit follows): recon showed the engine already wrote N levels in one call and linked children through the run's id map — the block was page-side (`deepblock` at depth > 1, the run-time skip, the one-level `cc.children = []`). `sftkRecOnePassPlan` (closure pulls missing ancestors in, deepest first; anchors pick the call — the root tree call, or a call rooted at the level whose parent exists) + `sftkRecPruneTree` (per-call tree, any depth, only the riding records); grandchildren selectable at any depth; the engine names children whose parents failed in the run (all, or some). Tests `onepass-plan-0929`, `engine-onepass-0929`. Live (`scripts/dev/live/onepass-tree.mjs`): the Accounts tree from the first scan in ONE run on trailheads5 → trailheads4 — line items, contact roles, case comments and order items written with their parents; the fixture's deliberate refusals (a Retail account without a Website, a Lab lead without a Phone) left their children out; ↩ Roll back restored the target (CLI 4 accounts · 2 contacts · 0 opportunities · 0 line items before and after).
+
 **Problem.** A grandchild (line item, comment, order item) is not selectable while its parent
 is missing in the target (rule R5); a real hierarchy takes two or three runs.
 

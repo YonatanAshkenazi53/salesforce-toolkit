@@ -126,6 +126,12 @@ extensions containing root files that start with `_`).
   saying "undone", and records the undo as its own entry. Where a change cannot be reversed —
   a deleted flow version, a deleted debug log, a Draft rewritten in place — the entry says so
   in plain words instead of offering a button.
+- **A whole record tree in one run.** A grandchild whose parent is missing in the target — a
+  line item on a new Opportunity, a comment on a new Case — can now be ticked straight from the
+  first scan. The run adds the missing parents and grandparents by itself (the plan says "+N
+  added so the records below them have a parent"), writes every level parents first, and links
+  each record to the id its parent just got. When a parent is refused, its children are not
+  inserted without it, and the run names them instead of leaving them silently out.
 - **Writing into production always asks you to type the org name.** Until now
   only deletes did; an insert or overwrite into production from Reconcile ran
   on one click. One typed confirmation per org now names everything the run

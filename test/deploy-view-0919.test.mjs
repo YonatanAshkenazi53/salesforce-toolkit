@@ -218,11 +218,11 @@ describe('the new page owns no engine: same scan, same selection, same run', () 
 
 describe('shared safety checks (extracted, behaviour unchanged)', () => {
   const state = extractFunction('studio-reconcile.js', 'sftkRecChildRowState');
-  it('child row state: none / missing / deepblock / exists / untracked', () => {
+  it('child row state: none / missing (any depth) / exists / untracked', () => {
     const miss = new Set(['P1']), ex = new Set(['P2']);
     expect(state({ parentSrcId: null }, 1, miss, ex)).toBe('none');
     expect(state({ parentSrcId: 'P1' }, 1, miss, ex)).toBe('missing');
-    expect(state({ parentSrcId: 'P1' }, 2, miss, ex)).toBe('deepblock');
+    expect(state({ parentSrcId: 'P1' }, 2, miss, ex)).toBe('missing');   // phase 4: comes along at any depth
     expect(state({ parentSrcId: 'P2' }, 2, miss, ex)).toBe('exists');
     expect(state({ parentSrcId: 'P9' }, 1, miss, ex)).toBe('untracked');
   });
