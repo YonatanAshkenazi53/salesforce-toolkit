@@ -43,6 +43,7 @@ extensions containing root files that start with `_`).
   Sequences still run whole deployments as before.
 
 ### Fixed
+- **The field compare dialog is dark in dark mode.** Its header, fold and footer bars and the value chips were painted light on a dark page (a variable the page never defines, and dark rules written for the Toolkit popup's theme class). They now follow Data Studio's own theme, OLED included.
 - **Field Cleaner — the field delete works again.** Salesforce's Tooling API now refuses
   to delete a custom field ("insufficient access rights on cross-reference id") even
   when nothing references it; the Toolkit deletes it through the Metadata API instead

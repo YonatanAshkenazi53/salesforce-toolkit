@@ -2487,7 +2487,7 @@ html, body {
    ds-drift-compare-* rule can bleed in (the ds-lkp collision lesson).
    Differences first, matching folded, values in mono, push footer. */
 .ds-dc { border: 1px solid var(--border, #dddbda); border-radius: 8px; overflow: hidden; font-size: 12px; background: var(--bg, #fff); }
-.ds-dc-hdr { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--bg-alt, #f7f8fa); border-bottom: 1px solid var(--border, #dddbda); }
+.ds-dc-hdr { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--surface, #f7f8fa); border-bottom: 1px solid var(--border, #dddbda); }
 .ds-dc-pill { font-weight: 700; font-size: 11.5px; padding: 2px 9px; border-radius: 999px; }
 .ds-dc-pill-diff { background: rgba(217, 119, 6, .14); color: #b45309; }
 .ds-dc-pill-ok { background: rgba(46, 132, 74, .14); color: #2e844a; }
@@ -2504,7 +2504,7 @@ html, body {
 .ds-dc-fname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-dc-rename { font-weight: 400; color: var(--subtext, #706e6b); }
 .ds-dc-tags { display: flex; flex-wrap: wrap; gap: 4px; }
-.ds-dc-tag { font-size: 10px; padding: 0 5px; border-radius: 3px; border: 1px solid var(--border, #dddbda); color: var(--subtext, #706e6b); background: var(--bg-alt, #f7f8fa); cursor: help; }
+.ds-dc-tag { font-size: 10px; padding: 0 5px; border-radius: 3px; border: 1px solid var(--border, #dddbda); color: var(--subtext, #706e6b); background: var(--surface, #f7f8fa); cursor: help; }
 .ds-dc-tag-lkp { color: #0b5cab; border-color: #b8d4f1; background: rgba(11, 92, 171, .07); }
 .ds-dc-tag-warn { color: #b45309; border-color: #f6d3a6; background: rgba(217, 119, 6, .08); }
 .ds-dc-tag-phantom { color: #4338ca; border-color: #c7d2fe; background: #eef2ff; }
@@ -2520,14 +2520,28 @@ html, body {
 .ds-dc-diff .ds-dc-arrow { color: #b45309; font-weight: 700; }
 .ds-dc-types { font-size: 10px; color: var(--subtext, #706e6b); white-space: nowrap; }
 .ds-dc-fold { border-top: 1px solid var(--border, #dddbda); }
-.ds-dc-fold > summary { padding: 6px 10px; font-size: 11px; color: var(--subtext, #706e6b); cursor: pointer; user-select: none; background: var(--bg-alt, #f7f8fa); }
+.ds-dc-fold > summary { padding: 6px 10px; font-size: 11px; color: var(--subtext, #706e6b); cursor: pointer; user-select: none; background: var(--surface, #f7f8fa); }
 .ds-dc-fold > summary:hover { color: var(--text, #181818); }
-.ds-dc-foot { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-top: 1px solid var(--border, #dddbda); background: var(--bg-alt, #f7f8fa); }
+.ds-dc-foot { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-top: 1px solid var(--border, #dddbda); background: var(--surface, #f7f8fa); }
 .ds-dc-count { font-size: 11px; color: var(--subtext, #706e6b); margin-right: auto; }
-.sftk-dark .ds-dc { background: var(--bg, #1b1b1f); }
-.sftk-dark .ds-dc-v-tgt { background: rgba(255, 255, 255, .07); }
-.sftk-dark .ds-dc-row:hover { background: rgba(255, 255, 255, .04); }
-.sftk-dark .ds-dc-diff { background: rgba(217, 119, 6, .09); }
+/* Dark mode — Data Studio's theme class is .ds-dark on <html> (studio-core
+   applyDarkMode), NOT the popup's body.sftk-dark; these rules were written
+   for the wrong class and never fired (user 2026-09-30: "the bright is
+   killing your eyes"). --bg-alt was never defined here either, so the header,
+   fold and footer bars fell back to #f7f8fa on a dark modal; they now ride
+   --surface, which both themes define. Chips get explicit dark values so
+   nothing depends on a light fallback. */
+.ds-dark .ds-dc { background: var(--bg); }
+.ds-dark .ds-dc-v { color: var(--text); }
+.ds-dark .ds-dc-v-src { background: rgba(120, 185, 240, .12); }
+.ds-dark .ds-dc-v-tgt { background: rgba(255, 255, 255, .07); }
+.ds-dark .ds-dc-diff .ds-dc-v-tgt { background: rgba(245, 166, 35, .18); }
+.ds-dark .ds-dc-empty { color: var(--subtext); border-color: var(--border); }
+.ds-dark .ds-dc-row:hover { background: rgba(255, 255, 255, .04); }
+.ds-dark .ds-dc-diff { background: rgba(217, 119, 6, .09); }
+.ds-dark .ds-dc-tag-phantom { color: #a5b4fc; border-color: #4338ca; background: rgba(67, 56, 202, .18); }
+.ds-dark .ds-dc-tag-warn { border-color: #6B4A15; }
+.ds-dark .ds-dc-fold > summary:hover { color: var(--text); }
 
 .ds-drift-compare-loading { font-size: 11px; color: var(--subtext); padding: 8px; font-style: italic; }
 .ds-drift-compare-err     { font-size: 11px; color: #b45309; background: rgba(234, 88, 12, 0.08); padding: 8px 10px; border-radius: 4px; border-left: 3px solid #ea580c; }
