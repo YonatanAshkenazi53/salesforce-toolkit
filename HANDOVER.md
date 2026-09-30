@@ -7,7 +7,7 @@ project lives per folder; the full memory was copied to this folder's project on
 
 **State.** Campaign 3 is COMPLETE (phases 1–6 and 8; phase 7 "nightly runs" skipped by the user — do not re-propose). After it, two
 user requests were built and verified live: Copy Permissions copies the role, and the Deploy page's ⏸ "pause record-triggered
-flows during the run" option. Everything is committed locally; nothing is ever pushed (nobody asked). Last gate: 126 test files /
+flows during the run" option. Everything is committed AND pushed to `origin/work/1.4.3-deploy-view` (the user asked on 2026-09-30: "It should be on git" — push after every commit round; master is untouched). Last gate: 126 test files /
 2956 tests green, `npm run pack` done, headless boot smoke 1/1/1 on all three pages. `dist/store-staging` is the current build.
 
 **Standing laws (the user's, non-negotiable).** No Silent Waits. Never claim more than was verified — re-read the org, and check
