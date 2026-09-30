@@ -1,5 +1,51 @@
 # HANDOVER — Admin Toolkit for Salesforce
 
+## START HERE (written 2026-09-30 for a fresh chat — read this block, then the rest only as needed)
+
+**Open this chat on the folder `C:\Users\yonas\OneDrive\Desktop\Saleforce Toolkit`** (not `Desktop\website`). Claude's memory for this
+project lives per folder; the full memory was copied to this folder's project on 2026-09-30, so a chat opened here knows everything.
+
+**State.** Campaign 3 is COMPLETE (phases 1–6 and 8; phase 7 "nightly runs" skipped by the user — do not re-propose). After it, two
+user requests were built and verified live: Copy Permissions copies the role, and the Deploy page's ⏸ "pause record-triggered
+flows during the run" option. Everything is committed locally; nothing is ever pushed (nobody asked). Last gate: 126 test files /
+2956 tests green, `npm run pack` done, headless boot smoke 1/1/1 on all three pages. `dist/store-staging` is the current build.
+
+**Standing laws (the user's, non-negotiable).** No Silent Waits. Never claim more than was verified — re-read the org, and check
+`npm run verify`'s EXIT CODE, never grep its summary. Every write goes through `sftkWriteVerified` with a History journal
+(`test/write-discipline`, `test/confirm-discipline`, `test/history-discipline` fail the build otherwise). One confirmation per
+write (`sftkConfirmDestructive`), typed org name for production, fail closed on ambiguity. Latest Salesforce tech only. Nothing
+pre-selected on the Deploy page. Commit each round; never `taskkill chrome.exe` (it closed the user's browser). Keep
+CHANGELOG.md / HANDOVER.md / docs/FEATURES.md / memory current (a Stop hook enforces the memory update).
+
+**Model policy.** Fable: engine, security, debugging, review, the first migration of a pattern, every live run. Sonnet: recon,
+prose, mechanical test-locked sweeps. Never Opus.
+
+**Gate for every change.** `npm run verify` (exit code) → `npm run pack` → headless boot smoke of
+`dist/store-staging/{popup,studio,apex-log-viewer}.html` (grep "I confirm that any consequence" = 1 each) → commit.
+
+**Live testing.** `node scripts/dev/headless-studio.mjs scripts/dev/live/<script>.mjs` (headless Chrome + the unpacked extension;
+logins via `sf org open --url-only`; sessions from the CLI aliases). Orgs: `npc` = **trailheads5** (source, trial), `npc2` =
+**trailheads4** (target, trial) — both expire; rebuild a source with `docs/fixtures/rebuild-source.sh <alias>`. Fixture facts and
+expected counts: the READMEs under `docs/fixtures/`; the Accounts tree root reads **7 · 1 · 2 · ⚠2**. History lives in the
+harness's throwaway profile, so an undo / rollback must run in the SAME session as the change (see `onepass-tree.mjs`,
+`ambiguous.mjs`, `flowpause.mjs`, `_undo.mjs`). CLI login tip: `sf org login web --browser edge`.
+
+**Where things are.** Plan + status per phase: `docs/PLAN-campaign-3.md` (incl. the backlog). Public feature guide:
+`docs/FEATURES.md` (to be rendered by `studio-whatsnew.js` at launch instead of the changelog). Older ideas never scheduled:
+`IMPLEMENTATION_PLAN.md` (the `- [ ]` items). Memory: `project_sf_flow_cleaner.md` (append near the newest **PHASE…** entries).
+
+**Release decisions (the user's).** Public launch = a NEW store listing at version **1.0.0** (the store refuses lower versions
+on the old listing); the name stays "Admin Toolkit for Salesforce"; no release notes in the public build — the feature guide
+explains every feature. Still the user's to do: approve the guide, set 1.0.0, the hand-driven E2E run
+(`docs/fixtures/complex-deployment/E2E-RUNBOOK.md`), and add TWO lines to the public privacy policy (gist): `sftk_orghealth`
+and `sftk_flow_run_paused` (see PRIVACY.md).
+
+**Open ideas (nothing scheduled).** The `- [ ]` items in IMPLEMENTATION_PLAN.md; two are possible bugs worth confirming first:
+the Lightning Pages "Who sees what → Show users" 404, and the unverified sweep candidates (file pairing using the source's field
+name on the target).
+
+---
+
 Written 2026-09-12 at the end of a long multi-day session. Everything below is
 UNCOMMITTED in git (last commit: `07cd84a Org Seeder: seed without deleting…`).
 Gate at handover: `npm run verify` → 68 files, **2240 tests passing**.
