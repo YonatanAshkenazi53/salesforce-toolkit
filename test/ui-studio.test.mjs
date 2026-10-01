@@ -449,10 +449,7 @@ describe('crown & pin persistence — sweep round 2 fixes', () => {
     expect(BUILDER).not.toMatch(/\.(sourcePinned|targetOrgs|_srcCrownMoved)\s*=/);
   });
 
-  it('the target chooser previews THIS profile\'s own source, never the ring crown\'s, for a pinned source', () => {
-    const src = RECONCILE.slice(RECONCILE.indexOf('window.openReconcile'), RECONCILE.indexOf('window.openReconcile') + 3000);
-    expect(src).toMatch(/_ringScanKey\(u, p\.sourceOrg\)/);
-  });
+  // (the target chooser is gone — campaign 4 phase 2: a deployment has one pair, picked on the Deploy page)
 
   it('picker toolbar counts match what their toggles actually do', () => {
     // "Hide in-sync" must count hideSet (in-sync MINUS file-drifted), not
@@ -801,12 +798,7 @@ describe('sweep 2026-08-16: stale state can never drive a write or wear a verdic
     expect(REC.slice(i, i + 500)).toContain('_recFileSel = new Set();');
   });
 
-  it('the target chooser checks BOTH lastScan stamps, like the ring matrix', () => {
-    const i = REC.indexOf('data-rec-target');
-    const guard = REC.slice(0, i);
-    expect(guard).toContain("_orgKey(p.lastScan.sourceOrg) === _orgKey(p.sourceOrg || '')");
-    expect(guard).toContain("_orgKey(p.lastScan.targetOrg) === _orgKey(p.targetOrg || '')");
-  });
+  // (the target chooser is gone — campaign 4 phase 2: a deployment has one pair, picked on the Deploy page)
 
   it('a failed file check renders as UNKNOWN on chooser and ring cell, never ✓ in sync', () => {
     const RINGSRC = read('studio-ring.js');
@@ -946,9 +938,7 @@ describe('a clean root never claims full sync over unverified or missing childre
     expect(RINGSRC).toContain("Ring scans do NOT check this deployment's");
   });
 
-  it('the target chooser qualifies too — its tiles are root-only summaries', () => {
-    expect(REC).toContain("'✓ root in sync · children unverified'");
-  });
+  // (the target chooser is gone — campaign 4 phase 2: a deployment has one pair, picked on the Deploy page)
 });
 
 // ── The landing-page sync tiles obey every verdict law (user 2026-08-18,
