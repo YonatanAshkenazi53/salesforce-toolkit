@@ -3,7 +3,6 @@
 // PROFILE BUILDER — Object Tree Editor
 // ════════════════════════════════════════════════════════════════
 function openProfileBuilder(existingProfile) {
-  window._bldSrcOverride = false;   // fresh builder → source follows the ring again
   _editingProfile = existingProfile
     ? JSON.parse(JSON.stringify(existingProfile))
     : {
@@ -13,7 +12,7 @@ function openProfileBuilder(existingProfile) {
         updatedAt: new Date().toISOString(),
         // New profiles start from whatever the topbar SOURCE chip is showing
         // — same resolution, one helper — so a new deployment never opens
-        // blank while the topbar plainly names a source. The target list
+        // blank while a source is known. The target list
         // excludes it automatically (an org is never its own target).
         sourceOrg: (typeof currentSourceOrg === 'function' ? currentSourceOrg() : (_workingPair.src || '')),
         targetOrg: _workingPair.tgt || '',
@@ -84,7 +83,7 @@ function renderBuilder() {
       // ONE primary in the region (Save &amp; Run). Save/Cancel are neutral,
       // and nothing here is destructive, so nothing here is red.
       actions: `${p.tree ? `<button class="ds-btn" id="dsPreviewAllBtn" title="Count records for every node in parallel">${dsIcon('eye')}Preview All</button>
-        <button class="ds-btn" id="dsBldCheckTargets" title="Describe every ring target and verify the tree's objects + every mapped field exist there — the multi-org answer to 'which org will this break in?'">${dsIcon('flask')}Check all targets</button>
+        <button class="ds-btn" id="dsBldCheckTargets" title="Describe the default target and verify the tree's objects + every mapped field exist there — the multi-org answer to 'which org will this break in?'">${dsIcon('flask')}Check all targets</button>
         <button class="ds-btn" id="dsBldSuggestPii" title="Scan every object in this tree for likely PII (field types, names/labels, org compliance classification) and add write-time mask rules — masked/pseudonymized, never written raw">${dsIcon('lock')}Suggest PII masks</button>` : ''}
         <button class="ds-btn" id="dsBuilderCancel">Cancel</button>
         <button class="ds-btn" id="dsBuilderSave">${dsIcon('save')}Save</button>
@@ -99,105 +98,35 @@ function renderBuilder() {
       </div>
 
       ${(() => {
-        // Multi-org reframe (user 2026-07-20: "the source and target thing
-        // doesn't work any more"): with a Sync Ring, the SOURCE is the ring's
-        // source of truth — locked, with an explicit escape hatch for the
-        // rare intentional off-ring deployment. The TARGET becomes a
-        // REFERENCE target: it drives field mapping, previews and the default
-        // scan — the actual orgs written to are picked at run time (▶ Run,
-        // 🌐 Multi-org, Sync Ring, 🌳 Tree diff).
+        // Campaign 4 phase 2 (user 2026-10-01): a deployment is a SHAPE; the orgs
+        // are picked on the Deploy page from the orgs open in Chrome. These two
+        // selects only hold the last-used pair (and the field-mapping schema
+        // reference). No lock, no pin, no follow mode.
         const ls = _liveOrgSet();
-        const ringSrc = (typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2) ? _ring.sourceUrl : '';
-        const srcLocked = !!ringSrc && !window._bldSrcOverride && !p.sourcePinned &&
-          (!p.sourceOrg || _orgKey(p.sourceOrg) === _orgKey(ringSrc));
-        if (srcLocked) p.sourceOrg = ringSrc;
-        // TARGETS: follow the ring unless pinned (user decision 2026-07-20).
-        // targetOrgs === null → follow-mode: the set is profileTargets(p),
-        // resolved LIVE, so ring changes flow into this deployment forever.
-        // An array → the user pinned specific orgs. p.targetOrg stays the
-        // FIRST effective target — the invisible schema reference every
-        // engine path (mapping describes, previews, scans) keeps using.
-        const followMode = !!ringSrc && !Array.isArray(p.targetOrgs);
-        if (!ringSrc && !Array.isArray(p.targetOrgs)) {
-          p.targetOrgs = p.targetOrg ? [p.targetOrg] : [];   // no ring → pinning is the only mode
-        }
-        const effTargets = (Array.isArray(p.targetOrgs) ? p.targetOrgs : profileTargets(p))
-          .filter(u => _orgKey(u) !== _orgKey(p.sourceOrg || ''));
-        p.targetOrg = effTargets[0] || '';
-        const orgOpts = sel => allMapOrgs().map(o =>
-          `<option value="${esc(o.url)}" ${sel === o.url ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label, ls))}</option>`).join('');
+        if (p.targetOrg && _orgKey(p.targetOrg) === _orgKey(p.sourceOrg || '')) p.targetOrg = '';
+        const orgOpts = (sel, skip) => allMapOrgs()
+          .filter(o => !skip || _orgKey(o.url) !== _orgKey(skip))
+          .map(o => `<option value="${esc(o.url)}" ${sel === o.url ? 'selected' : ''}>${esc(orgOptionLabel(o.url, o.label, ls))}</option>`).join('');
+        const gone = u => u && !allMapOrgs().some(o => _orgKey(o.url) === _orgKey(u))
+          ? `<option value="${esc(u)}" selected disabled>${esc(orgLabel(u))} — no longer in your org list</option>` : '';
         return `
       <div class="ds-builder-orgs-row">
         <div class="ds-builder-org-col ds-bld-col-src">
           <div class="ds-lbl ds-bld-col-hd">${dsIcon('database')}Source <span class="ds-builder-org-hint">where records come FROM</span></div>
-          ${srcLocked
-            ? `<div class="ds-bld-src-locked" title="Locked to your Sync Ring's source of truth — every multi-org surface flows FROM it. Change it in the topbar SOURCE menu.">
-                 ${dsIcon('crown')}<strong>${esc(orgLabel(ringSrc))}</strong>
-                 <span class="ds-bld-src-note">your source of truth</span>
-                 <a href="#" id="dsBldSrcUnlock" class="ds-bld-src-note">use a different source…</a>
-               </div>`
-            : `<select id="dsProfileSrcOrg" class="ds-select" aria-label="Source org — where records come from">
-                <option value="">— Select source org —</option>${orgOpts(p.sourceOrg)}
-                ${p.sourceOrg && !allMapOrgs().some(o => _orgKey(o.url) === _orgKey(p.sourceOrg))
-                  ? `<option value="${esc(p.sourceOrg)}" selected disabled>${esc(orgLabel(p.sourceOrg))} — no longer in your org list</option>`
-                  : ''}
-              </select>
-              ${ringSrc && p.sourceOrg && _orgKey(p.sourceOrg) !== _orgKey(ringSrc)
-                ? `<div class="ds-bld-src-warn">${dsIcon('warn')}pinned off-ring: compares in this deployment measure FROM <strong>${esc(orgLabel(p.sourceOrg))}</strong> — NOT from the ring's source of truth (${esc(orgLabel(ringSrc))})
-                     <button class="ds-btn ds-btn-xs" id="dsBldPromoteSrc"
-                       title="Move the 👑: make ${esc(orgLabel(p.sourceOrg))} the ring's source of truth. EVERY ring surface — matrix rows, sync plans, tree diffs, the topbar chip — will measure from it, and ring-following deployments will flow FROM it. The global setting never moves silently; this button IS the explicit move.">👑 make it the source of truth</button>
-                   </div>` : ''}`}
-          ${p._srcCrownMoved ? `
-          <div style="margin-top:6px;padding:8px 10px;border:1px solid var(--c-warn-border,#6B4A15);border-left-width:3px;border-radius:6px;font-size:12px;line-height:1.55">
-            ⚠ <strong>The source of truth moved.</strong>
-            This deployment now flows FROM <strong>${esc(orgLabel(p._srcCrownMoved.to))}</strong> — it was <strong>${esc(orgLabel(p._srcCrownMoved.from))}</strong> until ${timeAgo(p._srcCrownMoved.at)}.
-            Compares made before the move measured FROM the old source; Reconcile marks them stale, and the crown-change rescan re-baselines open orgs automatically.
-            <div style="display:flex;gap:8px;margin-top:7px;flex-wrap:wrap">
-              <button class="ds-btn ds-btn-xs ds-btn-primary" id="dsBldSrcMovedAck">✓ got it — follow the new source</button>
-              <button class="ds-btn ds-btn-xs" id="dsBldSrcMovedRevert"
-                title="Keep this deployment flowing FROM ${esc(orgLabel(p._srcCrownMoved.from))}. Pins it as an off-ring source — the crown stops moving it, and its compares keep measuring FROM ${esc(orgLabel(p._srcCrownMoved.from))}.">↩ keep using ${esc(orgLabel(p._srcCrownMoved.from))}</button>
-            </div>
-          </div>` : ''}
+          <select id="dsProfileSrcOrg" class="ds-select" aria-label="Source org — where records come from">
+            <option value="">— Select source org —</option>${orgOpts(p.sourceOrg)}${gone(p.sourceOrg)}
+          </select>
         </div>
-        <!-- The direction statement. Two of the recent bug reports came from
-             this row reading as two unrelated columns; the slot is now always
-             filled — the ⇄ swap BUTTON when the source can be changed, a
-             static → when the ring has locked it — so the arrow is always
-             there to say which way records move. -->
         <div class="ds-builder-orgs-flow">
-          ${srcLocked
-            ? `${dsIcon('arrow-right')}<span class="ds-sr">records flow from the source to the targets</span>`
-            : `<button class="ds-builder-orgs-swap" id="dsProfileSwapOrgs" aria-label="Swap source and target orgs"
-                title="Swap source and target orgs — also inverts field mappings and clears picked records (they belong to the old source org)">${dsIcon('swap')}</button>`}
+          <button class="ds-builder-orgs-swap" id="dsProfileSwapOrgs" aria-label="Swap source and target orgs"
+            title="Swap source and target orgs — also inverts field mappings and clears picked records (they belong to the old source org)">${dsIcon('swap')}</button>
         </div>
         <div class="ds-builder-org-col ds-bld-col-tgt">
-          <div class="ds-lbl ds-bld-col-hd">${dsIcon('box')}Targets <span class="ds-builder-org-hint">where records are written</span></div>
-          <div class="ds-bld-tgt-hint">This is the deployment's ring: 🚀 Deploy asks <strong>which target</strong>, one at a time · field mapping previews use the first target's schema · Check all targets validates the rest</div>
-          ${ringSrc ? `
-          <label class="ds-pk-orgchk" title="The deployment's targets are ALWAYS whatever the ring's targets are — add an org to the ring and this deployment covers it automatically.">
-            <input type="radio" name="dsBldTgtMode" value="follow" ${followMode ? 'checked' : ''}>
-            ${dsIcon('repeat')} Follow the Sync Ring — all its targets, always
-          </label>
-          <div class="ds-bld-tgt-now">now: ${esc(effTargets.map(u => orgLabel(u)).join(' · ')) || 'none'}</div>
-          <label class="ds-pk-orgchk" title="Freeze this deployment to specific orgs — ring changes won't affect it.">
-            <input type="radio" name="dsBldTgtMode" value="pin" ${followMode ? '' : 'checked'}>
-            ${dsIcon('pin')} Pin specific orgs:
-          </label>` : ''}
-          <div class="ds-pk-orgchk-list" id="dsBldTgtList" ${followMode ? 'hidden' : ''}>
-            ${allMapOrgs().map(o => {
-              // The source is LOCKED here, not hidden (user 2026-07-30: "when we
-              // select a source org here, we need to lock it from the target
-              // list"). An org silently vanishing from the list reads as a bug;
-              // a disabled row that says why is self-explanatory. Deploying an
-              // org to itself would match every record against itself.
-              const isSrc = _orgKey(o.url) === _orgKey(p.sourceOrg || '');
-              return `<label class="ds-pk-orgchk${isSrc ? ' ds-pk-orgchk-locked' : ''}"
-                ${isSrc ? 'title="This is the source org — records come FROM here, so it can\'t also be a target."' : ''}>
-                <input type="checkbox" data-bld-tgt="${esc(o.url)}" ${isSrc ? 'disabled' : ''} ${!isSrc && effTargets.some(u => _orgKey(u) === _orgKey(o.url)) ? 'checked' : ''}>
-                ${esc(orgOptionLabel(o.url, o.label, ls))}${isSrc ? `<span class="ds-pk-lock-pill">${dsIcon('lock')}source</span>` : ''}</label>`;
-            }).join('')
-            || '<div class="ds-seq-empty">No orgs known — open them in Chrome tabs.</div>'}
-          </div>
+          <div class="ds-lbl ds-bld-col-hd">${dsIcon('box')}Default target <span class="ds-builder-org-hint">where records are written</span></div>
+          <div class="ds-bld-tgt-hint">The Deploy page lets you pick any open org at run time · field mapping previews use this org's schema</div>
+          <select id="dsProfileTgtOrg" class="ds-select" aria-label="Default target org — where records are written">
+            <option value="">— Select target org —</option>${orgOpts(p.targetOrg, p.sourceOrg)}${gone(p.targetOrg)}
+          </select>
         </div>
       </div>`;
       })()}
@@ -308,106 +237,22 @@ function renderBuilder() {
   // below would discard it. Bind it live so re-rendering is always safe.
   eid('dsProfileName')?.addEventListener('input', e => { _editingProfile.name = e.target.value; });
 
-  // 👑 Explicit promotion (user 2026-08-11: "when we change the source here,
-  // it should also change the source in general, no?") — the ring's source
-  // of truth NEVER moves silently (user ruling 2026-07-31: surprise crown
-  // moves are how orgs get overwritten from the wrong direction). Changing a
-  // profile's source offers the promotion in one labeled click instead.
-  eid('dsBldPromoteSrc')?.addEventListener('click', async () => {
-    const src = _editingProfile?.sourceOrg;
-    if (!src || typeof _ring !== 'object' || !_ring) return;
-    if (!confirm(`👑 Make ${orgLabel(src)} the ring's source of truth?\n\nEvery ring surface — matrix rows, sync plans, tree diffs, the topbar SOURCE chip — will measure FROM it, and deployments that follow the ring will flow FROM it.\n\nThe current crown (${orgLabel(_ring.sourceUrl)}) becomes a regular ring org.`)) return;
-    // QA sweep 2026-08-11: clear the pin on the SAVED copy too — the editing
-    // clone only lands on Save, but the promote's other effects persist now;
-    // a cancel would otherwise strand the saved profile pinned to nothing.
-    // Must happen BEFORE the setter's syncRingFollowers pass so this profile
-    // follows the new crown in the same sweep.
-    delete _editingProfile.sourcePinned;   // this profile's source IS the crown now
-    const savedP = _profiles.find(x => x.id === _editingProfile.id);
-    if (savedP) { delete savedP.sourcePinned; }
-    // QA sweep round 2: persist unconditionally — syncRingFollowers saves
-    // only `if (changed)`, so a lone un-pin would otherwise evaporate.
-    try { await storageSaveProfiles(); } catch (_) {}
-    // The one crown writer: history, membership, topbar chip, followers,
-    // persist, re-baseline. rerender:false — renderView has no 'builder'
-    // case and would navigate away mid-edit; repaint explicitly instead.
-    await dsSetSourceOfTruth(src, `${orgLabel(src)} became the source of truth`, { rerender: false });
-    renderBuilder();   // the source column re-locks onto the new crown
-  });
-
-  eid('dsBldSrcMovedAck')?.addEventListener('click', async e => {
-    e.preventDefault();
-    delete _editingProfile._srcCrownMoved;
-    // QA sweep round 2: this deletes the stamp on the unsaved EDITING CLONE
-    // only — storageSaveProfiles() persists _profiles, where the saved copy
-    // (written by syncRingFollowers) still carried it, so the banner came
-    // back on every reopen until the user separately hit Save. Clear it on
-    // the saved object too.
-    const savedP = _profiles.find(x => x.id === _editingProfile.id);
-    if (savedP) delete savedP._srcCrownMoved;
-    try { await storageSaveProfiles(); } catch (_) {}
-    renderBuilder();
-  });
-
+  // Source / default-target selects (campaign 4 phase 2, user 2026-10-01: a
+  // deployment is a shape, the orgs are picked when you deploy). These two are
+  // only the LAST-USED pair; nothing follows a crown any more.
   eid('dsProfileSrcOrg')?.addEventListener('change', e => {
     _editingProfile.sourceOrg = e.target.value || '';
-    // Dynamic-source contract (user 2026-08-11): a hand-picked source that
-    // differs from the crown is a PIN — the crown stops moving it. Picking
-    // the crown itself re-joins follow mode.
-    const _crown = (typeof _ring === 'object' && _ring?.sourceUrl) ? _ring.sourceUrl : '';
-    if (_crown && _editingProfile.sourceOrg && _orgKey(_editingProfile.sourceOrg) !== _orgKey(_crown)) {
-      _editingProfile.sourcePinned = true;
-    } else {
-      delete _editingProfile.sourcePinned;
+    // An org can't deploy to itself.
+    if (_editingProfile.sourceOrg && _editingProfile.targetOrg &&
+        _orgKey(_editingProfile.targetOrg) === _orgKey(_editingProfile.sourceOrg)) {
+      showToast(`${orgLabel(_editingProfile.sourceOrg)} is the source now — cleared it as the default target.`, 'info', 4500);
+      _editingProfile.targetOrg = '';
     }
-    delete _editingProfile._srcCrownMoved;   // a deliberate pick supersedes the move notice
-    // An org can't deploy to itself. Drop the new source from a PINNED target
-    // set — the render-time filter only cleans the display, so without this
-    // the stale entry survives in targetOrgs and the next checkbox tick
-    // re-saves it. Follow-mode (null) resolves live and needs no fix.
-    if (Array.isArray(_editingProfile.targetOrgs)) {
-      const before = _editingProfile.targetOrgs.length;
-      _editingProfile.targetOrgs = _editingProfile.targetOrgs
-        .filter(u => _orgKey(u) !== _orgKey(_editingProfile.sourceOrg));
-      if (_editingProfile.targetOrgs.length !== before) {
-        showToast(`${orgLabel(_editingProfile.sourceOrg)} is the source now — removed it from the targets.`, 'info', 4500);
-      }
-      _editingProfile.targetOrg = _editingProfile.targetOrgs[0] || '';
-    }
-    renderBuilder();         // repaint the target list with the new source locked
+    renderBuilder();         // repaint the target list without the new source
     _bldLoadRootObjects();   // the root-object list comes from the source org
   });
-  document.querySelectorAll('[data-bld-tgt]').forEach(cb =>
-    cb.addEventListener('change', () => {
-      // Filter the source out again here: the disabled checkbox can't be
-      // ticked, but a stale checked one from a pre-fix profile would
-      // otherwise be re-collected and persisted.
-      const sel = [...document.querySelectorAll('[data-bld-tgt]:checked')].map(c => c.dataset.bldTgt)
-        .filter(u => _orgKey(u) !== _orgKey(_editingProfile.sourceOrg || ''));
-      _editingProfile.targetOrgs = sel;           // touching the list = pinning
-      _editingProfile.targetOrg  = sel[0] || '';  // first target = schema reference (engine compat)
-      const pin = document.querySelector('input[name="dsBldTgtMode"][value="pin"]');
-      if (pin) pin.checked = true;
-    }));
-  // Follow ⇄ pin mode switch. Follow = targetOrgs null (resolved live from
-  // the ring); pin starts from the current effective set.
-  document.querySelectorAll('input[name="dsBldTgtMode"]').forEach(r =>
-    r.addEventListener('change', () => {
-      if (!r.checked) return;
-      if (r.value === 'follow') {
-        _editingProfile.targetOrgs = null;
-        _editingProfile.targetOrg = profileTargets(_editingProfile)[0] || '';
-      } else {
-        _editingProfile.targetOrgs = profileTargets(_editingProfile).slice();
-      }
-      renderBuilder();
-    }));
-  // Escape hatch from the 👑-locked source — reveals the plain org select
-  // (the off-ring warning under it keeps the divergence visible).
-  eid('dsBldSrcUnlock')?.addEventListener('click', e => {
-    e.preventDefault();
-    window._bldSrcOverride = true;
-    renderBuilder();
+  eid('dsProfileTgtOrg')?.addEventListener('change', e => {
+    _editingProfile.targetOrg = e.target.value || '';
   });
   _bldLoadRootObjects();
 
@@ -554,9 +399,6 @@ function renderBuilder() {
     const doSwap = () => {
       const prof = _editingProfile;
       [prof.sourceOrg, prof.targetOrg] = [prof.targetOrg || '', prof.sourceOrg || ''];
-      // A swap collapses the target set to the single swapped-in org — the
-      // old multi-target set pointed at the OLD source's world.
-      prof.targetOrgs = prof.targetOrg ? [prof.targetOrg] : [];
       let clearedPicks = 0;
       const droppedMappings = [];
       (function walk(node) {
@@ -930,15 +772,15 @@ function bldSchemaGaps(tree, describes) {
   return gaps;
 }
 
-// 🧪 Check the tree against EVERY ring target (fallback: the schema
-// reference org) — which org would this deployment break in, before any run.
+// 🧪 Check the tree against the default target —
+// which org would this deployment break in, before any run.
 // Accepts an explicit profile (post-import check runs before any builder
 // session exists); no argument = the builder's editing profile, as before.
 async function _bldCheckAllTargets(profileArg) {
   const p = profileArg || _editingProfile;
   if (!p?.tree) return;
   const targets = profileTargets(p);
-  if (!targets.length) { showToast('No targets known — configure the Sync Ring or pin targets in the builder', 'warning', 5000); return; }
+  if (!targets.length) { showToast('No default target set — pick one in the builder', 'warning', 5000); return; }
   const objs = [...collectTreeObjects(p.tree)];
   showModal(`
     <div class="ds-modal-header">🧪 Schema check — ${esc(p.name)}</div>
@@ -2013,6 +1855,10 @@ function bldProfileRuntimeFields() {
     'ringScans',     // per-target ring scan summaries — the exporter's scan status, not the importer's
     'schedule',      // legacy schedule — its alarms live in the exporter's browser only; the chip would lie here
     'ephemeral',     // internal flag for unsaved org-compare/ring clones — never meaningful in a file
+    'targetOrgs',    // retired (campaign 4 phase 2): deployments no longer pin or follow a set of targets
+    'sourcePinned',  // retired with the crown — the source is just the org picked last
+    '_srcCrownMoved',// retired with the crown
+    '_ringOf',       // internal ring-clone provenance — never meaningful in a file
     'importedFrom',  // provenance of a PREVIOUS import on the exporter's machine — each import mints its own
     'piiSalt'        // MACHINE-LOCAL pseudonymization salt (sftk-pii.js contract): export strips it, import
                      // mints a fresh one — masked values differ per machine BY DESIGN. piiPolicy itself is
@@ -2065,8 +1911,8 @@ function bldProfileExportPayload(profile, version) {
 //     original must not collide (existingIds guards the regeneration)
 //   • runtime fields present in a hand-edited file are stripped again and
 //     REPORTED in `stripped` so the UI can say so instead of silently eating
-//   • targetOrgs semantics survive: null / absent = follow-the-ring
-//     (profileFollowsRing checks !Array.isArray), an array = pinned set
+//   • old files may carry targetOrgs / sourcePinned (the retired ring fields):
+//     they are stripped and reported like any runtime field, never applied
 //   • provenance (importedFrom) is minted fresh — shown on the card
 // Pure (needs bldProfileRuntimeFields + bldProfileStrip in scope).
 function bldProfileImportParse(text, existingIds, fileName) {
@@ -2162,20 +2008,18 @@ window.importProfileFromFile = function () {
     _profiles.push(prof);
     await storageSaveProfiles();
     if (_currentView === 'profiles') renderProfiles();
-    // The file was written against the EXPORTER's orgs and ring. Say plainly
+    // The file was written against the EXPORTER's orgs . Say plainly
     // that nothing has been validated against this machine's targets, and
     // offer the existing schema-gap check right here — an import is exactly
     // the "which org will this break in?" moment.
-    const tgtDesc = Array.isArray(prof.targetOrgs)
-      ? `${prof.targetOrgs.length} pinned target(s)`
-      : 'targets follow YOUR Sync Ring';
+    const tgtDesc = prof.targetOrg ? `default target ${orgLabel(prof.targetOrg)}` : 'no default target';
     showModal(`
       <div class="ds-modal-header">⬆ Imported “${esc(prof.name)}”</div>
       <div class="ds-modal-body" style="font-size:12.5px">
         <div style="margin-bottom:8px">Source: <strong>${esc(prof.sourceOrg ? orgLabel(prof.sourceOrg) : '— not set —')}</strong> · ${esc(tgtDesc)}.</div>
         ${nMaskRules ? `<div style="color:var(--subtext);margin-bottom:8px">${dsIcon('lock')} ${nMaskRules} PII masking rule(s) travelled with the profile. The pseudonymization salt is machine-local and is never imported — a fresh one was generated here, so masked values on this machine will differ from the exporter's.</div>` : ''}
         ${res.stripped.length ? `<div style="color:var(--subtext);margin-bottom:8px">Machine-local state in the file was not imported (it belongs to the exporter's machine): ${esc(res.stripped.join(', '))}.</div>` : ''}
-        <div style="color:var(--subtext)">This file was written against the exporter's orgs and Sync Ring — nothing has been validated against <em>your</em> targets yet.${prof.tree ? ' Run the schema check to see which of your orgs it would break in.' : ' It has no object tree yet — open ✏ Edit to build one.'}</div>
+        <div style="color:var(--subtext)">This file was written against the exporter's orgs — nothing has been validated against <em>your</em> targets yet.${prof.tree ? ' Run the schema check to see which of your orgs it would break in.' : ' It has no object tree yet — open ✏ Edit to build one.'}</div>
       </div>
       <div class="ds-modal-footer">
         <button class="ds-btn" data-dsaction="closeModal">Later</button>

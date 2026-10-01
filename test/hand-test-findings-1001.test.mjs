@@ -33,11 +33,11 @@ describe('1. a missing root object is said in words, about the org that was read
     expect(out.hint).toMatch(/built for an org that has it/);
     expect(out.message).not.toMatch(/WSDL|HTTP 400/);
   });
-  it('the ring toast names the source of truth for a source read, the target otherwise', () => {
+  it('the ring toast names the source for a source read, the target otherwise', () => {
     const i = RG.indexOf('const onSrc = /^source query failed/i.test(msg);');
     expect(i).toBeGreaterThan(0);
     const block = RG.slice(i, i + 700);
-    expect(block).toContain('reading ${orgLabel(ringSrc)} (the source of truth)');
+    expect(block).toContain('reading ${orgLabel(ringSrc)} (the source)');
     expect(block).toContain('reading ${orgLabel(tgtUrl)}');
     expect(block).toContain("msg.replace(/^(source|target) query failed:\\s*/i, '')");
     expect(RG).not.toContain('showToast(`Scan failed for ${orgLabel(tgtUrl)}: ${fe.message}`');

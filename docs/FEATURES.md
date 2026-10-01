@@ -66,10 +66,10 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 - ⏸ **Pause record-triggered flows** (an option next to ▶ Deploy, off by default): the page lists the active record-triggered flows on the deployment's objects in the target; the run's confirmation names them; they are switched off before the first write and back on at their exact versions as soon as the writes end — also when the run fails or is stopped. Records written while they are off are never processed by those flows. If the page closes mid-run, the Deploy page and Org health show which flows are still off, with a button to switch them on. Flows from installed packages cannot be switched and stay on.
 - Limit: a very large bucket is shown a page at a time, so a huge object can need more than one pass.
 
-### Sync Ring
-- Pick one org as the 👑 source of truth and tick other orgs into the ring; for every saved deployment you then see, at a glance, how far each ring org has drifted (missing, changed, or only-in-target counts) without opening each one individually. Opening a cell takes you straight to the 🚀 Deploy page for that pair to fix it.
-- Drift can also be checked automatically on a schedule (counts only), with a badge on the extension icon when something has drifted. A record that looks like a duplicate of another is never auto-matched — it's flagged for you to pair by hand instead.
-- Limit: the ring only checks a deployment's top-level object, not its child records — check those directly on the Deploy page.
+### All open orgs
+- Pick one source org and every other org open in Chrome becomes a column; for every saved deployment you then see, at a glance, how far each org has drifted (missing, changed, or only-in-target counts) without opening each one individually. Opening a cell takes you straight to the 🚀 Deploy page for that pair to fix it. Nothing is crowned or remembered as "the" source: changing it here only changes which org the columns are measured from, and moves or rescans nothing.
+- A record that looks like a duplicate of another is never auto-matched — it's flagged for you to pair by hand instead.
+- Limit: this page only checks a deployment's top-level object, not its child records — check those directly on the Deploy page.
 
 ### Picklist Manager
 - In a single org: every value with its active state, usage count and record types, plus a wizard for deactivating or removing a value that first checks flows and validation rules mentioning it by name (an honest, partial check stating how many it actually scanned) before letting you remap or clear the records that hold it.
@@ -88,12 +88,12 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 - Limit: this compares a whole object at once, not just the records a particular deployment cares about, so its numbers won't match a deployment's own scan of the same object.
 
 ### Deploy Readiness
-- Picks a source org and checks every ring target's schema against it before you migrate anything: missing or mismatched fields, picklist value gaps, missing record types, active validation and duplicate rules on the target, and org-level settings that can silently break a load (like State/Country picklists being on in one org and off in another). Only reads schema, never data.
+- Picks a source org and checks every other open org's schema against it before you migrate anything: missing or mismatched fields, picklist value gaps, missing record types, active validation and duplicate rules on the target, and org-level settings that can silently break a load (like State/Country picklists being on in one org and off in another). Only reads schema, never data.
 - Every result states exactly which org pair and when it was checked; an inconclusive check is shown as unknown, never quietly counted as fine.
 - Limit: this checks the *shape* of the data — fields, values, rules — not who can see or edit it.
 
 ### Org health
-- One org at a time, one card per finding, each with a button into the tool that fixes it: licence types at their cap, active users who have not logged in for 90 days (integration users left out), flows switched off with ⏻ Flow switches and still off, your own flows three or more releases below the org's release, Lightning pages assigned to nobody, picklists that differ between the Sync Ring's orgs (for the object you name), and custom fields on an object that no record fills and nothing references.
+- One org at a time, one card per finding, each with a button into the tool that fixes it: licence types at their cap, active users who have not logged in for 90 days (integration users left out), flows switched off with ⏻ Flow switches and still off, your own flows three or more releases below the org's release, Lightning pages assigned to nobody, picklists that differ between your open orgs (for the object you name), and custom fields on an object that no record fills and nothing references.
 - Nothing is read until you press Check or Check all; each card shows its API cost first, and Check all shows the org's remaining daily API budget. Answers are kept on this PC per org with the time they were checked.
 - A check that could not read everything says so — "could not be checked", "NOT an all-clear" — and never shows a green result for something it did not read.
 - Limit: the unused-fields card relies on Salesforce's dependency index, which does not cover reports, list views or Lightning pages, so its list is candidates to confirm in Field Cleaner before deleting anything.
@@ -103,5 +103,5 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 - Limit: an early preview that may not be fully reliable yet; a large org is capped to a portion of its objects unless you name the rest yourself.
 
 ### Field Audit (Labs)
-- An early preview: ranks a chosen object's custom fields by how safe they'd likely be to delete — fill rate, who can see the field, how recently it changed, and how many other things depend on it — and can compare fill rates for the same field across your Sync Ring. Read-only; actually removing a field still happens in Field Cleaner.
+- An early preview: ranks a chosen object's custom fields by how safe they'd likely be to delete — fill rate, who can see the field, how recently it changed, and how many other things depend on it — and can compare fill rates for the same field across your open orgs. Read-only; actually removing a field still happens in Field Cleaner.
 - Limit: an early preview where a blank result on screen means "not measured," not "safe to delete" — it says so directly.

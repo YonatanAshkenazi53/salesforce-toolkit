@@ -179,9 +179,9 @@ describe('the builder source → targets row states the direction', () => {
     expect(row).toContain('ds-builder-org-col');
   });
 
-  it('the connector slot is ALWAYS filled — swap button when unlocked, arrow when locked', () => {
+  it('the connector slot is always the swap button (no lock, no ring: the source is a plain select)', () => {
     expect(row).toContain('ds-builder-orgs-flow');
-    expect(row).toContain("dsIcon('arrow-right')");
+    expect(row).not.toContain("dsIcon('arrow-right')");
     expect(row).toMatch(/id="dsProfileSwapOrgs"/);
     // and the swap control kept its accessible name now that it is icon-only
     expect(row).toMatch(/id="dsProfileSwapOrgs" aria-label="Swap source and target orgs"/);
@@ -192,11 +192,13 @@ describe('the builder source → targets row states the direction', () => {
     expect(LAYER).toMatch(/\.ds-bld-col-hd\s*{/);
   });
 
-  it('the LOCKED source row is legible, not 55%-opacity invisible', () => {
-    expect(row).toContain('ds-pk-orgchk-locked');
-    expect(row).toContain('ds-pk-lock-pill');
-    const locked = LAYER.slice(LAYER.indexOf('.ds-pk-orgchk-locked,'));
-    expect(locked.slice(0, 300)).toContain('opacity: 1');
+  it('source and target are two plain selects; the target list excludes the source (campaign 4 phase 2)', () => {
+    expect(row).toMatch(/<select id="dsProfileSrcOrg"/);
+    expect(row).toMatch(/<select id="dsProfileTgtOrg"/);
+    expect(row).toMatch(/orgOpts\(p\.targetOrg, p\.sourceOrg\)/);
+    expect(row).not.toContain('data-bld-tgt');
+    expect(row).not.toContain('dsBldTgtMode');
+    expect(row).not.toContain('ds-pk-orgchk-locked');
   });
 
   it('the row is a grid with a real middle track, not two floating columns', () => {
@@ -239,10 +241,9 @@ describe('accessibility invariants', () => {
     expect(LAYER).toMatch(/\.ds-fm-skip-btn:focus-visible/);
   });
 
-  it('the builder\'s follow-mode target list is hidden from AT too, not just visually', () => {
-    expect(BUILDER).toMatch(/id="dsBldTgtList" \$\{followMode \? 'hidden' : ''\}/);
-    // …and the attribute has to beat the list's own display:grid.
-    expect(LAYER).toMatch(/\.ds-pk-orgchk-list\[hidden\]\s*{\s*display:\s*none/);
+  it('both builder org selects carry an accessible name', () => {
+    expect(BUILDER).toMatch(/id="dsProfileSrcOrg"[^>]*aria-label=/);
+    expect(BUILDER).toMatch(/id="dsProfileTgtOrg"[^>]*aria-label=/);
   });
 });
 
@@ -274,25 +275,15 @@ describe('the layer speaks the token vocabulary and adds nothing to it', () => {
 describe('unset source of truth is stated, not implied', () => {
   const core = CORE, pk = PICKLISTS;
 
-  it('the topbar select carries a selected placeholder when no source is set', () => {
-    // Must be BOTH selected (so it wins over the browser's first-option
-    // fallback) and disabled (so it can never be chosen as a real value).
-    expect(core).toMatch(/const placeholder = srcUrl \? '' :/);
-    expect(core).toMatch(/<option value=""\s+selected\s+disabled>/);
-  });
-
-  it('the placeholder is emitted BEFORE the org options, or it cannot win', () => {
-    const m = /\$\{placeholder\}\$\{opts\}/.exec(core);
-    expect(m, 'placeholder must precede opts in the select markup').toBeTruthy();
-  });
-
-  it('the topbar chip is visually marked as unset, not styled like a real choice', () => {
-    expect(core).toMatch(/ds-pair-sel-unset/);
+  it('the topbar chip is read-only: it lists the open orgs and opens the All open orgs page', () => {
+    expect(core).toMatch(/id="dsOpenOrgsChip"/);
+    expect(core).toMatch(/navigateToView\('ring'\)/);
+    expect(core).not.toMatch(/id="dsSotSel"/);
   });
 
   it('the picklist source line renders an explanation instead of an empty string', () => {
     expect(pk).toMatch(/ds-pk-sot-unset/);
-    expect(pk).toMatch(/No source of truth set/);
+    expect(pk).toMatch(/No source picked/);
     // Scoped to the sotLine assignment itself: a broad "no `: ''` anywhere"
     // regex matched unrelated conditional renders in this 2,500-line file.
     const decl = /const sotLine = sotOrg([\s\S]{0,900}?)\n\s*const chks/.exec(pk);
@@ -318,20 +309,14 @@ describe('new deployments inherit the topbar source', () => {
   const core = CORE, bld = BUILDER, prof = PROFILES;
   const currentSourceOrg = extractFunction('studio-core.js', 'currentSourceOrg');
 
-  it('the helper prefers the ring source, then the working pair, then empty', () => {
+  it('the helper is the preferred source (the org picked last), else empty — no ring involved', () => {
     globalThis._ring = { sourceUrl: 'https://ring.my.salesforce.com' };
     globalThis._workingPair = { src: 'https://wp.my.salesforce.com' };
-    expect(currentSourceOrg()).toBe('https://ring.my.salesforce.com');
-    globalThis._ring = { sourceUrl: '' };
     expect(currentSourceOrg()).toBe('https://wp.my.salesforce.com');
     globalThis._workingPair = { src: '' };
     expect(currentSourceOrg()).toBe('');
     globalThis._ring = null; globalThis._workingPair = null;
     expect(currentSourceOrg()).toBe('');
-  });
-
-  it('the topbar chip resolves through the helper, not its own expression', () => {
-    expect(core).toMatch(/const srcUrl = currentSourceOrg\(\);/);
   });
 
   it('both new-record paths seed their source from the helper', () => {
@@ -377,25 +362,16 @@ describe('multi-org session enumeration attributes sessions to the right org', (
   });
 });
 
-describe('the ring source of truth is preselected and locked', () => {
-  it('the source row is checked and disabled, never unticked by accident', () => {
-    expect(RING).toMatch(/\$\{isSrc \|\| inRing \? 'checked' : ''\}/);
-    expect(RING).toMatch(/\$\{isSrc \? 'disabled' : ''\}/);
+describe('the All open orgs page picks its source from the open orgs', () => {
+  it('a plain source select over sftkOpenOrgs; nothing is pre-selected when the preferred source is not open', () => {
+    expect(RING).toMatch(/<select id="dsRingSrc"/);
+    expect(RING).toMatch(/sftkOpenOrgs\(\)/);
+    expect(RING).toContain(`\${src ? '' : '<option value="" selected disabled>— pick the source —</option>'}`);
+    expect(RING).toMatch(/Open at least two orgs in Chrome/);
   });
 
-  it('the lock is explained, not silent', () => {
-    expect(RING).toMatch(/ds-ring-src-lock/);
-    expect(RING).toMatch(/source — always in the ring/);
-    // Consolidation (user 2026-08-13): the crown moves ONLY via the topbar
-    // SOURCE menu — the ring panel's own ⦿ radios are gone, and the lock
-    // text points at the one real control.
-    expect(RING).toMatch(/Pick a different source in the topbar SOURCE menu to move it/);
-    expect(RING).not.toMatch(/name="dsRingSrc"/);
-  });
-
-  it('studio.css styles the locked row', () => {
-    expect(CSS).toMatch(/\.ds-ring-org-locked\s*\{/);
-    expect(CSS).toMatch(/\.ds-ring-src-lock\s*\{/);
+  it('the membership panel and the lock are gone', () => {
+    expect(RING).not.toMatch(/ds-ring-cb|ds-ring-cfg|ds-ring-src-lock|dsRingRestoreCrown|dsRingAdoptWp/);
   });
 });
 
@@ -448,7 +424,7 @@ describe('empty live set = unknown, not closed', () => {
   // size>0 re-disabled every open target in exactly that state.
   it('every liveness consumer branches on _liveKnown(), not set size', () => {
     // (the fan-out dialog and the Sync Plan — two consumers — were retired 2026-09-14)
-    expect(RING.match(/typeof _liveKnown === 'function'/g)?.length).toBe(3);
+    expect(RING.match(/typeof _liveKnown === 'function'/g)?.length).toBe(2);
     expect(CORE).toMatch(/function _liveKnown\(\) \{ return _allSessionsOk; \}/);
   });
 
@@ -468,23 +444,9 @@ describe('crown & pin persistence — sweep round 2 fixes', () => {
   const MODALS = read('studio-builder-modals.js');
   const RECONCILE = read('studio-reconcile.js');
 
-  it('promote persists the un-pin unconditionally, not only when syncRingFollowers moves something else', () => {
-    const src = BUILDER.slice(BUILDER.indexOf("eid('dsBldPromoteSrc')"), BUILDER.indexOf("eid('dsBldSrcMovedAck')"));
-    expect(src).toMatch(/if \(savedP\) \{ delete savedP\.sourcePinned; \}/);
-    // The save call must come BEFORE the crown setter (whose
-    // syncRingFollowers pass saves only `if (changed)`) — the un-pin must
-    // not depend on that conditional save firing.
-    const saveAt = src.indexOf('await storageSaveProfiles()');
-    const setterAt = src.indexOf('await dsSetSourceOfTruth(');
-    expect(saveAt).toBeGreaterThan(-1);
-    expect(setterAt).toBeGreaterThan(-1);
-    expect(saveAt).toBeLessThan(setterAt);
-  });
-
-  it('the "got it" ack clears the crown-moved stamp on the SAVED profile too, not just the editing clone', () => {
-    const src = BUILDER.slice(BUILDER.indexOf("eid('dsBldSrcMovedAck')"), BUILDER.indexOf("eid('dsProfileSrcOrg')"));
-    expect(src).toMatch(/const savedP = _profiles\.find\(x => x\.id === _editingProfile\.id\)/);
-    expect(src).toMatch(/if \(savedP\) delete savedP\._srcCrownMoved/);
+  it('the builder has no promote / crown-moved handlers and writes none of the retired ring fields', () => {
+    expect(BUILDER).not.toMatch(/dsBldPromoteSrc|dsBldSrcMovedAck|dsBldSrcUnlock|_bldSrcOverride/);
+    expect(BUILDER).not.toMatch(/\.(sourcePinned|targetOrgs|_srcCrownMoved)\s*=/);
   });
 
   it('the target chooser previews THIS profile\'s own source, never the ring crown\'s, for a pinned source', () => {
@@ -518,16 +480,16 @@ describe('the builder header count can never disagree with the tree', () => {
 });
 
 describe('a phantom source org is named, never silently kept', () => {
-  it('removeOrg drops the org from the ring and clears a matching sourceUrl', () => {
+  it('removeOrg clears a matching preferred source / target and persists it', () => {
     const src = CORE.slice(CORE.indexOf('window.removeOrg ='));
-    expect(src).toMatch(/_ring\.orgs = \(_ring\.orgs \|\| \[\]\)\.filter/);
-    expect(src).toMatch(/_orgKey\(_ring\.sourceUrl\) === _orgKey\(orgUrl\)\) _ring\.sourceUrl = ''/);
-    expect(src).toMatch(/ds_ring: _ring/);
+    expect(src).toMatch(/_workingPair\.src = ''; wpDirty = true;/);
+    expect(src).toMatch(/storageSaveWorkingPair\(\)/);
+    expect(src).not.toMatch(/ds_ring/);
   });
 
   it('the builder source select names a sourceOrg that is no longer in the org list', () => {
     expect(BUILDER).toMatch(/no longer in your org list/);
-    expect(BUILDER).toMatch(/!allMapOrgs\(\)\.some\(o => _orgKey\(o\.url\) === _orgKey\(p\.sourceOrg\)\)/);
+    expect(BUILDER).toMatch(/!allMapOrgs\(\)\.some\(o => _orgKey\(o\.url\) === _orgKey\(u\)\)/);
   });
 });
 
@@ -684,11 +646,11 @@ describe('the compare trio explains itself on hover', () => {
 
   it('each surface names its role AND its siblings', () => {
     const RECONCILE = read('studio-reconcile.js');
-    // Reconcile = fix one pair, points at the Sync Ring matrix (Tree diff was
+    // Reconcile = fix one pair, points at the All open orgs matrix (Tree diff was
     // retired 2026-09-14 — one target at a time is the whole model now)
     expect(RECONCILE).toMatch(/help: 'The repair shop of the compare trio/);
-    expect(RECONCILE).toMatch(/help: '[^']*Sync Ring/);
-    // Ring = source of truth + reading-not-live-state honesty
+    expect(RECONCILE).toMatch(/help: '[^']*All open orgs/);
+    // All open orgs = one picked source + reading-not-live-state honesty
     expect(RING).toMatch(/help: '[^']*a reading, not live state/);
   });
 
@@ -851,7 +813,7 @@ describe('sweep 2026-08-16: stale state can never drive a write or wear a verdic
     expect(REC).toContain('📎 file check failed');
     expect(RINGSRC).toContain('file check FAILED');
     // every ring-summary write site stamps fileErr beside fileMiss
-    expect((RINGSRC.match(/fileErr: true/g) || []).length).toBeGreaterThanOrEqual(3);   // Sync Plan's sites retired 2026-09-14
+    expect((RINGSRC.match(/fileErr: true/g) || []).length).toBeGreaterThanOrEqual(2);   // Sync Plan's sites retired 2026-09-14, the re-baseline sweep 2026-10-01
     expect(SCAN).toContain('fileErr: true');
   });
 
@@ -859,14 +821,10 @@ describe('sweep 2026-08-16: stale state can never drive a write or wear a verdic
     expect(SCAN).toContain("return { error: 'source and target are the same org' };");
   });
 
-  it('a crown change mid-rebaseline queues and aborts, never drops silently', () => {
+  it('nothing rescans when the source changes: the re-baseline sweep is gone', () => {
     const RINGSRC = read('studio-ring.js');
-    const i = RINGSRC.indexOf('async function sftkRingRebaseline');
-    const fn = RINGSRC.slice(i, RINGSRC.indexOf('\n}', RINGSRC.indexOf('finally', i)) + 2);
-    expect(fn).toContain('_ringRebaselineQueued = reason; return;');
-    expect(fn).toMatch(/interrupted = true; break outer;/);
-    expect(fn).toMatch(/continue; *\/\/ never scan the crown against itself/);
-    expect(fn).toContain('sftkRingRebaseline(r);');
+    expect(RINGSRC).not.toContain('sftkRingRebaseline');
+    expect(CORE).not.toContain('sftkRingRebaseline');
   });
 
   it('Builder Save carries forward machine-written scan state from the saved copy', () => {
@@ -895,40 +853,26 @@ describe('sweep 2026-08-16: stale state can never drive a write or wear a verdic
   });
 });
 
-// ── Source-of-truth consolidation (user 2026-08-13: "change source org
-// only in the upper menu — everything should calculate by it") ──────────
-describe('one crown writer: dsSetSourceOfTruth', () => {
-  const RECONCILE = read('studio-reconcile.js');
-
-  it('the setter carries the WHOLE contract: history, membership, chip, followers, re-baseline', () => {
-    const i = CORE.indexOf('async function dsSetSourceOfTruth');
+// ── One preferred source (campaign 4 phase 2, user 2026-10-01: "no more source
+// of truth"). dsSetPreferredSource is the only writer; it re-points nothing. ──
+describe('one preferred source: dsSetPreferredSource', () => {
+  it('the setter only records the pick: no followers, no rescans, no membership', () => {
+    const i = CORE.indexOf('async function dsSetPreferredSource');
     expect(i).toBeGreaterThan(-1);
-    const fn = CORE.slice(i, i + 2600);
-    expect(CORE).toContain('window.dsSetSourceOfTruth = dsSetSourceOfTruth;');
-    expect(fn).toContain('_ring.prevSourceUrl = _ring.sourceUrl;');
-    expect(fn).toContain('_ring.prevSourceAt');
-    expect(fn).toMatch(/if \(!_ring\.orgs\.some\(u => _orgKey\(u\) === _orgKey\(url\)\)\) _ring\.orgs\.push\(url\);/);
+    const fn = CORE.slice(i, CORE.indexOf('\n}', i) + 2);
+    expect(CORE).toContain('window.dsSetPreferredSource = dsSetPreferredSource;');
     expect(fn).toContain('_workingPair.src = url;');
-    expect(fn).toContain('syncRingFollowers');
-    // Re-baseline skips ONLY a pristine first crown (review w703wnvrm):
-    // hadCrown alone missed re-crowning after removeOrg tore the crown
-    // down (baselines survive) and a first crown that re-pointed
-    // followers (their scans measured FROM old sources).
-    expect(fn).toMatch(/const hadBaselines = hadCrown \|\| moved\?\.srcMoved/);
-    expect(fn).toMatch(/p\.ringScans && Object\.keys\(p\.ringScans\)\.length/);
-    expect(fn).toMatch(/if \(hadBaselines && typeof sftkRingRebaseline === 'function'\)/);
+    expect(fn).toContain('_ring = sftkRingView();');
+    expect(fn).not.toMatch(/syncRingFollowers|sftkRingRebaseline|_ring\.orgs\.push/);
     // The ALWAYS-VISIBLE topbar must not blow away an open Builder
     // session — repaint the editor in place instead of renderView.
     expect(fn).toMatch(/if \(eid\('dsProfileName'\) && typeof renderBuilder === 'function'\) renderBuilder\(\);/);
   });
 
-  it('review w703wnvrm follow-ups hold: teardown clears the mirror, no dead crown pointers', () => {
-    // removeOrg must fell the topbar mirror with the crown, or the closed
-    // <select> impersonates whichever candidate sorts first.
+  it('teardown clears the mirror, and no surface points at a removed crown control', () => {
     const rm = CORE.slice(CORE.indexOf("eid('dsOrgRemoveConfirm')"), CORE.indexOf("eid('dsOrgRemoveConfirm')") + 1800);
     expect(rm).toMatch(/_workingPair\.src = ''; wpDirty = true;/);
     expect(rm).toContain('renderWorkingPair();');
-    // No surface may still direct the user to change the crown in the ring.
     for (const [name, src] of [['studio-builder.js', BUILDER], ['studio-ring.js', RING],
                                ['studio-core.js', CORE], ['studio-picklists.js', PICKLISTS],
                                ['studio-readiness.js', read('studio-readiness.js')]]) {
@@ -937,38 +881,18 @@ describe('one crown writer: dsSetSourceOfTruth', () => {
     }
   });
 
-  it('every crown path routes through the setter — no stray sourceUrl writes remain', () => {
-    // topbar, ring adopt, ring restore, Builder promote:
-    expect(CORE).toMatch(/dsSotSel'\)\?\.addEventListener\('change', async e => \{\s*[^]{0,220}?dsSetSourceOfTruth\(e\.target\.value/);
-    expect(RING).toMatch(/dsRingAdoptWp[^]{0,260}?dsSetSourceOfTruth\(url/);
-    expect(RING).toMatch(/dsRingRestoreCrown[^]{0,260}?dsSetSourceOfTruth\(prev/);
-    expect(BUILDER).toMatch(/dsBldPromoteSrc[^]{0,2200}?dsSetSourceOfTruth\(src/);
-    // the ONLY direct `_ring.sourceUrl = <org>` assignment left is inside
-    // the setter itself; org-removal clears to '' which is teardown, not a
-    // crown move. The ring view and Builder write none at all.
+  it('the All open orgs source select routes through the setter; nothing assigns _ring.sourceUrl', () => {
+    expect(RING).toMatch(/dsRingSrc'\)\?\.addEventListener\('change'[^]{0,200}?dsSetPreferredSource\(url\)/);
     expect(RING).not.toMatch(/_ring\.sourceUrl = /);
     expect(BUILDER).not.toMatch(/_ring\.sourceUrl = /);
-    expect((CORE.match(/_ring\.sourceUrl = [^'']/g) || []).length).toBe(1);
+    expect((CORE.match(/_ring\.sourceUrl = [^'']/g) || []).length).toBe(0);
   });
 
-  it("the topbar dropdown lists EVERY known org — a non-member can be crowned directly", () => {
+  it('the topbar chip lists the orgs open in Chrome and nothing else', () => {
     const i = CORE.indexOf('function renderWorkingPair()');
-    const fn = CORE.slice(i, i + 2600);
-    // candidates come from allMapOrgs(), never scoped to _ring.orgs
-    // (user repro 2026-08-13: dropdown showed ONLY orgfarm while the ring
-    // config listed all 3 known orgs)
-    expect(fn).toMatch(/const candidates = \[\.\.\.orgs\.map\(o => o\.url\)\]/);
-    expect(fn).not.toMatch(/_ring\?\.orgs\?\.length \? _ring\.orgs/);
-    // non-members are labeled, ring members sort first
-    expect(fn).toContain("' — not in the ring yet'");
-    expect(fn).toMatch(/sort\(\(a, b\) => \(inRing\(b\) - inRing\(a\)\)\)/);
-  });
-
-  it('the ring config carries no source radios and no silent crown fallback', () => {
-    expect(RING).not.toMatch(/name="dsRingSrc"/);
-    expect(RING).not.toMatch(/sourceUrl = _ring\.orgs\[0\]/);
-    // membership handler still exists (checkboxes are the panel's job)
-    expect(RING).toMatch(/\.ds-ring-cb'\)/);
+    const fn = CORE.slice(i, CORE.indexOf('\n}', i) + 2);
+    expect(fn).toContain('sftkOpenOrgs()');
+    expect(fn).not.toMatch(/<select|inRing|not in the ring yet/);
   });
 });
 

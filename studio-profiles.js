@@ -500,27 +500,13 @@ function profileCard(p) {
   const lastRun     = _history.filter(h => h.profileId === p.id).sort((a,b) => b.startedAt.localeCompare(a.startedAt))[0];
 
   const hasOrgs = !!(p.sourceOrg && p.targetOrg);
-  // 👑/⚠ — is this deployment's own source the ring's source of truth?
-  // ▶ Run and 🔄 Refresh state use the deployment's OWN pair (by design — a
-  // saved pair is intentional); the chip makes any divergence visible so the
-  // user never mistakes a card scan for a ring-flow scan.
-  const _ringOn = typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2;
-  const sotChip = !hasOrgs || !_ringOn ? ''
-    : _orgKey(p.sourceOrg) === _orgKey(_ring.sourceUrl)
-      ? `<span class="ds-td-sot" title="This deployment's source IS your Sync Ring's source of truth.">👑</span>`
-      : `<span class="ds-profile-sot-diff" title="This deployment's source (${esc(orgLabel(p.sourceOrg))}) is NOT your Sync Ring's source of truth (${esc(orgLabel(_ring.sourceUrl))}). ▶ Run and 🔄 Refresh state here use the deployment's own pair; the Sync Ring flows from the source of truth.">⚠ off-ring source</span>`;
+  // Last-used pair, shown plainly (campaign 4 phase 2, user 2026-10-01): the
+  // Deploy page lets you pick any open orgs, so no crown / ring chip here.
   const orgRow  = hasOrgs
-    ? `<div class="ds-profile-card-orgs">
-         <span class="ds-profile-card-org">${esc(orgLabel(p.sourceOrg))}</span>${sotChip}
+    ? `<div class="ds-profile-card-orgs" title="last used pair — pick any open orgs on the Deploy page">
+         <span class="ds-profile-card-org">${esc(orgLabel(p.sourceOrg))}</span>
          <span class="ds-profile-card-org-arrow">→</span>
-         ${(() => {
-           const tgts = profileTargets(p);
-           const follows = profileFollowsRing(p) && _ringOn;
-           if (tgts.length > 1 || (follows && tgts.length)) {
-             return `<span class="ds-profile-card-org" title="${esc(tgts.map(u => orgLabel(u)).join(' · '))}${follows ? ' — follows the Sync Ring (grows with it)' : ' — pinned set'}">${follows ? '🔄 ring targets' : `📌 ${tgts.length} targets`} (${tgts.length})</span>`;
-           }
-           return `<span class="ds-profile-card-org">${esc(orgLabel(p.targetOrg))}</span>`;
-         })()}
+         <span class="ds-profile-card-org">${esc(orgLabel(p.targetOrg))}</span>
        </div>`
     : `<div class="ds-profile-card-orgs ds-profile-card-orgs-missing">
          ⚠ Source and target orgs not set — click ✏ Edit to configure

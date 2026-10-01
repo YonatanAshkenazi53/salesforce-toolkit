@@ -161,12 +161,12 @@ function renderFieldAudit() {
       <button class="ds-btn ds-btn-primary" id="faLoad">Load fields</button>
       <button class="ds-btn" id="faScan" style="display:${_faFields.length ? '' : 'none'}">📊 Measure usage</button>
       <button class="ds-btn" id="faCrossBtn" style="display:${(_faFields.length && targets.length) ? '' : 'none'}"
-              title="Run the same fill-rate measurement against the Sync Ring's other orgs, so a field that looks unused here can be seen as heavily used elsewhere BEFORE anyone deletes it.">🌐 Compare across ring</button>
+              title="Run the same fill-rate measurement against the other orgs open in Chrome, so a field that looks unused here can be seen as heavily used elsewhere BEFORE anyone deletes it.">🌐 Compare across open orgs</button>
       <button class="ds-btn ds-btn-danger" id="faCancelBtn" style="display:none">✋ Cancel</button>
       <span id="faProgress" class="ds-fa-progress"></span>
     </div>
     ${ringMovedFrom ? `<div style="font-size:12px;border:1px solid #C5DBF0;background:#E8F4FD;color:#014486;border-radius:8px;padding:8px 11px;margin-bottom:10px">
-      👑 The Sync Ring's source of truth moved to <strong>${esc(orgLabel(ringSrc))}</strong>
+      The source moved to <strong>${esc(orgLabel(ringSrc))}</strong>
       (was <strong>${esc(orgLabel(ringMovedFrom))}</strong>) — Field Audit followed it.
       Pick a different org above to pin this view instead.</div>` : ''}
     ${droppedFrom ? `<div style="font-size:12px;border:1px solid #F0C36D;background:#FFF8E6;color:#5C4405;border-radius:8px;padding:8px 11px;margin-bottom:10px">
@@ -630,7 +630,7 @@ async function _faCompareAcrossRing() {
   const org = _faLoadedOrg, obj = _faLoadedObj;
   if (!org || !obj || !_faFields.length) { showToast('Load an object first', 'warning'); return; }
   const targets = faRingTargets().filter(u => _orgKey(u) !== _orgKey(org));
-  if (!targets.length) { showToast('The Sync Ring has no other orgs to compare against', 'warning'); return; }
+  if (!targets.length) { showToast('No other orgs are open to compare against', 'warning'); return; }
 
   _faCrossRunning = true;
   _faCancel = false;
@@ -653,7 +653,7 @@ async function _faCompareAcrossRing() {
   const orgUrls    = [org, ...targets].slice(0, FA_CROSS_MAX_ORGS);
   const notes      = [
     `Capped at the top ${fieldApis.length} delete-candidate field${fieldApis.length === 1 ? '' : 's'} of ${candidates.length} non-formula custom fields on ${obj}.`,
-    `Capped at ${orgUrls.length} org${orgUrls.length === 1 ? '' : 's'} (the loaded org + up to ${FA_CROSS_MAX_ORGS - 1} Sync Ring targets)${targets.length > FA_CROSS_MAX_ORGS - 1 ? ` — ${targets.length - (FA_CROSS_MAX_ORGS - 1)} ring target(s) were NOT checked` : ''}.`,
+    `Capped at ${orgUrls.length} org${orgUrls.length === 1 ? '' : 's'} (the loaded org + up to ${FA_CROSS_MAX_ORGS - 1} other open orgs)${targets.length > FA_CROSS_MAX_ORGS - 1 ? ` — ${targets.length - (FA_CROSS_MAX_ORGS - 1)} open org(s) were NOT checked` : ''}.`,
     'Formula fields are excluded — COUNT() aggregates do not apply to them.',
   ];
 

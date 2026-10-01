@@ -70,6 +70,6 @@ describe('the scan, the Deploy page and the ring are wired to the bucket', () =>
   it('the ring cell counts ambiguous rows as not in sync and shows ⚠N', () => {
     expect(RG).toContain('const drift = (s.missing || 0) + (s.changed || 0) + (s.extra || 0) + (s.ambiguous || 0);');
     expect(RG).toContain('<b class="ds-ring-a">⚠${s.ambiguous}</b>');
-    expect((RG.match(/ambiguous: \([\w.]+\.ambiguous \|\| \[\]\)\.length,/g) || []).length).toBeGreaterThanOrEqual(3);
+    expect((RG.match(/ambiguous: \([\w.]+\.ambiguous \|\| \[\]\)\.length,/g) || []).length).toBeGreaterThanOrEqual(2);   // the native lastScan summary + the 🔎 scan deposit (⚖ no longer scans)
   });
 });

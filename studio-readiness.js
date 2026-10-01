@@ -60,8 +60,8 @@ async function renderReadiness() {
       </div>`;
         const ls = _liveOrgSet();
         return `
-      <div class="ds-pk-sot-line" title="Every target below is checked against this org's schema. Change it in the topbar SOURCE menu.">
-        👑 Source of truth: <strong>${esc(orgOptionLabel(ring.src, orgLabel(ring.src), ls))}</strong>
+      <div class="ds-pk-sot-line" title="Every target below is checked against this org's schema. Change it on the All open orgs page.">
+        Source: <strong>${esc(orgOptionLabel(ring.src, orgLabel(ring.src), ls))}</strong>
         ${!ls.has(_orgKey(ring.src)) ? '<span style="color:#92400e">— open it in a Chrome tab, schemas are read from it</span>' : ''}
       </div>
       <div class="ds-pk-cmp-lbl" style="margin-top:6px">Check readiness of</div>
@@ -401,7 +401,7 @@ async function runReadinessCheck() {
     resultsEl.style.display = '';
     resultsEl.innerHTML = `
       <div class="dr-run-attrib" style="font-size:12.5px;margin-bottom:8px">
-        ${ring ? '👑 ' : ''}<strong>${esc(orgLabel(srcId))}</strong> → ${tgtIds.map(u => esc(orgLabel(u))).join(' · ')}
+        <strong>${esc(orgLabel(srcId))}</strong> → ${tgtIds.map(u => esc(orgLabel(u))).join(' · ')}
         <span style="color:var(--subtext)"> · ${objects.length} object(s) · ${esc(new Date().toLocaleString())}</span>
       </div>
       <div class="dr-progress">

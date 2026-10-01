@@ -235,8 +235,8 @@ function sftkOhPicklistsVerdict(inp) {
   const obj = i.obj || 'the object';
   const ringCount = Number(i.ringCount) || 0;
   if (ringCount < 2) {
-    return { tone: 'warn', headline: 'Needs a Sync Ring with 2+ orgs',
-      lines: ['Nothing was read — picklists are compared between the orgs of the Sync Ring. Add the orgs there, then check again.'] };
+    return { tone: 'warn', headline: 'Needs 2+ open orgs',
+      lines: ['Nothing was read — picklists are compared between the orgs open in Chrome. Open at least two, then check again.'] };
   }
   const skipped = i.skipped || [], rows = i.rows || [], usable = Number(i.usable) || 0;
   const lines = skipped.map(s => `${s.label} — ${s.skip} — NOT part of this check`);
@@ -497,8 +497,8 @@ const OH_CARDS = [
     },
   },
   {
-    id: 'picklists', icon: '📋', title: 'Picklists drifting between the ring’s orgs',
-    what: 'One object’s picklist fields (up to 25) compared across every org of the Sync Ring — values, labels, active state, defaults and record-type assignments — the Picklist Manager’s own sweep, read-only. Every ring org must be open in a Chrome tab; an org that is not is named and the result is never “in sync”.',
+    id: 'picklists', icon: '📋', title: 'Picklists drifting between your open orgs',
+    what: 'One object’s picklist fields (up to 25) compared across every org open in Chrome — values, labels, active state, defaults and record-type assignments — the Picklist Manager’s own sweep, read-only. Every org compared must be open in a Chrome tab; an org that is not is named and the result is never “in sync”.',
     input: { label: 'Object', placeholder: 'Account', default: 'Account' },
     calls: () => {
       const n = (typeof _ring === 'object' && _ring && (_ring.orgs || []).length) || 0;
@@ -508,7 +508,7 @@ const OH_CARDS = [
       const obj = sftkOhObjectName(ctx.input);
       if (!obj) throw new Error('type an object API name (for example Account or MyObject__c)');
       const ringUrls = (typeof _ring === 'object' && _ring && _ring.orgs) || [];
-      const ringFix = { label: 'Open Sync Ring', view: 'ring' };
+      const ringFix = { label: 'Open the All open orgs page', view: 'ring' };
       if (ringUrls.length < 2) return { ...sftkOhPicklistsVerdict({ obj, ringCount: ringUrls.length }), fix: ringFix };
       const orgs = await _pkSweepOpenOrgs(ringUrls, obj);
       const usable = orgs.filter(o => o.sess && o.desc);

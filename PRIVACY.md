@@ -42,8 +42,7 @@ not exfiltrate data past this policy.
 | `apex_log_viewer_*` | Raw Apex log bodies handed to the log-viewer tab |
 | `sftk_dep_cache` | Flow subflow-dependency map per org (flow version ids, API names, labels, version numbers, statuses) plus each version's `LastModifiedDate`, so reopening the popup re-reads only what changed. Capped at 3 orgs / 1.5 MB total, least-recently-used evicted; raw flow metadata is never stored |
 | `ds_scans`, `ds_scan_results` | Saved comparison results: record ids and match-key values for the records a scan found on each side |
-| `ds_ring`, `ds_connections`, `ds_stored_orgs` | Your multi-org setup: which orgs are grouped, which is the source of truth, your labels for them |
-| `ds_sched_drift` | Latest scheduled drift-check result: per-org record counts and any errors |
+| `ds_connections`, `ds_stored_orgs` | Your multi-org setup: the orgs you connected and your labels for them |
 | `sftk_flow_run_paused` | Record-triggered flows a deployment switched off, per org (flow name, object, the version to switch back on) — removed as soon as they are back on |
 | `sftk_orghealth` | Org health: the last answer of each check per org — counts, and the names of the licences, users, flows, pages, picklist fields or custom fields it found |
 | `ds_readiness_state`, `ds_settings` | Deploy-readiness selections and Data Studio preferences |

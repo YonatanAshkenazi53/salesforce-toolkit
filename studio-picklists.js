@@ -550,14 +550,14 @@ function _pkRenderCompareConfig() {
   // and offer the one click that fixes it — an absent explanation reads as a
   // bug, and the matrix genuinely behaves differently without a golden org.
   const sotLine = sotOrg
-    ? `<div class="ds-pk-sot-line" title="Always part of the comparison — every org below is compared against it. Change it in the topbar SOURCE menu.">
-        Source of truth: <strong>${esc(orgOptionLabel(sotOrg.url, sotOrg.label))}</strong>
+    ? `<div class="ds-pk-sot-line" title="Always part of the comparison — every org below is compared against it. Change it on the All open orgs page.">
+        Source: <strong>${esc(orgOptionLabel(sotOrg.url, sotOrg.label))}</strong>
         ${(!_liveOrgSet().has(_orgKey(sotOrg.url))) ? '<span class="ds-pk-sot-warn">— open it in a Chrome tab, the matrix reads from it</span>' : ''}
       </div>`
     : `<div class="ds-pk-sot-line ds-pk-sot-unset">
-        No source of truth set — the orgs you tick are compared side by side, with none treated as golden, and
+        No source picked — the orgs you tick are compared side by side, with none treated as the source, and
         <strong>🔄 Sync from source</strong> has nothing to sync from.
-        <button class="ds-btn ds-btn-xs" id="dsPkGoRing" style="margin-left:6px">Set one in Sync Ring</button>
+        <button class="ds-btn ds-btn-xs" id="dsPkGoRing" style="margin-left:6px">Pick one in All open orgs</button>
       </div>`;
   const chks = orgs.filter(o => !(_sotUrl && _orgKey(o.url) === _orgKey(_sotUrl))).map(o =>
     `<label class="ds-pk-orgchk"><input type="checkbox" data-pk-cmporg="${esc(o.url)}" ${_pkCmpOrgs.includes(o.url) ? 'checked' : ''}> ${esc(orgOptionLabel(o.url, o.label))}</label>`).join('');
@@ -1715,7 +1715,7 @@ function _pkRenderMatrix() {
       ${cols.map(c => `<div class="ds-pk-mx-col">
         <label class="ds-pk-mx-orgsel"><input type="checkbox" class="ds-pk-mx-orgchk" data-org="${esc(c.orgUrl)}" ${c.inv ? 'checked' : 'disabled'}${c.metaRO ? ` title="${esc(c.metaRO)}"` : ''}> ${esc(c.label)}</label>
         ${(typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2 && _orgKey(c.orgUrl) === _orgKey(_ring.sourceUrl))
-          ? `<span class="ds-pk-mx-sot" title="Your Sync Ring's source of truth — 🔄 Sync from source pre-selects this org as the source.">${dsIcon('crown')}source of truth</span>` : ''}
+          ? `<span class="ds-pk-mx-sot" title="Your current source — 🔄 Sync from source pre-selects this org as the source.">source</span>` : ''}
         ${c.skip ? `<span class="ds-pk-mx-skip" title="${esc(c.skip)}">skipped: ${esc(c.skip)}</span>`
           : c.metaRO ? `<span class="ds-pk-mx-skip" title="${esc(c.metaRO)}">standard — read-only</span>${prodBadge(c.orgUrl)}`
           : prodBadge(c.orgUrl)}
@@ -2685,12 +2685,12 @@ async function _pkOpenSyncPlan() {
     // dialog doesn't use, so the scan gate can't be raced by it).
     const bodyHtml = `
       <div class="ds-plan-op" style="margin-bottom:10px">
-        Source of truth:
+        Source:
         ${srcLocked
-          ? `<strong>${esc(loaded[srcIdx].label)}</strong> <span class="ds-pk-mx-sot" title="Locked to your Sync Ring's source of truth — every sync flows FROM it. Change it in the topbar SOURCE menu.">👑 source of truth</span>`
+          ? `<strong>${esc(loaded[srcIdx].label)}</strong> <span class="ds-pk-mx-sot" title="Locked to your current source — every sync flows FROM it. Change it on the All open orgs page.">source</span>`
           : `<select id="dsPkSyncSrc" class="ds-select ds-select-sm">
               ${loaded.map((r, i) => `<option value="${i}" ${i === srcIdx ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}
-            </select>${ringSrcKey ? ` <span style="font-size:11px;color:var(--warning)">⚠ your 👑 source of truth isn't loaded in this matrix — reload the matrix with it, or pick a source explicitly</span>` : ''}`}
+            </select>${ringSrcKey ? ` <span style="font-size:11px;color:var(--warning)">⚠ your current source isn't loaded in this matrix — reload the matrix with it, or pick a source explicitly</span>` : ''}`}
         <span class="ds-pk-hint">every other loaded org becomes a target</span>
       </div>
       ${plans.map((pl, pi) => {
@@ -3074,7 +3074,7 @@ async function _pkSweepObject() {
       <div class="ds-pk-summary">🧹 Whole-object sweep · <strong>${esc(obj)}</strong> ·
         ${fields.length} picklist field${fields.length !== 1 ? 's' : ''} × ${usable.length} org${usable.length !== 1 ? 's' : ''}
         <span id="dsPkSwProgress" style="color:var(--subtext)">— starting…</span></div>
-      <div class="ds-pk-note">Field list &amp; sync direction come from <strong>${esc(srcOrg.label)}</strong>${ringKey && srcOrg.orgKey === ringKey ? ' 👑 source of truth' : ' — no ring source of truth is loaded, so this is simply the first readable org'}.
+      <div class="ds-pk-note">Field list &amp; sync direction come from <strong>${esc(srcOrg.label)}</strong>${ringKey && srcOrg.orgKey === ringKey ? ' (your current source)' : ' — your current source is not loaded, so this is simply the first readable org'}.
         Record counts are <strong>NOT</strong> loaded in a sweep (that would be one aggregate query per field per org); each field's 🔄 Sync re-reads them, plus record types and the automation check, before anything is written.</div>
       ${capped > 0 ? `<div class="ds-pk-note">⚠ Capped at ${FIELD_CAP} fields — <strong>${capped}</strong> further picklist field(s) on ${esc(obj)} were NOT swept: ${esc(allFields.slice(FIELD_CAP).map(f => f.name).join(', '))}</div>` : ''}
       ${skipped.length ? `<div class="ds-pk-note">⚠ Skipped ${skipped.length} org(s): ${esc(skipped.map(o => `${o.label} (${o.skip})`).join(' · '))} — they are NOT part of any verdict below.</div>` : ''}

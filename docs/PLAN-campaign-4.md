@@ -79,6 +79,8 @@ leaves a deployment "broken". The user read the menu as "which org am I looking 
 
 **Build (in this order, each step gated and pushed).**
 
+**Steps 3 + 5 + 6 DONE 2026-10-01** (commit follows; Fable core + Sonnet sweep, Fable review + live): no crown anywhere — `_ring` is a derived view (`sftkRingView`: preferred source + other open orgs), `currentSourceOrg()` = the last pick, `dsSetPreferredSource` re-points nothing; `syncRingFollowers`, `dsSetSourceOfTruth`, `sftkRingRebaseline`, the ring membership / crown history / scheduled drift probe (background `SF_SET_RING_SCHEDULE` / `SF_RUN_RING_PROBE`), `sourcePinned` / `targetOrgs` / `_srcCrownMoved` writes, the Builder lock / pin / 👑 promote and the 👑 dropdown suffix are gone; the top bar shows a read-only "N orgs open" chip; the ring page is "All open orgs" (source select `#dsRingSrc`, columns = other open orgs, ⚖ sets the pair on the SAVED deployment and opens it — no clone); the Builder has two plain selects (source, default target). Tests rewritten (`ui-studio` ring blocks, `ent-profile-io`, `pure-functions`, …) + new `open-orgs-model-1001`. Live in the harness with both orgs: chip "2 orgs open · trailheads5 · trailheads4"; All open orgs → pick trailheads5 → 🔎 scan the Accounts tree cell → ⚖ → the Deploy page on the saved deployment, trailheads5 → trailheads4, picker on top. Left for step 4: `openReconcile`'s `pair_` clone for a non-primary target and the `_ringOf` branches in studio-scan / studio-reconcile.
+
 **Step 1 + 2 DONE 2026-10-01** (commit follows): `sftkOpenOrgs()` in studio-core.js; `sftkDeployOrgPicker` (pure) + `_depOrgPickerHtml` / `_depSetPair` / `_depWireOrgPicker` in studio-deploy.js — the picker on both Deploy page branches; the pick saves the pair as last-used and (until step 3) pins both sides so the ring plumbing cannot re-point it. Test `deploy-org-picker-1001`; live in the harness with both orgs logged in (`picker-live.mjs`, scratchpad): both orgs offered, ⇄ swap saved and the page asked to read the new pair.
 1. `sftkOpenOrgs()` — one function both pages use for "orgs open in Chrome" (label, url, key,
    sandbox/production flag), from the sessions the background already lists.
@@ -171,6 +173,10 @@ live run view (Phase 1) in place. The advisor notes become one "Before you deplo
 **Size.** 2 days. Last, because Phase 5 changes step 1.
 
 ---
+
+## Backlog (found during the campaign)
+
+- **Synced records beyond the 5,000 window cannot be found (user 2026-10-01: "5000 contacts are in sync and 1740 is not. but where are they").** The Synced tab lists the first 5,000 identical records and says the rest (1,740 here) exist; the filter searches only the loaded 5,000, so a user cannot confirm one specific record is in sync. Fix: keep the match KEY (name) of every synced record in the scan result (keys only — a few bytes each, no fields), list by name with the filter over all of them, and load a record's details on click. Same for the other buckets' windows.
 
 ## Order and effort
 
