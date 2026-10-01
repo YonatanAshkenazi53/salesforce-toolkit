@@ -140,6 +140,17 @@ function sftkFriendlyError(raw) {
     out.hint = 'Delete those interviews first (Setup → Paused And Failed Flow Interviews), then try again.';
     return out;
   }
+  // "sObject type 'X' is not supported" — the org has no such object (a
+  // deployment built for another org, re-pointed by the ring crown — user
+  // 2026-09-30, the toast quoted Salesforce's WSDL advice).
+  m = s.match(/sObject type '([^']+)' is not supported/i);
+  if (m) {
+    out.type = 'missing-object';
+    out.object = m[1];
+    out.message = `This org has no object named ${m[1]}`;
+    out.hint = 'This deployment was built for an org that has it. Check the API name on the deployment, or point it at an org that has the object.';
+    return out;
+  }
   if (/DUPLICATES_DETECTED|Use one of these records\?/i.test(s)) {
     out.type = 'duplicate';
     out.message = 'A duplicate rule in the target org flagged this record and blocked the write';

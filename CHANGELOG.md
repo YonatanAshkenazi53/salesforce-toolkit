@@ -43,6 +43,7 @@ extensions containing root files that start with `_`).
   Sequences still run whole deployments as before.
 
 ### Fixed
+- **Three things the run log and the ring got wrong.** When the source of truth has no object a deployment needs, the toast now says so in words and names the org it read, instead of quoting Salesforce's SOQL error about the wrong org. The run log keeps the engine's information lines (Bulk API chosen, person-account name parts, lookups resolved) grey instead of painting them red after a failure. The "names used by more than one record" line counts all of them, not just the five it shows.
 - **⚠ Ambiguous says what it means.** The tab now opens with a plain explanation of why records land there and what each choice does. The choices read "📌 Same as #1" and "➕ New in <org>" instead of "pair with" and "insert as new", every row says how many records share the name on each side, and rows with several candidates wrap instead of pushing the page sideways.
 - **A parents-first step always finds its way back.** "‹ Back to Account" did nothing when the deployment it was opened from was not a saved one (a target picked at 🚀 Deploy time, a Sync Ring cell). The step now remembers where it came from, and the button returns there with the scan intact.
 - **The field compare dialog is dark in dark mode.** Its header, fold and footer bars and the value chips were painted light on a dark page (a variable the page never defines, and dark rules written for the Toolkit popup's theme class). They now follow Data Studio's own theme, OLED included.
