@@ -2649,6 +2649,12 @@ async function runReconcile(profile, objType, buckets, opts) {
   };
   if (prog) prog.innerHTML = '<div class="ds-prog-hdr">Reconcile progress</div>';
   const runBtn = eid('dsRecRunBtn'); if (runBtn) runBtn.disabled = true;
+  // The Deploy page re-renders on every state change (a ring tile landing, a
+  // tab switch) — while this flag is on it keeps the SAME #dsRecProgress node
+  // instead of snapshotting it as "Last run on this page" (user 2026-10-01:
+  // "i switched to another tab and came back, now the counter stopped").
+  window._sftkRunActive = true;
+  window._sftkRunLogNode = prog;   // the node to put back after a repaint, even from another view
 
   const allSess = _buildAllSessions();
   const srcSess = _resolveSession(profile.sourceOrg, allSess);
@@ -2656,13 +2662,14 @@ async function runReconcile(profile, objType, buckets, opts) {
   if (!srcSess?.sid || !tgtSess?.sid) {
     log('❌', 'Source or target org session not active — open both in Chrome tabs.', 'ds-prog-err');
     if (runBtn) runBtn.disabled = false;
+    window._sftkRunActive = false;
     return;
   }
   // ⏸ after the confirmation, before the first write (see opts above)
   if (_fp && opts && typeof opts.beforeWrites === 'function') {
     let go = false;
     try { go = await opts.beforeWrites(tgtSess, log); } catch (e) { log('❌', `Pausing the flows failed — the run did not start: ${e?.message || e}`, 'ds-prog-err'); go = false; }
-    if (!go) { if (runBtn) runBtn.disabled = false; return; }
+    if (!go) { if (runBtn) runBtn.disabled = false; window._sftkRunActive = false; return; }
   }
 
   // Stream the engine's per-batch progress into the reconcile log (also
@@ -3369,6 +3376,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   await storageSaveHistory();
 
   log('✅', `Reconcile complete — refreshing state…`);
+  window._sftkRunActive = false;
   // Remember which child sections had scans BEFORE the root refresh wipes
   // lastScan.children — they get re-scanned right after so the accordion
   // reflects the new reality (and just-created orphans are visible).

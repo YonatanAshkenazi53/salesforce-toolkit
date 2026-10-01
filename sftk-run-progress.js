@@ -127,7 +127,9 @@ function sftkRunProgressCardText(c, now) {
   const pct = total ? Math.min(100, Math.round(done / total * 100)) : 0;
   out.pct = pct;
   out.failPct = total ? Math.min(pct, Math.round((c.failed || 0) / total * 100)) : 0;
-  const rate = elapsedMs > 0 && done > 0 ? done / (elapsedMs / 1000) : 0;
+  // No rate before two seconds have passed — the first batch landing at 0:00
+  // read "207100/s" in the harness.
+  const rate = elapsedMs >= 2000 && done > 0 ? done / (elapsedMs / 1000) : 0;
   const left = rate > 0 && total > done ? (total - done) / rate : null;
   const rateText = rate >= 10 ? `${Math.round(rate)}/s` : rate > 0 ? `${rate.toFixed(1)}/s` : '';
   const verb = c.mode === 'bulkRead' ? 'read' : 'written';
@@ -195,19 +197,26 @@ function sftkRunProgressHandler(logEl) {
   }
 
   function tick() {
-    if (!logEl || !logEl.isConnected || state.ended) { stop(); return; }
+    if (!logEl || state.ended) { stop(); return; }
+    if (!logEl.isConnected) { pendingRepaint = true; return; }   // detached for a repaint — wait, don't give up
     const now = Date.now();
     let alive = false;
-    for (const c of state.cards.values()) { if (!c.finished) { alive = true; paint(c, now); } }
+    for (const c of state.cards.values()) { if (!c.finished || pendingRepaint) paint(c, now); if (!c.finished) alive = true; }
+    pendingRepaint = false;
     if (!alive) stop();
   }
   function start() { if (!ticker) ticker = setInterval(tick, 1000); }
   function stop() { if (ticker) { clearInterval(ticker); ticker = null; } }
 
+  // A page repaint can detach the node for a moment (the Deploy page puts the
+  // same node back). Events keep folding into the state meanwhile; the ticker
+  // repaints every live card once the node is connected again.
+  let pendingRepaint = false;
   return (evt) => {
-    if (!evt || !logEl || !logEl.isConnected) return;
+    if (!evt || !logEl) return;
     const now = Date.now();
     const r = sftkRunProgressReduce(state, evt, now);
+    if (!logEl.isConnected) { pendingRepaint = true; start(); return; }
     if (!r) return;
     if (r.ended) { for (const c of state.cards.values()) paint(c, now); stop(); return; }
     if (r.step) {
