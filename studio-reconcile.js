@@ -2856,7 +2856,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       counts.pulledFailed += (s.failed  || 0);
       log(s.failed ? '⚠' : '✅', `Pulled ${s.created || 0}${s.failed ? `, ${s.failed} failed` : ''} into source`, s.failed ? 'ds-prog-err' : '');
       (res.errors || []).forEach(e => allErrors.push(`pull: ${e}`));
-      (res.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
+      _recLogEngineLines(log, res.errors);
     } catch (e) { allErrors.push(`Pull failed: ${e?.message || e}`); log('❌', `Pull failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
 
