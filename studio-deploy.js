@@ -331,7 +331,7 @@ async function renderDeploy() {
   if (scan.dupKeys?.rows) notes.push(sftkRecDupsHtml(scan, p));
   // Phase 5 — the ambiguous copies are listed, not guessed: say where.
   { const nAmb = (scan.ambiguous || []).length;
-    if (nAmb) notes.push(`⚠ <b>${nAmb.toLocaleString()} ${esc(p.tree?.objectType || p.tree?.childSObject || '')} record(s) are ambiguous</b> — both orgs hold their match key more than once, so the scan cannot tell which copy is which. Nothing is deployed for them until you choose: open <b>⚠ Ambiguous</b> below to 📌 pair each copy with its target record, or ➕ mark it as new.`); }
+    if (nAmb) notes.push(`⚠ <b>${nAmb.toLocaleString()} ${esc(p.tree?.objectType || p.tree?.childSObject || '')} record(s) are ambiguous</b> — more than one record carries the same name, so the scan cannot tell which is which. Nothing is deployed for them until you choose: open <b>⚠ Ambiguous</b> below and say, per record, 📌 which ${esc(orgLabel(p.targetOrg))} record it is the same as, or ➕ that it is new there.`); }
   // child objects: the same card, without the root's fix buttons (they act on the root's key)
   for (const [pk, cs] of Object.entries(scan.children || {})) {
     if (!cs || !cs.dupKeys || !cs.dupKeys.rows) continue;
@@ -646,6 +646,22 @@ async function _depPaintOrder(p, scan) {
   }
 }
 
+// ⚠ Ambiguous — what the tab means and what each choice does, in words the
+// user asked for (2026-10-01: "what these means? insert as new, pair, etc.").
+function _depAmbIntro(p, isRoot) {
+  const srcL = esc(orgLabel(p.sourceOrg)), tgtL = esc(orgLabel(p.targetOrg));
+  return `<div class="ds-dep-note ds-dep-amb-intro">
+    <div><b>Why these records are here.</b> Records are recognised across the two orgs by their name (the match key). Each record below shares its name with another record, in ${srcL}, in ${tgtL}, or both, so the Toolkit cannot tell which is which. Nothing in this list is deployed until you decide, one record at a time.</div>
+    ${isRoot ? `<ul>
+      <li><b>📌 Same as #1</b> — this ${srcL} record and record #1 in ${tgtL} are the same record. From now on they are compared and updated as a pair.</li>
+      <li><b>➕ New in ${tgtL}</b> — this record does not exist in ${tgtL} yet. It moves to 🔴 Insert and is created there when you deploy.</li>
+      <li><b>#1 ↗</b> opens that ${tgtL} record in a new tab, so you can check before choosing.</li>
+    </ul>
+    <div>Each choice is remembered for ${tgtL} together with the pairs from 🔗 Match review, and both orgs are read again right away.</div>`
+    : `<div>For a child object the choice cannot be made by hand: give it a second match field (✏ Edit → Records → Matching) so its records can be told apart by more than the name, then scan again.</div>`}
+  </div>`;
+}
+
 // The deployment a parents-first step was opened FROM: the saved one by id,
 // else the unsaved object the step kept (a pair clone / ring ⚖ origin is not
 // in _profiles — the old lookup found nothing and the button did nothing).
@@ -799,17 +815,21 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
       // Phase 5 — the copies and the target records each could be. A choice is
       // remembered (match memory, per target org) and the orgs are read again.
       const cands = r.candidates || [];
-      extra = `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="The same match key is held by ${(r.twins || []).length + 1} source and ${cands.length} target record(s) — which is which cannot be told from the key.">${(r.twins || []).length ? `${(r.twins || []).length + 1} copies in ${esc(orgLabel(p.sourceOrg))} · ` : ''}${cands.length} possible in ${esc(orgLabel(p.targetOrg))}</span>`;
+      // User 2026-10-01: "the user will have no idea what it means" — say it
+      // in words: how many share the name on each side, and what each choice
+      // does to THIS record. The tab's intro (above the list) explains once.
+      const nSrc = (r.twins || []).length + 1, srcL = orgLabel(p.sourceOrg), tgtL = orgLabel(p.targetOrg);
+      extra = `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="${nSrc} record(s) in ${esc(srcL)} and ${cands.length} in ${esc(tgtL)} carry this name — the name alone cannot say which is which.">${nSrc > 1 ? `${nSrc} with this name in ${esc(srcL)} · ` : ''}${cands.length} with this name in ${esc(tgtL)}</span>`;
       tail = isRoot
-        ? `${cands.map((t, i) => `<button class="ds-dep-link" data-dep-amb-pin="${esc(r.sourceId)}|${esc(t)}" title="Remember: this source record IS that target record — the next scan compares them as a pair">📌 pair with #${i + 1}</button> <a class="ds-dep-open" href="${recUrl(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open target record #${i + 1}">#${i + 1} ↗</a>`).join(' · ')} · <button class="ds-dep-link" data-dep-amb-new="${esc(r.sourceId)}" title="Remember: this source record has no counterpart in the target — the next scan lists it under 🔴 Insert">➕ insert as new</button>`
-        : `<span class="ds-rec-pnote" title="Pairing by hand is for the root object; a child object needs a match key that tells the copies apart">add a second match field (✏ Edit → Records → Matching)</span>`;
+        ? `${cands.map((t, i) => `<button class="ds-dep-link" data-dep-amb-pin="${esc(r.sourceId)}|${esc(t)}" title="This ${esc(srcL)} record and record #${i + 1} in ${esc(tgtL)} are the same record. From now on they are compared and updated as a pair.">📌 Same as #${i + 1}</button> <a class="ds-dep-open" href="${recUrl(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open record #${i + 1} in ${esc(tgtL)} to check it before choosing">#${i + 1} ↗</a>`).join(' · ')} · <button class="ds-dep-link" data-dep-amb-new="${esc(r.sourceId)}" title="This record does not exist in ${esc(tgtL)} yet. It moves to 🔴 Insert and is created there when you deploy.">➕ New in ${esc(tgtL)}</button>`
+        : `<span class="ds-rec-pnote" title="Choosing by hand works for the first object of the deployment only. A child object needs a second match field so its records can be told apart by more than the name.">cannot be chosen by hand for a child object — add a second match field (✏ Edit → Records → Matching)</span>`;
     } else {
       extra = r.personAccount ? '<span class="ds-rec-pnote" title="The Contact behind a Person Account — Salesforce creates and owns it.">👤 person account</span>' : '';
       // Synced = the COMPARED fields are equal. ▸ compare reads both records
       // live and shows every compared field side by side (user 2026-09-21).
       tail = `<button class="ds-dep-link" data-dep-fields="${esc(r.sourceId)}|${esc(r.targetId)}" title="Reads this record live from both orgs and shows every compared field side by side — what is equal, and anything that changed since the scan">▸ compare</button>`;
     }
-    return `<div class="ds-dep-row">${ctl || '<span></span>'}<span class="ds-dep-key" title="${k}">${k}</span><span class="ds-dep-mid">${near}${extra}</span><span class="ds-dep-tail">${tail} <span class="ds-dep-open">${links}</span></span></div>`;
+    return `<div class="ds-dep-row${tabDef.k === 'amb' ? ' ds-dep-row-amb' : ''}">${ctl || '<span></span>'}<span class="ds-dep-key" title="${k}">${k}</span><span class="ds-dep-mid">${near}${extra}</span><span class="ds-dep-tail">${tail} <span class="ds-dep-open">${links}</span></span></div>`;
   };
 
   const nAll = rows.length.toLocaleString();
@@ -828,6 +848,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
       : `only the ${info.shown.toLocaleString()} listed record(s) exist in this result, so “all listed” means those, not every record. Run what is listed, 🔄 Refresh state, and repeat — or narrow the deployment.`}</div>` : ''}
     ${!isRoot && s.personContacts ? `<div class="ds-dep-note">${esc(sftkPaContactsLine(s.personContacts, orgLabel(p.sourceOrg), orgLabel(p.targetOrg)))}</div>` : ''}
     ${!isRoot ? (s.warnings || []).map(w => `<div class="ds-dep-note">⚠ ${esc(String(w).replace(/^[⚠\s]+/, ''))}</div>`).join('') : ''}
+    ${tabDef.k === 'amb' && rows.length ? _depAmbIntro(p, isRoot) : ''}
     <div class="ds-dep-list">${shown.length ? shown.map(rowHtml).join('') : `<div class="ds-dep-empty">${q ? 'No record matches that filter.' : `Nothing ${esc(tabDef.noun)}.`}</div>`}</div>
     ${rows.length > shown.length ? `<div class="ds-dep-note">Showing ${shown.length.toLocaleString()} of ${rows.length.toLocaleString()} — the count is the truth, the list is a window. Filter to find a record.</div>` : ''}`;
 
