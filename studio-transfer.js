@@ -9,62 +9,10 @@
 // processed, 3 failed".
 //
 // Inline styles (no CSS file is owned here) match the ds-prog-row look.
-function _trRenderBulkRow(logEl, evt) {
-  if (!logEl || !logEl.isConnected) return;
-  const isRead = evt.phase === 'bulkQuery';
-  const obj    = String(evt.obj || evt.objType || '?');
-  const id     = `dsTrBulk_${isRead ? 'r' : 'w'}_${obj.replace(/[^\w]/g, '_')}`;
-  let row = logEl.querySelector(`#${id}`);
-  if (!row) {
-    row = document.createElement('div');
-    row.id = id;
-    row.className = 'ds-prog-row ds-prog-live';
-    logEl.appendChild(row);
-  }
-  const num  = n => (Number.isFinite(Number(n)) ? Number(n).toLocaleString() : '?');
-  const done = num(evt.processed);
-  // total is unknown while the job is still being sized — say "?" rather than
-  // inventing a denominator.
-  const tot  = (evt.total === null || evt.total === undefined) ? '?' : num(evt.total);
-  const verb = isRead ? 'read' : 'processed';
-  const tail = (!isRead && evt.failed) ? `, ${num(evt.failed)} failed` : '';
-  const icon = evt.state === 'Aborted' ? '✋' : (evt.state === 'JobComplete' ? '✅' : '⚡');
-  row.textContent = `${icon} ${obj} — Bulk ${isRead ? 'read' : 'write'} job: ${evt.state || 'InProgress'} — ${done} / ${tot} ${verb}${tail}`;
-  if (evt.state === 'Aborted') row.style.color = '#b45309';
-  logEl.scrollTop = logEl.scrollHeight;
-}
-
-// Wraps the shared progress handler: bulk phases get the dedicated row above,
-// everything else falls through unchanged.
-function _trProgressHandler(logEl) {
-  // Cross-file call (studio-scan.js) — guarded per the load-order rule.
-  const base = (typeof _runProgressHandler === 'function') ? _runProgressHandler(logEl) : () => {};
-  return evt => {
-    if (evt && (evt.phase === 'bulk' || evt.phase === 'bulkQuery')) {
-      _trRenderBulkRow(logEl, evt);
-      return;
-    }
-    // Real-time error feed (user 2026-08-18) — red rows as failures land,
-    // appended (not updated in place) so nothing scrolls out of history.
-    if (evt && evt.phase === 'errs' && Array.isArray(evt.lines) && logEl?.isConnected) {
-      for (const ln of evt.lines) {
-        const row = document.createElement('div');
-        row.className = 'ds-prog-row ds-prog-err';
-        row.textContent = `❌ ${ln}`;
-        logEl.appendChild(row);
-      }
-      if (evt.more) {
-        const r = document.createElement('div');
-        r.className = 'ds-prog-row ds-prog-err';
-        r.textContent = `…and ${evt.more} more error(s) in this batch — the full list lands in History.`;
-        logEl.appendChild(r);
-      }
-      logEl.scrollTop = logEl.scrollHeight;
-      return;
-    }
-    base(evt);
-  };
-}
+// The live run view (bulk job rows, batch bars, the real-time error feed) is
+// sftkRunProgressHandler in sftk-run-progress.js — shared by every page that
+// runs the engine since campaign 4 phase 1; this file's private wrapper and
+// bulk row are gone.
 
 // ════════════════════════════════════════════════════════════════
 // E3 — API-BUDGET AWARENESS
@@ -2012,7 +1960,7 @@ async function runTransfer() {
 
   // Live progress + Cancel: the Port streams per-batch counts into the log
   // (keeping the worker alive) and carries the cancel command back.
-  const runPort = _openRunPort(_trProgressHandler(eid('dsTrProgLog')));
+  const runPort = _openRunPort(sftkRunProgressHandler(eid('dsTrProgLog')));
   eid('dsTrCancelBtn')?.addEventListener('click', () => {
     try { runPort?.postMessage({ cmd: 'cancel' }); } catch (_) {}
     const cb = eid('dsTrCancelBtn');

@@ -111,34 +111,8 @@ function _openRunPort(onEvent) {
 
 // Renders progress events into a log element: one LIVE line per object
 // (updated in place per batch) + a step line per sequence step.
-function _runProgressHandler(logEl) {
-  let stepIdx = 0;
-  return (evt) => {
-    if (!evt || !logEl || !logEl.isConnected) return;
-    if (evt.phase === 'hb' || evt.phase === 'start' || evt.phase === 'end') return;
-    if (evt.phase === 'step') {
-      stepIdx = evt.index + 1;
-      const row = document.createElement('div');
-      row.className = 'ds-prog-row ds-prog-step';
-      row.textContent = `▶ Step ${evt.index + 1}/${evt.total}: ${evt.name}`;
-      logEl.appendChild(row);
-      logEl.scrollTop = logEl.scrollHeight;
-      return;
-    }
-    const lineId = `dsRunLive_${stepIdx}_${String(evt.obj || 'x').replace(/[^\w]/g, '_')}`;
-    let row = logEl.querySelector(`#${lineId}`);
-    if (!row) {
-      row = document.createElement('div');
-      row.id = lineId;
-      row.className = 'ds-prog-row ds-prog-live';
-      logEl.appendChild(row);
-    }
-    if (evt.phase === 'node')    row.textContent = `⏳ ${evt.obj}: reading records…`;
-    if (evt.phase === 'fetched') row.textContent = `⏳ ${evt.obj}: ${evt.count} record(s) fetched — writing…`;
-    if (evt.phase === 'batch')   row.textContent = `⏳ ${evt.obj}: ${evt.done}/${evt.total} written · ${evt.created} created${evt.failed ? `, ${evt.failed} failed` : ''}`;
-    logEl.scrollTop = logEl.scrollHeight;
-  };
-}
+// _runProgressHandler moved to sftk-run-progress.js (sftkRunProgressHandler,
+// plus an alias under the old name) — campaign 4 phase 1.
 
 // ── Save profile ──────────────────────────────────────────────
 // Write the in-memory _editingProfile to _profiles + chrome.storage, without

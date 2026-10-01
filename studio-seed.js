@@ -1437,7 +1437,7 @@ async function sftkSeedRun(what, objs, targets) {
       liveEl.className = 'ds-prog-log';
       liveEl.style.cssText = 'max-height:220px;overflow-y:auto;margin:2px 0 8px 18px;font-size:12px';
       runlog.appendChild(liveEl);
-      _seedPort = (typeof _openRunPort === 'function') ? _openRunPort(_trProgressHandler(liveEl)) : null;
+      _seedPort = (typeof _openRunPort === 'function') ? _openRunPort(sftkRunProgressHandler(liveEl)) : null;
       try {
         // Configuration BEFORE data, always: validation rules, flows and
         // Apex read Custom Settings, Custom Metadata and Labels, so rows
