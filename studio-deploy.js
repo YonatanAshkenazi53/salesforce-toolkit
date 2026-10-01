@@ -228,7 +228,12 @@ async function renderDeploy() {
   if (_depForProfile !== p.id) { _depForProfile = p.id; _depObjPath = ''; _depTab = 'ins'; _depFilter = ''; if (!_depRetry) _depRetryNote = ''; _depLastRunLog = null; }
   // The post-run refresh repaints this page and used to wipe the run log with
   // it (live run 2026-09-22) — keep the last one and show it under the bar.
-  { const cur = eid('dsRecProgress'); if (cur && cur.innerText && cur.innerText.trim()) _depLastRunLog = { pid: p.id, html: cur.innerHTML }; }
+  // Mid-run the log is LIVE: keep the node itself (the progress handler and
+  // runReconcile's log() hold a reference to it) and put it back after the
+  // repaint; snapshot only a finished run (user 2026-10-01: a tab switch froze
+  // the counter at 2071/5000 while the engine kept writing).
+  const liveLog = window._sftkRunActive ? (window._sftkRunLogNode || eid('dsRecProgress')) : null;
+  if (!liveLog) { const cur = eid('dsRecProgress'); if (cur && cur.innerText && cur.innerText.trim()) _depLastRunLog = { pid: p.id, html: cur.innerHTML }; }
   if (_depLastRunLog && _depLastRunLog.pid !== p.id) _depLastRunLog = null;
 
   const objType = p.tree?.objectType || p.tree?.childSObject || '?';
@@ -410,6 +415,7 @@ async function renderDeploy() {
     <div id="dsRecProgress" class="ds-rec-progress"></div></div>
     ${_depLastRunLog ? `<details open class="ds-rec-card ds-dep-lastlog"><summary class="ds-rec-card-title">📜 Last run on this page — the numbers above are already refreshed; History keeps this run too</summary><div class="ds-rec-progress">${_depLastRunLog.html}</div></details>` : ''}`);
 
+  if (liveLog) { const slot = eid('dsRecProgress'); if (slot && slot !== liveLog) slot.replaceWith(liveLog); }
   _depWireChrome(p);
   _depPaintList(p, scan, cur, curScan, tabDef, { srcLocked });
   _depSummary(p, objType, objByPath);

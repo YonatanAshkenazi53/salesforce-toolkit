@@ -118,6 +118,27 @@ describe('the rest of the engine events', () => {
   });
 });
 
+describe('a repaint mid-run does not freeze the view (user 2026-10-01: a tab switch stopped the counter)', () => {
+  it('runReconcile flags itself active and remembers its log node; the Deploy page puts that node back', () => {
+    const RC = read('studio-reconcile.js'), DV = read('studio-deploy.js');
+    expect(RC).toContain('window._sftkRunActive = true;');
+    expect(RC).toContain('window._sftkRunLogNode = prog;');
+    expect((RC.match(/window\._sftkRunActive = false;/g) || []).length).toBeGreaterThanOrEqual(3);
+    expect(DV).toContain("const liveLog = window._sftkRunActive ? (window._sftkRunLogNode || eid('dsRecProgress')) : null;");
+    expect(DV).toContain("if (liveLog) { const slot = eid('dsRecProgress'); if (slot && slot !== liveLog) slot.replaceWith(liveLog); }");
+  });
+  it('the handler keeps folding events while its node is detached and repaints on reconnect', () => {
+    expect(SRC).toContain("if (!logEl.isConnected) { pendingRepaint = true; start(); return; }");
+    expect(SRC).toContain("if (!logEl.isConnected) { pendingRepaint = true; return; }");
+    expect(SRC).not.toContain("if (!evt || !logEl || !logEl.isConnected) return;");
+  });
+  it('no records-per-second before two seconds have passed', () => {
+    const { st } = drive([[0, { phase: 'fetched', obj: 'Account', count: 5000 }], [10, { phase: 'batch', obj: 'Account', done: 2071, total: 5000, created: 2071, failed: 0 }]]);
+    const t = api.sftkRunProgressCardText(st.cards.get('0_Account'), T0 + 10);
+    expect(t.timeText).toBe('0:00');
+  });
+});
+
 describe('wiring: every page that runs the engine uses the shared live view', () => {
   it('studio.html loads the module before the pages', () => {
     const html = read('studio.html');

@@ -105,7 +105,7 @@ describe('wired into the Deploy page and the run', () => {
     expect(RC).toContain('⏸ <strong>Before the first write:</strong> switch OFF');
     expect(RC).toContain('Records written while they are off are <strong>never</strong> processed by these flows.');
     expect(RC).toContain('try { go = await opts.beforeWrites(tgtSess, log); }');
-    expect(RC).toContain('if (!go) { if (runBtn) runBtn.disabled = false; return; }');
+    expect(RC).toContain('if (!go) { if (runBtn) runBtn.disabled = false; window._sftkRunActive = false; return; }');
   });
   it('they come back on in a finally — a failed or stopped run switches them back too; leftovers get a banner', () => {
     // right after the last write (live 2026-09-29), and again in a finally if that never ran
