@@ -221,6 +221,73 @@ window.sftkDeployToClassic = function () {
 })();
 
 // ── the page ──────────────────────────────────────────────────────────────
+// ── Between which orgs ──────────────────────────────────────────────────
+// Campaign 4 phase 2 (user 2026-10-01): a deployment is a SHAPE; the orgs are
+// picked here, from the orgs open in Chrome, every time. The saved pair is
+// only "last used". PURE: tests drive it with a canned open-org list.
+//   p     the deployment ({ sourceOrg, targetOrg })
+//   open  [{ url, key, label }] — sftkOpenOrgs()
+//   label (url) → org label;  key (url) → org key
+// → { src, tgt (keys, '' when not open), sources, targets, notes[] }
+function sftkDeployOrgPicker(p, open, label, key) {
+  const srcKey = p.sourceOrg ? key(p.sourceOrg) : '', tgtKey = p.targetOrg ? key(p.targetOrg) : '';
+  const srcOpen = !!srcKey && open.some(o => o.key === srcKey);
+  const tgtOpen = !!tgtKey && open.some(o => o.key === tgtKey);
+  const src = srcOpen ? srcKey : '';
+  const targets = open.filter(o => o.key !== src);
+  const tgt = tgtOpen && tgtKey !== src ? tgtKey : '';
+  const notes = [];
+  if (!open.length) notes.push('No Salesforce org is open in Chrome. Open the two orgs in tabs, then come back — this page reads them live.');
+  else if (open.length === 1) notes.push(`Only ${open[0].label} is open in Chrome. Open the other org in a tab to deploy between them.`);
+  if ((p.sourceOrg || p.targetOrg) && (!srcOpen || !tgtOpen)) {
+    const miss = [!srcOpen && p.sourceOrg ? label(p.sourceOrg) : '', !tgtOpen && p.targetOrg ? label(p.targetOrg) : ''].filter(Boolean);
+    notes.push(`Last used: ${label(p.sourceOrg || '') || '—'} → ${label(p.targetOrg || '') || '—'}. ${miss.join(' and ')} ${miss.length > 1 ? 'are' : 'is'} not open — open ${miss.length > 1 ? 'them' : 'it'} in Chrome, or pick other open orgs above.`);
+  }
+  return { src, tgt, sources: open, targets, notes };
+}
+
+function _depOrgPickerHtml(p) {
+  const open = (typeof sftkOpenOrgs === 'function') ? sftkOpenOrgs() : [];
+  // typeof guards: the runtime test renders this page in a bare VM context
+  const m = sftkDeployOrgPicker(p, open, (typeof orgLabel === 'function') ? orgLabel : (u => String(u || '')), (typeof _orgKey === 'function') ? _orgKey : (u => String(u || '')));
+  const opt = (o, sel) => `<option value="${esc(o.key)}" ${sel ? 'selected' : ''}>${esc(o.label)}</option>`;
+  return `<div class="ds-rec-card ds-dep-orgs">
+    <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">🧭</span><span class="ds-rec-card-title">Between which orgs</span><span class="ds-dep-orgs-hint">only orgs open in Chrome are offered · picking writes nothing</span></div>
+    <div class="ds-dep-orgs-row">
+      <label>From <select id="dsDepSrc" class="ds-select ds-select-sm" aria-label="Source org"><option value="" ${m.src ? '' : 'selected'} disabled>— pick the source —</option>${m.sources.map(o => opt(o, o.key === m.src)).join('')}</select></label>
+      <span class="ds-dep-orgs-arrow">→</span>
+      <label>To <select id="dsDepTgt" class="ds-select ds-select-sm" aria-label="Target org" ${m.src ? '' : 'disabled'}><option value="" ${m.tgt ? '' : 'selected'} disabled>— pick the target —</option>${m.targets.map(o => opt(o, o.key === m.tgt)).join('')}</select></label>
+      <button class="ds-btn ds-btn-xs" id="dsDepSwap" title="Swap source and target" ${m.src && m.tgt ? '' : 'disabled'}>⇄</button>
+    </div>
+    ${m.notes.map(n => `<div class="ds-dep-orgs-note">${esc(n)}</div>`).join('')}
+  </div>`;
+}
+
+// The pick: set the pair on the deployment (saved as "last used"), drop any
+// selection made against the old pair, and repaint — the page then shows the
+// pair's scan if it is fresh, else "Read both orgs now". Writes nothing.
+async function _depSetPair(p, srcKey, tgtKey) {
+  const open = (typeof sftkOpenOrgs === 'function') ? sftkOpenOrgs() : [];
+  const src = open.find(o => o.key === srcKey), tgt = open.find(o => o.key === tgtKey);
+  if (src && tgt && src.key === tgt.key) { showToast('Source and target must be two different orgs.', 'warning', 3500); return; }
+  if (src) p.sourceOrg = src.url;
+  if (tgt) p.targetOrg = tgt.url;
+  // Until the ring plumbing is gone (phase 2 step 3) the pick must survive its
+  // re-pointing: pin both sides.
+  if (src) p.sourcePinned = true;
+  if (tgt) p.targetOrgs = [tgt.url];
+  if (!p.ephemeral && typeof storageSaveProfiles === 'function') { try { await storageSaveProfiles(); } catch (_) {} }
+  _depForProfile = '';   // a new pair: selections, tab and filter start over
+  renderDeploy();
+}
+
+function _depWireOrgPicker(p) {
+  const cur = () => ({ src: eid('dsDepSrc')?.value || '', tgt: eid('dsDepTgt')?.value || '' });
+  eid('dsDepSrc')?.addEventListener('change', () => { const c = cur(); _depSetPair(p, c.src, c.tgt === c.src ? '' : c.tgt); });
+  eid('dsDepTgt')?.addEventListener('change', () => { const c = cur(); _depSetPair(p, c.src, c.tgt); });
+  eid('dsDepSwap')?.addEventListener('click', () => { const c = cur(); if (c.src && c.tgt) _depSetPair(p, c.tgt, c.src); });
+}
+
 async function renderDeploy() {
   const p = _reconcileProfile;
   if (!p) { _currentView = 'profiles'; renderProfiles(); return; }
@@ -277,13 +344,14 @@ async function renderDeploy() {
   });
 
   if (!fresh) {
-    setMain(`${header}<div class="ds-dep-page">
+    setMain(`${header}<div class="ds-dep-page">${_depOrgPickerHtml(p)}
       <div class="ds-rec-card ds-rec-card-warn">
         <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">🔄</span><span class="ds-rec-card-title">${scan ? 'The last scan does not match this deployment any more' : 'Nothing has been read yet'}</span></div>
         <div class="ds-rec-card-line">This page shows what is in <b>${esc(srcL)}</b>, what is already in <b>${esc(tgtL)}</b>, and what differs. It needs one read of both orgs first. Nothing is written.</div>
         <div><button class="ds-btn ds-btn-primary" id="dsDepScan" ${offline.length ? 'disabled title="Open the org(s) named above first"' : ''}>🔄 Read both orgs now</button></div>
       </div>${offlineHtml}</div>`);
     _depWireChrome(p);
+    _depWireOrgPicker(p);
     eid('dsDepScan')?.addEventListener('click', () => _depRescan(p));
     return;
   }
@@ -368,7 +436,7 @@ async function renderDeploy() {
       <div id="dsDepList"></div>
     </div>`;
 
-  setMain(`${header}<div class="ds-dep-page">
+  setMain(`${header}<div class="ds-dep-page">${_depOrgPickerHtml(p)}
     ${p._parentOf?.objType ? `<div class="ds-rec-card ds-dep-journey"><div class="ds-rec-card-line">⛓ Parents-first step: you opened this to align <b>${esc(objType)}</b> before deploying <b>${esc(p._parentOf.objType)}</b>. When it reads in sync — or when there is nothing to align — go back. <button class="ds-btn ds-btn-sm ds-btn-primary" id="dsDepJourneyBack">‹ Back to ${esc(origin ? (origin.name || p._parentOf.objType) : p._parentOf.objType)}</button></div></div>` : ''}
     ${_depRetryNote ? `<div class="ds-rec-card"><div class="ds-rec-card-line">${esc(_depRetryNote)}</div></div>` : ''}
     ${offlineHtml}
@@ -417,6 +485,7 @@ async function renderDeploy() {
 
   if (liveLog) { const slot = eid('dsRecProgress'); if (slot && slot !== liveLog) slot.replaceWith(liveLog); }
   _depWireChrome(p);
+  _depWireOrgPicker(p);
   _depPaintList(p, scan, cur, curScan, tabDef, { srcLocked });
   _depSummary(p, objType, objByPath);
 

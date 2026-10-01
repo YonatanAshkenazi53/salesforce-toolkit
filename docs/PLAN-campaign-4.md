@@ -78,6 +78,8 @@ leaves a deployment "broken". The user read the menu as "which org am I looking 
   no automatic rescans. History and match memory already key by pair.
 
 **Build (in this order, each step gated and pushed).**
+
+**Step 1 + 2 DONE 2026-10-01** (commit follows): `sftkOpenOrgs()` in studio-core.js; `sftkDeployOrgPicker` (pure) + `_depOrgPickerHtml` / `_depSetPair` / `_depWireOrgPicker` in studio-deploy.js — the picker on both Deploy page branches; the pick saves the pair as last-used and (until step 3) pins both sides so the ring plumbing cannot re-point it. Test `deploy-org-picker-1001`; live in the harness with both orgs logged in (`picker-live.mjs`, scratchpad): both orgs offered, ⇄ swap saved and the page asked to read the new pair.
 1. `sftkOpenOrgs()` — one function both pages use for "orgs open in Chrome" (label, url, key,
    sandbox/production flag), from the sessions the background already lists.
 2. Deploy page: the org picker at the top (From · To). Picking sets the deployment's pair for

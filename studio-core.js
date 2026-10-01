@@ -1976,6 +1976,20 @@ function _liveOrgSet() {
 // not on set size (the active-tab session alone makes size 1 while
 // enumeration may have failed, silently disabling every open target).
 function _liveKnown() { return _allSessionsOk; }
+// The orgs open in Chrome RIGHT NOW, deduped by org key — the only orgs a
+// deployment can run between (campaign 4 phase 2, user 2026-10-01: "run and
+// compare just between all open orgs in the browser"). Each: { url, key,
+// label }. Empty until the session enumeration completed (see _liveKnown).
+function sftkOpenOrgs() {
+  if (typeof _buildAllSessions !== 'function') return [];
+  const seen = new Map();
+  for (const s of _buildAllSessions()) {
+    if (!s || !s.sid || !s.orgUrl) continue;
+    const key = _orgKey(s.orgUrl);
+    if (!seen.has(key)) seen.set(key, { url: s.orgUrl, key, label: orgLabel(s.orgUrl) });
+  }
+  return [...seen.values()];
+}
 function orgOptionLabel(url, label, liveSet) {
   const live = liveSet || _liveOrgSet();
   // Liveness markers only when the live set is KNOWLEDGE (enumeration
