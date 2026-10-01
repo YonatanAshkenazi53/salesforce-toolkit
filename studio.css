@@ -6235,6 +6235,12 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 .ds-dep-tail { display: inline-flex; gap: 10px; align-items: center; white-space: nowrap; font-size: 12px; }
 /* ⚠ Ambiguous rows carry up to three choices — let them wrap instead of pushing the page sideways (user 2026-10-01) */
 .ds-dep-row-amb .ds-dep-tail { flex-wrap: wrap; white-space: normal; justify-content: flex-end; row-gap: 4px; }
+/* Between which orgs — the org picker on top of the Deploy page (campaign 4) */
+.ds-dep-orgs-hint { margin-left: auto; color: var(--subtext); font-size: 11px; font-weight: 400; }
+.ds-dep-orgs-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.ds-dep-orgs-row label { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.ds-dep-orgs-arrow { color: var(--subtext); font-size: 16px; }
+.ds-dep-orgs-note { margin-top: 6px; font-size: 12px; color: var(--subtext); }
 .ds-dep-amb-intro ul { margin: 6px 0; padding-left: 18px; }
 .ds-dep-amb-intro li { margin: 2px 0; }
 .ds-dep-amb-intro > div + div { margin-top: 6px; }
