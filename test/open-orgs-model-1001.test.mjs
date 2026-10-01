@@ -149,3 +149,18 @@ describe('no crown / "source of truth" wording in what the user reads', () => {
     expect(code(PROFILES)).not.toMatch(/ds-profile-sot-diff|ring targets/);
   });
 });
+
+describe('step 4 — no pair clone: opening a deployment against another target moves its pair', () => {
+  const RC = readFileSync(new URL('../studio-reconcile.js', import.meta.url), 'utf8');
+  it('openReconcile never clones (`pair_`) and never shows a target chooser', () => {
+    const i = RC.indexOf('window.openReconcile = function(profileId, targetUrl) {');
+    const fn = RC.slice(i, RC.indexOf('\n};\n', i));
+    expect(fn).not.toContain('pair_${Date.now()}');
+    expect(fn).not.toContain('showModal(');
+    expect(fn).toContain("if (targetUrl && _orgKey(targetUrl) !== _orgKey(p.targetOrg || '')) {");
+    expect(fn).toContain('p.targetOrg = targetUrl;');
+    expect(fn).toContain('delete p.sourcePinned; delete p.targetOrgs; delete p._srcCrownMoved;');
+    expect(fn).toContain('_reconcileProfile = p;');
+    expect(fn).toContain("showToast('Source and target must be two different orgs.'");
+  });
+});
