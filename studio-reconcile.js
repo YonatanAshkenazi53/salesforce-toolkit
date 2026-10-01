@@ -2947,7 +2947,7 @@ async function runReconcile(profile, objType, buckets, opts) {
           cSum.failed ? 'ds-prog-err' : '');
       }
       (res.errors || []).forEach(e => allErrors.push(`insert: ${e}`));
-      (res.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
+      _recLogEngineLines(log, res.errors);
     } catch (e) { allErrors.push(`Push failed: ${e?.message || e}`); log('❌', `Push failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
 
@@ -3035,7 +3035,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         log('  ' + (rs.failed ? '⚠' : '✅'), `${rObj}: ${rs.created || 0} created under the new ${obj}${rs.failed ? `, ${rs.failed} failed` : ''}`, rs.failed ? 'ds-prog-err' : '');
       }
       (res.errors || []).forEach(e => allErrors.push(`insert ${obj}: ${e}`));
-      (res.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
+      _recLogEngineLines(log, res.errors);
     } catch (e) { allErrors.push(`Insert ${obj} failed: ${e?.message || e}`); log('❌', `Insert ${obj} failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
 
@@ -3233,7 +3233,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       bumpChild(obj, 'overwriteFailed', result.failed || 0);
       log(result.failed ? '⚠' : '✅', `${obj}: updated ${result.ok || 0}${result.failed ? `, ${result.failed} failed` : ''}`, result.failed ? 'ds-prog-err' : '');
       (result.errors || []).forEach(e2 => allErrors.push(`update ${obj}: ${e2}`));
-      (result.errors || []).slice(0, 5).forEach(e2 => log('  ❌', e2, 'ds-prog-err'));
+      _recLogEngineLines(log, result.errors);
     } catch (e) { allErrors.push(`⚠ Update ${obj} failed: ${e?.message || e}`); log('❌', `Update ${obj} failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
 
@@ -3247,7 +3247,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       rootFailedUpdates.push(...(result.failedRecords || []));
       log(result.failed ? '⚠' : '✅', `Updated ${result.ok}${result.failed ? `, ${result.failed} failed` : ''}`, result.failed ? 'ds-prog-err' : '');
       (result.errors || []).forEach(e => allErrors.push(`update: ${e}`));
-      (result.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
+      _recLogEngineLines(log, result.errors);
     } catch (e) { allErrors.push(`Overwrite failed: ${e?.message || e}`); log('❌', `Overwrite failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
 
@@ -3279,7 +3279,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       counts.updatedSource += (result.ok || 0); counts.updatedSourceFailed += (result.failed || 0);
       log(result.failed ? '⚠' : '✅', `Updated ${result.ok} in source${result.failed ? `, ${result.failed} failed` : ''}`, result.failed ? 'ds-prog-err' : '');
       (result.errors || []).forEach(e => allErrors.push(`update-source: ${e}`));
-      (result.errors || []).slice(0, 5).forEach(e => log('  ❌', e, 'ds-prog-err'));
+      _recLogEngineLines(log, result.errors);
     } catch (e) { allErrors.push(`Source update failed: ${e?.message || e}`); log('❌', `Source update failed: ${e?.message || e}`, 'ds-prog-err'); }
   }
 
@@ -4473,7 +4473,7 @@ function sftkRecDupsHtml(scan, p) {
   // (user 2026-09-21: followed the advice, the dialog was empty).
   const unS = (scan.missingInTarget || []).length, unT = (scan.onlyInTarget || []).length;
   return `<details class="ds-rec-dups">
-      <summary>⚠ ${ex.length} name(s) used by more than one record — the scan never guesses which copy is which</summary>
+      <summary>⚠ ${((scan.dupKeys.keys || []).length || ex.length).toLocaleString()} name(s) used by more than one record — the scan never guesses which copy is which</summary>
       <div class="ds-rec-dup-rows">${rows}</div>${more}
       <div class="ds-rec-dup-note"><b>Why it matters:</b> records are matched by this name. With two “same” names the pairing is a coin flip, and so is anything else that finds records by name — lookups, other deployments.</div>
       <div class="ds-rec-dup-fix"><b>How to fix it, safest first</b>
@@ -4621,6 +4621,20 @@ async function sftkParentVerifyOne(p, refObj) {
 // stamped so the page offers "Continue to <child>" once it is aligned (user
 // 2026-08-10: "we deployed the parents. now we need to be able to deploy the
 // childrens"). Returns false when the scan failed.
+// The engine's `errors` list carries NOTES too — lines marked ℹ / 🔗 / 📎 / ⚠
+// (the 'ℹ ' contract in background.js finalErrors). They are information, and
+// painting them as red ❌ made a run read as broken (user 2026-09-30: after one
+// real DUPLICATES_DETECTED line, the Bulk-API choice, the person-account note
+// and the lookups disclosure all wore ✕). Same split sftkFriendlyError makes.
+function _recLogEngineLines(log, lines) {
+  for (const e of (lines || []).slice(0, 5)) {
+    const t = String(e);
+    const note = t.includes('ℹ') || t.includes('🔗') || t.includes('📎') || t.includes('⚠') || /hand-pick/i.test(t);
+    if (note) log('  ℹ', t.replace(/^\s*[ℹ⚠]\s*/, ''), 'ds-prog-note');
+    else log('  ❌', t, 'ds-prog-err');
+  }
+}
+
 async function sftkOpenParentsFirst(p, refObj, forObj) {
   const eph = {
     id: `gap_${Date.now()}`,

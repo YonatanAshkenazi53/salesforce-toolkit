@@ -422,8 +422,14 @@ async function _ringScanOne(profileId, tgtUrl, btn) {
     }
     await storageSaveProfiles();
   } catch (e) {
-    const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(e.message) : { message: e.message };
-    showToast(`Scan failed for ${orgLabel(tgtUrl)}: ${fe.message}`, 'error', 6000);
+    // Name the org whose read failed — "source query failed" is the SOURCE
+    // (the crown), not the target this tile belongs to (user 2026-09-30: the
+    // toast said "Scan failed for trailheads5" about a query on trailheads4).
+    const msg = String(e?.message || e);
+    const onSrc = /^source query failed/i.test(msg);
+    const fe = (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(msg.replace(/^(source|target) query failed:\s*/i, '')) : { message: msg };
+    const who = onSrc ? `reading ${orgLabel(ringSrc)} (the source of truth)` : `reading ${orgLabel(tgtUrl)}`;
+    showToast(`${p.name ? `${p.name}: ` : ''}scan failed ${who} — ${fe.message}${fe.hint ? ` ${fe.hint}` : ''}`, 'error', 8000);
   }
   _ringRenderMatrix();
 }
