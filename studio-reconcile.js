@@ -4629,7 +4629,11 @@ async function sftkOpenParentsFirst(p, refObj, forObj) {
     ephemeral: true,
     scanConfig: { matchField: 'Name', compareFields: [] },
     tree: { objectType: refObj, where: '', children: [] },
-    _parentOf: { profileId: p.id, objType: forObj },
+    // The origin may itself be unsaved (a pair clone from 🚀 Deploy with a
+    // non-primary target, a ring ⚖): then it is not in _profiles, so keep the
+    // object — the way back must always exist (user 2026-10-01: "when i click
+    // back to account. nothing occurs").
+    _parentOf: { profileId: p.id, objType: forObj, ...(p.ephemeral ? { profile: p } : {}) },
   };
   const res = await runDiffScan(eph);
   if (res?.error) { showToast(`Scan failed: ${res.error}`, 'error', 6000); return false; }

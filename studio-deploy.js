@@ -257,7 +257,7 @@ async function renderDeploy() {
 
   // A parents-first step was opened FROM another deployment — the way back is
   // to that deployment, not to the list (user 2026-09-21).
-  const origin = p._parentOf?.profileId ? _profiles.find(x => x.id === p._parentOf.profileId) : null;
+  const origin = _depOrigin(p);
   const header = dsViewHeader({
     icon: 'swap',
     back: origin
@@ -450,10 +450,7 @@ async function renderDeploy() {
   eid('dsRecRunBtn')?.addEventListener('click', () => _depRun(p, objType,
     { missing: scan.missingInTarget || [], drift: scan.changed || [], extras: scan.onlyInTarget || [] }));
   _depFlowPauseWire(p);
-  eid('dsDepJourneyBack')?.addEventListener('click', () => {
-    const orig = _profiles.find(x => x.id === p._parentOf?.profileId);
-    if (orig) window.openReconcile(orig.id);
-  });
+  eid('dsDepJourneyBack')?.addEventListener('click', () => _depGoOrigin(p));
   // 🌳 the shape of the deployment, then ⛓ what it points at outside itself
   _depPaintTree(p, scan);
   _depPaintOrder(p, scan);
@@ -649,12 +646,31 @@ async function _depPaintOrder(p, scan) {
   }
 }
 
+// The deployment a parents-first step was opened FROM: the saved one by id,
+// else the unsaved object the step kept (a pair clone / ring ⚖ origin is not
+// in _profiles — the old lookup found nothing and the button did nothing).
+function _depOrigin(p) {
+  const id = p._parentOf?.profileId;
+  if (!id) return null;
+  return _profiles.find(x => x.id === id) || p._parentOf.profile || null;
+}
+// Go back to it — never a dead click: saved → the normal open; unsaved → the
+// kept object with its scan; gone → the deployments list.
+function _depGoOrigin(p) {
+  const orig = _depOrigin(p);
+  if (orig && _profiles.includes(orig)) return window.openReconcile(orig.id);
+  if (orig) {
+    _reconcileProfile = orig;
+    _currentView = (typeof sftkDeployViewOn === 'function' && sftkDeployViewOn()) ? 'deploy' : 'reconcile';
+    renderReconcile();
+    return;
+  }
+  _currentView = 'profiles'; renderProfiles();
+}
+
 function _depWireChrome(p) {
   eid('dsDepBack')?.addEventListener('click', () => { _currentView = 'profiles'; renderProfiles(); });
-  eid('dsDepBackOrigin')?.addEventListener('click', () => {
-    const orig = _profiles.find(x => x.id === p._parentOf?.profileId);
-    if (orig) window.openReconcile(orig.id); else { _currentView = 'profiles'; renderProfiles(); }
-  });
+  eid('dsDepBackOrigin')?.addEventListener('click', () => _depGoOrigin(p));
   eid('dsDepRefresh')?.addEventListener('click', () => _depRescan(p));
   eid('dsDepMatchReview')?.addEventListener('click', () => openMatchReview(p));
 }
