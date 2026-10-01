@@ -802,6 +802,21 @@ html, body {
 /* ── Live run progress (Port) ─────────────────────────────────── */
 .ds-progress-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ds-prog-live { color: var(--brand); font-variant-numeric: tabular-nums; }
+/* Live run view (sftk-run-progress.js) — one card per object: state, clocks,
+   a percentage bar with failures as a red segment, the numbers underneath. */
+.ds-prog-row.ds-prog-card { display: block; padding: 8px 16px 9px; font-variant-numeric: tabular-nums; }   /* beats .ds-prog-row's flex (declared later) */
+.ds-prog-card-hd { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.ds-prog-card-icon { flex: 0 0 auto; }
+.ds-prog-card-obj { font-weight: 700; }
+.ds-prog-card-state { color: var(--brand); }
+.ds-prog-card-time { margin-left: auto; color: var(--subtext); font-size: 11.5px; white-space: nowrap; }
+.ds-prog-bar { position: relative; display: block; width: 100%; height: 8px; margin: 6px 0 4px; border-radius: 999px; background: var(--surface2); overflow: hidden; }
+.ds-prog-bar-fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: var(--brand); border-radius: 999px; transition: width .4s ease; }
+.ds-prog-bar-fail { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: var(--danger); border-radius: 999px; transition: width .4s ease; }
+.ds-prog-card-nums { color: var(--subtext); font-size: 11.5px; }
+.ds-prog-card-done .ds-prog-card-state { color: var(--success); }
+.ds-prog-card-done .ds-prog-bar-fill { background: var(--success); }
+.ds-prog-card-failed .ds-prog-card-state { color: var(--warning); }
 .ds-prog-step { font-weight: 700; margin-top: 4px; }
 .ds-seq-run-log { max-height: 260px; overflow-y: auto; margin-top: 8px; font-size: 12px; }
 

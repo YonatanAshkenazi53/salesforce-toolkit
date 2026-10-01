@@ -2667,7 +2667,7 @@ async function runReconcile(profile, objType, buckets, opts) {
 
   // Stream the engine's per-batch progress into the reconcile log (also
   // keeps the worker alive across the multi-phase pipeline).
-  const recPort = _openRunPort(_runProgressHandler(prog));
+  const recPort = _openRunPort(sftkRunProgressHandler(prog));   // the live run view (sftk-run-progress.js)
 
   // ↩ RESTORE POINT (studio-undo.js) — the target's before-image of every
   // object this run can write, plus the SOURCE's root object when the run

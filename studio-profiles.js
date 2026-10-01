@@ -376,7 +376,7 @@ async function runSequence(seqId) {
   `);
 
   // Live progress: step + per-batch lines stream into the modal log.
-  const seqPort = _openRunPort(_runProgressHandler(eid('dsSeqRunLog')));
+  const seqPort = _openRunPort(sftkRunProgressHandler(eid('dsSeqRunLog')));
   // ✋ a cancel clicked while the restore point is being read must stop the
   // sequence BEFORE the engine starts — the port cancel alone would be reset
   // by the engine's own start.

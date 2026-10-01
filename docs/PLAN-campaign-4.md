@@ -21,6 +21,8 @@ reset the target with cleanup.apex + seed-target.apex.
 
 ## Phase 1 — a live run view, Inspector-style
 
+**DONE 2026-10-01** (commit follows): `sftk-run-progress.js` — pure reducer `sftkRunProgressReduce` + formatter `sftkRunProgressCardText` + painter `sftkRunProgressHandler`; Deploy (runReconcile), Transfer, Sequences and the Seeder all wire it; `_trProgressHandler` / `_trRenderBulkRow` / the studio-scan text handler removed. Cards: bar + red failure segment, written/created/failed, elapsed, rate, ETA, batch n of N, Bulk job state + "Salesforce last answered Xs ago", a 1 s ticker while anything is alive. Test `run-progress-1001` (scripted event sequences, fake clock, wiring). Rendered in the harness with the engine's real event shapes (dark). Live run against a Bulk-sized tree deferred until trailheads5 is rebuilt (the user's reversed runs are still writing into it).
+
 **Problem.** On the Deploy page a 5,000-record write sits on "Account: 5000 record(s) fetched —
 writing…" for minutes. Root cause found: `runReconcile` wires the RAW `_runProgressHandler`
 (studio-scan.js), which ignores `phase:'bulk'` (the Bulk API 2.0 job poll — state, processed,
