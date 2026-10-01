@@ -6217,6 +6217,11 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 .ds-dep-key { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-dep-mid { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; font-size: 12px; color: var(--subtext); }
 .ds-dep-tail { display: inline-flex; gap: 10px; align-items: center; white-space: nowrap; font-size: 12px; }
+/* ⚠ Ambiguous rows carry up to three choices — let them wrap instead of pushing the page sideways (user 2026-10-01) */
+.ds-dep-row-amb .ds-dep-tail { flex-wrap: wrap; white-space: normal; justify-content: flex-end; row-gap: 4px; }
+.ds-dep-amb-intro ul { margin: 6px 0; padding-left: 18px; }
+.ds-dep-amb-intro li { margin: 2px 0; }
+.ds-dep-amb-intro > div + div { margin-top: 6px; }
 .ds-dep-open a { color: var(--subtext); }
 .ds-dep-link { background: none; border: 0; padding: 0; font: inherit; font-size: 12px; color: var(--brand); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .ds-dep-link.ds-lkp-on { font-weight: 700; }
