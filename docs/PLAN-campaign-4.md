@@ -50,29 +50,61 @@ as they land.
 
 **Size.** 1 day.
 
-## Phase 2 — the crown leaves the top bar
+## Phase 2 — orgs are picked when you deploy; the ring and the crown go away
 
-**Problem.** The top-bar SOURCE menu crowns the org it switches to. Crowning re-points every
-ring-following deployment, marks their scans stale and rescans all of them — and fails loudly
-for a deployment whose root object the new source lacks. The user read the menu as "which org
-am I looking at". Decision (user 2026-10-01): remove it from the top bar.
+**Decided 2026-10-01 (user: "maybe profile should run and compare just between all open orgs in
+the browser, u select the source and the targets already auto calculate by that" → "sounds
+good").** This replaces the earlier Phase 2 (crown behind a confirmation) AND the earlier
+Phase 5 (From/To at deploy time); both are folded in here.
 
-**Build.**
-1. The top-bar chip shows the working pair read-only (or disappears once Phase 5 lands).
-2. The crown moves only on the Sync Ring page, behind `sftkConfirmDestructive` whose text lists
-   what will change: "7 deployments will now read from trailheads4 · 1 cannot: Load_Parent__c
-   does not exist there" — computed before the dialog, no surprises after.
-3. No automatic rescan storm: after the move, the ring page offers "🔎 Scan all" as a button;
-   stale tiles say stale.
-4. Crown history (↩ restore) stays.
+**Problem.** A deployment owns its orgs or follows the ring's crown. Switching the top-bar
+SOURCE menu crowns an org, re-points every following deployment, marks their scans stale and
+rescans them all — and breaks the ones whose root object the new source lacks. An expired org
+leaves a deployment "broken". The user read the menu as "which org am I looking at".
 
-**Enforce.** `dsSetSourceOfTruth` is reachable only from the ring page (test on the html + core
-wiring); the confirmation text names every deployment that cannot follow.
+**The model.**
+- A deployment is a SHAPE: objects, filters, fields and mapping, matching, lookups, engine
+  options. It never owns orgs. `sourceOrg` / `targetOrg` stay on the record only as "last used".
+- The Deploy page lists the orgs OPEN IN CHROME right now. The user picks the source (default:
+  the last used one, if open). The other open orgs are the possible targets — checkboxes,
+  NOTHING ticked (the user's law). One target at a time is worked on (scan, select, deploy);
+  several ticked = the same page per target, one after another.
+- An org that is not open is not offered. A saved deployment is never re-pointed, never stale,
+  never broken: it says "open the orgs to run it".
+- Production stays guarded: an org being open is not consent to write into it — the typed org
+  name gate is unchanged.
+- The Sync Ring page becomes "all open orgs at a glance": the same matrix and scans across the
+  open orgs with a per-page source pick; no membership to configure, no crown, no re-pointing,
+  no automatic rescans. History and match memory already key by pair.
 
-**Live.** A ring with the CX deployments plus one deployment rooted in an object only one org
-has: crown moves with the dialog naming it; nothing rescans until asked.
+**Build (in this order, each step gated and pushed).**
+1. `sftkOpenOrgs()` — one function both pages use for "orgs open in Chrome" (label, url, key,
+   sandbox/production flag), from the sessions the background already lists.
+2. Deploy page: the org picker at the top (From · To). Picking sets the deployment's pair for
+   this session and saves it as last-used; `lastScan` comes from the pair's cached scan when one
+   exists (the `ringScans` map, renamed `pairScans`), else "Read both orgs". Nothing else on the
+   page changes yet.
+3. Remove the crown: the top-bar SOURCE menu, `dsSetSourceOfTruth`, `syncRingFollowers`,
+   `sftkRingRebaseline`, `sourceFollowsRing` / `sourcePinned`, ring membership, crown history.
+   Deployments that followed the ring keep their last pair as defaults — migration = none.
+4. Remove the pair clones: `openReconcile(profileId, targetUrl)` sets the pair on the profile
+   instead of cloning (`pair_…`, `_ringOf`); the parents-first step keeps its `_parentOf.profile`
+   (already there). Org Compare keeps its own ephemeral profile (it is not a deployment).
+5. Sync Ring page → "All open orgs": source pick on the page, matrix across the other open
+   orgs, 🔎 Scan all on demand, tiles open the Deploy page with that pair set.
+6. Builder: the source column locks onto the picked source (it used to lock onto the crown).
 
-**Size.** 1 day.
+**Enforce.** `test/open-orgs-model-*.test.mjs`: no code path creates a `pair_` clone or reads
+`_ring.sourceUrl`; the Deploy page never pre-ticks a target; `scan-e2e` on two pairs of the
+canned world from one saved shape; every existing ring test rewritten against the open-orgs
+matrix (list in the recon report).
+
+**Live.** CX tree trailheads5 → trailheads4 from the picker; then the same saved shape with
+trailheads4 as source (after rebuild-source.sh) — no clone, History shows both pairs, rollback
+per pair; close one org's tab → the picker drops it, nothing breaks.
+
+**Size.** 4–6 days. The engine is untouched; the risk is the page + profile model, netted by
+the live scripts and the canned tests.
 
 ## Phase 3 — the words
 
@@ -120,30 +152,9 @@ without Phone): with the switch on, both records land; CLI shows the rules activ
 
 **Size.** 1 day.
 
-## Phase 5 — pick From and To when you deploy
+## Phase 5 — (folded into Phase 2 on 2026-10-01)
 
-**Problem.** A deployment carries its orgs (or follows the ring). Opening it against another
-target makes a temporary copy; the crown re-points it; a parents-first step born from a copy
-had no way back (fixed 2026-10-01, but the shape stays fragile). Users want to deploy the same
-shape between any two orgs.
-
-**Build.**
-1. A deployment is a SHAPE: objects, filters, fields and mapping, matching, lookups, engine
-   options. `sourceOrg` / `targetOrg` become defaults ("last used").
-2. The Deploy page opens with From → To selectors (open orgs first, then known orgs), and
-   reads both orgs on Confirm. Scans, match memory, run ledgers and History are keyed by the
-   pair, as the ring already keys `ringScans`.
-3. Follow-the-ring vs pinned modes, `pair_` clones and `_ringOf` go away; the Sync Ring page
-   becomes "run this shape across these targets" (one scan per pair, the matrix as today).
-4. Migration: existing profiles keep their orgs as defaults; nothing else to convert.
-
-**Enforce.** Engine tests unchanged (the engine never cared); scan-e2e on two pairs of the
-canned world; a test that no code path creates an ephemeral clone any more.
-
-**Live.** CX tree trailheads5 → trailheads4, then the same shape trailheads4 → trailheads5
-(after rebuild), from the same saved deployment; History shows both pairs; rollback per pair.
-
-**Size.** 3–5 days. The risky one. After 1–4 so every surface it touches is already honest.
+From/To at deploy time is the core of the new Phase 2; nothing separate remains here.
 
 ## Phase 6 — the Deploy page in three steps
 
@@ -164,10 +175,10 @@ live run view (Phase 1) in place. The advisor notes become one "Before you deplo
 | phase | days | needs |
 |---|---|---|
 | 1 live run view | 1 | both orgs (vol tree for a Bulk job) |
-| 2 crown off the top bar | 1 | — |
+| 2 orgs picked at deploy time, ring + crown removed | 4–6 | both orgs, rebuilt source |
 | 3 words | 1 | — |
 | 4 pause validation rules | 1 | target org with the fixture rules |
-| 5 From/To at deploy time | 3–5 | both orgs, rebuilt source |
+| 5 (folded into 2) | — | — |
 | 6 three-step page | 2 | — |
 
 About two weeks of sessions. Release decision unchanged: the public launch is 1.0.0 on a new
