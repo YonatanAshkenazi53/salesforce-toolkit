@@ -2706,8 +2706,6 @@ const MESSAGE_CONTRACTS = {
   GET_SF_SESSION:              { required: [] },
   GET_ALL_SF_SESSIONS:         { required: [] },
   SF_QUERY:                    { required: ['orgUrl', 'sid', 'query'] },
-  SF_SET_RING_SCHEDULE:        { required: ['minutes'] },
-  SF_RUN_RING_PROBE:           { required: [] },
   SF_QUERY_ALL:                { required: ['orgUrl', 'sid', 'query'] },
   SF_REST_QUERY:               { required: ['orgUrl', 'sid', 'query'] },
   SF_TOOLING_DELETE:           { required: ['orgUrl', 'sid', 'sobject', 'id'] },
@@ -2761,10 +2759,6 @@ async function dispatchMessage(message) {
   switch (type) {
     case 'GET_SF_SESSION':
       return getSfSession(message.activeTabUrl || null);
-    case 'SF_SET_RING_SCHEDULE':
-      return setRingSchedule(message.minutes);
-    case 'SF_RUN_RING_PROBE':
-      return runRingProbe();
     case 'SF_QUERY':
       return sfQuery(orgUrl, sid, message.query, message.tooling !== false);
     case 'SF_QUERY_ALL':
@@ -4550,111 +4544,6 @@ async function sftkCookieSessFor(url) {
     if (best) return { orgUrl: `https://${h}`, sid: best.value };
   } catch (_) {}
   return null;
-}
-
-const RING_ALARM = 'sftkRingProbe';
-
-async function setRingSchedule(minutes) {
-  const mins = Number(minutes) || 0;
-  try { await chrome.alarms.clear(RING_ALARM); } catch (_) {}
-  if (mins > 0) chrome.alarms.create(RING_ALARM, { periodInMinutes: mins, delayInMinutes: 1 });
-  // Persist on the ring so a browser restart re-asserts the schedule.
-  try {
-    const d = await chrome.storage.local.get('ds_ring');
-    if (d.ds_ring) { d.ds_ring.scheduleMins = mins; await chrome.storage.local.set({ ds_ring: d.ds_ring }); }
-  } catch (_) {}
-  return { success: true, minutes: mins };
-}
-
-chrome.runtime.onStartup?.addListener(() => {
-  chrome.storage.local.get('ds_ring').then(d => {
-    const mins = Number(d.ds_ring?.scheduleMins) || 0;
-    if (mins > 0) chrome.alarms.create(RING_ALARM, { periodInMinutes: mins });
-  }).catch(() => {});
-});
-
-chrome.alarms?.onAlarm?.addListener(a => {
-  if (a.name === RING_ALARM) runRingProbe().catch(() => {});
-});
-
-async function runRingProbe() {
-  const d = await chrome.storage.local.get(['ds_ring', 'sftk_profiles']);
-  const ring = d.ds_ring;
-  if (!ring?.sourceUrl || (ring.orgs || []).length < 2) {
-    return { ts: new Date().toISOString(), summary: { checked: 0, drifted: 0, skipped: 0 } };
-  }
-  const norm = u => {
-    try {
-      const h = new URL(u).hostname
-        .replace('.lightning.force.com', '.my.salesforce.com')
-        .replace('.salesforce-setup.com', '.salesforce.com');
-      return `https://${h}`;
-    } catch (_) { return (u || '').toLowerCase(); }
-  };
-  // Per-org session with a WRONG-ORG GUARD: getSfSession falls back to any
-  // open SF tab when the requested org has none — a probe must NEVER count
-  // records in a different org and call it this one.
-  async function sessFor(url) {
-    const direct = await sftkCookieSessFor(url);
-    if (direct) return direct;
-    try {
-      const s = await getSfSession(url);
-      if (s?.sid && norm(s.orgUrl) === norm(url)) return s;
-    } catch (_) {}
-    return null;
-  }
-  const count = async (sess, obj, where) => {
-    const r = await sfQuery(sess.orgUrl, sess.sid, `SELECT COUNT() FROM ${obj}${where ? ` WHERE ${where}` : ''}`, false);
-    if (r?.error) throw new Error(r.error);
-    return r.totalSize ?? 0;
-  };
-
-  const ts = new Date().toISOString();
-  const rows = [];
-  const targets = (ring.orgs || []).filter(u => norm(u) !== norm(ring.sourceUrl));
-  const profiles = (d.sftk_profiles || []).filter(p => p?.tree?.objectType).slice(0, 10);
-  const srcSess = await sessFor(ring.sourceUrl);
-  if (!srcSess) {
-    rows.push({ skip: 'source', reason: 'source of truth is not signed in in this Chrome profile — nothing probed' });
-  } else {
-    for (const p of profiles) {
-      const obj = p.tree.objectType;
-      if (Array.isArray(p.tree.recordIds) && p.tree.recordIds.length) {
-        rows.push({ profileId: p.id, profileName: p.name, obj, skip: 'picked',
-          reason: 'uses hand-picked records — a count probe would be meaningless; run a full scan' });
-        continue;
-      }
-      let srcCount;
-      try { srcCount = await count(srcSess, obj, p.tree.where); }
-      catch (e) {
-        rows.push({ profileId: p.id, profileName: p.name, obj, skip: 'src-query', reason: `source count failed: ${e.message}` });
-        continue;
-      }
-      for (const tgt of targets) {
-        const tgtSess = await sessFor(tgt);
-        if (!tgtSess) {
-          rows.push({ profileId: p.id, profileName: p.name, obj, tgt, skip: 'session',
-            reason: 'not signed in — not probed' });
-          continue;
-        }
-        try {
-          const tgtCount = await count(tgtSess, obj, p.tree.where);
-          rows.push({ profileId: p.id, profileName: p.name, obj, tgt, srcCount, tgtCount,
-            drifted: srcCount !== tgtCount });
-        } catch (e) {
-          rows.push({ profileId: p.id, profileName: p.name, obj, tgt, skip: 'tgt-query', reason: e.message });
-        }
-      }
-    }
-  }
-  const summary = sftkProbeSummary(rows);
-  try { await chrome.storage.local.set({ ds_sched_drift: { ts, rows, summary } }); } catch (_) {}
-  // Badge = number of drifted pairs; cleared when the ring view is opened.
-  try {
-    chrome.action.setBadgeBackgroundColor({ color: '#C23934' });
-    chrome.action.setBadgeText({ text: summary.drifted ? String(summary.drifted) : '' });
-  } catch (_) {}
-  return { ts, summary };
 }
 
 async function sfCollectionsCreate(orgUrl, sid, records) {

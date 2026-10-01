@@ -169,14 +169,14 @@ describe('pages — Lightning pages assigned to nobody', () => {
 });
 
 // ── 3. picklists ────────────────────────────────────────────────────────
-describe('picklists — drift between the ring’s orgs', () => {
+describe('picklists — drift between the open orgs', () => {
   const v = (status, label, extra) => ({ status, label, drifting: ['missing', 'values', 'rts'].includes(status), erroredIn: [], ...extra });
   const row = (field, verdict) => ({ field, label: field, verdict });
   it('fewer than 2 ring orgs: says so, reads nothing, warn', () => {
     for (const n of [0, 1]) {
       const r = picklistsVerdict({ obj: 'Account', ringCount: n });
       expect(r.tone).toBe('warn');
-      expect(r.headline).toBe('Needs a Sync Ring with 2+ orgs');
+      expect(r.headline).toBe('Needs 2+ open orgs');
     }
   });
   it('a ring org that is not open is NAMED and the card is warn, never "in sync"', () => {
@@ -224,7 +224,7 @@ describe('picklists — drift between the ring’s orgs', () => {
       expect(SRC, fn).toContain(fn);
     }
     expect(SRC).toContain("fix = { label: 'Open Picklist Manager', view: 'picklists' }");
-    expect(SRC).toContain("ringFix = { label: 'Open Sync Ring', view: 'ring' }");
+    expect(SRC).toContain("ringFix = { label: 'Open the All open orgs page', view: 'ring' }");
     expect(SRC).toContain('const FIELD_CAP = 25;');
     const PK = rd('studio-picklists.js');
     // the sweep itself now runs on the same DOM-free functions

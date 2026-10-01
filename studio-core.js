@@ -112,7 +112,7 @@ let _settings = { historyDays: 30, countsOnly: false };
 // (user decision 2026-07-14: "a global two-org context is the wrong shape for
 // a 5-org ring"). _workingPair.src stays mirrored to ring.sourceUrl so every
 // existing default-seeding path keeps working unchanged.
-let _ring = null;   // { orgs: [urls], sourceUrl } | null (not configured)
+let _ring = null;   // DERIVED view { orgs: [open org urls], sourceUrl: the preferred source } — see sftkRingView(); never persisted (campaign 4 phase 2)
 
 // ── DOM helpers ───────────────────────────────────────────────
 const esc = s => String(s ?? '')
@@ -420,6 +420,7 @@ function showSessionBanner(orgUrl, onReconnect = null) {
     const allRes = await sendBg({ type: 'GET_ALL_SF_SESSIONS' });
     _allSessions = allRes?.sessions || [];
     _allSessionsOk = _allSessionsOk || Array.isArray(allRes?.sessions);
+    _ring = sftkRingView();
     _allSessions.forEach(s => upsertOrg(s.orgUrl, s.label));
 
     const session = await sendBg({ type: 'GET_SF_SESSION' });
@@ -491,7 +492,7 @@ async function storageLoad() {
   const d = await chrome.storage.local.get([
     'sftk_profiles','sftk_history','sftk_orgs',
     'ds_dark_mode','sftk_dark','sftk_oled','ds_activity_log','sftk_sequences','sftk_active_run',
-    'ds_working_pair','ds_settings','ds_ring'
+    'ds_working_pair','ds_settings'
   ]);
   _profiles     = d.sftk_profiles   || [];
   _history      = d.sftk_history    || [];
@@ -511,29 +512,11 @@ async function storageLoad() {
   // topbar/nav glyphs are CSS-hidden the moment the class lands.
   applyProMode(_settings.proMode);
 
-  // M2: ring config — migrate the legacy working pair into a 2-org ring the
-  // first time (its source becomes the source of truth).
-  _ring = d.ds_ring || null;
-  if (!_ring && _workingPair.src) {
-    _ring = { orgs: [_workingPair.src, _workingPair.tgt].filter(Boolean), sourceUrl: _workingPair.src };
-    chrome.storage.local.set({ ds_ring: _ring }).catch(() => {});
-  }
-  if (_ring?.sourceUrl) _workingPair.src = _ring.sourceUrl;   // keep default-seeding paths alive
-
-  // 2026-07-20 migration: earlier builds SNAPSHOTTED targetOrgs on every
-  // builder open. A pinned set identical to the current ring targets carries
-  // no information — convert it to follow-mode (null) so those deployments
-  // track the ring, which is what the default should have been.
-  if (typeof _ring === 'object' && _ring?.sourceUrl) {
-    const ringKeys = new Set((_ring.orgs || [])
-      .filter(u => _orgKey(u) !== _orgKey(_ring.sourceUrl)).map(u => _orgKey(u)));
-    for (const p of _profiles) {
-      if (!Array.isArray(p.targetOrgs)) continue;
-      const keys = p.targetOrgs.map(u => _orgKey(u));
-      if (keys.length === ringKeys.size && keys.every(k => ringKeys.has(k))) p.targetOrgs = null;
-    }
-  }
-  syncRingFollowers();
+  // Campaign 4 phase 2 (user 2026-10-01): there is no ring to configure and
+  // no crown. _ring is a DERIVED view — the orgs open in Chrome plus the
+  // preferred source (the last one picked) — recomputed whenever the session
+  // list or the pick changes. Nothing re-points a deployment, ever.
+  _ring = sftkRingView();
 
   // Retention (S5): purge history entries older than the configured window.
   // "Delete after N days" means DELETE — the on-PC archive purges too, not
@@ -783,6 +766,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const allRes = await sendBg({ type: 'GET_ALL_SF_SESSIONS' });
   _allSessions = (allRes?.sessions || []);
   _allSessionsOk = _allSessionsOk || Array.isArray(allRes?.sessions);
+  _ring = sftkRingView();
   _allSessions.forEach(s => upsertOrg(s.orgUrl, s.label));
   await storageSaveOrgs();
 
@@ -1053,7 +1037,7 @@ function recordActivity(view) {
 const CMD_VIEWS = [
   { i: 'plug',      label: 'Connected Orgs',   view: 'orgs',      desc: 'Manage connections' },
   { i: 'box',       label: 'Data Deployment',  view: 'profiles',  desc: 'Profiles + run transfer' },
-  { i: 'repeat',    label: 'Sync Ring',        view: 'ring',      desc: 'All orgs vs the source of truth' },
+  { i: 'repeat',    label: 'All open orgs',    view: 'ring',      desc: 'Every deployment vs every open org' },
   { i: 'sliders',   label: 'Picklist Manager', view: 'picklists', desc: 'Values & record types across orgs' },
   { i: 'scroll',    label: 'History',          view: 'history',   desc: 'Past transfer runs' },
   { i: 'search',    label: 'Org Compare',      view: 'compare',   desc: 'Diff data across many objects' },
@@ -1532,20 +1516,27 @@ function _viewAvailable(view) {
 // growing the ring grows every following deployment. An array means the
 // user pinned a specific set in the builder. p.targetOrg (the schema
 // reference every engine path reads) is kept in sync by syncRingFollowers().
-function profileFollowsRing(p) { return !!p && !Array.isArray(p.targetOrgs); }
+// Campaign 4 phase 2: a deployment never "follows" anything — its orgs are
+// picked on the Deploy page from the orgs open in Chrome; sourceOrg/targetOrg
+// are the LAST-USED pair. Kept as functions because many callers resolve the
+// target through them; `targetOrgs` (the old pinned set) is ignored.
+function profileFollowsRing() { return false; }
 function profileTargets(p) {
   if (!p) return [];
   // An org is NEVER a target of itself — every record would match itself and
-  // a "sync" would write the source onto the source. The builder locks the
-  // source out of the picker, but this is the chokepoint every run, scan and
-  // fan-out resolves through, so a profile saved before that lock (or edited
-  // by hand / imported from a file) is corrected here too. (2026-07-30)
+  // a "sync" would write the source onto the source. (2026-07-30)
   const notSelf = u => _orgKey(u) !== _orgKey(p.sourceOrg || '');
-  if (Array.isArray(p.targetOrgs)) return p.targetOrgs.filter(notSelf);
-  if (typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2) {
-    return (_ring.orgs || []).filter(u => _orgKey(u) !== _orgKey(_ring.sourceUrl) && notSelf(u));
-  }
   return (p.targetOrg && notSelf(p.targetOrg)) ? [p.targetOrg] : [];
+}
+// The derived "ring": the preferred source first, then every other org open in
+// Chrome. Readers that used to need a configured ring (Deploy Readiness,
+// Schema View, Fields audit, the picklist sweep, Org health) keep working on
+// exactly this — all open orgs, nothing to configure.
+function sftkRingView() {
+  const src = currentSourceOrg();
+  const open = (typeof sftkOpenOrgs === 'function') ? sftkOpenOrgs().map(x => x.url) : [];
+  const others = open.filter(u => !src || _orgKey(u) !== _orgKey(src));
+  return { orgs: src ? [src, ...others] : others, sourceUrl: src };
 }
 // ── Per-target field-mapping overrides (user 2026-07-20) ──────────────────
 // node.fieldMappingOverrides = { [orgKey]: { srcField: tgtName|null } } — a
@@ -1573,32 +1564,7 @@ function treeForTarget(tree, tgtUrl) {
   return walk(tree);
 }
 
-function syncRingFollowers() {
-  let changed = false;
-  let srcMoved = 0;
-  const crown = (typeof _ring === 'object' && _ring?.sourceUrl && (_ring.orgs || []).length >= 2)
-    ? _ring.sourceUrl : '';
-  for (const p of (_profiles || [])) {
-    if (!p || p.ephemeral) continue;
-    // SOURCE follows the crown DYNAMICALLY (user 2026-08-11: "if the source
-    // is changed in the toolkit, it needs to be changed here as well…
-    // handle it all dynamically") — unless the user PINNED a custom source
-    // in the Builder (p.sourcePinned). Every move is stamped so the Builder
-    // can warn that compares made before it measured FROM the old source;
-    // the Reconcile stale-guard and the crown-change re-baseline handle the
-    // scans themselves.
-    if (crown && !p.sourcePinned && p.sourceOrg && _orgKey(p.sourceOrg) !== _orgKey(crown)) {
-      p._srcCrownMoved = { from: p.sourceOrg, to: crown, at: new Date().toISOString() };
-      p.sourceOrg = crown;
-      srcMoved++; changed = true;
-    }
-    if (!profileFollowsRing(p)) continue;
-    const first = profileTargets(p)[0];
-    if (first && _orgKey(first) !== _orgKey(p.targetOrg || '')) { p.targetOrg = first; changed = true; }
-  }
-  if (changed) { try { storageSaveProfiles().catch(() => {}); } catch (_) {} }
-  return { srcMoved };
-}
+// syncRingFollowers() is gone (campaign 4 phase 2): nothing re-points a deployment.
 
 function renderView(view) {
   if (!_viewAvailable(view)) view = 'orgs';
@@ -1813,6 +1779,7 @@ function renderOrgsPanel() {
     const allRes = await sendBg({ type: 'GET_ALL_SF_SESSIONS' });
     _allSessions = allRes?.sessions || [];
     _allSessionsOk = _allSessionsOk || Array.isArray(allRes?.sessions);
+    _ring = sftkRingView();
     _allSessions.forEach(s => upsertOrg(s.orgUrl, s.label));
     await storageSaveOrgs();
     renderOrgsPanel();
@@ -1913,11 +1880,6 @@ window.removeOrg = function(orgUrl) {
     // a removed source used to survive as _ring.sourceUrl, so new
     // deployments silently seeded sourceOrg with an org whose select showed
     // "— Select source org —" (Fable recheck, behaviour audit).
-    if (_ring) {
-      _ring.orgs = (_ring.orgs || []).filter(u => _orgKey(u) !== _orgKey(orgUrl));
-      if (_ring.sourceUrl && _orgKey(_ring.sourceUrl) === _orgKey(orgUrl)) _ring.sourceUrl = '';
-      try { await chrome.storage.local.set({ ds_ring: _ring }); } catch (_) {}
-    }
     // The topbar mirror must fall with the crown (review w703wnvrm): a
     // surviving _workingPair.src keeps currentSourceOrg() returning the
     // removed org — the closed <select> then displays whichever candidate
@@ -1999,14 +1961,9 @@ function orgOptionLabel(url, label, liveSet) {
   // (typeof guard: tests extract this function standalone.)
   const known = (typeof _liveKnown === 'function') ? _liveKnown() : live.size > 0;
   const on = known && live.has(_orgKey(url));
-  // 👑 marks the Sync Ring's source of truth in EVERY org dropdown and
-  // checkbox list app-wide (user directive 2026-07-17: the source org must be
-  // recognizable in every feature, not just the ring view).
-  const sot = !!(typeof _ring === 'object' && _ring?.sourceUrl &&
-    (_ring.orgs || []).length >= 2 && _orgKey(url) === _orgKey(_ring.sourceUrl));
   // E4 pro mode: status dots drop (the "(not open)" suffix already carries
-  // the offline state) and the 👑 source-of-truth chip becomes " — source".
-  return `${known ? window.sftkGlyph(on ? '🟢 ' : '⚪ ', '') : ''}${label || orgLabel(url)}${sot ? window.sftkGlyph(' 👑', ' — source') : ''}${known && !on ? ' (not open)' : ''}`;
+  // the offline state). The 👑 crown suffix is gone with the crown (campaign 4).
+  return `${known ? window.sftkGlyph(on ? '🟢 ' : '⚪ ', '') : ''}${label || orgLabel(url)}${known && !on ? ' (not open)' : ''}`;
 }
 
 // ── Working org pair (topbar control) ─────────────────────────────
@@ -2025,105 +1982,41 @@ function orgOptionLabel(url, label, liveSet) {
 // another (_workingPair.src alone), so a new deployment could open with an
 // empty source while the topbar plainly showed one (user 2026-07-30).
 function currentSourceOrg() {
-  return (typeof _ring === 'object' && _ring?.sourceUrl)
-    || (typeof _workingPair === 'object' && _workingPair?.src)
-    || '';
+  return (typeof _workingPair === 'object' && _workingPair?.src) || '';
 }
 
-// ── THE crown setter — every source-of-truth change flows through here ──
-// (user 2026-08-13: "I want to be able to change source org only in the
-// upper menu. everything should calculate by it.") Before this, FIVE paths
-// wrote _ring.sourceUrl with different subsets of the contract — the topbar
-// (the control the user actually wants) was the weakest: no crown history,
-// no re-baseline, no re-point disclosure. One writer, whole contract:
-// history stamp → membership → follower re-point → persist → repaint →
-// re-baseline. Returns { changed, moved }.
-// opts.rerender=false lets the Builder keep its own repaint (renderView has
-// no 'builder' case — a full view render would navigate away mid-edit).
-async function dsSetSourceOfTruth(url, reason, opts = {}) {
+// ── The preferred source ──────────────────────────────────────────────────
+// Campaign 4 phase 2: there is no crown. The "preferred source" is only the
+// org the user picked last (on the Deploy page, the All-orgs page or in the
+// Builder) — the default the next pick starts from. Setting it re-points
+// NOTHING and rescans nothing (user 2026-10-01: "profiles are getting broken
+// when we change a source").
+async function dsSetPreferredSource(url, opts = {}) {
   if (!url) return { changed: false };
-  if (!_ring) _ring = { orgs: [], sourceUrl: '' };
-  if (_ring.sourceUrl && _orgKey(_ring.sourceUrl) === _orgKey(url)) return { changed: false };
-  const hadCrown = !!_ring.sourceUrl;
-  // Crown history (user 2026-08-11: "it forgot that my original source of
-  // truth was ashkenazy6") — the ring config offers ↩ restore.
-  if (hadCrown) {
-    _ring.prevSourceUrl = _ring.sourceUrl;
-    _ring.prevSourceAt  = new Date().toISOString();
-  }
-  _ring.sourceUrl = url;
-  if (!_ring.orgs.some(u => _orgKey(u) === _orgKey(url))) _ring.orgs.push(url);
-  _workingPair.src = url;   // the topbar chip IS the crown — always in step
-  try { await chrome.storage.local.set({ ds_ring: _ring }); } catch (_) {}
+  if (_workingPair.src && _orgKey(_workingPair.src) === _orgKey(url)) return { changed: false };
+  _workingPair.src = url;
   try { storageSaveWorkingPair(); } catch (_) {}
-  const moved = (typeof syncRingFollowers === 'function') ? syncRingFollowers() : null;
-  showToast(`👑 ${orgLabel(url)} is now the source of truth — every ring surface follows it${moved?.srcMoved ? ` · ${moved.srcMoved} deployment(s) re-pointed (their earlier compares are marked stale)` : ''}`, 'success', 5500);
+  _ring = sftkRingView();
   renderWorkingPair();
   if (opts.rerender !== false) {
-    // A crown change from the ALWAYS-VISIBLE topbar must not blow away an
-    // open Builder session — renderView has no 'builder' case, so a full
-    // view render would replace the editor with the profiles list and
-    // discard unsaved edits (review w703wnvrm). The Builder's name input
-    // exists only while the editor is on screen; repaint it in place so
-    // the source column re-locks onto the new crown instead.
     if (eid('dsProfileName') && typeof renderBuilder === 'function') renderBuilder();
     else renderView(_currentView);
   }
-  // Skip the re-baseline ONLY for a pristine first crown — the ring being
-  // born, nothing measured yet. hadCrown alone was the wrong gate (review
-  // w703wnvrm): removing the crown org clears sourceUrl while every
-  // profile's ringScans baselines survive, and a FIRST crown can still
-  // re-point existing deployments (srcMoved) whose scans were measured
-  // FROM their old sources — both states must rescan like any crown move.
-  const hadBaselines = hadCrown || moved?.srcMoved
-    || (_profiles || []).some(p => p && !p.ephemeral && p.ringScans && Object.keys(p.ringScans).length);
-  if (hadBaselines && typeof sftkRingRebaseline === 'function') {
-    sftkRingRebaseline(reason || 'the source of truth changed');
-  }
-  return { changed: true, moved };
+  return { changed: true };
 }
-window.dsSetSourceOfTruth = dsSetSourceOfTruth;
+window.dsSetPreferredSource = dsSetPreferredSource;
 
 function renderWorkingPair() {
   const el = eid('dsWorkingPair');
   if (!el) return;
-  const orgs = allMapOrgs();
-  if (!orgs.length) { el.innerHTML = ''; return; }
-  const ls = _liveOrgSet();
-  const srcUrl = currentSourceOrg();
-  // EVERY known org, ring members first — not just _ring.orgs. The dropdown
-  // is THE control now, so it must be able to crown an org that isn't a
-  // ring member yet (user repro 2026-08-13: topbar showed ONLY orgfarm
-  // while the ring config listed all 3 known orgs — a brand-new org had no
-  // path to become source here). Crowning a non-member adds it to the ring.
-  const inRing = u => (_ring?.orgs || []).some(x => _orgKey(x) === _orgKey(u));
-  const candidates = [...orgs.map(o => o.url)]
-    .sort((a, b) => (inRing(b) - inRing(a)));
-  const ringExists = (_ring?.orgs?.length || 0) > 0;
-  const opts = candidates.map(u => {
-    const o = orgs.find(x => _orgKey(x.url) === _orgKey(u));
-    const outside = ringExists && !inRing(u);
-    return `<option value="${esc(u)}" ${_orgKey(u) === _orgKey(srcUrl) ? 'selected' : ''}>${esc(orgOptionLabel(u, o?.label, ls))}${outside ? ' — not in the ring yet' : ''}</option>`;
-  }).join('');
-  // With no source set, NOTHING carries `selected` and a <select> silently
-  // falls back to displaying its FIRST option — so this chip asserted an org
-  // was the source of truth while none was (user 2026-07-30: "source of truth
-  // is not pre select but it is select in the top bar", with the Sync Ring
-  // correctly saying "No source of truth yet" right below it). A placeholder
-  // makes the unset state say so instead of impersonating whichever org
-  // happens to sort first.
-  const placeholder = srcUrl ? '' :
-    `<option value="" selected disabled>— none set —</option>`;
-  el.innerHTML = `
-    <span class="ds-pair-lbl" title="Source of truth — new deployments, compares and picklist loads all start from this org. Configure the full ring with the gear.">Source</span>
-    <select id="dsSotSel" class="ds-pair-sel${srcUrl ? '' : ' ds-pair-sel-unset'}" aria-label="Source of truth — the org data flows FROM" title="${srcUrl ? 'The golden org data flows FROM' : 'No source of truth is set yet — pick one here'}">${placeholder}${opts}</select>
-    <button id="dsSotRingBtn" class="ds-pair-swap" aria-label="Configure the Sync Ring" title="Configure the Sync Ring (which orgs stay in sync)">${dsIcon('gear')}</button>`;
-  eid('dsSotSel')?.addEventListener('change', async e => {
-    // THE control — full crown contract (history, membership, followers,
-    // re-baseline) via the one shared setter.
-    await dsSetSourceOfTruth(e.target.value, 'the source of truth changed');
-  });
-  eid('dsSotRingBtn')?.addEventListener('click', () => navigateToView('ring'));
+  // Read-only: the orgs open in Chrome right now. Picking happens where it
+  // matters — on the Deploy page (From → To) and the All-orgs page.
+  const open = (typeof sftkOpenOrgs === 'function') ? sftkOpenOrgs() : [];
+  const known = (typeof _liveKnown === 'function') ? _liveKnown() : open.length > 0;
+  if (!known) { el.innerHTML = ''; return; }
+  const names = open.map(o => esc(o.label)).join(' · ');
+  el.innerHTML = `<button id="dsOpenOrgsChip" class="ds-pair-chip" title="${open.length ? `Open in Chrome: ${names.replace(/"/g, '&quot;')} — deployments run between these. Click for all open orgs at a glance.` : 'No Salesforce org is open in a Chrome tab'}">${window.sftkGlyph('🟢 ', '')}${open.length} org${open.length === 1 ? '' : 's'} open${open.length ? `<span class="ds-pair-chip-names"> · ${names}</span>` : ''}</button>`;
+  eid('dsOpenOrgsChip')?.addEventListener('click', () => navigateToView('ring'));
 }
 
 // Resolve an org URL (the value of every org <select>) to a live session
@@ -2135,6 +2028,7 @@ async function getOrgSession(orgUrl) {
   const freshRes = await sendBg({ type: 'GET_ALL_SF_SESSIONS' });
   if (Array.isArray(freshRes?.sessions)) _allSessionsOk = true;
   if (freshRes?.sessions?.length) _allSessions = freshRes.sessions;
+  _ring = sftkRingView();
   const sess = _resolveSession(orgUrl, _buildAllSessions());
   return (sess && sess.sid) ? sess : null;
 }

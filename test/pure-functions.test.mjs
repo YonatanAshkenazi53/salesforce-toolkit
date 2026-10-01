@@ -809,26 +809,22 @@ describe('profileTargets (studio-core.js) — an org is never a target of itself
   const B = 'https://acme-dev.develop.my.salesforce.com';
   const C = 'https://acme--qa.sandbox.my.salesforce.com';
 
-  it('drops the source from a PINNED target list', () => {
-    expect(profileTargets({ sourceOrg: A, targetOrgs: [A, B, C] })).toEqual([B, C]);
+  // Campaign 4 phase 2 (user 2026-10-01): the pinned set is retired — a
+  // deployment's targets are just [targetOrg]; an old targetOrgs is ignored.
+  it('ignores a retired targetOrgs list: the targets are only the default target', () => {
+    expect(profileTargets({ sourceOrg: A, targetOrg: B, targetOrgs: [A, B, C] })).toEqual([B]);
+    expect(profileTargets({ sourceOrg: A, targetOrgs: [A, B, C] })).toEqual([]);
   });
 
   it('matches the source across Salesforce domain forms, not by string equality', () => {
     const lightning = 'https://acme.lightning.force.com';
-    expect(profileTargets({ sourceOrg: lightning, targetOrgs: [A, B] })).toEqual([B]);
-  });
-
-  it('a pinned list of ONLY the source resolves to no targets, not to itself', () => {
-    expect(profileTargets({ sourceOrg: A, targetOrgs: [A] })).toEqual([]);
+    expect(profileTargets({ sourceOrg: lightning, targetOrg: A })).toEqual([]);
+    expect(profileTargets({ sourceOrg: lightning, targetOrg: B })).toEqual([B]);
   });
 
   it('drops a legacy single targetOrg that equals the source', () => {
     expect(profileTargets({ sourceOrg: A, targetOrg: A })).toEqual([]);
     expect(profileTargets({ sourceOrg: A, targetOrg: B })).toEqual([B]);
-  });
-
-  it('leaves a legitimate pinned set untouched', () => {
-    expect(profileTargets({ sourceOrg: A, targetOrgs: [B, C] })).toEqual([B, C]);
   });
 
   it('survives junk input', () => {

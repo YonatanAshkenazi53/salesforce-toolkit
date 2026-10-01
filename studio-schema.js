@@ -237,7 +237,7 @@ async function renderSchemaView() {
       </div>
       <div id="svError" class="dr-error" style="display:none"></div>
       ${ringMoved ? `<div style="margin-top:10px;font-size:12px;border:1px solid #C5DBF0;background:#E8F4FD;color:#014486;border-radius:8px;padding:8px 11px">
-        👑 The Sync Ring's source of truth moved to <strong>${esc(orgLabel(ringSrc))}</strong>
+        The source moved to <strong>${esc(orgLabel(ringSrc))}</strong>
         (was <strong>${esc(orgLabel(saved.ringSrc))}</strong>) — Schema View followed it.
         Pick a different org above to pin this view to one instead.</div>` : ''}
     </div>

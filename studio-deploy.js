@@ -272,10 +272,8 @@ async function _depSetPair(p, srcKey, tgtKey) {
   if (src && tgt && src.key === tgt.key) { showToast('Source and target must be two different orgs.', 'warning', 3500); return; }
   if (src) p.sourceOrg = src.url;
   if (tgt) p.targetOrg = tgt.url;
-  // Until the ring plumbing is gone (phase 2 step 3) the pick must survive its
-  // re-pointing: pin both sides.
-  if (src) p.sourcePinned = true;
-  if (tgt) p.targetOrgs = [tgt.url];
+  delete p.sourcePinned; delete p.targetOrgs; delete p._srcCrownMoved;   // old ring fields, retired
+  if (src && typeof dsSetPreferredSource === 'function') { try { await dsSetPreferredSource(src.url, { rerender: false }); } catch (_) {} }
   if (!p.ephemeral && typeof storageSaveProfiles === 'function') { try { await storageSaveProfiles(); } catch (_) {} }
   _depForProfile = '';   // a new pair: selections, tab and filter start over
   renderDeploy();

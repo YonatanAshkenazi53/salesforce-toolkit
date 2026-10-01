@@ -4,7 +4,7 @@
 // (scan results, learned record pairs) that is machine-scoped. The export
 // payload must carry ONLY config; import must validate honestly (a newer
 // schema is refused by name, never half-imported), regenerate the id, keep
-// targetOrgs semantics (null = follow-the-ring), and mint fresh provenance.
+// the retired ring fields (targetOrgs / sourcePinned) stay out of the file, and mint fresh provenance.
 import { describe, it, expect } from 'vitest';
 import { extractFunctions } from './extract.mjs';
 
@@ -23,7 +23,8 @@ function realisticProfile() {
     updatedAt: '2026-07-20T09:30:00.000Z',
     sourceOrg: 'https://golden.my.salesforce.com',
     targetOrg: 'https://uat.my.salesforce.com',
-    targetOrgs: null,                                      // follow-the-ring
+    targetOrgs: null,                                      // retired ring field — an old profile still carries it
+    sourcePinned: true,                                    // retired ring field
     scanConfig: { matchField: 'Name', compareFields: ['Industry'] },
     ownerMapping: {
       mode: 'match',
@@ -110,16 +111,16 @@ describe('bldProfileExportPayload — envelope + strip list', () => {
     expect(p.tree.children[0].fieldMappings.LastName).toBe('');
   });
 
-  it('strips EVERY runtime field (lastScan, matchMemory, ringScans, schedule, ephemeral, importedFrom, piiSalt)', () => {
+  it('strips EVERY runtime field (lastScan, matchMemory, ringScans, schedule, ephemeral, importedFrom, piiSalt + the retired ring fields)', () => {
     const p = { ...realisticProfile(), ephemeral: true };
     const out = bldProfileExportPayload(p, '1.0.0').profile;
     for (const f of bldProfileRuntimeFields()) {
       expect(out[f], `runtime field "${f}" must not export`).toBeUndefined();
     }
-    // and the strip list is exactly the documented seven — a new machine-local
+    // and the strip list is exactly the documented eleven — a new machine-local
     // field must be added HERE consciously, not leak silently
     expect(bldProfileRuntimeFields().sort()).toEqual(
-      ['ephemeral', 'importedFrom', 'lastScan', 'matchMemory', 'piiSalt', 'ringScans', 'schedule']);
+      ['_ringOf', '_srcCrownMoved', 'ephemeral', 'importedFrom', 'lastScan', 'matchMemory', 'piiSalt', 'ringScans', 'schedule', 'sourcePinned', 'targetOrgs']);
   });
 
   it('PII: the masking POLICY exports, the machine-local SALT never does', () => {
@@ -144,8 +145,8 @@ describe('bldProfileExportPayload — envelope + strip list', () => {
     const out = bldProfileExportPayload(realisticProfile(), '1.0.0').profile;
     expect(out.sourceOrg).toBe('https://golden.my.salesforce.com');
     expect(out.targetOrg).toBe('https://uat.my.salesforce.com');
-    expect('targetOrgs' in out).toBe(true);
-    expect(out.targetOrgs).toBeNull();                                    // follow-the-ring survives
+    expect('targetOrgs' in out).toBe(false);                              // retired (campaign 4 phase 2): stripped on export
+    expect('sourcePinned' in out).toBe(false);
     expect(out.scanConfig).toEqual({ matchField: 'Name', compareFields: ['Industry'] });
     expect(out.ownerMapping.matching).toEqual({ fields: ['Email', 'Name'], normalize: { emailLower: true, caseFold: false, trim: true } });
     expect(out.tree.where).toBe("Industry = 'Energy'");
@@ -204,17 +205,26 @@ describe('bldProfileImportParse — round trip', () => {
     expect(p.piiSalt).toBeUndefined();
   });
 
-  it('targetOrgs: null (follow-the-ring) survives the round trip as null, not [] or absent', () => {
-    const res = roundTrip();
-    expect('targetOrgs' in res.profile).toBe(true);
-    expect(res.profile.targetOrgs).toBeNull();
-  });
-
-  it('targetOrgs: pinned array survives as the same array', () => {
+  it('the retired ring fields do not survive the round trip (targetOrgs / sourcePinned)', () => {
     const p = realisticProfile();
     p.targetOrgs = ['https://uat.my.salesforce.com', 'https://qa.my.salesforce.com'];
     const res = roundTrip(p);
-    expect(res.profile.targetOrgs).toEqual(['https://uat.my.salesforce.com', 'https://qa.my.salesforce.com']);
+    expect('targetOrgs' in res.profile).toBe(false);
+    expect('sourcePinned' in res.profile).toBe(false);
+    expect(res.profile.targetOrg).toBe('https://uat.my.salesforce.com');   // the default target is plain config
+  });
+
+  it('an OLD file that still carries the ring fields imports, ignoring them (and says so)', () => {
+    const payload = bldProfileExportPayload(realisticProfile(), '2.4.1');
+    payload.profile.targetOrgs = ['https://uat.my.salesforce.com'];
+    payload.profile.sourcePinned = true;
+    payload.profile._srcCrownMoved = { from: 'a', to: 'b' };
+    const res = bldProfileImportParse(JSON.stringify(payload), [], 'old.json');
+    expect(res.error).toBeUndefined();
+    expect('targetOrgs' in res.profile).toBe(false);
+    expect('sourcePinned' in res.profile).toBe(false);
+    expect('_srcCrownMoved' in res.profile).toBe(false);
+    expect(res.stripped).toEqual(expect.arrayContaining(['targetOrgs', 'sourcePinned', '_srcCrownMoved']));
   });
 
   it('regenerates the id — never reuses the file id, never collides with existing ids', () => {
