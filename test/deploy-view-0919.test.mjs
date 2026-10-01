@@ -399,7 +399,8 @@ describe('2026-09-21 — parents at first sight, checked on load when cheap, and
   it('the verdict is in the page header, and a parents-first step leads back to where it came from', () => {
     expect(DV).toContain('id="dsDepParentsChip"');
     expect(DV).toContain('id="dsDepBackOrigin"');
-    expect(DV).toContain("if (orig) window.openReconcile(orig.id);");
+    // 2026-10-01: the way back resolves the origin by id, then by the kept object (parents-first-back-1001)
+    expect(DV).toContain("window.openReconcile(orig.id)");
   });
 });
 

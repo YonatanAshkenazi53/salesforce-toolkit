@@ -1129,7 +1129,7 @@ async function bldCompareParent(refObj, btn) {
       ephemeral: true,
       scanConfig: { matchField: 'Name', compareFields: [] },
       tree: { objectType: refObj, where: '', children: [] },
-      _parentOf: { profileId: p.id, objType: p.tree?.objectType || p.tree?.childSObject },
+      _parentOf: { profileId: p.id, objType: p.tree?.objectType || p.tree?.childSObject, ...(p.ephemeral ? { profile: p } : {}) },
     };
     const res = await runDiffScan(eph);
     if (res?.error) { showToast(`Scan failed: ${res.error}`, 'error', 6000); return; }

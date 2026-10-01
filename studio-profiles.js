@@ -699,6 +699,9 @@ window.saveEphemeralProfile = async function() {
   const p = _reconcileProfile;
   if (!p || !p.ephemeral) return;
   delete p.ephemeral;
+  // a parents-first step keeps its unsaved origin OBJECT for the way back —
+  // never persist that (a whole deployment with its scan inside another)
+  if (p._parentOf) delete p._parentOf.profile;
   p.createdAt = p.updatedAt = new Date().toISOString();
   _profiles.push(p);
   await storageSaveProfiles();
