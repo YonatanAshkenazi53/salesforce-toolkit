@@ -76,6 +76,11 @@ async function openFieldMappingModal(pathStr) {
   let tgtLoaded = false;
   let srcLoadFailed = false;
   let tgtLoadFailed = false;
+  // WHY a side failed: 'closed' = no live session for the org; 'describe' = the
+  // org is open but the object could not be described there (it may not exist
+  // in that org, or is not accessible). User 2026-10-02: both orgs were open
+  // and the dialog still said "not open" — the object was from another org.
+  let srcFailWhy = '', tgtFailWhy = '';
 
   // ── Auto-map: match by API name first, then by normalised label ───────────
   function normalise(s) { return (s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
@@ -352,15 +357,18 @@ async function openFieldMappingModal(pathStr) {
   // srcLoadFailed / tgtLoadFailed distinguish "still loading" from "couldn't
   // load" — the source side used to show a permanent "Loading…" with no hint
   // when the profile's source org simply wasn't open in a Chrome tab.
+  const failText = (url, why) => why === 'describe'
+    ? `⚠ ${esc(objType)} could not be read in ${esc(orgLabel(url))} — the object may not exist in that org, or you cannot access it there`
+    : `⚠ ${esc(orgLabel(url))} not open — open it in a Chrome tab, then reopen this modal`;
   function srcStatusHtml() {
     if (!srcUrl) return '';
-    if (srcLoadFailed) return `<span class="ds-fm-warn-sm">⚠ ${esc(orgLabel(srcUrl))} not open — open it in a Chrome tab, then reopen this modal</span>`;
+    if (srcLoadFailed) return `<span class="ds-fm-warn-sm">${failText(srcUrl, srcFailWhy)}</span>`;
     if (!srcLoaded) return `<span class="ds-fm-loading-sm">Loading…</span>`;
     return `<span class="ds-fm-ok">✓ ${srcFields.length} fields</span>`;
   }
   function tgtStatusHtml() {
     if (!tgtUrl) return '';
-    if (tgtLoadFailed) return `<span class="ds-fm-warn-sm">⚠ ${esc(orgLabel(tgtUrl))} not open — open it in a Chrome tab, then reopen this modal</span>`;
+    if (tgtLoadFailed) return `<span class="ds-fm-warn-sm">${failText(tgtUrl, tgtFailWhy)}</span>`;
     if (!tgtLoaded) return `<span class="ds-fm-loading-sm">Loading…</span>`;
     return `<span class="ds-fm-ok">✓ ${tgtFields.length} fields</span>`;
   }
@@ -445,7 +453,7 @@ async function openFieldMappingModal(pathStr) {
         srcFields = fields; srcLoaded = true;
         node._meta.availableFields = fields; node._meta.fieldsLoaded = true;
       } else {
-        srcLoadFailed = true;   // failed describe — show the warning, not eternal "Loading…"
+        srcLoadFailed = true; srcFailWhy = org.sid ? 'describe' : 'closed';   // say WHICH failure, not eternal "Loading…"
       }
       const el = eid('dsFmSrcStatus'); if (el) el.innerHTML = srcStatusHtml();
     } else {
@@ -454,7 +462,7 @@ async function openFieldMappingModal(pathStr) {
       if (statusEl) statusEl.innerHTML = '<span class="ds-fm-loading-sm">Loading…</span>';
       const fields = await loadFields(org.url, org.sid);
       if (fields) { tgtFields = fields; tgtLoaded = true; }
-      else tgtLoadFailed = true;
+      else { tgtLoadFailed = true; tgtFailWhy = org.sid ? 'describe' : 'closed'; }
       const el = eid('dsFmTgtStatus'); if (el) el.innerHTML = tgtStatusHtml();
     }
     const autoBtn = eid('dsFmAutoMap');
@@ -695,10 +703,10 @@ async function openFieldMappingModal(pathStr) {
         srcFields = fields; srcLoaded = true;
         node._meta.availableFields = fields; node._meta.fieldsLoaded = true;
       } else {
-        srcLoadFailed = true;   // describe failed — surface it, don't hang
+        srcLoadFailed = true; srcFailWhy = srcOrg.sid ? 'describe' : 'closed';   // describe failed — surface it, don't hang
       }
     } else {
-      srcLoadFailed = true;     // source org not open in any Chrome tab
+      srcLoadFailed = true; srcFailWhy = 'closed';     // source org not open in any Chrome tab
     }
   }
 
@@ -708,9 +716,9 @@ async function openFieldMappingModal(pathStr) {
     if (tgtOrg) {
       const fields = await loadFields(tgtOrg.url, tgtOrg.sid);
       if (fields) { tgtFields = fields; tgtLoaded = true; }
-      else tgtLoadFailed = true;   // keep the org visible + explain, don't silently clear
+      else { tgtLoadFailed = true; tgtFailWhy = tgtOrg.sid ? 'describe' : 'closed'; }   // keep the org visible + explain, don't silently clear
     } else {
-      tgtLoadFailed = true;        // org not open in any Chrome tab
+      tgtLoadFailed = true; tgtFailWhy = 'closed';        // org not open in any Chrome tab
     }
   }
 
