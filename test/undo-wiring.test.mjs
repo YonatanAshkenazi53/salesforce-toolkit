@@ -105,7 +105,9 @@ describe('the capture never lies about coverage', () => {
 });
 
 describe('the rollback keeps the laws', () => {
-  const fn = UN.slice(UN.indexOf('window.rollbackRun'));
+  // Campaign 4 phase 7: the modal flow became two DOM-free functions the
+  // ↩ Roll back page drives — the planner and the executor (studio-undo.js).
+  const fn = UN.slice(UN.indexOf('async function sftkUndoBuildPlan('));
 
   it('never hard-deletes — Recycle Bin only', () => {
     expect(fn).toContain("'SF_COLLECTIONS_DELETE'");
@@ -113,7 +115,8 @@ describe('the rollback keeps the laws', () => {
   });
 
   it('shows the plan, the automation that can reject it, and the limits BEFORE the typed confirmation', () => {
-    before(fn, 'sftkUndoAutomationSummary(', 'dsUndoTyped');
+    // the automation is checked in the planner, before the executor can write anything
+    before(fn, 'sftkUndoAutomationSummary(', 'async function sftkUndoExecute(');
     expect(UN).toContain('sftkUndoLimits()');
     expect(UN).toContain('Could not check');
     expect(fn).toContain("'ROLLBACK'");
@@ -137,7 +140,7 @@ describe('the rollback keeps the laws', () => {
 
   it('refused reads never read as "matches the restore point"', () => {
     expect(UN).toContain('Nothing could be rolled back');
-    expect(UN).toMatch(/else if \(refused\.length\)/);
+    expect(UN).toMatch(/if \(refused\.length\) \{/);   // the verdict helper: refused → 'Nothing could be rolled back', never 'matches'
     expect(UN).toContain('every object that was read matches the restore point');
   });
 
@@ -150,38 +153,34 @@ describe('the rollback keeps the laws', () => {
   });
 
   it('looks under the records it would delete and KEEPS parents of later children', () => {
-    before(fn, 'sftkUndoCascadeChildren(', 'dsUndoTyped');
+    before(fn, 'sftkUndoCascadeChildren(', 'async function sftkUndoExecute(');
     expect(fn).toMatch(/if \(item\.cascadeUnknown\.length\) \{ for \(const id of createdSet\) kept\.add\(id\); \}/);
     expect(fn).toMatch(/scoped\.created = scoped\.created\.filter\(id => !kept\.has\(id\)\)/);
   });
 
   it('matches flows by object LABEL and the verify pass judges the acted-on records by identity', () => {
     expect(fn).toContain('sftkUndoAutomationSummary(results, objs, labels)');
-    expect(fn).toMatch(/const acted = new Set\(\[\.\.\.item\.scoped\.created, \.\.\.item\.scoped\.changed\.map\(c => c\.id\)\]\)/);
+    expect(fn).toMatch(/const acted = new Set\(\[\.\.\.w\.created, \.\.\.w\.changed\.map\(c => c\.id\)\]\)/);   // exactly what THIS execution acted on
     expect(fn).toContain('sftkUndoVerifyCounts(d2, acted)');
     expect(fn).toMatch(/Verifying \$\{item\.objType\}: re-reading/);
   });
 
   it('a second click while one is in flight is refused; archived cards are persisted back to the archive', () => {
     expect(UN).toContain('let _sftkUndoBusy = null;');
-    expect(fn).toMatch(/if \(_sftkUndoBusy\) return showToast/);
+    expect(fn).toMatch(/if \(_sftkUndoBusy\) \{ showToast/);
     expect(UN).toMatch(/function _sftkUndoAllEntries\(\)/);
     expect(UN).toMatch(/sftkArchPut\(arch\)/);
   });
 
-  it('the guard is a token, released by ANY close before the writes and by NO close during them', () => {
+  it('the guard is a token held only while writes are in flight; the planner stops at any point the page no longer wants it', () => {
     // token: an abandoned flow that wakes up later cannot release a newer flow's guard
     expect(fn).toMatch(/const token = \+\+_sftkUndoSeq;\s*_sftkUndoBusy = token;/);
-    expect(fn).toMatch(/const done = \(\) => \{ if \(_sftkUndoBusy === token\) _sftkUndoBusy = null; \};/);
-    // Escape / another modal: observed, abandons the flow before writes
-    expect(fn).toContain('new MutationObserver(');
-    expect(fn).toMatch(/obs\.observe\(overlay, \{ attributes: true, attributeFilter: \['style'\] \}\)/);
-    expect(fn).toMatch(/const abandon = \(\) => \{\s*if \(executing\) return;/);
-    // during execution the modal is locked and Close is disabled
+    expect(fn).toMatch(/finally \{\s*window\._sftkModalLock = false;\s*if \(_sftkUndoBusy === token\) _sftkUndoBusy = null;/);
+    // the planner (reads only) checks io.alive() between every org round-trip and returns null — nothing is written
+    expect((fn.match(/if \(!alive\(\)\) return null;/g) || []).length).toBeGreaterThanOrEqual(4);
+    // during execution the modal lock is on (the shared dialog cannot be closed over a running rollback)
     expect(fn).toContain('window._sftkModalLock = true;');
-    expect(fn).toMatch(/finally \{\s*window\._sftkModalLock = false;/);
     expect(CO).toMatch(/function closeModal\(\) \{[\s\S]{0,200}if \(window\._sftkModalLock\) return;/);
-    expect(fn).toMatch(/closeBtn\?\.addEventListener\('click', \(\) => \{ if \(executing\) return; abandon\(\); closeModal\(\); \}\)/);
   });
 
   it('the end-of-run boundary is PER ORG \u2014 a leg never borrows another org\u2019s', () => {
@@ -190,21 +189,23 @@ describe('the rollback keeps the laws', () => {
     expect(RC2).toMatch(/undo: \{ \.\.\.undoStub, \.\.\.runEnd, runEndByOrg \}/);
     expect(fn).toMatch(/const endFor = \(evOrgUrl\) => \{/);
     expect(fn).toMatch(/return \{ at: null, source: null \};/);
-    expect(fn).toContain('sftkUndoScopeByTime(diff, res.records || [], legEnd)');
+    expect(fn).toContain('sftkUndoScopeByTime(diff, nowRows, legEnd)');
     expect(UN).toContain('No end-of-run time is recorded for this org');
   });
 
   it('a failed describe fails CLOSED on the cascade check \u2014 every created parent is kept', () => {
     expect(fn).toMatch(/const cascadeKnown = !!\(desc && Array\.isArray\(desc\.childRelationships\)\)/);
-    expect(fn).toMatch(/if \(scoped\.created\.length && !cascadeKnown\) \{[\s\S]{0,200}item\.kept = scoped\.created\.length;\s*scoped\.created = \[\];/);
+    expect(fn).toMatch(/if \(scoped\.created\.length && !cascadeKnown\) \{[\s\S]{0,300}item\.kept = scoped\.created\.length;\s*item\.keptIds = scoped\.created\.slice\(\);\s*scoped\.created = \[\];/);
     expect(fn).toContain('could not be described in');
     // and the plan says the real reason, not "children were added"
-    expect(UN).toMatch(/if \(it\.cascadeUnknown && it\.cascadeUnknown\.length\) \{\s*bits\.push\(`<span style="color:#92400e"><strong>\$\{it\.kept\.toLocaleString\(\)\}<\/strong> kept \u2014 could not check/);
+    expect(UN).toContain('item.cascadeUnknown.push(`${o.objType} could not be described`)');   // the page says 'kept — could not check what hangs under it (…)' from this
+    // (old plan-dialog pin retired: the reason now rides the kept record's row on the rollback page)
+    void (0 && /if \(it\.cascadeUnknown && it\.cascadeUnknown\.length\) \{\s*bits\.push\(`<span style="color:#92400e"><strong>\$\{it\.kept\.toLocaleString\(\)\}<\/strong> kept \u2014 could not check/);
   });
 
   it('writes go in 200-record slices, each contained; a slice with no answer is UNCONFIRMED, not refused', () => {
     expect(fn).toContain('const SLICE = 200;');
-    expect(fn).toMatch(/for \(let i = 0; i < item\.scoped\.created\.length; i \+= SLICE\)/);
+    expect(fn).toMatch(/for \(let i = 0; i < w\.created\.length; i \+= SLICE\)/);
     expect(fn).toMatch(/for \(let i = 0; i < payload\.length; i \+= SLICE\)/);
     expect(fn).toMatch(/r\.deleteFailed \+= slice\.length; r\.unconfirmed \+= slice\.length;/);
     expect(fn).toContain('outcome unconfirmed');
@@ -230,7 +231,8 @@ describe('the rollback keeps the laws', () => {
 
   it('keeps one result object per leg AND object — a refused second leg can never vanish into success', () => {
     // Reconcile pull / ← update captures the same root object in the target AND the source.
-    expect(fn).toMatch(/const key = multiLeg \? `\$\{item\.objType\} @ \$\{orgLabel\(item\.leg\.orgUrl\)\}` : item\.objType/);
+    expect(fn).toMatch(/it\.key = multiLeg \? `\$\{it\.objType\} @ \$\{orgLabel\(it\.leg\.orgUrl\)\}` : it\.objType/);
+    expect(fn).toContain('const key = item.key;');
     expect(fn).toMatch(/const r = results\[key\] \|\| \(results\[key\] = \{/);
     expect(fn).not.toMatch(/results\[item\.objType\] = results\[item\.objType\] \|\| r/);
   });

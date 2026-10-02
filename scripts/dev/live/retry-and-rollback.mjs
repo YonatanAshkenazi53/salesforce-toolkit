@@ -51,27 +51,60 @@ export default async function (h) {
   h.log('Roll back available:', !rbDisabled);
   if (rbDisabled) return;
   await h.eval(`document.querySelector('[data-dsaction="rollbackRun"]:not([disabled])').click()`);
-  // the plan is complete when the typed input exists, or when the Go button was removed (nothing to do)
-  await h.waitFor("!!document.querySelector('#dsUndoTyped') || (!!document.querySelector('#dsUndoPlan')?.innerText && !document.querySelector('#dsUndoGo'))", 300000, 1000);
+  // ↩ Roll back is a PAGE (campaign 4 phase 7): the plan is ready when the Go
+  // button exists, or the page says it could not be prepared / nothing to do.
+  await h.waitFor("!!document.querySelector('#dsRbGo') || !!document.querySelector('.ds-rec-card-bad')", 300000, 1000);
   await h.sleep(1000);
-  h.log('ROLLBACK PLAN:', await dump(h, '#dsUndoPlan', 6000));
-  h.log('ROLLBACK LOG (pre):', await dump(h, '#dsUndoLog', 800));
-  const forced = await h.eval(`(() => { let n = 0; document.querySelectorAll('[data-undo-force]').forEach(c => { c.checked = true; n++; }); return n; })()`);
+  h.log('ROLLBACK PAGE:', await dump(h, '.ds-dep-plan', 3000));
+  h.log('ROLLBACK PREP LOG:', await dump(h, '#dsRbPrepLog', 800));
+  h.log('ROLLBACK RECORDS (current tab):', await dump(h, '#dsRbList', 2500));
+  const forced = await h.eval(`(() => { let n = 0; document.querySelectorAll('[data-rb-pick^="force|"]').forEach(c => { if (!c.checked) { c.click(); n++; } }); return n; })()`);
   h.log('force boxes ticked:', forced);
-  const word = await h.eval(`(document.querySelector('#dsUndoTyped')?.placeholder || '')`);
-  h.log('typed word asked:', JSON.stringify(word));
-  if (!word) return;
-  await h.eval(`(() => { const i = document.querySelector('#dsUndoTyped'); i.value = ${JSON.stringify(word)}; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+  // UNTICK_ONE=1: keep ONE created record — proves unticking survives (CLI shows it after)
+  if (process.env.UNTICK_ONE === '1') {
+    const kept = await h.eval(`(() => { const cb = document.querySelector('[data-rb-pick^="del|"]:checked'); if (!cb) return ''; cb.click(); return cb.closest('.ds-dep-row')?.querySelector('.ds-dep-key')?.textContent || cb.dataset.rbPick; })()`);
+    h.log('UNTICKED (kept on purpose):', JSON.stringify(kept));
+  }
+  h.log('summary:', await dump(h, '#dsRbSummary', 200));
+  const goOn = await h.eval(`!!document.querySelector('#dsRbGo') && !document.querySelector('#dsRbGo').disabled`);
+  h.log('Go enabled:', goOn);
+  if (!goOn) return;
+  await h.eval(`document.querySelector('#dsRbGo').click()`);
+  // the ONE shared confirmation: acknowledgement checkbox, the typed word (ROLLBACK),
+  // or the typed org name for production / guarded orgs
+  await h.waitFor("!!document.querySelector('#sftkConfirmGo') || !!document.querySelector('#sftkConfirmProdGo')", 20000, 300);
   await h.sleep(300);
-  h.log('Go enabled:', await h.eval(`!document.querySelector('#dsUndoGo')?.disabled`));
-  await h.eval(`document.querySelector('#dsUndoGo')?.click()`);
+  await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } return true; })()`);
+  // the page asks for ROLLBACK (non-production); production asks the org name in the second step below
+  const word = (await h.eval(`!!document.querySelector('#sftkConfirmWord')`)) ? 'ROLLBACK' : '';
+  h.log('typed word asked:', JSON.stringify(word));
+  if (word) await h.eval(`(() => { const i = document.querySelector('#sftkConfirmWord'); i.value = ${JSON.stringify(word)}; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+  await h.sleep(300);
+  h.log('Confirm enabled:', await h.eval(`!document.querySelector('#sftkConfirmGo')?.disabled`));
+  await h.eval(`document.querySelector('#sftkConfirmGo')?.click()`);
+  await h.sleep(500);
+  if (await h.eval(`!!document.querySelector('#sftkConfirmProd')`)) {
+    const prodName = await h.eval(`(document.querySelector('#sftkConfirmProd')?.placeholder || '')`);
+    h.log('production step — org name asked:', JSON.stringify(prodName));
+    await h.eval(`(() => { const i = document.querySelector('#sftkConfirmProd'); i.value = ${JSON.stringify(prodName)}; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    await h.sleep(300);
+    await h.eval(`document.querySelector('#sftkConfirmProdGo')?.click()`);
+  }
   // the rollback writes its own History entry on success AND on failure — that is the end marker
   const rbBefore = await h.eval(`_history.filter(x => x.kind === 'rollback').length`);
   for (let i = 0; i < 1500; i++) { if (await h.eval(`_history.filter(x => x.kind === 'rollback').length > ${rbBefore}`)) break; await h.sleep(1000); }
   await h.sleep(2000);
-  h.log('ROLLBACK LOG:', await dump(h, '#dsUndoLog', 2500));
+  h.log('ROLLBACK LOG:', await dump(h, '#dsRbLog', 2500));
+  h.log('ROLLBACK RESULT:', await dump(h, '#dsRbResult', 800));
+  h.log('ROLLBACK ERRORS:', await h.eval(`JSON.stringify(((_history.filter(x => x.kind === 'rollback').slice(-1)[0] || {}).errors || []).slice(0, 12))`));
+  h.log('ROLLBACK PREP LOG (full):', await dump(h, '#dsRbPrepLog', 4000));
   await h.shot(h.shots + '/rollback.png');
-  await h.eval(`(() => { if (typeof closeModal === 'function') closeModal(); return true; })()`); await h.sleep(500);
+  // 📋 the report: every record by name
+  if (await h.eval(`!!document.querySelector('#dsRbOpenReport')`)) {
+    await h.eval(`document.querySelector('#dsRbOpenReport').click()`); await h.sleep(1500);
+    h.log('REPORT:', await dump(h, '.ds-dep-page', 2500));
+    await h.shot(h.shots + '/rollback-report.png');
+  }
   await h.eval(`document.querySelector('[data-view="history"]')?.click()`); await h.sleep(1500);
   h.log('HISTORY after rollback:', await dump(h, '.ds-history-card, .ds-history-item', 900));
 }

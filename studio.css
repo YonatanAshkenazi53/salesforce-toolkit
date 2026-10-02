@@ -6240,6 +6240,14 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 .ds-pair-chip:hover { background: rgba(255,255,255,.22); }
 .ds-pair-chip-names { color: rgba(255,255,255,.75); }
 @media (max-width: 1100px) { .ds-pair-chip-names { display: none; } }
+/* ↩ Roll back page (campaign 4 phase 7) */
+.ds-rb-intro { border-left: 3px solid var(--brand); }
+.ds-rb-leg > summary { cursor: pointer; padding: 8px 12px; }
+.ds-rb-auto { font-size: 12px; padding: 0 12px 10px; }
+.ds-rb-warnline { margin-top: 6px; padding: 8px 10px; background: var(--c-warn-bg, #fffbeb); border-left: 3px solid var(--warning); border-radius: 4px; font-size: 12px; color: var(--c-warn-fg, #92400e); }
+.ds-rb-limits { margin-top: 8px; }
+.ds-rb-foot-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ds-dep-mono { font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: var(--subtext); }
 /* Between which orgs — the org picker on top of the Deploy page (campaign 4) */
 .ds-dep-orgs-hint { margin-left: auto; color: var(--subtext); font-size: 11px; font-weight: 400; }
 .ds-dep-orgs-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
