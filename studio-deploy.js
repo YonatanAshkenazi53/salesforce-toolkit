@@ -125,7 +125,11 @@ let _depTab     = 'ins';
 let _depFilter  = '';
 let _depForProfile = null;
 let _depLastRunLog = null;   // { pid, html } — the last run's log, kept across the post-run repaint
-const SFTK_DEPLOY_WINDOW = 300;   // rows painted per tab; the count is the truth
+const SFTK_DEPLOY_WINDOW = 300;   // rows painted per tab at first; "Show more" / "Show all" extend it
+// The window grows per list (object × tab × filter) and resets when the list
+// changes (user 2026-10-02: "Showing 300 of 350 … Filter to find a record" —
+// "dont think its a good user exp. we need to give the info somehow").
+let _depWindow = SFTK_DEPLOY_WINDOW, _depWindowKey = '';
 
 function _depChildSel(pathKey) {
   if (!_recChildSel[pathKey]) _recChildSel[pathKey] = { push: new Set(), relink: new Set(), overwrite: new Set(), del: new Set() };
@@ -252,7 +256,7 @@ function _depOrgPickerHtml(p) {
   const m = sftkDeployOrgPicker(p, open, (typeof orgLabel === 'function') ? orgLabel : (u => String(u || '')), (typeof _orgKey === 'function') ? _orgKey : (u => String(u || '')));
   const opt = (o, sel) => `<option value="${esc(o.key)}" ${sel ? 'selected' : ''}>${esc(o.label)}</option>`;
   return `<div class="ds-rec-card ds-dep-orgs">
-    <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">🧭</span><span class="ds-rec-card-title">Between which orgs</span><span class="ds-dep-orgs-hint">only orgs open in Chrome are offered · picking writes nothing</span></div>
+    <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">🏢</span><span class="ds-rec-card-title">Between which orgs</span><span class="ds-dep-orgs-hint">only orgs open in Chrome are offered · picking writes nothing</span></div>
     <div class="ds-dep-orgs-row">
       <label>From <select id="dsDepSrc" class="ds-select ds-select-sm" aria-label="Source org"><option value="" ${m.src ? '' : 'selected'} disabled>— pick the source —</option>${m.sources.map(o => opt(o, o.key === m.src)).join('')}</select></label>
       <span class="ds-dep-orgs-arrow">→</span>
@@ -569,7 +573,7 @@ async function _depPaintTree(p, scan) {
   const root = sftkDeployTreeNodes(p.tree);
   const missingTgt = (_depIdKey === key && _depIdData) ? sftkIdCreatable(_depIdData.objects, 'tgt') : [];
   host.innerHTML = `<div class="ds-rec-card">
-    <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">🌳</span><span class="ds-rec-card-title">This deployment</span>
+    <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">📦</span><span class="ds-rec-card-title">This deployment</span>
       <span class="ds-rec-card-hint">the shape of the data you are defining across ${esc(orgLabel(p.sourceOrg || ''))} and ${esc(orgLabel(p.targetOrg || ''))} — click an object to see its records</span></div>
     <div class="ds-dtree"><ul>${root ? nodeHtml(root) : ''}</ul></div>
     <div class="ds-dtree-foot"><button class="ds-btn ds-btn-sm" id="dsDepIdBtn" title="See which objects carry the identity field in each org, create it where it is missing, and stamp matched pairs">🪪 Identity…</button>
@@ -832,7 +836,9 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   const key = r => (typeof sftkMatchKeyLabel === 'function') ? sftkMatchKeyLabel(r.matchKey) : String(r.matchKey ?? '');
   const q = _depFilter.trim().toLowerCase();
   const rows = q ? all.filter(r => key(r).toLowerCase().includes(q) || String(r.parentKeySrc || '').toLowerCase().includes(q)) : all;
-  const shown = rows.slice(0, SFTK_DEPLOY_WINDOW);
+  const wkey = `${cur.pathKey}|${tabDef.k}|${q}`;
+  if (wkey !== _depWindowKey) { _depWindowKey = wkey; _depWindow = SFTK_DEPLOY_WINDOW; }
+  const shown = rows.slice(0, _depWindow);
   const recUrl = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
 
   // child Insert rows: the SAME parent rule the classic page applies
@@ -906,7 +912,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   };
 
   const nAll = rows.length.toLocaleString();
-  const bulk = tabDef.k === 'ins' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list${rows.length > SFTK_DEPLOY_WINDOW ? ` — the list below paints the first ${SFTK_DEPLOY_WINDOW.toLocaleString()}, the count is the truth` : ''}">✓ All ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
+  const bulk = tabDef.k === 'ins' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list${rows.length > shown.length ? ` — including the ${(rows.length - shown.length).toLocaleString()} not shown yet (Show all lists them)` : ''}">✓ All ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
     : tabDef.k === 'chg' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Overwrite every ${nAll} changed record(s) in this list with the source's values">→ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
     : tabDef.k === 'ext' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list for deletion">🗑 all ${nAll}${!isRoot ? ' (no orphans)' : ''}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
     : tabDef.k === 'link' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" ${relinkBlocked ? 'disabled' : ''}>⇄ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>` : '';
@@ -923,7 +929,17 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     ${!isRoot ? (s.warnings || []).map(w => `<div class="ds-dep-note">⚠ ${esc(String(w).replace(/^[⚠\s]+/, ''))}</div>`).join('') : ''}
     ${tabDef.k === 'amb' && rows.length ? _depAmbIntro(p, isRoot) : ''}
     <div class="ds-dep-list">${shown.length ? shown.map(rowHtml).join('') : `<div class="ds-dep-empty">${q ? 'No record matches that filter.' : `Nothing ${esc(tabDef.noun)}.`}</div>`}</div>
-    ${rows.length > shown.length ? `<div class="ds-dep-note">Showing ${shown.length.toLocaleString()} of ${rows.length.toLocaleString()} — the count is the truth, the list is a window. Filter to find a record.</div>` : ''}`;
+    ${rows.length > shown.length ? `<div class="ds-dep-note ds-dep-more">Showing ${shown.length.toLocaleString()} of ${rows.length.toLocaleString()}
+      <button class="ds-btn ds-btn-xs" data-dep-more="step">Show ${Math.min(SFTK_DEPLOY_WINDOW, rows.length - shown.length).toLocaleString()} more</button>
+      <button class="ds-btn ds-btn-xs" data-dep-more="all">Show all ${rows.length.toLocaleString()}</button></div>` : ''}`;
+  // Show more / all: grow the window for THIS list and repaint in place,
+  // keeping the scroll position.
+  host.querySelectorAll('[data-dep-more]').forEach(b => b.addEventListener('click', () => {
+    const list = host.querySelector('.ds-dep-list'); const top = list ? list.scrollTop : 0;
+    _depWindow = b.dataset.depMore === 'all' ? rows.length : _depWindow + SFTK_DEPLOY_WINDOW;
+    _depPaintList(p, scan, cur, s, tabDef, opts);
+    const again = host.querySelector('.ds-dep-list'); if (again) again.scrollTop = top;
+  }));
 
   // ── wiring: every control writes into the classic Sets ──
   const repaint = () => { _depPaintList(p, scan, cur, s, tabDef, opts); _depSummary(p, p.tree?.objectType || p.tree?.childSObject || '?', null); };
