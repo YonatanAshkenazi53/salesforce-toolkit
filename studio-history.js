@@ -351,6 +351,7 @@ function renderHistory() {
               title="Open this deployment with the ${totalFailed} failed record(s) ticked under 🔴 Insert. Records that already succeeded are not touched.">↻ Retry failed (${totalFailed})</button>` : ''}
             ${undoSt.show ? `<button class="ds-btn ds-btn-xs ${undoSt.disabled ? '' : 'ds-btn-danger'}" ${undoSt.disabled ? 'disabled' : ''} data-dsaction="rollbackRun" data-arg="${esc(run.id)}"
               title="${esc(undoSt.title || '')}">${esc(undoSt.label)}</button>` : ''}
+            ${isRollback ? `<button class="ds-btn ds-btn-xs" data-dsaction="rollbackReport" data-arg="${esc(run.id)}" title="Every record this rollback deleted or restored, by name">📋 Which records</button>` : ''}
             ${profExists && !isRecRun && !isRollback ? `<button class="ds-btn ds-btn-xs" data-dsaction="runAgain" data-arg="${esc(run.id)}"
               title="Open this deployment against the same target this run used. Nothing is selected for you.">↻ Run again</button>` : ''}
             ${profExists && isRecRun ? `<button class="ds-btn ds-btn-xs" data-dsaction="openReconcile" data-arg="${esc(run.profileId)}"

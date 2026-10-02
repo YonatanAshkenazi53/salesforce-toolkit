@@ -490,6 +490,8 @@ function sftkUndoRowLabel(row) {
   const person = [s(row.FirstName), s(row.LastName)].filter(Boolean).join(' ');
   if (person) return person;
   for (const f of ['Subject', 'Title', 'CaseNumber', 'OrderNumber', 'ContractNumber', 'Label', 'DeveloperName', 'MasterLabel']) if (s(row[f])) return s(row[f]);
+  // a comment / note / body: its first words
+  for (const f of ['CommentBody', 'Body', 'Description']) { const t = s(row[f]).replace(/\s+/g, ' '); if (t) return t.length > 60 ? `${t.slice(0, 57)}…` : t; }
   return s(row.Id);
 }
 
@@ -538,7 +540,11 @@ function sftkUndoFieldsNotCovered(describe) {
 // (feeds, history, shares, subscriptions…) are skipped: they exist only for
 // their parent and hold no one's independent work.
 function sftkUndoCascadeChildren(describe) {
-  const skip = /(Feed|History|Share|Tag|ChangeEvent)$|^(EntitySubscription|TopicAssignment|ContentDocumentLink|FlowRecordRelation|RecordAction|CollaborationGroupRecord|Vote|ProcessInstance|ProcessInstanceHistory|DuplicateRecordItem|UserRecordAccess|EmailStatus|AttachedContentDocument|CombinedAttachment|OpenActivity|ActivityHistory|NoteAndAttachment|LookedUpFromActivity|OutgoingEmail|ProcessException|RecentlyViewed)$/;
+  // History2 = the Lightning case/lead history objects (CaseHistory2) — system
+  // rows like the rest; live rollback 2026-10-02 kept all 4 Cases because this
+  // one could not be filtered by CreatedDate, and then Salesforce refused to
+  // delete their Accounts and Contacts.
+  const skip = /(Feed|History|History2|Share|Tag|ChangeEvent)$|^(EntitySubscription|TopicAssignment|ContentDocumentLink|FlowRecordRelation|RecordAction|CollaborationGroupRecord|Vote|ProcessInstance|ProcessInstanceHistory|DuplicateRecordItem|UserRecordAccess|EmailStatus|AttachedContentDocument|CombinedAttachment|OpenActivity|ActivityHistory|NoteAndAttachment|LookedUpFromActivity|OutgoingEmail|ProcessException|RecentlyViewed)$/;
   const out = []; const seen = new Set();
   for (const r of ((describe && describe.childRelationships) || [])) {
     if (!r || !r.cascadeDelete || !r.childSObject || !r.field) continue;

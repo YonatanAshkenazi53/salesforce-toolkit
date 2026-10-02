@@ -817,6 +817,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'retryFailed':           window.retryFailedRun?.(arg); break;
       case 'runAgain':              window.runAgain?.(arg); break;
       case 'rollbackRun':           window.rollbackRun?.(arg); break;
+      case 'rollbackReport':        window.openRollback?.(arg, { report: true }); break;   // 📋 which records a rollback touched
       case 'undoTool':              window.undoTool?.(arg); break;
       case 'openOrgTab':            chrome.tabs.create({ url: arg }); break;
       case 'compareOrgFrom':        window.compareOrgFrom?.(arg); break;
@@ -1506,7 +1507,7 @@ function navigateToView(view) {
 // Palette/hash entries for absent views are filtered by this same check.
 function _viewAvailable(view) {
   const need = { readiness: 'renderReadiness', schema: 'renderSchemaView', fields: 'renderFieldAudit',
-                 whatsnew: 'renderWhatsNew', orghealth: 'renderOrgHealth' };
+                 whatsnew: 'renderWhatsNew', orghealth: 'renderOrgHealth', rollback: 'renderRollback' };
   return !need[view] || typeof window[need[view]] === 'function';
 }
 
@@ -1591,6 +1592,7 @@ function renderView(view) {
     case 'compare':   renderOrgCompare(); break;
     case 'picklists': renderPicklists();  break;
     case 'ring':      renderRing();       break;
+    case 'rollback':  if (typeof window.renderRollback === 'function') window.renderRollback(); else renderHistory(); break;   // ↩ the rollback page (campaign 4 phase 7)
     // The Org Seeder ships only in the dev build while it is hardened
     // (user 2026-08-31: "I dont want the org seeder to be available now.
     // we need to test it more") — the packer strips its file and nav. A
