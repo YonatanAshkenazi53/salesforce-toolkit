@@ -176,6 +176,57 @@ live run view (Phase 1) in place. The advisor notes become one "Before you deplo
 
 ---
 
+## Phase 7 — Roll back is a page, and it says who
+
+**Asked 2026-10-02 (user): "The rollback screen is not great. we should make it open a reconcile
+screen, like the deployment screen, with all the features there." and, on the History card
+("Contact · 1250 deleted ✓ verified"): "there's no info on the operation, who got deleted, etc".**
+
+**Problem.** ↩ Roll back opens a modal: a progress log, a per-object plan in one line each
+("delete 812 not in the restore point · restore 2 overwritten · 5 kept …"), a typed word, Go. No
+record is named before, and none after: the History card keeps counts only.
+
+**Build.**
+1. Split studio-undo.js: `sftkUndoBuildPlan(run, ev, io)` (steps 1-2 of today's `rollbackRun`:
+   sessions, locks, org type, automation, re-read, diff, scope-by-time, person contacts, cascade
+   checks — DOM-free, `io.log` / `io.alive` callbacks) and `sftkUndoExecute(ctx, picks, io)`
+   (step 4: deletes, restores, verify, History record). `rollbackRun` becomes the page's opener.
+   Plan items carry the RECORDS, not only ids: for "created → delete" the current rows (Name /
+   key fields), for "overwritten → restore" the before-image row and the current row with the
+   differing fields; kept / left-alone / not-restorable rows likewise, with their reason.
+2. A view `rollback` (studio-rollback.js, Deploy-page pattern): header "↩ Roll back — <deployment>
+   · <org> · run <when> · restore point <when>"; "What the run did" table per object (delete /
+   restore / kept / left alone / deleted-since / untouched); tabs per object with buckets
+   **To delete** (created by the run), **To restore** (overwritten; ▸ record opens the field
+   compare before ↔ now), **Kept** (reason; "delete anyway — I checked" per record where the
+   children could not be read), **Left alone** (created or edited after the run), **Not
+   restorable** (deleted since; hard-deleted). Rows: name, what happens, links to the record.
+   Checkboxes on To delete / To restore, ALL TICKED by default — a rollback's purpose is
+   everything the run did; unticking is the exception (said in the intro). The automation card
+   (validation rules, triggers, flows that can refuse or re-fire) stays, as a card.
+3. ONE confirmation through `sftkConfirmDestructive` (word ROLLBACK, typed org name for
+   production / unknown), then the live run view (`sftkRunProgressHandler`) in place — the
+   execute path posts per-object fetched / batch events like the engine does.
+4. The record: the rollback's History entry keeps per object `deletedRecords` / `restoredRecords`
+   / `failedRecords` as `{ id, name }` (restored: + the fields put back), capped at 5,000 per
+   object and said when capped. The History card's "1,250 deleted" opens the rollback page in
+   REPORT mode: the same tabs, read-only, every record named, soft-deleted ones linking to the
+   target's Recycle Bin, with the verification per object.
+5. Undo of tool writes (History › tool cards) keeps its dialog — one record, one line.
+
+**Enforce.** `test/rollback-page-1002.test.mjs`: the planner is DOM-free (no `eid(`/`document.`
+inside `sftkUndoBuildPlan` / `sftkUndoExecute`); items carry rows; defaults all ticked; the one
+confirmation; the History entry carries named records; the card opens the report. Existing
+rollback tests (`undo-*`, `rollback*`) keep passing against the extracted functions.
+
+**Live.** The CX tree run (7 inserts) then ↩ on its History card → the page lists the 7 created
+Accounts by name under To delete, the 1 updated under To restore with before ↔ now; untick one
+Account → it survives (CLI); the report names the six deleted and the one restored; the Recycle
+Bin link works. Then the volume run (6,000) for the window and the cap note.
+
+**Size.** 2 days. Fable (undo engine, the page's selection → plan); Sonnet may do the report
+mode's markup once the data contract exists.
+
 ## Backlog (found during the campaign)
 
 - **Synced records beyond the 5,000 window cannot be found (user 2026-10-01: "5000 contacts are in sync and 1740 is not. but where are they").** The Synced tab lists the first 5,000 identical records and says the rest (1,740 here) exist; the filter searches only the loaded 5,000, so a user cannot confirm one specific record is in sync. Fix: keep the match KEY (name) of every synced record in the scan result (keys only — a few bytes each, no fields), list by name with the filter over all of them, and load a record's details on click. Same for the other buckets' windows.
