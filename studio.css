@@ -6236,9 +6236,9 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 /* ⚠ Ambiguous rows carry up to three choices — let them wrap instead of pushing the page sideways (user 2026-10-01) */
 .ds-dep-row-amb .ds-dep-tail { flex-wrap: wrap; white-space: normal; justify-content: flex-end; row-gap: 4px; }
 /* Topbar: the read-only 'N orgs open' chip (campaign 4 — the SOURCE menu is gone) */
-.ds-pair-chip { background: none; border: 1px solid var(--border); color: var(--text); border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
-.ds-pair-chip:hover { background: var(--surface2); }
-.ds-pair-chip-names { color: var(--subtext); }
+.ds-pair-chip { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25); color: #fff; border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }   /* the topbar is dark in both themes (same palette as the old .ds-pair-sel) */
+.ds-pair-chip:hover { background: rgba(255,255,255,.22); }
+.ds-pair-chip-names { color: rgba(255,255,255,.75); }
 @media (max-width: 1100px) { .ds-pair-chip-names { display: none; } }
 /* Between which orgs — the org picker on top of the Deploy page (campaign 4) */
 .ds-dep-orgs-hint { margin-left: auto; color: var(--subtext); font-size: 11px; font-weight: 400; }

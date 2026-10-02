@@ -17,7 +17,8 @@ describe('bulk select covers the whole list', () => {
     expect(h).toContain('for (const r of rows) {');
     expect(h).not.toContain('for (const r of shown) {');
     expect(DV).toContain('>✓ All ${nAll}</button>');
-    expect(DV).toContain('the count is the truth');
+    // 2026-10-02: the window grows (Show more / Show all); ✓ All says it covers the rows not shown yet
+    expect(DV).toContain('not shown yet (Show all lists them)');
   });
 });
 
