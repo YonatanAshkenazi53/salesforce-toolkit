@@ -995,6 +995,22 @@ const FieldCleaner = (() => {
       // ── 1. Resolve CustomField tooling ID ─────────────────
       const fieldId = await resolveCustomFieldId();
       if (!fieldId) {
+        // A field THIS Toolkit deleted is a known case, not a mystery (user
+        // 2026-10-02: the re-scan after a delete said "Could not locate").
+        let deleted = null;
+        try {
+          const d = await chrome.storage.local.get('sftk_fc_deletion_log');
+          deleted = (Array.isArray(d.sftk_fc_deletion_log) ? d.sftk_fc_deletion_log : [])
+            .find(e => e && e.object === _selObj?.api && e.field === _selField?.api && (!e.orgUrl || !_orgUrl || sftkOrgKey(e.orgUrl) === sftkOrgKey(_orgUrl)));
+        } catch (_) { deleted = null; }
+        if (deleted) {
+          const until = new Date(Date.parse(deleted.at) + 15 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+          showScanError(
+            `This field was deleted with the Toolkit on ${new Date(deleted.at).toLocaleString()}. Salesforce keeps it in Deleted Fields until about ${until}: ` +
+            `Setup → Object Manager → ${_selObj?.api} → Fields & Relationships → Deleted Fields → Undelete (it comes back as ${String(_selField?.api || '').replace(/__c$/, '')}_del__c — rename it), then pick it here again.`
+          );
+          return;
+        }
         showScanError(
           'Could not locate this field in the Tooling API. ' +
           'Verify the field API name and that you have Customize Application permission.'
@@ -3929,6 +3945,11 @@ const FieldCleaner = (() => {
         object: _selObj?.api, field: _selField?.api, fieldId, metadata: null };
     }
 
+    // History (user 2026-10-02: "deleted a field. dont see any history and
+    // rollback here") — the delete is journaled like every other tool write.
+    // Undo is NOT offered: Salesforce has no API to undelete a custom field;
+    // the entry says where the way back is (Setup → Deleted Fields, 15 days).
+    const j = (typeof sftkHistoryBegin === 'function') ? sftkHistoryBegin({ tool: 'Field Cleaner', title: `🗑 Delete field — ${_selObj?.api}.${_selField?.api}`, orgUrl: _orgUrl }) : null;
     // verified-by: the re-read below (before "if (res.error)"), which
     // reports the delete refused if the field can still be read back.
     let res = await bg({
@@ -3966,6 +3987,16 @@ const FieldCleaner = (() => {
       if (stillThere) res = { error: `Salesforce (${via === 'metadata' ? 'Metadata API' : 'Tooling API'}) said the field was deleted, but it can still be read back — treat this as unverified and check it in Object Manager.` };
     }
 
+    const _graceEndIso = new Date(Date.now() + 15 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    if (j && typeof sftkHistoryNote === 'function') {
+      sftkHistoryNote(j, { ok: !res.error, accepted: !res.error, verified: !res.error, text: res.error ? String(res.error) : `deleted through the ${via === 'metadata' ? 'Metadata' : 'Tooling'} API and re-read: no longer a readable field` },
+        `Delete ${_selObj?.api}.${_selField?.api} in ${String(_orgUrl || '').replace(/^https?:\/\//, '').replace(/\.my\.salesforce\.com.*$/, '')}`);
+      try {
+        await sftkHistoryEnd(j, { undo: { none: res.error
+          ? 'nothing was accepted by Salesforce, so there is nothing to undo'
+          : `Salesforce has no API to undelete a custom field. Until about ${_graceEndIso} it can be restored by hand: Setup → Object Manager → ${_selObj?.api} → Fields & Relationships → Deleted Fields → Undelete (it comes back named ${String(_selField?.api || '').replace(/__c$/, '')}_del__c — rename it). The Toolkit keeps a metadata snapshot in its deletion log.` } });
+      } catch (_) { /* the journal is best-effort — the delete already happened */ }
+    }
     if (res.error) {
       if (btn) { btn.disabled = false; btn.textContent = '🗑 Delete Field'; }
       const errEl = document.createElement('div');
@@ -3974,6 +4005,10 @@ const FieldCleaner = (() => {
       if (res.toolingError) errEl.title = `Tooling API said: ${String(res.toolingError).slice(0, 300)}`;
       eid('fcResults').appendChild(errEl);
     } else {
+      // The picker must forget the field (user 2026-10-02: it stayed in the
+      // list and a re-scan said "Could not locate this field").
+      const gone = String(_selField?.api || '');
+      _allFields = (_allFields || []).filter(f => f && f.api !== gone && f.name !== gone);
       // Persist the log entry (success only — a refused delete removed nothing).
       try {
         const d = await chrome.storage.local.get('sftk_fc_deletion_log');
