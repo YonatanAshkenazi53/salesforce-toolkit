@@ -437,14 +437,16 @@ function sftkUndoScopeByTime(diff, afterRows, runEndedAt) {
   const end = runEndedAt ? Date.parse(runEndedAt) : NaN;
   const byId = {};
   for (const r of (afterRows || [])) if (r && r.Id) byId[r.Id] = r;
-  const out = { created: [], createdLater: 0, changed: [], changedLater: 0, filtered: Number.isFinite(end) };
+  // createdLaterIds / changedLaterIds: the "left alone" records BY NAME on the
+  // rollback page (campaign 4 phase 7) — the counts stay for every older reader.
+  const out = { created: [], createdLater: 0, changed: [], changedLater: 0, filtered: Number.isFinite(end), createdLaterIds: [], changedLaterIds: [] };
   for (const id of ((diff && diff.created) || [])) {
     const t = Date.parse((byId[id] && byId[id].CreatedDate) || '');
-    if (out.filtered && Number.isFinite(t) && t > end + 60000) out.createdLater++; else out.created.push(id);
+    if (out.filtered && Number.isFinite(t) && t > end + 60000) { out.createdLater++; out.createdLaterIds.push(id); } else out.created.push(id);
   }
   for (const c of ((diff && diff.changed) || [])) {
     const t = Date.parse((byId[c.id] && byId[c.id].LastModifiedDate) || '');
-    if (out.filtered && Number.isFinite(t) && t > end + 60000) out.changedLater++; else out.changed.push(c);
+    if (out.filtered && Number.isFinite(t) && t > end + 60000) { out.changedLater++; out.changedLaterIds.push(c.id); } else out.changed.push(c);
   }
   return out;
 }
@@ -468,9 +470,27 @@ function sftkUndoResultSummary(results) {
       // must link its failed records into the RIGHT org.
       ...(r.orgUrl ? { orgUrl: r.orgUrl } : {}),
       ...(r.failedRecords && r.failedRecords.length ? { failedRecords: r.failedRecords.slice(0, 200) } : {}),
+      // WHO: every record deleted / restored, by name (campaign 4 phase 7 —
+      // user 2026-10-02: "there's no info on the operation, who got deleted").
+      // Capped per object so a History entry stays a History entry; said when capped.
+      ...(r.deletedRecords && r.deletedRecords.length ? { deletedRecords: r.deletedRecords.slice(0, 5000) } : {}),
+      ...(r.restoredRecords && r.restoredRecords.length ? { restoredRecords: r.restoredRecords.slice(0, 5000) } : {}),
+      ...(((r.deletedRecords || []).length > 5000 || (r.restoredRecords || []).length > 5000) ? { recordsCapped: 5000 } : {}),
     };
   }
   return out;
+}
+
+// A record's name for a human: Name, else the person parts, else the usual
+// title fields, else the Id. PURE.
+function sftkUndoRowLabel(row) {
+  if (!row) return '';
+  const s = v => (v == null ? '' : String(v)).trim();
+  if (s(row.Name)) return s(row.Name);
+  const person = [s(row.FirstName), s(row.LastName)].filter(Boolean).join(' ');
+  if (person) return person;
+  for (const f of ['Subject', 'Title', 'CaseNumber', 'OrderNumber', 'ContractNumber', 'Label', 'DeveloperName', 'MasterLabel']) if (s(row[f])) return s(row[f]);
+  return s(row.Id);
 }
 
 // Status of a rollback run — 'success' only when nothing was refused AND the
