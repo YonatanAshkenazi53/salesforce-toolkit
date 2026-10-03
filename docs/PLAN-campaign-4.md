@@ -229,6 +229,53 @@ Bin link works. Then the volume run (6,000) for the window and the cap note.
 **Size.** 2 days. Fable (undo engine, the page's selection → plan); Sonnet may do the report
 mode's markup once the data contract exists.
 
+## Phase 8 — Field Cleaner: a way back for a deleted field
+
+**Asked 2026-10-02 (user): "deleted a field. dont see any history and rollback here. maybe we
+should give a feature to restore the field from the recycle bin + redeploy all the related
+metadata we removed?" → proposal accepted 2026-10-03 ("ok good").**
+
+**Verified live 2026-10-03 (trailheads4, fixture field SFTK_FC_Test_Status on Account):**
+- Salesforce has NO API to undelete a custom field. A deleted field stays a Tooling `CustomField`
+  row with the SAME Id, renamed `X_del` / `X_del1` / … and is absent from describe.
+- The classic page `/p/setup/layout/DeletedFieldList?type=<Object>` lists them; each row's
+  Undelete link carries a one-time `_CONFIRMATIONTOKEN`, so a direct link to the Undelete action
+  cannot be built ("Unable to Access Page") — the deep link goes to the LIST, the user clicks
+  Undelete once (no further confirmation; an "Undeleted a Custom Field" page follows).
+- After Undelete the field is live as `X_del__c` (same Id). A Tooling PATCH of
+  `{ FullName: '<Object>.X__c', Metadata: <its Metadata, nulls stripped> }` renames it back
+  (HTTP 204; describe then shows `X__c`). `{ DeveloperName }` alone is refused
+  (REQUIRED_FIELD_MISSING: Metadata).
+
+**Build (popup → Field Cleaner).**
+1. `sftk-fieldrestore.js` (pure): `sftkFieldRestoreState(logEntry, toolingRow, liveNames)` →
+   `in-bin` | `undeleted` (live under a `_del` name) | `restored` | `gone` | `expired`;
+   `sftkFieldRestoreRenameBody(toolingRecord, object, field)` (uses `sftkMetaForPatch`);
+   `sftkFieldRestoreListUrl(orgUrl, objectApiOrId)`.
+2. A "🗑 Deleted with the Toolkit — the way back" panel in the Field Cleaner tab, from
+   `sftk_fc_deletion_log` for this org: per field its state and the ONE next step —
+   ① Open Deleted Fields (new tab) + "click Undelete next to <label>" → ② "I undeleted it —
+   check" (re-reads Tooling + describe) → ③ "Rename back to X__c" (one confirmation, verified
+   write, History journal) → ④ the related Field Cleaner History entries for that field (flow
+   fixes, stripped field security, report columns) listed newest first, each with its own
+   ↩ Undo (the existing History undo; nothing new in the engine).
+3. The delete's History entry and the "Field deleted" card point at the panel.
+4. Honest limits, said on the panel: 15 days; the field's place on page layouts and anything
+   Salesforce itself dropped at delete time is re-checked and listed, not assumed; `gone` =
+   erased or past 15 days → recreate from the saved definition is a later item.
+
+**Enforce.** `test/field-restore-1003.test.mjs`: the state function on every combination; the
+rename body strips nulls and names the full name; the panel never offers rename before the
+field is live, never offers undo before it is renamed; write/confirm/history disciplines stay
+at baseline zero.
+
+**Live.** `scripts/dev/live/field-restore.mjs`: delete the fixture field with the Toolkit →
+panel says in-bin → (harness clicks Undelete on the list, standing in for the user) → check →
+rename → CLI describe shows `SFTK_FC_Test_Status__c` → undo the flow fix from the panel → CLI
+shows the flow version active again.
+
+**Size.** 1 day.
+
 ## Backlog (found during the campaign)
 
 - **Synced records beyond the 5,000 window cannot be found (user 2026-10-01: "5000 contacts are in sync and 1740 is not. but where are they").** The Synced tab lists the first 5,000 identical records and says the rest (1,740 here) exist; the filter searches only the loaded 5,000, so a user cannot confirm one specific record is in sync. Fix: keep the match KEY (name) of every synced record in the scan result (keys only — a few bytes each, no fields), list by name with the filter over all of them, and load a record's details on click. Same for the other buckets' windows.
