@@ -11,7 +11,7 @@ const src  = f => readFileSync(new URL('../' + f, import.meta.url), 'utf8');
 const code = s => s.replace(/^\s*\/\/.*$/gm, '');
 const TR = code(src('studio-transfer.js'));
 const RC = code(src('studio-reconcile.js'));
-const PR = code(src('studio-profiles.js'));
+const PR = code(src('studio-profiles.js') + '\n' + src('studio-sequences.js'));   // Sequences live in studio-sequences.js since 2026-10-03 (cut from the public build)
 const UN = src('studio-undo.js');
 const HI = code(src('studio-history.js'));
 const CO = code(src('studio-core.js'));
@@ -61,7 +61,7 @@ describe('the restore point is read BEFORE the first write, on every path', () =
   });
 
   it('sequences — one image for the whole chain, stamped on every step entry', () => {
-    const fn = PR.slice(PR.indexOf('async function runSequence('), PR.indexOf('function profileCard('));
+    const fn = PR.slice(PR.indexOf('async function runSequence('));   // runSequence is the last function of studio-sequences.js
     before(fn, 'sftkUndoCaptureForRun(', "type:      'SF_EXECUTE_SEQUENCE'");
     expect(fn).toContain("scope: 'sequence'");
     expect(fn).toContain('sftkUndoMergeObjects(');

@@ -344,10 +344,11 @@ function sftkPicklistGapNote(scan, tgtOrgUrl, objectType) {
       <span style="color:var(--subtext)">${g.multi ? '(multi-select)' : ''}</span>
       <span>→ ${shown.map(v => `<span class="ds-diff-chip ds-diff-drift" style="margin-right:3px">${esc(v)}</span>`).join('')}${more ? `<span style="color:var(--subtext)">+${more} more</span>` : ''}</span>
       <span style="color:var(--subtext)">· ${g.affected} record(s) affected · ${esc(consequence)}</span>
-      <button class="ds-btn ds-btn-xs" data-recpl-fix="${i}"
+      ${typeof window.sftkOpenPicklistFix === 'function' ? `<button class="ds-btn ds-btn-xs" data-recpl-fix="${i}"
         data-pl-org="${esc(tgtOrgUrl || '')}" data-pl-obj="${esc(objectType || '')}"
         data-pl-field="${esc(g.tgtField || g.field)}" data-pl-value="${esc(first)}"
-        title="Open the Picklist Manager on ${esc(tgtLbl)} for ${esc(objectType || '')}.${esc(g.tgtField || g.field)}, pre-filled with &quot;${esc(first)}&quot;.">🎚 Fix in Picklist Manager</button>
+        title="Open the Picklist Manager on ${esc(tgtLbl)} for ${esc(objectType || '')}.${esc(g.tgtField || g.field)}, pre-filled with &quot;${esc(first)}&quot;.">🎚 Fix in Picklist Manager</button>`
+        : `<span class="ds-subtext" title="Setup → Object Manager → ${esc(objectType || '')} → Fields &amp; Relationships → ${esc(g.tgtField || g.field)} → Values → New">add the value in ${esc(tgtLbl)}: Setup → Object Manager → ${esc(objectType || '')} → ${esc(g.tgtField || g.field)} → Values</span>`}
     </div>`;
   }).join('');
   const capNote = cap ? `<div style="color:var(--subtext);font-size:11.5px;margin-top:4px">
@@ -376,7 +377,7 @@ function sftkWirePicklistFixButtons() {
       value:  btn.dataset.plValue || ''
     };
     if (typeof window.sftkOpenPicklistFix !== 'function') {
-      showToast('The Picklist Manager quick-fix isn\'t available in this build — open 🎚 Picklists from the sidebar and add the value manually.', 'warning', 7000);
+      showToast('The Picklist Manager is not part of this build — add the value in Salesforce Setup (Object Manager → the field → Values).', 'warning', 7000);
       return;
     }
     try { window.sftkOpenPicklistFix(arg); }

@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-const SRC = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'studio-profiles.js'), 'utf8');
+const SRC = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'studio-sequences.js'), 'utf8');   // Sequences live in studio-sequences.js since 2026-10-03 (cut from the public build)
 const between = (a, b) => { const i = SRC.indexOf(a); expect(i, a).toBeGreaterThan(0); return SRC.slice(i, SRC.indexOf(b, i)); };
 
 describe('runSequence — the confirmation comes before the run', () => {

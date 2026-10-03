@@ -53,7 +53,7 @@ describe('every verified write is preceded by the shared confirmation (or names 
       const html = readFileSync(join(root, page), 'utf8');
       const c = html.indexOf('src="sftk-confirm.js"'), o = html.indexOf('src="sftk-org-identity.js"');
       expect(c, page).toBeGreaterThan(o);
-      for (const tool of ['field-cleaner.js', 'user-copy.js', 'studio-picklists.js', 'studio-profiles.js']) {
+      for (const tool of ['field-cleaner.js', 'user-copy.js', 'studio-picklists.js', 'studio-profiles.js', 'studio-sequences.js']) {
         const j = html.indexOf(`src="${tool}"`);
         if (j > 0) expect(c, `${tool} before the dialog in ${page}`).toBeLessThan(j);
       }

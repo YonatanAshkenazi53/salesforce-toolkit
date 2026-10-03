@@ -149,7 +149,7 @@ describe('wiring: every page that runs the engine uses the shared live view', ()
   it('Deploy, Transfer, Sequences and the Seeder wire sftkRunProgressHandler; the private handlers are gone', () => {
     expect(read('studio-reconcile.js')).toContain('_openRunPort(sftkRunProgressHandler(prog))');
     expect(read('studio-transfer.js')).toContain("_openRunPort(sftkRunProgressHandler(eid('dsTrProgLog')))");
-    expect(read('studio-profiles.js')).toContain("_openRunPort(sftkRunProgressHandler(eid('dsSeqRunLog')))");
+    expect(read('studio-sequences.js')).toContain("_openRunPort(sftkRunProgressHandler(eid('dsSeqRunLog')))");
     expect(read('studio-seed.js')).toContain('_openRunPort(sftkRunProgressHandler(liveEl))');
     expect(read('studio-transfer.js')).not.toContain('function _trRenderBulkRow(');
     expect(read('studio-transfer.js')).not.toContain('function _trProgressHandler(');

@@ -27,7 +27,7 @@ const HTML      = read('studio.html');
 const CORE      = read('studio-core.js');
 const BUILDER   = read('studio-builder.js');
 const PICKLISTS = read('studio-picklists.js');
-const PROFILES  = read('studio-profiles.js');
+const PROFILES  = read('studio-profiles.js') + '\n' + read('studio-sequences.js');   // Sequences live in studio-sequences.js since 2026-10-03 (cut from the public build)
 const RING      = read('studio-ring.js');
 const SHARED    = read('styles.css');
 
@@ -429,7 +429,7 @@ describe('empty live set = unknown, not closed', () => {
   });
 
   it('_allSessionsOk is set at every enumeration site and never inferred', () => {
-    const PROFILES2 = read('studio-profiles.js');
+    const PROFILES2 = read('studio-profiles.js') + '\n' + read('studio-sequences.js');
     const TRANSFER = read('studio-transfer.js');
     // one flag write per GET_ALL_SF_SESSIONS response adoption
     expect(CORE.match(/_allSessionsOk = _allSessionsOk \|\| Array\.isArray\(allRes\?\.sessions\)/g)?.length).toBe(3);
@@ -1021,7 +1021,7 @@ describe('the batch-size input goes inert in Async mode, on every surface', () =
 describe('no competitor names in user-visible strings', () => {
   const SHIPPED = ['popup.js', 'studio-core.js', 'studio-transfer.js',
     'studio-reconcile.js', 'studio-builder.js', 'studio-builder-modals.js',
-    'studio-ring.js', 'studio-scan.js', 'studio-history.js', 'studio-profiles.js',
+    'studio-ring.js', 'studio-scan.js', 'studio-history.js', 'studio-profiles.js', 'studio-sequences.js',
     'lightning-pages.js', 'field-cleaner.js', 'CHANGELOG.md', 'studio.html', 'popup.html'];
   const NAMES = /(Inspector|Gearset|Workbench|SFDMU)/i;
 
