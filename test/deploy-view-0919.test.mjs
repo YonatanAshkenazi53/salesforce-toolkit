@@ -269,7 +269,7 @@ describe('pure helpers', () => {
 
 describe('the plan uses measured totals, not the length of a capped list', () => {
   it('reads sftkScanBucketInfo / sftkBucketCountLabel and says when a list is truncated', () => {
-    expect(DV).toContain('sftkDeployPlanRows(p.tree, scan, sftkScanBucketInfo, sftkBucketCountLabel)');
+    expect(DV).toContain('sftkDeployPlanRows(p.tree, scan, sftkScanBucketInfo, sftkDeployCountLabel)');   // 2026-10-03: the cell shows the TRUE total
     expect(DV).toContain('const n = i.total != null ? i.total : i.shown;');
     expect(DV).toContain('This list is truncated');
   });

@@ -97,7 +97,10 @@ describe('Deploy view — the page actually runs', () => {
     }
     // specifics
     vm.runInContext(`_depObjPath = ''; _depTab = 'ins';`, ctx); await vm.runInContext('renderDeploy()', ctx);
-    need(mainHtml.includes('5,000 of 5,048'), 'root Insert shows the measured total of a capped bucket');
+    // 2026-10-03: the cell shows the TRUE total ("5,000 of 5,048" read as "48 are not…"); the list line says how many it lists
+    need(/>5,048</.test(mainHtml), 'root Insert shows the measured total of a capped bucket');
+    need(!mainHtml.includes('5,000 of 5,048'), 'a count cell never reads "X of Y"');
+    need(els.get('dsDepList').innerHTML.includes('the first 5,000 are listed here'), 'the list line says how many are listed');
     need(els.get('dsDepList').innerHTML.includes('This list is truncated'), 'capped bucket says so');
     need((els.get('dsDepList').innerHTML.match(/class="ds-dep-row"/g) || []).length === 300, 'the list is a 300-row window');
     need(els.get('dsRecRunBtn').disabled === true, 'nothing selected → Deploy disabled');
