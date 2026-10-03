@@ -2215,6 +2215,9 @@ async function runReconcile(profile, objType, buckets, opts) {
   // opts.afterWrites(log) switches them back on right after the last write; the
   // caller also does it when this returns, if that did not happen (studio-deploy.js).
   const _fp = opts && opts.flowPause && (opts.flowPause.flows || []).length ? opts.flowPause : null;
+  // ⏸ validation rules (campaign 4 phase 4 — sftk-vrpause.js): opts.rulePause =
+  // { rules, managed }, listed in the same confirmation, switched by the same hooks.
+  const _vp = opts && opts.rulePause && (opts.rulePause.rules || []).length ? opts.rulePause : null;
   // ⛔ RUN GATE (user 2026-08-10: "the recommendation to sync parents first
   // is not strong enough") — the advisor's probe already knows when the
   // selected inserts are DOOMED (empty parent object behind a required
@@ -2461,7 +2464,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   // rides along as extraHtml, and the target's production typed-name step
   // rides in the SAME dialog — replacing the old #dsRecDelOk showModal() and
   // the confirmTypedProd(profile.targetOrg, …) call that used to follow it.
-  if (delIds.length || pullIds.length || updSrcIds.length || anyChildAct || capWarnLines.length || _fp) {
+  if (delIds.length || pullIds.length || updSrcIds.length || anyChildAct || capWarnLines.length || _fp || _vp) {
     const delBlock = delIds.length ? (isHard
       ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:4px;font-size:12px;color:#991b1b">
            🔥 <strong>Hard-delete ${delIds.length} ${esc(objType)} record(s)</strong> from
@@ -2489,8 +2492,8 @@ async function runReconcile(profile, objType, buckets, opts) {
            ← <strong>Update ${updSrcIds.length} ${esc(objType)} record(s)</strong> in
            <strong>${esc(orgLabel(profile.sourceOrg))}</strong> (source) with the target's values — the target wins those rows.</div>`
       : '';
-    const _fpOnly = !!_fp && !delIds.length && !childDelTotal && !pullIds.length && !updSrcIds.length && !anyChildAct && !capWarnLines.length;
-    const title = _fpOnly ? '⏸ Confirm the run — record-triggered flows paused'
+    const _fpOnly = (!!_fp || !!_vp) && !delIds.length && !childDelTotal && !pullIds.length && !updSrcIds.length && !anyChildAct && !capWarnLines.length;
+    const title = _fpOnly ? (_fp && _vp ? '⏸ Confirm the run — flows and validation rules paused' : _vp ? '⏸ Confirm the run — validation rules paused' : '⏸ Confirm the run — record-triggered flows paused')
       : (delIds.length || childDelTotal)
       ? (isHard ? '🔥 Confirm HARD delete' : '⚠ Confirm reconcile actions')
       : (anyChildAct && !pullIds.length && !updSrcIds.length)
@@ -2513,9 +2516,19 @@ async function runReconcile(profile, objType, buckets, opts) {
            Records written while they are off are <strong>never</strong> processed by these flows.
            ${(_fp.managed || []).length ? `<br>Flows from installed packages cannot be switched and stay ON: ${esc(_fp.managed.join(', '))}.` : ''}</div>`
       : '';
+    const ruleBlock = _vp
+      ? `<div style="margin-top:10px;padding:10px 12px;background:#fffbeb;border-left:3px solid #d97706;border-radius:4px;font-size:12px">
+           ⏸ <strong>Before the first write:</strong> switch OFF ${_vp.rules.length} validation rule(s) in
+           <strong>${esc(orgLabel(profile.targetOrg))}</strong> — ${_vp.rules.map(x => `${esc(x.name)} <span class="ds-subtext">(${esc(x.object)})</span>`).join(', ')}.<br>
+           ▶ <strong>When the run ends</strong> (finished, failed or stopped): switch each back ON.
+           While they are off they are off for <strong>every user</strong> of that org, not only for this run, and records written meanwhile are <strong>never</strong> validated later.
+           ${(_vp.untouched || []).length ? `<br>Rules on objects this run does not write stay ON: ${esc(_vp.untouched.join(', '))}.` : ''}
+           ${(_vp.managed || []).length ? `<br>Rules from installed packages cannot be switched and stay ON: ${esc(_vp.managed.join(', '))}.` : ''}</div>`
+      : '';
     const bodyHtml = `
       Review the changes before continuing:
       ${flowBlock}
+      ${ruleBlock}
       ${capWarnBlock}
       ${planBlock}
       ${pullBlock}
@@ -2603,9 +2616,9 @@ async function runReconcile(profile, objType, buckets, opts) {
     return;
   }
   // ⏸ after the confirmation, before the first write (see opts above)
-  if (_fp && opts && typeof opts.beforeWrites === 'function') {
+  if ((_fp || _vp) && opts && typeof opts.beforeWrites === 'function') {
     let go = false;
-    try { go = await opts.beforeWrites(tgtSess, log); } catch (e) { log('❌', `Pausing the flows failed — the run did not start: ${e?.message || e}`, 'ds-prog-err'); go = false; }
+    try { go = await opts.beforeWrites(tgtSess, log); } catch (e) { log('❌', `Pausing the automation failed — the run did not start: ${e?.message || e}`, 'ds-prog-err'); go = false; }
     if (!go) { if (runBtn) runBtn.disabled = false; window._sftkRunActive = false; return; }
   }
 
@@ -3242,8 +3255,8 @@ async function runReconcile(profile, objType, buckets, opts) {
   // ▶ The writes are over: paused flows go back on NOW — not after the History
   // save and the post-run refresh (live 2026-09-29: they stayed off seconds
   // longer than the writes). The caller's finally is the safety net.
-  if (_fp && opts && typeof opts.afterWrites === 'function') {
-    try { await opts.afterWrites(log); } catch (e) { log('⚠', `Switching the paused flows back on failed here — tried again when the run ends: ${e?.message || e}`, 'ds-prog-warn'); }
+  if ((_fp || _vp) && opts && typeof opts.afterWrites === 'function') {
+    try { await opts.afterWrites(log); } catch (e) { log('⚠', `Switching the paused automation back on failed here — tried again when the run ends: ${e?.message || e}`, 'ds-prog-warn'); }
   }
 
   // ── 5. Save to History so the run is visible later ───────────────────

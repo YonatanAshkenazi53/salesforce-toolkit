@@ -98,10 +98,11 @@ describe('wired into the Deploy page and the run', () => {
   it('an option, OFF by default — "or just deploy regularly with flows active"', () => {
     expect(DV).toContain("let _depFlowPause = { on: false, key: '', list: null, error: '' };");
     expect(DV).toContain('<input type="checkbox" id="dsDepFlowPause" ${_depFlowPause.on ? \'checked\' : \'\'}> ⏸ pause record-triggered flows</label>');
-    expect(DV).toContain('if (!fp) return runReconcile(p, objType, buckets);');
+    expect(DV).toContain('if (!fp) return _depReconcile(p, objType, buckets);');   // 2026-10-03: through the validation-rule wrapper, which is itself a no-op when that option is off
+    expect(DV).toContain('if (!vp || !vp.rules.length) return runReconcile(p, objType, buckets, opts);');
   });
   it('the flows are in the run\'s ONE confirmation; they go off after it and before the first write; the run stops if they cannot', () => {
-    expect(RC).toContain('if (delIds.length || pullIds.length || updSrcIds.length || anyChildAct || capWarnLines.length || _fp) {');
+    expect(RC).toContain('if (delIds.length || pullIds.length || updSrcIds.length || anyChildAct || capWarnLines.length || _fp || _vp) {');
     expect(RC).toContain('⏸ <strong>Before the first write:</strong> switch OFF');
     expect(RC).toContain('Records written while they are off are <strong>never</strong> processed by these flows.');
     expect(RC).toContain('try { go = await opts.beforeWrites(tgtSess, log); }');

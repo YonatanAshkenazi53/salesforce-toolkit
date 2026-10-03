@@ -44,6 +44,7 @@ not exfiltrate data past this policy.
 | `ds_scans`, `ds_scan_results` | Saved comparison results: record ids and match-key values for the records a scan found on each side |
 | `ds_connections`, `ds_stored_orgs` | Your multi-org setup: the orgs you connected and your labels for them |
 | `sftk_flow_run_paused` | Record-triggered flows a deployment switched off, per org (flow name, object, the version to switch back on) — removed as soon as they are back on |
+| `sftk_vr_run_paused` | Validation rules a deployment switched off, per org (rule id, name, object) — removed as soon as they are back on |
 | `sftk_orghealth` | Org health: the last answer of each check per org — counts, and the names of the licences, users, flows, pages, picklist fields or custom fields it found |
 | `ds_readiness_state`, `ds_settings` | Deploy-readiness selections and Data Studio preferences |
 | `fc_fix_snapshots` | Field Cleaner undo data: the **full metadata** of flows, layouts and Lightning pages captured before it edits them, so a change can be rolled back |

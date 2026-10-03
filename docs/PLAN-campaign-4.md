@@ -134,6 +134,8 @@ comments and the engine).
 
 ## Phase 4 — ⏸ pause validation rules during the run
 
+**DONE 2026-10-03** (commit follows): `sftk-vrpause.js` (`sftkVrPauseSelect` pure · `sftkVrPauseList` — one Tooling query + one GET per rule for its Metadata · `sftkVrPauseOff` / `sftkVrPauseOn` through `sftkWriteVerifiedAll` with one re-read · memory `sftk_vr_run_paused` · History journals with undo steps). Deploy page: `#dsDepRulePause` + list + leftovers banner (`_depRulePauseWire`, `_depRuleLeftovers`); `_depReconcile` wraps the run — rules go off AFTER the flows and back on BEFORE them, a finally is the safety net; `runReconcile` takes `opts.rulePause` (`_vp`) into its ONE confirmation. **Only the objects in use** (user: "only for the used objects"): `sftkDeployWrittenObjects(objects, _recSel, _recChildSel)` = objects with a selection + their ancestors; rules AND flows are narrowed to them, the confirmation names the rules that stay on. Verified first by CLI that a Tooling PATCH of the rule's own Metadata with `active:false/true` switches it. Live (`scripts/dev/live/vrpause.mjs`, trailheads5 → trailheads4): root inserts only → confirmation "switch OFF 1 validation rule … Rules on objects this run does not write stay ON: SFTK_CX_Lab_Lead_Needs_Phone (Contact)" → 7 of 7 Accounts inserted (the rule normally refuses one) → rule back ON by CLI, memory empty → ↩ rollback clean (4 accounts). Tests `vrpause-1003`. Not yet: the Org health leftovers card counts flows only.
+
 **Problem.** Duplicate rules can be bypassed with Salesforce's header
 (`Sforce-Duplicate-Rule-Header: allowSave=true`; Bulk 2.0 cannot, so a bypass run uses
 Collections). Validation rules have no header. The user asked for a switch.
