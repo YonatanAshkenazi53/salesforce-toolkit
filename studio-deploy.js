@@ -64,7 +64,7 @@ const SFTK_DEPLOY_TABS = [
   { k: 'link', bucket: 'linkMismatch',    label: '⇄ Link differs',    noun: 'point at a different parent', childOnly: true },
   { k: 'same', bucket: 'identical',       label: '🟢 Synced',         noun: 'synced',         childOnly: false },
   // Campaign 3 phase 5 — a key both orgs hold more than once: never guessed.
-  { k: 'amb',  bucket: 'ambiguous',       label: '⚠ Ambiguous',       noun: 'ambiguous — not deployed until you choose', childOnly: false },
+  { k: 'amb',  bucket: 'ambiguous',       label: '⚠ Needs a decision', noun: 'need a decision — not deployed until you choose', childOnly: false },
 ];
 
 // One plan row per object. `info(scanLike, bucket)` is sftkScanBucketInfo —
@@ -169,6 +169,10 @@ const SFTK_DEPLOY_WINDOW = 300;   // rows painted per tab at first; "Show more" 
 // changes (user 2026-10-02: "Showing 300 of 350 … Filter to find a record" —
 // "dont think its a good user exp. we need to give the info somehow").
 let _depWindow = SFTK_DEPLOY_WINDOW, _depWindowKey = '';
+// ⚠ Needs a decision: what the user chose per source record (target id, or
+// '__new__'), kept until Apply; reset when the scan or the pair changes. A
+// row's suggestion (scan: one field proves the pair) is the default.
+let _depAmbPick = new Map(), _depAmbPickKey = '';
 
 function _depChildSel(pathKey) {
   if (!_recChildSel[pathKey]) _recChildSel[pathKey] = { push: new Set(), relink: new Set(), overwrite: new Set(), del: new Set() };
@@ -422,7 +426,7 @@ async function renderDeploy() {
         <thead><tr><th>Object</th><th class="ds-dep-num" title="Records read from the source for this deployment">In source</th><th class="ds-dep-num" title="Records read from the target">In target</th>
           <th class="ds-dep-num" title="In the source only — inserted when you select them">🔴 Insert</th><th class="ds-dep-num" title="In both orgs with different values — pick a winner per row">🟡 Changed</th>
           <th class="ds-dep-num" title="In the target only — never deleted unless you choose it">🔵 In target only</th><th class="ds-dep-num" title="Child records that exist in both orgs but point at a different parent">⇄ Link differs</th>
-          <th class="ds-dep-num" title="In both orgs with equal values — left alone">🟢 Synced</th><th class="ds-dep-num" title="The match key is held more than once where both orgs have it — the scan cannot tell which copy is which, so nothing is deployed for these until you pair each copy with its target or mark it as new">⚠ Ambiguous</th><th></th></tr></thead>
+          <th class="ds-dep-num" title="In both orgs with equal values — left alone">🟢 Synced</th><th class="ds-dep-num" title="The match key is held more than once where both orgs have it — the scan cannot tell which copy is which, so nothing is deployed for these until you pair each copy with its target or mark it as new">⚠ Needs a decision</th><th></th></tr></thead>
         <tbody>${plan.map(r => `<tr>
           <td><button class="ds-dep-objlink" data-dep-obj="${esc(r.pathKey)}" data-dep-tab="ins" style="padding-left:${r.depth * 16}px">${r.depth ? '↳ ' : ''}${esc(r.obj)}</button>
             <span class="ds-dep-sub">${r.depth ? `under ${esc(r.parentObj || '')}` : 'root'}</span></td>
@@ -445,7 +449,7 @@ async function renderDeploy() {
   if (scan.dupKeys?.rows) notes.push(sftkRecDupsHtml(scan, p));
   // Phase 5 — the ambiguous copies are listed, not guessed: say where.
   { const nAmb = (scan.ambiguous || []).length;
-    if (nAmb) notes.push(`⚠ <b>${nAmb.toLocaleString()} ${esc(p.tree?.objectType || p.tree?.childSObject || '')} record(s) are ambiguous</b> — more than one record carries the same name, so the scan cannot tell which is which. Nothing is deployed for them until you choose: open <b>⚠ Ambiguous</b> below and say, per record, 📌 which ${esc(orgLabel(p.targetOrg))} record it is the same as, or ➕ that it is new there.`); }
+    if (nAmb) notes.push(`⚠ <b>${nAmb.toLocaleString()} ${esc(p.tree?.objectType || p.tree?.childSObject || '')} record(s) are ambiguous</b> — more than one record carries the same name, so the scan cannot tell which is which. Nothing is deployed for them until you choose: open <b>⚠ Needs a decision</b> below and say, per record, 📌 which ${esc(orgLabel(p.targetOrg))} record it is the same as, or ➕ that it is new there.`); }
   // child objects: the same card, without the root's fix buttons (they act on the root's key)
   for (const [pk, cs] of Object.entries(scan.children || {})) {
     if (!cs || !cs.dupKeys || !cs.dupKeys.rows) continue;
@@ -767,20 +771,50 @@ async function _depPaintOrder(p, scan) {
   }
 }
 
-// ⚠ Ambiguous — what the tab means and what each choice does, in words the
-// user asked for (2026-10-01: "what these means? insert as new, pair, etc.").
-function _depAmbIntro(p, isRoot) {
+// ⚠ Needs a decision — the tab explains itself and makes each group DECIDABLE
+// (user 2026-10-01: "what these means? insert as new, pair, etc."; 2026-10-03:
+// "we need to make the ambigious page more understandble"). The scan says which
+// compared field tells the copies apart (row.tell, scan.ambiguousCand) and
+// suggests the pairs one field proves (row.suggest); the page groups by name
+// and asks ONE question per record.
+function _depAmbIntro(p, isRoot, s) {
   const srcL = esc(orgLabel(p.sourceOrg)), tgtL = esc(orgLabel(p.targetOrg));
+  const adv = (s && s.ambiguousAdvice && s.ambiguousAdvice[0]) || null;
+  const nSug = ((s && s.ambiguous) || []).filter(r => r && r.suggest).length;
   return `<div class="ds-dep-note ds-dep-amb-intro">
-    <div><b>Why these records are here.</b> Records are recognised across the two orgs by their name (the match key). Each record below shares its name with another record, in ${srcL}, in ${tgtL}, or both, so the Toolkit cannot tell which is which. Nothing in this list is deployed until you decide, one record at a time.</div>
-    ${isRoot ? `<ul>
-      <li><b>📌 Same as #1</b> — this ${srcL} record and record #1 in ${tgtL} are the same record. From now on they are compared and updated as a pair.</li>
-      <li><b>➕ New in ${tgtL}</b> — this record does not exist in ${tgtL} yet. It moves to 🔴 Insert and is created there when you deploy.</li>
-      <li><b>#1 ↗</b> opens that ${tgtL} record in a new tab, so you can check before choosing.</li>
-    </ul>
-    <div>Each choice is remembered for ${tgtL} together with the pairs from 🔗 Match review, and both orgs are read again right away.</div>`
+    <div><b>Why these records are here.</b> Each one shares its name with another record, so the name alone cannot say which record in ${srcL} is which record in ${tgtL}. Nothing here is deployed until you decide.</div>
+    ${isRoot ? `<div><b>What to do.</b> For each ${srcL} record, pick which ${tgtL} record it is — or that it is new there. The values shown next to each record are the ones that differ between the copies. Then press <b>📌 Apply</b>: your choices are remembered for ${tgtL} and both orgs are read again.</div>
+    ${adv && nSug ? `<div>💡 <b>${nSug.toLocaleString()} are already filled in.</b> Where exactly one copy on each side has the same <b>${esc(adv.field)}</b>, that pair is suggested below — check them, then Apply. To never be asked again, add ${esc(adv.field)} to how records are recognised (✏ Edit → Records → Matching).</div>` : ''}`
     : `<div>For a child object the choice cannot be made by hand: give it a second match field (✏ Edit → Records → Matching) so its records can be told apart by more than the name, then scan again.</div>`}
   </div>`;
+}
+
+// The groups: one block per shared name — the target records it could be
+// (numbered, with the values that tell them apart), then each source record
+// with ONE select: which of those it is, or new.
+function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf) {
+  const srcL = esc(orgLabel(p.sourceOrg)), tgtL = esc(orgLabel(p.targetOrg));
+  const candTell = (s && s.ambiguousCand) || {};
+  const url = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
+  const chips = tell => { const t = (tell || []).filter(x => x && x[1] !== ''); return t.length ? t.map(x => `<span class="ds-amb-chip" title="${esc(x[0])}">${esc(x[0])}: <b>${esc(x[1])}</b></span>`).join('') : '<span class="ds-dep-muted">no compared field differs between the copies — open the record to tell</span>'; };
+  const groups = new Map();
+  for (const r of rows) { const k = keyOf(r); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
+  let html = '';
+  for (const [k, rs] of groups) {
+    const cands = rs[0].candidates || [];
+    const nSrc = (rs[0].twins || []).length + 1;
+    html += `<div class="ds-amb-group">
+      <div class="ds-amb-ghd"><b>${esc(k)}</b><span class="ds-dep-muted">${nSrc} in ${srcL} · ${cands.length} in ${tgtL}</span></div>
+      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${tgtL}</div>${cands.map((t, i) => `<div class="ds-amb-cand"><span class="ds-amb-n">#${i + 1}</span>${chips(candTell[t])}<a class="ds-dep-open" href="${url(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open this ${tgtL} record">open ↗</a></div>`).join('')}</div>
+      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${srcL} — which one is it?</div>${rs.map(r => { const pick = pickOf(r); return `<div class="ds-amb-src">${chips(r.tell)}<a class="ds-dep-open" href="${url(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener" title="Open this ${srcL} record">open ↗</a>
+          <select class="ds-select ds-select-sm ds-amb-sel" data-dep-amb-sel="${esc(r.sourceId)}" aria-label="Which ${tgtL} record is this">
+            <option value="" ${pick ? '' : 'selected'}>— decide —</option>
+            ${cands.map((t, i) => `<option value="${esc(t)}" ${pick === t ? 'selected' : ''}>it is #${i + 1} in ${tgtL}${r.suggest === t ? ` — suggested (same ${esc(r.suggestBy || '')})` : ''}</option>`).join('')}
+            <option value="__new__" ${pick === '__new__' ? 'selected' : ''}>it is new — create it in ${tgtL}</option>
+          </select></div>`; }).join('')}</div>
+    </div>`;
+  }
+  return html;
 }
 
 // The deployment a parents-first step was opened FROM: the saved one by id,
@@ -881,6 +915,9 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   const q = _depFilter.trim().toLowerCase();
   const rows = q ? all.filter(r => key(r).toLowerCase().includes(q) || String(r.parentKeySrc || '').toLowerCase().includes(q)) : all;
   const wkey = `${cur.pathKey}|${tabDef.k}|${q}`;
+  { const ak = `${p.id}|${p.targetOrg}|${(s && s.runAt) || ''}`; if (ak !== _depAmbPickKey) { _depAmbPickKey = ak; _depAmbPick = new Map(); } }
+  const ambPick = r => _depAmbPick.has(r.sourceId) ? _depAmbPick.get(r.sourceId) : (r.suggest || '');
+  const ambRoot = tabDef.k === 'amb' && isRoot;
   if (wkey !== _depWindowKey) { _depWindowKey = wkey; _depWindow = SFTK_DEPLOY_WINDOW; }
   const shown = rows.slice(0, _depWindow);
   const recUrl = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
@@ -935,17 +972,11 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
       extra = `<span class="ds-rec-link-detail" title="currently → should be">${esc(r.parentKeyTgt || '∅')} → ${esc(r.parentKeySrc || '∅')}</span>`;
       tail = `<button class="ds-dep-link" data-dep-fields="${esc(r.sourceId)}|${esc(r.targetId)}">▸ record</button>`;
     } else if (tabDef.k === 'amb') {
-      // Phase 5 — the copies and the target records each could be. A choice is
-      // remembered (match memory, per target org) and the orgs are read again.
+      // a child object's ambiguous rows (the root object uses _depAmbGroupsHtml)
       const cands = r.candidates || [];
-      // User 2026-10-01: "the user will have no idea what it means" — say it
-      // in words: how many share the name on each side, and what each choice
-      // does to THIS record. The tab's intro (above the list) explains once.
       const nSrc = (r.twins || []).length + 1, srcL = orgLabel(p.sourceOrg), tgtL = orgLabel(p.targetOrg);
       extra = `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="${nSrc} record(s) in ${esc(srcL)} and ${cands.length} in ${esc(tgtL)} carry this name — the name alone cannot say which is which.">${nSrc > 1 ? `${nSrc} with this name in ${esc(srcL)} · ` : ''}${cands.length} with this name in ${esc(tgtL)}</span>`;
-      tail = isRoot
-        ? `${cands.map((t, i) => `<button class="ds-dep-link" data-dep-amb-pin="${esc(r.sourceId)}|${esc(t)}" title="This ${esc(srcL)} record and record #${i + 1} in ${esc(tgtL)} are the same record. From now on they are compared and updated as a pair.">📌 Same as #${i + 1}</button> <a class="ds-dep-open" href="${recUrl(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open record #${i + 1} in ${esc(tgtL)} to check it before choosing">#${i + 1} ↗</a>`).join(' · ')} · <button class="ds-dep-link" data-dep-amb-new="${esc(r.sourceId)}" title="This record does not exist in ${esc(tgtL)} yet. It moves to 🔴 Insert and is created there when you deploy.">➕ New in ${esc(tgtL)}</button>`
-        : `<span class="ds-rec-pnote" title="Choosing by hand works for the first object of the deployment only. A child object needs a second match field so its records can be told apart by more than the name.">cannot be chosen by hand for a child object — add a second match field (✏ Edit → Records → Matching)</span>`;
+      tail = `<span class="ds-rec-pnote" title="Choosing by hand works for the first object of the deployment only. A child object needs a second match field so its records can be told apart by more than the name.">cannot be chosen by hand for a child object — add a second match field (✏ Edit → Records → Matching)</span>`;
     } else {
       extra = r.personAccount ? '<span class="ds-rec-pnote" title="The Contact behind a Person Account — Salesforce creates and owns it.">👤 person account</span>' : '';
       // Synced = the COMPARED fields are equal. ▸ compare reads both records
@@ -964,15 +995,15 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     <div class="ds-dep-tools">
       <input type="search" id="dsDepFilter" class="ds-dep-filter" placeholder="🔍 filter by name${isRoot ? '' : ' or parent'}…" value="${esc(_depFilter)}" aria-label="Filter records">
       <span>${esc(sftkDeployCountLabel(info.shown, info.total, info.capped, info.totalIsFloor))} ${esc(cur.obj)} ${esc(tabDef.noun)}${info.capped ? ` — the first ${Number(info.shown || 0).toLocaleString()} are listed here` : ''}</span>
-      <span class="ds-dep-sp"></span>${bulk}
+      <span class="ds-dep-sp"></span>${bulk}${ambRoot && rows.length ? `<button class="ds-btn ds-btn-xs ds-btn-primary" id="dsDepAmbApply" disabled>📌 Apply</button>` : ''}
     </div>
     ${info.capped ? `<div class="ds-dep-note">⚠ This list is truncated — ${tabDef.k === 'same'
       ? `${info.shown.toLocaleString()} of the synced records are listed; the rest exist and are in sync, they were just not loaded into this result.`
       : `only the ${info.shown.toLocaleString()} listed record(s) exist in this result, so “all listed” means those, not every record. Run what is listed, 🔄 Refresh state, and repeat — or narrow the deployment.`}</div>` : ''}
     ${!isRoot && s.personContacts ? `<div class="ds-dep-note">${esc(sftkPaContactsLine(s.personContacts, orgLabel(p.sourceOrg), orgLabel(p.targetOrg)))}</div>` : ''}
     ${!isRoot ? (s.warnings || []).map(w => `<div class="ds-dep-note">⚠ ${esc(String(w).replace(/^[⚠\s]+/, ''))}</div>`).join('') : ''}
-    ${tabDef.k === 'amb' && rows.length ? _depAmbIntro(p, isRoot) : ''}
-    <div class="ds-dep-list">${shown.length ? shown.map(rowHtml).join('') : `<div class="ds-dep-empty">${q ? 'No record matches that filter.' : `Nothing ${esc(tabDef.noun)}.`}</div>`}</div>
+    ${tabDef.k === 'amb' && rows.length ? _depAmbIntro(p, isRoot, s) : ''}
+    <div class="ds-dep-list">${shown.length ? (ambRoot ? _depAmbGroupsHtml(p, shown, s, ambPick, key) : shown.map(rowHtml).join('')) : `<div class="ds-dep-empty">${q ? 'No record matches that filter.' : `Nothing ${esc(tabDef.noun)}.`}</div>`}</div>
     ${rows.length > shown.length ? `<div class="ds-dep-note ds-dep-more">Showing ${shown.length.toLocaleString()} of ${rows.length.toLocaleString()}
       <button class="ds-btn ds-btn-xs" data-dep-more="step">Show ${Math.min(SFTK_DEPLOY_WINDOW, rows.length - shown.length).toLocaleString()} more</button>
       <button class="ds-btn ds-btn-xs" data-dep-more="all">Show all ${rows.length.toLocaleString()}</button></div>` : ''}`;
@@ -998,15 +1029,30 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     showToast(`${what} — remembered for ${orgLabel(p.targetOrg)}; reading both orgs again…`, 'success', 5000);
     await _depRescan(p);
   };
-  host.querySelectorAll('[data-dep-amb-pin]').forEach(b => b.addEventListener('click', () => {
-    const [sid, tid] = String(b.dataset.depAmbPin).split('|');
-    host.querySelectorAll('[data-dep-amb-pin], [data-dep-amb-new]').forEach(x => { x.disabled = true; });
-    ambChoose([[sid, tid]], '📌 Paired');
-  }));
-  host.querySelectorAll('[data-dep-amb-new]').forEach(b => b.addEventListener('click', () => {
-    host.querySelectorAll('[data-dep-amb-pin], [data-dep-amb-new]').forEach(x => { x.disabled = true; });
-    ambChoose([[b.dataset.depAmbNew, SFTK_MEM_NEW]], '➕ Marked as new');
-  }));
+  // one select per source record; nothing is remembered until 📌 Apply
+  const ambDecided = () => (ambRoot ? all : []).filter(r => ambPick(r));
+  const ambPaintApply = () => {
+    const b = eid('dsDepAmbApply'); if (!b) return;
+    const n = ambDecided().length;
+    b.disabled = !n;
+    b.textContent = n ? `📌 Apply ${n.toLocaleString()} decision${n === 1 ? '' : 's'}` : '📌 Apply — decide at least one below';
+  };
+  host.querySelectorAll('[data-dep-amb-sel]').forEach(el => el.addEventListener('change', () => { _depAmbPick.set(el.dataset.depAmbSel, el.value); ambPaintApply(); }));
+  eid('dsDepAmbApply')?.addEventListener('click', () => {
+    const dec = ambDecided();
+    if (!dec.length) return;
+    // one record in the target can be the same as only ONE record in the source
+    const used = new Map();
+    for (const r of dec) {
+      const t = ambPick(r);
+      if (t === '__new__') continue;
+      if (used.has(t)) { showToast(`Two ${orgLabel(p.sourceOrg)} records named "${key(r)}" were both said to be the same ${orgLabel(p.targetOrg)} record — one record there can be only one record here. Change one of them.`, 'warning', 9000); return; }
+      used.set(t, r.sourceId);
+    }
+    host.querySelectorAll('[data-dep-amb-sel], #dsDepAmbApply').forEach(x => { x.disabled = true; });
+    ambChoose(dec.map(r => [r.sourceId, ambPick(r) === '__new__' ? SFTK_MEM_NEW : ambPick(r)]), `📌 ${dec.length.toLocaleString()} decision(s) applied`);
+  });
+  ambPaintApply();
   host.querySelectorAll('[data-dep-push]').forEach(cb => cb.addEventListener('change', () => {
     const set = isRoot ? _recSel.push : sel.push;
     if (cb.checked) set.add(cb.dataset.depPush); else set.delete(cb.dataset.depPush);
