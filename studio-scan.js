@@ -1480,6 +1480,31 @@ async function runDiffScan(profile, node = null, scope = null) {
       ambiguous.push(row);
     }
   }
+  // What makes a ⚠ group DECIDABLE (sftkAmbiguousInsight, sftk-matching.js —
+  // user 2026-10-03: "we need to make the ambigious page more understandble"):
+  // the compared-field values that tell the copies apart ride on each row and
+  // each candidate, and a field that PROVES a pair suggests it. Advisory: the
+  // user still decides, and a failure here never fails a scan.
+  let ambiguousAdvice = [];
+  const ambiguousCand = {};
+  try {
+    if (ambiguous.length && typeof sftkAmbiguousInsight === 'function') {
+      const plan = comparePlan.slice(0, 30);
+      const val = (fn, rec) => { try { const v = fn(rec); return (v == null || typeof v === 'object') ? '' : String(v).slice(0, 60); } catch (_) { return ''; } };
+      const groups = [..._ambKeys].map(k => ({ key: k,
+        src: (_sGrp.get(k) || []).map(r => ({ id: r.Id, vals: plan.map(p => val(p.srcExtract, r)) })),
+        tgt: (_tGrp.get(k) || []).map(r => ({ id: r.Id, vals: plan.map(p => val(p.tgtExtract, r)) })) }));
+      const ins = sftkAmbiguousInsight(groups, plan.map(p => p.srcField));
+      for (const row of ambiguous) {
+        const x = ins.rows.get(row.sourceId);
+        if (!x) continue;
+        if (x.tell.length) row.tell = x.tell;
+        if (x.suggest) { row.suggest = x.suggest; row.suggestBy = x.by; }
+      }
+      for (const [tid, tell] of ins.cands) if (tell.length) ambiguousCand[tid] = tell;
+      ambiguousAdvice = ins.advice;
+    }
+  } catch (_) { ambiguousAdvice = []; }
 
   // NEAR-MISS pass (user bug 2026-08-04: one child's external-Id value
   // carried an invisible whitespace difference — the record showed as
@@ -1775,6 +1800,10 @@ async function runDiffScan(profile, node = null, scope = null) {
     // more than once, with the target records it could be (candidates) and
     // its source twins. In no other bucket; never deployed until resolved.
     ambiguous:     ambiguous.slice(0, BUCKET_CAP),
+    // the telling values of each candidate target record, and the fields that
+    // would settle the most copies — what the ⚠ tab shows (campaign 4)
+    ...(Object.keys(ambiguousCand).length ? { ambiguousCand } : {}),
+    ...(ambiguousAdvice.length ? { ambiguousAdvice } : {}),
     // Caps to keep chrome.storage payload reasonable on big orgs. The
     // picker only needs source IDs to badge rows, and "extras in target"
     // is just informational for now.

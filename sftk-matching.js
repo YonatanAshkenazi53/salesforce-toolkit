@@ -413,6 +413,58 @@ function sftkScanKeyClasses(srcCounts, tgtCounts) {
   return out;
 }
 
+// PURE. Campaign 4 (user 2026-10-03: "we need to make the ambigious page more
+// understandble") — what the page needs to make a ⚠ group DECIDABLE instead of
+// "Same as #1 · Same as #2 · Same as #3" over records that look identical:
+// which compared field tells the copies apart, and which pairs that field
+// PROVES (the same value on exactly one copy on each side).
+//   groups: [{ key, src: [{ id, vals }], tgt: [{ id, vals }] }] — vals[i] is the
+//           record's value of fields[i], as a string ('' when empty)
+//   fields: [name]
+// → { rows:  Map(srcId → { tell: [[field, value]], suggest: tgtId|undefined, by: field|undefined }),
+//     cands: Map(tgtId → [[field, value]]),
+//     advice: [{ field, groups, records }]  (best first — groups a field settles
+//             completely, records it pairs), settled: number of suggested pairs }
+// A suggestion is only ever a PAIR. "No copy on the other side has this value"
+// proves nothing (the field itself may have changed), so it suggests nothing.
+function sftkAmbiguousInsight(groups, fields) {
+  const rows = new Map(), cands = new Map();
+  const perField = (fields || []).map(() => ({ groups: 0, records: 0 }));
+  let settled = 0;
+  const uniqNonEmpty = vals => vals.every(v => v !== '') && new Set(vals).size === vals.length;
+  for (const g of (groups || [])) {
+    const src = g.src || [], tgt = g.tgt || [];
+    let best = null;   // { i, pairs: Map(srcId → tgtId) }
+    const distinct = [];
+    for (let i = 0; i < (fields || []).length; i++) {
+      const sv = src.map(r => String((r.vals || [])[i] ?? '')), tv = tgt.map(r => String((r.vals || [])[i] ?? ''));
+      distinct.push(new Set([...sv, ...tv].filter(v => v !== '')).size);
+      if (!uniqNonEmpty(sv) || !uniqNonEmpty(tv)) continue;
+      const tIdx = new Map(tv.map((v, k) => [v, k]));
+      const pairs = new Map();
+      sv.forEach((v, k) => { if (tIdx.has(v)) pairs.set(src[k].id, tgt[tIdx.get(v)].id); });
+      if (!pairs.size) continue;
+      if (pairs.size === src.length) { perField[i].groups++; }
+      perField[i].records += pairs.size;
+      if (!best || pairs.size > best.pairs.size) best = { i, pairs };
+    }
+    // what to SHOW next to each copy: the proving field first, then the fields
+    // with the most different values in this group (at most three)
+    const order = distinct.map((d, i) => ({ d, i })).filter(x => x.d > 1).sort((a, b) => b.d - a.d || a.i - b.i).map(x => x.i);
+    const show = [...new Set([...(best ? [best.i] : []), ...order])].slice(0, 3);
+    const tellOf = r => show.map(i => [fields[i], String((r.vals || [])[i] ?? '')]);
+    for (const r of src) {
+      const t = best ? best.pairs.get(r.id) : undefined;
+      rows.set(r.id, { tell: tellOf(r), suggest: t, by: t ? fields[best.i] : undefined });
+      if (t) settled++;
+    }
+    for (const r of tgt) cands.set(r.id, tellOf(r));
+  }
+  const advice = perField.map((x, i) => ({ field: fields[i], groups: x.groups, records: x.records }))
+    .filter(a => a.records > 0).sort((a, b) => b.records - a.records || b.groups - a.groups).slice(0, 3);
+  return { rows, cands, advice, settled };
+}
+
 function sftkScanAccuracy(scan) {
   if (!scan || scan.error) return null;
   const matched  = (scan.identical || []).length + (scan.changed || []).length;

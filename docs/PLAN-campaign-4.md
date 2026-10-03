@@ -278,6 +278,27 @@ shows the flow version active again.
 
 **Size.** 1 day.
 
+## Phase 9 — "Needs a decision": the ambiguous page, decidable
+
+**DONE 2026-10-03** (user: "we need to make the ambigious page more understandble"). The
+2026-10-01 fix was words (an intro, plainer labels); with 350 rows of "Same as #1 · Same as #2 ·
+Same as #3" over records that look identical, words were not enough. Now:
+- `sftkAmbiguousInsight(groups, fields)` (sftk-matching.js, pure): per group, which compared
+  fields tell the copies apart, and the pairs ONE field proves (one distinct non-empty value per
+  copy on each side, the same value on exactly one copy across) — never a "new" suggestion.
+- The scan (studio-scan.js) annotates each ambiguous row with `tell` / `suggest` / `suggestBy`,
+  stores `ambiguousCand` (telling values per candidate target record) and `ambiguousAdvice`.
+- The tab is "⚠ Needs a decision" (bucket key unchanged): groups by the shared name, numbered
+  target records with their telling values, ONE select per source record (it is #n · it is new),
+  suggestions pre-filled and labelled with the proving field, "📌 Apply N decisions" (nothing
+  remembered before; two source records cannot claim one target record). `_depAmbGroupsHtml`,
+  `_depAmbPick` in studio-deploy.js.
+- Tests `ambiguous-help-1001` (rewritten). Live (`scripts/dev/live/ambiguous.mjs`): the fixture's
+  duplicate pair shows "BillingCity: Haifa / Eilat" against the target's "Target twin"; decide one
+  → Apply → 8 · 2 · 2 · ⚠0 → deploy the other → CLI two records → ↩ rollback → one.
+- Next step if wanted: "add <field> to the match key" as one button on the intro (today it names
+  the field and points at ✏ Edit → Records → Matching).
+
 ## Backlog (found during the campaign)
 
 - **Synced records beyond the 5,000 window cannot be found (user 2026-10-01: "5000 contacts are in sync and 1740 is not. but where are they").** The Synced tab lists the first 5,000 identical records and says the rest (1,740 here) exist; the filter searches only the loaded 5,000, so a user cannot confirm one specific record is in sync. Fix: keep the match KEY (name) of every synced record in the scan result (keys only — a few bytes each, no fields), list by name with the filter over all of them, and load a record's details on click. Same for the other buckets' windows.

@@ -59,11 +59,11 @@ describe('the scan, the Deploy page and the ring are wired to the bucket', () =>
     expect(SC).toContain("for (const sr of forcedNew) missingInTarget.push({ ..._srcRow(sftkMatchKey(sr, srcMatching) || '(insert as new)', sr), forcedNew: true });");
   });
   it('Deploy: a ⚠ Ambiguous tab after Synced, a plan column, pair / insert-as-new buttons that remember and rescan', () => {
-    expect(DV).toContain("{ k: 'amb',  bucket: 'ambiguous',       label: '⚠ Ambiguous',");
-    expect(DV.indexOf("label: '⚠ Ambiguous'")).toBeGreaterThan(DV.indexOf("label: '🟢 Synced'"));
+    expect(DV).toContain("{ k: 'amb',  bucket: 'ambiguous',       label: '⚠ Needs a decision',");   // renamed 2026-10-03 — the bucket key stays 'ambiguous'
+    expect(DV.indexOf("label: '⚠ Needs a decision'")).toBeGreaterThan(DV.indexOf("label: '🟢 Synced'"));
     expect(DV).toContain("${cell(r, 'same')}${cell(r, 'amb')}");
-    expect(DV).toContain('data-dep-amb-pin="${esc(r.sourceId)}|${esc(t)}"');
-    expect(DV).toContain("ambChoose([[b.dataset.depAmbNew, SFTK_MEM_NEW]], '➕ Marked as new');");
+    expect(DV).toContain('data-dep-amb-sel="${esc(r.sourceId)}"');   // 2026-10-03: one select per record instead of a row of pin links
+    expect(DV).toContain("ambChoose(dec.map(r => [r.sourceId, ambPick(r) === '__new__' ? SFTK_MEM_NEW : ambPick(r)]),");   // 📌 Apply: pairs and \"new\" in one remembered batch
     expect(DV).toContain('await window.sftkLearnPairs?.(p.id, p.targetOrg, pairs);');
     expect(DV).toContain('await _depRescan(p);');
   });

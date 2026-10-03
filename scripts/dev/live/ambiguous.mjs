@@ -37,10 +37,12 @@ export default async function (h) {
   await h.sleep(1200);
   h.log('AMBIGUOUS LIST:', await dump(h, '#dsDepList', 1400));
   await h.shot(h.shots + '/amb-list.png');
-  const pin = await h.eval(`(() => { const b = document.querySelector('[data-dep-amb-pin]'); return b ? b.dataset.depAmbPin : null; })()`);
-  h.log('pinning:', pin);
+  // ⚠ Needs a decision (campaign 4): one select per source record, then 📌 Apply.
+  // Say the FIRST copy is the target's record; leave the other undecided.
+  const pin = await h.eval(`(() => { const s = document.querySelector('[data-dep-amb-sel]'); if (!s) return null; const o = [...s.options].find(x => x.value && x.value !== '__new__'); if (!o) return null; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return s.dataset.depAmbSel + '|' + o.value; })()`);
+  h.log('deciding:', pin, '| apply button:', await h.eval(`(document.querySelector('#dsDepAmbApply') || {}).textContent`));
   if (!pin) return;
-  await h.eval(`document.querySelector('[data-dep-amb-pin]').click()`);
+  await h.eval(`document.querySelector('#dsDepAmbApply').click()`);
   await h.sleep(2500);
   await waitScanned(h); await h.sleep(2500);
   h.log('PLAN after pin:', await dump(h, '.ds-dep-plan', 900));
