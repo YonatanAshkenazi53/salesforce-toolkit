@@ -30,7 +30,16 @@ LABS_JS = {'studio-schema.js', 'studio-fields.js'}
 # so it graduates only after the dev-org test plan passes. The dev build
 # keeps it; the packer strips the file, its script tag and its nav button.
 HELD_BACK_JS = {'studio-seed.js'}
-EXCLUDE_JS = LABS_JS | HELD_BACK_JS | {'studio-tools.js', 'content.js'}
+# Cut from the PUBLIC build for 1.0 (user 2026-10-03: "lets cut squences,
+# picklist manager. but we do need the lightning pages") — a narrower product
+# that has been used by a human end to end. Both stay in the repo and the dev
+# build; each comes back as its own announced release. studio-picklists.js is
+# the Picklist Manager (its nav button goes too; Org health drops its picklist
+# card and the Deploy page its "Fix in Picklist Manager" button by themselves).
+# studio-sequences.js is Sequences (the Data Deployment page hides the section
+# when the file is absent).
+CUT_JS = {'studio-picklists.js', 'studio-sequences.js'}
+EXCLUDE_JS = LABS_JS | HELD_BACK_JS | CUT_JS | {'studio-tools.js', 'content.js'}
 
 def fail(msg):
     print(f'❌ PACK FAILED: {msg}')
@@ -69,13 +78,18 @@ def main():
     # ── Strip Labs from studio.html ──────────────────────────────────────
     sh_path = os.path.join(STAGE, 'studio.html')
     html = io.open(sh_path, encoding='utf-8').read()
-    for js in (LABS_JS | HELD_BACK_JS):
+    for js in (LABS_JS | HELD_BACK_JS | CUT_JS):
         html = re.sub(rf'[ \t]*<script src="{re.escape(js)}"></script>\r?\n?', '', html)
     # The Seeder's nav button — a button for a stripped view would open a
     # blank page (the router falls back, but the button must not exist).
     m = re.search(r'[ \t]*<button class="ds-nav-btn" data-view="seed">.*?</button>\r?\n?', html, re.S)
     if not m:
         fail('Org Seeder nav button not found in studio.html — nav layout changed?')
+    html = html[:m.start()] + html[m.end():]
+    # The Picklist Manager's nav button — same rule.
+    m = re.search(r'[ \t]*<button class="ds-nav-btn" data-view="picklists">.*?</button>\r?\n?', html, re.S)
+    if not m:
+        fail('Picklist Manager nav button not found in studio.html — nav layout changed?')
     html = html[:m.start()] + html[m.end():]
     i_labs = html.find('<!-- Labs:')
     i_footer = html.find('<!-- Nav footer -->')
@@ -115,7 +129,8 @@ def main():
     for line in ch.split('\n'):
         stripped = line.lstrip()
         if stripped.startswith('- '):
-            skipping = '(Labs)' in line
+            # …and bullets whose TITLE is a tool the public build does not ship
+            skipping = '(Labs)' in line or bool(re.match(r'- \*\*[^*]*(Picklist Manager|Sequence)', stripped))
         elif stripped.startswith('#') or not stripped:
             skipping = False
         if not skipping:
@@ -130,6 +145,7 @@ def main():
         if os.path.exists(os.path.join(STAGE, js)):
             fail(f'{js} leaked into staging')
     for needle in ['studio-seed.js', 'data-view="seed"',
+                   'studio-picklists.js', 'studio-sequences.js', 'data-view="picklists"',
                    'studio-schema.js', 'studio-fields.js',
                    'data-view="schema"', 'data-view="fields"']:
         if needle in html:
@@ -167,6 +183,7 @@ def main():
     size = os.path.getsize(zip_path)
     print(f'✅ {os.path.relpath(zip_path, ROOT)} — {len(copied)} files, {size/1024:.0f} KB')
     print('   Labs excluded:', ', '.join(sorted(LABS_JS)), '(+ studio-tools.js, content.js, harness/_ files, eslint config; html comments + changelog preamble stripped)')
+    print('   Cut from the public build:', ', '.join(sorted(CUT_JS)), '· held back:', ', '.join(sorted(HELD_BACK_JS)))
 
 if __name__ == '__main__':
     main()

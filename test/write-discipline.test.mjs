@@ -59,7 +59,7 @@ describe('every Salesforce write goes through sftkWriteVerified (or names its re
       const html = readFileSync(join(root, page), 'utf8');
       const i = html.indexOf('src="sftk-write.js"');
       expect(i, page).toBeGreaterThan(0);
-      for (const tool of ['field-cleaner.js', 'dependency-map.js', 'user-copy.js', 'studio-picklists.js', 'studio-profiles.js']) {
+      for (const tool of ['field-cleaner.js', 'dependency-map.js', 'user-copy.js', 'studio-picklists.js', 'studio-profiles.js', 'studio-sequences.js']) {
         const j = html.indexOf(`src="${tool}"`);
         if (j > 0) expect(i, `${tool} before the helper in ${page}`).toBeLessThan(j);
       }

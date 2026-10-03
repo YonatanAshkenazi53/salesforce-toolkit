@@ -1507,7 +1507,8 @@ function navigateToView(view) {
 // Palette/hash entries for absent views are filtered by this same check.
 function _viewAvailable(view) {
   const need = { readiness: 'renderReadiness', schema: 'renderSchemaView', fields: 'renderFieldAudit',
-                 whatsnew: 'renderWhatsNew', orghealth: 'renderOrgHealth', rollback: 'renderRollback' };
+                 whatsnew: 'renderWhatsNew', orghealth: 'renderOrgHealth', rollback: 'renderRollback',
+                 picklists: 'renderPicklists' };   // not in the public build (2026-10-03)
   return !need[view] || typeof window[need[view]] === 'function';
 }
 

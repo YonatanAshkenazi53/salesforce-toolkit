@@ -58,7 +58,6 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 
 ### Data Deployment
 - Build a reusable deployment — which object and related child records to move, and which field identifies a matching record between two orgs — from a template or from scratch, and import or export it as a file to share with a teammate (no passwords or org-specific record IDs travel with it).
-- Chain several deployments into a **Sequence** that runs one after another against one org pair, so a later step can use records an earlier step just created. Running a Sequence lists every step and the stakes and requires an acknowledgement — plus the target org's name if it's production — before writing anything.
 - Opening a deployment goes to the 🚀 **Deploy** page, which scans both orgs and sorts every record into 🔴 Insert (missing from target), 🟡 Changed (differs), 🔵 only in target, 🟢 Synced, or ⚠ Needs a decision — nothing is ticked for you. ⚠ Needs a decision holds records whose match key both orgs hold more than once: the scan never guesses which copy is which; you 📌 pair each copy with its target record or ➕ mark it as new, the choice is remembered, and both orgs are read again. Lookups inside the same deployment connect automatically after insert; lookups outside it are matched by name, and you can hand-pick the right target record when a match is ambiguous or would land empty.
 - A **Duplicate rules** setting decides whether the target's own duplicate-detection can block a record (Respect) or is bypassed (Bypass) — bypassing forces the run onto the slower Collections API rather than Bulk API 2.0, since Bulk can't skip duplicate rules at all. A separate Engine setting picks between quick Collections calls and one big Bulk job for large volumes.
 - ↻ **Retry failed** re-opens a deployment with just the records that failed last time already ticked; History keeps Salesforce's answer for every record, and the run's own log names each refusal with Salesforce's text.
@@ -71,14 +70,8 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 - A record that looks like a duplicate of another is never auto-matched — it's flagged for you to pair by hand instead.
 - Limit: this page only checks a deployment's top-level object, not its child records — check those directly on the Deploy page.
 
-### Picklist Manager
-- In a single org: every value with its active state, usage count and record types, plus a wizard for deactivating or removing a value that first checks flows and validation rules mentioning it by name (an honest, partial check stating how many it actually scanned) before letting you remap or clear the records that hold it.
-- Comparing across orgs: a matrix of every value's state per org and 🔄 **Sync from source** to bring targets in line — adding missing values, deactivating what's gone, and aligning labels, record types and the default, with "also deactivate extra values the target has" left unticked by default. Bulk actions apply the same change across every ticked org at once. Standard picklists and shared (global) value sets can be viewed and edited too; 🔄 Sync from source cannot write them.
-- Every write is confirmed first, production targets require typing the org's name, and any Run button waits until every org's automation check finishes before it becomes clickable.
-- Limit: Salesforce's own API cannot truly delete a picklist value — the tool re-reads afterward and reports plainly that it was kept inactive instead, with the exact Setup path to delete it for good by hand.
-
 ### History
-- A log of every past deployment and sequence run: the org pair, per-object counts (created, updated, deleted, failed), and a status of success, partial, or failed. Filter by status or deployment, and export any run — or all of them — as CSV or JSON.
+- A log of every past deployment: the org pair, per-object counts (created, updated, deleted, failed), and a status of success, partial, or failed. Filter by status or deployment, and export any run — or all of them — as CSV or JSON.
 - ↩ **Roll back**, launched from a run's card, undoes it: typing ROLLBACK (or the org's name for production) deletes what the run created and restores what it overwrote to its prior values, then re-reads the target and only reports "verified" for what it actually confirmed gone or restored.
 - Every change made by a Toolkit tool — a picklist value deactivated, a flow switched off or moved to a new API version, a permission copied, a licence toggled, a Lightning page assigned — has its own entry here too, saying what was written and what the org showed afterwards. ↩ **Undo** on that entry writes the earlier state back, asks with the same dialog (the word UNDO, and the org's name for production), re-reads the org before it says "undone", and records the undo as an entry of its own. When a change cannot be reversed, the entry says why instead of offering the button.
 - Limit: a rollback cannot undo automation that already ran because of the original write — emails already sent, records other flows or triggers created, or owner changes all stay as they are; hard-deleted records can't come back; and only the most recent runs keep enough information to be rolled back at all.
@@ -105,3 +98,18 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 ### Field Audit (Labs)
 - An early preview: ranks a chosen object's custom fields by how safe they'd likely be to delete — fill rate, who can see the field, how recently it changed, and how many other things depend on it — and can compare fill rates for the same field across your open orgs. Read-only; actually removing a field still happens in Field Cleaner.
 - Limit: an early preview where a blank result on screen means "not measured," not "safe to delete" — it says so directly.
+
+## Not in the public build yet
+
+These tools exist and stay in the repository and the developer build. They were taken out of the
+first public release on 2026-10-03 to keep it to what has been used end to end; each returns as its
+own release. The in-app guide must not render this section.
+
+### Picklist Manager
+- In a single org: every value with its active state, usage count and record types, plus a wizard for deactivating or removing a value that first checks flows and validation rules mentioning it by name (an honest, partial check stating how many it actually scanned) before letting you remap or clear the records that hold it.
+- Comparing across orgs: a matrix of every value's state per org and 🔄 **Sync from source** to bring targets in line — adding missing values, deactivating what's gone, and aligning labels, record types and the default, with "also deactivate extra values the target has" left unticked by default. Bulk actions apply the same change across every ticked org at once. Standard picklists and shared (global) value sets can be viewed and edited too; 🔄 Sync from source cannot write them.
+- Every write is confirmed first, production targets require typing the org's name, and any Run button waits until every org's automation check finishes before it becomes clickable.
+- Limit: Salesforce's own API cannot truly delete a picklist value — the tool re-reads afterward and reports plainly that it was kept inactive instead, with the exact Setup path to delete it for good by hand.
+
+### Sequences
+- Chain several deployments into a **Sequence** that runs one after another against one org pair, so a later step can use records an earlier step just created. Running a Sequence lists every step and the stakes and requires an acknowledgement — plus the target org's name if it's production — before writing anything.

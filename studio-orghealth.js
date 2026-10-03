@@ -498,6 +498,7 @@ const OH_CARDS = [
   },
   {
     id: 'picklists', icon: '📋', title: 'Picklists drifting between your open orgs',
+    needs: '_pkSweepOpenOrgs',   // the sweep readers live in studio-picklists.js — absent in the public build, so is this card
     what: 'One object’s picklist fields (up to 25) compared across every org open in Chrome — values, labels, active state, defaults and record-type assignments — the Picklist Manager’s own sweep, read-only. Every org compared must be open in a Chrome tab; an org that is not is named and the result is never “in sync”.',
     input: { label: 'Object', placeholder: 'Account', default: 'Account' },
     calls: () => {
@@ -593,7 +594,7 @@ const OH_CARDS = [
       return { ...sftkOhFieldsVerdict({ obj, records, custom: customs.length, fields: list, hidden }), fix };
     },
   },
-];
+].filter(c => !c.needs || typeof window[c.needs] === 'function');
 
 async function _ohLoad() {
   try { return (await chrome.storage.local.get(OH_STORE_KEY))[OH_STORE_KEY] || {}; } catch (_) { return {}; }

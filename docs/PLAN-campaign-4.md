@@ -299,6 +299,28 @@ Same as #3" over records that look identical, words were not enough. Now:
 - Next step if wanted: "add <field> to the match key" as one button on the intro (today it names
   the field and points at ✏ Edit → Records → Matching).
 
+## Scope of the first public release (decided 2026-10-03)
+
+Asked "what would you cut from the scope?", the recommendation was: ship Data Deployment +
+History + Connected Orgs, Flows, Field Cleaner, Dependencies, Debugger; hide the rest as Labs.
+**The user's decision: "lets cut squences, picklist manager. but we do need the lightning pages".**
+So for 1.0:
+- **Cut from the public build (kept in the repo and the dev build):** the Picklist Manager
+  (`studio-picklists.js`) and Sequences (moved into `studio-sequences.js`). `scripts/pack_store.py`
+  `CUT_JS` leaves both files out, strips the Picklist nav button and the changelog bullets titled
+  after them; the page degrades by itself: `_viewAvailable('picklists')`, Org health drops its
+  picklist-drift card (`needs: '_pkSweepOpenOrgs'`), the Deploy page shows "add the value in Setup"
+  instead of "🎚 Fix in Picklist Manager", the Data Deployment page shows the Sequences section only
+  when `sequenceCard` exists. Verified in the harness on BOTH builds (store: absent, six Org health
+  cards, a stale `#/picklists` link falls back to home, no page errors; dev: present).
+- **Stays in:** Lightning Pages — which therefore needs the hand-level QA it never had (app /
+  profile assignments, clone, deactivate were never exercised; the "Who sees what → Show users"
+  404 is unconfirmed). That is now release work, not optional.
+- **Not decided:** All open orgs, Org Compare, Deploy Readiness, Org health, Copy Permissions,
+  Licenses, Flow Access — they ship unless the user says otherwise.
+- `docs/FEATURES.md` keeps the two cut tools under "Not in the public build yet"; the in-app guide
+  must not render that section.
+
 ## Backlog (found during the campaign)
 
 - **Synced records beyond the 5,000 window cannot be found (user 2026-10-01: "5000 contacts are in sync and 1740 is not. but where are they").** The Synced tab lists the first 5,000 identical records and says the rest (1,740 here) exist; the filter searches only the loaded 5,000, so a user cannot confirm one specific record is in sync. Fix: keep the match KEY (name) of every synced record in the scan result (keys only — a few bytes each, no fields), list by name with the filter over all of them, and load a record's details on click. Same for the other buckets' windows.

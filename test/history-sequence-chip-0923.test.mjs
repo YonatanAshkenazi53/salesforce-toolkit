@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const HIST = readFileSync(join(root, 'studio-history.js'), 'utf8');
-const PROF = readFileSync(join(root, 'studio-profiles.js'), 'utf8');
+const PROF = readFileSync(join(root, 'studio-profiles.js'), 'utf8') + '\n' + readFileSync(join(root, 'studio-sequences.js'), 'utf8');   // Sequences live in studio-sequences.js since 2026-10-03 (cut from the public build)
 
 describe('sequence step cards', () => {
   it('the per-step History entries carry the sequence id and name', () => {
