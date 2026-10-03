@@ -102,6 +102,30 @@ function sftkDeployPlanRows(tree, scan, info, label) {
   });
 }
 
+// The objects THIS run writes: every object with something selected, plus its
+// ancestors in the tree (a selected child rides with its missing parents).
+// The ⏸ pauses use it — automation is switched off only on the objects in use
+// (user 2026-10-03: "it should cancel the validation only for the used objects
+// and re enble them afterwards"). PURE. objects: sftkDeployObjects(tree).
+function sftkDeployWrittenObjects(objects, recSel, recChildSel) {
+  const size = s => (s && typeof s.size === 'number') ? s.size : 0;
+  const any = sel => !!sel && Object.values(sel).some(v => size(v) > 0);
+  const byPath = new Map((objects || []).map(o => [o.pathKey, o.obj]));
+  const out = new Set();
+  const addWithAncestors = pathKey => {
+    let k = String(pathKey || '');
+    for (;;) {
+      if (byPath.has(k)) out.add(byPath.get(k));
+      if (k === '') break;
+      const i = k.lastIndexOf('.');
+      k = i < 0 ? '' : k.slice(0, i);
+    }
+  };
+  if (any(recSel)) addWithAncestors('');
+  for (const [k, sel] of Object.entries(recChildSel || {})) if (any(sel)) addWithAncestors(k);
+  return out;
+}
+
 // What is selected, in words and as one number — from the SAME Sets the
 // classic page fills. objByPath: { pathKey → object name }.
 function sftkDeploySelection(recSel, recChildSel, rootObj, objByPath) {
@@ -459,6 +483,7 @@ async function renderDeploy() {
     ${offlineHtml}
     <div id="dsDepTree"></div>
     <div id="dsDepFlowLeft"></div>
+    <div id="dsDepRuleLeft"></div>
     ${planHtml}
     <div id="dsDepOrder"></div>
     ${notesHtml}
@@ -493,9 +518,12 @@ async function renderDeploy() {
         </select></label>
       <label class="ds-dep-delmode" style="cursor:pointer" title="Off (the default): the run writes with every flow active, as usual. On: the record-triggered flows on this deployment's objects in the target are switched off after the confirmation, and back on at their exact versions when the run ends — even if it fails. Records written while they are off are never processed by them.">
         <input type="checkbox" id="dsDepFlowPause" ${_depFlowPause.on ? 'checked' : ''}> ⏸ pause record-triggered flows</label>
+      <label class="ds-dep-delmode" style="cursor:pointer" title="Off (the default): the run writes with every validation rule active, as usual — a record a rule rejects is refused and named. On: the active validation rules on this deployment's objects in the target org are switched off after you confirm and back on as soon as the run ends (finished, failed or stopped). While they are off they are off for EVERY user of that org, and records written meanwhile are never validated later.">
+        <input type="checkbox" id="dsDepRulePause" ${_depRulePause.on ? 'checked' : ''}> ⏸ pause validation rules</label>
       <button class="ds-btn ds-btn-lg ds-btn-primary" id="dsRecRunBtn" disabled>▶ Deploy</button>
     </div>
     <div id="dsDepFlowPauseList" class="ds-dep-foot"></div>
+    <div id="dsDepRulePauseList" class="ds-dep-foot"></div>
     <div class="ds-dep-foot">The real, rolled-back 🧪 dry run is the next step of this page and is not built yet.</div>
     <div id="dsRecProgress" class="ds-rec-progress"></div></div>
     ${_depLastRunLog ? `<details open class="ds-rec-card ds-dep-lastlog"><summary class="ds-rec-card-title">📜 Last run on this page — the numbers above are already refreshed; History keeps this run too</summary><div class="ds-rec-progress">${_depLastRunLog.html}</div></details>` : ''}`);
@@ -542,6 +570,7 @@ async function renderDeploy() {
   eid('dsRecRunBtn')?.addEventListener('click', () => _depRun(p, objType,
     { missing: scan.missingInTarget || [], drift: scan.changed || [], extras: scan.onlyInTarget || [] }));
   _depFlowPauseWire(p);
+  _depRulePauseWire(p);
   eid('dsDepJourneyBack')?.addEventListener('click', () => _depGoOrigin(p));
   // 🌳 the shape of the deployment, then ⛓ what it points at outside itself
   _depPaintTree(p, scan);
@@ -1053,7 +1082,7 @@ async function _depFlowPauseWire(p) {
     const l = fp.list;
     host.innerHTML = !l.flows.length
       ? `No active record-triggered flow on ${esc(objects.join(', '))} in ${esc(orgLabel(p.targetOrg))} — nothing to pause; the run writes as usual.${l.managed.length ? ` (${l.managed.length} from installed packages cannot be switched: ${esc(l.managed.join(', '))})` : ''}`
-      : `⏸ ${l.flows.length} flow(s) will be switched off during the run and back on when it ends: ${l.flows.map(f => `${esc(f.label)} <span class="ds-subtext">(${esc(f.object)})</span>`).join(', ')}.${l.managed.length ? ` Installed-package flows stay on: ${esc(l.managed.join(', '))}.` : ''}`;
+      : `⏸ Active record-triggered flows on this deployment's objects — the run switches off ONLY the ones on objects it writes (listed in its confirmation), and back on when it ends: ${l.flows.map(f => `${esc(f.label)} <span class="ds-subtext">(${esc(f.object)})</span>`).join(', ')}.${l.managed.length ? ` Installed-package flows stay on: ${esc(l.managed.join(', '))}.` : ''}`;
   };
   const load = async () => {
     _depFlowPause = { on: true, key, list: null, error: '' };
@@ -1101,12 +1130,137 @@ async function _depFlowLeftovers(p) {
   });
 }
 
+// ── ⏸ pause validation rules during the run (campaign 4 phase 4) ─────────────
+// The same contract as the flows above (sftk-vrpause.js): an option, OFF by
+// default; the rules are listed when it is ticked; they go off after the run's
+// one confirmation and back on when it ends; leftovers get a banner.
+let _depRulePause = { on: false, key: '', list: null, error: '' };
+
+async function _depRulePauseWire(p) {
+  const objects = sftkDeployObjects(p.tree).map(o => o.obj);
+  const key = `${p.targetOrg}|${objects.join(',')}`;
+  const box = eid('dsDepRulePause'), host = eid('dsDepRulePauseList');
+  const paint = () => {
+    if (!host) return;
+    const vp = _depRulePause;
+    if (!vp.on) { host.innerHTML = ''; return; }
+    if (vp.error) { host.innerHTML = `⚠ The validation rules could not be listed — ${esc(vp.error)}. Untick to deploy with the rules active, or open ${esc(orgLabel(p.targetOrg))} and tick again.`; return; }
+    if (!vp.list) { host.textContent = `⏳ reading the active validation rules on ${objects.join(', ')} in ${orgLabel(p.targetOrg)}…`; return; }
+    const l = vp.list;
+    host.innerHTML = !l.rules.length
+      ? `No active validation rule on ${esc(objects.join(', '))} in ${esc(orgLabel(p.targetOrg))} — nothing to pause; the run writes as usual.${l.managed.length ? ` (${l.managed.length} from installed packages cannot be switched: ${esc(l.managed.join(', '))}.)` : ''}`
+      : `⏸ Active validation rules on this deployment's objects — the run switches off ONLY the ones on objects it writes (decided when you press ▶ Deploy and listed in its confirmation), and back on when it ends: ${l.rules.map(r => `${esc(r.name)} <span class="ds-subtext">(${esc(r.object)})</span>`).join(', ')}. <b>While they are off they are off for every user of ${esc(orgLabel(p.targetOrg))}.</b>${l.managed.length ? ` Rules from installed packages cannot be switched and stay on: ${esc(l.managed.join(', '))}.` : ''}`;
+  };
+  const load = async () => {
+    _depRulePause = { on: true, key, list: null, error: '' };
+    paint();
+    try {
+      const sess = await getOrgSession(p.targetOrg);
+      if (!sess) throw new Error(`${orgLabel(p.targetOrg)} is not open in a Chrome tab`);
+      const list = await sftkVrPauseList(sess, objects);
+      if (_depRulePause.key === key && _depRulePause.on) _depRulePause.list = list;
+    } catch (e) { if (_depRulePause.key === key) _depRulePause.error = (e && e.message) || String(e); }
+    paint();
+  };
+  box?.addEventListener('change', () => { if (box.checked) load(); else { _depRulePause = { on: false, key: '', list: null, error: '' }; paint(); } });
+  if (_depRulePause.on && _depRulePause.key !== key) load(); else paint();
+  _depRuleLeftovers(p);
+}
+
+// Rules a run paused and never switched back on (the tab closed mid-run):
+// said at the top of the page, with the one button that fixes it.
+async function _depRuleLeftovers(p) {
+  const host = eid('dsDepRuleLeft');
+  if (!host || typeof sftkVrPausedLeftovers !== 'function') return;
+  const left = await sftkVrPausedLeftovers(p.targetOrg);
+  const ids = Object.keys(left);
+  if (!ids.length) { host.innerHTML = ''; return; }
+  host.innerHTML = `<div class="ds-rec-card ds-rec-card-bad"><div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⏸</span><span class="ds-rec-card-title">${ids.length} validation rule(s) in ${esc(orgLabel(p.targetOrg))} are still OFF</span></div>
+    <div class="ds-rec-card-line">A deployment switched them off and did not get to switch them back on (the page closed during the run): ${ids.map(i => `${esc(left[i].name || i)} <span class="ds-subtext">(${esc(left[i].object || '')})</span>`).join(', ')}. Until they are back on, nothing in that org is validated by them.</div>
+    <div class="ds-rec-card-line"><button class="ds-btn ds-btn-sm ds-btn-primary" id="dsDepRuleLeftOn">▶ Switch them back on</button></div></div>`;
+  eid('dsDepRuleLeftOn')?.addEventListener('click', async () => {
+    const rules = ids.map(i => ({ id: i, name: left[i].name || i, object: left[i].object || '' }));
+    const gate = await sftkOrgWriteGate(p.targetOrg, _orgs);
+    const sure = await sftkConfirmDestructive({
+      title: `▶ Switch ${rules.length} validation rule(s) back on in ${orgLabel(p.targetOrg)}`, icon: '▶',
+      items: rules.map(r => ({ label: `${r.name} (${r.object})` })),
+      revOverride: { html: 'Each rule is switched back on and re-read.', needsCheckbox: false },
+      confirmLabel: '▶ Switch back on',
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!sure) return;
+    const sess = await getOrgSession(p.targetOrg);
+    if (!sess) { showToast(`${orgLabel(p.targetOrg)} is not open in a Chrome tab — open it first`, 'warning', 6000); return; }
+    const r = await sftkVrPauseOn(sess, rules);
+    showToast(r.failed.length ? `⚠ ${r.done.length} back on; ${r.failed.length} NOT: ${r.failed.join(' · ')}` : `▶ ${r.done.length} validation rule(s) back on — verified by re-reading the org`, r.failed.length ? 'error' : 'success', r.failed.length ? 15000 : 6000);
+    _depRuleLeftovers(p);
+  });
+}
+
+// The run, with the rule pause on top of whatever else it was given (the flow
+// pause passes its own hooks through here): rules go off AFTER the flows, come
+// back on BEFORE them, and again in a finally if the run never reached its end.
+async function _depReconcile(p, objType, buckets, opts) {
+  const vpAll = _depRulePause.on && _depRulePause.list && _depRulePause.list.rules.length ? _depRulePause.list : null;
+  // only the rules on the objects this run writes — the others stay on, and are named in the confirmation
+  const written = sftkDeployWrittenObjects(sftkDeployObjects(p.tree), _recSel, _recChildSel);
+  const vp = vpAll ? { ...vpAll, rules: vpAll.rules.filter(r => written.has(r.object)), untouched: vpAll.rules.filter(r => !written.has(r.object)).map(r => `${r.name} (${r.object})`) } : null;
+  if (!vp || !vp.rules.length) return runReconcile(p, objType, buckets, opts);
+  let pausedR = null, tgtSessR = null, backR = null;
+  const resumeR = async () => {
+    if (backR || !pausedR || !pausedR.ok || !pausedR.off.length) return backR;
+    const sess = (await getOrgSession(p.targetOrg)) || tgtSessR;
+    backR = await sftkVrPauseOn(sess, pausedR.off);
+    return backR;
+  };
+  try {
+    await runReconcile(p, objType, buckets, { ...(opts || {}), rulePause: vp,
+      beforeWrites: async (sess, log) => {
+        tgtSessR = sess;
+        if (opts && typeof opts.beforeWrites === 'function') { const ok = await opts.beforeWrites(sess, log); if (!ok) return false; }
+        log('⏸', `Switching off ${vp.rules.length} validation rule(s) in ${orgLabel(sess.orgUrl)}…`);
+        pausedR = await sftkVrPauseOff(sess, vp.rules);
+        if (!pausedR.ok) {
+          log('❌', `Not every validation rule could be switched off, so the run did not start: ${pausedR.failed.join(' · ')}${pausedR.restored.length ? ` — ${pausedR.restored.length} already off switched back on` : ''}${pausedR.restoreFailed.length ? ` — NOT back on: ${pausedR.restoreFailed.join(' · ')}` : ''}`, 'ds-prog-err');
+          // whatever the flow option switched off goes back on too — the run is not starting
+          if (opts && typeof opts.afterWrites === 'function') { try { await opts.afterWrites(log); } catch (_) { /* its own finally tries again */ } }
+          return false;
+        }
+        log('✅', `${pausedR.off.length} validation rule(s) switched off — verified by re-reading the org; they go back on as soon as the writes end`);
+        return true;
+      },
+      afterWrites: async log => {
+        if (pausedR && pausedR.ok && pausedR.off.length) {
+          log('▶', `Switching ${pausedR.off.length} validation rule(s) back on…`);
+          const r = await resumeR();
+          log(r.failed.length ? '⚠' : '✅', r.failed.length
+            ? `${r.done.length} back on; NOT: ${r.failed.join(' · ')} — the Deploy page lists them with a button`
+            : `${r.done.length} validation rule(s) back on — verified by re-reading the org`, r.failed.length ? 'ds-prog-err' : '');
+        }
+        if (opts && typeof opts.afterWrites === 'function') await opts.afterWrites(log);
+      },
+    });
+  } finally {
+    // the safety net: a run that failed or stopped before its last write
+    if (pausedR && pausedR.ok && pausedR.off.length) {
+      const r = await resumeR();
+      if (r.failed.length) showToast(`⚠ ${r.failed.length} validation rule(s) could NOT be switched back on in ${orgLabel(p.targetOrg)}: ${r.failed.join(' · ')} — the Deploy page lists them with a button to switch them on.`, 'error', 20000);
+      else showToast(`▶ ${r.done.length} validation rule(s) back on in ${orgLabel(p.targetOrg)} — verified by re-reading the org`, 'success', 8000);
+      if (_currentView === 'deploy') _depRuleLeftovers(p);
+    }
+  }
+}
+
 // ▶ Deploy: as always — or, with ⏸ ticked and flows found, the run pauses them
 // after its confirmation and they are switched back on when it returns, in a
 // finally (a failed or stopped run switches them back too).
 async function _depRun(p, objType, buckets) {
-  const fp = _depFlowPause.on && _depFlowPause.list && _depFlowPause.list.flows.length ? _depFlowPause.list : null;
-  if (!fp) return runReconcile(p, objType, buckets);
+  const fpAll = _depFlowPause.on && _depFlowPause.list && _depFlowPause.list.flows.length ? _depFlowPause.list : null;
+  // only the flows on the objects this run writes (2026-10-03) — a flow on an object with nothing selected stays on
+  const writtenF = sftkDeployWrittenObjects(sftkDeployObjects(p.tree), _recSel, _recChildSel);
+  const fpNarrow = fpAll ? { ...fpAll, flows: fpAll.flows.filter(f => writtenF.has(f.object)) } : null;
+  const fp = fpNarrow && fpNarrow.flows.length ? fpNarrow : null;
+  if (!fp) return _depReconcile(p, objType, buckets);
   let paused = null, tgtSess = null, back = null;
   const resume = async () => {
     if (back || !paused || !paused.ok || !paused.off.length) return back;
@@ -1115,7 +1269,7 @@ async function _depRun(p, objType, buckets) {
     return back;
   };
   try {
-    await runReconcile(p, objType, buckets, { flowPause: fp,
+    await _depReconcile(p, objType, buckets, { flowPause: fp,
       beforeWrites: async (sess, log) => {
         tgtSess = sess;
         log('⏸', `Switching off ${fp.flows.length} record-triggered flow(s) in ${orgLabel(sess.orgUrl)}…`);

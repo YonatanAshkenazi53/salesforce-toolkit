@@ -362,7 +362,7 @@ describe('a capped set feeding a WRITE', () => {
     const rec = codeOnly(srcOf('studio-reconcile.js'));
     // An Insert-only run used to write with no dialog at all; the guard is the
     // extra condition on that gate.
-    expect(rec).toMatch(/if \(delIds\.length \|\| pullIds\.length \|\| updSrcIds\.length \|\| anyChildAct \|\| capWarnLines\.length \|\| _fp\)/);   // + ⏸ paused flows (2026-09-29): switching them is a write to disclose
+    expect(rec).toMatch(/if \(delIds\.length \|\| pullIds\.length \|\| updSrcIds\.length \|\| anyChildAct \|\| capWarnLines\.length \|\| _fp \|\| _vp\)/);   // + ⏸ paused flows (2026-09-29) and ⏸ paused validation rules (2026-10-03): switching them is a write to disclose
     // The warning is BUILT from the selections, per object, root and children.
     expect(rec).toMatch(/sftkCappedWriteNote\(rootScan, rootKinds, objType\)/);
     expect(rec).toMatch(/sftkCappedWriteNote\(a\.cs, kinds, obj\)/);
