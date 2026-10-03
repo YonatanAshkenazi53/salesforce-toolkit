@@ -1321,10 +1321,15 @@ function renderTreeNode(node, path, isRoot, depth = 0) {
                 </span>
                </div>`
             : '';
+          // "Created before parent" (child-first) is NO LONGER OFFERED (user
+          // 2026-10-03: "take it out"): unverified on the Deploy page, and rarely
+          // needed now that a whole tree deploys in one run and in-tree lookups
+          // connect after insert. The engine still honours it, so a deployment
+          // that ALREADY carries the setting (an older version, an imported
+          // file) says so and offers the way back to the normal order; nothing
+          // in the builder sets it any more.
           const cfOn = node.insertOrder === 'childFirst';
-          const cfTitle = cfOn
-            ? `Child-first is ON: these records are created BEFORE the parent (without ${node.field || 'the parent link'}), the parent is created next — its lookups to these records connect automatically — then these records are updated to point at their parent. Requires ${node.field || 'the link field'} to be optional and updateable in the target (not master-detail). Click to switch back to the default order.`
-            : `Default order: the parent is created first, then these records with ${node.field || 'the parent link'} set at insert. Click to create these records BEFORE the parent instead — for parents whose own lookups require these records to already exist (e.g. CPQ lookup tables).`;
+          const cfTitle = `These records are created BEFORE their parent (without ${node.field || 'the parent link'}) and connected afterwards — set in an earlier version or an imported file. This option is no longer offered: click to return to the normal order (parent first).`;
           return `
         <div class="ds-tree-config-row">
           <button class="ds-btn ds-btn-xs ds-btn-config" data-records-btn="${esc(pathKey)}" title="Pick specific records to copy">
@@ -1342,8 +1347,8 @@ function renderTreeNode(node, path, isRoot, depth = 0) {
             const nMask = bldPiiCountForObject(_editingProfile?.piiPolicy, objName);
             return nMask ? `<span class="ds-config-badge ds-badge-masked" title="${nMask} ${esc(objName)} field(s) are masked at write time — pseudonymized hash or null, never the raw value. Configure via 🎭 in Fields &amp; mapping or Suggest PII masks.">${dsIcon('lock')}${nMask} masked</span>` : '';
           })()}
-          ${!isRoot ? `<button class="ds-btn ds-btn-xs ds-btn-config ${cfOn ? 'ds-btn-config--active' : ''}" data-order-btn="${esc(pathKey)}" title="${esc(cfTitle)}">
-            ${cfOn ? '⤴ Created before parent' : '⤵ Created after parent'}
+          ${!isRoot && cfOn ? `<button class="ds-btn ds-btn-xs ds-btn-config ds-btn-config--active" data-order-btn="${esc(pathKey)}" title="${esc(cfTitle)}">
+            ⤴ Created before parent — click for the normal order
           </button>` : ''}
           <button class="ds-btn ds-btn-xs ds-btn-config ${node.includeFiles ? 'ds-btn-config--active' : ''}" data-files-btn="${esc(pathKey)}"
             title="${node.includeFiles
@@ -1497,14 +1502,13 @@ function wireTreeEvents() {
         .then(() => bldPiiDecorateMappingModal(btn.dataset.mapBtn)));
   });
 
-  // Insert-order toggle (child nodes only): default parent-first ⤵ vs
-  // child-first ⤴ (records created before the parent, linked afterwards).
+  // The ⤴ chip of a node that still carries child-first (older versions,
+  // imported files): one click returns it to the normal order. Nothing sets it.
   area.querySelectorAll('[data-order-btn]').forEach(btn => {
     btn.addEventListener('click', () => {
       const node = getNodeByPath(_editingProfile.tree, btn.dataset.orderBtn);
       if (!node) return;
-      if (node.insertOrder === 'childFirst') delete node.insertOrder;
-      else node.insertOrder = 'childFirst';
+      delete node.insertOrder;   // back to the normal order — the builder no longer sets child-first (2026-10-03)
       refreshTree();
     });
   });

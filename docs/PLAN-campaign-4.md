@@ -313,6 +313,7 @@ So for 1.0:
   instead of "🎚 Fix in Picklist Manager", the Data Deployment page shows the Sequences section only
   when `sequenceCard` exists. Verified in the harness on BOTH builds (store: absent, six Org health
   cards, a stale `#/picklists` link falls back to home, no page errors; dev: present).
+- **Taken out of the builder (2026-10-03, "take it out"):** the per-object order switch "⤵ Created after parent / ⤴ Created before parent" (child-first). The engine still honours `insertOrder: 'childFirst'` (26 tests in `engine-childfirst`), but nothing in the builder sets it any more; a deployment that already carries it (older version, imported file) shows "⤴ Created before parent — click for the normal order" and one click removes it. Reason: never run through the Deploy page, its pre-check lived on the retired Transfer page, and a whole tree now deploys in one run with in-tree lookups connected after insert. Checked in the harness with both orgs: 12 object rows, no switch; the legacy chip appears and resets. Test `childfirst-cut-1003`.
 - **Stays in:** Lightning Pages — which therefore needs the hand-level QA it never had (app /
   profile assignments, clone, deactivate were never exercised; the "Who sees what → Show users"
   404 is unconfirmed). That is now release work, not optional.
