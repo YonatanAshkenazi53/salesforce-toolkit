@@ -33,3 +33,29 @@ describe('records list window', () => {
     expect(DV).toContain('<span class="ds-rec-card-ico">📦</span><span class="ds-rec-card-title">This deployment</span>');
   });
 });
+
+// 2026-10-03 — "SYNCED 5,000 of 9,899" read as "4,899 are not synced"
+// (user: "where do i see those who are not synced?"). The cell and the tab
+// show the TRUE total; the list line says how many it lists.
+import { extractFunction } from './extract.mjs';
+describe('count cells show the true total', () => {
+  const label = extractFunction('studio-deploy.js', 'sftkDeployCountLabel');
+  it('a truncated list with a known total reads as the total, never "X of Y"', () => {
+    expect(label(5000, 9899, true, false)).toBe('9,899');
+    expect(label(5000, 9899, true, true)).toBe('9,899+');
+  });
+  it('a truncated list with no measured total reads as a floor', () => {
+    expect(label(5000, null, true, false)).toBe('5,000+');
+    expect(label(5000, 5000, true, false)).toBe('5,000+');
+  });
+  it('a complete list reads as its count; zero stays zero', () => {
+    expect(label(12, 12, false, false)).toBe('12');
+    expect(label(0, 0, false, false)).toBe('0');
+    expect(label(401, null, false, false)).toBe('401');
+  });
+  it('the plan table and the tabs use it; the list line says how many are listed', () => {
+    expect((DV.match(/sftkDeployPlanRows\(p\.tree, scan, sftkScanBucketInfo, sftkDeployCountLabel\)/g) || []).length).toBe(2);
+    expect(DV).toContain('are listed here');
+    expect(DV).toContain('in total — the list shows the first');
+  });
+});

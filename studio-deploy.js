@@ -70,6 +70,21 @@ const SFTK_DEPLOY_TABS = [
 // One plan row per object. `info(scanLike, bucket)` is sftkScanBucketInfo —
 // the measured TOTAL even when the stored list is capped; `label(...)` is
 // sftkBucketCountLabel. Both injected so this stays pure.
+// The count a person reads in a cell or on a tab: the TRUE total. A truncated
+// list is a property of the LIST, not of the number — "5,000 of 9,899" under
+// SYNCED read as "4,899 are not synced" (user 2026-10-03: "where do i see
+// those who are not synced?"). The list itself says how many it shows.
+//   complete / capped with a known total → "9,899" ("+" when the total is a floor)
+//   capped, total not measured           → "5,000+"
+// PURE.
+function sftkDeployCountLabel(shown, total, capped, totalIsFloor) {
+  const group = n => String(Math.floor(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const known = total != null && Number.isFinite(Number(total)) && Number(total) >= 0;
+  if (!capped) return known ? `${group(total)}${totalIsFloor ? '+' : ''}` : group(shown);
+  if (known && Number(total) > Number(shown)) return `${group(total)}${totalIsFloor ? '+' : ''}`;
+  return `${group(shown)}+`;
+}
+
 function sftkDeployPlanRows(tree, scan, info, label) {
   return sftkDeployObjects(tree).map(o => {
     const s = sftkDeployScanFor(scan, o);
@@ -366,14 +381,14 @@ async function renderDeploy() {
   }
   const objects = sftkDeployObjects(p.tree);
   const objByPath = Object.fromEntries(objects.map(o => [o.pathKey, o.obj]));
-  const plan = sftkDeployPlanRows(p.tree, scan, sftkScanBucketInfo, sftkBucketCountLabel);
+  const plan = sftkDeployPlanRows(p.tree, scan, sftkScanBucketInfo, sftkDeployCountLabel);
   if (!objects.some(o => o.pathKey === _depObjPath)) _depObjPath = '';
 
   // ── plan card ──
   const sum = k => plan.reduce((n, r) => n + ((r.cells[k] && r.cells[k].n) || 0), 0);
   const unscanned = plan.filter(r => !r.scanned);
   const cell = (r, k) => r.cells[k]
-    ? `<td class="ds-dep-num${r.cells[k].n ? ` ds-dep-n-${k}` : ' ds-dep-muted'}" data-dep-obj="${esc(r.pathKey)}" data-dep-tab="${k}" title="${r.cells[k].capped ? 'The stored list is truncated — this is the measured total' : 'Show these records'}">${esc(r.cells[k].text)}</td>`
+    ? `<td class="ds-dep-num${r.cells[k].n ? ` ds-dep-n-${k}` : ' ds-dep-muted'}" data-dep-obj="${esc(r.pathKey)}" data-dep-tab="${k}" title="${r.cells[k].capped ? `${Number(r.cells[k].n || 0).toLocaleString()} in total — the list shows the first ${Number(r.cells[k].shown || 0).toLocaleString()} of them` : 'Show these records'}">${esc(r.cells[k].text)}</td>`
     : `<td class="ds-dep-num ds-dep-muted">${r.scanned ? '—' : ''}</td>`;
   const planHtml = `
     <div class="ds-rec-card">
@@ -546,7 +561,7 @@ async function _depPaintTree(p, scan) {
   const host = eid('dsDepTree');
   if (!host || !scan) return;
   const key = `${p.id}|${sftkOrgKey(p.targetOrg || '')}`;
-  const plan = sftkDeployPlanRows(p.tree, scan, sftkScanBucketInfo, sftkBucketCountLabel);
+  const plan = sftkDeployPlanRows(p.tree, scan, sftkScanBucketInfo, sftkDeployCountLabel);
   const order = (_depOrderKey === `${p.id}|${scan.runAt}` && _depOrderData) ? (_depOrderData.objects || []) : [];
   const idOf = pathKey => (_depIdKey === key && _depIdData) ? (_depIdData.objects || []).find(o => o.pathKey === pathKey) : null;
   // The chips name the ORG, not "source"/"target" — the page has exactly one
@@ -919,7 +934,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   host.innerHTML = `
     <div class="ds-dep-tools">
       <input type="search" id="dsDepFilter" class="ds-dep-filter" placeholder="🔍 filter by name${isRoot ? '' : ' or parent'}…" value="${esc(_depFilter)}" aria-label="Filter records">
-      <span>${esc(sftkBucketCountLabel(info.shown, info.total, info.capped, info.totalIsFloor))} ${esc(cur.obj)} ${esc(tabDef.noun)}</span>
+      <span>${esc(sftkDeployCountLabel(info.shown, info.total, info.capped, info.totalIsFloor))} ${esc(cur.obj)} ${esc(tabDef.noun)}${info.capped ? ` — the first ${Number(info.shown || 0).toLocaleString()} are listed here` : ''}</span>
       <span class="ds-dep-sp"></span>${bulk}
     </div>
     ${info.capped ? `<div class="ds-dep-note">⚠ This list is truncated — ${tabDef.k === 'same'
