@@ -34,10 +34,22 @@ function sftkFlowSurgeryPlan(versions, referencingIds, opts) {
   const ref = new Set((Array.isArray(referencingIds) ? referencingIds : []).map(String));
   const active = vs.find(v => v.status === 'Active') || null;
   const activeRefs = !!(active && ref.has(active.id));
-  const inactiveRefs = vs.filter(v => v.status !== 'Active' && ref.has(v.id));
-  const cleanInactive = vs.filter(v => v.status !== 'Active' && !ref.has(v.id)).length;
   const maxNum = vs.length ? vs[0].num : 0;
   const dropActive = activeRefs && activeMode === 'delete';
+  // Salesforce saves a deployed flow OVER its newest version when that
+  // version is a DRAFT (never activated), instead of creating a new one —
+  // live 2026-10-04: v3 Active + v4 Draft, the deploy REPLACED v4 (the draft
+  // record is gone, a new record carries the same number) and activated it;
+  // with the newest version Obsolete it created v5. So a newer draft is not
+  // deleted afterwards: its number IS the new version, and its own content is
+  // lost — the plan says so.
+  const newest = vs[0] || null;
+  const overwrite = (activeRefs && !dropActive && newest && /draft/i.test(newest.status))
+    ? { ...newest, refs: ref.has(newest.id) } : null;
+  const isOver = v => !!overwrite && v.id === overwrite.id;
+  const inactiveRefs = vs.filter(v => v.status !== 'Active' && ref.has(v.id) && !isOver(v));
+  const cleanInactive = vs.filter(v => v.status !== 'Active' && !ref.has(v.id) && !isOver(v)).length;
+  const expectNew = overwrite ? overwrite.num : maxNum + 1;
   const toDelete = [
     ...inactiveRefs.map(v => ({ ...v, why: 'inactive version that still references the field' })),
     ...(activeRefs ? [{ ...active, why: dropActive ? 'the active version — the flow is switched off first' : 'replaced by the new version' }] : []),
@@ -47,14 +59,14 @@ function sftkFlowSurgeryPlan(versions, referencingIds, opts) {
     steps.push({ kind: 'deactivate', from: active.num });
     steps.push({ kind: 'verify-inactive' });
   } else if (activeRefs) {
-    steps.push({ kind: 'redeploy', from: active.num, expectNew: maxNum + 1 });
-    steps.push({ kind: 'verify-active', expectNew: maxNum + 1 });
+    steps.push({ kind: 'redeploy', from: active.num, expectNew, ...(overwrite ? { overwrites: overwrite.num } : {}) });
+    steps.push({ kind: 'verify-active', expectNew });
   }
   if (toDelete.length) steps.push({ kind: 'delete-versions', versions: toDelete.map(v => v.id) });
   return {
     mode: dropActive ? 'active-delete' : (activeRefs ? 'active' : (inactiveRefs.length ? 'inactive-only' : 'none')),
-    active, activeRefs, inactiveRefs, toDelete, cleanInactive,
-    expectNew: (activeRefs && !dropActive) ? maxNum + 1 : null,
+    active, activeRefs, inactiveRefs, toDelete, cleanInactive, overwrite,
+    expectNew: (activeRefs && !dropActive) ? expectNew : null,
     steps,
   };
 }
@@ -187,7 +199,11 @@ function sftkFlowInterviewWords(k) {
   return { head: `${kinds.total} flow interview(s)${parts.length ? ` (${parts.join(', ')})` : ''}`, cost };
 }
 
-function sftkFlowSurgeryLines(plan, interviews, interviewCheckError) {
+// opts.swapTo: the field every reference is moved to (⇄ Replace with another
+// field, sftk-fieldreplace.js) — the new version then KEEPS its logic and
+// points at that field, instead of losing the reference.
+function sftkFlowSurgeryLines(plan, interviews, interviewCheckError, opts) {
+  const swapTo = opts && opts.swapTo ? String(opts.swapTo) : '';
   const p = plan || { mode: 'none', toDelete: [], inactiveRefs: [] };
   const out = [];
   const vlist = (arr) => arr.map(v => `v${v.num} (${v.status || '?'})`).join(', ');
@@ -200,7 +216,14 @@ function sftkFlowSurgeryLines(plan, interviews, interviewCheckError) {
     out.push(`Then delete v${p.active.num}${p.inactiveRefs.length ? ` and ${p.inactiveRefs.length} inactive version(s) that still reference the field: ${vlist(p.inactiveRefs)}` : ''}.`);
     out.push('THE FLOW STOPS RUNNING. Whatever it automated no longer happens, and no other version becomes active by itself.');
   } else if (p.mode === 'active') {
-    out.push(`Deploy a new version (expected v${p.expectNew}) without the field reference, from the active v${p.active.num}, and make sure it is ACTIVE. Nothing is deleted until the org confirms the new version is running.`);
+    if (p.overwrite) {
+      out.push(`v${p.overwrite.num} is a DRAFT newer than the active v${p.active.num}. Salesforce saves a deployed flow over its newest draft instead of creating a new version, so the draft's current content is REPLACED by ${swapTo ? `the version that uses ${swapTo}` : 'the fixed version'} — tick the backup below to keep a copy of the draft.`);
+      out.push(swapTo
+        ? `Deploy the active v${p.active.num} over the draft v${p.overwrite.num} with every reference to the field pointing at ${swapTo} instead, and make sure v${p.overwrite.num} is ACTIVE. Nothing is deleted until the org confirms it is running.`
+        : `Deploy the active v${p.active.num} over the draft v${p.overwrite.num} without the field reference, and make sure v${p.overwrite.num} is ACTIVE. Nothing is deleted until the org confirms it is running.`);
+    } else out.push(swapTo
+      ? `Deploy a new version (expected v${p.expectNew}) of the active v${p.active.num} in which every reference to the field points at ${swapTo} instead, and make sure it is ACTIVE. Nothing is deleted until the org confirms the new version is running.`
+      : `Deploy a new version (expected v${p.expectNew}) without the field reference, from the active v${p.active.num}, and make sure it is ACTIVE. Nothing is deleted until the org confirms the new version is running.`);
     out.push(`Then delete the replaced v${p.active.num}${p.inactiveRefs.length ? ` and ${p.inactiveRefs.length} inactive version(s) that still reference the field: ${vlist(p.inactiveRefs)}` : ''}.`);
   } else {
     out.push(`Delete ${p.inactiveRefs.length} inactive version(s) that still reference the field: ${vlist(p.inactiveRefs)}. No new version is needed — ${p.active ? `the active v${p.active.num} does not use the field` : 'the flow has no active version'}.`);

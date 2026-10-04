@@ -348,6 +348,14 @@ const FieldCleaner = (() => {
   // Selection state
   let _selObj    = null;   // { api, label, durableId }
   let _selField  = null;   // { durableId, api, label, type }
+  // ⇄ Replace with another field (sftk-fieldreplace.js, user 2026-10-04: "what
+  // if we want to remove the old field and assign a new field instead with
+  // the same type?"). While a replacement is chosen, every automatic fix
+  // MOVES the reference to it instead of removing it.
+  let _replField  = null;  // { api, label, type, desc } — desc is its describe entry
+  let _replCompat = null;  // sftkFieldReplaceCompat's verdict for (_selField → _replField)
+  let _replSeq    = 0;     // a newer field selection wins over a describe still in flight
+  const _descCache = new Map();   // object api (lower) → Promise of its describe
   let _allObjects = [];
   let _allFields  = [];
   let _objectsLoaded = false;
@@ -406,6 +414,7 @@ const FieldCleaner = (() => {
     _orgUrl    = orgUrl;
     _sid       = sid;
     _container = container;
+    _descCache.clear(); _replField = null; _replCompat = null;
     renderShell();
     renderSnapshotLog();   // F6: restore points survive across sessions
     // C5a: one delegated listener for every "↗ open in X" cross-link —
@@ -543,6 +552,17 @@ const FieldCleaner = (() => {
         <!-- Selected pill -->
         <div id="fcPill" class="fc-pill-row" style="display:none"></div>
 
+        <!-- Step 3 (optional): move the references to another field instead of removing them -->
+        <div class="fc-step" id="fcReplStep" style="display:none">
+          <div class="fc-step-label">3 — Replace it with another field <span class="fc-step-opt">optional</span></div>
+          <div class="fc-repl-help">Leave this empty to <b>remove</b> the field's references. Pick a field of the same type to <b>move</b> them to it instead: flows keep their logic, layouts and Lightning pages keep the slot, reports keep the column.</div>
+          <div class="fc-picker-wrap" id="fcReplWrap">
+            <input id="fcReplInput" class="fc-input" placeholder="Loading fields of the same type…" autocomplete="off" disabled>
+            <div id="fcReplDrop" class="fc-dropdown" style="display:none"></div>
+          </div>
+          <div id="fcReplNote" class="fc-repl-note" style="display:none"></div>
+        </div>
+
         <!-- Scan button -->
         <button id="fcScanBtn" class="btn btn-primary fc-scan-btn" style="display:none">
           🔍 Scan Dependencies
@@ -562,6 +582,7 @@ const FieldCleaner = (() => {
     document.addEventListener('click', e => {
       if (!e.target.closest('#fcObjWrap'))   closeDropdown('fcObjDrop');
       if (!e.target.closest('#fcFieldWrap')) closeDropdown('fcFieldDrop');
+      if (!e.target.closest('#fcReplWrap'))  closeDropdown('fcReplDrop');
     }, true);
   }
 
@@ -858,6 +879,9 @@ const FieldCleaner = (() => {
   function resetFieldAndBelow() {
     _selField = null;
     _groups   = {};
+    _replField = null; _replCompat = null; _replSeq++;
+    const replStep = eid('fcReplStep');
+    if (replStep) replStep.style.display = 'none';
     const pill    = eid('fcPill');
     const scanBtn = eid('fcScanBtn');
     const results = eid('fcResults');
@@ -950,6 +974,137 @@ const FieldCleaner = (() => {
 
     eid('fcResults').innerHTML = '';
     updateScanCostLine();
+    setupReplacePicker();
+  }
+
+  // ── ⇄ Replace with another field (step 3, optional) ─────────────────────
+  // The describe of the selected object: precise types, lengths, lookup
+  // targets and picklist values — what "the same type" is judged from. One
+  // read per object per popup; a failed read is not remembered.
+  function _describeObj(api) {
+    const k = String(api || '').toLowerCase();
+    if (!_descCache.has(k)) {
+      const p = bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+        path: `services/data/v62.0/sobjects/${encodeURIComponent(api)}/describe` })
+        .then(d => { if (!d || d.error || !Array.isArray(d.fields)) _descCache.delete(k); return d; });
+      _descCache.set(k, p);
+    }
+    return _descCache.get(k);
+  }
+  function _replOn() { return !!(_selField && _replField && _replCompat && _replCompat.ok); }
+  function _replReadOnly() { const d = _replField && _replField.desc; return !!(d && (d.calculated || d.updateable === false)); }
+  // What a row's fix button says. An inactive flow version is only ever
+  // deleted, so its button keeps saying so.
+  function _fixBtnLabel(type, componentId) {
+    if (!_replOn()) return '✂ Remove';
+    if (type === 'Flow') {
+      const vi = _flowVerInfo[String(componentId).substring(0, 15)];
+      return vi && vi.status !== 'Active' ? '✂ Remove' : '⇄ Replace';
+    }
+    return '⇄ Replace';
+  }
+  function _groupNote(type, cfg) { return (_replOn() && cfg.replNote) ? cfg.replNote.replace('{new}', _replField.api) : cfg.note; }
+  // The mode changed (a replacement was picked or cleared): every idle fix
+  // button, bulk button and group note says what it will now do.
+  function _applyReplMode() {
+    const results = eid('fcResults');
+    if (!results) return;
+    results.querySelectorAll('.fc-fix-btn:not(.fc-xml-fix):not([disabled])').forEach(b => { b.textContent = _fixBtnLabel(b.dataset.type, b.dataset.id); });
+    results.querySelectorAll('.fc-xml-fix').forEach(b => { b.textContent = _fixBtnLabel(b.dataset.type, b.dataset.id); });
+    results.querySelectorAll('.fc-fix-all').forEach(b => { b.textContent = `${_replOn() ? '⇄ Replace in' : '✂ Remove from'} all ${b.dataset.n} ${b.dataset.label}`; });
+    results.querySelectorAll('.fc-group-note-text').forEach(n => { const t = n.dataset.type; n.textContent = _groupNote(t, TYPE_CFG[t] || TYPE_CFG_DEFAULT); });
+    const bar = eid('fcReplBar');
+    if (bar) bar.outerHTML = _replBarHtml();
+    if (eid('fcFlsPanel')) renderFlsPanel();
+  }
+  function _replBarHtml() {
+    return _replOn()
+      ? `<div id="fcReplBar" class="fc-repl-bar">⇄ <strong>Replace mode</strong> — references move to <code>${esc(_selObj.api)}.${esc(_replField.api)}</code>. The buttons below say ⇄ Replace where a reference can be moved; everything else is unchanged.</div>`
+      : '<div id="fcReplBar" style="display:none"></div>';
+  }
+  function _replNoteHtml() {
+    if (!_replField) return '';
+    const c = _replCompat || { ok: false, blockers: ['not checked'], warnings: [] };
+    const head = c.ok
+      ? `⇄ References to <code>${esc(_selField.api)}</code> will be moved to <code>${esc(_replField.api)}</code> <span class="fc-pill-type">${esc(_replField.type)}</span>`
+      : `✋ <code>${esc(_replField.api)}</code> cannot stand in for <code>${esc(_selField.api)}</code>`;
+    const list = arr => arr.length ? `<ul>${arr.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
+    return `<div class="${c.ok ? 'fc-repl-ok' : 'fc-repl-bad'}">${head}
+        <button type="button" class="fc-dd-linkbtn" id="fcReplClear">✕ Clear</button>
+        ${list(c.blockers)}
+        ${c.ok && c.warnings.length ? `<div class="fc-repl-warn">⚠ Check before you replace:${list(c.warnings)}</div>` : ''}
+        ${c.ok ? '<div class="fc-repl-sub">This moves REFERENCES only. The values stored in the old field are not copied — use Data Loader or a one-off flow for that before you delete it.</div>' : ''}
+      </div>`;
+  }
+  function _setReplField(entry) {
+    _replField = entry || null;
+    const input = eid('fcReplInput');
+    const note = eid('fcReplNote');
+    if (!entry) { _replCompat = null; if (input) input.value = ''; }
+    if (note) {
+      note.innerHTML = _replNoteHtml();
+      note.style.display = entry ? '' : 'none';
+      eid('fcReplClear')?.addEventListener('click', () => _setReplField(null));
+    }
+    _applyReplMode();
+  }
+  async function setupReplacePicker() {
+    const seq = ++_replSeq;
+    _replField = null; _replCompat = null;
+    const step = eid('fcReplStep'), input = eid('fcReplInput'), drop = eid('fcReplDrop'), note = eid('fcReplNote');
+    if (!step || !input || !drop || !note) return;
+    step.style.display = '';
+    input.value = ''; input.disabled = true; input.placeholder = 'Loading fields of the same type…';
+    drop.style.display = 'none'; note.style.display = 'none'; note.innerHTML = '';
+    const d = await _describeObj(_selObj.api);
+    if (seq !== _replSeq) return;                       // a newer selection won
+    const off = why => { input.placeholder = 'Not available for this field'; note.innerHTML = `<div class="fc-repl-bad">${why}</div>`; note.style.display = ''; };
+    if (!d || d.error || !Array.isArray(d.fields)) {
+      const fe = sftkFriendlyError((d && d.error) || 'no answer');
+      off(`Replacing is not available: the object's fields could not be read (${esc(fe.message)}). Removing references works as before.`);
+      return;
+    }
+    const oldDesc = d.fields.find(f => String(f.name).toLowerCase() === _selField.api.toLowerCase());
+    if (!oldDesc) {
+      off(`Replacing is not available: <code>${esc(_selField.api)}</code> is not in your user's view of ${esc(_selObj.api)} (no field-level security for you), so its type cannot be compared with another field. Give yourself access to it, then pick the field again.`);
+      return;
+    }
+    const cands = d.fields
+      .filter(f => sftkFieldReplaceCompat(oldDesc, f).ok)
+      .map(f => ({ api: f.name, label: f.label, type: f.type, desc: f }));
+    if (!cands.length) {
+      off(`No other field of ${esc(_selObj.api)} has the same type (${esc(oldDesc.type)}${oldDesc.type === 'reference' ? ` → ${esc((oldDesc.referenceTo || []).join(', '))}` : ''}) — create the new field first (and give yourself access to it), then pick the field again.`);
+      return;
+    }
+    // A fresh node each time: a new field selection must not stack listeners.
+    const inp = input.cloneNode(true);
+    delete inp.dataset.fcKeys;
+    input.replaceWith(inp);
+    inp.disabled = false;
+    inp.placeholder = `Type to search ${cands.length} field${cands.length === 1 ? '' : 's'} of the same type…`;
+    const pick = item => {
+      const c = cands.find(x => x.api === item.dataset.api);
+      if (!c) return;
+      inp.value = `${c.label} (${c.api})`;
+      drop.style.display = 'none';
+      inp.setAttribute('aria-expanded', 'false');
+      _replCompat = sftkFieldReplaceCompat(oldDesc, c.desc);
+      _setReplField(c);
+    };
+    const render = filter => {
+      const rows = fcRankEntries(cands, filter).slice(0, 80);
+      const prevActive = drop.querySelector('.fc-dd-item.fc-dd-active')?.dataset.api || null;
+      drop.innerHTML = rows.length
+        ? rows.map(f => `<div class="fc-dd-item" data-api="${esc(f.api)}"><span class="fc-dd-main">${esc(f.label)}</span><span class="fc-dd-sub">${esc(f.api)}</span><span class="fc-dd-type">${esc(f.type)}</span></div>`).join('')
+        : '<div class="fc-dd-empty">No field of the same type matches</div>';
+      fcRestoreActiveRow(drop, inp, prevActive);
+      drop.querySelectorAll('.fc-dd-item').forEach(item => item.addEventListener('mousedown', e => { e.preventDefault(); pick(item); }));
+      fcWireDropdownKeys(inp, drop, pick);
+      drop.style.display = '';
+      inp.setAttribute('aria-expanded', 'true');
+    };
+    inp.addEventListener('input', () => { if (!inp.value.trim() && _replField) _setReplField(null); render(inp.value); });
+    inp.addEventListener('focus', () => render(_replField ? '' : inp.value));
   }
 
   // E3b: quote the scan's API cost under the button, BEFORE it runs. The
@@ -1409,13 +1564,16 @@ const FieldCleaner = (() => {
   const TYPE_CFG = {
     Flow:           { icon: '🌊', label: 'Flows',            fixable: true, sev: 'blocker',
                       note: 'A new version is saved with the field reference removed AND activated automatically. Old versions that still reference the field are deleted too — Salesforce keeps the dependency lock per version, so stale versions would otherwise still block the field delete.',
-                      doneLabel: '✅ Activated' },
+                      doneLabel: '✅ Activated',
+                      replNote: 'The active version is saved again with every reference pointing at {new} — the flow keeps its logic — then activated and verified. Old versions that still reference the old field are deleted: Salesforce keeps the dependency lock per version.' },
     FlexiPage:      { icon: '📄', label: 'Lightning Pages',  fixable: true, sev: 'silent',
                       note: 'Field references in visibility rules and field components will be removed automatically.',
-                      doneLabel: '✅ Page updated' },
+                      doneLabel: '✅ Page updated',
+                      replNote: 'Field components and visibility rules that use the field are pointed at {new}.' },
     Layout:         { icon: '📋', label: 'Page Layouts',     fixable: true, sev: 'silent',
                       note: 'The field will be removed from all layout sections automatically.',
-                      doneLabel: '✅ Layout updated' },
+                      doneLabel: '✅ Layout updated',
+                      replNote: '{new} takes the field’s place on the layout.' },
     ListView:       { icon: '📊', label: 'List Views',       fixable: false, sev: 'silent',
                       note: 'Open the object\'s list view and remove the column or filter.' },
     CompactLayout:  { icon: '📇', label: 'Compact Layouts',  fixable: false, sev: 'silent',
@@ -1439,7 +1597,8 @@ const FieldCleaner = (() => {
     // 2026-09-01: "one of the metadata items that we scan everytime").
     Report:         { icon: '📊', label: 'Reports',          fixable: true, sev: 'silent',
                       note: 'The field is removed from the report’s columns, filters and groupings (a restore point is saved first). Formulas and buckets are never auto-edited and stay listed as manual; an edit that would break the report (its only column or only grouping) is refused with the fix.',
-                      doneLabel: '✅ Report updated' },
+                      doneLabel: '✅ Report updated',
+                      replNote: 'Columns, filters and groupings that use the field are pointed at {new} (a restore point is saved first). Formulas and buckets are never auto-edited and stay listed as manual.' },
     ReportType:     { icon: '📑', label: 'Report Types',     fixable: false, sev: 'blocker',
                       note: 'Salesforce exposes no modern API for editing report-type columns — remove the field’s column in Setup → Report Types, then re-scan.' },
     // Live 2026-09-03: the dependency index ACCEPTS these two types, but it
@@ -1488,9 +1647,16 @@ const FieldCleaner = (() => {
       err.setupUrl = `${_orgUrl.replace(/\/$/, '')}/lightning/r/Report/${reportId}/view`;
       throw err;
     }
-    const res = sftkRptStripField(d.reportMetadata, obj, field);
+    // \u21c4 Replace with another field: columns, filters and groupings keep their
+    // place and name the new field (sftk-fieldreplace.js).
+    const swap = _replOn();
+    const swapTo = swap ? _replField.api : '';
+    const res = swap
+      ? sftkRptReplaceField(d.reportMetadata, obj, field, swapTo, sftkRptTokenMatch, sftkRptFieldHits)
+      : sftkRptStripField(d.reportMetadata, obj, field);
+    const moved = swap ? res.swapped : res.removed;
     if (!res.changed) {
-      const err = new Error(`nothing auto-removable \u2014 ${res.manual.join('; ') || 'no editable reference found'}`);
+      const err = new Error(`nothing ${swap ? 'that can be moved automatically' : 'auto-removable'} \u2014 ${res.manual.join('; ') || 'no editable reference found'}`);
       err.setupUrl = `${_orgUrl.replace(/\/$/, '')}/lightning/r/Report/${reportId}/view`;
       throw err;
     }
@@ -1500,7 +1666,7 @@ const FieldCleaner = (() => {
     // undo re-PATCHes the report's pre-fix metadata (the untouched copy
     // sftkRptStripField deep-copied FROM, so d.reportMetadata is still the
     // "before" state here).
-    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `\ud83d\udcca Report \u2014 "${reportName}" (${obj}.${field} removed)`, orgUrl: _orgUrl });
+    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `\ud83d\udcca Report \u2014 "${reportName}" (${obj}.${field} ${swap ? `\u2192 ${swapTo}` : 'removed'})`, orgUrl: _orgUrl });
     let wr;
     try {
       // confirmed-by: fixOne's sftkConfirmDestructive (the only caller)
@@ -1524,10 +1690,10 @@ const FieldCleaner = (() => {
           }
           const left = sftkRptFieldHits(after.reportMetadata, obj, field);
           const parts = [];
-          if (res.removed.columns) parts.push(`${res.removed.columns} column(s)`);
-          if (res.removed.filters) parts.push(`${res.removed.filters} filter(s)`);
-          if (res.removed.groupings) parts.push(`${res.removed.groupings} grouping(s)`);
-          let label = `\u2705 Report updated \u00b7 removed ${parts.join(', ')}`;
+          if (moved.columns) parts.push(`${moved.columns} column(s)`);
+          if (moved.filters) parts.push(`${moved.filters} filter(s)`);
+          if (moved.groupings) parts.push(`${moved.groupings} grouping(s)`);
+          let label = `\u2705 Report updated \u00b7 ${swap ? `${parts.join(', ')} now use ${swapTo}` : `removed ${parts.join(', ')}`}`;
           if (res.manual.length) label += ` \u00b7 \u26a0 still manual: ${res.manual.join('; ')}`;
           else if (left && left.any) label += ' \u00b7 \u26a0 some references remain \u2014 re-scan';
           else label += ' \u00b7 verified: no references remain';
@@ -1605,6 +1771,7 @@ const FieldCleaner = (() => {
           ${manualCount > 0 ? `<span class="fc-badge-manual">${manualCount} manual</span>` : ''}
         </span>
       </div>
+      ${_replBarHtml()}
       ${_mcdCapped ? `
       <div class="fc-unscanned-note">
         ⚠ <strong>This list may be truncated.</strong> Salesforce caps the dependency
@@ -1626,7 +1793,7 @@ const FieldCleaner = (() => {
             <span class="fc-group-label">${esc(cfg.label)}</span>
             <span class="fc-group-count">${items.length}</span>
           </div>
-          <div class="fc-group-note">${esc(cfg.note)}${
+          <div class="fc-group-note"><span class="fc-group-note-text" data-type="${esc(type)}">${esc(_groupNote(type, cfg))}</span>${
             // C5a: the toolkit's own tools manage exactly these components —
             // offer a jump instead of dead-ending into Setup.
             type === 'Flow'
@@ -1641,10 +1808,8 @@ const FieldCleaner = (() => {
           </div>
           ${cfg.fixable && items.length > 1
             ? `<button class="btn btn-secondary btn-sm fc-fix-all"
-                        data-type="${esc(type)}"
-                        style="margin:2px 0 8px 0">
-                 ✂ Remove from all ${items.length} ${esc(cfg.label)}
-               </button>`
+                        data-type="${esc(type)}" data-n="${items.length}" data-label="${esc(cfg.label)}"
+                        style="margin:2px 0 8px 0">${_replOn() ? '⇄ Replace in' : '✂ Remove from'} all ${items.length} ${esc(cfg.label)}</button>`
             : ''}
         </div>`;
     }
@@ -1731,20 +1896,23 @@ const FieldCleaner = (() => {
   // ── F5: FLS visibility panel — who can even see this field? ─────────────
   // One FieldPermissions query lists every profile / permission set granting
   // read or edit. Per-row ✂ strips that grant (PermissionsRead/Edit → false).
-  async function _queryFls() {
+  async function _queryFls(fieldApi) {
     const res = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
       query: `SELECT Id, ParentId, SobjectType, Field, Parent.Label, Parent.IsOwnedByProfile, Parent.Profile.Name, ` +
              `PermissionsRead, PermissionsEdit FROM FieldPermissions ` +
-             `WHERE SobjectType = '${_selObj.api}' AND Field = '${_selObj.api}.${_selField.api}'` });
+             `WHERE SobjectType = '${_selObj.api}' AND Field = '${_selObj.api}.${fieldApi || _selField.api}'` });
     if (res.error) return { error: res.error };
     return { rows: res.records || [] };
   }
 
+  let _flsSeq = 0;
   async function renderFlsPanel() {
     const el = eid('fcFlsPanel');
     if (!el || !_selObj?.api || !_selField?.api) return;
     el.innerHTML = sftkCatSm('Checking who can see this field…');
+    const seq = ++_flsSeq;
     const { rows, error } = await _queryFls();
+    if (seq !== _flsSeq) return;                         // a newer render won
     if (error) {
       const fe = sftkFriendlyError(error);
       el.innerHTML = `<div class="fc-unscanned-note" title="${esc(fe.raw)}">👁 FLS check unavailable: ${esc(fe.message + (fe.hint ? ' — ' + fe.hint : ''))}</div>`;
@@ -1754,7 +1922,26 @@ const FieldCleaner = (() => {
       el.innerHTML = `<div class="fc-fls-empty">👁 <strong>No profile or permission set grants access</strong> to this field — nobody can see it today.</div>`;
       return;
     }
-    el.innerHTML = `
+    // ⇄ Replace with another field: whoever sees the old field must see the
+    // new one, or the swapped flow / layout shows them nothing.
+    let copyHtml = '', copyPlan = null;
+    if (_replOn()) {
+      const to = _replField.api;
+      const nr = await _queryFls(to);
+      if (seq !== _flsSeq) return;
+      if (nr.error) {
+        const fe = sftkFriendlyError(nr.error);
+        copyHtml = `<div class="fc-unscanned-note" title="${esc(fe.raw)}">🔑 Could not read who can see ${esc(to)}: ${esc(fe.message)} — compare the two fields' access in Setup.</div>`;
+      } else {
+        copyPlan = sftkFlsCopyPlan(rows, nr.rows, _selObj.api, to, { readOnly: _replReadOnly() });
+        const n = copyPlan.create.length + copyPlan.update.length;
+        copyHtml = n
+          ? `<div class="fc-fls-copy" id="fcFlsCopy">🔑 <strong>${n}</strong> of the ${rows.length} below ${n === 1 ? 'does' : 'do'} not give the same access to <code>${esc(to)}</code> yet — ${n === 1 ? 'its' : 'their'} users would not see the new field.
+               <button class="btn btn-secondary btn-sm" id="fcFlsCopyBtn">🔑 Copy access to ${esc(to)}</button></div>`
+          : `<div class="fc-fls-copy fc-fls-copy-ok" id="fcFlsCopy">🔑 Everyone who can see <code>${esc(_selField.api)}</code> already has the same access to <code>${esc(to)}</code>.</div>`;
+      }
+    }
+    el.innerHTML = `${copyHtml}
       <details class="fc-fls">
         <summary>👁 Visible to <strong>${rows.length}</strong> profile${rows.length === 1 ? '' : 's'}/permission set${rows.length === 1 ? '' : 's'}</summary>
         <div class="fc-fls-rows">
@@ -1774,6 +1961,7 @@ const FieldCleaner = (() => {
             'Inspect or migrate these profile / permission-set assignments in the Copy Permissions tool before stripping visibility')}
         </div>
       </details>`;
+    eid('fcFlsCopyBtn')?.addEventListener('click', e => _copyFlsAccess(copyPlan, e.currentTarget));
     el.querySelectorAll('.fc-fls-strip').forEach(btn => {
       btn.addEventListener('click', async () => {
         const row = btn.closest('.fc-fls-row');
@@ -1838,6 +2026,82 @@ const FieldCleaner = (() => {
         }
       });
     });
+  }
+
+  // 🔑 Copy the old field's access to the replacement field. Access is only
+  // ever ADDED (sftkFlsCopyPlan never lowers a grant); each grant is re-read,
+  // and History can take every one of them back.
+  async function _copyFlsAccess(plan, btn) {
+    if (!plan || !_replOn()) return;
+    const obj = _selObj.api, from = _selField.api, to = _replField.api;
+    const all = [...plan.create.map(c => ({ ...c, op: 'create', parentId: c.body.ParentId, want: c.body })),
+                 ...plan.update.map(u => ({ ...u, op: 'update', want: u.after }))];
+    const perm = w => (w.PermissionsEdit ? 'read + edit' : 'read');
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    const sure = await sftkConfirmDestructive({
+      title: `Copy field access to ${to}`,
+      icon: '🔑',
+      items: all.map(x => ({ label: x.who, sub: `${x.kind} — ${x.op === 'create' ? `gets ${perm(x.want)}` : `raised from ${perm(x.before)} to ${perm(x.want)}`}` })),
+      revOverride: { html: `Gives each of these the access to <strong>${esc(obj)}.${esc(to)}</strong> that it has to ${esc(obj)}.${esc(from)}${_replReadOnly() ? ' (read only — the new field cannot be edited)' : ''}. Access is only added: nothing is lowered or removed. Data Studio › History can take it back.`, needsCheckbox: false },
+      confirmLabel: '🔑 Copy access',
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!sure) return;
+    btn.disabled = true; btn.textContent = '⏳ Copying…';
+    // History (sftk-history.js): one journal for this button press; the undo
+    // deletes each grant it created and puts each raised grant back.
+    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `🔑 Field access — ${obj}.${from} → ${to} (${all.length})`, orgUrl: _orgUrl });
+    let res = null, after = [];
+    const items = all.map(x => ({
+      describe: `${x.who}: ${perm(x.want)} access to ${to}`,
+      write: () => (x.op === 'create'
+        ? bg({ type: 'SF_REST_POST', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+            path: 'services/data/v62.0/sobjects/FieldPermissions', body: x.body })
+        : bg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+            records: [{ attributes: { type: 'FieldPermissions' }, Id: x.id, ...x.after }] })),
+    }));
+    try {
+      // confirmed-by: the sftkConfirmDestructive right above
+      // The write discipline (sftk-write.js): ONE re-read of the new field's
+      // grants judges every item — a grant counts only when the org shows it.
+      res = await sftkWriteVerifiedAll(items, { journal: j, verifyAll: async () => {
+        const q = await _queryFls(to);
+        if (q.error) throw new Error(q.error);
+        after = q.rows;
+        return all.map(x => {
+          const r = after.find(y => y.ParentId === x.parentId);
+          return { ok: !!r && !!r.PermissionsRead && (!x.want.PermissionsEdit || !!r.PermissionsEdit), text: null };
+        });
+      } });
+    } finally {
+      const steps = [];
+      ((res && res.results) || []).forEach((r, i) => {
+        if (!r.ok) return;
+        const x = all[i];
+        const row = after.find(y => y.ParentId === x.parentId);
+        if (x.op === 'create' && row) steps.push({
+          describe: `Remove ${x.who}'s access to ${to} again`,
+          // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+          msg: { type: 'SF_REST_DELETE', sobject: 'FieldPermissions', id: row.Id },
+          verify: { query: `SELECT Id FROM FieldPermissions WHERE Id = '${row.Id}'`, tooling: false, pick: 'records', absent: true,
+            text: { ok: `${x.who}: access to ${to} removed again — verified by re-reading the org`, bad: `${x.who}: accepted by Salesforce, but the org still shows the grant` } },
+        });
+        if (x.op === 'update') steps.push({
+          describe: `Put ${x.who}'s access to ${to} back to ${perm(x.before)}`,
+          // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+          msg: { type: 'SF_COLLECTIONS_UPDATE', records: [{ attributes: { type: 'FieldPermissions' }, Id: x.id, ...x.before }] },
+          verify: { query: `SELECT PermissionsEdit FROM FieldPermissions WHERE Id = '${x.id}'`, tooling: false, pick: 'records.0', field: 'PermissionsEdit', equals: x.before.PermissionsEdit,
+            text: { ok: `${x.who}: access to ${to} is ${perm(x.before)} again — verified by re-reading the org`, bad: `${x.who}: accepted by Salesforce, but the org still shows the raised grant` } },
+        });
+      });
+      await sftkHistoryEnd(j, { undo: steps.length ? { steps } : { none: 'no grant was confirmed changed, so there is nothing to undo' } });
+    }
+    const box = eid('fcFlsCopy');
+    if (!box) return;
+    const bad = res.results.map((r, i) => (r.ok ? null : `${all[i].who}: ${r.accepted ? 'accepted, but the org does not show the grant' : _feText(String((r.raw && r.raw.error) || r.text || 'refused'))}`)).filter(Boolean);
+    box.className = `fc-fls-copy${bad.length ? '' : ' fc-fls-copy-ok'}`;
+    box.innerHTML = `🔑 ${res.ok} of ${all.length} now ${res.ok === 1 ? 'has' : 'have'} the same access to <code>${esc(to)}</code> — verified by re-reading the org.` +
+      (bad.length ? `<ul class="fc-fls-copy-bad">${bad.map(b => `<li>⚠ ${esc(b)}</li>`).join('')}</ul>Give these access in Setup → Field-Level Security.` : '');
   }
 
   // ── F3: staged deprecation — rename + strip FLS now, delete later ───────
@@ -2243,7 +2507,7 @@ const FieldCleaner = (() => {
     const vinfo   = type === 'Flow' ? _flowVerInfo[String(id).substring(0, 15)] : null;
     const verBadge = vinfo
       ? ` <span class="fc-ver-badge" style="margin-left:6px;font-size:10.5px;padding:0 5px;border-radius:8px;border:1px solid var(--border,#dddbda);${vinfo.status === 'Active' ? 'color:var(--active-color,#2E844A)' : 'opacity:.75'}" title="${vinfo.status === 'Active'
-          ? 'The ACTIVE version references the field: ✂ deploys a new version without it, verifies the new one is active, then deletes this one.'
+          ? 'The ACTIVE version references the field: the fix deploys a new version (without the reference — or, in replace mode, pointing at the replacement field), verifies the new one is active, then deletes this one.'
           : 'An inactive version references the field: ✂ deletes this version (after an optional backup) — no new version is needed for it.'}">v${vinfo.num} · ${esc(vinfo.status)}</span>`
       : '';
     const canInsp = Object.prototype.hasOwnProperty.call(_INSPECT_SOBJECT, type);
@@ -2271,9 +2535,7 @@ const FieldCleaner = (() => {
             ${depsLink}
             ${inspBtn}
             <button class="btn btn-secondary btn-sm fc-fix-btn"
-                    data-id="${esc(id)}" data-name="${name}" data-type="${esc(type)}">
-              ✂ Remove
-            </button>
+                    data-id="${esc(id)}" data-name="${name}" data-type="${esc(type)}">${_fixBtnLabel(type, id)}</button>
           </span>
         </div>${xmlPanel}`;
     }
@@ -2308,17 +2570,22 @@ const FieldCleaner = (() => {
       if (pbtn) { pbtn.disabled = true; pbtn.textContent = '🔎 reading versions…'; }
       try { flowPlan = await fixFlowPlan(componentId, componentName); }
       catch (e) {
-        if (pbtn) { pbtn.disabled = false; pbtn.textContent = '✂ Remove'; }
+        if (pbtn) { pbtn.disabled = false; pbtn.textContent = _fixBtnLabel(type, componentId); }
         appendInlineError(componentId, e.message, e.setupUrl, '↗ Open in Flow Builder');
         return;
       }
-      if (pbtn) { pbtn.disabled = false; pbtn.textContent = '✂ Remove'; }
+      if (pbtn) { pbtn.disabled = false; pbtn.textContent = _fixBtnLabel(type, componentId); }
       if (flowPlan.plan.mode === 'none') {
         markFixed(componentId, '✅ No version of this flow references the field any more');
         _markFlowSiblings(componentId, flowPlan.defId, '✅ No version of this flow references the field any more', '');
         return;
       }
     }
+    // ⇄ Replace with another field: the reference MOVES instead of going. For
+    // a flow that only applies to an active version (inactive ones are deleted
+    // either way). Read once here — the dialog, the run and the labels agree.
+    const swap = _replOn() && (type !== 'Flow' || flowPlan.plan.mode === 'active');
+    const swapTo = swap ? _replField.api : '';
     let wantBackup = true;
     // An ACTIVE version that references the field can be dealt with two ways;
     // the user chooses (2026-09-21). 'replace' is only offered when the
@@ -2333,21 +2600,23 @@ const FieldCleaner = (() => {
     let activeMode = hasChoice ? (canReplace && !replaceLikelyRefused ? 'replace' : '') : 'replace';
     const gate = await sftkOrgWriteGate(_orgUrl);
     const sure = await sftkConfirmDestructive({
-      title: `Remove field reference — ${cfg.label || type}`,
+      title: `${swap ? 'Replace' : 'Remove'} field reference — ${cfg.label || type}`,
+      ...(swap ? { icon: '⇄' } : {}),
       items: type === 'Flow'
-        ? flowPlan.plan.toDelete.map(v => ({ label: `${componentName} v${v.num}`, sub: `${v.status} — deleted (${hasChoice && v.status === 'Active' ? 'the active version: replaced or removed, as you choose below' : v.why})` }))
+        ? [...flowPlan.plan.toDelete.map(v => ({ label: `${componentName} v${v.num}`, sub: `${v.status} — deleted (${hasChoice && v.status === 'Active' ? 'the active version: replaced or removed, as you choose below' : v.why})` })),
+           ...(flowPlan.plan.overwrite ? [{ label: `${componentName} v${flowPlan.plan.overwrite.num}`, sub: `${flowPlan.plan.overwrite.status} — its content is REPLACED when the flow keeps running (Salesforce saves the new version over the newest draft)${flowPlan.plan.overwrite.refs ? '; deleted when you choose delete' : ''}` }] : [])]
         : [{ label: componentName, sub: type }],
       revOverride: {
         html: type === 'Flow'
           ? `⚠ <strong>${hasChoice ? 'This' : (flowPlan.plan.mode === 'active' ? 'Deploys a new flow version without the reference, verifies it is ACTIVE, and then' : 'This')} permanently deletes flow versions</strong> that still reference the field (Salesforce holds the dependency lock per version, not per active version).<ol id="fcFlowLines" style="margin:6px 0 0 18px;padding:0">${(hasChoice && !activeMode ? [] : flowPlan.lines).map(l => `<li>${esc(l)}</li>`).join('')}</ol>`
-          : `✏ ${cfg.note || 'The field reference is removed from this component.'} The change deploys immediately. ${['Report', 'Layout', 'FlexiPage'].includes(type)
+          : `${swap ? `⇄ <strong>${esc(_selObj.api)}.${esc(_selField.api)} → ${esc(swapTo)}</strong>. ${esc(_groupNote(type, cfg))}` : `✏ ${cfg.note || 'The field reference is removed from this component.'}`} The change deploys immediately. ${['Report', 'Layout', 'FlexiPage'].includes(type)
               ? 'A <strong>restore point</strong> is saved first — 🧾 Cleanup history can put the previous version back.'
               : 'There is no undo besides re-adding the field by hand.'}`,
         needsCheckbox: type === 'Flow',
       },
       extraHtml: type === 'Flow' ? `
         ${hasChoice ? _flowChoiceHtml(flowPlan, componentName, canReplace) : ''}
-        <label class="sftk-confirm-ack"><input type="checkbox" id="fcFlowBackup" checked> ⬇ Back up the ${flowPlan.plan.toDelete.length} version(s) as a zip before deleting (recommended — the Flows tool can restore from it)</label>
+        <label class="sftk-confirm-ack"><input type="checkbox" id="fcFlowBackup" checked> ⬇ Back up the ${flowPlan.plan.toDelete.length + (flowPlan.plan.overwrite ? 1 : 0)} version(s) as a zip before deleting (recommended — the Flows tool can restore from it)</label>
         ${flowPlan.interviews.length ? `<div class="sftk-confirm-undo">⏸ ${esc(sftkFlowInterviewWords(sftkFlowInterviewKinds(flowPlan.interviews)).head)} that will be deleted first: ${esc(flowPlan.interviews.slice(0, 8).map(i => i.InterviewLabel || i.Name).join(', '))}${flowPlan.interviews.length > 8 ? ` … +${flowPlan.interviews.length - 8} more` : ''}</div>` : ''}` : '',
       onRender: type === 'Flow' ? () => {
         const cb = document.getElementById('fcFlowBackup');
@@ -2361,7 +2630,7 @@ const FieldCleaner = (() => {
           const ol = document.getElementById('fcFlowLines');
           if (ol) ol.innerHTML = lines.length ? lines.map(l => `<li>${esc(l)}</li>`).join('') : '<li>Choose below what happens to the active version.</li>';
           if (go) {
-            go.textContent = activeMode === 'delete' ? '🗑 Switch the flow off, then delete' : activeMode === 'replace' ? '✂ Deploy fixed version, then delete' : 'Choose an option first';
+            go.textContent = activeMode === 'delete' ? '🗑 Switch the flow off, then delete' : activeMode === 'replace' ? (swap ? '⇄ Deploy the version that uses the new field, then delete' : '✂ Deploy fixed version, then delete') : 'Choose an option first';
             go.disabled = !(ack && ack.checked && activeMode);
           }
         };
@@ -2370,8 +2639,8 @@ const FieldCleaner = (() => {
         sync();
       } : null,
       confirmLabel: type === 'Flow'
-        ? (flowPlan.plan.mode === 'active' ? '✂ Deploy fixed version, then delete' : '🗑 Delete referencing version(s)')
-        : '✂ Remove reference',
+        ? (flowPlan.plan.mode === 'active' ? (swap ? '⇄ Deploy the version that uses the new field, then delete' : '✂ Deploy fixed version, then delete') : '🗑 Delete referencing version(s)')
+        : (swap ? '⇄ Replace reference' : '✂ Remove reference'),
       production: gate.production ? { label: gate.label } : null,
     });
     if (!sure) return;
@@ -2388,7 +2657,8 @@ const FieldCleaner = (() => {
         // covering every write fixFlowExecute makes (activation/deactivation,
         // interview deletes, version deletes) — passed into the helper so
         // each write's verdict lands in the same entry.
-        const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `✂ Flow — ${componentName} (${_selObj.api}.${_selField.api} removed)`, orgUrl: _orgUrl });
+        const moving = swap && activeMode !== 'delete';
+        const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: moving ? `⇄ Flow — ${componentName} (${_selObj.api}.${_selField.api} → ${swapTo})` : `✂ Flow — ${componentName} (${_selObj.api}.${_selField.api} removed)`, orgUrl: _orgUrl });
         let r;
         try {
           r = await fixFlowExecute(chosen, { backup: wantBackup, journal: j });
@@ -2396,13 +2666,15 @@ const FieldCleaner = (() => {
           await sftkHistoryEnd(j, { undo: (r && r.undo) || { none: 'nothing was accepted by Salesforce, so there is nothing to undo' } });
         }
         const bits = [];
-        if (r.mode === 'active') bits.push(`v${r.newVersion} deployed and ACTIVE (verified by re-reading the org)`);
+        if (r.mode === 'active') bits.push(`v${r.newVersion} deployed and ACTIVE (verified by re-reading the org)${r.swapped ? ` — ${r.swapped} reference${r.swapped === 1 ? '' : 's'} now point${r.swapped === 1 ? 's' : ''} at ${swapTo}` : ''}${r.overwrote ? ` — saved over the draft v${r.newVersion}, as Salesforce does when the newest version is a draft` : ''}`);
         if (r.mode === 'active-delete') bits.push('flow switched OFF (verified by re-reading the org) — it no longer runs');
         if (r.deleted) bits.push(`${r.deleted} version(s) deleted`);
         if (r.interviewsDeleted) bits.push(`${r.interviewsDeleted} flow interview(s) deleted`);
         if (r.interviewsFailed) bits.push(`⚠ ${r.interviewsFailed} flow interview(s) couldn't be deleted`);
         if (r.failed || r.skipped) bits.push(`⚠ ${r.failed + r.skipped} version(s) couldn't be deleted — still blocking the field delete${r.errors.length ? ` (${[...new Set(r.errors)].join('; ')})` : ''}`);
-        if (r.stillMentions) bits.push(`⚠ the new version still mentions the field in text the auto-fix does not touch (a formula or decision) — finish it in Flow Builder`);
+        if (r.stillMentions) bits.push(r.swapped
+          ? `⚠ the new version still mentions ${_selField.api} in ${r.undecided || 'some'} place(s) whose object could not be worked out — if they are this field, change them in Flow Builder`
+          : `⚠ the new version still mentions the field in text the auto-fix does not touch (a formula or decision) — finish it in Flow Builder`);
         // Not finished is not done (live 2026-09-22: three versions Salesforce
         // refused were marked ✅ and the delete zone read "All dependencies
         // resolved"). A refused version keeps its ✂ button and says why.
@@ -2416,12 +2688,12 @@ const FieldCleaner = (() => {
         doneLinks = _flowDoneLinks({ stillBlocking: r.failed + r.skipped });
         _markFlowSiblings(componentId, r.defId, label, doneLinks);
       }
-      if (type === 'Layout')    await fixLayout(componentId, componentName);
-      if (type === 'FlexiPage') await fixFlexiPage(componentId, componentName);
+      if (type === 'Layout')    label = (await fixLayout(componentId, componentName)) || label;
+      if (type === 'FlexiPage') label = (await fixFlexiPage(componentId, componentName)) || label;
       if (type === 'Report')    label = await fixReport(componentId, componentName);
       markFixed(componentId, label, doneLinks);
     } catch (e) {
-      if (btn) { btn.disabled = false; btn.textContent = '✂ Remove'; }
+      if (btn) { btn.disabled = false; btn.textContent = _fixBtnLabel(type, componentId); }
       // Label the open-link button based on which builder we're sending them to.
       const linkLabel = type === 'Flow' ? '↗ Open in Flow Builder'
         : type === 'Report' ? '↗ Open report' : '↗ Open in Setup';
@@ -2604,7 +2876,13 @@ const FieldCleaner = (() => {
   // inactive — and both facts are RE-READ, never assumed. Throws (with a
   // Flow Builder link) when that cannot be established; callers delete
   // nothing in that case.
-  async function _verifyFlowActivation(defId, prevMax, flowName, flowIdForLink, journal) {
+  // `before` (the version list read BEFORE the deploy) covers the other thing
+  // Salesforce does: it saves a deploy OVER the newest version when that
+  // version is a draft — no higher number appears; the draft record is
+  // replaced by a NEW record with the same number (live 2026-10-04: reported
+  // "no new version appeared" while v4 had been replaced and activated). So
+  // the written version is the one whose Id was not there before.
+  async function _verifyFlowActivation(defId, prevMax, flowName, flowIdForLink, journal, before) {
     const read = async () => {
       const r = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
         query: `SELECT Id, VersionNumber, Status FROM Flow WHERE DefinitionId = '${defId}' ORDER BY VersionNumber DESC` });
@@ -2614,8 +2892,15 @@ const FieldCleaner = (() => {
     const link = e => { const u = _flowBuilderUrl(flowIdForLink); if (u) e.setupUrl = u; return e; };
     let versions = await read();
     let newest = versions[0];
+    let overwrote = false;
     if (!newest || (Number(newest.VersionNumber) || 0) <= prevMax) {
-      throw link(new Error(`The deploy was accepted but no new version of "${flowName}" appeared (latest is still v${prevMax}). Nothing was deleted.`));
+      // No higher number: a record that was not in the list before the deploy
+      // is the version that was written (the active one first, if several).
+      const had = new Set((Array.isArray(before) ? before : []).map(v => v.Id));
+      const fresh = had.size ? versions.filter(v => !had.has(v.Id)) : [];
+      const written = fresh.find(v => v.Status === 'Active') || fresh[0] || null;
+      if (!written) throw link(new Error(`The deploy was accepted but no new version of "${flowName}" appeared (latest is still v${prevMax}). Nothing was deleted.`));
+      newest = written; overwrote = true;
     }
     if (newest.Status !== 'Active') {
       const newId = newest.Id;
@@ -2641,7 +2926,7 @@ const FieldCleaner = (() => {
         throw link(new Error(`v${newest ? newest.VersionNumber : '?'} of "${flowName}" was created but could NOT be activated${act?.error ? ` — ${_feText(act.error)}` : ''}. The previous version stays active and nothing was deleted. Activate the new version in Flow Builder, then run ✂ Remove again.`));
       }
     }
-    return { newVersion: Number(newest.VersionNumber) || 0, newId: newest.Id, versions };
+    return { newVersion: Number(newest.VersionNumber) || 0, newId: newest.Id, versions, overwrote };
   }
 
   // Paused / waiting interviews on these versions — Salesforce refuses to
@@ -2753,6 +3038,7 @@ const FieldCleaner = (() => {
   // element's label and API name — Flow Builder's Toolbox → Manager finds them.
   function _flowChoiceHtml(fp, flowName, canReplace) {
     const pv = fp.preview || { removed: [], remaining: [], emptied: [] };
+    if (pv.swap) return _flowSwapHtml(fp, canReplace);
     const act = fp.plan.active;
     const li = (x, tail) => `<li><b>${esc(x.kind)}</b> “${esc(x.label || x.name || '?')}”${x.name ? ` <code>${esc(x.name)}</code>` : ''} — ${esc(x.where)}${tail ? `: <code>${esc(tail)}</code>` : ''}</li>`;
     const list = (arr, tailKey) => arr.length ? `<ul class="fc-prev-list">${arr.slice(0, 12).map(x => li(x, x[tailKey])).join('')}${arr.length > 12 ? `<li>… +${arr.length - 12} more</li>` : ''}</ul>` : '';
@@ -2773,6 +3059,60 @@ const FieldCleaner = (() => {
         <span><b>Delete the active version too</b> — switch the flow off, verify nothing is active, then delete v${act.num} with the rest. <em>The flow stops running.</em></span></label>
       <div class="fc-prev-sec"><b>Or do it yourself.</b> ${open} In Flow Builder open <i>Toolbox → Manager</i> and search each API name shown above (<code>like_this</code>); change or remove the reference, reconnect anything you delete, then Save As a new version and Activate. Run ✂ Remove here again afterwards — it will find the active version clean and only remove the old versions.</div>
     </div>`;
+  }
+
+  // ⇄ The same dialog section when the reference MOVES (sftk-fieldreplace.js):
+  // what is pointed at the new field, and what is left alone and why. Nothing
+  // is taken out, so nothing can be left empty.
+  function _flowSwapHtml(fp, canReplace) {
+    const pv = fp.preview;
+    const act = fp.plan.active;
+    const li = (x, tail) => `<li><b>${esc(x.kind)}</b> “${esc(x.label || x.name || '?')}”${x.name ? ` <code>${esc(x.name)}</code>` : ''} — ${esc(x.where)}${tail ? `: <code>${esc(tail)}</code>` : ''}</li>`;
+    const list = (arr, tail) => arr.length ? `<ul class="fc-prev-list">${arr.slice(0, 12).map(x => li(x, tail(x))).join('')}${arr.length > 12 ? `<li>… +${arr.length - 12} more</li>` : ''}</ul>` : '';
+    const open = fp.builderUrl ? `<a href="${esc(fp.builderUrl)}" target="_blank" rel="noopener" class="fc-prev-open">↗ Open v${act.num} in Flow Builder</a>` : '';
+    const other = pv.remaining.filter(x => x.why === 'other'), undecided = pv.remaining.filter(x => x.why !== 'other');
+    return `<div class="fc-prev">
+      <div class="fc-prev-hd">Inside the active v${act.num} — what moving to ${esc(pv.to)} changes</div>
+      ${pv.removed.length ? `<div class="fc-prev-sec fc-prev-ok"><b>⇄ Pointed at ${esc(pv.to)} (${pv.removed.length})</b>
+        <div class="fc-prev-note">Nothing is taken out: every condition, assignment and filter stays, reading or writing the new field.</div>${list(pv.removed, x => x.what)}</div>`
+        : `<div class="fc-prev-sec fc-prev-bad"><b>⇄ Nothing in this version can be moved automatically.</b></div>`}
+      ${undecided.length ? `<div class="fc-prev-sec fc-prev-bad"><b>✋ Left alone (${undecided.length}) — could not tell whose field this is</b>
+        <div class="fc-prev-note">A reference is moved only when it is KNOWN to be ${esc(_selObj.api)}'s field. These sit where the object cannot be worked out (the output of an action, a value typed as text…). If one of them is this field, change it in Flow Builder — until then Salesforce keeps the field locked.</div>${list(undecided, x => x.value)}</div>` : ''}
+      ${other.length ? `<div class="fc-prev-sec"><b>Not this field (${other.length})</b>
+        <div class="fc-prev-note">The same field name on another object — left exactly as it is.</div>${list(other, x => `${x.value} — a field of ${x.object}`)}</div>` : ''}
+      <div class="fc-prev-hd">The active version — choose</div>
+      <label class="fc-prev-opt${canReplace ? '' : ' fc-prev-opt-off'}"><input type="radio" name="fcActiveMode" value="replace" ${canReplace ? 'checked' : 'disabled'}>
+        <span><b>Keep the flow running on ${esc(pv.to)}</b> — deploy a new active v${fp.plan.expectNew} with the references moved, verify it is active, then delete v${act.num}.${canReplace ? '' : ' <em>Not available: no reference in this version can be moved.</em>'}</span></label>
+      <label class="fc-prev-opt"><input type="radio" name="fcActiveMode" value="delete">
+        <span><b>Delete the active version too</b> — switch the flow off, verify nothing is active, then delete v${act.num} with the rest. <em>The flow stops running.</em></span></label>
+      <div class="fc-prev-sec"><b>Or do it yourself.</b> ${open} In Flow Builder open <i>Toolbox → Manager</i> and search each API name shown above (<code>like_this</code>); point it at the new field, then Save As a new version and Activate. Run the fix here again afterwards — it will find the active version clean and only remove the old versions.</div>
+    </div>`;
+  }
+
+  // ⇄ The swap on ONE flow version's metadata, in place. A field reached
+  // through a lookup ($Record.Account.Field__c) is this object's only when the
+  // org's schema says the lookup points here — so each such chain is resolved
+  // against the describes first; a chain that cannot be resolved (polymorphic
+  // lookup, unreadable object) is left alone, never guessed.
+  const _chainKey = (root, rels) => `${String(root).toLowerCase()}|${rels.map(r => String(r).toLowerCase()).join('.')}`;
+  async function _chainOwner(rootObj, rels) {
+    let cur = rootObj;
+    for (const rel of rels) {
+      const d = await _describeObj(cur);
+      if (!d || d.error || !Array.isArray(d.fields)) return null;
+      const f = d.fields.find(x => String(x.relationshipName || '').toLowerCase() === String(rel).toLowerCase());
+      if (!f || !Array.isArray(f.referenceTo) || f.referenceTo.length !== 1) return null;
+      cur = f.referenceTo[0];
+    }
+    return cur;
+  }
+  async function _flowSwap(metadata) {
+    const obj = _selObj.api, from = _selField.api, to = _replField.api;
+    const probe = sftkFlowReplaceField(JSON.parse(JSON.stringify(metadata)), obj, from, to);
+    const owners = new Map();
+    for (const need of probe.needs) owners.set(_chainKey(need.rootObj, need.rels), await _chainOwner(need.rootObj, need.rels));
+    return sftkFlowReplaceField(metadata, obj, from, to, {
+      chainOwner: (root, rels) => { const v = owners.get(_chainKey(root, rels)); return v === undefined ? null : v; } });
   }
 
   async function fixFlowPlan(flowId, flowName) {
@@ -2798,13 +3138,25 @@ const FieldCleaner = (() => {
       try {
         const before = metaById[plan.active.id].Metadata;
         const after = JSON.parse(JSON.stringify(before));
-        removeFieldRefs(after, _selObj.api, _selField.api);
-        preview = sftkFlowRefPreview(before, after, _fieldStringTester());
+        if (_replOn()) {
+          // The REAL swap on a clone — the preview cannot disagree with the run.
+          const sw = await _flowSwap(after);
+          const J = x => JSON.stringify(x);
+          preview = { swap: true, to: _replField.api, emptied: [],
+            removed: sw.changed.map(c => ({ ...sftkFlowRefWhere(before, c.path), what: `${c.before} → ${c.after}` })),
+            remaining: sftkFlowRefScan(after, _fieldStringTester()).map(h => {
+              const sk = sw.skipped.find(x => J(x.path) === J(h.path));
+              return { ...sftkFlowRefWhere(after, h.path), value: h.value, why: sk ? sk.why : 'unknown', object: sk ? sk.object : null };
+            }) };
+        } else {
+          removeFieldRefs(after, _selObj.api, _selField.api);
+          preview = sftkFlowRefPreview(before, after, _fieldStringTester());
+        }
       } catch (_) { preview = null; }   // no preview is a missing convenience, never a wrong one
     }
     return { flowId, flowName, defId, versions, maxNum, metaById, plan, interviews, interviewCheckError,
       planDelete, preview, builderUrl: plan.active ? _flowBuilderUrl(plan.active.id) : null,
-      lines: sftkFlowSurgeryLines(plan, kinds, interviewCheckError),
+      lines: sftkFlowSurgeryLines(plan, kinds, interviewCheckError, _replOn() ? { swapTo: _replField.api } : null),
       linesDelete: planDelete ? sftkFlowSurgeryLines(planDelete, kinds, interviewCheckError) : null };
   }
 
@@ -2817,21 +3169,25 @@ const FieldCleaner = (() => {
     const apiNameOf = id => String(metaById[id]?.FullName || '').replace(/-\d+$/, '');
     const journal = opts && opts.journal;
 
+    // A draft newer than the active version is saved OVER by the deploy
+    // (sftkFlowSurgeryPlan's `overwrite`): its content goes too, so it is
+    // backed up and gets a restore point like the versions that are deleted.
+    const gone = plan.overwrite ? [...plan.toDelete, plan.overwrite] : plan.toDelete;
     // 1. backup zip of every version that will be deleted — BEFORE any change
     if (opts && opts.backup) {
       if (typeof downloadFlowBackupZip !== 'function') {
         throw new Error('The backup download is not available on this page — nothing was changed. Untick the backup to proceed without one.');
       }
-      const entries = plan.toDelete.map(v => ({
+      const entries = gone.map(v => ({
         MasterLabel: flowName, ApiName: apiNameOf(v.id), VersionNumber: v.num, Status: v.status,
         ProcessType: metaById[v.id]?.ProcessType || metaById[v.id]?.Metadata?.processType || '',
         FullName: metaById[v.id]?.FullName, Metadata: metaById[v.id]?.Metadata,
       }));
       const safe = String(flowName || 'Flow').replace(/[^a-zA-Z0-9_-]/g, '_');
-      downloadFlowBackupZip(entries, _orgUrl, `${safe}_field-cleanup_${plan.toDelete.map(v => 'v' + v.num).join('-')}_backup.zip`);
+      downloadFlowBackupZip(entries, _orgUrl, `${safe}_field-cleanup_${gone.map(v => 'v' + v.num).join('-')}_backup.zip`);
     }
     // 🧾 Cleanup history restore points for every version that goes
-    for (const v of plan.toDelete) {
+    for (const v of gone) {
       await _snapshotFix('Flow', v.id, `${flowName} v${v.num}`, metaById[v.id]?.FullName, metaById[v.id]?.Metadata);
     }
 
@@ -2839,7 +3195,19 @@ const FieldCleaner = (() => {
     if (plan.mode === 'active') {
       const src = metaById[plan.active.id];
       const metadata = JSON.parse(JSON.stringify(src.Metadata));
-      const changes = removeFieldRefs(metadata, _selObj.api, _selField.api);
+      const swapping = _replOn();
+      const changes = swapping
+        ? (await _flowSwap(metadata)).changed.reduce((n, c) => n + c.n, 0)
+        : removeFieldRefs(metadata, _selObj.api, _selField.api);
+      if (swapping) out.swapped = changes;
+      if (changes === 0 && swapping) {
+        const err = new Error(
+          `No reference in the active v${plan.active.num} of "${flowName}" could be moved to ${_replField.api} — each mention is ` +
+          `another object's field or sits where its object cannot be worked out. Nothing was deleted. ` +
+          `Click "Open in Flow Builder" to change it by hand, then run the fix again for the old versions.`);
+        const u = _flowBuilderUrl(plan.active.id); if (u) err.setupUrl = u;
+        throw err;
+      }
       if (changes === 0) {
         const err = new Error(
           `Couldn't auto-remove the field from the active v${plan.active.num} of "${flowName}" — the reference is ` +
@@ -2851,16 +3219,23 @@ const FieldCleaner = (() => {
       delete metadata.fullName;
       const deployRes = await deployFlowViaMetadataApi(apiNameOf(plan.active.id), metadata);
       if (!deployRes || !deployRes.success) {
-        const e = new Error(`Salesforce refused the fixed "${flowName}": ${deployRes?.error ? String(deployRes.error).replace(/\s+/g, ' ').slice(0, 300) : 'deploy failed'}. Nothing was deleted. Choose “Delete the active version too”, or open in Flow Builder to remove the field reference by hand.`);
+        const e = new Error(`Salesforce refused the fixed "${flowName}"${swapping ? ` (the version that uses ${_replField.api})` : ''}: ${deployRes?.error ? String(deployRes.error).replace(/\s+/g, ' ').slice(0, 300) : 'deploy failed'}. Nothing was deleted. Choose “Delete the active version too”, or open in Flow Builder to ${swapping ? 'change' : 'remove'} the field reference by hand.`);
         const u = _flowBuilderUrl(plan.active.id); if (u) e.setupUrl = u;
         throw e;
       }
-      const ver = await _verifyFlowActivation(defId, maxNum, flowName, plan.active.id, journal);
-      out.newVersion = ver.newVersion; out.newId = ver.newId;
+      const ver = await _verifyFlowActivation(defId, maxNum, flowName, plan.active.id, journal, fp.versions);
+      out.newVersion = ver.newVersion; out.newId = ver.newId; out.overwrote = !!ver.overwrote;
       // The new version must not mention the field either — formula and
       // decision text is outside what the auto-fix touches, so say so.
       const check = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: 'Flow', id: ver.newId, _suppressError: true });
       out.stillMentions = !!(check?.Metadata && flowReferencesField(check.Metadata));
+      if (swapping && check?.Metadata) {
+        // After a swap, "still mentions" means: something of THIS field is left
+        // (movable, or undecided) — a same-named field of another object is not.
+        const again = await _flowSwap(JSON.parse(JSON.stringify(check.Metadata)));
+        out.undecided = again.skipped.filter(x => x.why !== 'other').length;
+        out.stillMentions = again.changed.length > 0 || out.undecided > 0;
+      }
     }
 
     // 2b. the OTHER way: switch the flow off, verified, before its active
@@ -2900,7 +3275,8 @@ const FieldCleaner = (() => {
       out.interviewsDeleted = di.deleted; out.interviewsFailed = di.failed; out.errors.push(...di.errors);
       for (const id of di.failedVersionIds) skip.add(id);
     }
-    const dv = await _deleteFlowVersionIds(plan.toDelete.map(v => v.id), skip, journal);
+    // never the version that now RUNS the flow
+    const dv = await _deleteFlowVersionIds(plan.toDelete.map(v => v.id).filter(id => id !== out.newId), skip, journal);
     out.deleted = dv.deleted; out.failed = dv.failed; out.skipped = dv.skipped; out.errors.push(...dv.errors);
     // Undo: whichever mode ran, the version(s) that referenced the field —
     // including the one that WAS active — are among plan.toDelete and so are
@@ -3474,11 +3850,16 @@ const FieldCleaner = (() => {
     await _snapshotFix('Layout', componentId, componentName, res.FullName || res.fullName, metadata);
     const beforeMetadata = JSON.parse(JSON.stringify(metadata));   // pre-mutation copy for the History undo step
 
-    const changes = removeFieldFromLayout(metadata, _selField.api);
+    // ⇄ Replace with another field: the new field takes the slot (or, when it
+    // is already on the layout, the old slot becomes a blank space).
+    const swap = _replOn();
+    const swapTo = swap ? _replField.api : '';
+    const sw = swap ? sftkLayoutReplaceField(metadata, _selField.api, swapTo, { readOnly: _replReadOnly() }) : null;
+    const changes = swap ? sw.swapped + sw.blanked : removeFieldFromLayout(metadata, _selField.api);
     if (changes === 0) {
       throw new Error(
         `Field not found in "${componentName}" layout sections. ` +
-        'It may be in a related list or inline edit only — remove manually.'
+        `It may be in a related list or inline edit only — ${swap ? 'change it' : 'remove'} manually.`
       );
     }
 
@@ -3492,7 +3873,7 @@ const FieldCleaner = (() => {
     let patchRes = null, deployErr;
     // History (sftk-history.js): one journal for this button press; the
     // undo re-PATCHes the layout's pre-fix metadata.
-    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `📋 Layout — "${componentName}" (${_selObj.api}.${_selField.api} removed)`, orgUrl: _orgUrl });
+    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `📋 Layout — "${componentName}" (${_selObj.api}.${_selField.api} ${swap ? `→ ${swapTo}` : 'removed'})`, orgUrl: _orgUrl });
     let wr;
     try {
       // confirmed-by: fixOne's sftkConfirmDestructive (the only caller)
@@ -3514,11 +3895,21 @@ const FieldCleaner = (() => {
             sobject: 'Layout', id: componentId });
           if (!after || after.error || !after.Metadata) return { ok: false, text: null };
           const left = removeFieldFromLayout(JSON.parse(JSON.stringify(after.Metadata)), _selField.api);
-          return { ok: left === 0, text: null };
+          // a swap is only done when the old field is gone AND the new one is there
+          const hasNew = !swap || (after.Metadata.layoutSections || []).some(sec => (sec.layoutColumns || []).some(col =>
+            (col.layoutItems || []).some(it => it && String(it.field || '').toLowerCase() === swapTo.toLowerCase())));
+          return { ok: left === 0 && hasNew, text: null };
         },
       });
-      if (wr.accepted && wr.ok) return;
-      if (wr.accepted) throw new Error(`"${componentName}" was saved but still references the field on re-read — check it in Setup.`);
+      if (wr.accepted && wr.ok) {
+        return swap
+          ? (sw.swapped ? `✅ Layout updated · ${swapTo} now sits where ${_selField.api} was — verified by re-reading the org`
+                        : `✅ Layout updated · ${swapTo} was already on the layout, so the old slot is now a blank space — verified by re-reading the org`)
+          : undefined;
+      }
+      if (wr.accepted) throw new Error(swap
+        ? `"${componentName}" was saved, but on re-read it does not show ${swapTo} in place of the field — check it in Setup.`
+        : `"${componentName}" was saved but still references the field on re-read — check it in Setup.`);
 
       // Both paths failed — surface a clean message *with* a one-click deep link
       // to the layout in Setup, so the manual fix is 30 seconds, not a hunt.
@@ -3588,17 +3979,23 @@ const FieldCleaner = (() => {
     await _snapshotFix('FlexiPage', componentId, componentName, res.FullName || res.fullName, metadata);
     const beforeMetadata = JSON.parse(JSON.stringify(metadata));   // pre-mutation copy for the History undo step
 
-    const changes = removeFieldFromFlexiPage(metadata, _selObj.api, _selField.api);
+    // ⇄ Replace with another field: field components and visibility rules
+    // are pointed at the new field (sftk-fieldreplace.js).
+    const swap = _replOn();
+    const swapTo = swap ? _replField.api : '';
+    const sw = swap ? sftkFlexiReplaceField(metadata, _selObj.api, _selField.api, swapTo) : null;
+    const changes = swap ? sw.swapped + sw.dropped : removeFieldFromFlexiPage(metadata, _selObj.api, _selField.api);
     if (changes === 0) {
       throw new Error(
         `No direct field references found in "${componentName}". ` +
-        'The dependency may be inside a custom component — remove manually in App Builder.'
+        (swap && sw.left ? `${sw.left} mention(s) reach the field through a related record, which is another object's field and is left alone. ` : '') +
+        `The dependency may be inside a custom component — ${swap ? 'change it' : 'remove'} manually in App Builder.`
       );
     }
 
     // History (sftk-history.js): one journal for this button press; the
     // undo re-PATCHes the FlexiPage's pre-fix metadata.
-    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `🧩 FlexiPage — "${componentName}" (${_selObj.api}.${_selField.api} removed)`, orgUrl: _orgUrl });
+    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `🧩 FlexiPage — "${componentName}" (${_selObj.api}.${_selField.api} ${swap ? `→ ${swapTo}` : 'removed'})`, orgUrl: _orgUrl });
     let wr;
     try {
       // confirmed-by: fixOne's sftkConfirmDestructive (the only caller)
@@ -3617,12 +4014,24 @@ const FieldCleaner = (() => {
           const after = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
             sobject: 'FlexiPage', id: componentId });
           if (!after || after.error || !after.Metadata) return { ok: false, text: null };
+          if (swap) {
+            // nothing left to move on re-read = the swap really landed
+            const again = sftkFlexiReplaceField(JSON.parse(JSON.stringify(after.Metadata)), _selObj.api, _selField.api, swapTo);
+            return { ok: again.swapped + again.dropped === 0, text: null };
+          }
           const left = removeFieldFromFlexiPage(JSON.parse(JSON.stringify(after.Metadata)), _selObj.api, _selField.api);
           return { ok: left === 0, text: null };
         },
       });
       if (!wr.accepted) throw new Error(`Could not save "${componentName}": ${_feText((wr.raw && wr.raw.error) || 'refused')}`);
       if (!wr.ok) throw new Error(`"${componentName}" was saved but still references the field on re-read — check it in App Builder.`);
+      if (swap) {
+        const bits = [];
+        if (sw.swapped) bits.push(`${sw.swapped} place${sw.swapped === 1 ? '' : 's'} now use${sw.swapped === 1 ? 's' : ''} ${swapTo}`);
+        if (sw.dropped) bits.push(`${sw.dropped} component${sw.dropped === 1 ? '' : 's'} dropped — the page already showed ${swapTo}`);
+        if (sw.left) bits.push(`⚠ ${sw.left} mention${sw.left === 1 ? '' : 's'} through a related record left alone (another object's field)`);
+        return `✅ Page updated · ${bits.join(' · ')} — verified by re-reading the org`;
+      }
     } finally {
       await sftkHistoryEnd(j, { undo: wr && wr.accepted
         ? { steps: [{
@@ -3666,9 +4075,10 @@ const FieldCleaner = (() => {
     function cleanVisibilityRule(rule) {
       if (!rule?.criteria?.length) return rule;
       const before = rule.criteria.length;
-      rule.criteria = rule.criteria.filter(c =>
-        !refMatches(c.leftValue) && !refMatches(c.rightValue?.value)
-      );
+      // a right-hand side is a plain string in the API's JSON; it names the
+      // field only when written as a merge field ({!Record.Field})
+      const rightRef = c => { const v = typeof c.rightValue === 'string' ? c.rightValue : c.rightValue?.value; return typeof v === 'string' && v.startsWith('{!') && refMatches(v); };
+      rule.criteria = rule.criteria.filter(c => !refMatches(c.leftValue) && !rightRef(c));
       changes += before - rule.criteria.length;
 
       if (rule.criteria.length === 0) return null; // delete rule → always visible
@@ -3751,11 +4161,19 @@ const FieldCleaner = (() => {
       );
     }
     // Helper: scrub field references out of an instance's visibility rule.
+    // The rule lives under `visibilityRule` — what the Tooling API returns (read
+    // live 2026-10-04 on a real page). This looked only at
+    // `componentVisibilityRule`, a key the API never sends, so a visibility
+    // rule that used the field was never cleaned and the re-read (the same
+    // function) still called the page clean.
     function cleanInstanceVisibility(inst) {
-      if (!inst || !inst.componentVisibilityRule) return;
-      const cleaned = cleanVisibilityRule(inst.componentVisibilityRule);
-      if (cleaned === null) delete inst.componentVisibilityRule;
-      else inst.componentVisibilityRule = cleaned;
+      if (!inst) return;
+      for (const key of ['visibilityRule', 'componentVisibilityRule']) {
+        if (!inst[key]) continue;
+        const cleaned = cleanVisibilityRule(inst[key]);
+        if (cleaned === null) delete inst[key];
+        else inst[key] = cleaned;
+      }
     }
 
     for (const region of (metadata.flexiPageRegions || [])) {
@@ -4191,7 +4609,7 @@ const FieldCleaner = (() => {
       // The new version must be ACTIVE — verified by re-reading the org
       // (activated here if the deploy left it inactive); nothing is purged
       // before that is established.
-      await _verifyFlowActivation(before.defId, before.maxNum, flowName, flowId, journal);
+      await _verifyFlowActivation(before.defId, before.maxNum, flowName, flowId, journal, before.versions);
       // Stale versions still referencing the field keep the dependency lock —
       // purge them so the field delete isn't blocked (see purgeOldFlowVersions).
       return await purgeOldFlowVersions(flowId, flowName, journal);

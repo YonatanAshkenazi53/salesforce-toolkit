@@ -299,6 +299,126 @@ Same as #3" over records that look identical, words were not enough. Now:
 - Next step if wanted: "add <field> to the match key" as one button on the intro (today it names
   the field and points at ✏ Edit → Records → Matching).
 
+## Phase 10 — Lightning Pages QA (started 2026-10-04, PAUSED for Phase 11)
+
+Lightning Pages stays in 1.0, so it gets the hand-level QA it never had. Recon of
+`lightning-pages.js` (map by a Sonnet agent, the write paths then read by Fable) found the
+following. **Read in code, NOT yet reproduced live** unless marked.
+
+Live so far: the harness opens the fixture page `SFTK_LP_Test_Account_Page` on trailheads5; it
+is currently the Desktop org default for Account there (left from an earlier run).
+
+Findings to reproduce, then fix (in this order — the first three change what users see):
+1. **Deactivate can reset ANOTHER page's org default.** `activatePage(..., 'Draft')` deploys a
+   CustomObject `actionOverrides` entry `type=Default` with no content for Desktop. A page that
+   is active only through an app or profile assignment is not the org default, so the reset
+   lands on whichever page is. The page itself stays assigned while the detail says "Draft".
+   Fix shape: Deactivate = remove every assignment THIS page holds (fresh re-read first, each
+   named in the one confirmation), never a blind reset.
+2. **App Default / App+Record Type+Profile on an unassigned page also makes the page the org
+   default for Desktop** (`doAdd` pre-activation, `if (!isActive && sobjectType && mode !==
+   'orgdefault') await activatePage(...)`). The confirmation only says "the Draft page will also
+   be activated". An app assignment alone already activates a page; the extra org-wide write
+   must go.
+3. **▶ Activate is "set as org default for Desktop" under another name**, and its confirmation
+   does not say so, nor which page it replaces.
+4. **Org-default writes are not verified** (`noVerify`) and the detail afterwards is drawn from
+   synthesized state (`assignmentsOverride`), not a re-read. The describe (`actionOverrides`,
+   cache-busted) is a real read-back: use it, with a visible wait, and say which page was
+   replaced; the same read gives a real undo (redeploy the previous page or `Default`).
+5. **Clone with "Copy assignments" (ticked by default) takes over every slot of the original**
+   and has no shared confirmation or production gate. Default it off, say the consequence, gate it.
+6. `patchCustomApp` verifies only the COUNT of overrides, not that the entry is there / gone.
+7. "Show affected users" (`fetchUsers`) caches an error as an empty list: a failed query reads
+   "No active users on this profile". The reported "Who sees what - Show users" HTTP 404 is
+   still to reproduce (`fetchOrgDefaultUsers` shows a friendly error; no fresh-session retry
+   beyond `bg()`'s SESSION_EXPIRED path).
+8. An App Default row is labelled "Org Default - Applies to all users in the org" (`isOrgDef =
+   !a.profile`).
+9. After the last assignment is removed the detail says "Draft"; everywhere else the tool says
+   "Not assigned".
+10. The "Mark as Default" checkbox in the App + Record Type + Profile form is never read.
+11. An already-assigned form factor (ticked + disabled) is deployed again when the other one is added.
+12. There is no delete-page action (the clone's History entry says "delete by hand") — a limit to
+    state in FEATURES.md, not a bug.
+
+Live script to extend: `scripts/dev/live/lightning-pages.mjs` (STEP=appdefault | artp | clone |
+deactivate | whosees), CLI truth between steps: describe `actionOverrides`, Tooling
+`CustomApplication.Metadata.profileActionOverrides`, Tooling `FlexiPage.Metadata.pageAssignments`.
+
+## Phase 11 — Field Cleaner: replace a field with another one (DONE 2026-10-04)
+
+User, reading the feature guide's Field Cleaner section: "what if we want to remove the old field
+and assign a new field instead with the same type?" then "i want to add the replace field feature".
+
+**What it is.** Step 3 of Field Cleaner, optional: "Replace it with another field". Empty = today's
+behaviour (references are removed). With a field chosen, every automatic fix MOVES the reference.
+
+**Engine: `sftk-fieldreplace.js` (pure, popup.html loads it before field-cleaner.js).**
+- `sftkFieldReplaceCompat(oldDesc, newDesc)` - blockers (other type, other lookup target, a field
+  the describe does not list) and warnings (missing picklist values, shorter, cannot be written).
+  The picker offers only fields without a blocker, from the object describe (standard fields too).
+- `sftkFlowReplaceField(metadata, obj, old, new, { chainOwner })` - walks every string the scanner
+  walks (labels / descriptions skipped) and swaps a token ONLY when its object is known to be `obj`:
+  `$Record` / `$Record__Prior` (start object), record variables, Get Records elements, loops and
+  collection processors over those, a bare field name inside an element with `object` /
+  `inputReference`, `Obj.Field`. A same-named field of another object -> `skipped` (why 'other').
+  Unknown object -> `skipped` (why 'unknown'). A path through a relationship
+  (`$Record.Account.X__c`) -> `needs`; field-cleaner.js resolves the chain against the describes
+  (`_chainOwner`; a polymorphic or unreadable hop = not resolved = left alone) and runs it again.
+- `sftkLayoutReplaceField` (new field takes the slot; already on the layout -> blank space;
+  read-only field -> Readonly), `sftkFlexiReplaceField` (fieldItem, field properties, visibility
+  criteria; a related record's field is left), `sftkRptReplaceField` (columns / filters / groupings
+  in the token's own spelling; formulas and buckets stay manual), `sftkFlsCopyPlan` (create / raise,
+  never lower; read only for a field that cannot be edited).
+
+**Wiring in field-cleaner.js.** `_replField` / `_replCompat` / `_replOn()`; `setupReplacePicker()`
+(`#fcReplStep`, `#fcReplInput`, `#fcReplDrop`, `#fcReplNote`, `#fcReplClear`); `_applyReplMode()`
+relabels idle buttons (`_fixBtnLabel`: an inactive flow version stays "✂ Remove"), group notes
+(`TYPE_CFG[*].replNote`), the `#fcReplBar` and the access panel; `fixOne` computes `swap` once;
+flows: `_flowSwap` (preview on a clone AND the run), `_flowSwapHtml`, `sftkFlowSurgeryLines(...,
+{ swapTo })`; `fixLayout` / `fixFlexiPage` / `fixReport` branch on `_replOn()` and return their own
+label; `_copyFlsAccess` (`#fcFlsCopy`, `#fcFlsCopyBtn`; `sftkWriteVerifiedAll` + one re-read; undo
+= delete what was created, lower what was raised).
+
+**Verified live on trailheads5 (`scripts/dev/live/field-replace.mjs`, CLI truth after each):**
+- picker: only same-type fields; warning that Status2 has no "Closed"; a scan shows Replace mode.
+- 🔑 access: System Administrator got read + edit on the new field (FieldPermissions by CLI).
+- flow with the field in a Get Records filter: v2 Active with the new field, v1 deleted.
+- the flow removal could NOT fix (assignments would be left empty): 4 references moved, new version
+  active, 5 old versions + 5 failed interviews deleted; `MetadataComponentDependency` then shows 0
+  flows on the old field.
+- layout: the new field sits in the old slot. Lightning page: field component + visibility rule
+  moved; History -> Undo put the page back (verified); plain removal now also clears the rule.
+- reports: the engine's output was PATCHed by CLI and Salesforce accepted it (column, filter,
+  grouping). **Not exercised through the screen:** the dependency index did not list the two
+  fixture reports (created by API, moved to Public Reports) during the session, so no report row
+  appeared. Re-scan later; if they never appear, that is a scan gap to chase (reports created by
+  API / not yet indexed).
+
+**Two real bugs the live run found (both fixed, both pre-date this phase):**
+1. *A draft newer than the active version.* Salesforce saves a deployed flow over its newest
+   version when that version is a Draft: the draft record is replaced by a NEW record with the same
+   number (proven by CLI; with the newest version Obsolete it creates the next number). The tool
+   expected a higher number, said "no new version appeared ... Nothing was deleted" and stopped
+   with the flow already changed. Now `sftkFlowSurgeryPlan` returns `overwrite`, the dialog names
+   the draft and says its content is REPLACED, the draft is in the backup zip and gets a restore
+   point, `_verifyFlowActivation(..., before)` takes the record that was not there before as the
+   written version, and that version is never among the deletions. Pins:
+   `test/flow-draft-overwrite-1004`.
+2. *Lightning-page visibility rules.* The Tooling API returns the rule as `visibilityRule` with a
+   plain-string right-hand side; the remover looked at `componentVisibilityRule`, so a rule that
+   tested the field was never cleaned and the re-read (same function) called the page clean.
+
+**Limits, stated in the product:** references move, data does not (no value copy); a flow swap has
+no History undo (old versions are deleted — the backup zip is the way back); list views, compact
+layouts, quick actions, validation rules, formula fields and Apex stay manual exactly as before.
+
+**Backlog from this phase:** copy the stored values old -> new as an optional step before the
+delete; replace in validation-rule / formula text; the XML inspector's "Remove selected" is removal
+only; a flow whose active version mentions a same-named field of another object is still listed as
+"referencing" by the plan (the scanner is by name).
+
 ## Scope of the first public release (decided 2026-10-03)
 
 Asked "what would you cut from the scope?", the recommendation was: ship Data Deployment +

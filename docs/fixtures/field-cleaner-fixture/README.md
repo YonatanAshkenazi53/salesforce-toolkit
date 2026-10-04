@@ -144,3 +144,31 @@ Live: `ACTIVE=replace FLOW="SFTK FC Test Flow 2" node scripts/dev/headless-studi
   v2, verifies it ACTIVE by re-reading the org, deletes v1; CLI: only v2 Active, the lookup keeps
   its Name filter. The old fixture flow (v3 Active with assignments) is still refused on replace
   and left untouched, as in pass 1.
+
+## Replace with another field (2026-10-04)
+
+More fixture, all on trailheads5 (`npc`):
+- `replace/` - `Account.SFTK_FC_Test_Status2__c` (the same picklist WITHOUT "Closed") and the
+  permission set `SFTK_FC_Test_See2` (assign it: a field nobody can see is absent from the
+  describe, and the replace picker reads the describe).
+  `cd replace && sf project deploy start -o npc --source-dir force-app && sf org assign permset -o npc --name SFTK_FC_Test_See2`
+- `surfaces/` - layout `Account-SFTK FC Test Layout` and Lightning page `SFTK_FC_Test_Page`
+  (a Dynamic Forms field + a visibility rule), both using the OLD field. Redeploy to reset them:
+  `cd surfaces && sf project deploy start -o npc --source-dir force-app`
+- `report/` - two report bodies for `sf api request rest services/data/v64.0/analytics/reports
+  --method POST --body @report/report.json -o npc` (column + filter; grouping). Salesforce refuses
+  a field that is both a column and a grouping.
+
+Live: `node scripts/dev/headless-studio.mjs scripts/dev/live/field-replace.mjs` with
+`STEP=scan|access|flow|layout|page|report`, `FLOW=<label>`, `NAME=<row name>`, `FROM` / `TO`,
+`NO_REPLACE=1` (plain removal), `SCAN_ONLY=1`, `UNDO=1`.
+
+- verified: everything listed under Phase 11 of `docs/PLAN-campaign-4.md`.
+- found + fixed: a flow whose newest version is a DRAFT (Salesforce saves the deploy over the
+  draft: same number, new record) and Lightning-page visibility rules (`visibilityRule`, not
+  `componentVisibilityRule`).
+- state after the session: `SFTK_FC_Test_Flow` v8 Active and `SFTK_FC_Test_Flow2` v2 Active use
+  Status2; v4 / v6 of the first are obsolete and clean. To get the old shape back run
+  `bash rebuild.sh npc` (it deploys v1-v4 as new versions on top).
+- not exercised through the screen: reports (the dependency index did not list the fixture
+  reports during the session).

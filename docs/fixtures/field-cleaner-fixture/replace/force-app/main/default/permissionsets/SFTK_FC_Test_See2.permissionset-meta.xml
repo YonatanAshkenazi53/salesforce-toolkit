@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Admin Toolkit test fixture for Field Cleaner "Replace with another field": lets the admin see Account.SFTK_FC_Test_Status2__c (a field nobody can see is absent from the object's describe). Safe to delete.</description>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.SFTK_FC_Test_Status2__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <hasActivationRequired>false</hasActivationRequired>
+    <label>SFTK FC Test See 2</label>
+</PermissionSet>

@@ -40,7 +40,7 @@ explains every feature. Still the user's to do: approve the guide, set 1.0.0, th
 (`docs/fixtures/complex-deployment/E2E-RUNBOOK.md`), and add TWO lines to the public privacy policy (gist): `sftk_orghealth`
 and `sftk_flow_run_paused` (see PRIVACY.md).
 
-**Since this block was written (2026-10-01 → 10-03): campaign 4** — `docs/PLAN-campaign-4.md` is the live plan (live run view, orgs picked at deploy time / no crown, rollback page, ⏸ validation rules, "Needs a decision", scope of 1.0: Picklist Manager + Sequences cut from the public build, Lightning Pages stays and needs QA). `master` was fast-forwarded on 2026-10-03; it moves only when the user says.
+**Since this block was written (2026-10-01 → 10-03): campaign 4** — `docs/PLAN-campaign-4.md` is the live plan (live run view, orgs picked at deploy time / no crown, rollback page, ⏸ validation rules, "Needs a decision", scope of 1.0: Picklist Manager + Sequences cut from the public build, Lightning Pages stays and needs QA). `master` was fast-forwarded on 2026-10-03; it moves only when the user says. **2026-10-04:** Field Cleaner got ⇄ *Replace with another field* (phase 11 of the plan; engine `sftk-fieldreplace.js`, live on trailheads5) and two real fixes found by its live run (a flow whose newest version is a draft; Lightning-page visibility rules). Lightning Pages QA (phase 10) is recon only so far — twelve findings in the plan, none fixed yet.
 
 **Open ideas (nothing scheduled).** The `- [ ]` items in IMPLEMENTATION_PLAN.md; two are possible bugs worth confirming first:
 the Lightning Pages "Who sees what → Show users" 404, and the unverified sweep candidates (file pairing using the source's field
