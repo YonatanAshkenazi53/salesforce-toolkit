@@ -881,6 +881,7 @@ const FieldCleaner = (() => {
     _groups   = {};
     _replField = null; _replCompat = null; _replSeq++;
     _copyState = null; _copySeq++;
+    _rptScan = null; _lastScan = null;
     const replStep = eid('fcReplStep');
     if (replStep) replStep.style.display = 'none';
     const pill    = eid('fcPill');
@@ -1232,7 +1233,9 @@ const FieldCleaner = (() => {
         }
       }
 
-      await renderResults([...deps, ...flexiHits, ...supHits], fieldId);
+      _rptScan = null;
+      _lastScan = { deps: [...deps, ...flexiHits, ...supHits], fieldId };
+      await renderResults(_lastScan.deps, fieldId);
     } catch (e) {
       const fe = sftkFriendlyError(e.message);
       showScanError(`Unexpected error: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`);
@@ -1632,7 +1635,8 @@ const FieldCleaner = (() => {
         \u2139\ufe0f <strong>Reports and report types</strong> appear above only when Salesforce\u2019s dependency
         index returns them through its API. In some orgs it returns none (seen live: two public reports
         used a field and neither was listed), so a report that uses this field can be missing here.
-        Before deleting, open the field in Setup and press \u201cWhere is this used?\u201d \u2014 that page lists reports.
+        Before deleting, press \ud83d\udcca Scan the reports below (it reads every report itself), or open the field
+        in Setup and press \u201cWhere is this used?\u201d \u2014 that page lists reports.
         <strong>Email Templates and Approval Processes</strong> appear above only when that index reports
         them \u2014 Salesforce does not guarantee it does for every template or approval, so check them by hand.
         <strong>Not scanned at all</strong> (no API): criteria-based sharing rules \u2014 these break silently if
@@ -1746,11 +1750,13 @@ const FieldCleaner = (() => {
         <div id="fcCopyVals"></div>
         <div id="fcDepZone"></div>
         <div id="fcFlsPanel"></div>
-        ${_unscannedNoteHtml()}`;
+        ${_unscannedNoteHtml()}
+        <div id="fcRptScan"></div>`;
       eid('fcDelFreeBtn').onclick = () => confirmDelete(fieldId);
       runDataUsage();
       renderDeprecationZone(fieldId);
       renderFlsPanel();
+      renderReportScan();
       return;
     }
 
@@ -1793,7 +1799,8 @@ const FieldCleaner = (() => {
         <div id="fcCopyVals"></div>
       <div id="fcDepZone"></div>
       <div id="fcFlsPanel"></div>
-      ${_unscannedNoteHtml()}`;
+      ${_unscannedNoteHtml()}
+        <div id="fcRptScan"></div>`;
 
     for (const [type, items] of Object.entries(_groups)) {
       const cfg = TYPE_CFG[type] || { ...TYPE_CFG_DEFAULT, label: type };
@@ -1902,6 +1909,7 @@ const FieldCleaner = (() => {
     runDataUsage();              // F1: fill the verdict placeholder asynchronously
     renderDeprecationZone(fieldId);  // F3: stage banner / deprecate button
     renderFlsPanel();            // F5: who can see this field
+    renderReportScan();          // the opt-in report sweep
   }
 
   // ── F5: FLS visibility panel — who can even see this field? ─────────────
@@ -2039,6 +2047,128 @@ const FieldCleaner = (() => {
     });
   }
 
+  // ── 📊 The report sweep (opt-in) ─────────────────────────────────────────
+  // The everyday scan takes reports from Salesforce's dependency index. Live
+  // 2026-10-04 that index returned NO reports at all for two public reports
+  // that used the field, so "covered by the scan" was not true. The note says
+  // so; this is the other half the user asked for ("both"): on request, read
+  // every report's own definition and look for the field. It is never part of
+  // the scan itself (user 2026-09-01: no org-wide report read on every scan) —
+  // it runs only when the button is pressed, after its cost is stated, with a
+  // live count and a Stop.
+  const FC_RPT_CONCURRENCY = 4;
+  let _lastScan = null;   // { deps, fieldId } — what the last scan put on screen
+  let _rptScan  = null;   // { status, list, done, found[], possible[], failed, whyFailed, stop }
+
+  function renderReportScan() {
+    const el = eid('fcRptScan');
+    if (!el || !_selObj || !_selField) return;
+    const s = _rptScan;
+    const N = x => Number(x).toLocaleString();
+    const link = r => `<a href="${esc(`${_orgUrl.replace(/\/$/, '')}/lightning/r/Report/${r.Id}/view`)}" target="_blank" rel="noopener">${esc(r.Name || r.Id)}</a>`;
+    if (!s) {
+      const listed = ((_lastScan && _lastScan.deps) || []).filter(d => d.MetadataComponentType === 'Report').length;
+      el.innerHTML = `<div class="fc-rpt">📊 <strong>Reports.</strong> ${listed
+          ? `Salesforce’s index listed ${N(listed)} above — it does not list every report in every org.`
+          : 'Salesforce’s index listed none — in some orgs it lists none at all.'}
+        To be sure, this tool can open every report’s definition and look for the field itself.
+        <button class="btn btn-secondary btn-sm" id="fcRptCount">📊 Scan the reports…</button></div>`;
+      eid('fcRptCount').addEventListener('click', _rptCount);
+      return;
+    }
+    if (s.status === 'counting') { el.innerHTML = `<div class="fc-rpt">${sftkCatSm('Listing the reports you can open…')}</div>`; return; }
+    if (s.status === 'error') {
+      el.innerHTML = `<div class="fc-rpt fc-rpt-bad" title="${esc(s.error)}">📊 The reports could not be listed: ${esc(_feText(s.error))} <button class="btn btn-secondary btn-sm" id="fcRptCount">↻ Try again</button></div>`;
+      eid('fcRptCount').addEventListener('click', _rptCount);
+      return;
+    }
+    if (s.status === 'ready') {
+      const n = s.list.length;
+      el.innerHTML = n === 0
+        ? `<div class="fc-rpt">📊 There are no reports you can open in this org — nothing to scan.</div>`
+        : `<div class="fc-rpt">📊 This org has <strong>${N(n)}</strong> report${n === 1 ? '' : 's'} you can open. Reading each definition costs one API call: <strong>${N(n)} API call${n === 1 ? '' : 's'}</strong>, ${FC_RPT_CONCURRENCY} at a time. Reports that only other people can open (their private folders) are not read.
+            <button class="btn btn-primary btn-sm" id="fcRptGo">▶ Scan ${N(n)} report${n === 1 ? '' : 's'}</button>
+            <button class="btn btn-secondary btn-sm" id="fcRptCancel">Cancel</button></div>`;
+      eid('fcRptGo')?.addEventListener('click', _rptRun);
+      eid('fcRptCancel')?.addEventListener('click', () => { _rptScan = null; renderReportScan(); });
+      return;
+    }
+    if (s.status === 'running') {
+      el.innerHTML = `<div class="fc-rpt"><div class="fc-copy-prog">${sftkCatSm(`Reading reports… ${N(s.done)} of ${N(s.list.length)} · ${N(s.found.length)} use the field${s.failed ? ` · ${N(s.failed)} could not be read` : ''}`)}
+        <button class="btn btn-secondary btn-sm" id="fcRptStop"${s.stop ? ' disabled' : ''}>${s.stop ? 'Stopping…' : '⏹ Stop'}</button></div></div>`;
+      eid('fcRptStop')?.addEventListener('click', () => { s.stop = true; renderReportScan(); });
+      return;
+    }
+    // done / stopped
+    const all = s.done === s.list.length;
+    const fresh = s.added || 0;
+    el.innerHTML = `<div class="fc-rpt ${all ? 'fc-rpt-ok' : 'fc-rpt-bad'}">📊 <strong>Report scan${all ? '' : ' — STOPPED'}:</strong> read ${N(s.done)} of ${N(s.list.length)} report${s.list.length === 1 ? '' : 's'}${all ? '' : ` — the other ${N(s.list.length - s.done)} were NOT checked`}.
+        <strong>${N(s.found.length)}</strong> use${s.found.length === 1 ? 's' : ''} <code>${esc(_selObj.api)}.${esc(_selField.api)}</code>${s.found.length ? (fresh ? ` — ${N(fresh)} added to the list above under Reports` : ' — already listed above under Reports') : ''}.
+        ${s.possible.length ? `<div>⚠ ${N(s.possible.length)} mention a field with the same name without saying which object — check by hand: ${s.possible.slice(0, 8).map(link).join(', ')}${s.possible.length > 8 ? '…' : ''}</div>` : ''}
+        ${s.failed ? `<div>⚠ ${N(s.failed)} could not be read (${esc(s.whyFailed || 'no reason given')}) — those were NOT checked.</div>` : ''}
+        <div class="fc-repl-sub">Reports only other people can open were not read. <button class="fc-dd-linkbtn" id="fcRptCount">↻ Scan again</button></div>
+      </div>`;
+    eid('fcRptCount')?.addEventListener('click', _rptCount);
+  }
+
+  // Step 1: the list (one paginated query) — it is also the exact cost of step 2.
+  async function _rptCount() {
+    _rptScan = { status: 'counting' };
+    renderReportScan();
+    const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
+      query: 'SELECT Id, Name, FolderName FROM Report ORDER BY Name' });
+    if (!_rptScan || _rptScan.status !== 'counting') return;
+    if (!q || q.error) { _rptScan = { status: 'error', error: (q && q.error) || 'no answer' }; renderReportScan(); return; }
+    _rptScan = { status: 'ready', list: q.records || [], done: 0, found: [], possible: [], failed: 0, whyFailed: '', stop: false, added: 0 };
+    renderReportScan();
+  }
+
+  // Step 2: every report's definition, a few at a time.
+  async function _rptRun() {
+    const s = _rptScan;
+    if (!s || s.status !== 'ready') return;
+    const obj = _selObj.api, field = _selField.api;
+    s.status = 'running';
+    renderReportScan();
+    let next = 0, lastPaint = 0;
+    const worker = async () => {
+      while (!s.stop && _rptScan === s) {
+        const i = next++;
+        if (i >= s.list.length) return;
+        const r = s.list[i];
+        const d = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true, _silentError: true,
+          path: `services/data/v62.0/analytics/reports/${r.Id}/describe` });
+        if (!d || d.error || !d.reportMetadata) {
+          s.failed++;
+          if (!s.whyFailed) s.whyFailed = _feText((d && d.error) || 'no definition returned').slice(0, 160);
+        } else {
+          const kind = sftkRptScanClass(sftkRptFieldHits(d.reportMetadata, obj, field));
+          if (kind === 'definite') s.found.push(r);
+          else if (kind === 'possible') s.possible.push(r);
+        }
+        s.done++;
+        if (Date.now() - lastPaint > 250) { lastPaint = Date.now(); if (_rptScan === s) renderReportScan(); }
+      }
+    };
+    await Promise.all(Array.from({ length: FC_RPT_CONCURRENCY }, worker));
+    if (_rptScan !== s) return;                      // another field was picked meanwhile
+    s.status = s.done === s.list.length ? 'done' : 'stopped';
+
+    // The reports found join the list as ordinary Report rows (the fix button
+    // works on them like on any other), unless the index had listed them.
+    const have = new Set(((_lastScan && _lastScan.deps) || []).filter(d => d.MetadataComponentType === 'Report').map(d => String(d.MetadataComponentId).substring(0, 15)));
+    const rows = s.found.filter(r => !have.has(String(r.Id).substring(0, 15))).map(r => ({
+      MetadataComponentId: r.Id, MetadataComponentName: r.Name || r.Id, MetadataComponentType: 'Report',
+      RefMetadataComponentId: null, RefMetadataComponentName: field, _supplemental: true }));
+    s.added = rows.length;
+    if (rows.length && _lastScan) {
+      // rows already fixed in this session are not brought back as open work
+      const fixed = new Set([...document.querySelectorAll('#fcResults .fc-item-fixed')].map(e => e.id.replace(/^fcItem_/, '')));
+      _lastScan.deps = [..._lastScan.deps.filter(d => !fixed.has(String(d.MetadataComponentId))), ...rows];
+      await renderResults(_lastScan.deps, _lastScan.fieldId);     // draws this panel again from _rptScan
+    } else renderReportScan();
+  }
+
   // ── 📦 Copy the stored values to the replacement field ──────────────────
   // Replace mode moves references; the data stays behind in the old field and
   // is lost with it. This copies it (user 2026-10-04: "yes"). Nothing is read
@@ -2128,11 +2258,11 @@ const FieldCleaner = (() => {
     const n = plan.fill.length + (st.overwrite ? plan.over.length : 0);
     const N = x => Number(x).toLocaleString();
     const li = [];
-    li.push(`<li>✅ <strong>${N(plan.same)}</strong> already hold the same value in <code>${esc(to)}</code></li>`);
-    li.push(`<li>➕ <strong>${N(plan.fill.length)}</strong> have <code>${esc(to)}</code> empty — these are copied</li>`);
+    li.push(`<li>✅ <strong>${N(plan.same)}</strong> already hold${plan.same === 1 ? 's' : ''} the same value in <code>${esc(to)}</code></li>`);
+    li.push(`<li>➕ <strong>${N(plan.fill.length)}</strong> ${plan.fill.length === 1 ? 'has' : 'have'} <code>${esc(to)}</code> empty — ${plan.fill.length === 1 ? 'it is' : 'these are'} copied</li>`);
     if (st.fillOnly) li.push(`<li>≠ records where <code>${esc(to)}</code> already holds a value were not read (too many records to compare) and are left as they are</li>`);
-    else if (plan.over.length) li.push(`<li>≠ <strong>${N(plan.over.length)}</strong> hold a DIFFERENT value in <code>${esc(to)}</code> — left as they are unless you tick:
-      <label class="fc-copy-over"><input type="checkbox" id="fcCopyOver"${st.overwrite ? ' checked' : ''}> overwrite them with the value of <code>${esc(from)}</code></label></li>`);
+    else if (plan.over.length) li.push(`<li>≠ <strong>${N(plan.over.length)}</strong> hold${plan.over.length === 1 ? 's' : ''} a DIFFERENT value in <code>${esc(to)}</code> — left as ${plan.over.length === 1 ? 'it is' : 'they are'} unless you tick:
+      <label class="fc-copy-over"><input type="checkbox" id="fcCopyOver"${st.overwrite ? ' checked' : ''}> overwrite ${plan.over.length === 1 ? 'it' : 'them'} with the value of <code>${esc(from)}</code></label></li>`);
     for (const b of plan.blocked) li.push(`<li>✋ <strong>${N(b.count)}</strong> cannot be copied: ${esc(b.reason)}</li>`);
     if (plan.unlisted.length) li.push(`<li>⚠ ${esc(to)} does not list ${plan.unlisted.slice(0, 6).map(u => `“${esc(u.value)}” (${N(u.count)})`).join(', ')}${plan.unlisted.length > 6 ? '…' : ''}. It is not a restricted picklist, so Salesforce accepts them — as values outside its list.</li>`);
     el.innerHTML = `<div class="fc-copy">📦 <strong>Stored values</strong> — <strong>${N(plan.total)}</strong> record${plan.total === 1 ? '' : 's'} hold${plan.total === 1 ? 's' : ''} a value in <code>${esc(from)}</code>${st.capped ? ` <em>(the first ${N(FC_COPY_CAP)} that still need one — run again for the rest)</em>` : ''}:

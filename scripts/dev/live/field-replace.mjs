@@ -8,6 +8,7 @@
 //   STEP=page        ⇄ Replace on the first Lightning page row
 //   STEP=report      ⇄ Replace on the first report row
 //   STEP=copy        📦 Stored values: compare the two fields, then copy (OVER=1 also overwrites; COMPARE_ONLY=1 stops after the compare)
+//   STEP=rptscan     📊 the opt-in report sweep (COUNT_ONLY=1 stops at the quoted cost; THEN=report goes on to fix NAME=<report>)
 //   ORG=npc2         run on trailheads4 instead of trailheads5
 //   SCAN_ONLY=1      open the dialog, log it, cancel
 //   FROM / TO        the two field API names (defaults: the fixture's)
@@ -122,6 +123,25 @@ export default async function (h) {
     h.log('PLAN after:', await dump(h, '#fcCopyVals', 900));
     await h.shot(h.shots + '/fr-copy.png');
     if (process.env.UNDO === '1') await undoNewest(h);
+    return;
+  }
+  if (step === 'rptscan') {
+    h.log('REPORT PANEL:', await dump(h, '#fcRptScan', 500));
+    await h.eval(`document.querySelector('#fcRptCount').click()`);
+    await h.waitFor("!!document.querySelector('#fcRptGo') || /no reports|could not be listed/.test(document.querySelector('#fcRptScan')?.innerText || '')", 120000, 500);
+    h.log('QUOTED COST:', await dump(h, '#fcRptScan', 600));
+    if (process.env.COUNT_ONLY === '1' || !(await h.eval(`!!document.querySelector('#fcRptGo')`))) return;
+    await h.eval(`document.querySelector('#fcRptGo').click()`);
+    await h.sleep(700);
+    h.log('WHILE RUNNING:', await dump(h, '#fcRptScan', 300));
+    await h.waitFor("/Report scan/.test(document.querySelector('#fcRptScan')?.innerText || '')", 900000, 1000);
+    await h.sleep(2500);
+    h.log('SWEEP RESULT:', await dump(h, '#fcRptScan', 900));
+    h.log('fix buttons after the sweep:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-fix-btn:not(.fc-xml-fix), .fc-fix-all')].map(b => b.textContent.trim() + (b.dataset.name ? ' · ' + b.dataset.name : ''))`)));
+    await h.shot(h.shots + '/fr-rptscan.png');
+    if (process.env.THEN !== 'report') return;
+    await fixRow(h, 'Report', process.env.NAME || '');
+    h.log('RESULTS after:', await dump(h, '#fcGroup_Report', 900));
     return;
   }
   if (step === 'flow')   await fixRow(h, 'Flow', process.env.FLOW || 'SFTK FC Test Flow 2', process.env.ACTIVE || 'replace');

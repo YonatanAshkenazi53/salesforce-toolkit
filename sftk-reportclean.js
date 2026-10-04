@@ -158,7 +158,21 @@ function sftkRtHits(describeJson, objectApi, fieldApi) {
   return { definite: [...definite], possible: [...possible] };
 }
 
+// One report's verdict for the opt-in sweep, from sftkRptFieldHits:
+//   'definite' the report names Object.Field (a column, filter, grouping, or
+//              a formula / bucket / chart) — it uses the field
+//   'possible' only a bare field name without its object — may be another
+//              object's field; shown for a look by hand, never acted on
+//   null       the report does not mention it
+function sftkRptScanClass(hits) {
+  const h = hits || {};
+  if ((h.columns || []).length || (h.filters || []).length || (h.groupings || []).length || h.elsewhere) return 'definite';
+  if ((h.possible || []).length) return 'possible';
+  return null;
+}
+
 if (typeof globalThis !== 'undefined') {
+  globalThis.sftkRptScanClass  = sftkRptScanClass;
   globalThis.sftkRptTokenMatch = sftkRptTokenMatch;
   globalThis.sftkRptFieldHits  = sftkRptFieldHits;
   globalThis.sftkRptStripField = sftkRptStripField;
