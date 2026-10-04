@@ -22,23 +22,27 @@ describe('the org-default probe distinguishes "nothing found" from "could not lo
   });
 });
 
-describe('openDetail — no status, no assignment, probe answered → Unassigned', () => {
-  it('sets PublishStatus Unassigned only when every read answered and found nothing', () => {
-    expect(SRC).toContain("} else if (!toolingStatus && assignments.length === 0 && !_lpProbeFailed) {");
-    expect(SRC).toContain("page = { ...page, PublishStatus: 'Unassigned' };");
+// 2026-10-04: the detail was rebuilt on what the org really answers (the org
+// default from the describe, app-level assignments from the apps themselves —
+// test/lp-assignments-1004). The words this file exists for are kept.
+describe('openDetail — every read answered and found nothing → Unassigned; a failed read → unknown', () => {
+  it('the status comes from the assignments, and a failed read makes it unknown, never "none"', () => {
+    expect(SRC).toContain('const status = isRecordPage ? lpPageStatus(assignments, unknown.length > 0) : null;');
+    expect(SRC).toContain("if (_lpProbeFailed) unknown.push(`the org default could not be read (${_lpProbeFailed})`);");
+    expect(SRC).toContain('if (_appIndexErr) unknown.push(_appIndexErr);');
   });
 });
 
 describe('renderDetail — the words', () => {
-  const fn = between('function renderDetail(page, metaRes, assignments, bodyEl, recordTypes = []) {', '// ── C5c: embedded-flow cross-links');
+  const fn = between('function renderDetail(page, metaRes, assignments, bodyEl, recordTypes = [], ctx = {}) {', '// ── Render user chips for an assignment row');
   it('status reads "Not assigned"', () => {
-    expect(fn).toContain("const isUnassigned = normStatus === 'unassigned';");
-    expect(fn).toMatch(/: isUnassigned \? 'Not assigned' : 'Draft';/);
+    expect(fn).toContain("const statusLabel = isActive ? 'Active' : 'Not assigned';");
+    expect(fn).not.toContain("'Draft'");
   });
-  it('the empty list says nobody sees the page and how to add an assignment; only a failed probe says unknown, with the reason', () => {
-    const empty = SRC.slice(SRC.indexOf('const emptyMsg = !statusKnown'), SRC.indexOf('const emptyMsg = !statusKnown') + 900);
-    expect(empty).toContain("'No assignments — this page is not shown to anyone yet. Add one below: org default, app default, or app + record type + profile.'");
-    expect(empty).toContain("'⚠️ The org-default check failed' + (_lpProbeFailed ? ' (' + esc(_lpProbeFailed) + ')' : '') + ' — org-default assignments are unknown here; app and profile assignments were read and there are none.'");
+  it('the empty list says nobody sees the page and how to add an assignment; a failed read says unknown, never "not assigned"', () => {
+    expect(fn).toContain("'No assignments — this page is not shown to anyone yet. Add one below: org default, app default, or app + record type + profile.'");
+    expect(fn).toContain('treat this as unknown, not as “not assigned”');
+    expect(fn).toContain('Unknown — a check failed');
     expect(SRC).not.toContain('status unknown for this page type');
   });
 });

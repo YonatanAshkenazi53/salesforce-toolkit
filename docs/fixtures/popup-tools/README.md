@@ -15,7 +15,7 @@ Scripts (all `node scripts/dev/headless-studio.mjs scripts/dev/live/<name>.mjs`)
 | Copy Permissions | `copy-perms.mjs` | SRC, TGT, SCAN_ONLY=1 |
 | Licenses | `licenses.mjs` | USER, ACTION=deactivate/reactivate/cycle, SCAN_ONLY=1 |
 | Flow Access | `flow-access.mjs` | FLOW, PS, SCAN_ONLY=1 |
-| Lightning Pages | `lightning-pages.mjs` | PAGE, STEP=detail/orgdefault/remove/cycle, SCAN_ONLY=1 |
+| Lightning Pages | `lightning-pages.mjs` | PAGE, STEP=detail/orgdefault/appdefault/artp/remove/deactivate/clone/users/whosees/cycle, APP, PROFILE, RT, ROW, FF, COPY=1, UNDO=1, SCAN_ONLY=1 |
 
 ## Findings
 
@@ -43,3 +43,8 @@ Scripts (all `node scripts/dev/headless-studio.mjs scripts/dev/live/<name>.mjs`)
   assignments, Clone, Deactivate page, the user-lens pages.
 
 **Role (2026-09-29):** trailheads5 has one role, `SFTK Test Role` (00E9k0000002CmfEAE), held by SFTK Test A; SFTK Test B has none — `copy-perms.mjs UNDO=1` copies it to B and the History undo takes it off again. Identity-licence users accept a role.
+- rebuilt 2026-10-04 (campaign 4 phase 10): app default and app + record type + profile had never
+  been accepted by Salesforce, an app assignment silently made the page the org default, and
+  Deactivate could reset another page's org default. Fixture app `SFTK_LP_Test_App` added
+  (`docs/fixtures/lightning-page-fixture`). All steps above verified with CLI truth; baseline after
+  the session: `SFTK_LP_Test_Account_Page` is Account's Desktop org default, the app holds nothing.

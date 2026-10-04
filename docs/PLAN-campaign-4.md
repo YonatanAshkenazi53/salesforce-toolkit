@@ -299,52 +299,69 @@ Same as #3" over records that look identical, words were not enough. Now:
 - Next step if wanted: "add <field> to the match key" as one button on the intro (today it names
   the field and points at ✏ Edit → Records → Matching).
 
-## Phase 10 — Lightning Pages QA (started 2026-10-04, PAUSED for Phase 11)
+## Phase 10 — Lightning Pages QA: the assignment model, rebuilt (DONE 2026-10-04)
 
-Lightning Pages stays in 1.0, so it gets the hand-level QA it never had. Recon of
-`lightning-pages.js` (map by a Sonnet agent, the write paths then read by Fable) found the
-following. **Read in code, NOT yet reproduced live** unless marked.
+Lightning Pages stays in 1.0, so it got the hand-level QA it never had. The first live step
+(App Default on an unassigned page) made that page the org-wide Desktop default and then failed.
+Everything below was then PROVED BY CLI on trailheads5 before any code changed.
 
-Live so far: the harness opens the fixture page `SFTK_LP_Test_Account_Page` on trailheads5; it
-is currently the Desktop org default for Account there (left from an earlier run).
+**What Salesforce really does (the tool had all of this wrong):**
+- App Default = an entry of `CustomApplication.Metadata.actionOverrides`. App + Record Type +
+  Profile = an entry of `.profileActionOverrides` (an entry there without a profile is refused:
+  "Required field profile"). The tool wrote app defaults into `profileActionOverrides`.
+- The profile is its METADATA name (`Admin`, `Standard`), read with a single-row Tooling query
+  (`SELECT Id, FullName FROM Profile WHERE Id = …`). The display name gives
+  INVALID_CROSS_REFERENCE_KEY. The record type is `Object.DeveloperName`.
+- A Tooling PATCH of a CustomApplication MERGES the two override lists (an entry left out stays;
+  an entry is removed by sending `type: 'Default'` for its slot) and REPLACES every other field
+  (omit `description` and it is cleared; omit `uiType` and the PATCH is refused). So a PATCH =
+  the app's whole current definition (`sftkMetaForPatch`) + only the changed entry.
+- `FlexiPage.Metadata` has no `pageAssignments` and no `publishStatus` (v62 and v64): a page's
+  app-level assignments can only be read from the apps. There is no profile-only assignment
+  without an app ("All Apps" was not a real option).
+- An org default is cleared by deploying `type=Default` for the slot — which resets WHATEVER page
+  holds it.
 
-Findings to reproduce, then fix (in this order — the first three change what users see):
-1. **Deactivate can reset ANOTHER page's org default.** `activatePage(..., 'Draft')` deploys a
-   CustomObject `actionOverrides` entry `type=Default` with no content for Desktop. A page that
-   is active only through an app or profile assignment is not the org default, so the reset
-   lands on whichever page is. The page itself stays assigned while the detail says "Draft".
-   Fix shape: Deactivate = remove every assignment THIS page holds (fresh re-read first, each
-   named in the one confirmation), never a blind reset.
-2. **App Default / App+Record Type+Profile on an unassigned page also makes the page the org
-   default for Desktop** (`doAdd` pre-activation, `if (!isActive && sobjectType && mode !==
-   'orgdefault') await activatePage(...)`). The confirmation only says "the Draft page will also
-   be activated". An app assignment alone already activates a page; the extra org-wide write
-   must go.
-3. **▶ Activate is "set as org default for Desktop" under another name**, and its confirmation
-   does not say so, nor which page it replaces.
-4. **Org-default writes are not verified** (`noVerify`) and the detail afterwards is drawn from
-   synthesized state (`assignmentsOverride`), not a re-read. The describe (`actionOverrides`,
-   cache-busted) is a real read-back: use it, with a visible wait, and say which page was
-   replaced; the same read gives a real undo (redeploy the previous page or `Default`).
-5. **Clone with "Copy assignments" (ticked by default) takes over every slot of the original**
-   and has no shared confirmation or production gate. Default it off, say the consequence, gate it.
-6. `patchCustomApp` verifies only the COUNT of overrides, not that the entry is there / gone.
-7. "Show affected users" (`fetchUsers`) caches an error as an empty list: a failed query reads
-   "No active users on this profile". The reported "Who sees what - Show users" HTTP 404 is
-   still to reproduce (`fetchOrgDefaultUsers` shows a friendly error; no fresh-session retry
-   beyond `bg()`'s SESSION_EXPIRED path).
-8. An App Default row is labelled "Org Default - Applies to all users in the org" (`isOrgDef =
-   !a.profile`).
-9. After the last assignment is removed the detail says "Draft"; everywhere else the tool says
-   "Not assigned".
-10. The "Mark as Default" checkbox in the App + Record Type + Profile form is never read.
-11. An already-assigned form factor (ticked + disabled) is deployed again when the other one is added.
-12. There is no delete-page action (the clone's History entry says "delete by hand") — a limit to
-    state in FEATURES.md, not a bug.
+**What changed (lightning-pages.js; pure helpers at column 0, pins `test/lp-assignments-1004`):**
+- Read model: `ensureApps` (Lightning `CustomApplication` rows), `ensureAppIndex` / `refreshApp`
+  (`_appMeta`, batched; a failed read = `_appIndexErr` = assignments UNKNOWN),
+  `profileFullName` / `profileNameOfFull` / `resolveProfileNames`; `lpAppAssignments`,
+  `lpAppSlotHolder`, `lpAppHas`, `lpOrgSlotHolder`, `lpPageStatus`, `lpAssignmentWords`.
+- `openDetail(page, errorMsg, note)` always shows what the org answers (no `assignmentsOverride`,
+  no `publishStatusOverride`). Non-record pages: "Activation not read here", no form.
+- Writes: `writeOrgDefault` (deploy + describe re-read, 8 x 2.5 s, shown; clearing only while this
+  page holds the slot), `writeAppAssignment` (fresh app read, delta via `lpAppDelta`, re-read),
+  `orgUndoStep` (History undo with a describe re-read). `doAdd(…, want, ctx)` = one confirmation
+  naming every assignment and the page it REPLACES (`currentHolders`), one History entry; no
+  pre-activation. `confirmRemove(…, idxs)` / `doRemove` serve ✕ and ⏸ Deactivate (= all).
+  No Activate button, no "All Apps", no "Mark as Default".
+- Clone: unticked "Also move the original's assignments to the copy" + the shared confirmation.
+- `fetchUsers` returns `{ users, error }`; an error is shown with a retry.
+- List Pass 3 and `scanAllPageAssignments` read app-level assignments from the app index; the
+  audit covers record pages and says how many pages of other types are not in it.
+- `sftk-history.js`: an undo step's `verify` may be a REST `path` (not only SOQL), with a list of
+  `where` conditions and `retries` — that is how an org-default undo is re-read.
 
-Live script to extend: `scripts/dev/live/lightning-pages.mjs` (STEP=appdefault | artp | clone |
-deactivate | whosees), CLI truth between steps: describe `actionOverrides`, Tooling
-`CustomApplication.Metadata.profileActionOverrides`, Tooling `FlexiPage.Metadata.pageAssignments`.
+**Verified live (`scripts/dev/live/lightning-pages.mjs`, CLI truth after each step):** app default
+on an unassigned page (org default untouched); app + record type + profile for Standard User and
+System Administrator (stored as Standard / Admin; a person-account record type is refused by
+Salesforce and reported per item); ✕ on one row; ⏸ Deactivate (4 removed, app clean, the OTHER
+page's org default untouched); org default set over another page (dialog names it; verified);
+History undo of an org default (verified by re-read); clone with move; affected users; the list
+dots; the audit card with an app + profile row. Fixture: app `SFTK_LP_Test_App`
+(`docs/fixtures/lightning-page-fixture`).
+
+**Not reproduced:** the "Who sees what → Show users" HTTP 404 from the old bug note — the list
+loads; a failing query shows a friendly error there.
+
+**Left (backlog):**
+- `fetchOrgDefaults` Pass 1 still does one Tooling GET per unmanaged page to read
+  `pageAssignments`, a field that does not exist. It is harmless but wasted; removing it changes
+  the quoted-cost arithmetic and its pins (`lightning-pages-scale`, `ent-quota-lp`).
+- App-level undo from History (needs a safe way to write one entry without carrying a stale copy
+  of the app's definition).
+- Person-account record types (`PersonAccount.X`) in the App + Record Type + Profile form.
+- Home / App page activation is not read.
 
 ## Phase 11 — Field Cleaner: replace a field with another one (DONE 2026-10-04)
 

@@ -111,9 +111,17 @@ const LightningPages = (() => {
   let _actionOverrideSupported = false;
   let _aoStorageKey = '';   // set in init() once orgUrl is known
 
-  // Set to false if the Tooling AppDefinition sObject returns HTTP 400 in this org.
-  // All AppDefinition strategies in ensureApps() are skipped when false.
-  let _appDefinitionSupported = true;
+  // App-level assignments (see the note above ensureApps): every Lightning
+  // app's definition, kept for the session as the index of who holds what.
+  let _appMeta      = new Map();   // CustomApplication Id → Metadata
+  let _appListErr   = null;        // why the list of Lightning apps could not be read
+  let _appIndexErr  = null;        // why some app definitions could not be read (assignments then UNKNOWN)
+  const _profFullById = new Map(); // Profile Id → metadata FullName ("Admin", "Standard", …)
+  let _stdProfilesRead = false;    // the standard profiles' metadata names were read once
+  function _appStateReset() {
+    _appMeta = new Map(); _appListErr = null; _appIndexErr = null;
+    _profFullById.clear(); _stdProfilesRead = false;
+  }
 
   // ── Public API ───────────────────────────────────────────
   function init(container, orgUrl, sid) {
@@ -125,7 +133,7 @@ const LightningPages = (() => {
     profileUserCache          = {};
     allApps                   = [];
     recordTypeCache           = {};
-    _appDefinitionSupported   = true;
+    _appStateReset();
     _wswScan                  = null;
     _wswScanCost              = null;
     _lpAudience               = null;
@@ -217,7 +225,7 @@ const LightningPages = (() => {
       // ActionOverride is never SOQL-queryable (always HTTP 400) — keep the flag
       // off on refresh too, matching init(). See the flag declaration comment.
       _actionOverrideSupported  = false;
-      _appDefinitionSupported   = true;
+      _appStateReset();
       _wswScan                  = null;
       _wswScanCost              = null;
       _lpAudience               = null;
@@ -420,9 +428,15 @@ const LightningPages = (() => {
     const pendingIds = _lpPendingEntityIds(objects);
     // Pass 3 (status retrieves for still-unknown pages) is part of the same
     // run, so it must be part of the same quoted cost.
-    const statusReads = allPages.filter(p =>
-      !p.PublishStatus && !LP_TYPES_NO_ACTIVATION.has(p.Type)
-      && (!remaining || !_odStatusDone.has(p.Id))).length;
+    // It is answered from the Lightning apps' own definitions — one batched
+    // read of the apps not read yet, however many pages are waiting (it used
+    // to be one read PER page, of a field that does not exist).
+    const needStatus = allPages.some(p =>
+      !p.PublishStatus && p.Type === 'RecordPage'
+      && (!remaining || !_odStatusDone.has(p.Id)));
+    const statusReads = !needStatus ? 0
+      : allApps.length ? lpBatchChunkPlan(allApps.filter(a => !_appMeta.has(a.Id)).length, LP_SCAN_PAGE_CHUNK).length
+      : 5;   // the app list is not read yet: 1 query + a few batches — the strip prints "≈" 
     return lpOrgDefaultsPlan(pageTargets.length, objects.length, {
       autoMax:     LP_OD_AUTO_MAX,
       concurrency: LP_OD_CONCURRENCY,
@@ -679,30 +693,39 @@ const LightningPages = (() => {
     // won't resolve and stay orange"). The page's own Metadata carries
     // publishStatus — one retrieve per still-unknown page settles the dot
     // for good. No-activation types are excluded: they get the neutral dot.
+    // A record page that is nobody's org default can still be shown through an
+    // app (app default, app + record type + profile). FlexiPage metadata has
+    // NO pageAssignments and no publishStatus (read live 2026-10-04: neither
+    // key exists) — this pass used to read the former per page, so every
+    // app-assigned page was called "not activated". The Lightning apps' own
+    // definitions hold those assignments: one batched read answers every page.
+    // Other page types (Home, App…) are not read by this tool: no claim, a
+    // neutral dot.
     const statusTargets = allPages.filter(p =>
-      !p.PublishStatus && !LP_TYPES_NO_ACTIVATION.has(p.Type) && !_odStatusDone.has(p.Id));
-    const p3 = await lpRunPool(statusTargets, async (pg) => {
-      if (myToken !== _odRunToken) return false;
-      try {
-        const r = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
-          sobject: 'FlexiPage', id: pg.Id });
-        calls++;
-        if (r?.error || !r?.Metadata) return false;
-        // FlexiPage has NO publishStatus anywhere (verified live 2026-08-19 —
-        // the field is a phantom). A Lightning page's only activation truth
-        // is its ASSIGNMENTS: Metadata.pageAssignments carries org-default,
-        // app, and profile activations alike. Present → the page is live
-        // somewhere; absent → nothing in the org points at it.
-        const asg = Array.isArray(r.Metadata.pageAssignments) ? r.Metadata.pageAssignments.length : 0;
-        syncPageStatus(pg.Id, asg ? 'Active' : 'Unassigned');
+      !p.PublishStatus && p.Type === 'RecordPage' && !_odStatusDone.has(p.Id));
+    const p3 = { complete: true };
+    if (statusTargets.length && !stop()) {
+      await ensureAppIndex();
+      if (myToken !== _odRunToken) return;
+      const viaApp = new Set();
+      for (const app of allApps) {
+        const m = _appMeta.get(app.Id);
+        for (const o of [...((m && m.actionOverrides) || []), ...((m && m.profileActionOverrides) || [])]) {
+          if (o && String(o.type || '').toLowerCase() === 'flexipage' && o.content) viaApp.add(String(o.content).toLowerCase());
+        }
+      }
+      const named = dev => { const d = String(dev || '').toLowerCase(); return [...viaApp].some(c => c === d || c.endsWith('__' + d)); };
+      for (const pg of statusTargets) {
+        if (named(pg.DeveloperName)) syncPageStatus(pg.Id, 'Active');
+        // "Not assigned" needs BOTH reads to have answered: its object's describe
+        // (not the org default) and every app (not assigned there either).
+        else if (!_appIndexErr && pg.EntityDefinitionId && _odObjDone.has(pg.EntityDefinitionId)) syncPageStatus(pg.Id, 'Unassigned');
+        else continue;                       // stays unknown — the strip counts it
         _odStatusDone.add(pg.Id);
-        return true;
-      } catch (_) { return false; }   // stays unknown — the strip counts it
-    }, {
-      concurrency: LP_OD_CONCURRENCY,
-      shouldStop:  stop,
-      onProgress:  () => { if (myToken === _odRunToken) odRepaint(); }
-    });
+      }
+      if (_appIndexErr) p3.complete = false;
+      odRepaint();
+    } else if (statusTargets.length) p3.complete = false;
     if (myToken !== _odRunToken) return;
 
     // `complete` is decided by the pools' own counts, never by the absence of a
@@ -872,7 +895,8 @@ const LightningPages = (() => {
           ? `<span class="lp-obj-tag" style="opacity:.75" title="${collides ? 'Another page has the same label — this is the API name' : 'Installed by a managed package'}">${managed ? '🔒 ' : ''}${esc(p.DeveloperName || '')}</span>`
           : '';
         const ps  = (p.PublishStatus || '').toLowerCase();
-        const dotCls = isNA && !ps          ? 'lp-dot-na'
+        const notRead = !isNA && p.Type !== 'RecordPage';   // Home / App / … pages: activation not read here
+        const dotCls = (isNA || notRead) && !ps ? 'lp-dot-na'
                      : ps === 'active'      ? 'lp-dot-active'
                      : ps === 'unassigned'  ? 'lp-dot-na'
                      : ps === 'obsolete'    ? 'lp-dot-obsolete'
@@ -882,8 +906,9 @@ const LightningPages = (() => {
         // org-default run was never started or was stopped, nothing is checking
         // and the status is simply not known — say that instead.
         const dotTitle = isNA && !ps ? `Org-default activation doesn't apply to this page type — it is active wherever its app includes it.`
+                       : notRead && !ps ? 'This tool reads the activation of record pages only — a Home or App page is activated in Lightning App Builder, and nothing is claimed about it here.'
                        : ps === 'active' ? 'Active' : ps === 'obsolete' ? 'Obsolete'
-                       : ps === 'unassigned' ? 'Not activated — no org default, app, or profile assignment points at this page. Safe to edit; users never see it.'
+                       : ps === 'unassigned' ? 'Not assigned — it is not the org default, and no Lightning app assigns it. Users never see it.'
                        : ps === 'draft'  ? 'Draft'
                        : _odState.status === 'running' ? 'Checking…'
                        : 'Status not checked';
@@ -1205,7 +1230,7 @@ const LightningPages = (() => {
         for (const d of activePages) blocks.push(() => renderCard(d));
       }
       if (inactivePages.length) {
-        blocks.push(() => `<div class="lp-pm-section-hdr" style="margin-top:14px">○ Draft / Inactive Pages (${inactivePages.length})</div>`);
+        blocks.push(() => `<div class="lp-pm-section-hdr" style="margin-top:14px">○ Not assigned (${inactivePages.length})</div>`);
         for (const d of inactivePages) blocks.push(() => renderCard(d));
       }
       if (!activePages.length && !inactivePages.length) {
@@ -1226,7 +1251,10 @@ const LightningPages = (() => {
             : '');
       const costHtml = costText
         ? `<div style="font-size:11px;color:var(--subtext);margin:0 0 6px">${esc(costText)}</div>` : '';
-      body.innerHTML = costHtml + lpAudienceCaveatHtml(audience, pageDataArr);
+      const otherTypes = allPages.filter(p => p.Type !== 'RecordPage').length;
+      const scopeHtml = (otherTypes || _appIndexErr)
+        ? `<div class="lp-unknown-note">${otherTypes ? esc(`This audit covers record pages. ${otherTypes} Home, App, Flow and other pages are not in it: they are activated another way that this tool does not read, so nothing is claimed about who sees them.`) : ''}${_appIndexErr ? esc(` ⚠️ App-level assignments may be incomplete: ${_appIndexErr}.`) : ''}</div>` : '';
+      body.innerHTML = costHtml + scopeHtml + lpAudienceCaveatHtml(audience, pageDataArr);
 
       // Wiring runs after every append and only touches elements it has not seen
       // (data-lpw). Delegation is not an option for the expanders: `toggle` does
@@ -1368,7 +1396,10 @@ const LightningPages = (() => {
       if (!pRes.error && pRes.records) allProfiles = pRes.records;
     }
 
-    const targets = [...allPages].sort((a, b) =>
+    // RECORD pages only. A Home / App / Flow page is activated another way that
+    // this tool does not read — listing it here as "inactive, 0 users" (as the
+    // scan did) was a claim nothing supported. The view says how many were left out.
+    const targets = allPages.filter(p => p.Type === 'RecordPage').sort((a, b) =>
       (a.MasterLabel || '').localeCompare(b.MasterLabel || '')
     );
     if (!targets.length) {
@@ -1407,6 +1438,21 @@ const LightningPages = (() => {
     );
     if (!alive()) return null;   // navigated away
 
+    // App default / app + record type + profile live in the Lightning apps' own
+    // definitions (a FlexiPage's metadata has NO pageAssignments — read live
+    // 2026-10-04; this scan read that missing key and so showed org defaults
+    // only). One batched read of the apps answers every page.
+    await ensureAppIndex();
+    if (!alive()) return null;
+    const appRowsOf = (devName, sobject) => {
+      const out = [];
+      for (const app of allApps) {
+        const m = _appMeta.get(app.Id);
+        if (m) out.push(...lpAppAssignments(appInfo(app), m, devName, sobject));
+      }
+      return out;
+    };
+
     // Rows in INPUT order — the position of a page in this array is fixed here
     // and never inferred from anything the server sends back.
     const rows = targets.map((p, i) => {
@@ -1424,14 +1470,14 @@ const LightningPages = (() => {
       // EntityDefinitionId from the initial SOQL list — critical for custom Record
       // Pages where Metadata.sobjectType may return null.
       const sobjectType = meta.Metadata?.sobjectType || p.EntityDefinitionId || null;
-      // PublishStatus when a pass established it, else the assignments are
-      // the truth (the Metadata GET does not return publishStatus —
-      // verified live 2026-08-19; Salesforce computes it FROM assignments).
-      const pageStatus  = (p.PublishStatus
-        || ((meta.Metadata?.pageAssignments || []).length ? 'active' : 'unassigned')).toLowerCase();
+      // The assignments are the truth (a FlexiPage has no publish status).
+      // `app` carries the app's LABEL here — this view only displays it.
+      const appAsg = appRowsOf(meta.FullName || p.DeveloperName, sobjectType)
+        .map(a => ({ ...a, app: a.appLabel || a.app }));
+      const pageStatus  = (appAsg.length ? 'active' : (p.PublishStatus || 'unassigned')).toLowerCase();
       return {
         page: p, meta,
-        assignments: [...(meta.Metadata?.pageAssignments || [])],
+        assignments: appAsg,
         orgDefaults: [], orgDefaultDebug: null,
         _devName:     meta.FullName || p.DeveloperName,
         _sobjectType: sobjectType,
@@ -1441,6 +1487,14 @@ const LightningPages = (() => {
         _wantsDescribe: !!(sobjectType && pageStatus !== 'draft' && pageStatus !== 'obsolete')
       };
     });
+
+    // An assignment stores a profile by its METADATA name; the audience is
+    // resolved by the name people know.
+    await resolveProfileNames(rows.flatMap(r => r.assignments.map(a => a.profileFull)));
+    if (!alive()) return null;
+    for (const r of rows) for (const a of r.assignments) {
+      if (a.kind === 'artp') a.profile = profileNameOfFull(a.profileFull) || a.profileFull;
+    }
 
     // ── Pass 2: ONE describe per unique OBJECT ───────────────────────────────
     // 01I… ids are resolved to API names FIRST, in one chunked query for the
@@ -1515,17 +1569,9 @@ const LightningPages = (() => {
         out.log.strategy1Skipped = 'ActionOverride not supported in this org';
       }
 
-      // Merge: add describe-derived entries that the Tooling pageAssignments did
-      // not already carry. Tested against the ORIGINAL api list, not the growing
-      // one — same as openDetail, and the same as the loop this replaced.
-      const apiAssignments = r.meta.Metadata?.pageAssignments || [];
+      // The org default joins the app-level assignments read above.
       r.orgDefaults = out.defaults;
-      for (const co of out.defaults) {
-        const already = apiAssignments.some(
-          a => !a.profile && !a.app && (a.formFactor || 'Large') === co.formFactor
-        );
-        if (!already) r.assignments.push(co);
-      }
+      for (const co of out.defaults) r.assignments.push({ ...co, kind: 'org' });
       // Salesforce enforces: a page can only be an org default while Active.
       // Unconditionally set status to Active when org-default is confirmed —
       // this corrects stale Tooling API data without any extra round-trip.
@@ -1538,6 +1584,14 @@ const LightningPages = (() => {
       // is why the old code needed a guard against a page inheriting the
       // previous page's debug data.
       r.orgDefaultDebug = out.conclusive ? null : out.log;
+    }
+
+    // Assigned through an app only (nobody's org default) is ACTIVE too.
+    for (const r of rows) {
+      if (r.assignments.length > 0 && String(r.page.PublishStatus || '').toLowerCase() !== 'active') {
+        r.page = { ...r.page, PublishStatus: 'Active' };
+        syncPageStatus(r.page.Id, 'Active');
+      }
     }
 
     pagesDone = targets.length;
@@ -2024,94 +2078,106 @@ const LightningPages = (() => {
     document.getElementById('lpUlBack')?.addEventListener('click', () => openUserLens());
   }
 
-  // ── Load Lightning apps with sequential fallback strategies ─
-  // Each strategy is tried in turn; we stop as soon as one returns usable data.
-  //
-  // Strategy order:
-  //   1. REST AppMenuItem WHERE Type='App'  — most universally supported, no Tooling needed
-  //   2. REST AppMenuItem (no type filter)  — broader net for orgs where Type='App' is empty
-  //   3. Tooling AppDefinition with Label   — Tooling fallback (skipped if unsupported)
-  //   4. Tooling AppDefinition with MasterLabel — older API version variant
-  //   5. Tooling AppDefinition minimal      — last resort (DeveloperName only)
-  //
-  // Failure modes addressed:
-  //   • AppDefinition not supported in all orgs (HTTP 400) → _appDefinitionSupported flag
-  //   • AppDefinition.MasterLabel may not exist in all API versions → try Label first
-  //   • AppMenuItem.Name is often null → accept records with just Label
-  //   • Type='App' filter may exclude some Lightning apps → also try without filter
+  // ── Lightning apps, and the assignments each one holds ─────
+  // Where a record page's app-level assignments REALLY live (proved by CLI on
+  // trailheads5, 2026-10-04 — the tool had this wrong in four ways and no
+  // app-level assignment it wrote had ever been accepted):
+  //   • an App Default is an entry of CustomApplication.actionOverrides;
+  //     App + Record Type + Profile is an entry of .profileActionOverrides
+  //     (an entry there without a profile is refused: "Required field profile");
+  //   • the profile is written by its METADATA name ("Admin", "Standard"), not
+  //     the name people see — the display name is INVALID_CROSS_REFERENCE_KEY;
+  //   • the record type is written as Object.DeveloperName;
+  //   • a Tooling PATCH MERGES the two override lists (an entry that is left
+  //     out stays; an entry is removed by sending type "Default" for its slot)
+  //     while every other field of the app is REPLACED — so a PATCH carries the
+  //     app's whole current definition plus only the changed entry;
+  //   • FlexiPage.Metadata has NO pageAssignments: a page's app-level
+  //     assignments can only be read from the apps themselves.
+  // So the apps are read from CustomApplication (the record that is written),
+  // and their definitions are kept for the session as the assignment index.
   async function ensureApps() {
     if (allApps.length > 0) return;
+    const r = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
+      query: "SELECT Id, DeveloperName, NamespacePrefix, Label FROM CustomApplication WHERE UiType = 'Lightning' ORDER BY Label" });
+    if (!r || r.error) { _appListErr = (r && r.error) || 'no answer'; return; }
+    _appListErr = null;
+    allApps = (r.records || []).map(a => ({
+      Id: a.Id, DeveloperName: a.DeveloperName, NamespacePrefix: a.NamespacePrefix || '',
+      MasterLabel: a.Label || a.DeveloperName,
+    }));
+  }
 
-    // Helper: normalise a raw records array into allApps format and sort
-    function appsFromRecords(records, nameField, labelField) {
-      const hits = records.filter(r => r[labelField]);
-      return hits.map(r => ({
-        DeveloperName: r[nameField] || r[labelField],
-        MasterLabel:   r[labelField]
-      })).sort((a, b) => (a.MasterLabel || '').localeCompare(b.MasterLabel || ''));
+  // Every Lightning app's definition, read once (batched) and kept. A failed
+  // read is remembered as a reason: the page's app assignments are then
+  // UNKNOWN, never "none".
+  async function ensureAppIndex(onProgress) {
+    await ensureApps();
+    if (_appListErr) { _appIndexErr = `the list of Lightning apps could not be read (${_appListErr})`; return; }
+    const todo = allApps.filter(a => !_appMeta.has(a.Id));
+    if (todo.length) {
+      const res = await _lpBatchRead(
+        todo.map(a => `services/data/v62.0/tooling/sobjects/CustomApplication/${a.Id}`),
+        LP_SCAN_PAGE_CHUNK, { onProgress });
+      res.forEach((r, i) => { if (r && r.ok && r.body && r.body.Metadata) _appMeta.set(todo[i].Id, r.body.Metadata); });
     }
+    const missing = allApps.filter(a => !_appMeta.has(a.Id));
+    _appIndexErr = missing.length
+      ? `${missing.length} of ${allApps.length} Lightning app(s) could not be read (${missing.slice(0, 3).map(a => a.MasterLabel).join(', ')}${missing.length > 3 ? '…' : ''})`
+      : null;
+  }
+  // One app, read fresh — before a write (its whole definition travels with
+  // the PATCH) and after it (the re-read that judges the write).
+  async function refreshApp(appId) {
+    const r = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true, sobject: 'CustomApplication', id: appId });
+    if (!r || r.error || !r.Metadata) throw new Error((r && r.error) || 'the app’s definition was not returned');
+    _appMeta.set(appId, r.Metadata);
+    return r.Metadata;
+  }
+  const appInfo = a => ({ id: a.Id, name: a.DeveloperName, label: a.MasterLabel });
 
-    // Strategy 1 — REST: AppMenuItem WHERE Type='App' (most compatible, no Tooling needed)
-    const r1 = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
-                          query: "SELECT Name,Label FROM AppMenuItem WHERE Type='App' ORDER BY Label" });
-    if (!r1.error && r1.records?.length) {
-      const apps = appsFromRecords(r1.records, 'Name', 'Label');
-      if (apps.length) { allApps = apps; return; }
+  // A profile's METADATA name (what an assignment stores). One Tooling query
+  // per profile — FullName is only returned for a single row.
+  async function profileFullName(profileId) {
+    if (_profFullById.has(profileId)) return _profFullById.get(profileId);
+    const r = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
+      query: `SELECT Id, FullName FROM Profile WHERE Id = '${profileId}'` });
+    if (r && r.error) throw new Error(r.error);
+    const full = r && r.records && r.records[0] && r.records[0].FullName;
+    if (!full) throw new Error('Salesforce did not return the profile’s metadata name');
+    _profFullById.set(profileId, full);
+    return full;
+  }
+  // The name people know, for a metadata name — or null when it is not known yet.
+  function profileNameOfFull(full) {
+    if (!full) return null;
+    const low = String(full).toLowerCase();
+    for (const [id, f] of _profFullById) {
+      if (String(f).toLowerCase() === low) { const p = allProfiles.find(x => x.Id === id); if (p) return p.Name; }
     }
-
-    // Strategy 2 — REST: AppMenuItem with no Type filter (catches all app-type items)
-    const r2 = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
-                          query: "SELECT Name,Label,Type FROM AppMenuItem ORDER BY Label" });
-    if (!r2.error && r2.records?.length) {
-      // Keep records whose Type looks like an application (App / Application / AppPage)
-      const appTypes = new Set(['App', 'Application', 'AppPage']);
-      const filtered = r2.records.filter(r => r.Label && (!r.Type || appTypes.has(r.Type)));
-      if (filtered.length) {
-        allApps = appsFromRecords(filtered, 'Name', 'Label');
-        return;
-      }
-      // If the type filter removed everything, fall back to all records with a Label
-      const apps = appsFromRecords(r2.records, 'Name', 'Label');
-      if (apps.length) { allApps = apps; return; }
-    }
-
-    // Strategies 3-5 — Tooling: AppDefinition (skipped entirely if unsupported in this org)
-    if (!_appDefinitionSupported) return;
-
-    // Strategy 3 — Tooling: AppDefinition with Label (most compatible field)
-    const r3 = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
-                          query: 'SELECT DeveloperName,Label FROM AppDefinition ORDER BY Label' });
-    if (r3.error && /not supported|sObject type/i.test(r3.error)) {
-      _appDefinitionSupported = false; return;
-    }
-    if (!r3.error && r3.records?.length) {
-      const apps = appsFromRecords(r3.records, 'DeveloperName', 'Label');
-      if (apps.length) { allApps = apps; return; }
-    }
-
-    // Strategy 4 — Tooling: AppDefinition with MasterLabel (older API versions)
-    const r4 = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
-                          query: 'SELECT DeveloperName,MasterLabel FROM AppDefinition' });
-    if (r4.error && /not supported|sObject type/i.test(r4.error)) {
-      _appDefinitionSupported = false; return;
-    }
-    if (!r4.error && r4.records?.length) {
-      const apps = appsFromRecords(r4.records, 'DeveloperName', 'MasterLabel');
-      if (apps.length) { allApps = apps; return; }
-    }
-
-    // Strategy 5 — Tooling: AppDefinition minimal (DeveloperName only, describe-safe)
-    const r5 = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
-                          query: 'SELECT DeveloperName FROM AppDefinition' });
-    if (r5.error && /not supported|sObject type/i.test(r5.error)) {
-      _appDefinitionSupported = false; return;
-    }
-    if (!r5.error && r5.records?.length) {
-      allApps = r5.records
-        .filter(r => r.DeveloperName)
-        .map(r => ({ DeveloperName: r.DeveloperName, MasterLabel: r.DeveloperName }))
-        .sort((a, b) => a.DeveloperName.localeCompare(b.DeveloperName));
-    }
+    let dec = String(full);
+    try { dec = decodeURIComponent(dec); } catch (_) { /* not encoded */ }
+    const p = allProfiles.find(x => String(x.Name).toLowerCase() === dec.toLowerCase());
+    return p ? p.Name : null;
+  }
+  // A custom profile's metadata name IS its name; a standard one's is not
+  // ("Admin" = System Administrator). When an assignment names a profile that
+  // matches no profile by name, read the standard profiles' metadata names —
+  // once, batched.
+  async function resolveProfileNames(fulls) {
+    const unknown = (fulls || []).filter(f => f && !profileNameOfFull(f));
+    if (!unknown.length || _stdProfilesRead) return;
+    _stdProfilesRead = true;
+    const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
+      query: 'SELECT ProfileId FROM PermissionSet WHERE IsOwnedByProfile = true AND IsCustom = false' });
+    if (!q || q.error) return;
+    const ids = [...new Set((q.records || []).map(r => r.ProfileId).filter(Boolean))].filter(id => !_profFullById.has(id));
+    const res = await _lpBatchRead(
+      ids.map(id => `services/data/v62.0/tooling/query/?q=${encodeURIComponent(`SELECT Id, FullName FROM Profile WHERE Id = '${id}'`)}`), 25);
+    res.forEach((r, i) => {
+      const full = r && r.ok && r.body && r.body.records && r.body.records[0] && r.body.records[0].FullName;
+      if (full) _profFullById.set(ids[i], full);
+    });
   }
 
   // ── Org-default assignment detection ─────────────────────
@@ -2262,11 +2328,12 @@ const LightningPages = (() => {
   }
 
   // ── Page detail ───────────────────────────────────────────
-  // errorMsg:              shows an error banner at the top of the detail (post-deploy errors).
-  // publishStatusOverride: overrides the API-returned publishStatus (handles Tooling API lag).
-  // assignmentsOverride:   overrides the API-returned assignments (used immediately after save
-  //                        so the user sees the correct state before the API catches up).
-  async function openDetail(page, errorMsg = null, publishStatusOverride = null, assignmentsOverride = null) {
+  // errorMsg: shown as a banner above the detail (a write that failed).
+  // note:     shown as a plain result line (what a write did, in words).
+  // The assignments shown are ALWAYS what the org answers now: the org default
+  // from the object's describe, the app-level ones from the apps themselves.
+  // Nothing is drawn from what a write was supposed to have done.
+  async function openDetail(page, errorMsg = null, note = null) {
     const content = document.getElementById('lpContent');
     if (!content) return;
 
@@ -2300,11 +2367,11 @@ const LightningPages = (() => {
     document.getElementById('lpOpenSfBtn').addEventListener('click', () => {
       chrome.tabs.create({ url: `${_orgUrl}/visualEditor/appBuilder.app?id=${page.Id}` });
     });
+    const say = msg => { const b = document.getElementById('lpDetailBody'); if (b) b.innerHTML = sftkCat(msg); };
 
-    // Load apps first (sequential fallback — only runs once, then cached)
     await ensureApps();
 
-    // Fetch page metadata, profiles, and record types in parallel.
+    // Page metadata, profiles and record types in parallel.
     const sObjectType = page.EntityDefinitionId || null;
     const [metaRes, profileRes, rtRes] = await Promise.all([
       bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
@@ -2318,51 +2385,6 @@ const LightningPages = (() => {
                query: `SELECT DeveloperName,Name FROM RecordType WHERE SObjectType='${sObjectType}' AND IsActive=true ORDER BY Name` })
         : Promise.resolve({ records: recordTypeCache[sObjectType] || [], error: null }),
     ]);
-
-    // Sync PublishStatus from the Tooling GET response.
-    // Three sources, tried in order of reliability:
-    //
-    //   1. metaRes.PublishStatus       — top-level sObject field returned by the bare
-    //                                    REST GET (/tooling/sobjects/FlexiPage/{id}).
-    //                                    This IS present even in Developer Edition orgs
-    //                                    where the SOQL PublishStatus field 400s.
-    //
-    //   2. metaRes.Metadata.publishStatus — nested inside the compound Metadata field.
-    //                                    Works in most org types but null in Dev Edition.
-    //
-    //   3. Tooling SOQL SELECT Metadata FROM FlexiPage — second-to-last resort;
-    //                                    also tends to return null in Dev Edition.
-    if (!page.PublishStatus && !publishStatusOverride) {
-      const raw = metaRes?.PublishStatus               // ← top-level sObject field (NEW)
-               || metaRes?.Metadata?.publishStatus     // ← compound Metadata field
-               || null;
-      if (raw) {
-        // Normalize to Title Case to match the SOQL convention (Active / Draft / Obsolete).
-        const normalized = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
-        page = { ...page, PublishStatus: normalized };
-        syncPageStatus(page.Id, normalized);
-      }
-    }
-
-    // Tooling SOQL fallback — last-resort for orgs where both REST GET fields are null.
-    // A Tooling SOQL query against FlexiPage.Metadata retrieves the compound field via
-    // a different code path and may return publishStatus when the REST GET doesn't.
-    if (!page.PublishStatus && !publishStatusOverride) {
-      try {
-        const fqRes = await bg({
-          type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
-          query: `SELECT Metadata FROM FlexiPage WHERE Id = '${page.Id}'`
-        });
-        const fqStatus = fqRes?.records?.[0]?.Metadata?.publishStatus;
-        if (fqStatus) {
-          const normalized = fqStatus.charAt(0).toUpperCase() + fqStatus.slice(1).toLowerCase();
-          page = { ...page, PublishStatus: normalized };
-          // Also patch metaRes so the downstream rawStatus computation picks it up
-          if (metaRes.Metadata) metaRes.Metadata.publishStatus = normalized;
-          syncPageStatus(page.Id, normalized);
-        }
-      } catch (_) { /* non-fatal — fall through to Unknown */ }
-    }
 
     if (!allProfiles.length && profileRes.records) allProfiles = profileRes.records;
     if (sObjectType && !recordTypeCache[sObjectType] && !rtRes.error && rtRes.records) {
@@ -2383,128 +2405,72 @@ const LightningPages = (() => {
       return;
     }
 
-    // Build the final assignment list used for rendering.
-    // Two sources are merged:
-    //   1. FlexiPage.Metadata.pageAssignments (App Default / Profile assignments from Tooling API)
-    //   2. CustomObject.actionOverrides       (Org Default assignments — NOT in pageAssignments)
-    //
-    // If the caller already knows the correct state (e.g. right after a save), use that
-    // directly to avoid waiting for the Tooling API to catch up.
-    let assignments;
-    if (assignmentsOverride !== null) {
-      assignments = assignmentsOverride;
-    } else {
-      const apiAssignments = metaRes.Metadata?.pageAssignments || [];
-      // For Record Pages, also check the sObject describe / ActionOverride / CustomObject
-      // metadata to find any org-default assignment set via Lightning App Builder.
-      const devName = metaRes.FullName || page.DeveloperName;
-      // Use sobjectType from metadata (most authoritative) with fallback to EntityDefinitionId
-      const coSObjectType = metaRes.Metadata?.sobjectType || sObjectType || null;
-      // Only SKIP the describe endpoint when the page is explicitly Draft or Obsolete.
-      // Unknown/null publishStatus (managed/system pages) still gets checked.
-      // Use direct PublishStatus SOQL field as primary (more reliable than Metadata compound).
-      const toolingStatus = (page.PublishStatus || metaRes.Metadata?.publishStatus || metaRes?.PublishStatus || '').toLowerCase();
-      const coOrgDefaults = (coSObjectType && toolingStatus !== 'draft' && toolingStatus !== 'obsolete')
-        ? await fetchCustomObjectOrgDefaults(coSObjectType, devName, page.Id)
-        : [];
-      // Merge: add CustomObject entries that aren't already in pageAssignments
-      assignments = [...apiAssignments];
-      for (const co of coOrgDefaults) {
-        const alreadyPresent = apiAssignments.some(
-          a => !a.profile && !a.app && (a.formFactor || 'Large') === co.formFactor
-        );
-        if (!alreadyPresent) assignments.push(co);
-      }
+    const devName = metaRes.FullName || page.DeveloperName;
+    const sobject = metaRes.Metadata?.sobjectType
+      || (sObjectType ? (_lpEntityName(sObjectType) || sObjectType) : null);
+    // This tool reads and writes the assignments of RECORD pages. A Home or
+    // App page is activated another way (the app's own navigation, the Home
+    // page assignment) that is not read here — its state is not guessed.
+    const isRecordPage = page.Type === 'RecordPage' && !!sobject;
 
-      // Salesforce enforces: a page can only be an org default while it is Active.
-      // If any strategy (describe or ActionOverride SOQL) confirmed org-default,
-      // resolve the status to Active unconditionally — even if the Tooling API
-      // returned a stale 'Draft' value due to caching lag.
-      if (coOrgDefaults.length > 0) {
-        page = { ...page, PublishStatus: 'Active' };
-        syncPageStatus(page.Id, 'Active');
-      } else if (!toolingStatus && assignments.length === 0 && !_lpProbeFailed) {
-        // Salesforce keeps no publish status for a Lightning page — its
-        // activation IS its assignments. Every read answered and found none.
-        page = { ...page, PublishStatus: 'Unassigned' };
+    const assignments = [];
+    const unknown = [];
+    if (isRecordPage) {
+      // 1. Org default — the object's describe (cache-busted, see the probe).
+      const orgDefaults = await fetchCustomObjectOrgDefaults(sobject, devName, page.Id);
+      if (_lpProbeFailed) unknown.push(`the org default could not be read (${_lpProbeFailed})`);
+      for (const o of orgDefaults) assignments.push({ kind: 'org', formFactor: o.formFactor || 'Large', default: true, sobject });
+      // 2. App default / app + record type + profile — every Lightning app's own definition.
+      await ensureAppIndex((done, total) => say(`Reading the Lightning apps’ assignments… ${done}/${total}`));
+      if (_appIndexErr) unknown.push(_appIndexErr);
+      const appRows = [];
+      for (const app of allApps) {
+        const meta = _appMeta.get(app.Id);
+        if (meta) appRows.push(...lpAppAssignments(appInfo(app), meta, devName, sobject));
+      }
+      await resolveProfileNames(appRows.map(a => a.profileFull));
+      for (const a of appRows) {
+        if (a.kind === 'artp') a.profile = profileNameOfFull(a.profileFull) || a.profileFull;
+        assignments.push(a);
       }
     }
 
-    // Explicit caller override always wins (used immediately after activation to avoid
-    // waiting for the Tooling API to catch up to a Metadata Deploy).
-    if (publishStatusOverride) {
-      page = { ...page, PublishStatus: publishStatusOverride };
-      if (metaRes.Metadata) metaRes.Metadata.publishStatus = publishStatusOverride;
-    }
+    // A record page's activation IS its assignments (Salesforce keeps no
+    // publish status). null = at least one read failed: unknown, not "none".
+    const status = isRecordPage ? lpPageStatus(assignments, unknown.length > 0) : null;
+    page = { ...page, PublishStatus: status };
+    if (status) syncPageStatus(page.Id, status);
 
-    renderDetail(page, metaRes, assignments, body, recordTypes);
+    renderDetail(page, metaRes, assignments, body, recordTypes, { sobject, devName, unknown, isRecordPage });
 
     // Enable Clone button — data is now fully loaded
     const cloneBtn = document.getElementById('lpCloneBtn');
     if (cloneBtn) {
       cloneBtn.disabled = false;
-      cloneBtn.addEventListener('click', () => openCloneDialog(page, metaRes, assignments));
+      cloneBtn.addEventListener('click', () => openCloneDialog(page, metaRes, assignments, { sobject, devName }));
     }
 
-    // Surface org-default debug info in the UI — but ONLY when describe itself
-    // failed or returned no View overrides.  If describe succeeded and found
-    // overrides (just pointing to a different page), that is a successful
-    // determination that THIS page is not the org default — no panel needed.
-    if (_orgDefaultDebug && assignmentsOverride === null) {
-      const debugData = _orgDefaultDebug;
-      // Determine whether the failure is because ActionOverride simply isn't supported
-      // in this org (Dev Edition, some sandboxes).  That's not a bug — suppress noise.
-      const aoUnsupported = !_actionOverrideSupported
-        || (debugData.aoError && /ActionOverride.*not supported|sObject type.*ActionOverride/i.test(debugData.aoError))
-        || debugData.strategy1Skipped;
-
-      if (!aoUnsupported) {
-        console.warn('[SF Toolkit] fetchCustomObjectOrgDefaults: no match found', debugData);
-      }
-      const describeOk   = debugData.describeError === 'ok';
-      const hasOverrides = Array.isArray(debugData.allViewOverrides) && debugData.allViewOverrides.length > 0;
-      // Only show the panel when we genuinely could not determine org-default status
-      // AND the failure isn't simply due to ActionOverride being unsupported.
-      if (!aoUnsupported && (!describeOk || !hasOverrides)) {
-        const freshBody = document.getElementById('lpDetailBody');
-        if (freshBody) {
-          const dbg = document.createElement('details');
-          dbg.style.cssText = 'margin:8px 0;font-size:11px;border:1px solid #e07b39;border-radius:4px;padding:4px 8px;background:#fff8f4;color:#444;';
-          const summary = document.createElement('summary');
-          summary.style.cssText = 'cursor:pointer;font-weight:600;color:#c0392b;';
-          summary.textContent = '⚠ Org-default detection failed — click for debug info';
-          const pre = document.createElement('pre');
-          pre.style.cssText = 'margin:6px 0 2px;font-size:10px;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto;';
-          pre.textContent = JSON.stringify(debugData, null, 2);
-          dbg.appendChild(summary);
-          dbg.appendChild(pre);
-          freshBody.prepend(dbg);
-        }
-      }
+    const freshBody = document.getElementById('lpDetailBody');
+    if (note && freshBody) {
+      const div = document.createElement('div');
+      div.className = 'lp-result-note';
+      div.id = 'lpResultNote';
+      div.textContent = note;
+      freshBody.insertBefore(div, freshBody.firstChild);
     }
-
-    // Inject error banner at top of body when called after a failed deploy
-    if (errorMsg) {
-      const freshBody = document.getElementById('lpDetailBody');
-      if (freshBody) {
-        const isAccessDenied = /INSUFFICIENT_ACCESS|cannot.*modify|managed.*component/i.test(errorMsg);
-        const hint = isAccessDenied
-          ? '<br><small style="opacity:0.8">💡 Use <strong>Setup → Lightning App Builder → Activation</strong> to manage assignments for this page.</small>'
-          : '';
-        // Module-specific access-denied explainer wins; everything else gets the
-        // shared friendly translation (raw string kept in the title for copy/paste).
-        let shownMsg = errorMsg;
-        if (!isAccessDenied) {
-          const fe = sftkFriendlyError(errorMsg);
-          shownMsg = fe.message + (fe.hint ? ' — ' + fe.hint : '');
-        }
-        const errDiv = document.createElement('div');
-        errDiv.className = 'error-banner';
-        errDiv.style.marginBottom = '12px';
-        errDiv.title = errorMsg;
-        errDiv.innerHTML = `❌ ${esc(shownMsg)}${hint}`;
-        freshBody.insertBefore(errDiv, freshBody.firstChild);
-      }
+    // Error banner at the top of the body when called after a write that failed
+    if (errorMsg && freshBody) {
+      const isAccessDenied = /INSUFFICIENT_ACCESS|cannot.*modify|managed.*component/i.test(errorMsg);
+      const hint = isAccessDenied
+        ? '<br><small style="opacity:0.8">💡 Use <strong>Setup → Lightning App Builder → Activation</strong> to manage assignments for this page.</small>'
+        : '';
+      const errDiv = document.createElement('div');
+      errDiv.className = 'error-banner';
+      errDiv.style.marginBottom = '12px';
+      errDiv.style.whiteSpace = 'pre-line';
+      errDiv.title = errorMsg;
+      errDiv.innerHTML = `❌ ${esc(errorMsg)}${hint}`;
+      freshBody.insertBefore(errDiv, freshBody.firstChild);
     }
   }
 
@@ -2532,55 +2498,43 @@ const LightningPages = (() => {
   }
 
   // ── Detail body ───────────────────────────────────────────
-  function renderDetail(page, metaRes, assignments, bodyEl, recordTypes = []) {
+  function renderDetail(page, metaRes, assignments, bodyEl, recordTypes = [], ctx = {}) {
     // Pages with ManageableState !== 'unmanaged' are standard or managed-package pages.
     // Salesforce's Metadata API rejects ANY modification to them — show a clear notice
     // instead of a form that will always fail.
     const canEdit  = !page.ManageableState || page.ManageableState === 'unmanaged';
-    // Use direct PublishStatus SOQL field first — more reliable than compound Metadata
-    // field which may return null for managed/system pages.
-    // If both sources are null after all fallbacks (Tooling GET + Tooling SOQL), show
-    // 'Unknown' rather than guessing 'Draft' — we could otherwise mask Active pages
-    // in Dev Edition orgs where the Metadata API responses are non-standard.
-    const rawStatus   = page.PublishStatus || metaRes.Metadata?.publishStatus || metaRes?.PublishStatus || null;
-    const normStatus  = rawStatus ? rawStatus.toLowerCase() : null; // null = unknown
-    const isActive    = normStatus === 'active';
-    const isUnassigned = normStatus === 'unassigned';
-    const statusKnown = normStatus !== null;
+    const unknown  = ctx.unknown || [];
+    const isRecordPage = !!ctx.isRecordPage;
+    const status   = page.PublishStatus || null;          // 'Active' | 'Unassigned' | null (not known)
+    const isActive = status === 'Active';
+    const isUnassigned = status === 'Unassigned';
+    const ffLabel  = ff => (ff === 'Small' ? '📱 Mobile' : '🖥 Desktop');
 
-    // Profiles already assigned (profile-specific only; org-default has no profile name)
-    const assignedProfileNames = new Set(
-      assignments.filter(a => a.profile).map(a => a.profile.toLowerCase())
-    );
-    const available = allProfiles.filter(p =>
-      !assignedProfileNames.has(p.Name.toLowerCase())
-    );
-
-    // ── Activation status bar ─────────────────────────────
+    // ── Status bar ────────────────────────────────────────
+    // A Lightning page has no "active" switch in Salesforce: being assigned
+    // somewhere IS what makes it active. So there is no Activate button — the
+    // form below is how a page gets shown — and Deactivate means exactly
+    // "remove every assignment", each one named before anything is written.
     let html = '<div class="lp-status-bar">';
-    if (!statusKnown) {
+    if (!isRecordPage) {
+      html += '<span class="lp-status-dot lp-dot-na" title="Not read by this tool"></span>';
+      html += '<span class="lp-status-text">Activation not read here</span>';
+    } else if (!status) {
       html += '<span class="lp-status-dot lp-dot-unknown" title="Status could not be determined"></span>';
-      html += '<span class="lp-status-text lp-status-unknown" title="The org-default check failed, so whether this page is assigned could not be read">Unknown — check failed</span>';
-      // For unmanaged pages where status couldn't be determined, still show Activate
-      // so the user isn't blocked — they may need to activate a page we can't read.
-      if (canEdit) {
-        html += '<button class="btn btn-sm btn-primary" id="lpActivateBtn">▶ Activate</button>';
-      }
+      html += '<span class="lp-status-text lp-status-unknown" title="' + esc(unknown.join(' · ')) + '">Unknown — a check failed</span>';
     } else {
-      const statusLabel = normStatus === 'active' ? 'Active'
-                        : normStatus === 'obsolete' ? 'Obsolete'
-                        : isUnassigned ? 'Not assigned' : 'Draft';
-      const dotCls = normStatus === 'active' ? 'lp-dot-active'
-                   : normStatus === 'obsolete' ? 'lp-dot-obsolete' : 'lp-dot-draft';
-      html += '<span class="lp-status-dot ' + dotCls + '" title="' + statusLabel + '"></span>';
+      const statusLabel = isActive ? 'Active' : 'Not assigned';
+      html += '<span class="lp-status-dot ' + (isActive ? 'lp-dot-active' : 'lp-dot-na') + '" title="' + statusLabel + '"></span>';
       html += '<span class="lp-status-text">' + statusLabel + '</span>';
-      if (canEdit && normStatus !== 'obsolete') {
-        const btnCls = isActive ? 'btn-secondary' : 'btn-primary';
-        const btnTxt = isActive ? '⏸ Deactivate' : '▶ Activate';
-        html += '<button class="btn btn-sm ' + btnCls + '" id="lpActivateBtn">' + btnTxt + '</button>';
-      }
+    }
+    if (isRecordPage && canEdit && assignments.length > 0) {
+      html += '<button class="btn btn-sm btn-secondary" id="lpDeactivateBtn" title="Remove every assignment listed below — the page stops being shown to anyone">⏸ Deactivate — remove ' +
+        (assignments.length === 1 ? 'the assignment' : 'all ' + assignments.length + ' assignments') + '</button>';
     }
     html += '</div>';
+    if (unknown.length) {
+      html += '<div class="lp-unknown-note">⚠️ Part of this page’s assignments could not be read, so the list below may be incomplete: ' + esc(unknown.join('; ')) + '. Press 🔄 on the list to try again.</div>';
+    }
 
     // ── C5c: embedded-flow cross-links ────────────────────
     // The page's Metadata already names the flow(s) it launches — surface
@@ -2600,55 +2554,51 @@ const LightningPages = (() => {
       html += '</div>';
     }
 
-    // ── Current Assignments section ──────────────────────
+    if (!isRecordPage) {
+      html += '<div class="lp-managed-notice">';
+      html += 'This tool reads and changes the assignments of <strong>record pages</strong> (org default, app default, app + record type + profile). ';
+      html += 'A ' + esc(humanType(page.Type)) + ' is activated in a different way that is not read here, so nothing is said about who sees it.<br>';
+      html += 'Use <strong>Lightning App Builder → Activation</strong> (↗ Open in Salesforce, above) for this page.';
+      html += '</div>';
+      bodyEl.innerHTML = html;
+      return;
+    }
+
+    // ── Current assignments ──────────────────────────────
     html += '<div class="lp-section-hdr">';
-    html += '<span>Profile Assignments</span>';
+    html += '<span>Assignments</span>';
     html += '<span class="lp-badge">' + assignments.length + '</span>';
     html += '</div>';
 
     if (assignments.length === 0) {
-      const emptyMsg = !statusKnown
-        ? '⚠️ The org-default check failed' + (_lpProbeFailed ? ' (' + esc(_lpProbeFailed) + ')' : '') + ' — org-default assignments are unknown here; app and profile assignments were read and there are none.'
-        : isUnassigned
-          ? 'No assignments — this page is not shown to anyone yet. Add one below: org default, app default, or app + record type + profile.'
-          : isActive
-            ? 'No profile assignments — all users see the org-default page.'
-            : 'No profile assignments — this page is inactive and not shown to any users.';
+      const emptyMsg = unknown.length
+        ? '⚠️ No assignment was found, but not everything could be read (see above) — treat this as unknown, not as “not assigned”.'
+        : 'No assignments — this page is not shown to anyone yet. Add one below: org default, app default, or app + record type + profile.';
       html += '<div class="lp-empty-sm">' + emptyMsg + '</div>';
     } else {
       for (let i = 0; i < assignments.length; i++) {
-        const a          = assignments[i];
-        const isOrgDef   = !a.profile;
-        const profileLabel = isOrgDef ? 'Org Default' : esc(a.profile);
-        const icon         = isOrgDef ? '🌐' : '👤';
-        const pRec = isOrgDef ? null : allProfiles.find(p =>
-          p.Name.toLowerCase() === (a.profile || '').toLowerCase()
-        );
-        const defTag = a.default
-          ? '<span class="lp-def-tag">Default</span>' : '';
-        const rtTag  = a.recordType
-          ? '<span class="lp-rt-tag">RT: ' + esc(a.recordType) + '</span>' : '';
-        const appTag = a.app
-          ? '<span class="lp-rt-tag">App: ' + esc(a.app) + '</span>' : '';
-        const ffLabel = a.formFactor === 'Large' ? '🖥 Desktop'
-                      : a.formFactor === 'Small'  ? '📱 Mobile' : '';
-        const ffTag   = ffLabel
-          ? '<span class="lp-rt-tag">' + ffLabel + '</span>' : '';
-
-        html += '<div class="lp-asgn-row" id="lpAsgn' + i + '">';
+        const a = assignments[i];
+        const L = lpAssignmentWords(a);
+        const pRec = a.kind === 'artp' ? allProfiles.find(p => p.Name.toLowerCase() === String(a.profile || '').toLowerCase()) : null;
+        html += '<div class="lp-asgn-row" id="lpAsgn' + i + '" data-kind="' + esc(a.kind) + '">';
         html += '<div class="lp-asgn-info">';
         html += '<div class="lp-asgn-profile">';
-        html += '<span class="lp-profile-icon">' + icon + '</span>';
-        html += '<strong>' + profileLabel + '</strong>';
-        html += defTag + ffTag + appTag + rtTag;
+        html += '<span class="lp-profile-icon">' + L.icon + '</span>';
+        html += '<strong>' + esc(L.title) + '</strong>';
+        html += '<span class="lp-rt-tag">' + ffLabel(a.formFactor) + '</span>';
+        if (a.kind !== 'org') html += '<span class="lp-rt-tag">App: ' + esc(a.appLabel || a.app) + '</span>';
+        if (a.kind === 'artp') {
+          const rtRec = a.recordType ? recordTypes.find(r => String(r.DeveloperName).toLowerCase() === String(a.recordType).toLowerCase()) : null;
+          html += '<span class="lp-rt-tag"' + (a.recordType ? ' title="' + esc(a.recordTypeFull || a.recordType) + '"' : '') + '>' + (a.recordType ? 'Record type: ' + esc(rtRec ? rtRec.Name : a.recordType) : 'Any record type') + '</span>';
+        }
         html += '</div>';
         html += '<div class="lp-asgn-users" id="lpUsers' + i + '">';
-        if (isOrgDef) {
-          html += '<span class="lp-users-na">Applies to all users in the org</span>';
+        if (a.kind !== 'artp') {
+          html += '<span class="lp-users-na">' + esc(L.who) + '</span>';
         } else if (pRec) {
           html += '<button class="lp-users-btn" data-pid="' + esc(pRec.Id) + '" data-slot="' + i + '" data-name="' + esc(a.profile) + '">👥 Show affected users</button>';
         } else {
-          html += '<span class="lp-users-na">Profile not found in org</span>';
+          html += '<span class="lp-users-na">Profile “' + esc(a.profile) + '” — its users could not be looked up (the name Salesforce stores for it matches no profile here)</span>';
         }
         html += '</div></div>';
         if (canEdit) {
@@ -2658,7 +2608,7 @@ const LightningPages = (() => {
       }
     }
 
-    // ── Add Profile / Activation section ──────────────────
+    // ── Add assignment ───────────────────────────────────
     html += '<div class="lp-section-hdr" style="margin-top:16px"><span>Add Assignment</span></div>';
 
     if (!canEdit) {
@@ -2669,10 +2619,9 @@ const LightningPages = (() => {
       html += '</div>';
     } else {
       // ── 3-tab assignment form matching Lightning App Builder ──
-      // Inform the user that adding assignments to a Draft page will also activate it
       let addHtml = '';
-      if (statusKnown && !isActive) {
-        addHtml += '<div class="lp-draft-hint">ℹ️ Adding any assignment will also <strong>activate</strong> this page — matching how Lightning App Builder works.</div>';
+      if (isUnassigned) {
+        addHtml += '<div class="lp-draft-hint">ℹ️ An assignment is what activates a page: the page is shown to exactly the audience you assign it to, and to nobody else.</div>';
       }
       addHtml += '<div class="lp-assign-tabs">';
       addHtml += '<button class="lp-atab lp-atab-active" data-tab="orgdefault">🌐 Org Default</button>';
@@ -2680,42 +2629,40 @@ const LightningPages = (() => {
       addHtml += '<button class="lp-atab" data-tab="artp">📋 App, Record Type &amp; Profile</button>';
       addHtml += '</div>';
 
-      // ─ Tab 1: Org Default ─
-      // Determine which form factors are ALREADY assigned as org default for this page
-      const alreadyDesktop = assignments.some(a => !a.profile && !a.app && (a.formFactor || 'Large') === 'Large');
-      const alreadyMobile  = assignments.some(a => !a.profile && !a.app && a.formFactor === 'Small');
+      // ─ Tab 1: Org Default ─ a form factor this page already holds is not offered again
+      const alreadyDesktop = assignments.some(a => a.kind === 'org' && a.formFactor === 'Large');
+      const alreadyMobile  = assignments.some(a => a.kind === 'org' && a.formFactor === 'Small');
       const dskAlready = alreadyDesktop ? ' <strong class="lp-already">already</strong>' : '';
       const mobAlready = alreadyMobile  ? ' <strong class="lp-already">already</strong>' : '';
       addHtml += '<div class="lp-atab-pane lp-atab-pane-active" id="lpTabOrgDefault">';
-      addHtml += '<p class="lp-tab-desc">Displays for all users in the org unless a more specific assignment overrides it.</p>';
+      addHtml += '<p class="lp-tab-desc">Displays for all users in the org unless a more specific assignment overrides it. It takes the place of the page that is the org default now — the confirmation names that page.</p>';
       addHtml += '<div class="lp-ff-group" style="margin-bottom:10px">';
       addHtml += `<label class="lp-ff-lbl"><input type="checkbox" id="lpOrgDefDesktop"${alreadyDesktop ? ' checked disabled' : ' checked'}> 🖥 Desktop${dskAlready}</label>`;
       addHtml += `<label class="lp-ff-lbl"><input type="checkbox" id="lpOrgDefMobile"${alreadyMobile  ? ' checked disabled' : ''}> 📱 Mobile${mobAlready}</label>`;
       addHtml += '</div>';
       addHtml += '<div class="lp-add-action">';
-      addHtml += '<button class="btn btn-primary btn-sm" id="lpAddBtnOrgDef">Set as Org Default</button>';
+      addHtml += `<button class="btn btn-primary btn-sm" id="lpAddBtnOrgDef"${alreadyDesktop && alreadyMobile ? ' disabled' : ''}>Set as Org Default</button>`;
       addHtml += '<span id="lpAddErrOrgDef" class="lp-add-err" style="display:none"></span>';
       addHtml += '</div></div>';
+
+      const appRow = (cls, a) => {
+        let s = `<div class="lp-app-item">`;
+        s += `<label class="lp-app-item-lbl"><input type="checkbox" class="${cls}" value="${esc(a.Id)}"> ${esc(a.MasterLabel)}</label>`;
+        s += `<select class="lp-app-ff-sel" data-app="${esc(a.Id)}" disabled>`;
+        s += `<option value="Large">🖥 Desktop</option>`;
+        s += `<option value="Small">📱 Mobile</option>`;
+        s += `</select></div>`;
+        return s;
+      };
+      const noApps = _appListErr
+        ? '<div class="lp-empty-hint">⚠️ The Lightning apps could not be read (' + esc(lpWhy(_appListErr)) + ') — press 🔄 on the list to try again.</div>'
+        : '<div class="lp-empty-hint">No Lightning apps found in this org.</div>';
 
       // ─ Tab 2: App Default ─
       addHtml += '<div class="lp-atab-pane" id="lpTabAppDefault" style="display:none">';
       addHtml += '<p class="lp-tab-desc">Overrides the org default for users within the selected app(s). Choose form factor per app.</p>';
-      if (allApps.length === 0) {
-        addHtml += '<div class="lp-empty-hint">No Lightning apps found in this org.</div>';
-      } else {
-        addHtml += '<div class="lp-multi-list" id="lpAppDefList">';
-        for (const a of allApps) {
-          const devName = esc(a.DeveloperName);
-          const label   = esc(a.MasterLabel);
-          addHtml += `<div class="lp-app-item">`;
-          addHtml += `<label class="lp-app-item-lbl"><input type="checkbox" class="lp-appdef-cb" value="${devName}"> ${label}</label>`;
-          addHtml += `<select class="lp-app-ff-sel" data-app="${devName}" disabled>`;
-          addHtml += `<option value="Large">🖥 Desktop</option>`;
-          addHtml += `<option value="Small">📱 Mobile</option>`;
-          addHtml += `</select></div>`;
-        }
-        addHtml += '</div>';
-      }
+      if (allApps.length === 0) addHtml += noApps;
+      else addHtml += '<div class="lp-multi-list" id="lpAppDefList">' + allApps.map(a => appRow('lp-appdef-cb', a)).join('') + '</div>';
       addHtml += '<div class="lp-add-action">';
       addHtml += '<button class="btn btn-primary btn-sm" id="lpAddBtnAppDef" disabled>⚡ Assign App Default</button>';
       addHtml += '<span id="lpAddErrAppDef" class="lp-add-err" style="display:none"></span>';
@@ -2725,50 +2672,33 @@ const LightningPages = (() => {
       addHtml += '<div class="lp-atab-pane" id="lpTabARTP" style="display:none">';
       addHtml += '<p class="lp-tab-desc">Most specific level. Overrides org and app defaults. Creates one assignment per combination selected.</p>';
       addHtml += '<div class="lp-artp-grid">';
-
-      // Apps column (with per-app FF dropdown)
       addHtml += '<div class="lp-artp-col">';
       addHtml += '<div class="lp-artp-col-hdr">Apps</div>';
-      addHtml += '<div class="lp-multi-list" id="lpARTPAppList">';
-      addHtml += '<div class="lp-app-item">';
-      addHtml += '<label class="lp-app-item-lbl"><input type="checkbox" class="lp-artp-app-cb" value=""> All Apps</label>';
-      addHtml += '<select class="lp-app-ff-sel" data-app="" disabled><option value="Large">🖥 Desktop</option><option value="Small">📱 Mobile</option></select>';
+      addHtml += allApps.length === 0 ? noApps : '<div class="lp-multi-list" id="lpARTPAppList">' + allApps.map(a => appRow('lp-artp-app-cb', a)).join('') + '</div>';
       addHtml += '</div>';
-      for (const a of allApps) {
-        const devName = esc(a.DeveloperName);
-        const label   = esc(a.MasterLabel);
-        addHtml += `<div class="lp-app-item">`;
-        addHtml += `<label class="lp-app-item-lbl"><input type="checkbox" class="lp-artp-app-cb" value="${devName}"> ${label}</label>`;
-        addHtml += `<select class="lp-app-ff-sel" data-app="${devName}" disabled>`;
-        addHtml += `<option value="Large">🖥 Desktop</option>`;
-        addHtml += `<option value="Small">📱 Mobile</option>`;
-        addHtml += `</select></div>`;
-      }
-      addHtml += '</div></div>';
 
-      // Record Types column (only if applicable)
+      // Record types (only when the object has them). Each is written by name:
+      // an entry without a record type is only written for an object that has none.
       if (recordTypes.length > 0) {
         addHtml += '<div class="lp-artp-col">';
         addHtml += '<div class="lp-artp-col-hdr">Record Types</div>';
         addHtml += '<div class="lp-multi-list" id="lpARTPRTList">';
-        addHtml += '<div class="lp-multi-item"><label><input type="checkbox" class="lp-artp-rt-cb" value=""> All Record Types</label></div>';
+        addHtml += '<div class="lp-multi-item"><label><input type="checkbox" id="lpARTPRTAll"> All ' + recordTypes.length + ' record types</label></div>';
         for (const rt of recordTypes) {
           addHtml += `<div class="lp-multi-item"><label><input type="checkbox" class="lp-artp-rt-cb" value="${esc(rt.DeveloperName)}"> ${esc(rt.Name)}</label></div>`;
         }
         addHtml += '</div></div>';
       }
 
-      // Profiles column
       addHtml += '<div class="lp-artp-col">';
       addHtml += '<div class="lp-artp-col-hdr">Profiles</div>';
       addHtml += '<div class="lp-multi-list" id="lpARTPProfileList">';
-      for (const p of available) {
-        addHtml += `<div class="lp-multi-item"><label><input type="checkbox" class="lp-artp-profile-cb" value="${esc(p.Name)}"> ${esc(p.Name)}</label></div>`;
+      for (const p of allProfiles) {
+        addHtml += `<div class="lp-multi-item"><label><input type="checkbox" class="lp-artp-profile-cb" value="${esc(p.Id)}"> ${esc(p.Name)}</label></div>`;
       }
       addHtml += '</div></div>';
 
       addHtml += '</div>'; // close lp-artp-grid
-      addHtml += '<label class="lp-def-lbl" style="margin-top:8px;display:inline-flex"><input type="checkbox" id="lpARTPDefault" checked style="margin-right:5px"> Mark as Default</label>';
       addHtml += '<div class="lp-add-action">';
       addHtml += '<button class="btn btn-primary btn-sm" id="lpAddBtnARTP" disabled>+ Add Assignments</button>';
       addHtml += '<span id="lpAddErrARTP" class="lp-add-err" style="display:none"></span>';
@@ -2779,19 +2709,12 @@ const LightningPages = (() => {
 
     bodyEl.innerHTML = html;
 
-    // ── Wire: activate / deactivate ──────────────────────
-    const activateBtn = document.getElementById('lpActivateBtn');
-    if (activateBtn) {
-      activateBtn.addEventListener('click', () =>
-        doActivate(page, metaRes, assignments, !isActive)
-      );
-    }
+    // ── Wire: deactivate (= remove every assignment) ─────
+    document.getElementById('lpDeactivateBtn')?.addEventListener('click', () => confirmRemove(page, metaRes, assignments, assignments.map((_, i) => i), ctx));
 
     // ── Wire: remove buttons ─────────────────────────────
     bodyEl.querySelectorAll('.lp-rm-btn').forEach(btn => {
-      btn.addEventListener('click', () =>
-        confirmRemove(page, metaRes, assignments, parseInt(btn.dataset.idx))
-      );
+      btn.addEventListener('click', () => confirmRemove(page, metaRes, assignments, [parseInt(btn.dataset.idx)], ctx));
     });
 
     // ── Wire: show-users buttons ─────────────────────────
@@ -2800,8 +2723,16 @@ const LightningPages = (() => {
         const { pid, slot, name } = btn.dataset;
         const slotEl = document.getElementById(`lpUsers${slot}`);
         if (slotEl) slotEl.innerHTML = sftkCatSm('Loading users…');
-        const users = await fetchUsers(pid);
-        renderUserBadges(slot, users, name);
+        const res = await fetchUsers(pid);
+        if (res.error) {
+          // A failed read is not "no users" — say it, and let the user try again.
+          if (slotEl) {
+            slotEl.innerHTML = `<span class="lp-users-na" style="color:#c0392b" title="${esc(res.error)}">Could not load users: ${esc(lpWhy(res.error))}</span> <button class="lp-users-btn lp-users-retry">↻ Try again</button>`;
+            slotEl.querySelector('.lp-users-retry')?.addEventListener('click', () => btn.click());
+          }
+          return;
+        }
+        renderUserBadges(slot, res.users, name);
       });
     });
 
@@ -2820,7 +2751,26 @@ const LightningPages = (() => {
       });
     });
 
+    // ── Wire: Org Default tab ─────────────────────────────
+    const orgFfs = () => [
+      (!alreadyDesktopNow() && document.getElementById('lpOrgDefDesktop')?.checked) ? 'Large' : null,
+      (!alreadyMobileNow()  && document.getElementById('lpOrgDefMobile')?.checked)  ? 'Small' : null,
+    ].filter(Boolean);
+    function alreadyDesktopNow() { return assignments.some(a => a.kind === 'org' && a.formFactor === 'Large'); }
+    function alreadyMobileNow()  { return assignments.some(a => a.kind === 'org' && a.formFactor === 'Small'); }
+    document.getElementById('lpAddBtnOrgDef')?.addEventListener('click', () => {
+      const ffs = orgFfs();
+      if (!ffs.length) {
+        const e = document.getElementById('lpAddErrOrgDef');
+        if (e) { e.textContent = 'Tick Desktop or Mobile.'; e.style.display = ''; }
+        return;
+      }
+      doAdd(page, metaRes, assignments, 'orgdefault', ffs.map(ff => ({ kind: 'org', formFactor: ff, sobject: ctx.sobject })), ctx);
+    });
+
     // ── Wire: App Default tab — checkbox enables FF select ─
+    const ffOf = cb => cb.closest('.lp-app-item')?.querySelector('.lp-app-ff-sel')?.value || 'Large';
+    const appOf = id => allApps.find(a => a.Id === id);
     function updateAppDefBtn() {
       const checked = bodyEl.querySelectorAll('#lpAppDefList .lp-appdef-cb:checked');
       const btn = document.getElementById('lpAddBtnAppDef');
@@ -2832,40 +2782,40 @@ const LightningPages = (() => {
     }
     bodyEl.querySelectorAll('.lp-appdef-cb').forEach(cb => {
       cb.addEventListener('change', () => {
-        const row = cb.closest('.lp-app-item');
-        const sel = row?.querySelector('.lp-app-ff-sel');
+        const sel = cb.closest('.lp-app-item')?.querySelector('.lp-app-ff-sel');
         if (sel) sel.disabled = !cb.checked;
         updateAppDefBtn();
       });
     });
-    document.getElementById('lpAddBtnAppDef')?.addEventListener('click', () =>
-      doAdd(page, metaRes, assignments, 'appdefault')
-    );
-
-    // ── Wire: Org Default tab button ──────────────────────
-    document.getElementById('lpAddBtnOrgDef')?.addEventListener('click', () =>
-      doAdd(page, metaRes, assignments, 'orgdefault')
-    );
+    document.getElementById('lpAddBtnAppDef')?.addEventListener('click', () => {
+      const want = [...bodyEl.querySelectorAll('#lpAppDefList .lp-appdef-cb:checked')].map(cb => {
+        const app = appOf(cb.value);
+        return app ? { kind: 'app', app: app.DeveloperName, appId: app.Id, appLabel: app.MasterLabel, formFactor: ffOf(cb), sobject: ctx.sobject } : null;
+      }).filter(Boolean);
+      doAdd(page, metaRes, assignments, 'appdefault', want, ctx);
+    });
 
     // ── Wire: ARTP tab — selection count → button label ───
+    const rtAll = document.getElementById('lpARTPRTAll');
+    rtAll?.addEventListener('change', () => {
+      bodyEl.querySelectorAll('#lpARTPRTList .lp-artp-rt-cb').forEach(cb => { cb.checked = rtAll.checked; });
+      updateARTPBtn();
+    });
     function updateARTPBtn() {
       const appCount     = bodyEl.querySelectorAll('#lpARTPAppList .lp-artp-app-cb:checked').length;
       const profileCount = bodyEl.querySelectorAll('#lpARTPProfileList .lp-artp-profile-cb:checked').length;
       const rtCount      = recordTypes.length > 0
         ? bodyEl.querySelectorAll('#lpARTPRTList .lp-artp-rt-cb:checked').length
-        : 1; // no RT column = multiply by 1
+        : 1; // no record types on the object = one assignment per app × profile
       const btn = document.getElementById('lpAddBtnARTP');
       if (!btn) return;
-      const total = appCount * profileCount * (rtCount || 1);
-      btn.disabled = appCount === 0 || profileCount === 0 || (recordTypes.length > 0 && rtCount === 0);
-      btn.textContent = (appCount === 0 || profileCount === 0)
-        ? '+ Add Assignments'
-        : `+ Add ${total} Assignment${total !== 1 ? 's' : ''}`;
+      const total = appCount * profileCount * rtCount;
+      btn.disabled = total === 0;
+      btn.textContent = total === 0 ? '+ Add Assignments' : `+ Add ${total} Assignment${total !== 1 ? 's' : ''}`;
     }
     bodyEl.querySelectorAll('.lp-artp-app-cb').forEach(cb => {
       cb.addEventListener('change', () => {
-        const row = cb.closest('.lp-app-item');
-        const sel = row?.querySelector('.lp-app-ff-sel');
+        const sel = cb.closest('.lp-app-item')?.querySelector('.lp-app-ff-sel');
         if (sel) sel.disabled = !cb.checked;
         updateARTPBtn();
       });
@@ -2873,9 +2823,20 @@ const LightningPages = (() => {
     bodyEl.querySelectorAll('.lp-artp-rt-cb, .lp-artp-profile-cb').forEach(cb =>
       cb.addEventListener('change', updateARTPBtn)
     );
-    document.getElementById('lpAddBtnARTP')?.addEventListener('click', () =>
-      doAdd(page, metaRes, assignments, 'artp')
-    );
+    document.getElementById('lpAddBtnARTP')?.addEventListener('click', () => {
+      const apps = [...bodyEl.querySelectorAll('#lpARTPAppList .lp-artp-app-cb:checked')].map(cb => ({ app: appOf(cb.value), ff: ffOf(cb) })).filter(x => x.app);
+      const profs = [...bodyEl.querySelectorAll('#lpARTPProfileList .lp-artp-profile-cb:checked')].map(cb => allProfiles.find(p => p.Id === cb.value)).filter(Boolean);
+      const rts = recordTypes.length > 0
+        ? [...bodyEl.querySelectorAll('#lpARTPRTList .lp-artp-rt-cb:checked')].map(cb => cb.value)
+        : [null];
+      const want = [];
+      for (const { app, ff } of apps) for (const p of profs) for (const rt of rts) {
+        want.push({ kind: 'artp', app: app.DeveloperName, appId: app.Id, appLabel: app.MasterLabel, formFactor: ff, sobject: ctx.sobject,
+          profile: p.Name, profileId: p.Id, profileFull: null,
+          recordType: rt, recordTypeFull: rt ? `${ctx.sobject}.${rt}` : null });
+      }
+      doAdd(page, metaRes, assignments, 'artp', want, ctx);
+    });
   }
 
   // ── Render user chips for an assignment row ───────────────
@@ -2946,262 +2907,197 @@ const LightningPages = (() => {
     });
   }
 
-  // ── Add assignment — 3 modes ─────────────────────────────
-  // mode: 'orgdefault' | 'appdefault' | 'artp'
-  //
-  // Lightning page assignments are NOT stored in FlexiPage metadata.
-  // They live in two places:
-  //   • Org Default / Profile-only  → Tooling API ActionOverride sObject
-  //   • App Default / App+Profile   → Tooling API CustomApplication.profileActionOverrides
-  async function doAdd(page, metaRes, currentAssignments, mode) {
-    // N3: any write invalidates the cached org-wide assignment scan, otherwise
-    // "Who sees what?" would keep showing pre-change user counts.
-    _wswScan = null;
-    const sobjectType = metaRes.Metadata?.sobjectType || page.EntityDefinitionId || null;
-    const devName     = metaRes.FullName;
-    const isActive    = (page.PublishStatus || metaRes.Metadata?.publishStatus || '').toLowerCase() === 'active';
-
-    const btnId = mode === 'orgdefault' ? 'lpAddBtnOrgDef'
-                : mode === 'appdefault' ? 'lpAddBtnAppDef'
-                : 'lpAddBtnARTP';
-    const errId = mode === 'orgdefault' ? 'lpAddErrOrgDef'
-                : mode === 'appdefault' ? 'lpAddErrAppDef'
-                : 'lpAddErrARTP';
-    const origLabel = mode === 'orgdefault' ? 'Set as Org Default'
-                    : mode === 'appdefault' ? '⚡ Assign App Default'
-                    : '+ Add Assignments';
-
+  // ── Add assignments ───────────────────────────────────────
+  // want: the assignments the form asked for, as objects
+  //   { kind:'org',  formFactor, sobject }
+  //   { kind:'app',  app, appId, appLabel, formFactor, sobject }
+  //   { kind:'artp', … + profile, profileId, recordType, recordTypeFull }
+  // ONE confirmation names every one of them and, where the slot is taken,
+  // the page that will be replaced. ONE History entry holds every write.
+  // Nothing else is written: an app or profile assignment does NOT also make
+  // the page the org default (it used to, silently — live 2026-10-04).
+  async function doAdd(page, metaRes, currentAssignments, mode, want, ctx) {
+    _wswScan = null;    // "Who sees what?" must be recomputed after any write
+    const devName = ctx.devName, sobject = ctx.sobject;
+    const btnId = mode === 'orgdefault' ? 'lpAddBtnOrgDef' : mode === 'appdefault' ? 'lpAddBtnAppDef' : 'lpAddBtnARTP';
+    const errId = mode === 'orgdefault' ? 'lpAddErrOrgDef' : mode === 'appdefault' ? 'lpAddErrAppDef' : 'lpAddErrARTP';
     const addBtn = document.getElementById(btnId);
     const errEl  = document.getElementById(errId);
-
-    // A new assignment changes who sees the page (and, for a Draft page, also
-    // activates it) — confirm before writing, showing what was selected.
-    let confirmItems = [{ label: page.MasterLabel, sub: mode === 'orgdefault' ? 'Org Default' : mode === 'appdefault' ? 'App Default' : 'App + Record Type + Profile' }];
-    if (mode === 'appdefault') {
-      confirmItems = [...document.querySelectorAll('#lpAppDefList .lp-appdef-cb:checked')]
-        .map(cb => ({ label: cb.closest('.lp-app-item')?.querySelector('.lp-app-item-lbl')?.textContent?.trim() || cb.value, sub: 'App Default' }));
-    } else if (mode === 'artp') {
-      const apps = [...document.querySelectorAll('#lpARTPAppList .lp-artp-app-cb:checked')]
-        .map(cb => cb.closest('.lp-app-item')?.querySelector('.lp-app-item-lbl')?.textContent?.trim() || cb.value || 'All Apps');
-      const profiles = [...document.querySelectorAll('#lpARTPProfileList .lp-artp-profile-cb:checked')].map(cb => cb.value);
-      confirmItems = [{ label: page.MasterLabel, sub: `${apps.join(', ')} → ${profiles.join(', ')}` }];
-    } else if (mode === 'orgdefault') {
-      const desktop = document.getElementById('lpOrgDefDesktop')?.checked !== false;
-      const mobile  = document.getElementById('lpOrgDefMobile')?.checked  === true;
-      confirmItems = [{ label: page.MasterLabel, sub: `Org Default — ${[desktop && 'Desktop', mobile && 'Mobile'].filter(Boolean).join(', ')}` }];
-    }
-    const addGate = await sftkOrgWriteGate(_orgUrl);
-    const addSure = await sftkConfirmDestructive({
-      title: (addBtn?.textContent || origLabel).trim(),
-      icon: mode === 'orgdefault' ? '🌐' : mode === 'appdefault' ? '⚡' : '📋',
-      items: confirmItems,
-      revOverride: { html: `Assigns <strong>${esc(page.MasterLabel)}</strong> as the Lightning page shown to the selected audience${!isActive && sobjectType && mode !== 'orgdefault' ? ' — the Draft page will also be activated' : ''}. Reversible any time with the ✕ remove button on the assignment.`, needsCheckbox: false },
-      confirmLabel: origLabel,
-      production: addGate.production ? { label: addGate.label } : null,
-    });
-    if (!addSure) return;
-
+    const fail = msg => { if (errEl) { errEl.textContent = '❌ ' + msg; errEl.style.display = ''; } };
     if (errEl) errEl.style.display = 'none';
-    if (addBtn) { addBtn.disabled = true; addBtn.textContent = '⏳ Saving…'; }
+    if (!want || !want.length) { fail('Nothing is selected.'); return; }
+    if (!sobject) { fail('Assignments can only be set for record pages (pages of an object).'); return; }
+    const origLabel = addBtn ? addBtn.textContent : '';
+    if (addBtn) { addBtn.disabled = true; addBtn.textContent = '🔎 Checking what is there now…'; }
+    const restoreBtn = () => { if (addBtn) { addBtn.disabled = false; addBtn.textContent = origLabel; } };
 
-    // Progress counter in the tab pane — doAdd can run many sequential Metadata
-    // Deploys (ARTP mode is apps × profiles × record types), each several seconds.
+    // What holds each slot NOW (read fresh): the confirmation says what is replaced.
+    let holders;
+    try { holders = await currentHolders(want, sobject); }
+    catch (e) { restoreBtn(); fail(`Could not read what is assigned now (${lpWhy(e.message)}) — nothing was changed.`); return; }
+    const pageName = idOrName => {
+      const key = String(idOrName || '').toLowerCase();
+      const p = allPages.find(x => String(x.Id).toLowerCase().substring(0, 15) === key.substring(0, 15) || String(x.DeveloperName).toLowerCase() === key);
+      return p ? p.MasterLabel : String(idOrName);
+    };
+    const thisPage = h => !!h && (String(h).toLowerCase().substring(0, 15) === String(page.Id).toLowerCase().substring(0, 15) || String(h).toLowerCase() === String(devName).toLowerCase());
+    const todo = want.filter((a, i) => !thisPage(holders[i]));   // already this page → nothing to write
+    if (!todo.length) { restoreBtn(); fail('This page already holds every assignment you selected — nothing to change.'); return; }
+    const items = want.map((a, i) => {
+      const L = lpAssignmentWords(a);
+      const h = holders[i];
+      const what = thisPage(h) ? 'already this page — not written'
+        : h ? `REPLACES “${pageName(h)}” there` : 'nothing is assigned there now';
+      return { label: `${L.title} · ${a.formFactor === 'Small' ? 'Mobile' : 'Desktop'}${a.kind !== 'org' ? ` · ${a.appLabel}` : ''}${a.kind === 'artp' ? ` · ${a.recordType || 'any record type'}` : ''}`, sub: what };
+    });
+    const replaced = want.filter((a, i) => holders[i] && !thisPage(holders[i])).length;
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    const sure = await sftkConfirmDestructive({
+      title: `Assign “${page.MasterLabel}”`,
+      icon: mode === 'orgdefault' ? '🌐' : mode === 'appdefault' ? '⚡' : '📋',
+      items,
+      revOverride: {
+        html: `Shows <strong>${esc(page.MasterLabel)}</strong> to exactly the audience listed above — nothing else is assigned.` +
+          (replaced ? ` <strong>${replaced}</strong> of them ${replaced === 1 ? 'takes' : 'take'} the place of another page, which stops being shown there.` : '') +
+          ' Each one is re-read after it is written. Remove an assignment any time with its ✕.',
+        needsCheckbox: replaced > 0,
+        ack: 'I understand the pages named above stop being shown there',
+      },
+      confirmLabel: `Assign ${todo.length}`,
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!sure) { restoreBtn(); return; }
+
+    if (addBtn) addBtn.textContent = '⏳ Saving…';
     let progEl = null;
     if (addBtn) {
       progEl = document.createElement('div');
       progEl.className = 'lp-add-progress';
       addBtn.insertAdjacentElement('afterend', progEl);
     }
-    const showDeployProgress = (done, total) => {
-      if (progEl) progEl.innerHTML = sftkCatSm(`Deploying ${done}/${total}…`);
-    };
+    const say = msg => { if (progEl) progEl.innerHTML = sftkCatSm(msg); };
 
+    // History (sftk-history.js): one journal for this button press.
+    const j = sftkHistoryBegin({ tool: 'Lightning Pages', title: `➕ “${page.MasterLabel}” — ${todo.length} assignment${todo.length === 1 ? '' : 's'}`, orgUrl: _orgUrl });
+    const done = [], failed = [], undoSteps = [];
     try {
-      // For orgdefault mode: DO NOT pre-activate separately.
-      // The saveActionOverride call IS the activation — deploying CustomObject.actionOverrides
-      // with type='Flexipage' is both the activation and the org-default assignment in one step.
-      // Pre-activating would deploy the exact same CustomObject twice (wasteful, and the second
-      // deploy can race with the first).
-      //
-      // For appdefault / artp: still pre-activate for Draft pages so the page becomes visible
-      // before we add the more-specific app/profile assignment.
-      if (!isActive && sobjectType && mode !== 'orgdefault') await activatePage(page, metaRes);
-
-      if (mode === 'orgdefault') {
-        if (!sobjectType) throw new Error('Org Default can only be set for Record Pages (pages with an associated object).');
-        const desktop = document.getElementById('lpOrgDefDesktop')?.checked !== false;
-        const mobile  = document.getElementById('lpOrgDefMobile')?.checked  === true;
-        const ffs = [];
-        if (desktop || (!desktop && !mobile)) ffs.push('Large');
-        if (mobile) ffs.push('Small');
-        if (ffs.length === 0) throw new Error('Select at least one form factor.');
-        for (let fi = 0; fi < ffs.length; fi++) {
-          showDeployProgress(fi + 1, ffs.length);
-          await saveActionOverride(sobjectType, devName, ffs[fi], null);
-        }
-        // After saving, synthesize the assignments so the UI is immediately correct
-        // (the Tooling API pageAssignments field lags behind Metadata Deploy by seconds).
-        const synthAssignments = [
-          ...currentAssignments.filter(a => a.profile || a.app),  // keep non-org-default entries
-          ...ffs.map(ff => ({ formFactor: ff, default: true }))    // add freshly-set org-defaults
-        ];
-        await openDetail(page, null, 'Active', synthAssignments);
-        syncPageStatus(page.Id, 'Active');
-        return;
-      }
-
-      if (mode === 'appdefault') {
-        const checked = [...document.querySelectorAll('#lpAppDefList .lp-appdef-cb:checked')];
-        if (checked.length === 0) throw new Error('No apps selected.');
-        // Sequential to avoid PATCH conflicts on the same CustomApplication
-        for (let ci = 0; ci < checked.length; ci++) {
-          const cb  = checked[ci];
-          showDeployProgress(ci + 1, checked.length);
-          const row = cb.closest('.lp-app-item');
-          const ff  = row?.querySelector('.lp-app-ff-sel')?.value || 'Large';
-          await saveAppAssignment(cb.value, devName, ff, sobjectType, null, null);
-        }
-      }
-
-      if (mode === 'artp') {
-        const appPairs = [];
-        document.querySelectorAll('#lpARTPAppList .lp-artp-app-cb:checked').forEach(cb => {
-          const row = cb.closest('.lp-app-item');
-          const ff  = row?.querySelector('.lp-app-ff-sel')?.value || 'Large';
-          appPairs.push({ app: cb.value || null, ff });
-        });
-
-        const profiles = [];
-        document.querySelectorAll('#lpARTPProfileList .lp-artp-profile-cb:checked').forEach(cb =>
-          profiles.push(cb.value)
-        );
-
-        const rts = [];
-        const rtCbs = document.querySelectorAll('#lpARTPRTList .lp-artp-rt-cb:checked');
-        if (rtCbs.length > 0) {
-          rtCbs.forEach(cb => rts.push(cb.value || null)); // empty value = "All"
-        } else {
-          rts.push(null);
-        }
-
-        if (appPairs.length === 0 || profiles.length === 0) {
-          throw new Error('Select at least one app and one profile.');
-        }
-
-        // Sequential writes — multiple requests to the same CustomApplication must not race
-        const totalDeploys = appPairs.length * profiles.length * rts.length;
-        let deploysDone = 0;
-        for (const pair of appPairs) {
-          for (const profile of profiles) {
-            for (const rt of rts) {
-              showDeployProgress(++deploysDone, totalDeploys);
-              if (pair.app) {
-                // Specific app → CustomApplication.profileActionOverrides
-                await saveAppAssignment(pair.app, devName, pair.ff, sobjectType, profile, rt || null);
-              } else {
-                // "All Apps" selected → profile-level ActionOverride (no app context)
-                const prof = allProfiles.find(p =>
-                  p.Name.toLowerCase() === profile.toLowerCase()
-                );
-                if (!prof) throw new Error(`Profile "${profile}" not found.`);
-                await saveActionOverride(sobjectType, devName, pair.ff, prof.Id);
-              }
-            }
+      for (let i = 0; i < todo.length; i++) {
+        const a = todo[i];
+        const tag = `${i + 1}/${todo.length}`;
+        try {
+          if (a.kind === 'org') {
+            const prev = holders[want.indexOf(a)];
+            const r = await writeOrgDefault(sobject, a.formFactor, { id: page.Id, devName }, j, m => say(`${tag} · ${m}`));
+            if (!r.accepted) throw new Error(r.why);
+            (r.ok ? done : failed).push(r.text);
+            if (r.ok) undoSteps.push(orgUndoStep(sobject, a.formFactor, prev ? allPages.find(p => String(p.Id).substring(0, 15) === String(prev).substring(0, 15)) : null, prev));
+          } else {
+            say(`${tag} · ${a.appLabel}…`);
+            if (a.kind === 'artp' && !a.profileFull) a.profileFull = await profileFullName(a.profileId);
+            const r = await writeAppAssignment(a, devName, false, j);
+            if (!r.accepted) throw new Error(r.why);
+            (r.ok ? done : failed).push(r.text);
           }
+        } catch (e) {
+          failed.push(`${lpAssignmentWords(a).title}${a.kind !== 'org' ? ` in ${a.appLabel}` : ''}${a.kind === 'artp' && a.recordType ? `, record type ${a.recordType}` : ''} (${a.formFactor === 'Small' ? 'Mobile' : 'Desktop'}): ${lpWhy(e.message)}`);
         }
       }
-
-      // appdefault / artp: reload detail with publishStatus override if we just activated
-      if (!isActive && sobjectType) syncPageStatus(page.Id, 'Active');
-      await openDetail(page, null, !isActive && sobjectType ? 'Active' : null);
-    } catch (e) {
-      if (progEl) progEl.remove();
-      if (addBtn) { addBtn.disabled = false; addBtn.textContent = origLabel; }
-      if (errEl) {
-        const isAccessDenied = /INSUFFICIENT_ACCESS|cannot.*modify|managed.*component/i.test(e.message);
-        const hint = isAccessDenied
-          ? '<br><span class="lp-err-hint">💡 This is a managed or standard page. ' +
-            'Use <strong>Setup → Lightning App Builder → Activation</strong> instead.</span>'
-          : '';
-        // Module-specific access-denied explainer wins; everything else gets the
-        // shared friendly translation (raw string kept in the title for copy/paste).
-        let shownMsg = e.message;
-        if (!isAccessDenied) {
-          const fe = sftkFriendlyError(e.message);
-          shownMsg = fe.message + (fe.hint ? ' — ' + fe.hint : '');
-        }
-        errEl.title = e.message;
-        errEl.innerHTML = `❌ ${esc(shownMsg)}${hint}`;
-        errEl.style.display = '';
-      }
+    } finally {
+      await sftkHistoryEnd(j, { undo: undoSteps.filter(Boolean).length
+        ? { steps: undoSteps.filter(Boolean), note: 'App and profile assignments are not part of this undo — remove them with ✕ on the page.' }
+        : { none: done.length ? 'an app or profile assignment is taken back on the page itself: open it here and press ✕ on the assignment (an automatic undo would have to write the app’s whole definition back and could overwrite changes made since)' : 'nothing was confirmed changed, so there is nothing to undo' } });
     }
+    await openDetail(page,
+      failed.length ? `${failed.length} of ${todo.length} could not be assigned:\n• ${failed.join('\n• ')}` : null,
+      done.length ? `✅ ${done.length} assignment${done.length === 1 ? '' : 's'} written and verified by re-reading the org.` : null);
   }
 
-  // ── Remove profile assignment (Metadata Deploy) ───────────
-  async function confirmRemove(page, metaRes, assignments, idx) {
-    if (typeof showModal !== 'function') return;
-    const a          = assignments[idx];
-    const isOrgDef   = !a.profile;
-    const label      = isOrgDef ? 'Org Default' : a.profile;
-    const pRec       = isOrgDef ? null : allProfiles.find(p =>
-      p.Name.toLowerCase() === (a.profile || '').toLowerCase()
-    );
-    const cached     = pRec ? profileUserCache[pRec.Id] : null;
-    const impactNote = isOrgDef
-      ? 'All users will fall back to the Salesforce default page for this object.'
-      : cached
-        ? `👥 <strong>${cached.length}</strong> user${cached.length !== 1 ? 's' : ''} on this profile will fall back to the org-default page.`
-        : 'Users on this profile will fall back to the org-default page.';
+  // What holds each wanted slot right now: a FlexiPage Id (org default), a page
+  // API name (app-level), or null. Read fresh — never from the screen.
+  async function currentHolders(want, sobject) {
+    const out = new Array(want.length).fill(null);
+    if (want.some(a => a.kind === 'org')) {
+      const desc = await readDescribe(sobject);
+      want.forEach((a, i) => { if (a.kind === 'org') out[i] = lpOrgSlotHolder(desc, a.formFactor); });
+    }
+    const appIds = [...new Set(want.filter(a => a.kind !== 'org').map(a => a.appId))];
+    for (const id of appIds) await refreshApp(id);
+    for (let i = 0; i < want.length; i++) {
+      const a = want[i];
+      if (a.kind === 'org') continue;
+      if (a.kind === 'artp' && !a.profileFull) a.profileFull = await profileFullName(a.profileId);
+      out[i] = lpAppSlotHolder(_appMeta.get(a.appId), a);
+    }
+    return out;
+  }
 
+  // ── Remove assignments (one ✕, or all of them = Deactivate) ─────────────
+  // idxs: indexes into the assignments on screen. The confirmation names each;
+  // every one is checked against the org again right before it is removed
+  // (a slot that another page holds by now is left alone), written through its
+  // own path, and re-read.
+  async function confirmRemove(page, metaRes, assignments, idxs, ctx) {
+    if (typeof showModal !== 'function') return;
+    const list = idxs.map(i => assignments[i]).filter(Boolean);
+    if (!list.length) return;
+    const all = list.length === assignments.length && list.length > 1;
+    const hasOrg = list.some(a => a.kind === 'org');
     const gate = await sftkOrgWriteGate(_orgUrl);
     const sure = await sftkConfirmDestructive({
-      title: 'Remove Assignment?',
+      title: all ? `Deactivate “${page.MasterLabel}”?` : 'Remove assignment?',
       icon: '⚠️',
-      items: [{ label: page.MasterLabel, sub: label }],
-      revOverride: { html: impactNote, needsCheckbox: false },
-      confirmLabel: 'Remove',
+      items: list.map(a => { const L = lpAssignmentWords(a); return { label: `${L.title} · ${a.formFactor === 'Small' ? 'Mobile' : 'Desktop'}${a.kind !== 'org' ? ` · ${a.appLabel || a.app}` : ''}${a.kind === 'artp' && a.recordType ? ` · ${a.recordType}` : ''}`, sub: L.fallback }; }),
+      revOverride: {
+        html: (all ? `Deactivating a page means removing every assignment it has: <strong>${esc(page.MasterLabel)}</strong> stops being shown to anyone. ` : `<strong>${esc(page.MasterLabel)}</strong> stops being shown to this audience. `) +
+          (hasOrg ? 'Where it is the org default, users fall back to Salesforce’s standard page for the object. ' : '') +
+          'Only assignments this page still holds are removed — each is checked again first. Add them back any time from this screen.',
+        needsCheckbox: all,
+        ack: 'I understand this page stops being shown to these users',
+      },
+      confirmLabel: all ? `⏸ Remove all ${list.length}` : 'Remove',
       production: gate.production ? { label: gate.label } : null,
     });
     if (!sure) return;
-    await doRemove(page, metaRes, assignments, idx);
+    await doRemove(page, list, ctx);
   }
 
-  async function doRemove(page, metaRes, assignments, idx) {
-    // N3: see doAdd — drop the cached scan so user counts are recomputed.
+  async function doRemove(page, list, ctx) {
     _wswScan = null;
     const bodyEl = document.getElementById('lpDetailBody');
-    if (bodyEl) bodyEl.innerHTML = sftkCat('Removing assignment…');
-
-    const a           = assignments[idx];
-    const sobjectType = metaRes.Metadata?.sobjectType || page.EntityDefinitionId || null;
-    const devName     = metaRes.FullName;
-
+    const say = msg => { const b = document.getElementById('lpDetailBody'); if (b) b.innerHTML = sftkCat(msg); };
+    if (bodyEl) say(list.length === 1 ? 'Removing assignment…' : `Removing ${list.length} assignments…`);
+    const devName = ctx.devName, sobject = ctx.sobject;
+    // History (sftk-history.js): one journal for this press.
+    const j = sftkHistoryBegin({ tool: 'Lightning Pages', title: `✕ “${page.MasterLabel}” — ${list.length} assignment${list.length === 1 ? '' : 's'} removed`, orgUrl: _orgUrl });
+    const done = [], failed = [], undoSteps = [];
     try {
-      if (a.app) {
-        // App-based assignment → remove from CustomApplication.profileActionOverrides
-        await deleteAppAssignment(
-          a.app, devName,
-          a.formFactor || 'Large', sobjectType,
-          a.profile    || null,
-          a.recordType || null
-        );
-      } else {
-        // Org-level (or profile-only) assignment → deploy type=Default to reset the override
-        await deleteActionOverride(sobjectType, devName, a.formFactor || 'Large', a.profile || null);
+      for (let i = 0; i < list.length; i++) {
+        const a = list[i];
+        const tag = list.length > 1 ? `${i + 1}/${list.length} · ` : '';
+        try {
+          if (a.kind === 'org') {
+            const r = await writeOrgDefault(sobject, a.formFactor, null, j, m => say(`${tag}${m}`), { id: page.Id, devName });
+            if (!r.accepted) throw new Error(r.why);
+            (r.ok ? done : failed).push(r.text);
+            if (r.ok && !r.skipped) undoSteps.push(orgUndoStep(sobject, a.formFactor, page, page.Id));
+          } else {
+            say(`${tag}${a.appLabel || a.app}…`);
+            const r = await writeAppAssignment(a, devName, true, j);
+            if (!r.accepted) throw new Error(r.why);
+            (r.ok ? done : failed).push(r.text);
+          }
+        } catch (e) {
+          failed.push(`${lpAssignmentWords(a).title}${a.kind !== 'org' ? ` in ${a.appLabel || a.app}` : ''} (${a.formFactor === 'Small' ? 'Mobile' : 'Desktop'}): ${lpWhy(e.message)}`);
+        }
       }
-      // Show the expected post-removal state immediately.
-      // The Salesforce API (Tooling publishStatus + describe actionOverrides) can take
-      // several seconds to reflect a Metadata Deploy, so we synthesise the correct UI
-      // state rather than re-fetching stale data.
-      const remaining = assignments.filter((_, i) => i !== idx);
-      const stillHasOrgDefault = remaining.some(r => !r.profile && !r.app);
-      const newStatus = stillHasOrgDefault ? 'Active' : 'Draft';
-      await openDetail(page, null, newStatus, remaining);
-      syncPageStatus(page.Id, newStatus);
-    } catch (e) {
-      console.error('[SF Toolkit] doRemove failed:', e);
-      await openDetail(page, e.message);
+    } finally {
+      await sftkHistoryEnd(j, { undo: undoSteps.filter(Boolean).length
+        ? { steps: undoSteps.filter(Boolean), note: 'App and profile assignments are not part of this undo — add them again from the page.' }
+        : { none: done.length ? 'an app or profile assignment is put back on the page itself: open it here and add it again (an automatic undo would have to write the app’s whole definition back and could overwrite changes made since)' : 'nothing was confirmed changed, so there is nothing to undo' } });
     }
+    await openDetail(page,
+      failed.length ? `${failed.length} of ${list.length} could not be removed:\n• ${failed.join('\n• ')}` : null,
+      done.length ? `✅ ${done.join(' · ')}` : null);
   }
 
   // ── Clone page ────────────────────────────────────────────
@@ -3219,30 +3115,24 @@ const LightningPages = (() => {
       || 'New_Page';                    // final fallback
   }
 
-  // Show a modal dialog letting the user configure the clone (label, API name, copy assignments).
-  function openCloneDialog(page, metaRes, assignments) {
+  // Show a modal dialog letting the user configure the clone (label, API name)
+  // and, as a separate and deliberate choice, MOVE the original's assignments
+  // to the copy. A slot shows one page: giving an assignment to the copy takes
+  // it from the original. So that box starts unticked, says what it does, and
+  // ticking it leads through the shared confirmation before anything moves.
+  function openCloneDialog(page, metaRes, assignments, ctx) {
     if (typeof showModal !== 'function') return;
 
     const origLabel      = page.MasterLabel || page.DeveloperName || 'Page';
     const defaultLabel   = origLabel + ' Copy';
     const defaultApiName = labelToApiName(defaultLabel);
-
-    // Build assignment preview list
-    let assignHtml = '';
-    if (assignments.length > 0) {
-      const rows = assignments.map(a => {
-        const who = !a.profile && !a.app
-          ? '🌐 Org Default'
-          : a.app
-            ? `⚡ ${esc(a.app)}${a.profile ? ' · ' + esc(a.profile) : ''}`
-            : `👤 ${esc(a.profile)}`;
-        const ff = (a.formFactor || 'Large') === 'Small' ? '📱' : '🖥';
-        return `<div class="lp-clone-asgn-row">${who} <span class="lp-rt-tag">${ff}</span></div>`;
-      }).join('');
-      assignHtml = `<div class="lp-clone-asgn-list">${rows}</div>`;
-    } else {
-      assignHtml = '<div class="lp-empty-hint" style="margin-top:4px">No assignments on original page.</div>';
-    }
+    const rowOf = a => {
+      const L = lpAssignmentWords(a);
+      return `${L.icon} ${esc(L.title)}${a.kind !== 'org' ? ' · ' + esc(a.appLabel || a.app) : ''}${a.kind === 'artp' && a.recordType ? ' · ' + esc(a.recordType) : ''} <span class="lp-rt-tag">${a.formFactor === 'Small' ? '📱' : '🖥'}</span>`;
+    };
+    const assignHtml = assignments.length > 0
+      ? `<div class="lp-clone-asgn-list">${assignments.map(a => `<div class="lp-clone-asgn-row">${rowOf(a)}</div>`).join('')}</div>`
+      : '';
 
     showModal(`
       <div class="modal-header">
@@ -3251,7 +3141,7 @@ const LightningPages = (() => {
       </div>
       <div class="modal-body">
         <p style="margin-bottom:12px;font-size:11px;color:var(--subtext)">
-          Creates a copy of <strong>${esc(origLabel)}</strong> with the same layout and components.
+          Creates a copy of <strong>${esc(origLabel)}</strong> with the same layout and components. The copy is not shown to anyone until you assign it.
         </p>
 
         <label class="lp-clone-field-lbl">New Label</label>
@@ -3263,11 +3153,15 @@ const LightningPages = (() => {
                value="${esc(defaultApiName)}" placeholder="New_Page_Name" autocomplete="off">
         <div class="lp-clone-hint">Letters, numbers, underscores only — must start with a letter.</div>
 
+        ${assignments.length > 0 ? `
         <label class="lp-clone-field-lbl" style="margin-top:12px;display:flex;align-items:center;gap:6px;cursor:pointer">
-          <input type="checkbox" id="cloneCopyAssignments" ${assignments.length > 0 ? 'checked' : ''}>
-          Copy assignments (${assignments.length})
+          <input type="checkbox" id="cloneCopyAssignments">
+          Also move the original’s ${assignments.length === 1 ? 'assignment' : assignments.length + ' assignments'} to the copy
         </label>
-        <div id="cloneAssignPreview"${assignments.length === 0 ? ' style="display:none"' : ''}>${assignHtml}</div>
+        <div id="cloneAssignPreview" style="display:none">
+          <div class="lp-clone-hint" style="color:#b45309">⚠ The copy TAKES OVER these: users see the copy there, and <strong>${esc(origLabel)}</strong> stops being shown. You are asked to confirm before anything moves.</div>
+          ${assignHtml}
+        </div>` : '<input type="checkbox" id="cloneCopyAssignments" style="display:none">'}
 
         <div id="cloneError" class="lp-add-err" style="display:none;margin-top:8px"></div>
         <div id="cloneStatus" style="margin-top:8px"></div>
@@ -3290,8 +3184,8 @@ const LightningPages = (() => {
     });
     apiInput.addEventListener('input', () => { apiEdited = true; });
 
-    copyAssignCb.addEventListener('change', () => {
-      preview.style.display = copyAssignCb.checked ? '' : 'none';
+    copyAssignCb?.addEventListener('change', () => {
+      if (preview) preview.style.display = copyAssignCb.checked ? '' : 'none';
     });
 
     document.getElementById('modalCancel').addEventListener('click', () => {
@@ -3301,7 +3195,7 @@ const LightningPages = (() => {
     document.getElementById('cloneConfirmBtn').addEventListener('click', async () => {
       const label   = document.getElementById('cloneLabel').value.trim();
       const apiName = document.getElementById('cloneApiName').value.trim();
-      const copyA   = document.getElementById('cloneCopyAssignments').checked;
+      const copyA   = !!document.getElementById('cloneCopyAssignments')?.checked && assignments.length > 0;
       const errEl   = document.getElementById('cloneError');
 
       errEl.style.display = 'none';
@@ -3312,53 +3206,63 @@ const LightningPages = (() => {
         errEl.style.display = '';
         return;
       }
+      const friendly = raw => {
+        if (/DUPLICATE_DEVELOPER_NAME|duplicate.*developer.?name/i.test(raw)) return `A page with the API name "${apiName}" already exists — choose a different API name.`;
+        if (/invalid.*(?:character|name)|INVALID_NAME/i.test(raw)) return 'The API name is not valid — use letters, numbers, and underscores, starting with a letter.';
+        return lpWhy(raw);
+      };
+
+      if (copyA) {
+        // Moving assignments changes what users see: the shared confirmation
+        // (and the typed org name on production) comes first. It replaces
+        // this dialog; progress then shows on the page itself.
+        const gate = await sftkOrgWriteGate(_orgUrl);
+        const sure = await sftkConfirmDestructive({
+          title: `Clone “${origLabel}” and move its assignments`,
+          icon: '📋',
+          items: assignments.map(a => { const L = lpAssignmentWords(a); return { label: `${L.title} · ${a.formFactor === 'Small' ? 'Mobile' : 'Desktop'}${a.kind !== 'org' ? ` · ${a.appLabel || a.app}` : ''}${a.kind === 'artp' && a.recordType ? ` · ${a.recordType}` : ''}`, sub: `moves from “${origLabel}” to “${label}”` }; }),
+          revOverride: { html: `Creates <strong>${esc(label)}</strong> (${esc(apiName)}) and then gives it every assignment listed above. <strong>${esc(origLabel)}</strong> stops being shown there. If the copy cannot be created, nothing is moved.`,
+            needsCheckbox: true, ack: 'I understand users will see the copy instead of the original' },
+          confirmLabel: '📋 Clone and move',
+          production: gate.production ? { label: gate.label } : null,
+        });
+        if (!sure) return;
+        const say = msg => { const b = document.getElementById('lpDetailBody'); if (b) b.innerHTML = sftkCat(msg); };
+        try { await doClone(page, metaRes, assignments, label, apiName, true, ctx, say); }
+        catch (e) { await openDetail(page, `The page was not cloned: ${friendly(e.message || String(e))}. Nothing was moved.`); }
+        return;
+      }
 
       const btn      = document.getElementById('cloneConfirmBtn');
       const statusEl = document.getElementById('cloneStatus');
       btn.disabled    = true;
       btn.textContent = '⏳ Cloning…';
-      if (statusEl) statusEl.innerHTML = sftkCatSm('Cloning page…');
+      const say = msg => { const el = document.getElementById('cloneStatus'); if (el) el.innerHTML = sftkCatSm(msg); };
+      say('Cloning page…');
 
       try {
-        await doClone(page, metaRes, assignments, label, apiName, copyA);
+        await doClone(page, metaRes, assignments, label, apiName, false, ctx, say);
         if (typeof closeModal === 'function') closeModal();
       } catch (e) {
         btn.disabled    = false;
         btn.textContent = '📋 Clone Page';
         if (statusEl) statusEl.innerHTML = '';
-        // Translate common clone failures (name collision, invalid name);
-        // sftkFriendlyError covers the rest. Raw error kept in title for copy/paste.
         const raw = e.message || String(e);
-        let shownMsg;
-        if (/DUPLICATE_DEVELOPER_NAME|duplicate.*developer.?name/i.test(raw)) {
-          shownMsg = `A page with the API name "${apiName}" already exists — choose a different API name.`;
-        } else if (/invalid.*(?:character|name)|INVALID_NAME/i.test(raw)) {
-          shownMsg = 'The API name is not valid — use letters, numbers, and underscores, starting with a letter.';
-        } else {
-          const fe = sftkFriendlyError(raw);
-          shownMsg = fe.message + (fe.hint ? ' — ' + fe.hint : '');
-        }
         errEl.title = raw;
-        errEl.textContent = '❌ ' + shownMsg;
+        errEl.textContent = '❌ ' + friendly(raw);
         errEl.style.display = '';
       }
     });
   }
 
-  // Deploy a cloned FlexiPage and optionally recreate all assignments on it.
-  async function doClone(page, metaRes, assignments, newLabel, newApiName, copyAssignments) {
-    // Step progress in the clone modal (#cloneStatus exists while the modal is open)
-    const cloneStep = msg => {
-      const el = document.getElementById('cloneStatus');
-      if (el) el.innerHTML = sftkCatSm(msg);
-    };
-
+  // Deploy a cloned FlexiPage and, when asked and confirmed, move the
+  // original's assignments to it.
+  async function doClone(page, metaRes, assignments, newLabel, newApiName, moveAssignments, ctx, say) {
     // ── 1. Build the clone metadata ──────────────────────────
-    // Deep-copy metadata, update masterLabel, strip read-only / assignment fields.
     const cloneMeta = JSON.parse(JSON.stringify(metaRes.Metadata || {}));
     cloneMeta.masterLabel = newLabel;
-    delete cloneMeta.pageAssignments;  // not a writable XSD field; assignments are recreated below
-    delete cloneMeta.publishStatus;    // computed by SF automatically from assignments
+    delete cloneMeta.pageAssignments;  // not a field of a FlexiPage
+    delete cloneMeta.publishStatus;    // not a field of a FlexiPage
 
     // Create a fake metaRes-shape so buildFlexiPageZip uses the new developer name
     const cloneMetaRes = { FullName: newApiName, Metadata: cloneMeta };
@@ -3368,12 +3272,13 @@ const LightningPages = (() => {
     // cloning only ever CREATES a page; there is no previous copy to go
     // back to.
     const journal = sftkHistoryBegin({ tool: 'Lightning Pages', title: `📋 Clone → "${newApiName}"`, orgUrl: _orgUrl });
-    cloneStep('Deploying cloned page…');
+    say('Deploying cloned page…');
     let newPage = null;
     let wr;
     try {
     // confirmed-by: openCloneDialog's Clone Page form (the only caller —
-    // label/API name are reviewed there before the Clone Page button writes)
+    // label/API name are reviewed there before the Clone Page button writes;
+    // moving assignments goes through sftkConfirmDestructive there first)
     // The write discipline (sftk-write.js): the deploy is the write, the
     // FlexiPage lookup below is the verify — never trust the deploy's own
     // answer for whether the clone actually exists.
@@ -3382,7 +3287,7 @@ const LightningPages = (() => {
       journal,
       write: () => bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64 }),
       verify: async () => {
-        cloneStep('Locating new page…');
+        say('Locating new page…');
         const findRes = await bg({
           type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true,
           query: `SELECT Id,DeveloperName,MasterLabel,Type,EntityDefinitionId,ManageableState ` +
@@ -3396,442 +3301,214 @@ const LightningPages = (() => {
     } finally {
       await sftkHistoryEnd(journal, { undo: { none: `cloning creates a new page — there is no previous copy to undo to; delete "${newApiName}" by hand in Lightning App Builder if you no longer want it` } });
     }
-    if (!wr.accepted) throw new Error('Deploy failed: ' + ((wr.raw && wr.raw.error) || 'refused'));
+    if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
     if (!wr.ok) throw new Error(wr.text);
 
     // Add to the in-memory list so it appears without a full reload
-    allPages.push({ ...newPage, PublishStatus: 'Draft', _isOrgDefault: false });
+    allPages.push({ ...newPage, PublishStatus: 'Unassigned', _isOrgDefault: false });
 
-    // ── 4. Recreate assignments ──────────────────────────────
-    if (copyAssignments && assignments.length > 0) {
-      cloneStep('Copying assignments…');
-      const sobjectType = metaRes.Metadata?.sobjectType || page.EntityDefinitionId || null;
-      const errors      = [];
-
-      for (const a of assignments) {
+    // ── 2. Move the assignments (confirmed in the dialog) ─────
+    if (!moveAssignments || !assignments.length) { await openDetail(newPage, null, `✅ “${newLabel}” created. It is not shown to anyone yet — assign it below.`); return; }
+    _wswScan = null;
+    const sobject = ctx.sobject;
+    // History: one journal for the move; an org default can be handed back to
+    // the original, app-level ones are re-assigned from the original's page.
+    const j2 = sftkHistoryBegin({ tool: 'Lightning Pages', title: `📋 “${newLabel}” takes over ${assignments.length} assignment${assignments.length === 1 ? '' : 's'} of “${page.MasterLabel}”`, orgUrl: _orgUrl });
+    const done = [], failed = [], undoSteps = [];
+    try {
+      for (let i = 0; i < assignments.length; i++) {
+        const a = assignments[i];
+        const tag = `${i + 1}/${assignments.length}`;
         try {
-          if (a.app) {
-            // App-based assignment → CustomApplication.profileActionOverrides
-            await saveAppAssignment(
-              a.app, newApiName, a.formFactor || 'Large',
-              sobjectType, a.profile || null, a.recordType || null
-            );
+          let r;
+          if (a.kind === 'org') {
+            r = await writeOrgDefault(sobject, a.formFactor, { id: newPage.Id, devName: newApiName }, j2, m => say(`${tag} · ${m}`));
+            if (r.accepted && r.ok) undoSteps.push(orgUndoStep(sobject, a.formFactor, page, page.Id));
           } else {
-            // Org default (no profile) or profile-only assignment → ActionOverride
-            let profileId = null;
-            if (a.profile) {
-              const profRec = allProfiles.find(p =>
-                p.Name.toLowerCase() === (a.profile || '').toLowerCase()
-              );
-              if (!profRec) {
-                errors.push(`Profile "${a.profile}" not found — skipped.`);
-                continue;
-              }
-              profileId = profRec.Id;
-            }
-            await saveActionOverride(sobjectType, newApiName, a.formFactor || 'Large', profileId);
+            say(`${tag} · ${a.appLabel || a.app}…`);
+            r = await writeAppAssignment(a, newApiName, false, j2);
           }
+          if (!r.accepted) throw new Error(r.why);
+          (r.ok ? done : failed).push(r.text);
         } catch (e) {
-          const label = a.app
-            ? `App "${a.app}"${a.profile ? ' / ' + a.profile : ''}`
-            : a.profile ? `Profile "${a.profile}"` : 'Org Default';
-          errors.push(`${label}: ${e.message}`);
+          failed.push(`${lpAssignmentWords(a).title}${a.kind !== 'org' ? ` in ${a.appLabel || a.app}` : ''}: ${lpWhy(e.message)}`);
         }
       }
-
-      if (errors.length > 0) {
-        // Partial success — open with a warning banner.
-        // If at least one assignment was saved the page is now Active; otherwise Draft.
-        const partialStatus = errors.length < assignments.length ? 'Active' : 'Draft';
-        syncPageStatus(newPage.Id, partialStatus);
-        await openDetail(newPage, 'Some assignments could not be copied:\n• ' + errors.join('\n• '), partialStatus);
-        return;
-      }
+    } finally {
+      await sftkHistoryEnd(j2, { undo: undoSteps.filter(Boolean).length
+        ? { steps: undoSteps.filter(Boolean), note: 'App and profile assignments are not part of this undo — assign them to the original again from its page.' }
+        : { none: done.length ? 'app and profile assignments are handed back on the original page itself: open it here and assign them again' : 'nothing was confirmed changed, so there is nothing to undo' } });
     }
-
-    // ── 5. Open the new page's detail view ──────────────────
-    // Pass the known publishStatus so openDetail never attempts a PublishStatus SOQL
-    // query (which fails in orgs where the field isn't available on FlexiPage).
-    const finalStatus = (copyAssignments && assignments.length > 0) ? 'Active' : 'Draft';
-    syncPageStatus(newPage.Id, finalStatus);
-    await openDetail(newPage, null, finalStatus);
+    await openDetail(newPage,
+      failed.length ? `${failed.length} of ${assignments.length} assignments could not be moved (the original keeps them):\n• ${failed.join('\n• ')}` : null,
+      `✅ “${newLabel}” created${done.length ? ` and now holds ${done.length} assignment${done.length === 1 ? '' : 's'} of “${page.MasterLabel}” — verified by re-reading the org` : ''}.`);
   }
 
-  // ── Activate / Deactivate ────────────────────────────────
-  // Purely changes publishStatus. Org-default assignment is managed via the
-  // "🌐 Org Default" tab in the Add Assignment form — no longer mixed into
-  // this modal (which caused confusion when page was already active).
-  async function doActivate(page, metaRes, assignments, activate) {
-    if (typeof showModal !== 'function') return;
-    // N3: activation flips whether this page reaches anyone at all, so the
-    // cached scan (which keys audiences off PublishStatus) must be rebuilt.
-    _wswScan = null;
-
-    const gate = await sftkOrgWriteGate(_orgUrl);
-    if (!activate) {
-      // Deactivate confirmation
-      const sure = await sftkConfirmDestructive({
-        title: 'Deactivate Page?',
-        icon: '⚠️',
-        items: [{ label: page.MasterLabel }],
-        revOverride: { html: 'Deactivating will set the page back to Draft. Users will no longer see this page. Reversible any time with ▶ Activate.', needsCheckbox: false },
-        confirmLabel: 'Deactivate',
-        production: gate.production ? { label: gate.label } : null,
-      });
-      if (!sure) return;
-      await runDeploy(page, metaRes, assignments, 'Draft');
-      return;
-    }
-
-    // Activate confirmation — org default is handled by the "🌐 Org Default" tab
-    const sure = await sftkConfirmDestructive({
-      title: 'Activate Page',
-      icon: '▶',
-      items: [{ label: page.MasterLabel }],
-      revOverride: { html: 'To assign this page as org default, use the 🌐 Org Default tab in the assignment form after activating. Reversible any time with ⚠️ Deactivate.', needsCheckbox: false },
-      confirmLabel: 'Activate',
-      production: gate.production ? { label: gate.label } : null,
-    });
-    if (!sure) return;
-    await runDeploy(page, metaRes, assignments, 'Active');
-  }
-
-  // Activates or deactivates the page by updating publishStatus via Tooling API PATCH.
-  // pageAssignments is intentionally excluded — it is NONCREATABLE/NONUPDATABLE on
-  // FlexiPage (assignments live in ActionOverride / CustomApplication, not FlexiPage).
-  async function runDeploy(page, metaRes, currentAssignments, publishStatus) {
-    const bodyEl = document.getElementById('lpDetailBody');
-    const label  = publishStatus === 'Active' ? 'Activating' : 'Deactivating';
-    if (bodyEl) bodyEl.innerHTML = sftkCat(`${label} page…`);
-
-    try {
-      await activatePage(page, metaRes, publishStatus);
-      // Pass publishStatus as an override — Salesforce's Tooling API publishStatus
-      // field can lag a few seconds behind a Metadata Deploy, so we display the
-      // known-correct state immediately instead of relying on the re-fetched value.
-      await openDetail(page, null, publishStatus);
-      syncPageStatus(page.Id, publishStatus);
-    } catch (e) {
-      await openDetail(page, e.message);
-    }
-  }
-
-  // ── Silent activate/deactivate helper (no UI) ────────────────
-  // Called by doAdd (Draft page gets first assignment) and runDeploy.
-  // Only PATCHes publishStatus — leaves all other metadata untouched.
-  async function activatePage(page, metaRes, publishStatus = 'Active') {
-    // Salesforce computes publishStatus automatically from page assignments — it
-    // cannot be written via any API (Tooling PATCH, Metadata Deploy, or sObject update
-    // all fail with various "field not writable" or XSD errors).
-    //
-    // Instead we drive activation through assignments, exactly as Lightning App Builder does:
-    //   Activate   → create / update the org-wide Desktop (Large) ActionOverride
-    //   Deactivate → delete  the org-wide Desktop ActionOverride for this page
-    //
-    // For non-Record Pages (no sobjectType) the caller must use the assignment form.
-
-    const sobjectType = metaRes?.Metadata?.sobjectType;
-    const devName     = metaRes?.FullName || page.DeveloperName;
-
-    if (!sobjectType) {
-      throw new Error(
-        publishStatus === 'Active'
-          ? 'Quick Activate is only supported for Record Pages (pages linked to an sObject). ' +
-            'Use the "Add Assignment" form below to assign this page.'
-          : 'Quick Deactivate is only supported for Record Pages. ' +
-            'Remove existing assignments using the ✕ buttons in the Assignments section.'
-      );
-    }
-
-    if (publishStatus === 'Active') {
-      // Creates or updates the org-wide Desktop default for this object type.
-      // Salesforce will automatically flip publishStatus → Active once the record exists.
-      await saveActionOverride(sobjectType, devName, 'Large', null);
-    } else {
-      // Removes the org-wide Desktop override that points to this page.
-      // When no assignments remain, Salesforce flips publishStatus → Obsolete.
-      await deleteActionOverride(sobjectType, devName, 'Large', null);
-    }
-  }
-
-  // ── Fetch users for a profile (cached) ───────────────────
+  // ── Fetch users for a profile ─────────────────────────────
+  // Returns { users, error }. A failed read is NEVER remembered as an empty
+  // list (it used to be: a 404 then read "No active users on this profile"
+  // until the next refresh).
   async function fetchUsers(profileId) {
-    if (profileUserCache[profileId]) return profileUserCache[profileId];
-
+    if (profileUserCache[profileId]) return { users: profileUserCache[profileId], error: null };
     const res = await bg({
-      type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
+      type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
       query: `SELECT Id,Name,Username FROM User ` +
              `WHERE ProfileId='${profileId}' AND IsActive=true ORDER BY Name`
     });
-
-    const users = res.error ? [] : (res.records || []);
-    profileUserCache[profileId] = users;
-    return users;
+    if (!res || res.error) return { users: [], error: (res && res.error) || 'no answer' };
+    profileUserCache[profileId] = res.records || [];
+    return { users: profileUserCache[profileId], error: null };
   }
 
-  // ── Assignment write/delete helpers ─────────────────────────
-  //
-  // Lightning page assignments are NOT stored in FlexiPage metadata.
-  // • Org Default / Profile-only → Standard REST API  ActionOverride sObject
-  //                                (NOT Tooling API — ActionOverride is a standard sObject)
-  // • App Default / App+Profile  → Tooling API  CustomApplication.profileActionOverrides
-  //
-  // The pageAssignments array on a FlexiPage Tooling GET is aggregated read-only data.
+  // ── Assignment writes ───────────────────────────────────────
+  // Two places, two mechanics (see the note above ensureApps):
+  //   • Org default            → a Metadata deploy of CustomObject.actionOverrides
+  //                              (type Flexipage + the page, or type Default to clear)
+  //   • App default / app + record type + profile
+  //                            → a Tooling PATCH of the CustomApplication
+  // Both are judged by RE-READING the org, never by the request's own answer.
 
-  // Build and deploy a CustomObject metadata ZIP containing a single actionOverrides
-  // entry.  Salesforce merges actionOverrides on deploy (keyed on actionName +
-  // formFactor + profile), so we only need to include the entry we're changing.
-  //
-  // type = 'Flexipage'  → set the FlexiPage as the override
-  // type = 'Default'    → reset to the standard Salesforce view (removes the override)
-  async function deployCustomObjectActionOverride(sobjectType, devName, formFactor, profileName, type) {
+  // The object's describe, fresh (the `?_=` defeats the browser's HTTP cache —
+  // this module writes an org default and reads it straight back).
+  async function readDescribe(sobject) {
+    await _lpResolveEntityNames([sobject]);
+    const api = _lpEntityName(sobject) || sobject;
+    const d = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+      path: `services/data/v62.0/sobjects/${api}/describe/?_=${Date.now()}` });
+    if (!d || d.error || !Array.isArray(d.actionOverrides)) throw new Error((d && d.error) || 'the object could not be described');
+    return d;
+  }
+
+  // The deploy package for ONE org-default slot. devName = the page to show;
+  // null = back to Salesforce's standard page (type Default carries no content).
+  function orgOverrideZip(sobject, formFactor, devName) {
     const lines = [
       '<?xml version="1.0" encoding="UTF-8"?>',
       '<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">',
       '    <actionOverrides>',
       '        <actionName>View</actionName>',
     ];
-    // Include <content> only for Flexipage type (names the page to set).
-    // Default type must NOT include content — it is the "reset to standard view" marker
-    // and Salesforce ignores/corrupts the entry if content is present with type=Default.
-    if (type === 'Flexipage' && devName) {
-      lines.push(`        <content>${escXml(devName)}</content>`);
-    }
-    lines.push(`        <formFactor>${escXml(formFactor)}</formFactor>`);
-    if (profileName) lines.push(`        <profile>${escXml(profileName)}</profile>`);
+    if (devName) lines.push(`        <content>${escXml(devName)}</content>`);
     lines.push(
+      `        <formFactor>${escXml(formFactor)}</formFactor>`,
       '        <skipRecordTypeSelect>false</skipRecordTypeSelect>',
-      `        <type>${escXml(type)}</type>`,
+      `        <type>${devName ? 'Flexipage' : 'Default'}</type>`,
       '    </actionOverrides>',
       '</CustomObject>'
     );
-
     const pkgLines = [
       '<?xml version="1.0" encoding="UTF-8"?>',
       '<Package xmlns="http://soap.sforce.com/2006/04/metadata">',
       '    <types>',
-      `        <members>${escXml(sobjectType)}</members>`,
+      `        <members>${escXml(sobject)}</members>`,
       '        <name>CustomObject</name>',
       '    </types>',
       '    <version>62.0</version>',
       '</Package>',
     ];
-
     const enc = new TextEncoder();
-    const zipBase64 = buildStoredZip([
-      { name: 'package.xml',                          data: enc.encode(pkgLines.join('\n')) },
-      { name: `objects/${sobjectType}.object`,         data: enc.encode(lines.join('\n'))   },
+    return buildStoredZip([
+      { name: 'package.xml',               data: enc.encode(pkgLines.join('\n')) },
+      { name: `objects/${sobject}.object`, data: enc.encode(lines.join('\n'))   },
     ]);
-
-    // History (sftk-history.js): one journal per deploy. Undo is `none` —
-    // a CustomObject actionOverride has no reliable per-slot read (the
-    // describe endpoint reflects only the current user's own effective
-    // view, not every profile's), so the state before THIS deploy cannot
-    // be captured with confidence; faking it risks writing back the wrong
-    // page. Reset it by hand in Setup if it needs reversing.
-    const journal = sftkHistoryBegin({ tool: 'Lightning Pages', title: `🔧 ${sobjectType} view override`, orgUrl: _orgUrl });
-    let wr;
-    try {
-    // confirmed-by: every caller confirms first — doActivate's, confirmRemove's,
-    // or doAdd's sftkConfirmDestructive (saveActionOverride/deleteActionOverride
-    // are only reached from activatePage, doAdd's orgdefault mode, or doRemove)
-    // The write discipline (sftk-write.js): routed through the helper, but
-    // not re-read here — a CustomObject actionOverride has no simple
-    // queryable sObject to re-read (it is Metadata-only). Every caller
-    // reloads the real, current assignment state via openDetail() right
-    // after this returns, which is the actual confirmation shown to the user.
-    wr = await sftkWriteVerified({
-      describe: `${sobjectType} view override`,
-      journal,
-      write: () => bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64 }),
-      noVerify: 'no queryable sObject for a CustomObject actionOverride — openDetail() re-reads the real assignment state right after',
-    });
-    } finally {
-      await sftkHistoryEnd(journal, { undo: { none: `the previous ${sobjectType} view override could not be read back reliably before writing — reset it by hand in Setup → Object Manager → ${sobjectType} → Buttons, Links, and Actions if this needs to be undone` } });
-    }
-    if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
   }
 
-  // Set a FlexiPage as the View override for an sObject type.
-  // profileId=null → org-wide default (all profiles).
-  async function saveActionOverride(sobjectType, devName, formFactor, profileId) {
-    if (!sobjectType) {
-      throw new Error('Org Default can only be set for Record Pages (pages associated with an object).');
-    }
-    // Resolve profileId → name (the Metadata API uses names, not IDs).
-    let profileName = null;
-    if (profileId) {
-      const profRes = await bg({
-        type: 'SF_QUERY_ALL', tooling: false, orgUrl: _orgUrl, sid: _sid,
-        query: `SELECT Name FROM Profile WHERE Id = '${profileId}'`
-      });
-      if (profRes.error) throw new Error(profRes.error);
-      profileName = profRes.records?.[0]?.Name;
-      if (!profileName) throw new Error(`Profile ${profileId} not found.`);
-    }
-    await deployCustomObjectActionOverride(sobjectType, devName, formFactor, profileName, 'Flexipage');
-  }
-
-  // Remove the FlexiPage View override for an sObject type by resetting it to Default.
-  // devName is passed through so Salesforce can identify WHICH override to reset.
-  async function deleteActionOverride(sobjectType, devName, formFactor, profileName) {
-    if (!sobjectType) return;
-    await deployCustomObjectActionOverride(sobjectType, devName, formFactor, profileName, 'Default');
-  }
-
-  // Add or replace a profileActionOverride entry on a CustomApplication.
-  // Fetches the current Metadata compound, merges the new entry, and PATCHes back.
-  async function saveAppAssignment(appDevName, devName, formFactor, sobjectType, profileName, recordTypeName) {
-    const { appId, appMeta } = await getCustomApp(appDevName);
-
-    // Build the new entry (only include optional fields when non-empty)
-    const newEntry = { actionName: 'View', content: devName, formFactor, type: 'Flexipage' };
-    if (sobjectType)    newEntry.pageOrSobjectType = sobjectType;
-    if (profileName)    newEntry.profile            = profileName;
-    if (recordTypeName) newEntry.recordType         = recordTypeName;
-
-    // Merge: drop any existing entry that matches the same slot, add the new one
-    const existing = (appMeta.Metadata.profileActionOverrides || []).filter(o => {
-      if ((o.actionName || 'View') !== 'View') return true;  // unrelated action — keep
-      const sameFF  = (o.formFactor         || 'Large') === (formFactor     || 'Large');
-      const samePro = (o.profile            || '')       === (profileName    || '');
-      const sameSob = (o.pageOrSobjectType  || '')       === (sobjectType    || '');
-      const sameRT  = (o.recordType         || '')       === (recordTypeName || '');
-      return !(sameFF && samePro && sameSob && sameRT);  // false = remove this conflict
-    });
-
-    await patchCustomApp(appId, appMeta, [...existing, newEntry]);
-  }
-
-  // Remove a profileActionOverride entry from a CustomApplication.
-  async function deleteAppAssignment(appDevName, devName, formFactor, sobjectType, profileName, recordTypeName) {
-    let appId, appMeta;
-    try { ({ appId, appMeta } = await getCustomApp(appDevName)); }
-    catch (e) {
-      // If the app simply doesn't exist, there's nothing to delete — that's fine.
-      // Re-throw anything else (network errors, permission errors, etc.).
-      if (/not found|no.*record/i.test(e.message)) return;
-      throw e;
-    }
-
-    const before = appMeta.Metadata.profileActionOverrides || [];
-    const after  = before.filter(o => {
-      if ((o.actionName || 'View') !== 'View') return true;
-      if ((o.content || '').toLowerCase() !== devName.toLowerCase()) return true;
-      const sameFF  = (o.formFactor         || 'Large') === (formFactor     || 'Large');
-      const samePro = (o.profile            || '')       === (profileName    || '');
-      const sameSob = (o.pageOrSobjectType  || '')       === (sobjectType    || '');
-      const sameRT  = (o.recordType         || '')       === (recordTypeName || '');
-      return !(sameFF && samePro && sameSob && sameRT);  // false = remove this entry
-    });
-
-    if (after.length === before.length) return;  // entry not found — nothing to do
-    await patchCustomApp(appId, appMeta, after);
-  }
-
-  // ── CustomApplication Tooling API helpers ────────────────────
-
-  // Fetch a CustomApplication by DeveloperName and return its Id + full metadata.
-  async function getCustomApp(appDevName) {
-    const qRes = await bg({
-      type: 'SF_QUERY_ALL', tooling: true, orgUrl: _orgUrl, sid: _sid,
-      query: `SELECT Id FROM CustomApplication WHERE DeveloperName='${appDevName}'`
-    });
-    if (qRes.error) throw new Error(qRes.error);
-    if (!qRes.records?.length) throw new Error(`App "${appDevName}" not found in this org.`);
-    const appId   = qRes.records[0].Id;
-    const appMeta = await bg({
-      type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
-      sobject: 'CustomApplication', id: appId
-    });
-    if (appMeta.error) throw new Error(appMeta.error);
-    if (!appMeta.Metadata) {
-      throw new Error(
-        `The Tooling API did not return Metadata for app "${appDevName}". ` +
-        `Please use Setup → Lightning App Builder → Activation to manage app assignments.`
-      );
-    }
-    return { appId, appMeta };
-  }
-
-  // PATCH a CustomApplication with an updated profileActionOverrides array.
-  async function patchCustomApp(appId, appMeta, updatedOverrides) {
-    const cleanMeta = prepareCustomAppMetadata({
-      ...appMeta.Metadata,
-      profileActionOverrides: updatedOverrides
-    });
-    // History (sftk-history.js): appMeta.Metadata.profileActionOverrides,
-    // read by the caller BEFORE this PATCH, is the previous state — the
-    // undo (below) PATCHes it straight back.
-    const prevOverrides = appMeta.Metadata.profileActionOverrides || [];
-    const journal = sftkHistoryBegin({ tool: 'Lightning Pages', title: `📱 App assignment — ${appId}`, orgUrl: _orgUrl });
-    let wr;
-    try {
-    // confirmed-by: every caller confirms first — doAdd's or confirmRemove's
-    // sftkConfirmDestructive (patchCustomApp is only reached from
-    // saveAppAssignment/deleteAppAssignment, called by doAdd or doRemove)
-    // The write discipline (sftk-write.js): the PATCH is the write, a
-    // re-read of the app's own overrides count is the verify.
-    wr = await sftkWriteVerified({
-      describe: 'app assignment',
-      journal,
-      write: () => bg({
-        type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid,
-        path: `services/data/v62.0/tooling/sobjects/CustomApplication/${appId}`,
-        body: { Metadata: cleanMeta }
-      }),
-      verify: async () => {
-        const chk = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
-          sobject: 'CustomApplication', id: appId });
-        if (!chk || chk.error || !chk.Metadata) return { ok: false, text: null };
-        const now = (chk.Metadata.profileActionOverrides || []).length;
-        return { ok: now === updatedOverrides.length, text: null };
-      },
-    });
-    } finally {
-      const prevMeta = prepareCustomAppMetadata({ ...appMeta.Metadata, profileActionOverrides: prevOverrides });
-      await sftkHistoryEnd(journal, {
-        undo: (wr && wr.ok) ? { steps: [{
-          describe: `App ${appId}: restore the previous assignment(s) (${prevOverrides.length})`,
-          // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
-          msg: { type: 'SF_PATCH', path: `services/data/v62.0/tooling/sobjects/CustomApplication/${appId}`, body: { Metadata: prevMeta } },
-          verify: { query: `SELECT Id, Metadata FROM CustomApplication WHERE Id = '${appId}'`, tooling: true,
-            pick: 'records.0.Metadata.profileActionOverrides', count: prevOverrides.length,
-            text: { ok: `App ${appId}: previous assignment(s) restored — verified by re-reading the org`,
-                    bad: `App ${appId}: accepted by Salesforce, but the org still shows a different set of overrides` } },
-        }] } : { none: 'nothing was confirmed changed, so there is nothing to undo' },
-      });
-    }
-    if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
-    if (!wr.ok) throw new Error('the assignment was saved, but the org still shows a different set of overrides on re-read — check it in App Builder.');
-  }
-
-  // Prepare a CustomApplication Metadata object for Tooling API PATCH.
-  // Strips Tooling-internal fields and sorts keys alphabetically
-  // (CustomApplication XSD field ordering is largely alphabetical).
-  function prepareCustomAppMetadata(meta) {
-    const stripped = stripToolingFields(meta);
-    if (!stripped || typeof stripped !== 'object' || Array.isArray(stripped)) return stripped;
-    const result = {};
-    for (const k of Object.keys(stripped).sort()) {
-      if (k === 'profileActionOverrides' && Array.isArray(stripped[k])) {
-        // Sort each entry's keys alphabetically (actionName, content, formFactor,
-        // pageOrSobjectType, profile, recordType, type — already alphabetical)
-        result[k] = stripped[k].map(o => {
-          if (o && typeof o === 'object' && !Array.isArray(o)) {
-            const so = {};
-            for (const ok of Object.keys(o).filter(x => !TOOLING_INTERNAL_KEYS.has(x)).sort()) {
-              so[ok] = o[ok];
-            }
-            return so;
-          }
-          return o;
-        });
-      } else {
-        result[k] = stripped[k];
+  // Set (target = { id, devName }) or clear (target = null) the org default of
+  // one form factor. Clearing happens ONLY while `holder` still holds the slot:
+  // a "Default" deploy resets whatever page is the org default at that moment,
+  // so it is never sent blind (it used to be: ⏸ Deactivate on a page that was
+  // active through an app reset ANOTHER page's org default).
+  // Returns { accepted, ok, text, why, skipped }.
+  async function writeOrgDefault(sobject, formFactor, target, journal, say, holder) {
+    const ffWord = formFactor === 'Small' ? 'Mobile' : 'Desktop';
+    const id15 = x => String(x || '').substring(0, 15).toLowerCase();
+    if (!target) {
+      const now = lpOrgSlotHolder(await readDescribe(sobject), formFactor);
+      if (!now || id15(now) !== id15(holder.id)) {
+        return { accepted: true, ok: true, skipped: true,
+          text: `Org default (${ffWord}): this page no longer holds it${now ? ' — another page does, and it was left alone' : ''}; nothing to remove` };
       }
     }
-    return result;
+    const zipBase64 = orgOverrideZip(sobject, formFactor, target ? target.devName : null);
+    // confirmed-by: doAdd's / confirmRemove's / the clone's sftkConfirmDestructive (the only callers)
+    // The write discipline (sftk-write.js): the deploy is the write; the verify
+    // re-reads the object's describe until it shows the intended page in the
+    // slot. Salesforce can take a few seconds to reflect a deploy — the wait is
+    // shown, counted, and bounded.
+    const wr = await sftkWriteVerified({
+      describe: `${sobject} org default (${ffWord})`,
+      journal,
+      write: () => bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64 }),
+      verify: async () => {
+        for (let n = 1; n <= 8; n++) {
+          if (say) say(`Org default (${ffWord}): written — re-reading the org to confirm it (${n} of 8)…`);
+          let seen;
+          try { seen = lpOrgSlotHolder(await readDescribe(sobject), formFactor); } catch (_) { seen = undefined; }
+          const good = seen === undefined ? false
+            : target ? (!!seen && id15(seen) === id15(target.id))
+            : !(seen && id15(seen) === id15(holder.id));
+          if (good) return { ok: true, text: null };
+          await new Promise(r => setTimeout(r, 2500));
+        }
+        return { ok: false, text: null };
+      },
+    });
+    if (!wr.accepted) return { accepted: false, why: (wr.raw && wr.raw.error) || wr.text || 'refused' };
+    return { accepted: true, ok: wr.ok,
+      text: wr.ok ? `Org default (${ffWord}) ${target ? 'set' : 'removed'}`
+        : `Org default (${ffWord}): Salesforce accepted the change, but 20 seconds later the org still does not show it — open the page again in a minute to check` };
+  }
+
+  // The History undo step for one org-default slot: put back what held it.
+  // prevId set but the page not in this tool's list → no step (it cannot be named).
+  function orgUndoStep(sobject, formFactor, prevPage, prevId) {
+    if (prevId && !prevPage) return null;
+    const ffWord = formFactor === 'Small' ? 'Mobile' : 'Desktop';
+    return {
+      describe: prevPage
+        ? `Make “${prevPage.MasterLabel}” the org default of ${sobject} (${ffWord}) again`
+        : `Clear the org default of ${sobject} (${ffWord}) again`,
+      // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+      msg: { type: 'SF_METADATA_DEPLOY', zipBase64: orgOverrideZip(sobject, formFactor, prevPage ? prevPage.DeveloperName : null) },
+      // An org default is not in SOQL: the re-read is the object's describe
+      // (the same read this tool judges its own write by), repeated while the
+      // deploy settles.
+      verify: { path: `services/data/v62.0/sobjects/${sobject}/describe/`, pick: 'actionOverrides',
+        where: [{ field: 'name', equals: 'View' }, { field: 'formFactor', equals: formFactor === 'Small' ? 'SMALL' : 'LARGE' }],
+        ...(prevPage ? { field: 'pageId', equals: prevPage.Id } : { absent: true }),
+        retries: 8,
+        text: { ok: `${sobject} org default (${ffWord}) is ${prevPage ? `“${prevPage.MasterLabel}”` : 'Salesforce’s standard page'} again — verified by re-reading the org`,
+                bad: `${sobject} org default (${ffWord}): accepted by Salesforce, but the org does not show ${prevPage ? `“${prevPage.MasterLabel}”` : 'the standard page'} there` } },
+    };
+  }
+
+  // Assign (remove = false) or clear (remove = true) ONE app-level slot.
+  // The PATCH carries the app's whole current definition (every field but the
+  // two override lists is replaced by a PATCH) plus only the changed entry (the
+  // lists are merged). The re-read of the app is the verdict.
+  // Returns { accepted, ok, text, why }.
+  async function writeAppAssignment(a, devName, remove, journal) {
+    const what = `${lpAssignmentWords(a).title} in ${a.appLabel || a.app} (${a.formFactor === 'Small' ? 'Mobile' : 'Desktop'}${a.kind === 'artp' && a.recordType ? `, record type ${a.recordType}` : ''})`;
+    const before = await refreshApp(a.appId);
+    if (remove && !lpAppHas(before, a, devName)) {
+      return { accepted: true, ok: true, text: `${what}: this page no longer holds it — nothing to remove` };
+    }
+    const body = { Metadata: { ...sftkMetaForPatch(before), ...lpAppDelta(a, devName, remove) } };
+    // confirmed-by: doAdd's / confirmRemove's / the clone's sftkConfirmDestructive (the only callers)
+    const wr = await sftkWriteVerified({
+      describe: what,
+      journal,
+      write: () => bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+        path: `services/data/v62.0/tooling/sobjects/CustomApplication/${a.appId}`, body }),
+      verify: async () => {
+        const now = await refreshApp(a.appId);
+        return { ok: lpAppHas(now, a, devName) === !remove, text: null };
+      },
+    });
+    if (!wr.accepted) return { accepted: false, why: (wr.raw && wr.raw.error) || wr.text || 'refused' };
+    return { accepted: true, ok: wr.ok,
+      text: wr.ok ? `${what} ${remove ? 'removed' : 'assigned'}`
+        : `${what}: Salesforce accepted the change, but the app does not show it on re-read — check it in Lightning App Builder` };
   }
 
   // ── Metadata Deploy helpers ──────────────────────────────
@@ -3935,12 +3612,9 @@ const LightningPages = (() => {
     'masterLabel',
     'parentFlexiPage',
     'platformActionlist',
-    // publishStatus is intentionally omitted — it is NOT in the writable FlexiPage XSD.
-    // Salesforce manages it automatically: Draft → Active when the first assignment is
-    // created, Active → Obsolete when all assignments are removed.  Attempting to write
-    // it via Metadata Deploy or Tooling API Metadata compound causes an XSD cascade
-    // error ("publishStatus invalid at this location").  Use a direct Tooling API
-    // sObject PATCH { PublishStatus: 'Active' } instead (see activatePage()).
+    // publishStatus is intentionally omitted — a FlexiPage has no such field (read
+    // live: the key does not exist). A page is "active" exactly when something
+    // assigns it; there is nothing to write here.
     'quickActionList',
     'sobjectType',
     'summaryLayout',
@@ -4056,12 +3730,9 @@ const LightningPages = (() => {
   // Build a ready-to-deploy base64 ZIP for a FlexiPage Metadata Deploy.
   // Used for any future FlexiPage-level metadata changes (not page assignments —
   // those are managed via ActionOverride / CustomApplication separately).
-  // Pass publishStatusOverride to force a specific activation state in the XML.
-  function buildFlexiPageZip(metaRes, publishStatusOverride) {
+  function buildFlexiPageZip(metaRes) {
     const developerName = metaRes.FullName;
-    const metadata      = publishStatusOverride
-      ? { ...metaRes.Metadata, publishStatus: publishStatusOverride }
-      : metaRes.Metadata;
+    const metadata      = metaRes.Metadata;
     const enc = new TextEncoder();
     return buildStoredZip([
       { name: 'package.xml',
@@ -4791,4 +4462,95 @@ function lpApiBudgetText(calls, budget, opts) {
   let text = parts.join(' · ');
   if (warn) text = `⚠ ${text} — this may exhaust the org's remaining daily API budget`;
   return { text, warn, calls: n };
+}
+
+// ══ A record page's assignments — the real model (pure) ═══════════════════
+// Proved by CLI on a live org, 2026-10-04 (see the note above ensureApps):
+// an App Default is an entry of the app's `actionOverrides`; App + Record
+// Type + Profile is an entry of `profileActionOverrides` whose profile is the
+// profile's METADATA name and whose record type is Object.DeveloperName; a
+// slot is cleared by sending type "Default" for it.
+
+// Is raw override entry `o` in the slot assignment `a` describes?
+function lpSameSlot(o, a) {
+  const low = v => String(v == null ? '' : v).toLowerCase();
+  if (!o || low(o.actionName || 'View') !== 'view') return false;
+  if ((o.formFactor || 'Large') !== (a.formFactor || 'Large')) return false;
+  if (low(o.pageOrSobjectType) !== low(a.sobject)) return false;
+  if (a.kind === 'artp') return low(o.profile) === low(a.profileFull) && low(o.recordType) === low(a.recordTypeFull);
+  return true;
+}
+// The assignments of page `devName` that ONE Lightning app holds.
+// app: { id, name, label }; meta: the CustomApplication's Metadata.
+function lpAppAssignments(app, meta, devName, sobject) {
+  const out = [];
+  const dn = String(devName || '').toLowerCase();
+  const mine = o => o && String(o.actionName || 'View').toLowerCase() === 'view'
+    && String(o.type || '').toLowerCase() === 'flexipage' && String(o.content || '').toLowerCase() === dn;
+  const base = o => ({ app: app.name, appId: app.id, appLabel: app.label, formFactor: o.formFactor || 'Large', sobject: o.pageOrSobjectType || sobject || null });
+  for (const o of ((meta && meta.actionOverrides) || [])) if (mine(o)) out.push({ kind: 'app', ...base(o) });
+  for (const o of ((meta && meta.profileActionOverrides) || [])) {
+    if (!mine(o)) continue;
+    const rt = o.recordType || null;
+    out.push({ kind: 'artp', ...base(o), profileFull: o.profile || null, profile: o.profile || null,
+      recordTypeFull: rt, recordType: rt ? String(rt).split('.').pop() : null });
+  }
+  return out;
+}
+// The API name of the page that holds a's slot in this app now (any page), or null.
+function lpAppSlotHolder(meta, a) {
+  const list = (meta && (a.kind === 'artp' ? meta.profileActionOverrides : meta.actionOverrides)) || [];
+  const hit = list.find(o => lpSameSlot(o, a) && String(o.type || '').toLowerCase() === 'flexipage' && o.content);
+  return hit ? String(hit.content) : null;
+}
+// Does this app show page `devName` in a's slot?
+function lpAppHas(meta, a, devName) {
+  const h = lpAppSlotHolder(meta, a);
+  return !!h && h.toLowerCase() === String(devName || '').toLowerCase();
+}
+// The two override lists to PATCH for ONE change: the single changed entry in
+// its list, the other list empty (a PATCH merges these lists — entries that
+// are not sent stay as they are). remove → the "Default" entry that clears it.
+function lpAppDelta(a, devName, remove) {
+  const e = { actionName: 'View', formFactor: a.formFactor || 'Large', pageOrSobjectType: a.sobject, type: remove ? 'Default' : 'Flexipage' };
+  if (!remove) e.content = devName;
+  if (a.kind === 'artp') {
+    e.profile = a.profileFull;
+    if (a.recordTypeFull) e.recordType = a.recordTypeFull;
+    return { actionOverrides: [], profileActionOverrides: [e] };
+  }
+  e.skipRecordTypeSelect = false;
+  return { actionOverrides: [e], profileActionOverrides: [] };
+}
+// The FlexiPage Id that is the org default of one form factor, from the
+// object's describe — or null when Salesforce's standard page is shown.
+function lpOrgSlotHolder(describe, formFactor) {
+  const want = formFactor === 'Small' ? 'SMALL' : 'LARGE';
+  const hit = ((describe && describe.actionOverrides) || []).find(o =>
+    o && String(o.name || '').toLowerCase() === 'view' && String(o.formFactor || 'LARGE').toUpperCase() === want && o.pageId);
+  return hit ? String(hit.pageId) : null;
+}
+// A record page's activation IS its assignments. unknown = a read failed:
+// then "none found" proves nothing.
+function lpPageStatus(assignments, unknown) {
+  if (Array.isArray(assignments) && assignments.length > 0) return 'Active';
+  return unknown ? null : 'Unassigned';
+}
+// The words for one assignment: its name, who it reaches, what they see without it.
+function lpAssignmentWords(a) {
+  if (!a || a.kind === 'org') return { icon: '🌐', title: 'Org default',
+    who: 'Every user, unless an app or profile assignment wins',
+    fallback: 'users fall back to Salesforce’s standard page for the object' };
+  if (a.kind === 'app') return { icon: '⚡', title: 'App default',
+    who: 'Every user of this app, unless an app + record type + profile assignment wins',
+    fallback: 'users of this app fall back to the org default' };
+  return { icon: '👤', title: String(a.profile || a.profileFull || 'Profile'),
+    who: 'Users with this profile, in this app',
+    fallback: 'these users fall back to the app default, then the org default' };
+}
+// Salesforce's own words for a refusal, without the HTTP prefix. Not the
+// shared translator: its hints are written for data deployments ("map them
+// from a source field"), which is the wrong advice on this screen.
+function lpWhy(raw) {
+  return String(raw == null ? '' : raw).replace(/^HTTP\s*\d+:\s*/i, '').replace(/\s+/g, ' ').trim().slice(0, 400) || 'no reason given';
 }

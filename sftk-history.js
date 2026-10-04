@@ -21,6 +21,10 @@
 //     msg:      { type: 'SF_PATCH', path: '…/FlowDefinition/300…', body: { Metadata: { activeVersionNumber: 3 } } },
 //     verify:   { query: "SELECT ActiveVersionId FROM FlowDefinitionView WHERE ApiName = 'SFTK_FS_Test_Acc1'",
 //                 tooling: false, pick: 'records.0', field: 'ActiveVersionId', notNull: true },
+//               — or, for state SOQL cannot read (an object's org-default page lives in its
+//               describe): { path: 'services/data/v62.0/sobjects/Account/describe/', pick: …, … }.
+//               `retries` (≤ 10, 2.5 s apart) re-reads until the state shows: a Metadata
+//               deploy can take a few seconds to be reflected. Each extra read is logged.
 //     orgUrl?:  '…' (defaults to the entry's target org) }
 // The org's session is looked up when the undo runs (the user must be
 // logged in to that org in a Salesforce tab); each step goes through
@@ -171,7 +175,8 @@ function sftkToolUndoState(entry) {
 
 // ── The verify spec, evaluated against a query's answer (pure) ──────────
 //   pick:    dotted path into the answer (default 'records'); numbers index arrays
-//   where:   { field, equals } — pick the array element whose field matches
+//   where:   { field, equals } — pick the array element whose field matches;
+//            or a LIST of them, all of which must match (text compared without case)
 //   then one of: absent (nothing there) · count (array length) ·
 //                field + equals / notNull / notFalse (a value on the picked object)
 //   text:    { ok, bad } — the sentences for both outcomes (optional)
@@ -188,7 +193,11 @@ function sftkUndoVerifyEval(spec, answer) {
   const t = s.text || {};
   if (!answer || answer.error) return { ok: false, text: `could not re-read the org${answer && answer.error ? ` (${answer.error})` : ''} — treat this as unverified` };
   let v = _sftkHistPick(answer, s.pick || 'records');
-  if (s.where && s.where.field) v = (Array.isArray(v) ? v : []).find(x => x && x[s.where.field] === s.where.equals);
+  const conds = Array.isArray(s.where) ? s.where.filter(w => w && w.field) : (s.where && s.where.field ? [s.where] : []);
+  if (conds.length) {
+    const same = (a, b) => (typeof a === 'string' && typeof b === 'string' && conds.length > 1) ? a.toLowerCase() === b.toLowerCase() : a === b;
+    v = (Array.isArray(v) ? v : []).find(x => x && conds.every(w => same(x[w.field], w.equals)));
+  }
   let ok;
   if (s.absent) ok = v === undefined || v === null || (Array.isArray(v) && v.length === 0);
   else if (typeof s.count === 'number') ok = Array.isArray(v) && v.length === s.count;
@@ -257,9 +266,22 @@ async function sftkHistoryUndo(entryId, opts) {
     const r = await sftkWriteVerified({
       describe: step.describe,
       write: () => send({ ...step.msg, orgUrl: stepOrg.orgUrl, sid: stepOrg.sid, _suppressError: true, _silentError: true }),
-      verify: step.verify && step.verify.query ? async () => sftkUndoVerifyEval(step.verify,
-        await send({ type: 'SF_QUERY', tooling: !!step.verify.tooling, orgUrl: stepOrg.orgUrl, sid: stepOrg.sid, query: step.verify.query, _suppressError: true, _silentError: true })) : undefined,
-      noVerify: step.verify && step.verify.query ? undefined : 'this step has no re-read',
+      verify: step.verify && (step.verify.query || step.verify.path) ? async () => {
+        const vs = step.verify;
+        const read = () => (vs.path
+          ? send({ type: 'SF_REST_GET', orgUrl: stepOrg.orgUrl, sid: stepOrg.sid, path: `${vs.path}${String(vs.path).includes('?') ? '&' : '?'}_=${Date.now()}`, _suppressError: true, _silentError: true })
+          : send({ type: 'SF_QUERY', tooling: !!vs.tooling, orgUrl: stepOrg.orgUrl, sid: stepOrg.sid, query: vs.query, _suppressError: true, _silentError: true }));
+        const tries = Math.max(1, Math.min(10, Number(vs.retries) || 1));
+        let verdict = null;
+        for (let n = 1; n <= tries; n++) {
+          verdict = sftkUndoVerifyEval(vs, await read());
+          if (verdict.ok || n === tries) break;
+          log(`… ${step.describe}: not shown by the org yet — re-reading (${n + 1} of ${tries})`);
+          await new Promise(r => setTimeout(r, 2500));
+        }
+        return verdict;
+      } : undefined,
+      noVerify: step.verify && (step.verify.query || step.verify.path) ? undefined : 'this step has no re-read',
       journal: j,
     });
     log(`${r.ok ? '✅' : r.accepted ? '⚠' : '❌'} ${r.text}`);
