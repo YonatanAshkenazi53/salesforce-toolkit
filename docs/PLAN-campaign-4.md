@@ -437,12 +437,28 @@ was "no org-wide report sweep"; with the index silent, reports are in practice u
 keep the honest note (done), or add an opt-in, quoted, cancellable sweep (one Analytics describe
 per report).
 
-**Limits, stated in the product:** references move, data does not (no value copy); a flow swap has
+**📦 Stored values (added 2026-10-04, user: "should Replace Field offer to copy the old field's
+data into the new one before the delete? yes").** Panel `#fcCopyVals` under the data verdict, in
+replace mode only. Nothing is read until "Compare the two fields" (cost quoted from the measured
+fill). `_copyRead` = one paginated query of Id + both fields where the old one holds a value (a
+long-text field cannot be filtered: read everything, drop the empty ones; over `FC_COPY_CAP`
+100,000 the read switches to "new field still empty" so each run makes progress). Pure:
+`sftkCopyValuesPlan` (same / fill / over / blocked with reason / unlisted), `sftkCopyValuesCheck`,
+`sftkCopyValuesCsv`, `sftkCopySameValue`. `_copyRun`: one confirmation (automation runs, the old
+field is untouched, receipt CSV ticked), ONE `sftkWriteVerified` whose write is the batched
+`SF_COLLECTIONS_UPDATE` loop (200 per call, live count, ⏹ Stop) and whose verify re-reads the
+records; refused records are counted by Salesforce's reason; undo steps (put back what the new
+field held) up to `FC_COPY_UNDO` 1,000 records, else `none` pointing at the receipt.
+Live on trailheads4 with CLI truth: 3 of 8 copied and 5 blocked (restricted picklist has no
+"Closed"); a differing value left alone, then overwritten when ticked; a record refused by a
+temporary validation rule reported with its message; History undo emptied the field again,
+verified.
+
+**Limits, stated in the product:** references move with the fixes, data with 📦 Stored values; a flow swap has
 no History undo (old versions are deleted — the backup zip is the way back); list views, compact
 layouts, quick actions, validation rules, formula fields and Apex stay manual exactly as before.
 
-**Backlog from this phase:** copy the stored values old -> new as an optional step before the
-delete; replace in validation-rule / formula text; the XML inspector's "Remove selected" is removal
+**Backlog from this phase:** replace in validation-rule / formula text; the XML inspector's "Remove selected" is removal
 only; a flow whose active version mentions a same-named field of another object is still listed as
 "referencing" by the plan (the scanner is by name).
 

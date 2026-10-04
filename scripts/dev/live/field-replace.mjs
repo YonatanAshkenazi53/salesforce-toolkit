@@ -7,6 +7,8 @@
 //   STEP=layout      ⇄ Replace on the first layout row
 //   STEP=page        ⇄ Replace on the first Lightning page row
 //   STEP=report      ⇄ Replace on the first report row
+//   STEP=copy        📦 Stored values: compare the two fields, then copy (OVER=1 also overwrites; COMPARE_ONLY=1 stops after the compare)
+//   ORG=npc2         run on trailheads4 instead of trailheads5
 //   SCAN_ONLY=1      open the dialog, log it, cancel
 //   FROM / TO        the two field API names (defaults: the fixture's)
 //   UNDO=1           Data Studio › History › ↩ Undo the newest entry afterwards
@@ -60,7 +62,7 @@ async function fixRow(h, type, name, activeMode) {
 
 export default async function (h) {
   const FROM = process.env.FROM || 'SFTK_FC_Test_Status__c', TO = process.env.TO || 'SFTK_FC_Test_Status2__c';
-  await h.login('npc');
+  await h.login(process.env.ORG || 'npc');   // ORG=npc2 runs on trailheads4
   await h.popup('fields');
   await h.watchErrors();
   await h.waitFor("!!document.querySelector('#fcObjInput')", 60000, 500);
@@ -94,6 +96,33 @@ export default async function (h) {
     await h.waitFor("!document.querySelector('#fcFlsCopyBtn')", 120000, 500);
     await h.sleep(1500);
     h.log('ACCESS after:', await dump(h, '#fcFlsCopy', 700));
+  }
+  if (step === 'copy') {
+    await h.waitFor("!!document.querySelector('#fcCopyCompare') || /holds no values|cannot be copied/.test(document.querySelector('#fcCopyVals')?.innerText || '')", 60000, 500);
+    h.log('VALUES panel:', await dump(h, '#fcCopyVals', 700));
+    if (!(await h.eval(`!!document.querySelector('#fcCopyCompare')`))) return;
+    await h.eval(`document.querySelector('#fcCopyCompare').click()`);
+    await h.waitFor("!!document.querySelector('#fcCopyGo') || !!document.querySelector('#fcCopyVals .fc-copy-bad')", 300000, 500);
+    h.log('PLAN:', await dump(h, '#fcCopyVals', 1500));
+    if (process.env.COMPARE_ONLY === '1') return;
+    if (process.env.OVER === '1' && await h.eval(`!!document.querySelector('#fcCopyOver')`)) {
+      await h.eval(`(() => { const c = document.querySelector('#fcCopyOver'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+      await h.sleep(300);
+      h.log('PLAN with overwrite:', await dump(h, '#fcCopyVals', 900));
+    }
+    if (await h.eval(`document.querySelector('#fcCopyGo')?.disabled !== false`)) { h.log('nothing to copy'); return; }
+    await h.eval(`document.querySelector('#fcCopyGo').click()`);
+    await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 30000, 300); await h.sleep(300);
+    // no receipt download in a headless run
+    await h.eval(`(() => { const c = document.querySelector('#fcCopyCsv'); if (c && c.checked) { c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); } return true; })()`);
+    if (!(await confirm(h, 'copy values'))) return;
+    await h.waitFor("!!document.querySelector('#fcCopyResult .fc-copy-res')", 600000, 500);
+    await h.sleep(800);
+    h.log('COPY RESULT:', await dump(h, '#fcCopyResult', 900));
+    h.log('PLAN after:', await dump(h, '#fcCopyVals', 900));
+    await h.shot(h.shots + '/fr-copy.png');
+    if (process.env.UNDO === '1') await undoNewest(h);
+    return;
   }
   if (step === 'flow')   await fixRow(h, 'Flow', process.env.FLOW || 'SFTK FC Test Flow 2', process.env.ACTIVE || 'replace');
   if (step === 'layout') await fixRow(h, 'Layout', process.env.NAME || '');
