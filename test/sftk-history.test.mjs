@@ -138,6 +138,18 @@ describe('sftkUndoVerifyEval — the re-read judged from data', () => {
     expect(ev({ pick: 'records.0', field: 'ActiveVersionId', equals: null }, ans).ok).toBe(false);
     expect(ev({ pick: 'records.0', field: 'ActiveVersionId', equals: null }, { records: [{ ActiveVersionId: null }] }).ok).toBe(true);
   });
+  it('a LIST of where-conditions must all match (an object describe holds one override per action AND form factor)', () => {
+    const ans = { actionOverrides: [
+      { name: 'Edit', formFactor: 'LARGE', pageId: null },
+      { name: 'View', formFactor: 'SMALL', pageId: '0M0s' },
+      { name: 'View', formFactor: 'LARGE', pageId: '0M0L' },
+    ] };
+    const where = [{ field: 'name', equals: 'view' }, { field: 'formFactor', equals: 'LARGE' }];
+    expect(ev({ pick: 'actionOverrides', where, field: 'pageId', equals: '0M0L' }, ans).ok).toBe(true);
+    expect(ev({ pick: 'actionOverrides', where, field: 'pageId', equals: '0M0s' }, ans).ok).toBe(false);
+    expect(ev({ pick: 'actionOverrides', where, absent: true }, ans).ok).toBe(false);
+    expect(ev({ pick: 'actionOverrides', where, absent: true }, { actionOverrides: [ans.actionOverrides[1]] }).ok).toBe(true);
+  });
   it('where picks the element; count and absent judge a list', () => {
     const ans = { records: [{ Name: 'a', IsActive: true }, { Name: 'b', IsActive: false }] };
     expect(ev({ where: { field: 'Name', equals: 'b' }, field: 'IsActive', equals: false }, ans).ok).toBe(true);

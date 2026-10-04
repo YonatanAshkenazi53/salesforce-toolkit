@@ -261,7 +261,8 @@ describe('page-list dots resolve or say n/a — never pulse forever', () => {
   });
 
   it('no-activation types get the neutral dot + collapsed fold', () => {
-    expect(LP).toMatch(/isNA && !ps\s+\? 'lp-dot-na'/);
+    // 2026-10-04: page types whose activation this tool does not read (Home, App…) get the same neutral dot
+    expect(LP).toMatch(/\(isNA \|\| notRead\) && !ps \? 'lp-dot-na'/);
     expect(LP).toContain('<details class="lp-group">');
     expect(LP).toContain('activation lives in each app — collapsed');
     // the n/a dot is calm — no pulse animation
@@ -278,10 +279,14 @@ describe('page-list dots resolve or say n/a — never pulse forever', () => {
     expect(LP).not.toContain('meta?.Metadata?.publishStatus');
     expect(LP).not.toContain('|| meta.Metadata?.publishStatus');
     expect(LP).toContain('const statusTargets = allPages.filter(p =>');
-    expect(LP).toMatch(/!p\.PublishStatus && !LP_TYPES_NO_ACTIVATION\.has\(p\.Type\) && !_odStatusDone\.has\(p\.Id\)/);
-    expect(LP).toMatch(/sobject: 'FlexiPage', id: pg\.Id/);
-    expect(LP).toMatch(/asg = Array\.isArray\(r\.Metadata\.pageAssignments\) \? r\.Metadata\.pageAssignments\.length : 0/);
-    expect(LP).toContain("syncPageStatus(pg.Id, asg ? 'Active' : 'Unassigned')");
+    // Live 2026-10-04: pageAssignments is a phantom too (the key does not exist
+    // on v62 or v64). The assignments live in the Lightning apps' own
+    // definitions — one batched read answers every record page; other page
+    // types are not read at all (test/lp-assignments-1004).
+    expect(LP).toMatch(/!p\.PublishStatus && p\.Type === 'RecordPage' && !_odStatusDone\.has\(p\.Id\)/);
+    expect(LP).not.toMatch(/r\.Metadata\.pageAssignments/);
+    expect(LP).toContain("if (named(pg.DeveloperName)) syncPageStatus(pg.Id, 'Active');");
+    expect(LP).toContain("else if (!_appIndexErr && pg.EntityDefinitionId && _odObjDone.has(pg.EntityDefinitionId)) syncPageStatus(pg.Id, 'Unassigned');");
     expect(LP).toContain('p1.complete && p2.complete && p3.complete');
     // …and the strip's quoted cost includes those retrieves
     expect(LP).toMatch(/extraCalls:\s+Math\.ceil\(pendingIds\.length \/ LP_ENTITY_CHUNK\) \+ statusReads/);
@@ -289,7 +294,7 @@ describe('page-list dots resolve or say n/a — never pulse forever', () => {
 
   it('Unassigned renders as a calm n/a state with an honest title, everywhere', () => {
     expect((LP.match(/ps === 'unassigned'\s+\? 'lp-dot-na'/g) || []).length).toBeGreaterThanOrEqual(2);
-    expect(LP).toContain('Not activated — no org default, app, or profile assignment points at this page.');
+    expect(LP).toContain('Not assigned — it is not the org default, and no Lightning app assigns it. Users never see it.');
     // the map view derives from assignments too
     expect(LP).toMatch(/d\.page\.PublishStatus \|\| \(\(d\.assignments \|\| \[\]\)\.length \? 'active' : 'unassigned'\)/);
   });
