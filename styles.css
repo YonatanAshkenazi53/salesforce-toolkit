@@ -6652,6 +6652,11 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .fc-copy-prog { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .fc-copy-res { margin-top: 8px; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--border); border-left: 3px solid #b45309; }
 .fc-copy-res.fc-copy-ok { border-left-color: var(--active-color, #2e844a); }
+/* 📊 the opt-in report sweep */
+.fc-rpt { margin: 8px 0; padding: 8px 11px; font-size: 12px; line-height: 1.5; border: 1px solid var(--border); border-left: 3px solid var(--accent, #0176d3); border-radius: 6px; }
+.fc-rpt .btn { margin: 4px 6px 0 0; }
+.fc-rpt-ok { border-left-color: var(--active-color, #2e844a); }
+.fc-rpt-bad { border-left-color: #b45309; }
 /* F3: staged deprecation */
 .fc-dep-offer { margin: 8px 0; padding: 8px 11px; font-size: 12px; border: 1px dashed var(--border); border-radius: 6px; background: var(--bg); }
 .fc-dep-hint { color: var(--subtext); font-size: 11px; display: block; margin-top: 4px; }

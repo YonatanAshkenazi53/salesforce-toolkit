@@ -432,10 +432,16 @@ the Tooling REST API returned no Report rows at all on trailheads5 (two public r
 field; an explicit `MetadataComponentType = 'Report'` filter returned 0; the Bulk API 2.0 route
 said "sObject type 'MetadataComponentDependency' is not supported"). The note under the results
 said reports "are covered by the scan above"; it now says they appear only when the index returns
-them and points at Setup's "Where is this used?". **Decision for the user:** the 2026-09-01 choice
-was "no org-wide report sweep"; with the index silent, reports are in practice unscanned. Options:
-keep the honest note (done), or add an opt-in, quoted, cancellable sweep (one Analytics describe
-per report).
+them and points at Setup's "Where is this used?". **Decided 2026-10-04: "both"** — the honest note
+stays AND an opt-in sweep exists: `#fcRptScan` under the results; `_rptCount` lists the reports
+(`SELECT Id, Name, FolderName FROM Report`, which is also the exact cost), `_rptRun` reads each
+`analytics/reports/<id>/describe` four at a time (composite/batch refuses this resource: "Cannot
+access this resource in a batch request"), `sftkRptScanClass(sftkRptFieldHits(...))` = definite /
+possible / null; found reports join the results as Report rows (`_lastScan`, re-render without
+the rows already fixed). Live count, Stop, "NOT checked" for anything not read, private reports of
+others named as unread. Never part of `runScan`. Live on trailheads4: 123 reports in ~10 s, 2
+found, and ⇄ Replace on one of them went through the screen (column + filter now on the new field,
+CLI truth) — which also closes the "reports not exercised through the screen" gap above.
 
 **📦 Stored values (added 2026-10-04, user: "should Replace Field offer to copy the old field's
 data into the new one before the delete? yes").** Panel `#fcCopyVals` under the data verdict, in

@@ -124,7 +124,9 @@ describe('the Field Cleaner wiring keeps the laws', () => {
   it('Reports and Report Types are TYPES in the everyday scan — no org-wide sweep', () => {
     // User 2026-09-01: "it should be one of the metadata items that we scan
     // everytime … scanning all the reports in the org is not a good
-    // solution". The dependency index already lists them.
+    // solution". The dependency index lists them — when it does: live
+    // 2026-10-04 it returned none, so an OPT-IN sweep was added (user: "both").
+    // The everyday scan still never reads the reports (test/report-sweep-1004).
     expect(FC).toMatch(/Report:\s+\{ icon: '\u{1F4CA}', label: 'Reports',\s+fixable: true/u);
     expect(FC).toMatch(/ReportType:\s+\{ icon: '\u{1F4D1}', label: 'Report Types',\s+fixable: false, sev: 'blocker'/u);
     expect(FC).not.toContain('FROM Report\'');
