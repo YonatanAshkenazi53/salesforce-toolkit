@@ -315,3 +315,14 @@ describe('Field Cleaner — step 3 and what it changes', () => {
     expect(FC).toContain("await sftkHistoryEnd(j, { undo: steps.length ? { steps } : { none: 'no grant was confirmed changed, so there is nothing to undo' } });");
   });
 });
+
+// Found on the way (live 2026-10-04): the dependency index returned no reports
+// for two public reports that used the field. The scan note claimed coverage.
+describe('Field Cleaner — the note about reports says what is true', () => {
+  const FC = read('field-cleaner.js');
+  it('no longer says reports are covered; points at Setup\'s own list', () => {
+    expect(FC).not.toContain('are covered by the scan above');
+    expect(FC).toContain('appear above only when Salesforce\\u2019s dependency');
+    expect(FC).toContain('a report that uses this field can be missing here');
+  });
+});
