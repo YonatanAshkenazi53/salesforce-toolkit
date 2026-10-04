@@ -880,6 +880,7 @@ const FieldCleaner = (() => {
     _selField = null;
     _groups   = {};
     _replField = null; _replCompat = null; _replSeq++;
+    _copyState = null; _copySeq++;
     const replStep = eid('fcReplStep');
     if (replStep) replStep.style.display = 'none';
     const pill    = eid('fcPill');
@@ -1016,6 +1017,7 @@ const FieldCleaner = (() => {
     const bar = eid('fcReplBar');
     if (bar) bar.outerHTML = _replBarHtml();
     if (eid('fcFlsPanel')) renderFlsPanel();
+    renderCopyValues();
   }
   function _replBarHtml() {
     return _replOn()
@@ -1033,7 +1035,7 @@ const FieldCleaner = (() => {
         <button type="button" class="fc-dd-linkbtn" id="fcReplClear">✕ Clear</button>
         ${list(c.blockers)}
         ${c.ok && c.warnings.length ? `<div class="fc-repl-warn">⚠ Check before you replace:${list(c.warnings)}</div>` : ''}
-        ${c.ok ? '<div class="fc-repl-sub">This moves REFERENCES only. The values stored in the old field are not copied — use Data Loader or a one-off flow for that before you delete it.</div>' : ''}
+        ${c.ok ? '<div class="fc-repl-sub">This moves REFERENCES. The values stored in the old field are a separate step: after the scan, 📦 Stored values compares the two fields and offers to copy them.</div>' : ''}
       </div>`;
   }
   function _setReplField(entry) {
@@ -1741,6 +1743,7 @@ const FieldCleaner = (() => {
           <button class="btn btn-danger" id="fcDelFreeBtn">🗑 Delete Field</button>
         </div>
         <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">${sftkCatSm('Measuring how much data is stored in this field…')}</div>
+        <div id="fcCopyVals"></div>
         <div id="fcDepZone"></div>
         <div id="fcFlsPanel"></div>
         ${_unscannedNoteHtml()}`;
@@ -1787,6 +1790,7 @@ const FieldCleaner = (() => {
         Fix what's listed, re-scan, and repeat until the count drops below the cap.
       </div>` : ''}
       <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">${sftkCatSm('Measuring how much data is stored in this field…')}</div>
+        <div id="fcCopyVals"></div>
       <div id="fcDepZone"></div>
       <div id="fcFlsPanel"></div>
       ${_unscannedNoteHtml()}`;
@@ -2033,6 +2037,268 @@ const FieldCleaner = (() => {
         }
       });
     });
+  }
+
+  // ── 📦 Copy the stored values to the replacement field ──────────────────
+  // Replace mode moves references; the data stays behind in the old field and
+  // is lost with it. This copies it (user 2026-10-04: "yes"). Nothing is read
+  // or written until the user asks: the compare is one paginated query whose
+  // cost is quoted on the button; the copy states what it writes, runs through
+  // sftkWriteVerified with a live count and a Stop, and is judged by reading
+  // the records again. The old field is never changed.
+  const FC_COPY_CAP  = 100000;   // records compared / written per run
+  const FC_COPY_UNDO = 1000;     // History keeps an undo up to this many records
+  let _copyState = null;         // { from, to, rows, capped, fillOnly, unfiltered, overwrite, plan, result }
+  let _copyStop  = false;
+  let _copySeq   = 0;
+
+  // Both fields of every record that holds a value in the old one.
+  // fillOnly: only where the new field is still empty (how a run over the cap
+  // makes progress). A long-text field cannot be filtered in a query: then
+  // every record is read and the empty ones are dropped here.
+  async function _copyRead(fillOnly) {
+    const obj = _selObj.api, from = _selField.api, to = _replField.api;
+    const base = `SELECT Id, ${from}, ${to} FROM ${obj}`;
+    let unfiltered = false;
+    let q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
+      query: `${base} WHERE ${from} != null${fillOnly ? ` AND ${to} = null` : ''} ORDER BY Id LIMIT ${FC_COPY_CAP + 1}` });
+    if (q && q.error && /filter/i.test(q.error)) {
+      unfiltered = true;
+      q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
+        query: `${base} ORDER BY Id LIMIT ${FC_COPY_CAP + 1}` });
+    }
+    if (!q || q.error) throw new Error((q && q.error) || 'no answer');
+    if (q.incomplete) throw new Error(`the read came back incomplete (Salesforce says ${q.incomplete.expected} records, got ${q.incomplete.got})`);
+    const all = q.records || [];
+    return { rows: all.slice(0, FC_COPY_CAP), capped: all.length > FC_COPY_CAP, unfiltered };
+  }
+
+  function renderCopyValues() {
+    const el = eid('fcCopyVals');
+    if (!el) return;
+    if (!_replOn()) { el.innerHTML = ''; _copyState = null; return; }
+    const from = _selField.api, to = _replField.api;
+    if (_replReadOnly()) {
+      el.innerHTML = `<div class="fc-copy">📦 <strong>Stored values</strong> cannot be copied: <code>${esc(to)}</code> cannot be written (a formula or read-only field).</div>`;
+      return;
+    }
+    if (_copyState && _copyState.to === to && _copyState.from === from) { _renderCopyPlan(); return; }
+    _copyState = null;
+    const known = _dataVerdict && !_dataVerdict.sampled && !_dataVerdict.formula;
+    const filled = known ? _dataVerdict.filled : null;
+    if (filled === 0) {
+      el.innerHTML = `<div class="fc-copy fc-copy-ok">📦 <code>${esc(from)}</code> holds no values — there is nothing to copy to <code>${esc(to)}</code>.</div>`;
+      return;
+    }
+    const calls = filled != null ? Math.max(1, Math.ceil(filled / 2000)) : null;
+    el.innerHTML = `<div class="fc-copy">📦 <strong>Stored values.</strong> ${filled != null
+        ? `<strong>${filled.toLocaleString()}</strong> record${filled === 1 ? '' : 's'} hold${filled === 1 ? 's' : ''} a value in <code>${esc(from)}</code>.`
+        : `How many records hold a value in <code>${esc(from)}</code> is not measured yet.`}
+      Replacing moves references only: to keep the data, copy it to <code>${esc(to)}</code> before you delete the field.
+      <button class="btn btn-secondary btn-sm" id="fcCopyCompare">📦 Compare the two fields${calls ? ` (≈${calls.toLocaleString()} API call${calls === 1 ? '' : 's'})` : ''}</button></div>`;
+    eid('fcCopyCompare').addEventListener('click', _copyCompare);
+  }
+
+  async function _copyCompare() {
+    const el = eid('fcCopyVals');
+    if (!el || !_replOn()) return;
+    const seq = ++_copySeq;
+    const from = _selField.api, to = _replField.api;
+    el.innerHTML = `<div class="fc-copy">${sftkCatSm(`Reading ${from} and ${to} on every record that holds a value…`)}</div>`;
+    try {
+      let r = await _copyRead(false), fillOnly = false;
+      if (r.capped && !r.unfiltered) { r = await _copyRead(true); fillOnly = true; }
+      if (seq !== _copySeq || !_replOn() || _replField.api !== to) return;
+      if (r.capped && r.unfiltered) throw new Error(`more than ${FC_COPY_CAP.toLocaleString()} records, and this field type cannot be filtered in a query — copy the values with Data Loader instead`);
+      _copyState = { from, to, rows: r.rows, capped: r.capped, fillOnly, unfiltered: r.unfiltered, overwrite: false, plan: null, result: null };
+      _renderCopyPlan();
+    } catch (e) {
+      if (seq !== _copySeq) return;
+      el.innerHTML = `<div class="fc-copy fc-copy-bad" title="${esc(e.message)}">📦 The two fields could not be compared: ${esc(_feText(e.message))} <button class="btn btn-secondary btn-sm" id="fcCopyCompare">↻ Try again</button></div>`;
+      eid('fcCopyCompare')?.addEventListener('click', _copyCompare);
+    }
+  }
+
+  function _renderCopyPlan() {
+    const el = eid('fcCopyVals'), st = _copyState;
+    if (!el || !st) return;
+    const from = st.from, to = st.to;
+    const plan = sftkCopyValuesPlan(st.rows, from, to, { newDesc: _replField.desc });
+    st.plan = plan;
+    const n = plan.fill.length + (st.overwrite ? plan.over.length : 0);
+    const N = x => Number(x).toLocaleString();
+    const li = [];
+    li.push(`<li>✅ <strong>${N(plan.same)}</strong> already hold the same value in <code>${esc(to)}</code></li>`);
+    li.push(`<li>➕ <strong>${N(plan.fill.length)}</strong> have <code>${esc(to)}</code> empty — these are copied</li>`);
+    if (st.fillOnly) li.push(`<li>≠ records where <code>${esc(to)}</code> already holds a value were not read (too many records to compare) and are left as they are</li>`);
+    else if (plan.over.length) li.push(`<li>≠ <strong>${N(plan.over.length)}</strong> hold a DIFFERENT value in <code>${esc(to)}</code> — left as they are unless you tick:
+      <label class="fc-copy-over"><input type="checkbox" id="fcCopyOver"${st.overwrite ? ' checked' : ''}> overwrite them with the value of <code>${esc(from)}</code></label></li>`);
+    for (const b of plan.blocked) li.push(`<li>✋ <strong>${N(b.count)}</strong> cannot be copied: ${esc(b.reason)}</li>`);
+    if (plan.unlisted.length) li.push(`<li>⚠ ${esc(to)} does not list ${plan.unlisted.slice(0, 6).map(u => `“${esc(u.value)}” (${N(u.count)})`).join(', ')}${plan.unlisted.length > 6 ? '…' : ''}. It is not a restricted picklist, so Salesforce accepts them — as values outside its list.</li>`);
+    el.innerHTML = `<div class="fc-copy">📦 <strong>Stored values</strong> — <strong>${N(plan.total)}</strong> record${plan.total === 1 ? '' : 's'} hold${plan.total === 1 ? 's' : ''} a value in <code>${esc(from)}</code>${st.capped ? ` <em>(the first ${N(FC_COPY_CAP)} that still need one — run again for the rest)</em>` : ''}:
+        <ul class="fc-copy-list">${li.join('')}</ul>
+        <button class="btn btn-primary btn-sm" id="fcCopyGo"${n ? '' : ' disabled'}>📦 Copy ${N(n)} value${n === 1 ? '' : 's'} to ${esc(to)}</button>
+        <button class="btn btn-secondary btn-sm" id="fcCopyAgain" title="Read both fields again">↻ Compare again</button>
+        <div id="fcCopyResult">${st.result || ''}</div>
+      </div>`;
+    eid('fcCopyOver')?.addEventListener('change', e => { st.overwrite = !!e.target.checked; st.result = null; _renderCopyPlan(); });
+    eid('fcCopyGo')?.addEventListener('click', _copyRun);
+    eid('fcCopyAgain')?.addEventListener('click', () => { _copyState = null; _copyCompare(); });
+  }
+
+  async function _copyRun() {
+    const st = _copyState;
+    if (!st || !st.plan || !_replOn()) return;
+    const obj = _selObj.api, from = st.from, to = st.to;
+    const targets = [...st.plan.fill, ...(st.overwrite ? st.plan.over : [])];
+    if (!targets.length) return;
+    const overN = st.overwrite ? st.plan.over.length : 0;
+    const N = x => Number(x).toLocaleString();
+    const undoable = targets.length <= FC_COPY_UNDO;
+    let wantCsv = true;
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    const sure = await sftkConfirmDestructive({
+      title: `Copy ${N(targets.length)} value${targets.length === 1 ? '' : 's'} to ${to}`,
+      icon: '📦',
+      items: [
+        { label: `${N(st.plan.fill.length)} record${st.plan.fill.length === 1 ? '' : 's'}`, sub: `${to} is empty — gets the value of ${from}` },
+        ...(overN ? [{ label: `${N(overN)} record${overN === 1 ? '' : 's'}`, sub: `${to} holds a different value — OVERWRITTEN with the value of ${from}` }] : []),
+      ],
+      revOverride: {
+        html: `Writes <strong>${esc(obj)}.${esc(to)}</strong> on ${N(targets.length)} record${targets.length === 1 ? '' : 's'}. <strong>${esc(from)}</strong> is not changed. Each record is saved like any edit: the object’s flows, triggers, validation rules and duplicate rules run, and its last-modified date changes. A record Salesforce refuses is reported with the reason and left as it is. ` +
+          (undoable ? 'Data Studio › History can take this copy back.' : `This run is larger than ${N(FC_COPY_UNDO)} records, so History keeps no undo for it — the receipt below is the way back.`),
+        needsCheckbox: true,
+        ack: overN ? `I understand ${N(overN)} existing value${overN === 1 ? '' : 's'} in ${to} ${overN === 1 ? 'is' : 'are'} overwritten` : `I understand ${N(targets.length)} record${targets.length === 1 ? ' is' : 's are'} updated`,
+      },
+      extraHtml: `<label class="sftk-confirm-ack"><input type="checkbox" id="fcCopyCsv" checked> ⬇ Save a receipt first: a CSV of every record, the value written and the value that was there</label>`,
+      onRender: () => { const cb = eid('fcCopyCsv'); cb?.addEventListener('change', () => { wantCsv = !!cb.checked; }); },
+      confirmLabel: `📦 Copy ${N(targets.length)} value${targets.length === 1 ? '' : 's'}`,
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!sure) return;
+
+    if (wantCsv) {
+      const blob = new Blob([sftkCopyValuesCsv(to, targets)], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `${obj}.${to}-copy-receipt-${targets.length}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    }
+
+    _copyStop = false;
+    eid('fcCopyGo')?.setAttribute('disabled', '');
+    eid('fcCopyAgain')?.setAttribute('disabled', '');
+    const box = () => eid('fcCopyResult');
+    const okIds = new Set(), reasons = new Map();
+    let sent = 0, refused = 0, stopped = false, callErr = null;
+    const paint = phase => {
+      const b = box(); if (!b) return;
+      b.innerHTML = `<div class="fc-copy-prog">${sftkCatSm(`${phase} ${N(sent)} of ${N(targets.length)} sent · ${N(okIds.size)} accepted${refused ? ` · ${N(refused)} refused` : ''}`)}
+        <button class="btn btn-secondary btn-sm" id="fcCopyStop">⏹ Stop</button></div>`;
+      eid('fcCopyStop')?.addEventListener('click', () => { _copyStop = true; const s = eid('fcCopyStop'); if (s) { s.disabled = true; s.textContent = 'Stopping after this batch…'; } });
+    };
+    paint('Writing…');
+
+    // History (sftk-history.js): one journal for this copy.
+    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `📦 Values — ${obj}.${from} → ${to} (${N(targets.length)} record${targets.length === 1 ? '' : 's'})`, orgUrl: _orgUrl });
+    let wr = null, check = null, after = null;
+    try {
+      // confirmed-by: the sftkConfirmDestructive right above
+      // The write discipline (sftk-write.js): the whole batched update is ONE
+      // write; the verify reads the written records again and compares each
+      // with the value it was meant to get.
+      wr = await sftkWriteVerified({
+        describe: `${to} on ${N(targets.length)} ${obj} record${targets.length === 1 ? '' : 's'}`,
+        journal: j,
+        write: async () => {
+          for (let i = 0; i < targets.length; i += 200) {
+            if (_copyStop) { stopped = true; break; }
+            const chunk = targets.slice(i, i + 200);
+            // verified-by: this loop is the write arm of the sftkWriteVerified around it — the re-read below judges every record
+            const res = await bg({ type: 'SF_COLLECTIONS_UPDATE', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+              records: chunk.map(t => ({ attributes: { type: obj }, Id: t.Id, [to]: t.value })) });
+            if (!Array.isArray(res)) { callErr = (res && res.error) || 'no answer'; break; }
+            res.forEach((r, k) => {
+              if (r && r.success) { okIds.add(chunk[k].Id); return; }
+              refused++;
+              const e0 = (r && r.errors && r.errors[0]) || {};
+              const why = `${e0.statusCode ? e0.statusCode + ': ' : ''}${String(e0.message || 'refused').replace(/\s+/g, ' ').slice(0, 160)}`;
+              reasons.set(why, (reasons.get(why) || 0) + 1);
+            });
+            sent += chunk.length;
+            paint('Writing…');
+          }
+          if (callErr && !okIds.size) return { error: callErr };
+          return { sent, accepted: okIds.size };
+        },
+        verify: async () => {
+          const wrote = targets.filter(t => okIds.has(t.Id));
+          paint('Re-reading the records to confirm…');
+          if (!st.fillOnly) {
+            const r = await _copyRead(false);
+            after = r.rows;
+            check = sftkCopyValuesCheck(wrote, after, to);
+          } else {
+            // over the cap the compare read only shows records that still need a
+            // value — so the written ones are read back by Id, 200 at a time
+            const got = [];
+            for (let i = 0; i < wrote.length; i += 200) {
+              const lit = wrote.slice(i, i + 200).map(t => `'${t.Id}'`).join(',');
+              const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true,
+                query: `SELECT Id, ${to} FROM ${obj} WHERE Id IN (${lit})` });
+              if (!q || q.error) throw new Error((q && q.error) || 'no answer');
+              got.push(...(q.records || []));
+            }
+            check = sftkCopyValuesCheck(wrote, got, to);
+          }
+          return { ok: wrote.length > 0 && check.ok === wrote.length, detail: check,
+            text: `${to}: ${N(check.ok)} of ${N(wrote.length)} written record${wrote.length === 1 ? ' holds' : 's hold'} the value of ${from} on re-read${refused ? ` · ${N(refused)} refused by Salesforce` : ''}${stopped ? ' · stopped before the end' : ''}` };
+        },
+      });
+    } finally {
+      // Undo: put back what the new field held (empty, or the overwritten
+      // value) on the records that were written — up to FC_COPY_UNDO of them.
+      const wrote = targets.filter(t => okIds.has(t.Id));
+      const steps = [];
+      if (wr && wr.accepted && wrote.length && wrote.length <= FC_COPY_UNDO) {
+        for (let i = 0; i < wrote.length; i += 200) {
+          const chunk = wrote.slice(i, i + 200);
+          const allEmpty = chunk.every(t => t.was == null);
+          steps.push({
+            describe: `Put ${to} back on ${chunk.length} record${chunk.length === 1 ? '' : 's'} (${i + 1}–${i + chunk.length})`,
+            // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+            msg: { type: 'SF_COLLECTIONS_UPDATE', records: chunk.map(t => ({ attributes: { type: obj }, Id: t.Id, [to]: t.was == null ? null : t.was })) },
+            // Emptied again can be re-read in one query; a restored older value
+            // cannot be compared by SOQL, so that step is accepted, not re-read.
+            verify: (allEmpty && !st.unfiltered) ? { query: `SELECT Id FROM ${obj} WHERE Id IN (${chunk.map(t => `'${t.Id}'`).join(',')}) AND ${to} != null`,
+              tooling: false, pick: 'records', absent: true,
+              text: { ok: `${to} is empty again on ${chunk.length} record${chunk.length === 1 ? '' : 's'} — verified by re-reading the org`,
+                      bad: `${to}: accepted by Salesforce, but some of these records still hold a value` } } : null,
+          });
+        }
+      }
+      await sftkHistoryEnd(j, { undo: steps.length ? { steps }
+        : { none: (wr && wr.accepted && wrote.length) ? `more than ${N(FC_COPY_UNDO)} records were written — History keeps no undo at that size; the receipt CSV lists every record and what ${to} held before` : 'nothing was accepted by Salesforce, so there is nothing to undo' } });
+    }
+
+    // What happened, in words — then the plan again, from what the org holds now.
+    const why = [...reasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([w, c]) => `<li>${N(c)} × ${esc(w)}</li>`).join('');
+    const wroteN = okIds.size;
+    let head;
+    if (!wr.accepted) head = `❌ Nothing was copied: ${esc(_feText(String((wr.raw && wr.raw.error) || wr.text || 'refused')))}`;
+    else if (wr.ok) head = `✅ <strong>${N(check.ok)}</strong> value${check.ok === 1 ? '' : 's'} copied to <code>${esc(to)}</code> — verified by re-reading the records.`;
+    else if (check) head = `⚠ ${N(wroteN)} record${wroteN === 1 ? ' was' : 's were'} accepted by Salesforce, and ${N(check.ok)} hold the value on re-read${check.badCount ? ` — ${N(check.badCount)} show something else (automation may have changed it), e.g. ${esc(check.bad.slice(0, 3).map(b => b.Id).join(', '))}` : ''}.`;
+    else head = `⚠ ${N(wroteN)} record${wroteN === 1 ? ' was' : 's were'} accepted by Salesforce, but they could not be re-read to confirm it — treat this as unverified.`;
+    st.result = `<div class="fc-copy-res ${wr.ok && !refused ? 'fc-copy-ok' : 'fc-copy-warn'}">${head}
+      ${refused ? `<div>✋ <strong>${N(refused)}</strong> refused by Salesforce and left as they were:<ul class="fc-copy-list">${why}</ul></div>` : ''}
+      ${stopped ? `<div>⏹ Stopped: ${N(targets.length - sent)} record${targets.length - sent === 1 ? ' was' : 's were'} not sent.</div>` : ''}
+      ${callErr && okIds.size ? `<div>⚠ The run broke off: ${esc(_feText(callErr))}. ${N(targets.length - sent)} record(s) were not sent.</div>` : ''}
+    </div>`;
+    if (after) st.rows = after;
+    else if (st.fillOnly) { try { const r = await _copyRead(true); st.rows = r.rows; st.capped = r.capped; } catch (_) { /* the result line stands; ↻ Compare again re-reads */ } }
+    st.overwrite = false;
+    _renderCopyPlan();
   }
 
   // 🔑 Copy the old field's access to the replacement field. Access is only
@@ -2454,6 +2720,7 @@ const FieldCleaner = (() => {
     const el = eid('fcDataVerdict');
     if (!el || !_dataVerdict) return;
     const v = _dataVerdict;
+    if (!_copyState) renderCopyValues();   // the 📦 panel quotes the measured count
     if (v.formula) {
       el.className = 'fc-data-verdict fc-data-na';
       el.innerHTML = '📊 <strong>Formula / derived field</strong> — stores no editable data of its own.';

@@ -374,6 +374,93 @@ function sftkFlsCopyPlan(oldRows, newRows, objApi, newApi, opts) {
   return out;
 }
 
+// ── 7. Stored values ─────────────────────────────────────────────────────
+// Replacing moves REFERENCES; the data stays in the old field and goes when
+// the field is deleted. These plan a copy of the old field's values into the
+// new one (user 2026-10-04: "should Replace Field offer to copy the old
+// field's data into the new one before the delete? yes").
+
+// Do two field values say the same thing? Empty is null or ''.
+function sftkCopySameValue(a, b) {
+  const empty = v => v == null || v === '';
+  if (empty(a) || empty(b)) return empty(a) && empty(b);
+  if (typeof a === 'number' || typeof b === 'number') return Number(a) === Number(b);
+  return String(a) === String(b);
+}
+
+// rows: [{ Id, <oldApi>, <newApi> }] — every record read. Only records whose
+// OLD field holds a value take part.
+// opts.newDesc: the new field's describe entry (type, length, picklist values).
+// Returns
+//   total   records that hold a value in the old field
+//   same    the new field already holds that value
+//   fill    [{ Id, value, was: null }]  the new field is empty
+//   over    [{ Id, value, was }]        the new field holds something ELSE —
+//           written only when the caller decides to overwrite
+//   blocked [{ reason, count, ids[≤5] }] never written: Salesforce would
+//           refuse the value (not in a restricted picklist, too long)
+//   unlisted [{ value, count }] picklist values the new field does not list
+//           but would accept (it is not restricted)
+function sftkCopyValuesPlan(rows, oldApi, newApi, opts) {
+  const d = (opts && opts.newDesc) || {};
+  const isPick = d.type === 'picklist' || d.type === 'multipicklist';
+  const listed = new Set((d.picklistValues || []).filter(v => v && v.active !== false).map(v => String(v.value)));
+  const maxLen = Number(d.length) > 0 ? Number(d.length) : 0;
+  const out = { total: 0, same: 0, fill: [], over: [], blocked: [], unlisted: [] };
+  const blocked = new Map(), unlisted = new Map();
+  const block = (reason, id) => {
+    const b = blocked.get(reason) || { reason, count: 0, ids: [] };
+    b.count++; if (b.ids.length < 5) b.ids.push(id);
+    blocked.set(reason, b);
+  };
+  for (const r of (Array.isArray(rows) ? rows : [])) {
+    if (!r || !r.Id) continue;
+    const v = r[oldApi];
+    if (v == null || v === '') continue;
+    out.total++;
+    const was = r[newApi];
+    if (sftkCopySameValue(v, was)) { out.same++; continue; }
+    if (isPick && listed.size) {
+      const tokens = d.type === 'multipicklist' ? String(v).split(';') : [String(v)];
+      const missing = tokens.filter(t => !listed.has(t));
+      if (missing.length) {
+        if (d.restrictedPicklist) { block(`the value “${missing[0]}” is not one of ${newApi}’s values (a restricted picklist refuses it)`, r.Id); continue; }
+        for (const m of missing) unlisted.set(m, (unlisted.get(m) || 0) + 1);
+      }
+    }
+    if (maxLen && typeof v === 'string' && v.length > maxLen) { block(`the value is longer than ${newApi} allows (${maxLen} characters)`, r.Id); continue; }
+    if (was == null || was === '') out.fill.push({ Id: r.Id, value: v, was: null });
+    else out.over.push({ Id: r.Id, value: v, was });
+  }
+  out.blocked = [...blocked.values()];
+  out.unlisted = [...unlisted.entries()].map(([value, count]) => ({ value, count }));
+  return out;
+}
+
+// After the copy: which of the records that were written hold the intended
+// value now? intended: [{ Id, value }]; afterRows: [{ Id, <newApi> }] read again.
+// Returns { ok, bad: [{ Id, want, got }] (≤ 20), badCount, missing }.
+function sftkCopyValuesCheck(intended, afterRows, newApi) {
+  const now = new Map((afterRows || []).filter(r => r && r.Id).map(r => [String(r.Id).substring(0, 15), r]));
+  const out = { ok: 0, bad: [], badCount: 0, missing: 0 };
+  for (const t of (intended || [])) {
+    const r = now.get(String(t.Id).substring(0, 15));
+    if (!r) { out.missing++; continue; }
+    if (sftkCopySameValue(t.value, r[newApi])) out.ok++;
+    else { out.badCount++; if (out.bad.length < 20) out.bad.push({ Id: t.Id, want: t.value, got: r[newApi] }); }
+  }
+  return out;
+}
+
+// The receipt: every record that is about to be written, what it gets and
+// what was there. The way back at any size (Data Loader takes it as it is).
+function sftkCopyValuesCsv(newApi, targets) {
+  const q = v => { const s = v == null ? '' : String(v); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const lines = [`Id,${newApi} (written),${newApi} (before)`];
+  for (const t of (targets || [])) lines.push([q(t.Id), q(t.value), q(t.was)].join(','));
+  return lines.join('\r\n');
+}
+
 if (typeof globalThis !== 'undefined') {
   globalThis.sftkFieldReplaceCompat = sftkFieldReplaceCompat;
   globalThis.sftkFlowResourceObjects = sftkFlowResourceObjects;
@@ -382,4 +469,8 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkFlexiReplaceField = sftkFlexiReplaceField;
   globalThis.sftkRptReplaceField = sftkRptReplaceField;
   globalThis.sftkFlsCopyPlan = sftkFlsCopyPlan;
+  globalThis.sftkCopySameValue = sftkCopySameValue;
+  globalThis.sftkCopyValuesPlan = sftkCopyValuesPlan;
+  globalThis.sftkCopyValuesCheck = sftkCopyValuesCheck;
+  globalThis.sftkCopyValuesCsv = sftkCopyValuesCsv;
 }

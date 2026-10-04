@@ -282,8 +282,8 @@ describe('Field Cleaner — step 3 and what it changes', () => {
     expect(FC).toContain('function _replOn() { return !!(_selField && _replField && _replCompat && _replCompat.ok); }');
     expect(FC).toContain('_replField = null; _replCompat = null; _replSeq++;');
   });
-  it('says plainly that the stored values are not copied', () => {
-    expect(FC).toContain('This moves REFERENCES only. The values stored in the old field are not copied');
+  it('says plainly that moving references does not move the data, and where the data is copied', () => {
+    expect(FC).toContain('This moves REFERENCES. The values stored in the old field are a separate step: after the scan, 📦 Stored values compares the two fields and offers to copy them.');
   });
   it('a button says what it will do: an inactive flow version is only ever removed', () => {
     expect(FC).toContain("return vi && vi.status !== 'Active' ? '✂ Remove' : '⇄ Replace';");
@@ -326,3 +326,98 @@ describe('Field Cleaner — the note about reports says what is true', () => {
     expect(FC).toContain('a report that uses this field can be missing here');
   });
 });
+
+// ── 📦 Copy the stored values (user 2026-10-04: "should Replace Field offer to
+// copy the old field's data into the new one before the delete? yes") ───────
+describe('stored values — the plan of a copy', () => {
+  const C = new Function(`${SRC}\nreturn { sftkCopySameValue, sftkCopyValuesPlan, sftkCopyValuesCheck, sftkCopyValuesCsv };`)();
+  const row = (id, a, b) => ({ Id: id, [OLD]: a, [NEW]: b });
+  const pk = (vals, restricted) => ({ type: 'picklist', length: 255, restrictedPicklist: restricted, picklistValues: vals.map(v => ({ value: v, active: true })) });
+
+  it('only records that hold a value take part; same / fill / differ are told apart', () => {
+    const p = C.sftkCopyValuesPlan([row('1', 'New', null), row('2', 'New', 'New'), row('3', 'Reviewed', 'New'), row('4', null, 'New'), row('5', '', null)], OLD, NEW, { newDesc: pk(['New', 'Reviewed'], true) });
+    expect(p.total).toBe(3);
+    expect(p.same).toBe(1);
+    expect(p.fill).toEqual([{ Id: '1', value: 'New', was: null }]);
+    expect(p.over).toEqual([{ Id: '3', value: 'Reviewed', was: 'New' }]);      // written only when the user ticks overwrite
+    expect(p.blocked).toEqual([]);
+  });
+  it('a value a RESTRICTED picklist would refuse is never sent — it is counted with the reason', () => {
+    const p = C.sftkCopyValuesPlan([row('1', 'Closed', null), row('2', 'Closed', null), row('3', 'New', null)], OLD, NEW, { newDesc: pk(['New', 'Reviewed'], true) });
+    expect(p.fill.map(x => x.Id)).toEqual(['3']);
+    expect(p.blocked).toEqual([{ reason: `the value “Closed” is not one of ${NEW}’s values (a restricted picklist refuses it)`, count: 2, ids: ['1', '2'] }]);
+  });
+  it('an UNRESTRICTED picklist accepts it: copied, and named as a value outside the list', () => {
+    const p = C.sftkCopyValuesPlan([row('1', 'Closed', null)], OLD, NEW, { newDesc: pk(['New'], false) });
+    expect(p.fill.length).toBe(1);
+    expect(p.unlisted).toEqual([{ value: 'Closed', count: 1 }]);
+  });
+  it('a multi-select value is checked token by token; a text that does not fit is blocked', () => {
+    const mp = { type: 'multipicklist', restrictedPicklist: true, picklistValues: [{ value: 'A', active: true }, { value: 'B', active: true }] };
+    const p = C.sftkCopyValuesPlan([row('1', 'A;B', null), row('2', 'A;Z', null)], OLD, NEW, { newDesc: mp });
+    expect(p.fill.map(x => x.Id)).toEqual(['1']);
+    expect(p.blocked[0].reason).toContain('“Z”');
+    const q = C.sftkCopyValuesPlan([row('1', 'abcdef', null), row('2', 'abc', null)], OLD, NEW, { newDesc: { type: 'string', length: 3 } });
+    expect(q.fill.map(x => x.Id)).toEqual(['2']);
+    expect(q.blocked[0]).toMatchObject({ count: 1, reason: `the value is longer than ${NEW} allows (3 characters)` });
+  });
+  it('numbers, checkboxes and empties compare by meaning', () => {
+    expect(C.sftkCopySameValue(5, '5')).toBe(true);
+    expect(C.sftkCopySameValue(5.0, 5)).toBe(true);
+    expect(C.sftkCopySameValue(null, '')).toBe(true);
+    expect(C.sftkCopySameValue(false, null)).toBe(false);          // an unticked checkbox is a value
+    expect(C.sftkCopySameValue('a', 'A')).toBe(false);
+    const p = C.sftkCopyValuesPlan([row('1', true, false), row('2', false, false)], OLD, NEW, { newDesc: { type: 'boolean' } });
+    expect(p.same).toBe(1);
+    expect(p.over).toEqual([{ Id: '1', value: true, was: false }]);  // a checkbox is never "empty": changing it is an overwrite
+  });
+  it('the verdict after the run is per record: what was meant, what the org holds now', () => {
+    const c = C.sftkCopyValuesCheck([{ Id: '001000000000001AAA', value: 'New' }, { Id: '001000000000002AAA', value: 'New' }, { Id: '001000000000003AAA', value: 'New' }],
+      [{ Id: '001000000000001AAA', [NEW]: 'New' }, { Id: '001000000000002', [NEW]: 'Reviewed' }], NEW);
+    expect(c).toEqual({ ok: 1, bad: [{ Id: '001000000000002AAA', want: 'New', got: 'Reviewed' }], badCount: 1, missing: 1 });
+  });
+  it('the receipt lists every record, the value written and the value that was there', () => {
+    expect(C.sftkCopyValuesCsv(NEW, [{ Id: '1', value: 'a,b', was: null }, { Id: '2', value: 'x', was: 'say "hi"' }]))
+      .toBe(`Id,${NEW} (written),${NEW} (before)\r\n1,"a,b",\r\n2,x,"say ""hi"""`);
+  });
+});
+
+describe('stored values — the wiring keeps the laws', () => {
+  const FC = read('field-cleaner.js');
+  const run = FC.slice(FC.indexOf('async function _copyRun() {'), FC.indexOf("// 🔑 Copy the old field's access to the replacement field."));
+  it('nothing is read until the user asks, and the cost is on the button', () => {
+    expect(FC).toContain("eid('fcCopyCompare').addEventListener('click', _copyCompare);");
+    expect(FC).toContain('📦 Compare the two fields${calls ? ` (≈${calls.toLocaleString()} API call${calls === 1 ? \'\' : \'s\'})` : \'\'}');
+  });
+  it('overwriting an existing value is never the default', () => {
+    expect(FC).toContain('overwrite: false, plan: null, result: null };');
+    expect(run).toContain('const targets = [...st.plan.fill, ...(st.overwrite ? st.plan.over : [])];');
+    expect(run).toContain('st.overwrite = false;');                       // and it does not stick for the next run
+  });
+  it('one confirmation says what is written, that automation runs, and offers the receipt (ticked)', () => {
+    expect(run).toContain('the object’s flows, triggers, validation rules and duplicate rules run');
+    expect(run).toContain('<input type="checkbox" id="fcCopyCsv" checked>');
+    expect(run).toContain('needsCheckbox: true,');
+    expect(run).toContain('production: gate.production ? { label: gate.label } : null,');
+  });
+  it('the old field is never written', () => {
+    expect(run).toContain('records: chunk.map(t => ({ attributes: { type: obj }, Id: t.Id, [to]: t.value })) });');
+    expect(run).not.toContain('[from]:');
+  });
+  it('the run can be stopped between batches, and is judged by reading the records again', () => {
+    expect(run).toContain('if (_copyStop) { stopped = true; break; }');
+    expect(run).toContain('check = sftkCopyValuesCheck(wrote, after, to);');
+    expect(run).toContain('return { ok: wrote.length > 0 && check.ok === wrote.length, detail: check,');
+  });
+  it('a refused record is counted with Salesforce\'s reason, never hidden', () => {
+    expect(run).toContain('reasons.set(why, (reasons.get(why) || 0) + 1);');
+    expect(run).toContain('refused by Salesforce and left as they were');
+  });
+  it('History can take a copy back up to the undo cap; beyond it the entry says why and points at the receipt', () => {
+    expect(FC).toContain('const FC_COPY_UNDO = 1000;');
+    expect(run).toContain('if (wr && wr.accepted && wrote.length && wrote.length <= FC_COPY_UNDO) {');
+    expect(run).toContain('[to]: t.was == null ? null : t.was');
+    expect(run).toContain('History keeps no undo at that size; the receipt CSV lists every record');
+  });
+});
+
