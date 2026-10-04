@@ -1619,11 +1619,18 @@ const FieldCleaner = (() => {
 
   // F8: honest disclosure of what the scan does NOT cover — the Tooling
   // dependency index doesn't track these, so silent breakage hides here.
+  // Reports (live 2026-10-04, trailheads5): the index, queried through the
+  // Tooling REST API, returned NO Report rows at all — not for two public
+  // reports that used the field, not with an explicit type filter; the Bulk
+  // API route answered "sObject type not supported". The note used to claim
+  // reports were covered; it now says what is true.
   function _unscannedNoteHtml() {
     return `
       <div class="fc-unscanned-note">
-        \u2139\ufe0f <strong>Reports and report types</strong> are covered by the scan above \u2014 they come
-        from Salesforce\u2019s own dependency index, the same one behind \u201cWhere is this used?\u201d.
+        \u2139\ufe0f <strong>Reports and report types</strong> appear above only when Salesforce\u2019s dependency
+        index returns them through its API. In some orgs it returns none (seen live: two public reports
+        used a field and neither was listed), so a report that uses this field can be missing here.
+        Before deleting, open the field in Setup and press \u201cWhere is this used?\u201d \u2014 that page lists reports.
         <strong>Email Templates and Approval Processes</strong> appear above only when that index reports
         them \u2014 Salesforce does not guarantee it does for every template or approval, so check them by hand.
         <strong>Not scanned at all</strong> (no API): criteria-based sharing rules \u2014 these break silently if

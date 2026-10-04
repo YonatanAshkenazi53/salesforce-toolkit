@@ -410,6 +410,16 @@ label; `_copyFlsAccess` (`#fcFlsCopy`, `#fcFlsCopyBtn`; `sftkWriteVerifiedAll` +
    plain-string right-hand side; the remover looked at `componentVisibilityRule`, so a rule that
    tested the field was never cleaned and the re-read (same function) called the page clean.
 
+**Found on the way — reports are NOT reliably in the scan.** `MetadataComponentDependency` through
+the Tooling REST API returned no Report rows at all on trailheads5 (two public reports used the
+field; an explicit `MetadataComponentType = 'Report'` filter returned 0; the Bulk API 2.0 route
+said "sObject type 'MetadataComponentDependency' is not supported"). The note under the results
+said reports "are covered by the scan above"; it now says they appear only when the index returns
+them and points at Setup's "Where is this used?". **Decision for the user:** the 2026-09-01 choice
+was "no org-wide report sweep"; with the index silent, reports are in practice unscanned. Options:
+keep the honest note (done), or add an opt-in, quoted, cancellable sweep (one Analytics describe
+per report).
+
 **Limits, stated in the product:** references move, data does not (no value copy); a flow swap has
 no History undo (old versions are deleted — the backup zip is the way back); list views, compact
 layouts, quick actions, validation rules, formula fields and Apex stay manual exactly as before.
