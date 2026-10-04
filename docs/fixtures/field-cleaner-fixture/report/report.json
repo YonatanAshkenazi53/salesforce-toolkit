@@ -1,0 +1,9 @@
+{
+  "reportMetadata": {
+    "name": "SFTK FC Test Report (column + filter)",
+    "reportFormat": "TABULAR",
+    "reportType": { "type": "AccountList" },
+    "detailColumns": ["ACCOUNT.NAME", "Account.SFTK_FC_Test_Status__c"],
+    "reportFilters": [{ "column": "Account.SFTK_FC_Test_Status__c", "operator": "equals", "value": "New" }]
+  }
+}

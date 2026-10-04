@@ -1,0 +1,9 @@
+{
+  "reportMetadata": {
+    "name": "SFTK FC Test Report (grouping)",
+    "reportFormat": "SUMMARY",
+    "reportType": { "type": "AccountList" },
+    "detailColumns": ["ACCOUNT.NAME"],
+    "groupingsDown": [{ "name": "Account.SFTK_FC_Test_Status__c", "sortOrder": "Asc", "dateGranularity": "None" }]
+  }
+}

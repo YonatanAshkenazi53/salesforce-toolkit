@@ -119,9 +119,11 @@ describe('field-cleaner.js executes the plan in the safe order', () => {
     const deploy = at('deployFlowViaMetadataApi(apiNameOf(plan.active.id), metadata)');
     // Phase 3 (History with undo): these three now also carry the caller's
     // journal, so a write's verdict lands in the button-press's History entry.
-    const verify = at('await _verifyFlowActivation(defId, maxNum, flowName, plan.active.id, journal)');
+    // 2026-10-04: it also gets the version list read BEFORE the deploy —
+    // Salesforce saves a deploy over a newer draft instead of creating a version (test/flow-draft-overwrite-1004).
+    const verify = at('await _verifyFlowActivation(defId, maxNum, flowName, plan.active.id, journal, fp.versions)');
     const ivs    = at('await _deleteFlowInterviews(fp.interviews, journal)');
-    const vers   = at('await _deleteFlowVersionIds(plan.toDelete.map(v => v.id), skip, journal)');
+    const vers   = at('await _deleteFlowVersionIds(plan.toDelete.map(v => v.id).filter(id => id !== out.newId), skip, journal)');
     expect(backup).toBeLessThan(deploy);
     expect(deploy).toBeLessThan(verify);
     expect(verify).toBeLessThan(ivs);
@@ -137,12 +139,12 @@ describe('field-cleaner.js executes the plan in the safe order', () => {
     expect(nothing).toBeGreaterThanOrEqual(2);
     // Phase 3 (History with undo): _verifyFlowActivation now also takes the
     // caller's journal, so its write's verdict lands in the right entry.
-    const verify = slice(FC, 'async function _verifyFlowActivation(defId, prevMax, flowName, flowIdForLink, journal)');
+    const verify = slice(FC, 'async function _verifyFlowActivation(defId, prevMax, flowName, flowIdForLink, journal, before)');
     expect((verify.match(/Nothing was deleted|nothing was deleted/g) || []).length).toBeGreaterThanOrEqual(3);
   });
 
   it('activation is re-read, activated by the tool if needed, and re-read again', () => {
-    const verify = slice(FC, 'async function _verifyFlowActivation(defId, prevMax, flowName, flowIdForLink, journal)');
+    const verify = slice(FC, 'async function _verifyFlowActivation(defId, prevMax, flowName, flowIdForLink, journal, before)');
     expect(verify).toMatch(/\(Number\(newest\.VersionNumber\) \|\| 0\) <= prevMax/);
     expect(verify).toContain("body: { Metadata: { activeVersionNumber: Number(newest.VersionNumber) } }");
     expect(verify).toMatch(/versions = await read\(\);\s*newest = versions\.find\(v => v\.Id === newId\)/);
@@ -211,10 +213,13 @@ describe('flow interviews are named by kind', () => {
 // the active version is also deleted or only the field ref is deleted from it".
 describe('the active version can be replaced OR deleted — the plan knows both', () => {
   const vs = [{ Id: 'a4', VersionNumber: 4, Status: 'Draft' }, { Id: 'a3', VersionNumber: 3, Status: 'Active' }, { Id: 'a1', VersionNumber: 1, Status: 'Obsolete' }];
-  it('replace is the default and is unchanged', () => {
+  it('replace is the default', () => {
     const p = F.sftkFlowSurgeryPlan(vs, ['a3', 'a1']);
     expect(p.mode).toBe('active');
-    expect(p.expectNew).toBe(5);
+    // live 2026-10-04: with a DRAFT (v4) newer than the active version Salesforce saves the
+    // deploy over that draft — no v5 appears (this said 5; test/flow-draft-overwrite-1004)
+    expect(p.expectNew).toBe(4);
+    expect(p.overwrite).toMatchObject({ id: 'a4', refs: false });
     expect(p.steps.map(s => s.kind)).toEqual(['redeploy', 'verify-active', 'delete-versions']);
   });
   it('delete switches the flow off, verifies, then deletes the SAME versions', () => {
