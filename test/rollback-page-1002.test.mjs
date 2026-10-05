@@ -96,6 +96,6 @@ describe('the page', () => {
     expect(RB).toContain("field: 'restoredRecords'");
     expect(RB).toContain("field: 'failedRecords'");
     expect(RB).toContain('/lightning/o/DeleteEvent/home');
-    expect(RB).toContain('This rollback ran before records were kept by name — counts only.');
+    expect(RB).toContain('This rollback ran before History kept the records by name.');   // then the Recycle Bin is read: test/rollback-report-1005
   });
 });

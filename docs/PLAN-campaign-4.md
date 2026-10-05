@@ -550,7 +550,19 @@ So for 1.0:
   DONE: packer cuts `debug-modal.js` and the `#dbgBtn` of both pages, `'debug'` joins `CUT_IDS`,
   `debug-logger.js` stays (every tool calls it) but `_ships()` keeps it off; `#sftkTermsBtn` added
   to studio.html (wired by sftk-terms.js); the pack fails if either page lacks it.
-- History › rollback card › "Which records" shows no records; it should open a Deploy-like page.
+- **History › rollback card › "Which records" showed no records** (user: "when you click see which
+  records, you dont see the list" / "it should open the reconcile deployment screen"). Cause: the
+  entry was from 2026-10-02, before `deletedRecords` existed; the report then showed chips and
+  "counts only". DONE: the records card (object bar, tabs, filter) is always drawn; when
+  `_rbNamesMissing(s)` the page reads the object's deleted records from the org's Recycle Bin
+  (`_rbBinRead`: `sftkUndoBinQuery` → REST `queryAll`, `IsDeleted = true` inside the rollback's
+  start–end ± 2 min, paged, cap 50,000), says the source, the minutes and the verdict
+  (`sftkUndoBinVerdict`: match / fewer / more / capped), "open that org" without a session, and
+  "can no longer be named" after 15 days. Restored records without names are counted and said.
+  Also fixed: counts-only mode did not strip `deletedRecords` / `restoredRecords`.
+  Live on trailheads5 with a synthetic copy of the user's entry (`scripts/dev/live/rollback-report.mjs`):
+  Account 812 found of 812 (✅), Contact 380 found of 1,250 (⚠ "the other 870 are no longer in
+  the Recycle Bin"). Pins `test/rollback-report-1005`.
 - "Needs a decision": fix them one by one; the options are not clear; question whether the user
   should pick which record to keep and which duplicates to delete.
 - Deploy page › "This deployment" tree: the cards, the relation and "how many each hold" read as

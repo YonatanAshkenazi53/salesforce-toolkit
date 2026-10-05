@@ -75,6 +75,10 @@ extensions containing root files that start with `_`).
 - **History undo for an org default is verified.** Undo puts the previous page back and re-reads the object to confirm it.
 - **Honest limits.** The tool reads and changes the assignments of record pages. Home, App and other page types are activated in a different way that it does not read, so it no longer says "not activated" or "0 users" about them. A failed read is shown as unknown, never as "none". "Show affected users" shows an error with a retry when the query fails, instead of "No active users".
 
+### Fixed — a rollback's "Which records" always lists the records
+- **The deleted records are read from the Recycle Bin when History has no names.** A rollback that ran before History kept names, or with counts-only mode on, opened a report with counts and no list. The report now reads the records that rollback deleted from the org's Recycle Bin, which keeps them for 15 days, and lists them by name. It says where the list came from, for which minutes, and how it compares with the count. If the Recycle Bin holds fewer records than the rollback counted, it says how many cannot be named. Nothing is changed by the read.
+- **Counts-only mode keeps no names from a rollback either.** The names a rollback deleted or restored stayed in History with counts-only mode on. They are now removed like every other record name.
+
 ### Changed — the Licence button is on both pages
 - **Data Studio has the Licence button too.** The licence agreement and the privacy notes you accepted can be read again from the top bar of the Toolkit and of Data Studio.
 

@@ -597,6 +597,9 @@ function _historyStripCountsOnly(entries) {
     if (h.summary) for (const obj of Object.values(h.summary)) {
       if (obj && typeof obj === 'object') {
         delete obj.targetRecords; delete obj.failedRecords; delete obj.failedSourceIds;
+        // a rollback's records by name are record names too (found 2026-10-05:
+        // they stayed in History with counts-only on)
+        delete obj.deletedRecords; delete obj.restoredRecords; delete obj.recordsCapped;
       }
     }
   }
