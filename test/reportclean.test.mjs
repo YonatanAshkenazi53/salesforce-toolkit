@@ -202,6 +202,17 @@ describe('managed flows are visible and protected', () => {
     expect(DEP).toMatch(/function reset\(\) \{[\s\S]{0,300}_managedFlows = null;/);
     // and the "what uses" search says it could not read them
     expect(DEP).toContain('No flow that could be read mentions');
+    // 2026-10-05: "no hit" is an answer only for the versions whose text was searched —
+    // with the map reused from the stored cache the search said "no flow mentions it"
+    // about a field two flows use, and claimed full coverage with no text read.
+    expect(DEP).toContain('const total = sftkDepSearchTotal(_scanTotal, _scannedIds.size, have);');
+    expect(DEP).toContain('were NOT searched');
+    expect(DEP).toContain('so this is not a “no”.');
+    expect(DEP).toContain("refResults.querySelector('#depRefRescan')?.addEventListener('click', () => document.getElementById('depRescanBtn')?.click());");
+    const fn = new Function(DEP.slice(DEP.indexOf('function sftkDepSearchTotal('), DEP.indexOf('function searchCoverage()')) + '; return sftkDepSearchTotal;')();
+    expect(fn(0, 119, 0)).toBe(119);      // cache-primed: nothing read this session
+    expect(fn(119, 119, 119)).toBe(119);  // a full scan
+    expect(fn(0, 0, 0)).toBe(0);
     expect(DEP).toContain('their contents are hidden by Salesforce, so they were not searched');
     const POP = readFileSync(new URL('../popup.js', import.meta.url), 'utf8');
     expect(POP).toContain('DependencyMap.loadManagedFlows(loadOrgUrl, loadSid)');

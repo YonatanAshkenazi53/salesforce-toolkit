@@ -90,6 +90,9 @@ extensions containing root files that start with `_`).
 - **The answers are written out.** Instead of a dropdown of "#1 / #2", each record lists its answers as sentences that carry the values of the record they mean: "Same record as #1 (BillingCity: Haifa)", "Not there yet — create it as a new record", "Not decided — it stays out of the deployment".
 - **Two copies of the same thing.** The tab says what to do with a true duplicate: say which copy is the same record, and after the re-read the left-over copy is listed under 🔵 Only in the target, where you can tick it for deletion. The tab itself never deletes.
 
+### Fixed — "What uses…" no longer answers "nothing" about flows it did not read
+- **The Dependencies search says how much it searched.** When the flow list came from the stored cache, the search had read no flow text in that session and still answered that no flow mentions the term. It now says how many flow versions were searched and how many were not, that this is not a "no", and offers to read them all.
+
 ### Fixed — a rollback's "Which records" always lists the records
 - **The deleted records are read from the Recycle Bin when History has no names.** A rollback that ran before History kept names, or with counts-only mode on, opened a report with counts and no list. The report now reads the records that rollback deleted from the org's Recycle Bin, which keeps them for 15 days, and lists them by name. It says where the list came from, for which minutes, and how it compares with the count. If the Recycle Bin holds fewer records than the rollback counted, it says how many cannot be named. Nothing is changed by the read.
 - **Counts-only mode keeps no names from a rollback either.** The names a rollback deleted or restored stayed in History with counts-only mode on. They are now removed like every other record name.

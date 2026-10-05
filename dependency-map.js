@@ -1557,9 +1557,20 @@ const DependencyMap = (() => {
   // load the literal search covers only the versions read in this session. A
   // search that silently covered 40 of 1600 versions and said "no flow mentions
   // X" would be the exact false negative this module exists to prevent.
+  // How many flow versions a "What uses…" search has to have read to be an
+  // answer: every version the scan was asked for, or holds from the cache, or
+  // read — whichever is largest. PURE.
+  function sftkDepSearchTotal(scanTotal, scannedCount, haveText) {
+    return Math.max(Number(scanTotal) || 0, Number(scannedCount) || 0, Number(haveText) || 0);
+  }
   function searchCoverage() {
     const have = Object.keys(metaTextByFlowId).length;
-    const total = _scanTotal || have;
+    // Every version the map knows counts, whether its metadata was read in
+    // this session or came from the stored cache. Found 2026-10-05 while
+    // recording the walkthrough: with the map reused from the cache
+    // (_scanTotal can be 0 there) this said "full" with NO text read, and the
+    // search answered "no flow mentions it" about a field two flows use.
+    const total = sftkDepSearchTotal(_scanTotal, _scannedIds.size, have);
     return { have, total, full: have >= total && metadataFetched };
   }
 
@@ -2157,7 +2168,11 @@ const DependencyMap = (() => {
               <span class="dep-ref-count">×${h.count}</span>
             </div>`;
           }).join('')
-        : `<div class="dep-ref-hdr">No flow that could be read mentions “${escHtml(term)}”${isMetadataFetched() ? '' : ` — but ${scanCaveat()}, so this search covered only part of the org`}.${managedCaveat() ? ` <b style="color:var(--warning,#DD7A01)">🔒 ${escHtml(managedCaveat())}.</b>` : ''}</div>`;
+        // No hit is an answer only for the versions whose text was searched.
+        : `<div class="dep-ref-hdr">${cov.full
+            ? `No flow that could be read mentions “${escHtml(term)}”.`
+            : `No match for “${escHtml(term)}” in the ${cov.have} of ${cov.total} flow versions whose text was read in this session. <b style="color:var(--warning,#DD7A01)">The other ${cov.total - cov.have} were NOT searched${isMetadataFetched() ? ' — they came from the stored dependency cache, which does not keep their text' : ` — ${scanCaveat()}`}, so this is not a “no”.</b> <button class="btn-small" id="depRefRescan" title="Reads every flow version again (the same as ↻ Rescan), then search again">↻ Read them all</button>`}${managedCaveat() ? ` <b style="color:var(--warning,#DD7A01)">🔒 ${escHtml(managedCaveat())}.</b>` : ''}</div>`;
+      refResults.querySelector('#depRefRescan')?.addEventListener('click', () => document.getElementById('depRescanBtn')?.click());
       refResults.querySelectorAll('.dep-ref-hit').forEach(row =>
         row.addEventListener('click', () =>
           chrome.tabs.create({ url: `${orgUrl}/builder_platform_interaction/flowBuilder.app?flowId=${row.dataset.id}` })));
