@@ -158,6 +158,28 @@ function sftkDeployTreeNodes(tree) {
   })(tree, [], 0);
 }
 
+// PURE. What one object's card in the tree says (user 2026-10-05, on the tree:
+// "the view of the objects and their relation. how many each hold"): how the
+// object hangs under its parent, how many records each org holds, and what is
+// left to do — or that it has not been counted, which is never "zero".
+//   n          tree node { obj, depth, field }
+//   parentObj  the object above it ('' for the root)
+//   row        its plan row (sftkDeployPlanRows) or null
+// → { role, counted, src, tgt, work: [{ k, icon, n, text, words }], total, inSync }
+const SFTK_DEPLOY_NODE_WORK = [
+  ['ins', '🔴', 'to insert'], ['chg', '🟡', 'changed'], ['ext', '🔵', 'only in the target'],
+  ['link', '⇄', 'linked differently'], ['amb', '⚠', 'need a decision'],
+];
+function sftkDeployNodeFacts(n, parentObj, row) {
+  const role = (n && n.depth) ? `under ${parentObj || '?'} · ${n.field || '?'}` : 'the root object';
+  if (!row || !row.scanned) return { role, counted: false, src: null, tgt: null, work: [], total: null, inSync: false };
+  const work = SFTK_DEPLOY_NODE_WORK
+    .map(([k, icon, words]) => ({ k, icon, words, n: (row.cells && row.cells[k] && Number(row.cells[k].n)) || 0, text: (row.cells && row.cells[k] && row.cells[k].text) || '0' }))
+    .filter(w => w.n > 0);
+  const total = work.reduce((t, w) => t + w.n, 0);
+  return { role, counted: true, src: row.src, tgt: row.tgt, work, total, inSync: total === 0 };
+}
+
 // ── page state (presentation only) ────────────────────────────────────────
 let _depObjPath = '';      // which object the records panel shows ('' = root)
 let _depTab     = 'ins';
@@ -597,41 +619,61 @@ async function _depPaintTree(p, scan) {
   const plan = sftkDeployPlanRows(p.tree, scan, sftkScanBucketInfo, sftkDeployCountLabel);
   const order = (_depOrderKey === `${p.id}|${scan.runAt}` && _depOrderData) ? (_depOrderData.objects || []) : [];
   const idOf = pathKey => (_depIdKey === key && _depIdData) ? (_depIdData.objects || []).find(o => o.pathKey === pathKey) : null;
-  // The chips name the ORG, not "source"/"target" — the page has exactly one
-  // of each and the reader knows them by name (user 2026-09-22).
-  const idPill = (v, lbl) => v === 'yes' ? `<span class="ds-dtree-id ds-dtree-id-ok" title="${esc(lbl)} has the identity field (SFTK_ID__c) on this object — its records can be recognised exactly">🪪 ${esc(lbl)} ✓</span>`
-    : v === 'no' ? `<span class="ds-dtree-id ds-dtree-id-no" title="${esc(lbl)} has no identity field on this object — records are recognised by the match key only. 🪪 Identity… below can create it">🪪 ${esc(lbl)} ✗</span>`
-    : `<span class="ds-dtree-id" title="not checked yet">🪪 ${esc(lbl)} …</span>`;
   const srcOrgL = orgLabel(p.sourceOrg || '') || 'source', tgtOrgL = orgLabel(p.targetOrg || '') || 'target';
-  const nodeHtml = n => {
-    const pr = plan.find(r => r.pathKey === n.pathKey) || {};
+  const num = v => (v == null ? '?' : Number(v).toLocaleString());
+  // The identity field is optional: a card mentions it only where an org HAS
+  // it. "✗ ✗" on every card read as two errors per object (user 2026-10-05:
+  // "this part seems a bit broken"); the line under the tree says the rest.
+  const idLine = id => {
+    if (!id || (id.src !== 'yes' && id.tgt !== 'yes')) return '';
+    const one = (v, lbl) => `${esc(lbl)} ${v === 'yes' ? '✓' : v === 'no' ? '✗' : '…'}`;
+    return `<div class="ds-dtree-line" title="The identity field (SFTK_ID__c) lets a record be recognised exactly, whatever its name">🪪 identity field: ${one(id.src, srcOrgL)} · ${one(id.tgt, tgtOrgL)}</div>`;
+  };
+  const nodeHtml = (n, parent) => {
+    const pr = plan.find(r => r.pathKey === n.pathKey) || null;
     const s = sftkDeployScanFor(scan, n);
+    const f = sftkDeployNodeFacts(n, parent ? parent.obj : '', pr);
     const keyFields = s ? ((s.matching && s.matching.fields && s.matching.fields.length) ? s.matching.fields : [s.matchField || 'Name']) : null;
-    const work = pr.scanned ? ['ins', 'chg', 'ext', 'link'].reduce((t, k) => t + ((pr.cells[k] && pr.cells[k].n) || 0), 0) : null;
-    const id = idOf(n.pathKey);
     const needs = (order.find(o => o.pathKey === n.pathKey) || {}).parents || [];
+    // a child is counted against its parent's records, so the parent comes first
+    const parentCounted = !parent || !!(plan.find(r => r.pathKey === parent.pathKey) || {}).scanned;
+    const counts = f.counted
+      ? `<div class="ds-dtree-counts"><span><b>${num(f.src)}</b> in ${esc(srcOrgL)}</span><span class="ds-dtree-arrow">→</span><span><b>${num(f.tgt)}</b> in ${esc(tgtOrgL)}</span></div>
+         <div class="ds-dtree-todo">${f.inSync ? '<span class="ds-dtree-sync">✓ in sync</span>' : f.work.map(w => `<span class="ds-dtree-chip ds-dtree-chip-${w.k}" data-tree-tab="${w.k}" title="Show these ${esc(n.obj)} records">${w.icon} ${esc(w.text)} ${esc(w.words)}</span>`).join('')}</div>`
+      : `<div class="ds-dtree-counts ds-dep-muted">not counted yet — unknown, not zero
+           ${parentCounted ? `<button class="ds-btn ds-btn-xs" data-tree-scan="${esc(n.pathKey)}" title="Read ${esc(n.obj)} in both orgs and count it. Nothing is changed.">🔎 Count</button>` : `<span>(count ${esc(parent.obj)} first)</span>`}</div>`;
     return `<li><div class="ds-dtree-node${n.pathKey === _depObjPath ? ' ds-dtree-node-on' : ''}" data-tree-obj="${esc(n.pathKey)}" role="button" tabindex="0" title="Show this object's records below">
-        <div class="ds-dtree-name">${esc(n.obj)} <span class="ds-dtree-role">${n.depth ? `via ${esc(n.field || '?')}` : 'root'}</span></div>
-        <div class="ds-dtree-line">${keyFields ? `recognised by <b>${esc(keyFields.join(' + '))}</b>` : '<span class="ds-dep-muted">not scanned yet</span>'}</div>
-        <div class="ds-dtree-line">${idPill(id ? id.src : null, srcOrgL)} ${idPill(id ? id.tgt : null, tgtOrgL)}</div>
-        <div class="ds-dtree-line">${work == null ? '<span class="ds-dep-muted">unknown — scan it</span>' : work ? `<b class="ds-dtree-work">${work.toLocaleString()} to act on</b>` : '<span class="ds-dtree-sync">✓ in sync</span>'}</div>
-        ${needs.length ? `<div class="ds-dtree-needs" title="Objects outside this deployment that these records point at">points at ${needs.map(g => `<span class="ds-dtree-need${g.srcCount === 0 ? ' ds-dtree-need-off' : g.empty ? ' ds-dtree-need-bad' : ''}">${esc(g.refObj)}</span>`).join(' ')}</div>` : ''}
-      </div>${n.children.length ? `<ul>${n.children.map(nodeHtml).join('')}</ul>` : ''}</li>`;
+        <div class="ds-dtree-name">${esc(n.obj)} <span class="ds-dtree-role"${n.depth ? ` title="Each ${esc(n.obj)} belongs to one ${esc(parent ? parent.obj : '')} through its ${esc(n.field || '?')} field"` : ''}>${esc(f.role)}</span></div>
+        ${counts}
+        ${keyFields ? `<div class="ds-dtree-line">matched by <b>${esc(keyFields.join(' + '))}</b></div>` : ''}
+        ${idLine(idOf(n.pathKey))}
+        ${needs.length ? `<div class="ds-dtree-needs" title="Objects outside this deployment that these records look up — see Start with parents first">looks up, outside this deployment: ${needs.map(g => `<span class="ds-dtree-need${g.srcCount === 0 ? ' ds-dtree-need-off' : g.empty ? ' ds-dtree-need-bad' : ''}" title="${g.srcCount === 0 ? 'no record here uses it' : g.empty ? `${esc(tgtOrgL)} has none yet` : 'used by these records'}">${esc(g.refObj)}</span>`).join(' ')}</div>` : ''}
+      </div>${n.children.length ? `<ul>${n.children.map(ch => nodeHtml(ch, n)).join('')}</ul>` : ''}</li>`;
   };
   const root = sftkDeployTreeNodes(p.tree);
   const missingTgt = (_depIdKey === key && _depIdData) ? sftkIdCreatable(_depIdData.objects, 'tgt') : [];
   host.innerHTML = `<div class="ds-rec-card">
     <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">📦</span><span class="ds-rec-card-title">This deployment</span>
-      <span class="ds-rec-card-hint">the shape of the data you are defining across ${esc(orgLabel(p.sourceOrg || ''))} and ${esc(orgLabel(p.targetOrg || ''))} — click an object to see its records</span></div>
-    <div class="ds-dtree"><ul>${root ? nodeHtml(root) : ''}</ul></div>
+      <span class="ds-rec-card-hint">every object of this deployment, how it hangs under its parent, and how many records ${esc(orgLabel(p.sourceOrg || ''))} and ${esc(orgLabel(p.targetOrg || ''))} hold — click an object to see its records</span></div>
+    <div class="ds-dtree"><ul>${root ? nodeHtml(root, null) : ''}</ul></div>
     <div class="ds-dtree-foot"><button class="ds-btn ds-btn-sm" id="dsDepIdBtn" title="See which objects carry the identity field in each org, create it where it is missing, and stamp matched pairs">🪪 Identity…</button>
-      ${missingTgt.length ? `<span class="ds-rec-card-line">${missingTgt.length} object(s) cannot be recognised exactly in ${esc(orgLabel(p.targetOrg || ''))} yet — <b>${esc(missingTgt.join(', '))}</b> ${missingTgt.length === 1 ? 'has' : 'have'} no identity field. The Toolkit can create it.</span>` : ''}</div>
+      ${missingTgt.length ? `<span class="ds-rec-card-line">Optional. Records are matched by the fields shown on each card. An identity field makes that match exact even when a name changes — ${missingTgt.length} object(s) have none in ${esc(orgLabel(p.targetOrg || ''))} yet (${esc(missingTgt.join(', '))}). 🪪 Identity… can create it.</span>` : ''}</div>
   </div>`;
   host.querySelectorAll('[data-tree-obj]').forEach(el => {
-    const go = () => { _depObjPath = el.dataset.treeObj; _depTab = 'ins'; _depFilter = ''; renderDeploy().then(() => eid('dsDepRecords')?.scrollIntoView({ block: 'nearest' })); };
-    el.addEventListener('click', go);
-    el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    // a chip opens its own tab of that object; the card opens the object
+    const go = tab => { _depObjPath = el.dataset.treeObj; _depTab = tab || 'ins'; _depFilter = ''; renderDeploy().then(() => eid('dsDepRecords')?.scrollIntoView({ block: 'nearest' })); };
+    el.addEventListener('click', e => { if (e.target.closest?.('[data-tree-scan]')) return; go(e.target.closest?.('[data-tree-tab]')?.dataset.treeTab); });
+    el.addEventListener('keydown', e => { if (e.target !== el) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
   });
+  // 🔎 Count on a card: the same child read the plan table's 🔎 Scan does
+  host.querySelectorAll('[data-tree-scan]').forEach(b => b.addEventListener('click', async e => {
+    e.stopPropagation();
+    b.disabled = true; b.textContent = '⏳ reading both orgs…';
+    let res = null;
+    try { res = await scanReconcileChild(p, b.dataset.treeScan); } catch (err) { res = { error: (err && err.message) || String(err) }; }
+    if (res && res.error) showToast(`Could not count it: ${res.error}`, 'error', 7000);
+    if (_currentView === 'deploy') renderDeploy();
+  }));
   eid('dsDepIdBtn')?.addEventListener('click', () => sftkOpenIdentityModal(p, scan));
   if (_depIdKey !== key) {
     _depIdKey = key; _depIdData = null;

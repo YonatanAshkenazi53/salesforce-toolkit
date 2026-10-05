@@ -6327,28 +6327,39 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 .ds-dep-page > #dsDepTree:empty { display: none; }
 .ds-dep-page > #dsDepTree > .ds-rec-card { max-width: none; margin: 0; }
 .ds-dtree { overflow-x: auto; padding: 4px 2px 8px; }
+/* The tree reads left to right, top-aligned: a parent sits level with its
+   first child, so the root is at the top of the card whatever the size of the
+   tree. Every connector meets its neighbour at the same height (26px = the
+   card's title line), which is what makes the relations readable
+   (2026-10-05: "the view of the objects and their relation … seems a bit broken"). */
 .ds-dtree ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; position: relative; }
 .ds-dtree > ul > li { padding-left: 0; }
-.ds-dtree li { display: flex; align-items: center; position: relative; padding: 6px 0 6px 30px; }
+.ds-dtree li { display: flex; align-items: flex-start; position: relative; padding: 6px 0 6px 30px; }
+.ds-dtree li::before, .ds-dtree li::after, .ds-dtree li > ul::before { content: ''; position: absolute; border: 0 solid var(--c-border-strong, var(--subtext)); opacity: .6; }
 .ds-dtree > ul > li::before, .ds-dtree > ul > li::after { display: none; }
-.ds-dtree li::before { content: ''; position: absolute; left: 0; top: 50%; width: 30px; border-top: 1.5px solid var(--border); }
-.ds-dtree li::after { content: ''; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1.5px solid var(--border); }
-.ds-dtree li:first-child::after { top: 50%; }
-.ds-dtree li:last-child::after { bottom: 50%; }
-.ds-dtree li:only-child::after { display: none; }
+.ds-dtree li::before { left: 0; top: 26px; width: 30px; border-top-width: 2px; }
+.ds-dtree li::after { left: 0; top: 0; bottom: 0; border-left-width: 2px; }
+.ds-dtree li:first-child::after { top: 26px; }
+.ds-dtree li:last-child::after { bottom: auto; height: 26px; }
+.ds-dtree li:first-child:last-child::after { display: none; }
 .ds-dtree li > ul { margin-left: 30px; }
-.ds-dtree li > ul::before { content: ''; position: absolute; left: -30px; top: 50%; width: 30px; border-top: 1.5px solid var(--border); }
-.ds-dtree-node { flex: 0 0 auto; min-width: 210px; max-width: 300px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface2); padding: 8px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.ds-dtree li > ul::before { left: -30px; top: 26px; width: 30px; border-top-width: 2px; }
+.ds-dtree-node { flex: 0 0 auto; min-width: 250px; max-width: 360px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface2); padding: 8px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .ds-dtree-node:hover, .ds-dtree-node:focus-visible { border-color: var(--brand); outline: none; }
 .ds-dtree-node-on { border-color: var(--brand); background: var(--brand-bg); }
-.ds-dtree-name { font-weight: 700; font-size: 13.5px; color: var(--text); }
-.ds-dtree-role { font-weight: 400; font-size: 11px; color: var(--subtext); margin-left: 4px; }
+.ds-dtree-name { font-weight: 700; font-size: 13.5px; color: var(--text); display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.ds-dtree-role { font-weight: 400; font-size: 11px; color: var(--subtext); }
 .ds-dtree-line { color: var(--subtext); }
 .ds-dtree-line b { color: var(--text); }
-.ds-dtree-id { font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
-.ds-dtree-id-ok { border-color: var(--success); color: var(--c-good-fg, var(--success)); }
-.ds-dtree-id-no { border-color: var(--warning); color: var(--c-warn-fg, var(--warning)); }
-.ds-dtree-work { color: var(--c-critical-fg, var(--danger)); }
+.ds-dtree-counts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--subtext); }
+.ds-dtree-counts b { color: var(--text); font-size: 13px; }
+.ds-dtree-arrow { color: var(--subtext); }
+.ds-dtree-todo { display: flex; flex-wrap: wrap; gap: 4px; }
+.ds-dtree-chip { border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; background: var(--surface); color: var(--text); white-space: nowrap; font-size: 11.5px; }
+.ds-dtree-chip:hover { border-color: var(--brand); }
+.ds-dtree-chip-ins { color: var(--c-critical-fg, var(--danger)); }
+.ds-dtree-chip-chg, .ds-dtree-chip-amb { color: var(--c-warn-fg, var(--warning)); }
+.ds-dtree-chip-ext, .ds-dtree-chip-link { color: var(--brand); }
 .ds-dtree-sync { color: var(--c-good-fg, var(--success)); font-weight: 600; }
 .ds-dtree-needs { font-size: 11px; color: var(--subtext); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .ds-dtree-need { border: 1px dashed var(--border); border-radius: 6px; padding: 0 5px; }
