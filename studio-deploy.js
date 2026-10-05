@@ -777,25 +777,42 @@ async function _depPaintOrder(p, scan) {
 // compared field tells the copies apart (row.tell, scan.ambiguousCand) and
 // suggests the pairs one field proves (row.suggest); the page groups by name
 // and asks ONE question per record.
+//
+// 2026-10-05 (user, on this tab): "i would like to be able to also fix them one
+// by one. also the options … are not clear. i think the user should select
+// which record to keep and which of the dupes to delete. no?"
+//   • one by one — every group has its own 📌 Apply this one: the decision is
+//     remembered at once (match memory) and both orgs are read again ONCE,
+//     when the user asks, not after every group;
+//   • the options — each answer is a sentence that carries the values of the
+//     record it means ("Same record as #2 (Phone: 555-9 · Paris)"), listed in
+//     the open, not behind a dropdown of "#1 / #2";
+//   • duplicates — this tab decides which record IS which; it never deletes.
+//     The copy that is left over is then listed under 🔵 Only in the target,
+//     where deleting it is already offered. The intro says so.
 function _depAmbIntro(p, isRoot, s) {
   const srcL = esc(orgLabel(p.sourceOrg)), tgtL = esc(orgLabel(p.targetOrg));
   const adv = (s && s.ambiguousAdvice && s.ambiguousAdvice[0]) || null;
   const nSug = ((s && s.ambiguous) || []).filter(r => r && r.suggest).length;
   return `<div class="ds-dep-note ds-dep-amb-intro">
     <div><b>Why these records are here.</b> Each one shares its name with another record, so the name alone cannot say which record in ${srcL} is which record in ${tgtL}. Nothing here is deployed until you decide.</div>
-    ${isRoot ? `<div><b>What to do.</b> For each ${srcL} record, pick which ${tgtL} record it is — or that it is new there. The values shown next to each record are the ones that differ between the copies. Then press <b>📌 Apply</b>: your choices are remembered for ${tgtL} and both orgs are read again.</div>
-    ${adv && nSug ? `<div>💡 <b>${nSug.toLocaleString()} are already filled in.</b> Where exactly one copy on each side has the same <b>${esc(adv.field)}</b>, that pair is suggested below — check them, then Apply. To never be asked again, add ${esc(adv.field)} to how records are recognised (✏ Edit → Records → Matching).</div>` : ''}`
+    ${isRoot ? `<div><b>What to do.</b> For each ${srcL} record, say which ${tgtL} record it is — or that it is not there yet. The values next to each record are the ones that differ between the copies. Decide one name at a time with <b>📌 Apply this one</b>: the answer is remembered for ${tgtL} right away. When you are done, the button above reads both orgs again, once, and the records move to their own tabs.</div>
+    <div><b>Two copies of the same thing?</b> This tab never deletes. Say which copy is the same record; after the re-read the copy that is left over is listed under 🔵 Only in ${tgtL}, where you can tick it for deletion.</div>
+    ${adv && nSug ? `<div>💡 <b>${nSug.toLocaleString()} are already filled in.</b> Where exactly one copy on each side has the same <b>${esc(adv.field)}</b>, that pair is suggested below — check them, then apply. To never be asked again, add ${esc(adv.field)} to how records are recognised (✏ Edit → Records → Matching).</div>` : ''}`
     : `<div>For a child object the choice cannot be made by hand: give it a second match field (✏ Edit → Records → Matching) so its records can be told apart by more than the name, then scan again.</div>`}
   </div>`;
 }
 
 // The groups: one block per shared name — the target records it could be
 // (numbered, with the values that tell them apart), then each source record
-// with ONE select: which of those it is, or new.
-function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf) {
+// with ONE question, its answers written out. pickOf(r) = the answer on
+// screen; memOf(r) = the answer already remembered ('' when none).
+const SFTK_AMB_RADIO_MAX = 6;   // more candidates than this: a dropdown, same sentences
+function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf) {
   const srcL = esc(orgLabel(p.sourceOrg)), tgtL = esc(orgLabel(p.targetOrg));
   const candTell = (s && s.ambiguousCand) || {};
   const url = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
+  const tellText = tell => (tell || []).filter(x => x && x[1] !== '').map(x => `${x[0]}: ${x[1]}`).join(' · ');
   const chips = tell => { const t = (tell || []).filter(x => x && x[1] !== ''); return t.length ? t.map(x => `<span class="ds-amb-chip" title="${esc(x[0])}">${esc(x[0])}: <b>${esc(x[1])}</b></span>`).join('') : '<span class="ds-dep-muted">no compared field differs between the copies — open the record to tell</span>'; };
   const groups = new Map();
   for (const r of rows) { const k = keyOf(r); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
@@ -803,15 +820,25 @@ function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf) {
   for (const [k, rs] of groups) {
     const cands = rs[0].candidates || [];
     const nSrc = (rs[0].twins || []).length + 1;
+    const radios = cands.length <= SFTK_AMB_RADIO_MAX;
+    const pending = rs.some(r => pickOf(r) !== memOf(r));
+    const kept = rs.some(r => memOf(r));
+    // every answer as one plain sentence — the same words in the list and in the dropdown
+    const answers = r => [
+      ...cands.map((t, i) => ({ v: t, text: `Same record as #${i + 1} in ${orgLabel(p.targetOrg)}${tellText(candTell[t]) ? ` (${tellText(candTell[t])})` : ''}${r.suggest === t ? ` — suggested: same ${r.suggestBy || 'value'}` : ''}` })),
+      { v: '__new__', text: `Not in ${orgLabel(p.targetOrg)} yet — create it there as a new record` },
+      { v: '', text: 'Not decided — it stays out of the deployment' },
+    ];
     html += `<div class="ds-amb-group">
-      <div class="ds-amb-ghd"><b>${esc(k)}</b><span class="ds-dep-muted">${nSrc} in ${srcL} · ${cands.length} in ${tgtL}</span></div>
-      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${tgtL}</div>${cands.map((t, i) => `<div class="ds-amb-cand"><span class="ds-amb-n">#${i + 1}</span>${chips(candTell[t])}<a class="ds-dep-open" href="${url(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open this ${tgtL} record">open ↗</a></div>`).join('')}</div>
-      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${srcL} — which one is it?</div>${rs.map(r => { const pick = pickOf(r); return `<div class="ds-amb-src">${chips(r.tell)}<a class="ds-dep-open" href="${url(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener" title="Open this ${srcL} record">open ↗</a>
-          <select class="ds-select ds-select-sm ds-amb-sel" data-dep-amb-sel="${esc(r.sourceId)}" aria-label="Which ${tgtL} record is this">
-            <option value="" ${pick ? '' : 'selected'}>— decide —</option>
-            ${cands.map((t, i) => `<option value="${esc(t)}" ${pick === t ? 'selected' : ''}>it is #${i + 1} in ${tgtL}${r.suggest === t ? ` — suggested (same ${esc(r.suggestBy || '')})` : ''}</option>`).join('')}
-            <option value="__new__" ${pick === '__new__' ? 'selected' : ''}>it is new — create it in ${tgtL}</option>
-          </select></div>`; }).join('')}</div>
+      <div class="ds-amb-ghd"><b>${esc(k)}</b><span class="ds-dep-muted">${nSrc} in ${srcL} · ${cands.length} in ${tgtL}</span><span class="ds-dep-sp"></span>
+        ${kept && !pending ? '<span class="ds-amb-done">✓ remembered — takes effect when both orgs are read again</span>' : ''}
+        <button class="ds-btn ds-btn-xs" data-dep-amb-one="${esc(k)}" ${pending ? '' : 'disabled'} title="Remember the answers of this name now. Both orgs are read again later, once.">📌 Apply this one</button></div>
+      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${tgtL} — the records it could be</div>${cands.map((t, i) => `<div class="ds-amb-cand"><span class="ds-amb-n">#${i + 1}</span>${chips(candTell[t])}<a class="ds-dep-open" href="${url(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open this ${tgtL} record">open ↗</a></div>`).join('')}</div>
+      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${srcL} — which ${tgtL} record is each one?</div>${rs.map(r => { const pick = pickOf(r); const ans = answers(r); return `<div class="ds-amb-src">${chips(r.tell)}<a class="ds-dep-open" href="${url(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener" title="Open this ${srcL} record">open ↗</a>
+          ${radios ? '' : `<select class="ds-select ds-select-sm ds-amb-sel" data-dep-amb-sel="${esc(r.sourceId)}" aria-label="Which ${tgtL} record is this">
+            ${[ans[ans.length - 1], ...ans.slice(0, -1)].map(a => `<option value="${esc(a.v)}" ${pick === a.v ? 'selected' : ''}>${esc(a.text)}</option>`).join('')}
+          </select>`}</div>
+          ${radios ? `<div class="ds-amb-opts" role="radiogroup" aria-label="Which ${tgtL} record is this">${ans.map(a => `<label class="ds-amb-opt${pick === a.v ? ' ds-amb-opt-on' : ''}"><input type="radio" name="amb_${esc(r.sourceId)}" data-dep-amb-sel="${esc(r.sourceId)}" value="${esc(a.v)}" ${pick === a.v ? 'checked' : ''}><span>${esc(a.text)}</span></label>`).join('')}</div>` : ''}`; }).join('')}</div>
     </div>`;
   }
   return html;
@@ -916,7 +943,11 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   const rows = q ? all.filter(r => key(r).toLowerCase().includes(q) || String(r.parentKeySrc || '').toLowerCase().includes(q)) : all;
   const wkey = `${cur.pathKey}|${tabDef.k}|${q}`;
   { const ak = `${p.id}|${p.targetOrg}|${(s && s.runAt) || ''}`; if (ak !== _depAmbPickKey) { _depAmbPickKey = ak; _depAmbPick = new Map(); } }
-  const ambPick = r => _depAmbPick.has(r.sourceId) ? _depAmbPick.get(r.sourceId) : (r.suggest || '');
+  // An answer already remembered (match memory — it survives a reload; the
+  // scan on screen is older than it, so the record is still listed here).
+  const ambMemNow = () => ((_profiles.find(x => x.id === p.id) || p).matchMemory || {})[_orgKey(p.targetOrg || '')] || {};
+  const ambMem = r => { const v = ambMemNow()[r.sourceId]; return v === SFTK_MEM_NEW ? '__new__' : (v && (r.candidates || []).includes(v) ? v : ''); };
+  const ambPick = r => _depAmbPick.has(r.sourceId) ? _depAmbPick.get(r.sourceId) : (ambMem(r) || r.suggest || '');
   const ambRoot = tabDef.k === 'amb' && isRoot;
   if (wkey !== _depWindowKey) { _depWindowKey = wkey; _depWindow = SFTK_DEPLOY_WINDOW; }
   const shown = rows.slice(0, _depWindow);
@@ -1003,7 +1034,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     ${!isRoot && s.personContacts ? `<div class="ds-dep-note">${esc(sftkPaContactsLine(s.personContacts, orgLabel(p.sourceOrg), orgLabel(p.targetOrg)))}</div>` : ''}
     ${!isRoot ? (s.warnings || []).map(w => `<div class="ds-dep-note">⚠ ${esc(String(w).replace(/^[⚠\s]+/, ''))}</div>`).join('') : ''}
     ${tabDef.k === 'amb' && rows.length ? _depAmbIntro(p, isRoot, s) : ''}
-    <div class="ds-dep-list">${shown.length ? (ambRoot ? _depAmbGroupsHtml(p, shown, s, ambPick, key) : shown.map(rowHtml).join('')) : `<div class="ds-dep-empty">${q ? 'No record matches that filter.' : `Nothing ${esc(tabDef.noun)}.`}</div>`}</div>
+    <div class="ds-dep-list">${shown.length ? (ambRoot ? _depAmbGroupsHtml(p, shown, s, ambPick, key, ambMem) : shown.map(rowHtml).join('')) : `<div class="ds-dep-empty">${q ? 'No record matches that filter.' : `Nothing ${esc(tabDef.noun)}.`}</div>`}</div>
     ${rows.length > shown.length ? `<div class="ds-dep-note ds-dep-more">Showing ${shown.length.toLocaleString()} of ${rows.length.toLocaleString()}
       <button class="ds-btn ds-btn-xs" data-dep-more="step">Show ${Math.min(SFTK_DEPLOY_WINDOW, rows.length - shown.length).toLocaleString()} more</button>
       <button class="ds-btn ds-btn-xs" data-dep-more="all">Show all ${rows.length.toLocaleString()}</button></div>` : ''}`;
@@ -1021,36 +1052,80 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   const fEl = eid('dsDepFilter');
   fEl?.addEventListener('input', () => { _depFilter = fEl.value; const pos = fEl.selectionStart; repaint(); const n = eid('dsDepFilter'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (_) {} } });
   const selectable = r => isRoot || (() => { const st = sftkRecChildRowState(r, cur.depth, pMissing, pExists); return st !== 'deepblock' && st !== 'untracked'; })();
-  // Phase 5 — ⚠ Ambiguous choices: remembered in match memory (a pair, or
-  // SFTK_MEM_NEW for "insert as new"), then both orgs are read again so every
-  // bucket reflects the choice. Nothing is written to Salesforce here.
-  const ambChoose = async (pairs, what) => {
-    await window.sftkLearnPairs?.(p.id, p.targetOrg, pairs);
-    showToast(`${what} — remembered for ${orgLabel(p.targetOrg)}; reading both orgs again…`, 'success', 5000);
-    await _depRescan(p);
+  // Phase 5 — ⚠ Needs a decision: an answer is remembered in match memory (a
+  // pair, or SFTK_MEM_NEW for "create it as new"). Nothing is written to
+  // Salesforce here. One name at a time (📌 Apply this one) remembers at once
+  // and leaves the re-read for later; the button above remembers what is still
+  // open and reads both orgs again, once (user 2026-10-05: "i would like to be
+  // able to also fix them one by one").
+  const ambPending = () => (ambRoot ? all : []).filter(r => ambPick(r) !== ambMem(r));   // to remember, change or forget
+  const ambKept = () => (ambRoot ? all : []).filter(r => ambMem(r));
+  // Remember / forget, then READ THE MEMORY BACK: a decision that was not kept
+  // (a deployment that is not saved has no memory) is counted, never assumed.
+  const ambSave = async recs => {
+    const learn = recs.filter(r => ambPick(r)).map(r => [r.sourceId, ambPick(r) === '__new__' ? SFTK_MEM_NEW : ambPick(r)]);
+    const forget = recs.filter(r => !ambPick(r)).map(r => r.sourceId);
+    if (learn.length) await window.sftkLearnPairs?.(p.id, p.targetOrg, learn);
+    if (forget.length) await window.sftkForgetPairs?.(p.id, p.targetOrg, forget);
+    const now = ((_profiles.find(x => x.id === p.id) || p).matchMemory || {})[_orgKey(p.targetOrg || '')] || {};
+    const lost = learn.filter(([sId, t]) => now[sId] !== t).length + forget.filter(sId => now[sId]).length;
+    if (!lost) for (const [sId] of learn) _depAmbPick.delete(sId);   // the memory is the answer now
+    return lost;
   };
-  // one select per source record; nothing is remembered until 📌 Apply
-  const ambDecided = () => (ambRoot ? all : []).filter(r => ambPick(r));
+  const ambNotKept = n => showToast(`${n.toLocaleString()} decision(s) could not be remembered — this deployment is not a saved one, so it has no memory to keep them in. Nothing changed.`, 'error', 9000);
+  // one record in the target can be the same as only ONE record in the source
+  const ambTwice = recs => {
+    const sId = sftkAmbTwice(recs.map(r => [r.sourceId, ambPick(r)]));
+    if (!sId) return false;
+    const r = recs.find(x => x.sourceId === sId);
+    showToast(`Two ${orgLabel(p.sourceOrg)} records named "${r ? key(r) : ''}" were both said to be the same ${orgLabel(p.targetOrg)} record — one record there can be only one record here. Change one of them.`, 'warning', 9000);
+    return true;
+  };
   const ambPaintApply = () => {
     const b = eid('dsDepAmbApply'); if (!b) return;
-    const n = ambDecided().length;
-    b.disabled = !n;
-    b.textContent = n ? `📌 Apply ${n.toLocaleString()} decision${n === 1 ? '' : 's'}` : '📌 Apply — decide at least one below';
+    const nP = ambPending().length, nK = ambKept().length;
+    b.disabled = !(nP || nK);
+    b.textContent = nP ? `📌 Apply ${nP.toLocaleString()} decision${nP === 1 ? '' : 's'} and read both orgs again`
+      : nK ? `🔄 Read both orgs again — ${nK.toLocaleString()} remembered decision${nK === 1 ? '' : 's'} take${nK === 1 ? 's' : ''} effect`
+      : '📌 Apply — decide at least one below';
   };
-  host.querySelectorAll('[data-dep-amb-sel]').forEach(el => el.addEventListener('change', () => { _depAmbPick.set(el.dataset.depAmbSel, el.value); ambPaintApply(); }));
-  eid('dsDepAmbApply')?.addEventListener('click', () => {
-    const dec = ambDecided();
-    if (!dec.length) return;
-    // one record in the target can be the same as only ONE record in the source
-    const used = new Map();
-    for (const r of dec) {
-      const t = ambPick(r);
-      if (t === '__new__') continue;
-      if (used.has(t)) { showToast(`Two ${orgLabel(p.sourceOrg)} records named "${key(r)}" were both said to be the same ${orgLabel(p.targetOrg)} record — one record there can be only one record here. Change one of them.`, 'warning', 9000); return; }
-      used.set(t, r.sourceId);
+  host.querySelectorAll('[data-dep-amb-sel]').forEach(el => el.addEventListener('change', () => {
+    if (el.type === 'radio' && !el.checked) return;
+    _depAmbPick.set(el.dataset.depAmbSel, el.value);
+    // in place: the chosen answer is marked, the group's own button wakes up
+    const grp = el.closest('.ds-amb-group');
+    if (grp) {
+      if (el.type === 'radio') grp.querySelectorAll(`input[name="${el.name}"]`).forEach(x => x.closest('.ds-amb-opt')?.classList.toggle('ds-amb-opt-on', x.checked));
+      const gb = grp.querySelector('[data-dep-amb-one]');
+      if (gb) {
+        const open = shown.filter(r => key(r) === gb.dataset.depAmbOne).some(r => ambPick(r) !== ambMem(r));
+        gb.disabled = !open;
+        if (open) grp.querySelector('.ds-amb-done')?.remove();
+      }
     }
-    host.querySelectorAll('[data-dep-amb-sel], #dsDepAmbApply').forEach(x => { x.disabled = true; });
-    ambChoose(dec.map(r => [r.sourceId, ambPick(r) === '__new__' ? SFTK_MEM_NEW : ambPick(r)]), `📌 ${dec.length.toLocaleString()} decision(s) applied`);
+    ambPaintApply();
+  }));
+  host.querySelectorAll('[data-dep-amb-one]').forEach(b => b.addEventListener('click', async () => {
+    const name = b.dataset.depAmbOne;
+    const rs = shown.filter(r => key(r) === name);
+    if (ambTwice(rs)) return;
+    const todo = rs.filter(r => ambPick(r) !== ambMem(r));
+    if (!todo.length) return;
+    b.disabled = true; b.textContent = '⏳ remembering…';
+    const lost = await ambSave(todo);
+    if (lost) ambNotKept(lost);
+    else showToast(`📌 "${name}" — remembered for ${orgLabel(p.targetOrg)}. It takes effect when both orgs are read again.`, 'success', 4000);
+    repaint();
+  }));
+  eid('dsDepAmbApply')?.addEventListener('click', async () => {
+    const pend = ambPending();
+    if (!pend.length && !ambKept().length) return;
+    if (ambTwice(all.filter(r => ambPick(r)))) return;
+    host.querySelectorAll('[data-dep-amb-sel], [data-dep-amb-one], #dsDepAmbApply').forEach(x => { x.disabled = true; });
+    const lost = pend.length ? await ambSave(pend) : 0;
+    if (lost) { ambNotKept(lost); repaint(); return; }
+    showToast(`📌 ${ambKept().length.toLocaleString()} decision(s) remembered for ${orgLabel(p.targetOrg)} — reading both orgs again…`, 'success', 5000);
+    await _depRescan(p);
   });
   ambPaintApply();
   host.querySelectorAll('[data-dep-push]').forEach(cb => cb.addEventListener('change', () => {

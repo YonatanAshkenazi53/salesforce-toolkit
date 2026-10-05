@@ -342,6 +342,32 @@ function sftkMemoryMerge(mem, pairs, cap) {
   return out;
 }
 
+// Match memory without the given source ids — a decision taken back on the
+// ⚠ Needs a decision tab. PURE; returns a NEW object.
+function sftkMemoryForget(mem, srcIds) {
+  const drop = new Set((Array.isArray(srcIds) ? srcIds : []).map(String));
+  const out = {};
+  const src = (mem && typeof mem === 'object') ? mem : {};
+  for (const k of Object.keys(src)) if (!drop.has(k) && typeof src[k] === 'string' && src[k]) out[k] = src[k];
+  return out;
+}
+
+// One target record can be the same as only ONE source record. PURE.
+// answers: [[srcId, answer]] — a target id, '__new__' or '' (not decided).
+// Returns the srcId of the first record that claims a target already claimed
+// by an earlier one, or ''.
+function sftkAmbTwice(answers) {
+  const used = new Set();
+  for (const a of (Array.isArray(answers) ? answers : [])) {
+    if (!Array.isArray(a)) continue;
+    const t = a[1];
+    if (!t || t === '__new__') continue;
+    if (used.has(t)) return String(a[0] || '');
+    used.add(t);
+  }
+  return '';
+}
+
 // 0..1 similarity of two ALREADY-NORMALIZED match-key strings. Component-
 // aware: keys split on the U+0001 separator (String.fromCharCode(1), inlined
 // for self-contained extraction) and the score is the MEAN of per-component
@@ -509,4 +535,6 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkScanAccuracy        = sftkScanAccuracy;
   globalThis.sftkScanKeyClasses      = sftkScanKeyClasses;
   globalThis.SFTK_MEM_NEW            = SFTK_MEM_NEW;
+  globalThis.sftkMemoryForget        = sftkMemoryForget;
+  globalThis.sftkAmbTwice            = sftkAmbTwice;
 }

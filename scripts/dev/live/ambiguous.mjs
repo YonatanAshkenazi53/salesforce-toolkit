@@ -37,9 +37,9 @@ export default async function (h) {
   await h.sleep(1200);
   h.log('AMBIGUOUS LIST:', await dump(h, '#dsDepList', 1400));
   await h.shot(h.shots + '/amb-list.png');
-  // ⚠ Needs a decision (campaign 4): one select per source record, then 📌 Apply.
+  // ⚠ Needs a decision (campaign 4): one question per source record (radios up to six candidates, else a select), then 📌 Apply.
   // Say the FIRST copy is the target's record; leave the other undecided.
-  const pin = await h.eval(`(() => { const s = document.querySelector('[data-dep-amb-sel]'); if (!s) return null; const o = [...s.options].find(x => x.value && x.value !== '__new__'); if (!o) return null; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return s.dataset.depAmbSel + '|' + o.value; })()`);
+  const pin = await h.eval(`(() => { const s = document.querySelector('[data-dep-amb-sel]'); if (!s) return null; if (s.type === 'radio') { const r = [...document.querySelectorAll('input[data-dep-amb-sel="' + s.dataset.depAmbSel + '"]')].find(x => x.value && x.value !== '__new__'); if (!r) return null; r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return r.dataset.depAmbSel + '|' + r.value; } const o = [...s.options].find(x => x.value && x.value !== '__new__'); if (!o) return null; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return s.dataset.depAmbSel + '|' + o.value; })()`);
   h.log('deciding:', pin, '| apply button:', await h.eval(`(document.querySelector('#dsDepAmbApply') || {}).textContent`));
   if (!pin) return;
   await h.eval(`document.querySelector('#dsDepAmbApply').click()`);

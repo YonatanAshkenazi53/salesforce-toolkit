@@ -63,8 +63,8 @@ describe('the scan, the Deploy page and the ring are wired to the bucket', () =>
     expect(DV.indexOf("label: '⚠ Needs a decision'")).toBeGreaterThan(DV.indexOf("label: '🟢 Synced'"));
     expect(DV).toContain("${cell(r, 'same')}${cell(r, 'amb')}");
     expect(DV).toContain('data-dep-amb-sel="${esc(r.sourceId)}"');   // 2026-10-03: one select per record instead of a row of pin links
-    expect(DV).toContain("ambChoose(dec.map(r => [r.sourceId, ambPick(r) === '__new__' ? SFTK_MEM_NEW : ambPick(r)]),");   // 📌 Apply: pairs and \"new\" in one remembered batch
-    expect(DV).toContain('await window.sftkLearnPairs?.(p.id, p.targetOrg, pairs);');
+    expect(DV).toContain("const learn = recs.filter(r => ambPick(r)).map(r => [r.sourceId, ambPick(r) === '__new__' ? SFTK_MEM_NEW : ambPick(r)]);");   // pairs and \"new\" in one remembered batch
+    expect(DV).toContain('if (learn.length) await window.sftkLearnPairs?.(p.id, p.targetOrg, learn);');
     expect(DV).toContain('await _depRescan(p);');
   });
   it('the ring cell counts ambiguous rows as not in sync and shows ⚠N', () => {

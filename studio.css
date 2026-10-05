@@ -6251,7 +6251,15 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 .ds-amb-n { font-weight: 700; min-width: 22px; color: var(--brand); }
 .ds-amb-chip { padding: 1px 7px; border-radius: 999px; background: var(--surface2); color: var(--text); font-size: 11.5px; }
 .ds-amb-chip b { font-weight: 600; }
-.ds-amb-sel { margin-left: auto; flex: 0 1 380px; min-width: 240px; max-width: 420px; }
+.ds-amb-sel { margin-left: auto; flex: 0 1 520px; min-width: 260px; max-width: 620px; }
+/* the answers of one record, written out (2026-10-05) */
+.ds-amb-opts { display: flex; flex-direction: column; gap: 1px; margin: 0 0 8px 4px; }
+.ds-amb-opt { display: flex; align-items: baseline; gap: 7px; padding: 3px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+.ds-amb-opt:hover { background: var(--surface2); }
+.ds-amb-opt-on { background: var(--surface2); font-weight: 600; }
+.ds-amb-opt input { margin: 0; flex: 0 0 auto; position: relative; top: 2px; }
+.ds-amb-done { font-size: 11.5px; color: var(--subtext); }
+.ds-amb-ghd .ds-btn { flex: 0 0 auto; }
 /* ↩ Roll back page (campaign 4 phase 7) */
 .ds-rb-intro { border-left: 3px solid var(--brand); }
 .ds-rb-leg > summary { cursor: pointer; padding: 8px 12px; }
