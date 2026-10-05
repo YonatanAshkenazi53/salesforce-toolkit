@@ -82,25 +82,25 @@ describe('the page', () => {
     // a child object cannot be chosen by hand — the intro says what to do instead
     expect(fn).toContain('give it a second match field (✏ Edit → Records → Matching)');
   });
-  it('groups by the shared name: numbered target records with their telling values, one select per source record', () => {
+  it('groups by the shared name: numbered target records with their telling values, one question per source record', () => {
     const i = DV.indexOf('function _depAmbGroupsHtml(');
     const fn = DV.slice(i, DV.indexOf('\n}\n', i));
     expect(fn).toContain('const k = keyOf(r); if (!groups.has(k)) groups.set(k, []);');
     expect(fn).toContain('<span class="ds-amb-n">#${i + 1}</span>${chips(candTell[t])}');
     expect(fn).toContain('data-dep-amb-sel="${esc(r.sourceId)}"');
-    expect(fn).toContain('<option value="" ${pick ? \'\' : \'selected\'}>— decide —</option>');
-    expect(fn).toContain('it is #${i + 1} in ${tgtL}');
-    expect(fn).toContain('— suggested (same ${esc(r.suggestBy || \'\')})');
-    expect(fn).toContain('<option value="__new__" ${pick === \'__new__\' ? \'selected\' : \'\'}>it is new — create it in ${tgtL}</option>');
+    // 2026-10-05: the answers are sentences that carry the candidate's values (test/needs-decision-1005)
+    expect(fn).toContain('Same record as #${i + 1} in ${orgLabel(p.targetOrg)}');
+    expect(fn).toContain("— suggested: same ${r.suggestBy || 'value'}");
+    expect(fn).toContain('yet — create it there as a new record');
     expect(fn).toContain('no compared field differs between the copies — open the record to tell');
-    expect(DV).toContain('(ambRoot ? _depAmbGroupsHtml(p, shown, s, ambPick, key) : shown.map(rowHtml).join(\'\'))');
+    expect(DV).toContain('(ambRoot ? _depAmbGroupsHtml(p, shown, s, ambPick, key, ambMem) : shown.map(rowHtml).join(\'\'))');
   });
-  it('a suggestion is the default pick; nothing is remembered until 📌 Apply; one target record cannot be two source records', () => {
-    expect(DV).toContain("const ambPick = r => _depAmbPick.has(r.sourceId) ? _depAmbPick.get(r.sourceId) : (r.suggest || '');");
-    expect(DV).toContain("host.querySelectorAll('[data-dep-amb-sel]').forEach(el => el.addEventListener('change', () => { _depAmbPick.set(el.dataset.depAmbSel, el.value); ambPaintApply(); }));");
+  it('a remembered answer, else a suggestion, is the default pick; nothing is remembered until an Apply; one target record cannot be two source records', () => {
+    expect(DV).toContain("const ambPick = r => _depAmbPick.has(r.sourceId) ? _depAmbPick.get(r.sourceId) : (ambMem(r) || r.suggest || '');");
+    expect(DV).toContain('_depAmbPick.set(el.dataset.depAmbSel, el.value);');
     expect(DV).toContain('id="dsDepAmbApply"');
     expect(DV).toContain('one record there can be only one record here. Change one of them.');
-    expect(DV).toContain("ambChoose(dec.map(r => [r.sourceId, ambPick(r) === '__new__' ? SFTK_MEM_NEW : ambPick(r)]),");
+    expect(DV).toContain('const sId = sftkAmbTwice(recs.map(r => [r.sourceId, ambPick(r)]));');
     // the picks belong to one scan of one pair
     expect(DV).toContain("if (ak !== _depAmbPickKey) { _depAmbPickKey = ak; _depAmbPick = new Map(); }");
   });

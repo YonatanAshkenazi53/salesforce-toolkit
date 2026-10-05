@@ -563,8 +563,20 @@ So for 1.0:
   Live on trailheads5 with a synthetic copy of the user's entry (`scripts/dev/live/rollback-report.mjs`):
   Account 812 found of 812 (✅), Contact 380 found of 1,250 (⚠ "the other 870 are no longer in
   the Recycle Bin"). Pins `test/rollback-report-1005`.
-- "Needs a decision": fix them one by one; the options are not clear; question whether the user
-  should pick which record to keep and which duplicates to delete.
+- **"Needs a decision": one by one, clearer options, and the duplicates question** (user: "i would
+  like to be able to also fix them one by one. also the options … are not clear. i think the user
+  should select which record to keep and which of the dupes to delete. no?"). DONE:
+  `_depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf)` — per group `data-dep-amb-one` (📌 Apply
+  this one: remember now, no re-read), answers as sentences with the candidate's telling values
+  (radios up to `SFTK_AMB_RADIO_MAX = 6`, else a select with the same sentences); `ambMem` reads
+  the match memory itself (survives a reload); `ambSave` learns / forgets and READS BACK (an
+  unsaved deployment has no memory → said); top button = "Apply N and read both orgs again" or
+  "🔄 Read both orgs again — N remembered"; new pure `sftkAmbTwice`, `sftkMemoryForget`, page
+  `window.sftkForgetPairs`. Duplicates: answered in the intro, not built as a delete — the tab
+  decides which record IS which; the left-over copy lands under 🔵 Only in target after the
+  re-read, where delete is already offered (scan: `_twinsExtra` → onlyInTarget). Live with both
+  orgs (`scripts/dev/live/needs-decision.mjs`): remember → take back → remember → re-read; plan
+  shows 0 needing a decision; trailheads4 unchanged (CLI). Pins `test/needs-decision-1005`.
 - Deploy page › "This deployment" tree: the cards, the relation and "how many each hold" read as
   broken.
 

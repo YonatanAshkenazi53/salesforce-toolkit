@@ -75,6 +75,11 @@ extensions containing root files that start with `_`).
 - **History undo for an org default is verified.** Undo puts the previous page back and re-reads the object to confirm it.
 - **Honest limits.** The tool reads and changes the assignments of record pages. Home, App and other page types are activated in a different way that it does not read, so it no longer says "not activated" or "0 users" about them. A failed read is shown as unknown, never as "none". "Show affected users" shows an error with a retry when the query fails, instead of "No active users".
 
+### Changed — "Needs a decision" can be settled one name at a time
+- **Apply this one.** Every name on the ⚠ Needs a decision tab has its own Apply button. The answer is remembered right away, and both orgs are read again once, when you ask for it, instead of after every name. Choosing "Not decided" on a remembered record takes the answer back.
+- **The answers are written out.** Instead of a dropdown of "#1 / #2", each record lists its answers as sentences that carry the values of the record they mean: "Same record as #1 (BillingCity: Haifa)", "Not there yet — create it as a new record", "Not decided — it stays out of the deployment".
+- **Two copies of the same thing.** The tab says what to do with a true duplicate: say which copy is the same record, and after the re-read the left-over copy is listed under 🔵 Only in the target, where you can tick it for deletion. The tab itself never deletes.
+
 ### Fixed — a rollback's "Which records" always lists the records
 - **The deleted records are read from the Recycle Bin when History has no names.** A rollback that ran before History kept names, or with counts-only mode on, opened a report with counts and no list. The report now reads the records that rollback deleted from the org's Recycle Bin, which keeps them for 15 days, and lists them by name. It says where the list came from, for which minutes, and how it compares with the count. If the Recycle Bin holds fewer records than the rollback counted, it says how many cannot be named. Nothing is changed by the read.
 - **Counts-only mode keeps no names from a rollback either.** The names a rollback deleted or restored stayed in History with counts-only mode on. They are now removed like every other record name.

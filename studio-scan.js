@@ -2106,6 +2106,22 @@ window.sftkLearnPairs = async function (profileId, tgtUrl, learnedPairs) {
   }
 };
 
+// A decision taken back (⚠ Needs a decision → "Not decided" on a record whose
+// answer was already remembered). Same guards as sftkLearnPairs; never throws.
+window.sftkForgetPairs = async function (profileId, tgtUrl, srcIds) {
+  try {
+    if (!Array.isArray(srcIds) || !srcIds.length) return;
+    const p = _profiles.find(x => x.id === profileId);
+    if (!p || p.ephemeral) return;
+    const key = _orgKey(tgtUrl || '');
+    if (!key || !p.matchMemory || typeof p.matchMemory !== 'object' || !p.matchMemory[key]) return;
+    p.matchMemory[key] = sftkMemoryForget(p.matchMemory[key], srcIds);
+    await storageSaveProfiles();
+  } catch (e) {
+    window.SFToolkitDebug?.log('scan', 'warn', 'match-memory forget failed', e?.message || String(e));
+  }
+};
+
 // "Refresh state" — now just the diff scan (drives Pick Records badges +
 // profile card chips + Reconcile columns). The snapshot capture that this
 // used to bundle was removed along with the Org Map drift overlay (its only
