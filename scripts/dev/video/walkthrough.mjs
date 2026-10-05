@@ -10,8 +10,9 @@
 // Each section is recorded into its own folder (REC_DIR/<id>/), so
 // ONLY=flows,deploy records just those again and the composer joins them with
 // the ones already there (their ids are in SECTIONS).
-// WRITES=0 leaves out the one section that changes an org (a two-record
-// deployment into trailheads4 and its rollback) — everything else only reads.
+// WRITES=0 leaves out the sections that use a tool for real (Flow switches,
+// API versions, Field Cleaner, Deploy and roll back — each on fixtures, each
+// undone or restored); everything else only reads.
 //
 // Every section is on its own: one that fails is logged and the tour goes on,
 // and the end of the log lists what was recorded and what was not.
@@ -19,7 +20,7 @@
 // npc2 = trailheads4 (the target).
 import { execFileSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
-import { writeFileSync, rmSync, renameSync, existsSync } from 'node:fs';
+import { writeFileSync, rmSync, renameSync, existsSync, cpSync } from 'node:fs';
 import { makeRecorder } from './recorder.mjs';
 
 const J = JSON.stringify;
@@ -48,7 +49,13 @@ export default async function (h) {
   const rec = makeRecorder(h, base, { names: ownNames() });
   const text = async (sel, n = 400) => (await h.eval(`(document.querySelector(${J(sel)})?.innerText || '')`)).slice(0, n).split(NL).map(x => x.trim()).filter(Boolean).join(' | ');
   const has = sel => h.eval(`!!document.querySelector(${J(sel)})`);
-  const popup = async tab => { await h.popup(tab); await rec.resume(); };
+  // A Toolkit tool works on ONE org. Several sections now change things, so a
+  // tool that opened on the wrong org stops the section instead of acting there.
+  const popup = async tab => {
+    await h.popup(tab); await rec.resume();
+    const on = await h.eval(`document.querySelector('#topbarOrgLabel')?.textContent || ''`);
+    if (on !== 'trailheads5') throw new Error(`the Toolkit opened on "${on}", not on trailheads5`);
+  };
   const studio = async hash => { await h.studio(hash); await rec.resume(); };
   // the Toolkit's home page: the popup opened without a tool
   const home = async () => {
@@ -63,18 +70,17 @@ export default async function (h) {
 
   const { SECTIONS } = await import('./sections.mjs');
   const done = [], failed = [];
-  // The Toolkit works on the org of the most recently used Salesforce tab, so
-  // only the source is logged in while its tools are shown; the target joins
-  // before the first Data Studio section.
+  // Both orgs are open from the start (the home chapter shows switching between
+  // them). The Toolkit opens on the org of the most recently used Salesforce
+  // tab, so the source is logged in last.
+  await h.login(TGT);
   await h.login(SRC);
-  let targetIn = false;
   await h.watchErrors();
   // the first page, before the recording starts: the licence is accepted here, off camera
   await h.popup('flows');
   for (const s of SECTIONS) {
     if (only.length && !only.includes(s.id)) continue;
     if (s.writes && process.env.WRITES === '0') { h.log('skipped (WRITES=0):', s.id); continue; }
-    if (s.needsTarget && !targetIn) { await h.login(TGT); targetIn = true; }
     h.log('──── section', s.id);
     // into <id>.new first: a section that fails keeps the recording it had
     const dir = join(base, s.id), tmp = join(base, s.id + '.new');
@@ -83,10 +89,18 @@ export default async function (h) {
     let err = null;
     try { await s.run(ctx); await rec.pause(900); } catch (e) { err = e; }
     await rec.end({ id: s.id, title: s.title });
+    // off camera: put back what the section used (a fixture it changed for real)
+    if (s.cleanup) { try { await s.cleanup(ctx); } catch (e) { h.log('CLEANUP FAILED', s.id, (e && e.message) || e); } }
     if (!err) {
-      try { rmSync(dir, { recursive: true, force: true }); } catch (_) {}
-      renameSync(tmp, dir);
-      done.push(s.id);
+      // Windows (and a synced folder) can hold a just-written folder for a moment: try again, then copy
+      try {
+        let moved = false;
+        for (let i = 0; i < 8 && !moved; i++) {
+          try { rmSync(dir, { recursive: true, force: true }); renameSync(tmp, dir); moved = true; } catch (_) { await h.sleep(1500); }
+        }
+        if (!moved) { rmSync(dir, { recursive: true, force: true }); cpSync(tmp, dir, { recursive: true }); try { rmSync(tmp, { recursive: true, force: true }); } catch (_) {} }
+        done.push(s.id);
+      } catch (e) { failed.push(`${s.id}: recorded, but its folder could not be put in place (${(e && e.message) || e}) — it is in ${tmp}`); }
     } else {
       failed.push(`${s.id}: ${String((err && err.message) || err).split(NL)[0].slice(0, 200)}${existsSync(dir) ? ' (its earlier recording is kept)' : ''}`);
       h.log('SECTION FAILED', s.id, (err && err.stack) || err);

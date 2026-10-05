@@ -1,16 +1,32 @@
 // The sections of the walkthrough (walkthrough.mjs runs them in this order).
-// Each: { id, title (the chapter), needsTarget?, writes?, run(ctx) }.
+// Each: { id, title (the chapter), writes?, run(ctx), cleanup?(ctx) }.
 // ctx = { h, rec, text, has, popup(tab), studio(hash), home() }.
 //
-// Rule for every section: it only READS, except `run` (flagged writes: true),
-// which deploys two fixture records into trailheads4 and rolls them back —
-// the org ends as it started, and the section can be left out with WRITES=0.
-// A confirmation opened to show it is CANCELLED, never confirmed.
+// Most sections only read. The ones flagged `writes: true` use a tool for
+// real, on FIXTURES only, and leave the org as they found it:
+//   flow-switches  three fixture flows OFF, then ↩ Undo from the tool's History
+//   api-versions   one fixture flow to the org's API version, then ↩ Undo
+//   fields         the fixture field replaced on its layout, Lightning page
+//                  and flows, one change undone on camera; `cleanup` then
+//                  redeploys the fixture (fixture.mjs) off camera
+//   run            two fixture accounts into trailheads4, then rolled back
+// WRITES=0 leaves all four out. A confirmation that is opened only to show it
+// is CANCELLED, never confirmed.
+//
+// Every caption states what the tool does and nothing more: when a tool
+// changes, change its caption here with it.
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join, resolve, dirname } from 'node:path';
+import { restoreFieldCleanerFixture } from './fixture.mjs';
+
 const J = JSON.stringify;
 const FIXTURE = 'docs/fixtures/complex-deployment/profiles.json';
-const DEPLOYMENT = 'SFTK CX — Accounts tree';
+const DEMO = 'Accounts and Contacts';
 const OLD_FIELD = 'SFTK_FC_Test_Status__c', NEW_FIELD = 'SFTK_FC_Test_Status2__c';
+const SRC_ORG = 'trailheads5', TGT_ORG = 'trailheads4';
+const SRC_URL = `https://${SRC_ORG}.my.salesforce.com`, TGT_URL = `https://${TGT_ORG}.my.salesforce.com`;
 
+// ── small helpers ──────────────────────────────────────────────────────────
 // a Field Cleaner picker: focus, type, pick the item by API name
 async function fcPick({ h, rec }, input, drop, api) {
   await h.eval(`(() => { const i = document.querySelector(${J(input)}); i.focus(); i.dispatchEvent(new Event('focus')); return true; })()`);
@@ -21,9 +37,84 @@ async function fcPick({ h, rec }, input, drop, api) {
   await h.eval(`(() => { const it = document.querySelector('${drop} .fc-dd-item[data-api="${api}"]'); it.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); return true; })()`);
   await h.sleep(900);
 }
-const cancelDialog = async ({ h }) => { await h.eval(`(() => { const c = document.querySelector('#sftkConfirmCancel') || [...document.querySelectorAll('#modalBox button, #dsModalBox button')].find(b => /cancel/i.test(b.textContent)); if (c) c.click(); return !!c; })()`); await h.sleep(700); };
-const nav = async ({ h, rec }, view) => { await rec.click(`.ds-nav-btn[data-view="${view}"]`, 1200); };
+const nav = async ({ rec }, view) => { await rec.click(`.ds-nav-btn[data-view="${view}"]`, 1200); };
 const waitScanned = ({ h, rec }) => rec.fast(() => h.waitFor("!!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", 600000, 1000));
+const tick = ({ h }, sel) => h.eval(`(() => { const cb = document.querySelector(${J(sel)}); if (!cb) return false; if (!cb.checked) { cb.checked = true; cb.dispatchEvent(new Event('change', { bubbles: true })); } return true; })()`);
+// an org treated as production asks for its name after the first confirmation
+const prodGate = async ({ h }) => {
+  await h.sleep(500);
+  if (await h.eval(`!!document.querySelector('#sftkConfirmProd')`)) {
+    await h.eval(`(() => { const i = document.querySelector('#sftkConfirmProd'); i.value = i.placeholder; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    await h.eval(`document.querySelector('#sftkConfirmProdGo')?.click()`);
+  }
+};
+// the shared confirmation with a typed word (OFF, CHANGE, UNDO…)
+async function typedConfirm(c, word) {
+  const { h, rec } = c;
+  await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 120000, 400);
+  await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) a.click(); return true; })()`);
+  if (await c.has('#sftkConfirmWord')) await rec.type('#sftkConfirmWord', word, 140);
+  await rec.click('#sftkConfirmGo', 600);
+  await prodGate(c);
+}
+// ↩ Undo the newest change of the open tool, from the tool's own History (top bar)
+async function undoInTool(c, caption) {
+  const { h, rec } = c;
+  await h.waitFor("document.querySelector('#sftkThBtn') && document.querySelector('#sftkThBtn').style.display !== 'none'", 30000, 500);
+  await rec.click('#sftkThBtn', 900);
+  await h.waitFor("document.querySelectorAll('#sftkThModalList .sftk-th-card').length > 0", 30000, 300);
+  await rec.say(caption, 5500);
+  const undo = '#sftkThModalList [data-th-undo]:not([disabled])';
+  if (!(await c.has(undo))) throw new Error('the tool offers no undo for its newest change');
+  await rec.click(undo, 600);
+  await typedConfirm(c, 'UNDO');
+  await rec.fast(() => h.waitFor("!!document.querySelector('#sftkThModalList .sftk-th-said')", 300000, 800));
+  const said = await c.text('#sftkThModalList .sftk-th-said', 200);
+  if (!/^Undone/.test(said)) throw new Error(`the undo was not verified: ${said}`);
+  await rec.say('Undone, and verified by reading the org again.', 3800);
+  await rec.click('#sftkThClose', 500);
+}
+// The video's own deployments: Accounts with their Contacts (the fixture's big
+// tree cut down to two objects, so every screen stays readable), plus two
+// small ones for the lists. Imported through the product's own import.
+async function ensureDemo(c) {
+  const { h } = c;
+  const all = JSON.parse(readFileSync(FIXTURE, 'utf8'));
+  const pick = n => all.find(p => (p.profile || p).name === n);
+  const base = JSON.parse(JSON.stringify(pick('SFTK CX — Accounts tree')));
+  const prof = base.profile || base;
+  prof.name = DEMO;
+  prof.tree.children = (prof.tree.children || []).filter(ch => (ch.objectType || ch.childSObject) === 'Contact');
+  // The direction is WRITTEN here, never left to the harness: the fixture file
+  // names an org that no longer exists, and the harness then stands the logged-
+  // in orgs in for it by LOGIN ORDER. On 2026-10-05 a changed login order made
+  // the deployment run trailheads4 → trailheads5; it was stopped before it
+  // wrote. The names are set, and checked again after the import.
+  const list = [base, pick('SFTK CX — Campaigns'), pick('SFTK CX — Leads')].filter(Boolean).map(p => JSON.parse(JSON.stringify(p)));
+  for (const p of list) { const q = p.profile || p; q.sourceOrg = SRC_URL; q.targetOrg = TGT_URL; }
+  const file = join(resolve(process.env.REC_DIR || 'dist/video/rec'), 'demo-deployments.json');
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(list));
+  await h.importProfiles(file);
+  const got = await h.eval(`(() => { const p = _profiles.find(p => p.name === ${J(DEMO)}); return p ? { id: p.id, src: p.sourceOrg || '', tgt: p.targetOrg || '' } : null; })()`);
+  if (!got) throw new Error('the demo deployment could not be imported');
+  if (!got.src.includes(SRC_ORG) || !got.tgt.includes(TGT_ORG)) throw new Error(`the demo deployment points ${got.src} → ${got.tgt}; it must be ${SRC_ORG} → ${TGT_ORG}`);
+  return got.id;
+}
+// Before anything is written by a deployment: the page itself must say source → target as intended.
+async function assertDirection({ h }) {
+  const d = await h.eval(`(() => { const p = (typeof _reconcileProfile !== 'undefined' && _reconcileProfile) || null; return p ? { src: p.sourceOrg || '', tgt: p.targetOrg || '' } : null; })()`);
+  if (!d || !d.src.includes(SRC_ORG) || !d.tgt.includes(TGT_ORG)) throw new Error(`the Deploy page is open ${d ? `${d.src} → ${d.tgt}` : 'on nothing'}; this chapter only ever writes ${SRC_ORG} → ${TGT_ORG}`);
+}
+async function openDemoScanned(c) {
+  const { h } = c;
+  if (!(await c.has('.ds-nav-btn'))) await c.studio('');
+  const id = await ensureDemo(c);
+  await h.eval(`window.runProfile(${J(id)})`); await h.sleep(1500);
+  await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
+  await waitScanned(c); await h.sleep(2000);
+  return id;
+}
 
 export const SECTIONS = [
   // ───────────────────────────── the Toolkit ─────────────────────────────
@@ -34,6 +125,22 @@ export const SECTIONS = [
     await rec.say('It has two parts. The Toolkit works on one org: flows, pages, fields, permissions. Data Studio moves records between orgs.', 5500);
     await rec.point('.home-card[data-fid="flows"]', 900);
     await rec.point('.home-card[data-fid="fields"]', 900);
+    // several orgs open: the Toolkit works on one at a time, says which, and switches
+    const pickOrg = async part => {
+      await rec.click('#homeOrgSelector', 900);
+      await rec.fast(() => h.waitFor("document.querySelectorAll('#homeOrgDropdown .home-org-dd-item').length > 1", 20000, 400));
+      await rec.pause(1800);
+      const ok = await h.eval(`(() => { document.querySelectorAll('[data-demo-org]').forEach(x => x.removeAttribute('data-demo-org')); const it = [...document.querySelectorAll('#homeOrgDropdown .home-org-dd-item')].find(x => x.innerText.includes(${J(part)})); if (!it) return false; it.setAttribute('data-demo-org', '1'); return true; })()`);
+      if (!ok) throw new Error(`${part} is not in the org list`);
+      await rec.click('#homeOrgDropdown .home-org-dd-item[data-demo-org="1"]', 600);
+      await h.waitFor(`(document.querySelector('#homeOrgSelector')?.innerText || '').includes(${J(part)})`, 30000, 400);
+      await rec.pause(1500);
+    };
+    await rec.say('With several orgs open, the Toolkit works on one at a time. The card at the top says which one, and switches.', 1500);
+    await pickOrg(TGT_ORG);
+    await rec.say('Every tool now reads and writes that org, until you switch again. The same switch is in the top bar of every tool.', 5000);
+    await pickOrg(SRC_ORG);
+    if (!(await c.text('#homeOrgSelector', 200)).includes(SRC_ORG)) throw new Error('could not switch back to the source org');
     await rec.say('Every tool reads first and shows what it found. A change is made only after one confirmation that says exactly what will happen.', 5000);
   } },
 
@@ -86,16 +193,69 @@ export const SECTIONS = [
       await rec.say(st.partial ? '“What uses this?” Type a field or a component and see the flows that mention it.'
         : `“What uses this?” Every flow was read: ${st.hits} flow version${st.hits === 1 ? '' : 's'} mention this field.`, 5500);
     }
-    if (await c.has('#depBulkBtn')) {
-      await rec.click('#depBulkBtn', 1200);
-      await rec.fast(() => h.waitFor("document.querySelectorAll('.dep-fb-cb').length > 0 || /could not|no flows|nothing/i.test(document.querySelector('#depFbBody, #depToolPanel')?.innerText || '')", 300000, 1500).catch(() => {}));
-      await rec.say('Flow switches. Switch many flows off before a data load and back on afterwards. Each way asks you to type a word first, and every switch is checked against the org.', 6500);
-    }
-    if (await c.has('#depApiVerBtn')) {
-      await rec.click('#depApiVerBtn', 1200);
-      await rec.fast(() => h.waitFor("document.querySelectorAll('.dep-av-pick').length > 0 || /could not|no flows|nothing/i.test(document.querySelector('#depAvOut')?.innerText || '')", 300000, 1500).catch(() => {}));
-      await rec.say('API versions. See which flows run on an old API version and move them to a newer one.', 5000);
-    }
+    await rec.scrollTo('#depBulkBtn', 'center');
+    await rec.point('#depBulkBtn', 900);
+    await rec.point('#depApiVerBtn', 900);
+    await rec.say('Two more tools live here: Flow switches and API versions. Both are next.', 3500);
+  } },
+
+  { id: 'flow-switches', title: 'Flow switches', writes: true, run: async c => {
+    const { h, rec } = c;
+    const PICKS = ['SFTK_FS_Test_Acc1', 'SFTK_FS_Test_Acc2', 'SFTK_FS_Test_Con1'];
+    const rowsReady = "document.querySelectorAll('.dep-fb-cb').length > 0 || /could not|no flows|nothing/i.test(document.querySelector('#depFbBody, #depToolPanel')?.innerText || '')";
+    const states = () => h.eval(`${J(PICKS)}.map(v => { const x = document.querySelector('.dep-fb-cb[value="' + v + '"]'); return x ? x.dataset.on : 'missing'; })`);
+    await c.popup('dependencies');
+    await rec.fast(() => h.waitFor("!!document.querySelector('#depBulkBtn')", 300000, 1000));
+    await rec.say('Flow switches. Before a data load you often want some automation out of the way, and back on afterwards.', 1200);
+    await rec.click('#depBulkBtn', 800);
+    await rec.fast(async () => { await h.waitFor(rowsReady, 300000, 1500); await h.sleep(1200); });
+    const before = await states();
+    if (before.some(s => s !== 'on')) throw new Error(`the three fixture flows must be ON before this chapter (they are: ${before.join(', ')})`);
+    await rec.scrollTo(`.dep-fb-cb[value="${PICKS[0]}"]`, 'center');
+    await rec.say('Every record-triggered flow of the org, grouped by object, and whether it is on. Tick the ones to switch.', 1200);
+    for (const v of PICKS) { await rec.point(`.dep-fb-cb[value="${v}"]`, 550); await tick(c, `.dep-fb-cb[value="${v}"]`); }
+    await rec.point('#depFbCount', 1000);
+    await rec.click('#depFbOff', 600);
+    await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 120000, 500);
+    await rec.say('The confirmation names every flow and says what switching it off means. Then it asks you to type the word.', 5000);
+    await typedConfirm(c, 'OFF');
+    await rec.fast(() => h.waitFor("/switched (OFF|ON)|❌|stale/.test(document.querySelector('#depFbOut')?.innerText || '')", 600000, 1000));
+    await rec.scrollTo('#depFbOut', 'center');
+    await rec.say('Each flow is switched off and then read back from the org. The active versions are remembered, so switching on restores exactly those.', 6500);
+    await undoInTool(c, 'The change is now in this tool’s History. Undo writes the earlier state back: here, the three flows on again.');
+    // read the list again: the three flows must be ON
+    await h.eval(`(() => { window.__sftkOldCb = document.querySelector('.dep-fb-cb'); document.querySelector('#depFbReload')?.click(); return true; })()`);
+    await rec.fast(async () => { await h.waitFor("document.querySelectorAll('.dep-fb-cb').length > 0 && document.querySelector('.dep-fb-cb') !== window.__sftkOldCb", 300000, 1000); await h.sleep(1200); });
+    const after = await states();
+    if (after.some(s => s !== 'on')) throw new Error(`after the undo the fixture flows are: ${after.join(', ')}`);
+    await rec.scrollTo(`.dep-fb-cb[value="${PICKS[0]}"]`, 'center');
+    await rec.say('Read again from the org: all three are on.', 3500);
+  } },
+
+  { id: 'api-versions', title: 'API versions', writes: true, run: async c => {
+    const { h, rec } = c;
+    const row = '.dep-av-pick[value="SFTK_AV_Test_A"]';
+    await c.popup('dependencies');
+    await rec.fast(() => h.waitFor("!!document.querySelector('#depApiVerBtn')", 300000, 1000));
+    await rec.say('API versions. A flow keeps the API version it was saved with, so an upgraded org can still be running old flow behaviour.', 1200);
+    await rec.click('#depApiVerBtn', 800);
+    await rec.fast(async () => { await h.waitFor("document.querySelectorAll('.dep-av-pick').length > 0 || /could not|no flows|nothing/i.test(document.querySelector('#depAvOut')?.innerText || '')", 300000, 1500); await h.sleep(1500); });
+    const label = await h.eval(`(document.querySelector(${J(row)})?.closest('label')?.innerText || '')`);
+    if (!/behind/.test(label)) throw new Error(`the fixture flow SFTK_AV_Test_A must be behind the org's release before this chapter (it reads: ${label.slice(0, 80)})`);
+    await rec.scrollTo(row, 'center');
+    await rec.say('Each flow with the version it is pinned to, and how far that is behind the release this org runs.', 5000);
+    await rec.point(row, 700); await tick(c, row);
+    const target = await h.eval(`(() => { const s = document.querySelector('#depAvTarget'); if (!s || !s.options.length) return ''; s.value = s.options[0].value; s.dispatchEvent(new Event('change', { bubbles: true })); return s.options[0].textContent.trim(); })()`);
+    await rec.point('#depAvTarget', 1100);
+    await rec.say(`Pick the flows and the version to move them to. Here: one flow, to ${target ? `API ${target}` : 'the org’s release'}.`, 4500);
+    await rec.click('#depAvApply', 600);
+    await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 120000, 500);
+    await rec.say('Changing the version deploys a new version of the flow. Where the flow is active, the tool activates it and reads the org again to confirm what is running.', 6500);
+    await typedConfirm(c, 'CHANGE');
+    await rec.fast(() => h.waitFor("/refused the package|changed across/.test(document.querySelector('#depAvLog')?.innerText || '')", 600000, 1500));
+    await rec.scrollTo('#depAvLog', 'center');
+    await rec.say('Done: the new version is active, verified by re-reading the org.', 4500);
+    await undoInTool(c, 'This too is in the tool’s History. Undo makes the previous version the active one again.');
   } },
 
   { id: 'debugger', title: 'Debugger', run: async c => {
@@ -145,41 +305,103 @@ export const SECTIONS = [
     await rec.say('Assign, remove, deactivate or clone a page from here. Every change is confirmed once and then checked against the org.', 5500);
   } },
 
-  { id: 'fields', title: 'Field Cleaner', run: async c => {
-    const { h, rec } = c;
-    await c.popup('fields');
-    await h.waitFor("!!document.querySelector('#fcObjInput')", 60000, 500);
-    await rec.say('Field Cleaner. Before you delete a field, see everything that still uses it.', 1200);
-    await fcPick(c, '#fcObjInput', '#fcObjDrop', 'Account');
-    await fcPick(c, '#fcFieldInput', '#fcFieldDrop', OLD_FIELD);
-    await rec.fast(() => h.waitFor("!document.querySelector('#fcReplInput')?.disabled || !!document.querySelector('#fcReplNote .fc-repl-bad')", 60000, 500));
-    await rec.say('Optional: pick a replacement field of the same type. Then every reference can be moved to it instead of removed.', 1500);
-    if (!(await h.eval(`!!document.querySelector('#fcReplInput')?.disabled`))) await fcPick(c, '#fcReplInput', '#fcReplDrop', NEW_FIELD);
-    await rec.click('#fcScanBtn', 800);
-    await rec.fast(() => h.waitFor("/reference|Nothing references|No references|found|dependenc/i.test(document.querySelector('#fcResults')?.innerText || '') && !/scanning|⏳/i.test(document.querySelector('#fcScanBtn')?.innerText || '')", 240000, 1000));
-    await h.sleep(3000);
-    await rec.scrollTo('#fcResults');
-    await rec.say('The result: every layout, flow, Lightning page and report that mentions the field, and whether the field still holds data.', 6000);
-    if (await c.has('.fc-flow-card')) {
-      await rec.scrollTo('.fc-flow-card', 'center');
-      await rec.say('A flow is one card. It says what happens to each version, and you choose: replace the field, remove it and keep the flow running, or delete the versions.', 7000);
-      const btn = (await c.has('.fc-flow-card .fc-fix-btn[data-swap="1"]')) ? '.fc-flow-card .fc-fix-btn[data-swap="1"]' : '.fc-flow-card .fc-fix-btn';
-      if (await c.has(btn)) {
-        await rec.click(btn, 500);
-        await rec.fast(() => h.waitFor("!!document.querySelector('#sftkConfirmGo') || !!document.querySelector('.fc-item-err')", 90000, 500).catch(() => {}));
-        if (await c.has('#sftkConfirmGo')) {
-          await rec.say('One confirmation states the exact plan: which version is deployed, which are deleted, and a backup of the old versions.', 6500);
-          await rec.click('#sftkConfirmCancel', 600);
-          await rec.say('Cancelled here, so nothing changed.', 2500);
+  { id: 'fields', title: 'Field Cleaner', writes: true,
+    cleanup: async ({ h }) => { restoreFieldCleanerFixture('npc', (...a) => h.log(...a)); },
+    run: async c => {
+      const { h, rec } = c;
+      const settled = "!document.querySelector('#sftkConfirmGo') && !document.querySelector('.fc-fix-btn[disabled]')";
+      // the tool's confirmation for one fix: read it out, acknowledge, go
+      const confirmFix = async ({ caption, hold = 5000, flow = false }) => {
+        await rec.fast(() => h.waitFor("!!document.querySelector('#sftkConfirmGo') || !!document.querySelector('.fc-item-err')", 120000, 500));
+        if (!(await c.has('#sftkConfirmGo'))) throw new Error(`no confirmation appeared: ${await c.text('.fc-item-err', 300)}`);
+        if (caption) await rec.say(caption, hold);
+        if (flow && await h.eval(`!!document.querySelector('#fcFlowBackup')?.checked`)) await rec.click('#fcFlowBackup', 500);   // no file download in a recording
+        if (await c.has('#sftkConfirmAck')) { await rec.point('#sftkConfirmAck', 500); await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) a.click(); return true; })()`); await h.sleep(300); }
+        await rec.click('#sftkConfirmGo', 600);
+        await prodGate(c);
+      };
+      let fixed = 0;
+      const fix = async (sel, opts, after) => {
+        if (!(await c.has(sel))) return false;
+        await rec.click(sel, 500);
+        await confirmFix(opts);
+        await rec.fast(() => h.waitFor(settled, 600000, 1000));
+        await h.sleep(1500);
+        fixed++;
+        if (after) await rec.say(after.text, after.hold || 4500);
+        return true;
+      };
+
+      await c.popup('fields');
+      await h.waitFor("!!document.querySelector('#fcObjInput')", 60000, 500);
+      await rec.say('Field Cleaner, from start to finish: retiring a field by moving everything that uses it to its replacement.', 1500);
+      await fcPick(c, '#fcObjInput', '#fcObjDrop', 'Account');
+      await fcPick(c, '#fcFieldInput', '#fcFieldDrop', OLD_FIELD);
+      await rec.fast(() => h.waitFor("!document.querySelector('#fcReplInput')?.disabled || !!document.querySelector('#fcReplNote .fc-repl-bad')", 60000, 500));
+      await rec.say('Pick the object, the field, and a replacement field of the same type.', 1200);
+      if (await h.eval(`!!document.querySelector('#fcReplInput')?.disabled`)) throw new Error('the replacement picker is not available for the fixture field');
+      await fcPick(c, '#fcReplInput', '#fcReplDrop', NEW_FIELD);
+      await rec.click('#fcScanBtn', 800);
+      await rec.fast(() => h.waitFor("/reference|Nothing references|No references|found|dependenc/i.test(document.querySelector('#fcResults')?.innerText || '') && !/scanning|⏳/i.test(document.querySelector('#fcScanBtn')?.innerText || '')", 240000, 1000));
+      await h.sleep(3000);
+      await rec.scrollTo('#fcResults');
+      await rec.say('The scan lists everything that mentions the field: layouts, flows, Lightning pages, and whether the field still holds data. Nothing has changed yet.', 6500);
+
+      // 1. access: the people who can see the old field must see the new one
+      if (await c.has('#fcFlsCopyBtn')) {
+        await rec.scrollTo('#fcFlsCopyBtn', 'center');
+        await rec.click('#fcFlsCopyBtn', 500);
+        await confirmFix({ caption: 'First, access. The profiles and permission sets that can see the old field get the same access to the new one. Access is only added.', hold: 6000 });
+        await rec.fast(() => h.waitFor("!document.querySelector('#fcFlsCopyBtn') && !document.querySelector('#sftkConfirmGo')", 120000, 500));
+        await h.sleep(1200); fixed++;
+        await rec.say('Copied, and verified by reading the org again.', 3500);
+      }
+      // 2. the layout and the Lightning page
+      if (await c.has('.fc-fix-btn[data-type="Layout"][data-swap="1"]')) {
+        await rec.scrollTo('.fc-fix-btn[data-type="Layout"][data-swap="1"]', 'center');
+        await rec.say('Every item has its own buttons: Replace moves it to the new field, Remove takes the old field out.', 4500);
+        await fix('.fc-fix-btn[data-type="Layout"][data-swap="1"]', { caption: 'Replace on the page layout: the new field takes the old field’s place. A restore point is saved first.' },
+          { text: 'The layout now shows the new field.', hold: 3200 });
+      }
+      if (await c.has('.fc-fix-btn[data-type="FlexiPage"][data-swap="1"]')) {
+        await rec.scrollTo('.fc-fix-btn[data-type="FlexiPage"][data-swap="1"]', 'center');
+        await fix('.fc-fix-btn[data-type="FlexiPage"][data-swap="1"]', { caption: 'The same on the Lightning page: its field component and its visibility rule now use the new field.' });
+      }
+      // 3. the flows: a new active version that uses the new field
+      let firstFlow = true;
+      for (const name of ['SFTK FC Test Flow 2', 'SFTK FC Test Flow']) {
+        const sel = `.fc-fix-btn[data-type="Flow"][data-name="${name}"][data-swap="1"]`;
+        if (!(await c.has(sel))) continue;
+        await rec.scrollTo(sel, 'center');
+        if (firstFlow) await rec.say('A flow is one card. It says what happens to each of its versions, and gives you the choice: replace the field, remove it and keep the flow running, or delete the versions.', 7500);
+        await fix(sel, { flow: true, hold: firstFlow ? 7500 : 4000,
+          caption: firstFlow ? 'Replace on a flow. The confirmation states the exact plan: a new active version that uses the new field, then the old versions deleted. It offers a backup zip first, switched off for this recording.'
+            : 'The second flow, the same way.' },
+          firstFlow ? { text: 'The new version is active, verified by reading the org, and the old versions are gone. The card says which version runs now.', hold: 6000 } : null);
+        firstFlow = false;
+      }
+      if (!fixed) throw new Error('nothing could be fixed — the fixture is not in place');
+      // 4. what is left
+      if (await c.has('#fcDeleteZone')) {
+        await rec.scrollTo('#fcDeleteZone', 'center');
+        await rec.say('Nothing uses the old field any more. Now it can be deleted, or deprecated first: hidden and renamed, with a one-click way back.', 6500);
+      }
+      // 5. the tool's own History, and one undo
+      if (await c.has('#fcToolHist summary')) {
+        await rec.scrollTo('#fcToolHist', 'center');
+        await rec.click('#fcToolHist summary', 900);
+        await rec.say('Everything Field Cleaner changed is listed here, under its results: what was written, and what the org showed afterwards.', 6000);
+        const undo = '#fcToolHist [data-th-undo]:not([disabled])';
+        if (await c.has(undo)) {
+          await rec.click(undo, 600);
+          await typedConfirm(c, 'UNDO');
+          await rec.fast(() => h.waitFor("!!document.querySelector('#fcToolHist .sftk-th-said')", 300000, 800));
+          await rec.scrollTo('#fcToolHist .sftk-th-said', 'center');
+          await rec.say('A change that has a way back has an Undo. A deleted flow version cannot be re-created, which is why the backup is offered before it goes.', 7000);
         }
       }
-    } else if (await c.has('.fc-fix-btn')) {
-      await rec.point('.fc-fix-btn', 1200);
-      await rec.say('Each item has its own button. Nothing changes until you confirm.', 4000);
-    }
-    await rec.scrollBy(null, 500);
-    await rec.say('It can also copy the old field’s access and stored values to the new field, and read every report to find the ones Salesforce’s index does not list.', 6500);
-  } },
+      await rec.say('It can also copy the stored values of the old field to the new one, and read every report to find the ones Salesforce’s index does not list.', 6000);
+    } },
 
   { id: 'copy-perms', title: 'Copy Permissions', run: async c => {
     const { h, rec } = c;
@@ -200,7 +422,7 @@ export const SECTIONS = [
     await rec.scrollTo('#ucPreview');
     await rec.say('It lists what the first user has: profile, role, permission sets, groups. Tick what to copy.', 6000);
     await rec.point('#ucCopyBtn', 1300);
-    await rec.say('It asks once, and reads the user back afterwards to confirm the copy.', 4500);
+    await rec.say('It asks once, and reads the user back afterwards to confirm the copy. The copy is in this tool’s History, with its Undo.', 5500);
   } },
 
   { id: 'flow-access', title: 'Flow Access', run: async c => {
@@ -211,11 +433,11 @@ export const SECTIONS = [
     await h.sleep(800);
     await rec.type('#fpFlowSearch', 'SFTK', 60);
     await h.sleep(700);
-    const tick = cls => h.eval(`(() => { const cb = [...document.querySelectorAll('.${cls}')].find(x => x.offsetParent && !x.checked); if (!cb) return false; cb.checked = true; cb.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
-    await rec.point('.fp-flow-cb', 700); await tick('fp-flow-cb');
+    const tickFirst = cls => h.eval(`(() => { const cb = [...document.querySelectorAll('.${cls}')].find(x => x.offsetParent && !x.checked); if (!cb) return false; cb.checked = true; cb.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+    await rec.point('.fp-flow-cb', 700); await tickFirst('fp-flow-cb');
     await rec.type('#fpPsSearch', 'SFTK', 60);
     await h.sleep(700);
-    await rec.point('.fp-ps-cb', 700); await tick('fp-ps-cb');
+    await rec.point('.fp-ps-cb', 700); await tickFirst('fp-ps-cb');
     await h.sleep(800);
     await rec.say('Pick flows on the left and profiles or permission sets on the right. The summary says what will be granted.', 5500);
     if (await c.has('#fpAssignBtn')) await rec.point('#fpAssignBtn', 1300);
@@ -223,7 +445,7 @@ export const SECTIONS = [
   } },
 
   // ───────────────────────────── Data Studio ─────────────────────────────
-  { id: 'orgs', title: 'Data Studio — Connected Orgs', needsTarget: true, run: async c => {
+  { id: 'orgs', title: 'Data Studio — Connected Orgs', run: async c => {
     const { h, rec } = c;
     await c.studio('');
     await rec.say('Data Studio opens in its own tab. It works with every Salesforce org you have open in this browser.', 4500);
@@ -233,19 +455,17 @@ export const SECTIONS = [
     await rec.say('Connected Orgs. Give an org a label, lock it against writes, or guard it like production: then every write asks you to type the org’s name.', 7000);
   } },
 
-  { id: 'deploy', title: 'Data Deployment', needsTarget: true, run: async c => {
+  { id: 'deploy', title: 'Data Deployment', run: async c => {
     const { h, rec } = c;
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');
-    await h.importProfiles(FIXTURE);
+    const id = await ensureDemo(c);
     await nav(c, 'profiles');
     await rec.fast(() => h.waitFor("document.querySelectorAll('.ds-profile-card').length > 0", 30000, 500));
     await rec.say('Data Deployment. A deployment is a saved definition: a root object, the objects under it, and how records are recognised in the other org.', 6500);
-    const id = await h.eval(`_profiles.find(p => p.name === ${J(DEPLOYMENT)})?.id`);
-    if (!id) throw new Error('fixture deployment missing');
     await rec.point(`[data-dsaction="runProfile"][data-arg="${id}"]`, 1000);
     await h.eval(`window.runProfile(${J(id)})`);
     await h.sleep(1800);
-    await rec.say('Opening one goes to the Deploy page. First it reads both orgs. Nothing is written.', 1500);
+    await rec.say('This one is Accounts with their Contacts. Opening it goes to the Deploy page. First it reads both orgs. Nothing is written.', 1500);
     await rec.click('#dsDepScan, #dsDepRefresh', 500);
     await waitScanned(c);
     await h.sleep(2500);
@@ -289,18 +509,31 @@ export const SECTIONS = [
         }
       }
     }
+    // what can be taken out of the way for a run (shown, then switched back off: this tour runs without them)
+    if (await c.has('#dsDepRulePause')) {
+      await rec.scrollTo('#dsRecRunBtn', 'center');
+      await rec.say('Before a run, you can take the target’s automation out of the way, on just the objects being written.', 4500);
+      const show = async (box, list, text, hold) => {
+        if (!(await c.has(box))) return;
+        await rec.click(box, 600);
+        await rec.fast(() => h.waitFor(`(document.querySelector(${J(list)})?.innerText || '').trim().length > 20`, 60000, 500).catch(() => {}));
+        await rec.scrollTo(list, 'center');
+        await rec.say(text, hold);
+        if (await h.eval(`!!document.querySelector(${J(box)})?.checked`)) { await h.eval(`document.querySelector(${J(box)}).click()`); await h.sleep(500); }
+      };
+      await show('#dsDepRulePause', '#dsDepRulePauseList', 'Pause validation rules. The page lists the active rules on these objects. They are switched off after you confirm and back on as soon as the writes end.', 7000);
+      await show('#dsDepFlowPause', '#dsDepFlowPauseList', 'Pause record-triggered flows. They are switched off before the first write and back on at their exact versions afterwards, also when a run fails or is stopped.', 7000);
+      if (await c.has('#dsDepDupRules')) {
+        await rec.scrollTo('#dsDepDupRules', 'center');
+        await rec.point('#dsDepDupRules', 1200);
+        await rec.say('Duplicate rules: respect them, so a record a rule flags is not written and the run says so, or bypass them for this deployment.', 6500);
+      }
+    }
   } },
 
-  { id: 'run', title: 'Deploy and roll back', needsTarget: true, writes: true, run: async c => {
+  { id: 'run', title: 'Deploy and roll back', writes: true, run: async c => {
     const { h, rec } = c;
-    if (!(await h.eval(`typeof _currentView !== 'undefined' && _currentView === 'deploy' && !!document.querySelector('.ds-dep-plan')`))) {
-      if (!(await c.has('.ds-nav-btn'))) await c.studio('');
-      await h.importProfiles(FIXTURE);
-      const id = await h.eval(`_profiles.find(p => p.name === ${J(DEPLOYMENT)})?.id`);
-      await h.eval(`window.runProfile(${J(id)})`); await h.sleep(1500);
-      await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
-      await waitScanned(c); await h.sleep(2000);
-    }
+    if (!(await h.eval(`typeof _currentView !== 'undefined' && _currentView === 'deploy' && !!document.querySelector('.ds-dep-plan')`))) await openDemoScanned(c);
     await h.eval(`document.querySelector('[data-dep-obj=""][data-dep-tab="ins"]')?.click()`);
     await h.sleep(1200);
     await rec.scrollTo('#dsDepRecords');
@@ -314,10 +547,12 @@ export const SECTIONS = [
       for (const r of picked) { const cb = r.querySelector('input[data-dep-push]'); if (!cb.checked) { cb.checked = true; cb.dispatchEvent(new Event('change', { bubbles: true })); } }
       return picked.length; })()`);
     if (!n) throw new Error('no record to insert in the fixture');
+    await assertDirection(c);
     await rec.say(`Now a real deployment. ${n === 1 ? 'One record is' : 'Two records are'} ticked to insert into the target org.`, 4000);
     await rec.scrollTo('#dsRecRunBtn', 'center');
     await rec.say('A restore point is taken first, so the run can be rolled back.', 3500);
     const before = await h.eval('_history.length');
+    await assertDirection(c);
     await rec.click('#dsRecRunBtn', 1500);
     for (let i = 0; i < 3; i++) {
       if (await c.has('#sftkConfirmGo')) {
@@ -335,7 +570,7 @@ export const SECTIONS = [
     await rec.pause(2500);
     await rec.fast(async () => { await h.sleep(5000); await h.waitFor("!document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000).catch(() => {}); });
     const last = await h.eval(`(() => { const e = _history[_history.length - 1] || {}; const s = Object.values(e.summary || {}); const sum = k => s.reduce((t, o) => t + (Number(o && o[k]) || 0), 0); return { status: e.status || '', inserted: sum('inserted'), failed: sum('failed') + sum('insertedFailed') }; })()`);
-    h.log('deployment result:', JSON.stringify(last));
+    h.log('deployment result:', J(last));
     await rec.say(last.status === 'success'
       ? 'Done. Afterwards both orgs are read again, so the page shows what is true now, not what was sent.'
       : 'Finished, and not everything was accepted: a record the target refused is reported with Salesforce’s own reason, never counted as done. Both orgs are read again afterwards.', 5500);
@@ -355,14 +590,8 @@ export const SECTIONS = [
     await rec.scrollTo('#dsRbGo', 'center');
     await rec.click('#dsRbGo', 800);
     await h.waitFor("!!document.querySelector('#sftkConfirmGo') || !!document.querySelector('#sftkConfirmProdGo')", 20000, 300);
-    await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) a.click(); return true; })()`);
     await rec.say('The confirmation asks for a typed word.', 800);
-    if (await c.has('#sftkConfirmWord')) await rec.type('#sftkConfirmWord', 'ROLLBACK', 90);
-    await rec.click('#sftkConfirmGo', 800);
-    if (await c.has('#sftkConfirmProd')) {
-      await h.eval(`(() => { const i = document.querySelector('#sftkConfirmProd'); i.value = i.placeholder; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
-      await h.eval(`document.querySelector('#sftkConfirmProdGo')?.click()`);
-    }
+    await typedConfirm(c, 'ROLLBACK');
     await rec.fast(async () => { const end = Date.now() + 900000; while (Date.now() < end && (await h.eval(`_history.filter(x => x.kind === 'rollback').length`)) <= rbBefore) await h.sleep(1000); await h.sleep(2000); });
     if ((await h.eval(`_history.filter(x => x.kind === 'rollback').length`)) <= rbBefore) throw new Error('the rollback did not finish');
     await rec.scrollTo('#dsRbResult', 'center');
@@ -373,46 +602,53 @@ export const SECTIONS = [
     }
   } },
 
-  { id: 'ring', title: 'All open orgs', needsTarget: true, run: async c => {
+  { id: 'ring', title: 'All open orgs', run: async c => {
     const { h, rec } = c;
-    if (!(await c.has('.ds-nav-btn'))) { await c.studio(''); await h.importProfiles(FIXTURE); }
+    if (!(await c.has('.ds-nav-btn'))) await c.studio('');
+    await ensureDemo(c);
     await nav(c, 'ring');
-    await h.waitFor("!!document.querySelector('#dsRingBody')", 60000, 500);
-    await rec.fast(() => h.waitFor("!!document.querySelector('[data-ring-cell]')", 60000, 1000).catch(() => {}));
-    await rec.say('All open orgs. Every deployment against every other org you have open: how far each target is from the source.', 5500);
-    if (await c.has('[data-ring-scan1]:not([disabled])')) {
-      await rec.click('[data-ring-scan1]:not([disabled])', 600);
-      await rec.fast(async () => { await h.sleep(2500); await h.waitFor("![...document.querySelectorAll('[data-ring-cell]')].some(x => /⏳/.test(x.innerText)) && ![...document.querySelectorAll('[data-ring-scan1]')].some(b => /⏳/.test(b.textContent))", 600000, 2000).catch(() => {}); });
-      await rec.say('A scan compares one deployment with one target and fills in the counts: missing, changed, only in the target. Nothing is changed.', 6000);
+    await h.waitFor("!!document.querySelector('#dsRingSrc')", 60000, 500);
+    await rec.say('All open orgs. One org is the source, and every other org you have open is measured against it.', 1500);
+    await rec.point('#dsRingSrc', 900);
+    const ok = await h.eval(`(() => { const s = document.querySelector('#dsRingSrc'); const o = [...s.options].find(o => (o.value + ' ' + o.textContent).includes(${J(SRC_ORG)})); if (!o) return false; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+    if (!ok) throw new Error('the source org is not offered');
+    await rec.fast(() => h.waitFor("!!document.querySelector('[data-ring-cell]')", 60000, 1000));
+    await rec.pause(1500);
+    await rec.say('Pick the source. Each deployment is a row, each other org a column: how far that org is from the source for that deployment.', 6000);
+    if (await c.has('[data-ring-scantgt]:not([disabled])')) {
+      await rec.click('[data-ring-scantgt]:not([disabled])', 600);
+      await rec.fast(async () => { await h.sleep(2500); await h.waitFor("![...document.querySelectorAll('[data-ring-scantgt], [data-ring-scan1]')].some(b => /⏳/.test(b.textContent)) && ![...document.querySelectorAll('[data-ring-cell]')].some(x => /⏳/.test(x.innerText))", 900000, 2000).catch(() => {}); await h.sleep(1500); });
+      await rec.say('Scan a target, and every deployment is compared with it: records missing, changed, or only in the target. A scan changes nothing.', 6500);
     }
-    if (await c.has('[data-ring-scantgt]')) await rec.point('[data-ring-scantgt]', 1300);
+    if (await c.has('[data-ring-rec]')) { await rec.point('[data-ring-rec]', 1200); await rec.say('From a cell you open that deployment against that org, and fix it there.', 4000); }
   } },
 
-  { id: 'history', title: 'History', needsTarget: true, run: async c => {
+  { id: 'history', title: 'History', run: async c => {
     const { h, rec } = c;
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');
     await nav(c, 'history');
     await h.sleep(1500);
     await rec.say('History. Every deployment and every rollback, with what was written and what the org said afterwards.', 5500);
     if (await c.has('.ds-history-card')) { await rec.point('.ds-history-card', 1200); await rec.scrollBy(null, 400); }
+    if (await c.has('#dsHistKitNote')) { await rec.scrollTo('#dsHistKitNote', 'center'); await rec.point('#dsHistKitNote', 1200); }
     await rec.say('A change made by a Toolkit tool is listed in that tool, with its own Undo. All of it stays on this computer, and you can export it.', 6000);
   } },
 
-  { id: 'compare', title: 'Org Compare', needsTarget: true, run: async c => {
+  { id: 'compare', title: 'Org Compare', run: async c => {
     const { h, rec } = c;
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');
     await nav(c, 'compare');
     await h.waitFor("!!document.querySelector('#dsOCSrc')", 60000, 500);
     await rec.say('Org Compare. Pick two orgs and any objects, and count the difference.', 1500);
     const setOrg = (sel, part) => h.eval(`(() => { const s = document.querySelector(${J(sel)}); const o = [...s.options].find(o => o.value.includes(${J(part)})); if (!o) return false; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
-    await rec.point('#dsOCSrc', 600); await setOrg('#dsOCSrc', 'trailheads5'); await h.sleep(600);
-    await rec.point('#dsOCTgt', 600); await setOrg('#dsOCTgt', 'trailheads4'); await h.sleep(600);
+    await rec.point('#dsOCSrc', 600); await setOrg('#dsOCSrc', SRC_ORG); await h.sleep(600);
+    await rec.point('#dsOCTgt', 600); await setOrg('#dsOCTgt', TGT_ORG); await h.sleep(600);
     await rec.fast(() => h.waitFor("document.querySelectorAll('[data-oc-obj]').length > 5", 180000, 1000));
     if (await c.has('#dsOCSelNone')) await h.eval(`document.querySelector('#dsOCSelNone').click()`);
     for (const o of ['Account', 'Contact', 'Opportunity', 'Case']) {
       if (!(await c.has(`[data-oc-obj="${o}"]`))) continue;
       await rec.point(`[data-oc-obj="${o}"]`, 450);
-      await h.eval(`(() => { const cb = document.querySelector('[data-oc-obj="${o}"]'); if (!cb.checked) { cb.checked = true; cb.dispatchEvent(new Event('change', { bubbles: true })); } return true; })()`);
+      await tick(c, `[data-oc-obj="${o}"]`);
     }
     await rec.click('#dsOCRun', 800);
     await rec.fast(() => h.waitFor("document.querySelectorAll('.ds-oc-table tbody tr').length > 0 && !/comparing/.test(document.querySelector('#dsOCResults')?.innerText || '')", 600000, 2000));
@@ -421,7 +657,7 @@ export const SECTIONS = [
     await rec.say('Per object: how many records are in both orgs, missing from the target, or only in the target. Read-only.', 6000);
   } },
 
-  { id: 'orghealth', title: 'Org health', needsTarget: true, run: async c => {
+  { id: 'orghealth', title: 'Org health', run: async c => {
     const { h, rec } = c;
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');
     await nav(c, 'orghealth');
@@ -436,7 +672,7 @@ export const SECTIONS = [
     await rec.pause(2500);
   } },
 
-  { id: 'outro', title: 'Licence and privacy', needsTarget: true, run: async c => {
+  { id: 'outro', title: 'Licence and privacy', run: async c => {
     const { h, rec } = c;
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');
     if (await c.has('#sftkTermsBtn')) {
@@ -445,6 +681,8 @@ export const SECTIONS = [
       await h.eval(`document.querySelector('#sftkTermsViewClose')?.click()`);
       await h.sleep(600);
     }
+    await c.home();
     await rec.say('Admin Toolkit for Salesforce. It reads before it writes, asks once, and checks the org afterwards.', 5500);
+    await rec.say('Thank you for watching.', 3500);
   } },
 ];

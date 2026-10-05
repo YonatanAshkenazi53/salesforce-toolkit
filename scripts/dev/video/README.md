@@ -48,14 +48,27 @@ Saves a PNG of the picture at each of those seconds to the harness's screenshot 
 | `walkthrough.mjs` | logs in, runs the sections, lists what was recorded and what failed |
 | `compose.mjs` | the sections in `order.json` order (or one recording) → MP4 and chapters |
 | `voice.mjs` | the captions spoken into WAV files (Windows System.Speech, offline) |
+| `fixture.mjs` | puts the Field Cleaner fixture back after its chapter (CLI deploys, no flow runs) |
 | `peek.mjs` | frames of a finished video |
 | `smoke.mjs` | a 15-second self-test of recorder and composer, no org needed |
 
 ## Rules the tour keeps
 
-- **It reads.** A confirmation that is opened to show it is cancelled. The one
-  exception is the section `run`: it deploys two fixture records into the target
-  org and rolls them back, so the org ends as it started. `WRITES=0` leaves it out.
+- **It reads, except where a tool is shown for real.** Four chapters use a tool
+  end to end, on fixtures only, and leave the org as they found it: Flow switches
+  (three fixture flows off, then ↩ Undo), API versions (one fixture flow to the
+  org's version, then ↩ Undo), Field Cleaner (the fixture field replaced on its
+  layout, Lightning page and flows; one change undone on camera; the fixture is
+  redeployed off camera by `fixture.mjs`), and Deploy and roll back (two fixture
+  accounts into the target, then rolled back). `WRITES=0` leaves all four out.
+  A confirmation that is opened only to show it is cancelled.
+- **A deployment only ever runs trailheads5 → trailheads4.** The demo deployments
+  carry both org addresses themselves, and the chapter checks the Deploy page's
+  own source and target again before it ticks anything and before it presses
+  Deploy. (The fixture file names an org that no longer exists; the harness then
+  stands the logged-in orgs in by login order — never rely on that.)
+- **The Toolkit must be on the source org.** Every Toolkit chapter stops if the
+  tool opened on another org.
 - **A section stands alone.** Each is recorded into its own folder
   (`dist/video/rec/<id>/`). One that fails is logged, keeps the recording it had,
   and the tour goes on; the end of the log says `RECORDED:` and `FAILED:`.

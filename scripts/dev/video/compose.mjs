@@ -95,6 +95,8 @@ export default async function (h) {
   }
   for (const c of said) ev.push({ tau: T(c.t), kind: 'cue', text: c.text, voice: c.voice || null });
   for (const c of (man.chapters || [])) ev.push({ tau: T(c.t), kind: 'chapter', title: c.title });
+  // the "sped up" badge goes when the waiting ends, even if the picture does not change then
+  for (const f of fast) ev.push({ tau: T(f.b) + 5, kind: 'fastoff' });
   ev.sort((a, b) => a.tau - b.tau || (a.kind === 'frame' ? 1 : -1));
   const total = Math.max(T(man.length || (fr.length ? fr[fr.length - 1].t : 0)), said.busyUntil || 0) + 1500;
   h.log(`composing ${ev.filter(e => e.kind === 'frame').length} of ${fr.length} frames · source ${(man.length / 1000).toFixed(0)} s → video ${(total / 1000).toFixed(0)} s (waiting ×${FAST}${SPEAK ? `, ${spoken} captions spoken` : ', silent'})`);
@@ -184,6 +186,7 @@ export default async function (h) {
       await h.eval(`(async () => { __v.fast = ${e.fast ? 'true' : 'false'}; await __v.frame(${JSON.stringify(b64)}); return 1; })()`);
       shown++;
     } else if (e.kind === 'cue') await h.eval(`(() => { __v.caption = ${JSON.stringify(e.text)}; __v.paint(); ${e.voice ? `__v.speak(${JSON.stringify(basename(e.voice))});` : ''} return 1; })()`);
+    else if (e.kind === 'fastoff') await h.eval(`(() => { __v.fast = false; __v.paint(); return 1; })()`);
     else await h.eval(`(() => { __v.chapter = ${JSON.stringify(e.title)}; __v.paint(); return 1; })()`);
     if (Date.now() - lastLog > 30000) { lastLog = Date.now(); h.log(`… ${((Date.now() - t0) / 1000).toFixed(0)} / ${(total / 1000).toFixed(0)} s, ${shown} frames, lag ${Math.max(0, Date.now() - t0 - e.tau).toFixed(0)} ms`); }
   }
