@@ -6669,6 +6669,8 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .fc-flow-done .fc-flow-warn { color: #b45309; }
 .fc-ver-badge { display: inline-block; margin-right: 6px; padding: 0 6px; font-size: 10.5px; border-radius: 8px; border: 1px solid var(--border, #dddbda); color: var(--text); white-space: nowrap; }
 .fc-fix-pair { display: inline-flex; gap: 4px; }
+.fc-fix-every-box { margin: 8px 0; padding: 7px 11px; font-size: 12px; border: 1px solid var(--border); border-radius: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.fc-fix-every-box .fc-repl-sub { margin: 0; }
 /* F3: staged deprecation */
 .fc-dep-offer { margin: 8px 0; padding: 8px 11px; font-size: 12px; border: 1px dashed var(--border); border-radius: 6px; background: var(--bg); }
 .fc-dep-hint { color: var(--subtext); font-size: 11px; display: block; margin-top: 4px; }

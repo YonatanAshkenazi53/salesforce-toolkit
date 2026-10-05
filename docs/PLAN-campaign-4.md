@@ -476,6 +476,13 @@ listener, `_rowBusy`. `fixAll(type, fieldId, swap)` goes item by item. Live on t
 in all 2 flows = 2 confirmations, no errors; then ✂ Remove on one flow and ⇄ Replace on the other
 (CLI truth).
 
+**Everything at once (2026-10-05, user: "only one thing is missing now, remove all and replace
+all").** `#fcFixEvery` above the list: `_fixEveryHtml(n)` / `_refreshFixEvery()` /
+`fixEverything(fieldId, swap)` walks the fixable groups through `fixAll`; a fix now returns
+`'cancel'` when the user says no, and a walk stops there. Live on trailheads4: Cancel on the second
+dialog stopped the walk (1 done, 3 left, box says "all 3"); then Replace all 3 = 3 dialogs, nothing
+left, the dependency index shows 0.
+
 **Limits, stated in the product:** references move with the fixes, data with 📦 Stored values; a flow swap has
 no History undo (old versions are deleted — the backup zip is the way back); list views, compact
 layouts, quick actions, validation rules, formula fields and Apex stay manual exactly as before.
@@ -506,6 +513,21 @@ So for 1.0:
   Licenses, Flow Access — they ship unless the user says otherwise.
 - `docs/FEATURES.md` keeps the two cut tools under "Not in the public build yet"; the in-app guide
   must not render that section.
+
+## Hand-test findings, 2026-10-05 (Data Studio)
+
+- **All open orgs — the Scan button was in the source column** (user: "why do i have a scan button
+  in the source? … we need to be able to scan only the targets"). DONE: no button in the deployment
+  column; each target column header has `data-ring-scantgt` (`_ringScanTarget`: every deployment
+  against that org), the cell 🔎 stays. Live with both orgs: "🔎 Scan all 6" on trailheads4, six
+  cells filled.
+- **Scope of the first release, Data Studio** (user marked a screenshot): Connected Orgs, Data
+  Deployment, All open orgs, History, Org Compare, Org health. NOT marked: Deploy Readiness.
+- History › rollback card › "Which records" shows no records; it should open a Deploy-like page.
+- "Needs a decision": fix them one by one; the options are not clear; question whether the user
+  should pick which record to keep and which duplicates to delete.
+- Deploy page › "This deployment" tree: the cards, the relation and "how many each hold" read as
+  broken.
 
 ## Backlog (found during the campaign)
 

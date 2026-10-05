@@ -512,7 +512,7 @@ describe('Field Cleaner — the choice is made per item, by the button pressed',
     const all = FC.slice(FC.indexOf('async function fixAll(type, fieldId, swap) {'), FC.indexOf('// extraLinksHtml (C5a)'));
     expect(all).toContain('? _flowCards.map(c => ({ id: c.primaryId, name: c.name }))');
     expect(all).toContain("if (eid(`fcItem_${it.id}`)?.classList.contains('fc-item-fixed')) continue;");
-    expect(all).toContain('await fixOne(type, it.id, it.name, fieldId, swap);');
+    expect(all).toContain("if ((await fixOne(type, it.id, it.name, fieldId, swap)) === 'cancel') return 'cancel';");
   });
   it('a settled item cannot be fixed again from anywhere', () => {
     expect(FC).toContain("if (eid(`fcItem_${componentId}`)?.classList.contains('fc-item-fixed')) return;");
@@ -532,6 +532,31 @@ describe('Field Cleaner — small truths of the two-button list', () => {
   });
   it('in replace mode the group note says what each of the two buttons does', () => {
     expect(FC).toContain("`⇄ Replace: ${cfg.replNote.replace('{new}', _replField.api)} ✂ Remove: ${cfg.note}`");
+  });
+});
+
+// User 2026-10-05: "only one thing is missing now, remove all and replace all".
+describe('Field Cleaner — everything at once', () => {
+  const FC = read('field-cleaner.js');
+  it('one button per way for every fixable item, whatever its kind; Replace all only in replace mode', () => {
+    expect(FC).toContain('data-swap="1" title="${tip}">⇄ Replace all ${n}</button>` : \'\'}');
+    expect(FC).toContain('data-swap="0" title="${tip}">✂ Remove all ${n}</button>');
+    expect(FC).toContain("if (n < 2) return '<div id=\"fcFixEvery\" style=\"display:none\"></div>';");
+  });
+  it('it walks group by group through the same per-item fix — every item still confirms', () => {
+    const fn = FC.slice(FC.indexOf('async function fixEverything(fieldId, swap) {'), FC.indexOf("// An item's buttons while its fix works"));
+    expect(fn).toContain('for (const type of Object.keys(_groups)) {');
+    expect(fn).toContain('if (!(TYPE_CFG[type] || TYPE_CFG_DEFAULT).fixable) continue;');
+    expect(fn).toContain("if ((await fixAll(type, fieldId, swap)) === 'cancel') break;");
+    expect(fn).not.toContain('sftkWriteVerified');           // it writes nothing itself
+  });
+  it('Cancel in any dialog stops the walk instead of asking again for every item', () => {
+    expect(FC).toContain("if (!sure) return 'cancel';");
+    expect(FC).toContain("if ((await fixOne(type, it.id, it.name, fieldId, swap)) === 'cancel') return 'cancel';");
+  });
+  it('the count is what is still open, and follows every fix and every mode change', () => {
+    expect(FC).toContain("el.outerHTML = _fixEveryHtml(document.querySelectorAll('#fcResults .fc-fix-pair').length);");
+    expect((FC.match(/_refreshFixEvery\(\);/g) || []).length).toBeGreaterThanOrEqual(3);
   });
 });
 

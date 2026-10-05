@@ -1044,6 +1044,38 @@ const FieldCleaner = (() => {
       ? `<button class="btn btn-secondary btn-sm fc-fix-all" data-type="${esc(type)}" data-swap="1">⇄ Replace in all ${n} ${noun}</button> ${rm}`
       : rm;
   }
+  // "Everything at once" (user 2026-10-05: "only one thing is missing now,
+  // remove all and replace all"): one button per way for every fixable item in
+  // the list, whatever its kind. It walks the items one by one — each still
+  // shows its own confirmation, because each is its own change (and a flow
+  // needs its own choice) — and cancelling any dialog stops the walk.
+  let _everyRunning = false;
+  function _fixEveryHtml(n) {
+    if (n < 2) return '<div id="fcFixEvery" style="display:none"></div>';
+    const tip = 'Goes through every fixable item below, one by one. Each still asks before it changes anything.';
+    return `<div id="fcFixEvery" class="fc-fix-every-box"><strong>Everything at once:</strong>
+        ${_replOn() ? `<button class="btn btn-primary btn-sm fc-fix-every" data-swap="1" title="${tip}">⇄ Replace all ${n}</button>` : ''}
+        <button class="btn btn-secondary btn-sm fc-fix-every" data-swap="0" title="${tip}">✂ Remove all ${n}</button>
+        <span class="fc-repl-sub">Walks the ${n} fixable items one by one. Each still asks first; Cancel in any dialog stops the walk.</span></div>`;
+  }
+  function _refreshFixEvery() {
+    const el = eid('fcFixEvery');
+    if (el && !_everyRunning) el.outerHTML = _fixEveryHtml(document.querySelectorAll('#fcResults .fc-fix-pair').length);
+  }
+  async function fixEverything(fieldId, swap) {
+    if (_everyRunning || _fixSwap !== null) return;
+    _everyRunning = true;
+    eid('fcFixEvery')?.querySelectorAll('button').forEach(b => { b.disabled = true; });
+    try {
+      for (const type of Object.keys(_groups)) {
+        if (!(TYPE_CFG[type] || TYPE_CFG_DEFAULT).fixable) continue;
+        if ((await fixAll(type, fieldId, swap)) === 'cancel') break;
+      }
+    } finally {
+      _everyRunning = false;
+      _refreshFixEvery();
+    }
+  }
   // An item's buttons while its fix works (text on the one that was pressed),
   // and back to idle (text = null).
   function _rowBusy(componentId, text) {
@@ -1064,6 +1096,7 @@ const FieldCleaner = (() => {
     if (!results) return;
     results.querySelectorAll('.fc-fix-pair').forEach(p => { if (!p.querySelector('.fc-fix-btn[disabled]')) p.innerHTML = _fixBtnsHtml(p.dataset.type, p.dataset.id, p.dataset.name); });
     results.querySelectorAll('.fc-fix-allbox').forEach(b => { b.innerHTML = _fixAllHtml(b.dataset.type, Number(b.dataset.n), b.dataset.label); });
+    _refreshFixEvery();
     results.querySelectorAll('.fc-flow-vers').forEach(ul => { const c = _flowCards.find(x => x.primaryId === ul.dataset.id); if (c) ul.innerHTML = _flowVersHtml(c); });
     results.querySelectorAll('.fc-group-note-text').forEach(n => { const t = n.dataset.type; n.textContent = _groupNote(t, TYPE_CFG[t] || TYPE_CFG_DEFAULT); });
     const bar = eid('fcReplBar');
@@ -1844,6 +1877,7 @@ const FieldCleaner = (() => {
         </span>
       </div>
       ${_replBarHtml()}
+      ${_fixEveryHtml(autoCount)}
       ${_mcdCapped ? `
       <div class="fc-unscanned-note">
         ⚠ <strong>This list may be truncated.</strong> Salesforce caps the dependency
@@ -1943,6 +1977,8 @@ const FieldCleaner = (() => {
           if (!one.disabled && !one.classList.contains('fc-xml-fix')) fixOne(one.dataset.type, one.dataset.id, one.dataset.name, _curFieldId, one.dataset.swap === '1');
           return;
         }
+        const every = ev.target.closest?.('.fc-fix-every');
+        if (every) { if (!every.disabled) fixEverything(_curFieldId, every.dataset.swap === '1'); return; }
         const all = ev.target.closest?.('.fc-fix-all');
         if (all && !all.disabled) {
           const t = all.dataset.type, swap = all.dataset.swap === '1';
@@ -3036,7 +3072,8 @@ const FieldCleaner = (() => {
     if (eid(`fcItem_${componentId}`)?.classList.contains('fc-item-fixed')) return;
     if (_fixSwap !== null) return;
     _fixSwap = !!swap && _replOn();
-    try { await _fixOneRun(type, componentId, componentName, fieldId); }
+    // 'cancel' = the user said no in the dialog (a bulk walk stops there)
+    try { return await _fixOneRun(type, componentId, componentName, fieldId); }
     finally { _fixSwap = null; }
   }
   async function _fixOneRun(type, componentId, componentName, fieldId) {
@@ -3130,7 +3167,7 @@ const FieldCleaner = (() => {
         : (swap ? '⇄ Replace reference' : '✂ Remove reference'),
       production: gate.production ? { label: gate.label } : null,
     });
-    if (!sure) return;
+    if (!sure) return 'cancel';
 
     _rowBusy(componentId, '⏳ working…');
     try {
@@ -3221,7 +3258,8 @@ const FieldCleaner = (() => {
       : (_groups[type] || []).map(d => ({ id: d.MetadataComponentId, name: d.MetadataComponentName || d.MetadataComponentId }));
     for (const it of list) {
       if (eid(`fcItem_${it.id}`)?.classList.contains('fc-item-fixed')) continue;
-      await fixOne(type, it.id, it.name, fieldId, swap);
+      // Cancel in a dialog stops the walk — it is not asked again for every item
+      if ((await fixOne(type, it.id, it.name, fieldId, swap)) === 'cancel') return 'cancel';
     }
   }
 
@@ -3253,6 +3291,7 @@ const FieldCleaner = (() => {
       if (open < 2) box.remove();
       else { box.dataset.n = String(open); box.innerHTML = _fixAllHtml(box.dataset.type, open, box.dataset.label); }
     }
+    _refreshFixEvery();
     checkEnableDelete();
   }
 

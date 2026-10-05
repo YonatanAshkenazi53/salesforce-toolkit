@@ -5,6 +5,7 @@
 //   STEP=access      🔑 copy the old field's access to the new field
 //   STEP=flow        ⇄ Replace on a flow (FLOW=<label>, default "SFTK FC Test Flow 2")
 //   STEP=flowall     the "… in all N Flows" button: one confirmation per FLOW, however many versions are listed
+//   STEP=every       "Everything at once": ⇄ Replace all N (SWAP=0: ✂ Remove all N); CANCEL_AT=<n> cancels the n-th dialog (the walk must stop)
 //   STEP=layout      ⇄ Replace on the first layout row
 //   STEP=page        ⇄ Replace on the first Lightning page row
 //   STEP=report      ⇄ Replace on the first report row
@@ -147,6 +148,35 @@ export default async function (h) {
     if (process.env.THEN !== 'report') return;
     await fixRow(h, 'Report', process.env.NAME || '');
     h.log('RESULTS after:', await dump(h, '#fcGroup_Report', 900));
+    return;
+  }
+  if (step === 'every') {
+    const sel = `.fc-fix-every[data-swap="${process.env.SWAP === '0' ? '0' : '1'}"]`;
+    h.log('everything box:', await dump(h, '#fcFixEvery', 400));
+    if (!(await h.eval(`!!document.querySelector(${JSON.stringify(sel)})`))) { h.log('no such button'); return; }
+    await h.eval(`document.querySelector(${JSON.stringify(sel)}).click()`);
+    const cancelAt = Number(process.env.CANCEL_AT) || 0;
+    let dialogs = 0;
+    for (let i = 0; i < 20; i++) {
+      const got = await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 25000, 500).then(() => true).catch(() => false);
+      if (!got) break;
+      dialogs++;
+      const title = await h.eval(`(document.querySelector('#modalBox')?.innerText || '').split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).slice(0, 3).join(' | ').slice(0, 160)`);
+      h.log(`dialog ${dialogs}:`, title);
+      if (cancelAt === dialogs) { await h.eval(`document.querySelector('#sftkConfirmCancel')?.click()`); h.log('cancelled on purpose'); await h.sleep(1500); continue; }
+      await h.eval(`(() => { const r = document.querySelector('input[name="fcActiveMode"][value="replace"]'); if (r && !r.disabled) { r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); } const b = document.querySelector('#fcFlowBackup'); if (b && b.checked) { b.checked = false; b.dispatchEvent(new Event('change', { bubbles: true })); } const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } return true; })()`);
+      await h.sleep(300);
+      await h.eval(`document.querySelector('#sftkConfirmGo').click()`);
+      await h.waitFor("!document.querySelector('#sftkConfirmGo')", 30000, 300).catch(() => {});
+      await h.waitFor("!document.querySelector('.fc-fix-btn[disabled]')", 600000, 1000);
+      await h.sleep(1500);
+    }
+    h.log('dialogs shown:', dialogs);
+    h.log('DONE:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-item-fixed .fc-item-ok')].map(e => e.innerText.slice(0, 110))`)));
+    h.log('still open:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-fix-pair')].map(e => e.dataset.type + ':' + e.dataset.name)`)));
+    h.log('INLINE ERRORS:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-item-err')].map(e => e.innerText.slice(0, 300))`)));
+    h.log('everything box after:', await dump(h, '#fcFixEvery', 300));
+    h.log('DELETE ZONE:', await dump(h, '#fcDeleteZone', 300));
     return;
   }
   if (step === 'flowall') {

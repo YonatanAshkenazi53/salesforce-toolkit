@@ -48,10 +48,10 @@ export default async function (h) {
   h.log('ring head:', await dump(h, '#dsRingBody', 500));
   const cellSel = `[data-ring-cell^="${pid}|"]`;
   h.log('cell before:', await h.eval(`document.querySelector(${JSON.stringify(cellSel)})?.innerText.replace(/\\s+/g, ' ')`));
-  // the row's 🔎 Scan refreshes every ring target of this deployment (no changes); ⚖ opens Reconcile
-  const recBtn = await h.eval(`(() => { const b = document.querySelector('[data-ring-scanall="' + ${JSON.stringify(pid)} + '"]'); if (!b) return 'no scan button'; b.click(); return 'clicked ' + b.textContent.trim(); })()`);
+  // the 🔎 in the cell scans this deployment against that target (no changes); ⚖ opens Reconcile
+  const recBtn = await h.eval(`(() => { const b = document.querySelector('[data-ring-scan1^="' + ${JSON.stringify(pid)} + '|"]'); if (!b) return 'no scan button'; b.click(); return 'clicked ' + b.textContent.trim(); })()`);
   h.log('ring scan:', recBtn);
-  await h.waitFor("!document.querySelector('[data-ring-scanall=\"" + pid + "\"]')?.disabled && !/not scanned/.test(document.querySelector(" + JSON.stringify(cellSel) + ")?.innerText || '')", 600000, 2000);
+  await h.waitFor("!document.querySelector('[data-ring-scan1^=\"" + pid + "|\"]')?.disabled && !/not scanned|⏳/.test(document.querySelector(" + JSON.stringify(cellSel) + ")?.innerText || '')", 600000, 2000);
   await h.sleep(1000);
   const cell = await h.eval(`(() => { const c = document.querySelector(${JSON.stringify(cellSel)}); if (!c) return null; const t = c.querySelector('.ds-ring-counts'); return { text: c.innerText.replace(/\\s+/g, ' ').trim(), title: t ? t.title : '', m: c.querySelector('.ds-ring-m')?.textContent, ch: c.querySelector('.ds-ring-c')?.textContent, e: c.querySelector('.ds-ring-e')?.textContent, clean: !!c.querySelector('.ds-ring-clean') }; })()`);
   h.log('RING CELL:', JSON.stringify(cell));
