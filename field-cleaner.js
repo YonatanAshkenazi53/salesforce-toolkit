@@ -572,6 +572,7 @@ const FieldCleaner = (() => {
 
         <!-- Results area -->
         <div id="fcResults"></div>
+        <div id="fcToolHist"></div>
         <div id="fcSnapLog"></div>
 
       </div>`;
@@ -2408,7 +2409,7 @@ const FieldCleaner = (() => {
       ],
       revOverride: {
         html: `Writes <strong>${esc(obj)}.${esc(to)}</strong> on ${N(targets.length)} record${targets.length === 1 ? '' : 's'}. <strong>${esc(from)}</strong> is not changed. Each record is saved like any edit: the object’s flows, triggers, validation rules and duplicate rules run, and its last-modified date changes. A record Salesforce refuses is reported with the reason and left as it is. ` +
-          (undoable ? 'Data Studio › History can take this copy back.' : `This run is larger than ${N(FC_COPY_UNDO)} records, so History keeps no undo for it — the receipt below is the way back.`),
+          (undoable ? '🧾 History, under the results, can take this copy back.' : `This run is larger than ${N(FC_COPY_UNDO)} records, so History keeps no undo for it — the receipt below is the way back.`),
         needsCheckbox: true,
         ack: overN ? `I understand ${N(overN)} existing value${overN === 1 ? '' : 's'} in ${to} ${overN === 1 ? 'is' : 'are'} overwritten` : `I understand ${N(targets.length)} record${targets.length === 1 ? ' is' : 's are'} updated`,
       },
@@ -2557,7 +2558,7 @@ const FieldCleaner = (() => {
       title: `Copy field access to ${to}`,
       icon: '🔑',
       items: all.map(x => ({ label: x.who, sub: `${x.kind} — ${x.op === 'create' ? `gets ${perm(x.want)}` : `raised from ${perm(x.before)} to ${perm(x.want)}`}` })),
-      revOverride: { html: `Gives each of these the access to <strong>${esc(obj)}.${esc(to)}</strong> that it has to ${esc(obj)}.${esc(from)}${_replReadOnly() ? ' (read only — the new field cannot be edited)' : ''}. Access is only added: nothing is lowered or removed. Data Studio › History can take it back.`, needsCheckbox: false },
+      revOverride: { html: `Gives each of these the access to <strong>${esc(obj)}.${esc(to)}</strong> that it has to ${esc(obj)}.${esc(from)}${_replReadOnly() ? ' (read only — the new field cannot be edited)' : ''}. Access is only added: nothing is lowered or removed. 🧾 History, under the results, can take it back.`, needsCheckbox: false },
       confirmLabel: '🔑 Copy access',
       production: gate.production ? { label: gate.label } : null,
     });
@@ -3165,7 +3166,7 @@ const FieldCleaner = (() => {
         html: type === 'Flow'
           ? `⚠ <strong>${asks ? 'This' : preset === 'delete' ? 'Switches the flow off, verifies that nothing is active, and then' : (flowPlan.plan.mode === 'active' ? (swap ? `Deploys a new flow version that uses ${esc(swapTo)}, verifies it is ACTIVE, and then` : 'Deploys a new flow version without the reference, verifies it is ACTIVE, and then') : 'This')} permanently deletes flow versions</strong> that still reference the field (Salesforce holds the dependency lock per version, not per active version).<ol id="fcFlowLines" style="margin:6px 0 0 18px;padding:0">${(asks && !activeMode ? [] : activeMode === 'delete' ? flowPlan.linesDelete : flowPlan.lines).map(l => `<li>${esc(l)}</li>`).join('')}</ol>`
           : `${swap ? `⇄ <strong>${esc(_selObj.api)}.${esc(_selField.api)} → ${esc(swapTo)}</strong>. ${esc(_groupNote(type, cfg))}` : `✏ ${cfg.note || 'The field reference is removed from this component.'}`} The change deploys immediately. ${['Report', 'Layout', 'FlexiPage'].includes(type)
-              ? 'A <strong>restore point</strong> is saved first — 🧾 Cleanup history can put the previous version back.'
+              ? 'A <strong>restore point</strong> is saved first — ↩ Restore points, under the results, can put the previous version back.'
               : 'There is no undo besides re-adding the field by hand.'}`,
         needsCheckbox: type === 'Flow',
       },
@@ -5540,6 +5541,9 @@ const FieldCleaner = (() => {
   }
 
   async function renderSnapshotLog() {
+    // 🧾 what Field Cleaner changed, with ↩ Undo — listed here, in the tool
+    // (user 2026-10-05: "it should show under the field cleaner")
+    if (typeof sftkToolHistoryInline === 'function') sftkToolHistoryInline(eid('fcToolHist'), 'fields');
     const el = eid('fcSnapLog');
     if (!el) return;
     const store = await chrome.storage.local.get(SNAP_KEY);
@@ -5548,7 +5552,7 @@ const FieldCleaner = (() => {
     if (!mine.length) { el.innerHTML = ''; return; }
     el.innerHTML = `
       <details class="fc-snaplog">
-        <summary>🧾 Cleanup history — ${mine.length} change${mine.length === 1 ? '' : 's'} with restore points</summary>
+        <summary>↩ Restore points — ${mine.length} piece${mine.length === 1 ? '' : 's'} of metadata saved before a fix</summary>
         <div class="fc-snap-rows">
           ${mine.map(s => `
             <div class="fc-snap-row">

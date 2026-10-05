@@ -104,10 +104,12 @@ describe('the conversion preserved each view\'s behaviour surface', () => {
   it('History\'s header count is computed from the arrays the list renders', () => {
     // Two-tier history (📦 archive): the header states the hot count and,
     // when archived runs are loaded into the view, the archived count — the
-    // list renders exactly _history + _archShown, so the numbers agree.
-    expect(SRC['studio-history.js']).toMatch(/count: `\$\{_history\.length\} run/);
-    expect(SRC['studio-history.js']).toMatch(/\$\{_archShown\.length\} archived shown/);
-    expect(SRC['studio-history.js']).toMatch(/\[\.\.\._history, \.\.\._archShown\]\.sort/);
+    // list renders exactly those two arrays, so the numbers agree. Since
+    // 2026-10-05 both are the page's OWN entries: a Toolkit tool's change is
+    // listed in that tool (test/tool-history-1005).
+    expect(SRC['studio-history.js']).toMatch(/count: `\$\{split\.mine\.length\} run/);
+    expect(SRC['studio-history.js']).toMatch(/\$\{mineArch\.length\} archived shown/);
+    expect(SRC['studio-history.js']).toMatch(/\[\.\.\.split\.mine, \.\.\.mineArch\]\.sort/);
   });
 
   it('the empty-state History header exists alongside the main one', () => {

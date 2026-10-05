@@ -10,8 +10,10 @@
 //   const j = sftkHistoryBegin({ tool: 'Flow switches', title: '⏻ 3 flows OFF', orgUrl });
 //   … every sftkWriteVerified({ …, journal: j }) appends its verdict to j.what …
 //   await sftkHistoryEnd(j, { undo: { steps: [...] } | { none: 'why not' } });
-// The entry lands in the same `sftk_history` list the Data Studio History
-// page shows (kind: 'tool'), from either page. test/history-discipline
+// The entry lands in the same `sftk_history` list as deployments (kind:
+// 'tool'), from either page. WHERE it is shown: a Toolkit tool's entries in
+// that tool (sftk-toolhistory.js), everything else in Data Studio › History —
+// see sftkHistoryToolTab below. test/history-discipline
 // fails the build on a write that names no journal and on an End that
 // states no undo.
 //
@@ -295,8 +297,86 @@ async function sftkHistoryUndo(entryId, opts) {
   return { ok: okAll, text: okAll ? `Undone — ${okN} step${okN === 1 ? '' : 's'} verified by re-reading the org` : `Undo ran: ${okN} of ${j.what.length} step${j.what.length === 1 ? '' : 's'} verified — see the undo's entry in History`, entry, undoEntry };
 }
 
+// ── Whose history an entry belongs to (user 2026-10-05: "seeing field cleaner
+// history on the data deployment history is confusing, it should show under
+// the field cleaner") ─────────────────────────────────────────────────────
+// A change made by a TOOLKIT tool is listed in that tool (sftk-toolhistory.js);
+// Data Studio › History keeps deployments, rollbacks and Data Studio's own
+// changes. The entry itself is unchanged — one list, one undo.
+// Tool name (as passed to sftkHistoryBegin) → the Toolkit tab that shows it.
+const SFTK_TOOLKIT_TOOLS = {
+  'Field Cleaner': 'fields', 'Lightning Pages': 'pages', 'Apex Debugger': 'debugger', 'License Manager': 'licenses',
+  'Copy Permissions': 'copy-perms', 'Flow switches': 'dependencies', 'API versions': 'dependencies',
+  'Flow delete': 'flows', 'Flow Access': 'flow-access',
+};
+const SFTK_TOOLKIT_TAB_LABELS = {
+  flows: 'Flows', dependencies: 'Dependencies', debugger: 'Debugger', pages: 'Lightning Pages', fields: 'Field Cleaner',
+  'copy-perms': 'Copy Permissions', licenses: 'Licenses', 'flow-access': 'Flow Access',
+};
+// The Toolkit tab an entry is shown in, or '' (a deployment, a rollback, a Data Studio change). PURE.
+function sftkHistoryToolTab(entry) {
+  if (!entry || entry.kind !== 'tool') return '';
+  return Object.prototype.hasOwnProperty.call(SFTK_TOOLKIT_TOOLS, entry.tool) ? SFTK_TOOLKIT_TOOLS[entry.tool] : '';
+}
+function sftkHistoryTabLabel(tab) {
+  return Object.prototype.hasOwnProperty.call(SFTK_TOOLKIT_TAB_LABELS, String(tab)) ? SFTK_TOOLKIT_TAB_LABELS[String(tab)] : '';
+}
+// One tool's entries, newest first. PURE.
+function sftkHistoryForTab(all, tab) {
+  return (Array.isArray(all) ? all : []).filter(e => sftkHistoryToolTab(e) === String(tab))
+    .sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')));
+}
+// Data Studio's side of the split: its own entries, and how many live in which Toolkit tab. PURE.
+function sftkHistoryStudioSplit(all) {
+  const mine = [], kit = {};
+  for (const e of (Array.isArray(all) ? all : [])) {
+    const tab = sftkHistoryToolTab(e);
+    if (tab) kit[tab] = (kit[tab] || 0) + 1; else if (e) mine.push(e);
+  }
+  return { mine, kit, kitTotal: Object.values(kit).reduce((n, v) => n + v, 0) };
+}
+// "5m ago" for a card. PURE.
+function sftkHistoryAgo(iso, nowMs) {
+  const t = Date.parse(iso || '');
+  if (!Number.isFinite(t)) return '';
+  const s = Math.max(0, Math.round((Number(nowMs) - t) / 1000));
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+// The ⬇ Report of one tool change: what was written, where, when, and what the org showed. PURE.
+function sftkHistoryReport(entry) {
+  const e = entry || {};
+  const st = sftkToolUndoState(e);
+  return {
+    product: 'Admin Toolkit for Salesforce', kind: 'tool-change', tool: e.tool || '', title: e.profileName || '',
+    org: e.targetOrg || '', startedAt: e.startedAt || null, completedAt: e.completedAt || null, status: e.status || '',
+    writes: (Array.isArray(e.what) ? e.what : []).map(w => ({ what: w.text || w.describe || '', verified: !!w.ok, accepted: !!w.accepted })),
+    errors: Array.isArray(e.errors) ? e.errors : [],
+    undo: e.toolUndo ? (e.toolUndo.done ? { state: e.toolUndo.done.ok ? 'undone and verified' : 'undo attempted', at: e.toolUndo.done.at }
+      : e.toolUndo.none ? { state: 'no undo', why: e.toolUndo.none } : { state: 'available', steps: (e.toolUndo.steps || []).map(s => s.describe) }) : { state: st.label || 'none' },
+    ...(e.undoOf ? { undoOf: e.undoOf } : {}),
+  };
+}
+function sftkHistoryReportName(entry) {
+  const e = entry || {};
+  const slug = String(e.tool || 'change').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'change';
+  const d = new Date(e.startedAt || Date.now());
+  const iso = Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+  return `sftk-change-${slug}-${iso.slice(0, 10)}-${iso.slice(11, 19).replace(/:/g, '')}`;
+}
+
 if (typeof globalThis !== 'undefined') {
   globalThis.sftkHistoryBegin      = sftkHistoryBegin;
+  globalThis.SFTK_TOOLKIT_TOOLS     = SFTK_TOOLKIT_TOOLS;
+  globalThis.sftkHistoryToolTab     = sftkHistoryToolTab;
+  globalThis.sftkHistoryTabLabel    = sftkHistoryTabLabel;
+  globalThis.sftkHistoryForTab      = sftkHistoryForTab;
+  globalThis.sftkHistoryStudioSplit = sftkHistoryStudioSplit;
+  globalThis.sftkHistoryAgo         = sftkHistoryAgo;
+  globalThis.sftkHistoryReport      = sftkHistoryReport;
+  globalThis.sftkHistoryReportName  = sftkHistoryReportName;
   globalThis.sftkHistoryNote       = sftkHistoryNote;
   globalThis.sftkHistoryEnd        = sftkHistoryEnd;
   globalThis.sftkHistoryAppend     = sftkHistoryAppend;
