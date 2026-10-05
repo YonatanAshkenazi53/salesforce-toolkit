@@ -3,7 +3,7 @@
 A scripted tour of every tool in the public build, recorded live against the two
 trial orgs, with the captions burned into the picture. Nothing is downloaded or
 installed: the recording is Chrome's own screencast and the encoder is Chrome's
-own (canvas → MediaRecorder, H.264 in MP4).
+own (canvas → MediaRecorder, H.264 + AAC in MP4), and the voice is Windows' own.
 
 ## Make it
 
@@ -47,6 +47,7 @@ Saves a PNG of the picture at each of those seconds to the harness's screenshot 
 | `sections.mjs` | the tour itself: one entry per tool, with its captions |
 | `walkthrough.mjs` | logs in, runs the sections, lists what was recorded and what failed |
 | `compose.mjs` | the sections in `order.json` order (or one recording) → MP4 and chapters |
+| `voice.mjs` | the captions spoken into WAV files (Windows System.Speech, offline) |
 | `peek.mjs` | frames of a finished video |
 | `smoke.mjs` | a 15-second self-test of recorder and composer, no org needed |
 
@@ -68,6 +69,25 @@ Saves a PNG of the picture at each of those seconds to the harness's screenshot 
   with a "sped up" badge, never cut out silently.
 - **A caption states what the tool does and nothing more.** When a tool changes,
   change its caption in `sections.mjs` with it.
+
+## The voice
+
+Every caption is also spoken, and the speech is recorded into the same MP4 as its
+audio track. The voice is one that is already on this PC — Windows' own
+"Microsoft David" (male) by default — so nothing is installed and the text goes
+nowhere. A caption stays, and the picture holds, until its sentence has been
+spoken; that is why the narrated video runs a little longer than a silent one.
+
+| setting | meaning |
+|---|---|
+| `VOICE=0` | compose a silent video |
+| `VOICE_NAME="Microsoft Zira Desktop"` | another installed voice |
+| `RATE=2` | faster speech (-10 … 10, default 1) |
+
+The sentences are kept as WAV files in `dist/video/rec/voice/`, named by a hash of
+text + voice + rate, so only a caption that changed is spoken again. To hear a
+different voice (for example a recording of your own), replace those files: the
+composer takes each sentence's length from its file.
 
 ## Captions: in the picture, or as a subtitle file — never both
 
