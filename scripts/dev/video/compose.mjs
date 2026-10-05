@@ -1,5 +1,12 @@
 // Turn a recording folder (recorder.mjs: frames/*.jpg + manifest.json) into an
-// MP4 with the captions burned in, plus an .srt and a chapters list.
+// MP4 with the captions burned in, plus a chapters list.
+//
+// The captions are IN the picture. So no subtitle file is written next to the
+// video: a player loads a same-named .srt by itself and draws it over the
+// burned-in text, and YouTube's CC would do the same (user 2026-10-05: "in the
+// video, text is overlapping with another text"). CAPTIONS=track makes the
+// other kind instead: a video with NO caption text in the picture
+// (<name>-nocaptions.mp4) and the captions as <name>-nocaptions.srt beside it.
 //
 //   REC_DIR=<folder> OUT=<file.mp4> node scripts/dev/headless-studio.mjs scripts/dev/video/compose.mjs
 //
@@ -20,7 +27,8 @@ const MIN_GAP = 40;            // ms between frames sent to the encoder (25 fps 
 
 export default async function (h) {
   const dir = resolve(process.env.REC_DIR || 'dist/video/rec');
-  const out = resolve(process.env.OUT || 'dist/video/walkthrough.mp4');
+  const TRACK = process.env.CAPTIONS === 'track';   // captions as a subtitle file, not in the picture
+  const out = resolve(process.env.OUT || 'dist/video/walkthrough.mp4').replace(/\.mp4$/i, TRACK ? '-nocaptions.mp4' : '.mp4');
   // One recording (manifest.json), or the walkthrough's sections (order.json +
   // <id>/manifest.json): joined in order, each shifted to start where the one
   // before it ended. A section with no recording is left out, and said.
@@ -60,7 +68,7 @@ export default async function (h) {
   const total = mapT(man.length || (fr.length ? fr[fr.length - 1].t : 0)) + 1500;
   h.log(`composing ${ev.filter(e => e.kind === 'frame').length} of ${fr.length} frames · source ${(man.length / 1000).toFixed(0)} s → video ${(total / 1000).toFixed(0)} s (waiting ×${FAST})`);
 
-  // ── the .srt and the chapters (YouTube reads both) ──
+  // ── the chapters, and (CAPTIONS=track only) the subtitle file ──
   const stamp = ms => { const p = (n, w = 2) => String(Math.floor(n)).padStart(w, '0'); return `${p(ms / 3600000)}:${p(ms / 60000 % 60)}:${p(ms / 1000 % 60)},${p(ms % 1000, 3)}`; };
   const cues = (man.cues || []).map(c => ({ tau: mapT(c.t), text: c.text }));
   let srt = '', k = 0;
@@ -70,7 +78,7 @@ export default async function (h) {
     if (end - cues[i].tau < 300) continue;
     srt += `${++k}\n${stamp(cues[i].tau)} --> ${stamp(end - 50)}\n${cues[i].text}\n\n`;
   }
-  writeFileSync(out.replace(/\.mp4$/i, '') + '.srt', srt);
+  if (TRACK) writeFileSync(out.replace(/\.mp4$/i, '') + '.srt', srt);
   const mmss = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000 % 60)).padStart(2, '0')}`;
   const ch = (man.chapters || []).map(c => ({ tau: mapT(c.t), title: c.title }));
   writeFileSync(out.replace(/\.mp4$/i, '') + '.chapters.txt', ch.map((c, i) => `${mmss(i === 0 ? 0 : c.tau)} ${c.title}`).join('\n') + '\n');
@@ -99,7 +107,7 @@ export default async function (h) {
       if (V.chapter) { g.font = '700 24px "Segoe UI", sans-serif'; const w = g.measureText(V.chapter).width + 36;
         g.fillStyle = '#1b6fd1'; g.beginPath(); g.roundRect(32, ${PAGE_H} + 38, w, 46, 10); g.fill();
         g.fillStyle = '#fff'; g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillText(V.chapter, 50, ${PAGE_H} + 62); left = 32 + w + 28; }
-      if (V.caption) { g.font = '500 31px "Segoe UI", sans-serif'; g.fillStyle = '#fff'; g.textBaseline = 'middle'; g.textAlign = 'left';
+      if (V.caption && !${TRACK ? 'true' : 'false'}) { g.font = '500 31px "Segoe UI", sans-serif'; g.fillStyle = '#fff'; g.textBaseline = 'middle'; g.textAlign = 'left';
         let lines = wrap(V.caption, ${W} - left - 40);
         if (lines.length > 2) { g.font = '500 26px "Segoe UI", sans-serif'; lines = wrap(V.caption, ${W} - left - 40).slice(0, 3); }
         const lh = lines.length > 2 ? 32 : 40; const y0 = ${PAGE_H} + 62 - (lines.length - 1) * lh / 2;
@@ -141,6 +149,6 @@ export default async function (h) {
   }
   const onDisk = existsSync(file) ? statSync(file).size : 0;
   h.log(`video: ${file} — ${(onDisk / 1048576).toFixed(1)} MB (${onDisk === size ? 'complete' : `INCOMPLETE: page had ${size} bytes`}), ${(total / 1000).toFixed(0)} s, ${shown} frames`);
-  h.log('captions:', out.replace(/\.mp4$/i, '') + '.srt', '· chapters:', out.replace(/\.mp4$/i, '') + '.chapters.txt');
+  h.log(TRACK ? `captions: ${out.replace(/\.mp4$/i, '')}.srt (a subtitle file — the picture has none)` : 'captions: burned into the picture (no subtitle file is written)', '· chapters:', out.replace(/\.mp4$/i, '') + '.chapters.txt');
   if (onDisk !== size) throw new Error('the video file is incomplete');
 }
