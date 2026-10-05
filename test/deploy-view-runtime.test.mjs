@@ -128,10 +128,14 @@ describe('Deploy view — the page actually runs', () => {
     await new Promise(r => setTimeout(r, 0));
     const tree = els.get('dsDepTree').innerHTML;
     need(tree.includes('This deployment') && (tree.match(/class="ds-dtree-node/g) || []).length === 2, 'the tree draws one node per object');
-    need(tree.includes('via AccountId') && tree.includes('recognised by'), 'a child says how it hangs under its parent, and every node how its records are recognised');
-    need(tree.includes('🪪 trailheads4 ✓') && tree.includes('🪪 trailheads4 ✗') && !tree.includes('🪪 target'), 'each node names the ORG that holds (or lacks) the identity field');
-    need(tree.includes('points at') && tree.includes('Campaign'), 'a node names the outside objects it points at');
-    need(tree.includes('no identity field'), 'the tree says which objects cannot be recognised exactly yet');
+    need(tree.includes('under Account · AccountId') && tree.includes('the root object') && tree.includes('matched by'), 'a child says how it hangs under its parent, and every node how its records are matched');
+    // 2026-10-05: how many each org holds, on the card
+    need(tree.includes('<b>5,058</b> in trailheads2') && tree.includes('<b>10</b> in trailheads4') && tree.includes('<b>30</b> in trailheads2') && tree.includes('<b>12</b> in trailheads4'), 'every counted object says how many records each org holds');
+    need(!tree.includes('not counted yet'), 'a counted object is never called uncounted');
+    // the identity field is optional: only a card where an org HAS it mentions it, by org name
+    need((tree.match(/identity field: /g) || []).length === 1 && tree.includes('trailheads2 ✗ · trailheads4 ✓') && !tree.includes('🪪 target'), 'only the object that has the identity field in an org mentions it, naming the orgs');
+    need(tree.includes('looks up, outside this deployment') && tree.includes('Campaign'), 'a node names the outside objects it looks up');
+    need(tree.includes('An identity field makes that match exact') && tree.includes('Optional.'), 'the line under the tree says the identity field is optional and what it adds');
     // duplicate names: who they are + the fixes
     ctx._reconcileProfile.lastScan.dupKeys = { rows: 4, keys: ['Acme', 'Beta'], examples: [{ key: 'Acme', src: ['001A', '001B'], tgt: ['001C', '001D'] }] };
     await vm.runInContext('renderDeploy()', ctx);

@@ -75,6 +75,12 @@ extensions containing root files that start with `_`).
 - **History undo for an org default is verified.** Undo puts the previous page back and re-reads the object to confirm it.
 - **Honest limits.** The tool reads and changes the assignments of record pages. Home, App and other page types are activated in a different way that it does not read, so it no longer says "not activated" or "0 users" about them. A failed read is shown as unknown, never as "none". "Show affected users" shows an error with a retry when the query fails, instead of "No active users".
 
+### Changed — the deployment tree shows the relations and the numbers
+- **Each object's card says how it hangs and how much it holds.** On the Deploy page, every card in "This deployment" now says which object it is under and through which field, how many records each org holds, and what is left to do, one chip per kind. A chip opens that list.
+- **An object that was not read says so.** It reads "not counted yet — unknown, not zero" with a Count button that reads it in both orgs. Nothing is changed by a count.
+- **The lines of the tree meet.** The root sits at the top and every connector joins its neighbour.
+- **The identity field is no longer shown as two errors per object.** It is optional. A card mentions it only where an org has it, and the line under the tree says what it adds.
+
 ### Changed — "Needs a decision" can be settled one name at a time
 - **Apply this one.** Every name on the ⚠ Needs a decision tab has its own Apply button. The answer is remembered right away, and both orgs are read again once, when you ask for it, instead of after every name. Choosing "Not decided" on a remembered record takes the answer back.
 - **The answers are written out.** Instead of a dropdown of "#1 / #2", each record lists its answers as sentences that carry the values of the record they mean: "Same record as #1 (BillingCity: Haifa)", "Not there yet — create it as a new record", "Not decided — it stays out of the deployment".

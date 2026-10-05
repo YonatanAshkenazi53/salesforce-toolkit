@@ -577,8 +577,17 @@ So for 1.0:
   re-read, where delete is already offered (scan: `_twinsExtra` → onlyInTarget). Live with both
   orgs (`scripts/dev/live/needs-decision.mjs`): remember → take back → remember → re-read; plan
   shows 0 needing a decision; trailheads4 unchanged (CLI). Pins `test/needs-decision-1005`.
-- Deploy page › "This deployment" tree: the cards, the relation and "how many each hold" read as
-  broken.
+- **Deploy page › "This deployment" tree** (user: "this part seems a bit broken. the view of the
+  objects and their relation. how many each hold. etc"). DONE: pure `sftkDeployNodeFacts(n,
+  parentObj, row)` (role "under Account · AccountId" / "the root object", counted, src, tgt, work
+  chips ins/chg/ext/link/amb, inSync — records needing a decision are work); the card shows
+  "N in <source> → M in <target>", one chip per kind (`data-tree-tab` opens that tab), "matched
+  by …", "looks up, outside this deployment: …"; an unread object says "not counted yet — unknown,
+  not zero" with `data-tree-scan` (🔎 Count = `scanReconcileChild`, offered once its parent is
+  counted); identity line only where an org has the field (the ✗ ✗ chips are gone), footer says
+  it is optional; CSS: top-aligned tree, connectors meet at 26px. Live with both orgs
+  (`scripts/dev/live/deploy-tree.mjs`): Account 10 → 4 with four chips; 🔎 Count on Contact →
+  8 → 2; a chip opened Contact › Insert. Pins `test/deploy-tree-1005`.
 
 ## Backlog (found during the campaign)
 

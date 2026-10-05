@@ -120,8 +120,9 @@ describe('the Deploy tree has its own class prefix', () => {
 describe('identity chips name the org; Bulk hides the Collections knobs', () => {
   it('the chips are labelled with orgLabel(), never "source"/"target"', () => {
     expect(DV).toContain("const srcOrgL = orgLabel(p.sourceOrg || '') || 'source', tgtOrgL = orgLabel(p.targetOrg || '') || 'target';");
-    expect(DV).toContain('${idPill(id ? id.src : null, srcOrgL)} ${idPill(id ? id.tgt : null, tgtOrgL)}');
-    expect(DV).not.toContain("idPill(id ? id.src : null, 'source')");
+    // 2026-10-05: one quiet line, and only where an org has the field (test/deploy-tree-1005)
+    expect(DV).toContain("🪪 identity field: ${one(id.src, srcOrgL)} · ${one(id.tgt, tgtOrgL)}");
+    expect(DV).not.toContain("one(id.src, 'source')");
   });
   it('with Bulk selected the batch/threads inputs are not rendered, and the line says why', () => {
     expect(DV).toContain('Bulk API 2.0 splits the job itself — no batch size or threads');
