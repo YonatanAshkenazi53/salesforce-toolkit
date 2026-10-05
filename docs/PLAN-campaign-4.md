@@ -618,7 +618,7 @@ flagged `run` section (two fixture records into trailheads4, rolled back; `WRITE
 failing section is logged and skipped; e-mail addresses and the running user's name are masked before
 they are drawn; waits play 8× with a "sped up" badge. Output in `dist/video/` (not in git). The upload
 to YouTube is the user's step. Re-record after any UI change: three commands in the README.
-First cut 2026-10-05: all 16 sections recorded with no failure, 7 min 50 s, 18.5 MB; re-recorded after the history move (see below).
+Final cut of 2026-10-05: 16 chapters, 8 min 12 s, 18 MB, recorded from the public build after the history move; each section has its own folder (`dist/video/rec/<id>/`), so one chapter can be recorded again with `ONLY=<id>` and the video composed again. The recording found two product defects, both fixed the same day: the Dependencies search answering "nothing" about unread flows, and a rollback's progress row saying "created" while deleting.
 
 ## Backlog (found during the campaign)
 
