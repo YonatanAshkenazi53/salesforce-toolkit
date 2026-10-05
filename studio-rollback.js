@@ -16,6 +16,9 @@
 //            runs with the live run view, then shows the result.
 //   REPORT — opened from a rollback's History card: the same tabs, read-only,
 //            every record the rollback deleted / restored / failed, by name.
+//            When the entry has no names for what it deleted (an older
+//            rollback, counts-only mode, more than History keeps), the list
+//            is read from the org's Recycle Bin (_rbBinRead).
 // Everything the run did is TICKED by default — a rollback's purpose is all of
 // it; unticking is the exception (said in the intro).
 
@@ -343,24 +346,85 @@ async function _rbGo() {
 
 // ── REPORT mode ─────────────────────────────────────────────────────────────
 const _RB_REPORT_TABS = [
-  { k: 'deleted',  label: '🗑 Deleted',  field: 'deletedRecords',  noun: 'deleted — in the Recycle Bin of the org for 15 days' },
-  { k: 'restored', label: '↩ Restored', field: 'restoredRecords', noun: 'restored to their values from the restore point' },
+  { k: 'deleted',  label: '🗑 Deleted',  field: 'deletedRecords',  count: 'deleted', noun: 'deleted — in the Recycle Bin of the org for 15 days' },
+  { k: 'restored', label: '↩ Restored', field: 'restoredRecords', count: 'updated', noun: 'restored to their values from the restore point' },
   { k: 'failed',   label: '❌ Failed',   field: 'failedRecords',   noun: 'refused by Salesforce — nothing changed for these' },
 ];
+const SFTK_RB_BIN_CAP = 50000;
+// The org a per-object result was written in (a two-leg rollback names it per object).
+function _rbReportOrg(e, s) { return (s && s.orgUrl) || e.targetOrg || e.tgtOrgUrl || ''; }
+// Names are missing for the deleted records of this object: an older rollback,
+// counts-only mode, or more records than a History entry keeps.
+function _rbNamesMissing(s) { return Number(s && s.deleted || 0) > ((s && s.deletedRecords) || []).length; }
+
+// A rollback deletes to the Recycle Bin, so the org itself still knows which
+// records it deleted — for 15 days. When the History entry has no names (user
+// 2026-10-05, on a rollback from before names were kept: "when you click see
+// which records, you dont see the list of records"), the page reads them
+// there: the object's deleted records inside the rollback's own time window.
+// A read, never a write; said on the page while it runs, with what it costs.
+async function _rbBinRead(objKey) {
+  const me = _rb; if (!me || !me.report) return;
+  const e = me.entry, s = (e.summary || {})[objKey] || {};
+  const org = _rbReportOrg(e, s);
+  const objType = String(objKey).split(' @ ')[0];
+  me.bin = me.bin || {};
+  const st = me.bin[objKey] = { state: 'loading', rows: [], calls: 0 };
+  const paint = () => { if (_rb === me && _currentView === 'rollback') renderRollback(); };
+  const fail = (state, error) => { st.state = state; st.error = error || ''; paint(); };
+  try {
+    const sess = await getOrgSession(org);
+    if (_rb !== me) return;
+    if (!sess) return fail('nosession');
+    // The label: the object's own name field, when it has one (Case has CaseNumber, a Task has Subject).
+    let nameField = '';
+    try {
+      const d = await describe(objType, sess.orgUrl, sess.sid); st.calls++;
+      const fields = (d && d.fields) || [];
+      nameField = (fields.find(f => f.nameField === true) || fields.find(f => f.name === 'Name') || {}).name || '';
+    } catch (_) { /* no label field: the list shows Ids */ }
+    const q = sftkUndoBinQuery(objType, e.startedAt, e.completedAt, nameField);
+    if (!q) return fail('error', 'this History entry has no start and end time to search by');
+    st.from = q.from; st.to = q.to; st.tolMin = q.tolMin;
+    let path = `services/data/v62.0/queryAll/?q=${encodeURIComponent(q.soql)}`;
+    while (path) {
+      const res = await sendBg({ type: 'SF_REST_GET', orgUrl: sess.orgUrl, sid: sess.sid, path, _suppressError: true });
+      st.calls++;
+      if (_rb !== me) return;
+      if (!res || res.error || !Array.isArray(res.records)) return fail('error', (res && res.error) || 'Salesforce returned no records list');
+      for (const r of res.records) st.rows.push({ id: r.Id, name: (nameField && r[nameField] != null && String(r[nameField]).trim()) || r.Id });
+      if (st.rows.length >= SFTK_RB_BIN_CAP) { st.capped = true; break; }
+      path = res.nextRecordsUrl ? String(res.nextRecordsUrl).replace(/^\/+/, '') : '';
+    }
+    st.state = 'done';
+    paint();
+  } catch (err) { fail('error', (err && err.message) || String(err)); }
+}
+
 function _rbRenderReport() {
   const me = _rb; const e = me.entry; const n = v => Number(v || 0).toLocaleString();
   const summary = e.summary || {};
   const keys = Object.keys(summary);
   if (!keys.includes(me.objKey)) me.objKey = keys[0] || '';
   const s = summary[me.objKey] || {};
-  const org = s.orgUrl || e.targetOrg || e.tgtOrgUrl || '';
-  const old = !keys.some(k => summary[k].deletedRecords || summary[k].restoredRecords || summary[k].failedRecords);
-  const chips = keys.map(k => { const r = summary[k]; return `<span class="ds-summary-chip"><strong>${esc(k)}</strong> · ${r.deleted ? `<span class="ds-rec-tag ds-rec-tag-del">${n(r.deleted)} deleted</span>` : ''} ${r.updated ? `<span class="ds-rec-tag ds-rec-tag-upd">${n(r.updated)} restored</span>` : ''} ${(r.deletedFailed || r.updatedFailed) ? `<span class="ds-rec-tag ds-rec-tag-fail">${n((r.deletedFailed || 0) + (r.updatedFailed || 0))} failed</span>` : ''} ${r.remaining === 0 ? '<span class="ds-rec-tag ds-rec-tag-ins">✓ verified</span>' : r.remaining == null ? '<span class="ds-rec-tag ds-rec-tag-fail">unverified</span>' : `<span class="ds-rec-tag ds-rec-tag-fail">${n(r.remaining)} still differ</span>`}${r.leftAlone ? ` <span class="ds-rec-tag">${n(r.leftAlone)} left alone</span>` : ''}${r.stillGone ? ` <span class="ds-rec-tag ds-rec-tag-del">${n(r.stillGone)} still gone</span>` : ''}</span>`; }).join(' ');
-  const tabs = _RB_REPORT_TABS.map(t => ({ ...t, n: (s[t.field] || []).length }));
+  const org = _rbReportOrg(e, s);
+  const chips = keys.map(k => { const r = summary[k]; return `<span class="ds-summary-chip"><strong>${esc(k)}</strong> · ${r.deleted ? `<span class="ds-rec-tag ds-rec-tag-del">${n(r.deleted)} deleted</span>` : ''} ${r.updated ? `<span class="ds-rec-tag ds-rec-tag-upd">${n(r.updated)} restored</span>` : ''} ${(r.deletedFailed || r.updatedFailed) ? `<span class="ds-rec-tag ds-rec-tag-fail">${n((r.deletedFailed || 0) + (r.updatedFailed || 0))} failed</span>` : ''} ${r.leftAlone ? `<span class="ds-rec-tag">${n(r.leftAlone)} left alone</span>` : ''}</span>`; }).join(' ');
+  // Where the Deleted list comes from: the entry's own names, or — when it has
+  // none (or fewer than it deleted) — the org's Recycle Bin, read now.
+  const missing = _rbNamesMissing(s);
+  const bin = (me.bin || {})[me.objKey] || null;
+  const days = sftkUndoBinAge(e.completedAt || e.startedAt, Date.now());
+  const tooOld = days !== null && days > 15;
+  if (missing && !bin && !tooOld && me.objKey) { _rbBinRead(me.objKey); }
+  const binNow = (me.bin || {})[me.objKey] || null;
+  const fromBin = missing && binNow && binNow.state === 'done';
+  const stored = { deleted: s.deletedRecords || [], restored: s.restoredRecords || [], failed: s.failedRecords || [] };
+  const listOf = k => (k === 'deleted' && fromBin) ? binNow.rows : stored[k];
+  const tabs = _RB_REPORT_TABS.map(t => ({ ...t, n: t.count ? Math.max(Number(s[t.count] || 0), listOf(t.k).length) : listOf(t.k).length }));
   if (!tabs.some(t => t.k === me.tab)) me.tab = 'deleted';
   const tab = tabs.find(t => t.k === me.tab);
   const q = (me.filter || '').trim().toLowerCase();
-  const all = (s[tab.field] || []).map(r => ({ id: r.id, name: r.name || r.label || r.id, fields: r.fields, error: r.error, op: r.op }));
+  const all = listOf(me.tab).map(r => ({ id: r.id, name: r.name || r.label || r.id, fields: r.fields, error: r.error, op: r.op }));
   const rows = q ? all.filter(r => `${r.name} ${r.id} ${r.error || ''}`.toLowerCase().includes(q)) : all;
   const shown = rows.slice(0, me.window);
   const rowHtml = r => {
@@ -371,20 +435,39 @@ function _rbRenderReport() {
       : `<span class="ds-dep-open"><a href="${_rbRecUrl(org, r.id)}" target="_blank" rel="noopener">open ↗</a></span>`;
     return `<div class="ds-dep-row"><span class="ds-dep-mono">${esc(r.id)}</span><span class="ds-dep-key" title="${esc(r.id)}">${esc(r.name)}</span><span class="ds-dep-mid">${mid}</span><span class="ds-dep-tail">${tail}</span></div>`;
   };
+  // What the page says about a list it could not take from the entry.
+  const why = (typeof _settings !== 'undefined' && _settings && _settings.countsOnly)
+    ? 'Counts-only mode keeps no record names in History.'
+    : (s.deletedRecords || []).length ? `History keeps the first ${n((s.deletedRecords || []).length)} names per object.` : 'This rollback ran before History kept the records by name.';
+  const again = '<button class="ds-btn ds-btn-xs" id="dsRbBinRead">🔎 Read again</button>';
+  let note = '';
+  if (me.tab === 'deleted' && missing) {
+    if (tooOld) note = `<div class="ds-dep-note">${esc(why)} It ran ${n(days)} days ago and the Recycle Bin keeps a record for 15 days, so the ${n(s.deleted)} deleted records can no longer be named.</div>`;
+    else if (!binNow || binNow.state === 'loading') note = `<div class="ds-dep-note">🔎 ${esc(why)} Reading the ${n(s.deleted)} deleted ${esc(me.objKey)} records from the Recycle Bin of ${esc(orgLabel(org))} instead (≈${n(sftkUndoReadQuote(s.deleted).calls + 1)} API calls, nothing is changed)…</div>`;
+    else if (binNow.state === 'nosession') note = `<div class="ds-dep-note">⚠ ${esc(why)} The records it deleted can still be read from the Recycle Bin of ${esc(orgLabel(org))} — open that org in a Chrome tab, then ${again}</div>`;
+    else if (binNow.state === 'error') note = `<div class="ds-dep-note">❌ ${esc(why)} Reading the Recycle Bin of ${esc(orgLabel(org))} failed: ${esc(binNow.error || 'unknown error')}. Nothing is listed. ${again}</div>`;
+    else {
+      const v = sftkUndoBinVerdict(binNow.rows.length, s.deleted, !!binNow.capped);
+      note = `<div class="ds-dep-note">${v.kind === 'match' ? '✅' : '⚠'} ${esc(why)} This list was read from the Recycle Bin of ${esc(orgLabel(org))} just now (${n(binNow.calls)} API calls): ${esc(me.objKey)} records deleted between ${esc(_rbWhen(binNow.from))} and ${esc(_rbWhen(binNow.to))} — the rollback’s own time, ${n(binNow.tolMin)} minutes either side. ${esc(v.text)} ${again}</div>`;
+    }
+  } else if (me.tab === 'restored' && Number(s.updated || 0) > stored.restored.length) {
+    note = `<div class="ds-dep-note">${esc(stored.restored.length ? `History keeps the first ${n(stored.restored.length)} names per object.` : why)} ${n(Number(s.updated) - stored.restored.length)} restored record(s) are counted but not named — a restored record leaves no trace in the org to read them from.</div>`;
+  }
+  const waiting = me.tab === 'deleted' && missing && !tooOld && (!binNow || binNow.state === 'loading');
   setMain(`${_rbHeader(`${esc(e.profileName || '↩ Rollback')} — what it did`, `${esc(orgLabel(org))} · ${esc(_rbWhen(e.completedAt || e.startedAt))} · ${esc(e.status || '')}`)}
     <div class="ds-dep-page">
       <div class="ds-rec-card"><div class="ds-rec-card-hd"><span class="ds-rec-card-ico">📋</span><span class="ds-rec-card-title">Per object</span></div><div class="ds-rec-card-line">${chips || 'nothing recorded'}</div>
-        ${old ? '<div class="ds-dep-note">This rollback ran before records were kept by name — counts only.</div>' : ''}
         ${s.recordsCapped ? `<div class="ds-dep-note">⚠ Only the first ${n(s.recordsCapped)} deleted and restored records are kept by name for this object — the counts above are the truth.</div>` : ''}
       </div>
-      ${old ? '' : `<div class="ds-rec-card ds-rb-records">
+      ${!keys.length ? '' : `<div class="ds-rec-card ds-rb-records">
         <div class="ds-dep-objbar"><span class="ds-dep-objlbl">object</span>${keys.map(k => `<button class="ds-dep-objbtn ${k === me.objKey ? 'ds-dep-objbtn-on' : ''}" data-rb-robj="${esc(k)}">${esc(k)}</button>`).join('')}</div>
         <div class="ds-dep-tabs" role="tablist">${tabs.map(t => `<button role="tab" data-rb-rtab="${t.k}" aria-selected="${t.k === me.tab}">${t.label} <b>${t.n.toLocaleString()}</b></button>`).join('')}</div>
+        ${note}
         <div class="ds-dep-tools">
           <input type="search" id="dsRbFilter" class="ds-dep-filter" placeholder="🔍 filter by name or Id…" value="${esc(me.filter)}" aria-label="Filter records">
-          <span>${rows.length.toLocaleString()} ${esc(me.objKey)} ${esc(tab.noun)}</span>
+          <span>${rows.length.toLocaleString()} ${esc(me.objKey)} ${esc(tab.noun)}${all.length < tab.n ? ` — ${n(all.length)} of ${n(tab.n)} named` : ''}</span>
         </div>
-        <div class="ds-dep-list">${shown.length ? shown.map(rowHtml).join('') : `<div class="ds-dep-empty">${q ? 'No record matches that filter.' : `Nothing ${esc(tab.noun)}.`}</div>`}</div>
+        <div class="ds-dep-list">${shown.length ? shown.map(rowHtml).join('') : `<div class="ds-dep-empty">${waiting ? 'Reading the Recycle Bin…' : q ? 'No record matches that filter.' : (tab.n ? 'No names to list — see the note above.' : `Nothing ${esc(tab.noun)}.`)}</div>`}</div>
         ${rows.length > shown.length ? `<div class="ds-dep-note ds-dep-more">Showing ${shown.length.toLocaleString()} of ${rows.length.toLocaleString()}
           <button class="ds-btn ds-btn-xs" data-rb-more="step">Show ${Math.min(SFTK_RB_WINDOW, rows.length - shown.length).toLocaleString()} more</button>
           <button class="ds-btn ds-btn-xs" data-rb-more="all">Show all ${rows.length.toLocaleString()}</button></div>` : ''}
@@ -393,6 +476,7 @@ function _rbRenderReport() {
   _rbWireBack();
   document.querySelectorAll('[data-rb-robj]').forEach(b => b.addEventListener('click', () => { me.objKey = b.dataset.rbRobj; me.filter = ''; me.window = SFTK_RB_WINDOW; renderRollback(); }));
   document.querySelectorAll('[data-rb-rtab]').forEach(b => b.addEventListener('click', () => { me.tab = b.dataset.rbRtab; me.filter = ''; me.window = SFTK_RB_WINDOW; renderRollback(); }));
+  eid('dsRbBinRead')?.addEventListener('click', () => { if (me.bin) delete me.bin[me.objKey]; renderRollback(); });
   const f = eid('dsRbFilter');
   f?.addEventListener('input', () => { me.filter = f.value; me.window = SFTK_RB_WINDOW; const pos = f.selectionStart; renderRollback(); const g = eid('dsRbFilter'); if (g) { g.focus(); try { g.setSelectionRange(pos, pos); } catch (_) {} } });
   document.querySelectorAll('[data-rb-more]').forEach(b => b.addEventListener('click', () => { me.window = b.dataset.rbMore === 'all' ? rows.length : me.window + SFTK_RB_WINDOW; renderRollback(); }));

@@ -481,6 +481,46 @@ function sftkUndoResultSummary(results) {
   return out;
 }
 
+// ── A rollback's report, when its records were not kept by name ─────────────
+// A rollback deletes to the Recycle Bin, where a record stays for 15 days, so
+// "which records did it delete" can be read again from the org: the object's
+// deleted records inside the rollback's own time window. The times on a
+// History entry are this PC's clock; the org's are Salesforce's — hence a
+// tolerance on both sides, said on the page.
+// PURE. Returns { soql, from, to, tolMin } or null (no usable times, or a name
+// that is not an API name — nothing is ever built from free text).
+function sftkUndoBinQuery(objType, startedAt, completedAt, nameField, tolMs) {
+  const api = /^[A-Za-z][A-Za-z0-9_]*$/;
+  if (!api.test(String(objType || ''))) return null;
+  const a = Date.parse(startedAt || ''), b = Date.parse(completedAt || '');
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return null;
+  const tol = (tolMs != null && Number(tolMs) >= 0) ? Number(tolMs) : 120000;
+  const iso = t => new Date(t).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const from = iso(a - tol), to = iso(b + tol);
+  const nf = (api.test(String(nameField || '')) && nameField !== 'Id') ? String(nameField) : '';
+  return {
+    soql: `SELECT Id${nf ? `, ${nf}` : ''} FROM ${objType} WHERE IsDeleted = true AND SystemModstamp >= ${from} AND SystemModstamp <= ${to} ORDER BY SystemModstamp, Id`,
+    from, to, tolMin: Math.round(tol / 60000),
+  };
+}
+// Whole days since a rollback ran (null when the time is unreadable). PURE.
+function sftkUndoBinAge(whenIso, nowMs) {
+  const t = Date.parse(whenIso || '');
+  if (!Number.isFinite(t) || !Number.isFinite(Number(nowMs))) return null;
+  return Math.max(0, Math.floor((Number(nowMs) - t) / 86400000));
+}
+// How the Recycle Bin read compares with what the rollback counted. The count
+// on the History entry is Salesforce's per-record answer at the time and stays
+// the truth; the list is what the org can still name today. PURE.
+function sftkUndoBinVerdict(found, counted, capped) {
+  const f = Number(found) || 0, c = Number(counted) || 0;
+  const N = v => Number(v).toLocaleString();
+  if (capped) return { kind: 'capped', text: `The read stopped at ${N(f)} records; the rollback counted ${N(c)}.` };
+  if (f === c) return { kind: 'match', text: `${N(f)} found — the same number the rollback counted.` };
+  if (f < c) return { kind: 'fewer', text: `${N(f)} found; the rollback counted ${N(c)}. The other ${N(c - f)} are no longer in the Recycle Bin (it keeps a record for 15 days and has a size limit), so they cannot be named.` };
+  return { kind: 'more', text: `${N(f)} found; the rollback counted ${N(c)}. ${N(f - c)} of these were deleted by something else in the same minutes — this list cannot tell which.` };
+}
+
 // A record's name for a human: Name, else the person parts, else the usual
 // title fields, else the Id. PURE.
 function sftkUndoRowLabel(row) {
@@ -579,6 +619,9 @@ function sftkUndoVerifyCounts(diff, actedIds) {
 
 if (typeof globalThis !== 'undefined') {
   globalThis.sftkUndoMaxRows           = sftkUndoMaxRows;
+  globalThis.sftkUndoBinQuery          = sftkUndoBinQuery;
+  globalThis.sftkUndoBinAge            = sftkUndoBinAge;
+  globalThis.sftkUndoBinVerdict        = sftkUndoBinVerdict;
   globalThis.sftkUndoMaxRuns           = sftkUndoMaxRuns;
   globalThis.sftkUndoFields            = sftkUndoFields;
   globalThis.sftkUndoSnapshotSoql      = sftkUndoSnapshotSoql;
