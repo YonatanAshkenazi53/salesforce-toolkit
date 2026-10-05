@@ -50,6 +50,10 @@
     return out;
   }
 
+  function _ships() {
+    try { return typeof sftkShips !== 'function' || sftkShips('debug'); } catch (_) { return true; }
+  }
+
   function extVer() {
     try { return chrome.runtime.getManifest().version; } catch (_) { return '?'; }
   }
@@ -57,7 +61,10 @@
   // ── Core object ────────────────────────────────────────────
   const D = {
     // ── State ───────────────────────────────────────────────
-    enabled:   localStorage.getItem(ENABLED_KEY) === '1',
+    // A build without the Debug Log (sftk-build.js) has no button to open it,
+    // so nothing may be recorded there either — not even when an older build
+    // on this PC left the switch on.
+    enabled:   _ships() && localStorage.getItem(ENABLED_KEY) === '1',
     entries:   [],
     persisted: false,   // true while we are writing to storage
     _cb:       null,    // header-badge refresh callback
@@ -116,6 +123,7 @@
     },
 
     toggle() {
+      if (!_ships()) { this.enabled = false; return false; }
       this.enabled = !this.enabled;
       localStorage.setItem(ENABLED_KEY, this.enabled ? '1' : '0');
       if (!this.enabled) { this.clear(); this.persisted = false; }

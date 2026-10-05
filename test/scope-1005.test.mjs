@@ -35,9 +35,9 @@ describe('sftk-build.js — the developer build ships everything', () => {
 });
 
 describe('the packer — what the public build leaves out', () => {
-  it('Deploy Readiness and Licenses join the Picklist Manager and Sequences', () => {
-    expect(PACK).toContain("CUT_JS = {'studio-picklists.js', 'studio-sequences.js', 'studio-readiness.js', 'license-manager.js'}");
-    expect(PACK).toContain("CUT_IDS = ['picklists', 'sequences', 'readiness', 'licenses']");
+  it('Deploy Readiness, Licenses and the Debug Log join the Picklist Manager and Sequences', () => {
+    expect(PACK).toContain("CUT_JS = {'studio-picklists.js', 'studio-sequences.js', 'studio-readiness.js', 'license-manager.js', 'debug-modal.js'}");
+    expect(PACK).toContain("CUT_IDS = ['picklists', 'sequences', 'readiness', 'licenses', 'debug']");
   });
   it('their nav buttons, the Licenses tab and their script tags go; a changed layout fails the pack instead of shipping a dead button', () => {
     expect(PACK).toContain('data-view="readiness">');
@@ -51,7 +51,7 @@ describe('the packer — what the public build leaves out', () => {
     expect(PACK).toContain("fail('packed sftk-build.js still says nothing is cut')");
   });
   it('the post-checks look for leftovers in both pages', () => {
-    expect(PACK).toContain("for needle in ['license-manager.js', 'data-tab=\"licenses\"', 'tab-licenses']:");
+    expect(PACK).toContain("for needle in ['license-manager.js', 'data-tab=\"licenses\"', 'tab-licenses', 'debug-modal.js', 'id=\"dbgBtn\"']:");
     expect(PACK).toContain("'studio-readiness.js', 'data-view=\"readiness\"',");
   });
 });
@@ -79,5 +79,38 @@ describe('the pages degrade by themselves', () => {
     const shipped = F.slice(0, F.indexOf('## Not in the public build yet'));
     expect(shipped).not.toContain('### Licenses');
     expect(shipped).not.toContain('### Deploy Readiness');
+  });
+});
+
+// User 2026-10-05: "i dont think the store release should have debug feature
+// for both tookit and data studio, and license should show on both".
+describe('the public build has no Debug Log; the Licence button is on both pages', () => {
+  const LOG = read('debug-logger.js');
+  it('the packer takes the Debug button out of both top bars and fails if it cannot find it', () => {
+    expect(PACK).toContain("m = re.search(DBG_BTN_RE, html, re.S)");
+    expect(PACK).toContain("fail('Debug button not found in studio.html — top bar changed?')");
+    expect(PACK).toContain("m = re.search(DBG_BTN_RE, pop, re.S)");
+    expect(PACK).toContain("fail('Debug button not found in popup.html — top bar changed?')");
+    expect(PACK).toContain("for needle in ['debug-modal.js', 'id=\"dbgBtn\"']:");
+  });
+  it('the recorder cannot be on in a build without the Debug Log — not even from an old switch', () => {
+    expect(LOG).toContain("enabled:   _ships() && localStorage.getItem(ENABLED_KEY) === '1',");
+    expect(LOG).toContain("if (!_ships()) { this.enabled = false; return false; }");
+    expect(LOG).toContain("return typeof sftkShips !== 'function' || sftkShips('debug');");
+  });
+  it('both pages start without the Debug Log code', () => {
+    expect(read('popup.js')).toContain("if (typeof initDebugMode === 'function') initDebugMode();");
+    expect(read('studio-core.js')).toContain("if (typeof initDebugMode === 'function') initDebugMode();");
+  });
+  it('the build list is loaded before the recorder on both pages', () => {
+    for (const page of ['popup.html', 'studio.html']) {
+      const h = read(page);
+      expect(h.indexOf('<script src="sftk-build.js"></script>')).toBeLessThan(h.indexOf('<script src="debug-logger.js"></script>'));
+    }
+  });
+  it('the Licence button is in both top bars, and the pack fails without it', () => {
+    for (const page of ['popup.html', 'studio.html']) expect(read(page)).toContain('<button id="sftkTermsBtn" class="dbg-btn"');
+    expect(PACK).toContain("fail(f'packed {page} has no Licence button')");
+    expect(read('sftk-terms.js')).toContain("const b = document.getElementById('sftkTermsBtn');");
   });
 });

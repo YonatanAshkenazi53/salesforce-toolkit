@@ -262,12 +262,13 @@ function sftkFlowCardLines(versions, opts) {
     if (vs.length) lines.push({ vers: `${tag(vs)} · not active`, text: 'deleted. No version that runs uses the field, so nothing is replaced and no new version is made.' });
     return { hasActive: false, lines };
   }
-  lines.push({ vers: `v${active.num} · Active`, text: (swapTo
-    ? `the version that runs. ⇄ Replace saves a new version that uses ${swapTo} and keeps the flow running. ✂ Remove saves one without the reference, or deletes this version and switches the flow off — you choose in the dialog.`
-    : 'the version that runs. ✂ Remove saves a new version without the reference, or deletes this version and switches the flow off — you choose in the dialog.')
+  // The decision is on the card (user 2026-10-05): one button per way.
+  lines.push({ vers: `v${active.num} · Active`, text: 'the version that runs. '
+    + (swapTo ? `⇄ Replace saves a new active version that uses ${swapTo}; the flow keeps running. ` : '')
+    + '✂ Remove · flow keeps running saves a new active version without the field. 🗑 Delete versions · flow off switches the flow off instead.'
     + ` Either way v${active.num} itself is deleted afterwards.` });
   const top = vs.find(v => v.num > active.num && /draft/i.test(v.status)) || null;
-  if (top) lines.push({ vers: `v${top.num} · Draft`, text: 'newer than the active version: when the flow keeps running, Salesforce saves the new version OVER this draft, so its content is replaced. The dialog offers a backup.' });
+  if (top) lines.push({ vers: `v${top.num} · Draft`, text: 'newer than the active version: when the flow keeps running, Salesforce saves the new version OVER this draft, so its content is replaced; with 🗑 it is deleted if it mentions the field. The dialog offers a backup.' });
   const rest = vs.filter(v => v !== active && v !== top);
   if (rest.length) lines.push({ vers: `${tag(rest)} · not active`, text: 'deleted. Salesforce keeps the field locked while any version mentions it.' });
   return { hasActive: true, lines };

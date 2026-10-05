@@ -46,8 +46,16 @@ HELD_BACK_JS = {'studio-seed.js'}
 # out. Both keep working in the repo and the dev build. The pages degrade by
 # themselves (no card, no palette row, no link); sftk-build.js carries the ids
 # so one page can know what the other page does not have.
-CUT_JS = {'studio-picklists.js', 'studio-sequences.js', 'studio-readiness.js', 'license-manager.js'}
-CUT_IDS = ['picklists', 'sequences', 'readiness', 'licenses']
+#
+# 2026-10-05, later the same day — "i dont think the store release should have
+# debug feature for both tookit and data studio, and license should show on
+# both". The Debug Log (the top-bar button + debug-modal.js) leaves both pages;
+# debug-logger.js stays because every tool calls it, but with 'debug' cut it
+# can never be switched on. The Licence button is in both pages' top bars and
+# the pack fails if either lost it.
+CUT_JS = {'studio-picklists.js', 'studio-sequences.js', 'studio-readiness.js', 'license-manager.js', 'debug-modal.js'}
+CUT_IDS = ['picklists', 'sequences', 'readiness', 'licenses', 'debug']
+DBG_BTN_RE = r'[ \t]*<button id="dbgBtn"[^>]*>.*?</button>\r?\n?'
 EXCLUDE_JS = LABS_JS | HELD_BACK_JS | CUT_JS | {'studio-tools.js', 'content.js'}
 
 def fail(msg):
@@ -105,6 +113,11 @@ def main():
     if not m:
         fail('Deploy Readiness nav button not found in studio.html — nav layout changed?')
     html = html[:m.start()] + html[m.end():]
+    # The Debug Log's top-bar button — same rule.
+    m = re.search(DBG_BTN_RE, html, re.S)
+    if not m:
+        fail('Debug button not found in studio.html — top bar changed?')
+    html = html[:m.start()] + html[m.end():]
     i_labs = html.find('<!-- Labs:')
     i_footer = html.find('<!-- Nav footer -->')
     if i_labs == -1 or i_footer == -1 or i_footer < i_labs:
@@ -124,6 +137,10 @@ def main():
     m = re.search(r'[ \t]*<div id="tab-licenses" class="tab-content"[^>]*>\s*<div id="licenseManagerContainer"></div>\s*</div>\r?\n?', pop)
     if not m:
         fail('Licenses tab container not found in popup.html — layout changed?')
+    pop = pop[:m.start()] + pop[m.end():]
+    m = re.search(DBG_BTN_RE, pop, re.S)
+    if not m:
+        fail('Debug button not found in popup.html — top bar changed?')
     pop = pop[:m.start()] + pop[m.end():]
     io.open(pp_path, 'w', encoding='utf-8').write(pop)
 
@@ -182,9 +199,15 @@ def main():
         if os.path.exists(os.path.join(STAGE, js)):
             fail(f'{js} leaked into staging')
     pop = io.open(os.path.join(STAGE, 'popup.html'), encoding='utf-8').read()
-    for needle in ['license-manager.js', 'data-tab="licenses"', 'tab-licenses']:
+    for needle in ['license-manager.js', 'data-tab="licenses"', 'tab-licenses', 'debug-modal.js', 'id="dbgBtn"']:
         if needle in pop:
             fail(f'packed popup.html still contains {needle}')
+    for needle in ['debug-modal.js', 'id="dbgBtn"']:
+        if needle in html:
+            fail(f'packed studio.html still contains {needle}')
+    for page, doc in (('popup.html', pop), ('studio.html', html)):
+        if 'id="sftkTermsBtn"' not in doc:
+            fail(f'packed {page} has no Licence button')
     if 'window.SFTK_CUT = [];' in io.open(os.path.join(STAGE, 'sftk-build.js'), encoding='utf-8').read():
         fail('packed sftk-build.js still says nothing is cut')
     for needle in ['studio-seed.js', 'data-view="seed"',

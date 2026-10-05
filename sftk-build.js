@@ -9,7 +9,10 @@
 // other page (Data Studio's command palette and Org health open Toolkit tabs;
 // a link to a tab that is not there would open a blank page). Inside one page
 // a missing tool is already detected by its missing function.
-// Ids: Toolkit tab ids ('licenses') and Data Studio view ids ('readiness').
+// Ids: Toolkit tab ids ('licenses'), Data Studio view ids ('readiness'), and
+// 'debug' — the Debug Log of both pages (user 2026-10-05: "i dont think the
+// store release should have debug feature for both tookit and data studio").
+// Without it the recorder (debug-logger.js) can never be switched on.
 window.SFTK_CUT = [];
 
 function sftkShips(id) {

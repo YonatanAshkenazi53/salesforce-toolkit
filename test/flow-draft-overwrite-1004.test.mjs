@@ -67,7 +67,7 @@ describe('field-cleaner.js — recognising and surviving the overwrite', () => {
     expect(FC).toContain('plan.toDelete.map(v => v.id).filter(id => id !== out.newId)');
   });
   it('the confirmation names the draft, and the result says it was saved over', () => {
-    expect(FC).toContain('its content is REPLACED when the flow keeps running (Salesforce saves the new version over the newest draft)');
+    expect(FC).toContain("its content is REPLACED ${asks ? 'when the flow keeps running' : 'by the new version'} (Salesforce saves the new version over the newest draft)");
     expect(FC).toContain('saved over the draft v${r.newVersion}, as Salesforce does when the newest version is a draft');
   });
   it('the selective removal passes its before-list too', () => {

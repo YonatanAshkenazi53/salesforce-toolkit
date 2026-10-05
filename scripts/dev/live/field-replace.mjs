@@ -14,6 +14,7 @@
 //   ORG=npc2         run on trailheads4 instead of trailheads5
 //   SCAN_ONLY=1      open the dialog, log it, cancel
 //   SWAP=0           press ✂ Remove instead of ⇄ Replace on the item (replace mode shows both)
+//   WAY=keep / off   on a flow that runs on the field: ✂ Remove · flow keeps running, or 🗑 Delete versions · flow off
 //   FROM / TO        the two field API names (defaults: the fixture's)
 //   UNDO=1           Data Studio › History › ↩ Undo the newest entry afterwards
 import { undoNewest } from './_undo.mjs';
@@ -53,7 +54,9 @@ async function confirm(h, what, activeMode) {
 }
 async function fixRow(h, type, name, activeMode) {
   // every item has two buttons in replace mode: SWAP=0 presses ✂ Remove, the default presses ⇄ Replace
-  const way = process.env.SWAP === '0' ? '[data-swap="0"]' : (process.env.NO_REPLACE === '1' ? '' : '[data-swap="1"]');
+  // a flow that runs on the field has two ✂ buttons: WAY=keep (new active version) or WAY=off (delete the active one too)
+  const way = (type === 'Flow' && process.env.WAY) ? `[data-swap="0"][data-way="${process.env.WAY}"]`
+    : process.env.SWAP === '0' ? '[data-swap="0"]' : (process.env.NO_REPLACE === '1' ? '' : '[data-swap="1"]');
   const sel = `.fc-fix-btn[data-type="${type}"]${name ? `[data-name="${name}"]` : ''}${way}:not([disabled]):not(.fc-xml-fix)`;
   const btn = await h.eval(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); return b ? b.textContent.trim() + ' · ' + b.dataset.name : null; })()`);
   h.log(`${type} button:`, btn);
