@@ -666,7 +666,7 @@ async function sftkUndoExecute(ctx, picks, io) {
             errors.push(`${key}: delete of ${slice.length} record(s) unconfirmed — ${e?.message || e}`);
             log('❌', `${item.objType}: a delete of ${slice.length} record(s) got no per-record answer (${e?.message || e}) — outcome unconfirmed; the verification read below tells.`, 'ds-prog-err');
           }
-          progress({ phase: 'batch', obj: `🗑 ${item.objType}`, done: Math.min(i + SLICE, w.created.length), total: w.created.length, created: r.deleted, failed: r.deleteFailed });
+          progress({ phase: 'batch', obj: `🗑 ${item.objType}`, done: Math.min(i + SLICE, w.created.length), total: w.created.length, created: r.deleted, failed: r.deleteFailed, okWord: 'deleted' });
         }
         log(r.deleteFailed ? '⚠' : '✅', `${item.objType}: ${r.deleted.toLocaleString()} deleted${r.deleteFailed ? `, ${r.deleteFailed.toLocaleString()} not confirmed` : ''}`, r.deleteFailed ? 'ds-prog-warn' : '');
       }
@@ -695,7 +695,7 @@ async function sftkUndoExecute(ctx, picks, io) {
             errors.push(`${key}: restore of ${slice.length} record(s) unconfirmed — ${e?.message || e}`);
             log('❌', `${item.objType}: a restore of ${slice.length} record(s) got no per-record answer (${e?.message || e}) — outcome unconfirmed; the verification read below tells.`, 'ds-prog-err');
           }
-          progress({ phase: 'batch', obj: `↩ ${item.objType}`, done: Math.min(i + SLICE, payload.length), total: payload.length, created: r.restored, failed: r.restoreFailed });
+          progress({ phase: 'batch', obj: `↩ ${item.objType}`, done: Math.min(i + SLICE, payload.length), total: payload.length, created: r.restored, failed: r.restoreFailed, okWord: 'restored' });
         }
         log(r.restoreFailed ? '⚠' : '✅', `${item.objType}: ${r.restored.toLocaleString()} restored${r.restoreFailed ? `, ${r.restoreFailed.toLocaleString()} not confirmed` : ''}`, r.restoreFailed ? 'ds-prog-warn' : '');
       }

@@ -112,6 +112,16 @@ describe('the rest of the engine events', () => {
     expect(c.finished).toBe(true);
     expect(api.sftkRunProgressCardText(c, T0 + 1000).numsText).toBe('6 / 6 written · 6 created');
   });
+  // 2026-10-05: a rollback's rows said "2 / 2 written · 2 created" while it was DELETING
+  it('a rollback names what the accepted records became: deleted, or restored — never "created"', () => {
+    const del = drive([[0, { phase: 'fetched', obj: '🗑 Account', count: 2 }], [500, { phase: 'batch', obj: '🗑 Account', done: 2, total: 2, created: 2, failed: 0, okWord: 'deleted' }]]);
+    expect(api.sftkRunProgressCardText([...del.st.cards.values()][0], T0 + 1000).numsText).toBe('2 / 2 written · 2 deleted');
+    const res = drive([[0, { phase: 'fetched', obj: '↩ Contact', count: 3 }], [500, { phase: 'batch', obj: '↩ Contact', done: 3, total: 3, created: 2, failed: 1, okWord: 'restored' }]]);
+    expect(api.sftkRunProgressCardText([...res.st.cards.values()][0], T0 + 1000).numsText).toBe('3 / 3 written · 2 restored · 1 failed');
+    const UN = read('studio-undo.js');
+    expect(UN).toContain("created: r.deleted, failed: r.deleteFailed, okWord: 'deleted' });");
+    expect(UN).toContain("created: r.restored, failed: r.restoreFailed, okWord: 'restored' });");
+  });
   it('durations read as m:ss and h:mm:ss', () => {
     expect(api.sftkRunFmtDur(42_000)).toBe('0:42');
     expect(api.sftkRunFmtDur(4_205_000)).toBe('1:10:05');
