@@ -534,6 +534,22 @@ So for 1.0:
   cells filled.
 - **Scope of the first release, Data Studio** (user marked a screenshot): Connected Orgs, Data
   Deployment, All open orgs, History, Org Compare, Org health. NOT marked: Deploy Readiness.
+- **Field Cleaner — a flow's decision is on its card** (user: "in the flows, the user should also
+  have a small decision to make. remove the field, and create a new active version without him.
+  remove the field and delete everything including the active versions. in a replace we will just
+  create a new active version with the new field"). DONE: `_fixBtnsHtml` gives a flow with an active
+  referencing version `data-way="keep"` (✂ Remove · flow keeps running) and `data-way="off"`
+  (🗑 Delete versions · flow off), plus ⇄ Replace in replace mode; `_fixWay`; in `_fixOneRun`
+  `preset` / `asks` / `shownPlan` — the dialog states the way and shows no radios; a replace never
+  has radios (`_flowSwapHtml`); a way that cannot work is refused before the dialog. A walk over
+  many items made no decision, so its dialog still asks. Live on trailheads4 (fields reversed):
+  three dialogs read; 🗑 on "SFTK FC Test Flow" → switched off, all 4 versions gone (CLI: the flow
+  no longer exists); ✂ keep on "SFTK FC Test Flow 2" → v9 Active, v8 + v2 deleted (CLI).
+- **No Debug Log in the public build; Licence on both pages** (user: "i dont think the store release
+  should have debug feature for both tookit and data studio, and license should show on both").
+  DONE: packer cuts `debug-modal.js` and the `#dbgBtn` of both pages, `'debug'` joins `CUT_IDS`,
+  `debug-logger.js` stays (every tool calls it) but `_ships()` keeps it off; `#sftkTermsBtn` added
+  to studio.html (wired by sftk-terms.js); the pack fails if either page lacks it.
 - History › rollback card › "Which records" shows no records; it should open a Deploy-like page.
 - "Needs a decision": fix them one by one; the options are not clear; question whether the user
   should pick which record to keep and which duplicates to delete.

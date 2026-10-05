@@ -435,16 +435,19 @@ describe('a flow is ONE item — before the fix it says what happens to each ver
     const c = F.sftkFlowCardLines([V(11, 'Active'), V(12, 'Draft'), V(10, 'Obsolete'), V(9, 'Obsolete')], { swapTo: 'New__c' });
     expect(c.hasActive).toBe(true);
     expect(c.lines.map(l => l.vers)).toEqual(['v11 · Active', 'v12 · Draft', 'v10, v9 · not active']);
-    expect(c.lines[0].text).toContain('⇄ Replace saves a new version that uses New__c and keeps the flow running');
-    expect(c.lines[0].text).toContain('✂ Remove saves one without the reference');
+    expect(c.lines[0].text).toContain('⇄ Replace saves a new active version that uses New__c; the flow keeps running.');
+    expect(c.lines[0].text).toContain('✂ Remove · flow keeps running saves a new active version without the field.');
+    expect(c.lines[0].text).toContain('🗑 Delete versions · flow off switches the flow off instead.');
+    expect(c.lines[0].text).not.toContain('you choose in the dialog');
     expect(c.lines[0].text).toContain('Either way v11 itself is deleted afterwards.');
     expect(c.lines[1].text).toContain('saves the new version OVER this draft');
     expect(c.lines[2].text).toContain('deleted.');
   });
-  it('without a replacement field only ✂ Remove is described', () => {
+  it('without a replacement field the two ways to remove are described, and no ⇄', () => {
     const c = F.sftkFlowCardLines([V(3, 'Active')], {});
     expect(c.lines[0].text).not.toContain('⇄');
-    expect(c.lines[0].text).toContain('✂ Remove saves a new version without the reference');
+    expect(c.lines[0].text).toContain('✂ Remove · flow keeps running saves a new active version without the field.');
+    expect(c.lines[0].text).toContain('🗑 Delete versions · flow off');
   });
   it('a draft OLDER than the active version is just an old version', () => {
     expect(F.sftkFlowCardLines([V(3, 'Active'), V(2, 'Draft')], {}).lines.map(l => l.vers)).toEqual(['v3 · Active', 'v2 · not active']);
@@ -486,7 +489,7 @@ describe('Field Cleaner — the choice is made per item, by the button pressed',
   it('the run follows the button, not the mode: replace mode alone moves nothing', () => {
     expect(FC).toContain('function _swapOn() { return _fixSwap === true && _replOn(); }');
     expect(FC).toContain('_fixSwap = !!swap && _replOn();');
-    expect(FC).toContain('finally { _fixSwap = null; }');
+    expect(FC).toContain("finally { _fixSwap = null; _fixWay = ''; }");
     // every fix path asks _swapOn(), none asks the mode
     expect((FC.match(/const swap = _swapOn\(\);/g) || []).length).toBe(3);                 // layout, Lightning page, report
     expect(FC).toContain("const swap = _swapOn() && (type !== 'Flow' || flowPlan.plan.mode === 'active');");
@@ -494,7 +497,7 @@ describe('Field Cleaner — the choice is made per item, by the button pressed',
     expect(FC).not.toMatch(/const swap(ping)? = _replOn\(\)/);
   });
   it('the click carries the choice; one listener serves buttons that are re-drawn', () => {
-    expect(FC).toContain("fixOne(one.dataset.type, one.dataset.id, one.dataset.name, _curFieldId, one.dataset.swap === '1');");
+    expect(FC).toContain("fixOne(one.dataset.type, one.dataset.id, one.dataset.name, _curFieldId, one.dataset.swap === '1', one.dataset.way || '');");
     expect(FC).toContain("if (!results.dataset.fcFixWired) {");
     expect(FC).toContain("if (_fixSwap !== null) return;");                                  // one fix at a time
   });
@@ -560,3 +563,57 @@ describe('Field Cleaner — everything at once', () => {
   });
 });
 
+// User 2026-10-05, on the flow cards: "in the flows, the user should also have a
+// small decision to make. remove the field, and create a new active version
+// without him. remove the field and delete everything including the active
+// versions. in a replace we will just create a new active version with the new
+// field". The decision used to be two radio buttons inside the confirmation.
+describe('a flow that runs on the field — the decision is made on its card', () => {
+  const FC = read('field-cleaner.js');
+  const btns = FC.slice(FC.indexOf('function _fixBtnsHtml('), FC.indexOf('function _fixAllHtml('));
+  it('two ways to remove, one button each; ⇄ Replace joins them when a replacement is picked', () => {
+    expect(btns).toContain('data-swap="0" data-way="keep"');
+    expect(btns).toContain('✂ Remove · flow keeps running</button>');
+    expect(btns).toContain('data-swap="0" data-way="off"');
+    expect(btns).toContain('🗑 Delete versions · flow off</button>');
+    expect(btns).toContain('return move + keep + off;');
+    expect(btns).toContain("const move = _replOn() ? `<button class=\"btn btn-primary btn-sm fc-fix-btn\" ${attrs} data-swap=\"1\"");
+  });
+  it('the button pressed is the way: nothing is asked again in the dialog', () => {
+    expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off') ? way : '';");
+    expect(FC).toContain("const preset = !hasChoice ? '' : (swap || _fixWay === 'keep') ? 'replace' : _fixWay === 'off' ? 'delete' : '';");
+    expect(FC).toContain('if (preset) activeMode = preset;');
+    expect(FC).toContain('const asks = hasChoice && !preset;');
+    expect(FC).toContain('if (!asks) return;');
+    expect(FC).toContain('_flowChoiceHtml(flowPlan, componentName, canReplace, preset)');
+  });
+  it('a replace has nothing to choose: its dialog section carries no radio at all', () => {
+    const sw = FC.slice(FC.indexOf('function _flowSwapHtml('), FC.indexOf('const _chainKey ='));
+    expect(sw).not.toContain('fcActiveMode');
+    expect(sw).toContain('A replace has nothing else to choose.');
+  });
+  it('🗑 shows the delete plan: its own version list, its own lines, its own button text', () => {
+    expect(FC).toContain("const shownPlan = preset === 'delete' ? flowPlan.planDelete : (flowPlan ? flowPlan.plan : null);");
+    expect(FC).toContain("(asks && !activeMode ? [] : activeMode === 'delete' ? flowPlan.linesDelete : flowPlan.lines)");
+    expect(FC).toContain("preset === 'delete' ? '🗑 Switch the flow off, then delete'");
+    expect(FC).toContain('<b>The flow stops running.</b> It is switched off, the org is read again to confirm that nothing is active');
+  });
+  it('a way that cannot work is refused BEFORE the dialog, with nothing changed', () => {
+    const i = FC.indexOf("if (preset === 'replace' && !canReplace) {");
+    expect(i).toBeGreaterThan(0);
+    const win = FC.slice(i, FC.indexOf('if (preset) activeMode = preset;', i));
+    expect(win).toContain('appendInlineError(componentId, swap');
+    expect((win.match(/Nothing was changed\./g) || []).length).toBe(2);
+    expect(win).toContain('return;');
+    expect(i).toBeLessThan(FC.indexOf('const sure = await sftkConfirmDestructive({', i));
+  });
+  it('a walk over many items made no decision, so its dialog still asks (the two radios stay)', () => {
+    const ch = FC.slice(FC.indexOf('function _flowChoiceHtml('), FC.indexOf('function _flowSwapHtml('));
+    expect(ch).toContain('name="fcActiveMode" value="replace"');
+    expect(ch).toContain('name="fcActiveMode" value="delete"');
+    expect(ch).toContain("${preset === 'replace' ? `<div class=\"fc-prev-hd\">The active version — the flow keeps running</div>");
+  });
+  it('the busy text lands on the button that was pressed, not on its neighbour', () => {
+    expect(FC).toContain("(!b.dataset.way || !_fixWay || b.dataset.way === _fixWay)) b.textContent = text;");
+  });
+});

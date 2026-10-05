@@ -1001,6 +1001,7 @@ const FieldCleaner = (() => {
   // button (user 2026-10-05: "if i want to replace only one of them it will
   // replace them all. some i want to be able to delete and some to replace").
   let _fixSwap = null;
+  let _fixWay = '';   // a flow card's own decision: 'keep' (new active version) | 'off' (delete the active one too) | '' (not made: a bulk walk)
   function _swapOn() { return _fixSwap === true && _replOn(); }
   // One card per flow (the index lists a flow once per version that mentions
   // the field): [{ key, name, primaryId, active, versions: [{ id, num, status }] }]
@@ -1031,6 +1032,17 @@ const FieldCleaner = (() => {
       const card = _flowCards.find(c => c.primaryId === String(id));
       if (card && !card.active) {
         return `<button class="btn btn-secondary btn-sm fc-fix-btn" ${attrs} data-swap="0" title="Delete the old versions that still mention the field">🗑 Delete ${card.versions.length} old version${card.versions.length === 1 ? '' : 's'}</button>`;
+      }
+      if (card) {
+        // A flow that RUNS on the field leaves one small decision, and it is
+        // made here on the card (user 2026-10-05: "remove the field, and create
+        // a new active version without him. remove the field and delete
+        // everything including the active versions. in a replace we will just
+        // create a new active version with the new field").
+        const keep = `<button class="btn btn-secondary btn-sm fc-fix-btn" ${attrs} data-swap="0" data-way="keep" title="Saves a new active version without the field, then deletes the versions that mention it. The flow keeps running.">✂ Remove · flow keeps running</button>`;
+        const off = `<button class="btn btn-secondary btn-sm fc-fix-btn" ${attrs} data-swap="0" data-way="off" title="Switches the flow off and deletes every version that mentions the field, the active one too. The flow stops running.">🗑 Delete versions · flow off</button>`;
+        const move = _replOn() ? `<button class="btn btn-primary btn-sm fc-fix-btn" ${attrs} data-swap="1" title="Saves a new active version that uses ${esc(_replField.api)} instead of the field. The flow keeps running.">⇄ Replace</button>` : '';
+        return move + keep + off;
       }
     }
     const rm = `<button class="btn btn-secondary btn-sm fc-fix-btn" ${attrs} data-swap="0" title="Take the field’s reference out of this">✂ Remove</button>`;
@@ -1084,7 +1096,7 @@ const FieldCleaner = (() => {
     if (text == null) { pair.innerHTML = _fixBtnsHtml(pair.dataset.type, componentId, pair.dataset.name); return; }
     pair.querySelectorAll('.fc-fix-btn').forEach(b => {
       b.disabled = true;
-      if ((b.dataset.swap === '1') === (_fixSwap === true)) b.textContent = text;
+      if ((b.dataset.swap === '1') === (_fixSwap === true) && (!b.dataset.way || !_fixWay || b.dataset.way === _fixWay)) b.textContent = text;
     });
   }
   // In replace mode an item has two buttons, so the note says what each does.
@@ -1652,7 +1664,7 @@ const FieldCleaner = (() => {
   //               (layouts, list views, quick actions — cosmetic breakage)
   const TYPE_CFG = {
     Flow:           { icon: '🌊', label: 'Flows',            fixable: true, sev: 'blocker',
-                      note: 'A new version is saved with the field reference removed AND activated automatically. Old versions that still reference the field are deleted too — Salesforce keeps the dependency lock per version, so stale versions would otherwise still block the field delete.',
+                      note: 'A flow that runs on the field has two ways: ✂ Remove · flow keeps running saves a new active version without the field; 🗑 Delete versions · flow off switches the flow off. Either way every version that still mentions the field is deleted — Salesforce keeps the dependency lock per version, so a stale version would otherwise still block the field delete.',
                       doneLabel: '✅ Activated',
                       replNote: 'The active version is saved again with every reference pointing at {new} — the flow keeps its logic — then activated and verified. Old versions that still reference the old field are deleted: Salesforce keeps the dependency lock per version.' },
     FlexiPage:      { icon: '📄', label: 'Lightning Pages',  fixable: true, sev: 'silent',
@@ -1974,7 +1986,7 @@ const FieldCleaner = (() => {
       results.addEventListener('click', ev => {
         const one = ev.target.closest?.('.fc-fix-btn');
         if (one) {
-          if (!one.disabled && !one.classList.contains('fc-xml-fix')) fixOne(one.dataset.type, one.dataset.id, one.dataset.name, _curFieldId, one.dataset.swap === '1');
+          if (!one.disabled && !one.classList.contains('fc-xml-fix')) fixOne(one.dataset.type, one.dataset.id, one.dataset.name, _curFieldId, one.dataset.swap === '1', one.dataset.way || '');
           return;
         }
         const every = ev.target.closest?.('.fc-fix-every');
@@ -3066,15 +3078,17 @@ const FieldCleaner = (() => {
   // ── Fix individual flow ────────────────────────────────────
   // swap: the button pressed — true = ⇄ Replace (move the reference to the
   // replacement field), false / undefined = ✂ Remove. One fix at a time.
-  async function fixOne(type, componentId, componentName, fieldId, swap) {
+  // way: a flow card's decision for the version that runs ('keep' | 'off').
+  async function fixOne(type, componentId, componentName, fieldId, swap, way) {
     // A row that is already settled has nothing left to fix (and, for a flow,
     // its version may be gone): never run a fix on it again.
     if (eid(`fcItem_${componentId}`)?.classList.contains('fc-item-fixed')) return;
     if (_fixSwap !== null) return;
     _fixSwap = !!swap && _replOn();
+    _fixWay = (way === 'keep' || way === 'off') ? way : '';
     // 'cancel' = the user said no in the dialog (a bulk walk stops there)
     try { return await _fixOneRun(type, componentId, componentName, fieldId); }
-    finally { _fixSwap = null; }
+    finally { _fixSwap = null; _fixWay = ''; }
   }
   async function _fixOneRun(type, componentId, componentName, fieldId) {
     const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
@@ -3122,30 +3136,47 @@ const FieldCleaner = (() => {
     // correct, but a wasted round). Then nothing is preselected: the user picks.
     const replaceLikelyRefused = canReplace && !!pv && (pv.emptied || []).length > 0;
     let activeMode = hasChoice ? (canReplace && !replaceLikelyRefused ? 'replace' : '') : 'replace';
+    // The decision is made on the flow's card: ✂ keeps the flow running on a
+    // new version, 🗑 deletes the active version too, and ⇄ always keeps it
+    // running on the new field (user 2026-10-05). Only a walk over many items
+    // arrives without one — then the dialog asks, as it always did.
+    const preset = !hasChoice ? '' : (swap || _fixWay === 'keep') ? 'replace' : _fixWay === 'off' ? 'delete' : '';
+    if (preset === 'replace' && !canReplace) {
+      const vN = `the active v${flowPlan.plan.active.num} of "${componentName}"`;
+      const left = pv ? pv.remaining.length : 0;
+      appendInlineError(componentId, swap
+        ? `Nothing in ${vN} can be pointed at ${swapTo} automatically${left ? ` — the field is mentioned in ${left} place(s) where its object could not be worked out` : ''}. Nothing was changed. Change it in Flow Builder, or use one of the other buttons on this flow.`
+        : `Nothing can be taken out of ${vN} automatically${left ? ` — the field is used in ${left} place(s) the fix never rewrites (a decision or a formula)` : ''}. Nothing was changed. Change it in Flow Builder and press ✂ again, or press 🗑 Delete versions · flow off.`,
+        flowPlan.builderUrl, '↗ Open in Flow Builder');
+      return;
+    }
+    if (preset) activeMode = preset;
+    const asks = hasChoice && !preset;                      // the dialog shows the two ways only when the card did not
+    const shownPlan = preset === 'delete' ? flowPlan.planDelete : (flowPlan ? flowPlan.plan : null);
     const gate = await sftkOrgWriteGate(_orgUrl);
     const sure = await sftkConfirmDestructive({
       title: `${swap ? 'Replace' : 'Remove'} field reference — ${cfg.label || type}`,
       ...(swap ? { icon: '⇄' } : {}),
       items: type === 'Flow'
-        ? [...flowPlan.plan.toDelete.map(v => ({ label: `${componentName} v${v.num}`, sub: `${v.status} — deleted (${hasChoice && v.status === 'Active' ? 'the active version: replaced or removed, as you choose below' : v.why})` })),
-           ...(flowPlan.plan.overwrite ? [{ label: `${componentName} v${flowPlan.plan.overwrite.num}`, sub: `${flowPlan.plan.overwrite.status} — its content is REPLACED when the flow keeps running (Salesforce saves the new version over the newest draft)${flowPlan.plan.overwrite.refs ? '; deleted when you choose delete' : ''}` }] : [])]
+        ? [...shownPlan.toDelete.map(v => ({ label: `${componentName} v${v.num}`, sub: `${v.status} — deleted (${asks && v.status === 'Active' ? 'the active version: replaced or removed, as you choose below' : v.why})` })),
+           ...(shownPlan.overwrite ? [{ label: `${componentName} v${shownPlan.overwrite.num}`, sub: `${shownPlan.overwrite.status} — its content is REPLACED ${asks ? 'when the flow keeps running' : 'by the new version'} (Salesforce saves the new version over the newest draft)${asks && shownPlan.overwrite.refs ? '; deleted when you choose delete' : ''}` }] : [])]
         : [{ label: componentName, sub: type }],
       revOverride: {
         html: type === 'Flow'
-          ? `⚠ <strong>${hasChoice ? 'This' : (flowPlan.plan.mode === 'active' ? 'Deploys a new flow version without the reference, verifies it is ACTIVE, and then' : 'This')} permanently deletes flow versions</strong> that still reference the field (Salesforce holds the dependency lock per version, not per active version).<ol id="fcFlowLines" style="margin:6px 0 0 18px;padding:0">${(hasChoice && !activeMode ? [] : flowPlan.lines).map(l => `<li>${esc(l)}</li>`).join('')}</ol>`
+          ? `⚠ <strong>${asks ? 'This' : preset === 'delete' ? 'Switches the flow off, verifies that nothing is active, and then' : (flowPlan.plan.mode === 'active' ? (swap ? `Deploys a new flow version that uses ${esc(swapTo)}, verifies it is ACTIVE, and then` : 'Deploys a new flow version without the reference, verifies it is ACTIVE, and then') : 'This')} permanently deletes flow versions</strong> that still reference the field (Salesforce holds the dependency lock per version, not per active version).<ol id="fcFlowLines" style="margin:6px 0 0 18px;padding:0">${(asks && !activeMode ? [] : activeMode === 'delete' ? flowPlan.linesDelete : flowPlan.lines).map(l => `<li>${esc(l)}</li>`).join('')}</ol>`
           : `${swap ? `⇄ <strong>${esc(_selObj.api)}.${esc(_selField.api)} → ${esc(swapTo)}</strong>. ${esc(_groupNote(type, cfg))}` : `✏ ${cfg.note || 'The field reference is removed from this component.'}`} The change deploys immediately. ${['Report', 'Layout', 'FlexiPage'].includes(type)
               ? 'A <strong>restore point</strong> is saved first — 🧾 Cleanup history can put the previous version back.'
               : 'There is no undo besides re-adding the field by hand.'}`,
         needsCheckbox: type === 'Flow',
       },
       extraHtml: type === 'Flow' ? `
-        ${hasChoice ? _flowChoiceHtml(flowPlan, componentName, canReplace) : ''}
-        <label class="sftk-confirm-ack"><input type="checkbox" id="fcFlowBackup" checked> ⬇ Back up the ${flowPlan.plan.toDelete.length + (flowPlan.plan.overwrite ? 1 : 0)} version(s) as a zip before deleting (recommended — the Flows tool can restore from it)</label>
+        ${hasChoice ? _flowChoiceHtml(flowPlan, componentName, canReplace, preset) : ''}
+        <label class="sftk-confirm-ack"><input type="checkbox" id="fcFlowBackup" checked> ⬇ Back up the ${shownPlan.toDelete.length + (shownPlan.overwrite ? 1 : 0)} version(s) as a zip before deleting (recommended — the Flows tool can restore from it)</label>
         ${flowPlan.interviews.length ? `<div class="sftk-confirm-undo">⏸ ${esc(sftkFlowInterviewWords(sftkFlowInterviewKinds(flowPlan.interviews)).head)} that will be deleted first: ${esc(flowPlan.interviews.slice(0, 8).map(i => i.InterviewLabel || i.Name).join(', '))}${flowPlan.interviews.length > 8 ? ` … +${flowPlan.interviews.length - 8} more` : ''}</div>` : ''}` : '',
       onRender: type === 'Flow' ? () => {
         const cb = document.getElementById('fcFlowBackup');
         cb?.addEventListener('change', () => { wantBackup = !!cb.checked; });
-        if (!hasChoice) return;
+        if (!asks) return;   // the way was chosen on the card (or there is only one)
         // The choice drives the numbered plan and the button; nothing can be
         // confirmed until BOTH the acknowledgement is ticked and a way is chosen.
         const go = document.getElementById('sftkConfirmGo'), ack = document.getElementById('sftkConfirmAck');
@@ -3163,7 +3194,8 @@ const FieldCleaner = (() => {
         sync();
       } : null,
       confirmLabel: type === 'Flow'
-        ? (flowPlan.plan.mode === 'active' ? (swap ? '⇄ Deploy the version that uses the new field, then delete' : '✂ Deploy fixed version, then delete') : '🗑 Delete referencing version(s)')
+        ? (preset === 'delete' ? '🗑 Switch the flow off, then delete'
+          : flowPlan.plan.mode === 'active' ? (swap ? '⇄ Deploy the version that uses the new field, then delete' : '✂ Deploy fixed version, then delete') : '🗑 Delete referencing version(s)')
         : (swap ? '⇄ Replace reference' : '✂ Remove reference'),
       production: gate.production ? { label: gate.label } : null,
     });
@@ -3569,10 +3601,18 @@ const FieldCleaner = (() => {
   // it leaves the user (2026-09-21). Flow Builder cannot be driven or
   // highlighted from outside, so the manual route names every location by the
   // element's label and API name — Flow Builder's Toolbox → Manager finds them.
-  function _flowChoiceHtml(fp, flowName, canReplace) {
+  // preset: the way already chosen on the flow's card ('replace' = the flow
+  // keeps running, 'delete' = the active version goes too) — then the dialog
+  // states it instead of asking. '' = not chosen (a bulk walk): it asks.
+  function _flowChoiceHtml(fp, flowName, canReplace, preset) {
     const pv = fp.preview || { removed: [], remaining: [], emptied: [] };
     if (pv.swap) return _flowSwapHtml(fp, canReplace);
     const act = fp.plan.active;
+    if (preset === 'delete') return `<div class="fc-prev">
+      <div class="fc-prev-hd">The active v${act.num} — deleted with the rest</div>
+      <div class="fc-prev-sec fc-prev-warn"><b>The flow stops running.</b> It is switched off, the org is read again to confirm that nothing is active, and then v${act.num} is deleted with every other version that mentions the field. A version that never mentioned the field is left as it is, not active.</div>
+      <div class="fc-prev-sec">To keep the flow running instead, cancel and press <b>✂ Remove · flow keeps running</b> on its card.</div>
+    </div>`;
     const li = (x, tail) => `<li><b>${esc(x.kind)}</b> “${esc(x.label || x.name || '?')}”${x.name ? ` <code>${esc(x.name)}</code>` : ''} — ${esc(x.where)}${tail ? `: <code>${esc(tail)}</code>` : ''}</li>`;
     const list = (arr, tailKey) => arr.length ? `<ul class="fc-prev-list">${arr.slice(0, 12).map(x => li(x, x[tailKey])).join('')}${arr.length > 12 ? `<li>… +${arr.length - 12} more</li>` : ''}</ul>` : '';
     const open = fp.builderUrl ? `<a href="${esc(fp.builderUrl)}" target="_blank" rel="noopener" class="fc-prev-open">↗ Open v${act.num} in Flow Builder</a>` : '';
@@ -3584,12 +3624,13 @@ const FieldCleaner = (() => {
         <div class="fc-prev-note">Decisions and formulas decide what a flow does, so they are never rewritten for you. Until these are changed by hand, Salesforce will still refuse to delete the field.</div>${list(pv.remaining, 'value')}</div>` : ''}
       ${pv.emptied.length ? `<div class="fc-prev-sec fc-prev-warn"><b>⚠ Left empty by the fix (${pv.emptied.length}) — Salesforce is likely to refuse the new version</b>${list(pv.emptied, '')}
         <div class="fc-prev-note">An element with nothing left to do is invalid. If the deploy is refused, nothing is deleted and the message says so.</div></div>` : ''}
-      <div class="fc-prev-hd">The active version — choose</div>
+      ${preset === 'replace' ? `<div class="fc-prev-hd">The active version — the flow keeps running</div>
+      <div class="fc-prev-sec">A new active v${fp.plan.expectNew} is saved without what comes out above, the org is read again to confirm it is active, and then v${act.num} is deleted.${pv.emptied.length ? ` <em>Salesforce is likely to refuse it: ${pv.emptied.length} element(s) would be left empty. If it does, nothing is deleted.</em>` : ''}${pv.remaining.length ? ` <em>The field stays locked until you also fix the ${pv.remaining.length} manual place(s) in the new version.</em>` : ''} To switch the flow off instead, cancel and press <b>🗑 Delete versions · flow off</b> on its card.</div>` : `<div class="fc-prev-hd">The active version — choose</div>
       <label class="fc-prev-opt${canReplace ? '' : ' fc-prev-opt-off'}"><input type="radio" name="fcActiveMode" value="replace" ${canReplace ? (pv.emptied.length ? '' : 'checked') : 'disabled'}>
         <span><b>Keep the flow running</b> — deploy a new active v${fp.plan.expectNew} without what comes out above, verify it is active, then delete v${act.num}.
         ${canReplace && pv.emptied.length ? `<em>Likely refused: ${pv.emptied.length} element(s) would be left empty. Pick this only if you will fix them in Flow Builder; otherwise choose delete.</em> ` : ''}${canReplace ? (pv.remaining.length ? `<em>The field stays locked until you also fix the ${pv.remaining.length} manual place(s) in the new version.</em>` : '') : '<em>Not available: there is nothing the automatic fix can take out of this version.</em>'}</span></label>
       <label class="fc-prev-opt"><input type="radio" name="fcActiveMode" value="delete">
-        <span><b>Delete the active version too</b> — switch the flow off, verify nothing is active, then delete v${act.num} with the rest. <em>The flow stops running.</em></span></label>
+        <span><b>Delete the active version too</b> — switch the flow off, verify nothing is active, then delete v${act.num} with the rest. <em>The flow stops running.</em></span></label>`}
       <div class="fc-prev-sec"><b>Or do it yourself.</b> ${open} In Flow Builder open <i>Toolbox → Manager</i> and search each API name shown above (<code>like_this</code>); change or remove the reference, reconnect anything you delete, then Save As a new version and Activate. Run ✂ Remove here again afterwards — it will find the active version clean and only remove the old versions.</div>
     </div>`;
   }
@@ -3613,11 +3654,8 @@ const FieldCleaner = (() => {
         <div class="fc-prev-note">A reference is moved only when it is KNOWN to be ${esc(_selObj.api)}'s field. These sit where the object cannot be worked out (the output of an action, a value typed as text…). If one of them is this field, change it in Flow Builder — until then Salesforce keeps the field locked.</div>${list(undecided, x => x.value)}</div>` : ''}
       ${other.length ? `<div class="fc-prev-sec"><b>Not this field (${other.length})</b>
         <div class="fc-prev-note">The same field name on another object — left exactly as it is.</div>${list(other, x => `${x.value} — a field of ${x.object}`)}</div>` : ''}
-      <div class="fc-prev-hd">The active version — choose</div>
-      <label class="fc-prev-opt${canReplace ? '' : ' fc-prev-opt-off'}"><input type="radio" name="fcActiveMode" value="replace" ${canReplace ? 'checked' : 'disabled'}>
-        <span><b>Keep the flow running on ${esc(pv.to)}</b> — deploy a new active v${fp.plan.expectNew} with the references moved, verify it is active, then delete v${act.num}.${canReplace ? '' : ' <em>Not available: no reference in this version can be moved.</em>'}</span></label>
-      <label class="fc-prev-opt"><input type="radio" name="fcActiveMode" value="delete">
-        <span><b>Delete the active version too</b> — switch the flow off, verify nothing is active, then delete v${act.num} with the rest. <em>The flow stops running.</em></span></label>
+      <div class="fc-prev-hd">The active version — the flow keeps running on ${esc(pv.to)}</div>
+      <div class="fc-prev-sec">A new active v${fp.plan.expectNew} is saved with the references moved, the org is read again to confirm it is active, and then v${act.num} is deleted. A replace has nothing else to choose.</div>
       <div class="fc-prev-sec"><b>Or do it yourself.</b> ${open} In Flow Builder open <i>Toolbox → Manager</i> and search each API name shown above (<code>like_this</code>); point it at the new field, then Save As a new version and Activate. Run the fix here again afterwards — it will find the active version clean and only remove the old versions.</div>
     </div>`;
   }
@@ -3752,7 +3790,7 @@ const FieldCleaner = (() => {
       delete metadata.fullName;
       const deployRes = await deployFlowViaMetadataApi(apiNameOf(plan.active.id), metadata);
       if (!deployRes || !deployRes.success) {
-        const e = new Error(`Salesforce refused the fixed "${flowName}"${swapping ? ` (the version that uses ${_replField.api})` : ''}: ${deployRes?.error ? String(deployRes.error).replace(/\s+/g, ' ').slice(0, 300) : 'deploy failed'}. Nothing was deleted. Choose “Delete the active version too”, or open in Flow Builder to ${swapping ? 'change' : 'remove'} the field reference by hand.`);
+        const e = new Error(`Salesforce refused the fixed "${flowName}"${swapping ? ` (the version that uses ${_replField.api})` : ''}: ${deployRes?.error ? String(deployRes.error).replace(/\s+/g, ' ').slice(0, 300) : 'deploy failed'}. Nothing was deleted. Press 🗑 Delete versions · flow off on this flow (in a walk over all items: “Delete the active version too”), or open in Flow Builder to ${swapping ? 'change' : 'remove'} the field reference by hand.`);
         const u = _flowBuilderUrl(plan.active.id); if (u) e.setupUrl = u;
         throw e;
       }

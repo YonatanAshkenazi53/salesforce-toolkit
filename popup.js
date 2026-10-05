@@ -52,7 +52,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // not painted onto a half-themed page.
   if (typeof sftkTermsGate === 'function' && !(await sftkTermsGate())) return;
   _termsOk = true;
-  initDebugMode();
+  if (typeof initDebugMode === 'function') initDebugMode();   // absent in a build without the Debug Log
   initActivityBar();
   setupTabs();
   setupModeToggle();
