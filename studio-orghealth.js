@@ -384,7 +384,7 @@ const OH_CARDS = [
       const r = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false, _silentError: true,
         query: 'SELECT Name, TotalLicenses, UsedLicenses FROM UserLicense WHERE TotalLicenses > 0 ORDER BY Name' });
       if (!r || r.error) throw new Error(r?.error || 'no answer');
-      return { ...sftkOhLicenceVerdict(r.records || []), fix: { label: 'Open Licenses', popupTab: 'licenses' } };
+      return { ...sftkOhLicenceVerdict(r.records || []), fix: _ohLicFix() };
     },
   },
   {
@@ -404,7 +404,7 @@ const OH_CARDS = [
       const skipped = (r.records || []).length - people.length;
       const v = sftkOhIdleVerdict(people, (r.records || []).length >= LIMIT);
       if (skipped) v.lines = [...v.lines, `${skipped} user(s) on an integration licence not counted — they never log in by design`];
-      return { ...v, fix: { label: 'Open Licenses', popupTab: 'licenses' } };
+      return { ...v, fix: _ohLicFix() };
     },
   },
   {
@@ -657,6 +657,12 @@ async function renderOrgHealth() {
   _ohWire(ctx, total, plus, est.filter(n => typeof n !== 'number').length);
 }
 
+// The Licenses tool lives in the Toolkit. A build that does not carry it
+// (sftk-build.js) offers no button to it — the card's own lines still say
+// which licence or which users.
+function _ohLicFix() {
+  return (typeof sftkShips !== 'function' || sftkShips('licenses')) ? { label: 'Open Licenses', popupTab: 'licenses' } : undefined;
+}
 function _ohWire(ctx, total, plus, plusN) {
   eid('dsOhOrg')?.addEventListener('change', e => { _ohOrg = e.target.value; renderOrgHealth(); });
   eid('dsOhAll')?.addEventListener('click', async () => {

@@ -38,7 +38,16 @@ HELD_BACK_JS = {'studio-seed.js'}
 # card and the Deploy page its "Fix in Picklist Manager" button by themselves).
 # studio-sequences.js is Sequences (the Data Deployment page hides the section
 # when the file is absent).
-CUT_JS = {'studio-picklists.js', 'studio-sequences.js'}
+#
+# 2026-10-05 — the user named the first release tool by tool. Data Studio:
+# Connected Orgs, Data Deployment, All open orgs, History, Org Compare, Org
+# health (a marked screenshot) — so Deploy Readiness (studio-readiness.js) is
+# out. Toolkit: "all besides licenses" — so Licenses (license-manager.js) is
+# out. Both keep working in the repo and the dev build. The pages degrade by
+# themselves (no card, no palette row, no link); sftk-build.js carries the ids
+# so one page can know what the other page does not have.
+CUT_JS = {'studio-picklists.js', 'studio-sequences.js', 'studio-readiness.js', 'license-manager.js'}
+CUT_IDS = ['picklists', 'sequences', 'readiness', 'licenses']
 EXCLUDE_JS = LABS_JS | HELD_BACK_JS | CUT_JS | {'studio-tools.js', 'content.js'}
 
 def fail(msg):
@@ -91,12 +100,40 @@ def main():
     if not m:
         fail('Picklist Manager nav button not found in studio.html — nav layout changed?')
     html = html[:m.start()] + html[m.end():]
+    # Deploy Readiness's nav button — same rule.
+    m = re.search(r'[ \t]*<button class="ds-nav-btn" data-view="readiness">.*?</button>\r?\n?', html, re.S)
+    if not m:
+        fail('Deploy Readiness nav button not found in studio.html — nav layout changed?')
+    html = html[:m.start()] + html[m.end():]
     i_labs = html.find('<!-- Labs:')
     i_footer = html.find('<!-- Nav footer -->')
     if i_labs == -1 or i_footer == -1 or i_footer < i_labs:
         fail('Labs nav markers not found in studio.html — nav layout changed?')
     html = html[:i_labs] + html[i_footer:]
     io.open(sh_path, 'w', encoding='utf-8').write(html)
+
+    # ── Strip the cut Toolkit tool (Licenses) from popup.html ────────────
+    pp_path = os.path.join(STAGE, 'popup.html')
+    pop = io.open(pp_path, encoding='utf-8').read()
+    for js in CUT_JS:
+        pop = re.sub(rf'[ \t]*<script src="{re.escape(js)}"></script>\r?\n?', '', pop)
+    m = re.search(r'[ \t]*<button class="tab-btn app-nav-btn" data-tab="licenses">.*?</button>\r?\n?', pop, re.S)
+    if not m:
+        fail('Licenses nav button not found in popup.html — nav layout changed?')
+    pop = pop[:m.start()] + pop[m.end():]
+    m = re.search(r'[ \t]*<div id="tab-licenses" class="tab-content"[^>]*>\s*<div id="licenseManagerContainer"></div>\s*</div>\r?\n?', pop)
+    if not m:
+        fail('Licenses tab container not found in popup.html — layout changed?')
+    pop = pop[:m.start()] + pop[m.end():]
+    io.open(pp_path, 'w', encoding='utf-8').write(pop)
+
+    # ── Tell both pages what this build leaves out (sftk-build.js) ───────
+    sb_path = os.path.join(STAGE, 'sftk-build.js')
+    sb = io.open(sb_path, encoding='utf-8').read()
+    if sb.count('window.SFTK_CUT = [];') != 1:
+        fail('sftk-build.js: the "window.SFTK_CUT = [];" line was not found exactly once')
+    sb = sb.replace('window.SFTK_CUT = [];', 'window.SFTK_CUT = ' + repr(CUT_IDS).replace("'", '"') + ';')
+    io.open(sb_path, 'w', encoding='utf-8').write(sb)
 
     # ── Strip HTML comments from every staged page ───────────────────────
     # Dev comments carry internal history (Labs notes, dated decisions, file
@@ -130,7 +167,7 @@ def main():
         stripped = line.lstrip()
         if stripped.startswith('- '):
             # …and bullets whose TITLE is a tool the public build does not ship
-            skipping = '(Labs)' in line or bool(re.match(r'- \*\*[^*]*(Picklist Manager|Sequence)', stripped))
+            skipping = '(Labs)' in line or bool(re.match(r'- \*\*[^*]*(Picklist Manager|Sequence|Deploy Readiness|Licenses|License Manager)', stripped))
         elif stripped.startswith('#') or not stripped:
             skipping = False
         if not skipping:
@@ -144,7 +181,14 @@ def main():
     for js in EXCLUDE_JS:
         if os.path.exists(os.path.join(STAGE, js)):
             fail(f'{js} leaked into staging')
+    pop = io.open(os.path.join(STAGE, 'popup.html'), encoding='utf-8').read()
+    for needle in ['license-manager.js', 'data-tab="licenses"', 'tab-licenses']:
+        if needle in pop:
+            fail(f'packed popup.html still contains {needle}')
+    if 'window.SFTK_CUT = [];' in io.open(os.path.join(STAGE, 'sftk-build.js'), encoding='utf-8').read():
+        fail('packed sftk-build.js still says nothing is cut')
     for needle in ['studio-seed.js', 'data-view="seed"',
+                   'studio-readiness.js', 'data-view="readiness"',
                    'studio-picklists.js', 'studio-sequences.js', 'data-view="picklists"',
                    'studio-schema.js', 'studio-fields.js',
                    'data-view="schema"', 'data-view="fields"']:

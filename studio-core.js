@@ -1120,7 +1120,8 @@ function openCommandPalette() {
     const navItems = CMD_VIEWS.filter(v => _viewAvailable(v.view)).filter(v =>
       !q || v.label.toLowerCase().includes(q) || v.desc.toLowerCase().includes(q)
     );
-    const toolkitItems = CMD_TOOLKIT.filter(t =>
+    // a Toolkit tab this build does not carry is not offered (sftk-build.js)
+    const toolkitItems = CMD_TOOLKIT.filter(t => typeof sftkShips !== 'function' || sftkShips(t.tab)).filter(t =>
       !q || t.label.toLowerCase().includes(q) || t.desc.toLowerCase().includes(q)
     );
     const profileItems = q
@@ -1386,13 +1387,13 @@ function renderWelcome() {
           <span class="ds-welcome-card-badge ds-badge-write">Writes records</span>
           ${activityBadge('transfer')}
         </div>
-        <div class="ds-welcome-card" data-gotoview="readiness">
+        ${_viewAvailable('readiness') ? `<div class="ds-welcome-card" data-gotoview="readiness">
           <div class="ds-welcome-card-icon">🛡</div>
           <div class="ds-welcome-card-title">Deploy Readiness</div>
           <div class="ds-welcome-card-desc">Compare schemas between orgs — spot missing fields, picklist gaps, and validation rules before a load fails.</div>
           <span class="ds-welcome-card-badge ds-badge-read">Read-only</span>
           ${activityBadge('readiness')}
-        </div>
+        </div>` : ''}
         ${_viewAvailable('schema') ? `<div class="ds-welcome-card" data-gotoview="schema">
           <div class="ds-welcome-card-icon">🕸</div>
           <div class="ds-welcome-card-title">Schema View</div>

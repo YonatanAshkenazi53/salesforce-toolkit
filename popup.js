@@ -78,7 +78,7 @@ function maybeRunFirstRunTour() {
     {
       selector: '.app-sidebar',
       title: 'Your tools',
-      text:  'Every feature lives here — clean up flows, inspect Lightning pages, find field dependencies, copy permissions, manage licenses and more.'
+      text:  'Every feature lives here — clean up flows, inspect Lightning pages, find field dependencies, copy permissions and more.'
     },
     {
       selector: '#dataStudioBtn',
@@ -229,7 +229,8 @@ const HOME_FEATURES = [
     desc: 'Licences at the cap, idle users, flows left off — in Data Studio',
     action() { chrome.tabs.create({ url: chrome.runtime.getURL('studio.html#/orghealth') }); }
   }
-];
+  // a tool this build does not carry has no card, no palette row and no deep link (sftk-build.js)
+].filter(f => typeof sftkShips !== 'function' || sftkShips(f.id));
 
 // Feature sections — defines grouping on the home page
 const HOME_SECTIONS = [
@@ -3007,6 +3008,7 @@ function initUserCopyTab() {
 // ============================================================
 function initLicenseManagerTab() {
   if (!toolTabHasSession()) return;
+  if (typeof LicenseManager === 'undefined') return;   // not in this build
   LicenseManager.updateSession(orgUrl, sid);
   const container = document.getElementById('licenseManagerContainer');
   if (!container._lmInitialized) {
