@@ -24,12 +24,11 @@ as the tour takes, waits included), the third composes the video in real time.
 Run them one after the other, never two at once: the harness closes any other
 headless Chrome it started.
 
-Out come three files in `dist/video/` (not in git):
+Out come two files in `dist/video/` (not in git):
 
 | file | what |
 |---|---|
 | `walkthrough.mp4` | 1920×1080, captions burned in, chapter name on the left of the caption band |
-| `walkthrough.srt` | the same captions, for YouTube's subtitles upload |
 | `walkthrough.chapters.txt` | `0:00 Title` lines to paste into the YouTube description |
 
 ## Look at it without playing it
@@ -47,7 +46,7 @@ Saves a PNG of the picture at each of those seconds to the harness's screenshot 
 | `recorder.mjs` | `makeRecorder(h, dir)`: one recording per `begin(dir)` … `end()` — screencast frames, captions (`say`), chapters, waiting stretches (`fast`), a ring around what is clicked (`click`, `point`), typing (`type`), and the mask |
 | `sections.mjs` | the tour itself: one entry per tool, with its captions |
 | `walkthrough.mjs` | logs in, runs the sections, lists what was recorded and what failed |
-| `compose.mjs` | the sections in `order.json` order (or one recording) → MP4, `.srt`, chapters |
+| `compose.mjs` | the sections in `order.json` order (or one recording) → MP4 and chapters |
 | `peek.mjs` | frames of a finished video |
 | `smoke.mjs` | a 15-second self-test of recorder and composer, no org needed |
 
@@ -70,7 +69,23 @@ Saves a PNG of the picture at each of those seconds to the harness's screenshot 
 - **A caption states what the tool does and nothing more.** When a tool changes,
   change its caption in `sections.mjs` with it.
 
+## Captions: in the picture, or as a subtitle file — never both
+
+The captions are burned into the picture, so the default run writes **no** `.srt`.
+A subtitle file next to a video with the same name is loaded by most players on
+their own and drawn over the burned-in text; YouTube's CC would do the same.
+
+To publish with YouTube's own subtitles instead (viewers can switch them off, and
+YouTube can translate them), compose the other variant:
+
+```bash
+CAPTIONS=track REC_DIR=dist/video/rec OUT=dist/video/walkthrough.mp4 node scripts/dev/headless-studio.mjs scripts/dev/video/compose.mjs
+```
+
+It writes `walkthrough-nocaptions.mp4` (no caption text in the picture) and
+`walkthrough-nocaptions.srt`. Upload that pair, not the burned-in video.
+
 ## Uploading
 
-The upload is done by hand: YouTube Studio → Create → Upload video, then add the
-`.srt` under Subtitles and paste the chapters into the description.
+The upload is done by hand: YouTube Studio → Create → Upload video, then paste the
+chapters into the description. With the burned-in video, add no subtitle file.
