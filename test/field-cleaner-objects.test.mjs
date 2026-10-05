@@ -551,14 +551,15 @@ describe('dropdown keyboard state survives what the UI does around it', () => {
 // ══════════════════════════════════════════════════════════════════
 describe('metadata-mutating fixes confirm before acting', () => {
   it('fixOne gates on sftkConfirmDestructive with the flow-version-deletion truth', () => {
-    const i = SRC.indexOf('async function fixOne(');
+    const i = SRC.indexOf('async function _fixOneRun(');   // 2026-10-05: fixOne is the wrapper that carries the per-item choice
     const fn = SRC.slice(i, SRC.indexOf('\n  }', i));
     expect(fn).toContain('await sftkConfirmDestructive({');
     expect(fn).toContain('permanently deletes flow versions');   // 2026-09-21: the active version may go too, so not only "old" ones
     expect(fn).toMatch(/needsCheckbox: type === 'Flow'/);
     expect(fn).toMatch(/if \(!sure\) return;/);
     // the confirm happens BEFORE the button flips to ⏳
-    expect(fn.indexOf('sftkConfirmDestructive')).toBeLessThan(fn.indexOf("textContent = '⏳'"));
+    expect(fn.indexOf('sftkConfirmDestructive')).toBeLessThan(fn.indexOf("_rowBusy(componentId, '⏳ working…')"));
+    expect(fn.indexOf("_rowBusy(componentId, '⏳ working…')")).toBeGreaterThan(0);
   });
 
   it('the field delete itself still runs through the shared destructive confirm', () => {

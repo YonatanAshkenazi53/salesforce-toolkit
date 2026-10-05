@@ -285,9 +285,9 @@ describe('Field Cleaner — step 3 and what it changes', () => {
   it('says plainly that moving references does not move the data, and where the data is copied', () => {
     expect(FC).toContain('This moves REFERENCES. The values stored in the old field are a separate step: after the scan, 📦 Stored values compares the two fields and offers to copy them.');
   });
-  it('a button says what it will do: an inactive flow version is only ever removed', () => {
-    expect(FC).toContain("return vi && vi.status !== 'Active' ? '✂ Remove' : '⇄ Replace';");
-    expect(FC).not.toContain("textContent = '✂ Remove'; }");            // no path puts the old word back blindly
+  it('replace mode ADDS a button: every item offers ⇄ Replace and ✂ Remove, and the click decides (see the last block)', () => {
+    expect(FC).toContain('data-swap="1" title="Point this at ${esc(_replField.api)} instead of the field">⇄ Replace</button>${rm}`;');
+    expect(FC).toContain('if (!_replOn()) return rm;');
   });
   it('flows: the preview is made by the REAL swap on a clone, and the run uses the same swap', () => {
     expect(FC).toContain('const sw = await _flowSwap(after);');
@@ -418,6 +418,120 @@ describe('stored values — the wiring keeps the laws', () => {
     expect(run).toContain('if (wr && wr.accepted && wrote.length && wrote.length <= FC_COPY_UNDO) {');
     expect(run).toContain('[to]: t.was == null ? null : t.was');
     expect(run).toContain('History keeps no undo at that size; the receipt CSV lists every record');
+  });
+});
+
+// ── One card per flow, a choice per item (user 2026-10-05) ───────────────────
+// Screenshot: "Replace in all 5 Flows" fixed the flow, then ran the fix again
+// for each of its other version rows — all deleted by then — and printed "Could
+// not resolve the flow definition of this version" beside rows that read done.
+// And: "its very confusing. i dont know what was deleted, what was changed to
+// a new active flow version. also if i want to replace only one of them it
+// will replace them all. some i want to be able to delete and some to replace".
+describe('a flow is ONE item — before the fix it says what happens to each version', () => {
+  const F = extractFunctions('sftk-flowsurgery.js', ['sftkFlowCardLines', 'sftkFlowDoneLines']);
+  const V = (num, status) => ({ num, status });
+  it('the active version, a newer draft and the old versions each get their own sentence', () => {
+    const c = F.sftkFlowCardLines([V(11, 'Active'), V(12, 'Draft'), V(10, 'Obsolete'), V(9, 'Obsolete')], { swapTo: 'New__c' });
+    expect(c.hasActive).toBe(true);
+    expect(c.lines.map(l => l.vers)).toEqual(['v11 · Active', 'v12 · Draft', 'v10, v9 · not active']);
+    expect(c.lines[0].text).toContain('⇄ Replace saves a new version that uses New__c and keeps the flow running');
+    expect(c.lines[0].text).toContain('✂ Remove saves one without the reference');
+    expect(c.lines[0].text).toContain('Either way v11 itself is deleted afterwards.');
+    expect(c.lines[1].text).toContain('saves the new version OVER this draft');
+    expect(c.lines[2].text).toContain('deleted.');
+  });
+  it('without a replacement field only ✂ Remove is described', () => {
+    const c = F.sftkFlowCardLines([V(3, 'Active')], {});
+    expect(c.lines[0].text).not.toContain('⇄');
+    expect(c.lines[0].text).toContain('✂ Remove saves a new version without the reference');
+  });
+  it('a draft OLDER than the active version is just an old version', () => {
+    expect(F.sftkFlowCardLines([V(3, 'Active'), V(2, 'Draft')], {}).lines.map(l => l.vers)).toEqual(['v3 · Active', 'v2 · not active']);
+  });
+  it('no active version uses the field → nothing to replace, the old versions are deleted', () => {
+    const c = F.sftkFlowCardLines([V(2, 'Obsolete'), V(1, 'Obsolete')], { swapTo: 'New__c' });
+    expect(c.hasActive).toBe(false);
+    expect(c.lines).toEqual([{ vers: 'v2, v1 · not active', text: 'deleted. No version that runs uses the field, so nothing is replaced and no new version is made.' }]);
+  });
+});
+
+describe('a flow is ONE item — after the fix it says what happened, one fact per line', () => {
+  const F = extractFunctions('sftk-flowsurgery.js', ['sftkFlowCardLines', 'sftkFlowDoneLines']);
+  const plan = { toDelete: [{ id: 'a', num: 9, status: 'Obsolete' }, { id: 'b', num: 11, status: 'Active' }, { id: 'n', num: 12, status: 'Draft' }], cleanInactive: 1 };
+  it('which version runs now, that a draft was saved over, which versions are gone — the running one is never listed as deleted', () => {
+    const lines = F.sftkFlowDoneLines({ mode: 'active', newVersion: 12, newId: 'n', overwrote: true, swapped: 4, interviewsDeleted: 5 }, plan, { swapTo: 'New__c', field: 'Old__c' });
+    expect(lines.map(l => l.text)).toEqual([
+      'v12 is the ACTIVE version now — 4 references in it point at New__c. Verified by re-reading the org.',
+      'v12 was a draft before: Salesforce saved the new version over it, so the draft’s own content is gone.',
+      'Deleted: v9, v11 (was the active version).',
+      '5 flow interviews on those versions deleted.',
+      '1 other version never mentioned the field and was left alone.',
+    ]);
+  });
+  it('a removal says "saved without the field reference"; switching off says the flow no longer runs', () => {
+    expect(F.sftkFlowDoneLines({ mode: 'active', newVersion: 4, newId: 'x' }, { toDelete: [{ id: 'o', num: 3, status: 'Active' }] }, {})[0].text)
+      .toBe('v4 is the ACTIVE version now — saved without the field reference. Verified by re-reading the org.');
+    expect(F.sftkFlowDoneLines({ mode: 'active-delete' }, { toDelete: [{ id: 'o', num: 3, status: 'Active' }] }, {}).map(l => l.text))
+      .toEqual(['The flow is switched OFF: no version is active, so it no longer runs. Verified by re-reading the org.', 'Deleted: v3 (was the active version).']);
+  });
+  it('a leftover mention is a warning line, never hidden', () => {
+    const l = F.sftkFlowDoneLines({ mode: 'active', newVersion: 2, newId: 'x', stillMentions: true }, { toDelete: [] }, {});
+    expect(l[l.length - 1]).toMatchObject({ warn: true });
+  });
+});
+
+describe('Field Cleaner — the choice is made per item, by the button pressed', () => {
+  const FC = read('field-cleaner.js');
+  it('the run follows the button, not the mode: replace mode alone moves nothing', () => {
+    expect(FC).toContain('function _swapOn() { return _fixSwap === true && _replOn(); }');
+    expect(FC).toContain('_fixSwap = !!swap && _replOn();');
+    expect(FC).toContain('finally { _fixSwap = null; }');
+    // every fix path asks _swapOn(), none asks the mode
+    expect((FC.match(/const swap = _swapOn\(\);/g) || []).length).toBe(3);                 // layout, Lightning page, report
+    expect(FC).toContain("const swap = _swapOn() && (type !== 'Flow' || flowPlan.plan.mode === 'active');");
+    expect(FC).toContain('const swapping = _swapOn();');
+    expect(FC).not.toMatch(/const swap(ping)? = _replOn\(\)/);
+  });
+  it('the click carries the choice; one listener serves buttons that are re-drawn', () => {
+    expect(FC).toContain("fixOne(one.dataset.type, one.dataset.id, one.dataset.name, _curFieldId, one.dataset.swap === '1');");
+    expect(FC).toContain("if (!results.dataset.fcFixWired) {");
+    expect(FC).toContain("if (_fixSwap !== null) return;");                                  // one fix at a time
+  });
+  it('a flow with no active version that uses the field offers only "delete the old versions"', () => {
+    expect(FC).toContain('if (card && !card.active) {');
+    expect(FC).toContain('🗑 Delete ${card.versions.length} old version${card.versions.length === 1 ? \'\' : \'s\'}</button>`;');
+  });
+  it('the list shows one card per flow, and counts flows — not versions', () => {
+    expect(FC).toContain("${type === 'Flow' ? _flowCards.map(renderFlowCard).join('') : items.map(d => renderItem(d, cfg.fixable, type)).join('')}");
+    expect(FC).toContain("const nItems = type === 'Flow' ? _flowCards.length : items.length;");
+    expect(FC).toContain('const shownCount = deps.length - flowExtra;');
+    expect(FC).toContain("const noun = type === 'Flow' ? `flow${n === 1 ? '' : 's'}` : esc(label);");
+  });
+  it('"… all N" goes item by item in the way its button says, and a flow is asked about once', () => {
+    const all = FC.slice(FC.indexOf('async function fixAll(type, fieldId, swap) {'), FC.indexOf('// extraLinksHtml (C5a)'));
+    expect(all).toContain('? _flowCards.map(c => ({ id: c.primaryId, name: c.name }))');
+    expect(all).toContain("if (eid(`fcItem_${it.id}`)?.classList.contains('fc-item-fixed')) continue;");
+    expect(all).toContain('await fixOne(type, it.id, it.name, fieldId, swap);');
+  });
+  it('a settled item cannot be fixed again from anywhere', () => {
+    expect(FC).toContain("if (eid(`fcItem_${componentId}`)?.classList.contains('fc-item-fixed')) return;");
+  });
+  it('the result of a flow is one statement with its facts listed — not the same sentence on every version row', () => {
+    expect(FC).toContain("label = r.mode === 'active' ? `✅ Done — v${r.newVersion} is the active version now`");
+    expect(FC).toContain('doneHtml = `<ul class="fc-flow-done">${sftkFlowDoneLines(r, chosen.plan, { swapTo, field: _selField.api })');
+    expect(FC).toContain('markFixed(componentId, label, doneLinks, doneHtml);');
+  });
+});
+
+describe('Field Cleaner — small truths of the two-button list', () => {
+  const FC = read('field-cleaner.js');
+  it('the "… all N" buttons count what is still open and go away when one or none is left', () => {
+    expect(FC).toContain("const open = item.closest('.fc-group').querySelectorAll('.fc-fix-pair').length;");
+    expect(FC).toContain('if (open < 2) box.remove();');
+  });
+  it('in replace mode the group note says what each of the two buttons does', () => {
+    expect(FC).toContain("`⇄ Replace: ${cfg.replNote.replace('{new}', _replField.api)} ✂ Remove: ${cfg.note}`");
   });
 });
 

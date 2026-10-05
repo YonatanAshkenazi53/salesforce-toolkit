@@ -460,6 +460,22 @@ Live on trailheads4 with CLI truth: 3 of 8 copied and 5 blocked (restricted pick
 temporary validation rule reported with its message; History undo emptied the field again,
 verified.
 
+**One card per flow, a choice per item (2026-10-05, user testing by hand).** Screenshot: "Replace in
+all 5 Flows" fixed the flow and then ran the fix again for each other version row ("Could not
+resolve the flow definition of this version" beside rows that read done). And: "its very confusing.
+i dont know what was deleted, what was changed to a new active flow version. also if i want to
+replace only one of them it will replace them all. some i want to be able to delete and some to
+replace". Changes: `_flowCardsOf` / `renderFlowCard` (one card per flow definition, `primaryId` =
+the active version; lines from pure `sftkFlowCardLines`); the result of a flow is one statement +
+`sftkFlowDoneLines` (which version runs now, draft saved over, versions deleted, interviews, clean
+versions left alone); the header and "all N" count flows, not versions. The way a fix goes is no
+longer the MODE but the BUTTON: `_fixSwap` / `_swapOn()`, `fixOne(…, swap)` wrapper around
+`_fixOneRun`, `_fixBtnsHtml` (⇄ Replace + ✂ Remove in replace mode; "🗑 Delete N old versions" for a
+flow with no active version that uses the field), `_fixAllHtml` (both kinds), one delegated click
+listener, `_rowBusy`. `fixAll(type, fieldId, swap)` goes item by item. Live on trailheads4: replace
+in all 2 flows = 2 confirmations, no errors; then ✂ Remove on one flow and ⇄ Replace on the other
+(CLI truth).
+
 **Limits, stated in the product:** references move with the fixes, data with 📦 Stored values; a flow swap has
 no History undo (old versions are deleted — the backup zip is the way back); list views, compact
 layouts, quick actions, validation rules, formula fields and Apex stay manual exactly as before.
