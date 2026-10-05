@@ -97,7 +97,7 @@ describe('the sentences the dialog shows', () => {
 describe('field-cleaner.js executes the plan in the safe order', () => {
   const plan = slice(FC, 'async function fixFlowPlan(flowId, flowName)');
   const exec = slice(FC, 'async function fixFlowExecute(fp, opts)');
-  const one  = slice(FC, 'async function fixOne(type, componentId, componentName, fieldId)');
+  const one  = slice(FC, 'async function _fixOneRun(type, componentId, componentName, fieldId)');
 
   it('reads EVERY version before planning, and refuses a partial picture', () => {
     expect(plan).toContain('for (const v of versions)');
@@ -163,10 +163,10 @@ describe('field-cleaner.js executes the plan in the safe order', () => {
     expect(one).toContain('the new version still mentions the field');
   });
 
-  it('every row of the same flow is settled together, and rows say which version they are', () => {
-    expect(FC).toContain('function _markFlowSiblings(exceptId, defId, label, links)');
-    expect(one).toContain('_markFlowSiblings(componentId, r.defId, label, doneLinks);');
+  it('a flow is ONE card whose lines say which version is which (2026-10-05: it used to be one row per version)', () => {
+    expect(FC).not.toContain('_markFlowSiblings');
     expect(FC).toContain('if (_groups.Flow) await _loadFlowVersionInfo(_groups.Flow);');
+    expect(FC).toContain('_flowCards = _groups.Flow ? _flowCardsOf(_groups.Flow) : [];');
     expect(FC).toContain('class="fc-ver-badge"');
   });
 
@@ -295,7 +295,7 @@ describe('field-cleaner.js: the preview comes from the REAL remover, and the cho
     expect(FC2).toContain("const canReplace = hasChoice && !!pv && pv.removed.length > 0;");
     expect(FC2).toContain("let activeMode = hasChoice ? (canReplace && !replaceLikelyRefused ? 'replace' : '') : 'replace';");
     expect(FC2).toContain('go.disabled = !(ack && ack.checked && activeMode);');
-    expect(FC2).toContain("if (hasChoice && !activeMode) return;");
+    expect(FC2).toContain("if (hasChoice && !activeMode) { _rowBusy(componentId, null); return; }");
   });
   it('deleting the active version switches the flow off and VERIFIES it before any delete', () => {
     const ex = FC2.slice(FC2.indexOf('async function fixFlowExecute('));

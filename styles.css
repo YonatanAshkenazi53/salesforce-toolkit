@@ -6657,6 +6657,18 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .fc-rpt .btn { margin: 4px 6px 0 0; }
 .fc-rpt-ok { border-left-color: var(--active-color, #2e844a); }
 .fc-rpt-bad { border-left-color: #b45309; }
+/* one card per flow, what happens to each version, and what happened */
+.fc-item.fc-flow-card { display: block; }
+.fc-flow-head { display: flex; align-items: center; gap: 6px; }
+.fc-flow-card.fc-item-fixed { opacity: 1; }
+.fc-flow-card.fc-item-fixed .fc-item-name { font-weight: 600; margin-right: 8px; }
+.fc-flow-vers, .fc-flow-done { list-style: none; margin: 6px 0 2px; padding: 0; font-size: 11.5px; line-height: 1.5; color: var(--subtext); }
+.fc-flow-vers li, .fc-flow-done li { padding: 2px 0; }
+.fc-flow-done { color: var(--text); }
+.fc-flow-done .fc-flow-ico { display: inline-block; width: 18px; }
+.fc-flow-done .fc-flow-warn { color: #b45309; }
+.fc-ver-badge { display: inline-block; margin-right: 6px; padding: 0 6px; font-size: 10.5px; border-radius: 8px; border: 1px solid var(--border, #dddbda); color: var(--text); white-space: nowrap; }
+.fc-fix-pair { display: inline-flex; gap: 4px; }
 /* F3: staged deprecation */
 .fc-dep-offer { margin: 8px 0; padding: 8px 11px; font-size: 12px; border: 1px dashed var(--border); border-radius: 6px; background: var(--bg); }
 .fc-dep-hint { color: var(--subtext); font-size: 11px; display: block; margin-top: 4px; }

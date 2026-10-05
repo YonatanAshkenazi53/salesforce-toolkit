@@ -302,7 +302,7 @@ describe('13 · delete-error guidance matches what is scanned now', () => {
 
 // ════════════════════════════════════════════════════════════════════════
 describe('14 · the fix confirm says a restore point exists where one is saved', () => {
-  const fn = slice(FC, 'async function fixOne(type, componentId', '  ');
+  const fn = slice(FC, 'async function _fixOneRun(type, componentId', '  ');   // 2026-10-05: fixOne is the wrapper that carries the per-item choice (⇄ / ✂)
   it('branches on the types that snapshot first', () => {
     expect(fn).toContain("['Report', 'Layout', 'FlexiPage'].includes(type)");
     expect(fn).toContain('restore point');

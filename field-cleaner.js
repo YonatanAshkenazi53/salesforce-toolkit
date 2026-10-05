@@ -995,25 +995,76 @@ const FieldCleaner = (() => {
   }
   function _replOn() { return !!(_selField && _replField && _replCompat && _replCompat.ok); }
   function _replReadOnly() { const d = _replField && _replField.desc; return !!(d && (d.calculated || d.updateable === false)); }
-  // What a row's fix button says. An inactive flow version is only ever
-  // deleted, so its button keeps saying so.
-  function _fixBtnLabel(type, componentId) {
-    if (!_replOn()) return '✂ Remove';
-    if (type === 'Flow') {
-      const vi = _flowVerInfo[String(componentId).substring(0, 15)];
-      return vi && vi.status !== 'Active' ? '✂ Remove' : '⇄ Replace';
+  // Which way the fix that is RUNNING goes: true = move the reference to the
+  // replacement field, false = take it out; null = no fix is running. It is
+  // chosen PER ITEM, by the button pressed — replace mode only adds the second
+  // button (user 2026-10-05: "if i want to replace only one of them it will
+  // replace them all. some i want to be able to delete and some to replace").
+  let _fixSwap = null;
+  function _swapOn() { return _fixSwap === true && _replOn(); }
+  // One card per flow (the index lists a flow once per version that mentions
+  // the field): [{ key, name, primaryId, active, versions: [{ id, num, status }] }]
+  let _flowCards = [];
+  let _curFieldId = null;
+  function _flowCardsOf(items) {
+    const by = new Map();
+    for (const d of (items || [])) {
+      const id = String(d.MetadataComponentId || '');
+      const info = _flowVerInfo[id.substring(0, 15)] || {};
+      const key = info.defId ? String(info.defId).substring(0, 15) : `n:${d.MetadataComponentName || id}`;
+      if (!by.has(key)) by.set(key, { key, name: d.MetadataComponentName || id, versions: [] });
+      by.get(key).versions.push({ id, num: info.num || 0, status: info.status || '' });
     }
-    return '⇄ Replace';
+    return [...by.values()].map(c => {
+      c.versions.sort((a, b) => b.num - a.num);
+      c.active = c.versions.find(v => v.status === 'Active') || null;
+      c.primaryId = (c.active || c.versions[0]).id;      // the card's id, and the version the fix starts from
+      return c;
+    });
   }
-  function _groupNote(type, cfg) { return (_replOn() && cfg.replNote) ? cfg.replNote.replace('{new}', _replField.api) : cfg.note; }
+  // The fix buttons of ONE item. Replace mode shows two — the user chooses for
+  // this item. A flow with no active version that uses the field has nothing
+  // to replace: its old versions can only be deleted.
+  function _fixBtnsHtml(type, id, rawName) {
+    const attrs = `data-id="${esc(id)}" data-name="${esc(rawName)}" data-type="${esc(type)}"`;
+    if (type === 'Flow') {
+      const card = _flowCards.find(c => c.primaryId === String(id));
+      if (card && !card.active) {
+        return `<button class="btn btn-secondary btn-sm fc-fix-btn" ${attrs} data-swap="0" title="Delete the old versions that still mention the field">🗑 Delete ${card.versions.length} old version${card.versions.length === 1 ? '' : 's'}</button>`;
+      }
+    }
+    const rm = `<button class="btn btn-secondary btn-sm fc-fix-btn" ${attrs} data-swap="0" title="Take the field’s reference out of this">✂ Remove</button>`;
+    if (!_replOn()) return rm;
+    return `<button class="btn btn-primary btn-sm fc-fix-btn" ${attrs} data-swap="1" title="Point this at ${esc(_replField.api)} instead of the field">⇄ Replace</button>${rm}`;
+  }
+  function _fixAllHtml(type, n, label) {
+    const noun = type === 'Flow' ? `flow${n === 1 ? '' : 's'}` : esc(label);
+    const rm = `<button class="btn btn-secondary btn-sm fc-fix-all" data-type="${esc(type)}" data-swap="0">✂ Remove from all ${n} ${noun}</button>`;
+    return _replOn()
+      ? `<button class="btn btn-secondary btn-sm fc-fix-all" data-type="${esc(type)}" data-swap="1">⇄ Replace in all ${n} ${noun}</button> ${rm}`
+      : rm;
+  }
+  // An item's buttons while its fix works (text on the one that was pressed),
+  // and back to idle (text = null).
+  function _rowBusy(componentId, text) {
+    const pair = document.querySelector(`.fc-fix-pair[data-id="${componentId}"]`);
+    if (!pair) return;
+    if (text == null) { pair.innerHTML = _fixBtnsHtml(pair.dataset.type, componentId, pair.dataset.name); return; }
+    pair.querySelectorAll('.fc-fix-btn').forEach(b => {
+      b.disabled = true;
+      if ((b.dataset.swap === '1') === (_fixSwap === true)) b.textContent = text;
+    });
+  }
+  // In replace mode an item has two buttons, so the note says what each does.
+  function _groupNote(type, cfg) { return (_replOn() && cfg.replNote) ? `⇄ Replace: ${cfg.replNote.replace('{new}', _replField.api)} ✂ Remove: ${cfg.note}` : cfg.note; }
   // The mode changed (a replacement was picked or cleared): every idle fix
   // button, bulk button and group note says what it will now do.
   function _applyReplMode() {
     const results = eid('fcResults');
     if (!results) return;
-    results.querySelectorAll('.fc-fix-btn:not(.fc-xml-fix):not([disabled])').forEach(b => { b.textContent = _fixBtnLabel(b.dataset.type, b.dataset.id); });
-    results.querySelectorAll('.fc-xml-fix').forEach(b => { b.textContent = _fixBtnLabel(b.dataset.type, b.dataset.id); });
-    results.querySelectorAll('.fc-fix-all').forEach(b => { b.textContent = `${_replOn() ? '⇄ Replace in' : '✂ Remove from'} all ${b.dataset.n} ${b.dataset.label}`; });
+    results.querySelectorAll('.fc-fix-pair').forEach(p => { if (!p.querySelector('.fc-fix-btn[disabled]')) p.innerHTML = _fixBtnsHtml(p.dataset.type, p.dataset.id, p.dataset.name); });
+    results.querySelectorAll('.fc-fix-allbox').forEach(b => { b.innerHTML = _fixAllHtml(b.dataset.type, Number(b.dataset.n), b.dataset.label); });
+    results.querySelectorAll('.fc-flow-vers').forEach(ul => { const c = _flowCards.find(x => x.primaryId === ul.dataset.id); if (c) ul.innerHTML = _flowVersHtml(c); });
     results.querySelectorAll('.fc-group-note-text').forEach(n => { const t = n.dataset.type; n.textContent = _groupNote(t, TYPE_CFG[t] || TYPE_CFG_DEFAULT); });
     const bar = eid('fcReplBar');
     if (bar) bar.outerHTML = _replBarHtml();
@@ -1022,7 +1073,7 @@ const FieldCleaner = (() => {
   }
   function _replBarHtml() {
     return _replOn()
-      ? `<div id="fcReplBar" class="fc-repl-bar">⇄ <strong>Replace mode</strong> — references move to <code>${esc(_selObj.api)}.${esc(_replField.api)}</code>. The buttons below say ⇄ Replace where a reference can be moved; everything else is unchanged.</div>`
+      ? `<div id="fcReplBar" class="fc-repl-bar">⇄ <strong>Replace mode</strong> — every item below now has two buttons, and you choose for each one: <strong>⇄ Replace</strong> points it at <code>${esc(_selObj.api)}.${esc(_replField.api)}</code>, <strong>✂ Remove</strong> takes the reference out.</div>`
       : '<div id="fcReplBar" style="display:none"></div>';
   }
   function _replNoteHtml() {
@@ -1662,7 +1713,7 @@ const FieldCleaner = (() => {
     }
     // \u21c4 Replace with another field: columns, filters and groupings keep their
     // place and name the new field (sftk-fieldreplace.js).
-    const swap = _replOn();
+    const swap = _swapOn();
     const swapTo = swap ? _replField.api : '';
     const res = swap
       ? sftkRptReplaceField(d.reportMetadata, obj, field, swapTo, sftkRptTokenMatch, sftkRptFieldHits)
@@ -1768,19 +1819,24 @@ const FieldCleaner = (() => {
       _groups[t].push(d);
     }
 
-    // Flow rows are per VERSION (the dependency index reports each version
-    // that mentions the field). Read their number/status once so every row
-    // says which version it is and what ✂ will do to it.
+    // The dependency index reports a flow once per VERSION that mentions the
+    // field. Read each version's number and status once, then show ONE card
+    // per flow that says what happens to each of its versions.
     if (_groups.Flow) await _loadFlowVersionInfo(_groups.Flow);
+    _flowCards = _groups.Flow ? _flowCardsOf(_groups.Flow) : [];
+    _curFieldId = fieldId;
+    // counted as the user sees them: a flow is one item, whatever its versions
+    const flowExtra = (_groups.Flow ? _groups.Flow.length : 0) - _flowCards.length;
+    const shownCount = deps.length - flowExtra;
 
     const autoCount   = Object.entries(_groups)
       .filter(([t]) => (TYPE_CFG[t] || TYPE_CFG_DEFAULT).fixable)
-      .reduce((n, [,arr]) => n + arr.length, 0);
-    const manualCount = deps.length - autoCount;
+      .reduce((n, [,arr]) => n + arr.length, 0) - flowExtra;
+    const manualCount = shownCount - autoCount;
 
     let html = `
       <div class="fc-results-hdr">
-        <strong>${deps.length}</strong> dependenc${deps.length === 1 ? 'y' : 'ies'} on
+        <strong>${shownCount}</strong> dependenc${shownCount === 1 ? 'y' : 'ies'} on
         <code>${esc(_selObj.api)}.${esc(_selField.api)}</code>
         <span class="fc-badge-row">
           ${autoCount   > 0 ? `<span class="fc-badge-auto">${autoCount} auto-fixable</span>`  : ''}
@@ -1804,12 +1860,13 @@ const FieldCleaner = (() => {
 
     for (const [type, items] of Object.entries(_groups)) {
       const cfg = TYPE_CFG[type] || { ...TYPE_CFG_DEFAULT, label: type };
+      const nItems = type === 'Flow' ? _flowCards.length : items.length;
       html += `
         <div class="fc-group" id="fcGroup_${esc(type)}">
           <div class="fc-group-hdr">
             <span class="fc-group-icon">${cfg.icon}</span>
             <span class="fc-group-label">${esc(cfg.label)}</span>
-            <span class="fc-group-count">${items.length}</span>
+            <span class="fc-group-count"${type === 'Flow' ? ` title="${items.length} version${items.length === 1 ? '' : 's'} of ${nItems === 1 ? 'this flow' : 'these flows'} mention the field"` : ''}>${nItems}</span>
           </div>
           <div class="fc-group-note"><span class="fc-group-note-text" data-type="${esc(type)}">${esc(_groupNote(type, cfg))}</span>${
             // C5a: the toolkit's own tools manage exactly these components —
@@ -1822,12 +1879,10 @@ const FieldCleaner = (() => {
                     'Inspect assignments, org defaults, and profile overrides for these pages in the Lightning Pages tool')
                 : ''}</div>
           <div class="fc-group-items">
-            ${items.map(d => renderItem(d, cfg.fixable, type)).join('')}
+            ${type === 'Flow' ? _flowCards.map(renderFlowCard).join('') : items.map(d => renderItem(d, cfg.fixable, type)).join('')}
           </div>
-          ${cfg.fixable && items.length > 1
-            ? `<button class="btn btn-secondary btn-sm fc-fix-all"
-                        data-type="${esc(type)}" data-n="${items.length}" data-label="${esc(cfg.label)}"
-                        style="margin:2px 0 8px 0">${_replOn() ? '⇄ Replace in' : '✂ Remove from'} all ${items.length} ${esc(cfg.label)}</button>`
+          ${cfg.fixable && nItems > 1
+            ? `<div class="fc-fix-allbox" data-type="${esc(type)}" data-n="${nItems}" data-label="${esc(cfg.label)}" style="margin:2px 0 8px 0">${_fixAllHtml(type, nItems, cfg.label)}</div>`
             : ''}
         </div>`;
     }
@@ -1877,20 +1932,27 @@ const FieldCleaner = (() => {
 
     results.innerHTML = html;
 
-    // Wire buttons
-    results.querySelectorAll('.fc-fix-btn').forEach(btn => {
-      btn.addEventListener('click', () =>
-        fixOne(btn.dataset.type, btn.dataset.id, btn.dataset.name, fieldId));
-    });
+    // Wire buttons. The fix buttons are re-drawn when the mode changes or a fix
+    // ends, so they are handled by ONE listener on the results area (the XML
+    // inspector's own button keeps its own listener).
+    if (!results.dataset.fcFixWired) {
+      results.dataset.fcFixWired = '1';
+      results.addEventListener('click', ev => {
+        const one = ev.target.closest?.('.fc-fix-btn');
+        if (one) {
+          if (!one.disabled && !one.classList.contains('fc-xml-fix')) fixOne(one.dataset.type, one.dataset.id, one.dataset.name, _curFieldId, one.dataset.swap === '1');
+          return;
+        }
+        const all = ev.target.closest?.('.fc-fix-all');
+        if (all && !all.disabled) {
+          const t = all.dataset.type, swap = all.dataset.swap === '1';
+          all.closest('.fc-fix-allbox')?.remove();
+          fixAll(t, _curFieldId, swap);
+        }
+      });
+    }
     results.querySelectorAll('.fc-setup-btn').forEach(btn => {
       btn.addEventListener('click', () => openSetup(btn.dataset.type));
-    });
-    results.querySelectorAll('.fc-fix-all').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const t = btn.dataset.type;
-        fixAll(t, _groups[t] || [], fieldId);
-        btn.remove();
-      });
     });
 
     // Wire XML inspect buttons
@@ -2164,6 +2226,8 @@ const FieldCleaner = (() => {
     if (rows.length && _lastScan) {
       // rows already fixed in this session are not brought back as open work
       const fixed = new Set([...document.querySelectorAll('#fcResults .fc-item-fixed')].map(e => e.id.replace(/^fcItem_/, '')));
+      // a fixed flow card stands for every version of that flow the index listed
+      for (const c of _flowCards) if (fixed.has(c.primaryId)) c.versions.forEach(v => fixed.add(v.id));
       _lastScan.deps = [..._lastScan.deps.filter(d => !fixed.has(String(d.MetadataComponentId))), ...rows];
       await renderResults(_lastScan.deps, _lastScan.fieldId);     // draws this panel again from _rptScan
     } else renderReportScan();
@@ -2905,15 +2969,35 @@ const FieldCleaner = (() => {
     }
   }
 
+  // One card for ONE flow: its name, the buttons, and what happens to each of
+  // its versions that mention the field (sftkFlowCardLines).
+  function _flowVersHtml(c) {
+    return sftkFlowCardLines(c.versions, { swapTo: _replOn() ? _replField.api : '' }).lines
+      .map(l => `<li><span class="fc-ver-badge">${esc(l.vers)}</span> ${esc(l.text)}</li>`).join('');
+  }
+  function renderFlowCard(c) {
+    const id = c.primaryId;
+    const seen = c.active ? `the active v${c.active.num}` : `v${c.versions[0].num}`;
+    return `
+        <div class="fc-item fc-flow-card" id="fcItem_${esc(id)}">
+          <div class="fc-flow-head">
+            <span class="fc-item-name">${esc(c.name)}</span>
+            <span class="fc-item-btns">
+              ${xlinkHtml('dependencies', '↗ Deps',
+                "Map this flow's subflow call chain in the Dependencies tab before trimming it")}
+              <button class="btn btn-sm fc-inspect-btn" title="View the XML of ${esc(seen)}"
+                      data-id="${esc(id)}" data-type="Flow">🔍</button>
+              <span class="fc-fix-pair" data-id="${esc(id)}" data-type="Flow" data-name="${esc(c.name)}">${_fixBtnsHtml('Flow', id, c.name)}</span>
+            </span>
+          </div>
+          <ul class="fc-flow-vers" data-id="${esc(id)}">${_flowVersHtml(c)}</ul>
+        </div><div class="fc-xml-panel" id="fcXml_${esc(id)}" style="display:none"></div>`;
+  }
+
   function renderItem(dep, fixable, type) {
     const id      = dep.MetadataComponentId;
-    const name    = esc(dep.MetadataComponentName || id);
-    const vinfo   = type === 'Flow' ? _flowVerInfo[String(id).substring(0, 15)] : null;
-    const verBadge = vinfo
-      ? ` <span class="fc-ver-badge" style="margin-left:6px;font-size:10.5px;padding:0 5px;border-radius:8px;border:1px solid var(--border,#dddbda);${vinfo.status === 'Active' ? 'color:var(--active-color,#2E844A)' : 'opacity:.75'}" title="${vinfo.status === 'Active'
-          ? 'The ACTIVE version references the field: the fix deploys a new version (without the reference — or, in replace mode, pointing at the replacement field), verifies the new one is active, then deletes this one.'
-          : 'An inactive version references the field: ✂ deletes this version (after an optional backup) — no new version is needed for it.'}">v${vinfo.num} · ${esc(vinfo.status)}</span>`
-      : '';
+    const rawName = dep.MetadataComponentName || id;
+    const name    = esc(rawName);
     const canInsp = Object.prototype.hasOwnProperty.call(_INSPECT_SOBJECT, type);
     const inspBtn = canInsp
       ? `<button class="btn btn-sm fc-inspect-btn" title="View XML metadata"
@@ -2923,23 +3007,13 @@ const FieldCleaner = (() => {
       ? `<div class="fc-xml-panel" id="fcXml_${esc(id)}" style="display:none"></div>`
       : '';
 
-    // C5a: before trimming a flow, its full subflow picture lives in the
-    // Dependencies tab — a per-row jump turns a blind auto-fix into an
-    // informed one (no prefill: the Dependencies tab has no handoff state).
-    const depsLink = type === 'Flow'
-      ? xlinkHtml('dependencies', '↗ Deps',
-          "Map this flow's subflow call chain in the Dependencies tab before trimming it")
-      : '';
-
     if (fixable) {
       return `
         <div class="fc-item" id="fcItem_${esc(id)}">
-          <span class="fc-item-name">${name}${verBadge}</span>
+          <span class="fc-item-name">${name}</span>
           <span class="fc-item-btns">
-            ${depsLink}
             ${inspBtn}
-            <button class="btn btn-secondary btn-sm fc-fix-btn"
-                    data-id="${esc(id)}" data-name="${name}" data-type="${esc(type)}">${_fixBtnLabel(type, id)}</button>
+            <span class="fc-fix-pair" data-id="${esc(id)}" data-type="${esc(type)}" data-name="${name}">${_fixBtnsHtml(type, id, rawName)}</span>
           </span>
         </div>${xmlPanel}`;
     }
@@ -2954,7 +3028,18 @@ const FieldCleaner = (() => {
   }
 
   // ── Fix individual flow ────────────────────────────────────
-  async function fixOne(type, componentId, componentName, fieldId) {
+  // swap: the button pressed — true = ⇄ Replace (move the reference to the
+  // replacement field), false / undefined = ✂ Remove. One fix at a time.
+  async function fixOne(type, componentId, componentName, fieldId, swap) {
+    // A row that is already settled has nothing left to fix (and, for a flow,
+    // its version may be gone): never run a fix on it again.
+    if (eid(`fcItem_${componentId}`)?.classList.contains('fc-item-fixed')) return;
+    if (_fixSwap !== null) return;
+    _fixSwap = !!swap && _replOn();
+    try { await _fixOneRun(type, componentId, componentName, fieldId); }
+    finally { _fixSwap = null; }
+  }
+  async function _fixOneRun(type, componentId, componentName, fieldId) {
     const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
     // W6 (user 2026-08-05: "ask before any delete operation") — ✂ Remove
     // DEPLOYS metadata on one click, and for flows also permanently DELETES
@@ -2970,25 +3055,23 @@ const FieldCleaner = (() => {
     // and nothing is deleted before a new version is verified active.
     let flowPlan = null;
     if (type === 'Flow') {
-      const pbtn = document.querySelector(`.fc-fix-btn[data-id="${componentId}"]`);
-      if (pbtn) { pbtn.disabled = true; pbtn.textContent = '🔎 reading versions…'; }
+      _rowBusy(componentId, '🔎 reading versions…');
       try { flowPlan = await fixFlowPlan(componentId, componentName); }
       catch (e) {
-        if (pbtn) { pbtn.disabled = false; pbtn.textContent = _fixBtnLabel(type, componentId); }
+        _rowBusy(componentId, null);
         appendInlineError(componentId, e.message, e.setupUrl, '↗ Open in Flow Builder');
         return;
       }
-      if (pbtn) { pbtn.disabled = false; pbtn.textContent = _fixBtnLabel(type, componentId); }
+      _rowBusy(componentId, null);
       if (flowPlan.plan.mode === 'none') {
         markFixed(componentId, '✅ No version of this flow references the field any more');
-        _markFlowSiblings(componentId, flowPlan.defId, '✅ No version of this flow references the field any more', '');
         return;
       }
     }
     // ⇄ Replace with another field: the reference MOVES instead of going. For
     // a flow that only applies to an active version (inactive ones are deleted
     // either way). Read once here — the dialog, the run and the labels agree.
-    const swap = _replOn() && (type !== 'Flow' || flowPlan.plan.mode === 'active');
+    const swap = _swapOn() && (type !== 'Flow' || flowPlan.plan.mode === 'active');
     const swapTo = swap ? _replField.api : '';
     let wantBackup = true;
     // An ACTIVE version that references the field can be dealt with two ways;
@@ -3049,13 +3132,12 @@ const FieldCleaner = (() => {
     });
     if (!sure) return;
 
-    const btn = document.querySelector(`.fc-fix-btn[data-id="${componentId}"]`);
-    if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+    _rowBusy(componentId, '⏳ working…');
     try {
       let label = cfg.doneLabel || '✅ Done';
-      let doneLinks = '';
+      let doneLinks = '', doneHtml = '';
       if (type === 'Flow') {
-        if (hasChoice && !activeMode) return;   // the button is disabled without a choice; belt and braces
+        if (hasChoice && !activeMode) { _rowBusy(componentId, null); return; }   // the button is disabled without a choice; belt and braces
         const chosen = (hasChoice && activeMode === 'delete') ? { ...flowPlan, plan: flowPlan.planDelete, lines: flowPlan.linesDelete } : flowPlan;
         // History (sftk-history.js): one journal for this button press,
         // covering every write fixFlowExecute makes (activation/deactivation,
@@ -3088,16 +3170,20 @@ const FieldCleaner = (() => {
           if (flowPlan.builderUrl) e.setupUrl = flowPlan.builderUrl;
           throw e;
         }
-        label = `✅ ${bits.join(' · ')}`;
-        doneLinks = _flowDoneLinks({ stillBlocking: r.failed + r.skipped });
-        _markFlowSiblings(componentId, r.defId, label, doneLinks);
+        // One flow, one result: which version runs now, which were deleted.
+        label = r.mode === 'active' ? `✅ Done — v${r.newVersion} is the active version now`
+              : r.mode === 'active-delete' ? '✅ Done — the flow is switched off'
+              : `✅ Done — ${r.deleted} old version${r.deleted === 1 ? '' : 's'} deleted`;
+        doneLinks = r.mode === 'active' ? _flowDoneLinks({ stillBlocking: 0 }) : '';
+        doneHtml = `<ul class="fc-flow-done">${sftkFlowDoneLines(r, chosen.plan, { swapTo, field: _selField.api })
+          .map(l => `<li${l.warn ? ' class="fc-flow-warn"' : ''}><span class="fc-flow-ico">${l.icon}</span> ${esc(l.text)}</li>`).join('')}</ul>`;
       }
       if (type === 'Layout')    label = (await fixLayout(componentId, componentName)) || label;
       if (type === 'FlexiPage') label = (await fixFlexiPage(componentId, componentName)) || label;
       if (type === 'Report')    label = await fixReport(componentId, componentName);
-      markFixed(componentId, label, doneLinks);
+      markFixed(componentId, label, doneLinks, doneHtml);
     } catch (e) {
-      if (btn) { btn.disabled = false; btn.textContent = _fixBtnLabel(type, componentId); }
+      _rowBusy(componentId, null);
       // Label the open-link button based on which builder we're sending them to.
       const linkLabel = type === 'Flow' ? '↗ Open in Flow Builder'
         : type === 'Report' ? '↗ Open report' : '↗ Open in Setup';
@@ -3124,23 +3210,33 @@ const FieldCleaner = (() => {
     return links;
   }
 
-  async function fixAll(type, items, fieldId) {
-    for (const item of items) {
-      await fixOne(type, item.MetadataComponentId,
-                   item.MetadataComponentName || item.MetadataComponentId, fieldId);
+  // "… all N": one item at a time, each with its own confirmation, all in the
+  // way the bulk button says (⇄ or ✂). A flow is ONE item however many of its
+  // versions the index lists (user 2026-10-05, screenshot: after the flow was
+  // fixed the loop ran again for each other version row — all deleted by then —
+  // and printed "Could not resolve the flow definition of this version").
+  async function fixAll(type, fieldId, swap) {
+    const list = type === 'Flow'
+      ? _flowCards.map(c => ({ id: c.primaryId, name: c.name }))
+      : (_groups[type] || []).map(d => ({ id: d.MetadataComponentId, name: d.MetadataComponentName || d.MetadataComponentId }));
+    for (const it of list) {
+      if (eid(`fcItem_${it.id}`)?.classList.contains('fc-item-fixed')) continue;
+      await fixOne(type, it.id, it.name, fieldId, swap);
     }
   }
 
   // extraLinksHtml (C5a) — optional pre-escaped xlinkHtml() follow-up links
   // rendered after the done-label (e.g. "↗ Check access" after a flow fix).
-  function markFixed(componentId, label = '✅ Done', extraLinksHtml = '') {
+  // detailHtml — optional pre-built block under the label (a flow's result,
+  // one line per fact).
+  function markFixed(componentId, label = '✅ Done', extraLinksHtml = '', detailHtml = '') {
     const item = eid(`fcItem_${componentId}`);
     if (!item) return;
     const name = item.querySelector('.fc-item-name')?.textContent || '';
     item.classList.add('fc-item-fixed');
     item.innerHTML = `
       <span class="fc-item-name">${esc(name)}</span>
-      <span class="fc-item-ok">${esc(label)}${extraLinksHtml}</span>`;
+      <span class="fc-item-ok">${esc(label)}${extraLinksHtml}</span>${detailHtml}`;
     // Close any open XML inspector for this item
     const xmlPanel = eid(`fcXml_${componentId}`);
     if (xmlPanel) {
@@ -3149,6 +3245,13 @@ const FieldCleaner = (() => {
       // keeps counting as an unresolved fix and "Delete Field" never
       // re-enables (audit 2026-09-12).
       xmlPanel.querySelector('.fc-xml-fix')?.remove();
+    }
+    // The "… all N" buttons count what is still open: gone when one or none is left.
+    const box = item.closest('.fc-group')?.querySelector('.fc-fix-allbox');
+    if (box) {
+      const open = item.closest('.fc-group').querySelectorAll('.fc-fix-pair').length;
+      if (open < 2) box.remove();
+      else { box.dataset.n = String(open); box.innerHTML = _fixAllHtml(box.dataset.type, open, box.dataset.label); }
     }
     checkEnableDelete();
   }
@@ -3421,19 +3524,6 @@ const FieldCleaner = (() => {
     return out;
   }
 
-  // The other rows of the same flow (the index lists each version that
-  // mentions the field) are settled by the same surgery — mark them too.
-  function _markFlowSiblings(exceptId, defId, label, links) {
-    if (!defId) return;
-    const key = String(defId).substring(0, 15);
-    for (const d of (_groups.Flow || [])) {
-      const id = String(d.MetadataComponentId || '');
-      if (id === String(exceptId)) continue;
-      const info = _flowVerInfo[id.substring(0, 15)];
-      if (info && info.defId && String(info.defId).substring(0, 15) === key) markFixed(id, label, links);
-    }
-  }
-
   // Read every version of the flow, find which mention the field, and plan.
   // Nothing is written here.
   // What the automatic fix would do INSIDE the active version, and the choice
@@ -3542,7 +3632,7 @@ const FieldCleaner = (() => {
       try {
         const before = metaById[plan.active.id].Metadata;
         const after = JSON.parse(JSON.stringify(before));
-        if (_replOn()) {
+        if (_swapOn()) {
           // The REAL swap on a clone — the preview cannot disagree with the run.
           const sw = await _flowSwap(after);
           const J = x => JSON.stringify(x);
@@ -3560,7 +3650,7 @@ const FieldCleaner = (() => {
     }
     return { flowId, flowName, defId, versions, maxNum, metaById, plan, interviews, interviewCheckError,
       planDelete, preview, builderUrl: plan.active ? _flowBuilderUrl(plan.active.id) : null,
-      lines: sftkFlowSurgeryLines(plan, kinds, interviewCheckError, _replOn() ? { swapTo: _replField.api } : null),
+      lines: sftkFlowSurgeryLines(plan, kinds, interviewCheckError, _swapOn() ? { swapTo: _replField.api } : null),
       linesDelete: planDelete ? sftkFlowSurgeryLines(planDelete, kinds, interviewCheckError) : null };
   }
 
@@ -3599,7 +3689,7 @@ const FieldCleaner = (() => {
     if (plan.mode === 'active') {
       const src = metaById[plan.active.id];
       const metadata = JSON.parse(JSON.stringify(src.Metadata));
-      const swapping = _replOn();
+      const swapping = _swapOn();
       const changes = swapping
         ? (await _flowSwap(metadata)).changed.reduce((n, c) => n + c.n, 0)
         : removeFieldRefs(metadata, _selObj.api, _selField.api);
@@ -4256,7 +4346,7 @@ const FieldCleaner = (() => {
 
     // ⇄ Replace with another field: the new field takes the slot (or, when it
     // is already on the layout, the old slot becomes a blank space).
-    const swap = _replOn();
+    const swap = _swapOn();
     const swapTo = swap ? _replField.api : '';
     const sw = swap ? sftkLayoutReplaceField(metadata, _selField.api, swapTo, { readOnly: _replReadOnly() }) : null;
     const changes = swap ? sw.swapped + sw.blanked : removeFieldFromLayout(metadata, _selField.api);
@@ -4385,7 +4475,7 @@ const FieldCleaner = (() => {
 
     // ⇄ Replace with another field: field components and visibility rules
     // are pointed at the new field (sftk-fieldreplace.js).
-    const swap = _replOn();
+    const swap = _swapOn();
     const swapTo = swap ? _replField.api : '';
     const sw = swap ? sftkFlexiReplaceField(metadata, _selObj.api, _selField.api, swapTo) : null;
     const changes = swap ? sw.swapped + sw.dropped : removeFieldFromFlexiPage(metadata, _selObj.api, _selField.api);

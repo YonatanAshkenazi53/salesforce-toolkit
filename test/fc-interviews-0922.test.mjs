@@ -44,9 +44,10 @@ describe('flow fix outcome — refused versions are not "done"', () => {
     expect(after).toMatch(/Not finished: \$\{bits\.join\(' · '\)\}/);
     expect(after).toMatch(/The field stays locked until every version that references it is gone/);
     expect(after).toMatch(/throw e;/);
-    // the ✅ label and the sibling marking come only after the throw
-    expect(after.indexOf('throw e;')).toBeLessThan(after.indexOf('label = `✅ ${bits.join'));
-    expect(SRC.indexOf('const stuck = (r.failed')).toBeLessThan(SRC.indexOf('_markFlowSiblings(componentId, r.defId, label, doneLinks);'));
+    // the ✅ label and the result lines come only after the throw
+    const done = SRC.indexOf("label = r.mode === 'active' ? `✅ Done");
+    expect(done).toBeGreaterThan(i + after.indexOf('throw e;'));
+    expect(SRC.indexOf('sftkFlowDoneLines(r, chosen.plan')).toBeGreaterThan(done);
   });
   it('the refused-version line says "still blocking", never "may still block", and repeats no error', () => {
     expect(SRC).toContain("version(s) couldn't be deleted — still blocking the field delete${r.errors.length ? ` (${[...new Set(r.errors)].join('; ')})` : ''}");

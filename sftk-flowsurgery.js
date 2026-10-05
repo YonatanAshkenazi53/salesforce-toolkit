@@ -239,7 +239,70 @@ function sftkFlowSurgeryLines(plan, interviews, interviewCheckError, opts) {
   return out;
 }
 
+// ── One card per FLOW (user 2026-10-05) ─────────────────────────────────────
+// The dependency index lists a flow once per VERSION that mentions the field.
+// Shown as rows, one flow looked like several separate things: "i dont know
+// what was deleted, what was changed to a new active flow version … if i want
+// to replace only one of them it will replace them all". A flow is ONE item:
+// these say, before the fix, what happens to each of its versions, and after
+// it, what happened.
+
+// versions: [{ num, status }] — the versions of ONE flow that mention the field.
+// opts.swapTo: the replacement field (replace mode) or ''.
+// Returns { hasActive, lines: [{ vers, text }] }.
+function sftkFlowCardLines(versions, opts) {
+  const swapTo = opts && opts.swapTo ? String(opts.swapTo) : '';
+  const vs = (Array.isArray(versions) ? versions : [])
+    .map(v => ({ num: Number(v && v.num) || 0, status: String((v && v.status) || '') }))
+    .sort((a, b) => b.num - a.num);
+  const active = vs.find(v => v.status === 'Active') || null;
+  const tag = arr => arr.map(v => `v${v.num}`).join(', ');
+  const lines = [];
+  if (!active) {
+    if (vs.length) lines.push({ vers: `${tag(vs)} · not active`, text: 'deleted. No version that runs uses the field, so nothing is replaced and no new version is made.' });
+    return { hasActive: false, lines };
+  }
+  lines.push({ vers: `v${active.num} · Active`, text: (swapTo
+    ? `the version that runs. ⇄ Replace saves a new version that uses ${swapTo} and keeps the flow running. ✂ Remove saves one without the reference, or deletes this version and switches the flow off — you choose in the dialog.`
+    : 'the version that runs. ✂ Remove saves a new version without the reference, or deletes this version and switches the flow off — you choose in the dialog.')
+    + ` Either way v${active.num} itself is deleted afterwards.` });
+  const top = vs.find(v => v.num > active.num && /draft/i.test(v.status)) || null;
+  if (top) lines.push({ vers: `v${top.num} · Draft`, text: 'newer than the active version: when the flow keeps running, Salesforce saves the new version OVER this draft, so its content is replaced. The dialog offers a backup.' });
+  const rest = vs.filter(v => v !== active && v !== top);
+  if (rest.length) lines.push({ vers: `${tag(rest)} · not active`, text: 'deleted. Salesforce keeps the field locked while any version mentions it.' });
+  return { hasActive: true, lines };
+}
+
+// What a finished flow fix did, one fact per line.
+//   r     fixFlowExecute's result: { mode, newVersion, newId, overwrote, swapped,
+//         interviewsDeleted, stillMentions, undecided }
+//   plan  the plan that ran: { toDelete: [{ id, num, status }], cleanInactive }
+//   opts  { swapTo, field }
+// Returns [{ icon, text, warn? }].
+function sftkFlowDoneLines(r, plan, opts) {
+  const o = opts || {}, res = r || {}, p = plan || {};
+  const out = [];
+  if (res.mode === 'active') {
+    out.push({ icon: '▶', text: `v${res.newVersion} is the ACTIVE version now — ${res.swapped
+      ? `${res.swapped} reference${res.swapped === 1 ? '' : 's'} in it point${res.swapped === 1 ? 's' : ''} at ${o.swapTo}`
+      : 'saved without the field reference'}. Verified by re-reading the org.` });
+    if (res.overwrote) out.push({ icon: '♻', text: `v${res.newVersion} was a draft before: Salesforce saved the new version over it, so the draft’s own content is gone.` });
+  } else if (res.mode === 'active-delete') {
+    out.push({ icon: '⏹', text: 'The flow is switched OFF: no version is active, so it no longer runs. Verified by re-reading the org.' });
+  }
+  const gone = (p.toDelete || []).filter(v => v && String(v.id) !== String(res.newId || ''));
+  if (gone.length) out.push({ icon: '🗑', text: `Deleted: ${gone.map(v => `v${v.num}${v.status === 'Active' ? ' (was the active version)' : ''}`).join(', ')}.` });
+  if (res.interviewsDeleted) out.push({ icon: '🗑', text: `${res.interviewsDeleted} flow interview${res.interviewsDeleted === 1 ? '' : 's'} on those versions deleted.` });
+  if (p.cleanInactive) out.push({ icon: '·', text: `${p.cleanInactive} other version${p.cleanInactive === 1 ? '' : 's'} never mentioned the field and ${p.cleanInactive === 1 ? 'was' : 'were'} left alone.` });
+  if (res.stillMentions) out.push({ icon: '⚠', warn: true, text: res.swapped
+    ? `The new version still mentions ${o.field} in ${res.undecided || 'some'} place(s) whose object could not be worked out — if they are this field, change them in Flow Builder.`
+    : 'The new version still mentions the field in text the automatic fix does not touch (a formula or decision) — finish it in Flow Builder.' });
+  return out;
+}
+
 if (typeof globalThis !== 'undefined') {
+  globalThis.sftkFlowCardLines = sftkFlowCardLines;
+  globalThis.sftkFlowDoneLines = sftkFlowDoneLines;
   globalThis.sftkFlowSurgeryPlan = sftkFlowSurgeryPlan;
   globalThis.sftkFlowInterviewKinds = sftkFlowInterviewKinds;
   globalThis.sftkFlowRefScan = sftkFlowRefScan;
