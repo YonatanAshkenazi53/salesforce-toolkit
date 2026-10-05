@@ -18,6 +18,8 @@
 //   h.text(selector)       innerText of the first match ('' when absent)
 //   h.shot(file)           PNG screenshot
 //   h.log(...)             timestamped line
+//   h.cdp(method, params)  a raw DevTools-protocol command on the current tab; h.onEvent(fn) hears every event
+// SFTK_WINDOW=1600,900 sets the window size (default 1500,1100).
 // Chrome profile lives under %LOCALAPPDATA%\Temp (never the user's profile).
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
@@ -51,7 +53,7 @@ log('profile:', PROFILE, process.env.SFTK_KEEP ? '(kept)' : '(deleted on exit)')
 const chrome = spawn(CHROME, [
   '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--hide-scrollbars',
   '--remote-debugging-pipe', '--enable-unsafe-extension-debugging',
-  `--user-data-dir=${PROFILE}`, '--window-size=1500,1100', 'about:blank'
+  `--user-data-dir=${PROFILE}`, `--window-size=${process.env.SFTK_WINDOW || '1500,1100'}`, 'about:blank'
 ], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
 process.on('exit', () => { try { chrome.kill(); } catch (_) {} });
 
@@ -211,6 +213,10 @@ const h = {
     if (!ok) throw new Error(`no enabled button matching ${re} in ${within}`);
   },
   shots: SHOTS,
+  // raw protocol access, for scripts that need more than the helpers above
+  // (the walkthrough recorder: Page.startScreencast and its frame events)
+  cdp(method, params = {}, sessionId) { return send(method, params, sessionId === undefined ? this.session : sessionId); },
+  onEvent(fn) { listeners.push(fn); },
   // import deployments from a fixture file of sftk-profile payloads (array or one),
   // through the extension's own parser — replaces same-name deployments
   async importProfiles(file) {
