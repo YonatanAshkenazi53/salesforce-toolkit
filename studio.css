@@ -5131,6 +5131,7 @@ html, body {
 .ds-ring-row > div + div, .ds-ring-head > div + div { border-left: 1px solid var(--border); padding-left: 10px; }
 .ds-ring-cell { flex-wrap: wrap; row-gap: 3px; }
 .ds-ring-row-acts .ds-btn { white-space: nowrap; }
+.ds-ring-colhdr .ds-btn { margin-left: 8px; white-space: nowrap; text-transform: none; letter-spacing: 0; }
 
 /* Tree Diff (user request: tree differences across envs + suggestions) */
 .ds-td-matrix { border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }

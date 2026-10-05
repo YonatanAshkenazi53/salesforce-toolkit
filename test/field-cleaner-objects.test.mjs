@@ -556,7 +556,7 @@ describe('metadata-mutating fixes confirm before acting', () => {
     expect(fn).toContain('await sftkConfirmDestructive({');
     expect(fn).toContain('permanently deletes flow versions');   // 2026-09-21: the active version may go too, so not only "old" ones
     expect(fn).toMatch(/needsCheckbox: type === 'Flow'/);
-    expect(fn).toMatch(/if \(!sure\) return;/);
+    expect(fn).toMatch(/if \(!sure\) return 'cancel';/);   // 2026-10-05: a bulk walk stops on Cancel
     // the confirm happens BEFORE the button flips to ⏳
     expect(fn.indexOf('sftkConfirmDestructive')).toBeLessThan(fn.indexOf("_rowBusy(componentId, '⏳ working…')"));
     expect(fn.indexOf("_rowBusy(componentId, '⏳ working…')")).toBeGreaterThan(0);

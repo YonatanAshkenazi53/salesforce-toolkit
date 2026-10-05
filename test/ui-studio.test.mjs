@@ -409,10 +409,22 @@ describe('empty live set = unknown, not closed', () => {
     expect(off).toContain('(not open)');
   }));
 
-  it('Scan-all skips only KNOWN-closed orgs', () => {
-    const src = RING.slice(RING.indexOf('async function _ringScanAll('),
-                           RING.indexOf('\n}', RING.indexOf('async function _ringScanAll(')));
+  it('a target scan skips only a KNOWN-closed org', () => {
+    const src = RING.slice(RING.indexOf('async function _ringScanTarget('),
+                           RING.indexOf('\n}', RING.indexOf('async function _ringScanTarget(')));
     expect(src).toMatch(/lsKnown && !\[\.\.\.ls\]\.some/);
+  });
+
+  // User 2026-10-05, on a 🔎 Scan that sat in the source column: "why do i have
+  // a scan button in the source? … we need to be able to scan only the targets".
+  it('scanning sits on the TARGETS: a button per target column and one per cell, none in the source column', () => {
+    expect(RING).not.toContain('data-ring-scanall');
+    expect(RING).not.toContain('ds-ring-row-acts');
+    expect(RING).toContain('data-ring-scantgt="${esc(t)}"');
+    expect(RING).toContain("b.addEventListener('click', () => _ringScanTarget(b.dataset.ringScantgt, b)));");
+    expect(RING).toContain('data-ring-scan1="${esc(p.id)}|${esc(tUrl)}"');
+    const src = RING.slice(RING.indexOf('async function _ringScanTarget('), RING.indexOf('// Per-cell repair'));
+    expect(src).toContain('await _ringScanOne(p.id, tgtUrl, null);');
   });
 
   it('matrix cells only badge ⚫ / disable 🔎 when liveness is known', () => {
