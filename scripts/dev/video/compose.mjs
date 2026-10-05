@@ -18,8 +18,15 @@
 // viewport at 1.2×), a 120-px band below it with the chapter on the left and
 // the caption in the middle. Stretches the script marked as waiting
 // (rec.fast) play FAST× faster, with a "sped up" badge so the viewer knows.
+//
+// Narration (on by default; VOICE=0 makes a silent video): every caption is
+// spoken by a voice that is already on this PC (voice.mjs) and recorded into
+// the same file as an audio track. A caption stays, and the picture holds,
+// until its sentence has been spoken — so the video runs a little longer than
+// the silent one, and voice, caption and screen never drift apart.
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { join, dirname, resolve, basename } from 'node:path';
+import { speakAll, voiceFile, wavSeconds, VOICE as VOICE_NAME, RATE as VOICE_RATE } from './voice.mjs';
 
 const FAST = Number(process.env.FAST || 8);
 const W = 1920, H = 1080, PAGE_H = 960;
@@ -28,6 +35,7 @@ const MIN_GAP = 40;            // ms between frames sent to the encoder (25 fps 
 export default async function (h) {
   const dir = resolve(process.env.REC_DIR || 'dist/video/rec');
   const TRACK = process.env.CAPTIONS === 'track';   // captions as a subtitle file, not in the picture
+  const SPEAK = process.env.VOICE !== '0';          // the narration
   const out = resolve(process.env.OUT || 'dist/video/walkthrough.mp4').replace(/\.mp4$/i, TRACK ? '-nocaptions.mp4' : '.mp4');
   // One recording (manifest.json), or the walkthrough's sections (order.json +
   // <id>/manifest.json): joined in order, each shifted to start where the one
@@ -54,23 +62,46 @@ export default async function (h) {
   const mapT = t => { let o = t; for (const s of fast) { if (t >= s.b) o -= (s.b - s.a) * (1 - 1 / FAST); else if (t > s.a) o -= (t - s.a) * (1 - 1 / FAST); } return Math.max(0, o); };
   const inFast = t => fast.some(s => t > s.a && t < s.b);
 
+  // ── narration: where each sentence starts, and how far it pushes what follows ──
+  // A caption that would arrive while the one before it is still being spoken
+  // waits for it; everything after that moment moves by the same amount, so
+  // the picture simply holds for those seconds.
+  const said = (man.cues || []).map(c => ({ t: c.t, tau0: mapT(c.t), text: c.text })).sort((a, b) => a.tau0 - b.tau0);
+  const breaks = [];
+  let spoken = 0;
+  if (SPEAK) {
+    const v = speakAll(dir);
+    h.log(`voice: ${VOICE_NAME}, rate ${VOICE_RATE} — ${v.captions} captions, ${v.made} newly spoken, ${v.seconds.toFixed(0)} s of speech`);
+    let shift = 0, busyUntil = 0;
+    for (const c of said) {
+      let start = c.tau0 + shift;
+      if (start < busyUntil) { shift += busyUntil - start; start = busyUntil; }
+      breaks.push({ at: c.tau0, shift });
+      const f = voiceFile(dir, c.text);
+      if (f && existsSync(f)) { c.voice = f; c.dur = wavSeconds(f) * 1000; busyUntil = start + c.dur + 350; spoken++; }
+    }
+    said.busyUntil = busyUntil;
+  }
+  const shiftAt = tau0 => { let s = 0; for (const b of breaks) { if (b.at <= tau0) s = b.shift; else break; } return s; };
+  const T = t => { const x = mapT(t); return x + shiftAt(x); };   // recording time → video time
+
   // ── one timeline of everything that changes the picture ──
   const ev = [];
   const fr = man.frames || [];
   let last = -1e9;
   for (let i = 0; i < fr.length; i++) {
-    const tau = mapT(fr[i].t), next = i + 1 < fr.length ? mapT(fr[i + 1].t) : Infinity;
+    const tau = T(fr[i].t), next = i + 1 < fr.length ? T(fr[i + 1].t) : Infinity;
     if (tau - last >= MIN_GAP || next - tau >= 120) { ev.push({ tau, kind: 'frame', f: fr[i].abs ? join(dir, fr[i].f) : join(dir, 'frames', fr[i].f), fast: inFast(fr[i].t) }); last = tau; }
   }
-  for (const c of (man.cues || [])) ev.push({ tau: mapT(c.t), kind: 'cue', text: c.text });
-  for (const c of (man.chapters || [])) ev.push({ tau: mapT(c.t), kind: 'chapter', title: c.title });
+  for (const c of said) ev.push({ tau: T(c.t), kind: 'cue', text: c.text, voice: c.voice || null });
+  for (const c of (man.chapters || [])) ev.push({ tau: T(c.t), kind: 'chapter', title: c.title });
   ev.sort((a, b) => a.tau - b.tau || (a.kind === 'frame' ? 1 : -1));
-  const total = mapT(man.length || (fr.length ? fr[fr.length - 1].t : 0)) + 1500;
-  h.log(`composing ${ev.filter(e => e.kind === 'frame').length} of ${fr.length} frames · source ${(man.length / 1000).toFixed(0)} s → video ${(total / 1000).toFixed(0)} s (waiting ×${FAST})`);
+  const total = Math.max(T(man.length || (fr.length ? fr[fr.length - 1].t : 0)), said.busyUntil || 0) + 1500;
+  h.log(`composing ${ev.filter(e => e.kind === 'frame').length} of ${fr.length} frames · source ${(man.length / 1000).toFixed(0)} s → video ${(total / 1000).toFixed(0)} s (waiting ×${FAST}${SPEAK ? `, ${spoken} captions spoken` : ', silent'})`);
 
   // ── the chapters, and (CAPTIONS=track only) the subtitle file ──
   const stamp = ms => { const p = (n, w = 2) => String(Math.floor(n)).padStart(w, '0'); return `${p(ms / 3600000)}:${p(ms / 60000 % 60)}:${p(ms / 1000 % 60)},${p(ms % 1000, 3)}`; };
-  const cues = (man.cues || []).map(c => ({ tau: mapT(c.t), text: c.text }));
+  const cues = said.map(c => ({ tau: T(c.t), text: c.text }));
   let srt = '', k = 0;
   for (let i = 0; i < cues.length; i++) {
     if (!cues[i].text) continue;
@@ -80,7 +111,7 @@ export default async function (h) {
   }
   if (TRACK) writeFileSync(out.replace(/\.mp4$/i, '') + '.srt', srt);
   const mmss = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000 % 60)).padStart(2, '0')}`;
-  const ch = (man.chapters || []).map(c => ({ tau: mapT(c.t), title: c.title }));
+  const ch = (man.chapters || []).map(c => ({ tau: T(c.t), title: c.title }));
   writeFileSync(out.replace(/\.mp4$/i, '') + '.chapters.txt', ch.map((c, i) => `${mmss(i === 0 ? 0 : c.tau)} ${c.title}`).join('\n') + '\n');
 
   // ── the encoder page ──
@@ -88,11 +119,25 @@ export default async function (h) {
   const type = await h.eval(`(async () => {
     const c = document.createElement('canvas'); c.width = ${W}; c.height = ${H}; document.body.style.margin = '0'; document.body.appendChild(c);
     const g = c.getContext('2d');
-    const type = MediaRecorder.isTypeSupported('video/mp4;codecs=avc1.640028') ? 'video/mp4;codecs=avc1.640028' : MediaRecorder.isTypeSupported('video/mp4') ? 'video/mp4' : 'video/webm;codecs=vp9';
-    const stream = c.captureStream(0); const track = stream.getVideoTracks()[0];
-    const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: ${Number(process.env.BITRATE || 8000000)} });
+    const speak = ${SPEAK ? 'true' : 'false'};
+    const pick = list => list.find(t => MediaRecorder.isTypeSupported(t));
+    const type = speak ? pick(['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4;codecs=avc1,opus', 'video/webm;codecs=vp9,opus'])
+      : pick(['video/mp4;codecs=avc1.640028', 'video/mp4', 'video/webm;codecs=vp9']);
+    const vstream = c.captureStream(0); const track = vstream.getVideoTracks()[0];
+    let ac = null, dest = null, stream = vstream;
+    if (speak) {
+      ac = new AudioContext({ sampleRate: 48000 }); dest = ac.createMediaStreamDestination();
+      // a silent source that never stops: the audio track then runs from the first
+      // moment to the last, and a sentence lands exactly where it was started
+      const hum = ac.createConstantSource(); const mute = ac.createGain(); mute.gain.value = 0; hum.connect(mute); mute.connect(dest); hum.start();
+      stream = new MediaStream([track, dest.stream.getAudioTracks()[0]]);
+    }
+    const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: ${Number(process.env.BITRATE || 8000000)}, audioBitsPerSecond: 160000 });
     const chunks = []; rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-    const V = window.__v = { c, g, track, rec, chunks, type, img: null, caption: '', chapter: '', fast: false, blob: null };
+    const V = window.__v = { c, g, track, rec, chunks, type, ac, dest, clips: {}, img: null, caption: '', chapter: '', fast: false, blob: null };
+    // the narration: each sentence is decoded before the recording starts, and only started at its moment
+    V.load = async (id, b64) => { const bytes = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0)); V.clips[id] = await ac.decodeAudioData(bytes.buffer); return V.clips[id].duration; };
+    V.speak = id => { const buf = V.clips[id]; if (!buf) return false; const src = ac.createBufferSource(); src.buffer = buf; src.connect(dest); src.start(); return true; };
     const wrap = (text, max) => { const words = String(text).split(' '); const lines = []; let cur = '';
       for (const w of words) { const t = cur ? cur + ' ' + w : w; if (g.measureText(t).width > max && cur) { lines.push(cur); cur = w; } else cur = t; }
       if (cur) lines.push(cur); return lines; };
@@ -116,10 +161,17 @@ export default async function (h) {
     };
     V.frame = async b64 => { const im = new Image(); im.src = 'data:image/jpeg;base64,' + b64; try { await im.decode(); V.img = im; } catch (_) {} V.paint(); };
     V.paint();
-    rec.start(1000);
-    V.keep = setInterval(V.paint, 200);   // a held picture still needs frames, or players stall on it
     return type; })()`);
   h.log('encoder:', type);
+  if (SPEAK) {
+    // sound needs the page to have been "clicked" once: the protocol can say so
+    const st = await h.cdp('Runtime.evaluate', { expression: '__v.ac.resume().then(() => __v.ac.state)', awaitPromise: true, returnByValue: true, userGesture: true });
+    if (st.result.value !== 'running') throw new Error(`the audio could not start (${st.result.value})`);
+    const files = [...new Set(ev.filter(e => e.voice).map(e => e.voice))];
+    for (const f of files) await h.eval(`__v.load(${JSON.stringify(basename(f))}, ${JSON.stringify(readFileSync(f).toString('base64'))})`);
+    h.log(`narration loaded: ${files.length} sentences`);
+  }
+  await h.eval(`(() => { __v.rec.start(1000); __v.keep = setInterval(__v.paint, 200); return 1; })()`);   // a held picture still needs frames, or players stall on it
 
   // ── play the timeline in real time ──
   const t0 = Date.now();
@@ -131,7 +183,7 @@ export default async function (h) {
       const b64 = readFileSync(e.f).toString('base64');
       await h.eval(`(async () => { __v.fast = ${e.fast ? 'true' : 'false'}; await __v.frame(${JSON.stringify(b64)}); return 1; })()`);
       shown++;
-    } else if (e.kind === 'cue') await h.eval(`(() => { __v.caption = ${JSON.stringify(e.text)}; __v.paint(); return 1; })()`);
+    } else if (e.kind === 'cue') await h.eval(`(() => { __v.caption = ${JSON.stringify(e.text)}; __v.paint(); ${e.voice ? `__v.speak(${JSON.stringify(basename(e.voice))});` : ''} return 1; })()`);
     else await h.eval(`(() => { __v.chapter = ${JSON.stringify(e.title)}; __v.paint(); return 1; })()`);
     if (Date.now() - lastLog > 30000) { lastLog = Date.now(); h.log(`… ${((Date.now() - t0) / 1000).toFixed(0)} / ${(total / 1000).toFixed(0)} s, ${shown} frames, lag ${Math.max(0, Date.now() - t0 - e.tau).toFixed(0)} ms`); }
   }
