@@ -59,19 +59,32 @@ export const SECTIONS = [
     await rec.pause(3000);
     if (await c.has('.dep-filter-btn[data-type="RecordTriggeredFlow"]')) { await rec.click('.dep-filter-btn[data-type="RecordTriggeredFlow"]', 1500); await rec.say('Filter by kind, for example only record-triggered flows.', 3000); await rec.click('.dep-filter-btn[data-type="all"]', 1000); }
     if (await c.has('#depRefSearch')) {
-      await rec.type('#depRefSearch', OLD_FIELD, 22);
-      await rec.click('#depRefGo', 800);
-      await rec.fast(() => h.waitFor("!!document.querySelector('#depRefResults')?.innerText", 60000, 500).catch(() => {}));
-      if (await c.has('#depRefRescan')) {
-        // the flow list came from the stored cache: the page says the search read nothing yet, and offers to read it all
-        await rec.say('The search says how much it actually read. Here the list came from a stored cache, so it offers to read every flow first.', 4500);
-        await rec.click('#depRefRescan', 800);
-        await rec.fast(async () => { await h.sleep(3000); await h.waitFor("!!document.querySelector('#depRescanBtn') && !document.querySelector('#depRescanBtn').disabled && document.querySelectorAll('.dep-node').length > 0", 300000, 1000); await h.sleep(1500); });
+      // The search answers only for the flow versions whose text it has read, and says so.
+      // So: search; while the page says the scan is still running, wait and search again;
+      // when it says the list came from the stored cache, press its "Read them all".
+      const search = async () => {
         await h.eval(`(() => { const i = document.querySelector('#depRefSearch'); i.value = ${J(OLD_FIELD)}; document.querySelector('#depRefGo').click(); return true; })()`);
-        await rec.fast(() => h.waitFor("!!document.querySelector('#depRefResults')?.innerText", 60000, 500).catch(() => {}));
+        await h.waitFor("!!document.querySelector('#depRefResults')?.innerText", 60000, 500).catch(() => {});
+        await h.sleep(400);
+        return h.eval(`(() => { const t = document.querySelector('#depRefResults')?.innerText || ''; return { partial: !!document.querySelector('#depRefRescan'), running: /still running/.test(t), hits: document.querySelectorAll('.dep-ref-hit').length }; })()`);
+      };
+      await rec.type('#depRefSearch', OLD_FIELD, 22);
+      let st = await search();
+      if (st.partial) {
+        await rec.scrollTo('#depRefResults', 'center');
+        await rec.say('The search says how much it actually read. Not every flow has been read yet, so this is not an answer.', 4500);
+        await rec.fast(async () => {
+          const end = Date.now() + 420000; let asked = false;
+          while (st.partial && Date.now() < end) {
+            if (!st.running && !asked) { asked = true; await h.eval(`document.querySelector('#depRefRescan')?.click()`); await h.sleep(4000); }
+            else await h.sleep(3000);
+            st = await search();
+          }
+        });
       }
       await rec.scrollTo('#depRefResults', 'center');
-      await rec.say('“What uses this?” Type a field or a component and see every flow that mentions it.', 5000);
+      await rec.say(st.partial ? '“What uses this?” Type a field or a component and see the flows that mention it.'
+        : `“What uses this?” Every flow was read: ${st.hits} flow version${st.hits === 1 ? '' : 's'} mention this field.`, 5500);
     }
     if (await c.has('#depBulkBtn')) {
       await rec.click('#depBulkBtn', 1200);
@@ -112,9 +125,16 @@ export const SECTIONS = [
     await rec.pause(2500);
     await rec.type('#lpSearch', 'SFTK');
     await h.sleep(900);
-    const opened = await h.eval(`(() => { const r = [...document.querySelectorAll('.lp-row')].find(x => /SFTK[ _]LP/i.test(x.querySelector('.lp-row-name')?.textContent || '')) || document.querySelector('.lp-row'); if (!r) return false; r.setAttribute('data-demo-row', '1'); return true; })()`);
-    if (!opened) throw new Error('no Lightning page row to open');
-    await rec.click('.lp-row[data-demo-row="1"]', 800);
+    // the list redraws itself while it checks the org defaults, so the row is found again at every step
+    const findRow = `([...document.querySelectorAll('.lp-row')].find(x => /SFTK[ _]LP/i.test(x.querySelector('.lp-row-name')?.textContent || '')) || document.querySelector('.lp-row'))`;
+    let open = false;
+    for (let i = 0; i < 5 && !open; i++) {
+      if (!(await h.eval(`(() => { const r = ${findRow}; if (!r) return false; document.querySelectorAll('[data-demo-row]').forEach(x => x.removeAttribute('data-demo-row')); r.setAttribute('data-demo-row', '1'); return true; })()`))) throw new Error('no Lightning page row to open');
+      await rec.point('.lp-row[data-demo-row="1"]', 700);
+      await h.eval(`(() => { const r = ${findRow}; if (r) r.click(); return !!r; })()`);
+      open = await h.waitFor("!!document.querySelector('#lpDetailBody') && !!document.querySelector('#lpDetailBody').offsetParent", 6000, 300).then(() => true).catch(() => false);
+    }
+    if (!open) throw new Error('the page detail did not open');
     await rec.fast(() => h.waitFor("!!document.querySelector('#lpDetailBody .lp-status-bar')", 180000, 1000));
     await rec.say('A page’s assignments, read from Salesforce each time: the org default, an app default, or an app with a record type and a profile.', 6000);
     if (await c.has('.lp-users-btn')) {

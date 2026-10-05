@@ -7,7 +7,9 @@
 //   REC_DIR=dist/video/rec OUT=dist/video/walkthrough.mp4 \
 //     node scripts/dev/headless-studio.mjs scripts/dev/video/compose.mjs
 //
-// ONLY=flows,deploy records just those sections (their ids are in SECTIONS).
+// Each section is recorded into its own folder (REC_DIR/<id>/), so
+// ONLY=flows,deploy records just those again and the composer joins them with
+// the ones already there (their ids are in SECTIONS).
 // WRITES=0 leaves out the one section that changes an org (a two-record
 // deployment into trailheads4 and its rollback) — everything else only reads.
 //
@@ -16,7 +18,8 @@
 // The orgs: npc = trailheads5 (the source, where the Toolkit's fixtures live),
 // npc2 = trailheads4 (the target).
 import { execFileSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { writeFileSync, rmSync, renameSync, existsSync } from 'node:fs';
 import { makeRecorder } from './recorder.mjs';
 
 const J = JSON.stringify;
@@ -41,7 +44,8 @@ function ownNames() {
 
 export default async function (h) {
   const only = String(process.env.ONLY || '').split(',').map(s => s.trim()).filter(Boolean);
-  const rec = makeRecorder(h, resolve(process.env.REC_DIR || 'dist/video/rec'), { names: ownNames() });
+  const base = resolve(process.env.REC_DIR || 'dist/video/rec');
+  const rec = makeRecorder(h, base, { names: ownNames() });
   const text = async (sel, n = 400) => (await h.eval(`(document.querySelector(${J(sel)})?.innerText || '')`)).slice(0, n).split(NL).map(x => x.trim()).filter(Boolean).join(' | ');
   const has = sel => h.eval(`!!document.querySelector(${J(sel)})`);
   const popup = async tab => { await h.popup(tab); await rec.resume(); };
@@ -67,17 +71,31 @@ export default async function (h) {
   await h.watchErrors();
   // the first page, before the recording starts: the licence is accepted here, off camera
   await h.popup('flows');
-  await rec.start();
   for (const s of SECTIONS) {
     if (only.length && !only.includes(s.id)) continue;
     if (s.writes && process.env.WRITES === '0') { h.log('skipped (WRITES=0):', s.id); continue; }
-    if (s.needsTarget && !targetIn) { await rec.fast(async () => { await h.login(TGT); }); targetIn = true; }
+    if (s.needsTarget && !targetIn) { await h.login(TGT); targetIn = true; }
     h.log('──── section', s.id);
-    try { rec.chapter(s.title); await s.run(ctx); done.push(s.id); }
-    catch (e) { failed.push(`${s.id}: ${String((e && e.message) || e).split(NL)[0].slice(0, 200)}`); h.log('SECTION FAILED', s.id, (e && e.stack) || e); try { await h.shot(`${h.shots}/walk-fail-${s.id}.png`); } catch (_) {} rec.hush(); }
+    // into <id>.new first: a section that fails keeps the recording it had
+    const dir = join(base, s.id), tmp = join(base, s.id + '.new');
+    await rec.begin(tmp);
+    rec.chapter(s.title);
+    let err = null;
+    try { await s.run(ctx); await rec.pause(900); } catch (e) { err = e; }
+    await rec.end({ id: s.id, title: s.title });
+    if (!err) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+      renameSync(tmp, dir);
+      done.push(s.id);
+    } else {
+      failed.push(`${s.id}: ${String((err && err.message) || err).split(NL)[0].slice(0, 200)}${existsSync(dir) ? ' (its earlier recording is kept)' : ''}`);
+      h.log('SECTION FAILED', s.id, (err && err.stack) || err);
+      try { await h.shot(`${h.shots}/walk-fail-${s.id}.png`); } catch (_) {}
+      try { rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
+    }
   }
-  await rec.pause(1500);
-  await rec.stop();
+  // the order the composer joins the sections in
+  writeFileSync(join(base, 'order.json'), JSON.stringify(SECTIONS.map(s => s.id)));
   h.log('RECORDED:', done.join(', ') || '(nothing)');
   h.log('FAILED:', failed.length ? failed.join(' ‖ ') : '(none)');
   h.log('page exceptions during the tour:', h.exceptions.length);

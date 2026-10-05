@@ -44,10 +44,10 @@ Saves a PNG of the picture at each of those seconds to the harness's screenshot 
 
 | file | job |
 |---|---|
-| `recorder.mjs` | `makeRecorder(h, dir)`: screencast frames, captions (`say`), chapters, waiting stretches (`fast`), a ring around what is clicked (`click`, `point`), typing (`type`), and the mask |
+| `recorder.mjs` | `makeRecorder(h, dir)`: one recording per `begin(dir)` … `end()` — screencast frames, captions (`say`), chapters, waiting stretches (`fast`), a ring around what is clicked (`click`, `point`), typing (`type`), and the mask |
 | `sections.mjs` | the tour itself: one entry per tool, with its captions |
 | `walkthrough.mjs` | logs in, runs the sections, lists what was recorded and what failed |
-| `compose.mjs` | frames + manifest → MP4, `.srt`, chapters |
+| `compose.mjs` | the sections in `order.json` order (or one recording) → MP4, `.srt`, chapters |
 | `peek.mjs` | frames of a finished video |
 | `smoke.mjs` | a 15-second self-test of recorder and composer, no org needed |
 
@@ -56,9 +56,12 @@ Saves a PNG of the picture at each of those seconds to the harness's screenshot 
 - **It reads.** A confirmation that is opened to show it is cancelled. The one
   exception is the section `run`: it deploys two fixture records into the target
   org and rolls them back, so the org ends as it started. `WRITES=0` leaves it out.
-- **A section stands alone.** One that fails is logged and the tour goes on; the
-  end of the log says `RECORDED:` and `FAILED:`. `ONLY=flows,deploy` records just
-  those.
+- **A section stands alone.** Each is recorded into its own folder
+  (`dist/video/rec/<id>/`). One that fails is logged, keeps the recording it had,
+  and the tour goes on; the end of the log says `RECORDED:` and `FAILED:`.
+  `ONLY=pages,deploy` records just those again, and the compose step joins them
+  with the sections already there — so after a change to one tool, record that
+  one section and compose.
 - **No personal data in a frame.** The recorder rewrites every e-mail address and
   the running user's own name in the page before it is drawn. It changes the
   display of the throwaway headless profile only.
