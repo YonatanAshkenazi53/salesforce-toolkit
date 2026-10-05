@@ -43,11 +43,6 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 - Every planned change is listed and requires a checkbox before it writes anything; a profile or role change replaces the old one, but everything else only adds access — nothing is removed from the target user. It reports Salesforce's answer for each operation — what was assigned, what was refused and why.
 - Limit: a permission set whose license doesn't match the target user's is shown but never force-assigned.
 
-### Licenses
-- Deactivate or reactivate one or more users at once (a dialog names everyone affected before you confirm). **Change License** reassigns a user's profile — which is how Salesforce ties a license — from a list grouped by license, and warns you to check a seat is free first.
-- Reports success or failure per user from Salesforce's answer; after a deactivation it also tells you the user has moved to the Inactive filter, since the list shows active users by default.
-- Limit: users are changed one at a time behind the scenes, so a large selection takes longer and partial failures are reported individually.
-
 ### Flow Access
 - Pick one or more flows and one or more permission sets, see how many already have access, and grant them all in one action.
 - It lists exactly what will be granted before writing (this always deploys a small metadata package, since a plain API write doesn't actually create this kind of access), then reloads the access list from the org so you can see the grant in place.
@@ -84,13 +79,8 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 - Pick two orgs and any objects, standard or custom, and see a record-count difference for each — how many exist in both, are missing from the target, or exist only in the target — matched by name, an external ID, or a field you choose. Read-only; 🚀 Deploy next to any row jumps straight to a scoped deployment for that object.
 - Limit: this compares a whole object at once, not just the records a particular deployment cares about, so its numbers won't match a deployment's own scan of the same object.
 
-### Deploy Readiness
-- Picks a source org and checks every other open org's schema against it before you migrate anything: missing or mismatched fields, picklist value gaps, missing record types, active validation and duplicate rules on the target, and org-level settings that can silently break a load (like State/Country picklists being on in one org and off in another). Only reads schema, never data.
-- Every result states exactly which org pair and when it was checked; an inconclusive check is shown as unknown, never quietly counted as fine.
-- Limit: this checks the *shape* of the data — fields, values, rules — not who can see or edit it.
-
 ### Org health
-- One org at a time, one card per finding, each with a button into the tool that fixes it: licence types at their cap, active users who have not logged in for 90 days (integration users left out), flows switched off with ⏻ Flow switches and still off, your own flows three or more releases below the org's release, Lightning pages assigned to nobody, picklists that differ between your open orgs (for the object you name), and custom fields on an object that no record fills and nothing references.
+- One org at a time, one card per finding, most with a button into the tool that fixes it: licence types at their cap, active users who have not logged in for 90 days (integration users left out), flows switched off with ⏻ Flow switches and still off, your own flows three or more releases below the org's release, Lightning pages assigned to nobody, picklists that differ between your open orgs (for the object you name), and custom fields on an object that no record fills and nothing references.
 - Nothing is read until you press Check or Check all; each card shows its API cost first, and Check all shows the org's remaining daily API budget. Answers are kept on this PC per org with the time they were checked.
 - A check that could not read everything says so — "could not be checked", "NOT an all-clear" — and never shows a green result for something it did not read.
 - Limit: the unused-fields card relies on Salesforce's dependency index, which does not cover reports, list views or Lightning pages, so its list is candidates to confirm in Field Cleaner before deleting anything.
@@ -106,8 +96,9 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 ## Not in the public build yet
 
 These tools exist and stay in the repository and the developer build. They were taken out of the
-first public release on 2026-10-03 to keep it to what has been used end to end; each returns as its
-own release. The in-app guide must not render this section.
+first public release (2026-10-03 and 2026-10-05, the owner's choice tool by tool) to keep it to
+what has been used end to end; each returns as its own release. The in-app guide must not render
+this section.
 
 ### Picklist Manager
 - In a single org: every value with its active state, usage count and record types, plus a wizard for deactivating or removing a value that first checks flows and validation rules mentioning it by name (an honest, partial check stating how many it actually scanned) before letting you remap or clear the records that hold it.
@@ -117,3 +108,13 @@ own release. The in-app guide must not render this section.
 
 ### Sequences
 - Chain several deployments into a **Sequence** that runs one after another against one org pair, so a later step can use records an earlier step just created. Running a Sequence lists every step and the stakes and requires an acknowledgement — plus the target org's name if it's production — before writing anything.
+
+### Licenses
+- Deactivate or reactivate one or more users at once (a dialog names everyone affected before you confirm). **Change License** reassigns a user's profile — which is how Salesforce ties a license — from a list grouped by license, and warns you to check a seat is free first.
+- Reports success or failure per user from Salesforce's answer; after a deactivation it also tells you the user has moved to the Inactive filter, since the list shows active users by default.
+- Limit: users are changed one at a time behind the scenes, so a large selection takes longer and partial failures are reported individually.
+
+### Deploy Readiness
+- Picks a source org and checks every other open org's schema against it before you migrate anything: missing or mismatched fields, picklist value gaps, missing record types, active validation and duplicate rules on the target, and org-level settings that can silently break a load (like State/Country picklists being on in one org and off in another). Only reads schema, never data.
+- Every result states exactly which org pair and when it was checked; an inconclusive check is shown as unknown, never quietly counted as fine.
+- Limit: this checks the *shape* of the data — fields, values, rules — not who can see or edit it.

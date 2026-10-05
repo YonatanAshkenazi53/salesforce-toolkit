@@ -509,8 +509,19 @@ So for 1.0:
 - **Stays in:** Lightning Pages — which therefore needs the hand-level QA it never had (app /
   profile assignments, clone, deactivate were never exercised; the "Who sees what → Show users"
   404 is unconfirmed). That is now release work, not optional.
-- **Not decided:** All open orgs, Org Compare, Deploy Readiness, Org health, Copy Permissions,
-  Licenses, Flow Access — they ship unless the user says otherwise.
+- **Decided 2026-10-05, tool by tool.** Data Studio (a marked screenshot): Connected Orgs, Data
+  Deployment, All open orgs, History, Org Compare, Org health. Toolkit: "all besides licenses".
+  So **Deploy Readiness** (`studio-readiness.js`) and **Licenses** (`license-manager.js`) are cut
+  from the public build too. `CUT_JS` / `CUT_IDS` in the packer; the nav buttons, the Licenses tab
+  and the script tags are stripped; `sftk-build.js` (`window.SFTK_CUT`, `sftkShips(id)`) is
+  rewritten in staging so Data Studio does not link to a Toolkit tab that is not there (palette,
+  Org health's "Open Licenses"). Checked in the harness on both builds: the public Data Studio nav
+  is exactly orgs / profiles / ring / history / compare / orghealth, the Toolkit nav has no
+  Licenses, a stale `#/readiness` link falls back to home, no page errors; the developer build
+  shows everything. Pins `test/scope-1005`.
+- **Asked for the release (2026-10-05):** a walkthrough video with on-screen subtitles showing
+  every shipped feature of the Toolkit and Data Studio live. To record from the public build once
+  the hand-test findings are fixed. Needs ffmpeg (not installed) to assemble frames.
 - `docs/FEATURES.md` keeps the two cut tools under "Not in the public build yet"; the in-app guide
   must not render that section.
 
