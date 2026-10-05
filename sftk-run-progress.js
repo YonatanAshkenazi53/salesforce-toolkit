@@ -77,6 +77,8 @@ function sftkRunProgressReduce(state, evt, now) {
       if (c.batchSize == null && done > 0) c.batchSize = done;   // the first batch sizes the rest
       c.done = done; c.total = Number(evt.total) || c.total || 0;
       c.created = Number(evt.created) || 0; c.failed = Number(evt.failed) || 0;
+      // what the accepted records became: a rollback deletes and restores, it creates nothing
+      if (evt.okWord) c.okWord = String(evt.okWord);
       if (c.total && c.done >= c.total) c.finished = true;
       return { card: c };
     }
@@ -155,7 +157,7 @@ function sftkRunProgressCardText(c, now) {
   }
   out.timeText = [sftkRunFmtDur(elapsedMs), rateText, !c.finished && left != null ? `~${sftkRunFmtDur(left * 1000)} left` : '']
     .filter(Boolean).join(' · ');
-  const tail = c.mode === 'bulkRead' ? '' : ` · ${sftkRunFmtN(c.created)} created${c.failed ? ` · ${sftkRunFmtN(c.failed)} failed` : ''}`;
+  const tail = c.mode === 'bulkRead' ? '' : ` · ${sftkRunFmtN(c.created)} ${c.okWord || 'created'}${c.failed ? ` · ${sftkRunFmtN(c.failed)} failed` : ''}`;
   out.numsText = total ? `${sftkRunFmtN(done)} / ${sftkRunFmtN(total)} ${verb}${done ? tail : ''}` : (done ? `${sftkRunFmtN(done)} ${verb}` : '');
   if (c.finished) out.alive = false;
   return out;
