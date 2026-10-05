@@ -21,7 +21,26 @@ const MIN_GAP = 40;            // ms between frames sent to the encoder (25 fps 
 export default async function (h) {
   const dir = resolve(process.env.REC_DIR || 'dist/video/rec');
   const out = resolve(process.env.OUT || 'dist/video/walkthrough.mp4');
-  const man = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
+  // One recording (manifest.json), or the walkthrough's sections (order.json +
+  // <id>/manifest.json): joined in order, each shifted to start where the one
+  // before it ended. A section with no recording is left out, and said.
+  let man;
+  if (existsSync(join(dir, 'order.json'))) {
+    man = { length: 0, frames: [], cues: [], chapters: [], fast: [] };
+    const missing = [];
+    for (const id of JSON.parse(readFileSync(join(dir, 'order.json'), 'utf8'))) {
+      const f = join(dir, id, 'manifest.json');
+      if (!existsSync(f)) { missing.push(id); continue; }
+      const m = JSON.parse(readFileSync(f, 'utf8')), off = man.length;
+      man.cues.push({ t: off, text: '' });   // a caption never runs on into the next section
+      for (const x of (m.frames || [])) man.frames.push({ f: join(id, 'frames', x.f), t: off + x.t, abs: true });
+      for (const x of (m.cues || [])) man.cues.push({ t: off + x.t, text: x.text });
+      for (const x of (m.chapters || [])) man.chapters.push({ t: off + x.t, title: x.title });
+      for (const x of (m.fast || [])) man.fast.push({ a: off + x.a, b: off + x.b });
+      man.length = off + (m.length || 0) + 250;
+    }
+    if (missing.length) h.log('NOT in this video (no recording):', missing.join(', '));
+  } else man = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
   mkdirSync(dirname(out), { recursive: true });
   const fast = (man.fast || []).slice().sort((a, b) => a.a - b.a);
   const mapT = t => { let o = t; for (const s of fast) { if (t >= s.b) o -= (s.b - s.a) * (1 - 1 / FAST); else if (t > s.a) o -= (t - s.a) * (1 - 1 / FAST); } return Math.max(0, o); };
@@ -33,7 +52,7 @@ export default async function (h) {
   let last = -1e9;
   for (let i = 0; i < fr.length; i++) {
     const tau = mapT(fr[i].t), next = i + 1 < fr.length ? mapT(fr[i + 1].t) : Infinity;
-    if (tau - last >= MIN_GAP || next - tau >= 120) { ev.push({ tau, kind: 'frame', f: fr[i].f, fast: inFast(fr[i].t) }); last = tau; }
+    if (tau - last >= MIN_GAP || next - tau >= 120) { ev.push({ tau, kind: 'frame', f: fr[i].abs ? join(dir, fr[i].f) : join(dir, 'frames', fr[i].f), fast: inFast(fr[i].t) }); last = tau; }
   }
   for (const c of (man.cues || [])) ev.push({ tau: mapT(c.t), kind: 'cue', text: c.text });
   for (const c of (man.chapters || [])) ev.push({ tau: mapT(c.t), kind: 'chapter', title: c.title });
@@ -101,7 +120,7 @@ export default async function (h) {
     const wait = e.tau - (Date.now() - t0);
     if (wait > 2) await h.sleep(wait);
     if (e.kind === 'frame') {
-      const b64 = readFileSync(join(dir, 'frames', e.f)).toString('base64');
+      const b64 = readFileSync(e.f).toString('base64');
       await h.eval(`(async () => { __v.fast = ${e.fast ? 'true' : 'false'}; await __v.frame(${JSON.stringify(b64)}); return 1; })()`);
       shown++;
     } else if (e.kind === 'cue') await h.eval(`(() => { __v.caption = ${JSON.stringify(e.text)}; __v.paint(); return 1; })()`);

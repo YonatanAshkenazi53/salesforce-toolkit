@@ -15,8 +15,7 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 export function makeRecorder(h, dir, opts = {}) {
-  const framesDir = join(dir, 'frames');
-  const state = { t0: 0, frames: [], cues: [], chapters: [], fast: [], on: false, n: 0, names: opts.names || [] };
+  const state = { dir, framesDir: join(dir, 'frames'), t0: 0, frames: [], cues: [], chapters: [], fast: [], on: false, n: 0, names: opts.names || [], sized: false };
   const now = () => Date.now() - state.t0;
   const J = JSON.stringify;
 
@@ -27,17 +26,24 @@ export function makeRecorder(h, dir, opts = {}) {
     if (!state.on || m.sessionId !== h.session) return;
     const i = ++state.n;
     const file = String(i).padStart(6, '0') + '.jpg';
-    try { writeFileSync(join(framesDir, file), Buffer.from(m.params.data, 'base64')); state.frames.push({ f: file, t: now() }); } catch (_) { /* a lost frame is a held frame */ }
+    try { writeFileSync(join(state.framesDir, file), Buffer.from(m.params.data, 'base64')); state.frames.push({ f: file, t: now() }); } catch (_) { /* a lost frame is a held frame */ }
   });
 
   const rec = {
     dir, state,
-    async start() {
-      try { rmSync(dir, { recursive: true, force: true }); } catch (_) {}
-      mkdirSync(framesDir, { recursive: true });
-      // 1600×800 CSS px drawn at 1.2× = 1920×960 real pixels: the composer's page area, with no resampling
-      const vp = opts.viewport || { width: 1600, height: 800, scale: 1.2 };
-      try { await h.cdp('Emulation.setDeviceMetricsOverride', { width: vp.width, height: vp.height, deviceScaleFactor: vp.scale, mobile: false }); } catch (e) { h.log('viewport override failed:', e.message); }
+    // One recording = one folder (frames/ + manifest.json). The walkthrough makes
+    // one per SECTION, so a single section can be recorded again on its own and
+    // the composer joins whatever folders are there (order.json).
+    async begin(toDir) {
+      state.dir = toDir || dir; state.framesDir = join(state.dir, 'frames');
+      try { rmSync(state.dir, { recursive: true, force: true }); } catch (_) {}
+      mkdirSync(state.framesDir, { recursive: true });
+      state.frames = []; state.cues = []; state.chapters = []; state.fast = []; state.n = 0;
+      if (!state.sized) {
+        // 1600×800 CSS px drawn at 1.2× = 1920×960 real pixels: the composer's page area, with no resampling
+        const vp = opts.viewport || { width: 1600, height: 800, scale: 1.2 };
+        try { await h.cdp('Emulation.setDeviceMetricsOverride', { width: vp.width, height: vp.height, deviceScaleFactor: vp.scale, mobile: false }); state.sized = true; } catch (e) { h.log('viewport override failed:', e.message); }
+      }
       state.t0 = Date.now(); state.on = true;
       await rec.resume();
     },
@@ -48,14 +54,16 @@ export function makeRecorder(h, dir, opts = {}) {
       try { await h.cdp('Page.startScreencast', { format: 'jpeg', quality: 88, everyNthFrame: 2 }); } catch (_) {}
       await rec.mask();
     },
-    async stop() {
+    async end(extra) {
       state.on = false;
       try { await h.cdp('Page.stopScreencast'); } catch (_) {}
-      const manifest = { length: now(), frames: state.frames, cues: state.cues, chapters: state.chapters, fast: state.fast, viewport: opts.viewport || null };
-      writeFileSync(join(dir, 'manifest.json'), J(manifest));
-      h.log(`recording: ${state.frames.length} frames, ${(manifest.length / 1000).toFixed(0)} s, ${state.cues.length} captions, ${state.chapters.length} chapters → ${dir}`);
+      const manifest = { length: now(), frames: state.frames, cues: state.cues, chapters: state.chapters, fast: state.fast, ...(extra || {}) };
+      writeFileSync(join(state.dir, 'manifest.json'), J(manifest));
+      h.log(`recording: ${state.frames.length} frames, ${(manifest.length / 1000).toFixed(0)} s, ${state.cues.length} captions → ${state.dir}`);
       return manifest;
     },
+    start() { return rec.begin(dir); },
+    stop() { return rec.end(); },
     // ── what the viewer reads ──
     async say(text, holdMs = 0) { state.cues.push({ t: now(), text: String(text) }); h.log('SAY:', text); if (holdMs) await h.sleep(holdMs); },
     hush() { state.cues.push({ t: now(), text: '' }); },
