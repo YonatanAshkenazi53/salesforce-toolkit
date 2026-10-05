@@ -253,8 +253,30 @@ let _histFilter = { status: '', profileId: '' };
 // tier — see sftk-archive.js). Cleared with the archive itself.
 let _archShown = [];
 
+// A change made by a Toolkit tool is listed IN that tool, not here (user
+// 2026-10-05: "seeing field cleaner history on the data deployment history is
+// confusing, it should show under the field cleaner"). This page keeps
+// deployments, rollbacks and Data Studio's own changes, and one line says how
+// many Toolkit changes live where, with a button to each tool's list.
+function _histKitNote(kit, total) {
+  if (!total) return '';
+  const ships = tab => typeof sftkShips !== 'function' || sftkShips(tab);
+  const tabs = Object.keys(kit).sort((a, b) => kit[b] - kit[a]);
+  return `<div class="ds-pk-note" id="dsHistKitNote">🧰 ${total.toLocaleString()} change${total === 1 ? '' : 's'} made with Toolkit tools ${total === 1 ? 'is' : 'are'} not listed here — each is in the tool that made it, with its ↩ Undo:
+    ${tabs.map(t => ships(t)
+      ? `<button class="ds-btn ds-btn-xs" data-hist-kit="${esc(t)}" title="Open ${esc(sftkHistoryTabLabel(t))} on its History">${esc(sftkHistoryTabLabel(t))} (${kit[t]})</button>`
+      : `<span class="ds-chip" title="This build does not carry the tool">${esc(sftkHistoryTabLabel(t))} (${kit[t]})</span>`).join(' ')}
+    <span class="ds-subtext">⬇ Export still includes them.</span></div>`;
+}
+function _histWireKitNote() {
+  document.querySelectorAll('[data-hist-kit]').forEach(b => b.addEventListener('click', () =>
+    chrome.tabs.create({ url: chrome.runtime.getURL(`popup.html?tab=${encodeURIComponent(b.dataset.histKit)}&history=1`) })));
+}
+
 function renderHistory() {
-  if (!_history.length && !_archShown.length) {
+  const split = (typeof sftkHistoryStudioSplit === 'function') ? sftkHistoryStudioSplit(_history) : { mine: _history, kit: {}, kitTotal: 0 };
+  const mineArch = _archShown.filter(r => typeof sftkHistoryToolTab !== 'function' || !sftkHistoryToolTab(r));
+  if (!split.mine.length && !mineArch.length) {
     setMain(`
       ${dsViewHeader({ icon: 'scroll', title: 'History' })}
       <div class="ds-empty-page">
@@ -262,12 +284,14 @@ function renderHistory() {
         <div class="ds-empty-title">No transfers yet</div>
         <div class="ds-empty-sub">Run a transfer and the results will appear here.</div>
       </div>
+      ${_histKitNote(split.kit, split.kitTotal)}
       <div id="dsArchBar" class="ds-pk-note" style="margin:0 auto;max-width:640px"></div>`);
     _histFillArchBar();
+    _histWireKitNote();
     return;
   }
 
-  const sorted = [..._history, ..._archShown].sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
+  const sorted = [...split.mine, ...mineArch].sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
 
   // Apply filters (status chip + profile dropdown).
   const filtered = sorted.filter(run =>
@@ -288,7 +312,7 @@ function renderHistory() {
       title: 'History',
       // sorted is the full displayed set — the filter row below counts
       // against the same array, so the two numbers can never disagree.
-      count: `${_history.length} run${_history.length !== 1 ? 's' : ''} retained${_archShown.length ? ` · 📦 ${_archShown.length} archived shown` : ''}`,
+      count: `${split.mine.length} run${split.mine.length !== 1 ? 's' : ''} retained${mineArch.length ? ` · 📦 ${mineArch.length} archived shown` : ''}`,
       actions: `<select id="dsRetentionDays" class="ds-select ds-select-sm" title="Runs older than this are purged automatically when the Studio opens">
           ${[[7, 'Keep 7 days'], [30, 'Keep 30 days'], [90, 'Keep 90 days'], [0, 'Keep forever']].map(([v, lbl]) =>
             `<option value="${v}" ${_settings.historyDays === v ? 'selected' : ''}>${lbl}</option>`).join('')}
@@ -313,11 +337,14 @@ function renderHistory() {
       </select>
       <span class="ds-hist-filter-count">${filtered.length} of ${sorted.length} run${sorted.length !== 1 ? 's' : ''}</span>
     </div>
+    ${_histKitNote(split.kit, split.kitTotal)}
     ${!filtered.length ? `<div class="ds-seq-empty">No runs match the current filters.</div>` : ''}
     <div class="ds-history-list">
       ${filtered.map(run => {
-        // Phase 3 — a Toolkit tool's change (kind 'tool') has its own card:
-        // what was written, what the org showed, and ↩ Undo.
+        // Phase 3 — a change made by a Data Studio tool (kind 'tool': a pause
+        // around a deployment, a picklist value…) has its own card: what was
+        // written, what the org showed, and ↩ Undo. A TOOLKIT tool's change
+        // is not in this list at all (see _histKitNote).
         if (run.kind === 'tool') return _histToolCard(run);
         // Aggregate failed source IDs across all objects in this run.
         // The retry button only appears when we actually have IDs to retry.
@@ -707,6 +734,7 @@ function renderHistory() {
     });
   });
 
+  _histWireKitNote();
   // Filter wiring — status chips + profile dropdown re-render the list.
   document.querySelectorAll('[data-hist-status]').forEach(b =>
     b.addEventListener('click', () => { _histFilter.status = b.dataset.histStatus; renderHistory(); }));

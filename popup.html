@@ -33,6 +33,9 @@
           <span id="topbarOrgLabel" class="topbar-org-label">—</span>
           <span class="topbar-org-arrow" data-i="chevron" aria-hidden="true"></span>
         </button>
+        <!-- The open tool's own history (sftk-toolhistory.js): shown only while a
+             tool that has made changes is open. -->
+        <button id="sftkThBtn" class="dbg-btn" style="display:none" title="The changes this tool made"><span data-i="clock" aria-hidden="true"></span><span id="sftkThBtnLabel">History</span></button>
         <button id="dataStudioBtn" class="dbg-btn" title="Open Data Studio — multi-org data deployment"><span data-i="globe" aria-hidden="true"></span>Data Studio</button>
         <!-- Label is rewritten by debug-modal.js ("Debug" / "5" / "5 ⚠"), so
              the glyph comes from #dbgBtn::before in styles.css. -->
@@ -338,6 +341,7 @@
   <script src="sftk-friendly-error.js"></script>
   <script src="sftk-api-budget.js"></script>
   <script src="sftk-confirm.js"></script>
+  <script src="sftk-toolhistory.js"></script>
   <script src="onboarding.js"></script>
   <script src="debug-modal.js"></script>
   <!-- Flow API-version comparison across orgs: pure helpers, must load

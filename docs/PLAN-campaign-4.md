@@ -589,6 +589,37 @@ So for 1.0:
   (`scripts/dev/live/deploy-tree.mjs`): Account 10 → 4 with four chips; 🔎 Count on Contact →
   8 → 2; a chip opened Contact › Insert. Pins `test/deploy-tree-1005`.
 
+## Whose history is it (user 2026-10-05)
+
+"i think seeing field cleaner history on the data deployment history is confusing, it should show
+under the field cleaner". DONE for every Toolkit tool, not only Field Cleaner (one rule): the entry
+is unchanged (one list, one `sftkHistoryUndo`); WHERE it is shown changed. sftk-history.js:
+`SFTK_TOOLKIT_TOOLS` (tool name → tab), `sftkHistoryToolTab`, `sftkHistoryForTab`,
+`sftkHistoryStudioSplit`, `sftkHistoryAgo`, `sftkHistoryReport(Name)`. New `sftk-toolhistory.js`
+(popup): top-bar `#sftkThBtn` "History (N)" for the open tool → a dialog with the tool's cards,
+↩ Undo, ⬇ Report; `sftkToolHistoryInline(host, tab)` — Field Cleaner mounts it in `#fcToolHist`
+under its results (its old "🧾 Cleanup history" is now "↩ Restore points"). Data Studio › History:
+`sftkHistoryStudioSplit` → lists only its own entries; `_histKitNote` says how many Toolkit changes
+live in which tool and opens `popup.html?tab=<tab>&history=1`. Live on trailheads4: 🔑 copy access
+→ Data Studio shows 0 tool cards + the note "Field Cleaner (1)" → Toolkit › Field Cleaner › History
+(1) → ↩ Undo (typed UNDO) → "Undone — 1 step verified by re-reading the org". Live helper
+`_undo.mjs` now finds where the newest tool entry is shown. Pins `test/tool-history-1005`.
+
+## The walkthrough video (user 2026-10-05)
+
+"i want you to create a youtube video with on screen subtitles, that will show in live every
+feature of both the toolkit and data studio". Built as a scripted pipeline in `scripts/dev/video/`
+(README there): `walkthrough.mjs` + `sections.mjs` drive the PUBLIC build (`SFTK_EXT=dist/store-staging`)
+through the headless harness on both trial orgs; `recorder.mjs` keeps Chrome's own screencast frames,
+the captions, the chapters and the waiting stretches; `compose.mjs` encodes 1920×1080 H.264 MP4 with
+the captions burned in, plus `.srt` and a chapters list, using Chrome's own MediaRecorder — no ffmpeg,
+nothing downloaded. Harness gained `h.cdp`, `h.onEvent`, `SFTK_WINDOW`. Rules: read-only except the
+flagged `run` section (two fixture records into trailheads4, rolled back; `WRITES=0` skips it); a
+failing section is logged and skipped; e-mail addresses and the running user's name are masked before
+they are drawn; waits play 8× with a "sped up" badge. Output in `dist/video/` (not in git). The upload
+to YouTube is the user's step. Re-record after any UI change: three commands in the README.
+First cut 2026-10-05: all 16 sections recorded with no failure, 7 min 50 s, 18.5 MB; re-recorded after the history move (see below).
+
 ## Backlog (found during the campaign)
 
 - **Synced records beyond the 5,000 window cannot be found (user 2026-10-01: "5000 contacts are in sync and 1740 is not. but where are they").** The Synced tab lists the first 5,000 identical records and says the rest (1,740 here) exist; the filter searches only the loaded 5,000, so a user cannot confirm one specific record is in sync. Fix: keep the match KEY (name) of every synced record in the scan result (keys only — a few bytes each, no fields), list by name with the filter over all of them, and load a record's details on click. Same for the other buckets' windows.

@@ -1096,7 +1096,7 @@ const UserCopy = (() => {
       const sure = await sftkConfirmDestructive({
         title: `Copy access from ${sourceUser.Name} to ${targetUser.Name}`,
         items: planned.length ? planned : [{ label: 'Nothing ticked', sub: 'no operation would run' }],
-        revOverride: { html: `Writes into <strong>${esc(targetUser.Name)}</strong>'s user record and assignments in this org. A profile or role change replaces the old one; permission sets and groups are ADDED (nothing is removed from ${esc(targetUser.Name)}). Recorded in Data Studio › History, where ↩ Undo reverses it.`, needsCheckbox: true },
+        revOverride: { html: `Writes into <strong>${esc(targetUser.Name)}</strong>'s user record and assignments in this org. A profile or role change replaces the old one; permission sets and groups are ADDED (nothing is removed from ${esc(targetUser.Name)}). Recorded in this tool’s History (top bar), where ↩ Undo reverses it.`, needsCheckbox: true },
         confirmLabel: '📋 Copy access',
         production: gate.production ? { label: gate.label } : null,
       });

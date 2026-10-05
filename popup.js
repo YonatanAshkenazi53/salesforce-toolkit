@@ -299,10 +299,13 @@ function navigateToTab(tabName) {
   const tab = document.getElementById(`tab-${tabName}`);
   if (btn) { btn.classList.add('active'); btn.setAttribute('aria-current', 'page'); }
   if (tab) tab.style.display = '';
+  // the open tool's own History button (sftk-toolhistory.js)
+  if (typeof sftkToolHistorySetTab === 'function') sftkToolHistorySetTab(tabName);
 }
 
 // Show the home page — deactivates sidebar selection.
 function showHomePage() {
+  if (typeof sftkToolHistorySetTab === 'function') sftkToolHistorySetTab('');   // home is no tool
   // Home is not a sidebar tab, so no button may claim aria-current here.
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.classList.remove('active');

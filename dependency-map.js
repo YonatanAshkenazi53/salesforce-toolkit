@@ -3101,7 +3101,7 @@ const DependencyMap = (() => {
     out.innerHTML = `
       <div class="dep-blast-sec"${report.some(r => r.includes('❌')) ? ' style="border-left:3px solid var(--warn,#d97706);padding-left:8px"' : ''}>
         ${report.join('<br>')}<br>
-        <span style="opacity:.75">Recorded in Data Studio › History, where ↩ Undo switches them back. This table is now stale —</span>
+        <span style="opacity:.75">Recorded in this tool’s History (top bar), where ↩ Undo switches them back. This table is now stale —</span>
         <button class="btn-small" id="depFbReload">↻ Reload the fresh state</button>
       </div>`;
     out.querySelector('#depFbReload')?.addEventListener('click', () => {

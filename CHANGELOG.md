@@ -75,6 +75,10 @@ extensions containing root files that start with `_`).
 - **History undo for an org default is verified.** Undo puts the previous page back and re-reads the object to confirm it.
 - **Honest limits.** The tool reads and changes the assignments of record pages. Home, App and other page types are activated in a different way that it does not read, so it no longer says "not activated" or "0 users" about them. A failed read is shown as unknown, never as "none". "Show affected users" shows an error with a retry when the query fails, instead of "No active users".
 
+### Changed — a tool's history is in the tool
+- **Field Cleaner's changes are listed in Field Cleaner.** Changes made by a Toolkit tool used to appear in Data Studio's History, between the deployments. Each tool now has its own History: a button in the Toolkit's top bar while the tool is open, with what was written, what the org showed, and Undo. Field Cleaner also lists its changes under its results.
+- **Data Studio's History is about deployments again.** It lists deployments, rollbacks and Data Studio's own changes. One line says how many Toolkit changes there are and opens each tool on its list. The full export still includes everything.
+
 ### Changed — the deployment tree shows the relations and the numbers
 - **Each object's card says how it hangs and how much it holds.** On the Deploy page, every card in "This deployment" now says which object it is under and through which field, how many records each org holds, and what is left to do, one chip per kind. A chip opens that list.
 - **An object that was not read says so.** It reads "not counted yet — unknown, not zero" with a Count button that reads it in both orgs. Nothing is changed by a count.

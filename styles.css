@@ -6857,3 +6857,23 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 /* Lightning Pages — what a write did, and what could not be read (2026-10-04) */
 .lp-result-note { margin: 0 0 10px; padding: 7px 11px; font-size: 12px; line-height: 1.45; border-radius: 6px; border: 1px solid var(--active-color, #2e844a); background: rgba(46,132,74,.08); white-space: pre-line; }
 .lp-unknown-note { margin: 6px 0 10px; padding: 7px 11px; font-size: 12px; line-height: 1.45; border-radius: 6px; border: 1px solid #b45309; background: rgba(180,83,9,.07); }
+
+/* ── A tool's own history (sftk-toolhistory.js, 2026-10-05) ─────────────── */
+.sftk-th-intro { font-size: 12px; color: var(--subtext, #5b6472); margin: 0 0 10px; }
+.sftk-th-modal { max-height: 62vh; overflow-y: auto; padding-right: 4px; }
+.sftk-th-list { display: flex; flex-direction: column; gap: 8px; }
+.sftk-th-card { border: 1px solid var(--border, #d8dde6); border-radius: 8px; padding: 8px 10px; background: var(--surface, #fff); text-align: left; }
+.sftk-th-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sftk-th-title { font-weight: 600; font-size: 13px; flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.sftk-th-status { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border, #d8dde6); white-space: nowrap; }
+.sftk-th-success { color: #2e844a; border-color: #2e844a; }
+.sftk-th-partial { color: #a96404; border-color: #a96404; }
+.sftk-th-failed { color: #ba0517; border-color: #ba0517; }
+.sftk-th-chip { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--surface2, #f3f3f3); }
+.sftk-th-when { font-size: 11.5px; color: var(--subtext, #5b6472); white-space: nowrap; }
+.sftk-th-what { font-size: 12.5px; padding: 6px 0 0; display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+.sftk-th-sub { color: var(--subtext, #5b6472); font-size: 12px; }
+.sftk-th-said { margin-top: 4px; padding: 4px 8px; border-radius: 6px; background: var(--surface2, #f3f3f3); font-size: 12px; }
+.sftk-th-inline { margin: 10px 0; border: 1px solid var(--border, #d8dde6); border-radius: 8px; padding: 6px 10px; }
+.sftk-th-inline > summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 2px 0; }
+.sftk-th-inline[open] > summary { margin-bottom: 8px; }
