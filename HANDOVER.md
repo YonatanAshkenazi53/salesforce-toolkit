@@ -49,6 +49,7 @@ defects found and fixed, log in `docs/QA-1.0.md`. The user's open asks, in order
    `ONLY=orgs,deploy,identity,run,ring,history,compare,orghealth,outro SFTK_EXT=dist/store-staging SFTK_WINDOW=1600,800 REC_DIR=dist/video/rec node scripts/dev/headless-studio.mjs scripts/dev/video/walkthrough.mjs`
    (log `dist/video/rerecord.log` — "RECORDED: … FAILED: (none)" means it worked), then
    `REC_DIR=dist/video/rec OUT=dist/video/walkthrough.mp4 SFTK_EXT=dist/store-staging node scripts/dev/headless-studio.mjs scripts/dev/video/compose.mjs`
+   DONE 2026-10-06 22:3x: `dist/video/walkthrough.mp4` 15:08, 19 chapters, sent to the user.
    (log `dist/video/compose.log`; encodes in real time, ~15 min; writes `dist/video/walkthrough.mp4`
    + `.chapters.txt`). If `compose.log` has no "wrote" line, run the compose command again
    (it needs no re-recording). Then send the user the file and the chapter list.
