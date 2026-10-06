@@ -54,9 +54,12 @@ defects found and fixed, log in `docs/QA-1.0.md`. The user's open asks, in order
    + `.chapters.txt`). If `compose.log` has no "wrote" line, run the compose command again
    (it needs no re-recording). Then send the user the file and the chapter list.
    `node scripts/dev/video/listen.mjs` checks the sound without playing it.
-2. **1.0.0 release mechanics** — NOT started, needs the user's go: manifest + CHANGELOG
-   version (What's New still shows 1.5.0 / 2026-09-21), store listing text and screenshots,
-   privacy policy, then `master` fast-forward on the user's say and the YouTube upload (user).
+2. **1.0.0 release mechanics — DONE 2026-10-07** (manifest 1.0.0, public CHANGELOG section,
+   `docs/store-listing.md`, screenshots in `dist/store-shots/` via
+   `SFTK_EXT=dist/store-staging SFTK_WINDOW=1280,800 node scripts/dev/headless-studio.mjs scripts/dev/live/screenshots.mjs`,
+   zip `dist/salesforce-toolkit-v1.0.0-store.zip`). Left for the USER: sync the public privacy
+   gist with PRIVACY.md, create the NEW store listing and upload the zip + screenshots, say
+   when `master` may fast-forward, upload the video to YouTube.
 3. Nothing is left half-done in the orgs: every QA run undid itself or was followed by a
    restore; if in doubt, `node -e "import('./scripts/dev/video/fixture.mjs').then(m=>m.removeIdentityField(['npc2','npc'],['Account','Contact'],console.log))"`
    removes a leftover identity field, and `sf data query -o npc2 -q "SELECT Name FROM Account WHERE Name LIKE 'SFTK CX%' AND CreatedDate = TODAY"`
