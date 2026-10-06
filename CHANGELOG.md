@@ -97,6 +97,9 @@ extensions containing root files that start with `_`).
 - **The deleted records are read from the Recycle Bin when History has no names.** A rollback that ran before History kept names, or with counts-only mode on, opened a report with counts and no list. The report now reads the records that rollback deleted from the org's Recycle Bin, which keeps them for 15 days, and lists them by name. It says where the list came from, for which minutes, and how it compares with the count. If the Recycle Bin holds fewer records than the rollback counted, it says how many cannot be named. Nothing is changed by the read.
 - **Counts-only mode keeps no names from a rollback either.** The names a rollback deleted or restored stayed in History with counts-only mode on. They are now removed like every other record name.
 
+### Removed — Pro mode and the in-app guidance
+- **Pro mode** (Data Studio's "Pro" toggle, which swapped emoji for plain text) and the **in-app guidance** (the first-run tours and the pop-up help bubbles) are not in this release. A ? badge still shows its text as a plain tooltip.
+
 ### Changed — the Licence button is on both pages
 - **Data Studio has the Licence button too.** The licence agreement and the privacy notes you accepted can be read again from the top bar of the Toolkit and of Data Studio.
 
