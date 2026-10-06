@@ -191,3 +191,15 @@ describe('what is on screen is what the org answers', () => {
     expect(P.lpWhy(null)).toBe('no reason given');
   });
 });
+
+// Security review 2026-10-06 (low): the progress line of a write is HTML, and an
+// app's label is whatever an admin typed — it is escaped in every call.
+describe('the progress line escapes the app label', () => {
+  it('every say() that names an app goes through esc()', () => {
+    const LP = readFileSync(new URL('../lightning-pages.js', import.meta.url), 'utf8');
+    expect(LP).toContain('say(`${tag} · ${esc(a.appLabel)}…`);');
+    expect(LP).toContain('say(`${tag}${esc(a.appLabel || a.app)}…`);');
+    expect(LP).toContain('say(`${tag} · ${esc(a.appLabel || a.app)}…`);');
+    expect(LP).not.toMatch(/say\(`[^`]*\$\{a\.appLabel/);
+  });
+});

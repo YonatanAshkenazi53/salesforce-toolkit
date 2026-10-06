@@ -2992,7 +2992,7 @@ const LightningPages = (() => {
             (r.ok ? done : failed).push(r.text);
             if (r.ok) undoSteps.push(orgUndoStep(sobject, a.formFactor, prev ? allPages.find(p => String(p.Id).substring(0, 15) === String(prev).substring(0, 15)) : null, prev));
           } else {
-            say(`${tag} · ${a.appLabel}…`);
+            say(`${tag} · ${esc(a.appLabel)}…`);
             if (a.kind === 'artp' && !a.profileFull) a.profileFull = await profileFullName(a.profileId);
             const r = await writeAppAssignment(a, devName, false, j);
             if (!r.accepted) throw new Error(r.why);
@@ -3081,7 +3081,7 @@ const LightningPages = (() => {
             (r.ok ? done : failed).push(r.text);
             if (r.ok && !r.skipped) undoSteps.push(orgUndoStep(sobject, a.formFactor, page, page.Id));
           } else {
-            say(`${tag}${a.appLabel || a.app}…`);
+            say(`${tag}${esc(a.appLabel || a.app)}…`);
             const r = await writeAppAssignment(a, devName, true, j);
             if (!r.accepted) throw new Error(r.why);
             (r.ok ? done : failed).push(r.text);
@@ -3325,7 +3325,7 @@ const LightningPages = (() => {
             r = await writeOrgDefault(sobject, a.formFactor, { id: newPage.Id, devName: newApiName }, j2, m => say(`${tag} · ${m}`));
             if (r.accepted && r.ok) undoSteps.push(orgUndoStep(sobject, a.formFactor, page, page.Id));
           } else {
-            say(`${tag} · ${a.appLabel || a.app}…`);
+            say(`${tag} · ${esc(a.appLabel || a.app)}…`);
             r = await writeAppAssignment(a, newApiName, false, j2);
           }
           if (!r.accepted) throw new Error(r.why);
