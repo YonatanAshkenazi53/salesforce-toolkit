@@ -17,7 +17,7 @@
 // changes, change its caption here with it.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
-import { restoreFieldCleanerFixture } from './fixture.mjs';
+import { restoreFieldCleanerFixture, removeIdentityField } from './fixture.mjs';
 
 const J = JSON.stringify;
 const FIXTURE = 'docs/fixtures/complex-deployment/profiles.json';
@@ -531,6 +531,51 @@ export const SECTIONS = [
     }
   } },
 
+  // User 2026-10-06: "we didn't cover the external id field creation that should map
+  // both orgs and how it works". The 🪪 identity field: created in both orgs on
+  // camera, matched pairs stamped, the re-scan matches by it; cleanup deletes the
+  // fields and the permission set again.
+  { id: 'identity', title: 'The identity field', writes: true,
+    cleanup: async ({ h }) => { removeIdentityField(['npc2', 'npc'], ['Account', 'Contact'], (...a) => h.log(...a)); },
+    run: async c => {
+    const { h, rec } = c;
+    await openDemoScanned(c);
+    await assertDirection(c);
+    await rec.scrollTo('#dsDepTree');
+    await rec.say('Records are matched between orgs by a field — here by Name. Names change, and two records can share one. The identity field makes the match exact.', 7500);
+    await rec.click('#dsDepIdBtn', 800);
+    await rec.fast(() => h.waitFor("!!document.querySelector('#dsIdGo')", 60000, 500));
+    await h.sleep(800);
+    await rec.say('One small field, SFTK underscore ID: on every target record it stores the Id of the source record it came from. The table says which org has it — neither, yet — and how many matched pairs the scan found.', 9500);
+    await rec.point('#dsIdS', 800);
+    await h.eval(`(() => { const s = document.querySelector('#dsIdS'); if (s && !s.disabled && !s.checked) s.click(); return true; })()`);
+    await rec.say('Create it in the target, and in the source as well, so the identity travels when this org is a source for another one.', 6000);
+    await rec.click('#dsIdGo', 600);
+    await rec.fast(() => h.waitFor("document.querySelectorAll('#dsIdOut .ds-rec-card-line').length > 0", 300000, 1000));
+    await h.sleep(1200);
+    await rec.say('One metadata deploy per org: the field, plus a permission set that lets you see it. The table is read again from both orgs.', 6500);
+    const stamp = await h.eval(`(() => { const b = [...document.querySelectorAll('[data-id-stamp]')].find(b => /Account/.test(b.closest('tr')?.innerText || '')); return b ? b.innerText.trim() : ''; })()`);
+    if (stamp) {
+      await rec.point(`[data-id-stamp]`, 800);
+      await rec.say(`${stamp.replace('🪪 ', '')} — the Accounts the scan already matched by Name get their source Id written once. From then on they match exactly, whatever their names do.`, 7500);
+      await h.eval(`(() => { const b = [...document.querySelectorAll('[data-id-stamp]')].find(b => /Account/.test(b.closest('tr')?.innerText || '')); if (b) b.click(); return true; })()`);
+      await rec.fast(() => h.waitFor("!!document.querySelector('#sftkConfirmGo')", 30000, 300));
+      await h.sleep(600);
+      await rec.say('The one confirmation, as for every write. Each stamped record is re-read afterwards.', 4500);
+      const hist = await h.eval('_history.length');
+      await rec.click('#sftkConfirmGo', 600);
+      await prodGate(c);
+      await rec.fast(async () => { for (let i = 0; i < 120 && !(await h.eval(`_history.length > ${hist}`)); i++) await h.sleep(1000); await h.sleep(1500); });
+      await rec.say('Done, and recorded in History with an undo — the field can be emptied again from there.', 5000);
+    }
+    await h.closeModal();
+    await h.sleep(400);
+    await rec.click('#dsDepRefresh', 600);
+    await waitScanned(c);
+    await h.sleep(1500);
+    await rec.scrollTo('.ds-dep-plan', 'center');
+    await rec.say('Read again, the stamped records match by their identity. New records a deployment creates are stamped as they are written — nothing more to do.', 7000);
+  } },
   { id: 'run', title: 'Deploy and roll back', writes: true, run: async c => {
     const { h, rec } = c;
     if (!(await h.eval(`typeof _currentView !== 'undefined' && _currentView === 'deploy' && !!document.querySelector('.ds-dep-plan')`))) await openDemoScanned(c);

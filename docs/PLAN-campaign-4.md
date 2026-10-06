@@ -620,6 +620,30 @@ they are drawn; waits play 8× with a "sped up" badge. Output in `dist/video/` (
 to YouTube is the user's step. Re-record after any UI change: three commands in the README.
 Final cut of 2026-10-05: 16 chapters, 8 min 12 s, 18 MB, recorded from the public build after the history move; each section has its own folder (`dist/video/rec/<id>/`), so one chapter can be recorded again with `ONLY=<id>` and the video composed again. The recording found two product defects, both fixed the same day: the Dependencies search answering "nothing" about unread flows, and a rollback's progress row saying "created" while deleting.
 
+## The release QA (user 2026-10-06: "the biggest qa we ever did, we need to test every feature end to end")
+
+The log is `docs/QA-1.0.md` (feature × scenario matrix, findings, what was fixed).
+The driver is `scripts/dev/qa/run.mjs <batch>` over `scripts/dev/qa/batches.mjs`
+(toolkit, toolkit2, studio, studio2), run against the PUBLIC build
+(`npm run pack` → `dist/store-staging`), one headless harness at a time, every log kept
+under `dist/qa/<batch>/`. Every write undoes itself or is followed by a fixture restore
+(`restoreFieldCleanerFixture`, `rebuildFc`, `removeIdentityField`, the dup-rule fixture's
+own cleanup). New live scripts cover what had none: Flows (backup → delete → restore,
+the download read back), Debugger, Connected Orgs (lock refuses a write, guard asks the
+typed name), the builder, All open orgs + Org Compare, History (filters, exports,
+counts-only, retention), the identity field, the engine options, the release smoke
+(licence gate, cut tools absent, What's New, dark mode).
+
+Found and fixed in round 1 (commit 888f3c0 and the one after): Flows › Restore reported
+every success as failed (Tooling SOQL refuses `WHERE FullName =`); Field Cleaner offered
+"Remove · flow keeps running" where Salesforce would refuse it (now refused before the
+dialog); the data verdict's wording; ↩ Undo now says what it could not restore; Org
+Compare's "100%" with records missing and its two "Deploy" buttons.
+
+Still owed from the user's message of 2026-10-06: the walkthrough video has no chapter on
+the 🪪 identity field — `sections.mjs` now has one (`identity`, between Data Deployment
+and the run); the video is to be re-recorded after the QA pass.
+
 ## Backlog (found during the campaign)
 
 - **Synced records beyond the 5,000 window cannot be found (user 2026-10-01: "5000 contacts are in sync and 1740 is not. but where are they").** The Synced tab lists the first 5,000 identical records and says the rest (1,740 here) exist; the filter searches only the loaded 5,000, so a user cannot confirm one specific record is in sync. Fix: keep the match KEY (name) of every synced record in the scan result (keys only — a few bytes each, no fields), list by name with the filter over all of them, and load a record's details on click. Same for the other buckets' windows.

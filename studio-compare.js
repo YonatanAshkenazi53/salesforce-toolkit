@@ -342,6 +342,27 @@ async function runOrgCompare() {
 // orgs, index by matchField value, count buckets. Presence-only (no drift)
 // since Org Compare has no per-object field config — drift is the
 // Reconcile view's job, fed by a Profile.
+// PURE. The match percentage of one object: matched out of (matched + missing).
+// QA 2026-10-06 (live, both orgs): Account read "100%" with 7 missing and Contact
+// "100%" with 6 missing — Math.round carried 99.93 up to a number that means
+// "nothing is missing". It never says 100 while something is missing (99.9 at
+// most), never 0 while something matched (0.1 at least); whole numbers otherwise.
+function sftkOcMatchPct(matched, missing, extras) {
+  const m = Number(matched) || 0, mi = Number(missing) || 0, ex = Number(extras) || 0;
+  const denom = m + mi;
+  if (denom <= 0) return ex === 0 ? 100 : 0;
+  if (mi === 0) return 100;
+  if (m === 0) return 0;
+  const raw = m / denom * 100;
+  if (raw >= 99.95) return 99.9;
+  if (raw <= 0.05) return 0.1;
+  const rounded = Math.round(raw);
+  if (rounded === 100) return 99.9;
+  if (rounded === 0) return 0.1;
+  return rounded;
+}
+if (typeof globalThis !== 'undefined') globalThis.sftkOcMatchPct = sftkOcMatchPct;
+
 async function _ocCompareOneObject(objName, srcSess, tgtSess) {
   // Pick matchField via describe. The match strategy is read from
   // _orgCompareState — see the matchStrategy state field for the three
@@ -438,8 +459,7 @@ async function _ocCompareOneObject(objName, srcSess, tgtSess) {
   let matched = 0, missing = 0, extras = 0;
   for (const k of srcByKey.keys()) (tgtByKey.has(k) ? matched++ : missing++);
   for (const k of tgtByKey.keys()) if (!srcByKey.has(k)) extras++;
-  const denom = matched + missing;
-  const pct = denom > 0 ? Math.round(matched / denom * 100) : (extras === 0 ? 100 : 0);
+  const pct = sftkOcMatchPct(matched, missing, extras);
   return {
     srcCount:   srcByKey.size,
     tgtCount:   tgtByKey.size,
@@ -521,7 +541,7 @@ function _ocRenderResults() {
           <td style="white-space:nowrap">
             <button class="ds-btn ds-btn-xs ds-btn-primary" data-oc-reconcile="${esc(r.name)}">🚀 Deploy</button>
             <button class="ds-btn ds-btn-xs" data-oc-deploy="${esc(r.name)}" data-oc-mf="${esc(r.matchField || '')}"
-              title="Create a saved deployment pre-configured for ${esc(r.name)} with this org pair and match field">📦 Deploy</button>
+              title="Create a saved deployment pre-configured for ${esc(r.name)} with this org pair and match field — nothing is written">📦 Save as deployment</button>
           </td>
         </tr>`;
       }).join('')}</tbody>
