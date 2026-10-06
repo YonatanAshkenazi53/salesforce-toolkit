@@ -236,12 +236,15 @@ function histExportPayload(entries, settings, opts) {
   };
 }
 
-// sftk-run-<object>-<YYYY-MM-DD>-<HHMMSS> (UTC, from startedAt; falls back
-// to now for undated entries). Extension is appended by the caller.
+// sftk-run-<deployment>-<YYYY-MM-DD>-<HHMMSS> (UTC, from startedAt; falls back
+// to now for undated entries). Extension is appended by the caller. QA
+// 2026-10-06: an Accounts-tree run exported as "sftk-run-CaseComment-…" — the
+// first summary key was a child object; the deployment's name says what the
+// file is, the first object only when the entry has no name.
 function histExportFilename(entry) {
   const e = entry || {};
-  const firstObj = Object.keys(e.summary || {})[0] || 'run';
-  const slug = String(firstObj).replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'run';
+  const base = e.profileName || Object.keys(e.summary || {})[0] || 'run';
+  const slug = String(base).replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'run';
   const d = new Date(e.startedAt || Date.now());
   const iso = Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
   return `sftk-run-${slug}-${iso.slice(0, 10)}-${iso.slice(11, 19).replace(/:/g, '')}`;

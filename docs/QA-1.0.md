@@ -23,7 +23,7 @@ Legend: ✅ pass · ❌ defect found (then "fixed <commit>") · ⏭ not run / wh
 |---|---|---|---|
 | Home | open on one org, org label, tool cards; switch when two orgs are open | video `home` section + `smoke` | ✅ (walkthrough recording 2026-10-05; the public build boots: popup/studio/log viewer 1/1/1) |
 | Flows | list grouped by name, versions, 🔗 subflow mark, search | `flows-backup-delete-restore` | ✅ 70 flows listed; search narrows; CLI agrees on the versions |
-| Flows | ⬇ Backup of a version (file) | 🧑 download | pending — hand step |
+| Flows | ⬇ Backup of a version (file) | `flows-backup-delete-restore` | ✅ the download was caught through CDP (`Browser.setDownloadBehavior`): SF_Backup_2026-10-06_1flow.zip, 7,862 bytes, and it restored the flow |
 | Flows | 🗑 Delete inactive versions: warning, backup offer, "I understand" box, re-read | `flows-backup-delete-restore` | ✅ permanent-delete box gates Go; Draft gone (CLI) |
 | Flows | 📥 Restore a backup as a new Draft | `flows-backup-delete-restore` | ❌ said "0 restored, 1 failed" while the Draft existed → fixed (verify by developer name); re-run "✅ 1 Flow Restored", CLI agrees |
 | Dependencies | tree, "what uses", 🧨 blast radius, 🔗 chain, export | `dependencies-readonly` | ✅ 250 nodes, blast radius, chain, two searches (1 and 35 hits, 177 managed named as unread), export row |
@@ -50,7 +50,7 @@ Legend: ✅ pass · ❌ defect found (then "fixed <commit>") · ⏭ not run / wh
 | Field Cleaner | flow: 🗑 Delete versions · flow off | `fr-flow-off` | ✅ v18 Draft + v17 Active deleted, flow off |
 | Field Cleaner | Everything at once: ⇄ Replace all | `fr-every-replace` | ✅ 4 dialogs, layout / 2 flows / page replaced, "Safe to delete" |
 | Field Cleaner | 🕐 Deprecate first → Undo | `fc-deprecate-undo` | ✅ label renamed, 1 grant stripped, Slack set named as not editable; undo restored |
-| Field Cleaner | 🗑 Delete Field after everything is cleared (+ fixture rebuild) | `fc-remove-all-delete-field` | ⚠ the run reached the flow refusal (see above) and stopped before the delete; the fixture was rebuilt; to re-run after the fix |
+| Field Cleaner | 🗑 Delete Field after everything is cleared (+ fixture rebuild) | `fc-remove-all-delete-field` | ✅ (third round) Flow 2 → new active v16, layout, Flow 1 "keep" refused up front → "flow off", page; "Safe to delete"; the field deleted through the Metadata API (the Tooling API refused — said so), restorable ~15 days; fixture rebuilt and scanned again (4 dependencies) |
 | Copy Permissions | plan, checkbox, copy → Salesforce's answer → Undo | `copy-perms-undo` | ✅ role set, verified; undo verified |
 | Flow Access | grant to a permission set → reload → Undo | `flow-access-undo` | ✅ granted, verified; undo verified |
 
@@ -58,33 +58,35 @@ Legend: ✅ pass · ❌ defect found (then "fixed <commit>") · ⏭ not run / wh
 
 | Feature | Scenario | Run | Result |
 |---|---|---|---|
-| Connected Orgs | list, rename label, forget | `connected-orgs` (new) | pending |
-| Connected Orgs | lock an org → a write to it is refused | `connected-orgs` (new) | pending |
-| Connected Orgs | guard as production → the typed org name is required | `connected-orgs` (new) | pending |
-| Data Deployment | builder: new from template / from scratch, edit, clone, delete, export, import | `builder` (new) | pending |
+| Connected Orgs | list, rename label, forget | `connected-orgs` (new) | ✅ rename shown and reverted; 🔒 lock → a real Flow-switch write refused by the service worker ("Org is marked read-only"), CLI unchanged; 🛑 guard → typed org name asked, cancel wrote nothing |
+| Connected Orgs | lock an org → a write to it is refused | `connected-orgs` (new) | ✅ rename shown and reverted; 🔒 lock → a real Flow-switch write refused by the service worker ("Org is marked read-only"), CLI unchanged; 🛑 guard → typed org name asked, cancel wrote nothing |
+| Connected Orgs | guard as production → the typed org name is required | `connected-orgs` (new) | ✅ rename shown and reverted; 🔒 lock → a real Flow-switch write refused by the service worker ("Org is marked read-only"), CLI unchanged; 🛑 guard → typed org name asked, cancel wrote nothing |
+| Data Deployment | builder: new from template / from scratch, edit, clone, delete, export, import | `builder` (new) | ✅ new (Account > Contacts via the relationship list) → card; rename; clone "Copy of"; export file has no session/scan/ids; delete; import; template; all cleaned up |
 | Data Deployment | Deploy page: scan, buckets, nothing ticked, tree cards and counts | `deploy-tree`, `consistency` | ✅ tree and plan agree (Account 10 → 4: 7/1/2/0/2); consistency's ring part re-pointed to the new page |
 | Data Deployment | ⚠ Needs a decision: answer one, forget, re-read | `needs-decision` | ✅ nothing written (CLI) |
 | Data Deployment | parents first: grandchild ticked, parents added, linked | `parents-first` | ✅ 6 of 8 parents not aligned, journey to Individual |
 | Data Deployment | run → failures → ↻ Retry failed → rollback | `retry-and-rollback` | ✅ 6 inserted 1 failed → Retry ticks 1 → rollback deletes 6 |
 | Data Deployment | ⏸ pause record-triggered flows around a real run, back on at their versions | `flowpause-run-rollback` | ✅ 3 flows OFF before the write, back ON verified (CLI ON/ON/ON) |
 | Data Deployment | validation rules paused around a real run | `vrpause-run-rollback` | ✅ 1 rule off, back on |
-| Data Deployment | one-pass tree run and its rollback | `onepass-tree-rollback` | pending |
-| Data Deployment | duplicate rules Respect / Bypass; Engine Bulk threshold | `engine-options` (new) | pending |
-| Data Deployment | 🪪 Identity field: which org has `SFTK_ID__c`, create it where missing, stamp matched pairs, re-scan matches by it (user 2026-10-06: also missing from the video) | `identity` (new) | pending |
-| History | cards, filters, CSV/JSON export, report, counts-only, retention | `history` (new) | pending |
-| History | 📋 Which records on a rollback without names → Recycle Bin | `rollback-report-bin` | pending |
-| History | Toolkit changes shown in the tool, Data Studio names them | `tool-history` (covered by every `*-undo` run) | pending |
-| All open orgs | pick source, columns, scan a cell, open the Deploy page from it | `allorgs` (new) | pending |
-| Org Compare | two orgs, objects, strategies, CSV, Deploy from a row | `compare` (new) | pending |
-| Org health | Check all, costs, cards, buttons into tools | `orghealth-ring` | pending |
-| Cross-cutting | cut features absent from the public build (Debug, Pro, guidance, Licenses tab, Readiness, Picklists, Sequences) | `scope` (new, static on dist/store-staging) | pending |
-| Cross-cutting | What's New, Licence dialog decline → no writes | `licence-gate` (new) | pending |
-| Cross-cutting | dark mode draws both pages | `smoke` DARK=1 (new) | pending |
+| Data Deployment | one-pass tree run and its rollback | `onepass-tree-rollback` | ✅ whole tree in one pass (CLI: 4/2/0/0 → 8/5/3/2), rollback verified per object, CLI back to 4/2/0/0; person-account contacts said to arrive with their account |
+| Data Deployment | duplicate rules Respect / Bypass; Engine Bulk threshold | `engine-options` (new) | ✅ Bulk: one ingest job (CLI jobs/ingest), History now says via Bulk (fixed), rolled back · Duplicate rules: Respect refused the near-duplicate with the plain-words line + hint; Bypass against a BLOCK rule still refused — the run now says a Block rule cannot be passed (fixed), both runs rolled back, rule and twin removed |
+| Data Deployment | 🪪 Identity field: which org has `SFTK_ID__c`, create it where missing, stamp matched pairs, re-scan matches by it (user 2026-10-06: also missing from the video) | `identity` (new) | ❌ "could not be re-read" after a successful deploy → fixed; re-run ✅ end to end incl. stamp (CLI) and undo |
+| History | cards, filters, CSV/JSON export, report, counts-only, retention | `history` (new) | ✅ run-retry-rollback-history HISTORY=1: 2 cards, status filters agree with the entries, deployment filter, run export JSON+CSV and Export all JSON+CSV read back, counts-only strips ids 13 → 0, retention 30 → 7 stored; file name now carries the deployment (fixed) |
+| History | 📋 Which records on a rollback without names → Recycle Bin | `rollback-report-bin` | ✅ Recycle Bin read: Account 812 of 812; Contact fewer than counted, said as ⚠ |
+| History | Toolkit changes shown in the tool, Data Studio names them | `tool-history` (covered by every `*-undo` run) | ✅ every Toolkit undo ran from the tool's History; Data Studio › History showed the "N changes made with Toolkit tools" note and 0 tool cards |
+| All open orgs | pick source, columns, scan a cell, open the Deploy page from it | `allorgs` (new) | ✅ source picked, column scanned, cells counted, ⚖ opened the Deploy page on the right pair with nothing ticked |
+| Org Compare | two orgs, objects, strategies, CSV, Deploy from a row | `compare` (new) | ✅ Auto / External Id / typed field; every row's arithmetic consistent; 99.9% fix confirmed live; CSV read back; 🚀 Deploy opened the page |
+| Org health | Check all, costs, cards, buttons into tools | `orghealth-ring` | ✅ 6 cards with their API cost, budget line, licences at the cap named |
+| Cross-cutting | cut features absent from the public build (Debug, Pro, guidance, Licenses tab, Readiness, Picklists, Sequences) | `scope` (new, static on dist/store-staging) | ✅ release-smoke: SFTK_CUT exact, no Debug/Pro/guidance/Licenses/Readiness/Picklists/Sequences on either page, palette filtered |
+| Cross-cutting | What's New, Licence dialog decline → no writes | `licence-gate` (new) | ✅ release-smoke: Decline blocks the page, read again → Accept, remembered on the other two pages |
+| Cross-cutting | dark mode draws both pages | `smoke` DARK=1 (new) | ✅ release-smoke: both pages toggle dark and draw |
 
 ## Findings
 
-Batches run so far on the public build: `toolkit` (27 runs, all exit 0), `toolkit2`
-(9 runs; two script failures fixed and re-run). Logs under `dist/qa/`.
+Batches run on the public build (logs under `dist/qa/<batch>/`): `toolkit` (27 runs),
+`toolkit2` (9), `toolkit3` (3, the delete of the field), `studio` (10), `studio2` (7),
+`fix2` (3 re-runs after fixes). Every script failure was read: the ones below were defects,
+the rest were the scripts themselves (listed at the end). All orgs end as they began.
 
 ### Defects found and fixed (commit of 2026-10-06, "QA round 1")
 1. **Flows › 📥 Restore reported every successful restore as failed.** The verify query
@@ -108,6 +110,27 @@ Batches run so far on the public build: `toolkit` (27 runs, all exit 0), `toolki
    → 100%; Contact 6 missing → 100%) — `Math.round`. Fixed: `sftkOcMatchPct` caps at 99.9
    while anything is missing (test oc-pct-1006). The two row buttons both read "Deploy";
    the saver is now "📦 Save as deployment".
+
+6. **🪪 Identity › Create the field said "deploy failed — could not be re-read" after a
+   successful deploy** (CLI: field + permission set present in both orgs). The verify was a
+   data query the user cannot run before the permission set is assigned. Fixed: verify by
+   `FieldDefinition` (no FLS), visibility probed after the assignment (test
+   identity-verify-1006). Re-run: created in both, stamped 1 pair (CLI shows the source
+   Id), re-scan, undo emptied it, cleanup removed the fields.
+7. **History never said "via Bulk" for a Deploy-page run.** Engine = Bulk ran one ingest
+   job (CLI `jobs/ingest`: Account insert, JobComplete) but the entry dropped `viaBulk`.
+   Fixed in runReconcile (test deploy-viabulk-1006).
+
+8. **Duplicate rules › Bypass claimed success against a Block rule.** Fixture rule
+   `Account.SFTK_QA_Block` (Block on insert) + a near-duplicate: Respect refused Berlin Lab
+   ("Use one of these records?"), History said "A duplicate rule in the target org flagged
+   this record" with the Bypass hint ✅. Bypass → ↻ Retry: the run logged "records a rule
+   would have flagged were written" yet the rule blocked them — the header only passes Alert
+   rules. Fixed: the diagnostic says so; `[DUPLICATES_DETECTED]` is kept in a refusal whose
+   text is the rule's own alert text; the friendly hint names the Block case (test
+   dup-bypass-1006).
+9. Per-run report file was named after the first summary object ("sftk-run-CaseComment-…")
+   — now the deployment name (ent-audit-export pins updated).
 
 ### Verified and honest (no change needed)
 - Flow switches OFF/ON/undo, API versions change/undo, Lightning Pages (detail, org

@@ -58,7 +58,8 @@ describe('duplicate rules: respect by default, bypass by choice', () => {
     delete globalThis.__sftkRunDupBypass;
     expect((BG.match(/headers: _runDupHeaders\(\),/g) || []).length).toBe(3);
     expect(BG).toContain("globalThis.__sftkRunDupBypass = !!(profile && profile.duplicateRules === 'bypass');");
-    expect(BG).toContain('Duplicate rules in the target were bypassed for this run');
+    // QA 2026-10-06: the line also says a rule set to Block is not passed by the header
+    expect(BG).toContain('Duplicate rules set to Alert were bypassed for this run');
   });
   it('saved on the deployment through the shared engine setter; shown next to ▶ Deploy', () => {
     expect(RC).toContain("else if (key === 'duplicateRules') { if (raw === 'bypass') p.duplicateRules = 'bypass'; else delete p.duplicateRules; out = p.duplicateRules || 'respect'; }");

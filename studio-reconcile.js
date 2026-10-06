@@ -2879,6 +2879,10 @@ async function runReconcile(profile, objType, buckets, opts) {
         counts.inserted += (s.created || 0);
       }
       counts.insertedFailed += (s.failed || 0);
+      // QA 2026-10-06: the engine said how it wrote (one Bulk API 2.0 job vs
+      // Collections) and this entry dropped it — History never showed "via
+      // Bulk" for a Deploy-page run although the job ran (CLI: jobs/ingest).
+      if (s.viaBulk) counts.viaBulk = true;
       rootTargets.push(...(s.targetRecords || []));
       rootFailedInserts.push(...(s.failedSourceIds || []));
       log(s.failed ? '⚠' : '✅', `${s.upsertUpdated ? `Upserted ${s.created || 0} ${objType} (${s.upsertCreated || 0} created, ${s.upsertUpdated} updated)` : `Inserted ${s.created || 0} ${objType}`}${s.failed ? `, ${s.failed} failed` : ''}`, s.failed ? 'ds-prog-err' : '');
@@ -2896,6 +2900,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         bumpChild(obj, 'connectFailed', cSum.connectFailed || 0);
         if (cSum.targetRecords?.length) {
           childCounts[obj].targetRecords = (childCounts[obj].targetRecords || []).concat(cSum.targetRecords);
+          if (cSum.viaBulk) childCounts[obj].viaBulk = true;
         }
         if (cSum.failedSourceIds?.length) {
           childCounts[obj].failedSourceIds = (childCounts[obj].failedSourceIds || []).concat(cSum.failedSourceIds);
@@ -2973,6 +2978,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       bumpChild(obj, 'failed',  s2.failed  || 0);
       if (s2.targetRecords?.length) {
         childCounts[obj].targetRecords = (childCounts[obj].targetRecords || []).concat(s2.targetRecords);
+        if (s2.viaBulk) childCounts[obj].viaBulk = true;
       }
       if (s2.failedSourceIds?.length) {
         childCounts[obj].failedSourceIds = (childCounts[obj].failedSourceIds || []).concat(s2.failedSourceIds);
@@ -2989,6 +2995,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         bumpChild(rObj, 'created', rs.created || 0);
         bumpChild(rObj, 'failed',  rs.failed  || 0);
         if (rs.targetRecords?.length) childCounts[rObj].targetRecords = (childCounts[rObj].targetRecords || []).concat(rs.targetRecords);
+        if (rs.viaBulk) childCounts[rObj].viaBulk = true;
         if (rs.failedSourceIds?.length) childCounts[rObj].failedSourceIds = (childCounts[rObj].failedSourceIds || []).concat(rs.failedSourceIds);
         log('  ' + (rs.failed ? '⚠' : '✅'), `${rObj}: ${rs.created || 0} created under the new ${obj}${rs.failed ? `, ${rs.failed} failed` : ''}`, rs.failed ? 'ds-prog-err' : '');
       }
@@ -3304,6 +3311,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         updatedSource: counts.updatedSource, updatedSourceFailed: counts.updatedSourceFailed,
         purged:   counts.purged,
         deleteMode: _recDeleteMode,
+        ...(counts.viaBulk ? { viaBulk: true } : {}),
         ...(rootTargets.length ? { targetRecords: rootTargets.slice(0, 200) } : {}),
         ...(rootFailedInserts.length ? { failedSourceIds: sftkCapFailedIds(rootFailedInserts) } : {}),
         ...(rootFailedUpdates.length ? { failedRecords: rootFailedUpdates.slice(0, 200) } : {})
@@ -3313,6 +3321,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         .filter(([obj]) => obj !== objType)
         .map(([obj, c]) => [obj, {
           inserted: c.created, insertedFailed: c.failed,
+          ...(c.viaBulk ? { viaBulk: true } : {}),
           connected: c.connected, connectFailed: c.connectFailed,
           relinked: c.relinked, relinkFailed: c.relinkFailed,
           // R4 — child drift overwrites + target-only deletes.
@@ -3550,10 +3559,14 @@ async function sftkIdDeployTo(orgUrls, objects) {
     let undoNote = `the ${sftkIdFieldName()} field can be removed again in Setup (Object Manager → the object → Fields & Relationships) — deleting a field here has no honest re-read: a successful removal makes the same probe query fail, indistinguishable from a broken one`;
     try {
       // The one write discipline (sftk-write.js): a deploy job's own "done"
-      // used to BE the report — one probe read per object of the field it was
-      // meant to create closes the same gap a PATCH accepted-but-unchanged
-      // taught elsewhere (a deploy can report success with the field still
-      // invisible to this user's FLS).
+      // used to BE the report — a re-read of the field's DEFINITION on each
+      // object closes the same gap a PATCH accepted-but-unchanged taught
+      // elsewhere. QA 2026-10-06 (live, both orgs): the re-read used to be a
+      // data query of the new field, which this user cannot see until the
+      // permission set below is assigned — so every successful deploy was
+      // reported "accepted by Salesforce, but could not be re-read" while the
+      // CLI showed the field in both orgs. The definition does not depend on
+      // field-level security; visibility is probed after the assignment.
       // confirmed-by: sftkIdDeployTo's sftkConfirmDestructive above (before this loop).
       const dw = await sftkWriteVerified({
         describe: `${sftkIdFieldName()} in ${label}`,
@@ -3562,12 +3575,12 @@ async function sftkIdDeployTo(orgUrls, objects) {
         verify: async () => {
           const missing = [];
           for (const o of objs) {
-            const probe = await sendBg({ type: 'SF_QUERY', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false, _suppressError: true,
-              query: `SELECT ${sftkIdFieldName()} FROM ${o} LIMIT 1` });
-            if (probe?.error) missing.push(o);
+            const def = await sendBg({ type: 'SF_QUERY', orgUrl: sess.orgUrl, sid: sess.sid, tooling: true, _suppressError: true,
+              query: sftkIdDefinitionQuery(o) });
+            if (!def || def.error || !(def.records && def.records.length)) missing.push(o);
           }
           return missing.length
-            ? { ok: false, text: `${sftkIdFieldName()} in ${label}: accepted by Salesforce, but could not be re-read on ${missing.join(', ')}` }
+            ? { ok: false, text: `${sftkIdFieldName()} in ${label}: accepted by Salesforce, but the org shows no such field on ${missing.join(', ')} on re-read` }
             : { ok: true };
         },
       });
@@ -3592,6 +3605,14 @@ async function sftkIdDeployTo(orgUrls, objects) {
           noVerify: 'an insert returns the new row, and "already assigned" already means the grant exists',
         });
         if (!aw.accepted) throw new Error(aw.text);
+        // now that the set is assigned, the field must be readable by this user
+        const invisible = [];
+        for (const o of objs) {
+          const probe = await sendBg({ type: 'SF_QUERY', orgUrl: sess.orgUrl, sid: sess.sid, tooling: false, _suppressError: true,
+            query: `SELECT ${sftkIdFieldName()} FROM ${o} LIMIT 1` });
+          if (probe?.error) invisible.push(o);
+        }
+        if (invisible.length) out.errors.push(`${label}: the field exists and the permission set is assigned, but a read of ${sftkIdFieldName()} on ${invisible.join(', ')} is still refused — field-level security can take a moment; read the table again, and check the SFTK Identity set in Setup if it stays.`);
         out.ok++; out.perOrg.push({ orgUrl, ok: true });
         // History: undo removes the assignment ONLY when THIS run created it.
         if (aw.raw && aw.raw.id && !aw.raw.alreadyAssigned) {

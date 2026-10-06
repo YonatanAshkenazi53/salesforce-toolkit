@@ -361,8 +361,13 @@ describe('histExportPayload — JSON export with honest retention note', () => {
 // ── histExportFilename ──────────────────────────────────────────
 
 describe('histExportFilename', () => {
-  it('builds sftk-run-<object>-<date>-<time> from the first summary object and startedAt (UTC)', () => {
-    expect(histExportFilename(FULL_RUN)).toBe('sftk-run-Account-2026-07-29-140322');
+  it('builds sftk-run-<deployment>-<date>-<time> from the deployment name and startedAt (UTC)', () => {
+    expect(histExportFilename(FULL_RUN)).toBe('sftk-run-Accounts_to_UAT-2026-07-29-140322');
+  });
+  // QA 2026-10-06: an Accounts-tree run exported as "sftk-run-CaseComment-…"
+  it('falls back to the first summary object only when the entry has no deployment name', () => {
+    expect(histExportFilename({ summary: { CaseComment: {}, Account: {} }, startedAt: '2026-01-02T03:04:05.000Z' })).toBe('sftk-run-CaseComment-2026-01-02-030405');
+    expect(histExportFilename({ profileName: 'SFTK CX — Accounts tree', summary: { CaseComment: {} }, startedAt: '2026-01-02T03:04:05.000Z' })).toBe('sftk-run-SFTK_CX_Accounts_tree-2026-01-02-030405');
   });
 
   it('slugs unsafe characters in the object name', () => {

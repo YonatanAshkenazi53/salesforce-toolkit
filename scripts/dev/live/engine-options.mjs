@@ -10,7 +10,9 @@
 //               Respect → the insert of Berlin Lab FAILS with DUPLICATES_DETECTED, named
 //               in the run log; Bypass → ↻ Retry failed → it lands (CLI). ↩ Roll back,
 //               then the near-duplicate and the rule are removed again.
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import retryAndRollback from './retry-and-rollback.mjs';
 const NL = String.fromCharCode(10);
 const lines = (s, n = 2500) => String(s || '').slice(0, n).split(NL).map(x => x.trim()).filter(Boolean).join(' | ');
@@ -58,7 +60,7 @@ async function run(h) {
     await h.sleep(1000);
   }
   await h.sleep(3000);
-  const e = JSON.parse(await h.eval("JSON.stringify((() => { const e = _history[_history.length - 1]; return { status: e.status, summary: e.summary, errors: (e.errors || []).slice(0, 6), viaBulk: Object.values(e.summary || {}).some(s => s.viaBulk) }; })())"));
+  const e = JSON.parse(await h.eval("JSON.stringify((() => { const e = _history[_history.length - 1]; return { status: e.status, summary: e.summary, errors: (e.errors || []).slice(0, 6), failed: Object.values(e.summary || {}).flatMap(s => s.failedSourceIds || []), viaBulk: Object.values(e.summary || {}).some(s => s.viaBulk) }; })())"));
   h.log('RUN LOG:', lines(lastLog, 1500));
   h.log('HISTORY entry:', JSON.stringify(e).slice(0, 900));
   return e;
@@ -93,8 +95,11 @@ export default async function (h) {
 
   if (step === 'dup') {
     // the fixture: a blocking rule and one near-duplicate in the target
-    const dep = cli('npc2', ['project', 'deploy', 'start', '--source-dir', 'docs/fixtures/dup-rule-fixture/force-app', '--test-level', 'NoTestRun']);
+    // from inside the fixture folder — its own sfdx-project.json (the repo root has none)
+    // by component name: source tracking otherwise answers "No local changes to deploy" after the rule was removed through the CLI
+    const dep = JSON.parse(execFileSync('sf', ['project', 'deploy', 'start', '-o', 'npc2', '-m', 'DuplicateRule:Account.SFTK_QA_Block', '--test-level', 'NoTestRun', '--ignore-conflicts', '--json'], { cwd: 'docs/fixtures/dup-rule-fixture', shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
     h.log(`rule deployed: ${dep.result?.status}`);
+    if (dep.result?.status !== 'Succeeded') throw new Error('the duplicate-rule fixture did not deploy: ' + JSON.stringify(dep.result?.details?.componentFailures || dep.message || '').slice(0, 300));
     const twin = cli('npc2', ['data', 'create', 'record', '-s', 'Account', '-v', `"Name='SFTK CX Berlin Labs' BillingCity='Berlin' BillingCountry='Germany'"`]).result.id;
     h.log(`near-duplicate created in the target: ${twin}`);
     let twinDeleted = false, ruleRemoved = false;
@@ -104,8 +109,21 @@ export default async function (h) {
       await setOption(h, '#dsDepDupRules', 'respect');
       await tickRootInserts(h);
       const e1 = await run(h);
-      const dupErr = (e1.errors || []).find(x => /DUPLICATES_DETECTED|duplicate/i.test(JSON.stringify(x)));
-      h.log(`Respect: status ${e1.status} · a duplicate refusal named: ${!!dupErr} → ${JSON.stringify(dupErr || '').slice(0, 300)}`);
+      // the refusal is per record (summary[obj].failedSourceIds[].error) — it must say it was a duplicate rule
+      const berlin = (e1.failed || []).find(f => f.label === 'SFTK CX Berlin Lab');
+      // Salesforce's own text for a duplicate-rule block is the alert text ("Use one of these records?");
+      // sftk-friendly-error.js keys on exactly that and History shows the plain-language line
+      const dupErr = berlin && /DUPLICATES_DETECTED|duplicate rule|Use one of these records\?/i.test(berlin.error || '') ? berlin : null;
+      h.log(`Respect: status ${e1.status} · Berlin Lab refused: ${!!berlin} → "${berlin ? berlin.error : ''}" · recognisable as a duplicate rule: ${!!dupErr}`);
+      h.log('all refusals:', JSON.stringify((e1.failed || []).map(f => `${f.label}: ${f.error}`)));
+      await h.eval(`document.querySelector('[data-view="history"]')?.click()`); await h.sleep(1200);
+      await h.eval("document.querySelectorAll('.ds-history-card details').forEach(d => { d.open = true; })");
+      const card = await h.eval("(document.querySelector('.ds-history-card')?.innerText || '').replace(/\\s+/g, ' ')");
+      const friendly = /duplicate rule in the target org/i.test(card), raw = /Use one of these records\?/.test(card);
+      h.log(`History card: plain-words duplicate line ${friendly} · raw Salesforce text ${raw} · hint ${/Bypass for this deployment/.test(card)}`);
+      h.log('CARD (full):', card.slice(0, 1800));
+      h.log('entry.errors:', JSON.stringify(e1.errors));
+      if (!friendly && !raw) h.log('❌ the History card does not mention the duplicate block at all');
       const mid = tgtCx();
       h.log(`CLI target after Respect: Berlin Lab present: ${mid.includes('SFTK CX Berlin Lab')} (must be false)`);
       if (!dupErr || mid.includes('SFTK CX Berlin Lab')) throw new Error('Respect did not block the near-duplicate');
@@ -117,8 +135,15 @@ export default async function (h) {
       h.log('SUMMARY (retry):', lines(await h.text('#dsDepSummary'), 300));
       const e2 = await run(h);
       const end = tgtCx();
-      h.log(`Bypass: status ${e2.status} · CLI target after Bypass: Berlin Lab present: ${end.includes('SFTK CX Berlin Lab')} (must be true)`);
-      if (!end.includes('SFTK CX Berlin Lab')) throw new Error('Bypass did not insert the near-duplicate');
+      // Salesforce: the bypass header passes a rule set to ALERT; a rule set to BLOCK (this fixture)
+      // still blocks (learned live 2026-10-06). The honest outcome: the record is still refused, the
+      // refusal is recognisable as a duplicate rule whatever its alert text, and the run says why.
+      const berlin2 = (e2.failed || []).find(f => f.label === 'SFTK CX Berlin Lab');
+      h.log(`Bypass against a BLOCK rule: status ${e2.status} · Berlin Lab present: ${end.includes('SFTK CX Berlin Lab')} (must be false) · refusal: "${berlin2 ? berlin2.error : ''}"`);
+      h.log('entry.errors (bypass run):', JSON.stringify(e2.errors));
+      if (end.includes('SFTK CX Berlin Lab')) throw new Error('a Block rule was passed — not what Salesforce does; check the fixture');
+      if (!berlin2 || !/DUPLICATES_DETECTED/.test(berlin2.error || '')) throw new Error('the refusal under Bypass is not recognisable as a duplicate rule: ' + (berlin2 ? berlin2.error : 'no refusal'));
+      if (!(e2.errors || []).some(x => /set to Block still blocks/.test(x))) throw new Error('the run does not say that a Block rule cannot be bypassed');
       await setOption(h, '#dsDepDupRules', 'respect').catch(() => {});
       // roll back both runs, newest first
       process.env.SKIP_RUN = '1';
@@ -126,8 +151,22 @@ export default async function (h) {
       await h.eval(`document.querySelector('[data-view="history"]')?.click()`); await h.sleep(1200);
       if (await h.eval(`!!document.querySelector('[data-dsaction="rollbackRun"]:not([disabled])')`)) await retryAndRollback(h);
     } finally {
-      try { cli('npc2', ['data', 'delete', 'record', '-s', 'Account', '-i', twin]); twinDeleted = true; } catch (e) { h.log('twin delete failed: ' + String(e.stdout || e.message).slice(0, 200)); }
-      try { execSync('sf project delete source -o npc2 -m DuplicateRule:Account.SFTK_QA_Block --no-prompt --json', { cwd: 'docs/fixtures/dup-rule-fixture', encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); ruleRemoved = true; } catch (e) { h.log('rule removal failed: ' + String(e.stdout || e.message).slice(0, 300)); }
+      // safety net: whatever this test inserted today and did not roll back goes (the History of a
+      // throwaway profile cannot roll it back later — learned 2026-10-06, four times)
+      try {
+        const mine = (cli('npc2', ['data', 'query', '-q', `"SELECT Id, Name FROM Account WHERE (Name LIKE 'SFTK CX%' OR Name LIKE 'Person SFTK CX%') AND CreatedDate = TODAY"`]).result.records || []);
+        for (const r of mine) cli('npc2', ['data', 'delete', 'record', '-s', 'Account', '-i', r.Id]);
+        if (mine.length) h.log(`safety net: deleted ${mine.length} account(s) this test inserted today: ${mine.map(r => r.Name).join('; ')}`);
+      } catch (e) { h.log('safety net failed: ' + String(e.stdout || e.message).slice(0, 200)); }
+      try { cli('npc2', ['data', 'delete', 'record', '-s', 'Account', '-i', twin]); twinDeleted = true; }
+      catch (e) { const t = String(e.stdout || e.message); if (/ENTITY_IS_DELETED|not found|does not exist/i.test(t)) twinDeleted = true; else h.log('twin delete failed: ' + t.slice(0, 200)); }
+      // a destructive deploy — `sf project delete source` also deletes the fixture's LOCAL file (learned 2026-10-06)
+      try {
+        const dir = join(process.env.TEMP || '.', `sftk-dup-cleanup-${Date.now()}`); mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, 'package.xml'), '<?xml version="1.0" encoding="UTF-8"?><Package xmlns="http://soap.sforce.com/2006/04/metadata"><version>62.0</version></Package>');
+        writeFileSync(join(dir, 'destructiveChanges.xml'), '<?xml version="1.0" encoding="UTF-8"?><Package xmlns="http://soap.sforce.com/2006/04/metadata"><types><members>Account.SFTK_QA_Block</members><name>DuplicateRule</name></types><version>62.0</version></Package>');
+        cli('npc2', ['project', 'deploy', 'start', '--metadata-dir', dir, '--test-level', 'NoTestRun', '--ignore-warnings']); ruleRemoved = true;
+      } catch (e) { h.log('rule removal failed: ' + String(e.stdout || e.message).slice(0, 300)); }
       const rules = (cli('npc2', ['data', 'query', '-q', `"SELECT DeveloperName FROM DuplicateRule WHERE DeveloperName = 'SFTK_QA_Block'"`]).result.records || []).length;
       const back = tgtCx();
       h.log(`cleanup: twin deleted ${twinDeleted} · rule removed ${ruleRemoved} (rules named SFTK_QA_Block left: ${rules}) · CLI target CX accounts (${back.length}): ${back.length === before.length ? 'as before ✓' : 'DIFFERENT ❌ ' + back.join('; ')}`);

@@ -94,6 +94,12 @@ export default async function (h) {
   else {
   h.log('flow button:', await h.eval(`(() => { const b = document.querySelector(${JSON.stringify(flowSel)}); return b.dataset.name + ' (' + b.closest('.fc-item')?.innerText.replace(/\\s+/g, ' ').slice(0, 80) + ')'; })()`));
   await h.eval(`document.querySelector(${JSON.stringify(flowSel)}).click()`);
+  // since 2026-10-06 a way that cannot work is refused BEFORE the dialog (an inline error, no confirmation)
+  await h.waitFor("!!document.querySelector('#sftkConfirmGo') || !!document.querySelector('.fc-inline-error, .fc-item-err, [class*=inline-err]')", 90000, 500);
+  if (!(await h.eval("!!document.querySelector('#sftkConfirmGo')"))) {
+    h.log('REFUSED BEFORE THE DIALOG:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-inline-error, .fc-item-err, [class*=inline-err]')].map(e => e.innerText.slice(0, 500))`)));
+    if (process.env.SCAN_ONLY === '1') return;
+  } else {
   const ok = await confirmDialog(h, process.env.ACTIVE);
   if (process.env.SCAN_ONLY === '1' || !ok) { h.log('SCAN_ONLY / not confirmable — cancelling'); await h.eval(`(() => { const c = [...document.querySelectorAll('button')].find(b => /cancel/i.test(b.textContent)); if (c) c.click(); return true; })()`); return; }
   await h.eval(`document.querySelector('#sftkConfirmGo').click()`);
@@ -105,6 +111,7 @@ export default async function (h) {
   h.log('AFTER FLOW FIX — results:', await dump(h, '#fcResults', 3000));
   h.log('snap log:', await dump(h, '#fcSnapLog', 800));
   await h.shot(h.shots + '/fc-after-flow.png');
+  }
   }
   // any other fix buttons (permission set etc.). QA 2026-10-06: a flow whose
   // "keeps running" way is refused (an element would be left empty) is pressed
@@ -123,10 +130,12 @@ export default async function (h) {
     if (!pick) break;
     tried.add(pick);
     h.log('next fix:', pick);
+    // an earlier refusal stays on the page: only a NEW inline error (or the dialog) counts
+    const errsBefore = await h.eval("document.querySelectorAll('.fc-inline-error, .fc-item-err, [class*=inline-err]').length");
     await h.eval(`(() => { const b = document.querySelector('.fc-fix-btn[data-sftk-pick]'); b.removeAttribute('data-sftk-pick'); b.click(); return true; })()`);
-    await h.sleep(1500);
+    await h.waitFor(`!!document.querySelector('#sftkConfirmGo') || document.querySelectorAll('.fc-inline-error, .fc-item-err, [class*=inline-err]').length > ${errsBefore}`, 90000, 500);
     if (!(await h.eval("!!document.querySelector('#sftkConfirmGo')"))) {
-      h.log('refused before the dialog:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-inline-error, .fc-item-err, [class*=inline-err]')].map(e => e.innerText.slice(0, 400))`)));
+      h.log('refused before the dialog:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-inline-error, .fc-item-err, [class*=inline-err]')].slice(-1).map(e => e.innerText.slice(0, 400))`)));
       continue;
     }
     const ok2 = await confirmDialog(h, process.env.ACTIVE);
