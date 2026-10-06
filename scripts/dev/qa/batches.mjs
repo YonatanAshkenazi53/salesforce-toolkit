@@ -77,5 +77,8 @@ export const BATCHES = {
     { name: 'builder-crud-export-import', script: `${L}builder.mjs` },
     { name: 'allorgs-compare', script: `${L}allorgs-compare.mjs`, timeoutMin: 30 },
     { name: 'run-retry-rollback-history', script: `${L}retry-and-rollback.mjs`, env: { HISTORY: '1' }, timeoutMin: 40 },
+    { name: 'identity-create-stamp-undo', script: `${L}identity.mjs`, timeoutMin: 30 },
+    { name: 'engine-bulk-rollback', script: `${L}engine-options.mjs`, env: { STEP: 'bulk' }, timeoutMin: 40 },
+    { name: 'engine-duplicate-rules', script: `${L}engine-options.mjs`, env: { STEP: 'dup' }, timeoutMin: 50 },
   ],
 };

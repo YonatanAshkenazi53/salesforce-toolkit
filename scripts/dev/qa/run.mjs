@@ -39,7 +39,7 @@ for (const run of batch) {
   writeFileSync(join(outDir, `${run.name}.log`), log);
   const lines = log.split(NL).map(l => l.trimEnd()).filter(Boolean);
   const count = re => lines.filter(l => re.test(l)).length;
-  const exc = count(/PAGE EXCEPTION/), cerr = count(/CONSOLE error/), bad = count(/❌|FAILED|timeout waiting|SECTION FAILED|Not finished|INCOMPLETE/i);
+  const exc = count(/PAGE EXCEPTION/), cerr = count(/CONSOLE error/), bad = count(/❌(?! Failed 0)|FAILED|timeout waiting|SECTION FAILED|Not finished|INCOMPLETE/i);   // a report's own "❌ Failed 0" is not a failure
   const last = lines.length ? lines[lines.length - 1].slice(0, 160) : '(no output)';
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
   const line = `${r.status === 0 ? '✓' : '✗'} ${run.name} · exit ${r.status === null ? 'timeout' : r.status} · ${secs}s · exceptions ${exc} · console errors ${cerr} · ❌/FAILED lines ${bad} · last: ${last}`;

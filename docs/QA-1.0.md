@@ -22,37 +22,37 @@ Legend: ✅ pass · ❌ defect found (then "fixed <commit>") · ⏭ not run / wh
 | Feature | Scenario | Run | Result |
 |---|---|---|---|
 | Home | open on one org, org label, tool cards; switch when two orgs are open | video `home` section + `smoke` | ✅ (walkthrough recording 2026-10-05; the public build boots: popup/studio/log viewer 1/1/1) |
-| Flows | list grouped by name, versions, 🔗 subflow mark, search | `flows-list` (new) | pending |
+| Flows | list grouped by name, versions, 🔗 subflow mark, search | `flows-backup-delete-restore` | ✅ 70 flows listed; search narrows; CLI agrees on the versions |
 | Flows | ⬇ Backup of a version (file) | 🧑 download | pending — hand step |
-| Flows | 🗑 Delete inactive versions: warning, backup offer, "I understand" box, re-read | `flows-delete` (new, fixture Draft) | pending |
-| Flows | 📥 Restore a backup as a new Draft | `flows-restore` (new) | pending |
-| Dependencies | tree, "what uses", 🧨 blast radius, 🔗 chain, export | `dependencies-readonly` | pending |
-| Dependencies | ⏻ Flow switches OFF → typed OFF → re-read → Undo from History | `flow-switches-off-undo` | pending |
-| Dependencies | ⏻ OFF then ON in one session (remembered versions) | `flow-switches-cycle` | pending |
-| Dependencies | ⚙ API versions: pick, target, CHANGE, re-read, Undo | `api-versions-change-undo` | pending |
-| Debugger | pick user, Start Trace → re-check, logs list, open a log, Stop Trace | `debugger` (new) | pending |
-| Debugger | apex-log-viewer.html opens a log | `debugger` (new) | pending |
-| Lightning Pages | list, detail of a record page, assignments read | `lp-detail` | pending |
-| Lightning Pages | org default set → re-read → remove | `lp-orgdefault-remove` | pending |
-| Lightning Pages | app default | `lp-appdefault` | pending |
-| Lightning Pages | app + record type + profile | `lp-artp` | pending |
-| Lightning Pages | Deactivate (every assignment named) | `lp-deactivate` | pending |
-| Lightning Pages | Clone (unassigned copy) | `lp-clone` | pending |
-| Lightning Pages | What a user sees | `lp-users` | pending |
-| Lightning Pages | Who sees what? (org-wide audit) | `lp-whosees` | pending |
-| Field Cleaner | scan of the fixture field: every surface listed, fixable vs needs a person | `fc-scan-only`, `fr-scan` | pending |
-| Field Cleaner | 🔑 copy access → Undo | `fr-access-undo` | pending |
-| Field Cleaner | ⇄ Replace on the layout → Undo | `fr-layout-undo` | pending |
-| Field Cleaner | ⇄ Replace on the Lightning page → Undo | `fr-page-undo` | pending |
-| Field Cleaner | 📦 Stored values: compare only; fill → re-read → Undo | `fr-copy-compare`, `fr-copy-fill-undo` | pending |
-| Field Cleaner | 📊 report sweep: the quoted cost | `fr-report-count` | pending |
-| Field Cleaner | flow: ✂ Remove · flow keeps running (new active version) | `fr-flow-keep` | pending |
-| Field Cleaner | flow: 🗑 Delete versions · flow off | `fr-flow-off` | pending |
-| Field Cleaner | Everything at once: ⇄ Replace all | `fr-every-replace` | pending |
-| Field Cleaner | 🕐 Deprecate first → Undo | `fc-deprecate` (new) | pending |
-| Field Cleaner | 🗑 Delete Field after everything is cleared (+ fixture rebuild) | `fc-delete-field` (new) | pending |
-| Copy Permissions | plan, checkbox, copy → Salesforce's answer → Undo | `copy-perms-undo` | pending |
-| Flow Access | grant to a permission set → reload → Undo | `flow-access-undo` | pending |
+| Flows | 🗑 Delete inactive versions: warning, backup offer, "I understand" box, re-read | `flows-backup-delete-restore` | ✅ permanent-delete box gates Go; Draft gone (CLI) |
+| Flows | 📥 Restore a backup as a new Draft | `flows-backup-delete-restore` | ❌ said "0 restored, 1 failed" while the Draft existed → fixed (verify by developer name); re-run "✅ 1 Flow Restored", CLI agrees |
+| Dependencies | tree, "what uses", 🧨 blast radius, 🔗 chain, export | `dependencies-readonly` | ✅ 250 nodes, blast radius, chain, two searches (1 and 35 hits, 177 managed named as unread), export row |
+| Dependencies | ⏻ Flow switches OFF → typed OFF → re-read → Undo from History | `flow-switches-off-undo` | ✅ 3 OFF verified by re-read; Undo 3 steps verified; CLI agrees |
+| Dependencies | ⏻ OFF then ON in one session (remembered versions) | `flow-switches-cycle` | ✅ OFF then ON restores v1 (remembered) |
+| Dependencies | ⚙ API versions: pick, target, CHANGE, re-read, Undo | `api-versions-change-undo` | ✅ 3 flows → API 49 verified; Undo 4 steps; the in-place Draft is said to be unrestorable (known limitation) — the result now repeats it (fixed) |
+| Debugger | pick user, Start Trace → re-check, logs list, open a log, Stop Trace | `debugger-trace-log-viewer` | ✅ TraceFlag seen by CLI; anonymous Apex log listed and opened with the probe line; viewer tab shows it; Stop → flag gone (CLI); History has both |
+| Debugger | apex-log-viewer.html opens a log | `debugger-trace-log-viewer` | ✅ TraceFlag seen by CLI; anonymous Apex log listed and opened with the probe line; viewer tab shows it; Stop → flag gone (CLI); History has both |
+| Lightning Pages | list, detail of a record page, assignments read | `lp-detail` | ✅ |
+| Lightning Pages | org default set → re-read → remove | `lp-orgdefault-set-remove` | ✅ set → "1 assignment written and verified" → removed; first attempt found Desktop already set (fixture state) and said "Tick Desktop or Mobile" |
+| Lightning Pages | app default | `lp-appdefault` | ✅ |
+| Lightning Pages | app + record type + profile | `lp-artp` | ✅ |
+| Lightning Pages | Deactivate (every assignment named) | `lp-deactivate` | ✅ both assignments named, removed |
+| Lightning Pages | Clone (unassigned copy) | `lp-clone` | ✅ "created, not shown to anyone yet" |
+| Lightning Pages | What a user sees | `lp-users` | ✅ |
+| Lightning Pages | Who sees what? (org-wide audit) | `lp-whosees` | ✅ |
+| Field Cleaner | scan of the fixture field: every surface listed, fixable vs needs a person | `fc-scan-only`, `fr-scan` | ✅ 4 dependencies, 4 auto-fixable; verdict wording fixed |
+| Field Cleaner | 🔑 copy access → Undo | `fr-access-undo` | ✅ copied, verified; Undo verified |
+| Field Cleaner | ⇄ Replace on the layout → Undo | `fr-layout-undo` | ✅ |
+| Field Cleaner | ⇄ Replace on the Lightning page → Undo | `fr-page-undo` | ✅ |
+| Field Cleaner | 📦 Stored values: compare only; fill → re-read → Undo | `fr-copy-compare`, `fr-copy-fill-undo` | ✅ compare: 3 same / 0 empty / 5 not copyable ("Closed" missing in the new field) said plainly; fill path re-run after clearing the new field |
+| Field Cleaner | 📊 report sweep: the quoted cost | `fr-report-count` | ✅ cost quoted first |
+| Field Cleaner | flow: ✂ Remove · flow keeps running (new active version) | `fr-flow-keep` | ✅ Flow 2: new active v8; on SFTK FC Test Flow Salesforce refuses (empty Assignment) → now refused before the dialog (fixed) |
+| Field Cleaner | flow: 🗑 Delete versions · flow off | `fr-flow-off` | ✅ v18 Draft + v17 Active deleted, flow off |
+| Field Cleaner | Everything at once: ⇄ Replace all | `fr-every-replace` | ✅ 4 dialogs, layout / 2 flows / page replaced, "Safe to delete" |
+| Field Cleaner | 🕐 Deprecate first → Undo | `fc-deprecate-undo` | ✅ label renamed, 1 grant stripped, Slack set named as not editable; undo restored |
+| Field Cleaner | 🗑 Delete Field after everything is cleared (+ fixture rebuild) | `fc-remove-all-delete-field` | ⚠ the run reached the flow refusal (see above) and stopped before the delete; the fixture was rebuilt; to re-run after the fix |
+| Copy Permissions | plan, checkbox, copy → Salesforce's answer → Undo | `copy-perms-undo` | ✅ role set, verified; undo verified |
+| Flow Access | grant to a permission set → reload → Undo | `flow-access-undo` | ✅ granted, verified; undo verified |
 
 ## Data Studio
 
@@ -62,12 +62,12 @@ Legend: ✅ pass · ❌ defect found (then "fixed <commit>") · ⏭ not run / wh
 | Connected Orgs | lock an org → a write to it is refused | `connected-orgs` (new) | pending |
 | Connected Orgs | guard as production → the typed org name is required | `connected-orgs` (new) | pending |
 | Data Deployment | builder: new from template / from scratch, edit, clone, delete, export, import | `builder` (new) | pending |
-| Data Deployment | Deploy page: scan, buckets, nothing ticked, tree cards and counts | `deploy-tree`, `consistency` | pending |
-| Data Deployment | ⚠ Needs a decision: answer one, forget, re-read | `needs-decision` | pending |
-| Data Deployment | parents first: grandchild ticked, parents added, linked | `parents-first` | pending |
-| Data Deployment | run → failures → ↻ Retry failed → rollback | `retry-and-rollback` | pending |
-| Data Deployment | ⏸ pause record-triggered flows around a real run, back on at their versions | `flowpause-run-rollback` | pending |
-| Data Deployment | validation rules paused around a real run | `vrpause-run-rollback` | pending |
+| Data Deployment | Deploy page: scan, buckets, nothing ticked, tree cards and counts | `deploy-tree`, `consistency` | ✅ tree and plan agree (Account 10 → 4: 7/1/2/0/2); consistency's ring part re-pointed to the new page |
+| Data Deployment | ⚠ Needs a decision: answer one, forget, re-read | `needs-decision` | ✅ nothing written (CLI) |
+| Data Deployment | parents first: grandchild ticked, parents added, linked | `parents-first` | ✅ 6 of 8 parents not aligned, journey to Individual |
+| Data Deployment | run → failures → ↻ Retry failed → rollback | `retry-and-rollback` | ✅ 6 inserted 1 failed → Retry ticks 1 → rollback deletes 6 |
+| Data Deployment | ⏸ pause record-triggered flows around a real run, back on at their versions | `flowpause-run-rollback` | ✅ 3 flows OFF before the write, back ON verified (CLI ON/ON/ON) |
+| Data Deployment | validation rules paused around a real run | `vrpause-run-rollback` | ✅ 1 rule off, back on |
 | Data Deployment | one-pass tree run and its rollback | `onepass-tree-rollback` | pending |
 | Data Deployment | duplicate rules Respect / Bypass; Engine Bulk threshold | `engine-options` (new) | pending |
 | Data Deployment | 🪪 Identity field: which org has `SFTK_ID__c`, create it where missing, stamp matched pairs, re-scan matches by it (user 2026-10-06: also missing from the video) | `identity` (new) | pending |
@@ -103,6 +103,11 @@ Batches run so far on the public build: `toolkit` (27 runs, all exit 0), `toolki
 4. **↩ Undo result omitted what was not restored** (API versions: the in-place Draft).
    The dialog said it; the result and the undo entry now carry an ℹ "Not restored" line
    (sftk-history.js, test in sftk-history.test.mjs).
+
+5. **Org Compare said "100%" with records missing** (Account 10,075 matched / 7 missing
+   → 100%; Contact 6 missing → 100%) — `Math.round`. Fixed: `sftkOcMatchPct` caps at 99.9
+   while anything is missing (test oc-pct-1006). The two row buttons both read "Deploy";
+   the saver is now "📦 Save as deployment".
 
 ### Verified and honest (no change needed)
 - Flow switches OFF/ON/undo, API versions change/undo, Lightning Pages (detail, org

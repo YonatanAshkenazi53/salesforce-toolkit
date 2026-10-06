@@ -30,6 +30,14 @@ expected counts: the READMEs under `docs/fixtures/`; the Accounts tree root read
 harness's throwaway profile, so an undo / rollback must run in the SAME session as the change (see `onepass-tree.mjs`,
 `ambiguous.mjs`, `flowpause.mjs`, `_undo.mjs`). CLI login tip: `sf org login web --browser edge`.
 
+**Release QA (2026-10-06).** `node scripts/dev/qa/run.mjs <batch>` runs the live scripts of
+`scripts/dev/qa/batches.mjs` (toolkit, toolkit2, studio, studio2) against the PUBLIC build
+(`npm run pack` first; `SFTK_EXT=dist/store-staging`), one harness at a time, logs under
+`dist/qa/<batch>/` with a `_summary.txt`. A run passes on exit code 0, no page exception /
+console error / ❌ line, AND a log whose claims the CLI confirms — read the logs, the summary
+line is not the verdict. `docs/QA-1.0.md` is the matrix and the findings. Every writing run
+undoes itself or is followed by a restore step; the orgs end as they began.
+
 **Where things are.** Plan + status per phase: `docs/PLAN-campaign-3.md` (incl. the backlog). Public feature guide:
 `docs/FEATURES.md` (to be rendered by `studio-whatsnew.js` at launch instead of the changelog). Older ideas never scheduled:
 `IMPLEMENTATION_PLAN.md` (the `- [ ]` items). Memory: `project_sf_flow_cleaner.md` (append near the newest **PHASE…** entries).

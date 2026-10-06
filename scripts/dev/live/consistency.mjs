@@ -1,7 +1,7 @@
 // Live: do Org Compare, the Sync Ring and the Deploy page agree about the same data?
 // Fixture: docs/fixtures/complex-deployment (profiles.json), trailheads5 → trailheads4.
 //   1. Org Compare (whole objects, no profile filter): Account, Contact, Opportunity.
-//   2. Sync Ring: scan the PROFILE deployment's cell for trailheads4 (missing / changed / extra).
+//   2. All open orgs: scan the PROFILE deployment's cell for trailheads4 (missing / changed / extra).
 //   3. Deploy page: the same deployment's scan (to insert / changed / only in target / synced).
 // The Ring and the Deploy page share the profile's scope, so their numbers must agree;
 // Org Compare has no filter, so its numbers are reported for the reader, not compared.
@@ -34,26 +34,22 @@ export default async function (h) {
   await h.shot(h.shots + '/oc-results.png');
   }
 
-  // ── 2. Sync Ring — needs a source of truth (topbar SOURCE) and at least one more org ticked ──
-  h.log('SOURCE menu:', await setSelect(h, '#dsSotSel', 'trailheads5'));
-  await h.sleep(1200);
+  // ── 2. All open orgs (the ring page, redone 2026-10-01: a source select, one column per
+  // other open org, the Scan button on the target column) — scan this deployment's cell ──
   await h.eval(`document.querySelector('[data-view="ring"]')?.click()`);
-  await h.waitFor("!!document.querySelector('#dsRingBody')", 60000, 500); await h.sleep(1000);
-  h.log('ring orgs:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.ds-ring-cb')].map(c => c.value + (c.checked ? '*' : '') + (c.disabled ? '(crown)' : ''))`)));
-  const adopt = await h.eval(`(() => { const b = document.querySelector('#dsRingAdoptWp'); if (b) { b.click(); return 'adopted topbar SOURCE'; } return 'no adopt button'; })()`);
-  h.log('adopt:', adopt); await h.sleep(1500);
-  const tickedRing = await h.eval(`(() => { let n = 0; document.querySelectorAll('.ds-ring-cb').forEach(c => { if (!c.disabled && !c.checked && /trailheads4/.test(c.value)) { c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); n++; } }); return n; })()`);
-  h.log('ring target ticked:', tickedRing);
+  await h.waitFor("!!document.querySelector('#dsRingSrc')", 60000, 500); await h.sleep(1000);
+  h.log('SOURCE menu:', await setSelect(h, '#dsRingSrc', 'https://trailheads5.my.salesforce.com'));
+  await h.sleep(1500);
   await h.waitFor("!!document.querySelector('[data-ring-cell]')", 60000, 1000); await h.sleep(1000);
   h.log('ring head:', await dump(h, '#dsRingBody', 500));
   const cellSel = `[data-ring-cell^="${pid}|"]`;
   h.log('cell before:', await h.eval(`document.querySelector(${JSON.stringify(cellSel)})?.innerText.replace(/\\s+/g, ' ')`));
-  // the 🔎 in the cell scans this deployment against that target (no changes); ⚖ opens Reconcile
-  const recBtn = await h.eval(`(() => { const b = document.querySelector('[data-ring-scan1^="' + ${JSON.stringify(pid)} + '|"]'); if (!b) return 'no scan button'; b.click(); return 'clicked ' + b.textContent.trim(); })()`);
+  // the column's Scan button scans every deployment against trailheads4 (no changes)
+  const recBtn = await h.eval(`(() => { const b = [...document.querySelectorAll('[data-ring-scantgt]')].find(b => /trailheads4/.test(b.dataset.ringScantgt) && !b.disabled); if (!b) return 'no scan button'; b.click(); return 'clicked ' + b.textContent.trim(); })()`);
   h.log('ring scan:', recBtn);
-  await h.waitFor("!document.querySelector('[data-ring-scan1^=\"" + pid + "|\"]')?.disabled && !/not scanned|⏳/.test(document.querySelector(" + JSON.stringify(cellSel) + ")?.innerText || '')", 600000, 2000);
+  await h.waitFor("!/scanning|⏳/i.test(document.querySelector(" + JSON.stringify(cellSel) + ")?.innerText || '') && /\\d/.test(document.querySelector(" + JSON.stringify(cellSel) + ")?.innerText || '')", 600000, 2000);
   await h.sleep(1000);
-  const cell = await h.eval(`(() => { const c = document.querySelector(${JSON.stringify(cellSel)}); if (!c) return null; const t = c.querySelector('.ds-ring-counts'); return { text: c.innerText.replace(/\\s+/g, ' ').trim(), title: t ? t.title : '', m: c.querySelector('.ds-ring-m')?.textContent, ch: c.querySelector('.ds-ring-c')?.textContent, e: c.querySelector('.ds-ring-e')?.textContent, clean: !!c.querySelector('.ds-ring-clean') }; })()`);
+  const cell = await h.eval(`(() => { const c = document.querySelector(${JSON.stringify(cellSel)}); if (!c) return null; return { text: c.innerText.replace(/\\s+/g, ' ').trim(), drift: c.className }; })()`);
   h.log('RING CELL:', JSON.stringify(cell));
   await h.shot(h.shots + '/ring.png');
 

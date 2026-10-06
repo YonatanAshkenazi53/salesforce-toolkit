@@ -93,6 +93,13 @@ extensions containing root files that start with `_`).
 ### Fixed — "What uses…" no longer answers "nothing" about flows it did not read
 - **The Dependencies search says how much it searched.** When the flow list came from the stored cache, the search had read no flow text in that session and still answered that no flow mentions the term. It now says how many flow versions were searched and how many were not, that this is not a "no", and offers to read them all.
 
+### Fixed — Org Compare: no "100%" while records are missing (QA 2026-10-06)
+- Account read **100%** with 7 records missing from the target, Contact 100% with 6 —
+  the rounded number said "nothing is missing". A row now reads 99.9% at most while
+  anything is missing, and 0.1% at least while anything matched.
+- Every row had two buttons both called "Deploy". 🚀 Deploy opens the Deploy page for
+  that object; the other is now **📦 Save as deployment** — it writes nothing.
+
 ### Fixed — Flows: a restored backup was reported as failed (QA 2026-10-06)
 - 📥 Restore deployed the Draft and then said "accepted by Salesforce, but the new
   Draft version could not be found on re-read" — every time, because the re-read
