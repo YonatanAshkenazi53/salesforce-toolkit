@@ -13,6 +13,8 @@
 // 'debug' — the Debug Log of both pages (user 2026-10-05: "i dont think the
 // store release should have debug feature for both tookit and data studio").
 // Without it the recorder (debug-logger.js) can never be switched on.
+// 'pro' (Data Studio's Pro mode) and 'guidance' (the tours and help bubbles
+// of onboarding.js) — cut 2026-10-06 ("cut pro mode … in app guidance as well").
 window.SFTK_CUT = [];
 
 function sftkShips(id) {

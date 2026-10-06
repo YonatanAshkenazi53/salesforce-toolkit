@@ -53,8 +53,16 @@ HELD_BACK_JS = {'studio-seed.js'}
 # debug-logger.js stays because every tool calls it, but with 'debug' cut it
 # can never be switched on. The Licence button is in both pages' top bars and
 # the pack fails if either lost it.
-CUT_JS = {'studio-picklists.js', 'studio-sequences.js', 'studio-readiness.js', 'license-manager.js', 'debug-modal.js'}
-CUT_IDS = ['picklists', 'sequences', 'readiness', 'licenses', 'debug']
+#
+# 2026-10-06 — "cut pro mode. … in app guidance as well". Pro mode (the Pro
+# toggle in Data Studio's top bar; the Toolkit never had it) and the in-app
+# guidance (onboarding.js: the first-run tours, the (?) help bubbles, the
+# teaching empty states) leave the public build. Every caller of SFTKOnboard
+# is guarded; a (?) badge falls back to a plain title tooltip (styles.css /
+# studio.css carry its look).
+CUT_JS = {'studio-picklists.js', 'studio-sequences.js', 'studio-readiness.js', 'license-manager.js', 'debug-modal.js', 'onboarding.js'}
+CUT_IDS = ['picklists', 'sequences', 'readiness', 'licenses', 'debug', 'pro', 'guidance']
+PRO_BTN_RE = r'[ \t]*<button class="ds-pro-toggle" id="dsProToggle"[^>]*>.*?</button>\r?\n?'
 DBG_BTN_RE = r'[ \t]*<button id="dbgBtn"[^>]*>.*?</button>\r?\n?'
 EXCLUDE_JS = LABS_JS | HELD_BACK_JS | CUT_JS | {'studio-tools.js', 'content.js'}
 
@@ -117,6 +125,11 @@ def main():
     m = re.search(DBG_BTN_RE, html, re.S)
     if not m:
         fail('Debug button not found in studio.html — top bar changed?')
+    html = html[:m.start()] + html[m.end():]
+    # Pro mode's toggle — same rule.
+    m = re.search(PRO_BTN_RE, html, re.S)
+    if not m:
+        fail('Pro toggle not found in studio.html — top bar changed?')
     html = html[:m.start()] + html[m.end():]
     i_labs = html.find('<!-- Labs:')
     i_footer = html.find('<!-- Nav footer -->')
@@ -199,10 +212,10 @@ def main():
         if os.path.exists(os.path.join(STAGE, js)):
             fail(f'{js} leaked into staging')
     pop = io.open(os.path.join(STAGE, 'popup.html'), encoding='utf-8').read()
-    for needle in ['license-manager.js', 'data-tab="licenses"', 'tab-licenses', 'debug-modal.js', 'id="dbgBtn"']:
+    for needle in ['license-manager.js', 'data-tab="licenses"', 'tab-licenses', 'debug-modal.js', 'id="dbgBtn"', 'onboarding.js']:
         if needle in pop:
             fail(f'packed popup.html still contains {needle}')
-    for needle in ['debug-modal.js', 'id="dbgBtn"']:
+    for needle in ['debug-modal.js', 'id="dbgBtn"', 'onboarding.js', 'id="dsProToggle"']:
         if needle in html:
             fail(f'packed studio.html still contains {needle}')
     for page, doc in (('popup.html', pop), ('studio.html', html)):

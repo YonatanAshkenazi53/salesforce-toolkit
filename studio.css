@@ -6380,3 +6380,8 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 .sftk-confirm-ack { display: flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 12.5px; cursor: pointer; font-weight: 600; }
 .sftk-confirm-word { margin-top: 8px; }
 .sftk-confirm-prodnote { margin-top: 8px; font-size: 12px; color: var(--danger, #ea001e); }
+
+/* The (?) help badge. onboarding.js gives it a bubble; without that file (the
+   public build, 2026-10-06) it is a plain badge with a title tooltip. */
+.sftk-help { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: #cbd5e1; color: #fff; font-size: 10px; font-weight: 700; cursor: help; margin-left: 4px; vertical-align: middle; user-select: none; }
+.sftk-help:hover, .sftk-help:focus { background: #2563eb; outline: none; }

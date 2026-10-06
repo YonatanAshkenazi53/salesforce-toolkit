@@ -6877,3 +6877,8 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .sftk-th-inline { margin: 10px 0; border: 1px solid var(--border, #d8dde6); border-radius: 8px; padding: 6px 10px; }
 .sftk-th-inline > summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 2px 0; }
 .sftk-th-inline[open] > summary { margin-bottom: 8px; }
+
+/* The (?) help badge. onboarding.js gives it a bubble; without that file (the
+   public build, 2026-10-06) it is a plain badge with a title tooltip. */
+.sftk-help { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: #cbd5e1; color: #fff; font-size: 10px; font-weight: 700; cursor: help; margin-left: 4px; vertical-align: middle; user-select: none; }
+.sftk-help:hover, .sftk-help:focus { background: #2563eb; outline: none; }

@@ -36,8 +36,8 @@ describe('sftk-build.js — the developer build ships everything', () => {
 
 describe('the packer — what the public build leaves out', () => {
   it('Deploy Readiness, Licenses and the Debug Log join the Picklist Manager and Sequences', () => {
-    expect(PACK).toContain("CUT_JS = {'studio-picklists.js', 'studio-sequences.js', 'studio-readiness.js', 'license-manager.js', 'debug-modal.js'}");
-    expect(PACK).toContain("CUT_IDS = ['picklists', 'sequences', 'readiness', 'licenses', 'debug']");
+    expect(PACK).toContain("CUT_JS = {'studio-picklists.js', 'studio-sequences.js', 'studio-readiness.js', 'license-manager.js', 'debug-modal.js', 'onboarding.js'}");
+    expect(PACK).toContain("CUT_IDS = ['picklists', 'sequences', 'readiness', 'licenses', 'debug', 'pro', 'guidance']");
   });
   it('their nav buttons, the Licenses tab and their script tags go; a changed layout fails the pack instead of shipping a dead button', () => {
     expect(PACK).toContain('data-view="readiness">');
@@ -51,7 +51,7 @@ describe('the packer — what the public build leaves out', () => {
     expect(PACK).toContain("fail('packed sftk-build.js still says nothing is cut')");
   });
   it('the post-checks look for leftovers in both pages', () => {
-    expect(PACK).toContain("for needle in ['license-manager.js', 'data-tab=\"licenses\"', 'tab-licenses', 'debug-modal.js', 'id=\"dbgBtn\"']:");
+    expect(PACK).toContain("for needle in ['license-manager.js', 'data-tab=\"licenses\"', 'tab-licenses', 'debug-modal.js', 'id=\"dbgBtn\"', 'onboarding.js']:");
     expect(PACK).toContain("'studio-readiness.js', 'data-view=\"readiness\"',");
   });
 });
@@ -91,7 +91,7 @@ describe('the public build has no Debug Log; the Licence button is on both pages
     expect(PACK).toContain("fail('Debug button not found in studio.html — top bar changed?')");
     expect(PACK).toContain("m = re.search(DBG_BTN_RE, pop, re.S)");
     expect(PACK).toContain("fail('Debug button not found in popup.html — top bar changed?')");
-    expect(PACK).toContain("for needle in ['debug-modal.js', 'id=\"dbgBtn\"']:");
+    expect(PACK).toContain("for needle in ['debug-modal.js', 'id=\"dbgBtn\"', 'onboarding.js', 'id=\"dsProToggle\"']:");
   });
   it('the recorder cannot be on in a build without the Debug Log — not even from an old switch', () => {
     expect(LOG).toContain("enabled:   _ships() && localStorage.getItem(ENABLED_KEY) === '1',");
@@ -112,5 +112,28 @@ describe('the public build has no Debug Log; the Licence button is on both pages
     for (const page of ['popup.html', 'studio.html']) expect(read(page)).toContain('<button id="sftkTermsBtn" class="dbg-btn"');
     expect(PACK).toContain("fail(f'packed {page} has no Licence button')");
     expect(read('sftk-terms.js')).toContain("const b = document.getElementById('sftkTermsBtn');");
+  });
+});
+
+// User 2026-10-06: "cut pro mode. … in app guidance as well".
+describe('the public build has no Pro mode and no in-app guidance', () => {
+  it('the packer takes the Pro toggle out of Data Studio and fails if it cannot find it', () => {
+    expect(PACK).toContain('PRO_BTN_RE = r\'[ \\t]*<button class="ds-pro-toggle" id="dsProToggle"[^>]*>.*?</button>\\r?\\n?\'');
+    expect(PACK).toContain("fail('Pro toggle not found in studio.html — top bar changed?')");
+  });
+  it('onboarding.js (tours, help bubbles, teaching empty states) is cut, and every caller is guarded', () => {
+    for (const f of ['popup.js', 'studio-core.js']) {
+      const src = read(f);
+      for (const m of src.matchAll(/^(?!\s*\/\/).*SFTKOnboard[^?].*$/gm)) {
+        const line = m[0];
+        expect(/if \(!window\.SFTKOnboard\) return;|typeof SFTKOnboard !== 'undefined'|SFTKOnboard\?\.|SFTKOnboard\.help\(help\)|SFTKOnboard\.firstRun\(/.test(line), `${f}: ${line.trim().slice(0, 100)}`).toBe(true);
+      }
+      // the only unguarded-looking call sits right after its guard
+      expect(src).toMatch(/if \(!window\.SFTKOnboard\) return;\n\s*window\.SFTKOnboard\.firstRun\(/);
+    }
+  });
+  it('the (?) badge keeps its look in both stylesheets without onboarding.js', () => {
+    for (const f of ['styles.css', 'studio.css']) expect(read(f)).toContain('.sftk-help { display: inline-flex;');
+    expect(read('studio-core.js')).toContain('`<span class="sftk-help" title="${esc(help)}" tabindex="0">?</span>`');
   });
 });
