@@ -3,6 +3,14 @@
 // (typed word, plan, execution), reporting what each said.
 //   PROFILE = deployment name (default: the Accounts tree)
 //   ROLLBACK=0 to skip the rollback
+//   HISTORY=1 afterwards: the History page end to end — the cards, the status and
+//             deployment filters, a run's own export (JSON + CSV, real downloads read
+//             back), Export all, counts-only mode (ids stripped, checked in storage),
+//             the retention select; everything is set back as it was
+// The deployment only ever writes trailheads5 → trailheads4: the Deploy page's own
+// direction is asserted before anything is ticked.
+import { mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { resolve, join } from 'node:path';
 const dump = async (h, sel, n = 1500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).join(' | ');
 export default async function (h) {
   await h.login('npc'); await h.login('npc2'); await h.studio(''); await h.watchErrors();
@@ -13,6 +21,9 @@ export default async function (h) {
   if (process.env.SKIP_RUN === '1') { h.log('SKIP_RUN: no deployment run'); }
   else {
   await h.eval(`window.runProfile(${JSON.stringify(id)})`); await h.sleep(1500);
+  const dir = await h.eval(`(() => { const p = (typeof _reconcileProfile !== 'undefined' && _reconcileProfile) || null; return p ? { src: p.sourceOrg || '', tgt: p.targetOrg || '' } : null; })()`);
+  h.log('direction:', JSON.stringify(dir));
+  if (!dir || !dir.src.includes('trailheads5') || !dir.tgt.includes('trailheads4')) throw new Error(`the Deploy page is open ${dir ? `${dir.src} → ${dir.tgt}` : 'on nothing'}; this script only ever writes trailheads5 → trailheads4`);
   await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
   await h.waitFor("!!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000);
   await h.sleep(1500);
@@ -107,4 +118,90 @@ export default async function (h) {
   }
   await h.eval(`document.querySelector('[data-view="history"]')?.click()`); await h.sleep(1500);
   h.log('HISTORY after rollback:', await dump(h, '.ds-history-card, .ds-history-item', 900));
+  if (process.env.HISTORY === '1') await historyPage(h);
+}
+
+// ── the History page itself ──
+const ID_RE = String.raw`\b00[135][0-9A-Za-z]{15}\b`;
+async function historyPage(h) {
+  const NL = String.fromCharCode(10);
+  const lines = (s, n = 2500) => String(s || '').slice(0, n).split(NL).map(x => x.trim()).filter(Boolean).join(' | ');
+  const cardCount = () => h.eval("document.querySelectorAll('.ds-history-card').length");
+  const storedIds = () => h.eval(`new Promise(r => chrome.storage.local.get('sftk_history', d => r((JSON.stringify(d.sftk_history || []).match(new RegExp(${JSON.stringify(ID_RE)}, 'g')) || []).length)))`);
+  const setting = k => h.eval(`new Promise(r => chrome.storage.local.get('ds_settings', d => r((d.ds_settings || {})[${JSON.stringify(k)}])))`);
+  await h.eval(`document.querySelector('[data-view="history"]')?.click()`); await h.sleep(1200);
+  const total = await cardCount();
+  h.log(`HISTORY PAGE: ${total} card(s) · entries ${await h.eval("JSON.stringify(_history.map(x => (x.kind || 'run') + ':' + x.status))")}`);
+  h.log('HEADER:', lines(await h.eval("document.querySelector('#dsMain')?.innerText || ''"), 500));
+  // status filters: each count must agree with the entries, "all" brings every card back
+  const filters = await h.eval("[...document.querySelectorAll('[data-hist-status]')].map(b => b.dataset.histStatus)");
+  const seen = {};
+  for (const f of filters) { await h.eval(`document.querySelector('[data-hist-status="${f}"]').click()`); await h.sleep(500); seen[f] = await cardCount(); }
+  const expect = JSON.parse(await h.eval("JSON.stringify(Object.fromEntries(['all','success','partial','failed'].map(k => [k, k === 'all' ? _history.length : _history.filter(x => x.status === k).length])))"));
+  h.log('status filters → cards:', JSON.stringify(seen), '· the entries say:', JSON.stringify(expect));
+  for (const [k, v] of Object.entries(expect)) if (k in seen && seen[k] !== v) throw new Error(`filter ${k} shows ${seen[k]} card(s), the entries say ${v}`);
+  await h.eval(`document.querySelector('[data-hist-status="all"]')?.click()`); await h.sleep(400);
+  // the deployment filter
+  h.log('deployment filter options:', JSON.stringify(await h.eval("[...document.querySelectorAll('#dsHistProfile option')].map(o => o.value + ' :: ' + o.text)")));
+  const pick = await h.eval("[...document.querySelectorAll('#dsHistProfile option')].map(o => o.value).find(v => v)");
+  if (pick) {
+    await h.eval(`(() => { const s = document.querySelector('#dsHistProfile'); s.value = ${JSON.stringify(pick)}; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`); await h.sleep(500);
+    h.log(`filtered by ${pick}: ${await cardCount()} card(s)`);
+    await h.eval("(() => { const s = document.querySelector('#dsHistProfile'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()"); await h.sleep(400);
+  }
+  // downloads land in a folder of ours
+  const dlDir = resolve('dist/qa/downloads'); mkdirSync(dlDir, { recursive: true });
+  await h.cdp('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir, eventsEnabled: true }, null);
+  const grab = (re) => { const had = new Set(readdirSync(dlDir)); return async () => { let f = null; for (let i = 0; i < 40 && !f; i++) { await h.sleep(500); f = readdirSync(dlDir).find(x => !had.has(x) && re.test(x)); } return f ? join(dlDir, f) : null; }; };
+  const base = f => f.split(/[\\/]/).pop();
+  // a run's own export: JSON, then CSV
+  let wait = grab(/\.json$/);
+  await h.eval("document.querySelector('[data-hist-export]').click()"); await h.sleep(800);
+  h.log('RUN EXPORT DIALOG:', lines(await h.text('#dsModalBox'), 500));
+  await h.click('#dsRunExportJson');
+  let f = await wait(); if (!f) throw new Error('the run JSON export did not download');
+  const runJson = JSON.parse(readFileSync(f, 'utf8'));
+  h.log(`RUN JSON: ${base(f)} (${statSync(f).size} bytes) · keys: ${Object.keys(runJson).slice(0, 14).join(',')}`);
+  await h.closeModal().catch(() => {}); await h.sleep(300);
+  wait = grab(/\.csv$/);
+  await h.eval("document.querySelector('[data-hist-export]').click()"); await h.sleep(800);
+  await h.click('#dsRunExportCsv');
+  f = await wait(); if (!f) throw new Error('the run CSV export did not download');
+  const csv = readFileSync(f, 'utf8').split(/\r?\n/).filter(Boolean);
+  h.log(`RUN CSV: ${base(f)} · ${csv.length - 1} row(s) · header: ${csv[0].slice(0, 200)}`);
+  await h.closeModal().catch(() => {}); await h.sleep(300);
+  // Export all: JSON and CSV
+  wait = grab(/^sftk-history-.*\.json$/);
+  await h.click('#dsHistExportAll'); await h.sleep(600);
+  h.log('EXPORT ALL DIALOG:', lines(await h.text('#dsModalBox'), 500));
+  await h.click('#dsHistExportAllJson');
+  f = await wait(); if (!f) throw new Error('Export all JSON did not download');
+  const all = JSON.parse(readFileSync(f, 'utf8'));
+  const runs = Array.isArray(all) ? all : (all.runs || all.history || all.entries || []);
+  const inHist = await h.eval('_history.length');
+  h.log(`ALL JSON: ${base(f)} · ${runs.length} run(s) in the file, ${inHist} in History · top keys: ${Array.isArray(all) ? '(array)' : Object.keys(all).join(',')}`);
+  if (runs.length !== inHist) throw new Error('Export all JSON does not carry every run');
+  wait = grab(/^sftk-history-.*\.csv$/);
+  await h.click('#dsHistExportAll'); await h.sleep(600); await h.click('#dsHistExportAllCsv');
+  f = await wait(); if (!f) throw new Error('Export all CSV did not download');
+  const allCsv = readFileSync(f, 'utf8').split(/\r?\n/).filter(Boolean);
+  h.log(`ALL CSV: ${base(f)} · ${allCsv.length - 1} row(s) · header: ${allCsv[0].slice(0, 200)}`);
+  // counts-only: record ids leave the stored history at once; then off again
+  const idsBefore = await storedIds();
+  await h.eval("(() => { const c = document.querySelector('#dsCountsOnly'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); return true; })()"); await h.sleep(1500);
+  const idsAfter = await storedIds();
+  h.log(`counts-only: record ids in stored history ${idsBefore} → ${idsAfter} · toast: ${lines(await h.eval("document.querySelector('.ds-toast')?.innerText || ''"), 200)}`);
+  if (idsAfter !== 0) throw new Error('counts-only left record ids in storage');
+  h.log('card after the strip:', lines(await h.eval("document.querySelector('.ds-history-card')?.innerText || ''"), 400));
+  await h.eval("(() => { const c = document.querySelector('#dsCountsOnly'); c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); return true; })()"); await h.sleep(600);
+  h.log(`counts-only stored after switching it off: ${await setting('countsOnly')}`);
+  // retention
+  const retBefore = await h.eval("document.querySelector('#dsRetentionDays').value");
+  const other = await h.eval(`[...document.querySelectorAll('#dsRetentionDays option')].map(o => o.value).find(v => v !== ${JSON.stringify(retBefore)})`);
+  await h.eval(`(() => { const s = document.querySelector('#dsRetentionDays'); s.value = ${JSON.stringify(other)}; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`); await h.sleep(500);
+  const retStored = String(await setting('historyDays'));
+  h.log(`retention options ${JSON.stringify(await h.eval("[...document.querySelectorAll('#dsRetentionDays option')].map(o => o.value + ':' + o.text)"))} · ${retBefore} → ${other} · stored ${retStored} · toast: ${lines(await h.eval("document.querySelector('.ds-toast')?.innerText || ''"), 200)}`);
+  if (retStored !== String(parseInt(other, 10) || 0)) throw new Error('the retention setting did not store');
+  await h.eval(`(() => { const s = document.querySelector('#dsRetentionDays'); s.value = ${JSON.stringify(retBefore)}; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`); await h.sleep(300);
+  h.log('✓ History page: cards, filters agree with the entries, run export JSON+CSV, export all JSON+CSV, counts-only strips, retention stores; settings restored');
 }

@@ -603,7 +603,8 @@ describe('a flow that runs on the field — the decision is made on its card', (
     expect(i).toBeGreaterThan(0);
     const win = FC.slice(i, FC.indexOf('if (preset) activeMode = preset;', i));
     expect(win).toContain('appendInlineError(componentId, swap');
-    expect((win.match(/Nothing was changed\./g) || []).length).toBe(2);
+    // three refusals since QA 2026-10-06: nothing to take out (remove / swap), and an element left empty
+    expect((win.match(/Nothing was changed\./g) || []).length).toBe(3);
     expect(win).toContain('return;');
     expect(i).toBeLessThan(FC.indexOf('const sure = await sftkConfirmDestructive({', i));
   });

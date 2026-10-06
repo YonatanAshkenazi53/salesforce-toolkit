@@ -174,7 +174,7 @@ const h = {
     await this.navigate(`chrome-extension://${this.extId}/studio.html${hash}`);
     await this.sleep(1500);
     if (await this.eval(`/I confirm that any consequence/.test(document.body.innerText)`)) {
-      await this.eval(`(() => { for (const cb of document.querySelectorAll('input[type=checkbox]')) if (!cb.checked) cb.click(); return true; })()`);
+      await this.eval(`(() => { const cb = document.querySelector('#sftkTermsCb'); if (cb && !cb.checked) cb.click(); return true; })()`);   // ONLY the gate's box (QA 2026-10-06: ticking every box also ticked the Flows tab's tree-backup option)
       await this.sleep(200);
       const clicked = await this.eval(`(() => { const b = [...document.querySelectorAll('button')].find(b => !b.disabled && /accept|agree|continue|start/i.test(b.textContent)); if (b) b.click(); return b ? b.textContent.trim() : null; })()`);
       log('licence gate: clicked', JSON.stringify(clicked));
@@ -194,7 +194,7 @@ const h = {
     await this.navigate(`chrome-extension://${this.extId}/popup.html?tab=${encodeURIComponent(tab)}`);
     await this.sleep(1500);
     if (await this.eval(`/I confirm that any consequence/.test(document.body.innerText)`)) {
-      await this.eval(`(() => { for (const cb of document.querySelectorAll('input[type=checkbox]')) if (!cb.checked) cb.click(); return true; })()`);
+      await this.eval(`(() => { const cb = document.querySelector('#sftkTermsCb'); if (cb && !cb.checked) cb.click(); return true; })()`);   // ONLY the gate's box (QA 2026-10-06: ticking every box also ticked the Flows tab's tree-backup option)
       await this.sleep(200);
       await this.eval(`(() => { const b = [...document.querySelectorAll('button')].find(b => !b.disabled && /accept|agree|continue|start/i.test(b.textContent)); if (b) b.click(); return !!b; })()`);
       await this.sleep(1200);

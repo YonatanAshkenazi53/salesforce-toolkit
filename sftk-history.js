@@ -96,7 +96,8 @@ function _sftkHistNormalizeUndo(undo) {
 }
 
 function _sftkHistStatus(j) {
-  const w = j.what || [];
+  // an `info` line says something (what an undo could not restore); it is not a write
+  const w = (j.what || []).filter(x => !x.info);
   if (!w.length) return 'failed';
   const ok = w.filter(x => x.ok).length;
   const accepted = w.filter(x => x.accepted).length;
@@ -288,13 +289,21 @@ async function sftkHistoryUndo(entryId, opts) {
     });
     log(`${r.ok ? '✅' : r.accepted ? '⚠' : '❌'} ${r.text}`);
   }
+  // QA 2026-10-06: a tool's undo can leave something as it is (API versions: a
+  // Draft rewritten in place has no previous copy). The dialog said so; the
+  // result and the undo's own entry must say so too, or "Undone — 4 steps
+  // verified" reads as the whole change taken back.
+  const note = entry.toolUndo && entry.toolUndo.note ? String(entry.toolUndo.note) : '';
+  if (note) j.what.push({ describe: 'not restored', info: true, ok: false, accepted: false, verified: false, text: `Not restored — ${note}` });
   // confirmed-by: the ↩ Undo sftkConfirmDestructive above (or the caller, with confirm: false)
   const undoEntry = await sftkHistoryEnd(j, { undo: { none: 'this entry is itself an undo — redo the change from the tool' }, undoOf: entry.id });
-  const okAll = j.what.length > 0 && j.what.every(x => x.ok);
+  const stepsRun = j.what.filter(x => !x.info);
+  const okAll = stepsRun.length > 0 && stepsRun.every(x => x.ok);
   entry.toolUndo.done = { at: j.completedAt, ok: okAll, entryId: j.id };
   await sftkHistoryAppend(entry);
-  const okN = j.what.filter(x => x.ok).length;
-  return { ok: okAll, text: okAll ? `Undone — ${okN} step${okN === 1 ? '' : 's'} verified by re-reading the org` : `Undo ran: ${okN} of ${j.what.length} step${j.what.length === 1 ? '' : 's'} verified — see the undo's entry in History`, entry, undoEntry };
+  const okN = stepsRun.filter(x => x.ok).length;
+  const tail = note ? ` · not restored: ${note}` : '';
+  return { ok: okAll, text: (okAll ? `Undone — ${okN} step${okN === 1 ? '' : 's'} verified by re-reading the org` : `Undo ran: ${okN} of ${stepsRun.length} step${stepsRun.length === 1 ? '' : 's'} verified — see the undo's entry in History`) + tail, entry, undoEntry };
 }
 
 // ── Whose history an entry belongs to (user 2026-10-05: "seeing field cleaner

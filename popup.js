@@ -2566,21 +2566,48 @@ async function performRestore(backup) {
   if (typeof window.sftkDeployFlowMetadata !== 'function') {
     throw new Error('Flow deploy helper unavailable — reload the extension and try again.');
   }
+  // QA 2026-10-06 (live): the verify below used to filter Tooling `Flow` on
+  // FullName, which Tooling SOQL refuses — so EVERY successful restore was
+  // reported "accepted but could not be found on re-read" (the CLI saw the new
+  // Draft). The re-read now goes by the definition's developer name, and it
+  // is only a verify of THIS restore when the Draft it finds is newer than
+  // every version the org held before the deploy.
+  const safeName = String(fullName).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const versionsQ = `SELECT Id, VersionNumber, Status FROM Flow WHERE Definition.DeveloperName = '${safeName}'`;
+  const beforeQ = await sendBg({ type: 'SF_QUERY', orgUrl, sid, tooling: true, _suppressError: true, query: versionsQ });
+  const beforeMax = sftkFlowRestoreMaxVersion(beforeQ);
+
   const result = await window.sftkDeployFlowMetadata(orgUrl, sid, fullName, f.Metadata, 'Draft');
 
   if (result?.error)    throw new Error(result.error);
   if (!result?.success) throw new Error('Deploy did not report success.');
 
   // The write discipline (sftk-write.js): the deploy above is the write —
-  // this re-read is the verify. A Draft restore adds a new version, so a
-  // freshly-created Draft with a higher number than any this session saw
-  // before is the confirmation (cheap: one Tooling query).
-  const q = await sendBg({ type: 'SF_QUERY', orgUrl, sid, tooling: true, _suppressError: true,
-    query: `SELECT Id FROM Flow WHERE FullName = '${String(fullName).replace(/'/g, "\\'")}' AND Status = 'Draft'` });
-  if (!q || q.error || !(q.records && q.records.length)) {
-    throw new Error('The restore was accepted by Salesforce, but the new Draft version could not be found on re-read — check Flow Builder before relying on it.');
-  }
+  // this re-read is the verify (one Tooling query).
+  const q = await sendBg({ type: 'SF_QUERY', orgUrl, sid, tooling: true, _suppressError: true, query: versionsQ });
+  const found = sftkFlowRestoreVerify(q, beforeMax);
+  if (!found.ok) throw new Error(found.text);
+  result.restoredVersion = found.version;
   return result;
+}
+
+// PURE. The highest version number an org holds for a flow, from the Tooling
+// re-read; 0 when the flow does not exist there (or the read failed — then the
+// verify below accepts any Draft, and says so).
+function sftkFlowRestoreMaxVersion(q) {
+  if (!q || q.error || !Array.isArray(q.records)) return 0;
+  return q.records.reduce((m, r) => Math.max(m, Number(r && r.VersionNumber) || 0), 0);
+}
+// PURE. Did the restore land? ok when the re-read shows a Draft newer than
+// every version held before; the text says what was seen otherwise.
+function sftkFlowRestoreVerify(q, beforeMax) {
+  if (!q || q.error) return { ok: false, text: `The restore was accepted by Salesforce, but the org could not be re-read to confirm it${q && q.error ? ` (${q.error})` : ''} — check Flow Builder before relying on it.` };
+  const rows = Array.isArray(q.records) ? q.records : [];
+  const drafts = rows.filter(r => r && String(r.Status) === 'Draft').map(r => Number(r.VersionNumber) || 0);
+  const newer = drafts.filter(v => v > (Number(beforeMax) || 0));
+  if (newer.length) return { ok: true, version: Math.max(...newer) };
+  if (drafts.length) return { ok: false, text: `The restore was accepted by Salesforce, but the only Draft the org shows (v${Math.max(...drafts)}) is not newer than what it held before (v${beforeMax}) — check Flow Builder before relying on it.` };
+  return { ok: false, text: 'The restore was accepted by Salesforce, but the org shows no Draft version of this flow on re-read — check Flow Builder before relying on it.' };
 }
 
 // ============================================================
