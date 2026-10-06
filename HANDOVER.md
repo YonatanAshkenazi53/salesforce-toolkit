@@ -38,6 +38,32 @@ console error / ❌ line, AND a log whose claims the CLI confirms — read the l
 line is not the verdict. `docs/QA-1.0.md` is the matrix and the findings. Every writing run
 undoes itself or is followed by a restore step; the orgs end as they began.
 
+**WHERE WE ARE — 2026-10-06 evening (read this first if the session was cut).**
+Branch `work/1.4.3-deploy-view`, HEAD a0d4fa8 (pushed); `master` still at 9c892dd (moves only
+when the user says). The release QA the user asked for is DONE: six batches green, nine
+defects found and fixed, log in `docs/QA-1.0.md`. The user's open asks, in order:
+1. **The walkthrough video must show the 🪪 identity field** (user: "we didn't cover the
+   external id field creation that should map both orgs and how it works"). The chapter
+   exists (`scripts/dev/video/sections.mjs`, id `identity`). A re-recording of the Data
+   Studio chapters + identity was started with
+   `ONLY=orgs,deploy,identity,run,ring,history,compare,orghealth,outro SFTK_EXT=dist/store-staging SFTK_WINDOW=1600,800 REC_DIR=dist/video/rec node scripts/dev/headless-studio.mjs scripts/dev/video/walkthrough.mjs`
+   (log `dist/video/rerecord.log` — "RECORDED: … FAILED: (none)" means it worked), then
+   `REC_DIR=dist/video/rec OUT=dist/video/walkthrough.mp4 SFTK_EXT=dist/store-staging node scripts/dev/headless-studio.mjs scripts/dev/video/compose.mjs`
+   (log `dist/video/compose.log`; encodes in real time, ~15 min; writes `dist/video/walkthrough.mp4`
+   + `.chapters.txt`). If `compose.log` has no "wrote" line, run the compose command again
+   (it needs no re-recording). Then send the user the file and the chapter list.
+   `node scripts/dev/video/listen.mjs` checks the sound without playing it.
+2. **1.0.0 release mechanics** — NOT started, needs the user's go: manifest + CHANGELOG
+   version (What's New still shows 1.5.0 / 2026-09-21), store listing text and screenshots,
+   privacy policy, then `master` fast-forward on the user's say and the YouTube upload (user).
+3. Nothing is left half-done in the orgs: every QA run undid itself or was followed by a
+   restore; if in doubt, `node -e "import('./scripts/dev/video/fixture.mjs').then(m=>m.removeIdentityField(['npc2','npc'],['Account','Contact'],console.log))"`
+   removes a leftover identity field, and `sf data query -o npc2 -q "SELECT Name FROM Account WHERE Name LIKE 'SFTK CX%' AND CreatedDate = TODAY"`
+   must return nothing (delete what it returns — those are test inserts).
+The gate for any change stays: `npm run verify` (exit code) → `npm run pack` →
+`SFTK_EXT=dist/store-staging node scripts/dev/headless-studio.mjs scripts/dev/live/release-smoke.mjs`
+→ commit → push. Never run two harness scripts at once.
+
 **Where things are.** Plan + status per phase: `docs/PLAN-campaign-3.md` (incl. the backlog). Public feature guide:
 `docs/FEATURES.md` (to be rendered by `studio-whatsnew.js` at launch instead of the changelog). Older ideas never scheduled:
 `IMPLEMENTATION_PLAN.md` (the `- [ ]` items). Memory: `project_sf_flow_cleaner.md` (append near the newest **PHASE…** entries).
