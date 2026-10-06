@@ -32,7 +32,7 @@
   function cardHtml(e) {
     const st = sftkToolUndoState(e);
     const what = Array.isArray(e.what) ? e.what : [];
-    const icon = w => (w.ok ? '✅' : w.accepted ? '⚠' : '❌');
+    const icon = w => w.info ? 'ℹ' : (w.ok ? '✅' : w.accepted ? '⚠' : '❌');
     const badge = e.status === 'success' ? '✅' : e.status === 'partial' ? '⚠' : '❌';
     const said = _said.get(e.id);
     return `<div class="sftk-th-card" data-th-id="${esc(e.id)}">

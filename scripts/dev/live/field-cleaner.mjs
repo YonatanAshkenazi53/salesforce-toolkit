@@ -106,12 +106,29 @@ export default async function (h) {
   h.log('snap log:', await dump(h, '#fcSnapLog', 800));
   await h.shot(h.shots + '/fc-after-flow.png');
   }
-  // any other fix buttons (permission set etc.)
-  for (let i = 0; i < 4; i++) {
-    const nxt = await h.eval(`(() => { const b = document.querySelector('.fc-fix-btn:not([disabled])'); return b ? (b.dataset.type + ':' + (b.dataset.name || b.dataset.id)) : null; })()`);
-    if (!nxt) break;
-    h.log('next fix:', nxt);
-    await h.eval(`document.querySelector('.fc-fix-btn:not([disabled])').click()`);
+  // any other fix buttons (permission set etc.). QA 2026-10-06: a flow whose
+  // "keeps running" way is refused (an element would be left empty) is pressed
+  // again with 🗑 Delete versions · flow off, never the same button twice.
+  const tried = new Set();
+  for (let i = 0; i < 6; i++) {
+    const pick = await h.eval(`(() => {
+      const tried = new Set(${JSON.stringify([...tried])});
+      for (const b of document.querySelectorAll('.fc-fix-btn:not([disabled])')) {
+        const key = b.dataset.type + ':' + (b.dataset.name || b.dataset.id) + ':' + (b.dataset.way || '');
+        if (tried.has(key)) continue;
+        if (b.dataset.type === 'Flow' && tried.has(b.dataset.type + ':' + (b.dataset.name || b.dataset.id) + ':keep') && b.dataset.way !== 'off') continue;
+        b.setAttribute('data-sftk-pick', '1'); return key;
+      }
+      return null; })()`);
+    if (!pick) break;
+    tried.add(pick);
+    h.log('next fix:', pick);
+    await h.eval(`(() => { const b = document.querySelector('.fc-fix-btn[data-sftk-pick]'); b.removeAttribute('data-sftk-pick'); b.click(); return true; })()`);
+    await h.sleep(1500);
+    if (!(await h.eval("!!document.querySelector('#sftkConfirmGo')"))) {
+      h.log('refused before the dialog:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-inline-error, .fc-item-err, [class*=inline-err]')].map(e => e.innerText.slice(0, 400))`)));
+      continue;
+    }
     const ok2 = await confirmDialog(h, process.env.ACTIVE);
     if (!ok2) { await h.eval(`(() => { const c = [...document.querySelectorAll('button')].find(b => /cancel/i.test(b.textContent)); if (c) c.click(); return true; })()`); break; }
     await h.eval(`document.querySelector('#sftkConfirmGo').click()`);

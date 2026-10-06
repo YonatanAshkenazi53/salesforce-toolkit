@@ -2975,7 +2975,12 @@ const FieldCleaner = (() => {
     const ageStr = v.lastIso
       ? _relAge(v.lastIso)
       : (v.filled === 0 ? 'never' : 'unknown');
-    const scope = v.sampled ? `~${v.filled} of ${v.total.toLocaleString()} sampled` : `${v.filled.toLocaleString()} of ${v.total.toLocaleString()} records`;
+    // QA 2026-10-06: this read "Empty on 99.9% of 8 of 10,266 records" — the
+    // percentage is of ALL records, the count is how many hold a value. Two
+    // facts, said as two facts.
+    const scope = `${v.total.toLocaleString()} ${v.sampled ? 'sampled' : 'records'}`;
+    const holders = v.filled === 0 ? 'none holds a value'
+      : `${v.sampled ? '~' : ''}${v.filled.toLocaleString()} hold${v.filled === 1 && !v.sampled ? 's' : ''} a value`;
     // Never round UP to 100% / down to 0% unless the value is truly there —
     // "100% empty" on a field that still holds 12 values would be a lie.
     const pctStr = p => (p >= 99.95 && p < 100) ? '99.9'
@@ -2986,8 +2991,8 @@ const FieldCleaner = (() => {
       <span class="fc-data-badge">${safe ? '✅ SAFE' : '⚠ CAUTION'}</span>
       <span class="fc-data-text">
         ${safe
-          ? `Empty on <strong>${pctStr(emptyPct)}%</strong> of ${scope}`
-          : `Populated on <strong>${pctStr(pctFilled)}%</strong> of ${scope}`}
+          ? `Empty on <strong>${pctStr(emptyPct)}%</strong> of ${scope} (${holders})`
+          : `Populated on <strong>${pctStr(pctFilled)}%</strong> of ${scope} (${holders})`}
         · last value written <strong>${ageStr}</strong>${v.sampled ? ' <em>(sampled)</em>' : ''}
       </span>`;
   }
@@ -3148,6 +3153,19 @@ const FieldCleaner = (() => {
       appendInlineError(componentId, swap
         ? `Nothing in ${vN} can be pointed at ${swapTo} automatically${left ? ` — the field is mentioned in ${left} place(s) where its object could not be worked out` : ''}. Nothing was changed. Change it in Flow Builder, or use one of the other buttons on this flow.`
         : `Nothing can be taken out of ${vN} automatically${left ? ` — the field is used in ${left} place(s) the fix never rewrites (a decision or a formula)` : ''}. Nothing was changed. Change it in Flow Builder and press ✂ again, or press 🗑 Delete versions · flow off.`,
+        flowPlan.builderUrl, '↗ Open in Flow Builder');
+      return;
+    }
+    // QA 2026-10-06 (live): ✂ Remove · flow keeps running on a flow whose only
+    // assignment line is the field was offered, confirmed, and then refused by
+    // Salesforce ("Required field is missing: assignmentItems") — nothing
+    // deleted, correct, but a wasted round with a confirmation in it. The
+    // preview already knows which elements the fix would leave empty: say so
+    // before the dialog, and name the ways that do work.
+    if (preset === 'replace' && !swap && replaceLikelyRefused) {
+      const names = pv.emptied.slice(0, 4).map(e => `${e.kind} “${e.label || e.name || '?'}” (${e.where})`).join(', ');
+      appendInlineError(componentId,
+        `✂ Remove · flow keeps running cannot work on "${componentName}": taking the field out leaves ${names} with nothing in it, and Salesforce refuses a version like that. Nothing was changed. Press 🗑 Delete versions · flow off, pick a replacement field and press ⇄ Replace, or change the flow in Flow Builder and press ✂ again.`,
         flowPlan.builderUrl, '↗ Open in Flow Builder');
       return;
     }

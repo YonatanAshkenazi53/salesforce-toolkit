@@ -759,7 +759,7 @@ function renderHistory() {
 function _histToolCard(run) {
   const st = (typeof sftkToolUndoState === 'function') ? sftkToolUndoState(run) : { show: false };
   const what = Array.isArray(run.what) ? run.what : [];
-  const icon = w => w.ok ? '✅' : w.accepted ? '⚠' : '❌';
+  const icon = w => w.info ? 'ℹ' : w.ok ? '✅' : w.accepted ? '⚠' : '❌';
   const st4 = run.status === 'success' ? '✅' : run.status === 'partial' ? '⚠' : '❌';
   return `
         <div class="ds-history-card ds-history-card-tool">

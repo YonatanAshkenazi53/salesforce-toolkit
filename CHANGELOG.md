@@ -93,6 +93,29 @@ extensions containing root files that start with `_`).
 ### Fixed — "What uses…" no longer answers "nothing" about flows it did not read
 - **The Dependencies search says how much it searched.** When the flow list came from the stored cache, the search had read no flow text in that session and still answered that no flow mentions the term. It now says how many flow versions were searched and how many were not, that this is not a "no", and offers to read them all.
 
+### Fixed — Flows: a restored backup was reported as failed (QA 2026-10-06)
+- 📥 Restore deployed the Draft and then said "accepted by Salesforce, but the new
+  Draft version could not be found on re-read" — every time, because the re-read
+  asked Salesforce a question it refuses (filtering flows on their full name). The
+  re-read now goes by the flow's developer name and only counts a Draft newer than
+  every version the org held before the restore; the result says which version landed.
+
+### Fixed — Field Cleaner: a way that cannot work is refused before you confirm it
+- ✂ Remove · flow keeps running on a flow whose Assignment has the field as its only
+  line was offered and confirmed, and then Salesforce refused the new version
+  ("Required field is missing: assignmentItems") — nothing deleted, but a wasted
+  round. The preview already knows which elements the fix would leave empty; the
+  button now says so at once, names them, and points to 🗑 Delete versions · flow
+  off, ⇄ Replace, or Flow Builder.
+- The data verdict read "Empty on 99.9% of 8 of 10,266 records". It now says the two
+  facts apart: "Empty on 99.9% of 10,266 records (8 hold a value)".
+
+### Fixed — ↩ Undo says what it could not restore
+- An undo that leaves something as it is (⚙ API versions: a Draft rewritten in place
+  has no previous copy) said so in its dialog but not in its result — "Undone — 4 steps
+  verified" read as the whole change taken back. The result and the undo's History
+  entry now carry an ℹ line: "Not restored — …".
+
 ### Fixed — a rollback's "Which records" always lists the records
 - **The deleted records are read from the Recycle Bin when History has no names.** A rollback that ran before History kept names, or with counts-only mode on, opened a report with counts and no list. The report now reads the records that rollback deleted from the org's Recycle Bin, which keeps them for 15 days, and lists them by name. It says where the list came from, for which minutes, and how it compares with the count. If the Recycle Bin holds fewer records than the rollback counted, it says how many cannot be named. Nothing is changed by the read.
 - **Counts-only mode keeps no names from a rollback either.** The names a rollback deleted or restored stayed in History with counts-only mode on. They are now removed like every other record name.

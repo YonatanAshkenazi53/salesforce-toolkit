@@ -94,7 +94,7 @@ export default async function (h) {
   h.log('MODE BAR:', await dump(h, '#fcReplBar', 400));
   h.log('RESULTS:', await dump(h, '#fcResults', 3500));
   h.log('fix buttons:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-fix-btn, .fc-fix-all')].map(b => b.textContent.trim() + (b.dataset.name ? ' · ' + b.dataset.name : ''))`)));
-  h.log('FLOW CARDS:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-flow-card')].map(c => c.innerText.replace(/\s+/g, ' ').slice(0, 600))`)));
+  h.log('FLOW CARDS:', JSON.stringify(await h.eval(`[...document.querySelectorAll('.fc-flow-card')].map(c => c.innerText.replace(/\\s+/g, ' ').slice(0, 600))`)));
   h.log('ACCESS:', await dump(h, '#fcFlsPanel', 700));
   await h.shot(h.shots + '/fr-results.png');
   const step = (process.env.STEP || 'scan').toLowerCase();

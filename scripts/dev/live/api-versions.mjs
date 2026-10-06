@@ -3,7 +3,7 @@
 // choose a target API version, type CHANGE, apply, and report the log.
 //   ORGS=npc[,npc2]   which orgs to log in (default npc only)
 //   PICK=<regex>      which flow API names to tick (default ^SFTK_AV_Test)
-//   TARGET=67.0       target API version option (default: the newest option offered)
+//   TARGET=67.0       target API version option (default: the first option = the org's own release)
 //   SCAN_ONLY=1       stop after the confirmation text (nothing written)
 import { undoNewest } from './_undo.mjs';   // UNDO=1: Data Studio › History › ↩ Undo the newest entry afterwards (TYPE_IT=1 for a guarded org)
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
@@ -28,7 +28,9 @@ export default async function (h) {
   // tick only the fixture flows
   const ticked = await h.eval(`(() => { let n = 0; document.querySelectorAll('.dep-av-pick').forEach(c => { const want = new RegExp(${JSON.stringify(pick)}).test(c.value) && !c.disabled; if (c.checked !== want) { c.checked = want; c.dispatchEvent(new Event('change', { bubbles: true })); } if (want) n++; }); return n; })()`);
   h.log('ticked:', ticked);
-  const target = process.env.TARGET || (opts.length ? opts[opts.length - 1].split(':')[0] : '');
+  // the list is newest first ("67.0 (this org's release)" on top) — QA 2026-10-06 found the old
+  // "last option" default landing on API 49, the oldest
+  const target = process.env.TARGET || (opts.length ? opts[0].split(':')[0] : '');
   await h.eval(`(() => { const s = document.querySelector('#depAvTarget'); s.value = ${JSON.stringify(target)}; s.dispatchEvent(new Event('change', { bubbles: true })); return s.value; })()`);
   h.log('target set to:', target, '→ select now reads', await h.eval(`document.querySelector('#depAvTarget')?.value`));
   h.log('apply button:', await h.eval(`(() => { const b = document.querySelector('#depAvApply'); return b ? b.textContent.trim() + (b.disabled ? ' (off)' : '') : null; })()`));

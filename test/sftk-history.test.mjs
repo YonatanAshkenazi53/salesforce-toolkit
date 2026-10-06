@@ -206,6 +206,19 @@ describe('sftkHistoryUndo — the steps run through the write discipline', () =>
     expect(list[0].toolUndo.done).toMatchObject({ ok: true, entryId: list[1].id });
     expect(list[1]).toMatchObject({ kind: 'tool', tool: 'Flow switches', profileName: '↩ Undo — ⏻ 1 flow OFF', undoOf: 'e1', status: 'success', toolUndo: { none: 'this entry is itself an undo — redo the change from the tool' } });
   });
+  // QA 2026-10-06: API versions leaves a Draft rewritten in place unrestored and says so in
+  // the dialog; the result and the undo entry must carry it too (ℹ line, not a step).
+  it('what the undo could not restore is said in the result and on the undo entry, outside the step count', async () => {
+    storage.store.sftk_history[0].toolUndo.note = '1 flow(s) have no previous copy to restore (rewritten in place): F2';
+    const r = await H.sftkHistoryUndo('e1', { send });
+    expect(r.ok).toBe(true);
+    expect(r.text).toBe('Undone — 1 step verified by re-reading the org · not restored: 1 flow(s) have no previous copy to restore (rewritten in place): F2');
+    const undoEntry = storage.store.sftk_history[1];
+    expect(undoEntry.status).toBe('success');
+    expect(undoEntry.what).toHaveLength(2);
+    expect(undoEntry.what[1]).toMatchObject({ info: true, ok: false, accepted: false, text: 'Not restored — 1 flow(s) have no previous copy to restore (rewritten in place): F2' });
+    expect(undoEntry.errors || []).toEqual([]);
+  });
   it('a cancelled dialog writes nothing; no session for the org says to log in first; a done entry is refused', async () => {
     confirmed = false;
     expect(await H.sftkHistoryUndo('e1', { send })).toMatchObject({ ok: false, cancelled: true });
