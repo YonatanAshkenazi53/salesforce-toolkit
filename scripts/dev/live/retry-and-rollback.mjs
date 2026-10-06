@@ -140,7 +140,9 @@ async function historyPage(h) {
   const expect = JSON.parse(await h.eval("JSON.stringify(Object.fromEntries(['all','success','partial','failed'].map(k => [k, k === 'all' ? _history.length : _history.filter(x => x.status === k).length])))"));
   h.log('status filters → cards:', JSON.stringify(seen), '· the entries say:', JSON.stringify(expect));
   for (const [k, v] of Object.entries(expect)) if (k in seen && seen[k] !== v) throw new Error(`filter ${k} shows ${seen[k]} card(s), the entries say ${v}`);
-  await h.eval(`document.querySelector('[data-hist-status="all"]')?.click()`); await h.sleep(400);
+  // the "All" button carries an EMPTY status value (QA 2026-10-06: clicking "all" was a no-op and left the "failed" filter on → no cards)
+  await h.eval(`(document.querySelector('[data-hist-status=""]') || document.querySelector('[data-hist-status="all"]'))?.click()`); await h.sleep(400);
+  if (await cardCount() !== total) throw new Error(`"All" did not bring every card back: ${await cardCount()} of ${total}`);
   // the deployment filter
   h.log('deployment filter options:', JSON.stringify(await h.eval("[...document.querySelectorAll('#dsHistProfile option')].map(o => o.value + ' :: ' + o.text)")));
   const pick = await h.eval("[...document.querySelectorAll('#dsHistProfile option')].map(o => o.value).find(v => v)");

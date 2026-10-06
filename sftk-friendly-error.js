@@ -154,7 +154,7 @@ function sftkFriendlyError(raw) {
   if (/DUPLICATES_DETECTED|Use one of these records\?/i.test(s)) {
     out.type = 'duplicate';
     out.message = 'A duplicate rule in the target org flagged this record and blocked the write';
-    out.hint = 'These are copies of existing records — set Duplicate rules to "Bypass for this deployment" next to ▶ Deploy and run again, or relax the rule in the target for the migration.';
+    out.hint = 'These are copies of existing records — set Duplicate rules to "Bypass for this deployment" next to ▶ Deploy and run again, or relax the rule in the target for the migration. Bypass passes a rule set to Alert; a rule set to Block cannot be passed by any API — if Bypass was already on, that is the rule you are facing.';
     return out;
   }
   if (/INSUFFICIENT_ACCESS/i.test(s)) {

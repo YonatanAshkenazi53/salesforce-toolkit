@@ -93,6 +93,27 @@ extensions containing root files that start with `_`).
 ### Fixed — "What uses…" no longer answers "nothing" about flows it did not read
 - **The Dependencies search says how much it searched.** When the flow list came from the stored cache, the search had read no flow text in that session and still answered that no flow mentions the term. It now says how many flow versions were searched and how many were not, that this is not a "no", and offers to read them all.
 
+### Fixed — Duplicate rules: what "Bypass" can and cannot do (QA 2026-10-06)
+- Against a duplicate rule set to **Block**, a Bypass run said "records a rule would have
+  flagged were written" while the rule blocked them all the same. Salesforce's bypass passes
+  a rule set to Alert; no API passes a rule set to Block. The run now says exactly that, and a
+  record refused by a rule with its own alert text is still recognised as a duplicate-rule
+  block (the status code stays in the text), with the plain-language line in History.
+- The per-run report file is named after the deployment ("sftk-run-SFTK_CX_Accounts_tree-…"),
+  not after whichever object happened to come first.
+
+### Fixed — the identity field's "Create" reported a success as a failure (QA 2026-10-06)
+- 🪪 Create the field deployed `SFTK_ID__c` and its permission set in both orgs and then
+  said "accepted by Salesforce, but could not be re-read on Account, Contact". The re-read
+  was a data query of the new field, which you cannot run until the permission set is
+  assigned a moment later. It now re-reads the field's definition; once the set is
+  assigned it also checks that you can read the field, and says so if you still cannot.
+
+### Fixed — History says "via Bulk" for a Deploy-page run that used Bulk API 2.0
+- With Engine = "Async — Bulk API 2.0 job" the run went through one Bulk job (the org's
+  job list shows it), but the History entry did not keep that fact, so the card and the
+  CSV report never said so. They do now.
+
 ### Fixed — Org Compare: no "100%" while records are missing (QA 2026-10-06)
 - Account read **100%** with 7 records missing from the target, Contact 100% with 6 —
   the rounded number said "nothing is missing". A row now reads 99.9% at most while

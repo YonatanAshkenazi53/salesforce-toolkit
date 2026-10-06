@@ -12,7 +12,7 @@ const clearStatus2 = { name: 'clear-status2-values', node: "const {execFileSync}
 // after 🗑 Delete Field: the whole fixture from scratch (rebuild.sh deploys the field, the
 // permission set and flow v1–v4 and runs the flow so failed interviews exist), then the
 // second flow, the layout + Lightning page, the replacement field and the seed values
-const rebuildFc = { name: 'rebuild-field-cleaner-fixture', node: "const {execSync}=require('node:child_process');const run=c=>{console.log('> '+c);execSync(c,{stdio:'inherit',shell:true});};run('bash docs/fixtures/field-cleaner-fixture/rebuild.sh npc');run('cd docs/fixtures/field-cleaner-fixture/flow2 && sf project deploy start -o npc --source-dir force-app --test-level NoTestRun');run('cd docs/fixtures/field-cleaner-fixture/replace && sf project deploy start -o npc --source-dir force-app --test-level NoTestRun');run('cd docs/fixtures/field-cleaner-fixture/surfaces && sf project deploy start -o npc --source-dir force-app --test-level NoTestRun');run('sf apex run -o npc -f docs/fixtures/field-cleaner-fixture/seed-pk.apex');console.log('rebuilt')", timeoutMin: 20 };
+const rebuildFc = { name: 'rebuild-field-cleaner-fixture', node: "const {execSync}=require('node:child_process');const run=c=>{console.log('> '+c);execSync(c,{stdio:'inherit',shell:true});};run('bash docs/fixtures/field-cleaner-fixture/rebuild.sh npc');run('cd docs/fixtures/field-cleaner-fixture/flow2 && sf project deploy start -o npc --source-dir force-app --test-level NoTestRun');run('cd docs/fixtures/field-cleaner-fixture/replace && sf project deploy start -o npc --source-dir force-app --test-level NoTestRun');run('cd docs/fixtures/field-cleaner-fixture/surfaces && sf project deploy start -o npc --source-dir force-app --test-level NoTestRun');const n=JSON.parse(require('node:child_process').execFileSync('sf',['data','query','-o','npc','--json','-q','\"SELECT COUNT() FROM Account WHERE SFTK_FC_Test_Status__c != null\"'],{shell:true,encoding:'utf8'})).result.totalSize;if(n){console.log('seed values already there on '+n+' record(s) — seed skipped');}else{run('sf apex run -o npc -f docs/fixtures/field-cleaner-fixture/seed-pk.apex');}console.log('rebuilt')", timeoutMin: 20 };
 
 export const BATCHES = {
   // ── the Toolkit, on trailheads5 ──
@@ -58,6 +58,13 @@ export const BATCHES = {
     rebuildFc,
     { name: 'fc-scan-after-rebuild', script: `${L}field-cleaner.mjs`, env: { SCAN_ONLY: '1' } },
   ],
+  // ── the Toolkit, third round: the delete of the field itself (the second round's run
+  // stopped at the flow refusal that is now refused up front) ──
+  toolkit3: [
+    { name: 'fc-remove-all-delete-field', script: `${L}field-cleaner.mjs`, env: { DELETE_FIELD: '1' }, timeoutMin: 30 },
+    rebuildFc,
+    { name: 'fc-scan-after-rebuild', script: `${L}field-cleaner.mjs`, env: { SCAN_ONLY: '1' } },
+  ],
   // ── Data Studio, trailheads5 → trailheads4 ──
   studio: [
     { name: 'consistency', script: `${L}consistency.mjs`, timeoutMin: 30 },
@@ -70,6 +77,13 @@ export const BATCHES = {
     { name: 'onepass-tree-rollback', script: `${L}onepass-tree.mjs`, timeoutMin: 60 },
     { name: 'rollback-report-bin', script: `${L}rollback-report.mjs` },
     { name: 'orghealth-ring', script: `${L}orghealth.mjs`, env: { RING: '1' }, timeoutMin: 20 },
+  ],
+  // ── the re-runs after the fixes of 2026-10-06 (identity verify, viaBulk in History, the
+  // dup-rule fixture's sort order, the History script's "All" filter) ──
+  fix2: [
+    { name: 'engine-bulk-rollback', script: `${L}engine-options.mjs`, env: { STEP: 'bulk' }, timeoutMin: 40 },
+    { name: 'engine-duplicate-rules', script: `${L}engine-options.mjs`, env: { STEP: 'dup' }, timeoutMin: 50 },
+    { name: 'run-retry-rollback-history', script: `${L}retry-and-rollback.mjs`, env: { HISTORY: '1' }, timeoutMin: 40 },
   ],
   // ── Data Studio, second round ──
   studio2: [

@@ -811,7 +811,12 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   // the run (live run 2026-09-22: a 3-level Account hierarchy arrived flat
   // at level 2, and nothing said so).
   const treeObjSet   = new Set(ordered.map(e => e.node.objectType || e.node.childSObject).filter(Boolean));
-  if (globalThis.__sftkRunDupBypass) diagnostics.push('Duplicate rules in the target were bypassed for this run (engine setting) — records a rule would have flagged were written.');
+  // QA 2026-10-06 (live, a Block rule in trailheads4): the bypass header lets a
+  // record past a rule whose action is ALERT; a rule set to BLOCK still blocks
+  // it, whatever the header says — Salesforce offers no API way past a blocking
+  // rule. The old line ("records a rule would have flagged were written") was
+  // wrong for that case.
+  if (globalThis.__sftkRunDupBypass) diagnostics.push('Duplicate rules set to Alert were bypassed for this run (engine setting): records such a rule would have flagged were written. A rule set to Block still blocks — no API can pass it; relax that rule in the target for the migration.');
   const nodeLateRefs = new Map();   // node → deferredRefs that point INTO the tree
 
   // SOURCE-org record ids defining a node's scope, used to filter its
@@ -1766,7 +1771,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             }
           }
           else {
-            const msg = (result.errors || []).map(e => e.message).join('; ');
+            // QA 2026-10-06: a duplicate rule with its own alert text ("a record
+            // like this already exists") lost the fact that it WAS a duplicate
+            // rule — the status code is kept in the text so History and the
+            // friendly reading recognise it whatever the rule's words are.
+            const msg = (result.errors || []).map(e => (e.statusCode === 'DUPLICATES_DETECTED' && !/DUPLICATES_DETECTED/.test(e.message || '')) ? `${e.message} [DUPLICATES_DETECTED]` : e.message).join('; ');
             // B3 — a cancelled Bulk job marks every record it never reached.
             // Those are "not attempted", not "rejected": counting them as
             // failures would report 38 000 failures for a run the user simply

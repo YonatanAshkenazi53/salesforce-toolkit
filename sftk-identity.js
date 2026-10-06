@@ -60,6 +60,16 @@ function sftkIdObjectFileXml() {
 // it to the running user right after the deploy.
 function sftkIdPermSetName() { return 'SFTK_Identity'; }
 
+// PURE. The Tooling query that says whether an object carries the identity
+// field — by its DEFINITION (FieldDefinition), which does not depend on this
+// user's field-level security. objectApiName is a Salesforce API name
+// (letters, digits, underscores); anything else is refused.
+function sftkIdDefinitionQuery(objectApiName) {
+  const o = String(objectApiName || '');
+  if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(o)) throw new Error(`not an object API name: ${o}`);
+  return `SELECT Id FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = '${o}' AND QualifiedApiName = '${sftkIdFieldName()}'`;
+}
+
 function sftkIdPermSetXml(objects) {
   const rows = [...new Set((objects || []).filter(Boolean))].sort().map(o => [
     '    <fieldPermissions>',
@@ -156,6 +166,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkIdPermSetXml     = sftkIdPermSetXml;
   globalThis.sftkIdPackageFiles   = sftkIdPackageFiles;
   globalThis.sftkIdBackfillPairs  = sftkIdBackfillPairs;
+  globalThis.sftkIdDefinitionQuery = sftkIdDefinitionQuery;
   globalThis.sftkIdStampPayload   = sftkIdStampPayload;
   globalThis.sftkIdUserFromIdentity = sftkIdUserFromIdentity;
 }

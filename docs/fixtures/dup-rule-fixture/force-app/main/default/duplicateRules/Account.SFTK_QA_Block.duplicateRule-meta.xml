@@ -4,18 +4,13 @@
     <actionOnUpdate>Allow</actionOnUpdate>
     <alertText>SFTK QA: a record like this already exists (blocked on purpose by the test fixture).</alertText>
     <description>QA fixture of Admin Toolkit for Salesforce: blocks an insert that the standard Account matching rule says is a duplicate. Deployed only for the duplicate-rules test and removed afterwards.</description>
-    <duplicateRuleFilter xsi:nil="true" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"/>
     <duplicateRuleMatchRules>
         <matchRuleSObjectType>Account</matchRuleSObjectType>
         <matchingRule>Standard_Account_Match_Rule_v1_0</matchingRule>
-        <objectMapping xsi:nil="true" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"/>
     </duplicateRuleMatchRules>
     <isActive>true</isActive>
     <masterLabel>SFTK QA Block</masterLabel>
-    <operationsOnInsert>Alert</operationsOnInsert>
-    <operationsOnInsert>Report</operationsOnInsert>
     <operationsOnUpdate>Alert</operationsOnUpdate>
-    <operationsOnUpdate>Report</operationsOnUpdate>
     <securityOption>EnforceSharingRules</securityOption>
-    <sortOrder>1</sortOrder>
+    <sortOrder>2</sortOrder>
 </DuplicateRule>

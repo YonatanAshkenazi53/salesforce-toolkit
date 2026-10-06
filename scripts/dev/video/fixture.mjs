@@ -49,6 +49,10 @@ export function removeIdentityField(aliases, objects, log = () => {}) {
   const done = [], failed = [];
   for (const alias of aliases) {
     try {
+      // a permission set cannot be deleted while it is assigned (live 2026-10-06) — the
+      // assignments the tool made go first
+      const q = JSON.parse(execFileSync('sf', ['data', 'query', '-o', alias, '--json', '-q', `"SELECT Id FROM PermissionSetAssignment WHERE PermissionSet.Name = 'SFTK_Identity'"`], { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+      for (const r of (q.result && q.result.records) || []) execFileSync('sf', ['data', 'delete', 'record', '-o', alias, '-s', 'PermissionSetAssignment', '-i', r.Id, '--json'], { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
       execFileSync('sf', ['project', 'deploy', 'start', '-o', alias, '--metadata-dir', dir, '--test-level', 'NoTestRun', '--ignore-warnings', '--json'], { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
       done.push(alias);
     } catch (e) { failed.push(`${alias}: ${String((e && (e.stdout || e.message)) || e).slice(0, 300)}`); }
