@@ -440,17 +440,16 @@ function renderBuilder() {
     let pickCount = 0;
     (function count(node) { if (!node) return; pickCount += node.recordIds?.length || 0; (node.children || []).forEach(count); })(_editingProfile.tree);
     if (pickCount > 0) {
-      showModal(`
-        <div class="ds-modal-header">⇄ Swap source and target?</div>
-        <div class="ds-modal-body">
+      sftkDialog({
+      title: `⇄ Swap source and target?`,
+      sev: 'amber',
+      bodyHtml: `
           Field mappings will be inverted to match the new direction.<br><br>
           ⚠ <strong>${pickCount} picked record(s)</strong> will be cleared — record Ids belong
           to the old source org and won't exist in the new one. You can re-pick after swapping.
-        </div>
-        <div class="ds-modal-footer">
-          <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-          <button class="ds-btn ds-btn-primary" id="dsSwapOrgsOk">⇄ Swap</button>
-        </div>`);
+        `,
+      actions: [{ label: `Cancel`, kind: 'secondary', attrs: 'data-dsaction="closeModal"' }, { id: 'dsSwapOrgsOk', label: `⇄ Swap`, kind: 'primary' }],
+    });
       eid('dsSwapOrgsOk')?.addEventListener('click', () => { closeModal(); doSwap(); });
     } else {
       doSwap();

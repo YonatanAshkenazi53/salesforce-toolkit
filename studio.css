@@ -6424,3 +6424,7 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 .sftk-cf-word input { width: 140px; padding: 4px 8px; margin-left: 6px; font-size: 13px; letter-spacing: .5px; }
 .sftk-cf-actions { display: flex; gap: 8px; flex: 0 0 auto; margin-left: auto; }
 .sftk-cf-go:not(:disabled) { background: var(--cf) !important; border-color: var(--cf) !important; color: #fff !important; }
+
+.sftk-cf-sev-neutral { --cf: var(--brand); --cf-bg: var(--bg); }
+.sftk-cf-sev-neutral .sftk-cf-fact:nth-child(2) { color: var(--subtext); border-color: var(--border); background: var(--bg); }
+.sftk-cf-sev-good { --cf: var(--success); --cf-bg: rgba(46, 132, 74, .08); }

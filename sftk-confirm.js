@@ -224,6 +224,76 @@ function sftkConfirmDestructive(opts) {
   });
 }
 
+// ── The shared dialog shape for everything that is NOT a destructive write ──
+// (2026-10-07, user: "we got more places like this both on toolkit and data
+// studio"). Same head / band / body / pinned-foot as sftkConfirmDestructive, so
+// a gate, a result, a question or a small form looks like the confirmation it
+// sits next to. Callers wire their own buttons by id afterwards, as before.
+//   sftkDialog({
+//     icon: '⚠️', title: 'Paused flow interviews found',
+//     sev: 'red' | 'amber' | 'blue' | 'neutral' | 'good',   // the colour of the stakes + primary
+//     facts: ['3 interviews', '2 flows'],                    // chips under the title
+//     stakes: '<b>…</b> will also be deleted.',              // html, the coloured card (optional)
+//     items: [{ label, sub }] | ['…'],                        // the list (optional, filter above 8)
+//     bodyHtml: '…',                                          // anything else (optional)
+//     note: '↩ …',                                            // the quiet line under the body (optional)
+//     actions: [{ id: 'modalCancel', label: 'Cancel' }, { id: 'modalConfirm', label: 'Delete', kind: 'danger' | 'primary' | 'secondary', disabled, attrs: 'data-dsaction="closeModal"' }],
+//     gatesHtml: '…',                                         // left side of the foot (optional)
+//     onRender() {},
+//   });
+function sftkDialog(opts) {
+  const o = opts || {};
+  const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  if (typeof window.showModal !== 'function') { window.alert(String(o.title || '')); return; }
+  const ds = !!document.getElementById('dsModalBox');
+  const C = ds
+    ? { btn: 'ds-btn', primary: 'ds-btn ds-btn-primary', danger: 'ds-btn ds-btn-danger', input: 'ds-input' }
+    : { btn: 'btn btn-secondary', primary: 'btn btn-primary', danger: 'btn btn-danger', input: 'search-input' };
+  const sev = ['red', 'amber', 'blue', 'neutral', 'good'].includes(o.sev) ? o.sev : 'neutral';
+  const items = Array.isArray(o.items) ? o.items : [];
+  const label = i => esc(typeof i === 'string' ? i : (i && i.label) || '');
+  const sub = i => (i && typeof i === 'object' && i.sub) ? esc(i.sub) : '';
+  const itemsHtml = items.length ? `
+    <div class="sftk-cf-items">
+      <div class="sftk-cf-items-head"><span class="sftk-cf-items-count">${items.length} ${items.length === 1 ? 'item' : 'items'}</span>
+        ${items.length > 8 ? `<input class="${C.input} sftk-cf-filter" id="sftkDialogFilter" placeholder="filter…" autocomplete="off" aria-label="Filter the list">` : ''}</div>
+      <div class="sftk-cf-list" role="list">${items.slice(0, 500).map(i => `<div class="sftk-cf-row" role="listitem"><span class="sftk-cf-row-l">${label(i)}</span>${sub(i) ? `<span class="sftk-cf-row-s">${sub(i)}</span>` : ''}</div>`).join('')}${items.length > 500 ? `<div class="sftk-cf-row sftk-confirm-more">…and ${items.length - 500} more</div>` : ''}</div>
+    </div>` : '';
+  const actions = (Array.isArray(o.actions) && o.actions.length ? o.actions : [{ id: 'modalCancel', label: 'Close' }])
+    .map(a => `<button class="${a.kind === 'danger' ? C.danger : a.kind === 'primary' ? C.primary : C.btn}${a.kind === 'danger' || a.kind === 'primary' ? ' sftk-cf-go' : ''}" id="${esc(a.id)}" ${a.disabled ? 'disabled' : ''}${a.title ? ` title="${esc(a.title)}"` : ''}${a.attrs ? ' ' + a.attrs : ''}>${esc(a.label)}</button>`).join('');
+  window.showModal(`
+    <div class="sftk-cf sftk-cf-sev-${sev}">
+      <div class="sftk-cf-head">
+        ${o.icon ? `<span class="sftk-cf-icon" aria-hidden="true">${o.icon}</span>` : ''}
+        <div class="sftk-cf-headtext">
+          <h2 class="sftk-cf-title">${esc(o.title || '')}</h2>
+          ${Array.isArray(o.facts) && o.facts.length ? `<div class="sftk-cf-facts">${o.facts.map(f => `<span class="sftk-cf-fact">${esc(f)}</span>`).join('')}</div>` : ''}
+        </div>
+      </div>
+      <div class="sftk-cf-body">
+        ${o.stakes ? `<div class="sftk-cf-stakes sftk-confirm-rev">${o.stakes}</div>` : ''}
+        ${itemsHtml}
+        ${o.bodyHtml ? `<div class="sftk-cf-extra">${o.bodyHtml}</div>` : ''}
+        ${o.note ? `<div class="sftk-cf-undo sftk-confirm-undo">${esc(o.note)}</div>` : ''}
+      </div>
+      <div class="sftk-cf-foot">
+        <div class="sftk-cf-gates">${o.gatesHtml || ''}</div>
+        <div class="sftk-cf-actions">${actions}</div>
+      </div>
+    </div>`);
+  const box = document.getElementById(ds ? 'dsModalBox' : 'modalBox');
+  box?.classList.add('sftk-cf-host');
+  // the host class leaves with the dialog, whichever way it closes
+  const mo = new MutationObserver(() => { if (!box.querySelector('.sftk-cf')) { box.classList.remove('sftk-cf-host'); mo.disconnect(); } });
+  if (box) mo.observe(box, { childList: true });
+  document.getElementById('sftkDialogFilter')?.addEventListener('input', e => {
+    const q = String(e.target.value || '').trim().toLowerCase();
+    box?.querySelectorAll('.sftk-cf-list .sftk-cf-row:not(.sftk-confirm-more)').forEach(r => { r.style.display = !q || r.textContent.toLowerCase().includes(q) ? '' : 'none'; });
+  });
+  if (typeof o.onRender === 'function') o.onRender();
+}
+if (typeof globalThis !== 'undefined') globalThis.sftkDialog = sftkDialog;
+
 // Is this org one where a write must also be confirmed by typing its name?
 // The Connected Orgs page stores every org seen (sftk_orgs: orgType from the
 // org's own IsSandbox / trial answer, and the user's 🛑 Guard as production

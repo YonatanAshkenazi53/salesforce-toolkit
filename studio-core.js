@@ -1811,19 +1811,18 @@ function renderOrgsPanel() {
 
 window.editOrgLabel = function(orgUrl) {
   const current = _orgs[orgUrl]?.label || orgLabel(orgUrl);
-  showModal(`
-    <div class="ds-modal-header">${window.sftkGlyph('✏ ', '')}Rename Org</div>
-    <div class="ds-modal-body">
+  sftkDialog({
+      title: `${window.sftkGlyph('✏ ', '')}Rename Org`,
+      sev: 'neutral',
+      bodyHtml: `
       <div class="ds-org-edit-row">
         <label class="ds-lbl">Friendly label</label>
         <input id="dsOrgLabelInput" class="ds-input" value="${esc(current)}" placeholder="e.g. Production, QA Sandbox">
       </div>
       <div style="font-size:11px;color:var(--subtext)">${esc(orgUrl)}</div>
-    </div>
-    <div class="ds-modal-footer">
-      <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-      <button class="ds-btn ds-btn-primary" id="dsOrgLabelSave">Save</button>
-    </div>`);
+    `,
+      actions: [{ label: `Cancel`, kind: 'secondary', attrs: 'data-dsaction="closeModal"' }, { id: 'dsOrgLabelSave', label: `Save`, kind: 'primary' }],
+    });
   setTimeout(() => {
     eid('dsOrgLabelInput')?.focus();
     eid('dsOrgLabelSave')?.addEventListener('click', async () => {
@@ -1874,13 +1873,13 @@ window.toggleOrgGuardProd = async function(orgUrl) {
 };
 
 window.removeOrg = function(orgUrl) {
-  showModal(`
-    <div class="ds-modal-header">Remove Org</div>
-    <div class="ds-modal-body">Remove <strong>${esc(orgLabel(orgUrl))}</strong> from the org list? This only removes it from the Studio's memory — it won't affect your Salesforce account.</div>
-    <div class="ds-modal-footer">
-      <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-      <button class="ds-btn ds-btn-danger" id="dsOrgRemoveConfirm">Remove</button>
-    </div>`);
+  sftkDialog({
+      title: `Remove Org`,
+      sev: 'red',
+      bodyHtml: `
+Remove <strong>${esc(orgLabel(orgUrl))}</strong> from the org list? This only removes it from the Studio's memory — it won't affect your Salesforce account.`,
+      actions: [{ label: `Cancel`, kind: 'secondary', attrs: 'data-dsaction="closeModal"' }, { id: 'dsOrgRemoveConfirm', label: `Remove`, kind: 'danger' }],
+    });
   eid('dsOrgRemoveConfirm')?.addEventListener('click', async () => {
     delete _orgs[orgUrl];
     // The ring must not keep pointing at an org the map no longer knows —

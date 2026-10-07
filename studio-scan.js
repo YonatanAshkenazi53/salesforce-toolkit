@@ -78,17 +78,16 @@ function accuracyChip(acc, compact) {
 // must type the org's label exactly before Proceed enables.
 function confirmTypedProd(orgLabelStr, actionSummary) {
   return new Promise(resolve => {
-    showModal(`
-      <div class="ds-modal-header">🛑 Production org</div>
-      <div class="ds-modal-body">
+    sftkDialog({
+      title: `🛑 Production org`,
+      sev: 'red',
+      bodyHtml: `
         <p>You're about to <strong>${esc(actionSummary)}</strong> in <strong>${esc(orgLabelStr)}</strong> — which looks like a <strong>PRODUCTION</strong> org.</p>
         <p style="margin-top:8px">Type the org name to confirm: <code>${esc(orgLabelStr)}</code></p>
         <input id="dsProdConfirmInput" class="ds-input" autocomplete="off" placeholder="${esc(orgLabelStr)}">
-      </div>
-      <div class="ds-modal-footer">
-        <button class="ds-btn" id="dsProdCancel">Cancel</button>
-        <button class="ds-btn ds-btn-danger" id="dsProdGo" disabled>Proceed</button>
-      </div>`);
+      `,
+      actions: [{ id: 'dsProdCancel', label: `Cancel`, kind: 'secondary' }, { id: 'dsProdGo', label: `Proceed`, kind: 'danger', disabled: true }],
+    });
     const inp = eid('dsProdConfirmInput'), go = eid('dsProdGo');
     inp?.addEventListener('input', () => { if (go) go.disabled = inp.value.trim() !== orgLabelStr; });
     inp?.focus();

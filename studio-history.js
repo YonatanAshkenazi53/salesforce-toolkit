@@ -658,9 +658,10 @@ function renderHistory() {
     }
   });
   eid('dsClearCached')?.addEventListener('click', () => {
-    showModal(`
-      <div class="ds-modal-header">🧹 Clear cached org data</div>
-      <div class="ds-modal-body">
+    sftkDialog({
+      title: `🧹 Clear cached org data`,
+      sev: 'red',
+      bodyHtml: `
         Deletes everything cached <em>about your orgs' data</em>:
         <ul style="margin:8px 0 8px 18px;font-size:12.5px">
           <li>all run history (${_history.length} entries)</li>
@@ -671,11 +672,9 @@ function renderHistory() {
           <li>↩ restore points taken before data deployments (record images kept on this PC for Roll back)</li>
         </ul>
         Deployment configurations, org labels, read-only locks, and settings are kept.
-      </div>
-      <div class="ds-modal-footer">
-        <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-        <button class="ds-btn ds-btn-danger" id="dsConfirmClearCached">Clear cached data</button>
-      </div>`);
+      `,
+      actions: [{ label: `Cancel`, kind: 'secondary', attrs: 'data-dsaction="closeModal"' }, { id: 'dsConfirmClearCached', label: `Clear cached data`, kind: 'danger' }],
+    });
     eid('dsConfirmClearCached')?.addEventListener('click', async () => {
       closeModal();
       _history = [];
@@ -719,13 +718,13 @@ function renderHistory() {
   });
 
   eid('dsClearHistory')?.addEventListener('click', () => {
-    showModal(`
-      <div class="ds-modal-header">Clear History</div>
-      <div class="ds-modal-body">Delete all transfer history records?</div>
-      <div class="ds-modal-footer">
-        <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-        <button class="ds-btn ds-btn-danger" id="dsConfirmClearHistory">Clear All</button>
-      </div>`);
+    sftkDialog({
+      title: `Clear History`,
+      sev: 'red',
+      bodyHtml: `
+Delete all transfer history records?`,
+      actions: [{ label: `Cancel`, kind: 'secondary', attrs: 'data-dsaction="closeModal"' }, { id: 'dsConfirmClearHistory', label: `Clear All`, kind: 'danger' }],
+    });
     eid('dsConfirmClearHistory')?.addEventListener('click', async () => {
       closeModal();
       _history = [];
@@ -841,9 +840,10 @@ function _histShowRunExportModal(run) {
   const oi = header.indexOf('outcome');
   const recordRows = rows.filter(r => r[oi] === 'written' || r[oi] === 'failed-update' || r[oi] === 'failed-insert').length;
   const fnameBase = histExportFilename(run);
-  showModal(`
-    <div class="ds-modal-header">⬇ Run report</div>
-    <div class="ds-modal-body" style="font-size:12.5px">
+  sftkDialog({
+      title: `⬇ Run report`,
+      sev: 'neutral',
+      bodyHtml: `
       <div><strong>${esc(run.profileName || 'Unknown profile')}</strong> · ${esc(run.status || '')} · ${esc(run.startedAt || 'undated')}</div>
       <div style="opacity:.85;margin-top:2px">${esc(srcLabel)} → ${esc(tgtLabel)}</div>
       <div style="margin-top:8px">
@@ -855,12 +855,9 @@ function _histShowRunExportModal(run) {
       ${notes.length ? `<div style="margin-top:8px;opacity:.85">${notes.map(n => `<div>⚠ ${esc(n)}</div>`).join('')}</div>` : ''}
       <div style="margin-top:8px;opacity:.7">${esc(_HIST_CSV_GUARD_NOTE)}</div>
       <div style="margin-top:4px;opacity:.7">Files: <code>${esc(fnameBase)}.json</code> / <code>.csv</code></div>
-    </div>
-    <div class="ds-modal-footer">
-      <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-      <button class="ds-btn" id="dsRunExportCsv">⬇ CSV</button>
-      <button class="ds-btn ds-btn-primary" id="dsRunExportJson">⬇ JSON</button>
-    </div>`);
+    `,
+      actions: [{ label: `Cancel`, kind: 'secondary', attrs: 'data-dsaction="closeModal"' }, { id: 'dsRunExportCsv', label: `⬇ CSV`, kind: 'secondary' }, { id: 'dsRunExportJson', label: `⬇ JSON`, kind: 'primary' }],
+    });
   eid('dsRunExportJson')?.addEventListener('click', () => {
     const payload = histExportPayload([run], _settings, { labels: _histLabelsMap([run]) });
     _histDownload(`${fnameBase}.json`, JSON.stringify(payload, null, 2), 'application/json');
@@ -934,9 +931,10 @@ function _histShowExportAllModal() {
   const retentionLine = days > 0
     ? `Exporting the ${sorted.length} run(s) currently retained. Runs older than ${days} day(s) were already purged per your ${days}-day retention setting and are NOT in this export.`
     : `Exporting the ${sorted.length} run(s) currently retained. Retention is set to "keep forever", so nothing has been purged by age.`;
-  showModal(`
-    <div class="ds-modal-header">⬇ Export run history</div>
-    <div class="ds-modal-body" style="font-size:12.5px">
+  sftkDialog({
+      title: `⬇ Export run history`,
+      sev: 'neutral',
+      bodyHtml: `
       <div>${esc(retentionLine)}</div>
       <div style="margin-top:4px;opacity:.85">This exports the RETAINED (newest 100) runs only — runs past that cap live in the 📦 on-PC archive; use "⬇ Export all (incl. archive)" in the 📦 bar below the list to get everything in one file.</div>
       ${_settings.countsOnly ? `<div style="margin-top:4px;opacity:.85">⚠ Counts-only mode is ON: entries carry counts and errors but no per-record ids or labels.</div>` : ''}
@@ -945,12 +943,9 @@ function _histShowExportAllModal() {
         <strong>CSV</strong> — one summary row per run: status, orgs, per-run totals, error count.
       </div>
       <div style="margin-top:8px;opacity:.7">${esc(_HIST_CSV_GUARD_NOTE)}</div>
-    </div>
-    <div class="ds-modal-footer">
-      <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-      <button class="ds-btn" id="dsHistExportAllCsv">⬇ CSV</button>
-      <button class="ds-btn ds-btn-primary" id="dsHistExportAllJson">⬇ JSON</button>
-    </div>`);
+    `,
+      actions: [{ label: `Cancel`, kind: 'secondary', attrs: 'data-dsaction="closeModal"' }, { id: 'dsHistExportAllCsv', label: `⬇ CSV`, kind: 'secondary' }, { id: 'dsHistExportAllJson', label: `⬇ JSON`, kind: 'primary' }],
+    });
   eid('dsHistExportAllJson')?.addEventListener('click', () => {
     const payload = histExportPayload(sorted, _settings, { labels: _histLabelsMap(sorted), nowIso });
     _histDownload(`sftk-history-${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');

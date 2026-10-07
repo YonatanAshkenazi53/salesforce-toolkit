@@ -1674,20 +1674,16 @@ async function checkAndWarnInterviews(selected) {
     return new Promise((resolve) => {
       const nameList = interviews.slice(0, 10).map(i => `<li>${escHtml(i.Name)}</li>`).join('');
       const moreNote = interviews.length > 10 ? `<li>+ ${interviews.length - 10} more</li>` : '';
-      showModal(`
-        <div class="modal-header modal-warn">
-          <span class="modal-icon">⚠️</span>
-          <h2>Paused Flow Interviews Found</h2>
-        </div>
-        <div class="modal-body">
+      sftkDialog({
+      icon: `⚠️`,
+      title: `Paused Flow Interviews Found`,
+      sev: 'red',
+      bodyHtml: `
           <p><strong>${interviews.length} paused/waiting flow interview${interviews.length !== 1 ? 's' : ''}</strong> will also be permanently deleted.</p>
           <ul class="modal-list">${nameList}${moreNote}</ul>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" id="modalCancel">Cancel</button>
-          <button class="btn btn-danger" id="modalConfirm">Delete interviews + flows</button>
-        </div>
-      `);
+        `,
+      actions: [{ id: 'modalCancel', label: `Cancel`, kind: 'secondary' }, { id: 'modalConfirm', label: `Delete interviews + flows`, kind: 'danger' }],
+    });
       document.getElementById('modalCancel').addEventListener('click', () => { closeModal(); resolve(false); });
       document.getElementById('modalConfirm').addEventListener('click', () => { closeModal(); resolve(true); });
     });
@@ -1826,21 +1822,16 @@ async function askScanBeforeDelete() {
     : `None of the ${allFlows.length} flow versions in this org have been scanned.`;
 
   return new Promise((resolve) => {
-    showModal(`
-      <div class="modal-header modal-danger">
-        <span class="modal-icon">⚠️</span>
-        <h2>The subflow check has no data</h2>
-      </div>
-      <div class="modal-body">
+    sftkDialog({
+      icon: `⚠️`,
+      title: `The subflow check has no data`,
+      sev: 'red',
+      bodyHtml: `
         <p>${escHtml(coverage)} Without that map the toolkit cannot tell whether another flow calls the versions you are about to delete — and this delete is permanent.</p>
         <p class="modal-warning-text">Finishing the scan reads ${left.reads} flow version(s) in ${left.calls} batched API call(s) (${escHtml(left.estLabel)}). You can stop it at any point.</p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" id="modalCancel">Cancel delete</button>
-        <button class="btn btn-danger" id="modalSkip">Delete without checking</button>
-        <button class="btn btn-primary" id="modalScan">Scan now (${left.calls} call${left.calls === 1 ? '' : 's'})</button>
-      </div>
-    `);
+      `,
+      actions: [{ id: 'modalCancel', label: `Cancel delete`, kind: 'secondary' }, { id: 'modalSkip', label: `Delete without checking`, kind: 'danger' }, { id: 'modalScan', label: `Scan now (${left.calls} call${left.calls === 1 ? '' : 's'})`, kind: 'primary' }],
+    });
     document.getElementById('modalCancel').addEventListener('click', () => { closeModal(); resolve('cancel'); });
     document.getElementById('modalSkip').addEventListener('click',   () => { closeModal(); resolve('skip'); });
     document.getElementById('modalScan').addEventListener('click',   () => { closeModal(); resolve('scan'); });
@@ -1853,20 +1844,16 @@ async function askScanBeforeDelete() {
 // exactly what could not be proven and chooses. Returns 'skip' | 'cancel'.
 async function askStaleBeforeDelete(reason) {
   return new Promise((resolve) => {
-    showModal(`
-      <div class="modal-header modal-danger">
-        <span class="modal-icon">⚠️</span>
-        <h2>The subflow check could not be re-verified</h2>
-      </div>
-      <div class="modal-body">
+    sftkDialog({
+      icon: `⚠️`,
+      title: `The subflow check could not be re-verified`,
+      sev: 'red',
+      bodyHtml: `
         <p>Part of this org's dependency map was reused from the stored cache, and ${escHtml(String(reason || 'it could not be re-checked against the org'))}.</p>
         <p class="modal-warning-text">That means “nothing calls these flows” has <b>not</b> been confirmed against the org as it is right now, and this delete is permanent. Reopening the popup (or resuming the scan) re-reads the org from scratch.</p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" id="modalCancel">Cancel delete</button>
-        <button class="btn btn-danger" id="modalSkip">Delete without a verified check</button>
-      </div>
-    `);
+      `,
+      actions: [{ id: 'modalCancel', label: `Cancel delete`, kind: 'secondary' }, { id: 'modalSkip', label: `Delete without a verified check`, kind: 'danger' }],
+    });
     document.getElementById('modalCancel').addEventListener('click', () => { closeModal(); resolve('cancel'); });
     document.getElementById('modalSkip').addEventListener('click',   () => { closeModal(); resolve('skip'); });
   });
@@ -1956,12 +1943,11 @@ function showSubflowDependencyModal(problematic, allFlowsList, deletingIds, reso
 
   const tableRows = buildTable(problematic, 0, new Set());
 
-  showModal(`
-    <div class="modal-header modal-warn">
-      <span class="modal-icon">🔗</span>
-      <h2>Subflow Dependencies Detected</h2>
-    </div>
-    <div class="modal-body">
+  sftkDialog({
+      icon: `🔗`,
+      title: `Subflow Dependencies Detected`,
+      sev: 'amber',
+      bodyHtml: `
       <p>Some flows you are deleting are called as subflows by other flows. Deleting them will break those parent flows — and Salesforce refuses to delete a flow while another flow's subflow element still calls it, so "Proceed anyway" only works once those parents no longer call it. Ticking a parent deletes the parents first, then the flow.</p>
       <div class="dep-table-controls">
         <label><input type="checkbox" id="selectAllParents"> Select all parent flows</label>
@@ -1980,13 +1966,9 @@ function showSubflowDependencyModal(problematic, allFlowsList, deletingIds, reso
           </tbody>
         </table>
       </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" id="modalCancel">Cancel</button>
-      <button class="btn btn-warning" id="proceedIgnoreBtn">Proceed anyway, ignore broken parents</button>
-      <button class="btn btn-danger" id="deactivateDeleteBtn" disabled>Deactivate + delete selected parents</button>
-    </div>
-  `);
+    `,
+      actions: [{ id: 'modalCancel', label: `Cancel`, kind: 'secondary' }, { id: 'proceedIgnoreBtn', label: `Proceed anyway, ignore broken parents`, kind: 'secondary' }, { id: 'deactivateDeleteBtn', label: `Deactivate + delete selected parents`, kind: 'danger', disabled: true }],
+    });
 
   attachCbListeners();
 
@@ -2029,22 +2011,18 @@ async function showActiveWarningModal(activeFlows) {
       </li>`
     ).join('');
 
-    showModal(`
-      <div class="modal-header modal-danger">
-        <span class="modal-icon">⚠️</span>
-        <h2>You are about to delete ACTIVE flows</h2>
-      </div>
-      <div class="modal-body">
+    sftkDialog({
+      icon: `⚠️`,
+      title: `You are about to delete ACTIVE flows`,
+      sev: 'red',
+      bodyHtml: `
         <p style="margin-bottom:8px;font-size:12px">Optionally download a backup before deleting:</p>
         <ul class="modal-list backup-list">${rows}</ul>
         <button class="btn btn-secondary btn-sm" id="backupAllBtn" style="margin:6px 0 10px">⬇ Download All Backups</button>
         <p class="modal-warning-text">Deleting active flows may break automations, processes, or user-facing screens that depend on them. This action cannot be undone.</p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" id="modalCancel">Cancel</button>
-        <button class="btn btn-danger" id="modalConfirm">I understand, delete anyway</button>
-      </div>
-    `);
+      `,
+      actions: [{ id: 'modalCancel', label: `Cancel`, kind: 'secondary' }, { id: 'modalConfirm', label: `I understand, delete anyway`, kind: 'danger' }],
+    });
 
     // Individual backup buttons
     document.querySelectorAll('.backup-one-btn').forEach(btn => {
@@ -2238,22 +2216,19 @@ function planTreeBackup(selected) {
 function confirmTreeBackup(selected, plan) {
   return new Promise(resolve => {
     const li = (t) => `<li>${escHtml(t)}</li>`;
-    showModal(`
-      <div class="modal-header">
-        <span class="modal-icon">🌳</span>
-        <h2>Back up ${selected.length} flow(s) with their subflow tree</h2>
-      </div>
-      <div class="modal-body">
+    sftkDialog({
+      icon: `🌳`,
+      title: `Back up ${selected.length} flow(s) with their subflow tree`,
+      sev: 'blue',
+      bodyHtml: `
         <p><strong>${plan.add.length}</strong> subflow version(s) will be added — the active version of each, or the newest when none is active:</p>
         <ul class="modal-list">${plan.add.map(f => li(`${f.MasterLabel} v${f.VersionNumber} (${f.Status})`)).join('') || li('none — the selected flows call no subflows that are not already selected')}</ul>
         ${plan.excluded.length ? `<p><strong>Not included</strong> (said, not skipped silently):</p><ul class="modal-list">${plan.excluded.map(x => li(`${x.apiName} — ${x.why}`)).join('')}</ul>` : ''}
         ${plan.truncated ? '<p class="modal-warning-text">⚠ The tree walk hit its size cap — deeper subflows are NOT included.</p>' : ''}
         <p style="font-size:12px;opacity:.8">One zip: every flow as .flow XML plus package.xml and backup.json — restorable in 📥 Restore mode.</p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" id="modalCancel">Cancel</button>
-        <button class="btn btn-primary" id="modalConfirm">⬇ Download ${selected.length + plan.add.length} flow(s)</button>
-      </div>`);
+      `,
+      actions: [{ id: 'modalCancel', label: `Cancel`, kind: 'secondary' }, { id: 'modalConfirm', label: `⬇ Download ${selected.length + plan.add.length} flow(s)`, kind: 'primary' }],
+    });
     document.getElementById('modalCancel').addEventListener('click', () => { closeModal(); resolve(false); });
     document.getElementById('modalConfirm').addEventListener('click', () => { closeModal(); resolve(true); });
   });
@@ -2268,14 +2243,17 @@ async function onBackupClick() {
   if (document.getElementById('backupWithSubflows')?.checked) {
     const plan = planTreeBackup(selected);
     if (plan.blocked) {
-      showModal(`
-        <div class="modal-header modal-warn"><span class="modal-icon">🔗</span><h2>The tree is not known yet</h2></div>
-        <div class="modal-body">
+      sftkDialog({
+      icon: `🔗`,
+      title: `The tree is not known yet`,
+      sev: 'amber',
+      bodyHtml: `
           <p>The dependency scan has not read ${plan.blocked.length} flow(s) in this tree, so what they call is UNKNOWN — a "whole tree" backup would silently miss subflows.</p>
           <ul class="modal-list">${plan.blocked.slice(0, 12).map(a => `<li>${escHtml(a)}</li>`).join('')}${plan.blocked.length > 12 ? `<li>… +${plan.blocked.length - 12} more</li>` : ''}</ul>
           <p>Run 🔗 Scan dependencies (or Resume) above, then back up again. Untick the tree option to back up only the selected versions.</p>
-        </div>
-        <div class="modal-footer"><button class="btn btn-secondary" id="modalCancel">Close</button></div>`);
+        `,
+      actions: [{ id: 'modalCancel', label: `Close`, kind: 'secondary' }],
+    });
       document.getElementById('modalCancel').addEventListener('click', closeModal);
       return;
     }
@@ -2313,13 +2291,14 @@ async function onBackupClick() {
   updateActionBar();
 
   if (flows.length === 0) {
-    showModal(`
-      <div class="modal-header modal-danger">
-        <span class="modal-icon">❌</span><h2>Backup Failed</h2>
-      </div>
-      <div class="modal-body"><p>Could not fetch metadata for any of the selected flows.</p></div>
-      <div class="modal-footer"><button class="btn btn-secondary" id="modalCancel">Close</button></div>
-    `);
+    sftkDialog({
+      icon: `❌`,
+      title: `Backup Failed`,
+      sev: 'red',
+      bodyHtml: `
+<p>Could not fetch metadata for any of the selected flows.</p>`,
+      actions: [{ id: 'modalCancel', label: `Close`, kind: 'secondary' }],
+    });
     document.getElementById('modalCancel').addEventListener('click', closeModal);
     return;
   }
@@ -2508,23 +2487,20 @@ async function onRestoreClick() {
   updateActionBar();
 
   if (errors.length === 0) {
-    showModal(`
-      <div class="modal-header" style="color:var(--active-color)">
-        <span class="modal-icon">✅</span>
-        <h2>${successes.length} Flow${successes.length !== 1 ? 's' : ''} Restored</h2>
-      </div>
-      <div class="modal-body">
+    sftkDialog({
+      icon: `✅`,
+      title: `${successes.length} Flow${successes.length !== 1 ? 's' : ''} Restored`,
+      sev: 'good',
+      bodyHtml: `
         <ul class="modal-list">
           ${successes.map(f => `<li>${escHtml(f.MasterLabel)} v${f.VersionNumber} → new Draft</li>`).join('')}
         </ul>
         <p style="margin-top:8px;font-size:11px;color:var(--subtext)">
           Open Flow Builder to review and activate the restored flows.
         </p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" id="modalCancel">Close</button>
-      </div>
-    `);
+      `,
+      actions: [{ id: 'modalCancel', label: `Close`, kind: 'secondary' }],
+    });
     document.getElementById('modalCancel').addEventListener('click', () => {
       closeModal();
       switchMode('delete');
@@ -2533,20 +2509,17 @@ async function onRestoreClick() {
   } else {
     const errHtml  = errors.map(e => `<li style="word-break:break-word">${escHtml(e)}</li>`).join('');
     const okHtml   = successes.map(f => `<li>${escHtml(f.MasterLabel)} v${f.VersionNumber}</li>`).join('');
-    showModal(`
-      <div class="modal-header modal-warn">
-        <span class="modal-icon">⚠️</span>
-        <h2>${successes.length} restored, ${errors.length} failed</h2>
-      </div>
-      <div class="modal-body">
+    sftkDialog({
+      icon: `⚠️`,
+      title: `${successes.length} restored, ${errors.length} failed`,
+      sev: 'amber',
+      bodyHtml: `
         ${successes.length > 0 ? `<p style="margin-bottom:4px;font-weight:700">Restored:</p><ul class="modal-list">${okHtml}</ul>` : ''}
         <p style="margin:8px 0 4px;font-weight:700;color:var(--danger)">Failed:</p>
         <ul class="modal-list">${errHtml}</ul>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" id="modalCancel">Close</button>
-      </div>
-    `);
+      `,
+      actions: [{ id: 'modalCancel', label: `Close`, kind: 'secondary' }],
+    });
     document.getElementById('modalCancel').addEventListener('click', () => { closeModal(); if (successes.length > 0) loadFlows(); });
   }
 }
@@ -2882,19 +2855,16 @@ function showResultToast(successCount, errors) {
   // Show errors in a modal so they can't be missed
   if (errors.length > 0) {
     const errorList = errors.map(e => `<li style="margin-bottom:6px">${escHtml(e.msg)}</li>`).join('');
-    showModal(`
-      <div class="modal-header modal-warn">
-        <span class="modal-icon">⚠️</span>
-        <h2>${successCount} deleted, ${errors.length} failed</h2>
-      </div>
-      <div class="modal-body">
+    sftkDialog({
+      icon: `⚠️`,
+      title: `${successCount} deleted, ${errors.length} failed`,
+      sev: 'amber',
+      bodyHtml: `
         <p style="margin-bottom:8px">The following could not be deleted:</p>
         <ul class="modal-list" style="font-size:11px;word-break:break-word">${errorList}</ul>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" id="modalCancel">Close</button>
-      </div>
-    `);
+      `,
+      actions: [{ id: 'modalCancel', label: `Close`, kind: 'secondary' }],
+    });
     document.getElementById('modalCancel').addEventListener('click', closeModal);
     return;
   }

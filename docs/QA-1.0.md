@@ -146,9 +146,12 @@ the rest were the scripts themselves (listed at the end). All orgs end as they b
     the fact — now next to the Delete mode (note + toast) and in the confirmation.
 15. Dependencies rows: created/modified dates without the people — now "created … by …" /
     "modified … by …" as two aligned lines (Tooling `CreatedBy.Name`, `LastModifiedBy.Name`).
-Open from the same session: the shared confirmation dialog and the ~50 hand-built modals are
-to be redesigned (plan agreed in chat: headline sentence, facts row, severity-coloured stakes,
-a real item table with search, pinned action bar, production as a band, 720px, dark tokens).
+Done the same evening: `sftkConfirmDestructive` redesigned (34 callers inherit it) and a shared
+`sftkDialog` for the rest; 22 hand-built dialogs migrated (popup: the Flows gates, backups,
+restores, delete results; Data Studio: rename / remove org, swap orgs, clear cached / clear
+history, run report, export all, pick the target, delete a deployment, the production step).
+The content-heavy panels (lookups, match review, identity, field mapping, pick / filter
+records, schema check, PII masks, record detail) keep their own layouts for now.
 
 ### Verified and honest (no change needed)
 - Flow switches OFF/ON/undo, API versions change/undo, Lightning Pages (detail, org
