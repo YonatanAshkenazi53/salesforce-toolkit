@@ -6886,3 +6886,39 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 /* Dependencies rows: created / modified, two aligned lines (2026-10-07) */
 .dep-node-dates { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 1px; margin-left: 8px; font-size: 10.5px; line-height: 1.3; color: var(--subtext, #706E6B); white-space: nowrap; }
 .dep-node-date-k { display: inline-block; min-width: 52px; text-align: right; opacity: .75; margin-right: 3px; }
+
+/* ── The shared confirmation dialog (sftk-confirm.js), redesigned 2026-10-07 ──
+   One shape for every write: head (sentence + facts), optional production band,
+   scrolling body (stakes, list, extras), pinned foot (gates left, actions right).
+   Colour says the severity: red permanent · amber a recorded write · blue reversible. */
+.sftk-cf-host { width: min(720px, 94vw) !important; max-width: min(720px, 94vw) !important; max-height: 88vh !important; padding: 0 !important; overflow: hidden !important; display: flex; flex-direction: column; }
+.sftk-cf { display: flex; flex-direction: column; max-height: 88vh; min-height: 0; color: var(--text); --cf: var(--warning); --cf-bg: var(--warning-bg); }
+.sftk-cf-sev-red  { --cf: var(--danger); --cf-bg: rgba(234, 0, 30, .07); }
+.sftk-cf-sev-blue { --cf: var(--brand); --cf-bg: var(--brand-bg); }
+.sftk-cf-head { display: flex; gap: 12px; align-items: flex-start; padding: 16px 20px 12px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+.sftk-cf-icon { font-size: 22px; line-height: 1; margin-top: 2px; color: var(--cf); flex: 0 0 auto; }
+.sftk-cf-headtext { min-width: 0; flex: 1 1 auto; }
+.sftk-cf-title { margin: 0; font-size: 16px; line-height: 1.3; font-weight: 700; color: var(--text); }
+.sftk-cf-facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.sftk-cf-fact { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--subtext); background: var(--bg); }
+.sftk-cf-fact:nth-child(2) { color: var(--cf); border-color: var(--cf); background: var(--cf-bg); }
+.sftk-cf-band { padding: 8px 20px; background: rgba(234, 0, 30, .09); color: var(--danger); font-size: 12.5px; border-bottom: 1px solid var(--border); margin: 0 !important; }
+.sftk-cf-body { padding: 14px 20px; overflow: auto; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.sftk-cf-stakes.sftk-confirm-rev { margin: 0; padding: 10px 12px; border-radius: 6px; border: 1px solid var(--cf); border-left-width: 4px; background: var(--cf-bg); color: var(--text); font-size: 12.5px; line-height: 1.5; }
+.sftk-cf-items { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.sftk-cf-items-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; background: var(--bg); border-bottom: 1px solid var(--border); font-size: 11.5px; font-weight: 600; color: var(--subtext); }
+.sftk-cf-filter { width: 180px; padding: 3px 8px; font-size: 12px; }
+.sftk-cf-list.sftk-confirm-items { margin: 0; padding: 0; list-style: none; max-height: 240px; overflow: auto; font-size: 12.5px; }
+.sftk-cf-row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 10px; border-top: 1px solid var(--border-light, var(--border)); }
+.sftk-cf-row:first-child { border-top: 0; }
+.sftk-cf-row-l { min-width: 0; overflow-wrap: anywhere; }
+.sftk-cf-row-s { flex: 0 0 auto; color: var(--subtext); font-size: 11.5px; white-space: nowrap; }
+.sftk-cf-row.sftk-confirm-more { color: var(--subtext); font-style: italic; }
+.sftk-cf-extra { font-size: 12.5px; }
+.sftk-cf-undo.sftk-confirm-undo { margin: 0; font-size: 12px; color: var(--subtext); }
+.sftk-cf-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 20px; border-top: 1px solid var(--border); background: var(--bg); flex: 0 0 auto; flex-wrap: wrap; }
+.sftk-cf-gates { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-width: 0; flex: 1 1 auto; }
+.sftk-cf-gates .sftk-confirm-ack { margin: 0; font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.sftk-cf-word input { width: 140px; padding: 4px 8px; margin-left: 6px; font-size: 13px; letter-spacing: .5px; }
+.sftk-cf-actions { display: flex; gap: 8px; flex: 0 0 auto; margin-left: auto; }
+.sftk-cf-go:not(:disabled) { background: var(--cf) !important; border-color: var(--cf) !important; color: #fff !important; }
