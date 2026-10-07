@@ -132,6 +132,24 @@ the rest were the scripts themselves (listed at the end). All orgs end as they b
 9. Per-run report file was named after the first summary object ("sftk-run-CaseComment-…")
    — now the deployment name (ent-audit-export pins updated).
 
+
+### Hand-test findings by the user, 2026-10-07 (all fixed, pinned)
+10. Licence page unreadable in dark mode (dark @media block before the light rules).
+11. Lightning Pages "Finish the check" looked dead — a repeat run ended identically with no
+    feedback; now says "Tried again just now (run N) — the same result" and names the
+    objects that could not be described.
+12. Field Cleaner: no group button for "Remove · flow keeps running" / "Delete versions ·
+    flow off" — added; each flow still confirms on its own.
+13. Field Cleaner History lines showed Salesforce ids for deleted versions and runs — now
+    "Flow v17 (Active) deleted", "failed flow run “…” deleted".
+14. Hard delete: that ↩ Roll back cannot restore hard-deleted records was said only after
+    the fact — now next to the Delete mode (note + toast) and in the confirmation.
+15. Dependencies rows: created/modified dates without the people — now "created … by …" /
+    "modified … by …" as two aligned lines (Tooling `CreatedBy.Name`, `LastModifiedBy.Name`).
+Open from the same session: the shared confirmation dialog and the ~50 hand-built modals are
+to be redesigned (plan agreed in chat: headline sentence, facts row, severity-coloured stakes,
+a real item table with search, pinned action bar, production as a band, 720px, dark tokens).
+
 ### Verified and honest (no change needed)
 - Flow switches OFF/ON/undo, API versions change/undo, Lightning Pages (detail, org
   default set/remove, app default, app+RT+profile, deactivate, clone, what a user sees,

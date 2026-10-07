@@ -512,10 +512,10 @@ describe('Field Cleaner — the choice is made per item, by the button pressed',
     expect(FC).toContain("const noun = type === 'Flow' ? `flow${n === 1 ? '' : 's'}` : esc(label);");
   });
   it('"… all N" goes item by item in the way its button says, and a flow is asked about once', () => {
-    const all = FC.slice(FC.indexOf('async function fixAll(type, fieldId, swap) {'), FC.indexOf('// extraLinksHtml (C5a)'));
+    const all = FC.slice(FC.indexOf("async function fixAll(type, fieldId, swap, way = '') {"), FC.indexOf('// extraLinksHtml (C5a)'));
     expect(all).toContain('? _flowCards.map(c => ({ id: c.primaryId, name: c.name }))');
     expect(all).toContain("if (eid(`fcItem_${it.id}`)?.classList.contains('fc-item-fixed')) continue;");
-    expect(all).toContain("if ((await fixOne(type, it.id, it.name, fieldId, swap)) === 'cancel') return 'cancel';");
+    expect(all).toContain("if ((await fixOne(type, it.id, it.name, fieldId, swap, way)) === 'cancel') return 'cancel';");
   });
   it('a settled item cannot be fixed again from anywhere', () => {
     expect(FC).toContain("if (eid(`fcItem_${componentId}`)?.classList.contains('fc-item-fixed')) return;");
@@ -555,7 +555,7 @@ describe('Field Cleaner — everything at once', () => {
   });
   it('Cancel in any dialog stops the walk instead of asking again for every item', () => {
     expect(FC).toContain("if (!sure) return 'cancel';");
-    expect(FC).toContain("if ((await fixOne(type, it.id, it.name, fieldId, swap)) === 'cancel') return 'cancel';");
+    expect(FC).toContain("if ((await fixOne(type, it.id, it.name, fieldId, swap, way)) === 'cancel') return 'cancel';");
   });
   it('the count is what is still open, and follows every fix and every mode change', () => {
     expect(FC).toContain("el.outerHTML = _fixEveryHtml(document.querySelectorAll('#fcResults .fc-fix-pair').length);");

@@ -310,9 +310,9 @@ describe('C2 · ↻ Rescan and per-row version facts in the Dependencies tab', (
     const node = DEP.slice(DEP.indexOf('node.innerHTML = `\n        <span class="dep-node-toggle">'), DEP.indexOf("node.addEventListener('contextmenu'"));
     expect(node).toContain('v${escHtml(String(flow.VersionNumber))}');
     expect(node).toContain('API ${flow.ApiVersion}');
-    expect(node).toContain('depDatesHtml(flow.CreatedDate, flow.LastModifiedDate)');
+    expect(node).toContain('depDatesHtml(flow.CreatedDate, flow.LastModifiedDate, flow.CreatedBy && flow.CreatedBy.Name, flow.LastModifiedBy && flow.LastModifiedBy.Name)');
     // …and the popup's flow list actually fetches those fields
-    expect(PU).toMatch(/const FLOW_FIELDS = '[^']*ApiVersion,CreatedDate'/);
+    expect(PU).toMatch(/const FLOW_FIELDS = '[^']*ApiVersion,CreatedDate,CreatedBy\.Name,LastModifiedBy\.Name'/);   // 2026-10-07: who created / modified
     expect(PU).toMatch(/SELECT \$\{FLOW_FIELDS\},LastModifiedDate FROM Flow/);
   });
 

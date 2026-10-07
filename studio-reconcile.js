@@ -2470,7 +2470,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:4px;font-size:12px;color:#991b1b">
            🔥 <strong>Hard-delete ${delIds.length} ${esc(objType)} record(s)</strong> from
            <strong>${esc(orgLabel(profile.targetOrg))}</strong> — purged from the Recycle Bin and
-           <strong>cannot be recovered</strong>.</div>`
+           <strong>cannot be recovered</strong>. ↩ Roll back will not bring them back; switch Delete mode to Recycle Bin if you may need to.</div>`
       : `<div style="margin-top:10px;padding:10px 12px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:4px;font-size:12px;color:#92400e">
            🗑 <strong>Delete ${delIds.length} ${esc(objType)} record(s)</strong> from
            <strong>${esc(orgLabel(profile.targetOrg))}</strong> — recoverable from the Recycle Bin for 15 days.</div>`) : '';
@@ -2479,7 +2479,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:4px;font-size:12px;color:#991b1b">
            🔥 <strong>Hard-delete ${childDelTotal} child record(s)</strong> from
            <strong>${esc(orgLabel(profile.targetOrg))}</strong> — purged from the Recycle Bin and
-           <strong>cannot be recovered</strong>.</div>`
+           <strong>cannot be recovered</strong>. ↩ Roll back will not bring them back.</div>`
       : `<div style="margin-top:10px;padding:10px 12px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:4px;font-size:12px;color:#92400e">
            🗑 <strong>Delete ${childDelTotal} child record(s)</strong> from
            <strong>${esc(orgLabel(profile.targetOrg))}</strong> — recoverable from the Recycle Bin for 15 days.</div>`) : '';

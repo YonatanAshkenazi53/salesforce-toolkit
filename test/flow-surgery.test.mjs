@@ -123,7 +123,7 @@ describe('field-cleaner.js executes the plan in the safe order', () => {
     // Salesforce saves a deploy over a newer draft instead of creating a version (test/flow-draft-overwrite-1004).
     const verify = at('await _verifyFlowActivation(defId, maxNum, flowName, plan.active.id, journal, fp.versions)');
     const ivs    = at('await _deleteFlowInterviews(fp.interviews, journal)');
-    const vers   = at('await _deleteFlowVersionIds(plan.toDelete.map(v => v.id).filter(id => id !== out.newId), skip, journal)');
+    const vers   = at('await _deleteFlowVersionIds(plan.toDelete.map(v => v.id).filter(id => id !== out.newId), skip, journal,');
     expect(backup).toBeLessThan(deploy);
     expect(deploy).toBeLessThan(verify);
     expect(verify).toBeLessThan(ivs);
@@ -176,7 +176,7 @@ describe('field-cleaner.js executes the plan in the safe order', () => {
     // Phase 3 (History with undo): both now carry fixFlowSelective's own journal.
     expect(sel.indexOf('_verifyFlowActivation(before.defId, before.maxNum, flowName, flowId, journal)')).toBeLessThan(sel.indexOf('purgeOldFlowVersions(flowId, flowName, journal)'));
     const purge = slice(FC, 'async function purgeOldFlowVersions(anyVersionId, flowName, journal)');
-    expect(purge.indexOf('_flowInterviewsFor(stale.map(v => v.Id))')).toBeLessThan(purge.indexOf('_deleteFlowVersionIds(stale.map(v => v.Id), skip, journal)'));
+    expect(purge.indexOf('_flowInterviewsFor(stale.map(v => v.Id))')).toBeLessThan(purge.indexOf('_deleteFlowVersionIds(stale.map(v => v.Id), skip, journal,'));
     expect(purge).toContain("confirmLabel: '🗑 Delete interviews, then the versions'");
   });
 

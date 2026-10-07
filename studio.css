@@ -6385,3 +6385,6 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
    public build, 2026-10-06) it is a plain badge with a title tooltip. */
 .sftk-help { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: #cbd5e1; color: #fff; font-size: 10px; font-weight: 700; cursor: help; margin-left: 4px; vertical-align: middle; user-select: none; }
 .sftk-help:hover, .sftk-help:focus { background: #2563eb; outline: none; }
+
+/* Deploy page: the hard-delete consequence, said next to the mode (2026-10-07) */
+.ds-dep-hardnote { flex-basis: 100%; font-size: 12px; color: var(--danger); padding: 4px 8px; border-left: 3px solid var(--danger); background: var(--warning-bg); border-radius: 4px; }

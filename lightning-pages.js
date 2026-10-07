@@ -495,6 +495,11 @@ const LightningPages = (() => {
 
   // The one place an org-default run is started. Never awaited by the caller,
   // so it must never throw and must never leave the strip mid-sentence.
+  function _odNoteFailedObject(name, why) {
+    const list = _odState.failedObjects || (_odState.failedObjects = []);
+    if (list.length < 50) list.push({ name: String(name), why: String(why).slice(0, 160) });
+  }
+
   function startOrgDefaults() {
     if (_odState.status === 'running') return;
     fetchOrgDefaults().catch(() => {
@@ -585,6 +590,11 @@ const LightningPages = (() => {
     _odState.objectsDone  = objsAlready;
     _odState.pagesFailed  = 0;
     _odState.objectsFailed = 0;
+    // Which objects failed and why, and how many runs there have been: a second
+    // press of "Finish the check" that ends exactly like the first must say so
+    // (user 2026-10-07: "the button here doesn't do anything when i click it").
+    _odState.failedObjects = [];
+    _odState.attempts = (_odState.attempts || 0) + 1;
     odRepaint(true);
 
     const p1 = await lpRunPool(targets, async (p) => {
@@ -629,7 +639,7 @@ const LightningPages = (() => {
 
     const p2 = await lpRunPool(sObjectTypes, async (sObjectType) => {
       const apiName = _lpEntityName(sObjectType);
-      if (!apiName) { _odState.objectsFailed++; return false; }   // unresolved id — nothing to describe
+      if (!apiName) { _odState.objectsFailed++; _odNoteFailedObject(String(sObjectType), 'its API name could not be resolved'); return false; }   // unresolved id — nothing to describe
       try {
         const descRes = await bg({
           type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
@@ -637,7 +647,7 @@ const LightningPages = (() => {
         });
         if (myToken !== _odRunToken) return false;   // superseded mid-call (see Pass 1)
         calls++;
-        if (!descRes || descRes.error) { _odState.objectsFailed++; return false; }
+        if (!descRes || descRes.error) { _odState.objectsFailed++; _odNoteFailedObject(apiName, (descRes && descRes.error) || 'no answer'); return false; }
         // A describe with no actionOverrides array is a CONCLUSIVE "no override
         // on this object", so the object counts as covered.
         _odObjDone.add(sObjectType);
@@ -782,7 +792,7 @@ const LightningPages = (() => {
     if (st.status === 'running') {
       btn = `<button class="btn btn-secondary btn-sm" id="lpOdStopBtn" style="flex-shrink:0">Stop</button>`;
     } else if (plan.calls > 0) {
-      const label = st.status === 'skipped' ? 'Check org defaults' : 'Finish the check';
+      const label = st.status === 'skipped' ? 'Check org defaults' : (st.attempts > 1 ? 'Try again' : 'Finish the check');
       btn = `<button class="btn btn-secondary btn-sm" id="lpOdRunBtn" style="flex-shrink:0"` +
             ` title="Runs ${plan.calls} Salesforce API call${plan.calls !== 1 ? 's' : ''} — ${esc(plan.estLabel)}">` +
             `${esc(label)} (${plan.calls} call${plan.calls !== 1 ? 's' : ''})</button>`;
@@ -4358,8 +4368,15 @@ function lpOdSummary(state, plan) {
 
   // st === 'done'
   if (!unresolved && !failures.length) return '';
-  return `Org-default check finished: ${pagesDone} / ${pagesTotal} ${plural(pagesTotal, 'page')} ` +
-         `and ${objDone} / ${objTotal} ${plural(objTotal, 'object')}.${failBit} ` +
+  // QA 2026-10-07: a second run that ends like the first looked like a dead
+  // button — the sentence now says it ran again, and names what failed and why.
+  const failed = Array.isArray(s.failedObjects) ? s.failedObjects : [];
+  const named = failed.length
+    ? ` Could not be described: ${failed.slice(0, 4).map(f => `${f.name} (${f.why})`).join('; ')}${failed.length > 4 ? ` and ${failed.length - 4} more` : ''}.`
+    : '';
+  const again = n(s.attempts) > 1 ? `Tried again just now (run ${n(s.attempts)}) — the same result. ` : '';
+  return `${again}Org-default check finished: ${pagesDone} / ${pagesTotal} ${plural(pagesTotal, 'page')} ` +
+         `and ${objDone} / ${objTotal} ${plural(objTotal, 'object')}.${failBit}${named} ` +
          `${unresolved} ${plural(unresolved, 'page')} could not be resolved and stay marked "?" — UNCHECKED, not "not the org default".`;
 }
 
