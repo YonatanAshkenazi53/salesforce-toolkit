@@ -1052,7 +1052,13 @@ const FieldCleaner = (() => {
   }
   function _fixAllHtml(type, n, label) {
     const noun = type === 'Flow' ? `flow${n === 1 ? '' : 's'}` : esc(label);
-    const rm = `<button class="btn btn-secondary btn-sm fc-fix-all" data-type="${esc(type)}" data-swap="0">✂ Remove from all ${n} ${noun}</button>`;
+    // Flows: the same two ways the cards offer (user 2026-10-07: "here we have
+    // remove but we dont have remove flow keep running for all") — each flow
+    // is still confirmed on its own, with the way already chosen.
+    const rm = type === 'Flow'
+      ? `<button class="btn btn-secondary btn-sm fc-fix-all" data-type="Flow" data-swap="0" data-way="keep" title="Every flow gets a new active version without the field and keeps running; a flow where that cannot work is refused and left for you">✂ Remove from all ${n} ${noun} · flows keep running</button> ` +
+        `<button class="btn btn-secondary btn-sm fc-fix-all" data-type="Flow" data-swap="0" data-way="off" title="Every flow is switched off and its versions that mention the field are deleted">🗑 Delete versions · all ${n} ${noun} off</button>`
+      : `<button class="btn btn-secondary btn-sm fc-fix-all" data-type="${esc(type)}" data-swap="0">✂ Remove from all ${n} ${noun}</button>`;
     return _replOn()
       ? `<button class="btn btn-secondary btn-sm fc-fix-all" data-type="${esc(type)}" data-swap="1">⇄ Replace in all ${n} ${noun}</button> ${rm}`
       : rm;
@@ -1996,7 +2002,7 @@ const FieldCleaner = (() => {
         if (all && !all.disabled) {
           const t = all.dataset.type, swap = all.dataset.swap === '1';
           all.closest('.fc-fix-allbox')?.remove();
-          fixAll(t, _curFieldId, swap);
+          fixAll(t, _curFieldId, swap, all.dataset.way || '');
         }
       });
     }
@@ -3303,14 +3309,18 @@ const FieldCleaner = (() => {
   // versions the index lists (user 2026-10-05, screenshot: after the flow was
   // fixed the loop ran again for each other version row — all deleted by then —
   // and printed "Could not resolve the flow definition of this version").
-  async function fixAll(type, fieldId, swap) {
+  // way: '' (the dialog asks per flow) · 'keep' (new active version, flow keeps
+  // running) · 'off' (switch off, delete the versions) — the group buttons above.
+  async function fixAll(type, fieldId, swap, way = '') {
     const list = type === 'Flow'
       ? _flowCards.map(c => ({ id: c.primaryId, name: c.name }))
       : (_groups[type] || []).map(d => ({ id: d.MetadataComponentId, name: d.MetadataComponentName || d.MetadataComponentId }));
     for (const it of list) {
       if (eid(`fcItem_${it.id}`)?.classList.contains('fc-item-fixed')) continue;
-      // Cancel in a dialog stops the walk — it is not asked again for every item
-      if ((await fixOne(type, it.id, it.name, fieldId, swap)) === 'cancel') return 'cancel';
+      // Cancel in a dialog stops the walk — it is not asked again for every item.
+      // A flow refused before its dialog (the way cannot work there) is left with
+      // its inline error and the walk goes on to the next one.
+      if ((await fixOne(type, it.id, it.name, fieldId, swap, way)) === 'cancel') return 'cancel';
     }
   }
 
@@ -3551,8 +3561,11 @@ const FieldCleaner = (() => {
     // The write discipline (sftk-write.js): one batch, one re-read
     // (verifyAll) confirming the interviews are actually gone — never the
     // DELETE's own answer.
+    // History shows these lines — a run is named by what it was, not by its id
+    // (user 2026-10-07: "show better info than id that says nothing to the user").
+    const runWords = it => `${/^error$/i.test(String(it.InterviewStatus || '')) ? 'failed' : 'paused'} flow run${it.InterviewLabel || it.Name ? ` “${it.InterviewLabel || it.Name}”` : ''}${it.CurrentElement ? ` (at ${it.CurrentElement})` : ''} deleted`;
     const batch = await sftkWriteVerifiedAll(list.map(it => ({
-      describe: it.Id,
+      describe: runWords(it),
       write: () => bg({ type: 'SF_REST_DELETE', orgUrl: _orgUrl, sid: _sid, sobject: 'FlowInterview', id: it.Id, _suppressError: true }),
     })), {
       journal,   // history-by: the caller's journal — deleted interviews cannot be re-created
@@ -3577,7 +3590,9 @@ const FieldCleaner = (() => {
 
   // Versions whose interviews could not be deleted are skipped — Salesforce
   // would refuse them anyway, and the count says so.
-  async function _deleteFlowVersionIds(ids, skipIds, journal) {
+  // labelOf: id → words for History ("SFTK FC Test Flow v17 (Active) deleted"); an id
+  // with no words falls back to the id.
+  async function _deleteFlowVersionIds(ids, skipIds, journal, labelOf) {
     const out = { deleted: 0, failed: 0, skipped: 0, errors: [] };
     const todo = [];
     for (const id of (ids || [])) {
@@ -3591,7 +3606,7 @@ const FieldCleaner = (() => {
     // (verifyAll) confirming the versions are actually gone — never the
     // DELETE's own answer.
     const batch = await sftkWriteVerifiedAll(todo.map(id => ({
-      describe: id,
+      describe: (labelOf && labelOf[id]) || id,
       write: () => bg({ type: 'SF_TOOLING_DELETE', orgUrl: _orgUrl, sid: _sid, sobject: 'Flow', id, _suppressError: true }),
     })), {
       journal,   // history-by: the caller's journal — deleted flow versions cannot be re-created
@@ -3866,7 +3881,8 @@ const FieldCleaner = (() => {
       for (const id of di.failedVersionIds) skip.add(id);
     }
     // never the version that now RUNS the flow
-    const dv = await _deleteFlowVersionIds(plan.toDelete.map(v => v.id).filter(id => id !== out.newId), skip, journal);
+    const dv = await _deleteFlowVersionIds(plan.toDelete.map(v => v.id).filter(id => id !== out.newId), skip, journal,
+      Object.fromEntries(plan.toDelete.map(v => [v.id, `${flowName} v${v.num}${v.status ? ` (${v.status})` : ''} deleted`])));
     out.deleted = dv.deleted; out.failed = dv.failed; out.skipped = dv.skipped; out.errors.push(...dv.errors);
     // Undo: whichever mode ran, the version(s) that referenced the field —
     // including the one that WAS active — are among plan.toDelete and so are
@@ -3957,7 +3973,8 @@ const FieldCleaner = (() => {
       } else if (ivErr && window.SFToolkitDebug?.enabled) {
         window.SFToolkitDebug.log('fields', 'warn', `Paused-interview check failed for "${flowName}"`, ivErr);
       }
-      const dv = await _deleteFlowVersionIds(stale.map(v => v.Id), skip, journal);
+      const dv = await _deleteFlowVersionIds(stale.map(v => v.Id), skip, journal,
+        Object.fromEntries(stale.map(v => [v.Id, `${flowName} v${v.VersionNumber}${v.Status ? ` (${v.Status})` : ''} deleted`])));
       out.purged = dv.deleted; out.failed = dv.failed + dv.skipped; out.stillBlocking = dv.failed + dv.skipped;
     } catch (e) {
       if (window.SFToolkitDebug?.enabled) {

@@ -1643,10 +1643,18 @@ const DependencyMap = (() => {
     const p = n => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
-  function depDatesHtml(createdIso, modifiedIso) {
+  // Two short lines, right of the badges: who made this version and when, who
+  // last changed it and when (user 2026-10-07: "created on date by, modified at
+  // date by … and make it more readable").
+  function depDatesHtml(createdIso, modifiedIso, createdBy, modifiedBy) {
     const c = depShortDate(createdIso), m = depShortDate(modifiedIso);
     if (!c && !m) return '';
-    return `<span class="dep-node-dates" style="font-size:10.5px;color:var(--subtext,#706E6B);margin-left:4px" title="This version: created ${c || '?'} · last modified ${m || '?'}">${c ? `created ${c}` : ''}${c && m ? ' · ' : ''}${m ? `modified ${m}` : ''}</span>`;
+    const who = n => n ? ` by ${escHtml(String(n))}` : '';
+    const title = `This version: created ${c || '?'}${createdBy ? ` by ${createdBy}` : ''} · last modified ${m || '?'}${modifiedBy ? ` by ${modifiedBy}` : ''}`;
+    return `<span class="dep-node-dates" title="${escHtml(title)}">` +
+      (c ? `<span class="dep-node-date"><span class="dep-node-date-k">created</span> ${c}${who(createdBy)}</span>` : '') +
+      (m ? `<span class="dep-node-date"><span class="dep-node-date-k">modified</span> ${m}${who(modifiedBy)}</span>` : '') +
+      `</span>`;
   }
 
   function paintManagedSection(host) {
@@ -1992,7 +2000,7 @@ const DependencyMap = (() => {
         // DefinitionId rides along for popup.js (QA F4): versions this
         // re-check DISCOVERS get merged into its flow list, and its
         // deactivate-parent path cannot work without their DefinitionId.
-        query: 'SELECT Id,MasterLabel,Definition.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,ApiVersion,LastModifiedDate FROM Flow',
+        query: 'SELECT Id,MasterLabel,Definition.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,ApiVersion,CreatedDate,CreatedBy.Name,LastModifiedDate,LastModifiedBy.Name FROM Flow',
         _suppressError: true
       });
     } catch (e) {
@@ -2320,7 +2328,7 @@ const DependencyMap = (() => {
         ${flow.VersionNumber ? `<span class="badge dep-type-badge" title="The version this row shows — the Active one, or the newest when none is active. Other versions are listed in 🔗 chains.">v${escHtml(String(flow.VersionNumber))}</span>` : ''}
         ${flow.ApiVersion ? `<span class="badge dep-type-badge" title="Pinned to Salesforce API ${flow.ApiVersion} \u2014 the flow keeps this version's behaviour regardless of the org's release. Compare and change it in \u2699 API versions.">API ${flow.ApiVersion}</span>` : ''}
         <span class="badge ${statusClass}">${flow.Status}</span>
-        ${depDatesHtml(flow.CreatedDate, flow.LastModifiedDate)}
+        ${depDatesHtml(flow.CreatedDate, flow.LastModifiedDate, flow.CreatedBy && flow.CreatedBy.Name, flow.LastModifiedBy && flow.LastModifiedBy.Name)}
         ${scanBadge}
       `;
 

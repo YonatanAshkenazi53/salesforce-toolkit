@@ -1156,7 +1156,7 @@ describe('the QA F1–F7 wiring is really in the source', () => {
   it('F4: the re-check query carries DefinitionId, without which a merged parent could never be deactivated', () => {
     // ApiVersion joined the select 2026-08-30 ("all flows must have api
     // version" — the list cannot show what the scan never reads).
-    expect(dep).toMatch(/SELECT Id,MasterLabel,Definition\.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,ApiVersion,LastModifiedDate FROM Flow/);
+    expect(dep).toMatch(/SELECT Id,MasterLabel,Definition\.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,ApiVersion,CreatedDate,CreatedBy\.Name,LastModifiedDate,LastModifiedBy\.Name FROM Flow/);
   });
 
   it('F5: the cache-primed path surfaces the cache note (e.g. dropped blast-radius detail)', () => {

@@ -979,7 +979,7 @@ async function loadFlows() {
     // ApiVersion / CreatedDate ride along for the Dependencies rows (user
     // 2026-09-13: "version number, api version, status … last modified date
     // and created date") — both are plain Tooling Flow fields.
-    const FLOW_FIELDS = 'Id,MasterLabel,Definition.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,Description,ApiVersion,CreatedDate';
+    const FLOW_FIELDS = 'Id,MasterLabel,Definition.DeveloperName,DefinitionId,VersionNumber,Status,ProcessType,Description,ApiVersion,CreatedDate,CreatedBy.Name,LastModifiedBy.Name';
     const order = ' ORDER BY MasterLabel ASC,VersionNumber ASC';
     let result = await sendBg({
       type: 'SF_QUERY_ALL', orgUrl: loadOrgUrl, sid: loadSid, tooling: true,

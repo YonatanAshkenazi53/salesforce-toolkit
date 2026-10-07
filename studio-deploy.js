@@ -542,6 +542,7 @@ async function renderDeploy() {
           <option value="recycle" ${_recDeleteMode === 'recycle' ? 'selected' : ''}>🗑 Recycle Bin</option>
           <option value="hard" ${_recDeleteMode === 'hard' ? 'selected' : ''}>🔥 Hard delete</option>
         </select></label>
+      <span id="dsDepHardNote" class="ds-dep-hardnote" style="${_recDeleteMode === 'hard' ? '' : 'display:none'}">🔥 Hard-deleted records skip the Recycle Bin — <strong>↩ Roll back cannot bring them back</strong>. Only the Recycle Bin mode can be undone.</span>
       <label class="ds-dep-delmode" style="cursor:pointer" title="Off (the default): the run writes with every flow active, as usual. On: the record-triggered flows on this deployment's objects in the target are switched off after the confirmation, and back on at their exact versions when the run ends — even if it fails. Records written while they are off are never processed by them.">
         <input type="checkbox" id="dsDepFlowPause" ${_depFlowPause.on ? 'checked' : ''}> ⏸ pause record-triggered flows</label>
       <label class="ds-dep-delmode" style="cursor:pointer" title="Off (the default): the run writes with every validation rule active, as usual — a record a rule rejects is refused and named. On: the active validation rules on this deployment's objects in the target org are switched off after you confirm and back on as soon as the run ends (finished, failed or stopped). While they are off they are off for EVERY user of that org, and records written meanwhile are never validated later.">
@@ -579,7 +580,12 @@ async function renderDeploy() {
     else _depObjPath = b.dataset.depScan;
     renderDeploy();
   }));
-  eid('dsDepDeleteMode')?.addEventListener('change', e => { _recDeleteMode = e.target.value; });
+  eid('dsDepDeleteMode')?.addEventListener('change', e => {
+    _recDeleteMode = e.target.value;
+    // the consequence is said the moment the mode is picked, not only at the confirmation
+    const note = eid('dsDepHardNote'); if (note) note.style.display = _recDeleteMode === 'hard' ? '' : 'none';
+    if (_recDeleteMode === 'hard') showToast('🔥 Hard delete: deleted records cannot be brought back by ↩ Roll back — they skip the Recycle Bin.', 'warning', 7000);
+  });
   // Engine settings: the same rules and the same save as the classic page.
   eid('dsDepApiMode')?.addEventListener('change', async e => { await sftkRecSetEngine(p, 'apiMode', e.target.value); renderDeploy(); });
   eid('dsDepBatch')?.addEventListener('change', async e => { e.target.value = await sftkRecSetEngine(p, 'batchSize', e.target.value); });

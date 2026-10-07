@@ -58,6 +58,20 @@ Salesforce answered, it says that instead.
   a field you choose.
 - **Org health** — one card per finding, each with its API cost first.
 
+### Fixed before the first cut (hand tests, 2026-10-07)
+- Lightning Pages: "Finish the check" ran again and showed the same sentence, which read as a
+  dead button. The strip now says it ran again, names the objects that cannot be described
+  and why, and the button reads "Try again".
+- Field Cleaner: the group button for flows offers both ways — "Remove from all N flows ·
+  flows keep running" and "Delete versions · all N flows off" — like the cards do.
+- Field Cleaner History: a deleted flow version is named ("SFTK FC Test Flow v17 (Active)
+  deleted") and a deleted run by its label and state, not by a Salesforce id.
+- Data Deployment: picking Hard delete says at once, next to the mode and in the
+  confirmation, that ↩ Roll back cannot bring hard-deleted records back.
+- Dependencies: every row shows who created the version and who last modified it, as two
+  aligned lines ("created 2026-09-26 by …" / "modified …").
+- The licence page is readable in dark mode; the EULA names the tools that ship.
+
 ### Known limits
 - A Toolkit tool's changes are listed in that tool's History; Data Studio's History lists
   deployments and rollbacks.
