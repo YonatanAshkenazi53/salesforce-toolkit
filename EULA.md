@@ -12,10 +12,10 @@ and any company you install it for) and **Yonatan Ashkenazi** (**"we"**, **"us"*
 It covers the **Admin Toolkit for Salesforce** browser extension in its entirety
 (the **"Software"**) — **both** the Toolkit and Data Studio, **and every one of
 their components**, including but not limited to: Field Cleaner, the flow tools
-and dependency map, Lightning page tools, permission-set tools, picklist tools,
-the Apex debugger and log viewer, org compare and readiness, deployments,
-Reconcile, the Org Seeder, the sync ring, and anything added to the Software in
-future. Nothing in this agreement is limited to one feature.
+and dependency map, Lightning page tools, permission and flow-access tools, the
+Apex debugger and log viewer, data deployments and rollbacks, All open orgs, Org
+Compare, Org health, and anything added to the Software in future. Nothing in
+this agreement is limited to one feature.
 
 **By installing or using the Software you accept this agreement.** If you do not
 accept it, do not install or use the Software. The Software asks you to accept
@@ -165,7 +165,7 @@ is governed by your own agreement with Salesforce.
 The Software runs entirely in your browser. It has no servers, no accounts, no
 analytics and no telemetry, and it sends your data nowhere except the Salesforce
 orgs you are signed in to. See [PRIVACY.md](PRIVACY.md) for the detail, including
-how the Org Seeder handles data you copy between orgs.
+how data you copy between orgs is handled.
 
 ## 8. Paid features in future
 

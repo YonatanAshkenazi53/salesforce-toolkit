@@ -7,7 +7,6 @@
   <style>
     :root { color-scheme: light dark; }
     body { margin: 0; background: #f3f3f3; color: #181818; font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
-    @media (prefers-color-scheme: dark) { body { background: #16171a; color: #e6e6e6; } .doc { background: #1f2024; } .tabs a { color: #8ab4f8; } .tabs a.on { background: #2b2d33; } blockquote { border-color: #444; } code { background: #2b2d33; } }
     .wrap { max-width: 760px; margin: 0 auto; padding: 18px 16px 60px; }
     .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
     .tabs a { padding: 6px 12px; border-radius: 6px; text-decoration: none; color: #0b5cab; border: 1px solid transparent; }
@@ -24,6 +23,10 @@
     table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
     td, th { border: 1px solid #dddbda; padding: 4px 8px; text-align: left; vertical-align: top; }
     .err { color: #b00020; }
+    /* Dark mode LAST: these rules share specificity with the light ones above, so source order decides.
+       QA 2026-10-07 (user screenshot): with the block first, the light .doc / .tabs a.on / code rules won
+       and the page showed near-white text on a white card. */
+    @media (prefers-color-scheme: dark) { body { background: #16171a; color: #e6e6e6; } .doc { background: #1f2024; } .tabs a { color: #8ab4f8; } .tabs a.on { background: #2b2d33; } blockquote { border-color: #444; } code { background: #2b2d33; } }
   </style>
 </head>
 <body>
