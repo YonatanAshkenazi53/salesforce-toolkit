@@ -237,14 +237,16 @@ window.runProfile = function(profileId, targetUrl) {
   // for — the same question ⚖ Reconcile asks — and never fans out.
   const _tgts = p ? profileTargets(p) : [];
   if (p && _tgts.length > 1 && !targetUrl) {
-    showModal(`
-      <div class="ds-modal-header">🚀 Deploy — pick the target</div>
-      <div class="ds-modal-body" style="font-size:12.5px">
+    sftkDialog({
+      title: `🚀 Deploy — pick the target`,
+      sev: 'neutral',
+      bodyHtml: `
         <div style="margin-bottom:8px">A run writes to <strong>one target</strong> at a time. ${esc(orgLabel(p.sourceOrg))} deploys to ${_tgts.length} targets — which one is this run for?</div>
         ${_tgts.map(u => `<button class="ds-btn" style="display:flex;width:100%;margin:4px 0;justify-content:space-between;align-items:center" data-run-target="${esc(u)}">
             <span>${esc(orgLabel(u))} ${prodBadge(u)}</span></button>`).join('')}
-      </div>
-      <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Cancel</button></div>`);
+      `,
+      actions: [{ label: `Cancel`, kind: 'secondary', attrs: 'data-dsaction="closeModal"' }],
+    });
     document.querySelectorAll('[data-run-target]').forEach(b =>
       b.addEventListener('click', () => { closeModal(); window.runProfile(profileId, b.dataset.runTarget); }));
     return;
@@ -340,13 +342,13 @@ window.cloneProfile = function(profileId) {
 };
 
 window.deleteProfile = function(profileId) {
-  showModal(`
-    <div class="ds-modal-header">Delete Profile</div>
-    <div class="ds-modal-body">This will permanently delete this profile and its schedule (if any). Transfer history is kept.</div>
-    <div class="ds-modal-footer">
-      <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-      <button class="ds-btn ds-btn-danger" id="dsConfirmDelete">Delete</button>
-    </div>`);
+  sftkDialog({
+      title: `Delete Profile`,
+      sev: 'red',
+      bodyHtml: `
+This will permanently delete this profile and its schedule (if any). Transfer history is kept.`,
+      actions: [{ label: `Cancel`, kind: 'secondary', attrs: 'data-dsaction="closeModal"' }, { id: 'dsConfirmDelete', label: `Delete`, kind: 'danger' }],
+    });
   eid('dsConfirmDelete')?.addEventListener('click', async () => {
     closeModal();
     _profiles = _profiles.filter(p => p.id !== profileId);

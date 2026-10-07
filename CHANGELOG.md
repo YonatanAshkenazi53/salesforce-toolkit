@@ -71,6 +71,13 @@ Salesforce answered, it says that instead.
 - Dependencies: every row shows who created the version and who last modified it, as two
   aligned lines ("created 2026-09-26 by …" / "modified …").
 - The licence page is readable in dark mode; the EULA names the tools that ship.
+- Every dialog has one shape now, on both pages: the sentence as the title with facts chips,
+  the stakes in a card coloured by severity (red permanent, amber a recorded write, blue
+  reversible), a real list with a filter when it is long, and a pinned bar that keeps the
+  acknowledgement or the typed word beside Cancel and Go — never scrolled away. Production is
+  a red band in the same dialog. The gates, results and questions around the writes (paused
+  interviews, subflow checks, active flows, backups, restores, rename / remove an org, clear
+  history, exports, delete a deployment, the production step) share it.
 
 ### Known limits
 - A Toolkit tool's changes are listed in that tool's History; Data Studio's History lists
