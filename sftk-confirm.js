@@ -75,14 +75,45 @@ function sftkConfirmDestructive(opts) {
         needsCheckbox: opts.revOverride.needsCheckbox !== false, ack: opts.revOverride.ack || '' }
     : (REV[reversibility] || REV.permanent);
 
-  const MAX_SHOWN = 12;
+  // ── The dialog (redesigned 2026-10-07, user: "these type of screens all over
+  // should be better") — one shape for every write, on both pages:
+  //   head   the sentence (title) + facts chips (how many, how reversible, where)
+  //   band   production, when the target is treated as one
+  //   body   the stakes (coloured by severity), the items as a real list with a
+  //          filter when there are many, the caller's extras, the undo hint
+  //   foot   pinned: the acknowledgement / typed word on the left, Cancel · Go
+  //          on the right — never scrolled away
+  // The ids (sftkConfirmGo / Ack / Word / Cancel / Prod / ProdGo / ProdCancel)
+  // and the two-step production flow are unchanged: callers, tests and the
+  // live scripts rely on them.
+  const MAX_SHOWN = 500;
   const shown = items.slice(0, MAX_SHOWN);
   const moreCount = items.length - shown.length;
+  const itemLabel = i => esc(typeof i === 'string' ? i : (i.label || ''));
+  const itemSub = i => (i && typeof i === 'object' && i.sub) ? esc(i.sub) : '';
   const itemsHtml = items.length ? `
-    <ul class="sftk-confirm-items">
-      ${shown.map(i => `<li>${esc(i.label || i)}${i.sub ? ` <small>${esc(i.sub)}</small>` : ''}</li>`).join('')}
-      ${moreCount > 0 ? `<li class="sftk-confirm-more">…and ${moreCount} more</li>` : ''}
-    </ul>` : '';
+    <div class="sftk-cf-items">
+      <div class="sftk-cf-items-head">
+        <span class="sftk-cf-items-count">${items.length} ${items.length === 1 ? 'item' : 'items'}</span>
+        ${items.length > 8 ? `<input class="${C.input} sftk-cf-filter" id="sftkConfirmFilter" placeholder="filter…" autocomplete="off" aria-label="Filter the list">` : ''}
+      </div>
+      <div class="sftk-cf-list sftk-confirm-items" role="list">
+        ${shown.map(i => `<div class="sftk-cf-row" role="listitem"><span class="sftk-cf-row-l">${itemLabel(i)}</span>${itemSub(i) ? `<span class="sftk-cf-row-s">${itemSub(i)}</span>` : ''}</div>`).join('')}
+        ${moreCount > 0 ? `<div class="sftk-cf-row sftk-confirm-more">…and ${moreCount} more — the list is capped; every one of them is included</div>` : ''}
+      </div>
+    </div>` : '';
+
+  // Severity drives the colour: red = permanent (needs the acknowledgement),
+  // blue = reversible by design (Recycle Bin, a new version), amber = a write
+  // that is recorded and may be undone from History.
+  const sev = rev.needsCheckbox ? 'red' : (!opts.revOverride && (reversibility === 'recycle' || reversibility === 'new-version')) ? 'blue' : 'amber';
+  const revWord = rev.needsCheckbox ? 'Permanent' : reversibility === 'recycle' && !opts.revOverride ? 'Recycle Bin · 15 days'
+    : reversibility === 'new-version' && !opts.revOverride ? 'Reversible' : (undoHint && /undo/i.test(undoHint) ? 'Undo in History' : 'Writes');
+  const facts = [
+    items.length ? `${items.length} ${items.length === 1 ? 'item' : 'items'}` : null,
+    revWord,
+    ...(Array.isArray(opts.facts) ? opts.facts.map(String) : []),
+  ].filter(Boolean);
 
   // Data Studio has its own modal classes (ds-*); the popup uses modal-*/btn.
   const ds = !!document.getElementById('dsModalBox');
@@ -92,34 +123,47 @@ function sftkConfirmDestructive(opts) {
   const word = String(typedWord || '').trim();
   const prod = production && (production.label || production === true) ? { label: String(production.label || '') } : null;
   const gateOff = rev.needsCheckbox || !!word;
+  const hostBox = () => document.getElementById(ds ? 'dsModalBox' : 'modalBox');
 
   return new Promise(resolve => {
     window.showModal(`
-      <div class="${C.head}">
-        ${ds ? `${icon} ${esc(title)}` : `<span class="modal-icon">${icon}</span><h2>${esc(title)}</h2>`}
-      </div>
-      <div class="${C.body}">
-        ${itemsHtml}
-        <div class="sftk-confirm-rev ${rev.cls}">${rev.html}</div>
-        ${undoHint ? `<div class="sftk-confirm-undo">↩ ${esc(undoHint)}</div>` : ''}
-        ${extraHtml}
-        ${rev.needsCheckbox ? `
-          <label class="sftk-confirm-ack">
-            <input type="checkbox" id="sftkConfirmAck">
-            ${esc(rev.ack || 'I understand this is permanent')}
-          </label>` : ''}
-        ${word ? `
-          <label class="sftk-confirm-ack sftk-confirm-word">Type <code>${esc(word)}</code> to confirm:
-            <input class="${C.input}" id="sftkConfirmWord" autocomplete="off" style="width:110px;padding:2px 6px">
-          </label>` : ''}
-        ${prod ? `<div class="sftk-confirm-prodnote">🛑 <strong>${esc(prod.label)}</strong> is treated as a PRODUCTION org — one more step asks for its name.</div>` : ''}
-      </div>
-      <div class="${C.foot}">
-        <button class="${C.btn}" id="sftkConfirmCancel">Cancel</button>
-        <button class="${C.primary}" id="sftkConfirmGo" ${gateOff ? 'disabled' : ''}>${esc(confirmLabel)}</button>
+      <div class="sftk-cf sftk-cf-sev-${sev}">
+        <div class="sftk-cf-head">
+          <span class="sftk-cf-icon" aria-hidden="true">${icon}</span>
+          <div class="sftk-cf-headtext">
+            <h2 class="sftk-cf-title">${esc(title)}</h2>
+            <div class="sftk-cf-facts">${facts.map(f => `<span class="sftk-cf-fact">${esc(f)}</span>`).join('')}</div>
+          </div>
+        </div>
+        ${prod ? `<div class="sftk-cf-band sftk-confirm-prodnote">🛑 <strong>${esc(prod.label)}</strong> is treated as a PRODUCTION org — one more step asks for its name.</div>` : ''}
+        <div class="sftk-cf-body">
+          <div class="sftk-cf-stakes sftk-confirm-rev ${rev.cls}">${rev.html}</div>
+          ${itemsHtml}
+          ${extraHtml ? `<div class="sftk-cf-extra">${extraHtml}</div>` : ''}
+          ${undoHint ? `<div class="sftk-cf-undo sftk-confirm-undo">↩ ${esc(undoHint)}</div>` : ''}
+        </div>
+        <div class="sftk-cf-foot">
+          <div class="sftk-cf-gates">
+            ${rev.needsCheckbox ? `
+              <label class="sftk-confirm-ack sftk-cf-ack">
+                <input type="checkbox" id="sftkConfirmAck">
+                <span>${esc(rev.ack || 'I understand this is permanent')}</span>
+              </label>` : ''}
+            ${word ? `
+              <label class="sftk-confirm-ack sftk-confirm-word sftk-cf-word">Type <code>${esc(word)}</code> to confirm
+                <input class="${C.input}" id="sftkConfirmWord" autocomplete="off" spellcheck="false" aria-label="Type ${esc(word)} to confirm">
+              </label>` : ''}
+          </div>
+          <div class="sftk-cf-actions">
+            <button class="${C.btn}" id="sftkConfirmCancel">Cancel</button>
+            <button class="${C.primary} sftk-cf-go" id="sftkConfirmGo" ${gateOff ? 'disabled' : ''}>${esc(confirmLabel)}</button>
+          </div>
+        </div>
       </div>`);
+    hostBox()?.classList.add('sftk-cf-host');
 
     const done = val => {
+      hostBox()?.classList.remove('sftk-cf-host');
       if (typeof window.closeModal === 'function') window.closeModal();
       resolve(val);
     };
@@ -130,23 +174,42 @@ function sftkConfirmDestructive(opts) {
       const wordOk = !word || (document.getElementById('sftkConfirmWord')?.value || '').trim().toUpperCase() === word.toUpperCase();
       go.disabled = !(ackOk && wordOk);
     };
+    // The list filter: client-side, on the rendered rows.
+    document.getElementById('sftkConfirmFilter')?.addEventListener('input', e => {
+      const q = String(e.target.value || '').trim().toLowerCase();
+      document.querySelectorAll('.sftk-cf-list .sftk-cf-row:not(.sftk-confirm-more)').forEach(r => { r.style.display = !q || r.textContent.toLowerCase().includes(q) ? '' : 'none'; });
+    });
     // The production step: the same dialog, the org's name typed exactly.
     const askProduction = () => {
       const box = document.getElementById('sftkConfirmGo')?.closest(ds ? '#dsModalBox' : '.modal, #modalBox') || document.getElementById('sftkConfirmGo')?.parentElement?.parentElement;
       if (!box) return done(true);
       box.innerHTML = `
-        <div class="${C.head}">${ds ? '🛑 Production org' : '<span class="modal-icon">🛑</span><h2>Production org</h2>'}</div>
-        <div class="${C.body}">
-          <p>You're about to <strong>${esc(confirmLabel.replace(/^[^\w]+/, ''))}</strong> in <strong>${esc(prod.label)}</strong>, which is treated as a <strong>PRODUCTION</strong> org — what you change here affects real users now.</p>
-          <p style="margin-top:8px">Type the org name to confirm: <code>${esc(prod.label)}</code></p>
-          <input class="${C.input}" id="sftkConfirmProd" autocomplete="off" placeholder="${esc(prod.label)}" style="width:100%;margin-top:6px">
-        </div>
-        <div class="${C.foot}">
-          <button class="${C.btn}" id="sftkConfirmProdCancel">Cancel</button>
-          <button class="${C.primary}" id="sftkConfirmProdGo" disabled>Proceed</button>
+        <div class="sftk-cf sftk-cf-sev-red">
+          <div class="sftk-cf-head">
+            <span class="sftk-cf-icon" aria-hidden="true">🛑</span>
+            <div class="sftk-cf-headtext">
+              <h2 class="sftk-cf-title">Production org</h2>
+              <div class="sftk-cf-facts"><span class="sftk-cf-fact">${esc(prod.label)}</span><span class="sftk-cf-fact">${esc(confirmLabel.replace(/^[^\w]+/, ''))}</span></div>
+            </div>
+          </div>
+          <div class="sftk-cf-body">
+            <div class="sftk-cf-stakes sftk-confirm-rev sftk-rev-permanent">You're about to <strong>${esc(confirmLabel.replace(/^[^\w]+/, ''))}</strong> in <strong>${esc(prod.label)}</strong>, which is treated as a <strong>PRODUCTION</strong> org — what you change here affects real users now.</div>
+          </div>
+          <div class="sftk-cf-foot">
+            <div class="sftk-cf-gates">
+              <label class="sftk-confirm-ack sftk-cf-word">Type the org name <code>${esc(prod.label)}</code> to confirm
+                <input class="${C.input}" id="sftkConfirmProd" autocomplete="off" spellcheck="false" placeholder="${esc(prod.label)}">
+              </label>
+            </div>
+            <div class="sftk-cf-actions">
+              <button class="${C.btn}" id="sftkConfirmProdCancel">Cancel</button>
+              <button class="${C.primary} sftk-cf-go" id="sftkConfirmProdGo" disabled>Proceed</button>
+            </div>
+          </div>
         </div>`;
       const inp = document.getElementById('sftkConfirmProd'), go = document.getElementById('sftkConfirmProdGo');
       inp?.addEventListener('input', () => { if (go) go.disabled = inp.value.trim() !== prod.label; });
+      inp?.addEventListener('keydown', e => { if (e.key === 'Enter' && go && !go.disabled) go.click(); });
       inp?.focus();
       document.getElementById('sftkConfirmProdCancel')?.addEventListener('click', () => done(false));
       go?.addEventListener('click', () => done(true));
@@ -155,6 +218,8 @@ function sftkConfirmDestructive(opts) {
     document.getElementById('sftkConfirmGo')?.addEventListener('click', () => { if (prod) askProduction(); else done(true); });
     document.getElementById('sftkConfirmAck')?.addEventListener('change', syncGo);
     document.getElementById('sftkConfirmWord')?.addEventListener('input', syncGo);
+    document.getElementById('sftkConfirmWord')?.addEventListener('keydown', e => { const go = document.getElementById('sftkConfirmGo'); if (e.key === 'Enter' && go && !go.disabled) go.click(); });
+    (document.getElementById('sftkConfirmWord') || document.getElementById('sftkConfirmAck') || document.getElementById('sftkConfirmCancel'))?.focus?.();
     if (typeof onRender === 'function') onRender();
   });
 }

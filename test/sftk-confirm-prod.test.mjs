@@ -78,6 +78,6 @@ describe('sftkConfirmDestructive — the production step and the required word',
     expect(SRC).toContain("ack: opts.revOverride.ack || ''");
   });
   it('the first step announces the coming production step', () => {
-    expect(SRC).toContain('is treated as a PRODUCTION org — one more step asks for its name.');
+    expect(SRC).toContain('is treated as a PRODUCTION org — one more step asks for its name.');   // the red band at the top of the dialog (2026-10-07)
   });
 });
