@@ -45,7 +45,7 @@ export default async function (h) {
   const cellSel = `[data-ring-cell^="${pid}|"]`;
   h.log('cell before:', await h.eval(`document.querySelector(${JSON.stringify(cellSel)})?.innerText.replace(/\\s+/g, ' ')`));
   // the column's Scan button scans every deployment against trailheads4 (no changes)
-  const recBtn = await h.eval(`(() => { const b = [...document.querySelectorAll('[data-ring-scantgt]')].find(b => /trailheads4/.test(b.dataset.ringScantgt) && !b.disabled); if (!b) return 'no scan button'; b.click(); return 'clicked ' + b.textContent.trim(); })()`);
+  const recBtn = await h.eval("(() => { const b = document.querySelector('[data-ring-scanall]:not([disabled])'); if (!b) return 'no scan button'; b.click(); return 'clicked ' + b.textContent.trim(); })()");
   h.log('ring scan:', recBtn);
   await h.waitFor("!/scanning|⏳/i.test(document.querySelector(" + JSON.stringify(cellSel) + ")?.innerText || '') && /\\d/.test(document.querySelector(" + JSON.stringify(cellSel) + ")?.innerText || '')", 600000, 2000);
   await h.sleep(1000);

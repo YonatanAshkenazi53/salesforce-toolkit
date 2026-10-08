@@ -66,7 +66,7 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 - Limit: a very large bucket is shown a page at a time, so a huge object can need more than one pass.
 
 ### All open orgs
-- Pick one source org and every other org open in Chrome becomes a column; for every saved deployment you then see, at a glance, how far each org has drifted (missing, changed, or only-in-target counts) without opening each one individually. Opening a cell takes you straight to the 🚀 Deploy page for that pair to fix it. Nothing is crowned or remembered as "the" source: changing it here only changes which org the columns are measured from, and moves or rescans nothing.
+- Pick one source org and every other org open in Chrome becomes a column; for every saved deployment you then see, at a glance, how far each org has drifted (missing, changed, or only-in-target counts) without opening each one individually. One Scan reads every deployment against every open org; opening a cell takes you straight to the 🚀 Deploy page for that pair to fix it. Nothing is crowned or remembered as "the" source: changing it here only changes which org the columns are measured from, and moves or rescans nothing.
 - A record that looks like a duplicate of another is never auto-matched — it's flagged for you to pair by hand instead.
 - Limit: this page only checks a deployment's top-level object, not its child records — check those directly on the Deploy page.
 

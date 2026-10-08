@@ -660,10 +660,10 @@ export const SECTIONS = [
     await rec.fast(() => h.waitFor("!!document.querySelector('[data-ring-cell]')", 60000, 1000));
     await rec.pause(1500);
     await rec.say('Pick the source. Each deployment is a row, each other org a column: how far that org is from the source for that deployment.', 6000);
-    if (await c.has('[data-ring-scantgt]:not([disabled])')) {
-      await rec.click('[data-ring-scantgt]:not([disabled])', 600);
-      await rec.fast(async () => { await h.sleep(2500); await h.waitFor("![...document.querySelectorAll('[data-ring-scantgt], [data-ring-scan1]')].some(b => /⏳/.test(b.textContent)) && ![...document.querySelectorAll('[data-ring-cell]')].some(x => /⏳/.test(x.innerText))", 900000, 2000).catch(() => {}); await h.sleep(1500); });
-      await rec.say('Scan a target, and every deployment is compared with it: records missing, changed, or only in the target. A scan changes nothing.', 6500);
+    if (await c.has('[data-ring-scanall]:not([disabled])')) {
+      await rec.click('[data-ring-scanall]:not([disabled])', 600);
+      await rec.fast(async () => { await h.sleep(2500); await h.waitFor("![...document.querySelectorAll('[data-ring-scanall]')].some(b => /⏳/.test(b.textContent)) && ![...document.querySelectorAll('[data-ring-cell]')].some(x => /⏳/.test(x.innerText))", 900000, 2000).catch(() => {}); await h.sleep(1500); });
+      await rec.say('One Scan compares every deployment with every open org: records missing, changed, or only in the target. A scan changes nothing.', 6500);
     }
     if (await c.has('[data-ring-rec]')) { await rec.point('[data-ring-rec]', 1200); await rec.say('From a cell you open that deployment against that org, and fix it there.', 4000); }
   } },

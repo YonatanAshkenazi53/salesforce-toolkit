@@ -43,9 +43,9 @@ export default async function (h) {
   h.log('RING HEADER:', lines(await h.eval("document.querySelector('#dsMain')?.innerText || ''"), 500));
   const cellsBefore = await h.eval("[...document.querySelectorAll('[data-ring-cell]')].map(c => c.dataset.ringCell.split('|')[1].replace(/https?:\\/\\//, '') + ' → ' + c.innerText.replace(/\\s+/g, ' ').trim().slice(0, 80))");
   h.log(`cells before the scan (${cellsBefore.length}):`, JSON.stringify(cellsBefore.slice(0, 6)));
-  const tgtBtn = await h.eval(`(() => { const b = [...document.querySelectorAll('[data-ring-scantgt]')].find(b => /${TGT}/.test(b.dataset.ringScantgt) && !b.disabled); if (!b) return null; const t = b.innerText.trim(); b.click(); return t; })()`);
-  h.log(`column scan button pressed: ${tgtBtn}`);
-  if (!tgtBtn) throw new Error(`no enabled Scan button on the ${TGT} column`);
+  const tgtBtn = await h.eval("(() => { const b = document.querySelector('[data-ring-scanall]:not([disabled])'); if (!b) return null; const t = b.innerText.trim(); b.click(); return t; })()");
+  h.log(`the page's Scan button pressed: ${tgtBtn}`);
+  if (!tgtBtn) throw new Error('no enabled Scan button on the page');
   await h.waitFor("![...document.querySelectorAll('[data-ring-cell]')].some(c => /scanning|…|⏳/i.test(c.innerText)) && [...document.querySelectorAll('[data-ring-cell]')].some(c => /\\d/.test(c.innerText))", 600000, 2000);
   await h.sleep(1500);
   const cellsAfter = await h.eval("[...document.querySelectorAll('[data-ring-cell]')].map(c => c.innerText.replace(/\\s+/g, ' ').trim().slice(0, 140))");

@@ -6428,3 +6428,6 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 .sftk-cf-sev-neutral { --cf: var(--brand); --cf-bg: var(--bg); }
 .sftk-cf-sev-neutral .sftk-cf-fact:nth-child(2) { color: var(--subtext); border-color: var(--border); background: var(--bg); }
 .sftk-cf-sev-good { --cf: var(--success); --cf-bg: rgba(46, 132, 74, .08); }
+
+/* All open orgs: the one Scan button above the matrix (2026-10-08) */
+.ds-ring-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 10px; }
