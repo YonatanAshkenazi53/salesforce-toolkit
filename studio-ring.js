@@ -122,7 +122,7 @@ function _ringRenderMatrix() {
     const badge = live ? '' : `<span class="ds-ring-offline" title="Org not open in a Chrome tab — open it to scan or push">⚫</span>`;
     if (!s) return `<div class="ds-ring-cell ds-ring-cell-unknown" data-ring-cell="${esc(p.id)}|${esc(tUrl)}">
       ${badge}<span class="ds-ring-unknown">not scanned</span>
-      <button class="ds-btn ds-btn-xs" data-ring-scan1="${esc(p.id)}|${esc(tUrl)}" ${live ? '' : 'disabled'}>🔎</button>
+      <span class="ds-ring-cell-acts"><button class="ds-btn ds-btn-xs" data-ring-rec="${esc(p.id)}|${esc(tUrl)}" ${live ? '' : 'disabled'} title="Open this deployment against this org">⚖</button></span>
     </div>`;
     const drift = (s.missing || 0) + (s.changed || 0) + (s.extra || 0) + (s.ambiguous || 0);
     const fMiss = s.fileMiss || 0;
@@ -150,26 +150,26 @@ function _ringRenderMatrix() {
            </span>`}
       <span class="ds-ring-age${stale ? ' ds-ring-stale' : ''}" title="${stale ? 'Scan is over a day old' : ''}">${esc(age)}</span>
       <span class="ds-ring-cell-acts">
-        <button class="ds-btn ds-btn-xs" data-ring-scan1="${esc(p.id)}|${esc(tUrl)}" ${live ? '' : 'disabled'} title="Re-scan this org">🔎</button>
-        <button class="ds-btn ds-btn-xs" data-ring-rec="${esc(p.id)}|${esc(tUrl)}" ${live ? '' : 'disabled'} title="Open Reconcile against this org (fresh scan)">⚖</button>
+        <button class="ds-btn ds-btn-xs" data-ring-rec="${esc(p.id)}|${esc(tUrl)}" ${live ? '' : 'disabled'} title="Open this deployment against this org (a fresh read of both)">⚖</button>
       </span>
     </div>`;
   };
 
+  // ONE scan for the whole page (user 2026-10-08: "why do we need two scan
+  // buttons? we need scan, and if there's more than two targets scan both"):
+  // every deployment against every open target, one after the other. A cell's
+  // ⚖ opens that one pair; nothing else here scans.
+  const liveTargets = targets.filter(t => !lsKnown || [...ls].some(u => _orgKey(u) === _orgKey(t)));
+  const scanLabel = `🔎 Scan — ${profiles.length} deployment${profiles.length === 1 ? '' : 's'} × ${liveTargets.length} org${liveTargets.length === 1 ? '' : 's'}`;
   body.innerHTML = `
+    <div class="ds-ring-toolbar">
+      <button class="ds-btn ds-btn-primary" data-ring-scanall ${liveTargets.length ? '' : 'disabled'} title="Compares every deployment below with every open target org — ${profiles.length * liveTargets.length} scan${profiles.length * liveTargets.length === 1 ? '' : 's'}, nothing is written">${scanLabel}</button>
+      <span class="ds-oc-sub">${liveTargets.length < targets.length ? `${targets.length - liveTargets.length} org${targets.length - liveTargets.length === 1 ? ' is' : 's are'} not open in a tab and will be skipped · ` : ''}counts are missing · changed · only in target, for the root object of each deployment</span>
+    </div>
     <div class="ds-ring-matrix" style="--ring-cols:${targets.length}">
       <div class="ds-ring-head">
         <div class="ds-ring-rowhdr">Deployment <span class="ds-oc-sub">from ${esc(orgLabel(ring.sourceUrl))}</span></div>
-        ${targets.map(t => {
-          // Scanning belongs to a TARGET: the button sits on the org that is
-          // measured (user 2026-10-05, on a 🔎 Scan that sat in the source
-          // column: "why do i have a scan button in the source? … we need to be
-          // able to scan only the targets"). It scans every deployment against
-          // this one org; the 🔎 in a cell scans one deployment.
-          const liveT = !lsKnown || [...ls].some(u => _orgKey(u) === _orgKey(t));
-          return `<div class="ds-ring-colhdr" title="${esc(t)}">${esc(orgLabel(t))} ${prodBadge(t)}
-            <button class="ds-btn ds-btn-xs" data-ring-scantgt="${esc(t)}" ${liveT ? '' : 'disabled'} title="Compare ${profiles.length === 1 ? 'the deployment' : `all ${profiles.length} deployments`} with ${esc(orgLabel(t))} and refresh the counts — nothing is changed">🔎 Scan${profiles.length > 1 ? ` all ${profiles.length}` : ''}</button></div>`;
-        }).join('')}
+        ${targets.map(t => `<div class="ds-ring-colhdr" title="${esc(t)}">${esc(orgLabel(t))} ${prodBadge(t)}</div>`).join('')}
       </div>
       ${profiles.map(p => `
         <div class="ds-ring-row">
@@ -180,13 +180,9 @@ function _ringRenderMatrix() {
           ${targets.map(t => cell(p, t)).join('')}
         </div>`).join('')}
     </div>
-    <div class="ds-pk-note" style="margin-top:8px">Counts refresh when you scan a target — the 🔎 on an org's column compares every deployment with that org, the 🔎 in a cell compares one. Cells show missing · changed · only-in-target.
-    ⚖ opens Reconcile for that one target — fixes happen one target at a time. Every row flows FROM the source you picked above.</div>`;
+    <div class="ds-pk-note" style="margin-top:8px">🔎 Scan compares every deployment with every open target — nothing is written. Cells show missing · changed · only in target for the deployment's root object; child objects are checked on the Deploy page. ⚖ opens that deployment against that one org, where fixes happen. Every row flows FROM the source you picked above.</div>`;
 
-  body.querySelectorAll('[data-ring-scan1]').forEach(b =>
-    b.addEventListener('click', () => { const [pid, t] = b.dataset.ringScan1.split('|'); _ringScanOne(pid, t, b); }));
-  body.querySelectorAll('[data-ring-scantgt]').forEach(b =>
-    b.addEventListener('click', () => _ringScanTarget(b.dataset.ringScantgt, b)));
+  body.querySelector('[data-ring-scanall]')?.addEventListener('click', () => _ringScanAll());
   body.querySelectorAll('[data-ring-rec]').forEach(b =>
     b.addEventListener('click', () => { const [pid, t] = b.dataset.ringRec.split('|'); _ringOpenReconcile(pid, t); }));
 }
@@ -280,27 +276,29 @@ async function _ringScanOne(profileId, tgtUrl, btn) {
   _ringRenderMatrix();
 }
 
-// Every deployment against ONE target — the button on that org's column.
-async function _ringScanTarget(tgtUrl, btn) {
+// Every deployment against every open target, one after the other — the one
+// Scan button of the page. Progress is written on the button, which the matrix
+// re-render replaces each pass, so it is found again every time.
+let _ringScanAllBusy = false;
+async function _ringScanAll() {
+  if (_ringScanAllBusy) return;
   const ls = _liveOrgSet();
-  // Unknown liveness (enumeration not completed) ≠ "closed" — attempt the
-  // scan; _ringScanOne toasts a failure honestly.
   const lsKnown = (typeof _liveKnown === 'function') ? _liveKnown() : ls.size > 0;
-  if (lsKnown && ![...ls].some(u => _orgKey(u) === _orgKey(tgtUrl))) return;   // known-closed org
+  const targets = _ringTargets().filter(t => !lsKnown || [...ls].some(u => _orgKey(u) === _orgKey(t)));
   const rows = _profiles.filter(p => p.tree && !p.ephemeral);
-  if (btn) { btn.disabled = true; }
+  const total = targets.length * rows.length;
+  if (!total) return;
+  _ringScanAllBusy = true;
   let done = 0;
-  for (const p of rows) {
-    // _ringScanOne re-renders the matrix, destroying the button we disabled
-    // — re-find it each pass so progress stays visible and the freshly
-    // rendered button stays disabled (no second scan of the same org from a
-    // double click).
-    btn = [...document.querySelectorAll('[data-ring-scantgt]')].find(x => x.dataset.ringScantgt === tgtUrl) || btn;
-    if (btn) { btn.disabled = true; btn.textContent = `⏳ ${++done}/${rows.length}`; }
-    else ++done;
-    await _ringScanOne(p.id, tgtUrl, null);
+  const paint = () => { const b = document.querySelector('[data-ring-scanall]'); if (b) { b.disabled = true; b.textContent = `⏳ ${done} / ${total}`; } };
+  try {
+    paint();
+    for (const t of targets) for (const p of rows) { paint(); await _ringScanOne(p.id, t, null); done++; }
+  } finally {
+    _ringScanAllBusy = false;
+    _ringRenderMatrix();
+    showToast(`🔎 ${done} of ${total} scan${total === 1 ? '' : 's'} done — ${rows.length} deployment${rows.length === 1 ? '' : 's'} against ${targets.length} org${targets.length === 1 ? '' : 's'}`, 'success', 5000);
   }
-  _ringRenderMatrix();
 }
 
 // Per-cell repair: set the picked pair on the SAVED deployment (it is only the

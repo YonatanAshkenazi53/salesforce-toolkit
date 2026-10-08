@@ -146,6 +146,10 @@ the rest were the scripts themselves (listed at the end). All orgs end as they b
     the fact — now next to the Delete mode (note + toast) and in the confirmation.
 15. Dependencies rows: created/modified dates without the people — now "created … by …" /
     "modified … by …" as two aligned lines (Tooling `CreatedBy.Name`, `LastModifiedBy.Name`).
+16. All open orgs had a scan button per target column and one per cell (user 2026-10-08:
+    "why do we need two scan buttons?") — now ONE Scan for the page, every deployment
+    against every open org, progress on the button; cells keep ⚖ only.
+
 Done the same evening: `sftkConfirmDestructive` redesigned (34 callers inherit it) and a shared
 `sftkDialog` for the rest; 22 hand-built dialogs migrated (popup: the Flows gates, backups,
 restores, delete results; Data Studio: rename / remove org, swap orgs, clear cached / clear

@@ -71,6 +71,8 @@ Salesforce answered, it says that instead.
 - Dependencies: every row shows who created the version and who last modified it, as two
   aligned lines ("created 2026-09-26 by …" / "modified …").
 - The licence page is readable in dark mode; the EULA names the tools that ship.
+- All open orgs: one 🔎 Scan for the page — every deployment against every open org, one
+  after the other — instead of a button per column and one per cell. A cell keeps ⚖.
 - Every dialog has one shape now, on both pages: the sentence as the title with facts chips,
   the stakes in a card coloured by severity (red permanent, amber a recorded write, blue
   reversible), a real list with a filter when it is long, and a pinned bar that keeps the

@@ -409,22 +409,25 @@ describe('empty live set = unknown, not closed', () => {
     expect(off).toContain('(not open)');
   }));
 
-  it('a target scan skips only a KNOWN-closed org', () => {
-    const src = RING.slice(RING.indexOf('async function _ringScanTarget('),
-                           RING.indexOf('\n}', RING.indexOf('async function _ringScanTarget(')));
-    expect(src).toMatch(/lsKnown && !\[\.\.\.ls\]\.some/);
+  it('the page scan skips only a KNOWN-closed org', () => {
+    const src = RING.slice(RING.indexOf('async function _ringScanAll('), RING.indexOf('// Per-cell repair'));
+    expect(src).toMatch(/filter\(t => !lsKnown \|\| \[\.\.\.ls\]\.some/);
   });
 
-  // User 2026-10-05, on a 🔎 Scan that sat in the source column: "why do i have
-  // a scan button in the source? … we need to be able to scan only the targets".
-  it('scanning sits on the TARGETS: a button per target column and one per cell, none in the source column', () => {
-    expect(RING).not.toContain('data-ring-scanall');
+  // User 2026-10-05 ("why do i have a scan button in the source?") and 2026-10-08
+  // ("why do we need two scan buttons? we need scan, and if there's more than two
+  // targets scan both"): ONE Scan button for the page, above the matrix, that
+  // compares every deployment with every open target; cells keep only ⚖.
+  it('scanning is ONE button for the whole page; cells and columns carry no scan button', () => {
+    expect(RING).toContain('data-ring-scanall');
+    expect(RING).not.toContain('data-ring-scantgt');
+    expect(RING).not.toContain('data-ring-scan1');
     expect(RING).not.toContain('ds-ring-row-acts');
-    expect(RING).toContain('data-ring-scantgt="${esc(t)}"');
-    expect(RING).toContain("b.addEventListener('click', () => _ringScanTarget(b.dataset.ringScantgt, b)));");
-    expect(RING).toContain('data-ring-scan1="${esc(p.id)}|${esc(tUrl)}"');
-    const src = RING.slice(RING.indexOf('async function _ringScanTarget('), RING.indexOf('// Per-cell repair'));
-    expect(src).toContain('await _ringScanOne(p.id, tgtUrl, null);');
+    expect(RING).toContain("body.querySelector('[data-ring-scanall]')?.addEventListener('click', () => _ringScanAll());");
+    const all = RING.slice(RING.indexOf('async function _ringScanAll('), RING.indexOf('// Per-cell repair'));
+    expect(all).toContain('for (const t of targets) for (const p of rows) { paint(); await _ringScanOne(p.id, t, null); done++; }');
+    expect(all).toContain('_ringScanAllBusy = false;');
+    expect(RING).toContain('data-ring-rec="${esc(p.id)}|${esc(tUrl)}"');
   });
 
   it('matrix cells only badge ⚫ / disable 🔎 when liveness is known', () => {
@@ -436,7 +439,7 @@ describe('empty live set = unknown, not closed', () => {
   // size>0 re-disabled every open target in exactly that state.
   it('every liveness consumer branches on _liveKnown(), not set size', () => {
     // (the fan-out dialog and the Sync Plan — two consumers — were retired 2026-09-14)
-    expect(RING.match(/typeof _liveKnown === 'function'/g)?.length).toBe(2);
+    expect(RING.match(/typeof _liveKnown === 'function'/g)?.length).toBe(2);   // the matrix, a cell scan, the page scan (2026-10-08)
     expect(CORE).toMatch(/function _liveKnown\(\) \{ return _allSessionsOk; \}/);
   });
 
