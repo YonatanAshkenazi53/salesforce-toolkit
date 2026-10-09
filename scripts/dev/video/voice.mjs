@@ -1,24 +1,36 @@
-// The narration: every caption of the recorded sections, spoken into a WAV
-// file by a voice that is already on this PC (Windows System.Speech — offline,
-// the text goes nowhere, nothing is installed).
+// The narration: every caption of the recorded sections, spoken into a file.
+//
+// Two engines:
+//   edge (the default since 2026-10-09, user: "less robotic", "like NotebookLM")
+//        — Microsoft's neural voices through the edge-tts package (the voices
+//        Edge's Read Aloud uses), MP3 + a subtitle file whose last cue gives the
+//        duration. The caption text goes to Microsoft's speech endpoint.
+//        VOICE_NAME=en-US-AndrewNeural (default)  RATE="+0%"  PY=<python.exe>
+//   sapi — Windows System.Speech (offline, the old robotic voice) → WAV.
+//        VOICE_ENGINE=sapi VOICE_NAME="Microsoft David Desktop" RATE=1
 //
 //   REC_DIR=dist/video/rec node scripts/dev/video/voice.mjs
-//   VOICE="Microsoft David Desktop"  (default — the installed male voice)   RATE=1  (-10 … 10)
 //
-// Files land in REC_DIR/voice/<hash>.wav, keyed by a hash of text + voice +
-// rate, so a caption that did not change is not spoken again. compose.mjs
-// (VOICE=1) finds them through the same hash (voiceFile below).
+// Files land in REC_DIR/voice/<hash>.(mp3|wav), keyed by a hash of engine +
+// text + voice + rate, so a caption that did not change is not spoken again.
+// compose.mjs (VOICE=1) finds them through the same hash (voiceFile below) and
+// reads their length with voiceSeconds.
 //
-// The speech commands go to PowerShell on its standard input: this PC does not
-// run PowerShell script FILES, and that setting is left as it is.
+// SAPI's speech commands go to PowerShell on its standard input: this PC does
+// not run PowerShell script FILES, and that setting is left as it is.
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-export const VOICE = process.env.VOICE_NAME || 'Microsoft David Desktop';
-export const RATE = Number.isFinite(Number(process.env.RATE)) && process.env.RATE !== undefined && process.env.RATE !== '' ? Number(process.env.RATE) : 1;
+export const ENGINE = (process.env.VOICE_ENGINE || 'edge').toLowerCase() === 'sapi' ? 'sapi' : 'edge';
+export const VOICE = process.env.VOICE_NAME || (ENGINE === 'edge' ? 'en-US-AndrewNeural' : 'Microsoft David Desktop');
+export const RATE = ENGINE === 'edge'
+  ? (process.env.RATE && /^[+-]\d+%$/.test(process.env.RATE) ? process.env.RATE : '+0%')
+  : (Number.isFinite(Number(process.env.RATE)) && process.env.RATE !== undefined && process.env.RATE !== '' ? Number(process.env.RATE) : 1);
+// The Python that has edge-tts (the bare `python` on this PC can be the Store alias).
+const PY = process.env.PY || 'C:/Users/yonas/AppData/Local/Python/pythoncore-3.14-64/python.exe';
 
 // What is said for a caption: the caption itself, minus what a voice should not read aloud.
 export function spokenText(caption) {
@@ -32,8 +44,18 @@ export function spokenText(caption) {
 export function voiceFile(dir, caption) {
   const text = spokenText(caption);
   if (!text) return null;
-  const hash = createHash('sha1').update(`${VOICE}|${RATE}|${text}`).digest('hex').slice(0, 16);
-  return join(dir, 'voice', `${hash}.wav`);
+  const hash = createHash('sha1').update(`${ENGINE === 'edge' ? 'edge|' : ''}${VOICE}|${RATE}|${text}`).digest('hex').slice(0, 16);
+  return join(dir, 'voice', `${hash}.${ENGINE === 'edge' ? 'mp3' : 'wav'}`);
+}
+// Seconds of a voice file: a WAV from its header; an MP3 from the subtitle file
+// edge-tts wrote beside it (the last cue's end, plus the tail it leaves after
+// the final word).
+export function voiceSeconds(file) {
+  if (/\.wav$/i.test(file)) return wavSeconds(file);
+  const srt = file.replace(/\.mp3$/i, '.srt');
+  if (!existsSync(srt)) return 0;
+  const ends = [...readFileSync(srt, 'utf8').matchAll(/--> (\d\d):(\d\d):(\d\d)[,.](\d{3})/g)].map(m => (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) + (+m[4]) / 1000);
+  return ends.length ? Math.max(...ends) + 0.25 : 0;
 }
 // Seconds of a PCM WAV file, from its own header (data bytes / byte rate).
 export function wavSeconds(file) {
@@ -63,7 +85,12 @@ export function speakAll(dir) {
   mkdirSync(join(dir, 'voice'), { recursive: true });
   const list = texts.map(t => ({ text: spokenText(t), file: voiceFile(dir, t) })).filter(x => x.file);
   const todo = list.filter(x => !existsSync(x.file) || statSync(x.file).size < 1000);
-  if (todo.length) {
+  if (todo.length && ENGINE === 'edge') {
+    for (const it of todo) {
+      const r = spawnSync(PY, ['-m', 'edge_tts', '--voice', VOICE, `--rate=${RATE}`, '--text', it.text, '--write-media', it.file, '--write-subtitles', it.file.replace(/\.mp3$/i, '.srt')], { encoding: 'utf8' });
+      if (r.status !== 0 || !existsSync(it.file)) throw new Error(`edge-tts could not speak a caption: ${(r.stderr || r.stdout || '').trim().slice(0, 300)}`);
+    }
+  } else if (todo.length) {
     const listFile = join(dir, 'voice', 'list.json');
     writeFileSync(listFile, JSON.stringify(todo), 'utf8');
     const q = s => `'${String(s).replace(/'/g, "''")}'`;
@@ -84,12 +111,12 @@ export function speakAll(dir) {
   }
   const missing = list.filter(x => !existsSync(x.file));
   if (missing.length) throw new Error(`${missing.length} caption(s) have no voice file`);
-  const total = list.reduce((n, x) => n + wavSeconds(x.file), 0);
+  const total = list.reduce((n, x) => n + voiceSeconds(x.file), 0);
   return { captions: list.length, made: todo.length, seconds: total };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const dir = resolve(process.env.REC_DIR || 'dist/video/rec');
   const r = speakAll(dir);
-  console.log(`voice: ${VOICE}, rate ${RATE} — ${r.captions} captions, ${r.made} newly spoken, ${r.seconds.toFixed(0)} s of speech → ${join(dir, 'voice')}`);
+  console.log(`voice: ${ENGINE} ${VOICE}, rate ${RATE} — ${r.captions} captions, ${r.made} newly spoken, ${r.seconds.toFixed(0)} s of speech → ${join(dir, 'voice')}`);
 }

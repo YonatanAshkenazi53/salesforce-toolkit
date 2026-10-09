@@ -376,7 +376,10 @@ function renderHistory() {
             ${run.sequenceName && !isRollback ? `<span class="ds-chip" title="This run was one step of the sequence “${esc(run.sequenceName)}”. ↩ Roll back sequence undoes EVERY step of that sequence run, not only this one (live 2026-09-23).">🔗 step of “${esc(run.sequenceName)}”</span>` : ''}
             ${run._archived ? '<span class="ds-chip" title="Loaded from the 📦 on-PC archive (IndexedDB) — runs that aged past the 100-run hot cap live there instead of being deleted">📦 archived</span>' : ''}
             ${run.scheduledRun ? '<span class="ds-chip">📅 scheduled</span>' : ''}
+            ${run.stopped === 'pause' ? '<span class="ds-chip" title="You paused this run; it stopped after the batch in flight. Nothing is half-written.">⏸ paused</span>' : run.stopped === 'closed' ? '<span class="ds-chip" title="The page was closed while this run was on; the engine stopped after the batch in flight. Nothing is half-written.">⏹ page closed</span>' : run.stopped === 'cancel' ? '<span class="ds-chip">⏹ cancelled</span>' : ''}
             <span class="ds-history-time">${timeAgo(run.startedAt)}</span>
+            ${run.stopped && run.selected && profExists ? `<button class="ds-btn ds-btn-xs ds-btn-primary" data-dsaction="continueRun" data-arg="${esc(run.id)}"
+              title="Open this deployment with the records you had ticked and the run did not reach ticked again — the scan decides which those are; nothing already written is touched.">▶ Continue</button>` : ''}
             ${retryable ? `<button class="ds-btn ds-btn-xs ds-btn-primary" data-dsaction="retryFailed" data-arg="${esc(run.id)}"
               title="Open this deployment with the ${totalFailed} failed record(s) ticked under 🔴 Insert. Records that already succeeded are not touched.">↻ Retry failed (${totalFailed})</button>` : ''}
             ${undoSt.show ? `<button class="ds-btn ds-btn-xs ${undoSt.disabled ? '' : 'ds-btn-danger'}" ${undoSt.disabled ? 'disabled' : ''} data-dsaction="rollbackRun" data-arg="${esc(run.id)}"

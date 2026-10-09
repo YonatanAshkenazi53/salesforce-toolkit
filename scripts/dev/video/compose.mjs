@@ -26,7 +26,7 @@
 // the silent one, and voice, caption and screen never drift apart.
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import { join, dirname, resolve, basename } from 'node:path';
-import { speakAll, voiceFile, wavSeconds, VOICE as VOICE_NAME, RATE as VOICE_RATE } from './voice.mjs';
+import { speakAll, voiceFile, voiceSeconds, VOICE as VOICE_NAME, RATE as VOICE_RATE, ENGINE as VOICE_ENGINE } from './voice.mjs';
 
 const FAST = Number(process.env.FAST || 8);
 const W = 1920, H = 1080, PAGE_H = 960;
@@ -71,14 +71,14 @@ export default async function (h) {
   let spoken = 0;
   if (SPEAK) {
     const v = speakAll(dir);
-    h.log(`voice: ${VOICE_NAME}, rate ${VOICE_RATE} — ${v.captions} captions, ${v.made} newly spoken, ${v.seconds.toFixed(0)} s of speech`);
+    h.log(`voice: ${VOICE_ENGINE} ${VOICE_NAME}, rate ${VOICE_RATE} — ${v.captions} captions, ${v.made} newly spoken, ${v.seconds.toFixed(0)} s of speech`);
     let shift = 0, busyUntil = 0;
     for (const c of said) {
       let start = c.tau0 + shift;
       if (start < busyUntil) { shift += busyUntil - start; start = busyUntil; }
       breaks.push({ at: c.tau0, shift });
       const f = voiceFile(dir, c.text);
-      if (f && existsSync(f)) { c.voice = f; c.dur = wavSeconds(f) * 1000; busyUntil = start + c.dur + 350; spoken++; }
+      if (f && existsSync(f)) { c.voice = f; c.dur = voiceSeconds(f) * 1000; busyUntil = start + c.dur + 350; spoken++; }
     }
     said.busyUntil = busyUntil;
   }

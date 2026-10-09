@@ -2626,6 +2626,20 @@ async function runReconcile(profile, objType, buckets, opts) {
   // Stream the engine's per-batch progress into the reconcile log (also
   // keeps the worker alive across the multi-phase pipeline).
   const recPort = _openRunPort(sftkRunProgressHandler(prog));   // the live run view (sftk-run-progress.js)
+  // ⏸ Pause: the engine stops after the batch in flight (never mid-write); the
+  // run's History entry says so and offers ▶ Continue. Closing the page does the
+  // same — said here before anyone tries the tab's ✕ (user 2026-10-09).
+  let stoppedWhy = '';
+  if (prog && prog.parentElement && !eid('dsRunPauseBar')) {
+    prog.insertAdjacentHTML('beforebegin', `<div class="ds-run-pausebar" id="dsRunPauseBar">
+      <button class="ds-btn ds-btn-sm" id="dsRunPauseBtn" title="Stops after the batch being written right now — nothing is half-written. ▶ Continue from History picks up the records that were not reached.">⏸ Pause</button>
+      <span class="ds-run-pausenote">Keep this tab open: closing it pauses the run after the batch in flight. Paused runs continue from History.</span>
+    </div>`);
+    eid('dsRunPauseBtn')?.addEventListener('click', () => {
+      try { recPort?.postMessage({ cmd: 'pause' }); } catch (_) {}
+      const btn = eid('dsRunPauseBtn'); if (btn) { btn.disabled = true; btn.textContent = '⏸ Pausing — finishing the batch in flight…'; }
+    });
+  }
 
   // ↩ RESTORE POINT (studio-undo.js) — the target's before-image of every
   // object this run can write, plus the SOURCE's root object when the run
@@ -2809,6 +2823,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         srcOrgUrl: tgtSess.orgUrl, srcSid: tgtSess.sid,   // read from TARGET
         tgtOrgUrl: srcSess.orgUrl, tgtSid: srcSess.sid    // write to SOURCE
       });
+      if (res && res.stopped) stoppedWhy = res.stopped;
       const s = res.summary?.[objType] || {};
       counts.pulled       += (s.created || 0);
       counts.pulledFailed += (s.failed  || 0);
@@ -2857,6 +2872,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
         tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid
       });
+      if (res && res.stopped) stoppedWhy = res.stopped;
       const s = res.summary?.[objType] || {};
       // M3c — remember the srcId→tgtId pairs this push just created (root
       // object). sftkLearnPairs no-ops for ephemeral profile ids; the guard
@@ -2893,6 +2909,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         if (obj === objType) continue;   // self-relationship: counts already in root line
         if (_seenRootObj.has(obj)) continue;   // the engine's summary is per object
         _seenRootObj.add(obj);
+        if (res && res.stopped) stoppedWhy = res.stopped;
         const cSum = res.summary?.[obj] || {};
         bumpChild(obj, 'created', cSum.created || 0);
         bumpChild(obj, 'failed',  cSum.failed  || 0);
@@ -2967,6 +2984,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         srcOrgUrl: srcSess.orgUrl, srcSid: srcSess.sid,
         tgtOrgUrl: tgtSess.orgUrl, tgtSid: tgtSess.sid
       });
+      if (res && res.stopped) stoppedWhy = res.stopped;
       const s2 = res.summary?.[obj] || {};
       // Same upsert split as the root push — upsert-updates are not creates.
       if (s2.upsertCreated != null || s2.upsertUpdated != null) {
@@ -3300,6 +3318,10 @@ async function runReconcile(profile, objType, buckets, opts) {
     tgtOrgUrl:    profile.targetOrg,
     startedAt,
     completedAt:  new Date().toISOString(),
+    // what was ticked, per tree path — ▶ Continue re-ticks what a paused or
+    // interrupted run did not reach (the next scan says which those are)
+    selected:     { '': treePushIds, ...Object.fromEntries(childActs.filter(a => a.groupA.length).map(a => [a.pathKey, [...a.groupA]])) },
+    ...(stoppedWhy ? { stopped: stoppedWhy } : {}),
     status,
     undo: { ...undoStub, ...runEnd, runEndByOrg },
     summary: {
@@ -3335,8 +3357,9 @@ async function runReconcile(profile, objType, buckets, opts) {
   });
   await storageSaveHistory();
 
-  log('✅', `Reconcile complete — refreshing state…`);
+  log(stoppedWhy ? '⏸' : '✅', stoppedWhy === 'pause' ? 'Paused — the records not reached are still to deploy; ▶ Continue from History.' : stoppedWhy === 'closed' ? 'Stopped — the page was closed mid-run; ▶ Continue from History.' : stoppedWhy ? 'Cancelled — refreshing state…' : `Reconcile complete — refreshing state…`);
   window._sftkRunActive = false;
+  eid('dsRunPauseBar')?.remove();
   // Remember which child sections had scans BEFORE the root refresh wipes
   // lastScan.children — they get re-scanned right after so the accordion
   // reflects the new reality (and just-created orphans are visible).

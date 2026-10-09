@@ -211,7 +211,7 @@ let _depRetryNote = '';
 // (rowState is the classic parent rule). Changed rows are counted, not ticked:
 // which org wins a row is the user's call.
 function sftkDeployRetryPicks(scan, byPath, rowState) {
-  const out = { picks: {}, found: 0, inChanged: 0, lost: 0, total: 0 };
+  const out = { picks: {}, found: 0, inChanged: 0, inTarget: 0, lost: 0, total: 0 };
   for (const [pathKey, ids] of Object.entries(byPath || {})) {
     const want = new Set(ids || []);
     out.total += want.size;
@@ -233,8 +233,10 @@ function sftkDeployRetryPicks(scan, byPath, rowState) {
     };
     const hit = (s.missingInTarget || []).filter(r => want.has(r.sourceId) && ok(r)).map(r => r.sourceId);
     const chg = (s.changed || []).filter(r => want.has(r.sourceId)).length;
+    // identical now = written before a stop (or by hand since) — ▶ Continue says so
+    const same = (s.identical || []).filter(r => want.has(r.sourceId)).length;
     if (hit.length) out.picks[pathKey] = hit;
-    out.found += hit.length; out.inChanged += chg;
+    out.found += hit.length; out.inChanged += chg; out.inTarget += same;
     out.lost += Math.max(0, want.size - hit.length - chg);
   }
   return out;
@@ -245,8 +247,19 @@ function sftkDeployRetryLine(r) {
     + (r.inChanged ? ` ${r.inChanged} are under 🟡 Changed — pick which org wins each row.` : '')
     + (r.lost ? ` ${r.lost} are not in an Insert list of the last scan (already in the target, outside the scan, or an object not scanned yet) — 🔄 Refresh state measures again.` : '');
 }
-window.sftkDeployRetry = function (profileId, byPath, targetUrl) {
-  _depRetry = { profileId, byPath: byPath || {} };
+// PURE. The sentence for ▶ Continue (a paused or interrupted run): what was
+// ticked then is ticked again where the scan still lists it as missing.
+function sftkDeployContinueLine(r) {
+  if (!r || !r.total) return '';
+  const written = r.inTarget || 0, lost = Math.max(0, (r.lost || 0) - written);
+  return `▶ Continue: ${r.found} of the ${r.total} record(s) you had ticked are ticked again under 🔴 Insert — the run did not reach them.`
+    + (written ? ` ${written} ${written === 1 ? 'is' : 'are'} in the target already (written before the stop) and ${written === 1 ? 'is' : 'are'} left alone.` : '')
+    + (r.inChanged ? ` ${r.inChanged} are under 🟡 Changed — pick which org wins each row.` : '')
+    + (lost ? ` ${lost} ${lost === 1 ? 'is' : 'are'} not listed by this scan (a record that failed keeps its place under ↻ Retry failed).` : '')
+    + ' Check the ticks, then ▶ Deploy.';
+}
+window.sftkDeployRetry = function (profileId, byPath, targetUrl, mode) {
+  _depRetry = { profileId, byPath: byPath || {}, mode: mode || 'retry' };
   _depRetryNote = '';
   window.openReconcile?.(profileId, targetUrl);
 };
@@ -426,7 +439,7 @@ async function renderDeploy() {
   if (_depRetry && (_depRetry.profileId === p.id || _depRetry.profileId === p._ringOf?.profileId)) {
     const rp = sftkDeployRetryPicks(scan, _depRetry.byPath, sftkRecChildRowState);
     for (const [k, ids] of Object.entries(rp.picks)) { const set = k === '' ? _recSel.push : _depChildSel(k).push; ids.forEach(id => set.add(id)); }
-    _depRetryNote = sftkDeployRetryLine(rp);
+    _depRetryNote = _depRetry.mode === 'continue' ? sftkDeployContinueLine(rp) : sftkDeployRetryLine(rp);
     _depRetry = null;
   }
   const objects = sftkDeployObjects(p.tree);

@@ -38,6 +38,23 @@ console error / ❌ line, AND a log whose claims the CLI confirms — read the l
 line is not the verdict. `docs/QA-1.0.md` is the matrix and the findings. Every writing run
 undoes itself or is followed by a restore step; the orgs end as they began.
 
+**2026-10-09 — pause / continue / closed-tab (user: "make sure users can pause a long deployment and
+continue from where they left … if you close the window in the middle of deployment we must state it
+will cancel the deployment, are u sure? … also the X in the chrome tab").** Engine (background.js):
+`_runStopWhy` ('pause' | 'cancel' | 'closed'), port `{cmd:'pause'}`, the port's onDisconnect sets
+'closed' while a run is on, `sftkRunStopLine(why, obj, written, total, failed)` (counts every record
+SENT), `_runNoteStop` keeps the line for `_endRun` → `sftk_run_interrupted` in storage when the page
+is gone. Page: `#dsRunPauseBtn` on the live run view, the History entry carries `selected` (per
+tree path) + `stopped`; History chips ⏸ paused / ⏹ page closed + ▶ Continue →
+`sftkDeployRetry(…, 'continue')` → `sftkDeployRetryPicks` (now counts `inTarget` = identical now =
+written before the stop) → `sftkDeployContinueLine`; `beforeunload` guard on `window._sftkRunActive`
+(studio-core.js); studio-core shows the interrupted-run notice once and consumes the markers.
+The engine's test sandboxes list `'sftkRunStopLine', '_runStopReason', '_runNoteStop'`.
+Live proof: `SFTK_EXT=dist/store-staging node scripts/dev/headless-studio.mjs scripts/dev/live/pause-continue.mjs`
+(default = pause → continue → two rollbacks, CLI truth; `STEP=closed` = navigate away mid-run →
+beforeunload prompt → engine stops → notice on the next page → re-scan; cleanup of the written
+records by CLI since a dead page writes no History). Closed path live: PROVEN 2026-10-09 (log dist/qa/live-closed-2.txt).
+
 **WHERE WE ARE — 2026-10-06 evening (read this first if the session was cut).**
 Branch `work/1.4.3-deploy-view`, HEAD a0d4fa8 (pushed); `master` still at 9c892dd (moves only
 when the user says). The release QA the user asked for is DONE: six batches green, nine
