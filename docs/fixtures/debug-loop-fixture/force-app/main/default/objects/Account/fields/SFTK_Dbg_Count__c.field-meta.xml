@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>SFTK_Dbg_Count__c</fullName>
+    <description>Admin Toolkit fixture for the Debugger video: the after-save flow SFTK_Dbg_Loop adds 1 to this field and so re-triggers itself, until it reaches 5.</description>
+    <externalId>false</externalId>
+    <inlineHelpText>Test fixture — a flow counts up on this field to show a recursion loop in the Debugger.</inlineHelpText>
+    <label>SFTK Dbg Count</label>
+    <precision>18</precision>
+    <required>false</required>
+    <scale>0</scale>
+    <trackTrending>false</trackTrending>
+    <type>Number</type>
+    <unique>false</unique>
+</CustomField>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Admin Toolkit fixture: read/edit on Account.SFTK_Dbg_Count__c for the user who triggers the debug-loop flow.</description>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.SFTK_Dbg_Count__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <hasActivationRequired>false</hasActivationRequired>
+    <label>SFTK Dbg Access</label>
+</PermissionSet>

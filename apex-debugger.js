@@ -955,6 +955,16 @@ const ApexDebugger = (() => {
     return _debugLevels[_selProfile];
   }
 
+  // PURE. Two timestamps name the same second? (Salesforce returns
+  // "+0000" with whole seconds; we send an ISO string with milliseconds.)
+  function sftkDbgSameInstant(a, b) {
+    const ta = Date.parse(String(a || '').replace(/([+-]\d\d)(\d\d)$/, '$1:$2'));
+    const tb = b instanceof Date ? b.getTime() : Date.parse(String(b || '').replace(/([+-]\d\d)(\d\d)$/, '$1:$2'));
+    if (!Number.isFinite(ta) || !Number.isFinite(tb)) return false;
+    return Math.abs(ta - tb) < 1000;
+  }
+  if (typeof globalThis !== 'undefined') globalThis.sftkDbgSameInstant = sftkDbgSameInstant;
+
   async function _startTrace() {
     if (!_selUser) return;
     const startBtn = document.getElementById('adbgStartBtn');
@@ -1006,7 +1016,11 @@ const ApexDebugger = (() => {
             const chk = await _bg({ type: 'SF_QUERY', tooling: true, _suppressError: true,
               query: `SELECT ExpirationDate FROM TraceFlag WHERE Id = '${existing.records[0].Id}'` });
             if (!chk || chk.error || !chk.records?.length) return { ok: false, text: null };
-            return { ok: chk.records[0].ExpirationDate === exp.toISOString(), text: null };
+            // QA 2026-10-09 (live): the org answers "2026-10-09T18:07:06.000+0000" for a
+            // value sent as "…06.123Z" — a string compare called every EXTENDED trace
+            // unverified ("accepted, but the org still shows the old expiration").
+            // Compare the instants, to the second.
+            return { ok: sftkDbgSameInstant(chk.records[0].ExpirationDate, exp), text: null };
           },
         });
         if (!pWr.accepted) throw new Error((pWr.raw && pWr.raw.error) || 'refused');
