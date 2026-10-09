@@ -75,7 +75,8 @@ describe('↻ Retry failed ticks what it can prove, and reports the rest', () =>
   it('root: Insert rows are ticked, Changed rows are counted, the rest is reported', () => {
     const r = picks(scan, { '': ['A1', 'A3', 'A9'] }, rowState);
     expect(r.picks).toEqual({ '': ['A1'] });
-    expect(r).toMatchObject({ found: 1, inChanged: 1, lost: 1, total: 3 });
+    expect(r).toMatchObject({ found: 1, inChanged: 1, lost: 1, total: 3, inTarget: 0 });
+    expect(picks(scan, { '': ['A1', 'A4'] }, rowState)).toMatchObject({ found: 1, inTarget: 1, lost: 1 });   // A4 is identical now: written before a stop
   });
   it('child: only rows the page would let the user tick', () => {
     const r = picks(scan, { '0': ['C1', 'C2', 'C3'] }, rowState);

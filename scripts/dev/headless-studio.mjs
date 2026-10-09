@@ -250,7 +250,7 @@ const h = {
     log('imported:', out.join(' · '));
     return out;
   },
-  async close() { try { await send('Browser.close'); } catch (_) {} try { chrome.kill(); } catch (_) {} },
+  async close() { try { await Promise.race([send('Browser.close'), new Promise(r => setTimeout(r, 10000))]); } catch (_) {} try { chrome.kill(); } catch (_) {} },
 };
 
 const scriptPath = process.argv[2];
@@ -258,6 +258,6 @@ if (!scriptPath) { console.error('usage: node scripts/dev/headless-studio.mjs <s
 const mod = await import(pathToFileURL(resolve(scriptPath)).href);
 let code = 0;
 try { await h.start(); await mod.default(h); }
-catch (e) { code = 1; console.error('FAILED:', e?.stack || e); try { await h.shot(join(SHOTS, 'failure.png')); } catch (_) {} }
+catch (e) { code = 1; console.error('FAILED:', e?.stack || e); try { await Promise.race([h.shot(join(SHOTS, 'failure.png')), new Promise((_, rj) => setTimeout(() => rj(new Error('shot timeout')), 10000))]); } catch (_) {} }
 finally { await h.close(); }
 process.exit(code);

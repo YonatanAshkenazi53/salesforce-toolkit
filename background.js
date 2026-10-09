@@ -463,15 +463,46 @@ async function assertOrgWritable(orgUrl) {
 // partial summary marked cancelled instead of dying mid-write.
 let _runPort      = null;
 let _runCancelled = false;
+// Why the run stopped early (user 2026-10-09: "make sure users can pause a long
+// deployment and continue from where they left … if you close the window in the
+// middle of deployment we must state it"). The engine stops between batches,
+// never mid-write; the History entry carries the reason and the page offers
+// ▶ Continue from it.
+//   'cancel' — the user cancelled · 'pause' — the user paused · 'closed' — the
+//   page went away while a run was on (the progress port disconnected)
+let _runStopWhy = '';
+let _runStopLineLast = '';   // the last stop line of this run (for a page that closed)
+// The reason as the engine sees it — guarded, because the test harness runs the
+// engine's functions outside this file, where the flag above does not exist.
+function _runStopReason() { try { return _runStopWhy || 'cancel'; } catch (_) { return 'cancel'; } }
+// Keeps the stop line of a run whose page closed, for _endRun (guarded as above).
+function _runNoteStop(line) { try { if (_runStopWhy === 'closed') _runStopLineLast = line; } catch (_) { /* harness */ } return line; }
+function sftkRunStopLine(why, objType, done, total, failed) {
+  const rest = 'the rest is still to deploy — ▶ Continue from History';
+  const part = objType ? `${objType}: ` : '';
+  // done = written, failed = refused by Salesforce — both were SENT; the live
+  // run 2026-10-09 said "paused after 1 of 7" when 2 had gone (1 written, 1 failed)
+  const sent = (Number.isFinite(done) ? done : 0) + (Number.isFinite(failed) ? failed : 0);
+  const after = Number.isFinite(done) ? `after ${sent} of ${total} record(s)${failed ? ` (${done} written, ${failed} failed)` : ''}` : 'before the next object';
+  if (why === 'pause') return `${part}⏸ paused ${after} — nothing is half-written; ${rest}.`;
+  if (why === 'closed') return `${part}⏹ the page was closed — the run stopped ${after}; ${rest}.`;
+  return `${part}cancelled ${after}${objType ? '' : ' — remaining objects skipped'}.`;
+}
 let _runHeartbeat = null;
 
 chrome.runtime.onConnect.addListener(port => {
   if (port.name !== 'sftk-run-progress') return;
   _runPort = port;
   port.onMessage.addListener(msg => {
-    if (msg?.cmd === 'cancel') _runCancelled = true;
+    if (msg?.cmd === 'cancel') { _runCancelled = true; _runStopWhy = 'cancel'; }
+    if (msg?.cmd === 'pause') { _runCancelled = true; _runStopWhy = 'pause'; }
   });
-  port.onDisconnect.addListener(() => { if (_runPort === port) _runPort = null; });
+  port.onDisconnect.addListener(() => {
+    if (_runPort === port) _runPort = null;
+    // The page that watched this run is gone (tab closed, reloaded, navigated):
+    // stop after the batch in flight rather than writing on with no screen.
+    if (_runHeartbeat && !_runCancelled) { _runCancelled = true; _runStopWhy = 'closed'; }
+  });
 });
 
 function postRunProgress(evt) {
@@ -483,6 +514,7 @@ function postRunProgress(evt) {
 // worker out. _endRun stops it.
 function _beginRun(kind) {
   _runCancelled = false;
+  _runStopWhy = '';
   clearInterval(_runHeartbeat);
   _runHeartbeat = setInterval(() => postRunProgress({ phase: 'hb' }), 20000);
   chrome.storage.local.set({ sftk_active_run: { kind, startedAt: new Date().toISOString() } }).catch(() => {});
@@ -492,6 +524,13 @@ function _endRun() {
   clearInterval(_runHeartbeat);
   _runHeartbeat = null;
   chrome.storage.local.remove('sftk_active_run').catch(() => {});
+  // The page that started this run is gone (its progress port dropped): no
+  // History entry can be written for it. Leave the stop line where the next
+  // Data Studio page finds it (studio-core.js shows it once).
+  if (_runStopWhy === 'closed' && _runStopLineLast) {
+    chrome.storage.local.set({ sftk_run_interrupted: { at: new Date().toISOString(), line: _runStopLineLast } }).catch(() => {});
+  }
+  _runStopLineLast = '';
   postRunProgress({ phase: 'end' });
 }
 
@@ -871,7 +910,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
     const objType = node.objectType || node.childSObject;
     // Cancel between nodes — never mid-write.
     if (_runCancelled) {
-      errors.push('Run cancelled — remaining objects skipped.');
+      errors.push(_runNoteStop(sftkRunStopLine(_runStopReason())));
       break;
     }
     postRunProgress({ phase: 'node', obj: objType });
@@ -1749,7 +1788,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         // Cancel between waves — records already written stay written
         // (allOrNone:false per batch); the summary reports the partial count.
         if (_runCancelled) {
-          errors.push(`${objType}: cancelled after ${ok} of ${payloads.length} record(s).`);
+          errors.push(_runNoteStop(sftkRunStopLine(_runStopReason(), objType, ok, payloads.length, fail)));
           break;
         }
         const starts = [];
@@ -2250,7 +2289,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
     startedAt, completedAt: new Date().toISOString(),
     sourceOrg: srcOrgUrl, targetOrg: tgtOrgUrl,
     status: errors.length === 0 ? 'success' : (Object.values(summary).some(s=>s.created>0) ? 'partial' : 'failed'),
-    ...(_runCancelled ? { cancelled: true } : {}),
+    ...(_runCancelled ? { cancelled: true, stopped: _runStopReason() } : {}),
     summary, errors: finalErrors.slice(0, 50)
   };
 }
@@ -2295,7 +2334,7 @@ async function executeProfileSequence(profiles, srcOrgUrl, srcSid, tgtOrgUrl, tg
   return {
     sequence: true, startedAt, completedAt: new Date().toISOString(),
     sourceOrg: srcOrgUrl, targetOrg: tgtOrgUrl,
-    ...(_runCancelled ? { cancelled: true } : {}),
+    ...(_runCancelled ? { cancelled: true, stopped: _runStopReason() } : {}),
     status, steps, idMapSize: Object.keys(sharedIdMap).length
   };
 }

@@ -149,7 +149,16 @@ the rest were the scripts themselves (listed at the end). All orgs end as they b
 16. All open orgs had a scan button per target column and one per cell (user 2026-10-08:
     "why do we need two scan buttons?") — now ONE Scan for the page, every deployment
     against every open org, progress on the button; cells keep ⚖ only.
-
+17. No way to pause a long deployment and continue later; closing the tab mid-run neither
+    asked nor said what happened (user 2026-10-09). Now: ⏸ Pause on the live run view
+    (stops between batches, never mid-write), History chip "⏸ paused" + ▶ Continue (re-ticks
+    the records not reached; written ones left alone), a beforeunload prompt while a run is on,
+    and a page that closed stops the engine after the batch in flight — the next Data Studio
+    page says it once (`sftk_run_interrupted`), a re-scan lists the rest.
+    Live (`scripts/dev/live/pause-continue.mjs`, batch size 1): pause after 1 of 7 → History
+    ⏸ paused, Continue ticked 6, the rest landed, both runs rolled back, CLI agrees at every
+    step. `STEP=closed`: the browser asked (beforeunload), the engine stopped (CLI count
+    frozen 8 s later), the reopened page showed the notice once, re-scan listed the rest.
 Done the same evening: `sftkConfirmDestructive` redesigned (34 callers inherit it) and a shared
 `sftkDialog` for the rest; 22 hand-built dialogs migrated (popup: the Flows gates, backups,
 restores, delete results; Data Studio: rename / remove org, swap orgs, clear cached / clear

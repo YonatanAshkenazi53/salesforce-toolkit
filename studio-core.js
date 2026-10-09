@@ -491,7 +491,7 @@ async function storageLoad() {
   await runStorageMigrations();
   const d = await chrome.storage.local.get([
     'sftk_profiles','sftk_history','sftk_orgs',
-    'ds_dark_mode','sftk_dark','sftk_oled','ds_activity_log','sftk_sequences','sftk_active_run',
+    'ds_dark_mode','sftk_dark','sftk_oled','ds_activity_log','sftk_sequences','sftk_active_run','sftk_run_interrupted',
     'ds_working_pair','ds_settings'
   ]);
   _profiles     = d.sftk_profiles   || [];
@@ -557,7 +557,16 @@ async function storageLoad() {
 
   // A leftover active-run marker means a previous run was interrupted
   // (studio tab closed / worker killed mid-run) — say so instead of silence.
-  if (d.sftk_active_run) {
+  if (d.sftk_run_interrupted && d.sftk_run_interrupted.line) {
+    // The engine stopped a deployment because its page closed (it carries on
+    // only to the end of the batch in flight — nothing half-written). The page
+    // that closed could not write History, so this is the one place it is said.
+    const ri = d.sftk_run_interrupted;
+    setTimeout(() => showToast(
+      `${window.sftkGlyph('⏹ ', '')}A deployment stopped when its page was closed (${timeAgo(ri.at)}): ${ri.line.replace(/ — ▶ Continue from History\.$/, '')}. The records written before the stop are in the target. Open the deployment and 🔍 Scan: the Insert list is what is still to deploy.`,
+      'warning', 15000), 1200);
+    chrome.storage.local.remove(['sftk_run_interrupted', 'sftk_active_run']).catch(() => {});
+  } else if (d.sftk_active_run) {
     const ar = d.sftk_active_run;
     setTimeout(() => showToast(
       `${window.sftkGlyph('⚠ ', '')}A previous ${ar.kind || 'run'} looks interrupted (started ${timeAgo(ar.startedAt)}). Check History and re-scan before re-running.`,
@@ -676,6 +685,13 @@ function closeModal() {
   const overlay = eid('dsModal');
   if (overlay) overlay.style.display = 'none';
 }
+
+// A run in progress: the browser asks before the tab closes or reloads (the
+// text is the browser's own; ours sits beside the live run view). The engine
+// stops after the batch in flight when the page goes — see background.js.
+window.addEventListener('beforeunload', e => {
+  if (window._sftkRunActive) { e.preventDefault(); e.returnValue = ''; }
+});
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeModal();
@@ -818,6 +834,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'refreshState':          window.refreshProfileState?.(arg); break;
       case 'openReconcile':         window.openReconcile?.(arg); break;
       case 'retryFailed':           window.retryFailedRun?.(arg); break;
+      case 'continueRun':           window.continueRun?.(arg); break;
       case 'runAgain':              window.runAgain?.(arg); break;
       case 'rollbackRun':           window.rollbackRun?.(arg); break;
       case 'rollbackReport':        window.openRollback?.(arg, { report: true }); break;   // 📋 which records a rollback touched

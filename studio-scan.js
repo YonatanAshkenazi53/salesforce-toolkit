@@ -2134,6 +2134,21 @@ window.refreshProfileState = async function(profileId) {
 // from a previous run. Walks the run's summary, builds per-node recordIds
 // overrides via _transferNodeFilters, sets _transferProfile, then renders
 // the transfer view. The user just clicks ▶ Run to retry.
+// ▶ Continue a paused / interrupted run: the records that were ticked are offered
+// again; the Deploy page's scan keeps only the ones still missing (what the run
+// wrote is in the target now and drops out by itself).
+window.continueRun = function(runId) {
+  const run = _history.find(h => h.id === runId);
+  if (!run) return showToast('Run not found', 'error', 3000);
+  const profile = _profiles.find(p => p.id === run.profileId);
+  if (!profile) return showToast('Deployment no longer exists — cannot continue', 'error', 4000);
+  const byPath = {};
+  for (const [k, ids] of Object.entries(run.selected || {})) if (Array.isArray(ids) && ids.length) byPath[k] = ids;
+  if (!Object.keys(byPath).length) return showToast('This run kept no record of what was ticked — open the deployment and tick again', 'info', 5000);
+  if (typeof window.sftkDeployRetry === 'function') { window.sftkDeployRetry(profile.id, byPath, run.tgtOrgUrl || run.targetOrg || undefined, 'continue'); return; }
+  window.openReconcile?.(profile.id);
+};
+
 window.retryFailedRun = function(runId) {
   const run = _history.find(h => h.id === runId);
   if (!run) return showToast('Run not found', 'error', 3000);

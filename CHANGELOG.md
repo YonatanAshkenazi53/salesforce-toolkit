@@ -59,6 +59,9 @@ Salesforce answered, it says that instead.
 - **Org health** — one card per finding, each with its API cost first.
 
 ### Fixed before the first cut (hand tests, 2026-10-07)
+- Data Deployment: a long run can be **⏸ paused** — it stops after the batch in flight (nothing
+  is half-written), History shows "⏸ paused" with how far it got, and **▶ Continue** reopens the
+  deployment with the records not reached ticked again; what was written is left alone. Closing the tab (or the X of the Chrome tab) while a run is on: the browser asks first; if you leave, the run stops after the batch in flight and the next Data Studio page says so once, with how far it got — a 🔍 Scan then lists what is still to deploy.
 - Lightning Pages: "Finish the check" ran again and showed the same sentence, which read as a
   dead button. The strip now says it ran again, names the objects that cannot be described
   and why, and the button reads "Try again".
