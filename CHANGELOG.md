@@ -59,6 +59,9 @@ Salesforce answered, it says that instead.
 - **Org health** — one card per finding, each with its API cost first.
 
 ### Fixed before the first cut (hand tests, 2026-10-07)
+- The shared confirmation did not open at all when its list had more than eight items
+  (a rollback of a larger run, a delete of many flow versions): the dialog's filter box
+  used a value before its line. Found while recording the walkthrough on 2026-10-10.
 - Data Deployment: a long run can be **⏸ paused** — it stops after the batch in flight (nothing
   is half-written), History shows "⏸ paused" with how far it got, and **▶ Continue** reopens the
   deployment with the records not reached ticked again; what was written is left alone. Closing the tab (or the X of the Chrome tab) while a run is on: the browser asks first; if you leave, the run stops after the batch in flight and the next Data Studio page says so once, with how far it got — a 🔍 Scan then lists what is still to deploy.

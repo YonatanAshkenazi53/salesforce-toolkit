@@ -86,6 +86,15 @@ function sftkConfirmDestructive(opts) {
   // The ids (sftkConfirmGo / Ack / Word / Cancel / Prod / ProdGo / ProdCancel)
   // and the two-step production flow are unchanged: callers, tests and the
   // live scripts rely on them.
+  // The class map comes FIRST: the items list below uses it for its filter box
+  // (more than 8 items), and a `const` read before its line throws — every
+  // confirmation with a long list (a rollback of 29 records, video 2026-10-10)
+  // died with "Cannot access 'C' before initialization" and never opened.
+  // Data Studio has its own modal classes (ds-*); the popup uses modal-*/btn.
+  const ds = !!document.getElementById('dsModalBox');
+  const C = ds
+    ? { head: 'ds-modal-header', body: 'ds-modal-body', foot: 'ds-modal-footer', btn: 'ds-btn', primary: 'ds-btn ds-btn-danger', input: 'ds-input' }
+    : { head: 'modal-header modal-danger', body: 'modal-body', foot: 'modal-footer', btn: 'btn btn-secondary', primary: 'btn btn-danger', input: 'search-input' };
   const MAX_SHOWN = 500;
   const shown = items.slice(0, MAX_SHOWN);
   const moreCount = items.length - shown.length;
@@ -115,11 +124,6 @@ function sftkConfirmDestructive(opts) {
     ...(Array.isArray(opts.facts) ? opts.facts.map(String) : []),
   ].filter(Boolean);
 
-  // Data Studio has its own modal classes (ds-*); the popup uses modal-*/btn.
-  const ds = !!document.getElementById('dsModalBox');
-  const C = ds
-    ? { head: 'ds-modal-header', body: 'ds-modal-body', foot: 'ds-modal-footer', btn: 'ds-btn', primary: 'ds-btn ds-btn-danger', input: 'ds-input' }
-    : { head: 'modal-header modal-danger', body: 'modal-body', foot: 'modal-footer', btn: 'btn btn-secondary', primary: 'btn btn-danger', input: 'search-input' };
   const word = String(typedWord || '').trim();
   const prod = production && (production.label || production === true) ? { label: String(production.label || '') } : null;
   const gateOff = rev.needsCheckbox || !!word;

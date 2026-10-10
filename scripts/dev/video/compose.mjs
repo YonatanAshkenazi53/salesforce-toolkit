@@ -14,10 +14,13 @@
 // is downloaded or installed. It encodes in real time, so composing takes as
 // long as the finished video runs.
 //
-// Layout, 1920×1080: the page on top (1920×960 — the recorder's 1600×800
-// viewport at 1.2×), a 120-px band below it with the chapter on the left and
-// the caption in the middle. Stretches the script marked as waiting
-// (rec.fast) play FAST× faster, with a "sped up" badge so the viewer knows.
+// Layout, 1920×1080: a browser frame on top (88 px: a tab strip and an address
+// bar drawn like Chrome's, showing the page's real title and address — user
+// 2026-10-09: "make the demonstration look like it was recorded on a chrome
+// browser"), the page under it (1920×872 — the recorder's 1600×727 viewport at
+// 1.2×), and a 120-px band below with the chapter on the left and the caption
+// in the middle. Stretches the script marked as waiting (rec.fast) play FAST×
+// faster, with a "sped up" badge so the viewer knows.
 //
 // Narration (on by default; VOICE=0 makes a silent video): every caption is
 // spoken by a voice that is already on this PC (voice.mjs) and recorded into
@@ -29,7 +32,7 @@ import { join, dirname, resolve, basename } from 'node:path';
 import { speakAll, voiceFile, voiceSeconds, VOICE as VOICE_NAME, RATE as VOICE_RATE, ENGINE as VOICE_ENGINE } from './voice.mjs';
 
 const FAST = Number(process.env.FAST || 8);
-const W = 1920, H = 1080, PAGE_H = 960;
+const W = 1920, H = 1080, FRAME_H = 88, PAGE_H = 872, BAND_Y = FRAME_H + PAGE_H;
 const MIN_GAP = 40;            // ms between frames sent to the encoder (25 fps ceiling)
 
 export default async function (h) {
@@ -42,9 +45,11 @@ export default async function (h) {
   // before it ended. A section with no recording is left out, and said.
   let man;
   if (existsSync(join(dir, 'order.json'))) {
-    man = { length: 0, frames: [], cues: [], chapters: [], fast: [] };
+    man = { length: 0, frames: [], cues: [], chapters: [], fast: [], pages: [] };
     const missing = [];
-    for (const id of JSON.parse(readFileSync(join(dir, 'order.json'), 'utf8'))) {
+    // ONLY=a,b composes just those sections (a quick check of a chapter)
+    const only = String(process.env.ONLY || '').split(',').map(x => x.trim()).filter(Boolean);
+    for (const id of JSON.parse(readFileSync(join(dir, 'order.json'), 'utf8')).filter(id => !only.length || only.includes(id))) {
       const f = join(dir, id, 'manifest.json');
       if (!existsSync(f)) { missing.push(id); continue; }
       const m = JSON.parse(readFileSync(f, 'utf8')), off = man.length;
@@ -53,6 +58,7 @@ export default async function (h) {
       for (const x of (m.cues || [])) man.cues.push({ t: off + x.t, text: x.text });
       for (const x of (m.chapters || [])) man.chapters.push({ t: off + x.t, title: x.title });
       for (const x of (m.fast || [])) man.fast.push({ a: off + x.a, b: off + x.b });
+      for (const x of (m.pages || [])) man.pages.push({ t: off + x.t, url: x.url, title: x.title });
       man.length = off + (m.length || 0) + 250;
     }
     if (missing.length) h.log('NOT in this video (no recording):', missing.join(', '));
@@ -95,6 +101,7 @@ export default async function (h) {
   }
   for (const c of said) ev.push({ tau: T(c.t), kind: 'cue', text: c.text, voice: c.voice || null });
   for (const c of (man.chapters || [])) ev.push({ tau: T(c.t), kind: 'chapter', title: c.title });
+  for (const p of (man.pages || [])) ev.push({ tau: T(p.t), kind: 'page', url: p.url || '', title: p.title || '' });
   // the "sped up" badge goes when the waiting ends, even if the picture does not change then
   for (const f of fast) ev.push({ tau: T(f.b) + 5, kind: 'fastoff' });
   ev.sort((a, b) => a.tau - b.tau || (a.kind === 'frame' ? 1 : -1));
@@ -136,28 +143,62 @@ export default async function (h) {
     }
     const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: ${Number(process.env.BITRATE || 8000000)}, audioBitsPerSecond: 160000 });
     const chunks = []; rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-    const V = window.__v = { c, g, track, rec, chunks, type, ac, dest, clips: {}, img: null, caption: '', chapter: '', fast: false, blob: null };
+    const V = window.__v = { c, g, track, rec, chunks, type, ac, dest, clips: {}, img: null, caption: '', chapter: '', fast: false, blob: null, url: '', title: '' };
     // the narration: each sentence is decoded before the recording starts, and only started at its moment
     V.load = async (id, b64) => { const bytes = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0)); V.clips[id] = await ac.decodeAudioData(bytes.buffer); return V.clips[id].duration; };
     V.speak = id => { const buf = V.clips[id]; if (!buf) return false; const src = ac.createBufferSource(); src.buffer = buf; src.connect(dest); src.start(); return true; };
     const wrap = (text, max) => { const words = String(text).split(' '); const lines = []; let cur = '';
       for (const w of words) { const t = cur ? cur + ' ' + w : w; if (g.measureText(t).width > max && cur) { lines.push(cur); cur = w; } else cur = t; }
       if (cur) lines.push(cur); return lines; };
+    const frame = () => {
+      const FH = ${FRAME_H};
+      // the tab strip
+      g.fillStyle = '#dee1e6'; g.fillRect(0, 0, ${W}, 40);
+      g.font = '400 15px "Segoe UI", sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'left';
+      const title = V.title || 'New Tab';
+      const tw = Math.min(360, Math.max(180, g.measureText(title).width + 84));
+      g.fillStyle = '#fff'; g.beginPath(); g.roundRect(12, 8, tw, 40, [10, 10, 0, 0]); g.fill();
+      g.fillStyle = '#1b6fd1'; g.beginPath(); g.roundRect(26, 16, 18, 18, 4); g.fill();
+      g.fillStyle = '#fff'; g.font = '700 12px "Segoe UI", sans-serif'; g.textAlign = 'center'; g.fillText('A', 35, 26);
+      g.textAlign = 'left'; g.font = '400 15px "Segoe UI", sans-serif'; g.fillStyle = '#202124';
+      let t = title; while (t && g.measureText(t).width > tw - 84) t = t.slice(0, -1); if (t !== title) t = t.replace(/\s+$/, '') + '…';
+      g.fillText(t, 54, 25);
+      g.fillStyle = '#5f6368'; g.font = '400 18px "Segoe UI", sans-serif'; g.fillText('×', 12 + tw - 24, 24);
+      g.font = '400 22px "Segoe UI", sans-serif'; g.fillText('+', 12 + tw + 14, 24);
+      g.font = '400 16px "Segoe UI", sans-serif'; g.textAlign = 'center'; g.fillText('—', ${W} - 114, 20); g.fillText('▢', ${W} - 70, 20); g.fillText('✕', ${W} - 28, 20);
+      // the address bar
+      g.fillStyle = '#fff'; g.fillRect(0, 40, ${W}, FH - 40);
+      g.fillStyle = '#5f6368'; g.font = '400 20px "Segoe UI Symbol", "Segoe UI", sans-serif'; g.textAlign = 'center';
+      g.fillText('←', 24, 64); g.fillText('→', 58, 64); g.fillText('↻', 92, 64);
+      g.fillStyle = '#f1f3f4'; g.beginPath(); g.roundRect(116, 46, ${W} - 116 - 132, 36, 18); g.fill();
+      g.fillStyle = '#5f6368'; g.font = '400 15px "Segoe UI Emoji", "Segoe UI", sans-serif'; g.textAlign = 'left'; g.fillText('🧩', 132, 64);
+      g.fillStyle = '#202124'; g.font = '400 16px "Segoe UI", sans-serif';
+      let u = String(V.url || ''); while (u && g.measureText(u).width > ${W} - 116 - 132 - 60) u = u.slice(0, -1); if (u !== String(V.url || '')) u += '…';
+      g.fillText(u, 160, 64);
+      g.fillStyle = '#5f6368'; g.font = '400 18px "Segoe UI Symbol", "Segoe UI", sans-serif'; g.textAlign = 'center';
+      g.fillText('☆', ${W} - 100, 64); g.fillText('⋮', ${W} - 24, 64);
+      g.fillStyle = '#dadce0'; g.fillRect(0, FH - 1, ${W}, 1);
+    };
     V.paint = () => {
-      g.fillStyle = '#0f1722'; g.fillRect(0, 0, ${W}, ${PAGE_H});
-      if (V.img) g.drawImage(V.img, 0, 0, ${W}, ${PAGE_H});
+      frame();
+      g.fillStyle = '#ffffff'; g.fillRect(0, ${FRAME_H}, ${W}, ${PAGE_H});
+      if (V.img) {
+        // scaled to the width; a taller picture (another tab, at its own size) is cropped at the bottom, never squeezed
+        const s = ${W} / V.img.width, hh = Math.min(${PAGE_H}, V.img.height * s);
+        g.drawImage(V.img, 0, 0, V.img.width, hh / s, 0, ${FRAME_H}, ${W}, hh);
+      }
       if (V.fast) { g.font = '600 26px "Segoe UI", sans-serif'; const t = '⏩ waiting — sped up'; const w = g.measureText(t).width + 36;
-        g.fillStyle = 'rgba(11,31,58,.88)'; g.beginPath(); g.roundRect(${W} - w - 24, 20, w, 48, 24); g.fill(); g.fillStyle = '#fff'; g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillText(t, ${W} - w - 6, 45); }
-      g.fillStyle = '#0b1f3a'; g.fillRect(0, ${PAGE_H}, ${W}, ${H - PAGE_H});
-      g.fillStyle = '#1b6fd1'; g.fillRect(0, ${PAGE_H}, ${W}, 3);
+        g.fillStyle = 'rgba(11,31,58,.88)'; g.beginPath(); g.roundRect(${W} - w - 24, ${FRAME_H} + 20, w, 48, 24); g.fill(); g.fillStyle = '#fff'; g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillText(t, ${W} - w - 6, ${FRAME_H} + 44); }
+      g.fillStyle = '#0b1f3a'; g.fillRect(0, ${BAND_Y}, ${W}, ${H - BAND_Y});
+      g.fillStyle = '#1b6fd1'; g.fillRect(0, ${BAND_Y}, ${W}, 3);
       let left = 40;
       if (V.chapter) { g.font = '700 24px "Segoe UI", sans-serif'; const w = g.measureText(V.chapter).width + 36;
-        g.fillStyle = '#1b6fd1'; g.beginPath(); g.roundRect(32, ${PAGE_H} + 38, w, 46, 10); g.fill();
-        g.fillStyle = '#fff'; g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillText(V.chapter, 50, ${PAGE_H} + 62); left = 32 + w + 28; }
+        g.fillStyle = '#1b6fd1'; g.beginPath(); g.roundRect(32, ${BAND_Y} + 38, w, 46, 10); g.fill();
+        g.fillStyle = '#fff'; g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillText(V.chapter, 50, ${BAND_Y} + 62); left = 32 + w + 28; }
       if (V.caption && !${TRACK ? 'true' : 'false'}) { g.font = '500 31px "Segoe UI", sans-serif'; g.fillStyle = '#fff'; g.textBaseline = 'middle'; g.textAlign = 'left';
         let lines = wrap(V.caption, ${W} - left - 40);
         if (lines.length > 2) { g.font = '500 26px "Segoe UI", sans-serif'; lines = wrap(V.caption, ${W} - left - 40).slice(0, 3); }
-        const lh = lines.length > 2 ? 32 : 40; const y0 = ${PAGE_H} + 62 - (lines.length - 1) * lh / 2;
+        const lh = lines.length > 2 ? 32 : 40; const y0 = ${BAND_Y} + 62 - (lines.length - 1) * lh / 2;
         lines.forEach((ln, i) => g.fillText(ln, left, y0 + i * lh)); }
       track.requestFrame();
     };
@@ -187,7 +228,15 @@ export default async function (h) {
       shown++;
     } else if (e.kind === 'cue') await h.eval(`(() => { __v.caption = ${JSON.stringify(e.text)}; __v.paint(); ${e.voice ? `__v.speak(${JSON.stringify(basename(e.voice))});` : ''} return 1; })()`);
     else if (e.kind === 'fastoff') await h.eval(`(() => { __v.fast = false; __v.paint(); return 1; })()`);
+    else if (e.kind === 'page') await h.eval(`(() => { __v.url = ${JSON.stringify(e.url)}; __v.title = ${JSON.stringify(e.title)}; __v.paint(); return 1; })()`);
     else await h.eval(`(() => { __v.chapter = ${JSON.stringify(e.title)}; __v.paint(); return 1; })()`);
+    // SNAP=<seconds>: one PNG of the composed picture at that moment, to look at the layout
+    if (process.env.SNAP && !ev.snapped && e.tau >= Number(process.env.SNAP) * 1000) {
+      ev.snapped = true;
+      const png = await h.eval(`__v.c.toDataURL('image/png').slice(22)`);
+      writeFileSync(out.replace(/\.mp4$/i, '') + '-snap.png', Buffer.from(png, 'base64'));
+      h.log('snapshot written at', (e.tau / 1000).toFixed(1), 's');
+    }
     if (Date.now() - lastLog > 30000) { lastLog = Date.now(); h.log(`… ${((Date.now() - t0) / 1000).toFixed(0)} / ${(total / 1000).toFixed(0)} s, ${shown} frames, lag ${Math.max(0, Date.now() - t0 - e.tau).toFixed(0)} ms`); }
   }
   const tail = total - (Date.now() - t0);

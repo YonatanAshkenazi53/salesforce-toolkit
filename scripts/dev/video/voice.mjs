@@ -80,6 +80,24 @@ export function captionsOf(dir) {
   return out;
 }
 
+// One caption, spoken now if its file is not there yet (the recorder calls this
+// while recording, so a sentence's length is known before the next action).
+// Returns the file, or null for a caption with nothing to say.
+export function speakOne(dir, caption) {
+  const file = voiceFile(dir, caption);
+  if (!file) return null;
+  if (existsSync(file) && statSync(file).size >= 1000) return file;
+  mkdirSync(join(dir, 'voice'), { recursive: true });
+  const text = spokenText(caption);
+  if (ENGINE === 'edge') {
+    const r = spawnSync(PY, ['-m', 'edge_tts', '--voice', VOICE, `--rate=${RATE}`, '--text', text, '--write-media', file, '--write-subtitles', file.replace(/\.mp3$/i, '.srt')], { encoding: 'utf8' });
+    if (r.status !== 0 || !existsSync(file)) throw new Error(`edge-tts could not speak a caption: ${(r.stderr || r.stdout || '').trim().slice(0, 300)}`);
+    return file;
+  }
+  speakAll.sapi(dir, [{ text, file }]);
+  return file;
+}
+
 export function speakAll(dir) {
   const texts = [...new Set(captionsOf(dir))];
   mkdirSync(join(dir, 'voice'), { recursive: true });
@@ -90,7 +108,15 @@ export function speakAll(dir) {
       const r = spawnSync(PY, ['-m', 'edge_tts', '--voice', VOICE, `--rate=${RATE}`, '--text', it.text, '--write-media', it.file, '--write-subtitles', it.file.replace(/\.mp3$/i, '.srt')], { encoding: 'utf8' });
       if (r.status !== 0 || !existsSync(it.file)) throw new Error(`edge-tts could not speak a caption: ${(r.stderr || r.stdout || '').trim().slice(0, 300)}`);
     }
-  } else if (todo.length) {
+  } else if (todo.length) speakAll.sapi(dir, todo);
+  const missing = list.filter(x => !existsSync(x.file));
+  if (missing.length) throw new Error(`${missing.length} caption(s) have no voice file`);
+  const total = list.reduce((n, x) => n + voiceSeconds(x.file), 0);
+  return { captions: list.length, made: todo.length, seconds: total };
+}
+// Windows System.Speech, for a list of { text, file } (WAV)
+speakAll.sapi = function (dir, todo) {
+  {
     const listFile = join(dir, 'voice', 'list.json');
     writeFileSync(listFile, JSON.stringify(todo), 'utf8');
     const q = s => `'${String(s).replace(/'/g, "''")}'`;
@@ -109,11 +135,7 @@ export function speakAll(dir) {
     const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '-'], { input: ps, encoding: 'utf8' });
     if (r.status !== 0 || !/done/.test(r.stdout || '')) throw new Error(`the voice could not be made: ${(r.stderr || r.stdout || '').trim().slice(0, 400)}`);
   }
-  const missing = list.filter(x => !existsSync(x.file));
-  if (missing.length) throw new Error(`${missing.length} caption(s) have no voice file`);
-  const total = list.reduce((n, x) => n + voiceSeconds(x.file), 0);
-  return { captions: list.length, made: todo.length, seconds: total };
-}
+};
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const dir = resolve(process.env.REC_DIR || 'dist/video/rec');

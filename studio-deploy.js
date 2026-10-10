@@ -564,7 +564,6 @@ async function renderDeploy() {
     </div>
     <div id="dsDepFlowPauseList" class="ds-dep-foot"></div>
     <div id="dsDepRulePauseList" class="ds-dep-foot"></div>
-    <div class="ds-dep-foot">The real, rolled-back 🧪 dry run is the next step of this page and is not built yet.</div>
     <div id="dsRecProgress" class="ds-rec-progress"></div></div>
     ${_depLastRunLog ? `<details open class="ds-rec-card ds-dep-lastlog"><summary class="ds-rec-card-title">📜 Last run on this page — the numbers above are already refreshed; History keeps this run too</summary><div class="ds-rec-progress">${_depLastRunLog.html}</div></details>` : ''}`);
 

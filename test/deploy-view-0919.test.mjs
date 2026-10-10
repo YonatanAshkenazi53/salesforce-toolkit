@@ -282,8 +282,8 @@ describe('the plan uses measured totals, not the length of a capped list', () =>
     expect(order.every(x => x > 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
-  it('says plainly what is not built yet', () => {
-    expect(DV).toContain('dry run is the next step of this page and is not built yet');
+  it('carries no roadmap note on the public page (the dry run lives in docs/PLAN, not under the Deploy button — seen in the walkthrough 2026-10-10)', () => {
+    expect(DV).not.toContain('is not built yet');
   });
 });
 
