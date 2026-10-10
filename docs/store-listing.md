@@ -87,3 +87,9 @@ read the same, and paste the gist URL into the dashboard's privacy-policy field.
 ## What's new (1.0.0)
 The first public release — see the 1.0.0 section of CHANGELOG.md (the in-app What's New
 renders it).
+
+## Open source (added 2026-10-10)
+
+Line for the listing's description: "Open source under the Apache License 2.0 — the code, the
+tests and the fixtures are public." (Add the repository link once the repository is public:
+that switch is yours, in GitHub's settings.)

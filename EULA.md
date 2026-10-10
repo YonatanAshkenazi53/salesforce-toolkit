@@ -1,10 +1,12 @@
-# End User Licence Agreement — Admin Toolkit for Salesforce
+# Licence Agreement and Terms of Use — Admin Toolkit for Salesforce
 
-**Version 2 · Effective 3 September 2026 · Contact: the developer contact on this extension's Chrome Web Store page**
+**Version 3 · Effective 10 October 2026 · Contact: the developer contact on this extension's Chrome Web Store page**
 
-*Version 2 makes one thing explicit that version 1 implied: by accepting, you
-confirm that any consequence of using the Software — both the Toolkit and Data
-Studio, and every one of their components — is your responsibility.*
+*Version 3 makes the Software open source. Versions 1 and 2 granted a personal
+licence to use a proprietary program; version 3 grants everyone the rights of the
+Apache License 2.0 and keeps the one thing that has not changed: any consequence of
+using the Software — both the Toolkit and Data Studio, and every one of their
+components — is your responsibility.*
 
 This agreement is between you (**"you"**, the person installing the extension,
 and any company you install it for) and **Yonatan Ashkenazi** (**"we"**, **"us"**).
@@ -23,24 +25,23 @@ before it will run, and records the version you accepted and when.
 
 ---
 
-## 1. What you may do
+## 1. Open source: what you may do
 
-We grant you a **free, personal, non-exclusive, non-transferable, revocable**
-licence to install and use the Software for your own work, including work you do
-for your employer or your clients.
+The Software is **open source under the Apache License, Version 2.0** (the full
+text is in the LICENSE file, and on the Licence page of the extension). Under it
+you may use the Software for any purpose, copy it, change it, and share your
+copies and changes — commercially or not — as long as you keep the copyright and
+licence notices and say what you changed. The Apache License also gives you a
+patent licence from every contributor for their contributions, and it says that
+the Software comes **without any warranty**. Section 1 here summarises the
+licence; where the two differ, the LICENSE file governs.
 
-## 2. What you may not do
+## 2. What this agreement adds
 
-You may not:
-
-- copy, redistribute, publish, sell, rent, lease, sublicense, or host the
-  Software for others;
-- modify the Software or create derivative works from it;
-- reverse engineer, decompile, or disassemble it, except where applicable law
-  expressly permits this despite this clause;
-- remove or obscure any copyright, licence, or attribution notice;
-- use the Software to break the law, to breach your agreement with Salesforce,
-  or to access an org you are not authorised to access.
+The Apache License covers the code. This agreement covers **using the Software
+against your Salesforce orgs**, and it adds one obligation the licence does not:
+you may not use the Software to break the law, to breach your agreement with
+Salesforce, or to access an org you are not authorised to access.
 
 ## 3. You are responsible for what you do to your orgs — read this part
 
@@ -167,13 +168,13 @@ analytics and no telemetry, and it sends your data nowhere except the Salesforce
 orgs you are signed in to. See [PRIVACY.md](PRIVACY.md) for the detail, including
 how data you copy between orgs is handled.
 
-## 8. Paid features in future
+## 8. Free, and staying free
 
-The Software is free today. We may in future offer paid features or paid tiers.
-If we do, the terms for those will be presented to you before you buy anything,
-and this agreement will continue to govern the free functionality. **We will not
-start charging you for something you are already using without asking you
-first.**
+The Software is free and open source. Anyone may build on it under the Apache
+License 2.0. If we ever offer a paid service around it, that service will have
+its own terms, presented before you buy anything; the Software itself stays under
+this agreement and the Apache License. **We will not start charging you for
+something you are already using.**
 
 ## 9. Changes to this agreement
 
@@ -183,8 +184,10 @@ accepted and the date you accepted it are recorded locally in your browser.
 
 ## 10. Termination
 
-This licence ends automatically if you breach it. You may end it at any time by
-uninstalling the Software. Sections 3, 4, 5, 6 and 11 survive termination.
+Your right to use the Software against your orgs under this agreement ends if
+you breach section 2. You may end this agreement at any time by uninstalling the
+Software. The Apache License 2.0 is not ended by this agreement — see its own
+terms. Sections 3, 4, 5, 6 and 11 survive termination.
 
 ## 11. Governing law
 
@@ -195,6 +198,6 @@ proceedings elsewhere.
 
 ## 12. Whole agreement
 
-This agreement, with LICENSE and PRIVACY.md, is the whole agreement between you
-and us about the Software. If any part of it is found unenforceable, the rest
+This agreement, with LICENSE (the Apache License 2.0) and PRIVACY.md, is the
+whole agreement between you and us about the Software. If any part of it is found unenforceable, the rest
 continues to apply.

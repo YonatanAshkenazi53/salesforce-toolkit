@@ -54,7 +54,7 @@ not exfiltrate data past this policy.
 | `sftk_debug_enabled`, `sftk_debug_entries`, `sftk_debug_meta` | Debug mode: recent API calls with URLs and error text, for the exportable debug report. Session ids and bearer tokens are stripped before anything is written |
 | `adbg_custom_profiles`, `adbg_log_font_px` | Debugger presets and reader font size |
 | `sftk_seed_pii`, `sftk_seed_keys` | Org Seeder rules: which fields to mask and how, which field identifies a record, and the masking salt. Field **names** only — never values |
-| `sftk_terms_accepted` | The EULA version you accepted and when. Nothing else |
+| `sftk_terms_accepted` | The version of the licence agreement you accepted and when. Nothing else |
 | `sftk_history[].undo` | Per run: whether a restore point exists, which objects it covers, and why any were skipped. The restore point itself (record ids and the current values of every writable field, for each object a deployment can write) lives in the IndexedDB database `sftk_undo` on this PC — never in chrome.storage — for the newest 10 runs only, and it is deleted by the same retention window, by “Clear cached org data” and by “Clear All” |
 | `sftk_dark`, `sftk_tour_*`, `ds_whatsnew_seen`, `sftk_ao_*`, `sftk_schema_version` | Theme, first-run flags, last-seen release, per-view options, storage schema version |
 

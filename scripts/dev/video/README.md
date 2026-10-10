@@ -118,6 +118,7 @@ the picture holds, until its sentence has been spoken.
 | `VOICE_NAME=en-US-BrianNeural` | another neural voice (`python -m edge_tts --list-voices`) |
 | `RATE=+10%` | faster speech (edge-tts takes a signed percentage) |
 | `VOICE_ENGINE=sapi` | Windows' own offline voice instead (`VOICE_NAME="Microsoft David Desktop"`, `RATE=1`) |
+| `VOICE_ENGINE=piper` | a neural voice that runs on this PC: piper-tts with the Ryan model in `C:/Users/yonas/AppData/Local/piper-voices/` (installed 2026-10-10 with the user's permission when Microsoft's endpoint began refusing every request with 403). `PIPER_MODEL=` another model, `PIPER_LENGTH=1.1` slower |
 
 The sentences are kept in `dist/video/rec/voice/` (MP3 + the subtitle file that
 gives its length), named by a hash of engine + text + voice + rate, so only a

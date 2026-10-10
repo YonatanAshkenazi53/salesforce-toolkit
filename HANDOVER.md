@@ -38,6 +38,18 @@ console error / ❌ line, AND a log whose claims the CLI confirms — read the l
 line is not the verdict. `docs/QA-1.0.md` is the matrix and the findings. Every writing run
 undoes itself or is followed by a restore step; the orgs end as they began.
 
+**2026-10-10 (evening) — OPEN SOURCE + the voice.** User: "i think i want to go opensource … the community
+might appreciate the job even more", then "I agree on everything" (Apache-2.0, the gate stays as a plain
+disclaimer). Done: LICENSE = Apache License 2.0 (+ copyright line + Salesforce disclaimer), EULA.md =
+"Licence Agreement and Terms of Use" version 3 (sections 1–2 rewritten for the open-source grant, 8/10/12
+adjusted, the responsibility/no-warranty/liability sections unchanged), `sftkTermsVersion()` = 3 (everyone
+accepts again; the "terms changed" intro says why), a first gate point about the licence, legal.html labels,
+CHANGELOG "Open source" section, store-listing line, PRIVACY wording, the opening chapter's caption;
+terms-gate tests re-pinned. STILL THE USER'S: make the GitHub repository public and add its link to the
+store listing / README. Voice: edge-tts stayed on 403 all day; with the user's permission piper-tts 1.8
++ the en_US-ryan-high model (120 MB, C:/Users/yonas/AppData/Local/piper-voices/) were installed —
+`VOICE_ENGINE=piper` in voice.mjs (WAV, hashed with the engine name). The whole tour is recorded with it.
+
 **2026-10-10 (later) — walkthrough v4, the user's second round of asks, ALL BUILT AND DRY-RUN, waiting
 for the voice.** The asks: Dependencies search + full rescan on camera; Debugger: Copy Report pressed,
 an error log (anonymous Apex dividing by zero) with the Errors filter, Hide noise with its line counts,
