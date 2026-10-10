@@ -247,8 +247,16 @@ export default async function (h) {
 
   // ── stop, and bring the file out of the page in slices ──
   const size = await h.eval(`(async () => { const V = __v; clearInterval(V.keep); const done = new Promise(r => { V.rec.onstop = r; }); V.rec.stop(); await done; V.blob = new Blob(V.chunks, { type: V.type }); return V.blob.size; })()`);
-  const file = /mp4/.test(type) ? out : out.replace(/\.mp4$/i, '.webm');
-  writeFileSync(file, Buffer.alloc(0));
+  let file = /mp4/.test(type) ? out : out.replace(/\.mp4$/i, '.webm');
+  // A file a player or the cloud sync still holds (EBUSY, 2026-10-10: a 23-minute compose lost
+  // at the last step) is left alone: the video goes to a sibling name instead, and it is said.
+  try { writeFileSync(file, Buffer.alloc(0)); }
+  catch (e) {
+    if (e.code !== 'EBUSY' && e.code !== 'EPERM') throw e;
+    const alt = file.replace(/\.(mp4|webm)$/i, `-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}.$1`);
+    h.log(`${basename(file)} is held by another program — writing ${basename(alt)} instead`);
+    file = alt; writeFileSync(file, Buffer.alloc(0));
+  }
   const SLICE = 3 * 1024 * 1024;
   for (let off = 0; off < size; off += SLICE) {
     const b64 = await h.eval(`(async () => { const buf = new Uint8Array(await __v.blob.slice(${off}, ${off + SLICE}).arrayBuffer()); let s = ''; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000)); return btoa(s); })()`);

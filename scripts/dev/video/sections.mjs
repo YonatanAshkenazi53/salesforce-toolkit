@@ -83,7 +83,19 @@ async function confirmShared(c, { caption = '', hold = 0, word = null, flowBacku
   await h.eval(`(() => { const b = document.querySelector('#sftkConfirmGo'); if (b) b.setAttribute('data-demo-go', '1'); return true; })()`);
   await rec.click('#sftkConfirmGo', 600);
   await prodGate(c);
-  await h.waitFor("!document.querySelector('#sftkConfirmGo[data-demo-go]')", 600000, 300);
+  // gone, or no longer shown (a dialog that is hidden first and removed later — the Deploy run, 2026-10-10)
+  await h.waitFor("(() => { const b = document.querySelector('#sftkConfirmGo[data-demo-go]'); return !b || !b.offsetParent; })()", 600000, 300);
+}
+// The Dependencies page above 150 flow versions does not start its scan by itself (it says
+// what the scan costs and waits for you — the four extra fixture flows pushed the org over
+// the line, 2026-10-10): the button is pressed on camera, and said once.
+async function depScanGate(c, say = false) {
+  const { h, rec } = c;
+  await h.sleep(1500);
+  const there = await h.eval(`(() => { const b = [...document.querySelectorAll('button')].find(b => /Scan dependencies/.test(b.textContent)); if (!b) return false; b.setAttribute('data-demo-depscan', '1'); return true; })()`);
+  if (!there) return;
+  if (say) await rec.say('Above a hundred and fifty flow versions the scan does not start by itself: the page says what it costs in API calls, and you start it.');
+  await rec.click('[data-demo-depscan="1"]', 800);
 }
 // the shared confirmation with a typed word (OFF, CHANGE, UNDO…)
 const typedConfirm = (c, word) => confirmShared(c, { word });
@@ -224,6 +236,7 @@ export const SECTIONS = [
     const { h, rec } = c;
     await c.popup('dependencies');
     await rec.say('Dependencies. The flows of the org as a tree: which flow calls which.');
+    await depScanGate(c, true);
     await rec.fast(() => h.waitFor("!!document.querySelector('#depApiVerBtn') && document.querySelectorAll('.dep-node').length > 0", 300000, 1000));
     await rec.pause(3000);
     if (await c.has('.dep-filter-btn[data-type="RecordTriggeredFlow"]')) { await rec.click('.dep-filter-btn[data-type="RecordTriggeredFlow"]', 1500); await rec.say('Filter by kind, for example only record-triggered flows.', 3000); await rec.click('.dep-filter-btn[data-type="all"]', 1000); }
@@ -274,6 +287,7 @@ export const SECTIONS = [
     const rowsReady = "document.querySelectorAll('.dep-fb-cb').length > 0 || /could not|no flows|nothing/i.test(document.querySelector('#depFbBody, #depToolPanel')?.innerText || '')";
     const states = () => h.eval(`${J(PICKS)}.map(v => { const x = document.querySelector('.dep-fb-cb[value="' + v + '"]'); return x ? x.dataset.on : 'missing'; })`);
     await c.popup('dependencies');
+    await depScanGate(c);
     await rec.fast(() => h.waitFor("!!document.querySelector('#depBulkBtn')", 300000, 1000));
     await rec.say('Flow switches. Before a data load you often want some automation out of the way, and back on afterwards.', 1200);
     await rec.click('#depBulkBtn', 800);
@@ -305,6 +319,7 @@ export const SECTIONS = [
     const { h, rec } = c;
     const row = '.dep-av-pick[value="SFTK_AV_Test_A"]';
     await c.popup('dependencies');
+    await depScanGate(c);
     await rec.fast(() => h.waitFor("!!document.querySelector('#depApiVerBtn')", 300000, 1000));
     await rec.say('API versions. A flow keeps the API version it was saved with, so an upgraded org can still be running old flow behaviour.', 1200);
     await rec.click('#depApiVerBtn', 800);
