@@ -168,6 +168,10 @@ the rest were the scripts themselves (listed at the end). All orgs end as they b
     and is not built yet" — a roadmap note from the mock-up days, shipped to users (seen in a
     video frame, 2026-10-10). Removed; the plan stays in docs. The test that pinned the sentence
     now pins its absence.
+20. Field Cleaner: the per-group "… all N" buttons were removed when a walk started and never
+    came back, so after a cancelled walk three open flows had no group button (walkthrough
+    recording, 2026-10-10). Disabled for the walk, redrawn afterwards for what is still open;
+    `test/fc-group-walk-1010.test.mjs`.
 Done the same evening: `sftkConfirmDestructive` redesigned (34 callers inherit it) and a shared
 `sftkDialog` for the rest; 22 hand-built dialogs migrated (popup: the Flows gates, backups,
 restores, delete results; Data Studio: rename / remove org, swap orgs, clear cached / clear

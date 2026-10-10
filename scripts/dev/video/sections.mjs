@@ -80,8 +80,10 @@ async function confirmShared(c, { caption = '', hold = 0, word = null, flowBacku
     const w = word || (await h.eval(`(document.querySelector('#sftkConfirmWord')?.getAttribute('aria-label') || '').replace(/^Type\s+/, '').replace(/\s+to confirm$/, '').trim()`)) || 'CONFIRM';
     await rec.type('#sftkConfirmWord', w, 140);
   }
+  await h.eval(`(() => { const b = document.querySelector('#sftkConfirmGo'); if (b) b.setAttribute('data-demo-go', '1'); return true; })()`);
   await rec.click('#sftkConfirmGo', 600);
   await prodGate(c);
+  await h.waitFor("!document.querySelector('#sftkConfirmGo[data-demo-go]')", 600000, 300);
 }
 // the shared confirmation with a typed word (OFF, CHANGE, UNDO…)
 const typedConfirm = (c, word) => confirmShared(c, { word });
@@ -148,28 +150,60 @@ export const SECTIONS = [
   // ───────────────────────────── the Toolkit ─────────────────────────────
   { id: 'home', title: 'Admin Toolkit', run: async c => {
     const { h, rec } = c;
-    await c.home();
-    await rec.say('Admin Toolkit for Salesforce. It runs in your browser and uses the Salesforce session you already have open. It talks to your Salesforce org and to nothing else.', 5500);
-    await rec.say('It has two parts. The Toolkit works on one org: flows, pages, fields, permissions. Data Studio moves records between orgs.', 5500);
+    // the popup on a fresh profile: the licence gate is up, nothing behind it is loaded yet
+    await h.navigate(`chrome-extension://${h.extId}/popup.html`);
+    await h.sleep(1500);
+    await rec.resume();
+    await rec.say('Admin Toolkit for Salesforce. It runs in your browser, on the Salesforce session you already have open, and talks to your org and to nothing else.');
+    if (await c.has('#sftkTermsCb')) {
+      await rec.say('On the first start, before anything else, it asks you to accept its licence agreement. It says plainly that the tool can change and delete data in your orgs, and that the consequences are yours.');
+      await rec.reveal('#sftkTermsTitle');
+      await rec.say('The full agreement and the privacy notes are one click away, and you can read them again any time from the Licence button in the top bar. We will not go through them here.');
+      await rec.point('#sftkTermsCb', 600);
+      await h.eval(`(() => { const cb = document.querySelector('#sftkTermsCb'); if (cb && !cb.checked) cb.click(); return true; })()`);
+      await h.sleep(500);
+      await rec.click('#sftkTermsYes', 1200);
+    }
+    await h.eval(`(() => { if (!window.__sftkTourKiller) window.__sftkTourKiller = setInterval(() => { const b = [...document.querySelectorAll('button, a')].find(b => /skip tour/i.test(b.textContent || '')); if (b) b.click(); }, 400); return true; })()`);
+    await rec.fast(() => h.waitFor("!document.querySelector('#sftkTermsCb') && document.querySelectorAll('.home-card').length > 0 && !document.querySelector('.home-loading')", 60000, 500));
+    await h.sleep(800);
+    await rec.say('Accepted once, remembered. It has two parts: the Toolkit works on one org — flows, pages, fields, permissions — and Data Studio moves records between orgs.');
     await rec.point('.home-card[data-fid="flows"]', 900);
     await rec.point('.home-card[data-fid="fields"]', 900);
     // several orgs open: the Toolkit works on one at a time, says which, and switches
     const pickOrg = async part => {
       await rec.click('#homeOrgSelector', 900);
       await rec.fast(() => h.waitFor("document.querySelectorAll('#homeOrgDropdown .home-org-dd-item').length > 1", 20000, 400));
-      await rec.pause(1800);
+      await rec.pause(1200);
       const ok = await h.eval(`(() => { document.querySelectorAll('[data-demo-org]').forEach(x => x.removeAttribute('data-demo-org')); const it = [...document.querySelectorAll('#homeOrgDropdown .home-org-dd-item')].find(x => x.innerText.includes(${J(part)})); if (!it) return false; it.setAttribute('data-demo-org', '1'); return true; })()`);
       if (!ok) throw new Error(`${part} is not in the org list`);
       await rec.click('#homeOrgDropdown .home-org-dd-item[data-demo-org="1"]', 600);
       await h.waitFor(`(document.querySelector('#homeOrgSelector')?.innerText || '').includes(${J(part)})`, 30000, 400);
-      await rec.pause(1500);
+      await rec.pause(1000);
     };
-    await rec.say('With several orgs open, the Toolkit works on one at a time. The card at the top says which one, and switches.', 1500);
+    await rec.say('With several orgs open, the Toolkit works on one at a time. The card at the top says which one, and switches.');
     await pickOrg(TGT_ORG);
-    await rec.say('Every tool now reads and writes that org, until you switch again. The same switch is in the top bar of every tool.', 5000);
+    await rec.say('Every tool now reads and writes that org, until you switch again. The same switch sits in the top bar of every tool.');
     await pickOrg(SRC_ORG);
     if (!(await c.text('#homeOrgSelector', 200)).includes(SRC_ORG)) throw new Error('could not switch back to the source org');
-    await rec.say('Every tool reads first and shows what it found. A change is made only after one confirmation that says exactly what will happen.', 5000);
+    // the rest of the top bar, one control at a time
+    await rec.click('#dsWhatsNewTop', 1200);
+    await rec.say('What’s New: the release notes, per version, inside the app.');
+    await rec.reveal('#whatsNewContainer');
+    if (await c.has('#homeBtn')) await rec.click('#homeBtn', 900);
+    await rec.click('#sftkDarkToggle', 900);
+    await rec.say('Dark mode.');
+    await rec.click('#sftkDarkToggle', 900);
+    await rec.say('A second press gives OLED black: pure black surfaces for OLED screens. One setting for both parts of the extension.');
+    await rec.click('#sftkDarkToggle', 800);
+    await rec.say('And back to light.');
+    await rec.click('#sftkTermsBtn', 1000);
+    await rec.say('The Licence button brings the agreement and the privacy notes back, any time.');
+    await rec.reveal('#sftkTermsViewTitle');
+    if (await c.has('#sftkTermsViewClose')) await rec.click('#sftkTermsViewClose', 600);
+    await rec.point('#dataStudioBtn', 900);
+    await rec.say('Data Studio opens in a tab of its own; its chapters come later, with its quick navigation and shortcuts.');
+    await rec.say('Every tool reads first and shows what it found. A change is made only after one confirmation that says exactly what will happen.');
   } },
 
   { id: 'flows', title: 'Flows', run: async c => {
@@ -194,34 +228,39 @@ export const SECTIONS = [
     await rec.pause(3000);
     if (await c.has('.dep-filter-btn[data-type="RecordTriggeredFlow"]')) { await rec.click('.dep-filter-btn[data-type="RecordTriggeredFlow"]', 1500); await rec.say('Filter by kind, for example only record-triggered flows.', 3000); await rec.click('.dep-filter-btn[data-type="all"]', 1000); }
     if (await c.has('#depRefSearch')) {
-      // The search answers only for the flow versions whose text it has read, and says so.
-      // So: search; while the page says the scan is still running, wait and search again;
-      // when it says the list came from the stored cache, press its "Read them all".
-      const search = async () => {
-        // the panel is redrawn while "Read them all" runs: the input is gone for a moment (live 2026-10-10)
-        await h.waitFor("!!document.querySelector('#depRefSearch') && !!document.querySelector('#depRefGo')", 120000, 500);
-        await h.eval(`(() => { const i = document.querySelector('#depRefSearch'); i.value = ${J(OLD_FIELD)}; document.querySelector('#depRefGo').click(); return true; })()`);
-        await h.waitFor("!!document.querySelector('#depRefResults')?.innerText", 60000, 500).catch(() => {});
-        await h.sleep(400);
-        return h.eval(`(() => { const t = document.querySelector('#depRefResults')?.innerText || ''; return { partial: !!document.querySelector('#depRefRescan'), running: /still running/.test(t), hits: document.querySelectorAll('.dep-ref-hit').length }; })()`);
-      };
-      await rec.type('#depRefSearch', OLD_FIELD, 22);
-      let st = await search();
-      if (st.partial) {
+      // User 2026-10-10 on the first cut: "i dont really see the example on the screen of what
+      // uses this … didn't show how a full scan goes". So: the search ON camera, its partial
+      // answer, the "Read them all" click, the wait, and the search again over everything.
+      const results = () => h.eval(`(() => ({ partial: !!document.querySelector('#depRefRescan'), hits: document.querySelectorAll('.dep-ref-hit').length }))()`);
+      const searchOnCamera = async () => {
+        await rec.scrollTo('#depRefSearch', 'center');
+        await rec.type('#depRefSearch', OLD_FIELD, 22);
+        await rec.click('#depRefGo', 600);
+        await rec.fast(() => h.waitFor("!!(document.querySelector('#depRefResults')?.innerText || '').trim()", 60000, 500).catch(() => {}));
+        await h.sleep(600);
         await rec.scrollTo('#depRefResults', 'center');
-        await rec.say('The search says how much it actually read. Not every flow has been read yet, so this is not an answer.', 4500);
-        await rec.fast(async () => {
-          const end = Date.now() + 420000; let asked = false;
-          while (st.partial && Date.now() < end) {
-            if (!st.running && !asked) { asked = true; await h.eval(`document.querySelector('#depRefRescan')?.click()`); await h.sleep(4000); }
-            else await h.sleep(3000);
-            st = await search();
-          }
-        });
-      }
-      await rec.scrollTo('#depRefResults', 'center');
-      await rec.say(st.partial ? '“What uses this?” Type a field or a component and see the flows that mention it.'
-        : `“What uses this?” Every flow was read: ${st.hits} flow version${st.hits === 1 ? '' : 's'} mention this field.`, 5500);
+        return results();
+      };
+      let st = await searchOnCamera();
+      await rec.say(st.partial
+        ? `“What uses this?” — a field name, and the flows that mention it. ${st.hits ? `${st.hits} so far, and` : 'None yet, and'} the answer says how much was actually read: not every flow version, so this is not a final answer.`
+        : `“What uses this?” — a field name, and the flows that mention it. ${st.hits} flow version${st.hits === 1 ? '' : 's'}, from the versions read when this page opened — the answer always says how much was read.`);
+      await rec.reveal('#depRefResults');
+      // the full scan, on camera: every flow version's text read again
+      await rec.scrollTo('#depRescanBtn', 'center');
+      await rec.click('#depRescanBtn', 800);
+      await rec.say('Rescan drops the stored data and reads the text of every flow version again. The status line counts them.');
+      await rec.fast(async () => {
+        await h.sleep(3000);
+        await h.waitFor("(() => { const b = document.querySelector('#depRescanBtn'); return !!b && !b.disabled && !/rescanning/.test(b.textContent) && document.querySelectorAll('.dep-node').length > 0 && !!document.querySelector('#depRefSearch'); })()", 600000, 1000);
+        await h.sleep(1500);
+      });
+      await rec.say('Read. The same search again, over everything just read.');
+      st = await searchOnCamera();
+      await rec.say(st.partial
+        ? `${st.hits} flow version${st.hits === 1 ? '' : 's'} mention this field among those read; the rest are named as not searched.`
+        : `Every flow version was read: ${st.hits} flow version${st.hits === 1 ? '' : 's'} mention this field, each with how many times. A click opens the flow.`);
+      await rec.reveal('#depRefResults');
     }
     await rec.scrollTo('#depBulkBtn', 'center');
     await rec.point('#depBulkBtn', 900);
@@ -339,20 +378,61 @@ export const SECTIONS = [
       await rec.scrollTo('#adbgLogFilter', 'center');
       await rec.type('#adbgLogFilter', 'counting up', 70);
       await rec.say('A search keeps only the matching lines: here the trigger’s own debug line, once per pass.');
-      await rec.click('.adbg-log-cat[data-cat="soqldml"]', 900);
-      await rec.say('One-click filters. Only the queries and the DML.');
-      await rec.click('.adbg-log-cat[data-cat="errors"]', 900);
-      await rec.say('Only the errors.');
-      await rec.click('.adbg-log-cat[data-cat="nonoise"]', 900);
-      await rec.say('Hide noise drops the lines nobody reads — heap, statement and limit chatter. What is left is what happened.');
-      await rec.click('.adbg-log-cat[data-cat=""]', 600);
       await h.eval(`(() => { const i = document.querySelector('#adbgLogFilter'); if (i) { i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); } return true; })()`);
-      await h.sleep(500);
+      await h.sleep(600);
+      const shownLines = () => h.eval(`(document.querySelector('#adbgLogView')?.innerText || '').split(String.fromCharCode(10)).filter(l => l.trim()).length`);
+      const all = await shownLines();
+      await rec.click('.adbg-log-cat[data-cat="soqldml"]', 900);
+      await rec.say(`One-click filters. Only the queries and the DML: ${await shownLines()} lines of ${all}.`);
+      await rec.click('.adbg-log-cat[data-cat="nonoise"]', 900);
+      const quiet = await shownLines();
+      await rec.say(`Hide noise drops the lines nobody reads — heap, statement and limit chatter. ${all} lines become ${quiet}; what is left is what happened.`);
+      await rec.reveal('#adbgLogView');
+      await rec.click('.adbg-log-cat[data-cat=""]', 600);
       if (await c.has('.adbg-det-actions')) {
         await rec.scrollTo('.adbg-det-actions', 'center');
-        await rec.point('#adbgCopyReportBtn', 700); await rec.point('#adbgDlReportBtn', 700); await rec.point('#adbgDlBtn', 700);
-        await rec.say('The report: the analysis as text, to copy or to download as Markdown. And the raw log, exactly as Salesforce returned it.');
+        await rec.click('#adbgCopyReportBtn', 900);
+        const copied = /Copied/.test(await h.eval(`document.querySelector('#adbgCopyReportBtn')?.textContent || ''`));
+        await rec.say(copied
+          ? 'Copy Report puts the analysis on the clipboard as text — the button says Copied — ready to paste into a ticket or a chat.'
+          : 'Copy Report puts the analysis on the clipboard as text, ready to paste into a ticket or a chat.');
+        await rec.point('#adbgDlReportBtn', 700); await rec.point('#adbgDlBtn', 700);
+        await rec.say('Report dot m d downloads the same analysis as a Markdown file; Raw dot log downloads the log exactly as Salesforce returned it.');
       }
+      // an error: anonymous Apex that throws, as the traced user — the log shows the exception
+      await rec.say('Now an error. A piece of Apex that divides by zero runs in the org.');
+      await rec.fast(async () => {
+        const apexFile = `${process.env.TEMP || '.'}/sftk-video-${Date.now()}.apex`;
+        writeFileSync(apexFile, "System.debug('SFTK video: about to divide by zero'); Integer zero = 0; Integer boom = 10 / zero; System.debug(boom);");
+        try { cliJson('npc', ['apex', 'run', '-f', apexFile]); } catch (_) { /* the run fails on purpose; the log is what matters */ }
+        await h.sleep(4000);
+      });
+      const rowsBefore = await h.eval("document.querySelectorAll('#adbgLogList .adbg-log-row').length");
+      await rec.click('#adbgRefreshBtn', 800);
+      await rec.fast(() => h.waitFor(`document.querySelectorAll('#adbgLogList .adbg-log-row').length > ${rowsBefore}`, 60000, 1000).catch(() => {}));
+      await h.sleep(800);
+      const errRow = await h.eval(`(() => { const r = [...document.querySelectorAll('#adbgLogList .adbg-log-row')].find(r => /Exception|FATAL|Unhandled/i.test(r.innerText) || r.querySelector('.adbg-row-fail')) || document.querySelector('#adbgLogList .adbg-log-row'); if (!r) return false; document.querySelectorAll('[data-demo-pick]').forEach(x => x.removeAttribute('data-demo-pick')); r.setAttribute('data-demo-pick', '1'); return true; })()`);
+      if (errRow) {
+        await rec.click('[data-demo-pick="1"] .adbg-row-op', 800);
+        await rec.fast(() => h.waitFor("!!document.querySelector('#adbgLogView') && !document.querySelector('#adbgDetail .adbg-detail-loading')", 60000, 500));
+        await h.sleep(800);
+        await rec.say('The new log. The header counts the exception, and the Errors filter keeps only the lines that matter: the exception, and where it was thrown.');
+        await rec.scrollTo('#adbgLogFilter', 'center');
+        await rec.click('.adbg-log-cat[data-cat="errors"]', 900);
+        await rec.reveal('#adbgLogView');
+        await rec.say(`${await shownLines()} lines: the exception itself. Nothing else to read through.`);
+        await rec.click('.adbg-log-cat[data-cat=""]', 600);
+      }
+      // the search across every log in the list
+      await rec.scrollTo('#adbgXSearch', 'center');
+      await rec.type('#adbgXSearch', 'counting up', 70);
+      await rec.click('#adbgXSearchBtn', 800);
+      await rec.say('Search across all logs reads every log in the list and marks the ones that contain the words, with how many lines match.');
+      await rec.fast(() => h.waitFor("!/Searching/.test(document.querySelector('#adbgLogCount')?.innerText || '')", 300000, 1000).catch(() => {}));
+      await h.sleep(800);
+      if (await c.has('.adbg-badge-xhit')) await rec.point('.adbg-badge-xhit', 1000);
+      await rec.say(`${await h.eval("document.querySelectorAll('#adbgLogList .adbg-row-xhit').length")} logs mention the trigger’s debug line — the loop logs, and none of the others.`);
+      await rec.click('#adbgXSearchClear', 600);
       // the log in a tab of its own: one picture of that tab goes into the recording
       await rec.click('#adbgNewTabBtn', 2500);
       const viewer = (await h.cdp('Target.getTargets', {}, null)).targetInfos.find(t => t.type === 'page' && /apex-log-viewer\.html/.test(t.url));
@@ -388,100 +468,340 @@ export const SECTIONS = [
       await rec.fast(() => h.waitFor("document.querySelector('#adbgStartBtn').style.display !== 'none'", 60000, 500));
       await rec.say('Stop ends the trace, and the tool reads the org back to be sure it is really gone.');
     } },
-  { id: 'pages', title: 'Lightning Pages', run: async c => {
+  { id: 'pages', title: 'Lightning Pages', writes: true, run: async c => {
     const { h, rec } = c;
+    const PAGE = /SFTK LP Test Account Page/i;
+    const acc = cliJson('npc', ['data', 'query', '-q', `"SELECT Id FROM Account WHERE Name = 'SFTK PK Account 1' LIMIT 1"`]).result.records[0];
+    // one picture of an Account record page in Salesforce, in a tab of its own
+    const recordFrame = async (caption) => {
+      // A brand-new browser session each time (a new browser context, logged in through a fresh
+      // frontdoor URL from the CLI): Lightning keeps page assignments in its session caches, and a
+      // tab in the old session drew the old page even after the change (dry runs 2026-10-10).
+      // The frontdoor URL carries a session id: it is never logged.
+      const path = `/lightning/r/Account/${acc.Id}/view`;
+      const fd = cliJson('npc', ['org', 'open', '--url-only']).result.url;
+      const { browserContextId } = await h.cdp('Target.createBrowserContext', {}, null);
+      const { targetId } = await h.cdp('Target.createTarget', { url: `${fd}${fd.includes('?') ? '&' : '?'}retURL=${encodeURIComponent(path)}`, browserContextId }, null);
+      const { sessionId } = await h.cdp('Target.attachToTarget', { targetId, flatten: true }, null);
+      await rec.fast(async () => {
+        await h.cdp('Page.enable', {}, sessionId).catch(() => {});
+        for (let i = 0; i < 90; i++) {
+          const r = await h.cdp('Runtime.evaluate', { expression: "(/\/lightning\/r\/Account\//.test(location.href) && document.body) ? document.body.innerText.length : 0", returnByValue: true }, sessionId).catch(() => ({ result: { value: 0 } }));
+          if (r.result.value > 1500) break; await h.sleep(1000);
+        }
+        await h.sleep(5000);   // the record page draws its components after the shell
+        // the "Slack in Salesforce" promo popover, if it is up, is closed first
+        await h.cdp('Runtime.evaluate', { expression: `(() => { const pop = [...document.querySelectorAll('section, div')].find(e => e.children.length < 12 && /Slack in Salesforce/.test(e.innerText || '') && e.querySelector('button')); const b = (pop && (pop.querySelector('.slds-popover__close, button[title*="lose" i], button[aria-label*="lose" i], button[aria-label*="ismiss" i]') || pop.querySelector('button'))) || document.querySelector('.slds-popover__close'); if (b) b.click(); return !!b; })()`, returnByValue: true }, sessionId).catch(() => {});
+        await h.sleep(600);
+      });
+      rec.state.pages.push({ t: (rec.state.frames.at(-1) || { t: 0 }).t + 1, url: `https://${SRC_ORG}.lightning.force.com${path}`, title: 'SFTK PK Account 1 | Salesforce' });
+      await rec.frameFrom(sessionId, 300);
+      await rec.say(caption);
+      await h.cdp('Target.closeTarget', { targetId }, null).catch(() => {});
+      await h.cdp('Target.disposeBrowserContext', { browserContextId }, null).catch(() => {});
+      await rec.resume(); await h.sleep(600);
+    };
+    const openFixturePage = async () => {
+      await rec.fast(() => h.waitFor("document.querySelectorAll('.lp-row').length > 0", 240000, 1000));
+      await h.eval(`(() => { const i = document.querySelector('#lpSearch'); if (i && i.value !== 'SFTK') { i.value = 'SFTK'; i.dispatchEvent(new Event('input', { bubbles: true })); } return true; })()`);
+      await h.sleep(900);
+      const findRow = `([...document.querySelectorAll('.lp-row')].find(x => ${PAGE}.test(x.querySelector('.lp-row-name')?.textContent || '')))`;
+      let open = false;
+      for (let i = 0; i < 5 && !open; i++) {
+        if (!(await h.eval(`(() => { const r = ${findRow}; if (!r) return false; document.querySelectorAll('[data-demo-row]').forEach(x => x.removeAttribute('data-demo-row')); r.setAttribute('data-demo-row', '1'); return true; })()`))) { await h.sleep(1500); continue; }
+        await rec.point('.lp-row[data-demo-row="1"]', 700);
+        await h.eval(`(() => { const r = ${findRow}; if (r) r.click(); return !!r; })()`);
+        open = await h.waitFor("!!document.querySelector('#lpDetailBody') && !!document.querySelector('#lpDetailBody').offsetParent", 6000, 300).then(() => true).catch(() => false);
+      }
+      if (!open) throw new Error('the fixture page detail did not open');
+      await rec.fast(() => h.waitFor("!!document.querySelector('#lpDetailBody .lp-status-bar')", 180000, 1000));
+      await h.sleep(600);
+    };
+
     await c.popup('pages');
     await rec.say('Lightning Pages. Every record page of the org, and where each one is assigned.');
     await rec.fast(() => h.waitFor("document.querySelectorAll('.lp-row').length > 0", 240000, 1000));
-    await rec.pause(2500);
+    await rec.pause(1500);
     await rec.type('#lpSearch', 'SFTK');
-    await h.sleep(900);
-    // the list redraws itself while it checks the org defaults, so the row is found again at every step
-    const findRow = `([...document.querySelectorAll('.lp-row')].find(x => /SFTK[ _]LP/i.test(x.querySelector('.lp-row-name')?.textContent || '')) || document.querySelector('.lp-row'))`;
-    let open = false;
-    for (let i = 0; i < 5 && !open; i++) {
-      if (!(await h.eval(`(() => { const r = ${findRow}; if (!r) return false; document.querySelectorAll('[data-demo-row]').forEach(x => x.removeAttribute('data-demo-row')); r.setAttribute('data-demo-row', '1'); return true; })()`))) throw new Error('no Lightning page row to open');
-      await rec.point('.lp-row[data-demo-row="1"]', 700);
-      await h.eval(`(() => { const r = ${findRow}; if (r) r.click(); return !!r; })()`);
-      open = await h.waitFor("!!document.querySelector('#lpDetailBody') && !!document.querySelector('#lpDetailBody').offsetParent", 6000, 300).then(() => true).catch(() => false);
+    await openFixturePage();
+    await rec.say('A page’s assignments, read from Salesforce each time: the org default, an app default, or an app with a record type and a profile. This test page has none yet, so nobody sees it.');
+    await recordFrame('An Account in this org today, in the Learning Home app: the standard record page, with its tabs, related lists and activity.');
+    // the assignment, for real: the app default of the app the users work in (an org default would be
+    // beaten there by the app's own default page — the first dry run showed the same page twice)
+    const APP = 'Learning Home', PROFILE = 'System Administrator';
+    await rec.click('.lp-atab[data-tab="artp"]', 700);
+    await rec.say(`The most specific assignment: an app, record types and a profile. The ${APP} app, every record type, and the ${PROFILE} profile — the person about to open the record. It beats the org default and the app default.`);
+    const tick = async (listSel, cls, text) => {
+      const ok = await h.eval(`(() => { const it = [...document.querySelectorAll(${J(listSel + ' .lp-app-item, ' + listSel + ' .lp-multi-item')})].find(x => ${J(text)} ? new RegExp(${J(text)}, 'i').test(x.innerText) : true); if (!it) return false; document.querySelectorAll('[data-demo-tick]').forEach(e => e.removeAttribute('data-demo-tick')); it.setAttribute('data-demo-tick', '1'); return true; })()`);
+      if (!ok) throw new Error(`"${text}" is not offered in ${listSel}`);
+      await rec.point('[data-demo-tick="1"]', 600);
+      await h.eval(`(() => { const cb = document.querySelector('[data-demo-tick="1"] input[type=checkbox]'); if (cb && !cb.checked) cb.click(); return true; })()`);
+      await h.sleep(500);
+    };
+    await tick('#lpARTPAppList', 'lp-artp-app-cb', APP);
+    if (await c.has('#lpARTPRTAll')) { await rec.point('#lpARTPRTAll', 600); await h.eval(`(() => { const cb = document.querySelector('#lpARTPRTAll'); if (cb && !cb.checked) cb.click(); return true; })()`); await h.sleep(500); }
+    await tick('#lpARTPProfileList', 'lp-artp-profile-cb', PROFILE);
+    await rec.click('#lpAddBtnARTP', 800);
+    await confirmShared(c, { caption: 'The confirmation lists every combination it will write: one per app, record type and profile.' });
+    // the error box is always in the page, empty: wait for TEXT in either (dry run 2026-10-10)
+    await rec.fast(() => h.waitFor("!!document.querySelector('#lpResultNote') || !!(document.querySelector('#lpAddErrARTP')?.innerText || '').trim()", 180000, 500));
+    await h.sleep(800);
+    if (await c.has('#lpResultNote')) {
+      await rec.scrollTo('#lpResultNote', 'center');
+      const note = (await c.text('#lpResultNote', 160)) || 'Assigned, and verified by reading the org again.';
+      const refused = await h.eval(`(() => { const e = [...document.querySelectorAll('.lp-add-err, .error-banner')].find(x => x.offsetParent !== null && /could not be assigned/.test(x.innerText)); return e ? e.innerText.replace(/\\s+/g, ' ').slice(0, 300) : ''; })()`);
+      await rec.say(refused ? `${note} One combination Salesforce refused — the Person Account record type cannot take a business page — and the tool says so in Salesforce’s own words.` : note);
     }
-    if (!open) throw new Error('the page detail did not open');
-    await rec.fast(() => h.waitFor("!!document.querySelector('#lpDetailBody .lp-status-bar')", 180000, 1000));
-    await rec.say('A page’s assignments, read from Salesforce each time: the org default, an app default, or an app with a record type and a profile.', 6000);
-    if (await c.has('.lp-users-btn')) {
-      await rec.click('.lp-users-btn', 800);
-      await rec.fast(() => h.sleep(4000));
-      await rec.say('“Show affected users” lists who actually gets this page.', 4000);
+    else throw new Error(`the assignment failed: ${await c.text('#lpAddErrARTP', 300)}`);
+    await recordFrame('The same Account now, in the same app: the test page — a highlights panel and the details, nothing else — because the Toolkit just assigned it.');
+    await rec.point('#lpOpenSfBtn', 900);
+    await rec.say('“Open in Salesforce” opens the page in the Lightning App Builder.');
+    // who sees what
+    await rec.click('#lpBackBtn', 900);
+    await rec.fast(() => h.waitFor("!!document.querySelector('#lpProfileMapBtn')", 60000, 500));
+    await rec.click('#lpProfileMapBtn', 800);
+    await rec.say('“Who sees what?” reads every assignment of the org and answers per object and profile: which page each profile gets, and through which rule.');
+    await rec.fast(() => h.waitFor("document.querySelectorAll('.lp-wsw-card').length > 0 && !document.querySelector('#lpWswLoad')", 600000, 1000));
+    await h.sleep(800);
+    // the Account card first (the list is long): then a short way down it
+    await h.eval(`(() => { const c = [...document.querySelectorAll('.lp-wsw-card')].find(x => /^Account|Account Record Page/.test((x.querySelector('.lp-wsw-card-hdr') || x).innerText.trim())); if (c) c.setAttribute('data-demo-card', '1'); return !!c; })()`);
+    if (await c.has('[data-demo-card="1"]')) await rec.scrollTo('[data-demo-card="1"]', 'start');
+    await rec.say(`One card per object. The Account card now lists the test page for ${PROFILE} inside ${APP}, next to the org default and the other assignments.`);
+    await rec.scrollBy(null, 420); await rec.scrollBy(null, 420);
+    if (await c.has('details.lp-od-users')) {
+      await rec.scrollTo('details.lp-od-users', 'center');
+      await h.eval(`(() => { const d = document.querySelector('details.lp-od-users'); d.open = true; d.dispatchEvent(new Event('toggle')); return true; })()`);
+      await rec.fast(() => h.waitFor("!/Loading users/.test(document.querySelector('details.lp-od-users')?.innerText || '')", 120000, 500));
+      await rec.say('“Show users” lists the people behind a row.');
     }
-    await rec.say('Assign, remove, deactivate or clone a page from here. Every change is confirmed once and then checked against the org.', 5500);
+    // what a user sees
+    await rec.click('#lpBackBtn', 900);
+    await rec.fast(() => h.waitFor("!!document.querySelector('#lpUserLensBtn')", 60000, 500));
+    await rec.click('#lpUserLensBtn', 800);
+    await rec.say('“What a user sees” goes the other way: pick one user, and get the page they land on for each object, and which assignment won.');
+    await rec.fast(() => h.waitFor("document.querySelectorAll('#lpUlList .lp-row').length > 0", 120000, 500));
+    await rec.type('#lpUlSearch', 'Test A', 60);
+    await rec.click('#lpUlSearchBtn', 800);
+    await rec.fast(() => h.waitFor("[...document.querySelectorAll('#lpUlList .lp-row')].some(r => /Test A/.test(r.innerText))", 120000, 500));
+    await h.eval(`(() => { const r = [...document.querySelectorAll('#lpUlList .lp-row')].find(r => /Test A/.test(r.innerText)); if (r) r.setAttribute('data-demo-row', '1'); return !!r; })()`);
+    await rec.click('#lpUlList .lp-row[data-demo-row="1"]', 800);
+    await rec.fast(() => h.waitFor("!!document.querySelector('#lpUlBack')", 120000, 500));
+    await h.sleep(800);
+    await rec.say('Per object: the page, and the rule that chose it — and why the others lost.');
+    await rec.reveal('#lpDetailBody');
+    // removed again
+    await rec.click('#lpUlBack', 700);
+    await rec.fast(() => h.waitFor("!!document.querySelector('#lpBackBtn')", 60000, 500));
+    await rec.click('#lpBackBtn', 900);
+    await openFixturePage();
+    const rm = '.lp-asgn-row[data-kind="artp"] .lp-rm-btn';
+    if (!(await c.has(rm))) throw new Error('the assignment row has no remove button');
+    await rec.scrollTo(rm, 'center');
+    await rec.click(rm, 800);
+    await confirmShared(c, { caption: 'Remove takes the assignments away again — every combination — confirmed, then checked against the org.' });
+    await rec.fast(() => h.waitFor("!!document.querySelector('#lpResultNote')", 180000, 500));
+    await h.sleep(800);
+    // the remove took every combination with it? what is left is said, not assumed
+    for (let i = 0; i < 6 && await c.has('.lp-asgn-row[data-kind="artp"] .lp-rm-btn'); i++) {
+      await h.eval(`document.querySelector('.lp-asgn-row[data-kind="artp"] .lp-rm-btn').click()`);
+      await confirmShared(c, {});
+      await rec.fast(() => h.waitFor("!!document.querySelector('#lpResultNote')", 180000, 500)); await h.sleep(800);
+    }
+    await rec.say('Assign, remove, deactivate or clone a page from here. Every change is confirmed once and then read back from the org.');
   } },
 
   { id: 'fields', title: 'Field Cleaner', writes: true,
-    cleanup: async ({ h }) => { rebuildFieldCleanerFixture('npc', (...a) => h.log(...a)); },
+    cleanup: async ({ h }) => {
+      rebuildFieldCleanerFixture('npc', (...a) => h.log(...a));
+      // the values the chapter copied into the replacement field go again, so the next recording copies them again
+      try {
+        const q = cliJson('npc', ['data', 'query', '-q', `"SELECT Id FROM Account WHERE SFTK_FC_Test_Status2__c != null"`]).result.records || [];
+        for (const r of q) cliJson('npc', ['data', 'update', 'record', '-s', 'Account', '-i', r.Id, '-v', '"SFTK_FC_Test_Status2__c="']);
+        h.log(`copied values cleared from ${q.length} record(s)`);
+      } catch (e) { h.log('clearing the copied values:', (e && e.message) || e); }
+    },
     run: async c => {
       const { h, rec } = c;
-      const settled = "!document.querySelector('#sftkConfirmGo') && !document.querySelector('.fc-fix-btn[disabled]')";
-      const walking = "[...document.querySelectorAll('#fcFixEvery button')].some(b => b.disabled)";
+      const settled = "!document.querySelector('#sftkConfirmGo') && !document.querySelector('.fc-fix-btn[disabled]') && !document.querySelector('.fc-fix-all[disabled]')";
+      // off camera: eight fixture accounts get a value in the old field, so there is something to copy
+      await rec.fast(async () => {
+        const ids = (cliJson('npc', ['data', 'query', '-q', `"SELECT Id FROM Account WHERE Name LIKE 'SFTK PK Account%' ORDER BY Name LIMIT 8"`]).result.records || []).map(r => r.Id);
+        ids.forEach((id, i) => { try { cliJson('npc', ['data', 'update', 'record', '-s', 'Account', '-i', id, '-v', `"${OLD_FIELD}=${i % 3 === 0 ? 'Closed' : i % 3 === 1 ? 'Reviewed' : 'New'}"`]); } catch (_) {} });
+        h.log(`seeded ${ids.length} account(s) with a value in ${OLD_FIELD}`);
+      });
+      const flowBtn = (name, swap, way) => `.fc-fix-pair[data-type="Flow"][data-name="${name}"] .fc-fix-btn[data-swap="${swap}"]${way ? `[data-way="${way}"]` : ''}`;
+      const cardText = async name => (await h.eval(`(() => { const p = document.querySelector('.fc-fix-pair[data-type="Flow"][data-name="${name}"]'); const card = p && p.closest('.fc-flow-card'); return card ? card.innerText.replace(/\\s+/g, ' ').trim() : ''; })()`)).slice(0, 220);
+      const flowsLeft = () => h.eval(`document.querySelectorAll('.fc-fix-pair[data-type="Flow"]').length`);
+      // one fix on one item: click, the confirmation shown whole and confirmed, the result waited for
+      const fixOne = async (sel, caption) => {
+        await rec.scrollTo(sel, 'center');
+        await rec.click(sel, 600);
+        await confirmShared(c, { caption, flowBackupOff: true });
+        await rec.fast(() => h.waitFor(settled, 600000, 1000));
+        await h.sleep(1200);
+      };
+
       await c.popup('fields');
       await h.waitFor("!!document.querySelector('#fcObjInput')", 60000, 500);
-      await rec.say('Field Cleaner retires a field: it finds everything that uses it, moves each use to a replacement, and then deletes the field — every step with its own confirmation.');
+      await rec.say('Field Cleaner retires a field. It finds everything that uses the field; then, item by item, you either replace the field with another one or remove the references; and at the end you delete the field. Every step asks first.');
       await fcPick(c, '#fcObjInput', '#fcObjDrop', 'Account');
       await fcPick(c, '#fcFieldInput', '#fcFieldDrop', OLD_FIELD);
       await rec.fast(() => h.waitFor("!document.querySelector('#fcReplInput')?.disabled || !!document.querySelector('#fcReplNote .fc-repl-bad')", 60000, 500));
-      await rec.say('The object, the field, and a replacement field of the same type.');
+      await rec.say('The object, the field to retire, and the field that replaces it — same type.');
       if (await h.eval(`!!document.querySelector('#fcReplInput')?.disabled`)) throw new Error('the replacement picker is not available for the fixture field');
       await fcPick(c, '#fcReplInput', '#fcReplDrop', NEW_FIELD);
       await rec.click('#fcScanBtn', 800);
       await rec.fast(() => h.waitFor("/reference|Nothing references|No references|found|dependenc/i.test(document.querySelector('#fcResults')?.innerText || '') && !/scanning|⏳/i.test(document.querySelector('#fcScanBtn')?.innerText || '')", 600000, 1000));
       await h.sleep(2500);
       await rec.scrollTo('#fcResults');
-      await rec.say('The scan lists everything that mentions the field: the layout, the Lightning page, the flows, who can see it, and whether it still holds values. Nothing has changed yet.');
+      const nFlows = await flowsLeft();
+      await rec.say(`The scan. Everything that mentions the field, in groups: ${nFlows} flows, the page layout, the Lightning page, who can see the field, and whether it still holds values. Nothing has changed yet.`);
       await rec.reveal(null);
       await rec.scrollTo('#fcResults');
-      // 1. access: the people who can see the old field must see the new one
+      // the XML inspector on one flow: the flow's own definition with every reference marked
+      const inspect = '.fc-inspect-btn[data-type="Flow"]';
+      if (await c.has(inspect)) {
+        await rec.scrollTo(inspect, 'center');
+        await rec.click(inspect, 800);
+        await rec.fast(() => h.waitFor("!!document.querySelector('.fc-xml-panel .fc-xml-hdr')", 60000, 500).catch(() => {}));
+        if (await c.has('.fc-xml-panel .fc-xml-hdr')) {
+          await rec.scrollTo('.fc-xml-panel .fc-xml-hdr', 'start');
+          const badge = ((await c.text('.fc-xml-panel .fc-xml-hdr', 200)).replace(/\s+/g, ' ').match(/\d+ field refs?(?: · \d+ blocks? to remove)?/) || [''])[0];
+          await rec.say(`The magnifier opens the flow’s XML as Salesforce stores it, with every place the field is used marked${badge ? ` — ${badge}` : ''}. That is what a Replace changes and what a Remove takes out.`);
+          await rec.reveal('.fc-xml-panel');
+          await rec.click(inspect, 600);
+        }
+      }
+      // 1. access first: the people who can see the old field must see the new one
       if (await c.has('#fcFlsCopyBtn')) {
         await rec.scrollTo('#fcFlsCopyBtn', 'center');
         await rec.click('#fcFlsCopyBtn', 500);
-        await confirmShared(c, { caption: 'First, access. The profiles and permission sets that can see the old field get the same access to the new one. Access is only ever added.' });
+        await confirmShared(c, { caption: 'First, access. Whoever can see the old field gets the same access to the new one. Access is only ever added.' });
         await rec.fast(() => h.waitFor("!document.querySelector('#fcFlsCopyBtn') && !document.querySelector('#sftkConfirmGo')", 120000, 500));
         await h.sleep(1200);
         await rec.say('Copied, and verified by reading the org again.');
       }
-      // 2. everything at once: the walk over the whole list
-      const every = '.fc-fix-every[data-swap="1"]';
-      if (!(await c.has(every))) throw new Error('no "Replace all" button — the fixture is not in place');
-      await rec.scrollTo('#fcFixEvery', 'center');
-      await rec.say('Every item has its own Replace and Remove. "Everything at once" walks the whole list: each item still asks first, and Cancel in any dialog stops the walk.');
-      await rec.click(every, 600);
-      const seen = {};
-      const captions = {
-        Layout: 'The page layout: the new field takes the old field’s place. A restore point is saved first.',
-        Page:   'The Lightning page: its field component and its visibility rule move to the new field.',
-        Flow:   'A flow: the plan is a new active version that uses the new field, then the old versions deleted. A backup of the flow is offered first — switched off for this recording.',
-        Other:  'The next item, the same way.',
-      };
-      for (let i = 0; i < 30; i++) {
-        await rec.fast(() => h.waitFor(`!!document.querySelector('#sftkConfirmGo') || !${walking}`, 600000, 500));
-        if (!(await c.has('#sftkConfirmGo'))) break;
-        const title = await c.text('.sftk-cf-title', 200);
-        const kind = /flow/i.test(title) ? 'Flow' : /layout/i.test(title) ? 'Layout' : /lightning|flexi|page/i.test(title) ? 'Page' : 'Other';
-        const first = !seen[kind]; seen[kind] = 1;
-        await confirmShared(c, { caption: first ? captions[kind] : 'The next one.', flowBackupOff: true });
-        await rec.fast(() => h.waitFor("!document.querySelector('#sftkConfirmGo')", 600000, 500));
+      // 2. the values in the records: Replace moves references; the data is its own step
+      if (await c.has('#fcCopyCompare')) {
+        await rec.scrollTo('#fcCopyCompare', 'center');
+        await rec.say('Replace moves the places that mention the field. The values stored in the records are a separate step: Stored values compares the two fields, record by record.');
+        await rec.click('#fcCopyCompare', 800);
+        await rec.fast(() => h.waitFor("!!document.querySelector('#fcCopyGo') || /cannot be copied/.test(document.querySelector('.fc-copy')?.innerText || '')", 180000, 500));
         await h.sleep(600);
+        if (await c.has('#fcCopyGo:not([disabled])')) {
+          await rec.scrollTo('.fc-copy', 'center');
+          const held = ((await h.eval(`(document.querySelector('.fc-copy')?.innerText || '')`)).match(/(\d+) records? holds? a value/) || [])[1];
+          await rec.say(`${held ? `${held} records hold a value in the old field. ` : ''}The copy fills the new field where it is empty; a value already there is never overwritten unless you say so.`);
+          await rec.reveal('.fc-copy');
+          await rec.click('#fcCopyGo', 800);
+          await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 120000, 400);
+          await h.eval(`(() => { const cb = document.querySelector('#fcCopyCsv'); if (cb && cb.checked) cb.click(); return true; })()`);   // no file download in a recording
+          await confirmShared(c, { caption: 'The confirmation counts the records and offers a receipt first: a CSV of every record with the value written and the value that was there.' });
+          await rec.fast(() => h.waitFor("/copied|verified|failed|refused/i.test(document.querySelector('#fcCopyResult')?.innerText || '')", 300000, 500));
+          await h.sleep(800);
+          await rec.scrollTo('#fcCopyResult', 'center');
+          await rec.say((await c.text('#fcCopyResult', 160)).replace(/\s+/g, ' ') || 'Copied, and verified by reading the records again.');
+        } else {
+          await rec.say((await c.text('.fc-copy', 160)).replace(/\s+/g, ' ') || 'Nothing to copy here.');
+        }
       }
-      await rec.fast(() => h.waitFor(`${settled} && !${walking}`, 600000, 1000));
-      await h.sleep(1500);
+      // 3. REPLACE on ONE flow
+      const one = 'SFTK FC Test Flow 2';
+      if (await c.has(flowBtn(one, 1))) {
+        await rec.scrollTo(flowBtn(one, 1), 'center');
+        await rec.say('A flow is one card, with its versions. Three buttons: Replace the field; Remove it and keep the flow running; or Delete the versions and switch the flow off. First, Replace on this one flow.');
+        await fixOne(flowBtn(one, 1), 'The confirmation is the plan: a new active version of the flow that uses the new field, then the old versions deleted. A backup zip is offered first — switched off for this recording.');
+        await rec.scrollTo(`.fc-fix-pair[data-type="Flow"][data-name="${one}"]`, 'center');
+        const okLine = (await h.eval(`(() => { const card = [...document.querySelectorAll('.fc-flow-card')].find(x => x.innerText.includes(${J(one)})); const ok = card && card.querySelector('.fc-item-ok'); return ok ? ok.innerText.replace(/\\s+/g, ' ').trim() : ''; })()`)).slice(0, 150);
+        await rec.say(okLine ? `Done. The card says: ${okLine}` : 'Done. The card says which version runs now, and that the old versions are gone.');
+      }
+      h.log('flow group box after replace-one:', await h.eval(`(() => { const b = [...document.querySelectorAll('.fc-fix-allbox')].map(x => x.dataset.type + ':' + x.dataset.n + ' → ' + x.innerText.replace(/\\s+/g, ' ').slice(0, 100)); return b.join(' ‖ ') || '(none)'; })()`), '| pairs:', await h.eval(`[...document.querySelectorAll('.fc-fix-pair[data-type="Flow"]')].map(p => p.dataset.name).join(', ')`));
+      // 3. REPLACE on MANY flows: the group button walks the flows one by one; Cancel stops it
+      const allReplace = '.fc-fix-all[data-type="Flow"][data-swap="1"]';
+      if (await c.has(allReplace) && (await flowsLeft()) >= 3) {
+        await rec.scrollTo(allReplace, 'center');
+        await rec.say(`Now many at once. "Replace in all ${await flowsLeft()} flows" walks the flows one by one. Each still shows its own confirmation, and Cancel in any of them stops the walk.`);
+        await rec.click(allReplace, 600);
+        for (let i = 0; i < 2; i++) {
+          await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 120000, 400);
+          const title = await c.text('.sftk-cf-title', 120);
+          await confirmShared(c, { caption: i === 0 ? `${title}. The same plan as before, for this flow. Confirm.` : `${title}. Confirm again.`, flowBackupOff: true });
+          await h.sleep(300);
+          await h.sleep(400);
+        }
+        await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 120000, 400);
+        await rec.say('The third one — Cancel. The walk stops here: two flows replaced, the rest untouched.');
+        await rec.click('#sftkConfirmCancel', 800);
+        await rec.fast(() => h.waitFor(settled, 600000, 1000));
+        await h.sleep(1000);
+      }
+      h.log('flow group box after walk-cancel:', await h.eval(`(() => { const b = [...document.querySelectorAll('.fc-fix-allbox')].map(x => x.dataset.type + ':' + x.dataset.n + ' → ' + x.innerText.replace(/\\s+/g, ' ').slice(0, 100)); return b.join(' ‖ ') || '(none)'; })()`), '| pairs:', await h.eval(`[...document.querySelectorAll('.fc-fix-pair[data-type="Flow"]')].map(p => p.dataset.name).join(', ')`));
+      // 4. REMOVE on ONE flow, the "flow off" way
+      const offBtn = `.fc-fix-pair[data-type="Flow"] .fc-fix-btn[data-swap="0"][data-way="off"]`;
+      if (await c.has(offBtn)) {
+        const name = await h.eval(`document.querySelector(${J(offBtn)}).closest('.fc-fix-pair').dataset.name`);
+        await rec.scrollTo(offBtn, 'center');
+        await rec.say(`Remove, on one flow, the hard way: "Delete versions, flow off". For a flow nobody needs any more — the flow is switched off and every version that mentions the field is deleted.`);
+        await fixOne(offBtn, 'The plan says exactly that, and offers the backup first.');
+        await rec.scrollTo(`.fc-fix-pair[data-type="Flow"][data-name="${name}"]`, 'center').catch(() => {});
+        await rec.say(`Done: ${name} is off, its versions gone.`);
+      }
+      // 5. REMOVE on MANY flows, the "keep running" way
+      const allKeep = '.fc-fix-all[data-type="Flow"][data-swap="0"][data-way="keep"]';
+      h.log('flow group box now:', await h.eval(`(() => { const b = [...document.querySelectorAll('.fc-fix-allbox')].map(x => x.dataset.type + ':' + x.dataset.n + ' → ' + x.innerText.replace(/\\s+/g, ' ').slice(0, 120)); return b.join(' ‖ ') || '(none)'; })()`), '| flows open:', await flowsLeft());
+      if (await c.has(allKeep)) {
+        const n = await flowsLeft();
+        await rec.scrollTo(allKeep, 'center');
+        await rec.say(`Remove on the remaining ${n} flows, the gentle way: "flows keep running". Each gets a new active version with the field taken out, and goes on working.`);
+        await rec.click(allKeep, 600);
+        for (let i = 0; i < n + 1; i++) {
+          await rec.fast(() => h.waitFor(`!!document.querySelector('#sftkConfirmGo') || ${settled}`, 600000, 500));
+          if (!(await c.has('#sftkConfirmGo'))) break;
+          const title = await c.text('.sftk-cf-title', 120);
+          await confirmShared(c, { caption: i === 0 ? `${title}: a new version without the field, the flow stays on.` : `${title}.`, flowBackupOff: true });
+          await h.sleep(300);
+          await h.sleep(400);
+        }
+        await rec.fast(() => h.waitFor(settled, 600000, 1000));
+        await h.sleep(1200);
+        const left = await flowsLeft();
+        await rec.say(left
+          ? `${n - left} done, each card saying which version runs now. ${left === 1 ? 'One was' : `${left} were`} refused before any dialog: there the field sits in a place the automatic remove never rewrites, and the card says so. Replace is the way for ${left === 1 ? 'that one' : 'those'}.`
+          : 'All of them done, each card saying which version runs now.');
+      }
+      // 6. what is not a flow: the layout and the Lightning page, with "Everything at once"
+      const every = '.fc-fix-every[data-swap="1"]';
+      const walking = "[...document.querySelectorAll('#fcFixEvery button')].some(b => b.disabled)";
+      if (await c.has(every)) {
+        await rec.scrollTo('#fcFixEvery', 'center');
+        const left = await flowsLeft();
+        await rec.say(left ? `What is left: ${left} flow${left === 1 ? '' : 's'}, the page layout and the Lightning page. "Everything at once" walks them all the same way.` : 'What is left is not a flow: the page layout and the Lightning page. "Everything at once" walks them the same way.');
+        await rec.click(every, 600);
+        for (let i = 0; i < 12; i++) {
+          await rec.fast(() => h.waitFor(`!!document.querySelector('#sftkConfirmGo') || !${walking}`, 600000, 500));
+          if (!(await c.has('#sftkConfirmGo'))) break;
+          const title = await c.text('.sftk-cf-title', 120);
+          await confirmShared(c, { caption: /layout/i.test(title) ? 'The page layout: the new field takes the old field’s place. A restore point is saved first.' : /lightning|flexi|page/i.test(title) ? 'The Lightning page: its field component and its visibility rule move to the new field.' : `${title}.`, flowBackupOff: true });
+          await h.sleep(300);
+          await h.sleep(500);
+        }
+        await rec.fast(() => h.waitFor(`${settled} && !${walking}`, 600000, 1000));
+        await h.sleep(1200);
+      } else {
+        for (const sel of ['.fc-fix-btn[data-type="Layout"][data-swap="1"]', '.fc-fix-btn[data-type="FlexiPage"][data-swap="1"]']) {
+          if (await c.has(sel)) await fixOne(sel, /Layout/.test(sel) ? 'The page layout: the new field takes the old field’s place. A restore point is saved first.' : 'The Lightning page: its field component and its visibility rule move to the new field.');
+        }
+      }
       await rec.scrollTo('#fcResults');
-      await rec.say('Done, item by item. Each card says what it is now: which flow version runs, which versions were deleted, what the layout shows.');
+      await rec.say('Every item done, and every card says what it is now.');
       await rec.reveal(null);
-      // 3. the tool's own History
+      // 7. the tool's own History
       if (await c.has('#fcToolHist summary')) {
         await rec.scrollTo('#fcToolHist', 'center');
         await rec.click('#fcToolHist summary', 900);
         await rec.say('Everything the tool changed is listed under the results, with what the org showed afterwards. A change with a way back has an Undo.');
       }
-      // 4. the field itself
+      // 8. the field itself
       await rec.scrollTo('#fcDeleteZone', 'center');
       await rec.say('Nothing uses the old field any more. Deprecate hides and renames it, with a one-click way back; Delete removes it.');
       const delOn = await h.eval(`(() => { const b = document.querySelector('#fcDelBtn'); return !!b && !b.disabled; })()`);
@@ -496,27 +816,80 @@ export const SECTIONS = [
         await rec.say((await c.text('#fcDeleteNote', 200)) || 'The delete stays blocked until the blockers above are cleared.');
       }
     } },
-  { id: 'copy-perms', title: 'Copy Permissions', run: async c => {
-    const { h, rec } = c;
-    await c.popup('copy-perms');
-    await h.waitFor("!!document.querySelector('#ucSourceInput')", 60000, 500);
-    await h.sleep(1200);
-    await rec.say('Copy Permissions. Give one user what another user has.', 1200);
-    const pick = async (P, name) => {
-      await rec.type(`#${P}Input`, name, 40);
-      await rec.fast(() => h.waitFor(`[...document.querySelectorAll('#${P}List .uc-drop-item')].some(e => !e.classList.contains('uc-drop-loading') && e.innerText.includes(${J(name)}))`, 120000, 500));
-      await h.eval(`(() => { const e = [...document.querySelectorAll('#${P}List .uc-drop-item')].find(e => e.innerText.includes(${J(name)})); if (e) e.click(); return !!e; })()`);
-      await h.sleep(900);
-    };
-    await pick('ucSource', 'Test A');
-    await pick('ucTarget', 'Test B');
-    await rec.fast(() => h.waitFor("!!document.querySelector('.uc-ps-cb, .uc-grp-cb, #ucProfileCb') || /nothing|no permission/i.test(document.querySelector('#ucPreview')?.innerText || '')", 120000, 500));
-    await h.sleep(1200);
-    await rec.scrollTo('#ucPreview');
-    await rec.say('It lists what the first user has: profile, role, permission sets, groups. Tick what to copy.', 6000);
-    await rec.point('#ucCopyBtn', 1300);
-    await rec.say('It asks once, and reads the user back afterwards to confirm the copy. The copy is in this tool’s History, with its Undo.', 5500);
-  } },
+
+  { id: 'copy-perms', title: 'Copy Permissions', writes: true,
+    // the net: if the refused profile change somehow went through, Test B goes back on Identity User
+    cleanup: async ({ h }) => {
+      try {
+        const b = cliJson('npc', ['data', 'query', '-q', `"SELECT Id, Profile.Name FROM User WHERE Name LIKE 'SFTK%Test B%' LIMIT 1"`]).result.records[0];
+        if (b && b.Profile && b.Profile.Name !== 'Identity User') {
+          const p = cliJson('npc', ['data', 'query', '-q', `"SELECT Id FROM Profile WHERE Name = 'Identity User' LIMIT 1"`]).result.records[0];
+          cliJson('npc', ['data', 'update', 'record', '-s', 'User', '-i', b.Id, '-v', `"ProfileId=${p.Id}"`]);
+          h.log('copy-perms cleanup: Test B put back on Identity User');
+        } else h.log('copy-perms cleanup: Test B unchanged (Identity User)');
+      } catch (e) { h.log('copy-perms cleanup:', (e && e.message) || e); }
+    },
+    run: async c => {
+      const { h, rec } = c;
+      await c.popup('copy-perms');
+      await h.waitFor("!!document.querySelector('#ucSourceInput')", 60000, 500);
+      await h.sleep(1200);
+      await rec.say('Copy Permissions. Give one user what another user has: profile, role, permission sets, groups, user permissions, locale.');
+      // the picker searches name, username, e-mail, alias AND profile — the administrator is found by profile, so no name is typed on camera
+      const pick = async (P, typed, match) => {
+        await rec.type(`#${P}Input`, typed, 40);
+        await rec.fast(() => h.waitFor(`[...document.querySelectorAll('#${P}List .uc-drop-item')].some(e => !e.classList.contains('uc-drop-loading') && ${match}.test(e.innerText))`, 120000, 500));
+        await h.eval(`(() => { const e = [...document.querySelectorAll('#${P}List .uc-drop-item')].find(e => ${match}.test(e.innerText)); if (e) e.click(); return !!e; })()`);
+        await rec.remask();
+        await h.sleep(900);
+      };
+      const previewReady = () => rec.fast(() => h.waitFor("!!document.querySelector('#ucProfileCb') || !!document.querySelector('.uc-ps-cb, .uc-grp-cb') || /nothing|no permission/i.test(document.querySelector('#ucPreview')?.innerText || '')", 120000, 500));
+      // 1. a source whose licence the target does not have (user 2026-10-10: "how it copies a user
+      //    without a matching license … and what occurs if we don't have this license")
+      await pick('ucSource', 'System Admin', '/System Administrator/');
+      await pick('ucTarget', 'Test B', '/Test B/');
+      await previewReady();
+      await h.sleep(1200);
+      await rec.scrollTo('#ucPreview');
+      await rec.say('First, a copy that cannot fully work: the source is an administrator on a Salesforce licence, the target a test user on an Identity licence.');
+      if (await c.has('.uc-license-note')) {
+        await rec.scrollTo('.uc-license-note', 'center');
+        await rec.say('The profile row says it plainly: this would also change the licence, from Identity to Salesforce, and a licence slot must be free for that.');
+      }
+      if (await c.has('.uc-danger-label')) {
+        await rec.scrollTo('.uc-danger-label', 'center');
+        const n = await h.eval(`document.querySelectorAll('.uc-row-danger').length`);
+        await rec.say(`${n} permission sets cannot be copied at all: each needs a licence the target does not have, and the badge on every row names the licence it needs.`);
+        await rec.reveal('#ucPreview');
+      }
+      // only the profile stays ticked: the refusal is then the only thing that can happen
+      await h.eval(`(() => { for (const cb of document.querySelectorAll('#ucPreview input[type=checkbox]')) { if (cb.id !== 'ucProfileCb' && cb.checked && !cb.disabled) { cb.checked = false; cb.dispatchEvent(new Event('change', { bubbles: true })); } } return true; })()`);
+      await h.sleep(500);
+      await rec.scrollTo('#ucProfileCb', 'center');
+      await rec.say('Only the profile is ticked. This org has no free Salesforce licence — so what happens when the licence is not there?');
+      await rec.scrollTo('#ucCopyBtn', 'center');
+      await rec.click('#ucCopyBtn', 800);
+      await confirmShared(c, { caption: 'The confirmation names the user and the change.' });
+      await rec.fast(() => h.waitFor("!!(document.querySelector('#ucResult')?.innerText || '').trim() && !/Copying/.test(document.querySelector('#ucCopyBtn')?.textContent || '')", 180000, 1000));
+      await h.sleep(800);
+      await rec.scrollTo('#ucResult', 'center');
+      const res = await c.text('#ucResult', 300);
+      h.log('copy result:', res);
+      await rec.say(/error/i.test(res)
+        ? 'Salesforce refuses, and the tool says so in Salesforce’s own words: no licence available. Nothing changed on the user — the preview is read again and still shows the Identity profile.'
+        : 'Done — the profile changed, so a licence slot was free after all.');
+      await rec.reveal('#ucResult');
+      // 2. the everyday copy: one test user to another, on the same licence (shown, not run)
+      await rec.say('Now the everyday case: one test user to another, on the same licence.');
+      await pick('ucSource', 'Test A', '/Test A/');
+      await previewReady();
+      await h.sleep(1200);
+      await rec.scrollTo('#ucPreview');
+      await rec.say('It lists what the first user has that the second lacks — here the role — and what they already share. Tick what to copy.');
+      await rec.reveal('#ucPreview');
+      await rec.point('#ucCopyBtn', 1300);
+      await rec.say('It asks once, reads the user back afterwards to confirm, and the copy is in this tool’s History with its Undo.');
+    } },
 
   { id: 'flow-access', title: 'Flow Access', run: async c => {
     const { h, rec } = c;
@@ -546,6 +919,15 @@ export const SECTIONS = [
     await rec.fast(() => h.waitFor("document.querySelectorAll('.ds-org-row').length > 0", 30000, 500).catch(() => {}));
     await rec.point('.ds-org-row', 1200);
     await rec.say('Connected Orgs. Give an org a label, lock it against writes, or guard it like production: then every write asks you to type the org’s name.', 7000);
+    // quick navigation: Ctrl+K from anywhere in Data Studio
+    await rec.click('#dsCmdPaletteBtn', 900);
+    await rec.fast(() => h.waitFor("!!document.querySelector('#dsCmdInput')", 20000, 300));
+    await rec.say('Quick nav: Control K from anywhere. Type a view or a deployment, Enter opens it, Escape closes the box.');
+    await rec.type('#dsCmdInput', 'hist', 90);
+    if (await c.has('.ds-cmd-item')) await rec.point('.ds-cmd-item', 900);
+    await h.eval(`(() => { const i = document.querySelector('#dsCmdInput'); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true; })()`);
+    await h.sleep(600);
+    if (await c.has('#dsCmdInput')) await rec.click('#dsCmdPaletteBtn', 600);
   } },
 
   { id: 'builder', title: 'Building a deployment', run: async c => {

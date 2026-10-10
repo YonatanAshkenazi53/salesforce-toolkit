@@ -137,6 +137,7 @@ export function makeRecorder(h, dir, opts = {}) {
     // one frame: the screencast only ever shows the tab in front.
     async frameFrom(sessionId, holdMs = 0) {
       try {
+        await rec.maskIn(sessionId); await h.sleep(300);
         const r = await h.cdp('Page.captureScreenshot', { format: 'jpeg', quality: 88 }, sessionId);
         const i = ++state.n, file = String(i).padStart(6, '0') + '.jpg';
         writeFileSync(join(state.framesDir, file), Buffer.from(r.data, 'base64')); state.frames.push({ f: file, t: now() });
@@ -184,9 +185,8 @@ export function makeRecorder(h, dir, opts = {}) {
     async remask() {
       try { await h.eval(`(() => { if (document.activeElement && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) document.activeElement.blur(); if (window.__sftkDemoWalk) window.__sftkDemoWalk(); return true; })()`); } catch (_) {}
     },
-    async mask() {
-      try {
-        await h.eval(`(() => {
+    maskSource() {
+      return `(() => {
           if (window.__sftkDemoMask) return true;
           const names = ${J(state.names.filter(Boolean))};
           const mail = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}/g;
@@ -209,8 +209,14 @@ export function makeRecorder(h, dir, opts = {}) {
           window.__sftkDemoMask.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
           window.__sftkDemoWalk = () => walk(document.documentElement);
           walk(document.documentElement);
-          return true; })()`);
-      } catch (_) { /* a page that cannot be scripted shows nothing of the tool anyway */ }
+          return true; })()`;
+    },
+    async mask() {
+      try { await h.eval(rec.maskSource()); } catch (_) { /* a page that cannot be scripted shows nothing of the tool anyway */ }
+    },
+    // the same mask inside another tab (a Salesforce record page, before its picture is taken)
+    async maskIn(sessionId) {
+      try { await h.cdp('Runtime.evaluate', { expression: rec.maskSource(), returnByValue: true }, sessionId); } catch (_) {}
     },
   };
   return rec;
