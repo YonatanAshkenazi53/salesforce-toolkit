@@ -38,6 +38,19 @@ console error / ❌ line, AND a log whose claims the CLI confirms — read the l
 line is not the verdict. `docs/QA-1.0.md` is the matrix and the findings. Every writing run
 undoes itself or is followed by a restore step; the orgs end as they began.
 
+**2026-10-10 (night) — the v4 cut recorded with Piper.** All 20 chapters recorded (`dist/video/record-v5.log`
++ `record-v5b.log`), composed as `dist/video/walkthrough.mp4` (33:42, 1080p) and three 720p phone parts
+(`walkthrough-part1a-toolkit.mp4` home…API versions, `walkthrough-part1b-toolkit.mp4` Debugger…Flow Access,
+`walkthrough-part2-data-studio.mp4`). Lessons of the night: (1) the Dependencies page above 150 flow
+versions waits for a "Scan dependencies (N calls)" click — the four extra fixture flows pushed trailheads5
+over the line; `depScanGate` in sections.mjs presses it on camera in the three chapters that need the page;
+(2) `confirmShared` waits for the Go button it marked to be gone OR hidden (the Deploy run's dialog is
+hidden first); (3) NEVER run a second harness script while a compose runs — a Lightning Pages probe
+killed a 34-minute compose (exit 13); (4) a target mp4 held by OneDrive/a player → EBUSY at the last
+step: compose.mjs now writes a sibling name and says so; (5) a 720p part must stay under ~13 minutes
+to fit a 30 MB upload. Orgs verified clean by CLI after the full recording (CX 4, no identity fields,
+FC field back, Test B on Identity User, no trace flags).
+
 **2026-10-10 (evening) — OPEN SOURCE + the voice.** User: "i think i want to go opensource … the community
 might appreciate the job even more", then "I agree on everything" (Apache-2.0, the gate stays as a plain
 disclaimer). Done: LICENSE = Apache License 2.0 (+ copyright line + Salesforce disclaimer), EULA.md =
