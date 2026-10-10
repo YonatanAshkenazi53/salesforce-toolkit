@@ -28,7 +28,14 @@ export function makeRecorder(h, dir, opts = {}) {
     if (!state.on || m.sessionId !== h.session) return;
     const i = ++state.n;
     const file = String(i).padStart(6, '0') + '.jpg';
-    try { writeFileSync(join(state.framesDir, file), Buffer.from(m.params.data, 'base64')); state.frames.push({ f: file, t: now() }); } catch (_) { /* a lost frame is a held frame */ }
+    // The frame's time is the browser's own capture time (metadata.timestamp, seconds since
+    // the epoch), not the moment this handler ran: while a sentence was being synthesised the
+    // handler could run seconds late, and every frame of that stretch was stamped late — the
+    // picture then lagged the voice (user 2026-10-10: "the voice is not in sync").
+    const ts = m.params.metadata && Number(m.params.metadata.timestamp);
+    let t = now();
+    if (Number.isFinite(ts) && ts > 1e9) { const cand = Math.round(ts * 1000 - state.t0); if (cand >= -2000 && cand <= t + 2000) t = Math.max(0, cand); }
+    try { writeFileSync(join(state.framesDir, file), Buffer.from(m.params.data, 'base64')); state.frames.push({ f: file, t }); } catch (_) { /* a lost frame is a held frame */ }
   });
 
   const rec = {
@@ -87,7 +94,7 @@ export function makeRecorder(h, dir, opts = {}) {
       state.cues.push({ t: now(), text: String(text) }); h.log('SAY:', text);
       let hold = holdMs;
       if (opts.voice !== false && String(text).trim()) {
-        try { const f = speakOne(voiceDir, String(text)); if (f) hold = Math.max(hold, Math.round(voiceSeconds(f) * 1000) + 350); }
+        try { const f = await speakOne(voiceDir, String(text)); if (f) hold = Math.max(hold, Math.round(voiceSeconds(f) * 1000) + 350); }
         catch (e) { h.log('voice while recording:', (e && e.message) || e); }
       }
       if (hold) await h.sleep(hold);

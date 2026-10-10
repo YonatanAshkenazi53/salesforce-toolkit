@@ -38,6 +38,17 @@ console error / ❌ line, AND a log whose claims the CLI confirms — read the l
 line is not the verdict. `docs/QA-1.0.md` is the matrix and the findings. Every writing run
 undoes itself or is followed by a restore step; the orgs end as they began.
 
+**2026-10-10 (late night) — SYNC ROOT CAUSE, fixed; everything recorded again.** The user: "the voice is
+not in sync with the actions on the screen and the subtitles." Cause: recorder.mjs stamped a screencast
+frame with `now()` when the HANDLER ran, and `speakOne` was a blocking spawnSync — while Piper made a
+sentence (seconds) every frame of that stretch was stamped late, so the picture lagged the voice. Fix:
+a frame's time is the browser's own `metadata.timestamp` (seconds since the epoch → ms since t0, with a
+sanity fallback), and `speakOne` is async (spawn, awaited) so the loop keeps running. Checked on the
+Flows chapter: frames strictly increasing, each caption's next frame within 0.1 s. The whole tour was
+then recorded again (`record-v6.log`), composed, and the Andrew watcher restarted at the end of that chain
+(the user: "make sure the watcher is running"; the user prefers Andrew — `walkthrough-andrew.mp4` when
+edge-tts answers).
+
 **2026-10-10 (night) — the v4 cut recorded with Piper.** All 20 chapters recorded (`dist/video/record-v5.log`
 + `record-v5b.log`), composed as `dist/video/walkthrough.mp4` (33:42, 1080p) and three 720p phone parts
 (`walkthrough-part1a-toolkit.mp4` home…API versions, `walkthrough-part1b-toolkit.mp4` Debugger…Flow Access,
