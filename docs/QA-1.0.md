@@ -159,6 +159,15 @@ the rest were the scripts themselves (listed at the end). All orgs end as they b
     ⏸ paused, Continue ticked 6, the rest landed, both runs rolled back, CLI agrees at every
     step. `STEP=closed`: the browser asked (beforeunload), the engine stopped (CLI count
     frozen 8 s later), the reopened page showed the notice once, re-scan listed the rest.
+18. `sftkConfirmDestructive` threw "Cannot access 'C' before initialization" for any list of
+    more than eight items (the filter box used the class map before its `const`): the rollback
+    of a 29-record run never showed its confirmation (walkthrough recording, 2026-10-10). The
+    declaration moved above the list; `test/confirm-many-items-1010.test.mjs` pins the order for
+    both dialogs. Earlier live rollbacks passed only because they had eight items or fewer.
+19. The Deploy page's footer said "The real, rolled-back dry run is the next step of this page
+    and is not built yet" — a roadmap note from the mock-up days, shipped to users (seen in a
+    video frame, 2026-10-10). Removed; the plan stays in docs. The test that pinned the sentence
+    now pins its absence.
 Done the same evening: `sftkConfirmDestructive` redesigned (34 callers inherit it) and a shared
 `sftkDialog` for the rest; 22 hand-built dialogs migrated (popup: the Flows gates, backups,
 restores, delete results; Data Studio: rename / remove org, swap orgs, clear cached / clear

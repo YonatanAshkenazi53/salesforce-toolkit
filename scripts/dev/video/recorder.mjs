@@ -13,9 +13,11 @@
 // touches the DISPLAY only, in this throwaway headless profile.
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { speakOne, voiceSeconds } from './voice.mjs';
 
 export function makeRecorder(h, dir, opts = {}) {
-  const state = { dir, framesDir: join(dir, 'frames'), t0: 0, frames: [], cues: [], chapters: [], fast: [], on: false, n: 0, names: opts.names || [], sized: false };
+  const state = { dir, framesDir: join(dir, 'frames'), t0: 0, frames: [], cues: [], chapters: [], fast: [], pages: [], on: false, n: 0, names: opts.names || [], sized: false };
+  const voiceDir = dir;   // the voice files live beside the sections (compose.mjs looks there too)
   const now = () => Date.now() - state.t0;
   const J = JSON.stringify;
 
@@ -38,10 +40,11 @@ export function makeRecorder(h, dir, opts = {}) {
       state.dir = toDir || dir; state.framesDir = join(state.dir, 'frames');
       try { rmSync(state.dir, { recursive: true, force: true }); } catch (_) {}
       mkdirSync(state.framesDir, { recursive: true });
-      state.frames = []; state.cues = []; state.chapters = []; state.fast = []; state.n = 0;
+      state.frames = []; state.cues = []; state.chapters = []; state.fast = []; state.pages = []; state.n = 0;
       if (!state.sized) {
-        // 1600×800 CSS px drawn at 1.2× = 1920×960 real pixels: the composer's page area, with no resampling
-        const vp = opts.viewport || { width: 1600, height: 800, scale: 1.2 };
+        // 1600×727 CSS px drawn at 1.2× = 1920×872 real pixels: the composer's page area under
+        // its browser frame (88 px), with no resampling
+        const vp = opts.viewport || { width: 1600, height: 727, scale: 1.2 };
         try { await h.cdp('Emulation.setDeviceMetricsOverride', { width: vp.width, height: vp.height, deviceScaleFactor: vp.scale, mobile: false }); state.sized = true; } catch (e) { h.log('viewport override failed:', e.message); }
       }
       state.t0 = Date.now(); state.on = true;
@@ -53,11 +56,21 @@ export function makeRecorder(h, dir, opts = {}) {
       try { await h.cdp('Page.bringToFront'); } catch (_) {}
       try { await h.cdp('Page.startScreencast', { format: 'jpeg', quality: 88, everyNthFrame: 2 }); } catch (_) {}
       await rec.mask();
+      await rec.page();
+    },
+    // the address and title the composer's browser frame shows from now on — noted
+    // whenever they changed (a view change inside the page moves the hash)
+    async page() {
+      try {
+        const p = JSON.parse(await h.eval(`JSON.stringify({ url: location.href, title: document.title })`));
+        const last = state.pages[state.pages.length - 1];
+        if (!last || last.url !== p.url || last.title !== p.title) state.pages.push({ t: now(), ...p });
+      } catch (_) {}
     },
     async end(extra) {
       state.on = false;
       try { await h.cdp('Page.stopScreencast'); } catch (_) {}
-      const manifest = { length: now(), frames: state.frames, cues: state.cues, chapters: state.chapters, fast: state.fast, ...(extra || {}) };
+      const manifest = { length: now(), frames: state.frames, cues: state.cues, chapters: state.chapters, fast: state.fast, pages: state.pages, ...(extra || {}) };
       writeFileSync(join(state.dir, 'manifest.json'), J(manifest));
       h.log(`recording: ${state.frames.length} frames, ${(manifest.length / 1000).toFixed(0)} s, ${state.cues.length} captions → ${state.dir}`);
       return manifest;
@@ -65,7 +78,20 @@ export function makeRecorder(h, dir, opts = {}) {
     start() { return rec.begin(dir); },
     stop() { return rec.end(); },
     // ── what the viewer reads ──
-    async say(text, holdMs = 0) { state.cues.push({ t: now(), text: String(text) }); h.log('SAY:', text); if (holdMs) await h.sleep(holdMs); },
+    // A caption, and the picture holds at least as long as the sentence takes to
+    // say (user 2026-10-09: "feature show on the screen in sync with the voice and
+    // subtitles"): the sentence is spoken now (voice.mjs, cached by text), its length
+    // read, and only then does the script go on. A longer holdMs still wins.
+    async say(text, holdMs = 0) {
+      await rec.remask(); await rec.page();
+      state.cues.push({ t: now(), text: String(text) }); h.log('SAY:', text);
+      let hold = holdMs;
+      if (opts.voice !== false && String(text).trim()) {
+        try { const f = speakOne(voiceDir, String(text)); if (f) hold = Math.max(hold, Math.round(voiceSeconds(f) * 1000) + 350); }
+        catch (e) { h.log('voice while recording:', (e && e.message) || e); }
+      }
+      if (hold) await h.sleep(hold);
+    },
     hush() { state.cues.push({ t: now(), text: '' }); },
     chapter(title) { state.chapters.push({ t: now(), title: String(title) }); h.log('CHAPTER:', title); },
     // a stretch that is only waiting (a scan, a login): played faster by the composer
@@ -94,6 +120,7 @@ export function makeRecorder(h, dir, opts = {}) {
       if (!ok) { h.log('demo click: no element for', sel); return false; }
       await h.eval(`(() => { const el = document.querySelector(${J(sel)}); if (el) el.click(); return !!el; })()`);
       await h.sleep(after);
+      await rec.page();
       return true;
     },
     // type into an input the way a person would (the tool's own input handlers fire)
@@ -106,6 +133,42 @@ export function makeRecorder(h, dir, opts = {}) {
       }
       await h.sleep(350);
     },
+    // A picture of ANOTHER tab (a log opened in a new tab), put into the recording as
+    // one frame: the screencast only ever shows the tab in front.
+    async frameFrom(sessionId, holdMs = 0) {
+      try {
+        const r = await h.cdp('Page.captureScreenshot', { format: 'jpeg', quality: 88 }, sessionId);
+        const i = ++state.n, file = String(i).padStart(6, '0') + '.jpg';
+        writeFileSync(join(state.framesDir, file), Buffer.from(r.data, 'base64')); state.frames.push({ f: file, t: now() });
+      } catch (e) { h.log('frameFrom:', (e && e.message) || e); }
+      if (holdMs) await h.sleep(holdMs);
+    },
+    // Show ALL of a dialog or a page (user 2026-10-09: "if we need to scroll down, make
+    // the scroll"): the scrollable box inside (or around) sel is scrolled to its end
+    // in steps a viewer can follow. Returns false when nothing needed scrolling.
+    async reveal(sel = null, step = 230, ms = 420) {
+      const extra = await h.eval(`(() => {
+        document.querySelectorAll('[data-sftk-reveal]').forEach(e => e.removeAttribute('data-sftk-reveal'));
+        const root = ${sel ? `document.querySelector(${J(sel)})` : 'null'};
+        const can = el => { if (!el || el.nodeType !== 1) return false; if (el === document.scrollingElement) return el.scrollHeight > el.clientHeight + 12;
+          const cs = getComputedStyle(el); return /(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 12; };
+        const cands = [];
+        if (root) { cands.push(...root.querySelectorAll('*')); cands.push(root); let p = root.parentElement; while (p) { cands.push(p); p = p.parentElement; } }
+        cands.push(document.scrollingElement);
+        const el = cands.find(can); if (!el) return 0;
+        el.setAttribute('data-sftk-reveal', '1'); el.scrollTop = 0;
+        return el.scrollHeight - el.clientHeight; })()`);
+      if (!extra) return false;
+      await h.sleep(500);
+      for (let i = 0; i < 60; i++) {
+        const atEnd = await h.eval(`(() => { const el = document.querySelector('[data-sftk-reveal]'); if (!el) return true; el.scrollTop += ${step}; return el.scrollTop + el.clientHeight >= el.scrollHeight - 2; })()`);
+        await h.sleep(ms);
+        if (atEnd) break;
+      }
+      await h.sleep(600);
+      await h.eval(`(() => { document.querySelectorAll('[data-sftk-reveal]').forEach(e => e.removeAttribute('data-sftk-reveal')); return 1; })()`);
+      return true;
+    },
     async scrollTo(sel, block = 'start') {
       await h.eval(`(() => { const el = document.querySelector(${J(sel)}); if (el) el.scrollIntoView({ block: ${J(block)}, behavior: 'auto' }); return !!el; })()`);
       await h.sleep(900);
@@ -116,6 +179,11 @@ export function makeRecorder(h, dir, opts = {}) {
     },
 
     // ── privacy: e-mail addresses and given names never reach a frame ──
+    // the mask again, now: a field that was typed into shows its real value until
+    // it loses focus (the walk skips the active element), so the focus is dropped first
+    async remask() {
+      try { await h.eval(`(() => { if (document.activeElement && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) document.activeElement.blur(); if (window.__sftkDemoWalk) window.__sftkDemoWalk(); return true; })()`); } catch (_) {}
+    },
     async mask() {
       try {
         await h.eval(`(() => {
@@ -139,6 +207,7 @@ export function makeRecorder(h, dir, opts = {}) {
           const run = nodes => { if (busy) return; busy = true; try { for (const n of nodes) walk(n.nodeType === 3 ? n.parentNode || n : n); } finally { busy = false; } };
           window.__sftkDemoMask = new MutationObserver(ms => run(ms.map(m => m.type === 'characterData' ? m.target : m.target)));
           window.__sftkDemoMask.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+          window.__sftkDemoWalk = () => walk(document.documentElement);
           walk(document.documentElement);
           return true; })()`);
       } catch (_) { /* a page that cannot be scripted shows nothing of the tool anyway */ }

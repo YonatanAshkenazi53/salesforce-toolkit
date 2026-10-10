@@ -38,6 +38,33 @@ console error / ❌ line, AND a log whose claims the CLI confirms — read the l
 line is not the verdict. `docs/QA-1.0.md` is the matrix and the findings. Every writing run
 undoes itself or is followed by a restore step; the orgs end as they began.
 
+**2026-10-10 — walkthrough video v3 (user 2026-10-09: recursion in the Debugger, "all the debugger
+features, like hide noise", Field Cleaner "full replace or delete … with all of their features", Data
+Deployment "a more complex tree and deploy a lot of records … extend the time of the actual operation",
+"all the dialogs … fully presented, if we need to scroll down, make the scroll", "look like it was
+recorded on a chrome browser", "professional and human like", "feature show on the screen in sync with
+the voice and subtitles", Andrew's voice).** Pipeline (`scripts/dev/video/`, README there is current):
+recorder `say` speaks each caption at recording time (voice.mjs `speakOne`, edge-tts Andrew, cached by
+text) and holds the picture for the sentence → nothing drifts; `reveal(sel)` scrolls a dialog/page to
+its end; `frameFrom(sessionId)` puts a picture of another tab in; the page's title + URL per stretch
+go into the manifest (`pages`) and the composer draws a Chrome-like frame (88 px) above a 1920×872
+page (recorder viewport 1600×727 @1.2). `confirmShared` in sections.mjs = the one dialog shown whole
+(scrolled), acknowledged, the typed word read from the input's aria-label. Chapters: `debugger`
+(loop fixture via CLI save, LOOP badge, banner, ANALYSIS, search, the four filters, report buttons,
+new tab, Compare, Purge cancelled, Stop; cleanup clears TraceFlags), `fields` ("Replace all" walk +
+Delete Field; cleanup `rebuildFieldCleanerFixture` = rebuild.sh + flow2/replace/surfaces), new
+`builder` (new deployment, root Account, Contact/Opportunity/Case, OpportunityLineItem under
+Opportunity, Cancel), `deploy` on the WHOLE CX tree (DEMO = 'Accounts and everything under them',
+`#dsDepScanAll`), `run` (scan-all first, tick all per object, Americas unticked, batch size 5 /
+threads 1 so the write can be watched, run + rollback in REAL time with captions over the wait).
+Compose: `ONLY=` and `SNAP=<s>` (a PNG of the layout). Live findings: the Dependencies search input
+vanishes during "Read them all" (guarded); a re-scan reads the root only (scan-all before ticking);
+**product bug** — the shared confirmation crashed for >8 items (fixed, QA finding 18); the Deploy
+page's "dry run … not built yet" footer removed (QA 19). The recorder notes the page's URL/title at
+every caption and click (the frame's address bar follows view changes); the batch size is TYPED into
+`#dsDepBatch` so the page shows the 5 the voice names. Logs:
+`dist/video/record-v3*.log`, `dist/video/compose-v3.log`; output `dist/video/walkthrough.mp4`.
+
 **2026-10-09 — pause / continue / closed-tab (user: "make sure users can pause a long deployment and
 continue from where they left … if you close the window in the middle of deployment we must state it
 will cancel the deployment, are u sure? … also the X in the chrome tab").** Engine (background.js):
