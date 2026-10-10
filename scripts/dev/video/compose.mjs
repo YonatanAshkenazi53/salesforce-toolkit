@@ -34,6 +34,9 @@ import { speakAll, voiceFile, voiceSeconds, VOICE as VOICE_NAME, RATE as VOICE_R
 const FAST = Number(process.env.FAST || 8);
 const W = 1920, H = 1080, FRAME_H = 88, PAGE_H = 872, BAND_Y = FRAME_H + PAGE_H;
 const MIN_GAP = 40;            // ms between frames sent to the encoder (25 fps ceiling)
+// SCALE=0.6667 composes a 1280×720 picture (the same layout, drawn smaller) — with
+// AUDIO_BITRATE=64000 and BITRATE=1200000 a copy under 30 MB for a phone or a chat
+const SCALE = Number(process.env.SCALE || 1);
 
 export default async function (h) {
   const dir = resolve(process.env.REC_DIR || 'dist/video/rec');
@@ -126,8 +129,8 @@ export default async function (h) {
   // ── the encoder page ──
   await h.navigate('about:blank');
   const type = await h.eval(`(async () => {
-    const c = document.createElement('canvas'); c.width = ${W}; c.height = ${H}; document.body.style.margin = '0'; document.body.appendChild(c);
-    const g = c.getContext('2d');
+    const c = document.createElement('canvas'); c.width = Math.round(${W} * ${SCALE}); c.height = Math.round(${H} * ${SCALE}); document.body.style.margin = '0'; document.body.appendChild(c);
+    const g = c.getContext('2d'); g.scale(${SCALE}, ${SCALE});
     const speak = ${SPEAK ? 'true' : 'false'};
     const pick = list => list.find(t => MediaRecorder.isTypeSupported(t));
     const type = speak ? pick(['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4;codecs=avc1,opus', 'video/webm;codecs=vp9,opus'])
@@ -141,7 +144,7 @@ export default async function (h) {
       const hum = ac.createConstantSource(); const mute = ac.createGain(); mute.gain.value = 0; hum.connect(mute); mute.connect(dest); hum.start();
       stream = new MediaStream([track, dest.stream.getAudioTracks()[0]]);
     }
-    const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: ${Number(process.env.BITRATE || 8000000)}, audioBitsPerSecond: 160000 });
+    const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: ${Number(process.env.BITRATE || 8000000)}, audioBitsPerSecond: ${Number(process.env.AUDIO_BITRATE || 160000)} });
     const chunks = []; rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
     const V = window.__v = { c, g, track, rec, chunks, type, ac, dest, clips: {}, img: null, caption: '', chapter: '', fast: false, blob: null, url: '', title: '' };
     // the narration: each sentence is decoded before the recording starts, and only started at its moment

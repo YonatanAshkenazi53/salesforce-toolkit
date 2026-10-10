@@ -32,7 +32,7 @@ Out come two files in `dist/video/` (not in git):
 | file | what |
 |---|---|
 | `walkthrough.mp4` | 1920×1080: browser frame (88 px), the page (1920×872), the caption band with the chapter on the left |
-| (optional) `walkthrough-small.mp4` | `BITRATE=1500000 OUT=dist/video/walkthrough-small.mp4` for a chat upload; composing takes as long as the video runs |
+| (optional) phone copies | `SCALE=0.6667 BITRATE=1200000 AUDIO_BITRATE=64000 ONLY=<chapters> OUT=…` — 720p, lighter sound; the whole tour at 720p is still ~39 MB (the sound is a third of it), so two parts (Toolkit chapters / Data Studio chapters, 22 MB + 17 MB) fit a 30 MB upload limit. Composing takes as long as the part runs |
 | `walkthrough.chapters.txt` | `0:00 Title` lines to paste into the YouTube description |
 
 ## Look at it without playing it
