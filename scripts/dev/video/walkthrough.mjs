@@ -76,8 +76,9 @@ export default async function (h) {
   await h.login(TGT);
   await h.login(SRC);
   await h.watchErrors();
-  // the first page, before the recording starts: the licence is accepted here, off camera
-  await h.popup('flows');
+  // The licence gate: the home chapter shows the first activation on camera (user 2026-10-10:
+  // "show how first activation looks"), so it is accepted off camera only when home is not recorded.
+  if (only.length && !only.includes('home')) await h.popup('flows');
   for (const s of SECTIONS) {
     if (only.length && !only.includes(s.id)) continue;
     if (s.writes && process.env.WRITES === '0') { h.log('skipped (WRITES=0):', s.id); continue; }

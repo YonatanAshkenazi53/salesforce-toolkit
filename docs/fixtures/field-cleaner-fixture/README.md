@@ -135,6 +135,10 @@ permission-set grant).
 
 ## Pass 2 - "Keep the flow running" succeeds (2026-09-23)
 
+`flows-extra/` holds `SFTK_FC_Test_Flow3` … `Flow6` (Active, copies of flow 2 — added 2026-10-10 so the
+walkthrough can show Replace and Remove on ONE flow and on MANY, and a cancelled walk). Deploy:
+`cd flows-extra && sf project deploy start -o npc --source-dir force-app`. With them the scan lists 6 flows.
+
 `flow2/` holds `SFTK_FC_Test_Flow2` (Active): the field is ONE of two filters of a record lookup,
 so the automatic fix leaves nothing empty. Deploy: `cd flow2 && sf project deploy start -o npc --source-dir force-app`.
 Live: `ACTIVE=replace FLOW="SFTK FC Test Flow 2" node scripts/dev/headless-studio.mjs scripts/dev/live/field-cleaner.mjs`

@@ -59,6 +59,9 @@ Salesforce answered, it says that instead.
 - **Org health** — one card per finding, each with its API cost first.
 
 ### Fixed before the first cut (hand tests, 2026-10-07)
+- Field Cleaner: the "Replace in all N flows" / "Remove from all N flows" buttons vanished as soon
+  as a walk started, so a walk stopped early (Cancel, a refused flow) left the remaining flows
+  without them. They are now disabled during the walk and drawn again for what is still open.
 - The shared confirmation did not open at all when its list had more than eight items
   (a rollback of a larger run, a delete of many flow versions): the dialog's filter box
   used a value before its line. Found while recording the walkthrough on 2026-10-10.

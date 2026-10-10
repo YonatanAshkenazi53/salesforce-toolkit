@@ -12,7 +12,7 @@ describe('Field Cleaner: the group button for flows offers both ways', () => {
     expect(FC).toContain('data-type="Flow" data-swap="0" data-way="off"');
     expect(FC).toContain('✂ Remove from all ${n} ${noun} · flows keep running');
     expect(FC).toContain('🗑 Delete versions · all ${n} ${noun} off');
-    expect(FC).toContain("fixAll(t, _curFieldId, swap, all.dataset.way || '');");
+    expect(FC).toContain("fixAll(t, _curFieldId, swap, all.dataset.way || '').finally(() => {");   // the walk's end redraws the group buttons (2026-10-10)
     expect(FC).toContain("async function fixAll(type, fieldId, swap, way = '')");
     expect(FC).toContain('await fixOne(type, it.id, it.name, fieldId, swap, way)');
   });

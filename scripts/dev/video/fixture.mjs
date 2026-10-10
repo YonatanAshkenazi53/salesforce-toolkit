@@ -38,14 +38,15 @@ export function restoreFieldCleanerFixture(alias = 'npc', log = () => {}) {
 
 // The Field Cleaner fixture rebuilt from scratch — after the chapter DELETED the
 // field (rebuild.sh: field + permission set + four flow versions with their failed
-// interviews; then flow 2, the replacement field and the surfaces). Minutes.
+// interviews; then flow 2, the four extra flows 3–6 (flows-extra/), the replacement field and the
+// surfaces). Minutes.
 export function rebuildFieldCleanerFixture(alias = 'npc', log = () => {}) {
   const root = resolve('docs/fixtures/field-cleaner-fixture');
   const sh = (cmd, cwd) => execFileSync(cmd, [], { cwd, shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const done = [], failed = [];
   const step = (name, fn) => { try { fn(); done.push(name); } catch (e) { failed.push(`${name}: ${String((e && (e.stdout || e.message)) || e).slice(0, 300)}`); } };
   step('rebuild.sh', () => sh(`bash "${root.replace(/\\/g, '/')}/rebuild.sh" ${alias}`, root));
-  for (const part of ['flow2', 'replace', 'surfaces']) step(part, () => sh(`sf project deploy start -o ${alias} --source-dir force-app --test-level NoTestRun --json`, join(root, part)));
+  for (const part of ['flow2', 'flows-extra', 'replace', 'surfaces']) step(part, () => sh(`sf project deploy start -o ${alias} --source-dir force-app --test-level NoTestRun --json`, join(root, part)));
   log(`Field Cleaner fixture on ${alias}: rebuilt ${done.join(', ') || 'nothing'}${failed.length ? ` — FAILED ${failed.join(' ‖ ')}` : ''}`);
   return { done, failed };
 }

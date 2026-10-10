@@ -38,6 +38,35 @@ console error / ❌ line, AND a log whose claims the CLI confirms — read the l
 line is not the verdict. `docs/QA-1.0.md` is the matrix and the findings. Every writing run
 undoes itself or is followed by a restore step; the orgs end as they began.
 
+**2026-10-10 (later) — walkthrough v4, the user's second round of asks, ALL BUILT AND DRY-RUN, waiting
+for the voice.** The asks: Dependencies search + full rescan on camera; Debugger: Copy Report pressed,
+an error log (anonymous Apex dividing by zero) with the Errors filter, Hide noise with its line counts,
+search across all logs; Lightning Pages: a live assignment (app + every record type + System
+Administrator for Learning Home — an org/app default is beaten there), the Account record page in
+Salesforce before and after (`recordFrame`: a NEW browser context logged in through a fresh CLI
+frontdoor URL — Lightning caches assignments per session; Storage.clearDataForOrigin was not enough),
+Who sees what, What a user sees (Test A), the assignments removed again; Copy Permissions: admin
+(found by profile, no name typed) → Test B shows the licence change warning and N "Incompatible
+license" sets with the licence each needs, then the profile copy alone is run and Salesforce refuses
+("License Limit Exceeded") — shown as what happens without the licence; Field Cleaner: intro says
+replace OR remove, the XML inspector (magnifier), Stored values compared and copied (8 seeded values,
+5 copied — 3 "Closed" are not in the new picklist, said by the tool), Replace on ONE flow, "Replace in
+all 5" confirmed twice and cancelled, "Delete versions · flow off" on one, "Remove from all · keep
+running" on the rest (one refused: the field sits in a decision — Replace handles it), Everything at
+once for layout + page, History, Delete Field; fixture: `flows-extra/` (Flow 3–6) deployed and in the
+rebuild; home chapter: first activation gate on camera (walkthrough.mjs no longer pre-accepts when
+home is recorded), org switch, What's New, dark → OLED → light, Licence button, Data Studio; orgs
+chapter: Quick nav (Ctrl+K). Product bugs found and fixed: QA 20 (group buttons after a walk).
+Script lessons: a regex inside an `h.eval(\`…\`)` template literal needs `\\s` (a `\s` lost its
+backslash and the caption lost every "s"); `confirmShared` marks the Go button and waits for THAT
+button to be gone (back-to-back dialogs of a walk reuse the id); the ARTP tab writes one assignment
+per record type and Salesforce refuses PersonAccount for a business page (said on camera).
+**VOICE OUTAGE:** since ~11:00 UTC 2026-10-10 Microsoft's edge-tts endpoint answers 403 (WSServerHandshakeError
+"Invalid response status") for every synthesis — the voice list still works; upgrade to 7.2.8 did not
+help; ~60 retries over hours. The recordings of the reworked chapters exist (captions without voice
+files); when the voice is back: re-record everything (`walkthrough.mjs`, no ONLY) so the holds match
+the sentences, then compose. Dry-run logs: `dist/video/record-v4*.log`.
+
 **2026-10-10 — walkthrough video v3 (user 2026-10-09: recursion in the Debugger, "all the debugger
 features, like hide noise", Field Cleaner "full replace or delete … with all of their features", Data
 Deployment "a more complex tree and deploy a lot of records … extend the time of the actual operation",

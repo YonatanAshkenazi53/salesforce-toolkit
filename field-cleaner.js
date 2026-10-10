@@ -2001,8 +2001,22 @@ const FieldCleaner = (() => {
         const all = ev.target.closest?.('.fc-fix-all');
         if (all && !all.disabled) {
           const t = all.dataset.type, swap = all.dataset.swap === '1';
-          all.closest('.fc-fix-allbox')?.remove();
-          fixAll(t, _curFieldId, swap, all.dataset.way || '');
+          // The "… all N" buttons used to be REMOVED when the walk started, so a
+          // walk that stopped early (Cancel in a dialog, a flow refused and left)
+          // left the items that were still open with no group button (walkthrough
+          // recording 2026-10-10: 3 flows open, no "Remove from all"). Now they are
+          // disabled for the walk and drawn again for what is still open.
+          const box = all.closest('.fc-fix-allbox');
+          box?.querySelectorAll('button').forEach(b => { b.disabled = true; });
+          _walkRunning = true;
+          fixAll(t, _curFieldId, swap, all.dataset.way || '').finally(() => {
+            _walkRunning = false;
+            if (!box || !box.isConnected) return;
+            const group = box.closest('.fc-group');
+            const open = group ? group.querySelectorAll('.fc-fix-pair').length : 0;
+            if (open < 2) box.remove();
+            else { box.dataset.n = String(open); box.innerHTML = _fixAllHtml(t, open, box.dataset.label); }
+          });
         }
       });
     }
@@ -3311,6 +3325,7 @@ const FieldCleaner = (() => {
   // and printed "Could not resolve the flow definition of this version").
   // way: '' (the dialog asks per flow) · 'keep' (new active version, flow keeps
   // running) · 'off' (switch off, delete the versions) — the group buttons above.
+  let _walkRunning = false;   // a "… all N" walk is on: the group buttons stay disabled until it ends
   async function fixAll(type, fieldId, swap, way = '') {
     const list = type === 'Flow'
       ? _flowCards.map(c => ({ id: c.primaryId, name: c.name }))
@@ -3350,7 +3365,10 @@ const FieldCleaner = (() => {
     if (box) {
       const open = item.closest('.fc-group').querySelectorAll('.fc-fix-pair').length;
       if (open < 2) box.remove();
-      else { box.dataset.n = String(open); box.innerHTML = _fixAllHtml(box.dataset.type, open, box.dataset.label); }
+      else {
+        box.dataset.n = String(open); box.innerHTML = _fixAllHtml(box.dataset.type, open, box.dataset.label);
+        if (_walkRunning) box.querySelectorAll('button').forEach(b => { b.disabled = true; });
+      }
     }
     _refreshFixEvery();
     checkEnableDelete();
