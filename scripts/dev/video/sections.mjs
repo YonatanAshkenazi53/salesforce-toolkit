@@ -380,7 +380,16 @@ export const SECTIONS = [
         if (!best) return false; best.r.setAttribute('data-demo-pick', '1'); return true; })()`);
       if (!picked) throw new Error('no log row to open');
       await rec.click('[data-demo-pick="1"] .adbg-row-op', 800);
-      await rec.fast(() => h.waitFor("!!document.querySelector('#adbgLogView') && !document.querySelector('#adbgDetail .adbg-detail-loading')", 60000, 500));
+      // a big log can take a while to arrive, and the list may redraw under the click (v6 take
+      // 2026-10-10 timed out at 60 s): wait longer, and click the row once more if nothing opened
+      const opened = () => h.eval("!!document.querySelector('#adbgLogView') && !document.querySelector('#adbgDetail .adbg-detail-loading')");
+      await rec.fast(async () => {
+        await h.waitFor("!!document.querySelector('#adbgLogView') && !document.querySelector('#adbgDetail .adbg-detail-loading')", 120000, 500).catch(() => {});
+        if (!(await opened())) {
+          await h.eval(`(() => { const r = document.querySelector('[data-demo-pick="1"] .adbg-row-op') || document.querySelector('#adbgLogList .adbg-log-row .adbg-row-op'); if (r) r.click(); return !!r; })()`);
+          await h.waitFor("!!document.querySelector('#adbgLogView') && !document.querySelector('#adbgDetail .adbg-detail-loading')", 120000, 500);
+        }
+      });
       await h.sleep(800);
       if (await c.has('.adbg-loop-banner')) await rec.scrollTo('.adbg-loop-banner', 'center');
       await rec.say('Opened: the recursion is named at the top. The trigger fired five times on one save, and the analysis shows the chain.');

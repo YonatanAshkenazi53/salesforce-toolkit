@@ -25,7 +25,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import { join, resolve, basename } from 'node:path';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 const _eng = (process.env.VOICE_ENGINE || 'edge').toLowerCase();
@@ -91,18 +91,35 @@ export function captionsOf(dir) {
 // One caption, spoken now if its file is not there yet (the recorder calls this
 // while recording, so a sentence's length is known before the next action).
 // Returns the file, or null for a caption with nothing to say.
-export function speakOne(dir, caption) {
+// A child process, awaited — the recorder's event loop keeps running while a sentence is
+// made (a blocking call stamped every screencast frame of that stretch late).
+function runPy(args, input) {
+  return new Promise(resolve => {
+    const p = spawn(PY, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    p.stdout.on('data', d => { out += d; }); p.stderr.on('data', d => { err += d; });
+    p.on('error', e => resolve({ status: -1, stdout: out, stderr: String(e) }));
+    p.on('close', code => resolve({ status: code, stdout: out, stderr: err }));
+    p.stdin.end(input == null ? '' : input);
+  });
+}
+export async function speakOne(dir, caption) {
   const file = voiceFile(dir, caption);
   if (!file) return null;
   if (existsSync(file) && statSync(file).size >= 1000) return file;
   mkdirSync(join(dir, 'voice'), { recursive: true });
   const text = spokenText(caption);
   if (ENGINE === 'edge') {
-    const r = spawnSync(PY, ['-m', 'edge_tts', '--voice', VOICE, `--rate=${RATE}`, '--text', text, '--write-media', file, '--write-subtitles', file.replace(/\.mp3$/i, '.srt')], { encoding: 'utf8' });
+    const r = await runPy(['-m', 'edge_tts', '--voice', VOICE, `--rate=${RATE}`, '--text', text, '--write-media', file, '--write-subtitles', file.replace(/\.mp3$/i, '.srt')]);
     if (r.status !== 0 || !existsSync(file)) throw new Error(`edge-tts could not speak a caption: ${(r.stderr || r.stdout || '').trim().slice(0, 300)}`);
     return file;
   }
-  if (ENGINE === 'piper') { speakAll.piper(dir, [{ text, file }]); return file; }
+  if (ENGINE === 'piper') {
+    const t = /[.!?…]$/.test(text.trim()) ? text.trim() : text.trim() + '.';
+    const r = await runPy(['-m', 'piper', '--model', PIPER_MODEL, '--length_scale', String(RATE), '--sentence_silence', '0.25', '--output_file', file], t);
+    if (r.status !== 0 || !existsSync(file) || statSync(file).size < 1000) throw new Error(`piper could not speak a caption: ${(r.stderr || r.stdout || '').trim().slice(0, 300)}`);
+    return file;
+  }
   speakAll.sapi(dir, [{ text, file }]);
   return file;
 }
