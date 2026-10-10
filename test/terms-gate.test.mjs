@@ -115,11 +115,12 @@ describe('what the dialog tells people', () => {
     expect(gate).toMatch(/is my responsibility, not the author/);
     expect(gate).toMatch(/including production/);
     // version 2 re-gates everyone who accepted the weaker v1 statement
-    expect(V).toBe(2);
+    expect(V).toBe(3);   // 3: open source under the Apache License 2.0 (2026-10-10) — everyone accepts again
     expect(F.sftkTermsNeedsAccept({ version: 1, acceptedAt: '2026-08-26T00:00:00Z' }, V).needed).toBe(true);
     // and the document itself carries the same confirmation
     const eula = read('EULA.md');
-    expect(eula).toContain('Version 2');
+    expect(eula).toContain('Version 3');
+    expect(eula).toMatch(/open source under the \*\*Apache License, Version 2\.0\*\*|open source under the Apache License, Version 2\.0/);
     expect(eula).toMatch(/By accepting this agreement you confirm that any consequence of using the\nSoftware/);
   });
 
@@ -207,11 +208,13 @@ describe('the documents the gate points at', () => {
     expect(flat('EULA.md')).toMatch(/will not start charging you for something you are already using/i);
   });
 
-  it('the LICENSE is proprietary, not an open-source grant', () => {
+  it('the LICENSE is the Apache License 2.0 (open source since 2026-10-10), with the copyright line and the Salesforce disclaimer', () => {
     const l = flat('LICENSE');
-    expect(l).toMatch(/All rights reserved/i);
-    expect(l).toMatch(/NOT open source/i);
-    expect(l).toMatch(/may NOT copy, modify, redistribute/i);
+    expect(l).toMatch(/Apache License, Version 2\.0/);
+    expect(l).toMatch(/Copyright 2026 Yonatan Ashkenazi/);
+    expect(l).toMatch(/Grant of Patent License/);
+    expect(l).toMatch(/not affiliated with, endorsed by, or supported by Salesforce/);
+    expect(l).not.toMatch(/NOT open source/i);
   });
 
   it('they SHIP, so the gate does not link to a 404', () => {

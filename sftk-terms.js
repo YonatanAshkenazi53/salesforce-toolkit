@@ -24,7 +24,7 @@
 //   v2 (2026-09-03): the acceptance statement now says outright that ANY
 //   consequence of using BOTH the Toolkit and Data Studio, and every one of
 //   their components, is the user's responsibility (user request).
-function sftkTermsVersion() { return 2; }
+function sftkTermsVersion() { return 3; }   // 3 = open source under the Apache License 2.0 (2026-10-10)
 
 // The storage key. One place, because three pages read it.
 function sftkTermsKey() { return 'sftk_terms_accepted'; }
@@ -55,6 +55,7 @@ function sftkTermsRecord(version, nowIso) {
 // dialog cannot drift away from what EULA.md section 3 actually says.
 function sftkTermsPoints() {
   return [
+    { icon: '🔓', text: 'The Software is <strong>open source under the Apache License 2.0</strong>: free to use, change and share, and it comes without any warranty. What follows is about using it against your orgs.' },
     { icon: '🧩', text: 'This agreement covers <strong>both the Toolkit and Data Studio, and every one of their components</strong> — Field Cleaner, the flow tools, deployments, Reconcile, the Org Seeder, the debugger, everything. <strong>Any consequence of using any of it is your responsibility</strong>, not the author’s.' },
     { icon: '🗑', text: 'This tool can <strong>delete every record</strong> of an object you select, in every org you select — and can purge them past the Recycle Bin, where nothing can recover them.' },
     { icon: '✍', text: 'It can <strong>overwrite</strong> data, files and configuration in several orgs at once, and <strong>deploy metadata</strong> — Flows, Layouts, Lightning pages, permission sets, Custom Metadata, Custom Labels — which can change how your orgs behave.' },
@@ -122,7 +123,7 @@ async function sftkTermsGate() {
         </div>
         <div style="font-size:12.5px;opacity:.75;margin-bottom:12px">
           ${changed
-            ? 'The agreement now states outright that any consequence of using both the Toolkit and Data Studio, and every one of their components, is your responsibility. Please read and accept the updated agreement to continue.'
+            ? 'The Software is now open source under the Apache License 2.0; the rest is unchanged: any consequence of using both the Toolkit and Data Studio, and every one of their components, is your responsibility. Please read and accept the updated agreement to continue.'
             : 'This tool can permanently change and delete data in your Salesforce orgs. Please read this before you start.'}
         </div>
         <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;line-height:1.45">

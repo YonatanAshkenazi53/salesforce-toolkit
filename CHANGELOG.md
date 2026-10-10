@@ -21,6 +21,11 @@ changes something in Salesforce shows you what it is about to do and asks first;
 tool reads the org back afterwards it says "verified", and where it can only report what
 Salesforce answered, it says that instead.
 
+### Open source
+- The extension is **open source under the Apache License 2.0** (the LICENSE file, and the Licence
+  page inside the app). The agreement you accept on the first start is version 3: it says so, and
+  keeps the one thing that did not change — what you do to your orgs is your responsibility.
+
 ### Toolkit (the popup)
 - **Flows** — every flow with its versions; delete the versions you tick (with a backup
   offered first, paused interviews and calling flows checked), back up versions as a file,

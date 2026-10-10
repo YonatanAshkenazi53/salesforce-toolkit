@@ -156,7 +156,7 @@ export const SECTIONS = [
     await rec.resume();
     await rec.say('Admin Toolkit for Salesforce. It runs in your browser, on the Salesforce session you already have open, and talks to your org and to nothing else.');
     if (await c.has('#sftkTermsCb')) {
-      await rec.say('On the first start, before anything else, it asks you to accept its licence agreement. It says plainly that the tool can change and delete data in your orgs, and that the consequences are yours.');
+      await rec.say('On the first start, before anything else, it asks you to accept its terms. The extension is open source under the Apache License 2.0, and the terms say plainly that the tool can change and delete data in your orgs, and that the consequences are yours.');
       await rec.reveal('#sftkTermsTitle');
       await rec.say('The full agreement and the privacy notes are one click away, and you can read them again any time from the Licence button in the top bar. We will not go through them here.');
       await rec.point('#sftkTermsCb', 600);
