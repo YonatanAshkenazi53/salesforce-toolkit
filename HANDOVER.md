@@ -38,6 +38,14 @@ console error / ❌ line, AND a log whose claims the CLI confirms — read the l
 line is not the verdict. `docs/QA-1.0.md` is the matrix and the findings. Every writing run
 undoes itself or is followed by a restore step; the orgs end as they began.
 
+**2026-10-11 — Andrew through Azure.** edge-tts's 403 is a Microsoft-side handshake change (rany2/edge-tts
+issue #490, 2026-10-10), not our address (a router restart changed nothing). The user set up an Azure Speech
+resource (free F0, East US, `sftk-toolkit-voice-2026` in resource group `sftk-video`); the key lives in
+`.secrets/azure-speech.json` (git-ignored, verified; NEVER print it). voice.mjs gained `VOICE_ENGINE=azure`
+(REST `tts.speech.microsoft.com/cognitiveservices/v1`, SSML, WAV 24 kHz; `speakAll` is async now). The
+whole tour is recorded again with it (`record-v7.log`) and composed (`compose-v7*.log`): the Andrew cut,
+in sync. The edge watcher was stopped. Spending: F0 cannot bill; the free account's spending limit is on.
+
 **2026-10-10 (late night) — SYNC ROOT CAUSE, fixed; everything recorded again.** The user: "the voice is
 not in sync with the actions on the screen and the subtitles." Cause: recorder.mjs stamped a screencast
 frame with `now()` when the HANDLER ran, and `speakOne` was a blocking spawnSync — while Piper made a

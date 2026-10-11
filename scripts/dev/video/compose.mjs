@@ -79,7 +79,7 @@ export default async function (h) {
   const breaks = [];
   let spoken = 0;
   if (SPEAK) {
-    const v = speakAll(dir);
+    const v = await speakAll(dir);
     h.log(`voice: ${VOICE_ENGINE} ${VOICE_NAME}, rate ${VOICE_RATE} — ${v.captions} captions, ${v.made} newly spoken, ${v.seconds.toFixed(0)} s of speech`);
     let shift = 0, busyUntil = 0;
     for (const c of said) {
