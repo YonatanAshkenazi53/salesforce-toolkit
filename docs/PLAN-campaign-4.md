@@ -646,6 +646,17 @@ and the run); the video is to be re-recorded after the QA pass.
 
 ## Backlog (found during the campaign)
 
+- **Needs a decision → Merge (user 2026-10-11: "maybe we can provide merging mechanism? so the user
+  ends up with a unique data and without dupes").** First feature after 1.0. A third answer per
+  name: "Merge into this one" — the chosen record survives; the dialog shows the copies side by side
+  and for EVERY field that differs the user picks which value the survivor keeps (survivor's values
+  as the default — the user 2026-10-11: "User needs to be able to select the merged values");
+  everything under the other copies is re-parented to it, the copies deleted; one
+  confirmation, journaled, rollback for the delete/update legs; the native Salesforce merge for
+  Account/Contact/Lead where a current API offers it (check for a REST form before falling back to
+  the SOAP `merge()` call — the memory rule); the dialog says a native merge cannot be undone. Live
+  test on the fixture pair "SFTK CX Duplicate Name". Not started while the video and the release are open.
+
 - **Synced records beyond the 5,000 window cannot be found (user 2026-10-01: "5000 contacts are in sync and 1740 is not. but where are they").** The Synced tab lists the first 5,000 identical records and says the rest (1,740 here) exist; the filter searches only the loaded 5,000, so a user cannot confirm one specific record is in sync. Fix: keep the match KEY (name) of every synced record in the scan result (keys only — a few bytes each, no fields), list by name with the filter over all of them, and load a record's details on click. Same for the other buckets' windows.
 
 ## Order and effort

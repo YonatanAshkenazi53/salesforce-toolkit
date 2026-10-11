@@ -5297,6 +5297,13 @@ const FieldCleaner = (() => {
       let badgeTxt = refCount
         ? `${refCount} field ref${refCount !== 1 ? 's' : ''}`
         : 'no refs found';
+      // Salesforce's dependency index matches on TEXT: a page whose description mentions
+      // the field's API name is listed, though no component or rule uses it (user 2026-10-11:
+      // "no refs found, why do i see the lightning page then?"). Such an item has nothing to
+      // remove and must not keep "Delete Field" locked — it is settled here, and says why.
+      if (!refCount && !delCount && fixable && type !== 'Flow' && type !== 'ApexClass' && type !== 'ApexTrigger') {
+        markFixed(componentId, '✅ Nothing uses the field here — Salesforce lists it because its description or another text mentions the field’s name. Nothing to remove.');
+      }
       if (delCount > 0) badgeTxt += ` · ${delCount} block${delCount !== 1 ? 's' : ''} to remove`;
 
       const hintHtml = _XI_HINT[type]

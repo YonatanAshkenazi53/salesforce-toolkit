@@ -8,6 +8,10 @@
 //        VOICE_NAME=en-US-AndrewNeural (default)  RATE="+0%"  PY=<python.exe>
 //   sapi — Windows System.Speech (offline, the old robotic voice) → WAV.
 //        VOICE_ENGINE=sapi VOICE_NAME="Microsoft David Desktop" RATE=1
+//   azure — Microsoft's official Speech service (the same Andrew voice as edge, reliable,
+//        free tier 500k characters a month). The key and region live in
+//        .secrets/azure-speech.json ({ "key", "region" }), a git-ignored file the user fills;
+//        the key is never logged. WAV (24 kHz).  VOICE_ENGINE=azure VOICE_NAME=en-US-AndrewNeural RATE=+0%
 //   piper — a neural voice that runs ON THIS PC (piper-tts, installed 2026-10-10 with the
 //        user's permission after Microsoft's endpoint began refusing every request):
 //        the Ryan voice model under C:/Users/yonas/AppData/Local/piper-voices/. WAV.
@@ -29,10 +33,10 @@ import { spawnSync, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 const _eng = (process.env.VOICE_ENGINE || 'edge').toLowerCase();
-export const ENGINE = _eng === 'sapi' ? 'sapi' : _eng === 'piper' ? 'piper' : 'edge';
+export const ENGINE = _eng === 'sapi' ? 'sapi' : _eng === 'piper' ? 'piper' : _eng === 'azure' ? 'azure' : 'edge';
 export const PIPER_MODEL = process.env.PIPER_MODEL || 'C:/Users/yonas/AppData/Local/piper-voices/en_US-ryan-high.onnx';
-export const VOICE = process.env.VOICE_NAME || (ENGINE === 'edge' ? 'en-US-AndrewNeural' : ENGINE === 'piper' ? basename(PIPER_MODEL).replace(/\.onnx$/i, '') : 'Microsoft David Desktop');
-export const RATE = ENGINE === 'edge'
+export const VOICE = process.env.VOICE_NAME || (ENGINE === 'edge' || ENGINE === 'azure' ? 'en-US-AndrewNeural' : ENGINE === 'piper' ? basename(PIPER_MODEL).replace(/\.onnx$/i, '') : 'Microsoft David Desktop');
+export const RATE = ENGINE === 'edge' || ENGINE === 'azure'
   ? (process.env.RATE && /^[+-]\d+%$/.test(process.env.RATE) ? process.env.RATE : '+0%')
   : ENGINE === 'piper'
     ? (Number.isFinite(Number(process.env.PIPER_LENGTH)) && process.env.PIPER_LENGTH ? Number(process.env.PIPER_LENGTH) : 1)
@@ -52,7 +56,7 @@ export function spokenText(caption) {
 export function voiceFile(dir, caption) {
   const text = spokenText(caption);
   if (!text) return null;
-  const hash = createHash('sha1').update(`${ENGINE === 'edge' ? 'edge|' : ENGINE === 'piper' ? 'piper|' : ''}${VOICE}|${RATE}|${text}`).digest('hex').slice(0, 16);
+  const hash = createHash('sha1').update(`${ENGINE === 'edge' ? 'edge|' : ENGINE === 'piper' ? 'piper|' : ENGINE === 'azure' ? 'azure|' : ''}${VOICE}|${RATE}|${text}`).digest('hex').slice(0, 16);
   return join(dir, 'voice', `${hash}.${ENGINE === 'edge' ? 'mp3' : 'wav'}`);
 }
 // Seconds of a voice file: a WAV from its header; an MP3 from the subtitle file
@@ -114,6 +118,7 @@ export async function speakOne(dir, caption) {
     if (r.status !== 0 || !existsSync(file)) throw new Error(`edge-tts could not speak a caption: ${(r.stderr || r.stdout || '').trim().slice(0, 300)}`);
     return file;
   }
+  if (ENGINE === 'azure') { await speakAzure(text, file); return file; }
   if (ENGINE === 'piper') {
     const t = /[.!?…]$/.test(text.trim()) ? text.trim() : text.trim() + '.';
     const r = await runPy(['-m', 'piper', '--model', PIPER_MODEL, '--length_scale', String(RATE), '--sentence_silence', '0.25', '--output_file', file], t);
@@ -124,7 +129,31 @@ export async function speakOne(dir, caption) {
   return file;
 }
 
-export function speakAll(dir) {
+// Azure Speech, one sentence → WAV (24 kHz, 16-bit mono). The key is read from the
+// secrets file at call time and never written anywhere else.
+function azureSecrets() {
+  const file = resolve('.secrets/azure-speech.json');
+  if (!existsSync(file)) throw new Error('no .secrets/azure-speech.json — the Azure Speech key and region go there');
+  const s = JSON.parse(readFileSync(file, 'utf8'));
+  if (!s.key || /PASTE/.test(s.key) || !s.region) throw new Error('.secrets/azure-speech.json needs "key" and "region"');
+  return s;
+}
+async function speakAzure(text, file) {
+  const { key, region } = azureSecrets();
+  const esc = x => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const ssml = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US"><voice name="${esc(VOICE)}"><prosody rate="${esc(RATE)}">${esc(text)}</prosody></voice></speak>`;
+  const res = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
+    method: 'POST',
+    headers: { 'Ocp-Apim-Subscription-Key': key, 'Content-Type': 'application/ssml+xml', 'X-Microsoft-OutputFormat': 'riff-24khz-16bit-mono-pcm', 'User-Agent': 'sftk-walkthrough' },
+    body: ssml,
+  });
+  if (!res.ok) throw new Error(`Azure Speech answered ${res.status} ${res.statusText}${res.status === 401 ? ' — the key or the region in .secrets/azure-speech.json is wrong' : ''}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length < 1000) throw new Error('Azure Speech returned no audio');
+  writeFileSync(file, buf);
+}
+
+export async function speakAll(dir) {
   const texts = [...new Set(captionsOf(dir))];
   mkdirSync(join(dir, 'voice'), { recursive: true });
   const list = texts.map(t => ({ text: spokenText(t), file: voiceFile(dir, t) })).filter(x => x.file);
@@ -134,7 +163,8 @@ export function speakAll(dir) {
       const r = spawnSync(PY, ['-m', 'edge_tts', '--voice', VOICE, `--rate=${RATE}`, '--text', it.text, '--write-media', it.file, '--write-subtitles', it.file.replace(/\.mp3$/i, '.srt')], { encoding: 'utf8' });
       if (r.status !== 0 || !existsSync(it.file)) throw new Error(`edge-tts could not speak a caption: ${(r.stderr || r.stdout || '').trim().slice(0, 300)}`);
     }
-  } else if (todo.length && ENGINE === 'piper') speakAll.piper(dir, todo);
+  } else if (todo.length && ENGINE === 'azure') { for (const it of todo) await speakAzure(it.text, it.file); }
+  else if (todo.length && ENGINE === 'piper') speakAll.piper(dir, todo);
   else if (todo.length) speakAll.sapi(dir, todo);
   const missing = list.filter(x => !existsSync(x.file));
   if (missing.length) throw new Error(`${missing.length} caption(s) have no voice file`);
@@ -176,6 +206,6 @@ speakAll.sapi = function (dir, todo) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const dir = resolve(process.env.REC_DIR || 'dist/video/rec');
-  const r = speakAll(dir);
+  const r = await speakAll(dir);
   console.log(`voice: ${ENGINE} ${VOICE}, rate ${RATE} — ${r.captions} captions, ${r.made} newly spoken, ${r.seconds.toFixed(0)} s of speech → ${join(dir, 'voice')}`);
 }

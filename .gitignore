@@ -12,3 +12,6 @@ dist/
 /Saleforce Toolkit/
 # Local preview render of a Data Studio page (scripts/dev/deploy-preview.mjs)
 _preview_*.html
+
+# local secrets (an Azure Speech key for the walkthrough voice) — never committed
+.secrets/
