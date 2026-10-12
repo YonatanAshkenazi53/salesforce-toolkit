@@ -221,14 +221,9 @@ const HOME_FEATURES = [
     title: 'Flow Access',
     desc: 'Control which users and profiles can run each flow',
     action() { navigateToTab('flow-access'); initFlowAccessTab(); }
-  },
-  {
-    id: 'health',
-    i: 'chart',
-    title: 'Org health',
-    desc: 'Licences at the cap, idle users, flows left off — in Data Studio',
-    action() { chrome.tabs.create({ url: chrome.runtime.getURL('studio.html#/orghealth') }); }
   }
+  // Org health lives in Data Studio only; the home card that opened it there is gone
+  // (user 2026-10-12: "remove org health from the toolkit").
   // a tool this build does not carry has no card, no palette row and no deep link (sftk-build.js)
 ].filter(f => typeof sftkShips !== 'function' || sftkShips(f.id));
 
@@ -244,7 +239,7 @@ const HOME_SECTIONS = [
   },
   {
     title: 'Users & Records',
-    ids: ['copy-perms', 'licenses', 'flow-access', 'health']
+    ids: ['copy-perms', 'licenses', 'flow-access']
   },
 ];
 

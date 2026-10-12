@@ -64,6 +64,8 @@ Salesforce answered, it says that instead.
 - **Org health** — one card per finding, each with its API cost first.
 
 ### Fixed before the first cut (hand tests, 2026-10-07)
+- The Toolkit's home no longer carries an "Org health" card: the tool lives in Data Studio, and the
+  card only opened it there.
 - Field Cleaner: the "Replace in all N flows" / "Remove from all N flows" buttons vanished as soon
   as a walk started, so a walk stopped early (Cancel, a refused flow) left the remaining flows
   without them. They are now disabled during the walk and drawn again for what is still open.
