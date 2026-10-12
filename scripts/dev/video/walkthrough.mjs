@@ -44,6 +44,11 @@ function ownNames() {
 }
 
 export default async function (h) {
+  // The video shows the PUBLIC build (dist/store-staging: no Pro, no Debug, no Labs tools). A chapter
+  // recorded from the source folder once slipped through (2026-10-12) — refused here, not found later.
+  if (!/store-staging/i.test(String(process.env.SFTK_EXT || "")) && process.env.SFTK_DEV !== "1") {
+    throw new Error("the walkthrough records the public build: run with SFTK_EXT=dist/store-staging (npm run pack first), or SFTK_DEV=1 to record the source folder on purpose");
+  }
   const only = String(process.env.ONLY || '').split(',').map(s => s.trim()).filter(Boolean);
   const base = resolve(process.env.REC_DIR || 'dist/video/rec');
   const rec = makeRecorder(h, base, { names: ownNames() });
