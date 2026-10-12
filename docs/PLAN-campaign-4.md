@@ -646,16 +646,19 @@ and the run); the video is to be re-recorded after the QA pass.
 
 ## Backlog (found during the campaign)
 
-- **Needs a decision → Merge (user 2026-10-11: "maybe we can provide merging mechanism? so the user
-  ends up with a unique data and without dupes").** First feature after 1.0. A third answer per
-  name: "Merge into this one" — the chosen record survives; the dialog shows the copies side by side
-  and for EVERY field that differs the user picks which value the survivor keeps (survivor's values
-  as the default — the user 2026-10-11: "User needs to be able to select the merged values");
-  everything under the other copies is re-parented to it, the copies deleted; one
-  confirmation, journaled, rollback for the delete/update legs; the native Salesforce merge for
-  Account/Contact/Lead where a current API offers it (check for a REST form before falling back to
-  the SOAP `merge()` call — the memory rule); the dialog says a native merge cannot be undone. Live
-  test on the fixture pair "SFTK CX Duplicate Name". Not started while the video and the release are open.
+- **Needs a decision → 🔀 Merge — SHIPPED in 1.0 (2026-10-12; user 2026-10-11: "maybe we can provide
+  merging mechanism? so the user ends up with a unique data and without dupes" / "It's only merge into
+  this one. User needs to be able to select the merged values"; 2026-10-12: "i think we need to ship it
+  as 1.0").** sftk-merge.js + `_depMergeCopies` in studio-deploy.js: a 🔀 button on the side of a ⚠
+  group that holds more than one copy; the copies read live; a picker with the record that stays and
+  one radio per differing writable field (the survivor's values ticked); the shared confirmation with
+  "cannot be undone"; the chosen values PATCHed first, then — Account/Contact/Lead/Case — Salesforce's
+  own `Database.merge` through the Tooling API's executeAnonymous (SF_APEX_RUN; no REST form exists,
+  SOAP not used; a GET that the org write gate treats as a write), or — other objects — every child
+  relationship moved and re-counted, then the copy deleted; History entry "Merge" with undo: none
+  (said); the memory forgets the copies that are gone; both orgs read again. Live on trailheads5
+  (scripts/dev/live/merge.mjs): the fixture pair merged, Eilat's values chosen, MasterRecordId on the
+  deleted copy, the pair put back (fixture.mjs restoreDuplicateName). Tests: test/merge-1012.test.mjs.
 
 - **Synced records beyond the 5,000 window cannot be found (user 2026-10-01: "5000 contacts are in sync and 1740 is not. but where are they").** The Synced tab lists the first 5,000 identical records and says the rest (1,740 here) exist; the filter searches only the loaded 5,000, so a user cannot confirm one specific record is in sync. Fix: keep the match KEY (name) of every synced record in the scan result (keys only — a few bytes each, no fields), list by name with the filter over all of them, and load a record's details on click. Same for the other buckets' windows.
 

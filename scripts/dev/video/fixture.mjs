@@ -76,3 +76,40 @@ export function removeIdentityField(aliases, objects, log = () => {}) {
   log(`identity field removed from ${done.join(', ') || 'nothing'}${failed.length ? ` — FAILED ${failed.join(' ‖ ')}` : ''}`);
   return { done, failed };
 }
+
+// The duplicate pair "SFTK CX Duplicate Name" of the complex-deployment fixture
+// (seed-source.apex: Haifa / 1 and Eilat / 2), put back after a 🔀 Merge made it
+// one record — the record that stayed gets Haifa / 1 again, the Eilat copy is
+// inserted again, through the same DML options the seed uses (the org's
+// duplicate rules stay as they are: the fixture carries duplicates on purpose).
+// Returns { before, after } counts, or { failed }.
+export function restoreDuplicateName(alias = 'npc', log = () => {}) {
+  const apex = [
+    "Database.DMLOptions dmo = new Database.DMLOptions(); dmo.DuplicateRuleHeader.allowSave = true; dmo.DuplicateRuleHeader.runAsCurrentUser = true; dmo.optAllOrNone = true;",
+    "List<Account> have = [SELECT Id, BillingCity, AnnualRevenue FROM Account WHERE Name = 'SFTK CX Duplicate Name' ORDER BY CreatedDate];",
+    "if (have.size() >= 2) { System.debug('SFTK restore: nothing to do, ' + have.size()); return; }",
+    "if (have.size() == 1) { have[0].Industry = 'Energy'; have[0].BillingCity = 'Haifa'; have[0].AnnualRevenue = 1; Database.update(have[0], dmo); }",
+    "else Database.insert(new Account(Name='SFTK CX Duplicate Name', Industry='Energy', BillingCity='Haifa', AnnualRevenue=1), dmo);",
+    "Database.insert(new Account(Name='SFTK CX Duplicate Name', Industry='Energy', BillingCity='Eilat', AnnualRevenue=2), dmo);",
+  ].join('\n');
+  const dir = join(process.env.TEMP || resolve('dist'), `sftk-dupname-${Date.now()}`);
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, 'restore.apex');
+  writeFileSync(file, apex);
+  const count = () => {
+    const q = JSON.parse(execFileSync('sf', ['data', 'query', '-o', alias, '--json', '-q', "\"SELECT Id, BillingCity, AnnualRevenue FROM Account WHERE Name = 'SFTK CX Duplicate Name'\""],
+      { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+    return ((q.result && q.result.records) || []).map(r => `${r.Id}:${r.BillingCity}/${r.AnnualRevenue}`);
+  };
+  try {
+    const before = count();
+    execFileSync('sf', ['apex', 'run', '-o', alias, '--file', `"${file}"`, '--json'], { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const after = count();
+    log(`Duplicate Name pair on ${alias}: ${before.length} → ${after.length} (${after.join(', ')})`);
+    return { before, after };
+  } catch (e) {
+    const failed = String((e && (e.stdout || e.message)) || e).slice(0, 400);
+    log(`Duplicate Name pair on ${alias}: restore FAILED — ${failed}`);
+    return { failed };
+  } finally { try { rmSync(dir, { recursive: true, force: true }); } catch (_) {} }
+}

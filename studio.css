@@ -6435,3 +6435,15 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 /* Deploy run: ⏸ Pause beside the live view, and the one line about closing the tab (2026-10-09) */
 .ds-run-pausebar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
 .ds-run-pausenote { font-size: 12px; color: var(--subtext); }
+
+/* ── 🔀 Merge the copies (Deploy › ⚠ Needs a decision; sftk-merge.js) ── */
+.ds-amb-merge { margin-left: 8px; }
+.ds-merge-wrap { overflow: auto; max-height: 46vh; border: 1px solid var(--border); border-radius: 8px; }
+.ds-merge-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.ds-merge-table th, .ds-merge-table td { text-align: left; vertical-align: top; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.ds-merge-table thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.ds-merge-table tbody th { font-weight: 600; white-space: nowrap; }
+.ds-merge-col.ds-merge-keep { background: rgba(27, 111, 209, .10); }
+.ds-merge-val, .ds-merge-keeplbl { display: flex; gap: 6px; align-items: baseline; cursor: pointer; word-break: break-word; }
+.ds-merge-keeplbl { font-weight: 700; }
+.ds-merge-same { margin-top: 8px; }

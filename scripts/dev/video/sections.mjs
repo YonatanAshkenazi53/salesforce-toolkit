@@ -21,7 +21,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { rebuildFieldCleanerFixture, removeIdentityField } from './fixture.mjs';
+import { rebuildFieldCleanerFixture, removeIdentityField, restoreDuplicateName } from './fixture.mjs';
 
 const J = JSON.stringify;
 const FIXTURE = 'docs/fixtures/complex-deployment/profiles.json';
@@ -1019,7 +1019,11 @@ export const SECTIONS = [
     if (await c.has('#sftkConfirmGo')) await rec.click('#sftkConfirmGo', 600);
   } },
 
-  { id: 'deploy', title: 'Data Deployment', run: async c => {
+  // writes: the 🔀 Merge step merges the fixture's duplicate pair in trailheads5 for real;
+  // the pair is put back off camera (fixture.mjs) so the next chapters see it again
+  { id: 'deploy', title: 'Data Deployment', writes: true,
+    cleanup: async ({ h }) => { restoreDuplicateName('npc', (...a) => h.log(...a)); },
+    run: async c => {
     const { h, rec } = c;
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');
     const id = await ensureDemo(c);
@@ -1077,6 +1081,36 @@ export const SECTIONS = [
           await h.sleep(600);
           await rec.click('[data-dep-amb-one]:not([disabled])', 1500);
           await rec.say('The answer is remembered for this pair of orgs. It is not a change in Salesforce.', 4500);
+        }
+        // 🔀 the copies in ONE org merged into one (user 2026-10-11: "so the user ends up with a
+        // unique data and without dupes"; 2026-10-12: "ship it as 1.0") — a real write to trailheads5
+        if (await c.has('[data-dep-amb-merge="src"]')) {
+          await rec.scrollTo('[data-dep-amb-merge="src"]', 'center');
+          await rec.say('And when the two copies live in one org by mistake, merge them. The copies are read live from that org.', 5500);
+          await rec.click('[data-dep-amb-merge="src"]', 600);
+          await rec.fast(() => h.waitFor("!!document.querySelector('.ds-merge-table')", 60000, 300));
+          await h.sleep(800);
+          await rec.say('Side by side. You choose the record that stays, and for every field that differs, the value it keeps — its own values are ticked.', 7500);
+          const other = await h.eval(`(() => { const r = document.querySelector('tr[data-merge-field="BillingCity"] input[value="1"]') || document.querySelector('tr[data-merge-field] input[value="1"]'); if (!r) return false; r.setAttribute('data-demo-merge', '1'); return true; })()`);
+          if (other) {
+            await rec.point('input[data-demo-merge="1"]', 700);
+            await h.eval(`(() => { const r = document.querySelector('input[data-demo-merge="1"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+            await rec.say('Here the first copy stays, with the city of the second.', 3500);
+          }
+          await rec.click('#dsMergeGo', 600);
+          await rec.fast(() => h.waitFor("!!document.querySelector('#sftkConfirmGo')", 30000, 300));
+          await h.sleep(800);
+          await rec.say('The one confirmation: what is merged, what is written, and that a merge cannot be undone. Salesforce itself performs it.', 6500);
+          const hist = await h.eval('_history.length');
+          await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) a.click(); return true; })()`);
+          await h.sleep(400);
+          await rec.click('#sftkConfirmGo', 600);
+          await prodGate(c);
+          await rec.fast(() => h.waitFor(`_history.length > ${hist}`, 120000, 500));
+          await waitScanned(c);
+          await h.sleep(1200);
+          await rec.scrollTo('.ds-dep-tabs', 'center');
+          await rec.say('Done — verified by reading the org again, recorded in History — and both orgs are read again: the name is one record now, and the tab is empty.', 7500);
         }
       }
     }

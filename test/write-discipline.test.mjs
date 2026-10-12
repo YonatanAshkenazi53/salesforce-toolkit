@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const WRITE_TYPES = /type:\s*'(SF_PATCH|SF_TOOLING_DELETE|SF_REST_DELETE|SF_HARD_DELETE|SF_COLLECTIONS_UPDATE|SF_COLLECTIONS_DELETE|SF_METADATA_DEPLOY|SF_CREATE_FLOW|SF_TOOLING_POST|SF_REST_POST|SF_EXECUTE_PROFILE_TRANSFER|SF_EXECUTE_SEQUENCE)'/;
+const WRITE_TYPES = /type:\s*'(SF_APEX_RUN|SF_PATCH|SF_TOOLING_DELETE|SF_REST_DELETE|SF_HARD_DELETE|SF_COLLECTIONS_UPDATE|SF_COLLECTIONS_DELETE|SF_METADATA_DEPLOY|SF_CREATE_FLOW|SF_TOOLING_POST|SF_REST_POST|SF_EXECUTE_PROFILE_TRANSFER|SF_EXECUTE_SEQUENCE)'/;
 
 // UI files only: background.js is the transport, not a caller.
 const UI_FILES = readdirSync(root).filter(f => f.endsWith('.js') && !f.startsWith('_') && !f.startsWith('eslint')
