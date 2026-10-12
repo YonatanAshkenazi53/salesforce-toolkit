@@ -2819,6 +2819,8 @@ async function dispatchMessage(message) {
       return sfGetMetadata(orgUrl, sid, message.id);
     case 'SF_TOOLING_GET':
       return sfToolingGet(orgUrl, sid, message.sobject, message.id);
+    case 'SF_APEX_RUN':
+      return sfApexRun(orgUrl, sid, message.apex);
     case 'SF_CREATE_FLOW':
       return sfCreateFlow(orgUrl, sid, message.fullName, message.metadata);
     case 'SF_PATCH':
@@ -3082,6 +3084,7 @@ async function sfProxyFetch(orgUrl, targetUrl, method = 'GET', bodyStr = null) {
 // returns true here, so their behaviour is byte-for-byte unchanged.
 function sftkIsWriteRequest(method, url, bodyStr) {
   const m = String(method || 'GET').toUpperCase();
+  if (m === 'GET' && /\/tooling\/executeAnonymous\b/i.test(String(url || ''))) return true;   // an Apex run is a write, whatever the verb
   if (m === 'GET' || m === 'HEAD') return false;
   if (m !== 'POST') return true;
   if (!/\/composite\/batch(?:[?#]|$)/i.test(String(url || ''))) return true;
@@ -3339,6 +3342,20 @@ async function sfRestGetText(orgUrl, sid, path) {
   const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url);
   if (!ok) throw new Error(sfErrorMsg(status, body, url));
   return { text: body };
+}
+
+// Anonymous Apex through the Tooling API (GET …/tooling/executeAnonymous/?anonymousBody=…).
+// The only caller is the merge of duplicate records (sftk-merge.js: Database.merge
+// has no REST form). It is a WRITE although the verb is GET: sftkIsWriteRequest
+// knows the path, so a read-only org refuses it like any other write.
+// Answers { compiled, success, compileProblem, exceptionMessage, line, column, … }.
+async function sfApexRun(orgUrl, sid, apex) {
+  const code = String(apex || '');
+  if (!code.trim()) throw new Error('no Apex to run');
+  const url = `${orgUrl}/services/data/${API_VERSION}/tooling/executeAnonymous/?anonymousBody=${encodeURIComponent(code)}`;
+  const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url);
+  if (!ok) throw new Error(sfErrorMsg(status, body, url));
+  return JSON.parse(body);
 }
 
 async function sfToolingGet(orgUrl, sid, sobject, id) {

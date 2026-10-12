@@ -55,47 +55,19 @@ Salesforce answered, it says that instead.
   nothing ticked for you. A whole tree goes in one run, parents first; lookups connect;
   record-triggered flows, validation rules and duplicate rules can be paused or bypassed
   for the run (and what cannot be bypassed is said); ↻ Retry failed; the 🪪 identity field
-  makes matching exact across orgs.
+  makes matching exact across orgs. A long run can be ⏸ paused after the batch in flight and
+  ▶ continued later with the records not reached; closing the tab mid-run asks first.
+  Where a name exists more than once in one org, 🔀 **Merge** makes it one record: you choose
+  the record that stays and, for every field that differs, the value it keeps; the copies are
+  merged into it (Salesforce's own merge for Accounts, Contacts, Leads and Cases; for other
+  objects what hangs under a copy is moved first, then the copy deleted) and both orgs are read
+  again. A merge cannot be undone — the dialog says so.
 - **All open orgs** — every deployment against every open org at a glance.
 - **History** — every run with its counts, exports as CSV or JSON, and ↩ Roll back, which
   deletes what a run created and restores what it changed, then verifies.
 - **Org Compare** — record counts of any objects between two orgs, by name, external id or
   a field you choose.
 - **Org health** — one card per finding, each with its API cost first.
-
-### Fixed before the first cut (hand tests, 2026-10-07)
-- The Toolkit's home no longer carries an "Org health" card: the tool lives in Data Studio, and the
-  card only opened it there.
-- Field Cleaner: the "Replace in all N flows" / "Remove from all N flows" buttons vanished as soon
-  as a walk started, so a walk stopped early (Cancel, a refused flow) left the remaining flows
-  without them. They are now disabled during the walk and drawn again for what is still open.
-- The shared confirmation did not open at all when its list had more than eight items
-  (a rollback of a larger run, a delete of many flow versions): the dialog's filter box
-  used a value before its line. Found while recording the walkthrough on 2026-10-10.
-- Data Deployment: a long run can be **⏸ paused** — it stops after the batch in flight (nothing
-  is half-written), History shows "⏸ paused" with how far it got, and **▶ Continue** reopens the
-  deployment with the records not reached ticked again; what was written is left alone. Closing the tab (or the X of the Chrome tab) while a run is on: the browser asks first; if you leave, the run stops after the batch in flight and the next Data Studio page says so once, with how far it got — a 🔍 Scan then lists what is still to deploy.
-- Lightning Pages: "Finish the check" ran again and showed the same sentence, which read as a
-  dead button. The strip now says it ran again, names the objects that cannot be described
-  and why, and the button reads "Try again".
-- Field Cleaner: the group button for flows offers both ways — "Remove from all N flows ·
-  flows keep running" and "Delete versions · all N flows off" — like the cards do.
-- Field Cleaner History: a deleted flow version is named ("SFTK FC Test Flow v17 (Active)
-  deleted") and a deleted run by its label and state, not by a Salesforce id.
-- Data Deployment: picking Hard delete says at once, next to the mode and in the
-  confirmation, that ↩ Roll back cannot bring hard-deleted records back.
-- Dependencies: every row shows who created the version and who last modified it, as two
-  aligned lines ("created 2026-09-26 by …" / "modified …").
-- The licence page is readable in dark mode; the EULA names the tools that ship.
-- All open orgs: one 🔎 Scan for the page — every deployment against every open org, one
-  after the other — instead of a button per column and one per cell. A cell keeps ⚖.
-- Every dialog has one shape now, on both pages: the sentence as the title with facts chips,
-  the stakes in a card coloured by severity (red permanent, amber a recorded write, blue
-  reversible), a real list with a filter when it is long, and a pinned bar that keeps the
-  acknowledgement or the typed word beside Cancel and Go — never scrolled away. Production is
-  a red band in the same dialog. The gates, results and questions around the writes (paused
-  interviews, subflow checks, active flows, backups, restores, rename / remove an org, clear
-  history, exports, delete a deployment, the production step) share it.
 
 ### Known limits
 - A Toolkit tool's changes are listed in that tool's History; Data Studio's History lists

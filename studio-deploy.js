@@ -893,8 +893,8 @@ function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf) {
       <div class="ds-amb-ghd"><b>${esc(k)}</b><span class="ds-dep-muted">${nSrc} in ${srcL} · ${cands.length} in ${tgtL}</span><span class="ds-dep-sp"></span>
         ${kept && !pending ? '<span class="ds-amb-done">✓ remembered — takes effect when both orgs are read again</span>' : ''}
         <button class="ds-btn ds-btn-xs" data-dep-amb-one="${esc(k)}" ${pending ? '' : 'disabled'} title="Remember the answers of this name now. Both orgs are read again later, once.">📌 Apply this one</button></div>
-      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${tgtL} — the records it could be</div>${cands.map((t, i) => `<div class="ds-amb-cand"><span class="ds-amb-n">#${i + 1}</span>${chips(candTell[t])}<a class="ds-dep-open" href="${url(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open this ${tgtL} record">open ↗</a></div>`).join('')}</div>
-      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${srcL} — which ${tgtL} record is each one?</div>${rs.map(r => { const pick = pickOf(r); const ans = answers(r); return `<div class="ds-amb-src">${chips(r.tell)}<a class="ds-dep-open" href="${url(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener" title="Open this ${srcL} record">open ↗</a>
+      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${tgtL} — the records it could be${cands.length > 1 ? ` <button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="tgt" data-dep-amb-key="${esc(k)}" title="Merge these records into one: you choose which one stays and which values it keeps; the others are merged into it and deleted.">🔀 Merge these ${cands.length} into one</button>` : ''}</div>${cands.map((t, i) => `<div class="ds-amb-cand"><span class="ds-amb-n">#${i + 1}</span>${chips(candTell[t])}<a class="ds-dep-open" href="${url(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open this ${tgtL} record">open ↗</a></div>`).join('')}</div>
+      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${srcL} — which ${tgtL} record is each one?${nSrc > 1 ? ` <button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="src" data-dep-amb-key="${esc(k)}" title="Merge these records into one: you choose which one stays and which values it keeps; the others are merged into it and deleted.">🔀 Merge these ${nSrc} into one</button>` : ''}</div>${rs.map(r => { const pick = pickOf(r); const ans = answers(r); return `<div class="ds-amb-src">${chips(r.tell)}<a class="ds-dep-open" href="${url(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener" title="Open this ${srcL} record">open ↗</a>
           ${radios ? '' : `<select class="ds-select ds-select-sm ds-amb-sel" data-dep-amb-sel="${esc(r.sourceId)}" aria-label="Which ${tgtL} record is this">
             ${[ans[ans.length - 1], ...ans.slice(0, -1)].map(a => `<option value="${esc(a.v)}" ${pick === a.v ? 'selected' : ''}>${esc(a.text)}</option>`).join('')}
           </select>`}</div>
@@ -931,6 +931,119 @@ function _depWireChrome(p) {
   eid('dsDepBackOrigin')?.addEventListener('click', () => _depGoOrigin(p));
   eid('dsDepRefresh')?.addEventListener('click', () => _depRescan(p));
   eid('dsDepMatchReview')?.addEventListener('click', () => openMatchReview(p));
+}
+
+// ── 🔀 Merge the copies of one name into one of them ─────────────────────────
+// (user 2026-10-11: "maybe we can provide merging mechanism? so the user ends up
+// with a unique data and without dupes" / "It's only merge into this one. User
+// needs to be able to select the merged values"; shipped in 1.0 on 2026-10-12.)
+// From ⚠ Needs a decision, on the side that holds more than one record of the
+// name: the copies are read live, the user picks the record that stays and, for
+// every field that differs, the value it keeps; after the shared confirmation
+// the copies are merged into it (sftk-merge.js), the memory forgets the copies
+// that are gone, and both orgs are read again — the name is unique then.
+async function _depMergeCopies(p, side, name, ids) {
+  const orgUrl = side === 'src' ? p.sourceOrg : p.targetOrg;
+  const obj = (p.tree && p.tree.objectType) || '';
+  const uniq = [...new Set((ids || []).filter(Boolean))];
+  if (!obj || uniq.length < 2) return showToast('Nothing to merge: this name has one record on that side.', 'info', 5000);
+  if (!uniq.every(sftkMergeIdOk)) return showToast('These records could not be merged: an id is not a Salesforce id.', 'error', 6000);
+  const sess = await getOrgSession(orgUrl);
+  if (!sess) return showToast(`No open session for ${orgLabel(orgUrl)} — open it in a Salesforce tab first.`, 'error', 7000);
+  showToast(`Reading the ${uniq.length} copies of "${name}" in ${orgLabel(orgUrl)}…`, 'info', 3000);
+  const desc = await describe(obj, sess.orgUrl, sess.sid);
+  if (!desc || !Array.isArray(desc.fields)) return showToast(`${obj} could not be described in ${orgLabel(orgUrl)}.`, 'error', 7000);
+  const read = await sftkMergeRead({ send: sendBg, orgUrl: sess.orgUrl, sid: sess.sid, obj, fields: desc.fields, ids: uniq });
+  if (read.error) return showToast(`The copies could not be read: ${read.error}`, 'error', 8000);
+  const recs = read.records;
+  if (recs.length < 2) return showToast(`Only ${recs.length} of the ${uniq.length} copies could be read — one is gone already? Read both orgs again.`, 'error', 8000);
+  const diff = sftkMergeDiff(desc.fields, recs);
+  const native = sftkMergeNative(obj);
+  const rels = native ? [] : sftkMergeChildPlan(desc.childRelationships);
+  const label = desc.label || obj, plural = desc.labelPlural || `${label}s`;
+  const org = orgLabel(orgUrl);
+  const when = iso => String(iso || '').slice(0, 10);
+  const fmt = v => esc(sftkMergeValueText(v));
+  const base = String(orgUrl || '').replace(/\/$/, '');
+  const head = recs.map((r, i) => `<th class="ds-merge-col${i === 0 ? ' ds-merge-keep' : ''}" data-merge-col="${i}"><label class="ds-merge-keeplbl"><input type="radio" name="dsMergeKeep" value="${i}" ${i === 0 ? 'checked' : ''}> Keep copy ${i + 1}</label><div class="ds-dep-muted"><a href="${esc(base)}/lightning/r/${esc(r.Id)}/view" target="_blank" rel="noopener">${esc(r.Id)}</a> · created ${esc(when(r.CreatedDate))} · changed ${esc(when(r.LastModifiedDate))}</div></th>`).join('');
+  const rows = diff.differ.map(f => `<tr data-merge-field="${esc(f.name)}"><th scope="row">${esc(f.label)}<div class="ds-dep-muted">${esc(f.name)}</div></th>${f.values.map((v, i) => `<td class="ds-merge-col${i === 0 ? ' ds-merge-keep' : ''}" data-merge-col="${i}"><label class="ds-merge-val"><input type="radio" name="dsMergeF_${esc(f.name)}" value="${i}" ${i === 0 ? 'checked' : ''}> <span>${fmt(v)}</span></label></td>`).join('')}</tr>`).join('');
+  const table = `<div class="ds-merge-wrap"><table class="ds-merge-table"><thead><tr><th>Which record stays?</th>${head}</tr></thead><tbody>${rows || `<tr><td colspan="${recs.length + 1}" class="ds-dep-muted">Every writable field holds the same value in all copies — nothing to choose.</td></tr>`}</tbody></table></div>
+    <div class="ds-dep-muted ds-merge-same">${diff.differ.length ? 'For each field above, tick the value the record that stays keeps (its own values are ticked). ' : ''}${diff.same.toLocaleString()} writable field${diff.same === 1 ? ' is' : 's are'} the same in every copy.</div>`;
+  const others = recs.length === 2 ? 'the other copy is' : `the other ${recs.length - 1} copies are`;
+  const stakes = native
+    ? `<b>One record stays; ${others} merged into it and deleted.</b> Salesforce merges ${esc(plural)} itself: everything under the copies — related records, activities, files, notes, feed — moves to the record that stays. <b>The Toolkit cannot undo a merge.</b>`
+    : `<b>One record stays; ${others} deleted.</b> Salesforce has no merge for ${esc(plural)}, so the Toolkit moves what hangs under a copy to the record that stays, one relationship at a time (${rels.length.toLocaleString()} relationship${rels.length === 1 ? '' : 's'}${rels.length ? ': ' + esc(rels.slice(0, 6).map(r => r.child).join(', ')) + (rels.length > 6 ? '…' : '') : ''}), and deletes the copy only when everything moved; a relationship that refuses stops the merge before that copy is deleted. History, sharing and feed rows of a copy go with it. <b>The Toolkit cannot undo a merge.</b>`;
+  const choice = await new Promise(resolve => {
+    let done = false;
+    const finish = v => { if (!done) { done = true; resolve(v); } };
+    sftkDialog({
+      icon: '🔀', title: `Merge the ${recs.length} copies of "${name}" in ${org}`, sev: 'red',
+      facts: [label, `${recs.length} copies`, `${diff.differ.length.toLocaleString()} field${diff.differ.length === 1 ? '' : 's'} differ`, native ? 'Salesforce merge' : 'moved, then deleted'],
+      stakes, bodyHtml: table,
+      note: 'The copies go to the Recycle Bin for 15 days; restoring them there does not take back what moved to the record that stays.',
+      actions: [{ id: 'dsMergeCancel', label: 'Cancel' }, { id: 'dsMergeGo', label: '🔀 Merge into the chosen record…', kind: 'danger' }],
+      onRender: () => {
+        const box = eid('dsModalBox');
+        if (!box) return finish(null);
+        const paint = () => {
+          const keep = Number((box.querySelector('input[name="dsMergeKeep"]:checked') || {}).value || 0);
+          box.querySelectorAll('[data-merge-col]').forEach(el => el.classList.toggle('ds-merge-keep', Number(el.dataset.mergeCol) === keep));
+        };
+        box.querySelectorAll('input[name="dsMergeKeep"]').forEach(r => r.addEventListener('change', () => {
+          // the record that stays keeps its own values until the user says otherwise
+          box.querySelectorAll('tr[data-merge-field]').forEach(tr => { const x = tr.querySelector(`input[value="${r.value}"]`); if (x) x.checked = true; });
+          paint();
+        }));
+        eid('dsMergeCancel')?.addEventListener('click', () => { closeModal(); finish(null); });
+        eid('dsMergeGo')?.addEventListener('click', () => {
+          const keep = Number((box.querySelector('input[name="dsMergeKeep"]:checked') || {}).value || 0);
+          const picks = {};
+          box.querySelectorAll('tr[data-merge-field]').forEach(tr => { const x = tr.querySelector('input:checked'); if (x) picks[tr.dataset.mergeField] = Number(x.value); });
+          closeModal(); finish({ keep, picks });
+        });
+        const mo = new MutationObserver(() => { if (!box.querySelector('.sftk-cf')) { mo.disconnect(); finish(null); } });
+        mo.observe(box, { childList: true });
+      },
+    });
+  });
+  if (!choice) return;
+  const survivor = recs[choice.keep], dups = recs.filter((_, i) => i !== choice.keep);
+  const chosen = sftkMergeChosen(diff, choice.picks, choice.keep);
+  const gate = await sftkOrgWriteGate(orgUrl, _orgs);
+  const tell = r => diff.differ.slice(0, 3).map(f => `${f.label}: ${sftkMergeValueText(r[f.name])}`).join(' · ');
+  const ok = await sftkConfirmDestructive({
+    icon: '🔀', title: `Merge ${dups.length === 1 ? 'one copy' : `${dups.length} copies`} of "${name}" into ${survivor.Id} in ${org}`,
+    items: [
+      ...dups.map(r => ({ label: `${label} ${r.Id} — merged into ${survivor.Id} and deleted`, sub: tell(r) })),
+      ...chosen.changes.map(ch => ({ label: `${ch.label}: ${sftkMergeValueText(ch.from)} → ${sftkMergeValueText(ch.to)}`, sub: 'written to the record that stays' })),
+    ],
+    reversibility: 'permanent',
+    revOverride: { html: '⛔ <strong>Cannot be undone</strong> — the copies go to the Recycle Bin, but restoring them does not take back what moved to the record that stays. The Toolkit offers no undo for a merge.', needsCheckbox: true },
+    confirmLabel: '🔀 Merge now',
+    production: gate.production ? { label: gate.label } : null,
+    undoHint: native ? 'Salesforce performs the merge (Database.merge); the result is verified by re-reading the org.' : 'Each relationship is moved and re-counted before a copy is deleted.',
+  });
+  if (!ok) return;
+  const journal = sftkHistoryBegin({ tool: 'Merge', title: `🔀 ${label} "${name}": ${dups.length === 1 ? 'one copy' : `${dups.length} copies`} merged into ${survivor.Id} in ${org}`, orgUrl });
+  let res = null;
+  try {
+    res = await sftkMergeRun({ send: sendBg, orgUrl: sess.orgUrl, sid: sess.sid, obj, label, name, survivorId: survivor.Id, dupIds: dups.map(r => r.Id), body: chosen.body, native, rels, journal });
+  } finally {
+    await sftkHistoryEnd(journal, {
+      undo: { none: 'a merge cannot be undone by the Toolkit — the copies are in the Recycle Bin, but restoring them does not take back what moved to the record that stays' },
+      errors: res && !res.ok ? [res.text] : [],
+    });
+  }
+  // the memory: a copy that is gone can no longer be an answer
+  const gone = new Set((res && res.deleted) || []);
+  if (gone.size && !p.ephemeral) {
+    const mem = ((_profiles.find(x => x.id === p.id) || p).matchMemory || {})[_orgKey(p.targetOrg || '')] || {};
+    const forget = side === 'src' ? [...gone] : Object.entries(mem).filter(([, t]) => gone.has(t)).map(([s]) => s);
+    if (forget.length) await window.sftkForgetPairs?.(p.id, p.targetOrg, forget);
+  }
+  for (const id of gone) _depAmbPick.delete(id);
+  showToast(res.text, res.ok ? 'success' : 'error', res.ok ? 7000 : 12000);
+  await _depRescan(p);
 }
 
 async function _depRescan(p) {
@@ -1164,6 +1277,13 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
       }
     }
     ambPaintApply();
+  }));
+  // 🔀 the copies of one name, on the side that holds more than one, merged into one record
+  host.querySelectorAll('[data-dep-amb-merge]').forEach(b => b.addEventListener('click', () => {
+    const side = b.dataset.depAmbMerge, name = b.dataset.depAmbKey;
+    const rs = all.filter(r => key(r) === name);
+    const ids = side === 'src' ? rs.map(r => r.sourceId) : ((rs[0] && rs[0].candidates) || []);
+    _depMergeCopies(p, side, name, ids);
   }));
   host.querySelectorAll('[data-dep-amb-one]').forEach(b => b.addEventListener('click', async () => {
     const name = b.dataset.depAmbOne;

@@ -33,7 +33,13 @@ import { speakAll, voiceFile, voiceSeconds, VOICE as VOICE_NAME, RATE as VOICE_R
 
 const FAST = Number(process.env.FAST || 8);
 const W = 1920, H = 1080, FRAME_H = 88, PAGE_H = 872, BAND_Y = FRAME_H + PAGE_H;
-const MIN_GAP = 40;            // ms between frames sent to the encoder (25 fps ceiling)
+const MIN_GAP = 66;            // ms between frames sent to the encoder (15 fps ceiling)
+// In a sped-up stretch the recording's frames arrive FAST× closer together: 236 pictures
+// of a scrolling page in one second of video left the encoder drawing the previous page
+// under the next one (user 2026-10-12: "a lot of weird parts like this one"). Inside a
+// waiting stretch at most ~3 pictures a second go to the encoder, the last one always.
+const FAST_GAP = 350;
+const KEYFRAME_MS = Number(process.env.KEYFRAME || 4000);   // a keyframe every 4 s: nothing left over from an earlier picture lives longer (2 s doubled the file)
 // SCALE=0.6667 composes a 1280×720 picture (the same layout, drawn smaller) — with
 // AUDIO_BITRATE=64000 and BITRATE=1200000 a copy under 30 MB for a phone or a chat
 const SCALE = Number(process.env.SCALE || 1);
@@ -100,7 +106,8 @@ export default async function (h) {
   let last = -1e9;
   for (let i = 0; i < fr.length; i++) {
     const tau = T(fr[i].t), next = i + 1 < fr.length ? T(fr[i + 1].t) : Infinity;
-    if (tau - last >= MIN_GAP || next - tau >= 120) { ev.push({ tau, kind: 'frame', f: fr[i].abs ? join(dir, fr[i].f) : join(dir, 'frames', fr[i].f), fast: inFast(fr[i].t) }); last = tau; }
+    const fastHere = inFast(fr[i].t), gap = fastHere ? FAST_GAP : MIN_GAP;
+    if (tau - last >= gap || next - tau >= gap) { ev.push({ tau, kind: 'frame', f: fr[i].abs ? join(dir, fr[i].f) : join(dir, 'frames', fr[i].f), fast: fastHere }); last = tau; }
   }
   for (const c of said) ev.push({ tau: T(c.t), kind: 'cue', text: c.text, voice: c.voice || null });
   for (const c of (man.chapters || [])) ev.push({ tau: T(c.t), kind: 'chapter', title: c.title });
@@ -109,6 +116,7 @@ export default async function (h) {
   for (const f of fast) ev.push({ tau: T(f.b) + 5, kind: 'fastoff' });
   ev.sort((a, b) => a.tau - b.tau || (a.kind === 'frame' ? 1 : -1));
   const total = Math.max(T(man.length || (fr.length ? fr[fr.length - 1].t : 0)), said.busyUntil || 0) + 1500;
+  for (const f of fast) h.log(`  waiting stretch ${(f.a / 1000).toFixed(0)}–${(f.b / 1000).toFixed(0)} s of the recording → video ${(T(f.a) / 1000).toFixed(1)}–${(T(f.b) / 1000).toFixed(1)} s`);
   h.log(`composing ${ev.filter(e => e.kind === 'frame').length} of ${fr.length} frames · source ${(man.length / 1000).toFixed(0)} s → video ${(total / 1000).toFixed(0)} s (waiting ×${FAST}${SPEAK ? `, ${spoken} captions spoken` : ', silent'})`);
 
   // ── the chapters, and (CAPTIONS=track only) the subtitle file ──
@@ -144,7 +152,7 @@ export default async function (h) {
       const hum = ac.createConstantSource(); const mute = ac.createGain(); mute.gain.value = 0; hum.connect(mute); mute.connect(dest); hum.start();
       stream = new MediaStream([track, dest.stream.getAudioTracks()[0]]);
     }
-    const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: ${Number(process.env.BITRATE || 8000000)}, audioBitsPerSecond: ${Number(process.env.AUDIO_BITRATE || 160000)} });
+    const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: ${Number(process.env.BITRATE || 8000000)}, audioBitsPerSecond: ${Number(process.env.AUDIO_BITRATE || 160000)}, videoKeyFrameIntervalDuration: ${KEYFRAME_MS} });
     const chunks = []; rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
     const V = window.__v = { c, g, track, rec, chunks, type, ac, dest, clips: {}, img: null, caption: '', chapter: '', fast: false, blob: null, url: '', title: '' };
     // the narration: each sentence is decoded before the recording starts, and only started at its moment
@@ -191,7 +199,7 @@ export default async function (h) {
         g.drawImage(V.img, 0, 0, V.img.width, hh / s, 0, ${FRAME_H}, ${W}, hh);
       }
       if (V.fast) { g.font = '600 26px "Segoe UI", sans-serif'; const t = '⏩ waiting — sped up'; const w = g.measureText(t).width + 36;
-        g.fillStyle = 'rgba(11,31,58,.88)'; g.beginPath(); g.roundRect(${W} - w - 24, ${FRAME_H} + 20, w, 48, 24); g.fill(); g.fillStyle = '#fff'; g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillText(t, ${W} - w - 6, ${FRAME_H} + 44); }
+        g.fillStyle = 'rgba(11,31,58,.88)'; g.beginPath(); g.roundRect(${W} - w - 24, ${BAND_Y} - 68, w, 48, 24); g.fill(); g.fillStyle = '#fff'; g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillText(t, ${W} - w - 6, ${BAND_Y} - 44); }
       g.fillStyle = '#0b1f3a'; g.fillRect(0, ${BAND_Y}, ${W}, ${H - BAND_Y});
       g.fillStyle = '#1b6fd1'; g.fillRect(0, ${BAND_Y}, ${W}, 3);
       let left = 40;

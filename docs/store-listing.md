@@ -45,7 +45,8 @@ DATA STUDIO
   record sorted into insert / changed / only in target / synced / needs a decision, nothing
   ticked for you. A whole tree in one run, parents first; lookups connect; record-triggered
   flows, validation rules and duplicate rules can be paused or bypassed for the run; retry
-  the failed ones; an identity field makes matching exact across orgs.
+  the failed ones; an identity field makes matching exact across orgs; a name that exists
+  twice in one org can be merged into one record, value by value.
 • All open orgs — every deployment against every open org at a glance.
 • History — every run with its counts, CSV/JSON export, and Roll back, which deletes
   what a run created and restores what it changed, then verifies.
