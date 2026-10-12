@@ -26,6 +26,9 @@ export default async function (h) {
   await h.eval("(() => { const g = [...document.querySelectorAll('.flow-group')].find(g => /SFTK Dep Test/.test(g.dataset.label)); if (g) g.querySelector('.flow-group-header').click(); return true; })()");
   await shot('toolkit-flows');
   await h.eval("document.querySelector('[data-tab=\"dependencies\"]')?.click()");
+  // above 150 flow versions the page waits for "Scan dependencies (N calls)" (the extra fixture flows, 2026-10-10)
+  await h.sleep(2500);
+  await h.eval("(() => { const b = [...document.querySelectorAll('button')].find(b => /Scan dependencies/.test(b.textContent)); if (b) b.click(); return !!b; })()");
   await h.waitFor("!!document.querySelector('#depBulkBtn')", 240000, 1000); await h.sleep(1500); await shot('toolkit-dependencies');
   await h.eval("document.querySelector('#depBulkBtn').click()"); await h.waitFor("document.querySelectorAll('.dep-fb-cb').length > 0", 300000, 1000); await h.sleep(800); await shot('toolkit-flow-switches');
   await h.eval("document.querySelector('[data-tab=\"pages\"]')?.click()");

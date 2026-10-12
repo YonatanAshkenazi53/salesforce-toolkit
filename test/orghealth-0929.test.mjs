@@ -60,7 +60,7 @@ describe('the page keeps the budget-first rules', () => {
     expect(CORE).toContain("case 'orghealth': renderOrgHealth();");
     expect(HTML).toContain('data-view="orghealth"');
     expect(HTML.indexOf('src="studio-orghealth.js"')).toBeGreaterThan(HTML.indexOf('src="studio-transfer.js"'));
-    expect(POP).toContain("chrome.tabs.create({ url: chrome.runtime.getURL('studio.html#/orghealth') });");
+    expect(POP).not.toContain("studio.html#/orghealth");   // the Toolkit's tile is gone (user 2026-10-12): Org health has one door, Data Studio's navigation
     expect(readFileSync(join(root, 'studio-history.js'), 'utf8')).toContain("'sftk_orghealth',");
   });
 });
