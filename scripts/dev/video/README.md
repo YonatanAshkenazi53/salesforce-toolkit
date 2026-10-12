@@ -57,6 +57,7 @@ compose step joins just those sections (a check of a chapter after re-recording 
 | `voice.mjs` | the captions spoken into MP3 files (edge-tts, Andrew) — `speakOne` while recording, `speakAll` at compose; `VOICE_ENGINE=sapi` for Windows' own offline voice |
 | `fixture.mjs` | rebuilds the Field Cleaner fixture after its chapter deleted the field (`rebuildFieldCleanerFixture`), removes the identity field (`removeIdentityField`) |
 | `peek.mjs` | frames of a finished video |
+| `avsync.mjs` | measures, in a finished MP4, how far each speech onset is from the caption change it belongs to, at the start and the end of the file (`VIDEO=<file>`); 0.05 s both ends on 2026-10-12 — no drift |
 | `smoke.mjs` | a 15-second self-test of recorder and composer, no org needed |
 
 ## Rules the tour keeps

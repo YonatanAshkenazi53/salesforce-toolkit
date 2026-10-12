@@ -403,8 +403,11 @@ export const SECTIONS = [
       await rec.type('#adbgLogFilter', 'counting up', 70);
       await rec.say('A search keeps only the matching lines: here the trigger’s own debug line, once per pass.');
       await h.eval(`(() => { const i = document.querySelector('#adbgLogFilter'); if (i) { i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); } return true; })()`);
+      // the view redraws after a pause: the count waits for the whole log to be back (a take counted the 7 search hits as "all")
+      await h.waitFor("document.querySelectorAll('#adbgLogView .adbg-log-line').length > 50", 15000, 200).catch(() => {});
       await h.sleep(600);
-      const shownLines = () => h.eval(`(document.querySelector('#adbgLogView')?.innerText || '').split(String.fromCharCode(10)).filter(l => l.trim()).length`);
+      // one rendered line = one .adbg-log-line (innerText split in two per line and doubled every count — v7 take)
+      const shownLines = () => h.eval(`[...document.querySelectorAll('#adbgLogView .adbg-log-line')].filter(e => getComputedStyle(e).display !== 'none').length`);
       const all = await shownLines();
       await rec.click('.adbg-log-cat[data-cat="soqldml"]', 900);
       await rec.say(`One-click filters. Only the queries and the DML: ${await shownLines()} lines of ${all}.`);
@@ -435,10 +438,26 @@ export const SECTIONS = [
       await rec.click('#adbgRefreshBtn', 800);
       await rec.fast(() => h.waitFor(`document.querySelectorAll('#adbgLogList .adbg-log-row').length > ${rowsBefore}`, 60000, 1000).catch(() => {}));
       await h.sleep(800);
-      const errRow = await h.eval(`(() => { const r = [...document.querySelectorAll('#adbgLogList .adbg-log-row')].find(r => /Exception|FATAL|Unhandled/i.test(r.innerText) || r.querySelector('.adbg-row-fail')) || document.querySelector('#adbgLogList .adbg-log-row'); if (!r) return false; document.querySelectorAll('[data-demo-pick]').forEach(x => x.removeAttribute('data-demo-pick')); r.setAttribute('data-demo-pick', '1'); return true; })()`);
-      if (errRow) {
-        await rec.click('[data-demo-pick="1"] .adbg-row-op', 800);
-        await rec.fast(() => h.waitFor("!!document.querySelector('#adbgLogView') && !document.querySelector('#adbgDetail .adbg-detail-loading')", 60000, 500));
+      // the row with Salesforce's own verdict ("Divide by 0") — waited for (it arrives after the refresh), found by id
+      const errId = await rec.fast(async () => {
+        for (let i = 0; i < 12; i++) {
+          const id = await h.eval(`(() => { const r = [...document.querySelectorAll('#adbgLogList .adbg-log-row')].find(r => r.querySelector('.adbg-row-fail') || /Divide by 0|Exception|FATAL/i.test(r.innerText)); return r ? r.dataset.id : ''; })()`);
+          if (id) return id;
+          await h.eval(`document.querySelector('#adbgRefreshBtn')?.click()`); await h.sleep(5000);
+        }
+        return '';
+      });
+      if (errId) {
+        const rowSel = `#adbgLogList .adbg-log-row[data-id="${errId}"]`;
+        await rec.point(rowSel, 600);
+        // opened, and checked: the view must show the divide-by-zero log, not the one before
+        await rec.fast(async () => {
+          for (let i = 0; i < 3; i++) {
+            await h.eval(`(() => { const r = document.querySelector(${J(rowSel)}); const op = r && (r.querySelector('.adbg-row-op') || r); if (op) op.click(); return !!op; })()`);
+            const ok = await h.waitFor("!!document.querySelector('#adbgLogView') && !document.querySelector('#adbgDetail .adbg-detail-loading') && /Divide by 0|MathException|FATAL_ERROR/.test(document.querySelector('#adbgDetail')?.innerText || '')", 40000, 500).then(() => true).catch(() => false);
+            if (ok) break;
+          }
+        });
         await h.sleep(800);
         await rec.say('The new log. The header counts the exception, and the Errors filter keeps only the lines that matter: the exception, and where it was thrown.');
         await rec.scrollTo('#adbgLogFilter', 'center');

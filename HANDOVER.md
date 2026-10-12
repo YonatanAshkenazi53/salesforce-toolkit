@@ -38,6 +38,18 @@ console error / ❌ line, AND a log whose claims the CLI confirms — read the l
 line is not the verdict. `docs/QA-1.0.md` is the matrix and the findings. Every writing run
 undoes itself or is followed by a restore step; the orgs end as they began.
 
+**2026-10-12 — the user's review of the Andrew cut.** "in the debugger when you show the exception the error
+doesn't show and it shows an empty line. also the clicks on the screen and the text isn't synced with the
+speech. and sometimes artifacts appear." Findings: (1) the Errors step had opened the PREVIOUS log (the list
+redrew between the pick and the click) → the chapter now finds the "Divide by 0" row by id, clicks it and
+checks the view shows that log; the line counts the captions speak come from `.adbg-log-line` elements
+after the view has redrawn (innerText doubled them; the search's 7 hits were once counted as "all").
+(2) `avsync.mjs` (new) measures voice-vs-caption offset inside a finished MP4: 0.05 s at both ends of part 2
+— NO drift; the remaining "sync" remark needs an example from the user (asked; the design is: the sentence
+is spoken, then the action). (3) artifacts = the 1.2 Mbps cap on the 720p parts → 3 Mbps + 96 kbps audio
+(parts 14–21 MB). Also: the Toolkit's Org health home card removed (user), 4 pins updated, screenshots
+regenerated. Lesson: never run a second harness script while a compose runs; a part must stay < ~12 min.
+
 **2026-10-11 — Andrew through Azure.** edge-tts's 403 is a Microsoft-side handshake change (rany2/edge-tts
 issue #490, 2026-10-10), not our address (a router restart changed nothing). The user set up an Azure Speech
 resource (free F0, East US, `sftk-toolkit-voice-2026` in resource group `sftk-video`); the key lives in
