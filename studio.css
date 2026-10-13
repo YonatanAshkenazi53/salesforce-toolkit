@@ -6447,3 +6447,11 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 .ds-merge-val, .ds-merge-keeplbl { display: flex; gap: 6px; align-items: baseline; cursor: pointer; word-break: break-word; }
 .ds-merge-keeplbl { font-weight: 700; }
 .ds-merge-same { margin-top: 8px; }
+/* a confirmation's plan: one sentence in the coloured box, the rest as short labelled rows on white */
+.sftk-cf-plan { margin-top: 8px; padding: 6px 10px; background: var(--surface, #fff); border-radius: 6px; color: var(--text); }
+.sftk-cf-rows { margin: 0; padding: 0; list-style: none; counter-reset: cfp; }
+.sftk-cf-rows li { display: flex; gap: 8px; align-items: baseline; margin: 3px 0; font-size: 12.5px; }
+.sftk-cf-rows li::before { counter-increment: cfp; content: counter(cfp); flex: 0 0 14px; color: var(--subtext); font-size: 11px; }
+.sftk-cf-rows li > b { flex: 0 0 86px; font-weight: 700; }
+.sftk-cf-more { margin-top: 4px; font-size: 11px; color: var(--subtext); }
+.sftk-cf-more > summary { cursor: pointer; color: var(--brand); }

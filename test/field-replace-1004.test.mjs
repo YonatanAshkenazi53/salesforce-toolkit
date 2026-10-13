@@ -395,7 +395,7 @@ describe('stored values — the wiring keeps the laws', () => {
     expect(run).toContain('st.overwrite = false;');                       // and it does not stick for the next run
   });
   it('one confirmation says what is written, that automation runs, and offers the receipt (ticked)', () => {
-    expect(run).toContain('the object’s flows, triggers, validation rules and duplicate rules run');
+    expect(run).toContain('the object’s flows, triggers, validation and duplicate rules run');
     expect(run).toContain('<input type="checkbox" id="fcCopyCsv" checked>');
     expect(run).toContain('needsCheckbox: true,');
     expect(run).toContain('production: gate.production ? { label: gate.label } : null,');
@@ -594,7 +594,7 @@ describe('a flow that runs on the field — the decision is made on its card', (
   });
   it('🗑 shows the delete plan: its own version list, its own lines, its own button text', () => {
     expect(FC).toContain("const shownPlan = preset === 'delete' ? flowPlan.planDelete : (flowPlan ? flowPlan.plan : null);");
-    expect(FC).toContain("(asks && !activeMode ? [] : activeMode === 'delete' ? flowPlan.linesDelete : flowPlan.lines)");
+    expect(FC).toContain("activeMode === 'delete' ? { rows: flowPlan.rowsDelete, lines: flowPlan.linesDelete } : { rows: flowPlan.rows, lines: flowPlan.lines }");   // v2: short rows + the full plan under a fold
     expect(FC).toContain("preset === 'delete' ? '🗑 Switch the flow off, then delete'");
     expect(FC).toContain('<b>The flow stops running.</b> It is switched off, the org is read again to confirm that nothing is active');
   });

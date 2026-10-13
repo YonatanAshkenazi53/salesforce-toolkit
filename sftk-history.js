@@ -252,7 +252,12 @@ async function sftkHistoryUndo(entryId, opts) {
       icon: '↩',
       items: steps.map(s => ({ label: s.describe })),   // objects: the dialog reads .sub on a string (String.prototype.sub!)
       revOverride: {
-        html: `Writes the previous state back in <strong>${(sess.label || _sftkHistOrgKey(orgUrl)).replace(/</g, '&lt;')}</strong>, step by step; each step is re-read to confirm it and the whole undo is recorded in History. An undo has no undo — to redo the change, use the tool again.${entry.toolUndo.note ? `<br>${String(entry.toolUndo.note).replace(/</g, '&lt;')}` : ''}`,
+        html: `Writes the previous state back in <strong>${(sess.label || _sftkHistOrgKey(orgUrl)).replace(/</g, '&lt;')}</strong>. An undo has no undo.` +
+          '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">' +
+          '<li><b>Steps</b><span>One at a time; each step is re-read to confirm it</span></li>' +
+          '<li><b>Recorded</b><span>The whole undo is recorded in History</span></li>' +
+          '<li><b>Redo</b><span>To redo the change, use the tool again</span></li></ol>' +
+          (entry.toolUndo.note ? `<details class="sftk-cf-more"><summary>Note from the tool</summary>${String(entry.toolUndo.note).replace(/</g, '&lt;')}</details>` : '') + '</div>',
         needsCheckbox: true,
         ack: 'I understand this writes the earlier state back over whatever is there now',
       },

@@ -2732,7 +2732,8 @@ function sftkWireDriftCompare(expand, profile, objType, srcId, tgtId, refetch) {
       title: `Update ${picks.length} field(s) on this target record`,
       icon: '✏',
       items,
-      revOverride: { html: '⚠ <strong>Not reversible by this tool</strong> — only these fields are written on the target record. Lookups that match zero or several target records are reported, never guessed.', needsCheckbox: true },
+      revOverride: { html: '⚠ <strong>Not reversible by this tool</strong> — only these fields are written on the target record.' +
+        '<div class="sftk-cf-plan"><ol class="sftk-cf-rows"><li><b>Lookups</b><span>Ones that match zero or several target records are reported, never guessed</span></li></ol></div>', needsCheckbox: true },
       confirmLabel: 'Update',
       production: gate.production ? { label: gate.label } : null,
     });

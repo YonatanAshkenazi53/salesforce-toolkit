@@ -3021,7 +3021,10 @@ const DependencyMap = (() => {
       }))),
       revOverride: {
         html: mode === 'deactivate'
-          ? 'Their automation <strong>stops for EVERYONE</strong> in this org until switched back on. Records created while off are never retroactively processed. Active versions are remembered, so ▶ Activate restores exactly them.'
+          ? 'Their automation <strong>stops for EVERYONE</strong> in this org until switched back on.' +
+            '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">' +
+            '<li><b>Not processed</b><span>Records created while off are never retroactively processed</span></li>' +
+            '<li><b>Undo</b><span>Active versions are remembered, so ▶ Activate restores exactly them</span></li></ol></div>'
           : 'Each flow is switched on at the version listed below, in every ticked org.',
         needsCheckbox: true,
         ack: 'I understand and want to proceed',
@@ -3530,7 +3533,15 @@ const DependencyMap = (() => {
         sub: `${a.from || '?'}→${a.to}${a.status === 'Active' ? ' (active)' : ` (${a.status || 'draft'})`}`,
       }))),
       revOverride: {
-        html: `This <strong>writes to ${orgKeys.size} org(s)</strong>. Each change deploys a <strong>new version</strong> of the flow. Where the flow is Active, the tool then <strong>activates the new version</strong> and re-reads the org to confirm what is running (the previous one becomes Obsolete once the new one is active) — if the activation is refused, the previous version stays active and the result says so. Salesforce documents that <strong>flow behaviour can differ between API versions</strong> — this is a functional change, not a label. Each org is deployed as <strong>one package</strong>, all-or-nothing: if any flow in an org is rejected, none of that org's flows change. Other orgs are unaffected either way.`,
+        html: `This <strong>writes to ${orgKeys.size} org(s)</strong> — each change deploys a <strong>new version</strong> of the flow.` +
+          '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">' +
+          '<li><b>Then</b><span>Where the flow is Active, the tool then <strong>activates the new version</strong></span></li>' +
+          '<li><b>Verified</b><span>It re-reads the org to confirm what is running</span></li>' +
+          '<li><b>Obsolete</b><span>Once the new one is active, the previous one becomes Obsolete</span></li>' +
+          '<li><b>Refused</b><span>If activation is refused, the previous version stays active and the result says so</span></li>' +
+          '<li><b>Behaviour</b><span>Salesforce documents that <strong>flow behaviour can differ between API versions</strong> — this is a functional change, not a label</span></li>' +
+          "<li><b>Package</b><span>One per org, <strong>all-or-nothing</strong>: if any flow in an org is rejected, none of that org's flows change</span></li>" +
+          '<li><b>Other orgs</b><span>Unaffected either way</span></li></ol></div>',
         needsCheckbox: true,
         ack: 'I understand and want to proceed',
       },

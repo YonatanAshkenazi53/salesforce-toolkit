@@ -971,8 +971,16 @@ async function _depMergeCopies(p, side, name, ids) {
     <div class="ds-dep-muted ds-merge-same">${diff.differ.length ? 'For each field above, tick the value the record that stays keeps (its own values are ticked). ' : ''}${diff.same.toLocaleString()} writable field${diff.same === 1 ? ' is' : 's are'} the same in every copy.</div>`;
   const others = recs.length === 2 ? 'the other copy is' : `the other ${recs.length - 1} copies are`;
   const stakes = native
-    ? `<b>One record stays; ${others} merged into it and deleted.</b> Salesforce merges ${esc(plural)} itself: everything under the copies — related records, activities, files, notes, feed — moves to the record that stays. <b>The Toolkit cannot undo a merge.</b>`
-    : `<b>One record stays; ${others} deleted.</b> Salesforce has no merge for ${esc(plural)}, so the Toolkit moves what hangs under a copy to the record that stays, one relationship at a time (${rels.length.toLocaleString()} relationship${rels.length === 1 ? '' : 's'}${rels.length ? ': ' + esc(rels.slice(0, 6).map(r => r.child).join(', ')) + (rels.length > 6 ? '…' : '') : ''}), and deletes the copy only when everything moved; a relationship that refuses stops the merge before that copy is deleted. History, sharing and feed rows of a copy go with it. <b>The Toolkit cannot undo a merge.</b>`;
+    ? `<b>One record stays; ${others} merged into it and deleted.</b> <b>The Toolkit cannot undo a merge.</b>` +
+      `<div class="sftk-cf-plan"><ol class="sftk-cf-rows"><li><b>Salesforce</b><span>Merges ${esc(plural)} itself: related records, activities, files, notes and feed move to the record that stays</span></li></ol></div>`
+    : `<b>One record stays; ${others} deleted.</b> <b>The Toolkit cannot undo a merge.</b>` +
+      `<div class="sftk-cf-plan"><ol class="sftk-cf-rows">` +
+      `<li><b>No merge</b><span>Salesforce has no merge for ${esc(plural)}, so the Toolkit does it by hand</span></li>` +
+      `<li><b>Moves</b><span>What hangs under a copy goes to the record that stays, one relationship at a time (${rels.length.toLocaleString()} relationship${rels.length === 1 ? '' : 's'})</span></li>` +
+      `<li><b>Deletes</b><span>A copy only when everything under it moved</span></li>` +
+      `<li><b>Refusal</b><span>A relationship that refuses stops the merge before that copy is deleted</span></li>` +
+      `<li><b>Goes with it</b><span>History, sharing and feed rows of a copy</span></li></ol>` +
+      (rels.length ? `<details class="sftk-cf-more"><summary>The relationships (${rels.length.toLocaleString()})</summary>${esc(rels.map(r => r.child).join(', '))}</details>` : '') + `</div>`;
   const choice = await new Promise(resolve => {
     let done = false;
     const finish = v => { if (!done) { done = true; resolve(v); } };
@@ -1018,7 +1026,9 @@ async function _depMergeCopies(p, side, name, ids) {
       ...chosen.changes.map(ch => ({ label: `${ch.label}: ${sftkMergeValueText(ch.from)} → ${sftkMergeValueText(ch.to)}`, sub: 'written to the record that stays' })),
     ],
     reversibility: 'permanent',
-    revOverride: { html: '⛔ <strong>Cannot be undone</strong> — the copies go to the Recycle Bin, but restoring them does not take back what moved to the record that stays. The Toolkit offers no undo for a merge.', needsCheckbox: true },
+    revOverride: { html: '⛔ <strong>Cannot be undone</strong> — the Toolkit offers no undo for a merge.' +
+      '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">' +
+      '<li><b>Recycle Bin</b><span>The copies go there, but restoring them does not take back what moved to the record that stays</span></li></ol></div>', needsCheckbox: true },
     confirmLabel: '🔀 Merge now',
     production: gate.production ? { label: gate.label } : null,
     undoHint: native ? 'Salesforce performs the merge (Database.merge); the result is verified by re-reading the org.' : 'Each relationship is moved and re-counted before a copy is deleted.',
