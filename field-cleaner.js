@@ -2431,8 +2431,11 @@ const FieldCleaner = (() => {
         ...(overN ? [{ label: `${N(overN)} record${overN === 1 ? '' : 's'}`, sub: `${to} holds a different value — OVERWRITTEN with the value of ${from}` }] : []),
       ],
       revOverride: {
-        html: `Writes <strong>${esc(obj)}.${esc(to)}</strong> on ${N(targets.length)} record${targets.length === 1 ? '' : 's'}. <strong>${esc(from)}</strong> is not changed. Each record is saved like any edit: the object’s flows, triggers, validation rules and duplicate rules run, and its last-modified date changes. A record Salesforce refuses is reported with the reason and left as it is. ` +
-          (undoable ? '🧾 History, under the results, can take this copy back.' : `This run is larger than ${N(FC_COPY_UNDO)} records, so History keeps no undo for it — the receipt below is the way back.`),
+        html: `Writes <strong>${esc(obj)}.${esc(to)}</strong> on ${N(targets.length)} record${targets.length === 1 ? '' : 's'}; <strong>${esc(from)}</strong> is not changed.` +
+          '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">' +
+          '<li><b>Saved as</b><span>Any edit: the object’s flows, triggers, validation and duplicate rules run; last-modified changes</span></li>' +
+          '<li><b>Refused</b><span>A record Salesforce refuses is reported with the reason and left as it is</span></li>' +
+          '<li><b>Undo</b><span>' + (undoable ? '🧾 History, under the results, can take this copy back' : `Larger than ${N(FC_COPY_UNDO)} records, so History keeps no undo — the receipt below is the way back`) + '</span></li></ol></div>',
         needsCheckbox: true,
         ack: overN ? `I understand ${N(overN)} existing value${overN === 1 ? '' : 's'} in ${to} ${overN === 1 ? 'is' : 'are'} overwritten` : `I understand ${N(targets.length)} record${targets.length === 1 ? ' is' : 's are'} updated`,
       },
@@ -2581,7 +2584,10 @@ const FieldCleaner = (() => {
       title: `Copy field access to ${to}`,
       icon: '🔑',
       items: all.map(x => ({ label: x.who, sub: `${x.kind} — ${x.op === 'create' ? `gets ${perm(x.want)}` : `raised from ${perm(x.before)} to ${perm(x.want)}`}` })),
-      revOverride: { html: `Gives each of these the access to <strong>${esc(obj)}.${esc(to)}</strong> that it has to ${esc(obj)}.${esc(from)}${_replReadOnly() ? ' (read only — the new field cannot be edited)' : ''}. Access is only added: nothing is lowered or removed. 🧾 History, under the results, can take it back.`, needsCheckbox: false },
+      revOverride: { html: `Gives each of these the access to <strong>${esc(obj)}.${esc(to)}</strong> that it has to ${esc(obj)}.${esc(from)}${_replReadOnly() ? ' (read only — the new field cannot be edited)' : ''}.` +
+          '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">' +
+          '<li><b>Not touched</b><span>Access is only added: nothing is lowered or removed</span></li>' +
+          '<li><b>Undo</b><span>🧾 History, under the results, can take it back</span></li></ol></div>', needsCheckbox: false },
       confirmLabel: '🔑 Copy access',
       production: gate.production ? { label: gate.label } : null,
     });
@@ -2691,7 +2697,10 @@ const FieldCleaner = (() => {
           title: 'Deprecate field',
           icon: '🕐',
           items: [{ label: `${_selObj.api}.${_selField.api}`, sub: _selField?.type }],
-          revOverride: { html: 'Renames the label to <code>zz_DEPRECATED…</code> and hides the field from everyone — wait for complaints, then delete (or undo) with one click. Fully reversible with ↩ Undo deprecation.', needsCheckbox: false },
+          revOverride: { html: 'Renames the label to <code>zz_DEPRECATED…</code> and hides the field from everyone.' +
+            '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">' +
+            '<li><b>Then</b><span>Wait for complaints, then delete (or undo) with one click</span></li>' +
+            '<li><b>Undo</b><span>Fully reversible with ↩ Undo deprecation</span></li></ol></div>', needsCheckbox: false },
           confirmLabel: '🕐 Deprecate',
           production: gate.production ? { label: gate.label } : null,
         });
@@ -3203,7 +3212,7 @@ const FieldCleaner = (() => {
         : [{ label: componentName, sub: type }],
       revOverride: {
         html: type === 'Flow'
-          ? `⚠ <strong>Flow versions that mention the field are deleted for good</strong> — Salesforce locks the field per version. The plan:<ol id="fcFlowLines" class="fc-plan">${(asks && !activeMode ? [] : activeMode === 'delete' ? flowPlan.linesDelete : flowPlan.lines).map(l => `<li>${esc(l)}</li>`).join('')}</ol>`
+          ? `⚠ <strong>Flow versions that mention the field are deleted for good</strong> — Salesforce locks the field per version.${_flowPlanBoxHtml(asks && !activeMode ? null : activeMode === 'delete' ? { rows: flowPlan.rowsDelete, lines: flowPlan.linesDelete } : { rows: flowPlan.rows, lines: flowPlan.lines })}`
           : `${swap ? `⇄ <strong>${esc(_selObj.api)}.${esc(_selField.api)} → ${esc(swapTo)}</strong>. ${esc(_groupNote(type, cfg))}` : `✏ ${cfg.note || 'The field reference is removed from this component.'}`} The change deploys immediately. ${['Report', 'Layout', 'FlexiPage'].includes(type)
               ? 'A <strong>restore point</strong> is saved first — ↩ Restore points, under the results, can put the previous version back.'
               : 'There is no undo besides re-adding the field by hand.'}`,
@@ -3221,9 +3230,9 @@ const FieldCleaner = (() => {
         // confirmed until BOTH the acknowledgement is ticked and a way is chosen.
         const go = document.getElementById('sftkConfirmGo'), ack = document.getElementById('sftkConfirmAck');
         const sync = () => {
-          const lines = activeMode === 'delete' ? flowPlan.linesDelete : activeMode === 'replace' ? flowPlan.lines : [];
-          const ol = document.getElementById('fcFlowLines');
-          if (ol) ol.innerHTML = lines.length ? lines.map(l => `<li>${esc(l)}</li>`).join('') : '<li>Choose below what happens to the active version.</li>';
+          const cur = activeMode === 'delete' ? { rows: flowPlan.rowsDelete, lines: flowPlan.linesDelete } : activeMode === 'replace' ? { rows: flowPlan.rows, lines: flowPlan.lines } : null;
+          const box = document.getElementById('fcFlowPlan');
+          if (box) box.outerHTML = _flowPlanBoxHtml(cur);
           if (go) {
             go.textContent = activeMode === 'delete' ? '🗑 Switch the flow off, then delete' : activeMode === 'replace' ? (swap ? '⇄ Deploy the version that uses the new field, then delete' : '✂ Deploy fixed version, then delete') : 'Choose an option first';
             go.disabled = !(ack && ack.checked && activeMode);
@@ -3782,7 +3791,22 @@ const FieldCleaner = (() => {
     return { flowId, flowName, defId, versions, maxNum, metaById, plan, interviews, interviewCheckError,
       planDelete, preview, builderUrl: plan.active ? _flowBuilderUrl(plan.active.id) : null,
       lines: sftkFlowSurgeryLines(plan, kinds, interviewCheckError, _swapOn() ? { swapTo: _replField.api } : null),
-      linesDelete: planDelete ? sftkFlowSurgeryLines(planDelete, kinds, interviewCheckError) : null };
+      linesDelete: planDelete ? sftkFlowSurgeryLines(planDelete, kinds, interviewCheckError) : null,
+      rows: sftkFlowPlanRows(plan, kinds, interviewCheckError, _swapOn() ? { swapTo: _replField.api } : null),
+      rowsDelete: planDelete ? sftkFlowPlanRows(planDelete, kinds, interviewCheckError) : null };
+  }
+
+  // The plan in the confirmation: short labelled rows, the full sentences under a
+  // fold (user 2026-10-13: "so much text here in red. very hard to read it all").
+  // cur = { rows, lines } or null while a way is still to be chosen.
+  function _flowPlanBoxHtml(cur) {
+    const rows = (cur && cur.rows) || [], lines = (cur && cur.lines) || [];
+    return `<div class="fc-planbox" id="fcFlowPlan">
+      <ol id="fcFlowLines" class="fc-plan">${rows.length
+        ? rows.map(r => `<li><b class="fc-plan-k">${esc(r.k)}</b><span>${esc(r.text)}</span></li>`).join('')
+        : '<li><span>Choose below what happens to the active version.</span></li>'}</ol>
+      ${lines.length ? `<details class="fc-plan-full"><summary>The plan in full</summary><ol>${lines.map(l => `<li>${esc(l)}</li>`).join('')}</ol></details>` : ''}
+    </div>`;
   }
 
   // Execute a plan: backup → (new version, VERIFIED active) → interviews →
@@ -3983,7 +4007,10 @@ const FieldCleaner = (() => {
           items: interviews.slice(0, 12).map(i => ({ label: i.InterviewLabel || i.Name,
             sub: /^error$/i.test(String(i.InterviewStatus || '')) ? `failed${i.CurrentElement ? ` at ${i.CurrentElement}` : ''}` : (i.CurrentElement ? `paused at ${i.CurrentElement}` : '') })),
           revOverride: { html: (() => { const w = sftkFlowInterviewWords(sftkFlowInterviewKinds(interviews));
-            return `⏸ <strong>${w.head}</strong> sit on the old versions that still reference the field. Salesforce refuses to delete a version while they exist, so they are deleted first${w.cost ? ` — ${w.cost}` : ''}.`; })(), needsCheckbox: true },
+            return `⏸ <strong>${w.head}</strong> sit on the old versions that still reference the field.` +
+              '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">' +
+              '<li><b>Why first</b><span>Salesforce refuses to delete a version while they exist, so they are deleted first</span></li>' +
+              (w.cost ? w.cost.split('; ').map(c => `<li><b>Cost</b><span>${c}</span></li>`).join('') : '') + '</ol></div>'; })(), needsCheckbox: true },
           confirmLabel: '🗑 Delete interviews, then the versions',
           production: gate.production ? { label: gate.label } : null,
         });
@@ -5381,7 +5408,12 @@ const FieldCleaner = (() => {
             title: `Remove ${selSet.size} block(s) — ${componentName}`,
             icon: '✂',
             items: [{ label: componentName, sub: `${selSet.size} of ${totalDeletable} reference(s) selected` }],
-            revOverride: { html: '🔁 Deploys a new flow version without the selected blocks (the previous version remains and can be re-activated). ⚠ Any OLD, INACTIVE versions of this flow that still reference the field are then <strong>permanently deleted</strong> to clear the dependency lock — Salesforce holds no Recycle Bin for flow versions.', needsCheckbox: true },
+            revOverride: { html: '⚠ Any OLD, INACTIVE versions of this flow that still reference the field are then <strong>permanently deleted</strong>.' +
+              '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">' +
+              '<li><b>Writes</b><span>🔁 Deploys a new flow version without the selected blocks</span></li>' +
+              '<li><b>Undo</b><span>The previous version remains and can be re-activated</span></li>' +
+              '<li><b>Why delete</b><span>To clear the dependency lock on the field</span></li>' +
+              '<li><b>Recycle Bin</b><span>None — Salesforce holds no Recycle Bin for flow versions</span></li></ol></div>', needsCheckbox: true },
             confirmLabel: '✂ Remove selected',
             production: gate.production ? { label: gate.label } : null,
           });

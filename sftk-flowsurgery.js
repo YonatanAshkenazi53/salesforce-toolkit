@@ -239,6 +239,37 @@ function sftkFlowSurgeryLines(plan, interviews, interviewCheckError, opts) {
   return out;
 }
 
+// The same plan as SHORT rows for the confirmation (user 2026-10-13: "so much
+// text here in red. very hard to read it all"): a label and one short clause
+// each. The full sentences (sftkFlowSurgeryLines) sit under a fold next to them.
+//   → [{ k: 'Deploy' | 'Delete' | 'Switch off' | 'Result' | 'Interviews' | 'Backup' | 'Nothing', text }]
+function sftkFlowPlanRows(plan, interviews, interviewCheckError, opts) {
+  const swapTo = opts && opts.swapTo ? String(opts.swapTo) : '';
+  const p = plan || { mode: 'none', toDelete: [], inactiveRefs: [] };
+  const rows = [];
+  const vs = arr => arr.map(v => `v${v.num}`).join(', ');
+  const others = p.cleanInactive ? ` · ${p.cleanInactive} other version${p.cleanInactive === 1 ? '' : 's'} untouched` : '';
+  const refs = swapTo ? `references → ${swapTo}` : 'without the field';
+  if (p.mode === 'none') { rows.push({ k: 'Nothing', text: 'no version of this flow references the field any more' }); return rows; }
+  if (p.mode === 'active-delete') {
+    rows.push({ k: 'Switch off', text: `v${p.active.num} is deactivated; the org is read again to confirm no version is active` });
+    rows.push({ k: 'Delete', text: `v${p.active.num}${p.inactiveRefs.length ? `, ${vs(p.inactiveRefs)}` : ''}${others}` });
+    rows.push({ k: 'Result', text: 'the flow stops running — nothing becomes active by itself' });
+  } else if (p.mode === 'active') {
+    rows.push({ k: 'Deploy', text: p.overwrite
+      ? `v${p.active.num} over the draft v${p.overwrite.num} (its content is replaced), ${refs} · verified active before anything is deleted`
+      : `a new v${p.expectNew} from v${p.active.num}, ${refs} · verified active before anything is deleted` });
+    rows.push({ k: 'Delete', text: `v${p.active.num}${p.inactiveRefs.length ? `, ${vs(p.inactiveRefs)}` : ''}${others}` });
+  } else {
+    rows.push({ k: 'Delete', text: `${vs(p.inactiveRefs)} · no new version needed (${p.active ? `v${p.active.num} does not use the field` : 'no active version'})${others}` });
+  }
+  const k = (typeof interviews === 'object' && interviews) ? interviews : { total: Number(interviews) || 0, paused: Number(interviews) || 0, failed: 0 };
+  if (interviewCheckError) rows.push({ k: 'Interviews', text: `could not be checked (${interviewCheckError}) — a deletion may be refused` });
+  else if (k.total > 0) rows.push({ k: 'Interviews', text: `${k.total} on those versions are deleted first${k.paused ? ` (${k.paused} paused: a user mid-flow loses progress)` : ' (failed runs: error reports only)'}` });
+  rows.push({ k: 'Backup', text: 'a zip of the deleted versions first (ticked below) — Salesforce cannot restore them' });
+  return rows;
+}
+
 // ── One card per FLOW (user 2026-10-05) ─────────────────────────────────────
 // The dependency index lists a flow once per VERSION that mentions the field.
 // Shown as rows, one flow looked like several separate things: "i dont know
@@ -311,4 +342,5 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkFlowRefPreview = sftkFlowRefPreview;
   globalThis.sftkFlowInterviewWords = sftkFlowInterviewWords;
   globalThis.sftkFlowSurgeryLines = sftkFlowSurgeryLines;
+  globalThis.sftkFlowPlanRows = sftkFlowPlanRows;
 }

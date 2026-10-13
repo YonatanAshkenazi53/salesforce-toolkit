@@ -572,7 +572,10 @@ const FlowPermissions = (() => {
         ...permSets.map(p => ({ label: p.Label, sub: 'Permission set' })),
       ],
       revOverride: {
-        html: `Grant <strong>Flow Access</strong> (permission to run these flows) to the selected permission sets — ${flows.length} flow(s) → ${permSets.length} permission set(s). Additive: existing object/field/Apex permissions on the sets are left untouched, and the grant can be revoked again any time.`,
+        html: `Grant <strong>Flow Access</strong> (permission to run these flows) to the selected permission sets — ${flows.length} flow(s) → ${permSets.length} permission set(s).` +
+          '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">' +
+          '<li><b>Not touched</b><span>Additive: existing object/field/Apex permissions on the sets are left untouched</span></li>' +
+          '<li><b>Undo</b><span>The grant can be revoked again any time</span></li></ol></div>',
         needsCheckbox: false,
       },
       confirmLabel: '🔑 Assign',

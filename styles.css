@@ -6973,3 +6973,20 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 /* an inline History card: two lines, the rest under a fold (v2, 2026-10-13) */
 .sftk-th-more { margin-top: 2px; }
 .sftk-th-more > summary { cursor: pointer; color: var(--brand); font-size: 11px; }
+/* the plan inside the confirmation: short labelled rows on white, the full sentences under a fold */
+.fc-planbox { margin-top: 8px; padding: 6px 10px; background: var(--surface, #fff); border-radius: 6px; color: var(--text); }
+.fc-planbox .fc-plan { margin: 0; padding: 0; list-style: none; counter-reset: plan; }
+.fc-planbox .fc-plan li { display: flex; gap: 8px; align-items: baseline; margin: 3px 0; font-size: 12.5px; }
+.fc-planbox .fc-plan li::before { counter-increment: plan; content: counter(plan); flex: 0 0 14px; color: var(--subtext); font-size: 11px; }
+.fc-plan-k { flex: 0 0 78px; font-weight: 700; }
+.fc-plan-full { margin-top: 4px; font-size: 11px; color: var(--subtext); }
+.fc-plan-full > summary { cursor: pointer; color: var(--brand); }
+.fc-plan-full ol { margin: 4px 0 0 16px; padding: 0; }
+/* a confirmation's plan: one sentence in the coloured box, the rest as short labelled rows on white */
+.sftk-cf-plan { margin-top: 8px; padding: 6px 10px; background: var(--surface, #fff); border-radius: 6px; color: var(--text); }
+.sftk-cf-rows { margin: 0; padding: 0; list-style: none; counter-reset: cfp; }
+.sftk-cf-rows li { display: flex; gap: 8px; align-items: baseline; margin: 3px 0; font-size: 12.5px; }
+.sftk-cf-rows li::before { counter-increment: cfp; content: counter(cfp); flex: 0 0 14px; color: var(--subtext); font-size: 11px; }
+.sftk-cf-rows li > b { flex: 0 0 86px; font-weight: 700; }
+.sftk-cf-more { margin-top: 4px; font-size: 11px; color: var(--subtext); }
+.sftk-cf-more > summary { cursor: pointer; color: var(--brand); }

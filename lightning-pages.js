@@ -2968,8 +2968,10 @@ const LightningPages = (() => {
       items,
       revOverride: {
         html: `Shows <strong>${esc(page.MasterLabel)}</strong> to exactly the audience listed above — nothing else is assigned.` +
-          (replaced ? ` <strong>${replaced}</strong> of them ${replaced === 1 ? 'takes' : 'take'} the place of another page, which stops being shown there.` : '') +
-          ' Each one is re-read after it is written. Remove an assignment any time with its ✕.',
+          '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">' +
+          (replaced ? `<li><b>Replaces</b><span><strong>${replaced}</strong> of them ${replaced === 1 ? 'takes' : 'take'} the place of another page, which stops being shown there</span></li>` : '') +
+          '<li><b>Verified</b><span>Each one is re-read after it is written</span></li>' +
+          '<li><b>Undo</b><span>Remove an assignment any time with its ✕</span></li></ol></div>',
         needsCheckbox: replaced > 0,
         ack: 'I understand the pages named above stop being shown there',
       },
@@ -3058,9 +3060,11 @@ const LightningPages = (() => {
       icon: '⚠️',
       items: list.map(a => { const L = lpAssignmentWords(a); return { label: `${L.title} · ${a.formFactor === 'Small' ? 'Mobile' : 'Desktop'}${a.kind !== 'org' ? ` · ${a.appLabel || a.app}` : ''}${a.kind === 'artp' && a.recordType ? ` · ${a.recordType}` : ''}`, sub: L.fallback }; }),
       revOverride: {
-        html: (all ? `Deactivating a page means removing every assignment it has: <strong>${esc(page.MasterLabel)}</strong> stops being shown to anyone. ` : `<strong>${esc(page.MasterLabel)}</strong> stops being shown to this audience. `) +
-          (hasOrg ? 'Where it is the org default, users fall back to Salesforce’s standard page for the object. ' : '') +
-          'Only assignments this page still holds are removed — each is checked again first. Add them back any time from this screen.',
+        html: (all ? `Deactivating a page means removing every assignment it has: <strong>${esc(page.MasterLabel)}</strong> stops being shown to anyone.` : `<strong>${esc(page.MasterLabel)}</strong> stops being shown to this audience.`) +
+          '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">' +
+          (hasOrg ? '<li><b>Fallback</b><span>Where it is the org default, users get Salesforce’s standard page for the object</span></li>' : '') +
+          '<li><b>Scope</b><span>Only assignments this page still holds are removed — each is checked again first</span></li>' +
+          '<li><b>Undo</b><span>Add them back any time from this screen</span></li></ol></div>',
         needsCheckbox: all,
         ack: 'I understand this page stops being shown to these users',
       },
@@ -3231,7 +3235,9 @@ const LightningPages = (() => {
           title: `Clone “${origLabel}” and move its assignments`,
           icon: '📋',
           items: assignments.map(a => { const L = lpAssignmentWords(a); return { label: `${L.title} · ${a.formFactor === 'Small' ? 'Mobile' : 'Desktop'}${a.kind !== 'org' ? ` · ${a.appLabel || a.app}` : ''}${a.kind === 'artp' && a.recordType ? ` · ${a.recordType}` : ''}`, sub: `moves from “${origLabel}” to “${label}”` }; }),
-          revOverride: { html: `Creates <strong>${esc(label)}</strong> (${esc(apiName)}) and then gives it every assignment listed above. <strong>${esc(origLabel)}</strong> stops being shown there. If the copy cannot be created, nothing is moved.`,
+          revOverride: { html: `<strong>${esc(origLabel)}</strong> stops being shown at every assignment listed above.` +
+              `<div class="sftk-cf-plan"><ol class="sftk-cf-rows"><li><b>Writes</b><span>Creates <strong>${esc(label)}</strong> (${esc(apiName)}), then gives it every assignment listed above</span></li>` +
+              '<li><b>If it fails</b><span>If the copy cannot be created, nothing is moved</span></li></ol></div>',
             needsCheckbox: true, ack: 'I understand users will see the copy instead of the original' },
           confirmLabel: '📋 Clone and move',
           production: gate.production ? { label: gate.label } : null,
