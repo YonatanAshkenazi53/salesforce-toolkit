@@ -554,7 +554,7 @@ describe('metadata-mutating fixes confirm before acting', () => {
     const i = SRC.indexOf('async function _fixOneRun(');   // 2026-10-05: fixOne is the wrapper that carries the per-item choice
     const fn = SRC.slice(i, SRC.indexOf('\n  }', i));
     expect(fn).toContain('await sftkConfirmDestructive({');
-    expect(fn).toContain('permanently deletes flow versions');   // 2026-09-21: the active version may go too, so not only "old" ones
+    expect(fn).toContain('Flow versions that mention the field are deleted for good');   // 2026-09-21: the active version may go too, so not only "old" ones; v2 wording 2026-10-13
     expect(fn).toMatch(/needsCheckbox: type === 'Flow'/);
     expect(fn).toMatch(/if \(!sure\) return 'cancel';/);   // 2026-10-05: a bulk walk stops on Cancel
     // the confirm happens BEFORE the button flips to ⏳
@@ -574,9 +574,9 @@ describe('metadata-mutating fixes confirm before acting', () => {
 describe('dependency scan discloses the MCD cap', () => {
   it('the MCD result is cap-checked and the banner renders in the results header', () => {
     expect(SRC).toMatch(/_mcdCapped = fcLooksCapped\(deps\.length\)/);
-    expect(SRC).toMatch(/This list may be truncated\.<\/strong>/);
-    expect(SRC).toMatch(/FLOOR, not a total/);
+    expect(SRC).toMatch(/This list may be cut short\.<\/strong>/);
+    expect(SRC).toMatch(/treat the count as a floor/);
     // The banner sits with the results header, not buried below the groups.
-    expect(SRC.indexOf('This list may be truncated')).toBeLessThan(SRC.indexOf('fc-badge-auto">${autoCount}') + 2000);
+    expect(SRC.indexOf('This list may be cut short')).toBeLessThan(SRC.indexOf('fc-badge-auto">${autoCount}') + 2000);
   });
 });

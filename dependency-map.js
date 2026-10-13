@@ -3023,10 +3023,10 @@ const DependencyMap = (() => {
         html: mode === 'deactivate'
           ? 'Their automation <strong>stops for EVERYONE</strong> in this org until switched back on. Records created while off are never retroactively processed. Active versions are remembered, so ▶ Activate restores exactly them.'
           : 'Each flow is switched on at the version listed below, in every ticked org.',
-        needsCheckbox: false,
+        needsCheckbox: true,
+        ack: 'I understand and want to proceed',
       },
       confirmLabel: `⏻ Switch ${word}`,
-      typedWord: word,
       extraHtml: skips.length ? `<div style="margin-top:4px;font-size:11.5px;opacity:.8">Skipped: ${escHtml(skips.join(', '))}</div>` : '',
       production: gateLabel ? { label: gateLabel } : null,
     });
@@ -3531,10 +3531,10 @@ const DependencyMap = (() => {
       }))),
       revOverride: {
         html: `This <strong>writes to ${orgKeys.size} org(s)</strong>. Each change deploys a <strong>new version</strong> of the flow. Where the flow is Active, the tool then <strong>activates the new version</strong> and re-reads the org to confirm what is running (the previous one becomes Obsolete once the new one is active) — if the activation is refused, the previous version stays active and the result says so. Salesforce documents that <strong>flow behaviour can differ between API versions</strong> — this is a functional change, not a label. Each org is deployed as <strong>one package</strong>, all-or-nothing: if any flow in an org is rejected, none of that org's flows change. Other orgs are unaffected either way.`,
-        needsCheckbox: false,
+        needsCheckbox: true,
+        ack: 'I understand and want to proceed',
       },
       confirmLabel: '⚙ Apply',
-      typedWord: 'CHANGE',
       extraHtml: `
         ${noops ? `<div style="margin-top:4px;font-size:11.5px;opacity:.8">ℹ ${noops} (flow, org) pair(s) are already at ${escHtml(target)} — skipped, not rewritten.</div>` : ''}
         ${blocked.length ? `<div style="margin-top:4px;font-size:11.5px;color:var(--warn,#d97706)">⚠ ${blocked.length} pair(s) cannot be changed: ${escHtml([...new Set(blocked.map(b => `${b.apiName} in ${orgLbl(b.orgKey)} — ${b.why}`))].slice(0, 4).join('; '))}${blocked.length > 4 ? '…' : ''}</div>` : ''}`,

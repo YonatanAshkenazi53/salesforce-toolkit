@@ -34,7 +34,7 @@ async function tryFlowSwitchOff(h, { expectTyped }) {
   await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 120000, 500);
   await h.sleep(500);
   h.log('CONFIRM:', lines(await h.text('#modalBox'), 700));
-  await h.eval("(() => { const i = document.querySelector('#sftkConfirmWord'); i.value = 'OFF'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()");
+  await h.eval("(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } return true; })()");
   await h.sleep(300);
   await h.eval("document.querySelector('#sftkConfirmGo')?.click()");
   await h.sleep(800);

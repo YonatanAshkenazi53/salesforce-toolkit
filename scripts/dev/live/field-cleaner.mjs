@@ -39,7 +39,7 @@ async function passConfirm(h, what) {
   if (!(await h.eval(`!!document.querySelector('#sftkConfirmGo')`))) return;
   await h.sleep(300);
   h.log(`CONFIRM (${what}):`, (await h.eval(`(document.querySelector('#modalBox')?.innerText || '')`)).replace(/\s+/g, ' ').slice(0, 500));
-  await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } const w = document.querySelector('#sftkConfirmWord'); if (w) { w.value = (document.querySelector('#modalBox')?.innerText.match(/Type\\s+(\\S+)\\s+to confirm/) || [])[1] || ''; w.dispatchEvent(new Event('input', { bubbles: true })); } return true; })()`);
+  await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } return true; })()`);
   await h.sleep(300);
   await h.eval(`document.querySelector('#sftkConfirmGo')?.click()`);
   await h.sleep(600);

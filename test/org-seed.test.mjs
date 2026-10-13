@@ -295,7 +295,8 @@ describe('the view keeps the safety rails', () => {
   it('wipes demand the typed RESET confirmation with per-target counts', () => {
     // Campaign 3 phase 2: the typed word moved onto the shared confirm
     // dialog's own typedWord mechanism (sftk-confirm.js).
-    expect(SEED).toMatch(/typedWord: 'RESET'/);
+    expect(SEED).not.toMatch(/typedWord/);  // owner 2026-10-13: acknowledge, no typed RESET
+    expect(SEED).toContain("ack: 'I understand and want to proceed'");
     expect(SEED).toContain('this DELETES data');
     expect(SEED).toContain('Master-detail children of deleted records cascade-delete too.');
   });

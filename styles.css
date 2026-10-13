@@ -6926,3 +6926,50 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .sftk-cf-sev-neutral { --cf: var(--brand); --cf-bg: var(--bg); }
 .sftk-cf-sev-neutral .sftk-cf-fact:nth-child(2) { color: var(--subtext); border-color: var(--border); background: var(--bg); }
 .sftk-cf-sev-good { --cf: var(--success); --cf-bg: rgba(46, 132, 74, .08); }
+
+/* ── Field Cleaner results v2 (2026-10-13, user: "a lot of text on the screen … messy") ──
+   One status card of facts — a row each, an icon, one sentence, its button on the right —
+   instead of stacked banners; the explanations fold away under it. */
+.fc-status { margin: 6px 0 10px; padding: 2px 12px 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg, var(--bg)); }
+.fc-status-hd { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 0 6px; font-size: 12.5px; }
+.fc-status-hd code { font-size: 12px; }
+.fc-status-n { color: var(--subtext); }
+.fc-fact { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-top: 1px solid var(--border); font-size: 12px; line-height: 1.45; }
+.fc-status .fc-fact { margin: 0; background: none; border-left: 0; border-right: 0; border-bottom: 0; border-radius: 0; }
+.fc-status > .fc-fact:first-of-type, .fc-status-hd + .fc-fact { border-top: 1px solid var(--border); }
+.fc-fact-ico { flex: 0 0 18px; text-align: center; line-height: 1.45; }
+.fc-fact-text { flex: 1; min-width: 0; }
+.fc-fact-act { flex-shrink: 0; display: flex; align-items: center; gap: 4px; margin-left: 8px; }
+.fc-fact-act .btn { margin: 0; }
+.fc-fact-more { font-size: 11px; color: var(--brand); }
+.fc-fact-warn .fc-fact-text { color: #b45309; }
+.fc-status .fc-data-verdict { padding: 6px 0; }
+.fc-status .fc-data-badge { margin-right: 6px; }
+.fc-status .fc-copy, .fc-status .fc-rpt, .fc-status .fc-fls-copy, .fc-status .fc-dep-offer { margin: 0; padding: 6px 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: none; }
+.fc-status .fc-copy .btn, .fc-status .fc-rpt .btn { margin: 0; }
+.fc-status .fc-copy-list { margin: 4px 0 6px 18px; }
+.fc-status details.fc-fls { border-top: 1px solid var(--border); }
+.fc-status details.fc-fls > summary { list-style: none; cursor: pointer; border-top: 0; }
+.fc-status details.fc-fls > summary::-webkit-details-marker { display: none; }
+.fc-status details.fc-fls[open] > summary .fc-fact-more::after { content: ' ▴'; }
+.fc-status details.fc-fls:not([open]) > summary .fc-fact-more::after { content: ' ▾'; }
+.fc-howto { border-top: 1px solid var(--border); padding: 6px 0 2px; font-size: 11px; color: var(--subtext); line-height: 1.45; }
+.fc-howto > summary { cursor: pointer; color: var(--brand); font-size: 11.5px; }
+.fc-howto-row { margin: 6px 0 0 18px; }
+.fc-howto .fc-unscanned-note { margin: 8px 0 0 18px; padding: 0; border: 0; background: none; font-size: 11px; }
+.fc-group-hdr .fc-group-sp { flex: 1; }
+.fc-group-hdr .fc-fix-allbox { display: flex; gap: 4px; }
+.fc-group-hdr .fc-fix-allbox .btn { margin: 0; }
+.fc-group-hdr .xlink, .fc-group-hdr a { font-size: 11px; }
+.fc-flow-vers { display: flex; flex-wrap: wrap; gap: 4px; margin: 5px 0 1px; }
+.fc-flow-vers li.fc-ver { padding: 0; cursor: help; }
+.fc-flow-vers li.fc-ver .fc-ver-badge { display: inline-block; }
+/* the flow confirmation: the plan as a tight list, the element preview folded */
+.fc-plan { margin: 6px 0 0 18px; padding: 0; }
+.fc-plan li { margin: 2px 0; }
+.fc-prev-more { margin: 4px 0; font-size: 11.5px; }
+.fc-prev-more > summary { cursor: pointer; color: var(--brand); font-weight: 600; }
+.fc-prev-more[open] > summary { margin-bottom: 4px; }
+/* an inline History card: two lines, the rest under a fold (v2, 2026-10-13) */
+.sftk-th-more { margin-top: 2px; }
+.sftk-th-more > summary { cursor: pointer; color: var(--brand); font-size: 11px; }

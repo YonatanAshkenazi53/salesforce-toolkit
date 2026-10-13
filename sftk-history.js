@@ -226,7 +226,7 @@ function _sftkHistSend(msg) {
   });
 }
 
-// Undo one tool entry: confirm (the shared dialog, word UNDO, the typed org
+// Undo one tool entry: confirm (the shared dialog, the acknowledgement, the typed org
 // name when the target is treated as production), then run the steps
 // through the write discipline, record the undo as its own entry, mark the
 // original. opts: { send?, onLog?, confirm? (false = skip the dialog, for
@@ -257,7 +257,6 @@ async function sftkHistoryUndo(entryId, opts) {
         ack: 'I understand this writes the earlier state back over whatever is there now',
       },
       confirmLabel: '↩ Undo',
-      typedWord: 'UNDO',
       production: gate.production ? { label: gate.label } : null,
     });
     if (!sure) return { ok: false, text: 'Undo cancelled — nothing was written.', cancelled: true };

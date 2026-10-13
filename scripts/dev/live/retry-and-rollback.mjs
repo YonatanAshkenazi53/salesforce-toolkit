@@ -86,10 +86,7 @@ export default async function (h) {
   await h.waitFor("!!document.querySelector('#sftkConfirmGo') || !!document.querySelector('#sftkConfirmProdGo')", 20000, 300);
   await h.sleep(300);
   await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } return true; })()`);
-  // the page asks for ROLLBACK (non-production); production asks the org name in the second step below
-  const word = (await h.eval(`!!document.querySelector('#sftkConfirmWord')`)) ? 'ROLLBACK' : '';
-  h.log('typed word asked:', JSON.stringify(word));
-  if (word) await h.eval(`(() => { const i = document.querySelector('#sftkConfirmWord'); i.value = ${JSON.stringify(word)}; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+  // acknowledgement only (owner 2026-10-13); production asks the org name in the second step below
   await h.sleep(300);
   h.log('Confirm enabled:', await h.eval(`!document.querySelector('#sftkConfirmGo')?.disabled`));
   await h.eval(`document.querySelector('#sftkConfirmGo')?.click()`);

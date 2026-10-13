@@ -82,8 +82,9 @@ describe('the page', () => {
   it('ONE confirmation through the shared dialog: ROLLBACK, or the org name for production; then the live run view', () => {
     const go = slice(RB, 'async function _rbGo() {', '\n}\n');
     expect(go).toContain('const sure = await sftkConfirmDestructive({');
-    expect(go).toContain("typedWord: ctx.prod ? '' : 'ROLLBACK',");
-    expect(go).toContain('production: ctx.prod ? { label: ctx.typedWord } : null,');
+    expect(go).not.toContain('typedWord');  // owner 2026-10-13: checkbox outside production
+    expect(go).toContain("needsCheckbox: true, ack: 'I understand and want to proceed'");
+    expect(go).toContain('production: ctx.prod ? { label: ctx.prodLabel } : null,');
     expect(go).toContain('progress: sftkRunProgressHandler(logEl)');
     expect(go).toContain('const res = await sftkUndoExecute(ctx, picks, io);');
     expect(go).toContain("window.openRollback(res.entry.id, { report: true })");

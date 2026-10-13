@@ -118,8 +118,6 @@ export default async function (h) {
   h.log('FINAL CONFIRM:', lines(await h.eval("(document.querySelector('#sftkConfirmGo').closest('.sftk-confirm, .modal, [class*=confirm]') || document.body).innerText")));
   const goDisabledBefore = await h.eval("document.querySelector('#sftkConfirmGo').disabled");
   await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } return true; })()`);
-  const word = await h.eval("document.querySelector('#sftkConfirmWord') ? (document.querySelector('#sftkConfirmWord').placeholder || document.querySelector('#sftkConfirmWord').dataset.word || '') : ''");
-  if (word) h.log('typed word asked:', word);
   h.log(`Go disabled before the box: ${goDisabledBefore}, after: ${await h.eval("document.querySelector('#sftkConfirmGo').disabled")}`);
   await h.click('#sftkConfirmGo');
   await h.waitFor("!document.querySelector('#sftkConfirmGo') && /deleted|failed/i.test(document.body.innerText)", 120000, 1000);

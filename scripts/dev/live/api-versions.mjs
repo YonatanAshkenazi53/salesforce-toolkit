@@ -1,6 +1,6 @@
 // Live: ⚙ API versions (Dependencies tab) — pick the fixture flows
 // (docs/fixtures/apiver-fixture: SFTK_AV_Test_A 60 Active, _B 62 Active, _C 58 Draft),
-// choose a target API version, type CHANGE, apply, and report the log.
+// choose a target API version, acknowledge, apply, and report the log.
 //   ORGS=npc[,npc2]   which orgs to log in (default npc only)
 //   PICK=<regex>      which flow API names to tick (default ^SFTK_AV_Test)
 //   TARGET=67.0       target API version option (default: the first option = the org's own release)
@@ -40,9 +40,9 @@ export default async function (h) {
   h.log('CONFIRM:', await dump(h, '#modalBox', 2500));
   await h.shot(h.shots + '/apiver-confirm.png');
   if (process.env.SCAN_ONLY === '1') { h.log('SCAN_ONLY — cancelling'); await h.eval(`document.querySelector('#sftkConfirmCancel')?.click()`); return; }
-  const hasInp = await h.eval(`!!document.querySelector('#sftkConfirmWord')`);
-  if (!hasInp) { h.log('no confirmation input — stopping'); return; }
-  await h.eval(`(() => { const i = document.querySelector('#sftkConfirmWord'); i.value = 'CHANGE'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+  const hasAck = await h.eval(`!!document.querySelector('#sftkConfirmAck')`);
+  if (!hasAck) { h.log('no acknowledgement checkbox — stopping'); return; }
+  await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } return true; })()`);
   await h.sleep(300);
   h.log('Apply enabled:', await h.eval(`!document.querySelector('#sftkConfirmGo')?.disabled`));
   await h.eval(`document.querySelector('#sftkConfirmGo')?.click()`);

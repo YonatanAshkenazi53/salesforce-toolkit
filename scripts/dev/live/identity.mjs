@@ -93,7 +93,7 @@ export default async function (h) {
   h.log(`History undo button: ${undoBtn}`);
   if (!undoBtn) throw new Error('no enabled Undo on the stamp entry');
   await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 30000, 300); await h.sleep(300);
-  await h.eval("(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } const w = document.querySelector('#sftkConfirmWord'); if (w) { w.value = 'UNDO'; w.dispatchEvent(new Event('input', { bubbles: true })); } return true; })()");
+  await h.eval("(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } return true; })()");
   await h.sleep(300);
   await h.eval("document.querySelector('#sftkConfirmGo').click()");
   for (let i = 0; i < 120 && !(await h.eval(`_history.length > ${histBefore} + 1`)); i++) await h.sleep(1000);

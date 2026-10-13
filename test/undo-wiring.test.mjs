@@ -119,7 +119,7 @@ describe('the rollback keeps the laws', () => {
     before(fn, 'sftkUndoAutomationSummary(', 'async function sftkUndoExecute(');
     expect(UN).toContain('sftkUndoLimits()');
     expect(UN).toContain('Could not check');
-    expect(fn).toContain("'ROLLBACK'");
+    expect(fn).not.toContain("'ROLLBACK'");  // owner 2026-10-13: no typed word outside production
     expect(fn).toMatch(/prod \? orgLabel\(/);
   });
 

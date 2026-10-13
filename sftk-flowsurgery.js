@@ -216,26 +216,26 @@ function sftkFlowSurgeryLines(plan, interviews, interviewCheckError, opts) {
     out.push(`Then delete v${p.active.num}${p.inactiveRefs.length ? ` and ${p.inactiveRefs.length} inactive version(s) that still reference the field: ${vlist(p.inactiveRefs)}` : ''}.`);
     out.push('THE FLOW STOPS RUNNING. Whatever it automated no longer happens, and no other version becomes active by itself.');
   } else if (p.mode === 'active') {
+    // v2 (2026-10-13, user: "a lot of text"): the draft case is said inside the deploy line, not as a line of its own
     if (p.overwrite) {
-      out.push(`v${p.overwrite.num} is a DRAFT newer than the active v${p.active.num}. Salesforce saves a deployed flow over its newest draft instead of creating a new version, so the draft's current content is REPLACED by ${swapTo ? `the version that uses ${swapTo}` : 'the fixed version'} — tick the backup below to keep a copy of the draft.`);
       out.push(swapTo
-        ? `Deploy the active v${p.active.num} over the draft v${p.overwrite.num} with every reference to the field pointing at ${swapTo} instead, and make sure v${p.overwrite.num} is ACTIVE. Nothing is deleted until the org confirms it is running.`
-        : `Deploy the active v${p.active.num} over the draft v${p.overwrite.num} without the field reference, and make sure v${p.overwrite.num} is ACTIVE. Nothing is deleted until the org confirms it is running.`);
+        ? `Deploy the active v${p.active.num} over the draft v${p.overwrite.num} with every reference to the field pointing at ${swapTo} instead, and make sure v${p.overwrite.num} is ACTIVE (v${p.overwrite.num} is a DRAFT newer than the active v${p.active.num}: Salesforce saves the deployed version over it, so its own content is REPLACED — the backup below keeps a copy). Nothing is deleted until the org confirms it is running.`
+        : `Deploy the active v${p.active.num} over the draft v${p.overwrite.num} without the field reference, and make sure v${p.overwrite.num} is ACTIVE (v${p.overwrite.num} is a DRAFT newer than the active v${p.active.num}: Salesforce saves the deployed version over it, so its own content is REPLACED — the backup below keeps a copy). Nothing is deleted until the org confirms it is running.`);
     } else out.push(swapTo
-      ? `Deploy a new version (expected v${p.expectNew}) of the active v${p.active.num} in which every reference to the field points at ${swapTo} instead, and make sure it is ACTIVE. Nothing is deleted until the org confirms the new version is running.`
-      : `Deploy a new version (expected v${p.expectNew}) without the field reference, from the active v${p.active.num}, and make sure it is ACTIVE. Nothing is deleted until the org confirms the new version is running.`);
-    out.push(`Then delete the replaced v${p.active.num}${p.inactiveRefs.length ? ` and ${p.inactiveRefs.length} inactive version(s) that still reference the field: ${vlist(p.inactiveRefs)}` : ''}.`);
+      ? `Deploy a new version (expected v${p.expectNew}) of the active v${p.active.num} with every reference to the field pointing at ${swapTo} instead, and make sure it is ACTIVE. Nothing is deleted until the org confirms the new version is running.`
+      : `Deploy a new version (expected v${p.expectNew}) of the active v${p.active.num} without the field reference, and make sure it is ACTIVE. Nothing is deleted until the org confirms the new version is running.`);
+    out.push(`Then delete the replaced v${p.active.num}${p.inactiveRefs.length ? ` and ${p.inactiveRefs.length} inactive version(s) that still reference the field: ${vlist(p.inactiveRefs)}` : ''}${p.cleanInactive ? `; ${p.cleanInactive} other version(s) never mention the field and are left alone` : ''}.`);
   } else {
     out.push(`Delete ${p.inactiveRefs.length} inactive version(s) that still reference the field: ${vlist(p.inactiveRefs)}. No new version is needed — ${p.active ? `the active v${p.active.num} does not use the field` : 'the flow has no active version'}.`);
   }
-  if (p.cleanInactive) out.push(`${p.cleanInactive} other inactive version(s) do not mention the field and are left alone.`);
+  if (p.cleanInactive && p.mode !== 'active') out.push(`${p.cleanInactive} other inactive version(s) do not mention the field and are left alone.`);
   if (interviewCheckError) {
     out.push(`Paused flow interviews could NOT be checked (${interviewCheckError}) — if any exist on a version to be deleted, that deletion will be refused by Salesforce and reported here.`);
   } else if ((typeof interviews === 'object' && interviews ? interviews.total : interviews) > 0) {
     const w = sftkFlowInterviewWords(interviews);
-    out.push(`${w.head} on the versions to be deleted will be deleted FIRST — Salesforce refuses to delete a version while they exist${w.cost ? `: ${w.cost}` : ''}.`);
+    out.push(`${w.head} on those versions are deleted FIRST — Salesforce refuses to delete a version while they exist${w.cost ? `: ${w.cost}` : ''}.`);
   }
-  out.push('Deleted flow versions cannot be restored by Salesforce. Tick the backup below to download them as a zip first — the Flows tool can restore from it.');
+  out.push('Deleted flow versions cannot be restored by Salesforce — the backup below downloads them as a zip first; the Flows tool can restore from it.');
   return out;
 }
 

@@ -45,7 +45,8 @@
         <button class="btn btn-sm btn-secondary" data-th-report="${esc(e.id)}" title="Download this entry as a JSON file: what was written, where, when, and what the org showed.">⬇ Report</button>
       </div>
       <div class="sftk-th-what">
-        ${what.length ? what.map(w => `<div>${icon(w)} ${esc(w.text || w.describe)}</div>`).join('') : '<div>— nothing was written</div>'}
+        ${what.length ? what.slice(0, 2).map(w => `<div>${icon(w)} ${esc(w.text || w.describe)}</div>`).join('') : '<div>— nothing was written</div>'}
+        ${what.length > 2 ? `<details class="sftk-th-more"><summary>+${what.length - 2} more</summary>${what.slice(2).map(w => `<div>${icon(w)} ${esc(w.text || w.describe)}</div>`).join('')}</details>` : ''}
         ${e.toolUndo && e.toolUndo.none ? `<div class="sftk-th-sub">↩ no undo: ${esc(e.toolUndo.none)}</div>` : ''}
         ${e.toolUndo && e.toolUndo.done ? `<div class="sftk-th-sub">↩ ${e.toolUndo.done.ok ? 'undone and verified' : 'undo attempted — not every step confirmed'} on ${esc(e.toolUndo.done.at)}</div>` : ''}
         ${said ? `<div class="sftk-th-said">${esc(said)}</div>` : ''}

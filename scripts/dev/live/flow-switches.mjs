@@ -36,9 +36,8 @@ async function switchOnce(h, mode) {
   h.log('CONFIRM:', await dump(h, '#modalBox', 2500));
   await h.shot(h.shots + `/fs-confirm-${mode}.png`);
   if (process.env.SCAN_ONLY === '1') { h.log('SCAN_ONLY — cancelling'); await h.eval(`document.querySelector('#sftkConfirmCancel')?.click()`); return false; }
-  if (!(await h.eval(`!!document.querySelector('#sftkConfirmWord')`))) { h.log('no confirmation input — stopping'); return false; }
-  const word = mode === 'on' ? 'ON' : 'OFF';
-  await h.eval(`(() => { const i = document.querySelector('#sftkConfirmWord'); i.value = ${JSON.stringify(word)}; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+  if (!(await h.eval(`!!document.querySelector('#sftkConfirmAck')`))) { h.log('no acknowledgement checkbox — stopping'); return false; }
+  await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } return true; })()`);
   await h.sleep(300);
   h.log('Go enabled:', await h.eval(`!document.querySelector('#sftkConfirmGo')?.disabled`));
   await h.eval(`document.querySelector('#sftkConfirmGo')?.click()`);

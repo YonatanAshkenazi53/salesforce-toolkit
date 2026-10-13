@@ -1071,11 +1071,11 @@ const FieldCleaner = (() => {
   let _everyRunning = false;
   function _fixEveryHtml(n) {
     if (n < 2) return '<div id="fcFixEvery" style="display:none"></div>';
-    const tip = 'Goes through every fixable item below, one by one. Each still asks before it changes anything.';
-    return `<div id="fcFixEvery" class="fc-fix-every-box"><strong>Everything at once:</strong>
-        ${_replOn() ? `<button class="btn btn-primary btn-sm fc-fix-every" data-swap="1" title="${tip}">⇄ Replace all ${n}</button>` : ''}
-        <button class="btn btn-secondary btn-sm fc-fix-every" data-swap="0" title="${tip}">✂ Remove all ${n}</button>
-        <span class="fc-repl-sub">Walks the ${n} fixable items one by one. Each still asks first; Cancel in any dialog stops the walk.</span></div>`;
+    const tip = 'Goes through every fixable item below, one by one. Each still asks before it changes anything; Cancel in any dialog stops the walk.';
+    return `<div id="fcFixEvery" class="fc-fact fc-fact-every"><span class="fc-fact-ico">⚡</span>
+        <span class="fc-fact-text"><b>Everything at once</b> — the ${n} fixable items below, one by one; each still asks first.</span>
+        <span class="fc-fact-act">${_replOn() ? `<button class="btn btn-primary btn-sm fc-fix-every" data-swap="1" title="${tip}">⇄ Replace all ${n}</button>` : ''}
+        <button class="btn btn-secondary btn-sm fc-fix-every" data-swap="0" title="${tip}">✂ Remove all ${n}</button></span></div>`;
   }
   function _refreshFixEvery() {
     const el = eid('fcFixEvery');
@@ -1125,7 +1125,7 @@ const FieldCleaner = (() => {
   }
   function _replBarHtml() {
     return _replOn()
-      ? `<div id="fcReplBar" class="fc-repl-bar">⇄ <strong>Replace mode</strong> — every item below now has two buttons, and you choose for each one: <strong>⇄ Replace</strong> points it at <code>${esc(_selObj.api)}.${esc(_replField.api)}</code>, <strong>✂ Remove</strong> takes the reference out.</div>`
+      ? `<div id="fcReplBar" class="fc-fact fc-fact-repl"><span class="fc-fact-ico">⇄</span><span class="fc-fact-text"><b>Replace mode</b> — every item offers <b>⇄ Replace</b> (points it at <code>${esc(_selObj.api)}.${esc(_replField.api)}</code>) and <b>✂ Remove</b> (takes the reference out). You choose per item.</span></div>`
       : '<div id="fcReplBar" style="display:none"></div>';
   }
   function _replNoteHtml() {
@@ -1886,30 +1886,37 @@ const FieldCleaner = (() => {
       .reduce((n, [,arr]) => n + arr.length, 0) - flowExtra;
     const manualCount = shownCount - autoCount;
 
+    // What each kind of item gets, in words — once, in the collapsed help under
+    // the status card, not as a paragraph over every group (user 2026-10-13:
+    // "a lot of text on the screen … hard to understand what happens there").
+    const howto = Object.keys(_groups).map(t => {
+      const c = TYPE_CFG[t] || { ...TYPE_CFG_DEFAULT, label: t };
+      return `<div class="fc-howto-row">${c.icon} <b>${esc(c.label)}</b> — <span class="fc-group-note-text" data-type="${esc(t)}">${esc(_groupNote(t, c))}</span></div>`;
+    }).join('');
     let html = `
-      <div class="fc-results-hdr">
-        <strong>${shownCount}</strong> dependenc${shownCount === 1 ? 'y' : 'ies'} on
-        <code>${esc(_selObj.api)}.${esc(_selField.api)}</code>
-        <span class="fc-badge-row">
-          ${autoCount   > 0 ? `<span class="fc-badge-auto">${autoCount} auto-fixable</span>`  : ''}
-          ${manualCount > 0 ? `<span class="fc-badge-manual">${manualCount} manual</span>` : ''}
-        </span>
-      </div>
-      ${_replBarHtml()}
-      ${_fixEveryHtml(autoCount)}
-      ${_mcdCapped ? `
-      <div class="fc-unscanned-note">
-        ⚠ <strong>This list may be truncated.</strong> Salesforce caps the dependency
-        index (MetadataComponentDependency, beta) at 2,000 rows and stops silently —
-        the scan landed on that boundary, so treat the count as a FLOOR, not a total.
-        Fix what's listed, re-scan, and repeat until the count drops below the cap.
-      </div>` : ''}
-      <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">${sftkCatSm('Measuring how much data is stored in this field…')}</div>
+      <div class="fc-status" id="fcStatus">
+        <div class="fc-status-hd">
+          <code>${esc(_selObj.api)}.${esc(_selField.api)}</code>
+          <span class="fc-status-n"><strong>${shownCount}</strong> place${shownCount === 1 ? '' : 's'} use${shownCount === 1 ? 's' : ''} it</span>
+          <span class="fc-badge-row">
+            ${autoCount   > 0 ? `<span class="fc-badge-auto">${autoCount} fixable here</span>`  : ''}
+            ${manualCount > 0 ? `<span class="fc-badge-manual">${manualCount} by hand</span>` : ''}
+          </span>
+        </div>
+        ${_replBarHtml()}
+        <div id="fcDataVerdict" class="fc-fact fc-data-verdict fc-data-loading"><span class="fc-fact-ico">📈</span><span class="fc-fact-text">${sftkCatSm('Measuring how much data is stored in this field…')}</span></div>
         <div id="fcCopyVals"></div>
-      <div id="fcDepZone"></div>
-      <div id="fcFlsPanel"></div>
-      ${_unscannedNoteHtml()}
-        <div id="fcRptScan"></div>`;
+        <div id="fcFlsPanel"></div>
+        <div id="fcRptScan"></div>
+        <div id="fcDepZone"></div>
+        ${_fixEveryHtml(autoCount)}
+        ${_mcdCapped ? `<div class="fc-fact fc-fact-warn"><span class="fc-fact-ico">⚠</span><span class="fc-fact-text"><strong>This list may be cut short.</strong> Salesforce stops its dependency index at 2,000 rows without saying so — treat the count as a floor: fix what is listed, scan again, repeat.</span></div>` : ''}
+        <details class="fc-howto">
+          <summary>How each item is fixed, and what the scan cannot see</summary>
+          ${howto}
+          ${_unscannedNoteHtml()}
+        </details>
+      </div>`;
 
     for (const [type, items] of Object.entries(_groups)) {
       const cfg = TYPE_CFG[type] || { ...TYPE_CFG_DEFAULT, label: type };
@@ -1920,23 +1927,19 @@ const FieldCleaner = (() => {
             <span class="fc-group-icon">${cfg.icon}</span>
             <span class="fc-group-label">${esc(cfg.label)}</span>
             <span class="fc-group-count"${type === 'Flow' ? ` title="${items.length} version${items.length === 1 ? '' : 's'} of ${nItems === 1 ? 'this flow' : 'these flows'} mention the field"` : ''}>${nItems}</span>
-          </div>
-          <div class="fc-group-note"><span class="fc-group-note-text" data-type="${esc(type)}">${esc(_groupNote(type, cfg))}</span>${
-            // C5a: the toolkit's own tools manage exactly these components —
-            // offer a jump instead of dead-ending into Setup.
-            type === 'Flow'
-              ? xlinkHtml('flows', '↗ Open in Flows',
-                  "Manage these flows' versions — delete stale ones, backup, restore — in the Flows tool")
+            <span class="fc-group-sp"></span>
+            ${type === 'Flow'
+              ? xlinkHtml('flows', '↗ Flows', "Manage these flows' versions — delete stale ones, backup, restore — in the Flows tool")
               : type === 'FlexiPage'
-                ? xlinkHtml('pages', '↗ Open in Lightning Pages',
-                    'Inspect assignments, org defaults, and profile overrides for these pages in the Lightning Pages tool')
-                : ''}</div>
+                ? xlinkHtml('pages', '↗ Lightning Pages', 'Inspect assignments, org defaults, and profile overrides for these pages in the Lightning Pages tool')
+                : ''}
+            ${cfg.fixable && nItems > 1
+              ? `<span class="fc-fix-allbox" data-type="${esc(type)}" data-n="${nItems}" data-label="${esc(cfg.label)}">${_fixAllHtml(type, nItems, cfg.label)}</span>`
+              : ''}
+          </div>
           <div class="fc-group-items">
             ${type === 'Flow' ? _flowCards.map(renderFlowCard).join('') : items.map(d => renderItem(d, cfg.fixable, type)).join('')}
           </div>
-          ${cfg.fixable && nItems > 1
-            ? `<div class="fc-fix-allbox" data-type="${esc(type)}" data-n="${nItems}" data-label="${esc(cfg.label)}" style="margin:2px 0 8px 0">${_fixAllHtml(type, nItems, cfg.label)}</div>`
-            : ''}
         </div>`;
     }
 
@@ -1971,7 +1974,7 @@ const FieldCleaner = (() => {
         ${silentNote}
         <div class="fc-delete-note" id="fcDeleteNote">
           ${autoCount > 0
-            ? '⚠ Fix all auto-fixable dependencies above first.'
+            ? `⚠ Fix the ${autoCount} fixable item${autoCount === 1 ? '' : 's'} above first.`
             : blockerTotal > 0
               ? '🔒 Delete is blocked until the blockers above are cleared.'
               : silentManual > 0
@@ -2086,14 +2089,14 @@ const FieldCleaner = (() => {
         copyPlan = sftkFlsCopyPlan(rows, nr.rows, _selObj.api, to, { readOnly: _replReadOnly() });
         const n = copyPlan.create.length + copyPlan.update.length;
         copyHtml = n
-          ? `<div class="fc-fls-copy" id="fcFlsCopy">🔑 <strong>${n}</strong> of the ${rows.length} below ${n === 1 ? 'does' : 'do'} not give the same access to <code>${esc(to)}</code> yet — ${n === 1 ? 'its' : 'their'} users would not see the new field.
-               <button class="btn btn-secondary btn-sm" id="fcFlsCopyBtn">🔑 Copy access to ${esc(to)}</button></div>`
-          : `<div class="fc-fls-copy fc-fls-copy-ok" id="fcFlsCopy">🔑 Everyone who can see <code>${esc(_selField.api)}</code> already has the same access to <code>${esc(to)}</code>.</div>`;
+          ? `<div class="fc-fact fc-fls-copy" id="fcFlsCopy"><span class="fc-fact-ico">🔑</span><span class="fc-fact-text"><strong>${n}</strong> of the ${rows.length} below ${n === 1 ? 'does' : 'do'} not give the same access to <code>${esc(to)}</code> yet — ${n === 1 ? 'its' : 'their'} users would not see the new field.
+               </span><span class="fc-fact-act"><button class="btn btn-secondary btn-sm" id="fcFlsCopyBtn">🔑 Copy access to ${esc(to)}</button></span></div>`
+          : `<div class="fc-fact fc-fls-copy fc-fls-copy-ok" id="fcFlsCopy"><span class="fc-fact-ico">🔑</span><span class="fc-fact-text">Everyone who can see <code>${esc(_selField.api)}</code> already has the same access to <code>${esc(to)}</code>.</span></div>`;
       }
     }
     el.innerHTML = `${copyHtml}
       <details class="fc-fls">
-        <summary>👁 Visible to <strong>${rows.length}</strong> profile${rows.length === 1 ? '' : 's'}/permission set${rows.length === 1 ? '' : 's'}</summary>
+        <summary class="fc-fact"><span class="fc-fact-ico">👁</span><span class="fc-fact-text">Visible to <strong>${rows.length}</strong> profile${rows.length === 1 ? '' : 's'}/permission set${rows.length === 1 ? '' : 's'}</span><span class="fc-fact-act fc-fact-more">show</span></summary>
         <div class="fc-fls-rows">
           ${rows.map(r => {
             const name = r.Parent?.IsOwnedByProfile ? (r.Parent?.Profile?.Name || r.Parent?.Label) : r.Parent?.Label;
@@ -2199,11 +2202,11 @@ const FieldCleaner = (() => {
     const link = r => `<a href="${esc(`${_orgUrl.replace(/\/$/, '')}/lightning/r/Report/${r.Id}/view`)}" target="_blank" rel="noopener">${esc(r.Name || r.Id)}</a>`;
     if (!s) {
       const listed = ((_lastScan && _lastScan.deps) || []).filter(d => d.MetadataComponentType === 'Report').length;
-      el.innerHTML = `<div class="fc-rpt">📊 <strong>Reports.</strong> ${listed
-          ? `Salesforce’s index listed ${N(listed)} above — it does not list every report in every org.`
-          : 'Salesforce’s index listed none — in some orgs it lists none at all.'}
-        To be sure, this tool can open every report’s definition and look for the field itself.
-        <button class="btn btn-secondary btn-sm" id="fcRptCount">📊 Scan the reports…</button></div>`;
+      el.innerHTML = `<div class="fc-fact fc-rpt"><span class="fc-fact-ico">📊</span><span class="fc-fact-text"><b>Reports</b> — ${listed
+          ? `Salesforce’s index listed ${N(listed)} above; it does not list every report in every org.`
+          : 'Salesforce’s index listed none; in some orgs it lists none at all.'}
+        To be sure, this tool can read every report’s definition itself.</span>
+        <span class="fc-fact-act"><button class="btn btn-secondary btn-sm" id="fcRptCount">📊 Scan the reports…</button></span></div>`;
       eid('fcRptCount').addEventListener('click', _rptCount);
       return;
     }
@@ -2342,7 +2345,7 @@ const FieldCleaner = (() => {
     if (!_replOn()) { el.innerHTML = ''; _copyState = null; return; }
     const from = _selField.api, to = _replField.api;
     if (_replReadOnly()) {
-      el.innerHTML = `<div class="fc-copy">📦 <strong>Stored values</strong> cannot be copied: <code>${esc(to)}</code> cannot be written (a formula or read-only field).</div>`;
+      el.innerHTML = `<div class="fc-fact fc-copy"><span class="fc-fact-ico">📦</span><span class="fc-fact-text"><b>Stored values</b> cannot be copied: <code>${esc(to)}</code> cannot be written (a formula or read-only field).</span></div>`;
       return;
     }
     if (_copyState && _copyState.to === to && _copyState.from === from) { _renderCopyPlan(); return; }
@@ -2350,15 +2353,15 @@ const FieldCleaner = (() => {
     const known = _dataVerdict && !_dataVerdict.sampled && !_dataVerdict.formula;
     const filled = known ? _dataVerdict.filled : null;
     if (filled === 0) {
-      el.innerHTML = `<div class="fc-copy fc-copy-ok">📦 <code>${esc(from)}</code> holds no values — there is nothing to copy to <code>${esc(to)}</code>.</div>`;
+      el.innerHTML = `<div class="fc-fact fc-copy fc-copy-ok"><span class="fc-fact-ico">📦</span><span class="fc-fact-text"><code>${esc(from)}</code> holds no values — nothing to copy to <code>${esc(to)}</code>.</span></div>`;
       return;
     }
     const calls = filled != null ? Math.max(1, Math.ceil(filled / 2000)) : null;
-    el.innerHTML = `<div class="fc-copy">📦 <strong>Stored values.</strong> ${filled != null
+    el.innerHTML = `<div class="fc-fact fc-copy"><span class="fc-fact-ico">📦</span><span class="fc-fact-text"><b>Stored values</b> — ${filled != null
         ? `<strong>${filled.toLocaleString()}</strong> record${filled === 1 ? '' : 's'} hold${filled === 1 ? 's' : ''} a value in <code>${esc(from)}</code>.`
-        : `How many records hold a value in <code>${esc(from)}</code> is not measured yet.`}
-      Replacing moves references only: to keep the data, copy it to <code>${esc(to)}</code> before you delete the field.
-      <button class="btn btn-secondary btn-sm" id="fcCopyCompare">📦 Compare the two fields${calls ? ` (≈${calls.toLocaleString()} API call${calls === 1 ? '' : 's'})` : ''}</button></div>`;
+        : `how many records hold a value in <code>${esc(from)}</code> is not measured yet.`}
+      Replace moves references only: copy the values to <code>${esc(to)}</code> before the field is deleted.</span>
+      <span class="fc-fact-act"><button class="btn btn-secondary btn-sm" id="fcCopyCompare">📦 Compare the two fields${calls ? ` (≈${calls.toLocaleString()} API call${calls === 1 ? '' : 's'})` : ''}</button></span></div>`;
     eid('fcCopyCompare').addEventListener('click', _copyCompare);
   }
 
@@ -2678,11 +2681,9 @@ const FieldCleaner = (() => {
       });
     } else {
       el.innerHTML = `
-        <div class="fc-dep-offer">
-          🕐 Not sure it's unused? <button class="btn btn-secondary btn-sm" id="fcDepBtn">Deprecate first</button>
-          <span class="fc-dep-hint">renames the label to <code>zz_DEPRECATED…</code> and hides the field from everyone —
-          wait for complaints, then delete (or undo) with one click.</span>
-        </div>`;
+        <div class="fc-fact fc-dep-offer"><span class="fc-fact-ico">🕐</span>
+          <span class="fc-fact-text"><b>Not sure it's unused?</b> Deprecate renames the label to <code>zz_DEPRECATED…</code> and hides the field from everyone; delete or undo later with one click.</span>
+          <span class="fc-fact-act"><button class="btn btn-secondary btn-sm" id="fcDepBtn">Deprecate first</button></span></div>`;
       eid('fcDepBtn')?.addEventListener('click', async e => {
         const btn = e.currentTarget;
         const gate = await sftkOrgWriteGate(_orgUrl);
@@ -3006,13 +3007,13 @@ const FieldCleaner = (() => {
     const pctStr = p => (p >= 99.95 && p < 100) ? '99.9'
                       : (p > 0 && p < 0.05) ? '0.1'
                       : p.toFixed(p > 99 || p < 1 ? 1 : 0);
-    el.className = `fc-data-verdict ${safe ? 'fc-data-safe' : 'fc-data-caution'}`;
+    el.className = `fc-fact fc-data-verdict ${safe ? 'fc-data-safe' : 'fc-data-caution'}`;
     el.innerHTML = `
-      <span class="fc-data-badge">${safe ? '✅ SAFE' : '⚠ CAUTION'}</span>
-      <span class="fc-data-text">
+      <span class="fc-fact-ico">${safe ? '✅' : '⚠'}</span>
+      <span class="fc-fact-text"><span class="fc-data-badge">${safe ? 'SAFE' : 'CAUTION'}</span>
         ${safe
-          ? `Empty on <strong>${pctStr(emptyPct)}%</strong> of ${scope} (${holders})`
-          : `Populated on <strong>${pctStr(pctFilled)}%</strong> of ${scope} (${holders})`}
+          ? `Empty on <strong>${pctStr(emptyPct)}%</strong> of ${scope} · ${holders}`
+          : `Populated on <strong>${pctStr(pctFilled)}%</strong> of ${scope} · ${holders}`}
         · last value written <strong>${ageStr}</strong>${v.sampled ? ' <em>(sampled)</em>' : ''}
       </span>`;
   }
@@ -3047,7 +3048,7 @@ const FieldCleaner = (() => {
   // its versions that mention the field (sftkFlowCardLines).
   function _flowVersHtml(c) {
     return sftkFlowCardLines(c.versions, { swapTo: _replOn() ? _replField.api : '' }).lines
-      .map(l => `<li><span class="fc-ver-badge">${esc(l.vers)}</span> ${esc(l.text)}</li>`).join('');
+      .map(l => `<li class="fc-ver" title="${esc(l.text)}"><span class="fc-ver-badge">${esc(l.vers)}</span></li>`).join('');
   }
   function renderFlowCard(c) {
     const id = c.primaryId;
@@ -3202,7 +3203,7 @@ const FieldCleaner = (() => {
         : [{ label: componentName, sub: type }],
       revOverride: {
         html: type === 'Flow'
-          ? `⚠ <strong>${asks ? 'This' : preset === 'delete' ? 'Switches the flow off, verifies that nothing is active, and then' : (flowPlan.plan.mode === 'active' ? (swap ? `Deploys a new flow version that uses ${esc(swapTo)}, verifies it is ACTIVE, and then` : 'Deploys a new flow version without the reference, verifies it is ACTIVE, and then') : 'This')} permanently deletes flow versions</strong> that still reference the field (Salesforce holds the dependency lock per version, not per active version).<ol id="fcFlowLines" style="margin:6px 0 0 18px;padding:0">${(asks && !activeMode ? [] : activeMode === 'delete' ? flowPlan.linesDelete : flowPlan.lines).map(l => `<li>${esc(l)}</li>`).join('')}</ol>`
+          ? `⚠ <strong>Flow versions that mention the field are deleted for good</strong> — Salesforce locks the field per version. The plan:<ol id="fcFlowLines" class="fc-plan">${(asks && !activeMode ? [] : activeMode === 'delete' ? flowPlan.linesDelete : flowPlan.lines).map(l => `<li>${esc(l)}</li>`).join('')}</ol>`
           : `${swap ? `⇄ <strong>${esc(_selObj.api)}.${esc(_selField.api)} → ${esc(swapTo)}</strong>. ${esc(_groupNote(type, cfg))}` : `✏ ${cfg.note || 'The field reference is removed from this component.'}`} The change deploys immediately. ${['Report', 'Layout', 'FlexiPage'].includes(type)
               ? 'A <strong>restore point</strong> is saved first — ↩ Restore points, under the results, can put the previous version back.'
               : 'There is no undo besides re-adding the field by hand.'}`,
@@ -3668,22 +3669,23 @@ const FieldCleaner = (() => {
     const li = (x, tail) => `<li><b>${esc(x.kind)}</b> “${esc(x.label || x.name || '?')}”${x.name ? ` <code>${esc(x.name)}</code>` : ''} — ${esc(x.where)}${tail ? `: <code>${esc(tail)}</code>` : ''}</li>`;
     const list = (arr, tailKey) => arr.length ? `<ul class="fc-prev-list">${arr.slice(0, 12).map(x => li(x, x[tailKey])).join('')}${arr.length > 12 ? `<li>… +${arr.length - 12} more</li>` : ''}</ul>` : '';
     const open = fp.builderUrl ? `<a href="${esc(fp.builderUrl)}" target="_blank" rel="noopener" class="fc-prev-open">↗ Open v${act.num} in Flow Builder</a>` : '';
+    const sum = [`${pv.removed.length} come${pv.removed.length === 1 ? 's' : ''} out`, pv.remaining.length ? `${pv.remaining.length} stay${pv.remaining.length === 1 ? 's' : ''} — by hand` : '', pv.emptied.length ? `${pv.emptied.length} left empty` : ''].filter(Boolean).join(' · ');
     return `<div class="fc-prev">
-      <div class="fc-prev-hd">Inside the active v${act.num} — what an automatic fix would do</div>
+      <details class="fc-prev-more"><summary>Inside the active v${act.num}: ${sum}</summary>
       ${pv.removed.length ? `<div class="fc-prev-sec fc-prev-ok"><b>✂ Comes out automatically (${pv.removed.length})</b>${list(pv.removed, 'what')}</div>`
         : `<div class="fc-prev-sec fc-prev-bad"><b>✂ Nothing can be taken out automatically.</b></div>`}
       ${pv.remaining.length ? `<div class="fc-prev-sec fc-prev-bad"><b>✋ Cannot be removed automatically (${pv.remaining.length}) — these KEEP the field locked</b>
         <div class="fc-prev-note">Decisions and formulas decide what a flow does, so they are never rewritten for you. Until these are changed by hand, Salesforce will still refuse to delete the field.</div>${list(pv.remaining, 'value')}</div>` : ''}
       ${pv.emptied.length ? `<div class="fc-prev-sec fc-prev-warn"><b>⚠ Left empty by the fix (${pv.emptied.length}) — Salesforce is likely to refuse the new version</b>${list(pv.emptied, '')}
         <div class="fc-prev-note">An element with nothing left to do is invalid. If the deploy is refused, nothing is deleted and the message says so.</div></div>` : ''}
-      ${preset === 'replace' ? `<div class="fc-prev-hd">The active version — the flow keeps running</div>
-      <div class="fc-prev-sec">A new active v${fp.plan.expectNew} is saved without what comes out above, the org is read again to confirm it is active, and then v${act.num} is deleted.${pv.emptied.length ? ` <em>Salesforce is likely to refuse it: ${pv.emptied.length} element(s) would be left empty. If it does, nothing is deleted.</em>` : ''}${pv.remaining.length ? ` <em>The field stays locked until you also fix the ${pv.remaining.length} manual place(s) in the new version.</em>` : ''} To switch the flow off instead, cancel and press <b>🗑 Delete versions · flow off</b> on its card.</div>` : `<div class="fc-prev-hd">The active version — choose</div>
+      <div class="fc-prev-sec"><b>Or do it yourself.</b> ${open} In Flow Builder open <i>Toolbox → Manager</i> and search each API name shown above (<code>like_this</code>); change or remove the reference, reconnect anything you delete, then Save As a new version and Activate. Run ✂ Remove here again afterwards — it will find the active version clean and only remove the old versions.</div>
+      </details>
+      ${preset === 'replace' ? `<div class="fc-prev-sec">${pv.emptied.length ? ` <em>Salesforce is likely to refuse it: ${pv.emptied.length} element(s) would be left empty. If it does, nothing is deleted.</em>` : ''}${pv.remaining.length ? ` <em>The field stays locked until you also fix the ${pv.remaining.length} manual place(s) in the new version.</em>` : ''} To switch the flow off instead, cancel and press <b>🗑 Delete versions · flow off</b> on its card.</div>` : `<div class="fc-prev-hd">The active version — choose</div>
       <label class="fc-prev-opt${canReplace ? '' : ' fc-prev-opt-off'}"><input type="radio" name="fcActiveMode" value="replace" ${canReplace ? (pv.emptied.length ? '' : 'checked') : 'disabled'}>
         <span><b>Keep the flow running</b> — deploy a new active v${fp.plan.expectNew} without what comes out above, verify it is active, then delete v${act.num}.
         ${canReplace && pv.emptied.length ? `<em>Likely refused: ${pv.emptied.length} element(s) would be left empty. Pick this only if you will fix them in Flow Builder; otherwise choose delete.</em> ` : ''}${canReplace ? (pv.remaining.length ? `<em>The field stays locked until you also fix the ${pv.remaining.length} manual place(s) in the new version.</em>` : '') : '<em>Not available: there is nothing the automatic fix can take out of this version.</em>'}</span></label>
       <label class="fc-prev-opt"><input type="radio" name="fcActiveMode" value="delete">
         <span><b>Delete the active version too</b> — switch the flow off, verify nothing is active, then delete v${act.num} with the rest. <em>The flow stops running.</em></span></label>`}
-      <div class="fc-prev-sec"><b>Or do it yourself.</b> ${open} In Flow Builder open <i>Toolbox → Manager</i> and search each API name shown above (<code>like_this</code>); change or remove the reference, reconnect anything you delete, then Save As a new version and Activate. Run ✂ Remove here again afterwards — it will find the active version clean and only remove the old versions.</div>
     </div>`;
   }
 
@@ -3697,8 +3699,9 @@ const FieldCleaner = (() => {
     const list = (arr, tail) => arr.length ? `<ul class="fc-prev-list">${arr.slice(0, 12).map(x => li(x, tail(x))).join('')}${arr.length > 12 ? `<li>… +${arr.length - 12} more</li>` : ''}</ul>` : '';
     const open = fp.builderUrl ? `<a href="${esc(fp.builderUrl)}" target="_blank" rel="noopener" class="fc-prev-open">↗ Open v${act.num} in Flow Builder</a>` : '';
     const other = pv.remaining.filter(x => x.why === 'other'), undecided = pv.remaining.filter(x => x.why !== 'other');
+    const sum = [`${pv.removed.length} pointed at ${esc(pv.to)}`, undecided.length ? `${undecided.length} left alone` : '', other.length ? `${other.length} not this field` : ''].filter(Boolean).join(' · ');
     return `<div class="fc-prev">
-      <div class="fc-prev-hd">Inside the active v${act.num} — what moving to ${esc(pv.to)} changes</div>
+      <details class="fc-prev-more"><summary>Inside the active v${act.num}: ${sum}</summary>
       ${pv.removed.length ? `<div class="fc-prev-sec fc-prev-ok"><b>⇄ Pointed at ${esc(pv.to)} (${pv.removed.length})</b>
         <div class="fc-prev-note">Nothing is taken out: every condition, assignment and filter stays, reading or writing the new field.</div>${list(pv.removed, x => x.what)}</div>`
         : `<div class="fc-prev-sec fc-prev-bad"><b>⇄ Nothing in this version can be moved automatically.</b></div>`}
@@ -3706,9 +3709,8 @@ const FieldCleaner = (() => {
         <div class="fc-prev-note">A reference is moved only when it is KNOWN to be ${esc(_selObj.api)}'s field. These sit where the object cannot be worked out (the output of an action, a value typed as text…). If one of them is this field, change it in Flow Builder — until then Salesforce keeps the field locked.</div>${list(undecided, x => x.value)}</div>` : ''}
       ${other.length ? `<div class="fc-prev-sec"><b>Not this field (${other.length})</b>
         <div class="fc-prev-note">The same field name on another object — left exactly as it is.</div>${list(other, x => `${x.value} — a field of ${x.object}`)}</div>` : ''}
-      <div class="fc-prev-hd">The active version — the flow keeps running on ${esc(pv.to)}</div>
-      <div class="fc-prev-sec">A new active v${fp.plan.expectNew} is saved with the references moved, the org is read again to confirm it is active, and then v${act.num} is deleted. A replace has nothing else to choose.</div>
       <div class="fc-prev-sec"><b>Or do it yourself.</b> ${open} In Flow Builder open <i>Toolbox → Manager</i> and search each API name shown above (<code>like_this</code>); point it at the new field, then Save As a new version and Activate. Run the fix here again afterwards — it will find the active version clean and only remove the old versions.</div>
+      </details>
     </div>`;
   }
 

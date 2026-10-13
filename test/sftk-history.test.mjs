@@ -194,7 +194,8 @@ describe('sftkHistoryUndo — the steps run through the write discipline', () =>
     expect(r.ok).toBe(true);
     expect(r.text).toBe('Undone — 1 step verified by re-reading the org');
     const dialog = sent.find(x => x.dialog).dialog;
-    expect(dialog).toMatchObject({ typedWord: 'UNDO', confirmLabel: '↩ Undo', items: [{ label: 'F back on (v3)' }], production: { label: 'A' } });
+    expect(dialog).toMatchObject({ confirmLabel: '↩ Undo', items: [{ label: 'F back on (v3)' }], production: { label: 'A' } });
+    expect(dialog.typedWord).toBeUndefined();
     expect(dialog.revOverride.needsCheckbox).toBe(true);
     expect(dialog.revOverride.ack).toBe('I understand this writes the earlier state back over whatever is there now');
     const patch = sent.find(x => x.type === 'SF_PATCH');

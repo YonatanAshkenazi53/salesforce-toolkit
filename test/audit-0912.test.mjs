@@ -196,7 +196,8 @@ describe('7 · ⏻ Flow switches sit behind a typed confirmation', () => {
     // dialog (sftk-confirm.js) — the typed word is now that dialog's own gate.
     expect(plan).toContain("const word = mode === 'deactivate' ? 'OFF' : 'ON'");
     expect(plan).toContain('sftkConfirmDestructive(');
-    expect(plan).toContain('typedWord: word');
+    expect(plan).not.toContain('typedWord');  // owner 2026-10-13: checkbox, not a typed ON/OFF
+    expect(plan).toContain("ack: 'I understand and want to proceed'");
   });
 
   it('the write lives only past the gate', () => {

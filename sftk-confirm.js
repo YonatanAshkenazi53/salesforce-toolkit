@@ -30,9 +30,12 @@ function sftkConfirmDestructive(opts) {
     //   production: { label }   → after the acknowledgement, a second step in
     //                             the SAME dialog asks for the org's name
     //                             (typed exactly); false/undefined = no step.
-    //   typedWord: 'CHANGE'     → the Go button stays off until that word is
-    //                             typed (the ⚙ API versions / ⏻ switches /
-    //                             ↩ ROLLBACK rule), in the first step.
+    //   typedWord: 'WORD'       → RESERVED for the production step: callers
+    //                             must NOT pass it any more (owner decision
+    //                             2026-10-13). Outside production the user
+    //                             ticks "I understand…" and presses the
+    //                             button; typing is only the org's name.
+    //                             The mechanism stays, unused.
     production = null,
     typedWord = '',
   } = opts || {};

@@ -136,7 +136,7 @@ export default async function (h) {
     if (!(await h.eval(`!!document.querySelector('#dsRbGo') && !document.querySelector('#dsRbGo').disabled`))) throw new Error('rollback Go not enabled');
     await h.eval(`document.querySelector('#dsRbGo').click()`);
     await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 20000, 300); await h.sleep(300);
-    await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } const i = document.querySelector('#sftkConfirmWord'); if (i) { i.value = 'ROLLBACK'; i.dispatchEvent(new Event('input', { bubbles: true })); } return true; })()`);
+    await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } return true; })()`);
     await h.sleep(300);
     await h.eval(`document.querySelector('#sftkConfirmGo')?.click()`);
     const rbBefore = await h.eval(`_history.filter(x => x.kind === 'rollback').length`);

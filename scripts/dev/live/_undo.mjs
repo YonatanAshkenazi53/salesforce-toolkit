@@ -15,7 +15,7 @@ async function walkDialog(h, opts, box) {
   h.log('UNDO DIALOG:', await dump(h, box, 1800));
   await h.shot(h.shots + '/undo-dialog.png');
   if (opts.cancel) { await h.eval(`document.querySelector('#sftkConfirmCancel')?.click()`); h.log('cancelled on purpose'); return 'cancelled'; }
-  await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } const i = document.querySelector('#sftkConfirmWord'); if (i) { i.value = 'UNDO'; i.dispatchEvent(new Event('input', { bubbles: true })); } return true; })()`);
+  await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } return true; })()`);
   await h.sleep(300);
   h.log('Go enabled:', await h.eval(`!document.querySelector('#sftkConfirmGo')?.disabled`));
   await h.eval(`document.querySelector('#sftkConfirmGo')?.click()`);

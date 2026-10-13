@@ -15,7 +15,7 @@ Flows, data deployments between orgs, permission copies, Lightning page assignme
 Admin Toolkit for Salesforce works through the Salesforce tabs you already have open — no
 separate login, no server in between. Nothing about your data leaves your browser except
 to talk directly to your own orgs. Anything that can change something in Salesforce shows
-you what it is about to do and asks first: a checkbox, a typed word for anything permanent,
+you what it is about to do and asks first: an acknowledgement checkbox,
 and the org's name when the target is production. Where a tool reads the org back
 afterwards it says "verified"; where it can only report what Salesforce answered, it says
 that instead.

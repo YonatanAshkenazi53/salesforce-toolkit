@@ -288,7 +288,8 @@ describe('the multi-org API version panel', () => {
   it('changing a version is gated: typed confirmation + behaviour warning', () => {
     // Campaign 3 phase 2: moved into the shared sftkConfirmDestructive dialog
     // (sftk-confirm.js) — the typed word is now that dialog's own gate.
-    expect(DEP).toContain("typedWord: 'CHANGE'");
+    expect(DEP).not.toContain("typedWord: 'CHANGE'");  // owner 2026-10-13: acknowledge + press, no typed word
+    expect(DEP).toContain("ack: 'I understand and want to proceed'");
     expect(DEP).toContain('sftkConfirmDestructive(');
     expect(DEP).toContain('flow behaviour can differ between API versions');
     expect(DEP).toContain('this is a functional change, not a label');

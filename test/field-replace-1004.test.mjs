@@ -590,7 +590,7 @@ describe('a flow that runs on the field — the decision is made on its card', (
   it('a replace has nothing to choose: its dialog section carries no radio at all', () => {
     const sw = FC.slice(FC.indexOf('function _flowSwapHtml('), FC.indexOf('const _chainKey ='));
     expect(sw).not.toContain('fcActiveMode');
-    expect(sw).toContain('A replace has nothing else to choose.');
+    expect(sw).toContain('pointed at ${esc(pv.to)}');   // the fold's summary says what moves; the plan itself is in the stakes above (v2, 2026-10-13)
   });
   it('🗑 shows the delete plan: its own version list, its own lines, its own button text', () => {
     expect(FC).toContain("const shownPlan = preset === 'delete' ? flowPlan.planDelete : (flowPlan ? flowPlan.plan : null);");
@@ -612,7 +612,9 @@ describe('a flow that runs on the field — the decision is made on its card', (
     const ch = FC.slice(FC.indexOf('function _flowChoiceHtml('), FC.indexOf('function _flowSwapHtml('));
     expect(ch).toContain('name="fcActiveMode" value="replace"');
     expect(ch).toContain('name="fcActiveMode" value="delete"');
-    expect(ch).toContain("${preset === 'replace' ? `<div class=\"fc-prev-hd\">The active version — the flow keeps running</div>");
+    // v2 (2026-10-13): the way already chosen on the card is not restated — only its warnings are shown
+    expect(ch).toContain("${preset === 'replace' ? `<div class=\"fc-prev-sec\">${pv.emptied.length");
+    expect(ch).toContain('<details class="fc-prev-more"><summary>Inside the active v${act.num}');
   });
   it('the busy text lands on the button that was pressed, not on its neighbour', () => {
     expect(FC).toContain("(!b.dataset.way || !_fixWay || b.dataset.way === _fixWay)) b.textContent = text;");
