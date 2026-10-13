@@ -567,11 +567,11 @@ async function sftkUndoBuildPlan(loaded, io) {
   const multiLeg = legs.length > 1;
   for (const it of plan) it.key = multiLeg ? `${it.objType} @ ${orgLabel(it.leg.orgUrl)}` : it.objType;
   const prodLeg = legs.find(l => cachedOrgType(l.orgUrl) === 'production') || legs.find(l => prodUnknown.includes(l.orgUrl)) || legs[0];
-  const typedWord = prod ? orgLabel(prodLeg.orgUrl) : 'ROLLBACK';
+  const prodLabel = prod ? orgLabel(prodLeg.orgUrl) : '';
   // Parents kept only because a child object could not be READ are the
   // user's call: the page offers "delete anyway — I checked" per record.
   const forceable = plan.some(it => !it.refused && it.keptIds && it.keptIds.length && it.cascadeUnknown && it.cascadeUnknown.length);
-  return { ...loaded, legs, plan, anyWork, forceable, prod, prodUnknown, prodLeg, typedWord, evLegs };
+  return { ...loaded, legs, plan, anyWork, forceable, prod, prodUnknown, prodLeg, prodLabel, evLegs };
 }
 
 // Step 4 — deletes first (children before parents), then restores, then the

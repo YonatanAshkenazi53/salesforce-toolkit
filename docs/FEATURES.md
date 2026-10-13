@@ -1,6 +1,6 @@
 # Admin Toolkit for Salesforce — what every tool does
 
-Admin Toolkit for Salesforce runs inside your browser and works through the Salesforce tabs you already have open — no separate login, no server of ours in between. Nothing about your data leaves your browser except to talk directly to your own Salesforce orgs. Anything that can change something in Salesforce shows you what it's about to do and asks first — a checkbox, a typed word for anything permanent, and in Data Studio the org's name when the target is production. Where a tool reads the org back afterward, it says so; where it can only report what Salesforce answered, it says that instead.
+Admin Toolkit for Salesforce runs inside your browser and works through the Salesforce tabs you already have open — no separate login, no server of ours in between. Nothing about your data leaves your browser except to talk directly to your own Salesforce orgs. Anything that can change something in Salesforce shows you what it's about to do and asks first — an acknowledgement checkbox, and in Data Studio the org's name when the target is production. Where a tool reads the org back afterward, it says so; where it can only report what Salesforce answered, it says that instead.
 
 ## Toolkit (the popup)
 
@@ -12,8 +12,8 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 
 ### Dependencies
 - A tree of every flow showing what calls what, a "what uses…" search for a field, object or value, 🧨 blast radius (what breaks if you touch this flow), and 🔗 chain (upstream and downstream, with loops detected). All read-only; an export downloads the same report as a file. Deleting a flow from here uses the same checks as the Flows tab, including a table of every flow that calls the one you're deleting.
-- ⚙ **API versions** compares every flow's pinned API version to the org's own release. Pick flows and a target version, then type CHANGE to confirm; it deploys a new version (activating it if the flow was Active) or rewrites a Draft in place, then re-reads the org and reports what changed and verified versus what Salesforce refused.
-- ⏻ **Flow switches** groups record-triggered and scheduled flows by object with an On/Off state. Turning flows off requires typing OFF and warns automation stops for everyone and records created while off aren't processed retroactively; it re-reads the org afterward and remembers which version was active so turning back on can restore it — or says honestly it can't if there's no record of it.
+- ⚙ **API versions** compares every flow's pinned API version to the org's own release. Pick flows and a target version, then acknowledge and confirm; it deploys a new version (activating it if the flow was Active) or rewrites a Draft in place, then re-reads the org and reports what changed and verified versus what Salesforce refused.
+- ⏻ **Flow switches** groups record-triggered and scheduled flows by object with an On/Off state. Turning flows off requires acknowledging and confirming, and warns automation stops for everyone and records created while off aren't processed retroactively; it re-reads the org afterward and remembers which version was active so turning back on can restore it — or says honestly it can't if there's no record of it.
 - Limit: this only knows what a flow's own saved metadata calls, not buttons, Apex, REST or scheduled starts; a managed flow's contents can't be searched.
 
 ### Debugger
@@ -73,7 +73,7 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 
 ### History
 - A log of every past deployment: the org pair, per-object counts (created, updated, deleted, failed), and a status of success, partial, or failed. Filter by status or deployment, and export any run — or all of them — as CSV or JSON.
-- ↩ **Roll back**, launched from a run's card, undoes it: typing ROLLBACK (or the org's name for production) deletes what the run created and restores what it overwrote to its prior values, then re-reads the target and only reports "verified" for what it actually confirmed gone or restored.
+- ↩ **Roll back**, launched from a run's card, undoes it: acknowledging and confirming (and typing the org's name for production) deletes what the run created and restores what it overwrote to its prior values, then re-reads the target and only reports "verified" for what it actually confirmed gone or restored.
 - A change made by a Toolkit tool — a flow switched off or moved to a new API version, a permission copied, a Lightning page assigned, a field reference replaced — is listed in that tool, not here: while the tool is open its **History** button shows what was written, what the org showed afterwards, and ↩ Undo where the change can be taken back (Field Cleaner also lists it under its results). Data Studio’s History says how many such changes there are and opens each tool on its list.
 - Limit: a rollback cannot undo automation that already ran because of the original write — emails already sent, records other flows or triggers created, or owner changes all stay as they are; hard-deleted records can't come back; and only the most recent runs keep enough information to be rolled back at all.
 

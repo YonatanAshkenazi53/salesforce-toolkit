@@ -48,7 +48,7 @@ describe('rollback and the org guards', () => {
   });
   it('the typed word is the org name for production AND guarded orgs, and the dialog says why', () => {
     expect(U).toContain("else if (t !== 'sandbox' && t !== 'dev') { prod = true; prodUnknown.push(leg.orgUrl); }");
-    expect(U).toContain("const typedWord = prod ? orgLabel(prodLeg.orgUrl) : 'ROLLBACK';");
+    expect(U).toContain("const prodLabel = prod ? orgLabel(prodLeg.orgUrl) : '';");
     expect(RB).toContain('is production, or guarded as production, so the word to type is its name.');
   });
 });

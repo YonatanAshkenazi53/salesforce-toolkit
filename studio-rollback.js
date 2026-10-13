@@ -308,16 +308,16 @@ async function _rbGo() {
     return bits.length ? { label: `${it.key} — ${bits.join(' · ')}`, sub: orgLabel(it.leg.orgUrl) } : null;
   }).filter(Boolean);
   const orgs = ctx.legs.map(l => orgLabel(l.orgUrl)).join(' + ');
-  // confirmed-by: sftkConfirmDestructive below — the ONE confirmation; typed
-  // ROLLBACK, or the org's name for production / unknown org types.
+  // confirmed-by: sftkConfirmDestructive below — the ONE confirmation; the
+  // acknowledgement, or the org's name for production / unknown org types.
   const sure = await sftkConfirmDestructive({
     title: `↩ Roll back ${ctx.run.profileName || ctx.ev.profileName || 'this run'} in ${orgs}`, icon: '↩',
     items: lines,
     reversibility: 'recycle',
     undoHint: 'Deleted records go to the Recycle Bin (15 days). Restored values overwrite today’s values — the restore point keeps nothing newer, so write down anything you want to keep first.',
     confirmLabel: '↩ Roll back',
-    typedWord: ctx.prod ? '' : 'ROLLBACK',
-    production: ctx.prod ? { label: ctx.typedWord } : null,
+    revOverride: { cls: 'sftk-rev-recycle', html: '♻ <strong>Recoverable</strong> — deleted records go to the Recycle Bin and can be restored for 15 days.', needsCheckbox: true, ack: 'I understand and want to proceed' },
+    production: ctx.prod ? { label: ctx.prodLabel } : null,
   });
   if (!sure) return;
   me.executing = true;

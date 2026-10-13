@@ -66,7 +66,7 @@ function clearTraceFlags(alias, log) {
 }
 // The one shared confirmation: read out, shown WHOLE (scrolled to its end — user
 // 2026-10-09: "all the dialogs shown in the video are fully presented"),
-// acknowledged, the typed word typed (the word the dialog itself asks for, unless
+// acknowledged, the production step typed (no word is typed elsewhere; the old word param is ignored, unless
 // given), confirmed; then the production step if the org is treated as one.
 async function confirmShared(c, { caption = '', hold = 0, word = null, flowBackupOff = false } = {}) {
   const { h, rec } = c;
@@ -76,10 +76,6 @@ async function confirmShared(c, { caption = '', hold = 0, word = null, flowBacku
   await rec.reveal('.sftk-cf-host');
   if (flowBackupOff && await h.eval(`!!document.querySelector('#fcFlowBackup')?.checked`)) await rec.click('#fcFlowBackup', 500);   // no file download in a recording
   if (await c.has('#sftkConfirmAck')) { await rec.point('#sftkConfirmAck', 500); await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) a.click(); return true; })()`); await h.sleep(300); }
-  if (await c.has('#sftkConfirmWord')) {
-    const w = word || (await h.eval(`(document.querySelector('#sftkConfirmWord')?.getAttribute('aria-label') || '').replace(/^Type\s+/, '').replace(/\s+to confirm$/, '').trim()`)) || 'CONFIRM';
-    await rec.type('#sftkConfirmWord', w, 140);
-  }
   await h.eval(`(() => { const b = document.querySelector('#sftkConfirmGo'); if (b) b.setAttribute('data-demo-go', '1'); return true; })()`);
   await rec.click('#sftkConfirmGo', 600);
   await prodGate(c);
@@ -97,7 +93,7 @@ async function depScanGate(c, say = false) {
   if (say) await rec.say('Above a hundred and fifty flow versions the scan does not start by itself: the page says what it costs in API calls, and you start it.');
   await rec.click('[data-demo-depscan="1"]', 800);
 }
-// the shared confirmation with a typed word (OFF, CHANGE, UNDO…)
+// the shared confirmation (kept for old call sites: the acknowledgement only)
 const typedConfirm = (c, word) => confirmShared(c, { word });
 // ↩ Undo the newest change of the open tool, from the tool's own History (top bar)
 async function undoInTool(c, caption) {
@@ -300,7 +296,7 @@ export const SECTIONS = [
     await rec.point('#depFbCount', 1000);
     await rec.click('#depFbOff', 600);
     await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 120000, 500);
-    await rec.say('The confirmation names every flow and says what switching it off means. Then it asks you to type the word.', 5000);
+    await rec.say('The confirmation names every flow and says what switching it off means. Then it asks you to acknowledge and confirm.', 5000);
     await typedConfirm(c, 'OFF');
     await rec.fast(() => h.waitFor("/switched (OFF|ON)|❌|stale/.test(document.querySelector('#depFbOut')?.innerText || '')", 600000, 1000));
     await rec.scrollTo('#depFbOut', 'center');
@@ -1274,7 +1270,7 @@ export const SECTIONS = [
     await rec.reveal(null);
     await rec.scrollTo('#dsRbGo', 'center');
     await rec.click('#dsRbGo', 800);
-    await confirmShared(c, { caption: 'The confirmation asks for a typed word.', word: 'ROLLBACK' });
+    await confirmShared(c, { caption: 'The confirmation asks you to acknowledge.' });
     await rec.say('The rollback runs like a deployment: live, object by object, and verified at the end by reading the org again.');
     const t1 = Date.now();
     while ((await h.eval(`_history.filter(x => x.kind === 'rollback').length`)) <= rbBefore && Date.now() - t1 < 900000) await h.sleep(1000);

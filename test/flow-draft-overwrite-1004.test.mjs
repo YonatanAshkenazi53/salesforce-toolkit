@@ -42,7 +42,7 @@ describe('the plan — a draft newer than the active version', () => {
   it('the dialog says the draft is REPLACED and to back it up', () => {
     const p = F.sftkFlowSurgeryPlan([V('d', 4, 'Draft'), V('a', 3, 'Active')], ['d', 'a']);
     const lines = F.sftkFlowSurgeryLines(p, 0, null).join(' ');
-    expect(lines).toContain('v4 is a DRAFT newer than the active v3');
+    expect(lines).toContain('v4 is a DRAFT newer than the active v3');   // said inside the deploy line since v2 (2026-10-13)
     expect(lines).toContain('REPLACED');
     expect(lines).toContain('Deploy the active v3 over the draft v4 without the field reference');
     expect(F.sftkFlowSurgeryLines(p, 0, null, { swapTo: 'New__c' }).join(' ')).toContain('pointing at New__c instead, and make sure v4 is ACTIVE');

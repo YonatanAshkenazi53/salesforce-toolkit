@@ -1320,15 +1320,14 @@ async function sftkSeedConfirmAndRun(what) {
       const masked = objs.reduce((n, o) => n + Object.keys(sftkSeedPiiForObject(o)).length, 0);
       return masked ? `<div class="ds-pk-note" style="margin-top:4px">🎭 ${masked} field(s) will be pseudonymized on the way in — masked, never anonymized.</div>` : '';
     })()}`;
-  // The RESET word and the production typed-name step now live in the SAME
-  // shared dialog (sftk-confirm.js) — same wording, same typed word.
+  // The acknowledgement and the production typed-name step live in the SAME
+  // shared dialog (sftk-confirm.js).
   const ok = await sftkConfirmDestructive({
     title: `🧹 ${what.seed ? 'Reset & Seed' : 'Wipe targets'} — this DELETES data`,
     icon: '🧹',
     revOverride: _seedDelMode === 'hard'
       ? { html: '🔥 <strong>Permanent</strong> — hard-deleted records are purged from the Recycle Bin and cannot be recovered.', needsCheckbox: true }
-      : { html: '♻ <strong>Recoverable</strong> — deleted records go to the Recycle Bin and can be restored for 15 days.', needsCheckbox: false },
-    typedWord: 'RESET',
+      : { html: '♻ <strong>Recoverable</strong> — deleted records go to the Recycle Bin and can be restored for 15 days.', needsCheckbox: true, ack: 'I understand and want to proceed' },
     confirmLabel: `🧹 ${what.seed ? 'Reset & Seed' : 'Wipe'} ${targets.length} org(s)`,
     extraHtml: bodyHtml,
     production: prodTargets.length ? { label: await prodLabelFor() } : null,
