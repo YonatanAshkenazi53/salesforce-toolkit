@@ -51,7 +51,8 @@ export default async function (h) {
   await h.studio('#/profiles');
   await h.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await h.importProfiles('docs/fixtures/complex-deployment/profiles.json');
-  // the import re-points every deployment to the logged-in source and target (the target org changed on 2026-10-15)
+  // the direction is trailheads5 → the Developer Edition target, whatever the login order (the import re-points by it)
+  await h.eval("(async () => { const all = (typeof _buildAllSessions === 'function' ? _buildAllSessions() : _allSessions) || []; const src = (all.find(x => /trailheads5/.test(x.orgUrl)) || {}).orgUrl, tgt = (all.find(x => /dev-ed|orgfarm/.test(x.orgUrl)) || {}).orgUrl; if (src && tgt) { for (const p of _profiles) { p.sourceOrg = src; p.targetOrg = tgt; } await storageSaveProfiles(); } return [src, tgt]; })()").then(r => h.log('deployments point', r));
   await h.eval("location.hash = '#/profiles'"); await h.sleep(1200); await shot('studio-deployments');
   const id = await h.eval("_profiles.find(p => p.name === 'SFTK CX — Accounts tree')?.id");
   await h.eval(`window.runProfile(${JSON.stringify(id)})`); await h.sleep(1500);
