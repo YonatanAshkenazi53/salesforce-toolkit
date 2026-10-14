@@ -88,32 +88,62 @@ function _sftkMergeNorm(v) {
 //   → { differ: [{ name, label, type, values: [...] }], same }
 function sftkMergeDiff(fields, recs) {
   const rs = Array.isArray(recs) ? recs : [];
-  const differ = [];
+  const differ = [], sameList = [];
   let same = 0;
   for (const f of (fields || [])) {
     if (!sftkMergeFieldOk(f)) continue;
     const values = rs.map(r => (r && r[f.name] !== undefined) ? r[f.name] : null);
-    if (values.every(v => _sftkMergeNorm(v) === _sftkMergeNorm(values[0]))) { same++; continue; }
+    if (values.every(v => _sftkMergeNorm(v) === _sftkMergeNorm(values[0]))) { same++; sameList.push({ name: f.name, label: f.label || f.name, type: f.type || '', value: values[0] }); continue; }
     differ.push({ name: f.name, label: f.label || f.name, type: f.type || '', values });
   }
-  return { differ, same };
+  return { differ, same, sameList };
+}
+
+// A value the user TYPED for a field (user 2026-10-14: a third choice beside the
+// copies' values), in the shape the REST API takes for that field type. '' → null.
+// Reference ids and booleans must be exact; a number must parse; anything that
+// does not fit is refused here with a sentence, before the dialog closes.
+function sftkMergeCoerce(type, text) {
+  const t = String(type || ''), s = String(text == null ? '' : text).trim();
+  if (s === '') return { ok: true, value: null };
+  if (t === 'boolean') { if (/^(true|yes|1)$/i.test(s)) return { ok: true, value: true }; if (/^(false|no|0)$/i.test(s)) return { ok: true, value: false }; return { ok: false, error: 'true or false' }; }
+  if (['double', 'currency', 'int', 'percent', 'long'].includes(t)) { const n = Number(s.replace(/,/g, '')); if (!Number.isFinite(n)) return { ok: false, error: 'a number' }; return { ok: true, value: t === 'int' || t === 'long' ? Math.trunc(n) : n }; }
+  if (t === 'date') { if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return { ok: false, error: 'a date as YYYY-MM-DD' }; return { ok: true, value: s }; }
+  if (t === 'datetime') { if (Number.isNaN(Date.parse(s))) return { ok: false, error: 'a date and time, e.g. 2026-10-14T09:30:00Z' }; return { ok: true, value: new Date(s).toISOString() }; }
+  if (t === 'reference') { if (!/^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$/.test(s)) return { ok: false, error: 'a Salesforce id' }; return { ok: true, value: s }; }
+  return { ok: true, value: s };
+}
+
+// The field types a value can sensibly be typed for (the rest: pick one of the copies' values).
+function sftkMergeTypable(type) {
+  return !['address', 'location', 'base64', 'anyType', 'complexvalue', 'json', 'multipicklist'].includes(String(type || ''));
 }
 
 // What the survivor is written with: for every differing field the value of the
-// copy the user picked, when it is not the survivor's own.
-//   picks: { fieldName: copyIndex }   survivorIdx: the survivor's position
-//   → { body: { field: value }, changes: [{ name, label, from, to }] }
+// copy the user picked — or the value the user typed — when it is not the
+// survivor's own.
+//   picks: { fieldName: copyIndex | { custom: text } }   survivorIdx: the survivor's position
+//   → { body: { field: value }, changes: [{ name, label, from, to, typed? }], errors: [{ name, label, error }] }
 function sftkMergeChosen(diff, picks, survivorIdx) {
-  const body = {}, changes = [];
+  const body = {}, changes = [], errors = [];
   const s = Number.isInteger(survivorIdx) ? survivorIdx : 0;
   for (const f of ((diff && diff.differ) || [])) {
-    const i = picks && Number.isInteger(picks[f.name]) ? picks[f.name] : s;
+    const p = picks ? picks[f.name] : undefined;
+    if (p && typeof p === 'object' && 'custom' in p) {
+      const r = sftkMergeCoerce(f.type, p.custom);
+      if (!r.ok) { errors.push({ name: f.name, label: f.label, error: r.error }); continue; }
+      if (_sftkMergeNorm(r.value) === _sftkMergeNorm(f.values[s])) continue;
+      body[f.name] = r.value;
+      changes.push({ name: f.name, label: f.label, from: f.values[s], to: r.value, typed: true });
+      continue;
+    }
+    const i = Number.isInteger(p) ? p : s;
     if (i === s || i < 0 || i >= f.values.length) continue;
     if (_sftkMergeNorm(f.values[i]) === _sftkMergeNorm(f.values[s])) continue;
     body[f.name] = f.values[i];
     changes.push({ name: f.name, label: f.label, from: f.values[s], to: f.values[i] });
   }
-  return { body, changes };
+  return { body, changes, errors };
 }
 
 // The generic way: the child relationships whose rows move to the survivor.
@@ -289,6 +319,8 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkMergeFieldOk = sftkMergeFieldOk;
   globalThis.sftkMergeDiff = sftkMergeDiff;
   globalThis.sftkMergeChosen = sftkMergeChosen;
+  globalThis.sftkMergeCoerce = sftkMergeCoerce;
+  globalThis.sftkMergeTypable = sftkMergeTypable;
   globalThis.sftkMergeChildPlan = sftkMergeChildPlan;
   globalThis.sftkMergeValueText = sftkMergeValueText;
   globalThis.sftkMergeApexRefusal = sftkMergeApexRefusal;

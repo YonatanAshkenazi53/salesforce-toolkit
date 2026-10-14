@@ -6455,3 +6455,8 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 .sftk-cf-rows li > b { flex: 0 0 86px; font-weight: 700; }
 .sftk-cf-more { margin-top: 4px; font-size: 11px; color: var(--subtext); }
 .sftk-cf-more > summary { cursor: pointer; color: var(--brand); }
+.ds-merge-typed { min-width: 150px; }
+.ds-merge-typed .ds-input { width: 100%; min-width: 120px; }
+.ds-merge-samefold { margin-top: 8px; font-size: 12px; }
+.ds-merge-samefold > summary { cursor: pointer; color: var(--brand, #1b6fd1); }
+.ds-merge-samefold .ds-merge-wrap { margin-top: 6px; max-height: 32vh; }

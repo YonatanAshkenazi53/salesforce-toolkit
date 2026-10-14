@@ -966,9 +966,13 @@ async function _depMergeCopies(p, side, name, ids) {
   const fmt = v => esc(sftkMergeValueText(v));
   const base = String(orgUrl || '').replace(/\/$/, '');
   const head = recs.map((r, i) => `<th class="ds-merge-col${i === 0 ? ' ds-merge-keep' : ''}" data-merge-col="${i}"><label class="ds-merge-keeplbl"><input type="radio" name="dsMergeKeep" value="${i}" ${i === 0 ? 'checked' : ''}> Keep copy ${i + 1}</label><div class="ds-dep-muted"><a href="${esc(base)}/lightning/r/${esc(r.Id)}/view" target="_blank" rel="noopener">${esc(r.Id)}</a> · created ${esc(when(r.CreatedDate))} · changed ${esc(when(r.LastModifiedDate))}</div></th>`).join('');
-  const rows = diff.differ.map(f => `<tr data-merge-field="${esc(f.name)}"><th scope="row">${esc(f.label)}<div class="ds-dep-muted">${esc(f.name)}</div></th>${f.values.map((v, i) => `<td class="ds-merge-col${i === 0 ? ' ds-merge-keep' : ''}" data-merge-col="${i}"><label class="ds-merge-val"><input type="radio" name="dsMergeF_${esc(f.name)}" value="${i}" ${i === 0 ? 'checked' : ''}> <span>${fmt(v)}</span></label></td>`).join('')}</tr>`).join('');
-  const table = `<div class="ds-merge-wrap"><table class="ds-merge-table"><thead><tr><th>Which record stays?</th>${head}</tr></thead><tbody>${rows || `<tr><td colspan="${recs.length + 1}" class="ds-dep-muted">Every writable field holds the same value in all copies — nothing to choose.</td></tr>`}</tbody></table></div>
-    <div class="ds-dep-muted ds-merge-same">${diff.differ.length ? 'For each field above, tick the value the record that stays keeps (its own values are ticked). ' : ''}${diff.same.toLocaleString()} writable field${diff.same === 1 ? ' is' : 's are'} the same in every copy.</div>`;
+  // every differing field: one radio per copy, and a third — a value typed here (user 2026-10-14)
+  const hint = t => t === 'date' ? 'YYYY-MM-DD' : t === 'datetime' ? '2026-10-14T09:30:00Z' : t === 'boolean' ? 'true / false' : t === 'reference' ? 'a Salesforce id' : 'type a value…';
+  const rows = diff.differ.map(f => `<tr data-merge-field="${esc(f.name)}" data-merge-type="${esc(f.type)}"><th scope="row">${esc(f.label)}<div class="ds-dep-muted">${esc(f.name)}</div></th>${f.values.map((v, i) => `<td class="ds-merge-col${i === 0 ? ' ds-merge-keep' : ''}" data-merge-col="${i}"><label class="ds-merge-val"><input type="radio" name="dsMergeF_${esc(f.name)}" value="${i}" ${i === 0 ? 'checked' : ''}> <span>${fmt(v)}</span></label></td>`).join('')}<td class="ds-merge-typed">${sftkMergeTypable(f.type) ? `<label class="ds-merge-val"><input type="radio" name="dsMergeF_${esc(f.name)}" value="custom"> <input type="text" class="ds-input ds-input-sm" data-merge-custom="${esc(f.name)}" placeholder="${esc(hint(f.type))}" aria-label="A value typed for ${esc(f.label)}"></label>` : ''}</td></tr>`).join('');
+  const sameRows = (diff.sameList || []).map(f => `<tr><th scope="row">${esc(f.label)}<div class="ds-dep-muted">${esc(f.name)}</div></th><td colspan="${recs.length + 1}">${fmt(f.value)}</td></tr>`).join('');
+  const table = `<div class="ds-merge-wrap"><table class="ds-merge-table"><thead><tr><th>Which record stays?</th>${head}<th class="ds-merge-typed">or a value you type</th></tr></thead><tbody>${rows || `<tr><td colspan="${recs.length + 2}" class="ds-dep-muted">Every writable field holds the same value in all copies — nothing to choose.</td></tr>`}</tbody></table></div>
+    <div class="ds-dep-muted ds-merge-same">${diff.differ.length ? 'For each field above, tick the value the record that stays keeps (its own values are ticked), or type one. ' : ''}${diff.same.toLocaleString()} writable field${diff.same === 1 ? ' is' : 's are'} the same in every copy.</div>
+    ${sameRows ? `<details class="ds-merge-samefold"><summary>Show the ${diff.same.toLocaleString()} field${diff.same === 1 ? '' : 's'} that ${diff.same === 1 ? 'is' : 'are'} the same</summary><div class="ds-merge-wrap"><table class="ds-merge-table">${sameRows}</table></div></details>` : ''}`;
   const others = recs.length === 2 ? 'the other copy is' : `the other ${recs.length - 1} copies are`;
   const stakes = native
     ? `<b>One record stays; ${others} merged into it and deleted.</b> <b>The Toolkit cannot undo a merge.</b>` +
@@ -1002,11 +1006,19 @@ async function _depMergeCopies(p, side, name, ids) {
           box.querySelectorAll('tr[data-merge-field]').forEach(tr => { const x = tr.querySelector(`input[value="${r.value}"]`); if (x) x.checked = true; });
           paint();
         }));
+        // typing in a row's box is choosing it
+        box.querySelectorAll('input[data-merge-custom]').forEach(inp => inp.addEventListener('input', () => { const r = inp.closest('tr')?.querySelector('input[type="radio"][value="custom"]'); if (r) r.checked = true; }));
         eid('dsMergeCancel')?.addEventListener('click', () => { closeModal(); finish(null); });
         eid('dsMergeGo')?.addEventListener('click', () => {
           const keep = Number((box.querySelector('input[name="dsMergeKeep"]:checked') || {}).value || 0);
           const picks = {};
-          box.querySelectorAll('tr[data-merge-field]').forEach(tr => { const x = tr.querySelector('input:checked'); if (x) picks[tr.dataset.mergeField] = Number(x.value); });
+          box.querySelectorAll('tr[data-merge-field]').forEach(tr => {
+            const x = tr.querySelector('input[type="radio"]:checked'); if (!x) return;
+            picks[tr.dataset.mergeField] = x.value === 'custom' ? { custom: (tr.querySelector('input[data-merge-custom]') || {}).value || '' } : Number(x.value);
+          });
+          // a typed value that does not fit its field is said now, in the dialog, not after it closed
+          const bad = sftkMergeChosen(diff, picks, keep).errors;
+          if (bad.length) { showToast(`${bad.map(b => `${b.label}: needs ${b.error}`).join(' · ')}`, 'error', 7000); return; }
           closeModal(); finish({ keep, picks });
         });
         const mo = new MutationObserver(() => { if (!box.querySelector('.sftk-cf')) { mo.disconnect(); finish(null); } });
@@ -1023,7 +1035,7 @@ async function _depMergeCopies(p, side, name, ids) {
     icon: '🔀', title: `Merge ${dups.length === 1 ? 'one copy' : `${dups.length} copies`} of "${name}" into ${survivor.Id} in ${org}`,
     items: [
       ...dups.map(r => ({ label: `${label} ${r.Id} — merged into ${survivor.Id} and deleted`, sub: tell(r) })),
-      ...chosen.changes.map(ch => ({ label: `${ch.label}: ${sftkMergeValueText(ch.from)} → ${sftkMergeValueText(ch.to)}`, sub: 'written to the record that stays' })),
+      ...chosen.changes.map(ch => ({ label: `${ch.label}: ${sftkMergeValueText(ch.from)} → ${sftkMergeValueText(ch.to)}`, sub: ch.typed ? 'typed by you — written to the record that stays' : 'written to the record that stays' })),
     ],
     reversibility: 'permanent',
     revOverride: { html: '⛔ <strong>Cannot be undone</strong> — the Toolkit offers no undo for a merge.' +

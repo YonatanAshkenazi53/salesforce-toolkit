@@ -9,7 +9,7 @@
 // (fixture.mjs: restoreDuplicateName). trailheads4 (npc2) is read only.
 //   1. the group as drawn: the 🔀 button sits on the trailheads5 side (two copies)
 //   2. the picker: both copies side by side, Billing City and Annual Revenue differ
-//   3. keep the Haifa copy, take Eilat's city and revenue → the shared confirmation
+//   3. keep the Haifa copy, take Eilat's city, TYPE a revenue of 7 (the third choice, 2026-10-14) → the shared confirmation
 //      (cannot be undone — acknowledged) → Merge now
 //   4. the History entry; CLI: one Account left with Eilat / 2, the deleted copy
 //      carries MasterRecordId = the record that stayed; trailheads4 unchanged
@@ -71,7 +71,10 @@ export default async function (h) {
     const keep = cols.findIndex(c => c.includes(haifa.Id)), other = cols.findIndex(c => c.includes(eilat.Id));
     if (keep < 0 || other < 0) throw new Error('the copies are not the fixture ids');
     await h.eval(`(() => { const r = document.querySelector('input[name="dsMergeKeep"][value="${keep}"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
-    for (const f of ['BillingCity', 'AnnualRevenue']) await h.eval(`(() => { const r = document.querySelector('tr[data-merge-field="${f}"] input[value="${other}"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+    for (const f of ['BillingCity']) await h.eval(`(() => { const r = document.querySelector('tr[data-merge-field="${f}"] input[value="${other}"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+    // the third choice (2026-10-14): a value typed here — Annual Revenue becomes 7, a number neither copy holds
+    await h.eval(`(() => { const i = document.querySelector('input[data-merge-custom="AnnualRevenue"]'); i.value = '7'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    h.log('3. same-fields fold:', await h.eval(`(document.querySelector('.ds-merge-samefold summary')?.innerText || 'none')`));
     const picked = await h.eval(`[...document.querySelectorAll('tr[data-merge-field]')].map(tr => tr.dataset.mergeField + '=' + (tr.querySelector('input:checked') || {}).value)`);
     h.log('3. keep column', keep, '| picks:', JSON.stringify(picked));
     await h.eval(`document.querySelector('#dsMergeGo').click()`);
@@ -96,7 +99,7 @@ export default async function (h) {
     // 4. the org
     const after = cli('npc', `SELECT Id, BillingCity, AnnualRevenue FROM Account WHERE Name = '${NAME}'`);
     h.log('4. CLI trailheads5 after:', JSON.stringify(after.map(r => `${r.Id}:${r.BillingCity}/${r.AnnualRevenue}`)));
-    if (after.length !== 1 || after[0].Id !== haifa.Id || after[0].BillingCity !== 'Eilat' || Number(after[0].AnnualRevenue) !== 2) throw new Error('the org does not show one record with the chosen values');
+    if (after.length !== 1 || after[0].Id !== haifa.Id || after[0].BillingCity !== 'Eilat' || Number(after[0].AnnualRevenue) !== 7) throw new Error('the org does not show one record with the chosen values (city from the other copy, revenue typed)');
     const gone = cli('npc', `SELECT Id, IsDeleted, MasterRecordId FROM Account WHERE Id = '${eilat.Id}'`, true);
     h.log('4. CLI the merged copy:', JSON.stringify(gone));
     if (!gone[0] || !gone[0].IsDeleted || gone[0].MasterRecordId !== haifa.Id) throw new Error('the copy is not a merged (deleted) record pointing at the record that stayed');
