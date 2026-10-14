@@ -44,14 +44,14 @@ export default async function (h) {
   };
   await pick('#fcObjInput', '#fcObjDrop', 'Account'); await pick('#fcFieldInput', '#fcFieldDrop', 'SFTK_FC_Test_Status__c');
   await h.click('#fcScanBtn');
-  await h.waitFor("/dependencies on/.test(document.querySelector('#fcResults')?.innerText || '') && !/scanning|⏳/i.test(document.querySelector('#fcScanBtn')?.innerText || '')", 180000, 1000);
+  await h.waitFor("/places? uses? it|No dependencies found/.test(document.querySelector('#fcResults')?.innerText || '') && !/scanning|⏳/i.test(document.querySelector('#fcScanBtn')?.innerText || '')", 180000, 1000);
   await h.sleep(1500); await shot('toolkit-field-cleaner');
   await dark(true); await shot('toolkit-field-cleaner-dark'); await dark(false);
   // ── Data Studio ──
   await h.studio('#/profiles');
   await h.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await h.importProfiles('docs/fixtures/complex-deployment/profiles.json');
-  await h.eval("(async () => { for (const p of _profiles) { p.sourceOrg = 'https://trailheads5.my.salesforce.com'; p.targetOrg = 'https://trailheads4.my.salesforce.com'; } await storageSaveProfiles(); return true; })()");
+  // the import re-points every deployment to the logged-in source and target (the target org changed on 2026-10-15)
   await h.eval("location.hash = '#/profiles'"); await h.sleep(1200); await shot('studio-deployments');
   const id = await h.eval("_profiles.find(p => p.name === 'SFTK CX — Accounts tree')?.id");
   await h.eval(`window.runProfile(${JSON.stringify(id)})`); await h.sleep(1500);
@@ -62,7 +62,7 @@ export default async function (h) {
   await h.eval("document.querySelector('[data-dep-obj=\"\"][data-dep-tab=\"ins\"]')?.click()"); await h.sleep(600);
   await h.eval("document.querySelector('#dsDepRecords')?.scrollIntoView({ block: 'start' })"); await shot('studio-deploy-records');
   await h.eval("location.hash = '#/compare'"); await h.sleep(1200);
-  await h.eval("(() => { const pick = (sel, re) => { const s = document.querySelector(sel); const o = [...s.options].find(o => re.test(o.value) || re.test(o.text)); if (o) { s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); } }; pick('#dsOCSrc', /trailheads5/); pick('#dsOCTgt', /trailheads4/); return true; })()");
+  await h.eval("(() => { const pick = (sel, re) => { const s = document.querySelector(sel); const o = [...s.options].find(o => re.test(o.value) || re.test(o.text)); if (o) { s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); } }; pick('#dsOCSrc', /trailheads5/); pick('#dsOCTgt', /orgfarm|dev-ed/); return true; })()");
   await h.waitFor("document.querySelectorAll('[data-oc-obj]').length > 0", 120000, 1000); await h.sleep(400);
   await h.eval("document.querySelector('#dsOCSelNone')?.click(); for (const o of ['Account', 'Contact', 'Opportunity']) { const c = document.querySelector('[data-oc-obj=\"' + o + '\"]'); if (c && !c.checked) c.click(); }");
   await h.click('#dsOCRun'); await h.waitFor("!document.querySelector('#dsOCRun').disabled && !document.querySelector('.ds-oc-pending')", 300000, 1000); await h.sleep(800); await shot('studio-org-compare');
