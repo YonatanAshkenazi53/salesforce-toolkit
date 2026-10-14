@@ -23,7 +23,7 @@ import { extractFunctions } from './extract.mjs';
 
 const read = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
 const M = extractFunctions('sftk-merge.js', ['sftkMergeNative', 'sftkMergeIdOk', 'sftkMergeRounds', 'sftkMergeApex', 'sftkMergeFieldOk',
-  'sftkMergeDiff', 'sftkMergeChosen', 'sftkMergeChildPlan', 'sftkMergeValueText', 'sftkMergeApexRefusal', '_sftkMergeNorm']);
+  'sftkMergeDiff', 'sftkMergeChosen', 'sftkMergeChildPlan', 'sftkMergeValueText', 'sftkMergeApexRefusal', '_sftkMergeNorm', 'sftkMergeCoerce', 'sftkMergeTypable']);
 
 const A = '001000000000001AAA', B = '001000000000002AAA', C = '001000000000003AAA', D = '001000000000004AAA';
 
@@ -91,16 +91,36 @@ describe('the fields that differ, and what the survivor is written with', () => 
     expect(d.differ[1]).toEqual({ name: 'AnnualRevenue', label: 'Annual Revenue', type: 'currency', values: [1, 2] });
     expect(d.differ[2].values).toEqual([null, '03-1234567']);
     expect(d.same).toBe(3);   // Name, Industry, Active__c
+    expect(d.sameList.map(f => `${f.name}=${f.value}`)).toEqual(['Name=SFTK CX Duplicate Name', 'Industry=Energy', 'Active__c=true']);
   });
   it('the survivor keeps its own values unless another copy\'s was picked; a pick equal to its own writes nothing', () => {
     const d = M.sftkMergeDiff(fields, recs);
-    expect(M.sftkMergeChosen(d, {}, 0)).toEqual({ body: {}, changes: [] });
+    expect(M.sftkMergeChosen(d, {}, 0)).toEqual({ body: {}, changes: [], errors: [] });
     const c = M.sftkMergeChosen(d, { AnnualRevenue: 1, Phone: 0 }, 0);
     expect(c.body).toEqual({ AnnualRevenue: 2 });
     expect(c.changes).toEqual([{ name: 'AnnualRevenue', label: 'Annual Revenue', from: 1, to: 2 }]);
     // the second copy stays, with the first copy's (empty) phone: an empty value is a real choice
     const e = M.sftkMergeChosen(d, { Phone: 0 }, 1);
     expect(e.body).toEqual({ Phone: null });
+  });
+  it('a typed value: coerced to the field type, refused with a sentence when it does not fit, written when it differs from the survivor\'s', () => {
+    const d = M.sftkMergeDiff(fields, recs);
+    const c = M.sftkMergeChosen(d, { AnnualRevenue: { custom: '2,500' }, Phone: { custom: '' } }, 0);
+    expect(c.errors).toEqual([]);
+    expect(c.body).toEqual({ AnnualRevenue: 2500 });   // Phone typed empty = the survivor's own null: nothing to write
+    expect(c.changes[0]).toMatchObject({ name: 'AnnualRevenue', from: 1, to: 2500, typed: true });
+    const bad = M.sftkMergeChosen(d, { AnnualRevenue: { custom: 'lots' } }, 0);
+    expect(bad.body).toEqual({});
+    expect(bad.errors).toEqual([{ name: 'AnnualRevenue', label: 'Annual Revenue', error: 'a number' }]);
+    expect(M.sftkMergeCoerce('boolean', 'yes')).toEqual({ ok: true, value: true });
+    expect(M.sftkMergeCoerce('boolean', 'maybe').ok).toBe(false);
+    expect(M.sftkMergeCoerce('date', '2026-10-14')).toEqual({ ok: true, value: '2026-10-14' });
+    expect(M.sftkMergeCoerce('date', '14/10/2026').ok).toBe(false);
+    expect(M.sftkMergeCoerce('reference', 'not-an-id').ok).toBe(false);
+    expect(M.sftkMergeCoerce('string', '  Netanya ')).toEqual({ ok: true, value: 'Netanya' });
+    expect(M.sftkMergeCoerce('int', '7.9')).toEqual({ ok: true, value: 7 });
+    expect(M.sftkMergeTypable('string')).toBe(true);
+    expect(M.sftkMergeTypable('address')).toBe(false);
   });
   it('values in words', () => {
     expect(M.sftkMergeValueText(null)).toBe('(empty)');
@@ -271,6 +291,9 @@ describe('wiring', () => {
     const flow = DV.slice(DV.indexOf('async function _depMergeCopies('), DV.indexOf('async function _depRescan('));
     expect(flow).toMatch(/sftkMergeRead\(\{ send: sendBg/);
     expect(flow).toMatch(/name="dsMergeKeep"/);
+    expect(flow).toMatch(/data-merge-custom=/);                 // a value typed per field (2026-10-14)
+    expect(flow).toMatch(/ds-merge-samefold/);                  // the identical fields under a fold
+    expect(flow).toMatch(/sftkMergeChosen\(diff, picks, keep\)\.errors/);   // a typed value that does not fit is refused inside the dialog
     expect(flow).toMatch(/The Toolkit cannot undo a merge\./);
     expect(flow).toMatch(/sftkConfirmDestructive\(\{[\s\S]*reversibility: 'permanent'[\s\S]*Cannot be undone/);
     expect(flow).toMatch(/production: gate\.production/);
