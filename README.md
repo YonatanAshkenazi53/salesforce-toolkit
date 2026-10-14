@@ -7,6 +7,9 @@ the orgs you are already logged in to. Nothing leaves it.
 
 Open source under the Apache License 2.0. First public release: 1.0.0.
 
+**Walkthrough video** (35 minutes, every tool on two real orgs, with chapters):
+https://youtu.be/w6sJUhMPFB8
+
 ## Two pages
 
 **The Toolkit** (the popup, also a full tab) works on one org at a time:
@@ -50,7 +53,8 @@ Open source under the Apache License 2.0. First public release: 1.0.0.
 
 ## Install
 
-From the Chrome Web Store, or unpacked: clone this repository, open `chrome://extensions`,
+From the Chrome Web Store (link coming with the release), or unpacked: clone this repository
+(https://github.com/YonatanAshkenazi53/salesforce-toolkit), open `chrome://extensions`,
 switch on Developer mode and choose **Load unpacked** on the repository folder. The store build
 is produced by `npm run pack` and leaves the developer-only tools out.
 

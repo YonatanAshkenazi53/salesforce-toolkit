@@ -55,6 +55,9 @@ DATA STUDIO
 
 Everything stays on your PC (chrome.storage.local). No analytics, no account, no server.
 
+## YouTube video (the dashboard's "Promo video" field, under Store listing → Additional fields)
+https://youtu.be/w6sJUhMPFB8
+
 ## Category
 Developer Tools
 
@@ -80,10 +83,9 @@ Does not collect or transmit user data. All data read from Salesforce stays in t
 browser; the only network calls go to the user's own Salesforce orgs.
 
 ## Privacy policy
-PRIVACY.md (ships in the package) already lists every storage key, including the ones added
-since the last public copy (`sftk_orghealth`, `sftk_flow_run_paused`, `sftk_vr_run_paused`,
-`sftk_terms_accepted`). Replace the public gist's text with the current PRIVACY.md so the two
-read the same, and paste the gist URL into the dashboard's privacy-policy field.
+The repository is public (2026-10-15), so the privacy-policy URL for the dashboard is the file itself:
+https://github.com/YonatanAshkenazi53/salesforce-toolkit/blob/master/PRIVACY.md
+(PRIVACY.md ships in the package too, and lists every storage key.)
 
 ## What's new (1.0.0)
 The first public release — see the 1.0.0 section of CHANGELOG.md (the in-app What's New
@@ -92,5 +94,5 @@ renders it).
 ## Open source (added 2026-10-10)
 
 Line for the listing's description: "Open source under the Apache License 2.0 — the code, the
-tests and the fixtures are public." (Add the repository link once the repository is public:
-that switch is yours, in GitHub's settings.)
+tests and the fixtures are public: https://github.com/YonatanAshkenazi53/salesforce-toolkit"
+(public since 2026-10-15; Apache License 2.0).
