@@ -54,7 +54,7 @@ export default async function (h) {
   // before it ended. A section with no recording is left out, and said.
   let man;
   if (existsSync(join(dir, 'order.json'))) {
-    man = { length: 0, frames: [], cues: [], chapters: [], fast: [], pages: [] };
+    man = { length: 0, frames: [], cues: [], chapters: [], fast: [], pages: [], pointer: [] };
     const missing = [];
     // ONLY=a,b composes just those sections (a quick check of a chapter)
     const only = String(process.env.ONLY || '').split(',').map(x => x.trim()).filter(Boolean);
@@ -68,6 +68,7 @@ export default async function (h) {
       for (const x of (m.chapters || [])) man.chapters.push({ t: off + x.t, title: x.title });
       for (const x of (m.fast || [])) man.fast.push({ a: off + x.a, b: off + x.b });
       for (const x of (m.pages || [])) man.pages.push({ t: off + x.t, url: x.url, title: x.title });
+      for (const x of (m.pointer || [])) man.pointer.push({ t: off + x.t, x: x.x, y: x.y, vw: x.vw, click: x.click });
       man.length = off + (m.length || 0) + 250;
     }
     if (missing.length) h.log('NOT in this video (no recording):', missing.join(', '));
@@ -75,7 +76,7 @@ export default async function (h) {
   mkdirSync(dirname(out), { recursive: true });
   // each waiting stretch plays FAST× faster, and a very long one faster still: no stretch takes more
   // than 5 s of video (a 96-s wait for Salesforce took 12 s of badge, 2026-10-15)
-  const fast = (man.fast || []).slice().sort((a, b) => a.a - b.a).map(s => ({ ...s, k: Math.max(FAST, (s.b - s.a) / 5000) }));
+  const fast = (man.fast || []).slice().sort((a, b) => a.a - b.a).map(s => ({ ...s, k: s.v ? Math.max(1, (s.b - s.a) / (s.v * 1000)) : Math.max(FAST, (s.b - s.a) / 5000) }));   // a stretch that asked for N s of video gets them, even slower than FAST×
   const mapT = t => { let o = t; for (const s of fast) { if (t >= s.b) o -= (s.b - s.a) * (1 - 1 / s.k); else if (t > s.a) o -= (t - s.a) * (1 - 1 / s.k); } return Math.max(0, o); };
   const inFast = t => fast.some(s => t > s.a && t < s.b);
 
@@ -114,6 +115,8 @@ export default async function (h) {
   for (const c of said) ev.push({ tau: T(c.t), kind: 'cue', text: c.text, voice: c.voice || null, dur: c.dur || 0 });
   for (const c of (man.chapters || [])) ev.push({ tau: T(c.t), kind: 'chapter', title: c.title });
   for (const p of (man.pages || [])) ev.push({ tau: T(p.t), kind: 'page', url: p.url || '', title: p.title || '' });
+  // the pointer: where it went, and when it pressed (drawn by the encoder page, moving between places)
+  for (const q of (man.pointer || [])) ev.push({ tau: T(q.t), kind: 'ptr', x: q.x, y: q.y, vw: q.vw || 1600, click: !!q.click });
   // the "sped up" badge goes when the waiting ends, even if the picture does not change then
   for (const f of fast) { ev.push({ tau: T(f.a), kind: 'faston' }); ev.push({ tau: T(f.b) + 5, kind: 'fastoff' }); }
   ev.sort((a, b) => a.tau - b.tau || (a.kind === 'frame' ? 1 : -1));
@@ -164,7 +167,7 @@ export default async function (h) {
     }
     const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: ${Number(process.env.BITRATE || 8000000)}, audioBitsPerSecond: ${Number(process.env.AUDIO_BITRATE || 160000)}, videoKeyFrameIntervalDuration: ${KEYFRAME_MS} });
     const chunks = []; rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-    const V = window.__v = { c, g, track, rec, chunks, type, ac, dest, clips: {}, img: null, caption: '', chapter: '', fast: false, blob: null, url: '', title: '' };
+    const V = window.__v = { c, g, track, rec, chunks, type, ac, dest, clips: {}, img: null, caption: '', chapter: '', fast: false, blob: null, url: '', title: '', ptr: null, ptrFrom: null, ptrT0: 0, clickAt: 0 };
     // the narration: each sentence is decoded before the recording starts, and only started at its moment
     V.load = async (id, b64) => { const bytes = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0)); V.clips[id] = await ac.decodeAudioData(bytes.buffer); return V.clips[id].duration; };
     V.speak = id => { const buf = V.clips[id]; if (!buf) return false; const src = ac.createBufferSource(); src.buffer = buf; src.connect(dest); src.start(); return true; };
@@ -210,6 +213,19 @@ export default async function (h) {
       }
       if (V.fast) { g.font = '600 26px "Segoe UI", sans-serif'; const t = '⏩ waiting — sped up'; const w = g.measureText(t).width + 36;
         g.fillStyle = 'rgba(11,31,58,.88)'; g.beginPath(); g.roundRect(${W} - w - 24, ${BAND_Y} - 68, w, 48, 24); g.fill(); g.fillStyle = '#fff'; g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillText(t, ${W} - w - 6, ${BAND_Y} - 44); }
+      if (V.ptr) {
+        // the pointer glides from where it was to where it is (350 ms), and a press is a ring that grows and fades
+        const nowMs = performance.now(), k = Math.min(1, (nowMs - V.ptrT0) / 350), e = 1 - Math.pow(1 - k, 3);
+        const from = V.ptrFrom || V.ptr, sc = ${W} / (V.ptr.vw || 1600);
+        const x = (from.x + (V.ptr.x - from.x) * e) * sc, y = ${FRAME_H} + (from.y + (V.ptr.y - from.y) * e) * sc;
+        if (y < ${BAND_Y}) {
+          const age = nowMs - V.clickAt;
+          if (V.clickAt && age < 450) { const rr = 10 + 26 * (age / 450); g.beginPath(); g.arc(x, y, rr, 0, Math.PI * 2); g.strokeStyle = 'rgba(255,45,120,' + (0.9 * (1 - age / 450)).toFixed(2) + ')'; g.lineWidth = 4; g.stroke(); }
+          g.save(); g.translate(x, y); g.scale(1.7, 1.7);
+          g.beginPath(); g.moveTo(0, 0); g.lineTo(0, 16); g.lineTo(4, 12.5); g.lineTo(7, 19); g.lineTo(9.5, 18); g.lineTo(6.7, 11.5); g.lineTo(12, 11.5); g.closePath();
+          g.fillStyle = '#fff'; g.fill(); g.lineWidth = 1.2; g.strokeStyle = '#111'; g.stroke(); g.restore();
+        }
+      }
       g.fillStyle = '#0b1f3a'; g.fillRect(0, ${BAND_Y}, ${W}, ${H - BAND_Y});
       g.fillStyle = '#1b6fd1'; g.fillRect(0, ${BAND_Y}, ${W}, 3);
       let left = 40;
@@ -235,7 +251,7 @@ export default async function (h) {
     for (const f of files) await h.eval(`__v.load(${JSON.stringify(basename(f))}, ${JSON.stringify(readFileSync(f).toString('base64'))})`);
     h.log(`narration loaded: ${files.length} sentences`);
   }
-  await h.eval(`(() => { __v.rec.start(1000); __v.keep = setInterval(__v.paint, 200); return 1; })()`);   // a held picture still needs frames, or players stall on it
+  await h.eval(`(() => { __v.rec.start(1000); __v.keep = setInterval(__v.paint, 50); return 1; })()`);   // a held picture still needs frames, or players stall on it
 
   // ── play the timeline in real time ──
   const t0 = Date.now();
@@ -251,6 +267,7 @@ export default async function (h) {
     // a wait begins: the badge goes on, and a sentence already spoken leaves the screen
     else if (e.kind === 'faston') await h.eval(`(() => { __v.fast = true; ${cueEnd <= e.tau ? "__v.caption = '';" : ''} __v.paint(); return 1; })()`);
     else if (e.kind === 'fastoff') await h.eval(`(() => { __v.fast = false; __v.paint(); return 1; })()`);
+    else if (e.kind === 'ptr') await h.eval(`(() => { const V = __v; V.ptrFrom = V.ptr || { x: ${e.x}, y: ${e.y} }; V.ptr = { x: ${e.x}, y: ${e.y}, vw: ${e.vw} }; V.ptrT0 = performance.now(); ${e.click ? 'V.clickAt = performance.now();' : ''} V.paint(); return 1; })()`);
     else if (e.kind === 'page') await h.eval(`(() => { __v.url = ${JSON.stringify(e.url)}; __v.title = ${JSON.stringify(e.title)}; __v.paint(); return 1; })()`);
     else await h.eval(`(() => { __v.chapter = ${JSON.stringify(e.title)}; __v.paint(); return 1; })()`);
     // SNAP=<seconds>: one PNG of the composed picture at that moment, to look at the layout

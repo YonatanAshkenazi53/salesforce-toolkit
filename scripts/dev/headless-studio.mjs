@@ -22,7 +22,7 @@
 // SFTK_WINDOW=1600,900 sets the window size (default 1500,1100).
 // Chrome profile lives under %LOCALAPPDATA%\Temp (never the user's profile).
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync, createWriteStream } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -54,8 +54,12 @@ const chrome = spawn(CHROME, [
   '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--hide-scrollbars',
   '--remote-debugging-pipe', '--enable-unsafe-extension-debugging',
   `--user-data-dir=${PROFILE}`, `--window-size=${process.env.SFTK_WINDOW || '1500,1100'}`, 'about:blank'
-], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
+], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
 process.on('exit', () => { try { chrome.kill(); } catch (_) {} });
+// Chrome's own stderr and its exit are kept: a pipe that breaks (EPIPE on a write) is Chrome gone, and this says why
+const chromeErr = createWriteStream(join(SHOTS, 'chrome-stderr.log'));
+chrome.stderr.pipe(chromeErr);
+chrome.on('exit', (code, sig) => log('CHROME EXITED', code, sig || ''));
 
 // ── the pipe ──
 const toChrome = chrome.stdio[3], fromChrome = chrome.stdio[4];

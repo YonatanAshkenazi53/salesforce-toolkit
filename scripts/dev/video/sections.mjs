@@ -21,14 +21,16 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { rebuildFieldCleanerFixture, removeIdentityField, restoreDuplicateName } from './fixture.mjs';
+import { rebuildFieldCleanerFixture, removeIdentityField, restoreDuplicateName, removeVolume } from './fixture.mjs';
 
 const J = JSON.stringify;
 const FIXTURE = 'docs/fixtures/complex-deployment/profiles.json';
 const DEMO = 'Accounts and everything under them';
+const DEMO_VOL = 'Two thousand accounts';
 const OLD_FIELD = 'SFTK_FC_Test_Status__c', NEW_FIELD = 'SFTK_FC_Test_Status2__c';
-const SRC_ORG = 'trailheads5', TGT_ORG = 'trailheads4';
-const SRC_URL = `https://${SRC_ORG}.my.salesforce.com`, TGT_URL = `https://${TGT_ORG}.my.salesforce.com`;
+// the target is a Developer Edition org since 2026-10-15 (the Nonprofit Cloud trial expired)
+const SRC_ORG = 'trailheads5', TGT_ORG = 'orgfarm-e2c4511b2b-dev-ed';
+const SRC_URL = `https://${SRC_ORG}.my.salesforce.com`, TGT_URL = `https://${TGT_ORG}.develop.my.salesforce.com`;
 
 // ── small helpers ──────────────────────────────────────────────────────────
 // a Field Cleaner picker: focus, type, pick the item by API name
@@ -137,6 +139,29 @@ async function ensureDemo(c) {
   const got = await h.eval(`(() => { const p = _profiles.find(p => p.name === ${J(DEMO)}); return p ? { id: p.id, src: p.sourceOrg || '', tgt: p.targetOrg || '' } : null; })()`);
   if (!got) throw new Error('the demo deployment could not be imported');
   if (!got.src.includes(SRC_ORG) || !got.tgt.includes(TGT_ORG)) throw new Error(`the demo deployment points ${got.src} → ${got.tgt}; it must be ${SRC_ORG} → ${TGT_ORG}`);
+  return got.id;
+}
+// The volume deployment (user 2026-10-15: "thousands of them with fast forward … show how the numbers go
+// up"): 2,000 of the source's 5,190 SFTK VOL accounts, accounts only (the Developer Edition target holds
+// 5 MB), written in batches of 100 through the Collections API so the counter climbs on camera.
+async function ensureVolumeDemo(c) {
+  const { h } = c;
+  const all = JSON.parse(readFileSync(FIXTURE, 'utf8'));
+  const base = JSON.parse(JSON.stringify(all.find(p => (p.profile || p).name === 'SFTK VOL — Accounts')));
+  const prof = base.profile || base;
+  prof.name = DEMO_VOL;
+  // SOQL LIKE knows only % and _ (a [01] class matched nothing, 2026-10-16): 00001–00999, 01000–01999, and 02000
+  prof.tree.where = "Name LIKE 'SFTK VOL Account 00%' OR Name LIKE 'SFTK VOL Account 01%'";   // 00000–01999: exactly 2,000
+  prof.tree.children = [];
+  prof.apiMode = 'sync'; prof.batchSize = 100; prof.threads = 1;
+  prof.sourceOrg = SRC_URL; prof.targetOrg = TGT_URL;
+  const file = join(resolve(process.env.REC_DIR || 'dist/video/rec'), 'demo-volume.json');
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify([base]));
+  await h.importProfiles(file);
+  const got = await h.eval(`(() => { const p = _profiles.find(p => p.name === ${J(DEMO_VOL)}); return p ? { id: p.id, src: p.sourceOrg || '', tgt: p.targetOrg || '' } : null; })()`);
+  if (!got) throw new Error('the volume deployment could not be imported');
+  if (!got.src.includes(SRC_ORG) || !got.tgt.includes(TGT_ORG)) throw new Error(`the volume deployment points ${got.src} → ${got.tgt}; it must be ${SRC_ORG} → ${TGT_ORG}`);
   return got.id;
 }
 // Before anything is written by a deployment: the page itself must say source → target as intended.
@@ -1279,6 +1304,70 @@ export const SECTIONS = [
       await rec.say('“Which records” lists every record the rollback touched, by name.');
       await rec.reveal(null);
     }
+  } },
+
+  // Two thousand records, written live: the counter climbs on camera (user 2026-10-15). Rolled back on
+  // camera; a chapter that did not finish is cleaned off camera.
+  { id: 'volume', title: 'Deploy at volume', writes: true,
+    cleanup: async ({ h }) => { removeVolume('npc2', (...a) => h.log(...a)); },
+    run: async c => {
+    const { h, rec } = c;
+    if (!(await c.has('.ds-nav-btn'))) await c.studio('');
+    const id = await ensureVolumeDemo(c);
+    await h.eval(`window.runProfile(${J(id)})`); await h.sleep(1500);
+    await rec.say('The same page, at volume: a deployment of two thousand accounts the target does not have.');
+    await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
+    await waitScanned(c);
+    await h.sleep(1500);
+    await assertDirection(c);
+    await rec.scrollTo('#dsDepTickAll', 'center');
+    await rec.say('One button ticks them all.');
+    await rec.click('#dsDepTickAll', 900);
+    await rec.fast(() => h.waitFor("document.querySelectorAll('#dsDepRecords input[type=checkbox]:checked').length > 0", 30000, 300));
+    const ticked = await h.eval('_recSel.push.size');
+    if (ticked < 1900) throw new Error(`only ${ticked} records ticked`);
+    await rec.scrollTo('#dsRecRunBtn', 'center');
+    await rec.say(`${ticked.toLocaleString()} records ticked, in batches of one hundred, so the count can be watched.`);
+    const before = await h.eval('_history.length');
+    await rec.click('#dsRecRunBtn', 1500);
+    for (let i = 0; i < 3; i++) {
+      if (await c.has('#sftkConfirmGo')) await confirmShared(c, { caption: i === 0 ? 'The confirmation, with the numbers.' : '' });
+      else if (await h.modalText()) {
+        await h.eval(`(() => { const b = document.querySelector('#dsRecDelOk') || [...document.querySelectorAll('#dsModalBox button')].find(b => /proceed|deploy|confirm/i.test(b.textContent)); if (b) b.click(); return !!b; })()`);
+        await h.sleep(1500);
+      } else break;
+    }
+    await rec.scrollTo('#dsRecProgress');
+    await rec.say('Sped up here, but every number is a real write as it happens: records accepted by Salesforce, batch after batch.');
+    const t0 = Date.now();
+    await rec.fast(async () => { while ((await h.eval('_history.length')) <= before && Date.now() - t0 < 1200000) await h.sleep(500); }, { video: 12 });
+    if ((await h.eval('_history.length')) <= before) throw new Error('the volume deployment did not finish');
+    await rec.pause(1500);
+    await rec.fast(async () => { await h.sleep(3000); await h.waitFor("!document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000).catch(() => {}); });
+    const last = await h.eval(`(() => { const e = _history[_history.length - 1] || {}; const s = Object.values(e.summary || {}); const sum = k => s.reduce((t, o) => t + (Number(o && o[k]) || 0), 0); return { status: e.status || '', inserted: sum('inserted') || sum('created') || 0, failed: sum('failed') || 0 }; })()`);
+    h.log('volume result:', J(last));
+    h.log('volume entry:', await h.eval(`(() => { const e = _history[_history.length - 1] || {}; return JSON.stringify({ status: e.status, errors: (e.errors || []).slice(0, 5), notes: e.notes || e.note || null, summary: e.summary }); })()`));
+    await rec.say(last.status === 'success'
+      ? `Done: ${Number(last.inserted).toLocaleString()} records written and read back from the target.`
+      : `Finished: ${Number(last.inserted).toLocaleString()} written, ${last.failed} refused, each with Salesforce’s own reason.`);
+    await nav(c, 'history');
+    await h.waitFor("!!document.querySelector('.ds-history-card, .ds-history-item')", 20000, 500);
+    if (!(await c.has('[data-dsaction="rollbackRun"]:not([disabled])'))) throw new Error('no rollback offered for the volume run');
+    const rbBefore = await h.eval(`_history.filter(x => x.kind === 'rollback').length`);
+    await rec.click('[data-dsaction="rollbackRun"]:not([disabled])', 800);
+    await rec.say('And back: the same two thousand, rolled back.');
+    await rec.fast(() => h.waitFor("!!document.querySelector('#dsRbGo') || !!document.querySelector('.ds-rec-card-bad')", 300000, 1000));
+    await h.sleep(1200);
+    if (!(await c.has('#dsRbGo'))) throw new Error('the volume rollback could not be prepared');
+    await rec.scrollTo('#dsRbGo', 'center');
+    await rec.click('#dsRbGo', 800);
+    await confirmShared(c, { caption: '' });
+    const t1 = Date.now();
+    await rec.fast(async () => { while ((await h.eval(`_history.filter(x => x.kind === 'rollback').length`)) <= rbBefore && Date.now() - t1 < 1200000) await h.sleep(500); }, { video: 8 });
+    if ((await h.eval(`_history.filter(x => x.kind === 'rollback').length`)) <= rbBefore) throw new Error('the volume rollback did not finish');
+    await h.sleep(1500);
+    await rec.scrollTo('#dsRbResult', 'center');
+    await rec.say('Rolled back, and the target is as it was.');
   } },
 
   { id: 'ring', title: 'All open orgs', run: async c => {
