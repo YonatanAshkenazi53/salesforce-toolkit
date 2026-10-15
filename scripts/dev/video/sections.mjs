@@ -109,7 +109,7 @@ async function undoInTool(c, caption) {
   await rec.fast(() => h.waitFor("!!document.querySelector('#sftkThModalList .sftk-th-said')", 300000, 800));
   const said = await c.text('#sftkThModalList .sftk-th-said', 200);
   if (!/^Undone/.test(said)) throw new Error(`the undo was not verified: ${said}`);
-  await rec.say('Undone, and verified by reading the org again.', 3800);
+  await rec.say('Undone.', 3800);
   await rec.click('#sftkThClose', 500);
 }
 // The video's own deployments: the fixture's whole Accounts tree (ten objects
@@ -211,7 +211,7 @@ export const SECTIONS = [
     if (await c.has('#sftkTermsViewClose')) await rec.click('#sftkTermsViewClose', 600);
     await rec.point('#dataStudioBtn', 900);
     await rec.say('Data Studio opens in a tab of its own; its chapters come later, with its quick navigation and shortcuts.');
-    await rec.say('Every tool reads first and shows what it found. A change is made only after one confirmation that says exactly what will happen.');
+    await rec.say('Every tool reads first and shows what it found. A change is made only after one confirmation that says exactly what will happen, and every change is checked by reading the org again. That rule holds for every tool you will see; it is not repeated from here on.');
   } },
 
   { id: 'flows', title: 'Flows', run: async c => {
@@ -308,7 +308,7 @@ export const SECTIONS = [
     const after = await states();
     if (after.some(s => s !== 'on')) throw new Error(`after the undo the fixture flows are: ${after.join(', ')}`);
     await rec.scrollTo(`.dep-fb-cb[value="${PICKS[0]}"]`, 'center');
-    await rec.say('Read again from the org: all three are on.', 3500);
+    await rec.say('All three are on again.', 3500);
   } },
 
   { id: 'api-versions', title: 'API versions', writes: true, run: async c => {
@@ -330,11 +330,11 @@ export const SECTIONS = [
     await rec.say(`Pick the flows and the version to move them to. Here: one flow, to ${target ? `API ${target}` : 'the org’s release'}.`, 4500);
     await rec.click('#depAvApply', 600);
     await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 120000, 500);
-    await rec.say('Changing the version deploys a new version of the flow. Where the flow is active, the tool activates it and reads the org again to confirm what is running.', 6500);
+    await rec.say('Changing the version deploys a new version of the flow. Where the flow is active, the tool activates the new one.', 6500);
     await typedConfirm(c, 'CHANGE');
     await rec.fast(() => h.waitFor("/refused the package|changed across/.test(document.querySelector('#depAvLog')?.innerText || '')", 600000, 1500));
     await rec.scrollTo('#depAvLog', 'center');
-    await rec.say('Done: the new version is active, verified by re-reading the org.', 4500);
+    await rec.say('Done: the new version is the active one.', 4500);
     await undoInTool(c, 'This too is in the tool’s History. Undo makes the previous version the active one again.');
   } },
 
@@ -587,7 +587,7 @@ export const SECTIONS = [
     await h.sleep(800);
     if (await c.has('#lpResultNote')) {
       await rec.scrollTo('#lpResultNote', 'center');
-      const note = (await c.text('#lpResultNote', 160)) || 'Assigned, and verified by reading the org again.';
+      const note = (await c.text('#lpResultNote', 160)) || 'Assigned.';
       const refused = await h.eval(`(() => { const e = [...document.querySelectorAll('.lp-add-err, .error-banner')].find(x => x.offsetParent !== null && /could not be assigned/.test(x.innerText)); return e ? e.innerText.replace(/\\s+/g, ' ').slice(0, 300) : ''; })()`);
       await rec.say(refused ? `${note} One combination Salesforce refused — the Person Account record type cannot take a business page — and the tool says so in Salesforce’s own words.` : note);
     }
@@ -718,7 +718,7 @@ export const SECTIONS = [
         await confirmShared(c, { caption: 'First, access. Whoever can see the old field gets the same access to the new one. Access is only ever added.' });
         await rec.fast(() => h.waitFor("!document.querySelector('#fcFlsCopyBtn') && !document.querySelector('#sftkConfirmGo')", 120000, 500));
         await h.sleep(1200);
-        await rec.say('Copied, and verified by reading the org again.');
+        await rec.say('Copied.');
       }
       // 2. the values in the records: Replace moves references; the data is its own step
       if (await c.has('#fcCopyCompare')) {
@@ -739,7 +739,7 @@ export const SECTIONS = [
           await rec.fast(() => h.waitFor("/copied|verified|failed|refused/i.test(document.querySelector('#fcCopyResult')?.innerText || '')", 300000, 500));
           await h.sleep(800);
           await rec.scrollTo('#fcCopyResult', 'center');
-          await rec.say((await c.text('#fcCopyResult', 160)).replace(/\s+/g, ' ') || 'Copied, and verified by reading the records again.');
+          await rec.say((await c.text('#fcCopyResult', 160)).replace(/\s+/g, ' ') || 'Copied.');
         } else {
           await rec.say((await c.text('.fc-copy', 160)).replace(/\s+/g, ' ') || 'Nothing to copy here.');
         }
@@ -849,7 +849,7 @@ export const SECTIONS = [
         await confirmShared(c, { caption: 'The delete asks once more. The tool cannot undo it — Salesforce keeps a deleted field for fifteen days under Setup — and the confirmation says so.' });
         await rec.fast(() => h.waitFor("!!document.querySelector('.fc-success') || !!document.querySelector('.fc-error-msg')", 180000, 500));
         await h.sleep(1200);
-        if (await c.has('.fc-success')) { await rec.scrollTo('.fc-success', 'center'); await rec.say('Deleted, and verified: the field can no longer be read from the org.'); }
+        if (await c.has('.fc-success')) { await rec.scrollTo('.fc-success', 'center'); await rec.say('Deleted. The field is gone from the org.'); }
         else { await rec.scrollTo('.fc-error-msg', 'center'); await rec.say('Refused — and the tool says why, in Salesforce’s own words.'); }
       } else {
         await rec.say((await c.text('#fcDeleteNote', 200)) || 'The delete stays blocked until the blockers above are cleared.');
@@ -1106,7 +1106,7 @@ export const SECTIONS = [
           await waitScanned(c);
           await h.sleep(1200);
           await rec.scrollTo('.ds-dep-tabs', 'center');
-          await rec.say('Done — verified by reading the org again, recorded in History — and both orgs are read again: the name is one record now, and the tab is empty.', 7500);
+          await rec.say('Done, and recorded in History. Both orgs are read again: the name is one record now, and the tab is empty.', 7500);
         }
       }
     }
@@ -1154,7 +1154,7 @@ export const SECTIONS = [
     await rec.click('#dsIdGo', 600);
     await rec.fast(() => h.waitFor("document.querySelectorAll('#dsIdOut .ds-rec-card-line').length > 0", 300000, 1000));
     await h.sleep(1200);
-    await rec.say('One metadata deploy per org: the field, plus a permission set that lets you see it. The table is read again from both orgs.', 6500);
+    await rec.say('One metadata deploy per org: the field, plus a permission set that lets you see it.', 6500);
     const stamp = await h.eval(`(() => { const b = [...document.querySelectorAll('[data-id-stamp]')].find(b => /Account/.test(b.closest('tr')?.innerText || '')); return b ? b.innerText.trim() : ''; })()`);
     if (stamp) {
       await rec.point(`[data-id-stamp]`, 800);
@@ -1162,7 +1162,7 @@ export const SECTIONS = [
       await h.eval(`(() => { const b = [...document.querySelectorAll('[data-id-stamp]')].find(b => /Account/.test(b.closest('tr')?.innerText || '')); if (b) b.click(); return true; })()`);
       await rec.fast(() => h.waitFor("!!document.querySelector('#sftkConfirmGo')", 30000, 300));
       await h.sleep(600);
-      await rec.say('The one confirmation, as for every write. Each stamped record is re-read afterwards.', 4500);
+      await rec.say('The one confirmation, as for every write.', 4500);
       const hist = await h.eval('_history.length');
       await rec.click('#sftkConfirmGo', 600);
       await prodGate(c);
@@ -1175,7 +1175,7 @@ export const SECTIONS = [
     await waitScanned(c);
     await h.sleep(1500);
     await rec.scrollTo('.ds-dep-plan', 'center');
-    await rec.say('Read again, the stamped records match by their identity. New records a deployment creates are stamped as they are written — nothing more to do.', 7000);
+    await rec.say('Now the stamped records match by their identity. New records a deployment creates are stamped as they are written — nothing more to do.', 7000);
   } },
   { id: 'run', title: 'Deploy and roll back', writes: true, run: async c => {
     const { h, rec } = c;
@@ -1188,20 +1188,16 @@ export const SECTIONS = [
       await h.sleep(1500);
     }
     await rec.scrollTo('#dsDepRecords');
-    await rec.say('Now a real deployment, of the whole tree. Per object, the Insert tab lists what the target lacks, and "tick all" takes the list.');
-    const objs = await h.eval(`[...document.querySelectorAll('[data-dep-obj][data-dep-tab="ins"]')].map(b => b.dataset.depObj).filter((v, i, a) => a.indexOf(v) === i)`);
-    let ticked = 0;
-    // the root first: everything, except one fixture account the target's own validation rule refuses
-    // (Retail without a website) — its children then stay untickable, their parent not being on the way
+    await rec.say('Now a real deployment, of the whole tree. One button ticks every record the target lacks, in every object that was read — parents before their children.');
+    await rec.scrollTo('#dsDepTickAll', 'center');
+    await rec.click('#dsDepTickAll', 900);
+    await rec.fast(() => h.waitFor("document.querySelectorAll('#dsDepRecords input[type=checkbox]:checked').length > 0", 30000, 300));
+    let ticked = await h.eval(`(() => { let n = 0; for (const k of Object.keys(_recChildSel)) n += _recChildSel[k].push.size; return n + _recSel.push.size; })()`);
+    // one fixture account stays out on purpose: the target's own validation rule refuses it (Retail
+    // without a website) — its children then stay untickable, their parent not being on the way
     await rec.click('[data-dep-obj=""][data-dep-tab="ins"]', 500);
-    ticked += await h.eval(`(() => { const b = document.querySelector('[data-dep-bulk="all"]'); if (b && !b.disabled) b.click(); let n = 0; for (const r of document.querySelectorAll('#dsDepList .ds-dep-row')) { if (/Americas/.test(r.innerText)) { const cb = r.querySelector('input[type=checkbox]:checked'); if (cb) { cb.click(); n++; } } } return document.querySelectorAll('#dsDepList input[type=checkbox]:checked').length; })()`);
-    await h.sleep(500);
-    for (const o of objs) {
-      if (o === '') continue;
-      await rec.click(`[data-dep-obj="${o}"][data-dep-tab="ins"]`, 500);
-      const n = await h.eval(`(() => { const b = document.querySelector('[data-dep-bulk="all"]'); if (!b || b.disabled) return 0; b.click(); return document.querySelectorAll('#dsDepList input[type=checkbox]:checked').length; })()`);
-      await h.sleep(300); ticked += n;
-    }
+    ticked -= await h.eval(`(() => { let n = 0; for (const r of document.querySelectorAll('#dsDepList .ds-dep-row')) { if (/Americas/.test(r.innerText)) { const cb = r.querySelector('input[type=checkbox]:checked'); if (cb) { cb.click(); n++; } } } return document.querySelectorAll('#dsDepList input[type=checkbox]:checked').length; })()`);
+    await rec.say('One account stays out on purpose: the target refuses it with a validation rule, and the run will say so.', 4500);
     await h.sleep(600);
     if (!ticked) throw new Error('nothing to insert in the fixture');
     await assertDirection(c);
@@ -1261,7 +1257,7 @@ export const SECTIONS = [
     if (!(await c.has('[data-dsaction="rollbackRun"]:not([disabled])'))) throw new Error('no rollback offered for the run');
     const rbBefore = await h.eval(`_history.filter(x => x.kind === 'rollback').length`);
     await rec.click('[data-dsaction="rollbackRun"]:not([disabled])', 800);
-    await rec.say('Roll back opens a page of its own. It reads the org again and compares it with the restore point.');
+    await rec.say('Roll back opens a page of its own: what the run wrote, compared with the restore point.');
     await rec.fast(() => h.waitFor("!!document.querySelector('#dsRbGo') || !!document.querySelector('.ds-rec-card-bad')", 300000, 1000));
     await h.sleep(1500);
     if (!(await c.has('#dsRbGo'))) throw new Error('the rollback could not be prepared');
@@ -1271,13 +1267,13 @@ export const SECTIONS = [
     await rec.scrollTo('#dsRbGo', 'center');
     await rec.click('#dsRbGo', 800);
     await confirmShared(c, { caption: 'The confirmation asks you to acknowledge.' });
-    await rec.say('The rollback runs like a deployment: live, object by object, and verified at the end by reading the org again.');
+    await rec.say('The rollback runs like a deployment: live, object by object.');
     const t1 = Date.now();
     while ((await h.eval(`_history.filter(x => x.kind === 'rollback').length`)) <= rbBefore && Date.now() - t1 < 900000) await h.sleep(1000);
     await h.sleep(2000);
     if ((await h.eval(`_history.filter(x => x.kind === 'rollback').length`)) <= rbBefore) throw new Error('the rollback did not finish');
     await rec.scrollTo('#dsRbResult', 'center');
-    await rec.say('Rolled back, and verified by reading the org again. The records are in the target’s Recycle Bin.');
+    await rec.say('Rolled back. The records are in the target’s Recycle Bin.');
     if (await c.has('#dsRbOpenReport')) {
       await rec.click('#dsRbOpenReport', 1500);
       await rec.say('“Which records” lists every record the rollback touched, by name.');

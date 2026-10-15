@@ -206,6 +206,20 @@ function _depChildSel(pathKey) {
 let _depRetry = null;        // { profileId, byPath: { pathKey: [sourceId] } }
 let _depRetryNote = '';
 
+// PURE. Every record the target lacks, per scanned object — the input of "tick
+// every insert" (user 2026-10-15: "just select all"): sftkDeployRetryPicks then
+// applies the parent rule, so a child whose parent is not on the way stays out.
+//   → { pathKey: [sourceId] } for the root and every scanned child
+function sftkDeployEveryInsert(scan) {
+  const out = {};
+  if (!scan) return out;
+  const ids = s => (s && s.missingInTarget || []).map(r => r.sourceId).filter(Boolean);
+  const root = ids(scan);
+  if (root.length) out[''] = root;
+  for (const [k, s] of Object.entries((scan && scan.children) || {})) { const l = ids(s); if (l.length) out[k] = l; }
+  return out;
+}
+
 // PURE. Which of a failed run's records can be ticked on this page right now?
 // Only Insert rows, and for a child only rows the page would let the user tick
 // (rowState is the classic parent rule). Changed rows are counted, not ticked:
@@ -450,6 +464,8 @@ async function renderDeploy() {
   // ── plan card ──
   const sum = k => plan.reduce((n, r) => n + ((r.cells[k] && r.cells[k].n) || 0), 0);
   const unscanned = plan.filter(r => !r.scanned);
+  // what "✓ Tick every insert" would tick: every missing record of every scanned object, the parent rule applied
+  const every = sftkDeployRetryPicks(scan, sftkDeployEveryInsert(scan), sftkRecChildRowState);
   const cell = (r, k) => r.cells[k]
     ? `<td class="ds-dep-num${r.cells[k].n ? ` ds-dep-n-${k}` : ' ds-dep-muted'}" data-dep-obj="${esc(r.pathKey)}" data-dep-tab="${k}" title="${r.cells[k].capped ? `${Number(r.cells[k].n || 0).toLocaleString()} in total — the list shows the first ${Number(r.cells[k].shown || 0).toLocaleString()} of them` : 'Show these records'}">${esc(r.cells[k].text)}</td>`
     : `<td class="ds-dep-num ds-dep-muted">${r.scanned ? '—' : ''}</td>`;
@@ -471,6 +487,7 @@ async function renderDeploy() {
         </tr>`).join('')}
         ${plan.length > 1 ? `<tr class="ds-dep-total"><td>All objects</td><td></td><td></td>${['ins', 'chg', 'ext', 'link', 'same', 'amb'].map(k => `<td class="ds-dep-num${sum(k) ? ` ds-dep-n-${k}` : ' ds-dep-muted'}">${sum(k).toLocaleString()}</td>`).join('')}<td></td></tr>` : ''}</tbody></table></div>
       ${unscanned.length ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs ds-btn-primary" id="dsDepScanAll" title="Read every object below against the target, one after the other, parents before their children">🔎 Scan all ${unscanned.length}</button> <b>${unscanned.map(r => esc(r.obj)).join(', ')}</b> not read against this target yet — unknown, not zero. Scan ${unscanned.length === 1 ? 'it' : 'them'} before calling this pair in sync.</div>` : ''}
+      ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepTickAll" title="Tick every record the target lacks, in every object read against it — parents before their children. A child whose parent is not on the way stays out; an object not read stays out. Nothing is written until you press Deploy.">✓ Tick every insert — ${every.found.toLocaleString()} record${every.found === 1 ? '' : 's'} in ${Object.keys(every.picks).length} object${Object.keys(every.picks).length === 1 ? '' : 's'}</button>${unscanned.length ? ' <span class="ds-dep-muted">objects not read yet are not included</span>' : ''}</div>` : ''}
     </div>`;
 
   // ── notes: the same facts the classic header shows ──
@@ -585,6 +602,16 @@ async function renderDeploy() {
   });
   document.querySelectorAll('.ds-dep-objbtn').forEach(b => b.addEventListener('click', () => { _depObjPath = b.dataset.depObj; _depTab = 'ins'; _depFilter = ''; renderDeploy(); }));
   eid('dsDepScanAll')?.addEventListener('click', () => _depScanAll(p, unscanned.map(r => r.pathKey)));
+  // ✓ every insert in one press — the same sets the per-tab "All" buttons fill, object by object
+  eid('dsDepTickAll')?.addEventListener('click', () => {
+    let n = 0;
+    for (const [k, ids] of Object.entries(every.picks)) {
+      const set = k === '' ? _recSel.push : _depChildSel(k).push;
+      for (const id of ids) { set.add(id); n++; }
+    }
+    showToast(`✓ ${n.toLocaleString()} record${n === 1 ? '' : 's'} ticked in ${Object.keys(every.picks).length} object${Object.keys(every.picks).length === 1 ? '' : 's'} — untick what should stay out, then Deploy.`, 'success', 5000);
+    renderDeploy();
+  });
   document.querySelectorAll('[data-dep-scan]').forEach(b => b.addEventListener('click', async () => {
     b.disabled = true; b.textContent = '⏳ reading…';
     const res = await scanReconcileChild(p, b.dataset.depScan);

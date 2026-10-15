@@ -57,6 +57,7 @@ Salesforce answered, it says that instead.
   for the run (and what cannot be bypassed is said); ↻ Retry failed; the 🪪 identity field
   makes matching exact across orgs. A long run can be ⏸ paused after the batch in flight and
   ▶ continued later with the records not reached; closing the tab mid-run asks first.
+  One button ticks every record the target lacks, in every object read, parents before children.
   Where a name exists more than once in one org, 🔀 **Merge** makes it one record: you choose
   the record that stays and, for every field that differs, the value it keeps; the copies are
   merged into it (Salesforce's own merge for Accounts, Contacts, Leads and Cases; for other
