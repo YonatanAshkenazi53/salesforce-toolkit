@@ -553,7 +553,7 @@ async function renderDeploy() {
             <option value="sync" ${p.apiMode === 'sync' ? 'selected' : ''}>Synchronous — Collections</option>
             <option value="bulk" ${p.apiMode === 'bulk' ? 'selected' : ''}>Async — Bulk API 2.0 job</option>
           </select></label>
-        ${p.apiMode === 'bulk'
+        ${p.apiMode === 'bulk' && p.duplicateRules !== 'bypass'
           ? `<span class="ds-dep-sub" title="Bulk API 2.0 takes the whole set as one job and splits it into chunks itself — batch size and threads only apply to synchronous Collections calls.">Bulk API 2.0 splits the job itself — no batch size or threads</span>`
           : `<label class="ds-dep-delmode" title="Records per synchronous Collections call (1–200). Smaller batches isolate failures and duck per-transaction trigger limits.${(p.apiMode || 'auto') === 'auto' ? ' In Auto, used below the Bulk threshold.' : ''}">batch size
           <input id="dsDepBatch" class="ds-input ds-input-sm" type="number" min="1" max="200" step="1" style="width:68px;text-align:right" value="${Math.max(1, Math.min(200, Number(p.batchSize) || 200))}"></label>
@@ -573,6 +573,7 @@ async function renderDeploy() {
           <option value="hard" ${_recDeleteMode === 'hard' ? 'selected' : ''}>🔥 Hard delete</option>
         </select></label>
       <span id="dsDepHardNote" class="ds-dep-hardnote" style="${_recDeleteMode === 'hard' ? '' : 'display:none'}">🔥 Hard-deleted records skip the Recycle Bin — <strong>↩ Roll back cannot bring them back</strong>. Only the Recycle Bin mode can be undone.</span>
+      ${(() => { const n = sftkEngineNote(p); return n ? `<span id="dsDepEngineNote" class="ds-dep-enginenote${n.kind === 'warn' ? ' ds-dep-enginenote-warn' : ''}">${esc(n.text)}</span>` : ''; })()}
       <label class="ds-dep-delmode" style="cursor:pointer" title="Off (the default): the run writes with every flow active, as usual. On: the record-triggered flows on this deployment's objects in the target are switched off after the confirmation, and back on at their exact versions when the run ends — even if it fails. Records written while they are off are never processed by them.">
         <input type="checkbox" id="dsDepFlowPause" ${_depFlowPause.on ? 'checked' : ''}> ⏸ pause record-triggered flows</label>
       <label class="ds-dep-delmode" style="cursor:pointer" title="Off (the default): the run writes with every validation rule active, as usual — a record a rule rejects is refused and named. On: the active validation rules on this deployment's objects in the target org are switched off after you confirm and back on as soon as the run ends (finished, failed or stopped). While they are off they are off for EVERY user of that org, and records written meanwhile are never validated later.">
@@ -629,7 +630,7 @@ async function renderDeploy() {
   eid('dsDepApiMode')?.addEventListener('change', async e => { await sftkRecSetEngine(p, 'apiMode', e.target.value); renderDeploy(); });
   eid('dsDepBatch')?.addEventListener('change', async e => { e.target.value = await sftkRecSetEngine(p, 'batchSize', e.target.value); });
   eid('dsDepThreads')?.addEventListener('change', async e => { e.target.value = await sftkRecSetEngine(p, 'threads', e.target.value); });
-  eid('dsDepDupRules')?.addEventListener('change', async e => { await sftkRecSetEngine(p, 'duplicateRules', e.target.value); });
+  eid('dsDepDupRules')?.addEventListener('change', async e => { await sftkRecSetEngine(p, 'duplicateRules', e.target.value); renderDeploy(); });
   eid('dsDepUndoCapture')?.addEventListener('change', async e => {
     _settings.undoCapture = !!e.target.checked;
     await storageSaveSettings();
