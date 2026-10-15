@@ -154,6 +154,7 @@ async function ensureVolumeDemo(c) {
   prof.tree.where = "Name LIKE 'SFTK VOL Account 00%' OR Name LIKE 'SFTK VOL Account 01%'";   // 00000–01999: exactly 2,000
   prof.tree.children = [];
   prof.apiMode = 'sync'; prof.batchSize = 100; prof.threads = 1;
+  prof.duplicateRules = 'respect';   // the fixture's bypass setting added a note to the run; these names are unique anyway
   prof.sourceOrg = SRC_URL; prof.targetOrg = TGT_URL;
   const file = join(resolve(process.env.REC_DIR || 'dist/video/rec'), 'demo-volume.json');
   mkdirSync(dirname(file), { recursive: true });
@@ -1226,7 +1227,8 @@ export const SECTIONS = [
     await h.sleep(600);
     if (!ticked) throw new Error('nothing to insert in the fixture');
     await assertDirection(c);
-    await rec.say(`${ticked} records across ${objs.length} objects are ticked. A child whose parent is also new is written after its parent, with the new parent’s id.`);
+    const nObjs = await h.eval('(_recSel.push.size ? 1 : 0) + Object.keys(_recChildSel).filter(k => _recChildSel[k].push.size).length');
+    await rec.say(`${ticked} records across ${nObjs} objects are ticked. A child whose parent is also new is written after its parent, with the new parent’s id.`);
     // batches of five, one at a time: the write can be watched (two hundred is the default) — typed into
     // the setting itself, so the page shows the five the voice speaks of
     if (await c.has('#dsDepBatch')) {
