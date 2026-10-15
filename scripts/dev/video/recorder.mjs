@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { speakOne, voiceSeconds } from './voice.mjs';
 
 export function makeRecorder(h, dir, opts = {}) {
-  const state = { dir, framesDir: join(dir, 'frames'), t0: 0, frames: [], cues: [], chapters: [], fast: [], pages: [], on: false, n: 0, names: opts.names || [], sized: false };
+  const state = { dir, framesDir: join(dir, 'frames'), t0: 0, frames: [], cues: [], chapters: [], fast: [], pages: [], pointer: [], lastPtr: null, on: false, n: 0, names: opts.names || [], sized: false };
   const voiceDir = dir;   // the voice files live beside the sections (compose.mjs looks there too)
   const now = () => Date.now() - state.t0;
   const J = JSON.stringify;
@@ -47,7 +47,7 @@ export function makeRecorder(h, dir, opts = {}) {
       state.dir = toDir || dir; state.framesDir = join(state.dir, 'frames');
       try { rmSync(state.dir, { recursive: true, force: true }); } catch (_) {}
       mkdirSync(state.framesDir, { recursive: true });
-      state.frames = []; state.cues = []; state.chapters = []; state.fast = []; state.pages = []; state.n = 0;
+      state.frames = []; state.cues = []; state.chapters = []; state.fast = []; state.pages = []; state.pointer = []; state.lastPtr = null; state.n = 0;
       if (!state.sized) {
         // 1600×727 CSS px drawn at 1.2× = 1920×872 real pixels: the composer's page area under
         // its browser frame (88 px), with no resampling
@@ -77,7 +77,7 @@ export function makeRecorder(h, dir, opts = {}) {
     async end(extra) {
       state.on = false;
       try { await h.cdp('Page.stopScreencast'); } catch (_) {}
-      const manifest = { length: now(), frames: state.frames, cues: state.cues, chapters: state.chapters, fast: state.fast, pages: state.pages, ...(extra || {}) };
+      const manifest = { length: now(), frames: state.frames, cues: state.cues, chapters: state.chapters, fast: state.fast, pages: state.pages, pointer: state.pointer, ...(extra || {}) };
       writeFileSync(join(state.dir, 'manifest.json'), J(manifest));
       h.log(`recording: ${state.frames.length} frames, ${(manifest.length / 1000).toFixed(0)} s, ${state.cues.length} captions → ${state.dir}`);
       return manifest;
@@ -102,7 +102,7 @@ export function makeRecorder(h, dir, opts = {}) {
     hush() { state.cues.push({ t: now(), text: '' }); },
     chapter(title) { state.chapters.push({ t: now(), title: String(title) }); h.log('CHAPTER:', title); },
     // a stretch that is only waiting (a scan, a login): played faster by the composer
-    async fast(fn) { const a = now(); try { return await fn(); } finally { const b = now(); if (b - a > 1500) state.fast.push({ a, b }); } },
+    async fast(fn, o) { const a = now(); try { return await fn(); } finally { const b = now(); if (b - a > 1500) state.fast.push({ a, b, ...(o && o.video ? { v: Number(o.video) } : {}) }); } },
     async pause(ms) { await h.sleep(ms); },
 
     // ── what the viewer sees happen ──
@@ -118,13 +118,14 @@ export function makeRecorder(h, dir, opts = {}) {
         document.body.appendChild(d);
         setTimeout(() => { d.style.opacity = '0'; }, ${Math.max(200, ms - 250)});
         setTimeout(() => d.remove(), ${ms + 100});
-        return true; })()`);
-      if (ok) await h.sleep(ms);
-      return ok;
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2, vw: window.innerWidth }; })()`);
+      if (ok) { state.lastPtr = { x: ok.x, y: ok.y, vw: ok.vw }; state.pointer.push({ t: now(), ...state.lastPtr }); await h.sleep(ms); }
+      return !!ok;
     },
     async click(sel, after = 700) {
       const ok = await rec.point(sel, 800);
       if (!ok) { h.log('demo click: no element for', sel); return false; }
+      if (state.lastPtr) state.pointer.push({ t: now(), ...state.lastPtr, click: 1 });   // the press, where the pointer is
       await h.eval(`(() => { const el = document.querySelector(${J(sel)}); if (el) el.click(); return !!el; })()`);
       await h.sleep(after);
       await rec.page();

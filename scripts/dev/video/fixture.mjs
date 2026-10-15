@@ -113,3 +113,28 @@ export function restoreDuplicateName(alias = 'npc', log = () => {}) {
     return { failed };
   } finally { try { rmSync(dir, { recursive: true, force: true }); } catch (_) {} }
 }
+
+// The SFTK VOL records removed from an org (cleanup-volume.apex, 9,000 a run, until none
+// is left). A finished volume chapter rolls its records back itself; this is for the chapter
+// that did not finish. Returns the number removed, or { failed }.
+export function removeVolume(alias = 'npc2', log = () => {}) {
+  const count = () => {
+    const q = JSON.parse(execFileSync('sf', ['data', 'query', '-o', alias, '--json', '-q', '"SELECT COUNT(Id) n FROM Account WHERE Name LIKE \'SFTK VOL Account %\'"'],
+      { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+    const r = ((q.result && q.result.records) || [])[0] || {};
+    return Number(r.n != null ? r.n : r.expr0) || 0;
+  };
+  try {
+    let left = count(), removed = 0, rounds = 0;
+    while (left > 0 && rounds < 6) {
+      execFileSync('sf', ['apex', 'run', '-o', alias, '--file', 'docs/fixtures/complex-deployment/cleanup-volume.apex', '--json'], { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      const now = count(); removed += left - now; left = now; rounds++;
+    }
+    log(`volume records on ${alias}: ${removed} removed, ${left} left`);
+    return removed;
+  } catch (e) {
+    const failed = String((e && (e.stdout || e.message)) || e).slice(0, 300);
+    log(`volume records on ${alias}: cleanup FAILED — ${failed}`);
+    return { failed };
+  }
+}
