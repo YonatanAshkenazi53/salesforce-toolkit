@@ -1262,7 +1262,8 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           if (!tgtRtId) unmatchedRt.push(r.DeveloperName);
         }
         if (unmatchedRt.length) {
-          errors.push(`${objType}: record type(s) ${unmatchedRt.join(', ')} have no match in the target org — those records use the target's default record type.`);
+          // a note, not a failure: the records are written, with the target's default record type (ℹ keeps the run's status honest)
+          errors.push(`${objType}: ℹ record type(s) ${unmatchedRt.join(', ')} have no match in the target org — those records use the target's default record type.`);
         }
       }
 
