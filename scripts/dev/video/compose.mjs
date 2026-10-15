@@ -66,7 +66,7 @@ export default async function (h) {
       for (const x of (m.frames || [])) man.frames.push({ f: join(id, 'frames', x.f), t: off + x.t, abs: true });
       for (const x of (m.cues || [])) man.cues.push({ t: off + x.t, text: x.text });
       for (const x of (m.chapters || [])) man.chapters.push({ t: off + x.t, title: x.title });
-      for (const x of (m.fast || [])) man.fast.push({ a: off + x.a, b: off + x.b });
+      for (const x of (m.fast || [])) man.fast.push({ a: off + x.a, b: off + x.b, ...(x.v ? { v: x.v } : {}) });   // a stretch keeps the seconds it asked for
       for (const x of (m.pages || [])) man.pages.push({ t: off + x.t, url: x.url, title: x.title });
       for (const x of (m.pointer || [])) man.pointer.push({ t: off + x.t, x: x.x, y: x.y, vw: x.vw, click: x.click });
       man.length = off + (m.length || 0) + 250;
