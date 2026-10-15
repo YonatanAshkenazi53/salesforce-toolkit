@@ -73,8 +73,10 @@ export default async function (h) {
     if (missing.length) h.log('NOT in this video (no recording):', missing.join(', '));
   } else man = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
   mkdirSync(dirname(out), { recursive: true });
-  const fast = (man.fast || []).slice().sort((a, b) => a.a - b.a);
-  const mapT = t => { let o = t; for (const s of fast) { if (t >= s.b) o -= (s.b - s.a) * (1 - 1 / FAST); else if (t > s.a) o -= (t - s.a) * (1 - 1 / FAST); } return Math.max(0, o); };
+  // each waiting stretch plays FAST× faster, and a very long one faster still: no stretch takes more
+  // than 5 s of video (a 96-s wait for Salesforce took 12 s of badge, 2026-10-15)
+  const fast = (man.fast || []).slice().sort((a, b) => a.a - b.a).map(s => ({ ...s, k: Math.max(FAST, (s.b - s.a) / 5000) }));
+  const mapT = t => { let o = t; for (const s of fast) { if (t >= s.b) o -= (s.b - s.a) * (1 - 1 / s.k); else if (t > s.a) o -= (t - s.a) * (1 - 1 / s.k); } return Math.max(0, o); };
   const inFast = t => fast.some(s => t > s.a && t < s.b);
 
   // ── narration: where each sentence starts, and how far it pushes what follows ──
@@ -109,15 +111,23 @@ export default async function (h) {
     const fastHere = inFast(fr[i].t), gap = fastHere ? FAST_GAP : MIN_GAP;
     if (tau - last >= gap || next - tau >= gap) { ev.push({ tau, kind: 'frame', f: fr[i].abs ? join(dir, fr[i].f) : join(dir, 'frames', fr[i].f), fast: fastHere }); last = tau; }
   }
-  for (const c of said) ev.push({ tau: T(c.t), kind: 'cue', text: c.text, voice: c.voice || null });
+  for (const c of said) ev.push({ tau: T(c.t), kind: 'cue', text: c.text, voice: c.voice || null, dur: c.dur || 0 });
   for (const c of (man.chapters || [])) ev.push({ tau: T(c.t), kind: 'chapter', title: c.title });
   for (const p of (man.pages || [])) ev.push({ tau: T(p.t), kind: 'page', url: p.url || '', title: p.title || '' });
   // the "sped up" badge goes when the waiting ends, even if the picture does not change then
-  for (const f of fast) ev.push({ tau: T(f.b) + 5, kind: 'fastoff' });
+  for (const f of fast) { ev.push({ tau: T(f.a), kind: 'faston' }); ev.push({ tau: T(f.b) + 5, kind: 'fastoff' }); }
   ev.sort((a, b) => a.tau - b.tau || (a.kind === 'frame' ? 1 : -1));
   const total = Math.max(T(man.length || (fr.length ? fr[fr.length - 1].t : 0)), said.busyUntil || 0) + 1500;
   for (const f of fast) h.log(`  waiting stretch ${(f.a / 1000).toFixed(0)}–${(f.b / 1000).toFixed(0)} s of the recording → video ${(T(f.a) / 1000).toFixed(1)}–${(T(f.b) / 1000).toFixed(1)} s`);
   h.log(`composing ${ev.filter(e => e.kind === 'frame').length} of ${fr.length} frames · source ${(man.length / 1000).toFixed(0)} s → video ${(total / 1000).toFixed(0)} s (waiting ×${FAST}${SPEAK ? `, ${spoken} captions spoken` : ', silent'})`);
+
+  // TRACE_TEXT=<words of a caption>: print every event from 3 s before that caption to 12 s after it, then stop (no video)
+  if (process.env.TRACE_TEXT) {
+    const c = ev.find(e => e.kind === 'cue' && String(e.text || '').includes(process.env.TRACE_TEXT));
+    if (!c) { h.log('TRACE: no such caption'); return; }
+    for (const e of ev) if (e.tau >= c.tau - 3000 && e.tau <= c.tau + 12000) h.log('TRACE', (e.tau / 1000).toFixed(2), e.kind, e.kind === 'frame' ? (e.fast ? 'FAST' : 'plain') + ' ' + basename(e.f) : e.kind === 'cue' ? String(e.text).slice(0, 40) : '');
+    return;
+  }
 
   // ── the chapters, and (CAPTIONS=track only) the subtitle file ──
   const stamp = ms => { const p = (n, w = 2) => String(Math.floor(n)).padStart(w, '0'); return `${p(ms / 3600000)}:${p(ms / 60000 % 60)}:${p(ms / 1000 % 60)},${p(ms % 1000, 3)}`; };
@@ -229,7 +239,7 @@ export default async function (h) {
 
   // ── play the timeline in real time ──
   const t0 = Date.now();
-  let shown = 0, lastLog = 0;
+  let shown = 0, lastLog = 0, cueEnd = 0;
   for (const e of ev) {
     const wait = e.tau - (Date.now() - t0);
     if (wait > 2) await h.sleep(wait);
@@ -237,7 +247,9 @@ export default async function (h) {
       const b64 = readFileSync(e.f).toString('base64');
       await h.eval(`(async () => { __v.fast = ${e.fast ? 'true' : 'false'}; await __v.frame(${JSON.stringify(b64)}); return 1; })()`);
       shown++;
-    } else if (e.kind === 'cue') await h.eval(`(() => { __v.caption = ${JSON.stringify(e.text)}; __v.paint(); ${e.voice ? `__v.speak(${JSON.stringify(basename(e.voice))});` : ''} return 1; })()`);
+    } else if (e.kind === 'cue') { cueEnd = e.tau + (e.dur || 0) + 350; await h.eval(`(() => { __v.caption = ${JSON.stringify(e.text)}; __v.paint(); ${e.voice ? `__v.speak(${JSON.stringify(basename(e.voice))});` : ''} return 1; })()`); }
+    // a wait begins: the badge goes on, and a sentence already spoken leaves the screen
+    else if (e.kind === 'faston') await h.eval(`(() => { __v.fast = true; ${cueEnd <= e.tau ? "__v.caption = '';" : ''} __v.paint(); return 1; })()`);
     else if (e.kind === 'fastoff') await h.eval(`(() => { __v.fast = false; __v.paint(); return 1; })()`);
     else if (e.kind === 'page') await h.eval(`(() => { __v.url = ${JSON.stringify(e.url)}; __v.title = ${JSON.stringify(e.title)}; __v.paint(); return 1; })()`);
     else await h.eval(`(() => { __v.chapter = ${JSON.stringify(e.title)}; __v.paint(); return 1; })()`);
