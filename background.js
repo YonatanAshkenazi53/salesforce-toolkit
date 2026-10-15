@@ -2288,7 +2288,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
     profileId: profile.id, profileName: profile.name,
     startedAt, completedAt: new Date().toISOString(),
     sourceOrg: srcOrgUrl, targetOrg: tgtOrgUrl,
-    status: errors.length === 0 ? 'success' : (Object.values(summary).some(s=>s.created>0) ? 'partial' : 'failed'),
+    // a note (ℹ — a bypassed duplicate rule, a diagnostic) is not a failure: 2,000 records written and none
+    // refused came out 'partial' because of one (2026-10-16)
+    status: errors.filter(e => !String(e).includes('ℹ')).length === 0 ? 'success' : (Object.values(summary).some(s=>s.created>0) ? 'partial' : 'failed'),
     ...(_runCancelled ? { cancelled: true, stopped: _runStopReason() } : {}),
     summary, errors: finalErrors.slice(0, 50)
   };
