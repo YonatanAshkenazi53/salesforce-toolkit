@@ -4524,6 +4524,21 @@ async function sftkRecSetEngine(p, key, raw) {
   return out;
 }
 
+// PURE. What the Engine and the Duplicate rules choice mean together, said on the page
+// (user 2026-10-16: "make sure the reconcile window says it when we choose bulk api").
+// Bulk API 2.0 has no header to bypass duplicate rules: a Bypass run is written through
+// synchronous Collections calls whatever the Engine says (background.js, dupBypass), and
+// batch size and threads apply again. null = nothing worth a line.
+function sftkEngineNote(p) {
+  const mode = (p && (p.apiMode === 'sync' || p.apiMode === 'bulk')) ? p.apiMode : 'auto';
+  const bypass = !!(p && p.duplicateRules === 'bypass');
+  const thr = (p && Number(p.bulkThreshold) > 0) ? Number(p.bulkThreshold) : 2000;
+  if (mode === 'bulk' && bypass) return { kind: 'warn', text: 'Bypass is chosen, and Bulk API 2.0 cannot bypass duplicate rules — this deployment is written through synchronous Collections calls instead, so batch size and threads apply.' };
+  if (mode === 'bulk') return { kind: 'info', text: 'Bulk API 2.0 runs the target’s duplicate rules and cannot bypass them: a record a rule blocks is refused and named. Choosing Bypass moves the deployment to Collections calls.' };
+  if (mode === 'auto' && bypass) return { kind: 'info', text: `Bypass keeps every object on Collections calls, also at or above ${thr.toLocaleString()} records — Bulk API 2.0 cannot bypass duplicate rules.` };
+  return null;
+}
+
 // ── Parents-first: the shared data side (classic advisor + Deploy view) ──
 // PURE. Where one parent object stands for this org pair.
 //   g:  { empty }                       from the LIMIT-1 probe

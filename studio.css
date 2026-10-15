@@ -6387,6 +6387,8 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 .sftk-help:hover, .sftk-help:focus { background: #2563eb; outline: none; }
 
 /* Deploy page: the hard-delete consequence, said next to the mode (2026-10-07) */
+.ds-dep-enginenote { flex-basis: 100%; font-size: 12px; color: var(--subtext); padding: 4px 8px; border-left: 3px solid var(--border); border-radius: 4px; }
+.ds-dep-enginenote-warn { color: var(--text); border-left-color: var(--warning); background: var(--warning-bg); }
 .ds-dep-hardnote { flex-basis: 100%; font-size: 12px; color: var(--danger); padding: 4px 8px; border-left: 3px solid var(--danger); background: var(--warning-bg); border-radius: 4px; }
 
 /* ── The shared confirmation dialog (sftk-confirm.js), redesigned 2026-10-07 ──

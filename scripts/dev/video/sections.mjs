@@ -777,7 +777,7 @@ export const SECTIONS = [
       if (await c.has(flowBtn(one, 1))) {
         await rec.scrollTo(flowBtn(one, 1), 'center');
         await rec.say('A flow is one card, with its versions. Three buttons: Replace the field; Remove it and keep the flow running; or Delete the versions and switch the flow off. First, Replace on this one flow.');
-        await fixOne(flowBtn(one, 1), 'The confirmation is the plan: a new active version of the flow that uses the new field, then the old versions deleted. A backup zip is offered first — switched off for this recording.');
+        await fixOne(flowBtn(one, 1), 'The confirmation is the plan: a new active version of the flow that uses the new field, then the old versions deleted. A backup zip is offered first — switched off for this recording. If those versions still carry flow interviews, paused or failed runs, the tool deletes them first and the plan says so: Salesforce refuses to delete a version while an interview exists. A paused one is a user mid-flow; a failed one is only a saved error report.');
         await rec.scrollTo(`.fc-fix-pair[data-type="Flow"][data-name="${one}"]`, 'center');
         const okLine = (await h.eval(`(() => { const card = [...document.querySelectorAll('.fc-flow-card')].find(x => x.innerText.includes(${J(one)})); const ok = card && card.querySelector('.fc-item-ok'); return ok ? ok.innerText.replace(/\\s+/g, ' ').trim() : ''; })()`)).slice(0, 150);
         await rec.say(okLine ? `Done. The card says: ${okLine}` : 'Done. The card says which version runs now, and that the old versions are gone.');
@@ -1078,10 +1078,27 @@ export const SECTIONS = [
       await rec.scrollTo('#dsDepTree');
       await rec.say('An object that was not read says “not counted yet”. Count it, and its numbers appear. Unknown is never shown as zero.', 6000);
     }
-    if (await c.has('#dsDepOrder')) { await rec.scrollTo('#dsDepOrder'); await rec.say('“Start with parents first” lists what these records look up outside the deployment, and whether the target has it.', 6000); }
+    // why parents first, and how a lookup is resolved (user 2026-10-16: 'explain a bit why we offer to align parents first')
+    if (await c.has('#dsDepOrder')) {
+      await rec.scrollTo('#dsDepOrder');
+      await rec.say('“Start with parents first” lists what these records look up outside the deployment, and whether the target has it.', 6000);
+      await rec.say('A lookup is not copied as an id — ids differ between orgs. When a record is written, the tool finds the record it points at in the target by name, or by the identity field, and connects to that.', 7500);
+      await rec.say('If that parent is missing in the target, the lookup lands empty: the record is created but disconnected, and if the field is required Salesforce refuses it. So the parents go in first; a parent that is part of this deployment is written before its children, and each child gets the new parent’s id.', 10000);
+      await rec.say('A parent that is not part of the deployment is listed here with a button that deploys it first. Nothing is guessed: a lookup the tool cannot resolve is said before you deploy, not after.', 7000);
+    }
     await rec.scrollTo('#dsDepRecords');
     await rec.click('.ds-dep-tabs [data-dep-tab="ins"]', 900);
     await rec.say('Below, every record, in tabs. Nothing is ticked for you: only what you tick is written.', 5000);
+    // the lookups window of one record: where each lookup lands, and the override
+    if (await c.has('#dsDepList [data-dep-lkp]')) {
+      await rec.click('#dsDepList [data-dep-lkp]', 900);
+      await rec.fast(() => h.waitFor("!!document.querySelector('#dsDepLkpHost') && (document.querySelector('#dsDepLkpHost').innerText || '').length > 20", 30000, 300));
+      await h.sleep(800);
+      await rec.say('Every record has a Lookups window: each lookup field, where it would land in the target, and why. Where the name match is wrong, you pick the target record yourself, or set the lookup to empty on purpose.', 9000);
+      await h.closeModal();
+      await h.eval(`(() => { const x = document.querySelector('[data-dsaction="closeModal"]'); if (x) x.click(); return true; })()`);
+      await h.sleep(600);
+    }
     if (await c.has('.ds-dep-tabs [data-dep-tab="chg"]')) {
       await rec.click('.ds-dep-tabs [data-dep-tab="chg"]', 1200);
       if (await c.has('[data-dep-fields]')) {
@@ -1156,6 +1173,39 @@ export const SECTIONS = [
         await rec.scrollTo('#dsDepDupRules', 'center');
         await rec.point('#dsDepDupRules', 1200);
         await rec.say('Duplicate rules: respect them, so a record a rule flags is not written and the run says so, or bypass them for this deployment.', 6500);
+        // what Bulk API 2.0 can and cannot do (user 2026-10-16: 'you didn't explain what bulk api 2 supports
+        // and what it's not' / 'does bulk api supports batch sizes and threads?' — it does not: background.js ignores both)
+        if (await c.has('#dsDepApiMode')) {
+          await rec.point('#dsDepApiMode', 900);
+          await rec.say('The engine next to it. Collections writes up to two hundred records a call and answers per record at once. Batch size and threads are its settings: a smaller batch isolates a failure and stays under a trigger’s limits; threads run batches in parallel.', 11000);
+          if (await c.has('#dsDepBatch')) await rec.point('#dsDepBatch', 700);
+          await rec.say('Bulk API 2.0 takes the whole set as one job with far fewer calls and splits it itself, so batch size and threads do not apply, and the page hides them. Its answers come at the end, and it cannot bypass duplicate rules: choose Bypass and the run stays on Collections, and says so.', 12000);
+          await rec.say('And no engine gets past a duplicate rule set to Block: those records are refused by Salesforce and named.', 5500);
+          // on camera: the page itself says it when Bulk is chosen (user 2026-10-16: "make sure the
+          // reconcile window says it when we choose bulk api" / "Also the vid")
+          if (await c.has('#dsDepDupRules')) {
+            const eng0 = await h.eval(`(() => ({ apiMode: document.querySelector('#dsDepApiMode').value, dup: document.querySelector('#dsDepDupRules').value }))()`);
+            const choose = async (sel, value, until) => {
+              await h.eval(`(() => { const s = document.querySelector(${J(sel)}); if (!s) return false; s.value = ${J(value)}; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+              await rec.fast(() => h.waitFor(until, 15000, 200));
+              await h.sleep(700);
+            };
+            await rec.click('#dsDepApiMode', 600);
+            await choose('#dsDepApiMode', 'bulk', "!!document.querySelector('#dsDepEngineNote') && !document.querySelector('#dsDepBatch')");
+            await rec.scrollTo('#dsDepEngineNote', 'center');
+            await rec.point('#dsDepEngineNote', 900);
+            await rec.say('Choose Bulk API 2.0 and the page says it: batch size and threads are gone, and the duplicate rules are the target’s to run.', 6500);
+            await rec.click('#dsDepDupRules', 600);
+            await choose('#dsDepDupRules', 'bypass', "!!document.querySelector('#dsDepEngineNote.ds-dep-enginenote-warn') && !!document.querySelector('#dsDepBatch')");
+            await rec.point('#dsDepEngineNote', 900);
+            await rec.say('Choose Bypass as well, and the page says the deployment moves to Collections calls, with batch size and threads back. Nothing is decided quietly.', 7000);
+            // back to the deployment’s own settings, off camera
+            await rec.fast(async () => {
+              await choose('#dsDepDupRules', eng0.dup, `document.querySelector('#dsDepDupRules').value === ${J(eng0.dup)}`);
+              await choose('#dsDepApiMode', eng0.apiMode, `document.querySelector('#dsDepApiMode').value === ${J(eng0.apiMode)}`);
+            });
+          }
+        }
       }
     }
   } },

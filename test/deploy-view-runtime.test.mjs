@@ -53,7 +53,7 @@ describe('Deploy view — the page actually runs', () => {
     vm.createContext(ctx);
     for (const [f, n] of [['studio-scan.js', 'sftkBucketCapShipped'], ['studio-scan.js', 'sftkScanBucketInfo'], ['studio-scan.js', 'sftkBucketCountLabel'],
       ['studio-reconcile.js', 'sftkRecChildRowState'], ['studio-reconcile.js', 'sftkPaContactsLine'],
-      ['studio-reconcile.js', 'sftkParentStepState'], ['studio-reconcile.js', 'sftkRecDupsHtml'], ['sftk-identity.js', 'sftkIdCreatable']]) vm.runInContext(grab(f, n), ctx);
+      ['studio-reconcile.js', 'sftkParentStepState'], ['studio-reconcile.js', 'sftkRecDupsHtml'], ['studio-reconcile.js', 'sftkEngineNote'], ['sftk-identity.js', 'sftkIdCreatable']]) vm.runInContext(grab(f, n), ctx);
     vm.runInContext(src('studio-deploy.js').replace(/^'use strict';/, ''), ctx, { filename: 'studio-deploy.js' });
 
     const rows = (n, f) => Array.from({ length: n }, (_, i) => f(i));
