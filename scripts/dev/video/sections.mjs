@@ -154,7 +154,9 @@ async function ensureVolumeDemo(c) {
   prof.tree.where = "Name LIKE 'SFTK VOL Account 00%' OR Name LIKE 'SFTK VOL Account 01%'";   // 00000–01999: exactly 2,000
   prof.tree.children = [];
   prof.apiMode = 'sync'; prof.batchSize = 100; prof.threads = 1;
-  prof.duplicateRules = 'respect';   // the fixture's bypass setting added a note to the run; these names are unique anyway
+  // bypass, as the fixture says: the target's standard Account duplicate rule BLOCKS these — their names fuzzy-match
+  // each other (1,896 of 2,000 refused with DUPLICATES_DETECTED on 2026-10-16 with 'respect'); the run says it bypassed
+  prof.duplicateRules = 'bypass';
   prof.sourceOrg = SRC_URL; prof.targetOrg = TGT_URL;
   const file = join(resolve(process.env.REC_DIR || 'dist/video/rec'), 'demo-volume.json');
   mkdirSync(dirname(file), { recursive: true });
@@ -1346,10 +1348,10 @@ export const SECTIONS = [
     if ((await h.eval('_history.length')) <= before) throw new Error('the volume deployment did not finish');
     await rec.pause(1500);
     await rec.fast(async () => { await h.sleep(3000); await h.waitFor("!document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000).catch(() => {}); });
-    const last = await h.eval(`(() => { const e = _history[_history.length - 1] || {}; const s = Object.values(e.summary || {}); const sum = k => s.reduce((t, o) => t + (Number(o && o[k]) || 0), 0); return { status: e.status || '', inserted: sum('inserted') || sum('created') || 0, failed: sum('failed') || 0 }; })()`);
+    const last = await h.eval(`(() => { const e = _history[_history.length - 1] || {}; const s = Object.values(e.summary || {}); const sum = k => s.reduce((t, o) => t + (Number(o && o[k]) || 0), 0); return { status: e.status || '', inserted: sum('inserted') || sum('created') || 0, failed: sum('insertedFailed') || 0 }; })()`);
     h.log('volume result:', J(last));
     h.log('volume entry:', await h.eval(`(() => { const e = _history[_history.length - 1] || {}; return JSON.stringify({ status: e.status, errors: (e.errors || []).slice(0, 5), notes: e.notes || e.note || null, summary: e.summary }); })()`));
-    await rec.say(last.status === 'success'
+    await rec.say(!last.failed
       ? `Done: ${Number(last.inserted).toLocaleString()} records written and read back from the target.`
       : `Finished: ${Number(last.inserted).toLocaleString()} written, ${last.failed} refused, each with Salesforce’s own reason.`);
     await nav(c, 'history');
