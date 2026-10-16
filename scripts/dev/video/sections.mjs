@@ -1222,6 +1222,8 @@ export const SECTIONS = [
     await assertDirection(c);
     await rec.scrollTo('#dsDepTree');
     await rec.say('Records are matched between orgs by a field — here by Name. Names change, and two records can share one. The identity field makes the match exact.', 7500);
+    await rec.say('Why it matters: every deployment after the first has to recognise the records it already wrote. Matched by name, a renamed account looks like a new one and is created twice; two accounts with one name are a guess.', 9500);
+    await rec.say('An identity ends that. A Salesforce Id is unique and never changes, so the source record’s own Id is written into a small external-id field on the target record, and from then on the pair is exact.', 8500);
     await rec.click('#dsDepIdBtn', 800);
     await rec.fast(() => h.waitFor("!!document.querySelector('#dsIdGo')", 60000, 500));
     await h.sleep(800);
@@ -1254,6 +1256,8 @@ export const SECTIONS = [
     await h.sleep(1500);
     await rec.scrollTo('.ds-dep-plan', 'center');
     await rec.say('Now the stamped records match by their identity. New records a deployment creates are stamped as they are written — nothing more to do.', 7000);
+    await rec.say('This is what keeps the two orgs aligned over time. The field is an external id, so the scan takes it as the match key and a re-run upserts on it: an existing record is updated, never written twice. A renamed record is still the same record, and a shared name is no longer a guess.', 11000);
+    await rec.say('Because it is a plain external-id field, it also serves outside the tool — a lookup can be matched by it, a report can show which source record each one came from, and your own integrations can key on it.', 8000);
   } },
   { id: 'run', title: 'Deploy and roll back', writes: true, run: async c => {
     const { h, rec } = c;
