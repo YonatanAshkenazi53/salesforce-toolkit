@@ -1334,6 +1334,9 @@ export const SECTIONS = [
     cleanup: async ({ h }) => { removeVolume('npc2', (...a) => h.log(...a)); },
     run: async c => {
     const { h, rec } = c;
+    // the target must not hold these records before the take (2026-10-16: a cleanup right after a mass insert had
+    // skipped every row — Salesforce still held locks — and the take found nothing to insert)
+    removeVolume('npc2', (...a) => h.log(...a));
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');
     const id = await ensureVolumeDemo(c);
     await h.eval(`window.runProfile(${J(id)})`); await h.sleep(1500);
