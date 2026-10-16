@@ -239,7 +239,7 @@ export const SECTIONS = [
     if (await c.has('#sftkTermsViewClose')) await rec.click('#sftkTermsViewClose', 600);
     await rec.point('#dataStudioBtn', 900);
     await rec.say('Data Studio opens in a tab of its own; its chapters come later, with its quick navigation and shortcuts.');
-    await rec.say('Every tool reads first and shows what it found. A change is made only after one confirmation that says exactly what will happen, and every change is checked by reading the org again. That rule holds for every tool you will see; it is not repeated from here on.');
+    await rec.say('Every tool reads first and shows what it found. A change is made only after one confirmation that says exactly what will happen, and every change is checked by reading the org again. That rule holds for every tool you will see.');
   } },
 
   { id: 'flows', title: 'Flows', run: async c => {
