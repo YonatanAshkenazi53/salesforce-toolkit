@@ -1381,6 +1381,9 @@ export const SECTIONS = [
     await rec.fast(async () => { await h.sleep(3000); await h.waitFor("!document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000).catch(() => {}); });
     const last = await h.eval(`(() => { const e = _history[_history.length - 1] || {}; const s = Object.values(e.summary || {}); const sum = k => s.reduce((t, o) => t + (Number(o && o[k]) || 0), 0); return { status: e.status || '', inserted: sum('inserted') || sum('created') || 0, failed: sum('insertedFailed') || 0 }; })()`);
     h.log('deployment result:', J(last));
+    // a run that did not write every ticked record is not the take (2026-10-16: a transient HTTP 404 from Salesforce left
+    // the contacts at 0 of 1,152 and the chapter narrated it as done) — the chapter fails and keeps its last recording
+    if (last.status !== 'success' || Number(last.inserted) < ticked) throw new Error(`the deployment wrote ${last.inserted} of ${ticked} records (status ${last.status}) — not the take`);
     h.log('deployment entry:', await h.eval(`(() => { const e = _history[_history.length - 1] || {}; return JSON.stringify({ status: e.status, errors: (e.errors || []).slice(0, 5) }); })()`));
     await rec.say(!last.failed
       ? `Done: ${Number(last.inserted).toLocaleString()} records written and read back from the target — the page shows what is true now, not what was sent.`
