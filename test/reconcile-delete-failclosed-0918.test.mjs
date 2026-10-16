@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 
-// 2026-09-18 — parity inventory finding: the Reconcile delete guards checked
+// 2026-09-18 — parity inventory finding: the Transfer delete guards checked
 // `=== 'production'` only, so an org whose type could not be read allowed hard
 // deletes and skipped the typed confirmation. Law: fail closed on ambiguity.
 const RC = readFileSync(new URL('../studio-reconcile.js', import.meta.url), 'utf8');
 const run = RC.slice(RC.indexOf('async function runReconcile('), RC.indexOf('async function reconcileStampPairs'));
 
-describe('Reconcile deletes fail closed on an unknown org type', () => {
+describe('Transfer deletes fail closed on an unknown org type', () => {
   it('only a confirmed sandbox or dev org escapes the guards', () => {
     expect(run).toContain("const tgtGuarded = tgtOrgType !== 'sandbox' && tgtOrgType !== 'dev';");
   });

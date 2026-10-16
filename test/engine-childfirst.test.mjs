@@ -417,7 +417,7 @@ describe('engine matrix — failure accounting and cancel', () => {
   });
 });
 
-// ── 431 guard (load test 2026-08-17): a Reconcile "✓ All" run rides EVERY
+// ── 431 guard (load test 2026-08-17): a Transfer "✓ All" run rides EVERY
 // selected id in node.recordIds — 1,850 picked children built a ~39KB
 // `Id IN (…)` GET query string and Salesforce answered HTTP 431 with zero
 // rows written. Picked-id reads must chunk like every other IN list.
@@ -479,7 +479,7 @@ describe('engine notes are marked, never dressed as failures', () => {
     expect(sftkFriendlyError('push: Load_Child__c: HTTP 431: Request Header Fields Too Large').kind).toBe('error');
   });
 
-  it('a Reconcile run cannot report success over a hard error', async () => {
+  it('a Transfer run cannot report success over a hard error', async () => {
     const { readFileSync } = await import('node:fs');
     const REC = readFileSync(new URL('../studio-reconcile.js', import.meta.url), 'utf8');
     // A child pass that dies wholesale contributes zero per-record fails —

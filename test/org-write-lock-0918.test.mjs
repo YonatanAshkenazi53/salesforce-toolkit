@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 
 // 2026-09-18 — user: "read only is not a viable feature" → after the
 // assessment: "keep it". The lock stays, presented as a write lock, and
-// Reconcile refuses by org and direction before anything runs.
+// Transfer refuses by org and direction before anything runs.
 const CO = readFileSync(new URL('../studio-core.js', import.meta.url), 'utf8');
 const RC = readFileSync(new URL('../studio-reconcile.js', import.meta.url), 'utf8');
 const BG = readFileSync(new URL('../background.js', import.meta.url), 'utf8');
@@ -22,7 +22,7 @@ describe('the org write lock', () => {
     const fn = CO.slice(CO.indexOf('window.sftkOrgLocked = function(orgUrl)'), CO.indexOf('window.toggleOrgReadOnly = async function'));
     expect(fn).toContain('_orgKey(u) === want');
   });
-  it('a locked source switches every ← control off in Reconcile', () => {
+  it('a locked source switches every ← control off in Transfer', () => {
     expect(RC.split("${srcLocked ? 'disabled' : ''}").length - 1).toBe(4);
   });
   it('▶ Run refuses by org and direction before any write', () => {

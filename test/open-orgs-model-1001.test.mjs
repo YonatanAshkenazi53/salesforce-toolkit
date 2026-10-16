@@ -116,7 +116,7 @@ describe('the All open orgs page (studio-ring.js)', () => {
     expect(fn).toContain('_ringActiveSource()');
   });
 
-  it('⚖ sets the pair on the SAVED deployment and opens Reconcile on it: no ring_ clone', () => {
+  it('⚖ sets the pair on the SAVED deployment and opens Transfer on it: no ring_ clone', () => {
     const i = RING.indexOf('async function _ringOpenReconcile(');
     const fn = RING.slice(i, RING.indexOf('\n}', i) + 2);
     expect(fn).toContain('p.sourceOrg = src;');

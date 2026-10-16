@@ -110,7 +110,7 @@ function sftkFriendlyError(raw) {
     // first). Lead with the deploy-order fix; the mapping advice stays for
     // genuinely unmapped data fields.
     out.hint = m[1].endsWith('__c') || /Id$/.test(m[1].trim())
-      ? 'If this is a lookup, the records it points at usually don\'t exist in the target yet — deploy the referenced object FIRST (parents before children), or hand-pick targets via the 🔗 panel in Reconcile. For a plain data field: map it from a source field, or relax the requirement in the target.'
+      ? 'If this is a lookup, the records it points at usually don\'t exist in the target yet — deploy the referenced object FIRST (parents before children), or hand-pick targets via the 🔗 panel in Transfer. For a plain data field: map it from a source field, or relax the requirement in the target.'
       : 'The target org requires these fields. Map them from a source field, or relax the requirement in the target.';
     return out;
   }

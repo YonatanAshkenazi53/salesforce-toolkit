@@ -1138,6 +1138,12 @@ export const SECTIONS = [
     await rec.reveal('.ds-dep-plan');
     await rec.scrollTo('#dsDepTree');
     await rec.say('The deployment as a tree: how each object hangs under its parent and how many records each org holds.', 5000);
+    // the sections fold (user 2026-10-17: "can we do the whole sections collapsable?")
+    if (await c.has("#dsDepTree details.ds-dep-fold > summary")) {
+      await rec.click("#dsDepTree details.ds-dep-fold > summary", 700);
+      await rec.say("Each section folds away once read, and stays the way you left it.", 4500);
+      await rec.click("#dsDepTree details.ds-dep-fold > summary", 700);
+    }
     if (await c.has('[data-tree-scan]')) {
       await rec.click('[data-tree-scan]', 500);
       await rec.fast(async () => { await h.sleep(1500); await h.waitFor("![...document.querySelectorAll('[data-tree-scan]')].some(b => /⏳/.test(b.textContent))", 300000, 1000); await h.sleep(5000); });

@@ -882,7 +882,7 @@ async function openRecordPickerModal(pathStr) {
   // A scan is "fresh" only when the profile's CURRENT object + org pair
   // matches what the scan was run against — protects against showing
   // stale state after the user changes orgs in the builder.
-  // CHILD nodes read their OWN scan bucket — Reconcile v2 stores per-node
+  // CHILD nodes read their OWN scan bucket — Transfer v2 stores per-node
   // results at lastScan.children[pathKey]. The old gate compared the
   // ROOT-shaped lastScan's objectType against the child's, which can never
   // match, so every child picker silently showed NO target comparison
@@ -1353,7 +1353,7 @@ async function openRecordPickerModal(pathStr) {
                       : 'Click to see field-by-field comparison';
                     badgeHtml = `<span class="ds-pick-state-badge ds-diff-drift ds-pick-drift-clickable" data-drift-id="${esc(r.Id)}" title="${esc(dTip)}">🟡 changed ▸</span>`;
                   } else if (idsFileMiss.has(r.Id)) {
-                    badgeHtml = '<span class="ds-pick-state-badge ds-diff-drift" title="Fields match, but this record has file(s) the target lacks — NOT fully synced. Reconcile → 🟢 Synced tab → select & move, or a 📎 Run carries them.">🟢📎 files missing</span>';
+                    badgeHtml = '<span class="ds-pick-state-badge ds-diff-drift" title="Fields match, but this record has file(s) the target lacks — NOT fully synced. Transfer → 🟢 Synced tab → select & move, or a 📎 Run carries them.">🟢📎 files missing</span>';
                   } else if (idsInSync.has(r.Id)) {
                     rowCls = ' ds-pick-row-deployed';
                     badgeHtml = '<span class="ds-pick-state-badge ds-diff-sync" title="Present in target and all compare fields match — no action needed">🟢 in sync</span>';
@@ -1842,7 +1842,7 @@ async function openRecordPickerModal(pathStr) {
       });
     });
 
-    // Child-node compare: run the scoped child scan (Reconcile v2), then
+    // Child-node compare: run the scoped child scan (Transfer v2), then
     // reopen so the badges paint from the fresh bucket. Session ticks made
     // BEFORE comparing don't survive the reopen — saved picks do.
     eid('dsRecChildScan')?.addEventListener('click', async () => {

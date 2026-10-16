@@ -841,8 +841,8 @@ describe('sftkFriendlyError — disclosures never wear the red ✗', () => {
   const { sftkFriendlyError: fe } =
     extractFunctions('sftk-friendly-error.js', ['sftkDecodeEntities', 'sftkFriendlyError']);
   it('🔗 / 📎 / hand-pick lines classify as notes', () => {
-    expect(fe('🔗 2 lookup value(s) written from hand-picked targets (your Reconcile 🔗 picks — they beat name-matching)').kind).toBe('note');
-    expect(fe('update: Step_Order__c: 1 lookup value(s) set from per-record hand-picks (Reconcile → lookup overrides).').kind).toBe('note');
+    expect(fe('🔗 2 lookup value(s) written from hand-picked targets (your Transfer 🔗 picks — they beat name-matching)').kind).toBe('note');
+    expect(fe('update: Step_Order__c: 1 lookup value(s) set from per-record hand-picks (Transfer → lookup overrides).').kind).toBe('note');
     expect(fe('Step_Order__c: 📎 files — 3 copied, 3 link(s) created, 1 already present (checksum match), 0 failed.').kind).toBe('note');
   });
   it('real failures still classify as errors', () => {

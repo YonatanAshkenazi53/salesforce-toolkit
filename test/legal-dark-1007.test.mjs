@@ -15,7 +15,7 @@ describe('legal page: dark mode rules come after the light ones', () => {
     expect(HTML).toContain('.doc { background: #1f2024; }');
   });
   it('the EULA names the tools that ship, not the cut ones', () => {
-    for (const gone of ['Org Seeder', 'sync ring', 'picklist tools', 'Reconcile,', 'readiness']) expect(EULA).not.toContain(gone);
+    for (const gone of ['Org Seeder', 'sync ring', 'picklist tools', 'Transfer,', 'readiness']) expect(EULA).not.toContain(gone);
     expect(EULA.replace(/\s+/g, ' ')).toContain('data deployments and rollbacks, All open orgs, Org Compare, Org health');
   });
 });

@@ -34,7 +34,7 @@ describe('Retry failed never opens a run with an unfiltered parent (2026-09-18)'
     expect(split({ '': {}, '0': {}, '0.1': {} }).unsafe).toEqual([]);
     expect(split({})).toEqual({ safe: [], unsafe: [] });
   });
-  it('child-only failures go to Reconcile; mixed retries drop the unsafe nodes and say so', () => {
+  it('child-only failures go to Transfer; mixed retries drop the unsafe nodes and say so', () => {
     const fn = SC.slice(SC.indexOf('window.retryFailedRun = function(runId)'), SC.indexOf('function sftkRetrySplit(filters)'));
     expect(fn).toContain('if (split.unsafe.length && !split.safe.length) {');
     expect(fn).toContain('window.openReconcile?.(profile.id');

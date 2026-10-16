@@ -5,7 +5,7 @@
 // Pick a source + target org from open Chrome tabs, pick which objects to
 // compare, then run a parallel diff across all of them. Result is a
 // scorecard table sorted by worst drift first. Click a row → opens
-// Reconcile scoped to that object via an ephemeral profile.
+// Transfer scoped to that object via an ephemeral profile.
 
 // Curated standard objects worth comparing by default. Customs (suffix __c)
 // are auto-added. Audit/junk objects are NOT included by default; user can
@@ -61,7 +61,7 @@ async function renderOrgCompare() {
     <div style="background:#E8F4FD;border:1px solid #C5DBF0;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#014486;max-width:920px">
       <strong>Read-only.</strong> Org Compare queries record counts and which records exist in each org.
       Pick a match strategy below — <strong>External Id</strong> is the most reliable across orgs, <strong>Name</strong> is the loose default.
-      Click any row in the result table to open <strong>Reconcile</strong> scoped to that object — that's where you can actually insert/update/delete.
+      Click any row in the result table to open <strong>Transfer</strong> scoped to that object — that's where you can actually insert/update/delete.
     </div>
 
     <div class="ds-oc-config">
@@ -341,7 +341,7 @@ async function runOrgCompare() {
 // Compare ONE object: describe (to pick matchField), parallel SOQL on both
 // orgs, index by matchField value, count buckets. Presence-only (no drift)
 // since Org Compare has no per-object field config — drift is the
-// Reconcile view's job, fed by a Profile.
+// Transfer view's job, fed by a Profile.
 // PURE. The match percentage of one object: matched out of (matched + missing).
 // QA 2026-10-06 (live, both orgs): Account read "100%" with 7 missing and Contact
 // "100%" with 6 missing — Math.round carried 99.93 up to a number that means
@@ -550,7 +550,7 @@ function _ocRenderResults() {
   // Wire the summary-strip CSV export.
   eid('dsOCExportCsv')?.addEventListener('click', _ocExportCsv);
 
-  // Wire row reconcile buttons — build an ephemeral profile and open Reconcile.
+  // Wire row reconcile buttons — build an ephemeral profile and open Transfer.
   el.querySelectorAll('[data-oc-reconcile]').forEach(btn => {
     btn.addEventListener('click', () => _ocOpenReconcile(btn.dataset.ocReconcile));
   });
@@ -579,7 +579,7 @@ function _ocRenderResults() {
 // Export the current result set as a CSV file (client-side Blob download —
 // no server round-trip). Columns adapt to the presence-only result shape:
 // matched/missing/onlyInTarget instead of per-field "changed" (Org Compare
-// doesn't diff field values — that's Reconcile's job).
+// doesn't diff field values — that's Transfer's job).
 function _ocExportCsv() {
   const rows = (_orgCompareState.results || []).filter(r => r.status !== 'pending');
   if (!rows.length) {
@@ -619,7 +619,7 @@ function _ocExportCsv() {
   showToast(`CSV exported — ${rows.length} row(s)`, 'success', 3000);
 }
 
-// Open Reconcile scoped to one object — build an ephemeral, unsaved profile
+// Open Transfer scoped to one object — build an ephemeral, unsaved profile
 // so the user can act on the diff right away without going through the
 // Profile Builder. Pre-runs the diff scan so the columns are populated
 // the moment the view opens.

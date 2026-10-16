@@ -30,7 +30,7 @@ const before = (src, a, b) => { expect(src.indexOf(a)).toBeGreaterThan(-1); expe
 describe('A1 · the per-field push honours the PII policy', () => {
   const fn = SC.slice(SC.indexOf('async function sftkPushFieldsToTarget'), SC.indexOf('function sftkWireDriftCompare'));
 
-  it('derives this object’s rules from the deployment policy, like Reconcile does', () => {
+  it('derives this object’s rules from the deployment policy, like Transfer does', () => {
     expect(fn).toMatch(/for \(const \[k, rule\] of Object\.entries\(profile\?\.piiPolicy \|\| \{\}\)\)/);
     expect(fn).toContain("piiRules[k.slice(dot + 1).toLowerCase()] = rule;");
   });

@@ -1,4 +1,4 @@
-// Two findings from the user's work session (2026-09-14): Reconcile opened
+// Two findings from the user's work session (2026-09-14): Transfer opened
 // with everything selected, and a run claimed more records than were picked.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -9,7 +9,7 @@ const REC = read('studio-reconcile.js');
 const TR  = read('studio-transfer.js');
 const { sftkChildCountWhere, sftkCountBreakdown } = extractFunctions('studio-transfer.js', ['sftkChildCountWhere', 'sftkCountBreakdown']);
 
-describe('Reconcile selects nothing by default', () => {
+describe('Transfer selects nothing by default', () => {
   it('no seeding of push / overwrite from the buckets — and no re-arming on re-render', () => {
     const fn = REC.slice(REC.indexOf('function renderReconcile('), REC.indexOf('async function runReconcile('));
     expect(fn).not.toMatch(/missing\.forEach\(r => r\.sourceId && _recSel\.push\.add/);

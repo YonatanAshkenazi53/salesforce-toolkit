@@ -613,8 +613,8 @@ async function _loadUpsertFieldOptions() {
     // Say what to DO, not just what's missing (user 2026-08-09: "upsert can
     // work with regular id field too"): true — but a SOURCE record's Id
     // doesn't exist in the target org, so Id-keyed upsert needs the match
-    // key to translate first. That flow exists today: Reconcile.
-    sel.title = `Salesforce upsert needs a key the TARGET org can match on. It does accept Id — but a source record's Id doesn't exist in the target, so cross-org Id-upsert needs the match key to translate first. That flow exists today: run a scan and use Reconcile — it updates matched records by their target Id and inserts the rest (exact upsert semantics, no External ID field needed). Or add an External ID field to ${obj} in both orgs for direct upsert here.`;
+    // key to translate first. That flow exists today: Transfer.
+    sel.title = `Salesforce upsert needs a key the TARGET org can match on. It does accept Id — but a source record's Id doesn't exist in the target, so cross-org Id-upsert needs the match key to translate first. That flow exists today: run a scan and use Transfer — it updates matched records by their target Id and inserts the rest (exact upsert semantics, no External ID field needed). Or add an External ID field to ${obj} in both orgs for direct upsert here.`;
     sel.disabled = true;
     inp.style.display = '';
     return;
@@ -1773,7 +1773,7 @@ function openRunRecordsPreview() {
       const o = sftkRunOpFor(state, hasUpsert);
       return `<div class="ds-runprev-row">
         <span class="ds-rec-col-key" title="${keyL(r.matchKey)}">${keyL(r.matchKey)}</span>
-        ${r.nearMiss ? `<span class="ds-rec-pnote ds-rec-pnote-missing" title="A target record differs only by ${esc(r.nearMiss.reason)} — see Reconcile">≈ near match</span>` : ''}
+        ${r.nearMiss ? `<span class="ds-rec-pnote ds-rec-pnote-missing" title="A target record differs only by ${esc(r.nearMiss.reason)} — see Transfer">≈ near match</span>` : ''}
         <span class="ds-runprev-op ${o.cls}">${o.op}</span>
       </div>`;
     }).join('') || '<div class="ds-rec-col-empty">nothing in scope</div>';
@@ -2118,7 +2118,7 @@ async function runTransfer() {
     profileName: _transferProfile?.name,
     // Set BOTH the *OrgUrl and sourceOrg/targetOrg keys: History (renderHistory)
     // and the Connected-Orgs "N transfers logged" counter read sourceOrg/
-    // targetOrg, while health tiles read *OrgUrl. Reconcile entries set all
+    // targetOrg, while health tiles read *OrgUrl. Transfer entries set all
     // four — transfers must too, or they render "Unknown → Unknown".
     srcOrgUrl: _transferSrc?.orgUrl,
     tgtOrgUrl: _transferTgt?.orgUrl,
@@ -2226,7 +2226,7 @@ function sftkFanoutTargetAdvice(scan, live, writeMode, now, kids) {
     if (kids && kids.unscanned > 0) {
       return { tone: 'unknown', actionable: true,
         headline: `root in sync as of ${age} — child records not checked here`,
-        detail: `This summary covers the root object only; ${kids.unscanned} child section(s) have no fresh scan for this target. A run upserts everything in scope, children included — scan the pair in ⚖ Reconcile to see child counts first.${extraNote}` };
+        detail: `This summary covers the root object only; ${kids.unscanned} child section(s) have no fresh scan for this target. A run upserts everything in scope, children included — scan the pair in ⚖ Transfer to see child counts first.${extraNote}` };
     }
     return { tone: 'clean', actionable: false,
       headline: `in sync as of ${age} — nothing to write`,

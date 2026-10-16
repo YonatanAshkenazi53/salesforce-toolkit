@@ -234,7 +234,7 @@ window.runProfile = function(profileId, targetUrl) {
   const p = _profiles.find(x => x.id === profileId) || null;
   // ONE target per run (user 2026-09-14: "you do it one by one"). A
   // deployment whose ring has several targets asks which one this run is
-  // for — the same question ⚖ Reconcile asks — and never fans out.
+  // for — the same question ⚖ Transfer asks — and never fans out.
   const _tgts = p ? profileTargets(p) : [];
   if (p && _tgts.length > 1 && !targetUrl) {
     sftkDialog({
@@ -308,7 +308,7 @@ window.compareOrgFrom = function(orgUrl) {
   renderOrgCompare();
 };
 
-// Reconcile "💾 Save as deployment" — promote the ephemeral Org-Compare
+// Transfer "💾 Save as deployment" — promote the ephemeral Org-Compare
 // profile into a real saved deployment. Keeps its id so the run history it
 // already produced stays linked (and retryable).
 window.saveEphemeralProfile = async function() {
