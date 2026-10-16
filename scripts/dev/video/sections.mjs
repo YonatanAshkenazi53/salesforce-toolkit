@@ -26,7 +26,8 @@ import { rebuildFieldCleanerFixture, removeIdentityField, restoreDuplicateName, 
 const J = JSON.stringify;
 const FIXTURE = 'docs/fixtures/complex-deployment/profiles.json';
 const DEMO = 'Accounts and everything under them';
-const DEMO_VOL = 'Two thousand accounts';
+const BUILT = 'Accounts with contacts, opportunities and cases';   // built on camera in the builder chapter, removed off camera
+const DEMO_VOL = 'Accounts and their contacts, at volume';
 const OLD_FIELD = 'SFTK_FC_Test_Status__c', NEW_FIELD = 'SFTK_FC_Test_Status2__c';
 // the target is a Developer Edition org since 2026-10-15 (the Nonprofit Cloud trial expired)
 const SRC_ORG = 'trailheads5', TGT_ORG = 'orgfarm-e2c4511b2b-dev-ed';
@@ -150,9 +151,11 @@ async function ensureVolumeDemo(c) {
   const base = JSON.parse(JSON.stringify(all.find(p => (p.profile || p).name === 'SFTK VOL — Accounts')));
   const prof = base.profile || base;
   prof.name = DEMO_VOL;
-  // SOQL LIKE knows only % and _ (a [01] class matched nothing, 2026-10-16): 00001–00999, 01000–01999, and 02000
-  prof.tree.where = "Name LIKE 'SFTK VOL Account 00%' OR Name LIKE 'SFTK VOL Account 01%'";   // 00000–01999: exactly 2,000
-  prof.tree.children = [];
+  // SOQL LIKE knows only % and _ (a [01] class matched nothing, 2026-10-16). Blocks 000–006: 700 accounts and
+  // their ~1,150 contacts (the Developer Edition target holds 5 MB ≈ 2,500 records in all; user 2026-10-16:
+  // "a lot of records. the tree shouldn't be so big… thousands of records for a few objects")
+  prof.tree.where = ['000', '001', '002', '003', '004', '005', '006'].map(b => `Name LIKE 'SFTK VOL Account ${b}%'`).join(' OR ');
+  prof.tree.children = [{ childSObject: 'Contact', field: 'AccountId', matchField: 'Email' }];
   prof.apiMode = 'sync'; prof.batchSize = 100; prof.threads = 1;
   // bypass, as the fixture says: the target's standard Account duplicate rule BLOCKS these — their names fuzzy-match
   // each other (1,896 of 2,000 refused with DUPLICATES_DETECTED on 2026-10-16 with 'respect'); the run says it bypassed
@@ -997,7 +1000,11 @@ export const SECTIONS = [
     if (await c.has('#dsCmdInput')) await rec.click('#dsCmdPaletteBtn', 600);
   } },
 
-  { id: 'builder', title: 'Building a deployment', run: async c => {
+  { id: 'builder', title: 'Building a deployment',
+    cleanup: async ({ h }) => {
+      try { await h.eval(`(async () => { const n = _profiles.length; _profiles = _profiles.filter(p => p.name !== ${J(BUILT)}); if (_profiles.length !== n) await storageSaveProfiles(); return n - _profiles.length; })()`).then(n => h.log(`built deployment removed: ${n}`)); } catch (e) { h.log('removing the built deployment:', (e && e.message) || e); }
+    },
+    run: async c => {
     const { h, rec } = c;
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');
     await nav(c, 'profiles');
@@ -1005,7 +1012,7 @@ export const SECTIONS = [
     await rec.say('Data Deployment moves records between orgs. It starts with a deployment: a definition you build once and run as often as you like.');
     await rec.click('#dsNewProfile', 900);
     await h.waitFor("!!document.querySelector('#dsProfileName')", 15000, 300); await h.sleep(500);
-    await rec.type('#dsProfileName', 'Accounts and everything under them', 45);
+    await rec.type('#dsProfileName', BUILT, 45);
     const src = await h.eval(`[...document.querySelectorAll('#dsProfileSrcOrg option')].find(o => /${SRC_ORG}/.test(o.value))?.value || ''`);
     const tgt = await h.eval(`[...document.querySelectorAll('#dsProfileTgtOrg option')].find(o => /${TGT_ORG}/.test(o.value))?.value || ''`);
     if (!src || !tgt) throw new Error('both orgs are not offered in the builder');
@@ -1037,10 +1044,69 @@ export const SECTIONS = [
       await add(path, 'OpportunityLineItem');
       await rec.say('And a child of a child: line items under the opportunities. A tree of any depth.');
     }
-    await rec.scrollTo('#dsTreeArea');
-    await rec.say('Saved, this becomes a deployment you can run, compare across orgs and export as a file. For the rest of this tour a prepared one is used: Accounts with ten objects under them.');
-    await rec.click('#dsBuilderCancel', 900);   // nothing is saved here
-    if (await c.has('#sftkConfirmGo')) await rec.click('#sftkConfirmGo', 600);
+    // a filter on the root, and a count
+    if (await c.has('[data-where=""]')) {
+      await rec.scrollTo('[data-where=""]', 'center');
+      await rec.click('[data-where=""]', 500);
+      await rec.type('[data-where=""]', "Name LIKE 'SFTK CX%'", 40);
+      await h.eval(`(() => { const i = document.querySelector('[data-where=""]'); i.dispatchEvent(new Event('change', { bubbles: true })); i.blur(); return true; })()`);
+      await rec.say('A filter on the root, in SOQL: only these accounts go, and only the children that hang under them.', 6000);
+      if (await c.has('[data-preview=""]')) {
+        await rec.click('[data-preview=""]', 600);
+        await rec.fast(async () => { await h.sleep(2500); });
+        await rec.say('Preview counts them in the source before anything else happens.', 4000);
+      }
+    }
+    // matching: the records window of the root
+    if (await c.has('[data-records-btn=""]')) {
+      await rec.click('[data-records-btn=""]', 800);
+      await rec.fast(() => h.waitFor("!!document.querySelector('input[name=\"dsMatchStrat\"]')", 60000, 300));
+      await h.sleep(800);
+      await rec.point('input[name="dsMatchStrat"]', 500);
+      await rec.say('Matching: how two records are recognised as the same record across orgs. It decides what a scan calls missing, changed or in sync, and what a re-run updates.', 8500);
+      await rec.point('input[name="dsMatchStrat"][value="field"]', 700);
+      await rec.say('One field — here the Name. Or several fields together, for a junction object that has no name of its own. Or an external id, the strongest key: it survives renames and lets a re-run upsert instead of duplicating.', 10000);
+      if (await c.has('#dsRecTgtMatchField')) {
+        await rec.point('#dsRecDisplayField', 600);
+        await rec.point('#dsRecTgtMatchField', 600);
+        await rec.say('The field can differ by org: match on one field in the source and another in the target. Normalize forgives case and spacing on both sides.', 6500);
+      }
+      if (await c.has('#dsMatchTestBtn')) {
+        await rec.click('#dsMatchTestBtn', 700);
+        await rec.fast(() => h.waitFor("(document.querySelector('#dsMatchTestResults')?.innerText || '').length > 20", 120000, 500).catch(() => {}));
+        await h.sleep(800);
+        await rec.point('#dsMatchTestResults', 700);
+        await rec.say('Test grades the key against both orgs, live: how many records carry a value, how many values are unique, and how many pairs would match. A weak key is seen here, not after a run.', 8500);
+      }
+      if (await c.has('#dsRecSave')) await rec.click('#dsRecSave', 700);
+      await h.sleep(600);
+      if (await h.modalText()) { await h.closeModal(); await h.sleep(400); }
+    }
+    // Fields & mapping: a field the target names differently (user 2026-10-16: "two different orgs that some of
+    // them have different fields … how we deal with this situation"). The target carries Preferred_Contact_Channel__c
+    // (target-metadata fixture) where the source has Preferred_Contact_Method__c.
+    if (await c.has('[data-map-btn=""]')) {
+      await rec.click('[data-map-btn=""]', 800);
+      await rec.fast(() => h.waitFor("!!document.querySelector('#dsFmList .ds-fm-tgt-input') && !document.querySelector('#dsFmList .ds-fm-loading-sm, .ds-fm-loading-sm')", 60000, 300).catch(() => {}));
+      await h.sleep(800);
+      await rec.say('Fields and mapping: every field of the source object, checked against the target’s schema. Most names are the same in both orgs and need nothing.', 7000);
+      const row = '.ds-fm-tgt-input[data-src="Preferred_Contact_Method__c"]';
+      if (await c.has(row)) {
+        await rec.point(row, 900);
+        await rec.say('This one is different: the target has no field of that name, so a run would skip it. The target calls it Preferred Contact Channel — so that is where it is mapped.', 8000);
+        await rec.type(row, 'Preferred_Contact_Channel__c', 35);
+        await h.sleep(600);
+        await rec.say('An org whose names differ again gets the same treatment: clone the deployment for that org and map its names there. All open orgs, later in this tour, runs every deployment against every open org.', 8500);
+      }
+      if (await c.has('#dsFmSave')) await rec.click('#dsFmSave', 700);
+      await h.sleep(600);
+      if (await h.modalText()) { await h.closeModal(); await h.sleep(400); }
+    }
+    await rec.scrollTo('#dsBuilderSave', 'center');
+    await rec.click('#dsBuilderSave', 900);
+    await rec.fast(() => h.waitFor(`!!document.querySelector('#dsNewProfile') && (document.body.innerText || '').includes(${J(BUILT)})`, 30000, 300));
+    await h.sleep(800);
+    await rec.say('Saved: a deployment you can run, compare across orgs and export as a file. For the rest of this tour a prepared one is used: Accounts with ten objects under them.', 7500);
   } },
 
   // writes: the 🔀 Merge step merges the fixture's duplicate pair in trailheads5 for real;
@@ -1259,46 +1325,42 @@ export const SECTIONS = [
     await rec.say('This is what keeps the two orgs aligned over time. The field is an external id, so the scan takes it as the match key and a re-run upserts on it: an existing record is updated, never written twice. A renamed record is still the same record, and a shared name is no longer a guess.', 11000);
     await rec.say('Because it is a plain external-id field, it also serves outside the tool — a lookup can be matched by it, a report can show which source record each one came from, and your own integrations can key on it.', 8000);
   } },
-  { id: 'run', title: 'Deploy and roll back', writes: true, run: async c => {
+  // The deployment that is run for real (user 2026-10-16: "a lot of records. the tree shouldn't be so big. but it
+  // does have to fast forward thousands of records for a few objects" / "show how records are deployed and the bar
+  // is moving"): Account → Contact, 700 accounts and their ~1,150 contacts, batches of 100; the progress panel
+  // fills the view, the first seconds in real time, the rest sped up; rolled back on camera. A chapter that did
+  // not finish is cleaned off camera (removeVolume).
+  { id: 'run', title: 'Deploy and roll back', writes: true,
+    cleanup: async ({ h }) => { removeVolume('npc2', (...a) => h.log(...a)); },
+    run: async c => {
     const { h, rec } = c;
-    if (!(await h.eval(`typeof _currentView !== 'undefined' && _currentView === 'deploy' && !!document.querySelector('.ds-dep-plan')`))) await openDemoScanned(c);
-    // the children are read under the root's records first (a re-scan reads the root only — live 2026-10-10: 6 of ~40 records)
+    if (!(await c.has('.ds-nav-btn'))) await c.studio('');
+    const id = await ensureVolumeDemo(c);
+    await h.eval(`window.runProfile(${J(id)})`); await h.sleep(1500);
+    await rec.say('Now a real deployment. A small tree — accounts and the contacts under them — but thousands of records the target does not have.', 7000);
+    await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
+    await waitScanned(c);
+    await h.sleep(1500);
+    await assertDirection(c);
+    // the children are read under the root's records first (a scan reads the root only)
     if (await c.has('#dsDepScanAll')) {
       await rec.scrollTo('#dsDepScanAll', 'center');
       await rec.click('#dsDepScanAll', 600);
       await rec.fast(() => h.waitFor("!document.querySelector('#dsDepScanAll') && ![...document.querySelectorAll('[data-dep-scan]')].some(b => b.disabled) && !document.querySelector('#dsDepRefresh')?.disabled", 900000, 1000));
       await h.sleep(1500);
     }
-    await rec.scrollTo('#dsDepRecords');
-    await rec.say('Now a real deployment, of the whole tree. One button ticks every record the target lacks, in every object that was read — parents before their children.');
+    await rec.scrollTo('.ds-dep-plan', 'center');
+    await rec.say('The plan, per object: how many to insert. One button ticks every record the target lacks, in every object that was read.', 6500);
     await rec.scrollTo('#dsDepTickAll', 'center');
     await rec.click('#dsDepTickAll', 900);
     await rec.fast(() => h.waitFor("document.querySelectorAll('#dsDepRecords input[type=checkbox]:checked').length > 0", 30000, 300));
-    let ticked = await h.eval(`(() => { let n = 0; for (const k of Object.keys(_recChildSel)) n += _recChildSel[k].push.size; return n + _recSel.push.size; })()`);
-    // one fixture account stays out on purpose: the target's own validation rule refuses it (Retail
-    // without a website) — its children then stay untickable, their parent not being on the way
-    await rec.click('[data-dep-obj=""][data-dep-tab="ins"]', 500);
-    ticked -= await h.eval(`(() => { let n = 0; for (const r of document.querySelectorAll('#dsDepList .ds-dep-row')) { if (/Americas/.test(r.innerText)) { const cb = r.querySelector('input[type=checkbox]:checked'); if (cb) { cb.click(); n++; } } } return document.querySelectorAll('#dsDepList input[type=checkbox]:checked').length; })()`);
-    await rec.say('One account stays out on purpose: the target refuses it with a validation rule, and the run will say so.', 4500);
-    await h.sleep(600);
-    if (!ticked) throw new Error('nothing to insert in the fixture');
-    await assertDirection(c);
-    const nObjs = await h.eval('(_recSel.push.size ? 1 : 0) + Object.keys(_recChildSel).filter(k => _recChildSel[k].push.size).length');
-    await rec.say(`${ticked} records across ${nObjs} objects are ticked. A child whose parent is also new is written after its parent, with the new parent’s id.`);
-    // batches of five, one at a time: the write can be watched (two hundred is the default) — typed into
-    // the setting itself, so the page shows the five the voice speaks of
-    if (await c.has('#dsDepBatch')) {
-      await rec.scrollTo('#dsDepBatch', 'center');
-      await rec.type('#dsDepBatch', '5', 120);
-      await h.eval(`(() => { const i = document.querySelector('#dsDepBatch'); i.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
-      await h.sleep(600);
-      await rec.say('The batch size is a setting: two hundred by default. Five here, so each batch can be watched.');
-    } else await h.eval("(async () => { await sftkRecSetEngine(_reconcileProfile, 'batchSize', '5'); return true; })()");
-    await h.eval("(async () => { await sftkRecSetEngine(_reconcileProfile, 'threads', '1'); return true; })()");
+    const ticked = await h.eval(`(() => { let n = 0; for (const k of Object.keys(_recChildSel || {})) n += _recChildSel[k].push.size; return n + _recSel.push.size; })()`);
+    if (ticked < 1500) throw new Error(`only ${ticked} records ticked`);
+    const nObjs = await h.eval('(_recSel.push.size ? 1 : 0) + Object.keys(_recChildSel || {}).filter(k => _recChildSel[k].push.size).length');
     await rec.scrollTo('#dsRecRunBtn', 'center');
-    await rec.say('A restore point is taken first, so the run can be rolled back.');
+    await rec.say(`${ticked.toLocaleString()} records across ${nObjs} objects. Parents first: a contact whose account is also new is written after its account, with the new account’s id. Batches of one hundred, so the count can be watched.`, 10000);
+    await rec.say('A restore point is taken first, so the run can be rolled back.', 4000);
     const before = await h.eval('_history.length');
-    await assertDirection(c);
     await rec.click('#dsRecRunBtn', 1500);
     for (let i = 0; i < 3; i++) {
       if (await c.has('#sftkConfirmGo')) await confirmShared(c, { caption: i === 0 ? 'One confirmation: what will be written, where, and in which order.' : '' });
@@ -1307,125 +1369,49 @@ export const SECTIONS = [
         await h.sleep(1500);
       } else break;
     }
-    await rec.scrollTo('#dsRecProgress');
-    await rec.say('The run, as it happens: object by object, parents first, in batches, with Salesforce’s answer for every record.');
-    // real time, narrated — the write is the point (user 2026-10-09: "extend the time of the actual operation")
+    // the progress panel fills the view: the first seconds in real time, the rest sped up
+    await rec.fast(() => h.waitFor("!!document.querySelector('#dsRecProgress') && (document.querySelector('#dsRecProgress').innerText || '').length > 10", 60000, 300).catch(() => {}));
+    await rec.scrollTo('#dsRecProgress', 'start');
+    await rec.say('The run, as it happens: the restore point first, then the accounts, batch after batch — Salesforce’s answer for every record, and the count climbing.', 8500);
+    await rec.say('Then the contacts, each connected to its new account. A refusal is named with its reason and never counted as done. Pause stops after the batch in flight; History continues the run later.', 9500);
     const t0 = Date.now();
-    const lines = [
-      'Accounts first. Then the objects under them, in the order the tree needs.',
-      'Every record gets Salesforce’s own answer. A refusal is named with its reason, and is never counted as done.',
-      'A long run can be paused here. It stops after the batch in flight, and History offers to continue it later.',
-    ];
-    let k = 0;
-    while ((await h.eval('_history.length')) <= before && Date.now() - t0 < 900000) {
-      await h.sleep(1000);
-      if (k < lines.length && Date.now() - t0 > 5000 + k * 9000) {
-        if (k === 2 && await c.has('#dsRunPauseBtn')) await rec.point('#dsRunPauseBtn', 900);
-        await rec.say(lines[k]); k++;
-      }
-    }
+    await rec.fast(async () => { while ((await h.eval('_history.length')) <= before && Date.now() - t0 < 1200000) await h.sleep(500); }, { video: 10 });
     if ((await h.eval('_history.length')) <= before) throw new Error('the deployment did not finish');
-    await rec.pause(2500);
-    await rec.fast(async () => { await h.sleep(5000); await h.waitFor("!document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000).catch(() => {}); });
-    const last = await h.eval(`(() => { const e = _history[_history.length - 1] || {}; const s = Object.values(e.summary || {}); const sum = k => s.reduce((t, o) => t + (Number(o && o[k]) || 0), 0); return { status: e.status || '', inserted: sum('inserted'), failed: sum('insertedFailed') }; })()`);
-    h.log('deployment result:', J(last));
-    h.log('deployment errors:', await h.eval(`JSON.stringify(((_history[_history.length - 1] || {}).errors || []).slice(0, 12))`));
-    await rec.say(last.status === 'success'
-      ? `Done: ${last.inserted} records written. Afterwards both orgs are read again, so the page shows what is true now, not what was sent.`
-      : `Finished: ${last.inserted} records written, ${last.failed} refused. A record the target refused is reported with Salesforce’s own reason, never counted as done. Both orgs are read again afterwards.`);
-
-    await nav(c, 'history');
-    await h.waitFor("!!document.querySelector('.ds-history-card, .ds-history-item')", 20000, 500);
-    await rec.say('History keeps every run: what was written, per object, with links to the records, and a report by name.');
-    if (!(await c.has('[data-dsaction="rollbackRun"]:not([disabled])'))) throw new Error('no rollback offered for the run');
-    const rbBefore = await h.eval(`_history.filter(x => x.kind === 'rollback').length`);
-    await rec.click('[data-dsaction="rollbackRun"]:not([disabled])', 800);
-    await rec.say('Roll back opens a page of its own: what the run wrote, compared with the restore point.');
-    await rec.fast(() => h.waitFor("!!document.querySelector('#dsRbGo') || !!document.querySelector('.ds-rec-card-bad')", 300000, 1000));
-    await h.sleep(1500);
-    if (!(await c.has('#dsRbGo'))) throw new Error('the rollback could not be prepared');
-    await rec.scrollTo('.ds-dep-plan', 'center');
-    await rec.say('It names every record it would delete or restore, child objects first, and what it leaves alone because someone changed it after the run.');
-    await rec.reveal(null);
-    await rec.scrollTo('#dsRbGo', 'center');
-    await rec.click('#dsRbGo', 800);
-    await confirmShared(c, { caption: 'The confirmation asks you to acknowledge.' });
-    await rec.say('The rollback runs like a deployment: live, object by object.');
-    const t1 = Date.now();
-    while ((await h.eval(`_history.filter(x => x.kind === 'rollback').length`)) <= rbBefore && Date.now() - t1 < 900000) await h.sleep(1000);
-    await h.sleep(2000);
-    if ((await h.eval(`_history.filter(x => x.kind === 'rollback').length`)) <= rbBefore) throw new Error('the rollback did not finish');
-    await rec.scrollTo('#dsRbResult', 'center');
-    await rec.say('Rolled back. The records are in the target’s Recycle Bin.');
-    if (await c.has('#dsRbOpenReport')) {
-      await rec.click('#dsRbOpenReport', 1500);
-      await rec.say('“Which records” lists every record the rollback touched, by name.');
-      await rec.reveal(null);
-    }
-  } },
-
-  // Two thousand records, written live: the counter climbs on camera (user 2026-10-15). Rolled back on
-  // camera; a chapter that did not finish is cleaned off camera.
-  { id: 'volume', title: 'Deploy at volume', writes: true,
-    cleanup: async ({ h }) => { removeVolume('npc2', (...a) => h.log(...a)); },
-    run: async c => {
-    const { h, rec } = c;
-    if (!(await c.has('.ds-nav-btn'))) await c.studio('');
-    const id = await ensureVolumeDemo(c);
-    await h.eval(`window.runProfile(${J(id)})`); await h.sleep(1500);
-    await rec.say('The same page, at volume: a deployment of two thousand accounts the target does not have.');
-    await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
-    await waitScanned(c);
-    await h.sleep(1500);
-    await assertDirection(c);
-    await rec.scrollTo('#dsDepTickAll', 'center');
-    await rec.say('One button ticks them all.');
-    await rec.click('#dsDepTickAll', 900);
-    await rec.fast(() => h.waitFor("document.querySelectorAll('#dsDepRecords input[type=checkbox]:checked').length > 0", 30000, 300));
-    const ticked = await h.eval('_recSel.push.size');
-    if (ticked < 1900) throw new Error(`only ${ticked} records ticked`);
-    await rec.scrollTo('#dsRecRunBtn', 'center');
-    await rec.say(`${ticked.toLocaleString()} records ticked, in batches of one hundred, so the count can be watched.`);
-    const before = await h.eval('_history.length');
-    await rec.click('#dsRecRunBtn', 1500);
-    for (let i = 0; i < 3; i++) {
-      if (await c.has('#sftkConfirmGo')) await confirmShared(c, { caption: i === 0 ? 'The confirmation, with the numbers.' : '' });
-      else if (await h.modalText()) {
-        await h.eval(`(() => { const b = document.querySelector('#dsRecDelOk') || [...document.querySelectorAll('#dsModalBox button')].find(b => /proceed|deploy|confirm/i.test(b.textContent)); if (b) b.click(); return !!b; })()`);
-        await h.sleep(1500);
-      } else break;
-    }
-    await rec.scrollTo('#dsRecProgress');
-    await rec.say('Sped up here, but every number is a real write as it happens: records accepted by Salesforce, batch after batch.');
-    const t0 = Date.now();
-    await rec.fast(async () => { while ((await h.eval('_history.length')) <= before && Date.now() - t0 < 1200000) await h.sleep(500); }, { video: 12 });
-    if ((await h.eval('_history.length')) <= before) throw new Error('the volume deployment did not finish');
     await rec.pause(1500);
     await rec.fast(async () => { await h.sleep(3000); await h.waitFor("!document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000).catch(() => {}); });
     const last = await h.eval(`(() => { const e = _history[_history.length - 1] || {}; const s = Object.values(e.summary || {}); const sum = k => s.reduce((t, o) => t + (Number(o && o[k]) || 0), 0); return { status: e.status || '', inserted: sum('inserted') || sum('created') || 0, failed: sum('insertedFailed') || 0 }; })()`);
-    h.log('volume result:', J(last));
-    h.log('volume entry:', await h.eval(`(() => { const e = _history[_history.length - 1] || {}; return JSON.stringify({ status: e.status, errors: (e.errors || []).slice(0, 5), notes: e.notes || e.note || null, summary: e.summary }); })()`));
+    h.log('deployment result:', J(last));
+    h.log('deployment entry:', await h.eval(`(() => { const e = _history[_history.length - 1] || {}; return JSON.stringify({ status: e.status, errors: (e.errors || []).slice(0, 5) }); })()`));
     await rec.say(!last.failed
-      ? `Done: ${Number(last.inserted).toLocaleString()} records written and read back from the target.`
-      : `Finished: ${Number(last.inserted).toLocaleString()} written, ${last.failed} refused, each with Salesforce’s own reason.`);
+      ? `Done: ${Number(last.inserted).toLocaleString()} records written and read back from the target — the page shows what is true now, not what was sent.`
+      : `Finished: ${Number(last.inserted).toLocaleString()} written, ${last.failed} refused, each with Salesforce’s own reason, never counted as done.`, 7000);
     await nav(c, 'history');
     await h.waitFor("!!document.querySelector('.ds-history-card, .ds-history-item')", 20000, 500);
-    if (!(await c.has('[data-dsaction="rollbackRun"]:not([disabled])'))) throw new Error('no rollback offered for the volume run');
+    await rec.say('History keeps every run: what was written, per object, with links to the records, and a report by name.', 6000);
+    if (!(await c.has('[data-dsaction="rollbackRun"]:not([disabled])'))) throw new Error('no rollback offered for the run');
     const rbBefore = await h.eval(`_history.filter(x => x.kind === 'rollback').length`);
     await rec.click('[data-dsaction="rollbackRun"]:not([disabled])', 800);
-    await rec.say('And back: the same two thousand, rolled back.');
+    await rec.say('Roll back opens a page of its own: what the run wrote, compared with the restore point.', 5500);
     await rec.fast(() => h.waitFor("!!document.querySelector('#dsRbGo') || !!document.querySelector('.ds-rec-card-bad')", 300000, 1000));
     await h.sleep(1200);
-    if (!(await c.has('#dsRbGo'))) throw new Error('the volume rollback could not be prepared');
+    if (!(await c.has('#dsRbGo'))) throw new Error('the rollback could not be prepared');
+    await rec.scrollTo('.ds-dep-plan', 'center');
+    await rec.say('It names every record it would delete or restore, child objects first, and what it leaves alone because someone changed it after the run.', 7000);
     await rec.scrollTo('#dsRbGo', 'center');
     await rec.click('#dsRbGo', 800);
-    await confirmShared(c, { caption: '' });
+    await confirmShared(c, { caption: 'The confirmation asks you to acknowledge.' });
+    await rec.say('The rollback runs like a deployment: live, object by object — the contacts first, then their accounts.', 6000);
     const t1 = Date.now();
     await rec.fast(async () => { while ((await h.eval(`_history.filter(x => x.kind === 'rollback').length`)) <= rbBefore && Date.now() - t1 < 1200000) await h.sleep(500); }, { video: 8 });
-    if ((await h.eval(`_history.filter(x => x.kind === 'rollback').length`)) <= rbBefore) throw new Error('the volume rollback did not finish');
+    if ((await h.eval(`_history.filter(x => x.kind === 'rollback').length`)) <= rbBefore) throw new Error('the rollback did not finish');
     await h.sleep(1500);
     await rec.scrollTo('#dsRbResult', 'center');
-    await rec.say('Rolled back, and the target is as it was.');
+    await rec.say('Rolled back, and the target is as it was. The records are in its Recycle Bin.', 5000);
+    if (await c.has('#dsRbOpenReport')) {
+      await rec.click('#dsRbOpenReport', 1500);
+      await rec.say('“Which records” lists every record the rollback touched, by name.', 4500);
+      await rec.reveal(null);
+    }
   } },
 
   { id: 'ring', title: 'All open orgs', run: async c => {
