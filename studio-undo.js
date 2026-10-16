@@ -8,7 +8,7 @@
 // The pure logic — what to capture, how to diff, what a rollback can never
 // undo — lives in sftk-undo.js. This file is the wiring around it:
 //   · BEFORE a run writes (Run Transfer, fan-out, sequence, sync-plan push,
-//     Reconcile), read the before-image of every object the run can write
+//     Transfer), read the before-image of every object the run can write
 //     and keep it in IndexedDB (a full image is far too big for
 //     chrome.storage's shared 10 MB); a small stub rides on the History entry.
 //   · AFTER the run, take the end-of-run boundary from Salesforce's own
@@ -266,7 +266,7 @@ async function sftkUndoCaptureForRun(opts, log) {
 // leave the run's own last records in place or delete someone else's — so
 // the boundary is the newest LastModifiedDate Salesforce itself holds on the
 // written objects at the moment the run returns. ONE ORG per call: a run
-// that wrote into two orgs (Reconcile pull / ← update) takes one per org and
+// that wrote into two orgs (Transfer pull / ← update) takes one per org and
 // stores them under undo.runEndByOrg, because the target's last write says
 // nothing about when the source was last written. Falls back to the PC clock
 // only when the read fails, and SAYS which one it used.
@@ -563,7 +563,7 @@ async function sftkUndoBuildPlan(loaded, io) {
     return null;
   }
   // Keys: the same root object appears in both the target and the source leg
-  // of a Reconcile pull / ← update — one result object per leg AND object.
+  // of a Transfer pull / ← update — one result object per leg AND object.
   const multiLeg = legs.length > 1;
   for (const it of plan) it.key = multiLeg ? `${it.objType} @ ${orgLabel(it.leg.orgUrl)}` : it.objType;
   const prodLeg = legs.find(l => cachedOrgType(l.orgUrl) === 'production') || legs.find(l => prodUnknown.includes(l.orgUrl)) || legs[0];

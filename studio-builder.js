@@ -997,7 +997,7 @@ async function bldCompareParent(refObj, btn) {
              <div>🔴 ${nMiss} missing in target · 🟡 ${nChg} changed · 🔵 ${nExt} only in target · 🟢 ${nSame} in sync</div>
              <div style="margin-top:6px">Fix these BEFORE deploying — lookups pointing at missing/drifted parents land empty or wrong.</div>`}
         <div style="margin-top:12px; display:flex; gap:8px; align-items:center">
-          ${aligned ? '' : `<button class="ds-btn ds-btn-sm ds-btn-primary" id="bldParentCmpOpen">⚖ Open Reconcile to fix</button>`}
+          ${aligned ? '' : `<button class="ds-btn ds-btn-sm ds-btn-primary" id="bldParentCmpOpen">⚖ Open Transfer to fix</button>`}
           <button class="ds-btn ds-btn-sm" id="bldParentCmpClose">Close</button>
           ${aligned ? '' : `<span style="font-size:11px; color:var(--subtext)">unsaved Builder edits stay in memory — 💾 Save first if you want them persisted</span>`}
         </div>
@@ -1196,7 +1196,7 @@ function renderLookupSection(node, pathKey) {
   return `<div class="ds-lkp-section">
     <div class="ds-lkp-hdr">
       <span class="ds-lkp-hdr-icon">🔗</span>
-      <span class="ds-lkp-hdr-label">Lookup Resolution <span class="ds-lkp-hdr-role" title="Direction: these lookups point UP at parent records. The records they point at must already exist in the target org when this object deploys — deploy the parent objects first (or hand-pick targets in Reconcile 🔗). Child objects are the opposite direction: they point AT this object and are added below with + Add child relationship — the engine orders those automatically.">⬆ these are this object's PARENTS</span>${junctionChip}</span>
+      <span class="ds-lkp-hdr-label">Lookup Resolution <span class="ds-lkp-hdr-role" title="Direction: these lookups point UP at parent records. The records they point at must already exist in the target org when this object deploys — deploy the parent objects first (or hand-pick targets in Transfer 🔗). Child objects are the opposite direction: they point AT this object and are added below with + Add child relationship — the engine orders those automatically.">⬆ these are this object's PARENTS</span>${junctionChip}</span>
       <span class="ds-lkp-hdr-hint">Each row is a record this object points at — it must exist in the target BEFORE this object deploys, or the lookup lands empty</span>
     </div>
     <div class="ds-lkp-rows">${rows.join('')}${inTree.map(f => `<div class="ds-lkp-row ds-lkp-row-intree">
@@ -1550,7 +1550,7 @@ function wireTreeEvents() {
   // root is picked, so the alignment check lives here too. Scans the parent
   // object across the pair and reports in a MODAL (never navigates away —
   // the Builder holds unsaved in-memory edits); the modal's CTA opens the
-  // full Reconcile for a conscious jump.
+  // full Transfer for a conscious jump.
   area.querySelectorAll('[data-lkp-parentcmp]').forEach(btn => {
     btn.addEventListener('click', () => bldCompareParent(btn.dataset.lkpParentcmp, btn));
   });

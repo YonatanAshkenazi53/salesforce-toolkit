@@ -55,7 +55,7 @@ function prodBadge(orgUrl) {
 
 // 🎯 match-accuracy chip for a graded scan (acc = sftkScanAccuracy(scan)).
 // compact=true → just "🎯 97%" (Tree Diff cells); full → fields + wording.
-// Shared by the Reconcile header and Tree Diff (both load after this file).
+// Shared by the Transfer header and Tree Diff (both load after this file).
 function accuracyChip(acc, compact) {
   if (!acc) return '';
   const tone = acc.grade === 'high' ? 'background:#dcfce7;color:#166534'
@@ -1965,9 +1965,9 @@ async function scanReconcileChild(profile, pathKey) {
 // profile, persist, refresh whatever UI is open. Returns the result object
 // so the caller can show a toast / error / counts inline.
 async function refreshProfileDiff(profileId) {
-  // Ephemeral profiles (from Org Compare → Reconcile) aren't in _profiles —
+  // Ephemeral profiles (from Org Compare → Transfer) aren't in _profiles —
   // fall back to the in-memory _reconcileProfile so the refresh button inside
-  // Reconcile still works on them. ephemeral profiles skip the storage save.
+  // Transfer still works on them. ephemeral profiles skip the storage save.
   let profile = _profiles.find(p => p.id === profileId);
   if (!profile && _reconcileProfile && _reconcileProfile.id === profileId) {
     profile = _reconcileProfile;
@@ -1985,7 +1985,7 @@ async function refreshProfileDiff(profileId) {
   // lastScan (keeps chrome.storage payloads lean).
   try {
     // Match memory is PER TARGET and SOURCE-SPECIFIC. Ephemeral pair clones
-    // (⚖ ring cells, the Reconcile target chooser) carry _ringOf — their
+    // (⚖ ring cells, the Transfer target chooser) carry _ringOf — their
     // confirmed pairs belong to the REAL profile's memory for that target,
     // but ONLY when the clone scanned from the profile's own source org
     // (a ring clone from a different golden org must not seed it).
@@ -2067,9 +2067,9 @@ async function refreshProfileDiff(profileId) {
   showToast(
     `Diff refreshed — ${_lbl('missingInTarget')} missing, ${_lbl('changed')} drift, ${_lbl('identical')} in sync${res.bucketCaps ? ' · list truncated, see the ⚠ note on the Deploy page' : ''}`,
     'success', res.bucketCaps ? 7000 : 4000);
-  // Re-render whichever view is open. Reconcile included (user 2026-08-11:
+  // Re-render whichever view is open. Transfer included (user 2026-08-11:
   // "after an upsert operation, we need to show them… auto reload there") —
-  // a post-run rescan that lands while Reconcile is open repaints it, so
+  // a post-run rescan that lands while Transfer is open repaints it, so
   // freshly-synced records appear in the 🟢 Synced tab without a click.
   if (_currentView === 'profiles') renderProfiles();
   else if ((_currentView === 'reconcile' || _currentView === 'deploy') && typeof renderReconcile === 'function'
@@ -2122,7 +2122,7 @@ window.sftkForgetPairs = async function (profileId, tgtUrl, srcIds) {
 };
 
 // "Refresh state" — now just the diff scan (drives Pick Records badges +
-// profile card chips + Reconcile columns). The snapshot capture that this
+// profile card chips + Transfer columns). The snapshot capture that this
 // used to bundle was removed along with the Org Map drift overlay (its only
 // consumer). Kept as a thin alias so the profile-card button and the
 // post-transfer auto-refresh keep working without changes.
@@ -2182,7 +2182,7 @@ window.retryFailedRun = function(runId) {
   // A failed CHILD whose parents were written cannot be retried as a tree
   // run: its ancestors carry no filter, so ▶ Run would insert the WHOLE parent
   // object again (user 2026-09-18: 10 failed Contacts → a plan reading
-  // "Account 5,058"). Those go to ⚖ Reconcile, which attaches children to the
+  // "Account 5,058"). Those go to ⚖ Transfer, which attaches children to the
   // parents that already exist in the target.
   if (typeof sftkDeployViewOn === 'function' && sftkDeployViewOn() && typeof window.sftkDeployRetry === 'function') {
     const byPath = Object.fromEntries(Object.entries(filters).map(([k, f]) => [k, f.recordIds || []]));
@@ -2191,7 +2191,7 @@ window.retryFailedRun = function(runId) {
   const split = sftkRetrySplit(filters);
   const lost = split.unsafe.reduce((n, k) => n + (filters[k].recordIds || []).length, 0);
   if (split.unsafe.length && !split.safe.length) {
-    showToast(`↻ These ${lost} failed record(s) are children of records that are already in ${orgLabel(run.tgtOrgUrl || run.targetOrg || profile.targetOrg)} — a tree run would insert their parents again. Opening ⚖ Reconcile: rescan, open the child section, and insert them under the existing parents.`, 'warning', 12000);
+    showToast(`↻ These ${lost} failed record(s) are children of records that are already in ${orgLabel(run.tgtOrgUrl || run.targetOrg || profile.targetOrg)} — a tree run would insert their parents again. Opening ⚖ Transfer: rescan, open the child section, and insert them under the existing parents.`, 'warning', 12000);
     window.openReconcile?.(profile.id, run.tgtOrgUrl || run.targetOrg || undefined);
     return;
   }
@@ -2205,7 +2205,7 @@ window.retryFailedRun = function(runId) {
   _currentView = 'profiles';
   renderTransfer();
   const queued = Object.values(filters).reduce((n, f) => n + (f.recordIds || []).length, 0);
-  showToast(`Retry queued — ${queued} record(s) across ${Object.keys(filters).length} object(s). Click ▶ Run to retry.${lost ? ` ${lost} failed child record(s) whose parents were already written are NOT in this retry — insert them from ⚖ Reconcile.` : ''}`, lost ? 'warning' : 'info', lost ? 12000 : 5000);
+  showToast(`Retry queued — ${queued} record(s) across ${Object.keys(filters).length} object(s). Click ▶ Run to retry.${lost ? ` ${lost} failed child record(s) whose parents were already written are NOT in this retry — insert them from ⚖ Transfer.` : ''}`, lost ? 'warning' : 'info', lost ? 12000 : 5000);
 };
 
 // PURE. Which seeded retry filters are safe for a TREE run? A node is safe
@@ -2225,7 +2225,7 @@ function sftkRetrySplit(filters) {
 }
 
 // ════════════════════════════════════════════════════════════════
-// DRIFT FIELD COMPARE — used by the Pick Records picker + Reconcile view
+// DRIFT FIELD COMPARE — used by the Pick Records picker + Transfer view
 // ════════════════════════════════════════════════════════════════
 // Fetches one record from each org on demand and renders a side-by-side
 // field compare. No snapshot cache — queries live.
@@ -2579,7 +2579,7 @@ async function sftkPushFieldsToTarget(profile, objType, srcId, tgtId, picks) {
 
   // PII policy applies to EVERY write path (re-review 2026-09-12: this push
   // wrote raw source values into the very target the policy protects).
-  // Same contract as Reconcile's overwrite: rules keyed by this object's
+  // Same contract as Transfer's overwrite: rules keyed by this object's
   // field names, a policy without a salt is a hard stop, and a lookup whose
   // match field is covered is refused — resolving it would send the raw
   // value into a target-org SOQL.

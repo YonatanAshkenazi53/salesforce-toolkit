@@ -1,6 +1,6 @@
 // runDiffScan END-TO-END — user bug 2026-08-09: "record A existing both in
 // ashkenazy 6 and ashkenazy 7 with different data. the extension didn't
-// catch it." The Reconcile screenshot shows A in NO bucket at all (Insert
+// catch it." The Transfer screenshot shows A in NO bucket at all (Insert
 // lists only B, Changed 0, in-sync 0) — a matched pair vanished. This
 // harness drives the REAL runDiffScan against the user's exact shape.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -126,7 +126,7 @@ describe('a record present in BOTH orgs can never vanish from every bucket', () 
 
     // HEADER COUNTS (user screenshot 2026-08-09: "Insert 0" over 401 rows,
     // "Changed 0" over a visible row) — run the exact label pipeline the
-    // Reconcile headers use against this scan result.
+    // Transfer headers use against this scan result.
     const lbl = k => {
       const i = scan.sftkScanBucketInfo(res, k);
       return scan.sftkBucketCountLabel(i.shown, i.total, i.capped, i.totalIsFloor);

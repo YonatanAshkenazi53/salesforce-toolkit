@@ -6,7 +6,7 @@
 // any more. This page is a deployment × open-org matrix: pick ONE source here,
 // and every other org open in Chrome becomes a column. Every cell answers "how
 // far out of sync is THIS org for THIS dataset" — with per-cell repair (⚖ opens
-// Reconcile for that pair) and per-row scan (🔎).
+// Transfer for that pair) and per-row scan (🔎).
 //
 // The orgs are simply the ones open in Chrome (sftkOpenOrgs); the source is the
 // preferred source (currentSourceOrg), changed only through dsSetPreferredSource,
@@ -246,7 +246,7 @@ async function _ringScanOne(profileId, tgtUrl, btn) {
       window.sftkLearnPairs(p.id, tgtUrl, res.learnedPairs);
     }
     // Ring flow == the profile's own pair → this IS a native scan of that
-    // profile. Deposit it as lastScan too, so Reconcile's "scanned Xm ago"
+    // profile. Deposit it as lastScan too, so Transfer's "scanned Xm ago"
     // header and the ring cell describe the same moment (staleness law).
     // QA sweep 2026-08-10, two traps in the naive `p.lastScan = res`:
     //  · learnedPairs live in matchMemory, NEVER in lastScan (mirrors the
@@ -302,7 +302,7 @@ async function _ringScanAll() {
 }
 
 // Per-cell repair: set the picked pair on the SAVED deployment (it is only the
-// last-used pair), then open Reconcile on it. No ring_* clone any more (user
+// last-used pair), then open Transfer on it. No ring_* clone any more (user
 // 2026-10-01): the scan, the repair and the history all belong to the real
 // deployment.
 async function _ringOpenReconcile(profileId, tgtUrl) {

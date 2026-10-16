@@ -513,8 +513,8 @@ describe('studio-ring.js — sftkRingCellPick freshest-wins', () => {
     const src = codeOnly(srcOf('studio-ring.js'));
     expect(src).toMatch(/sftkRingCellPick\(nat,\s*\(p\.ringScans \|\| \{\}\)/);
     // The 🔎 scan deposits p.lastScan when the scanned flow is the profile's
-    // own pair — that's what keeps Reconcile and the page in the same moment.
-    // (⚖ no longer scans: it sets the pair on the saved profile and opens Reconcile.)
+    // own pair — that's what keeps Transfer and the page in the same moment.
+    // (⚖ no longer scans: it sets the pair on the saved profile and opens Transfer.)
     const deposits = src.match(/p\.lastScan = dep;/g) || [];
     expect(deposits.length).toBeGreaterThanOrEqual(1);
   });

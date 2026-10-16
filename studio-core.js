@@ -98,7 +98,7 @@ let _transferNodeFilters  = {};
 // the saved profile. null = use the profile's org. Cleared on profile change.
 let _transferOrgOverride  = { src: null, tgt: null };
 
-// Phase 3A — Reconcile view. The profile currently being reconciled (root
+// Phase 3A — Transfer view. The profile currently being reconciled (root
 // object only in v1). Selection state lives in the render closure.
 let _reconcileProfile = null;
 
@@ -1631,7 +1631,7 @@ function renderView(view) {
 
 // U5: sync-status strip — answers "is anything out of sync?" right on the
 // landing page, aggregating deployments that already have a fresh scan. Zero
-// new API calls: reads profile.lastScan buckets. Each tile → Reconcile.
+// new API calls: reads profile.lastScan buckets. Each tile → Transfer.
 function _syncStatusStripHtml() {
   const tiles = [];
   for (const p of _profiles) {
@@ -1682,7 +1682,7 @@ function _syncStatusStripHtml() {
           } else if (clean) {
             stats = t.fErr ? '<span class="ds-sync-c">✓ fields · 📎 file check failed</span>'
               : t.kidUnscanned
-                ? `<span class="ds-sync-clean" title="Root object in sync — ${t.kidUnscanned} child section(s) have no fresh scan, so child records are UNVERIFIED. Open Reconcile and scan them.">✓ root · children unverified</span>`
+                ? `<span class="ds-sync-clean" title="Root object in sync — ${t.kidUnscanned} child section(s) have no fresh scan, so child records are UNVERIFIED. Open Transfer and scan them.">✓ root · children unverified</span>`
                 : '<span class="ds-sync-clean">✓ in sync</span>';
           } else {
             stats = `${t.missing ? `<span class="ds-sync-m">${t.missing} missing</span>` : ''}
@@ -1693,7 +1693,7 @@ function _syncStatusStripHtml() {
           }
           return `
           <div class="ds-sync-tile${clean && !t.kidUnscanned && !t.fErr ? ' ds-sync-ok' : ''}" data-sync-profile="${esc(t.id)}"
-               title="Open Reconcile for ${esc(t.name)}">
+               title="Open Transfer for ${esc(t.name)}">
             <div class="ds-sync-tile-name">${esc(t.name)}</div>
             <div class="ds-sync-tile-pair">${esc(orgLabel(t.src))} → ${esc(orgLabel(t.tgt))}</div>
             <div class="ds-sync-tile-stats">${stats}</div>
@@ -1793,7 +1793,7 @@ function renderOrgsPanel() {
       </div>`}
   `);
 
-  // U5: sync tiles deep-link into Reconcile for that profile.
+  // U5: sync tiles deep-link into Transfer for that profile.
   eid('dsMain')?.querySelectorAll('[data-sync-profile]').forEach(t =>
     t.addEventListener('click', () => window.openReconcile?.(t.dataset.syncProfile)));
 

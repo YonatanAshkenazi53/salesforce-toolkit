@@ -1,6 +1,6 @@
 'use strict';
 // ════════════════════════════════════════════════════════════════════════
-// DEPLOY VIEW (BETA) — one page instead of "Run Transfer" + "⚖ Reconcile"
+// DEPLOY VIEW (BETA) — one page instead of "Run Transfer" + "⚖ Transfer"
 // ════════════════════════════════════════════════════════════════════════
 // User 2026-09-19: "Can you implement it with the option for us to go back to
 // the current view?" — so this page sits BESIDE the classic pages, behind a
@@ -9,7 +9,7 @@
 // THE RULE OF THIS FILE: it is a PRESENTATION. It owns no engine, no scan and
 // no selection state of its own:
 //   • the scan        → p.lastScan / scan.children[pathKey]   (runDiffScan, scanReconcileChild)
-//   • the selection   → _recSel / _recChildSel                (the Sets ⚖ Reconcile uses)
+//   • the selection   → _recSel / _recChildSel                (the Sets ⚖ Transfer uses)
 //   • the run         → runReconcile(p, objType, buckets)     (unchanged)
 //   • the compare     → sftkOpenDriftCompare, renderLkpOverridePanel
 //   • the advisor     → sftkRecParentGapAdvisor               (paints #dsRecParentGaps)
@@ -56,7 +56,7 @@ function sftkDeployScanFor(scan, o) {
   return sftkDeployChildFresh(scan, o.pathKey, o.obj) ? scan.children[o.pathKey] : null;
 }
 
-// Today's Reconcile vocabulary, colours and order (user 2026-09-18).
+// Today's Transfer vocabulary, colours and order (user 2026-09-18).
 const SFTK_DEPLOY_TABS = [
   { k: 'ins',  bucket: 'missingInTarget', label: '🔴 Insert',         noun: 'to insert',      childOnly: false },
   { k: 'chg',  bucket: 'changed',         label: '🟡 Changed',        noun: 'changed',        childOnly: false },
@@ -293,13 +293,13 @@ function sftkDeployOffline(p, sessions, resolve) {
 }
 
 // ── entry points ──────────────────────────────────────────────────────────
-// Classic page → this page (the ✨ button in the Reconcile header).
+// Classic page → this page (the ✨ button in the Transfer header).
 window.sftkOpenDeployView = function () {
   if (!_reconcileProfile) return;
   _currentView = 'deploy';
   renderReconcile();            // the seam at the top of renderReconcile routes here
 };
-// This page → classic Reconcile, for this visit only (the switch stays on).
+// This page → classic Transfer, for this visit only (the switch stays on).
 window.sftkDeployToClassic = function () {
   _currentView = 'reconcile';
   renderReconcile();
@@ -513,7 +513,7 @@ async function renderDeploy() {
   if (scan.nearMisses) notes.push(`≈ ${scan.nearMisses} record pair(s) almost matched — keys differ only by whitespace or case (marked ≈ on the rows).`);
   if (scan.personContacts) { const l = sftkPaContactsLine(scan.personContacts, srcL, tgtL); if (l) notes.push(esc(l)); }
   for (const w of (scan.warnings || [])) notes.push(`⚠ ${esc(String(w).replace(/^[⚠\s]+/, ''))}`);
-  const notesHtml = notes.length ? `<div class="ds-rec-card ds-rec-card-warn"><div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⚠</span><span class="ds-rec-card-title">Worth reading before you deploy</span></div>${notes.map(n => `<div class="ds-rec-card-line">${n}</div>`).join('')}</div>` : '';
+  const notesHtml = notes.length ? `<details${_depFoldOpen('notes')} class="ds-rec-card ds-rec-card-warn ds-dep-fold" data-fold="notes"><summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⚠</span><span class="ds-rec-card-title">Worth reading before you deploy</span><span class="ds-rec-card-hint">${notes.length} note${notes.length === 1 ? '' : 's'}</span></summary>${notes.map(n => `<div class="ds-rec-card-line">${n}</div>`).join('')}</details>` : '';
 
   // ── records panel ──
   const cur = objects.find(o => o.pathKey === _depObjPath) || objects[0];
@@ -583,7 +583,7 @@ async function renderDeploy() {
     <div id="dsDepFlowPauseList" class="ds-dep-foot"></div>
     <div id="dsDepRulePauseList" class="ds-dep-foot"></div>
     <div id="dsRecProgress" class="ds-rec-progress"></div></div>
-    ${_depLastRunLog ? `<details open class="ds-rec-card ds-dep-lastlog"><summary class="ds-rec-card-title">📜 Last run on this page — the numbers above are already refreshed; History keeps this run too</summary><div class="ds-rec-progress">${_depLastRunLog.html}</div></details>` : ''}`);
+    ${_depLastRunLog ? `<details open class="ds-rec-card ds-dep-lastlog ds-dep-fold"><summary class="ds-rec-card-title">📜 Last run on this page — the numbers above are already refreshed; History keeps this run too</summary><div class="ds-rec-progress">${_depLastRunLog.html}</div></details>` : ''}`);
 
   if (liveLog) { const slot = eid('dsRecProgress'); if (slot && slot !== liveLog) slot.replaceWith(liveLog); }
   _depWireChrome(p);
@@ -620,6 +620,7 @@ async function renderDeploy() {
     else _depObjPath = b.dataset.depScan;
     renderDeploy();
   }));
+  _depWireFolds(document);
   eid('dsDepDeleteMode')?.addEventListener('change', e => {
     _recDeleteMode = e.target.value;
     // the consequence is said the moment the mode is picked, not only at the confirmation
@@ -657,6 +658,25 @@ async function renderDeploy() {
 // which outside objects it points at.
 let _depIdKey = '', _depIdData = null;
 window.sftkDeployIdentityChanged = function () { _depIdKey = ''; _depIdData = null; if (_currentView === 'deploy' && _reconcileProfile) _depPaintTree(_reconcileProfile, _reconcileProfile.lastScan); };
+
+// ── folding sections (user 2026-10-17: "can we do the whole sections collapsable? the deployment tree,
+// deploy parents, worth reading") — <details> cards; what is folded is remembered in the settings ──
+function _depFoldOpen(key) {
+  const f = (typeof _settings === 'object' && _settings && _settings.deployFolds) || {};
+  return f[key] === false ? '' : ' open';
+}
+function _depWireFolds(host) {
+  if (!host || typeof host.querySelectorAll !== 'function') return;
+  host.querySelectorAll('details.ds-dep-fold[data-fold]').forEach(el => {
+    if (el.dataset.foldWired) return;
+    el.dataset.foldWired = '1';
+    el.addEventListener('toggle', async () => {
+      if (typeof _settings !== 'object' || !_settings) return;
+      _settings.deployFolds = { ...(_settings.deployFolds || {}), [el.dataset.fold]: !!el.open };
+      try { await storageSaveSettings(); } catch (_) { /* a fold is a convenience */ }
+    });
+  });
+}
 
 async function _depPaintTree(p, scan) {
   const host = eid('dsDepTree');
@@ -698,13 +718,14 @@ async function _depPaintTree(p, scan) {
   };
   const root = sftkDeployTreeNodes(p.tree);
   const missingTgt = (_depIdKey === key && _depIdData) ? sftkIdCreatable(_depIdData.objects, 'tgt') : [];
-  host.innerHTML = `<div class="ds-rec-card">
-    <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">📦</span><span class="ds-rec-card-title">This deployment</span>
-      <span class="ds-rec-card-hint">every object of this deployment, how it hangs under its parent, and how many records ${esc(orgLabel(p.sourceOrg || ''))} and ${esc(orgLabel(p.targetOrg || ''))} hold — click an object to see its records</span></div>
+  host.innerHTML = `<details${_depFoldOpen('tree')} class="ds-rec-card ds-dep-fold" data-fold="tree">
+    <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">📦</span><span class="ds-rec-card-title">This deployment</span>
+      <span class="ds-rec-card-hint">every object of this deployment, how it hangs under its parent, and how many records ${esc(orgLabel(p.sourceOrg || ''))} and ${esc(orgLabel(p.targetOrg || ''))} hold — click an object to see its records</span></summary>
     <div class="ds-dtree"><ul>${root ? nodeHtml(root, null) : ''}</ul></div>
     <div class="ds-dtree-foot"><button class="ds-btn ds-btn-sm" id="dsDepIdBtn" title="See which objects carry the identity field in each org, create it where it is missing, and stamp matched pairs">🪪 Identity…</button>
       ${missingTgt.length ? `<span class="ds-rec-card-line">Optional. Records are matched by the fields shown on each card. An identity field makes that match exact even when a name changes — ${missingTgt.length} object(s) have none in ${esc(orgLabel(p.targetOrg || ''))} yet (${esc(missingTgt.join(', '))}). 🪪 Identity… can create it.</span>` : ''}</div>
-  </div>`;
+  </details>`;
+  _depWireFolds(host);
   host.querySelectorAll('[data-tree-obj]').forEach(el => {
     // a chip opens its own tab of that object; the card opens the object
     const go = tab => { _depObjPath = el.dataset.treeObj; _depTab = tab || 'ins'; _depFilter = ''; renderDeploy().then(() => eid('dsDepRecords')?.scrollIntoView({ block: 'nearest' })); };
@@ -832,11 +853,11 @@ async function _depPaintOrder(p, scan) {
     </div>`;
   };
   const allDone = nextIdx === -1;
-  h.innerHTML = `<div class="ds-rec-card ${anyDoomed ? 'ds-rec-card-bad' : anyEmpty ? 'ds-rec-card-warn' : allDone ? 'ds-rec-card-good' : ''}">
-    <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span>
+  h.innerHTML = `<details${_depFoldOpen('order')} class="ds-rec-card ds-dep-fold ${anyDoomed ? 'ds-rec-card-bad' : anyEmpty ? 'ds-rec-card-warn' : allDone ? 'ds-rec-card-good' : ''}" data-fold="order">
+    <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span>
       <span class="ds-rec-card-title">${anyDoomed ? '⛔ Stop — some inserts here fail until their parents exist · ' : ''}Start with parents first</span>
       <span class="ds-dep-pchip ds-dep-pchip-${verdict.cls}">${esc(verdict.text)}</span>
-      <span class="ds-rec-card-hint">every object in this deployment, and what it points at outside it — those records must be in ${esc(tgtL)} first, lookups land on them by name</span></div>
+      <span class="ds-rec-card-hint">every object in this deployment, and what it points at outside it — those records must be in ${esc(tgtL)} first, lookups land on them by name</span></summary>
     <div class="ds-rec-card-body">
       ${steps.length ? steps.map(stepHtml).join('') : `<div class="ds-ordstep ds-ordstep-done"><span class="ds-ordstep-num">✓</span><span class="ds-dep-ordwhat">None of ${chain} points at an object outside this deployment — there is nothing to deploy first.</span></div>`}
       <div class="ds-ordstep${allDone ? ' ds-ordstep-next' : ''}">
@@ -844,7 +865,8 @@ async function _depPaintOrder(p, scan) {
         <span class="ds-dep-ordwhat"><strong>${chain}</strong> <span class="ds-lkp-hint">— this deployment, in this order: a parent object goes in before the object under it</span></span>
         ${allDone ? '<span class="ds-psync ds-psync-ok">parents ready ✓</span><span class="ds-ordstep-arrow">← next</span>' : '<span class="ds-lkp-hint">waits for the steps above</span>'}
       </div>
-    </div></div>`;
+    </div></details>`;
+  _depWireFolds(h);
   h.querySelectorAll('[data-dep-gap]').forEach(b => b.addEventListener('click', async () => {
     const label = b.textContent; b.disabled = true; b.textContent = '⏳ scanning…';
     if (!(await sftkOpenParentsFirst(p, b.dataset.depGap, b.dataset.depGapFor))) { b.disabled = false; b.textContent = label; }

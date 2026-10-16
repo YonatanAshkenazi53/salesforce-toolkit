@@ -6154,6 +6154,13 @@ body.ds-pro {
 .ds-rec-card-bad  { border-left-color: var(--danger); }
 .ds-rec-card-tight { flex-direction: row; gap: 8px; align-items: flex-start; padding: 8px 12px; color: var(--subtext); font-size: 12px; }
 .ds-rec-card-hd { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+/* folding cards on the Deploy page (2026-10-17): a chevron, the hint hidden while folded */
+.ds-dep-fold > summary { cursor: pointer; list-style: none; user-select: none; }
+.ds-dep-fold > summary::-webkit-details-marker { display: none; }
+.ds-dep-fold > summary::before { content: '▾'; display: inline-block; width: 1em; color: var(--subtext); font-size: 12px; }
+.ds-dep-fold:not([open]) > summary::before { content: '▸'; }
+.ds-dep-fold:not([open]) > summary .ds-rec-card-hint { display: none; }
+.ds-dep-fold > summary:hover .ds-rec-card-title { color: var(--brand); }
 .ds-rec-card-ico { font-size: 15px; line-height: 1; }
 .ds-rec-card-title { font-weight: 700; font-size: 13px; }
 .ds-rec-card-hint { font-size: 11px; color: var(--subtext); margin-left: auto; }

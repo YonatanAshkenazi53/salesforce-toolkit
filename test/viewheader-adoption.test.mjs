@@ -26,7 +26,7 @@ const SWEEP = {
   'studio-history.js':   { calls: 2, icon: 'scroll',    titleSrc: "title: 'History'",
                            ids: ['dsRetentionDays', 'dsCountsOnly', 'dsHistExportAll', 'dsClearCached', 'dsClearHistory'] },
   'studio-readiness.js': { calls: 1, icon: 'shield',    titleSrc: "title: 'Deployment Readiness'" },
-  'studio-reconcile.js': { calls: 1, icon: 'swap',      titleSrc: 'title: `Reconcile — ',
+  'studio-reconcile.js': { calls: 1, icon: 'swap',      titleSrc: 'title: `Transfer — ',
                            ids: ['dsRecBackBtn', 'dsRecRefreshBtn'], hooks: ['data-dsaction="saveEphemeralProfile"'], back: true },
   'studio-transfer.js':  { calls: 1, icon: 'play',      titleSrc: "title: 'Run Transfer'",
                            ids: ['dsTrBackBtn'], back: true },

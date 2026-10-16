@@ -649,7 +649,7 @@ function sftkSeedRenderRows() {
             ${targets.map(t => {
               const tc = r.tgtCounts[t];
               const same = r.srcCount != null && tc != null && r.srcCount === tc;
-              return `<td style="padding:3px 8px;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;${same ? 'opacity:.65' : 'color:var(--c-warn-text, #d97706)'}"><span data-seed-cell="${esc(r.name)}|${esc(_orgKey(t))}">${n(tc, (r.tgtWhy || {})[t])}</span> <button class="ds-btn ds-btn-xs" data-seed-rec="${esc(r.name)}|${esc(t)}" title="Open ⚖ Reconcile for ${esc(r.name)} against ${esc(orgLabel(t))} — compare row by row and pick exactly which records to push, overwrite or delete.">⚖</button></td>`;
+              return `<td style="padding:3px 8px;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;${same ? 'opacity:.65' : 'color:var(--c-warn-text, #d97706)'}"><span data-seed-cell="${esc(r.name)}|${esc(_orgKey(t))}">${n(tc, (r.tgtWhy || {})[t])}</span> <button class="ds-btn ds-btn-xs" data-seed-rec="${esc(r.name)}|${esc(t)}" title="Open ⚖ Transfer for ${esc(r.name)} against ${esc(orgLabel(t))} — compare row by row and pick exactly which records to push, overwrite or delete.">⚖</button></td>`;
             }).join('')}
           </tr>`).join('')}
       </table>
@@ -1133,7 +1133,7 @@ function sftkSeedDupeReport(found) {
     <div class="ds-modal-body" style="font-size:12.5px;max-height:60vh;overflow:auto">
       <div class="ds-pk-note">These key values appear more than once in the target. Each row shows the value and how many records carry it.</div>
       ${body}
-      <div class="ds-pk-note" style="margin-top:10px">To clean them up: open ⚖ Reconcile for the object and target (the ⚖ button on its row), where "In target only" lists the extras record by record and you choose what to delete.</div>
+      <div class="ds-pk-note" style="margin-top:10px">To clean them up: open ⚖ Transfer for the object and target (the ⚖ button on its row), where "In target only" lists the extras record by record and you choose what to delete.</div>
     </div>
     <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Close</button></div>`);
 }
@@ -1141,7 +1141,7 @@ function sftkSeedDupeReport(found) {
 // ⚖ — the door from the bulldozer to the scalpel (user 2026-08-20: "we
 // need a way for the user to reconcile against one target, to select the
 // records he wants to seed"). Builds the same ephemeral pair the ring's ⚖
-// uses, scans it, and hands it to Reconcile: from there every bucket is
+// uses, scans it, and hands it to Transfer: from there every bucket is
 // per-record. Works for objects with NO saved deployment — the seed's own
 // derived config (matching, lookup bridges, masking) carries it.
 async function sftkSeedOpenReconcile(obj, tgtUrl) {
@@ -1261,7 +1261,7 @@ async function sftkSeedConfirmAndRun(what) {
     showToast(`Counts were never loaded for ${unloaded.map(orgLabel).join(', ')} — click 🔍 Load objects & counts again first.`, 'error', 7000);
     return;
   }
-  // Production gates — same laws as Reconcile and the fan-out: hard delete
+  // Production gates — same laws as Transfer and the fan-out: hard delete
   // is flatly refused against prod; every OTHER prod write demands the
   // typed-org-name confirmation (the promise the PROD badge itself makes).
   const orgTypes = {};

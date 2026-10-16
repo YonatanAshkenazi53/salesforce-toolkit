@@ -56,7 +56,7 @@ function sftkTermsRecord(version, nowIso) {
 function sftkTermsPoints() {
   return [
     { icon: '🔓', text: 'The Software is <strong>open source under the Apache License 2.0</strong>: free to use, change and share, and it comes without any warranty. What follows is about using it against your orgs.' },
-    { icon: '🧩', text: 'This agreement covers <strong>both the Toolkit and Data Studio, and every one of their components</strong> — Field Cleaner, the flow tools, deployments, Reconcile, the Org Seeder, the debugger, everything. <strong>Any consequence of using any of it is your responsibility</strong>, not the author’s.' },
+    { icon: '🧩', text: 'This agreement covers <strong>both the Toolkit and Data Studio, and every one of their components</strong> — Field Cleaner, the flow tools, deployments, Transfer, the Org Seeder, the debugger, everything. <strong>Any consequence of using any of it is your responsibility</strong>, not the author’s.' },
     { icon: '🗑', text: 'This tool can <strong>delete every record</strong> of an object you select, in every org you select — and can purge them past the Recycle Bin, where nothing can recover them.' },
     { icon: '✍', text: 'It can <strong>overwrite</strong> data, files and configuration in several orgs at once, and <strong>deploy metadata</strong> — Flows, Layouts, Lightning pages, permission sets, Custom Metadata, Custom Labels — which can change how your orgs behave.' },
     { icon: '💾', text: 'You are responsible for having your <strong>own verified backups</strong> before you run anything destructive. This is not a backup tool.' },

@@ -1018,7 +1018,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         : (node.where || '');
       let recs = [];
 
-      // 431 GUARD (load test 2026-08-17): a Reconcile "✓ All" run rides
+      // 431 GUARD (load test 2026-08-17): a Transfer "✓ All" run rides
       // EVERY selected id in node.recordIds — 1,850 picked children built an
       // `Id IN (…)` of ~39KB into a GET query string and Salesforce's edge
       // answered HTTP 431 (Request Header Fields Too Large), zero rows
@@ -1269,7 +1269,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
 
       // W2 — per-record lookup overrides for THIS target org: the user's
       // hand-picked target record per (source record, field), set from
-      // Reconcile and stored at node.lookupOverrides[orgKey][srcId][field].
+      // Transfer and stored at node.lookupOverrides[orgKey][srcId][field].
       // Org-local target ids — stripped on profile export. Matched by org
       // IDENTITY like every other surface.
       let lkpOverridesUsed = 0;
@@ -1433,7 +1433,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
                 `PRE-FLIGHT STOP — ${objType}.${fieldName}: 0/${total} lookups resolved via ` +
                 `${res.matchObject}.${res.matchField}, and ${tfPre} is REQUIRED in the target, so every ` +
                 `insert would fail. Nothing was pushed. Fix: deploy ${res.matchObject} records to the ` +
-                `target first (the numbered plan in Reconcile does it in one click), then run again.`);
+                `target first (the numbered plan in Transfer does it in one click), then run again.`);
             }
           }
         }
@@ -1946,7 +1946,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // covers this object, even at zero (masking was ACTIVE, values may all
       // have been empty) — History and the run log read it from here.
       if (lkpOverridesUsed) {
-        diagnostics.push(`${objType}: ${lkpOverridesUsed} lookup value(s) set from per-record hand-picks (Reconcile → lookup overrides).`);
+        diagnostics.push(`${objType}: ${lkpOverridesUsed} lookup value(s) set from per-record hand-picks (Transfer → lookup overrides).`);
       }
       if (personRows) {
         diagnostics.push(`${objType}: ${personRows} Person Account(s) — Name is derived from FirstName/LastName on those, so only the name parts were sent.`);
@@ -2525,7 +2525,7 @@ async function sftkTransferFilesForNode(objType, srcOrgUrl, srcSid, tgtOrgUrl, t
   }
   const srcIds = Object.keys(idMap || {});
   if (!srcIds.length) return stats;
-  // `only` — Reconcile's per-file selection: { srcRecordId: [checksum, …] }.
+  // `only` — Transfer's per-file selection: { srcRecordId: [checksum, …] }.
   // When present, ONLY those (record, checksum) combinations move. The
   // scoping must stay PER RECORD: a flattened global checksum set would
   // also move an unselected same-checksum copy linked to a different
@@ -2878,7 +2878,7 @@ async function dispatchMessage(message) {
       }
     }
     case 'SFTK_TRANSFER_FILES': {
-      // Reconcile's 📎 "Move selected files" — the direct path for records
+      // Transfer's 📎 "Move selected files" — the direct path for records
       // that are already in sync (nothing to run, only attachments to move).
       // idMap: { srcRecordId → tgtRecordId } for the SELECTED records;
       // only:  { srcRecordId → [checksum, …] } for the SELECTED files.
@@ -4628,7 +4628,7 @@ async function sfCollectionsCreate(orgUrl, sid, records) {
 
 // ---------------------------------------------------------------
 // SObject Collections API — bulk DELETE up to 200 records by Id.
-// Used by the Reconcile view to remove "extras" (records present in target
+// Used by the Transfer view to remove "extras" (records present in target
 // but not in source). allOrNone:false so partial failures don't roll back
 // the whole batch. Returns array of { id, success, errors[] } per record.
 // ---------------------------------------------------------------
@@ -4713,7 +4713,7 @@ async function sfEmptyRecycleBin(orgUrl, sid, ids) {
 // ---------------------------------------------------------------
 // SObject Collections API — bulk UPDATE up to 200 records.
 // Each record must carry its target Id + attributes:{type}. Used by the
-// Reconcile view to push source values onto drifted target records.
+// Transfer view to push source values onto drifted target records.
 // allOrNone:false. Returns array of SaveResult { id, success, errors[] }.
 // ---------------------------------------------------------------
 async function sfCollectionsUpdate(orgUrl, sid, records) {

@@ -25,7 +25,7 @@ describe('Person Accounts: the whole Name is never sent', () => {
     const i = BG.indexOf('function buildCopyFields(describe)');
     expect(BG.slice(i, i + 2500)).toContain("f.name === 'IsPersonAccount'");
   });
-  it('⚖ Reconcile overwrite reads the flag and skips Name on person accounts', () => {
+  it('⚖ Transfer overwrite reads the flag and skips Name on person accounts', () => {
     const fn = RC.slice(RC.indexOf('async function reconcileOverwrite('));
     expect(fn).toContain("descByLower['ispersonaccount'] ? ['IsPersonAccount'] : []");
     expect(fn).toContain("sf === 'Name' && sr.IsPersonAccount === true");
@@ -64,7 +64,7 @@ describe('Person Account CONTACTS are left out everywhere, and said so', () => {
     expect(pass).toContain('r.personAccount = true; c.synced++;');
     expect(pass).not.toMatch(/drop\(identical/);
   });
-  it('History and the Reconcile header show the count', () => {
+  it('History and the Transfer header show the count', () => {
     expect(HI).toContain('Person Account contact(s) left out');
     expect(RC).toContain('scan.personContacts');
   });

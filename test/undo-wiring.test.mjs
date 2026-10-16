@@ -47,7 +47,7 @@ describe('the restore point is read BEFORE the first write, on every path', () =
     expect(errBranch).toMatch(/undo: \{ \.\.\.undoStub, \.\.\.runEnd \}/);
   });
 
-  it('Reconcile — after every confirmation, before phase 0; the source too when the run writes there', () => {
+  it('Transfer — after every confirmation, before phase 0; the source too when the run writes there', () => {
     const fn = RC.slice(RC.indexOf('async function runReconcile('), RC.indexOf('async function reconcileStampPairs'));
     // Campaign 3 phase 2: the Proceed dialog + the production typed-name step
     // both moved onto sftkConfirmDestructive (sftk-confirm.js) — still before the capture.
@@ -230,7 +230,7 @@ describe('the rollback keeps the laws', () => {
   });
 
   it('keeps one result object per leg AND object — a refused second leg can never vanish into success', () => {
-    // Reconcile pull / ← update captures the same root object in the target AND the source.
+    // Transfer pull / ← update captures the same root object in the target AND the source.
     expect(fn).toMatch(/it\.key = multiLeg \? `\$\{it\.objType\} @ \$\{orgLabel\(it\.leg\.orgUrl\)\}` : it\.objType/);
     expect(fn).toContain('const key = item.key;');
     expect(fn).toMatch(/const r = results\[key\] \|\| \(results\[key\] = \{/);

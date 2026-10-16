@@ -40,7 +40,7 @@ window.openReconcile = function(profileId, targetUrl) {
 
 // Module-scope selection sets so re-renders (after an action) preserve picks
 // where it makes sense. Reset when the profile changes.
-// Reconcile selection state. Buckets:
+// Transfer selection state. Buckets:
 //   push      — sourceIds, insert into target ("in source only")
 //   overwrite — sourceIds, update TARGET with source values ("drift" →)
 //   updSrc    — sourceIds, update SOURCE with target values ("drift" ←, 3B v2)
@@ -389,7 +389,7 @@ function sftkWirePicklistFixButtons() {
 // keys are source-side only (`sourceId|checksum`), so two pairs sharing a
 // source org produce IDENTICAL keys — a selection made for target A would
 // render pre-checked and arm 📎 Move against target B (QA sweep 2026-08-16,
-// confirmed HIGH). Shared by ⚖ Reconcile and the Deploy view.
+// confirmed HIGH). Shared by ⚖ Transfer and the Deploy view.
 function sftkRecResetSelectionFor(p) {
   if (_recLastProfileId === p.id) return;
   _recSel = { push: new Set(), overwrite: new Set(), updSrc: new Set(), del: new Set(), pull: new Set() };
@@ -622,7 +622,7 @@ async function renderReconcile() {
     // sidebar row exists for this sub-page, so no nav glyph to mirror.
     icon: 'swap',
     back: `<button class="ds-back-link" id="dsRecBackBtn" title="Back to Data Deployment">‹ Back to deployments</button>`,
-    title: `Reconcile — <span style="color:var(--brand)">${esc(objType)}</span>`,
+    title: `Transfer — <span style="color:var(--brand)">${esc(objType)}</span>`,
     help: 'The repair shop of the compare trio, for ONE source → target pair. Every number here comes from the last 🔄 scan — a point-in-time measurement, matched by your match key, never by record Id. Each bucket has its own action: push what’s missing, overwrite what changed, relink children, review extras — nothing writes until you click its action. For the same measurement across every open org, use the All open orgs matrix — its ⚖ opens this page for that target.',
     subtitle: `${esc(orgLabel(p.sourceOrg || ''))} → ${esc(orgLabel(p.targetOrg || ''))} ${prodBadge(p.targetOrg)}${scanFresh ? ` · scanned ${esc(timeAgo(scan.runAt))}` : ''}${scanFresh && scan.fetched ? ` · read ${scan.fetched.src}${scan.fetched.srcTotal != null ? ` of ${scan.fetched.srcTotal}` : ''} source / ${scan.fetched.tgt}${scan.fetched.tgtTotal != null ? ` of ${scan.fetched.tgtTotal}` : ''} target` : ''}${scanFresh && scan.where ? ` · <span class="ds-mm-chip" style="font-size:11px;padding:1px 7px;border-radius:9px;background:#fef3c7;color:#92400e" title="This WHERE scoped BOTH orgs' fetches — a record it excludes appears in NO bucket. Clear it in the builder's WHERE box if you expected that record here.">WHERE ${esc(scan.where)}</span>` : ''}${scanFresh && scan.memoryMatched ? ` · <span class="ds-mm-chip" style="font-size:11px;padding:1px 7px;border-radius:9px;background:#eef2ff;color:#4338ca;white-space:nowrap" title="${scan.memoryMatched} record pair(s) matched by remembered identity (match memory) instead of key — they survive renames on either side.">🧠 ${scan.memoryMatched} matched from memory</span>` : ''}${_acc ? ` · ${accuracyChip(_acc)}` : ''}`,
     actions: `${p.ephemeral ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="saveEphemeralProfile"
@@ -636,7 +636,7 @@ async function renderReconcile() {
       <div class="ds-empty-page">
         <div class="ds-empty-icon">⚖</div>
         <div class="ds-empty-title">Set source and target orgs first</div>
-        <div class="ds-empty-sub">Reconcile needs both orgs configured. Open the profile in <strong>✏ Edit</strong> to set them.</div>
+        <div class="ds-empty-sub">Transfer needs both orgs configured. Open the profile in <strong>✏ Edit</strong> to set them.</div>
       </div>`);
     eid('dsRecBackBtn')?.addEventListener('click', renderProfiles);
     return;
@@ -1301,7 +1301,7 @@ async function renderReconcile() {
         <button class="ds-tree-toggle" data-recc-toggle="${pathKey}">${open ? '▼' : '▶'}</button>
         <span class="ds-rec-child-title">${'↳'.repeat(depth)} <strong>${esc(childObj)}</strong> <span class="ds-rec-child-via">via ${esc(node.field || '?')}${depth > 1 ? ` · child of ${esc(parentObj)}` : ''}</span></span>
         ${badges}
-        ${depth > 1 && (node.children || []).length ? `<span class="ds-rec-child-via" title="Reconcile scans two levels deep (children + grandchildren) in v2 — this object's own children aren't scanned here">· deeper levels not scanned (v2)</span>` : ''}
+        ${depth > 1 && (node.children || []).length ? `<span class="ds-rec-child-via" title="Transfer scans two levels deep (children + grandchildren) in v2 — this object's own children aren't scanned here">· deeper levels not scanned (v2)</span>` : ''}
         <span class="ds-rec-child-actions">
           <button class="ds-btn ds-btn-xs ${showCf ? 'ds-btn-config--active' : ''}" ${orderDisabled ? 'disabled' : ''} data-recc-order="${pathKey}"
             title="${orderTitle}">
@@ -1902,7 +1902,7 @@ async function renderReconcile() {
   // separately, i want to select bulk api / batch size in reconcile").
   // Same persistence contract as the Run page and the fan-out: saved ON THE
   // PROFILE (the engine reads profile.apiMode/batchSize at run start, and
-  // Reconcile's push spreads this profile object into the engine message).
+  // Transfer's push spreads this profile object into the engine message).
   // For an ephemeral chooser pair, mirror onto the REAL profile via _ringOf
   // so the choice survives the session — the clone alone would evaporate.
   const _recEnginePersist = () => sftkRecEnginePersist(p);
@@ -2598,7 +2598,7 @@ async function runReconcile(profile, objType, buckets, opts) {
     row.textContent = `${icon} ${msg}`;
     prog.appendChild(row);
   };
-  if (prog) prog.innerHTML = '<div class="ds-prog-hdr">Reconcile progress</div>';
+  if (prog) prog.innerHTML = '<div class="ds-prog-hdr">Transfer progress</div>';
   const runBtn = eid('dsRecRunBtn'); if (runBtn) runBtn.disabled = true;
   // The Deploy page re-renders on every state change (a ring tile landing, a
   // tab switch) — while this flag is on it keeps the SAME #dsRecProgress node
@@ -3357,7 +3357,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   });
   await storageSaveHistory();
 
-  log(stoppedWhy ? '⏸' : '✅', stoppedWhy === 'pause' ? 'Paused — the records not reached are still to deploy; ▶ Continue from History.' : stoppedWhy === 'closed' ? 'Stopped — the page was closed mid-run; ▶ Continue from History.' : stoppedWhy ? 'Cancelled — refreshing state…' : `Reconcile complete — refreshing state…`);
+  log(stoppedWhy ? '⏸' : '✅', stoppedWhy === 'pause' ? 'Paused — the records not reached are still to deploy; ▶ Continue from History.' : stoppedWhy === 'closed' ? 'Stopped — the page was closed mid-run; ▶ Continue from History.' : stoppedWhy ? 'Cancelled — refreshing state…' : `Transfer complete — refreshing state…`);
   window._sftkRunActive = false;
   eid('dsRunPauseBar')?.remove();
   // Remember which child sections had scans BEFORE the root refresh wipes
@@ -3395,7 +3395,7 @@ async function runReconcile(profile, objType, buckets, opts) {
   if (counts.updatedSource) toastParts.push(`← ${counts.updatedSource} updated in source`);
   if (counts.pulled)        toastParts.push(`${counts.pulled} pulled`);
   if (counts.deleted)       toastParts.push(`${counts.deleted} deleted`);
-  const toastMsg = `Reconcile: ${toastParts.join(' · ') || 'no actions'}` +
+  const toastMsg = `Transfer: ${toastParts.join(' · ') || 'no actions'}` +
     (totalFail ? ` · ${totalFail} failed` : '');
   // TOTAL failure must be unmissable — the user ran 401 doomed inserts and
   // walked away believing they succeeded (2026-08-09). toastParts only gets
@@ -3577,7 +3577,7 @@ async function sftkIdDeployTo(orgUrls, objects) {
     // of a deployment run. The field deploy has no verified undo (see the
     // note below); the permission set assignment does, when this run
     // created it.
-    const journal = sftkHistoryBegin({ tool: 'Reconcile', title: `🪪 ${sftkIdFieldName()} + ${sftkIdPermSetName()} — ${label}`, orgUrl: sess.orgUrl });
+    const journal = sftkHistoryBegin({ tool: 'Transfer', title: `🪪 ${sftkIdFieldName()} + ${sftkIdPermSetName()} — ${label}`, orgUrl: sess.orgUrl });
     const undoSteps = [];
     let undoNote = `the ${sftkIdFieldName()} field can be removed again in Setup (Object Manager → the object → Fields & Relationships) — deleting a field here has no honest re-read: a successful removal makes the same probe query fail, indistinguishable from a broken one`;
     try {
@@ -3763,7 +3763,7 @@ async function reconcileStampPairs(p, scan) {
   // here (outside runReconcile) because it is an identity-stamp step, not a
   // deployment run. The before-value of the identity field is read first so
   // a confirmed stamp can be undone by writing it back.
-  const journal = sftkHistoryBegin({ tool: 'Reconcile', title: `🪪 ${pairs.length} ${objType} record(s) stamped — ${orgLabel(p.targetOrg)}`, orgUrl: p.targetOrg });
+  const journal = sftkHistoryBegin({ tool: 'Transfer', title: `🪪 ${pairs.length} ${objType} record(s) stamped — ${orgLabel(p.targetOrg)}`, orgUrl: p.targetOrg });
   const undoSteps = [];
   try {
     const oldValById = new Map();
@@ -3851,7 +3851,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const node = profile.tree;
   const fm   = node.fieldMappings || {};
 
-  // W2 — hand-picked lookup targets for THIS target org (the Reconcile 🔗
+  // W2 — hand-picked lookup targets for THIS target org (the Transfer 🔗
   // panel). Applied LAST in the payload build: a pick is already a
   // target-org id, so it needs no by-key resolution and beats the
   // name-matching refPairs below — the same Priority-0 the run engine
@@ -4225,7 +4225,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
 
   // W2 — disclose applied hand-picks the way the run engine does, so the
   // user can tell name-matching results from their own overrides.
-  if (lkpOvUsed) warnings.push(`🔗 ${lkpOvUsed} lookup value(s) written from hand-picked targets (your Reconcile 🔗 picks — they beat name-matching)`);
+  if (lkpOvUsed) warnings.push(`🔗 ${lkpOvUsed} lookup value(s) written from hand-picked targets (your Transfer 🔗 picks — they beat name-matching)`);
 
   // The one write discipline (sftk-write.js): Collections' per-record
   // success used to BE "updated" — one re-read of exactly the accepted Ids,
@@ -4451,13 +4451,13 @@ function sftkCapFailedIds(list, richCap, idCap) {
 // 401 × "Required field missing"). Probe once per scan (one LIMIT-1 query
 // per referenced object), cache the verdict, and offer the fix as ONE
 // CLICK: an ephemeral parents-first deployment on the same org pair,
-// opened straight in Reconcile with its missing records pre-selected (the
+// opened straight in Transfer with its missing records pre-selected (the
 // ring / tree-diff ephemeral recipe). Advisory only — any failure inside
 // leaves the page untouched.
 // The duplicate-name warning: WHO they are (linked in both orgs — user
 // 2026-08-10 "where are the records", 2026-09-21 "who are they?") and WHAT to
 // do about it, in the order that is safe (user 2026-09-21: "What operations we
-// can suggest in order to fix"). Shared by ⚖ Reconcile and the Deploy view.
+// can suggest in order to fix"). Shared by ⚖ Transfer and the Deploy view.
 // Buttons carry data-rec-dupfix; each page wires them (sftkRecWireDupFix).
 function sftkRecDupsHtml(scan, p) {
   const ex = (scan && scan.dupKeys && scan.dupKeys.examples) || [];
@@ -4740,7 +4740,7 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
     // lookup lands null; an existing one still deserves a compare-first
     // pass (missing rows / drift there break the children's bridges too).
     // Both buttons run the same one-click: scan the parent pair, open its
-    // Reconcile, fix, come back — this view refreshes itself.
+    // Transfer, fix, come back — this view refreshes itself.
     const nextIdx = steps.findIndex(s => !s.done);
     const allDone = nextIdx === -1;
     // Feed the RUN GATE — a banner is advice; guaranteed failure gets a stop.
@@ -4756,8 +4756,8 @@ async function sftkRecParentGapAdvisor(p, scan, objType, missing) {
         : s.checking
           ? `<span class="ds-lkp-hint">⏳ checking alignment…</span>`
           : s.vd
-            ? `<span class="ds-psync ds-psync-bad">🔴 ${s.vd.missing} missing · 🟡 ${s.vd.changed} changed · ${esc(timeAgo(s.vd.at))}</span> <button class="ds-btn ds-btn-xs${isNext ? ' ds-btn-primary' : ''}" data-recgap="${esc(s.refObj)}" title="Opens the ${esc(s.refObj)} Reconcile with this work waiting — fix, come back, continue down the list.">⚖ Open &amp; fix</button>`
-            : `<span class="ds-lkp-hint">couldn't check automatically</span> <button class="ds-btn ds-btn-xs" data-recgap="${esc(s.refObj)}" title="Scans ${esc(s.refObj)} across this org pair and opens its Reconcile.">🔍 Compare &amp; fix</button>`;
+            ? `<span class="ds-psync ds-psync-bad">🔴 ${s.vd.missing} missing · 🟡 ${s.vd.changed} changed · ${esc(timeAgo(s.vd.at))}</span> <button class="ds-btn ds-btn-xs${isNext ? ' ds-btn-primary' : ''}" data-recgap="${esc(s.refObj)}" title="Opens the ${esc(s.refObj)} Transfer with this work waiting — fix, come back, continue down the list.">⚖ Open &amp; fix</button>`
+            : `<span class="ds-lkp-hint">couldn't check automatically</span> <button class="ds-btn ds-btn-xs" data-recgap="${esc(s.refObj)}" title="Scans ${esc(s.refObj)} across this org pair and opens its Transfer.">🔍 Compare &amp; fix</button>`;
       return `<div class="ds-ordstep${s.done ? ' ds-ordstep-done' : ''}${isNext ? ' ds-ordstep-next' : ''}">
         <span class="ds-ordstep-num">${i + 1}</span>
         <strong>${esc(s.refObj)}</strong> <span class="ds-lkp-hint">(via ${esc(s.field)})</span>

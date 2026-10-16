@@ -343,7 +343,7 @@ describe('studio-scan / studio-reconcile — the probe and its display site agre
     expect(scan).toContain('orphanNote');
   });
 
-  it('renders both the honest label and the cap banner in Reconcile', () => {
+  it('renders both the honest label and the cap banner in Transfer', () => {
     expect(rec).toContain('cs.orphanNote');
     expect(rec).toContain('cs.orphanLabel');
     // The old sub-label built the count from rows alone and could not know

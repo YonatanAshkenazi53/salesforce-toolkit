@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { extractFunction, extractFunctions } from './extract.mjs';
 
 // 2026-09-19 — user: "Can you implement it with the option for us to go back
-// to the current view?" The Deploy view sits BESIDE Run Transfer + Reconcile,
+// to the current view?" The Deploy view sits BESIDE Run Transfer + Transfer,
 // behind a switch. It is a presentation: same scan, same selection Sets, same
 // run function. These tests pin that contract.
 const DV = readFileSync(new URL('../studio-deploy.js', import.meta.url), 'utf8');
@@ -39,7 +39,7 @@ describe('the Deploy view is the page: every door opens it', () => {
     expect(PR).not.toContain('dsDeployViewSwitch');
     expect(PR).toContain('>🚀 Deploy</button>');
     expect(PR).not.toContain('data-dsaction="openReconcile" data-arg="${p.id}"');
-    expect(PR).not.toContain('>⚖ Reconcile</button>');
+    expect(PR).not.toContain('>⚖ Transfer</button>');
     expect(DV).not.toContain('data-dsaction="deployToClassic"');
     expect(DV).not.toContain('ds-dep-beta');
   });
@@ -152,7 +152,7 @@ describe('Deploy page: scan all, refresh re-reads children, the run log stays', 
   it('the last run log is kept across the repaint and shown under the bar, per deployment', () => {
     expect(DV).toContain("_depLastRunLog = { pid: p.id, html: cur.innerHTML };");
     expect(DV).toContain('if (_depLastRunLog && _depLastRunLog.pid !== p.id) _depLastRunLog = null;');
-    expect(DV).toContain('class="ds-rec-card ds-dep-lastlog"');
+    expect(DV).toContain('class="ds-rec-card ds-dep-lastlog ds-dep-fold"');
   });
 });
 
@@ -275,7 +275,7 @@ describe('the plan uses measured totals, not the length of a capped list', () =>
     expect(DV).toContain('const n = i.total != null ? i.total : i.shown;');
     expect(DV).toContain('This list is truncated');
   });
-  it('uses today\'s Reconcile names, colours and order', () => {
+  it('uses today\'s Transfer names, colours and order', () => {
     const i = DV.indexOf('const SFTK_DEPLOY_TABS = [');
     const block = DV.slice(i, i + 900);
     const order = ['🔴 Insert', '🟡 Changed', '🔵 In target only', '⇄ Link differs', '🟢 Synced'].map(l => block.indexOf(l));

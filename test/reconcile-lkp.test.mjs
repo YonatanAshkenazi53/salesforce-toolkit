@@ -1,5 +1,5 @@
 // W2-UI — per-record lookup overrides: the pure read/write helpers behind
-// the Reconcile 🔗 panel. The ENGINE side (background.js reads
+// the Transfer 🔗 panel. The ENGINE side (background.js reads
 // node.lookupOverrides[orgKey][srcId][field] as Priority 0 in the payload
 // builder) is covered by engine-childfirst.test.mjs; these prove the UI
 // writes keys that reader accepts, never forks an org's bucket, and prunes

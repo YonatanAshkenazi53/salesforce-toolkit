@@ -166,7 +166,7 @@ describe('seed-level PII policy', () => {
     expect(SEED).toContain('284617035');
   });
 
-  it('⚖ opens Reconcile for ONE object against ONE target, even with no saved deployment', () => {
+  it('⚖ opens Transfer for ONE object against ONE target, even with no saved deployment', () => {
     expect(SEED).toMatch(/async function sftkSeedOpenReconcile\(obj, tgtUrl\)/);
     expect(SEED).toContain('data-seed-rec=');
     expect(SEED).toMatch(/const base = sftkSeedProfileFor\(obj, srcUrl, tgtUrl, \[\.\.\._seedSel\]\)/);

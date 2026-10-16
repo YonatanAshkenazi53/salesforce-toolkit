@@ -66,7 +66,7 @@ above on demand.
 A few short-lived values (an in-flight scan's progress, a pending modal's state)
 are held in `chrome.storage.session`, which the browser discards when it closes.
 
-## Copying data between orgs (Data Studio, Org Seeder, Reconcile)
+## Copying data between orgs (Data Studio, Org Seeder, Transfer)
 
 These features read records from one Salesforce org and write them into another
 org **that you choose**. This matters for privacy, so it is spelled out.

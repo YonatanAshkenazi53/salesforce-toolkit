@@ -617,7 +617,7 @@ describe('picked records and child-first are never invisible', () => {
 // ══════════════════════════════════════════════════════════════════
 // Child record picker vs the target org (user report 2026-08-04:
 // "doesn't pick child records correctly when compared to another org").
-// Reconcile v2 stores per-node scans at lastScan.children[pathKey]; the
+// Transfer v2 stores per-node scans at lastScan.children[pathKey]; the
 // picker's freshness gate compared the ROOT scan's objectType against
 // the child's — never equal — so child pickers silently dropped every
 // 🔴/🟡/🟢 badge and fell back to stale history.
@@ -658,7 +658,7 @@ describe('the compare trio explains itself on hover', () => {
 
   it('each surface names its role AND its siblings', () => {
     const RECONCILE = read('studio-reconcile.js');
-    // Reconcile = fix one pair, points at the All open orgs matrix (Tree diff was
+    // Transfer = fix one pair, points at the All open orgs matrix (Tree diff was
     // retired 2026-09-14 — one target at a time is the whole model now)
     expect(RECONCILE).toMatch(/help: 'The repair shop of the compare trio/);
     expect(RECONCILE).toMatch(/help: '[^']*All open orgs/);
@@ -668,7 +668,7 @@ describe('the compare trio explains itself on hover', () => {
 
   it('the deployment-card buttons carry the measure/fix/overview story', () => {
     expect(PROFILES).toContain('MEASURE this pair');
-    expect(PROFILES).toContain('Nothing writes until you select it.');   // 1.5.0: ▶ Run + ⚖ Reconcile became 🚀 Deploy
+    expect(PROFILES).toContain('Nothing writes until you select it.');   // 1.5.0: ▶ Run + ⚖ Transfer became 🚀 Deploy
   });
 });
 
@@ -804,7 +804,7 @@ describe('sweep 2026-08-16: stale state can never drive a write or wear a verdic
   const SCAN   = read('studio-scan.js');
   const MODALS = read('studio-builder-modals.js');
 
-  it('the Reconcile reset block clears the file selection too', () => {
+  it('the Transfer reset block clears the file selection too', () => {
     // `sourceId|checksum` keys carry no target — pairs sharing a source org
     // produce identical keys, so a survivor would arm 📎 Move against a
     // DIFFERENT target with pre-checked rows.
@@ -903,9 +903,9 @@ describe('one preferred source: dsSetPreferredSource', () => {
   });
 });
 
-// ── Engine controls reach Reconcile (user 2026-08-17: per-target deploys
-// need bulk/batch control on the Reconcile page) ─────────────────────────
-describe('Reconcile carries the engine controls with profile persistence', () => {
+// ── Engine controls reach Transfer (user 2026-08-17: per-target deploys
+// need bulk/batch control on the Transfer page) ─────────────────────────
+describe('Transfer carries the engine controls with profile persistence', () => {
   const REC = read('studio-reconcile.js');
 
   it('the action bar renders apiMode + batchSize with the shared contract', () => {

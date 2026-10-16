@@ -401,7 +401,7 @@ function renderHistory() {
           </div>
           <div class="ds-history-summary">
             ${Object.entries(run.summary || {}).map(([obj, s]) => {
-              // Reconcile runs carry explicit per-DML counts (inserted/updated/
+              // Transfer runs carry explicit per-DML counts (inserted/updated/
               // deleted). Transfer runs carry the legacy created/failed pair.
               // Show whichever set is populated so success detail is visible.
               const isRec = run.kind === 'reconcile' ||
