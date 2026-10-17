@@ -170,15 +170,8 @@ const HOME_FEATURES = [
     id: 'flows',
     i: 'nodes',
     title: 'Flows',
-    desc: 'Bulk delete, backup, and restore flow versions safely',
+    desc: 'Versions, backups and restore · what calls what · switches · API versions',
     action() { navigateToTab('flows'); loadFlowsIfNeeded(); }
-  },
-  {
-    id: 'dependencies',
-    i: 'share',
-    title: 'Dependencies',
-    desc: 'Map subflow call chains and see which flows reference other flows',
-    action() { navigateToTab('dependencies'); renderDependenciesTab(); }
   },
   {
     id: 'debugger',
@@ -231,7 +224,7 @@ const HOME_FEATURES = [
 const HOME_SECTIONS = [
   {
     title: 'Flows & Automation',
-    ids: ['flows', 'dependencies', 'debugger']
+    ids: ['flows', 'debugger']
   },
   {
     title: 'Pages & Fields',
@@ -272,6 +265,8 @@ chrome.runtime?.onMessage?.addListener?.((msg, _sender, sendResponse) => {
 
 // Navigate to a feature tab — hides home view, highlights sidebar item.
 function navigateToTab(tabName) {
+  // One Flows page (user 2026-10-17): the old Dependencies tab is a view of it, so every deep link still lands.
+  if (tabName === 'dependencies') { navigateToTab('flows'); setFlowView('deps'); return; }
   document.getElementById('homeView').style.display = 'none';
   document.getElementById('homeBtn').style.display  = '';
   document.querySelector('.app-body')?.classList.remove('home-active');
@@ -612,6 +607,7 @@ function loadFlowsIfNeeded() {
   if (_flowsLoaded) return;
   _flowsLoaded = true;
   loadFlows();
+  loadFlowInterviews();
 }
 
 // Timer reference for the "waiting for SF tab" polling loop.
@@ -1304,6 +1300,73 @@ function groupFlows() {
 // ============================================================
 // Render Flow List
 // ============================================================
+// ── Flow interviews on the list (user 2026-10-17: "failed interview") — one read for the org, a chip per
+// flow, a dialog that deletes the failed ones (or all), and the delete-before-version rule in performDeletion ──
+let _flowInterviews = { byVersion: {}, error: null, at: 0 };
+async function loadFlowInterviews() {
+  _flowInterviews = { byVersion: {}, error: null, at: 0 };
+  if (!orgUrl || !sid) return;
+  const r = await sendBg({ type: 'SF_REST_QUERY', orgUrl, sid, _suppressError: true, query: SFTK_FLOW_INTERVIEW_SOQL });
+  if (!r || r.error) _flowInterviews.error = (r && r.error) || 'no answer';
+  else _flowInterviews = { byVersion: sftkFlowInterviewsByVersion(r.records || []), error: null, at: Date.now() };
+  if (document.getElementById('flowList')?.style.display !== 'none') renderFlowList();
+}
+function buildInterviewChip(versions) {
+  const list = sftkFlowInterviewsFor(_flowInterviews.byVersion, versions.map(v => v.Id));
+  if (!list.length) return null;
+  const kinds = sftkFlowInterviewKinds(list), words = sftkFlowInterviewWords(kinds);
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = `flow-int-chip${kinds.paused ? ' flow-int-chip-paused' : ''}`;
+  chip.textContent = sftkFlowInterviewChip(kinds);
+  chip.title = `${words.head} — click to see them and delete the failed ones, or all. ${words.cost}`;
+  chip.addEventListener('click', e => { e.stopPropagation(); openFlowInterviewsDialog(versions[0]?.MasterLabel || '', list); });
+  return chip;
+}
+function openFlowInterviewsDialog(label, list) {
+  const kinds = sftkFlowInterviewKinds(list), words = sftkFlowInterviewWords(kinds);
+  const failed = list.filter(it => /^error$/i.test(String(it.InterviewStatus || '')));
+  const rows = list.slice(0, 40).map(it => `<li>${escHtml(sftkFlowInterviewLine(it))}</li>`).join('') + (list.length > 40 ? `<li>+ ${list.length - 40} more</li>` : '');
+  sftkDialog({
+    icon: '⏸', title: `Flow interviews — ${label}`, sev: kinds.paused ? 'red' : 'amber',
+    bodyHtml: `<p><strong>${escHtml(words.head)}.</strong> ${escHtml(words.cost)}.</p><ul class="modal-list">${rows}</ul>`,
+    actions: [
+      { id: 'modalCancel', label: 'Close', kind: 'secondary' },
+      ...(failed.length ? [{ id: 'fiDelFailed', label: `🗑 Delete the ${failed.length} failed`, kind: 'danger' }] : []),
+      ...(kinds.paused ? [{ id: 'fiDelAll', label: `🗑 Delete all ${list.length}`, kind: 'danger' }] : []),
+    ],
+  });
+  document.getElementById('modalCancel')?.addEventListener('click', () => closeModal());
+  document.getElementById('fiDelFailed')?.addEventListener('click', () => { closeModal(); deleteFlowInterviews(label, failed, 'failed'); });
+  document.getElementById('fiDelAll')?.addEventListener('click', () => { closeModal(); deleteFlowInterviews(label, list, 'all'); });
+}
+async function deleteFlowInterviews(label, list, which) {
+  const kinds = sftkFlowInterviewKinds(list);
+  const gate = await sftkOrgWriteGate(orgUrl);
+  const ok = await sftkConfirmDestructive({
+    title: `Delete ${list.length} flow interview${list.length === 1 ? '' : 's'} of ${label}`,
+    items: list.map(it => ({ label: sftkFlowInterviewLine(it) })),
+    reversibility: 'permanent',
+    confirmLabel: `🗑 Delete ${list.length}`,
+    undoHint: which === 'failed'
+      ? 'A failed interview is only a saved error report — deleting it loses nothing but that report. It cannot be re-created.'
+      : `${sftkFlowInterviewWords(kinds).cost}. A deleted interview cannot be re-created.`,
+    production: gate.production ? { label: gate.label } : null,
+  });
+  if (!ok) return;
+  const journal = sftkHistoryBegin({ tool: 'Flow interviews', title: `⏸ ${list.length} interview${list.length === 1 ? '' : 's'} of ${label} deleted`, orgUrl });
+  const r = await sftkFlowInterviewsDelete({ send: sendBg, orgUrl, sid, interviews: list, journal });
+  await sftkHistoryEnd(journal, { undo: { none: 'a deleted flow interview cannot be re-created' } });
+  sftkDialog({
+    icon: r.failed ? '⚠' : '✅', title: r.failed ? `${r.deleted} deleted, ${r.failed} refused` : `${r.deleted} interview${r.deleted === 1 ? '' : 's'} deleted`,
+    sev: r.failed ? 'amber' : 'good',
+    bodyHtml: r.failed ? `<ul class="modal-list">${r.errors.slice(0, 10).map(e => `<li>${escHtml(e)}</li>`).join('')}</ul>` : '<p>Verified by re-reading the org. History keeps this change.</p>',
+    actions: [{ id: 'modalCancel', label: 'Close', kind: 'secondary' }],
+  });
+  document.getElementById('modalCancel')?.addEventListener('click', () => closeModal());
+  await loadFlowInterviews();
+}
+
 function renderFlowList() {
   if (currentMode === 'restore') return; // restore mode owns the content area
   const list = document.getElementById('flowList');
@@ -1385,6 +1448,23 @@ function buildGroupElement(label, versions, depMap) {
 
   groupInfo.appendChild(groupLabel);
   groupInfo.appendChild(versionBadge);
+  // whole flow (user 2026-10-17: "delete flows or flows with versions"): one click selects every version —
+  // in Delete mode that removes the flow itself, and the confirmation says so
+  const wholeBtn = document.createElement('button');
+  wholeBtn.type = 'button';
+  wholeBtn.className = 'flow-whole-btn';
+  wholeBtn.textContent = currentMode === 'delete' ? '🗑 whole flow' : '✓ all versions';
+  wholeBtn.title = currentMode === 'delete'
+    ? `Select every version of ${label} — the flow itself is deleted, after a restore point is kept in History`
+    : `Select every version of ${label}`;
+  wholeBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    versions.forEach(v => selectedIds.add(v.Id));
+    updateGroupCheckbox(group, versions); updateActionBar(); updateSelectionSummary(); renderVersionCheckboxes(group, versions);
+  });
+  groupInfo.appendChild(wholeBtn);
+  const intChip = buildInterviewChip(versions);
+  if (intChip) groupInfo.appendChild(intChip);
 
   if (isSubflow) {
     const subflowIcon = document.createElement('span');
@@ -1625,19 +1705,26 @@ async function onDeleteClick() {
   // away and states the true stakes — flow-version deletes are PERMANENT
   // (Tooling deletes skip the Recycle Bin), so it requires the checkbox.
   const gate = await sftkOrgWriteGate(orgUrl);
+  const wholeDefs = sftkFlowWholeDefinitions(allFlows, new Set(toDelete.map(f => f.Id)));
   const finalOk = await sftkConfirmDestructive({
-    title: `Delete ${toDelete.length} flow version${toDelete.length !== 1 ? 's' : ''}`,
+    title: wholeDefs.size
+      ? `Delete ${toDelete.length} flow version${toDelete.length !== 1 ? 's' : ''} — ${wholeDefs.size} whole flow${wholeDefs.size !== 1 ? 's' : ''}`
+      : `Delete ${toDelete.length} flow version${toDelete.length !== 1 ? 's' : ''}`,
     items: toDelete.map(f => ({
       label: `${f.MasterLabel} v${f.VersionNumber}`,
-      sub: f.Status === 'Active' ? 'Active' : (extraToDelete.includes(f) ? 'added for dependencies' : ''),
+      sub: [f.Status === 'Active' ? 'Active' : '', extraToDelete.includes(f) ? 'added for dependencies' : '',
+        wholeDefs.has(f.DefinitionId) ? 'whole flow — with its last version the flow itself is removed' : ''].filter(Boolean).join(' · '),
     })),
-    reversibility: 'permanent',
+    // user 2026-10-17 ("rollback"): a restore point of every version is kept in History first, and ↩ Undo
+    // brings it back as a Draft version — so this is not the permanent delete it was
+    revOverride: { html: 'A restore point of every flow is kept in History before anything is deleted; <strong>↩ Undo</strong> brings each flow back as one version — the one that was active, active again, or its newest as a Draft. Its other versions stay deleted (⬇ Backup keeps them all). A flow whose restore point cannot be taken is <strong>not</strong> deleted.'
+      + (_pendingInterviews.length ? ` ${_pendingInterviews.length} flow interview(s) are deleted first and cannot be re-created.` : ''), cls: 'sftk-rev-undo', ack: 'I understand what is deleted and how it comes back' },
     confirmLabel: `🗑 Delete ${toDelete.length}`,
     // The subflow check above may have run against a map that was never fully
     // built, or against one whose edges came from the stored cache — say which
     // here rather than let the summary imply an all-clear it did not earn.
     undoHint: deleteCheckProvenance()
-      + 'Only flows you backed up (⬇) can come back — via Restore mode in this tab.',
+      + 'History keeps the restore points; ⬇ Backup still gives you a file of your own.',
     production: gate.production ? { label: gate.label } : null,
   });
   if (!finalOk) return;
@@ -1646,14 +1733,17 @@ async function onDeleteClick() {
   await performDeletion(toDelete, extraToDelete);
 }
 
+let _pendingInterviews = [];   // the interviews of the versions about to be deleted — performDeletion deletes them first
 async function checkAndWarnInterviews(selected) {
-  const ids = selected.map(f => `'${f.Id}'`).join(',');
+  _pendingInterviews = [];
+  // FlowVersionViewId carries the 15-character id (live 2026-09-22): both forms are asked for
+  const ids = [...new Set(selected.flatMap(f => { const s = String(f.Id); return s.length === 18 ? [s, s.substring(0, 15)] : [s]; }))].map(x => `'${x}'`).join(',');
   try {
     const result = await sendBg({
       type: 'SF_REST_QUERY',
       orgUrl,
       sid,
-      query: `SELECT Id, Name FROM FlowInterview WHERE FlowVersionViewId IN (${ids})`
+      query: `SELECT Id, Name, InterviewLabel, InterviewStatus, CurrentElement, CreatedDate, FlowVersionViewId FROM FlowInterview WHERE FlowVersionViewId IN (${ids})`
     });
     if (result.error) {
       // Audit C7 finding: this used to fail OPEN silently — deletion went
@@ -1665,16 +1755,18 @@ async function checkAndWarnInterviews(selected) {
     }
     const interviews = result.records || [];
     if (interviews.length === 0) return true;
+    _pendingInterviews = interviews;
 
     return new Promise((resolve) => {
-      const nameList = interviews.slice(0, 10).map(i => `<li>${escHtml(i.Name)}</li>`).join('');
+      const words = sftkFlowInterviewWords(sftkFlowInterviewKinds(interviews));
+      const nameList = interviews.slice(0, 10).map(i => `<li>${escHtml(sftkFlowInterviewLine(i))}</li>`).join('');
       const moreNote = interviews.length > 10 ? `<li>+ ${interviews.length - 10} more</li>` : '';
       sftkDialog({
       icon: `⚠️`,
-      title: `Paused Flow Interviews Found`,
+      title: `Flow interviews on these versions`,
       sev: 'red',
       bodyHtml: `
-          <p><strong>${interviews.length} paused/waiting flow interview${interviews.length !== 1 ? 's' : ''}</strong> will also be permanently deleted.</p>
+          <p><strong>${escHtml(words.head)}</strong> will be deleted first — Salesforce refuses to delete a version while an interview exists. ${escHtml(words.cost)}.</p>
           <ul class="modal-list">${nameList}${moreNote}</ul>
         `,
       actions: [{ id: 'modalCancel', label: `Cancel`, kind: 'secondary' }, { id: 'modalConfirm', label: `Delete interviews + flows`, kind: 'danger' }],
@@ -1822,7 +1914,7 @@ async function askScanBeforeDelete() {
       title: `The subflow check has no data`,
       sev: 'red',
       bodyHtml: `
-        <p>${escHtml(coverage)} Without that map the toolkit cannot tell whether another flow calls the versions you are about to delete — and this delete is permanent.</p>
+        <p>${escHtml(coverage)} Without that map the toolkit cannot tell whether another flow calls the versions you are about to delete — and a deleted flow comes back from History as one version only.</p>
         <p class="modal-warning-text">Finishing the scan reads ${left.reads} flow version(s) in ${left.calls} batched API call(s) (${escHtml(left.estLabel)}). You can stop it at any point.</p>
       `,
       actions: [{ id: 'modalCancel', label: `Cancel delete`, kind: 'secondary' }, { id: 'modalSkip', label: `Delete without checking`, kind: 'danger' }, { id: 'modalScan', label: `Scan now (${left.calls} call${left.calls === 1 ? '' : 's'})`, kind: 'primary' }],
@@ -1845,7 +1937,7 @@ async function askStaleBeforeDelete(reason) {
       sev: 'red',
       bodyHtml: `
         <p>Part of this org's dependency map was reused from the stored cache, and ${escHtml(String(reason || 'it could not be re-checked against the org'))}.</p>
-        <p class="modal-warning-text">That means “nothing calls these flows” has <b>not</b> been confirmed against the org as it is right now, and this delete is permanent. Reopening the popup (or resuming the scan) re-reads the org from scratch.</p>
+        <p class="modal-warning-text">That means “nothing calls these flows” has <b>not</b> been confirmed against the org as it is right now, and a deleted flow comes back from History as one version only. Reopening the popup (or resuming the scan) re-reads the org from scratch.</p>
       `,
       actions: [{ id: 'modalCancel', label: `Cancel delete`, kind: 'secondary' }, { id: 'modalSkip', label: `Delete without a verified check`, kind: 'danger' }],
     });
@@ -2014,7 +2106,7 @@ async function showActiveWarningModal(activeFlows) {
         <p style="margin-bottom:8px;font-size:12px">Optionally download a backup before deleting:</p>
         <ul class="modal-list backup-list">${rows}</ul>
         <button class="btn btn-secondary btn-sm" id="backupAllBtn" style="margin:6px 0 10px">⬇ Download All Backups</button>
-        <p class="modal-warning-text">Deleting active flows may break automations, processes, or user-facing screens that depend on them. This action cannot be undone.</p>
+        <p class="modal-warning-text">Deleting active flows may break automations, processes, or user-facing screens that depend on them. A restore point of every version is kept in History first; ↩ Undo brings a version back as a Draft, not active.</p>
       `,
       actions: [{ id: 'modalCancel', label: `Cancel`, kind: 'secondary' }, { id: 'modalConfirm', label: `I understand, delete anyway`, kind: 'danger' }],
     });
@@ -2128,6 +2220,9 @@ function setupModeToggle() {
   document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', () => switchMode(btn.dataset.mode));
   });
+  document.querySelectorAll('#flowViews .flow-view-btn').forEach(btn => {
+    btn.addEventListener('click', () => setFlowView(btn.dataset.view));
+  });
 
   // Drop-zone click → open file picker
   const dropZone = document.getElementById('restoreDropZone');
@@ -2149,6 +2244,35 @@ function setupModeToggle() {
     e.target.value = '';
     if (file) handleRestoreFile(file);
   });
+}
+
+// ── One Flows page (user 2026-10-17: "merge the page of flows and dependencies into one page with all the
+// features … it will be easier to understand") — four views: Versions (this list), Dependencies, ⏻ Switches,
+// ⚙ API versions. The last two are the dependency view's own lazy panels, opened for the user. ──
+let _flowView = 'versions';
+function setFlowView(view) {
+  const v = ['deps', 'switches', 'apiver'].includes(view) ? view : 'versions';
+  _flowView = v;
+  document.querySelectorAll('#flowViews .flow-view-btn').forEach(b => {
+    const on = b.dataset.view === v;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  const vers = document.getElementById('flowViewVersions'), deps = document.getElementById('tab-dependencies');
+  if (vers) vers.style.display = v === 'versions' ? '' : 'none';
+  if (deps) deps.style.display = v === 'versions' ? 'none' : '';
+  const host = document.getElementById('flowToolHost');
+  if (host) { host.style.display = v === 'switches' || v === 'apiver' ? '' : 'none'; if (v === 'deps') host.innerHTML = ''; }
+  if (v === 'versions') return;
+  // ⏻ Switches and ⚙ API versions draw their panel at the top of the view at once — no dependency scan is
+  // needed for them; the dependency tree follows below as on the Dependencies view
+  if (host && (v === 'switches' || v === 'apiver')) {
+    host.innerHTML = '';
+    if (!orgUrl || !sid) host.innerHTML = '<div class="info-banner">Open a Salesforce org in a tab first — this view reads the org live.</div>';
+    else if (v === 'switches') DependencyMap.renderSwitchesPanel(host, orgUrl, sid);
+    else DependencyMap.renderApiVersionsPanel(host, orgUrl, sid);
+  }
+  renderDependenciesTab();
 }
 
 function switchMode(mode) {
@@ -2644,13 +2768,8 @@ async function deleteOneFlow(flow, done, total, journal, track) {
     return;
   }
 
-  // Step 1: try direct delete (Tooling API sometimes allows it)
-  try {
-    await doDelete();
-    return;
-  } catch (_) {}
-
-  // Step 2: deactivate via FlowDefinition, then retry
+  // An active version is switched off first, then deleted (live 2026-10-17: a blind first attempt was refused
+  // with "cannot delete this flow version because it is active" and that refusal made the run "partial")
   updateProgressBar(done, total, `Deactivating: ${flow.MasterLabel} v${flow.VersionNumber}...`);
   await deactivateFlow(flow, journal, track);
   await wait(800);
@@ -2707,6 +2826,8 @@ async function performDeletion(toDelete, toDeactivate) {
   // no undo (Tooling deletes skip the Recycle Bin).
   const journal = sftkHistoryBegin({ tool: 'Flow delete', title: `🗑 ${total} flow version${total === 1 ? '' : 's'}`, orgUrl });
   const track = { deleted: new Set(), deactivated: new Map(), reactivated: new Set() };
+  const restore = new Map();   // flow.Id → { zipBase64, api, before: the version numbers this flow held } — the undo reads it
+  let restoreBytes = 0;
 
   showProgressPanel(true);
   const statusMessages = [...STATUS_MESSAGES];
@@ -2718,7 +2839,40 @@ async function performDeletion(toDelete, toDeactivate) {
   }, 1500);
 
   try {
-  for (const flow of toDelete) {
+  // 0. The interviews of these versions go first — Salesforce refuses to delete a version while one exists
+  // (confirmed-by: onDeleteClick's interviews dialog, then its final dialog)
+  if (_pendingInterviews.length) {
+    updateProgressBar(0, total, `Deleting ${_pendingInterviews.length} flow interview(s) first…`);
+    const ir = await sftkFlowInterviewsDelete({ send: sendBg, orgUrl, sid, interviews: _pendingInterviews, journal });
+    if (ir.failed) errors.push({ flow: null, msg: `${ir.failed} flow interview(s) could not be deleted: ${ir.errors.slice(0, 3).join(' · ')} — the versions they belong to will be refused by Salesforce` });
+    _pendingInterviews = [];
+    loadFlowInterviews();
+  }
+  // 1. A restore point, kept in History so ↩ Undo can bring the flow back (user 2026-10-17: "rollback"): ONE
+  // version per flow — the active one, else the newest going — deployed back with its own status. Not every
+  // version: a deploy OVERWRITES a Draft instead of adding a version (live 2026-10-17: ten Drafts collapsed
+  // into one), so the other versions stay deleted — ⬇ Backup before deleting keeps them all. A flow whose
+  // restore point cannot be taken is not deleted at all.
+  const keep = sftkFlowRestoreTargets(toDelete);
+  for (const flow of keep.values()) {
+    updateProgressBar(deleted, total, `Restore point: ${flow.MasterLabel} v${flow.VersionNumber}…`);
+    try {
+      const md = await sendBg({ type: 'SF_GET_METADATA', orgUrl, sid, id: flow.Id });
+      if (!md || md.error || !md.Metadata) throw new Error((md && md.error) || 'no metadata came back');
+      if (typeof window.sftkBuildFlowZip !== 'function') throw new Error('the flow packer is not loaded — reload the extension');
+      const api = flow.ApiName || String(md.FullName || '').replace(/-\d+$/, '');
+      const status = flow.Status === 'Active' ? 'Active' : 'Draft';
+      const zipBase64 = window.sftkBuildFlowZip(api, { ...md.Metadata, status });
+      restoreBytes += zipBase64.length;
+      if (restoreBytes > 8 * 1024 * 1024) throw new Error('the restore points of this delete would exceed 8 MB');
+      restore.set(flow.DefinitionId, { zipBase64, api, status, label: flow.MasterLabel, version: flow.VersionNumber,
+        before: allFlows.filter(f => f.DefinitionId === flow.DefinitionId).map(f => Number(f.VersionNumber) || 0) });
+    } catch (e) {
+      errors.push({ flow, msg: `${flow.MasterLabel}: NOT deleted — its restore point could not be kept (${e.message || e}). Back it up with ⬇ Backup, then delete it.` });
+    }
+  }
+  const deletable = toDelete.filter(f => restore.has(f.DefinitionId));
+  for (const flow of deletable) {
     updateProgressBar(deleted, total, `Deleting: ${flow.MasterLabel} v${flow.VersionNumber}...`);
 
     try {
@@ -2761,6 +2915,21 @@ async function performDeletion(toDelete, toDeactivate) {
     // Undo: only a flow left DEACTIVATED (never deleted, never switched
     // back on by the reactivation rescue above) has a previous state worth
     // restoring — reactivate it. A deleted flow version is gone for good.
+    // Undo, part 1: each flow comes back from its restore point — one deploy per flow, the version that was
+    // active (else the newest) with its own status — verified by re-reading the flow's versions (one with
+    // that status and a number the flow did not hold).
+    const restoreSteps = [...restore.entries()].filter(([defId]) => toDelete.some(f => f.DefinitionId === defId && track.deleted.has(f.Id))).map(([, rp]) => {
+      const safeApi = String(rp.api).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      return {
+        describe: `${rp.label}: restore v${rp.version} as ${rp.status === 'Active' ? 'the active version' : 'a Draft'}`,
+        // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+        msg: { type: 'SF_METADATA_DEPLOY', zipBase64: rp.zipBase64 },
+        verify: { query: `SELECT Id, Status, VersionNumber FROM Flow WHERE Definition.DeveloperName = '${safeApi}' AND Status = '${rp.status}'`,
+          tooling: true, where: { field: 'Status', equals: rp.status }, retries: 4,
+          text: { ok: `${rp.label}: back, ${rp.status === 'Active' ? 'active' : 'as a Draft'} — verified by re-reading the org`,
+                  bad: `${rp.label}: the deploy was accepted, but the org shows no restored version yet` } },
+      };
+    });
     const stillOff = [...track.deactivated.values()].filter(f => !track.deleted.has(f.Id) && !track.reactivated.has(f.Id));
     const steps = stillOff.map(f => ({
       describe: `${f.MasterLabel} v${f.VersionNumber}: switch back ON`,
@@ -2772,10 +2941,11 @@ async function performDeletion(toDelete, toDeactivate) {
         text: { ok: `${f.MasterLabel} v${f.VersionNumber}: active again — verified by re-reading the org`,
                 bad: `${f.MasterLabel} v${f.VersionNumber}: accepted by Salesforce, but the org still does not show it active` } },
     }));
+    const allSteps = [...restoreSteps, ...steps];
     await sftkHistoryEnd(journal, {
-      undo: steps.length
-        ? { steps, note: track.deleted.size ? `${track.deleted.size} flow version(s) were deleted permanently and cannot be restored` : '' }
-        : { none: 'deleted flow versions cannot be re-created' },
+      undo: allSteps.length
+        ? { steps: allSteps, note: restoreSteps.length ? `Each flow comes back as ONE version, numbered anew by Salesforce: the one that was active (active again) or its newest (as a Draft). ${Math.max(0, track.deleted.size - restoreSteps.length)} other deleted version(s) stay deleted — ⬇ Backup before deleting keeps them all.` : '' }
+        : { none: 'nothing was deleted' },
     });
   }
 
@@ -2908,6 +3078,29 @@ function updateActionBar() {
   }
 }
 
+// PURE. The definitions whose EVERY version is selected — those flows are removed as a whole.
+function sftkFlowWholeDefinitions(flows, selected) {
+  const byDef = new Map();
+  for (const f of (flows || [])) { if (!f || !f.DefinitionId) continue; if (!byDef.has(f.DefinitionId)) byDef.set(f.DefinitionId, []); byDef.get(f.DefinitionId).push(f); }
+  const out = new Set();
+  for (const [def, vs] of byDef) if (vs.length && vs.every(v => selected.has(v.Id))) out.add(def);
+  return out;
+}
+
+// PURE. For every flow among these versions, the one version that stands for it in a restore point: the
+// active one, else the highest number. Map DefinitionId → version.
+function sftkFlowRestoreTargets(versions) {
+  const out = new Map();
+  for (const f of (versions || [])) {
+    if (!f || !f.DefinitionId) continue;
+    const cur = out.get(f.DefinitionId);
+    const better = !cur || (f.Status === 'Active' && cur.Status !== 'Active')
+      || (f.Status === 'Active') === (cur.Status === 'Active') && (Number(f.VersionNumber) || 0) > (Number(cur.VersionNumber) || 0);
+    if (better) out.set(f.DefinitionId, f);
+  }
+  return out;
+}
+
 function updateSelectionSummary() {
   if (currentMode === 'restore') return; // restore mode sets its own summary text
   const el = document.getElementById('selectionSummary');
@@ -2919,6 +3112,8 @@ function updateSelectionSummary() {
   const activeCount = selectedFlows.filter(f => f.Status === 'Active').length;
 
   let text = `${count} version${count !== 1 ? 's' : ''} selected across ${uniqueLabels.size} flow${uniqueLabels.size !== 1 ? 's' : ''}`;
+  const whole = sftkFlowWholeDefinitions(allFlows, selectedIds).size;
+  if (whole && currentMode === 'delete') text += ` — ${whole} whole flow${whole !== 1 ? 's' : ''} (every version: the flow itself goes)`;
   if (activeCount > 0) {
     text += `  (${activeCount} active ⚠️)`;
     el.className = 'selection-summary selection-warn';

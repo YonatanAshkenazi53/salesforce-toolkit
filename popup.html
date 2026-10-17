@@ -58,10 +58,6 @@
           <span class="app-nav-icon" data-i="nodes" aria-hidden="true"></span>
           <span>Flows</span>
         </button>
-        <button class="tab-btn app-nav-btn" data-tab="dependencies">
-          <span class="app-nav-icon" data-i="share" aria-hidden="true"></span>
-          <span>Dependencies</span>
-        </button>
         <button class="tab-btn app-nav-btn" data-tab="debugger">
           <span class="app-nav-icon" data-i="bug" aria-hidden="true"></span>
           <span>Debugger</span>
@@ -125,6 +121,14 @@
         <!-- TAB: FLOWS -->
         <!-- ================================================== -->
         <div id="tab-flows" class="tab-content" style="display:none">
+          <!-- One page for everything about flows (user 2026-10-17): versions · dependencies · switches · API versions -->
+          <div class="mode-toggle flow-views" id="flowViews" role="tablist" aria-label="Flows page views">
+            <button type="button" class="flow-view-btn active" data-view="versions" role="tab" aria-selected="true" title="Every flow and its versions: delete, back up, restore">🗂 Versions</button>
+            <button type="button" class="flow-view-btn" data-view="deps" role="tab" aria-selected="false" title="What calls what, what uses a field or a value, blast radius">🔗 Dependencies</button>
+            <button type="button" class="flow-view-btn" data-view="switches" role="tab" aria-selected="false" title="Switch triggered flows off and on in bulk, by object">⏻ Switches</button>
+            <button type="button" class="flow-view-btn" data-view="apiver" role="tab" aria-selected="false" title="The API version every flow is pinned to, and changing it">⚙ API versions</button>
+          </div>
+          <div id="flowViewVersions">
 
           <!-- Toolbar -->
           <div class="toolbar" id="toolbar">
@@ -226,14 +230,15 @@
             </div>
             <div id="progressCurrentItem" class="progress-current-item"></div>
           </div>
-        </div>
+          </div><!-- /flowViewVersions -->
 
-        <!-- ================================================== -->
-        <!-- TAB: DEPENDENCIES -->
-        <!-- ================================================== -->
-        <div id="tab-dependencies" class="tab-content" style="display:none">
-          <div id="depNoDataBanner" class="info-banner" style="display:none"></div>
-          <div id="depTreeContainer"></div>
+          <!-- Dependencies, switches and API versions: the second view of the same page (the ids are kept —
+               dependency-map.js and popup.js render into them) -->
+          <div id="tab-dependencies" class="flow-view" style="display:none">
+            <div id="flowToolHost" style="display:none"></div>
+            <div id="depNoDataBanner" class="info-banner" style="display:none"></div>
+            <div id="depTreeContainer"></div>
+          </div>
         </div>
 
         <!-- ================================================== -->
@@ -336,6 +341,7 @@
   <script src="sftk-reportclean.js"></script>
   <script src="sftk-flow-xml.js"></script>
   <script src="sftk-flowsurgery.js"></script>
+  <script src="sftk-flowinterviews.js"></script>
   <script src="sftk-fieldreplace.js"></script>
   <script src="sftk-org-identity.js"></script>
   <script src="sftk-friendly-error.js"></script>

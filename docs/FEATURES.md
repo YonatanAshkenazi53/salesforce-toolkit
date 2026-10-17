@@ -10,7 +10,7 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 - ⬇ **Backup** downloads the selected version(s) as a file you could redeploy elsewhere, optionally including every flow it calls. 📥 **Restore** uploads a backup and redeploys it as a new Draft version — never turned on automatically; you activate it yourself in Flow Builder.
 - Limit: a managed-package flow's contents can't be backed up (Salesforce hides them), and a flow another flow calls cannot be deleted until the caller is handled first.
 
-### Dependencies
+### Dependencies (a view of the Flows page)
 - A tree of every flow showing what calls what, a "what uses…" search for a field, object or value, 🧨 blast radius (what breaks if you touch this flow), and 🔗 chain (upstream and downstream, with loops detected). All read-only; an export downloads the same report as a file. Deleting a flow from here uses the same checks as the Flows tab, including a table of every flow that calls the one you're deleting.
 - ⚙ **API versions** compares every flow's pinned API version to the org's own release. Pick flows and a target version, then acknowledge and confirm; it deploys a new version (activating it if the flow was Active) or rewrites a Draft in place, then re-reads the org and reports what changed and verified versus what Salesforce refused.
 - ⏻ **Flow switches** groups record-triggered and scheduled flows by object with an On/Off state. Turning flows off requires acknowledging and confirming, and warns automation stops for everyone and records created while off aren't processed retroactively; it re-reads the org afterward and remembers which version was active so turning back on can restore it — or says honestly it can't if there's no record of it.

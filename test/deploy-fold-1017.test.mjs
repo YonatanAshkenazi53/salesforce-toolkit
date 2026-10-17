@@ -13,6 +13,20 @@ describe('Deploy page: the tree, parents-first and notes cards fold', () => {
     expect(DV).toContain('<details${_depFoldOpen(\'notes\')} class="ds-rec-card ds-rec-card-warn ds-dep-fold" data-fold="notes"><summary class="ds-rec-card-hd">');
     expect(DV).toContain('<summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">📦</span><span class="ds-rec-card-title">This deployment</span>');
     expect(DV).toContain('<summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span>');
+    // user 2026-10-17: parents-first and the notes sit in ONE foldable section above the tree card
+    const info = DV.indexOf('data-fold="info"'), tree = DV.indexOf('<div id="dsDepTree"></div>'), order = DV.indexOf('<div id="dsDepOrder"></div>');
+    expect(info).toBeGreaterThan(0); expect(order).toBeGreaterThan(info); expect(tree).toBeGreaterThan(order);
+    expect(DV).toContain('<span class="ds-rec-card-title">About this deployment</span>');
+    // user 2026-10-17: parents all in sync → no card, one quiet line
+    expect(DV).toContain('if (allDone && !anyDoomed && !anyEmpty) { h.innerHTML = `<div class="ds-rec-card-line ds-dep-parents-ok"');
+    // user 2026-10-17: the org picker folds and sits right above the plan table; the plan table folds; a closed org is one line
+    expect(DV).toContain('<details${_depFoldOpen(\'orgs\', !settled)} class="ds-rec-card ds-dep-orgs ds-dep-fold" data-fold="orgs">');
+    expect(DV).toContain('<details${_depFoldOpen(\'plan\')} class="ds-rec-card ds-dep-fold" data-fold="plan">');
+    const pick = DV.indexOf('    ${_depOrgPickerHtml(p)}\n    ${planHtml}'); expect(pick).toBeGreaterThan(tree);
+    expect(DV).toContain('⛓ Parents are checked as soon as both orgs are open');
+    const open = new Function('_settings', DV.slice(DV.indexOf('function _depFoldOpen('), DV.indexOf('\n}\n', DV.indexOf('function _depFoldOpen(')) + 3) + ' return _depFoldOpen;');
+    expect(open({})('orgs', false)).toBe('');                               // the default of the fold
+    expect(open({ deployFolds: { orgs: true } })('orgs', false)).toBe(' open');   // the user's choice wins
   });
   it('open by default; a fold remembered as false stays folded; a toggle is saved to the settings', () => {
     const i = DV.indexOf('function _depFoldOpen(');

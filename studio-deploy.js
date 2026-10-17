@@ -347,8 +347,12 @@ function _depOrgPickerHtml(p) {
   // typeof guards: the runtime test renders this page in a bare VM context
   const m = sftkDeployOrgPicker(p, open, (typeof orgLabel === 'function') ? orgLabel : (u => String(u || '')), (typeof _orgKey === 'function') ? _orgKey : (u => String(u || '')));
   const opt = (o, sel) => `<option value="${esc(o.key)}" ${sel ? 'selected' : ''}>${esc(o.label)}</option>`;
-  return `<div class="ds-rec-card ds-dep-orgs">
-    <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">🏢</span><span class="ds-rec-card-title">Between which orgs</span><span class="ds-dep-orgs-hint">only orgs open in Chrome are offered · picking writes nothing</span></div>
+  const named = k => ((m.sources.find(o => o.key === k) || m.targets.find(o => o.key === k) || {}).label) || '';
+  const settled = !!(m.src && m.tgt && !m.notes.length);
+  // user 2026-10-17: the picker sits above "What the two orgs hold" and folds like the rest — by itself once
+  // the pair is set and both orgs are open (the folded line still names the pair)
+  return `<details${_depFoldOpen('orgs', !settled)} class="ds-rec-card ds-dep-orgs ds-dep-fold" data-fold="orgs">
+    <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">🏢</span><span class="ds-rec-card-title">Between which orgs</span><span class="ds-dep-orgs-hint">${settled ? `${esc(named(m.src))} → ${esc(named(m.tgt))}` : 'only orgs open in Chrome are offered · picking writes nothing'}</span></summary>
     <div class="ds-dep-orgs-row">
       <label>From <select id="dsDepSrc" class="ds-select ds-select-sm" aria-label="Source org"><option value="" ${m.src ? '' : 'selected'} disabled>— pick the source —</option>${m.sources.map(o => opt(o, o.key === m.src)).join('')}</select></label>
       <span class="ds-dep-orgs-arrow">→</span>
@@ -356,7 +360,7 @@ function _depOrgPickerHtml(p) {
       <button class="ds-btn ds-btn-xs" id="dsDepSwap" title="Swap source and target" ${m.src && m.tgt ? '' : 'disabled'}>⇄</button>
     </div>
     ${m.notes.map(n => `<div class="ds-dep-orgs-note">${esc(n)}</div>`).join('')}
-  </div>`;
+  </details>`;
 }
 
 // The pick: set the pair on the deployment (saved as "last used"), drop any
@@ -470,9 +474,9 @@ async function renderDeploy() {
     ? `<td class="ds-dep-num${r.cells[k].n ? ` ds-dep-n-${k}` : ' ds-dep-muted'}" data-dep-obj="${esc(r.pathKey)}" data-dep-tab="${k}" title="${r.cells[k].capped ? `${Number(r.cells[k].n || 0).toLocaleString()} in total — the list shows the first ${Number(r.cells[k].shown || 0).toLocaleString()} of them` : 'Show these records'}">${esc(r.cells[k].text)}</td>`
     : `<td class="ds-dep-num ds-dep-muted">${r.scanned ? '—' : ''}</td>`;
   const planHtml = `
-    <div class="ds-rec-card">
-      <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">📋</span><span class="ds-rec-card-title">What the two orgs hold</span>
-        <span class="ds-rec-card-hint">every number opens its records · nothing is selected until you select it</span></div>
+    <details${_depFoldOpen('plan')} class="ds-rec-card ds-dep-fold" data-fold="plan">
+      <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">📋</span><span class="ds-rec-card-title">What the two orgs hold</span>
+        <span class="ds-rec-card-hint">every number opens its records · nothing is selected until you select it</span></summary>
       <div class="ds-dep-tblwrap"><table class="ds-dep-plan">
         <thead><tr><th>Object</th><th class="ds-dep-num" title="Records read from the source for this deployment">In source</th><th class="ds-dep-num" title="Records read from the target">In target</th>
           <th class="ds-dep-num" title="In the source only — inserted when you select them">🔴 Insert</th><th class="ds-dep-num" title="In both orgs with different values — pick a winner per row">🟡 Changed</th>
@@ -488,7 +492,7 @@ async function renderDeploy() {
         ${plan.length > 1 ? `<tr class="ds-dep-total"><td>All objects</td><td></td><td></td>${['ins', 'chg', 'ext', 'link', 'same', 'amb'].map(k => `<td class="ds-dep-num${sum(k) ? ` ds-dep-n-${k}` : ' ds-dep-muted'}">${sum(k).toLocaleString()}</td>`).join('')}<td></td></tr>` : ''}</tbody></table></div>
       ${unscanned.length ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs ds-btn-primary" id="dsDepScanAll" title="Read every object below against the target, one after the other, parents before their children">🔎 Scan all ${unscanned.length}</button> <b>${unscanned.map(r => esc(r.obj)).join(', ')}</b> not read against this target yet — unknown, not zero. Scan ${unscanned.length === 1 ? 'it' : 'them'} before calling this pair in sync.</div>` : ''}
       ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepTickAll" title="Tick every record the target lacks, in every object read against it — parents before their children. A child whose parent is not on the way stays out; an object not read stays out. Nothing is written until you press Deploy.">✓ Tick every insert — ${every.found.toLocaleString()} record${every.found === 1 ? '' : 's'} in ${Object.keys(every.picks).length} object${Object.keys(every.picks).length === 1 ? '' : 's'}</button>${unscanned.length ? ' <span class="ds-dep-muted">objects not read yet are not included</span>' : ''}</div>` : ''}
-    </div>`;
+    </details>`;
 
   // ── notes: the same facts the classic header shows ──
   const notes = [];
@@ -533,16 +537,20 @@ async function renderDeploy() {
       <div id="dsDepList"></div>
     </div>`;
 
-  setMain(`${header}<div class="ds-dep-page">${_depOrgPickerHtml(p)}
+  setMain(`${header}<div class="ds-dep-page">
     ${p._parentOf?.objType ? `<div class="ds-rec-card ds-dep-journey"><div class="ds-rec-card-line">⛓ Parents-first step: you opened this to align <b>${esc(objType)}</b> before deploying <b>${esc(p._parentOf.objType)}</b>. When it reads in sync — or when there is nothing to align — go back. <button class="ds-btn ds-btn-sm ds-btn-primary" id="dsDepJourneyBack">‹ Back to ${esc(origin ? (origin.name || p._parentOf.objType) : p._parentOf.objType)}</button></div></div>` : ''}
     ${_depRetryNote ? `<div class="ds-rec-card"><div class="ds-rec-card-line">${esc(_depRetryNote)}</div></div>` : ''}
-    ${offlineHtml}
+    <details${_depFoldOpen('info')} class="ds-rec-card ds-dep-fold ds-dep-info" data-fold="info">
+      <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">ℹ</span><span class="ds-rec-card-title">About this deployment</span><span class="ds-rec-card-hint">what has to be in the target first, and what is worth reading before you deploy</span></summary>
+      ${offlineHtml}
+      <div id="dsDepOrder"></div>
+      ${notesHtml}
+    </details>
     <div id="dsDepTree"></div>
     <div id="dsDepFlowLeft"></div>
     <div id="dsDepRuleLeft"></div>
+    ${_depOrgPickerHtml(p)}
     ${planHtml}
-    <div id="dsDepOrder"></div>
-    ${notesHtml}
     ${recordsHtml}
     <div class="ds-dep-actionbar">
       <div class="ds-dep-summary" id="dsDepSummary"></div>
@@ -661,9 +669,10 @@ window.sftkDeployIdentityChanged = function () { _depIdKey = ''; _depIdData = nu
 
 // ── folding sections (user 2026-10-17: "can we do the whole sections collapsable? the deployment tree,
 // deploy parents, worth reading") — <details> cards; what is folded is remembered in the settings ──
-function _depFoldOpen(key) {
+function _depFoldOpen(key, dflt = true) {
   const f = (typeof _settings === 'object' && _settings && _settings.deployFolds) || {};
-  return f[key] === false ? '' : ' open';
+  if (typeof f[key] === 'boolean') return f[key] ? ' open' : '';
+  return dflt ? ' open' : '';
 }
 function _depWireFolds(host) {
   if (!host || typeof host.querySelectorAll !== 'function') return;
@@ -810,7 +819,11 @@ async function _depPaintOrder(p, scan) {
   const data = _depOrderData;
   const objects = data.objects || [];
   const chain = sftkDeployObjects(p.tree).map(o => esc(o.obj)).join(' → ');
-  if (data.offline || data.failed) {
+  if (data.offline) {
+    h.innerHTML = `<div class="ds-rec-card-line ds-dep-parents-ok">⛓ Parents are checked as soon as both orgs are open</div>`;
+    return;
+  }
+  if (data.failed) {
     h.innerHTML = `<div class="ds-rec-card ds-rec-card-warn"><div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span><span class="ds-rec-card-title">Start with parents first</span></div>
       <div class="ds-rec-card-line">${data.offline ? 'Both orgs must be open and signed in to check which parent objects these records point at.' : 'Could not read the objects’ lookups — 🔄 Refresh state to try again.'} Until then the order is unknown, not fine.</div></div>`;
     return;
@@ -853,6 +866,9 @@ async function _depPaintOrder(p, scan) {
     </div>`;
   };
   const allDone = nextIdx === -1;
+  // parents all in the target already: nothing to deploy first, so no card (user 2026-10-17: "if parents are synced we
+  // dont need to see the start with parents card") — the "About this deployment" hint still says what was checked
+  if (allDone && !anyDoomed && !anyEmpty) { h.innerHTML = `<div class="ds-rec-card-line ds-dep-parents-ok" title="Every object these records look up outside the deployment is already in ${esc(tgtL)}">⛓ Parents ready ✓ — nothing to deploy first</div>`; return; }
   h.innerHTML = `<details${_depFoldOpen('order')} class="ds-rec-card ds-dep-fold ${anyDoomed ? 'ds-rec-card-bad' : anyEmpty ? 'ds-rec-card-warn' : allDone ? 'ds-rec-card-good' : ''}" data-fold="order">
     <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span>
       <span class="ds-rec-card-title">${anyDoomed ? '⛔ Stop — some inserts here fail until their parents exist · ' : ''}Start with parents first</span>

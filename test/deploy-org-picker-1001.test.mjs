@@ -62,7 +62,10 @@ describe('wiring', () => {
     expect(fn).toContain('seen.set(key, { url: s.orgUrl, key, label: orgLabel(s.orgUrl) })');
   });
   it('the picker sits on top of BOTH Deploy page branches (nothing read yet, and fresh) and is wired on both', () => {
-    expect((DV.match(/<div class="ds-dep-page">\$\{_depOrgPickerHtml\(p\)\}/g) || []).length).toBe(2);
+    // 2026-10-17: on the fresh page the picker sits right above the plan table (user: "above what the two orgs
+    // hold"); on the nothing-read page it stays on top
+    expect((DV.match(/<div class="ds-dep-page">\$\{_depOrgPickerHtml\(p\)\}/g) || []).length).toBe(1);
+    const pick = DV.indexOf('    ${_depOrgPickerHtml(p)}'); expect(pick).toBeGreaterThan(0); expect(DV.indexOf('${planHtml}', pick) - pick).toBeLessThan(60);
     expect((DV.match(/_depWireOrgPicker\(p\);/g) || []).length).toBe(2);
   });
   it('the markup never pre-selects a missing side and disables the target until a source is picked', () => {

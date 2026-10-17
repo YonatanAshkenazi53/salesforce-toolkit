@@ -4034,6 +4034,10 @@ const DependencyMap = (() => {
     flowScanState: (apiName) => depFlowScanState(flowsByApiName[apiName] || [], _scannedIds),
     subflowClosure: (apiNames) => depSubflowClosure(dependencyMap, apiNames),
     getDefinitionTriggerMap,                         // apiName → FlowDefinitionView.TriggerType (every definition)
+    // One Flows page (2026-10-17): the ⏻ Switches and ⚙ API versions views draw their panel directly —
+    // no dependency scan needed; the panels read the org themselves with the session given here.
+    renderSwitchesPanel: (mount, orgUrl, sid) => { _lastOrgUrl = orgUrl || _lastOrgUrl; _lastSid = sid || _lastSid; renderFlowBulkPanel(mount, orgUrl); },
+    renderApiVersionsPanel: (mount, orgUrl, sid) => { _lastOrgUrl = orgUrl || _lastOrgUrl; _lastSid = sid || _lastSid; renderApiVerPanel(mount, orgUrl); },
     freshness,
     searchCoverage,
     // v1.1.0 — incremental cache + the destructive-path guarantee.

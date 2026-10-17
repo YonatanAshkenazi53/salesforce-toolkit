@@ -15,7 +15,7 @@ https://youtu.be/w6sJUhMPFB8
 **The Toolkit** (the popup, also a full tab) works on one org at a time:
 
 - **Flows** — versions, backups, delete stale versions.
-- **Dependencies** — what uses a field, a flow, a class; the subflow call chain; flow switches
+- **Dependencies** (a view of the Flows page) — what uses a field, a flow, a class; the subflow call chain; flow switches
   and API versions in bulk.
 - **Debugger** — Apex debug logs opened, filtered and explained; noise hidden; two logs compared.
 - **Lightning Pages** — assignments by app, record type and profile; who sees which page; what a

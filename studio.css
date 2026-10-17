@@ -6161,6 +6161,11 @@ body.ds-pro {
 .ds-dep-fold:not([open]) > summary::before { content: '▸'; }
 .ds-dep-fold:not([open]) > summary .ds-rec-card-hint { display: none; }
 .ds-dep-fold > summary:hover .ds-rec-card-title { color: var(--brand); }
+/* "About this deployment" (2026-10-17): parents-first and the notes live inside one foldable section, each still a foldable card */
+.ds-dep-info > .ds-rec-card, .ds-dep-info > #dsDepOrder > .ds-rec-card { max-width: none; margin: 8px 0 0; }
+.ds-dep-info > summary .ds-rec-card-hint { margin-left: 8px; }
+.ds-dep-parents-ok { font-size: 12px; color: var(--subtext); padding: 6px 2px 0; }
+.ds-dep-info:not([open]) { padding-bottom: 0; }
 .ds-rec-card-ico { font-size: 15px; line-height: 1; }
 .ds-rec-card-title { font-weight: 700; font-size: 13px; }
 .ds-rec-card-hint { font-size: 11px; color: var(--subtext); margin-left: auto; }
