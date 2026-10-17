@@ -1074,8 +1074,7 @@ const CMD_VIEWS = [
 // from HOME_FEATURES, so a name drift here shows the same feature with two
 // different icons depending on which app's palette is open.
 const CMD_TOOLKIT = [
-  { i: 'nodes',   label: 'Flows',            tab: 'flows',        desc: 'Bulk delete, backup & restore' },
-  { i: 'share',   label: 'Dependencies',     tab: 'dependencies', desc: 'Subflow call chains' },
+  { i: 'nodes',   label: 'Flows',            tab: 'flows',        desc: 'Versions · dependencies · switches · API versions' },
   { i: 'bug',     label: 'Apex Debugger',    tab: 'debugger',     desc: 'Trace flows, triggers, recursion' },
   { i: 'layout',  label: 'Lightning Pages',  tab: 'pages',        desc: 'Assignments & org defaults' },
   { i: 'sliders', label: 'Field Cleaner',    tab: 'fields',       desc: 'Scan deps, fix flows, delete fields' },

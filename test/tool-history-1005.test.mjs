@@ -49,7 +49,7 @@ describe('which tool shows an entry', () => {
     expect(F.sftkHistoryToolTab(tool('Deploy', '2026-10-05T10:00:00Z'))).toBe('');
     expect(F.sftkHistoryToolTab(tool('constructor', '2026-10-05T10:00:00Z'))).toBe('');
     expect(F.sftkHistoryToolTab(tool('Field Cleaner', '2026-10-05T10:00:00Z'))).toBe('fields');
-    expect(F.sftkHistoryToolTab(tool('API versions', '2026-10-05T10:00:00Z'))).toBe('dependencies');
+    expect(F.sftkHistoryToolTab(tool('API versions', '2026-10-05T10:00:00Z'))).toBe('flows');   // one Flows page (2026-10-17)
     expect(F.sftkHistoryToolTab(null)).toBe('');
   });
 });
@@ -59,14 +59,14 @@ describe('the split', () => {
     tool('Deploy', '2026-10-05T10:30:00Z'), rb('2026-10-05T12:00:00Z'), tool('Lightning Pages', '2026-10-05T07:00:00Z')];
   it('a tool gets its own entries, newest first, and nobody else’s', () => {
     expect(F.sftkHistoryForTab(all, 'fields').map(e => e.startedAt)).toEqual(['2026-10-05T11:00:00Z', '2026-10-05T09:00:00Z']);
-    expect(F.sftkHistoryForTab(all, 'dependencies').length).toBe(1);
-    expect(F.sftkHistoryForTab(all, 'flows')).toEqual([]);
+    expect(F.sftkHistoryForTab(all, 'flows').length).toBe(1);
+    expect(F.sftkHistoryForTab(all, 'dependencies')).toEqual([]);
     expect(F.sftkHistoryForTab(null, 'fields')).toEqual([]);
   });
   it('Data Studio keeps deployments, rollbacks and its own tools, and counts the rest per tab', () => {
     const s = F.sftkHistoryStudioSplit(all);
     expect(s.mine.map(e => e.id)).toEqual(['run_2026-10-05T08:00:00Z', 'tool_Deploy_2026-10-05T10:30:00Z', 'rb_2026-10-05T12:00:00Z']);
-    expect(s.kit).toEqual({ fields: 2, dependencies: 1, pages: 1 });
+    expect(s.kit).toEqual({ fields: 2, flows: 1, pages: 1 });
     expect(s.kitTotal).toBe(4);
   });
   it('nothing is lost: every entry is on exactly one side', () => {

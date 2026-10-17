@@ -319,11 +319,11 @@ async function sftkHistoryUndo(entryId, opts) {
 // Tool name (as passed to sftkHistoryBegin) → the Toolkit tab that shows it.
 const SFTK_TOOLKIT_TOOLS = {
   'Field Cleaner': 'fields', 'Lightning Pages': 'pages', 'Apex Debugger': 'debugger', 'License Manager': 'licenses',
-  'Copy Permissions': 'copy-perms', 'Flow switches': 'dependencies', 'API versions': 'dependencies',
-  'Flow delete': 'flows', 'Flow Access': 'flow-access',
+  'Copy Permissions': 'copy-perms', 'Flow switches': 'flows', 'API versions': 'flows',   // one Flows page (2026-10-17)
+  'Flow delete': 'flows', 'Flow interviews': 'flows', 'Flow Access': 'flow-access',
 };
 const SFTK_TOOLKIT_TAB_LABELS = {
-  flows: 'Flows', dependencies: 'Dependencies', debugger: 'Debugger', pages: 'Lightning Pages', fields: 'Field Cleaner',
+  flows: 'Flows', debugger: 'Debugger', pages: 'Lightning Pages', fields: 'Field Cleaner',
   'copy-perms': 'Copy Permissions', licenses: 'Licenses', 'flow-access': 'Flow Access',
 };
 // The Toolkit tab an entry is shown in, or '' (a deployment, a rollback, a Data Studio change). PURE.

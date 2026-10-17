@@ -261,7 +261,8 @@ export const SECTIONS = [
 
   { id: 'dependencies', title: 'Dependencies', run: async c => {
     const { h, rec } = c;
-    await c.popup('dependencies');
+    await c.popup('flows');
+    await rec.click('#flowViews [data-view="deps"]', 700);
     await rec.say('Dependencies. The flows of the org as a tree: which flow calls which.');
     await depScanGate(c, true);
     await rec.fast(() => h.waitFor("!!document.querySelector('#depApiVerBtn') && document.querySelectorAll('.dep-node').length > 0", 300000, 1000));
@@ -313,7 +314,8 @@ export const SECTIONS = [
     const PICKS = ['SFTK_FS_Test_Acc1', 'SFTK_FS_Test_Acc2', 'SFTK_FS_Test_Con1'];
     const rowsReady = "document.querySelectorAll('.dep-fb-cb').length > 0 || /could not|no flows|nothing/i.test(document.querySelector('#depFbBody, #depToolPanel')?.innerText || '')";
     const states = () => h.eval(`${J(PICKS)}.map(v => { const x = document.querySelector('.dep-fb-cb[value="' + v + '"]'); return x ? x.dataset.on : 'missing'; })`);
-    await c.popup('dependencies');
+    await c.popup('flows');
+    await rec.click('#flowViews [data-view="deps"]', 700);
     await depScanGate(c);
     await rec.fast(() => h.waitFor("!!document.querySelector('#depBulkBtn')", 300000, 1000));
     await rec.say('Flow switches. Before a data load you often want some automation out of the way, and back on afterwards.', 1200);
@@ -345,7 +347,8 @@ export const SECTIONS = [
   { id: 'api-versions', title: 'API versions', writes: true, run: async c => {
     const { h, rec } = c;
     const row = '.dep-av-pick[value="SFTK_AV_Test_A"]';
-    await c.popup('dependencies');
+    await c.popup('flows');
+    await rec.click('#flowViews [data-view="deps"]', 700);
     await depScanGate(c);
     await rec.fast(() => h.waitFor("!!document.querySelector('#depApiVerBtn')", 300000, 1000));
     await rec.say('API versions. A flow keeps the API version it was saved with, so an upgraded org can still be running old flow behaviour.', 1200);

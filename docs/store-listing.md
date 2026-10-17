@@ -24,7 +24,7 @@ THE TOOLKIT (the popup)
 • Flows — every flow with its versions. Delete the versions you tick (backup offered
   first; paused interviews and calling flows checked), back versions up as a file, restore
   a backup as a new Draft.
-• Dependencies — what calls what, "what uses…" a field or value, blast radius, call
+• Flows › Dependencies — what calls what, "what uses…" a field or value, blast radius, call
   chains, export. Flow switches turn record-triggered and scheduled flows off and back on
   at the version that was active. API versions move flows to a newer API version and
   verify what runs.

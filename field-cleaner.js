@@ -4478,6 +4478,8 @@ const FieldCleaner = (() => {
   // zip-deploy fixFlow uses — it adds a new version for EVERY flow type — but
   // callable with an explicit org/sid/status instead of the module's selected
   // _orgUrl/_sid. Defaults to a Draft version so restore never auto-activates.
+  // The Flows page keeps a restore point (a deployable zip) of every version it deletes (2026-10-17).
+  window.sftkBuildFlowZip = buildFlowZip;
   window.sftkDeployFlowMetadata = function (orgUrl, sid, fullName, metadata, status) {
     const md = { ...(metadata || {}) };
     delete md.fullName;               // Tooling-only descriptor; breaks the XML

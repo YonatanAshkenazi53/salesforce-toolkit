@@ -2249,6 +2249,17 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .mode-btn:last-child { border-right: none; }
 .mode-btn:hover:not(.active) { background: var(--brand-bg); color: var(--brand); }
 .mode-btn.active { background: var(--brand); color: #fff; }
+/* One Flows page (2026-10-17): the view strip above the mode toggle, the whole-flow button, the interview chip */
+.flow-views { margin-bottom: 8px; }
+.flow-view-btn { flex: 1; background: transparent; border: none; border-right: 1px solid var(--border); color: var(--subtext); padding: 8px 6px; cursor: pointer; font-size: 12.5px; font-weight: 600; transition: background .15s, color .15s; }
+.flow-view-btn:last-child { border-right: none; }
+.flow-view-btn:hover:not(.active) { background: var(--brand-bg); color: var(--brand); }
+.flow-view-btn.active { background: var(--brand); color: #fff; }
+.flow-whole-btn { font-size: 10.5px; padding: 1px 7px; border: 1px solid var(--border); border-radius: 10px; background: transparent; color: var(--subtext); cursor: pointer; margin-left: 4px; }
+.flow-whole-btn:hover { border-color: var(--danger); color: var(--danger); }
+.flow-int-chip { font-size: 10.5px; padding: 1px 7px; border: 1px solid var(--warning); border-radius: 10px; background: var(--warning-bg, transparent); color: var(--text); cursor: pointer; margin-left: 4px; }
+.flow-int-chip-paused { border-color: var(--danger); }
+.flow-int-chip:hover { filter: brightness(.95); }
 .mode-btn[data-mode="delete"].active  { background: var(--c-critical-bg); color: var(--danger); }
 .mode-btn[data-mode="backup"].active  { background: var(--brand-bg); color: var(--brand-dark); }
 .mode-btn[data-mode="restore"].active { background: var(--c-good-bg); color: var(--active-color); }
