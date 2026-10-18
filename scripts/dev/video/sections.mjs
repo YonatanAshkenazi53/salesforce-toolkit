@@ -257,6 +257,16 @@ export const SECTIONS = [
     await rec.pause(2000);
     await rec.point('#modeToggle', 1200);
     await rec.say('Old versions can be backed up to a zip file, deleted in bulk, and restored from that backup later.', 5000);
+    if (await c.has('.flow-whole-btn')) {
+      await rec.point('.flow-whole-btn', 900);
+      await rec.say('Or a whole flow at once. Before anything is deleted, a restore point is kept in History: Undo brings the flow back, the version that was active, active again.', 8000);
+    }
+    if (await c.has('.flow-int-chip')) {
+      await rec.point('.flow-int-chip', 900);
+      await rec.say('A flow with paused or failed runs says so. Failed ones are only saved error reports, and can be cleared here; a delete removes them first, since Salesforce refuses a version that still has one.', 9000);
+    }
+    await rec.point('#flowViews', 1200);
+    await rec.say('Everything about flows lives on this one page: the versions, what calls what, the switches, and the API versions.', 6000);
   } },
 
   { id: 'dependencies', title: 'Dependencies', run: async c => {
@@ -303,10 +313,10 @@ export const SECTIONS = [
         : `Every flow version was read: ${st.hits} flow version${st.hits === 1 ? '' : 's'} mention this field, each with how many times. A click opens the flow.`);
       await rec.reveal('#depRefResults');
     }
-    await rec.scrollTo('#depBulkBtn', 'center');
-    await rec.point('#depBulkBtn', 900);
-    await rec.point('#depApiVerBtn', 900);
-    await rec.say('Two more tools live here: Flow switches and API versions. Both are next.', 3500);
+    await rec.scrollTo('#flowViews', 'start');
+    await rec.point('#flowViews [data-view="switches"]', 900);
+    await rec.point('#flowViews [data-view="apiver"]', 900);
+    await rec.say('Two more views of the same page: Switches and API versions. Both are next.', 3500);
   } },
 
   { id: 'flow-switches', title: 'Flow switches', writes: true, run: async c => {
@@ -315,11 +325,8 @@ export const SECTIONS = [
     const rowsReady = "document.querySelectorAll('.dep-fb-cb').length > 0 || /could not|no flows|nothing/i.test(document.querySelector('#depFbBody, #depToolPanel')?.innerText || '')";
     const states = () => h.eval(`${J(PICKS)}.map(v => { const x = document.querySelector('.dep-fb-cb[value="' + v + '"]'); return x ? x.dataset.on : 'missing'; })`);
     await c.popup('flows');
-    await rec.click('#flowViews [data-view="deps"]', 700);
-    await depScanGate(c);
-    await rec.fast(() => h.waitFor("!!document.querySelector('#depBulkBtn')", 300000, 1000));
     await rec.say('Flow switches. Before a data load you often want some automation out of the way, and back on afterwards.', 1200);
-    await rec.click('#depBulkBtn', 800);
+    await rec.click('#flowViews [data-view="switches"]', 800);
     await rec.fast(async () => { await h.waitFor(rowsReady, 300000, 1500); await h.sleep(1200); });
     const before = await states();
     if (before.some(s => s !== 'on')) throw new Error(`the three fixture flows must be ON before this chapter (they are: ${before.join(', ')})`);
@@ -348,11 +355,8 @@ export const SECTIONS = [
     const { h, rec } = c;
     const row = '.dep-av-pick[value="SFTK_AV_Test_A"]';
     await c.popup('flows');
-    await rec.click('#flowViews [data-view="deps"]', 700);
-    await depScanGate(c);
-    await rec.fast(() => h.waitFor("!!document.querySelector('#depApiVerBtn')", 300000, 1000));
     await rec.say('API versions. A flow keeps the API version it was saved with, so an upgraded org can still be running old flow behaviour.', 1200);
-    await rec.click('#depApiVerBtn', 800);
+    await rec.click('#flowViews [data-view="apiver"]', 800);
     await rec.fast(async () => { await h.waitFor("document.querySelectorAll('.dep-av-pick').length > 0 || /could not|no flows|nothing/i.test(document.querySelector('#depAvOut')?.innerText || '')", 300000, 1500); await h.sleep(1500); });
     const label = await h.eval(`(document.querySelector(${J(row)})?.closest('label')?.innerText || '')`);
     if (!/behind/.test(label)) throw new Error(`the fixture flow SFTK_AV_Test_A must be behind the org's release before this chapter (it reads: ${label.slice(0, 80)})`);
@@ -1144,7 +1148,7 @@ export const SECTIONS = [
     // the sections fold (user 2026-10-17: "can we do the whole sections collapsable?")
     if (await c.has("#dsDepTree details.ds-dep-fold > summary")) {
       await rec.click("#dsDepTree details.ds-dep-fold > summary", 700);
-      await rec.say("Each section folds away once read, and stays the way you left it.", 4500);
+      await rec.say("Each section folds away once read, and stays the way you left it. Fold all, at the top, hides every one at once.", 6000);
       await rec.click("#dsDepTree details.ds-dep-fold > summary", 700);
     }
     if (await c.has('[data-tree-scan]')) {

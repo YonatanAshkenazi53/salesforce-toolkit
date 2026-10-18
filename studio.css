@@ -6155,6 +6155,7 @@ body.ds-pro {
 .ds-rec-card-tight { flex-direction: row; gap: 8px; align-items: flex-start; padding: 8px 12px; color: var(--subtext); font-size: 12px; }
 .ds-rec-card-hd { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 /* folding cards on the Deploy page (2026-10-17): a chevron, the hint hidden while folded */
+.ds-dep-foldbar { display: flex; gap: 6px; justify-content: flex-end; margin: 0 0 6px; }
 .ds-dep-fold > summary { cursor: pointer; list-style: none; user-select: none; }
 .ds-dep-fold > summary::-webkit-details-marker { display: none; }
 .ds-dep-fold > summary::before { content: '▾'; display: inline-block; width: 1em; color: var(--subtext); font-size: 12px; }

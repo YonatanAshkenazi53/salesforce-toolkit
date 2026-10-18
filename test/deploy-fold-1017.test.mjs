@@ -39,6 +39,11 @@ describe('Deploy page: the tree, parents-first and notes cards fold', () => {
     expect(DV).toContain('_depWireFolds(host);');
     expect(DV).toContain('_depWireFolds(h);');
   });
+  it('fold all / unfold all set every section and remember it', () => {
+    expect(DV).toContain('id="dsDepFoldAll"'); expect(DV).toContain('id="dsDepUnfoldAll"');
+    expect(DV).toContain("const SFTK_DEP_FOLDS = ['orgs', 'info', 'order', 'notes', 'tree', 'plan'];");
+    expect(DV).toContain("eid('dsDepFoldAll')?.addEventListener('click', () => _depFoldEvery(false));");
+  });
   it('the stylesheet draws the chevron and hides the hint of a folded card', () => {
     expect(CSS).toContain(".ds-dep-fold:not([open]) > summary::before { content: '▸'; }");
     expect(CSS).toContain('.ds-dep-fold:not([open]) > summary .ds-rec-card-hint { display: none; }');
