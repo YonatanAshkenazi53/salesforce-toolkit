@@ -1148,9 +1148,11 @@ body {
    popup and the popped-out window. */
 .home-section-cards {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));   /* two per section since Dependencies joined Flows (user 2026-10-18: "a two column with bigger cards") */
   gap: var(--home-gap);
 }
+.home-section-cards .home-card { padding: var(--sp-6, 20px); min-height: 96px; }
+.home-section-cards .home-card-title { font-size: 16px; }
 
 /* ── Feature card ─────────────────────────────────────────────────────── */
 .home-card {

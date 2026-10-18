@@ -75,7 +75,7 @@ export default async function (h) {
   if (themeBefore === themeAfter) throw new Error('the dark toggle changed nothing in Data Studio');
   await h.eval("location.hash = '#/history'"); await h.sleep(800);
   h.log('dark History view draws:', lines(await h.eval("document.querySelector('#dsMain')?.innerText || ''"), 160));
-  await h.click('#dsDarkToggle'); await h.sleep(400);
+  await h.eval("(() => { for (let i = 0; i < 3 && document.documentElement.classList.contains('ds-dark'); i++) document.getElementById('dsDarkToggle').click(); return true; })()"); await h.sleep(400);   // one button cycles light → dark → OLED → light
 
   // ── the Toolkit popup without an org: the session banner; cut tabs; What's New; dark ──
   await h.navigate(`${ext}/popup.html`); await h.sleep(2500);

@@ -101,7 +101,7 @@ describe('one icon dialect, shared with the Apex Debugger', () => {
   it('the dark toggle carries its glyph as an ATTRIBUTE — its label is rewritten by JS', () => {
     // applyDarkMode does `btn.textContent = …`, which destroys a child span.
     expect(HTML).toMatch(/id="dsDarkToggle"[^>]*data-i="moon"/);
-    expect(CORE).toMatch(/setAttribute\('data-i', on \? 'sun' : 'moon'\)/);
+    expect(CORE).toMatch(/setAttribute\('data-i', oled \? 'sun' : 'moon'\)/);   // one button, three states (2026-10-18)
     expect(LAYER).toMatch(/\.ds-topbar \.ds-dark-toggle::before/);
   });
 });
@@ -226,7 +226,7 @@ describe('accessibility invariants', () => {
     expect(HTML).toMatch(/id="dsSecurityBtn"[^>]*aria-label=/);
     expect(HTML).toMatch(/id="dsDarkToggle"[^>]*aria-label=/);
     // and the dark toggle's name is kept in step with its state
-    expect(CORE).toContain("btn.setAttribute('aria-label', btn.title)");
+    expect(CORE).toContain("btn.setAttribute('aria-label', label);");
   });
 
   it('decorative glyphs are hidden from assistive tech', () => {
