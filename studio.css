@@ -6161,9 +6161,12 @@ body.ds-pro {
 .ds-dep-fold > summary::before { content: '▾'; display: inline-block; width: 1em; color: var(--subtext); font-size: 12px; }
 .ds-dep-fold:not([open]) > summary::before { content: '▸'; }
 .ds-dep-fold:not([open]) > summary .ds-rec-card-hint { display: none; }
+/* folded: one line of what the section holds, where the hint was (2026-10-18) */
+.ds-dep-foldsum { display: none; margin-left: auto; font-size: 12px; color: var(--subtext); }
+.ds-dep-fold:not([open]) > summary .ds-dep-foldsum { display: inline; }
 .ds-dep-fold > summary:hover .ds-rec-card-title { color: var(--brand); }
 /* "About this deployment" (2026-10-17): parents-first and the notes live inside one foldable section, each still a foldable card */
-.ds-dep-info > .ds-rec-card, .ds-dep-info > #dsDepOrder > .ds-rec-card { max-width: none; margin: 8px 0 0; }
+.ds-dep-info > .ds-rec-card, .ds-dep-info > #dsDepOrder > .ds-rec-card, .ds-dep-info > #dsDepTree > .ds-rec-card { max-width: none; margin: 8px 0 0; }
 .ds-dep-info > summary .ds-rec-card-hint { margin-left: 8px; }
 .ds-dep-parents-ok { font-size: 12px; color: var(--subtext); padding: 6px 2px 0; }
 .ds-dep-info:not([open]) { padding-bottom: 0; }
@@ -6229,6 +6232,10 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 .ds-dep-objlink:hover { color: var(--brand); text-decoration: underline; }
 .ds-dep-sub { display: block; font-size: 11px; color: var(--subtext); }
 .ds-dep-rec { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); margin-bottom: 12px; max-width: 1200px; }
+/* one section (2026-10-18): the records live inside "What the two orgs hold"; the table row picks the object */
+details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid var(--border); border-radius: 0; margin: 10px -14px -10px; max-width: none; background: transparent; }
+.ds-dep-plan tr.ds-dep-cur > td { background: var(--brand-bg); }
+.ds-dep-plan tr.ds-dep-cur .ds-dep-objlink { color: var(--brand-dark); font-weight: 700; }
 .ds-dep-objsw { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--border); background: var(--surface2); border-radius: 8px 8px 0 0; }
 .ds-dep-lbl { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--subtext); font-weight: 600; margin-right: 4px; }
 .ds-dep-objbtn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 4px 11px; font: inherit; font-weight: 600; cursor: pointer; }
