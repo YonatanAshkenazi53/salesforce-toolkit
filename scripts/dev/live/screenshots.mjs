@@ -14,7 +14,8 @@ export default async function (h) {
     const f = join(out, `${String(++n).padStart(2, '0')}-${name}.png`);
     writeFileSync(f, Buffer.from(r.data, 'base64')); h.log('shot', f);
   };
-  const dark = async (on) => { const cur = await h.eval("document.documentElement.dataset.theme || ''"); if ((cur === 'dark') !== on) { await h.eval("(document.querySelector('#sftkDarkToggle') || document.querySelector('#dsDarkToggle'))?.click()"); await h.sleep(500); } };
+  // one theme button on each page cycles light → dark → OLED → light: click until the page is in the wanted state
+  const dark = async (on) => { for (let i = 0; i < 3; i++) { const cur = await h.eval("document.documentElement.classList.contains('ds-dark') || document.body.classList.contains('sftk-dark')"); if (cur === on) break; await h.eval("(document.querySelector('#sftkDarkToggle') || document.querySelector('#dsDarkToggle'))?.click()"); await h.sleep(500); } };
   await h.login('npc2'); await h.login('npc');
   await h.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   // ── the Toolkit ──

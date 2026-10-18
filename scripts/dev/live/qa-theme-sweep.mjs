@@ -47,7 +47,7 @@ export default async function (h) {
     await set('#dsDepDupRules', e0.d); await h.sleep(1200); await set('#dsDepApiMode', e0.a); await h.sleep(1200);
   }
   // back to light on both pages
-  if (await h.eval(`document.documentElement.classList.contains('ds-dark')`)) await h.eval(`document.getElementById('dsDarkToggle').click()`);
+  await h.eval("(() => { for (let i = 0; i < 3 && document.documentElement.classList.contains('ds-dark'); i++) document.getElementById('dsDarkToggle').click(); return true; })()"); await h.sleep(400);   // one button cycles light → dark → OLED → light
   await h.popup('flows');
   if (await h.eval(`document.body.classList.contains('sftk-dark')`)) await h.eval(`document.getElementById('sftkDarkToggle').click()`);
   h.log('page errors:', JSON.stringify(await h.eval('(window.__sftkErrors || []).slice(0, 5)')).slice(0, 500));

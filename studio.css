@@ -6233,6 +6233,8 @@ td.ds-dep-num[data-dep-tab]:hover { color: var(--brand); text-decoration: underl
 .ds-dep-sub { display: block; font-size: 11px; color: var(--subtext); }
 .ds-dep-rec { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); margin-bottom: 12px; max-width: 1200px; }
 /* one section (2026-10-18): the records live inside "What the two orgs hold"; the table row picks the object */
+/* the org picker opens the section (user 2026-10-18: "between which orgs + what two orgs hold should be one") */
+details[data-fold="plan"] > .ds-dep-orgs { max-width: none; margin: 8px 0 4px; }
 details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid var(--border); border-radius: 0; margin: 10px -14px -10px; max-width: none; background: transparent; }
 .ds-dep-plan tr.ds-dep-cur > td { background: var(--brand-bg); }
 .ds-dep-plan tr.ds-dep-cur .ds-dep-objlink { color: var(--brand-dark); font-weight: 700; }

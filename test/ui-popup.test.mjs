@@ -116,7 +116,7 @@ describe('the home grid fits — the Data Studio banner is no longer cut in half
   it('tool cards are laid out as a multi-column grid, not one long column', () => {
     const cards = HOME_CSS.slice(HOME_CSS.indexOf('.home-section-cards {'));
     expect(cards.slice(0, 260)).toContain('display: grid');
-    expect(cards.slice(0, 260)).toMatch(/grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
+    expect(cards.slice(0, 260)).toMatch(/grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);   // two per section since 2026-10-18
   });
 
   it('the narrow popup gets a density step, not a different layout', () => {

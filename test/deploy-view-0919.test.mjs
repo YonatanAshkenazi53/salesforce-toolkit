@@ -399,7 +399,7 @@ describe('2026-09-21 — parents at first sight, checked on load when cheap, and
     expect(DV).toContain("state = (s.srcCount != null && s.srcCount <= SFTK_DEPLOY_AUTOCHECK_MAX) ? 'checking' : 'large';");
     expect(RC).toContain('query: `SELECT COUNT() FROM ${g.refObj}`');
   });
-  it('the verdict is in the page header, and a parents-first step leads back to where it came from', () => {
+  it('the verdict is in the About header (2026-10-18), and a parents-first step leads back to where it came from', () => {
     expect(DV).toContain('id="dsDepParentsChip"');
     expect(DV).toContain('id="dsDepBackOrigin"');
     // 2026-10-01: the way back resolves the origin by id, then by the kept object (parents-first-back-1001)

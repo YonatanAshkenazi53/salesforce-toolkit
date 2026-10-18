@@ -323,7 +323,7 @@ function applyProMode(on) {
   // The dark toggle's label is emoji written from JS (not CSS-hideable) —
   // refresh it here so flipping pro mode doesn't leave a stale 🌙/☀️ behind.
   const dk = eid('dsDarkToggle');
-  if (dk) dk.textContent = window.sftkGlyph('', _darkMode ? 'Light' : 'Dark');
+  if (dk) _syncThemeBtn();
 }
 
 // Kick off the ds_settings read IMMEDIATELY at script evaluation — the same
@@ -861,8 +861,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyOledMode(_oledMode);
 
   // Wire dark mode + OLED toggles
-  eid('dsDarkToggle')?.addEventListener('click', () => applyDarkMode(!_darkMode));
-  eid('dsOledToggle')?.addEventListener('click', () => applyOledMode(!_oledMode));
+  // ONE button, the Toolkit's cycle (user 2026-10-18: "instead of these buttons i want the one button we have
+  // in the toolkit"): light → dark → OLED black → light
+  eid('dsDarkToggle')?.addEventListener('click', () => {
+    if (!_darkMode) { applyOledMode(false); applyDarkMode(true); }
+    else if (!_oledMode) applyOledMode(true);
+    else { applyOledMode(false); applyDarkMode(false); }
+  });
 
   // E4: professional-mode toggle — persists in ds_settings, then re-renders
   // the current view so JS-baked glyphs update (views are stateless full
@@ -997,24 +1002,7 @@ function applyDarkMode(on) {
   // OLED rides on dark: the class pair is only ever applied together, and
   // the OLED pill only shows while dark is on (it's a no-op in light mode).
   document.documentElement.classList.toggle('ds-oled', on && _oledMode);
-  const oledBtn = eid('dsOledToggle');
-  if (oledBtn) oledBtn.style.display = on ? '' : 'none';
-  const btn = eid('dsDarkToggle');
-  if (btn) {
-    // E4: plain-text label in professional mode (window.sftkGlyph).
-    // The glyph is a masked ::before driven by data-i (see the topbar block
-    // in studio.css) — an ATTRIBUTE, because this very assignment destroys
-    // any child node an icon <span> would live in. Same mechanism the Apex
-    // Debugger uses for its ten relabelled buttons. Pro mode still swaps in
-    // the plain-text label; the ::before is hidden there by .ds-pro.
-    btn.setAttribute('data-i', on ? 'sun' : 'moon');
-    btn.textContent = window.sftkGlyph('', on ? 'Light' : 'Dark');
-    btn.title = on ? 'Switch to light mode' : 'Switch to dark mode';
-    // a11y: outside pro mode the label IS an emoji, which no AT announces as
-    // an action. title= alone is not exposed as a name by every AT, so the
-    // accessible name is set here and kept in step with the state.
-    btn.setAttribute('aria-label', btn.title);
-  }
+  _syncThemeBtn();
   // X5: write the canonical shared key (sftk_dark) so the popup + log viewer
   // pick up the same choice; keep ds_dark_mode in sync for back-compat.
   chrome.storage.local.set({ sftk_dark: on, ds_dark_mode: on });
@@ -1026,15 +1014,20 @@ function applyDarkMode(on) {
 function applyOledMode(on) {
   _oledMode = on;
   document.documentElement.classList.toggle('ds-oled', _darkMode && on);
-  const ob = eid('dsOledToggle');
-  if (ob) {
-    ob.classList.toggle('ds-oled-on', on);
-    ob.setAttribute('aria-pressed', on ? 'true' : 'false');
-    ob.title = on
-      ? 'OLED black is on — switch back to standard dark surfaces'
-      : 'Absolute black for OLED screens — pure-black surfaces (rides on dark mode)';
-  }
+  _syncThemeBtn();
   chrome.storage.local.set({ sftk_oled: on });
+}
+// The one theme button: an icon only, the label says what the NEXT click does — the Toolkit's words exactly.
+function _syncThemeBtn() {
+  const btn = eid('dsDarkToggle');
+  if (!btn) return;
+  const dark = !!_darkMode, oled = dark && !!_oledMode;
+  btn.textContent = '';
+  btn.setAttribute('data-i', oled ? 'sun' : 'moon');
+  const label = !dark ? 'Switch to dark mode'
+    : (!oled ? 'Switch to OLED black — pure-black dark for OLED screens' : 'Switch to light mode');
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
 }
 
 // ════════════════════════════════════════════════════════════════

@@ -7,40 +7,32 @@ const RC = readFileSync(new URL('../studio-reconcile.js', import.meta.url), 'utf
 // User 2026-10-17: "can we do the whole sections collapsable? the deployment tree, deploy parents,
 // worth reading" — the three cards are <details>, open by default, and what is folded is remembered.
 describe('Deploy page: the tree, parents-first and notes cards fold', () => {
-  it('each card is a <details> with a data-fold key and a summary header', () => {
-    expect(DV).toContain('<details${_depFoldOpen(\'tree\')} class="ds-rec-card ds-dep-fold" data-fold="tree">');
-    expect(DV).toContain('<details${_depFoldOpen(\'order\')} class="ds-rec-card ds-dep-fold ${anyDoomed ? \'ds-rec-card-bad\' : anyEmpty ? \'ds-rec-card-warn\' : allDone ? \'ds-rec-card-good\' : \'\'}" data-fold="order">');
-    expect(DV).toContain('<details${_depFoldOpen(\'notes\')} class="ds-rec-card ds-rec-card-warn ds-dep-fold" data-fold="notes"><summary class="ds-rec-card-hd">');
-    expect(DV).toContain('<summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">📦</span><span class="ds-rec-card-title">This deployment</span>');
-    expect(DV).toContain('<summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span>');
-    // user 2026-10-17: parents-first and the notes sit in ONE foldable section above the tree card
+  it('one level of folding: two sections fold, the cards inside them do not (user 2026-10-18)', () => {
+    expect((DV.match(/<details\$\{_depFoldOpen\(/g) || []).length).toBe(2);
+    expect(DV).toContain('<details${_depFoldOpen(\'info\')} class="ds-rec-card ds-dep-fold ds-dep-info" data-fold="info">');
+    expect(DV).toContain('<details${_depFoldOpen(\'plan\')} class="ds-rec-card ds-dep-fold" data-fold="plan">');
+    expect(DV).toContain('<div class="ds-rec-card-hd"><span class="ds-rec-card-ico">📦</span><span class="ds-rec-card-title">This deployment</span>');
+    expect(DV).toContain("const SFTK_DEP_FOLDS = ['info', 'plan'];");
+    // About holds the parents, the notes and the tree
     const info = DV.indexOf('data-fold="info"'), tree = DV.indexOf('<div id="dsDepTree"></div>'), order = DV.indexOf('<div id="dsDepOrder"></div>');
     expect(info).toBeGreaterThan(0); expect(order).toBeGreaterThan(info); expect(tree).toBeGreaterThan(order);
-    expect(DV).toContain('<span class="ds-rec-card-title">About this deployment</span>');
-    // user 2026-10-17: parents all in sync → no card, one quiet line
-    expect(DV).toContain('<span class="ds-rec-card-title">Parents synced ✓</span>');   // user 2026-10-18: say it, inside About
-    // user 2026-10-17: the org picker folds and sits right above the plan table; the plan table folds; a closed org is one line
-    expect(DV).toContain('<details${_depFoldOpen(\'orgs\', !settled)} class="ds-rec-card ds-dep-orgs ds-dep-fold" data-fold="orgs">');
-    expect(DV).toContain('<details${_depFoldOpen(\'plan\')} class="ds-rec-card ds-dep-fold" data-fold="plan">');
-    const pick = DV.indexOf('    ${_depOrgPickerHtml(p)}'); expect(pick).toBeGreaterThan(tree); expect(DV.indexOf('planHtml.lastIndexOf', pick)).toBeGreaterThan(pick);
+    expect(DV).toContain('<span class="ds-rec-card-title">Parents synced ✓</span>');
     expect(DV).toContain('⛓ Parents are checked as soon as both orgs are open');
-    const open = new Function('_settings', DV.slice(DV.indexOf('function _depFoldOpen('), DV.indexOf('\n}\n', DV.indexOf('function _depFoldOpen(')) + 3) + ' return _depFoldOpen;');
-    expect(open({})('orgs', false)).toBe('');                               // the default of the fold
-    expect(open({ deployFolds: { orgs: true } })('orgs', false)).toBe(' open');   // the user's choice wins
+    // the orgs section: the picker, the plan table, the records — one fold
+    expect(DV).toContain('planHtml.slice(0, s) + _depOrgPickerHtml(p) + planHtml.slice(s, i) + recordsHtml');
   });
   it('open by default; a fold remembered as false stays folded; a toggle is saved to the settings', () => {
     const i = DV.indexOf('function _depFoldOpen(');
     const fn = new Function('_settings', DV.slice(i, DV.indexOf('\n}\n', i) + 3) + ' return _depFoldOpen;');
-    expect(fn(undefined)('tree')).toBe(' open');
-    expect(fn({ deployFolds: { tree: false } })('tree')).toBe('');
-    expect(fn({ deployFolds: { tree: false } })('order')).toBe(' open');
+    expect(fn(undefined)('info')).toBe(' open');
+    expect(fn({ deployFolds: { info: false } })('info')).toBe('');
+    expect(fn({ deployFolds: { info: false } })('plan')).toBe(' open');
     expect(DV).toContain("_settings.deployFolds = { ...(_settings.deployFolds || {}), [el.dataset.fold]: !!el.open };");
     expect(DV).toContain('_depWireFolds(document);');
     expect(DV).toContain('_depWireFolds(host);');
     expect(DV).toContain('_depWireFolds(h);');
   });
   it('the plan table and the records are one section; the table row picks the object (2026-10-18)', () => {
-    expect(DV).toContain("${(() => { const i = planHtml.lastIndexOf('</details>'); return planHtml.slice(0, i) + recordsHtml + planHtml.slice(i); })()}");
     expect(DV).not.toContain('    ${planHtml}\n    ${recordsHtml}');
     expect(DV).toContain('<div class="ds-dep-objsw"><span class="ds-dep-lbl">Object</span>');   // the objects stay, inside the one section
     expect(DV).toContain(' class="ds-dep-cur" aria-current="true"');
@@ -51,12 +43,14 @@ describe('Deploy page: the tree, parents-first and notes cards fold', () => {
   });
   it('a folded section shows a one-line summary of what it holds (2026-10-18)', () => {
     expect((DV.match(/class="ds-dep-foldsum"/g) || []).length).toBeGreaterThanOrEqual(3);
-    expect(DV).toContain("{ const s = eid('dsDepInfoParents'); if (s) s.textContent = verdict.text; }");
+    // user 2026-10-18: the parents' verdict sits in the About header, always shown; an org closed or a failed read says so
+    expect(DV).toContain('<span class="ds-rec-card-title">About this deployment</span><span id="dsDepParentsChip"');
+    expect(DV).toContain("ch.textContent = 'parents: not checked — an org is closed'");
+    expect(DV).toContain("ch.textContent = '⚠ parents could not be checked'");
     expect(CSS).toContain('.ds-dep-fold:not([open]) > summary .ds-dep-foldsum { display: inline; }');
   });
   it('fold all / unfold all set every section and remember it', () => {
     expect(DV).toContain('id="dsDepFoldAll"'); expect(DV).toContain('id="dsDepUnfoldAll"');
-    expect(DV).toContain("const SFTK_DEP_FOLDS = ['orgs', 'info', 'order', 'notes', 'tree', 'plan'];");
     expect(DV).toContain("eid('dsDepFoldAll')?.addEventListener('click', () => _depFoldEvery(false));");
   });
   it('the stylesheet draws the chevron and hides the hint of a folded card', () => {

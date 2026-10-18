@@ -351,8 +351,8 @@ function _depOrgPickerHtml(p) {
   const settled = !!(m.src && m.tgt && !m.notes.length);
   // user 2026-10-17: the picker sits above "What the two orgs hold" and folds like the rest — by itself once
   // the pair is set and both orgs are open (the folded line still names the pair)
-  return `<details${_depFoldOpen('orgs', !settled)} class="ds-rec-card ds-dep-orgs ds-dep-fold" data-fold="orgs">
-    <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">🏢</span><span class="ds-rec-card-title">Between which orgs</span><span class="ds-dep-orgs-hint">${settled ? `${esc(named(m.src))} → ${esc(named(m.tgt))}` : 'only orgs open in Chrome are offered · picking writes nothing'}</span></summary>
+  return `<div class="ds-rec-card ds-dep-orgs">
+    <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">🏢</span><span class="ds-rec-card-title">Between which orgs</span><span class="ds-dep-orgs-hint">${settled ? `${esc(named(m.src))} → ${esc(named(m.tgt))}` : 'only orgs open in Chrome are offered · picking writes nothing'}</span></div>
     <div class="ds-dep-orgs-row">
       <label>From <select id="dsDepSrc" class="ds-select ds-select-sm" aria-label="Source org"><option value="" ${m.src ? '' : 'selected'} disabled>— pick the source —</option>${m.sources.map(o => opt(o, o.key === m.src)).join('')}</select></label>
       <span class="ds-dep-orgs-arrow">→</span>
@@ -360,7 +360,7 @@ function _depOrgPickerHtml(p) {
       <button class="ds-btn ds-btn-xs" id="dsDepSwap" title="Swap source and target" ${m.src && m.tgt ? '' : 'disabled'}>⇄</button>
     </div>
     ${m.notes.map(n => `<div class="ds-dep-orgs-note">${esc(n)}</div>`).join('')}
-  </details>`;
+  </div>`;
 }
 
 // The pick: set the pair on the deployment (saved as "last used"), drop any
@@ -435,7 +435,7 @@ async function renderDeploy() {
       : `<button class="ds-back-link" id="dsDepBack" title="Back to Data Deployment">‹ Back to deployments</button>`,
     title: `Deploy — <span style="color:var(--brand)">${esc(p.name || objType)}</span>`,
     help: 'Reads both orgs, says what is already in the target, and writes only what you select. Nothing is selected until you select it. More than 5,000 records in one list? Run what is listed, 🔄 Refresh state, repeat.',
-    subtitle: `${esc(srcL)} → ${esc(tgtL)} ${prodBadge(p.targetOrg)}${fresh ? ` · scanned ${esc(timeAgo(scan.runAt))}` : ''}${fresh ? ' · <span id="dsDepParentsChip" class="ds-dep-pchip ds-dep-pchip-wait" title="Are the objects this deployment points at aligned between the two orgs? Details in the card below.">⏳ parents…</span>' : ''}`,
+    subtitle: `${esc(srcL)} → ${esc(tgtL)} ${prodBadge(p.targetOrg)}${fresh ? ` · scanned ${esc(timeAgo(scan.runAt))}` : ''}`,
     actions: `${p.ephemeral ? `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="saveEphemeralProfile" title="Keep this as a saved deployment — right now it disappears when you leave this page.">💾 Save as deployment</button>` : ''}
       ${fresh && !p.ephemeral && (scan.missingInTarget || []).length && (scan.onlyInTarget || []).length ? `<button class="ds-btn ds-btn-sm" id="dsDepMatchReview" title="The same record on both sides under different names? Pair a 🔴 Insert row with a 🔵 In target only row once — the pair is remembered for this target.">🔗 Match review</button>` : ''}
       <button class="ds-btn ds-btn-sm" id="dsDepRefresh" ${offline.length ? 'disabled title="Open the org(s) named on the page first"' : ''}>🔄 Refresh state</button>`,
@@ -517,7 +517,7 @@ async function renderDeploy() {
   if (scan.nearMisses) notes.push(`≈ ${scan.nearMisses} record pair(s) almost matched — keys differ only by whitespace or case (marked ≈ on the rows).`);
   if (scan.personContacts) { const l = sftkPaContactsLine(scan.personContacts, srcL, tgtL); if (l) notes.push(esc(l)); }
   for (const w of (scan.warnings || [])) notes.push(`⚠ ${esc(String(w).replace(/^[⚠\s]+/, ''))}`);
-  const notesHtml = notes.length ? `<details${_depFoldOpen('notes')} class="ds-rec-card ds-rec-card-warn ds-dep-fold" data-fold="notes"><summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⚠</span><span class="ds-rec-card-title">Worth reading before you deploy</span><span class="ds-rec-card-hint">${notes.length} note${notes.length === 1 ? '' : 's'}</span><span class="ds-dep-foldsum">${notes.length} note${notes.length === 1 ? '' : 's'} — open to read</span></summary>${notes.map(n => `<div class="ds-rec-card-line">${n}</div>`).join('')}</details>` : '';
+  const notesHtml = notes.length ? `<div class="ds-rec-card ds-rec-card-warn"><div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⚠</span><span class="ds-rec-card-title">Worth reading before you deploy</span><span class="ds-rec-card-hint">${notes.length} note${notes.length === 1 ? '' : 's'}</span><span class="ds-dep-foldsum">${notes.length} note${notes.length === 1 ? '' : 's'} — open to read</span></div>${notes.map(n => `<div class="ds-rec-card-line">${n}</div>`).join('')}</div>` : '';
 
   // ── records panel ──
   const cur = objects.find(o => o.pathKey === _depObjPath) || objects[0];
@@ -542,7 +542,7 @@ async function renderDeploy() {
     ${p._parentOf?.objType ? `<div class="ds-rec-card ds-dep-journey"><div class="ds-rec-card-line">⛓ Parents-first step: you opened this to align <b>${esc(objType)}</b> before deploying <b>${esc(p._parentOf.objType)}</b>. When it reads in sync — or when there is nothing to align — go back. <button class="ds-btn ds-btn-sm ds-btn-primary" id="dsDepJourneyBack">‹ Back to ${esc(origin ? (origin.name || p._parentOf.objType) : p._parentOf.objType)}</button></div></div>` : ''}
     ${_depRetryNote ? `<div class="ds-rec-card"><div class="ds-rec-card-line">${esc(_depRetryNote)}</div></div>` : ''}
     <details${_depFoldOpen('info')} class="ds-rec-card ds-dep-fold ds-dep-info" data-fold="info">
-      <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">ℹ</span><span class="ds-rec-card-title">About this deployment</span><span class="ds-rec-card-hint">what has to be in the target first, what is worth reading, and the deployment as a tree</span><span class="ds-dep-foldsum">${[offline.length ? `⚠ ${offline.map(u => esc(orgLabel(u))).join(' and ')} not open` : '', `${objects.length} object${objects.length === 1 ? '' : 's'}`, '<span id="dsDepInfoParents">parents: checking…</span>', notes.length ? `${notes.length} note${notes.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span></summary>
+      <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">ℹ</span><span class="ds-rec-card-title">About this deployment</span><span id="dsDepParentsChip" class="ds-dep-pchip ds-dep-pchip-wait" title="Are the objects this deployment points at aligned between the two orgs? Details below, under Start with parents first.">${offline.length ? 'parents: not checked — an org is closed' : '⏳ checking the parents…'}</span><span class="ds-rec-card-hint">what has to be in the target first, what is worth reading, and the deployment as a tree</span><span class="ds-dep-foldsum">${[offline.length ? `⚠ ${offline.map(u => esc(orgLabel(u))).join(' and ')} not open` : '', `${objects.length} object${objects.length === 1 ? '' : 's'}`, notes.length ? `${notes.length} note${notes.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span></summary>
       ${offlineHtml}
       <div id="dsDepOrder"></div>
       ${notesHtml}
@@ -550,8 +550,7 @@ async function renderDeploy() {
     </details>
     <div id="dsDepFlowLeft"></div>
     <div id="dsDepRuleLeft"></div>
-    ${_depOrgPickerHtml(p)}
-    ${(() => { const i = planHtml.lastIndexOf('</details>'); return planHtml.slice(0, i) + recordsHtml + planHtml.slice(i); })()}
+    ${(() => { const s = planHtml.indexOf('</summary>') + 10, i = planHtml.lastIndexOf('</details>'); return planHtml.slice(0, s) + _depOrgPickerHtml(p) + planHtml.slice(s, i) + recordsHtml + planHtml.slice(i); })()}
     <div class="ds-dep-actionbar">
       <div class="ds-dep-summary" id="dsDepSummary"></div>
       <span class="ds-dep-engine" title="How records are written. Auto: synchronous Collections calls below the threshold, one async Bulk API 2.0 job at or above it. Saved on the deployment — the classic pages use the same setting.">
@@ -680,7 +679,7 @@ window.sftkDeployIdentityChanged = function () { _depIdKey = ''; _depIdData = nu
 
 // ── folding sections (user 2026-10-17: "can we do the whole sections collapsable? the deployment tree,
 // deploy parents, worth reading") — <details> cards; what is folded is remembered in the settings ──
-const SFTK_DEP_FOLDS = ['orgs', 'info', 'order', 'notes', 'tree', 'plan'];
+const SFTK_DEP_FOLDS = ['info', 'plan'];   // one level of folding (2026-10-18)
 function _depFoldOpen(key, dflt = true) {
   const f = (typeof _settings === 'object' && _settings && _settings.deployFolds) || {};
   if (typeof f[key] === 'boolean') return f[key] ? ' open' : '';
@@ -739,13 +738,13 @@ async function _depPaintTree(p, scan) {
   };
   const root = sftkDeployTreeNodes(p.tree);
   const missingTgt = (_depIdKey === key && _depIdData) ? sftkIdCreatable(_depIdData.objects, 'tgt') : [];
-  host.innerHTML = `<details${_depFoldOpen('tree')} class="ds-rec-card ds-dep-fold" data-fold="tree">
-    <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">📦</span><span class="ds-rec-card-title">This deployment</span>
-      <span class="ds-rec-card-hint">every object of this deployment, how it hangs under its parent, and how many records ${esc(orgLabel(p.sourceOrg || ''))} and ${esc(orgLabel(p.targetOrg || ''))} hold — click an object to see its records</span><span class="ds-dep-foldsum">${(() => { const o = sftkDeployObjects(p.tree).map(x => esc(x.obj)); return `${o.length} object${o.length === 1 ? '' : 's'}: ${o.slice(0, 4).join(' · ')}${o.length > 4 ? ` · +${o.length - 4} more` : ''}`; })()}</span></summary>
+  host.innerHTML = `<div class="ds-rec-card">
+    <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">📦</span><span class="ds-rec-card-title">This deployment</span>
+      <span class="ds-rec-card-hint">every object of this deployment, how it hangs under its parent, and how many records ${esc(orgLabel(p.sourceOrg || ''))} and ${esc(orgLabel(p.targetOrg || ''))} hold — click an object to see its records</span><span class="ds-dep-foldsum">${(() => { const o = sftkDeployObjects(p.tree).map(x => esc(x.obj)); return `${o.length} object${o.length === 1 ? '' : 's'}: ${o.slice(0, 4).join(' · ')}${o.length > 4 ? ` · +${o.length - 4} more` : ''}`; })()}</span></div>
     <div class="ds-dtree"><ul>${root ? nodeHtml(root, null) : ''}</ul></div>
     <div class="ds-dtree-foot"><button class="ds-btn ds-btn-sm" id="dsDepIdBtn" title="See which objects carry the identity field in each org, create it where it is missing, and stamp matched pairs">🪪 Identity…</button>
       ${missingTgt.length ? `<span class="ds-rec-card-line">Optional. Records are matched by the fields shown on each card. An identity field makes that match exact even when a name changes — ${missingTgt.length} object(s) have none in ${esc(orgLabel(p.targetOrg || ''))} yet (${esc(missingTgt.join(', '))}). 🪪 Identity… can create it.</span>` : ''}</div>
-  </details>`;
+  </div>`;
   _depWireFolds(host);
   host.querySelectorAll('[data-tree-obj]').forEach(el => {
     // a chip opens its own tab of that object; the card opens the object
@@ -832,11 +831,12 @@ async function _depPaintOrder(p, scan) {
   const objects = data.objects || [];
   const chain = sftkDeployObjects(p.tree).map(o => esc(o.obj)).join(' → ');
   if (data.offline) {
-    { const s = eid('dsDepInfoParents'); if (s) s.textContent = 'parents: not checked — an org is closed'; }
+    { const ch = eid('dsDepParentsChip'); if (ch) { ch.textContent = 'parents: not checked — an org is closed'; ch.className = 'ds-dep-pchip ds-dep-pchip-wait'; } }
     h.innerHTML = `<div class="ds-rec-card-line ds-dep-parents-ok">⛓ Parents are checked as soon as both orgs are open</div>`;
     return;
   }
   if (data.failed) {
+    { const ch = eid('dsDepParentsChip'); if (ch) { ch.textContent = '⚠ parents could not be checked'; ch.className = 'ds-dep-pchip ds-dep-pchip-bad'; } }
     h.innerHTML = `<div class="ds-rec-card ds-rec-card-warn"><div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span><span class="ds-rec-card-title">Start with parents first</span></div>
       <div class="ds-rec-card-line">${data.offline ? 'Both orgs must be open and signed in to check which parent objects these records point at.' : 'Could not read the objects’ lookups — 🔄 Refresh state to try again.'} Until then the order is unknown, not fine.</div></div>`;
     return;
@@ -853,7 +853,6 @@ async function _depPaintOrder(p, scan) {
   const verdict = sftkDeployParentsVerdict(steps);
   const chip = eid('dsDepParentsChip');
   if (chip) { chip.textContent = verdict.text; chip.className = `ds-dep-pchip ds-dep-pchip-${verdict.cls}`; }
-  { const s = eid('dsDepInfoParents'); if (s) s.textContent = verdict.text; }
   // feed the SAME run gate the classic advisor feeds (root inserts only)
   const rootObj = objects.find(o => o.depth === 0);
   sftkParentGapSetGate(p, scan, rootObj ? rootObj.parents : [], (scan.missingInTarget || []).length > 0);
@@ -893,11 +892,11 @@ async function _depPaintOrder(p, scan) {
         : `None of these objects looks up a record outside the deployment.`}</div></div>`;
     return;
   }
-  h.innerHTML = `<details${_depFoldOpen('order')} class="ds-rec-card ds-dep-fold ${anyDoomed ? 'ds-rec-card-bad' : anyEmpty ? 'ds-rec-card-warn' : allDone ? 'ds-rec-card-good' : ''}" data-fold="order">
-    <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span>
+  h.innerHTML = `<div class="ds-rec-card ${anyDoomed ? 'ds-rec-card-bad' : anyEmpty ? 'ds-rec-card-warn' : allDone ? 'ds-rec-card-good' : ''}">
+    <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span>
       <span class="ds-rec-card-title">${anyDoomed ? '⛔ Stop — some inserts here fail until their parents exist · ' : ''}Start with parents first</span>
       <span class="ds-dep-pchip ds-dep-pchip-${verdict.cls}">${esc(verdict.text)}</span>
-      <span class="ds-rec-card-hint">every object in this deployment, and what it points at outside it — those records must be in ${esc(tgtL)} first, lookups land on them by name</span></summary>
+      <span class="ds-rec-card-hint">every object in this deployment, and what it points at outside it — those records must be in ${esc(tgtL)} first, lookups land on them by name</span></div>
     <div class="ds-rec-card-body">
       ${steps.length ? steps.map(stepHtml).join('') : `<div class="ds-ordstep ds-ordstep-done"><span class="ds-ordstep-num">✓</span><span class="ds-dep-ordwhat">None of ${chain} points at an object outside this deployment — there is nothing to deploy first.</span></div>`}
       <div class="ds-ordstep${allDone ? ' ds-ordstep-next' : ''}">
@@ -905,7 +904,7 @@ async function _depPaintOrder(p, scan) {
         <span class="ds-dep-ordwhat"><strong>${chain}</strong> <span class="ds-lkp-hint">— this deployment, in this order: a parent object goes in before the object under it</span></span>
         ${allDone ? '<span class="ds-psync ds-psync-ok">parents ready ✓</span><span class="ds-ordstep-arrow">← next</span>' : '<span class="ds-lkp-hint">waits for the steps above</span>'}
       </div>
-    </div></details>`;
+    </div></div>`;
   _depWireFolds(h);
   h.querySelectorAll('[data-dep-gap]').forEach(b => b.addEventListener('click', async () => {
     const label = b.textContent; b.disabled = true; b.textContent = '⏳ scanning…';

@@ -142,7 +142,7 @@ describe('one mask table across the two stylesheets', () => {
 
   it('the dark toggle keeps its data-i attribute so the shared moon/sun shapes apply', () => {
     expect(HTML).toMatch(/class="ds-dark-toggle"[^>]*data-i="moon"/);
-    expect(CORE).toMatch(/setAttribute\('data-i',\s*on \? 'sun' : 'moon'\)/);
+    expect(CORE).toMatch(/setAttribute\('data-i', oled \? 'sun' : 'moon'\)/);   // one button, three states (2026-10-18)
   });
 });
 
