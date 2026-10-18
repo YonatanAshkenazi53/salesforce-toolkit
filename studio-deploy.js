@@ -538,6 +538,7 @@ async function renderDeploy() {
     </div>`;
 
   setMain(`${header}<div class="ds-dep-page">
+    <div class="ds-dep-foldbar"><button class="ds-btn ds-btn-xs" id="dsDepFoldAll" title="Fold every section of this page — each keeps its one-line summary">▸ Fold all</button><button class="ds-btn ds-btn-xs" id="dsDepUnfoldAll" title="Open every section of this page">▾ Unfold all</button></div>
     ${p._parentOf?.objType ? `<div class="ds-rec-card ds-dep-journey"><div class="ds-rec-card-line">⛓ Parents-first step: you opened this to align <b>${esc(objType)}</b> before deploying <b>${esc(p._parentOf.objType)}</b>. When it reads in sync — or when there is nothing to align — go back. <button class="ds-btn ds-btn-sm ds-btn-primary" id="dsDepJourneyBack">‹ Back to ${esc(origin ? (origin.name || p._parentOf.objType) : p._parentOf.objType)}</button></div></div>` : ''}
     ${_depRetryNote ? `<div class="ds-rec-card"><div class="ds-rec-card-line">${esc(_depRetryNote)}</div></div>` : ''}
     <details${_depFoldOpen('info')} class="ds-rec-card ds-dep-fold ds-dep-info" data-fold="info">
@@ -629,6 +630,17 @@ async function renderDeploy() {
     renderDeploy();
   }));
   _depWireFolds(document);
+  // fold all / unfold all — every section, also the ones painted later (tree, parents first), remembered
+  const _depFoldEvery = open => {
+    if (typeof _settings !== 'object' || !_settings) return;
+    const f = { ...(_settings.deployFolds || {}) };
+    for (const k of SFTK_DEP_FOLDS) f[k] = open;
+    _settings.deployFolds = f;
+    document.querySelectorAll('details.ds-dep-fold[data-fold]').forEach(el => { el.open = open; });
+    try { storageSaveSettings(); } catch (_) { /* a fold is a convenience */ }
+  };
+  eid('dsDepFoldAll')?.addEventListener('click', () => _depFoldEvery(false));
+  eid('dsDepUnfoldAll')?.addEventListener('click', () => _depFoldEvery(true));
   eid('dsDepDeleteMode')?.addEventListener('change', e => {
     _recDeleteMode = e.target.value;
     // the consequence is said the moment the mode is picked, not only at the confirmation
@@ -669,6 +681,7 @@ window.sftkDeployIdentityChanged = function () { _depIdKey = ''; _depIdData = nu
 
 // ── folding sections (user 2026-10-17: "can we do the whole sections collapsable? the deployment tree,
 // deploy parents, worth reading") — <details> cards; what is folded is remembered in the settings ──
+const SFTK_DEP_FOLDS = ['orgs', 'info', 'order', 'notes', 'tree', 'plan'];
 function _depFoldOpen(key, dflt = true) {
   const f = (typeof _settings === 'object' && _settings && _settings.deployFolds) || {};
   if (typeof f[key] === 'boolean') return f[key] ? ' open' : '';
