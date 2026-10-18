@@ -3131,7 +3131,8 @@ const DependencyMap = (() => {
         <button class="btn-small" id="depFbReload">↻ Reload the fresh state</button>
       </div>`;
     out.querySelector('#depFbReload')?.addEventListener('click', () => {
-      const mount = out.closest('#depToolPanel');
+      // the panel lives in #depToolPanel (Dependencies view) or #flowToolHost (the Switches view, 2026-10-17)
+      const mount = out.closest('#depToolPanel, #flowToolHost');
       if (mount) loadFlowBulk(mount);
     });
   }

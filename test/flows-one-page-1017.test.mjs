@@ -27,6 +27,8 @@ describe('one Flows page', () => {
     expect(PJ).toContain("else if (v === 'switches') DependencyMap.renderSwitchesPanel(host, orgUrl, sid);");
     expect(PJ).toContain("else DependencyMap.renderApiVersionsPanel(host, orgUrl, sid);");
     expect(HTML).toContain('<div id="flowToolHost" style="display:none"></div>');
+    // the switches panel reloads itself in either host (the reload did nothing on the Switches view — 2026-10-18)
+    expect(readFileSync(new URL('../dependency-map.js', import.meta.url), 'utf8')).toContain("const mount = out.closest('#depToolPanel, #flowToolHost');");
   });
   it('History shows the switches, API versions and interviews changes on the Flows tab', () => {
     expect(HIST).toContain("'Flow switches': 'flows', 'API versions': 'flows'");
