@@ -19,6 +19,7 @@ describe('one Flows page', () => {
     expect(HTML).toContain('id="depTreeContainer"');
     for (const v of ['versions', 'deps', 'switches', 'apiver']) expect(HTML).toContain(`class="flow-view-btn${v === 'versions' ? ' active' : ''}" data-view="${v}"`);
     expect(HTML).toContain('<script src="sftk-flowinterviews.js"></script>');
+    expect(readFileSync(new URL('../styles.css', import.meta.url), 'utf8')).toContain('.flow-views { margin-bottom: 8px; flex-shrink: 0; }');
   });
   it('every deep link to the old tab lands on the Flows page, Dependencies view', () => {
     expect(PJ).toContain("if (tabName === 'dependencies') { navigateToTab('flows'); setFlowView('deps'); return; }");
