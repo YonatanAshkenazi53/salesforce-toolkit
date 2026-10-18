@@ -18,11 +18,11 @@ describe('Deploy page: the tree, parents-first and notes cards fold', () => {
     expect(info).toBeGreaterThan(0); expect(order).toBeGreaterThan(info); expect(tree).toBeGreaterThan(order);
     expect(DV).toContain('<span class="ds-rec-card-title">About this deployment</span>');
     // user 2026-10-17: parents all in sync → no card, one quiet line
-    expect(DV).toContain('if (allDone && !anyDoomed && !anyEmpty) { h.innerHTML = `<div class="ds-rec-card-line ds-dep-parents-ok"');
+    expect(DV).toContain('<span class="ds-rec-card-title">Parents synced ✓</span>');   // user 2026-10-18: say it, inside About
     // user 2026-10-17: the org picker folds and sits right above the plan table; the plan table folds; a closed org is one line
     expect(DV).toContain('<details${_depFoldOpen(\'orgs\', !settled)} class="ds-rec-card ds-dep-orgs ds-dep-fold" data-fold="orgs">');
     expect(DV).toContain('<details${_depFoldOpen(\'plan\')} class="ds-rec-card ds-dep-fold" data-fold="plan">');
-    const pick = DV.indexOf('    ${_depOrgPickerHtml(p)}\n    ${planHtml}'); expect(pick).toBeGreaterThan(tree);
+    const pick = DV.indexOf('    ${_depOrgPickerHtml(p)}'); expect(pick).toBeGreaterThan(tree); expect(DV.indexOf('planHtml.lastIndexOf', pick)).toBeGreaterThan(pick);
     expect(DV).toContain('⛓ Parents are checked as soon as both orgs are open');
     const open = new Function('_settings', DV.slice(DV.indexOf('function _depFoldOpen('), DV.indexOf('\n}\n', DV.indexOf('function _depFoldOpen(')) + 3) + ' return _depFoldOpen;');
     expect(open({})('orgs', false)).toBe('');                               // the default of the fold
@@ -38,6 +38,21 @@ describe('Deploy page: the tree, parents-first and notes cards fold', () => {
     expect(DV).toContain('_depWireFolds(document);');
     expect(DV).toContain('_depWireFolds(host);');
     expect(DV).toContain('_depWireFolds(h);');
+  });
+  it('the plan table and the records are one section; the table row picks the object (2026-10-18)', () => {
+    expect(DV).toContain("${(() => { const i = planHtml.lastIndexOf('</details>'); return planHtml.slice(0, i) + recordsHtml + planHtml.slice(i); })()}");
+    expect(DV).not.toContain('    ${planHtml}\n    ${recordsHtml}');
+    expect(DV).toContain('<div class="ds-dep-objsw"><span class="ds-dep-lbl">Object</span>');   // the objects stay, inside the one section
+    expect(DV).toContain(' class="ds-dep-cur" aria-current="true"');
+  });
+  it('the tree lives inside About this deployment (user 2026-10-18: "this is all one collapsable section")', () => {
+    const a = DV.indexOf('data-fold="info">'), tr = DV.indexOf('<div id="dsDepTree"></div>'), end = DV.indexOf('</details>', a);
+    expect(tr).toBeGreaterThan(a); expect(tr).toBeLessThan(end);
+  });
+  it('a folded section shows a one-line summary of what it holds (2026-10-18)', () => {
+    expect((DV.match(/class="ds-dep-foldsum"/g) || []).length).toBeGreaterThanOrEqual(3);
+    expect(DV).toContain("{ const s = eid('dsDepInfoParents'); if (s) s.textContent = verdict.text; }");
+    expect(CSS).toContain('.ds-dep-fold:not([open]) > summary .ds-dep-foldsum { display: inline; }');
   });
   it('fold all / unfold all set every section and remember it', () => {
     expect(DV).toContain('id="dsDepFoldAll"'); expect(DV).toContain('id="dsDepUnfoldAll"');
