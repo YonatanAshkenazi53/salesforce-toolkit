@@ -275,7 +275,7 @@ export const SECTIONS = [
     await rec.click('#flowViews [data-view="deps"]', 700);
     await rec.say('Dependencies. The flows of the org as a tree: which flow calls which.');
     await depScanGate(c, true);
-    await rec.fast(() => h.waitFor("!!document.querySelector('#depApiVerBtn') && document.querySelectorAll('.dep-node').length > 0", 300000, 1000));
+    await rec.fast(() => h.waitFor("!!document.querySelector('#depExportBtn') && document.querySelectorAll('.dep-node').length > 0", 300000, 1000));
     await rec.pause(3000);
     if (await c.has('.dep-filter-btn[data-type="RecordTriggeredFlow"]')) { await rec.click('.dep-filter-btn[data-type="RecordTriggeredFlow"]', 1500); await rec.say('Filter by kind, for example only record-triggered flows.', 3000); await rec.click('.dep-filter-btn[data-type="all"]', 1000); }
     if (await c.has('#depRefSearch')) {

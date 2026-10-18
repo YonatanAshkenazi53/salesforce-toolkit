@@ -28,6 +28,10 @@ describe('one Flows page', () => {
     expect(PJ).toContain("else if (v === 'switches') DependencyMap.renderSwitchesPanel(host, orgUrl, sid);");
     expect(PJ).toContain("else DependencyMap.renderApiVersionsPanel(host, orgUrl, sid);");
     expect(HTML).toContain('<div id="flowToolHost" style="display:none"></div>');
+    // user 2026-10-18: no duplicate buttons on the Dependencies view, and no dependency tree under Switches / API versions
+    const DM = readFileSync(new URL('../dependency-map.js', import.meta.url), 'utf8');
+    expect(DM).not.toContain('id="depBulkBtn"'); expect(DM).not.toContain('id="depApiVerBtn"');
+    expect(PJ).toContain("if (tree) tree.style.display = tool ? 'none' : '';");
     // the switches panel reloads itself in either host (the reload did nothing on the Switches view — 2026-10-18)
     expect(readFileSync(new URL('../dependency-map.js', import.meta.url), 'utf8')).toContain("const mount = out.closest('#depToolPanel, #flowToolHost');");
   });
@@ -69,6 +73,7 @@ describe('whole flows, interviews and the restore point', () => {
   it('a version delete asks for both id forms, keeps the interviews, and deletes them before the versions', () => {
     expect(PJ).toContain("return s.length === 18 ? [s, s.substring(0, 15)] : [s]; }))].map(x => `'${x}'`).join(',');");
     expect(PJ).toContain('_pendingInterviews = interviews;');
+    expect(PJ).toContain('emptyState.textContent = `No flow name contains');   // a search with no match is not an empty org
     expect(PJ).toContain("const ir = await sftkFlowInterviewsDelete({ send: sendBg, orgUrl, sid, interviews: _pendingInterviews, journal });");
     const a = PJ.indexOf('Deleting ${_pendingInterviews.length} flow interview(s) first'), b = PJ.indexOf('for (const flow of deletable)');
     expect(a).toBeGreaterThan(0); expect(b).toBeGreaterThan(a);

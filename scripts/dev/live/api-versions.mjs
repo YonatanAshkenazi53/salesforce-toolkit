@@ -11,10 +11,10 @@ export default async function (h) {
   for (const o of (process.env.ORGS || 'npc').split(',')) await h.login(o.trim());
   await h.popup('dependencies');
   await h.watchErrors();
-  await h.waitFor("!!document.querySelector('#depApiVerBtn')", 240000, 1000);
+  await h.eval(`document.querySelector('#flowViews [data-view="apiver"]').click()`);
   h.log('banner:', await dump(h, '#depNoDataBanner', 300));
   await h.sleep(800);
-  await h.eval(`document.querySelector('#depApiVerBtn').click()`);
+  
   // the panel reads every flow version of every org — wait for rows or a verdict
   await h.waitFor("document.querySelectorAll('.dep-av-pick').length > 0 || /could not|no flows|nothing/i.test(document.querySelector('#depAvOut')?.innerText || '')", 300000, 1500);
   await h.sleep(1500);

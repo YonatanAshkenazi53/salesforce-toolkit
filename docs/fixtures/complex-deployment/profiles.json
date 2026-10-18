@@ -6,8 +6,8 @@
     "exportedAt": "2026-09-22T00:00:00.000Z",
     "profile": {
       "name": "SFTK CX — Accounts tree",
-      "sourceOrg": "https://trailheads2.my.salesforce.com",
-      "targetOrg": "https://trailheads4.my.salesforce.com",
+      "sourceOrg": "https://trailheads5.my.salesforce.com",
+      "targetOrg": "https://orgfarm-e2c4511b2b-dev-ed.develop.my.salesforce.com",
       "tree": {
         "objectType": "Account",
         "where": "Name LIKE '%SFTK CX%'",
@@ -137,8 +137,8 @@
     "exportedAt": "2026-09-22T00:00:00.000Z",
     "profile": {
       "name": "SFTK CX — Campaigns",
-      "sourceOrg": "https://trailheads2.my.salesforce.com",
-      "targetOrg": "https://trailheads4.my.salesforce.com",
+      "sourceOrg": "https://trailheads5.my.salesforce.com",
+      "targetOrg": "https://orgfarm-e2c4511b2b-dev-ed.develop.my.salesforce.com",
       "tree": {
         "objectType": "Campaign",
         "where": "Name LIKE 'SFTK CX%'",
@@ -178,8 +178,8 @@
     "exportedAt": "2026-09-22T00:00:00.000Z",
     "profile": {
       "name": "SFTK CX — Products & prices",
-      "sourceOrg": "https://trailheads2.my.salesforce.com",
-      "targetOrg": "https://trailheads4.my.salesforce.com",
+      "sourceOrg": "https://trailheads5.my.salesforce.com",
+      "targetOrg": "https://orgfarm-e2c4511b2b-dev-ed.develop.my.salesforce.com",
       "tree": {
         "objectType": "Product2",
         "where": "Name LIKE 'SFTK CX%'",
@@ -207,8 +207,8 @@
     "exportedAt": "2026-09-22T00:00:00.000Z",
     "profile": {
       "name": "SFTK CX — Leads",
-      "sourceOrg": "https://trailheads2.my.salesforce.com",
-      "targetOrg": "https://trailheads4.my.salesforce.com",
+      "sourceOrg": "https://trailheads5.my.salesforce.com",
+      "targetOrg": "https://orgfarm-e2c4511b2b-dev-ed.develop.my.salesforce.com",
       "tree": {
         "objectType": "Lead",
         "where": "LastName LIKE 'SFTK CX%'",
@@ -223,8 +223,8 @@
     "exportedAt": "2026-09-22T00:00:00.000Z",
     "profile": {
       "name": "SFTK CX — Price books",
-      "sourceOrg": "https://trailheads2.my.salesforce.com",
-      "targetOrg": "https://trailheads4.my.salesforce.com",
+      "sourceOrg": "https://trailheads5.my.salesforce.com",
+      "targetOrg": "https://orgfarm-e2c4511b2b-dev-ed.develop.my.salesforce.com",
       "tree": {
         "objectType": "Pricebook2",
         "where": "Name LIKE 'SFTK CX%'",
@@ -239,8 +239,8 @@
     "exportedAt": "2026-09-22T00:00:00.000Z",
     "profile": {
       "name": "SFTK VOL — Accounts",
-      "sourceOrg": "https://trailheads2.my.salesforce.com",
-      "targetOrg": "https://trailheads4.my.salesforce.com",
+      "sourceOrg": "https://trailheads5.my.salesforce.com",
+      "targetOrg": "https://orgfarm-e2c4511b2b-dev-ed.develop.my.salesforce.com",
       "tree": {
         "objectType": "Account",
         "where": "Name LIKE 'SFTK VOL Account %'",

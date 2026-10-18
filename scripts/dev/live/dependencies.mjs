@@ -10,7 +10,7 @@ export default async function (h) {
   await h.login('npc');
   await h.popup('dependencies');
   await h.watchErrors();
-  await h.waitFor("!!document.querySelector('#depApiVerBtn') && document.querySelectorAll('.dep-node').length > 0", 300000, 1000);
+  await h.waitFor("!!document.querySelector('#depExportBtn') && document.querySelectorAll('.dep-node').length > 0", 300000, 1000);
   await h.sleep(1500);
   const ROOT = process.env.ROOT || 'SFTK_Dep_Test_Account_Trigger', LEAF = process.env.LEAF || 'SFTK_Dep_Test_L4';
   h.log('nodes:', await h.eval(`document.querySelectorAll('.dep-node').length`), 'banner:', await dump(h, '#depNoDataBanner', 200));

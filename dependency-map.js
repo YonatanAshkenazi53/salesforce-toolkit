@@ -2197,8 +2197,6 @@ const DependencyMap = (() => {
     toolsRow.className = 'dep-tools-row';
     toolsRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 8px 2px';
     toolsRow.innerHTML = `
-      <button class="btn-small" id="depBulkBtn" title="Switch triggered flows off and back on in bulk, by object, in this org — record-triggered, scheduled and platform-event flows, with their active state and API version. Deactivation remembers each flow's active version so reactivation restores exactly what was running.">⏻ Flow switches</button>
-      <button class="btn-small" id="depApiVerBtn" title="Compare the API version every flow in this org is pinned to with the release the org runs, and change it: one package, behind a typed CHANGE. Comparing alone changes nothing.">⚙ API versions</button>
       <button class="btn-small" id="depExportBtn" title="Download this dependency report as Markdown + CSV">⬇ Export report</button>
       <button class="btn-small" id="depRescanBtn" title="Drop this org's stored dependency data and read the flow list and every flow version again — use after editing flows in Flow Builder while this tab stayed open. Costs one read per flow version.">↻ Rescan</button>
       <span style="font-size:11px;color:var(--subtext,#706E6B)">Right-click a flow for 🧨 blast radius or 🔗 chains.</span>`;
@@ -2219,10 +2217,10 @@ const DependencyMap = (() => {
       toolPanel.innerHTML = '';
       render(toolPanel);
     };
-    toolsRow.querySelector('#depApiVerBtn').addEventListener('click', () =>
-      toggleTool('apiver', m => { renderApiVerPanel(m, orgUrl); }));
-    toolsRow.querySelector('#depBulkBtn').addEventListener('click', () =>
-      toggleTool('bulk', m => { renderFlowBulkPanel(m, orgUrl); }));
+    // ⏻ Flow switches and ⚙ API versions are views of the Flows page since 2026-10-18 (user: "take out flow
+    // switches and api versions since they got their own tab") — DependencyMap.renderSwitchesPanel /
+    // renderApiVersionsPanel draw them there.
+    void toggleTool;
     toolsRow.querySelector('#depExportBtn').addEventListener('click', () =>
       exportReport(orgUrl, exportStatus));
     toolsRow.querySelector('#depRescanBtn').addEventListener('click', (e) => {

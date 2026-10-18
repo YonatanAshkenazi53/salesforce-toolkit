@@ -60,9 +60,9 @@ export default async function (h) {
   for (const o of (process.env.ORGS || 'npc').split(',')) await h.login(o.trim());
   await h.popup('dependencies');
   await h.watchErrors();
-  await h.waitFor("!!document.querySelector('#depBulkBtn')", 240000, 1000);
+  await h.eval(`document.querySelector('#flowViews [data-view="switches"]').click()`);
   await h.sleep(800);
-  await h.eval(`document.querySelector('#depBulkBtn').click()`);
+  
   await waitRows(h);
   h.log('fixture rows:', JSON.stringify(await fixtureRows(h), null, 0));
   h.log('rows total:', await h.eval(`document.querySelectorAll('.dep-fb-cb').length`), 'groups:', JSON.stringify(await h.eval(`[...new Set([...document.querySelectorAll('.dep-fb-cb')].map(c => c.dataset.grp))].slice(0, 12)`)));

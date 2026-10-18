@@ -34,7 +34,7 @@ export default async function (h) {
     _profiles.push(p); await storageSaveProfiles(); return p.id; })()`);
   await h.eval(`window.runProfile(${JSON.stringify(id)})`); await h.sleep(1500);
   const dir = await h.eval("(() => { const p = _reconcileProfile; return p ? { src: p.sourceOrg, tgt: p.targetOrg } : null; })()");
-  if (!dir || !dir.src.includes('trailheads5') || !dir.tgt.includes('trailheads4')) throw new Error('wrong direction: ' + JSON.stringify(dir));
+  if (!dir || !dir.src.includes('trailheads5') || !/orgfarm|dev-ed/.test(dir.tgt)) throw new Error('wrong direction: ' + JSON.stringify(dir));
   await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
   await h.waitFor("!!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000); await h.sleep(1500);
   h.log('SUMMARY:', lines(await h.text('#dsDepSummary'), 300));
