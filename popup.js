@@ -1390,6 +1390,8 @@ function renderFlowList() {
 
   list.style.display = visibleCount > 0 ? '' : 'none';
   emptyState.style.display = visibleCount === 0 && sortedLabels.length > 0 ? '' : 'none';
+  // a search that matches nothing says so — it is not an empty org (QA 2026-10-18)
+  if (visibleCount === 0 && sortedLabels.length > 0) emptyState.textContent = `No flow name contains “${document.getElementById('searchInput').value.trim()}”.`;
   if (allFlows.length === 0) {
     emptyState.style.display = '';
     emptyState.textContent = 'No flows found in this org.';
@@ -2262,7 +2264,12 @@ function setFlowView(view) {
   if (vers) vers.style.display = v === 'versions' ? '' : 'none';
   if (deps) deps.style.display = v === 'versions' ? 'none' : '';
   const host = document.getElementById('flowToolHost');
-  if (host) { host.style.display = v === 'switches' || v === 'apiver' ? '' : 'none'; if (v === 'deps') host.innerHTML = ''; }
+  const tool = v === 'switches' || v === 'apiver';
+  if (host) { host.style.display = tool ? '' : 'none'; if (v === 'deps') host.innerHTML = ''; }
+  // the dependency tree belongs to the Dependencies view only (QA 2026-10-18: its scan offer showed under Switches)
+  const tree = document.getElementById('depTreeContainer'), banner = document.getElementById('depNoDataBanner');
+  if (tree) tree.style.display = tool ? 'none' : '';
+  if (banner && tool) banner.style.display = 'none';   // renderDependenciesTab sets it again on the Dependencies view
   if (v === 'versions') return;
   // ⏻ Switches and ⚙ API versions draw their panel at the top of the view at once — no dependency scan is
   // needed for them; the dependency tree follows below as on the Dependencies view
@@ -2271,6 +2278,7 @@ function setFlowView(view) {
     if (!orgUrl || !sid) host.innerHTML = '<div class="info-banner">Open a Salesforce org in a tab first — this view reads the org live.</div>';
     else if (v === 'switches') DependencyMap.renderSwitchesPanel(host, orgUrl, sid);
     else DependencyMap.renderApiVersionsPanel(host, orgUrl, sid);
+    return;
   }
   renderDependenciesTab();
 }

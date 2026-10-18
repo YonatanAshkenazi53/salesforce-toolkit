@@ -15,6 +15,17 @@ const clearStatus2 = { name: 'clear-status2-values', node: "const {execFileSync}
 const rebuildFc = { name: 'rebuild-field-cleaner-fixture', node: "const {execSync}=require('node:child_process');const run=c=>{console.log('> '+c);execSync(c,{stdio:'inherit',shell:true});};run('bash docs/fixtures/field-cleaner-fixture/rebuild.sh npc');run('cd docs/fixtures/field-cleaner-fixture/flow2 && sf project deploy start -o npc --source-dir force-app --test-level NoTestRun');run('cd docs/fixtures/field-cleaner-fixture/replace && sf project deploy start -o npc --source-dir force-app --test-level NoTestRun');run('cd docs/fixtures/field-cleaner-fixture/surfaces && sf project deploy start -o npc --source-dir force-app --test-level NoTestRun');const n=JSON.parse(require('node:child_process').execFileSync('sf',['data','query','-o','npc','--json','-q','\"SELECT COUNT() FROM Account WHERE SFTK_FC_Test_Status__c != null\"'],{shell:true,encoding:'utf8'})).result.totalSize;if(n){console.log('seed values already there on '+n+' record(s) — seed skipped');}else{run('sf apex run -o npc -f docs/fixtures/field-cleaner-fixture/seed-pk.apex');}console.log('rebuilt')", timeoutMin: 20 };
 
 export const BATCHES = {
+  // ── the targeted round of 2026-10-18 (after the one Flows page, merge, folds, Transfer): orgs npc = trailheads5,
+  // npc2 = the Developer Edition org. Cancel-only and read-only runs first, then the ones that write and undo.
+  qa1018: [
+    { name: 'prod-gate', script: `${L}qa-prod-gate.mjs` },
+    { name: 'theme-sweep', script: `${L}qa-theme-sweep.mjs`, timeoutMin: 25 },
+    { name: 'deploy-states', script: `${L}qa-deploy-states.mjs`, timeoutMin: 25 },
+    { name: 'merge-children', script: `${L}qa-merge-children.mjs` },
+    { name: 'bulk-volume', script: `${L}qa-bulk-volume.mjs`, timeoutMin: 40 },
+    { name: 'interviews', script: `${L}qa-interviews.mjs`, timeoutMin: 25 },
+    rebuildFc,
+  ],
   // ── the Toolkit, on trailheads5 ──
   toolkit: [
     { name: 'dependencies-readonly', script: `${L}dependencies.mjs` },

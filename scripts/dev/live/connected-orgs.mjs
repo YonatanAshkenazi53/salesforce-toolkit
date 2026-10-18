@@ -23,9 +23,9 @@ async function press(h, host, action) {
 // ⏻ Flow switches OFF on the fixture flows, up to the Go click; returns what the panel reports
 async function tryFlowSwitchOff(h, { expectTyped }) {
   await h.popup('dependencies');
-  await h.waitFor("!!document.querySelector('#depBulkBtn')", 240000, 1000);
+  await h.eval("document.querySelector('#flowViews [data-view=\"switches\"]').click()");
   await h.sleep(800);
-  await h.eval("document.querySelector('#depBulkBtn').click()");
+  
   await h.waitFor("document.querySelectorAll('.dep-fb-cb').length > 0", 300000, 1000);
   await h.sleep(1000);
   const ticked = await h.eval("(() => { let n = 0; document.querySelectorAll('.dep-fb-cb').forEach(c => { if (/^SFTK_FS_Test/.test(c.value) && !c.disabled && !c.checked) { c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); n++; } }); return n; })()");
