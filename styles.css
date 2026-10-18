@@ -2250,7 +2250,7 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .mode-btn:hover:not(.active) { background: var(--brand-bg); color: var(--brand); }
 .mode-btn.active { background: var(--brand); color: #fff; }
 /* One Flows page (2026-10-17): the view strip above the mode toggle, the whole-flow button, the interview chip */
-.flow-views { margin-bottom: 8px; }
+.flow-views { margin-bottom: 8px; flex-shrink: 0; }   /* the Flows tab is a flex column: without this the long list squeezed the strip to 2 px (2026-10-18) */
 .flow-view-btn { flex: 1; background: transparent; border: none; border-right: 1px solid var(--border); color: var(--subtext); padding: 8px 6px; cursor: pointer; font-size: 12.5px; font-weight: 600; transition: background .15s, color .15s; }
 .flow-view-btn:last-child { border-right: none; }
 .flow-view-btn:hover:not(.active) { background: var(--brand-bg); color: var(--brand); }
