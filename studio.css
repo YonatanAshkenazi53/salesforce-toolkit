@@ -6213,6 +6213,11 @@ body.ds-pro {
 .ds-rec-cols-child .ds-rec-col { max-height: clamp(220px, 52vh, 480px); }
 .ds-rec-cols-hide { display: none; }
 .ds-rec-card-good { border-left-color: var(--success); }
+/* parents synced: the whole card reads green (user 2026-10-19) */
+.ds-dep-parents-synced { background: var(--c-good-bg, rgba(16, 185, 129, 0.08)); }
+.ds-dep-parents-synced .ds-rec-card-title, .ds-dep-parents-synced .ds-rec-card-ico { color: var(--c-good-fg, var(--success)); }
+.ds-dep-parents-synced .ds-rec-card-line { color: var(--c-good-fg, var(--success)); }
+.ds-dep-pchip-ok { background: var(--c-good-bg, rgba(16, 185, 129, 0.1)); }
 
 /* ── Deploy view (beta, 2026-09-19) — one page beside Run Transfer + Reconcile ── */
 .ds-dep-beta { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 1px 7px; border-radius: 999px; background: var(--warning-bg); color: var(--c-warn-fg); vertical-align: middle; }
