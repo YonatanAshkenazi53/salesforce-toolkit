@@ -6322,6 +6322,17 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .ds-dep-link.ds-lkp-on { font-weight: 700; }
 .ds-dep-empty { padding: 18px 12px; color: var(--subtext); font-size: 13px; }
 .ds-dep-note { padding: 7px 12px; font-size: 12px; color: var(--subtext); border-bottom: 1px solid var(--border-light); }
+/* the action bar, three rows (user 2026-10-19: "this bar can be more elegant") — what and Deploy · the settings as
+   labelled fields · the before-the-run toggles; notes under them */
+.ds-dep-ab-row { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; width: 100%; }
+.ds-dep-ab-top { justify-content: space-between; }
+.ds-dep-ab-fields { gap: 8px 16px; padding-top: 10px; border-top: 1px solid var(--border); align-items: flex-end; }
+.ds-dep-field { display: inline-flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--subtext); }
+.ds-dep-field-lbl { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--subtext); }
+.ds-dep-field .ds-select { min-width: 150px; }
+.ds-dep-ab-fields > .ds-dep-sub { align-self: flex-end; padding-bottom: 6px; max-width: 320px; }
+.ds-dep-ab-toggles { gap: 6px 20px; }
+.ds-dep-toggle { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--text); cursor: pointer; }
 .ds-dep-actionbar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); position: sticky; bottom: 0; max-width: 1200px; box-shadow: var(--shadow); }
 .ds-dep-summary { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 320px; font-size: 12.5px; }
 .ds-dep-delmode { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--subtext); }
