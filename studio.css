@@ -117,9 +117,22 @@ html, body {
 
 .ds-logo {
   font-size: 22px;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   animation: pawWiggle 3s ease-in-out infinite;
 }
+/* the mark is a masked icon (the sitting cat, [data-i="cat"] in styles.css) — the same painter the dark toggle uses */
+.ds-logo::before, .ds-welcome-hero-icon::before {
+  content: '';
+  display: inline-block;
+  width: 24px; height: 24px;
+  background-color: currentColor;
+  -webkit-mask: center / contain no-repeat;
+  mask: center / contain no-repeat;
+  -webkit-mask-image: var(--adbg-icon);
+  mask-image: var(--adbg-icon);
+}
+.ds-welcome-hero-icon::before { width: 52px; height: 52px; color: var(--brand); }
 @keyframes pawWiggle {
   0%,85%,100% { transform: rotate(0); }
   90%         { transform: rotate(-15deg); }
