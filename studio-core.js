@@ -1373,7 +1373,7 @@ function renderWelcome() {
   setMain(`
     <div class="ds-welcome-wrap">
       <div class="ds-welcome-hero">
-        <div class="ds-welcome-hero-icon">🐱</div>
+        <div class="ds-welcome-hero-icon" data-i="cat" aria-hidden="true"></div>
         <div class="ds-welcome-hero-text">
           <div class="ds-welcome-hero-title">Welcome to Salesforce Data Studio</div>
           <div class="ds-welcome-hero-sub">
