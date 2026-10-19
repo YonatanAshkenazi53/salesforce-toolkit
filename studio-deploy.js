@@ -552,9 +552,12 @@ async function renderDeploy() {
     <div id="dsDepRuleLeft"></div>
     ${(() => { const s = planHtml.indexOf('</summary>') + 10, i = planHtml.lastIndexOf('</details>'); return planHtml.slice(0, s) + _depOrgPickerHtml(p) + planHtml.slice(s, i) + recordsHtml + planHtml.slice(i); })()}
     <div class="ds-dep-actionbar">
-      <div class="ds-dep-summary" id="dsDepSummary"></div>
-      <span class="ds-dep-engine" title="How records are written. Auto: synchronous Collections calls below the threshold, one async Bulk API 2.0 job at or above it. Saved on the deployment — the classic pages use the same setting.">
-        <label class="ds-dep-delmode">Engine
+      <div class="ds-dep-ab-row ds-dep-ab-top">
+        <div class="ds-dep-summary" id="dsDepSummary"></div>
+        <button class="ds-btn ds-btn-lg ds-btn-primary" id="dsRecRunBtn" disabled>▶ Deploy</button>
+      </div>
+      <div class="ds-dep-ab-row ds-dep-ab-fields">
+        <label class="ds-dep-field" title="How records are written. Auto: synchronous Collections calls below the threshold, one async Bulk API 2.0 job at or above it. Saved on the deployment — the classic pages use the same setting."><span class="ds-dep-field-lbl">Engine</span>
           <select id="dsDepApiMode" class="ds-select ds-select-sm">
             <option value="auto" ${(p.apiMode || 'auto') === 'auto' ? 'selected' : ''}>Auto — Bulk at ≥ ${(Number(p.bulkThreshold) > 0 ? Number(p.bulkThreshold) : 2000).toLocaleString()}</option>
             <option value="sync" ${p.apiMode === 'sync' ? 'selected' : ''}>Synchronous — Collections</option>
@@ -562,30 +565,28 @@ async function renderDeploy() {
           </select></label>
         ${p.apiMode === 'bulk' && p.duplicateRules !== 'bypass'
           ? `<span class="ds-dep-sub" title="Bulk API 2.0 takes the whole set as one job and splits it into chunks itself — batch size and threads only apply to synchronous Collections calls.">Bulk API 2.0 splits the job itself — no batch size or threads</span>`
-          : `<label class="ds-dep-delmode" title="Records per synchronous Collections call (1–200). Smaller batches isolate failures and duck per-transaction trigger limits.${(p.apiMode || 'auto') === 'auto' ? ' In Auto, used below the Bulk threshold.' : ''}">batch size
+          : `<label class="ds-dep-field" title="Records per synchronous Collections call (1–200). Smaller batches isolate failures and duck per-transaction trigger limits.${(p.apiMode || 'auto') === 'auto' ? ' In Auto, used below the Bulk threshold.' : ''}"><span class="ds-dep-field-lbl">Batch size</span>
           <input id="dsDepBatch" class="ds-input ds-input-sm" type="number" min="1" max="200" step="1" style="width:68px;text-align:right" value="${Math.max(1, Math.min(200, Number(p.batchSize) || 200))}"></label>
-        <label class="ds-dep-delmode" title="How many Collections batches run in parallel (1–6). Faster at scale, but parallel writes can hit row locks when records share a parent — lower it if you see UNABLE_TO_LOCK_ROW.${(p.apiMode || 'auto') === 'auto' ? ' In Auto, used below the Bulk threshold.' : ''}">threads
+        <label class="ds-dep-field" title="How many Collections batches run in parallel (1–6). Faster at scale, but parallel writes can hit row locks when records share a parent — lower it if you see UNABLE_TO_LOCK_ROW.${(p.apiMode || 'auto') === 'auto' ? ' In Auto, used below the Bulk threshold.' : ''}"><span class="ds-dep-field-lbl">Threads</span>
           <input id="dsDepThreads" class="ds-input ds-input-sm" type="number" min="1" max="6" step="1" style="width:52px;text-align:right" value="${Math.max(1, Math.min(6, Number(p.threads) || 1))}"></label>`}
-      </span>
-      <label class="ds-dep-delmode" title="Duplicate rules in the target org. Respect: a record a rule flags is NOT written and the run says so. Bypass: the records are written with Salesforce's duplicate-rule header (they are copies of existing records — a fuzzy name rule would block most of a migration). Bulk API 2.0 cannot bypass rules, so a bypass run uses synchronous Collections calls whatever the Engine setting says. Saved on the deployment.">Duplicate rules
-        <select id="dsDepDupRules" class="ds-select ds-select-sm">
-          <option value="respect" ${p.duplicateRules === 'bypass' ? '' : 'selected'}>Respect — blocked records fail</option>
+        <label class="ds-dep-field" title="Duplicate rules in the target org. Respect: a record a rule flags is NOT written and the run says so. Bypass: the records are written with Salesforce's duplicate-rule header (they are copies of existing records — a fuzzy name rule would block most of a migration). Bulk API 2.0 cannot bypass rules, so a bypass run uses synchronous Collections calls whatever the Engine setting says. Saved on the deployment."><span class="ds-dep-field-lbl">Duplicate rules</span>
+          <select id="dsDepDupRules" class="ds-select ds-select-sm">
+            <option value="respect" ${p.duplicateRules === 'bypass' ? '' : 'selected'}>Respect — blocked records fail</option>
           <option value="bypass" ${p.duplicateRules === 'bypass' ? 'selected' : ''}>Bypass for this deployment</option>
-        </select></label>
-      <label class="ds-dep-delmode" style="cursor:pointer" title="Before anything is written, every object this run can touch is read from the target and kept on this PC as a restore point (the newest 10 runs). History then offers ↩ Roll back. One setting for every deployment.">
-        <input type="checkbox" id="dsDepUndoCapture" ${_settings.undoCapture === false ? '' : 'checked'}> 📸 restore point</label>
-      <label class="ds-dep-delmode" title="How 🗑 selections are deleted">Delete mode
-        <select id="dsDepDeleteMode" class="ds-select ds-select-sm">
-          <option value="recycle" ${_recDeleteMode === 'recycle' ? 'selected' : ''}>🗑 Recycle Bin</option>
+          </select></label>
+        <label class="ds-dep-field" title="How 🗑 selections are deleted"><span class="ds-dep-field-lbl">Delete mode</span>
+          <select id="dsDepDeleteMode" class="ds-select ds-select-sm">
+            <option value="recycle" ${_recDeleteMode === 'recycle' ? 'selected' : ''}>🗑 Recycle Bin</option>
           <option value="hard" ${_recDeleteMode === 'hard' ? 'selected' : ''}>🔥 Hard delete</option>
-        </select></label>
+          </select></label>
+      </div>
+      <div class="ds-dep-ab-row ds-dep-ab-toggles">
+        <label class="ds-dep-toggle" title="Before anything is written, every object this run can touch is read from the target and kept on this PC as a restore point (the newest 10 runs). History then offers ↩ Roll back. One setting for every deployment."><input type="checkbox" id="dsDepUndoCapture" ${_settings.undoCapture === false ? '' : 'checked'}> 📸 restore point</label>
+        <label class="ds-dep-toggle" title="Off (the default): the run writes with every flow active, as usual. On: the record-triggered flows on this deployment's objects in the target are switched off after the confirmation, and back on at their exact versions when the run ends — even if it fails. Records written while they are off are never processed by them."><input type="checkbox" id="dsDepFlowPause" ${_depFlowPause.on ? 'checked' : ''}> ⏸ pause record-triggered flows</label>
+        <label class="ds-dep-toggle" title="Off (the default): the run writes with every validation rule active, as usual — a record a rule rejects is refused and named. On: the active validation rules on this deployment's objects in the target org are switched off after you confirm and back on as soon as the run ends (finished, failed or stopped). While they are off they are off for EVERY user of that org, and records written meanwhile are never validated later."><input type="checkbox" id="dsDepRulePause" ${_depRulePause.on ? 'checked' : ''}> ⏸ pause validation rules</label>
+      </div>
       <span id="dsDepHardNote" class="ds-dep-hardnote" style="${_recDeleteMode === 'hard' ? '' : 'display:none'}">🔥 Hard-deleted records skip the Recycle Bin — <strong>↩ Roll back cannot bring them back</strong>. Only the Recycle Bin mode can be undone.</span>
       ${(() => { const n = sftkEngineNote(p); return n ? `<span id="dsDepEngineNote" class="ds-dep-enginenote${n.kind === 'warn' ? ' ds-dep-enginenote-warn' : ''}">${esc(n.text)}</span>` : ''; })()}
-      <label class="ds-dep-delmode" style="cursor:pointer" title="Off (the default): the run writes with every flow active, as usual. On: the record-triggered flows on this deployment's objects in the target are switched off after the confirmation, and back on at their exact versions when the run ends — even if it fails. Records written while they are off are never processed by them.">
-        <input type="checkbox" id="dsDepFlowPause" ${_depFlowPause.on ? 'checked' : ''}> ⏸ pause record-triggered flows</label>
-      <label class="ds-dep-delmode" style="cursor:pointer" title="Off (the default): the run writes with every validation rule active, as usual — a record a rule rejects is refused and named. On: the active validation rules on this deployment's objects in the target org are switched off after you confirm and back on as soon as the run ends (finished, failed or stopped). While they are off they are off for EVERY user of that org, and records written meanwhile are never validated later.">
-        <input type="checkbox" id="dsDepRulePause" ${_depRulePause.on ? 'checked' : ''}> ⏸ pause validation rules</label>
-      <button class="ds-btn ds-btn-lg ds-btn-primary" id="dsRecRunBtn" disabled>▶ Deploy</button>
     </div>
     <div id="dsDepFlowPauseList" class="ds-dep-foot"></div>
     <div id="dsDepRulePauseList" class="ds-dep-foot"></div>
