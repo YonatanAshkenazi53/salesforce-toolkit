@@ -1022,7 +1022,8 @@ function _syncThemeBtn() {
   const btn = eid('dsDarkToggle');
   if (!btn) return;
   const dark = !!_darkMode, oled = dark && !!_oledMode;
-  btn.textContent = '';
+  // plain-text mode (the icon is hidden there) shows the word of the NEXT state, as before — the empty button of 2026-10-19
+  btn.textContent = window.sftkGlyph('', !dark ? 'Dark' : (!oled ? 'OLED' : 'Light'));
   btn.setAttribute('data-i', oled ? 'sun' : 'moon');
   const label = !dark ? 'Switch to dark mode'
     : (!oled ? 'Switch to OLED black — pure-black dark for OLED screens' : 'Switch to light mode');

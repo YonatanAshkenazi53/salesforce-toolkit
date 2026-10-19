@@ -17,6 +17,7 @@ describe('Deploy page: the tree, parents-first and notes cards fold', () => {
     const info = DV.indexOf('data-fold="info"'), tree = DV.indexOf('<div id="dsDepTree"></div>'), order = DV.indexOf('<div id="dsDepOrder"></div>');
     expect(info).toBeGreaterThan(0); expect(order).toBeGreaterThan(info); expect(tree).toBeGreaterThan(order);
     expect(DV).toContain('<span class="ds-rec-card-title">Parents synced ✓</span>');
+    expect(CSS).toContain('.ds-dep-parents-synced .ds-rec-card-title, .ds-dep-parents-synced .ds-rec-card-ico { color: var(--c-good-fg, var(--success)); }');   // green (user 2026-10-19)
     expect(DV).toContain('⛓ Parents are checked as soon as both orgs are open');
     // the orgs section: the picker, the plan table, the records — one fold
     expect(DV).toContain('planHtml.slice(0, s) + _depOrgPickerHtml(p) + planHtml.slice(s, i) + recordsHtml');
