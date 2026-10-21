@@ -945,9 +945,10 @@ function _depAmbIntro(p, isRoot, s) {
   const adv = (s && s.ambiguousAdvice && s.ambiguousAdvice[0]) || null;
   const nSug = ((s && s.ambiguous) || []).filter(r => r && r.suggest).length;
   return `<div class="ds-dep-note ds-dep-amb-intro">
-    <div><b>Why these records are here.</b> Each one shares its name with another record, so the name alone cannot say which record in ${srcL} is which record in ${tgtL}. Nothing here is deployed until you decide.</div>
-    ${isRoot ? `<div><b>What to do.</b> For each ${srcL} record, say which ${tgtL} record it is — or that it is not there yet. The values next to each record are the ones that differ between the copies. Decide one name at a time with <b>📌 Apply this one</b>: the answer is remembered for ${tgtL} right away. When you are done, the button above reads both orgs again, once, and the records move to their own tabs.</div>
-    <div><b>Two copies of the same thing?</b> This tab never deletes. Say which copy is the same record; after the re-read the copy that is left over is listed under 🔵 Only in ${tgtL}, where you can tick it for deletion.</div>
+    <div><b>Why these records are here.</b> Each one shares its name with another record, so the name alone cannot say which record in ${srcL} is which record in ${tgtL}. Nothing here is deployed until it is settled.</div>
+    ${isRoot ? `<div><b>Copies of the same record? Merge them.</b> Each side that holds more than one copy has a 🔀 Merge button: the copies are read live from that org, you choose the record that stays and, for every field that differs, the value it keeps. After the merge both orgs are read again; the name is unique then, and the pair is listed under 🟢 Synced when its values are equal, under 🟡 Changed when they still differ.</div>
+    <div><b>Different records that share a name? Say which is which.</b> For each ${srcL} record, say which ${tgtL} record it is — or that it is not there yet. The values next to each record are the ones that differ between the copies. Decide one name at a time with <b>📌 Apply this one</b>: the answer is remembered for ${tgtL} right away. When you are done, the button above reads both orgs again, once, and the records move to their own tabs.</div>
+    <div><b>Nothing on this tab deletes by itself.</b> An answer only pairs records; after the re-read the copy that is left over is listed under 🔵 Only in ${tgtL}, where you can tick it for deletion. A merge deletes the copies it merges, after its own confirmation.</div>
     ${adv && nSug ? `<div>💡 <b>${nSug.toLocaleString()} are already filled in.</b> Where exactly one copy on each side has the same <b>${esc(adv.field)}</b>, that pair is suggested below — check them, then apply. To never be asked again, add ${esc(adv.field)} to how records are recognised (✏ Edit → Records → Matching).</div>` : ''}`
     : `<div>For a child object the choice cannot be made by hand: give it a second match field (✏ Edit → Records → Matching) so its records can be told apart by more than the name, then scan again.</div>`}
   </div>`;
@@ -963,7 +964,7 @@ function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf) {
   const candTell = (s && s.ambiguousCand) || {};
   const url = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
   const tellText = tell => (tell || []).filter(x => x && x[1] !== '').map(x => `${x[0]}: ${x[1]}`).join(' · ');
-  const chips = tell => { const t = (tell || []).filter(x => x && x[1] !== ''); return t.length ? t.map(x => `<span class="ds-amb-chip" title="${esc(x[0])}">${esc(x[0])}: <b>${esc(x[1])}</b></span>`).join('') : '<span class="ds-dep-muted">no compared field differs between the copies — open the record to tell</span>'; };
+  const chips = tell => { const t = (tell || []).filter(x => x && x[1] !== ''); return t.length ? t.map(x => `<span class="ds-amb-chip" title="${esc(x[0])}">${esc(x[0])}: <b>${esc(x[1])}</b></span>`).join('') : '<span class="ds-dep-muted">no compared field differs between the copies — they look like the same record; open them to be sure</span>'; };
   const groups = new Map();
   for (const r of rows) { const k = keyOf(r); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
   let html = '';
@@ -973,6 +974,13 @@ function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf) {
     const radios = cands.length <= SFTK_AMB_RADIO_MAX;
     const pending = rs.some(r => pickOf(r) !== memOf(r));
     const kept = rs.some(r => memOf(r));
+    // the copies on a side that agree on every compared field look like one record (user 2026-10-21:
+    // "present dupes in both source and targets and offer to merge them")
+    const noTell = tell => !(tell || []).some(x => x && x[1] !== '');
+    const sameTgt = cands.length > 1 && cands.every(t => noTell(candTell[t]));
+    const sameSrc = nSrc > 1 && rs.every(r => noTell(r.tell));
+    const mergeTitle = 'Merge these records into one: you choose which one stays and which values it keeps; the others are merged into it and deleted.';
+    const mergeBar = `<div class="ds-amb-mergebar">${nSrc > 1 ? `<button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="src" data-dep-amb-key="${esc(k)}" title="${mergeTitle}">🔀 Merge the ${nSrc} copies in ${srcL}</button>` : ''}${cands.length > 1 ? `<button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="tgt" data-dep-amb-key="${esc(k)}" title="${mergeTitle}">🔀 Merge the ${cands.length} copies in ${tgtL}</button>` : ''}${nSrc > 1 && cands.length > 1 ? `<button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="both" data-dep-amb-key="${esc(k)}" title="First the ${srcL} copies, then the ${tgtL} copies — each with its own picker and confirmation; both orgs are read again once at the end.">🔀 Merge both sides</button>` : ''}<span class="ds-dep-muted">${sameTgt || sameSrc ? 'the copies agree on every compared field — they look like the same record' : 'copies of the same record? merge them · different records that share a name? answer below'}</span></div>`;
     // every answer as one plain sentence — the same words in the list and in the dropdown
     const answers = r => [
       ...cands.map((t, i) => ({ v: t, text: `Same record as #${i + 1} in ${orgLabel(p.targetOrg)}${tellText(candTell[t]) ? ` (${tellText(candTell[t])})` : ''}${r.suggest === t ? ` — suggested: same ${r.suggestBy || 'value'}` : ''}` })),
@@ -983,8 +991,9 @@ function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf) {
       <div class="ds-amb-ghd"><b>${esc(k)}</b><span class="ds-dep-muted">${nSrc} in ${srcL} · ${cands.length} in ${tgtL}</span><span class="ds-dep-sp"></span>
         ${kept && !pending ? '<span class="ds-amb-done">✓ remembered — takes effect when both orgs are read again</span>' : ''}
         <button class="ds-btn ds-btn-xs" data-dep-amb-one="${esc(k)}" ${pending ? '' : 'disabled'} title="Remember the answers of this name now. Both orgs are read again later, once.">📌 Apply this one</button></div>
-      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${tgtL} — the records it could be${cands.length > 1 ? ` <button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="tgt" data-dep-amb-key="${esc(k)}" title="Merge these records into one: you choose which one stays and which values it keeps; the others are merged into it and deleted.">🔀 Merge these ${cands.length} into one</button>` : ''}</div>${cands.map((t, i) => `<div class="ds-amb-cand"><span class="ds-amb-n">#${i + 1}</span>${chips(candTell[t])}<a class="ds-dep-open" href="${url(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open this ${tgtL} record">open ↗</a></div>`).join('')}</div>
-      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${srcL} — which ${tgtL} record is each one?${nSrc > 1 ? ` <button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="src" data-dep-amb-key="${esc(k)}" title="Merge these records into one: you choose which one stays and which values it keeps; the others are merged into it and deleted.">🔀 Merge these ${nSrc} into one</button>` : ''}</div>${rs.map(r => { const pick = pickOf(r); const ans = answers(r); return `<div class="ds-amb-src">${chips(r.tell)}<a class="ds-dep-open" href="${url(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener" title="Open this ${srcL} record">open ↗</a>
+      ${mergeBar}
+      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${tgtL} — ${cands.length} record${cands.length === 1 ? '' : 's'} of this name</div>${cands.map((t, i) => `<div class="ds-amb-cand"><span class="ds-amb-n">#${i + 1}</span>${chips(candTell[t])}<a class="ds-dep-open" href="${url(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open this ${tgtL} record">open ↗</a></div>`).join('')}</div>
+      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${srcL} — ${nSrc} record${nSrc === 1 ? '' : 's'} of this name · which ${tgtL} record is each one?</div>${rs.map(r => { const pick = pickOf(r); const ans = answers(r); return `<div class="ds-amb-src">${chips(r.tell)}<a class="ds-dep-open" href="${url(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener" title="Open this ${srcL} record">open ↗</a>
           ${radios ? '' : `<select class="ds-select ds-select-sm ds-amb-sel" data-dep-amb-sel="${esc(r.sourceId)}" aria-label="Which ${tgtL} record is this">
             ${[ans[ans.length - 1], ...ans.slice(0, -1)].map(a => `<option value="${esc(a.v)}" ${pick === a.v ? 'selected' : ''}>${esc(a.text)}</option>`).join('')}
           </select>`}</div>
@@ -1032,21 +1041,24 @@ function _depWireChrome(p) {
 // every field that differs, the value it keeps; after the shared confirmation
 // the copies are merged into it (sftk-merge.js), the memory forgets the copies
 // that are gone, and both orgs are read again — the name is unique then.
-async function _depMergeCopies(p, side, name, ids) {
+// Returns null when nothing was written (refused before the dialog, or cancelled), true when the
+// merge went through, false when Salesforce refused it. opts.rescan === false leaves the re-read
+// to the caller (🔀 Merge both sides reads both orgs once, after the second merge).
+async function _depMergeCopies(p, side, name, ids, opts = {}) {
   const orgUrl = side === 'src' ? p.sourceOrg : p.targetOrg;
   const obj = (p.tree && p.tree.objectType) || '';
   const uniq = [...new Set((ids || []).filter(Boolean))];
-  if (!obj || uniq.length < 2) return showToast('Nothing to merge: this name has one record on that side.', 'info', 5000);
-  if (!uniq.every(sftkMergeIdOk)) return showToast('These records could not be merged: an id is not a Salesforce id.', 'error', 6000);
+  if (!obj || uniq.length < 2) { showToast('Nothing to merge: this name has one record on that side.', 'info', 5000); return null; }
+  if (!uniq.every(sftkMergeIdOk)) { showToast('These records could not be merged: an id is not a Salesforce id.', 'error', 6000); return null; }
   const sess = await getOrgSession(orgUrl);
-  if (!sess) return showToast(`No open session for ${orgLabel(orgUrl)} — open it in a Salesforce tab first.`, 'error', 7000);
+  if (!sess) { showToast(`No open session for ${orgLabel(orgUrl)} — open it in a Salesforce tab first.`, 'error', 7000); return null; }
   showToast(`Reading the ${uniq.length} copies of "${name}" in ${orgLabel(orgUrl)}…`, 'info', 3000);
   const desc = await describe(obj, sess.orgUrl, sess.sid);
-  if (!desc || !Array.isArray(desc.fields)) return showToast(`${obj} could not be described in ${orgLabel(orgUrl)}.`, 'error', 7000);
+  if (!desc || !Array.isArray(desc.fields)) { showToast(`${obj} could not be described in ${orgLabel(orgUrl)}.`, 'error', 7000); return null; }
   const read = await sftkMergeRead({ send: sendBg, orgUrl: sess.orgUrl, sid: sess.sid, obj, fields: desc.fields, ids: uniq });
-  if (read.error) return showToast(`The copies could not be read: ${read.error}`, 'error', 8000);
+  if (read.error) { showToast(`The copies could not be read: ${read.error}`, 'error', 8000); return null; }
   const recs = read.records;
-  if (recs.length < 2) return showToast(`Only ${recs.length} of the ${uniq.length} copies could be read — one is gone already? Read both orgs again.`, 'error', 8000);
+  if (recs.length < 2) { showToast(`Only ${recs.length} of the ${uniq.length} copies could be read — one is gone already? Read both orgs again.`, 'error', 8000); return null; }
   const diff = sftkMergeDiff(desc.fields, recs);
   const native = sftkMergeNative(obj);
   const rels = native ? [] : sftkMergeChildPlan(desc.childRelationships);
@@ -1116,7 +1128,7 @@ async function _depMergeCopies(p, side, name, ids) {
       },
     });
   });
-  if (!choice) return;
+  if (!choice) return null;
   const survivor = recs[choice.keep], dups = recs.filter((_, i) => i !== choice.keep);
   const chosen = sftkMergeChosen(diff, choice.picks, choice.keep);
   const gate = await sftkOrgWriteGate(orgUrl, _orgs);
@@ -1135,7 +1147,7 @@ async function _depMergeCopies(p, side, name, ids) {
     production: gate.production ? { label: gate.label } : null,
     undoHint: native ? 'Salesforce performs the merge (Database.merge); the result is verified by re-reading the org.' : 'Each relationship is moved and re-counted before a copy is deleted.',
   });
-  if (!ok) return;
+  if (!ok) return null;
   const journal = sftkHistoryBegin({ tool: 'Merge', title: `🔀 ${label} "${name}": ${dups.length === 1 ? 'one copy' : `${dups.length} copies`} merged into ${survivor.Id} in ${org}`, orgUrl });
   let res = null;
   try {
@@ -1155,7 +1167,8 @@ async function _depMergeCopies(p, side, name, ids) {
   }
   for (const id of gone) _depAmbPick.delete(id);
   showToast(res.text, res.ok ? 'success' : 'error', res.ok ? 7000 : 12000);
-  await _depRescan(p);
+  if (opts.rescan !== false) await _depRescan(p);
+  return !!(res && res.ok);
 }
 
 async function _depRescan(p) {
@@ -1391,11 +1404,17 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     ambPaintApply();
   }));
   // 🔀 the copies of one name, on the side that holds more than one, merged into one record
-  host.querySelectorAll('[data-dep-amb-merge]').forEach(b => b.addEventListener('click', () => {
+  host.querySelectorAll('[data-dep-amb-merge]').forEach(b => b.addEventListener('click', async () => {
     const side = b.dataset.depAmbMerge, name = b.dataset.depAmbKey;
     const rs = all.filter(r => key(r) === name);
-    const ids = side === 'src' ? rs.map(r => r.sourceId) : ((rs[0] && rs[0].candidates) || []);
-    _depMergeCopies(p, side, name, ids);
+    const srcIds = rs.map(r => r.sourceId), tgtIds = (rs[0] && rs[0].candidates) || [];
+    if (side !== 'both') return _depMergeCopies(p, side, name, side === 'src' ? srcIds : tgtIds);
+    // both sides: the source copies first, then the target copies, each with its own picker and
+    // confirmation; a cancelled first merge stops here; both orgs are read again once, at the end
+    const a = await _depMergeCopies(p, 'src', name, srcIds, { rescan: false });
+    if (a === null) return;
+    await _depMergeCopies(p, 'tgt', name, tgtIds, { rescan: false });
+    await _depRescan(p);
   }));
   host.querySelectorAll('[data-dep-amb-one]').forEach(b => b.addEventListener('click', async () => {
     const name = b.dataset.depAmbOne;

@@ -22,6 +22,7 @@ tool reads the org back afterwards it says "verified", and where it can only rep
 Salesforce answered, it says that instead.
 
 ### Open source
+- Data Deployment › Needs a decision: a name with copies on either side offers 🔀 Merge first — the copies in the source, the copies in the target, or both sides one after the other with one re-read at the end. After the merge the name is unique and the pair lands under 🟢 Synced when its values are equal. Different records that share a name are still told apart by hand, below the merge offer.
 - The extension is **open source under the Apache License 2.0** (the LICENSE file, and the Licence
   page inside the app). The agreement you accept on the first start is version 3: it says so, and
   keeps the one thing that did not change — what you do to your orgs is your responsibility.

@@ -118,7 +118,7 @@ describe('one name at a time', () => {
 
 describe('duplicates — this tab never deletes, and says where deleting is', () => {
   it('the intro explains the two steps', () => {
-    expect(intro).toContain('<b>Two copies of the same thing?</b> This tab never deletes.');
+    expect(intro).toContain('<b>Nothing on this tab deletes by itself.</b> An answer only pairs records;');   // 2026-10-21: merge is offered first, and says it deletes
     expect(intro).toContain('the copy that is left over is listed under 🔵 Only in ${tgtL}, where you can tick it for deletion.');
     expect(intro).toContain('Decide one name at a time with <b>📌 Apply this one</b>');
   });

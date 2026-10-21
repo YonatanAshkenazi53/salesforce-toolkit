@@ -1193,7 +1193,7 @@ export const SECTIONS = [
       await rec.click('.ds-dep-tabs [data-dep-tab="amb"]', 1200);
       if (await c.has('.ds-amb-group')) {
         await rec.scrollTo('.ds-dep-amb-intro');
-        await rec.say('“Needs a decision”: two records share a name, so the scan never guesses. You say which record is which, one name at a time.', 6500);
+        await rec.say('“Needs a decision”: two records share a name, so the scan never guesses. Copies of the same record? Merge them. Different records? You say which is which, one name at a time.', 8000);
         const picked = await h.eval(`(() => { const r = [...document.querySelectorAll('input[data-dep-amb-sel]')].find(x => x.value && x.value !== '__new__'); if (!r) return false; r.setAttribute('data-demo-amb', '1'); return true; })()`);
         if (picked) {
           await rec.point('input[data-demo-amb="1"]', 700);
