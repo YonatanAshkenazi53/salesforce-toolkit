@@ -6491,6 +6491,9 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 
 /* ── 🔀 Merge the copies (Deploy › ⚠ Needs a decision; sftk-merge.js) ── */
 .ds-amb-merge { margin-left: 8px; }
+/* the merge offers of one name, above its copies (user 2026-10-21: merge first) */
+.ds-amb-mergebar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 2px 0 8px; font-size: 12px; }
+.ds-amb-mergebar .ds-amb-merge { margin-left: 0; }
 .ds-merge-wrap { overflow: auto; max-height: 46vh; border: 1px solid var(--border); border-radius: 8px; }
 .ds-merge-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 .ds-merge-table th, .ds-merge-table td { text-align: left; vertical-align: top; padding: 6px 10px; border-bottom: 1px solid var(--border); }

@@ -75,8 +75,9 @@ describe('the page', () => {
     const i = DV.indexOf('function _depAmbIntro(');
     const fn = DV.slice(i, DV.indexOf('\n}\n', i));
     expect(fn).toContain('Why these records are here.');
-    expect(fn).toContain('Nothing here is deployed until you decide.');
-    expect(fn).toContain('What to do.');
+    expect(fn).toContain('Nothing here is deployed until it is settled.');
+    expect(fn).toContain('Copies of the same record? Merge them.');          // 2026-10-21: merge first
+    expect(fn).toContain('Different records that share a name? Say which is which.');
     expect(fn).toContain('are already filled in.');
     expect(fn).toContain('to how records are recognised (✏ Edit → Records → Matching)');
     // a child object cannot be chosen by hand — the intro says what to do instead
@@ -92,7 +93,7 @@ describe('the page', () => {
     expect(fn).toContain('Same record as #${i + 1} in ${orgLabel(p.targetOrg)}');
     expect(fn).toContain("— suggested: same ${r.suggestBy || 'value'}");
     expect(fn).toContain('yet — create it there as a new record');
-    expect(fn).toContain('no compared field differs between the copies — open the record to tell');
+    expect(fn).toContain('no compared field differs between the copies — they look like the same record; open them to be sure');
     expect(DV).toContain('(ambRoot ? _depAmbGroupsHtml(p, shown, s, ambPick, key, ambMem) : shown.map(rowHtml).join(\'\'))');
   });
   it('a remembered answer, else a suggestion, is the default pick; nothing is remembered until an Apply; one target record cannot be two source records', () => {
