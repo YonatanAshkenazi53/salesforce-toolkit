@@ -3068,6 +3068,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       const pmTgtFields = (pm?.tgtFields || []).length ? pm.tgtFields
         : [relParentScan.matchFieldTgt || relParentScan.matchField || 'Name'];
       const pmNorm   = pm?.normalize || {};
+      const pmTiered = pm?.tiered === true && pmSrcFields.length > 1;   // most specific first (2026-10-23)
       const tgtMatch = pmTgtFields[0];
 
       // PII fail-closed: relink embeds RAW source parent-key values in a
@@ -3122,12 +3123,20 @@ async function runReconcile(profile, objType, buckets, opts) {
       // key form the source side uses (full when available, else component 1).
       const keys = [...new Set(rows.map(r => r.parentKeySrc).filter(Boolean))];
       const parentByKey = new Map();     // normalized key → target parent Id
+      const parentByAnchor = new Map();  // tiered: anchor → [{ parts, id }] — the best agreeing candidate wins, never a tie
       for (let ci = 0; ci < keys.length; ci += 100) {
         const lit = keys.slice(ci, ci + 100).map(v => soqlStrLit(v)).join(',');
         const q = await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false,
           query: `SELECT Id, ${pmTgtFields.join(', ')} FROM ${relParentObj} WHERE ${tgtMatch} IN (${lit})` });
         if (q?.error) throw new Error(q.error);
         for (const rec of (q.records || [])) {
+          if (pmTiered && fullKeys) {
+            const parts = sftkMatchParts(rec, { fields: pmTgtFields, normalize: pmNorm });
+            if (parts[0] === '') continue;
+            if (!parentByAnchor.has(parts[0])) parentByAnchor.set(parts[0], []);
+            parentByAnchor.get(parts[0]).push({ parts, id: rec.Id });
+            continue;
+          }
           const kk = fullKeys
             ? sftkMatchKey(rec, { fields: pmTgtFields, normalize: pmNorm })
             : sftkMatchKey(rec, { fields: [tgtMatch], normalize: pmNorm });
@@ -3140,7 +3149,13 @@ async function runReconcile(profile, objType, buckets, opts) {
         const wantKey = fullKeys
           ? (srcKeyByChild.get(r.sourceId) || '')
           : (r.parentKeySrc ? sftkNormalizeValue(r.parentKeySrc, pmNorm) : '');
-        const pid = wantKey ? parentByKey.get(wantKey) : null;
+        let pid = null;
+        if (pmTiered && fullKeys) {
+          const want = wantKey.split(String.fromCharCode(1));
+          const cands = parentByAnchor.get(want[0]) || [];
+          const at = sftkTieredPick(want, cands.map(x => x.parts));
+          pid = at >= 0 ? cands[at].id : null;
+        } else pid = wantKey ? parentByKey.get(wantKey) : null;
         if (!pid) { skippedNoParent++; continue; }
         updates.push({ attributes: { type: obj }, Id: r.targetId, [tgtLinkField]: pid });
       }
