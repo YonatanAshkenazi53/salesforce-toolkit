@@ -144,7 +144,10 @@ function sftkMatchingFromNode(node) {
     return {
       strategy,
       fields: m.fields.filter(Boolean).slice(0, 4),
-      normalize: { ...(m.normalize || {}) }
+      normalize: { ...(m.normalize || {}) },
+      // most specific first (user 2026-10-23): a composite key where a record that leaves a later
+      // component empty is matched by the components it has — see sftkTieredPairs
+      tiered: strategy === 'composite' && m.tiered === true
     };
   }
   return {
@@ -517,6 +520,122 @@ function sftkScanAccuracy(scan) {
            total, blank, dup: excluded + dupRoot, memory: scan.memoryMatched || 0 };
 }
 
+// ── Most specific first (user 2026-10-23: "if we have 100 pct population of the field name but
+// only 90 on the second field … pick the most specific by both fields and then fall back to only
+// matching by name for those who don't hold the value of the second field") ─────────────────
+//
+// A tiered composite key reads its components as EVIDENCE, not as one string: the first component
+// is the anchor and must be present and equal on both sides; every later component counts when
+// BOTH records hold a value — equal values add to the match, different values rule the pair out,
+// an empty value on either side says nothing. The candidate that agrees on the most components
+// wins; two candidates that agree equally well, or two source records that want the same target
+// equally, are not guessed — they go to ⚠ Needs a decision. All PURE.
+
+// The normalized components of a record's key ('' for an empty one).
+function sftkMatchParts(record, matching) {
+  const m = matching || {};
+  const fields = Array.isArray(m.fields) ? m.fields.filter(Boolean) : [];
+  if (!record || !fields.length) return [];
+  const norm = m.normalize || {};
+  return fields.map(f => sftkNormalizeValue(sftkPathValue(record, f), norm));
+}
+
+// How well two part lists agree: -1 when they cannot be the same record (an empty anchor on
+// either side, different anchors, or a component both hold with different values); otherwise
+// the number of components both hold with equal values (the anchor counts).
+function sftkTieredScore(a, b) {
+  if (!a || !b || !a.length || !b.length) return -1;
+  if (a[0] === '' || b[0] === '' || a[0] !== b[0]) return -1;
+  let n = 1;
+  const len = Math.min(a.length, b.length);
+  for (let i = 1; i < len; i++) {
+    if (a[i] === '' || b[i] === '') continue;
+    if (a[i] !== b[i]) return -1;
+    n++;
+  }
+  return n;
+}
+
+// Among candidate part lists, the one that agrees best with `want`: its index, or -1 when none
+// agrees or two agree equally well (a relink never guesses a parent).
+function sftkTieredPick(want, candidates) {
+  let best = -1, bestScore = 0, tie = false;
+  (candidates || []).forEach((c, i) => {
+    const s = sftkTieredScore(want, c);
+    if (s < 0) return;
+    if (s > bestScore) { best = i; bestScore = s; tie = false; }
+    else if (s === bestScore) tie = true;
+  });
+  return tie ? -1 : best;
+}
+
+// The scan's pairing for a tiered key. srcRecs / tgtRecs: records (with Id); srcMatching /
+// tgtMatching: { fields, normalize } per side. Returns
+//   { pairs: [[key, sr, tr]], inserts: [[key, sr, dupKey]], extras: [[key, tr, dupKey]],
+//     groups: Map(anchor → { srcs: [sr], tgts: [tr] })   // ⚠ Needs a decision, one group per anchor
+//     blankSrc, blankTgt }
+// Within one anchor the best unique claims are settled first (highest agreement, one claimant),
+// each settled pair freeing the rest; what is left with a candidate is one group for the user.
+function sftkTieredPairs(srcRecs, tgtRecs, srcMatching, tgtMatching) {
+  const SEP = String.fromCharCode(1);
+  const keyOf = parts => parts.join(SEP);
+  const byAnchor = new Map();
+  let blankSrc = 0, blankTgt = 0;
+  const add = (side, r, parts) => {
+    if (!parts.length || parts[0] === '') { if (side === 's') blankSrc++; else blankTgt++; return; }
+    if (!byAnchor.has(parts[0])) byAnchor.set(parts[0], { srcs: [], tgts: [] });
+    byAnchor.get(parts[0])[side === 's' ? 'srcs' : 'tgts'].push({ r, parts, key: keyOf(parts) });
+  };
+  for (const r of (srcRecs || [])) add('s', r, sftkMatchParts(r, srcMatching));
+  for (const r of (tgtRecs || [])) add('t', r, sftkMatchParts(r, tgtMatching));
+  const pairs = [], inserts = [], extras = [], groups = new Map();
+  for (const [anchor, g] of byAnchor) {
+    let srcs = g.srcs.slice(), tgts = g.tgts.slice();
+    // scores[i][j] for the records still open
+    for (;;) {
+      if (!srcs.length || !tgts.length) break;
+      const best = srcs.map(s => {
+        let top = 0, at = [];
+        tgts.forEach((t, j) => { const sc = sftkTieredScore(s.parts, t.parts); if (sc < 0) return; if (sc > top) { top = sc; at = [j]; } else if (sc === top) at.push(j); });
+        return { top, at };
+      });
+      // a settled claim: one best target for this source, and this source the only one that
+      // wants that target this well or better
+      let settled = null;
+      for (let i = 0; i < srcs.length && !settled; i++) {
+        const b = best[i];
+        if (!b.top || b.at.length !== 1) continue;
+        const j = b.at[0];
+        const rival = srcs.some((s2, i2) => i2 !== i && best[i2].top >= b.top && best[i2].at.includes(j));
+        if (!rival) settled = [i, j];
+      }
+      if (!settled) break;
+      const [i, j] = settled;
+      pairs.push([srcs[i].key, srcs[i].r, tgts[j].r]);
+      srcs.splice(i, 1); tgts.splice(j, 1);
+    }
+    // what is left: records with no candidate are ordinary inserts / extras; the rest is one group
+    const openS = srcs.filter(s => tgts.some(t => sftkTieredScore(s.parts, t.parts) >= 0));
+    const openT = tgts.filter(t => srcs.some(s => sftkTieredScore(s.parts, t.parts) >= 0));
+    for (const s of srcs) if (!openS.includes(s)) inserts.push([s.key, s.r, srcs.filter(x => x !== s && x.key === s.key).length > 0]);
+    for (const t of tgts) if (!openT.includes(t)) extras.push([t.key, t.r, tgts.filter(x => x !== t && x.key === t.key).length > 0]);
+    if (openS.length) groups.set(anchor, { srcs: openS.map(s => s.r), tgts: openT.map(t => t.r) });
+  }
+  return { pairs, inserts, extras, groups, blankSrc, blankTgt };
+}
+
+// What a key reads like, for the person configuring it (labels, not API names):
+//   "Account Name + ID Number + Email" and, when tiered, how a record with fewer values is matched.
+function sftkMatchingReadsAs(labels, tiered) {
+  const L = (labels || []).filter(Boolean);
+  if (!L.length) return { key: '', how: '' };
+  const key = L.join(' + ');
+  if (!tiered || L.length < 2) return { key, how: L.length < 2 ? `Two records are the same when their ${L[0]} is equal.` : `Two records are the same only when all ${L.length} values are present and equal.` };
+  const steps = [];
+  for (let n = L.length; n >= 1; n--) steps.push(n === L.length ? `a record with all ${n} values is matched on all ${n}` : n === 1 ? `one with only ${L[0]} is matched on ${L[0]} alone` : `one without ${L.slice(n).join(' or ')} on ${L.slice(0, n).join(' + ')}`);
+  return { key, how: `Most specific first: ${steps.join('; ')}. A value that differs on both sides rules the pair out; a pair that is not the single best match is listed under ⚠ Needs a decision.` };
+}
+
 // ── Global attach (classic-script export) ─────────────────────────────────
 if (typeof globalThis !== 'undefined') {
   globalThis.sftkNormalizeValue      = sftkNormalizeValue;
@@ -537,4 +656,9 @@ if (typeof globalThis !== 'undefined') {
   globalThis.SFTK_MEM_NEW            = SFTK_MEM_NEW;
   globalThis.sftkMemoryForget        = sftkMemoryForget;
   globalThis.sftkAmbTwice            = sftkAmbTwice;
+  globalThis.sftkMatchParts          = sftkMatchParts;
+  globalThis.sftkTieredScore         = sftkTieredScore;
+  globalThis.sftkTieredPick          = sftkTieredPick;
+  globalThis.sftkTieredPairs         = sftkTieredPairs;
+  globalThis.sftkMatchingReadsAs     = sftkMatchingReadsAs;
 }

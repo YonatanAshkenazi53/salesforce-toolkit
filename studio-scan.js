@@ -920,8 +920,8 @@ async function runDiffScan(profile, node = null, scope = null) {
   // Per-side key configs — same strategy + normalization, only the field
   // NAMES differ per side. Every key below comes from sftkMatchKey with one
   // of these two configs (THE invariant: scan and writers share this).
-  const srcMatching = { strategy: nodeMatching.strategy, fields: srcKeyFields, normalize: nodeMatching.normalize || {} };
-  const tgtMatching = { strategy: nodeMatching.strategy, fields: tgtKeyFields, normalize: nodeMatching.normalize || {} };
+  const srcMatching = { strategy: nodeMatching.strategy, fields: srcKeyFields, normalize: nodeMatching.normalize || {}, tiered: nodeMatching.tiered === true && srcKeyFields.length > 1 };
+  const tgtMatching = { strategy: nodeMatching.strategy, fields: tgtKeyFields, normalize: nodeMatching.normalize || {}, tiered: nodeMatching.tiered === true && tgtKeyFields.length > 1 };
 
   // Per-lookup compare maps (from the node's resolution config, else Name).
   // Reference fields are compared by the RELATED record's match field, not the
@@ -1336,6 +1336,19 @@ async function runDiffScan(profile, node = null, scope = null) {
   // as before, copies with no counterpart are listed normally, and a key
   // both orgs hold more than once goes to ⚠ Ambiguous — never guessed.
   const _sGrp = new Map(), _tGrp = new Map();
+  const srcByKey = new Map();
+  const tgtByKey = new Map();
+  const _twinsNew = [], _twinsExtra = [], _ambKeys = [];
+  if (srcMatching.tiered && typeof sftkTieredPairs === 'function') {
+    // Most specific first (user 2026-10-23): the components are evidence, the best unique claim
+    // wins, what is left with a candidate is one ⚠ group per anchor (sftkTieredPairs, pure).
+    const tp = sftkTieredPairs((srcRes.records || []).filter(r => !memPairedSrc.has(r.Id)), (tgtRes.records || []).filter(r => !memPairedTgt.has(r.Id)), srcMatching, tgtMatching);
+    _blankSrc += tp.blankSrc; _blankTgt += tp.blankTgt;
+    for (const [k, sr, tr] of tp.pairs) { srcByKey.set(k, sr); tgtByKey.set(k, tr); }
+    for (const [k, sr] of tp.inserts) _twinsNew.push([k, sr]);
+    for (const [k, tr] of tp.extras) _twinsExtra.push([k, tr]);
+    for (const [anchor, g] of tp.groups) { _ambKeys.push(anchor); _sGrp.set(anchor, g.srcs); _tGrp.set(anchor, g.tgts); }
+  } else {
   for (const r of (srcRes.records || [])) {
     if (memPairedSrc.has(r.Id)) continue;     // M3c — matched from memory (or ➕ insert as new)
     const k = sftkMatchKey(r, srcMatching);
@@ -1351,9 +1364,6 @@ async function runDiffScan(profile, node = null, scope = null) {
     _tGrp.get(k).push(r);
   }
   const _keyClass = sftkScanKeyClasses(new Map([..._sGrp].map(([k, a]) => [k, a.length])), new Map([..._tGrp].map(([k, a]) => [k, a.length])));
-  const srcByKey = new Map();
-  const tgtByKey = new Map();
-  const _twinsNew = [], _twinsExtra = [], _ambKeys = [];
   for (const [k, cls] of _keyClass) {
     if (cls === 'pair') {
       if (_sGrp.has(k)) srcByKey.set(k, _sGrp.get(k)[0]);
@@ -1361,6 +1371,7 @@ async function runDiffScan(profile, node = null, scope = null) {
     } else if (cls === 'insertAll') { for (const r of _sGrp.get(k)) _twinsNew.push([k, r]); }
     else if (cls === 'extraAll') { for (const r of _tGrp.get(k)) _twinsExtra.push([k, r]); }
     else _ambKeys.push(k);
+  }
   }
 
   const missingInTarget = []; // present in source, absent in target → "deploy"
@@ -1756,7 +1767,8 @@ async function runDiffScan(profile, node = null, scope = null) {
       strategy:  srcMatching.strategy,
       fields:    [...srcMatching.fields],
       tgtFields: [...tgtMatching.fields],
-      normalize: { ...(srcMatching.normalize || {}) }
+      normalize: { ...(srcMatching.normalize || {}) },
+      ...(srcMatching.tiered ? { tiered: true } : {})
     },
     // M3a — rows excluded because every key component was blank.
     ...((_blankSrc + _blankTgt) ? { blankKeys: { rows: _blankSrc + _blankTgt, src: _blankSrc, tgt: _blankTgt } } : {}),
