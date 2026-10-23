@@ -636,6 +636,85 @@ function sftkMatchingReadsAs(labels, tiered) {
   return { key, how: `Most specific first: ${steps.join('; ')}. A value that differs on both sides rules the pair out; a pair that is not the single best match is listed under ⚠ Needs a decision.` };
 }
 
+// How many records hold the key up to each field (user 2026-10-23: "when its only 1 field we just
+// show how many records have value for the one matching field in both orgs"): levels[k-1] counts
+// the records whose first k components are all present. PURE.
+function sftkTierCoverage(records, matching) {
+  const fields = (matching && Array.isArray(matching.fields) ? matching.fields : []).filter(Boolean);
+  const levels = fields.map((f, i) => ({ n: i + 1, field: f, populated: 0 }));
+  let total = 0;
+  for (const r of (records || [])) {
+    total++;
+    const parts = sftkMatchParts(r, matching);
+    for (let k = 0; k < parts.length; k++) { if (parts[k] === '') break; levels[k].populated++; }
+  }
+  return { total, levels };
+}
+
+// The cross-org preview of a tiered key from the two sides' part lists (already normalized):
+// the same pairing the scan runs, counted. PURE.
+function sftkTieredPreview(srcParts, tgtParts) {
+  const n = Math.max(...(srcParts || []).map(p => p.length), ...(tgtParts || []).map(p => p.length), 0);
+  const fields = Array.from({ length: n }, (_, i) => 'p' + i);
+  const rec = (parts, i) => { const o = { Id: String(i) }; fields.forEach((f, k) => { o[f] = parts[k] || ''; }); return o; };
+  const r = sftkTieredPairs((srcParts || []).map(rec), (tgtParts || []).map(rec), { fields, normalize: {} }, { fields, normalize: {} });
+  let ambiguous = 0;
+  for (const g of r.groups.values()) ambiguous += g.srcs.length;
+  return { sourceTotal: (srcParts || []).length, matchedUnique: r.pairs.length, ambiguous, unmatched: r.inserts.length + r.blankSrc };
+}
+
+// Key suggestions of a chosen depth (user 2026-10-23: "ask how many levels from 1 to 4 the user
+// would like the suggestion to be"). fields: a describe's fields. depth 1: one field each —
+// external IDs, unique fields, the name, e-mail, phone, then other text. depth 2–4: the name (or
+// the first text field) as the anchor plus the best other components, most specific first; a few
+// variants swap the last component. PURE; returns [{ label, strategy, fields, normalize, why, sig, tiered }].
+function sftkMatchSuggestionsOfDepth(fields, depth, opts) {
+  const fs = (Array.isArray(fields) ? fields : []).filter(Boolean);
+  const n = Math.min(4, Math.max(1, Number(depth) || 1));
+  const SYS = new Set(['Id', 'OwnerId', 'CreatedById', 'LastModifiedById', 'RecordTypeId', 'MasterRecordId', 'SystemModstamp', 'CreatedDate', 'LastModifiedDate']);
+  const textish = f => ['string', 'email', 'phone', 'url'].includes(f.type) && !SYS.has(f.name) && !f.calculated && !f.autoNumber && f.createable !== false && !f.deprecatedAndHidden;
+  const ext  = fs.filter(f => f.externalId === true && !SYS.has(f.name));
+  const uniq = fs.filter(f => f.unique === true && f.externalId !== true && f.type !== 'id' && !SYS.has(f.name));
+  const name = fs.find(f => f.nameField === true && !f.autoNumber) || null;
+  const email = fs.filter(f => f.type === 'email' && textish(f));
+  const phone = fs.filter(f => f.type === 'phone' && textish(f));
+  const idlike = fs.filter(f => f.type === 'string' && textish(f) && !f.nameField && /number|code|id$|_id|postal|zip|city/i.test(f.name) && !ext.includes(f) && !uniq.includes(f));
+  const other = fs.filter(f => f.type === 'string' && textish(f) && !f.nameField && !ext.includes(f) && !uniq.includes(f) && !idlike.includes(f) && (f.length || 0) <= 255);
+  const refs = fs.filter(f => f.type === 'reference' && f.relationshipName && !SYS.has(f.name) && (f.referenceTo || []).length === 1 && !f.polymorphicForeignKey && f.createable !== false)
+    .map(f => ({ name: `${f.relationshipName}.Name`, label: `${f.label || f.name} (by name)`, type: 'reference' }));
+  const out = [], seen = new Set();
+  const person = f => /^Person/.test(f.name);
+  const late = arr => [...arr.filter(f => !person(f)), ...arr.filter(person)];
+  const norm = flds => { const o = { caseFold: true, trim: true, collapseWs: true }; if (flds.some(x => x.type === 'email')) o.emailLower = true; if (flds.some(x => x.type === 'phone')) o.phoneDigits = true; return o; };
+  const push = (flds, strategy, why, tiered) => {
+    const names = flds.map(x => x.name);
+    const sig = strategy + ':' + names.join(',') + (tiered ? ':t' : '');
+    if (!names.length || seen.has(sig)) return;
+    seen.add(sig);
+    out.push({ label: names.join(' + '), strategy, fields: names, normalize: strategy === 'externalId' ? {} : norm(flds), why, sig, ...(tiered ? { tiered: true } : {}) });
+  };
+  if (n === 1) {
+    ext.forEach(f => push([f], 'externalId', 'external ID — built for cross-org identity'));
+    uniq.forEach(f => push([f], 'field', 'unique field'));
+    if (name) push([name], 'field', 'name field');
+    late(email).forEach(f => push([f], 'field', 'e-mail'));
+    late(phone).forEach(f => push([f], 'field', 'phone'));
+    late(idlike).forEach(f => push([f], 'field', 'a number or code'));
+    late(other).slice(0, 2).forEach(f => push([f], 'field', 'text field'));
+    return [...out.filter(x => !/^Person/.test(x.fields[0])), ...out.filter(x => /^Person/.test(x.fields[0]))].slice(0, 8);
+  }
+  const anchor = name || other[0] || idlike[0] || null;
+  if (!anchor) return out;
+  const comps = late([...ext, ...uniq, ...email, ...phone, ...idlike, ...other, ...refs].filter(f => f !== anchor));
+  if (!comps.length) return out;
+  const why = `${anchor.name} first, then the ${n - 1 === 1 ? 'field' : 'fields'} that tell records apart — most specific first`;
+  const take = comps.slice(0, n - 1);
+  push([anchor, ...take], 'composite', why, true);
+  for (let j = n - 1; j < comps.length && out.length < 6; j++) push([anchor, ...comps.slice(0, n - 2), comps[j]], 'composite', why, true);
+  if (n >= 3) for (let j = 1; j + n - 1 <= comps.length && out.length < 6; j++) push([anchor, ...comps.slice(j, j + n - 1)], 'composite', why, true);
+  return out.slice(0, 6);
+}
+
 // ── Global attach (classic-script export) ─────────────────────────────────
 if (typeof globalThis !== 'undefined') {
   globalThis.sftkNormalizeValue      = sftkNormalizeValue;
@@ -661,4 +740,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkTieredPick          = sftkTieredPick;
   globalThis.sftkTieredPairs         = sftkTieredPairs;
   globalThis.sftkMatchingReadsAs     = sftkMatchingReadsAs;
+  globalThis.sftkTierCoverage        = sftkTierCoverage;
+  globalThis.sftkTieredPreview       = sftkTieredPreview;
+  globalThis.sftkMatchSuggestionsOfDepth = sftkMatchSuggestionsOfDepth;
 }

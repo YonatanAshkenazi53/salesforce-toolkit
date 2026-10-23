@@ -837,7 +837,14 @@ async function openRecordPickerModal(pathStr) {
   let matchFoldOpen    = null;
   let matchSuggestOpen = false;
   const gradeCache     = new Map();   // suggestion sig → rendered mini-grade
-  const suggestions    = _matchSuggestionsFromDescribe(desc);
+  // 💡 Suggestions of a chosen depth (user 2026-10-23): 1 field = how many records hold it in
+  // both orgs; 2–4 = the name plus the best other fields, most specific first.
+  let matchSuggestDepth = matchStrategy === 'composite' ? Math.min(4, Math.max(1, matchFields.length)) : 1;
+  const _suggestionsAt = n => {
+    const list = (typeof sftkMatchSuggestionsOfDepth === 'function') ? sftkMatchSuggestionsOfDepth(desc?.fields || [], n, {}) : [];
+    return (list.length || n > 1) ? list : _matchSuggestionsFromDescribe(desc);
+  };
+  let suggestions      = _suggestionsAt(matchSuggestDepth);
   // QA sweep 2026-08-10 — grading concurrency lives at MODAL scope, not
   // render scope: re-renders create new closures, and per-render guards let
   // two auto-grade loops issue duplicate live-org queries.
@@ -1223,13 +1230,18 @@ async function openRecordPickerModal(pathStr) {
   // M3b — ranked suggestion rows; mini-grades are computed lazily per row
   // (never auto-run N analyses — API cost).
   function suggestListHtml() {
-    if (!suggestions.length) return `<div class="ds-subtext" style="font-size:12px">No obvious key candidates found on this object's schema.</div>`;
-    return `<div class="ds-match-suggest-list" style="display:flex;flex-direction:column;gap:4px">
+    const depthRow = `<div class="ds-match-depth" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;margin-bottom:6px">
+        <span class="ds-rec-display-lbl">How many fields in the key?</span>
+        ${[1, 2, 3, 4].map(n => `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="dsMatchDepth" data-match-depth="${n}" ${n === matchSuggestDepth ? 'checked' : ''}> ${n}</label>`).join('')}
+        <span class="ds-subtext" style="font-size:11px">${matchSuggestDepth === 1 ? 'one field: how many records hold a value for it, in both orgs' : 'the name first, then the fields that tell records apart — most specific first'}</span>
+      </div>`;
+    if (!suggestions.length) return depthRow + `<div class="ds-subtext" style="font-size:12px">No key of ${matchSuggestDepth} field${matchSuggestDepth === 1 ? '' : 's'} can be built from this object's schema.</div>`;
+    return depthRow + `<div class="ds-match-suggest-list" style="display:flex;flex-direction:column;gap:4px">
       ${suggestions.map(s => `
         <div class="ds-match-suggest-row" style="display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap">
           <button class="ds-btn ds-btn-xs" data-match-adopt="${esc(s.sig)}" title="Use this as the matching config">Use</button>
           <button class="ds-btn ds-btn-xs" data-match-grade="${esc(s.sig)}" title="Run the key-quality analysis for this candidate (queries both orgs)">Grade</button>
-          <strong>${esc(s.label)}</strong>
+          <strong>${esc(matchReadsAs(s.fields, false).key)}</strong>${s.tiered ? '<span class="ds-subtext" title="A record that leaves a later field empty is matched by the fields it has">most specific first</span>' : ''}
           <span data-match-score="${esc(s.sig)}"></span>
           <span class="ds-subtext">${esc(s.why)}${Object.keys(s.normalize || {}).some(k => s.normalize[k]) ? ' · normalized' : ''}</span>
           <div data-match-grade-out="${esc(s.sig)}" style="flex-basis:100%">${gradeCache.get(s.sig) || ''}</div>
@@ -1575,7 +1587,7 @@ async function openRecordPickerModal(pathStr) {
             : node;
           const tgtF  = sftkMatchingTgtFields(nodeT, m);
           const clone = { ..._editingProfile, targetOrg: tgtUrl };
-          const res   = await sftkAnalyzeMatchKey(objType, clone, m.fields, tgtF, m.normalize, m.strategy);
+          const res   = await sftkAnalyzeMatchKey(objType, clone, m.fields, tgtF, m.normalize, m.strategy, m.tiered === true);
           blocks.push(
             (list.length > 1 ? `<div style="font-weight:700;font-size:12px;margin-top:8px">→ ${esc(orgLabel(tgtUrl))}</div>` : '')
             + _matchAnalysisHtml(res, clone, false));
@@ -1593,13 +1605,22 @@ async function openRecordPickerModal(pathStr) {
 
     // ── M3b — ranked suggestions (adopt on click, grade lazily) ──────────
     function wireSuggestRows() {
+      document.querySelectorAll('[data-match-depth]').forEach(rb => rb.addEventListener('change', () => {
+        if (!rb.checked) return;
+        matchSuggestDepth = Number(rb.dataset.matchDepth) || 1;
+        suggestions = _suggestionsAt(matchSuggestDepth);
+        gradeReset();
+        const boxEl = eid('dsMatchSuggestBox');
+        if (boxEl) { boxEl.innerHTML = suggestListHtml(); wireSuggestRows(); _autoGradeTop(); }
+      }));
       document.querySelectorAll('[data-match-adopt]').forEach(b => b.addEventListener('click', () => {
         const s = suggestions.find(x => x.sig === b.dataset.matchAdopt);
         if (!s) return;
         matchStrategy  = s.strategy;
         matchFields    = [...s.fields];
+        matchTiered    = s.tiered === true;
         matchNormalize = { caseFold: false, trim: false, collapseWs: false, emailLower: false, phoneDigits: false, ...(s.normalize || {}) };
-        showToast(`Matching set to ${s.fields.join(' + ')} — click ✓ Apply to save`, 'info', 3500);
+        showToast(`Matching set to ${matchReadsAs(s.fields, false).key}${s.tiered ? ' (most specific first)' : ''} — click ✓ Apply to save`, 'info', 3500);
         matchCfgChanged(true);
       }));
       document.querySelectorAll('[data-match-grade]').forEach(b => b.addEventListener('click', async () => {
@@ -1646,7 +1667,7 @@ async function openRecordPickerModal(pathStr) {
           };
           const first = capped[0] || '';
           const clone = { ..._editingProfile, targetOrg: first };
-          const res   = await sftkAnalyzeMatchKey(objType, clone, s.fields, tgtFieldsFor(first), s.normalize || {}, s.strategy);
+          const res   = await sftkAnalyzeMatchKey(objType, clone, s.fields, tgtFieldsFor(first), s.normalize || {}, s.strategy, s.tiered === true);
           const extras = [];
           for (const u of capped.slice(1)) {
             try {
@@ -1665,7 +1686,16 @@ async function openRecordPickerModal(pathStr) {
           // auto-grade never tried again.
           if (res.srcErr || res.tgtErr || extras.some(x => x.err)) gradeFailed.add(s.sig);
           else gradeFailed.delete(s.sig);
+          // a most-specific-first key with a field (almost) nobody fills: say so, and the key pays for it
+          // (user 2026-10-23 — a key is suggested for the fields that tell records apart, not for empty ones)
+          const weak = [];
+          if (s.tiered) for (const side of [res.src, res.tgt, ...extras.map(x => x.counts)]) {
+            if (!side || !side.tiers || !side.tiers.total) continue;
+            side.tiers.levels.slice(1).forEach(l => { if (l.populated < side.tiers.total * 0.1 && !weak.some(w => w.field === l.field)) weak.push({ field: l.field, populated: l.populated, total: side.tiers.total }); });
+          }
+          if (weak.length && typeof s.score === 'number') s.score = Math.max(0, s.score - 30 * weak.length);
           let html = _matchAnalysisHtml(res, clone, true);
+          if (weak.length) html = `<div class="ds-subtext" style="font-size:11px;color:var(--warning,#b45309)">⚠ ${esc(weak.map(w => `${w.field}: held by ${w.populated.toLocaleString()} of ${w.total.toLocaleString()} sampled records — adds almost nothing to the key`).join(' · '))}</div>` + html;
           for (const x of extras) {
             html += `<div class="ds-match-test-out" style="margin-top:2px;padding:4px 8px;background:rgba(148,163,184,.12);border-radius:6px">${_matchStatsHtml(`Target · ${orgLabel(x.org)}`, x.counts, x.err)}</div>`;
           }
@@ -2209,7 +2239,7 @@ function _matchSuggestionsFromDescribe(desc) {
 
 // Per-org key counts for a field list. Returns { keyCounts, total, blank,
 // sampled } or { error }. Never throws for API errors — degrades to error.
-async function _matchOrgKeyCounts(objType, sess, fields, normalize, strategy) {
+async function _matchOrgKeyCounts(objType, sess, fields, normalize, strategy, tiered) {
   const flds = (fields || []).filter(Boolean).slice(0, 4);
   if (!flds.length) return { error: 'no key fields configured' };
   try {
@@ -2233,6 +2263,10 @@ async function _matchOrgKeyCounts(objType, sess, fields, normalize, strategy) {
     if (q?.error) return { error: q.error };
     const counts = sftkKeyCountsFromRecords(q.records || [], { strategy, fields: flds, normalize: normalize || {} });
     counts.sampled = (q.records || []).length >= 2000;
+    // a key of several fields: how many records hold it up to each field; a tiered key keeps the
+    // parts so the cross-org preview can run the scan's own pairing (2026-10-23)
+    if (flds.length > 1 && typeof sftkTierCoverage === 'function') counts.tiers = sftkTierCoverage(q.records || [], { fields: flds, normalize: normalize || {} });
+    if (tiered && typeof sftkMatchParts === 'function') counts.parts = (q.records || []).map(r => sftkMatchParts(r, { fields: flds, normalize: normalize || {} }));
     return counts;
   } catch (e) {
     return { error: e?.message || String(e) };
@@ -2241,7 +2275,7 @@ async function _matchOrgKeyCounts(objType, sess, fields, normalize, strategy) {
 
 // Full analysis: both orgs (graceful "org not open" per side) + cross-org
 // preview when both sides produced counts.
-async function sftkAnalyzeMatchKey(objType, profile, srcFields, tgtFields, normalize, strategy) {
+async function sftkAnalyzeMatchKey(objType, profile, srcFields, tgtFields, normalize, strategy, tiered) {
   const out = { src: null, tgt: null, srcErr: null, tgtErr: null, cross: null };
   const friendly = m => (typeof sftkFriendlyError === 'function') ? sftkFriendlyError(m).message : String(m);
   try {
@@ -2252,14 +2286,16 @@ async function sftkAnalyzeMatchKey(objType, profile, srcFields, tgtFields, norma
     if (!tgtSess?.sid) out.tgtErr = profile?.targetOrg
       ? `org not open — open ${orgLabel(profile.targetOrg)} in a Chrome tab` : 'no target org set on this profile';
     if (srcSess?.sid) {
-      const c = await _matchOrgKeyCounts(objType, srcSess, srcFields, normalize, strategy);
+      const c = await _matchOrgKeyCounts(objType, srcSess, srcFields, normalize, strategy, tiered);
       if (c?.error) out.srcErr = friendly(c.error); else out.src = c;
     }
     if (tgtSess?.sid) {
-      const c = await _matchOrgKeyCounts(objType, tgtSess, tgtFields, normalize, strategy);
+      const c = await _matchOrgKeyCounts(objType, tgtSess, tgtFields, normalize, strategy, tiered);
       if (c?.error) out.tgtErr = friendly(c.error); else out.tgt = c;
     }
-    if (out.src && out.tgt) out.cross = sftkCrossOrgPreview(out.src, out.tgt);
+    if (out.src && out.tgt) out.cross = (tiered && out.src.parts && out.tgt.parts && typeof sftkTieredPreview === 'function')
+      ? { ...sftkTieredPreview(out.src.parts, out.tgt.parts), tiered: true }
+      : sftkCrossOrgPreview(out.src, out.tgt);
   } catch (e) {
     const msg = friendly(e?.message || String(e));
     if (!out.src && !out.srcErr) out.srcErr = msg;
@@ -2279,7 +2315,8 @@ function _matchStatsHtml(label, counts, err) {
     <span style="min-width:150px"><strong>${esc(label)}</strong>${counts.sampled ? ` <span class="ds-subtext" title="More than 2,000 rows/groups — computed on the first 2,000">(sampled)</span>` : ''}</span>
     ${bar(st.populatedPct)} ${st.populatedPct}% populated
     ${bar(st.uniquePct)} ${st.uniquePct}% unique
-    <span class="ds-subtext">${st.total.toLocaleString()} record(s)${st.blank ? ` · ${st.blank.toLocaleString()} blank key` : ''}${st.dupRecords ? ` · ${st.dupRecords.toLocaleString()} share dup keys` : ''}</span>
+    <span class="ds-subtext"><strong>${st.populated.toLocaleString()} of ${st.total.toLocaleString()}</strong> hold ${counts.tiers ? 'the key' : 'a value'}${st.blank ? ` · ${st.blank.toLocaleString()} blank` : ''}${st.dupRecords ? ` · ${st.dupRecords.toLocaleString()} share dup keys` : ''}</span>
+    ${counts.tiers ? `<span class="ds-subtext" style="flex-basis:100%;padding-left:158px" title="How many records hold the key up to each field — a most-specific-first key matches a record by the fields it has">up to each field: ${counts.tiers.levels.map(l => `${esc(l.field)} <strong>${l.populated.toLocaleString()}</strong>`).join(' · ')}</span>` : ''}
   </div>`;
 }
 
@@ -2293,8 +2330,8 @@ function _matchVerdictHtml(res) {
   return `<div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:6px;flex-wrap:wrap">
     <span class="ds-diff-chip ${cls}">${esc(verdict)}</span>
     <span>matches <strong>${c.matchedUnique.toLocaleString()}</strong> of <strong>${c.sourceTotal.toLocaleString()}</strong> source records uniquely
-      · <strong>${c.ambiguous.toLocaleString()}</strong> ambiguous (dup keys either side)
-      · <strong>${c.unmatched.toLocaleString()}</strong> unmatched</span>
+      · <strong>${c.ambiguous.toLocaleString()}</strong> ${c.tiered ? 'need a decision' : 'ambiguous (dup keys either side)'}
+      · <strong>${c.unmatched.toLocaleString()}</strong> unmatched</span>${c.tiered ? ' <span class="ds-subtext">(most specific first, as the scan pairs)</span>' : ''}
   </div>`;
 }
 
