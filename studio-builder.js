@@ -1966,6 +1966,14 @@ function bldProfileImportParse(text, existingIds, fileName) {
   return { profile, stripped };
 }
 
+// A list of exports in one file (a bundle): the parsed array when the text is a non-empty JSON
+// array, else null (one export, or not JSON — bldProfileImportParse says which). Pure.
+function bldProfileImportBundle(text) {
+  let v;
+  try { v = JSON.parse(String(text)); } catch (_) { return null; }
+  return Array.isArray(v) && v.length ? v : null;
+}
+
 // ── E1 UI: per-card ⬇ Export + ⬆ Import (called from the profiles list) ──
 window.exportProfile = function (profileId) {
   const p = _profiles.find(x => x.id === profileId);
@@ -1999,6 +2007,35 @@ window.importProfileFromFile = function () {
     let text;
     try { text = await file.text(); }
     catch (e) { showToast(`Couldn't read ${file.name}: ${e?.message || e}`, 'error', 6000); return; }
+    // A file may hold ONE export or a LIST of them (a bundle, like the repository's fixture
+    // profiles.json; user 2026-10-23: "Import failed: not a profile export" on that file). A list
+    // is imported item by item: every good one lands, every refused one is named — nothing silent.
+    const bundle = bldProfileImportBundle(text);
+    if (bundle) {
+      const got = [], bad = [];
+      const ids = _profiles.map(p => p.id);
+      bundle.forEach((item, i) => {
+        const r = bldProfileImportParse(JSON.stringify(item), ids, file.name);
+        if (r.error) bad.push(`item ${i + 1}: ${r.error}`);
+        else { ids.push(r.profile.id); got.push(r.profile); }
+      });
+      if (!got.length) { showToast(`Import failed: none of the ${bundle.length} items in ${file.name} is a profile export — ${bad[0]}.`, 'error', 9000); return; }
+      for (const prof of got) {
+        if (prof.piiPolicy && typeof prof.piiPolicy === 'object' && Object.keys(prof.piiPolicy).length) bldPiiEnsureSalt(prof);
+        _profiles.push(prof);
+      }
+      await storageSaveProfiles();
+      if (_currentView === 'profiles') renderProfiles();
+      showModal(`
+        <div class="ds-modal-header">⬆ Imported ${got.length} deployment${got.length === 1 ? '' : 's'} from ${esc(file.name)}</div>
+        <div class="ds-modal-body" style="font-size:12.5px">
+          <ul style="margin:0 0 8px 18px;padding:0">${got.map(p => `<li><strong>${esc(p.name)}</strong> — ${esc(p.sourceOrg ? orgLabel(p.sourceOrg) : '— not set —')} → ${esc(p.targetOrg ? orgLabel(p.targetOrg) : 'no default target')}</li>`).join('')}</ul>
+          ${bad.length ? `<div style="color:var(--danger);margin-bottom:8px">Not imported: ${esc(bad.join(' · '))}.</div>` : ''}
+          <div style="color:var(--subtext)">These were written against the exporter's orgs — nothing has been validated against <em>your</em> targets yet. Open each deployment to read both orgs.</div>
+        </div>
+        <div class="ds-modal-footer"><button class="ds-btn ds-btn-primary" data-dsaction="closeModal">OK</button></div>`);
+      return;
+    }
     const res = bldProfileImportParse(text, _profiles.map(p => p.id), file.name);
     if (res.error) { showToast(`Import failed: ${res.error}.`, 'error', 9000); return; }
     const prof = res.profile;

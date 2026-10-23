@@ -356,3 +356,29 @@ describe('bldProfileImportParse — honest rejections', () => {
     expect(okAbsent.error).toBeUndefined();
   });
 });
+
+import { readFileSync } from 'node:fs';
+// 2026-10-23: a file may hold a LIST of exports (the fixture's profiles.json bundles six); the
+// dialog imports every good item and names every refused one — the single-export path unchanged.
+describe('a bundle: a JSON list of exports', () => {
+  const SRC = readFileSync(new URL('../studio-builder.js', import.meta.url), 'utf8');
+  const i = SRC.indexOf('function bldProfileImportBundle(');
+  const bundle = new Function(SRC.slice(i, SRC.indexOf('\n}\n', i) + 3) + ' return bldProfileImportBundle;')();
+  it('bldProfileImportBundle: the array for a non-empty JSON list, null for one object, bad JSON or an empty list', () => {
+    expect(bundle('[{"format":"sftk-profile"}]')).toEqual([{ format: 'sftk-profile' }]);
+    expect(bundle('{"format":"sftk-profile"}')).toBeNull();
+    expect(bundle('[]')).toBeNull();
+    expect(bundle('not json')).toBeNull();
+  });
+  it('the dialog imports item by item, keeps the new ids apart, names the refused items, and says it is unvalidated', () => {
+    const ui = SRC.slice(SRC.indexOf('window.importProfileFromFile = function'), SRC.indexOf('document.body.appendChild(inp);'));
+    expect(ui).toContain('const bundle = bldProfileImportBundle(text);');
+    expect(ui).toContain('const r = bldProfileImportParse(JSON.stringify(item), ids, file.name);');
+    expect(ui).toContain('else { ids.push(r.profile.id); got.push(r.profile); }');
+    expect(ui).toContain("Not imported: ${esc(bad.join(' · '))}.");
+    expect(ui).toContain('none of the ${bundle.length} items in ${file.name} is a profile export');
+    expect(ui).toContain("nothing has been validated against <em>your</em> targets yet. Open each deployment to read both orgs.");
+    // the single-export path is still there, after the bundle case
+    expect(ui.indexOf('const bundle = bldProfileImportBundle(text);')).toBeLessThan(ui.indexOf('const res = bldProfileImportParse(text, _profiles.map(p => p.id), file.name);'));
+  });
+});
