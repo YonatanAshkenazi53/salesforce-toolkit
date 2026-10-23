@@ -817,6 +817,12 @@ async function openRecordPickerModal(pathStr) {
   // W1 — per-node upsert rides the external-Id key. Session state mirrors
   // node.upsert; persisted on Apply alongside the matching config.
   let upsertOn = !!(node.upsert && node.upsert.field);
+  // Most specific first (user 2026-10-23): a composite key that falls back to the fields a record
+  // has (sftkTieredPairs). A NEW composite key starts with it on; a saved one keeps its own choice.
+  let matchTiered = initialMatching.tiered === true;
+  // The key in the user's words: field labels, not API names ("Account Name + ID Number + Email").
+  const matchLabelOf = f => { const x = candidateFields.find(y => y.name === f); return x ? (x.label || f) : f; };
+  const matchReadsAs = (fields, tiered) => (typeof sftkMatchingReadsAs === 'function') ? sftkMatchingReadsAs((fields || []).map(matchLabelOf), tiered) : { key: (fields || []).join(' + '), how: '' };
   if (node.matching?.fields?.[0]) displayField = node.matching.fields[0];
   // External-ID candidates from the source describe. The user's orgs may
   // have NONE — the strategy stays visible (greyed) with a Setup hint.
@@ -857,7 +863,7 @@ async function openRecordPickerModal(pathStr) {
   function persistMatching() {
     const fields = matchFields.filter(Boolean).slice(0, 4);
     if (!fields.length) fields.push(displayField || 'Name');
-    node.matching = { strategy: matchStrategy, fields, normalize: { ...matchNormalize } };
+    node.matching = { strategy: matchStrategy, fields, normalize: { ...matchNormalize }, ...(matchStrategy === 'composite' && matchTiered ? { tiered: true } : {}) };
     node.matchField = fields[0];
     node._meta._recDisplayField = fields[0];
     // Composite/external-ID target-side names derive from the Field Mapping;
@@ -1111,10 +1117,16 @@ async function openRecordPickerModal(pathStr) {
           ${val && !candidateFields.some(f => f.name === val) ? `<option value="${esc(val)}" selected>${esc(val)} — a related record's field</option>` : ''}
         </select>`);
       }
+      const ra = matchReadsAs(matchFields, matchTiered);
       body = `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
         ${sels.join('<span style="color:var(--subtext)">+</span>')}
         <span class="ds-subtext" style="font-size:11px">ordered, up to 4 — target-side names follow the Field Mapping</span>
-      </div>`;
+      </div>
+      <label class="ds-match-tiered" style="display:inline-flex;align-items:flex-start;gap:6px;cursor:pointer;font-size:12px;margin-top:6px" title="The first field must be present and equal on both sides. A later field counts when both records hold a value: equal adds to the match, different rules the pair out, empty says nothing. The best unique match wins; a tie is listed under ⚠ Needs a decision.">
+        <input type="checkbox" id="dsMatchTiered" ${matchTiered ? 'checked' : ''}>
+        <span><strong>Most specific first</strong> — a record that leaves a later field empty is matched by the fields it has</span>
+      </label>
+      <div class="ds-match-readsas ds-subtext" id="dsMatchReadsAs" style="font-size:11.5px;line-height:1.5;margin-top:4px">Reads as <strong>${esc(ra.key)}</strong>. ${esc(ra.how)}</div>`;
     } else {
       body = extIdCandidates.length
         ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -1278,7 +1290,7 @@ async function openRecordPickerModal(pathStr) {
           // nodes keep it open: choosing the key is step one there.
           const cfgd = !!(node.matching && node.matching.fields && node.matching.fields.length);
           const summary = cfgd
-            ? `${node.matching.strategy === 'externalId' ? '⚡ External ID' : node.matching.strategy === 'composite' ? 'Composite' : 'Single field'}: <strong>${esc(node.matching.fields.join(' + '))}</strong>${node.upsert || upsertOn ? ' · ⬆ upsert' : ''}`
+            ? `${node.matching.strategy === 'externalId' ? '⚡ External ID' : node.matching.strategy === 'composite' ? 'Composite' : 'Single field'}: <strong>${esc(matchReadsAs(node.matching.fields, false).key)}</strong>${node.matching.tiered ? ' <span class="ds-subtext">— most specific first</span>' : ''}${node.upsert || upsertOn ? ' · ⬆ upsert' : ''}`
             : 'not configured — matching by Name';
           return `<details class="ds-match-fold" ${matchFoldOpen === null ? (cfgd ? '' : 'open') : (matchFoldOpen ? 'open' : '')}>
             <summary style="cursor:pointer;font-size:12.5px;padding:4px 0">
@@ -1467,6 +1479,7 @@ async function openRecordPickerModal(pathStr) {
     // ── M3a — matching strategy / composite fields / normalization ───────
     document.querySelectorAll('input[name="dsMatchStrat"]').forEach(rb => rb.addEventListener('change', () => {
       matchStrategy = rb.value;
+      if (matchStrategy === 'composite' && !(node.matching && node.matching.strategy === 'composite')) matchTiered = true;
       // Honest defaults (user bug 2026-08-04: an invisible whitespace
       // difference in an external-Id value made one child "missing"): a
       // Salesforce upsert on a TEXT external Id matches case-insensitively
@@ -1511,6 +1524,11 @@ async function openRecordPickerModal(pathStr) {
       syncKeyTitles();
       matchCfgChanged(true);
     }));
+
+    eid('dsMatchTiered')?.addEventListener('change', e => {
+      matchTiered = e.target.checked;
+      matchCfgChanged(false);
+    });
 
     eid('dsMatchExtId')?.addEventListener('change', e => {
       matchFields = [e.target.value];
