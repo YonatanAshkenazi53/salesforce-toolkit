@@ -21,7 +21,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { rebuildFieldCleanerFixture, removeIdentityField, restoreDuplicateName, removeVolume } from './fixture.mjs';
+import { rebuildFieldCleanerFixture, removeIdentityField, restoreDuplicateName, removeVolume, seedTargetTwinCopy, restoreTargetTwin } from './fixture.mjs';
 
 const J = JSON.stringify;
 const FIXTURE = 'docs/fixtures/complex-deployment/profiles.json';
@@ -1078,6 +1078,38 @@ export const SECTIONS = [
         await rec.point('#dsRecTgtMatchField', 600);
         await rec.say('The field can differ by org: match on one field in the source and another in the target. Normalize forgives case and spacing on both sides.', 6500);
       }
+      // a key of several fields, most specific first, and suggestions of a chosen depth (user 2026-10-23)
+      if (await c.has('input[name="dsMatchStrat"][value="composite"]')) {
+        await rec.click('input[name="dsMatchStrat"][value="composite"]', 900);
+        await rec.fast(() => h.waitFor("!!document.querySelector('[data-match-comp=\"1\"]')", 30000, 300));
+        await h.sleep(600);
+        await rec.say('Several fields make a sequence: the name first, then the fields that tell records apart.', 5000);
+        const pick = async (slot, name) => h.eval(`(() => { const s = document.querySelector('[data-match-comp="${slot}"]'); if (!s) return false; const o = [...s.options].find(o => o.value === ${J(name)}); if (!o) return false; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return o.value; })()`);
+        await rec.point('[data-match-comp="1"]', 500);
+        if (await pick(1, 'Phone')) { await rec.fast(() => h.waitFor("!!document.querySelector('[data-match-comp=\"2\"]')", 30000, 300)); await h.sleep(1200); }
+        if (await pick(2, 'BillingCity')) await h.sleep(1500);
+        if (await c.has('#dsMatchTiered')) {
+          await rec.scrollTo('#dsMatchReadsAs', 'center');
+          await rec.point('#dsMatchTiered', 800);
+          await rec.say('Most specific first. A record that has all three values is matched on all three. One with no city is matched on name and phone; one with only a name, on the name alone. A value that differs on both sides rules the pair out.', 12000);
+          await rec.point('#dsMatchReadsAs', 800);
+          await rec.say('The page reads the key back in plain words, so there is no guessing what it does.', 4500);
+        }
+        if (await c.has('#dsMatchSuggestBtn')) {
+          await rec.click('#dsMatchSuggestBtn', 800);
+          await rec.fast(() => h.waitFor("!!document.querySelector('[data-match-depth]')", 30000, 300));
+          await rec.scrollTo('#dsMatchSuggestBox', 'start');
+          await rec.say('Suggestions ask how many fields the key should have. One field: how many records hold a value for it, in both orgs.', 6500);
+          await rec.click('[data-match-depth="3"]', 800);
+          await rec.fast(() => h.waitFor("[...document.querySelectorAll('[data-match-grade-out]')].slice(0, 3).every(el => el.innerText && !/grading/i.test(el.innerText))", 180000, 500).catch(() => {}));
+          await h.sleep(800);
+          await rec.say('Three fields: the name first, then the fields that tell records apart, graded against both orgs live. A field nobody fills is named and costs the key points; the best key wears the star.', 9500);
+        }
+        // back to the one field the rest of this tour uses
+        await rec.click('input[name="dsMatchStrat"][value="field"]', 800);
+        await rec.fast(() => h.waitFor("!!document.querySelector('#dsRecDisplayField')", 30000, 300).catch(() => {}));
+        await h.sleep(800);
+      }
       if (await c.has('#dsMatchTestBtn')) {
         await rec.click('#dsMatchTestBtn', 700);
         await rec.fast(() => h.waitFor("(document.querySelector('#dsMatchTestResults')?.innerText || '').length > 20", 120000, 500).catch(() => {}));
@@ -1119,10 +1151,12 @@ export const SECTIONS = [
   // writes: the 🔀 Merge step merges the fixture's duplicate pair in trailheads5 for real;
   // the pair is put back off camera (fixture.mjs) so the next chapters see it again
   { id: 'deploy', title: 'Data Deployment', writes: true,
-    cleanup: async ({ h }) => { restoreDuplicateName('npc', (...a) => h.log(...a)); },
+    cleanup: async ({ h }) => { restoreDuplicateName('npc', (...a) => h.log(...a)); restoreTargetTwin('npc2', (...a) => h.log(...a)); },
     run: async c => {
     const { h, rec } = c;
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');
+    // off camera: the target holds two copies of the duplicate name too (🔀 Merge both sides)
+    seedTargetTwinCopy('npc2', (...a) => h.log(...a));
     const id = await ensureDemo(c);
     await nav(c, 'profiles');
     await rec.fast(() => h.waitFor("document.querySelectorAll('.ds-profile-card').length > 0", 30000, 500));
@@ -1204,10 +1238,10 @@ export const SECTIONS = [
         }
         // 🔀 the copies in ONE org merged into one (user 2026-10-11: "so the user ends up with a
         // unique data and without dupes"; 2026-10-12: "ship it as 1.0") — a real write to trailheads5
-        if (await c.has('[data-dep-amb-merge="src"]')) {
-          await rec.scrollTo('[data-dep-amb-merge="src"]', 'center');
-          await rec.say('And when the two copies live in one org by mistake, merge them. The copies are read live from that org.', 5500);
-          await rec.click('[data-dep-amb-merge="src"]', 600);
+        if (await c.has('[data-dep-amb-merge="both"]')) {
+          await rec.scrollTo('.ds-amb-mergebar', 'center');
+          await rec.say('And when the copies are the same record, merge them. The copies in the source, the copies in the target, or both sides, one after the other. The copies are read live from each org.', 8500);
+          await rec.click('[data-dep-amb-merge="both"]', 600);
           await rec.fast(() => h.waitFor("!!document.querySelector('.ds-merge-table')", 60000, 300));
           await h.sleep(800);
           await rec.say('Side by side. You choose the record that stays, and for every field that differs, the value it keeps — its own values are ticked.', 7500);
@@ -1227,10 +1261,22 @@ export const SECTIONS = [
           await rec.click('#sftkConfirmGo', 600);
           await prodGate(c);
           await rec.fast(() => h.waitFor(`_history.length > ${hist}`, 120000, 500));
+          // the target's copies next, the same way
+          await rec.fast(() => h.waitFor("!!document.querySelector('.ds-merge-table')", 60000, 300));
+          await h.sleep(800);
+          await rec.say('The target’s two copies next, the same way. Here the first stays with its own values.', 5500);
+          await rec.click('#dsMergeGo', 600);
+          await rec.fast(() => h.waitFor("!!document.querySelector('#sftkConfirmGo')", 30000, 300));
+          await h.sleep(600);
+          await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) a.click(); return true; })()`);
+          await h.sleep(400);
+          await rec.click('#sftkConfirmGo', 600);
+          await prodGate(c);
+          await rec.fast(() => h.waitFor(`_history.length > ${hist + 1}`, 120000, 500));
           await waitScanned(c);
           await h.sleep(1200);
           await rec.scrollTo('.ds-dep-tabs', 'center');
-          await rec.say('Done, and recorded in History. Both orgs are read again: the name is one record now, and the tab is empty.', 7500);
+          await rec.say('Done, both recorded in History. Both orgs are read again once: one record on each side now, compared like any other pair, and the tab is empty.', 8000);
         }
       }
     }
