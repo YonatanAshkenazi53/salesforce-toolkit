@@ -143,7 +143,8 @@ export default async function (h) {
     srt += `${++k}\n${stamp(cues[i].tau)} --> ${stamp(end - 50)}\n${cues[i].text}\n\n`;
   }
   if (TRACK) writeFileSync(out.replace(/\.mp4$/i, '') + '.srt', srt);
-  const mmss = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000 % 60)).padStart(2, '0')}`;
+  // YouTube's chapter rule (user 2026-10-23): the first stamp is 00:00, so every stamp has two-digit minutes
+  const mmss = ms => `${String(Math.floor(ms / 60000)).padStart(2, '0')}:${String(Math.floor(ms / 1000 % 60)).padStart(2, '0')}`;
   const ch = (man.chapters || []).map(c => ({ tau: T(c.t), title: c.title }));
   writeFileSync(out.replace(/\.mp4$/i, '') + '.chapters.txt', ch.map((c, i) => `${mmss(i === 0 ? 0 : c.tau)} ${c.title}`).join('\n') + '\n');
 

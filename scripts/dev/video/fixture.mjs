@@ -83,6 +83,42 @@ export function removeIdentityField(aliases, objects, log = () => {}) {
 // inserted again, through the same DML options the seed uses (the org's
 // duplicate rules stay as they are: the fixture carries duplicates on purpose).
 // Returns { before, after } counts, or { failed }.
+// The TARGET's copy of "SFTK CX Duplicate Name" (seed-target.apex: "Target twin" / 3) gets a
+// second copy (Haifa / 1) so the deploy chapter can show 🔀 Merge both sides (user 2026-10-23);
+// restoreTargetTwin puts the fixture's copy back to its values and removes every other copy.
+function _dupNameApex(alias, lines, log, what) {
+  const dir = join(process.env.TEMP || resolve('dist'), `sftk-duptgt-${Date.now()}`);
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, 'run.apex');
+  writeFileSync(file, ["Database.DMLOptions dmo = new Database.DMLOptions(); dmo.DuplicateRuleHeader.allowSave = true; dmo.DuplicateRuleHeader.runAsCurrentUser = true; dmo.optAllOrNone = true;", ...lines].join('\n'));
+  try {
+    execFileSync('sf', ['apex', 'run', '-o', alias, '--file', `"${file}"`, '--json'], { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const q = JSON.parse(execFileSync('sf', ['data', 'query', '-o', alias, '--json', '-q', "\"SELECT Id, BillingCity, AnnualRevenue FROM Account WHERE Name = 'SFTK CX Duplicate Name' ORDER BY CreatedDate\""], { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+    const after = ((q.result && q.result.records) || []).map(r => `${r.Id}:${r.BillingCity}/${r.AnnualRevenue}`);
+    log(`${what} on ${alias}: ${after.length} record(s) (${after.join(', ')})`);
+    return { after };
+  } catch (e) {
+    const failed = String((e && (e.stdout || e.message)) || e).slice(0, 400);
+    log(`${what} on ${alias}: FAILED — ${failed}`);
+    return { failed };
+  } finally { try { rmSync(dir, { recursive: true, force: true }); } catch (_) {} }
+}
+export function seedTargetTwinCopy(alias = 'npc2', log = () => {}) {
+  return _dupNameApex(alias, [
+    "List<Account> have = [SELECT Id FROM Account WHERE Name = 'SFTK CX Duplicate Name' ORDER BY CreatedDate];",
+    "if (have.isEmpty()) Database.insert(new Account(Name='SFTK CX Duplicate Name', Industry='Energy', BillingCity='Target twin', AnnualRevenue=3), dmo);",
+    "if (have.size() < 2) Database.insert(new Account(Name='SFTK CX Duplicate Name', Industry='Energy', BillingCity='Haifa', AnnualRevenue=1), dmo);",
+  ], log, 'Duplicate Name twin seeded');
+}
+export function restoreTargetTwin(alias = 'npc2', log = () => {}) {
+  return _dupNameApex(alias, [
+    "List<Account> have = [SELECT Id FROM Account WHERE Name = 'SFTK CX Duplicate Name' ORDER BY CreatedDate];",
+    "if (have.isEmpty()) { Database.insert(new Account(Name='SFTK CX Duplicate Name', Industry='Energy', BillingCity='Target twin', AnnualRevenue=3), dmo); return; }",
+    "have[0].Industry = 'Energy'; have[0].BillingCity = 'Target twin'; have[0].AnnualRevenue = 3; Database.update(have[0], dmo);",
+    "if (have.size() > 1) { List<Account> gone = new List<Account>(); for (Integer i = 1; i < have.size(); i++) gone.add(have[i]); delete gone; }",
+  ], log, 'Duplicate Name target copy restored');
+}
+
 export function restoreDuplicateName(alias = 'npc', log = () => {}) {
   const apex = [
     "Database.DMLOptions dmo = new Database.DMLOptions(); dmo.DuplicateRuleHeader.allowSave = true; dmo.DuplicateRuleHeader.runAsCurrentUser = true; dmo.optAllOrNone = true;",
