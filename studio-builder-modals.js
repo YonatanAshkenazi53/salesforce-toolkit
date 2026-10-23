@@ -825,6 +825,10 @@ async function openRecordPickerModal(pathStr) {
     .map(f => ({ name: f.name, label: f.label || f.name, ext: f.externalId === true }));
   // M3b — analyzer state: cached results survive search-driven re-renders.
   let matchTestHtml    = '';
+  // The Matching fold as the user left it; null = the default (open until the key is configured).
+  // Every change inside the fold re-renders the modal, and the re-render folded it (user 2026-10-23:
+  // "when selecting one of the options in the radio buttons it will minimize the section").
+  let matchFoldOpen    = null;
   let matchSuggestOpen = false;
   const gradeCache     = new Map();   // suggestion sig → rendered mini-grade
   const suggestions    = _matchSuggestionsFromDescribe(desc);
@@ -1276,7 +1280,7 @@ async function openRecordPickerModal(pathStr) {
           const summary = cfgd
             ? `${node.matching.strategy === 'externalId' ? '⚡ External ID' : node.matching.strategy === 'composite' ? 'Composite' : 'Single field'}: <strong>${esc(node.matching.fields.join(' + '))}</strong>${node.upsert || upsertOn ? ' · ⬆ upsert' : ''}`
             : 'not configured — matching by Name';
-          return `<details class="ds-match-fold" ${cfgd ? '' : 'open'}>
+          return `<details class="ds-match-fold" ${matchFoldOpen === null ? (cfgd ? '' : 'open') : (matchFoldOpen ? 'open' : '')}>
             <summary style="cursor:pointer;font-size:12.5px;padding:4px 0">
               <strong>Matching:</strong> <span>${summary}</span>
               <span style="opacity:.6;font-size:11px"> — click to ${cfgd ? 'review or change' : 'configure'}</span>
@@ -1410,6 +1414,7 @@ async function openRecordPickerModal(pathStr) {
   }
 
   function wireModal(filter = '') {
+    eid('dsModalBox')?.querySelector('.ds-match-fold')?.addEventListener('toggle', e => { matchFoldOpen = e.target.open; });
     const note = () => { const el = eid('dsRecNote'); if (el) el.innerHTML = noteHtml(); };
 
     // Source-side match field change → persist as node.matchField, re-query, re-render.
