@@ -7,12 +7,14 @@ const RC = readFileSync(new URL('../studio-reconcile.js', import.meta.url), 'utf
 // User 2026-10-17: "can we do the whole sections collapsable? the deployment tree, deploy parents,
 // worth reading" — the three cards are <details>, open by default, and what is folded is remembered.
 describe('Deploy page: the tree, parents-first and notes cards fold', () => {
-  it('one level of folding: two sections fold, the cards inside them do not (user 2026-10-18)', () => {
-    expect((DV.match(/<details\$\{_depFoldOpen\(/g) || []).length).toBe(2);
+  it('the two sections fold, and so does every card inside About (user 2026-10-18; 2026-10-24: "minimize every card")', () => {
+    expect((DV.match(/<details\$\{_depFoldOpen\(/g) || []).length).toBe(8);   // info, plan, notes, tree, the parents card in its four shapes
     expect(DV).toContain('<details${_depFoldOpen(\'info\')} class="ds-rec-card ds-dep-fold ds-dep-info" data-fold="info">');
     expect(DV).toContain('<details${_depFoldOpen(\'plan\')} class="ds-rec-card ds-dep-fold" data-fold="plan">');
-    expect(DV).toContain('<div class="ds-rec-card-hd"><span class="ds-rec-card-ico">📦</span><span class="ds-rec-card-title">This deployment</span>');
-    expect(DV).toContain("const SFTK_DEP_FOLDS = ['info', 'plan'];");
+    expect(DV).toContain('<summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">📦</span><span class="ds-rec-card-title">This deployment</span>');
+    expect(DV).toContain("const SFTK_DEP_FOLDS = ['info', 'plan', 'parents', 'notes', 'tree'];");
+    for (const k of ['notes', 'tree', 'parents']) expect(DV).toContain(`data-fold="${k}"`);
+    expect(CSS).toContain('.ds-dep-subfold > summary { list-style: none; cursor: pointer; }');
     // About holds the parents, the notes and the tree
     const info = DV.indexOf('data-fold="info"'), tree = DV.indexOf('<div id="dsDepTree"></div>'), order = DV.indexOf('<div id="dsDepOrder"></div>');
     expect(info).toBeGreaterThan(0); expect(order).toBeGreaterThan(info); expect(tree).toBeGreaterThan(order);

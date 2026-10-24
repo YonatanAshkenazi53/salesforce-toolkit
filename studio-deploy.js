@@ -517,7 +517,7 @@ async function renderDeploy() {
   if (scan.nearMisses) notes.push(`≈ ${scan.nearMisses} record pair(s) almost matched — keys differ only by whitespace or case (marked ≈ on the rows).`);
   if (scan.personContacts) { const l = sftkPaContactsLine(scan.personContacts, srcL, tgtL); if (l) notes.push(esc(l)); }
   for (const w of (scan.warnings || [])) notes.push(`⚠ ${esc(String(w).replace(/^[⚠\s]+/, ''))}`);
-  const notesHtml = notes.length ? `<div class="ds-rec-card ds-rec-card-warn"><div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⚠</span><span class="ds-rec-card-title">Worth reading before you deploy</span><span class="ds-rec-card-hint">${notes.length} note${notes.length === 1 ? '' : 's'}</span><span class="ds-dep-foldsum">${notes.length} note${notes.length === 1 ? '' : 's'} — open to read</span></div>${notes.map(n => `<div class="ds-rec-card-line">${n}</div>`).join('')}</div>` : '';
+  const notesHtml = notes.length ? `<details${_depFoldOpen('notes')} class="ds-rec-card ds-rec-card-warn ds-dep-fold ds-dep-subfold" data-fold="notes"><summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⚠</span><span class="ds-rec-card-title">Worth reading before you deploy</span><span class="ds-rec-card-hint">${notes.length} note${notes.length === 1 ? '' : 's'}</span><span class="ds-dep-foldsum">${notes.length} note${notes.length === 1 ? '' : 's'} — open to read</span></summary>${notes.map(n => `<div class="ds-rec-card-line">${n}</div>`).join('')}</details>` : '';
 
   // ── records panel ──
   const cur = objects.find(o => o.pathKey === _depObjPath) || objects[0];
@@ -680,7 +680,7 @@ window.sftkDeployIdentityChanged = function () { _depIdKey = ''; _depIdData = nu
 
 // ── folding sections (user 2026-10-17: "can we do the whole sections collapsable? the deployment tree,
 // deploy parents, worth reading") — <details> cards; what is folded is remembered in the settings ──
-const SFTK_DEP_FOLDS = ['info', 'plan'];   // one level of folding (2026-10-18)
+const SFTK_DEP_FOLDS = ['info', 'plan', 'parents', 'notes', 'tree'];   // the two sections and the three cards inside About (2026-10-24: "minimize every card")
 function _depFoldOpen(key, dflt = true) {
   const f = (typeof _settings === 'object' && _settings && _settings.deployFolds) || {};
   if (typeof f[key] === 'boolean') return f[key] ? ' open' : '';
@@ -739,13 +739,13 @@ async function _depPaintTree(p, scan) {
   };
   const root = sftkDeployTreeNodes(p.tree);
   const missingTgt = (_depIdKey === key && _depIdData) ? sftkIdCreatable(_depIdData.objects, 'tgt') : [];
-  host.innerHTML = `<div class="ds-rec-card">
-    <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">📦</span><span class="ds-rec-card-title">This deployment</span>
-      <span class="ds-rec-card-hint">every object of this deployment, how it hangs under its parent, and how many records ${esc(orgLabel(p.sourceOrg || ''))} and ${esc(orgLabel(p.targetOrg || ''))} hold — click an object to see its records</span><span class="ds-dep-foldsum">${(() => { const o = sftkDeployObjects(p.tree).map(x => esc(x.obj)); return `${o.length} object${o.length === 1 ? '' : 's'}: ${o.slice(0, 4).join(' · ')}${o.length > 4 ? ` · +${o.length - 4} more` : ''}`; })()}</span></div>
+  host.innerHTML = `<details${_depFoldOpen('tree')} class="ds-rec-card ds-dep-fold ds-dep-subfold" data-fold="tree">
+    <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">📦</span><span class="ds-rec-card-title">This deployment</span>
+      <span class="ds-rec-card-hint">every object of this deployment, how it hangs under its parent, and how many records ${esc(orgLabel(p.sourceOrg || ''))} and ${esc(orgLabel(p.targetOrg || ''))} hold — click an object to see its records</span><span class="ds-dep-foldsum">${(() => { const o = sftkDeployObjects(p.tree).map(x => esc(x.obj)); return `${o.length} object${o.length === 1 ? '' : 's'}: ${o.slice(0, 4).join(' · ')}${o.length > 4 ? ` · +${o.length - 4} more` : ''}`; })()}</span></summary>
     <div class="ds-dtree"><ul>${root ? nodeHtml(root, null) : ''}</ul></div>
     <div class="ds-dtree-foot"><button class="ds-btn ds-btn-sm" id="dsDepIdBtn" title="See which objects carry the identity field in each org, create it where it is missing, and stamp matched pairs">🪪 Identity…</button>
       ${missingTgt.length ? `<span class="ds-rec-card-line">Optional. Records are matched by the fields shown on each card. An identity field makes that match exact even when a name changes — ${missingTgt.length} object(s) have none in ${esc(orgLabel(p.targetOrg || ''))} yet (${esc(missingTgt.join(', '))}). 🪪 Identity… can create it.</span>` : ''}</div>
-  </div>`;
+  </details>`;
   _depWireFolds(host);
   host.querySelectorAll('[data-tree-obj]').forEach(el => {
     // a chip opens its own tab of that object; the card opens the object
@@ -817,8 +817,8 @@ async function _depPaintOrder(p, scan) {
   const key = `${p.id}|${scan.runAt}`;
   const tgtL = orgLabel(p.targetOrg || '');
   if (_depOrderKey !== key || !_depOrderData) {
-    host.innerHTML = `<div class="ds-rec-card"><div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span><span class="ds-rec-card-title">Start with parents first</span>
-      <span class="ds-rec-card-hint">⏳ reading what each object points at — one describe per object, one 1-row probe per parent object</span></div></div>`;
+    host.innerHTML = `<details${_depFoldOpen('parents')} class="ds-rec-card ds-dep-fold ds-dep-subfold" data-fold="parents"><summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span><span class="ds-rec-card-title">Start with parents first</span>
+      <span class="ds-rec-card-hint">⏳ reading what each object points at — one describe per object, one 1-row probe per parent object</span></summary></details>`;
     _depOrderKey = key; _depOrderData = null;
     let data = null;
     try { data = await sftkParentOrderFor(p); } catch (_) { data = null; }
@@ -838,8 +838,9 @@ async function _depPaintOrder(p, scan) {
   }
   if (data.failed) {
     { const ch = eid('dsDepParentsChip'); if (ch) { ch.textContent = '⚠ parents could not be checked'; ch.className = 'ds-dep-pchip ds-dep-pchip-bad'; } }
-    h.innerHTML = `<div class="ds-rec-card ds-rec-card-warn"><div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span><span class="ds-rec-card-title">Start with parents first</span></div>
-      <div class="ds-rec-card-line">${data.offline ? 'Both orgs must be open and signed in to check which parent objects these records point at.' : 'Could not read the objects’ lookups — 🔄 Refresh state to try again.'} Until then the order is unknown, not fine.</div></div>`;
+    h.innerHTML = `<details${_depFoldOpen('parents')} class="ds-rec-card ds-rec-card-warn ds-dep-fold ds-dep-subfold" data-fold="parents"><summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span><span class="ds-rec-card-title">Start with parents first</span></summary>
+      <div class="ds-rec-card-line">${data.offline ? 'Both orgs must be open and signed in to check which parent objects these records point at.' : 'Could not read the objects’ lookups — 🔄 Refresh state to try again.'} Until then the order is unknown, not fine.</div></details>`;
+    _depWireFolds(h);
     return;
   }
   const steps = sftkDeployOrderSteps(objects).map(s => {
@@ -863,6 +864,7 @@ async function _depPaintOrder(p, scan) {
   const anyDoomed = steps.some(s => s.state === 'empty' && s.required);
   const anyEmpty = steps.some(s => s.state === 'empty');
   const need = s => s.neededBy.map(n => `${esc(n.obj)}.${esc(n.field)}${n.required ? ' <b>(required)</b>' : ''}`).join(' · ');
+  const matchedBy = s => { const m = sftkDeployParentMatchFields(p.tree, s); return m.length === 1 ? m[0] : m.join(' / '); };
   const stepHtml = (s, i) => {
     const isNext = i === nextIdx;
     const btn = (label, primary) => `<button class="ds-btn ds-btn-xs${primary ? ' ds-btn-primary' : ''}" data-dep-gap="${esc(s.refObj)}" data-dep-gap-for="${esc(s.forObj)}" title="Scans ${esc(s.refObj)} across this org pair and opens it here — align it, then the banner brings you back.">${label}</button>`;
@@ -875,7 +877,8 @@ async function _depPaintOrder(p, scan) {
       : `<span class="ds-lkp-hint">couldn't check automatically</span> ${btn('🔍 Compare & fix', false)}`;
     return `<div class="ds-ordstep${settled(s) ? ' ds-ordstep-done' : ''}${isNext ? ' ds-ordstep-next' : ''}">
       <span class="ds-ordstep-num">${i + 1}</span>
-      <span class="ds-dep-ordwhat"><strong>${esc(s.refObj)}</strong> <span class="ds-lkp-hint">needed by ${need(s)}</span></span>
+      <span class="ds-dep-ordwhat"><strong>${esc(s.refObj)}</strong> <span class="ds-lkp-hint">needed by ${need(s)}</span>
+        <span class="ds-dep-pmatch" title="The field of ${esc(s.refObj)} a lookup is resolved by: the child record's parent is found in ${esc(tgtL)} by this value. Change it when names repeat or differ between the orgs."> · matched by <b>${esc(matchedBy(s))}</b> <button class="ds-btn ds-btn-xs ds-dep-pmatch-btn" data-dep-pmatch-edit="${esc(s.refObj)}" title="Choose the field ${esc(s.refObj)} is matched by">✏</button></span></span>
       ${status}${isNext ? '<span class="ds-ordstep-arrow">← next</span>' : ''}
     </div>`;
   };
@@ -886,18 +889,19 @@ async function _depPaintOrder(p, scan) {
   // "we should show that the parents are synced for this deployment … under the info section")
   if (allDone && !anyDoomed && !anyEmpty) {
     const names = steps.map(s => esc(s.refObj));
-    h.innerHTML = `<div class="ds-rec-card ds-rec-card-good ds-dep-parents-synced"><div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span><span class="ds-rec-card-title">Parents synced ✓</span>
-      <span class="ds-rec-card-hint">nothing to deploy first</span></div>
+    h.innerHTML = `<details${_depFoldOpen('parents')} class="ds-rec-card ds-rec-card-good ds-dep-parents-synced ds-dep-fold ds-dep-subfold" data-fold="parents"><summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span><span class="ds-rec-card-title">Parents synced ✓</span>
+      <span class="ds-rec-card-hint">nothing to deploy first</span></summary>
       <div class="ds-rec-card-line">${names.length
         ? `Every object these records look up outside the deployment is already in ${esc(tgtL)}: ${names.join(', ')}. Lookups will land on them by name.`
-        : `None of these objects looks up a record outside the deployment.`}</div></div>`;
+        : `None of these objects looks up a record outside the deployment.`}</div></details>`;
+    _depWireFolds(h);
     return;
   }
-  h.innerHTML = `<div class="ds-rec-card ${anyDoomed ? 'ds-rec-card-bad' : anyEmpty ? 'ds-rec-card-warn' : allDone ? 'ds-rec-card-good' : ''}">
-    <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span>
+  h.innerHTML = `<details${_depFoldOpen('parents')} class="ds-rec-card ${anyDoomed ? 'ds-rec-card-bad' : anyEmpty ? 'ds-rec-card-warn' : allDone ? 'ds-rec-card-good' : ''} ds-dep-fold ds-dep-subfold" data-fold="parents">
+    <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span>
       <span class="ds-rec-card-title">${anyDoomed ? '⛔ Stop — some inserts here fail until their parents exist · ' : ''}Start with parents first</span>
       <span class="ds-dep-pchip ds-dep-pchip-${verdict.cls}">${esc(verdict.text)}</span>
-      <span class="ds-rec-card-hint">every object in this deployment, and what it points at outside it — those records must be in ${esc(tgtL)} first, lookups land on them by name</span></div>
+      <span class="ds-rec-card-hint">every object in this deployment, and what it points at outside it — those records must be in ${esc(tgtL)} first; a lookup lands on the parent that matches by the field shown on its row</span></summary>
     <div class="ds-rec-card-body">
       ${steps.length ? steps.map(stepHtml).join('') : `<div class="ds-ordstep ds-ordstep-done"><span class="ds-ordstep-num">✓</span><span class="ds-dep-ordwhat">None of ${chain} points at an object outside this deployment — there is nothing to deploy first.</span></div>`}
       <div class="ds-ordstep${allDone ? ' ds-ordstep-next' : ''}">
@@ -905,8 +909,11 @@ async function _depPaintOrder(p, scan) {
         <span class="ds-dep-ordwhat"><strong>${chain}</strong> <span class="ds-lkp-hint">— this deployment, in this order: a parent object goes in before the object under it</span></span>
         ${allDone ? '<span class="ds-psync ds-psync-ok">parents ready ✓</span><span class="ds-ordstep-arrow">← next</span>' : '<span class="ds-lkp-hint">waits for the steps above</span>'}
       </div>
-    </div></div>`;
+    </div></details>`;
   _depWireFolds(h);
+  // ✏ the field a parent is matched by (user 2026-10-24: "show by what field the parents are matched, and give
+  // the user an option to select a field")
+  h.querySelectorAll('[data-dep-pmatch-edit]').forEach(b => b.addEventListener('click', () => _depParentMatchEdit(p, scan, steps.find(s => s.refObj === b.dataset.depPmatchEdit))));
   h.querySelectorAll('[data-dep-gap]').forEach(b => b.addEventListener('click', async () => {
     const label = b.textContent; b.disabled = true; b.textContent = '⏳ scanning…';
     if (!(await sftkOpenParentsFirst(p, b.dataset.depGap, b.dataset.depGapFor))) { b.disabled = false; b.textContent = label; }
@@ -919,6 +926,74 @@ async function _depPaintOrder(p, scan) {
       if (_depOrderKey === key && _currentView === 'deploy' && _reconcileProfile === p) _depPaintOrder(p, scan);
     })();
   }
+}
+
+// PURE. The field(s) a parent object is matched by: every lookup of the deployment that points at it
+// carries its own resolution (node.lookupResolutions[field].matchField, Name when none) — one value
+// when they all agree, else each distinct one.
+function sftkDeployParentMatchFields(tree, step) {
+  const byObj = new Map();
+  (function walk(n) { if (!n) return; byObj.set(n.objectType || n.childSObject || '', n); (n.children || []).forEach(walk); })(tree);
+  const out = [];
+  for (const nb of ((step && step.neededBy) || [])) {
+    const node = byObj.get(nb.obj);
+    const lr = node && node.lookupResolutions && node.lookupResolutions[nb.field];
+    const f = (lr && lr.matchField) || 'Name';
+    if (!out.includes(f)) out.push(f);
+  }
+  return out.length ? out : ['Name'];
+}
+// PURE. The same resolution written to every lookup that points at the parent; returns the number changed.
+function sftkDeploySetParentMatchField(tree, step, field) {
+  const byObj = new Map();
+  (function walk(n) { if (!n) return; byObj.set(n.objectType || n.childSObject || '', n); (n.children || []).forEach(walk); })(tree);
+  let n = 0;
+  for (const nb of ((step && step.neededBy) || [])) {
+    const node = byObj.get(nb.obj);
+    if (!node) continue;
+    node.lookupResolutions = node.lookupResolutions || {};
+    const cur = node.lookupResolutions[nb.field] || {};
+    if (cur.matchField === field && cur.strategy === 'match') continue;
+    node.lookupResolutions[nb.field] = { ...cur, strategy: 'match', matchObject: step.refObj, matchField: field };
+    n++;
+  }
+  return n;
+}
+// ✏ on a parent row: the parent's fields that can identify a record (name, unique, external ID, text),
+// the current one selected; the choice lands on every lookup that points at this parent, the deployment
+// is saved, both orgs are read again. Several fields for a parent is the next step (backlog).
+async function _depParentMatchEdit(p, scan, step) {
+  if (!step) return;
+  const sess = await getOrgSession(p.sourceOrg);
+  if (!sess) return showToast(`Open ${orgLabel(p.sourceOrg)} in a Salesforce tab first — the fields of ${step.refObj} are read from there.`, 'error', 7000);
+  const desc = await describe(step.refObj, sess.orgUrl, sess.sid);
+  if (!desc || !Array.isArray(desc.fields)) return showToast(`${step.refObj} could not be described in ${orgLabel(p.sourceOrg)}.`, 'error', 7000);
+  const SYS = new Set(['Id', 'OwnerId', 'CreatedById', 'LastModifiedById', 'RecordTypeId', 'MasterRecordId']);
+  const cands = desc.fields.filter(f => !SYS.has(f.name) && (f.externalId || f.unique || f.nameField || ['string', 'email', 'phone', 'url'].includes(f.type)) && !f.calculated && f.type !== 'textarea')
+    .map(f => ({ name: f.name, label: f.label || f.name, why: f.externalId ? 'external ID' : f.unique ? 'unique' : f.nameField ? 'name' : '' }))
+    .sort((a, b) => (b.why === 'external ID') - (a.why === 'external ID') || (b.why === 'unique') - (a.why === 'unique') || (b.why === 'name') - (a.why === 'name') || a.label.localeCompare(b.label));
+  const cur = sftkDeployParentMatchFields(p.tree, step);
+  const now = cur.length === 1 ? cur[0] : '';
+  showModal(`
+    <div class="ds-modal-header">✏ ${esc(step.refObj)} — matched by which field?</div>
+    <div class="ds-modal-body" style="font-size:12.5px">
+      <div style="margin-bottom:8px">A record of ${esc(step.neededBy.map(n => `${n.obj}.${n.field}`).join(', '))} points at a ${esc(step.refObj)} record. In ${esc(orgLabel(p.targetOrg))} that parent is found by the value of this field${cur.length > 1 ? ` — today the lookups disagree: ${esc(cur.join(', '))}` : ''}.</div>
+      <select id="dsDepPmatchSel" class="ds-select" style="min-width:320px">
+        ${cands.map(f => `<option value="${esc(f.name)}" ${f.name === now ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})${f.why ? ` — ${f.why}` : ''}</option>`).join('')}
+      </select>
+      <div class="ds-subtext" style="font-size:11.5px;margin-top:8px">An external ID or a unique field is exact; a name repeats. Several fields, most specific first, for a parent outside the deployment is the next step — for an object inside it, the key lives in its Pick Records window.</div>
+    </div>
+    <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Cancel</button><button class="ds-btn ds-btn-primary" id="dsDepPmatchGo">Use this field and read both orgs again</button></div>`);
+  eid('dsDepPmatchGo')?.addEventListener('click', async () => {
+    const field = eid('dsDepPmatchSel')?.value;
+    if (!field) return;
+    const n = sftkDeploySetParentMatchField(p.tree, step, field);
+    closeModal();
+    if (!n) return showToast(`${step.refObj} is already matched by ${field}.`, 'info', 4000);
+    if (!p.ephemeral) { const saved = _profiles.find(x => x.id === p.id); if (saved && saved !== p) saved.tree = p.tree; await storageSaveProfiles(); }
+    showToast(`${step.refObj} is matched by ${field} on ${n} lookup${n === 1 ? '' : 's'} — reading both orgs again…`, 'success', 5000);
+    await _depRescan(p);
+  });
 }
 
 // ⚠ Needs a decision — the tab explains itself and makes each group DECIDABLE
