@@ -86,9 +86,45 @@ describe('the panel', () => {
     expect(M).toContain('async function sftkAnalyzeMatchKey(objType, profile, srcFields, tgtFields, normalize, strategy, tiered)');
     expect(M).toContain("if (flds.length > 1 && typeof sftkTierCoverage === 'function') counts.tiers = sftkTierCoverage(");
     expect(M).toContain("? { ...sftkTieredPreview(out.src.parts, out.tgt.parts), tiered: true }");
-    expect(M).toContain("<strong>${st.populated.toLocaleString()} of ${st.total.toLocaleString()}</strong> hold ${counts.tiers ? 'the key' : 'a value'}");
-    expect(M).toContain('up to each field: ${counts.tiers.levels.map(');
+    expect(M).toContain("['hold a value', (st, k) => `<strong>${n(st.populated)}</strong> of ${n(st.total)}");
+    expect(M).toContain("rows.push(['up to each field', (st, k) => k.tiers ? k.tiers.levels.map(");
     expect(M).toContain("s.normalize || {}, s.strategy, s.tiered === true);");
     expect(M).toContain("m.normalize, m.strategy, m.tiered === true);");
+  });
+});
+
+// 2026-10-24: "why is the expect mismatches? if we do email + id + phone number it should be even more
+// unique" — the verdict judges the key on each side, never how many source records the target holds.
+describe('the verdict judges the key, not the target\'s size', () => {
+  const { _matchKeyVerdict, _matchWouldHtml } = extractFunctions('studio-builder-modals.js', ['_matchKeyVerdict', '_matchWouldHtml'], { 'sftk-matching.js': ['sftkKeyStats'] });
+  const counts = (total, blank, dupPairs) => { const keyCounts = new Map(); let i = 0; for (; i < dupPairs; i++) keyCounts.set('d' + i, 2); for (let u = 0; u < total - blank - dupPairs * 2; u++) keyCounts.set('u' + u, 1); return { keyCounts, total, blank }; };
+  it('2,000 source records, 22 in the target, both fully populated and unique: a strong key', () => {
+    const v = _matchKeyVerdict([{ label: 'Source', counts: counts(2000, 0, 29) }, { label: 'Target', counts: counts(22, 0, 0) }]);
+    expect(v.label).toBe('Strong key'); expect(v.score).toBe(97); expect(v.why).toBe('58 share a key in Source');
+  });
+  it('a side with many blanks makes the key weak, and says which side', () => {
+    const v = _matchKeyVerdict([{ label: 'Source', counts: counts(100, 0, 0) }, { label: 'Target', counts: counts(100, 60, 0) }]);
+    expect(v.label).toBe('Weak key'); expect(v.why).toBe('60 blank in Target');
+  });
+  it('a side that did not answer is left out; none graded → null', () => {
+    expect(_matchKeyVerdict([{ label: 'Source', counts: counts(10, 0, 0) }, { label: 'Target', err: 'closed' }]).label).toBe('Strong key');
+    expect(_matchKeyVerdict([{ label: 'Source', err: 'x' }])).toBeNull();
+  });
+  it('the cross-org line counts pairs, inserts and decisions — no verdict in it', () => {
+    globalThis.esc = x => x;
+    const h = _matchWouldHtml({ cross: { sourceTotal: 2000, matchedUnique: 2, unmatched: 1998, ambiguous: 0, tiered: true } });
+    delete globalThis.esc;
+    expect(h).toContain('would pair <strong>2</strong> of 2,000 source records');
+    expect(h).toContain('<strong>1,998</strong> new in the target');
+    expect(h).not.toMatch(/mismatch|weak/i);
+  });
+});
+
+describe('a new depth while the first grades still run (found 2026-10-24)', () => {
+  const M3 = readFileSync(new URL('../studio-builder-modals.js', import.meta.url), 'utf8');
+  it('the running loop stops at the old list and the new list is graded once more', () => {
+    expect(M3).toContain("if (_autoGradeActive) { _autoGradeAgain = true; return; }");
+    expect(M3).toContain("if (!matchSuggestOpen || suggestions !== mine) break;");
+    expect(M3).toContain("if (_autoGradeAgain) { _autoGradeAgain = false; _autoGradeTop(); }");
   });
 });

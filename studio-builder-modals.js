@@ -851,6 +851,7 @@ async function openRecordPickerModal(pathStr) {
   const gradeInFlight  = new Map();   // sig → in-flight promise (dedupe)
   const gradeFailed    = new Set();   // sigs whose grade errored — retryable
   let _autoGradeActive = false;
+  let _autoGradeAgain  = false;   // the depth changed while a grade loop ran: run once more for the new list
   const gradeReset = () => {
     gradeCache.clear(); gradeInFlight.clear(); gradeFailed.clear();
     // Scores without their evidence panels would still paint badges.
@@ -1695,11 +1696,8 @@ async function openRecordPickerModal(pathStr) {
             side.tiers.levels.slice(1).forEach(l => { if (l.populated < side.tiers.total * 0.1 && !weak.some(w => w.field === l.field)) weak.push({ field: l.field, populated: l.populated, total: side.tiers.total }); });
           }
           if (weak.length && typeof s.score === 'number') s.score = Math.max(0, s.score - 30 * weak.length);
-          let html = _matchAnalysisHtml(res, clone, true);
+          let html = _matchAnalysisHtml(res, clone, true, extras);
           if (weak.length) html = `<div class="ds-subtext" style="font-size:11px;color:var(--warning,#b45309)">⚠ ${esc(weak.map(w => `${w.field}: held by ${w.populated.toLocaleString()} of ${w.total.toLocaleString()} sampled records — adds almost nothing to the key`).join(' · '))}</div>` + html;
-          for (const x of extras) {
-            html += `<div class="ds-match-test-out" style="margin-top:2px;padding:4px 8px;background:rgba(148,163,184,.12);border-radius:6px">${_matchStatsHtml(`Target · ${orgLabel(x.org)}`, x.counts, x.err)}</div>`;
-          }
           if (list.length > capped.length) {
             html += `<div class="ds-subtext" style="font-size:11px">…${list.length - capped.length} more target(s) not auto-graded (cap ${GRADE_TGT_CAP}) — 🧪 Test this key grades them all.</div>`;
           }
@@ -1734,11 +1732,12 @@ async function openRecordPickerModal(pathStr) {
     // automatically (sequential, ≤2 queries each, cached), so the list opens
     // as evidence, not just schema guesswork. The rest stay lazy per row.
     async function _autoGradeTop() {
-      if (_autoGradeActive) return;   // modal-scope guard — survives re-renders
+      if (_autoGradeActive) { _autoGradeAgain = true; return; }   // modal-scope guard — survives re-renders
       _autoGradeActive = true;
+      const mine = suggestions;
       try {
-        for (const s of suggestions.slice(0, 3)) {
-          if (!matchSuggestOpen) break;
+        for (const s of mine.slice(0, 3)) {
+          if (!matchSuggestOpen || suggestions !== mine) break;   // the list changed under the loop (a new depth)
           // Modal closed (element gone from the document) → stop issuing
           // live-org queries for a UI nobody is looking at.
           if (!document.getElementById('dsMatchSuggestBox')) break;
@@ -1750,7 +1749,10 @@ async function openRecordPickerModal(pathStr) {
           if (outEl) outEl.innerHTML = gradeCache.get(s.sig) || '';
           _refreshSuggestBadges();
         }
-      } finally { _autoGradeActive = false; }
+      } finally {
+        _autoGradeActive = false;
+        if (_autoGradeAgain) { _autoGradeAgain = false; _autoGradeTop(); }
+      }
     }
 
     wireSuggestRows();
@@ -2305,46 +2307,60 @@ async function sftkAnalyzeMatchKey(objType, profile, srcFields, tgtFields, norma
   return out;
 }
 
-// One org's stats line — ds-pk-style bar + numbers.
-function _matchStatsHtml(label, counts, err) {
-  if (err) return `<div class="ds-match-stat-row" style="font-size:12px;color:var(--warning,#b45309);margin-top:4px">⚠ ${esc(label)}: ${esc(err)}</div>`;
-  if (!counts) return '';
-  const st  = sftkKeyStats(counts);
-  const col = p => p >= 98 ? '#16a34a' : p >= 90 ? '#f59e0b' : '#dc2626';
-  const bar = pct => `<span class="ds-pk-bar" style="width:64px;display:inline-block"><span class="ds-pk-fill" style="width:${Math.max(2, pct)}%;background:${col(pct)}"></span></span>`;
-  return `<div class="ds-match-stat-row" style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:4px;flex-wrap:wrap">
-    <span style="min-width:150px"><strong>${esc(label)}</strong>${counts.sampled ? ` <span class="ds-subtext" title="More than 2,000 rows/groups — computed on the first 2,000">(sampled)</span>` : ''}</span>
-    ${bar(st.populatedPct)} ${st.populatedPct}% populated
-    ${bar(st.uniquePct)} ${st.uniquePct}% unique
-    <span class="ds-subtext"><strong>${st.populated.toLocaleString()} of ${st.total.toLocaleString()}</strong> hold ${counts.tiers ? 'the key' : 'a value'}${st.blank ? ` · ${st.blank.toLocaleString()} blank` : ''}${st.dupRecords ? ` · ${st.dupRecords.toLocaleString()} share dup keys` : ''}</span>
-    ${counts.tiers ? `<span class="ds-subtext" style="flex-basis:100%;padding-left:158px" title="How many records hold the key up to each field — a most-specific-first key matches a record by the fields it has">up to each field: ${counts.tiers.levels.map(l => `${esc(l.field)} <strong>${l.populated.toLocaleString()}</strong>`).join(' · ')}</span>` : ''}
-  </div>`;
+// The grade of a key, as ONE table (user 2026-10-24: "very hard to understand everything" / "why is
+// the expect mismatches? if we do email + id + phone number it should be even more unique"). The
+// verdict judges the KEY — how many records hold it and how unique it is, on every side — never how
+// many source records the target holds: a record the target does not hold yet is an insert, not a
+// mismatch. sides: [{ label, counts, err }].
+function _matchKeyVerdict(sides) {
+  const graded = (sides || []).filter(s => s && s.counts);
+  if (!graded.length) return null;
+  let min = 101, why = '';
+  for (const s of graded) {
+    const st = sftkKeyStats(s.counts);
+    const sc = Math.round(st.populatedPct * st.uniquePct / 100);
+    if (sc < min) {
+      min = sc;
+      why = st.blank ? `${st.blank.toLocaleString()} blank in ${s.label}` : st.dupRecords ? `${st.dupRecords.toLocaleString()} share a key in ${s.label}` : '';
+    }
+  }
+  return { score: min, label: min >= 90 ? 'Strong key' : min >= 70 ? 'Usable key' : 'Weak key', cls: min >= 90 ? 'ds-diff-sync' : min >= 70 ? 'ds-diff-drift' : 'ds-diff-missing', why };
 }
-
-// Cross-org verdict chip + "N of M match uniquely · X ambiguous · Y unmatched".
-function _matchVerdictHtml(res) {
-  if (!res?.cross) return '';
-  const c = res.cross;
-  const pct = c.sourceTotal ? Math.round((c.matchedUnique / c.sourceTotal) * 100) : 0;
-  const cls = pct >= 98 ? 'ds-diff-sync' : pct >= 85 ? 'ds-diff-drift' : 'ds-diff-missing';
-  const verdict = pct >= 98 ? 'Excellent key' : pct >= 85 ? 'Usable — review the gaps' : 'Weak key — expect mismatches';
-  return `<div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:6px;flex-wrap:wrap">
-    <span class="ds-diff-chip ${cls}">${esc(verdict)}</span>
-    <span>matches <strong>${c.matchedUnique.toLocaleString()}</strong> of <strong>${c.sourceTotal.toLocaleString()}</strong> source records uniquely
-      · <strong>${c.ambiguous.toLocaleString()}</strong> ${c.tiered ? 'need a decision' : 'ambiguous (dup keys either side)'}
-      · <strong>${c.unmatched.toLocaleString()}</strong> unmatched</span>${c.tiered ? ' <span class="ds-subtext">(most specific first, as the scan pairs)</span>' : ''}
-  </div>`;
+function _matchGradeTable(sides) {
+  const n = v => Number(v || 0).toLocaleString();
+  const cell = (s, fn) => (s.err || !s.counts) ? '' : fn(sftkKeyStats(s.counts), s.counts);
+  const rows = [
+    ['hold a value', (st, k) => `<strong>${n(st.populated)}</strong> of ${n(st.total)}${k.sampled ? ' <span class="ds-subtext" title="More than 2,000 records — the first 2,000 were read">(first 2,000)</span>' : ''}${st.blank ? ` · ${n(st.blank)} blank` : ''}`],
+    ['unique', (st) => `<strong>${st.uniquePct}%</strong>${st.dupRecords ? ` · ${n(st.dupRecords)} share a key` : ''}`],
+  ];
+  if (sides.some(s => s.counts && s.counts.tiers)) rows.push(['up to each field', (st, k) => k.tiers ? k.tiers.levels.map(l => `${esc(l.field)} <strong>${n(l.populated)}</strong>`).join(' · ') : '']);
+  return `<table class="ds-match-grade-tbl"><thead><tr><th></th>${sides.map(s => `<th>${esc(s.label)}</th>`).join('')}</tr></thead><tbody>
+    ${rows.map(([lbl, fn]) => `<tr><th scope="row">${lbl}</th>${sides.map(s => `<td>${cell(s, fn)}</td>`).join('')}</tr>`).join('')}
+    ${sides.some(s => s.err) ? `<tr><th scope="row"></th>${sides.map(s => `<td class="ds-match-grade-err">${s.err ? `⚠ ${esc(s.err)}` : ''}</td>`).join('')}</tr>` : ''}
+  </tbody></table>`;
 }
-
-// Full analysis panel (mini variant for suggestion-row grades).
-function _matchAnalysisHtml(res, profile, mini) {
-  const srcLbl = `Source · ${orgLabel(profile?.sourceOrg || '') || 'source org'}`;
-  const tgtLbl = `Target · ${orgLabel(profile?.targetOrg || '') || 'target org'}`;
-  const bothMissing = !res.src && !res.tgt;
-  return `<div class="ds-match-test-out" style="margin-top:${mini ? '2px' : '8px'};padding:${mini ? '4px 8px' : '8px 10px'};background:rgba(148,163,184,.12);border-radius:6px">
-    ${_matchStatsHtml(srcLbl, res.src, res.srcErr)}
-    ${_matchStatsHtml(tgtLbl, res.tgt, res.tgtErr)}
-    ${_matchVerdictHtml(res)}
-    ${!res.cross && !bothMissing ? `<div class="ds-subtext" style="font-size:11px;margin-top:4px">Cross-org preview needs BOTH orgs reachable.</div>` : ''}
-  </div>`;
+// What the scan would do with this key — counts, not a verdict.
+function _matchWouldHtml(res) {
+  const k = res && res.cross;
+  if (!k) return (res && (res.src || res.tgt)) ? '<span class="ds-subtext">the preview of pairs needs both orgs open</span>' : '';
+  return `would pair <strong>${k.matchedUnique.toLocaleString()}</strong> of ${k.sourceTotal.toLocaleString()} source records · <strong>${k.unmatched.toLocaleString()}</strong> new in the target · <strong>${k.ambiguous.toLocaleString()}</strong> need a decision${k.tiered ? ' <span class="ds-subtext">(most specific first, as the scan pairs)</span>' : ''}`;
 }
+function _matchSidesOf(res, profile, extras) {
+  return [
+    { label: `Source · ${orgLabel(profile?.sourceOrg || '') || 'source'}`, counts: res.src, err: res.srcErr },
+    { label: `Target · ${orgLabel(profile?.targetOrg || '') || 'target'}`, counts: res.tgt, err: res.tgtErr },
+    ...((extras || []).map(x => ({ label: `Target · ${orgLabel(x.org)}`, counts: x.counts, err: x.err }))),
+  ];
+}
+// Full (🧪 Test this key): the verdict, what the scan would do, the table. Mini (a suggestion row):
+// the same one line, the table under a fold.
+function _matchAnalysisHtml(res, profile, mini, extras) {
+  const sides = _matchSidesOf(res, profile, extras);
+  const v = _matchKeyVerdict(sides);
+  const head = `${v ? `<span class="ds-diff-chip ${v.cls}" title="How many records hold the key × how unique it is, on the weakest side">${esc(v.label)} ${v.score}/100</span>${v.why ? ` <span class="ds-subtext">${esc(v.why)}</span>` : ''}` : '<span class="ds-subtext">not graded — no org answered</span>'} <span class="ds-match-would">${_matchWouldHtml(res)}</span>`;
+  const table = _matchGradeTable(sides);
+  if (mini) return `<details class="ds-match-grade ds-match-grade-fold"><summary>${head}</summary>${table}</details>`;
+  return `<div class="ds-match-grade">${head}<div style="margin-top:6px">${table}</div></div>`;
+}
+// One side on its own, the same table with one column.
+function _matchStatsHtml(label, counts, err) { return _matchGradeTable([{ label, counts, err }]); }
