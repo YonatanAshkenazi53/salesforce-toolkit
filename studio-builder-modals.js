@@ -1152,21 +1152,17 @@ async function openRecordPickerModal(pathStr) {
       <div class="ds-match-cfg" style="border:1px solid var(--border,#e2e8f0);border-radius:6px;padding:8px 10px;margin-bottom:10px">
         <div class="ds-match-strat-row" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <span class="ds-rec-display-lbl" title="How records are recognized as 'the same' across orgs. Normalization is part of the key — the diff scan and every writer build keys identically from this config.">Matching:</span>
-          ${stratRadio('field', 'Single field', false, 'One field identifies the record (the classic matchField)')}
-          ${stratRadio('composite', 'Composite', false, 'Combine up to 4 fields into one key — for objects where no single field is unique (e.g. Name + Email)')}
+          ${stratRadio('field', 'Single field', false, 'One field is the identity — classic: Name. Two records with the same value are the same record. Example: Account Name.')}
+          ${stratRadio('composite', 'Composite', false, 'Several fields in a sequence, up to 4 — for objects where no single field is unique. Example: Name + ID number + Email; a junction object: its two parent lookups. With "Most specific first" a record that leaves a later field empty is matched by the fields it has.')}
           ${stratRadio('externalId', 'External ID', !extIdCandidates.length, extIdCandidates.length
-            ? 'Match on a dedicated external-ID (or unique) field — the most reliable cross-org identity'
+            ? 'A dedicated unique field, the strongest key: it survives renames and lets a re-run upsert instead of duplicating. Example: an External_Id__c that carries the same value in every org'
             : 'No external ID fields in this org — add one in Setup to enable')}
           <span style="flex:1"></span>
           <button class="ds-btn ds-btn-xs" id="dsMatchTestBtn" title="Grade this key against BOTH live orgs: populated% + unique% per org and a cross-org match preview">🧪 Test this key</button>
           <button class="ds-btn ds-btn-xs" id="dsMatchSuggestBtn" title="Ranked match-key suggestions — the top 3 are graded against LIVE data in the source and EVERY target automatically (populated% + unique% per org, worst org scores, ★ best key); the rest grade on demand">💡 Suggestions</button>
         </div>
-        <div class="ds-subtext ds-match-help" style="font-size:11.5px;line-height:1.5;margin-top:5px">
-          The match key is how two records are recognized as <strong>the same record</strong> across orgs — it decides missing / changed / extra in every scan, and what an upsert updates.
-          <strong>Single field</strong>: one column is the identity (classic: Name).
-          <strong>Composite</strong>: several columns together (junction objects: the two parent lookups).
-          <strong>External ID</strong>: a dedicated unique field — the strongest key; survives renames and enables ⬆ upsert.
-          Normalize forgives formatting-only differences (case, spaces) on both sides. 🧪 grades your key against live data · 💡 ranks this object's candidates.
+        <div class="ds-subtext ds-match-help" style="font-size:11.5px;line-height:1.5;margin-top:5px" title="The key decides what a scan calls missing, changed or in sync, and what a re-run updates. Hover a choice for what it means; 🧪 grades the key against live data, 💡 suggests keys.">
+          How two records are recognised as <strong>the same record</strong> across orgs — hover a choice to see what it means.
         </div>
         <div class="ds-match-fields-row" style="margin-top:6px">${body}</div>
         <div class="ds-match-norm-row" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;font-size:12px;align-items:center">
