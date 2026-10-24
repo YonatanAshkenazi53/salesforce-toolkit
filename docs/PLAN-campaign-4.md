@@ -662,6 +662,8 @@ and the run); the video is to be re-recorded after the QA pass.
 
 - **Synced records beyond the 5,000 window cannot be found (user 2026-10-01: "5000 contacts are in sync and 1740 is not. but where are they").** The Synced tab lists the first 5,000 identical records and says the rest (1,740 here) exist; the filter searches only the loaded 5,000, so a user cannot confirm one specific record is in sync. Fix: keep the match KEY (name) of every synced record in the scan result (keys only — a few bytes each, no fields), list by name with the filter over all of them, and load a record's details on click. Same for the other buckets' windows.
 
+- **A transfer from a file (user 2026-10-24: "we didn't show an example of transfer with a file" / "just add it to the backlog for now").** Today a deployment's source is always an open org; a file carries only the deployment's definition (⬇ Export / ⬆ Import, which now takes a list of exports). Wanted: records from a CSV or JSON file as the SOURCE of a deployment — the same scan, matching (most specific first included), buckets, confirmation and History as an org source, with the file's columns mapped like a source object's fields; and the walkthrough showing it. Not scheduled.
+
 ## Order and effort
 
 | phase | days | needs |
