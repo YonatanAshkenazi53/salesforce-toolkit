@@ -857,12 +857,13 @@ async function openRecordPickerModal(pathStr) {
     suggestions.forEach(s => { delete s.score; });
   };
 
+  // [key, label, what it forgives — one example each (user 2026-10-24: "no help text on these with examples")]
   const NORM_OPTS = [
-    ['caseFold',    'Ignore case'],
-    ['trim',        'Trim spaces'],
-    ['collapseWs',  'Collapse whitespace'],
-    ['emailLower',  'Lowercase emails'],
-    ['phoneDigits', 'Digits-only phones']
+    ['caseFold',    'Ignore case',         'ACME Ltd and acme ltd are the same value'],
+    ['trim',        'Trim spaces',         '" Acme Ltd " and "Acme Ltd" are the same value (spaces at the ends)'],
+    ['collapseWs',  'Collapse whitespace', '"Acme   Ltd" and "Acme Ltd" are the same value (runs of spaces, tabs, line breaks inside)'],
+    ['emailLower',  'Lowercase emails',    'Dana@Acme.COM and dana@acme.com are the same value (e-mail fields only)'],
+    ['phoneDigits', 'Digits-only phones',  '+972 (3) 555-1234 and 035551234 are the same value (phone fields only)']
   ];
 
   // Write the current Matching UI state onto the node. Legacy consumers keep
@@ -1169,7 +1170,7 @@ async function openRecordPickerModal(pathStr) {
         <div class="ds-match-fields-row" style="margin-top:6px">${body}</div>
         <div class="ds-match-norm-row" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;font-size:12px;align-items:center">
           <span class="ds-subtext" title="Applied to every key component on BOTH sides before comparing — normalization is part of the key itself.">Normalize:</span>
-          ${NORM_OPTS.map(([k, lbl]) => `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" data-match-norm="${esc(k)}" ${matchNormalize[k] ? 'checked' : ''}> ${lbl}</label>`).join('')}
+          ${NORM_OPTS.map(([k, lbl, ex]) => `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer" title="${esc(ex)}"><input type="checkbox" data-match-norm="${esc(k)}" ${matchNormalize[k] ? 'checked' : ''}> ${lbl}</label>`).join('')}
         </div>
         ${matchStrategy === 'externalId' ? `
         <div style="margin-top:7px">
