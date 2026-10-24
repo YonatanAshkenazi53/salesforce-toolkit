@@ -35,22 +35,30 @@
     const icon = w => w.info ? 'ℹ' : (w.ok ? '✅' : w.accepted ? '⚠' : '❌');
     const badge = e.status === 'success' ? '✅' : e.status === 'partial' ? '⚠' : '❌';
     const said = _said.get(e.id);
+    // "⇄ Flow — SFTK FC Test Flow 2 (Account.A__c → B__c)": the kind, the subject, the detail as a chip
+    // (user 2026-10-24: "can we also do the presented data here more organized?")
+    const title = String(e.profileName || e.tool || 'change');
+    const tm = /^(.*?) — (.*?)(?: \((.*)\))?$/.exec(title);
+    const kind = tm ? tm[1] : '', subject = tm ? tm[2] : title, detail = tm && tm[3] ? tm[3] : '';
+    const okN = what.filter(w => w.ok).length;
+    const line = w => `<div>${icon(w)} ${esc(w.text || w.describe)}</div>`;
     return `<div class="sftk-th-card" data-th-id="${esc(e.id)}">
       <div class="sftk-th-head">
         <span class="sftk-th-status sftk-th-${esc(e.status || 'failed')}">${badge} ${esc(e.status || '')}</span>
-        <span class="sftk-th-title">${esc(e.profileName || e.tool || 'change')}</span>
+        ${kind ? `<span class="sftk-th-kind">${esc(kind)}</span>` : ''}
+        <span class="sftk-th-title">${esc(subject)}${detail ? ` <span class="sftk-th-detail" title="${esc(detail)}">${esc(detail)}</span>` : ''}</span>
         ${e.undoOf ? '<span class="sftk-th-chip" title="This entry is the undo of an earlier change.">↩ undo</span>' : ''}
         <span class="sftk-th-when" title="${esc(e.startedAt || '')}">${esc(sftkHistoryAgo(e.startedAt, Date.now()))} · ${esc(orgName(e.targetOrg))}</span>
         ${st.show ? `<button class="btn btn-sm ${st.disabled ? 'btn-secondary' : 'btn-danger'} sftk-th-undo" ${st.disabled ? 'disabled' : ''} data-th-undo="${esc(e.id)}" title="${esc(st.title || '')}">${esc(st.label)}</button>` : ''}
         <button class="btn btn-sm btn-secondary" data-th-report="${esc(e.id)}" title="Download this entry as a JSON file: what was written, where, when, and what the org showed.">⬇ Report</button>
       </div>
       <div class="sftk-th-what">
-        ${what.length ? what.slice(0, 2).map(w => `<div>${icon(w)} ${esc(w.text || w.describe)}</div>`).join('') : '<div>— nothing was written</div>'}
-        ${what.length > 2 ? `<details class="sftk-th-more"><summary>+${what.length - 2} more</summary>${what.slice(2).map(w => `<div>${icon(w)} ${esc(w.text || w.describe)}</div>`).join('')}</details>` : ''}
-        ${e.toolUndo && e.toolUndo.none ? `<div class="sftk-th-sub">↩ no undo: ${esc(e.toolUndo.none)}</div>` : ''}
-        ${e.toolUndo && e.toolUndo.done ? `<div class="sftk-th-sub">↩ ${e.toolUndo.done.ok ? 'undone and verified' : 'undo attempted — not every step confirmed'} on ${esc(e.toolUndo.done.at)}</div>` : ''}
+        ${!what.length ? '<div>— nothing was written</div>'
+          : what.length <= 2 ? what.map(line).join('')
+          : `<details class="sftk-th-more"><summary>${okN === what.length ? `all ${what.length} steps verified by re-reading the org` : `${okN} of ${what.length} steps verified`} — show them</summary>${what.map(line).join('')}</details>`}
         ${said ? `<div class="sftk-th-said">${esc(said)}</div>` : ''}
       </div>
+      ${e.toolUndo && (e.toolUndo.none || e.toolUndo.done) ? `<div class="sftk-th-foot">${e.toolUndo.none ? `↩ no undo — ${esc(e.toolUndo.none)}` : ''}${e.toolUndo.done ? `↩ ${e.toolUndo.done.ok ? 'undone and verified' : 'undo attempted — not every step confirmed'} on ${esc(e.toolUndo.done.at)}` : ''}</div>` : ''}
     </div>`;
   }
 

@@ -6884,6 +6884,10 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .sftk-th-partial { color: #a96404; border-color: #a96404; }
 .sftk-th-failed { color: #ba0517; border-color: #ba0517; }
 .sftk-th-chip { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--surface2, #f3f3f3); }
+/* the kind of change and its detail, read at a glance (2026-10-24) */
+.sftk-th-kind { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--surface2, #f3f3f3); color: var(--subtext, #5b6472); white-space: nowrap; }
+.sftk-th-detail { font-weight: 400; font-size: 11.5px; font-family: ui-monospace, Consolas, monospace; color: var(--subtext, #5b6472); }
+.sftk-th-foot { margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--border-light, var(--border, #e5e7eb)); color: var(--subtext, #5b6472); font-size: 11.5px; }
 .sftk-th-when { font-size: 11.5px; color: var(--subtext, #5b6472); white-space: nowrap; }
 .sftk-th-what { font-size: 12.5px; padding: 6px 0 0; display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
 .sftk-th-sub { color: var(--subtext, #5b6472); font-size: 12px; }

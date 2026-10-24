@@ -123,7 +123,8 @@ describe('the Toolkit side (sftk-toolhistory.js)', () => {
     expect(TH).toContain('title="${esc(st.title || \'\')}"');
   });
   it('everything a record or an org supplied is escaped', () => {
-    expect(TH).toContain('${esc(e.profileName || e.tool || \'change\')}');
+    expect(TH).toContain("const title = String(e.profileName || e.tool || 'change');");   // 2026-10-24: kind · subject · detail, each escaped
+    for (const s of ['${esc(kind)}', '${esc(subject)}', '${esc(detail)}']) expect(TH).toContain(s);
     expect(TH).toContain('${esc(w.text || w.describe)}');
     expect(TH).toContain('${esc(e.toolUndo.none)}');
     expect(TH).toContain('${esc(said)}');

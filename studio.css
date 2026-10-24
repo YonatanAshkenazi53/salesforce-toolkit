@@ -6356,6 +6356,11 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .ds-dep-page > #dsRecParentGaps:empty, .ds-dep-page > #dsRecProgress:empty { display: none; }
 .ds-dep-page > #dsRecParentGaps > .ds-rec-card { max-width: none; margin: 0; }
 .ds-dep-actionbar { position: static; box-shadow: none; }
+/* the cards inside About fold too (2026-10-24) */
+.ds-dep-subfold > summary { list-style: none; cursor: pointer; }
+.ds-dep-subfold > summary::-webkit-details-marker { display: none; }
+.ds-dep-pmatch { white-space: nowrap; }
+.ds-dep-pmatch-btn { padding: 0 5px; margin-left: 2px; line-height: 1.4; }
 .ds-dep-list { max-height: clamp(220px, calc(100vh - 360px), 640px); }
 .ds-dep-plan td.ds-dep-n-ins  { color: var(--c-critical-fg, var(--danger)); font-weight: 700; }
 .ds-dep-plan td.ds-dep-n-chg  { color: var(--c-warn-fg, var(--warning)); font-weight: 700; }
