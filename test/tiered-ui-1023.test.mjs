@@ -30,3 +30,13 @@ describe('Pick Records › Matching › Composite: most specific first', () => {
     expect(picker).toContain('<strong>${esc(matchReadsAs(node.matching.fields, false).key)}</strong>${node.matching.tiered ? \' <span class="ds-subtext">— most specific first</span>\' : \'\'}');
   });
 });
+
+describe('Normalize options carry an example each (user 2026-10-24)', () => {
+  const M2 = readFileSync(new URL('../studio-builder-modals.js', import.meta.url), 'utf8');
+  it('every option has a label and an example in its hover tooltip — nothing more on the page (user: "on hover")', () => {
+    expect(M2).toContain("['caseFold',    'Ignore case',         'ACME Ltd and acme ltd are the same value']");
+    expect(M2).toContain("['phoneDigits', 'Digits-only phones',  '+972 (3) 555-1234 and 035551234 are the same value (phone fields only)']");
+    expect(M2).toContain('NORM_OPTS.map(([k, lbl, ex]) => `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer" title="${esc(ex)}">');
+    expect(M2).not.toContain('ds-match-norm-help');
+  });
+});
