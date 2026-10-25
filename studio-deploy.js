@@ -900,7 +900,6 @@ async function _depPaintOrder(p, scan) {
   h.innerHTML = `<details${_depFoldOpen('parents')} class="ds-rec-card ${anyDoomed ? 'ds-rec-card-bad' : anyEmpty ? 'ds-rec-card-warn' : allDone ? 'ds-rec-card-good' : ''} ds-dep-fold ds-dep-subfold" data-fold="parents">
     <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span>
       <span class="ds-rec-card-title">${anyDoomed ? '⛔ Stop — some inserts here fail until their parents exist · ' : ''}Start with parents first</span>
-      <span class="ds-dep-pchip ds-dep-pchip-${verdict.cls}">${esc(verdict.text)}</span>
       <span class="ds-rec-card-hint">every object in this deployment, and what it points at outside it — those records must be in ${esc(tgtL)} first; a lookup lands on the parent that matches by the field shown on its row</span></summary>
     <div class="ds-rec-card-body">
       ${steps.length ? steps.map(stepHtml).join('') : `<div class="ds-ordstep ds-ordstep-done"><span class="ds-ordstep-num">✓</span><span class="ds-dep-ordwhat">None of ${chain} points at an object outside this deployment — there is nothing to deploy first.</span></div>`}
