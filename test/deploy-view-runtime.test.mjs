@@ -140,7 +140,7 @@ describe('Deploy view — the page actually runs', () => {
     ctx._reconcileProfile.lastScan.dupKeys = { rows: 4, keys: ['Acme', 'Beta'], examples: [{ key: 'Acme', src: ['001A', '001B'], tgt: ['001C', '001D'] }] };
     await vm.runInContext('renderDeploy()', ctx);
     need(mainHtml.includes('copy 1') && mainHtml.includes('/lightning/r/001A/view'), 'the duplicate names are listed with links to each copy');
-    need(mainHtml.includes('How to fix it, safest first') && mainHtml.includes('data-rec-dupfix="stamp"') && mainHtml.includes('Do this last'), 'the fixes are listed in a safe order');
+    need(mainHtml.includes('What to do, safest first') && mainHtml.includes('Merge them') && mainHtml.includes('data-rec-dupfix="stamp"') && mainHtml.includes('Do this last'), 'the fixes are listed in a safe order');
     need(mainHtml.includes('id="dsDepApiMode"') && mainHtml.includes('id="dsDepBatch"') && mainHtml.includes('id="dsDepThreads"'), 'Engine, batch size and threads are on the page');
     vm.runInContext(`_depObjPath = ''; _depTab = 'same';`, ctx); await vm.runInContext('renderDeploy()', ctx);
     need(els.get('dsDepList').innerHTML.includes('▸ compare'), 'a Synced row can be compared across the two orgs');
