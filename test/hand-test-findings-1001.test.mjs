@@ -74,7 +74,8 @@ describe('2. engine notes stay notes in the run log', () => {
 
 describe('3. the duplicated-names summary counts all of them', () => {
   it('uses the total number of duplicated keys, not the examples shown', () => {
-    expect(RC).toContain('<summary>⚠ ${((scan.dupKeys.keys || []).length || ex.length).toLocaleString()} name(s) used by more than one record');
-    expect(RC).not.toContain('<summary>⚠ ${ex.length} name(s)');
+    expect(RC).toContain('const n = ((scan.dupKeys.keys || []).length || ex.length).toLocaleString();');   // 2026-10-25: the one-line head of the note
+    expect(RC).toContain('${n} name${n === '1' ? '' : 's'} used by more than one record');
+    expect(RC).not.toContain('${ex.length} name');
   });
 });

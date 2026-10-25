@@ -505,19 +505,19 @@ async function renderDeploy() {
   if (scan.dupKeys?.rows) notes.push(sftkRecDupsHtml(scan, p));
   // Phase 5 — the ambiguous copies are listed, not guessed: say where.
   { const nAmb = (scan.ambiguous || []).length;
-    if (nAmb) notes.push(`⚠ <b>${nAmb.toLocaleString()} ${esc(p.tree?.objectType || p.tree?.childSObject || '')} record(s) are ambiguous</b> — more than one record carries the same name, so the scan cannot tell which is which. Nothing is deployed for them until you choose: open <b>⚠ Needs a decision</b> below and say, per record, 📌 which ${esc(orgLabel(p.targetOrg))} record it is the same as, or ➕ that it is new there.`); }
+    if (nAmb) notes.push(`⚠ <b>${nAmb.toLocaleString()} ${esc(p.tree?.objectType || p.tree?.childSObject || '')} record${nAmb === 1 ? '' : 's'} need${nAmb === 1 ? 's' : ''} a decision</b> — more than one record carries the same name, and the scan does not guess. Nothing is deployed for them until it is settled: <button class="ds-btn ds-btn-xs" data-dep-tab-go="amb" title="Opens the ⚠ Needs a decision tab below">⚠ Open Needs a decision</button> — 🔀 merge copies of the same record, or say per record 📌 which ${esc(orgLabel(p.targetOrg))} record it is, or ➕ that it is new there.`); }
   // child objects: the same card, without the root's fix buttons (they act on the root's key)
   for (const [pk, cs] of Object.entries(scan.children || {})) {
     if (!cs || !cs.dupKeys || !cs.dupKeys.rows) continue;
     const node = getNodeByPath(p.tree, pk);
     const obj = node ? (node.objectType || node.childSObject) : pk;
-    const card = sftkRecDupsHtml(cs, { ...p, tree: node || p.tree }).replace(/<button[^>]*data-rec-dupfix[^>]*>[\s\S]*?<\/button>/g, '');
-    if (card) notes.push(`<div class="ds-dep-childdup"><b>${esc(obj)}</b> — ${card}</div>`);
+    const card = sftkRecDupsHtml(cs, { ...p, tree: node || p.tree }, obj).replace(/<button[^>]*data-rec-dupfix[^>]*>[\s\S]*?<\/button>/g, '');
+    if (card) notes.push(`<div class="ds-dep-childdup">${card}</div>`);
   }
   if (scan.nearMisses) notes.push(`≈ ${scan.nearMisses} record pair(s) almost matched — keys differ only by whitespace or case (marked ≈ on the rows).`);
   if (scan.personContacts) { const l = sftkPaContactsLine(scan.personContacts, srcL, tgtL); if (l) notes.push(esc(l)); }
   for (const w of (scan.warnings || [])) notes.push(`⚠ ${esc(String(w).replace(/^[⚠\s]+/, ''))}`);
-  const notesHtml = notes.length ? `<details${_depFoldOpen('notes')} class="ds-rec-card ds-rec-card-warn ds-dep-fold ds-dep-subfold" data-fold="notes"><summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⚠</span><span class="ds-rec-card-title">Worth reading before you deploy</span><span class="ds-rec-card-hint">${notes.length} note${notes.length === 1 ? '' : 's'}</span><span class="ds-dep-foldsum">${notes.length} note${notes.length === 1 ? '' : 's'} — open to read</span></summary>${notes.map(n => `<div class="ds-rec-card-line">${n}</div>`).join('')}</details>` : '';
+  const notesHtml = notes.length ? `<details${_depFoldOpen('notes')} class="ds-rec-card ds-rec-card-warn ds-dep-fold ds-dep-subfold" data-fold="notes"><summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⚠</span><span class="ds-rec-card-title">Worth reading before you deploy</span><span class="ds-rec-card-hint">${notes.length} note${notes.length === 1 ? '' : 's'}</span><span class="ds-dep-foldsum">${notes.length} note${notes.length === 1 ? '' : 's'} — open to read</span></summary>${notes.map(n => `<div class="ds-rec-card-line ds-dep-note-row">${n}</div>`).join('')}</details>` : '';
 
   // ── records panel ──
   const cur = objects.find(o => o.pathKey === _depObjPath) || objects[0];
@@ -1102,6 +1102,11 @@ function _depGoOrigin(p) {
 }
 
 function _depWireChrome(p) {
+  // a note that points at a tab opens it (the ⚠ Needs a decision note, 2026-10-25)
+  document.querySelectorAll('[data-dep-tab-go]').forEach(b => b.addEventListener('click', () => {
+    const t = document.querySelector(`.ds-dep-tabs [data-dep-obj=""][data-dep-tab="${b.dataset.depTabGo}"]`) || document.querySelector(`.ds-dep-tabs [data-dep-tab="${b.dataset.depTabGo}"]`);
+    if (t) { t.click(); setTimeout(() => eid('dsDepRecords')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 150); }
+  }));
   eid('dsDepBack')?.addEventListener('click', () => { _currentView = 'profiles'; renderProfiles(); });
   eid('dsDepBackOrigin')?.addEventListener('click', () => _depGoOrigin(p));
   eid('dsDepRefresh')?.addEventListener('click', () => _depRescan(p));

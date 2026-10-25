@@ -67,7 +67,7 @@ describe('the page', () => {
   it('is named for what the user must do, in the tab, the table and the advisor note', () => {
     expect(DV).toContain("label: '⚠ Needs a decision'");
     expect(DV).toContain('⚠ Needs a decision</th>');
-    expect(DV).toContain('open <b>⚠ Needs a decision</b> below');
+    expect(DV).toContain('data-dep-tab-go="amb" title="Opens the ⚠ Needs a decision tab below">⚠ Open Needs a decision</button>');   // 2026-10-25: a button, and the merge named
     expect(DV).not.toContain("label: '⚠ Ambiguous'");
   });
   it('an intro above the list: why, what to do, and how many are already filled in', () => {

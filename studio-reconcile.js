@@ -4474,7 +4474,7 @@ function sftkCapFailedIds(list, richCap, idCap) {
 // do about it, in the order that is safe (user 2026-09-21: "What operations we
 // can suggest in order to fix"). Shared by ⚖ Transfer and the Deploy view.
 // Buttons carry data-rec-dupfix; each page wires them (sftkRecWireDupFix).
-function sftkRecDupsHtml(scan, p) {
+function sftkRecDupsHtml(scan, p, objLabel) {
   const ex = (scan && scan.dupKeys && scan.dupKeys.examples) || [];
   if (!scan || !scan.dupKeys || !scan.dupKeys.rows) return '';
   const key = k => esc(typeof sftkMatchKeyLabel === 'function' ? sftkMatchKeyLabel(k) : String(k ?? ''));
@@ -4490,21 +4490,25 @@ function sftkRecDupsHtml(scan, p) {
   // Match review only has something to do when BOTH unmatched buckets hold rows
   // (user 2026-09-21: followed the advice, the dialog was empty).
   const unS = (scan.missingInTarget || []).length, unT = (scan.onlyInTarget || []).length;
-  return `<details class="ds-rec-dups">
-      <summary>⚠ ${((scan.dupKeys.keys || []).length || ex.length).toLocaleString()} name(s) used by more than one record — the scan never guesses which copy is which</summary>
+  const n = ((scan.dupKeys.keys || []).length || ex.length).toLocaleString();
+  // one line, then the copies and the way out under a fold (user 2026-10-25: "make this tab more readable and
+  // easier to understand" / "here we don't offer to merge them")
+  return `<div class="ds-rec-dups">
+      <div class="ds-rec-dup-head">⚠ <b>${objLabel ? `${esc(objLabel)}: ` : ''}${n} name${n === '1' ? '' : 's'} used by more than one record</b> — the scan never guesses which copy is which.</div>
+      <details class="ds-rec-dup-more"><summary>the copies, and what to do</summary>
       <div class="ds-rec-dup-rows">${rows}</div>${more}
-      <div class="ds-rec-dup-note"><b>Why it matters:</b> records are matched by this name. With two “same” names the pairing is a coin flip, and so is anything else that finds records by name — lookups, other deployments.</div>
-      <div class="ds-rec-dup-fix"><b>How to fix it, safest first</b>
+      <div class="ds-rec-dup-fix"><b>What to do, safest first</b>
         <ol>
-          <li><b>Make the copies one record.</b> Open the copies above. If they are the same real thing, merge them in Salesforce (Accounts, Contacts and Leads have Merge — it keeps one record and moves the related records onto it). If one is junk, delete or rename it. Do it in <i>both</i> orgs, then 🔄 Refresh state.</li>
-          <li><b>Or make the match key unique.</b> If both records are legitimate, the name alone cannot tell them apart — add a second field to the key (for example Name + Billing City, or an account number). ${saved ? `<button class="ds-btn ds-btn-xs" data-dsaction="editProfile" data-arg="${esc(p.id)}" title="Opens this deployment in the builder — Pick Records → Matching">✏ Change the match key</button>` : '<span class="ds-lkp-hint">Save this pair as a deployment to change its match key.</span>'}</li>
+          <li><b>Copies of the same record? 🔀 Merge them.</b> Under ⚠ Needs a decision below, every such name offers a merge: the copies in ${esc(orgLabel(p.sourceOrg))}, in ${esc(orgLabel(p.targetOrg))}, or both sides — you choose the record that stays and the values it keeps. One of them junk? Delete or rename it, then 🔄 Refresh state.</li>
+          <li><b>Different records that share a name? Make the key tell them apart.</b> Add a field to the key — most specific first matches each record by the fields it has (Name + account number, Name + billing city). ${saved ? `<button class="ds-btn ds-btn-xs" data-dsaction="editProfile" data-arg="${esc(p.id)}" title="Opens this deployment in the builder — Pick Records → Matching">✏ Change the match key</button>` : '<span class="ds-lkp-hint">Save this pair as a deployment to change its match key.</span>'}</li>
           ${unS && unT
             ? `<li><b>Or pair them by hand.</b> <button class="ds-btn ds-btn-xs" data-rec-dupfix="review" title="Pick, for each unmatched source record, the target record it really is — remembered for this org pair">🔗 Match review</button> pairs the ${unS.toLocaleString()} unmatched source record(s) with the ${unT.toLocaleString()} unmatched target record(s) — you say which is which.</li>`
-            : `<li><b>Pairing by hand is not possible here.</b> 🔗 Match review pairs records the scan could <i>not</i> match, and this scan left none unmatched: every copy above already got a partner — by name, in whatever order Salesforce returned them, which is exactly the coin flip. Matched records cannot be re-paired from here, so use step 1 or 2.</li>`}
+            : `<li><b>Pairing by hand is not possible here:</b> every copy already got a partner by name, in whatever order Salesforce returned them — the coin flip itself. Use step 1 or 2.</li>`}
           <li><b>Then make it stick.</b> Once the pairs are right, <button class="ds-btn ds-btn-xs" data-rec-dupfix="stamp" title="Writes each source record's Id into SFTK_ID__c on its matched target record — future scans match on that, whatever the names are">🪪 Stamp identity</button> writes each source record’s Id onto its target record, so later scans match on that and never on the name again. <i>Do this last</i> — stamping while copies are still ambiguous would cement a coin flip.</li>
         </ol>
       </div>
-    </details>`;
+      </details>
+    </div>`;
 }
 function sftkRecWireDupFix(root, p, scan) {
   (root || document).querySelectorAll('[data-rec-dupfix]').forEach(b => b.addEventListener('click', e => {
