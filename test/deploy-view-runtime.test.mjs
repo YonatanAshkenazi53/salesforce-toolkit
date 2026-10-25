@@ -118,7 +118,7 @@ describe('Deploy view — the page actually runs', () => {
     need((order.match(/class="ds-ordstep-num">/g) || []).length === 5, 'four outside objects + this deployment = five steps');
     need(order.includes('not needed — the source has none'), 'a parent object the SOURCE has none of is not a gap (live 2026-09-21: Individual, 0 in both orgs)');
     need(order.includes('90,000 records') && order.includes('Check now'), 'a big parent object is not scanned on load — it asks');
-    need(order.includes('not aligned'), 'the card title carries the one-glance verdict');
+    need(!order.includes('not aligned') && /not aligned/.test(els.get('dsDepParentsChip')?.textContent || ''), 'the one-glance verdict is said once, in the About header, not again on the card (2026-10-25)');
     need(order.includes('Account.Primary_Campaign__c') && order.includes('Contact.Campaign__c'), 'Campaign names BOTH the root field and the child field that need it');
     need(order.includes('✓ in sync'), 'a parent with a clean verdict reads in sync');
     need(order.includes('has none at all') && order.includes('Stop'), 'a required parent the target has none of is a stop');
