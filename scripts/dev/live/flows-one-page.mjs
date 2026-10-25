@@ -4,7 +4,7 @@
 //   SFTK_EXT=dist/store-staging node scripts/dev/headless-studio.mjs scripts/dev/live/flows-one-page.mjs
 // Afterwards: node -e "import('./scripts/dev/video/fixture.mjs').then(m => m.rebuildFieldCleanerFixture('npc', console.log))"
 import { execFileSync } from 'node:child_process';
-const FLOW = process.env.FLOW || 'SFTK_FC_Test_Flow_4';
+const FLOW = process.env.FLOW || 'SFTK_FC_Test_Flow4';
 const cli = q => JSON.parse(execFileSync('sf', ['data', 'query', '-o', 'npc', '-t', '-q', `"${q}"`, '--json'], { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })).result.records || [];
 const versions = () => cli(`SELECT Id, VersionNumber, Status FROM Flow WHERE Definition.DeveloperName = '${FLOW}' ORDER BY VersionNumber`);
 export default async function (h) {
