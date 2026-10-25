@@ -21,14 +21,14 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { rebuildFieldCleanerFixture, removeIdentityField, restoreDuplicateName, removeVolume, enrichVolBlocks, seedVolTwins, seedVolChanged } from './fixture.mjs';
+import { rebuildFieldCleanerFixture, removeIdentityField, restoreDuplicateName, removeVolume, enrichVolBlocks, seedVolTwins, seedVolChanged, seedVolExtra, removeVolCampaigns } from './fixture.mjs';
 
 const J = JSON.stringify;
 const FIXTURE = 'docs/fixtures/complex-deployment/profiles.json';
 const DEMO = 'Accounts and everything under them';
 const BUILT = 'Accounts and their contacts';   // THE deployment of the Data Studio half: built on camera, then scanned, decided, deployed, stamped, rolled back (user 2026-10-25: "only one example of data deployment")
 const DEMO_VOL = 'Accounts and their contacts, at volume';
-const VOL_WHERE = ['000', '001', '002', '003', '004', '005', '006'].map(b => `Name LIKE 'SFTK VOL Account ${b}%'`).join(' OR ');   // 700 accounts, ~1,150 contacts
+const VOL_WHERE = ['000', '001', '002', '003', '004'].map(b => `Name LIKE 'SFTK VOL Account ${b}%'`).join(' OR ');   // 500 accounts, ~820 contacts, 500 opportunities (the DE target holds ~2,500 records)
 const OLD_FIELD = 'SFTK_FC_Test_Status__c', NEW_FIELD = 'SFTK_FC_Test_Status2__c';
 // the target is a Developer Edition org since 2026-10-15 (the Nonprofit Cloud trial expired)
 const SRC_ORG = 'trailheads5', TGT_ORG = 'orgfarm-e2c4511b2b-dev-ed';
@@ -187,7 +187,7 @@ async function ensureBuilt(c) {
   const prof = base.profile || base;
   prof.name = BUILT;
   prof.tree.where = VOL_WHERE;
-  prof.tree.children = [{ childSObject: 'Contact', field: 'AccountId', matchField: 'Email' }];
+  prof.tree.children = [{ childSObject: 'Contact', field: 'AccountId', matchField: 'Email' }, { childSObject: 'Opportunity', field: 'AccountId', matchField: 'Name' }];
   prof.tree.fieldMappings = { ...(prof.tree.fieldMappings || {}), Preferred_Contact_Method__c: 'Preferred_Contact_Channel__c' };
   prof.apiMode = 'sync'; prof.batchSize = 100; prof.threads = 1; prof.duplicateRules = 'bypass';
   prof.sourceOrg = SRC_URL; prof.targetOrg = TGT_URL;
@@ -1081,7 +1081,8 @@ export const SECTIONS = [
       await h.sleep(1200); return true;
     };
     await add('', 'Contact', 'AccountId');
-    await rec.say('The contacts under them. Opportunities, cases, a child of a child — a tree of any depth, the same way. This tour keeps it to accounts and contacts.', 7000);
+    await add('', 'Opportunity', 'AccountId');
+    await rec.say('The contacts and the opportunities under them. Cases, or a child of a child, go the same way — a tree of any depth.', 6000);
     // a filter on the root, and a count
     if (await c.has('[data-where=""]')) {
       await rec.scrollTo('[data-where=""]', 'center');
@@ -1189,84 +1190,146 @@ export const SECTIONS = [
     run: async c => {
     const { h, rec } = c;
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');
-    // off camera: two copies of one name on each side (⚠ Needs a decision, 🔀 Merge both sides) and one
-    // account already in the target with another phone (🟡 Changed)
+    // off camera: the source blocks carry a phone, an account number on nine of ten and a campaign on the
+    // opportunities of block 000; two copies of one name on each side; one account the target holds with
+    // another phone; one account only the target holds
     enrichVolBlocks('npc', (...a) => h.log(...a));
     seedVolTwins('npc', 'src', (...a) => h.log(...a));
     seedVolTwins('npc2', 'tgt', (...a) => h.log(...a));
     seedVolChanged('npc2', (...a) => h.log(...a));
+    seedVolExtra('npc2', (...a) => h.log(...a));
     const id = await ensureBuilt(c);
     await settleBuilt(c, id);
+    const fold = async (key, open) => { await h.eval(`(() => { const d = document.querySelector('details[data-fold="${key}"]'); if (d) d.open = ${open ? 'true' : 'false'}; return true; })()`); await h.sleep(500); };
+    const foldClick = async key => { if (await c.has(`details[data-fold="${key}"] > summary`)) await rec.click(`details[data-fold="${key}"] > summary`, 700); };
+    const tab = async k => { if (await c.has(`.ds-dep-tabs [data-dep-obj=""][data-dep-tab="${k}"]`)) await rec.click(`.ds-dep-tabs [data-dep-obj=""][data-dep-tab="${k}"]`, 900); else if (await c.has(`.ds-dep-tabs [data-dep-tab="${k}"]`)) await rec.click(`.ds-dep-tabs [data-dep-tab="${k}"]`, 900); };
+    const scanKids = async () => {
+      if (await c.has('#dsDepScanAll')) {
+        await rec.click('#dsDepScanAll', 600);
+        await rec.fast(() => h.waitFor("!document.querySelector('#dsDepScanAll') && ![...document.querySelectorAll('[data-dep-scan]')].some(b => b.disabled) && !document.querySelector('#dsDepRefresh')?.disabled", 600000, 1000).catch(() => {}));
+        await h.sleep(1500);
+      }
+    };
+
+    // 1. open it
     await nav(c, 'profiles');
     await rec.fast(() => h.waitFor("document.querySelectorAll('.ds-profile-card').length > 0", 30000, 500));
-    await rec.say('The saved deployments. Each is a root object, the objects under it, and how records are recognised in the other org.');
+    await rec.say('The saved deployments. Here is the one we just built.', 3500);
     await rec.point(`[data-dsaction="runProfile"][data-arg="${id}"]`, 1000);
     await h.eval(`window.runProfile(${J(id)})`);
     await h.sleep(1800);
-    await rec.say('Opening the one we built goes to the Deploy page, which first reads both orgs. Nothing is written.');
+    await rec.say('Opening it goes to the Deploy page, which first reads both orgs. Nothing is written.', 5000);
     await rec.click('#dsDepScan, #dsDepRefresh', 500);
     await waitScanned(c);
-    await h.sleep(2500);
-    if (await c.has('#dsDepScanAll')) {
-      await rec.scrollTo('#dsDepScanAll', 'center');
-      await rec.click('#dsDepScanAll', 600);
-      await rec.fast(() => h.waitFor("!document.querySelector('#dsDepScanAll') && ![...document.querySelectorAll('[data-dep-scan]')].some(b => b.disabled) && !document.querySelector('#dsDepRefresh')?.disabled", 900000, 1000));
-      await h.sleep(2000);
+    await h.sleep(2000);
+    await scanKids();
+    await rec.fast(() => h.waitFor("!!document.querySelector('details[data-fold=\"parents\"] .ds-ordstep') || !!document.querySelector('.ds-dep-parents-synced')", 180000, 500).catch(() => {}));
+    await h.sleep(1500);
+    await rec.scrollTo('details[data-fold="info"]', 'start');
+    await rec.say('Two sections. About this deployment, on top: what has to be in the target first, what is worth reading, and the deployment as a tree. Below it, what the two orgs hold. Each card folds once it is read.', 9500);
+
+    // 2. parents first — one parent synced on camera
+    await fold('notes', false); await fold('tree', false); await fold('parents', true);
+    await rec.scrollTo('details[data-fold="parents"]', 'start');
+    await rec.say('Start with parents first. Every object these records point at outside the deployment is a row: the opportunities point at a Campaign. The row says whether the target has those records and by which field they are found.', 11000);
+    const campRow = await h.eval(`(() => { const r = [...document.querySelectorAll('details[data-fold="parents"] .ds-ordstep')].find(x => /^\\s*\\d+\\s*Campaign\\b/.test(x.innerText) || /Campaign/.test(x.querySelector('.ds-dep-ordwhat strong')?.textContent || '')); if (!r) return ''; r.setAttribute('data-demo-row', '1'); return r.innerText.replace(/\\s+/g, ' ').trim().slice(0, 160); })()`);
+    h.log('campaign row:', campRow);
+    if (campRow) {
+      await rec.point('[data-demo-row="1"]', 1000);
+      await rec.say('Campaign: the target is missing some. Open and fix.', 3500);
+      const door = await c.has('[data-demo-row="1"] [data-dep-gap]');
+      if (door) {
+        await rec.click('[data-demo-row="1"] [data-dep-gap]', 800);
+        await rec.fast(() => h.waitFor("!!document.querySelector('#dsDepJourneyBack') && !!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000));
+        await h.sleep(1500);
+        await rec.say('The same page, for Campaign: the records the target does not have, and a way back to our deployment at the top.', 6500);
+        await tab('ins');
+        if (await c.has('#dsDepTickAll')) await rec.click('#dsDepTickAll', 800);
+        else await h.eval(`[...document.querySelectorAll('#dsDepList input[type=checkbox]')].forEach(x => { if (!x.checked) x.click(); })`);
+        await rec.fast(() => h.waitFor("_recSel.push.size > 0", 30000, 300));
+        await rec.scrollTo('#dsRecRunBtn', 'center');
+        await rec.say('All of them ticked. Deploy.', 2500);
+        const before = await h.eval('_history.length');
+        await rec.click('#dsRecRunBtn', 1200);
+        for (let i = 0; i < 3; i++) {
+          if (await c.has('#sftkConfirmGo')) await confirmShared(c, { caption: i === 0 ? 'The one confirmation.' : '' });
+          else if (await h.modalText()) { await h.eval(`(() => { const b = document.querySelector('#dsRecDelOk') || [...document.querySelectorAll('#dsModalBox button')].find(b => /proceed|deploy|confirm/i.test(b.textContent)); if (b) b.click(); return true; })()`); await h.sleep(1500); }
+          else break;
+        }
+        await rec.fast(async () => { const t0 = Date.now(); while ((await h.eval('_history.length')) <= before && Date.now() - t0 < 600000) await h.sleep(500); await h.sleep(2500); await h.waitFor("!document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000).catch(() => {}); });
+        // the take says "written" only when the run wrote (dry run 2026-10-25: the target's user could not insert
+        // campaigns, every row was refused, and the chapter narrated a success)
+        const pr = await h.eval(`(() => { const e = _history[_history.length - 1] || {}; const s = Object.values(e.summary || {}); const sum = k => s.reduce((t, o) => t + (Number(o && o[k]) || 0), 0); return JSON.stringify({ status: e.status, inserted: sum('inserted'), failed: sum('insertedFailed'), err: (((s[0] || {}).failedSourceIds || [])[0] || {}).error || '' }); })()`).then(JSON.parse);
+        h.log('parent run:', J(pr));
+        if (pr.status !== 'success' || pr.failed) throw new Error(`the parent run did not write (${pr.status}, ${pr.failed} refused: ${pr.err}) — not the take`);
+        await rec.say(`Written and read back: ${pr.inserted} campaigns. Now back to our deployment.`, 4000);
+        await rec.click('#dsDepJourneyBack', 900);
+        await rec.fast(() => h.waitFor("!!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepJourneyBack')", 120000, 500).catch(() => {}));
+        await h.sleep(1200);
+        await rec.click('#dsDepScan, #dsDepRefresh', 500);
+        await waitScanned(c);
+        await scanKids();
+        await rec.fast(() => h.waitFor("[...document.querySelectorAll('details[data-fold=\"parents\"] .ds-ordstep')].some(x => /Campaign/.test(x.innerText) && /in sync/.test(x.innerText))", 180000, 1000));
+        await h.sleep(1200);
+        await fold('parents', true);
+        await rec.scrollTo('details[data-fold="parents"]', 'start');
+        await rec.say('Read again: Campaign is in sync. The other rows were never needed — the source has none of those. The parents are in place.', 7000);
+      }
     }
-    await rec.scrollTo('.ds-dep-plan', 'center');
-    await rec.say('The plan, object by object: how many records to insert, how many changed, how many exist only in the target, and how many are in sync. The children are read under the records of the scan above them.');
-    await rec.reveal('.ds-dep-plan');
-    await rec.scrollTo('#dsDepTree');
-    await rec.say('The deployment as a tree: how each object hangs under its parent and how many records each org holds.', 5000);
-    // the sections fold (user 2026-10-17: "can we do the whole sections collapsable?")
-    if (await c.has("#dsDepTree details.ds-dep-fold > summary")) {
-      await rec.click("#dsDepTree details.ds-dep-fold > summary", 700);
-      await rec.say("Each section folds away once read, and stays the way you left it. Fold all, at the top, hides every one at once.", 6000);
-      await rec.click("#dsDepTree details.ds-dep-fold > summary", 700);
+    await foldClick('parents');
+    await rec.say('Folded, it keeps its one line.', 2500);
+
+    // 3. worth reading
+    await fold('notes', true);
+    await rec.scrollTo('details[data-fold="notes"]', 'start');
+    await rec.say('Worth reading before you deploy: what the scan found that you should know. Here, a name used by more than one record, and records that need a decision — with what to do about each. The tab below handles both.', 9500);
+    await foldClick('notes');
+
+    // 4. the tree
+    await fold('tree', true);
+    await rec.scrollTo('details[data-fold="tree"]', 'start');
+    await rec.say('This deployment, as a tree: Account, with Contact and Opportunity under it — how each hangs under its parent, how many records each org holds, and what is left to do. A number on a card opens those records.', 9000);
+    if (await c.has('#dsDepTree [data-tree-scan]')) {
+      await rec.click('#dsDepTree [data-tree-scan]', 500);
+      await rec.fast(async () => { await h.sleep(1500); await h.waitFor("![...document.querySelectorAll('[data-tree-scan]')].some(b => /⏳/.test(b.textContent))", 300000, 1000); await h.sleep(3000); });
+      await rec.say('An object that was not read says not counted yet; Count reads it. Unknown is never shown as zero.', 5500);
     }
-    if (await c.has('[data-tree-scan]')) {
-      await rec.click('[data-tree-scan]', 500);
-      await rec.fast(async () => { await h.sleep(1500); await h.waitFor("![...document.querySelectorAll('[data-tree-scan]')].some(b => /⏳/.test(b.textContent))", 300000, 1000); await h.sleep(5000); });
-      await rec.scrollTo('#dsDepTree');
-      await rec.say('An object that was not read says “not counted yet”. Count it, and its numbers appear. Unknown is never shown as zero.', 6000);
-    }
-    // why parents first, and how a lookup is resolved (user 2026-10-16: 'explain a bit why we offer to align parents first')
-    if (await c.has('#dsDepOrder')) {
-      await rec.scrollTo('#dsDepOrder');
-      await rec.say('“Start with parents first” lists what these records look up outside the deployment, and whether the target has it.', 6000);
-      await rec.say('A lookup is not copied as an id — ids differ between orgs. When a record is written, the tool finds the record it points at in the target by name, or by the identity field, and connects to that.', 7500);
-      await rec.say('If that parent is missing in the target, the lookup lands empty: the record is created but disconnected, and if the field is required Salesforce refuses it. So the parents go in first; a parent that is part of this deployment is written before its children, and each child gets the new parent’s id.', 10000);
-      await rec.say('A parent that is not part of the deployment is listed here with a button that deploys it first. Nothing is guessed: a lookup the tool cannot resolve is said before you deploy, not after.', 7000);
-    }
-    await rec.scrollTo('#dsDepRecords');
-    await rec.click('.ds-dep-tabs [data-dep-tab="ins"]', 900);
-    await rec.say('Below, every record, in tabs. Nothing is ticked for you: only what you tick is written.', 5000);
-    // the lookups window of one record: where each lookup lands, and the override
+    await foldClick('tree');
+
+    // 5. what the two orgs hold — tab by tab
+    await rec.scrollTo('.ds-dep-plan', 'start');
+    await rec.say('What the two orgs hold, object by object: how many to insert, how many changed, how many only the target has, how many are in sync, and how many need a decision. Every number opens its records.', 9000);
+    await rec.scrollTo('#dsDepRecords', 'start');
+    await tab('ins');
+    await rec.say('Insert: the records the target does not have. Nothing is ticked for you — only what you tick is written.', 5500);
     if (await c.has('#dsDepList [data-dep-lkp]')) {
       await rec.click('#dsDepList [data-dep-lkp]', 900);
       await rec.fast(() => h.waitFor("!!document.querySelector('#dsDepLkpHost') && (document.querySelector('#dsDepLkpHost').innerText || '').length > 20", 30000, 300));
       await h.sleep(800);
-      await rec.say('Every record has a Lookups window: each lookup field, where it would land in the target, and why. Where the name match is wrong, you pick the target record yourself, or set the lookup to empty on purpose.', 9000);
+      await rec.say('A record’s Lookups window: each lookup field, where it lands in the target, and why. Where the match is wrong, you pick the target record yourself.', 7000);
       await h.closeModal();
       await h.eval(`(() => { const x = document.querySelector('[data-dsaction="closeModal"]'); if (x) x.click(); return true; })()`);
       await h.sleep(600);
     }
-    if (await c.has('.ds-dep-tabs [data-dep-tab="chg"]')) {
-      await rec.click('.ds-dep-tabs [data-dep-tab="chg"]', 1200);
-      if (await c.has('[data-dep-fields]')) {
-        await rec.click('[data-dep-fields]', 500);
-        await rec.fast(() => h.sleep(4500));
-        await rec.say('A changed record opens side by side, field by field, read live from both orgs.', 5500);
-        await h.closeModal();
-        await h.eval(`(() => { const x = document.querySelector('[data-dsaction="closeModal"]'); if (x) x.click(); return true; })()`);
-        await h.sleep(600);
-      }
+    await tab('chg');
+    await rec.say('Changed: in both orgs, with values that differ.', 3000);
+    if (await c.has('[data-dep-fields]')) {
+      await rec.click('[data-dep-fields]', 500);
+      await rec.fast(() => h.sleep(4500));
+      await rec.say('Side by side, field by field, read live from both orgs. Tick it to write the source’s values over.', 5500);
+      await h.closeModal();
+      await h.eval(`(() => { const x = document.querySelector('[data-dsaction="closeModal"]'); if (x) x.click(); return true; })()`);
+      await h.sleep(600);
     }
+    await tab('ext');
+    await rec.say('In target only: records the target has and the source does not. They are left alone unless you tick them for deletion.', 5500);
+    await tab('same');
+    await rec.say('Synced: equal on both sides. Nothing to do.', 3000);
     if (await c.has('.ds-dep-tabs [data-dep-tab="amb"]')) {
-      await rec.click('.ds-dep-tabs [data-dep-tab="amb"]', 1200);
+      await tab('amb');
       if (await c.has('.ds-amb-group')) {
         await rec.scrollTo('.ds-dep-amb-intro');
-        await rec.say('“Needs a decision”: two records share a name, so the scan never guesses. Copies of the same record? Merge them. Different records? You say which is which, one name at a time.', 8000);
+        await rec.say('Needs a decision: two records share a name, so the scan never guesses. Copies of the same record? Merge them. Different records? You say which is which, one name at a time.', 8000);
         const picked = await h.eval(`(() => { const r = [...document.querySelectorAll('input[data-dep-amb-sel]')].find(x => x.value && x.value !== '__new__'); if (!r) return false; r.setAttribute('data-demo-amb', '1'); return true; })()`);
         if (picked) {
           await rec.point('input[data-demo-amb="1"]', 700);
@@ -1275,11 +1338,9 @@ export const SECTIONS = [
           await rec.click('[data-dep-amb-one]:not([disabled])', 1500);
           await rec.say('The answer is remembered for this pair of orgs. It is not a change in Salesforce.', 4500);
         }
-        // 🔀 the copies in ONE org merged into one (user 2026-10-11: "so the user ends up with a
-        // unique data and without dupes"; 2026-10-12: "ship it as 1.0") — a real write to trailheads5
         if (await c.has('[data-dep-amb-merge="both"]')) {
           await rec.scrollTo('.ds-amb-mergebar', 'center');
-          await rec.say('And when the copies are the same record, merge them. The copies in the source, the copies in the target, or both sides, one after the other. The copies are read live from each org.', 8500);
+          await rec.say('And when the copies are the same record, merge them: the copies in the source, in the target, or both sides, one after the other. The copies are read live from each org.', 8500);
           await rec.click('[data-dep-amb-merge="both"]', 600);
           await rec.fast(() => h.waitFor("!!document.querySelector('.ds-merge-table')", 60000, 300));
           await h.sleep(800);
@@ -1300,7 +1361,6 @@ export const SECTIONS = [
           await rec.click('#sftkConfirmGo', 600);
           await prodGate(c);
           await rec.fast(() => h.waitFor(`_history.length > ${hist}`, 120000, 500));
-          // the target's copies next, the same way
           await rec.fast(() => h.waitFor("!!document.querySelector('.ds-merge-table')", 60000, 300));
           await h.sleep(800);
           await rec.say('The target’s two copies next, the same way. Here the first stays with its own values.', 5500);
@@ -1392,7 +1452,7 @@ export const SECTIONS = [
     const id = await ensureBuilt(c);
     await settleBuilt(c, id);
     await h.eval(`window.runProfile(${J(id)})`); await h.sleep(1500);
-    await rec.say('Now the run — the same deployment: seven hundred accounts and the contacts under them, which the target does not have.', 6500);
+    await rec.say('Now the run — the same deployment: five hundred accounts with their contacts and opportunities, which the target does not have.', 6500);
     await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
     await waitScanned(c);
     await h.sleep(1500);
@@ -1496,7 +1556,7 @@ export const SECTIONS = [
   } },
 
   { id: 'rollback', title: 'Roll back', writes: true,
-    cleanup: async ({ h }) => { removeVolume('npc2', (...a) => h.log(...a)); seedVolTwins('npc', 'src', (...a) => h.log(...a)); },
+    cleanup: async ({ h }) => { removeVolume('npc2', (...a) => h.log(...a)); removeVolCampaigns('npc2', (...a) => h.log(...a)); seedVolTwins('npc', 'src', (...a) => h.log(...a)); },
     run: async c => {
     const { h, rec } = c;
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');

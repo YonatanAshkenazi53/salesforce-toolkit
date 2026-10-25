@@ -128,8 +128,28 @@ export function enrichVolBlocks(alias = 'npc', log = () => {}) {
     "List<Account> accs = [SELECT Id, Name, Phone, AccountNumber FROM Account WHERE (Name LIKE 'SFTK VOL Account 000%' OR Name LIKE 'SFTK VOL Account 001%' OR Name LIKE 'SFTK VOL Account 002%' OR Name LIKE 'SFTK VOL Account 003%' OR Name LIKE 'SFTK VOL Account 004%' OR Name LIKE 'SFTK VOL Account 005%' OR Name LIKE 'SFTK VOL Account 006%') AND Phone = null];",
     "for (Account a : accs) { String n = a.Name.substring(a.Name.length() - 5); a.Phone = '03-555-' + n.substring(1); if (Math.mod(Integer.valueOf(n), 10) != 0) a.AccountNumber = 'VOL-' + n; }",
     "if (!accs.isEmpty()) Database.update(accs, dmo);",
-    "System.debug('enriched ' + accs.size());",
+    // the opportunities of block 000 point at one campaign the target does not have: the parent synced on camera
+    "List<Campaign> cs = [SELECT Id FROM Campaign WHERE Name = 'SFTK VOL Campaign' LIMIT 1];",
+    "Campaign cmp = cs.isEmpty() ? new Campaign(Name='SFTK VOL Campaign', IsActive=true, Type='Other') : cs[0];",
+    "if (cs.isEmpty()) insert cmp;",
+    "List<Opportunity> opps = [SELECT Id FROM Opportunity WHERE Name LIKE 'SFTK VOL Opp 000%' AND CampaignId = null];",
+    "for (Opportunity o : opps) o.CampaignId = cmp.Id;",
+    "if (!opps.isEmpty()) update opps;",
+    "System.debug('enriched ' + accs.size() + ' accounts, ' + opps.size() + ' opportunities');",
   ], log, 'Volume blocks enriched', "SELECT COUNT(Id) n FROM Account WHERE Name LIKE 'SFTK VOL Account 00%' AND Phone != null");
+}
+// One account the target has and the source does not (🔵 In target only).
+export function seedVolExtra(alias = 'npc2', log = () => {}) {
+  return _dupNameApex(alias, [
+    "List<Account> have = [SELECT Id FROM Account WHERE Name = 'SFTK VOL Account 000 Extra'];",
+    "if (have.isEmpty()) Database.insert(new Account(Name='SFTK VOL Account 000 Extra', Industry='Energy', BillingCity='City 0', Phone='03-555-0000'), dmo);",
+  ], log, 'Volume extra example', "SELECT Id, Phone FROM Account WHERE Name = 'SFTK VOL Account 000 Extra'");
+}
+// The campaigns the parents-first step wrote into the target (today's), gone again.
+export function removeVolCampaigns(alias = 'npc2', log = () => {}) {
+  return _dupNameApex(alias, [
+    "delete [SELECT Id FROM Campaign WHERE CreatedDate = LAST_N_DAYS:1];",
+  ], log, 'Campaigns written today removed', "SELECT COUNT(Id) n FROM Campaign");
 }
 // Two copies of one name inside block 000 — in the source Haifa / 1 and Eilat / 2; in the target "Target
 // twin" / 3 and Haifa / 1 — so the one deployment shows ⚠ Needs a decision and 🔀 Merge both sides.
