@@ -345,8 +345,8 @@ describe('2026-09-21 — four asks from the live page', () => {
   it('duplicates: both pages draw the same block, and stamping is offered LAST', () => {
     expect(RC).toContain('_health.push(sftkRecDupsHtml(scan, p));');
     expect(DV).toContain('notes.push(sftkRecDupsHtml(scan, p));');
-    const fn = RC.slice(RC.indexOf('function sftkRecDupsHtml(scan, p) {'), RC.indexOf('function sftkRecWireDupFix('));
-    expect(fn.indexOf('Make the copies one record')).toBeLessThan(fn.indexOf('Then make it stick'));
+    const fn = RC.slice(RC.indexOf('function sftkRecDupsHtml(scan, p, objLabel) {'), RC.indexOf('function sftkRecWireDupFix('));
+    expect(fn.indexOf('Copies of the same record? 🔀 Merge them.')).toBeLessThan(fn.indexOf('Then make it stick'));   // 2026-10-25: the merge is offered here, first
     expect(fn).toContain('stamping while copies are still ambiguous would cement a coin flip');
   });
   it('a Synced row opens the live compare, and the compare unfolds when nothing differs', () => {
