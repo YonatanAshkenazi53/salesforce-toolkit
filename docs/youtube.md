@@ -1,7 +1,7 @@
 # YouTube — Admin Toolkit for Salesforce 1.0.0 walkthrough
 
 Upload by hand: YouTube Studio → Create → Upload video. The file is
-`dist/video/share/walkthrough.mp4` (1080p, 43 min, captions burned in — add no subtitle file).
+`dist/video/share/walkthrough.mp4` (1080p, 44 min, captions burned in — add no subtitle file).
 The current public video is https://youtu.be/w6sJUhMPFB8 (the older cut); YouTube cannot swap a
 video's file, so this is a new upload. When it is public, put the new link into
 `docs/store-listing.md` (Promo video), `README.md` and the old video's description, then unlist the old one.
@@ -28,15 +28,15 @@ Chapters
 24:01 Flow Access
 24:29 Data Studio — Connected Orgs
 25:04 Building a deployment
-29:22 Data Deployment
-35:32 The run
-37:26 The identity field
-39:58 Roll back
-41:07 All open orgs
-41:43 History
-42:07 Org Compare
-42:30 Org health
-42:59 Licence and privacy
+29:10 Data Deployment
+36:45 The run
+38:37 The identity field
+41:06 Roll back
+42:15 All open orgs
+42:52 History
+43:16 Org Compare
+43:38 Org health
+44:07 Licence and privacy
 
 The Toolkit (popup): Flows with versions, dependencies, flow switches and API versions · Debugger · Lightning Pages · Field Cleaner · Copy Permissions · Flow Access.
 Data Studio: Connected Orgs · Data Deployment (a whole tree in one run, parents first, flows / validation rules / duplicate rules paused or bypassed for the run, Bulk API 2.0 or Collections, an identity field for exact matching, roll back with verification) · All open orgs · History · Org Compare · Org health.
