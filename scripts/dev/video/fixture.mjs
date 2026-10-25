@@ -86,15 +86,15 @@ export function removeIdentityField(aliases, objects, log = () => {}) {
 // The TARGET's copy of "SFTK CX Duplicate Name" (seed-target.apex: "Target twin" / 3) gets a
 // second copy (Haifa / 1) so the deploy chapter can show 🔀 Merge both sides (user 2026-10-23);
 // restoreTargetTwin puts the fixture's copy back to its values and removes every other copy.
-function _dupNameApex(alias, lines, log, what) {
+function _dupNameApex(alias, lines, log, what, countQuery) {
   const dir = join(process.env.TEMP || resolve('dist'), `sftk-duptgt-${Date.now()}`);
   mkdirSync(dir, { recursive: true });
   const file = join(dir, 'run.apex');
   writeFileSync(file, ["Database.DMLOptions dmo = new Database.DMLOptions(); dmo.DuplicateRuleHeader.allowSave = true; dmo.DuplicateRuleHeader.runAsCurrentUser = true; dmo.optAllOrNone = true;", ...lines].join('\n'));
   try {
     execFileSync('sf', ['apex', 'run', '-o', alias, '--file', `"${file}"`, '--json'], { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    const q = JSON.parse(execFileSync('sf', ['data', 'query', '-o', alias, '--json', '-q', "\"SELECT Id, BillingCity, AnnualRevenue FROM Account WHERE Name = 'SFTK CX Duplicate Name' ORDER BY CreatedDate\""], { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
-    const after = ((q.result && q.result.records) || []).map(r => `${r.Id}:${r.BillingCity}/${r.AnnualRevenue}`);
+    const q = JSON.parse(execFileSync('sf', ['data', 'query', '-o', alias, '--json', '-q', `"${countQuery || "SELECT Id, BillingCity, AnnualRevenue FROM Account WHERE Name = 'SFTK CX Duplicate Name' ORDER BY CreatedDate"}"`], { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+    const after = ((q.result && q.result.records) || []).map(r => r.n != null ? `${r.n}` : r.expr0 != null ? `${r.expr0}` : `${r.Id}:${r.BillingCity || r.Phone || ''}/${r.AnnualRevenue == null ? '' : r.AnnualRevenue}`);
     log(`${what} on ${alias}: ${after.length} record(s) (${after.join(', ')})`);
     return { after };
   } catch (e) {
@@ -117,6 +117,39 @@ export function restoreTargetTwin(alias = 'npc2', log = () => {}) {
     "have[0].Industry = 'Energy'; have[0].BillingCity = 'Target twin'; have[0].AnnualRevenue = 3; Database.update(have[0], dmo);",
     "if (have.size() > 1) { List<Account> gone = new List<Account>(); for (Integer i = 1; i < have.size(); i++) gone.add(have[i]); delete gone; }",
   ], log, 'Duplicate Name target copy restored');
+}
+
+// The ONE deployment of the video (user 2026-10-25: "only one example of data deployment … nothing twice"):
+// accounts of the SFTK VOL blocks 000–006 and their contacts. Off camera the source blocks get what the
+// matching chapter needs — a phone on every account and an account number on nine of ten (most specific
+// first: 100% names, 90% numbers) — once, where they are still empty.
+export function enrichVolBlocks(alias = 'npc', log = () => {}) {
+  return _dupNameApex(alias, [
+    "List<Account> accs = [SELECT Id, Name, Phone, AccountNumber FROM Account WHERE (Name LIKE 'SFTK VOL Account 000%' OR Name LIKE 'SFTK VOL Account 001%' OR Name LIKE 'SFTK VOL Account 002%' OR Name LIKE 'SFTK VOL Account 003%' OR Name LIKE 'SFTK VOL Account 004%' OR Name LIKE 'SFTK VOL Account 005%' OR Name LIKE 'SFTK VOL Account 006%') AND Phone = null];",
+    "for (Account a : accs) { String n = a.Name.substring(a.Name.length() - 5); a.Phone = '03-555-' + n.substring(1); if (Math.mod(Integer.valueOf(n), 10) != 0) a.AccountNumber = 'VOL-' + n; }",
+    "if (!accs.isEmpty()) Database.update(accs, dmo);",
+    "System.debug('enriched ' + accs.size());",
+  ], log, 'Volume blocks enriched', "SELECT COUNT(Id) n FROM Account WHERE Name LIKE 'SFTK VOL Account 00%' AND Phone != null");
+}
+// Two copies of one name inside block 000 — in the source Haifa / 1 and Eilat / 2; in the target "Target
+// twin" / 3 and Haifa / 1 — so the one deployment shows ⚠ Needs a decision and 🔀 Merge both sides.
+export const VOL_TWIN = 'SFTK VOL Account 000 Twin';
+export function seedVolTwins(alias, side, log = () => {}) {
+  const a = side === 'src' ? ["'Haifa', 1", "'Eilat', 2"] : ["'Target twin', 3", "'Haifa', 1"];
+  return _dupNameApex(alias, [
+    `List<Account> have = [SELECT Id, BillingCity, AnnualRevenue FROM Account WHERE Name = '${VOL_TWIN}' ORDER BY CreatedDate];`,
+    `if (have.size() >= 2) return;`,
+    `if (have.size() == 1) { have[0].Industry = 'Energy'; have[0].BillingCity = ${a[0].split(', ')[0]}; have[0].AnnualRevenue = ${a[0].split(', ')[1]}; Database.update(have[0], dmo); }`,
+    `else Database.insert(new Account(Name='${VOL_TWIN}', Industry='Energy', BillingCity=${a[0].split(', ')[0]}, AnnualRevenue=${a[0].split(', ')[1]}, Phone='03-555-0900'), dmo);`,
+    `Database.insert(new Account(Name='${VOL_TWIN}', Industry='Energy', BillingCity=${a[1].split(', ')[0]}, AnnualRevenue=${a[1].split(', ')[1]}, Phone='03-555-0900'), dmo);`,
+  ], log, `Volume twins (${side})`, `SELECT Id, BillingCity, AnnualRevenue FROM Account WHERE Name = '${VOL_TWIN}' ORDER BY CreatedDate`);
+}
+// One account of block 000 present in the target with another phone: the 🟡 Changed example.
+export function seedVolChanged(alias = 'npc2', log = () => {}) {
+  return _dupNameApex(alias, [
+    "List<Account> have = [SELECT Id FROM Account WHERE Name = 'SFTK VOL Account 00001'];",
+    "if (have.isEmpty()) Database.insert(new Account(Name='SFTK VOL Account 00001', Industry='Energy', BillingCity='City 1', Phone='00-000-0000', AnnualRevenue=1000), dmo);",
+  ], log, 'Volume changed example', "SELECT Id, Phone FROM Account WHERE Name = 'SFTK VOL Account 00001'");
 }
 
 export function restoreDuplicateName(alias = 'npc', log = () => {}) {

@@ -15,6 +15,24 @@ const clearStatus2 = { name: 'clear-status2-values', node: "const {execFileSync}
 const rebuildFc = { name: 'rebuild-field-cleaner-fixture', node: "const {execSync}=require('node:child_process');const run=c=>{console.log('> '+c);execSync(c,{stdio:'inherit',shell:true});};run('bash docs/fixtures/field-cleaner-fixture/rebuild.sh npc');run('cd docs/fixtures/field-cleaner-fixture/flow2 && sf project deploy start -o npc --source-dir force-app --test-level NoTestRun');run('cd docs/fixtures/field-cleaner-fixture/replace && sf project deploy start -o npc --source-dir force-app --test-level NoTestRun');run('cd docs/fixtures/field-cleaner-fixture/surfaces && sf project deploy start -o npc --source-dir force-app --test-level NoTestRun');const n=JSON.parse(require('node:child_process').execFileSync('sf',['data','query','-o','npc','--json','-q','\"SELECT COUNT() FROM Account WHERE SFTK_FC_Test_Status__c != null\"'],{shell:true,encoding:'utf8'})).result.totalSize;if(n){console.log('seed values already there on '+n+' record(s) — seed skipped');}else{run('sf apex run -o npc -f docs/fixtures/field-cleaner-fixture/seed-pk.apex');}console.log('rebuilt')", timeoutMin: 20 };
 
 export const BATCHES = {
+  // ── the round before shipping, 2026-10-25: everything that changed in the week of 10-19..10-24 (merge first,
+  // most-specific-first keys, suggestions by depth, the one-table grade, bundle import, the folding cards, the
+  // parents' match field, the Flows page), plus the release smoke. Orgs npc = trailheads5, npc2 = the DE org.
+  qa1025: [
+    { name: 'release-smoke', script: `${L}release-smoke.mjs` },
+    { name: 'import-bundle', script: `${L}qa-import-bundle.mjs` },
+    { name: 'match-fold', script: `${L}qa-match-fold.mjs` },
+    { name: 'tiered-key', script: `${L}qa-tiered-key.mjs` },
+    { name: 'suggest-depth', script: `${L}qa-suggest-depth.mjs`, timeoutMin: 20 },
+    { name: 'deploy-cards', script: `${L}qa-deploy-cards.mjs`, timeoutMin: 25 },
+    { name: 'needs-decision', script: `${L}needs-decision.mjs` },
+    { name: 'merge-both-sides', script: `${L}merge-both.mjs`, timeoutMin: 25 },
+    { name: 'merge-one-side', script: `${L}merge.mjs`, timeoutMin: 20 },
+    { name: 'deploy-states', script: `${L}qa-deploy-states.mjs`, timeoutMin: 25 },
+    { name: 'parents-first', script: `${L}parents-first.mjs`, timeoutMin: 30 },
+    { name: 'flows-one-page', script: `${L}flows-one-page.mjs`, timeoutMin: 25 },
+    { name: 'theme-sweep', script: `${L}qa-theme-sweep.mjs`, timeoutMin: 25 },
+  ],
   // ── the targeted round of 2026-10-18 (after the one Flows page, merge, folds, Transfer): orgs npc = trailheads5,
   // npc2 = the Developer Edition org. Cancel-only and read-only runs first, then the ones that write and undo.
   qa1018: [

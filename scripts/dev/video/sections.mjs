@@ -21,13 +21,14 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { rebuildFieldCleanerFixture, removeIdentityField, restoreDuplicateName, removeVolume, seedTargetTwinCopy, restoreTargetTwin } from './fixture.mjs';
+import { rebuildFieldCleanerFixture, removeIdentityField, restoreDuplicateName, removeVolume, enrichVolBlocks, seedVolTwins, seedVolChanged } from './fixture.mjs';
 
 const J = JSON.stringify;
 const FIXTURE = 'docs/fixtures/complex-deployment/profiles.json';
 const DEMO = 'Accounts and everything under them';
-const BUILT = 'Accounts with contacts, opportunities and cases';   // built on camera in the builder chapter, removed off camera
+const BUILT = 'Accounts and their contacts';   // THE deployment of the Data Studio half: built on camera, then scanned, decided, deployed, stamped, rolled back (user 2026-10-25: "only one example of data deployment")
 const DEMO_VOL = 'Accounts and their contacts, at volume';
+const VOL_WHERE = ['000', '001', '002', '003', '004', '005', '006'].map(b => `Name LIKE 'SFTK VOL Account ${b}%'`).join(' OR ');   // 700 accounts, ~1,150 contacts
 const OLD_FIELD = 'SFTK_FC_Test_Status__c', NEW_FIELD = 'SFTK_FC_Test_Status2__c';
 // the target is a Developer Edition org since 2026-10-15 (the Nonprofit Cloud trial expired)
 const SRC_ORG = 'trailheads5', TGT_ORG = 'orgfarm-e2c4511b2b-dev-ed';
@@ -174,6 +175,45 @@ async function ensureVolumeDemo(c) {
 async function assertDirection({ h }) {
   const d = await h.eval(`(() => { const p = (typeof _reconcileProfile !== 'undefined' && _reconcileProfile) || null; return p ? { src: p.sourceOrg || '', tgt: p.targetOrg || '' } : null; })()`);
   if (!d || !d.src.includes(SRC_ORG) || !d.tgt.includes(TGT_ORG)) throw new Error(`the Deploy page is open ${d ? `${d.src} → ${d.tgt}` : 'on nothing'}; this chapter only ever writes ${SRC_ORG} → ${TGT_ORG}`);
+}
+// The one deployment, as the builder chapter makes it; when a later chapter is recorded on its own it is
+// made off camera the same way (no second example).
+async function ensureBuilt(c) {
+  const { h } = c;
+  const have = await h.eval(`(() => { const p = _profiles.find(p => p.name === ${J(BUILT)}); return p ? p.id : null; })()`);
+  if (have) return have;
+  const all = JSON.parse(readFileSync(FIXTURE, 'utf8'));
+  const base = JSON.parse(JSON.stringify(all.find(p => (p.profile || p).name === 'SFTK VOL — Accounts')));
+  const prof = base.profile || base;
+  prof.name = BUILT;
+  prof.tree.where = VOL_WHERE;
+  prof.tree.children = [{ childSObject: 'Contact', field: 'AccountId', matchField: 'Email' }];
+  prof.tree.fieldMappings = { ...(prof.tree.fieldMappings || {}), Preferred_Contact_Method__c: 'Preferred_Contact_Channel__c' };
+  prof.apiMode = 'sync'; prof.batchSize = 100; prof.threads = 1; prof.duplicateRules = 'bypass';
+  prof.sourceOrg = SRC_URL; prof.targetOrg = TGT_URL;
+  const file = join(resolve(process.env.REC_DIR || 'dist/video/rec'), 'demo-built.json');
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify([base]));
+  await h.importProfiles(file);
+  const got = await h.eval(`(() => { const p = _profiles.find(p => p.name === ${J(BUILT)}); return p ? { id: p.id, src: p.sourceOrg || '', tgt: p.targetOrg || '' } : null; })()`);
+  if (!got) throw new Error('the deployment could not be made');
+  if (!got.src.includes(SRC_ORG) || !got.tgt.includes(TGT_ORG)) throw new Error(`the deployment points ${got.src} → ${got.tgt}; it must be ${SRC_ORG} → ${TGT_ORG}`);
+  return got.id;
+}
+// The run's own settings on the built deployment: Collections in batches of 100 so the counter climbs on
+// camera, and the target's standard Account duplicate rule bypassed (it blocks these look-alike names).
+async function settleBuilt(c, id) {
+  await c.h.eval(`(async () => { const p = _profiles.find(p => p.id === ${J(id)}); if (!p) return false; p.apiMode = 'sync'; p.batchSize = 100; p.threads = 1; p.duplicateRules = 'bypass';
+    const kid = (p.tree.children || []).find(x => x.childSObject === 'Contact'); if (kid) kid.matchField = 'Email'; await storageSaveProfiles(); return true; })()`);
+}
+async function openBuiltScanned(c) {
+  const { h } = c;
+  if (!(await c.has('.ds-nav-btn'))) await c.studio('');
+  const id = await ensureBuilt(c);
+  await h.eval(`window.runProfile(${J(id)})`); await h.sleep(1500);
+  await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
+  await waitScanned(c); await h.sleep(2000);
+  return id;
 }
 async function openDemoScanned(c) {
   const { h } = c;
@@ -1008,12 +1048,12 @@ export const SECTIONS = [
   } },
 
   { id: 'builder', title: 'Building a deployment',
-    cleanup: async ({ h }) => {
-      try { await h.eval(`(async () => { const n = _profiles.length; _profiles = _profiles.filter(p => p.name !== ${J(BUILT)}); if (_profiles.length !== n) await storageSaveProfiles(); return n - _profiles.length; })()`).then(n => h.log(`built deployment removed: ${n}`)); } catch (e) { h.log('removing the built deployment:', (e && e.message) || e); }
-    },
     run: async c => {
     const { h, rec } = c;
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');
+    // off camera: the source blocks carry a phone and, on nine of ten, an account number (the matching chapter)
+    enrichVolBlocks('npc', (...a) => h.log(...a));
+    await h.eval(`(async () => { const n = _profiles.length; _profiles = _profiles.filter(p => p.name !== ${J(BUILT)}); if (_profiles.length !== n) await storageSaveProfiles(); return true; })()`);
     await nav(c, 'profiles');
     await h.waitFor("!!document.querySelector('#dsNewProfile')", 60000, 500);
     await rec.say('Data Deployment moves records between orgs. It starts with a deployment: a definition you build once and run as often as you like.');
@@ -1041,21 +1081,12 @@ export const SECTIONS = [
       await h.sleep(1200); return true;
     };
     await add('', 'Contact', 'AccountId');
-    await add('', 'Opportunity', 'AccountId');
-    await add('', 'Case', 'AccountId');
-    await rec.say('Contacts, Opportunities, Cases.');
-    // a child of a child: line items under the opportunities (that node loads its own relationships)
-    const nested = await rec.fast(() => h.waitFor("!![...document.querySelectorAll('[data-add-child]')].find(r => r.dataset.addChild !== '' && r.dataset.relObj === 'OpportunityLineItem')", 60000, 1000).then(() => true).catch(() => false));
-    if (nested) {
-      const path = await h.eval(`[...document.querySelectorAll('[data-add-child]')].find(r => r.dataset.addChild !== '' && r.dataset.relObj === 'OpportunityLineItem').dataset.addChild`);
-      await add(path, 'OpportunityLineItem');
-      await rec.say('And a child of a child: line items under the opportunities. A tree of any depth.');
-    }
+    await rec.say('The contacts under them. Opportunities, cases, a child of a child — a tree of any depth, the same way. This tour keeps it to accounts and contacts.', 7000);
     // a filter on the root, and a count
     if (await c.has('[data-where=""]')) {
       await rec.scrollTo('[data-where=""]', 'center');
       await rec.click('[data-where=""]', 500);
-      await rec.type('[data-where=""]', "Name LIKE 'SFTK CX%'", 40);
+      await rec.type('[data-where=""]', VOL_WHERE, 12);
       await h.eval(`(() => { const i = document.querySelector('[data-where=""]'); i.dispatchEvent(new Event('change', { bubbles: true })); i.blur(); return true; })()`);
       await rec.say('A filter on the root, in SOQL: only these accounts go, and only the children that hang under them.', 6000);
       if (await c.has('[data-preview=""]')) {
@@ -1086,12 +1117,12 @@ export const SECTIONS = [
         await rec.say('Several fields make a sequence: the name first, then the fields that tell records apart.', 5000);
         const pick = async (slot, name) => h.eval(`(() => { const s = document.querySelector('[data-match-comp="${slot}"]'); if (!s) return false; const o = [...s.options].find(o => o.value === ${J(name)}); if (!o) return false; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return o.value; })()`);
         await rec.point('[data-match-comp="1"]', 500);
-        if (await pick(1, 'Phone')) { await rec.fast(() => h.waitFor("!!document.querySelector('[data-match-comp=\"2\"]')", 30000, 300)); await h.sleep(1200); }
-        if (await pick(2, 'BillingCity')) await h.sleep(1500);
+        if (await pick(1, 'AccountNumber')) { await rec.fast(() => h.waitFor("!!document.querySelector('[data-match-comp=\"2\"]')", 30000, 300)); await h.sleep(1200); }
+        if (await pick(2, 'Phone')) await h.sleep(1500);
         if (await c.has('#dsMatchTiered')) {
           await rec.scrollTo('#dsMatchReadsAs', 'center');
           await rec.point('#dsMatchTiered', 800);
-          await rec.say('Most specific first. A record that has all three values is matched on all three. One with no city is matched on name and phone; one with only a name, on the name alone. A value that differs on both sides rules the pair out.', 12000);
+          await rec.say('Most specific first. Every account here has a name, nine of ten have an account number. A record with all three values is matched on all three; one without a phone on name and number; one with only a name, on the name alone. A value that differs on both sides rules the pair out.', 13500);
           await rec.point('#dsMatchReadsAs', 800);
           await rec.say('The page reads the key back in plain words, so there is no guessing what it does.', 4500);
         }
@@ -1145,26 +1176,34 @@ export const SECTIONS = [
     await rec.click('#dsBuilderSave', 900);
     await rec.fast(() => h.waitFor(`!!document.querySelector('#dsNewProfile') && (document.body.innerText || '').includes(${J(BUILT)})`, 30000, 300));
     await h.sleep(800);
-    await rec.say('Saved: a deployment you can run, compare across orgs and export as a file. For the rest of this tour a prepared one is used: Accounts with ten objects under them.', 7500);
+    await rec.say('Saved: a deployment you can run, compare across orgs and export as a file. The rest of this tour runs this one.', 6000);
+    // off camera: the run's settings (Collections in batches of 100, the target's look-alike rule bypassed)
+    const builtId = await h.eval(`(() => { const p = _profiles.find(p => p.name === ${J(BUILT)}); return p ? p.id : null; })()`);
+    if (builtId) await settleBuilt(c, builtId);
   } },
 
   // writes: the 🔀 Merge step merges the fixture's duplicate pair in trailheads5 for real;
   // the pair is put back off camera (fixture.mjs) so the next chapters see it again
   { id: 'deploy', title: 'Data Deployment', writes: true,
-    cleanup: async ({ h }) => { restoreDuplicateName('npc', (...a) => h.log(...a)); restoreTargetTwin('npc2', (...a) => h.log(...a)); },
+    cleanup: async ({ h }) => { seedVolTwins('npc', 'src', (...a) => h.log(...a)); },
     run: async c => {
     const { h, rec } = c;
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');
-    // off camera: the target holds two copies of the duplicate name too (🔀 Merge both sides)
-    seedTargetTwinCopy('npc2', (...a) => h.log(...a));
-    const id = await ensureDemo(c);
+    // off camera: two copies of one name on each side (⚠ Needs a decision, 🔀 Merge both sides) and one
+    // account already in the target with another phone (🟡 Changed)
+    enrichVolBlocks('npc', (...a) => h.log(...a));
+    seedVolTwins('npc', 'src', (...a) => h.log(...a));
+    seedVolTwins('npc2', 'tgt', (...a) => h.log(...a));
+    seedVolChanged('npc2', (...a) => h.log(...a));
+    const id = await ensureBuilt(c);
+    await settleBuilt(c, id);
     await nav(c, 'profiles');
     await rec.fast(() => h.waitFor("document.querySelectorAll('.ds-profile-card').length > 0", 30000, 500));
     await rec.say('The saved deployments. Each is a root object, the objects under it, and how records are recognised in the other org.');
     await rec.point(`[data-dsaction="runProfile"][data-arg="${id}"]`, 1000);
     await h.eval(`window.runProfile(${J(id)})`);
     await h.sleep(1800);
-    await rec.say('This one is Accounts with ten objects under them. Opening it goes to the Deploy page, which first reads both orgs. Nothing is written.');
+    await rec.say('Opening the one we built goes to the Deploy page, which first reads both orgs. Nothing is written.');
     await rec.click('#dsDepScan, #dsDepRefresh', 500);
     await waitScanned(c);
     await h.sleep(2500);
@@ -1328,6 +1367,7 @@ export const SECTIONS = [
             await rec.fast(async () => {
               await choose('#dsDepDupRules', eng0.dup, `document.querySelector('#dsDepDupRules').value === ${J(eng0.dup)}`);
               await choose('#dsDepApiMode', eng0.apiMode, `document.querySelector('#dsDepApiMode').value === ${J(eng0.apiMode)}`);
+              await settleBuilt(c, id);
             });
           }
         }
@@ -1335,71 +1375,22 @@ export const SECTIONS = [
     }
   } },
 
-  // User 2026-10-06: "we didn't cover the external id field creation that should map
-  // both orgs and how it works". The 🪪 identity field: created in both orgs on
-  // camera, matched pairs stamped, the re-scan matches by it; cleanup deletes the
-  // fields and the permission set again.
-  { id: 'identity', title: 'The identity field', writes: true,
-    cleanup: async ({ h }) => { removeIdentityField(['npc2', 'npc'], ['Account', 'Contact'], (...a) => h.log(...a)); },
+  // The run (user 2026-10-16: "a lot of records. the tree shouldn't be so big. but it does have to fast forward
+  // thousands of records for a few objects" / "show how records are deployed and the bar is moving"): the one
+  // deployment — 700 accounts and their ~1,150 contacts, batches of 100; the progress panel fills the view, the
+  // first seconds in real time, the rest sped up. The identity field is stamped on these records next, and the
+  // rollback is a chapter of its own; a run that did not finish is cleaned off camera there (removeVolume).
+  { id: 'run', title: 'The run', writes: true,
     run: async c => {
     const { h, rec } = c;
-    await openDemoScanned(c);
-    await assertDirection(c);
-    await rec.scrollTo('#dsDepTree');
-    await rec.say('Records are matched between orgs by a field — here by Name. Names change, and two records can share one. The identity field makes the match exact.', 7500);
-    await rec.say('Why it matters: every deployment after the first has to recognise the records it already wrote. Matched by name, a renamed account looks like a new one and is created twice; two accounts with one name are a guess.', 9500);
-    await rec.say('An identity ends that. A Salesforce Id is unique and never changes, so the source record’s own Id is written into a small external-id field on the target record, and from then on the pair is exact.', 8500);
-    await rec.click('#dsDepIdBtn', 800);
-    await rec.fast(() => h.waitFor("!!document.querySelector('#dsIdGo')", 60000, 500));
-    await h.sleep(800);
-    await rec.say('One small field, SFTK underscore ID: on every target record it stores the Id of the source record it came from. The table says which org has it — neither, yet — and how many matched pairs the scan found.', 9500);
-    await rec.point('#dsIdS', 800);
-    await h.eval(`(() => { const s = document.querySelector('#dsIdS'); if (s && !s.disabled && !s.checked) s.click(); return true; })()`);
-    await rec.say('Create it in the target, and in the source as well, so the identity travels when this org is a source for another one.', 6000);
-    await rec.click('#dsIdGo', 600);
-    await rec.fast(() => h.waitFor("document.querySelectorAll('#dsIdOut .ds-rec-card-line').length > 0", 300000, 1000));
-    await h.sleep(1200);
-    await rec.say('One metadata deploy per org: the field, plus a permission set that lets you see it.', 6500);
-    const stamp = await h.eval(`(() => { const b = [...document.querySelectorAll('[data-id-stamp]')].find(b => /Account/.test(b.closest('tr')?.innerText || '')); return b ? b.innerText.trim() : ''; })()`);
-    if (stamp) {
-      await rec.point(`[data-id-stamp]`, 800);
-      await rec.say(`${stamp.replace('🪪 ', '')} — the Accounts the scan already matched by Name get their source Id written once. From then on they match exactly, whatever their names do.`, 7500);
-      await h.eval(`(() => { const b = [...document.querySelectorAll('[data-id-stamp]')].find(b => /Account/.test(b.closest('tr')?.innerText || '')); if (b) b.click(); return true; })()`);
-      await rec.fast(() => h.waitFor("!!document.querySelector('#sftkConfirmGo')", 30000, 300));
-      await h.sleep(600);
-      await rec.say('The one confirmation, as for every write.', 4500);
-      const hist = await h.eval('_history.length');
-      await rec.click('#sftkConfirmGo', 600);
-      await prodGate(c);
-      await rec.fast(async () => { for (let i = 0; i < 120 && !(await h.eval(`_history.length > ${hist}`)); i++) await h.sleep(1000); await h.sleep(1500); });
-      await rec.say('Done, and recorded in History with an undo — the field can be emptied again from there.', 5000);
-    }
-    await h.closeModal();
-    await h.sleep(400);
-    await rec.click('#dsDepRefresh', 600);
-    await waitScanned(c);
-    await h.sleep(1500);
-    await rec.scrollTo('.ds-dep-plan', 'center');
-    await rec.say('Now the stamped records match by their identity. New records a deployment creates are stamped as they are written — nothing more to do.', 7000);
-    await rec.say('This is what keeps the two orgs aligned over time. The field is an external id, so the scan takes it as the match key and a re-run upserts on it: an existing record is updated, never written twice. A renamed record is still the same record, and a shared name is no longer a guess.', 11000);
-    await rec.say('Because it is a plain external-id field, it also serves outside the tool — a lookup can be matched by it, a report can show which source record each one came from, and your own integrations can key on it.', 8000);
-  } },
-  // The deployment that is run for real (user 2026-10-16: "a lot of records. the tree shouldn't be so big. but it
-  // does have to fast forward thousands of records for a few objects" / "show how records are deployed and the bar
-  // is moving"): Account → Contact, 700 accounts and their ~1,150 contacts, batches of 100; the progress panel
-  // fills the view, the first seconds in real time, the rest sped up; rolled back on camera. A chapter that did
-  // not finish is cleaned off camera (removeVolume).
-  { id: 'run', title: 'Deploy and roll back', writes: true,
-    cleanup: async ({ h }) => { removeVolume('npc2', (...a) => h.log(...a)); },
-    run: async c => {
-    const { h, rec } = c;
-    // the target must not hold these records before the take (2026-10-16: a cleanup right after a mass insert had
+    // the target must not hold the blocks before the take (2026-10-16: a cleanup right after a mass insert had
     // skipped every row — Salesforce still held locks — and the take found nothing to insert)
     removeVolume('npc2', (...a) => h.log(...a));
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');
-    const id = await ensureVolumeDemo(c);
+    const id = await ensureBuilt(c);
+    await settleBuilt(c, id);
     await h.eval(`window.runProfile(${J(id)})`); await h.sleep(1500);
-    await rec.say('Now a real deployment. A small tree — accounts and the contacts under them — but thousands of records the target does not have.', 7000);
+    await rec.say('Now the run — the same deployment: seven hundred accounts and the contacts under them, which the target does not have.', 6500);
     await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
     await waitScanned(c);
     await h.sleep(1500);
@@ -1450,6 +1441,63 @@ export const SECTIONS = [
     await rec.say(!last.failed
       ? `Done: ${Number(last.inserted).toLocaleString()} records written and read back from the target — the page shows what is true now, not what was sent.`
       : `Finished: ${Number(last.inserted).toLocaleString()} written, ${last.failed} refused, each with Salesforce’s own reason, never counted as done.`, 7000);
+  } },
+
+  // The identity field, on the records the run just wrote (user 2026-10-06: "we didn't cover the external id
+  // field creation that should map both orgs and how it works"): created in both orgs on camera, the matched
+  // pairs stamped, the re-scan matches by it; cleanup deletes the fields and the permission set again.
+  { id: 'identity', title: 'The identity field', writes: true,
+    cleanup: async ({ h }) => { removeIdentityField(['npc2', 'npc'], ['Account', 'Contact'], (...a) => h.log(...a)); },
+    run: async c => {
+    const { h, rec } = c;
+    await openBuiltScanned(c);
+    await assertDirection(c);
+    await rec.scrollTo('#dsDepTree');
+    await rec.say('The records just written are matched by name from now on. Names change, and two records can share one. The identity field makes the match exact.', 7500);
+    await rec.say('Why it matters: every deployment after the first has to recognise the records it already wrote. Matched by name, a renamed account looks like a new one and is created twice; two accounts with one name are a guess.', 9500);
+    await rec.say('An identity ends that. A Salesforce Id is unique and never changes, so the source record’s own Id is written into a small external-id field on the target record, and from then on the pair is exact.', 8500);
+    await rec.click('#dsDepIdBtn', 800);
+    await rec.fast(() => h.waitFor("!!document.querySelector('#dsIdGo')", 60000, 500));
+    await h.sleep(800);
+    await rec.say('One small field, SFTK underscore ID: on every target record it stores the Id of the source record it came from. The table says which org has it — neither, yet — and how many matched pairs the scan found.', 9500);
+    await rec.point('#dsIdS', 800);
+    await h.eval(`(() => { const s = document.querySelector('#dsIdS'); if (s && !s.disabled && !s.checked) s.click(); return true; })()`);
+    await rec.say('Create it in the target, and in the source as well, so the identity travels when this org is a source for another one.', 6000);
+    await rec.click('#dsIdGo', 600);
+    await rec.fast(() => h.waitFor("document.querySelectorAll('#dsIdOut .ds-rec-card-line').length > 0", 300000, 1000));
+    await h.sleep(1200);
+    await rec.say('One metadata deploy per org: the field, plus a permission set that lets you see it.', 6500);
+    const stamp = await h.eval(`(() => { const b = [...document.querySelectorAll('[data-id-stamp]')].find(b => /Account/.test(b.closest('tr')?.innerText || '')); return b ? b.innerText.trim() : ''; })()`);
+    if (stamp) {
+      await rec.point(`[data-id-stamp]`, 800);
+      await rec.say(`${stamp.replace('🪪 ', '')} — the Accounts the scan already matched by Name get their source Id written once. From then on they match exactly, whatever their names do.`, 7500);
+      await h.eval(`(() => { const b = [...document.querySelectorAll('[data-id-stamp]')].find(b => /Account/.test(b.closest('tr')?.innerText || '')); if (b) b.click(); return true; })()`);
+      await rec.fast(() => h.waitFor("!!document.querySelector('#sftkConfirmGo')", 30000, 300));
+      await h.sleep(600);
+      await rec.say('The one confirmation, as for every write.', 4500);
+      const hist = await h.eval('_history.length');
+      await rec.click('#sftkConfirmGo', 600);
+      await prodGate(c);
+      await rec.fast(async () => { for (let i = 0; i < 120 && !(await h.eval(`_history.length > ${hist}`)); i++) await h.sleep(1000); await h.sleep(1500); });
+      await rec.say('Done, and recorded in History with an undo — the field can be emptied again from there.', 5000);
+    }
+    await h.closeModal();
+    await h.sleep(400);
+    await rec.click('#dsDepRefresh', 600);
+    await waitScanned(c);
+    await h.sleep(1500);
+    await rec.scrollTo('.ds-dep-plan', 'center');
+    await rec.say('Now the stamped records match by their identity. New records a deployment creates are stamped as they are written — nothing more to do.', 7000);
+    await rec.say('This is what keeps the two orgs aligned over time. The field is an external id, so the scan takes it as the match key and a re-run upserts on it: an existing record is updated, never written twice. A renamed record is still the same record, and a shared name is no longer a guess.', 11000);
+    await rec.say('Because it is a plain external-id field, it also serves outside the tool — a lookup can be matched by it, a report can show which source record each one came from, and your own integrations can key on it.', 8000);
+  } },
+
+  { id: 'rollback', title: 'Roll back', writes: true,
+    cleanup: async ({ h }) => { removeVolume('npc2', (...a) => h.log(...a)); seedVolTwins('npc', 'src', (...a) => h.log(...a)); },
+    run: async c => {
+    const { h, rec } = c;
+    if (!(await c.has('.ds-nav-btn'))) await c.studio('');
+    await ensureBuilt(c);
     await nav(c, 'history');
     await h.waitFor("!!document.querySelector('.ds-history-card, .ds-history-item')", 20000, 500);
     await rec.say('History keeps every run: what was written, per object, with links to the records, and a report by name.', 6000);
