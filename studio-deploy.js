@@ -890,7 +890,7 @@ async function _depPaintOrder(p, scan) {
   if (allDone && !anyDoomed && !anyEmpty) {
     const names = steps.map(s => esc(s.refObj));
     h.innerHTML = `<details${_depFoldOpen('parents')} class="ds-rec-card ds-rec-card-good ds-dep-parents-synced ds-dep-fold ds-dep-subfold" data-fold="parents"><summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span><span class="ds-rec-card-title">Parents synced ✓</span>
-      <span class="ds-rec-card-hint">nothing to deploy first</span></summary>
+      <span class="ds-rec-card-hint">nothing to deploy first</span><span class="ds-dep-foldsum">${steps.length ? `${steps.map(x => esc(x.refObj)).slice(0, 4).join(' · ')}${steps.length > 4 ? ` · +${steps.length - 4} more` : ''} — already in ${esc(tgtL)}` : 'no outside parents'}</span></summary>
       <div class="ds-rec-card-line">${names.length
         ? `Every object these records look up outside the deployment is already in ${esc(tgtL)}: ${names.join(', ')}. Lookups will land on them by name.`
         : `None of these objects looks up a record outside the deployment.`}</div></details>`;
@@ -900,7 +900,9 @@ async function _depPaintOrder(p, scan) {
   h.innerHTML = `<details${_depFoldOpen('parents')} class="ds-rec-card ${anyDoomed ? 'ds-rec-card-bad' : anyEmpty ? 'ds-rec-card-warn' : allDone ? 'ds-rec-card-good' : ''} ds-dep-fold ds-dep-subfold" data-fold="parents">
     <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span>
       <span class="ds-rec-card-title">${anyDoomed ? '⛔ Stop — some inserts here fail until their parents exist · ' : ''}Start with parents first</span>
-      <span class="ds-rec-card-hint">every object in this deployment, and what it points at outside it — those records must be in ${esc(tgtL)} first; a lookup lands on the parent that matches by the field shown on its row</span></summary>
+      <span class="ds-rec-card-hint">every object in this deployment, and what it points at outside it — those records must be in ${esc(tgtL)} first; a lookup lands on the parent that matches by the field shown on its row</span>
+      <span class="ds-dep-foldsum">${(() => { const names = steps.map(x => esc(x.refObj)); const next = nextIdx >= 0 ? steps[nextIdx] : null;
+        return `${names.length ? `${names.slice(0, 4).join(' · ')}${names.length > 4 ? ` · +${names.length - 4} more` : ''}` : 'no outside parents'}${next ? ` — next: ${next.state === 'empty' ? `deploy ${esc(next.refObj)} first` : next.state === 'behind' ? `align ${esc(next.refObj)}` : `check ${esc(next.refObj)}`}` : names.length ? ' — all in place, then this deployment' : ''}`; })()}</span></summary>
     <div class="ds-rec-card-body">
       ${steps.length ? steps.map(stepHtml).join('') : `<div class="ds-ordstep ds-ordstep-done"><span class="ds-ordstep-num">✓</span><span class="ds-dep-ordwhat">None of ${chain} points at an object outside this deployment — there is nothing to deploy first.</span></div>`}
       <div class="ds-ordstep${allDone ? ' ds-ordstep-next' : ''}">
