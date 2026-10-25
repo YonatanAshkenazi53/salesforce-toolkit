@@ -1354,6 +1354,8 @@ export const SECTIONS = [
               await rec.fast(() => h.waitFor(until, 15000, 200));
               await h.sleep(700);
             };
+            // the demo starts from "respect" (the built deployment runs with Bypass): Bulk + respect hides the batch field
+            await rec.fast(() => choose('#dsDepDupRules', 'respect', "document.querySelector('#dsDepDupRules').value === 'respect'"));
             await rec.click('#dsDepApiMode', 600);
             await choose('#dsDepApiMode', 'bulk', "!!document.querySelector('#dsDepEngineNote') && !document.querySelector('#dsDepBatch')");
             await rec.scrollTo('#dsDepEngineNote', 'center');
@@ -1404,9 +1406,10 @@ export const SECTIONS = [
     }
     await rec.scrollTo('.ds-dep-plan', 'center');
     await rec.say('The plan, per object: how many to insert. One button ticks every record the target lacks, in every object that was read.', 6500);
+    if (await c.has('.ds-dep-tabs [data-dep-tab="ins"]')) await rec.click('.ds-dep-tabs [data-dep-tab="ins"]', 700);
     await rec.scrollTo('#dsDepTickAll', 'center');
     await rec.click('#dsDepTickAll', 900);
-    await rec.fast(() => h.waitFor("document.querySelectorAll('#dsDepRecords input[type=checkbox]:checked').length > 0", 30000, 300));
+    await rec.fast(() => h.waitFor("_recSel.push.size > 0 || Object.values(_recChildSel || {}).some(s => s.push.size > 0)", 30000, 300));
     const ticked = await h.eval(`(() => { let n = 0; for (const k of Object.keys(_recChildSel || {})) n += _recChildSel[k].push.size; return n + _recSel.push.size; })()`);
     if (ticked < 1500) throw new Error(`only ${ticked} records ticked`);
     const nObjs = await h.eval('(_recSel.push.size ? 1 : 0) + Object.keys(_recChildSel || {}).filter(k => _recChildSel[k].push.size).length');
