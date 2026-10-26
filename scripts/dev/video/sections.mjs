@@ -1082,7 +1082,17 @@ export const SECTIONS = [
     };
     await add('', 'Contact', 'AccountId');
     await add('', 'Opportunity', 'AccountId');
+    // the tree just built is on screen, folded to its shape, while it is described (user 2026-10-27:
+    // "you don't scroll down so users can't see the tree you picked"); the children open again after
+    const foldChildren = async open => {
+      for (const path of await h.eval(`[...document.querySelectorAll('.ds-tree-node--child-1 > .ds-tree-node-card .ds-tree-toggle')].filter(b => b.getAttribute('aria-expanded') === ${open ? "'false'" : "'true'"}).map(b => b.dataset.path)`)) {
+        await rec.click(`.ds-tree-toggle[data-path="${path}"]`, 500);
+      }
+    };
+    await foldChildren(false);
+    if (await c.has('.ds-tree-node--child-1')) await rec.scrollTo('.ds-tree-node--child-1', 'center');
     await rec.say('The contacts and the opportunities under them. Cases, or a child of a child, go the same way — a tree of any depth.', 6000);
+    await foldChildren(true);
     // a filter on the root, and a count
     if (await c.has('[data-where=""]')) {
       await rec.scrollTo('[data-where=""]', 'center');
