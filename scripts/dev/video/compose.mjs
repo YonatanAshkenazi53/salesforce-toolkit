@@ -10,9 +10,12 @@
 //
 //   REC_DIR=<folder> OUT=<file.mp4> node scripts/dev/headless-studio.mjs scripts/dev/video/compose.mjs
 //
-// The encoder is Chrome's own (canvas → MediaRecorder, H.264 in MP4): nothing
-// is downloaded or installed. It encodes in real time, so composing takes as
-// long as the finished video runs.
+// The encoder is Chrome's own (canvas → MediaRecorder): nothing is downloaded
+// or installed. It encodes in real time, so composing takes as long as the
+// finished video runs. Since 2026-10-27 it records VP9 into <name>.webm (Chrome's
+// H.264 made every page of text soft, whatever bitrate it was asked for) and
+// finish.mjs turns that into the H.264 MP4 and the share copies with ffmpeg.
+// CODEC=h264 records the old way, straight to MP4.
 //
 // Layout, 1920×1080: a browser frame on top (88 px: a tab strip and an address
 // bar drawn like Chrome's, showing the page's real title and address — user
@@ -153,9 +156,15 @@ export default async function (h) {
   const type = await h.eval(`(async () => {
     const c = document.createElement('canvas'); c.width = Math.round(${W} * ${SCALE}); c.height = Math.round(${H} * ${SCALE}); document.body.style.margin = '0'; document.body.appendChild(c);
     const g = c.getContext('2d'); g.scale(${SCALE}, ${SCALE});
+    g.imageSmoothingQuality = 'high';   // the 1600-px recording is drawn 1.2x wider: the best resampling the canvas has, not bilinear (2026-10-27)
     const speak = ${SPEAK ? 'true' : 'false'};
     const pick = list => list.find(t => MediaRecorder.isTypeSupported(t));
-    const type = speak ? pick(['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4;codecs=avc1,opus', 'video/webm;codecs=vp9,opus'])
+    // VP9 in WebM, then finish.mjs makes the H.264 MP4 with ffmpeg. Chrome's own H.264 encoder
+    // paints text soft whatever bitrate it is asked for (2026-10-27: 50 KB keyframes at 1080p,
+    // the same at 8 and at 30 Mbps); its VP9 honours the bitrate. CODEC=h264 keeps the old way.
+    const vp9 = ${process.env.CODEC === 'h264' ? 'false' : 'true'};
+    const type = vp9 ? pick(speak ? ['video/webm;codecs=vp9,opus'] : ['video/webm;codecs=vp9'])
+      : speak ? pick(['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4;codecs=avc1,opus', 'video/webm;codecs=vp9,opus'])
       : pick(['video/mp4;codecs=avc1.640028', 'video/mp4', 'video/webm;codecs=vp9']);
     const vstream = c.captureStream(0); const track = vstream.getVideoTracks()[0];
     let ac = null, dest = null, stream = vstream;

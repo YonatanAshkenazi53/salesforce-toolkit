@@ -4,7 +4,8 @@ A scripted tour of every tool in the public build, recorded live against the two
 trial orgs, with the captions burned into the picture, inside a browser frame
 drawn like Chrome's (tab strip and address bar with the page's real title and
 address). The recording is Chrome's own screencast and the encoder is Chrome's
-own (canvas → MediaRecorder, H.264 + AAC in MP4); the voice is Microsoft's neural
+own (canvas → MediaRecorder, VP9 + Opus in WebM); ffmpeg then makes the H.264
+MP4 and the share copies (`finish.mjs`). The voice is Microsoft's neural
 "Andrew" through the edge-tts package (installed 2026-10-09 with the user's
 permission; the caption text goes to Microsoft's speech endpoint).
 
@@ -20,19 +21,30 @@ SFTK_EXT=dist/store-staging SFTK_WINDOW=1600,800 REC_DIR=dist/video/rec node scr
 
 ```bash
 REC_DIR=dist/video/rec OUT=dist/video/walkthrough.mp4 node scripts/dev/headless-studio.mjs scripts/dev/video/compose.mjs
+node scripts/dev/video/finish.mjs
 ```
 
 The first command builds the public build, the second records it (about as long
-as the tour takes, waits included), the third composes the video in real time.
-Run them one after the other, never two at once: the harness closes any other
-headless Chrome it started.
+as the tour takes, waits included), the third composes the video in real time
+into `walkthrough.webm`, the fourth turns that into the MP4 and the share copies
+with ffmpeg (a few minutes). Run the harness commands one after the other,
+never two at once: the harness closes any other headless Chrome it started.
+
+Why two encoders (2026-10-27): Chrome's own H.264 paints every page of text
+soft whatever bitrate it is asked for (50 KB keyframes at 1080p, the same at
+8 and at 30 Mbit/s — unreadable on the Deploy pages), while its VP9 honours
+the bitrate. So the composer records VP9 at 12 Mbit/s and ffmpeg (libx264,
+CRF 17) makes the file players and YouTube take. `CODEC=h264` records the
+old way, straight to MP4.
 
 Out come two files in `dist/video/` (not in git):
 
 | file | what |
 |---|---|
-| `walkthrough.mp4` | 1920×1080: browser frame (88 px), the page (1920×872), the caption band with the chapter on the left |
-| (optional) phone copies | `SCALE=0.6667 BITRATE=1200000 AUDIO_BITRATE=64000 ONLY=<chapters> OUT=…` — 720p, lighter sound; the whole tour at 720p is still ~39 MB (the sound is a third of it), so two parts (Toolkit chapters / Data Studio chapters, 22 MB + 17 MB) fit a 30 MB upload limit. Composing takes as long as the part runs |
+| `walkthrough.webm` | the composer's recording, 1920×1080: browser frame (88 px), the page (1920×872), the caption band with the chapter on the left |
+| `walkthrough.mp4` | the same as H.264 + AAC (`finish.mjs`), also copied to `share/` |
+| `share/walkthrough-720p.mp4` | a 720p copy |
+| `share/walkthrough-part*.mp4` | the tour in seven parts cut at section boundaries, 720p, each under `CAP_MB` (29.5) for a chat upload, each with its own `.chapters.txt` from 00:00 |
 | `walkthrough.chapters.txt` | `0:00 Title` lines to paste into the YouTube description |
 
 ## Look at it without playing it
@@ -53,7 +65,8 @@ compose step joins just those sections (a check of a chapter after re-recording 
 | `recorder.mjs` | `makeRecorder(h, dir)`: one recording per `begin(dir)` … `end()` — screencast frames, captions (`say`: spoken at once, and the picture holds for the sentence), chapters, waiting stretches (`fast`), a ring around what is clicked (`click`/`point`), typing (`type`), a dialog or page scrolled to its end (`reveal`), one picture of another tab (`frameFrom`), the page's title and address per stretch (for the frame), and the privacy mask (`mask`/`remask`) |
 | `sections.mjs` | the tour itself: one entry per tool, with its captions |
 | `walkthrough.mjs` | logs in, runs the sections, lists what was recorded and what failed |
-| `compose.mjs` | the sections in `order.json` order (or one recording) → MP4 and chapters |
+| `compose.mjs` | the sections in `order.json` order (or one recording) → WebM (VP9) and chapters |
+| `finish.mjs` | WebM → 1080p MP4, 720p copy, the parts under a size cap (ffmpeg); `STEPS=full,720p,parts` picks |
 | `voice.mjs` | the captions spoken into MP3 files (edge-tts, Andrew) — `speakOne` while recording, `speakAll` at compose; `VOICE_ENGINE=sapi` for Windows' own offline voice |
 | `fixture.mjs` | rebuilds the Field Cleaner fixture after its chapter deleted the field (`rebuildFieldCleanerFixture`), removes the identity field (`removeIdentityField`) |
 | `peek.mjs` | frames of a finished video |
