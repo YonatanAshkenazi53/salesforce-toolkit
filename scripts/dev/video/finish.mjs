@@ -11,7 +11,7 @@
 // the <name>.chapters.txt the composer wrote: one chapter per section), each
 // starting at 00:00 with its own chapters file, 720p, two-pass to the size cap.
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync, copyFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync, copyFileSync, rmSync } from 'node:fs';
 import { join, resolve, basename, dirname } from 'node:path';
 
 const IN = resolve(process.env.IN || 'dist/video/walkthrough.webm');
@@ -82,6 +82,7 @@ if (STEPS.includes('parts')) {
     const passlog = join(SHARE, `.${name}-2pass`);
     ff([...common, '-pass', '1', '-passlogfile', passlog, '-an', '-f', 'null', process.platform === 'win32' ? 'NUL' : '/dev/null'], `${name} pass 1 (${mmss(t0)}–${mmss(t1)}, ${videoK} kbit/s)`);
     ff([...common, '-pass', '2', '-passlogfile', passlog, '-c:a', 'aac', '-b:a', `${audioK}k`, '-ac', '2', '-movflags', '+faststart', out], `${name} pass 2`);
+    for (const f of [`${passlog}-0.log`, `${passlog}-0.log.mbtree`]) rmSync(f, { force: true });   // the first pass's notes, not a share file
     writeFileSync(out.replace(/\.mp4$/, '.chapters.txt'), chapters.slice(a, b + 1).map((c, i) => `${mmss(i === 0 ? 0 : c.t - t0)} ${c.title}`).join('\n') + '\n');
     log(name + ':', out, mb(out), `(${ids.filter(id => order.includes(id)).join(', ')})`);
   }

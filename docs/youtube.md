@@ -28,15 +28,15 @@ Chapters
 24:01 Flow Access
 24:29 Data Studio — Connected Orgs
 25:04 Building a deployment
-29:10 Data Deployment
-36:45 The run
-38:37 The identity field
-41:06 Roll back
-42:15 All open orgs
-42:52 History
-43:16 Org Compare
-43:38 Org health
-44:07 Licence and privacy
+29:23 Data Deployment
+36:58 The run
+38:50 The identity field
+41:18 Roll back
+42:28 All open orgs
+43:04 History
+43:28 Org Compare
+43:51 Org health
+44:19 Licence and privacy
 
 The Toolkit (popup): Flows with versions, dependencies, flow switches and API versions · Debugger · Lightning Pages · Field Cleaner · Copy Permissions · Flow Access.
 Data Studio: Connected Orgs · Data Deployment (a whole tree in one run, parents first, flows / validation rules / duplicate rules paused or bypassed for the run, Bulk API 2.0 or Collections, an identity field for exact matching, roll back with verification) · All open orgs · History · Org Compare · Org health.
