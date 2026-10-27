@@ -63,21 +63,19 @@ describe('sftkMemoryForget — a decision taken back', () => {
 describe('the answers are sentences, in the open', () => {
   it('each candidate answer carries that record’s telling values; "new" and "not decided" say what happens', () => {
     expect(groups).toContain("const tellText = tell => (tell || []).filter(x => x && x[1] !== '').map(x => `${x[0]}: ${x[1]}`).join(' · ');");
-    expect(groups).toContain("text: `Same record as #${i + 1} in ${orgLabel(p.targetOrg)}${tellText(candTell[t]) ? ` (${tellText(candTell[t])})` : ''}");
-    expect(groups).toContain("{ v: '__new__', text: `Not in ${orgLabel(p.targetOrg)} yet — create it there as a new record` },");
-    expect(groups).toContain("{ v: '', text: 'Not decided — it stays out of the deployment' },");
+    // 2026-10-27: the sentences complete "<copy> is …" (the grid before them was not understood)
+    expect(groups).toContain("text: `the same record as #${i + 1} in ${orgLabel(p.targetOrg)}${tellText(candTell[t]) ? ` (${tellText(candTell[t])})` : ''}");
+    expect(groups).toContain("{ v: '__new__', text: `a new record — not in ${orgLabel(p.targetOrg)} yet, create it there` },");
+    expect(groups).toContain("{ v: '', text: 'not decided yet — it stays out of the deployment' },");
     expect(groups).not.toContain('— decide —');
     expect(groups).not.toContain('it is #');
   });
-  it('up to six candidates: a radio per answer; more: a dropdown with the same sentences', () => {
-    expect(DV).toContain('const SFTK_AMB_RADIO_MAX = 6;');
-    expect(groups).toContain('const radios = cands.length <= SFTK_AMB_RADIO_MAX;');
-    expect(groups).toContain('<input type="radio" name="amb_${esc(r.sourceId)}" data-dep-amb-sel="${esc(r.sourceId)}" value="${esc(a.v)}"');
+  it('one sentence row per source copy: the copy, "is", a dropdown of the same sentences whatever the number of candidates', () => {
+    expect(groups).toContain('<span class="ds-amb-is">is</span>');
+    expect(groups).not.toContain('<input type="radio"');
     expect(groups).toContain('<option value="${esc(a.v)}" ${pick === a.v ? \'selected\' : \'\'}>${esc(a.text)}</option>');
   });
   it('every answer is escaped — a record value is text, never markup', () => {
-    expect(groups).toContain('title="${esc(a.text)}"');   // 2026-10-27: the matrix cell's tooltip
-    expect(groups).toContain('aria-label="${esc(a.text)}"');
     expect(groups).toContain('<option value="${esc(a.v)}" ${pick === a.v ? \'selected\' : \'\'}>${esc(a.text)}</option>');
     expect(groups).not.toMatch(/\$\{a\.text\}/);
   });

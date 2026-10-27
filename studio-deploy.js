@@ -781,6 +781,7 @@ async function _depPaintTree(p, scan) {
 // function only draws it and feeds the same run gate.
 let _depOrderKey = '', _depOrderData = null;
 const _depOrderChecked = new Set();
+const _depOrderInFlight = new Set();   // parent checks still reading — shown as "checking", never as failed (2026-10-27)
 // A parent object is checked for alignment ON LOAD when that is cheap: up to
 // this many source records (the scan's own list cap). Above it the page asks.
 const SFTK_DEPLOY_AUTOCHECK_MAX = 5000;
@@ -850,6 +851,7 @@ async function _depPaintOrder(p, scan) {
     if (state === 'unknown' && !_depOrderChecked.has(`${key}|${s.refObj}`)) {
       state = (s.srcCount != null && s.srcCount <= SFTK_DEPLOY_AUTOCHECK_MAX) ? 'checking' : 'large';
     }
+    if (state === 'unknown' && _depOrderInFlight.has(`${key}|${s.refObj}`)) state = 'checking';   // still reading — not a failure
     return { ...s, vd, state };
   });
   const verdict = sftkDeployParentsVerdict(steps);
@@ -865,12 +867,16 @@ async function _depPaintOrder(p, scan) {
   const anyEmpty = steps.some(s => s.state === 'empty');
   const need = s => s.neededBy.map(n => `${esc(n.obj)}.${esc(n.field)}${n.required ? ' <b>(required)</b>' : ''}`).join(' · ');
   const matchedBy = s => { const m = sftkDeployParentMatchFields(p.tree, s); return m.length === 1 ? m[0] : m.join(' / '); };
+  // the aligned records of a parent that is in sync (user 2026-10-27: "a view of the aligned parents and by what key")
+  const pairsBtn = s => { const vd = s.vd || {}; const kept = Array.isArray(vd.pairs) && vd.pairs.length; const n = vd.aligned != null ? vd.aligned : 0;
+    return kept ? `<button class="ds-btn ds-btn-xs" data-dep-pairs="${esc(s.refObj)}" title="Each ${esc(s.refObj)} record in ${esc(orgLabel(p.sourceOrg || ''))} and the ${esc(tgtL)} record it lands on — aligned by ${esc(vd.by || matchedBy(s))}">📋 ${n.toLocaleString()} aligned</button>`
+      : `<button class="ds-btn ds-btn-xs" data-dep-pairs-check="${esc(s.refObj)}" title="Reads ${esc(s.refObj)} in both orgs again and keeps the aligned pairs, so they can be listed">🔍 List the aligned records</button>`; };
   const stepHtml = (s, i) => {
     const isNext = i === nextIdx;
     const btn = (label, primary) => `<button class="ds-btn ds-btn-xs${primary ? ' ds-btn-primary' : ''}" data-dep-gap="${esc(s.refObj)}" data-dep-gap-for="${esc(s.forObj)}" title="Scans ${esc(s.refObj)} across this org pair and opens it here — align it, then the banner brings you back.">${label}</button>`;
     const status = s.state === 'notneeded' ? `<span class="ds-psync ds-psync-ok" title="${esc(orgLabel(p.sourceOrg || ''))} holds no ${esc(s.refObj)} records, so none of these records can point at one.">✓ not needed — the source has none</span>`
       : s.state === 'large' ? `<span class="ds-lkp-hint">${s.srcCount == null ? 'size unknown' : `${s.srcCount.toLocaleString()} records`} — too large to check on its own</span> ${btn('🔍 Check now', isNext)}`
-      : s.state === 'done' ? `<span class="ds-psync ds-psync-ok">✓ in sync${s.vd ? ` · ${esc(timeAgo(s.vd.at))}` : ''}</span> ${btn('⚖ Open', false)}`
+      : s.state === 'done' ? `<span class="ds-psync ds-psync-ok">✓ in sync${s.vd ? ` · ${esc(timeAgo(s.vd.at))}` : ''}</span> ${pairsBtn(s)} ${btn('⚖ Open', false)}`
       : s.state === 'empty' ? `<span class="ds-psync ds-psync-bad">${esc(tgtL)} has none at all${s.required ? ' — and a field above requires it' : ''}</span> ${btn(`➕ Deploy ${esc(s.refObj)} first`, true)}`
       : s.state === 'checking' ? `<span class="ds-lkp-hint">⏳ checking alignment…</span>`
       : s.state === 'behind' ? `<span class="ds-psync ds-psync-bad">🔴 ${s.vd.missing} missing · 🟡 ${s.vd.changed} changed · ${esc(timeAgo(s.vd.at))}</span> ${btn('⚖ Open & fix', isNext)}`
@@ -880,6 +886,7 @@ async function _depPaintOrder(p, scan) {
       <span class="ds-dep-ordwhat"><strong>${esc(s.refObj)}</strong> <span class="ds-lkp-hint">needed by ${need(s)}</span>
         <span class="ds-dep-pmatch" title="The field of ${esc(s.refObj)} a lookup is resolved by: the child record's parent is found in ${esc(tgtL)} by this value. Change it when names repeat or differ between the orgs."> · matched by <b>${esc(matchedBy(s))}</b> <button class="ds-btn ds-btn-xs ds-dep-pmatch-btn" data-dep-pmatch-edit="${esc(s.refObj)}" title="Choose the field ${esc(s.refObj)} is matched by">✏</button></span></span>
       ${status}${isNext ? '<span class="ds-ordstep-arrow">← next</span>' : ''}
+      <div class="ds-dep-pairs" data-dep-pairs-host="${esc(s.refObj)}" style="display:none"></div>
     </div>`;
   };
   const allDone = nextIdx === -1;
@@ -889,12 +896,24 @@ async function _depPaintOrder(p, scan) {
   // "we should show that the parents are synced for this deployment … under the info section")
   if (allDone && !anyDoomed && !anyEmpty) {
     const names = steps.map(s => esc(s.refObj));
+    // the aligned records, per parent object (user 2026-10-27: "a view of the aligned parents and by what key")
+    const parentLine = s => {
+      const vd = s.vd || {}, by = vd.by || matchedBy(s), n = vd.aligned != null ? vd.aligned : null;
+      const kept = Array.isArray(vd.pairs) && vd.pairs.length;
+      return `<div class="ds-dep-pline" data-dep-pline="${esc(s.refObj)}"><b>${esc(s.refObj)}</b> <span class="ds-dep-muted">needed by ${need(s)} · matched by <b>${esc(by)}</b>${n != null ? ` · ${n.toLocaleString()} record${n === 1 ? '' : 's'} aligned` : ''}${s.vd ? ` · checked ${esc(timeAgo(s.vd.at))}` : ''}</span>
+        ${kept ? `<button class="ds-btn ds-btn-xs" data-dep-pairs="${esc(s.refObj)}" title="Each ${esc(s.refObj)} record in ${esc(orgLabel(p.sourceOrg || ''))} and the ${esc(tgtL)} record it lands on — aligned by ${esc(by)}">📋 Show the ${n.toLocaleString()} aligned record${n === 1 ? '' : 's'}</button>` : `<button class="ds-btn ds-btn-xs" data-dep-pairs-check="${esc(s.refObj)}" title="Reads ${esc(s.refObj)} in both orgs again and keeps the aligned pairs">🔍 Check again to list them</button>`}
+        <button class="ds-btn ds-btn-xs ds-dep-pmatch-btn" data-dep-pmatch-edit="${esc(s.refObj)}" title="Choose the field ${esc(s.refObj)} is matched by">✏</button>
+        <div class="ds-dep-pairs" data-dep-pairs-host="${esc(s.refObj)}" style="display:none"></div></div>`;
+    };
     h.innerHTML = `<details${_depFoldOpen('parents')} class="ds-rec-card ds-rec-card-good ds-dep-parents-synced ds-dep-fold ds-dep-subfold" data-fold="parents"><summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">⛓</span><span class="ds-rec-card-title">Parents synced ✓</span>
       <span class="ds-rec-card-hint">nothing to deploy first</span><span class="ds-dep-foldsum">${steps.length ? `${steps.map(x => esc(x.refObj)).slice(0, 4).join(' · ')}${steps.length > 4 ? ` · +${steps.length - 4} more` : ''} — already in ${esc(tgtL)}` : 'no outside parents'}</span></summary>
       <div class="ds-rec-card-line">${names.length
-        ? `Every object these records look up outside the deployment is already in ${esc(tgtL)}: ${names.join(', ')}. Lookups will land on them by name.`
-        : `None of these objects looks up a record outside the deployment.`}</div></details>`;
+        ? `Every object these records look up outside the deployment is already in ${esc(tgtL)}: ${names.join(', ')}. A lookup lands on the ${esc(tgtL)} record that carries the same value of the field each is matched by.`
+        : `None of these objects looks up a record outside the deployment.`}</div>
+      ${steps.map(parentLine).join('')}</details>`;
     _depWireFolds(h);
+    h.querySelectorAll('[data-dep-pmatch-edit]').forEach(b => b.addEventListener('click', () => _depParentMatchEdit(p, scan, steps.find(s => s.refObj === b.dataset.depPmatchEdit))));
+    _depWireParentPairs(h, p, steps, scan, key);
     return;
   }
   h.innerHTML = `<details${_depFoldOpen('parents')} class="ds-rec-card ${anyDoomed ? 'ds-rec-card-bad' : anyEmpty ? 'ds-rec-card-warn' : allDone ? 'ds-rec-card-good' : ''} ds-dep-fold ds-dep-subfold" data-fold="parents">
@@ -915,6 +934,7 @@ async function _depPaintOrder(p, scan) {
   // ✏ the field a parent is matched by (user 2026-10-24: "show by what field the parents are matched, and give
   // the user an option to select a field")
   h.querySelectorAll('[data-dep-pmatch-edit]').forEach(b => b.addEventListener('click', () => _depParentMatchEdit(p, scan, steps.find(s => s.refObj === b.dataset.depPmatchEdit))));
+  _depWireParentPairs(h, p, steps, scan, key);
   h.querySelectorAll('[data-dep-gap]').forEach(b => b.addEventListener('click', async () => {
     const label = b.textContent; b.disabled = true; b.textContent = '⏳ scanning…';
     if (!(await sftkOpenParentsFirst(p, b.dataset.depGap, b.dataset.depGapFor))) { b.disabled = false; b.textContent = label; }
@@ -923,10 +943,46 @@ async function _depPaintOrder(p, scan) {
   const toCheck = steps.filter(s => s.state === 'checking');
   if (toCheck.length) {
     (async () => {
-      for (const s of toCheck) { _depOrderChecked.add(`${key}|${s.refObj}`); await sftkParentVerifyOne(p, s.refObj); }
+      for (const s of toCheck) {
+        _depOrderChecked.add(`${key}|${s.refObj}`); _depOrderInFlight.add(`${key}|${s.refObj}`);
+        try { await sftkParentVerifyOne(p, s.refObj, matchedBy(s).split(' / ')[0]); } finally { _depOrderInFlight.delete(`${key}|${s.refObj}`); }
+      }
       if (_depOrderKey === key && _currentView === 'deploy' && _reconcileProfile === p) _depPaintOrder(p, scan);
     })();
   }
+}
+
+// The aligned records of a parent object, under its line: each source record and the target record it
+// lands on, by the key; a check that kept no pairs (an older verdict) can be run again from here.
+function _depWireParentPairs(h, p, steps, scan, key) {
+  const tgtL = orgLabel(p.targetOrg || ''), srcL = orgLabel(p.sourceOrg || '');
+  const url = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
+  h.querySelectorAll('[data-dep-pairs]').forEach(b => b.addEventListener('click', () => {
+    const s = steps.find(x => x.refObj === b.dataset.depPairs); const host = h.querySelector(`[data-dep-pairs-host="${CSS.escape(b.dataset.depPairs)}"]`);
+    if (!s || !host) return;
+    if (host.style.display !== 'none') { host.style.display = 'none'; return; }
+    host.innerHTML = sftkParentPairsHtml(s.vd, s.refObj, srcL, tgtL, url(p.sourceOrg, '{id}'), url(p.targetOrg, '{id}'));
+    host.style.display = '';
+  }));
+  h.querySelectorAll('[data-dep-pairs-check]').forEach(b => b.addEventListener('click', async () => {
+    const s = steps.find(x => x.refObj === b.dataset.depPairsCheck); if (!s) return;
+    b.disabled = true; b.textContent = '⏳ reading both orgs…';
+    const m = sftkDeployParentMatchFields(p.tree, s)[0];
+    _depOrderChecked.add(`${key}|${s.refObj}`); _depOrderInFlight.add(`${key}|${s.refObj}`);
+    try { await sftkParentVerifyOne(p, s.refObj, m); } finally { _depOrderInFlight.delete(`${key}|${s.refObj}`); }
+    if (_currentView === 'deploy' && _reconcileProfile === p) _depPaintOrder(p, scan);
+  }));
+}
+
+// PURE. The aligned pairs as a table: source record → target record, by the key; changed pairs are marked.
+function sftkParentPairsHtml(vd, refObj, srcL, tgtL, srcUrlTpl, tgtUrlTpl) {
+  const pairs = (vd && Array.isArray(vd.pairs)) ? vd.pairs : [];
+  const by = (vd && vd.by) || 'Name', n = (vd && vd.aligned != null) ? vd.aligned : pairs.length;
+  if (!pairs.length) return `<div class="ds-dep-muted">No aligned pair was kept for ${esc(refObj)} — check it again.</div>`;
+  const link = (tpl, id) => tpl.replace('{id}', esc(id));
+  return `<table class="ds-dep-pairs-t"><thead><tr><th>${esc(by)}</th><th>in ${esc(srcL)}</th><th></th><th>in ${esc(tgtL)}</th></tr></thead><tbody>
+    ${pairs.map(x => `<tr${x.changed ? ' class="ds-dep-pair-chg"' : ''}><td>${esc(String(x.key ?? ''))}</td><td><a href="${link(srcUrlTpl, x.src)}" target="_blank" rel="noopener" title="${esc(x.src)}">open ↗</a></td><td class="ds-dep-pair-arrow" title="${x.changed ? 'The same record by ' + esc(by) + ' — other compared fields differ' : 'The same record by ' + esc(by)}">${x.changed ? '≈' : '='}</td><td><a href="${link(tgtUrlTpl, x.tgt)}" target="_blank" rel="noopener" title="${esc(x.tgt)}">open ↗</a></td></tr>`).join('')}
+  </tbody></table>${n > pairs.length ? `<div class="ds-dep-muted">The first ${pairs.length.toLocaleString()} of ${n.toLocaleString()} aligned records.</div>` : ''}${pairs.some(x => x.changed) ? `<div class="ds-dep-muted">≈ the same record by ${esc(by)}, with other fields that differ — a lookup still lands on it.</div>` : ''}`;
 }
 
 // PURE. The field(s) a parent object is matched by: every lookup of the deployment that points at it
@@ -1058,7 +1114,6 @@ function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf) {
   for (const [k, rs] of groups) {
     const cands = rs[0].candidates || [];
     const nSrc = Math.max(rs.length, (rs[0].twins || []).length + 1);
-    const radios = cands.length <= SFTK_AMB_RADIO_MAX;
     const pending = rs.some(r => pickOf(r) !== memOf(r));
     const kept = rs.some(r => memOf(r));
     // the copies on a side that agree on every compared field look like one record (user 2026-10-21:
@@ -1080,21 +1135,18 @@ function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf) {
     const tgtCol = `<div class="ds-amb-col ds-amb-col-tgt"><div class="ds-amb-collbl"><b>${tgtL}</b> <span class="ds-dep-muted">target · ${cands.length} record${cands.length === 1 ? '' : 's'} of this name</span></div>
         ${cands.map((t, i) => `<div class="ds-amb-rec"><span class="ds-amb-n">#${i + 1}</span>${chips(candTell[t])}<a class="ds-dep-open" href="${url(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open this ${tgtL} record">open ↗</a></div>`).join('') || '<div class="ds-amb-rec ds-dep-muted">no record of this name</div>'}
         <div class="ds-amb-colfoot">${tgtMerge}</div></div>`;
-    // every answer as one plain sentence — the matrix cell's tooltip and the dropdown's option
+    // every answer as one plain sentence (user 2026-10-27 on the grid: "i dont understand this part at all" —
+    // one line per source copy: the copy, then what it IS in the target, chosen from sentences)
     const answers = r => [
-      ...cands.map((t, i) => ({ v: t, text: `Same record as #${i + 1} in ${orgLabel(p.targetOrg)}${tellText(candTell[t]) ? ` (${tellText(candTell[t])})` : ''}${r.suggest === t ? ` — suggested: same ${r.suggestBy || 'value'}` : ''}` })),
-      { v: '__new__', text: `Not in ${orgLabel(p.targetOrg)} yet — create it there as a new record` },
-      { v: '', text: 'Not decided — it stays out of the deployment' },
+      ...cands.map((t, i) => ({ v: t, text: `the same record as #${i + 1} in ${orgLabel(p.targetOrg)}${tellText(candTell[t]) ? ` (${tellText(candTell[t])})` : ''}${r.suggest === t ? ` — suggested: same ${r.suggestBy || 'value'}` : ''}` })),
+      { v: '__new__', text: `a new record — not in ${orgLabel(p.targetOrg)} yet, create it there` },
+      { v: '', text: 'not decided yet — it stays out of the deployment' },
     ];
-    const question = `Which ${tgtL} record is each ${srcL} copy?`;
-    const cell = (r, a) => { const on = pickOf(r) === a.v; return `<td><label class="ds-amb-opt ds-amb-mx-cell${on ? ' ds-amb-opt-on' : ''}" title="${esc(a.text)}"><input type="radio" name="amb_${esc(r.sourceId)}" data-dep-amb-sel="${esc(r.sourceId)}" value="${esc(a.v)}" ${on ? 'checked' : ''} aria-label="${esc(a.text)}">${r.suggest && r.suggest === a.v ? '<span class="ds-amb-mx-sug" title="One compared field has the same value in both — a suggestion, not a decision">💡</span>' : ''}</label></td>`; };
-    const matrix = radios
-      ? `<table class="ds-amb-mx"><thead><tr><th class="ds-amb-mx-q">${question}</th>${cands.map((t, i) => `<th><span class="ds-amb-n">= #${i + 1}</span><div class="ds-amb-mx-sub">${esc(tellText(candTell[t]) || 'the same record')}</div></th>`).join('')}<th>➕ new<div class="ds-amb-mx-sub">not in ${tgtL} yet — create it there</div></th><th>⏸ not decided<div class="ds-amb-mx-sub">stays out of the deployment</div></th></tr></thead>
-          <tbody>${rs.map((r, ri) => `<tr><th scope="row"><span class="ds-amb-letter">${letter(ri)}</span> <span class="ds-amb-mx-tell">${esc(tellText(r.tell) || 'copy ' + letter(ri))}</span></th>${answers(r).map(a => cell(r, a)).join('')}</tr>`).join('')}</tbody></table>`
-      : `<div class="ds-amb-mx-q">${question}</div>${rs.map((r, ri) => { const pick = pickOf(r); const ans = answers(r); return `<div class="ds-amb-src"><span class="ds-amb-letter">${letter(ri)}</span>${chips(r.tell)}
-          <select class="ds-select ds-select-sm ds-amb-sel" data-dep-amb-sel="${esc(r.sourceId)}" aria-label="Which ${tgtL} record is this">
+    const question = `For each ${srcL} copy, say what it is in ${tgtL}:`;
+    const matrix = `<div class="ds-amb-mx-q">${question}</div>${rs.map((r, ri) => { const pick = pickOf(r); const ans = answers(r); return `<div class="ds-amb-src${pick ? ' ds-amb-src-on' : ''}"><span class="ds-amb-letter">${letter(ri)}</span>${chips(r.tell)}<span class="ds-amb-is">is</span>
+          <select class="ds-select ds-select-sm ds-amb-sel" data-dep-amb-sel="${esc(r.sourceId)}" aria-label="What this ${srcL} copy is in ${tgtL}">
             ${[ans[ans.length - 1], ...ans.slice(0, -1)].map(a => `<option value="${esc(a.v)}" ${pick === a.v ? 'selected' : ''}>${esc(a.text)}</option>`).join('')}
-          </select></div>`; }).join('')}`;
+          </select>${r.suggest ? '<span class="ds-amb-mx-sug" title="One compared field has the same value in both — a suggestion, not a decision">💡 suggested</span>' : ''}</div>`; }).join('')}`;
     html += `<div class="ds-amb-group">
       <div class="ds-amb-ghd"><b>${esc(k)}</b><span class="ds-dep-muted">${nSrc} in ${srcL} · ${cands.length} in ${tgtL}</span><span class="ds-dep-sp"></span>
         ${kept && !pending ? '<span class="ds-amb-done">✓ remembered — takes effect when both orgs are read again</span>' : ''}
@@ -1428,7 +1480,9 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
         <button class="ds-rec-extra-btn ${push ? 'ds-rec-extra-on-push' : ''}" data-dep-dir="overwrite" data-dep-id="${esc(r.sourceId)}" title="Update the TARGET record with the source's values">→</button>
         ${isRoot ? `<button class="ds-rec-extra-btn ${pull ? 'ds-rec-extra-on-pull' : ''}" data-dep-dir="updSrc" data-dep-id="${esc(r.sourceId)}" ${opts.srcLocked ? 'disabled' : ''} title="${opts.srcLocked ? esc(srcLockTip) : 'Update the SOURCE record with the target\'s values'}">←</button>` : ''}</span>`;
       extra = (r.fields || []).length ? `<span class="ds-rec-drift-why" title="Differs on: ${esc(r.fields.join(', '))}">${esc(r.fields.slice(0, 3).join(', '))}${r.fields.length > 3 ? ` +${r.fields.length - 3}` : ''}</span>` : '';
-      tail = `<button class="ds-dep-link" data-dep-fields="${esc(r.sourceId)}|${esc(r.targetId)}" title="The whole record, both orgs side by side — tick fields to update on the target">▸ record</button> ${valBtn(r.sourceId, r.targetId)} ${lkpBtn(r.sourceId, r.targetId)}`;
+      // one link for the record (user 2026-10-27: "why do i have values and record. they are the same functionality"):
+      // it compares, updates now, and opens the values editor — the typed count rides on it
+      tail = `<button class="ds-dep-link${valN(r.sourceId) ? ' ds-lkp-on' : ''}" data-dep-fields="${esc(r.sourceId)}|${esc(r.targetId)}" title="The whole record, both orgs side by side — tick fields to update on the target now, or ✏ type the values it is written with on ▶ Deploy">▸ record<span class="ds-lkp-count">${valN(r.sourceId) ? ` ✏ ${valN(r.sourceId)}` : ''}</span></button> ${lkpBtn(r.sourceId, r.targetId)}`;
     } else if (tabDef.k === 'ext') {
       const del = isRoot ? _recSel.del.has(r.targetId) : sel.del.has(r.targetId);
       const pull = isRoot && _recSel.pull.has(r.targetId);

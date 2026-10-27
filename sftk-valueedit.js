@@ -93,7 +93,7 @@ function sftkValOvApply(payload, overrides, fm, allowed, isMasked) {
 // mode 'ins' → createable, 'chg' → updateable; never system, audit, owner,
 // record type, formula, auto-number, compound or binary fields; never a field
 // the mapping excludes. Lookups are listed too (picked, not typed).
-//   → [{ name, label, type, reference, refTo, relationshipName, nameField, picklist: [values] | null, length }]
+//   → [{ name, label, type, reference, refTo, relationshipName, nameField, picklist: [{ value, label }] | null, length }]
 function sftkValEditFields(descFields, fm, mode) {
   const NEVER = new Set(['Id', 'CreatedDate', 'CreatedById', 'LastModifiedDate', 'LastModifiedById', 'SystemModstamp',
     'IsDeleted', 'OwnerId', 'RecordTypeId', 'LastActivityDate', 'LastViewedDate', 'LastReferencedDate', 'MasterRecordId', 'Jigsaw', 'JigsawCompanyId']);
@@ -109,7 +109,8 @@ function sftkValEditFields(descFields, fm, mode) {
       name: f.name, label: f.label || f.name, type: f.type || 'string',
       reference: f.type === 'reference', refTo: (f.referenceTo || []).slice(), relationshipName: f.relationshipName || '',
       nameField: !!f.nameField,
-      picklist: (f.type === 'picklist' || f.type === 'multipicklist') ? (f.picklistValues || []).filter(v => v && v.active !== false).map(v => v.value) : null,
+      // value = the API name that is written; label = what a person sees in Salesforce (user 2026-10-27: both shown)
+      picklist: (f.type === 'picklist' || f.type === 'multipicklist') ? (f.picklistValues || []).filter(v => v && v.active !== false).map(v => ({ value: v.value, label: v.label != null && v.label !== '' ? v.label : v.value })) : null,
       length: f.length || 0,
     });
   }

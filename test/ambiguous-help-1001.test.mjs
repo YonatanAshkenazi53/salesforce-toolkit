@@ -94,9 +94,9 @@ describe('the page', () => {
     expect(fn).toContain('<span class="ds-amb-n">#${i + 1}</span>${chips(candTell[t])}');
     expect(fn).toContain('data-dep-amb-sel="${esc(r.sourceId)}"');
     // 2026-10-05: the answers are sentences that carry the candidate's values (test/needs-decision-1005)
-    expect(fn).toContain('Same record as #${i + 1} in ${orgLabel(p.targetOrg)}');
+    expect(fn).toContain('the same record as #${i + 1} in ${orgLabel(p.targetOrg)}');   // 2026-10-27: completes "<copy> is …"
     expect(fn).toContain("— suggested: same ${r.suggestBy || 'value'}");
-    expect(fn).toContain('yet — create it there as a new record');
+    expect(fn).toContain('a new record — not in ${orgLabel(p.targetOrg)} yet, create it there');
     expect(fn).toContain('no compared field differs between the copies — they look like the same record; open them to be sure');
     expect(DV).toContain('(ambRoot ? _depAmbGroupsHtml(p, shown, s, ambPick, key, ambMem) : shown.map(rowHtml).join(\'\'))');
   });

@@ -56,7 +56,7 @@ describe('the fields a person may type', () => {
     { name: 'ParentId', label: 'Parent', createable: true, updateable: true, type: 'reference', referenceTo: ['Account'], relationshipName: 'Parent' },
     { name: 'Formula__c', createable: false, updateable: false, calculated: true, type: 'string' },
     { name: 'BillingAddress', createable: false, updateable: false, type: 'address' },
-    { name: 'Industry', label: 'Industry', createable: true, updateable: true, type: 'picklist', picklistValues: [{ value: 'Tech', active: true }, { value: 'Old', active: false }] },
+    { name: 'Industry', label: 'Industry', createable: true, updateable: true, type: 'picklist', picklistValues: [{ value: 'Tech', label: 'Tech', active: true }, { value: 'Old', active: false }] },
     { name: 'Locked__c', label: 'Locked', createable: true, updateable: false, type: 'string' },
     { name: 'Excluded__c', label: 'Excluded', createable: true, updateable: true, type: 'string' },
   ];
@@ -64,7 +64,7 @@ describe('the fields a person may type', () => {
     const f = V.sftkValEditFields(desc, { Excluded__c: null }, 'ins');
     expect(f.map(x => x.name)).toEqual(['Name', 'Industry', 'Locked', 'ParentId', 'Phone'].map(n => n === 'Locked' ? 'Locked__c' : n));
     expect(f.find(x => x.name === 'ParentId')).toMatchObject({ reference: true, refTo: ['Account'], relationshipName: 'Parent' });
-    expect(f.find(x => x.name === 'Industry').picklist).toEqual(['Tech']);
+    expect(f.find(x => x.name === 'Industry').picklist).toEqual([{ value: 'Tech', label: 'Tech' }]);   // label + API name, active only
   });
   it('update: updateable only', () => {
     expect(V.sftkValEditFields(desc, {}, 'chg').map(x => x.name)).not.toContain('Locked__c');
@@ -108,7 +108,9 @@ describe('the Deploy page', () => {
   it('a ✏ values button on every Insert and Changed row, lit with a count when the record carries typed values', () => {
     expect(DV).toContain('const valN = id => Object.keys(sftkValOvGet(node, p.targetOrg, id)).length;');
     expect(DV).toContain('tail = `${valBtn(r.sourceId, null)} ${lkpBtn(r.sourceId, null)}`;');
-    expect(DV).toContain('▸ record</button> ${valBtn(r.sourceId, r.targetId)} ${lkpBtn(r.sourceId, r.targetId)}`;');
+    // the Changed row has ONE record link (it opens the editor too) carrying the typed count — no second link (user 2026-10-27)
+    expect(DV).toContain('>▸ record<span class="ds-lkp-count">${valN(r.sourceId) ? ` ✏ ${valN(r.sourceId)}` : \'\'}</span></button> ${lkpBtn(r.sourceId, r.targetId)}`;');
+    expect(DV).not.toContain('${valBtn(r.sourceId, r.targetId)}');
     expect(DV).toContain('>✏ values<span class="ds-lkp-count">${valN(id) ? ` ${valN(id)}` : \'\'}</span></button>');
   });
   it('one or many: the row opens one record; the toolbar button opens every ticked record of the tab', () => {
