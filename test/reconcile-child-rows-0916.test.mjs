@@ -11,7 +11,7 @@ const CSS = readFileSync(new URL('../studio.css', import.meta.url), 'utf8');
 
 describe('the field compare opens wide, for root and child rows', () => {
   it('one shared opener, used by the root handler and the child handler', () => {
-    expect(RC).toContain('async function sftkOpenDriftCompare(prof, obj, srcId, tgtId, srcFields, tgtFields, keyLabel, fallbackFields)');
+    expect(RC).toContain('async function sftkOpenDriftCompare(prof, obj, srcId, tgtId, srcFields, tgtFields, keyLabel, fallbackFields, editable)');   // 2026-10-27: editable from a Changed row
     const root = RC.slice(RC.indexOf("document.querySelectorAll('[data-rec-drift]')"), RC.indexOf("document.querySelectorAll('[data-recc-drift]')"));
     expect(root).toContain('sftkOpenDriftCompare(p, objType, srcId, tgtId,');
     const child = RC.slice(RC.indexOf("document.querySelectorAll('[data-recc-drift]')"), RC.indexOf("document.querySelectorAll('[data-recc-lkp]')"));

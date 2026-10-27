@@ -2502,6 +2502,7 @@ function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap
   const canPush = p => p.differs && !p.phantom
     && !(lookupMap[p.srcField] && lookupMap[p.srcField].skip);
   const selectable = !!(opts && opts.selectable);
+  const editable = !!(opts && opts.editable);   // 2026-10-27: ✏ per row → the record's values editor on that field
   const differing = pairs.filter(p => p.differs);
   const agreeing  = pairs.filter(p => !p.differs);
   const lkpOf = p => lookupMap[p.srcField] || null;
@@ -2526,7 +2527,7 @@ function renderDriftCompareTable(srcRec, tgtRec, srcFields, tgtFields, lookupMap
           ? `<input type="checkbox" class="ds-dc-cb" data-dcp-src="${esc(p.srcField)}" data-dcp-tgt="${esc(p.tgtField)}" data-dcp-lkp="${info ? '1' : ''}" data-dcp-cur="${esc(String(p.tgtVal).slice(0, 120))}" data-dcp-new="${esc(String(p.srcVal).slice(0, 120))}" title="Select to update this field on the target record">`
           : `<span class="ds-dc-cb-slot"${why ? ` title="${esc(why)}"` : ''}>${p.differs ? '–' : ''}</span>`) : ''}
         <div class="ds-dc-field">
-          <span class="ds-dc-fname" title="${p.srcField !== p.tgtField ? esc(p.srcField + ' → ' + p.tgtField) : esc(p.srcField)}">${esc(p.srcField)}${p.srcField !== p.tgtField ? ` <span class="ds-dc-rename">→ ${esc(p.tgtField)}</span>` : ''}</span>
+          <span class="ds-dc-fname" title="${p.srcField !== p.tgtField ? esc(p.srcField + ' → ' + p.tgtField) : esc(p.srcField)}">${esc(p.srcField)}${p.srcField !== p.tgtField ? ` <span class="ds-dc-rename">→ ${esc(p.tgtField)}</span>` : ''}${editable ? ` <button class="ds-dc-edit" data-dc-edit="${esc(p.srcField)}" title="Type the value this field is written with on ▶ Deploy — instead of the source's">✏</button>` : ''}</span>
           <span class="ds-dc-tags">
             ${info && !info.skip ? tag(`🔗 by ${esc(info.matchField)}`, 'ds-dc-tag-lkp', `Lookup — compared and pushed by the related record's ${info.matchField}, never by the raw Id (Ids differ between orgs).`) : ''}
             ${info && info.skip ? tag('🔗 not compared', 'ds-dc-tag-mute', 'Polymorphic lookup with no match field configured — a raw-Id comparison across orgs would always differ, so it is not counted as drift.') : ''}

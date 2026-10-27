@@ -1635,17 +1635,20 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   host.querySelectorAll('[data-dep-fields]').forEach(b => b.addEventListener('click', () => {
     const [srcId, tgtId] = b.dataset.depFields.split('|');
     const row = all.find(r => r.sourceId === srcId);
-    sftkOpenDriftCompare(prof, cur.obj, srcId, tgtId, s.compareFields || [], s.compareFieldsTgt || s.compareFields || [], row ? key(row) : srcId, row?.fields || []);
+    sftkOpenDriftCompare(prof, cur.obj, srcId, tgtId, s.compareFields || [], s.compareFieldsTgt || s.compareFields || [], row ? key(row) : srcId, row?.fields || [], tabDef.k === 'chg');
   }));
   host.querySelectorAll('[data-dep-lkp]').forEach(b => b.addEventListener('click', () => {
     const srcId = b.dataset.recLkp;
     const row = all.find(r => r.sourceId === srcId);
     showModal(`<div class="ds-modal-header">🔗 Lookups · ${esc(cur.obj)} · ${esc(row ? key(row) : srcId)}
         <span class="ds-dc-modal-sub">where each lookup lands in ${esc(orgLabel(p.targetOrg))} — pick a record to override name matching</span>
+        <button class="ds-btn ds-btn-xs" id="dsDepLkpVals" title="Every writable field of this record, with the value it is written with — type a value to write it instead of the source's">✏ Edit the record's values</button>
         <button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button></div>
       <div class="ds-modal-body ds-dc-modal-body"><div id="dsDepLkpHost" style="padding:12px 0"></div></div>`);
     const h = eid('dsDepLkpHost');
     if (h) renderLkpOverridePanel(prof, cur.obj, srcId, h, b.dataset.recLkpTgt || null);
+    // the way to the whole record from here (user 2026-10-27: "i dont see an option to edit the record")
+    eid('dsDepLkpVals')?.addEventListener('click', () => sftkOpenValueEditor(prof, cur.obj, node, [srcId], b.dataset.recLkpTgt || null, row ? key(row) : srcId, tabDef.k === 'chg' ? 'chg' : 'ins', repaint));
   }));
   // ✏ values: one record from its row; every ticked record of the list from the toolbar
   host.querySelectorAll('[data-dep-vals]').forEach(b => b.addEventListener('click', () => {

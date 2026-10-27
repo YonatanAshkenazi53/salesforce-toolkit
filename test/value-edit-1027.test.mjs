@@ -118,7 +118,15 @@ describe('the Deploy page', () => {
     expect((DV.match(/data-dep-vals-many="1"/g) || []).length).toBe(2);   // Insert and Changed toolbars
   });
   it('the dialog: every writable field, source and target values, a box, ∅ for empty, lookups picked from the target, typed values checked before they are stored', () => {
-    expect(VE).toContain('async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onSaved)');
+    expect(VE).toContain('async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onSaved, opts)');
+    // 2026-10-27 "also here": the record compare opens it — on the whole record, or on one row's field
+    const RC2 = read('studio-reconcile.js'), SC = read('studio-scan.js');
+    expect(RC2).toContain('async function sftkOpenDriftCompare(prof, obj, srcId, tgtId, srcFields, tgtFields, keyLabel, fallbackFields, editable)');
+    expect(RC2).toContain("const openEditor = focus => sftkOpenValueEditor(prof, obj, prof.tree, [srcId], tgtId, keyLabel || srcId, 'chg', null, { focus });");
+    expect(RC2).toContain("body.querySelectorAll('[data-dc-edit]').forEach(b => b.addEventListener('click', () => openEditor(b.dataset.dcEdit)));");
+    expect(SC).toContain('${editable ? ` <button class="ds-dc-edit" data-dc-edit="${esc(p.srcField)}"');
+    expect(DV).toContain("row?.fields || [], tabDef.k === 'chg');");
+    expect(VE).toContain('const focus = opts && opts.focus;');
     expect(VE).toContain('const fields = sftkValEditFields(desc.fields, fm, mode);');
     expect(VE).toContain("SELECT Id, Name FROM ${refObj}${like} ORDER BY Name LIMIT 8");
     expect(VE).toContain('for (const id of ids) sftkLkpOvSet(node, p.targetOrg, id, field, h.dataset.veHit);');

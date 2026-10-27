@@ -4342,16 +4342,22 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
 // small"). Root and child rows share it. `prof` is the profile — or, for a
 // child row, a view of it whose tree is the child node — so field mapping,
 // lookups and the per-field push all read the right node.
-async function sftkOpenDriftCompare(prof, obj, srcId, tgtId, srcFields, tgtFields, keyLabel, fallbackFields) {
+async function sftkOpenDriftCompare(prof, obj, srcId, tgtId, srcFields, tgtFields, keyLabel, fallbackFields, editable) {
+  // editable (2026-10-27, user: "also here. i want all the fields to be editable"): the whole record's
+  // values editor from the header, and from any row's ✏ on that field — written by ▶ Deploy as an update
+  const canEdit = !!editable && typeof sftkOpenValueEditor === 'function' && prof && prof.tree;
+  const openEditor = focus => sftkOpenValueEditor(prof, obj, prof.tree, [srcId], tgtId, keyLabel || srcId, 'chg', null, { focus });
   showModal(`
     <div class="ds-modal-header">▸ ${esc(obj)} · ${esc(keyLabel || srcId)}
       <span class="ds-dc-modal-sub">${esc(orgLabel(prof.sourceOrg || ''))} (source) vs ${esc(orgLabel(prof.targetOrg || ''))} (target)</span>
+      ${canEdit ? '<button class="ds-btn ds-btn-xs" id="dsDcEditVals" title="Every writable field of this record, with the value it is written with on ▶ Deploy — type a value to write it instead of the source&#39;s">✏ Edit values — all the record\'s fields</button>' : ''}
       <button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button>
     </div>
     <div class="ds-modal-body ds-dc-modal-body"><div class="ds-drift-compare-loading">Loading…</div></div>`);
   const box = eid('dsModalBox');
   const body = box ? box.querySelector('.ds-dc-modal-body') : null;
   if (!body) return;
+  if (canEdit) eid('dsDcEditVals')?.addEventListener('click', () => openEditor(''));
   const res = await fetchDriftRowDetail(prof, obj, srcId, tgtId, srcFields, tgtFields);
   if (!body.isConnected) return;   // closed while loading
   if (res.error) {
@@ -4366,10 +4372,11 @@ async function sftkOpenDriftCompare(prof, obj, srcId, tgtId, srcFields, tgtField
   // target record — the refetch repaints from live values so a fixed field
   // never keeps showing as drifted.
   const paint = r => {
-    body.innerHTML = renderDriftCompareTable(r.srcRec, r.tgtRec, srcFields, tgtFields, r.lookupMap || {}, r.types || null, { selectable: true });
+    body.innerHTML = renderDriftCompareTable(r.srcRec, r.tgtRec, srcFields, tgtFields, r.lookupMap || {}, r.types || null, { selectable: true, editable: canEdit });
     // A synced record has no differing rows — then the matching fields ARE the
     // answer, so show them instead of a folded line (user 2026-09-21).
     if (!body.querySelector('.ds-dc-diff')) body.querySelector('details.ds-dc-fold')?.setAttribute('open', '');
+    body.querySelectorAll('[data-dc-edit]').forEach(b => b.addEventListener('click', () => openEditor(b.dataset.dcEdit)));
     sftkWireDriftCompare(body, prof, obj, srcId, tgtId, async () => {
       const fresh = await fetchDriftRowDetail(prof, obj, srcId, tgtId, srcFields, tgtFields);
       if (!fresh.error && body.isConnected) paint(fresh);
