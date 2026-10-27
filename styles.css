@@ -7008,3 +7008,29 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .sftk-cf-rows li > b { flex: 0 0 86px; font-weight: 700; }
 .sftk-cf-more { margin-top: 4px; font-size: 11px; color: var(--subtext); }
 .sftk-cf-more > summary { cursor: pointer; color: var(--brand); }
+
+/* 🧾 Activity — the feed of everything done (sftk-feed.js, 2026-10-27) */
+.sftk-feed { font-size: 12.5px; }
+.sftk-feed-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.sftk-feed-tools input { flex: 0 1 300px; }
+.sftk-feed-apps { display: flex; gap: 4px; }
+.sftk-feed-app-on { font-weight: 700; outline: 2px solid var(--brand, #1b6fd1); outline-offset: -1px; }
+.sftk-feed-sp { flex: 1; }
+.sftk-feed-count { font-size: 11.5px; opacity: .7; }
+.sftk-feed-list { max-height: 62vh; overflow: auto; }
+.sftk-feed-day > h4 { margin: 10px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; opacity: .75; }
+.sftk-feed-n { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 999px; background: rgba(127, 127, 127, .18); font-size: 11px; text-align: center; margin-left: 6px; }
+.sftk-feed-group { border: 1px solid var(--border, #d7dce3); border-radius: 8px; margin: 4px 0; padding: 0 8px 2px; }
+.sftk-feed-group > summary { display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer; list-style: none; }
+.sftk-feed-group > summary::-webkit-details-marker { display: none; }
+.sftk-feed-app { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; opacity: .7; }
+.sftk-feed-where { font-size: 11.5px; }
+a.sftk-feed-where { color: var(--brand, #1b6fd1); }
+.sftk-feed-link { background: none; border: 0; padding: 0; color: var(--brand, #1b6fd1); text-decoration: underline; cursor: pointer; font: inherit; font-size: 11.5px; }
+.sftk-feed-line { display: grid; grid-template-columns: 52px 22px minmax(0, 1fr) auto auto; gap: 8px; align-items: baseline; padding: 4px 0 4px 26px; border-top: 1px dashed var(--border-light, var(--border, #e3e7ee)); }
+.sftk-feed-time { font-variant-numeric: tabular-nums; opacity: .75; }
+.sftk-feed-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sftk-feed-counts, .sftk-feed-orgs { font-size: 11.5px; opacity: .75; white-space: nowrap; }
+.sftk-feed-chip { font-size: 10.5px; padding: 0 5px; border-radius: 999px; background: rgba(127, 127, 127, .18); }
+.sftk-feed-empty { padding: 18px; text-align: center; opacity: .7; }
+.sftk-feed-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: 11.5px; opacity: .85; }

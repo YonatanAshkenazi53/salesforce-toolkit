@@ -1344,7 +1344,9 @@ function renderTreeNode(node, path, isRoot, depth = 0) {
             // stronger claim (deterministic hashing is reversible by a
             // salt-holder with a guess list).
             const nMask = bldPiiCountForObject(_editingProfile?.piiPolicy, objName);
-            return nMask ? `<span class="ds-config-badge ds-badge-masked" title="${nMask} ${esc(objName)} field(s) are masked at write time — pseudonymized hash or null, never the raw value. Configure via 🎭 in Fields &amp; mapping or Suggest PII masks.">${dsIcon('lock')}${nMask} masked</span>` : '';
+            // a button since 2026-10-27 (user: "when you masked fields you can't cancel it. also i dont understand how
+            // the masking does"): it lists the masked fields, says what masking does, and unmasks one or all
+            return nMask ? `<button class="ds-config-badge ds-badge-masked" data-pii-chip="${esc(objName)}" title="${nMask} ${esc(objName)} field(s) are written masked — click to see which, what that means, and to unmask">${dsIcon('lock')}${nMask} masked</button>` : '';
           })()}
           ${!isRoot && cfOn ? `<button class="ds-btn ds-btn-xs ds-btn-config ds-btn-config--active" data-order-btn="${esc(pathKey)}" title="${esc(cfTitle)}">
             ⤴ Created before parent — click for the normal order
@@ -1513,6 +1515,7 @@ function wireTreeEvents() {
   });
 
   // 📎 Files toggle (W9) — per-node flag the engine's files pass reads.
+  area.querySelectorAll('[data-pii-chip]').forEach(btn => btn.addEventListener('click', () => bldOpenPiiListModal(btn.dataset.piiChip)));
   area.querySelectorAll('[data-files-btn]').forEach(btn => {
     btn.addEventListener('click', () => {
       const node = getNodeByPath(_editingProfile.tree, btn.dataset.filesBtn);
@@ -2264,6 +2267,40 @@ function bldPiiMaskBtnClick(e) {
   }
   bldPiiDecorateRows();
   refreshTree();   // repaint the "N masked" chips behind the modal
+}
+
+// ── The masked fields of one object: what masking does, and a way out of it ──
+// (user 2026-10-27: "when you masked fields you can't cancel it. also i dont understand how the masking does")
+function bldPiiRulesForObjectList(policy, objectApi) {
+  if (!policy || typeof policy !== 'object' || !objectApi) return [];
+  const prefix = (objectApi + '.').toLowerCase();
+  return Object.keys(policy).filter(k => policy[k] && k.toLowerCase().startsWith(prefix))
+    .map(k => ({ key: k, field: k.slice(k.indexOf('.') + 1), strategy: (policy[k] && policy[k].strategy) || 'hash' }))
+    .sort((a, b) => a.field.localeCompare(b.field));
+}
+function bldOpenPiiListModal(objectApi) {
+  const p = _editingProfile;
+  if (!p) return;
+  const rules = bldPiiRulesForObjectList(p.piiPolicy, objectApi);
+  const what = s => s === 'null' ? 'written empty' : 'written as a pseudonym — a hash of the value, same shape, same every run on this PC';
+  showModal(`<div class="ds-modal-header">${dsIcon('lock')} Masked fields of ${esc(objectApi)}<button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button></div>
+    <div class="ds-modal-body">
+      <div class="ds-pii-how"><b>What masking does.</b> When ▶ Deploy writes a record, a masked field does not get the real value: it gets a <b>pseudonym</b> (a hash of the value with a key kept on this PC — the same value always becomes the same pseudonym, so re-runs still match) or it is <b>written empty</b>. The source org is never changed, and nothing in the target can be turned back into the real value by someone without the key. The run log and History say how many values were masked.</div>
+      <div class="ds-pii-list" id="dsPiiList">${rules.length ? rules.map(r => `<div class="ds-pii-row" data-pii-row="${esc(r.key)}"><code>${esc(r.field)}</code><span class="ds-dep-muted">${esc(what(r.strategy))}</span><button class="ds-btn ds-btn-xs" data-pii-unmask="${esc(r.key)}" title="Write the real value again">✕ Unmask</button></div>`).join('') : '<div class="ds-dep-muted">No field of this object is masked.</div>'}</div>
+      <div class="ds-pii-foot">${rules.length ? `<button class="ds-btn ds-btn-sm" id="dsPiiUnmaskAll">✕ Unmask all ${rules.length} — write the real values</button>` : ''}<span class="ds-dep-sp"></span><span class="ds-dep-muted">Pick fields to mask: 🎭 in Fields &amp; mapping, or Suggest PII masks. Changes count when you Save the deployment.</span></div>
+    </div>`);
+  const policy = () => (p.piiPolicy && typeof p.piiPolicy === 'object') ? p.piiPolicy : null;
+  const drop = keys => { const pol = policy(); if (!pol) return; for (const k of keys) delete pol[k]; if (!Object.keys(pol).length) delete p.piiPolicy; };
+  document.querySelectorAll('[data-pii-unmask]').forEach(x => x.addEventListener('click', () => {
+    drop([x.dataset.piiUnmask]);
+    showToast(`${objectApi}.${x.dataset.piiUnmask.slice(x.dataset.piiUnmask.indexOf('.') + 1)} will be written with its real value.`, 'warning', 4000);
+    refreshTree(); bldOpenPiiListModal(objectApi);
+  }));
+  eid('dsPiiUnmaskAll')?.addEventListener('click', () => {
+    drop(rules.map(r => r.key));
+    showToast(`${rules.length} field${rules.length === 1 ? '' : 's'} of ${objectApi} unmasked — the real values are written.`, 'warning', 4500);
+    refreshTree(); closeModal();
+  });
 }
 
 // ── Suggest PII masks — candidates across the whole tree ─────────

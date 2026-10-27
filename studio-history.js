@@ -276,6 +276,36 @@ function _histWireKitNote() {
     chrome.tabs.create({ url: chrome.runtime.getURL(`popup.html?tab=${encodeURIComponent(b.dataset.histKit)}&history=1`) })));
 }
 
+// PURE. The actions of a card as labelled groups — fix · undo · open · report — so a person finds the
+// button by what they want to do (user 2026-10-27: "make sure the history page is understandable and
+// intuitive to use with action groups"). A group with nothing in it is not drawn.
+function _histActionsHtml(groups) {
+  const gs = (groups || []).map(g => ({ ...g, buttons: (g.buttons || []).filter(Boolean) })).filter(g => g.buttons.length);
+  if (!gs.length) return '';
+  return `<div class="ds-hist-acts">${gs.map(g => `<span class="ds-hist-actg" title="${esc(g.title || '')}"><span class="ds-hist-actg-lbl">${esc(g.label)}</span>${g.buttons.join('')}</span>`).join('')}</div>`;
+}
+
+// PURE. One sentence for a run: what it did, where, and what failed.
+function _histSentence(run) {
+  const t = histRunTotals(run);
+  const tgt = orgLabel(run.targetOrg || ''), src = orgLabel(run.sourceOrg || '');
+  const isRb = run.kind === 'rollback';
+  const parts = [];
+  if (isRb) {
+    if (t.deleted) parts.push(`deleted ${t.deleted.toLocaleString()} record${t.deleted === 1 ? '' : 's'} the run had created`);
+    if (t.updated) parts.push(`restored ${t.updated.toLocaleString()} record${t.updated === 1 ? '' : 's'} it had overwritten`);
+  } else {
+    if (t.created) parts.push(`inserted ${t.created.toLocaleString()}`);
+    if (t.updated) parts.push(`updated ${t.updated.toLocaleString()}`);
+    if (t.deleted) parts.push(`deleted ${t.deleted.toLocaleString()}`);
+    if (t.pulled)  parts.push(`pulled ${t.pulled.toLocaleString()} into ${src}`);
+  }
+  const did = parts.length ? parts.join(', ') : (run.status === 'failed' ? 'wrote nothing' : 'had nothing to write');
+  const fail = t.failed ? ` — ${t.failed.toLocaleString()} failed` : '';
+  const stop = run.stopped === 'pause' ? ' — paused before the end' : run.stopped === 'closed' ? ' — stopped when the page closed' : '';
+  return `${isRb ? 'Rollback' : 'Deployment'} ${isRb ? 'in' : 'into'} ${tgt}: ${did}${fail}${stop}.`;
+}
+
 function renderHistory() {
   const split = (typeof sftkHistoryStudioSplit === 'function') ? sftkHistoryStudioSplit(_history) : { mine: _history, kit: {}, kitTotal: 0 };
   const mineArch = _archShown.filter(r => typeof sftkHistoryToolTab !== 'function' || !sftkHistoryToolTab(r));
@@ -327,6 +357,7 @@ function renderHistory() {
         <button class="ds-btn ds-btn-sm" id="dsClearCached" title="Delete history, activity log, scan results, and cached Apex log bodies — org labels and settings stay">🧹 Clear cached org data</button>
         <button class="ds-btn ds-btn-danger ds-btn-sm" id="dsClearHistory">🗑 Clear All</button>`,
     })}
+    <div class="ds-hist-intro">Every deployment and rollback, newest first — each card says what it did and offers what you can do next: <b>fix</b> what did not finish, <b>undo</b> it, <b>open</b> the deployment, or download a <b>report</b>. Changes made with Toolkit tools live in their tools; 🧾 <b>Activity</b> in the top bar shows everything together, by day.</div>
     <div class="ds-hist-filters">
       <div class="ds-hist-status-chips">
         ${[['', 'All'], ['success', '✅ success'], ['partial', '⚠ partial'], ['failed', '❌ failed']].map(([v, lbl]) =>
@@ -378,27 +409,31 @@ function renderHistory() {
             ${run.scheduledRun ? '<span class="ds-chip">📅 scheduled</span>' : ''}
             ${run.stopped === 'pause' ? '<span class="ds-chip" title="You paused this run; it stopped after the batch in flight. Nothing is half-written.">⏸ paused</span>' : run.stopped === 'closed' ? '<span class="ds-chip" title="The page was closed while this run was on; the engine stopped after the batch in flight. Nothing is half-written.">⏹ page closed</span>' : run.stopped === 'cancel' ? '<span class="ds-chip">⏹ cancelled</span>' : ''}
             <span class="ds-history-time">${timeAgo(run.startedAt)}</span>
-            ${run.stopped && run.selected && profExists ? `<button class="ds-btn ds-btn-xs ds-btn-primary" data-dsaction="continueRun" data-arg="${esc(run.id)}"
-              title="Open this deployment with the records you had ticked and the run did not reach ticked again — the scan decides which those are; nothing already written is touched.">▶ Continue</button>` : ''}
-            ${retryable ? `<button class="ds-btn ds-btn-xs ds-btn-primary" data-dsaction="retryFailed" data-arg="${esc(run.id)}"
-              title="Open this deployment with the ${totalFailed} failed record(s) ticked under 🔴 Insert. Records that already succeeded are not touched.">↻ Retry failed (${totalFailed})</button>` : ''}
-            ${undoSt.show ? `<button class="ds-btn ds-btn-xs ${undoSt.disabled ? '' : 'ds-btn-danger'}" ${undoSt.disabled ? 'disabled' : ''} data-dsaction="rollbackRun" data-arg="${esc(run.id)}"
-              title="${esc(undoSt.title || '')}">${esc(undoSt.label)}</button>` : ''}
-            ${isRollback ? `<button class="ds-btn ds-btn-xs" data-dsaction="rollbackReport" data-arg="${esc(run.id)}" title="Every record this rollback deleted or restored, by name">📋 Which records</button>` : ''}
-            ${profExists && !isRecRun && !isRollback ? `<button class="ds-btn ds-btn-xs" data-dsaction="runAgain" data-arg="${esc(run.id)}"
-              title="Open this deployment against the same target this run used. Nothing is selected for you.">↻ Run again</button>` : ''}
-            ${profExists && isRecRun ? `<button class="ds-btn ds-btn-xs" data-dsaction="openReconcile" data-arg="${esc(run.profileId)}"
-              title="Open this deployment.">🚀 Deploy</button>` : ''}
-            ${profExists ? `<button class="ds-btn ds-btn-xs" data-dsaction="editProfile" data-arg="${esc(run.profileId)}"
-              title="Open this deployment in the builder.">✏ Profile</button>` : ''}
-            <button class="ds-btn ds-btn-xs" data-hist-export="${esc(run.id)}"
-              title="Download this run as a JSON or CSV audit report — who deployed what, where, when, and what failed.">⬇ Report</button>
           </div>
+          ${_histActionsHtml([
+            { label: 'fix', title: 'Finish or repeat what this run did not do', buttons: [
+              run.stopped && run.selected && profExists ? `<button class="ds-btn ds-btn-xs ds-btn-primary" data-dsaction="continueRun" data-arg="${esc(run.id)}" title="Open this deployment with the records you had ticked and the run did not reach ticked again — the scan decides which those are; nothing already written is touched.">▶ Continue</button>` : '',
+              retryable ? `<button class="ds-btn ds-btn-xs ds-btn-primary" data-dsaction="retryFailed" data-arg="${esc(run.id)}" title="Open this deployment with the ${totalFailed} failed record(s) ticked under 🔴 Insert. Records that already succeeded are not touched.">↻ Retry failed (${totalFailed})</button>` : '',
+            ] },
+            { label: 'undo', title: 'Take back what this run wrote', buttons: [
+              undoSt.show ? `<button class="ds-btn ds-btn-xs ${undoSt.disabled ? '' : 'ds-btn-danger'}" ${undoSt.disabled ? 'disabled' : ''} data-dsaction="rollbackRun" data-arg="${esc(run.id)}" title="${esc(undoSt.title || '')}">${esc(undoSt.label)}</button>` : '',
+              isRollback ? `<button class="ds-btn ds-btn-xs" data-dsaction="rollbackReport" data-arg="${esc(run.id)}" title="Every record this rollback deleted or restored, by name">📋 Which records</button>` : '',
+            ] },
+            { label: 'open', title: 'The deployment behind this run', buttons: [
+              profExists && !isRecRun && !isRollback ? `<button class="ds-btn ds-btn-xs" data-dsaction="runAgain" data-arg="${esc(run.id)}" title="Open this deployment against the same target this run used. Nothing is selected for you.">↻ Run again</button>` : '',
+              profExists && isRecRun ? `<button class="ds-btn ds-btn-xs" data-dsaction="openReconcile" data-arg="${esc(run.profileId)}" title="Open this deployment.">🚀 Deploy</button>` : '',
+              profExists ? `<button class="ds-btn ds-btn-xs" data-dsaction="editProfile" data-arg="${esc(run.profileId)}" title="Open this deployment in the builder.">✏ Profile</button>` : '',
+            ] },
+            { label: 'report', title: 'A file of what happened, for your records', buttons: [
+              `<button class="ds-btn ds-btn-xs" data-hist-export="${esc(run.id)}" title="Download this run as a JSON or CSV audit report — who deployed what, where, when, and what failed.">⬇ Report</button>`,
+            ] },
+          ])}
           <div class="ds-history-orgs">
             ${esc(orgLabel(run.sourceOrg || ''))} → ${esc(orgLabel(run.targetOrg || ''))}
             ${run.kind === 'reconcile' ? '<span class="ds-chip" style="margin-left:6px">⚖ reconcile</span>' : ''}
             ${isRollback ? '<span class="ds-chip" style="margin-left:6px" title="Deleted what a run created and restored what it overwrote, from the restore point taken before that run.">↩ rollback</span>' : ''}
           </div>
+          <div class="ds-hist-sentence">${esc(_histSentence(run))}</div>
           <div class="ds-history-summary">
             ${Object.entries(run.summary || {}).map(([obj, s]) => {
               // Transfer runs carry explicit per-DML counts (inserted/updated/
@@ -775,11 +810,11 @@ function _histToolCard(run) {
             ${run.undoOf ? '<span class="ds-chip" title="This entry is the undo of an earlier tool change.">↩ undo</span>' : ''}
             ${run._archived ? '<span class="ds-chip" title="Loaded from the 📦 on-PC archive (IndexedDB).">📦 archived</span>' : ''}
             <span class="ds-history-time">${timeAgo(run.startedAt)}</span>
-            ${st.show ? `<button class="ds-btn ds-btn-xs ${st.disabled ? '' : 'ds-btn-danger'}" ${st.disabled ? 'disabled' : ''} data-dsaction="undoTool" data-arg="${esc(run.id)}"
-              title="${esc(st.title || '')}">${esc(st.label)}</button>` : ''}
-            <button class="ds-btn ds-btn-xs" data-hist-export="${esc(run.id)}"
-              title="Download this entry as a JSON audit report — what was written, where, when, and what the org showed.">⬇ Report</button>
           </div>
+          ${_histActionsHtml([
+            { label: 'undo', title: 'Take back what this change wrote', buttons: [st.show ? `<button class="ds-btn ds-btn-xs ${st.disabled ? '' : 'ds-btn-danger'}" ${st.disabled ? 'disabled' : ''} data-dsaction="undoTool" data-arg="${esc(run.id)}" title="${esc(st.title || '')}">${esc(st.label)}</button>` : ''] },
+            { label: 'report', title: 'A file of what happened, for your records', buttons: [`<button class="ds-btn ds-btn-xs" data-hist-export="${esc(run.id)}" title="Download this entry as a JSON audit report — what was written, where, when, and what the org showed.">⬇ Report</button>`] },
+          ])}
           <div class="ds-history-orgs">${esc(orgLabel(run.targetOrg || ''))}</div>
           <div class="ds-hist-what">
             ${what.length ? what.map(w => `<div class="ds-hist-what-line">${icon(w)} ${esc(w.text || w.describe)}</div>`).join('') : '<div class="ds-hist-what-line">— nothing was written</div>'}

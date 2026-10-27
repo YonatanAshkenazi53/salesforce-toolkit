@@ -290,10 +290,16 @@ async function _ringScanAll() {
   if (!total) return;
   _ringScanAllBusy = true;
   let done = 0;
-  const paint = () => { const b = document.querySelector('[data-ring-scanall]'); if (b) { b.disabled = true; b.textContent = `⏳ ${done} / ${total}`; } };
+  // progress a person can read (user 2026-10-27: "it took time. maybe we should show progress there"): the chip
+  // names the deployment being scanned and the org, and that cell shows ⏳ until its turn ends
+  const paint = (p, t) => {
+    const b = document.querySelector('[data-ring-scanall]');
+    if (b) { b.disabled = true; b.textContent = `⏳ ${done} / ${total}${p ? ` · ${p.name}` : ''}`; b.title = p ? `Scanning ${p.name} against ${orgLabel(t || '')} — ${done} of ${total} done` : ''; }
+    if (p && t) { const cell = document.querySelector(`[data-ring-cell="${CSS.escape(p.id + '|' + t)}"]`); if (cell) cell.innerHTML = `<span class="ds-ring-unknown">⏳ scanning…</span>`; }
+  };
   try {
     paint();
-    for (const t of targets) for (const p of rows) { paint(); await _ringScanOne(p.id, t, null); done++; }
+    for (const t of targets) for (const p of rows) { paint(p, t); await _ringScanOne(p.id, t, null); done++; }
   } finally {
     _ringScanAllBusy = false;
     _ringRenderMatrix();
