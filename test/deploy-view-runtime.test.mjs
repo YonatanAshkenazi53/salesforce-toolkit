@@ -47,7 +47,7 @@ describe('Deploy view — the page actually runs', () => {
   sftkParentOrderFor: async () => ({ offline: false, objects: [
     { pathKey: '', obj: 'Account', depth: 0, parentObj: null, parents: [{ field: 'Primary_Campaign__c', refObj: 'Campaign', empty: false, required: false, srcCount: 12 }, { field: 'Region__c', refObj: 'Region__c', empty: true, required: true, srcCount: 40 }, { field: 'IndividualId', refObj: 'Individual', empty: true, required: false, srcCount: 0 }, { field: 'Big__c', refObj: 'Big__c', empty: false, required: false, srcCount: 90000 }] },
     { pathKey: '0', obj: 'Contact', depth: 1, parentObj: 'Account', parents: [{ field: 'Campaign__c', refObj: 'Campaign', empty: false, required: false }] }] }),
-      sftkLkpOvGet: () => ({}), sftkMatchKeyLabel: k => String(k),
+      sftkLkpOvGet: () => ({}), sftkValOvGet: () => ({}), sftkOpenValueEditor() {}, sftkAmbMergeAllPlan: () => [], sftkMatchKeyLabel: k => String(k),
       getNodeByPath: (root, k) => k.split('.').reduce((n, i) => n.children[Number(i)], root),
     };
     vm.createContext(ctx);

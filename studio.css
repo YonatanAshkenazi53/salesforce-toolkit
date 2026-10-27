@@ -6307,6 +6307,28 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .ds-amb-chip { padding: 1px 7px; border-radius: 999px; background: var(--surface2); color: var(--text); font-size: 11.5px; }
 .ds-amb-chip b { font-weight: 600; }
 .ds-amb-sel { margin-left: auto; flex: 0 1 520px; min-width: 260px; max-width: 620px; }
+/* 2026-10-27: the two orgs side by side, then the matching matrix */
+.ds-amb-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 4px 0 6px; }
+.ds-amb-col { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--surface); min-width: 0; }
+.ds-amb-col-tgt { border-color: var(--brand); }
+.ds-amb-collbl { font-size: 12px; margin-bottom: 4px; }
+.ds-amb-rec { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 3px 0; font-size: 12px; }
+.ds-amb-letter { font-weight: 700; min-width: 18px; color: var(--c-warn-fg); }
+.ds-amb-colfoot { margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px; }
+.ds-amb-both { margin: -2px 0 6px; text-align: center; }
+.ds-amb-match { margin-top: 2px; }
+.ds-amb-mx { border-collapse: collapse; font-size: 12px; }
+.ds-amb-mx th, .ds-amb-mx td { padding: 4px 10px; border-bottom: 1px solid var(--border-light, var(--border)); text-align: center; vertical-align: middle; }
+.ds-amb-mx thead th { font-weight: 600; vertical-align: bottom; }
+.ds-amb-mx tbody th { text-align: left; font-weight: 500; white-space: nowrap; }
+.ds-amb-mx-q { text-align: left !important; font-weight: 600 !important; color: var(--text); }
+.ds-amb-mx-sub { font-weight: 400; font-size: 11px; color: var(--subtext); max-width: 200px; margin: 0 auto; }
+.ds-amb-mx-cell { display: flex; justify-content: center; align-items: center; gap: 4px; padding: 4px 6px; margin: 0; border-radius: 6px; }
+.ds-amb-mx-cell.ds-amb-opt-on { background: rgba(27, 111, 209, .14); }
+.ds-amb-mx-cell input { top: 0; }
+.ds-amb-mx-tell { color: var(--subtext); }
+.ds-amb-mx-sug { font-size: 11px; cursor: help; }
+@media (max-width: 900px) { .ds-amb-cols { grid-template-columns: 1fr; } }
 /* the answers of one record, written out (2026-10-05) */
 .ds-amb-opts { display: flex; flex-direction: column; gap: 1px; margin: 0 0 8px 4px; }
 .ds-amb-opt { display: flex; align-items: baseline; gap: 7px; padding: 3px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; }
@@ -6538,6 +6560,31 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .sftk-cf-more { margin-top: 4px; font-size: 11px; color: var(--subtext); }
 .sftk-cf-more > summary { cursor: pointer; color: var(--brand); }
 .ds-merge-typed { min-width: 150px; }
+.ds-merge-how { margin: 0 0 8px; font-size: 12.5px; }
+/* ✏ Values — the record's fields and what they are written with (2026-10-27) */
+.ds-ve-tools { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; font-size: 12px; flex-wrap: wrap; }
+.ds-ve-tools #dsVeFilter { flex: 0 1 260px; }
+.ds-ve-onlyedited { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.ds-ve-wrap { max-height: 56vh; }
+.ds-ve-table th, .ds-ve-table td { vertical-align: middle; padding: 4px 10px; }
+.ds-ve-null { min-width: 26px; }
+.ds-ve-table tbody th { font-weight: 500; white-space: normal; min-width: 150px; max-width: 260px; }
+.ds-ve-row-on > th { border-left: 3px solid var(--brand); }
+.ds-ve-src, .ds-ve-tgt { max-width: 220px; word-break: break-word; font-size: 12px; }
+.ds-ve-cell { min-width: 260px; }
+.ds-ve-edit { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.ds-ve-in { flex: 1 1 180px; min-width: 140px; }
+.ds-ve-null-on .ds-ve-in { opacity: .45; }
+.ds-ve-err { flex-basis: 100%; color: var(--c-err-fg, #b42318); font-size: 11px; min-height: 0; }
+.ds-ve-err:empty { display: none; }
+.ds-ve-lkp-cur { font-size: 12px; margin-bottom: 3px; }
+.ds-ve-lkp-in { width: 100%; }
+.ds-ve-lkp-res { max-height: 150px; }
+.ds-ve-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.ds-ve-note { margin-top: 8px; font-size: 11.5px; }
+.ds-merge-useall { margin-top: 4px; }
+.ds-merge-meta { margin: 2px 0; display: flex; gap: 4px; flex-wrap: wrap; min-height: 18px; }
+.ds-merge-table thead th .ds-dep-muted { font-weight: 400; }
 .ds-merge-typed .ds-input { width: 100%; min-width: 120px; }
 .ds-merge-samefold { margin-top: 8px; font-size: 12px; }
 .ds-merge-samefold > summary { cursor: pointer; color: var(--brand, #1b6fd1); }

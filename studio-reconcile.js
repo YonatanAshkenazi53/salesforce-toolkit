@@ -2972,6 +2972,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         children: sftkRecPruneTree(a.node.children, a.pathKey, _bRides, _opDecorate),   // phase 4: the levels below ride along
         fieldMappings: a.node.fieldMappings || {},
         lookupOverrides: _att.overrides,                 // 🔗 hand-picks + the scan's own parent pairing
+        valueOverrides: a.node.valueOverrides || {},     // ✏ typed values
         lookupResolutions: {
           ...(a.node.lookupResolutions || {}),
           [a.node.field]: { strategy: 'match', matchObject: pObj, matchField: pMatch }
@@ -3224,7 +3225,8 @@ async function runReconcile(profile, objType, buckets, opts) {
         children: [],
         fieldMappings: a.node.fieldMappings || {},
         lookupResolutions: a.node.lookupResolutions || {},
-        lookupOverrides: a.node.lookupOverrides || {}     // 🔗 hand-picks made on child rows
+        lookupOverrides: a.node.lookupOverrides || {},    // 🔗 hand-picks made on child rows
+        valueOverrides: a.node.valueOverrides || {}      // ✏ typed values
       };
       const result = await reconcileOverwrite(cProfile, obj, a.ovwIds, a.cs.changed || [], srcSess, tgtSess);
       bumpChild(obj, 'overwritten',     result.ok     || 0);
@@ -3877,6 +3879,9 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   let lkpOvUsed = 0;
   let lkpOvEligible = null;   // srcField → mapped target field (built from describe)
   let tgtUpdMap = null;       // target field → updateable (null = describe unavailable)
+  // ✏ typed values (Deploy page → ✏ values) for THIS target org (sftk-valueedit.js)
+  const valOv = (typeof sftkValOvBucket === 'function') ? sftkValOvBucket(node, profile.targetOrg) : null;
+  let valOvUsed = 0, valOvMasked = 0;
 
   // PII policy applies to EVERY write path. This function sends
   // SF_COLLECTIONS_UPDATE itself instead of going through the engine, and
@@ -4032,7 +4037,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
     }
   } catch (_) { /* best effort — proceed with the unfiltered list */ }
 
-  if (!srcFields.length && !refPairs.length && !wantOwners) {
+  if (!srcFields.length && !refPairs.length && !wantOwners && !(valOv && Object.keys(valOv).length)) {
     return { ok: 0, failed: sourceIds.length, errors: [...warnings, 'No mapped fields to overwrite — configure Field Mapping on the root node.'] };
   }
 
@@ -4145,6 +4150,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
 
   // Build PATCH payloads keyed by target Id. rowMeta stays aligned with
   // payloads so per-record results can be turned into History record links.
+  const tgtUpdOk = tgtUpdMap ? new Set([...tgtUpdMap].filter(([, u]) => u === true).map(([k]) => k)) : null;
   const payloads = [];
   const rowMeta  = [];   // [{ id, label }]
   for (const sr of srcRecs) {
@@ -4205,6 +4211,12 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
         lkpOvUsed++;
       }
     }
+    // ✏ typed values: written in place of the source's, under the mapped name; a PII-covered field keeps its masked value
+    const valForRec = valOv && valOv[sr.Id] && typeof valOv[sr.Id] === 'object' ? valOv[sr.Id] : null;
+    if (valForRec) {
+      const vr = sftkValOvApply(p, valForRec, fm, tgtUpdOk, sf => piiActive && !!piiRules[String(sf).toLowerCase()]);
+      valOvUsed += vr.used; valOvMasked += vr.masked;
+    }
     // Owners: matched name → that user; unmatched → fallback; no fallback →
     // the target's current owner stays untouched.
     if (wantOwners) {
@@ -4241,6 +4253,9 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   // W2 — disclose applied hand-picks the way the run engine does, so the
   // user can tell name-matching results from their own overrides.
   if (lkpOvUsed) warnings.push(`🔗 ${lkpOvUsed} lookup value(s) written from hand-picked targets (your Transfer 🔗 picks — they beat name-matching)`);
+  // ℹ / ⚠ first: the run log paints a line without one of them as a failure (test/hand-test-findings-1001)
+  if (valOvUsed) warnings.push(`ℹ ✏ ${valOvUsed} value(s) typed on the Deploy page written in place of the source's`);
+  if (valOvMasked) warnings.push(`⚠ ✏ ${valOvMasked} typed value(s) NOT written — the PII policy covers those fields and wins`);
 
   // The one write discipline (sftk-write.js): Collections' per-record
   // success used to BE "updated" — one re-read of exactly the accepted Ids,

@@ -1051,12 +1051,13 @@ function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf) {
   const url = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
   const tellText = tell => (tell || []).filter(x => x && x[1] !== '').map(x => `${x[0]}: ${x[1]}`).join(' · ');
   const chips = tell => { const t = (tell || []).filter(x => x && x[1] !== ''); return t.length ? t.map(x => `<span class="ds-amb-chip" title="${esc(x[0])}">${esc(x[0])}: <b>${esc(x[1])}</b></span>`).join('') : '<span class="ds-dep-muted">no compared field differs between the copies — they look like the same record; open them to be sure</span>'; };
+  const letter = i => String.fromCharCode(65 + (i % 26)) + (i >= 26 ? String(Math.floor(i / 26)) : '');
   const groups = new Map();
   for (const r of rows) { const k = keyOf(r); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
   let html = '';
   for (const [k, rs] of groups) {
     const cands = rs[0].candidates || [];
-    const nSrc = (rs[0].twins || []).length + 1;
+    const nSrc = Math.max(rs.length, (rs[0].twins || []).length + 1);
     const radios = cands.length <= SFTK_AMB_RADIO_MAX;
     const pending = rs.some(r => pickOf(r) !== memOf(r));
     const kept = rs.some(r => memOf(r));
@@ -1066,27 +1067,59 @@ function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf) {
     const sameTgt = cands.length > 1 && cands.every(t => noTell(candTell[t]));
     const sameSrc = nSrc > 1 && rs.every(r => noTell(r.tell));
     const mergeTitle = 'Merge these records into one: you choose which one stays and which values it keeps; the others are merged into it and deleted.';
-    const mergeBar = `<div class="ds-amb-mergebar">${nSrc > 1 ? `<button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="src" data-dep-amb-key="${esc(k)}" title="${mergeTitle}">🔀 Merge the ${nSrc} copies in ${srcL}</button>` : ''}${cands.length > 1 ? `<button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="tgt" data-dep-amb-key="${esc(k)}" title="${mergeTitle}">🔀 Merge the ${cands.length} copies in ${tgtL}</button>` : ''}${nSrc > 1 && cands.length > 1 ? `<button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="both" data-dep-amb-key="${esc(k)}" title="First the ${srcL} copies, then the ${tgtL} copies — each with its own picker and confirmation; both orgs are read again once at the end.">🔀 Merge both sides</button>` : ''}<span class="ds-dep-muted">${sameTgt || sameSrc ? 'the copies agree on every compared field — they look like the same record' : 'copies of the same record? merge them · different records that share a name? answer below'}</span></div>`;
-    // every answer as one plain sentence — the same words in the list and in the dropdown
+    // 2026-10-27 (user: "show the dupes in both orgs and offer to merge them … intuitive"): the two
+    // orgs side by side, each with its copies and its own merge button; the question is a matrix below.
+    const oneRec = '<span class="ds-dep-muted">one record — nothing to merge here</span>';
+    const sameNote = '<span class="ds-dep-muted">they agree on every compared field — they look like the same record</span>';
+    const srcMerge = nSrc > 1 ? `<button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="src" data-dep-amb-key="${esc(k)}" title="${mergeTitle}">🔀 Merge the ${nSrc} copies in ${srcL}</button>${sameSrc ? sameNote : ''}` : oneRec;
+    const tgtMerge = cands.length > 1 ? `<button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="tgt" data-dep-amb-key="${esc(k)}" title="${mergeTitle}">🔀 Merge the ${cands.length} copies in ${tgtL}</button>${sameTgt ? sameNote : ''}` : oneRec;
+    const bothMerge = nSrc > 1 && cands.length > 1 ? `<div class="ds-amb-both"><button class="ds-btn ds-btn-xs ds-amb-merge" data-dep-amb-merge="both" data-dep-amb-key="${esc(k)}" title="First the ${srcL} copies, then the ${tgtL} copies — each with its own picker and confirmation; both orgs are read again once at the end.">🔀 Merge both sides</button></div>` : '';
+    const srcCol = `<div class="ds-amb-col ds-amb-col-src"><div class="ds-amb-collbl"><b>${srcL}</b> <span class="ds-dep-muted">source · ${nSrc} record${nSrc === 1 ? '' : 's'} of this name</span></div>
+        ${rs.map((r, ri) => `<div class="ds-amb-rec"><span class="ds-amb-letter">${letter(ri)}</span>${chips(r.tell)}<a class="ds-dep-open" href="${url(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener" title="Open this ${srcL} record">open ↗</a></div>`).join('')}
+        <div class="ds-amb-colfoot">${srcMerge}</div></div>`;
+    const tgtCol = `<div class="ds-amb-col ds-amb-col-tgt"><div class="ds-amb-collbl"><b>${tgtL}</b> <span class="ds-dep-muted">target · ${cands.length} record${cands.length === 1 ? '' : 's'} of this name</span></div>
+        ${cands.map((t, i) => `<div class="ds-amb-rec"><span class="ds-amb-n">#${i + 1}</span>${chips(candTell[t])}<a class="ds-dep-open" href="${url(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open this ${tgtL} record">open ↗</a></div>`).join('') || '<div class="ds-amb-rec ds-dep-muted">no record of this name</div>'}
+        <div class="ds-amb-colfoot">${tgtMerge}</div></div>`;
+    // every answer as one plain sentence — the matrix cell's tooltip and the dropdown's option
     const answers = r => [
       ...cands.map((t, i) => ({ v: t, text: `Same record as #${i + 1} in ${orgLabel(p.targetOrg)}${tellText(candTell[t]) ? ` (${tellText(candTell[t])})` : ''}${r.suggest === t ? ` — suggested: same ${r.suggestBy || 'value'}` : ''}` })),
       { v: '__new__', text: `Not in ${orgLabel(p.targetOrg)} yet — create it there as a new record` },
       { v: '', text: 'Not decided — it stays out of the deployment' },
     ];
+    const question = `Which ${tgtL} record is each ${srcL} copy?`;
+    const cell = (r, a) => { const on = pickOf(r) === a.v; return `<td><label class="ds-amb-opt ds-amb-mx-cell${on ? ' ds-amb-opt-on' : ''}" title="${esc(a.text)}"><input type="radio" name="amb_${esc(r.sourceId)}" data-dep-amb-sel="${esc(r.sourceId)}" value="${esc(a.v)}" ${on ? 'checked' : ''} aria-label="${esc(a.text)}">${r.suggest && r.suggest === a.v ? '<span class="ds-amb-mx-sug" title="One compared field has the same value in both — a suggestion, not a decision">💡</span>' : ''}</label></td>`; };
+    const matrix = radios
+      ? `<table class="ds-amb-mx"><thead><tr><th class="ds-amb-mx-q">${question}</th>${cands.map((t, i) => `<th><span class="ds-amb-n">= #${i + 1}</span><div class="ds-amb-mx-sub">${esc(tellText(candTell[t]) || 'the same record')}</div></th>`).join('')}<th>➕ new<div class="ds-amb-mx-sub">not in ${tgtL} yet — create it there</div></th><th>⏸ not decided<div class="ds-amb-mx-sub">stays out of the deployment</div></th></tr></thead>
+          <tbody>${rs.map((r, ri) => `<tr><th scope="row"><span class="ds-amb-letter">${letter(ri)}</span> <span class="ds-amb-mx-tell">${esc(tellText(r.tell) || 'copy ' + letter(ri))}</span></th>${answers(r).map(a => cell(r, a)).join('')}</tr>`).join('')}</tbody></table>`
+      : `<div class="ds-amb-mx-q">${question}</div>${rs.map((r, ri) => { const pick = pickOf(r); const ans = answers(r); return `<div class="ds-amb-src"><span class="ds-amb-letter">${letter(ri)}</span>${chips(r.tell)}
+          <select class="ds-select ds-select-sm ds-amb-sel" data-dep-amb-sel="${esc(r.sourceId)}" aria-label="Which ${tgtL} record is this">
+            ${[ans[ans.length - 1], ...ans.slice(0, -1)].map(a => `<option value="${esc(a.v)}" ${pick === a.v ? 'selected' : ''}>${esc(a.text)}</option>`).join('')}
+          </select></div>`; }).join('')}`;
     html += `<div class="ds-amb-group">
       <div class="ds-amb-ghd"><b>${esc(k)}</b><span class="ds-dep-muted">${nSrc} in ${srcL} · ${cands.length} in ${tgtL}</span><span class="ds-dep-sp"></span>
         ${kept && !pending ? '<span class="ds-amb-done">✓ remembered — takes effect when both orgs are read again</span>' : ''}
         <button class="ds-btn ds-btn-xs" data-dep-amb-one="${esc(k)}" ${pending ? '' : 'disabled'} title="Remember the answers of this name now. Both orgs are read again later, once.">📌 Apply this one</button></div>
-      ${mergeBar}
-      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${tgtL} — ${cands.length} record${cands.length === 1 ? '' : 's'} of this name</div>${cands.map((t, i) => `<div class="ds-amb-cand"><span class="ds-amb-n">#${i + 1}</span>${chips(candTell[t])}<a class="ds-dep-open" href="${url(p.targetOrg, t)}" target="_blank" rel="noopener" title="Open this ${tgtL} record">open ↗</a></div>`).join('')}</div>
-      <div class="ds-amb-side"><div class="ds-amb-sidelbl">in ${srcL} — ${nSrc} record${nSrc === 1 ? '' : 's'} of this name · which ${tgtL} record is each one?</div>${rs.map(r => { const pick = pickOf(r); const ans = answers(r); return `<div class="ds-amb-src">${chips(r.tell)}<a class="ds-dep-open" href="${url(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener" title="Open this ${srcL} record">open ↗</a>
-          ${radios ? '' : `<select class="ds-select ds-select-sm ds-amb-sel" data-dep-amb-sel="${esc(r.sourceId)}" aria-label="Which ${tgtL} record is this">
-            ${[ans[ans.length - 1], ...ans.slice(0, -1)].map(a => `<option value="${esc(a.v)}" ${pick === a.v ? 'selected' : ''}>${esc(a.text)}</option>`).join('')}
-          </select>`}</div>
-          ${radios ? `<div class="ds-amb-opts" role="radiogroup" aria-label="Which ${tgtL} record is this">${ans.map(a => `<label class="ds-amb-opt${pick === a.v ? ' ds-amb-opt-on' : ''}"><input type="radio" name="amb_${esc(r.sourceId)}" data-dep-amb-sel="${esc(r.sourceId)}" value="${esc(a.v)}" ${pick === a.v ? 'checked' : ''}><span>${esc(a.text)}</span></label>`).join('')}</div>` : ''}`; }).join('')}</div>
+      <div class="ds-amb-cols">${srcCol}${tgtCol}</div>${bothMerge}
+      <div class="ds-amb-match">${matrix}</div>
     </div>`;
   }
   return html;
+}
+
+// PURE. The merge walk's plan (user 2026-10-27: "an option of merge all that can merge a lot of
+// pairs one by one"): every name on the tab whose side holds more than one copy, source side
+// first, in the order shown. [{ name, side, ids }]
+function sftkAmbMergeAllPlan(rows, keyOf) {
+  const groups = new Map();
+  for (const r of (rows || [])) { const k = keyOf(r); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
+  const plan = [];
+  for (const [name, rs] of groups) {
+    const srcIds = [...new Set(rs.map(r => r.sourceId).filter(Boolean))];
+    const tgtIds = [...new Set(((rs[0] && rs[0].candidates) || []).filter(Boolean))];
+    if (srcIds.length > 1) plan.push({ name, side: 'src', ids: srcIds });
+    if (tgtIds.length > 1) plan.push({ name, side: 'tgt', ids: tgtIds });
+  }
+  return plan;
 }
 
 // The deployment a parents-first step was opened FROM: the saved one by id,
@@ -1158,31 +1191,41 @@ async function _depMergeCopies(p, side, name, ids, opts = {}) {
   const when = iso => String(iso || '').slice(0, 10);
   const fmt = v => esc(sftkMergeValueText(v));
   const base = String(orgUrl || '').replace(/\/$/, '');
-  const head = recs.map((r, i) => `<th class="ds-merge-col${i === 0 ? ' ds-merge-keep' : ''}" data-merge-col="${i}"><label class="ds-merge-keeplbl"><input type="radio" name="dsMergeKeep" value="${i}" ${i === 0 ? 'checked' : ''}> Keep copy ${i + 1}</label><div class="ds-dep-muted"><a href="${esc(base)}/lightning/r/${esc(r.Id)}/view" target="_blank" rel="noopener">${esc(r.Id)}</a> · created ${esc(when(r.CreatedDate))} · changed ${esc(when(r.LastModifiedDate))}</div></th>`).join('');
+  // 2026-10-27 (user: "the merge experience … should be intuitive"): each copy is a column that says
+  // what a person picks by — its age, how many fields it has filled — and one click takes all its values.
+  const okFields = desc.fields.filter(sftkMergeFieldOk);
+  const filled = recs.map(r => okFields.filter(f => r[f.name] != null && r[f.name] !== '').length);
+  const oldest = recs.reduce((b, r, i) => (String(r.CreatedDate || '') < String(recs[b].CreatedDate || '') ? i : b), 0);
+  const fullest = filled.indexOf(Math.max(...filled));
+  const head = recs.map((r, i) => `<th class="ds-merge-col${i === 0 ? ' ds-merge-keep' : ''}" data-merge-col="${i}"><label class="ds-merge-keeplbl"><input type="radio" name="dsMergeKeep" value="${i}" ${i === 0 ? 'checked' : ''}> Keep copy ${i + 1}</label>
+      <div class="ds-merge-meta">${i === oldest && recs.length > 1 ? '<span class="ds-amb-chip" title="Created first">oldest</span>' : ''}${i === fullest && filled.filter(n => n === filled[i]).length === 1 ? '<span class="ds-amb-chip" title="Holds a value in the most fields">most filled</span>' : ''}</div>
+      <div class="ds-dep-muted">created ${esc(when(r.CreatedDate))} · changed ${esc(when(r.LastModifiedDate))} · ${filled[i].toLocaleString()} field${filled[i] === 1 ? '' : 's'} filled · <a href="${esc(base)}/lightning/r/${esc(r.Id)}/view" target="_blank" rel="noopener" title="${esc(r.Id)}">open ↗</a></div>
+      ${diff.differ.length ? `<button class="ds-btn ds-btn-xs ds-merge-useall" data-merge-useall="${i}" title="Tick this copy's value in every row below">⬇ use all its values</button>` : ''}</th>`).join('');
   // every differing field: one radio per copy, and a third — a value typed here (user 2026-10-14)
   const hint = t => t === 'date' ? 'YYYY-MM-DD' : t === 'datetime' ? '2026-10-14T09:30:00Z' : t === 'boolean' ? 'true / false' : t === 'reference' ? 'a Salesforce id' : 'type a value…';
   const rows = diff.differ.map(f => `<tr data-merge-field="${esc(f.name)}" data-merge-type="${esc(f.type)}"><th scope="row">${esc(f.label)}<div class="ds-dep-muted">${esc(f.name)}</div></th>${f.values.map((v, i) => `<td class="ds-merge-col${i === 0 ? ' ds-merge-keep' : ''}" data-merge-col="${i}"><label class="ds-merge-val"><input type="radio" name="dsMergeF_${esc(f.name)}" value="${i}" ${i === 0 ? 'checked' : ''}> <span>${fmt(v)}</span></label></td>`).join('')}<td class="ds-merge-typed">${sftkMergeTypable(f.type) ? `<label class="ds-merge-val"><input type="radio" name="dsMergeF_${esc(f.name)}" value="custom"> <input type="text" class="ds-input ds-input-sm" data-merge-custom="${esc(f.name)}" placeholder="${esc(hint(f.type))}" aria-label="A value typed for ${esc(f.label)}"></label>` : ''}</td></tr>`).join('');
   const sameRows = (diff.sameList || []).map(f => `<tr><th scope="row">${esc(f.label)}<div class="ds-dep-muted">${esc(f.name)}</div></th><td colspan="${recs.length + 1}">${fmt(f.value)}</td></tr>`).join('');
-  const table = `<div class="ds-merge-wrap"><table class="ds-merge-table"><thead><tr><th>Which record stays?</th>${head}<th class="ds-merge-typed">or a value you type</th></tr></thead><tbody>${rows || `<tr><td colspan="${recs.length + 2}" class="ds-dep-muted">Every writable field holds the same value in all copies — nothing to choose.</td></tr>`}</tbody></table></div>
-    <div class="ds-dep-muted ds-merge-same">${diff.differ.length ? 'For each field above, tick the value the record that stays keeps (its own values are ticked), or type one. ' : ''}${diff.same.toLocaleString()} writable field${diff.same === 1 ? ' is' : 's are'} the same in every copy.</div>
+  const table = `<div class="ds-merge-how"><b>1.</b> Tick the record that stays. <b>2.</b> For each field that differs, tick the value it keeps — or type one.</div>
+    <div class="ds-merge-wrap"><table class="ds-merge-table"><thead><tr><th>Which record stays?</th>${head}<th class="ds-merge-typed">or a value you type</th></tr></thead><tbody>${rows || `<tr><td colspan="${recs.length + 2}" class="ds-dep-muted">Every writable field holds the same value in all copies — nothing to choose.</td></tr>`}</tbody></table></div>
+    <div class="ds-dep-muted ds-merge-same">${diff.same.toLocaleString()} writable field${diff.same === 1 ? ' is' : 's are'} the same in every copy${diff.differ.length ? ' — the record that stays keeps its own values unless you tick otherwise' : ''}.</div>
     ${sameRows ? `<details class="ds-merge-samefold"><summary>Show the ${diff.same.toLocaleString()} field${diff.same === 1 ? '' : 's'} that ${diff.same === 1 ? 'is' : 'are'} the same</summary><div class="ds-merge-wrap"><table class="ds-merge-table">${sameRows}</table></div></details>` : ''}`;
   const others = recs.length === 2 ? 'the other copy is' : `the other ${recs.length - 1} copies are`;
   const stakes = native
     ? `<b>One record stays; ${others} merged into it and deleted.</b> <b>The Toolkit cannot undo a merge.</b>` +
-      `<div class="sftk-cf-plan"><ol class="sftk-cf-rows"><li><b>Salesforce</b><span>Merges ${esc(plural)} itself: related records, activities, files, notes and feed move to the record that stays</span></li></ol></div>`
+      `<details class="sftk-cf-more"><summary>How Salesforce merges ${esc(plural)}</summary><div class="sftk-cf-plan"><ol class="sftk-cf-rows"><li><b>Salesforce</b><span>Merges ${esc(plural)} itself: related records, activities, files, notes and feed move to the record that stays</span></li></ol></div></details>`
     : `<b>One record stays; ${others} deleted.</b> <b>The Toolkit cannot undo a merge.</b>` +
-      `<div class="sftk-cf-plan"><ol class="sftk-cf-rows">` +
+      `<details class="sftk-cf-more"><summary>How the Toolkit merges ${esc(plural)} (Salesforce has no merge for them)</summary><div class="sftk-cf-plan"><ol class="sftk-cf-rows">` +
       `<li><b>No merge</b><span>Salesforce has no merge for ${esc(plural)}, so the Toolkit does it by hand</span></li>` +
       `<li><b>Moves</b><span>What hangs under a copy goes to the record that stays, one relationship at a time (${rels.length.toLocaleString()} relationship${rels.length === 1 ? '' : 's'})</span></li>` +
       `<li><b>Deletes</b><span>A copy only when everything under it moved</span></li>` +
       `<li><b>Refusal</b><span>A relationship that refuses stops the merge before that copy is deleted</span></li>` +
       `<li><b>Goes with it</b><span>History, sharing and feed rows of a copy</span></li></ol>` +
-      (rels.length ? `<details class="sftk-cf-more"><summary>The relationships (${rels.length.toLocaleString()})</summary>${esc(rels.map(r => r.child).join(', '))}</details>` : '') + `</div>`;
+      (rels.length ? `<details class="sftk-cf-more"><summary>The relationships (${rels.length.toLocaleString()})</summary>${esc(rels.map(r => r.child).join(', '))}</details>` : '') + `</div></details>`;
   const choice = await new Promise(resolve => {
     let done = false;
     const finish = v => { if (!done) { done = true; resolve(v); } };
     sftkDialog({
-      icon: '🔀', title: `Merge the ${recs.length} copies of "${name}" in ${org}`, sev: 'red',
+      icon: '🔀', title: `Merge the ${recs.length} copies of "${name}" in ${org}${opts.walk ? ` — ${opts.walk}` : ''}`, sev: 'red',
       facts: [label, `${recs.length} copies`, `${diff.differ.length.toLocaleString()} field${diff.differ.length === 1 ? '' : 's'} differ`, native ? 'Salesforce merge' : 'moved, then deleted'],
       stakes, bodyHtml: table,
       note: 'The copies go to the Recycle Bin for 15 days; restoring them there does not take back what moved to the record that stays.',
@@ -1198,6 +1241,10 @@ async function _depMergeCopies(p, side, name, ids, opts = {}) {
           // the record that stays keeps its own values until the user says otherwise
           box.querySelectorAll('tr[data-merge-field]').forEach(tr => { const x = tr.querySelector(`input[value="${r.value}"]`); if (x) x.checked = true; });
           paint();
+        }));
+        // one click: every row takes that copy's value
+        box.querySelectorAll('[data-merge-useall]').forEach(b => b.addEventListener('click', () => {
+          box.querySelectorAll('tr[data-merge-field]').forEach(tr => { const x = tr.querySelector(`input[value="${b.dataset.mergeUseall}"]`); if (x) x.checked = true; });
         }));
         // typing in a row's box is choosing it
         box.querySelectorAll('input[data-merge-custom]').forEach(inp => inp.addEventListener('input', () => { const r = inp.closest('tr')?.querySelector('input[type="radio"][value="custom"]'); if (r) r.checked = true; }));
@@ -1353,6 +1400,9 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   const relinkBlocked = !isRoot && !!(s.linkMasterDetail && s.linkUpdateable === false);
   const lkpN = id => Object.keys(sftkLkpOvGet(node, p.targetOrg, id)).length;
   const lkpBtn = (id, tgtId) => id ? `<button class="ds-dep-link${lkpN(id) ? ' ds-lkp-on' : ''}" data-rec-lkp="${esc(id)}" data-dep-lkp="1"${tgtId ? ` data-rec-lkp-tgt="${esc(tgtId)}"` : ''} title="Hand-pick which TARGET record each lookup field should point at for THIS record — saved per target org, beats name matching in the run.">🔗 lookups<span class="ds-lkp-count">${lkpN(id) ? ` ${lkpN(id)}` : ''}</span></button>` : '';
+  // ✏ typed values (user 2026-10-27: "change the whole record fields and deploy them as the user selected … one or many")
+  const valN = id => Object.keys(sftkValOvGet(node, p.targetOrg, id)).length;
+  const valBtn = (id, tgtId) => id ? `<button class="ds-dep-link${valN(id) ? ' ds-lkp-on' : ''}" data-dep-vals="${esc(id)}"${tgtId ? ` data-dep-vals-tgt="${esc(tgtId)}"` : ''} title="Every writable field of this record, with the value it is written with — type a value to write it instead of the source's; lookups are picked from ${esc(orgLabel(p.targetOrg))}. Saved on the deployment per target org.">✏ values<span class="ds-lkp-count">${valN(id) ? ` ${valN(id)}` : ''}</span></button>` : '';
   const srcLockTip = `🔒 Writes to ${orgLabel(p.sourceOrg)} are locked (Connected Orgs → Unlock writes)`;
 
   const rowHtml = r => {
@@ -1370,7 +1420,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
         : st === 'deepblock' ? `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="Its parent is missing in the target too, and inserting both in one run is not supported at this depth — insert the parent level first, then rescan.">parent missing — insert the parent level first</span>`
         : st === 'untracked' ? `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="Its parent is outside the scan above (scope or a duplicate key) — it cannot be attached safely.">parent untracked</span>`
         : `<span class="ds-rec-pnote ds-rec-pnote-none">no parent</span>`;
-      tail = lkpBtn(r.sourceId, null);
+      tail = `${valBtn(r.sourceId, null)} ${lkpBtn(r.sourceId, null)}`;
     } else if (tabDef.k === 'chg') {
       const push = isRoot ? _recSel.overwrite.has(r.sourceId) : sel.overwrite.has(r.sourceId);
       const pull = isRoot && _recSel.updSrc.has(r.sourceId);
@@ -1378,7 +1428,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
         <button class="ds-rec-extra-btn ${push ? 'ds-rec-extra-on-push' : ''}" data-dep-dir="overwrite" data-dep-id="${esc(r.sourceId)}" title="Update the TARGET record with the source's values">→</button>
         ${isRoot ? `<button class="ds-rec-extra-btn ${pull ? 'ds-rec-extra-on-pull' : ''}" data-dep-dir="updSrc" data-dep-id="${esc(r.sourceId)}" ${opts.srcLocked ? 'disabled' : ''} title="${opts.srcLocked ? esc(srcLockTip) : 'Update the SOURCE record with the target\'s values'}">←</button>` : ''}</span>`;
       extra = (r.fields || []).length ? `<span class="ds-rec-drift-why" title="Differs on: ${esc(r.fields.join(', '))}">${esc(r.fields.slice(0, 3).join(', '))}${r.fields.length > 3 ? ` +${r.fields.length - 3}` : ''}</span>` : '';
-      tail = `<button class="ds-dep-link" data-dep-fields="${esc(r.sourceId)}|${esc(r.targetId)}" title="The whole record, both orgs side by side — tick fields to update on the target">▸ record</button> ${lkpBtn(r.sourceId, r.targetId)}`;
+      tail = `<button class="ds-dep-link" data-dep-fields="${esc(r.sourceId)}|${esc(r.targetId)}" title="The whole record, both orgs side by side — tick fields to update on the target">▸ record</button> ${valBtn(r.sourceId, r.targetId)} ${lkpBtn(r.sourceId, r.targetId)}`;
     } else if (tabDef.k === 'ext') {
       const del = isRoot ? _recSel.del.has(r.targetId) : sel.del.has(r.targetId);
       const pull = isRoot && _recSel.pull.has(r.targetId);
@@ -1407,10 +1457,11 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   };
 
   const nAll = rows.length.toLocaleString();
-  const bulk = tabDef.k === 'ins' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list${rows.length > shown.length ? ` — including the ${(rows.length - shown.length).toLocaleString()} not shown yet (Show all lists them)` : ''}">✓ All ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
-    : tabDef.k === 'chg' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Overwrite every ${nAll} changed record(s) in this list with the source's values">→ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
+  const bulk = tabDef.k === 'ins' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list${rows.length > shown.length ? ` — including the ${(rows.length - shown.length).toLocaleString()} not shown yet (Show all lists them)` : ''}">✓ All ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button><button class="ds-btn ds-btn-xs" data-dep-vals-many="1" title="One value for every ticked record of this list: type it once, it is written on each of them">✏ Set values for the selected</button>`
+    : tabDef.k === 'chg' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Overwrite every ${nAll} changed record(s) in this list with the source's values">→ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button><button class="ds-btn ds-btn-xs" data-dep-vals-many="1" title="One value for every ticked record of this list: type it once, it is written on each of them">✏ Set values for the selected</button>`
     : tabDef.k === 'ext' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list for deletion">🗑 all ${nAll}${!isRoot ? ' (no orphans)' : ''}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
-    : tabDef.k === 'link' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" ${relinkBlocked ? 'disabled' : ''}>⇄ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>` : '';
+    : tabDef.k === 'link' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" ${relinkBlocked ? 'disabled' : ''}>⇄ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
+    : ambRoot && sftkAmbMergeAllPlan(rows, key).length ? (n => `<button class="ds-btn ds-btn-xs" data-dep-amb-mergeall="1" title="Every name whose org holds more than one copy, one merge at a time: each opens its own picker and confirmation; Cancel stops the walk; both orgs are read again once at the end.">🔀 Merge all — ${n} merge${n === 1 ? '' : 's'}, one by one</button>`)(sftkAmbMergeAllPlan(rows, key).length) : '';
   host.innerHTML = `
     <div class="ds-dep-tools">
       <input type="search" id="dsDepFilter" class="ds-dep-filter" placeholder="🔍 filter by name${isRoot ? '' : ' or parent'}…" value="${esc(_depFilter)}" aria-label="Filter records">
@@ -1494,6 +1545,19 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     }
     ambPaintApply();
   }));
+  // 🔀 Merge all: the walk — one picker and one confirmation per merge, Cancel stops it, one re-read at the end
+  host.querySelector('[data-dep-amb-mergeall]')?.addEventListener('click', async () => {
+    const plan = sftkAmbMergeAllPlan(rows, key);
+    if (!plan.length) return;
+    let done = 0, failed = 0, i = 0;
+    for (const step of plan) {
+      i++;
+      const r = await _depMergeCopies(p, step.side, step.name, step.ids, { rescan: false, walk: `${i} of ${plan.length}` });
+      if (r === null) { showToast(`Merge all stopped at ${i} of ${plan.length}${done ? ` — ${done} merged` : ''}.`, 'info', 6000); break; }
+      if (r) done++; else failed++;
+    }
+    if (done || failed) { showToast(`Merge all: ${done} merged${failed ? `, ${failed} failed` : ''} — reading both orgs again…`, failed ? 'warning' : 'success', 6000); await _depRescan(p); }
+  });
   // 🔀 the copies of one name, on the side that holds more than one, merged into one record
   host.querySelectorAll('[data-dep-amb-merge]').forEach(b => b.addEventListener('click', async () => {
     const side = b.dataset.depAmbMerge, name = b.dataset.depAmbKey;
@@ -1583,6 +1647,18 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     const h = eid('dsDepLkpHost');
     if (h) renderLkpOverridePanel(prof, cur.obj, srcId, h, b.dataset.recLkpTgt || null);
   }));
+  // ✏ values: one record from its row; every ticked record of the list from the toolbar
+  host.querySelectorAll('[data-dep-vals]').forEach(b => b.addEventListener('click', () => {
+    const srcId = b.dataset.depVals;
+    const row = all.find(r => r.sourceId === srcId);
+    sftkOpenValueEditor(prof, cur.obj, node, [srcId], b.dataset.depValsTgt || null, row ? key(row) : srcId, tabDef.k === 'chg' ? 'chg' : 'ins', repaint);
+  }));
+  host.querySelector('[data-dep-vals-many]')?.addEventListener('click', () => {
+    const set = tabDef.k === 'chg' ? (isRoot ? _recSel.overwrite : sel.overwrite) : (isRoot ? _recSel.push : sel.push);
+    const ids = all.map(r => r.sourceId).filter(id => id && set.has(id));
+    if (!ids.length) { showToast(`Tick the records first — ✏ Set values writes one value on every ticked ${tabDef.k === 'chg' ? 'changed' : 'insert'} record.`, 'info', 5000); return; }
+    sftkOpenValueEditor(prof, cur.obj, node, ids, null, null, tabDef.k === 'chg' ? 'chg' : 'ins', repaint);
+  });
 }
 
 // ── ⏸ pause record-triggered flows during the run (user 2026-09-29) ───────

@@ -48,6 +48,9 @@ Salesforce answered, it says that instead.
 - **Flow Access** — grant flows to permission sets in one action.
 
 ### Data Studio
+
+- **✏ Values on the Deploy page.** Every Insert and Changed row opens the whole record: each writable field with the source's value (and the target's, on a Changed row) and a box for the value it is written with instead — one record, or one value for every ticked record of the list. Lookups are picked from the target org in the same dialog. Typed values are saved on the deployment per target org and written by ▶ Deploy; the run log and History say how many. A field the PII policy covers keeps its masked value.
+- **⚠ Needs a decision, redrawn.** Each shared name shows the two orgs side by side — the copies in the source, the copies in the target, each side with its own 🔀 Merge button — and the question "which target record is each source copy?" as one grid: a row per source copy, a column per target record, plus "new" and "not decided". **🔀 Merge all** walks every name whose org holds copies, one merge at a time, each with its own picker and confirmation; Cancel stops the walk. The merge dialog says what a person picks by (oldest, most filled) and takes all of one copy's values with one click; how the merge is done folds away.
 - **Connected Orgs** — the orgs open in Chrome; rename, lock writes, or treat an org as
   production everywhere.
 - **Data Deployment** — a saved deployment (a root object, the objects under it, how a
