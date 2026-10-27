@@ -1020,13 +1020,23 @@ function _depAmbIntro(p, isRoot, s) {
   const srcL = esc(orgLabel(p.sourceOrg)), tgtL = esc(orgLabel(p.targetOrg));
   const adv = (s && s.ambiguousAdvice && s.ambiguousAdvice[0]) || null;
   const nSug = ((s && s.ambiguous) || []).filter(r => r && r.suggest).length;
+  if (!isRoot) return `<div class="ds-dep-note ds-dep-amb-intro">
+    <div>For a child object the choice cannot be made by hand: give it a second match field (✏ Edit → Records → Matching) so its records can be told apart by more than the name, then scan again.</div>
+  </div>`;
+  // 2026-10-27 (user: "too much info. we need to make it more readable"): one line of why, one line
+  // per way out, and what follows a merge or an answer under a fold.
   return `<div class="ds-dep-note ds-dep-amb-intro">
-    <div><b>Why these records are here.</b> Each one shares its name with another record, so the name alone cannot say which record in ${srcL} is which record in ${tgtL}. Nothing here is deployed until it is settled.</div>
-    ${isRoot ? `<div><b>Copies of the same record? Merge them.</b> Each side that holds more than one copy has a 🔀 Merge button: the copies are read live from that org, you choose the record that stays and, for every field that differs, the value it keeps. After the merge both orgs are read again; the name is unique then, and the pair is listed under 🟢 Synced when its values are equal, under 🟡 Changed when they still differ.</div>
-    <div><b>Different records that share a name? Say which is which.</b> For each ${srcL} record, say which ${tgtL} record it is — or that it is not there yet. The values next to each record are the ones that differ between the copies. Decide one name at a time with <b>📌 Apply this one</b>: the answer is remembered for ${tgtL} right away. When you are done, the button above reads both orgs again, once, and the records move to their own tabs.</div>
-    <div><b>Nothing on this tab deletes by itself.</b> An answer only pairs records; after the re-read the copy that is left over is listed under 🔵 Only in ${tgtL}, where you can tick it for deletion. A merge deletes the copies it merges, after its own confirmation.</div>
-    ${adv && nSug ? `<div>💡 <b>${nSug.toLocaleString()} are already filled in.</b> Where exactly one copy on each side has the same <b>${esc(adv.field)}</b>, that pair is suggested below — check them, then apply. To never be asked again, add ${esc(adv.field)} to how records are recognised (✏ Edit → Records → Matching).</div>` : ''}`
-    : `<div>For a child object the choice cannot be made by hand: give it a second match field (✏ Edit → Records → Matching) so its records can be told apart by more than the name, then scan again.</div>`}
+    <div class="ds-amb-intro-head"><b>Why these records are here.</b> Two or more records share a name, so the scan cannot tell which record in ${srcL} is which in ${tgtL}. Nothing here is deployed until it is settled.</div>
+    <ul class="ds-amb-intro-ways">
+      <li>🔀 <b>Copies of the same record? Merge them.</b> Each side that holds more than one copy has a Merge button.</li>
+      <li>📌 <b>Different records that share a name? Say which is which.</b> Decide one name at a time with <b>📌 Apply this one</b>, then read both orgs again with the button above.</li>
+      ${adv && nSug ? `<li>💡 <b>${nSug.toLocaleString()} are already filled in.</b> One copy on each side has the same <b>${esc(adv.field)}</b> — check them, then apply.</li>` : ''}
+    </ul>
+    <details class="ds-amb-intro-more"><summary>What happens after a merge or an answer</summary>
+      <div><b>A merge</b> reads the copies live from that org; you choose the record that stays and, for every field that differs, the value it keeps. A merge deletes the copies it merges, after its own confirmation. Both orgs are read again, and the pair is listed under 🟢 Synced when its values are equal, under 🟡 Changed when they still differ.</div>
+      <div><b>Nothing on this tab deletes by itself.</b> An answer only pairs records; after the re-read the copy that is left over is listed under 🔵 Only in ${tgtL}, where you can tick it for deletion.</div>
+      ${adv ? `<div>To never be asked about ${esc(adv.field)} again, add it to how records are recognised (✏ Edit → Records → Matching).</div>` : ''}
+    </details>
   </div>`;
 }
 
