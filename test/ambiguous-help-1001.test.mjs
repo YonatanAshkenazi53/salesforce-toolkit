@@ -80,6 +80,10 @@ describe('the page', () => {
     expect(fn).toContain('Different records that share a name? Say which is which.');
     expect(fn).toContain('are already filled in.');
     expect(fn).toContain('to how records are recognised (✏ Edit → Records → Matching)');
+    // 2026-10-27: one line of why, one per way out, the rest under a fold
+    expect(fn).toContain('<ul class="ds-amb-intro-ways">');
+    expect(fn).toContain('<details class="ds-amb-intro-more"><summary>What happens after a merge or an answer</summary>');
+    expect(fn.indexOf('<details class="ds-amb-intro-more">')).toBeLessThan(fn.indexOf('Nothing on this tab deletes by itself.'));
     // a child object cannot be chosen by hand — the intro says what to do instead
     expect(fn).toContain('give it a second match field (✏ Edit → Records → Matching)');
   });
