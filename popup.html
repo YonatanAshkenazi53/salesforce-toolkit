@@ -36,6 +36,8 @@
         <!-- The open tool's own history (sftk-toolhistory.js): shown only while a
              tool that has made changes is open. -->
         <button id="sftkThBtn" class="dbg-btn" style="display:none" title="The changes this tool made"><span data-i="clock" aria-hidden="true"></span><span id="sftkThBtnLabel">History</span></button>
+        <!-- 🧾 Activity (sftk-feed.js): everything the Toolkit and Data Studio did, and when — grouped by day and tool. -->
+        <button id="sftkFeedBtn" class="dbg-btn" title="Activity — everything the Toolkit and Data Studio did, and when" aria-label="Activity — everything the Toolkit and Data Studio did, and when"><span data-i="clock" aria-hidden="true"></span>Activity</button>
         <button id="dataStudioBtn" class="dbg-btn" title="Open Data Studio — multi-org data deployment"><span data-i="globe" aria-hidden="true"></span>Data Studio</button>
         <!-- Label is rewritten by debug-modal.js ("Debug" / "5" / "5 ⚠"), so
              the glyph comes from #dbgBtn::before in styles.css. -->
@@ -335,6 +337,7 @@
   <script src="sftk-write.js"></script>
   <script src="sftk-archive.js"></script>
   <script src="sftk-history.js"></script>
+  <script src="sftk-feed.js"></script>
   <!-- Report/Report-Type cleanup: pure surgery helpers for the Analytics
        REST API (modern stack only — user rule 2026-08-31), loaded before
        field-cleaner.js which drives them. -->

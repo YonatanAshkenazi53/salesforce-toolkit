@@ -425,7 +425,7 @@ describe('empty live set = unknown, not closed', () => {
     expect(RING).not.toContain('ds-ring-row-acts');
     expect(RING).toContain("body.querySelector('[data-ring-scanall]')?.addEventListener('click', () => _ringScanAll());");
     const all = RING.slice(RING.indexOf('async function _ringScanAll('), RING.indexOf('// Per-cell repair'));
-    expect(all).toContain('for (const t of targets) for (const p of rows) { paint(); await _ringScanOne(p.id, t, null); done++; }');
+    expect(all).toContain('for (const t of targets) for (const p of rows) { paint(p, t); await _ringScanOne(p.id, t, null); done++; }');   // 2026-10-27: the chip names the deployment being scanned
     expect(all).toContain('_ringScanAllBusy = false;');
     expect(RING).toContain('data-ring-rec="${esc(p.id)}|${esc(tUrl)}"');
   });
