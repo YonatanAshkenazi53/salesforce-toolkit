@@ -1273,8 +1273,23 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // Org-local target ids — stripped on profile export. Matched by org
       // IDENTITY like every other surface.
       let lkpOverridesUsed = 0;
+      let valOverridesUsed = 0, valOverridesMasked = 0;
       const lkpOverrides = (() => {
         const all = node.lookupOverrides;
+        if (!all || typeof all !== 'object') return null;
+        const want = sftkOrgKey(tgtOrgUrl);
+        for (const [k, v] of Object.entries(all)) {
+          if (sftkOrgKey(k) === want && v && typeof v === 'object') return v;
+        }
+        return null;
+      })();
+
+      // ✏ TYPED VALUES (user 2026-10-27: "make all the fields editable in every
+      // operation … so users can edit them and align data"): per-record values
+      // typed on the Deploy page for THIS target org, stored like the lookup
+      // picks at node.valueOverrides[orgKey][srcId][srcField] (sftk-valueedit.js).
+      const valOverrides = (() => {
+        const all = node.valueOverrides;
         if (!all || typeof all !== 'object') return null;
         const want = sftkOrgKey(tgtOrgUrl);
         for (const [k, v] of Object.entries(all)) {
@@ -1624,6 +1639,22 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             }
           }
         }
+        // ✏ TYPED VALUES — written in place of the source's, under the mapped
+        // name, after everything the engine resolved and before the identity
+        // stamp (always last). A field the PII policy covers keeps its masked
+        // value (the policy wins; the run says so); a field the target cannot
+        // take is skipped and listed like any other.
+        const valOv = valOverrides && valOverrides[r.Id] && typeof valOverrides[r.Id] === 'object' ? valOverrides[r.Id] : null;
+        if (valOv) {
+          for (const [sf, tv] of Object.entries(valOv)) {
+            if (node.fieldMappings && sf in node.fieldMappings && node.fieldMappings[sf] === null) continue;
+            const tf = node.fieldMappings?.[sf] ?? sf;
+            if (tgtCreatable.size && !tgtCreatable.has(tf)) { skippedForTarget.add(tf); continue; }
+            if (piiRules && piiRules[String(sf).toLowerCase()]) { valOverridesMasked++; continue; }
+            p[tf] = tv;
+            valOverridesUsed++;
+          }
+        }
         // 🪪 IDENTITY STAMP — the source record's own Id, written into the
         // dedicated external-ID field so this record is EXACTLY matchable
         // forever (user 2026-08-29: "a more reliable way to match between
@@ -1948,6 +1979,8 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       if (lkpOverridesUsed) {
         diagnostics.push(`${objType}: ${lkpOverridesUsed} lookup value(s) set from per-record hand-picks (Transfer → lookup overrides).`);
       }
+      if (valOverridesUsed) diagnostics.push(`${objType}: ✏ ${valOverridesUsed} value(s) typed on the Deploy page were written in place of the source's.`);
+      if (valOverridesMasked) diagnostics.push(`${objType}: ✏ ${valOverridesMasked} typed value(s) were NOT written — the PII policy covers those fields and wins.`);
       if (personRows) {
         diagnostics.push(`${objType}: ${personRows} Person Account(s) — Name is derived from FirstName/LastName on those, so only the name parts were sent.`);
       for (const [fld, n] of vanillaDropped) diagnostics.push(`${objType}: ${fld} left out of ${n} record(s) — Salesforce takes UnitPrice or TotalPrice on a line item, never both; the target computes TotalPrice from UnitPrice × Quantity.`);

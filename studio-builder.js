@@ -1886,6 +1886,7 @@ function bldProfileStrip(profile) {
     // keyed by org identity: meaningless (and misleading) on a teammate's
     // machine. Config they should rebuild against their own orgs.
     delete node.lookupOverrides;
+    delete node.valueOverrides;   // ✏ typed values: keyed by org-local source ids, same reason
     (Array.isArray(node.children) ? node.children : []).forEach(walk);
   })(clean.tree);
   return clean;

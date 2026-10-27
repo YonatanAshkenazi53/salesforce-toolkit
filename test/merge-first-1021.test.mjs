@@ -25,25 +25,37 @@ describe('the intro: merge first, then the question, and what a merge leads to',
   });
 });
 
-describe('the group: a merge bar above the copies, the copies on both sides, the question below', () => {
+// 2026-10-27 (user: "show the dupes in both orgs and offer to merge them"): the two orgs side by side, each
+// column with its copies and its own merge button; "Merge both sides" between them; the question is a matrix.
+describe('the group: the two orgs side by side, each with its copies and its merge button, the question below', () => {
   it('one button per side with copies, and both sides at once when both have them', () => {
-    expect(groups).toMatch(/nSrc > 1 \? `<button[^`]*data-dep-amb-merge="src"[^`]*>🔀 Merge the \$\{nSrc\} copies in \$\{srcL\}<\/button>`/);
-    expect(groups).toMatch(/cands\.length > 1 \? `<button[^`]*data-dep-amb-merge="tgt"[^`]*>🔀 Merge the \$\{cands\.length\} copies in \$\{tgtL\}<\/button>`/);
-    expect(groups).toMatch(/nSrc > 1 && cands\.length > 1 \? `<button[^`]*data-dep-amb-merge="both"/);
+    expect(groups).toMatch(/nSrc > 1 \? `<button[^`]*data-dep-amb-merge="src"[^`]*>🔀 Merge the \$\{nSrc\} copies in \$\{srcL\}<\/button>/);   // 2026-10-27: the same-record note may follow the button
+    expect(groups).toMatch(/cands\.length > 1 \? `<button[^`]*data-dep-amb-merge="tgt"[^`]*>🔀 Merge the \$\{cands\.length\} copies in \$\{tgtL\}<\/button>/);
+    expect(groups).toMatch(/nSrc > 1 && cands\.length > 1 \? `<div class="ds-amb-both"><button[^`]*data-dep-amb-merge="both"/);   // 2026-10-27: between the two columns
     expect(groups.match(/data-dep-amb-merge="/g).length).toBe(3);   // no second copy of a button on the side labels
-    expect(groups).toContain('${mergeBar}');
-    expect(groups.indexOf('${mergeBar}')).toBeLessThan(groups.indexOf('class="ds-amb-side"'));
+    expect(groups).toContain('<div class="ds-amb-colfoot">${srcMerge}</div>');
+    expect(groups).toContain('<div class="ds-amb-colfoot">${tgtMerge}</div>');
+    expect(groups).toContain('<div class="ds-amb-cols">${srcCol}${tgtCol}</div>${bothMerge}');
+    expect(groups.indexOf('${srcCol}${tgtCol}')).toBeLessThan(groups.indexOf('<div class="ds-amb-match">${matrix}</div>'));
+    expect(groups).toContain("const oneRec = '<span class=\"ds-dep-muted\">one record — nothing to merge here</span>';");
   });
   it('copies that agree on every compared field are said to look like one record', () => {
     expect(groups).toContain("const noTell = tell => !(tell || []).some(x => x && x[1] !== '');");
     expect(groups).toContain('const sameTgt = cands.length > 1 && cands.every(t => noTell(candTell[t]));');
     expect(groups).toContain('const sameSrc = nSrc > 1 && rs.every(r => noTell(r.tell));');
-    expect(groups).toContain("'the copies agree on every compared field — they look like the same record'");
+    expect(groups).toContain('they agree on every compared field — they look like the same record</span>');
+    expect(groups).toContain('${sameSrc ? sameNote : \'\'}');
+    expect(groups).toContain('${sameTgt ? sameNote : \'\'}');
     expect(groups).toContain('they look like the same record; open them to be sure');
   });
   it('both sides are listed with their counts; the question stays on the source side', () => {
-    expect(groups).toContain("in ${tgtL} — ${cands.length} record${cands.length === 1 ? '' : 's'} of this name");
-    expect(groups).toContain("in ${srcL} — ${nSrc} record${nSrc === 1 ? '' : 's'} of this name · which ${tgtL} record is each one?");
+    expect(groups).toContain("<b>${tgtL}</b> <span class=\"ds-dep-muted\">target · ${cands.length} record${cands.length === 1 ? '' : 's'} of this name</span>");
+    expect(groups).toContain("<b>${srcL}</b> <span class=\"ds-dep-muted\">source · ${nSrc} record${nSrc === 1 ? '' : 's'} of this name</span>");
+    expect(groups).toContain('const question = `Which ${tgtL} record is each ${srcL} copy?`;');
+    // the matrix: one row per source copy, one column per target record, then new, then not decided
+    expect(groups).toContain('<table class="ds-amb-mx">');
+    expect(groups).toContain('${answers(r).map(a => cell(r, a)).join(\'\')}');
+    expect(groups).toContain('<th>➕ new<div class="ds-amb-mx-sub">not in ${tgtL} yet — create it there</div></th><th>⏸ not decided<div class="ds-amb-mx-sub">stays out of the deployment</div></th>');
     expect(groups).toContain('data-dep-amb-sel="${esc(r.sourceId)}"');
   });
 });

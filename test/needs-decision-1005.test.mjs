@@ -76,7 +76,9 @@ describe('the answers are sentences, in the open', () => {
     expect(groups).toContain('<option value="${esc(a.v)}" ${pick === a.v ? \'selected\' : \'\'}>${esc(a.text)}</option>');
   });
   it('every answer is escaped — a record value is text, never markup', () => {
-    expect(groups).toContain('<span>${esc(a.text)}</span>');
+    expect(groups).toContain('title="${esc(a.text)}"');   // 2026-10-27: the matrix cell's tooltip
+    expect(groups).toContain('aria-label="${esc(a.text)}"');
+    expect(groups).toContain('<option value="${esc(a.v)}" ${pick === a.v ? \'selected\' : \'\'}>${esc(a.text)}</option>');
     expect(groups).not.toMatch(/\$\{a\.text\}/);
   });
 });
