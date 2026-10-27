@@ -4658,22 +4658,38 @@ async function sftkParentOrderFor(p) {
 
 // One background alignment check of a parent object: scan it across this org
 // pair and deposit the verdict. Never throws.
-async function sftkParentVerifyOne(p, refObj) {
+// matchField (2026-10-27): the field the deployment's lookups resolve this parent by — the check aligns by
+// the same key the run will use, and the verdict keeps the aligned pairs so the page can show WHICH
+// source record lands on WHICH target record (user: "a view of the aligned parents and by what key").
+const SFTK_PARENT_PAIRS_MAX = 300;
+let _parentVerifyLastError = '';   // why the last check could not run — the page says it on the step
+async function sftkParentVerifyOne(p, refObj, matchField) {
   try {
+    _parentVerifyLastError = '';
+    const by = matchField || 'Name';
     const eph = { id: `chk_${Date.now()}`, name: `${refObj} check`,
       sourceOrg: p.sourceOrg, targetOrg: p.targetOrg, ephemeral: true,
-      scanConfig: { matchField: 'Name', compareFields: [] },
+      scanConfig: { matchField: by, compareFields: [] },
       tree: { objectType: refObj, where: '', children: [] } };
     const res = await runDiffScan(eph);
-    if (res?.error) return false;
+    if (res?.error) { _parentVerifyLastError = String(res.error); return false; }
     sftkParentSyncPut(p.sourceOrg, p.targetOrg, refObj, {
       missing: (res.missingInTarget || []).length,
       changed: (res.changed || []).length,
       extra:   (res.onlyInTarget || []).length, ambiguous: (res.ambiguous || []).length,
       at:      res.runAt || new Date().toISOString(),
+      ...sftkParentPairsOf(res, by),
     });
     return true;
-  } catch (_) { return false; }
+  } catch (e) { _parentVerifyLastError = (e && e.message) || String(e); return false; }
+}
+
+// PURE. The aligned pairs of a parent check, capped: { by, aligned, pairs: [{ key, src, tgt, changed }] }
+function sftkParentPairsOf(res, by) {
+  const same = (res && res.identical) || [], chg = (res && res.changed) || [];
+  const all = [...same.map(r => ({ key: r.matchKey, src: r.sourceId, tgt: r.targetId, changed: false })),
+               ...chg.map(r => ({ key: r.matchKey, src: r.sourceId, tgt: r.targetId, changed: true }))].filter(x => x.src && x.tgt);
+  return { by: by || 'Name', aligned: all.length, pairs: all.slice(0, SFTK_PARENT_PAIRS_MAX) };
 }
 
 // The one-click journey: scan the parent object across this pair and open it,

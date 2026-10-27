@@ -6306,7 +6306,9 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .ds-amb-n { font-weight: 700; min-width: 22px; color: var(--brand); }
 .ds-amb-chip { padding: 1px 7px; border-radius: 999px; background: var(--surface2); color: var(--text); font-size: 11.5px; }
 .ds-amb-chip b { font-weight: 600; }
-.ds-amb-sel { margin-left: auto; flex: 0 1 520px; min-width: 260px; max-width: 620px; }
+.ds-amb-sel { flex: 0 1 560px; min-width: 260px; max-width: 680px; }
+.ds-amb-is { color: var(--subtext); font-style: italic; }
+.ds-amb-src-on .ds-amb-sel { border-color: var(--brand); }
 /* 2026-10-27: the two orgs side by side, then the matching matrix */
 .ds-amb-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 4px 0 6px; }
 .ds-amb-col { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--surface); min-width: 0; }
@@ -6321,7 +6323,7 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .ds-amb-mx th, .ds-amb-mx td { padding: 4px 10px; border-bottom: 1px solid var(--border-light, var(--border)); text-align: center; vertical-align: middle; }
 .ds-amb-mx thead th { font-weight: 600; vertical-align: bottom; }
 .ds-amb-mx tbody th { text-align: left; font-weight: 500; white-space: nowrap; }
-.ds-amb-mx-q { text-align: left !important; font-weight: 600 !important; color: var(--text); }
+.ds-amb-mx-q { text-align: left !important; font-weight: 600 !important; color: var(--text); font-size: 12px; margin: 6px 0 2px; }
 .ds-amb-mx-sub { font-weight: 400; font-size: 11px; color: var(--subtext); max-width: 200px; margin: 0 auto; }
 .ds-amb-mx-cell { display: flex; justify-content: center; align-items: center; gap: 4px; padding: 4px 6px; margin: 0; border-radius: 6px; }
 .ds-amb-mx-cell.ds-amb-opt-on { background: rgba(27, 111, 209, .14); }
@@ -6582,6 +6584,14 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .ds-ve-lkp-res { max-height: 150px; }
 .ds-ve-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .ds-ve-note { margin-top: 8px; font-size: 11.5px; }
+/* the aligned parent records under "Parents synced" (2026-10-27) */
+.ds-dep-pline { padding: 6px 12px 6px 28px; font-size: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-top: 1px dashed var(--border-light, var(--border)); }
+.ds-dep-pairs { flex-basis: 100%; }
+.ds-dep-pairs-t { border-collapse: collapse; font-size: 12px; margin: 4px 0; }
+.ds-dep-pairs-t th, .ds-dep-pairs-t td { padding: 3px 10px; border-bottom: 1px solid var(--border-light, var(--border)); text-align: left; }
+.ds-dep-pairs-t thead th { font-weight: 600; color: var(--subtext); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.ds-dep-pair-arrow { text-align: center !important; color: var(--subtext); }
+.ds-dep-pair-chg td:first-child { color: var(--c-warn-fg); }
 .ds-dc-edit { background: none; border: 0; padding: 0 3px; cursor: pointer; font-size: 12px; opacity: .55; }
 .ds-dc-row:hover .ds-dc-edit, .ds-dc-edit:focus { opacity: 1; }
 .ds-merge-useall { margin-top: 4px; }

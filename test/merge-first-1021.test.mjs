@@ -51,11 +51,12 @@ describe('the group: the two orgs side by side, each with its copies and its mer
   it('both sides are listed with their counts; the question stays on the source side', () => {
     expect(groups).toContain("<b>${tgtL}</b> <span class=\"ds-dep-muted\">target · ${cands.length} record${cands.length === 1 ? '' : 's'} of this name</span>");
     expect(groups).toContain("<b>${srcL}</b> <span class=\"ds-dep-muted\">source · ${nSrc} record${nSrc === 1 ? '' : 's'} of this name</span>");
-    expect(groups).toContain('const question = `Which ${tgtL} record is each ${srcL} copy?`;');
-    // the matrix: one row per source copy, one column per target record, then new, then not decided
-    expect(groups).toContain('<table class="ds-amb-mx">');
-    expect(groups).toContain('${answers(r).map(a => cell(r, a)).join(\'\')}');
-    expect(groups).toContain('<th>➕ new<div class="ds-amb-mx-sub">not in ${tgtL} yet — create it there</div></th><th>⏸ not decided<div class="ds-amb-mx-sub">stays out of the deployment</div></th>');
+    expect(groups).toContain('const question = `For each ${srcL} copy, say what it is in ${tgtL}:`;');
+    // one sentence row per source copy: the copy, "is", a dropdown of sentences (2026-10-27: the grid was not understood)
+    expect(groups).toContain('<span class="ds-amb-is">is</span>');
+    expect(groups).toContain('<select class="ds-select ds-select-sm ds-amb-sel" data-dep-amb-sel="${esc(r.sourceId)}" aria-label="What this ${srcL} copy is in ${tgtL}">');
+    expect(groups).toContain("{ v: '__new__', text: `a new record — not in ${orgLabel(p.targetOrg)} yet, create it there` }");
+    expect(groups).toContain("{ v: '', text: 'not decided yet — it stays out of the deployment' }");
     expect(groups).toContain('data-dep-amb-sel="${esc(r.sourceId)}"');
   });
 });

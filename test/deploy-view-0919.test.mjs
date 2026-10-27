@@ -317,6 +317,8 @@ describe('2026-09-21 — four asks from the live page', () => {
     const adv = RC.slice(RC.indexOf('async function sftkRecParentGapAdvisor('));
     expect(adv).toContain('const parents = await sftkParentGapsFor(objType, desc, tdesc, treeObjs, tgtSess);');
     expect(adv).toContain('await sftkParentVerifyOne(p, s.refObj);');
+    // 2026-10-27: the Deploy page checks by the deployment's own match field and keeps the aligned pairs
+    expect(DV).toContain("await sftkParentVerifyOne(p, s.refObj, matchedBy(s).split(' / ')[0]);");
     expect(adv).toContain('await sftkOpenParentsFirst(p, refObj, objType)');
     // its own rule is unchanged: it still speaks only when the root has inserts
     expect(adv).toContain("if (!(missing || []).length) { _recParentGapState = { key, doomed: [], empties: [] }; return; }");
