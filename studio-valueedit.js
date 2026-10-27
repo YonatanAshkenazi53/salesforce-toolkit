@@ -11,7 +11,7 @@
 // p: the deployment (for a child object a VIEW rooted at that node; node is the
 // real tree node, so a pick lands on the saved tree). srcIds: one id or many.
 // tgtId: the paired target record on a Changed row, else null. mode: 'ins'|'chg'.
-async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onSaved) {
+async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onSaved, opts) {
   const ids = [...new Set((Array.isArray(srcIds) ? srcIds : [srcIds]).filter(Boolean))];
   if (!ids.length || !node) return;
   const many = ids.length > 1;
@@ -96,6 +96,9 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   };
   eid('dsVeFilter')?.addEventListener('input', filt);
   eid('dsVeOnly')?.addEventListener('change', filt);
+  // opened on one field (a row's ✏ in the record compare): find it, and put the cursor in its box
+  const focus = opts && opts.focus;
+  if (focus) { const fi = eid('dsVeFilter'); if (fi) { fi.value = focus; filt(); } host.querySelector(`input[data-ve-field="${CSS.escape(focus)}"], [data-ve-lkp="${CSS.escape(focus)}"] input`)?.focus(); }
   const mark = tr => { const inp = tr.querySelector('.ds-ve-in'); const on = tr.classList.contains('ds-ve-null-on') || (inp && inp.value.trim() !== ''); tr.classList.toggle('ds-ve-row-on', on); const x = tr.querySelector('.ds-ve-clear'); if (x) x.style.visibility = on ? '' : 'hidden'; };
   host.querySelectorAll('.ds-ve-in').forEach(inp => inp.addEventListener('input', () => { const tr = inp.closest('tr'); tr.querySelector('.ds-ve-err').textContent = ''; mark(tr); }));
   host.querySelectorAll('[data-ve-null]').forEach(b => b.addEventListener('click', () => {
