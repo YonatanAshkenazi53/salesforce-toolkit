@@ -113,8 +113,18 @@ function sftkFeedTime(iso) {
         : `<button class="sftk-feed-where sftk-feed-link" data-feed-tool="${esc(g.tab)}" title="That tool's own history — undo and reports live there">open the tool's history</button>`;
     }
     return studio()
-      ? `<button class="sftk-feed-where sftk-feed-link" data-feed-studio="history" title="Data Studio › History — roll back, retry, reports">open History</button>`
-      : `<a class="sftk-feed-where" href="studio.html#history" target="_blank" rel="noopener" title="Data Studio › History — roll back, retry, reports">open in Data Studio ↗</a>`;
+      ? `<button class="sftk-feed-where sftk-feed-link" data-feed-studio="history" title="The full cards of these runs — per-object counts, the failed records by name, filters">details</button>`
+      : `<a class="sftk-feed-where" href="studio.html#/activity" target="_blank" rel="noopener" title="Opens Data Studio's Activity — roll back, retry, continue and the reports live there">open in Data Studio ↗</a>`;
+  };
+  // the actions of one entry: in Data Studio the History card's own groups (fix · undo · open · report);
+  // in the Toolkit a tool entry's ↩ Undo and ⬇ Report, and for a deployment the way to Data Studio
+  const actsHtml = e => {
+    if (studio()) return typeof window.sftkHistActionsFor === 'function' ? window.sftkHistActionsFor(e) : '';
+    if (e.kind === 'tool') {
+      const st = typeof sftkToolUndoState === 'function' ? sftkToolUndoState(e) : { show: false };
+      return `<div class="sftk-feed-acts">${st.show ? `<button class="btn btn-sm ${st.disabled ? 'btn-secondary' : 'btn-danger'}" ${st.disabled ? 'disabled' : ''} data-feed-undo="${esc(e.id)}" title="${esc(st.title || '')}">${esc(st.label)}</button>` : ''}<button class="btn btn-sm btn-secondary" data-feed-report="${esc(e.id)}" title="Download this entry as a JSON audit report — what was written, where, when, and what the org showed.">⬇ Report</button></div>`;
+    }
+    return `<div class="sftk-feed-acts"><a class="btn btn-sm btn-secondary" href="studio.html#/activity" target="_blank" rel="noopener" title="A deployment is rolled back, retried, continued and reported from Data Studio — its Activity has the same line with those buttons">↩ roll back · ↻ retry · ⬇ report — in Data Studio ↗</a></div>`;
   };
   const badge = s => s === 'success' ? '✅' : s === 'partial' ? '⚠' : s === 'running' ? '⏳' : '❌';
   const line = e => {
@@ -126,6 +136,7 @@ function sftkFeedTime(iso) {
       <span class="sftk-feed-title">${esc(w.title)}${e.undoOf ? ' <span class="sftk-feed-chip">↩ undo</span>' : ''}</span>
       <span class="sftk-feed-counts">${esc(sftkFeedCounts(e))}</span>
       <span class="sftk-feed-orgs">${esc(orgs)}</span>
+      ${actsHtml(e)}
     </div>`;
   };
   const groupHtml = g => `<details class="sftk-feed-group" open><summary><span class="sftk-feed-icon">${g.icon}</span><span class="sftk-feed-app">${esc(g.app)}</span><b>${esc(g.name)}</b><span class="sftk-feed-n">${g.entries.length}</span><span class="sftk-feed-sp"></span>${whereHtml(g)}</summary>${g.entries.map(line).join('')}</details>`;
@@ -141,6 +152,50 @@ function sftkFeedTime(iso) {
     const n = document.getElementById('sftkFeedCount'); if (n) n.textContent = `${g.n.toLocaleString()} of ${all.length.toLocaleString()}`;
     host.querySelectorAll('[data-feed-tool]').forEach(b => b.addEventListener('click', () => { if (typeof window.sftkToolHistoryOpen === 'function') window.sftkToolHistoryOpen(b.dataset.feedTool); }));
     host.querySelectorAll('[data-feed-studio]').forEach(b => b.addEventListener('click', () => { if (typeof closeModal === 'function') closeModal(); if (typeof navigateToView === 'function') navigateToView('history'); else location.hash = '#/history'; }));
+    // the Toolkit: ↩ Undo asks in the page's one dialog, so the feed steps aside and comes back after
+    host.querySelectorAll('[data-feed-undo]').forEach(b => b.addEventListener('click', async () => {
+      b.disabled = true;
+      if (typeof closeModal === 'function') closeModal();
+      if (typeof sftkHistoryUndo === 'function') await sftkHistoryUndo(b.dataset.feedUndo, {});
+      open();
+    }));
+    host.querySelectorAll('[data-feed-report]').forEach(b => b.addEventListener('click', () => {
+      const e = all.find(x => x.id === b.dataset.feedReport); if (!e) return;
+      download(`${typeof sftkHistoryReportName === 'function' ? sftkHistoryReportName(e) : 'sftk-activity'}.json`, JSON.stringify(typeof sftkHistoryReport === 'function' ? sftkHistoryReport(e) : e, null, 2));
+    }));
+    // Data Studio: the card's own buttons. ⬇ Report opens the export dialog in place of the feed;
+    // ↩ Undo of a tool entry asks first, so the feed steps aside and comes back; everything else
+    // navigates, so the feed closes behind it.
+    host.querySelectorAll('[data-hist-export]').forEach(b => b.addEventListener('click', () => { window.sftkHistExportOne?.(b.dataset.histExport); }));
+    host.querySelectorAll('[data-dsaction]').forEach(b => b.addEventListener('click', async ev => {
+      const a = b.dataset.dsaction;
+      if (a === 'undoTool') {
+        ev.stopPropagation(); b.disabled = true;
+        if (typeof closeModal === 'function') closeModal();
+        if (typeof window.undoTool === 'function') await window.undoTool(b.dataset.arg);
+        open();
+        return;
+      }
+      if (a !== 'closeModal') setTimeout(() => { if (typeof closeModal === 'function') closeModal(); }, 0);
+    }));
+  }
+
+  function download(name, text) {
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+
+  // ⬇ Export all: Data Studio's audit export (JSON or CSV, every retained run); the Toolkit writes
+  // one JSON file with every entry as it is stored
+  async function exportAll() {
+    if (studio() && typeof window.sftkHistExportAll === 'function') { window.sftkHistExportAll(); return; }
+    const all = (typeof sftkHistoryAll === 'function') ? await sftkHistoryAll() : [];
+    const nowIso = new Date().toISOString();
+    download(`sftk-activity-${nowIso.slice(0, 10)}-${nowIso.slice(11, 19).replace(/:/g, '')}.json`, JSON.stringify({ exportedAt: nowIso, count: all.length, entries: all }, null, 2));
   }
 
   function open() {
@@ -151,13 +206,15 @@ function sftkFeedTime(iso) {
           <input type="search" class="${cls.input}" id="sftkFeedQ" placeholder="🔍 find — a tool, a deployment, an org…" aria-label="Find in the activity">
           <span class="sftk-feed-apps">${['', 'Data Studio', 'Toolkit'].map(a => `<button class="${cls.btnX} sftk-feed-app-btn${filter.app === a ? ' sftk-feed-app-on' : ''}" data-feed-app="${esc(a)}">${a || 'Everything'}</button>`).join('')}</span>
           <span class="sftk-feed-sp"></span><span class="sftk-feed-count" id="sftkFeedCount"></span>
+          <button class="${cls.btnX}" id="sftkFeedExport" title="${studio() ? 'Download every retained run as a JSON or CSV audit file — for change-management records' : 'Download every entry as one JSON file'}">⬇ Export all</button>
         </div>
         <div class="sftk-feed-list" id="sftkFeedList"><div class="sftk-feed-empty">Reading…</div></div>
-        <div class="sftk-feed-foot"><span>Grouped by day, then by the tool or deployment. Undo, roll back and reports stay where each change lives — the link on each group goes there.</span>${studio() ? '' : `<button class="${cls.btn}" id="sftkFeedClose">Close</button>`}</div>
+        <div class="sftk-feed-foot"><span>Grouped by day, then by the tool or deployment. Each line carries what you can do with it: ${studio() ? 'fix what did not finish, undo it, open the deployment, download its report' : 'undo a tool\'s change and download its report; a deployment is handled in Data Studio'}.</span>${studio() ? '' : `<button class="${cls.btn}" id="sftkFeedClose">Close</button>`}</div>
       </div>`);
     // room for a title, its counts and its orgs on one line, on both pages
     const box = document.getElementById(studio() ? 'dsModalBox' : 'modalBox'); if (box) { box.style.width = 'min(960px, 94vw)'; box.style.maxWidth = '94vw'; }
     document.getElementById('sftkFeedClose')?.addEventListener('click', () => closeModal());
+    document.getElementById('sftkFeedExport')?.addEventListener('click', exportAll);
     const q = document.getElementById('sftkFeedQ');
     let timer = null;
     q?.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => { filter.q = q.value; paint(); }, 200); });
@@ -171,6 +228,8 @@ function sftkFeedTime(iso) {
 
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('sftkFeedBtn')?.addEventListener('click', open);
+    // studio.html#/activity (the Toolkit's link): the feed opens over the page
+    if (studio() && /^#\/activity\b/.test(location.hash || '')) setTimeout(open, 700);
   });
   try { chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.sftk_history && document.getElementById('sftkFeedList')) paint(); }); } catch (_) { /* outside the extension */ }
   if (typeof window !== 'undefined') window.sftkFeedOpen = open;

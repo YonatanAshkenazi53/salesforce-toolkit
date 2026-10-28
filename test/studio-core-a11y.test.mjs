@@ -112,7 +112,7 @@ describe('palette icon names are pinned to their counterparts', () => {
   const cmdToolkit = parseTable(toolkitBlock, 'tab');
 
   it('both tables parsed completely', () => {
-    expect(Object.keys(cmdViews).length).toBe(10);   // + Org health (campaign 3 phase 8)
+    expect(Object.keys(cmdViews).length).toBe(9);    // History left the palette and the sidebar — 🧾 Activity in the top bar is the one place (2026-10-28)
     expect(Object.keys(cmdToolkit).length).toBe(7);   // Dependencies is a view of the Flows page (2026-10-17)
   });
 

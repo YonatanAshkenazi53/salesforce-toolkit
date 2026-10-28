@@ -44,7 +44,7 @@ window.openRollback = async function(runId, opts) {
 };
 
 function renderRollback() {
-  if (!_rb) { navigateToView('history'); return; }
+  if (!_rb) { navigateToView('profiles'); return; }
   if (_rb.report) return _rbRenderReport();
   if (!_rb.ctx) return _rbRenderPreparing();
   _rbRenderPlan();
@@ -336,10 +336,10 @@ async function _rbGo() {
     out.innerHTML = `<div class="ds-rec-card ${res.status === 'success' ? '' : 'ds-rec-card-warn'}" style="margin-top:10px">
       <div class="ds-rec-card-hd"><span class="ds-rec-card-ico">${res.status === 'success' ? '✅' : '⚠'}</span><span class="ds-rec-card-title">Rollback ${esc(res.status)}${res.status === 'success' ? ' — verified by re-reading the org' : ''}</span></div>
       <div class="ds-rec-card-line">${chips}</div>
-      <div class="ds-rec-card-line">${res.entry ? `<button class="ds-btn ds-btn-sm ds-btn-primary" id="dsRbOpenReport">📋 Which records — the full report</button> ` : ''}<button class="ds-btn ds-btn-sm" id="dsRbToHistory">History</button></div>
+      <div class="ds-rec-card-line">${res.entry ? `<button class="ds-btn ds-btn-sm ds-btn-primary" id="dsRbOpenReport">📋 Which records — the full report</button> ` : ''}<button class="ds-btn ds-btn-sm" id="dsRbToHistory" title="Everything done, with its undo — the 🧾 Activity feed in the top bar">🧾 Activity</button></div>
     </div>`;
     eid('dsRbOpenReport')?.addEventListener('click', () => window.openRollback(res.entry.id, { report: true }));
-    eid('dsRbToHistory')?.addEventListener('click', () => navigateToView('history'));
+    eid('dsRbToHistory')?.addEventListener('click', () => { navigateToView('profiles'); window.sftkFeedOpen?.(); });
   }
   const go = eid('dsRbGo'); if (go) { go.disabled = true; go.textContent = res && res.status === 'success' ? '✅ Rolled back' : `⚠ ${(res && res.status) || 'failed'}`; }
 }

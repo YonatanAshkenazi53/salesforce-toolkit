@@ -1054,7 +1054,6 @@ const CMD_VIEWS = [
   { i: 'box',       label: 'Data Deployment',  view: 'profiles',  desc: 'Profiles + run transfer' },
   { i: 'repeat',    label: 'All open orgs',    view: 'ring',      desc: 'Every deployment vs every open org' },
   { i: 'sliders',   label: 'Picklist Manager', view: 'picklists', desc: 'Values & record types across orgs' },
-  { i: 'scroll',    label: 'History',          view: 'history',   desc: 'Past transfer runs' },
   { i: 'search',    label: 'Org Compare',      view: 'compare',   desc: 'Diff data across many objects' },
   { i: 'shield',    label: 'Deploy Readiness', view: 'readiness', desc: 'Schema compatibility' },
   { i: 'chart',     label: 'Org health',       view: 'orghealth', desc: 'What needs attention in one org' },
