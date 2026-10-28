@@ -7032,5 +7032,8 @@ a.sftk-feed-where { color: var(--brand, #1b6fd1); }
 .sftk-feed-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sftk-feed-counts, .sftk-feed-orgs { font-size: 11.5px; opacity: .75; white-space: nowrap; }
 .sftk-feed-chip { font-size: 10.5px; padding: 0 5px; border-radius: 999px; background: rgba(127, 127, 127, .18); }
+/* 2026-10-28: every line carries its actions (undo, roll back, retry, report) */
+.sftk-feed-line .ds-hist-acts, .sftk-feed-acts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 2px 0 2px 74px; }
+.sftk-feed-acts .btn, .sftk-feed-acts a.btn { font-size: 11.5px; padding: 2px 8px; line-height: 1.4; text-decoration: none; }
 .sftk-feed-empty { padding: 18px; text-align: center; opacity: .7; }
 .sftk-feed-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: 11.5px; opacity: .85; }
