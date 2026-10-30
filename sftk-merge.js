@@ -99,6 +99,77 @@ function sftkMergeDiff(fields, recs) {
   return { differ, same, sameList };
 }
 
+// PURE. The distinct values of one differing field, each with the copies that hold it, in the
+// order the copies were given — twelve copies with two owners are two choices, not twelve
+// columns (user 2026-10-30: "not a good experience").
+//   values: one differing field's values, by copy index  → [{ value, idx: [copyIndex, …] }]
+function sftkMergeValueGroups(values) {
+  const out = [];
+  (Array.isArray(values) ? values : []).forEach((v, i) => {
+    const k = _sftkMergeNorm(v);
+    const g = out.find(x => _sftkMergeNorm(x.value) === k);
+    if (g) g.idx.push(i); else out.push({ value: v, idx: [i] });
+  });
+  return out;
+}
+
+// PURE. The copy ticked for the user as the record that stays: the one with the most writable
+// fields filled; when they tie, the oldest (user 2026-10-30: "its hard to understand a bit").
+//   recs: the copies as read; okFields: the writable fields (sftkMergeFieldOk)  → copy index
+function sftkMergeSuggestKeep(recs, okFields) {
+  const rs = Array.isArray(recs) ? recs : [];
+  if (!rs.length) return 0;
+  const filled = rs.map(r => (okFields || []).filter(f => r && r[f.name] != null && r[f.name] !== '').length);
+  const max = Math.max(...filled);
+  let best = -1;
+  rs.forEach((r, i) => {
+    if (filled[i] !== max) return;
+    if (best < 0 || String(r.CreatedDate || '') < String(rs[best].CreatedDate || '')) best = i;
+  });
+  return best < 0 ? 0 : best;
+}
+
+// PURE. Which records to read by name so a reference value is shown as a name, not an id
+// (user 2026-10-30: "you can't know who is the owner"): every distinct id in a differing
+// lookup field, grouped by the object it points at. A polymorphic lookup (OwnerId → User or
+// Group) is split by the id's key prefix; an id whose object is unknown is left out.
+//   diff: sftkMergeDiff(...); fields: describe.fields  → [{ obj, ids: [...] }]
+function sftkMergeRefPlan(diff, fields) {
+  const byName = new Map((fields || []).map(f => [f.name, f]));
+  const prefix = { '005': 'User', '00G': 'Group', '001': 'Account', '003': 'Contact', '00Q': 'Lead', '006': 'Opportunity', '500': 'Case', '701': 'Campaign' };
+  const out = new Map();
+  for (const f of ((diff && diff.differ) || [])) {
+    const d = byName.get(f.name);
+    if (!d || d.type !== 'reference') continue;
+    const refs = Array.isArray(d.referenceTo) ? d.referenceTo : [];
+    for (const v of f.values) {
+      const id = v == null ? '' : String(v);
+      if (!/^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$/.test(id)) continue;
+      const obj = refs.length === 1 ? refs[0] : (refs.find(o => o === prefix[id.slice(0, 3)]) || '');
+      if (!obj) continue;
+      if (!out.has(obj)) out.set(obj, new Set());
+      out.get(obj).add(id);
+    }
+  }
+  return [...out].map(([obj, ids]) => ({ obj, ids: [...ids] }));
+}
+
+// The names behind the ids of a plan: one query per object. An object without a Name field
+// (or one that refuses) is skipped — its ids stay ids.
+//   ctx: { send, orgUrl, sid, plan }  → { id: name }
+async function sftkMergeRefNames(ctx) {
+  const c = ctx || {}, names = {};
+  if (typeof c.send !== 'function') return names;
+  for (const step of (c.plan || [])) {
+    if (!step.ids.length) continue;
+    try {
+      const q = await c.send({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: c.orgUrl, sid: c.sid, query: `SELECT Id, Name FROM ${step.obj} WHERE Id IN (${step.ids.map(id => `'${id}'`).join(',')})` });
+      for (const r of ((q && q.records) || [])) if (r && r.Id && r.Name) names[r.Id] = String(r.Name);
+    } catch (_) { /* its ids stay ids */ }
+  }
+  return names;
+}
+
 // A value the user TYPED for a field (user 2026-10-14: a third choice beside the
 // copies' values), in the shape the REST API takes for that field type. '' → null.
 // Reference ids and booleans must be exact; a number must parse; anything that
@@ -325,5 +396,9 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkMergeValueText = sftkMergeValueText;
   globalThis.sftkMergeApexRefusal = sftkMergeApexRefusal;
   globalThis.sftkMergeRead = sftkMergeRead;
+  globalThis.sftkMergeValueGroups = sftkMergeValueGroups;
+  globalThis.sftkMergeSuggestKeep = sftkMergeSuggestKeep;
+  globalThis.sftkMergeRefPlan = sftkMergeRefPlan;
+  globalThis.sftkMergeRefNames = sftkMergeRefNames;
   globalThis.sftkMergeRun = sftkMergeRun;
 }

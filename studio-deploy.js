@@ -782,6 +782,7 @@ async function _depPaintTree(p, scan) {
 let _depOrderKey = '', _depOrderData = null;
 const _depOrderChecked = new Set();
 const _depOrderInFlight = new Set();   // parent checks still reading — shown as "checking", never as failed (2026-10-27)
+const _depOrderQueue = [];             // the checks in the order they run; the first is being read now (2026-10-30: a bar per row)
 // A parent object is checked for alignment ON LOAD when that is cheap: up to
 // this many source records (the scan's own list cap). Above it the page asks.
 const SFTK_DEPLOY_AUTOCHECK_MAX = 5000;
@@ -793,7 +794,7 @@ function sftkDeployParentsVerdict(steps) {
   const n = k => s.filter(x => x.state === k).length;
   const bad = n('empty') + n('behind'), checking = n('checking'), ask = n('large') + n('unknown');
   if (bad) return { cls: 'bad', text: `⚠ ${bad} of ${s.length} parent object(s) not aligned` };
-  if (checking) return { cls: 'wait', text: `⏳ checking ${checking} of ${s.length} parent object(s)…` };
+  if (checking) { const now = s.find(x => x.state === 'checking' && x.reading); return { cls: 'wait', text: `⏳ checking ${checking} of ${s.length} parent object(s)…${now ? ` reading ${now.refObj} now` : ''}` }; }
   if (ask) return { cls: 'wait', text: `? ${ask} of ${s.length} parent object(s) not checked yet` };
   return { cls: 'ok', text: `✓ all ${s.length} parent object(s) aligned` };
 }
@@ -852,7 +853,7 @@ async function _depPaintOrder(p, scan) {
       state = (s.srcCount != null && s.srcCount <= SFTK_DEPLOY_AUTOCHECK_MAX) ? 'checking' : 'large';
     }
     if (state === 'unknown' && _depOrderInFlight.has(`${key}|${s.refObj}`)) state = 'checking';   // still reading — not a failure
-    return { ...s, vd, state };
+    return { ...s, vd, state, reading: state === 'checking' && _depOrderQueue.indexOf(`${key}|${s.refObj}`) <= 0 };
   });
   const verdict = sftkDeployParentsVerdict(steps);
   const chip = eid('dsDepParentsChip');
@@ -878,7 +879,9 @@ async function _depPaintOrder(p, scan) {
       : s.state === 'large' ? `<span class="ds-lkp-hint">${s.srcCount == null ? 'size unknown' : `${s.srcCount.toLocaleString()} records`} — too large to check on its own</span> ${btn('🔍 Check now', isNext)}`
       : s.state === 'done' ? `<span class="ds-psync ds-psync-ok">✓ in sync${s.vd ? ` · ${esc(timeAgo(s.vd.at))}` : ''}</span> ${pairsBtn(s)} ${btn('⚖ Open', false)}`
       : s.state === 'empty' ? `<span class="ds-psync ds-psync-bad">${esc(tgtL)} has none at all${s.required ? ' — and a field above requires it' : ''}</span> ${btn(`➕ Deploy ${esc(s.refObj)} first`, true)}`
-      : s.state === 'checking' ? `<span class="ds-lkp-hint">⏳ checking alignment…</span>`
+      : s.state === 'checking' ? (() => { const pos = _depOrderQueue.indexOf(`${key}|${s.refObj}`); return pos > 0
+          ? `<span class="ds-dep-pbar" aria-hidden="true"><span></span></span><span class="ds-lkp-hint">waiting · ${pos} ahead of it</span>`
+          : `<span class="ds-dep-pbar ds-dep-pbar-live" role="progressbar" aria-label="reading ${esc(s.refObj)} in both orgs"><span></span></span><span class="ds-lkp-hint">⏳ reading ${esc(s.refObj)} in both orgs…</span>`; })()
       : s.state === 'behind' ? `<span class="ds-psync ds-psync-bad">🔴 ${s.vd.missing} missing · 🟡 ${s.vd.changed} changed · ${esc(timeAgo(s.vd.at))}</span> ${btn('⚖ Open & fix', isNext)}`
       : `<span class="ds-lkp-hint">couldn't check automatically</span> ${btn('🔍 Compare & fix', false)}`;
     return `<div class="ds-ordstep${settled(s) ? ' ds-ordstep-done' : ''}${isNext ? ' ds-ordstep-next' : ''}">
@@ -939,16 +942,23 @@ async function _depPaintOrder(p, scan) {
     const label = b.textContent; b.disabled = true; b.textContent = '⏳ scanning…';
     if (!(await sftkOpenParentsFirst(p, b.dataset.depGap, b.dataset.depGapFor))) { b.disabled = false; b.textContent = label; }
   }));
-  // background alignment check, one attempt per parent per scan, then repaint
-  const toCheck = steps.filter(s => s.state === 'checking');
+  // background alignment check, one attempt per parent per scan. Every check is queued up front so each
+  // row shows its place (a bar: reading now / waiting · N ahead), and the card is repainted after every
+  // check so the rows settle one by one (user 2026-10-30: "it can look freezed to the end user").
+  // A check already in flight is never started again by the repaint.
+  const toCheck = steps.filter(s => s.state === 'checking' && !_depOrderInFlight.has(`${key}|${s.refObj}`));
   if (toCheck.length) {
+    for (const s of toCheck) { const k = `${key}|${s.refObj}`; _depOrderChecked.add(k); _depOrderInFlight.add(k); _depOrderQueue.push(k); }
     (async () => {
       for (const s of toCheck) {
-        _depOrderChecked.add(`${key}|${s.refObj}`); _depOrderInFlight.add(`${key}|${s.refObj}`);
-        try { await sftkParentVerifyOne(p, s.refObj, matchedBy(s).split(' / ')[0]); } finally { _depOrderInFlight.delete(`${key}|${s.refObj}`); }
+        const k = `${key}|${s.refObj}`;
+        try { await sftkParentVerifyOne(p, s.refObj, matchedBy(s).split(' / ')[0]); }
+        finally { _depOrderInFlight.delete(k); const qi = _depOrderQueue.indexOf(k); if (qi >= 0) _depOrderQueue.splice(qi, 1); }
+        if (_depOrderKey === key && _currentView === 'deploy' && _reconcileProfile === p) _depPaintOrder(p, scan);
       }
-      if (_depOrderKey === key && _currentView === 'deploy' && _reconcileProfile === p) _depPaintOrder(p, scan);
     })();
+    // the first paint already shows the first row as "reading now" and the rest waiting
+    if (_depOrderKey === key && _currentView === 'deploy' && _reconcileProfile === p) { _depPaintOrder(p, scan); return; }
   }
 }
 
@@ -1241,25 +1251,44 @@ async function _depMergeCopies(p, side, name, ids, opts = {}) {
   const label = desc.label || obj, plural = desc.labelPlural || `${label}s`;
   const org = orgLabel(orgUrl);
   const when = iso => String(iso || '').slice(0, 10);
-  const fmt = v => esc(sftkMergeValueText(v));
   const base = String(orgUrl || '').replace(/\/$/, '');
-  // 2026-10-27 (user: "the merge experience … should be intuitive"): each copy is a column that says
-  // what a person picks by — its age, how many fields it has filled — and one click takes all its values.
+  // 2026-10-30 (user, twelve copies: "not a good experience" / "you can't know who is the owner" /
+  // "hard to understand"): the copies are ROWS, not columns, so twelve read like two; each differing
+  // field shows its DISTINCT values with the copies that hold each; a lookup shows the record's name.
   const okFields = desc.fields.filter(sftkMergeFieldOk);
   const filled = recs.map(r => okFields.filter(f => r[f.name] != null && r[f.name] !== '').length);
   const oldest = recs.reduce((b, r, i) => (String(r.CreatedDate || '') < String(recs[b].CreatedDate || '') ? i : b), 0);
-  const fullest = filled.indexOf(Math.max(...filled));
-  const head = recs.map((r, i) => `<th class="ds-merge-col${i === 0 ? ' ds-merge-keep' : ''}" data-merge-col="${i}"><label class="ds-merge-keeplbl"><input type="radio" name="dsMergeKeep" value="${i}" ${i === 0 ? 'checked' : ''}> Keep copy ${i + 1}</label>
-      <div class="ds-merge-meta">${i === oldest && recs.length > 1 ? '<span class="ds-amb-chip" title="Created first">oldest</span>' : ''}${i === fullest && filled.filter(n => n === filled[i]).length === 1 ? '<span class="ds-amb-chip" title="Holds a value in the most fields">most filled</span>' : ''}</div>
-      <div class="ds-dep-muted">created ${esc(when(r.CreatedDate))} · changed ${esc(when(r.LastModifiedDate))} · ${filled[i].toLocaleString()} field${filled[i] === 1 ? '' : 's'} filled · <a href="${esc(base)}/lightning/r/${esc(r.Id)}/view" target="_blank" rel="noopener" title="${esc(r.Id)}">open ↗</a></div>
-      ${diff.differ.length ? `<button class="ds-btn ds-btn-xs ds-merge-useall" data-merge-useall="${i}" title="Tick this copy's value in every row below">⬇ use all its values</button>` : ''}</th>`).join('');
-  // every differing field: one radio per copy, and a third — a value typed here (user 2026-10-14)
+  const newest = recs.reduce((b, r, i) => (String(r.CreatedDate || '') > String(recs[b].CreatedDate || '') ? i : b), 0);
+  const keep0 = sftkMergeSuggestKeep(recs, okFields);
+  const names = await sftkMergeRefNames({ send: sendBg, orgUrl: sess.orgUrl, sid: sess.sid, plan: sftkMergeRefPlan(diff, desc.fields) });
+  const fmt = v => { const t = sftkMergeValueText(v); return names[t] ? `${esc(names[t])} <span class="ds-dep-muted">${esc(t)}</span>` : esc(t); };
+  const chip = (t, title) => `<span class="ds-amb-chip" title="${esc(title)}">${esc(t)}</span>`;
+  const ages = new Set(recs.map(r => String(r.CreatedDate || ''))).size > 1;   // all made together → no oldest, no newest
+  const tied = filled.filter(n => n === filled[keep0]).length > 1;
+  // what tells this copy apart: its values in the first differing fields (user 2026-10-30: "hard to understand")
+  const tellRow = r => diff.differ.slice(0, 3).map(f => `<span class="ds-merge-tell"><span class="ds-dep-muted">${esc(f.label)}:</span> ${fmt(r[f.name]) || '<span class="ds-dep-muted">empty</span>'}</span>`).join('');
+  const copyRow = (r, i) => `<div class="ds-merge-copy${i === keep0 ? ' ds-merge-keep' : ''}" data-merge-copy="${i}">
+      <label class="ds-merge-copy-lbl"><input type="radio" name="dsMergeKeep" value="${i}" ${i === keep0 ? 'checked' : ''}> Copy ${i + 1}</label>
+      <span class="ds-merge-meta">${ages && i === oldest ? chip('oldest', 'Created first') : ''}${ages && i === newest ? chip('newest', 'Created last') : ''}${filled[i] === Math.max(...filled) && !tied ? chip('most filled', 'Holds a value in the most fields') : ''}${i === keep0 ? '<span class="ds-amb-chip ds-amb-chip-sug" title="Ticked for you: the copy with the most fields filled — the oldest of them when they tie">💡 suggested</span>' : ''}</span>
+      <span class="ds-dep-muted">created ${esc(when(r.CreatedDate))} · changed ${esc(when(r.LastModifiedDate))} · ${filled[i].toLocaleString()} field${filled[i] === 1 ? '' : 's'} filled · <a href="${esc(base)}/lightning/r/${esc(r.Id)}/view" target="_blank" rel="noopener" title="${esc(r.Id)}">open ↗</a></span>
+      ${diff.differ.length ? `<span class="ds-merge-tells">${tellRow(r)}</span>` : ''}
+      ${diff.differ.length ? `<button type="button" class="ds-btn ds-btn-xs ds-merge-useall" data-merge-useall="${i}" title="In every field below, tick this copy's value">⬇ take all its values</button>` : ''}
+    </div>`;
+  // every differing field: one choice per DISTINCT value (with the copies that hold it), and one typed here (user 2026-10-14)
   const hint = t => t === 'date' ? 'YYYY-MM-DD' : t === 'datetime' ? '2026-10-14T09:30:00Z' : t === 'boolean' ? 'true / false' : t === 'reference' ? 'a Salesforce id' : 'type a value…';
-  const rows = diff.differ.map(f => `<tr data-merge-field="${esc(f.name)}" data-merge-type="${esc(f.type)}"><th scope="row">${esc(f.label)}<div class="ds-dep-muted">${esc(f.name)}</div></th>${f.values.map((v, i) => `<td class="ds-merge-col${i === 0 ? ' ds-merge-keep' : ''}" data-merge-col="${i}"><label class="ds-merge-val"><input type="radio" name="dsMergeF_${esc(f.name)}" value="${i}" ${i === 0 ? 'checked' : ''}> <span>${fmt(v)}</span></label></td>`).join('')}<td class="ds-merge-typed">${sftkMergeTypable(f.type) ? `<label class="ds-merge-val"><input type="radio" name="dsMergeF_${esc(f.name)}" value="custom"> <input type="text" class="ds-input ds-input-sm" data-merge-custom="${esc(f.name)}" placeholder="${esc(hint(f.type))}" aria-label="A value typed for ${esc(f.label)}"></label>` : ''}</td></tr>`).join('');
-  const sameRows = (diff.sameList || []).map(f => `<tr><th scope="row">${esc(f.label)}<div class="ds-dep-muted">${esc(f.name)}</div></th><td colspan="${recs.length + 1}">${fmt(f.value)}</td></tr>`).join('');
-  const table = `<div class="ds-merge-how"><b>1.</b> Tick the record that stays. <b>2.</b> For each field that differs, tick the value it keeps — or type one.</div>
-    <div class="ds-merge-wrap"><table class="ds-merge-table"><thead><tr><th>Which record stays?</th>${head}<th class="ds-merge-typed">or a value you type</th></tr></thead><tbody>${rows || `<tr><td colspan="${recs.length + 2}" class="ds-dep-muted">Every writable field holds the same value in all copies — nothing to choose.</td></tr>`}</tbody></table></div>
-    <div class="ds-dep-muted ds-merge-same">${diff.same.toLocaleString()} writable field${diff.same === 1 ? ' is' : 's are'} the same in every copy${diff.differ.length ? ' — the record that stays keeps its own values unless you tick otherwise' : ''}.</div>
+  const who = idx => idx.length === recs.length ? 'every copy' : idx.length === 1 ? `copy ${idx[0] + 1}` : `${idx.length} copies: ${idx.map(i => i + 1).join(', ')}`;
+  const rows = diff.differ.map(f => `<div class="ds-merge-frow" data-merge-field="${esc(f.name)}" data-merge-type="${esc(f.type)}">
+      <div class="ds-merge-fname">${esc(f.label)}<div class="ds-dep-muted">${esc(f.name)}</div></div>
+      <div class="ds-merge-opts">${sftkMergeValueGroups(f.values).map(g => `<label class="ds-merge-opt${g.idx.includes(keep0) ? ' ds-merge-opt-keep' : ''}" data-merge-idx="${g.idx.join(',')}"><input type="radio" name="dsMergeF_${esc(f.name)}" value="${g.idx[0]}" ${g.idx.includes(keep0) ? 'checked' : ''}> <span class="ds-merge-optv">${fmt(g.value) || '<span class="ds-dep-muted">empty</span>'}</span><span class="ds-merge-optn">${esc(who(g.idx))}</span></label>`).join('')}
+        ${sftkMergeTypable(f.type) ? `<label class="ds-merge-opt ds-merge-typed"><input type="radio" name="dsMergeF_${esc(f.name)}" value="custom"> <input type="text" class="ds-input ds-input-sm" data-merge-custom="${esc(f.name)}" placeholder="${esc(hint(f.type))}" aria-label="A value typed for ${esc(f.label)}"><span class="ds-merge-optn">a value you type</span></label>` : ''}
+      </div></div>`).join('');
+  const sameRows = (diff.sameList || []).map(f => `<tr><th scope="row">${esc(f.label)}<div class="ds-dep-muted">${esc(f.name)}</div></th><td>${fmt(f.value)}</td></tr>`).join('');
+  const nd = diff.differ.length;
+  const table = `<div class="ds-merge-step"><b>1 · Which record stays?</b> <span class="ds-dep-muted">The other ${recs.length === 2 ? 'copy is' : `${recs.length - 1} copies are`} merged into it. Ticked for you: the copy with the most fields filled${tied ? ' — the oldest of the ones that tie' : ''}.</span></div>
+    <div class="ds-merge-copies">${recs.map(copyRow).join('')}</div>
+    <div class="ds-merge-step"><b>2 · What it is written with.</b> <span class="ds-dep-muted">${nd ? `${nd.toLocaleString()} field${nd === 1 ? '' : 's'} differ${nd === 1 ? 's' : ''} between the copies. The record that stays keeps its own value unless you tick another — or type one.` : 'Every writable field holds the same value in all copies — nothing to choose.'}</span></div>
+    ${nd ? `<div class="ds-merge-fields">${rows}</div>` : ''}
+    <div class="ds-dep-muted ds-merge-same">${diff.same.toLocaleString()} writable field${diff.same === 1 ? ' is' : 's are'} the same in every copy.</div>
     ${sameRows ? `<details class="ds-merge-samefold"><summary>Show the ${diff.same.toLocaleString()} field${diff.same === 1 ? '' : 's'} that ${diff.same === 1 ? 'is' : 'are'} the same</summary><div class="ds-merge-wrap"><table class="ds-merge-table">${sameRows}</table></div></details>` : ''}`;
   const others = recs.length === 2 ? 'the other copy is' : `the other ${recs.length - 1} copies are`;
   const stakes = native
@@ -1278,33 +1307,34 @@ async function _depMergeCopies(p, side, name, ids, opts = {}) {
     const finish = v => { if (!done) { done = true; resolve(v); } };
     sftkDialog({
       icon: '🔀', title: `Merge the ${recs.length} copies of "${name}" in ${org}${opts.walk ? ` — ${opts.walk}` : ''}`, sev: 'red',
-      facts: [label, `${recs.length} copies`, `${diff.differ.length.toLocaleString()} field${diff.differ.length === 1 ? '' : 's'} differ`, native ? 'Salesforce merge' : 'moved, then deleted'],
+      facts: [label, `${recs.length} copies`, `${diff.differ.length.toLocaleString()} field${diff.differ.length === 1 ? ' differs' : 's differ'}`, native ? 'Salesforce merge' : 'moved, then deleted'],
       stakes, bodyHtml: table,
       note: 'The copies go to the Recycle Bin for 15 days; restoring them there does not take back what moved to the record that stays.',
       actions: [{ id: 'dsMergeCancel', label: 'Cancel' }, { id: 'dsMergeGo', label: '🔀 Merge into the chosen record…', kind: 'danger' }],
       onRender: () => {
         const box = eid('dsModalBox');
         if (!box) return finish(null);
+        const keepOf = () => Number((box.querySelector('input[name="dsMergeKeep"]:checked') || {}).value || 0);
+        const has = (el, i) => String(el.dataset.mergeIdx || '').split(',').map(Number).includes(i);
+        // every field takes copy i's value: the option whose copies include i
+        const takeAll = i => box.querySelectorAll('.ds-merge-frow').forEach(row => { const o = [...row.querySelectorAll('.ds-merge-opt[data-merge-idx]')].find(el => has(el, i)); const x = o && o.querySelector('input[type="radio"]'); if (x) x.checked = true; });
         const paint = () => {
-          const keep = Number((box.querySelector('input[name="dsMergeKeep"]:checked') || {}).value || 0);
-          box.querySelectorAll('[data-merge-col]').forEach(el => el.classList.toggle('ds-merge-keep', Number(el.dataset.mergeCol) === keep));
+          const keep = keepOf();
+          box.querySelectorAll('[data-merge-copy]').forEach(el => el.classList.toggle('ds-merge-keep', Number(el.dataset.mergeCopy) === keep));
+          box.querySelectorAll('.ds-merge-opt[data-merge-idx]').forEach(el => el.classList.toggle('ds-merge-opt-keep', has(el, keep)));
         };
         box.querySelectorAll('input[name="dsMergeKeep"]').forEach(r => r.addEventListener('change', () => {
           // the record that stays keeps its own values until the user says otherwise
-          box.querySelectorAll('tr[data-merge-field]').forEach(tr => { const x = tr.querySelector(`input[value="${r.value}"]`); if (x) x.checked = true; });
-          paint();
+          takeAll(Number(r.value)); paint();
         }));
-        // one click: every row takes that copy's value
-        box.querySelectorAll('[data-merge-useall]').forEach(b => b.addEventListener('click', () => {
-          box.querySelectorAll('tr[data-merge-field]').forEach(tr => { const x = tr.querySelector(`input[value="${b.dataset.mergeUseall}"]`); if (x) x.checked = true; });
-        }));
-        // typing in a row's box is choosing it
-        box.querySelectorAll('input[data-merge-custom]').forEach(inp => inp.addEventListener('input', () => { const r = inp.closest('tr')?.querySelector('input[type="radio"][value="custom"]'); if (r) r.checked = true; }));
+        box.querySelectorAll('[data-merge-useall]').forEach(b => b.addEventListener('click', () => takeAll(Number(b.dataset.mergeUseall))));
+        // typing in a field's box is choosing it
+        box.querySelectorAll('input[data-merge-custom]').forEach(inp => inp.addEventListener('input', () => { const r = inp.closest('.ds-merge-frow')?.querySelector('input[type="radio"][value="custom"]'); if (r) r.checked = true; }));
         eid('dsMergeCancel')?.addEventListener('click', () => { closeModal(); finish(null); });
         eid('dsMergeGo')?.addEventListener('click', () => {
           const keep = Number((box.querySelector('input[name="dsMergeKeep"]:checked') || {}).value || 0);
           const picks = {};
-          box.querySelectorAll('tr[data-merge-field]').forEach(tr => {
+          box.querySelectorAll('.ds-merge-frow').forEach(tr => {
             const x = tr.querySelector('input[type="radio"]:checked'); if (!x) return;
             picks[tr.dataset.mergeField] = x.value === 'custom' ? { custom: (tr.querySelector('input[data-merge-custom]') || {}).value || '' } : Number(x.value);
           });

@@ -5,12 +5,12 @@ what breaks vanilla Salesforce deployments — hierarchies, self-lookups, juncti
 pricebooks, person accounts, duplicates, files, validation rules — in two real
 trial orgs, driven headlessly by Claude (or by hand).
 
-## Orgs (as of 2026-09-22)
+## Orgs (as of 2026-10-30)
 
 | alias | org | role | CLI |
 |---|---|---|---|
-| `npc`  | trailheads5.my.salesforce.com (trailheads2 expired 2026-09-26; rebuilt with `bash docs/fixtures/rebuild-source.sh npc`) | source | `sf org login web --alias npc --browser edge` (Edge avoids the work Google profile) |
-| `npc2` | trailheads4.my.salesforce.com | target | `sf org login web --alias npc2 --instance-url https://trailheads4.my.salesforce.com` |
+| `npc`  | orgfarm-c449e108c2-dev-ed.develop.my.salesforce.com — a Developer Edition, never expires (trailheads2 expired 2026-09-26, trailheads5 expired 2026-10-28; each time rebuilt with `bash docs/fixtures/rebuild-source.sh npc`) | source | `sf org login web --alias npc --browser chrome` (lands in the active Chrome window — have the personal profile in front) |
+| `npc2` | orgfarm-e2c4511b2b-dev-ed.develop.my.salesforce.com (Developer Edition; trailheads4 before) | target | `sf org login web --alias npc2 --instance-url https://trailheads4.my.salesforce.com` |
 
 Both are trials → the Toolkit classifies them `dev`; use **🛑 Guard as production**
 (Connected Orgs) to exercise the typed production gates.

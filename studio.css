@@ -6432,6 +6432,12 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 
 /* Deploy view — parents verdict at first sight (2026-09-21) */
 .ds-dep-pchip { font-size: 11.5px; font-weight: 600; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+/* 2026-10-30: a bar on every parent row while its check runs — live for the one being read, quiet for the ones waiting */
+.ds-dep-pbar { display: inline-block; width: 96px; height: 6px; border-radius: 999px; background: rgba(127, 127, 127, .22); overflow: hidden; vertical-align: middle; margin-right: 8px; }
+.ds-dep-pbar > span { display: block; height: 100%; width: 40%; border-radius: inherit; background: var(--brand, #1b6fd1); opacity: .3; }
+.ds-dep-pbar-live > span { opacity: 1; animation: ds-pbar-slide 1.1s ease-in-out infinite; }
+@keyframes ds-pbar-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(260%); } }
+@media (prefers-reduced-motion: reduce) { .ds-dep-pbar-live > span { animation: none; width: 100%; } }
 .ds-dep-pchip-ok   { color: var(--c-good-fg, var(--success)); border-color: var(--success); }
 .ds-dep-pchip-bad  { color: var(--c-critical-fg, var(--danger)); border-color: var(--danger); }
 .ds-dep-pchip-wait { color: var(--subtext); }
@@ -6614,6 +6620,28 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .ds-merge-samefold { margin-top: 8px; font-size: 12px; }
 .ds-merge-samefold > summary { cursor: pointer; color: var(--brand, #1b6fd1); }
 .ds-merge-samefold .ds-merge-wrap { margin-top: 6px; max-height: 32vh; }
+/* 2026-10-30: copies as rows, a field's distinct values as options */
+.ds-merge-step { margin: 10px 0 6px; font-size: 12.5px; }
+.ds-merge-step:first-child { margin-top: 0; }
+.ds-merge-copies { display: flex; flex-direction: column; gap: 2px; max-height: 30vh; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
+.ds-merge-copy { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 5px 8px; border-radius: 6px; font-size: 12.5px; }
+.ds-merge-copy.ds-merge-keep { background: rgba(27, 111, 209, .10); }
+.ds-merge-copy-lbl { display: inline-flex; gap: 6px; align-items: center; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.ds-merge-copy .ds-merge-meta { margin: 0; min-height: 0; }
+.ds-merge-copy .ds-merge-useall { margin: 0 0 0 auto; }
+.ds-merge-copy a { color: var(--brand, #1b6fd1); }
+.ds-merge-tells { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 2px 14px; padding-left: 26px; font-size: 12px; }
+.ds-merge-tell { white-space: nowrap; }
+.ds-merge-fields { display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow: auto; }
+.ds-merge-frow { display: grid; grid-template-columns: minmax(140px, 200px) minmax(0, 1fr); gap: 6px 12px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; }
+.ds-merge-fname { font-weight: 600; font-size: 12.5px; }
+.ds-merge-opts { display: flex; flex-direction: column; gap: 4px; }
+.ds-merge-opt { display: flex; gap: 6px; align-items: baseline; cursor: pointer; font-size: 12.5px; word-break: break-word; }
+.ds-merge-opt.ds-merge-opt-keep .ds-merge-optv { font-weight: 600; }
+.ds-merge-optn { font-size: 11px; color: var(--subtext); white-space: nowrap; }
+.ds-merge-opt-keep .ds-merge-optn::after { content: ' · the record that stays'; }
+.ds-merge-opt.ds-merge-typed .ds-input { width: min(320px, 100%); min-width: 120px; }
+.ds-amb-chip-sug { color: var(--brand, #1b6fd1); }
 
 /* 🧾 Activity — the feed of everything done (sftk-feed.js, 2026-10-27) */
 .sftk-feed { font-size: 12.5px; }
