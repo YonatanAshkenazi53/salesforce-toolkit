@@ -17,7 +17,7 @@ try {
   Database.insert(hold, dmo);
   List<Account> subs = new List<Account>{
     new Account(Name='SFTK CX Europe GmbH', ParentId=hold.Id, Industry='Manufacturing', BillingCountry='Germany', BillingCity='Berlin', AnnualRevenue=4500000, NumberOfEmployees=120),
-    new Account(Name='SFTK CX Americas Inc', ParentId=hold.Id, Industry='Retail', BillingCountry='United States', BillingState='NY', BillingCity='New York', AnnualRevenue=6100000, NumberOfEmployees=300),
+    new Account(Name='SFTK CX Americas Inc', ParentId=hold.Id, Industry='Retail', BillingCountry='United States', BillingState='New York', BillingCity='New York', AnnualRevenue=6100000, NumberOfEmployees=300),
     new Account(Name='SFTK CX O\'Brien & Söhne — Ünïcode', ParentId=hold.Id, Industry='Consulting', BillingCountry='Austria', BillingCity='Wien', AnnualRevenue=800000),
     new Account(Name='SFTK CX Duplicate Name', Industry='Energy', BillingCity='Haifa', AnnualRevenue=1),
     new Account(Name='SFTK CX Duplicate Name', Industry='Energy', BillingCity='Eilat', AnnualRevenue=2),
@@ -142,15 +142,18 @@ try {
   }, dmo);
 
   // ── Person Accounts (if enabled) + a Case on the hidden Contact ──
-  List<RecordType> prt = [SELECT Id FROM RecordType WHERE SObjectType = 'Account' AND IsPersonType = true AND IsActive = true LIMIT 1];
+  // Person accounts off (a plain Developer Edition): RecordType has no IsPersonType and Account no PersonContactId,
+  // so these queries are dynamic — the script compiles either way and skips the two people (2026-10-30).
+  List<RecordType> prt = new List<RecordType>();
+  if (Schema.SObjectType.Account.fields.getMap().containsKey('ispersonaccount')) prt = Database.query('SELECT Id FROM RecordType WHERE SObjectType = \'Account\' AND IsPersonType = true AND IsActive = true LIMIT 1');
   if (!prt.isEmpty()) {
     List<Account> people = new List<Account>();
-    people.add(new Account(RecordTypeId=prt[0].Id));
-    people.add(new Account(RecordTypeId=prt[0].Id));
+    { Account pa = new Account(); pa.put('RecordTypeId', prt[0].Id); people.add(pa); }   // put(): Account has no RecordTypeId at compile time when it has no record types
+    { Account pa = new Account(); pa.put('RecordTypeId', prt[0].Id); people.add(pa); }   // put(): Account has no RecordTypeId at compile time when it has no record types
     people[0].put('FirstName', 'Person'); people[0].put('LastName', 'SFTK CX One'); people[0].put('PersonEmail', 'person.one@sftk-cx.example'); people[0].put('PersonMailingCountry', 'Israel');
     people[1].put('FirstName', 'Person'); people[1].put('LastName', 'SFTK CX Two'); people[1].put('PersonEmail', 'person.two@sftk-cx.example');
     Database.insert(people, dmo);
-    Id pc = [SELECT PersonContactId FROM Account WHERE Id = :people[0].Id].PersonContactId;
+    Id pc = (Id) Database.query('SELECT PersonContactId FROM Account WHERE Id = \'' + people[0].Id + '\'')[0].get('PersonContactId');
     Database.insert(new Case(Subject='SFTK CX Person account case', AccountId=people[0].Id, ContactId=pc, Status='New', Origin='Web'), dmo);
     Database.insert(new Task(Subject='SFTK CX Person task', WhoId=pc, Status='Not Started', Priority='Normal'), dmo);
   }
