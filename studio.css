@@ -6675,5 +6675,7 @@ a.sftk-feed-where { color: var(--brand, #1b6fd1); }
 /* 2026-10-28: every line carries its actions (undo, roll back, retry, report) */
 .sftk-feed-line .ds-hist-acts, .sftk-feed-acts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 2px 0 2px 74px; }
 .sftk-feed-acts .btn, .sftk-feed-acts a.btn { font-size: 11.5px; padding: 2px 8px; line-height: 1.4; text-decoration: none; }
+/* 2026-10-31: a disabled undo says why, next to the button */
+.ds-hist-why, .sftk-feed-why { font-size: 11px; color: var(--subtext); max-width: 560px; line-height: 1.35; }
 .sftk-feed-empty { padding: 18px; text-align: center; opacity: .7; }
 .sftk-feed-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: 11.5px; opacity: .85; }

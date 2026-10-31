@@ -122,7 +122,7 @@ function sftkFeedTime(iso) {
     if (studio()) return typeof window.sftkHistActionsFor === 'function' ? window.sftkHistActionsFor(e) : '';
     if (e.kind === 'tool') {
       const st = typeof sftkToolUndoState === 'function' ? sftkToolUndoState(e) : { show: false };
-      return `<div class="sftk-feed-acts">${st.show ? `<button class="btn btn-sm ${st.disabled ? 'btn-secondary' : 'btn-danger'}" ${st.disabled ? 'disabled' : ''} data-feed-undo="${esc(e.id)}" title="${esc(st.title || '')}">${esc(st.label)}</button>` : ''}<button class="btn btn-sm btn-secondary" data-feed-report="${esc(e.id)}" title="Download this entry as a JSON audit report — what was written, where, when, and what the org showed.">⬇ Report</button></div>`;
+      return `<div class="sftk-feed-acts">${st.show ? `<button class="btn btn-sm ${st.disabled ? 'btn-secondary' : 'btn-danger'}" ${st.disabled ? 'disabled' : ''} data-feed-undo="${esc(e.id)}" title="${esc(st.title || '')}">${esc(st.label)}</button>${st.disabled && st.title ? `<span class="sftk-feed-why">${esc(st.title)}</span>` : ''}` : ''}<button class="btn btn-sm btn-secondary" data-feed-report="${esc(e.id)}" title="Download this entry as a JSON audit report — what was written, where, when, and what the org showed.">⬇ Report</button></div>`;
     }
     return `<div class="sftk-feed-acts"><a class="btn btn-sm btn-secondary" href="studio.html#/activity" target="_blank" rel="noopener" title="A deployment is rolled back, retried, continued and reported from Data Studio — its Activity has the same line with those buttons">↩ roll back · ↻ retry · ⬇ report — in Data Studio ↗</a></div>`;
   };
