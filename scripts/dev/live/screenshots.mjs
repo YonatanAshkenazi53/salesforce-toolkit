@@ -8,12 +8,15 @@ import { resolve, join } from 'node:path';
 export default async function (h) {
   const out = resolve('dist/store-shots'); mkdirSync(out, { recursive: true });
   let n = 0;
-  const shot = async (name) => {
-    await h.sleep(900);
+  const still = () => h.eval("(() => { if (!document.getElementById('sftkShotStill')) { const st = document.createElement('style'); st.id = 'sftkShotStill'; st.textContent = '*, *::before, *::after { transition: none !important; animation: none !important; }'; document.head.appendChild(st); } return true; })()");
+  const grab = async (name) => {
+    await still(); await h.sleep(1200);
     const r = await h.cdp('Page.captureScreenshot', { format: 'png' });
     const f = join(out, `${String(++n).padStart(2, '0')}-${name}.png`);
     writeFileSync(f, Buffer.from(r.data, 'base64')); h.log('shot', f);
   };
+  // every screen in both themes (2026-10-31): light, then dark, then back
+  const shot = async (name) => { await grab(name); await dark(true); await grab(`${name}-dark`); await dark(false); };
   // one theme button on each page cycles light → dark → OLED → light: click until the page is in the wanted state
   const dark = async (on) => { for (let i = 0; i < 3; i++) { const cur = await h.eval("document.documentElement.classList.contains('ds-dark') || document.body.classList.contains('sftk-dark')"); if (cur === on) break; await h.eval("(document.querySelector('#sftkDarkToggle') || document.querySelector('#dsDarkToggle'))?.click()"); await h.sleep(500); } };
   await h.login('npc2'); await h.login('npc');
@@ -48,13 +51,13 @@ export default async function (h) {
   await h.click('#fcScanBtn');
   await h.waitFor("/places? uses? it|No dependencies found/.test(document.querySelector('#fcResults')?.innerText || '') && !/scanning|⏳/i.test(document.querySelector('#fcScanBtn')?.innerText || '')", 180000, 1000);
   await h.sleep(1500); await shot('toolkit-field-cleaner');
-  await dark(true); await shot('toolkit-field-cleaner-dark'); await dark(false);
+
   // ── Data Studio ──
   await h.studio('#/profiles');
   await h.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await h.importProfiles('docs/fixtures/complex-deployment/profiles.json');
   // the direction is trailheads5 → the Developer Edition target, whatever the login order (the import re-points by it)
-  await h.eval("(async () => { const all = (typeof _buildAllSessions === 'function' ? _buildAllSessions() : _allSessions) || []; const src = (all.find(x => /trailheads5/.test(x.orgUrl)) || {}).orgUrl, tgt = (all.find(x => /dev-ed|orgfarm/.test(x.orgUrl)) || {}).orgUrl; if (src && tgt) { for (const p of _profiles) { p.sourceOrg = src; p.targetOrg = tgt; } await storageSaveProfiles(); } return [src, tgt]; })()").then(r => h.log('deployments point', r));
+  await h.eval("(async () => { const all = (typeof _buildAllSessions === 'function' ? _buildAllSessions() : _allSessions) || []; const src = (all.find(x => /c449e108c2/.test(x.orgUrl)) || {}).orgUrl, tgt = (all.find(x => /dev-ed|orgfarm/.test(x.orgUrl)) || {}).orgUrl; if (src && tgt) { for (const p of _profiles) { p.sourceOrg = src; p.targetOrg = tgt; } await storageSaveProfiles(); } return [src, tgt]; })()").then(r => h.log('deployments point', r));
   await h.eval("location.hash = '#/profiles'"); await h.sleep(1200); await shot('studio-deployments');
   const id = await h.eval("_profiles.find(p => p.name === 'SFTK CX — Accounts tree')?.id");
   await h.eval(`window.runProfile(${JSON.stringify(id)})`); await h.sleep(1500);
@@ -65,13 +68,18 @@ export default async function (h) {
   await h.eval("document.querySelector('[data-dep-obj=\"\"][data-dep-tab=\"ins\"]')?.click()"); await h.sleep(600);
   await h.eval("document.querySelector('#dsDepRecords')?.scrollIntoView({ block: 'start' })"); await shot('studio-deploy-records');
   await h.eval("location.hash = '#/compare'"); await h.sleep(1200);
-  await h.eval("(() => { const pick = (sel, re) => { const s = document.querySelector(sel); const o = [...s.options].find(o => re.test(o.value) || re.test(o.text)); if (o) { s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); } }; pick('#dsOCSrc', /trailheads5/); pick('#dsOCTgt', /orgfarm|dev-ed/); return true; })()");
+  await h.eval("(() => { const pick = (sel, re) => { const s = document.querySelector(sel); const o = [...s.options].find(o => re.test(o.value) || re.test(o.text)); if (o) { s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); } }; pick('#dsOCSrc', /c449e108c2/); pick('#dsOCTgt', /e2c4511b2b/); return true; })()");
   await h.waitFor("document.querySelectorAll('[data-oc-obj]').length > 0", 120000, 1000); await h.sleep(400);
   await h.eval("document.querySelector('#dsOCSelNone')?.click(); for (const o of ['Account', 'Contact', 'Opportunity']) { const c = document.querySelector('[data-oc-obj=\"' + o + '\"]'); if (c && !c.checked) c.click(); }");
   await h.click('#dsOCRun'); await h.waitFor("!document.querySelector('#dsOCRun').disabled && !document.querySelector('.ds-oc-pending')", 300000, 1000); await h.sleep(800); await shot('studio-org-compare');
   await h.eval("location.hash = '#/orghealth'"); await h.sleep(1500);
   await h.eval("document.querySelector('#dsOhAll')?.click()"); await h.sleep(1500);
   await h.waitFor("![...document.querySelectorAll('[data-oh-check]')].some(b => /checking/.test(b.textContent))", 300000, 1000); await h.sleep(800); await shot('studio-org-health');
-  await dark(true); await h.eval("location.hash = '#/orgs'"); await h.sleep(1200); await shot('studio-connected-orgs-dark'); await dark(false);
+  await h.eval("location.hash = '#/orgs'"); await h.sleep(1200); await shot('studio-connected-orgs');
+  // 🧾 Activity (2026-10-28: the one history), with the run entries the scan left — in Data Studio and in the Toolkit
+  await h.eval("document.querySelector('#sftkFeedBtn')?.click()"); await h.sleep(1500); await shot('studio-activity');
+  if (typeof closeModal === 'undefined') await h.eval("typeof closeModal === 'function' && closeModal()");
+  await h.popup('flows'); await h.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false }); await h.sleep(1200);
+  await h.eval("document.querySelector('#sftkFeedBtn')?.click()"); await h.sleep(1500); await shot('toolkit-activity');
   h.log(`✓ ${n} screenshots in ${out}`);
 }

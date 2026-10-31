@@ -1162,7 +1162,9 @@ function _depAmbGroupsHtml(p, rows, s, pickOf, keyOf, memOf) {
         ${kept && !pending ? '<span class="ds-amb-done">✓ remembered — takes effect when both orgs are read again</span>' : ''}
         <button class="ds-btn ds-btn-xs" data-dep-amb-one="${esc(k)}" ${pending ? '' : 'disabled'} title="Remember the answers of this name now. Both orgs are read again later, once.">📌 Apply this one</button></div>
       <div class="ds-amb-cols">${srcCol}${tgtCol}</div>${bothMerge}
-      <div class="ds-amb-match">${matrix}</div>
+      ${nSrc > 1 || cands.length > 1
+        ? `<details class="ds-amb-match ds-amb-match-fold"${pending && rs.some(r => pickOf(r)) ? ' open' : ''}><summary>Not copies but different records that share a name? <span class="ds-dep-muted">Say which ${tgtL} record each ${srcL} one is — or merge above and skip this.</span></summary>${matrix}</details>`
+        : `<div class="ds-amb-match">${matrix}</div>`}
     </div>`;
   }
   return html;
@@ -1541,8 +1543,10 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   };
 
   const nAll = rows.length.toLocaleString();
-  const bulk = tabDef.k === 'ins' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list${rows.length > shown.length ? ` — including the ${(rows.length - shown.length).toLocaleString()} not shown yet (Show all lists them)` : ''}">✓ All ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button><button class="ds-btn ds-btn-xs" data-dep-vals-many="1" title="One value for every ticked record of this list: type it once, it is written on each of them">✏ Edit the selected records</button>`
-    : tabDef.k === 'chg' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Overwrite every ${nAll} changed record(s) in this list with the source's values">→ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button><button class="ds-btn ds-btn-xs" data-dep-vals-many="1" title="One value for every ticked record of this list: type it once, it is written on each of them">✏ Edit the selected records</button>`
+  // the bulk editor writes ONE value to every ticked record — the button says so, with the count, and sleeps at zero (user 2026-10-31)
+  const nSel = (tabDef.k === 'chg' ? (isRoot ? _recSel.overwrite : sel.overwrite) : (isRoot ? _recSel.push : sel.push)).size;
+  const bulk = tabDef.k === 'ins' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list${rows.length > shown.length ? ` — including the ${(rows.length - shown.length).toLocaleString()} not shown yet (Show all lists them)` : ''}">✓ All ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button><button class="ds-btn ds-btn-xs" data-dep-vals-many="1" ${nSel ? '' : 'disabled '}title="One value for every ticked record of this list: type it once, it is written on each of them — the same value on each">✏ Set one value on the ${nSel.toLocaleString()} selected</button>`
+    : tabDef.k === 'chg' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Overwrite every ${nAll} changed record(s) in this list with the source's values">→ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button><button class="ds-btn ds-btn-xs" data-dep-vals-many="1" ${nSel ? '' : 'disabled '}title="One value for every ticked record of this list: type it once, it is written on each of them — the same value on each">✏ Set one value on the ${nSel.toLocaleString()} selected</button>`
     : tabDef.k === 'ext' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list for deletion">🗑 all ${nAll}${!isRoot ? ' (no orphans)' : ''}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
     : tabDef.k === 'link' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" ${relinkBlocked ? 'disabled' : ''}>⇄ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
     : ambRoot && sftkAmbMergeAllPlan(rows, key).length ? (n => `<button class="ds-btn ds-btn-xs" data-dep-amb-mergeall="1" title="Every name whose org holds more than one copy, one merge at a time: each opens its own picker and confirmation; Cancel stops the walk; both orgs are read again once at the end.">🔀 Merge all — ${n} merge${n === 1 ? '' : 's'}, one by one</button>`)(sftkAmbMergeAllPlan(rows, key).length) : '';

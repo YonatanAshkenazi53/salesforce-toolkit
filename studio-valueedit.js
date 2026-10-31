@@ -16,8 +16,10 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   if (!ids.length || !node) return;
   const many = ids.length > 1;
   const srcL = orgLabel(p.sourceOrg), tgtL = orgLabel(p.targetOrg);
-  showModal(`<div class="ds-modal-header">▸ Record · ${esc(obj)} · ${many ? `${ids.length.toLocaleString()} selected records` : esc(label || ids[0])}
-      <span class="ds-dc-modal-sub">every writable field and lookup — what ${many ? 'these records are' : 'this record is'} written with in ${esc(tgtL)}: a value typed here replaces the source's, a record picked here is where the lookup points</span>
+  showModal(`<div class="ds-modal-header">${many ? `✏ One value for all ${ids.length.toLocaleString()} selected ${esc(obj)} records` : `▸ Record · ${esc(obj)} · ${esc(label || ids[0])}`}
+      <span class="ds-dc-modal-sub">${many
+        ? `a value typed here is written to EVERY one of the ${ids.length.toLocaleString()} records, the same value on each — a field left empty keeps each record's own value; a lookup picked here points every record at that one ${esc(tgtL)} record`
+        : `every writable field and lookup — what this record is written with in ${esc(tgtL)}: a value typed here replaces the source's, a record picked here is where the lookup points`}</span>
       <button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button></div>
     <div class="ds-modal-body ds-dc-modal-body"><div id="dsValEdHost" class="ds-ve"><div class="ds-drift-compare-loading">Reading the fields…</div></div></div>`);
   const host = eid('dsValEdHost');

@@ -6332,6 +6332,34 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .ds-amb-colfoot { margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px; }
 .ds-amb-both { margin: -2px 0 6px; text-align: center; }
 .ds-amb-match { margin-top: 2px; }
+.ds-amb-match-fold > summary { cursor: pointer; font-size: 12.5px; font-weight: 600; padding: 4px 0; }
+.ds-amb-match-fold > summary .ds-dep-muted { font-weight: 400; }
+/* 🔗 Pair records by hand (Match review, redrawn 2026-10-31) */
+.ds-mm-intro { font-size: 12.5px; color: var(--subtext); margin: 0 0 8px; }
+.ds-mm-how { font-size: 12px; margin: 0 0 10px; }
+.ds-mm-how > summary { cursor: pointer; color: var(--brand, #1b6fd1); }
+.ds-mm-how > div { margin-top: 4px; color: var(--subtext); }
+.ds-mm-cap { border-left: 3px solid var(--c-warn-fg, #f59e0b); padding-left: 8px; margin: 0 0 10px; font-size: 12px; }
+.ds-mm-grid { display: flex; gap: 12px; max-height: 360px; }
+.ds-mm-col { flex: 1; min-width: 0; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.ds-mm-col-r { flex: 1.5; }
+.ds-mm-hd { padding: 6px 10px; font-weight: 600; font-size: 11.5px; position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--border); z-index: 1; }
+.ds-mm-src, .ds-mm-cand { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border-light, var(--border)); font-size: 12.5px; }
+.ds-mm-src .ds-dep-open, .ds-mm-cand .ds-dep-open, .ds-mm-cand .ds-btn { white-space: nowrap; flex: none; }
+.ds-mm-src { cursor: pointer; }
+.ds-mm-src:hover { background: rgba(127, 127, 127, .10); }
+.ds-mm-src.ds-mm-on { background: rgba(27, 111, 209, .14); font-weight: 600; }
+.ds-mm-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-mm-sim { display: inline-flex; align-items: center; gap: 6px; min-width: 190px; font-size: 11.5px; color: var(--subtext); cursor: help; }
+.ds-mm-bar { width: 48px; height: 6px; border-radius: 999px; background: rgba(127, 127, 127, .22); overflow: hidden; flex: none; }
+.ds-mm-bar > span { display: block; height: 100%; background: var(--brand, #1b6fd1); }
+.ds-mm-sim b { min-width: 36px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+.ds-mm-empty, .ds-mm-none { padding: 10px; font-size: 12px; color: var(--subtext); }
+.ds-mm-more { margin: 6px 10px; }
+.ds-mm-made { margin-top: 10px; font-size: 12.5px; }
+.ds-mm-pair { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
+.ds-mm-pair .ds-mm-name { flex: 0 1 auto; max-width: 40%; }
+.ds-mm-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .ds-amb-mx { border-collapse: collapse; font-size: 12px; }
 .ds-amb-mx th, .ds-amb-mx td { padding: 4px 10px; border-bottom: 1px solid var(--border-light, var(--border)); text-align: center; vertical-align: middle; }
 .ds-amb-mx thead th { font-weight: 600; vertical-align: bottom; }

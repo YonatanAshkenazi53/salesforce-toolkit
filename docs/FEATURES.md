@@ -72,6 +72,7 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 ### All open orgs
 - Pick one source org and every other org open in Chrome becomes a column; for every saved deployment you then see, at a glance, how far each org has drifted (missing, changed, or only-in-target counts) without opening each one individually. One Scan reads every deployment against every open org; opening a cell takes you straight to the 🚀 Deploy page for that pair to fix it. Nothing is crowned or remembered as "the" source: changing it here only changes which org the columns are measured from, and moves or rescans nothing.
 - A record that looks like a duplicate of another is never auto-matched — it's flagged for you to pair by hand instead.
+- 🔗 **Pair records by hand** (the Deploy page's "Match review"): the source records the scan found no match for on the left, the unmatched target records on the right, ranked by how alike the names are — the best of the start they share, the letter pairs in common and the words in common, the three shown on hover and the method explained in the dialog. Both records open; a pair is remembered for the target org and used on every scan (the record then shows under Changed or Synced instead of Insert); a pair made in the dialog can be taken back, and the remembered pairs of an org can be forgotten at once.
 - Limit: this page only checks a deployment's top-level object, not its child records — check those directly on the Deploy page.
 
 ### History
