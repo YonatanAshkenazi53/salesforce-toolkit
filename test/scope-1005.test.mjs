@@ -37,7 +37,7 @@ describe('sftk-build.js — the developer build ships everything', () => {
 describe('the packer — what the public build leaves out', () => {
   it('Deploy Readiness, Licenses and the Debug Log join the Picklist Manager and Sequences', () => {
     expect(PACK).toContain("CUT_JS = {'studio-picklists.js', 'studio-sequences.js', 'studio-readiness.js', 'license-manager.js', 'debug-modal.js', 'onboarding.js'}");
-    expect(PACK).toContain("CUT_IDS = ['picklists', 'sequences', 'readiness', 'licenses', 'debug', 'pro', 'guidance']");
+    expect(PACK).toContain("CUT_IDS = ['picklists', 'sequences', 'readiness', 'licenses', 'debug', 'pro', 'guidance', 'pii']");   // 'pii': masking cut 2026-10-31
   });
   it('their nav buttons, the Licenses tab and their script tags go; a changed layout fails the pack instead of shipping a dead button', () => {
     expect(PACK).toContain('data-view="readiness">');

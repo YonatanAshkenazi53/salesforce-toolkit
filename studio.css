@@ -6598,9 +6598,15 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .ds-ve-null-on .ds-ve-in { opacity: .45; }
 .ds-ve-err { flex-basis: 100%; color: var(--c-err-fg, #b42318); font-size: 11px; min-height: 0; }
 .ds-ve-err:empty { display: none; }
-.ds-ve-lkp-cur { font-size: 12px; margin-bottom: 3px; }
+.ds-ve-lkp-cur { font-size: 12px; margin: 3px 0 0; }
+.ds-ve-lkp-in-on { border-color: var(--brand, #1b6fd1); font-weight: 600; }
+.ds-ve-lkp-pick { font-size: 12px; }
 .ds-ve-lkp-in { width: 100%; }
 .ds-ve-lkp-res { max-height: 150px; }
+/* 2026-10-31: where a lookup lands, said on its row (the 🔗 lookups panel folded into the editor) */
+.ds-ve-land { font-size: 11.5px; margin: 2px 0 4px; }
+.ds-ve-land-bad { color: var(--c-warn-fg, #b45309); }
+.ds-ve-land .ds-lkpo-hit { display: inline-block; width: auto; border: 1px solid var(--border); border-radius: 6px; margin: 3px 4px 0 0; padding: 2px 8px; }
 .ds-ve-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .ds-ve-note { margin-top: 8px; font-size: 11.5px; }
 /* the aligned parent records under "Parents synced" (2026-10-27) */

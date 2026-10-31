@@ -61,7 +61,7 @@ HELD_BACK_JS = {'studio-seed.js'}
 # is guarded; a (?) badge falls back to a plain title tooltip (styles.css /
 # studio.css carry its look).
 CUT_JS = {'studio-picklists.js', 'studio-sequences.js', 'studio-readiness.js', 'license-manager.js', 'debug-modal.js', 'onboarding.js'}
-CUT_IDS = ['picklists', 'sequences', 'readiness', 'licenses', 'debug', 'pro', 'guidance']
+CUT_IDS = ['picklists', 'sequences', 'readiness', 'licenses', 'debug', 'pro', 'guidance', 'pii']   # 'pii': masking is not in the first release (user 2026-10-31: "not good enough")
 PRO_BTN_RE = r'[ \t]*<button class="ds-pro-toggle" id="dsProToggle"[^>]*>.*?</button>\r?\n?'
 DBG_BTN_RE = r'[ \t]*<button id="dbgBtn"[^>]*>.*?</button>\r?\n?'
 EXCLUDE_JS = LABS_JS | HELD_BACK_JS | CUT_JS | {'studio-tools.js', 'content.js'}
@@ -197,7 +197,7 @@ def main():
         stripped = line.lstrip()
         if stripped.startswith('- '):
             # …and bullets whose TITLE is a tool the public build does not ship
-            skipping = '(Labs)' in line or bool(re.match(r'- \*\*[^*]*(Picklist Manager|Sequence|Deploy Readiness|Licenses|License Manager)', stripped))
+            skipping = '(Labs)' in line or bool(re.match(r'- \*\*[^*]*(Picklist Manager|Sequence|Deploy Readiness|Licenses|License Manager|Masked fields|PII mask)', stripped))
         elif stripped.startswith('#') or not stripped:
             skipping = False
         if not skipping:

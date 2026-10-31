@@ -16,8 +16,8 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   if (!ids.length || !node) return;
   const many = ids.length > 1;
   const srcL = orgLabel(p.sourceOrg), tgtL = orgLabel(p.targetOrg);
-  showModal(`<div class="ds-modal-header">✏ Values · ${esc(obj)} · ${many ? `${ids.length.toLocaleString()} selected records` : esc(label || ids[0])}
-      <span class="ds-dc-modal-sub">what ${many ? 'these records are' : 'this record is'} written with in ${esc(tgtL)} — a value typed here replaces the source's</span>
+  showModal(`<div class="ds-modal-header">▸ Record · ${esc(obj)} · ${many ? `${ids.length.toLocaleString()} selected records` : esc(label || ids[0])}
+      <span class="ds-dc-modal-sub">every writable field and lookup — what ${many ? 'these records are' : 'this record is'} written with in ${esc(tgtL)}: a value typed here replaces the source's, a record picked here is where the lookup points</span>
       <button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button></div>
     <div class="ds-modal-body ds-dc-modal-body"><div id="dsValEdHost" class="ds-ve"><div class="ds-drift-compare-loading">Reading the fields…</div></div></div>`);
   const host = eid('dsValEdHost');
@@ -42,13 +42,15 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   if (!many) {
     const plain = fields.filter(f => !f.reference).map(f => f.name);
     const refs = fields.filter(f => f.reference && f.relationshipName && !(f.refTo.length > 1)).map(f => `${f.relationshipName}.Name`);
-    srcRec = await q(srcSess, ids[0], [...plain, ...refs]);
-    if (!srcRec) srcRec = await q(srcSess, ids[0], plain);   // a related object without a Name field — read without the lookups' names
-    if (tgtId && tgtSess && tgtSess.sid) tgtRec = await q(tgtSess, tgtId, [...new Set(plain.map(tf))]);
+    const refIds = fields.filter(f => f.reference).map(f => f.name);   // the lookup's own id too — the landing line needs it
+    srcRec = await q(srcSess, ids[0], [...plain, ...refIds, ...refs]);
+    if (!srcRec) srcRec = await q(srcSess, ids[0], [...plain, ...refIds]);   // a related object without a Name field — read without the lookups' names
+    if (tgtId && tgtSess && tgtSess.sid) { const tp = [...new Set(plain.map(tf))]; tgtRec = await q(tgtSess, tgtId, [...tp, ...refs]); if (!tgtRec) tgtRec = await q(tgtSess, tgtId, tp); }
     if (!host.isConnected) return;
   }
   const val = v => (v === null || v === undefined || v === '') ? '<span class="ds-dc-empty">empty</span>' : `<span class="ds-dc-v" title="${esc(String(v))}">${esc(typeof v === 'object' ? JSON.stringify(v) : String(v))}</span>`;
   const relName = f => { const rel = srcRec && f.relationshipName && srcRec[f.relationshipName]; return rel && rel.Name != null ? rel.Name : null; };
+  const tgtRel = f => { const rel = tgtRec && f.relationshipName && tgtRec[f.relationshipName]; return rel && rel.Name != null ? rel.Name : null; };
   const hint = t => t === 'date' ? 'YYYY-MM-DD' : t === 'datetime' ? '2026-10-27T09:30:00Z' : t === 'boolean' ? 'true / false' : (t === 'double' || t === 'currency' || t === 'int' || t === 'percent') ? 'a number' : 'type a value…';
   const ovOf = id => sftkValOvGet(node, p.targetOrg, id);
   // for many records the box shows a value only when every record carries the same one
@@ -56,19 +58,23 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   const lkpOf = id => (typeof sftkLkpOvGet === 'function') ? sftkLkpOvGet(node, p.targetOrg, id) : {};
   const sameLkp = f => { const vs = ids.map(id => lkpOf(id)[f.name] || ''); return vs.every(v => v === vs[0]) ? vs[0] : (vs.some(Boolean) ? '__mixed__' : ''); };
   const nameOf = id => (typeof _lkpNameCache !== 'undefined' && _lkpNameCache.get(id)) || id;
+  // the picked record, said under the field (user 2026-10-31: "see it selected under the field and not using the red needle")
+  const pickLine = (field, id, name) => `<span class="ds-ve-lkp-pick">✓ points at <b>${esc(name)}</b> <span class="ds-dep-muted">${esc(id)}</span></span> <button class="ds-btn ds-btn-xs" data-ve-lkp-clear="${esc(field)}" title="Forget this pick — the lookup is matched by name again">✕ back to matching by name</button>`;
+  const matchLine = field => `<span class="ds-dep-muted">matched by ${esc((lkpCfg[field] && lkpCfg[field].matchField) || 'Name')} in ${esc(tgtL)}</span>`;
 
   const row = f => {
     const cur = f.reference ? sameLkp(f) : sameOv(f);
     const edited = f.reference ? !!cur : cur !== undefined;
     const isNull = !f.reference && cur === null;
     const cls = `ds-ve-row${edited ? ' ds-ve-row-on' : ''}${isNull ? ' ds-ve-null-on' : ''}`;
-    const srcCell = many ? '' : `<td class="ds-ve-src">${f.reference ? (relName(f) != null ? val(relName(f)) : val(srcRec ? srcRec[f.name] : null)) : val(srcRec ? srcRec[f.name] : null)}</td>`;
-    const tgtCell = many || !tgtId ? '' : `<td class="ds-ve-tgt">${f.reference ? '<span class="ds-dep-muted">—</span>' : val(tgtRec ? tgtRec[tf(f.name)] : null)}</td>`;
+    const srcCell = many ? '' : `<td class="ds-ve-src">${f.reference ? (relName(f) != null ? `${val(relName(f))}<div class="ds-dep-muted">${esc(String(srcRec[f.name] || ''))}</div>` : val(srcRec ? srcRec[f.name] : null)) : val(srcRec ? srcRec[f.name] : null)}</td>`;
+    const tgtCell = many || !tgtId ? '' : `<td class="ds-ve-tgt">${f.reference ? (tgtRel(f) != null ? val(tgtRel(f)) : val(tgtRec ? tgtRec[tf(f.name)] : null)) : val(tgtRec ? tgtRec[tf(f.name)] : null)}</td>`;
     const refObj = f.reference ? ((lkpCfg[f.name] && lkpCfg[f.name].matchObject) || f.refTo[0] || '') : '';
     const editor = f.reference
-      ? `<div class="ds-ve-lkp" data-ve-lkp="${esc(f.name)}" data-ve-refobj="${esc(refObj)}">
-          <div class="ds-ve-lkp-cur">${cur === '__mixed__' ? '<span class="ds-dep-muted">different picks per record</span>' : cur ? `<span class="ds-lkp-on" title="${esc(cur)}">📌 ${esc(nameOf(cur))}</span> <button class="ds-btn ds-btn-xs" data-ve-lkp-clear="${esc(f.name)}" title="Back to matching by name">✕</button>` : `<span class="ds-dep-muted">${refObj ? `matched by ${esc((lkpCfg[f.name] && lkpCfg[f.name].matchField) || 'Name')} in ${esc(tgtL)}` : 'not pickable'}</span>`}</div>
-          ${refObj ? `<input type="search" class="ds-input ds-input-sm ds-ve-lkp-in" placeholder="🔍 pick a ${esc(refObj)} in ${esc(tgtL)}…" aria-label="Pick the ${esc(refObj)} this lookup points at"><div class="ds-lkpo-results ds-ve-lkp-res" style="display:none"></div>` : ''}
+      ? `<div class="ds-ve-lkp" data-ve-lkp="${esc(f.name)}" data-ve-refobj="${esc(refObj)}" data-ve-srcname="${esc(relName(f) == null ? '' : String(relName(f)))}">
+          ${refObj ? `<input type="search" class="ds-input ds-input-sm ds-ve-lkp-in${cur && cur !== '__mixed__' ? ' ds-ve-lkp-in-on' : ''}" value="${cur && cur !== '__mixed__' ? esc(nameOf(cur)) : ''}" placeholder="🔍 pick a ${esc(refObj)} in ${esc(tgtL)}…" aria-label="Pick the ${esc(refObj)} this lookup points at"><div class="ds-lkpo-results ds-ve-lkp-res" style="display:none"></div>` : ''}
+          <div class="ds-ve-lkp-cur">${cur === '__mixed__' ? '<span class="ds-dep-muted">different picks per record</span>' : cur ? pickLine(f.name, cur, nameOf(cur)) : matchLine(f.name)}</div>
+          ${!many && refObj && relName(f) != null ? `<div class="ds-ve-land" data-ve-land="${esc(f.name)}"${cur ? ' style="display:none"' : ''}>⏳ where it lands in ${esc(tgtL)}…</div>` : ''}
         </div>`
       : `<div class="ds-ve-edit"><input type="text" class="ds-input ds-input-sm ds-ve-in" data-ve-field="${esc(f.name)}" data-ve-type="${esc(f.type)}" value="${isNull || cur === undefined ? '' : esc(typeof cur === 'object' ? JSON.stringify(cur) : String(cur))}" placeholder="${isNull ? 'written empty' : esc(f.picklist ? 'pick a value (API name is written)…' : hint(f.type))}" ${f.picklist ? `list="dsVeList_${esc(f.name)}"` : ''} aria-label="The value ${esc(f.label)} is written with" ${isNull ? 'disabled' : ''}>
           ${f.picklist ? `<datalist id="dsVeList_${esc(f.name)}">${f.picklist.map(v => `<option value="${esc(v.value)}" label="${esc(v.label === v.value ? v.label : `${v.label} · API ${v.value}`)}">`).join('')}</datalist>` : ''}
@@ -121,6 +127,19 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     const inp = box.querySelector('.ds-ve-lkp-in'), res = box.querySelector('.ds-ve-lkp-res');
     if (!inp || !res) return;
     let timer = null;
+    // a pick, from the search results or from the landing line: saved at once for every record of the dialog
+    const wireHits = el => el.querySelectorAll('[data-ve-hit]').forEach(h => h.addEventListener('click', async () => {
+      for (const id of ids) sftkLkpOvSet(node, p.targetOrg, id, field, h.dataset.veHit);
+      if (typeof _lkpNameCache !== 'undefined') _lkpNameCache.set(h.dataset.veHit, h.textContent);
+      await saveNode();
+      box.querySelector('.ds-ve-lkp-cur').innerHTML = pickLine(field, h.dataset.veHit, h.textContent);
+      box.closest('tr').classList.add('ds-ve-row-on');
+      wireClear(box);
+      const landEl = box.querySelector('[data-ve-land]'); if (landEl) landEl.style.display = 'none';   // a pick beats the name bridge
+      res.style.display = 'none'; inp.value = h.textContent; inp.classList.add('ds-ve-lkp-in-on');
+      showToast(`📌 ${field} → ${h.textContent} for ${many ? `${ids.length.toLocaleString()} records` : 'this record'} — saved.`, 'success', 4000);
+      if (typeof onSaved === 'function') onSaved();
+    }));
     const run = async () => {
       if (!tgtSess || !tgtSess.sid) { res.style.display = ''; res.innerHTML = `<div class="ds-drift-compare-err">⚠ Open ${esc(tgtL)} in a Chrome tab to pick from it.</div>`; return; }
       const term = inp.value.trim();
@@ -132,30 +151,48 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
       const recs = r.records || [];
       res.innerHTML = recs.length ? recs.map(x => `<button class="ds-lkpo-hit" data-ve-hit="${esc(x.Id)}" title="${esc(x.Id)}">${esc(x.Name != null ? x.Name : x.Id)}</button>`).join('')
         : `<div class="ds-drift-compare-empty">No ${esc(refObj)} record matches ${term ? `“${esc(term)}”` : 'that'} in ${esc(tgtL)}.</div>`;
-      res.querySelectorAll('[data-ve-hit]').forEach(h => h.addEventListener('click', async () => {
-        for (const id of ids) sftkLkpOvSet(node, p.targetOrg, id, field, h.dataset.veHit);
-        if (typeof _lkpNameCache !== 'undefined') _lkpNameCache.set(h.dataset.veHit, h.textContent);
-        await saveNode();
-        box.querySelector('.ds-ve-lkp-cur').innerHTML = `<span class="ds-lkp-on" title="${esc(h.dataset.veHit)}">📌 ${esc(h.textContent)}</span> <button class="ds-btn ds-btn-xs" data-ve-lkp-clear="${esc(field)}" title="Back to matching by name">✕</button>`;
-        box.closest('tr').classList.add('ds-ve-row-on');
-        wireClear(box);
-        res.style.display = 'none'; inp.value = '';
-        showToast(`📌 ${field} → ${h.textContent} for ${many ? `${ids.length.toLocaleString()} records` : 'this record'} — saved.`, 'success', 4000);
-        if (typeof onSaved === 'function') onSaved();
-      }));
+      wireHits(res);
     };
     inp.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 300); });
     inp.addEventListener('focus', () => { if (res.style.display === 'none') run(); });
     wireClear(box);
+    // where the lookup lands when nothing is picked — the engine's name bridge, previewed (folded in from the
+    // 🔗 lookups panel, user 2026-10-31: "values and lookups can become one view"): the target record(s) that
+    // carry the source parent's name — one (it lands there), several (the first wins — pick to be sure), none (empty)
+    const land = box.querySelector('[data-ve-land]');
+    if (land && tgtSess && tgtSess.sid && box.dataset.veSrcname) (async () => {
+      const nm = box.dataset.veSrcname;
+      const r = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, _suppressError: true, query: `SELECT Id, Name FROM ${refObj} WHERE Name = '${nm.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' LIMIT 5` });
+      if (!land.isConnected) return;
+      if (!r || r.error) { land.remove(); return; }
+      const recs = r.records || [];
+      if (recs.length === 1) {
+        if (typeof _lkpNameCache !== 'undefined') _lkpNameCache.set(recs[0].Id, recs[0].Name);
+        land.innerHTML = `✓ lands on <b>${esc(recs[0].Name)}</b> — the one ${esc(refObj)} named so in ${esc(tgtL)}`;
+      } else if (recs.length) {
+        land.className = 'ds-ve-land ds-ve-land-bad';
+        land.innerHTML = `⚠ ${recs.length}${recs.length === 5 ? '+' : ''} ${esc(refObj)} records named “${esc(nm)}” in ${esc(tgtL)} — the first wins; pick one to be sure: ${recs.map(x => `<button class="ds-lkpo-hit" data-ve-hit="${esc(x.Id)}" title="${esc(x.Id)}">${esc(x.Name)}</button>`).join('')}`;
+        wireHits(land);
+      } else {
+        // a parent this same run inserts is connected after insert (the engine's late link) — not empty
+        const parentId = srcRec ? srcRec[field] : null;
+        const inTree = typeof collectTreeObjects === 'function' && p.tree && collectTreeObjects(p.tree).has(refObj);
+        const insertedToo = inTree && p.tree && p.tree.objectType === obj && refObj === obj && parentId && ((p.lastScan && p.lastScan.missingInTarget) || []).some(r => (r && r.sourceId ? r.sourceId : r) === parentId);
+        if (insertedToo) land.innerHTML = `✓ <b>${esc(nm)}</b> is inserted by this run too — the lookup is connected after insert`;
+        else if (inTree) { land.className = 'ds-ve-land'; land.innerHTML = `ℹ no ${esc(refObj)} named “${esc(nm)}” in ${esc(tgtL)} yet — ${esc(refObj)} is part of this deployment: inserted in the same run it is connected after insert, otherwise pick one here or the lookup lands empty`; }
+        else { land.className = 'ds-ve-land ds-ve-land-bad'; land.innerHTML = `⚠ no ${esc(refObj)} named “${esc(nm)}” in ${esc(tgtL)} — the lookup lands EMPTY unless you pick one`; }
+      }
+    })();
   });
   function wireClear(box) {
     box.querySelectorAll('[data-ve-lkp-clear]').forEach(b => b.addEventListener('click', async () => {
       const field = b.dataset.veLkpClear;
       for (const id of ids) if (typeof sftkLkpOvClear === 'function') sftkLkpOvClear(node, p.targetOrg, id, field);
       await saveNode();
-      const refObj = box.dataset.veRefobj;
-      box.querySelector('.ds-ve-lkp-cur').innerHTML = `<span class="ds-dep-muted">matched by ${esc((lkpCfg[field] && lkpCfg[field].matchField) || 'Name')} in ${esc(tgtL)}</span>`;
-      const tr = box.closest('tr'); if (tr && !refObj) tr.classList.remove('ds-ve-row-on'); else if (tr) tr.classList.remove('ds-ve-row-on');
+      box.querySelector('.ds-ve-lkp-cur').innerHTML = matchLine(field);
+      const inp0 = box.querySelector('.ds-ve-lkp-in'); if (inp0) { inp0.value = ''; inp0.classList.remove('ds-ve-lkp-in-on'); }
+      const landEl = box.querySelector('[data-ve-land]'); if (landEl) landEl.style.display = '';
+      const tr = box.closest('tr'); if (tr) tr.classList.remove('ds-ve-row-on');
       if (typeof onSaved === 'function') onSaved();
     }));
   }
