@@ -240,3 +240,10 @@ orgs end as they began (target 4 fixture Accounts, source 8).
 Not scripted: a clean install by hand (the harness starts every run from an empty profile
 with the packed build, which covers the gate and first open), an expired-session path, the
 store assets (listing text and README now say Activity; screenshots still to be retaken).
+
+### The rest (same day): install from the zip, an expired session, the store screenshots, UI bugs
+
+- **Install from the zip.** `dist/salesforce-toolkit-v1.0.0-store.zip` unzipped and loaded as-is in a fresh profile: both pages boot, the licence gate shows once, no console error, version 1.0.0, the cut tabs and buttons absent. ✅
+- **Expired session** (`scripts/dev/live/session-expired.mjs`: the source org's cookie replaced by garbage, the page reloaded). The Toolkit silently works on the other open org. Data Studio's scan toast read `source query failed: SESSION_EXPIRED` → ❌ fixed: it names the org and says to sign in again and refresh (test/session-toast-1031). The parents card on a dead session: checked in the same script after the fix.
+- **Store screenshots** (`scripts/dev/live/screenshots.mjs`): every screen in both themes plus Activity in both pages, into `dist/store-shots/`. The first run showed light rows on dark pages — the capture caught rows mid-transition; the script now switches transitions off before each shot. Org Compare picks the new orgs.
+- **UI review of the frames** led to: the pairing dialog redrawn (Match review), the per-copy question folded behind the merge, the Flows page drawn tighter with "+ subflows", the bulk-edit button renamed with its count, plain words for an expired session and a refused merge. All in CHANGELOG 1.0.0.

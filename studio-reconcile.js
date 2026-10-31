@@ -1974,18 +1974,27 @@ async function renderReconcile() {
 // place, and re-renders the modal. Not offered on ephemeral profiles
 // (ring/compare clones) — memory belongs to the saved deployment.
 function openMatchReview(p) {
+  // 2026-10-31 (user: "how can we take this thing and make it better? and more easy to understand?
+  // ui and functionality"): pairs made here can be taken back, every candidate says how alike it
+  // is and why, both records open, and the words say what a pair does.
   const scan = p?.lastScan;
   if (!scan) return;
   const tgtKey = _orgKey(p.targetOrg || '');
   const lbl = k => esc(typeof sftkMatchKeyLabel === 'function' ? sftkMatchKeyLabel(k) : String(k ?? ''));
-  let paired = 0;         // pairs made this modal session
-  let selSrcId = null;    // selected "in source only" row
-  let clearArmed = false; // two-click confirm for the clear-memory button
+  const srcL = orgLabel(p.sourceOrg || ''), tgtL = orgLabel(p.targetOrg || '');
+  const url = (org, id) => `${esc(String(org || '').replace(/\/$/, ''))}/lightning/r/${esc(id)}/view`;
+  const obj = scan.objectType || '';
+  const madeHere = [];    // pairs made in this dialog: { srcRow, tgtRow } — each can be taken back
+  let selSrcId = null;    // the "in source only" record picked on the left
+  let clearArmed = false; // two-click confirm for the forget-all button
+  let showAll = false;    // every candidate, not just the six most alike
+  const pct = s => Math.round((Number(s) || 0) * 100);
+  const word = s => s >= 0.8 ? 'very alike' : s >= 0.5 ? 'alike' : s > 0 ? 'a little alike' : 'nothing in common';
 
   function finish() {
     closeModal();
-    if (paired > 0) {
-      showToast(`${paired} pair(s) remembered — 🔄 Refresh state to see their drift status`, 'success', 6000);
+    if (madeHere.length) {
+      showToast(`${madeHere.length} pair(s) remembered for ${tgtL} — 🔄 Refresh state to see where each now lands`, 'success', 6000);
       renderReconcile();
     }
   }
@@ -1995,39 +2004,38 @@ function openMatchReview(p) {
     const extras  = scan.onlyInTarget || [];
     const memN    = Object.keys((p.matchMemory || {})[tgtKey] || {}).length;
     clearArmed = false;
-    if (!selSrcId || !missing.some(r => r.sourceId === selSrcId)) {
-      selSrcId = missing.length ? missing[0].sourceId : null;
-    }
+    if (!selSrcId || !missing.some(r => r.sourceId === selSrcId)) selSrcId = missing.length ? missing[0].sourceId : null;
     const selRow = missing.find(r => r.sourceId === selSrcId) || null;
 
-    const listHtml = missing.length ? missing.map(r => `
-      <div class="ds-mm-src" data-mm-src="${esc(r.sourceId)}"
-        style="padding:5px 8px;cursor:pointer;border-bottom:1px solid rgba(128,128,128,.15);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap${r.sourceId === selSrcId ? ';background:#eef2ff;font-weight:600' : ''}"
-        title="${lbl(r.matchKey)}">${lbl(r.matchKey)}</div>`).join('')
-      : `<div class="ds-rec-col-empty" style="padding:10px">no unmatched source records 🎉</div>`;
+    const srcList = missing.length ? missing.map(r => `
+      <div class="ds-mm-src${r.sourceId === selSrcId ? ' ds-mm-on' : ''}" data-mm-src="${esc(r.sourceId)}" title="${lbl(r.matchKey)}">
+        <span class="ds-mm-name">${lbl(r.matchKey)}</span>
+        <a class="ds-dep-open" href="${url(p.sourceOrg, r.sourceId)}" target="_blank" rel="noopener" title="Open this ${esc(srcL)} record">open ↗</a>
+      </div>`).join('')
+      : `<div class="ds-mm-empty">Every ${esc(srcL)} record has its match 🎉</div>`;
 
     let candHtml;
     if (!selRow) {
-      candHtml = `<div class="ds-rec-col-empty" style="padding:10px">select a source row on the left</div>`;
+      candHtml = `<div class="ds-mm-empty">Pick a record on the left.</div>`;
     } else if (!extras.length) {
-      candHtml = `<div class="ds-rec-col-empty" style="padding:10px">no unmatched target records to pair with</div>`;
+      candHtml = `<div class="ds-mm-empty">${esc(tgtL)} has no unmatched record left to pair with — this one is new there and is inserted.</div>`;
     } else {
-      let ranked;
-      try {
-        ranked = extras
-          .map(r => ({ r, sim: sftkPairSimilarity(String(selRow.matchKey ?? ''), String(r.matchKey ?? '')) }))
-          .sort((a, b) => b.sim - a.sim)
-          .slice(0, 5);
-      } catch (_) {
-        ranked = extras.slice(0, 5).map(r => ({ r, sim: 0 }));   // degrade: unranked
-      }
-      candHtml = ranked.map(c => `
-        <div class="ds-mm-cand" style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid rgba(128,128,128,.15);font-size:12px">
-          <span style="min-width:38px;text-align:right;color:var(--subtext);font-variant-numeric:tabular-nums" title="Key similarity — a ranking hint only, never an automatic match">${Math.round(c.sim * 100)}%</span>
-          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${lbl(c.r.matchKey)}">${lbl(c.r.matchKey)}${c.r.orphan ? ' <span class="ds-chip">possible orphan</span>' : ''}</span>
-          <button class="ds-btn ds-btn-xs ds-btn-primary" data-mm-pair="${esc(c.r.targetId)}"
-            title="These two are the SAME record — remember the pair. Future scans match them by identity, even after renames.">Pair ⇒</button>
-        </div>`).join('');
+      const ranked = extras.map(r => {
+        let parts = { score: 0, prefix: 0, bigrams: 0, words: 0 };
+        try { parts = sftkPairSimilarityParts(String(selRow.matchKey ?? ''), String(r.matchKey ?? '')); } catch (_) { /* unranked */ }
+        return { r, sim: parts.score, parts };
+      }).sort((a, b) => b.sim - a.sim);
+      const shown = showAll ? ranked : ranked.slice(0, 6);
+      candHtml = shown.map(c => `
+        <div class="ds-mm-cand">
+          <span class="ds-mm-sim" title="How alike the two names are — the best of: shares the start ${pct(c.parts.prefix)}% · letter pairs in common ${pct(c.parts.bigrams)}% · words in common ${pct(c.parts.words)}%. A ranking hint only — you decide.">
+            <span class="ds-mm-bar"><span style="width:${pct(c.sim)}%"></span></span><b>${pct(c.sim)}%</b><span class="ds-mm-word">${word(c.sim)}</span></span>
+          <span class="ds-mm-name" title="${lbl(c.r.matchKey)}">${lbl(c.r.matchKey)}${c.r.orphan ? ' <span class="ds-chip" title="Its parent is not in the target either">possible orphan</span>' : ''}</span>
+          <a class="ds-dep-open" href="${url(p.targetOrg, c.r.targetId)}" target="_blank" rel="noopener" title="Open this ${esc(tgtL)} record">open ↗</a>
+          <button class="ds-btn ds-btn-xs ds-btn-primary" data-mm-pair="${esc(c.r.targetId)}" title="These two are the SAME record: the pair is remembered for ${esc(tgtL)} and used on every scan from now on, even after a rename.">🔗 Pair</button>
+        </div>`).join('')
+        + (ranked.length > shown.length ? `<button class="ds-btn ds-btn-xs ds-mm-more" data-mm-more="1">Show the other ${ranked.length - shown.length}</button>` : '')
+        + `<div class="ds-mm-none">None of these is it? Leave it — it is inserted as a new ${esc(tgtL)} record.</div>`;
     }
 
     // L6 — Match review pairs rows out of the SHIPPED buckets, so on a capped
@@ -2044,32 +2052,32 @@ function openMatchReview(p) {
       }
     } catch (_) { mmCapNote = ''; }
 
+    const made = madeHere.length ? `<div class="ds-mm-made"><b>Paired now (${madeHere.length})</b> <span class="ds-dep-muted">— remembered already; ↩ takes one back</span>
+      ${madeHere.map((m, i) => `<div class="ds-mm-pair"><span class="ds-mm-name">${lbl(m.srcRow.matchKey)}</span><span class="ds-dep-muted">is</span><span class="ds-mm-name">${lbl(m.tgtRow.matchKey)}</span><button class="ds-btn ds-btn-xs" data-mm-unpair="${i}" title="Forget this pair — both records go back to their lists">↩ Unpair</button></div>`).join('')}</div>` : '';
+
     showModal(`
-      <div class="ds-modal-header">🔗 Match review — ${esc(scan.objectType || '')}</div>
+      <div class="ds-modal-header">🔗 Pair records by hand — ${esc(obj)}<span class="ds-dc-modal-sub">the same record under a different name in each org</span></div>
       <div class="ds-modal-body">
-        <p style="font-size:12px;color:var(--subtext);margin:0 0 10px">Pick a source record, then pair it with the target record it actually is (renamed, retyped, …). Pairs are remembered 🧠 per target org and matched by identity on every future scan. The % is a similarity <em>hint</em> — pairing is always your call.</p>
-        ${mmCapNote ? `<div class="ds-rec-child-info ds-rec-cap-note" style="border-left:3px solid #f59e0b;padding-left:8px;margin:0 0 10px;font-size:12px">${esc(mmCapNote)}</div>` : ''}
-        <div class="ds-mm-grid" style="display:flex;gap:12px;max-height:340px">
-          <div style="flex:1;min-width:0;overflow:auto;border:1px solid rgba(128,128,128,.35);border-radius:6px">
-            <div style="padding:5px 8px;font-weight:600;font-size:11px;position:sticky;top:0;background:inherit;border-bottom:1px solid rgba(128,128,128,.25)">🔴 In source only (${missing.length}${mmCapNote ? ' listed' : ''})</div>
-            ${listHtml}
-          </div>
-          <div style="flex:1.25;min-width:0;overflow:auto;border:1px solid rgba(128,128,128,.35);border-radius:6px">
-            <div style="padding:5px 8px;font-weight:600;font-size:11px;position:sticky;top:0;background:inherit;border-bottom:1px solid rgba(128,128,128,.25)">🔵 Closest "in target only" candidates${selRow ? ` for <em>${lbl(selRow.matchKey)}</em>` : ''}</div>
-            ${candHtml}
-          </div>
+        <p class="ds-mm-intro">Left: ${esc(srcL)} records with no match. Right: unmatched ${esc(tgtL)} records, ranked by how alike the names are. Two that are the same record? 🔗 Pair them — remembered for ${esc(tgtL)}, used on every scan from now on; the record then shows under 🟡 Changed or 🟢 Synced instead of 🔴 Insert.</p>
+        <details class="ds-mm-how"><summary>How the % is measured</summary><div>The two names are compared as the scan matches them (the match key, case and punctuation ignored). Three measures are taken and the best one counts: how much of the <b>start</b> they share, how many <b>letter pairs</b> they have in common (a typo or a changed ending still scores), and how many <b>words</b> they share (reordered or added words still score). 100% is the same text. The % only orders the list — nothing is paired without your click.</div></details>
+        ${mmCapNote ? `<div class="ds-rec-child-info ds-rec-cap-note ds-mm-cap">${esc(mmCapNote)}</div>` : ''}
+        <div class="ds-mm-grid">
+          <div class="ds-mm-col"><div class="ds-mm-hd">🔴 Only in ${esc(srcL)} (${missing.length}${mmCapNote ? ' listed' : ''})</div>${srcList}</div>
+          <div class="ds-mm-col ds-mm-col-r"><div class="ds-mm-hd">🔵 Only in ${esc(tgtL)}${selRow ? ` — ranked for <em>${lbl(selRow.matchKey)}</em>` : ''}</div>${candHtml}</div>
         </div>
+        ${made}
       </div>
-      <div class="ds-modal-footer" style="display:flex;gap:8px;align-items:center">
-        <button class="ds-btn ds-btn-sm" id="dsMmClearMem" ${memN ? '' : 'disabled'}
-          title="Forget every remembered pair for this target org — those records fall back to key matching on the next scan.">🧠 Clear memory for this org (${memN} remembered)</button>
-        <span style="flex:1"></span>
-        ${paired ? `<span class="ds-chip">🧠 ${paired} paired</span>` : ''}
+      <div class="ds-modal-footer ds-mm-foot">
+        <span class="ds-dep-muted">🧠 ${memN.toLocaleString()} pair(s) remembered for ${esc(tgtL)}</span>
+        <button class="ds-btn ds-btn-xs" id="dsMmClearMem" ${memN ? '' : 'disabled'} title="Forget every remembered pair for this target org — those records match by name again on the next scan.">Forget them all…</button>
+        <span class="ds-dep-sp"></span>
         <button class="ds-btn ds-btn-primary" id="dsMmClose">Done</button>
       </div>`);
 
-    document.querySelectorAll('[data-mm-src]').forEach(el =>
-      el.addEventListener('click', () => { selSrcId = el.dataset.mmSrc; render(); }));
+    // room for two names, their links and the buttons on one line
+    { const box = eid('dsModalBox'); if (box) { box.style.width = 'min(1000px, 94vw)'; box.style.maxWidth = '94vw'; } }
+    document.querySelectorAll('[data-mm-src]').forEach(el => el.addEventListener('click', () => { selSrcId = el.dataset.mmSrc; showAll = false; render(); }));
+    document.querySelector('[data-mm-more]')?.addEventListener('click', () => { showAll = true; render(); });
 
     document.querySelectorAll('[data-mm-pair]').forEach(btn =>
       btn.addEventListener('click', async () => {
@@ -2091,10 +2099,28 @@ function openMatchReview(p) {
           _recSel.push.delete(srcRow.sourceId);
           _recSel.del.delete(tgtRow.targetId);
           _recSel.pull.delete(tgtRow.targetId);
-          paired++;
+          madeHere.push({ srcRow, tgtRow });
           if (!p.ephemeral) await storageSaveProfiles();   // persist the bucket edit
         } catch (e) {
           showToast(`Couldn't record the pair: ${e?.message || e}`, 'error', 5000);
+        }
+        render();
+      }));
+
+    // ↩ a pair made here is forgotten again and both records return to their lists
+    document.querySelectorAll('[data-mm-unpair]').forEach(btn =>
+      btn.addEventListener('click', async () => {
+        const m = madeHere[Number(btn.dataset.mmUnpair)];
+        if (!m) return;
+        try {
+          await window.sftkForgetPairs?.(p.id, p.targetOrg, [m.srcRow.sourceId]);
+          (scan.missingInTarget = scan.missingInTarget || []).push(m.srcRow);
+          (scan.onlyInTarget = scan.onlyInTarget || []).push(m.tgtRow);
+          madeHere.splice(madeHere.indexOf(m), 1);
+          selSrcId = m.srcRow.sourceId;
+          if (!p.ephemeral) await storageSaveProfiles();
+        } catch (e) {
+          showToast(`Couldn't take the pair back: ${e?.message || e}`, 'error', 5000);
         }
         render();
       }));
@@ -2114,7 +2140,7 @@ function openMatchReview(p) {
         const real = _profiles.find(x => x.id === p.id);
         if (real && real !== p && real.matchMemory) delete real.matchMemory[tgtKey];
         await storageSaveProfiles();
-        showToast('Match memory cleared for this org — the next scan matches by key only', 'success', 4500);
+        showToast(`Every remembered pair for ${tgtL} is forgotten — the next scan matches by name only`, 'success', 4500);
       } catch (e) {
         showToast(`Couldn't clear match memory: ${e?.message || e}`, 'error', 5000);
       }

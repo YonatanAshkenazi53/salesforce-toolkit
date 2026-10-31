@@ -1465,6 +1465,28 @@ function buildGroupElement(label, versions, depMap) {
     updateGroupCheckbox(group, versions); updateActionBar(); updateSelectionSummary(); renderVersionCheckboxes(group, versions);
   });
   groupInfo.appendChild(wholeBtn);
+  // whole flow + the subflows it calls (user 2026-10-31: "an option to also add subflows"): every version of
+  // this flow AND of every flow down its subflow tree. Only when the dependency scan has read this flow —
+  // "calls unknown" must never become "calls nothing". On delete the parents go first and a subflow another
+  // flow still calls is flagged by the dependency check before anything is deleted.
+  const scanned = typeof DependencyMap.flowScanState !== 'function' || DependencyMap.flowScanState(apiName).state === 'scanned';
+  const tree = apiName && scanned && typeof DependencyMap.subflowClosure === 'function' ? DependencyMap.subflowClosure([apiName]) : null;
+  const subNames = tree ? tree.names.filter(n => n !== apiName) : [];
+  if (subNames.length) {
+    const treeBtn = document.createElement('button');
+    treeBtn.type = 'button';
+    treeBtn.className = 'flow-whole-btn flow-tree-btn';
+    treeBtn.textContent = `${currentMode === 'delete' ? '🗑' : '✓'} + ${subNames.length} subflow${subNames.length === 1 ? '' : 's'}`;
+    treeBtn.title = `${currentMode === 'delete' ? 'Delete' : 'Select'} the whole flow AND every version of the ${subNames.length} subflow(s) it calls, down the whole tree: ${subNames.join(', ')}${tree.truncated ? ' …' : ''}.${currentMode === 'delete' ? ' A subflow another flow still calls is flagged before anything is deleted; the parents go first.' : ''}`;
+    treeBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      versions.forEach(v => selectedIds.add(v.Id));
+      const names = new Set(subNames);
+      for (const f of allFlows) if (names.has(f.ApiName)) selectedIds.add(f.Id);
+      renderFlowList(); updateActionBar(); updateSelectionSummary();
+    });
+    groupInfo.appendChild(treeBtn);
+  }
   const intChip = buildInterviewChip(versions);
   if (intChip) groupInfo.appendChild(intChip);
 

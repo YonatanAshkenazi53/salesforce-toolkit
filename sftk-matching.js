@@ -371,31 +371,49 @@ function sftkAmbTwice(answers) {
   return '';
 }
 
-// 0..1 similarity of two ALREADY-NORMALIZED match-key strings. Component-
-// aware: keys split on the U+0001 separator (String.fromCharCode(1), inlined
-// for self-contained extraction) and the score is the MEAN of per-component
-// scores — 1 for equal components, else prefix-ratio partial credit
-// (shared-prefix length / longer component length).
-//
-// FOR RANKING MATCH-REVIEW CANDIDATES ONLY. Never use this for automatic
-// matching — pairing is a human decision (M3c invariant).
-function sftkPairSimilarity(keyA, keyB) {
+// 0..1 similarity of two ALREADY-NORMALIZED match-key strings, for RANKING the
+// Match review candidates only — never for automatic matching (pairing is a
+// human decision, M3c invariant). Component-aware: keys split on the U+0001
+// separator (String.fromCharCode(1), inlined for self-contained extraction) and
+// the score is the MEAN of per-component scores. A component scores 1 when
+// equal; otherwise the BEST of three ways of being alike (2026-10-31, user:
+// "how do we calculate the matching here? show it to the user"):
+//   prefix   how much of the start they share (shared-prefix length / longer length)
+//   bigrams  letter pairs in common (Dice) — catches a typo or a changed ending
+//   words    words in common (Jaccard) — catches reordered or added words
+// sftkPairSimilarityParts returns the three means too, so the dialog can say
+// why a candidate ranks where it does.
+function sftkPairSimilarityParts(keyA, keyB) {
   const a = String(keyA === null || keyA === undefined ? '' : keyA).split(String.fromCharCode(1));
   const b = String(keyB === null || keyB === undefined ? '' : keyB).split(String.fromCharCode(1));
   const n = Math.max(a.length, b.length);
-  if (!n) return 0;
-  let sum = 0;
+  if (!n) return { score: 0, prefix: 0, bigrams: 0, words: 0 };
+  const grams = s => { const t = s.replace(/[^\p{L}\p{N}]+/gu, ' ').trim().toLowerCase(); const out = []; for (let i = 0; i + 1 < t.length; i++) out.push(t.slice(i, i + 2)); return out; };
+  const wordsOf = s => new Set(s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+  let sp = 0, sb = 0, sw = 0, best = 0;
   for (let i = 0; i < n; i++) {
     const x = a[i] || '', y = b[i] || '';
-    if (x === y) { sum += 1; continue; }        // equal (both-blank counts as equal)
+    if (x === y) { sp += 1; sb += 1; sw += 1; best += 1; continue; }        // equal (both-blank counts as equal)
     const longer = Math.max(x.length, y.length);
-    if (!longer) { sum += 1; continue; }
+    if (!longer) { sp += 1; sb += 1; sw += 1; best += 1; continue; }
     const shorter = Math.min(x.length, y.length);
     let p = 0;
     while (p < shorter && x[p] === y[p]) p++;
-    sum += p / longer;
+    const prefix = p / longer;
+    const gx = grams(x), gy = grams(y);
+    let common = 0; const pool = new Map(); for (const g of gy) pool.set(g, (pool.get(g) || 0) + 1);
+    for (const g of gx) { const k = pool.get(g) || 0; if (k > 0) { common++; pool.set(g, k - 1); } }
+    const bigrams = gx.length + gy.length ? (2 * common) / (gx.length + gy.length) : 0;
+    const wx = wordsOf(x), wy = wordsOf(y);
+    let both = 0; for (const w of wx) if (wy.has(w)) both++;
+    const union = new Set([...wx, ...wy]).size;
+    const words = union ? both / union : 0;
+    sp += prefix; sb += bigrams; sw += words; best += Math.max(prefix, bigrams, words);
   }
-  return sum / n;
+  return { score: best / n, prefix: sp / n, bigrams: sb / n, words: sw / n };
+}
+function sftkPairSimilarity(keyA, keyB) {
+  return sftkPairSimilarityParts(keyA, keyB).score;
 }
 
 // ── Scan accuracy (2026-07-17, user: "say how accurate it is") ────────────
@@ -729,6 +747,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkCrossOrgPreview     = sftkCrossOrgPreview;
   globalThis.sftkMatchKeyScore       = sftkMatchKeyScore;
   globalThis.sftkMemoryMerge         = sftkMemoryMerge;
+  globalThis.sftkPairSimilarityParts = sftkPairSimilarityParts;
   globalThis.sftkPairSimilarity      = sftkPairSimilarity;
   globalThis.sftkScanAccuracy        = sftkScanAccuracy;
   globalThis.sftkScanKeyClasses      = sftkScanKeyClasses;

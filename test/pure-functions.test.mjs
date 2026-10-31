@@ -363,7 +363,7 @@ describe('sftkBuildStoredZip (sftk-zip.js) — the shared Metadata-deploy zip bu
 
 describe('match memory (M3c) — sftk-matching.js pure helpers', () => {
   const { sftkMemoryMerge, sftkPairSimilarity } =
-    extractFunctions('sftk-matching.js', ['sftkMemoryMerge', 'sftkPairSimilarity']);
+    extractFunctions('sftk-matching.js', ['sftkMemoryMerge', 'sftkPairSimilarityParts', 'sftkPairSimilarity']);   // 2026-10-31: the % is the best of three measures
 
   it('sftkMemoryMerge merges, refreshes recency, evicts oldest past the cap', () => {
     const m1 = sftkMemoryMerge({}, [['s1', 't1'], ['s2', 't2']]);

@@ -378,7 +378,11 @@ async function sftkMergeRun(ctx) {
   const ok = deleted.length === dupIds.length;
   const text = ok
     ? `${label} "${name}": ${deleted.length === 1 ? 'the copy' : `${deleted.length} copies`} merged into ${survivorId}${fields.length ? ` with ${fields.length} chosen value${fields.length === 1 ? '' : 's'}` : ''} — verified by re-reading the org`
-    : `${label} "${name}": ${deleted.length} of ${dupIds.length} copies merged; ${kept.length} left as ${kept.length === 1 ? 'it was' : 'they were'} (${kept.join(', ')}) — see the lines`;
+    : `${label} "${name}": ${deleted.length} of ${dupIds.length} copies merged; ${kept.length} left as ${kept.length === 1 ? 'it was' : 'they were'} (${kept.join(', ')})${(() => {
+        // the reason, in the sentence (user 2026-10-31 saw "— see the lines" with nothing to see): the last refusal line
+        const why = lines.filter(l => /❌|⚠|refus|could not|cannot|can't|still there|not allowed|insufficient|invalid|failed/i.test(String(l))).slice(-1)[0];
+        return why ? ` — ${String(why).replace(/^[❌⚠✅]\s*/, '')}` : '';
+      })()}. Every line is in 🧾 Activity.`;
   return { ok, text, lines, deleted, kept };
 }
 

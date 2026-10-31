@@ -83,7 +83,6 @@ function renderBuilder() {
       // ONE primary in the region (Save &amp; Run). Save/Cancel are neutral,
       // and nothing here is destructive, so nothing here is red.
       actions: `${p.tree ? `<button class="ds-btn" id="dsPreviewAllBtn" title="Count records for every node in parallel">${dsIcon('eye')}Preview All</button>
-        <button class="ds-btn" id="dsBldCheckTargets" title="Describe the default target and verify the tree's objects + every mapped field exist there — the multi-org answer to 'which org will this break in?'">${dsIcon('flask')}Check all targets</button>
         ${sftkShips('pii') ? `<button class="ds-btn" id="dsBldSuggestPii" title="Scan every object in this tree for likely PII (field types, names/labels, org compliance classification) and add write-time mask rules — masked/pseudonymized, never written raw">${dsIcon('lock')}Suggest PII masks</button>` : ''}
         <button class="ds-btn" id="dsBuilderCancel">Cancel</button>` : ''}
         <button class="ds-btn" id="dsBuilderSave">${dsIcon('save')}Save</button>
@@ -212,7 +211,8 @@ function renderBuilder() {
   eid('dsSetRoot')?.addEventListener('click', () => setRootObject());
   _bldWireRootCombo();
   eid('dsPreviewAllBtn')?.addEventListener('click', () => previewAll());
-  eid('dsBldCheckTargets')?.addEventListener('click', () => _bldCheckAllTargets());
+  // the builder's "Check all targets" button left on 2026-10-31 (user: "we don't check against multiple targets here —
+  // it's done from the page of all open orgs"); _bldCheckAllTargets stays for the import dialog
   eid('dsBldSuggestPii')?.addEventListener('click', () => bldOpenPiiSuggestModal());
 
   // Save & Run — commit the profile, then jump straight to the Run page.

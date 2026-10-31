@@ -1987,7 +1987,18 @@ async function refreshProfileDiff(profileId) {
   if (!profile) return null;
   const res = await runDiffScan(profile);
   if (res?.error) {
-    showToast(`Diff scan: ${res.error}`, 'error', 6000);
+    // an expired session is said in words, naming the org to sign in to again (pre-ship QA 2026-10-31:
+    // the toast read "source query failed: SESSION_EXPIRED"); other known codes go through the friendly text
+    const raw = String(res.error);
+    let msg = `Diff scan: ${raw}`;
+    if (/SESSION_EXPIRED|INVALID_SESSION_ID/i.test(raw)) {
+      const org = /^source/i.test(raw) ? profile.sourceOrg : /^target/i.test(raw) ? profile.targetOrg : '';
+      msg = `Your session in ${org ? orgLabel(org) : 'one of the orgs'} has expired — open it in its Chrome tab and sign in again, then 🔄 Refresh state.`;
+    } else if (typeof sftkFriendlyError === 'function') {
+      const fe = sftkFriendlyError(raw);
+      if (fe && fe.type && fe.type !== 'generic' && fe.message) msg = `Diff scan: ${fe.message}${fe.hint ? ` — ${fe.hint}` : ''}`;
+    }
+    showToast(msg, 'error', 9000);
     return res;
   }
   // M3c — AUTO-LEARN: merge this scan's confirmed 1:1 pairs into the real
