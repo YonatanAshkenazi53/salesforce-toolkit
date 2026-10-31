@@ -58,7 +58,7 @@ export default async function (h) {
   await pick(h, '#fcFieldInput', '#fcFieldDrop', 'SFTK_FC_Test_Status__c');
   h.log('pill:', await dump(h, '#fcPill', 300));
   await h.click('#fcScanBtn');
-  await h.waitFor("/reference|Nothing references|No references|found/i.test(document.querySelector('#fcResults')?.innerText || '') && !/scanning|⏳/i.test(document.querySelector('#fcScanBtn')?.innerText || '')", 180000, 1000);
+  await h.waitFor("/reference|Nothing references|No references|found|places? uses? it/i.test(document.querySelector('#fcResults')?.innerText || '') && !/scanning|⏳/i.test(document.querySelector('#fcScanBtn')?.innerText || '')", 180000, 1000);
   await h.sleep(2000);
   h.log('RESULTS:', await dump(h, '#fcResults', 3500));
   h.log('DATA VERDICT:', await dump(h, '#fcDataVerdict', 400));
@@ -117,7 +117,7 @@ export default async function (h) {
   // "keeps running" way is refused (an element would be left empty) is pressed
   // again with 🗑 Delete versions · flow off, never the same button twice.
   const tried = new Set();
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < (process.env.ONLY_FLOW === '1' ? 0 : 6); i++) {   // ONLY_FLOW=1: the flow fix alone, so UNDO=1 undoes it
     const pick = await h.eval(`(() => {
       const tried = new Set(${JSON.stringify([...tried])});
       for (const b of document.querySelectorAll('.fc-fix-btn:not([disabled])')) {
@@ -147,6 +147,13 @@ export default async function (h) {
     h.log('after fix — results:', await dump(h, '#fcResults', 1500));
   }
   h.log('DELETE ZONE now:', await dump(h, '#fcDeleteZone', 600));
+  // UNDO=<n>: undo the n newest entries of this session from the tool's History, newest first — the
+  // history lives in this run's fresh profile, so the undo has to happen in the same session (2026-10-31)
+  const nUndo = Number(process.env.UNDO || 0);
+  if (nUndo > 0 && process.env.DELETE_FIELD !== '1') {
+    for (let i = 0; i < nUndo; i++) { h.log(`── undo ${i + 1} of ${nUndo} ──`); h.log('SAID:', await undoNewest(h)); await h.sleep(1500); }
+    return;
+  }
   if (process.env.DELETE_FIELD !== '1') return;
   const del = await h.eval(`(() => { const b = document.querySelector('#fcDelBtn') || document.querySelector('#fcDelFreeBtn'); return b ? (b.textContent.trim() + (b.disabled ? '(off)' : '')) : null; })()`);
   h.log('delete button:', del);

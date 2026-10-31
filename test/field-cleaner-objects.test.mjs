@@ -554,7 +554,7 @@ describe('metadata-mutating fixes confirm before acting', () => {
     const i = SRC.indexOf('async function _fixOneRun(');   // 2026-10-05: fixOne is the wrapper that carries the per-item choice
     const fn = SRC.slice(i, SRC.indexOf('\n  }', i));
     expect(fn).toContain('await sftkConfirmDestructive({');
-    expect(fn).toContain('Flow versions that mention the field are deleted for good');   // 2026-09-21: the active version may go too, so not only "old" ones; v2 wording 2026-10-13
+    expect(fn).toContain('Flow versions that mention the field are deleted</strong> — Salesforce locks the field per version. A restore point of each is kept first: ↩ Undo in History puts the version that was active back');   // 2026-10-31: the way back is said in the confirmation
     expect(fn).toMatch(/needsCheckbox: type === 'Flow'/);
     expect(fn).toMatch(/if \(!sure\) return 'cancel';/);   // 2026-10-05: a bulk walk stops on Cancel
     // the confirm happens BEFORE the button flips to ⏳
