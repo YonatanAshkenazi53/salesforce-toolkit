@@ -57,12 +57,12 @@ export default async function (h) {
 
     // 2. the picker
     await h.eval(`document.querySelector('[data-dep-amb-merge="src"]').click()`);
-    await h.waitFor("!!document.querySelector('.ds-merge-table')", 60000, 300);
+    await h.waitFor("!!document.querySelector('.ds-merge-copies')", 60000, 300);   // 2026-10-30: copies are rows
     await h.sleep(500);
     h.log('2. PICKER:', await dump(h, '#dsModalBox', 2200));
-    const cols = await h.eval(`[...document.querySelectorAll('.ds-merge-table thead th[data-merge-col]')].map(th => th.innerText.replace(/\\s+/g, ' ').trim())`);
+    const cols = await h.eval(`[...document.querySelectorAll('[data-merge-copy]')].map(el => (el.innerText + ' ' + (el.querySelector('a[title]')?.title || '')).replace(/\s+/g, ' ').trim())`);   // 2026-10-30: copies are rows
     h.log('2. columns:', JSON.stringify(cols));
-    const fields = await h.eval(`[...document.querySelectorAll('tr[data-merge-field]')].map(tr => tr.dataset.mergeField)`);
+    const fields = await h.eval(`[...document.querySelectorAll('.ds-merge-frow[data-merge-field]')].map(tr => tr.dataset.mergeField)`);
     h.log('2. fields that differ:', JSON.stringify(fields));
     if (!fields.includes('BillingCity') || !fields.includes('AnnualRevenue')) throw new Error('Billing City / Annual Revenue are not offered');
     await h.shot(h.shots + '/merge-2-picker.png');
@@ -71,11 +71,11 @@ export default async function (h) {
     const keep = cols.findIndex(c => c.includes(haifa.Id)), other = cols.findIndex(c => c.includes(eilat.Id));
     if (keep < 0 || other < 0) throw new Error('the copies are not the fixture ids');
     await h.eval(`(() => { const r = document.querySelector('input[name="dsMergeKeep"][value="${keep}"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
-    for (const f of ['BillingCity']) await h.eval(`(() => { const r = document.querySelector('tr[data-merge-field="${f}"] input[value="${other}"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+    for (const f of ['BillingCity']) await h.eval(`(() => { const o = [...document.querySelectorAll('.ds-merge-frow[data-merge-field="${f}"] .ds-merge-opt[data-merge-idx]')].find(el => el.dataset.mergeIdx.split(',').map(Number).includes(${other})); const r = o.querySelector('input[type="radio"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
     // the third choice (2026-10-14): a value typed here — Annual Revenue becomes 7, a number neither copy holds
     await h.eval(`(() => { const i = document.querySelector('input[data-merge-custom="AnnualRevenue"]'); i.value = '7'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
     h.log('3. same-fields fold:', await h.eval(`(document.querySelector('.ds-merge-samefold summary')?.innerText || 'none')`));
-    const picked = await h.eval(`[...document.querySelectorAll('tr[data-merge-field]')].map(tr => tr.dataset.mergeField + '=' + (tr.querySelector('input:checked') || {}).value)`);
+    const picked = await h.eval(`[...document.querySelectorAll('.ds-merge-frow[data-merge-field]')].map(tr => tr.dataset.mergeField + '=' + (tr.querySelector('input:checked') || {}).value)`);
     h.log('3. keep column', keep, '| picks:', JSON.stringify(picked));
     await h.eval(`document.querySelector('#dsMergeGo').click()`);
     await h.waitFor("!!document.querySelector('#sftkConfirmGo')", 30000, 300);

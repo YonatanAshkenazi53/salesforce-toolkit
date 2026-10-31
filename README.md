@@ -35,8 +35,8 @@ https://youtu.be/w6sJUhMPFB8
   lookups connect, automation can be paused for the run, a long run can be paused and continued.
   Where a name exists twice in one org, Merge makes it one record, value by value.
 - **All open orgs** — every deployment against every open org at a glance.
-- **History** — every run with its counts and a roll back that deletes what a run created and
-  restores what it changed, then verifies.
+- **Activity** — everything both pages did, by day, each line with its actions: a roll back
+  that deletes what a run created and restores what it changed, then verifies; retry; undo.
 - **Org Compare** and **Org health**.
 
 ## How it treats your orgs
@@ -46,8 +46,8 @@ https://youtu.be/w6sJUhMPFB8
   name as well.
 - A write is never reported from the request alone: the org is read again and the receipt
   says what it showed.
-- Every change lands in History with its undo, where one exists; where none exists the entry
-  says so.
+- Every change lands in Activity with its undo, where one exists; where none exists the entry
+  says why.
 - No telemetry, no server. The only network calls go to your own Salesforce orgs. See
   [PRIVACY.md](PRIVACY.md) for every key the extension stores locally.
 

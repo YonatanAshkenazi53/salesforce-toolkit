@@ -25,7 +25,7 @@ async function openScanned(h) {
   if (!id) throw new Error('fixture profile missing');
   await h.eval(`window.runProfile(${JSON.stringify(id)})`); await h.sleep(1500);
   const dir = await h.eval("(() => { const p = _reconcileProfile; return p ? { src: p.sourceOrg || '', tgt: p.targetOrg || '' } : null; })()");
-  if (!dir || !dir.src.includes('trailheads5') || !/orgfarm|dev-ed/.test(dir.tgt)) throw new Error(`wrong direction ${JSON.stringify(dir)}`);
+  if (!dir || !dir.src.includes('c449e108c2') || !/orgfarm|dev-ed/.test(dir.tgt)) throw new Error(`wrong direction ${JSON.stringify(dir)}`);
   await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
   await h.waitFor("!!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000); await h.sleep(1500);
   return id;
@@ -116,7 +116,7 @@ export default async function (h) {
       const dupErr = berlin && /DUPLICATES_DETECTED|duplicate rule|Use one of these records\?/i.test(berlin.error || '') ? berlin : null;
       h.log(`Respect: status ${e1.status} · Berlin Lab refused: ${!!berlin} → "${berlin ? berlin.error : ''}" · recognisable as a duplicate rule: ${!!dupErr}`);
       h.log('all refusals:', JSON.stringify((e1.failed || []).map(f => `${f.label}: ${f.error}`)));
-      await h.eval(`document.querySelector('[data-view="history"]')?.click()`); await h.sleep(1200);
+      await h.eval(`navigateToView('history')`); await h.sleep(1200);
       await h.eval("document.querySelectorAll('.ds-history-card details').forEach(d => { d.open = true; })");
       const card = await h.eval("(document.querySelector('.ds-history-card')?.innerText || '').replace(/\\s+/g, ' ')");
       const friendly = /duplicate rule in the target org/i.test(card), raw = /Use one of these records\?/.test(card);
@@ -128,7 +128,7 @@ export default async function (h) {
       h.log(`CLI target after Respect: Berlin Lab present: ${mid.includes('SFTK CX Berlin Lab')} (must be false)`);
       if (!dupErr || mid.includes('SFTK CX Berlin Lab')) throw new Error('Respect did not block the near-duplicate');
       // Bypass → retry the failed record
-      await h.eval(`document.querySelector('[data-view="history"]')?.click()`); await h.sleep(1200);
+      await h.eval(`navigateToView('history')`); await h.sleep(1200);
       await h.eval(`document.querySelector('[data-dsaction="retryFailed"]').click()`);
       await h.waitFor("_currentView === 'deploy' && !!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000); await h.sleep(2000);
       await setOption(h, '#dsDepDupRules', 'bypass');
@@ -148,7 +148,7 @@ export default async function (h) {
       // roll back both runs, newest first
       process.env.SKIP_RUN = '1';
       await retryAndRollback(h);
-      await h.eval(`document.querySelector('[data-view="history"]')?.click()`); await h.sleep(1200);
+      await h.eval(`navigateToView('history')`); await h.sleep(1200);
       if (await h.eval(`!!document.querySelector('[data-dsaction="rollbackRun"]:not([disabled])')`)) await retryAndRollback(h);
     } finally {
       // safety net: whatever this test inserted today and did not roll back goes (the History of a

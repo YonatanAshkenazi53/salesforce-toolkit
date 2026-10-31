@@ -92,7 +92,7 @@ export default async function (h) {
   await h.waitFor("!document.querySelector('#dsDepRefresh')?.disabled && /scanned (just now|\d+ ?s)/.test(document.querySelector('.ds-view-header, .ds-dep-page')?.innerText || 'scanned just now')", 60000, 1000);
   await h.sleep(1500);
   h.log('PLAN after run:', await dump(h, '.ds-dep-plan', 1600));
-  await h.eval(`document.querySelector('[data-view="history"]')?.click()`);
+  await h.eval(`navigateToView('history')`);
   await h.waitFor("!!document.querySelector('.ds-history-card, .ds-history-item')", 20000, 500);
   await h.sleep(1000);
   h.log('HISTORY:', await dump(h, '.ds-history-card, .ds-history-item, #dsMain', 1800));

@@ -9,9 +9,9 @@ import { undoNewest } from './_undo.mjs';   // UNDO=1: Data Studio › History �
 const dump = async (h, sel, n = 2500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ');
 export default async function (h) {
   for (const o of (process.env.ORGS || 'npc').split(',')) await h.login(o.trim());
-  await h.popup('dependencies');
+  await h.popup('flows'); await h.eval("setFlowView('apiver')"); await h.waitFor("(document.getElementById('flowToolHost')?.innerText || '').length > 20", 60000, 500); await h.sleep(800);   // the one Flows page (2026-10-17): the tool is a view of it
   await h.watchErrors();
-  await h.eval(`document.querySelector('#flowViews [data-view="apiver"]').click()`);
+  // (the view is already open — a second click re-rendered the panel and cancelled its running compare)
   h.log('banner:', await dump(h, '#depNoDataBanner', 300));
   await h.sleep(800);
   

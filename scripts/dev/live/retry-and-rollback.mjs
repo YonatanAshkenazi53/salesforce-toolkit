@@ -40,7 +40,7 @@ export default async function (h) {
   }
 
   // ── ↻ Retry failed ──
-  await h.eval(`document.querySelector('[data-view="history"]')?.click()`);
+  await h.eval(`navigateToView('history')`);
   await h.waitFor("!!document.querySelector('.ds-history-card, .ds-history-item')", 20000, 500); await h.sleep(800);
   h.log('HISTORY newest:', (await dump(h, '.ds-history-card, .ds-history-item', 700)));
   const retryBtn = await h.eval(`!!document.querySelector('[data-dsaction="retryFailed"]')`);
@@ -55,7 +55,7 @@ export default async function (h) {
 
   // ── ↩ Roll back ──
   if (process.env.ROLLBACK === '0') return;
-  await h.eval(`document.querySelector('[data-view="history"]')?.click()`);
+  await h.eval(`navigateToView('history')`);
   await h.waitFor("!!document.querySelector('[data-dsaction=\"rollbackRun\"]')", 20000, 500); await h.sleep(500);
   // the newest run that CAN be rolled back (a run that wrote nothing offers a disabled button)
   const rbDisabled = !(await h.eval(`!!document.querySelector('[data-dsaction="rollbackRun"]:not([disabled])')`));
@@ -113,7 +113,7 @@ export default async function (h) {
     h.log('REPORT:', await dump(h, '.ds-dep-page', 2500));
     await h.shot(h.shots + '/rollback-report.png');
   }
-  await h.eval(`document.querySelector('[data-view="history"]')?.click()`); await h.sleep(1500);
+  await h.eval(`navigateToView('history')`); await h.sleep(1500);
   h.log('HISTORY after rollback:', await dump(h, '.ds-history-card, .ds-history-item', 900));
   if (process.env.HISTORY === '1') await historyPage(h);
 }
@@ -126,7 +126,7 @@ async function historyPage(h) {
   const cardCount = () => h.eval("document.querySelectorAll('.ds-history-card').length");
   const storedIds = () => h.eval(`new Promise(r => chrome.storage.local.get('sftk_history', d => r((JSON.stringify(d.sftk_history || []).match(new RegExp(${JSON.stringify(ID_RE)}, 'g')) || []).length)))`);
   const setting = k => h.eval(`new Promise(r => chrome.storage.local.get('ds_settings', d => r((d.ds_settings || {})[${JSON.stringify(k)}])))`);
-  await h.eval(`document.querySelector('[data-view="history"]')?.click()`); await h.sleep(1200);
+  await h.eval(`navigateToView('history')`); await h.sleep(1200);
   const total = await cardCount();
   h.log(`HISTORY PAGE: ${total} card(s) · entries ${await h.eval("JSON.stringify(_history.map(x => (x.kind || 'run') + ':' + x.status))")}`);
   h.log('HEADER:', lines(await h.eval("document.querySelector('#dsMain')?.innerText || ''"), 500));

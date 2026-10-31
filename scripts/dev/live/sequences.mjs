@@ -51,7 +51,7 @@ export default async function (h) {
   h.log('RESULT:', await dump(h, '#seqRunBody', 1500));
   await h.shot(h.shots + '/seq-result.png');
   await h.eval(`document.querySelector('#seqRunClose')?.click()`); await h.sleep(500);
-  await h.eval(`document.querySelector('[data-view="history"]')?.click()`); await h.sleep(1500);
+  await h.eval(`navigateToView('history')`); await h.sleep(1500);
   h.log('HISTORY newest:', await dump(h, '.ds-history-card, .ds-history-item', 600));
   if (process.env.ROLLBACK !== '1') return;
   // ↩ Roll back sequence — the newest History entry (same session: History lives in the profile's storage)
@@ -74,6 +74,6 @@ export default async function (h) {
   h.log('ROLLBACK LOG:', await dump(h, '#dsUndoLog', 2500));
   await h.shot(h.shots + '/seq-rollback.png');
   await h.eval(`(() => { if (typeof closeModal === 'function') closeModal(); return true; })()`); await h.sleep(500);
-  await h.eval(`document.querySelector('[data-view="history"]')?.click()`); await h.sleep(1500);
+  await h.eval(`navigateToView('history')`); await h.sleep(1500);
   h.log('HISTORY after rollback:', await dump(h, '.ds-history-card, .ds-history-item', 700));
 }

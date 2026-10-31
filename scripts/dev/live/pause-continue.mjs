@@ -19,7 +19,7 @@ async function openScanned(h) {
   const id = await h.eval(`_profiles.find(p => p.name === ${JSON.stringify(NAME)})?.id`);
   await h.eval(`window.runProfile(${JSON.stringify(id)})`); await h.sleep(1500);
   const dir = await h.eval("(() => { const p = _reconcileProfile; return p ? { src: p.sourceOrg || '', tgt: p.targetOrg || '' } : null; })()");
-  if (!dir || !dir.src.includes('trailheads5') || !/orgfarm|dev-ed/.test(dir.tgt)) throw new Error(`wrong direction ${JSON.stringify(dir)}`);
+  if (!dir || !dir.src.includes('c449e108c2') || !/orgfarm|dev-ed/.test(dir.tgt)) throw new Error(`wrong direction ${JSON.stringify(dir)}`);
   await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
   await h.waitFor("!!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000); await h.sleep(1500);
 }
@@ -108,7 +108,7 @@ export default async function (h) {
   if (mid.length - before.length !== e1.inserted) throw new Error('the CLI count disagrees with the entry');
   h.log('RUN LOG tail:', lines(await h.eval("(document.querySelector('#dsRecProgress')?.innerText || '').split(String.fromCharCode(10)).slice(-4).join(' | ')"), 400));
   // ── History: the chip and ▶ Continue ──
-  await h.eval(`document.querySelector('[data-view="history"]')?.click()`); await h.sleep(1200);
+  await h.eval(`navigateToView('history')`); await h.sleep(1200);
   const card = await h.eval("(document.querySelector('.ds-history-card')?.innerText || '').replace(/\\s+/g, ' ').slice(0, 300)");
   h.log('CARD:', card);
   if (!/⏸ paused/.test(card)) throw new Error('no paused chip on the card');
@@ -128,7 +128,7 @@ export default async function (h) {
   if (e2.stopped) throw new Error('the continued run stopped early');
   // ── roll back both runs, newest first (the ↩ Roll back page + the one shared confirmation) ──
   for (let k = 0; k < 2; k++) {
-    await h.eval(`document.querySelector('[data-view="history"]')?.click()`);
+    await h.eval(`navigateToView('history')`);
     await h.waitFor("!!document.querySelector('[data-dsaction=\"rollbackRun\"]:not([disabled])')", 20000, 500); await h.sleep(500);
     await h.eval(`document.querySelector('[data-dsaction="rollbackRun"]:not([disabled])').click()`);
     await h.waitFor("!!document.querySelector('#dsRbGo') || !!document.querySelector('.ds-rec-card-bad')", 300000, 1000); await h.sleep(1000);

@@ -40,8 +40,8 @@ export default async function (h) {
   h.log('BUILDER header:', lines(await h.eval("document.querySelector('#dsMain')?.innerText || ''"), 400));
   const orgs = await h.eval("[...document.querySelectorAll('#dsProfileSrcOrg option')].map(o => o.value + ' :: ' + o.text)");
   h.log('source options:', JSON.stringify(orgs));
-  const src = await h.eval("[...document.querySelectorAll('#dsProfileSrcOrg option')].find(o => /trailheads5/.test(o.value))?.value || ''");
-  const tgt = await h.eval("[...document.querySelectorAll('#dsProfileTgtOrg option')].find(o => /trailheads4/.test(o.value))?.value || ''");
+  const src = await h.eval("[...document.querySelectorAll('#dsProfileSrcOrg option')].find(o => /c449e108c2/.test(o.value))?.value || ''");
+  const tgt = await h.eval("[...document.querySelectorAll('#dsProfileTgtOrg option')].find(o => /e2c4511b2b/.test(o.value))?.value || ''");
   if (!src || !tgt) throw new Error('both orgs are not offered in the builder');
   await h.eval(`(() => { const n = document.querySelector('#dsProfileName'); n.value = ${JSON.stringify(NAME)}; n.dispatchEvent(new Event('input', { bubbles: true })); n.dispatchEvent(new Event('change', { bubbles: true }));
     const s = document.querySelector('#dsProfileSrcOrg'); s.value = ${JSON.stringify(src)}; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
