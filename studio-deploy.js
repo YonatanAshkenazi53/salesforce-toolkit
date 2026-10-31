@@ -1481,10 +1481,10 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   }
   const relinkBlocked = !isRoot && !!(s.linkMasterDetail && s.linkUpdateable === false);
   const lkpN = id => Object.keys(sftkLkpOvGet(node, p.targetOrg, id)).length;
-  const lkpBtn = (id, tgtId) => id ? `<button class="ds-dep-link${lkpN(id) ? ' ds-lkp-on' : ''}" data-rec-lkp="${esc(id)}" data-dep-lkp="1"${tgtId ? ` data-rec-lkp-tgt="${esc(tgtId)}"` : ''} title="Hand-pick which TARGET record each lookup field should point at for THIS record — saved per target org, beats name matching in the run.">🔗 lookups<span class="ds-lkp-count">${lkpN(id) ? ` ${lkpN(id)}` : ''}</span></button>` : '';
   // ✏ typed values (user 2026-10-27: "change the whole record fields and deploy them as the user selected … one or many")
   const valN = id => Object.keys(sftkValOvGet(node, p.targetOrg, id)).length;
-  const valBtn = (id, tgtId) => id ? `<button class="ds-dep-link${valN(id) ? ' ds-lkp-on' : ''}" data-dep-vals="${esc(id)}"${tgtId ? ` data-dep-vals-tgt="${esc(tgtId)}"` : ''} title="Every writable field of this record, with the value it is written with — type a value to write it instead of the source's; lookups are picked from ${esc(orgLabel(p.targetOrg))}. Saved on the deployment per target org.">✏ values<span class="ds-lkp-count">${valN(id) ? ` ${valN(id)}` : ''}</span></button>` : '';
+  const editN = id => valN(id) + lkpN(id);   // typed values and lookup picks, one count (user 2026-10-31: "use record for both")
+  const valBtn = (id, tgtId) => id ? `<button class="ds-dep-link${editN(id) ? ' ds-lkp-on' : ''}" data-dep-vals="${esc(id)}"${tgtId ? ` data-dep-vals-tgt="${esc(tgtId)}"` : ''} title="The whole record — every writable field and lookup, with what it is written with on ▶ Deploy: type a value in place of the source's, pick the target record a lookup points at.">▸ record<span class="ds-lkp-count">${editN(id) ? ` ✏ ${editN(id)}` : ''}</span></button>` : '';
   const srcLockTip = `🔒 Writes to ${orgLabel(p.sourceOrg)} are locked (Connected Orgs → Unlock writes)`;
 
   const rowHtml = r => {
@@ -1502,7 +1502,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
         : st === 'deepblock' ? `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="Its parent is missing in the target too, and inserting both in one run is not supported at this depth — insert the parent level first, then rescan.">parent missing — insert the parent level first</span>`
         : st === 'untracked' ? `<span class="ds-rec-pnote ds-rec-pnote-unknown" title="Its parent is outside the scan above (scope or a duplicate key) — it cannot be attached safely.">parent untracked</span>`
         : `<span class="ds-rec-pnote ds-rec-pnote-none">no parent</span>`;
-      tail = `${valBtn(r.sourceId, null)} ${lkpBtn(r.sourceId, null)}`;
+      tail = `${valBtn(r.sourceId, null)}`;
     } else if (tabDef.k === 'chg') {
       const push = isRoot ? _recSel.overwrite.has(r.sourceId) : sel.overwrite.has(r.sourceId);
       const pull = isRoot && _recSel.updSrc.has(r.sourceId);
@@ -1512,7 +1512,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
       extra = (r.fields || []).length ? `<span class="ds-rec-drift-why" title="Differs on: ${esc(r.fields.join(', '))}">${esc(r.fields.slice(0, 3).join(', '))}${r.fields.length > 3 ? ` +${r.fields.length - 3}` : ''}</span>` : '';
       // one link for the record (user 2026-10-27: "why do i have values and record. they are the same functionality"):
       // it compares, updates now, and opens the values editor — the typed count rides on it
-      tail = `<button class="ds-dep-link${valN(r.sourceId) ? ' ds-lkp-on' : ''}" data-dep-fields="${esc(r.sourceId)}|${esc(r.targetId)}" title="The whole record, both orgs side by side — tick fields to update on the target now, or ✏ type the values it is written with on ▶ Deploy">▸ record<span class="ds-lkp-count">${valN(r.sourceId) ? ` ✏ ${valN(r.sourceId)}` : ''}</span></button> ${lkpBtn(r.sourceId, r.targetId)}`;
+      tail = `<button class="ds-dep-link${editN(r.sourceId) ? ' ds-lkp-on' : ''}" data-dep-fields="${esc(r.sourceId)}|${esc(r.targetId)}" title="The whole record, both orgs side by side — tick fields to update on the target now, or ✏ type the values and pick the lookups it is written with on ▶ Deploy">▸ record<span class="ds-lkp-count">${editN(r.sourceId) ? ` ✏ ${editN(r.sourceId)}` : ''}</span></button>`;
     } else if (tabDef.k === 'ext') {
       const del = isRoot ? _recSel.del.has(r.targetId) : sel.del.has(r.targetId);
       const pull = isRoot && _recSel.pull.has(r.targetId);
@@ -1541,8 +1541,8 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   };
 
   const nAll = rows.length.toLocaleString();
-  const bulk = tabDef.k === 'ins' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list${rows.length > shown.length ? ` — including the ${(rows.length - shown.length).toLocaleString()} not shown yet (Show all lists them)` : ''}">✓ All ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button><button class="ds-btn ds-btn-xs" data-dep-vals-many="1" title="One value for every ticked record of this list: type it once, it is written on each of them">✏ Set values for the selected</button>`
-    : tabDef.k === 'chg' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Overwrite every ${nAll} changed record(s) in this list with the source's values">→ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button><button class="ds-btn ds-btn-xs" data-dep-vals-many="1" title="One value for every ticked record of this list: type it once, it is written on each of them">✏ Set values for the selected</button>`
+  const bulk = tabDef.k === 'ins' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list${rows.length > shown.length ? ` — including the ${(rows.length - shown.length).toLocaleString()} not shown yet (Show all lists them)` : ''}">✓ All ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button><button class="ds-btn ds-btn-xs" data-dep-vals-many="1" title="One value for every ticked record of this list: type it once, it is written on each of them">✏ Edit the selected records</button>`
+    : tabDef.k === 'chg' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Overwrite every ${nAll} changed record(s) in this list with the source's values">→ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button><button class="ds-btn ds-btn-xs" data-dep-vals-many="1" title="One value for every ticked record of this list: type it once, it is written on each of them">✏ Edit the selected records</button>`
     : tabDef.k === 'ext' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" title="Select every ${nAll} record(s) in this list for deletion">🗑 all ${nAll}${!isRoot ? ' (no orphans)' : ''}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
     : tabDef.k === 'link' ? `<button class="ds-btn ds-btn-xs" data-dep-bulk="all" ${relinkBlocked ? 'disabled' : ''}>⇄ all ${nAll}</button><button class="ds-btn ds-btn-xs" data-dep-bulk="none">✗ None</button>`
     : ambRoot && sftkAmbMergeAllPlan(rows, key).length ? (n => `<button class="ds-btn ds-btn-xs" data-dep-amb-mergeall="1" title="Every name whose org holds more than one copy, one merge at a time: each opens its own picker and confirmation; Cancel stops the walk; both orgs are read again once at the end.">🔀 Merge all — ${n} merge${n === 1 ? '' : 's'}, one by one</button>`)(sftkAmbMergeAllPlan(rows, key).length) : '';
@@ -1720,19 +1720,6 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     const [srcId, tgtId] = b.dataset.depFields.split('|');
     const row = all.find(r => r.sourceId === srcId);
     sftkOpenDriftCompare(prof, cur.obj, srcId, tgtId, s.compareFields || [], s.compareFieldsTgt || s.compareFields || [], row ? key(row) : srcId, row?.fields || [], tabDef.k === 'chg');
-  }));
-  host.querySelectorAll('[data-dep-lkp]').forEach(b => b.addEventListener('click', () => {
-    const srcId = b.dataset.recLkp;
-    const row = all.find(r => r.sourceId === srcId);
-    showModal(`<div class="ds-modal-header">🔗 Lookups · ${esc(cur.obj)} · ${esc(row ? key(row) : srcId)}
-        <span class="ds-dc-modal-sub">where each lookup lands in ${esc(orgLabel(p.targetOrg))} — pick a record to override name matching</span>
-        <button class="ds-btn ds-btn-xs" id="dsDepLkpVals" title="Every writable field of this record, with the value it is written with — type a value to write it instead of the source's">✏ Edit the record's values</button>
-        <button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button></div>
-      <div class="ds-modal-body ds-dc-modal-body"><div id="dsDepLkpHost" style="padding:12px 0"></div></div>`);
-    const h = eid('dsDepLkpHost');
-    if (h) renderLkpOverridePanel(prof, cur.obj, srcId, h, b.dataset.recLkpTgt || null);
-    // the way to the whole record from here (user 2026-10-27: "i dont see an option to edit the record")
-    eid('dsDepLkpVals')?.addEventListener('click', () => sftkOpenValueEditor(prof, cur.obj, node, [srcId], b.dataset.recLkpTgt || null, row ? key(row) : srcId, tabDef.k === 'chg' ? 'chg' : 'ins', repaint));
   }));
   // ✏ values: one record from its row; every ticked record of the list from the toolbar
   host.querySelectorAll('[data-dep-vals]').forEach(b => b.addEventListener('click', () => {

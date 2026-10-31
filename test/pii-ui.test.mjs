@@ -177,7 +177,7 @@ describe('bldPiiMaskTitle — what the 🎭 control may claim', () => {
 // ── source assertions: wiring + copy (no DOM harness in npm test) ─────────
 describe('treatment wiring in the Fields & mapping modal (source)', () => {
   it('the modal open in wireTreeEvents chains into bldPiiDecorateMappingModal', () => {
-    expect(BUILDER).toMatch(/openFieldMappingModal\(btn\.dataset\.mapBtn\)\s*\.then\(\(\) => bldPiiDecorateMappingModal\(btn\.dataset\.mapBtn\)\)/);
+    expect(BUILDER).toMatch(/openFieldMappingModal\(btn\.dataset\.mapBtn\)\s*\.then\(\(\) => \{ if \(sftkShips\('pii'\)\) bldPiiDecorateMappingModal\(btn\.dataset\.mapBtn\); \}\)\)/);   // gated: masking is cut from the public build (2026-10-31)
   });
 
   it('decoration re-applies across the modal\'s re-renders: delegated click + childList observer on the persistent modal box', () => {

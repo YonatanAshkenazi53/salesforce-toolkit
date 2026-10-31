@@ -107,11 +107,13 @@ describe('the Deploy page', () => {
   const DV = read('studio-deploy.js'), VE = read('studio-valueedit.js'), HTML = read('studio.html'), CSS = read('studio.css');
   it('a ✏ values button on every Insert and Changed row, lit with a count when the record carries typed values', () => {
     expect(DV).toContain('const valN = id => Object.keys(sftkValOvGet(node, p.targetOrg, id)).length;');
-    expect(DV).toContain('tail = `${valBtn(r.sourceId, null)} ${lkpBtn(r.sourceId, null)}`;');
+    expect(DV).toContain('tail = `${valBtn(r.sourceId, null)}`;');   // 2026-10-31: one link — the lookups live in the editor
     // the Changed row has ONE record link (it opens the editor too) carrying the typed count — no second link (user 2026-10-27)
-    expect(DV).toContain('>▸ record<span class="ds-lkp-count">${valN(r.sourceId) ? ` ✏ ${valN(r.sourceId)}` : \'\'}</span></button> ${lkpBtn(r.sourceId, r.targetId)}`;');
+    expect(DV).toContain('>▸ record<span class="ds-lkp-count">${editN(r.sourceId) ? ` ✏ ${editN(r.sourceId)}` : \'\'}</span></button>`;');
+    expect(DV).not.toContain('lkpBtn(');   // the 🔗 lookups link is gone from the Deploy rows
     expect(DV).not.toContain('${valBtn(r.sourceId, r.targetId)}');
-    expect(DV).toContain('>✏ values<span class="ds-lkp-count">${valN(id) ? ` ${valN(id)}` : \'\'}</span></button>');
+    expect(DV).toContain('>▸ record<span class="ds-lkp-count">${editN(id) ? ` ✏ ${editN(id)}` : \'\'}</span></button>');
+    expect(DV).toContain('const editN = id => valN(id) + lkpN(id);');
   });
   it('one or many: the row opens one record; the toolbar button opens every ticked record of the tab', () => {
     expect(DV).toContain("sftkOpenValueEditor(prof, cur.obj, node, [srcId], b.dataset.depValsTgt || null, row ? key(row) : srcId, tabDef.k === 'chg' ? 'chg' : 'ins', repaint);");

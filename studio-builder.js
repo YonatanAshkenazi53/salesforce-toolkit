@@ -84,8 +84,8 @@ function renderBuilder() {
       // and nothing here is destructive, so nothing here is red.
       actions: `${p.tree ? `<button class="ds-btn" id="dsPreviewAllBtn" title="Count records for every node in parallel">${dsIcon('eye')}Preview All</button>
         <button class="ds-btn" id="dsBldCheckTargets" title="Describe the default target and verify the tree's objects + every mapped field exist there — the multi-org answer to 'which org will this break in?'">${dsIcon('flask')}Check all targets</button>
-        <button class="ds-btn" id="dsBldSuggestPii" title="Scan every object in this tree for likely PII (field types, names/labels, org compliance classification) and add write-time mask rules — masked/pseudonymized, never written raw">${dsIcon('lock')}Suggest PII masks</button>` : ''}
-        <button class="ds-btn" id="dsBuilderCancel">Cancel</button>
+        ${sftkShips('pii') ? `<button class="ds-btn" id="dsBldSuggestPii" title="Scan every object in this tree for likely PII (field types, names/labels, org compliance classification) and add write-time mask rules — masked/pseudonymized, never written raw">${dsIcon('lock')}Suggest PII masks</button>` : ''}
+        <button class="ds-btn" id="dsBuilderCancel">Cancel</button>` : ''}
         <button class="ds-btn" id="dsBuilderSave">${dsIcon('save')}Save</button>
         ${p.tree ? `<button class="ds-btn ds-btn-primary" id="dsBuilderSaveRun"
           title="Save the profile and immediately jump to the Run screen">${dsIcon('play')}Save &amp; Run</button>` : ''}`,
@@ -1346,7 +1346,7 @@ function renderTreeNode(node, path, isRoot, depth = 0) {
             const nMask = bldPiiCountForObject(_editingProfile?.piiPolicy, objName);
             // a button since 2026-10-27 (user: "when you masked fields you can't cancel it. also i dont understand how
             // the masking does"): it lists the masked fields, says what masking does, and unmasks one or all
-            return nMask ? `<button class="ds-config-badge ds-badge-masked" data-pii-chip="${esc(objName)}" title="${nMask} ${esc(objName)} field(s) are written masked — click to see which, what that means, and to unmask">${dsIcon('lock')}${nMask} masked</button>` : '';
+            return nMask && sftkShips('pii') ? `<button class="ds-config-badge ds-badge-masked" data-pii-chip="${esc(objName)}" title="${nMask} ${esc(objName)} field(s) are written masked — click to see which, what that means, and to unmask">${dsIcon('lock')}${nMask} masked</button>` : '';
           })()}
           ${!isRoot && cfOn ? `<button class="ds-btn ds-btn-xs ds-btn-config ds-btn-config--active" data-order-btn="${esc(pathKey)}" title="${esc(cfTitle)}">
             ⤴ Created before parent — click for the normal order
@@ -1500,7 +1500,7 @@ function wireTreeEvents() {
   area.querySelectorAll('[data-map-btn]').forEach(btn => {
     btn.addEventListener('click', () =>
       openFieldMappingModal(btn.dataset.mapBtn)
-        .then(() => bldPiiDecorateMappingModal(btn.dataset.mapBtn)));
+        .then(() => { if (sftkShips('pii')) bldPiiDecorateMappingModal(btn.dataset.mapBtn); }));
   });
 
   // The ⤴ chip of a node that still carries child-first (older versions,
@@ -2025,6 +2025,7 @@ window.importProfileFromFile = function () {
       });
       if (!got.length) { showToast(`Import failed: none of the ${bundle.length} items in ${file.name} is a profile export — ${bad[0]}.`, 'error', 9000); return; }
       for (const prof of got) {
+        if (!sftkShips('pii')) delete prof.piiPolicy;   // PII masking is not in this build (cut 2026-10-31) — the policy does not travel in
         if (prof.piiPolicy && typeof prof.piiPolicy === 'object' && Object.keys(prof.piiPolicy).length) bldPiiEnsureSalt(prof);
         _profiles.push(prof);
       }
@@ -2047,6 +2048,7 @@ window.importProfileFromFile = function () {
     // contract — the parse strip list already dropped any smuggled one).
     // Mint this machine's salt BEFORE saving so the first masked run can't
     // race an absent salt.
+    if (!sftkShips('pii')) delete prof.piiPolicy;   // PII masking is not in this build (cut 2026-10-31)
     const nMaskRules = prof.piiPolicy && typeof prof.piiPolicy === 'object' ? Object.keys(prof.piiPolicy).length : 0;
     if (nMaskRules) bldPiiEnsureSalt(prof);
     _profiles.push(prof);
