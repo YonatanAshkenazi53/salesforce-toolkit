@@ -4,7 +4,7 @@ export default async function (h) {
   await h.login('npc2');
   await h.studio('');
   // History: open every fold and read the errors + notes
-  await h.eval(`document.querySelector('[data-view="history"]')?.click()`);
+  await h.eval(`navigateToView('history')`);
   await h.sleep(2000);
   await h.eval(`document.querySelectorAll('details').forEach(d => d.open = true)`);
   await h.sleep(500);

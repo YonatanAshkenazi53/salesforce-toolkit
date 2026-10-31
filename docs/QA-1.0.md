@@ -199,3 +199,44 @@ records, schema check, PII masks, record detail) keep their own layouts for now.
 - Template-literal regexes in live scripts (`\s` → `s`) stripped letters from logs; the
   API-versions script's default target was the oldest option; the field-cleaner script
   pressed the same refused button again.
+
+## Pre-ship QA, 2026-10-31 (HEAD 7fcaedf + this round) — the packed build on the new orgs
+
+The source trial expired on 2026-10-28; `npc` is now the Developer Edition
+orgfarm-c449e108c2-dev-ed (never expires), `npc2` stays orgfarm-e2c4511b2b-dev-ed. Every
+fixture was rebuilt on the new source (`docs/fixtures/rebuild-source.sh`), the flow-pause flows
+deployed to the target, and every live script run against `dist/store-staging` through the
+headless harness (`%TEMP%\sftk-qa*/`), one at a time, in three rounds. All 23 pass.
+
+| Script | Covers | Result |
+|---|---|---|
+| flows-one-page | Flows page views, whole-flow delete with restore points, ↩ Undo brings the versions back (CLI) | ✅ |
+| flow-switches MODE=cycle | three fixture flows OFF then ON, the typed word, CLI | ✅ |
+| api-versions | three fixture flows moved to the org's API version, verified | ✅ |
+| field-cleaner ONLY_FLOW=1 UNDO=1 | the flow fix (keeps running) and its new ↩ Undo from the tool's History: the version that used the field back and active (CLI) | ✅ |
+| lightning-pages | org default set, assignment removed, CLI between steps | ✅ |
+| copy-perms | A's permission set + group copied to B, read back | ✅ |
+| flow-access | flow granted to a permission set, CLI | ✅ |
+| debugger | trace on, a log made by the CLI, viewer tab, trace off (CLI) | ✅ |
+| connected-orgs | rename, 🔒 Lock writes refuses a real write (CLI shows the flows untouched), guard as production gate | ✅ |
+| builder | new deployment, edit, clone, export (no session / ids in the file), delete | ✅ |
+| value-edit | ▸ record: a typed Description deployed, read back by the CLI, rolled back | ✅ |
+| merge-both | 🔀 Merge both sides on the fixture pair (the redrawn picker), the pair put back | ✅ |
+| vrpause / flowpause | validation rules / record-triggered flows paused for a run, back on after, rolled back | ✅ |
+| identity | 🪪 field created in both orgs, stamped, re-scan still matched, undo emptied, cleaned up | ✅ |
+| run-accounts-tree | the whole Accounts tree deployed, every child linked; target reset after | ✅ |
+| allorgs-compare / orghealth | ring scan cells, Org Compare counts, Org health cards | ✅ |
+| activity-look / edit-one-look / parents-loading-look / needs-decision-look / pii-cut-look | the 2026-10-27…31 screens on the packed build, light and dark; no PII surface in the public build | ✅ |
+
+**Defects in the product: none.** Fourteen first-round failures were all in the harness side:
+scripts still naming trailheads5/trailheads4, the Dependencies tab (a view of the Flows page
+since 2026-10-17), the History sidebar row (gone 2026-10-28), the merge dialog's columns
+(rows since 2026-10-30), a duplicate view click that cancelled the API-versions compare;
+fixtures not yet on the new orgs (flow-pause flows in the target, `cleanup.apex` assuming
+person accounts, a stale identity field on Opportunity in the target, an expired Trailhead
+TraceFlag the debugger check counted as ours). All fixed in the scripts and fixtures; both
+orgs end as they began (target 4 fixture Accounts, source 8).
+
+Not scripted: a clean install by hand (the harness starts every run from an empty profile
+with the packed build, which covers the gate and first open), an expired-session path, the
+store assets (listing text and README now say Activity; screenshots still to be retaken).

@@ -24,8 +24,10 @@ Database.delete([SELECT Id FROM PricebookEntry WHERE Product2.Name LIKE 'SFTK CX
 Database.delete([SELECT Id FROM Pricebook2 WHERE Name LIKE 'SFTK CX%'], false);
 Database.delete([SELECT Id FROM Product2 WHERE Name LIKE 'SFTK CX%'], false);
 Database.delete([SELECT Id FROM ContentDocument WHERE Title LIKE 'SFTK CX%'], false);
-Database.delete([SELECT Id FROM Contact WHERE LastName LIKE 'SFTK CX%' AND IsPersonAccount = false AND ReportsToId != null], false);
-Database.delete([SELECT Id FROM Contact WHERE LastName LIKE 'SFTK CX%' AND IsPersonAccount = false], false);
+// person accounts off (a plain Developer Edition): Contact has no IsPersonAccount — the filter is added only where it exists (2026-10-31)
+String pa = Schema.SObjectType.Contact.fields.getMap().containsKey('ispersonaccount') ? ' AND IsPersonAccount = false' : '';
+Database.delete(Database.query('SELECT Id FROM Contact WHERE LastName LIKE \'SFTK CX%\'' + pa + ' AND ReportsToId != null'), false);
+Database.delete(Database.query('SELECT Id FROM Contact WHERE LastName LIKE \'SFTK CX%\'' + pa), false);
 Database.delete([SELECT Id FROM Account WHERE (Name LIKE '%SFTK CX%') AND ParentId != null AND Parent.ParentId != null], false);
 Database.delete([SELECT Id FROM Account WHERE (Name LIKE '%SFTK CX%') AND ParentId != null], false);
 Database.delete([SELECT Id FROM Account WHERE Name LIKE '%SFTK CX%'], false);

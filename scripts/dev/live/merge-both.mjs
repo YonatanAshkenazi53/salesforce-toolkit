@@ -38,14 +38,15 @@ const DMO = "Database.DMLOptions dmo = new Database.DMLOptions(); dmo.DuplicateR
 // one merge dialog: keep the column of keepId; take the listed fields from the column of fromId
 // (none: its own values); confirm, acknowledge, go
 async function mergeKeep(h, step, keepId, fromId = null, fields = []) {
-  await h.waitFor("!!document.querySelector('.ds-merge-table')", 60000, 300); await h.sleep(500);
-  const cols = await h.eval(`[...document.querySelectorAll('.ds-merge-table thead th[data-merge-col]')].map(th => th.innerText.replace(/\\s+/g, ' ').trim())`);
+  await h.waitFor("!!document.querySelector('.ds-merge-copies')", 60000, 300); await h.sleep(500);
+  // a copy is a row: its text plus the id its "open" link carries (2026-10-30 redraw)
+  const cols = await h.eval(`[...document.querySelectorAll('[data-merge-copy]')].map(el => (el.innerText + ' ' + (el.querySelector('a[title]')?.title || '')).replace(/\\s+/g, ' ').trim())`);
   const keep = cols.findIndex(c => c.includes(keepId)), from = fromId ? cols.findIndex(c => c.includes(fromId)) : -1;
   h.log(`${step}. picker columns:`, JSON.stringify(cols), '→ keep', keep, fields.length ? `· ${fields.join(', ')} from ${from}` : '');
   if (keep < 0 || (fromId && from < 0)) throw new Error('the copies are not the expected columns of the picker');
   await h.eval(`(() => { const r = document.querySelector('input[name="dsMergeKeep"][value="${keep}"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
   for (const f of fields) {
-    const ok = await h.eval(`(() => { const r = document.querySelector('tr[data-merge-field="${f}"] input[value="${from}"]'); if (!r) return false; r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+    const ok = await h.eval(`(() => { const o = [...document.querySelectorAll('.ds-merge-frow[data-merge-field="${f}"] .ds-merge-opt[data-merge-idx]')].find(el => el.dataset.mergeIdx.split(',').map(Number).includes(${from})); const r = o && o.querySelector('input[type="radio"]'); if (!r) return false; r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
     if (!ok) throw new Error(`${f} is not offered by the picker`);
   }
   await h.eval(`document.querySelector('#dsMergeGo').click()`);

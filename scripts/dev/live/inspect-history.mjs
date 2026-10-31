@@ -1,6 +1,6 @@
 export default async function (h) {
   await h.studio('');
-  await h.eval(`document.querySelector('[data-view="history"]')?.click()`);
+  await h.eval(`navigateToView('history')`);
   await h.sleep(1500);
   await h.eval(`document.querySelectorAll('details').forEach(d => d.open = true)`);
   const raw = await h.eval(`(() => { const c = document.querySelector('.ds-history-card, .ds-history-item'); const d = c && c.querySelector('.ds-err-raw'); return d ? d.innerText : (c ? c.innerText.slice(-2500) : 'no card'); })()`);

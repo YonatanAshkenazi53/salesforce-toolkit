@@ -27,7 +27,7 @@ export default async function (h) {
   if (process.env.INSERT === '0') return changedPath(h, NAME);
   await h.eval(`window.runProfile(${JSON.stringify(id)})`); await h.sleep(1500);
   const dir = await h.eval(`(() => { const p = _reconcileProfile; return p ? { src: p.sourceOrg || '', tgt: p.targetOrg || '' } : null; })()`);
-  if (!dir || !dir.src.includes('trailheads5') || !/orgfarm|dev-ed/.test(dir.tgt)) throw new Error(`direction ${JSON.stringify(dir)} — this script only ever writes trailheads5 → the dev org`);
+  if (!dir || !dir.src.includes('c449e108c2') || !/orgfarm|dev-ed/.test(dir.tgt)) throw new Error(`direction ${JSON.stringify(dir)} — this script only ever writes trailheads5 → the dev org`);
   await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
   await waitScanned(h); await h.sleep(2000);
   await h.eval(`document.querySelector('[data-dep-obj=""][data-dep-tab="ins"]')?.click()`); await h.sleep(1000);

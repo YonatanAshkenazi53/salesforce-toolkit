@@ -125,7 +125,7 @@ export default async function (h) {
   h.log('STATUS after Stop:', lines(await h.text('#adbgStatusCell')) || '(empty — idle)');
   const after = traceFlags(user.Id);
   h.log(`CLI TraceFlags after Stop: ${after.length}`);
-  if (after.some(f => f.LogType === 'USER_DEBUG')) throw new Error('the USER_DEBUG TraceFlag is still in the org after Stop Trace');
+  if (after.some(f => f.LogType === 'USER_DEBUG' && new Date(f.ExpirationDate).getTime() > Date.now())) throw new Error('the USER_DEBUG TraceFlag is still in the org after Stop Trace');   // an expired flag from before is not the Toolkit's
   // the tool's History
   await h.click('#sftkThBtn');
   await h.waitFor("!!document.querySelector('#sftkThModalList')", 15000, 300);

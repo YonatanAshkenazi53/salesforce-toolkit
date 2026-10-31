@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { removeIdentityField } from '../video/fixture.mjs';
 const NL = String.fromCharCode(10);
 const lines = (s, n = 2500) => String(s || '').slice(0, n).split(NL).map(x => x.trim()).filter(Boolean).join(' | ');
-const SRC = 'https://trailheads5.my.salesforce.com', TGT = 'https://trailheads4.my.salesforce.com';
+const SRC = 'https://orgfarm-c449e108c2-dev-ed.develop.my.salesforce.com', TGT = 'https://orgfarm-e2c4511b2b-dev-ed.develop.my.salesforce.com';
 const cli = (alias, args) => JSON.parse(execFileSync('sf', [...args, '-o', alias, '--json'], { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
 const idFields = alias => (cli(alias, ['data', 'query', '--use-tooling-api', '-q', `"SELECT TableEnumOrId FROM CustomField WHERE DeveloperName = 'SFTK_ID'"`]).result.records || []).map(r => r.TableEnumOrId).sort().join(',') || 'none';
 const permSet = alias => (cli(alias, ['data', 'query', '-q', `"SELECT Id FROM PermissionSet WHERE Name = 'SFTK_Identity'"`]).result.records || []).length;
@@ -34,7 +34,7 @@ export default async function (h) {
     _profiles.push(p); await storageSaveProfiles(); return p.id; })()`);
   await h.eval(`window.runProfile(${JSON.stringify(id)})`); await h.sleep(1500);
   const dir = await h.eval("(() => { const p = _reconcileProfile; return p ? { src: p.sourceOrg, tgt: p.targetOrg } : null; })()");
-  if (!dir || !dir.src.includes('trailheads5') || !/orgfarm|dev-ed/.test(dir.tgt)) throw new Error('wrong direction: ' + JSON.stringify(dir));
+  if (!dir || !dir.src.includes('c449e108c2') || !/orgfarm|dev-ed/.test(dir.tgt)) throw new Error('wrong direction: ' + JSON.stringify(dir));
   await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
   await h.waitFor("!!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", 300000, 1000); await h.sleep(1500);
   h.log('SUMMARY:', lines(await h.text('#dsDepSummary'), 300));
@@ -88,7 +88,7 @@ export default async function (h) {
   h.log('SUMMARY after stamp + rescan:', lines(await h.text('#dsDepSummary'), 300));
   h.log('Account plan row:', lines(await h.eval("[...document.querySelectorAll('.ds-dep-plan tr')].map(tr => tr.innerText.replace(/\\s+/g, ' ')).find(t => /^Account/.test(t.trim())) || ''"), 300));
   // ── undo the stamp from History ──
-  await h.eval(`document.querySelector('[data-view="history"]')?.click()`); await h.sleep(1200);
+  await h.eval(`navigateToView('history')`); await h.sleep(1200);
   const undoBtn = await h.eval("(() => { const b = document.querySelector('[data-dsaction=\"undoTool\"]:not([disabled])'); if (!b) return null; b.click(); return b.innerText.trim(); })()");
   h.log(`History undo button: ${undoBtn}`);
   if (!undoBtn) throw new Error('no enabled Undo on the stamp entry');

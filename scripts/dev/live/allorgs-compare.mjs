@@ -12,7 +12,7 @@ import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 const NL = String.fromCharCode(10);
 const lines = (s, n = 2500) => String(s || '').slice(0, n).split(NL).map(x => x.trim()).filter(Boolean).join(' | ');
-const SRC = 'trailheads5', TGT = 'trailheads4';
+const SRC = 'orgfarm-c449e108c2-dev-ed', TGT = 'orgfarm-e2c4511b2b-dev-ed';
 
 async function deployPageDirection(h) {
   await h.waitFor("_currentView === 'deploy' && !!document.querySelector('.ds-dep-plan, #dsDepScan, #dsDepRefresh')", 120000, 1000);

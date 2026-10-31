@@ -58,7 +58,7 @@ async function switchOnce(h, mode) {
 
 export default async function (h) {
   for (const o of (process.env.ORGS || 'npc').split(',')) await h.login(o.trim());
-  await h.popup('dependencies');
+  await h.popup('flows'); await h.eval("setFlowView('switches')"); await h.waitFor("(document.getElementById('flowToolHost')?.innerText || '').length > 20", 60000, 500); await h.sleep(800);   // the one Flows page (2026-10-17): the tool is a view of it
   await h.watchErrors();
   await h.eval(`document.querySelector('#flowViews [data-view="switches"]').click()`);
   await h.sleep(800);

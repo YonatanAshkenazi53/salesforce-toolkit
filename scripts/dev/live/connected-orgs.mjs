@@ -22,7 +22,7 @@ async function press(h, host, action) {
 }
 // ⏻ Flow switches OFF on the fixture flows, up to the Go click; returns what the panel reports
 async function tryFlowSwitchOff(h, { expectTyped }) {
-  await h.popup('dependencies');
+  await h.popup('flows'); await h.eval("setFlowView('switches')"); await h.waitFor("(document.getElementById('flowToolHost')?.innerText || '').length > 20", 60000, 500); await h.sleep(800);   // the one Flows page: switches is a view of it
   await h.eval("document.querySelector('#flowViews [data-view=\"switches\"]').click()");
   await h.sleep(800);
   
@@ -67,7 +67,7 @@ export default async function (h) {
   await h.watchErrors();
   await h.waitFor("document.querySelectorAll('.ds-org-row').length > 0", 60000, 500);
   await h.sleep(1500);
-  const host = 'trailheads5';
+  const host = 'orgfarm-c449e108c2-dev-ed';   // the source org (a Developer Edition since 2026-10-30)
   h.log('HEADER:', lines(await h.eval("document.querySelector('.ds-view-header, .ds-vh, #dsMain h1')?.parentElement?.innerText || ''"), 300));
   h.log('ROW before:', await rowFor(h, host));
   const orgUrl = await h.eval(`(() => { const r = [...document.querySelectorAll('.ds-org-row')].find(r => r.querySelector('.ds-org-row-url')?.innerText.includes(${JSON.stringify(host)})); return r?.querySelector('[data-dsaction="editOrgLabel"]')?.dataset.arg || ''; })()`);

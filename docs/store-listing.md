@@ -48,8 +48,9 @@ DATA STUDIO
   the failed ones; an identity field makes matching exact across orgs; a name that exists
   twice in one org can be merged into one record, value by value.
 • All open orgs — every deployment against every open org at a glance.
-• History — every run with its counts, CSV/JSON export, and Roll back, which deletes
-  what a run created and restores what it changed, then verifies.
+• Activity — everything the Toolkit and Data Studio did, by day, with the actions on each
+  line: Roll back, which deletes what a run created and restores what it changed, then
+  verifies; Retry failed; Undo of a tool's change; a CSV/JSON export.
 • Org Compare — record counts of any objects between two orgs.
 • Org health — one card per finding, each with its API cost first.
 
@@ -65,7 +66,7 @@ Developer Tools
 - **cookies** — to read the Salesforce session cookie (`sid`) of the org tabs you already
   have open, so the extension can call the Salesforce APIs as you, without a separate login
   or a Connected App. It never reads cookies of any other site.
-- **storage** — your saved deployments, History, settings and cached org reads, on this PC
+- **storage** — your saved deployments, the activity history, settings and cached org reads, on this PC
   only (`chrome.storage.local`). Nothing is sent anywhere.
 - **scripting** — to read the org's identity (which org, sandbox or production) from the
   open Salesforce tab, so writes to production can ask for the typed org name.
