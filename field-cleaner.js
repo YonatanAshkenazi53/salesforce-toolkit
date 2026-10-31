@@ -3212,7 +3212,7 @@ const FieldCleaner = (() => {
         : [{ label: componentName, sub: type }],
       revOverride: {
         html: type === 'Flow'
-          ? `⚠ <strong>Flow versions that mention the field are deleted for good</strong> — Salesforce locks the field per version.${_flowPlanBoxHtml(asks && !activeMode ? null : activeMode === 'delete' ? { rows: flowPlan.rowsDelete, lines: flowPlan.linesDelete } : { rows: flowPlan.rows, lines: flowPlan.lines })}`
+          ? `⚠ <strong>Flow versions that mention the field are deleted</strong> — Salesforce locks the field per version. A restore point of each is kept first: ↩ Undo in History puts the version that was active back as the active version, and ↩ Restore points below the results hold every deleted version.${_flowPlanBoxHtml(asks && !activeMode ? null : activeMode === 'delete' ? { rows: flowPlan.rowsDelete, lines: flowPlan.linesDelete } : { rows: flowPlan.rows, lines: flowPlan.lines })}`
           : `${swap ? `⇄ <strong>${esc(_selObj.api)}.${esc(_selField.api)} → ${esc(swapTo)}</strong>. ${esc(_groupNote(type, cfg))}` : `✏ ${cfg.note || 'The field reference is removed from this component.'}`} The change deploys immediately. ${['Report', 'Layout', 'FlexiPage'].includes(type)
               ? 'A <strong>restore point</strong> is saved first — ↩ Restore points, under the results, can put the previous version back.'
               : 'There is no undo besides re-adding the field by hand.'}`,
@@ -3928,13 +3928,39 @@ const FieldCleaner = (() => {
     const dv = await _deleteFlowVersionIds(plan.toDelete.map(v => v.id).filter(id => id !== out.newId), skip, journal,
       Object.fromEntries(plan.toDelete.map(v => [v.id, `${flowName} v${v.num}${v.status ? ` (${v.status})` : ''} deleted`])));
     out.deleted = dv.deleted; out.failed = dv.failed; out.skipped = dv.skipped; out.errors.push(...dv.errors);
-    // Undo: whichever mode ran, the version(s) that referenced the field —
-    // including the one that WAS active — are among plan.toDelete and so are
-    // gone for good (Salesforce holds no Recycle Bin for flow versions), and
-    // a deleted interview cannot be re-created either. There is nothing here
-    // that is safe to promise back (sftkHistoryEnd overrides this to "nothing
-    // was accepted" automatically when nothing here was actually written).
-    out.undo = { none: 'the flow versions that used the field were deleted, and a deleted flow version cannot be re-created (Salesforce keeps no Recycle Bin for them); their metadata is kept under ↩ Restore points below the Field Cleaner\'s results, from where a version can be put back as a draft' };
+    // Undo (user 2026-10-31: "do it"): one version back, the way the Flows page's delete undoes
+    // itself — the version that WAS active is redeployed from its restore point as the active
+    // version (Salesforce numbers it anew); the fixed version stays as an obsolete version; the
+    // other deleted versions are restore points under the Field Cleaner's results, and the backup
+    // zip, when one was ticked, is on disk. A deleted flow interview cannot be re-created. Only
+    // when the fix in fact deleted or switched off something (sftkHistoryEnd says "nothing was
+    // accepted" by itself when nothing was written).
+    const act = plan.active && metaById[plan.active.id];
+    const activeGone = !!(plan.active && (plan.toDelete.some(v => v.id === plan.active.id) || out.deactivated));
+    const zipNote = opts && opts.backup ? ' A backup zip of every deleted version was downloaded before the fix.' : '';
+    if (activeGone && act && act.Metadata && (out.deleted || out.deactivated)) {
+      const api = apiNameOf(plan.active.id);
+      const md = JSON.parse(JSON.stringify(act.Metadata)); delete md.fullName; md.status = 'Active';
+      const safeApi = api.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      // the proof: an ACTIVE version that is not the fixed one. When every version went (the
+      // flow-off way), Salesforce re-creates the flow from the zip as v1 — so never "a number above".
+      const notFixed = out.newVersion ? ` AND VersionNumber != ${Number(out.newVersion)}` : '';
+      out.undo = {
+        steps: [{
+          describe: `${flowName}: restore v${plan.active.num} — the version that used the field — as the active version`,
+          // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read below
+          msg: { type: 'SF_METADATA_DEPLOY', zipBase64: buildFlowZip(api, md) },
+          verify: { query: `SELECT Id, Status, VersionNumber FROM Flow WHERE Definition.DeveloperName = '${safeApi}' AND Status = 'Active'${notFixed}`,
+            tooling: true, count: 1, retries: 4,
+            text: { ok: `${flowName}: the version that used the field is back and active — verified by re-reading the org`,
+                    bad: `${flowName}: the deploy was accepted, but the org shows no new active version yet` } },
+        }],
+        // the undo's result prints this after "not restored:" — so it opens with what stays out
+        note: `${[gone.length > 1 ? `the other ${gone.length - 1} deleted version(s), kept under ↩ Restore points below the Field Cleaner's results` : '', out.interviewsDeleted ? `${out.interviewsDeleted} deleted flow interview(s), which cannot be re-created` : ''].filter(Boolean).join('; ') || 'nothing else — one version was deleted'}. What comes back: v${plan.active.num}, the one that was active, as the active version (Salesforce numbers it anew)${out.newVersion ? `; the fixed v${out.newVersion} stays as an obsolete version` : ''}.${zipNote}`,
+      };
+    } else {
+      out.undo = { none: `the flow versions that used the field were deleted, and a deleted flow version cannot be re-created (Salesforce keeps no Recycle Bin for them); their metadata is kept under ↩ Restore points below the Field Cleaner's results, from where a version can be put back as a draft.${zipNote}` };
+    }
     return out;
   }
 

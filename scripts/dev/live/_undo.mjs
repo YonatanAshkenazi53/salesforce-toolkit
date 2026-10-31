@@ -64,7 +64,7 @@ async function undoInTool(h, tab, opts) {
 // A Data Studio tool's entry: Data Studio › History.
 async function undoInStudio(h, opts) {
   h.log('── ↩ UNDO (Data Studio › History) ──');
-  await h.eval(`document.querySelector('[data-view="history"]')?.click()`);
+  await h.eval(`navigateToView('history')`);   // History left the sidebar 2026-10-28 — the route stays
   await h.waitFor("!!document.querySelector('.ds-history-card-tool') || /No transfers yet|No runs match/.test(document.querySelector('#dsMain, body')?.innerText || '')", 60000, 500);
   await h.sleep(800);
   const cards = await h.eval(`[...document.querySelectorAll('.ds-history-card-tool')].slice(0, 3).map(c => c.innerText.split(String.fromCharCode(10)).map(x => x.trim()).filter(Boolean).join(' | ').slice(0, 400))`);
