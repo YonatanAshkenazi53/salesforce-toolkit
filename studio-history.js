@@ -301,7 +301,7 @@ function _histRunGroups(run) {
               retryable ? `<button class="ds-btn ds-btn-xs ds-btn-primary" data-dsaction="retryFailed" data-arg="${esc(run.id)}" title="Open this deployment with the ${totalFailed} failed record(s) ticked under 🔴 Insert. Records that already succeeded are not touched.">↻ Retry failed (${totalFailed})</button>` : '',
             ] },
             { label: 'undo', title: 'Take back what this run wrote', buttons: [
-              undoSt.show ? `<button class="ds-btn ds-btn-xs ${undoSt.disabled ? '' : 'ds-btn-danger'}" ${undoSt.disabled ? 'disabled' : ''} data-dsaction="rollbackRun" data-arg="${esc(run.id)}" title="${esc(undoSt.title || '')}">${esc(undoSt.label)}</button>` : '',
+              undoSt.show ? `<button class="ds-btn ds-btn-xs ${undoSt.disabled ? '' : 'ds-btn-danger'}" ${undoSt.disabled ? 'disabled' : ''} data-dsaction="rollbackRun" data-arg="${esc(run.id)}" title="${esc(undoSt.title || '')}">${esc(undoSt.label)}</button>${undoSt.disabled && undoSt.title ? `<span class="ds-hist-why">${esc(undoSt.title)}</span>` : ''}` : '',
               isRollback ? `<button class="ds-btn ds-btn-xs" data-dsaction="rollbackReport" data-arg="${esc(run.id)}" title="Every record this rollback deleted or restored, by name">📋 Which records</button>` : '',
             ] },
             { label: 'open', title: 'The deployment behind this run', buttons: [
@@ -319,7 +319,7 @@ function _histRunGroups(run) {
 function _histToolGroups(run) {
   const st = (typeof sftkToolUndoState === 'function') ? sftkToolUndoState(run) : { show: false };
   return [
-            { label: 'undo', title: 'Take back what this change wrote', buttons: [st.show ? `<button class="ds-btn ds-btn-xs ${st.disabled ? '' : 'ds-btn-danger'}" ${st.disabled ? 'disabled' : ''} data-dsaction="undoTool" data-arg="${esc(run.id)}" title="${esc(st.title || '')}">${esc(st.label)}</button>` : ''] },
+            { label: 'undo', title: 'Take back what this change wrote', buttons: [st.show ? `<button class="ds-btn ds-btn-xs ${st.disabled ? '' : 'ds-btn-danger'}" ${st.disabled ? 'disabled' : ''} data-dsaction="undoTool" data-arg="${esc(run.id)}" title="${esc(st.title || '')}">${esc(st.label)}</button>${st.disabled && st.title ? `<span class="ds-hist-why">${esc(st.title)}</span>` : ''}` : ''] },
             { label: 'report', title: 'A file of what happened, for your records', buttons: [`<button class="ds-btn ds-btn-xs" data-hist-export="${esc(run.id)}" title="Download this entry as a JSON audit report — what was written, where, when, and what the org showed.">⬇ Report</button>`] },
           ];
 }

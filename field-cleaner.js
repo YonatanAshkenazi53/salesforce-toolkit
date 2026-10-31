@@ -3934,7 +3934,7 @@ const FieldCleaner = (() => {
     // a deleted interview cannot be re-created either. There is nothing here
     // that is safe to promise back (sftkHistoryEnd overrides this to "nothing
     // was accepted" automatically when nothing here was actually written).
-    out.undo = { none: 'deleted flow version(s) and/or flow interview(s) cannot be re-created — a deleted version is gone for good' };
+    out.undo = { none: 'the flow versions that used the field were deleted, and a deleted flow version cannot be re-created (Salesforce keeps no Recycle Bin for them); their metadata is kept under ↩ Restore points below the Field Cleaner\'s results, from where a version can be put back as a draft' };
     return out;
   }
 
@@ -5270,7 +5270,7 @@ const FieldCleaner = (() => {
       // purge them so the field delete isn't blocked (see purgeOldFlowVersions).
       return await purgeOldFlowVersions(flowId, flowName, journal);
     } finally {
-      await sftkHistoryEnd(journal, { undo: { none: 'deleted flow version(s) and/or flow interview(s) cannot be re-created — a deleted version is gone for good' } });
+      await sftkHistoryEnd(journal, { undo: { none: 'the flow versions that used the field were deleted, and a deleted flow version cannot be re-created (Salesforce keeps no Recycle Bin for them); their metadata is kept under ↩ Restore points below the Field Cleaner\'s results, from where a version can be put back as a draft' } });
     }
   }
 

@@ -49,7 +49,7 @@
         <span class="sftk-th-title">${esc(subject)}${detail ? ` <span class="sftk-th-detail" title="${esc(detail)}">${esc(detail)}</span>` : ''}</span>
         ${e.undoOf ? '<span class="sftk-th-chip" title="This entry is the undo of an earlier change.">↩ undo</span>' : ''}
         <span class="sftk-th-when" title="${esc(e.startedAt || '')}">${esc(sftkHistoryAgo(e.startedAt, Date.now()))} · ${esc(orgName(e.targetOrg))}</span>
-        ${st.show ? `<button class="btn btn-sm ${st.disabled ? 'btn-secondary' : 'btn-danger'} sftk-th-undo" ${st.disabled ? 'disabled' : ''} data-th-undo="${esc(e.id)}" title="${esc(st.title || '')}">${esc(st.label)}</button>` : ''}
+        ${st.show ? `<button class="btn btn-sm ${st.disabled ? 'btn-secondary' : 'btn-danger'} sftk-th-undo" ${st.disabled ? 'disabled' : ''} data-th-undo="${esc(e.id)}" title="${esc(st.title || '')}">${esc(st.label)}</button>${st.disabled && st.title ? `<span class="sftk-th-why">${esc(st.title)}</span>` : ''}` : ''}
         <button class="btn btn-sm btn-secondary" data-th-report="${esc(e.id)}" title="Download this entry as a JSON file: what was written, where, when, and what the org showed.">⬇ Report</button>
       </div>
       <div class="sftk-th-what">
