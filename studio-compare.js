@@ -333,6 +333,8 @@ async function runOrgCompare() {
     completedAt: new Date().toISOString(),
     status:      anyDrift ? 'partial' : 'success',
     summary:     {},
+    // what was compared, for 🧾 Activity (2026-10-31): read-only, so no counts of writes
+    compare:     { objects: finished.length, drifted: finished.filter(r => r.error || (!r.skipped && (((r.missing || 0) > 0) || ((r.extras || 0) > 0)))).length, errors: finished.filter(r => r.error).length },
     errors:      []
   });
   await storageSaveHistory();
@@ -497,17 +499,17 @@ function _ocRenderResults() {
     const clean = done.filter(r => !r.missing && !r.extras).length;
     const drift = done.length - clean;
     banner = `
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#F3F3F3;border:1px solid #DDDBDA;border-radius:8px;padding:9px 14px;margin:0 0 10px;font-size:12.5px">
+      <div class="ds-oc-banner">
         <strong>${rows.length} object${rows.length === 1 ? '' : 's'} compared</strong>
-        <span style="color:#706E6B">·</span>
-        <span style="color:#2E844A;font-weight:600">✓ ${clean} clean</span>
-        <span style="color:#706E6B">·</span>
-        <span style="color:${drift ? '#B75D00' : '#706E6B'};font-weight:${drift ? '600' : '400'}">△ ${drift} drifted</span>
-        ${errs.length ? `<span style="color:#706E6B">·</span>
-        <span style="color:#BA0517;font-weight:600">⚠ ${errs.length} error${errs.length === 1 ? '' : 's'}</span>` : ''}
-        <span style="color:#706E6B">·</span>
-        <span style="color:#706E6B">${skip.length} skipped</span>
-        <span style="color:#706E6B;margin-left:auto">${esc(orgLabel(_orgCompareState.srcOrgUrl))} → ${esc(orgLabel(_orgCompareState.tgtOrgUrl))}</span>
+        <span class="ds-oc-dot">·</span>
+        <span class="ds-oc-clean">✓ ${clean} clean</span>
+        <span class="ds-oc-dot">·</span>
+        <span class="${drift ? 'ds-oc-drift' : 'ds-oc-dot'}">△ ${drift} drifted</span>
+        ${errs.length ? `<span class="ds-oc-dot">·</span>
+        <span class="ds-oc-drift">⚠ ${errs.length} error${errs.length === 1 ? '' : 's'}</span>` : ''}
+        <span class="ds-oc-dot">·</span>
+        <span class="ds-oc-dot">${skip.length} skipped</span>
+        <span class="ds-oc-dot ds-oc-right">${esc(orgLabel(_orgCompareState.srcOrgUrl))} → ${esc(orgLabel(_orgCompareState.tgtOrgUrl))}</span>
         <button class="ds-btn ds-btn-xs" id="dsOCExportCsv" title="Download these results as a CSV file">⬇ CSV</button>
       </div>`;
   }

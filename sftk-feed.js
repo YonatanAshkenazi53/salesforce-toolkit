@@ -20,6 +20,7 @@ function sftkFeedWhat(e) {
     const app = tab ? 'Toolkit' : 'Data Studio';
     return { app, group: String(e.tool || 'change'), title: String(e.profileName || e.tool || 'change'), icon: '🛠', tab };
   }
+  if (e.kind === 'compare') return { app: 'Data Studio', group: 'Org Compare', title: String(e.profileName || 'Org Compare').replace(/^Org Compare: /, ''), icon: '🔍', tab: '' };
   const isRb = e.kind === 'rollback';
   return { app: 'Data Studio', group: `${isRb ? 'Rollback' : 'Data Deployment'} — ${String(e.profileName || 'deployment').replace(/^↩ Rollback of /, '')}`,
     title: String(e.profileName || 'deployment'), icon: isRb ? '↩' : '🚀', tab: '' };
@@ -33,6 +34,11 @@ function sftkFeedCounts(e) {
     if (!what.length) return 'nothing written';
     const ok = what.filter(w => w.ok).length;
     return ok === what.length ? `${what.length} step${what.length === 1 ? '' : 's'} verified` : `${ok} of ${what.length} steps verified`;
+  }
+  if (e.kind === 'compare') {
+    const c = e.compare || {};
+    if (c.objects == null) return 'read-only — nothing written';
+    return `${c.objects} object${c.objects === 1 ? '' : 's'} compared · ${c.drifted || 0} drifted${c.errors ? ` · ${c.errors} could not be read` : ''} — read-only`;
   }
   let ins = 0, upd = 0, del = 0, fail = 0;
   for (const s of Object.values(e.summary || {})) {
@@ -126,13 +132,13 @@ function sftkFeedTime(iso) {
     }
     return `<div class="sftk-feed-acts"><a class="btn btn-sm btn-secondary" href="studio.html#/activity" target="_blank" rel="noopener" title="A deployment is rolled back, retried, continued and reported from Data Studio — its Activity has the same line with those buttons">↩ roll back · ↻ retry · ⬇ report — in Data Studio ↗</a></div>`;
   };
-  const badge = s => s === 'success' ? '✅' : s === 'partial' ? '⚠' : s === 'running' ? '⏳' : '❌';
+  const badge = (s, e) => e && e.kind === 'compare' ? '🔍' : s === 'success' ? '✅' : s === 'partial' ? '⚠' : s === 'running' ? '⏳' : '❌';   // a compare found drift or not — it is not a run that went wrong
   const line = e => {
     const w = sftkFeedWhat(e);
     const orgs = e.kind === 'tool' ? orgName(e.targetOrg) : `${orgName(e.sourceOrg)} → ${orgName(e.targetOrg)}`;
     return `<div class="sftk-feed-line" data-feed-id="${esc(e.id)}">
       <span class="sftk-feed-time" title="${esc(e.startedAt || '')}">${esc(sftkFeedTime(e.startedAt))}</span>
-      <span class="sftk-feed-status" title="${esc(e.status || '')}">${badge(e.status)}</span>
+      <span class="sftk-feed-status" title="${esc(e.kind === 'compare' ? (e.status === 'partial' ? 'drift found' : 'no drift') : e.status || '')}">${badge(e.status, e)}</span>
       <span class="sftk-feed-title">${esc(w.title)}${e.undoOf ? ' <span class="sftk-feed-chip">↩ undo</span>' : ''}</span>
       <span class="sftk-feed-counts">${esc(sftkFeedCounts(e))}</span>
       <span class="sftk-feed-orgs">${esc(orgs)}</span>
