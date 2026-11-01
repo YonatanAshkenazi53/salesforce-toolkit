@@ -86,6 +86,6 @@ describe('styles and the video', () => {
     expect(CSS).toContain('.ds-amb-mergebar .ds-amb-merge { margin-left: 0; }');
   });
   it('the deploy chapter says it in that order', () => {
-    expect(SEC).toContain('Copies of the same record? Merge them. Different records? You say which is which, one name at a time.');
+    expect(SEC).toContain('Copies of the same record? Merge them. Different records that share a name? Say which is which — one sentence per copy.');   // 2026-11-01: the question is a sentence per copy
   });
 });

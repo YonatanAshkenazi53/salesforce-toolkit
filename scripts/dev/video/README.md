@@ -1,7 +1,7 @@
 # The walkthrough video
 
 A scripted tour of every tool in the public build, recorded live against the two
-trial orgs, with the captions burned into the picture, inside a browser frame
+Developer Edition orgs, in DARK theme (user 2026-11-01), with the captions burned into the picture, inside a browser frame
 drawn like Chrome's (tab strip and address bar with the page's real title and
 address). The recording is Chrome's own screencast and the encoder is Chrome's
 own (canvas → MediaRecorder, VP9 + Opus in WebM); ffmpeg then makes the H.264
@@ -95,7 +95,7 @@ compose step joins just those sections (a check of a chapter after re-recording 
 - **The write is shown in real time.** The deployment and the rollback of the
   Deploy chapter are not sped up: the viewer sees each object and batch land, with
   captions over the wait.
-- **A deployment only ever runs trailheads5 → trailheads4.** The demo deployments
+- **A deployment only ever runs the source into the target** (orgfarm-c449e108c2-dev-ed → orgfarm-e2c4511b2b-dev-ed, both Developer Editions since 2026-10-30). The demo deployments
   carry both org addresses themselves, and the chapter checks the Deploy page's
   own source and target again before it ticks anything and before it presses
   Deploy. (The fixture file names an org that no longer exists; the harness then

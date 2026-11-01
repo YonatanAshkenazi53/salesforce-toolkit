@@ -27,7 +27,7 @@ const PARTS = {
   part1d: ['fields'],
   part1e: ['copy-perms', 'flow-access'],
   part2a: ['orgs', 'builder', 'deploy'],
-  part2b: ['run', 'identity', 'rollback', 'ring', 'history', 'compare', 'orghealth', 'outro'],
+  part2b: ['run', 'identity', 'rollback', 'ring', 'activity', 'compare', 'orghealth', 'outro'],
 };
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);

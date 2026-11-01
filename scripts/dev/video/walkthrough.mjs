@@ -16,8 +16,8 @@
 //
 // Every section is on its own: one that fails is logged and the tour goes on,
 // and the end of the log lists what was recorded and what was not.
-// The orgs: npc = trailheads5 (the source, where the Toolkit's fixtures live),
-// npc2 = trailheads4 (the target).
+// The orgs: npc = orgfarm-c449e108c2-dev-ed (the source, a Developer Edition where the
+// Toolkit's fixtures live), npc2 = orgfarm-e2c4511b2b-dev-ed (the target).
 import { execFileSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { writeFileSync, rmSync, renameSync, existsSync, cpSync } from 'node:fs';
@@ -59,7 +59,7 @@ export default async function (h) {
   const popup = async tab => {
     await h.popup(tab); await rec.resume();
     const on = await h.eval(`document.querySelector('#topbarOrgLabel')?.textContent || ''`);
-    if (on !== 'trailheads5') throw new Error(`the Toolkit opened on "${on}", not on trailheads5`);
+    if (!/c449e108c2/.test(on)) throw new Error(`the Toolkit opened on "${on}", not on the source org (orgfarm-c449e108c2-dev-ed)`);
   };
   const studio = async hash => { await h.studio(hash); await rec.resume(); };
   // the Toolkit's home page: the popup opened without a tool
@@ -81,6 +81,11 @@ export default async function (h) {
   await h.login(TGT);
   await h.login(SRC);
   await h.watchErrors();
+  // The tour is recorded in DARK (user 2026-11-01): the shared theme key is written before any page is
+  // shown — the popup is only opened here to reach chrome.storage; its gate is not accepted (the home
+  // chapter shows that on camera).
+  await h.navigate(`chrome-extension://${h.extId}/popup.html`); await h.sleep(900);
+  await h.eval("chrome.storage.local.set({ sftk_dark: true, ds_dark_mode: true, sftk_oled: false })"); await h.sleep(400);
   // The licence gate: the home chapter shows the first activation on camera (user 2026-10-10:
   // "show how first activation looks"), so it is accepted off camera only when home is not recorded.
   if (only.length && !only.includes('home')) await h.popup('flows');

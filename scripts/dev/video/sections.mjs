@@ -31,8 +31,9 @@ const DEMO_VOL = 'Accounts and their contacts, at volume';
 const VOL_WHERE = ['000', '001', '002', '003', '004'].map(b => `Name LIKE 'SFTK VOL Account ${b}%'`).join(' OR ');   // 500 accounts, ~820 contacts, 500 opportunities (the DE target holds ~2,500 records)
 const OLD_FIELD = 'SFTK_FC_Test_Status__c', NEW_FIELD = 'SFTK_FC_Test_Status2__c';
 // the target is a Developer Edition org since 2026-10-15 (the Nonprofit Cloud trial expired)
-const SRC_ORG = 'trailheads5', TGT_ORG = 'orgfarm-e2c4511b2b-dev-ed';
-const SRC_URL = `https://${SRC_ORG}.my.salesforce.com`, TGT_URL = `https://${TGT_ORG}.develop.my.salesforce.com`;
+// 2026-10-30: the source is a Developer Edition (the trial expired); both orgs are orgfarm Developer Editions
+const SRC_ORG = 'orgfarm-c449e108c2-dev-ed', TGT_ORG = 'orgfarm-e2c4511b2b-dev-ed';
+const SRC_URL = `https://${SRC_ORG}.develop.my.salesforce.com`, TGT_URL = `https://${TGT_ORG}.develop.my.salesforce.com`;
 
 // ── small helpers ──────────────────────────────────────────────────────────
 // a Field Cleaner picker: focus, type, pick the item by API name
@@ -270,9 +271,13 @@ export const SECTIONS = [
     await rec.say('What’s New: the release notes, per version, inside the app.');
     await rec.reveal('#whatsNewContainer');
     if (await c.has('#homeBtn')) await rec.click('#homeBtn', 900);
+    // the tour is dark: make sure of it before the cycle, and land on dark again after it (dark → OLED → light → dark)
+    await h.eval("chrome.storage.local.set({ sftk_dark: true, ds_dark_mode: true, sftk_oled: false })"); await h.sleep(700);
     await rec.click('#sftkDarkToggle', 900);
-    await rec.say('Dark mode.');
+    await rec.say('One button cycles the theme: dark, pure black for OLED screens, and light.', 4500);
     await rec.click('#sftkDarkToggle', 900);
+    await rec.click('#sftkDarkToggle', 900);
+    await h.eval("chrome.storage.local.set({ sftk_dark: true, ds_dark_mode: true, sftk_oled: false })"); await h.sleep(700);
     await rec.say('A second press gives OLED black: pure black surfaces for OLED screens. One setting for both parts of the extension.');
     await rec.click('#sftkDarkToggle', 800);
     await rec.say('And back to light.');
@@ -611,7 +616,7 @@ export const SECTIONS = [
         await h.cdp('Runtime.evaluate', { expression: `(() => { const pop = [...document.querySelectorAll('section, div')].find(e => e.children.length < 12 && /Slack in Salesforce/.test(e.innerText || '') && e.querySelector('button')); const b = (pop && (pop.querySelector('.slds-popover__close, button[title*="lose" i], button[aria-label*="lose" i], button[aria-label*="ismiss" i]') || pop.querySelector('button'))) || document.querySelector('.slds-popover__close'); if (b) b.click(); return !!b; })()`, returnByValue: true }, sessionId).catch(() => {});
         await h.sleep(600);
       });
-      rec.state.pages.push({ t: (rec.state.frames.at(-1) || { t: 0 }).t + 1, url: `https://${SRC_ORG}.lightning.force.com${path}`, title: 'SFTK PK Account 1 | Salesforce' });
+      rec.state.pages.push({ t: (rec.state.frames.at(-1) || { t: 0 }).t + 1, url: `https://${SRC_ORG}.develop.lightning.force.com${path}`, title: 'SFTK PK Account 1 | Salesforce' });
       await rec.frameFrom(sessionId, 300);
       await rec.say(caption);
       await h.cdp('Target.closeTarget', { targetId }, null).catch(() => {});
@@ -1312,11 +1317,12 @@ export const SECTIONS = [
     await rec.scrollTo('#dsDepRecords', 'start');
     await tab('ins');
     await rec.say('Insert: the records the target does not have. Nothing is ticked for you — only what you tick is written.', 5500);
-    if (await c.has('#dsDepList [data-dep-lkp]')) {
-      await rec.click('#dsDepList [data-dep-lkp]', 900);
-      await rec.fast(() => h.waitFor("!!document.querySelector('#dsDepLkpHost') && (document.querySelector('#dsDepLkpHost').innerText || '').length > 20", 30000, 300));
+    if (await c.has('#dsDepList [data-dep-vals]')) {
+      await rec.click('#dsDepList [data-dep-vals]', 900);
+      await rec.fast(() => h.waitFor("!!document.querySelector('#dsVeFilter') && document.querySelectorAll('.ds-ve-row').length > 3", 30000, 300));
       await h.sleep(800);
-      await rec.say('A record’s Lookups window: each lookup field, where it lands in the target, and why. Where the match is wrong, you pick the target record yourself.', 7000);
+      await rec.say('A record: every writable field and lookup, the source’s value, and a box for the value it is written with instead. A lookup says where it lands in the target — and you can pick the target record yourself.', 9000);
+      if (await c.has('[data-ve-land]')) { await rec.scrollTo('[data-ve-land]', 'center'); await rec.point('[data-ve-land]', 1500); }
       await h.closeModal();
       await h.eval(`(() => { const x = document.querySelector('[data-dsaction="closeModal"]'); if (x) x.click(); return true; })()`);
       await h.sleep(600);
@@ -1339,11 +1345,12 @@ export const SECTIONS = [
       await tab('amb');
       if (await c.has('.ds-amb-group')) {
         await rec.scrollTo('.ds-dep-amb-intro');
-        await rec.say('Needs a decision: two records share a name, so the scan never guesses. Copies of the same record? Merge them. Different records? You say which is which, one name at a time.', 8000);
-        const picked = await h.eval(`(() => { const r = [...document.querySelectorAll('input[data-dep-amb-sel]')].find(x => x.value && x.value !== '__new__'); if (!r) return false; r.setAttribute('data-demo-amb', '1'); return true; })()`);
+        await rec.say('Needs a decision: two records share a name, so the scan never guesses. Copies of the same record? Merge them. Different records that share a name? Say which is which — one sentence per copy.', 8000);
+        if (await c.has('.ds-amb-match-fold')) { await h.eval("(() => { document.querySelector('.ds-amb-match-fold').open = true; return true; })()"); await h.sleep(400); }
+        const picked = await h.eval(`(() => { const s = [...document.querySelectorAll('select[data-dep-amb-sel]')].find(x => [...x.options].some(o => o.value && o.value !== '__new__')); if (!s) return false; s.setAttribute('data-demo-amb', '1'); return true; })()`);
         if (picked) {
-          await rec.point('input[data-demo-amb="1"]', 700);
-          await h.eval(`(() => { const r = document.querySelector('input[data-demo-amb="1"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+          await rec.point('select[data-demo-amb="1"]', 700);
+          await h.eval(`(() => { const s = document.querySelector('select[data-demo-amb="1"]'); const o = [...s.options].find(o => o.value && o.value !== '__new__'); s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
           await h.sleep(600);
           await rec.click('[data-dep-amb-one]:not([disabled])', 1500);
           await rec.say('The answer is remembered for this pair of orgs. It is not a change in Salesforce.', 4500);
@@ -1352,10 +1359,10 @@ export const SECTIONS = [
           await rec.scrollTo('.ds-amb-mergebar', 'center');
           await rec.say('And when the copies are the same record, merge them: the copies in the source, in the target, or both sides, one after the other. The copies are read live from each org.', 8500);
           await rec.click('[data-dep-amb-merge="both"]', 600);
-          await rec.fast(() => h.waitFor("!!document.querySelector('.ds-merge-table')", 60000, 300));
+          await rec.fast(() => h.waitFor("!!document.querySelector('.ds-merge-copies')", 60000, 300));
           await h.sleep(800);
-          await rec.say('Side by side. You choose the record that stays, and for every field that differs, the value it keeps — its own values are ticked.', 7500);
-          const other = await h.eval(`(() => { const r = document.querySelector('tr[data-merge-field="BillingCity"] input[value="1"]') || document.querySelector('tr[data-merge-field] input[value="1"]'); if (!r) return false; r.setAttribute('data-demo-merge', '1'); return true; })()`);
+          await rec.say('Each copy on its own row: what tells it apart, when it was made, how full it is — the fullest is ticked for you. Under it, every field that differs, with each value and the copies that hold it.', 9000);
+          const other = await h.eval(`(() => { const pick = f => [...document.querySelectorAll('.ds-merge-frow[data-merge-field="' + f + '"] .ds-merge-opt[data-merge-idx]')].find(el => el.dataset.mergeIdx.split(',').map(Number).includes(1)); const o = pick('BillingCity') || [...document.querySelectorAll('.ds-merge-frow')].map(r => pick(r.dataset.mergeField)).find(Boolean); const r = o && o.querySelector('input[type="radio"]'); if (!r) return false; r.setAttribute('data-demo-merge', '1'); return true; })()`);
           if (other) {
             await rec.point('input[data-demo-merge="1"]', 700);
             await h.eval(`(() => { const r = document.querySelector('input[data-demo-merge="1"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
@@ -1371,7 +1378,7 @@ export const SECTIONS = [
           await rec.click('#sftkConfirmGo', 600);
           await prodGate(c);
           await rec.fast(() => h.waitFor(`_history.length > ${hist}`, 120000, 500));
-          await rec.fast(() => h.waitFor("!!document.querySelector('.ds-merge-table')", 60000, 300));
+          await rec.fast(() => h.waitFor("!!document.querySelector('.ds-merge-copies')", 60000, 300));
           await h.sleep(800);
           await rec.say('The target’s two copies next, the same way. Here the first stays with its own values.', 5500);
           await rec.click('#dsMergeGo', 600);
@@ -1385,7 +1392,7 @@ export const SECTIONS = [
           await waitScanned(c);
           await h.sleep(1200);
           await rec.scrollTo('.ds-dep-tabs', 'center');
-          await rec.say('Done, both recorded in History. Both orgs are read again once: one record on each side now, compared like any other pair, and the tab is empty.', 8000);
+          await rec.say('Done, both recorded in Activity. Both orgs are read again once: one record on each side now, compared like any other pair, and the tab is empty.', 8000);
         }
       }
     }
@@ -1499,7 +1506,7 @@ export const SECTIONS = [
     await rec.fast(() => h.waitFor("!!document.querySelector('#dsRecProgress') && (document.querySelector('#dsRecProgress').innerText || '').length > 10", 60000, 300).catch(() => {}));
     await rec.scrollTo('#dsRecProgress', 'start');
     await rec.say('The run, as it happens: the restore point first, then the accounts, batch after batch — Salesforce’s answer for every record, and the count climbing.', 8500);
-    await rec.say('Then the contacts, each connected to its new account. A refusal is named with its reason and never counted as done. Pause stops after the batch in flight; History continues the run later.', 9500);
+    await rec.say('Then the contacts, each connected to its new account. A refusal is named with its reason and never counted as done. Pause stops after the batch in flight; Activity continues the run later.', 9500);
     const t0 = Date.now();
     await rec.fast(async () => { while ((await h.eval('_history.length')) <= before && Date.now() - t0 < 1200000) await h.sleep(500); }, { video: 10 });
     if ((await h.eval('_history.length')) <= before) throw new Error('the deployment did not finish');
@@ -1552,7 +1559,7 @@ export const SECTIONS = [
       await rec.click('#sftkConfirmGo', 600);
       await prodGate(c);
       await rec.fast(async () => { for (let i = 0; i < 120 && !(await h.eval(`_history.length > ${hist}`)); i++) await h.sleep(1000); await h.sleep(1500); });
-      await rec.say('Done, and recorded in History with an undo — the field can be emptied again from there.', 5000);
+      await rec.say('Done, and recorded in Activity with an undo — the field can be emptied again from there.', 5000);
     }
     await h.closeModal();
     await h.sleep(400);
@@ -1571,12 +1578,13 @@ export const SECTIONS = [
     const { h, rec } = c;
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');
     await ensureBuilt(c);
-    await nav(c, 'history');
-    await h.waitFor("!!document.querySelector('.ds-history-card, .ds-history-item')", 20000, 500);
-    await rec.say('History keeps every run: what was written, per object, with links to the records, and a report by name.', 6000);
-    if (!(await c.has('[data-dsaction="rollbackRun"]:not([disabled])'))) throw new Error('no rollback offered for the run');
+    await rec.click('#sftkFeedBtn', 1200);
+    await h.waitFor("document.querySelectorAll('#sftkFeedList [data-dsaction]').length > 0", 20000, 400);
+    await h.sleep(600);
+    await rec.say('Activity keeps every run, by day: what was written, and on each line what you can do with it — retry what failed, roll back, open the deployment, download a report by name.', 8000);
+    if (!(await c.has('#sftkFeedList [data-dsaction="rollbackRun"]:not([disabled])'))) throw new Error('no rollback offered for the run');
     const rbBefore = await h.eval(`_history.filter(x => x.kind === 'rollback').length`);
-    await rec.click('[data-dsaction="rollbackRun"]:not([disabled])', 800);
+    await rec.click('#sftkFeedList [data-dsaction="rollbackRun"]:not([disabled])', 800);
     await rec.say('Roll back opens a page of its own: what the run wrote, compared with the restore point.', 5500);
     await rec.fast(() => h.waitFor("!!document.querySelector('#dsRbGo') || !!document.querySelector('.ds-rec-card-bad')", 300000, 1000));
     await h.sleep(1200);
@@ -1621,15 +1629,26 @@ export const SECTIONS = [
     if (await c.has('[data-ring-rec]')) { await rec.point('[data-ring-rec]', 1200); await rec.say('From a cell you open that deployment against that org, and fix it there.', 4000); }
   } },
 
-  { id: 'history', title: 'History', run: async c => {
+  { id: 'activity', title: 'Activity', run: async c => {
     const { h, rec } = c;
     if (!(await c.has('.ds-nav-btn'))) await c.studio('');
-    await nav(c, 'history');
-    await h.sleep(1500);
-    await rec.say('History. Every deployment and every rollback, with what was written and what the org said afterwards.', 5500);
-    if (await c.has('.ds-history-card')) { await rec.point('.ds-history-card', 1200); await rec.scrollBy(null, 400); }
-    if (await c.has('#dsHistKitNote')) { await rec.scrollTo('#dsHistKitNote', 'center'); await rec.point('#dsHistKitNote', 1200); }
-    await rec.say('A change made by a Toolkit tool is listed in that tool, with its own Undo. All of it stays on this computer, and you can export it.', 6000);
+    await rec.click('#sftkFeedBtn', 1200);
+    // the list is drawn (groups, or the empty words on a fresh profile) — the chapter never waits on a group that is not there
+    await h.waitFor("!!document.querySelector('#sftkFeedList') && !/Reading…/.test(document.querySelector('#sftkFeedList').innerText || '')", 20000, 400);
+    await h.sleep(800);
+    await rec.say('Activity, in the top bar of both pages: everything the Toolkit and Data Studio did, by day, then by the tool or the deployment.', 6500);
+    if (await c.has('#sftkFeedList .sftk-feed-group')) await rec.point('#sftkFeedList .sftk-feed-group', 1200);
+    await rec.say('Every line carries what you can do with it: fix what did not finish, undo it, open the deployment, download its report. An undo that is not possible says why.', 7500);
+    if (await c.has('[data-feed-app="Toolkit"]')) {
+      await rec.click('[data-feed-app="Toolkit"]', 900);
+      await rec.say('Filter by app; search by tool, deployment or org.', 3500);
+      await rec.click('[data-feed-app=""]', 600);
+    }
+    await rec.point('#sftkFeedExport', 1000);
+    await rec.say('All of it stays on this computer, and Export all writes it to a file.', 4500);
+    await h.closeModal();
+    await h.eval(`(() => { const x = document.querySelector('[data-dsaction="closeModal"]'); if (x) x.click(); return true; })()`);
+    await h.sleep(500);
   } },
 
   { id: 'compare', title: 'Org Compare', run: async c => {

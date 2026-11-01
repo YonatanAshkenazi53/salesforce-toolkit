@@ -70,7 +70,7 @@ npm run pack        # the store zip under dist/
 ```
 
 Classic scripts, no build step, no framework. Tests live in `test/` (vitest). The fixtures under
-`docs/fixtures` seed two trial orgs with the data and metadata the live scripts and the
+`docs/fixtures` seed two Developer Edition orgs with the data and metadata the live scripts and the
 walkthrough video exercise; `docs/FEATURES.md` describes every feature as shipped, and
 `CHANGELOG.md` is what the in-app What's New shows.
 

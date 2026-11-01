@@ -36,6 +36,10 @@ import { speakAll, voiceFile, voiceSeconds, VOICE as VOICE_NAME, RATE as VOICE_R
 
 const FAST = Number(process.env.FAST || 8);
 const W = 1920, H = 1080, FRAME_H = 88, PAGE_H = 872, BAND_Y = FRAME_H + PAGE_H;
+// the browser frame's palette: Chrome's dark frame by default (the tour is dark since 2026-11-01); FRAME=light for the old look
+const P = process.env.FRAME === 'light'
+  ? { strip: '#dee1e6', tab: '#fff', text: '#202124', icon: '#5f6368', bar: '#fff', omni: '#f1f3f4', divider: '#dadce0', page: '#ffffff' }
+  : { strip: '#202124', tab: '#35363a', text: '#e8eaed', icon: '#9aa0a6', bar: '#35363a', omni: '#202124', divider: '#3c4043', page: '#16181d' };
 const MIN_GAP = 66;            // ms between frames sent to the encoder (15 fps ceiling)
 // In a sped-up stretch the recording's frames arrive FAST× closer together: 236 pictures
 // of a scrolling page in one second of video left the encoder drawing the previous page
@@ -187,35 +191,35 @@ export default async function (h) {
     const frame = () => {
       const FH = ${FRAME_H};
       // the tab strip
-      g.fillStyle = '#dee1e6'; g.fillRect(0, 0, ${W}, 40);
+      g.fillStyle = '${P.strip}'; g.fillRect(0, 0, ${W}, 40);
       g.font = '400 15px "Segoe UI", sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'left';
       const title = V.title || 'New Tab';
       const tw = Math.min(360, Math.max(180, g.measureText(title).width + 84));
-      g.fillStyle = '#fff'; g.beginPath(); g.roundRect(12, 8, tw, 40, [10, 10, 0, 0]); g.fill();
+      g.fillStyle = '${P.tab}'; g.beginPath(); g.roundRect(12, 8, tw, 40, [10, 10, 0, 0]); g.fill();
       g.fillStyle = '#1b6fd1'; g.beginPath(); g.roundRect(26, 16, 18, 18, 4); g.fill();
       g.fillStyle = '#fff'; g.font = '700 12px "Segoe UI", sans-serif'; g.textAlign = 'center'; g.fillText('A', 35, 26);
-      g.textAlign = 'left'; g.font = '400 15px "Segoe UI", sans-serif'; g.fillStyle = '#202124';
+      g.textAlign = 'left'; g.font = '400 15px "Segoe UI", sans-serif'; g.fillStyle = '${P.text}';
       let t = title; while (t && g.measureText(t).width > tw - 84) t = t.slice(0, -1); if (t !== title) t = t.replace(/\s+$/, '') + '…';
       g.fillText(t, 54, 25);
-      g.fillStyle = '#5f6368'; g.font = '400 18px "Segoe UI", sans-serif'; g.fillText('×', 12 + tw - 24, 24);
+      g.fillStyle = '${P.icon}'; g.font = '400 18px "Segoe UI", sans-serif'; g.fillText('×', 12 + tw - 24, 24);
       g.font = '400 22px "Segoe UI", sans-serif'; g.fillText('+', 12 + tw + 14, 24);
       g.font = '400 16px "Segoe UI", sans-serif'; g.textAlign = 'center'; g.fillText('—', ${W} - 114, 20); g.fillText('▢', ${W} - 70, 20); g.fillText('✕', ${W} - 28, 20);
       // the address bar
-      g.fillStyle = '#fff'; g.fillRect(0, 40, ${W}, FH - 40);
-      g.fillStyle = '#5f6368'; g.font = '400 20px "Segoe UI Symbol", "Segoe UI", sans-serif'; g.textAlign = 'center';
+      g.fillStyle = '${P.bar}'; g.fillRect(0, 40, ${W}, FH - 40);
+      g.fillStyle = '${P.icon}'; g.font = '400 20px "Segoe UI Symbol", "Segoe UI", sans-serif'; g.textAlign = 'center';
       g.fillText('←', 24, 64); g.fillText('→', 58, 64); g.fillText('↻', 92, 64);
-      g.fillStyle = '#f1f3f4'; g.beginPath(); g.roundRect(116, 46, ${W} - 116 - 132, 36, 18); g.fill();
-      g.fillStyle = '#5f6368'; g.font = '400 15px "Segoe UI Emoji", "Segoe UI", sans-serif'; g.textAlign = 'left'; g.fillText('🧩', 132, 64);
-      g.fillStyle = '#202124'; g.font = '400 16px "Segoe UI", sans-serif';
+      g.fillStyle = '${P.omni}'; g.beginPath(); g.roundRect(116, 46, ${W} - 116 - 132, 36, 18); g.fill();
+      g.fillStyle = '${P.icon}'; g.font = '400 15px "Segoe UI Emoji", "Segoe UI", sans-serif'; g.textAlign = 'left'; g.fillText('🧩', 132, 64);
+      g.fillStyle = '${P.text}'; g.font = '400 16px "Segoe UI", sans-serif';
       let u = String(V.url || ''); while (u && g.measureText(u).width > ${W} - 116 - 132 - 60) u = u.slice(0, -1); if (u !== String(V.url || '')) u += '…';
       g.fillText(u, 160, 64);
-      g.fillStyle = '#5f6368'; g.font = '400 18px "Segoe UI Symbol", "Segoe UI", sans-serif'; g.textAlign = 'center';
+      g.fillStyle = '${P.icon}'; g.font = '400 18px "Segoe UI Symbol", "Segoe UI", sans-serif'; g.textAlign = 'center';
       g.fillText('☆', ${W} - 100, 64); g.fillText('⋮', ${W} - 24, 64);
-      g.fillStyle = '#dadce0'; g.fillRect(0, FH - 1, ${W}, 1);
+      g.fillStyle = '${P.divider}'; g.fillRect(0, FH - 1, ${W}, 1);
     };
     V.paint = () => {
       frame();
-      g.fillStyle = '#ffffff'; g.fillRect(0, ${FRAME_H}, ${W}, ${PAGE_H});
+      g.fillStyle = '${P.page}'; g.fillRect(0, ${FRAME_H}, ${W}, ${PAGE_H});
       if (V.img) {
         // scaled to the width; a taller picture (another tab, at its own size) is cropped at the bottom, never squeezed
         const s = ${W} / V.img.width, hh = Math.min(${PAGE_H}, V.img.height * s);
