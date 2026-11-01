@@ -28,7 +28,7 @@ const FIXTURE = 'docs/fixtures/complex-deployment/profiles.json';
 const DEMO = 'Accounts and everything under them';
 const BUILT = 'Accounts and their contacts';   // THE deployment of the Data Studio half: built on camera, then scanned, decided, deployed, stamped, rolled back (user 2026-10-25: "only one example of data deployment")
 const DEMO_VOL = 'Accounts and their contacts, at volume';
-const VOL_WHERE = ['000', '001', '002', '003', '004'].map(b => `Name LIKE 'SFTK VOL Account ${b}%'`).join(' OR ');   // 500 accounts, ~820 contacts, 500 opportunities (the DE target holds ~2,500 records)
+const VOL_WHERE = ['000'].map(b => `Name LIKE 'SFTK VOL Account ${b}%'`).join(' OR ');   // 2026-11-01: one block — 100 accounts, 200 contacts, 100 opportunities; the Developer Edition SOURCE is at its 5 MB storage edge
 const OLD_FIELD = 'SFTK_FC_Test_Status__c', NEW_FIELD = 'SFTK_FC_Test_Status2__c';
 // the target is a Developer Edition org since 2026-10-15 (the Nonprofit Cloud trial expired)
 // 2026-10-30: the source is a Developer Edition (the trial expired); both orgs are orgfarm Developer Editions
@@ -156,9 +156,9 @@ async function ensureVolumeDemo(c) {
   // SOQL LIKE knows only % and _ (a [01] class matched nothing, 2026-10-16). Blocks 000–006: 700 accounts and
   // their ~1,150 contacts (the Developer Edition target holds 5 MB ≈ 2,500 records in all; user 2026-10-16:
   // "a lot of records. the tree shouldn't be so big… thousands of records for a few objects")
-  prof.tree.where = ['000', '001', '002', '003', '004', '005', '006'].map(b => `Name LIKE 'SFTK VOL Account ${b}%'`).join(' OR ');
+  prof.tree.where = VOL_WHERE;   // 2026-11-01: the same one block as the built deployment
   prof.tree.children = [{ childSObject: 'Contact', field: 'AccountId', matchField: 'Email' }];
-  prof.apiMode = 'sync'; prof.batchSize = 100; prof.threads = 1;
+  prof.apiMode = 'sync'; prof.batchSize = 25; prof.threads = 1;
   // bypass, as the fixture says: the target's standard Account duplicate rule BLOCKS these — their names fuzzy-match
   // each other (1,896 of 2,000 refused with DUPLICATES_DETECTED on 2026-10-16 with 'respect'); the run says it bypassed
   prof.duplicateRules = 'bypass';
@@ -190,7 +190,7 @@ async function ensureBuilt(c) {
   prof.tree.where = VOL_WHERE;
   prof.tree.children = [{ childSObject: 'Contact', field: 'AccountId', matchField: 'Email' }, { childSObject: 'Opportunity', field: 'AccountId', matchField: 'Name' }];
   prof.tree.fieldMappings = { ...(prof.tree.fieldMappings || {}), Preferred_Contact_Method__c: 'Preferred_Contact_Channel__c' };
-  prof.apiMode = 'sync'; prof.batchSize = 100; prof.threads = 1; prof.duplicateRules = 'bypass';
+  prof.apiMode = 'sync'; prof.batchSize = 25; prof.threads = 1; prof.duplicateRules = 'bypass';
   prof.sourceOrg = SRC_URL; prof.targetOrg = TGT_URL;
   const file = join(resolve(process.env.REC_DIR || 'dist/video/rec'), 'demo-built.json');
   mkdirSync(dirname(file), { recursive: true });
@@ -204,7 +204,7 @@ async function ensureBuilt(c) {
 // The run's own settings on the built deployment: Collections in batches of 100 so the counter climbs on
 // camera, and the target's standard Account duplicate rule bypassed (it blocks these look-alike names).
 async function settleBuilt(c, id) {
-  await c.h.eval(`(async () => { const p = _profiles.find(p => p.id === ${J(id)}); if (!p) return false; p.apiMode = 'sync'; p.batchSize = 100; p.threads = 1; p.duplicateRules = 'bypass';
+  await c.h.eval(`(async () => { const p = _profiles.find(p => p.id === ${J(id)}); if (!p) return false; p.apiMode = 'sync'; p.batchSize = 25; p.threads = 1; p.duplicateRules = 'bypass';
     const kid = (p.tree.children || []).find(x => x.childSObject === 'Contact'); if (kid) kid.matchField = 'Email'; await storageSaveProfiles(); return true; })()`);
 }
 async function openBuiltScanned(c) {
@@ -1469,7 +1469,7 @@ export const SECTIONS = [
     const id = await ensureBuilt(c);
     await settleBuilt(c, id);
     await h.eval(`window.runProfile(${J(id)})`); await h.sleep(1500);
-    await rec.say('Now the run — the same deployment: five hundred accounts with their contacts and opportunities, which the target does not have.', 6500);
+    await rec.say('Now the run — the same deployment: a hundred accounts with their contacts and opportunities, which the target does not have.', 6500);
     await h.eval(`(document.querySelector('#dsDepScan') || document.querySelector('#dsDepRefresh')).click()`);
     await waitScanned(c);
     await h.sleep(1500);
@@ -1488,7 +1488,7 @@ export const SECTIONS = [
     await rec.click('#dsDepTickAll', 900);
     await rec.fast(() => h.waitFor("_recSel.push.size > 0 || Object.values(_recChildSel || {}).some(s => s.push.size > 0)", 30000, 300));
     const ticked = await h.eval(`(() => { let n = 0; for (const k of Object.keys(_recChildSel || {})) n += _recChildSel[k].push.size; return n + _recSel.push.size; })()`);
-    if (ticked < 1500) throw new Error(`only ${ticked} records ticked`);
+    if (ticked < 250) throw new Error(`only ${ticked} records ticked`);   // one block: ~100 accounts, ~200 contacts, ~100 opportunities
     const nObjs = await h.eval('(_recSel.push.size ? 1 : 0) + Object.keys(_recChildSel || {}).filter(k => _recChildSel[k].push.size).length');
     await rec.scrollTo('#dsRecRunBtn', 'center');
     await rec.say(`${ticked.toLocaleString()} records across ${nObjs} objects. Parents first: a contact whose account is also new is written after its account, with the new account’s id. Batches of one hundred, so the count can be watched.`, 10000);
