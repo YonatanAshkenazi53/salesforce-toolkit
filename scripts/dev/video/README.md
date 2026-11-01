@@ -30,6 +30,25 @@ into `walkthrough.webm`, the fourth turns that into the MP4 and the share copies
 with ffmpeg (a few minutes). Run the harness commands one after the other,
 never two at once: the harness closes any other headless Chrome it started.
 
+On a fresh source org (the Developer Edition `npc` since 2026-11-01), before the
+first recording, the Toolkit chapters need their fixtures in the org AND visible
+to the recording user — a field nobody can see is absent from every list and
+`sf data` says "No such column" about it:
+
+```bash
+cd docs/fixtures/apiver-fixture && sf project deploy start -o npc --source-dir force-app && cd ../../..
+cd docs/fixtures/debug-loop-fixture && sf project deploy start -o npc --source-dir force-app && cd ../../..
+cd docs/fixtures/lightning-page-fixture && sf project deploy start -o npc --source-dir force-app && cd ../../..
+bash docs/fixtures/field-cleaner-fixture/rebuild.sh npc
+sf org assign permset -o npc --name SFTK_Dbg_Access --name SFTK_FC_Test_See2
+```
+
+The API versions chapter refuses to start unless `SFTK_AV_Test_A` is behind the
+org's release (a recording that was stopped after the bump leaves it current:
+deploy the fixture again). The Lightning Pages chapter assigns the test page to
+the **Sales** app (every org has it; the Trailhead "Learning Home" app does not
+exist in a Developer Edition) and opens the record in that app.
+
 Why two encoders (2026-10-27): Chrome's own H.264 paints every page of text
 soft whatever bitrate it is asked for (50 KB keyframes at 1080p, the same at
 8 and at 30 Mbit/s — unreadable on the Deploy pages), while its VP9 honours

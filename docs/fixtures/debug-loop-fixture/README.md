@@ -10,7 +10,9 @@ iterations and how our debug tool helps to recognize it?"
   condition (`SFTK_Dbg_Count__c < 5`) stops it at 5. That is the recursion the Debugger's
   automation analysis flags (LOOP badge on the log row, the "Recursion" banner with the count).
 
-Deploy: `cd docs/fixtures/debug-loop-fixture && sf project deploy start -o npc --source-dir force-app`
+Deploy: `cd docs/fixtures/debug-loop-fixture && sf project deploy start -o npc --source-dir force-app && sf org assign permset -o npc --name SFTK_Dbg_Access`
+(the permission set makes the field visible to the running user; without it `sf data update`
+says "No such column" — the chapter failed so on the fresh Developer Edition, 2026-11-01)
 Trigger a run (with a trace on the running user): set the field to 0 on an Account —
 `sf data update record -o npc -s Account -i <id> -v "SFTK_Dbg_Count__c=0"` — and read the field back:
 it reads 5. The video chapter does this off camera and opens the log on screen.

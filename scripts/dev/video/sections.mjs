@@ -594,13 +594,17 @@ export const SECTIONS = [
     const { h, rec } = c;
     const PAGE = /SFTK LP Test Account Page/i;
     const acc = cliJson('npc', ['data', 'query', '-q', `"SELECT Id FROM Account WHERE Name = 'SFTK PK Account 1' LIMIT 1"`]).result.records[0];
+    // the app the assignment is made for, and the record page is opened in (a Developer Edition
+    // has no "Learning Home"; the Sales app is in every org — 2026-11-01)
+    const APP = 'Sales', PROFILE = 'System Administrator';
+    const app = cliJson('npc', ['data', 'query', '-q', `"SELECT DurableId FROM AppDefinition WHERE DeveloperName = 'LightningSales'"`]).result.records[0];
     // one picture of an Account record page in Salesforce, in a tab of its own
     const recordFrame = async (caption) => {
       // A brand-new browser session each time (a new browser context, logged in through a fresh
       // frontdoor URL from the CLI): Lightning keeps page assignments in its session caches, and a
       // tab in the old session drew the old page even after the change (dry runs 2026-10-10).
       // The frontdoor URL carries a session id: it is never logged.
-      const path = `/lightning/r/Account/${acc.Id}/view`;
+      const path = `/lightning/app/${app.DurableId}/r/Account/${acc.Id}/view`;
       const fd = cliJson('npc', ['org', 'open', '--url-only']).result.url;
       const { browserContextId } = await h.cdp('Target.createBrowserContext', {}, null);
       const { targetId } = await h.cdp('Target.createTarget', { url: `${fd}${fd.includes('?') ? '&' : '?'}retURL=${encodeURIComponent(path)}`, browserContextId }, null);
@@ -608,12 +612,14 @@ export const SECTIONS = [
       await rec.fast(async () => {
         await h.cdp('Page.enable', {}, sessionId).catch(() => {});
         for (let i = 0; i < 90; i++) {
-          const r = await h.cdp('Runtime.evaluate', { expression: "(/\/lightning\/r\/Account\//.test(location.href) && document.body) ? document.body.innerText.length : 0", returnByValue: true }, sessionId).catch(() => ({ result: { value: 0 } }));
+          const r = await h.cdp('Runtime.evaluate', { expression: "(location.pathname.includes('/r/Account/') && document.body) ? document.body.innerText.length : 0", returnByValue: true }, sessionId).catch(() => ({ result: { value: 0 } }));
           if (r.result.value > 1500) break; await h.sleep(1000);
         }
         await h.sleep(5000);   // the record page draws its components after the shell
-        // the "Slack in Salesforce" promo popover, if it is up, is closed first
-        await h.cdp('Runtime.evaluate', { expression: `(() => { const pop = [...document.querySelectorAll('section, div')].find(e => e.children.length < 12 && /Slack in Salesforce/.test(e.innerText || '') && e.querySelector('button')); const b = (pop && (pop.querySelector('.slds-popover__close, button[title*="lose" i], button[aria-label*="lose" i], button[aria-label*="ismiss" i]') || pop.querySelector('button'))) || document.querySelector('.slds-popover__close'); if (b) b.click(); return !!b; })()`, returnByValue: true }, sessionId).catch(() => {});
+        // a promo popover, if one is up ("Slack in Salesforce", "Try the new Salesforce Setup" — seen 2026-11-01 on the Developer Edition), is dismissed first; twice, since one can follow another
+        await h.cdp('Runtime.evaluate', { expression: `(() => { const pop = [...document.querySelectorAll('section, div')].find(e => e.children.length < 12 && /Slack in Salesforce|Try the new Salesforce|Salesforce Go|Let's Go/.test(e.innerText || '') && e.querySelector('button')); const b = (pop && (pop.querySelector('.slds-popover__close, button[title*="lose" i], button[aria-label*="lose" i], button[aria-label*="ismiss" i]') || [...pop.querySelectorAll('button')].find(x => /^(dismiss|close|not now|no thanks)$/i.test((x.innerText || '').trim())) || pop.querySelector('button'))) || document.querySelector('.slds-popover__close'); if (b) b.click(); return !!b; })()`, returnByValue: true }, sessionId).catch(() => {});
+        await h.sleep(900);
+        await h.cdp('Runtime.evaluate', { expression: `(() => { const pop = [...document.querySelectorAll('section, div')].find(e => e.children.length < 12 && /Slack in Salesforce|Try the new Salesforce|Salesforce Go|Let's Go/.test(e.innerText || '') && e.querySelector('button')); const b = pop && ([...pop.querySelectorAll('button')].find(x => /^(dismiss|close|not now|no thanks)$/i.test((x.innerText || '').trim())) || pop.querySelector('.slds-popover__close')); if (b) b.click(); return !!b; })()`, returnByValue: true }, sessionId).catch(() => {});
         await h.sleep(600);
       });
       rec.state.pages.push({ t: (rec.state.frames.at(-1) || { t: 0 }).t + 1, url: `https://${SRC_ORG}.develop.lightning.force.com${path}`, title: 'SFTK PK Account 1 | Salesforce' });
@@ -647,10 +653,9 @@ export const SECTIONS = [
     await rec.type('#lpSearch', 'SFTK');
     await openFixturePage();
     await rec.say('A page’s assignments, read from Salesforce each time: the org default, an app default, or an app with a record type and a profile. This test page has none yet, so nobody sees it.');
-    await recordFrame('An Account in this org today, in the Learning Home app: the standard record page, with its tabs, related lists and activity.');
+    await recordFrame(`An Account in this org today, in the ${APP} app: the standard record page, with its tabs, related lists and activity.`);
     // the assignment, for real: the app default of the app the users work in (an org default would be
     // beaten there by the app's own default page — the first dry run showed the same page twice)
-    const APP = 'Learning Home', PROFILE = 'System Administrator';
     await rec.click('.lp-atab[data-tab="artp"]', 700);
     await rec.say(`The most specific assignment: an app, record types and a profile. The ${APP} app, every record type, and the ${PROFILE} profile — the person about to open the record. It beats the org default and the app default.`);
     const tick = async (listSel, cls, text) => {
