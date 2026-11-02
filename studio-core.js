@@ -990,6 +990,9 @@ function showToast(message, type = 'info', durationMs = 3500) {
   setTimeout(() => {
     toast.classList.add('ds-toast-out');
     toast.addEventListener('animationend', () => toast.remove(), { once: true });
+    // where animations are off (a stylesheet with `animation: none`, a browser flag) the
+    // event never comes: the toast goes anyway (store screenshots showed it stuck, 2026-11-02)
+    setTimeout(() => toast.remove(), 700);
   }, durationMs);
 }
 
