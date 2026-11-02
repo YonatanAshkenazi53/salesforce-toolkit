@@ -1532,7 +1532,7 @@ export const SECTIONS = [
   // field creation that should map both orgs and how it works"): created in both orgs on camera, the matched
   // pairs stamped, the re-scan matches by it; cleanup deletes the fields and the permission set again.
   { id: 'identity', title: 'The identity field', writes: true,
-    cleanup: async ({ h }) => { removeIdentityField(['npc2', 'npc'], ['Account', 'Contact'], (...a) => h.log(...a)); },
+    cleanup: async ({ h }) => { removeIdentityField(['npc2', 'npc'], ['Account', 'Contact', 'Opportunity'], (...a) => h.log(...a)); },
     run: async c => {
     const { h, rec } = c;
     await openBuiltScanned(c);

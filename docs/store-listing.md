@@ -68,6 +68,9 @@ Developer Tools
   or a Connected App. It never reads cookies of any other site.
 - **storage** — your saved deployments, the activity history, settings and cached org reads, on this PC
   only (`chrome.storage.local`). Nothing is sent anywhere.
+- **unlimitedStorage** — a restore point (the target's records read before a deployment
+  writes, so it can be rolled back) and a flow backup can exceed the default 10 MB quota of
+  `chrome.storage.local`; they stay on this PC.
 - **scripting** — to read the org's identity (which org, sandbox or production) from the
   open Salesforce tab, so writes to production can ask for the typed org name.
 - **alarms** — to keep a long-running deployment's progress alive in the service worker.

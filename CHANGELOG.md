@@ -13,7 +13,7 @@ lives in `CHANGELOG_HISTORY.md` (repo only, never shipped — the packer only sh
 `CHANGELOG.md` itself; no leading underscore, Chrome refuses to load unpacked
 extensions containing root files that start with `_`).
 
-## 1.0.0 — 2026-10-07
+## 1.0.0 — 2026-11-02
 
 The first public release. Two tools in one extension, working through the Salesforce tabs
 you already have open — no separate login, no server of ours in between. Anything that
