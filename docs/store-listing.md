@@ -8,7 +8,7 @@ blocks below into the developer dashboard; the screenshots are in `dist/store-sh
 Admin Toolkit for Salesforce
 
 ## Summary (132 characters max)
-Flows, data deployments between orgs, permission copies, Lightning page assignments, field cleanup and debug logs — from your open tabs.
+Flows, data deployments between orgs, permission copies, Lightning pages, field cleanup and debug logs — from your open tabs.
 
 ## Description
 
