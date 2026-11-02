@@ -271,16 +271,19 @@ export const SECTIONS = [
     await rec.say('What’s New: the release notes, per version, inside the app.');
     await rec.reveal('#whatsNewContainer');
     if (await c.has('#homeBtn')) await rec.click('#homeBtn', 900);
-    // the tour is dark: make sure of it before the cycle, and land on dark again after it (dark → OLED → light → dark)
+    // the tour is dark: it starts there, each press is shown and then named (the button cycles
+    // dark → OLED → light → dark), and it lands on dark again for the rest of the tour. The old
+    // order said "back to light" over a black screen (user 2026-11-02: "its very messy").
     await h.eval("chrome.storage.local.set({ sftk_dark: true, ds_dark_mode: true, sftk_oled: false })"); await h.sleep(700);
-    await rec.click('#sftkDarkToggle', 900);
-    await rec.say('One button cycles the theme: dark, pure black for OLED screens, and light.', 4500);
-    await rec.click('#sftkDarkToggle', 900);
-    await rec.click('#sftkDarkToggle', 900);
+    await rec.point('#sftkDarkToggle', 900);
+    await rec.say('One button cycles the theme. The tour runs in dark.');
+    await rec.click('#sftkDarkToggle', 1200);
+    await rec.say('A press: OLED black, pure black surfaces for OLED screens. One setting for both parts of the extension.');
+    await rec.click('#sftkDarkToggle', 1200);
+    await rec.say('Another press: light.');
+    await rec.click('#sftkDarkToggle', 1200);
+    await rec.say('And a third brings dark back, for the rest of the tour.');
     await h.eval("chrome.storage.local.set({ sftk_dark: true, ds_dark_mode: true, sftk_oled: false })"); await h.sleep(700);
-    await rec.say('A second press gives OLED black: pure black surfaces for OLED screens. One setting for both parts of the extension.');
-    await rec.click('#sftkDarkToggle', 800);
-    await rec.say('And back to light.');
     await rec.click('#sftkTermsBtn', 1000);
     await rec.say('The Licence button brings the agreement and the privacy notes back, any time.');
     await rec.reveal('#sftkTermsViewTitle');

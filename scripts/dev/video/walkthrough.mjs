@@ -95,6 +95,10 @@ export default async function (h) {
     h.log('──── section', s.id);
     // into <id>.new first: a section that fails keeps the recording it had
     const dir = join(base, s.id), tmp = join(base, s.id + '.new');
+    // the tour is DARK, not OLED black: pinned before every chapter, whatever the one before
+    // left in storage (the first dark recording's home chapter left OLED on for the next five —
+    // user 2026-11-02: "i wanted it on dark mode only")
+    await h.eval("chrome.storage.local.set({ sftk_dark: true, ds_dark_mode: true, sftk_oled: false })").catch(() => {}); await h.sleep(300);
     await rec.begin(tmp);
     rec.chapter(s.title);
     let err = null;
