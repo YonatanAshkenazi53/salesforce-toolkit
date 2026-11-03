@@ -17,6 +17,10 @@ const P = extractFunctions('sftk-pii.js', [
   'sftkPiiHashHex', 'sftkPiiPatternList', 'sftkPiiIlIdValid', 'sftkPiiLuhn',
   'sftkPiiDetectPattern', 'sftkPiiPatternFormat', 'sftkPiiMaskValue',
   'sftkPiiMaskable', 'sftkPiiFormat', 'sftkPiiSuggest', 'sftkPiiNameLists',
+  // PII v2 (2026-11-04): the v1 shapes are reached through the v2 shaper, and a suggestion carries its treatment
+  'sftkPiiPatternFormatV2', 'sftkPiiTreatmentForDetected', 'sftkPiiPersona', 'sftkPiiHasHebrew', 'sftkPiiNameListsHe', 'sftkPiiStreetLists',
+  'sftkPiiPhoneKeepShape', 'sftkPiiRefillDigits', 'sftkPiiLuhnComplete', 'sftkPiiIbanValid', 'sftkPiiIbanMake', 'sftkPiiDateShift',
+  'sftkPiiFindSpans', 'sftkPiiScrubText', 'sftkPiiPatternListV2',
 ]);
 const SALT = 'a3f1c9d200aa11bb22cc33dd44ee55ff';
 const hexOf = v => P.sftkPiiHashHex(v, SALT);
@@ -197,7 +201,9 @@ describe('sftkPiiSuggest — pattern-aware suggestions', () => {
   it('address components are suggested — sure on person-shaped objects, offered on Account', () => {
     const contact = P.sftkPiiSuggest('Contact', [F('MailingStreet'), F('MailingCity')], null, null);
     expect(contact.map(o => o.field).sort()).toEqual(['MailingCity', 'MailingStreet']);
-    expect(contact.every(o => o.sure)).toBe(true);
+    // v2: a street names a person's door (pre-ticked); a city names an area (offered, not pre-ticked)
+    expect(contact.find(o => o.field === 'MailingStreet').sure).toBe(true);
+    expect(contact.find(o => o.field === 'MailingCity').sure).toBe(false);
     const acct = P.sftkPiiSuggest('Account', [F('BillingStreet')], null, null);
     expect(acct[0].reason).toContain('address component');
     expect(acct[0].sure).toBe(false);

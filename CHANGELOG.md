@@ -26,6 +26,16 @@ extensions containing root files that start with `_`).
   action bar says "dry run passed" for as long as they are the ones checked. Limits, said in the
   dialog: the first 200 records of each object; deletes, updates and relinks are not part of it;
   ⏸ pauses are not applied; 🔗 lookups connected after insert and 📎 files are not checked.
+- **🎭 PII treatments** in the deployment builder — seed a sandbox from a Full Copy without the
+  real people in it. Suggest reads every object's fields, compliance classification and 200 real rows
+  and proposes a treatment per field from what the values look like; each row shows two real values
+  and what they become. Treatments fabricate values that look real and pass validation: names (Hebrew
+  stays Hebrew), e-mails made from the fabricated name on a .invalid domain the Contacts of one Account
+  share, phones in the same shape, Luhn-valid cards with the last four kept, IBANs, Israeli IDs, SSNs,
+  streets, dates moved 1–180 days, free text with the PII inside it replaced — or a pseudonym, or
+  empty. The same value always becomes the same fake (a key kept on this PC), the source org is never
+  changed, and after the write the run reads a sample back and says whether anything still looks like
+  PII outside the fields the policy fabricates.
 
 ## 1.0.0 — 2026-11-02
 

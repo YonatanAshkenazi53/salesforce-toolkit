@@ -61,7 +61,7 @@ HELD_BACK_JS = {'studio-seed.js'}
 # is guarded; a (?) badge falls back to a plain title tooltip (styles.css /
 # studio.css carry its look).
 CUT_JS = {'studio-picklists.js', 'studio-sequences.js', 'studio-readiness.js', 'license-manager.js', 'debug-modal.js', 'onboarding.js'}
-CUT_IDS = ['picklists', 'sequences', 'readiness', 'licenses', 'debug', 'pro', 'guidance', 'pii']   # 'pii': masking is not in the first release (user 2026-10-31: "not good enough")
+CUT_IDS = ['picklists', 'sequences', 'readiness', 'licenses', 'debug', 'pro', 'guidance']   # 'pii' was cut from 1.0 ("not good enough"); 1.1 ships PII v2 — fabrication
 PRO_BTN_RE = r'[ \t]*<button class="ds-pro-toggle" id="dsProToggle"[^>]*>.*?</button>\r?\n?'
 DBG_BTN_RE = r'[ \t]*<button id="dbgBtn"[^>]*>.*?</button>\r?\n?'
 EXCLUDE_JS = LABS_JS | HELD_BACK_JS | CUT_JS | {'studio-tools.js', 'content.js'}

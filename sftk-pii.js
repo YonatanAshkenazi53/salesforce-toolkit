@@ -96,7 +96,7 @@ function sftkPiiFormat(hex, fieldDesc) {
 // Hash on a NON-maskable type nulls the value and reports "nulled" so the
 // caller's disclosure counts stay honest. Unrecognized strategies also null:
 // this function must never return the raw value of a covered field.
-async function sftkPiiMaskValue(value, fieldDesc, salt, rule) {
+async function sftkPiiMaskValue(value, fieldDesc, salt, rule, ctx) {
   if (value === null || value === undefined || value === '') {
     return { value, action: 'kept' };
   }
@@ -104,11 +104,19 @@ async function sftkPiiMaskValue(value, fieldDesc, salt, rule) {
   if (strategy === 'fixed') {
     return { value: rule.value === undefined ? null : rule.value, action: 'fixed' };
   }
-  // Format-preserving: same salted hash, shaped to the pattern so the
-  // target's validation rules and formulas still accept it. A shape the
-  // field can't hold comes back null and COUNTED, never truncated.
+  // Free text (v2): every span that looks like PII is replaced by a
+  // fabricated value of its own kind; the rest of the text stays.
+  if (strategy === 'pattern' && rule.pattern === 'scrub') {
+    const sc = await sftkPiiScrubText(value, salt, fieldDesc);
+    return { value: sc.text, action: sc.replaced ? 'hashed' : 'kept', replaced: sc.replaced };
+  }
+  // Format-preserving (v1) and fabricated (v2): the same salted hash, shaped
+  // to the pattern so the target's validation rules and formulas accept it;
+  // a record's persona (ctx) keeps its name parts and e-mail in agreement.
+  // A shape the field can't hold comes back null and COUNTED, never truncated.
   if (strategy === 'pattern' && rule.pattern) {
-    const shaped = sftkPiiPatternFormat(await sftkPiiHashHex(value, salt), rule.pattern, fieldDesc, value);
+    const c = ctx || {};
+    const shaped = sftkPiiPatternFormatV2(await sftkPiiHashHex(value, salt), rule.pattern, fieldDesc, value, c.persona || null, c.domain || null);
     return shaped == null ? { value: null, action: 'nulled' } : { value: shaped, action: 'hashed' };
   }
   if (strategy === 'hash' && sftkPiiMaskable(fieldDesc)) {
@@ -168,7 +176,8 @@ function sftkPiiSuggest(objectApi, fields, complianceByField, samplesByField) {
     }
     if (addrRx.test(f.name) && f.type !== 'reference') {
       reasons.push('address component');
-      if (personObj || /mailing|home|personal|other/i.test(f.name)) sure = true;
+      // a street names a person's door; a city, a state or a postal code names an area — offered, not pre-ticked
+      if (/street/i.test(f.name) && (personObj || /mailing|home|personal|other/i.test(f.name))) sure = true;
     }
     if (f.type === 'email' || f.type === 'phone') { reasons.push(f.type + ' field'); sure = true; }
     // A record's Name is only a person's name on a person-shaped object.
@@ -183,7 +192,8 @@ function sftkPiiSuggest(objectApi, fields, complianceByField, samplesByField) {
     // createable — FirstName/LastName are what the payload actually sends,
     // so they must be suggestable in their own right (adversarial review).
     if (/^((first|last|middle|maiden|nick)_?name|salutation|suffix)(__c)?$/i.test(f.name)) {
-      reasons.push('person name part'); sure = true;
+      reasons.push('person name part');
+      if (!/^(salutation|suffix)(__c)?$/i.test(f.name)) sure = true;   // "Mr." names nobody
       // Masking a first name to a LAST name reads as broken — match the part.
       if (/^last_?name|surname/i.test(f.name)) namePattern = 'last-name';
       else if (/^(first|middle|maiden|nick)_?name/i.test(f.name)) namePattern = 'first-name';
@@ -199,12 +209,32 @@ function sftkPiiSuggest(objectApi, fields, complianceByField, samplesByField) {
       reasons.push('free text — cannot be inspected, consider masking or null');
     }
     if (!reasons.length) continue;
+    // v2 — the treatment proposed for the row: a fabrication pattern read from
+    // the VALUES first (it always beats a guess from the field's role), then
+    // from the role; a hash when nothing fits. The user changes it per row.
+    const fromValues = det ? sftkPiiTreatmentForDetected(det.pattern) : null;
+    const fromRole = namePattern ? namePattern
+      : f.type === 'email' ? 'email-person'
+      : f.type === 'phone' ? 'phone-keep'
+      : /street/i.test(f.name) ? 'street'
+      : ((f.type === 'date' || f.type === 'datetime') && /birth|dob/i.test(f.name + ' ' + (f.label || ''))) ? 'date-shift'
+      : (f.type === 'textarea' && typeof f.length === 'number' && f.length >= 1000) ? 'scrub'
+      : null;
+    const pattern = fromValues || fromRole;
     out.push({ field: f.name, reason: reasons.join('; '), sure,
-      // A pattern read from real VALUES always beats one guessed from the
-      // field's role.
-      ...(det ? { pattern: det.pattern } : namePattern ? { pattern: namePattern } : {}) });
+      ...(pattern ? { pattern } : {}),
+      treatment: pattern ? { strategy: 'pattern', pattern } : { strategy: 'hash' } });
   }
   return out;
+}
+
+// The fabrication a detected value shape calls for.
+function sftkPiiTreatmentForDetected(detected) {
+  if (!detected) return null;
+  if (detected === 'il-mobile' || detected === 'il-phone' || detected === 'us-phone' || detected === 'uk-mobile' || detected === 'intl-phone') return 'phone-keep';
+  if (detected === 'email') return 'email-person';
+  if (detected === 'text-pii') return 'scrub';
+  return detected;   // il-id, credit-card, iban, us-ssn: the shape itself
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -323,9 +353,13 @@ function sftkPiiDetectPattern(values) {
   const tests = [
     ['il-id', v => sftkPiiIlIdValid(v)],
     ['credit-card', v => sftkPiiLuhn(v)],
+    ['iban', v => sftkPiiIbanValid(v)],
     ['us-ssn', v => /^\d{3}-\d{2}-\d{4}$/.test(v)],
     ['il-mobile', v => /^(\+972[- ]?|0)5\d[- ]?\d{3}[- ]?\d{4}$/.test(v)],
     ['il-phone', v => /^(\+972[- ]?|0)[2-4689][- ]?\d{3}[- ]?\d{4}$/.test(v)],
+    ['us-phone', v => /^\(?[2-9]\d{2}\)?[-. ]?\d{3}[-. ]?\d{4}$/.test(v)],
+    ['uk-mobile', v => /^(\+44[- ]?|0)7\d{3}[- ]?\d{6}$/.test(v)],
+    ['intl-phone', v => /^\+\d[\d\s().-]{6,18}\d$/.test(v)],
     ['email', v => /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(v)],
   ];
   let best = null;
@@ -337,7 +371,15 @@ function sftkPiiDetectPattern(values) {
       best = { pattern: pair[0], rate, hits, sampled: vals.length };
     }
   }
-  return best;
+  if (best) return best;
+  // v2 — free text that CONTAINS PII (an e-mail in a note, a phone in a
+  // description): a fifth of the values holding a span is a pattern of its own
+  // prose AROUND the span is what makes it free text — a bare identifier is
+  // not (a mixed bag of bare values is no pattern at all)
+  let withSpan = 0;
+  for (const v of vals) { try { if (sftkPiiFindSpans(v).some(sp => sp.text.length < v.length)) withSpan++; } catch (_) { /* a bad value is a miss */ } }
+  const rate = withSpan / vals.length;
+  return rate >= 0.2 ? { pattern: 'text-pii', rate, hits: withSpan, sampled: vals.length } : null;
 }
 
 // Deterministic value in a pattern's shape, derived from the hash hex.
@@ -394,6 +436,308 @@ function sftkPiiPatternFormat(hex, patternId, fieldDesc, srcValue) {
   return out;
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// PII v2 — FABRICATION (1.1, 2026-11-04)
+// ═════════════════════════════════════════════════════════════════════════
+// v1 pseudonymized: a hash shaped to the field's type. A seeded sandbox full
+// of "k3f9x2q1a7@masked.invalid" is safe and useless (user 2026-10-31: "not
+// good enough"). v2 fabricates: values that look real, pass the target's
+// validation and formulas, and stay coherent inside a record — a Contact's
+// e-mail is made from its fabricated name, the Contacts of one Account share
+// a fabricated domain. The contract of v1 holds: every value derives from
+// SHA-256(salt | value), so the same source value always lands the same way
+// (joins, match keys and re-seeds survive) and nothing is ever the original.
+// HONESTY stays: "fabricated" / "pseudonymized", never a stronger claim; a fake
+// that is shape-valid can coincide with someone's real identifier where the
+// scheme reserves no test range — each pattern's caveat says so.
+
+// Hebrew source → Hebrew names; everything else → the Latin lists.
+function sftkPiiHasHebrew(v) { return /[א-ת]/.test(String(v == null ? '' : v)); }
+function sftkPiiNameListsHe() {
+  return {
+    first: ['דנה', 'יעל', 'נועה', 'תמר', 'מאיה', 'שירה', 'עדי', 'ליאור', 'עומר', 'רוני', 'עמית', 'גל',
+      'יובל', 'עדן', 'טל', 'נדב', 'איתי', 'איתן', 'גיא', 'עידו', 'אלון', 'רון', 'ארז', 'אורן',
+      'אבי', 'יוסי', 'משה', 'דוד', 'שרה', 'רבקה', 'אסתר', 'מיכל', 'הדר', 'ניר', 'אורי', 'שני'],
+    last: ['לוי', 'כהן', 'מזרחי', 'פרץ', 'ביטון', 'אברהם', 'פרידמן', 'כץ', 'שפירא', 'ברק', 'גולן',
+      'שרון', 'אדלר', 'גרוס', 'וייס', 'קליין', 'חדד', 'אוחיון', 'דהן', 'אזולאי', 'גבאי', 'מלכה',
+      'סבג', 'עמר', 'אלבז', 'בן דוד', 'יוסף', 'נחום', 'שלום', 'רוזן'],
+  };
+}
+function sftkPiiStreetLists() {
+  return {
+    name: ['Oak', 'Maple', 'Cedar', 'Pine', 'Elm', 'Willow', 'Birch', 'Harbor', 'Lake', 'Hill', 'Park',
+      'River', 'Meadow', 'Sunset', 'Garden', 'Orchard', 'Valley', 'Ridge', 'Forest', 'Spring', 'Mill',
+      'Bridge', 'Chapel', 'Station', 'Market', 'King', 'Queen', 'Castle', 'Tower', 'Summit'],
+    kind: ['St', 'Ave', 'Rd', 'Blvd', 'Ln', 'Dr', 'Way', 'Ct'],
+    he: ['הרצל', 'ויצמן', 'בן גוריון', 'רוטשילד', 'אלנבי', 'דיזנגוף', 'ז׳בוטינסקי', 'הנשיא', 'השלום',
+      'הגפן', 'הזית', 'התמר', 'הדקל', 'האלון', 'הברוש', 'יפו', 'הירדן', 'הכרמל', 'הגליל', 'הנגב'],
+  };
+}
+
+// The persona of one record: the names its fabricated fields agree on.
+// `hex` is the hash of the record's identity (its name parts when it has
+// them, else the value being masked) — see sftkPiiPersonaSeed.
+function sftkPiiPersona(hex, hebrew) {
+  const n = BigInt('0x' + String(hex || '0'));
+  const pick = (arr, shift) => arr[Number((n / (10n ** BigInt(shift))) % BigInt(arr.length))];
+  const L = sftkPiiNameLists();
+  const H = sftkPiiNameListsHe();
+  const first = hebrew ? pick(H.first, 0) : pick(L.first, 0);
+  const last  = hebrew ? pick(H.last, 8)   : pick(L.last, 8);
+  // the Latin pair always exists: e-mails are ASCII even for a Hebrew name
+  const firstLatin = pick(L.first, 0), lastLatin = pick(L.last, 8);
+  const company = pick(L.company, 16);
+  return { first, last, firstLatin, lastLatin, company,
+    domain: company.toLowerCase().replace(/[^a-z0-9]+/g, '') + '.invalid' };
+}
+
+// What a record's persona hashes over: the name parts when the record has
+// them (so FirstName, LastName and Email agree), else the field's own value
+// (so a lone e-mail is still deterministic per value). The caller hashes it.
+function sftkPiiPersonaSeed(record, value) {
+  const r = record || {};
+  const parts = [r.FirstName, r.LastName, r.Name].map(x => (x == null ? '' : String(x).trim())).filter(Boolean);
+  return parts.length ? 'persona|' + parts.join('|') : 'value|' + String(value == null ? '' : value);
+}
+// The domain of a Contact's e-mail follows its Account (every Contact of
+// one Account shares it); a record without one takes its own persona's.
+function sftkPiiDomainSeed(record) {
+  const r = record || {};
+  const acc = r.AccountId || (r.Account && r.Account.Name) || r.Company || null;
+  return acc ? 'domain|' + String(acc) : null;
+}
+
+// Luhn body + check digit; `fixedTail` keeps the source's last digits
+// (a "keep last 4") — one free digit before the tail makes the sum valid.
+function sftkPiiLuhnComplete(body, fixedTail) {
+  const luhnSum = s => { let sum = 0, dbl = (s.length % 2 === 0); for (let i = 0; i < s.length; i++) { let d = Number(s[i]); if (dbl) { d *= 2; if (d > 9) d -= 9; } sum += d; dbl = !dbl; } return sum; };
+  if (!fixedTail) {
+    // the check digit sits right of the body: double from the right starting with the body's last digit
+    let sum = 0, dbl = true;
+    for (let i = body.length - 1; i >= 0; i--) { let d = Number(body[i]); if (dbl) { d *= 2; if (d > 9) d -= 9; } sum += d; dbl = !dbl; }
+    return body + String((10 - (sum % 10)) % 10);
+  }
+  for (let free = 0; free <= 9; free++) {
+    const cand = body + String(free) + fixedTail;
+    if (luhnSum(cand) % 10 === 0) return cand;
+  }
+  return body + '0' + fixedTail;   // unreachable: one of ten digits always fits
+}
+
+// IBAN: the country and length of the source, digits from the hash, the two
+// check digits recomputed (ISO 7064 mod 97-10) — shape-valid, never a real account.
+function sftkPiiIbanValid(value) {
+  const s = String(value == null ? '' : value).replace(/\s+/g, '').toUpperCase();
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(s)) return false;
+  const moved = s.slice(4) + s.slice(0, 4);
+  let rem = 0;
+  for (const ch of moved) {
+    const v = /[A-Z]/.test(ch) ? String(ch.charCodeAt(0) - 55) : ch;
+    for (const d of v) rem = (rem * 10 + Number(d)) % 97;
+  }
+  return rem === 1;
+}
+function sftkPiiIbanMake(country, bban) {
+  const moved = (bban + country + '00');
+  let rem = 0;
+  for (const ch of moved) {
+    const v = /[A-Z]/.test(ch) ? String(ch.charCodeAt(0) - 55) : ch;
+    for (const d of v) rem = (rem * 10 + Number(d)) % 97;
+  }
+  const check = String(98 - rem).padStart(2, '0');
+  return country + check + bban;
+}
+
+// Phone, keeping the source's shape: every separator, a leading + and
+// country code, and the opening digit group stay; the rest comes from the
+// hash. US numbers land on the 555-01xx fiction range, UK mobiles on
+// 07700 900xxx — where a country reserves nothing, the digits are simply
+// different and the caveat says a real line can coincide.
+function sftkPiiPhoneKeepShape(srcValue, hex) {
+  const src = String(srcValue == null ? '' : srcValue);
+  const digits = src.replace(/\D/g, '');
+  if (digits.length < 6) return null;
+  const n = BigInt('0x' + String(hex || '0'));
+  const pool = (n % (10n ** 24n)).toString().padStart(24, '0');
+  let keep = 0;   // leading digits that stay (country code / area)
+  if (/^\+/.test(src.trim()) || /^00/.test(digits)) keep = Math.min(3, Math.max(1, digits.length - 7));
+  else if (digits.length === 10 && /^[2-9]\d{2}[2-9]/.test(digits)) {
+    // North American shape: area kept, 555-01xx fiction exchange
+    const area = digits.slice(0, 3), tail = '55501' + pool.slice(0, 2);
+    return sftkPiiRefillDigits(src, area + tail);
+  }
+  else if (/^07\d{9}$/.test(digits)) return sftkPiiRefillDigits(src, '07700900' + pool.slice(0, 3));   // UK mobile fiction range
+  else if (/^05\d{8}$/.test(digits)) keep = 3;   // Israeli mobile: the 05X prefix stays
+  else if (/^0[2-9]\d{7}$/.test(digits)) keep = 2; // Israeli landline: the area stays
+  else keep = Math.min(2, digits.length - 6);
+  const out = digits.slice(0, keep) + pool.slice(0, digits.length - keep);
+  return sftkPiiRefillDigits(src, out);
+}
+// Put new digits back into the source's own separators.
+function sftkPiiRefillDigits(src, digits) {
+  let i = 0;
+  return String(src).replace(/\d/g, () => (i < digits.length ? digits[i++] : '0'));
+}
+
+// A date (or date-time) moved by 1–180 days either way, deterministic — the
+// age bracket survives, the birthday does not. Returns the same shape it got.
+function sftkPiiDateShift(srcValue, hex) {
+  const s = String(srcValue == null ? '' : srcValue).trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})(T.*)?$/.exec(s);
+  if (!m) return null;
+  const n = BigInt('0x' + String(hex || '0'));
+  const days = Number(n % 360n) - 180;
+  const shift = days === 0 ? 7 : days;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  d.setUTCDate(d.getUTCDate() + shift);
+  const iso = d.toISOString().slice(0, 10);
+  return m[4] ? iso + m[4] : iso;
+}
+
+// Spans inside free text that look like PII, with the pattern each one is.
+// Order matters: a card is 13–19 digits, an Israeli ID is 9 — the longer
+// match is taken first so an ID never eats a card's tail.
+function sftkPiiFindSpans(text) {
+  const s = String(text == null ? '' : text);
+  const out = [];
+  const take = (re, pattern, test) => {
+    for (const m of s.matchAll(re)) {
+      if (test && !test(m[0])) continue;
+      if (out.some(o => m.index < o.end && m.index + m[0].length > o.start)) continue;
+      out.push({ start: m.index, end: m.index + m[0].length, text: m[0], pattern });
+    }
+  };
+  take(/[^\s@<>()[\],;:"']+@[^\s@<>()[\],;:"']+\.[A-Za-z]{2,}/g, 'email');
+  take(/\b(?:\d[ -]?){12,18}\d\b/g, 'credit-card', v => sftkPiiLuhn(v));
+  take(/\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b/g, 'iban', v => sftkPiiIbanValid(v));
+  take(/\b\d{3}-\d{2}-\d{4}\b/g, 'us-ssn');
+  take(/(?:\+972[- ]?|\b0)5\d[- ]?\d{3}[- ]?\d{4}\b/g, 'il-mobile');
+  // nine bare digits with a valid check digit are an ID before they are a landline (a landline is written with its area dash)
+  take(/\b\d{9}\b/g, 'il-id', v => sftkPiiIlIdValid(v));
+  take(/(?:\+972[- ]?|\b0)[2-4689][- ]?\d{3}[- ]?\d{4}\b/g, 'il-phone');
+  take(/\b\(?[2-9]\d{2}\)?[-. ]\d{3}[-. ]\d{4}\b/g, 'us-phone');
+  return out.sort((a, b) => a.start - b.start);
+}
+
+// The list the UI offers (v2 adds to v1's): id, label, sample, caveat, and
+// the field types it fits ('*' = any text).
+function sftkPiiPatternListV2() {
+  return [
+    ...sftkPiiPatternList(),
+    { id: 'email-person', label: 'E-mail from the fabricated name', sample: 'dana.levi@northwind.invalid',
+      caveat: 'Made from the record\'s fabricated first and last name on a .invalid domain shared by the Contacts of one Account — readable, coherent, undeliverable by design.' },
+    { id: 'phone-keep', label: 'Phone, same shape', sample: '+1 (415) 555-0137',
+      caveat: 'Keeps the country code, the area and every separator; the rest changes. US numbers land on the 555-01xx range and UK mobiles on 07700 900xxx, which are never issued; elsewhere a number can coincide with a real line.' },
+    { id: 'card-last4', label: 'Credit card, last 4 kept', sample: '4539 5787 6362 1486',
+      caveat: 'Luhn-valid, same brand digit, the last four digits of the source kept so support screens still read right. The body is derived from the hash, never the real card.' },
+    { id: 'iban', label: 'IBAN', sample: 'DE44500105175407324931',
+      caveat: 'Same country and length, check digits recomputed — shape-valid, never a real account.' },
+    { id: 'street', label: 'Street address', sample: '42 Maple Ave',
+      caveat: 'A fabricated street and number; keep city, state and postal code as they are — they identify an area, not a person.' },
+    { id: 'date-shift', label: 'Date moved 1–180 days', sample: '1984-03-21 → 1984-07-02',
+      caveat: 'For birthdays and other personal dates: the age bracket survives, the exact day does not. Deterministic per value.' },
+    { id: 'scrub', label: 'Free text: replace what looks like PII', sample: 'call 052-8461930 → call 053-2917403',
+      caveat: 'E-mails, phones, cards, IBANs, SSNs and Israeli IDs found inside the text are each replaced by a fabricated value of the same kind; the rest of the text stays. A name or an address written in prose is NOT found — use Null for text that may hold those.' },
+  ];
+}
+
+// v2 shapes on top of v1's (sftkPiiPatternFormat handles the v1 ids and is
+// called for anything this one does not know). hex = SHA-256(salt | value);
+// persona = sftkPiiPersona(...) of the record, when the caller has one.
+function sftkPiiPatternFormatV2(hex, patternId, fieldDesc, srcValue, persona, domain) {
+  const n = BigInt('0x' + String(hex || '0'));
+  const digits = (count, shift) => String((n / (10n ** BigInt(shift))) % (10n ** BigInt(count))).padStart(count, '0');
+  const pick = (arr, shift) => arr[Number((n / (10n ** BigInt(shift))) % BigInt(arr.length))];
+  const hebrew = sftkPiiHasHebrew(srcValue);
+  let out = null;
+  if (patternId === 'email-person') {
+    const p = persona || sftkPiiPersona(hex, false);
+    const local = `${p.firstLatin}.${p.lastLatin}`.toLowerCase().replace(/[^a-z0-9.]+/g, '');
+    out = `${local}@${domain || p.domain}`;
+  } else if (patternId === 'phone-keep') {
+    out = sftkPiiPhoneKeepShape(srcValue, hex);
+  } else if (patternId === 'card-last4') {
+    const src = String(srcValue == null ? '' : srcValue).replace(/\D/g, '');
+    const brand = /^[3-6]/.test(src) ? src[0] : '4';
+    const tail = src.length >= 4 ? src.slice(-4) : digits(4, 20);
+    const len = src.length >= 13 && src.length <= 19 ? src.length : 16;
+    const body = brand + digits(len - 6, 0);   // brand + body + 1 free digit + 4 kept = len
+    out = sftkPiiLuhnComplete(body, tail);
+    if (/\d{4}[ -]\d{4}/.test(String(srcValue))) out = out.replace(/(\d{4})(?=\d)/g, '$1 ').trim();
+  } else if (patternId === 'iban') {
+    const src = String(srcValue == null ? '' : srcValue).replace(/\s+/g, '').toUpperCase();
+    const country = /^[A-Z]{2}/.test(src) ? src.slice(0, 2) : 'DE';
+    const bbanLen = src.length >= 15 ? src.length - 4 : 18;
+    out = sftkPiiIbanMake(country, digits(Math.min(30, bbanLen), 0));
+  } else if (patternId === 'street') {
+    const S = sftkPiiStreetLists();
+    const num = 1 + Number(n % 199n);
+    out = hebrew ? `${pick(S.he, 8)} ${num}` : `${num} ${pick(S.name, 8)} ${pick(S.kind, 16)}`;
+  } else if (patternId === 'date-shift') {
+    out = sftkPiiDateShift(srcValue, hex);
+  } else if (patternId === 'person-name' || patternId === 'first-name' || patternId === 'last-name') {
+    // v2: the persona (when the caller has one) keeps a record's parts in agreement; Hebrew stays Hebrew
+    const p = persona || sftkPiiPersona(hex, hebrew);
+    out = patternId === 'first-name' ? p.first : patternId === 'last-name' ? p.last : `${p.first} ${p.last}`;
+  } else {
+    return sftkPiiPatternFormat(hex, patternId, fieldDesc, srcValue);
+  }
+  if (out == null) return null;
+  const max = (fieldDesc && typeof fieldDesc.length === 'number' && fieldDesc.length > 0) ? fieldDesc.length : null;
+  if (max !== null && out.length > max) return null;   // never truncate a shape
+  return out;
+}
+
+// Free text: every span that looks like PII is replaced by a fabricated value
+// of its own kind (deterministic per span), the rest of the text stays.
+// async: each span hashes once. Returns { text, replaced: n }.
+async function sftkPiiScrubText(text, salt, fieldDesc) {
+  const s = String(text == null ? '' : text);
+  const spans = sftkPiiFindSpans(s);
+  if (!spans.length) return { text: s, replaced: 0 };
+  let out = '', at = 0, replaced = 0;
+  for (const sp of spans) {
+    const hex = await sftkPiiHashHex(sp.text, salt);
+    const pat = sp.pattern === 'us-phone' ? 'phone-keep' : sp.pattern;
+    const fake = sftkPiiPatternFormatV2(hex, pat, null, sp.text, null, null);
+    out += s.slice(at, sp.start) + (fake == null ? '' : fake);
+    at = sp.end; replaced++;
+  }
+  out += s.slice(at);
+  const max = (fieldDesc && typeof fieldDesc.length === 'number' && fieldDesc.length > 0) ? fieldDesc.length : null;
+  if (max !== null && out.length > max) out = out.slice(0, max);
+  return { text: out, replaced };
+}
+
+// After a write: do the values in the target still look like PII? Counts
+// per pattern over the sampled values, whole-value detectors and span
+// detectors alike. One honest line comes out of it; a hit is a finding.
+function sftkPiiAudit(valuesByField, coveredFields) {
+  const covered = new Set((coveredFields || []).map(f => String(f).toLowerCase()));
+  const hits = {}, expected = {};
+  let sampled = 0, fields = 0;
+  for (const [field, values] of Object.entries(valuesByField || {})) {
+    fields++;
+    const isCovered = covered.has(String(field).toLowerCase());
+    for (const v of (values || [])) {
+      if (v == null || v === '') continue;
+      sampled++;
+      for (const sp of sftkPiiFindSpans(String(v))) {
+        // our own fabrications: an e-mail on a .invalid domain is never a finding
+        if (sp.pattern === 'email' && /\.invalid$/i.test(sp.text)) continue;
+        const bucket = isCovered ? expected : hits;   // a fabricated phone still looks like a phone — by design
+        const k = sp.pattern;
+        bucket[k] = bucket[k] || { n: 0, fields: new Set() };
+        bucket[k].n++; bucket[k].fields.add(field);
+      }
+    }
+  }
+  const out = { sampled, fields, hits: {}, expected: {} };
+  for (const [k, h] of Object.entries(hits)) out.hits[k] = { n: h.n, fields: [...h.fields].sort() };
+  for (const [k, h] of Object.entries(expected)) out.expected[k] = { n: h.n, fields: [...h.fields].sort() };
+  return out;
+}
+
 // ── Global attach (classic-script export) ─────────────────────────────────
 if (typeof globalThis !== 'undefined') {
   globalThis.sftkPiiHashHex   = sftkPiiHashHex;
@@ -406,4 +750,17 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkPiiLuhn          = sftkPiiLuhn;
   globalThis.sftkPiiDetectPattern = sftkPiiDetectPattern;
   globalThis.sftkPiiPatternFormat = sftkPiiPatternFormat;
+  // PII v2 — fabrication
+  globalThis.sftkPiiPatternListV2   = sftkPiiPatternListV2;
+  globalThis.sftkPiiPatternFormatV2 = sftkPiiPatternFormatV2;
+  globalThis.sftkPiiPersona         = sftkPiiPersona;
+  globalThis.sftkPiiPersonaSeed     = sftkPiiPersonaSeed;
+  globalThis.sftkPiiDomainSeed      = sftkPiiDomainSeed;
+  globalThis.sftkPiiHasHebrew       = sftkPiiHasHebrew;
+  globalThis.sftkPiiFindSpans       = sftkPiiFindSpans;
+  globalThis.sftkPiiScrubText       = sftkPiiScrubText;
+  globalThis.sftkPiiAudit           = sftkPiiAudit;
+  globalThis.sftkPiiIbanValid       = sftkPiiIbanValid;
+  globalThis.sftkPiiPhoneKeepShape  = sftkPiiPhoneKeepShape;
+  globalThis.sftkPiiDateShift       = sftkPiiDateShift;
 }

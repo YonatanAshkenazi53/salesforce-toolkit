@@ -59,7 +59,18 @@ finds and says so — status `failed`.
 Open: overwrite / relink / delete probing (flat `allOrNone` + poison per
 kind), a "🧪 passed ✓" hint on ▶ Deploy keyed to the selection fingerprint.
 
-## B. PII v2 — fabrication   ⏳ next
+## B. PII v2 — fabrication   ✅ built + live-verified (2026-11-04)
+
+Where: `sftk-pii.js` (+ the byte-parity block in `background.js`): persona per
+record, Hebrew lists, phone-keep, card-last4, IBAN, street, date-shift, scrub,
+the span detectors, `sftkPiiAudit`; `sftkPiiMaskValue(…, ctx)`; the engine's
+`sftkPiiMaskRows` builds the persona and the Account domain; the post-write
+audit reads 200 written records back. Builder: Suggest PII treatments (200 rows,
+a treatment per row, two previews), the 🎭 chooser, `bldPiiSetRule` /
+`bldPiiApplyRules`. 'pii' left the pack cut list. Live: `scripts/dev/live/pii-v2.mjs`
+(the Leads fixture: fabricated values written, none real, rollback verified).
+Open: Hebrew street/company lists are short; a per-field "keep last N" for IDs;
+a walkthrough chapter. The design as planned:
 
 1. **Discovery**: Data Classification (`FieldDefinition.ComplianceGroup`,
    `SecurityClassification` — v1 reads it), name/type heuristics (v1), and

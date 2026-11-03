@@ -83,7 +83,7 @@ function renderBuilder() {
       // ONE primary in the region (Save &amp; Run). Save/Cancel are neutral,
       // and nothing here is destructive, so nothing here is red.
       actions: `${p.tree ? `<button class="ds-btn" id="dsPreviewAllBtn" title="Count records for every node in parallel">${dsIcon('eye')}Preview All</button>
-        ${sftkShips('pii') ? `<button class="ds-btn" id="dsBldSuggestPii" title="Scan every object in this tree for likely PII (field types, names/labels, org compliance classification) and add write-time mask rules — masked/pseudonymized, never written raw">${dsIcon('lock')}Suggest PII masks</button>` : ''}
+        ${sftkShips('pii') ? `<button class="ds-btn" id="dsBldSuggestPii" title="Read every object in this tree — field types, names, compliance classification and 200 real rows — and propose a treatment per field: fabricated values that look real (names, phones, e-mails, cards, IDs), a pseudonym, or empty. Never the raw value.">${dsIcon('lock')}Suggest PII treatments</button>` : ''}
         <button class="ds-btn" id="dsBuilderCancel">Cancel</button>` : ''}
         <button class="ds-btn" id="dsBuilderSave">${dsIcon('save')}Save</button>
         ${p.tree ? `<button class="ds-btn ds-btn-primary" id="dsBuilderSaveRun"
@@ -2259,16 +2259,9 @@ function bldPiiMaskBtnClick(e) {
   const ctx = _bldPiiModalCtx;
   if (!ctx || !_editingProfile) return;
   const field = btn.dataset.mask;
-  const res = bldPiiToggleHashRule(_editingProfile, ctx.objType, field);
-  if (res === 'added') {
-    // First rule mints the machine-local salt — every masked write needs it.
-    bldPiiEnsureSalt(_editingProfile);
-    showToast(`${ctx.objType}.${field} will be masked (pseudonymized) at write time — deterministic hash, never the raw value.`, 'info', 4500);
-  } else {
-    showToast(`Mask rule removed — ${ctx.objType}.${field} will be written unmasked.`, 'warning', 4500);
-  }
-  bldPiiDecorateRows();
-  refreshTree();   // repaint the "N masked" chips behind the modal
+  // v2: the chooser — every treatment the field's type can take, with three
+  // real values and what they become; Apply mints the salt, Remove lifts the rule
+  bldOpenPiiFieldModal(ctx.objType, field);
 }
 
 // ── The masked fields of one object: what masking does, and a way out of it ──
@@ -2284,12 +2277,12 @@ function bldOpenPiiListModal(objectApi) {
   const p = _editingProfile;
   if (!p) return;
   const rules = bldPiiRulesForObjectList(p.piiPolicy, objectApi);
-  const what = s => s === 'null' ? 'written empty' : 'written as a pseudonym — a hash of the value, same shape, same every run on this PC';
+  const what = key => bldPiiRuleWords((p.piiPolicy || {})[key]);
   showModal(`<div class="ds-modal-header">${dsIcon('lock')} Masked fields of ${esc(objectApi)}<button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button></div>
     <div class="ds-modal-body">
-      <div class="ds-pii-how"><b>What masking does.</b> When ▶ Deploy writes a record, a masked field does not get the real value: it gets a <b>pseudonym</b> (a hash of the value with a key kept on this PC — the same value always becomes the same pseudonym, so re-runs still match) or it is <b>written empty</b>. The source org is never changed, and nothing in the target can be turned back into the real value by someone without the key. The run log and History say how many values were masked.</div>
-      <div class="ds-pii-list" id="dsPiiList">${rules.length ? rules.map(r => `<div class="ds-pii-row" data-pii-row="${esc(r.key)}"><code>${esc(r.field)}</code><span class="ds-dep-muted">${esc(what(r.strategy))}</span><button class="ds-btn ds-btn-xs" data-pii-unmask="${esc(r.key)}" title="Write the real value again">✕ Unmask</button></div>`).join('') : '<div class="ds-dep-muted">No field of this object is masked.</div>'}</div>
-      <div class="ds-pii-foot">${rules.length ? `<button class="ds-btn ds-btn-sm" id="dsPiiUnmaskAll">✕ Unmask all ${rules.length} — write the real values</button>` : ''}<span class="ds-dep-sp"></span><span class="ds-dep-muted">Pick fields to mask: 🎭 in Fields &amp; mapping, or Suggest PII masks. Changes count when you Save the deployment.</span></div>
+      <div class="ds-pii-how"><b>What a treatment does.</b> When ▶ Deploy writes a record, a treated field never gets the real value: it gets a <b>fabricated</b> value of the same kind (a name that is a name, a phone in the same shape, an e-mail made from the fabricated name on a domain that cannot receive mail), a <b>pseudonym</b> (a hash, same shape) or it is <b>written empty</b>. Every fake derives from a hash of the real value with a key kept on this PC — the same value always becomes the same fake, so re-runs still match — and nothing in the target can be turned back without the key. The source org is never changed. After the write the run reads a sample back and says whether anything still looks like PII.</div>
+      <div class="ds-pii-list" id="dsPiiList">${rules.length ? rules.map(r => `<div class="ds-pii-row" data-pii-row="${esc(r.key)}"><code>${esc(r.field)}</code><span class="ds-dep-muted">${esc(what(r.key))}</span><button class="ds-btn ds-btn-xs" data-pii-unmask="${esc(r.key)}" title="Write the real value again">✕ Unmask</button></div>`).join('') : '<div class="ds-dep-muted">No field of this object is masked.</div>'}</div>
+      <div class="ds-pii-foot">${rules.length ? `<button class="ds-btn ds-btn-sm" id="dsPiiUnmaskAll">✕ Unmask all ${rules.length} — write the real values</button>` : ''}<span class="ds-dep-sp"></span><span class="ds-dep-muted">Pick fields: 🎭 in Fields &amp; mapping, or Suggest PII treatments. Changes count when you Save the deployment.</span></div>
     </div>`);
   const policy = () => (p.piiPolicy && typeof p.piiPolicy === 'object') ? p.piiPolicy : null;
   const drop = keys => { const pol = policy(); if (!pol) return; for (const k of keys) delete pol[k]; if (!Object.keys(pol).length) delete p.piiPolicy; };
@@ -2306,87 +2299,308 @@ function bldOpenPiiListModal(objectApi) {
 }
 
 // ── Suggest PII masks — candidates across the whole tree ─────────
+// ═══════════════════════════════════════════════════════════════════════════
+// PII v2 — FABRICATION in the builder (1.1, 2026-11-04)
+// ═══════════════════════════════════════════════════════════════════════════
+// v1 offered one treatment (a hash) and read nothing but field names. v2:
+// Suggest reads 200 real rows of every object in the tree and proposes a
+// treatment per field from what the VALUES look like, each row shows two
+// real values and what they become, and the user changes the treatment per
+// row. The 🎭 control in Fields & mapping opens the same chooser for one
+// field. Wording everywhere: "fabricated" / "pseudonymized", never a stronger claim.
+
+// The treatments a field of this type can take: [{ value, label, title }].
+// 'hash' and 'null' are always there; patterns come from the shared list.
+function bldPiiTreatmentOptions(fieldType) {
+  const t = String(fieldType || 'string');
+  const by = {
+    email:    ['email-person', 'email'],
+    phone:    ['phone-keep', 'il-mobile', 'il-phone'],
+    string:   ['person-name', 'first-name', 'last-name', 'company', 'street', 'phone-keep', 'email-person', 'il-id', 'us-ssn', 'credit-card', 'card-last4', 'iban', 'digits', 'scrub'],
+    textarea: ['scrub', 'street'],
+    date:     ['date-shift'],
+    datetime: ['date-shift'],
+    url:      [],
+  };
+  const ids = by[t] || (sftkPiiMaskable({ type: t }) ? [] : []);
+  const list = (typeof sftkPiiPatternListV2 === 'function') ? sftkPiiPatternListV2() : [];
+  const out = [];
+  for (const id of ids) {
+    const p = list.find(x => x.id === id);
+    if (p) out.push({ value: id, label: `🎭 ${p.label}`, title: p.caveat || '' });
+  }
+  if (sftkPiiMaskable({ type: t })) out.push({ value: 'hash', label: '# pseudonym — a hash, same shape', title: 'A deterministic hash shaped to the field\'s type — safe and joinable, but it reads as noise.' });
+  out.push({ value: 'null', label: '∅ write empty', title: 'The field is written empty. A required field cannot be emptied — the run says so.' });
+  return out;
+}
+
+// A rule from a treatment value, and back.
+function bldPiiRuleFromTreatment(value) {
+  if (value === 'hash') return { strategy: 'hash' };
+  if (value === 'null') return { strategy: 'null' };
+  return value ? { strategy: 'pattern', pattern: String(value) } : null;
+}
+function bldPiiTreatmentOfRule(rule) {
+  if (!rule) return null;
+  if (rule.strategy === 'pattern' && rule.pattern) return rule.pattern;
+  return rule.strategy === 'null' ? 'null' : rule.strategy === 'fixed' ? 'fixed' : 'hash';
+}
+// What a rule does, in words (the lists, the chips, the toasts).
+function bldPiiRuleWords(rule) {
+  const t = bldPiiTreatmentOfRule(rule);
+  if (!t) return 'written as is';
+  if (t === 'hash') return 'written as a pseudonym — a hash of the value, same shape, the same every run on this PC';
+  if (t === 'null') return 'written empty';
+  if (t === 'fixed') return `written as a fixed value${rule.value != null ? ` (${rule.value})` : ''}`;
+  const p = (typeof sftkPiiPatternListV2 === 'function' ? sftkPiiPatternListV2() : []).find(x => x.id === t);
+  return p ? `fabricated — ${p.label}` : `fabricated (${t})`;
+}
+
+// Set (or replace) one rule. Returns 'added' | 'changed' | 'same'. The salt
+// is the caller's job (bldPiiEnsureSalt) — minted once, never rotated.
+function bldPiiSetRule(profile, objectApi, fieldApi, rule) {
+  if (!profile || !objectApi || !fieldApi || !rule || typeof rule !== 'object') return 'same';
+  const key = `${objectApi}.${fieldApi}`;
+  const policy = (profile.piiPolicy && typeof profile.piiPolicy === 'object') ? profile.piiPolicy : (profile.piiPolicy = {});
+  const prevKey = Object.keys(policy).find(k => k.toLowerCase() === key.toLowerCase());
+  const prev = prevKey ? policy[prevKey] : null;
+  if (prev && JSON.stringify(prev) === JSON.stringify(rule)) return 'same';
+  if (prevKey && prevKey !== key) delete policy[prevKey];
+  policy[key] = { ...rule };
+  return prev ? 'changed' : 'added';
+}
+// Apply several at once (the Suggest modal's ✓). entries: [{ key, rule }].
+// Returns { added, changed }.
+function bldPiiApplyRules(profile, entries) {
+  const out = { added: 0, changed: 0 };
+  if (!profile || !Array.isArray(entries)) return out;
+  for (const e of entries) {
+    if (!e || typeof e.key !== 'string' || e.key.indexOf('.') <= 0 || !e.rule) continue;
+    const dot = e.key.indexOf('.');
+    const r = bldPiiSetRule(profile, e.key.slice(0, dot), e.key.slice(dot + 1), e.rule);
+    if (r === 'added') out.added++; else if (r === 'changed') out.changed++;
+  }
+  return out;
+}
+
+// Two real values and what they become — the row's preview. records are the
+// sampled rows (persona from the same row), desc the field's describe.
+async function bldPiiPreviewPairs(profile, objectApi, field, desc, rule, records, max) {
+  const out = [];
+  const salt = profile && profile.piiSalt;
+  if (!salt || !rule) return out;
+  for (const r of (records || [])) {
+    const v = r ? r[field] : undefined;
+    if (v == null || v === '') continue;
+    let ctx = null;
+    try {
+      const seed = sftkPiiPersonaSeed(r, v);
+      const hebrew = sftkPiiHasHebrew([r.FirstName, r.LastName, r.Name].filter(Boolean).join(' '));
+      const persona = sftkPiiPersona(await sftkPiiHashHex(seed, salt), hebrew);
+      const dseed = sftkPiiDomainSeed(r);
+      const domain = dseed ? sftkPiiPersona(await sftkPiiHashHex(dseed, salt), false).domain : persona.domain;
+      ctx = /^persona\|/.test(seed) ? { persona, domain } : { domain };
+    } catch (_) { ctx = null; }
+    let res;
+    try { res = await sftkPiiMaskValue(v, desc, salt, rule, ctx); } catch (e) { res = { value: `(${e && e.message || e})`, action: 'error' }; }
+    out.push({ from: String(v), to: res.value == null ? '∅ (empty)' : String(res.value), action: res.action });
+    if (out.length >= (max || 2)) break;
+  }
+  return out;
+}
+
+function bldPiiPreviewHtml(pairs) {
+  if (!pairs || !pairs.length) return '<span class="ds-pii-prev-none">no value to show</span>';
+  const cut = s => { const t = String(s); return t.length > 60 ? t.slice(0, 57) + '…' : t; };
+  return pairs.map(p => `<span class="ds-pii-prev-pair"><span class="ds-pii-prev-from" title="${esc(p.from)}">${esc(cut(p.from))}</span> → <b class="ds-pii-prev-to" title="${esc(p.to)}">${esc(cut(p.to))}</b></span>`).join('');
+}
+
+// Fill every [data-pii-prev] cell of the open modal, in sequence (hashing is
+// cheap, the DOM paints as they land).
+async function bldPiiFillPreviews(profile, sections) {
+  for (const sec of sections) {
+    if (!sec || !sec.records) continue;
+    for (const s of (sec.sugg || [])) {
+      const cell = document.querySelector(`#dsModalBox [data-pii-prev="${CSS.escape(sec.obj + '.' + s.field)}"]`);
+      const sel = document.querySelector(`#dsModalBox [data-pii-treat="${CSS.escape(sec.obj + '.' + s.field)}"]`);
+      if (!cell || !sel) continue;
+      const rule = bldPiiRuleFromTreatment(sel.value);
+      cell.innerHTML = '<span class="ds-pii-prev-none">…</span>';
+      const pairs = await bldPiiPreviewPairs(profile, sec.obj, s.field, sec.descByField[s.field], rule, sec.records, 2);
+      cell.innerHTML = bldPiiPreviewHtml(pairs);
+    }
+  }
+}
+
 async function bldOpenPiiSuggestModal() {
   const p = _editingProfile;
   if (!p?.tree) return;
   const objs = [...collectTreeObjects(p.tree)];
-  showModal(`<div class="ds-modal-header">🎭 Suggest PII masks</div>
+  showModal(`<div class="ds-modal-header">🎭 Suggest PII treatments</div>
     <div class="ds-modal-body" style="text-align:center;padding:40px;color:var(--subtext)">
-      ${window.sftkCatSm ? sftkCatSm(`Scanning ${objs.length} object(s) for likely PII…`) : 'Scanning…'}
+      ${window.sftkCatSm ? sftkCatSm(`Reading ${objs.length} object(s) — fields, classification and 200 real rows each…`) : 'Reading…'}
     </div>`);
   const sess = _builderSession();
+  bldPiiEnsureSalt(p);   // previews hash with the profile's own salt
   const sections = [];
-  let anyCompliance = false;
+  let anyCompliance = false, anySamples = false;
+  const SAMPLE_TYPES = new Set(['string', 'textarea', 'email', 'phone', 'url', 'date', 'datetime']);
   for (const obj of objs) {
-    // Describe cache is shared with the mapping UI — objects the builder has
-    // touched cost nothing here.
     const d = await describe(obj);
-    if (!d || !Array.isArray(d.fields)) {
-      sections.push({ obj, error: 'describe unavailable — no suggestions for this object' });
-      continue;
-    }
-    // Compliance classification is optional — many orgs never filled it in.
-    // A failed query degrades to name/type heuristics, said out loud below.
+    if (!d || !Array.isArray(d.fields)) { sections.push({ obj, error: 'describe unavailable — no suggestions for this object' }); continue; }
     const complianceByField = {};
+    let records = null, samplesByField = null;
     if (sess.orgUrl && sess.sid) {
       const q = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid,
         query: `SELECT QualifiedApiName, ComplianceGroup, SecurityClassification FROM FieldDefinition WHERE EntityDefinitionId = ${soqlStrLit(obj)}` });
-      if (!q?.error && Array.isArray(q.records)) {
-        for (const r of q.records) {
-          if (r.QualifiedApiName && r.ComplianceGroup) complianceByField[r.QualifiedApiName] = r.ComplianceGroup;
+      if (!q?.error && Array.isArray(q.records)) for (const r of q.records) if (r.QualifiedApiName && r.ComplianceGroup) complianceByField[r.QualifiedApiName] = r.ComplianceGroup;
+      // v2 — the VALUES: 200 recent rows of every text-like field (the strongest signal there is)
+      const sampleFields = d.fields.filter(f => f && f.name && SAMPLE_TYPES.has(f.type) && !f.calculated && f.name !== 'Id').map(f => f.name).slice(0, 60);
+      const personaFields = ['FirstName', 'LastName', 'Name', 'AccountId'].filter(n => d.fields.some(f => f.name === n) && !sampleFields.includes(n));
+      if (sampleFields.length) {
+        const q2 = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
+          query: `SELECT ${[...sampleFields, ...personaFields].join(', ')} FROM ${obj} ORDER BY LastModifiedDate DESC LIMIT 200` });
+        if (!q2?.error && Array.isArray(q2.records)) {
+          records = q2.records; samplesByField = {};
+          for (const f of sampleFields) samplesByField[f] = records.map(r => r[f]);
+          if (records.length) anySamples = true;
         }
       }
     }
     if (Object.keys(complianceByField).length) anyCompliance = true;
-    const typeByField = {};
-    for (const f of d.fields) typeByField[f.name] = f.type;
-    sections.push({ obj, sugg: sftkPiiSuggest(obj, d.fields, complianceByField), typeByField });
+    const typeByField = {}, descByField = {};
+    for (const f of d.fields) { typeByField[f.name] = f.type; descByField[f.name] = f; }
+    // only fields a payload can send — a compound Name or Address is never written (its parts are)
+    const writable = d.fields.filter(f => f && f.createable);
+    sections.push({ obj, sugg: sftkPiiSuggest(obj, writable, complianceByField, samplesByField), typeByField, descByField, records, sampled: records ? records.length : 0 });
   }
 
   const secHtml = sections.map(sec => {
     if (sec.error) return `<div class="ds-pii-sug-obj"><div class="ds-pii-sug-obj-hd">${esc(sec.obj)}</div><div class="ds-pii-sug-empty">⚠ ${esc(sec.error)}</div></div>`;
-    if (!sec.sugg.length) return `<div class="ds-pii-sug-obj"><div class="ds-pii-sug-obj-hd">${esc(sec.obj)}</div><div class="ds-pii-sug-empty">no likely-PII fields found</div></div>`;
-    return `<div class="ds-pii-sug-obj">
-      <div class="ds-pii-sug-obj-hd">${esc(sec.obj)} <span class="ds-pii-sug-count">${sec.sugg.length} candidate(s)</span></div>
+    const head = `<div class="ds-pii-sug-obj-hd">${esc(sec.obj)} <span class="ds-pii-sug-count">${sec.sugg.length} candidate(s)${sec.sampled ? ` · ${sec.sampled} row(s) read` : ' · no rows read'}</span></div>`;
+    if (!sec.sugg.length) return `<div class="ds-pii-sug-obj">${head}<div class="ds-pii-sug-empty">no likely-PII fields found${sec.sampled ? ' in the field names or the values' : ''}</div></div>`;
+    return `<div class="ds-pii-sug-obj">${head}
       ${sec.sugg.map(s => {
-        const covered = !!bldPiiRuleFor(p.piiPolicy, sec.obj, s.field);
+        const key = sec.obj + '.' + s.field;
+        const existing = bldPiiRuleFor(p.piiPolicy, sec.obj, s.field);
         const ftype = sec.typeByField[s.field];
-        const maskable = sftkPiiMaskable({ type: ftype });
-        return `<label class="ds-pii-sug-row${covered ? ' ds-pii-sug-covered' : ''}">
-          <input type="checkbox" data-pii-key="${esc(sec.obj + '.' + s.field)}" ${covered ? 'checked disabled' : (s.sure ? 'checked' : '')}>
+        const options = bldPiiTreatmentOptions(ftype);
+        const proposed = existing ? bldPiiTreatmentOfRule(existing) : (s.treatment && s.treatment.strategy === 'pattern' ? s.treatment.pattern : 'hash');
+        const current = options.some(o => o.value === proposed) ? proposed : (options[0] ? options[0].value : 'null');
+        return `<div class="ds-pii-sug-row${existing ? ' ds-pii-sug-covered' : ''}">
+          <label class="ds-pii-sug-pick"><input type="checkbox" data-pii-key="${esc(key)}" ${existing ? '' : (s.sure ? 'checked' : '')} title="${existing ? 'Already covered — tick to change its treatment' : 'Tick to apply the treatment on the right'}"></label>
           <span class="ds-pii-sug-field"><strong>${esc(sec.obj)}</strong>.${esc(s.field)}</span>
           <span class="ds-pii-sug-type">${esc(ftype || '?')}</span>
-          <span class="ds-pii-sug-reason">${esc(s.reason)}</span>
-          ${covered ? '<span class="ds-pii-sug-note">already masked</span>'
-            : (!maskable ? `<span class="ds-pii-sug-note ds-pii-sug-null" title="A hash can't be rendered as ${esc(ftype || 'this type')} — the engine writes NULL and counts it as nulled, never the raw value.">hash → NULL</span>` : '')}
-        </label>`;
+          <span class="ds-pii-sug-reason">${esc(s.reason)}${existing ? ` · <em>now: ${esc(bldPiiRuleWords(existing))}</em>` : ''}</span>
+          <select class="ds-select ds-select-sm ds-pii-sug-treat" data-pii-treat="${esc(key)}" title="What this field is written as">
+            ${options.map(o => `<option value="${esc(o.value)}" title="${esc(o.title)}" ${o.value === current ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
+          </select>
+          <span class="ds-pii-sug-prev" data-pii-prev="${esc(key)}">${sec.records ? '<span class="ds-pii-prev-none">…</span>' : '<span class="ds-pii-prev-none">no rows read</span>'}</span>
+        </div>`;
       }).join('')}
     </div>`;
   }).join('');
 
   showModal(`
-    <div class="ds-modal-header">🎭 Suggest PII masks — ${esc(p.name)}</div>
+    <div class="ds-modal-header">🎭 Suggest PII treatments — ${esc(p.name)}</div>
     <div class="ds-modal-body ds-pii-sug-body">
-      <div class="ds-pii-sug-honesty">Masking here is <strong>deterministic pseudonymization</strong>, not deletion: the same source value always yields the same masked value (that is what keeps joins, match keys and re-seeds working) — which also means anyone holding this machine's salt and a guess list can reverse it. Masked emails land on <code>masked.invalid</code>, a reserved domain that can never receive mail.</div>
-      ${anyCompliance ? '' : `<div class="ds-pii-sug-note-line">This org has no compliance classification on these objects (FieldDefinition.ComplianceGroup is empty or unreadable) — suggestions below come from field types, names and labels only.</div>`}
+      <div class="ds-pii-sug-honesty"><strong>Fabricated, not erased.</strong> Every treatment derives from a hash of the real value with a key kept on this PC: the same value always becomes the same fake (joins, match keys and re-seeds survive), a record's name parts and e-mail agree, the Contacts of one Account share a domain. E-mails land on <code>.invalid</code> domains that cannot receive mail. A fake that is shape-valid can still coincide with someone's real number where a country reserves no test range — each treatment's hover text says so.</div>
+      ${anySamples ? '' : '<div class="ds-pii-sug-note-line">No rows could be read from the source org — suggestions come from field types, names, labels and classification only; previews are empty.</div>'}
+      ${anyCompliance ? '' : '<div class="ds-pii-sug-note-line">This org has no compliance classification on these objects (FieldDefinition.ComplianceGroup is empty or unreadable).</div>'}
       ${secHtml || '<div class="ds-picker-empty">No objects in the tree.</div>'}
     </div>
     <div class="ds-modal-footer">
-      <span class="ds-pii-sug-legend">pre-checked = strong signal (field type, name field, label, or compliance group)</span>
+      <span class="ds-pii-sug-legend">pre-ticked = a strong signal (the values, the field type, a name part, the label, a compliance group) · each row shows two real values and what they become</span>
       <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
-      <button class="ds-btn ds-btn-primary" id="dsPiiSugApply">✓ Mask checked fields</button>
+      <button class="ds-btn ds-btn-primary" id="dsPiiSugApply">✓ Apply to the ticked fields</button>
     </div>`);
 
+  // previews land as they are computed; a changed treatment re-computes its row
+  bldPiiFillPreviews(p, sections);
+  document.querySelectorAll('#dsModalBox [data-pii-treat]').forEach(sel => sel.addEventListener('change', async () => {
+    const key = sel.dataset.piiTreat, dot = key.indexOf('.');
+    const sec = sections.find(x => x.obj === key.slice(0, dot));
+    const field = key.slice(dot + 1);
+    const cell = document.querySelector(`#dsModalBox [data-pii-prev="${CSS.escape(key)}"]`);
+    const cb = document.querySelector(`#dsModalBox [data-pii-key="${CSS.escape(key)}"]`);
+    if (cb) cb.checked = true;   // changing the treatment means "apply it"
+    if (!sec || !cell) return;
+    cell.innerHTML = bldPiiPreviewHtml(await bldPiiPreviewPairs(p, sec.obj, field, sec.descByField[field], bldPiiRuleFromTreatment(sel.value), sec.records, 2));
+  }));
   eid('dsPiiSugApply')?.addEventListener('click', () => {
-    const keys = [...document.querySelectorAll('#dsModalBox [data-pii-key]')]
-      .filter(cb => cb.checked && !cb.disabled).map(cb => cb.dataset.piiKey);
-    const added = bldPiiApplyHashRules(_editingProfile, keys);
-    if (added) bldPiiEnsureSalt(_editingProfile);   // first rule mints the machine-local salt
+    const entries = [...document.querySelectorAll('#dsModalBox [data-pii-key]')].filter(cb => cb.checked).map(cb => {
+      const sel = document.querySelector(`#dsModalBox [data-pii-treat="${CSS.escape(cb.dataset.piiKey)}"]`);
+      return { key: cb.dataset.piiKey, rule: bldPiiRuleFromTreatment(sel ? sel.value : 'hash') };
+    });
+    const res = bldPiiApplyRules(_editingProfile, entries);
+    if (res.added || res.changed) bldPiiEnsureSalt(_editingProfile);
     closeModal();
     refreshTree();   // paint the "N masked" chips
-    showToast(added
-      ? `${added} field(s) will be masked (pseudonymized) at write time — never the raw value. Save the profile to keep the rules.`
-      : 'No new mask rules — everything checked was already covered.', added ? 'success' : 'info', 5500);
+    const n = res.added + res.changed;
+    showToast(n
+      ? `${n} field(s) will be fabricated or masked at write time — never the raw value${res.changed ? ` (${res.changed} treatment(s) changed)` : ''}. Save the deployment to keep the rules.`
+      : 'No change — nothing ticked, or everything ticked already had this treatment.', n ? 'success' : 'info', 5500);
   });
 }
 
+// One field: the 🎭 control's chooser. Three real values, every treatment
+// the type can take, Apply / Remove.
+async function bldOpenPiiFieldModal(objectApi, field) {
+  const p = _editingProfile;
+  if (!p || !objectApi || !field) return;
+  bldPiiEnsureSalt(p);
+  const d = await describe(objectApi);
+  const desc = (d && Array.isArray(d.fields) ? d.fields.find(f => f.name === field) : null) || { name: field, type: 'string' };
+  const existing = bldPiiRuleFor(p.piiPolicy, objectApi, field);
+  const options = bldPiiTreatmentOptions(desc.type);
+  const current = existing ? bldPiiTreatmentOfRule(existing) : (desc.type === 'email' ? 'email-person' : desc.type === 'phone' ? 'phone-keep' : (options[0] ? options[0].value : 'null'));
+  // three recent values, with the persona fields when the object has them
+  let records = [];
+  const sess = _builderSession();
+  if (sess.orgUrl && sess.sid) {
+    const extra = ['FirstName', 'LastName', 'Name', 'AccountId'].filter(n => n !== field && d && d.fields.some(f => f.name === n));
+    const q = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
+      query: `SELECT ${[field, ...extra].join(', ')} FROM ${objectApi} WHERE ${field} != null ORDER BY LastModifiedDate DESC LIMIT 3` });
+    if (!q?.error && Array.isArray(q.records)) records = q.records;
+  }
+  showModal(`<div class="ds-modal-header">🎭 ${esc(objectApi)}.${esc(field)} <span class="ds-pii-sug-type">${esc(desc.type || '')}</span><button class="ds-btn ds-btn-xs ds-dc-modal-close" data-dsaction="closeModal" title="Close">✕</button></div>
+    <div class="ds-modal-body">
+      <div class="ds-pii-how">${existing ? `<b>Now:</b> ${esc(bldPiiRuleWords(existing))}.` : '<b>Not treated:</b> the real value is written.'} At write time the real value never lands: it is replaced by what you choose here — the same way every run on this PC — and the source org is never changed.</div>
+      <label class="ds-pii-field-treat">Write it as
+        <select class="ds-select ds-select-sm" id="dsPiiFieldTreat">${options.map(o => `<option value="${esc(o.value)}" title="${esc(o.title)}" ${o.value === current ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>
+      </label>
+      <div class="ds-pii-field-caveat" id="dsPiiFieldCaveat">${esc((options.find(o => o.value === current) || {}).title || '')}</div>
+      <div class="ds-pii-field-prev-hd">${records.length ? 'Three recent values and what they become:' : 'No value could be read from the source org to preview.'}</div>
+      <div class="ds-pii-field-prev" id="dsPiiFieldPrev"><span class="ds-pii-prev-none">…</span></div>
+    </div>
+    <div class="ds-modal-footer">
+      ${existing ? '<button class="ds-btn" id="dsPiiFieldRemove" title="Write the real value again">✕ Remove — write the real value</button>' : ''}
+      <span class="ds-dep-sp"></span>
+      <button class="ds-btn" data-dsaction="closeModal">Cancel</button>
+      <button class="ds-btn ds-btn-primary" id="dsPiiFieldApply">✓ Apply</button>
+    </div>`);
+  const paint = async () => {
+    const sel = eid('dsPiiFieldTreat'); if (!sel) return;
+    const o = options.find(x => x.value === sel.value);
+    const cav = eid('dsPiiFieldCaveat'); if (cav) cav.textContent = (o && o.title) || '';
+    const prev = eid('dsPiiFieldPrev');
+    if (prev) prev.innerHTML = bldPiiPreviewHtml(await bldPiiPreviewPairs(p, objectApi, field, desc, bldPiiRuleFromTreatment(sel.value), records, 3));
+  };
+  paint();
+  eid('dsPiiFieldTreat')?.addEventListener('change', paint);
+  eid('dsPiiFieldApply')?.addEventListener('click', () => {
+    const sel = eid('dsPiiFieldTreat');
+    const rule = bldPiiRuleFromTreatment(sel ? sel.value : 'hash');
+    const res = bldPiiSetRule(p, objectApi, field, rule);
+    if (res === 'added') bldPiiEnsureSalt(_editingProfile);
+    closeModal();
+    showToast(`${objectApi}.${field} will be masked (pseudonymized) at write time: ${bldPiiRuleWords(rule)} — never the raw value.`, 'info', 5000);
+    bldPiiDecorateRows(); refreshTree();
+  });
+  eid('dsPiiFieldRemove')?.addEventListener('click', () => {
+    bldPiiToggleHashRule(p, objectApi, field);   // a rule of any kind comes off
+    closeModal();
+    showToast(`Mask rule removed — ${objectApi}.${field} will be written unmasked.`, 'warning', 4500);
+    bldPiiDecorateRows(); refreshTree();
+  });
+}

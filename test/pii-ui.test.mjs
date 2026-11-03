@@ -232,23 +232,80 @@ describe('Suggest PII masks modal (source)', () => {
     expect(fn).not.toContain('SF_REST_GET');   // no raw describe call of its own
   });
 
-  it('carries the pseudonymization-reversibility line (salt + guess list) and the masked.invalid fact', () => {
-    expect(BUILDER).toContain('deterministic pseudonymization');
-    expect(BUILDER).toMatch(/holding this machine's salt and a guess list can reverse it/);
-    expect(BUILDER).toContain('masked.invalid');
+  // PII v2 (2026-11-04): the modal fabricates — a treatment per row from the
+  // VALUES, two real values and what they become, the user changes it per row.
+  it('says what it is in the honest words: a hash with a key kept on this PC, .invalid domains, a shape-valid fake can coincide', () => {
+    expect(BUILDER).toContain('derives from a hash of the real value with a key kept on this PC');
+    expect(BUILDER).toContain('<code>.invalid</code> domains that cannot receive mail');
+    expect(BUILDER).toContain('can still coincide with someone\'s real number where a country reserves no test range');
   });
 
-  it('pre-checks sure candidates, locks already-covered rows, and flags hash→NULL types honestly', () => {
-    expect(BUILDER).toMatch(/covered \? 'checked disabled' : \(s\.sure \? 'checked' : ''\)/);
-    expect(BUILDER).toContain('already masked');
-    expect(BUILDER).toContain('hash → NULL');
+  it('pre-ticks sure candidates, leaves a covered row unticked (tick to change its treatment), a select per row, a preview per row', () => {
+    expect(BUILDER).toContain("${existing ? '' : (s.sure ? 'checked' : '')}");
+    expect(BUILDER).toContain('Already covered — tick to change its treatment');
+    expect(BUILDER).toContain('data-pii-treat="${esc(key)}"');
+    expect(BUILDER).toContain('data-pii-prev="${esc(key)}"');
+    // a hash is offered only where it can be rendered; "write empty" is always there
+    expect(BUILDER).toContain("if (sftkPiiMaskable({ type: t })) out.push({ value: 'hash'");
+    expect(BUILDER).toContain("out.push({ value: 'null', label: '∅ write empty'");
   });
 
-  it('Apply counts only NEW rules, mints the salt, and repaints the tree chips', () => {
+  it('reads 200 real rows of every text-like field from the SOURCE and hands them to the suggester as values', () => {
+    expect(BUILDER).toMatch(/FROM \$\{obj\} ORDER BY LastModifiedDate DESC LIMIT 200/);
+    expect(BUILDER).toContain('sftkPiiSuggest(obj, writable, complianceByField, samplesByField)');   // only fields a payload can send
+  });
+
+  it('Apply writes every ticked row\'s own treatment, mints the salt on a new rule, and repaints the tree chips', () => {
     const apply = BUILDER.slice(BUILDER.indexOf("eid('dsPiiSugApply')"));
-    expect(apply).toContain('bldPiiApplyHashRules(_editingProfile, keys)');
-    expect(apply).toMatch(/if \(added\) bldPiiEnsureSalt\(_editingProfile\)/);
+    expect(apply).toContain('bldPiiApplyRules(_editingProfile, entries)');
+    expect(apply).toMatch(/if \(res\.added \|\| res\.changed\) bldPiiEnsureSalt\(_editingProfile\)/);
     expect(apply).toContain('refreshTree()');
+  });
+
+  it('the 🎭 control opens the chooser for one field; Apply mints the salt, Remove lifts the rule', () => {
+    expect(BUILDER).toContain('bldOpenPiiFieldModal(ctx.objType, field);');
+    const fm = BUILDER.slice(BUILDER.indexOf('async function bldOpenPiiFieldModal'));
+    expect(fm).toMatch(/const res = bldPiiSetRule\(p, objectApi, field, rule\);\s*\n\s*if \(res === 'added'\) bldPiiEnsureSalt\(_editingProfile\);/);
+    expect(fm).toContain('will be masked (pseudonymized) at write time');
+    expect(fm).toContain('will be written unmasked');
+  });
+});
+
+describe('PII v2 pure helpers (the chooser and the rules)', () => {
+  const api = new Function(`${readFileSync(join(root, 'sftk-pii.js'), 'utf8')}\n${BUILDER.slice(BUILDER.indexOf('function bldPiiTreatmentOptions'), BUILDER.indexOf('// Two real values and what they become'))}\nreturn { bldPiiTreatmentOptions, bldPiiRuleFromTreatment, bldPiiTreatmentOfRule, bldPiiRuleWords, bldPiiSetRule, bldPiiApplyRules };`)();
+  it('treatment options follow the field type; hash only where renderable; empty always; every pattern carries its caveat', () => {
+    const email = api.bldPiiTreatmentOptions('email').map(o => o.value);
+    expect(email).toEqual(['email-person', 'email', 'hash', 'null']);
+    const date = api.bldPiiTreatmentOptions('date').map(o => o.value);
+    expect(date).toEqual(['date-shift', 'null']);               // a hash is never a valid date
+    const phone = api.bldPiiTreatmentOptions('phone');
+    expect(phone[0]).toMatchObject({ value: 'phone-keep', label: '🎭 Phone, same shape' });
+    expect(phone[0].title).toMatch(/555-01xx/);
+    expect(api.bldPiiTreatmentOptions('textarea').map(o => o.value)).toEqual(['scrub', 'street', 'hash', 'null']);
+  });
+  it('a rule from a treatment and back; the words a rule is described with', () => {
+    expect(api.bldPiiRuleFromTreatment('hash')).toEqual({ strategy: 'hash' });
+    expect(api.bldPiiRuleFromTreatment('null')).toEqual({ strategy: 'null' });
+    expect(api.bldPiiRuleFromTreatment('phone-keep')).toEqual({ strategy: 'pattern', pattern: 'phone-keep' });
+    expect(api.bldPiiTreatmentOfRule({ strategy: 'pattern', pattern: 'scrub' })).toBe('scrub');
+    expect(api.bldPiiTreatmentOfRule({ strategy: 'fixed', value: 'x' })).toBe('fixed');
+    expect(api.bldPiiRuleWords({ strategy: 'pattern', pattern: 'email-person' })).toBe('fabricated — E-mail from the fabricated name');
+    expect(api.bldPiiRuleWords({ strategy: 'null' })).toBe('written empty');
+    expect(api.bldPiiRuleWords(null)).toBe('written as is');
+  });
+  it('bldPiiSetRule adds, changes or keeps — case-insensitive on the key, never two keys for one field', () => {
+    const p = {};
+    expect(api.bldPiiSetRule(p, 'Contact', 'Email', { strategy: 'hash' })).toBe('added');
+    expect(api.bldPiiSetRule(p, 'contact', 'email', { strategy: 'hash' })).toBe('same');
+    expect(api.bldPiiSetRule(p, 'contact', 'email', { strategy: 'pattern', pattern: 'email-person' })).toBe('changed');
+    expect(Object.keys(p.piiPolicy)).toEqual(['contact.email']);
+    expect(api.bldPiiSetRule(p, 'Contact', 'Email', null)).toBe('same');
+  });
+  it('bldPiiApplyRules counts added and changed, skips garbage', () => {
+    const p = { piiPolicy: { 'Lead.Email': { strategy: 'hash' } } };
+    const r = api.bldPiiApplyRules(p, [{ key: 'Lead.Email', rule: { strategy: 'pattern', pattern: 'email-person' } }, { key: 'Lead.Phone', rule: { strategy: 'pattern', pattern: 'phone-keep' } }, { key: 'nope', rule: { strategy: 'hash' } }, null]);
+    expect(r).toEqual({ added: 1, changed: 1 });
+    expect(p.piiPolicy).toEqual({ 'Lead.Email': { strategy: 'pattern', pattern: 'email-person' }, 'Lead.Phone': { strategy: 'pattern', pattern: 'phone-keep' } });
   });
 });
 

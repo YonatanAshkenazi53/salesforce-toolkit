@@ -230,7 +230,7 @@ describe('sftkPiiSuggest — masking candidates for one object', () => {
       { name: 'Email', label: 'Email', type: 'email', length: 80 },
       { name: 'MobilePhone', label: 'Mobile', type: 'phone', length: 40 },
     ], {});
-    expect(out).toEqual([
+    expect(out).toMatchObject([
       { field: 'Email', reason: 'email field', sure: true },
       { field: 'MobilePhone', reason: 'phone field', sure: true },
     ]);
@@ -265,7 +265,7 @@ describe('sftkPiiSuggest — masking candidates for one object', () => {
     const out = pii.sftkPiiSuggest('Contact', [
       { name: 'Name', label: 'Full Name', type: 'string', length: 121, nameField: true },
     ], {});
-    expect(out).toEqual([{ field: 'Name', reason: 'record name on a person-shaped object', sure: true, pattern: 'person-name' }]);
+    expect(out).toMatchObject([{ field: 'Name', reason: 'record name on a person-shaped object', sure: true, pattern: 'person-name' }]);
   });
 
   it('flags ComplianceGroup hits (semicolon-joined) and ignores non-matches', () => {
@@ -273,7 +273,7 @@ describe('sftkPiiSuggest — masking candidates for one object', () => {
       { name: 'Loyalty__c', label: 'Loyalty ID', type: 'string', length: 30 },
       { name: 'Region__c', label: 'Region', type: 'string', length: 30 },
     ], { Loyalty__c: 'PII;GDPR', Region__c: 'Internal' });
-    expect(out).toEqual([
+    expect(out).toMatchObject([
       { field: 'Loyalty__c', reason: 'ComplianceGroup: PII;GDPR', sure: true },
     ]);
   });
@@ -283,7 +283,7 @@ describe('sftkPiiSuggest — masking candidates for one object', () => {
       { name: 'Description', label: 'Description', type: 'textarea', length: 32000 },
       { name: 'Subject', label: 'Subject', type: 'string', length: 255 },
     ], {});
-    expect(out).toEqual([{ field: 'Description', reason: CAVEAT, sure: false }]);
+    expect(out).toMatchObject([{ field: 'Description', reason: CAVEAT, sure: false }]);
   });
 
   it('short textareas are NOT flagged as free text (length < 1000)', () => {
@@ -296,7 +296,7 @@ describe('sftkPiiSuggest — masking candidates for one object', () => {
     const out = pii.sftkPiiSuggest('Contact', [
       { name: 'MedicalNotes__c', label: 'Notes', type: 'textarea', length: 5000 },
     ], {});
-    expect(out).toEqual([{
+    expect(out).toMatchObject([{
       field: 'MedicalNotes__c',
       reason: 'name/label suggests personal data; ' + CAVEAT,
       sure: true,
