@@ -96,6 +96,18 @@ describe('fabricated identifiers that pass the target\'s checks', () => {
     expect(pii.sftkPiiIlIdValid(id)).toBe(true);
     expect(pii.sftkPiiPatternFormatV2(await hex('123-45-6789'), 'us-ssn', null, '123-45-6789', null, null)).toMatch(/^9\d{2}-\d{2}-\d{4}$/);
   });
+  it('a fabricated name is never the real one, whichever name the list lands on (live: "Tal" came out "Tal")', async () => {
+    const L = pii.sftkPiiNameLists();
+    for (const name of L.first) {
+      const out = pii.sftkPiiPatternFormatV2(await hex(name), 'first-name', null, name, null, null);
+      expect(out.toLowerCase(), name).not.toBe(name.toLowerCase());
+    }
+    for (const name of L.last) {
+      const out = pii.sftkPiiPatternFormatV2(await hex(name), 'last-name', null, name, null, null);
+      expect(out.toLowerCase(), name).not.toBe(name.toLowerCase());
+    }
+  });
+
   it('a shape the field cannot hold comes back null — never truncated', async () => {
     expect(pii.sftkPiiPatternFormatV2(await hex('x'), 'email-person', { type: 'email', length: 8 }, 'x@y.com', null, null)).toBeNull();
   });

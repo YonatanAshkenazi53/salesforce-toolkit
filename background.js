@@ -722,6 +722,12 @@ function sftkPiiPatternFormatV2(hex, patternId, fieldDesc, srcValue, persona, do
     // v2: the persona (when the caller has one) keeps a record's parts in agreement; Hebrew stays Hebrew
     const p = persona || sftkPiiPersona(hex, hebrew);
     out = patternId === 'first-name' ? p.first : patternId === 'last-name' ? p.last : `${p.first} ${p.last}`;
+    // a fabricated name must never be the real one (live 2026-11-04: "Tal" came out "Tal") — take the next name
+    if (String(out).trim().toLowerCase() === String(srcValue == null ? '' : srcValue).trim().toLowerCase()) {
+      const L = hebrew ? sftkPiiNameListsHe() : sftkPiiNameLists();
+      const next = (arr, cur) => arr[(Math.max(0, arr.indexOf(cur)) + 1) % arr.length];
+      out = patternId === 'first-name' ? next(L.first, p.first) : patternId === 'last-name' ? next(L.last, p.last) : `${next(L.first, p.first)} ${p.last}`;
+    }
   } else {
     return sftkPiiPatternFormat(hex, patternId, fieldDesc, srcValue);
   }
