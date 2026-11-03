@@ -8,7 +8,7 @@ the orgs you are already logged in to. Nothing leaves it.
 Open source under the Apache License 2.0. First public release: 1.0.0.
 
 **Walkthrough video** (35 minutes, every tool on two real orgs, with chapters):
-https://youtu.be/w6sJUhMPFB8
+https://youtu.be/rYgwqpQR324
 
 ## Two pages
 

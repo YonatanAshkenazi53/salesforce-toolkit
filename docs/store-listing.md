@@ -57,7 +57,7 @@ DATA STUDIO
 Everything stays on your PC (chrome.storage.local). No analytics, no account, no server.
 
 ## YouTube video (the dashboard's "Promo video" field, under Store listing → Additional fields)
-https://youtu.be/w6sJUhMPFB8
+https://youtu.be/rYgwqpQR324
 
 ## Category
 Developer Tools
