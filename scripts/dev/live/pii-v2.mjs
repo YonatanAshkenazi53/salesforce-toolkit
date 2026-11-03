@@ -87,6 +87,13 @@ export default async function (h) {
   for (let i = 0; i < 3; i++) {
     const m = await h.modalText(600); if (!m) break;
     h.log('MODAL:', m.slice(0, 500));
+    // the confirm dialog's Cancel in dark: what the browser actually paints (a washed button was seen on 2026-11-04)
+    if (i === 0 && await h.eval(`!!document.querySelector('#sftkConfirmCancel')`)) {
+      await theme(h, true);
+      h.log('CANCEL (dark) computed:', await h.eval(`(() => { const b = document.querySelector('#sftkConfirmCancel'); const c = getComputedStyle(b); return JSON.stringify({ bg: c.backgroundColor, color: c.color, opacity: c.opacity, cls: b.className, focused: document.activeElement === b, outline: c.outlineColor, filter: c.filter }); })()`));
+      await h.shot(SHOTS + 'pii-confirm-dark.png');
+      await theme(h, false);
+    }
     await h.eval(`(() => { const b = document.querySelector('#sftkConfirmGo') || [...document.querySelectorAll('#dsModalBox button')].find(b => /proceed|deploy/i.test(b.textContent) && !b.disabled); if (b) b.click(); })()`);
     await h.sleep(2000);
   }

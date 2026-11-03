@@ -188,3 +188,20 @@ describe('the engine masks rows with a persona per record', () => {
     expect(out.rows[0].Email.value).toMatch(/\.invalid$/);
   });
 });
+
+describe('History shows the policy\'s work on a run', () => {
+  const REC = readFileSync(new URL('../studio-reconcile.js', import.meta.url), 'utf8');
+  const HIST = readFileSync(new URL('../studio-history.js', import.meta.url), 'utf8');
+  it('the engine\'s masking counts and audit ride into the History entry, root and children', () => {
+    expect(REC).toContain('takePii(objType, s, true);');
+    expect(REC).toContain('takePii(obj, cSum, false);');
+    expect(REC).toContain('takePii(obj, s2, false);');
+    expect(REC).toContain('...(rootPii || {}),');
+    expect(REC).toContain('...(childPii[obj] || {}),');
+  });
+  it('the card says how many values were treated and whether the audit was clean', () => {
+    expect(HIST).toContain('🎭 ${n.toLocaleString()} treated');
+    expect(HIST).toContain('🔎 audit clean');
+    expect(HIST).toContain('🔎 audit: ${hits} finding(s)');
+  });
+});

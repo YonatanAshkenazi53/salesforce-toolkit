@@ -510,6 +510,17 @@ function renderHistory() {
                 if (s.notProcessed) parts.push(`<span class="ds-rec-tag ds-rec-tag-fail" title="The Bulk job was aborted when the run was cancelled — these records were not confirmed written.">${s.notProcessed} not confirmed</span>`);
                 if (s.personContactsSkipped) parts.push(`<span class="ds-rec-tag" title="Salesforce creates the Contact behind each Person Account together with the Account and refuses a second one — these were left out on purpose.">👤 ${s.personContactsSkipped} Person Account contact(s) left out</span>`);
                 if (s.viaBulk)  parts.push('<span class="ds-rec-tag" title="Written with one Bulk API 2.0 job instead of 200-record REST batches.">⚡ via Bulk API</span>');
+                // 🎭 the PII policy's work on this run, and whether the audit found anything readable
+                if (s.masked) {
+                  const n = (s.masked.hashed || 0) + (s.masked.nulled || 0) + (s.masked.fixed || 0);
+                  parts.push(`<span class="ds-rec-tag" title="Values the PII policy fabricated or masked at write time — never the real value (${s.masked.hashed || 0} fabricated or pseudonymized, ${s.masked.nulled || 0} written empty, ${s.masked.fixed || 0} fixed).">🎭 ${n.toLocaleString()} treated</span>`);
+                }
+                if (s.piiAudit) {
+                  const hits = Object.values(s.piiAudit.hits || {}).reduce((t, h) => t + (h.n || 0), 0);
+                  parts.push(hits
+                    ? `<span class="ds-rec-tag ds-rec-tag-fail" title="After the write, ${s.piiAudit.records} record(s) were read back: ${hits} value(s) outside the fields the policy fabricates still look like PII — roll the run back and widen the policy.">🔎 audit: ${hits} finding(s)</span>`
+                    : `<span class="ds-rec-tag ds-rec-tag-ins" title="After the write, ${s.piiAudit.records} record(s) were read back and ${s.piiAudit.sampled} value(s) in ${s.piiAudit.fields} text field(s) checked: nothing that looks like PII outside the fields the policy fabricates.">🔎 audit clean</span>`);
+                }
                 // ↩ a rollback's verification state is part of the result, never a footnote.
                 if (isRollback) parts.push(s.remaining === 0
                   ? '<span class="ds-rec-tag ds-rec-tag-ins" title="Re-read after the rollback: nothing from the run remains.">✓ verified</span>'

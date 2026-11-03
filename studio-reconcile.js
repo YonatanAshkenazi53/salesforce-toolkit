@@ -2757,6 +2757,15 @@ async function runReconcile(profile, objType, buckets, opts) {
   const rootFailedInserts = [];
   const rootFailedUpdates = [];
   const allErrors = [];
+  // 🎭 what the PII policy did on this run (the engine's masking counts and
+  // its post-write audit), per object — History shows it on the card
+  let rootPii = null;
+  const childPii = {};
+  const takePii = (obj, sum, isRoot) => {
+    if (!sum || (!sum.masked && !sum.piiAudit)) return;
+    const pii = { ...(sum.masked ? { masked: sum.masked } : {}), ...(sum.piiAudit ? { piiAudit: sum.piiAudit } : {}) };
+    if (isRoot) rootPii = pii; else childPii[obj] = pii;
+  };
 
   // Phase 4 — a selected record whose parent can be neither found in the
   // target nor inserted by this run (the parent's own parent is untracked by
@@ -2990,6 +2999,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       // Collections) and this entry dropped it — History never showed "via
       // Bulk" for a Deploy-page run although the job ran (CLI: jobs/ingest).
       if (s.viaBulk) counts.viaBulk = true;
+      takePii(objType, s, true);
       rootTargets.push(...(s.targetRecords || []));
       rootFailedInserts.push(...(s.failedSourceIds || []));
       if (PROBE) log(s.failed ? '⚠' : '✅', `🧪 ${probeNote(objType, s)}`, s.failed ? 'ds-prog-err' : '');
@@ -3007,6 +3017,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         bumpChild(obj, 'failed',  cSum.failed  || 0);
         bumpChild(obj, 'connected', cSum.connected || 0);
         bumpChild(obj, 'connectFailed', cSum.connectFailed || 0);
+        takePii(obj, cSum, false);
         if (cSum.targetRecords?.length) {
           childCounts[obj].targetRecords = (childCounts[obj].targetRecords || []).concat(cSum.targetRecords);
           if (cSum.viaBulk) childCounts[obj].viaBulk = true;
@@ -3091,6 +3102,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         bumpChild(obj, 'created', s2.created || 0);
       }
       bumpChild(obj, 'failed',  s2.failed  || 0);
+      takePii(obj, s2, false);
       if (s2.targetRecords?.length) {
         childCounts[obj].targetRecords = (childCounts[obj].targetRecords || []).concat(s2.targetRecords);
         if (s2.viaBulk) childCounts[obj].viaBulk = true;
@@ -3457,6 +3469,7 @@ async function runReconcile(profile, objType, buckets, opts) {
         deleteMode: _recDeleteMode,
         ...(counts.viaBulk ? { viaBulk: true } : {}),
         ...(rootTargets.length ? { targetRecords: rootTargets.slice(0, 200) } : {}),
+        ...(rootPii || {}),
         ...(rootFailedInserts.length ? { failedSourceIds: sftkCapFailedIds(rootFailedInserts) } : {}),
         ...(rootFailedUpdates.length ? { failedRecords: rootFailedUpdates.slice(0, 200) } : {})
       },
@@ -3471,6 +3484,7 @@ async function runReconcile(profile, objType, buckets, opts) {
           // R4 — child drift overwrites + target-only deletes.
           overwritten: c.overwritten || 0, overwrittenFailed: c.overwriteFailed || 0,
           deleted: c.deleted || 0, deletedFailed: c.deleteFailed || 0,
+          ...(childPii[obj] || {}),
           ...(c.targetRecords?.length ? { targetRecords: c.targetRecords.slice(0, 200) } : {}),
           ...(c.failedSourceIds?.length ? { failedSourceIds: sftkCapFailedIds(c.failedSourceIds) } : {})
         }]))
