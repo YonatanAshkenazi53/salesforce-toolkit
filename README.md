@@ -51,9 +51,22 @@ https://youtu.be/rYgwqpQR324
 - No telemetry, no server. The only network calls go to your own Salesforce orgs. See
   [PRIVACY.md](PRIVACY.md) for every key the extension stores locally.
 
+## Permissions
+
+| Permission | Why |
+|---|---|
+| `cookies` | Read your existing Salesforce session cookie, so the API calls run as you. No login of its own. |
+| `storage`, `unlimitedStorage` | Everything the extension keeps (flow backups, restore points, Activity) lives in the browser's local storage; large orgs exceed the default quota. |
+| `scripting` | Fallback only: if a direct API call is rejected (401), retry it from inside the org's own tab. |
+| `alarms` | Opt-in, read-only drift checks on a schedule (record counts) with a badge. No background writes. |
+| `host_permissions` (the salesforce.com, force.com and salesforce-setup.com families) | The API calls themselves. No other host. |
+
+No web-accessible resources: ordinary websites cannot detect the extension or talk to it.
+The same table, with every stored key, is in [PRIVACY.md](PRIVACY.md).
+
 ## Install
 
-From the Chrome Web Store (link coming with the release), or unpacked: clone this repository
+From the [Chrome Web Store](https://chromewebstore.google.com/detail/admin-toolkit-for-salesforce/hnlnanhfagbkhlgpmbndindielldfghk), or unpacked: clone this repository
 (https://github.com/YonatanAshkenazi53/salesforce-toolkit), open `chrome://extensions`,
 switch on Developer mode and choose **Load unpacked** on the repository folder. The store build
 is produced by `npm run pack` and leaves the developer-only tools out.
