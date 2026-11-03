@@ -13,6 +13,20 @@ lives in `CHANGELOG_HISTORY.md` (repo only, never shipped — the packer only sh
 `CHANGELOG.md` itself; no leading underscore, Chrome refuses to load unpacked
 extensions containing root files that start with `_`).
 
+## 1.1.0 — 2026-11-04
+
+### Data Studio
+- **🧪 Dry run** on the Deploy page, next to ▶ Deploy: a real write that Salesforce rolls back. The
+  selected inserts go to the target in one transaction together with a record that always fails, so
+  every validation rule, trigger, flow and duplicate rule runs on your real records — parents first,
+  each child linked to its parent — and nothing is kept; the run re-reads the org to confirm. The live
+  run view and History say, per object, how many would be written, how many Salesforce refused (with
+  its own error and the values sent; the record opens in the source org) and how many were not checked
+  because their parent would be refused. The selections stay for the ▶ Deploy that follows, and the
+  action bar says "dry run passed" for as long as they are the ones checked. Limits, said in the
+  dialog: the first 200 records of each object; deletes, updates and relinks are not part of it;
+  ⏸ pauses are not applied; 🔗 lookups connected after insert and 📎 files are not checked.
+
 ## 1.0.0 — 2026-11-02
 
 The first public release. Two tools in one extension, working through the Salesforce tabs

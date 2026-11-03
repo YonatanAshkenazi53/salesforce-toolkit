@@ -554,6 +554,7 @@ async function renderDeploy() {
     <div class="ds-dep-actionbar">
       <div class="ds-dep-ab-row ds-dep-ab-top">
         <div class="ds-dep-summary" id="dsDepSummary"></div>
+        <button class="ds-btn ds-btn-lg" id="dsRecProbeBtn" disabled title="A real write that Salesforce rolls back: the selected inserts go to the target in one transaction together with a record that always fails, so every validation rule, trigger, flow and duplicate rule runs on your real records — and nothing is kept. The first 200 records of each object. Deletes, updates and relinks are not part of it.">🧪 Dry run</button>
         <button class="ds-btn ds-btn-lg ds-btn-primary" id="dsRecRunBtn" disabled>▶ Deploy</button>
       </div>
       <div class="ds-dep-ab-row ds-dep-ab-fields">
@@ -661,6 +662,9 @@ async function renderDeploy() {
   sftkRecWireDupFix(document, p, scan);
   eid('dsRecRunBtn')?.addEventListener('click', () => _depRun(p, objType,
     { missing: scan.missingInTarget || [], drift: scan.changed || [], extras: scan.onlyInTarget || [] }));
+  // 🧪 the same run in probe mode — straight to runReconcile: a dry run never pauses flows or rules
+  eid('dsRecProbeBtn')?.addEventListener('click', () => runReconcile(p, objType,
+    { missing: scan.missingInTarget || [], drift: scan.changed || [], extras: scan.onlyInTarget || [] }, { probe: true }));
   _depFlowPauseWire(p);
   _depRulePauseWire(p);
   eid('dsDepJourneyBack')?.addEventListener('click', () => _depGoOrigin(p));
@@ -1984,6 +1988,14 @@ function _depSummary(p, objTypeOrNull, objByPathOrNull) {
   const objByPath = objByPathOrNull || Object.fromEntries(sftkDeployObjects(p.tree).map(o => [o.pathKey, o.obj]));
   const s = sftkDeploySelection(_recSel, _recChildSel, objType, objByPath);
   const el = eid('dsDepSummary'), run = eid('dsRecRunBtn');
-  if (el) el.innerHTML = s.total ? s.parts.map(x => `<span class="ds-diff-chip">${esc(x)}</span>`).join(' ') : '<span class="ds-dep-muted">Nothing selected — tick records above. ▶ Deploy writes only what you select.</span>';
+  // 🧪 the last dry run's verdict rides along while the ticked inserts are the ones it checked
+  const last = window._sftkProbeLast;
+  const probeHint = (last && s.total && typeof sftkProbeSelKey === 'function' && last.key === sftkProbeSelKey(p.id, _recSel, _recChildSel))
+    ? (last.status === 'success'
+      ? `<span class="ds-rec-tag ds-rec-tag-ins ds-dep-probe-hint" title="A dry run of exactly these inserts: Salesforce accepted every record and rolled the transaction back.">🧪 dry run passed — every record would be written</span>`
+      : `<span class="ds-rec-tag ds-rec-tag-fail ds-dep-probe-hint" title="A dry run of exactly these inserts: Salesforce refused some of them. The run log and History name each one.">🧪 dry run: ${(last.totals && last.totals.refused) || 0} would be refused${last.totals && last.totals.cascade ? `, ${last.totals.cascade} not checked` : ''}</span>`)
+    : '';
+  if (el) el.innerHTML = s.total ? s.parts.map(x => `<span class="ds-diff-chip">${esc(x)}</span>`).join(' ') + probeHint : '<span class="ds-dep-muted">Nothing selected — tick records above. ▶ Deploy writes only what you select.</span>';
   if (run) { run.disabled = !s.total; run.textContent = s.total ? `▶ Deploy ${s.total.toLocaleString()} selected into ${orgLabel(p.targetOrg)}` : '▶ Deploy'; }
+  const probe = eid('dsRecProbeBtn'); if (probe) probe.disabled = !s.total;
 }

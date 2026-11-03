@@ -119,7 +119,8 @@ function sftkConfirmDestructive(opts) {
   // blue = reversible by design (Recycle Bin, a new version), amber = a write
   // that is recorded and may be undone from History.
   const sev = rev.needsCheckbox ? 'red' : (!opts.revOverride && (reversibility === 'recycle' || reversibility === 'new-version')) ? 'blue' : 'amber';
-  const revWord = rev.needsCheckbox ? 'Permanent' : reversibility === 'recycle' && !opts.revOverride ? 'Recycle Bin · 15 days'
+  const revWord = opts.revWord ? String(opts.revWord)
+    : rev.needsCheckbox ? 'Permanent' : reversibility === 'recycle' && !opts.revOverride ? 'Recycle Bin · 15 days'
     : reversibility === 'new-version' && !opts.revOverride ? 'Reversible' : (undoHint && /undo/i.test(undoHint) ? 'Undo in History' : 'Writes');
   const facts = [
     items.length ? `${items.length} ${items.length === 1 ? 'item' : 'items'}` : null,

@@ -742,10 +742,207 @@ function sftkVanillaPayloadRules(objType, payload) {
 // so a run-scoped flag is enough; the writers add Salesforce's header.
 function _runDupHeaders() { return globalThis.__sftkRunDupBypass ? { 'Sforce-Duplicate-Rule-Header': 'allowSave=true' } : {}; }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 🧪 DRY RUN — a real write that Salesforce rolls back (1.1)
+// ═══════════════════════════════════════════════════════════════════════════
+// The old dry run was a second, hand-written copy of the engine's rules and
+// could never see validation rules, triggers or duplicate rules (they fire
+// on real writes only) — "dry run passes, real run fails". This one sends
+// the REAL payloads, built by executeProfileTransfer's own builder, in ONE
+// composite request with allOrNone:true and a poison subrequest at the end
+// that always fails, so Salesforce evaluates every record — rules, triggers,
+// duplicate rules — and then rolls the whole transaction back. Verified by
+// CLI on a real org (docs/deploy-merge-parity.md §A): 0 records persisted.
+//
+// Facts the parser relies on (observed, not assumed):
+//   · the FIRST subrequest that contains a failed record keeps its full
+//     per-record body; every other subrequest reports PROCESSING_HALTED —
+//     so errors surface one level at a time, and the engine re-sends without
+//     the refused records (and their children) until every level has spoken;
+//   · a child is evaluated against a parent created in the same request:
+//     `"AccountId": "@{n0[3].id}"` references row 3 of subrequest n0;
+//   · when nothing fails, only the poison fails → everything else passed.
+// Pure helpers, column-0, so test/extract.mjs can drive them without a DOM.
+// A function, not consts: test/extract.mjs materializes functions only.
+function sftkProbeLimits() {
+  return { sample: 200,      // records per object (one Collections subrequest)
+           maxSubs: 24,      // a composite takes 25 subrequests: 24 + the poison
+           maxRounds: 8 };   // one level of errors per round; a tree is rarely deeper
+}
+
+// A stable token for "the id this record WOULD get": keyed by the SOURCE id,
+// never by position, so removing a refused row from a subrequest shifts no
+// one else's reference. "@{n3[#001…].id}" is resolved to Salesforce's own
+// "@{n3[17].id}" right before sending; the # keeps the two apart.
+function sftkProbeToken(ref, srcId) { return `@{${ref}[#${srcId}].id}`; }
+function sftkProbeParseToken(v) {
+  const m = typeof v === 'string' ? /^@\{(n\d+)\[#([A-Za-z0-9]+)\]\.id\}$/.exec(v) : null;
+  return m ? { ref: m[1], srcId: m[2] } : null;
+}
+
+// The record that always fails: an Account with no Name (REQUIRED_FIELD_MISSING).
+// A poison must be a VALID body that fails a rule — an empty {} makes the whole
+// composite fail to parse (JSON_PARSER_ERROR) and nothing is evaluated.
+function sftkProbePoison() {
+  return { Description: 'Admin Toolkit dry run — this record is never written; it makes Salesforce roll the transaction back' };
+}
+
+// One round's composite body. subs: [{ ref, objType, upsertField|null,
+// rows: [{ srcId, payload }] }] — rows already filtered to what this round
+// sends. Tokens in payloads resolve to positions here; a token that points at
+// a row no longer in the round means "parent refused" — the caller removed
+// those rows already (sftkProbeCascade), so an unresolved token is a bug and
+// is left as-is for Salesforce to refuse loudly.
+function sftkProbeCompositeBody(subs, apiVersion) {
+  const posOf = new Map();   // ref → Map(srcId → index)
+  for (const s of subs) posOf.set(s.ref, new Map(s.rows.map((r, i) => [r.srcId, i])));
+  const resolve = (p) => {
+    const out = {};
+    for (const [k, v] of Object.entries(p)) {
+      const t = sftkProbeParseToken(v);
+      if (t) {
+        const i = posOf.get(t.ref) ? posOf.get(t.ref).get(t.srcId) : undefined;
+        out[k] = (i === undefined) ? v : `@{${t.ref}[${i}].id}`;
+      } else out[k] = v;
+    }
+    return out;
+  };
+  const compositeRequest = subs.map(s => ({
+    method: s.upsertField ? 'PATCH' : 'POST',
+    url: s.upsertField
+      ? `/services/data/${apiVersion}/composite/sobjects/${s.objType}/${s.upsertField}`
+      : `/services/data/${apiVersion}/composite/sobjects`,
+    referenceId: s.ref,
+    body: { allOrNone: false, records: s.rows.map(r => ({ attributes: { type: s.objType }, ...resolve(r.payload) })) },
+  }));
+  compositeRequest.push({ method: 'POST', url: `/services/data/${apiVersion}/sobjects/Account`, referenceId: 'poison', body: sftkProbePoison() });
+  return { allOrNone: true, compositeRequest };
+}
+
+// Read one round's answer. Returns per sub: state 'passed' (every row would be
+// written) · 'failing' (this is the sub Salesforce stopped at; rows carry
+// per-record verdicts) · 'halted' (not evaluated this round) · 'error' (the
+// whole subrequest was refused — a bad field, an unsupported resource); plus
+// the poison's verdict and any id that looks PERSISTED (success:true with a
+// real id and no rollback — must never happen; the caller checks the org).
+function sftkProbeParseRound(subs, resp) {
+  const items = (resp && Array.isArray(resp.compositeResponse)) ? resp.compositeResponse : [];
+  const byRef = new Map(items.map(it => [it && it.referenceId, it]));
+  const isHalted = b => Array.isArray(b) && b.length > 0 && b.every(x => x && x.errorCode === 'PROCESSING_HALTED');
+  const isSaveResults = b => Array.isArray(b) && b.length > 0 && b.every(x => x && typeof x.success === 'boolean');
+  const out = { subs: [], poisonFailed: null, persisted: [] };
+  for (const s of subs) {
+    const it = byRef.get(s.ref);
+    const body = it ? it.body : undefined;
+    const r = { ref: s.ref, objType: s.objType, state: 'halted', rows: [], error: null };
+    if (!it) { r.state = 'error'; r.error = 'no answer for this subrequest'; }
+    else if (isHalted(body)) r.state = 'halted';
+    else if (isSaveResults(body)) {
+      r.rows = body.map((x, i) => {
+        const srcId = s.rows[i] && s.rows[i].srcId;
+        if (x.success) {
+          if (x.id && !/^@/.test(String(x.id))) out.persisted.push({ objType: s.objType, id: x.id, srcId });
+          return { i, srcId, state: 'ok' };
+        }
+        const errs = Array.isArray(x.errors) ? x.errors : [];
+        if (errs.some(e => e && e.statusCode === 'ALL_OR_NONE_OPERATION_ROLLED_BACK')) return { i, srcId, state: 'ok' };
+        return { i, srcId, state: 'refused', errors: errs };
+      });
+      r.state = r.rows.some(x => x.state === 'refused') ? 'failing' : 'passed';
+    }
+    else if (Array.isArray(body) && body.length && body[0] && body[0].errorCode) { r.state = 'error'; r.error = body.map(b => b.message || b.errorCode).join('; '); }
+    else if (it.httpStatusCode >= 200 && it.httpStatusCode < 300) r.state = 'passed';
+    else { r.state = 'error'; r.error = `HTTP ${it.httpStatusCode}`; }
+    out.subs.push(r);
+  }
+  const p = byRef.get('poison');
+  if (p) {
+    const b = p.body;
+    out.poisonFailed = !(p.httpStatusCode >= 200 && p.httpStatusCode < 300);
+    if (!out.poisonFailed && b && b.id) out.persisted.push({ objType: 'Account', id: b.id, srcId: null, poison: true });
+  }
+  return out;
+}
+
+// Rows that reference a removed row (by token) are removed too, transitively —
+// a child whose parent would be refused is never written in a real run either
+// ("nothing is inserted without its parent"). Mutates subs[].rows; returns the
+// rows dropped by the cascade per ref (the directly removed ones are the
+// caller's own list).
+function sftkProbeCascade(subs, removedByRef) {
+  const removed = new Map();   // ref → Set(srcId)
+  for (const [ref, set] of Object.entries(removedByRef || {})) removed.set(ref, new Set(set));
+  const dropped = {};
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const s of subs) {
+      const keep = [];
+      for (const row of s.rows) {
+        let gone = !!(removed.get(s.ref) && removed.get(s.ref).has(row.srcId));
+        if (!gone) {
+          for (const v of Object.values(row.payload)) {
+            const t = sftkProbeParseToken(v);
+            if (t && removed.get(t.ref) && removed.get(t.ref).has(t.srcId)) { gone = true; break; }
+          }
+          if (gone) {
+            if (!removed.has(s.ref)) removed.set(s.ref, new Set());
+            removed.get(s.ref).add(row.srcId);
+            (dropped[s.ref] = dropped[s.ref] || []).push(row.srcId);
+            changed = true;
+          }
+        }
+        if (!gone) keep.push(row);
+      }
+      s.rows = keep;
+    }
+  }
+  return dropped;
+}
+
+// The verdict of a whole dry run: 'success' = every probed record would be
+// written and nothing else went wrong; 'partial' = some refused or unreached;
+// 'failed' = nothing would be written, or the probe itself could not run.
+function sftkProbeStatus(probe, errors) {
+  const by = (probe && probe.byObj) || {};
+  const objs = Object.values(by);
+  const would = objs.reduce((t, a) => t + (a.wouldWrite || 0), 0);
+  const bad = objs.reduce((t, a) => t + (a.refused || 0) + (a.cascade || 0) + (a.unreached || 0) + (a.earlier || 0), 0);
+  // per-record refusals are already in `bad` (one error line each, counted
+  // in refusedLines); anything else without the ℹ mark is a hard error
+  const hard = Math.max(0, (errors || []).filter(e => !String(e).includes('ℹ')).length - ((probe && probe.refusedLines) || 0));
+  const refused = objs.reduce((t, a) => t + (a.refused || 0), 0);
+  if (probe && probe.persistedFound) return 'failed';
+  if (!objs.length) return hard ? 'failed' : 'success';
+  if (bad === 0 && hard === 0) return 'success';
+  // nothing would be written AND something was refused (or broke): failed;
+  // rows merely set aside (a parent refused, an earlier step) make it partial
+  if (would === 0 && (refused > 0 || hard > 0)) return 'failed';
+  return 'partial';
+}
+
+// POST /composite — the one call a dry run round makes. Duplicate-rule bypass
+// rides along exactly as on a real write.
+async function sfProbeComposite(orgUrl, sid, body) {
+  const url = `${orgUrl}/services/data/${API_VERSION}/composite`;
+  const { ok, status, body: text } = await sfFetchWithProxy(orgUrl, sid, url, {
+    method: 'POST', headers: { ..._runDupHeaders() }, body: JSON.stringify(body)
+  });
+  if (!ok) throw new Error(sfErrorMsg(status, text, url));
+  return JSON.parse(text);
+}
+
 async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid, sharedIdMap = null, ledger = null) {
   globalThis.__sftkRunDupBypass = !!(profile && profile.duplicateRules === 'bypass');
   const startedAt    = new Date().toISOString();
-  const idMap        = sharedIdMap || {};  // srcId → tgtId (all objects — used for reference field remapping)
+  // 🧪 a dry run keeps its tokens to itself: the ledger's idMap carries REAL
+  // ids between the steps of one run, and a token from an earlier step would
+  // be sent to Salesforce as an id ("id value of incorrect type", live
+  // 2026-11-04). The ledger instead notes which records an earlier step WOULD
+  // create (probeIds); a row that points at one is not checked, and says so.
+  const PROBE = !!(profile && profile.probe === true);
+  const idMap        = PROBE ? {} : (sharedIdMap || {});  // srcId → tgtId (all objects — used for reference field remapping)
+  const probeEarlier = PROBE && ledger ? (ledger.probeIds = ledger.probeIds || Object.create(null)) : null;
   const summary      = {};
   const errors       = [];
   // Separate channel so diagnostic lines aren't truncated by the
@@ -769,8 +966,18 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   //    isolate failures and duck per-transaction trigger CPU / row-lock
   //    limits in the target. Bulk jobs ignore it — Salesforce chunks those
   //    internally.
-  const API_MODE   = (profile?.apiMode === 'sync' || profile?.apiMode === 'bulk') ? profile.apiMode : 'auto';
+  // 🧪 a dry run is one Collections subrequest per object: never Bulk
+  const API_MODE   = (profile && profile.probe === true) ? 'sync' : ((profile?.apiMode === 'sync' || profile?.apiMode === 'bulk') ? profile.apiMode : 'auto');
   const BATCH_SIZE = Math.max(1, Math.min(200, Number(profile?.batchSize) || 200));
+  // 🧪 DRY RUN (1.1): the real payloads go out in ONE composite transaction
+  // Salesforce rolls back (helpers above executeProfileTransfer). No write
+  // site below sends anything: each hands its chunk to probeSubs and gets a
+  // token per record in place of the id it would have, so children reference
+  // their parents exactly as in a real run. Sync Collections only, one chunk
+  // per node, up to sftkProbeLimits().sample records per object.
+  const PL = PROBE ? sftkProbeLimits() : null;   // only a dry run touches the probe helpers
+  const probeSubs = [];            // [{ ref, objType, upsertField, node, rows: [{ srcId, payload, label }] }]
+  const probeNodeInfo = new Map(); // node → { ref, total, sampledOf }
 
   // PII MASKING v1 — resolved ONCE per run, before anything is read or
   // written. A non-empty policy without its machine-local salt is a HARD
@@ -1202,8 +1409,13 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           diagnostics.push(`Contact: ${personContactsSkipped} Person Account contact(s) left out — Salesforce creates that Contact together with the Person Account and refuses a second one ("Cannot select a person account"); their details travel on the Account's Person fields.`);
         }
       }
+      // 🧪 a dry run checks a sample: the first sftkProbeLimits().sample records of
+      // each object (one Collections subrequest each); children are scoped to
+      // the sampled parents by the idMap filter below, as in a real run.
+      let probeSampledOf = 0;
+      if (PROBE && recs.length > PL.sample) { probeSampledOf = recs.length; recs = recs.slice(0, PL.sample); }
       nodeSourceIds.set(node, recs.map(r => r.Id));
-      postRunProgress({ phase: 'fetched', obj: objType, count: recs.length });
+      postRunProgress({ phase: 'fetched', obj: objType, count: recs.length, ...(PROBE ? { probe: true, sampledOf: probeSampledOf } : {}) });
 
       // Resolve this node's owner names against the TARGET org's users
       // (User owners only — queue-owned records won't match and fall back).
@@ -1515,6 +1727,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // giving child-first exact field parity with the default order.
       const preLinked    = new Map();
       const deferredRefs = [];
+      const probeEarlierRows = new Set();   // 🧪 rows that point at a record an earlier step of this run would create
       // Owner-mapping outcome counters for this node's summary line.
       // O1 adds: ownerKeyMatched (index hit), ownerKeyDup (ambiguous key —
       // excluded from the index, fell back rather than guessed).
@@ -1586,6 +1799,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
               if (isDeferredLink) preLinked.set(r.Id, idMap[v]);
               continue;
             }
+            // 🧪 an earlier step of this dry run would create the record — its id
+            // does not exist in this transaction; the row is set aside, not refused
+            if (probeEarlier && probeEarlier[v]) { probeEarlierRows.add(r.Id); continue; }
             if (isDeferredLink) {
               // NOTE: tgtField (the MAPPED name) is what the connect step must
               // patch — the insert path writes mapped names, so must the patch.
@@ -1745,9 +1961,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // (huge-tree run 2026-09-22: 5,000 of 5,000 DUPLICATES_DETECTED) — a
       // bypass run stays on synchronous Collections, whatever the settings.
       const dupBypass = !!globalThis.__sftkRunDupBypass;
-      const useBulk  = !dupBypass && (API_MODE === 'bulk' || (API_MODE !== 'sync' && payloads.length >= BULK_MIN));
+      const useBulk  = !dupBypass && (API_MODE === 'bulk' || (API_MODE !== 'sync' && payloads.length >= BULK_MIN));   // a dry run pins API_MODE to 'sync' above
       if (dupBypass && (API_MODE === 'bulk' || payloads.length >= BULK_MIN)) diagnostics.push(`${objType}: duplicate rules are bypassed for this run, and Bulk API 2.0 cannot bypass them — ${payloads.length} record(s) go through synchronous Collections calls instead (${Math.ceil(payloads.length / BATCH_SIZE)} call(s) of ${BATCH_SIZE}).`);
-      const STEP     = useBulk ? payloads.length : BATCH_SIZE;
+      const STEP     = useBulk ? payloads.length : (PROBE ? PL.sample : BATCH_SIZE);
       if (useBulk) {
         diagnostics.push(payloads.length >= BULK_MIN
           ? `${objType}: ${payloads.length} record(s) ≥ ${BULK_MIN} — using Bulk API 2.0 (one async job).`
@@ -1766,7 +1982,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // share a parent — the diagnostic and the UI tooltip both say so.
       const THREADS = (!useBulk && Number(profile.threads) >= 2)
         ? Math.min(6, Math.floor(Number(profile.threads))) : 1;
-      if (THREADS > 1) {
+      if (THREADS > 1 && !PROBE) {   // a dry run sends one chunk per object — threads cannot apply
         diagnostics.push(`${objType}: ${THREADS} batches in parallel (engine settings) — parallel writes can hit row locks on shared parents; lower Threads if you see UNABLE_TO_LOCK_ROW.`);
       }
       // One batch build+send, indexed from `i` — a closure so a wave of
@@ -1793,6 +2009,18 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
           }
           return rec;
         });
+        if (PROBE) {
+          // 🧪 nothing is sent now — the chunk joins the transaction sent after
+          // every node is built (see "DRY RUN — every payload" below).
+          const ref = `n${probeSubs.length}`;
+          const allRows = chunk.map((rec, k) => { const { attributes, ...payload } = rec; return { srcId: recs[i + k].Id, payload, label: recLabel(i + k, recs[i + k].Id) }; });
+          probeSubs.push({ ref, objType, upsertField: useUpsert ? upsertField : null, node,
+            rows: allRows.filter(r => !probeEarlierRows.has(r.srcId)),
+            earlier: allRows.filter(r => probeEarlierRows.has(r.srcId)).map(r => r.srcId) });
+          probeNodeInfo.set(node, { ref, total: chunk.length, sampledOf: probeSampledOf });
+          if (probeEarlier) for (const r of allRows) probeEarlier[r.srcId] = true;
+          return chunk.map((rec, k) => ({ success: true, id: sftkProbeToken(ref, recs[i + k].Id), probe: true }));
+        }
         let res;
         if (useBulk) {
           // Bulk speaks CSV — strip the Collections-only `attributes` wrapper.
@@ -1836,8 +2064,8 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
             if (result.created === true) upsCreated++;
             else if (result.created === false) upsUpdated++;
             transferredSourceIds.push(recs[i + j].Id);
-            if (isRootNode && idPairs.length < 2000) idPairs.push([recs[i + j].Id, result.id]);
-            if (targetRecords.length < 200) {
+            if (!PROBE && isRootNode && idPairs.length < 2000) idPairs.push([recs[i + j].Id, result.id]);
+            if (!PROBE && targetRecords.length < 200) {
               targetRecords.push({ id: result.id, label: recLabel(i + j, result.id) });
             }
           }
@@ -1960,7 +2188,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
         });
         postRunProgress({ phase: 'batch', obj: objType,
           done: Math.min(i + STEP, payloads.length), total: payloads.length,
-          created: ok, failed: fail });
+          created: ok, failed: fail, ...(PROBE ? { probe: true } : {}) });
         }
         // Real-time error feed (user 2026-08-18: "like inspector shows,
         // with errors in real time") — every error line this wave produced
@@ -2051,7 +2279,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // Runs after this node's records landed so FirstPublishLocationId can
       // point at the mapped target records. Failures are per-file, never
       // fatal to the run.
-      if (node.includeFiles === true && recs.length) {
+      if (!PROBE && node.includeFiles === true && recs.length) {
         try {
           const nodeIdMap = {};
           for (const sId of transferredSourceIds) { if (idMap[sId]) nodeIdMap[sId] = idMap[sId]; }
@@ -2109,7 +2337,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // link plus any other lookup pointing at not-yet-created records). Now
       // that this node's records exist in the target, patch every deferred
       // field that resolves — exact field parity with default parent-first.
-      for (const child of (node.children || []).filter(c => c.insertOrder === 'childFirst')) {
+      if (PROBE) {
+        const cfKidsP = (node.children || []).filter(c => c.insertOrder === 'childFirst' && (nodeRecs.get(c) || []).length).map(c => c.objectType || c.childSObject);
+        if (cfKidsP.length) diagnostics.push(`🧪 ${cfKidsP.join(', ')}: child-first records are linked to ${objType} after insert — the dry run checked them without that link.`);
+      }
+      for (const child of (node.children || []).filter(c => !PROBE && c.insertOrder === 'childFirst')) {
         const childObj  = child.objectType || child.childSObject;
         const childRecs = nodeRecs.get(child) || [];
         const linkedMap = nodePreLinked.get(child) || new Map();
@@ -2218,8 +2450,9 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
     const o = node.objectType || node.childSObject;
     for (const d of refs) if (!d.done && !d.isParentLink && d.inTree) lateItems.push({ objType: o, srcId: d.srcId, tgtField: d.tgtField, srcVal: d.srcVal, refObj: d.refObj });
   }
-  if (ledger && Array.isArray(ledger.lateRefs)) { lateItems.push(...ledger.lateRefs); ledger.lateRefs = []; }
-  if (lateItems.length && !_runCancelled) {
+  if (!PROBE && ledger && Array.isArray(ledger.lateRefs)) { lateItems.push(...ledger.lateRefs); ledger.lateRefs = []; }
+  if (PROBE && lateItems.length) diagnostics.push(`🧪 ${lateItems.length} lookup(s) are connected after insert in a real run (🔗 late links) — not checked by the dry run.`);
+  if (lateItems.length && !_runCancelled && !PROBE) {
     const LATE_BATCH = 200;
     const byObj = new Map();
     for (const it of lateItems) { if (!byObj.has(it.objType)) byObj.set(it.objType, []); byObj.get(it.objType).push(it); }
@@ -2262,6 +2495,124 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
     }
   }
 
+  // ── 🧪 DRY RUN — every payload in one transaction Salesforce rolls back ──
+  // Each node above handed its chunk to probeSubs instead of writing it. One
+  // composite request now carries them all, parents before children (the
+  // nodes were walked in insert order), with the poison last. Errors surface
+  // one level at a time (the first failing subrequest halts the rest), so a
+  // refused row — and every row that points at it — leaves the next round,
+  // until a round fails on the poison alone. Verdict per record: would be
+  // written · refused (with Salesforce's own error) · not checked (its parent
+  // would be refused) · not reached (rounds ran out).
+  let probeResult = null;
+  if (PROBE) {
+    probeResult = { sample: PL.sample, rounds: 0, persisted: [], byObj: {}, objects: probeSubs.length };
+    const verdict = new Map();   // ref → Map(srcId → { state, errors })
+    for (const s of probeSubs) verdict.set(s.ref, new Map(s.rows.map(r => [r.srcId, { state: 'unreached' }])));
+    const live = probeSubs.map(s => ({ ref: s.ref, objType: s.objType, upsertField: s.upsertField, rows: s.rows.slice() }));
+    // rows set aside (an earlier step creates what they point at) take their children with them
+    const earlierByRef = {};
+    for (const s of probeSubs) if (s.earlier && s.earlier.length) earlierByRef[s.ref] = s.earlier;
+    if (Object.keys(earlierByRef).length) {
+      const dropped = sftkProbeCascade(live, earlierByRef);
+      for (const [ref, ids] of Object.entries(dropped)) for (const id of ids) verdict.get(ref).set(id, { state: 'cascade' });
+    }
+    if (probeSubs.length > PL.maxSubs) {
+      errors.push(`🧪 dry run: this deployment writes ${probeSubs.length} object levels — one rolled-back transaction takes ${PL.maxSubs}; nothing was checked. Dry-run a smaller selection.`);
+    } else if (probeSubs.length) {
+      let round = 0;
+      try {
+        while (round < PL.maxRounds) {
+          round++;
+          if (_runCancelled) { errors.push(_runNoteStop(sftkRunStopLine(_runStopReason(), 'dry run', 0, 0, 0))); break; }
+          const sending = live.filter(s => s.rows.length);
+          if (!sending.length) break;
+          postRunProgress({ phase: 'probe', round, subs: sending.map(s => ({ obj: s.objType, n: s.rows.length })) });
+          const resp = await sfProbeComposite(tgtOrgUrl, tgtSid, sftkProbeCompositeBody(sending, API_VERSION));
+          const parsed = sftkProbeParseRound(sending, resp);
+          probeResult.rounds = round;
+          if (parsed.persisted.length) probeResult.persisted.push(...parsed.persisted);
+          if (parsed.poisonFailed === false) { errors.push('🧪 dry run: the poison record was ACCEPTED, so this round was not rolled back — see the persisted-record check below.'); }
+          const failIdx = parsed.subs.findIndex(x => x.state === 'failing' || x.state === 'error');
+          for (let k = 0; k < parsed.subs.length; k++) {
+            const sub = sending[k], res = parsed.subs[k], vm = verdict.get(sub.ref);
+            if (failIdx === -1 || k < failIdx) { for (const row of sub.rows) vm.set(row.srcId, { state: 'ok' }); }
+            else if (k === failIdx) {
+              if (res.state === 'error') for (const row of sub.rows) vm.set(row.srcId, { state: 'refused', errors: [{ statusCode: 'SUBREQUEST_REFUSED', message: res.error }] });
+              else for (const row of res.rows) vm.set(row.srcId, row.state === 'refused' ? { state: 'refused', errors: row.errors } : { state: 'ok' });
+            } else { for (const row of sub.rows) vm.set(row.srcId, { state: 'unreached' }); }
+          }
+          if (failIdx === -1) break;
+          const fs = sending[failIdx];
+          const refusedIds = fs.rows.filter(r => verdict.get(fs.ref).get(r.srcId).state === 'refused').map(r => r.srcId);
+          if (!refusedIds.length) break;
+          const dropped = sftkProbeCascade(live, { [fs.ref]: refusedIds });
+          for (const [ref, ids] of Object.entries(dropped)) for (const id of ids) verdict.get(ref).set(id, { state: 'cascade' });
+          if (failIdx === sending.length - 1) break;   // nothing after it was waiting
+        }
+      } catch (e) {
+        errors.push(`🧪 dry run stopped: ${(e && e.message) || e}`);
+      }
+      // A persisted record would break the one promise a dry run makes. The
+      // poison guarantees the rollback; this is the check that it did.
+      if (probeResult.persisted.length) {
+        const byObj = new Map();
+        for (const p of probeResult.persisted) { if (!byObj.has(p.objType)) byObj.set(p.objType, []); byObj.get(p.objType).push(p.id); }
+        for (const [o, ids] of byObj) {
+          try {
+            const lit = ids.slice(0, 200).map(id => `'${String(id).replace(/'/g, '')}'`).join(',');
+            const q = await sfQueryAll(tgtOrgUrl, tgtSid, `SELECT Id FROM ${o} WHERE Id IN (${lit})`, false);
+            const found = (q && Array.isArray(q.records)) ? q.records.map(r => r.Id) : [];
+            if (!found.length) { diagnostics.push(`🧪 ${o}: Salesforce answered ${ids.length} id(s) as written in a dry-run round, and a re-read shows none of them in the org — rolled back as intended.`); continue; }
+            const del = await sfCollectionsDelete(tgtOrgUrl, tgtSid, found);
+            const delOk = (Array.isArray(del) ? del : []).filter(r => r.success).length;
+            errors.push(`🧪 ${o}: ${found.length} record(s) from the dry run WERE written (the transaction did not roll back) — ${delOk} deleted again to the Recycle Bin${delOk < found.length ? `, ${found.length - delOk} could NOT be deleted: ${found.slice(0, 10).join(', ')}` : ''}.`);
+            probeResult.persistedFound = (probeResult.persistedFound || 0) + found.length;
+          } catch (e) { errors.push(`🧪 ${o}: could not check whether dry-run records persisted (${(e && e.message) || e}) — look for records created in the last minute.`); }
+        }
+      }
+      // Verdicts → summary. A node is a subrequest; the same object at two
+      // levels (Account under Account) merges into one line.
+      for (const s of probeSubs) {
+        const o = s.objType, vm = verdict.get(s.ref);
+        const agg = probeResult.byObj[o] = probeResult.byObj[o] || { probed: 0, wouldWrite: 0, refused: 0, cascade: 0, unreached: 0, earlier: 0, sampledOf: 0 };
+        const info = probeNodeInfo.get(s.node) || {};
+        if (info.sampledOf) agg.sampledOf += info.sampledOf;
+        for (const _id of (s.earlier || [])) { agg.probed++; agg.earlier++; }
+        if (!summary[o]) summary[o] = { created: 0, failed: 0 };
+        const fails = summary[o].probeFailed = summary[o].probeFailed || [];
+        for (const row of s.rows) {
+          const v = vm.get(row.srcId) || { state: 'unreached' };
+          agg.probed++;
+          if (v.state === 'ok') agg.wouldWrite++;
+          else if (v.state === 'refused') {
+            agg.refused++;
+            const msg = (v.errors || []).map(e => (e.statusCode === 'DUPLICATES_DETECTED' && !/DUPLICATES_DETECTED/.test(e.message || '')) ? `${e.message} [DUPLICATES_DETECTED]` : (e.message || e.statusCode || 'refused')).join('; ');
+            errors.push(`${o}: ${msg}`); probeResult.refusedLines = (probeResult.refusedLines || 0) + 1;
+            const named = [];
+            for (const e of (v.errors || [])) for (const fn of (Array.isArray(e.fields) ? e.fields : [])) if (fn && !named.includes(fn)) named.push(fn);
+            const notes = named.slice(0, 5).map(fn => Object.prototype.hasOwnProperty.call(row.payload, fn) ? { field: fn, sent: sftkTruncValue(row.payload[fn], 120) } : { field: fn, absent: true });
+            if (fails.length < 2000) fails.push({ id: row.srcId, error: msg, label: row.label || row.srcId, ...(notes.length ? { fields: notes } : {}) });
+          }
+          else if (v.state === 'cascade') agg.cascade++;
+          else agg.unreached++;
+        }
+      }
+      for (const [o, agg] of Object.entries(probeResult.byObj)) {
+        const s = summary[o];
+        s.created = 0; s.failed = agg.refused; s.probe = agg;
+        delete s.transferredSourceIds; delete s.idPairs; delete s.targetRecords;
+        if (s.probeFailed && s.probeFailed.length) s.failedSourceIds = s.probeFailed;
+        delete s.probeFailed;
+        postRunProgress({ phase: 'probeDone', obj: o, ...agg });
+        diagnostics.push(`🧪 ${o}: ${agg.probed} record(s) in a transaction Salesforce rolled back — ${agg.wouldWrite} would be written, ${agg.refused} refused${agg.cascade ? `, ${agg.cascade} not checked (their parent would be refused)` : ''}${agg.earlier ? `, ${agg.earlier} not checked (they point at a record an earlier step of this run creates)` : ''}${agg.unreached ? `, ${agg.unreached} not reached` : ''}${agg.sampledOf ? ` · a sample: the first ${agg.probed} of ${agg.sampledOf}` : ''}.`);
+      }
+      diagnostics.push(`🧪 Dry run limits: up to ${PL.sample} records per object; triggers and flows really ran and were rolled back with the transaction (e-mails and queued jobs roll back too; platform events published immediately do not); 🔗 lookups connected after insert and 📎 files were not checked; row locks and limits at full volume can still differ.`);
+    } else {
+      diagnostics.push('🧪 dry run: nothing to send — no record reached a write.');
+    }
+  }
+
   // Dedupe identical per-record errors — 20 contacts that all fail with
   // "Required fields are missing: [LastName]" should show ONE row + a count,
   // not 20 identical lines that eat the visible error window.
@@ -2287,7 +2638,8 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   // carries summary[obj].verified = { checked, found, sampled }; a shortfall
   // is an ℹ note — the counts stay Salesforce's answer, the note says what
   // the org shows now. Callers show "verified" only from this field.
-  try {
+  // 🧪 a dry run wrote nothing — there is nothing to re-read.
+  if (!PROBE) try {
     for (const [obj, s] of Object.entries(summary)) {
       if (!s || s.error || s.skipped) continue;
       const tgtIds = (s.transferredSourceIds || []).map(id => idMap[id]).filter(Boolean);
@@ -2324,8 +2676,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
     sourceOrg: srcOrgUrl, targetOrg: tgtOrgUrl,
     // a note (ℹ — a bypassed duplicate rule, a diagnostic) is not a failure: 2,000 records written and none
     // refused came out 'partial' because of one (2026-10-16)
-    status: errors.filter(e => !String(e).includes('ℹ')).length === 0 ? 'success' : (Object.values(summary).some(s=>s.created>0) ? 'partial' : 'failed'),
+    status: PROBE
+      ? sftkProbeStatus(probeResult, errors)
+      : (errors.filter(e => !String(e).includes('ℹ')).length === 0 ? 'success' : (Object.values(summary).some(s=>s.created>0) ? 'partial' : 'failed')),
     ...(_runCancelled ? { cancelled: true, stopped: _runStopReason() } : {}),
+    ...(PROBE ? { probe: probeResult || { byObj: {}, rounds: 0, sample: PL.sample, persisted: [] } } : {}),
     summary, errors: finalErrors.slice(0, 50)
   };
 }

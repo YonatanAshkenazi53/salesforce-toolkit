@@ -291,13 +291,14 @@ function _histRunGroups(run) {
   let totalFailed = 0;
   for (const s of Object.values(run.summary || {})) totalFailed += (s.failedSourceIds || []).map(f => typeof f === 'string' ? f : f.id).filter(Boolean).length;
   const profExists = !!(run.profileId && _profiles.some(p => p.id === run.profileId));
-  const retryable  = totalFailed > 0 && profExists;
-  const isRecRun   = run.kind === 'reconcile';
+  const isProbe    = run.kind === 'dryrun';
+  const retryable  = totalFailed > 0 && profExists && !isProbe;   // a dry run has nothing to retry — it wrote nothing
+  const isRecRun   = run.kind === 'reconcile' || isProbe;
   const isRollback = run.kind === 'rollback';
   const undoSt = (typeof sftkUndoCardState === 'function') ? sftkUndoCardState(run) : { show: false };
   return [
             { label: 'fix', title: 'Finish or repeat what this run did not do', buttons: [
-              run.stopped && run.selected && profExists ? `<button class="ds-btn ds-btn-xs ds-btn-primary" data-dsaction="continueRun" data-arg="${esc(run.id)}" title="Open this deployment with the records you had ticked and the run did not reach ticked again — the scan decides which those are; nothing already written is touched.">▶ Continue</button>` : '',
+              run.stopped && run.selected && profExists && !isProbe ? `<button class="ds-btn ds-btn-xs ds-btn-primary" data-dsaction="continueRun" data-arg="${esc(run.id)}" title="Open this deployment with the records you had ticked and the run did not reach ticked again — the scan decides which those are; nothing already written is touched.">▶ Continue</button>` : '',
               retryable ? `<button class="ds-btn ds-btn-xs ds-btn-primary" data-dsaction="retryFailed" data-arg="${esc(run.id)}" title="Open this deployment with the ${totalFailed} failed record(s) ticked under 🔴 Insert. Records that already succeeded are not touched.">↻ Retry failed (${totalFailed})</button>` : '',
             ] },
             { label: 'undo', title: 'Take back what this run wrote', buttons: [
@@ -339,6 +340,14 @@ window.sftkHistExportAll = function () { _histShowExportAllModal(); };
 function _histSentence(run) {
   const t = histRunTotals(run);
   const tgt = orgLabel(run.targetOrg || ''), src = orgLabel(run.sourceOrg || '');
+  if (run.kind === 'dryrun') {
+    const p = run.probe || {};
+    const bad = (p.refused || 0) + (p.cascade || 0) + (p.unreached || 0);
+    const did = !p.probed ? 'nothing was checked — no insert was selected'
+      : bad ? `${(p.would || 0).toLocaleString()} of ${p.probed.toLocaleString()} would be written${p.refused ? `, ${p.refused} refused` : ''}${p.cascade ? `, ${p.cascade} not checked` : ''}${p.unreached ? `, ${p.unreached} not reached` : ''}`
+      : `every one of the ${p.probed.toLocaleString()} record${p.probed === 1 ? '' : 's'} would be written`;
+    return `Dry run into ${tgt}: ${did}. Nothing was written.`;
+  }
   const isRb = run.kind === 'rollback';
   const parts = [];
   if (isRb) {
@@ -445,6 +454,7 @@ function renderHistory() {
         const retryable  = totalFailed > 0 && profExists;
         const isRecRun   = run.kind === 'reconcile';
         const isRollback = run.kind === 'rollback';
+        const isProbe    = run.kind === 'dryrun';
         // ↩ one state function decides what the card offers (studio-undo.js).
         const undoSt = (typeof sftkUndoCardState === 'function') ? sftkUndoCardState(run) : { show: false };
         return `
@@ -465,6 +475,7 @@ function renderHistory() {
             ${esc(orgLabel(run.sourceOrg || ''))} → ${esc(orgLabel(run.targetOrg || ''))}
             ${run.kind === 'reconcile' ? '<span class="ds-chip" style="margin-left:6px">⚖ reconcile</span>' : ''}
             ${isRollback ? '<span class="ds-chip" style="margin-left:6px" title="Deleted what a run created and restored what it overwrote, from the restore point taken before that run.">↩ rollback</span>' : ''}
+            ${isProbe ? '<span class="ds-chip" style="margin-left:6px" title="A real write that Salesforce rolled back: every record was evaluated — validation rules, triggers, flows, duplicate rules — and nothing was kept.">🧪 dry run — nothing written</span>' : ''}
           </div>
           <div class="ds-hist-sentence">${esc(_histSentence(run))}</div>
           <div class="ds-history-summary">
@@ -472,6 +483,16 @@ function renderHistory() {
               // Transfer runs carry explicit per-DML counts (inserted/updated/
               // deleted). Transfer runs carry the legacy created/failed pair.
               // Show whichever set is populated so success detail is visible.
+              if (isProbe) {
+                const a = (run.probe && run.probe.byObj && run.probe.byObj[obj]) || s.probe || {};
+                const parts = [`<span class="ds-rec-tag ds-rec-tag-ins">${(a.wouldWrite || 0).toLocaleString()} would be written</span>`];
+                if (a.refused)   parts.push(`<span class="ds-rec-tag ds-rec-tag-fail">${a.refused.toLocaleString()} refused</span>`);
+                if (a.cascade)   parts.push(`<span class="ds-rec-tag" title="Their parent would be refused, so they were never sent — a real run would not insert them either.">${a.cascade} not checked</span>`);
+                if (a.earlier)   parts.push(`<span class="ds-rec-tag" title="They point at a record an earlier step of this run creates — its id does not exist inside one rolled-back transaction, so they were set aside.">${a.earlier} not checked (earlier step)</span>`);
+                if (a.unreached) parts.push(`<span class="ds-rec-tag ds-rec-tag-fail" title="The rounds ran out before Salesforce got to these.">${a.unreached} not reached</span>`);
+                if (a.sampledOf) parts.push(`<span class="ds-rec-tag" title="A dry run sends the first 200 records of each object.">a sample of ${a.sampledOf.toLocaleString()}</span>`);
+                return `<span class="ds-summary-chip"><strong>${esc(obj)}</strong> · ${parts.join(' ')}</span>`;
+              }
               const isRec = run.kind === 'reconcile' ||
                             s.inserted != null || s.updated != null || s.deleted != null || s.pulled != null;
               if (isRec) {
@@ -577,7 +598,7 @@ function renderHistory() {
               if (srcBase && failedIns.length) {
                 out.push(`
               <details class="ds-history-links ds-history-links-failed">
-                <summary>✗ ${esc(obj)}: ${failedIns.length} failed insert(s) — open the SOURCE record in ${esc(orgLabel(srcBase))}</summary>
+                <summary>✗ ${esc(obj)}: ${failedIns.length} ${run.kind === 'dryrun' ? 'would be refused' : 'failed insert(s)'} — open the SOURCE record in ${esc(orgLabel(srcBase))}</summary>
                 <div class="ds-history-links-list">
                   ${failedIns.map(fr =>
                     `<a href="${esc(srcBase)}/${esc(fr.id)}" target="_blank" rel="noopener" title="${esc(fr.error || '')}">${esc(fr.label || fr.id)}</a>`
@@ -681,7 +702,7 @@ function renderHistory() {
               </div>` : '';
 
             const failBlock = [...failGroups.values()].map(f => `
-              <div class="ds-history-err-row" title="${esc(f.raw)}">❌ ${esc(f.object ? f.object + ': ' : '')}${esc(f.message)}${f.count > 1 ? ` <span class="ds-err-count">×${f.count}</span>` : ''}${f.phase ? ` <span class="ds-err-phase">while ${esc(f.phase)}</span>` : ''}
+              <div class="ds-history-err-row" title="${esc(f.raw)}">❌ ${esc(f.object ? f.object + ': ' : '')}${esc(f.message)}${f.count > 1 ? ` <span class="ds-err-count">×${f.count}</span>` : ''}${f.phase ? ` <span class="ds-err-phase">${run.kind === 'dryrun' ? 'in the dry run — would be refused' : `while ${esc(f.phase)}`}</span>` : ''}
                 ${valueBlock(f)}
                 ${f.hint ? `<div class="ds-err-hint">💡 ${esc(f.hint)}</div>` : ''}
               </div>`).join('');

@@ -66,12 +66,15 @@ function sftkRunProgressReduce(state, evt, now) {
       const c = _sftkRunCard(state, evt.obj, now);
       c.mode = 'write'; c.state = 'writing'; c.total = Number(evt.count) || 0; c.done = 0;
       c.writeStartedAt = now;
+      // 🧪 a dry run: the records are built now and sent later, in one transaction
+      if (evt.probe) { c.probe = true; c.sampledOf = Number(evt.sampledOf) || 0; }
       if (c.total === 0) c.finished = true;
       return { card: c };
     }
     case 'batch': {
       const c = _sftkRunCard(state, evt.obj, now);
       c.mode = 'write'; c.state = 'writing';
+      if (evt.probe) c.probe = true;
       if (!c.writeStartedAt) c.writeStartedAt = now;
       const done = Number(evt.done) || 0;
       if (c.batchSize == null && done > 0) c.batchSize = done;   // the first batch sizes the rest
@@ -79,7 +82,34 @@ function sftkRunProgressReduce(state, evt, now) {
       c.created = Number(evt.created) || 0; c.failed = Number(evt.failed) || 0;
       // what the accepted records became: a rollback deletes and restores, it creates nothing
       if (evt.okWord) c.okWord = String(evt.okWord);
-      if (c.total && c.done >= c.total) c.finished = true;
+      // a dry run's card closes on its verdict (probeDone), not when the records are built
+      if (c.total && c.done >= c.total && !c.probe) c.finished = true;
+      return { card: c };
+    }
+    // 🧪 one transaction per round: every object in it is "being checked"
+    case 'probe': {
+      const cards = [];
+      for (const sub of (Array.isArray(evt.subs) ? evt.subs : [])) {
+        const c = _sftkRunCard(state, sub.obj, now);
+        c.probe = true; c.mode = 'write'; c.state = 'probing'; c.round = Number(evt.round) || 1; c.finished = false;
+        if (!c.writeStartedAt) c.writeStartedAt = now;
+        cards.push(c);
+      }
+      return cards.length ? { cards } : null;
+    }
+    // 🧪 the verdict for one object
+    case 'probeDone': {
+      const c = _sftkRunCard(state, evt.obj, now);
+      const n = k => Number(evt[k]) || 0;
+      c.probe = true; c.mode = 'write';
+      // the same object can be checked by two steps of one run (under new
+      // parents, then under existing ones): the card adds them up
+      const prev = c.verdict || { probed: 0, wouldWrite: 0, refused: 0, cascade: 0, unreached: 0, sampledOf: 0 };
+      c.verdict = { probed: prev.probed + n('probed'), wouldWrite: prev.wouldWrite + n('wouldWrite'), refused: prev.refused + n('refused'),
+        cascade: prev.cascade + n('cascade') + n('earlier'), unreached: prev.unreached + n('unreached'), sampledOf: prev.sampledOf + n('sampledOf') };
+      c.done = c.verdict.probed; if (!c.total) c.total = c.verdict.probed;
+      c.failed = c.verdict.refused; c.created = c.verdict.wouldWrite;
+      c.finished = true;
       return { card: c };
     }
     case 'bulk':
@@ -128,6 +158,30 @@ function sftkRunProgressCardText(c, now) {
   const total = c.total || 0, done = c.done || 0;
   const pct = total ? Math.min(100, Math.round(done / total * 100)) : 0;
   out.pct = pct;
+  // 🧪 a dry run's card: built → checking (round n) → the verdict
+  if (c.probe) {
+    out.timeText = sftkRunFmtDur(elapsedMs);
+    const v = c.verdict;
+    if (v) {
+      const bad = v.refused + v.cascade + v.unreached;
+      out.icon = bad ? '⚠' : '✅'; out.pct = 100;
+      out.failPct = v.probed ? Math.min(100, Math.round(bad / v.probed * 100)) : 0;
+      out.stateText = v.refused ? `dry run: ${sftkRunFmtN(v.refused)} would be refused` : bad ? 'dry run: not every record was checked' : 'dry run: every record would be written';
+      out.numsText = `${sftkRunFmtN(v.probed)} checked · ${sftkRunFmtN(v.wouldWrite)} would be written${v.refused ? ` · ${sftkRunFmtN(v.refused)} refused` : ''}${v.cascade ? ` · ${sftkRunFmtN(v.cascade)} not checked (parent refused)` : ''}${v.unreached ? ` · ${sftkRunFmtN(v.unreached)} not reached` : ''}${v.sampledOf ? ` · a sample of ${sftkRunFmtN(v.sampledOf)}` : ''}`;
+      out.alive = false;
+      return out;
+    }
+    out.icon = '🧪';
+    if (!total) { out.icon = '✅'; out.stateText = 'nothing to check'; out.alive = false; return out; }
+    if (c.state === 'probing') {
+      out.stateText = `dry run · round ${c.round || 1}: Salesforce is checking…`;
+      out.numsText = `${sftkRunFmtN(total)} record(s) in the transaction${c.sampledOf ? ` · a sample of ${sftkRunFmtN(c.sampledOf)}` : ''}`;
+      return out;
+    }
+    out.stateText = done >= total ? 'built — waiting for the transaction' : 'building the records (dry run)…';
+    out.numsText = `${sftkRunFmtN(done)} / ${sftkRunFmtN(total)} built${c.sampledOf ? ` · a sample of ${sftkRunFmtN(c.sampledOf)}` : ''}`;
+    return out;
+  }
   out.failPct = total ? Math.min(pct, Math.round((c.failed || 0) / total * 100)) : 0;
   // No rate before two seconds have passed — the first batch landing at 0:00
   // read "207100/s" in the harness.
@@ -247,6 +301,7 @@ function sftkRunProgressHandler(logEl) {
       logEl.scrollTop = logEl.scrollHeight;
       return;
     }
+    if (r.cards) { for (const c of r.cards) paint(c, now); start(); return; }
     if (r.card) { paint(r.card, now); if (!r.card.finished) start(); }
   };
 }

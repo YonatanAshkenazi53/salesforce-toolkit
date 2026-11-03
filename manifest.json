@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Admin Toolkit for Salesforce",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Flows, data deployments between orgs, permission copies, Lightning pages, field cleanup and debug logs \u2014 from your open tabs.",
   "permissions": [
     "cookies",
