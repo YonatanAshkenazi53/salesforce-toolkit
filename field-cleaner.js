@@ -264,7 +264,8 @@ function fcPickerSummary(state) {
 // written: field-id lookup (1) + MetadataComponentDependency query (1) +
 // Lightning-page list (1) + list-view list (1) + compact-layout describe (1)
 // + quick-action list (1) + matching-rule query (1) + workflow-field-update
-// query (1) = 8. Three legs then fan out one call PER ITEM the lists return —
+// query (1) + report-type list (1) = 9. Four legs then fan out one call PER
+// ITEM the lists return (report types: one call per 10 of them) —
 // unknowable before the scan looks, so a count that hasn't been discovered
 // yet stays a "more if", never a made-up number.
 // counts: { flexiPages, listViews, quickActions } — each a number when known,
@@ -277,8 +278,9 @@ function fcEstimateScanCalls(counts) {
     { count: known(c.flexiPages),   what: 'Lightning page in the org' },
     { count: known(c.listViews),    what: 'list view on this object' },
     { count: known(c.quickActions), what: 'create/update quick action on this object' },
+    { count: known(c.reportTypes),  what: '10 custom report types in the org' },
   ];
-  let now = 8;
+  let now = 9;
   const moreIf = [];
   for (const l of legs) {
     if (l.count === null) moreIf.push(l.what);
@@ -1322,13 +1324,29 @@ const FieldCleaner = (() => {
         }
       }
 
+      // ── 3b. Supplemental report-type scan ─────────────────
+      // Live 2026-11-04: the dependency index lists a field's layouts and
+      // flows, not the custom report types whose columns carry it. A report
+      // type has no Tooling read, so every custom one is read through SOAP
+      // readMetadata (1 list + 1 call per 10 types) and searched for the
+      // column.
+      let rtHits = [];
+      try {
+        rtHits = await scanReportTypes([...deps, ...flexiHits]);
+      } catch (e) {
+        if (window.SFToolkitDebug?.enabled) {
+          window.SFToolkitDebug.log('fields', 'error',
+            'Supplemental report-type scan failed', e.message);
+        }
+      }
+
       // ── 4. Supplemental silent-breakage scan ──────────────
       // List views, compact layouts, quick actions, matching rules, and
       // workflow field updates — none of which the dependency index tracks,
       // all of which break silently when the field disappears.
       let supHits = [];
       try {
-        supHits = await scanSupplemental([...deps, ...flexiHits], fieldId);
+        supHits = await scanSupplemental([...deps, ...flexiHits, ...rtHits], fieldId);
       } catch (e) {
         if (window.SFToolkitDebug?.enabled) {
           window.SFToolkitDebug.log('fields', 'error',
@@ -1337,7 +1355,7 @@ const FieldCleaner = (() => {
       }
 
       _rptScan = null;
-      _lastScan = { deps: [...deps, ...flexiHits, ...supHits], fieldId };
+      _lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId };
       await renderResults(_lastScan.deps, fieldId);
     } catch (e) {
       const fe = sftkFriendlyError(e.message);
@@ -1414,6 +1432,45 @@ const FieldCleaner = (() => {
   function _fieldTokenRe() {
     const fl = (_selField?.api || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`(^|[^a-zA-Z0-9_])${fl}([^a-zA-Z0-9_]|$)`, 'i');
+  }
+
+  // ── Supplemental report-type scan ──────────────────────────
+  // Synthetic dependency records for every custom report type with a column
+  // of the selected field (sftk-mdapi.js reads the SOAP answer). The row's
+  // id is the type's developer name — that is how the fix reads it back.
+  async function scanReportTypes(existingDeps) {
+    const hits = [];
+    const msg = t => { const el = eid('fcResults')?.querySelector('.lp-robot-msg'); if (el) el.textContent = t; };
+    msg('Scanning report types…');
+    const listed = await bg({ type: 'SF_MD_LIST', orgUrl: _orgUrl, sid: _sid, mdType: 'ReportType', _suppressError: true });
+    if (!listed || listed.error) throw new Error(listed?.error || 'the report types could not be listed');
+    const types = sftkMdExtractListed(listed.text);
+    const known = new Set((existingDeps || [])
+      .filter(d => d.MetadataComponentType === 'ReportType')
+      .map(d => String(d.MetadataComponentName || '').toLowerCase()));
+    const per = sftkMdReadMax();
+    for (let i = 0; i < types.length; i += per) {
+      const slice = types.slice(i, i + per);
+      const read = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: 'ReportType',
+        fullNames: slice.map(t => t.fullName), _suppressError: true });
+      if (!read || read.error) throw new Error(read?.error || 'the report types could not be read');
+      for (const rec of sftkMdExtractRecords(read.text).records) {
+        const n = sftkRtMentions(rec.innerXml, _selObj.api, _selField.api);
+        if (!n) continue;
+        const label = sftkMdChildText(rec.innerXml, 'label') || rec.fullName;
+        if (known.has(label.toLowerCase()) || known.has(rec.fullName.toLowerCase())) continue;
+        const t = slice.find(x => x.fullName === rec.fullName) || {};
+        hits.push({
+          MetadataComponentId: rec.fullName, MetadataComponentName: label,
+          MetadataComponentType: 'ReportType',
+          RefMetadataComponentId: null, RefMetadataComponentName: _selField.api,
+          _supplemental: true, _fullName: rec.fullName, _columns: n,
+          _managed: t.namespacePrefix || '',
+        });
+      }
+      msg(`Scanning report types… ${Math.min(i + per, types.length)}/${types.length}`);
+    }
+    return hits;
   }
 
   async function scanSupplemental(existingDeps, fieldId) {
@@ -1707,8 +1764,13 @@ const FieldCleaner = (() => {
                       note: 'The field is removed from the report’s columns, filters and groupings (a restore point is saved first). Formulas and buckets are never auto-edited and stay listed as manual; an edit that would break the report (its only column or only grouping) is refused with the fix.',
                       doneLabel: '✅ Report updated',
                       replNote: 'Columns, filters and groupings that use the field are pointed at {new} (a restore point is saved first). Formulas and buckets are never auto-edited and stay listed as manual.' },
-    ReportType:     { icon: '📑', label: 'Report Types',     fixable: false, sev: 'blocker',
-                      note: 'Salesforce exposes no modern API for editing report-type columns — remove the field’s column in Setup → Report Types, then re-scan.' },
+    // Found by READING every custom report type in the org (SOAP readMetadata:
+    // 1 list + 1 call per 10 types) — live 2026-11-04 the dependency index
+    // listed the fixture field's layout and flows, not its report type.
+    ReportType:     { icon: '📑', label: 'Report Types',     fixable: true, sev: 'silent',
+                      note: 'The field’s column is removed from the report type’s sections (a restore point is saved first); a section left with no columns goes with it. A report built on the type loses that column, so fix the reports listed above first. A managed package’s report type is listed and left to Setup.',
+                      doneLabel: '✅ Report type updated',
+                      replNote: 'The column is pointed at {new} in place (a restore point is saved first). When the new field is already a column of the type, the old column is removed instead — a column may appear once per report type.' },
     // Live 2026-09-03: the dependency index ACCEPTS these two types, but it
     // is not guaranteed to hold a row for every template or approval that
     // uses a field — so they are listed when reported, and the note below
@@ -3213,7 +3275,7 @@ const FieldCleaner = (() => {
       revOverride: {
         html: type === 'Flow'
           ? `⚠ <strong>Flow versions that mention the field are deleted</strong> — Salesforce locks the field per version. A restore point of each is kept first: ↩ Undo in History puts the version that was active back as the active version, and ↩ Restore points below the results hold every deleted version.${_flowPlanBoxHtml(asks && !activeMode ? null : activeMode === 'delete' ? { rows: flowPlan.rowsDelete, lines: flowPlan.linesDelete } : { rows: flowPlan.rows, lines: flowPlan.lines })}`
-          : `${swap ? `⇄ <strong>${esc(_selObj.api)}.${esc(_selField.api)} → ${esc(swapTo)}</strong>. ${esc(_groupNote(type, cfg))}` : `✏ ${cfg.note || 'The field reference is removed from this component.'}`} The change deploys immediately. ${['Report', 'Layout', 'FlexiPage'].includes(type)
+          : `${swap ? `⇄ <strong>${esc(_selObj.api)}.${esc(_selField.api)} → ${esc(swapTo)}</strong>. ${esc(_groupNote(type, cfg))}` : `✏ ${cfg.note || 'The field reference is removed from this component.'}`} The change deploys immediately. ${['Report', 'ReportType', 'Layout', 'FlexiPage'].includes(type)
               ? 'A <strong>restore point</strong> is saved first — ↩ Restore points, under the results, can put the previous version back.'
               : 'There is no undo besides re-adding the field by hand.'}`,
         needsCheckbox: type === 'Flow',
@@ -3299,6 +3361,7 @@ const FieldCleaner = (() => {
       if (type === 'Layout')    label = (await fixLayout(componentId, componentName)) || label;
       if (type === 'FlexiPage') label = (await fixFlexiPage(componentId, componentName)) || label;
       if (type === 'Report')    label = await fixReport(componentId, componentName);
+      if (type === 'ReportType') label = (await fixReportType(componentId, componentName)) || label;
       markFixed(componentId, label, doneLinks, doneHtml);
     } catch (e) {
       _rowBusy(componentId, null);
@@ -4517,6 +4580,94 @@ const FieldCleaner = (() => {
       zipBase64: buildFlowZip(fullName, md)
     });
   };
+
+  // ── Report type fix ─────────────────────────────────────────
+  // No Tooling read and no REST retrieve for a report type: its XML is read
+  // with SOAP readMetadata and written back with the same REST deploy the
+  // layouts use. The edit is on the text (sftk-mdapi.js); a restore point
+  // and the History undo both redeploy the XML exactly as it was read.
+  const _rxEsc = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  function buildReportTypeZip(fullName, fileXml) {
+    const enc = new TextEncoder();
+    return window.sftkBuildStoredZip(sftkRtZipFiles(fullName, fileXml).map(f => ({ name: f.name, data: enc.encode(f.text) })));
+  }
+  async function readReportType(fullName) {
+    const r = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: 'ReportType', fullNames: [fullName], _suppressError: true });
+    if (!r || r.error) throw new Error(`Could not read report type "${fullName}": ${_feText(r?.error || 'no answer')}`);
+    const rec = sftkMdExtractRecords(r.text).records.find(x => x.fullName === fullName);
+    if (!rec) throw new Error(`Report type "${fullName}" was not found in the org.`);
+    return rec.innerXml;
+  }
+  async function fixReportType(componentId, componentName) {
+    const row = (_lastScan?.deps || []).find(d => d.MetadataComponentType === 'ReportType' && d.MetadataComponentId === componentId);
+    const setupUrl = `${_orgUrl.replace(/\/$/, '')}/lightning/setup/CustomReportTypes/home`;
+    const fail = text => { const e = new Error(text); e.setupUrl = setupUrl; return e; };
+    const fullName = (row && row._fullName) || (/^070/.test(String(componentId)) ? null : componentId);
+    if (!fullName) throw fail(`"${componentName}" came from the dependency index by id, and a report type is read by its developer name — remove the column in Setup → Report Types, then re-scan.`);
+    if (row && row._managed) throw fail(`"${componentName}" belongs to the managed package ${row._managed} and cannot be edited here — if the package allows it, remove the column in Setup → Report Types.`);
+    const before = await readReportType(fullName);
+    const obj = _selObj.api, field = _selField.api;
+    const swap = _swapOn();
+    const swapTo = swap ? _replField.api : '';
+    const res = swap ? sftkRtReplaceField(before, obj, field, swapTo) : sftkRtRemoveField(before, obj, field);
+    if (!res.changed) throw fail(`"${componentName}" has no column of ${obj}.${field}${res.skipped.length ? ` — the same field name appears under another table (${res.skipped.join('; ')}), which is not this field` : ''}. Check it in Setup → Report Types.`);
+    // Restore point FIRST — the fix is only offered with a way back.
+    await _snapshotFix('ReportType', componentId, componentName, fullName, { innerXml: before });
+    const zipAfter  = buildReportTypeZip(fullName, sftkMdRecordFileXml('ReportType', res.xml));
+    const zipBefore = buildReportTypeZip(fullName, sftkMdRecordFileXml('ReportType', before));
+    // History (sftk-history.js): one journal for this button press; the undo
+    // redeploys the XML as it was read.
+    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `📑 Report type — "${componentName}" (${obj}.${field} ${swap ? `→ ${swapTo}` : 'removed'})`, orgUrl: _orgUrl });
+    let wr;
+    try {
+      // confirmed-by: fixOne's sftkConfirmDestructive (the only caller)
+      // The write discipline (sftk-write.js): the deploy is the write, a SOAP
+      // re-read of the type is the verify — the column must be gone (and, on
+      // a swap, the new one there).
+      wr = await sftkWriteVerified({
+        describe: `"${componentName}" report type`,
+        journal: j,
+        write: async () => {
+          const r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64: zipAfter, _suppressError: true });
+          return (r && r.success) ? r : { error: (r && r.error) || 'the deploy was not accepted' };
+        },
+        verify: async () => {
+          let after;
+          try { after = await readReportType(fullName); } catch (_) { return { ok: false, text: null }; }
+          const gone = sftkRtMentions(after, obj, field) === 0;
+          const hasNew = !swap || res.newAlreadyThere || sftkRtMentions(after, obj, swapTo) > 0;
+          return { ok: gone && hasNew, text: null };
+        },
+      });
+      if (wr.accepted && wr.ok) {
+        const bits = [];
+        if (swap) bits.push(res.newAlreadyThere
+          ? `${swapTo} was already a column of the type, so the ${res.dropped === 1 ? 'old column was' : `${res.dropped} old columns were`} removed instead (a column may appear once)`
+          : `${res.swapped} column${res.swapped === 1 ? '' : 's'} now name${res.swapped === 1 ? 's' : ''} ${swapTo}`);
+        else bits.push(`${res.removed} column${res.removed === 1 ? '' : 's'} removed`);
+        if (res.emptied.length) bits.push(`section${res.emptied.length === 1 ? '' : 's'} ${res.emptied.map(l => `“${l}”`).join(', ')} held only that column and ${res.emptied.length === 1 ? 'was' : 'were'} removed too`);
+        if (res.skipped.length) bits.push(`left alone: ${res.skipped.join('; ')} (another table’s field of the same name)`);
+        return `✅ Report type updated · ${bits.join(' · ')} — verified by re-reading the org`;
+      }
+      if (wr.accepted) throw fail(swap
+        ? `"${componentName}" was deployed, but on re-read it does not show ${swapTo} in place of the column — check it in Setup → Report Types.`
+        : `"${componentName}" was deployed but still lists the column on re-read — check it in Setup → Report Types.`);
+      throw fail(`Salesforce won't accept the report type update for "${componentName}" (${_feText(String((wr.raw && wr.raw.error) || 'refused'))}). Click "Open in Setup" to remove the column by hand.`);
+    } finally {
+      await sftkHistoryEnd(j, { undo: wr && wr.accepted
+        ? { steps: [{
+            describe: `Put "${componentName}" report type back the way it was before this fix`,
+            // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the
+            // SOAP re-read below — the column of this object's field must be back
+            msg: { type: 'SF_METADATA_DEPLOY', zipBase64: zipBefore },
+            verify: { msg: { type: 'SF_MD_READ', mdType: 'ReportType', fullNames: [fullName] },
+              pattern: `<field>${_rxEsc(field)}</field>\\s*<table>${_rxEsc(obj)}</table>`, flags: 'i', retries: 3,
+              text: { ok: `"${componentName}": the column of ${obj}.${field} is back — verified by re-reading the org`,
+                      bad: `"${componentName}": the deploy was accepted, but on re-read the column is not there yet` } },
+          }] }
+        : { none: 'nothing was accepted by Salesforce, so there is nothing to undo' } });
+    }
+  }
 
   async function fixLayout(componentId, componentName) {
     const res = await bg({
@@ -5770,6 +5921,33 @@ const FieldCleaner = (() => {
           if (!wr.ok) throw new Error('restored, but the org could not be re-read to confirm it — check the report in Salesforce');
         } finally {
           await sftkHistoryEnd(j, { undo: { none: 'this is itself the undo — redo the fix from the tool to remove the field reference again' } });
+        }
+      } else if (snap.type === 'ReportType') {
+        if (!snap.fullName || !md.innerXml) throw new Error('Snapshot has no developer name or XML — cannot deploy');
+        // History (sftk-history.js): this button IS the undo of the fix that
+        // took the snapshot, so it gets its own journaled entry.
+        const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `↩ Restore report type — "${snap.name}"`, orgUrl: _orgUrl });
+        try {
+          // confirmed-by: the ↩ Restore sftkConfirmDestructive (the only caller)
+          // The write discipline (sftk-write.js): the deploy is the write, a
+          // SOAP re-read of the type is the verify.
+          const wr = await sftkWriteVerified({
+            describe: 'Report type restore',
+            journal: j,
+            write: async () => {
+              const r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, _suppressError: true,
+                zipBase64: buildReportTypeZip(snap.fullName, sftkMdRecordFileXml('ReportType', md.innerXml)) });
+              return (r && r.success) ? r : { error: (r && r.error) || 'the deploy was not accepted' };
+            },
+            verify: async () => {
+              try { const after = await readReportType(snap.fullName); return { ok: sftkRtMentions(after, snap.obj, snap.field) > 0, text: null }; }
+              catch (_) { return { ok: false, text: null }; }
+            },
+          });
+          if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
+          if (!wr.ok) throw new Error('restored, but the org could not be re-read to confirm it — check it in Setup → Report Types');
+        } finally {
+          await sftkHistoryEnd(j, { undo: { none: 'this is itself the undo — redo the fix from the tool to remove the column again' } });
         }
       } else {
         throw new Error(`Unknown snapshot type ${snap.type}`);

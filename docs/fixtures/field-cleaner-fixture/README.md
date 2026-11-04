@@ -176,3 +176,14 @@ Live: `node scripts/dev/headless-studio.mjs scripts/dev/live/field-replace.mjs` 
   `bash rebuild.sh npc` (it deploys v1-v4 as new versions on top).
 - not exercised through the screen: reports (the dependency index did not list the fixture
   reports during the session).
+
+## Report type (added 2026-11-04)
+
+`reporttype/` deploys the custom report type `SFTK_FC_Test_RT` ("SFTK FC Test Accounts"): base
+object Account with a joined Contacts section; the test field is the ONLY column of its own
+section ("Only the test field"), so ✂ Remove drops the section with it. A column may appear once
+per report type (Salesforce refused a first draft with the field in two sections). The dependency
+index does not list it for the field — the Field Cleaner's own report-type read finds it.
+Deploy: `cd reporttype && sf project deploy start -o npc --source-dir force-app`.
+Live: `node scripts/dev/headless-studio.mjs scripts/dev/live/field-cleaner-rt.mjs` (`REPLACE=1`
+for ⇄ Replace with Status2, `UNDO=1` to undo from History afterwards).

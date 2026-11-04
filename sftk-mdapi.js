@@ -236,6 +236,114 @@ function sftkMdMissingFields(innerXml, fields) {
   return missing;
 }
 
+// ── Custom report types ──────────────────────────────────────────────────
+// A report type's columns live in <sections><columns><field>X</field>
+// <table>Account</table></columns>…</sections>. The table names the object
+// (Account) or a joined relationship (Account.Contacts) — so a column is
+// THIS object's field only when its table IS the object; a same-named
+// field under another table is left alone and named. Salesforce allows a
+// column once per report type (live 2026-11-04: "Column X on table Account
+// appears more than once" refused the deploy).
+//
+// sftkRtEdit walks every section's columns and lets `visit(field, table,
+// sectionLabel)` answer 'keep', 'drop' or { rename }; a section whose last
+// column was dropped is dropped with it (a section with no columns has
+// nothing to offer a report builder). Everything not visited is re-emitted
+// byte for byte.
+function sftkRtEdit(innerXml, visit) {
+  const s = String(innerXml || '');
+  let out = '', cursor = 0;
+  const stats = { dropped: 0, renamed: 0, seen: 0, emptied: [] };
+  for (;;) {
+    const sec = sftkMdFindElement(s, 'sections', cursor);
+    if (!sec) break;
+    const secBody = s.slice(sec.bodyStart, sec.bodyEnd);
+    const label = sftkMdChildText(secBody, 'masterLabel') || '';
+    let sb = '', c2 = 0, kept = 0, touched = false;
+    for (;;) {
+      const ce = sftkMdFindElement(secBody, 'columns', c2);
+      if (!ce) break;
+      const colXml = secBody.slice(ce.start, ce.end);
+      const colBody = secBody.slice(ce.bodyStart, ce.bodyEnd);
+      const field = sftkMdChildText(colBody, 'field') || '';
+      const table = sftkMdChildText(colBody, 'table') || '';
+      stats.seen++;
+      const d = visit(field, table, label);
+      sb += secBody.slice(c2, ce.start);
+      if (d === 'drop') { stats.dropped++; touched = true; }
+      else if (d && typeof d === 'object' && d.rename) {
+        const fe = sftkMdFindElement(colBody, 'field', 0);
+        const nb = colBody.slice(0, fe.bodyStart) + sftkMdEscape(d.rename) + colBody.slice(fe.bodyEnd);
+        sb += colXml.slice(0, ce.bodyStart - ce.start) + nb + colXml.slice(ce.bodyEnd - ce.start);
+        stats.renamed++; kept++; touched = true;
+      } else { sb += colXml; kept++; }
+      c2 = ce.end;
+    }
+    sb += secBody.slice(c2);
+    out += s.slice(cursor, sec.start);
+    if (kept === 0 && touched) stats.emptied.push(label);          // the section goes with its last column
+    else out += s.slice(sec.start, sec.bodyStart) + sb + s.slice(sec.bodyEnd, sec.end);
+    cursor = sec.end;
+  }
+  out += s.slice(cursor);
+  return { xml: out, ...stats };
+}
+
+// How many columns of objApi.fieldApi the type has (0 = not referenced).
+function sftkRtMentions(innerXml, objApi, fieldApi) {
+  const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
+  let n = 0;
+  sftkRtEdit(innerXml, (field, table) => { if (field.toLowerCase() === f && table.toLowerCase() === o) n++; return 'keep'; });
+  return n;
+}
+
+// ✂ Remove: the column goes; a same-named field under another table is
+// listed in `skipped`, never touched.
+function sftkRtRemoveField(innerXml, objApi, fieldApi) {
+  const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
+  const skipped = [];
+  const r = sftkRtEdit(innerXml, (field, table, label) => {
+    if (field.toLowerCase() !== f) return 'keep';
+    if (table.toLowerCase() === o) return 'drop';
+    skipped.push(`${table}.${field} in “${label}”`);
+    return 'keep';
+  });
+  return { xml: r.xml, removed: r.dropped, emptied: r.emptied, skipped, changed: r.dropped > 0 };
+}
+
+// ⇄ Replace: the column names the new field in place. When the new field is
+// already a column of the same table, the old column is removed instead
+// (a column may appear once) and `newAlreadyThere` says so.
+function sftkRtReplaceField(innerXml, objApi, fieldApi, newFieldApi) {
+  const newAlreadyThere = sftkRtMentions(innerXml, objApi, newFieldApi) > 0;
+  if (newAlreadyThere) {
+    const rm = sftkRtRemoveField(innerXml, objApi, fieldApi);
+    return { xml: rm.xml, swapped: 0, dropped: rm.removed, emptied: rm.emptied, skipped: rm.skipped, newAlreadyThere, changed: rm.changed };
+  }
+  const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
+  const skipped = [];
+  const r = sftkRtEdit(innerXml, (field, table, label) => {
+    if (field.toLowerCase() !== f) return 'keep';
+    if (table.toLowerCase() === o) return { rename: newFieldApi };
+    skipped.push(`${table}.${field} in “${label}”`);
+    return 'keep';
+  });
+  return { xml: r.xml, swapped: r.renamed, dropped: 0, emptied: r.emptied, skipped, newAlreadyThere, changed: r.renamed > 0 };
+}
+
+// The two files a report-type deploy needs (the zip builder lives in sftk-zip.js).
+function sftkRtZipFiles(fullName, fileXml) {
+  const pkg = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    + '<Package xmlns="http://soap.sforce.com/2006/04/metadata">\n'
+    + '    <types>\n'
+    + `        <members>${sftkMdEscape(fullName)}</members>\n`
+    + '        <name>ReportType</name>\n'
+    + '    </types>\n'
+    + '    <version>62.0</version>\n'
+    + '</Package>';
+  return [{ name: 'package.xml', text: pkg }, { name: `reportTypes/${fullName}.reportType`, text: fileXml }];
+}
+
 if (typeof globalThis !== 'undefined') {
   globalThis.sftkMdTagRe          = sftkMdTagRe;
   globalThis.sftkMdFault          = sftkMdFault;
@@ -253,4 +361,9 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkMdMissingFields  = sftkMdMissingFields;
   globalThis.sftkMdListMax        = sftkMdListMax;
   globalThis.sftkMdReadMax        = sftkMdReadMax;
+  globalThis.sftkRtEdit           = sftkRtEdit;
+  globalThis.sftkRtMentions       = sftkRtMentions;
+  globalThis.sftkRtRemoveField    = sftkRtRemoveField;
+  globalThis.sftkRtReplaceField   = sftkRtReplaceField;
+  globalThis.sftkRtZipFiles       = sftkRtZipFiles;
 }

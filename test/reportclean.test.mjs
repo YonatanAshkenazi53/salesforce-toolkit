@@ -121,16 +121,21 @@ describe('report types', () => {
 });
 
 describe('the Field Cleaner wiring keeps the laws', () => {
-  it('Reports and Report Types are TYPES in the everyday scan — no org-wide sweep', () => {
+  it('Reports are a TYPE in the everyday scan — no org-wide sweep of reports; report types ARE read, cheaply', () => {
     // User 2026-09-01: "it should be one of the metadata items that we scan
     // everytime … scanning all the reports in the org is not a good
     // solution". The dependency index lists them — when it does: live
     // 2026-10-04 it returned none, so an OPT-IN sweep was added (user: "both").
     // The everyday scan still never reads the reports (test/report-sweep-1004).
+    // Report types are different (2026-11-04): the index NEVER listed the
+    // fixture type, there are tens of them, not hundreds, and a SOAP read
+    // takes ten per call — so the everyday scan reads them (1 + N/10 calls,
+    // said in the cost line) and the type is fixable like a layout.
     expect(FC).toMatch(/Report:\s+\{ icon: '\u{1F4CA}', label: 'Reports',\s+fixable: true/u);
-    expect(FC).toMatch(/ReportType:\s+\{ icon: '\u{1F4D1}', label: 'Report Types',\s+fixable: false, sev: 'blocker'/u);
+    expect(FC).toMatch(/ReportType:\s+\{ icon: '\u{1F4D1}', label: 'Report Types',\s+fixable: true, sev: 'silent'/u);
     expect(FC).not.toContain('FROM Report\'');
     expect(FC).not.toContain('fcScanReports');
+    expect(FC).toContain('async function scanReportTypes(existingDeps) {');
   });
 
   it('rides the modern Analytics REST API — no SOAP anywhere', () => {
@@ -158,8 +163,9 @@ describe('the Field Cleaner wiring keeps the laws', () => {
     expect(FC).toMatch(/snap\.type === 'Report'/);
   });
 
-  it('report types say plainly there is no modern write API', () => {
-    expect(FC).toContain('no modern API for editing report-type columns');
+  it('report types are read with SOAP readMetadata and written with the REST deploy (2026-11-04); Setup stays one click away', () => {
+    expect(FC).not.toContain('no modern API for editing report-type columns');
+    expect(FC).toContain('async function fixReportType(componentId, componentName) {');
     expect(FC).toContain("ReportType:     '/lightning/setup/CustomReportTypes/home'");
   });
 

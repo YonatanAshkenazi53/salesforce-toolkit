@@ -182,6 +182,9 @@ function sftkToolUndoState(entry) {
 //            or a LIST of them, all of which must match (text compared without case)
 //   then one of: absent (nothing there) · count (array length) ·
 //                field + equals / notNull / notFalse (a value on the picked object)
+//   pattern: a regular expression (source + flags) matched against the answer's
+//            TEXT — for a read that answers text, not JSON (SOAP readMetadata
+//            through `msg`, 2026-11-04: a report type has no SOQL and no REST path)
 //   text:    { ok, bad } — the sentences for both outcomes (optional)
 function _sftkHistPick(obj, path) {
   let v = obj;
@@ -195,6 +198,11 @@ function sftkUndoVerifyEval(spec, answer) {
   const s = spec || {};
   const t = s.text || {};
   if (!answer || answer.error) return { ok: false, text: `could not re-read the org${answer && answer.error ? ` (${answer.error})` : ''} — treat this as unverified` };
+  if (s.pattern) {
+    let ok = false;
+    try { ok = new RegExp(String(s.pattern), String(s.flags || '')).test(String(answer.text == null ? '' : answer.text)); } catch (_) { ok = false; }
+    return { ok, text: ok ? (t.ok || '') : (t.bad || 'accepted by Salesforce, but the org still shows the old state') };
+  }
   let v = _sftkHistPick(answer, s.pick || 'records');
   const conds = Array.isArray(s.where) ? s.where.filter(w => w && w.field) : (s.where && s.where.field ? [s.where] : []);
   if (conds.length) {
@@ -273,9 +281,11 @@ async function sftkHistoryUndo(entryId, opts) {
     const r = await sftkWriteVerified({
       describe: step.describe,
       write: () => send({ ...step.msg, orgUrl: stepOrg.orgUrl, sid: stepOrg.sid, _suppressError: true, _silentError: true }),
-      verify: step.verify && (step.verify.query || step.verify.path) ? async () => {
+      verify: step.verify && (step.verify.query || step.verify.path || step.verify.msg) ? async () => {
         const vs = step.verify;
-        const read = () => (vs.path
+        const read = () => (vs.msg
+          ? send({ ...vs.msg, orgUrl: stepOrg.orgUrl, sid: stepOrg.sid, _suppressError: true, _silentError: true })
+          : vs.path
           ? send({ type: 'SF_REST_GET', orgUrl: stepOrg.orgUrl, sid: stepOrg.sid, path: `${vs.path}${String(vs.path).includes('?') ? '&' : '?'}_=${Date.now()}`, _suppressError: true, _silentError: true })
           : send({ type: 'SF_QUERY', tooling: !!vs.tooling, orgUrl: stepOrg.orgUrl, sid: stepOrg.sid, query: vs.query, _suppressError: true, _silentError: true }));
         const tries = Math.max(1, Math.min(10, Number(vs.retries) || 1));
@@ -288,7 +298,7 @@ async function sftkHistoryUndo(entryId, opts) {
         }
         return verdict;
       } : undefined,
-      noVerify: step.verify && (step.verify.query || step.verify.path) ? undefined : 'this step has no re-read',
+      noVerify: step.verify && (step.verify.query || step.verify.path || step.verify.msg) ? undefined : 'this step has no re-read',
       journal: j,
     });
     log(`${r.ok ? '✅' : r.accepted ? '⚠' : '❌'} ${r.text}`);

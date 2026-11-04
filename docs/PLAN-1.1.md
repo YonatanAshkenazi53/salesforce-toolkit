@@ -108,8 +108,11 @@ without the PII".
 
 ## Backlog (added 2026-11-04)
 
-- **Field Cleaner fixes report types (user 2026-11-04: "תוסיף לבאקלוג").** Today
-  `ReportType` is listed as a blocker with "no modern API" — that note is stale.
+- ✅ BUILT the same evening — **Field Cleaner fixes report types (user 2026-11-04: "תוסיף לבאקלוג").**
+  Live on npc: the index did NOT list the fixture report type (layout + flows only), so the scan reads
+  every custom type (SOAP readMetadata, 1 list + 1 per 10); a column may appear once per type
+  (Salesforce refused the first fixture); a section emptied by the fix is dropped with it.
+  Was: `ReportType` listed as a blocker with "no modern API" — that note was stale.
   The read is SOAP `readMetadata` (sftk-mdapi.js already does it for Connected
   Apps), the write is REST `deployRequest` (layouts, flows, CMDT already go that
   way), the edit is string-level on the `<sections><columns><field>Obj.Field</field>`

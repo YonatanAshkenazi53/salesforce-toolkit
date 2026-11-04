@@ -3561,6 +3561,8 @@ const MESSAGE_CONTRACTS = {
   SF_REST_GET:                 { required: ['orgUrl', 'sid', 'path'] },
   SF_REST_GET_TEXT:            { required: ['orgUrl', 'sid', 'path'] },
   SF_METADATA_DEPLOY:          { required: ['orgUrl', 'sid', 'zipBase64'] },
+  SF_MD_LIST:                  { required: ['orgUrl', 'sid', 'mdType'] },
+  SF_MD_READ:                  { required: ['orgUrl', 'sid', 'mdType', 'fullNames'] },
   SF_COLLECTIONS_CREATE:       { required: ['orgUrl', 'sid', 'records'] },
   SF_COLLECTIONS_UPDATE:       { required: ['orgUrl', 'sid', 'records'] },
   SF_COLLECTIONS_DELETE:       { required: ['orgUrl', 'sid', 'ids'] },
@@ -3626,6 +3628,10 @@ async function dispatchMessage(message) {
       return sfQuery(orgUrl, sid, message.query, false);
     case 'SF_METADATA_DEPLOY':
       return sfMetadataDeploy(orgUrl, sid, message.zipBase64);
+    case 'SF_MD_LIST':
+      return sfMetadataList(orgUrl, sid, message.mdType);
+    case 'SF_MD_READ':
+      return sfMetadataRead(orgUrl, sid, message.mdType, message.fullNames);
     case 'SF_REST_GET':
       return sfRestGet(orgUrl, sid, message.path);
     case 'SF_REST_GET_TEXT':
@@ -4607,6 +4613,54 @@ async function sfCompositeBatch(orgUrl, sid, subrequests, opts) {
 // ── Metadata Deploy (REST-based, v38+) ─────────────────────────
 // The REST deployRequest endpoint requires multipart/form-data —
 // NOT a JSON body with a "zipFile" field (that is the SOAP API format).
+// ---------------------------------------------------------------
+// SOAP Metadata API READS — listMetadata / readMetadata. There is no REST
+// retrieve, so a component without a Tooling read (a custom report type)
+// is read here, with the session id in the SOAP header — the same sid
+// that authorizes REST, exactly as sfEmptyRecycleBin does. The envelope is
+// inline because the service worker cannot importScripts sftk-mdapi.js
+// (CSP); the popup parses the answer with that file's pure functions.
+// Reads, not writes: sfFetch directly, no read-only-org gate.
+// Answers { text } or { error: Salesforce's own faultstring }.
+// ---------------------------------------------------------------
+function sfMdEscape(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+async function sfMetadataSoap(orgUrl, sid, bodyXml) {
+  const ver = API_VERSION.replace(/^v/, '');
+  const url = `${orgUrl}/services/Soap/m/${ver}`;
+  const envelope = '<?xml version="1.0" encoding="utf-8"?>'
+    + '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:met="http://soap.sforce.com/2006/04/metadata">'
+    + `<soapenv:Header><met:SessionHeader><met:sessionId>${sfMdEscape(sid)}</met:sessionId></met:SessionHeader></soapenv:Header>`
+    + `<soapenv:Body>${bodyXml}</soapenv:Body></soapenv:Envelope>`;
+  let text = '', ok = false;
+  try {
+    const res = await sfFetch(url, {
+      method:  'POST',
+      headers: { 'Content-Type': 'text/xml; charset=UTF-8', 'SOAPAction': '""' },
+      body:    envelope
+    });
+    ok = res.ok;
+    text = await res.text();
+  } catch (e) {
+    return { error: `Metadata API request failed: ${e?.message || e}` };
+  }
+  const fault = text.match(/<(?:[A-Za-z0-9_.-]+:)?faultstring>([\s\S]*?)<\/(?:[A-Za-z0-9_.-]+:)?faultstring>/);
+  if (fault) return { error: fault[1].trim() };
+  if (!ok) return { error: 'the Metadata API answered an HTTP error without a fault' };
+  return { text };
+}
+async function sfMetadataList(orgUrl, sid, mdType) {
+  const ver = API_VERSION.replace(/^v/, '');
+  return sfMetadataSoap(orgUrl, sid,
+    `<met:listMetadata><met:queries><met:type>${sfMdEscape(mdType)}</met:type></met:queries><met:asOfVersion>${ver}</met:asOfVersion></met:listMetadata>`);
+}
+async function sfMetadataRead(orgUrl, sid, mdType, fullNames) {
+  const names = (Array.isArray(fullNames) ? fullNames : []).filter(Boolean).slice(0, 10);   // Salesforce's ceiling per call
+  return sfMetadataSoap(orgUrl, sid,
+    `<met:readMetadata><met:type>${sfMdEscape(mdType)}</met:type>${names.map(n => `<met:fullNames>${sfMdEscape(n)}</met:fullNames>`).join('')}</met:readMetadata>`);
+}
+
 async function sfMetadataDeploy(orgUrl, sid, zipBase64) {
   // Decode base64 → raw bytes
   const binaryStr = atob(zipBase64);

@@ -24,6 +24,8 @@ for v in 1 2 3 4; do
   fi
 done
 rm -f force-app/main/default/flows/SFTK_FC_Test_Flow.flow-meta.xml
+echo "== report type"
+(cd "$HERE/reporttype" && sf project deploy start -o "$ORG" --source-dir force-app --test-level NoTestRun >/dev/null)
 echo "== state"
 sf data query -q "SELECT VersionNumber, Status FROM Flow WHERE Definition.DeveloperName = 'SFTK_FC_Test_Flow' ORDER BY VersionNumber" -o "$ORG" --use-tooling-api 2>/dev/null | tail -n +1
 sf data query -q "SELECT COUNT() FROM FlowInterview WHERE InterviewLabel LIKE 'SFTK_FC_Test_Flow%'" -o "$ORG" 2>/dev/null | tail -3

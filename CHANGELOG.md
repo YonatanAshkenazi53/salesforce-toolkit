@@ -37,6 +37,14 @@ extensions containing root files that start with `_`).
   changed, and after the write the run reads a sample back and says whether anything still looks like
   PII outside the fields the policy fabricates.
 
+### Toolkit
+- **Field Cleaner fixes custom report types.** Salesforce's dependency index does not list the report
+  types whose columns carry a field, so the scan now reads every custom report type in the org and shows
+  the ones with the field's column, with the same ✂ Remove and ⇄ Replace as a layout: the column is taken
+  out (a section left with no columns goes with it) or pointed at the new field in place, a restore point
+  is saved first, ↩ Undo puts the type back, and the change is verified by reading the type back. Reports
+  built on the type lose the column, so the reports listed above come first.
+
 ## 1.0.0 — 2026-11-02
 
 The first public release. Two tools in one extension, working through the Salesforce tabs

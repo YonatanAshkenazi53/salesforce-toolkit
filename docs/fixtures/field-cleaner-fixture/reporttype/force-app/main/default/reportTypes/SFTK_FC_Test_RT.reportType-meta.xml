@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ReportType xmlns="http://soap.sforce.com/2006/04/metadata">
+    <baseObject>Account</baseObject>
+    <category>accounts</category>
+    <deployed>true</deployed>
+    <description>Field Cleaner fixture: a custom report type where the test field is the only column of its section (a column may appear once per report type) and a joined Contacts section.</description>
+    <join>
+        <outerJoin>true</outerJoin>
+        <relationship>Contacts</relationship>
+    </join>
+    <label>SFTK FC Test Accounts</label>
+    <sections>
+        <columns>
+            <checkedByDefault>true</checkedByDefault>
+            <field>Name</field>
+            <table>Account</table>
+        </columns>
+        <columns>
+            <checkedByDefault>false</checkedByDefault>
+            <field>Industry</field>
+            <table>Account</table>
+        </columns>
+        <masterLabel>Accounts</masterLabel>
+    </sections>
+    <sections>
+        <columns>
+            <checkedByDefault>false</checkedByDefault>
+            <field>SFTK_FC_Test_Status__c</field>
+            <table>Account</table>
+        </columns>
+        <masterLabel>Only the test field</masterLabel>
+    </sections>
+    <sections>
+        <columns>
+            <checkedByDefault>false</checkedByDefault>
+            <field>Name</field>
+            <table>Account.Contacts</table>
+        </columns>
+        <columns>
+            <checkedByDefault>false</checkedByDefault>
+            <field>Email</field>
+            <table>Account.Contacts</table>
+        </columns>
+        <masterLabel>Contacts</masterLabel>
+    </sections>
+</ReportType>

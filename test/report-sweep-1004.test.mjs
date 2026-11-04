@@ -45,7 +45,7 @@ describe('the sweep is asked for, never automatic', () => {
     expect(FC).toContain("eid('fcRptCancel')?.addEventListener('click', () => { _rptScan = null; renderReportScan(); });");
   });
   it('a new scan, or another field, forgets the sweep', () => {
-    expect(FC).toContain('_rptScan = null;\n      _lastScan = { deps: [...deps, ...flexiHits, ...supHits], fieldId };');
+    expect(FC).toContain('_rptScan = null;\n      _lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId };');
     expect(FC).toContain('_rptScan = null; _lastScan = null;');
   });
 });
