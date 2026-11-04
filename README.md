@@ -21,7 +21,8 @@ https://youtu.be/rYgwqpQR324
 - **Lightning Pages** — assignments by app, record type and profile; who sees which page; what a
   given user sees.
 - **Field Cleaner** — everything that uses a field, item by item: replace it with another field
-  (references and stored values), remove it, deprecate it, then delete it.
+  (references and stored values), remove it, deprecate it, then delete it. (Flows is about a flow's
+  own versions; Field Cleaner is about one field wherever it appears, flows included.)
 - **Copy Permissions** — one user's profile, role, permission sets, groups and settings onto
   another, adding only; licence mismatches explained.
 - **Flow Access** — grant flows to permission sets in one action.
