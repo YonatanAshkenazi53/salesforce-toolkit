@@ -322,7 +322,7 @@ function sftkOhFieldsVerdict(inp) {
   if (hidden) lines.push(`${hidden} custom field(s) exist in the org but the describe does not list them (field-level security) — not judged`);
   if (refd) lines.push(`${refd} more field(s) hold no data but are referenced — not listed`);
   if (skipped) lines.push(`${skipped} field(s) not judged (formula, auto-number, checkbox, long text and the like)`);
-  const caveat = 'the dependency index does not cover Lightning pages, list views or reports — open Field Cleaner before deleting';
+  const caveat = 'the API’s dependency index does not reliably return Lightning pages, list views or reports — open Field Cleaner before deleting';
   const incomplete = unread.length > 0 || hidden > 0;
   if (unused.length) {
     return { tone: 'warn', headline: `${unused.length} custom field(s) on ${obj} hold no data and have no reference in the dependency index (${caveat})${incomplete ? '; some could not be checked' : ''}`, lines };
@@ -544,7 +544,7 @@ const OH_CARDS = [
   },
   {
     id: 'fields', icon: '🧹', title: 'Custom fields with no data and no references',
-    what: 'One object’s custom fields that no record fills and that nothing in the dependency index references. The index does not cover Lightning pages, list views or reports, so treat the list as candidates and check them in Field Cleaner before deleting. Formula, auto-number, checkbox and long-text fields cannot be counted and are not judged.',
+    what: 'One object’s custom fields that no record fills and that nothing in the dependency index references. Unlike Setup’s own “Where is this used?”, the API’s index does not reliably return Lightning pages, list views or reports, so treat the list as candidates and check them in Field Cleaner before deleting. Formula, auto-number, checkbox and long-text fields cannot be counted and are not judged.',
     input: { label: 'Object', placeholder: 'Account', default: 'Account' },
     calls: () => '3 + 1 per 50 custom fields + 1 per 100 empty fields',
     async run(sess, ctx) {
