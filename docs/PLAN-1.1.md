@@ -105,3 +105,20 @@ a walkthrough chapter. The design as planned:
 Order: discovery + six generators + persona + audit; free text and address
 second; 1.1 ships with a walkthrough chapter "Seed a dev sandbox from Full Copy,
 without the PII".
+
+## Backlog (added 2026-11-04)
+
+- **Field Cleaner fixes report types (user 2026-11-04: "תוסיף לבאקלוג").** Today
+  `ReportType` is listed as a blocker with "no modern API" — that note is stale.
+  The read is SOAP `readMetadata` (sftk-mdapi.js already does it for Connected
+  Apps), the write is REST `deployRequest` (layouts, flows, CMDT already go that
+  way), the edit is string-level on the `<sections><columns><field>Obj.Field</field>`
+  block: ✂ Remove drops the column, ⇄ Replace renames the field in place, Undo
+  redeploys the saved XML, verify re-reads. To settle live on a fixture report
+  type in npc before promising: a section left with no columns (accept or
+  refuse, as the report fix refuses an only-column edit); joined objects
+  (`Contact.X__c` inside an Account report type is NOT this object's field —
+  reuse the layout Replace's same-name guard); order of work — reports that use
+  the column first, the report type after, since removing the column breaks
+  reports built on it. About a day with tests on pinned XML fixtures, a live
+  run with CLI truth, and the Undo verified. Not scheduled.
