@@ -259,6 +259,46 @@ function fcPickerSummary(state) {
   return parts.join(' · ');
 }
 
+// ── The scope of a scan (2026-11-05, a colleague's first day: "show the
+// dependencies that are required for deleting the field, and also the other
+// mentions that don't, and allow to scan both of the options").
+//   'both'     — everything (the default)
+//   'blockers' — only what makes Salesforce REFUSE the delete: the dependency
+//                index (Apex, rules, flows, templates…) plus the matching-rule
+//                and workflow-field-update reads — the cheap scan
+//   'mentions' — only the other mentions: the index's layouts, pages, reports,
+//                plus the Lightning-page, report-type, list-view, compact-layout
+//                and quick-action reads. The index answers both kinds in one
+//                call, so the blockers it returns are still COUNTED for the
+//                delete gate — hidden from the list, never from the decision.
+function fcScopeNorm(s) { return (s === 'blockers' || s === 'mentions') ? s : 'both'; }
+function fcScopeKeeps(scope, sev) {
+  const sc = fcScopeNorm(scope);
+  if (sc === 'both') return true;
+  return sc === 'blockers' ? sev === 'blocker' : sev !== 'blocker';
+}
+// Which legs a scan of that scope runs. The index query and the field-id
+// lookup always run.
+function fcScopeLegs(scope) {
+  const sc = fcScopeNorm(scope);
+  return {
+    flexiPages: sc !== 'blockers', reportTypes: sc !== 'blockers', listViews: sc !== 'blockers',
+    compactLayouts: sc !== 'blockers', quickActions: sc !== 'blockers',
+    matchingRules: sc !== 'mentions', workflowFieldUpdates: sc !== 'mentions',
+  };
+}
+function fcScopeLabel(scope) {
+  const sc = fcScopeNorm(scope);
+  return sc === 'blockers' ? '\ud83d\udd12 What blocks the delete' : sc === 'mentions' ? '\ud83d\udc40 Other mentions' : '\ud83d\udd0d Everything';
+}
+// The sentence under the switch — what that scope reads and what it leaves out.
+function fcScopeHelp(scope) {
+  const sc = fcScopeNorm(scope);
+  if (sc === 'blockers') return 'Reads only what makes Salesforce refuse the delete: Apex, validation and workflow rules, flows, matching rules, email templates, approval processes. The cheap scan. Layouts, Lightning pages, reports, report types, list views, compact layouts and quick actions are not read \u2014 they never block the delete, but they break or lose the field afterwards.';
+  if (sc === 'mentions') return 'Reads only the other mentions: layouts, Lightning pages, reports, report types, list views, compact layouts, quick actions \u2014 the delete goes through with these, and they break or lose the field afterwards. What blocks the delete is still counted for the Delete button, but not listed.';
+  return 'Reads both: what makes Salesforce refuse the delete, and every other mention that breaks or loses the field afterwards. Listed apart below.';
+}
+
 // E3b — what a full dependency scan costs, stated honestly. The floor is the
 // scan's fixed legs, counted from runScan/scanFlexiPages/scanSupplemental as
 // written: field-id lookup (1) + MetadataComponentDependency query (1) +
@@ -271,16 +311,18 @@ function fcPickerSummary(state) {
 // counts: { flexiPages, listViews, quickActions } — each a number when known,
 // null/undefined when not. Returns { now, known, moreIf } where `now` is the
 // call floor including every KNOWN leg and `moreIf` names the unknown ones.
-function fcEstimateScanCalls(counts) {
+function fcEstimateScanCalls(counts, scope) {
   const c = counts || {};
+  const L = fcScopeLegs(scope);
   const known = v => (Number.isFinite(Number(v)) && Number(v) >= 0) ? Math.floor(Number(v)) : null;
   const legs = [
-    { count: known(c.flexiPages),   what: 'Lightning page in the org' },
-    { count: known(c.listViews),    what: 'list view on this object' },
-    { count: known(c.quickActions), what: 'create/update quick action on this object' },
-    { count: known(c.reportTypes),  what: '10 custom report types in the org' },
-  ];
-  let now = 9;
+    L.flexiPages   && { count: known(c.flexiPages),   what: 'Lightning page in the org' },
+    L.listViews    && { count: known(c.listViews),    what: 'list view on this object' },
+    L.quickActions && { count: known(c.quickActions), what: 'create/update quick action on this object' },
+    L.reportTypes  && { count: known(c.reportTypes),  what: '10 custom report types in the org' },
+  ].filter(Boolean);
+  // the fixed legs of this scope: field id + the index always; then one list or query per leg that runs
+  let now = 2 + [L.flexiPages, L.listViews, L.compactLayouts, L.quickActions, L.matchingRules, L.workflowFieldUpdates, L.reportTypes].filter(Boolean).length;
   const moreIf = [];
   for (const l of legs) {
     if (l.count === null) moreIf.push(l.what);
@@ -565,6 +607,15 @@ const FieldCleaner = (() => {
           <div id="fcReplNote" class="fc-repl-note" style="display:none"></div>
         </div>
 
+        <!-- What to scan (2026-11-05): everything · what blocks the delete · other mentions -->
+        <div id="fcScopeWrap" style="display:none">
+          <div class="mode-toggle fc-scope" id="fcScope" role="radiogroup" aria-label="What to scan">
+            <button type="button" class="mode-btn" data-scope="both" role="radio">🔍 Everything</button>
+            <button type="button" class="mode-btn" data-scope="blockers" role="radio">🔒 What blocks the delete</button>
+            <button type="button" class="mode-btn" data-scope="mentions" role="radio">👀 Other mentions</button>
+          </div>
+          <div class="fc-repl-help" id="fcScopeHelp"></div>
+        </div>
         <!-- Scan button -->
         <button id="fcScanBtn" class="btn btn-primary fc-scan-btn" style="display:none">
           🔍 Scan Dependencies
@@ -976,6 +1027,7 @@ const FieldCleaner = (() => {
       scanBtn.textContent   = '🔍 Scan Dependencies';
       scanBtn.onclick       = runScan;
     }
+    _paintScope();
 
     eid('fcResults').innerHTML = '';
     updateScanCostLine();
@@ -1221,12 +1273,39 @@ const FieldCleaner = (() => {
   // (window.sftkApiBudget) is loaded in this page AND answers — the popup
   // does not load studio-transfer.js today, so tolerant wiring is the
   // difference between "estimate only" and a crash.
+  // ── the scope switch (2026-11-05): kept across sessions in sftk_fc_scope ──
+  let _scope = 'both';
+  try { chrome.storage?.local?.get('sftk_fc_scope').then(d => { _scope = fcScopeNorm(d && d.sftk_fc_scope); _paintScope(); }).catch(() => {}); } catch (_) {}
+  function _paintScope() {
+    const wrap = eid('fcScopeWrap');
+    if (!wrap) return;
+    wrap.style.display = eid('fcScanBtn') && eid('fcScanBtn').style.display !== 'none' ? '' : 'none';
+    wrap.querySelectorAll('[data-scope]').forEach(b => { const on = b.dataset.scope === _scope; b.classList.toggle('active', on); b.setAttribute('aria-checked', on ? 'true' : 'false'); });
+    const help = eid('fcScopeHelp'); if (help) help.textContent = fcScopeHelp(_scope);
+    if (!wrap.dataset.wired) {
+      wrap.dataset.wired = '1';
+      wrap.querySelectorAll('[data-scope]').forEach(b => b.addEventListener('click', async () => {
+        if (b.dataset.scope === _scope) return;
+        _scope = fcScopeNorm(b.dataset.scope);
+        try { await chrome.storage.local.set({ sftk_fc_scope: _scope }); } catch (_) {}
+        _paintScope();
+        updateScanCostLine();
+        // results already on the page: shown again in the new scope when the scan read it; else the button asks for a scan
+        if (_lastScan && _lastScan.deps) {
+          const covered = (_lastScan.scope || 'both') === 'both' || _lastScan.scope === _scope;
+          if (covered) renderResults(_lastScan.deps, _lastScan.fieldId);
+          else { const btn = eid('fcScanBtn'); if (btn) btn.textContent = `🔍 Scan again — ${_scope === 'blockers' ? 'the blockers were' : _scope === 'mentions' ? 'the other mentions were' : 'this scope was'} not read by the last scan`; }
+        }
+      }));
+    }
+  }
+
   let _fcBudgetSeq = 0;
   function updateScanCostLine() {
     const el = eid('fcApiCost');
     if (!el) return;
-    // Pre-scan, all three fan-out legs are undiscovered — say so.
-    const est = fcEstimateScanCalls(null);
+    // Pre-scan, the fan-out legs of this scope are undiscovered — say so.
+    const est = fcEstimateScanCalls(null, _scope);
     el.textContent   = fcScanBudgetLine(est, null).text;
     el.style.color   = '';
     el.style.display = '';
@@ -1313,9 +1392,10 @@ const FieldCleaner = (() => {
       // (incl. Dynamic Forms field sections) are never missed.
       const msgEl = eid('fcResults')?.querySelector('.lp-robot-msg');
       if (msgEl) msgEl.textContent = 'Scanning Lightning Pages…';
+      const scope = _scope, L = fcScopeLegs(scope);
       let flexiHits = [];
       try {
-        flexiHits = await scanFlexiPages(deps);
+        if (L.flexiPages) flexiHits = await scanFlexiPages(deps);
       } catch (e) {
         // Non-fatal — fall back to whatever MetadataComponentDependency found
         if (window.SFToolkitDebug?.enabled) {
@@ -1332,7 +1412,7 @@ const FieldCleaner = (() => {
       // column.
       let rtHits = [];
       try {
-        rtHits = await scanReportTypes([...deps, ...flexiHits]);
+        if (L.reportTypes) rtHits = await scanReportTypes([...deps, ...flexiHits]);
       } catch (e) {
         if (window.SFToolkitDebug?.enabled) {
           window.SFToolkitDebug.log('fields', 'error',
@@ -1346,7 +1426,7 @@ const FieldCleaner = (() => {
       // all of which break silently when the field disappears.
       let supHits = [];
       try {
-        supHits = await scanSupplemental([...deps, ...flexiHits, ...rtHits], fieldId);
+        supHits = await scanSupplemental([...deps, ...flexiHits, ...rtHits], fieldId, L);
       } catch (e) {
         if (window.SFToolkitDebug?.enabled) {
           window.SFToolkitDebug.log('fields', 'error',
@@ -1355,7 +1435,7 @@ const FieldCleaner = (() => {
       }
 
       _rptScan = null;
-      _lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId };
+      _lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope };
       await renderResults(_lastScan.deps, fieldId);
     } catch (e) {
       const fe = sftkFriendlyError(e.message);
@@ -1473,7 +1553,8 @@ const FieldCleaner = (() => {
     return hits;
   }
 
-  async function scanSupplemental(existingDeps, fieldId) {
+  async function scanSupplemental(existingDeps, fieldId, legs) {
+    const L = legs || fcScopeLegs('both');
     const hits = [];
     const seen = new Set((existingDeps || []).map(d =>
       `${d.MetadataComponentType}|${String(d.MetadataComponentId || '').substring(0, 15)}`));
@@ -1494,7 +1575,7 @@ const FieldCleaner = (() => {
     const fieldLc = _selField.api.toLowerCase();
 
     // 1. List views — describe gives the view's SOQL + columns.
-    try {
+    if (L.listViews) try {
       msg('Scanning list views…');
       const lvRes = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
         path: `services/data/v62.0/sobjects/${obj}/listviews` });
@@ -1519,7 +1600,7 @@ const FieldCleaner = (() => {
     } catch (_) {/* non-fatal */}
 
     // 2. Compact layouts — field items are listed right in the describe.
-    try {
+    if (L.compactLayouts) try {
       msg('Scanning compact layouts…');
       const clRes = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
         path: `services/data/v62.0/sobjects/${obj}/describe/compactLayouts` });
@@ -1537,7 +1618,7 @@ const FieldCleaner = (() => {
     // was flooding the log with red 404s. Only Create/Update actions own a
     // field layout, and only object-scoped custom ones can hold THIS object's
     // custom field, so filter to those; suppress errors on the rest.
-    try {
+    if (L.quickActions) try {
       msg('Scanning quick actions…');
       const qaRes = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
         path: `services/data/v62.0/sobjects/${obj}/quickActions` });
@@ -1573,7 +1654,7 @@ const FieldCleaner = (() => {
     // objects, not Tooling (the Tooling query 400'd "sObject type
     // 'MatchingRule' is not supported"). One join query gets every rule
     // item's Field for this object; Field comes back like "Contact.Email".
-    try {
+    if (L.matchingRules) try {
       msg('Scanning matching rules…');
       const mriRes = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
         query: `SELECT Id, Field, MatchingRuleId, MatchingRule.DeveloperName, MatchingRule.MasterLabel ` +
@@ -1590,7 +1671,7 @@ const FieldCleaner = (() => {
     } catch (_) {/* non-fatal */}
 
     // 5. Workflow field updates — FieldDefinitionId carries the field's id.
-    try {
+    if (L.workflowFieldUpdates) try {
       msg('Scanning workflow field updates…');
       const id15 = String(fieldId || '').substring(0, 15);
       const wfRes = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true,
@@ -1899,18 +1980,33 @@ const FieldCleaner = (() => {
     }
   }
 
-  async function renderResults(deps, fieldId) {
+  async function renderResults(allDeps, fieldId) {
     const results = eid('fcResults');
     if (!results) return;
+    // the scope (2026-11-05): what the list shows; blockers the index returned are COUNTED for the gate even when hidden
+    const sevOf = t => (TYPE_CFG[t] || TYPE_CFG_DEFAULT).sev;
+    const scanScope = (_lastScan && _lastScan.scope) || 'both';
+    const deps = (allDeps || []).filter(d => fcScopeKeeps(_scope, sevOf(d.MetadataComponentType || 'Unknown')));
+    const hiddenBlockers = (allDeps || []).filter(d => sevOf(d.MetadataComponentType || 'Unknown') === 'blocker' && !fcScopeKeeps(_scope, 'blocker'));
+    const unreadNote = scanScope === 'blockers'
+      ? `<div class="fc-fact fc-fact-warn"><span class="fc-fact-ico">👀</span><span class="fc-fact-text"><strong>The other mentions were not read</strong> — this scan looked only at what blocks the delete. Layouts, Lightning pages, reports, report types, list views, compact layouts and quick actions that mention the field are unknown: they never block the delete, but they break or lose the field afterwards. Switch to 🔍 Everything and scan again to see them.</span></div>`
+      : scanScope === 'mentions'
+        ? `<div class="fc-fact fc-fact-warn"><span class="fc-fact-ico">🔒</span><span class="fc-fact-text"><strong>Matching rules and workflow field updates were not read</strong> — this scan looked only at the other mentions. Both can make Salesforce refuse the delete. Switch to 🔍 Everything and scan again before deleting.</span></div>`
+        : '';
 
     if (!deps.length) {
+      const nothing = _scope === 'blockers' ? 'Nothing blocks the delete' : _scope === 'mentions' ? 'No other mention found' : 'No dependencies found';
+      const sub = hiddenBlockers.length
+        ? `${hiddenBlockers.length} blocker${hiddenBlockers.length === 1 ? '' : 's'} found but hidden by the 👀 scope — switch to 🔍 Everything to see ${hiddenBlockers.length === 1 ? 'it' : 'them'}. Salesforce refuses the delete until ${hiddenBlockers.length === 1 ? 'it is' : 'they are'} cleared.`
+        : scanScope === 'blockers' ? 'Salesforce will not refuse the delete. The other mentions were not read — see below.' : 'This field can be safely deleted.';
       results.innerHTML = `
         <div class="fc-clean">
-          <div class="fc-clean-icon">✅</div>
-          <div class="fc-clean-title">No dependencies found</div>
-          <div class="fc-clean-sub">This field can be safely deleted.</div>
-          <button class="btn btn-danger" id="fcDelFreeBtn">🗑 Delete Field</button>
+          <div class="fc-clean-icon">${hiddenBlockers.length ? '🔒' : '✅'}</div>
+          <div class="fc-clean-title">${nothing}</div>
+          <div class="fc-clean-sub">${sub}</div>
+          <button class="btn btn-danger" id="fcDelFreeBtn" ${hiddenBlockers.length ? 'disabled' : ''}>🗑 Delete Field</button>
         </div>
+        ${unreadNote}
         <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">${sftkCatSm('Measuring how much data is stored in this field…')}</div>
         <div id="fcCopyVals"></div>
         <div id="fcDepZone"></div>
@@ -1980,10 +2076,10 @@ const FieldCleaner = (() => {
         </details>
       </div>`;
 
-    for (const [type, items] of Object.entries(_groups)) {
+    const groupHtml = (type, items) => {
       const cfg = TYPE_CFG[type] || { ...TYPE_CFG_DEFAULT, label: type };
       const nItems = type === 'Flow' ? _flowCards.length : items.length;
-      html += `
+      return `
         <div class="fc-group" id="fcGroup_${esc(type)}">
           <div class="fc-group-hdr">
             <span class="fc-group-icon">${cfg.icon}</span>
@@ -2003,29 +2099,55 @@ const FieldCleaner = (() => {
             ${type === 'Flow' ? _flowCards.map(renderFlowCard).join('') : items.map(d => renderItem(d, cfg.fixable, type)).join('')}
           </div>
         </div>`;
-    }
+    };
+    // Two sections (2026-11-05): what makes Salesforce refuse the delete, then the other mentions.
+    const nOf = ([t, arr]) => t === 'Flow' ? _flowCards.length : arr.length;
+    const blockerGroups = Object.entries(_groups).filter(([t]) => sevOf(t) === 'blocker');
+    const mentionGroups = Object.entries(_groups).filter(([t]) => sevOf(t) !== 'blocker');
+    const nB = blockerGroups.reduce((n, g) => n + nOf(g), 0), nM = mentionGroups.reduce((n, g) => n + nOf(g), 0);
+    if (fcScopeKeeps(_scope, 'blocker')) html += `
+      <div class="fc-section fc-section-blockers" id="fcSectionBlockers">
+        <div class="fc-section-hdr"><span class="fc-section-title">🔒 Must be cleared before Salesforce deletes the field</span><span class="fc-section-n">${nB}</span></div>
+        <div class="fc-section-sub">${nB ? 'Salesforce refuses the delete while any of these still references the field.' : (scanScope === 'mentions' ? 'None in the dependency index — matching rules and workflow field updates were not read in this scope.' : 'Nothing blocks the delete.')}</div>
+        ${blockerGroups.map(([t, a]) => groupHtml(t, a)).join('')}
+      </div>`;
+    if (fcScopeKeeps(_scope, 'silent')) html += `
+      <div class="fc-section fc-section-mentions" id="fcSectionMentions">
+        <div class="fc-section-hdr"><span class="fc-section-title">👀 Other mentions — the delete goes through, these break afterwards</span><span class="fc-section-n">${nM}</span></div>
+        <div class="fc-section-sub">${nM ? 'Each of these stops working or loses the field once it is deleted. Fix them here so nothing breaks quietly.' : (scanScope === 'blockers' ? 'Not read in this scope.' : 'No other mention found.')}</div>
+        ${mentionGroups.map(([t, a]) => groupHtml(t, a)).join('')}
+      </div>`;
+    html += unreadNote;
 
     // ── F2: predictive blocker check ─────────────────────────────────────
     // Classify by whether Salesforce will actually REJECT the delete. Manual
     // blockers (Apex, validation/workflow/matching rules) can't be auto-fixed
     // here — Salesforce would 400 the delete — so gate the button on them up
     // front instead of letting the attempt fail server-side.
-    _manualBlockers = Object.entries(_groups)
+    const gateGroups = {};
+    for (const d of (allDeps || [])) { const t = d.MetadataComponentType || 'Unknown'; (gateGroups[t] = gateGroups[t] || []).push(d); }
+    _manualBlockers = Object.entries(gateGroups)
       .filter(([t]) => {
         const cfg = TYPE_CFG[t] || TYPE_CFG_DEFAULT;
         return cfg.sev === 'blocker' && !cfg.fixable;
       })
-      .map(([t, arr]) => ({ type: t, label: (TYPE_CFG[t] || { label: t }).label, count: arr.length }));
+      .map(([t, arr]) => ({ type: t, label: (TYPE_CFG[t] || { label: t }).label, count: arr.length, hidden: !fcScopeKeeps(_scope, 'blocker') }));
     const blockerTotal = _manualBlockers.reduce((n, b) => n + b.count, 0);
     const silentManual = Object.entries(_groups)
       .filter(([t]) => { const c = TYPE_CFG[t] || TYPE_CFG_DEFAULT; return c.sev === 'silent' && !c.fixable; })
       .reduce((n, [, arr]) => n + arr.length, 0);
-    const delDisabled = autoCount > 0 || blockerTotal > 0;
+    // a FIXABLE blocker the scope hides (a flow, under 👀) gates the delete too — Salesforce would refuse it
+    const hiddenFixable = hiddenBlockers.filter(d => (TYPE_CFG[d.MetadataComponentType] || TYPE_CFG_DEFAULT).fixable).length;
+    const delDisabled = autoCount > 0 || blockerTotal > 0 || hiddenFixable > 0;
+    const hiddenBlock = hiddenFixable > 0 ? `
+      <div class="fc-blockers">
+        <div class="fc-blockers-hdr">🔒 ${hiddenFixable} blocker${hiddenFixable === 1 ? '' : 's'} hidden by the 👀 scope (flows and the like, fixable here) — switch to 🔍 Everything to see and fix ${hiddenFixable === 1 ? 'it' : 'them'}. Salesforce refuses the delete until ${hiddenFixable === 1 ? 'it is' : 'they are'} cleared.</div>
+      </div>` : '';
 
     const blockerBlock = blockerTotal > 0 ? `
       <div class="fc-blockers">
         <div class="fc-blockers-hdr">🔒 ${blockerTotal} blocker${blockerTotal === 1 ? '' : 's'} — Salesforce will refuse the delete until ${blockerTotal === 1 ? 'this is' : 'these are'} cleared:</div>
-        ${_manualBlockers.map(b => `<div class="fc-blocker-row">${(TYPE_CFG[b.type] || {}).icon || '🔧'} <strong>${b.count}</strong> ${esc(b.label)} — clear in Setup, then re-scan</div>`).join('')}
+        ${_manualBlockers.map(b => `<div class="fc-blocker-row">${(TYPE_CFG[b.type] || {}).icon || '🔧'} <strong>${b.count}</strong> ${esc(b.label)} — clear in Setup, then re-scan${b.hidden ? ' (hidden by the 👀 scope — switch to 🔍 Everything to see them)' : ''}</div>`).join('')}
       </div>` : '';
     const silentNote = silentManual > 0 ? `
       <div class="fc-silent-note">⚠ ${silentManual} cosmetic reference${silentManual === 1 ? '' : 's'} (list views, quick actions…) won't block the delete but will stop working afterwards.</div>` : '';
@@ -2033,11 +2155,12 @@ const FieldCleaner = (() => {
     html += `
       <div class="fc-delete-zone" id="fcDeleteZone">
         ${blockerBlock}
+        ${hiddenBlock}
         ${silentNote}
         <div class="fc-delete-note" id="fcDeleteNote">
           ${autoCount > 0
             ? `⚠ Fix the ${autoCount} fixable item${autoCount === 1 ? '' : 's'} above first.`
-            : blockerTotal > 0
+            : (blockerTotal > 0 || hiddenFixable > 0)
               ? '🔒 Delete is blocked until the blockers above are cleared.'
               : silentManual > 0
                 ? '✅ No blockers — safe to delete (the cosmetic references above will simply vanish).'

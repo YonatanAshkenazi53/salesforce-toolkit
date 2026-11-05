@@ -5829,6 +5829,15 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
 .fc-pill-clear:hover { color: var(--danger); }
 
 .fc-scan-btn { width: 100%; }
+/* what to scan (2026-11-05): the switch above the button, the two sections of the results */
+.fc-scope { margin: 10px 0 6px; }
+.fc-scope .mode-btn { flex: 1; }
+.fc-section { margin-top: 14px; }
+.fc-section-hdr { display: flex; align-items: center; gap: 8px; padding: 6px 2px; border-bottom: 2px solid var(--border); }
+.fc-section-title { font-weight: 700; font-size: 13px; color: var(--text); }
+.fc-section-n { font-size: 11.5px; font-weight: 600; color: var(--subtext); background: var(--surface2); border: 1px solid var(--border); border-radius: 9px; padding: 0 7px; line-height: 17px; }
+.fc-section-blockers .fc-section-hdr { border-bottom-color: var(--danger, #c0392b); }
+.fc-section-sub { font-size: 11.5px; color: var(--subtext); margin: 4px 2px 6px; line-height: 1.4; }
 
 /* ── Result sections ── */
 .fc-section {

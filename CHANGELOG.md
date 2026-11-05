@@ -49,6 +49,13 @@ extensions containing root files that start with `_`).
   PII outside the fields the policy fabricates.
 
 ### Toolkit
+- **Field Cleaner tells blockers from mentions, and scans either.** The results now come in two
+  sections: 🔒 what must be cleared before Salesforce deletes the field (Apex, validation and workflow
+  rules, flows, matching rules, email templates, approval processes), and 👀 the other mentions
+  (layouts, Lightning pages, reports, report types, list views, compact layouts, quick actions — the
+  delete goes through, these break afterwards). A switch above Scan picks what to read: 🔍 Everything,
+  🔒 What blocks the delete (4 API calls, the cheap scan) or 👀 Other mentions. A scan that read less
+  says so, and a blocker is never hidden from the Delete button, only from the list.
 - **A filter box on ⏻ Switches and ⚙ API versions.** Type or paste a flow name or API name and the
   list narrows as you type. A flow you ticked stays ticked when the filter hides it — the line under
   the box and the footer say how many ticked flows are hidden — and Enter with one flow left ticks it,

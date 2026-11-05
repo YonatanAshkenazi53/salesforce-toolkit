@@ -18,7 +18,7 @@ import { extractFunctions } from './extract.mjs';
 const { drEstimateReadinessCalls, drReadinessBudgetLine } =
   extractFunctions('studio-readiness.js', ['drEstimateReadinessCalls', 'drReadinessBudgetLine']);
 const { fcEstimateScanCalls, fcScanBudgetLine } =
-  extractFunctions('field-cleaner.js', ['fcEstimateScanCalls', 'fcScanBudgetLine']);
+  extractFunctions('field-cleaner.js', ['fcEstimateScanCalls', 'fcScanBudgetLine', 'fcScopeLegs', 'fcScopeNorm']);   // the estimate follows the scope (2026-11-05)
 const { svDeepScanCallEstimate, svDeepScanBudgetLine } =
   extractFunctions('studio-schema.js', ['svDeepScanCallEstimate', 'svDeepScanBudgetLine']);
 

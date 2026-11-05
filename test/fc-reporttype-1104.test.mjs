@@ -173,8 +173,8 @@ describe('the wiring', () => {
   it('report types are fixable, read by the scan, dispatched, confirmed with a restore point, restorable, and undone by a redeploy', () => {
     expect(FC).toMatch(/ReportType:\s*\{ icon: '📑', label: 'Report Types',\s*fixable: true, sev: 'silent'/);
     expect(FC).not.toContain('no modern API');
-    expect(FC).toContain('rtHits = await scanReportTypes([...deps, ...flexiHits]);');
-    expect(FC).toContain('_lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId };');
+    expect(FC).toContain('if (L.reportTypes) rtHits = await scanReportTypes([...deps, ...flexiHits]);');   // within the scope's legs (2026-11-05)
+    expect(FC).toContain('_lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope };');
     expect(FC).toContain("mdType: 'ReportType'");
     expect(FC).toContain("if (type === 'ReportType') label = (await fixReportType(componentId, componentName)) || label;");
     expect(FC).toContain("['Report', 'ReportType', 'Layout', 'FlexiPage'].includes(type)");
