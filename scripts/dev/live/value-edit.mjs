@@ -38,7 +38,7 @@ export default async function (h) {
   if (!row) throw new Error('no Insert row with a ✏ values button');
   cli(h, row.name);
   await h.eval(`document.querySelector('[data-dep-vals="${row.id}"]').click()`);
-  await h.waitFor("!!document.querySelector('#dsVeSave')", 30000, 300); await h.sleep(1600);
+  await h.waitFor("document.querySelectorAll('#dsValEdHost tr[data-ve-row]').length > 0", 30000, 300); await h.sleep(1600);   // one record: no Save button since 2026-11-05 (saved as you type)
   h.log('DIALOG head:', (await h.modalText(600)));
   h.log('fields:', await h.eval(`document.querySelectorAll('tr[data-ve-row]').length`), '| lookup rows:', await h.eval(`document.querySelectorAll('[data-ve-lkp]').length`));
   await h.shot(h.shots + '/ve-1-dialog.png');
@@ -55,7 +55,8 @@ export default async function (h) {
   // target's validation rule rejects on purpose; a typed Website is exactly the fix a person would make here
   const typed = await h.eval(`(() => { const set = (f, v) => { const i = document.querySelector('input[data-ve-field="' + f + '"]'); if (!i) return false; i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); return i.closest('tr').className; }; return [set('Description', ${JSON.stringify(TYPED)}), set('Website', 'https://americas.example.com'), set('BillingState', 'New York')]; })()`);   // the source's "NY" is no state in the target (state picklists there)
   h.log('typed → row classes:', JSON.stringify(typed));
-  await h.eval(`document.querySelector('#dsVeSave').click()`); await h.sleep(1200);
+  await h.sleep(1200);   // saved as you type (2026-11-05); the dialog is closed by its Close button
+  await h.eval(`[...document.querySelectorAll('#dsModalBox [data-dsaction="closeModal"]')].pop().click()`); await h.sleep(600);
   h.log('badge on the row:', await h.eval(`document.querySelector('[data-dep-vals="${row.id}"]')?.textContent`), '| stored:', await h.eval(`JSON.stringify(sftkValOvGet(_reconcileProfile.tree, _reconcileProfile.targetOrg, "${row.id}"))`));
   h.log('persisted:', await h.eval(`JSON.stringify((_profiles.find(p => p.id === ${JSON.stringify(id)}).tree.valueOverrides) || null)`));
   // many: tick two rows, open the selection editor, look, cancel

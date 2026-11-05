@@ -138,7 +138,7 @@ describe('the Deploy page', () => {
     expect(VE).toContain("if (tr.classList.contains('ds-ve-null-on')) { picks.push([field, null]); return; }");
     expect(VE).toContain('for (const id of ids) for (const [field, v] of picks) { if (v === undefined) sftkValOvClear(node, p.targetOrg, id, field); else { sftkValOvSet(node, p.targetOrg, id, field, v); n++; } }');
     expect(VE).toContain("if (!p.ephemeral && typeof storageSaveProfiles === 'function') await storageSaveProfiles();");
-    expect(VE).toContain('is not changed, so after the run a record with a typed value differs from its source and is listed under 🟡 Changed until the orgs agree.');
+    expect(VE).toContain('is not changed, so after the run a record with a changed value differs from its source and is listed under 🟡 Changed until the orgs agree.');   // "changed", not "typed", since the boxes hold the source's values (2026-11-05)
   });
   it('the files are loaded before the Deploy page; the styles exist; the export strips them', () => {
     expect(HTML.indexOf('sftk-valueedit.js')).toBeLessThan(HTML.indexOf('studio-valueedit.js'));

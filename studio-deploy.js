@@ -1761,6 +1761,9 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     const set = isRoot ? _recSel.push : sel.push;
     if (cb.checked) set.add(cb.dataset.depPush); else set.delete(cb.dataset.depPush);
     touched();
+    // the toolbar's "Set one value on the N selected" follows the ticks without a repaint (it stayed disabled, live 2026-11-05)
+    const mb = host.querySelector('[data-dep-vals-many]');
+    if (mb) { const n = all.filter(r => r.sourceId && set.has(r.sourceId)).length; mb.disabled = !n; mb.textContent = `✏ Set one value on the ${n.toLocaleString()} selected`; }
     _depSummary(p, null, null);
   }));
   host.querySelectorAll('[data-dep-dir]').forEach(b => b.addEventListener('click', () => {
