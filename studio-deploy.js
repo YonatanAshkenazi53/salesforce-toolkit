@@ -201,6 +201,72 @@ function _depChildSel(pathKey) {
   return _recChildSel[pathKey];
 }
 
+// ── ✓ the ticks are remembered (2026-11-05: "I ticked 40 records, went to the
+// parent, deployed it, came back — and my ticks were gone") ─────────────────
+// Every tick made by hand is packed (sftk-depsel.js) under deployment + target
+// org: in memory always, on disk unless counts-only mode is on. After a scan
+// lands (a refresh, a run, a child read, the page opened again) the ticks whose
+// records are still in the same list come back; the rest are dropped and said.
+// Saved on the user's actions only — never from a repaint, so a reset that a
+// scan does on its way can never overwrite the memory with "nothing".
+let _depSelMem = {};              // key → packed (this session)
+let _depSelStore = null;          // the disk copy, read once
+let _depSelStamp = '';            // `${key}|${scan.runAt}` the ticks were put back for
+let _depSelUnread = null;         // child paths saved but not read for this scan yet
+let _depSelNote = '';             // the sentence under the plan
+let _depSelKept = 0, _depSelDropped = 0;   // totals for this stamp — the root and each child read later add to them
+let _depSelWrite = Promise.resolve();      // disk writes in order, at once (a throttled background tab delays timers)
+async function _depSelLoad() {
+  if (_depSelStore) return _depSelStore;
+  try { const d = await chrome.storage.local.get('sftk_dep_sel'); _depSelStore = (d && d.sftk_dep_sel && typeof d.sftk_dep_sel === 'object') ? d.sftk_dep_sel : {}; }
+  catch (_) { _depSelStore = {}; }
+  return _depSelStore;
+}
+function _depSelRemember(p) {
+  if (!p || !p.id) return;
+  const key = sftkDepSelKey(p.id, p.targetOrg);
+  const packed = sftkDepSelPack(_recSel, _recChildSel);
+  // a child saved earlier and not read for this scan yet keeps its ticks (they are not in the Sets to pack)
+  const prev = _depSelMem[key] || (_depSelStore && _depSelStore[key]);
+  if (prev && _depSelUnread && _depSelUnread.length) {
+    for (const path of _depSelUnread) if (prev.children && prev.children[path] && !packed.children[path]) packed.children[path] = prev.children[path];
+    packed.n = sftkDepSelCount(packed);
+  }
+  _depSelMem[key] = packed;
+  if (_settings && _settings.countsOnly) return;   // no record ids on disk in counts-only mode
+  _depSelWrite = _depSelWrite.then(async () => {
+    try { const store = await _depSelLoad(); _depSelStore = sftkDepSelStorePut(store, key, packed, 30); await chrome.storage.local.set({ sftk_dep_sel: _depSelStore }); } catch (_) {}
+  });
+}
+// Called by renderDeploy once the scan is fresh. Puts the ticks back once per
+// scan (stamp); a child read later gets its own ticks back on that repaint.
+async function _depSelRestoreIfDue(p, scan) {
+  const key = sftkDepSelKey(p.id, p.targetOrg);
+  const stamp = `${key}|${scan.runAt || ''}`;
+  const store = await _depSelLoad();
+  const packed = _depSelMem[key] || store[key] || null;
+  if (_depSelStamp !== stamp) {
+    _depSelStamp = stamp; _depSelUnread = null; _depSelNote = ''; _depSelKept = 0; _depSelDropped = 0;
+    if (!packed || !sftkDepSelCount(packed)) return;
+    if (!sftkDepSelEmpty(_recSel, _recChildSel)) return;   // ticks already made on this scan (↻ Retry, ✓ every insert) win
+    const r = sftkDepSelRestore(packed, scan);
+    _recSel = r.recSel;
+    for (const [k, v] of Object.entries(r.childSel)) _recChildSel[k] = v;
+    _depSelUnread = r.unread.length ? r.unread : null;
+    _depSelKept = r.kept; _depSelDropped = r.dropped;
+    _depSelNote = sftkDepSelLine(_depSelKept, _depSelDropped);
+    if (!_depSelMem[key]) _depSelMem[key] = packed;   // from disk: now in memory for the next pack
+    return;
+  }
+  if (_depSelUnread && _depSelUnread.length && packed) {
+    const r = sftkDepSelRestore(packed, scan, { root: false, children: _depSelUnread });
+    for (const [k, v] of Object.entries(r.childSel)) if (!_recChildSel[k] || !['push', 'relink', 'overwrite', 'del'].some(s => _recChildSel[k][s].size)) _recChildSel[k] = v;
+    _depSelUnread = r.unread.length ? r.unread : null;
+    _depSelKept += r.kept; _depSelDropped += r.dropped;
+    if (r.kept || r.dropped) _depSelNote = sftkDepSelLine(_depSelKept, _depSelDropped);
+  }
+}
+
 // ↻ Retry failed (History) lands here: the failed records that are still under
 // 🔴 Insert get ticked, the rest are reported — never guessed at.
 let _depRetry = null;        // { profileId, byPath: { pathKey: [sourceId] } }
@@ -390,7 +456,7 @@ async function renderDeploy() {
   const p = _reconcileProfile;
   if (!p) { _currentView = 'profiles'; renderProfiles(); return; }
   sftkRecResetSelectionFor(p);
-  if (_depForProfile !== p.id) { _depForProfile = p.id; _depObjPath = ''; _depTab = 'ins'; _depFilter = ''; if (!_depRetry) _depRetryNote = ''; _depLastRunLog = null; }
+  if (_depForProfile !== p.id) { _depForProfile = p.id; _depObjPath = ''; _depTab = 'ins'; _depFilter = ''; if (!_depRetry) _depRetryNote = ''; _depLastRunLog = null; _depSelNote = ''; }
   // The post-run refresh repaints this page and used to wipe the run log with
   // it (live run 2026-09-22) — keep the last one and show it under the bar.
   // Mid-run the log is LIVE: keep the node itself (the progress handler and
@@ -404,6 +470,7 @@ async function renderDeploy() {
   const objType = p.tree?.objectType || p.tree?.childSObject || '?';
   const scan = p.lastScan;
   const fresh = sftkRecScanFresh(p);
+  if (fresh && scan) { try { await _depSelRestoreIfDue(p, scan); } catch (_) {} }
   const srcL = orgLabel(p.sourceOrg || ''), tgtL = orgLabel(p.targetOrg || '');
   // Sessions: said up front, like the classic page's banner — not discovered by
   // a failed click (headless live test 2026-09-22: target closed → the page
@@ -459,6 +526,7 @@ async function renderDeploy() {
     for (const [k, ids] of Object.entries(rp.picks)) { const set = k === '' ? _recSel.push : _depChildSel(k).push; ids.forEach(id => set.add(id)); }
     _depRetryNote = _depRetry.mode === 'continue' ? sftkDeployContinueLine(rp) : sftkDeployRetryLine(rp);
     _depRetry = null;
+    _depSelRemember(p);
   }
   const objects = sftkDeployObjects(p.tree);
   const objByPath = Object.fromEntries(objects.map(o => [o.pathKey, o.obj]));
@@ -541,6 +609,7 @@ async function renderDeploy() {
     <div class="ds-dep-foldbar"><button class="ds-btn ds-btn-xs" id="dsDepFoldAll" title="Fold every section of this page — each keeps its one-line summary">▸ Fold all</button><button class="ds-btn ds-btn-xs" id="dsDepUnfoldAll" title="Open every section of this page">▾ Unfold all</button></div>
     ${p._parentOf?.objType ? `<div class="ds-rec-card ds-dep-journey"><div class="ds-rec-card-line">⛓ Parents-first step: you opened this to align <b>${esc(objType)}</b> before deploying <b>${esc(p._parentOf.objType)}</b>. When it reads in sync — or when there is nothing to align — go back. <button class="ds-btn ds-btn-sm ds-btn-primary" id="dsDepJourneyBack">‹ Back to ${esc(origin ? (origin.name || p._parentOf.objType) : p._parentOf.objType)}</button></div></div>` : ''}
     ${_depRetryNote ? `<div class="ds-rec-card"><div class="ds-rec-card-line">${esc(_depRetryNote)}</div></div>` : ''}
+    ${_depSelNote ? `<div class="ds-rec-card" id="dsDepSelNote"><div class="ds-rec-card-line">${esc(_depSelNote)} <span class="ds-dep-muted">Ticks are remembered per deployment and target org — through a refresh, a run and a closed tab.</span></div></div>` : ''}
     <details${_depFoldOpen('info')} class="ds-rec-card ds-dep-fold ds-dep-info" data-fold="info">
       <summary class="ds-rec-card-hd"><span class="ds-rec-card-ico">ℹ</span><span class="ds-rec-card-title">About this deployment</span><span id="dsDepParentsChip" class="ds-dep-pchip ds-dep-pchip-wait" title="Are the objects this deployment points at aligned between the two orgs? Details below, under Start with parents first.">${offline.length ? 'parents: not checked — an org is closed' : '⏳ checking the parents…'}</span><span class="ds-rec-card-hint">what has to be in the target first, what is worth reading, and the deployment as a tree</span><span class="ds-dep-foldsum">${[offline.length ? `⚠ ${offline.map(u => esc(orgLabel(u))).join(' and ')} not open` : '', `${objects.length} object${objects.length === 1 ? '' : 's'}`, notes.length ? `${notes.length} note${notes.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span></summary>
       ${offlineHtml}
@@ -619,6 +688,7 @@ async function renderDeploy() {
       const set = k === '' ? _recSel.push : _depChildSel(k).push;
       for (const id of ids) { set.add(id); n++; }
     }
+    _depSelRemember(p);
     showToast(`✓ ${n.toLocaleString()} record${n === 1 ? '' : 's'} ticked in ${Object.keys(every.picks).length} object${Object.keys(every.picks).length === 1 ? '' : 's'} — untick what should stay out, then Deploy.`, 'success', 5000);
     renderDeploy();
   });
@@ -1686,9 +1756,11 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
     await _depRescan(p);
   });
   ambPaintApply();
+  const touched = () => _depSelRemember(p);   // ✓ remembered (2026-11-05)
   host.querySelectorAll('[data-dep-push]').forEach(cb => cb.addEventListener('change', () => {
     const set = isRoot ? _recSel.push : sel.push;
     if (cb.checked) set.add(cb.dataset.depPush); else set.delete(cb.dataset.depPush);
+    touched();
     _depSummary(p, null, null);
   }));
   host.querySelectorAll('[data-dep-dir]').forEach(b => b.addEventListener('click', () => {
@@ -1697,6 +1769,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
       const other = dir === 'overwrite' ? 'updSrc' : 'overwrite';
       if (_recSel[dir].has(id)) _recSel[dir].delete(id); else { _recSel[dir].add(id); _recSel[other].delete(id); }
     } else if (sel.overwrite.has(id)) sel.overwrite.delete(id); else sel.overwrite.add(id);
+    touched();
     repaint();
   }));
   host.querySelectorAll('[data-dep-ext]').forEach(b => b.addEventListener('click', () => {
@@ -1705,11 +1778,13 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
       const other = act === 'del' ? 'pull' : 'del';
       if (_recSel[act].has(id)) _recSel[act].delete(id); else { _recSel[act].add(id); _recSel[other].delete(id); }
     } else if (sel.del.has(id)) sel.del.delete(id); else sel.del.add(id);
+    touched();
     repaint();
   }));
   host.querySelectorAll('[data-dep-relink]').forEach(b => b.addEventListener('click', () => {
     const id = b.dataset.depRelink;
     if (sel.relink.has(id)) sel.relink.delete(id); else sel.relink.add(id);
+    touched();
     repaint();
   }));
   host.querySelectorAll('[data-dep-bulk]').forEach(b => b.addEventListener('click', () => {
@@ -1722,6 +1797,7 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
       else if (tabDef.k === 'ext') { if (on && r.orphan) continue; const set = isRoot ? _recSel.del : sel.del; on ? set.add(r.targetId) : set.delete(r.targetId); if (isRoot) _recSel.pull.delete(r.targetId); }
       else if (tabDef.k === 'link') { on ? sel.relink.add(r.targetId) : sel.relink.delete(r.targetId); }
     }
+    touched();
     repaint();
   }));
   host.querySelectorAll('[data-dep-fields]').forEach(b => b.addEventListener('click', () => {

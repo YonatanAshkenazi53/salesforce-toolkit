@@ -16,6 +16,11 @@ extensions containing root files that start with `_`).
 ## 1.1.0 — 2026-11-04
 
 ### Data Studio
+- **The Deploy page remembers your ticks.** Tick records, refresh, run, open another deployment and
+  come back, or close the tab — what you ticked is still ticked. After every scan the page puts back
+  each tick whose record is still in the list it was ticked in, drops the ones that are in the target
+  by now (or gone), and says how many of each. Per deployment and target org; a child object not read
+  yet keeps its ticks until it is read. Counts-only mode keeps the memory off the disk.
 - **🧪 Dry run** on the Deploy page, next to ▶ Deploy: a real write that Salesforce rolls back. The
   selected inserts go to the target in one transaction together with a record that always fails, so
   every validation rule, trigger, flow and duplicate rule runs on your real records — parents first,
