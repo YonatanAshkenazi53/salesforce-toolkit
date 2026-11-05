@@ -2910,6 +2910,7 @@ const DependencyMap = (() => {
           <input type="checkbox" class="dep-fb-applyorg" value="${escHtml(o.key)}" ${o.toolingDown ? 'disabled' : 'checked'}>${escHtml(o.label)}</label>`).join('')}
         ${st.orgs.some(o => o.toolingDown) ? '<span class="dep-pill dep-pill-warn" title="This org\u2019s flow definitions could not be read \u2014 switching is disabled.">\u26a0 switching disabled</span>' : ''}
       </div>
+      ${depListFilterRow('switches')}
       <div class="dep-list">
         ${[...groups.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([g, flows]) => `
           <div class="dep-list-grp">
@@ -2922,7 +2923,7 @@ const DependencyMap = (() => {
               </span>
             </div>
             ${flows.map(f => `
-              <label class="dep-list-row">
+              <label class="dep-list-row" data-dep-search="${escHtml(sftkFlowFilterKey(f.label, f.apiName))}">
                 <input type="checkbox" class="dep-fb-cb" value="${escHtml(f.apiName)}" data-grp="${escHtml(g)}" data-on="${fbStateOf(f)}">
                 <span class="dep-list-name">
                   ${(() => { const lu = labelUrl(f); return lu
@@ -2951,15 +2952,18 @@ const DependencyMap = (() => {
       const picked = cbs.filter(c => c.checked);
       const nOn = picked.filter(c => c.dataset.on === 'on').length;
       const nOff = picked.filter(c => c.dataset.on === 'off').length;
+      const hid = picked.filter(c => c.closest('.dep-list-row')?.classList.contains('dep-list-hid')).length;
       const el = body.querySelector('#depFbCount');
-      if (el) el.textContent = `${picked.length} selected \u00b7 ${nOn} ON \u00b7 ${nOff} OFF`;
+      if (el) el.textContent = `${picked.length} selected \u00b7 ${nOn} ON \u00b7 ${nOff} OFF${hid ? ` \u00b7 ${hid} hidden by the filter` : ''}`;
       const off = body.querySelector('#depFbOff'), on = body.querySelector('#depFbOn');
       if (off) { off.disabled = !nOn; off.textContent = `\u23fb Switch OFF (${nOn} ON selected)`; }
       if (on)  { on.disabled = !nOff; on.textContent = `\u25b6 Switch ON (${nOff} OFF selected)`; }
     };
     cbs.forEach(c => c.addEventListener('change', sync));
+    const fbShown = depWireListFilter(body, { key: 'switches', rowSel: '.dep-list-row', cbSel: '.dep-fb-cb', grpSel: '.dep-list-grp', onChange: sync });
     body.querySelectorAll('.dep-fb-grp').forEach(b => b.addEventListener('click', () => {
-      const mine = cbs.filter(c => c.dataset.grp === b.dataset.grp && c.dataset.on === b.dataset.want);
+      const vis = new Set(fbShown().map(r => r.querySelector('.dep-fb-cb')));
+      const mine = cbs.filter(c => vis.has(c) && c.dataset.grp === b.dataset.grp && c.dataset.on === b.dataset.want);
       const allTicked = mine.length > 0 && mine.every(c => c.checked);
       mine.forEach(c => { c.checked = !allTicked; });
       sync();
@@ -3188,6 +3192,60 @@ const DependencyMap = (() => {
   }
   // Wires every [data-open-url] inside a container to open in a new tab —
   // the popup's own convention (chrome.tabs.create), not target=_blank.
+  // ── a filter box over a tick list (2026-11-05: "paste one flow name from the
+  // ticket, tick it, paste the next") — narrows the rows as you type, by label
+  // and API name (sftkFlowFilterHit). A ticked row the filter hides STAYS
+  // ticked: the line under the box says how many, and the footer keeps counting
+  // them. Enter with one row left ticks that row. The term is kept per panel,
+  // so a repaint (refresh, a switch applied) does not lose it.
+  const _depListFilterTerm = {};
+  function depListFilterRow(key) {
+    return `<div class="dep-list-filter-row"><input type="search" class="search-input dep-list-filter" data-filter-key="${escHtml(key)}" value="${escHtml(_depListFilterTerm[key] || '')}" placeholder="\ud83d\udd0d Filter by flow name or API name\u2026" aria-label="Filter the flows by name or API name"><span class="dep-list-filter-n dep-tool-count"></span></div>`;
+  }
+  // Returns a function that lists the rows the filter shows — what the group
+  // and "select the N behind" buttons act on, so a tick is never made blind.
+  function depWireListFilter(host, { key, rowSel, cbSel, grpSel, onChange }) {
+    const inp = host.querySelector('.dep-list-filter'), line = host.querySelector('.dep-list-filter-n');
+    const rows = () => [...host.querySelectorAll(rowSel)];
+    const hidden = r => r.classList.contains('dep-list-hid');
+    const shown = () => rows().filter(r => !hidden(r));
+    if (!inp) return shown;
+    const apply = () => {
+      const term = inp.value; _depListFilterTerm[key] = term;
+      let n = 0, hiddenTicked = 0;
+      const all = rows();
+      for (const r of all) {
+        const hit = sftkFlowFilterHit(term, r.dataset.depSearch || '');
+        r.classList.toggle('dep-list-hid', !hit);
+        if (hit) n++; else { const cb = r.querySelector(cbSel); if (cb && cb.checked) hiddenTicked++; }
+      }
+      if (grpSel) host.querySelectorAll(grpSel).forEach(g => {
+        const mine = [...g.querySelectorAll(rowSel)], vis = mine.filter(r => !hidden(r)).length;
+        g.classList.toggle('dep-list-hid', !vis);
+        // the group's count says what the filter left of it: "2 of 5"
+        const nEl = g.querySelector('.dep-list-grp-n');
+        if (nEl) { if (nEl.dataset.n == null) nEl.dataset.n = nEl.textContent; nEl.textContent = sftkFlowFilterNorm(term) && vis !== mine.length ? `${vis} of ${nEl.dataset.n}` : nEl.dataset.n; }
+      });
+      if (line) line.textContent = sftkFlowFilterLine(term, n, all.length, hiddenTicked);
+      if (typeof onChange === 'function') onChange();
+    };
+    inp.addEventListener('input', apply);
+    inp.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      const vis = shown();
+      if (vis.length !== 1) return;
+      const cb = vis[0].querySelector(cbSel);
+      if (!cb || cb.disabled) return;
+      e.preventDefault();
+      cb.checked = !cb.checked;
+      cb.dispatchEvent(new Event('change', { bubbles: true }));
+      apply();
+    });
+    host.addEventListener('change', e => { if (e.target && e.target.matches && e.target.matches(cbSel)) apply(); });
+    apply();
+    return shown;
+  }
+
   function depWireOpenLinks(container) {
     container.querySelectorAll('[data-open-url]').forEach(el => {
       el.addEventListener('click', e => {
@@ -3413,6 +3471,7 @@ const DependencyMap = (() => {
           <span class="dep-tool-count">Salesforce runs each flow with the behaviour of the version it was saved at, so old flows miss fixes and can behave differently from new ones. Updating saves a NEW version of each flow (and activates it where the flow is active) \u2014 try it in a sandbox first, and test the flows that matter.</span></div>
         <button class="btn-small dep-btn-primary" id="depAvUpdateAll" title="Ticks the ${fixable.length} flow(s) that are behind AND can be changed, sets the target to API ${escHtml(o0.maxVersion)}, and opens the confirmation. Nothing is written until you confirm there.">\u2699 Update all ${fixable.length} to API ${escHtml(o0.maxVersion)}\u2026</button>
       </div>` : ''}
+      ${depListFilterRow('apiver')}
       <div class="dep-list">
         ${[...matrix].sort((a, b) =>
             (lagOf(b) - lagOf(a))
@@ -3430,7 +3489,7 @@ const DependencyMap = (() => {
               + (roll.unknown ? ` \u00b7 ${roll.unknown} could not be read` : '');
           const isBehind = lagOf(r) > 0 || r.drift;
           const can = canOf(r);
-          return `<label class="dep-list-row ${isBehind ? 'dep-list-row-drift' : ''}${can.ok ? '' : ' dep-list-row-locked'}"${can.ok ? '' : ` title="Cannot be changed here: ${escHtml(can.why)}"`}>
+          return `<label class="dep-list-row ${isBehind ? 'dep-list-row-drift' : ''}${can.ok ? '' : ' dep-list-row-locked'}" data-dep-search="${escHtml(sftkFlowFilterKey(r.label, r.apiName))}"${can.ok ? '' : ` title="Cannot be changed here: ${escHtml(can.why)}"`}>
             <input type="checkbox" class="dep-av-pick" value="${escHtml(r.apiName)}" ${can.ok ? '' : 'disabled'}>
             <span class="dep-list-name">
               ${(() => { const lu = avLabelUrl(r); return lu
@@ -3448,6 +3507,7 @@ const DependencyMap = (() => {
       <div class="dep-tool-foot">
         <button class="btn-small" id="depAvSelDrift" ${fixable.length ? '' : 'disabled'}>${fixable.length ? `\u2713 Select the ${fixable.length} behind` : (behind.length ? 'none of the flows behind can be changed here' : 'nothing behind')}</button>
         <button class="btn-small" id="depAvSelNone">\u2717 None</button>
+        <span id="depAvCount" class="dep-tool-count">0 selected</span>
         <span class="dep-tool-sp"></span>
         <span class="dep-tool-count">Set API version to</span>
         <select id="depAvTarget" class="btn-small">
@@ -3463,13 +3523,26 @@ const DependencyMap = (() => {
       <div id="depAvApplyOut" class="dep-tool-out"></div>`;
 
     depWireOpenLinks(out);
-    const tickFixable = () => out.querySelectorAll('.dep-av-pick').forEach(cb => {
-      cb.checked = !cb.disabled && fixable.some(d => d.apiName === cb.value);
-    });
-    out.querySelector('#depAvSelDrift')?.addEventListener('click', tickFixable);
+    const avSync = () => {
+      const picked = [...out.querySelectorAll('.dep-av-pick')].filter(cb => cb.checked && !cb.disabled);
+      const hid = picked.filter(cb => cb.closest('.dep-list-row')?.classList.contains('dep-list-hid')).length;
+      const el = out.querySelector('#depAvCount');
+      if (el) el.textContent = `${picked.length} selected${hid ? ` \u00b7 ${hid} hidden by the filter` : ''}`;
+    };
+    out.querySelectorAll('.dep-av-pick').forEach(cb => cb.addEventListener('change', avSync));
+    const avShown = depWireListFilter(out, { key: 'apiver', rowSel: '.dep-list-row', cbSel: '.dep-av-pick', onChange: avSync });
+    // onlyShown: "Select the N behind" ticks what the filter shows; the ⚙ Update all shortcut means all N
+    const tickFixable = (onlyShown) => {
+      const vis = new Set(avShown().map(r => r.querySelector('.dep-av-pick')));
+      out.querySelectorAll('.dep-av-pick').forEach(cb => {
+        cb.checked = !cb.disabled && fixable.some(d => d.apiName === cb.value) && (!onlyShown || vis.has(cb));
+      });
+      avSync();
+    };
+    out.querySelector('#depAvSelDrift')?.addEventListener('click', () => tickFixable(true));
     // The suggestion is a SHORTCUT to the same confirmation, never past it.
     out.querySelector('#depAvUpdateAll')?.addEventListener('click', () => {
-      tickFixable();
+      tickFixable(false);
       const sel = out.querySelector('#depAvTarget');
       if (sel && o0 && o0.maxVersion) sel.value = o0.maxVersion;
       confirmApiVerChange(out);
@@ -3477,6 +3550,7 @@ const DependencyMap = (() => {
     });
     out.querySelector('#depAvSelNone')?.addEventListener('click', () => {
       out.querySelectorAll('.dep-av-pick').forEach(cb => { cb.checked = false; });
+      avSync();
     });
     out.querySelector('#depAvApply')?.addEventListener('click', () => confirmApiVerChange(out));
   }

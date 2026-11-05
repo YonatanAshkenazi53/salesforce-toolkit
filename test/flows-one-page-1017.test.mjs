@@ -73,7 +73,7 @@ describe('whole flows, interviews and the restore point', () => {
   it('a version delete asks for both id forms, keeps the interviews, and deletes them before the versions', () => {
     expect(PJ).toContain("return s.length === 18 ? [s, s.substring(0, 15)] : [s]; }))].map(x => `'${x}'`).join(',');");
     expect(PJ).toContain('_pendingInterviews = interviews;');
-    expect(PJ).toContain('emptyState.textContent = `No flow name contains');   // a search with no match is not an empty org
+    expect(PJ).toContain('emptyState.textContent = `No flow name or API name matches');   // a search with no match is not an empty org (API name too, 2026-11-05)
     expect(PJ).toContain("const ir = await sftkFlowInterviewsDelete({ send: sendBg, orgUrl, sid, interviews: _pendingInterviews, journal });");
     const a = PJ.indexOf('Deleting ${_pendingInterviews.length} flow interview(s) first'), b = PJ.indexOf('for (const flow of deletable)');
     expect(a).toBeGreaterThan(0); expect(b).toBeGreaterThan(a);

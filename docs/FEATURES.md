@@ -5,7 +5,7 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 ## Toolkit (the popup)
 
 ### Flows
-- Lists every flow in the org, grouped by name with each version, and shows a 🔗 mark when another flow calls it as a subflow. Read-only.
+- Lists every flow in the org, grouped by name with each version, and shows a 🔗 mark when another flow calls it as a subflow. The search box narrows the list by flow name or API name. Read-only.
 - 🗑 **Delete Selected** permanently removes the ticked flow versions. If any is Active it warns first and offers a backup; if paused runs are waiting on a version it offers to delete those too; if another flow still calls the one you're deleting, it shows you that calling flow and lets you delete it first, proceed anyway (Salesforce will refuse), or cancel. The final step needs an "I understand this is permanent" checkbox — Salesforce has no Recycle Bin for flow versions.
 - ⬇ **Backup** downloads the selected version(s) as a file you could redeploy elsewhere, optionally including every flow it calls. 📥 **Restore** uploads a backup and redeploys it as a new Draft version — never turned on automatically; you activate it yourself in Flow Builder.
 - Limit: a managed-package flow's contents can't be backed up (Salesforce hides them), and a flow another flow calls cannot be deleted until the caller is handled first.
@@ -13,6 +13,7 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 ### Dependencies (a view of the Flows page)
 - A tree of every flow showing what calls what, a "what uses…" search for a field, object or value, 🧨 blast radius (what breaks if you touch this flow), and 🔗 chain (upstream and downstream, with loops detected). All read-only; an export downloads the same report as a file. Deleting a flow from here uses the same checks as the Flows tab, including a table of every flow that calls the one you're deleting.
 - ⚙ **API versions** compares every flow's pinned API version to the org's own release. Pick flows and a target version, then acknowledge and confirm; it deploys a new version (activating it if the flow was Active) or rewrites a Draft in place, then re-reads the org and reports what changed and verified versus what Salesforce refused.
+- Both views have a filter box above their list: type (or paste from a ticket) a flow name or API name and the list narrows as you type; a flow you ticked stays ticked when the filter hides it, the line under the box and the footer say how many ticked flows are hidden, and Enter with one flow left ticks it — so paste, tick, paste the next, tick, then one action for all of them.
 - ⏻ **Flow switches** groups record-triggered and scheduled flows by object with an On/Off state. Turning flows off requires acknowledging and confirming, and warns automation stops for everyone and records created while off aren't processed retroactively; it re-reads the org afterward and remembers which version was active so turning back on can restore it — or says honestly it can't if there's no record of it.
 - Limit: this only knows what a flow's own saved metadata calls, not buttons, Apex, REST or scheduled starts; a managed flow's contents can't be searched.
 

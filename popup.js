@@ -1380,7 +1380,7 @@ function renderFlowList() {
   let visibleCount = 0;
 
   for (const label of sortedLabels) {
-    if (search && !label.toLowerCase().includes(search)) continue;
+    if (search && !sftkFlowFilterHit(search, sftkFlowFilterKey(label, (flowGroups[label][0] || {}).ApiName))) continue;   // label or API name (2026-11-05)
     const versions = flowGroups[label];
     visibleCount++;
 
@@ -1391,7 +1391,7 @@ function renderFlowList() {
   list.style.display = visibleCount > 0 ? '' : 'none';
   emptyState.style.display = visibleCount === 0 && sortedLabels.length > 0 ? '' : 'none';
   // a search that matches nothing says so — it is not an empty org (QA 2026-10-18)
-  if (visibleCount === 0 && sortedLabels.length > 0) emptyState.textContent = `No flow name contains “${document.getElementById('searchInput').value.trim()}”.`;
+  if (visibleCount === 0 && sortedLabels.length > 0) emptyState.textContent = `No flow name or API name matches “${document.getElementById('searchInput').value.trim()}”.`;
   if (allFlows.length === 0) {
     emptyState.style.display = '';
     emptyState.textContent = 'No flows found in this org.';
@@ -1646,7 +1646,7 @@ function setupToolbarEvents() {
   document.getElementById('selectAllBtn').addEventListener('click', () => {
     const search = document.getElementById('searchInput').value.toLowerCase().trim();
     for (const [label, versions] of Object.entries(flowGroups)) {
-      if (search && !label.toLowerCase().includes(search)) continue;
+      if (search && !sftkFlowFilterHit(search, sftkFlowFilterKey(label, (versions[0] || {}).ApiName))) continue;
       versions.forEach(v => selectedIds.add(v.Id));
     }
     renderFlowList();

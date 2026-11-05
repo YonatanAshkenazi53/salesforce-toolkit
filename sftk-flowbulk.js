@@ -178,7 +178,39 @@ function sftkFlowBulkMatrix(orgs, rowsByOrg, apiVerByOrg) {
     (a.object || '').localeCompare(b.object || '') || a.label.localeCompare(b.label));
 }
 
+// ── a filter over the tick lists (2026-11-05, a colleague's first day with the
+// tool: "paste one flow name from the ticket, tick it, go down a line in the
+// ticket, paste the next, tick it too") ─────────────────────────────────────
+// The key a row is searched by: its label and its API name, lower-cased, with
+// underscores read as spaces — so a pasted label finds the row whose API name
+// was derived from it, and the other way round.
+function sftkFlowFilterNorm(s) {
+  return String(s == null ? '' : s).toLowerCase().replace(/[_\s]+/g, ' ').trim();
+}
+function sftkFlowFilterKey(label, apiName) {
+  return [sftkFlowFilterNorm(label), sftkFlowFilterNorm(apiName)].filter(Boolean).join(' | ');
+}
+// Every word of the term must be in the key, in any order: "status account"
+// finds "Account Status Update". An empty term matches everything.
+function sftkFlowFilterHit(term, key) {
+  const t = sftkFlowFilterNorm(term);
+  if (!t) return true;
+  const k = sftkFlowFilterNorm(key);
+  return t.split(' ').every(w => k.includes(w));
+}
+// The line under the box. A ticked row the filter hides STAYS ticked, and is
+// said here — nothing is switched blind.
+function sftkFlowFilterLine(term, shown, total, hiddenTicked) {
+  if (!sftkFlowFilterNorm(term)) return '';
+  const base = shown === 0 ? `No flow name or API name matches “${String(term).trim()}”` : `${shown} of ${total} shown`;
+  return hiddenTicked ? `${base} · ${hiddenTicked} ticked flow${hiddenTicked === 1 ? '' : 's'} hidden by the filter — still counted below` : base;
+}
+
 if (typeof globalThis !== 'undefined') {
+  globalThis.sftkFlowFilterNorm = sftkFlowFilterNorm;
+  globalThis.sftkFlowFilterKey  = sftkFlowFilterKey;
+  globalThis.sftkFlowFilterHit  = sftkFlowFilterHit;
+  globalThis.sftkFlowFilterLine = sftkFlowFilterLine;
   globalThis.sftkFlowBulkKinds = sftkFlowBulkKinds;
   globalThis.sftkFlowBulkRows  = sftkFlowBulkRows;
   globalThis.sftkFlowBulkGroup = sftkFlowBulkGroup;

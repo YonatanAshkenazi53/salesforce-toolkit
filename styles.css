@@ -6831,6 +6831,10 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 /* ── ⚙ API versions / ⏻ Flow switches — single-org list UI (2026-09-14) ── */
 .dep-tool-sum { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; color: var(--text); margin: 6px 0 8px; }
 .dep-tool-apply[hidden] { display: none; }
+.dep-list-filter-row { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
+.dep-list-filter-row .dep-list-filter { flex: 1; min-width: 0; }
+.dep-list-filter-n { white-space: nowrap; }
+.dep-list-hid { display: none !important; }   /* a row or group the filter hides — its tick stays */
 .dep-list { border: 1px solid var(--border); border-radius: 8px; overflow-y: auto; max-height: 440px; background: var(--surface); }
 .dep-list-grp + .dep-list-grp { border-top: 1px solid var(--border); }
 .dep-list-grp-hd { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--c-surface-sunk); font-weight: 600; font-size: 12px; position: sticky; top: 0; z-index: 1; }

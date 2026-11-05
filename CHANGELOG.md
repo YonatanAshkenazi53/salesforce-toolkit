@@ -38,6 +38,11 @@ extensions containing root files that start with `_`).
   PII outside the fields the policy fabricates.
 
 ### Toolkit
+- **A filter box on ⏻ Switches and ⚙ API versions.** Type or paste a flow name or API name and the
+  list narrows as you type. A flow you ticked stays ticked when the filter hides it — the line under
+  the box and the footer say how many ticked flows are hidden — and Enter with one flow left ticks it,
+  so you can paste one name from a ticket, tick, paste the next, tick, and switch or change them all
+  at once. The 🗂 Versions search matches the API name too.
 - **Field Cleaner fixes custom report types.** Salesforce's dependency index does not list the report
   types whose columns carry a field, so the scan now reads every custom report type in the org and shows
   the ones with the field's column, with the same ✂ Remove and ⇄ Replace as a layout: the column is taken

@@ -453,14 +453,15 @@ describe('a flow that cannot be changed cannot be ticked', () => {
     expect(DEP2).toContain("${can.ok ? '' : 'disabled'}>");
     expect(DEP2).toContain('Cannot be changed here: ${escHtml(can.why)}');
     expect(DEP2).toContain('.filter(cb => cb.checked && !cb.disabled)');
-    expect(DEP2).toContain('cb.checked = !cb.disabled && fixable.some(d => d.apiName === cb.value);');
+    // 2026-11-05: the tick helper also respects the filter box ("Select the N behind" ticks what is shown)
+    expect(DEP2).toContain('cb.checked = !cb.disabled && fixable.some(d => d.apiName === cb.value) && (!onlyShown || vis.has(cb));');
   });
   it('the bulk suggestion counts only what can be changed and goes THROUGH the confirmation', () => {
     expect(DEP2).toContain('const fixable = behind.filter(r => canOf(r).ok);');
     expect(DEP2).toContain('id="depAvUpdateAll"');
     const i = DEP2.indexOf("out.querySelector('#depAvUpdateAll')?.addEventListener('click', () => {");
     const h = DEP2.slice(i, i + 420);
-    expect(h).toContain('tickFixable();');
+    expect(h).toContain('tickFixable(false);');   // the shortcut means ALL N, filter or not (2026-11-05)
     expect(h).toContain('sel.value = o0.maxVersion;');
     expect(h).toContain('confirmApiVerChange(out);');
     expect(h).not.toContain('applyApiVerChange(');
