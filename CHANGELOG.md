@@ -49,13 +49,24 @@ extensions containing root files that start with `_`).
   PII outside the fields the policy fabricates.
 
 ### Toolkit
+- **Field Cleaner's blocker list was put to the test — and fixed.** Every kind of reference a field can
+  have was built in a test org and the field was deleted under it, to see what Salesforce really
+  refuses. Two rows of the table were wrong: a Lightning page that holds the field *blocks* the delete
+  (it was listed as a mention), an email template does *not* (it was listed as a blocker). And eleven
+  kinds of blocker never show up in Salesforce's dependency index at all, so the scan now reads them
+  itself: workflow rules (active or not), email alerts and outbound messages, approval processes
+  (active or not), criteria-based sharing rules, duplicate rules with a filter on the field (active or
+  not), Lightning web components that import the field, custom metadata records that point at it, the
+  lead field mapping, and Lead/Case assignment, auto-response and escalation rules. A Process Builder
+  process is listed under Flows and blocks like one, but is never rewritten here — its card points to
+  Setup. Paths join the mentions: the delete goes through and the Path stays active on a field that no
+  longer exists. When Salesforce still refuses, the error now names the kind it named. The note under
+  the results says exactly what is read and what is not.
 - **Field Cleaner tells blockers from mentions, and scans either.** The results now come in two
-  sections: 🔒 what must be cleared before Salesforce deletes the field (Apex, validation and workflow
-  rules, flows, matching rules, email templates, approval processes), and 👀 the other mentions
-  (layouts, Lightning pages, reports, report types, list views, compact layouts, quick actions — the
+  sections: 🔒 what must be cleared before Salesforce deletes the field, and 👀 the other mentions (the
   delete goes through, these break afterwards). A switch above Scan picks what to read: 🔍 Everything,
-  🔒 What blocks the delete (4 API calls, the cheap scan) or 👀 Other mentions. A scan that read less
-  says so, and a blocker is never hidden from the Delete button, only from the list.
+  🔒 What blocks the delete or 👀 Other mentions. A scan that read less says so, and a blocker is never
+  hidden from the Delete button, only from the list.
 - **A filter box on ⏻ Switches and ⚙ API versions.** Type or paste a flow name or API name and the
   list narrows as you type. A flow you ticked stays ticked when the filter hides it — the line under
   the box and the footer say how many ticked flows are hidden — and Enter with one flow left ticks it,

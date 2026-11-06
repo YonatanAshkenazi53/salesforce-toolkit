@@ -171,11 +171,11 @@ describe('the Field Cleaner wiring keeps the laws', () => {
 
   it('the note explains where reports come from and what is still unscanned', () => {
     expect(FC).toContain('the same one behind');
-    // templates and approvals ride the index too — the note says the index is not guaranteed to list them
-    expect(FC).toMatch(/EmailTemplate:\s+\{ icon: '✉️', label: 'Email Templates',\s+fixable: false, sev: 'blocker'/);
+    // live-tested 2026-11-06: a template does NOT block the delete (a mention); an approval process does, and is read by its own leg
+    expect(FC).toMatch(/EmailTemplate:\s+\{ icon: '✉️', label: 'Email Templates',\s+fixable: false, sev: 'silent'/);
     expect(FC).toMatch(/ApprovalProcess:\{ icon: '✅', label: 'Approval Processes', fixable: false, sev: 'blocker'/);
-    expect(FC).toContain('only when that index reports');
-    expect(FC).toContain('Not scanned at all');
+    expect(FC).toContain('Found by reading every approval process on this object');
+    expect(FC).toContain('Not read, and not a blocker');
   });
 });
 

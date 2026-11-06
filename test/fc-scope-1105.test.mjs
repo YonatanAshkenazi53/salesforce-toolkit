@@ -27,17 +27,30 @@ describe('the scope', () => {
     expect(F.fcScopeKeeps('mentions', 'silent')).toBe(true);
     expect(F.fcScopeKeeps('mentions', undefined)).toBe(true);   // an unknown type is listed under mentions, counted by the gate as a blocker (TYPE_CFG_DEFAULT)
   });
-  it('which legs run: the cheap scan skips every read that can only find a mention; the mentions scan skips the two blocker reads', () => {
-    expect(F.fcScopeLegs('both')).toEqual({ flexiPages: true, reportTypes: true, listViews: true, compactLayouts: true, quickActions: true, matchingRules: true, workflowFieldUpdates: true });
-    expect(F.fcScopeLegs('blockers')).toEqual({ flexiPages: false, reportTypes: false, listViews: false, compactLayouts: false, quickActions: false, matchingRules: true, workflowFieldUpdates: true });
-    expect(F.fcScopeLegs('mentions')).toEqual({ flexiPages: true, reportTypes: true, listViews: true, compactLayouts: true, quickActions: true, matchingRules: false, workflowFieldUpdates: false });
+  it('which legs run (live-tested 2026-11-06): a Lightning page BLOCKS, so its leg runs in every scope; the cheap scan skips every read that can only find a mention; the mentions scan skips every blocker read', () => {
+    const B = { matchingRules: true, workflowFieldUpdates: true, workflow: true, approvals: true, sharingRules: true, duplicateRules: true, lwc: true, customMetadata: true };
+    const M = { reportTypes: true, listViews: true, compactLayouts: true, quickActions: true, paths: true };
+    const off = o => Object.fromEntries(Object.keys(o).map(k => [k, false]));
+    expect(F.fcScopeLegs('both')).toEqual({ flexiPages: true, ...B, leadMapping: false, objectRules: false, ...M });
+    expect(F.fcScopeLegs('blockers')).toEqual({ flexiPages: true, ...B, leadMapping: false, objectRules: false, ...off(M) });
+    expect(F.fcScopeLegs('mentions')).toEqual({ flexiPages: true, ...off(B), leadMapping: false, objectRules: false, ...M });
+    // the lead mapping is read for Lead and its targets; assignment/auto-response/escalation rules for Lead and Case
+    expect(F.fcScopeLegs('both', 'Lead')).toMatchObject({ leadMapping: true, objectRules: true });
+    expect(F.fcScopeLegs('both', 'Account')).toMatchObject({ leadMapping: true, objectRules: false });
+    expect(F.fcScopeLegs('both', 'Case')).toMatchObject({ leadMapping: false, objectRules: true });
+    expect(F.fcScopeLegs('both', 'My_Obj__c')).toMatchObject({ leadMapping: false, objectRules: false });
+    expect(F.fcScopeLegs('mentions', 'Lead')).toMatchObject({ leadMapping: false, objectRules: false });
   });
-  it('the cost follows the scope: 9 fixed calls for everything, 4 for the blockers (no fan-out), 7 for the mentions', () => {
-    expect(F.fcEstimateScanCalls(null)).toEqual({ now: 9, known: false, moreIf: ['Lightning page in the org', 'list view on this object', 'create/update quick action on this object', '10 custom report types in the org'] });
-    expect(F.fcEstimateScanCalls(null, 'blockers')).toEqual({ now: 4, known: true, moreIf: [] });
-    expect(F.fcEstimateScanCalls(null, 'mentions').now).toBe(7);
-    expect(F.fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2 }, 'mentions')).toEqual({ now: 58, known: true, moreIf: [] });
-    expect(F.fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2 }, 'blockers').now).toBe(4);   // the counts are of legs that do not run
+  it('the cost follows the scope: 18 fixed calls for everything, 13 for the blockers, 8 for the mentions; the fan-outs stay a "more if" until known', () => {
+    const FAN = ['Lightning page in the org', 'list view on this object', 'create/update quick action on this object', '10 custom report types in the org', 'workflow rule, alert or outbound message on this object', '10 approval processes on this object', '10 duplicate rules on this object', '10 custom metadata records in the org (read up to 300)'];
+    expect(F.fcEstimateScanCalls(null)).toEqual({ now: 18, known: false, moreIf: FAN });
+    expect(F.fcEstimateScanCalls(null, 'blockers')).toEqual({ now: 13, known: false, moreIf: FAN.filter(w => !/list view|quick action|report types/.test(w)) });
+    expect(F.fcEstimateScanCalls(null, 'mentions')).toEqual({ now: 8, known: false, moreIf: FAN.slice(0, 4) });
+    expect(F.fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2 }, 'mentions')).toEqual({ now: 59, known: true, moreIf: [] });
+    expect(F.fcEstimateScanCalls({ flexiPages: 40, listViews: 6, quickActions: 3, reportTypes: 2, workflowRules: 2, approvals: 1, duplicateRules: 1, customMetadata: 0 }, 'blockers')).toEqual({ now: 57, known: true, moreIf: [] });   // 13 + 40 pages + 2 + 1 + 1
+    // the lead mapping and the Lead/Case rules are read only for those objects: +1 and +3 fixed calls
+    expect(F.fcEstimateScanCalls(null, 'blockers', 'Account').now).toBe(14);
+    expect(F.fcEstimateScanCalls(null, 'blockers', 'Lead').now).toBe(17);
   });
   it('the words: a label per scope and a help line that says what is NOT read', () => {
     expect(F.fcScopeLabel('both')).toBe('🔍 Everything');
@@ -59,12 +72,12 @@ describe('wiring', () => {
     expect(FC).toContain("chrome.storage?.local?.get('sftk_fc_scope')");
   });
   it('the scan runs the legs of its scope and remembers which scope it read', () => {
-    expect(FC).toContain('const scope = _scope, L = fcScopeLegs(scope);');
+    expect(FC).toContain('const scope = _scope, L = fcScopeLegs(scope, _selObj.api);');
     expect(FC).toContain('if (L.flexiPages) flexiHits = await scanFlexiPages(deps);');
     expect(FC).toContain('if (L.reportTypes) rtHits = await scanReportTypes([...deps, ...flexiHits]);');
     expect(FC).toContain('supHits = await scanSupplemental([...deps, ...flexiHits, ...rtHits], fieldId, L);');
     expect(FC).toContain('_lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope };');
-    for (const leg of ['listViews', 'compactLayouts', 'quickActions', 'matchingRules', 'workflowFieldUpdates']) expect(FC).toContain(`if (L.${leg}) try {`);
+    for (const leg of ['listViews', 'compactLayouts', 'quickActions', 'matchingRules', 'workflowFieldUpdates', 'workflow', 'approvals', 'sharingRules', 'duplicateRules', 'lwc', 'customMetadata', 'leadMapping', 'objectRules', 'paths']) expect(FC).toContain(`if (L.${leg}) try {`);
   });
   it('the list is filtered by the scope; the gate counts every blocker the index returned, hidden or not', () => {
     expect(FC).toContain('const deps = (allDeps || []).filter(d => fcScopeKeeps(_scope, sevOf(d.MetadataComponentType || \'Unknown\')));');
@@ -81,7 +94,7 @@ describe('wiring', () => {
     expect(FC).toContain('🔒 Must be cleared before Salesforce deletes the field');
     expect(FC).toContain('👀 Other mentions — the delete goes through, these break afterwards');
     expect(FC).toContain('<strong>The other mentions were not read</strong>');
-    expect(FC).toContain('<strong>Matching rules and workflow field updates were not read</strong>');
+    expect(FC).toContain('<strong>The blockers outside the dependency index were not read</strong>');
     expect(CSS).toContain('.fc-section-blockers .fc-section-hdr { border-bottom-color: var(--danger, #c0392b); }');
   });
   it('switching the scope after a scan: shown again when the scan read it, else the button asks for a scan', () => {

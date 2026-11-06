@@ -344,7 +344,95 @@ function sftkRtZipFiles(fullName, fileXml) {
   return [{ name: 'package.xml', text: pkg }, { name: `reportTypes/${fullName}.reportType`, text: fileXml }];
 }
 
+// ── Field Cleaner's blocker legs (live-tested 2026-11-06, npc) ─────────────
+// Salesforce refuses a field delete while an approval process, a sharing
+// rule's criteria, a duplicate rule's filter, a lead field mapping or a
+// Lead/Case assignment, auto-response or escalation rule still names the
+// field — none of which the dependency index returns. They have no Tooling
+// read, so the scan reads them through readMetadata and searches the XML
+// with the helpers below. Every helper is pure: XML in, facts out.
+
+// The repeated child elements of a container body, each with its fullName.
+// A child without a fullName keeps its position as the name (1-based).
+function sftkMdChildren(innerXml, tag) {
+  const s = String(innerXml || '');
+  const out = [];
+  let cursor = 0, i = 0;
+  for (;;) {
+    const el = sftkMdFindElement(s, tag, cursor);
+    if (!el) break;
+    cursor = el.end; i++;
+    const body = s.slice(el.bodyStart, el.bodyEnd);
+    out.push({ fullName: sftkMdChildText(body, 'fullName') || String(i), innerXml: body });
+  }
+  return out;
+}
+
+// Does this XML name the field? True when a field-carrying element
+// (criteria <field>, a matching <fieldName>, an outbound message's <fields>,
+// a mapping's <inputField>/<outputField>) holds "Field__c" or
+// "Object.Field__c", or when a formula-carrying element (<formula>,
+// <errorConditionFormula>, <recordFilter>) mentions the field as a whole
+// token. Case-insensitive, as Salesforce is.
+function sftkMdMentionsField(innerXml, objApi, fieldApi) {
+  const s = String(innerXml || '');
+  const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
+  if (!f) return false;
+  const nameRe = /<(?:[A-Za-z0-9_.-]+:)?(field|fieldName|fields|inputField|outputField|leftValueReference)(?:\s[^>]*)?>([^<]*)<\//g;
+  let m;
+  while ((m = nameRe.exec(s))) {
+    const v = sftkMdUnescape(m[2]).trim().toLowerCase();
+    if (v === f || v === `${o}.${f}` || v.endsWith(`.${f}`)) return true;
+  }
+  const esc = f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const tokenRe = new RegExp(`(^|[^a-z0-9_])${esc}([^a-z0-9_]|$)`, 'i');
+  const formulaRe = /<(?:[A-Za-z0-9_.-]+:)?(formula|errorConditionFormula|recordFilter|booleanFilter)(?:\s[^>]*)?>([^<]*)<\//g;
+  while ((m = formulaRe.exec(s))) {
+    if (tokenRe.test(sftkMdUnescape(m[2]))) return true;
+  }
+  return false;
+}
+
+// The lead-conversion mappings that carry objApi.fieldApi: on the Lead side
+// (inputField of a Lead mapping) or on the target side (outputField of the
+// mapping whose outputObject is objApi). Returns [{ inputObject, outputObject,
+// inputField, outputField }] — empty when the field is not mapped.
+function sftkMdLeadMappingsFor(innerXml, objApi, fieldApi) {
+  const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
+  const out = [];
+  for (const om of sftkMdChildren(innerXml, 'objectMapping')) {
+    const inputObject = sftkMdChildText(om.innerXml, 'inputObject') || '';
+    const outputObject = sftkMdChildText(om.innerXml, 'outputObject') || '';
+    for (const mf of sftkMdChildren(om.innerXml, 'mappingFields')) {
+      const inputField = sftkMdChildText(mf.innerXml, 'inputField') || '';
+      const outputField = sftkMdChildText(mf.innerXml, 'outputField') || '';
+      const onLead = inputObject.toLowerCase() === o && inputField.toLowerCase() === f;
+      const onTarget = outputObject.toLowerCase() === o && outputField.toLowerCase() === f;
+      if (onLead || onTarget) out.push({ inputObject, outputObject, inputField, outputField });
+    }
+  }
+  return out;
+}
+
+// A custom metadata record's <values> that hold the field: a Field
+// Definition relationship stores "Object.Field__c" (that one makes
+// Salesforce refuse the delete); a text value may hold either spelling.
+// Returns the names of the record's fields that hold it.
+function sftkMdValuesHolding(innerXml, objApi, fieldApi) {
+  const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
+  const out = [];
+  for (const v of sftkMdChildren(innerXml, 'values')) {
+    const val = (sftkMdChildText(v.innerXml, 'value') || '').trim().toLowerCase();
+    if (val === f || val === `${o}.${f}`) out.push(sftkMdChildText(v.innerXml, 'field') || '?');
+  }
+  return out;
+}
+
 if (typeof globalThis !== 'undefined') {
+  globalThis.sftkMdChildren       = sftkMdChildren;
+  globalThis.sftkMdMentionsField  = sftkMdMentionsField;
+  globalThis.sftkMdLeadMappingsFor = sftkMdLeadMappingsFor;
+  globalThis.sftkMdValuesHolding  = sftkMdValuesHolding;
   globalThis.sftkMdTagRe          = sftkMdTagRe;
   globalThis.sftkMdFault          = sftkMdFault;
   globalThis.sftkMdUnescape       = sftkMdUnescape;

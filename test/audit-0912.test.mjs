@@ -294,10 +294,11 @@ describe('13 · delete-error guidance matches what is scanned now', () => {
     expect(fn).not.toMatch(/aren't scanned|aren\\'t scanned|"not scanned"/);
     expect(fn).not.toMatch(/\(a report,/);
   });
-  it('names what the index may miss, consistent with the note', () => {
-    expect(fn).toContain('email');
-    expect(fn).toContain('criteria-based sharing rule');
-    expect(FC).toContain('Email Templates and Approval Processes</strong> appear above only when that index reports');
+  it('names the kind Salesforce named, consistent with the note (2026-11-06: every blocker has a scan leg now)', () => {
+    expect(fn).toContain('Salesforce refuses the delete: the field is still used by');
+    expect(fn).toContain('the scan reads every kind that blocks');
+    expect(fn).not.toContain('criteria-based sharing rule');   // sharing rules are read now, not "may not report"
+    expect(FC).toContain('<strong>What blocks the delete is read in full</strong>');
   });
 });
 

@@ -279,12 +279,27 @@ function fcScopeKeeps(scope, sev) {
 }
 // Which legs a scan of that scope runs. The index query and the field-id
 // lookup always run.
-function fcScopeLegs(scope) {
+// Which legs a scan of that scope runs, for that object. The index query and
+// the field-id lookup always run. Live-tested 2026-11-06 (npc, one fixture per
+// reference type, each put to a destructive delete): what BLOCKS the delete
+// is a Lightning page (so that leg runs in every scope), matching and
+// duplicate rules (active or not), workflow rules (active or not), field
+// updates, email alerts and outbound messages, approval processes (active or
+// not), criteria-based sharing rules, a Lightning web component's schema
+// import, a custom metadata record whose Field Definition points at the
+// field, the lead field mapping (Lead and its targets) and a Lead/Case
+// assignment, auto-response or escalation rule. The other mentions never do.
+function fcScopeLegs(scope, objApi) {
   const sc = fcScopeNorm(scope);
+  const o = String(objApi || '').toLowerCase();
+  const blockers = sc !== 'mentions', mentions = sc !== 'blockers';
   return {
-    flexiPages: sc !== 'blockers', reportTypes: sc !== 'blockers', listViews: sc !== 'blockers',
-    compactLayouts: sc !== 'blockers', quickActions: sc !== 'blockers',
-    matchingRules: sc !== 'mentions', workflowFieldUpdates: sc !== 'mentions',
+    flexiPages: true,
+    matchingRules: blockers, workflowFieldUpdates: blockers, workflow: blockers, approvals: blockers,
+    sharingRules: blockers, duplicateRules: blockers, lwc: blockers, customMetadata: blockers,
+    leadMapping: blockers && ['lead', 'account', 'contact', 'opportunity'].includes(o),
+    objectRules: blockers && (o === 'lead' || o === 'case'),
+    reportTypes: mentions, listViews: mentions, compactLayouts: mentions, quickActions: mentions, paths: mentions,
   };
 }
 function fcScopeLabel(scope) {
@@ -294,35 +309,42 @@ function fcScopeLabel(scope) {
 // The sentence under the switch — what that scope reads and what it leaves out.
 function fcScopeHelp(scope) {
   const sc = fcScopeNorm(scope);
-  if (sc === 'blockers') return 'Reads only what makes Salesforce refuse the delete: Apex, validation and workflow rules, flows, matching rules, email templates, approval processes. The cheap scan. Layouts, Lightning pages, reports, report types, list views, compact layouts and quick actions are not read \u2014 they never block the delete, but they break or lose the field afterwards.';
-  if (sc === 'mentions') return 'Reads only the other mentions: layouts, Lightning pages, reports, report types, list views, compact layouts, quick actions \u2014 the delete goes through with these, and they break or lose the field afterwards. What blocks the delete is still counted for the Delete button, but not listed.';
+  if (sc === 'blockers') return 'Reads only what makes Salesforce refuse the delete: Apex, Visualforce, formula and roll-up fields, validation rules, flows and Process Builder, workflow rules, field updates, alerts and outbound messages, matching and duplicate rules, approval processes, sharing and scoping rules, Lightning pages, Lightning web components, custom metadata records, lead field mappings, Lead/Case rules. Layouts, reports, report types, list views, compact layouts, quick actions, email templates and Paths are not read \u2014 they never block the delete, but they break or lose the field afterwards.';
+  if (sc === 'mentions') return 'Reads only the other mentions: layouts, reports, report types, list views, compact layouts, quick actions, email templates, Paths \u2014 the delete goes through with these, and they break or lose the field afterwards. What blocks the delete is still counted for the Delete button, but not listed.';
   return 'Reads both: what makes Salesforce refuse the delete, and every other mention that breaks or loses the field afterwards. Listed apart below.';
 }
 
 // E3b — what a full dependency scan costs, stated honestly. The floor is the
 // scan's fixed legs, counted from runScan/scanFlexiPages/scanSupplemental as
 // written: field-id lookup (1) + MetadataComponentDependency query (1) +
-// Lightning-page list (1) + list-view list (1) + compact-layout describe (1)
-// + quick-action list (1) + matching-rule query (1) + workflow-field-update
-// query (1) + report-type list (1) = 9. Four legs then fan out one call PER
-// ITEM the lists return (report types: one call per 10 of them) —
-// unknowable before the scan looks, so a count that hasn't been discovered
-// yet stays a "more if", never a made-up number.
-// counts: { flexiPages, listViews, quickActions } — each a number when known,
+// one list or query per leg that runs (the workflow leg lists rules, alerts
+// and outbound messages: 3; the Lead/Case rules leg reads three containers:
+// 3). Several legs then fan out one call PER ITEM the lists return (report
+// types, approval processes, duplicate rules and custom metadata records: one
+// call per 10 of them) — unknowable before the scan looks, so a count that
+// hasn't been discovered yet stays a "more if", never a made-up number.
+// counts: { flexiPages, listViews, quickActions, reportTypes, workflowRules,
+// approvals, duplicateRules, customMetadata } — each a number when known,
 // null/undefined when not. Returns { now, known, moreIf } where `now` is the
 // call floor including every KNOWN leg and `moreIf` names the unknown ones.
-function fcEstimateScanCalls(counts, scope) {
+function fcEstimateScanCalls(counts, scope, objApi) {
   const c = counts || {};
-  const L = fcScopeLegs(scope);
+  const L = fcScopeLegs(scope, objApi);
   const known = v => (Number.isFinite(Number(v)) && Number(v) >= 0) ? Math.floor(Number(v)) : null;
   const legs = [
-    L.flexiPages   && { count: known(c.flexiPages),   what: 'Lightning page in the org' },
-    L.listViews    && { count: known(c.listViews),    what: 'list view on this object' },
-    L.quickActions && { count: known(c.quickActions), what: 'create/update quick action on this object' },
-    L.reportTypes  && { count: known(c.reportTypes),  what: '10 custom report types in the org' },
+    L.flexiPages     && { count: known(c.flexiPages),     what: 'Lightning page in the org' },
+    L.listViews      && { count: known(c.listViews),      what: 'list view on this object' },
+    L.quickActions   && { count: known(c.quickActions),   what: 'create/update quick action on this object' },
+    L.reportTypes    && { count: known(c.reportTypes),    what: '10 custom report types in the org' },
+    L.workflow       && { count: known(c.workflowRules),  what: 'workflow rule, alert or outbound message on this object' },
+    L.approvals      && { count: known(c.approvals),      what: '10 approval processes on this object' },
+    L.duplicateRules && { count: known(c.duplicateRules), what: '10 duplicate rules on this object' },
+    L.customMetadata && { count: known(c.customMetadata), what: '10 custom metadata records in the org (read up to 300)' },
   ].filter(Boolean);
   // the fixed legs of this scope: field id + the index always; then one list or query per leg that runs
-  let now = 2 + [L.flexiPages, L.listViews, L.compactLayouts, L.quickActions, L.matchingRules, L.workflowFieldUpdates, L.reportTypes].filter(Boolean).length;
+  let now = 2 + [L.flexiPages, L.listViews, L.compactLayouts, L.quickActions, L.matchingRules, L.workflowFieldUpdates, L.reportTypes,
+    L.approvals, L.sharingRules, L.duplicateRules, L.lwc, L.customMetadata, L.leadMapping, L.paths].filter(Boolean).length
+    + (L.workflow ? 3 : 0) + (L.objectRules ? 3 : 0);
   const moreIf = [];
   for (const l of legs) {
     if (l.count === null) moreIf.push(l.what);
@@ -408,6 +430,7 @@ const FieldCleaner = (() => {
   let _objShowSystem = false;
   let _groups    = {};     // type → [dep records] — kept for fixAll
   let _mcdCapped = false;  // last MCD query landed on the 2,000-row cap
+  let _cmtUnread = 0;      // custom metadata records in the org when there were too many to read (0 = read)
 
   // Picker completeness state. The bug this guards: EntityDefinition caps
   // server-side, so a big managed-package org silently loses objects off the
@@ -1069,14 +1092,19 @@ const FieldCleaner = (() => {
       const info = _flowVerInfo[id.substring(0, 15)] || {};
       const key = info.defId ? String(info.defId).substring(0, 15) : `n:${d.MetadataComponentName || id}`;
       if (!by.has(key)) by.set(key, { key, name: d.MetadataComponentName || id, versions: [] });
-      by.get(key).versions.push({ id, num: info.num || 0, status: info.status || '' });
+      by.get(key).versions.push({ id, num: info.num || 0, status: info.status || '', pb: !!info.pb });
     }
     return [...by.values()].map(c => {
       c.versions.sort((a, b) => b.num - a.num);
       c.active = c.versions.find(v => v.status === 'Active') || null;
       c.primaryId = (c.active || c.versions[0]).id;      // the card's id, and the version the fix starts from
+      c.pb = c.versions.some(v => v.pb);                 // a Process Builder process: shown, counted as a blocker, never edited here
       return c;
     });
+  }
+  // The card line of a Process Builder process: no buttons, the way to Setup.
+  function _pbNoteHtml() {
+    return `<span class="fc-pb-note" title="A Process Builder process blocks the delete like a flow, but is not edited here">⚙ Process Builder — open it in Setup (Process Automation → Process Builder): take the field out of its criteria and actions, or deactivate and delete the process; then re-scan.</span>`;
   }
   // The fix buttons of ONE item. Replace mode shows two — the user chooses for
   // this item. A flow with no active version that uses the field has nothing
@@ -1085,6 +1113,7 @@ const FieldCleaner = (() => {
     const attrs = `data-id="${esc(id)}" data-name="${esc(rawName)}" data-type="${esc(type)}"`;
     if (type === 'Flow') {
       const card = _flowCards.find(c => c.primaryId === String(id));
+      if (card && card.pb) return _pbNoteHtml();
       if (card && !card.active) {
         return `<button class="btn btn-secondary btn-sm fc-fix-btn" ${attrs} data-swap="0" title="Delete the old versions that still mention the field">🗑 Delete ${card.versions.length} old version${card.versions.length === 1 ? '' : 's'}</button>`;
       }
@@ -1305,7 +1334,7 @@ const FieldCleaner = (() => {
     const el = eid('fcApiCost');
     if (!el) return;
     // Pre-scan, the fan-out legs of this scope are undiscovered — say so.
-    const est = fcEstimateScanCalls(null, _scope);
+    const est = fcEstimateScanCalls(null, _scope, _selObj?.api);
     el.textContent   = fcScanBudgetLine(est, null).text;
     el.style.color   = '';
     el.style.display = '';
@@ -1389,10 +1418,12 @@ const FieldCleaner = (() => {
       // (FlexipageFieldInstance) references — Salesforce's own "Where is this
       // used?" catches them via internal indexing the Tooling API doesn't
       // expose. Scan FlexiPages directly so fields placed on Lightning Pages
-      // (incl. Dynamic Forms field sections) are never missed.
+      // (incl. Dynamic Forms field sections) are never missed. Live 2026-11-06:
+      // a page that holds the field (a field component or a visibility rule)
+      // makes Salesforce REFUSE the delete, so this leg runs in every scope.
       const msgEl = eid('fcResults')?.querySelector('.lp-robot-msg');
       if (msgEl) msgEl.textContent = 'Scanning Lightning Pages…';
-      const scope = _scope, L = fcScopeLegs(scope);
+      const scope = _scope, L = fcScopeLegs(scope, _selObj.api);
       let flexiHits = [];
       try {
         if (L.flexiPages) flexiHits = await scanFlexiPages(deps);
@@ -1420,10 +1451,13 @@ const FieldCleaner = (() => {
         }
       }
 
-      // ── 4. Supplemental silent-breakage scan ──────────────
-      // List views, compact layouts, quick actions, matching rules, and
-      // workflow field updates — none of which the dependency index tracks,
-      // all of which break silently when the field disappears.
+      // ── 4. Supplemental scan ──────────────────────────────
+      // What the dependency index does not track: the other mentions (list
+      // views, compact layouts, quick actions, Paths) and the blockers outside
+      // the index (matching and duplicate rules, workflow rules, field updates,
+      // alerts and outbound messages, approval processes, sharing rules, LWC
+      // schema imports, custom metadata records, lead mappings, Lead/Case
+      // rules — each one live-tested 2026-11-06).
       let supHits = [];
       try {
         supHits = await scanSupplemental([...deps, ...flexiHits, ...rtHits], fieldId, L);
@@ -1501,14 +1535,15 @@ const FieldCleaner = (() => {
     return hits;
   }
 
-  // ── Supplemental scans for silent-breakage types ───────────────────────
-  // MetadataComponentDependency doesn't track these AT ALL, yet deleting a
-  // field they use breaks them without warning: list views, compact layouts,
-  // quick actions, matching rules, workflow field updates. All five are
-  // cheap because they're scoped to the field's own object. Reports and
-  // report types ARE in the dependency index (they are TYPE_CFG entries);
-  // approval processes and email templates still can't be scanned
-  // affordably — renderResults shows a static "check manually" note.
+  // ── Supplemental scans ─────────────────────────────────────────────────
+  // MetadataComponentDependency doesn't track these AT ALL. Some break
+  // quietly when the field goes (list views, compact layouts, quick actions,
+  // Paths); the rest make Salesforce REFUSE the delete (matching and
+  // duplicate rules, workflow rules, field updates, alerts and outbound
+  // messages, approval processes, criteria sharing rules, LWC schema imports,
+  // custom metadata records, lead mappings, Lead/Case rules) — every one of
+  // them live-tested 2026-11-06 against a destructive delete. Reports and
+  // report types ARE in the dependency index (they are TYPE_CFG entries).
   function _fieldTokenRe() {
     const fl = (_selField?.api || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`(^|[^a-zA-Z0-9_])${fl}([^a-zA-Z0-9_]|$)`, 'i');
@@ -1683,6 +1718,178 @@ const FieldCleaner = (() => {
       }
     } catch (_) {/* non-fatal */}
 
+    // ── The legs below were added 2026-11-06, each after a live test in npc:
+    // one fixture per reference type, then a destructive delete of the field.
+    // Salesforce refused every one of these; the dependency index returned
+    // none of them. Tooling where it exists; readMetadata (SOAP, last resort)
+    // for the types that have no Tooling read.
+    const objLc = obj.toLowerCase();
+    const sameField = v => { const f = String(v || '').toLowerCase(); return f === fieldLc || f === `${objLc}.${fieldLc}`; };
+    const sfQ = (query, tooling) => bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: !!tooling, _suppressError: true, query });
+    const mdList = async mdType => {
+      const r = await bg({ type: 'SF_MD_LIST', orgUrl: _orgUrl, sid: _sid, mdType, _suppressError: true });
+      if (!r || r.error) throw new Error(r?.error || `${mdType} could not be listed`);
+      return sftkMdExtractListed(r.text);
+    };
+    const mdRead = async (mdType, fullNames, onProgress) => {
+      const out = [], per = sftkMdReadMax();
+      for (let i = 0; i < fullNames.length; i += per) {
+        const r = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType, fullNames: fullNames.slice(i, i + per), _suppressError: true });
+        if (!r || r.error) throw new Error(r?.error || `${mdType} could not be read`);
+        out.push(...sftkMdExtractRecords(r.text).records);
+        if (onProgress) onProgress(Math.min(i + per, fullNames.length), fullNames.length);
+      }
+      return out;
+    };
+    const mentions = xml => sftkMdMentionsField(xml, obj, _selField.api);
+    const offTag = xml => (sftkMdChildText(xml, 'active') || '') === 'false' ? ' (inactive)' : '';
+    // One Tooling read per record (Metadata comes back only one record at a time).
+    const eachMetadata = async (sobject, rows, test, type, nameOf, what) => {
+      const BATCH = 5;
+      for (let i = 0; i < rows.length; i += BATCH) {
+        const slice = rows.slice(i, i + BATCH);
+        const rs = await Promise.allSettled(slice.map(r => bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject, id: r.Id, _suppressError: true })));
+        rs.forEach((r, j) => {
+          if (r.status !== 'fulfilled' || r.value?.error) return;
+          const m = r.value.Metadata || {};
+          if (test(m)) add(type, slice[j].Id, nameOf(slice[j], m));
+        });
+        msg(`Scanning ${what}… ${Math.min(i + BATCH, rows.length)}/${rows.length}`);
+      }
+    };
+
+    // 6. Workflow rules (criteria or formula — an INACTIVE rule blocks too),
+    // email alerts whose recipient is this field, outbound messages that send it.
+    if (L.workflow) try {
+      msg('Scanning workflow rules…');
+      const rules = (await sfQ(`SELECT Id, Name FROM WorkflowRule WHERE TableEnumOrId = '${obj}'`, true))?.records || [];
+      await eachMetadata('WorkflowRule', rules,
+        m => (m.criteriaItems || []).some(c => sameField(c.field)) || (typeof m.formula === 'string' && re.test(m.formula)),
+        'WorkflowRule', (r, m) => r.Name + (m.active === false ? ' (inactive)' : ''), 'workflow rules');
+      const alerts = (await sfQ(`SELECT Id, DeveloperName FROM WorkflowAlert WHERE EntityDefinitionId = '${obj}'`, true))?.records || [];
+      await eachMetadata('WorkflowAlert', alerts,
+        m => (m.recipients || []).some(rc => sameField(rc.field)),
+        'WorkflowAlert', r => r.DeveloperName, 'email alerts');
+      const oms = (await sfQ(`SELECT Id, Name FROM WorkflowOutboundMessage WHERE EntityDefinitionId = '${obj}'`, true))?.records || [];
+      await eachMetadata('WorkflowOutboundMessage', oms,
+        m => (m.fields || []).some(sameField),
+        'WorkflowOutboundMessage', r => r.Name, 'outbound messages');
+    } catch (_) {/* non-fatal */}
+
+    // 7. Approval processes on this object (entry and step criteria; active
+    // or not). No Tooling read exists: listMetadata, then readMetadata.
+    if (L.approvals) try {
+      msg('Scanning approval processes…');
+      const names = (await mdList('ApprovalProcess')).map(t => t.fullName).filter(n => n.toLowerCase().startsWith(objLc + '.'));
+      for (const rec of await mdRead('ApprovalProcess', names, (a, b) => msg(`Scanning approval processes… ${a}/${b}`))) {
+        if (!mentions(rec.innerXml)) continue;
+        // the process's own label, not its first step's (live: "Step 1")
+        const top = rec.innerXml.replace(/<approvalStep>[\s\S]*?<\/approvalStep>/g, '');
+        add('ApprovalProcess', rec.fullName, (sftkMdChildText(top, 'label') || rec.fullName.replace(/^[^.]+\./, '')) + offTag(top));
+      }
+    } catch (_) {/* non-fatal */}
+
+    // 8. Criteria-based sharing rules (and guest-user rules): one read of the
+    // object's SharingRules container.
+    if (L.sharingRules) try {
+      msg('Scanning sharing rules…');
+      for (const rec of await mdRead('SharingRules', [obj])) {
+        for (const tag of ['sharingCriteriaRules', 'sharingGuestRules']) {
+          for (const rule of sftkMdChildren(rec.innerXml, tag)) {
+            if (mentions(rule.innerXml)) add('SharingCriteriaRule', `${obj}.${rule.fullName}`, sftkMdChildText(rule.innerXml, 'label') || rule.fullName);
+          }
+        }
+      }
+    } catch (_) {/* non-fatal */}
+
+    // 9. Duplicate rules whose record filter names the field (active or not).
+    // The list is plain SOQL; the filter lives in the rule's metadata.
+    if (L.duplicateRules) try {
+      msg('Scanning duplicate rules…');
+      const rows = (await sfQ(`SELECT Id, DeveloperName, MasterLabel, IsActive FROM DuplicateRule WHERE SobjectType = '${obj}'`, false))?.records || [];
+      const byName = new Map(rows.map(r => [`${objLc}.${String(r.DeveloperName || '').toLowerCase()}`, r]));
+      for (const rec of await mdRead('DuplicateRule', rows.map(r => `${obj}.${r.DeveloperName}`))) {
+        const filter = sftkMdFindElement(rec.innerXml, 'duplicateRuleFilter', 0);
+        if (!filter) continue;
+        const items = sftkMdChildren(rec.innerXml.slice(filter.bodyStart, filter.bodyEnd), 'duplicateRuleFilterItems');
+        const hit = items.some(it => {
+          const t = (sftkMdChildText(it.innerXml, 'table') || '').toLowerCase();
+          return sameField(sftkMdChildText(it.innerXml, 'field')) && (!t || t === objLc);
+        });
+        if (!hit) continue;
+        const r = byName.get(rec.fullName.toLowerCase());
+        add('DuplicateRule', r?.Id || rec.fullName, (r?.MasterLabel || sftkMdChildText(rec.innerXml, 'masterLabel') || rec.fullName) + (r && r.IsActive === false ? ' (inactive)' : ''));
+      }
+    } catch (_) {/* non-fatal */}
+
+    // 10. Lightning web components: a schema import of the field is compiled
+    // into the component, so Salesforce refuses the delete. (A field named
+    // only in the HTML does not block — live-tested.) One Tooling query reads
+    // every JS source in the org.
+    if (L.lwc) try {
+      msg('Scanning Lightning web components…');
+      const res = await sfQ("SELECT Id, FilePath, Source, LightningComponentBundleId, LightningComponentBundle.DeveloperName, LightningComponentBundle.MasterLabel FROM LightningComponentResource WHERE Format = 'js'", true);
+      const want = new RegExp(`@salesforce/schema/${objLc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.${fieldLc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9_])`, 'i');
+      const seenBundle = new Set();
+      for (const r of (res?.records || [])) {
+        if (!/\.js$/i.test(String(r.FilePath || ''))) continue;
+        if (!want.test(String(r.Source || ''))) continue;
+        const bid = r.LightningComponentBundleId || r.Id;
+        if (seenBundle.has(bid)) continue;
+        seenBundle.add(bid);
+        add('LightningComponentBundle', bid, r.LightningComponentBundle?.MasterLabel || r.LightningComponentBundle?.DeveloperName || r.FilePath);
+      }
+    } catch (_) {/* non-fatal */}
+
+    // 11. Custom metadata records whose value holds the field: a Field
+    // Definition relationship makes Salesforce refuse the delete (and SOQL on
+    // such a type returned nothing live, so the records are read through
+    // readMetadata). Bounded: up to 300 records; more is SAID, not read.
+    if (L.customMetadata) try {
+      msg('Scanning custom metadata records…');
+      const recs = await mdList('CustomMetadata');
+      const MAX = 300;
+      _cmtUnread = recs.length > MAX ? recs.length : 0;
+      if (!_cmtUnread) {
+        for (const rec of await mdRead('CustomMetadata', recs.map(r => r.fullName), (a, b) => msg(`Scanning custom metadata records… ${a}/${b}`))) {
+          const holding = sftkMdValuesHolding(rec.innerXml, obj, _selField.api);
+          if (holding.length) add('CustomMetadataRecord', rec.fullName, `${rec.fullName} (${holding.join(', ')})`);
+        }
+      }
+    } catch (_) {/* non-fatal */}
+
+    // 12. Lead field mapping — a mapped Lead field AND its Account/Contact/
+    // Opportunity target both refuse the delete.
+    if (L.leadMapping) try {
+      msg('Scanning lead field mappings…');
+      for (const rec of await mdRead('LeadConvertSettings', ['LeadConvertSettings'])) {
+        const maps = sftkMdLeadMappingsFor(rec.innerXml, obj, _selField.api);
+        if (maps.length) add('LeadConvertSettings', 'LeadConvertSettings', maps.map(m => `${m.inputObject}.${m.inputField} → ${m.outputObject}.${m.outputField}`).join(', '));
+      }
+    } catch (_) {/* non-fatal */}
+
+    // 13. Lead/Case assignment, auto-response and escalation rules (active or
+    // not): one read per container.
+    if (L.objectRules) try {
+      msg('Scanning assignment, auto-response and escalation rules…');
+      const kinds = [['AssignmentRules', 'assignmentRule', 'AssignmentRule'], ['AutoResponseRules', 'autoResponseRule', 'AutoResponseRule'], ['EscalationRules', 'escalationRule', 'EscalationRule']];
+      for (const [container, child, type] of kinds) {
+        for (const rec of await mdRead(container, [obj])) {
+          for (const rule of sftkMdChildren(rec.innerXml, child)) {
+            if (mentions(rule.innerXml)) add(type, `${obj}.${rule.fullName}`, rule.fullName + offTag(rule.innerXml));
+          }
+        }
+      }
+    } catch (_) {/* non-fatal */}
+
+    // 14. Paths (a mention, not a blocker): live-tested, the delete goes
+    // through and the Path stays ACTIVE on a field that no longer exists.
+    if (L.paths) try {
+      msg('Scanning Paths…');
+      const rows = (await sfQ(`SELECT Id, DeveloperName, MasterLabel, IsActive, SobjectProcessField FROM PathAssistant WHERE SobjectType = '${obj}'`, true))?.records || [];
+      for (const p of rows) if (sameField(p.SobjectProcessField)) add('PathAssistant', p.Id, (p.MasterLabel || p.DeveloperName) + (p.IsActive === false ? ' (inactive)' : ''));
+    } catch (_) {/* non-fatal */}
+
     return hits;
   }
 
@@ -1812,8 +2019,10 @@ const FieldCleaner = (() => {
                       note: 'A flow that runs on the field has two ways: ✂ Remove · flow keeps running saves a new active version without the field; 🗑 Delete versions · flow off switches the flow off. Either way every version that still mentions the field is deleted — Salesforce keeps the dependency lock per version, so a stale version would otherwise still block the field delete.',
                       doneLabel: '✅ Activated',
                       replNote: 'The active version is saved again with every reference pointing at {new} — the flow keeps its logic — then activated and verified. Old versions that still reference the old field are deleted: Salesforce keeps the dependency lock per version.' },
-    FlexiPage:      { icon: '📄', label: 'Lightning Pages',  fixable: true, sev: 'silent',
-                      note: 'Field references in visibility rules and field components will be removed automatically.',
+    // Live 2026-11-06: a page that holds the field (a field component or a
+    // visibility rule) makes Salesforce REFUSE the delete — a blocker.
+    FlexiPage:      { icon: '📄', label: 'Lightning Pages',  fixable: true, sev: 'blocker',
+                      note: 'Salesforce refuses the delete while a Lightning page holds the field. Field references in visibility rules and field components are removed automatically.',
                       doneLabel: '✅ Page updated',
                       replNote: 'Field components and visibility rules that use the field are pointed at {new}.' },
     Layout:         { icon: '📋', label: 'Page Layouts',     fixable: true, sev: 'silent',
@@ -1837,7 +2046,37 @@ const FieldCleaner = (() => {
     ApexTrigger:    { icon: '⚡', label: 'Apex Triggers',    fixable: false, sev: 'blocker',
                       note: 'Update the Apex trigger to remove the field reference.' },
     WorkflowRule:   { icon: '🔁', label: 'Workflow Rules',   fixable: false, sev: 'blocker',
-                      note: 'Edit or deactivate the workflow rule in Setup.' },
+                      note: 'Edit the rule’s criteria or formula in Setup, or delete the rule — an inactive rule blocks the delete too (live-tested). Found by reading every workflow rule on this object.' },
+    WorkflowAlert:  { icon: '📨', label: 'Email Alerts',     fixable: false, sev: 'blocker',
+                      note: 'The alert sends to this field. Change its recipient in Setup (Workflow Actions → Email Alerts) or delete the alert.' },
+    WorkflowOutboundMessage: { icon: '📡', label: 'Outbound Messages', fixable: false, sev: 'blocker',
+                      note: 'The message sends this field. Take it out of the message’s fields in Setup (Workflow Actions → Outbound Messages) or delete the message.' },
+    SharingCriteriaRule: { icon: '🔐', label: 'Sharing Rules (criteria)', fixable: false, sev: 'blocker',
+                      note: 'The rule’s criteria name the field. Edit or delete the sharing rule in Setup → Sharing Settings. Found by reading this object’s sharing rules.' },
+    DuplicateRule:  { icon: '👥', label: 'Duplicate Rules',  fixable: false, sev: 'blocker',
+                      note: 'The rule’s record filter names the field — active or not, Salesforce refuses the delete. Edit the filter in Setup → Duplicate Management → Duplicate Rules. Never switched off or edited here.' },
+    LightningComponentBundle: { icon: '⚡', label: 'Lightning Web Components', fixable: false, sev: 'blocker',
+                      note: 'The component imports the field’s schema (@salesforce/schema). Remove the import in the code and deploy. A field named only in the HTML does not block — and is not listed.' },
+    CustomMetadataRecord: { icon: '🗂', label: 'Custom Metadata Records', fixable: false, sev: 'blocker',
+                      note: 'A record holds the field’s name. When that value is a Field Definition relationship Salesforce refuses the delete; a plain text value only breaks whatever reads it. Edit the record in Setup → Custom Metadata Types → Manage Records.' },
+    LeadConvertSettings: { icon: '🔀', label: 'Lead Field Mapping', fixable: false, sev: 'blocker',
+                      note: 'The field is mapped for lead conversion — the Lead field and its target both block the delete. Remove the pair in Setup → Object Manager → Lead → Fields → Map Lead Fields.' },
+    AssignmentRule: { icon: '📬', label: 'Assignment Rules', fixable: false, sev: 'blocker',
+                      note: 'A rule entry’s criteria name the field — active or not. Edit the entry in Setup → Assignment Rules.' },
+    AutoResponseRule: { icon: '↩️', label: 'Auto-Response Rules', fixable: false, sev: 'blocker',
+                      note: 'A rule entry’s criteria name the field. Edit the entry in Setup → Auto-Response Rules.' },
+    EscalationRule: { icon: '⏫', label: 'Escalation Rules', fixable: false, sev: 'blocker',
+                      note: 'A rule entry’s criteria name the field — active or not. Edit the entry in Setup → Escalation Rules.' },
+    ApexComponent:  { icon: '🧩', label: 'Visualforce Components', fixable: false, sev: 'blocker',
+                      note: 'Update the component markup to remove the field reference.' },
+    ApexPage:       { icon: '📃', label: 'Visualforce Pages', fixable: false, sev: 'blocker',
+                      note: 'Update the page markup to remove the field reference.' },
+    RestrictionRule: { icon: '🚧', label: 'Scoping & Restriction Rules', fixable: false, sev: 'blocker',
+                      note: 'The rule’s record filter names the field — active or not. Edit the rule in Object Manager → Scoping Rules / Restriction Rules.' },
+    ProcessBuilder: { icon: '⚙', label: 'Process Builder',  fixable: false, sev: 'blocker',
+                      note: 'Open the process in Setup (Process Automation → Process Builder), take the field out of its criteria and actions or deactivate and delete the process, then re-scan. Listed under Flows; not edited here.' },
+    PathAssistant:  { icon: '🛤', label: 'Paths',            fixable: false, sev: 'silent',
+                      note: 'The delete goes through and the Path stays active on a field that no longer exists (live-tested). Delete or re-point the Path in Setup → Path Settings first.' },
     // Both come from Salesforce's own dependency index — the same one behind
     // "Where is this used?" — so they cost nothing extra to find (user
     // 2026-09-01: "one of the metadata items that we scan everytime").
@@ -1852,14 +2091,16 @@ const FieldCleaner = (() => {
                       note: 'The field’s column is removed from the report type’s sections (a restore point is saved first); a section left with no columns goes with it. A report built on the type loses that column, so fix the reports listed above first. A managed package’s report type is listed and left to Setup.',
                       doneLabel: '✅ Report type updated',
                       replNote: 'The column is pointed at {new} in place (a restore point is saved first). When the new field is already a column of the type, the old column is removed instead — a column may appear once per report type.' },
-    // Live 2026-09-03: the dependency index ACCEPTS these two types, but it
-    // is not guaranteed to hold a row for every template or approval that
-    // uses a field — so they are listed when reported, and the note below
-    // still says to check them by hand.
-    EmailTemplate:  { icon: '✉️', label: 'Email Templates',  fixable: false, sev: 'blocker',
-                      note: 'Edit the template in Setup and remove the merge field, then re-scan. Templates are listed only when Salesforce’s dependency index reports them.' },
+    // Live 2026-11-06: a text, Visualforce or Lightning template with the
+    // merge field does NOT stop the delete — the merge field just stops
+    // working afterwards. The index returned every fixture template.
+    EmailTemplate:  { icon: '✉️', label: 'Email Templates',  fixable: false, sev: 'silent',
+                      note: 'The delete goes through; the merge field in the template stops working. Edit the template in Setup and remove the merge field. Templates are listed when Salesforce’s dependency index reports them.' },
+    // Live 2026-11-06: an approval process that names the field in its
+    // criteria blocks the delete, ACTIVE OR NOT; the index returned none of
+    // them, so the scan reads every approval process on the object.
     ApprovalProcess:{ icon: '✅', label: 'Approval Processes', fixable: false, sev: 'blocker',
-                      note: 'Edit the approval process in Setup (entry criteria, field updates, step criteria), then re-scan. Listed only when Salesforce’s dependency index reports it.' },
+                      note: 'Edit the approval process in Setup (entry criteria, step criteria), then re-scan. Active or not, Salesforce refuses the delete while the process names the field. Found by reading every approval process on this object.' },
   };
   const TYPE_CFG_DEFAULT = { icon: '🔧', label: 'Other', fixable: false, sev: 'blocker',
     note: 'Review this dependency in Setup before deleting the field.' };
@@ -1868,25 +2109,34 @@ const FieldCleaner = (() => {
   // will make Salesforce reject the delete). Read by checkEnableDelete.
   let _manualBlockers = [];
 
-  // F8: honest disclosure of what the scan does NOT cover — the Tooling
-  // dependency index doesn't track these, so silent breakage hides here.
-  // Reports (live 2026-10-04, trailheads5): the index, queried through the
-  // Tooling REST API, returned NO Report rows at all — not for two public
-  // reports that used the field, not with an explicit type filter; the Bulk
-  // API route answered "sObject type not supported". The note used to claim
-  // reports were covered; it now says what is true.
+  // F8: honest disclosure of what the scan does NOT cover. Reports (live
+  // 2026-10-04, trailheads5): the index, queried through the Tooling REST
+  // API, returned NO Report rows at all — not for two public reports that
+  // used the field, not with an explicit type filter; the Bulk API route
+  // answered "sObject type not supported". Blockers (live 2026-11-06, npc,
+  // 60+ fixtures put to a destructive delete): every reference type that
+  // makes Salesforce refuse the delete is read by its own leg now; what is
+  // left unread does not block, and is named here.
   function _unscannedNoteHtml() {
+    const cmt = _cmtUnread
+      ? ` <strong>Custom metadata records were not read</strong> — this org has ${_cmtUnread.toLocaleString()} and the scan reads up to 300. A record whose Field Definition points at this field makes Salesforce refuse the delete: check Setup → Custom Metadata Types before deleting.`
+      : '';
     return `
       <div class="fc-unscanned-note">
-        \u2139\ufe0f <strong>Reports and report types</strong> appear above only when Salesforce\u2019s dependency
-        index returns them through its API. In some orgs it returns none (seen live: two public reports
-        used a field and neither was listed), so a report that uses this field can be missing here.
-        Before deleting, press \ud83d\udcca Scan the reports below (it reads every report itself), or open the field
-        in Setup and press \u201cWhere is this used?\u201d \u2014 that page lists reports.
-        <strong>Email Templates and Approval Processes</strong> appear above only when that index reports
-        them \u2014 Salesforce does not guarantee it does for every template or approval, so check them by hand.
-        <strong>Not scanned at all</strong> (no API): criteria-based sharing rules \u2014 these break silently if
-        the field is removed. Check them before deleting.
+        ℹ️ <strong>What blocks the delete is read in full</strong> (each kind live-tested against a real delete):
+        Apex, Visualforce, formula and roll-up fields, validation rules, flows and Process Builder, workflow rules,
+        field updates, alerts and outbound messages, matching and duplicate rules, approval processes, sharing and
+        scoping rules, Lightning pages, Lightning web components, custom metadata records, lead field mappings and
+        Lead/Case rules.${cmt}
+        <strong>Reports</strong> appear above only when Salesforce’s dependency index returns them through its API.
+        In some orgs it returns none (seen live: two public reports used a field and neither was listed),
+        so a report that uses this field can be missing here. Before deleting, press 📊 Scan the reports below (it reads every report itself),
+        or open the field in Setup and press “Where is this used?” — that page lists reports.
+        <strong>Not read, and not a blocker</strong> (the delete goes through; these break or lose the field quietly):
+        Aura component markup, a Lightning web component that names the field only in its HTML, search layouts,
+        related-list columns on other objects’ layouts, record-type picklist values, dependent-picklist settings,
+        Experience Cloud pages, and any text that holds the field’s name (dynamic Apex, custom settings, custom
+        labels). <strong>Not readable</strong>: territory assignment rules and managed-package components.
       </div>`;
   }
 
@@ -1989,9 +2239,9 @@ const FieldCleaner = (() => {
     const deps = (allDeps || []).filter(d => fcScopeKeeps(_scope, sevOf(d.MetadataComponentType || 'Unknown')));
     const hiddenBlockers = (allDeps || []).filter(d => sevOf(d.MetadataComponentType || 'Unknown') === 'blocker' && !fcScopeKeeps(_scope, 'blocker'));
     const unreadNote = scanScope === 'blockers'
-      ? `<div class="fc-fact fc-fact-warn"><span class="fc-fact-ico">👀</span><span class="fc-fact-text"><strong>The other mentions were not read</strong> — this scan looked only at what blocks the delete. Layouts, Lightning pages, reports, report types, list views, compact layouts and quick actions that mention the field are unknown: they never block the delete, but they break or lose the field afterwards. Switch to 🔍 Everything and scan again to see them.</span></div>`
+      ? `<div class="fc-fact fc-fact-warn"><span class="fc-fact-ico">👀</span><span class="fc-fact-text"><strong>The other mentions were not read</strong> — this scan looked only at what blocks the delete. Layouts, reports, report types, list views, compact layouts, quick actions, email templates and Paths that mention the field are unknown: they never block the delete, but they break or lose the field afterwards. Switch to 🔍 Everything and scan again to see them.</span></div>`
       : scanScope === 'mentions'
-        ? `<div class="fc-fact fc-fact-warn"><span class="fc-fact-ico">🔒</span><span class="fc-fact-text"><strong>Matching rules and workflow field updates were not read</strong> — this scan looked only at the other mentions. Both can make Salesforce refuse the delete. Switch to 🔍 Everything and scan again before deleting.</span></div>`
+        ? `<div class="fc-fact fc-fact-warn"><span class="fc-fact-ico">🔒</span><span class="fc-fact-text"><strong>The blockers outside the dependency index were not read</strong> — this scan looked only at the other mentions. Workflow rules, field updates, alerts and outbound messages, matching and duplicate rules, approval processes, sharing rules, Lightning web components, custom metadata records, lead mappings and Lead/Case rules can all make Salesforce refuse the delete. Switch to 🔍 Everything and scan again before deleting.</span></div>`
         : '';
 
     if (!deps.length) {
@@ -2039,9 +2289,11 @@ const FieldCleaner = (() => {
     const flowExtra = (_groups.Flow ? _groups.Flow.length : 0) - _flowCards.length;
     const shownCount = deps.length - flowExtra;
 
+    // a Process Builder process is listed under Flows but is not fixable here
+    const pbCards = _flowCards.filter(c => c.pb).length;
     const autoCount   = Object.entries(_groups)
       .filter(([t]) => (TYPE_CFG[t] || TYPE_CFG_DEFAULT).fixable)
-      .reduce((n, [,arr]) => n + arr.length, 0) - flowExtra;
+      .reduce((n, [,arr]) => n + arr.length, 0) - flowExtra - pbCards;
     const manualCount = shownCount - autoCount;
 
     // What each kind of item gets, in words — once, in the collapsed help under
@@ -2108,7 +2360,7 @@ const FieldCleaner = (() => {
     if (fcScopeKeeps(_scope, 'blocker')) html += `
       <div class="fc-section fc-section-blockers" id="fcSectionBlockers">
         <div class="fc-section-hdr"><span class="fc-section-title">🔒 Must be cleared before Salesforce deletes the field</span><span class="fc-section-n">${nB}</span></div>
-        <div class="fc-section-sub">${nB ? 'Salesforce refuses the delete while any of these still references the field.' : (scanScope === 'mentions' ? 'None in the dependency index — matching rules and workflow field updates were not read in this scope.' : 'Nothing blocks the delete.')}</div>
+        <div class="fc-section-sub">${nB ? 'Salesforce refuses the delete while any of these still references the field.' : (scanScope === 'mentions' ? 'None in the dependency index — the blockers outside it were not read in this scope.' : 'Nothing blocks the delete.')}</div>
         ${blockerGroups.map(([t, a]) => groupHtml(t, a)).join('')}
       </div>`;
     if (fcScopeKeeps(_scope, 'silent')) html += `
@@ -2132,6 +2384,7 @@ const FieldCleaner = (() => {
         return cfg.sev === 'blocker' && !cfg.fixable;
       })
       .map(([t, arr]) => ({ type: t, label: (TYPE_CFG[t] || { label: t }).label, count: arr.length, hidden: !fcScopeKeeps(_scope, 'blocker') }));
+    if (pbCards) _manualBlockers.push({ type: 'ProcessBuilder', label: `Process Builder process${pbCards === 1 ? '' : 'es'} (listed under Flows)`, count: pbCards, hidden: !fcScopeKeeps(_scope, 'blocker') });
     const blockerTotal = _manualBlockers.reduce((n, b) => n + b.count, 0);
     const silentManual = Object.entries(_groups)
       .filter(([t]) => { const c = TYPE_CFG[t] || TYPE_CFG_DEFAULT; return c.sev === 'silent' && !c.fixable; })
@@ -3231,9 +3484,12 @@ const FieldCleaner = (() => {
     for (let i = 0; i < ids.length; i += 100) {
       const lit = ids.slice(i, i + 100).map(x => `'${x}'`).join(',');
       const r = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true,
-        query: `SELECT Id, DefinitionId, VersionNumber, Status FROM Flow WHERE Id IN (${lit})` });
+        query: `SELECT Id, DefinitionId, VersionNumber, Status, ProcessType FROM Flow WHERE Id IN (${lit})` });
       for (const v of (r?.records || [])) {
-        _flowVerInfo[String(v.Id).substring(0, 15)] = { defId: v.DefinitionId, num: Number(v.VersionNumber) || 0, status: v.Status || '' };
+        // ProcessType 'Workflow' is a Process Builder process: the index lists
+        // it as a Flow and it blocks the delete like one (live 2026-11-06),
+        // but the flow fix must not rewrite it — it is left to Setup.
+        _flowVerInfo[String(v.Id).substring(0, 15)] = { defId: v.DefinitionId, num: Number(v.VersionNumber) || 0, status: v.Status || '', pb: v.ProcessType === 'Workflow' };
       }
     }
   }
@@ -3256,9 +3512,10 @@ const FieldCleaner = (() => {
                 "Map this flow's subflow call chain in the Dependencies tab before trimming it")}
               <button class="btn btn-sm fc-inspect-btn" title="View the XML of ${esc(seen)}"
                       data-id="${esc(id)}" data-type="Flow">🔍</button>
-              <span class="fc-fix-pair" data-id="${esc(id)}" data-type="Flow" data-name="${esc(c.name)}">${_fixBtnsHtml('Flow', id, c.name)}</span>
+              ${c.pb ? '' : `<span class="fc-fix-pair" data-id="${esc(id)}" data-type="Flow" data-name="${esc(c.name)}">${_fixBtnsHtml('Flow', id, c.name)}</span>`}
             </span>
           </div>
+          ${c.pb ? `<div class="fc-pb-line">${_pbNoteHtml()}</div>` : ''}
           <ul class="fc-flow-vers" data-id="${esc(id)}">${_flowVersHtml(c)}</ul>
         </div><div class="fc-xml-panel" id="fcXml_${esc(id)}" style="display:none"></div>`;
   }
@@ -3524,7 +3781,7 @@ const FieldCleaner = (() => {
   let _walkRunning = false;   // a "… all N" walk is on: the group buttons stay disabled until it ends
   async function fixAll(type, fieldId, swap, way = '') {
     const list = type === 'Flow'
-      ? _flowCards.map(c => ({ id: c.primaryId, name: c.name }))
+      ? _flowCards.filter(c => !c.pb).map(c => ({ id: c.primaryId, name: c.name }))
       : (_groups[type] || []).map(d => ({ id: d.MetadataComponentId, name: d.MetadataComponentName || d.MetadataComponentId }));
     for (const it of list) {
       if (eid(`fcItem_${it.id}`)?.classList.contains('fc-item-fixed')) continue;
@@ -5159,6 +5416,21 @@ const FieldCleaner = (() => {
       ReportType:     '/lightning/setup/CustomReportTypes/home',
       EmailTemplate:  '/lightning/o/EmailTemplate/home',
       ApprovalProcess:'/lightning/setup/ApprovalProcesses/home',
+      // the blocker legs added 2026-11-06
+      WorkflowAlert:  '/lightning/setup/WorkflowEmails/home',
+      WorkflowOutboundMessage: '/lightning/setup/WorkflowOutboundMessaging/home',
+      SharingCriteriaRule: '/lightning/setup/SecuritySharing/home',
+      DuplicateRule:  '/lightning/setup/DuplicateRules/home',
+      LightningComponentBundle: '/lightning/setup/LightningComponentBundles/home',
+      CustomMetadataRecord: '/lightning/setup/CustomMetadata/home',
+      LeadConvertSettings: '/lightning/setup/ObjectManager/Lead/FieldsAndRelationships/view',
+      AssignmentRule: obj === 'Case' ? '/lightning/setup/CaseRules/home' : '/lightning/setup/LeadRules/home',
+      AutoResponseRule: obj === 'Case' ? '/lightning/setup/CaseResponses/home' : '/lightning/setup/LeadResponses/home',
+      EscalationRule: '/lightning/setup/CaseEscRules/home',
+      RestrictionRule: `/lightning/setup/ObjectManager/${obj}/RestrictionRules/view`,
+      PathAssistant:  '/lightning/setup/PathAssistantSetupHome/home',
+      ApexComponent:  '/lightning/setup/ApexComponents/home',
+      ApexPage:       '/lightning/setup/ApexPages/home',
     };
     const url = _orgUrl.replace(/\/$/, '') + (paths[type] || '/lightning/setup/SetupOneHome/home');
     chrome.tabs.create({ url });
@@ -5248,18 +5520,29 @@ const FieldCleaner = (() => {
   // Turn Salesforce's raw delete errors into plain-English guidance.
   function _explainDeleteError(raw) {
     const s = String(raw || '');
+    // Salesforce names the kind of reference after a colon: "This custom
+    // field is referenced elsewhere in salesforce.com. : Workflow Rules." —
+    // or in a sentence of its own for matching/duplicate rules, Process
+    // Builder, scoping rules and custom metadata (live 2026-11-06). Say it.
+    const where = s.match(/referenced elsewhere in salesforce\.com\.?\s*:\s*([^(]+?)\s*(?:\(|$)/i)
+      || s.match(/used by the following ([a-z ]+?rules)\b/i)
+      || s.match(/referenced by the "[^"]+" (process) version/i)
+      || s.match(/used in at least one (Restriction Rule)/i);
+    if (where) {
+      return `Salesforce refuses the delete: the field is still used by ${where[1].trim().replace(/\.$/, '')}. ` +
+        'Clear it in Setup, then re-scan and delete again — the scan reads every kind that blocks, so a re-scan lists it. ' +
+        `(Salesforce said: ${s.replace(/\s+/g, ' ').slice(0, 400)})`;
+    }
     if (/INSUFFICIENT_ACCESS_ON_CROSS_REFERENCE_ENTITY|insufficient access rights on cross-reference/i.test(s)) {
       return 'Salesforce is still blocking this field. Usually one of: (a) a ' +
-        'dependency the index did not report (an approval process, an email ' +
-        'template, or a criteria-based sharing rule — see the note above), (b) the field is ' +
+        'reference the scan could not read (see "what the scan cannot see" above), (b) the field is ' +
         'referenced by a MANAGED package component (read-only), or (c) your ' +
         'user lacks "Customize Application" / "Modify Metadata". Resolve the ' +
         'remaining reference, then retry. (Salesforce said: ' + s.replace(/\s+/g, ' ').slice(0, 400) + ')';
     }
-    if (/in use|cannot delete.*because|referenced/i.test(s)) {
+    if (/in use|cannot delete.*because|can't delete|referenced|associated with/i.test(s)) {
       return 'The field is still referenced somewhere. Fix the listed ' +
-        'dependencies above (and check approval processes, email templates and ' +
-        'criteria-based sharing rules, which the dependency index may not report), then re-scan and delete again. ' +
+        'dependencies above, re-scan (the scan reads every kind that blocks the delete) and delete again. ' +
         `(Raw: ${s})`;
     }
     return s;

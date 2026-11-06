@@ -322,7 +322,7 @@ describe('Field Cleaner — the note about reports says what is true', () => {
   const FC = read('field-cleaner.js');
   it('no longer says reports are covered; points at Setup\'s own list', () => {
     expect(FC).not.toContain('are covered by the scan above');
-    expect(FC).toContain('appear above only when Salesforce\\u2019s dependency');
+    expect(FC).toContain('appear above only when Salesforce’s dependency');
     expect(FC).toContain('a report that uses this field can be missing here');
   });
 });
@@ -513,7 +513,7 @@ describe('Field Cleaner — the choice is made per item, by the button pressed',
   });
   it('"… all N" goes item by item in the way its button says, and a flow is asked about once', () => {
     const all = FC.slice(FC.indexOf("async function fixAll(type, fieldId, swap, way = '') {"), FC.indexOf('// extraLinksHtml (C5a)'));
-    expect(all).toContain('? _flowCards.map(c => ({ id: c.primaryId, name: c.name }))');
+    expect(all).toContain('? _flowCards.filter(c => !c.pb).map(c => ({ id: c.primaryId, name: c.name }))');   // a Process Builder process is skipped (2026-11-06)
     expect(all).toContain("if (eid(`fcItem_${it.id}`)?.classList.contains('fc-item-fixed')) continue;");
     expect(all).toContain("if ((await fixOne(type, it.id, it.name, fieldId, swap, way)) === 'cancel') return 'cancel';");
   });
