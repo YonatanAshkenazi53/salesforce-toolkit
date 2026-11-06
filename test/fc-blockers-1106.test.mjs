@@ -112,3 +112,21 @@ describe('the XML search behind the readMetadata legs', () => {
     expect(M.sftkMdValuesHolding(rec, 'Account', 'Area__c')).toEqual([]);
   });
 });
+
+describe('the demo scan of 2026-11-06 (live, npc) — two mention legs that missed their fixture', () => {
+  it('compact layouts come from Tooling + readMetadata, not from describe/compactLayouts (which lists only the assigned ones)', () => {
+    expect(FC).toContain("SELECT DeveloperName FROM CompactLayout WHERE SobjectType = '${obj}'");
+    expect(FC).toContain("await mdRead('CompactLayout', names.map(n => `${obj}.${n}`)");
+    expect(FC).not.toContain('sobjects/${obj}/describe/compactLayouts');
+  });
+  it('an object-scoped custom quick action ("Account.My_Action") is read; its describe takes the bare name', () => {
+    expect(FC).toContain("const bare = n => String(n || '').replace(new RegExp(`^${obj}");
+    expect(FC).toContain("if (bare(qa.name).includes('.')) return false;");
+    expect(FC).toContain('quickActions/${encodeURIComponent(bare(qa.name))}/describe');
+  });
+  it('the bulk flow buttons count only the flows they would touch — a Process Builder card is left out', () => {
+    expect(FC).toContain("const nFix = type === 'Flow' ? _flowCards.filter(c => !c.pb).length : nItems;");
+    expect(FC).toContain('${cfg.fixable && nFix > 1');
+    expect(FC).toContain('data-n="${nFix}"');
+  });
+});

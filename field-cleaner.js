@@ -1608,6 +1608,41 @@ const FieldCleaner = (() => {
     const re      = _fieldTokenRe();
     const obj     = _selObj.api;
     const fieldLc = _selField.api.toLowerCase();
+    // Shared by the legs below — Tooling where it exists; readMetadata (SOAP, last resort) for the types that have no Tooling read.
+    const objLc = obj.toLowerCase();
+    const sameField = v => { const f = String(v || '').toLowerCase(); return f === fieldLc || f === `${objLc}.${fieldLc}`; };
+    const sfQ = (query, tooling) => bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: !!tooling, _suppressError: true, query });
+    const mdList = async mdType => {
+      const r = await bg({ type: 'SF_MD_LIST', orgUrl: _orgUrl, sid: _sid, mdType, _suppressError: true });
+      if (!r || r.error) throw new Error(r?.error || `${mdType} could not be listed`);
+      return sftkMdExtractListed(r.text);
+    };
+    const mdRead = async (mdType, fullNames, onProgress) => {
+      const out = [], per = sftkMdReadMax();
+      for (let i = 0; i < fullNames.length; i += per) {
+        const r = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType, fullNames: fullNames.slice(i, i + per), _suppressError: true });
+        if (!r || r.error) throw new Error(r?.error || `${mdType} could not be read`);
+        out.push(...sftkMdExtractRecords(r.text).records);
+        if (onProgress) onProgress(Math.min(i + per, fullNames.length), fullNames.length);
+      }
+      return out;
+    };
+    const mentions = xml => sftkMdMentionsField(xml, obj, _selField.api);
+    const offTag = xml => (sftkMdChildText(xml, 'active') || '') === 'false' ? ' (inactive)' : '';
+    // One Tooling read per record (Metadata comes back only one record at a time).
+    const eachMetadata = async (sobject, rows, test, type, nameOf, what) => {
+      const BATCH = 5;
+      for (let i = 0; i < rows.length; i += BATCH) {
+        const slice = rows.slice(i, i + BATCH);
+        const rs = await Promise.allSettled(slice.map(r => bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject, id: r.Id, _suppressError: true })));
+        rs.forEach((r, j) => {
+          if (r.status !== 'fulfilled' || r.value?.error) return;
+          const m = r.value.Metadata || {};
+          if (test(m)) add(type, slice[j].Id, nameOf(slice[j], m));
+        });
+        msg(`Scanning ${what}… ${Math.min(i + BATCH, rows.length)}/${rows.length}`);
+      }
+    };
 
     // 1. List views — describe gives the view's SOQL + columns.
     if (L.listViews) try {
@@ -1634,15 +1669,16 @@ const FieldCleaner = (() => {
       }
     } catch (_) {/* non-fatal */}
 
-    // 2. Compact layouts — field items are listed right in the describe.
+    // 2. Compact layouts. describe/compactLayouts lists only the ASSIGNED ones
+    // (live 2026-11-06, npc: a compact layout with the field that no record
+    // type used was not returned, so the scan missed it). Tooling lists every
+    // compact layout of the object; readMetadata gives each one's fields.
     if (L.compactLayouts) try {
       msg('Scanning compact layouts…');
-      const clRes = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
-        path: `services/data/v62.0/sobjects/${obj}/describe/compactLayouts` });
-      for (const cl of (clRes?.compactLayouts || [])) {
-        const vals = (cl.fieldItems || []).flatMap(fi =>
-          (fi.layoutComponents || []).map(c => String(c.value || '').toLowerCase()));
-        if (vals.includes(fieldLc)) add('CompactLayout', cl.id || cl.name, cl.label || cl.name);
+      const clRes = await sfQ(`SELECT DeveloperName FROM CompactLayout WHERE SobjectType = '${obj}'`, true);
+      const names = (clRes?.records || []).map(r => r.DeveloperName).filter(Boolean);
+      if (names.length) for (const rec of await mdRead('CompactLayout', names.map(n => `${obj}.${n}`), (d, t) => msg(`Scanning compact layouts… ${d}/${t}`))) {
+        if (mentions(rec.innerXml)) add('CompactLayout', rec.fullName, sftkMdChildText(rec.innerXml, 'label') || rec.fullName);
       }
     } catch (_) {/* non-fatal */}
 
@@ -1657,10 +1693,14 @@ const FieldCleaner = (() => {
       msg('Scanning quick actions…');
       const qaRes = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid,
         path: `services/data/v62.0/sobjects/${obj}/quickActions` });
+      // An object-scoped custom action is listed as "Account.My_Action" (live
+      // 2026-11-06: the old "skip every name with a dot" rule skipped exactly the
+      // actions that can hold this object's field); its describe takes the bare name.
+      const bare = n => String(n || '').replace(new RegExp(`^${obj}\\.`, 'i'), '');
       const qas = (Array.isArray(qaRes) ? qaRes : []).filter(qa => {
         const t = (qa.type || '').toLowerCase();
-        // Skip global/chatter actions (name has a '.') and non-layout types.
-        if (String(qa.name || '').includes('.')) return false;
+        // Skip global/chatter actions (FeedItem.*, another object's) and non-layout types.
+        if (bare(qa.name).includes('.')) return false;
         return t === 'create' || t === 'update';
       });
       const BATCH = 5;
@@ -1671,7 +1711,7 @@ const FieldCleaner = (() => {
           // type filter but 404 on object-scoped describe — expected, carries
           // no information, logged as nothing instead of 22 Retry rows.
           type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, _silentError: true,
-          path: `services/data/v62.0/sobjects/${obj}/quickActions/${encodeURIComponent(qa.name)}/describe`
+          path: `services/data/v62.0/sobjects/${obj}/quickActions/${encodeURIComponent(bare(qa.name))}/describe`
         })));
         rs.forEach((r, j) => {
           if (r.status !== 'fulfilled' || r.value?.error) return;
@@ -1723,40 +1763,6 @@ const FieldCleaner = (() => {
     // Salesforce refused every one of these; the dependency index returned
     // none of them. Tooling where it exists; readMetadata (SOAP, last resort)
     // for the types that have no Tooling read.
-    const objLc = obj.toLowerCase();
-    const sameField = v => { const f = String(v || '').toLowerCase(); return f === fieldLc || f === `${objLc}.${fieldLc}`; };
-    const sfQ = (query, tooling) => bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: !!tooling, _suppressError: true, query });
-    const mdList = async mdType => {
-      const r = await bg({ type: 'SF_MD_LIST', orgUrl: _orgUrl, sid: _sid, mdType, _suppressError: true });
-      if (!r || r.error) throw new Error(r?.error || `${mdType} could not be listed`);
-      return sftkMdExtractListed(r.text);
-    };
-    const mdRead = async (mdType, fullNames, onProgress) => {
-      const out = [], per = sftkMdReadMax();
-      for (let i = 0; i < fullNames.length; i += per) {
-        const r = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType, fullNames: fullNames.slice(i, i + per), _suppressError: true });
-        if (!r || r.error) throw new Error(r?.error || `${mdType} could not be read`);
-        out.push(...sftkMdExtractRecords(r.text).records);
-        if (onProgress) onProgress(Math.min(i + per, fullNames.length), fullNames.length);
-      }
-      return out;
-    };
-    const mentions = xml => sftkMdMentionsField(xml, obj, _selField.api);
-    const offTag = xml => (sftkMdChildText(xml, 'active') || '') === 'false' ? ' (inactive)' : '';
-    // One Tooling read per record (Metadata comes back only one record at a time).
-    const eachMetadata = async (sobject, rows, test, type, nameOf, what) => {
-      const BATCH = 5;
-      for (let i = 0; i < rows.length; i += BATCH) {
-        const slice = rows.slice(i, i + BATCH);
-        const rs = await Promise.allSettled(slice.map(r => bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject, id: r.Id, _suppressError: true })));
-        rs.forEach((r, j) => {
-          if (r.status !== 'fulfilled' || r.value?.error) return;
-          const m = r.value.Metadata || {};
-          if (test(m)) add(type, slice[j].Id, nameOf(slice[j], m));
-        });
-        msg(`Scanning ${what}… ${Math.min(i + BATCH, rows.length)}/${rows.length}`);
-      }
-    };
 
     // 6. Workflow rules (criteria or formula — an INACTIVE rule blocks too),
     // email alerts whose recipient is this field, outbound messages that send it.
@@ -2331,6 +2337,8 @@ const FieldCleaner = (() => {
     const groupHtml = (type, items) => {
       const cfg = TYPE_CFG[type] || { ...TYPE_CFG_DEFAULT, label: type };
       const nItems = type === 'Flow' ? _flowCards.length : items.length;
+      // the bulk buttons count only what they would touch — a Process Builder card is listed but never rewritten
+      const nFix = type === 'Flow' ? _flowCards.filter(c => !c.pb).length : nItems;
       return `
         <div class="fc-group" id="fcGroup_${esc(type)}">
           <div class="fc-group-hdr">
@@ -2343,8 +2351,8 @@ const FieldCleaner = (() => {
               : type === 'FlexiPage'
                 ? xlinkHtml('pages', '↗ Lightning Pages', 'Inspect assignments, org defaults, and profile overrides for these pages in the Lightning Pages tool')
                 : ''}
-            ${cfg.fixable && nItems > 1
-              ? `<span class="fc-fix-allbox" data-type="${esc(type)}" data-n="${nItems}" data-label="${esc(cfg.label)}">${_fixAllHtml(type, nItems, cfg.label)}</span>`
+            ${cfg.fixable && nFix > 1
+              ? `<span class="fc-fix-allbox" data-type="${esc(type)}" data-n="${nFix}" data-label="${esc(cfg.label)}">${_fixAllHtml(type, nFix, cfg.label)}</span>`
               : ''}
           </div>
           <div class="fc-group-items">

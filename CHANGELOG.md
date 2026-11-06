@@ -61,7 +61,10 @@ extensions containing root files that start with `_`).
   process is listed under Flows and blocks like one, but is never rewritten here — its card points to
   Setup. Paths join the mentions: the delete goes through and the Path stays active on a field that no
   longer exists. When Salesforce still refuses, the error now names the kind it named. The note under
-  the results says exactly what is read and what is not.
+  the results says exactly what is read and what is not. Two mentions were being missed as well: a
+  compact layout that no record type uses (Salesforce's describe lists only the assigned ones; every
+  compact layout of the object is read now) and a custom quick action of the object (its name carries
+  the object's prefix, which the scan took for a global action).
 - **Field Cleaner tells blockers from mentions, and scans either.** The results now come in two
   sections: 🔒 what must be cleared before Salesforce deletes the field, and 👀 the other mentions (the
   delete goes through, these break afterwards). A switch above Scan picks what to read: 🔍 Everything,
