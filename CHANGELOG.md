@@ -27,7 +27,11 @@ extensions containing root files that start with `_`).
   close the dialog or the tab whenever, nothing is lost. ✕ on a row goes back to the source's value,
   ∅ writes the field empty, and the footer counts the changed values. A field that is empty in the
   source carries the ∅ mark from the start — it is written empty — and a typed value lifts the mark.
-  A record that could not be read from the source is said so, never shown as empty. The bulk dialog (one value for every ticked
+  A record that could not be read from the source is said so, never shown as empty; a single field
+  the org refuses for your user (describe lists it, the query says "No such column") is dropped from
+  the read and shown as "not readable". The record type has a row of its own: the source's type by
+  name, and a pick among the target's — a record without a pick lands on the target's type of the
+  same API name, as before. The bulk dialog (one value for every ticked
   record) keeps its Save button.
 - **🧪 Dry run** on the Deploy page, next to ▶ Deploy: a real write that Salesforce rolls back. The
   selected inserts go to the target in one transaction together with a record that always fails, so
@@ -66,7 +70,16 @@ extensions containing root files that start with `_`).
   the results says exactly what is read and what is not. Two mentions were being missed as well: a
   compact layout that no record type uses (Salesforce's describe lists only the assigned ones; every
   compact layout of the object is read now) and a custom quick action of the object (its name carries
-  the object's prefix, which the scan took for a global action).
+  the object's prefix, which the scan took for a global action). A demo field carrying every reference
+  type at once found four more: a matching rule on a custom field (Salesforce returns the field's Id,
+  not its name), inactive validation rules (never returned by the index; they have a leg now, listed
+  as a mention), lookup filters named "nf_Contact_00N…" (now named by their lookup field), and formula
+  fields, custom buttons, lookup filters and field sets shown by their raw type name.
+- **Field Cleaner's "how much data is stored" line was audited** after the owner doubted it on a field
+  deleted at work. Three ways it could be wrong are closed: a count that came back for an earlier pick
+  could land under the next field; a formula field was counted as if it stored data (describe never
+  says "formula"); a checkbox was "100% populated" on every org, since false is a value — a checkbox is
+  now counted by how many records have it ticked, and says so.
 - **Field Cleaner tells blockers from mentions, and scans either.** The results now come in two
   sections: 🔒 what must be cleared before Salesforce deletes the field, and 👀 the other mentions (the
   delete goes through, these break afterwards). A switch above Scan picks what to read: 🔍 Everything,

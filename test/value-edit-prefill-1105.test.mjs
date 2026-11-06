@@ -14,7 +14,8 @@ describe('one record: the box holds the value that is written', () => {
   it('the typed value, else the source\'s, as text — and the source\'s text travels on the box for the way back', () => {
     expect(VE).toContain("const srcText = f => (!many && srcRec) ? asText(srcRec[f.name]) : '';");
     expect(VE).toContain('const boxText = isNull ? \'\' : cur !== undefined ? asText(cur) : srcText(f);');
-    expect(VE).toContain('data-ve-src="${esc(srcText(f))}" value="${esc(boxText)}"');
+    expect(VE).toContain('data-ve-src="${esc(srcText(f))}"${unread');
+    expect(VE).toContain('value="${esc(boxText)}" placeholder=');
     expect(VE).toContain("typeof v === 'boolean' ? String(v) : typeof v === 'object' ? JSON.stringify(v) : String(v)");
   });
   it('"changed" means differs from the source (one record) · non-empty (many)', () => {

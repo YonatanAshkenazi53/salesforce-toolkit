@@ -131,3 +131,12 @@ describe('the pages', () => {
     expect(ENG).toMatch(/url: `\/services\/data\/\$\{apiVersion\}\/sobjects\/Account`, referenceId: 'poison', body: sftkProbePoison\(\)/);
   });
 });
+
+// 2026-11-07 (user, screenshot of the confirm dialog): "this button shuold say only dry run"
+describe('the dry-run confirm button', () => {
+  it('reads "Dry run", nothing more', () => {
+    const RC = readFileSync(new URL('../studio-reconcile.js', import.meta.url), 'utf8');
+    expect(RC).toContain("confirmLabel: '🧪 Dry run',");
+    expect(RC).not.toContain('Run the dry run');
+  });
+});

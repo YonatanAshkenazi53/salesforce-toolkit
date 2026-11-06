@@ -299,7 +299,7 @@ function fcScopeLegs(scope, objApi) {
     sharingRules: blockers, duplicateRules: blockers, lwc: blockers, customMetadata: blockers,
     leadMapping: blockers && ['lead', 'account', 'contact', 'opportunity'].includes(o),
     objectRules: blockers && (o === 'lead' || o === 'case'),
-    reportTypes: mentions, listViews: mentions, compactLayouts: mentions, quickActions: mentions, paths: mentions,
+    reportTypes: mentions, listViews: mentions, compactLayouts: mentions, quickActions: mentions, paths: mentions, validationRulesOff: mentions,
   };
 }
 function fcScopeLabel(scope) {
@@ -343,7 +343,7 @@ function fcEstimateScanCalls(counts, scope, objApi) {
   ].filter(Boolean);
   // the fixed legs of this scope: field id + the index always; then one list or query per leg that runs
   let now = 2 + [L.flexiPages, L.listViews, L.compactLayouts, L.quickActions, L.matchingRules, L.workflowFieldUpdates, L.reportTypes,
-    L.approvals, L.sharingRules, L.duplicateRules, L.lwc, L.customMetadata, L.leadMapping, L.paths].filter(Boolean).length
+    L.approvals, L.sharingRules, L.duplicateRules, L.lwc, L.customMetadata, L.leadMapping, L.paths, L.validationRulesOff].filter(Boolean).length
     + (L.workflow ? 3 : 0) + (L.objectRules ? 3 : 0);
   const moreIf = [];
   for (const l of legs) {
@@ -1608,6 +1608,7 @@ const FieldCleaner = (() => {
     const re      = _fieldTokenRe();
     const obj     = _selObj.api;
     const fieldLc = _selField.api.toLowerCase();
+    const fid15   = String(fieldId || '').substring(0, 15).toLowerCase();   // the field's Id, where a leg returns Ids instead of names
     // Shared by the legs below — Tooling where it exists; readMetadata (SOAP, last resort) for the types that have no Tooling read.
     const objLc = obj.toLowerCase();
     const sameField = v => { const f = String(v || '').toLowerCase(); return f === fieldLc || f === `${objLc}.${fieldLc}`; };
@@ -1736,8 +1737,9 @@ const FieldCleaner = (() => {
                `FROM MatchingRuleItem WHERE MatchingRule.SobjectType = '${obj}'` });
       if (!mriRes?.error) {
         for (const it of (mriRes?.records || [])) {
+          // a CUSTOM field comes back as the field's Id, not its name (live 2026-11-07: "00NdL00002h5fC1UAI" for an inactive rule on the field)
           const f = String(it.Field || '').toLowerCase();
-          if (f === fieldLc || f.endsWith('.' + fieldLc)) {
+          if (f === fieldLc || f.endsWith('.' + fieldLc) || (fid15 && f.startsWith(fid15))) {
             add('MatchingRule', it.MatchingRuleId,
                 it.MatchingRule?.MasterLabel || it.MatchingRule?.DeveloperName || it.MatchingRuleId);
           }
@@ -1894,6 +1896,28 @@ const FieldCleaner = (() => {
       msg('Scanning Paths…');
       const rows = (await sfQ(`SELECT Id, DeveloperName, MasterLabel, IsActive, SobjectProcessField FROM PathAssistant WHERE SobjectType = '${obj}'`, true))?.records || [];
       for (const p of rows) if (sameField(p.SobjectProcessField)) add('PathAssistant', p.Id, (p.MasterLabel || p.DeveloperName) + (p.IsActive === false ? ' (inactive)' : ''));
+    } catch (_) {/* non-fatal */}
+
+    // 15. Inactive validation rules (a mention: live-tested, an inactive rule
+    // lets the delete through; the index returns only active ones — the demo
+    // scan of 2026-11-07 listed none). One Tooling list, one read per rule.
+    if (L.validationRulesOff) try {
+      msg('Scanning inactive validation rules…');
+      const rows = (await sfQ(`SELECT Id, ValidationName FROM ValidationRule WHERE EntityDefinition.QualifiedApiName = '${obj}' AND Active = false`, true))?.records || [];
+      await eachMetadata('ValidationRule', rows, m => re.test(String(m.errorConditionFormula || '')) || sameField(m.errorDisplayField),
+        'ValidationRuleInactive', r => `${r.ValidationName} (inactive)`, 'inactive validation rules');
+    } catch (_) {/* non-fatal */}
+
+    // The index names a lookup filter "nf_<Object>_<field id>" — say which lookup field it is instead.
+    try {
+      const lf = (existingDeps || []).filter(d => d.MetadataComponentType === 'LookupFilter' && /^nf_\w+?_(00N\w{12,15})$/.test(String(d.MetadataComponentName || '')));
+      if (lf.length) {
+        const idOf = d => String(d.MetadataComponentName).match(/(00N\w{12,15})$/)[1].substring(0, 15);
+        const ids = [...new Set(lf.map(idOf))];
+        const r = await sfQ(`SELECT Id, DeveloperName, EntityDefinition.QualifiedApiName FROM CustomField WHERE Id IN (${ids.map(i => `'${i}'`).join(',')})`, true);
+        const by = new Map((r?.records || []).map(f => [String(f.Id).substring(0, 15), `${f.EntityDefinition?.QualifiedApiName || '?'}.${f.DeveloperName}__c`]));
+        for (const d of lf) if (by.has(idOf(d))) d.MetadataComponentName = `${by.get(idOf(d))} — its lookup filter`;
+      }
     } catch (_) {/* non-fatal */}
 
     return hits;
@@ -2079,6 +2103,17 @@ const FieldCleaner = (() => {
                       note: 'Update the page markup to remove the field reference.' },
     RestrictionRule: { icon: '🚧', label: 'Scoping & Restriction Rules', fixable: false, sev: 'blocker',
                       note: 'The rule’s record filter names the field — active or not. Edit the rule in Object Manager → Scoping Rules / Restriction Rules.' },
+    // the index returns these four by their raw type name; the demo scan of 2026-11-07 showed them as "CustomField 2", "LookupFilter 1: nf_Contact_00N…"
+    CustomField:    { icon: '🧮', label: 'Formula & Roll-up Fields', fixable: false, sev: 'blocker',
+                      note: 'A formula or roll-up summary field reads this field — on this object or across a relationship. Change or delete that field in Object Manager → Fields & Relationships.' },
+    WebLink:        { icon: '🔗', label: 'Custom Buttons & Links', fixable: false, sev: 'blocker',
+                      note: 'The button’s URL or content merges the field. Edit it in Object Manager → Buttons, Links, and Actions.' },
+    LookupFilter:   { icon: '🔎', label: 'Lookup Filters', fixable: false, sev: 'blocker',
+                      note: 'A lookup field’s filter compares this field. Edit the filter on that lookup field in Object Manager → Fields & Relationships.' },
+    FieldSet:       { icon: '🗃', label: 'Field Sets', fixable: false, sev: 'blocker',
+                      note: 'The field set lists the field. Take it out in Object Manager → Field Sets.' },
+    ValidationRuleInactive: { icon: '☑', label: 'Validation Rules (inactive)', fixable: false, sev: 'silent',
+                      note: 'An inactive rule does not block the delete, but its formula breaks the day it is switched on again. Fix or delete it in Object Manager → Validation Rules.' },
     ProcessBuilder: { icon: '⚙', label: 'Process Builder',  fixable: false, sev: 'blocker',
                       note: 'Open the process in Setup (Process Automation → Process Builder), take the field out of its criteria and actions or deactivate and delete the process, then re-scan. Listed under Flows; not edited here.' },
     PathAssistant:  { icon: '🛤', label: 'Paths',            fixable: false, sev: 'silent',
@@ -3370,31 +3405,52 @@ const FieldCleaner = (() => {
   // a second gives the last time a value was written. Formula/derived fields
   // (nothing stored) and aggregate-unsupported fields degrade to an honest
   // "N/A". Huge objects that time out fall back to a LIMIT sample.
-  let _dataVerdict = null;   // { fillPct, filled, total, lastIso, formula, sampled } | null
+  let _dataVerdict = null;   // { fillPct, filled, total, lastIso, formula, sampled, bool } | null
+  // Audit 2026-11-07 (user: "אני לא בטוח שהוא קלט נכון כמה רשומות משתמשות בשדה"): three ways the
+  // number could be wrong, each closed here —
+  //   • a race: pick field A, then B before A's count is back → A's numbers under B. Every run
+  //     carries a token; a count that comes back for an earlier pick is dropped.
+  //   • a formula / roll-up / auto-number: describe never says "formula" in `type` (it says
+  //     string/double with calculated:true), so the old test missed it and the field was counted
+  //     (or sampled) as if it stored data. `calculated` and `autoNumber` are read now.
+  //   • a checkbox is never null — COUNT(field) equals COUNT(Id) on every org, "100% populated" for
+  //     a box nobody ticks. A checkbox is counted by how many records have it TICKED.
+  let _dataRun = 0;
   async function runDataUsage() {
     _dataVerdict = null;
+    const run = ++_dataRun, stale = () => run !== _dataRun;
     const el = () => eid('fcDataVerdict');
     if (!el() || !_selObj?.api || !_selField?.api) return;
-    const obj = _selObj.api, fld = _selField.api;
+    const obj = _selObj.api, fld = _selField.api, d = _selField.desc || {};
 
     // Formula / roll-up / auto-number fields never "store" editable data.
-    if (/formula|roll-?up|summary|auto\s*number/i.test(_selField.type || '')) {
+    if (d.calculated || d.autoNumber || /formula|roll-?up|summary|auto\s*number|calculated/i.test(_selField.type || '')) {
       _dataVerdict = { formula: true };
       _renderDataVerdict();
       return;
     }
 
-    const agg = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false,
-      query: `SELECT COUNT(Id) tot, COUNT(${fld}) filled FROM ${obj}` });
+    const isBool = (d.type || _selField.type) === 'boolean';
+    const agg = isBool
+      ? await (async () => {
+          const t = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, query: `SELECT COUNT(Id) tot FROM ${obj}` });
+          if (t.error) return t;
+          const n = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, query: `SELECT COUNT(Id) filled FROM ${obj} WHERE ${fld} = true` });
+          if (n.error) return n;
+          return { records: [{ tot: (t.records || [])[0]?.tot, filled: (n.records || [])[0]?.filled }] };
+        })()
+      : await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false,
+          query: `SELECT COUNT(Id) tot, COUNT(${fld}) filled FROM ${obj}` });
+    if (stale()) return;
 
     if (agg.error) {
       // Aggregation not supported (formula/encrypted/long-text) or timeout →
       // sample fallback: read a slice and estimate the fill rate.
       if (/aggregate|group by|not supported|COUNT|encrypted/i.test(agg.error)) {
-        return _sampleDataUsage(obj, fld);
+        return _sampleDataUsage(obj, fld, run);
       }
       if (/timeout|time limit|too many/i.test(agg.error)) {
-        return _sampleDataUsage(obj, fld);
+        return _sampleDataUsage(obj, fld, run);
       }
       const fe = sftkFriendlyError(agg.error);
       const e = el(); if (e) { e.className = 'fc-data-verdict'; e.title = fe.raw; e.textContent = `📊 Couldn't measure field usage: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`; }
@@ -3407,20 +3463,22 @@ const FieldCleaner = (() => {
     let lastIso = null;
     if (filled > 0) {
       const mx = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false,
-        query: `SELECT MAX(LastModifiedDate) m FROM ${obj} WHERE ${fld} != null` });
+        query: `SELECT MAX(LastModifiedDate) m FROM ${obj} WHERE ${fld} ${isBool ? '= true' : '!= null'}` });
+      if (stale()) return;
       lastIso = (mx.records || [])[0]?.m || null;
     }
     _dataVerdict = {
-      filled, total, lastIso, sampled: false,
+      filled, total, lastIso, sampled: false, bool: isBool,
       fillPct: total > 0 ? (filled / total * 100) : 0,
     };
     _renderDataVerdict();
   }
 
-  async function _sampleDataUsage(obj, fld) {
+  async function _sampleDataUsage(obj, fld, run) {
     const el = eid('fcDataVerdict');
     const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
       query: `SELECT ${fld} FROM ${obj} LIMIT 5000` });
+    if (run !== undefined && run !== _dataRun) return;   // a later pick replaced this one
     if (q.error) {
       const fe = sftkFriendlyError(q.error);
       if (el) { el.className = 'fc-data-verdict'; el.title = fe.raw; el.textContent = `📊 Couldn't measure field usage: ${fe.message}${fe.hint ? ' — ' + fe.hint : ''}`; }
@@ -3455,7 +3513,9 @@ const FieldCleaner = (() => {
     // percentage is of ALL records, the count is how many hold a value. Two
     // facts, said as two facts.
     const scope = `${v.total.toLocaleString()} ${v.sampled ? 'sampled' : 'records'}`;
-    const holders = v.filled === 0 ? 'none holds a value'
+    const holders = v.bool
+      ? (v.filled === 0 ? 'none is ticked' : `${v.filled.toLocaleString()} ${v.filled === 1 ? 'is' : 'are'} ticked`)
+      : v.filled === 0 ? 'none holds a value'
       : `${v.sampled ? '~' : ''}${v.filled.toLocaleString()} hold${v.filled === 1 && !v.sampled ? 's' : ''} a value`;
     // Never round UP to 100% / down to 0% unless the value is truly there —
     // "100% empty" on a field that still holds 12 values would be a lie.
@@ -3467,8 +3527,8 @@ const FieldCleaner = (() => {
       <span class="fc-fact-ico">${safe ? '✅' : '⚠'}</span>
       <span class="fc-fact-text"><span class="fc-data-badge">${safe ? 'SAFE' : 'CAUTION'}</span>
         ${safe
-          ? `Empty on <strong>${pctStr(emptyPct)}%</strong> of ${scope} · ${holders}`
-          : `Populated on <strong>${pctStr(pctFilled)}%</strong> of ${scope} · ${holders}`}
+          ? `${v.bool ? 'Unticked' : 'Empty'} on <strong>${pctStr(emptyPct)}%</strong> of ${scope} · ${holders}`
+          : `${v.bool ? 'Ticked' : 'Populated'} on <strong>${pctStr(pctFilled)}%</strong> of ${scope} · ${holders}`}
         · last value written <strong>${ageStr}</strong>${v.sampled ? ' <em>(sampled)</em>' : ''}
       </span>`;
   }
@@ -5413,6 +5473,11 @@ const FieldCleaner = (() => {
       Layout:         `/lightning/setup/ObjectManager/${obj}/PageLayouts/view`,
       ListView:       `/lightning/o/${obj}/list`,
       ValidationRule: `/lightning/setup/ObjectManager/${obj}/ValidationRules/view`,
+      ValidationRuleInactive: `/lightning/setup/ObjectManager/${obj}/ValidationRules/view`,
+      CustomField:    `/lightning/setup/ObjectManager/${obj}/FieldsAndRelationships/view`,
+      LookupFilter:   `/lightning/setup/ObjectManager/${obj}/FieldsAndRelationships/view`,
+      WebLink:        `/lightning/setup/ObjectManager/${obj}/ButtonsLinksActions/view`,
+      FieldSet:       `/lightning/setup/ObjectManager/${obj}/FieldSets/view`,
       ApexClass:      '/lightning/setup/ApexClasses/home',
       ApexTrigger:    '/lightning/setup/ApexTriggers/home',
       WorkflowRule:   '/lightning/setup/WorkflowRules/home',

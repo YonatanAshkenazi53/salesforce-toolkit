@@ -37,20 +37,47 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
 
   // the source record's own values (one record), and the target's on a Changed row
   let readErr = '';   // why the source record could not be read — said on the page, never shown as "empty" (2026-11-05)
+  // columns the org refused for the running user ("No such column 'X'": describe lists a field the user cannot
+  // query — screenshot 2026-11-07, SFTK_Dbg_Count__c). They are dropped and the read is tried again, and named.
+  const unreadable = [];
   const q = async (sess, id, cols) => {
-    const r = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true, query: `SELECT ${['Id', ...cols].join(',')} FROM ${obj} WHERE Id = '${id}'` });
-    if (!r || r.error) { readErr = (r && r.error) ? String(r.error) : 'no answer'; return null; }
-    readErr = (r.records && r.records[0]) ? '' : 'the record is not there (deleted, or not visible to you)';
-    return (r.records && r.records[0]) || null;
+    let use = [...cols];
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const r = await sendBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true, query: `SELECT ${['Id', ...use].join(',')} FROM ${obj} WHERE Id = '${id}'` });
+      const bad = r && r.error ? /No such column '([^']+)'/i.exec(String(r.error)) : null;
+      if (bad && use.some(c => c.toLowerCase() === bad[1].toLowerCase())) {
+        use = use.filter(c => c.toLowerCase() !== bad[1].toLowerCase());
+        if (!unreadable.some(u => u.toLowerCase() === bad[1].toLowerCase())) unreadable.push(bad[1]);
+        continue;
+      }
+      if (!r || r.error) { readErr = (r && r.error) ? String(r.error) : 'no answer'; return null; }
+      readErr = (r.records && r.records[0]) ? '' : 'the record is not there (deleted, or not visible to you)';
+      return (r.records && r.records[0]) || null;
+    }
+    readErr = 'too many of its fields could not be read';
+    return null;
   };
+  const isUnread = name => unreadable.some(u => u.toLowerCase() === String(name).toLowerCase());
+  // Record Type (user 2026-11-07: "we dont show record type for records, i want to be able to edit them too"):
+  // the source's by name, and a pick among the target's — stored as RecordTypeId, which the engine writes as-is
+  // (a record without a pick lands on the target's type of the same API name, as before).
+  const rtInfos = (desc.recordTypeInfos || []).filter(r => r && r.recordTypeId);
+  const hasRt = rtInfos.some(r => !r.master);
+  let tgtRts = [];
+  if (hasRt && tgtSess && tgtSess.sid) {
+    const td = await describe(obj, tgtSess.orgUrl, tgtSess.sid);
+    if (!host.isConnected) return;
+    tgtRts = ((td && td.recordTypeInfos) || []).filter(r => r && r.recordTypeId && r.available !== false);
+  }
+  const rtCols = hasRt ? ['RecordTypeId', 'RecordType.Name', 'RecordType.DeveloperName'] : [];
   let srcRec = null, tgtRec = null;
   if (!many) {
     const plain = fields.filter(f => !f.reference).map(f => f.name);
     const refs = fields.filter(f => f.reference && f.relationshipName && !(f.refTo.length > 1)).map(f => `${f.relationshipName}.Name`);
     const refIds = fields.filter(f => f.reference).map(f => f.name);   // the lookup's own id too — the landing line needs it
-    srcRec = await q(srcSess, ids[0], [...plain, ...refIds, ...refs]);
-    if (!srcRec) srcRec = await q(srcSess, ids[0], [...plain, ...refIds]);   // a related object without a Name field — read without the lookups' names
-    if (tgtId && tgtSess && tgtSess.sid) { const tp = [...new Set(plain.map(tf))]; tgtRec = await q(tgtSess, tgtId, [...tp, ...refs]); if (!tgtRec) tgtRec = await q(tgtSess, tgtId, tp); }
+    srcRec = await q(srcSess, ids[0], [...plain, ...refIds, ...refs, ...rtCols]);
+    if (!srcRec) srcRec = await q(srcSess, ids[0], [...plain, ...refIds, ...rtCols]);   // a related object without a Name field — read without the lookups' names
+    if (tgtId && tgtSess && tgtSess.sid) { const tp = [...new Set(plain.map(tf))]; tgtRec = await q(tgtSess, tgtId, [...tp, ...refs, ...rtCols]); if (!tgtRec) tgtRec = await q(tgtSess, tgtId, [...tp, ...rtCols]); }
     if (!host.isConnected) return;
   }
   const val = v => (v === null || v === undefined || v === '') ? '<span class="ds-dc-empty">empty</span>' : `<span class="ds-dc-v" title="${esc(String(v))}">${esc(typeof v === 'object' ? JSON.stringify(v) : String(v))}</span>`;
@@ -79,10 +106,11 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     const boxText = isNull ? '' : cur !== undefined ? asText(cur) : srcText(f);
     // a field empty in the source is marked ∅ from the start — it IS written empty — and a typed value lifts the mark
     // (user 2026-11-07: "by default זה יסומן בתור ריק אלא אם כן המשתמש אמר אחרת. כמובן שאפשר לתת לו לבטל ולהכניס ערך")
-    const dflEmpty = !many && !f.reference && !isNull && cur === undefined && !!srcRec && srcText(f) === '';
-    const boxHint = isNull ? 'written empty' : dflEmpty ? 'empty' : many ? esc(f.picklist ? 'pick a value (API name is written)…' : hint(f.type)) : (srcText(f) ? '' : 'type a value, or leave it empty');
+    const unread = !many && isUnread(f.name);   // the org refused this column for the running user: not "empty", unknown
+    const dflEmpty = !many && !f.reference && !isNull && cur === undefined && !!srcRec && srcText(f) === '' && !unread;
+    const boxHint = isNull ? 'written empty' : dflEmpty ? 'empty' : unread ? 'could not be read for your user — type a value, or leave it' : many ? esc(f.picklist ? 'pick a value (API name is written)…' : hint(f.type)) : (srcText(f) ? '' : 'type a value, or leave it empty');
     const cls = `ds-ve-row${edited ? ' ds-ve-row-on' : ''}${isNull ? ' ds-ve-null-on' : ''}${dflEmpty ? ' ds-ve-empty-dfl' : ''}`;
-    const srcCell = many ? '' : `<td class="ds-ve-src">${f.reference ? (relName(f) != null ? `${val(relName(f))}<div class="ds-dep-muted">${esc(String(srcRec[f.name] || ''))}</div>` : val(srcRec ? srcRec[f.name] : null)) : val(srcRec ? srcRec[f.name] : null)}</td>`;
+    const srcCell = many ? '' : `<td class="ds-ve-src">${unread ? '<span class="ds-dc-empty" title="The org refused this column for your user — the value is unknown, not empty">not readable</span>' : f.reference ? (relName(f) != null ? `${val(relName(f))}<div class="ds-dep-muted">${esc(String(srcRec[f.name] || ''))}</div>` : val(srcRec ? srcRec[f.name] : null)) : val(srcRec ? srcRec[f.name] : null)}</td>`;
     const tgtCell = many || !tgtId ? '' : `<td class="ds-ve-tgt">${f.reference ? (tgtRel(f) != null ? val(tgtRel(f)) : val(tgtRec ? tgtRec[tf(f.name)] : null)) : val(tgtRec ? tgtRec[tf(f.name)] : null)}</td>`;
     const refObj = f.reference ? ((lkpCfg[f.name] && lkpCfg[f.name].matchObject) || f.refTo[0] || '') : '';
     const editor = f.reference
@@ -91,7 +119,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
           <div class="ds-ve-lkp-cur">${cur === '__mixed__' ? '<span class="ds-dep-muted">different picks per record</span>' : cur ? pickLine(f.name, cur, nameOf(cur)) : matchLine(f.name)}</div>
           ${!many && refObj && relName(f) != null ? `<div class="ds-ve-land" data-ve-land="${esc(f.name)}"${cur ? ' style="display:none"' : ''}>⏳ where it lands in ${esc(tgtL)}…</div>` : ''}
         </div>`
-      : `<div class="ds-ve-edit"><input type="text" class="ds-input ds-input-sm ds-ve-in" data-ve-field="${esc(f.name)}" data-ve-type="${esc(f.type)}" data-ve-src="${esc(srcText(f))}" value="${esc(boxText)}" placeholder="${boxHint}" ${f.picklist ? `list="dsVeList_${esc(f.name)}"` : ''} aria-label="The value ${esc(f.label)} is written with" ${isNull ? 'disabled' : ''}>
+      : `<div class="ds-ve-edit"><input type="text" class="ds-input ds-input-sm ds-ve-in" data-ve-field="${esc(f.name)}" data-ve-type="${esc(f.type)}" data-ve-src="${esc(srcText(f))}"${unread ? ' data-ve-unread="1"' : ''} value="${esc(boxText)}" placeholder="${boxHint}" ${f.picklist ? `list="dsVeList_${esc(f.name)}"` : ''} aria-label="The value ${esc(f.label)} is written with" ${isNull ? 'disabled' : ''}>
           ${f.picklist ? `<datalist id="dsVeList_${esc(f.name)}">${f.picklist.map(v => `<option value="${esc(v.value)}" label="${esc(v.label === v.value ? v.label : `${v.label} · API ${v.value}`)}">`).join('')}</datalist>` : ''}
           <button class="ds-btn ds-btn-xs ds-ve-null${isNull || dflEmpty ? ' ds-btn-primary' : ''}" data-ve-null="${esc(f.name)}" title="${isNull ? 'Written empty — click to type a value instead' : dflEmpty ? 'Empty in the source, written empty — type a value instead' : 'Write this field empty'}">∅</button>
           <button class="ds-btn ds-btn-xs ds-ve-clear" data-ve-clear="${esc(f.name)}" title="${many ? 'Keep each record\'s own value' : 'Back to the source\'s value'}" ${edited ? '' : 'style="visibility:hidden"'}>✕</button>
@@ -102,11 +130,29 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   const has = f => { if (f.reference ? !!sameLkp(f) : sameOv(f) !== undefined) return 2; if (!srcRec) return 0; const v = f.reference && f.relationshipName ? (relName(f) != null || srcRec[f.name]) : srcRec[f.name]; return v !== null && v !== undefined && v !== '' ? 1 : 0; };
   fields.sort((a, b) => (b.nameField - a.nameField) || (has(b) - has(a)) || a.label.localeCompare(b.label));
   const nEdited = fields.filter(f => f.reference ? !!sameLkp(f) : sameOv(f) !== undefined).length;
+  // the Record Type row: the source's type by name; a pick among the target's types, else the type of the same API name
+  const rtRow = () => {
+    if (!hasRt) return '';
+    const picks = ids.map(id => ovOf(id).RecordTypeId);
+    const cur = picks.every(v => v === picks[0]) ? picks[0] : '__mixed__';
+    const srcRt = srcRec && srcRec.RecordType ? srcRec.RecordType : null;
+    const srcDev = srcRt ? srcRt.DeveloperName : '';
+    const same = srcDev ? tgtRts.find(r => r.developerName === srcDev) : null;
+    const dflText = many ? 'each record’s own type, by API name'
+      : srcDev ? (same ? `the same type in ${tgtL}: ${same.name}` : `⚠ ${tgtL} has no record type named ${srcDev} — written with its default type`)
+      : `${tgtL}’s default type`;
+    const opts = tgtRts.map(r => `<option value="${esc(r.recordTypeId)}" ${cur === r.recordTypeId ? 'selected' : ''}>${esc(r.name)} (${esc(r.developerName)})${r.master ? ' — Master' : ''}</option>`).join('');
+    return `<tr class="ds-ve-row ds-ve-rt${cur && cur !== '__mixed__' ? ' ds-ve-row-on' : ''}" data-ve-row="RecordTypeId" data-ve-search="record type recordtypeid"><th scope="row">Record Type<div class="ds-dep-muted">RecordTypeId · the type of the same API name, unless you pick one</div></th>${many ? '' : `<td class="ds-ve-src">${val(srcRt ? `${srcRt.Name} (${srcRt.DeveloperName})` : (srcRec && !srcRec.RecordTypeId ? 'Master' : null))}</td>`}${many || !tgtId ? '' : `<td class="ds-ve-tgt">${val(tgtRec && tgtRec.RecordType ? `${tgtRec.RecordType.Name} (${tgtRec.RecordType.DeveloperName})` : null)}</td>`}<td class="ds-ve-cell"><div class="ds-ve-edit">
+        <select class="ds-select ds-select-sm ds-ve-rt-sel" data-ve-rt="1" aria-label="The record type this record is written with in ${esc(tgtL)}">${cur === '__mixed__' ? '<option value="__mixed__" selected>different picks per record</option>' : ''}<option value=""${cur ? '' : ' selected'}>${esc(dflText)}</option>${opts}</select>
+        <button class="ds-btn ds-btn-xs ds-ve-clear" data-ve-rt-clear="1" title="Back to the type of the same API name"${cur ? '' : ' style="visibility:hidden"'}>✕</button>
+      </div></td></tr>`;
+  };
   const piiNote = p.piiPolicy && Object.values(p.piiPolicy).some(Boolean) ? ' A field the PII policy covers keeps its masked value — the policy wins.' : '';
   host.innerHTML = `
     <div class="ds-ve-tools"><input type="search" id="dsVeFilter" class="ds-input ds-input-sm" placeholder="🔍 find a field…" aria-label="Find a field"><span class="ds-dep-muted">${fields.length.toLocaleString()} writable field${fields.length === 1 ? '' : 's'}${many ? ` · a value typed here is written for all ${ids.length.toLocaleString()} records` : ''}</span><span class="ds-dep-sp"></span><label class="ds-ve-onlyedited"><input type="checkbox" id="dsVeOnly" ${nEdited ? '' : 'disabled'}> only my changed values (${nEdited})</label></div>
     <div class="ds-merge-wrap ds-ve-wrap"><table class="ds-merge-table ds-ve-table"><thead><tr><th>Field</th>${many ? '' : `<th>${esc(srcL)} <span class="ds-dep-muted">source</span></th>`}${many || !tgtId ? '' : `<th>${esc(tgtL)} <span class="ds-dep-muted">target now</span></th>`}<th>written as <span class="ds-dep-muted">${many ? '(empty box = each record keeps its own value)' : '(the source\'s value unless you change it)'}</span></th></tr></thead>
-      <tbody>${fields.map(row).join('') || `<tr><td colspan="4" class="ds-dep-muted">No writable field.</td></tr>`}</tbody></table></div>
+      <tbody>${rtRow()}${fields.map(row).join('') || `<tr><td colspan="4" class="ds-dep-muted">No writable field.</td></tr>`}</tbody></table></div>
+    ${!many && unreadable.length ? `<div class="ds-dep-muted ds-ve-note">⚠ ${unreadable.length} field${unreadable.length === 1 ? '' : 's'} could not be read for your user — ${esc(unreadable.join(', '))} — so ${unreadable.length === 1 ? 'its box shows' : 'their boxes show'} "not readable", not empty; a value typed there is still written.</div>` : ''}
     ${!many && readErr ? `<div class="ds-drift-compare-err" id="dsVeReadErr">⚠ This record could not be read from ${esc(srcL)}: ${esc(readErr)}. The source column and the boxes are EMPTY because of that, not because the record is — a value typed here is still written, but check the record in ${esc(srcL)} first.</div>` : ''}
     <div class="ds-ve-foot">${many ? `<button class="ds-btn ds-btn-sm ds-btn-primary" id="dsVeSave">💾 Save values</button><button class="ds-btn ds-btn-sm" data-dsaction="closeModal">Cancel</button>` : `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="closeModal">Close</button><span class="ds-dep-muted" id="dsVeStatus">${nEdited ? `✏ ${nEdited} changed value${nEdited === 1 ? '' : 's'} — saved` : 'saved as you type'}</span>`}<span class="ds-dep-sp"></span><button class="ds-btn ds-btn-xs" id="dsVeClearAll" ${nEdited ? '' : 'disabled'}>${many ? '✕ Clear every typed value' : '✕ Back to the source on every field'}</button></div>
     <div class="ds-dep-muted ds-ve-note">${many ? 'Typed values are' : 'A changed value is'} written to ${esc(tgtL)} by ▶ Deploy (${mode === 'chg' ? 'the update' : 'the insert'}).${many ? '' : ' A field empty in the source is marked ∅ and written empty; type a value to write one instead.'} ${esc(srcL)} is not changed, so after the run a record with a changed value differs from its source and is listed under 🟡 Changed until the orgs agree.${piiNote} ${many ? 'Lookup picks are saved at once; typed values when you press Save.' : 'Everything here is saved as you type — close the dialog whenever you like, nothing is lost.'}</div>`;
@@ -127,11 +173,11 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     if (many || !srcRec) return;
     const inp = tr.querySelector('.ds-ve-in'), b = tr.querySelector('.ds-ve-null'); if (!inp || !b) return;
     const explicit = tr.classList.contains('ds-ve-null-on');
-    const on = !explicit && String(inp.dataset.veSrc || '') === '' && inp.value.trim() === '';
+    const on = !explicit && !inp.dataset.veUnread && String(inp.dataset.veSrc || '') === '' && inp.value.trim() === '';
     tr.classList.toggle('ds-ve-empty-dfl', on);
     if (explicit) return;
     b.classList.toggle('ds-btn-primary', on); b.title = on ? 'Empty in the source, written empty — type a value instead' : 'Write this field empty';
-    inp.placeholder = on ? 'empty' : (String(inp.dataset.veSrc || '') === '' ? 'type a value, or leave it empty' : hint(inp.dataset.veType));
+    inp.placeholder = on ? 'empty' : inp.dataset.veUnread ? 'could not be read for your user — type a value, or leave it' : (String(inp.dataset.veSrc || '') === '' ? 'type a value, or leave it empty' : hint(inp.dataset.veType));
   };
   const mark = tr => { const inp = tr.querySelector('.ds-ve-in'); const on = tr.classList.contains('ds-ve-null-on') || (inp && changedBox(inp)); tr.classList.toggle('ds-ve-row-on', on); const x = tr.querySelector('.ds-ve-clear'); if (x) x.style.visibility = on ? '' : 'hidden'; emptyDfl(tr); };
   // ── one record: saved as you type (debounced), on blur, and flushed when the dialog closes ──
@@ -182,6 +228,20 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
 
   // ── lookups: picked from the target org, saved at once, for every record of the dialog ──
   const saveNode = async () => { if (!p.ephemeral && typeof storageSaveProfiles === 'function') await storageSaveProfiles(); };
+  // ── the record type: a pick is saved at once for every record of the dialog, like a lookup ──
+  const rtStatus = () => { if (many) return; const n = Object.keys(sftkValOvGet(node, p.targetOrg, ids[0])).length; const stEl = eid('dsVeStatus'); if (stEl) stEl.textContent = n ? `✏ ${n} changed value${n === 1 ? '' : 's'} — saved` : 'saved as you type'; const ca = eid('dsVeClearAll'); if (ca) ca.disabled = !n; };
+  host.querySelectorAll('[data-ve-rt]').forEach(sel => sel.addEventListener('change', async () => {
+    const v = sel.value === '__mixed__' ? null : sel.value, tr = sel.closest('tr');
+    if (v === null) return;
+    for (const id of ids) { if (v) sftkValOvSet(node, p.targetOrg, id, 'RecordTypeId', v); else sftkValOvClear(node, p.targetOrg, id, 'RecordTypeId'); }
+    await saveNode();
+    sel.querySelector('option[value="__mixed__"]')?.remove();
+    tr.classList.toggle('ds-ve-row-on', !!v); const x = tr.querySelector('[data-ve-rt-clear]'); if (x) x.style.visibility = v ? '' : 'hidden';
+    rtStatus();
+    showToast(v ? `🪪 Record type → ${sel.selectedOptions[0].textContent} for ${many ? `${ids.length.toLocaleString()} records` : 'this record'} — saved.` : '🪪 Record type: the type of the same API name again — saved.', 'success', 4000);
+    if (typeof onSaved === 'function') onSaved();
+  }));
+  host.querySelectorAll('[data-ve-rt-clear]').forEach(b => b.addEventListener('click', () => { const sel = b.closest('tr').querySelector('[data-ve-rt]'); if (sel) { sel.value = ''; sel.dispatchEvent(new Event('change')); } }));
   host.querySelectorAll('[data-ve-lkp]').forEach(box => {
     const field = box.dataset.veLkp, refObj = box.dataset.veRefobj;
     const inp = box.querySelector('.ds-ve-lkp-in'), res = box.querySelector('.ds-ve-lkp-res');

@@ -2547,7 +2547,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       icon: '🧪',
       revOverride: { html: '🧪 <strong>Nothing is written.</strong> Salesforce evaluates every record and rolls the transaction back; the run then re-reads the org to confirm.', needsCheckbox: false },
       revWord: 'Rolled back — nothing kept',
-      confirmLabel: '🧪 Run the dry run',
+      confirmLabel: '🧪 Dry run',   // user 2026-11-07: "this button shuold say only dry run"
       extraHtml: bodyHtml,
       production: tgtGate ? { label: tgtGate.label || orgLabel(profile.targetOrg) } : null,
     });

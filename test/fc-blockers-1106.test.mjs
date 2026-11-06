@@ -130,3 +130,28 @@ describe('the demo scan of 2026-11-06 (live, npc) — two mention legs that miss
     expect(FC).toContain('data-n="${nFix}"');
   });
 });
+
+describe('the full demo scan of 2026-11-07 (every reference type on one field, npc)', () => {
+  it('a matching rule on a CUSTOM field is found by the field\'s Id — MatchingRuleItem.Field carries the Id, not the name', () => {
+    expect(FC).toContain("if (f === fieldLc || f.endsWith('.' + fieldLc) || (fid15 && f.startsWith(fid15))) {");
+    expect(FC).toContain("const fid15   = String(fieldId || '').substring(0, 15).toLowerCase();");
+  });
+  it('inactive validation rules get a leg of their own (a mention: the index returns only active rules)', () => {
+    expect(FC).toContain("AND Active = false`, true))?.records || [];");
+    expect(FC).toContain("'ValidationRuleInactive', r => `${r.ValidationName} (inactive)`, 'inactive validation rules');");
+    expect(sevOf('ValidationRuleInactive')).toBe('silent');
+    expect(FC).toContain('paths: mentions, validationRulesOff: mentions,');
+  });
+  it('the four index types that showed with raw names have a label, an icon and a Setup link', () => {
+    for (const t of ['CustomField', 'WebLink', 'LookupFilter', 'FieldSet']) {
+      expect(sevOf(t), t).toBe('blocker');
+      expect(FC, t).toMatch(new RegExp('^\\s*' + t + ':\\s*`/lightning/setup/ObjectManager/', 'm'));
+    }
+    expect(FC).toContain("label: 'Formula & Roll-up Fields'");
+    expect(FC).toContain("label: 'Lookup Filters'");
+  });
+  it('a lookup filter is named by its lookup field, not "nf_<Object>_<id>"', () => {
+    expect(FC).toContain("d.MetadataComponentType === 'LookupFilter' && /^nf_");
+    expect(FC).toContain('d.MetadataComponentName = `${by.get(idOf(d))} — its lookup filter`;');
+  });
+});

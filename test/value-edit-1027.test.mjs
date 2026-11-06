@@ -154,7 +154,7 @@ describe('the Deploy page', () => {
 describe('a source-empty field is marked ∅ by default', () => {
   const VE = read('studio-valueedit.js'), CSS = read('studio.css');
   it('the row is rendered marked, with the ∅ button lit and the box saying "empty"', () => {
-    expect(VE).toContain("const dflEmpty = !many && !f.reference && !isNull && cur === undefined && !!srcRec && srcText(f) === '';");
+    expect(VE).toContain("const dflEmpty = !many && !f.reference && !isNull && cur === undefined && !!srcRec && srcText(f) === '' && !unread;");
     expect(VE).toContain("dflEmpty ? 'empty' :");
     expect(VE).toContain("${dflEmpty ? ' ds-ve-empty-dfl' : ''}");
     expect(VE).toContain("ds-ve-null${isNull || dflEmpty ? ' ds-btn-primary' : ''}");
@@ -162,11 +162,42 @@ describe('a source-empty field is marked ∅ by default', () => {
     expect(CSS).toContain('.ds-ve-empty-dfl .ds-ve-in::placeholder {');
   });
   it('the mark follows the box: typing lifts it, clearing brings it back; ∅ on a marked row puts the cursor in the box; an unread record is never shown as empty', () => {
-    expect(VE).toContain("const on = !explicit && String(inp.dataset.veSrc || '') === '' && inp.value.trim() === '';");
+    expect(VE).toContain("const on = !explicit && !inp.dataset.veUnread && String(inp.dataset.veSrc || '') === '' && inp.value.trim() === '';");
     expect(VE).toContain("tr.classList.toggle('ds-ve-empty-dfl', on);");
     expect(VE).toContain('if (many || !srcRec) return;');
     expect(VE).toContain("if (on && tr.classList.contains('ds-ve-empty-dfl')) { inp.focus(); return; }");
     expect(VE).toContain("if (x) x.style.visibility = on ? '' : 'hidden'; emptyDfl(tr); };");
     expect(VE).toContain('A field empty in the source is marked ∅ and written empty; type a value to write one instead.');
+  });
+});
+
+// 2026-11-07 (user, two screenshots of the ▸ record dialog): "we dont show record type for records, i want
+// to be able to edit them too", and a record that "could not be read … No such column 'SFTK_Dbg_Count__c'"
+// (a field the running user cannot query, which describe still lists).
+describe('the Record Type row and the columns the org refuses', () => {
+  const VE = read('studio-valueedit.js');
+  it('a column the org refuses is dropped and the read tried again; the field says "not readable", never "empty"', () => {
+    expect(VE).toContain("const bad = r && r.error ? /No such column '([^']+)'/i.exec(String(r.error)) : null;");
+    expect(VE).toContain('use = use.filter(c => c.toLowerCase() !== bad[1].toLowerCase());');
+    expect(VE).toContain("const unread = !many && isUnread(f.name);");
+    expect(VE).toContain("&& srcText(f) === '' && !unread;");
+    expect(VE).toContain('not readable</span>');
+    expect(VE).toContain("const on = !explicit && !inp.dataset.veUnread && String(inp.dataset.veSrc || '') === '' && inp.value.trim() === '';");
+    expect(VE).toContain('could not be read for your user — ${esc(unreadable.join(\', \'))}');
+  });
+  it('the Record Type row: the source\'s type by name, a pick among the target\'s, stored as RecordTypeId for every record of the dialog', () => {
+    expect(VE).toContain("const hasRt = rtInfos.some(r => !r.master);");
+    expect(VE).toContain("const rtCols = hasRt ? ['RecordTypeId', 'RecordType.Name', 'RecordType.DeveloperName'] : [];");
+    expect(VE).toContain('<tbody>${rtRow()}${fields.map(row).join(\'\')');
+    expect(VE).toContain('data-ve-row="RecordTypeId"');
+    expect(VE).toContain("for (const id of ids) { if (v) sftkValOvSet(node, p.targetOrg, id, 'RecordTypeId', v); else sftkValOvClear(node, p.targetOrg, id, 'RecordTypeId'); }");
+    expect(VE).toContain("the same type in ${tgtL}: ${same.name}");
+    expect(VE).toContain("has no record type named ${srcDev} — written with its default type");
+  });
+  it('the engine writes a picked RecordTypeId as-is: the insert path copies every typed value, the update path applies them after the name remap', () => {
+    const BG = read('background.js'), RC = read('studio-reconcile.js');
+    expect(BG).toContain("if (f.name === 'RecordTypeId') { if (rtMap[v]) p.RecordTypeId = rtMap[v]; continue; }");
+    expect(BG).toContain('p[tf] = tv;\n            valOverridesUsed++;');
+    expect(RC.indexOf("if (sf === 'RecordTypeId' && rtRemap) {")).toBeLessThan(RC.indexOf('const vr = sftkValOvApply(p, valForRec, fm, tgtUpdOk'));
   });
 });
