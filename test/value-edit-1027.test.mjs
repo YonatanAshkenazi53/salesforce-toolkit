@@ -147,3 +147,26 @@ describe('the Deploy page', () => {
     expect(read('studio-builder.js')).toContain('delete node.valueOverrides;');
   });
 });
+
+// 2026-11-07 (user, with a screenshot of the ▸ record dialog): "by default זה יסומן בתור ריק אלא אם כן
+// המשתמש אמר אחרת. כמובן שאפשר לתת לו לבטל ולהכניס ערך" — a field empty in the source carries the ∅
+// mark from the start (it IS written empty); a typed value lifts the mark, clearing the box brings it back.
+describe('a source-empty field is marked ∅ by default', () => {
+  const VE = read('studio-valueedit.js'), CSS = read('studio.css');
+  it('the row is rendered marked, with the ∅ button lit and the box saying "empty"', () => {
+    expect(VE).toContain("const dflEmpty = !many && !f.reference && !isNull && cur === undefined && !!srcRec && srcText(f) === '';");
+    expect(VE).toContain("dflEmpty ? 'empty' :");
+    expect(VE).toContain("${dflEmpty ? ' ds-ve-empty-dfl' : ''}");
+    expect(VE).toContain("ds-ve-null${isNull || dflEmpty ? ' ds-btn-primary' : ''}");
+    expect(VE).toContain("dflEmpty ? 'Empty in the source, written empty — type a value instead'");
+    expect(CSS).toContain('.ds-ve-empty-dfl .ds-ve-in::placeholder {');
+  });
+  it('the mark follows the box: typing lifts it, clearing brings it back; ∅ on a marked row puts the cursor in the box; an unread record is never shown as empty', () => {
+    expect(VE).toContain("const on = !explicit && String(inp.dataset.veSrc || '') === '' && inp.value.trim() === '';");
+    expect(VE).toContain("tr.classList.toggle('ds-ve-empty-dfl', on);");
+    expect(VE).toContain('if (many || !srcRec) return;');
+    expect(VE).toContain("if (on && tr.classList.contains('ds-ve-empty-dfl')) { inp.focus(); return; }");
+    expect(VE).toContain("if (x) x.style.visibility = on ? '' : 'hidden'; emptyDfl(tr); };");
+    expect(VE).toContain('A field empty in the source is marked ∅ and written empty; type a value to write one instead.');
+  });
+});

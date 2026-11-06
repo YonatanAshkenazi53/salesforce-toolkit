@@ -76,11 +76,14 @@ describe('putting the ticks back onto a new scan', () => {
     expect(F.sftkDepSelRestore({ root: { push: ['a'] }, children: {} }, null).dropped).toBe(0);
     expect(F.sftkDepSelLine(0, 0)).toBe('');
   });
-  it('the sentence says what came back and what was dropped, and why', () => {
-    expect(F.sftkDepSelLine(5, 0)).toBe('✓ Your 5 ticks from before are back.');
-    expect(F.sftkDepSelLine(1, 0)).toBe('✓ Your 1 tick from before is back.');
-    expect(F.sftkDepSelLine(0, 3)).toBe('Your 3 ticks from before were dropped — the records are no longer in the list they were ticked in (written since, or changed).');
-    expect(F.sftkDepSelLine(2, 1)).toBe('✓ Your 2 ticks from before are back · 1 dropped — the records are no longer in the list they were ticked in (written since, or changed).');
+  // 2026-11-07 (user, screenshot of the "✓ Your 1 tick from before is back" card): "we dont need this
+  // message. we need the behevior" — ticks that came back are just there; only a DROPPED tick gets a line.
+  it('nothing is said about ticks that came back; a dropped tick is said, with why', () => {
+    expect(F.sftkDepSelLine(5, 0)).toBe('');
+    expect(F.sftkDepSelLine(1, 0)).toBe('');
+    expect(F.sftkDepSelLine(0, 3)).toBe('3 ticks from before were dropped — the records are no longer in the list they were ticked in (written since, or changed).');
+    expect(F.sftkDepSelLine(0, 1)).toBe('1 tick from before was dropped — the record is no longer in the list it was ticked in (written since, or changed).');
+    expect(F.sftkDepSelLine(2, 1)).toBe('1 tick from before was dropped — the record is no longer in the list it was ticked in (written since, or changed). The other 2 ticks are back.');
   });
   it('the disk store keeps the newest deployments only', () => {
     let store = {};
@@ -118,8 +121,8 @@ describe('wiring: saved on the user\'s actions only, put back once per scan, sai
     expect(DEP).toContain('_depSelWrite = _depSelWrite.then(async () => {');
     expect(DEP).toContain("await chrome.storage.local.set({ sftk_dep_sel: _depSelStore });");
   });
-  it('the sentence is on the page, with what the memory covers', () => {
+  it('the card is on the page only for a dropped tick — no "remembered" lecture', () => {
     expect(DEP).toContain('id="dsDepSelNote"');
-    expect(DEP).toContain('Ticks are remembered per deployment and target org — through a refresh, a run and a closed tab.');
+    expect(DEP).not.toContain('Ticks are remembered per deployment and target org');
   });
 });

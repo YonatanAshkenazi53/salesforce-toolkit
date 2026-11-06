@@ -18,14 +18,16 @@ extensions containing root files that start with `_`).
 ### Data Studio
 - **The Deploy page remembers your ticks.** Tick records, refresh, run, open another deployment and
   come back, or close the tab — what you ticked is still ticked. After every scan the page puts back
-  each tick whose record is still in the list it was ticked in, drops the ones that are in the target
-  by now (or gone), and says how many of each. Per deployment and target org; a child object not read
-  yet keeps its ticks until it is read. Counts-only mode keeps the memory off the disk.
+  each tick whose record is still in the list it was ticked in and drops the ones that are in the target
+  by now (or gone). Ticks that come back are simply there; only a dropped tick gets a line, with why.
+  Per deployment and target org; a child object not read yet keeps its ticks until it is read.
+  Counts-only mode keeps the memory off the disk.
 - **▸ record shows the values that are written.** For one record every box now holds the value the
   record is written with — the source's unless you change it — and every change is saved as you type:
   close the dialog or the tab whenever, nothing is lost. ✕ on a row goes back to the source's value,
-  ∅ writes the field empty, and the footer counts the changed values. A record that could not be read
-  from the source is said so, never shown as empty. The bulk dialog (one value for every ticked
+  ∅ writes the field empty, and the footer counts the changed values. A field that is empty in the
+  source carries the ∅ mark from the start — it is written empty — and a typed value lifts the mark.
+  A record that could not be read from the source is said so, never shown as empty. The bulk dialog (one value for every ticked
   record) keeps its Save button.
 - **🧪 Dry run** on the Deploy page, next to ▶ Deploy: a real write that Salesforce rolls back. The
   selected inserts go to the target in one transaction together with a record that always fails, so

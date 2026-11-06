@@ -102,14 +102,13 @@ function sftkDepSelRestore(packed, scan, opts) {
   return { recSel, childSel, kept, dropped, unread };
 }
 
-// The sentence on the page after a restore. Nothing to say when nothing was saved.
+// The sentence on the page after a restore. Ticks that came back are simply
+// there — nothing is said about them (user 2026-11-07: "we dont need this
+// message. we need the behevior"). Only a tick that was DROPPED is worth a line.
 function sftkDepSelLine(kept, dropped) {
-  if (!kept && !dropped) return '';
+  if (!dropped) return '';
   const t = n => `${n.toLocaleString()} tick${n === 1 ? '' : 's'}`;
-  const why = 'the records are no longer in the list they were ticked in (written since, or changed)';
-  if (!dropped) return `✓ Your ${t(kept)} from before ${kept === 1 ? 'is' : 'are'} back.`;
-  if (!kept) return `Your ${t(dropped)} from before ${dropped === 1 ? 'was' : 'were'} dropped — ${why}.`;
-  return `✓ Your ${t(kept)} from before ${kept === 1 ? 'is' : 'are'} back · ${dropped.toLocaleString()} dropped — ${why}.`;
+  return `${t(dropped)} from before ${dropped === 1 ? 'was' : 'were'} dropped — the record${dropped === 1 ? ' is' : 's are'} no longer in the list ${dropped === 1 ? 'it was' : 'they were'} ticked in (written since, or changed).${kept ? ` The other ${t(kept)} ${kept === 1 ? 'is' : 'are'} back.` : ''}`;
 }
 
 // The disk store: { key: packed }, the newest `max` deployments kept. An empty

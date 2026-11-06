@@ -6650,6 +6650,8 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .ds-ve-edit { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .ds-ve-in { flex: 1 1 180px; min-width: 140px; }
 .ds-ve-null-on .ds-ve-in { opacity: .45; }
+/* 2026-11-07: a field empty in the source carries the ∅ mark by default; the box says "empty" until a value is typed */
+.ds-ve-empty-dfl .ds-ve-in::placeholder { font-style: italic; opacity: .75; }
 .ds-ve-err { flex-basis: 100%; color: var(--c-err-fg, #b42318); font-size: 11px; min-height: 0; }
 .ds-ve-err:empty { display: none; }
 .ds-ve-lkp-cur { font-size: 12px; margin: 3px 0 0; }

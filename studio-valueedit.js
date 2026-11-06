@@ -77,8 +77,11 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     const edited = f.reference ? !!cur : cur !== undefined;
     const isNull = !f.reference && cur === null;
     const boxText = isNull ? '' : cur !== undefined ? asText(cur) : srcText(f);
-    const boxHint = isNull ? 'written empty' : many ? esc(f.picklist ? 'pick a value (API name is written)…' : hint(f.type)) : (srcText(f) ? '' : 'empty in the source — type a value, or leave it empty');
-    const cls = `ds-ve-row${edited ? ' ds-ve-row-on' : ''}${isNull ? ' ds-ve-null-on' : ''}`;
+    // a field empty in the source is marked ∅ from the start — it IS written empty — and a typed value lifts the mark
+    // (user 2026-11-07: "by default זה יסומן בתור ריק אלא אם כן המשתמש אמר אחרת. כמובן שאפשר לתת לו לבטל ולהכניס ערך")
+    const dflEmpty = !many && !f.reference && !isNull && cur === undefined && !!srcRec && srcText(f) === '';
+    const boxHint = isNull ? 'written empty' : dflEmpty ? 'empty' : many ? esc(f.picklist ? 'pick a value (API name is written)…' : hint(f.type)) : (srcText(f) ? '' : 'type a value, or leave it empty');
+    const cls = `ds-ve-row${edited ? ' ds-ve-row-on' : ''}${isNull ? ' ds-ve-null-on' : ''}${dflEmpty ? ' ds-ve-empty-dfl' : ''}`;
     const srcCell = many ? '' : `<td class="ds-ve-src">${f.reference ? (relName(f) != null ? `${val(relName(f))}<div class="ds-dep-muted">${esc(String(srcRec[f.name] || ''))}</div>` : val(srcRec ? srcRec[f.name] : null)) : val(srcRec ? srcRec[f.name] : null)}</td>`;
     const tgtCell = many || !tgtId ? '' : `<td class="ds-ve-tgt">${f.reference ? (tgtRel(f) != null ? val(tgtRel(f)) : val(tgtRec ? tgtRec[tf(f.name)] : null)) : val(tgtRec ? tgtRec[tf(f.name)] : null)}</td>`;
     const refObj = f.reference ? ((lkpCfg[f.name] && lkpCfg[f.name].matchObject) || f.refTo[0] || '') : '';
@@ -90,7 +93,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
         </div>`
       : `<div class="ds-ve-edit"><input type="text" class="ds-input ds-input-sm ds-ve-in" data-ve-field="${esc(f.name)}" data-ve-type="${esc(f.type)}" data-ve-src="${esc(srcText(f))}" value="${esc(boxText)}" placeholder="${boxHint}" ${f.picklist ? `list="dsVeList_${esc(f.name)}"` : ''} aria-label="The value ${esc(f.label)} is written with" ${isNull ? 'disabled' : ''}>
           ${f.picklist ? `<datalist id="dsVeList_${esc(f.name)}">${f.picklist.map(v => `<option value="${esc(v.value)}" label="${esc(v.label === v.value ? v.label : `${v.label} · API ${v.value}`)}">`).join('')}</datalist>` : ''}
-          <button class="ds-btn ds-btn-xs ds-ve-null${isNull ? ' ds-btn-primary' : ''}" data-ve-null="${esc(f.name)}" title="${isNull ? 'Written empty — click to type a value instead' : 'Write this field empty'}">∅</button>
+          <button class="ds-btn ds-btn-xs ds-ve-null${isNull || dflEmpty ? ' ds-btn-primary' : ''}" data-ve-null="${esc(f.name)}" title="${isNull ? 'Written empty — click to type a value instead' : dflEmpty ? 'Empty in the source, written empty — type a value instead' : 'Write this field empty'}">∅</button>
           <button class="ds-btn ds-btn-xs ds-ve-clear" data-ve-clear="${esc(f.name)}" title="${many ? 'Keep each record\'s own value' : 'Back to the source\'s value'}" ${edited ? '' : 'style="visibility:hidden"'}>✕</button>
           <div class="ds-ve-err" data-ve-err="${esc(f.name)}"></div></div>`;
     return `<tr class="${cls}" data-ve-row="${esc(f.name)}" data-ve-search="${esc((f.label + ' ' + f.name).toLowerCase())}"><th scope="row">${esc(f.label)}<div class="ds-dep-muted">${esc(f.name)}${f.name !== tf(f.name) ? ` → ${esc(tf(f.name))}` : ''} · ${esc(f.reference ? `lookup (${f.refTo.join(' / ')})` : f.type)}</div></th>${srcCell}${tgtCell}<td class="ds-ve-cell">${editor}</td></tr>`;
@@ -106,7 +109,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
       <tbody>${fields.map(row).join('') || `<tr><td colspan="4" class="ds-dep-muted">No writable field.</td></tr>`}</tbody></table></div>
     ${!many && readErr ? `<div class="ds-drift-compare-err" id="dsVeReadErr">⚠ This record could not be read from ${esc(srcL)}: ${esc(readErr)}. The source column and the boxes are EMPTY because of that, not because the record is — a value typed here is still written, but check the record in ${esc(srcL)} first.</div>` : ''}
     <div class="ds-ve-foot">${many ? `<button class="ds-btn ds-btn-sm ds-btn-primary" id="dsVeSave">💾 Save values</button><button class="ds-btn ds-btn-sm" data-dsaction="closeModal">Cancel</button>` : `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="closeModal">Close</button><span class="ds-dep-muted" id="dsVeStatus">${nEdited ? `✏ ${nEdited} changed value${nEdited === 1 ? '' : 's'} — saved` : 'saved as you type'}</span>`}<span class="ds-dep-sp"></span><button class="ds-btn ds-btn-xs" id="dsVeClearAll" ${nEdited ? '' : 'disabled'}>${many ? '✕ Clear every typed value' : '✕ Back to the source on every field'}</button></div>
-    <div class="ds-dep-muted ds-ve-note">${many ? 'Typed values are' : 'A changed value is'} written to ${esc(tgtL)} by ▶ Deploy (${mode === 'chg' ? 'the update' : 'the insert'}). ${esc(srcL)} is not changed, so after the run a record with a changed value differs from its source and is listed under 🟡 Changed until the orgs agree.${piiNote} ${many ? 'Lookup picks are saved at once; typed values when you press Save.' : 'Everything here is saved as you type — close the dialog whenever you like, nothing is lost.'}</div>`;
+    <div class="ds-dep-muted ds-ve-note">${many ? 'Typed values are' : 'A changed value is'} written to ${esc(tgtL)} by ▶ Deploy (${mode === 'chg' ? 'the update' : 'the insert'}).${many ? '' : ' A field empty in the source is marked ∅ and written empty; type a value to write one instead.'} ${esc(srcL)} is not changed, so after the run a record with a changed value differs from its source and is listed under 🟡 Changed until the orgs agree.${piiNote} ${many ? 'Lookup picks are saved at once; typed values when you press Save.' : 'Everything here is saved as you type — close the dialog whenever you like, nothing is lost.'}</div>`;
 
   // ── find a field; only the typed ones ──
   const filt = () => {
@@ -119,7 +122,18 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   const focus = opts && opts.focus;
   if (focus) { const fi = eid('dsVeFilter'); if (fi) { fi.value = focus; filt(); } host.querySelector(`input[data-ve-field="${CSS.escape(focus)}"], [data-ve-lkp="${CSS.escape(focus)}"] input`)?.focus(); }
   const changedBox = inp => many ? inp.value.trim() !== '' : inp.value.trim() !== String(inp.dataset.veSrc || '');
-  const mark = tr => { const inp = tr.querySelector('.ds-ve-in'); const on = tr.classList.contains('ds-ve-null-on') || (inp && changedBox(inp)); tr.classList.toggle('ds-ve-row-on', on); const x = tr.querySelector('.ds-ve-clear'); if (x) x.style.visibility = on ? '' : 'hidden'; };
+  // the ∅ mark a source-empty field carries by default: on while the box is empty and no explicit "written empty" is set
+  const emptyDfl = tr => {
+    if (many || !srcRec) return;
+    const inp = tr.querySelector('.ds-ve-in'), b = tr.querySelector('.ds-ve-null'); if (!inp || !b) return;
+    const explicit = tr.classList.contains('ds-ve-null-on');
+    const on = !explicit && String(inp.dataset.veSrc || '') === '' && inp.value.trim() === '';
+    tr.classList.toggle('ds-ve-empty-dfl', on);
+    if (explicit) return;
+    b.classList.toggle('ds-btn-primary', on); b.title = on ? 'Empty in the source, written empty — type a value instead' : 'Write this field empty';
+    inp.placeholder = on ? 'empty' : (String(inp.dataset.veSrc || '') === '' ? 'type a value, or leave it empty' : hint(inp.dataset.veType));
+  };
+  const mark = tr => { const inp = tr.querySelector('.ds-ve-in'); const on = tr.classList.contains('ds-ve-null-on') || (inp && changedBox(inp)); tr.classList.toggle('ds-ve-row-on', on); const x = tr.querySelector('.ds-ve-clear'); if (x) x.style.visibility = on ? '' : 'hidden'; emptyDfl(tr); };
   // ── one record: saved as you type (debounced), on blur, and flushed when the dialog closes ──
   const timers = new Map();
   const saveRow = async tr => {
@@ -153,6 +167,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   });
   host.querySelectorAll('[data-ve-null]').forEach(b => b.addEventListener('click', () => {
     const tr = b.closest('tr'), inp = tr.querySelector('.ds-ve-in'), on = !tr.classList.contains('ds-ve-null-on');
+    if (on && tr.classList.contains('ds-ve-empty-dfl')) { inp.focus(); return; }   // already empty by default: the ∅ is where a value is typed instead
     tr.classList.toggle('ds-ve-null-on', on); inp.disabled = on; if (on) inp.value = ''; inp.placeholder = on ? 'written empty' : hint(inp.dataset.veType);
     b.classList.toggle('ds-btn-primary', on); b.title = on ? 'Written empty — click to type a value instead' : 'Write this field empty';
     if (!on && !many) inp.value = String(inp.dataset.veSrc || '');   // back from "empty": the source's value again
