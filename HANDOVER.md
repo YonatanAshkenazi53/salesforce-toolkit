@@ -1,3 +1,5 @@
+> **2026-11-07 — the backlog handover for the next model is in [docs/HANDOVER-backlog-2026-11-07.md](docs/HANDOVER-backlog-2026-11-07.md): the standard, the tooling, the demo fixture in npc, what shipped, the seven open items with their settled design, the regression set, and the pitfalls. Read it first.**
+
 # HANDOVER — Admin Toolkit for Salesforce
 
 ## START HERE (written 2026-09-30 for a fresh chat — read this block, then the rest only as needed)
