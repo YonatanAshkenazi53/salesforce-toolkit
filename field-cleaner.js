@@ -1113,7 +1113,8 @@ const FieldCleaner = (() => {
     const attrs = `data-id="${esc(id)}" data-name="${esc(rawName)}" data-type="${esc(type)}"`;
     if (type === 'Flow') {
       const card = _flowCards.find(c => c.primaryId === String(id));
-      if (card && card.pb) return _pbNoteHtml();
+      // a Process Builder process is never rewritten here, but it can go as a whole (user 2026-11-07: "צריך את כולם")
+      if (card && card.pb) return `<button class="btn btn-danger btn-sm fc-fix-btn fc-del-btn" ${attrs} data-swap="0" data-way="delete" title="Delete every version of this process (switched off first if it runs) — its latest version is kept as a restore point; ↩ Undo deploys it back as a new, inactive version">🗑 Delete process</button>`;
       if (card && !card.active) {
         return `<button class="btn btn-secondary btn-sm fc-fix-btn" ${attrs} data-swap="0" title="Delete the old versions that still mention the field">🗑 Delete ${card.versions.length} old version${card.versions.length === 1 ? '' : 's'}</button>`;
       }
@@ -1131,7 +1132,7 @@ const FieldCleaner = (() => {
     }
     // 🗑 Delete the whole component — every blocker kind the delete engine knows (user 2026-11-07: one click for anything that must go)
     const cfgT = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
-    const spec = (cfgT.sev === 'blocker' && typeof sftkMdDeleteSpec === 'function') ? sftkMdDeleteSpec(type) : null;
+    const spec = (cfgT.sev === 'blocker' && typeof sftkMdDeleteSpec === 'function') ? (sftkMdDeleteSpec(type) || (type === 'LookupFilter' ? { what: 'lookup filter' } : null)) : null;
     const del = spec ? `<button class="btn btn-danger btn-sm fc-fix-btn fc-del-btn" ${attrs} data-swap="0" data-way="delete" title="Delete this ${esc(spec.what)} from the org — its definition is kept as a restore point; ↩ Undo deploys it back">🗑 Delete ${esc(spec.what)}</button>` : '';
     if (!cfgT.fixable) return del;
     const rm = `<button class="btn btn-secondary btn-sm fc-fix-btn" ${attrs} data-swap="0" title="Take the field’s reference out of this">✂ Remove</button>`;
@@ -1921,7 +1922,7 @@ const FieldCleaner = (() => {
         const ids = [...new Set(lf.map(idOf))];
         const r = await sfQ(`SELECT Id, DeveloperName, EntityDefinition.QualifiedApiName FROM CustomField WHERE Id IN (${ids.map(i => `'${i}'`).join(',')})`, true);
         const by = new Map((r?.records || []).map(f => [String(f.Id).substring(0, 15), `${f.EntityDefinition?.QualifiedApiName || '?'}.${f.DeveloperName}__c`]));
-        for (const d of lf) if (by.has(idOf(d))) d.MetadataComponentName = `${by.get(idOf(d))} — its lookup filter`;
+        for (const d of lf) if (by.has(idOf(d))) { d._lookupFieldId = idOf(d); d._lookupFieldName = by.get(idOf(d)); d.MetadataComponentName = `${by.get(idOf(d))} — its lookup filter`; }
       }
     } catch (_) {/* non-fatal */}
 
@@ -3590,7 +3591,7 @@ const FieldCleaner = (() => {
                 "Map this flow's subflow call chain in the Dependencies tab before trimming it")}
               <button class="btn btn-sm fc-inspect-btn" title="View the XML of ${esc(seen)}"
                       data-id="${esc(id)}" data-type="Flow">🔍</button>
-              ${c.pb ? '' : `<span class="fc-fix-pair" data-id="${esc(id)}" data-type="Flow" data-name="${esc(c.name)}">${_fixBtnsHtml('Flow', id, c.name)}</span>`}
+              <span class="${c.pb ? 'fc-del-pair' : 'fc-fix-pair'}" data-id="${esc(id)}" data-type="Flow" data-name="${esc(c.name)}">${_fixBtnsHtml('Flow', id, c.name)}</span>
             </span>
           </div>
           ${c.pb ? `<div class="fc-pb-line">${_pbNoteHtml()}</div>` : ''}
@@ -3612,7 +3613,7 @@ const FieldCleaner = (() => {
       : '';
 
     // a blocker the delete engine knows gets its 🗑 button even when nothing else is fixable here
-    const canDel = !fixable && (TYPE_CFG[type] || TYPE_CFG_DEFAULT).sev === 'blocker' && typeof sftkMdDeleteSpec === 'function' && !!sftkMdDeleteSpec(type);
+    const canDel = !fixable && (TYPE_CFG[type] || TYPE_CFG_DEFAULT).sev === 'blocker' && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter');
     if (fixable || canDel) {
       return `
         <div class="fc-item" id="fcItem_${esc(id)}">
@@ -5158,11 +5159,12 @@ const FieldCleaner = (() => {
     if (row && row._fullName) return row._fullName;
     const id = String(componentId || '');
     const looksLikeId = /^[A-Za-z0-9]{15}([A-Za-z0-9]{3})?$/.test(id);
-    if (type === 'MatchingRule' && looksLikeId) {
-      const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true, query: `SELECT DeveloperName, SobjectType FROM MatchingRule WHERE Id = '${id}'` });
+    if ((type === 'MatchingRule' || type === 'DuplicateRule') && looksLikeId) {
+      const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true, query: `SELECT DeveloperName, SobjectType FROM ${type} WHERE Id = '${id}'` });
       const r = q && !q.error ? (q.records || [])[0] : null;
       if (r) return `${r.SobjectType}.${r.DeveloperName}`;
     }
+    if (spec.special === 'lookupFilter') return (row && row._lookupFieldName) || id;
     if (spec.tooling && looksLikeId) {
       const g = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: spec.tooling, id, _suppressError: true });
       if (g && !g.error) {
@@ -5187,6 +5189,52 @@ const FieldCleaner = (() => {
   };
   // What puts the component back: the files of a redeploy, and how to check it is there again.
   async function _deleteRestorePlan(type, componentId, fullName, spec) {
+    const obj = _selObj.api, field = _selField.api;
+    const toolingGet = (sobject, id) => bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject, id, _suppressError: true });
+    // a lookup filter: only the filter goes, the lookup field and its data stay. Live 2026-11-07: a Tooling
+    // PATCH of the field is refused ("insufficient access rights on cross-reference id"); a deploy of the
+    // field inside its object file WITHOUT the <lookupFilter> removes it, and the original XML puts it back.
+    if (spec.special === 'lookupFilter') {
+      if (!/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(fullName)) throw new Error(`the lookup field behind "${fullName}" could not be worked out — re-scan`);
+      const r = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: 'CustomField', fullNames: [fullName], _suppressError: true });
+      if (!r || r.error) throw new Error(`the lookup field "${fullName}" could not be read (${_feText(r?.error || 'no answer')}) — nothing is changed without a restore point`);
+      const rec = sftkMdExtractRecords(r.text).records.find(x => x.fullName === fullName);
+      if (!rec) throw new Error(`the lookup field "${fullName}" was not found in the org — re-scan`);
+      const res = sftkMdLookupFilterRemove(rec.innerXml);
+      if (!res.removed) throw new Error(`"${fullName}" has no lookup filter any more — re-scan`);
+      const read = async () => { const a = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: 'CustomField', fullNames: [fullName], _suppressError: true }); if (!a || a.error) return null; return sftkMdExtractRecords(a.text).records.find(x => x.fullName === fullName) || false; };
+      return { files: sftkMdPackageFiles('CustomField', fullName, rec.innerXml), deployFiles: sftkMdPackageFiles('CustomField', fullName, res.xml),
+        verify: { msg: { type: 'SF_MD_READ', mdType: 'CustomField', fullNames: [fullName] }, pattern: '<lookupFilter>', flags: 'i', retries: 3 },
+        gone: async () => { const a = await read(); return !!a && !sftkMdFindElement(a.innerXml, 'lookupFilter', 0); } };
+    }
+    // the lead field mapping: the line of this field goes, the settings and every other line stay (a deploy of the edited XML)
+    if (spec.edit === 'leadMapping') {
+      const r = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: spec.mdType, fullNames: [fullName], _suppressError: true });
+      if (!r || r.error) throw new Error(`the lead field mapping could not be read (${_feText(r?.error || 'no answer')}) — nothing is changed without a restore point`);
+      const rec = sftkMdExtractRecords(r.text).records.find(x => x.fullName === fullName);
+      if (!rec) throw new Error('the lead field mapping was not found in the org — re-scan');
+      const res = sftkMdLeadMappingRemove(rec.innerXml, obj, field);
+      if (!res.removed) throw new Error(`no mapping of ${obj}.${field} is in the lead field mapping any more — re-scan`);
+      const read = async () => { const a = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: spec.mdType, fullNames: [fullName], _suppressError: true }); if (!a || a.error) return null; return sftkMdExtractRecords(a.text).records.find(x => x.fullName === fullName) || false; };
+      return { files: sftkMdPackageFiles(type, fullName, rec.innerXml), deployFiles: sftkMdPackageFiles(type, fullName, res.xml), removed: res.removed,
+        verify: { msg: { type: 'SF_MD_READ', mdType: spec.mdType, fullNames: [fullName] }, pattern: `<(inputField|outputField)>${_rxEsc(field)}</(inputField|outputField)>`, flags: 'i', retries: 3 },
+        gone: async () => { const a = await read(); return !!a && !sftkMdLeadMappingsFor(a.innerXml, obj, field).length; } };
+    }
+    // a Process Builder process: every version goes (switched off first); the latest version's XML is the restore point
+    if (spec.special === 'pb') {
+      const card = spec.card, defId = (_flowVerInfo[String(card.primaryId).substring(0, 15)] || {}).defId;
+      if (!defId) throw new Error(`the definition of "${card.name}" could not be worked out — re-scan`);
+      const dq = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true, query: `SELECT DeveloperName FROM FlowDefinition WHERE Id = '${defId}'` });
+      const devName = dq && !dq.error && (dq.records || [])[0] ? dq.records[0].DeveloperName : null;
+      if (!devName) throw new Error(`the API name of "${card.name}" could not be read — nothing is deleted without a restore point`);
+      const r = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: 'Flow', fullNames: [devName], _suppressError: true });
+      if (!r || r.error) throw new Error(`"${card.name}" could not be read (${_feText(r?.error || 'no answer')}) — nothing is deleted without a restore point`);
+      const rec = sftkMdExtractRecords(r.text).records.find(x => x.fullName === devName);
+      if (!rec) throw new Error(`"${card.name}" was not found in the org — re-scan`);
+      return { files: sftkMdPackageFiles('ProcessBuilder', devName, rec.innerXml), pb: { defId, devName, versions: card.versions.slice(), active: !!card.active },
+        verify: { query: `SELECT Id FROM Flow WHERE Definition.DeveloperName = '${devName.replace(/'/g, "\\'")}'`, tooling: true, pick: 'records', count: 1 },
+        gone: () => _goneByQuery(`SELECT Id FROM Flow WHERE DefinitionId = '${defId}'`) };
+    }
     if (spec.code) {
       const g = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: spec.tooling, id: componentId, _suppressError: true });
       if (!g || g.error || typeof g[spec.code] !== 'string') throw new Error(`the source of "${fullName}" could not be read (${_feText((g && g.error) || 'no answer')}) — nothing is deleted without a restore point`);
@@ -5219,25 +5267,44 @@ const FieldCleaner = (() => {
     if (!r || r.error) throw new Error(`"${fullName}" could not be read (${_feText(r?.error || 'no answer')}) — nothing is deleted without a restore point`);
     const rec = sftkMdExtractRecords(r.text).records.find(x => x.fullName === fullName);
     if (!rec) throw new Error(`"${fullName}" was not found in the org as a ${spec.what} — re-scan, it may be gone already`);
-    const files = sftkMdPackageFiles(type, fullName, rec.innerXml);
+    let innerXml = rec.innerXml;
+    if (type === 'DuplicateRule') {
+      // a rule put back takes the LAST sort order of its object (live 2026-11-07: the restore was refused,
+      // "SortOrder must be in sequential order from 1"); the count now, with the rule still there, is that place
+      const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true, query: `SELECT COUNT(Id) n FROM DuplicateRule WHERE SobjectType = '${fullName.split('.')[0]}'` });
+      const n = (q && !q.error && Number(((q.records || [])[0] || {}).n)) || 1;
+      // the rule's OWN sortOrder is the last one in the XML — the filter items carry a sortOrder of their own first
+      const at = innerXml.lastIndexOf('<sortOrder>');
+      const so = at >= 0 ? sftkMdFindElement(innerXml, 'sortOrder', at) : null;
+      if (so) innerXml = innerXml.slice(0, so.bodyStart) + String(n) + innerXml.slice(so.bodyEnd);
+    }
+    const files = sftkMdPackageFiles(type, fullName, innerXml);
     const read = async () => { const a = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: spec.mdType, fullNames: [fullName], _suppressError: true }); if (!a || a.error) return null; return sftkMdExtractRecords(a.text).records.find(x => x.fullName === fullName) || false; };
     return { files, verify: { msg: { type: 'SF_MD_READ', mdType: spec.mdType, fullNames: [fullName] }, pattern: `<fullName>${_rxEsc(fullName)}</fullName>`, flags: 'i', retries: 3 }, gone: async () => (await read()) === false };
   }
   async function fixDelete(type, componentId, componentName) {
-    const spec = sftkMdDeleteSpec(type);
     const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
+    const pbCard = type === 'Flow' ? _flowCards.find(c => c.primaryId === String(componentId) && c.pb) : null;
+    const spec = pbCard ? { type: 'Flow', mdType: 'Flow', what: 'Process Builder process', special: 'pb', card: pbCard }
+      : type === 'LookupFilter' ? { type, mdType: 'CustomField', what: 'lookup filter', special: 'lookupFilter' }
+      : sftkMdDeleteSpec(type);
     if (!spec) throw new Error(`A ${cfg.label || type} is not deleted from here — clear it in Setup.`);
     const obj = _selObj.api, field = _selField.api;
     const gate = await sftkOrgWriteGate(_orgUrl);
+    const special = spec.special === 'lookupFilter'
+      ? `✂ <strong>Only the filter is removed from the lookup field</strong> — the field itself and its data stay. The field’s definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in History (and ↩ Restore points, under the results) puts the filter back.`
+      : spec.edit === 'leadMapping'
+        ? `✂ <strong>Only the mapping line of ${esc(obj)}.${esc(field)} is removed</strong> — the other mappings and the conversion settings stay. The settings are read first and kept as a <strong>restore point</strong>; ↩ Undo in History (and ↩ Restore points, under the results) puts the line back.`
+        : spec.special === 'pb'
+          ? `🗑 <strong>Every version of the process is deleted</strong> — it is switched off first if it runs. Its latest version is read first and kept as a <strong>restore point</strong>; ↩ Undo in History (and ↩ Restore points, under the results) deploys it back as a new, inactive version — activate it in Setup if you need it to run again.`
+          : `🗑 <strong>The ${esc(spec.what)} is deleted from the org</strong> — not just its reference to ${esc(obj)}.${esc(field)}. Its full definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in History (and ↩ Restore points, under the results) deploys it back.${spec.code ? ' In a production org Salesforce may run the org’s Apex tests before it deletes code.' : ''}${type === 'MatchingRule' ? ' A matching rule a duplicate rule still uses is refused by Salesforce — delete that duplicate rule first.' : ''}${type === 'DuplicateRule' ? ' <strong>A duplicate rule guards the org’s data</strong> — this tool never switches one off or edits one behind a run; deleting it is yours to decide, here, with a way back.' : ''}`;
+    const verb = (spec.special === 'lookupFilter' || spec.edit) ? 'Remove' : 'Delete';
     const sure = await sftkConfirmDestructive({
-      title: `Delete ${spec.what} — ${cfg.label || type}`,
-      icon: '🗑',
+      title: `${verb} ${spec.what} — ${cfg.label || type}`,
+      icon: verb === 'Remove' ? '✂' : '🗑',
       items: [{ label: componentName, sub: spec.what }],
-      revOverride: {
-        html: `🗑 <strong>The ${esc(spec.what)} is deleted from the org</strong> — not just its reference to ${esc(obj)}.${esc(field)}. Its full definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in History (and ↩ Restore points, under the results) deploys it back.${spec.code ? ' In a production org Salesforce may run the org’s Apex tests before it deletes code.' : ''}${type === 'MatchingRule' ? ' A matching rule a duplicate rule still uses is refused by Salesforce — that duplicate rule is a hand job, on purpose.' : ''}`,
-        needsCheckbox: true,
-      },
-      confirmLabel: `🗑 Delete the ${spec.what}`,
+      revOverride: { html: special, needsCheckbox: true },
+      confirmLabel: `${verb === 'Remove' ? '✂' : '🗑'} ${verb} the ${spec.what}`,
       production: gate.production ? { label: gate.label } : null,
     });
     if (!sure) return 'cancel';
@@ -5247,19 +5314,27 @@ const FieldCleaner = (() => {
       fullName = await _deleteFullName(type, componentId, spec);
       plan = await _deleteRestorePlan(type, componentId, fullName, spec);
     } catch (e) { _rowBusy(componentId, null); appendInlineError(componentId, e.message); return; }
-    await _snapshotFix('MdDelete', componentId, componentName, fullName, { type, mdType: spec.mdType, what: spec.what, files: plan.files, verify: plan.verify });
-    _rowBusy(componentId, '⏳ deleting…');
-    const zipBack = _zipOf(plan.files), zipDel = _zipOf(sftkMdDestructiveFiles([[spec.mdType, fullName]]));
-    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `🗑 ${cfg.label || type} — "${componentName}" deleted (${obj}.${field})`, orgUrl: _orgUrl });
+    await _snapshotFix('MdDelete', componentId, componentName, fullName, { type, mdType: spec.mdType, what: spec.what, files: plan.files || null, patch: plan.undoPatch || null, verify: plan.verify });
+    _rowBusy(componentId, verb === 'Remove' ? '⏳ removing…' : '⏳ deleting…');
+    const zipBack = plan.files ? _zipOf(plan.files) : null;
+    const zipDel = plan.deployFiles ? _zipOf(plan.deployFiles) : (plan.patch || plan.pb) ? null : _zipOf(sftkMdDestructiveFiles([[spec.mdType, fullName]]));
+    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `${verb === 'Remove' ? '✂' : '🗑'} ${cfg.label || type} — "${componentName}" ${verb === 'Remove' ? 'removed' : 'deleted'} (${obj}.${field})`, orgUrl: _orgUrl });
     let wr, ranTests = false;
     try {
       // confirmed-by: the sftkConfirmDestructive right above
-      // The write discipline (sftk-write.js): the destructive deploy is the
-      // write, a re-read of the component is the verify — gone is done.
+      // The write discipline (sftk-write.js): the destructive deploy (or the
+      // edit's deploy, the field's PATCH, the process's version deletes) is
+      // the write, a re-read of the component is the verify — gone is done.
       wr = await sftkWriteVerified({
         describe: `"${componentName}" ${spec.what}`,
         journal: j,
         write: async () => {
+          if (plan.patch) { const r = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid, _suppressError: true, ...plan.patch }); return (r && !r.error) ? { success: true } : { error: (r && r.error) || 'the update was not accepted' }; }
+          if (plan.pb) {
+            if (plan.pb.active) { const off = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid, _suppressError: true, path: `services/data/v62.0/tooling/sobjects/FlowDefinition/${plan.pb.defId}`, body: { Metadata: { activeVersionNumber: 0 } } }); if (off && off.error) return { error: `switching it off: ${off.error}` }; }
+            for (const v of plan.pb.versions) { const d = await bg({ type: 'SF_TOOLING_DELETE', orgUrl: _orgUrl, sid: _sid, sobject: 'Flow', id: v.id, _suppressError: true }); if (d && d.error) return { error: `v${v.num}: ${d.error}` }; }
+            return { success: true };
+          }
           let r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64: zipDel, _suppressError: true });
           // production + Apex: Salesforce wants the org's tests run before code goes
           if (spec.code && r && !r.success && /test|coverage/i.test(String(r.error || ''))) { ranTests = true; r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64: zipDel, testLevel: 'RunLocalTests', _suppressError: true }); }
@@ -5268,17 +5343,20 @@ const FieldCleaner = (() => {
         verify: async () => { try { return { ok: await plan.gone(), text: null }; } catch (_) { return { ok: false, text: null }; } },
       });
       if (wr.accepted && wr.ok) {
-        _afterDelete(type);
+        _afterDelete(spec.special === 'pb' ? 'ProcessBuilder' : type);
+        if (spec.special === 'lookupFilter') return `✅ Removed — the lookup filter is gone, the field stays — verified by re-reading the org`;
+        if (spec.edit === 'leadMapping') return `✅ Removed — ${plan.removed} mapping line${plan.removed === 1 ? '' : 's'} of ${obj}.${field} gone, the other mappings kept — verified by re-reading the org`;
+        if (spec.special === 'pb') return `✅ Deleted — all ${plan.pb.versions.length} version${plan.pb.versions.length === 1 ? '' : 's'} of the process gone${plan.pb.active ? ' (it was switched off first)' : ''} — verified by re-reading the org`;
         return `✅ Deleted — the ${spec.what} is gone${ranTests ? ' (the org’s Apex tests ran first)' : ''} — verified by re-reading the org`;
       }
-      if (wr.accepted) throw new Error(`"${componentName}" — the delete was accepted, but on re-read the ${spec.what} is still there. Re-scan, and check it in Setup.`);
-      throw new Error(`Salesforce won't delete the ${spec.what} "${componentName}" (${_feText(String((wr.raw && wr.raw.error) || 'refused'))}). Clear it in Setup, then re-scan.`);
+      if (wr.accepted) throw new Error(`"${componentName}" — the ${verb.toLowerCase()} was accepted, but on re-read the ${spec.what} is still there. Re-scan, and check it in Setup.`);
+      throw new Error(`Salesforce won't ${verb.toLowerCase()} the ${spec.what} "${componentName}" (${_feText(String((wr.raw && wr.raw.error) || 'refused'))}). Clear it in Setup, then re-scan.`);
     } finally {
       await sftkHistoryEnd(j, { undo: wr && wr.accepted
         ? { steps: [{
-            describe: `Put the ${spec.what} "${componentName}" back as it was before the delete`,
+            describe: `Put the ${spec.what} "${componentName}" back as it was before the ${verb.toLowerCase()}`,
             // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read in `verify`
-            msg: { type: 'SF_METADATA_DEPLOY', zipBase64: zipBack },
+            msg: plan.undoPatch ? { type: 'SF_PATCH', ...plan.undoPatch } : { type: 'SF_METADATA_DEPLOY', zipBase64: zipBack },
             verify: { ...plan.verify, text: { ok: `"${componentName}": the ${spec.what} is back — verified by re-reading the org`, bad: `"${componentName}": the deploy was accepted, but on re-read the ${spec.what} is not there yet` } },
           }] }
         : { none: 'nothing was accepted by Salesforce, so there is nothing to undo' } });
@@ -6586,7 +6664,7 @@ const FieldCleaner = (() => {
         }
       } else if (snap.type === 'MdDelete') {
         // the restore point of a 🗑 Delete: the saved files go back as a package
-        if (!md || !Array.isArray(md.files) || !md.files.length) throw new Error('Snapshot has no files — cannot deploy');
+        if (!md || (!md.patch && (!Array.isArray(md.files) || !md.files.length))) throw new Error('Snapshot has no files — cannot deploy');
         const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `↩ Restore ${md.what || 'component'} — "${snap.name}"`, orgUrl: _orgUrl });
         try {
           // confirmed-by: the ↩ Restore sftkConfirmDestructive (the only caller)
@@ -6596,6 +6674,7 @@ const FieldCleaner = (() => {
             describe: `${md.what || 'component'} restore`,
             journal: j,
             write: async () => {
+              if (md.patch) { const r = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid, _suppressError: true, ...md.patch }); return (r && !r.error) ? { success: true } : { error: (r && r.error) || 'the update was not accepted' }; }
               const r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, _suppressError: true, zipBase64: _zipOf(md.files) });
               return (r && r.success) ? r : { error: (r && r.error) || 'the deploy was not accepted' };
             },

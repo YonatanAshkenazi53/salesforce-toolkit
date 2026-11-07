@@ -14,7 +14,7 @@ const M = extractFunctions('sftk-mdapi.js', ['sftkMdDeleteSpec', 'sftkMdDestruct
 describe('the type table', () => {
   it('every blocker kind the scan can list has a delete spec, except the ones kept by hand on purpose', () => {
     const sevBlocker = [...FC.matchAll(/^\s*([A-Za-z]+):\s*\{[^\n]*?sev: 'blocker'/gm)].map(m => m[1]);
-    const byHand = new Set(['DuplicateRule', 'LookupFilter', 'LeadConvertSettings', 'ProcessBuilder', 'Flow', 'Layout']);
+    const byHand = new Set(['LookupFilter', 'Flow', 'Layout']);   // 2026-11-07: a duplicate rule, the lead mapping and a Process Builder process joined the table; a lookup filter has a path of its own
     for (const t of sevBlocker) {
       if (byHand.has(t)) expect(M.sftkMdDeleteSpec(t), t).toBeNull();
       else expect(M.sftkMdDeleteSpec(t), t).not.toBeNull();
@@ -26,7 +26,7 @@ describe('the type table', () => {
     expect(M.sftkMdDeleteSpec('CustomMetadataRecord')).toMatchObject({ mdType: 'CustomMetadata', folder: 'customMetadata', suffix: 'md' });
     expect(M.sftkMdDeleteSpec('ApexClass')).toMatchObject({ code: 'Body', folder: 'classes', suffix: 'cls', metaTag: 'ApexClass' });
     expect(M.sftkMdDeleteSpec('LightningComponentBundle')).toMatchObject({ bundle: 'lwc' });
-    expect(M.sftkMdDeleteSpec('DuplicateRule')).toBeNull();
+    expect(M.sftkMdDeleteSpec('DuplicateRule')).toMatchObject({ folder: 'duplicateRules' });   // joined 2026-11-07 ("צריך את כולם")
     expect(M.sftkMdDeleteSpec('Nope')).toBeNull();
   });
 });
@@ -47,20 +47,20 @@ describe('the packages', () => {
     const f = M.sftkMdPackageFiles('ValidationRule', 'Account.SFTK_Live_VR', inner);
     expect(f.map(x => x.name)).toEqual(['package.xml', 'objects/Account.object']);
     expect(f[0].text).toContain('<members>Account.SFTK_Live_VR</members>');
-    expect(f[1].text).toContain('<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata"><validationRules><fullName>SFTK_Live_VR</fullName><active>true</active>');
+    expect(f[1].text).toContain('<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><validationRules><fullName>SFTK_Live_VR</fullName><active>true</active>');
     expect(f[1].text).not.toContain('Account.SFTK_Live_VR</fullName>');
     expect(f[1].text).toContain('</validationRules></CustomObject>');
     const w = M.sftkMdPackageFiles('WorkflowOutboundMessage', 'Account.SFTK_Live_OM', '<fullName>Account.SFTK_Live_OM</fullName><fields>Id</fields>');
     expect(w[1].name).toBe('workflows/Account.workflow');
-    expect(w[1].text).toContain('<Workflow xmlns="http://soap.sforce.com/2006/04/metadata"><outboundMessages><fullName>SFTK_Live_OM</fullName><fields>Id</fields></outboundMessages></Workflow>');
+    expect(w[1].text).toContain('<Workflow xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><outboundMessages><fullName>SFTK_Live_OM</fullName><fields>Id</fields></outboundMessages></Workflow>');
   });
   it('a top-level record gets its own file; a custom metadata record is deployed as CustomMetadata', () => {
     const f = M.sftkMdPackageFiles('CustomMetadataRecord', 'SFTK_Live_Cmt.Ref', '<fullName>SFTK_Live_Cmt.Ref</fullName><label>Ref</label>');
     expect(f.map(x => x.name)).toEqual(['package.xml', 'customMetadata/SFTK_Live_Cmt.Ref.md']);
     expect(f[0].text).toContain('<name>CustomMetadata</name>');
-    expect(f[1].text).toContain('<CustomMetadata xmlns="http://soap.sforce.com/2006/04/metadata"><label>Ref</label></CustomMetadata>');
+    expect(f[1].text).toContain('<CustomMetadata xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><label>Ref</label></CustomMetadata>');
     expect(M.sftkMdPackageFiles('ApexClass', 'X', '')).toBeNull();
-    expect(M.sftkMdPackageFiles('DuplicateRule', 'Account.X', '')).toBeNull();
+    expect(M.sftkMdPackageFiles('Flow', 'X', '')).toBeNull();
   });
   it('code goes back as its source and a -meta.xml; a bundle as its files and the bundle meta', () => {
     const c = M.sftkMdCodeFiles('ApexClass', 'SFTK_Live_Class', 'public class SFTK_Live_Class {}', 62.0);
@@ -80,19 +80,19 @@ describe('the packages', () => {
 
 describe('the wiring', () => {
   it('every blocker kind with a spec gets a 🗑 button, with or without Remove/Replace; the button is a third way of a fix', () => {
-    expect(FC).toContain("const spec = (cfgT.sev === 'blocker' && typeof sftkMdDeleteSpec === 'function') ? sftkMdDeleteSpec(type) : null;");
+    expect(FC).toContain("const spec = (cfgT.sev === 'blocker' && typeof sftkMdDeleteSpec === 'function') ? (sftkMdDeleteSpec(type) || (type === 'LookupFilter' ? { what: 'lookup filter' } : null)) : null;");
     expect(FC).toContain('data-way="delete" title="Delete this ${esc(spec.what)} from the org');
     expect(FC).toContain('if (!cfgT.fixable) return del;');
-    expect(FC).toContain("const canDel = !fixable && (TYPE_CFG[type] || TYPE_CFG_DEFAULT).sev === 'blocker' && typeof sftkMdDeleteSpec === 'function' && !!sftkMdDeleteSpec(type);");
+    expect(FC).toContain("const canDel = !fixable && (TYPE_CFG[type] || TYPE_CFG_DEFAULT).sev === 'blocker' && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter');");
     expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off' || way === 'delete') ? way : '';");
     expect(FC).toContain("if (_fixWay === 'delete') {");
   });
   it('the delete reads the full definition first (no restore point, no delete), deletes with destructiveChanges, verifies gone, and the undo deploys the saved files', () => {
-    expect(FC).toContain("await _snapshotFix('MdDelete', componentId, componentName, fullName, { type, mdType: spec.mdType, what: spec.what, files: plan.files, verify: plan.verify });");
-    expect(FC).toContain('const zipBack = _zipOf(plan.files), zipDel = _zipOf(sftkMdDestructiveFiles([[spec.mdType, fullName]]));');
+    expect(FC).toContain("await _snapshotFix('MdDelete', componentId, componentName, fullName, { type, mdType: spec.mdType, what: spec.what, files: plan.files || null, patch: plan.undoPatch || null, verify: plan.verify });");
+    expect(FC).toContain("const zipDel = plan.deployFiles ? _zipOf(plan.deployFiles) : (plan.patch || plan.pb) ? null : _zipOf(sftkMdDestructiveFiles([[spec.mdType, fullName]]));");
     expect(FC).toContain("nothing is deleted without a restore point");
     expect(FC).toContain("verify: async () => { try { return { ok: await plan.gone(), text: null }; } catch (_) { return { ok: false, text: null }; } },");
-    expect(FC).toContain("msg: { type: 'SF_METADATA_DEPLOY', zipBase64: zipBack },");
+    expect(FC).toContain("msg: plan.undoPatch ? { type: 'SF_PATCH', ...plan.undoPatch } : { type: 'SF_METADATA_DEPLOY', zipBase64: zipBack },");
     expect(FC).toContain("testLevel: 'RunLocalTests'");
     expect(BG).toContain('async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel) {');
     expect(BG).toContain("(testLevel === 'RunLocalTests' || testLevel === 'RunAllTestsInOrg') ? testLevel : 'NoTestRun'");
@@ -101,7 +101,7 @@ describe('the wiring', () => {
     expect(FC).toContain("const fn = g.FullName || (spec.parent && ent && g.DeveloperName ? `${ent}.${g.DeveloperName}` : (g.DeveloperName || g.Name));");   // live 2026-11-07: a FieldSet's Tooling record has no FullName
     expect(FC).toContain("gone: () => _goneByQuery(byName) };");
     expect(FC).toContain("gone: () => _goneByQuery(byDev) };");
-    expect(FC).toContain("SELECT DeveloperName, SobjectType FROM MatchingRule WHERE Id = '${id}'");
+    expect(FC).toContain("SELECT DeveloperName, SobjectType FROM ${type} WHERE Id = '${id}'");
     expect(FC).toContain("return id;\n  }\n  // \"Gone\" for code and bundles");
   });
   it('the gate row says the delete is here, and counts down as deletes land', () => {

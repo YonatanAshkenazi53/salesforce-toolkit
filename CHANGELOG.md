@@ -83,11 +83,14 @@ extensions containing root files that start with `_`).
   email alerts, outbound messages, approval processes, sharing rules, matching rules, field sets,
   custom buttons, formula fields, scoping and restriction rules, Lightning pages, custom metadata
   records, Apex classes and triggers, Visualforce pages and components, Lightning web components and
-  Aura components — each one deleted and put back live. A duplicate rule is left to Setup on purpose;
-  a lookup filter and the lead field mapping are parts of something else and will be edited, not
-  deleted. In a production org Salesforce may run the org's Apex tests before code goes; the tool
-  asks for that only when Salesforce demands it. The status line counts "deletable here" apart from
-  the true hand jobs.
+  Aura components — each one deleted and put back live. The four that are not components of their own
+  get the same button, their own way: a duplicate rule (deleted only from this button — nothing switches
+  one off or edits one behind a run), the lead field mapping (only the line of this field goes, the
+  settings and the other lines stay), a lookup filter (only the filter goes, the lookup field and its
+  data stay) and a Process Builder process (every version goes, switched off first; Undo brings its
+  latest version back, inactive). In a production org Salesforce may run the org's Apex tests before
+  code goes; the tool asks for that only when Salesforce demands it. The status line counts "deletable
+  here" apart from the true hand jobs.
 - **Field Cleaner's "how much data is stored" line was audited** after the owner doubted it on a field
   deleted at work. Three ways it could be wrong are closed: a count that came back for an earlier pick
   could land under the next field; a formula field was counted as if it stored data (describe never

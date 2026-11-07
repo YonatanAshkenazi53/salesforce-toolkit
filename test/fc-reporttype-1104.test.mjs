@@ -44,7 +44,7 @@ const INNER = `
         <columns><checkedByDefault>false</checkedByDefault><field>SFTK_FC_Test_Status__c</field><table>Account.Contacts</table></columns>
         <masterLabel>Contacts</masterLabel>
       </sections>`;
-const SOAP = `<?xml version="1.0" encoding="UTF-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><soapenv:Body><readMetadataResponse><result><records xsi:type="ReportType">${INNER}</records><records xsi:type="ReportType"><fullName xsi:nil="true"/></records></result></readMetadataResponse></soapenv:Body></soapenv:Envelope>`;
+const SOAP = `<?xml version="1.0" encoding="UTF-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><soapenv:Body><readMetadataResponse><result><records xsi:type="ReportType">${INNER}</records><records xsi:type="ReportType"><fullName xsi:nil="true"/></records></result></readMetadataResponse></soapenv:Body></soapenv:Envelope>`;
 
 const OBJ = 'Account', FIELD = 'SFTK_FC_Test_Status__c', NEW = 'SFTK_FC_Test_Status2__c';
 const cols = xml => [...xml.matchAll(/<columns>[\s\S]*?<\/columns>/g)].map(m => {
@@ -137,7 +137,7 @@ describe('⇄ Replace', () => {
 describe('the deploy package', () => {
   it('the record becomes a ReportType file without its fullName; the zip holds package.xml and reportTypes/<name>.reportType', () => {
     const file = F.sftkMdRecordFileXml('ReportType', F.sftkRtRemoveField(INNER, OBJ, FIELD).xml);
-    expect(file.startsWith('<?xml version="1.0" encoding="UTF-8"?>\n<ReportType xmlns="http://soap.sforce.com/2006/04/metadata">')).toBe(true);
+    expect(file.startsWith('<?xml version="1.0" encoding="UTF-8"?>\n<ReportType xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">')).toBe(true);
     expect(file).not.toContain('<fullName>');
     expect(file.endsWith('</ReportType>')).toBe(true);
     const files = F.sftkRtZipFiles('SFTK_FC_Test_RT', file);

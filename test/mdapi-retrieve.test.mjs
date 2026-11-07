@@ -152,7 +152,7 @@ describe('the package file', () => {
     // with it is a deploy error.
     const rec = F.sftkMdExtractRecords(SOAP).records[0];
     const file = F.sftkMdRecordFileXml('NamedCredential', rec.innerXml);
-    expect(file).toContain('<NamedCredential xmlns="http://soap.sforce.com/2006/04/metadata">');
+    expect(file).toContain('<NamedCredential xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">');
     expect(file).toContain('</NamedCredential>');
     expect(file).not.toContain('<fullName>');
     expect(file).toContain('https://api.partner.com/v2');

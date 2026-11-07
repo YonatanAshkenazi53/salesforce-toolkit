@@ -50,8 +50,8 @@ describe('a Process Builder process is shown, counted, never edited', () => {
     expect(FC).toContain('SELECT Id, DefinitionId, VersionNumber, Status, ProcessType FROM Flow WHERE Id IN');
     expect(FC).toContain("pb: v.ProcessType === 'Workflow'");
     expect(FC).toContain('c.pb = c.versions.some(v => v.pb);');
-    expect(FC).toContain('if (card && card.pb) return _pbNoteHtml();');
-    expect(FC).toContain("${c.pb ? '' : `<span class=\"fc-fix-pair\"");
+    expect(FC).toContain('if (card && card.pb) return `<button class="btn btn-danger btn-sm fc-fix-btn fc-del-btn" ${attrs} data-swap="0" data-way="delete"');   // 2026-11-07: the card deletes the process as a whole
+    expect(FC).toContain("<span class=\"${c.pb ? 'fc-del-pair' : 'fc-fix-pair'}\" data-id=\"${esc(id)}\" data-type=\"Flow\"");   // 2026-11-07: a Process Builder card carries 🗑 Delete process in a del-pair
     expect(FC).toContain('${c.pb ? `<div class="fc-pb-line">${_pbNoteHtml()}</div>` : \'\'}');
   });
   it('the bulk walk skips it, the delete gate counts it as a blocker by hand', () => {

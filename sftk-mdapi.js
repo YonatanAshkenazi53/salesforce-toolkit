@@ -214,7 +214,7 @@ function sftkMdRecordFileXml(metadataType, innerXml) {
   const fn = sftkMdFindElement(body, 'fullName', 0);
   if (fn) body = body.slice(0, fn.start) + body.slice(fn.end);
   return '<?xml version="1.0" encoding="UTF-8"?>\n'
-    + `<${metadataType} xmlns="http://soap.sforce.com/2006/04/metadata">`
+    + `<${metadataType} xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">`
     + body
     + `</${metadataType}>`;
 }
@@ -491,6 +491,12 @@ function _sftkMdDeleteTable() {
   ApexComponent:           { code: 'Markup', folder: 'components', suffix: 'component', what: 'Visualforce component', tooling: 'ApexComponent', metaTag: 'ApexComponent' },
   LightningComponentBundle: { bundle: 'lwc',  what: 'Lightning web component', tooling: 'LightningComponentBundle' },
   AuraDefinitionBundle:    { bundle: 'aura', what: 'Aura component',           tooling: 'AuraDefinitionBundle' },
+  // the three the user asked for by name ("צריך את כולם", 2026-11-07): a duplicate rule is deleted only from this
+  // explicit button (the standing rule stays: nothing switches one off or edits one behind a run); the lead field
+  // mapping is EDITED (its line goes, the settings stay); a Process Builder process is every version of a Flow
+  DuplicateRule:           { folder: 'duplicateRules',   suffix: 'duplicateRule',     what: 'duplicate rule' },
+  LeadConvertSettings:     { folder: 'LeadConvertSettings', suffix: 'LeadConvertSetting', what: 'lead field mapping', edit: 'leadMapping' },
+  ProcessBuilder:          { mdType: 'Flow',             folder: 'flows',             suffix: 'flow',             what: 'Process Builder process' },
   };
 }
 // What the delete needs to know about a type; null = not deletable here
@@ -528,7 +534,7 @@ function sftkMdPackageFiles(type, fullName, innerXml) {
     const fn = sftkMdFindElement(body, 'fullName', 0);
     if (fn) body = body.slice(0, fn.start) + body.slice(fn.end);
     const file = '<?xml version="1.0" encoding="UTF-8"?>\n'
-      + `<${s.parent} xmlns="http://soap.sforce.com/2006/04/metadata">`
+      + `<${s.parent} xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">`
       + `<${s.tag}><fullName>${sftkMdEscape(short)}</fullName>${body}</${s.tag}>`
       + `</${s.parent}>`;
     return [{ name: 'package.xml', text: _sftkPkgXml([[mdType, fullName]]) }, { name: `${s.folder}/${obj}.${s.suffix}`, text: file }];
@@ -575,10 +581,55 @@ function sftkMdBundleFiles(type, name, resources, meta) {
     + `</${tag}>` });
   return files;
 }
+// ✂ The lead-conversion mapping lines that carry objApi.fieldApi go; every
+// other line and the settings themselves stay. An objectMapping left with no
+// mappingFields is kept as it is — that is exactly how Salesforce clears a
+// mapping (live 2026-11-06: a deploy WITHOUT the objectMapping clears nothing).
+function sftkMdLeadMappingRemove(innerXml, objApi, fieldApi) {
+  const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
+  const s = String(innerXml || '');
+  let out = '', cursor = 0, removed = 0;
+  for (;;) {
+    const om = sftkMdFindElement(s, 'objectMapping', cursor);
+    if (!om) break;
+    const body = s.slice(om.bodyStart, om.bodyEnd);
+    const inputObject = (sftkMdChildText(body, 'inputObject') || '').toLowerCase();
+    const outputObject = (sftkMdChildText(body, 'outputObject') || '').toLowerCase();
+    let nb = '', c2 = 0;
+    for (;;) {
+      const mf = sftkMdFindElement(body, 'mappingFields', c2);
+      if (!mf) break;
+      const mb = body.slice(mf.bodyStart, mf.bodyEnd);
+      const inF = (sftkMdChildText(mb, 'inputField') || '').toLowerCase(), outF = (sftkMdChildText(mb, 'outputField') || '').toLowerCase();
+      const hit = (inputObject === o && inF === f) || (outputObject === o && outF === f);
+      nb += body.slice(c2, mf.start);
+      if (hit) removed++; else nb += body.slice(mf.start, mf.end);
+      c2 = mf.end;
+    }
+    nb += body.slice(c2);
+    out += s.slice(cursor, om.bodyStart) + nb + s.slice(om.bodyEnd, om.end);
+    cursor = om.end;
+  }
+  out += s.slice(cursor);
+  return { xml: out, removed };
+}
+
+// ✂ A lookup field's <lookupFilter> goes; everything else of the field is
+// re-emitted byte for byte. A deploy of the field without the element removes
+// the filter (live 2026-11-07); the original XML puts it back.
+function sftkMdLookupFilterRemove(innerXml) {
+  const s = String(innerXml || '');
+  const el = sftkMdFindElement(s, 'lookupFilter', 0);
+  if (!el) return { xml: s, removed: 0 };
+  return { xml: s.slice(0, el.start) + s.slice(el.end), removed: 1 };
+}
+
 if (typeof globalThis !== 'undefined') {
   globalThis.sftkMdDeleteSpec       = sftkMdDeleteSpec;
   globalThis.sftkMdDestructiveFiles = sftkMdDestructiveFiles;
   globalThis.sftkMdPackageFiles     = sftkMdPackageFiles;
   globalThis.sftkMdCodeFiles        = sftkMdCodeFiles;
   globalThis.sftkMdBundleFiles      = sftkMdBundleFiles;
+  globalThis.sftkMdLeadMappingRemove = sftkMdLeadMappingRemove;
+  globalThis.sftkMdLookupFilterRemove = sftkMdLookupFilterRemove;
 }
