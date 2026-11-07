@@ -91,6 +91,20 @@ extensions containing root files that start with `_`).
   latest version back, inactive). In a production org Salesforce may run the org's Apex tests before
   code goes; the tool asks for that only when Salesforce demands it. The status line counts "deletable
   here" apart from the true hand jobs.
+- **✂ Remove and ⇄ Replace inside a blocker, with its XML on screen.** Deleting a whole validation rule
+  to free one field is often too much. Every declarative blocker now also offers ✂ Remove and — once a
+  replacement field is picked — ⇄ Replace, which change only the field's own places in the component:
+  a criterion line, a recipient, a sent field, a field-set member, a filter condition, a mapping line,
+  a custom metadata value, or the field's name inside a formula, a button URL or a record filter.
+  Everything else is deployed back exactly as Salesforce returned it. The confirm shows the XML as it is
+  and as it will be, line by line; 🔍 shows the whole XML with the field's lines marked and what each
+  way would change. When what is left would not work — the field is a rule's only criterion, an alert's
+  only recipient, or sits in a formula (✂ never cuts a formula; a validation rule is switched off
+  instead, since an inactive rule does not block the delete) — the edit is refused before anything is
+  written, with the reason and the way that does work. A restore point is kept and ↩ Undo in History
+  deploys the original back. Duplicate rules keep 🗑 only: the tool never edits a duplicate rule's
+  criteria. Assignment, auto-response and escalation rules are now read through their object's rules,
+  which also makes their 🗑 restore point work.
 - **Field Cleaner's "how much data is stored" line was audited** after the owner doubted it on a field
   deleted at work. Three ways it could be wrong are closed: a count that came back for an earlier pick
   could land under the next field; a formula field was counted as if it stored data (describe never

@@ -633,3 +633,366 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkMdLeadMappingRemove = sftkMdLeadMappingRemove;
   globalThis.sftkMdLookupFilterRemove = sftkMdLookupFilterRemove;
 }
+
+// ── ✂ Remove / ⇄ Replace INSIDE a blocker, its XML kept whole (user
+// 2026-11-07: "we try to remove, replace the field in the metadata items
+// without breaking them. While showing XML") ────────────────────────────────
+// The record's inner XML (what readMetadata returned) goes in; the same XML
+// with only the field's own places changed comes out. Structure-driven:
+// criteria items and list members are dropped (✂) or renamed (⇄) as whole
+// elements; formula text gets a token swap on ⇄ and is never cut on ✂ (a
+// formula cannot lose a reference and stay a formula). When what is left
+// would no longer be a working component, the edit is REFUSED with the reason
+// and the way that does work — nothing is deployed on a refusal.
+// Returns { xml, changed, how: [strings], refused: string|null }.
+function _sftkMdFieldIs(v, objApi, fieldApi) {
+  const x = String(v == null ? '' : v).trim().toLowerCase(), f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
+  return !!f && (x === f || x === `${o}.${f}`);
+}
+// "Account.Old__c" → "Account.New__c", "Old__c" → "New__c": the spelling is kept.
+function _sftkMdRenameVal(v, newField) {
+  const s = String(v == null ? '' : v).trim();
+  const d = s.lastIndexOf('.');
+  return d >= 0 ? s.slice(0, d + 1) + newField : String(newField);
+}
+// Every <tag> element of xml, in order; visit(body) answers 'keep', 'drop' or
+// { body } (the element's new inner XML). Everything else is re-emitted byte for byte.
+function _sftkMdWalk(xml, tag, visit) {
+  const s = String(xml || '');
+  let out = '', cursor = 0, dropped = 0, changed = 0, kept = 0;
+  for (;;) {
+    const el = sftkMdFindElement(s, tag, cursor);
+    if (!el) break;
+    const body = s.slice(el.bodyStart, el.bodyEnd);
+    const d = visit(body);
+    out += s.slice(cursor, el.start);
+    if (d === 'drop') dropped++;
+    else if (d && typeof d === 'object') { out += s.slice(el.start, el.bodyStart) + d.body + s.slice(el.bodyEnd, el.end); changed++; kept++; }
+    else { out += s.slice(el.start, el.end); kept++; }
+    cursor = el.end;
+  }
+  return { xml: out + s.slice(cursor), dropped, changed, kept };
+}
+// A formula's references to the field — bare (Field__c) or Obj.Field__c —
+// swapped for newField (or only counted when newField is null).
+function _sftkMdSwapToken(text, objApi, fieldApi, newField) {
+  const rx = x => String(x || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!fieldApi) return { text: String(text || ''), n: 0 };
+  const re = new RegExp(`(^|[^A-Za-z0-9_.])((?:${rx(objApi)}\\.)?)${rx(fieldApi)}(?![A-Za-z0-9_])`, 'gi');
+  let n = 0;
+  const out = String(text || '').replace(re, (m, pre, ob) => { n++; return newField ? pre + ob + newField : m; });
+  return { text: out, n };
+}
+// Does a filter's logic (booleanFilter "1 AND (2 OR 3)") number its items?
+// Taking an item out of a numbered filter would silently change its meaning.
+function _sftkMdHasLogic(xml) {
+  const el = sftkMdFindElement(xml, 'booleanFilter', 0);
+  return !!el && String(xml).slice(el.bodyStart, el.bodyEnd).trim() !== '';
+}
+function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
+  const before = String(innerXml || '');
+  const nf = newField ? String(newField) : null;
+  const how = [];
+  let xml = before, refused = null;
+  const refuse = why => { if (!refused) refused = why; };
+  const plural = (n, w, ws) => `${n} ${n === 1 ? w : (ws || `${w}s`)}`;
+  const verb = nf ? `now ${nf}` : 'removed';
+  // a criteria-like element whose <child> names the field: dropped or renamed
+  const items = (src, tag, child) => {
+    let n = 0;
+    const r = _sftkMdWalk(src, tag, body => {
+      const el = sftkMdFindElement(body, child, 0);
+      if (!el) return 'keep';
+      const v = sftkMdUnescape(body.slice(el.bodyStart, el.bodyEnd));
+      if (!_sftkMdFieldIs(v, objApi, fieldApi)) return 'keep';
+      n++;
+      return nf ? { body: body.slice(0, el.bodyStart) + sftkMdEscape(_sftkMdRenameVal(v, nf)) + body.slice(el.bodyEnd) } : 'drop';
+    });
+    return { xml: r.xml, n, left: r.kept };
+  };
+  // a list member whose TEXT is the field (<fields>X</fields>)
+  const texts = (src, tag) => {
+    let n = 0;
+    const r = _sftkMdWalk(src, tag, body => {
+      if (/</.test(body) || !_sftkMdFieldIs(sftkMdUnescape(body), objApi, fieldApi)) return 'keep';
+      n++;
+      return nf ? { body: sftkMdEscape(_sftkMdRenameVal(sftkMdUnescape(body), nf)) } : 'drop';
+    });
+    return { xml: r.xml, n, left: r.kept };
+  };
+  // formula text: ⇄ swaps the token; ✂ only counts it (a formula is never cut)
+  const formulas = (src, tag) => {
+    let n = 0;
+    const r = _sftkMdWalk(src, tag, body => {
+      const s = _sftkMdSwapToken(body, objApi, fieldApi, nf);
+      n += s.n;
+      return (nf && s.n) ? { body: s.text } : 'keep';
+    });
+    return { xml: r.xml, n };
+  };
+  switch (type) {
+    case 'ValidationRule': {
+      const f = formulas(xml, 'errorConditionFormula');
+      if (!f.n) { refuse('the rule’s formula does not name the field as a whole token — edit it in Setup'); break; }
+      if (nf) { xml = f.xml; how.push(`formula: ${plural(f.n, 'reference')} ${verb}`); break; }
+      const act = sftkMdFindElement(xml, 'active', 0);
+      if (!act || xml.slice(act.bodyStart, act.bodyEnd).trim() !== 'true') { refuse('the rule is already inactive — an inactive rule does not block the delete; re-scan'); break; }
+      xml = xml.slice(0, act.bodyStart) + 'false' + xml.slice(act.bodyEnd);
+      how.push('switched off — a formula cannot lose a reference, and an inactive rule does not block the delete (its formula still names the field)');
+      break;
+    }
+    case 'CustomField': {
+      const f = formulas(xml, 'formula');
+      const r = items(f.xml, 'summaryFilterItems', 'field');
+      const sum = texts(r.xml, 'summarizedField');
+      if (!nf && (f.n || sum.n)) { refuse(f.n ? 'a formula cannot lose a reference — ⇄ Replace it with another field, or 🗑 delete this formula field' : 'the roll-up sums this field — ⇄ Replace it, or 🗑 delete the roll-up field'); break; }
+      if (!f.n && !r.n && !sum.n) { refuse('no formula, roll-up filter or summarized field names the field — edit it in Setup'); break; }
+      xml = sum.xml;
+      if (f.n) how.push(`formula: ${plural(f.n, 'reference')} ${verb}`);
+      if (r.n) how.push(`roll-up filter: ${plural(r.n, 'criterion', 'criteria')} ${verb}`);
+      if (sum.n) how.push(`summarized field ${verb}`);
+      break;
+    }
+    case 'LookupFilter': {
+      const lf = sftkMdFindElement(xml, 'lookupFilter', 0);
+      if (!lf) { refuse('the field has no lookup filter any more — re-scan'); break; }
+      const body = xml.slice(lf.bodyStart, lf.bodyEnd);
+      const r = items(body, 'filterItems', 'field');
+      if (!r.n) { refuse('no filter condition names the field — edit the filter in Setup'); break; }
+      if (!nf && _sftkMdHasLogic(body)) { refuse('the filter’s logic numbers its conditions — taking one out changes what the others mean; edit it in Setup, or 🗑 remove the whole filter'); break; }
+      if (!nf && r.left === 0) { xml = xml.slice(0, lf.start) + xml.slice(lf.end); how.push('the filter had no other condition — the whole lookup filter is removed; the lookup field and its data stay'); break; }
+      xml = xml.slice(0, lf.bodyStart) + r.xml + xml.slice(lf.bodyEnd);
+      how.push(`filter: ${plural(r.n, 'condition')} ${verb}${nf ? '' : `, ${plural(r.left, 'condition')} kept`}`);
+      break;
+    }
+    case 'WebLink':
+    case 'RestrictionRule': {
+      const what = type === 'WebLink' ? 'URL' : 'record filter';
+      const f = formulas(xml, type === 'WebLink' ? 'url' : 'recordFilter');
+      if (!f.n) { refuse(`the ${what} does not name the field as a whole token — edit it in Setup`); break; }
+      if (!nf) { refuse(type === 'WebLink' ? 'a URL cannot lose a merge field and keep working — ⇄ Replace it with another field, or 🗑 delete the button' : 'a record filter cannot lose a condition here — ⇄ Replace it with another field, or 🗑 delete the rule'); break; }
+      xml = f.xml; how.push(`${what}: ${plural(f.n, 'reference')} ${verb}`);
+      break;
+    }
+    case 'WorkflowFieldUpdate': {
+      const fe = sftkMdFindElement(xml, 'field', 0);
+      const target = !!fe && _sftkMdFieldIs(sftkMdUnescape(xml.slice(fe.bodyStart, fe.bodyEnd)), objApi, fieldApi);
+      const f = formulas(xml, 'formula');
+      if (!nf && target) { refuse('the field update WRITES to this field — ⇄ Replace points it at another field, or 🗑 delete the field update'); break; }
+      if (!nf && f.n) { refuse('its formula cannot lose a reference — ⇄ Replace it, or 🗑 delete the field update'); break; }
+      if (!target && !f.n) { refuse('neither its target nor its formula names the field — edit it in Setup'); break; }
+      xml = f.xml;
+      if (target) {
+        const e2 = sftkMdFindElement(xml, 'field', 0);
+        xml = xml.slice(0, e2.bodyStart) + sftkMdEscape(_sftkMdRenameVal(sftkMdUnescape(xml.slice(e2.bodyStart, e2.bodyEnd)), nf)) + xml.slice(e2.bodyEnd);
+        how.push(`target field ${verb}`);
+      }
+      if (f.n) how.push(`formula: ${plural(f.n, 'reference')} ${verb}`);
+      break;
+    }
+    case 'WorkflowRule':
+    case 'SharingCriteriaRule': {
+      const f = formulas(xml, 'formula');
+      if (!nf && f.n) { refuse('its formula cannot lose a reference — ⇄ Replace it, or 🗑 delete it'); break; }
+      const r = items(f.xml, 'criteriaItems', 'field');
+      if (!r.n && !f.n) { refuse('no criterion names the field — edit it in Setup'); break; }
+      if (!nf && r.n && _sftkMdHasLogic(xml)) { refuse('its filter logic numbers the criteria — taking one out changes what the others mean; ⇄ Replace, or edit it in Setup'); break; }
+      if (!nf && r.left === 0 && !sftkMdFindElement(xml, 'formula', 0)) { refuse(`its only criterion is this field — with none left it would ${type === 'WorkflowRule' ? 'fire on every record' : 'share every record'}; ⇄ Replace it, or 🗑 delete it`); break; }
+      xml = r.xml;
+      if (r.n) how.push(`criteria: ${plural(r.n, 'line')} ${verb}${nf ? '' : `, ${plural(r.left, 'line')} kept`}`);
+      if (f.n) how.push(`formula: ${plural(f.n, 'reference')} ${verb}`);
+      break;
+    }
+    case 'MatchingRule': {
+      const r = items(xml, 'matchingRuleItems', 'fieldName');
+      if (!r.n) { refuse('no matching item names the field — edit it in Setup'); break; }
+      if (!nf && _sftkMdHasLogic(xml)) { refuse('its filter logic numbers the items — ⇄ Replace, or edit it in Setup'); break; }
+      if (!nf && r.left === 0) { refuse('its only matching item is this field — a matching rule needs at least one; ⇄ Replace it, or 🗑 delete it'); break; }
+      xml = r.xml; how.push(`matching items: ${plural(r.n, 'item')} ${verb}${nf ? '' : `, ${plural(r.left, 'item')} kept`}`);
+      break;
+    }
+    case 'WorkflowAlert': {
+      const r = items(xml, 'recipients', 'field');
+      if (!r.n) { refuse('no recipient is the field — edit the alert in Setup'); break; }
+      if (!nf && r.left === 0 && !sftkMdFindElement(xml, 'ccEmails', 0)) { refuse('the field is the alert’s only recipient — an alert must send to someone; ⇄ Replace it with another email field, or 🗑 delete the alert'); break; }
+      xml = r.xml; how.push(`recipients: ${plural(r.n, 'recipient')} ${verb}${nf ? '' : `, ${plural(r.left, 'recipient')} kept`}`);
+      break;
+    }
+    case 'WorkflowOutboundMessage': {
+      const r = texts(xml, 'fields');
+      if (!r.n) { refuse('the message does not send the field — edit it in Setup'); break; }
+      if (!nf && r.left === 0) { refuse('the field is the only one the message sends — ⇄ Replace it, or 🗑 delete the message'); break; }
+      xml = r.xml; how.push(nf ? `fields sent: the field is ${verb}` : `fields sent: the field removed, ${plural(r.left, 'field')} still sent`);
+      break;
+    }
+    case 'FieldSet': {
+      let n = 0;
+      for (const tag of ['displayedFields', 'availableFields']) { const r = items(xml, tag, 'field'); xml = r.xml; n += r.n; }
+      if (!n) { refuse('the field set does not list the field — edit it in Setup'); break; }
+      how.push(`field set: the field ${nf ? verb : 'taken out'}`);
+      break;
+    }
+    case 'AssignmentRule':
+    case 'AutoResponseRule':
+    case 'EscalationRule': {
+      let hits = 0, dropped = 0, logic = false, formulaCut = false;
+      const r = _sftkMdWalk(xml, 'ruleEntry', body => {
+        const f = formulas(body, 'formula');
+        if (f.n && !nf) { formulaCut = true; return 'keep'; }
+        const c = items(f.xml, 'criteriaItems', 'field');
+        hits += c.n + f.n;
+        if (!c.n && !f.n) return 'keep';
+        if (!nf && _sftkMdHasLogic(body)) { logic = true; return 'keep'; }
+        if (!nf && c.left === 0 && !sftkMdFindElement(body, 'formula', 0)) { dropped++; return 'drop'; }
+        return { body: c.xml };
+      });
+      if (formulaCut) { refuse('a rule entry’s formula names the field — a formula cannot lose a reference; ⇄ Replace it, or edit the entry in Setup'); break; }
+      if (logic) { refuse('a rule entry’s filter logic numbers its criteria — ⇄ Replace, or edit it in Setup'); break; }
+      if (!hits) { refuse('no rule entry names the field — edit it in Setup'); break; }
+      if (!nf && r.kept === 0) { refuse('every entry of the rule hangs on this field — with none left the rule does nothing; ⇄ Replace it, or 🗑 delete the rule'); break; }
+      xml = r.xml;
+      how.push(nf ? `rule entries: ${plural(hits, 'reference')} ${verb}` : `rule entries: the field’s criteria removed${dropped ? `; ${plural(dropped, 'entry', 'entries')} whose only criterion it was dropped` : ''}, ${plural(r.kept, 'entry', 'entries')} kept`);
+      break;
+    }
+    case 'ApprovalProcess': {
+      let hits = 0, emptied = false, logic = false, formulaCut = false;
+      const r = _sftkMdWalk(xml, 'entryCriteria', body => {
+        const f = formulas(body, 'formula');
+        if (f.n && !nf) { formulaCut = true; return 'keep'; }
+        const c = items(f.xml, 'criteriaItems', 'field');
+        hits += c.n + f.n;
+        if (!c.n && !f.n) return 'keep';
+        if (!nf && _sftkMdHasLogic(body)) { logic = true; return 'keep'; }
+        if (!nf && c.left === 0 && !sftkMdFindElement(body, 'formula', 0)) { emptied = true; return 'keep'; }
+        return { body: c.xml };
+      });
+      const pages = _sftkMdWalk(r.xml, 'approvalPageFields', body => { const t = texts(body, 'field'); hits += t.n; return t.n ? { body: t.xml } : 'keep'; });
+      if (formulaCut) { refuse('the entry criteria are a formula that names the field — ⇄ Replace it, or edit the process in Setup'); break; }
+      if (logic) { refuse('the criteria’s filter logic numbers them — ⇄ Replace, or edit the process in Setup'); break; }
+      if (emptied) { refuse('the field is the only entry criterion — with none left EVERY record could enter the process; ⇄ Replace it, or 🗑 delete the process'); break; }
+      if (!hits) { refuse('no criterion or page field names the field — edit the process in Setup'); break; }
+      xml = pages.xml; how.push(`criteria and page fields: ${plural(hits, 'reference')} ${verb}`);
+      break;
+    }
+    case 'DuplicateRule': {
+      const fl = sftkMdFindElement(xml, 'duplicateRuleFilter', 0);
+      if (!fl) { refuse('the rule has no record filter — re-scan'); break; }
+      const body = xml.slice(fl.bodyStart, fl.bodyEnd);
+      const r = items(body, 'duplicateRuleFilterItems', 'field');
+      if (!r.n) { refuse('no filter line names the field — edit it in Setup'); break; }
+      if (!nf && _sftkMdHasLogic(body)) { refuse('the filter’s logic numbers its lines — ⇄ Replace, or edit it in Setup'); break; }
+      if (!nf && r.left === 0) { xml = xml.slice(0, fl.start) + xml.slice(fl.end); how.push('the filter had no other line — the record filter is removed, the rule now checks every record'); break; }
+      let i = 0;
+      const ren = _sftkMdWalk(r.xml, 'duplicateRuleFilterItems', b => { i++; const so = sftkMdFindElement(b, 'sortOrder', 0); return so ? { body: b.slice(0, so.bodyStart) + String(i) + b.slice(so.bodyEnd) } : 'keep'; });
+      xml = xml.slice(0, fl.bodyStart) + (nf ? r.xml : ren.xml) + xml.slice(fl.bodyEnd);
+      how.push(`record filter: ${plural(r.n, 'line')} ${verb}${nf ? '' : `, ${plural(r.left, 'line')} kept`}`);
+      break;
+    }
+    case 'CustomMetadataRecord': {
+      let n = 0;
+      const r = _sftkMdWalk(xml, 'values', body => {
+        const ve = sftkMdFindElement(body, 'value', 0);
+        if (!ve) return 'keep';
+        const v = sftkMdUnescape(body.slice(ve.bodyStart, ve.bodyEnd));
+        if (!_sftkMdFieldIs(v, objApi, fieldApi)) return 'keep';
+        n++;
+        const open = body.slice(ve.start, ve.bodyStart);
+        return { body: body.slice(0, ve.start) + (nf ? `${open}${sftkMdEscape(_sftkMdRenameVal(v, nf))}</value>` : '<value xsi:nil="true"/>') + body.slice(ve.end) };
+      });
+      if (!n) { refuse('no value of the record holds the field — edit it in Setup'); break; }
+      xml = r.xml; how.push(`${plural(n, 'value')} ${nf ? verb : 'emptied'}`);
+      break;
+    }
+    case 'LeadConvertSettings': {
+      if (!nf) {
+        const r = sftkMdLeadMappingRemove(xml, objApi, fieldApi);
+        if (!r.removed) { refuse('no mapping line carries the field — re-scan'); break; }
+        xml = r.xml; how.push(`${plural(r.removed, 'mapping line')} removed, the other lines kept`);
+        break;
+      }
+      let n = 0;
+      const o = String(objApi || '').toLowerCase();
+      const r = _sftkMdWalk(xml, 'objectMapping', body => {
+        const io = (sftkMdChildText(body, 'inputObject') || '').toLowerCase(), oo = (sftkMdChildText(body, 'outputObject') || '').toLowerCase();
+        const m = _sftkMdWalk(body, 'mappingFields', mb => {
+          let out = mb, hit = false;
+          for (const [side, objOf] of [['inputField', io], ['outputField', oo]]) {
+            const e = sftkMdFindElement(out, side, 0);
+            if (e && objOf === o && _sftkMdFieldIs(sftkMdUnescape(out.slice(e.bodyStart, e.bodyEnd)), objApi, fieldApi)) { out = out.slice(0, e.bodyStart) + sftkMdEscape(nf) + out.slice(e.bodyEnd); hit = true; n++; }
+          }
+          return hit ? { body: out } : 'keep';
+        });
+        return m.changed ? { body: m.xml } : 'keep';
+      });
+      if (!n) { refuse('no mapping line carries the field — re-scan'); break; }
+      xml = r.xml; how.push(`${plural(n, 'mapping line')} now ${nf}`);
+      break;
+    }
+    default:
+      refuse('this kind is not edited here — 🗑 delete it, or edit it in Setup');
+  }
+  if (refused) return { xml: before, changed: false, how: [], refused };
+  return { xml, changed: xml !== before, how, refused: null };
+}
+// Which ways a kind has: ✂ remove and/or ⇄ replace. Formula-ish kinds are
+// Replace only; the rest can take the field out of their structure. null =
+// not edited here (code, bundles, a whole Lightning page — 🗑 or Setup).
+function sftkMdEditWays(type) {
+  const t = {
+    ValidationRule: 'rr', CustomField: 'r', LookupFilter: 'rr', WebLink: 'r', RestrictionRule: 'r', WorkflowFieldUpdate: 'r',
+    WorkflowRule: 'rr', SharingCriteriaRule: 'rr', MatchingRule: 'rr', WorkflowAlert: 'rr', WorkflowOutboundMessage: 'rr', FieldSet: 'rr',
+    AssignmentRule: 'rr', AutoResponseRule: 'rr', EscalationRule: 'rr', ApprovalProcess: 'rr', DuplicateRule: 'rr',
+    CustomMetadataRecord: 'rr', LeadConvertSettings: 'rr',
+  }[type];
+  return t ? { remove: t === 'rr', replace: true } : null;
+}
+
+// Readable XML for the inspector and the edit dialog: one element per line,
+// a leaf on one line with its text. Display only — never deployed.
+function sftkMdPretty(xml) {
+  const toks = String(xml || '').split(/(<[^>]+>)/).filter(t => t !== '');
+  const out = [];
+  let depth = 0, i = 0;
+  const pad = () => '  '.repeat(depth);
+  while (i < toks.length) {
+    const t = toks[i];
+    if (/^<\//.test(t)) { depth = Math.max(0, depth - 1); out.push(pad() + t); i++; continue; }
+    if (/^<[A-Za-z]/.test(t) && !/\/>$/.test(t)) {
+      const nx = toks[i + 1], nx2 = toks[i + 2];
+      if (nx != null && !/^</.test(nx) && nx2 && /^<\//.test(nx2)) { out.push(pad() + t + nx.trim() + nx2); i += 3; continue; }
+      if (nx && /^<\//.test(nx)) { out.push(pad() + t + nx); i += 2; continue; }
+      out.push(pad() + t); depth++; i++; continue;
+    }
+    if (/^</.test(t)) { out.push(pad() + t); i++; continue; }
+    const txt = t.trim();
+    if (txt) out.push(pad() + txt);
+    i++;
+  }
+  return out.join('\n');
+}
+// Line diff (longest common subsequence) of two pretty texts:
+// [{ op: ' ' | '-' | '+', line }].
+function sftkMdLineDiff(a, b) {
+  const A = String(a || '').split('\n'), B = String(b || '').split('\n');
+  const n = A.length, m = B.length;
+  if (n * m > 1000000) return [...A.map(line => ({ op: '-', line })), ...B.map(line => ({ op: '+', line }))];
+  const L = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const out = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (A[i] === B[j]) { out.push({ op: ' ', line: A[i] }); i++; j++; }
+    else if (L[i + 1][j] >= L[i][j + 1]) { out.push({ op: '-', line: A[i] }); i++; }
+    else { out.push({ op: '+', line: B[j] }); j++; }
+  }
+  while (i < n) out.push({ op: '-', line: A[i++] });
+  while (j < m) out.push({ op: '+', line: B[j++] });
+  return out;
+}
+
+if (typeof globalThis !== 'undefined') {
+  globalThis.sftkMdEditField = sftkMdEditField;
+  globalThis.sftkMdEditWays  = sftkMdEditWays;
+  globalThis.sftkMdPretty    = sftkMdPretty;
+  globalThis.sftkMdLineDiff  = sftkMdLineDiff;
+}

@@ -17,8 +17,9 @@ export default async function (h) {
   await h.popup('fields');
   await h.watchErrors();
   await h.waitFor("!!document.querySelector('#fcObjInput')", 60000, 500);
-  await pick(h, '#fcObjInput', '#fcObjDrop', 'Account');
-  await pick(h, '#fcFieldInput', '#fcFieldDrop', 'SFTK_Live_Blk__c');
+  // OBJ / FIELD: another object's demo field (Lead / Case carry the assignment and escalation rules)
+  await pick(h, '#fcObjInput', '#fcObjDrop', process.env.OBJ || 'Account');
+  await pick(h, '#fcFieldInput', '#fcFieldDrop', process.env.FIELD || 'SFTK_Live_Blk__c');
   await h.eval(`document.querySelector('#fcScope [data-scope="blockers"]').click()`); await h.sleep(300);
   await h.eval(`document.querySelector('#fcScanBtn').click()`);
   await h.waitFor("!document.querySelector('#fcScanBtn')?.disabled", 600000, 1000); await h.sleep(1500);

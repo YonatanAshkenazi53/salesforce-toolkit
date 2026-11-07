@@ -1,0 +1,1 @@
+<fullName>Account.SFTK_Live_VR</fullName><active>true</active><description>SFTK live demo, never fires</description><errorConditionFormula>ISBLANK(SFTK_Live_Blk__c) &amp;&amp; FALSE</errorConditionFormula><errorMessage>SFTK live demo</errorMessage>

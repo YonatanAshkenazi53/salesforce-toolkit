@@ -82,9 +82,9 @@ describe('the wiring', () => {
   it('every blocker kind with a spec gets a 🗑 button, with or without Remove/Replace; the button is a third way of a fix', () => {
     expect(FC).toContain("const spec = (cfgT.sev === 'blocker' && typeof sftkMdDeleteSpec === 'function') ? (sftkMdDeleteSpec(type) || (type === 'LookupFilter' ? { what: 'lookup filter' } : null)) : null;");
     expect(FC).toContain('data-way="delete" title="Delete this ${esc(spec.what)} from the org');
-    expect(FC).toContain('if (!cfgT.fixable) return del;');
+    expect(FC).toContain('if (!cfgT.fixable) return edits + del;');   // ✂/⇄ inside the blocker come first (2026-11-08)
     expect(FC).toContain("const canDel = !fixable && (TYPE_CFG[type] || TYPE_CFG_DEFAULT).sev === 'blocker' && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter');");
-    expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off' || way === 'delete') ? way : '';");
+    expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit') ? way : '';");
     expect(FC).toContain("if (_fixWay === 'delete') {");
   });
   it('the delete reads the full definition first (no restore point, no delete), deletes with destructiveChanges, verifies gone, and the undo deploys the saved files', () => {
@@ -105,12 +105,12 @@ describe('the wiring', () => {
     expect(FC).toContain("return id;\n  }\n  // \"Gone\" for code and bundles");
   });
   it('the gate row says the delete is here, and counts down as deletes land', () => {
-    expect(FC).toContain(`'🗑 delete above, or clear in Setup, then re-scan' : 'clear in Setup, then re-scan'`);
+    expect(FC).toContain("'✂ / ⇄ or 🗑' : '🗑 delete'} above, or clear in Setup, then re-scan` : 'clear in Setup, then re-scan'");
     expect(FC).toContain('data-type="${esc(b.type)}">${(TYPE_CFG[b.type] || {}).icon');
-    expect(FC).toContain("hdr.textContent = '✅ Every blocker listed here was deleted — press Re-scan, then delete the field.';");
+    expect(FC).toContain("hdr.textContent = '✅ Every blocker listed here was fixed or deleted — press Re-scan, then delete the field.';");
   });
   it('the restore point of a delete deploys the saved files back', () => {
-    expect(FC).toContain("} else if (snap.type === 'MdDelete') {");
+    expect(FC).toContain("} else if (snap.type === 'MdDelete' || snap.type === 'MdEdit') {");
     expect(FC).toContain("zipBase64: _zipOf(md.files)");
   });
 });

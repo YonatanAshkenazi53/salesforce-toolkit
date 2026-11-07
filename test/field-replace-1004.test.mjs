@@ -580,7 +580,7 @@ describe('a flow that runs on the field — the decision is made on its card', (
     expect(btns).toContain("const move = _replOn() ? `<button class=\"btn btn-primary btn-sm fc-fix-btn\" ${attrs} data-swap=\"1\"");
   });
   it('the button pressed is the way: nothing is asked again in the dialog', () => {
-    expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off' || way === 'delete') ? way : '';");   // +delete 2026-11-07
+    expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit') ? way : '';");   // +delete 2026-11-07, +edit 2026-11-08
     expect(FC).toContain("const preset = !hasChoice ? '' : (swap || _fixWay === 'keep') ? 'replace' : _fixWay === 'off' ? 'delete' : '';");
     expect(FC).toContain('if (preset) activeMode = preset;');
     expect(FC).toContain('const asks = hasChoice && !preset;');

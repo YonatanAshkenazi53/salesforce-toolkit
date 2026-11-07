@@ -1,0 +1,1 @@
+<fullName>Contact.SFTK_Live_XVR</fullName><active>true</active><description>SFTK live demo, never fires</description><errorConditionFormula>Account.SFTK_Live_Blk__c = &apos;never@sftk.invalid&apos;</errorConditionFormula><errorMessage>SFTK live demo</errorMessage>

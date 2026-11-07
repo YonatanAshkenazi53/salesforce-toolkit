@@ -1,0 +1,1 @@
+<fullName>Account.SFTK_Live_Alert</fullName><description>live fixture</description><protected>false</protected><recipients><field>SFTK_Live_Blk__c</field><type>email</type></recipients><senderType>CurrentUser</senderType><template>unfiled$public/SFTK_Live_Email</template>

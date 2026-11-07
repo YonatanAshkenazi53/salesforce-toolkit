@@ -15,3 +15,7 @@ _preview_*.html
 
 # local secrets (an Azure Speech key for the walkthrough voice) — never committed
 .secrets/
+
+# outputs of the demo fixture builders (scripts/dev/live/demo): regenerated on every run
+scripts/dev/live/demo/live*/
+scripts/dev/live/demo/live4-report.json

@@ -1,0 +1,1 @@
+<fullName>Account.SFTK_Live_MR2</fullName><label>SFTK Live MR2 (on the field)</label><matchingRuleItems><blankValueBehavior>NullNotAllowed</blankValueBehavior><fieldName>SFTK_Live_Blk__c</fieldName><matchingMethod>Exact</matchingMethod></matchingRuleItems><ruleStatus>Inactive</ruleStatus>
