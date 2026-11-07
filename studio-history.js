@@ -194,6 +194,35 @@ function histHistoryCsvRows(entries, opts) {
   return { header, rows };
 }
 
+// Per-field before/after of one updated record (user 2026-11-07, promised on r/salesforce 2026-11-03: "ומה עם מה
+// שהבחור מרדיט אמר? משהו עם לפני ואחרי"): the target's values read just before the write, and the values written.
+// Only fields whose value changed; a field the PII policy covers keeps no BEFORE value (that is the target's raw data
+// — the AFTER is the masked value that was written); a before that could not be read is said so. PURE.
+function sftkFieldChanges(before, after, piiFields) {
+  const out = {};
+  const hide = piiFields instanceof Set ? piiFields : new Set(piiFields || []);
+  for (const [f, v] of Object.entries(after || {})) {
+    if (f === 'Id' || f === 'attributes') continue;
+    const a = v == null ? null : v;
+    if (!before) { out[f] = { before: null, beforeUnread: true, after: a }; continue; }
+    const b = before[f] == null ? null : before[f];
+    if (String(b ?? '') === String(a ?? '')) continue;
+    out[f] = hide.has(f) ? { before: null, beforeHidden: 'the PII policy covers this field — its value before the run is not kept', after: a } : { before: b, after: a };
+  }
+  return out;
+}
+// The before/after lines of one run, flat: one line per changed field of every updated record. PURE.
+function histFieldChanges(entry) {
+  const out = [];
+  for (const [obj, s] of Object.entries((entry && entry.summary) || {})) {
+    for (const r of ((s && s.targetRecords) || [])) {
+      if (!r || !r.changes) continue;
+      for (const [field, c] of Object.entries(r.changes)) out.push({ object: obj, id: r.id, label: r.label || r.id, field, before: c.before, after: c.after, ...(c.beforeUnread ? { beforeUnread: true } : {}), ...(c.beforeHidden ? { beforeHidden: c.beforeHidden } : {}) });
+    }
+  }
+  return out;
+}
+
 // JSON export payload (per-run when entries has one element, full history
 // otherwise). settings: { historyDays, countsOnly }. opts: { labels: {url →
 // label}, nowIso }. The retention note states what is and is NOT in the file
@@ -218,12 +247,15 @@ function histExportPayload(entries, settings, opts) {
       targetOrgLabel: labels[tgtUrl] || tgtUrl,
       totals: { created: t.created, updated: t.updated, deleted: t.deleted, pulled: t.pulled, failed: t.failed, notConfirmedWritten: t.notProcessed },
       ...(note ? { recordDetailNote: note } : {}),
+      // every changed field of every updated record: old and new value (none in counts-only mode — never kept)
+      fieldChanges: s.countsOnly ? [] : histFieldChanges(e),
     };
   });
   const retentionNote = (days > 0
     ? `This file contains the ${runs.length} run(s) passed to this export. Runs older than ${days} day(s) are DELETED automatically per the retention setting (from the hot tier AND the on-PC archive) and cannot appear in any export.`
     : `This file contains the ${runs.length} run(s) passed to this export. Retention is "keep forever": the newest 100 runs stay hot, older runs move to the on-PC 📦 archive — the History page's "Export all (incl. archive)" bundles both.`)
-    + (s.countsOnly ? ' Counts-only mode is ON: per-record ids and labels are stripped from history at write time, so runs carry counts and errors but no record-level detail.' : '');
+    + (s.countsOnly ? ' Counts-only mode is ON: per-record ids and labels are stripped from history at write time, so runs carry counts and errors but no record-level detail.' : '')
+    + (s.countsOnly ? ' fieldChanges is empty: counts-only mode keeps no values.' : ' fieldChanges lists, per run, every field an update changed — its value in the target just before the run and the value written (the first 200 updated records per object; a field under the PII policy keeps no before value).');
   return {
     format: 'sftk-history-export',
     version: 1,

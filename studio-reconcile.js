@@ -4289,6 +4289,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   const tgtUpdOk = tgtUpdMap ? new Set([...tgtUpdMap].filter(([, u]) => u === true).map(([k]) => k)) : null;
   const payloads = [];
   const rowMeta  = [];   // [{ id, label }]
+  const piiTgtFields = new Set();   // target fields the PII policy covers (History keeps no "before" for them)
   for (const sr of srcRecs) {
     const tgtId = srcToTgt.get(sr.Id);
     if (!tgtId) continue;
@@ -4315,6 +4316,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
       // PII a pre-policy seed may have planted in the target.
       const piiRule = piiActive && sf !== 'RecordTypeId' ? piiRules[sf.toLowerCase()] : null;
       if (piiRule) {
+        piiTgtFields.add(tf);
         const m = await sftkPiiMaskValue(v, descByLower[sf.toLowerCase()] || {}, profile.piiSalt, piiRule);
         if (m.action !== 'kept') {
           piiCounts[m.action] = (piiCounts[m.action] || 0) + 1;
@@ -4399,6 +4401,17 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   // masking, lookups, owner reassignment), closes the same gap a PATCH
   // accepted-but-unchanged taught elsewhere.
   const writeFields = [...new Set(payloads.flatMap(p => Object.keys(p).filter(k => k !== 'Id' && k !== 'attributes')))];
+  // History's before/after (user 2026-11-07, promised on r/salesforce 2026-11-03): the target's values of the written
+  // fields, read just before the write — the first 200 records, the ones History keeps by name. Counts-only mode keeps
+  // no values, so nothing is read for it; a read that fails leaves "before" unread, never guessed.
+  const keepValues = !(typeof _settings !== 'undefined' && _settings && _settings.countsOnly);
+  const beforeById = new Map();
+  if (keepValues && writeFields.length) {
+    const ids = payloads.map(x => x.Id).filter(Boolean).slice(0, 200);
+    const bq = ids.length ? await sendBg({ type: 'SF_QUERY_ALL', orgUrl: tgtSess.orgUrl, sid: tgtSess.sid, tooling: false, _suppressError: true,
+      query: `SELECT Id, ${writeFields.join(', ')} FROM ${objType} WHERE Id IN (${ids.map(id => soqlStrLit(id)).join(',')})` }) : null;
+    if (bq && !bq.error) for (const r of (bq.records || [])) beforeById.set(r.Id, r);
+  }
   // confirmed-by: every caller (runReconcile's root/inverse/child overwrite
   // paths) confirms via runReconcile's Proceed/production sftkConfirmDestructive first.
   // history-by: the deployment's own History entry (rollback in studio-undo.js)
@@ -4443,7 +4456,7 @@ async function reconcileOverwrite(profile, objType, sourceIds, driftBucket, srcS
   arr.forEach((r, i) => {
     if (!rowMeta[i]) return;
     const stale = r.success && payloads[i] && staleSet.has(payloads[i].Id);
-    if (r.success && !stale) { if (updatedRecords.length < 200) updatedRecords.push(rowMeta[i]); }
+    if (r.success && !stale) { if (updatedRecords.length < 200) updatedRecords.push(keepValues ? { ...rowMeta[i], changes: sftkFieldChanges(beforeById.get(payloads[i].Id), payloads[i], piiTgtFields) } : rowMeta[i]); }
     else if (failedRecords.length < 200) {
       failedRecords.push({ ...rowMeta[i], error: stale ? 'accepted by Salesforce, but the org still shows a different value' : (r.errors || []).map(e => e.message).join('; ') });
     }

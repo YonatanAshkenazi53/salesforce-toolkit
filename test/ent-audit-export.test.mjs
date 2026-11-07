@@ -16,7 +16,7 @@ const {
 } = extractFunctions('studio-history.js', [
   'histCsvEscape', 'histCsvSerialize', 'histFieldContext', 'histRunTotals',
   'histRecordDetailNote', 'histRunToCsvRows', 'histHistoryCsvRows',
-  'histExportPayload', 'histExportFilename',
+  'histExportPayload', 'histExportFilename', 'histFieldChanges',   // +fieldChanges 2026-11-08
 ]);
 
 // ── Fixtures ────────────────────────────────────────────────────
