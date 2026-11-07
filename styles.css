@@ -7107,3 +7107,21 @@ body.sftk-dark .fc-xml-badge--miss { color: #8BE0A4; }
 .fc-xml-done { flex-basis: 100%; margin: 2px 0 2px; font-size: 11px; }
 .fc-xml-done summary { cursor: pointer; color: var(--subtext); }
 .fc-xml-done .fc-xml-pre { border: 1px solid var(--border); border-radius: 6px; margin-top: 4px; }
+
+/* ── Field Cleaner ✎ XML editor (2026-11-08) ── */
+.fc-xml-editor { padding: 8px 12px 10px; }
+.fc-xml-ed-hint { font-size: 11px; color: var(--subtext); margin-bottom: 6px; line-height: 1.5; }
+.fc-xml-ta { width: 100%; box-sizing: border-box; resize: vertical; font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace; font-size: 11px; line-height: 1.6;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--code-bg, #f6f8fa); color: var(--text); tab-size: 2; white-space: pre; overflow: auto; }
+.fc-xml-ta:focus { outline: none; border-color: var(--brand); box-shadow: var(--focus-ring, 0 0 0 2px rgba(1,118,211,.3)); }
+.fc-xml-ed-bar { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.fc-xml-ed-state { flex: 1; font-size: 11px; color: var(--subtext); }
+.fc-xml-ed-state.fc-xml-ed-bad { color: var(--danger); }
+.fc-xml-ed-out:empty { display: none; }
+.fc-xml-ed-out { margin-top: 6px; }
+.fc-xml-ed-err, .fc-xml-ed-ok, .fc-xml-ed-note { font-size: 11.5px; padding: 6px 10px; border-radius: 6px; line-height: 1.5; }
+.fc-xml-ed-err { background: var(--c-critical-bg, #FEF0EE); color: var(--danger); border: 1px solid var(--c-critical-border, #F5B5B0); }
+.fc-xml-ed-ok { background: var(--c-good-bg, #EAF5EA); color: var(--success, #2e7d32); border: 1px solid var(--c-good-border, #B7DDB9); margin: 6px 12px; }
+.fc-xml-ed-note { color: var(--subtext); }
+.fc-xml-ed-raw { font-family: 'SF Mono', Consolas, monospace; font-size: 11px; display: block; margin-top: 3px; white-space: pre-wrap; }
+.fc-xml-edit-btn { margin-right: 4px; }

@@ -6364,7 +6364,133 @@ const FieldCleaner = (() => {
     });
     return { html: `<pre class="fc-xml-pre fc-xml-md">${lines.join('')}</pre>`, n };
   }
-  async function _xmlInspectMd(type, componentId, componentName, panel, inspBtn) {
+  // ✎ The XML editor (user 2026-11-07: "give the user an ability to edit the XML and repush it to sf the way
+  // they want. Like a vscode"): the record's XML in a box, deployed back through the same package deploy as
+  // ✂ / ⇄ / 🗑 — well-formed or nothing is sent, its name cannot change, the diff is confirmed, a restore point
+  // is kept, a refusal is shown in Salesforce's own words under the box, ↩ Undo in History deploys the original.
+  // the extension pages enforce Trusted Types (DOMParser refuses a plain string): a pure tag-balance check
+  function _xmlWellFormed(text) { return sftkMdWellFormed(text); }
+  function _xmlEditorOpen(panel, ctx) {
+    const box = panel.querySelector('.fc-xml-body');
+    if (!box) return;
+    const orig = sftkMdPretty(ctx.xml);
+    box.innerHTML = `
+      <div class="fc-xml-editor">
+        <div class="fc-xml-ed-hint">✎ Edit the XML and deploy it back — exactly this text is sent (as the ${esc(ctx.spec.what)} “${esc(ctx.fullName)}”). The <code>&lt;fullName&gt;</code> line names it and stays as it is. A restore point is kept; ↩ Undo in History deploys the original back.</div>
+        <textarea class="fc-xml-ta" spellcheck="false" wrap="off" aria-label="The XML of ${esc(ctx.componentName)}"></textarea>
+        <div class="fc-xml-ed-bar">
+          <span class="fc-xml-ed-state">No change yet</span>
+          <button class="btn btn-secondary btn-sm fc-xml-ed-reset" disabled>↺ Start over</button>
+          <button class="btn btn-secondary btn-sm fc-xml-ed-cancel">Cancel</button>
+          <button class="btn btn-primary btn-sm fc-xml-ed-deploy" disabled>⬆ Deploy to the org</button>
+        </div>
+        <div class="fc-xml-ed-out" role="status"></div>
+      </div>`;
+    const ta = box.querySelector('.fc-xml-ta'), state = box.querySelector('.fc-xml-ed-state');
+    const go = box.querySelector('.fc-xml-ed-deploy'), reset = box.querySelector('.fc-xml-ed-reset'), out = box.querySelector('.fc-xml-ed-out');
+    ta.value = orig;
+    ta.rows = Math.min(28, Math.max(8, orig.split('\n').length + 1));
+    const sync = () => {
+      const d = sftkMdLineDiff(orig, ta.value).filter(x => x.op !== ' ').length;
+      const bad = ta.value !== orig ? _xmlWellFormed(ta.value) : null;
+      state.textContent = ta.value === orig ? 'No change yet' : bad ? `⚠ Not well-formed XML — ${bad.slice(0, 160)}` : `${d} line${d === 1 ? '' : 's'} changed`;
+      state.classList.toggle('fc-xml-ed-bad', !!bad);
+      go.disabled = ta.value === orig || !!bad;
+      reset.disabled = ta.value === orig;
+    };
+    // a new edit clears the last deploy's verdict (it spoke of the text before)
+    ta.addEventListener('input', () => { out.innerHTML = ''; sync(); });
+    // Tab indents like an editor instead of leaving the box
+    ta.addEventListener('keydown', ev => {
+      if (ev.key !== 'Tab') return;
+      ev.preventDefault();
+      const s = ta.selectionStart, e = ta.selectionEnd;
+      ta.value = ta.value.slice(0, s) + '  ' + ta.value.slice(e);
+      ta.selectionStart = ta.selectionEnd = s + 2;
+      sync();
+    });
+    reset.addEventListener('click', () => { ta.value = orig; out.innerHTML = ''; sync(); });
+    box.querySelector('.fc-xml-ed-cancel').addEventListener('click', () => { _xmlInspectMd(ctx.type, ctx.componentId, ctx.componentName, panel, ctx.inspBtn); });
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      const r = await _xmlEditorDeploy(ctx, ta.value, out);
+      if (r === 'deployed') await _xmlInspectMd(ctx.type, ctx.componentId, ctx.componentName, panel, ctx.inspBtn, '✅ Deployed — every line you changed is in the org, verified by re-reading it. Below is what the org holds now; ↩ Undo in History puts the previous XML back.');
+      else sync();
+    });
+    ta.focus();
+  }
+  async function _xmlEditorDeploy(ctx, text, out) {
+    const { type, componentName, fullName, spec } = ctx;
+    const say = (cls, html) => { out.innerHTML = `<div class="${cls}">${html}</div>`; };
+    const bad = _xmlWellFormed(text);
+    if (bad) { say('fc-xml-ed-err', `❌ Not deployed — the XML is not well-formed: ${esc(bad)}`); return 'bad'; }
+    const inBox = !!_RULE_CONTAINERS[type];
+    const wantName = inBox ? fullName.slice(fullName.indexOf('.') + 1) : fullName;
+    const gotName = sftkMdChildText(text, 'fullName');
+    if (gotName !== wantName) { say('fc-xml-ed-err', `❌ Not deployed — the <code>&lt;fullName&gt;</code> must stay “${esc(wantName)}” (it names the ${esc(spec.what)}; renaming is not done here).`); return 'bad'; }
+    const pkgType = type === 'LookupFilter' ? 'CustomField' : type;
+    const files = sftkMdPackageFiles(pkgType, fullName, ctx.xml), deployFiles = sftkMdPackageFiles(pkgType, fullName, text);
+    const diff = sftkMdLineDiff(sftkMdPretty(ctx.xml), sftkMdPretty(text));
+    const added = diff.filter(x => x.op === '+').map(x => x.line.trim()).filter(Boolean);
+    const firstOld = (diff.find(x => x.op === '-') || {}).line;
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    const sure = await sftkConfirmDestructive({
+      title: `Deploy your XML — ${spec.what} “${componentName}”`,
+      icon: '⬆',
+      items: [{ label: componentName, sub: spec.what }],
+      revOverride: { html: `⬆ <strong>Your edited XML is deployed as the ${esc(spec.what)}</strong> — ${diff.filter(x => x.op !== ' ').length} line(s) differ from what the org holds now. The ${esc(spec.what)} as it is now is kept as a <strong>restore point</strong>: ↩ Undo in History (or ↩ Restore points, under the results) deploys it back.`, needsCheckbox: false, cls: 'sftk-rev-newver' },
+      undoHint: 'Undo in History',
+      extraHtml: `<div class="fc-xml-diff-hd">The XML — <span class="xd-del">− as it is</span> · <span class="xd-add">+ as you wrote it</span></div>${_xmlDiffHtml(ctx.xml, text)}`,
+      confirmLabel: '⬆ Deploy',
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!sure) { say('fc-xml-ed-note', 'Not deployed — cancelled. Your text is still in the box.'); return 'cancel'; }
+    const readMsg = _mdReadMsg(type, fullName, spec.mdType);
+    const backPattern = firstOld ? _rxEsc(firstOld.trim()) : _rxEsc(wantName);
+    await _snapshotFix('MdEdit', ctx.componentId, componentName, fullName, { type, mdType: spec.mdType, what: spec.what, how: ['XML edited by hand'], files, verify: { msg: readMsg, pattern: backPattern, flags: '', retries: 3 } });
+    say('fc-xml-ed-note', '⏳ Deploying…');
+    const zipBack = _zipOf(files), zipNew = _zipOf(deployFiles);
+    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `✎ XML edited — ${spec.what} "${componentName}"`, orgUrl: _orgUrl });
+    let wr;
+    try {
+      // confirmed-by: the sftkConfirmDestructive right above
+      // The write discipline (sftk-write.js): the deploy of the edited XML is the write; the verify re-reads the
+      // record and finds every line the user added (Salesforce may reorder elements, so not byte for byte).
+      wr = await sftkWriteVerified({
+        describe: `"${componentName}" ${spec.what} — XML edited`,
+        journal: j,
+        write: async () => {
+          const r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64: zipNew, _suppressError: true });
+          return (r && r.success) ? r : { error: (r && r.error) || 'the deploy was not accepted' };
+        },
+        verify: async () => {
+          for (let i = 0; i < 3; i++) {
+            const a = await _mdReadOne(type, fullName, spec.mdType);
+            if (a && a.rec) {
+              const now = new Set(sftkMdPretty(a.rec.innerXml).split('\n').map(l => l.trim()));
+              if (added.every(l => now.has(l))) return { ok: true, text: null };
+            }
+            await new Promise(res => setTimeout(res, 1200));
+          }
+          return { ok: false, text: null };
+        },
+      });
+      if (wr.accepted && wr.ok) { say('fc-xml-ed-ok', '✅ Deployed — every line you changed is in the org, verified by re-reading it. ↩ Undo in History puts the previous XML back.'); return 'deployed'; }
+      if (wr.accepted) { say('fc-xml-ed-err', `⚠ Salesforce accepted the deploy, but on re-read not every line you wrote is there — Salesforce may have normalised it. Open 🔍 again to see what the org holds.`); return 'odd'; }
+      say('fc-xml-ed-err', `❌ Salesforce refused the deploy — nothing was changed. Its words: <span class="fc-xml-ed-raw">${esc(String((wr.raw && wr.raw.error) || 'refused'))}</span>`);
+      return 'refused';
+    } finally {
+      await sftkHistoryEnd(j, { undo: wr && wr.accepted
+        ? { steps: [{
+            describe: `Put the ${spec.what} "${componentName}" back as it was before the XML edit`,
+            // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read in `verify`
+            msg: { type: 'SF_METADATA_DEPLOY', zipBase64: zipBack },
+            verify: { msg: readMsg, pattern: backPattern, flags: '', retries: 3, text: { ok: `"${componentName}": the previous XML is back — verified by re-reading the org`, bad: `"${componentName}": the deploy was accepted, but on re-read the previous XML is not back yet` } },
+          }] }
+        : { none: 'nothing was accepted by Salesforce, so there is nothing to undo' } });
+    }
+  }
+  async function _xmlInspectMd(type, componentId, componentName, panel, inspBtn, note) {
     const spec = type === 'LookupFilter' ? { type, mdType: 'CustomField', what: 'lookup filter', special: 'lookupFilter' } : sftkMdDeleteSpec(type);
     if (!spec) throw new Error('this kind has no XML read here');
     const fullName = await _deleteFullName(type, componentId, spec);
@@ -6387,11 +6513,13 @@ const FieldCleaner = (() => {
       <div class="fc-xml-hdr">
         <span class="fc-xml-hdr-name">${esc(componentName)} <small class="fc-xml-src">· ${esc(spec.mdType === 'CustomField' && type === 'LookupFilter' ? 'CustomField' : spec.mdType)} ${esc(fullName)} · Metadata API</small></span>
         <span class="fc-xml-badge ${marked.n ? 'fc-xml-badge--hit' : 'fc-xml-badge--miss'}">${marked.n ? `${marked.n} line${marked.n === 1 ? ' names' : 's name'} the field` : 'no line names the field'}</span>
-        <span class="fc-xml-hdr-actions"><button class="fc-xml-close" data-panelid="${esc(componentId)}">✕</button></span>
+        <span class="fc-xml-hdr-actions">${dupe ? '' : '<button class="btn btn-secondary btn-sm fc-xml-edit-btn" title="Edit this XML and deploy it back — like an editor; a restore point is kept">✎ Edit XML</button>'}<button class="fc-xml-close" data-panelid="${esc(componentId)}">✕</button></span>
       </div>
-      ${marked.html}
-      ${previews}`;
+      ${note ? `<div class="fc-xml-ed-ok fc-xml-ed-done">${esc(note)}</div>` : ''}
+      <div class="fc-xml-body">${marked.html}
+      ${previews}</div>`;
     panel.querySelector('.fc-xml-close')?.addEventListener('click', () => { panel.style.display = 'none'; if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open'); });
+    panel.querySelector('.fc-xml-edit-btn')?.addEventListener('click', ev => { ev.currentTarget.disabled = true; _xmlEditorOpen(panel, { type, componentId, componentName, fullName, spec, xml, inspBtn }); });
     panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
   // Toggle the XML inspector panel open/closed for a dependency item.

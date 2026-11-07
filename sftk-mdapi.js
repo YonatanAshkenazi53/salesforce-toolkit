@@ -959,7 +959,7 @@ function sftkMdPretty(xml) {
     if (/^<\//.test(t)) { depth = Math.max(0, depth - 1); out.push(pad() + t); i++; continue; }
     if (/^<[A-Za-z]/.test(t) && !/\/>$/.test(t)) {
       const nx = toks[i + 1], nx2 = toks[i + 2];
-      if (nx != null && !/^</.test(nx) && nx2 && /^<\//.test(nx2)) { out.push(pad() + t + nx.trim() + nx2); i += 3; continue; }
+      if (nx != null && !/^</.test(nx) && nx2 && /^<\//.test(nx2)) { out.push(pad() + t + nx + nx2); i += 3; continue; }   // a leaf's text exactly as it is (the editor deploys it)
       if (nx && /^<\//.test(nx)) { out.push(pad() + t + nx); i += 2; continue; }
       out.push(pad() + t); depth++; i++; continue;
     }
@@ -996,3 +996,28 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkMdPretty    = sftkMdPretty;
   globalThis.sftkMdLineDiff  = sftkMdLineDiff;
 }
+
+// Is this text well-formed XML (for the ✎ editor)? A tag-balance check, pure — the
+// extension pages enforce Trusted Types, so DOMParser is not used for it. Returns
+// null when it is, or the first problem with its line number.
+function sftkMdWellFormed(text) {
+  const s = String(text == null ? '' : text);
+  const stack = [];
+  const lineAt = i => s.slice(0, i).split('\n').length;
+  const re = /<!\[CDATA\[[\s\S]*?\]\]>|<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<(\/?)([A-Za-z_][\w.:-]*)((?:\s+[A-Za-z_][\w.:-]*\s*=\s*(?:"[^"<]*"|'[^'<]*'))*)\s*(\/?)>|<|&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);)/g;
+  let m;
+  while ((m = re.exec(s))) {
+    const t = m[0];
+    if (t === '<') return `line ${lineAt(m.index)}: a “<” that does not open a tag (write &lt; for a literal one)`;
+    if (t === '&') return `line ${lineAt(m.index)}: an “&” that is not an entity (write &amp; for a literal one)`;
+    if (!m[2]) continue;                                   // CDATA, comment, processing instruction
+    if (m[4]) continue;                                    // <x/>
+    if (!m[1]) { stack.push({ name: m[2], at: m.index }); continue; }
+    const open = stack.pop();
+    if (!open) return `line ${lineAt(m.index)}: </${m[2]}> closes nothing`;
+    if (open.name !== m[2]) return `line ${lineAt(m.index)}: <${open.name}> (line ${lineAt(open.at)}) is closed by </${m[2]}>`;
+  }
+  if (stack.length) { const o = stack[stack.length - 1]; return `line ${lineAt(o.at)}: <${o.name}> is never closed`; }
+  return null;
+}
+if (typeof globalThis !== 'undefined') globalThis.sftkMdWellFormed = sftkMdWellFormed;

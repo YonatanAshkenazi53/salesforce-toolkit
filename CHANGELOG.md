@@ -105,6 +105,11 @@ extensions containing root files that start with `_`).
   deploys the original back. Duplicate rules keep 🗑 only: the tool never edits a duplicate rule's
   criteria. Assignment, auto-response and escalation rules are now read through their object's rules,
   which also makes their 🗑 restore point work.
+- **✎ Edit the XML and deploy it back, from Field Cleaner's 🔍.** For every declarative blocker the XML the
+  org holds opens in an editor box: change what you need and press Deploy. Nothing is sent until the
+  text is well-formed (the box names the line that is not); the component's name cannot change; the
+  confirm shows your change line by line; a restore point is kept; if Salesforce refuses the deploy its
+  own words appear under the box and nothing changes; ↩ Undo in History deploys the previous XML.
 - **Field Cleaner's "how much data is stored" line was audited** after the owner doubted it on a field
   deleted at work. Three ways it could be wrong are closed: a count that came back for an earlier pick
   could land under the next field; a formula field was counted as if it stored data (describe never
