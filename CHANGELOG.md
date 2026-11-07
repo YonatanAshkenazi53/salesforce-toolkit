@@ -16,6 +16,22 @@ extensions containing root files that start with `_`).
 ## 1.1.0 — 2026-11-04
 
 ### Data Studio
+- **The History export says what an update changed, field by field.** A run that updates records now keeps,
+  for every field it changed, the value the target held just before the run and the value written; a
+  run's JSON export lists them (`fieldChanges`: object, record, field, before, after). The first 200
+  updated records per object are kept; a field under the PII policy keeps no "before"; counts-only mode
+  keeps no values at all.
+- **Opening a deployment reads every object in it.** No more "not counted yet" cards and Count buttons
+  to press one by one: when a deployment opens, the root and every child are read in both orgs, parents
+  before their children, and the parents outside the deployment are checked right after. 🔄 Rescan all
+  (on "What the two orgs hold") and 🔄 Refresh state read every object again, read before or not. When
+  you change how one object's records are matched, only that object and its children are read again.
+- **The Matching kit everywhere on the Deploy page.** Every card of "This deployment" says how its records
+  are matched and has ✏ matching, which opens that object's full Matching kit — single field, composite,
+  external ID, 🧪 Test this key and 💡 Suggestions — right there. A parent outside the deployment gets its
+  own kit too: single field or external ID, the field on both sides, suggestions graded on the live data
+  of both orgs, and Test this key. (A key of several fields for a parent outside the deployment is not
+  offered yet — the lookup that links a child to its parent matches one field; the dialog says so.)
 - **The Deploy page remembers your ticks.** Tick records, refresh, run, open another deployment and
   come back, or close the tab — what you ticked is still ticked. After every scan the page puts back
   each tick whose record is still in the list it was ticked in and drops the ones that are in the target
