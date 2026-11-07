@@ -142,11 +142,11 @@ describe('Deploy page: scan all, refresh re-reads children, the run log stays', 
     expect(order(['2', '1.1', '0', '1', '1.0', '2.0', ''])).toEqual(['0', '1', '2', '1.0', '1.1', '2.0']);
     expect(order(null)).toEqual([]);
   });
-  it('one button reads every unread child; Refresh re-reads the ones read before', () => {
+  it('one button reads every unread child; Refresh (and 🔄 Rescan all) re-read EVERY child — read before or not (2026-11-08)', () => {
     expect(DV).toContain('id="dsDepScanAll"');
     expect(DV).toContain("eid('dsDepScanAll')?.addEventListener('click', () => _depScanAll(p, unscanned.map(r => r.pathKey)));");
-    const rescan = DV.slice(DV.indexOf('async function _depRescan(p) {'), DV.indexOf('function sftkDeployChildOrder'));
-    expect(rescan.indexOf('const kids = sftkDeployChildOrder(Object.keys((p.lastScan && p.lastScan.children) || {}));')).toBeLessThan(rescan.indexOf('await window.refreshProfileState?.(p.id);'));
+    const rescan = DV.slice(DV.indexOf('async function _depRescan(p, opts) {'), DV.indexOf('function sftkDeployChildOrder'));
+    expect(rescan.indexOf('const kids = sftkDeployRescanKeys(p.tree, o.from);')).toBeLessThan(rescan.indexOf('await window.refreshProfileState?.(p.id);'));
     expect(rescan).toContain('const res = await scanReconcileChild(fp, kids[i]);');
   });
   it('the last run log is kept across the repaint and shown under the bar, per deployment', () => {
@@ -213,7 +213,7 @@ describe('the new page owns no engine: same scan, same selection, same run', () 
     expect(DV).toContain('const relinkBlocked = !isRoot && !!(s.linkMasterDetail && s.linkUpdateable === false);');
   });
   it('a rescan clears every selection, like the classic 🔄', () => {
-    const fn = DV.slice(DV.indexOf('async function _depRescan(p)'), DV.indexOf('// ── one bucket of one object'));
+    const fn = DV.slice(DV.indexOf('async function _depRescan(p, opts)'), DV.indexOf('// ── one bucket of one object'));
     expect(fn).toContain('_recChildSel = {};');
     expect(fn).toContain('await window.refreshProfileState?.(p.id);');
   });

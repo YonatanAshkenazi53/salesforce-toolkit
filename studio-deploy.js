@@ -185,6 +185,7 @@ let _depObjPath = '';      // which object the records panel shows ('' = root)
 let _depTab     = 'ins';
 let _depFilter  = '';
 let _depForProfile = null;
+let _depAutoScanFor = null;   // the deployment whose objects were read on open (once per opening)
 let _depLastRunLog = null;   // { pid, html } — the last run's log, kept across the post-run repaint
 const SFTK_DEPLOY_WINDOW = 300;   // rows painted per tab at first; "Show more" / "Show all" extend it
 // The window grows per list (object × tab × filter) and resets when the list
@@ -456,7 +457,8 @@ async function renderDeploy() {
   const p = _reconcileProfile;
   if (!p) { _currentView = 'profiles'; renderProfiles(); return; }
   sftkRecResetSelectionFor(p);
-  if (_depForProfile !== p.id) { _depForProfile = p.id; _depObjPath = ''; _depTab = 'ins'; _depFilter = ''; if (!_depRetry) _depRetryNote = ''; _depLastRunLog = null; _depSelNote = ''; }
+  const opening = _depForProfile !== p.id;
+  if (opening) { _depForProfile = p.id; _depObjPath = ''; _depTab = 'ins'; _depFilter = ''; if (!_depRetry) _depRetryNote = ''; _depLastRunLog = null; _depSelNote = ''; }
   // The post-run refresh repaints this page and used to wipe the run log with
   // it (live run 2026-09-22) — keep the last one and show it under the bar.
   // Mid-run the log is LIVE: keep the node itself (the progress handler and
@@ -518,7 +520,16 @@ async function renderDeploy() {
     _depWireChrome(p);
     _depWireOrgPicker(p);
     eid('dsDepScan')?.addEventListener('click', () => _depRescan(p));
+    // opening a deployment reads every object of it, no button pressed (user 2026-11-07); the parents outside it are
+    // checked by the alignment check that follows every scan
+    if (opening && !offline.length && _depAutoScanFor !== p.id) { _depAutoScanFor = p.id; setTimeout(() => _depRescan(p), 0); }
     return;
+  }
+  // a deployment read before, opened again: the objects not read against this target are read now, unasked
+  if (opening && !offline.length && _depAutoScanFor !== p.id) {
+    const unread = sftkDeployRescanKeys(p.tree).filter(k => !sftkDeployChildFresh(scan, k, _depObjName(p, k)));
+    _depAutoScanFor = p.id;
+    if (unread.length) setTimeout(() => _depScanAll(p, unread), 0);
   }
 
   if (_depRetry && (_depRetry.profileId === p.id || _depRetry.profileId === p._ringOf?.profileId)) {
@@ -558,6 +569,7 @@ async function renderDeploy() {
           <td>${r.depth ? `<button class="ds-btn ds-btn-xs" data-dep-scan="${esc(r.pathKey)}" title="${r.scanned ? 'Read this object again, under the records of the scan above' : 'This object has not been read against this target yet — its records are unknown, not zero'}">${r.scanned ? '🔎 Rescan' : '🔎 Scan'}</button>` : ''}</td>
         </tr>`).join('')}
         ${plan.length > 1 ? `<tr class="ds-dep-total"><td>All objects</td><td></td><td></td>${['ins', 'chg', 'ext', 'link', 'same', 'amb'].map(k => `<td class="ds-dep-num${sum(k) ? ` ds-dep-n-${k}` : ' ds-dep-muted'}">${sum(k).toLocaleString()}</td>`).join('')}<td></td></tr>` : ''}</tbody></table></div>
+      <div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepRescanAll" title="Read every object of this deployment again in both orgs — the root and every child, read before or not, parents before their children. Nothing is changed.">🔄 Rescan all ${plan.length}</button> <span class="ds-dep-muted">every object, root and children${unscanned.length ? ` — ${unscanned.length} not read yet` : ''}</span></div>
       ${unscanned.length ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs ds-btn-primary" id="dsDepScanAll" title="Read every object below against the target, one after the other, parents before their children">🔎 Scan all ${unscanned.length}</button> <b>${unscanned.map(r => esc(r.obj)).join(', ')}</b> not read against this target yet — unknown, not zero. Scan ${unscanned.length === 1 ? 'it' : 'them'} before calling this pair in sync.</div>` : ''}
       ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepTickAll" title="Tick every record the target lacks, in every object read against it — parents before their children. A child whose parent is not on the way stays out; an object not read stays out. Nothing is written until you press Deploy.">✓ Tick every insert — ${every.found.toLocaleString()} record${every.found === 1 ? '' : 's'} in ${Object.keys(every.picks).length} object${Object.keys(every.picks).length === 1 ? '' : 's'}</button>${unscanned.length ? ' <span class="ds-dep-muted">objects not read yet are not included</span>' : ''}</div>` : ''}
     </details>`;
@@ -681,6 +693,7 @@ async function renderDeploy() {
   });
   document.querySelectorAll('.ds-dep-objbtn').forEach(b => b.addEventListener('click', () => { _depObjPath = b.dataset.depObj; _depTab = 'ins'; _depFilter = ''; renderDeploy(); }));
   eid('dsDepScanAll')?.addEventListener('click', () => _depScanAll(p, unscanned.map(r => r.pathKey)));
+  eid('dsDepRescanAll')?.addEventListener('click', () => _depRescan(p));
   // ✓ every insert in one press — the same sets the per-tab "All" buttons fill, object by object
   eid('dsDepTickAll')?.addEventListener('click', () => {
     let n = 0;
@@ -794,7 +807,10 @@ async function _depPaintTree(p, scan) {
     const pr = plan.find(r => r.pathKey === n.pathKey) || null;
     const s = sftkDeployScanFor(scan, n);
     const f = sftkDeployNodeFacts(n, parent ? parent.obj : '', pr);
-    const keyFields = s ? ((s.matching && s.matching.fields && s.matching.fields.length) ? s.matching.fields : [s.matchField || 'Name']) : null;
+    // the key the scan used; before an object is read, the key it WILL be read by (its card offers ✏ matching either way)
+    const cfgNode = (typeof getNodeByPath === 'function') ? getNodeByPath(p.tree, n.pathKey) : null;
+    const keyFields = s ? ((s.matching && s.matching.fields && s.matching.fields.length) ? s.matching.fields : [s.matchField || 'Name'])
+      : cfgNode ? ((cfgNode.matching && cfgNode.matching.fields && cfgNode.matching.fields.length) ? cfgNode.matching.fields : [cfgNode.matchField || 'Name']) : null;
     const needs = (order.find(o => o.pathKey === n.pathKey) || {}).parents || [];
     // a child is counted against its parent's records, so the parent comes first
     const parentCounted = !parent || !!(plan.find(r => r.pathKey === parent.pathKey) || {}).scanned;
@@ -806,7 +822,7 @@ async function _depPaintTree(p, scan) {
     return `<li><div class="ds-dtree-node${n.pathKey === _depObjPath ? ' ds-dtree-node-on' : ''}" data-tree-obj="${esc(n.pathKey)}" role="button" tabindex="0" title="Show this object's records below">
         <div class="ds-dtree-name">${esc(n.obj)} <span class="ds-dtree-role"${n.depth ? ` title="Each ${esc(n.obj)} belongs to one ${esc(parent ? parent.obj : '')} through its ${esc(n.field || '?')} field"` : ''}>${esc(f.role)}</span></div>
         ${counts}
-        ${keyFields ? `<div class="ds-dtree-line">matched by <b>${esc(keyFields.join(' + '))}</b></div>` : ''}
+        ${keyFields ? `<div class="ds-dtree-line">matched by <b>${esc(keyFields.join(' + '))}</b> <button class="ds-btn ds-btn-xs ds-dtree-match" data-tree-match="${esc(n.pathKey)}" title="Change how ${esc(n.obj)} records are recognised across the two orgs — the Matching kit: single field, composite, external ID, 🧪 Test this key, 💡 Suggestions">✏ matching</button></div>` : ''}
         ${idLine(idOf(n.pathKey))}
         ${needs.length ? `<div class="ds-dtree-needs" title="Objects outside this deployment that these records look up — see Start with parents first">looks up, outside this deployment: ${needs.map(g => `<span class="ds-dtree-need${g.srcCount === 0 ? ' ds-dtree-need-off' : g.empty ? ' ds-dtree-need-bad' : ''}" title="${g.srcCount === 0 ? 'no record here uses it' : g.empty ? `${esc(tgtOrgL)} has none yet` : 'used by these records'}">${esc(g.refObj)}</span>`).join(' ')}</div>` : ''}
       </div>${n.children.length ? `<ul>${n.children.map(ch => nodeHtml(ch, n)).join('')}</ul>` : ''}</li>`;
@@ -824,7 +840,7 @@ async function _depPaintTree(p, scan) {
   host.querySelectorAll('[data-tree-obj]').forEach(el => {
     // a chip opens its own tab of that object; the card opens the object
     const go = tab => { _depObjPath = el.dataset.treeObj; _depTab = tab || 'ins'; _depFilter = ''; renderDeploy().then(() => eid('dsDepRecords')?.scrollIntoView({ block: 'nearest' })); };
-    el.addEventListener('click', e => { if (e.target.closest?.('[data-tree-scan]')) return; go(e.target.closest?.('[data-tree-tab]')?.dataset.treeTab); });
+    el.addEventListener('click', e => { if (e.target.closest?.('[data-tree-scan]')) return; const m = e.target.closest?.('[data-tree-match]'); if (m) { e.stopPropagation(); _depOpenMatching(p, m.dataset.treeMatch); return; } go(e.target.closest?.('[data-tree-tab]')?.dataset.treeTab); });
     el.addEventListener('keydown', e => { if (e.target !== el) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
   });
   // 🔎 Count on a card: the same child read the plan table's 🔎 Scan does
@@ -1100,41 +1116,146 @@ function sftkDeploySetParentMatchField(tree, step, field) {
   }
   return n;
 }
-// ✏ on a parent row: the parent's fields that can identify a record (name, unique, external ID, text),
-// the current one selected; the choice lands on every lookup that points at this parent, the deployment
-// is saved, both orgs are read again. Several fields for a parent is the next step (backlog).
+// ✏ on a parent row (user 2026-11-07: "matching of parents selection should have all of the features from
+// the pic above" / "כולל ההמלצות"): the deployment's Matching kit for a parent outside it — Single field or
+// External ID, 💡 Suggestions graded live against both orgs, 🧪 Test this key, Match on source ↔ target. The
+// choice lands on every lookup that points at this parent, the deployment is saved, both orgs are read
+// again. A composite key is not offered for a parent: the lookup bridge in the engine finds a parent by ONE
+// field (background.js) — said in the dialog, not hidden.
 async function _depParentMatchEdit(p, scan, step) {
   if (!step) return;
   const sess = await getOrgSession(p.sourceOrg);
   if (!sess) return showToast(`Open ${orgLabel(p.sourceOrg)} in a Salesforce tab first — the fields of ${step.refObj} are read from there.`, 'error', 7000);
   const desc = await describe(step.refObj, sess.orgUrl, sess.sid);
   if (!desc || !Array.isArray(desc.fields)) return showToast(`${step.refObj} could not be described in ${orgLabel(p.sourceOrg)}.`, 'error', 7000);
+  const tSess = p.targetOrg ? await getOrgSession(p.targetOrg) : null;
+  const tDesc = tSess ? await describe(step.refObj, tSess.orgUrl, tSess.sid).catch(() => null) : null;
+  const tgtNames = new Set(((tDesc && tDesc.fields) || []).map(f => f.name));
   const SYS = new Set(['Id', 'OwnerId', 'CreatedById', 'LastModifiedById', 'RecordTypeId', 'MasterRecordId']);
   const cands = desc.fields.filter(f => !SYS.has(f.name) && (f.externalId || f.unique || f.nameField || ['string', 'email', 'phone', 'url'].includes(f.type)) && !f.calculated && f.type !== 'textarea')
-    .map(f => ({ name: f.name, label: f.label || f.name, why: f.externalId ? 'external ID' : f.unique ? 'unique' : f.nameField ? 'name' : '' }))
+    .map(f => ({ name: f.name, label: f.label || f.name, ext: !!f.externalId, why: f.externalId ? 'external ID' : f.unique ? 'unique' : f.nameField ? 'name' : '', inTgt: !tDesc || tgtNames.has(f.name) }))
     .sort((a, b) => (b.why === 'external ID') - (a.why === 'external ID') || (b.why === 'unique') - (a.why === 'unique') || (b.why === 'name') - (a.why === 'name') || a.label.localeCompare(b.label));
   const cur = sftkDeployParentMatchFields(p.tree, step);
-  const now = cur.length === 1 ? cur[0] : '';
+  let strategy = cands.some(f => f.ext && f.name === cur[0]) ? 'externalId' : 'field';
+  let chosen = cur.length === 1 ? cur[0] : (cands[0] && cands[0].name) || 'Name';
+  const sugs = (typeof sftkMatchSuggestionsOfDepth === 'function' ? sftkMatchSuggestionsOfDepth(desc.fields, 1, {}) : [])
+    .filter(s => s && Array.isArray(s.fields) && s.fields.length === 1 && cands.some(c => c.name === s.fields[0])).slice(0, 4);
+  const clone = { ...p, ephemeral: true };
+  const grade = async (field, mini) => {
+    const res = await sftkAnalyzeMatchKey(step.refObj, clone, [field], [field], {}, 'field', false);
+    return _matchAnalysisHtml(res, clone, mini);
+  };
+  const optsHtml = () => cands.filter(f => strategy !== 'externalId' || f.ext)
+    .map(f => `<option value="${esc(f.name)}" ${f.name === chosen ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})${f.why ? ` — ${f.why}` : ''}${f.inTgt ? '' : ` — not in ${esc(orgLabel(p.targetOrg))}`}</option>`).join('');
+  const hasExt = cands.some(f => f.ext);
+  const radio = (v, lbl, dis, title) => `<label class="ds-match-strat" style="display:inline-flex;align-items:center;gap:4px;font-size:12px;${dis ? 'opacity:.55;cursor:not-allowed' : 'cursor:pointer'}" title="${esc(title)}"><input type="radio" name="dsPmStrat" value="${v}" ${strategy === v ? 'checked' : ''} ${dis ? 'disabled' : ''}> ${lbl}</label>`;
   showModal(`
-    <div class="ds-modal-header">✏ ${esc(step.refObj)} — matched by which field?</div>
+    <div class="ds-modal-header">✏ ${esc(step.refObj)} — how is the parent found in ${esc(orgLabel(p.targetOrg))}?</div>
     <div class="ds-modal-body" style="font-size:12.5px">
-      <div style="margin-bottom:8px">A record of ${esc(step.neededBy.map(n => `${n.obj}.${n.field}`).join(', '))} points at a ${esc(step.refObj)} record. In ${esc(orgLabel(p.targetOrg))} that parent is found by the value of this field${cur.length > 1 ? ` — today the lookups disagree: ${esc(cur.join(', '))}` : ''}.</div>
-      <select id="dsDepPmatchSel" class="ds-select" style="min-width:320px">
-        ${cands.map(f => `<option value="${esc(f.name)}" ${f.name === now ? 'selected' : ''}>${esc(f.label)} (${esc(f.name)})${f.why ? ` — ${f.why}` : ''}</option>`).join('')}
-      </select>
-      <div class="ds-subtext" style="font-size:11.5px;margin-top:8px">An external ID or a unique field is exact; a name repeats. Several fields, most specific first, for a parent outside the deployment is the next step — for an object inside it, the key lives in its Pick Records window.</div>
+      <div style="margin-bottom:8px">A record of ${esc(step.neededBy.map(n => `${n.obj}.${n.field}`).join(', '))} points at a ${esc(step.refObj)} record. In ${esc(orgLabel(p.targetOrg))} that parent is found by the value of this key${cur.length > 1 ? ` — today the lookups disagree: ${esc(cur.join(', '))}` : ''}.</div>
+      <div class="ds-match-cfg" style="border:1px solid var(--border,#e2e8f0);border-radius:6px;padding:8px 10px">
+        <div class="ds-match-strat-row" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <span class="ds-rec-display-lbl">Matching:</span>
+          ${radio('field', 'Single field', false, 'One field is the identity — classic: Name. Example: Account Name.')}
+          ${radio('externalId', 'External ID', !hasExt, hasExt ? 'A dedicated unique field, the strongest key: it survives renames.' : `No external ID field on ${step.refObj} in ${orgLabel(p.sourceOrg)} — add one in Setup to enable`)}
+          ${radio('composite', 'Composite', true, 'Several fields for a parent OUTSIDE the deployment is not supported yet: the lookup bridge finds a parent by one field. For an object inside the deployment, its card in “This deployment” opens the full kit.')}
+          <span style="flex:1"></span>
+          <button class="ds-btn ds-btn-xs" id="dsPmTest" title="Grade this key against both live orgs: populated% + unique% per org and a cross-org match preview">🧪 Test this key</button>
+          <button class="ds-btn ds-btn-xs" id="dsPmSug" title="Ranked single-field keys for ${esc(step.refObj)}, each graded against both live orgs">💡 Suggestions</button>
+        </div>
+        <div class="ds-rec-display-row" style="margin-top:8px">
+          <div class="ds-rec-mf-col"><span class="ds-rec-display-lbl">Match on source:</span><select id="dsDepPmatchSel" class="ds-select ds-select-sm" style="min-width:300px">${optsHtml()}</select></div>
+          <span class="ds-rec-mf-arrow">↔</span>
+          <div class="ds-rec-mf-col"><span class="ds-rec-display-lbl">Match on target:</span><span id="dsPmTgt" class="ds-subtext" style="font-size:12px"></span></div>
+        </div>
+        <div id="dsPmOut" style="margin-top:6px"></div>
+      </div>
+      <div class="ds-subtext" style="font-size:11.5px;margin-top:8px">An external ID or a unique field is exact; a name repeats. A value that matches more than one ${esc(step.refObj)} in ${esc(orgLabel(p.targetOrg))} is never guessed — that lookup is left empty and the run says so.</div>
     </div>
-    <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Cancel</button><button class="ds-btn ds-btn-primary" id="dsDepPmatchGo">Use this field and read both orgs again</button></div>`);
+    <div class="ds-modal-footer"><button class="ds-btn" data-dsaction="closeModal">Cancel</button><button class="ds-btn ds-btn-primary" id="dsDepPmatchGo">Use this key and read both orgs again</button></div>`);
+  const sel = eid('dsDepPmatchSel'), out = eid('dsPmOut');
+  const tgtLine = () => { const f = cands.find(c => c.name === chosen); const t = eid('dsPmTgt'); if (t) t.textContent = !f ? '' : f.inTgt ? `${f.name} — the same field in ${orgLabel(p.targetOrg)}` : `⚠ ${f.name} is not on ${step.refObj} in ${orgLabel(p.targetOrg)} — pick another`; };
+  tgtLine();
+  sel?.addEventListener('change', () => { chosen = sel.value; out.innerHTML = ''; tgtLine(); });
+  document.querySelectorAll('input[name="dsPmStrat"]').forEach(r => r.addEventListener('change', () => {
+    if (!r.checked) return;
+    strategy = r.value;
+    if (strategy === 'externalId' && !cands.some(c => c.ext && c.name === chosen)) chosen = (cands.find(c => c.ext) || {}).name || chosen;
+    sel.innerHTML = optsHtml(); out.innerHTML = ''; tgtLine();
+  }));
+  eid('dsPmTest')?.addEventListener('click', async ev => {
+    const b = ev.currentTarget; b.disabled = true; b.textContent = '⏳ testing…';
+    try { out.innerHTML = await grade(chosen, false); }
+    catch (e) { out.innerHTML = `<div class="ds-drift-compare-err">⚠ Key test failed: ${esc((typeof sftkFriendlyError === 'function' ? sftkFriendlyError(e?.message || String(e)).message : String(e)))}</div>`; }
+    b.disabled = false; b.textContent = '🧪 Test this key';
+  });
+  eid('dsPmSug')?.addEventListener('click', async ev => {
+    const b = ev.currentTarget; b.disabled = true; b.textContent = '⏳ grading…';
+    if (!sugs.length) { out.innerHTML = '<div class="ds-subtext">No single-field key stands out on this object — Name stays the default.</div>'; b.disabled = false; b.textContent = '💡 Suggestions'; return; }
+    out.innerHTML = `<div class="ds-subtext" style="font-size:11.5px">Grading ${sugs.length} keys against both orgs…</div>`;
+    const rows = [];
+    for (const s of sugs) {
+      let g = '';
+      try { g = await grade(s.fields[0], true); } catch (e) { g = `<span class="ds-subtext">could not be graded: ${esc(String(e?.message || e)).slice(0, 120)}</span>`; }
+      rows.push(`<div class="ds-pm-sug" style="display:flex;gap:8px;align-items:flex-start;border-top:1px solid var(--border);padding:6px 0">
+        <div style="flex:1"><b>${esc(s.label || s.fields[0])}</b> <span class="ds-subtext">${esc(s.why || '')}</span>${g}</div>
+        <button class="ds-btn ds-btn-xs" data-pm-use="${esc(s.fields[0])}">Use</button></div>`);
+    }
+    out.innerHTML = `<div style="font-size:11.5px;font-weight:600;margin-bottom:2px">💡 Suggestions — graded on the live data of both orgs</div>${rows.join('')}`;
+    out.querySelectorAll('[data-pm-use]').forEach(u => u.addEventListener('click', () => {
+      chosen = u.dataset.pmUse;
+      const c = cands.find(x => x.name === chosen);
+      if (strategy === 'externalId' && !(c && c.ext)) { strategy = 'field'; const r = document.querySelector('input[name="dsPmStrat"][value="field"]'); if (r) r.checked = true; }
+      sel.innerHTML = optsHtml(); tgtLine();
+      u.textContent = '✓ chosen';
+    }));
+    b.disabled = false; b.textContent = '💡 Suggestions';
+  });
   eid('dsDepPmatchGo')?.addEventListener('click', async () => {
-    const field = eid('dsDepPmatchSel')?.value;
+    const field = chosen;
     if (!field) return;
+    const c = cands.find(x => x.name === field);
+    if (c && !c.inTgt) return showToast(`${field} is not on ${step.refObj} in ${orgLabel(p.targetOrg)} — the parent could not be found by it there. Pick another field.`, 'error', 7000);
     const n = sftkDeploySetParentMatchField(p.tree, step, field);
     closeModal();
     if (!n) return showToast(`${step.refObj} is already matched by ${field}.`, 'info', 4000);
     if (!p.ephemeral) { const saved = _profiles.find(x => x.id === p.id); if (saved && saved !== p) saved.tree = p.tree; await storageSaveProfiles(); }
-    showToast(`${step.refObj} is matched by ${field} on ${n} lookup${n === 1 ? '' : 's'} — reading both orgs again…`, 'success', 5000);
-    await _depRescan(p);
+    // the objects that look this parent up are read again, with their children; the parents' alignment check follows the scan
+    const from = sftkDeployObjects(p.tree).filter(o => step.neededBy.some(nb => nb.obj === o.obj)).map(o => o.pathKey);
+    showToast(`${step.refObj} is matched by ${field} on ${n} lookup${n === 1 ? '' : 's'} — reading ${step.neededBy.map(nb => nb.obj).join(', ')} again…`, 'success', 5000);
+    await _depRescan(p, { from: from.length ? from : undefined });
   });
+}
+
+// "matched by …" on a card of This deployment (user 2026-11-07: "here we should also allow to change matching for
+// child's" / "matching by field"): the object's own Matching kit — the Pick Records window of the builder, the same
+// Single field / Composite / External ID, Test this key and Suggestions — opened right here. When the key changed,
+// the deployment is saved and both orgs are read again.
+async function _depOpenMatching(p, pathKey) {
+  if (!p || p.ephemeral) return showToast('Save this deployment first — the key is part of it.', 'info', 5000);
+  if (typeof openRecordPickerModal !== 'function' || typeof getNodeByPath !== 'function') return;
+  const node = getNodeByPath(p.tree, pathKey);
+  if (!node) return;
+  const sig = () => JSON.stringify({ m: node.matching || null, f: node.matchField || null, t: node.matchFieldTgt || null, u: node.upsert || null });
+  const before = sig();
+  // the builder's window reads node._meta (the builder attaches it when a profile opens; a saved tree has none)
+  if (typeof attachMeta === 'function') attachMeta(p.tree);
+  const prevEditing = _editingProfile;
+  _editingProfile = p;
+  try { await openRecordPickerModal(pathKey); } catch (e) { _editingProfile = prevEditing; return showToast(`The Matching window could not open: ${e?.message || e}`, 'error', 6000); }
+  // the window is the builder's own: wait for it to close, then put the builder's profile back
+  // closeModal only hides the overlay (the window's DOM stays): closed = the overlay hidden, or another window in the box
+  await new Promise(res => { const t = setInterval(() => { const ov = eid('dsModal'); if (!ov || ov.style.display === 'none' || !document.querySelector('#dsModalBox #dsRecSave')) { clearInterval(t); res(); } }, 400); });
+  _editingProfile = prevEditing;
+  // the builder's Save stores a COPY of the deployment (commitEditingProfile); this page keeps working on p —
+  // put p back in the list so the scan, the cards and the saved deployment are one object again (live 2026-11-08:
+  // the copy was re-read while the page painted p, and the card kept saying the old key)
+  const idx = _profiles.findIndex(x => x.id === p.id);
+  if (idx >= 0 && _profiles[idx] !== p) { p.updatedAt = _profiles[idx].updatedAt || p.updatedAt; _profiles[idx] = p; }
+  if (sig() === before) { if (idx >= 0) await storageSaveProfiles(); return; }
+  await storageSaveProfiles();
+  showToast(`${node.objectType || node.childSObject || 'The object'} is matched by ${(node.matching && node.matching.fields || [node.matchField || 'Name']).join(' + ')} now — reading it and its children again…`, 'success', 5000);
+  await _depRescan(p, { from: [pathKey] });
 }
 
 // ⚠ Needs a decision — the tab explains itself and makes each group DECIDABLE
@@ -1467,7 +1588,16 @@ async function _depMergeCopies(p, side, name, ids, opts = {}) {
   return !!(res && res.ok);
 }
 
-async function _depRescan(p) {
+// PURE. The child objects a re-read covers: every child of the deployment (user 2026-11-07: "i want to scan all the
+// childrens and parents when i open the deployment" — read before or not), or, after a key changed, only the objects
+// under the given path keys, each with its own children ("rescan the object and its childs"). Parents first.
+function sftkDeployRescanKeys(tree, from) {
+  const all = sftkDeployObjects(tree).map(o => o.pathKey).filter(k => k !== '');
+  if (!Array.isArray(from)) return sftkDeployChildOrder(all);
+  return sftkDeployChildOrder(all.filter(k => from.some(f => f !== '' && (k === f || k.startsWith(f + '.')))));
+}
+async function _depRescan(p, opts) {
+  const o = opts || {};
   const b = eid('dsDepRefresh') || eid('dsDepScan');
   if (b) { b.disabled = true; b.textContent = '⏳ reading both orgs…'; }
   // same reset the classic 🔄 does: a new scan invalidates every selection
@@ -1475,8 +1605,10 @@ async function _depRescan(p) {
   _recChildSel = {}; _depRetryNote = '';
   // children read before are read again — a root refresh alone left every one
   // of them "🔎 Scan" (live run 2026-09-22: 11 clicks after each run)
-  const kids = sftkDeployChildOrder(Object.keys((p.lastScan && p.lastScan.children) || {}));
-  await window.refreshProfileState?.(p.id);
+  // every child, not only the ones read before (a root refresh alone left the others "not counted yet");
+  // a changed key re-reads its own object and that object's children — the root only when it is one of them
+  const kids = sftkDeployRescanKeys(p.tree, o.from);
+  if (!Array.isArray(o.from) || o.from.includes('')) await window.refreshProfileState?.(p.id);
   const fp = _profiles.find(x => x.id === p.id) || p;
   const failed = [];
   for (let i = 0; i < kids.length; i++) {
