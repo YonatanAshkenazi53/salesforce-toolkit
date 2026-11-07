@@ -421,9 +421,19 @@ function sftkMdLeadMappingsFor(innerXml, objApi, fieldApi) {
 function sftkMdValuesHolding(innerXml, objApi, fieldApi) {
   const f = String(fieldApi || '').toLowerCase(), o = String(objApi || '').toLowerCase();
   const out = [];
-  for (const v of sftkMdChildren(innerXml, 'values')) {
-    const val = (sftkMdChildText(v.innerXml, 'value') || '').trim().toLowerCase();
-    if (val === f || val === `${o}.${f}`) out.push(sftkMdChildText(v.innerXml, 'field') || '?');
+  const vals = sftkMdChildren(innerXml, 'values').map(v => ({ field: sftkMdChildText(v.innerXml, 'field') || '?', val: (sftkMdChildText(v.innerXml, 'value') || '').trim() }));
+  // A bare "Field__c" names a field of the object the record's OTHER value names (an Entity Definition
+  // relationship stores "Account" in one field and "Field__c" in another). When that other value is a
+  // DIFFERENT object, the bare name is not this object's field (found 2026-11-08: the demo record with
+  // Entity__c = Account was listed as a blocker for Lead.SFTK_Live_Blk__c and Case.SFTK_Live_Blk__c).
+  const STD = /^(account|contact|lead|case|opportunity|user|campaign|asset|contract|order|product2|task|event|individual|quote|solution)$/;
+  const objLike = x => /^[a-z][a-z0-9_]*$/.test(x) && (STD.test(x) || /__(c|mdt|x|b|e)$/.test(x));
+  const otherObj = vals.some(v => { const x = v.val.toLowerCase(); return x !== o && x !== f && objLike(x); });
+  const ownObj = vals.some(v => v.val.toLowerCase() === o);
+  for (const v of vals) {
+    const val = v.val.toLowerCase();
+    if (val === `${o}.${f}`) out.push(v.field);
+    else if (val === f && (ownObj || !otherObj)) out.push(v.field);
   }
   return out;
 }

@@ -168,3 +168,17 @@ describe('the wiring', () => {
     expect(CSS).toContain('body.sftk-dark { --code-bg: #1A1D24; }');
   });
 });
+
+describe('custom metadata records: a bare field name belongs to the object the record names (QA 2026-11-08)', () => {
+  const V = extractFunctions('sftk-mdapi.js', ['sftkMdValuesHolding', 'sftkMdChildren', 'sftkMdChildText', 'sftkMdFindElement', 'sftkMdUnescape']);
+  const cmt = readFileSync(new URL('./fixtures/md-edit/CustomMetadata.SFTK_Live_Cmt.Ref.xml', import.meta.url), 'utf8');
+  it('Entity__c = Account + Field__c = SFTK_Live_Blk__c is Account\'s field — not Lead\'s, not Case\'s', () => {
+    expect(V.sftkMdValuesHolding(cmt, 'Account', 'SFTK_Live_Blk__c')).toEqual(['Field__c']);
+    expect(V.sftkMdValuesHolding(cmt, 'Lead', 'SFTK_Live_Blk__c')).toEqual([]);
+    expect(V.sftkMdValuesHolding(cmt, 'Case', 'SFTK_Live_Blk__c')).toEqual([]);
+  });
+  it('a record with no object named keeps the bare match (it could be any object\'s); "Obj.Field" always matches its object', () => {
+    expect(V.sftkMdValuesHolding('<values><field>F__c</field><value>X__c</value></values>', 'Lead', 'X__c')).toEqual(['F__c']);
+    expect(V.sftkMdValuesHolding('<values><field>E__c</field><value>Account</value></values><values><field>F__c</field><value>Lead.X__c</value></values>', 'Lead', 'X__c')).toEqual(['F__c']);
+  });
+});

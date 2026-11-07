@@ -108,7 +108,8 @@ describe('the XML search behind the readMetadata legs', () => {
       <values><field>Other__c</field><value xsi:type="xsd:string">Account.Region__c_Old</value></values>
       <values><field>Empty__c</field><value xsi:nil="true"/></values>`;
     expect(M.sftkMdValuesHolding(rec, 'Account', 'Region__c')).toEqual(['Field__c', 'Note__c']);
-    expect(M.sftkMdValuesHolding(rec, 'Contact', 'Region__c')).toEqual(['Note__c']);
+    // QA 2026-11-08: the record names Account (Entity__c), so its bare "region__c" is Account's field, not Contact's
+    expect(M.sftkMdValuesHolding(rec, 'Contact', 'Region__c')).toEqual([]);
     expect(M.sftkMdValuesHolding(rec, 'Account', 'Area__c')).toEqual([]);
   });
 });
