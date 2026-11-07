@@ -39,6 +39,6 @@ describe('the row and the dialog', () => {
     expect(DV).toContain('const n = sftkDeploySetParentMatchField(p.tree, step, field);');
     expect(DV).toContain('await storageSaveProfiles(); }');
     // 2026-11-08: the parents' Matching kit is followed by the tree cards' ✏ matching
-    expect(DV).toContain('await _depRescan(p, { from: from.length ? from : undefined });\n  });\n}\n\n// "matched by …" on a card of This deployment'.replace(/\n/g, DV.includes('\r\n') ? '\r\n' : '\n'));
+    expect(DV).toContain('await _depRescan(p, { from: from.length ? from : undefined });\n  });\n}\n\n// 🎭 PII suggestions on the Deploy page'.replace(/\n/g, DV.includes('\r\n') ? '\r\n' : '\n'));
   });
 });

@@ -6735,3 +6735,8 @@ a.sftk-feed-where { color: var(--brand, #1b6fd1); }
 .ds-hist-why, .sftk-feed-why { font-size: 11px; color: var(--subtext); max-width: 560px; line-height: 1.35; }
 .sftk-feed-empty { padding: 18px; text-align: center; opacity: .7; }
 .sftk-feed-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: 11.5px; opacity: .85; }
+
+/* ── 🎭 PII on the Deploy page (2026-11-08): the record an example comes from; ▸ record's treated value ── */
+.ds-pii-prev-rec { font-size: 10.5px; color: var(--subtext); margin-left: 3px; }
+.ds-ve-pii { margin-top: 3px; font-size: 11px; color: var(--text); background: var(--c-warn-bg, #FFF6E5); border: 1px solid var(--c-warn-border, #F2D59B); border-radius: 5px; padding: 2px 6px; }
+.ds-ve-pii b { font-family: 'SF Mono', Consolas, monospace; font-weight: 600; }

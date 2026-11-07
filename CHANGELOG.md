@@ -16,6 +16,11 @@ extensions containing root files that start with `_`).
 ## 1.1.0 — 2026-11-04
 
 ### Data Studio
+- **🎭 PII suggestions on the Deploy page, with the record each example comes from.** "Suggest PII
+  treatment for all N to insert" reads the very records the deployment inserts and proposes a treatment per
+  field, each with real examples and the record they come from ("Omer → Lior, in Omer SFTK CX Lead One").
+  ▸ record shows, under every field the policy covers, the value that is actually written ("🎭 written as
+  Lior"), and offers the same suggestions for that one record.
 - **The History export says what an update changed, field by field.** A run that updates records now keeps,
   for every field it changed, the value the target held just before the run and the value written; a
   run's JSON export lists them (`fieldChanges`: object, record, field, before, after). The first 200

@@ -2403,7 +2403,7 @@ async function bldPiiPreviewPairs(profile, objectApi, field, desc, rule, records
     } catch (_) { ctx = null; }
     let res;
     try { res = await sftkPiiMaskValue(v, desc, salt, rule, ctx); } catch (e) { res = { value: `(${e && e.message || e})`, action: 'error' }; }
-    out.push({ from: String(v), to: res.value == null ? '∅ (empty)' : String(res.value), action: res.action });
+    out.push({ from: String(v), to: res.value == null ? '∅ (empty)' : String(res.value), action: res.action, rec: (r && (r.Name || [r.FirstName, r.LastName].filter(Boolean).join(' ') || r.Id)) || '' });
     if (out.length >= (max || 2)) break;
   }
   return out;
@@ -2412,7 +2412,8 @@ async function bldPiiPreviewPairs(profile, objectApi, field, desc, rule, records
 function bldPiiPreviewHtml(pairs) {
   if (!pairs || !pairs.length) return '<span class="ds-pii-prev-none">no value to show</span>';
   const cut = s => { const t = String(s); return t.length > 60 ? t.slice(0, 57) + '…' : t; };
-  return pairs.map(p => `<span class="ds-pii-prev-pair"><span class="ds-pii-prev-from" title="${esc(p.from)}">${esc(cut(p.from))}</span> → <b class="ds-pii-prev-to" title="${esc(p.to)}">${esc(cut(p.to))}</b></span>`).join('');
+  // the record an example comes from is named (user 2026-11-07: "show which record the example comes from")
+  return pairs.map(p => `<span class="ds-pii-prev-pair"><span class="ds-pii-prev-from" title="${esc(p.from)}">${esc(cut(p.from))}</span> → <b class="ds-pii-prev-to" title="${esc(p.to)}">${esc(cut(p.to))}</b>${p.rec ? ` <span class="ds-pii-prev-rec" title="The record this example comes from">in ${esc(cut(p.rec))}</span>` : ''}</span>`).join('');
 }
 
 // Fill every [data-pii-prev] cell of the open modal, in sequence (hashing is
@@ -2432,13 +2433,19 @@ async function bldPiiFillPreviews(profile, sections) {
   }
 }
 
-async function bldOpenPiiSuggestModal() {
+// opts.recordsByObj { obj: [source ids] } (the Deploy page, user 2026-11-07: "suggest the policy for ALL inserted
+// records with a good example per field, show which record the example comes from"): the values are read from THOSE
+// records (up to 200 per object), not the newest rows; opts.scope words the header ("the 32 records this deployment
+// inserts", "this record").
+async function bldOpenPiiSuggestModal(opts) {
+  const o = opts || {};
   const p = _editingProfile;
   if (!p?.tree) return;
-  const objs = [...collectTreeObjects(p.tree)];
-  showModal(`<div class="ds-modal-header">🎭 Suggest PII treatments</div>
+  const byObj = o.recordsByObj && typeof o.recordsByObj === 'object' ? o.recordsByObj : null;
+  const objs = byObj ? Object.keys(byObj).filter(k => (byObj[k] || []).length) : [...collectTreeObjects(p.tree)];
+  showModal(`<div class="ds-modal-header">🎭 Suggest PII treatments${o.scope ? ` — ${esc(o.scope)}` : ''}</div>
     <div class="ds-modal-body" style="text-align:center;padding:40px;color:var(--subtext)">
-      ${window.sftkCatSm ? sftkCatSm(`Reading ${objs.length} object(s) — fields, classification and 200 real rows each…`) : 'Reading…'}
+      ${window.sftkCatSm ? sftkCatSm(byObj ? `Reading ${objs.length} object(s) — fields, classification and the values of the records themselves…` : `Reading ${objs.length} object(s) — fields, classification and 200 real rows each…`) : 'Reading…'}
     </div>`);
   const sess = _builderSession();
   bldPiiEnsureSalt(p);   // previews hash with the profile's own salt
@@ -2456,10 +2463,12 @@ async function bldOpenPiiSuggestModal() {
       if (!q?.error && Array.isArray(q.records)) for (const r of q.records) if (r.QualifiedApiName && r.ComplianceGroup) complianceByField[r.QualifiedApiName] = r.ComplianceGroup;
       // v2 — the VALUES: 200 recent rows of every text-like field (the strongest signal there is)
       const sampleFields = d.fields.filter(f => f && f.name && SAMPLE_TYPES.has(f.type) && !f.calculated && f.name !== 'Id').map(f => f.name).slice(0, 60);
-      const personaFields = ['FirstName', 'LastName', 'Name', 'AccountId'].filter(n => d.fields.some(f => f.name === n) && !sampleFields.includes(n));
-      if (sampleFields.length) {
+      const personaFields = ['Id', 'FirstName', 'LastName', 'Name', 'AccountId'].filter(n => d.fields.some(f => f.name === n) && !sampleFields.includes(n));
+      const only = byObj ? (byObj[obj] || []).filter(x => /^[A-Za-z0-9]{15,18}$/.test(String(x))).slice(0, 200) : null;
+      if (sampleFields.length && (!only || only.length)) {
         const q2 = await sendBg({ type: 'SF_QUERY', tooling: false, orgUrl: sess.orgUrl, sid: sess.sid, _suppressError: true,
-          query: `SELECT ${[...sampleFields, ...personaFields].join(', ')} FROM ${obj} ORDER BY LastModifiedDate DESC LIMIT 200` });
+          query: only ? `SELECT ${[...sampleFields, ...personaFields].join(', ')} FROM ${obj} WHERE Id IN (${only.map(x => soqlStrLit(x)).join(',')})`
+            : `SELECT ${[...sampleFields, ...personaFields].join(', ')} FROM ${obj} ORDER BY LastModifiedDate DESC LIMIT 200` });
         if (!q2?.error && Array.isArray(q2.records)) {
           records = q2.records; samplesByField = {};
           for (const f of sampleFields) samplesByField[f] = records.map(r => r[f]);
@@ -2502,7 +2511,7 @@ async function bldOpenPiiSuggestModal() {
   }).join('');
 
   showModal(`
-    <div class="ds-modal-header">🎭 Suggest PII treatments — ${esc(p.name)}</div>
+    <div class="ds-modal-header">🎭 Suggest PII treatments — ${esc(o.scope || p.name)}</div>
     <div class="ds-modal-body ds-pii-sug-body">
       <div class="ds-pii-sug-honesty"><strong>Fabricated, not erased.</strong> Every treatment derives from a hash of the real value with a key kept on this PC: the same value always becomes the same fake (joins, match keys and re-seeds survive), a record's name parts and e-mail agree, the Contacts of one Account share a domain. E-mails land on <code>.invalid</code> domains that cannot receive mail. A fake that is shape-valid can still coincide with someone's real number where a country reserves no test range — each treatment's hover text says so.</div>
       ${anySamples ? '' : '<div class="ds-pii-sug-note-line">No rows could be read from the source org — suggestions come from field types, names, labels and classification only; previews are empty.</div>'}

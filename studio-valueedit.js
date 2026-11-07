@@ -75,8 +75,13 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     const plain = fields.filter(f => !f.reference).map(f => f.name);
     const refs = fields.filter(f => f.reference && f.relationshipName && !(f.refTo.length > 1)).map(f => `${f.relationshipName}.Name`);
     const refIds = fields.filter(f => f.reference).map(f => f.name);   // the lookup's own id too — the landing line needs it
-    srcRec = await q(srcSess, ids[0], [...plain, ...refIds, ...refs, ...rtCols]);
-    if (!srcRec) srcRec = await q(srcSess, ids[0], [...plain, ...refIds, ...rtCols]);   // a related object without a Name field — read without the lookups' names
+    // the object's name field is read too (a Lead's or a Contact's Name is not writable): the run reads it, and a
+    // record's fabricated persona is hashed over it — ▸ record's "written as" must land where the run lands
+    // (live 2026-11-08: without it ▸ record said "Emma Levi" and the run wrote "Peter Nguyen")
+    const nameCol = ((desc.fields || []).find(f => f.nameField) || {}).name;
+    const extra = nameCol && !plain.includes(nameCol) ? [nameCol] : [];
+    srcRec = await q(srcSess, ids[0], [...plain, ...extra, ...refIds, ...refs, ...rtCols]);
+    if (!srcRec) srcRec = await q(srcSess, ids[0], [...plain, ...extra, ...refIds, ...rtCols]);   // a related object without a Name field — read without the lookups' names
     if (tgtId && tgtSess && tgtSess.sid) { const tp = [...new Set(plain.map(tf))]; tgtRec = await q(tgtSess, tgtId, [...tp, ...refs, ...rtCols]); if (!tgtRec) tgtRec = await q(tgtSess, tgtId, [...tp, ...rtCols]); }
     if (!host.isConnected) return;
   }
@@ -149,7 +154,7 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
   };
   const piiNote = p.piiPolicy && Object.values(p.piiPolicy).some(Boolean) ? ' A field the PII policy covers keeps its masked value — the policy wins.' : '';
   host.innerHTML = `
-    <div class="ds-ve-tools"><input type="search" id="dsVeFilter" class="ds-input ds-input-sm" placeholder="🔍 find a field…" aria-label="Find a field"><span class="ds-dep-muted">${fields.length.toLocaleString()} writable field${fields.length === 1 ? '' : 's'}${many ? ` · a value typed here is written for all ${ids.length.toLocaleString()} records` : ''}</span><span class="ds-dep-sp"></span><label class="ds-ve-onlyedited"><input type="checkbox" id="dsVeOnly" ${nEdited ? '' : 'disabled'}> only my changed values (${nEdited})</label></div>
+    <div class="ds-ve-tools"><input type="search" id="dsVeFilter" class="ds-input ds-input-sm" placeholder="🔍 find a field…" aria-label="Find a field"><span class="ds-dep-muted">${fields.length.toLocaleString()} writable field${fields.length === 1 ? '' : 's'}${many ? ` · a value typed here is written for all ${ids.length.toLocaleString()} records` : ''}</span><span class="ds-dep-sp"></span>${!many && !p.ephemeral && typeof window._depPiiSuggest === 'function' ? '<button class="ds-btn ds-btn-xs" id="dsVePiiSug" title="Suggest a PII treatment per field from the values of this record — you tick what applies; the rules apply to every record of the deployment">🎭 Suggest PII for this record</button>' : ''}<label class="ds-ve-onlyedited"><input type="checkbox" id="dsVeOnly" ${nEdited ? '' : 'disabled'}> only my changed values (${nEdited})</label></div>
     <div class="ds-merge-wrap ds-ve-wrap"><table class="ds-merge-table ds-ve-table"><thead><tr><th>Field</th>${many ? '' : `<th>${esc(srcL)} <span class="ds-dep-muted">source</span></th>`}${many || !tgtId ? '' : `<th>${esc(tgtL)} <span class="ds-dep-muted">target now</span></th>`}<th>written as <span class="ds-dep-muted">${many ? '(empty box = each record keeps its own value)' : '(the source\'s value unless you change it)'}</span></th></tr></thead>
       <tbody>${rtRow()}${fields.map(row).join('') || `<tr><td colspan="4" class="ds-dep-muted">No writable field.</td></tr>`}</tbody></table></div>
     ${!many && unreadable.length ? `<div class="ds-dep-muted ds-ve-note">⚠ ${unreadable.length} field${unreadable.length === 1 ? '' : 's'} could not be read for your user — ${esc(unreadable.join(', '))} — so ${unreadable.length === 1 ? 'its box shows' : 'their boxes show'} "not readable", not empty; a value typed there is still written.</div>` : ''}
@@ -157,6 +162,28 @@ async function sftkOpenValueEditor(p, obj, node, srcIds, tgtId, label, mode, onS
     <div class="ds-ve-foot">${many ? `<button class="ds-btn ds-btn-sm ds-btn-primary" id="dsVeSave">💾 Save values</button><button class="ds-btn ds-btn-sm" data-dsaction="closeModal">Cancel</button>` : `<button class="ds-btn ds-btn-sm ds-btn-primary" data-dsaction="closeModal">Close</button><span class="ds-dep-muted" id="dsVeStatus">${nEdited ? `✏ ${nEdited} changed value${nEdited === 1 ? '' : 's'} — saved` : 'saved as you type'}</span>`}<span class="ds-dep-sp"></span><button class="ds-btn ds-btn-xs" id="dsVeClearAll" ${nEdited ? '' : 'disabled'}>${many ? '✕ Clear every typed value' : '✕ Back to the source on every field'}</button></div>
     <div class="ds-dep-muted ds-ve-note">${many ? 'Typed values are' : 'A changed value is'} written to ${esc(tgtL)} by ▶ Deploy (${mode === 'chg' ? 'the update' : 'the insert'}).${many ? '' : ' A field empty in the source is marked ∅ and written empty; type a value to write one instead.'} ${esc(srcL)} is not changed, so after the run a record with a changed value differs from its source and is listed under 🟡 Changed until the orgs agree.${piiNote} ${many ? 'Lookup picks are saved at once; typed values when you press Save.' : 'Everything here is saved as you type — close the dialog whenever you like, nothing is lost.'}</div>`;
 
+  // 🎭 a field the PII policy covers is written masked — the row says what lands (user 2026-11-07: "display the
+  // treated values inside ▸ record"); a typed value never replaces it: the policy wins
+  eid('dsVePiiSug')?.addEventListener('click', () => { closeModal(); window._depPiiSuggest(p, { [obj]: [ids[0]] }, `this record — ${label || ids[0]}`); });
+  if (!many && srcRec && p.piiPolicy && typeof bldPiiRuleFor === 'function' && typeof bldPiiPreviewPairs === 'function') {
+    (async () => {
+      for (const f of fields) {
+        const rule = bldPiiRuleFor(p.piiPolicy, obj, f.name);
+        if (!rule) continue;
+        const cell = host.querySelector(`tr[data-ve-row="${CSS.escape(f.name)}"] .ds-ve-cell`);
+        if (!cell) continue;
+        const v = srcRec[f.name];
+        let to = '∅ (empty)';
+        if (v != null && v !== '') {
+          const dsc = (desc.fields || []).find(x => x.name === f.name) || { name: f.name, type: f.type };
+          const pairs = await bldPiiPreviewPairs(p, obj, f.name, dsc, rule, [srcRec], 1).catch(() => []);
+          to = pairs[0] ? pairs[0].to : (p.piiSalt ? '∅ (empty)' : 'masked at write time');
+        }
+        cell.insertAdjacentHTML('beforeend', `<div class="ds-ve-pii" title="The PII policy covers this field: this is what ${esc(tgtL)} receives, whatever the box holds">🎭 written as <b>${esc(to)}</b> <span class="ds-dep-muted">(treated — ${esc(typeof bldPiiRuleWords === 'function' ? bldPiiRuleWords(rule) : 'PII policy')})</span></div>`);
+        cell.closest('tr')?.classList.add('ds-ve-row-pii');
+      }
+    })();
+  }
   // ── find a field; only the typed ones ──
   const filt = () => {
     const t = (eid('dsVeFilter')?.value || '').trim().toLowerCase(), only = !!eid('dsVeOnly')?.checked;

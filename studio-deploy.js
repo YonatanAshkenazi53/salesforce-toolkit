@@ -569,6 +569,7 @@ async function renderDeploy() {
           <td>${r.depth ? `<button class="ds-btn ds-btn-xs" data-dep-scan="${esc(r.pathKey)}" title="${r.scanned ? 'Read this object again, under the records of the scan above' : 'This object has not been read against this target yet — its records are unknown, not zero'}">${r.scanned ? '🔎 Rescan' : '🔎 Scan'}</button>` : ''}</td>
         </tr>`).join('')}
         ${plan.length > 1 ? `<tr class="ds-dep-total"><td>All objects</td><td></td><td></td>${['ins', 'chg', 'ext', 'link', 'same', 'amb'].map(k => `<td class="ds-dep-num${sum(k) ? ` ds-dep-n-${k}` : ' ds-dep-muted'}">${sum(k).toLocaleString()}</td>`).join('')}<td></td></tr>` : ''}</tbody></table></div>
+      ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepPiiAll" title="Read the records this deployment inserts and suggest a PII treatment per field — each with a real example and the record it comes from; you tick what applies">🎭 Suggest PII treatment for all ${every.found.toLocaleString()} to insert</button> <span class="ds-dep-muted">${(() => { const n = Object.values(p.piiPolicy || {}).filter(Boolean).length; return n ? `${n} field${n === 1 ? ' is' : 's are'} masked now — ▸ record shows each value as it is written` : 'no field is masked yet'; })()}</span></div>` : ''}
       <div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepRescanAll" title="Read every object of this deployment again in both orgs — the root and every child, read before or not, parents before their children. Nothing is changed.">🔄 Rescan all ${plan.length}</button> <span class="ds-dep-muted">every object, root and children${unscanned.length ? ` — ${unscanned.length} not read yet` : ''}</span></div>
       ${unscanned.length ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs ds-btn-primary" id="dsDepScanAll" title="Read every object below against the target, one after the other, parents before their children">🔎 Scan all ${unscanned.length}</button> <b>${unscanned.map(r => esc(r.obj)).join(', ')}</b> not read against this target yet — unknown, not zero. Scan ${unscanned.length === 1 ? 'it' : 'them'} before calling this pair in sync.</div>` : ''}
       ${every.found ? `<div class="ds-rec-card-line"><button class="ds-btn ds-btn-xs" id="dsDepTickAll" title="Tick every record the target lacks, in every object read against it — parents before their children. A child whose parent is not on the way stays out; an object not read stays out. Nothing is written until you press Deploy.">✓ Tick every insert — ${every.found.toLocaleString()} record${every.found === 1 ? '' : 's'} in ${Object.keys(every.picks).length} object${Object.keys(every.picks).length === 1 ? '' : 's'}</button>${unscanned.length ? ' <span class="ds-dep-muted">objects not read yet are not included</span>' : ''}</div>` : ''}
@@ -694,6 +695,11 @@ async function renderDeploy() {
   document.querySelectorAll('.ds-dep-objbtn').forEach(b => b.addEventListener('click', () => { _depObjPath = b.dataset.depObj; _depTab = 'ins'; _depFilter = ''; renderDeploy(); }));
   eid('dsDepScanAll')?.addEventListener('click', () => _depScanAll(p, unscanned.map(r => r.pathKey)));
   eid('dsDepRescanAll')?.addEventListener('click', () => _depRescan(p));
+  eid('dsDepPiiAll')?.addEventListener('click', () => {
+    const byObj = {};
+    for (const [k, ids] of Object.entries(sftkDeployEveryInsert(scan))) { const o = _depObjName(p, k); byObj[o] = [...new Set([...(byObj[o] || []), ...ids])]; }
+    _depPiiSuggest(p, byObj, `the ${every.found.toLocaleString()} record${every.found === 1 ? '' : 's'} this deployment inserts`);
+  });
   // ✓ every insert in one press — the same sets the per-tab "All" buttons fill, object by object
   eid('dsDepTickAll')?.addEventListener('click', () => {
     let n = 0;
@@ -1226,6 +1232,28 @@ async function _depParentMatchEdit(p, scan, step) {
     await _depRescan(p, { from: from.length ? from : undefined });
   });
 }
+
+// 🎭 PII suggestions on the Deploy page (user 2026-11-07, "its kinda hard": "suggest the policy for ALL inserted
+// records with a good example per field, show which record the example comes from … offer the suggestion in mass or
+// for one record from its editor"): the builder's suggestion window, fed the records this deployment inserts (or the
+// one record), its examples named by record; the rules land on this deployment, which is saved.
+async function _depPiiSuggest(p, recordsByObj, scope) {
+  if (!p || typeof bldOpenPiiSuggestModal !== 'function') return;
+  if (p.ephemeral) return showToast('Save this deployment first — the PII policy is part of it.', 'info', 5000);
+  if (typeof attachMeta === 'function') attachMeta(p.tree);
+  const before = JSON.stringify(p.piiPolicy || {});
+  const prevEditing = _editingProfile;
+  _editingProfile = p;
+  try { await bldOpenPiiSuggestModal({ recordsByObj, scope }); } catch (e) { _editingProfile = prevEditing; return showToast(`The suggestions could not open: ${e?.message || e}`, 'error', 6000); }
+  await new Promise(res => { const t = setInterval(() => { const ov = eid('dsModal'); if (!ov || ov.style.display === 'none' || !document.querySelector('#dsModalBox #dsPiiSugApply')) { clearInterval(t); res(); } }, 400); });
+  _editingProfile = prevEditing;
+  if (JSON.stringify(p.piiPolicy || {}) === before) return;
+  const idx = _profiles.findIndex(x => x.id === p.id);
+  if (idx >= 0 && _profiles[idx] !== p) _profiles[idx] = p;
+  await storageSaveProfiles();
+  if (_currentView === 'deploy') renderDeploy();
+}
+window._depPiiSuggest = _depPiiSuggest;
 
 // "matched by …" on a card of This deployment (user 2026-11-07: "here we should also allow to change matching for
 // child's" / "matching by field"): the object's own Matching kit — the Pick Records window of the builder, the same
