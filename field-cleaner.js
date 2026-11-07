@@ -5372,10 +5372,16 @@ const FieldCleaner = (() => {
       if (n === 0) row.remove(); else if (b) b.textContent = String(n);
     }
     const box = document.querySelector('.fc-delete-zone .fc-blockers');
+    const left = box ? [...box.querySelectorAll('.fc-blocker-row strong')].reduce((n, b) => n + (Number(b.textContent) || 0), 0) : 0;
     if (box && !box.querySelector('.fc-blocker-row')) {
       const hdr = box.querySelector('.fc-blockers-hdr');
       if (hdr) hdr.textContent = '✅ Every blocker listed here was deleted — press Re-scan, then delete the field.';
     }
+    // the note under the gate said "N manual blocker(s) remain" from the scan — it follows the deletes (live 2026-11-07)
+    const note = eid('fcDeleteNote');
+    if (note && box) note.textContent = left > 0
+      ? `🔒 ${left} blocker${left === 1 ? '' : 's'} remain — delete ${left === 1 ? 'it' : 'them'} above or clear ${left === 1 ? 'it' : 'them'} in Setup, then re-scan.`
+      : '✅ Every blocker listed was deleted — press Re-scan to confirm, then 🗑 Delete Field.';
   }
 
   async function fixLayout(componentId, componentName) {
