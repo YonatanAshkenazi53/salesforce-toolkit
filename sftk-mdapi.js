@@ -455,3 +455,130 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkRtReplaceField   = sftkRtReplaceField;
   globalThis.sftkRtZipFiles       = sftkRtZipFiles;
 }
+
+// ── 🗑 Delete a blocker, as a whole (user 2026-11-07: "כל מה שחייב להיות
+// מוסר כדי להסיר שדה חייב להיות מחיק בלחיצת כפתור") ───────────────────────
+// One engine for every kind Salesforce refuses the field delete for: the
+// component is read first (its full definition is the restore point), then
+// removed with a destructiveChanges deploy, then read again (gone = done).
+// Undo deploys the saved definition back as a package. Pure: the table, the
+// package.xml/destructiveChanges files, and the files that recreate a record.
+//   parent/tag/folder/suffix: a child type lives inside its parent's file
+//   (objects/Account.object holds <validationRules>); a top-level type has a
+//   file of its own; code and bundles are recreated from their sources.
+function _sftkMdDeleteTable() {
+  return {
+  ValidationRule:          { parent: 'CustomObject',     tag: 'validationRules',      folder: 'objects',           suffix: 'object',           what: 'validation rule',            tooling: 'ValidationRule' },
+  FieldSet:                { parent: 'CustomObject',     tag: 'fieldSets',            folder: 'objects',           suffix: 'object',           what: 'field set',                  tooling: 'FieldSet' },
+  WebLink:                 { parent: 'CustomObject',     tag: 'webLinks',             folder: 'objects',           suffix: 'object',           what: 'custom button or link',      tooling: 'WebLink' },
+  CustomField:             { parent: 'CustomObject',     tag: 'fields',               folder: 'objects',           suffix: 'object',           what: 'formula or roll-up field',  tooling: 'CustomField' },
+  WorkflowRule:            { parent: 'Workflow',         tag: 'rules',                folder: 'workflows',         suffix: 'workflow',         what: 'workflow rule',              tooling: 'WorkflowRule' },
+  WorkflowFieldUpdate:     { parent: 'Workflow',         tag: 'fieldUpdates',         folder: 'workflows',         suffix: 'workflow',         what: 'field update',               tooling: 'WorkflowFieldUpdate' },
+  WorkflowAlert:           { parent: 'Workflow',         tag: 'alerts',               folder: 'workflows',         suffix: 'workflow',         what: 'email alert',                tooling: 'WorkflowAlert' },
+  WorkflowOutboundMessage: { parent: 'Workflow',         tag: 'outboundMessages',     folder: 'workflows',         suffix: 'workflow',         what: 'outbound message',           tooling: 'WorkflowOutboundMessage' },
+  SharingCriteriaRule:     { parent: 'SharingRules',     tag: 'sharingCriteriaRules', folder: 'sharingRules',      suffix: 'sharingRules',     what: 'sharing rule' },
+  AssignmentRule:          { parent: 'AssignmentRules',  tag: 'assignmentRule',       folder: 'assignmentRules',   suffix: 'assignmentRules',  what: 'assignment rule' },
+  AutoResponseRule:        { parent: 'AutoResponseRules', tag: 'autoResponseRule',    folder: 'autoResponseRules', suffix: 'autoResponseRules', what: 'auto-response rule' },
+  EscalationRule:          { parent: 'EscalationRules',  tag: 'escalationRule',       folder: 'escalationRules',   suffix: 'escalationRules',  what: 'escalation rule' },
+  MatchingRule:            { parent: 'MatchingRules',    tag: 'matchingRules',        folder: 'matchingRules',     suffix: 'matchingRule',     what: 'matching rule' },
+  ApprovalProcess:         { folder: 'approvalProcesses', suffix: 'approvalProcess',  what: 'approval process' },
+  RestrictionRule:         { folder: 'restrictionRules', suffix: 'rule',              what: 'scoping or restriction rule', tooling: 'RestrictionRule' },
+  CustomMetadataRecord:    { mdType: 'CustomMetadata',   folder: 'customMetadata',    suffix: 'md',               what: 'custom metadata record' },
+  FlexiPage:               { folder: 'flexipages',       suffix: 'flexipage',         what: 'Lightning page',             tooling: 'FlexiPage' },
+  ApexClass:               { code: 'Body',   folder: 'classes',    suffix: 'cls',       what: 'Apex class',            tooling: 'ApexClass',     metaTag: 'ApexClass' },
+  ApexTrigger:             { code: 'Body',   folder: 'triggers',   suffix: 'trigger',   what: 'Apex trigger',          tooling: 'ApexTrigger',   metaTag: 'ApexTrigger' },
+  ApexPage:                { code: 'Markup', folder: 'pages',      suffix: 'page',      what: 'Visualforce page',      tooling: 'ApexPage',      metaTag: 'ApexPage' },
+  ApexComponent:           { code: 'Markup', folder: 'components', suffix: 'component', what: 'Visualforce component', tooling: 'ApexComponent', metaTag: 'ApexComponent' },
+  LightningComponentBundle: { bundle: 'lwc',  what: 'Lightning web component', tooling: 'LightningComponentBundle' },
+  AuraDefinitionBundle:    { bundle: 'aura', what: 'Aura component',           tooling: 'AuraDefinitionBundle' },
+  };
+}
+// What the delete needs to know about a type; null = not deletable here
+// (a duplicate rule stays a hand job on purpose; a lookup filter and the
+// lead mapping are parts of something else and are edited, not deleted).
+function sftkMdDeleteSpec(type) {
+  const s = _sftkMdDeleteTable()[type];
+  return s ? { type, mdType: s.mdType || type, ...s } : null;
+}
+function _sftkPkgXml(items) {
+  const byType = new Map();
+  for (const [t, m] of items) { if (!byType.has(t)) byType.set(t, []); byType.get(t).push(m); }
+  let x = '<?xml version="1.0" encoding="UTF-8"?>\n<Package xmlns="http://soap.sforce.com/2006/04/metadata">\n';
+  for (const [t, ms] of byType) x += `    <types>\n${ms.map(m => `        <members>${sftkMdEscape(m)}</members>\n`).join('')}        <name>${sftkMdEscape(t)}</name>\n    </types>\n`;
+  return x + '    <version>62.0</version>\n</Package>';
+}
+// The two files of a delete: an empty package and the destructive list,
+// applied after it (destructiveChangesPost.xml, the same the CLI uses).
+function sftkMdDestructiveFiles(items) {
+  return [{ name: 'package.xml', text: _sftkPkgXml([]) }, { name: 'destructiveChangesPost.xml', text: _sftkPkgXml(items) }];
+}
+// The files that put one record back: its package.xml and the file the
+// Metadata API expects for the type. A child type goes inside its parent's
+// file with its SHORT name (Account.X is X inside objects/Account.object);
+// a top-level type gets a file of its own. innerXml is what readMetadata
+// returned, fullName and all.
+function sftkMdPackageFiles(type, fullName, innerXml) {
+  const s = sftkMdDeleteSpec(type);
+  if (!s || s.code || s.bundle) return null;
+  const mdType = s.mdType;
+  if (s.parent) {
+    const dot = fullName.indexOf('.');
+    const obj = dot > 0 ? fullName.slice(0, dot) : fullName, short = dot > 0 ? fullName.slice(dot + 1) : fullName;
+    let body = String(innerXml || '');
+    const fn = sftkMdFindElement(body, 'fullName', 0);
+    if (fn) body = body.slice(0, fn.start) + body.slice(fn.end);
+    const file = '<?xml version="1.0" encoding="UTF-8"?>\n'
+      + `<${s.parent} xmlns="http://soap.sforce.com/2006/04/metadata">`
+      + `<${s.tag}><fullName>${sftkMdEscape(short)}</fullName>${body}</${s.tag}>`
+      + `</${s.parent}>`;
+    return [{ name: 'package.xml', text: _sftkPkgXml([[mdType, fullName]]) }, { name: `${s.folder}/${obj}.${s.suffix}`, text: file }];
+  }
+  return [{ name: 'package.xml', text: _sftkPkgXml([[mdType, fullName]]) }, { name: `${s.folder}/${fullName}.${s.suffix}`, text: sftkMdRecordFileXml(mdType, innerXml) }];
+}
+// The Metadata API wants a decimal api version ("62.0", never "62" — a Tooling record says 62).
+function _sftkApiVer(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n.toFixed(1) : String(v || '62.0');
+}
+// The files that put a piece of code back: the source and its -meta.xml.
+function sftkMdCodeFiles(type, name, source, apiVersion, extra) {
+  const s = sftkMdDeleteSpec(type);
+  if (!s || !s.code) return null;
+  const meta = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    + `<${s.metaTag} xmlns="http://soap.sforce.com/2006/04/metadata"><apiVersion>${sftkMdEscape(_sftkApiVer(apiVersion))}</apiVersion>`
+    + (s.metaTag === 'ApexClass' || s.metaTag === 'ApexTrigger' ? '<status>Active</status>' : '')
+    + (extra && extra.label ? `<label>${sftkMdEscape(extra.label)}</label>` : '')
+    + `</${s.metaTag}>`;
+  return [
+    { name: 'package.xml', text: _sftkPkgXml([[type, name]]) },
+    { name: `${s.folder}/${name}.${s.suffix}`, text: String(source || '') },
+    { name: `${s.folder}/${name}.${s.suffix}-meta.xml`, text: meta },
+  ];
+}
+// The files that put a bundle back: every resource as it was, plus the
+// bundle's -meta.xml. resources: [{ path, source }], paths like
+// "lwc/x/x.js" (an LWC FilePath) or "x.cmp" (Aura, from its DefType).
+function sftkMdBundleFiles(type, name, resources, meta) {
+  const s = sftkMdDeleteSpec(type);
+  if (!s || !s.bundle) return null;
+  const files = [{ name: 'package.xml', text: _sftkPkgXml([[type, name]]) }];
+  for (const r of (resources || [])) {
+    const p = String(r.path || '');
+    files.push({ name: p.startsWith(`${s.bundle}/`) ? p : `${s.bundle}/${name}/${p}`, text: String(r.source || '') });
+  }
+  const m = meta || {};
+  const tag = type === 'LightningComponentBundle' ? 'LightningComponentBundle' : 'AuraDefinitionBundle';
+  const metaFile = type === 'LightningComponentBundle' ? `${s.bundle}/${name}/${name}.js-meta.xml` : `${s.bundle}/${name}/${name}.cmp-meta.xml`;
+  files.push({ name: metaFile, text: '<?xml version="1.0" encoding="UTF-8"?>\n'
+    + `<${tag} xmlns="http://soap.sforce.com/2006/04/metadata"><apiVersion>${sftkMdEscape(_sftkApiVer(m.apiVersion))}</apiVersion>`
+    + (type === 'LightningComponentBundle' ? `<isExposed>${m.isExposed === true ? 'true' : 'false'}</isExposed>${m.masterLabel ? `<masterLabel>${sftkMdEscape(m.masterLabel)}</masterLabel>` : ''}` : (m.description ? `<description>${sftkMdEscape(m.description)}</description>` : ''))
+    + `</${tag}>` });
+  return files;
+}
+if (typeof globalThis !== 'undefined') {
+  globalThis.sftkMdDeleteSpec       = sftkMdDeleteSpec;
+  globalThis.sftkMdDestructiveFiles = sftkMdDestructiveFiles;
+  globalThis.sftkMdPackageFiles     = sftkMdPackageFiles;
+  globalThis.sftkMdCodeFiles        = sftkMdCodeFiles;
+  globalThis.sftkMdBundleFiles      = sftkMdBundleFiles;
+}

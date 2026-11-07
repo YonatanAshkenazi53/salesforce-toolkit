@@ -3627,7 +3627,7 @@ async function dispatchMessage(message) {
     case 'SF_REST_QUERY':
       return sfQuery(orgUrl, sid, message.query, false);
     case 'SF_METADATA_DEPLOY':
-      return sfMetadataDeploy(orgUrl, sid, message.zipBase64);
+      return sfMetadataDeploy(orgUrl, sid, message.zipBase64, message.testLevel);
     case 'SF_MD_LIST':
       return sfMetadataList(orgUrl, sid, message.mdType);
     case 'SF_MD_READ':
@@ -4661,7 +4661,7 @@ async function sfMetadataRead(orgUrl, sid, mdType, fullNames) {
     `<met:readMetadata><met:type>${sfMdEscape(mdType)}</met:type>${names.map(n => `<met:fullNames>${sfMdEscape(n)}</met:fullNames>`).join('')}</met:readMetadata>`);
 }
 
-async function sfMetadataDeploy(orgUrl, sid, zipBase64) {
+async function sfMetadataDeploy(orgUrl, sid, zipBase64, testLevel) {
   // Decode base64 → raw bytes
   const binaryStr = atob(zipBase64);
   const zipBytes  = new Uint8Array(binaryStr.length);
@@ -4677,7 +4677,7 @@ async function sfMetadataDeploy(orgUrl, sid, zipBase64) {
       ignoreWarnings:    true,
       rollbackOnError:   true,
       singlePackage:     true,
-      testLevel:         'NoTestRun'
+      testLevel:         (testLevel === 'RunLocalTests' || testLevel === 'RunAllTestsInOrg') ? testLevel : 'NoTestRun'   // a destructive Apex delete in production needs the org's tests run (2026-11-07)
     }
   });
 

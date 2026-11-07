@@ -5892,6 +5892,12 @@ body.sftk-dark .btn-danger:hover:not(:disabled) { background: #4A1B1F; }
   background: #fff3cd; color: #856404; border: 1px solid #ffeeba;
   border-radius: 10px; padding: 1px 8px; font-size: 10.5px; font-weight: 600;
 }
+/* 2026-11-07: blockers the 🗑 engine removes as a whole, with a restore point */
+.fc-badge-del {
+  background: #fde2e1; color: #8a1c1c; border: 1px solid #f5c2c0;
+  border-radius: 10px; padding: 1px 8px; font-size: 10.5px; font-weight: 600;
+}
+body.sftk-dark .fc-badge-del { background: #4a1b1f; color: #ffb4b0; border-color: #6b2a30; }
 
 .fc-group {
   background: var(--card); border: 1px solid var(--border);

@@ -1129,9 +1129,14 @@ const FieldCleaner = (() => {
         return move + keep + off;
       }
     }
+    // 🗑 Delete the whole component — every blocker kind the delete engine knows (user 2026-11-07: one click for anything that must go)
+    const cfgT = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
+    const spec = (cfgT.sev === 'blocker' && typeof sftkMdDeleteSpec === 'function') ? sftkMdDeleteSpec(type) : null;
+    const del = spec ? `<button class="btn btn-danger btn-sm fc-fix-btn fc-del-btn" ${attrs} data-swap="0" data-way="delete" title="Delete this ${esc(spec.what)} from the org — its definition is kept as a restore point; ↩ Undo deploys it back">🗑 Delete ${esc(spec.what)}</button>` : '';
+    if (!cfgT.fixable) return del;
     const rm = `<button class="btn btn-secondary btn-sm fc-fix-btn" ${attrs} data-swap="0" title="Take the field’s reference out of this">✂ Remove</button>`;
-    if (!_replOn()) return rm;
-    return `<button class="btn btn-primary btn-sm fc-fix-btn" ${attrs} data-swap="1" title="Point this at ${esc(_replField.api)} instead of the field">⇄ Replace</button>${rm}`;
+    if (!_replOn()) return rm + del;
+    return `<button class="btn btn-primary btn-sm fc-fix-btn" ${attrs} data-swap="1" title="Point this at ${esc(_replField.api)} instead of the field">⇄ Replace</button>${rm}${del}`;
   }
   function _fixAllHtml(type, n, label) {
     const noun = type === 'Flow' ? `flow${n === 1 ? '' : 's'}` : esc(label);
@@ -1181,7 +1186,7 @@ const FieldCleaner = (() => {
   // An item's buttons while its fix works (text on the one that was pressed),
   // and back to idle (text = null).
   function _rowBusy(componentId, text) {
-    const pair = document.querySelector(`.fc-fix-pair[data-id="${componentId}"]`);
+    const pair = document.querySelector(`.fc-fix-pair[data-id="${componentId}"], .fc-del-pair[data-id="${componentId}"]`);
     if (!pair) return;
     if (text == null) { pair.innerHTML = _fixBtnsHtml(pair.dataset.type, componentId, pair.dataset.name); return; }
     pair.querySelectorAll('.fc-fix-btn').forEach(b => {
@@ -2335,7 +2340,11 @@ const FieldCleaner = (() => {
     const autoCount   = Object.entries(_groups)
       .filter(([t]) => (TYPE_CFG[t] || TYPE_CFG_DEFAULT).fixable)
       .reduce((n, [,arr]) => n + arr.length, 0) - flowExtra - pbCards;
-    const manualCount = shownCount - autoCount;
+    // 🗑 blockers the delete engine can remove as a whole (user 2026-11-07): counted apart from the true hand jobs
+    const delCount = Object.entries(_groups)
+      .filter(([t]) => { const c = TYPE_CFG[t] || TYPE_CFG_DEFAULT; return c.sev === 'blocker' && !c.fixable && typeof sftkMdDeleteSpec === 'function' && !!sftkMdDeleteSpec(t); })
+      .reduce((n, [,arr]) => n + arr.length, 0);
+    const manualCount = shownCount - autoCount - delCount;
 
     // What each kind of item gets, in words — once, in the collapsed help under
     // the status card, not as a paragraph over every group (user 2026-10-13:
@@ -2351,6 +2360,7 @@ const FieldCleaner = (() => {
           <span class="fc-status-n"><strong>${shownCount}</strong> place${shownCount === 1 ? '' : 's'} use${shownCount === 1 ? 's' : ''} it</span>
           <span class="fc-badge-row">
             ${autoCount   > 0 ? `<span class="fc-badge-auto">${autoCount} fixable here</span>`  : ''}
+            ${delCount > 0 ? `<span class="fc-badge-del" title="Blockers this tool can delete as a whole — each with a restore point">${delCount} deletable here</span>` : ''}
             ${manualCount > 0 ? `<span class="fc-badge-manual">${manualCount} by hand</span>` : ''}
           </span>
         </div>
@@ -2443,7 +2453,7 @@ const FieldCleaner = (() => {
     const blockerBlock = blockerTotal > 0 ? `
       <div class="fc-blockers">
         <div class="fc-blockers-hdr">🔒 ${blockerTotal} blocker${blockerTotal === 1 ? '' : 's'} — Salesforce will refuse the delete until ${blockerTotal === 1 ? 'this is' : 'these are'} cleared:</div>
-        ${_manualBlockers.map(b => `<div class="fc-blocker-row">${(TYPE_CFG[b.type] || {}).icon || '🔧'} <strong>${b.count}</strong> ${esc(b.label)} — clear in Setup, then re-scan${b.hidden ? ' (hidden by the 👀 scope — switch to 🔍 Everything to see them)' : ''}</div>`).join('')}
+        ${_manualBlockers.map(b => `<div class="fc-blocker-row" data-type="${esc(b.type)}">${(TYPE_CFG[b.type] || {}).icon || '🔧'} <strong>${b.count}</strong> ${esc(b.label)} — ${(typeof sftkMdDeleteSpec === 'function' && sftkMdDeleteSpec(b.type)) ? '🗑 delete above, or clear in Setup, then re-scan' : 'clear in Setup, then re-scan'}${b.hidden ? ' (hidden by the 👀 scope — switch to 🔍 Everything to see them)' : ''}</div>`).join('')}
       </div>` : '';
     const silentNote = silentManual > 0 ? `
       <div class="fc-silent-note">⚠ ${silentManual} cosmetic reference${silentManual === 1 ? '' : 's'} (list views, quick actions…) won't block the delete but will stop working afterwards.</div>` : '';
@@ -3601,13 +3611,16 @@ const FieldCleaner = (() => {
       ? `<div class="fc-xml-panel" id="fcXml_${esc(id)}" style="display:none"></div>`
       : '';
 
-    if (fixable) {
+    // a blocker the delete engine knows gets its 🗑 button even when nothing else is fixable here
+    const canDel = !fixable && (TYPE_CFG[type] || TYPE_CFG_DEFAULT).sev === 'blocker' && typeof sftkMdDeleteSpec === 'function' && !!sftkMdDeleteSpec(type);
+    if (fixable || canDel) {
       return `
         <div class="fc-item" id="fcItem_${esc(id)}">
           <span class="fc-item-name">${name}</span>
           <span class="fc-item-btns">
             ${inspBtn}
-            <span class="fc-fix-pair" data-id="${esc(id)}" data-type="${esc(type)}" data-name="${name}">${_fixBtnsHtml(type, id, rawName)}</span>
+            <span class="${canDel ? 'fc-del-pair' : 'fc-fix-pair'}" data-id="${esc(id)}" data-type="${esc(type)}" data-name="${name}">${_fixBtnsHtml(type, id, rawName)}</span>
+            ${canDel ? `<button class="btn btn-sm fc-setup-btn" data-type="${esc(type)}">↗ Setup</button>` : ''}
           </span>
         </div>${xmlPanel}`;
     }
@@ -3631,13 +3644,19 @@ const FieldCleaner = (() => {
     if (eid(`fcItem_${componentId}`)?.classList.contains('fc-item-fixed')) return;
     if (_fixSwap !== null) return;
     _fixSwap = !!swap && _replOn();
-    _fixWay = (way === 'keep' || way === 'off') ? way : '';
+    _fixWay = (way === 'keep' || way === 'off' || way === 'delete') ? way : '';
     // 'cancel' = the user said no in the dialog (a bulk walk stops there)
     try { return await _fixOneRun(type, componentId, componentName, fieldId); }
     finally { _fixSwap = null; _fixWay = ''; }
   }
   async function _fixOneRun(type, componentId, componentName, fieldId) {
     const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
+    // 🗑 the whole component goes (its own confirm, its own restore point)
+    if (_fixWay === 'delete') {
+      try { const label = await fixDelete(type, componentId, componentName); if (label === 'cancel') return 'cancel'; if (label) markFixed(componentId, label); }
+      catch (e) { _rowBusy(componentId, null); appendInlineError(componentId, e.message, e.setupUrl, '↗ Open in Setup'); }
+      return;
+    }
     // W6 (user 2026-08-05: "ask before any delete operation") — ✂ Remove
     // DEPLOYS metadata on one click, and for flows also permanently DELETES
     // versions that still reference the field. Confirm first, stating
@@ -5117,6 +5136,170 @@ const FieldCleaner = (() => {
     }
   }
 
+  // ── 🗑 Delete a blocker as a whole ──────────────────────────────────────
+  // User 2026-11-07: "כל מה שחייב להיות מוסר כדי להסיר שדה חייב להיות מחיק
+  // בלחיצת כפתור". One engine for every kind Salesforce refuses the field
+  // delete for (sftk-mdapi.js: the type table): the component's full
+  // definition is read FIRST and kept as the restore point, a
+  // destructiveChanges deploy removes it, a re-read proves it is gone, and
+  // ↩ Undo in History (or ↩ Restore under the results) deploys the saved
+  // definition back. Code (Apex, Visualforce) and bundles (LWC, Aura) are
+  // kept as their sources and put back the same way. A duplicate rule is
+  // never deleted here (the standing rule), a lookup filter and the lead
+  // mapping are edited, not deleted.
+  const _zipOf = files => { const enc = new TextEncoder(); return window.sftkBuildStoredZip(files.map(f => ({ name: f.name, data: enc.encode(f.text) }))); };
+  const _AURA_FILE = { COMPONENT: n => `${n}.cmp`, APPLICATION: n => `${n}.app`, EVENT: n => `${n}.evt`, INTERFACE: n => `${n}.intf`, TOKENS: n => `${n}.tokens`,
+    CONTROLLER: n => `${n}Controller.js`, HELPER: n => `${n}Helper.js`, RENDERER: n => `${n}Renderer.js`, STYLE: n => `${n}.css`, DOCUMENTATION: n => `${n}.auradoc`, DESIGN: n => `${n}.design`, SVG: n => `${n}.svg` };
+  // The full name the Metadata API knows the row by: the legs that read by
+  // name put it in the id; an index row carries a Tooling Id, which answers
+  // with its FullName; a matching rule is a plain record with a developer name.
+  async function _deleteFullName(type, componentId, spec) {
+    const row = (_lastScan?.deps || []).find(d => d.MetadataComponentType === type && d.MetadataComponentId === componentId);
+    if (row && row._fullName) return row._fullName;
+    const id = String(componentId || '');
+    const looksLikeId = /^[A-Za-z0-9]{15}([A-Za-z0-9]{3})?$/.test(id);
+    if (type === 'MatchingRule' && looksLikeId) {
+      const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true, query: `SELECT DeveloperName, SobjectType FROM MatchingRule WHERE Id = '${id}'` });
+      const r = q && !q.error ? (q.records || [])[0] : null;
+      if (r) return `${r.SobjectType}.${r.DeveloperName}`;
+    }
+    if (spec.tooling && looksLikeId) {
+      const g = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: spec.tooling, id, _suppressError: true });
+      if (g && !g.error) {
+        // a child type without FullName on its Tooling record (live 2026-11-07: FieldSet) is "<Object>.<DeveloperName>"
+        const ent = g.EntityDefinitionId || g.TableEnumOrId || '';
+        const fn = g.FullName || (spec.parent && ent && g.DeveloperName ? `${ent}.${g.DeveloperName}` : (g.DeveloperName || g.Name));
+        if (fn) return String(fn);
+      }
+    }
+    return id;
+  }
+  // "Gone" for code and bundles: a Tooling query by name, tried a few times —
+  // live 2026-11-07, the classes were deleted but a read straight after the
+  // deploy still answered (the index lags a moment behind a destructive deploy).
+  const _goneByQuery = async query => {
+    for (let i = 0; i < 5; i++) {
+      const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true, query });
+      if (q && !q.error && !(q.records || []).length) return true;
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    return false;
+  };
+  // What puts the component back: the files of a redeploy, and how to check it is there again.
+  async function _deleteRestorePlan(type, componentId, fullName, spec) {
+    if (spec.code) {
+      const g = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: spec.tooling, id: componentId, _suppressError: true });
+      if (!g || g.error || typeof g[spec.code] !== 'string') throw new Error(`the source of "${fullName}" could not be read (${_feText((g && g.error) || 'no answer')}) — nothing is deleted without a restore point`);
+      // only a Visualforce page or component carries a <label>; an Apex class or trigger with one is refused (live 2026-11-07: the class restore failed on it)
+      const withLabel = spec.metaTag === 'ApexPage' || spec.metaTag === 'ApexComponent';
+      const files = sftkMdCodeFiles(type, fullName, g[spec.code], g.ApiVersion, withLabel ? { label: g.MasterLabel || g.Label || fullName } : null);
+      const byName = `SELECT Id FROM ${spec.tooling} WHERE Name = '${fullName.replace(/'/g, "\\'")}'`;
+      return { files, verify: { query: byName, tooling: true, pick: 'records', count: 1 }, gone: () => _goneByQuery(byName) };
+    }
+    if (spec.bundle) {
+      const g = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: spec.tooling, id: componentId, _suppressError: true });
+      if (!g || g.error) throw new Error(`"${fullName}" could not be read (${_feText((g && g.error) || 'no answer')}) — nothing is deleted without a restore point`);
+      let resources = [];
+      if (type === 'LightningComponentBundle') {
+        const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true, query: `SELECT FilePath, Source FROM LightningComponentResource WHERE LightningComponentBundleId = '${componentId}'` });
+        if (!q || q.error) throw new Error(`the files of "${fullName}" could not be read (${_feText((q && q.error) || 'no answer')})`);
+        resources = (q.records || []).filter(r => !/-meta\.xml$/.test(String(r.FilePath || ''))).map(r => ({ path: r.FilePath, source: r.Source }));
+      } else {
+        const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true, query: `SELECT DefType, Source FROM AuraDefinition WHERE AuraDefinitionBundleId = '${componentId}'` });
+        if (!q || q.error) throw new Error(`the files of "${fullName}" could not be read (${_feText((q && q.error) || 'no answer')})`);
+        resources = (q.records || []).map(r => ({ path: (_AURA_FILE[r.DefType] || (n => `${n}.${String(r.DefType).toLowerCase()}`))(fullName), source: r.Source }));
+      }
+      if (!resources.length) throw new Error(`"${fullName}" came back with no files — nothing is deleted without a restore point`);
+      const m = g.Metadata || {};
+      const files = sftkMdBundleFiles(type, fullName, resources, { apiVersion: m.apiVersion || g.ApiVersion, isExposed: m.isExposed, masterLabel: m.masterLabel || g.MasterLabel, description: m.description || g.Description });
+      const byDev = `SELECT Id FROM ${spec.tooling} WHERE DeveloperName = '${fullName.replace(/'/g, "\\'")}'`;
+      return { files, verify: { query: byDev, tooling: true, pick: 'records', count: 1 }, gone: () => _goneByQuery(byDev) };
+    }
+    const r = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: spec.mdType, fullNames: [fullName], _suppressError: true });
+    if (!r || r.error) throw new Error(`"${fullName}" could not be read (${_feText(r?.error || 'no answer')}) — nothing is deleted without a restore point`);
+    const rec = sftkMdExtractRecords(r.text).records.find(x => x.fullName === fullName);
+    if (!rec) throw new Error(`"${fullName}" was not found in the org as a ${spec.what} — re-scan, it may be gone already`);
+    const files = sftkMdPackageFiles(type, fullName, rec.innerXml);
+    const read = async () => { const a = await bg({ type: 'SF_MD_READ', orgUrl: _orgUrl, sid: _sid, mdType: spec.mdType, fullNames: [fullName], _suppressError: true }); if (!a || a.error) return null; return sftkMdExtractRecords(a.text).records.find(x => x.fullName === fullName) || false; };
+    return { files, verify: { msg: { type: 'SF_MD_READ', mdType: spec.mdType, fullNames: [fullName] }, pattern: `<fullName>${_rxEsc(fullName)}</fullName>`, flags: 'i', retries: 3 }, gone: async () => (await read()) === false };
+  }
+  async function fixDelete(type, componentId, componentName) {
+    const spec = sftkMdDeleteSpec(type);
+    const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
+    if (!spec) throw new Error(`A ${cfg.label || type} is not deleted from here — clear it in Setup.`);
+    const obj = _selObj.api, field = _selField.api;
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    const sure = await sftkConfirmDestructive({
+      title: `Delete ${spec.what} — ${cfg.label || type}`,
+      icon: '🗑',
+      items: [{ label: componentName, sub: spec.what }],
+      revOverride: {
+        html: `🗑 <strong>The ${esc(spec.what)} is deleted from the org</strong> — not just its reference to ${esc(obj)}.${esc(field)}. Its full definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in History (and ↩ Restore points, under the results) deploys it back.${spec.code ? ' In a production org Salesforce may run the org’s Apex tests before it deletes code.' : ''}${type === 'MatchingRule' ? ' A matching rule a duplicate rule still uses is refused by Salesforce — that duplicate rule is a hand job, on purpose.' : ''}`,
+        needsCheckbox: true,
+      },
+      confirmLabel: `🗑 Delete the ${spec.what}`,
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!sure) return 'cancel';
+    _rowBusy(componentId, '⏳ reading…');
+    let fullName, plan;
+    try {
+      fullName = await _deleteFullName(type, componentId, spec);
+      plan = await _deleteRestorePlan(type, componentId, fullName, spec);
+    } catch (e) { _rowBusy(componentId, null); appendInlineError(componentId, e.message); return; }
+    await _snapshotFix('MdDelete', componentId, componentName, fullName, { type, mdType: spec.mdType, what: spec.what, files: plan.files, verify: plan.verify });
+    _rowBusy(componentId, '⏳ deleting…');
+    const zipBack = _zipOf(plan.files), zipDel = _zipOf(sftkMdDestructiveFiles([[spec.mdType, fullName]]));
+    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `🗑 ${cfg.label || type} — "${componentName}" deleted (${obj}.${field})`, orgUrl: _orgUrl });
+    let wr, ranTests = false;
+    try {
+      // confirmed-by: the sftkConfirmDestructive right above
+      // The write discipline (sftk-write.js): the destructive deploy is the
+      // write, a re-read of the component is the verify — gone is done.
+      wr = await sftkWriteVerified({
+        describe: `"${componentName}" ${spec.what}`,
+        journal: j,
+        write: async () => {
+          let r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64: zipDel, _suppressError: true });
+          // production + Apex: Salesforce wants the org's tests run before code goes
+          if (spec.code && r && !r.success && /test|coverage/i.test(String(r.error || ''))) { ranTests = true; r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64: zipDel, testLevel: 'RunLocalTests', _suppressError: true }); }
+          return (r && r.success) ? r : { error: (r && r.error) || 'the deploy was not accepted' };
+        },
+        verify: async () => { try { return { ok: await plan.gone(), text: null }; } catch (_) { return { ok: false, text: null }; } },
+      });
+      if (wr.accepted && wr.ok) {
+        _afterDelete(type);
+        return `✅ Deleted — the ${spec.what} is gone${ranTests ? ' (the org’s Apex tests ran first)' : ''} — verified by re-reading the org`;
+      }
+      if (wr.accepted) throw new Error(`"${componentName}" — the delete was accepted, but on re-read the ${spec.what} is still there. Re-scan, and check it in Setup.`);
+      throw new Error(`Salesforce won't delete the ${spec.what} "${componentName}" (${_feText(String((wr.raw && wr.raw.error) || 'refused'))}). Clear it in Setup, then re-scan.`);
+    } finally {
+      await sftkHistoryEnd(j, { undo: wr && wr.accepted
+        ? { steps: [{
+            describe: `Put the ${spec.what} "${componentName}" back as it was before the delete`,
+            // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read in `verify`
+            msg: { type: 'SF_METADATA_DEPLOY', zipBase64: zipBack },
+            verify: { ...plan.verify, text: { ok: `"${componentName}": the ${spec.what} is back — verified by re-reading the org`, bad: `"${componentName}": the deploy was accepted, but on re-read the ${spec.what} is not there yet` } },
+          }] }
+        : { none: 'nothing was accepted by Salesforce, so there is nothing to undo' } });
+    }
+  }
+  // The gate's blocker row of this kind counts one less; when every row is
+  // gone the note says what to do next (a re-scan, so nothing is assumed).
+  function _afterDelete(type) {
+    const row = document.querySelector(`.fc-blocker-row[data-type="${CSS.escape(type)}"]`);
+    if (row) {
+      const b = row.querySelector('strong');
+      const n = Math.max(0, (Number(b?.textContent) || 1) - 1);
+      if (n === 0) row.remove(); else if (b) b.textContent = String(n);
+    }
+    const box = document.querySelector('.fc-delete-zone .fc-blockers');
+    if (box && !box.querySelector('.fc-blocker-row')) {
+      const hdr = box.querySelector('.fc-blockers-hdr');
+      if (hdr) hdr.textContent = '✅ Every blocker listed here was deleted — press Re-scan, then delete the field.';
+    }
+  }
+
   async function fixLayout(componentId, componentName) {
     const res = await bg({
       type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
@@ -6400,6 +6583,35 @@ const FieldCleaner = (() => {
           if (!wr.ok) throw new Error('restored, but the org could not be re-read to confirm it — check the report in Salesforce');
         } finally {
           await sftkHistoryEnd(j, { undo: { none: 'this is itself the undo — redo the fix from the tool to remove the field reference again' } });
+        }
+      } else if (snap.type === 'MdDelete') {
+        // the restore point of a 🗑 Delete: the saved files go back as a package
+        if (!md || !Array.isArray(md.files) || !md.files.length) throw new Error('Snapshot has no files — cannot deploy');
+        const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: `↩ Restore ${md.what || 'component'} — "${snap.name}"`, orgUrl: _orgUrl });
+        try {
+          // confirmed-by: the ↩ Restore sftkConfirmDestructive (the only caller)
+          // The write discipline (sftk-write.js): the deploy is the write, the
+          // same re-read the delete's undo uses is the verify.
+          const wr = await sftkWriteVerified({
+            describe: `${md.what || 'component'} restore`,
+            journal: j,
+            write: async () => {
+              const r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, _suppressError: true, zipBase64: _zipOf(md.files) });
+              return (r && r.success) ? r : { error: (r && r.error) || 'the deploy was not accepted' };
+            },
+            verify: async () => {
+              const v = md.verify || {};
+              let a = null;
+              if (v.msg) a = await bg({ ...v.msg, orgUrl: _orgUrl, sid: _sid, _suppressError: true });
+              else if (v.query) a = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: !!v.tooling, _suppressError: true, query: v.query });
+              const r = (typeof sftkUndoVerifyEval === 'function') ? sftkUndoVerifyEval(v, a) : { ok: !!a && !a.error };
+              return { ok: !!r.ok, text: null };
+            },
+          });
+          if (!wr.accepted) throw new Error((wr.raw && wr.raw.error) || 'refused');
+          if (!wr.ok) throw new Error('restored, but the org could not be re-read to confirm it — check it in Setup');
+        } finally {
+          await sftkHistoryEnd(j, { undo: { none: 'this is itself the undo — press 🗑 Delete in the tool to delete it again' } });
         }
       } else if (snap.type === 'ReportType') {
         if (!snap.fullName || !md.innerXml) throw new Error('Snapshot has no developer name or XML — cannot deploy');

@@ -286,8 +286,8 @@ describe('Field Cleaner — step 3 and what it changes', () => {
     expect(FC).toContain('This moves REFERENCES. The values stored in the old field are a separate step: after the scan, 📦 Stored values compares the two fields and offers to copy them.');
   });
   it('replace mode ADDS a button: every item offers ⇄ Replace and ✂ Remove, and the click decides (see the last block)', () => {
-    expect(FC).toContain('data-swap="1" title="Point this at ${esc(_replField.api)} instead of the field">⇄ Replace</button>${rm}`;');
-    expect(FC).toContain('if (!_replOn()) return rm;');
+    expect(FC).toContain('data-swap="1" title="Point this at ${esc(_replField.api)} instead of the field">⇄ Replace</button>${rm}${del}`;');   // +${del} 2026-11-07: the 🗑 Delete button rides along
+    expect(FC).toContain('if (!_replOn()) return rm + del;');   // +del 2026-11-07
   });
   it('flows: the preview is made by the REAL swap on a clone, and the run uses the same swap', () => {
     expect(FC).toContain('const sw = await _flowSwap(after);');
@@ -580,7 +580,7 @@ describe('a flow that runs on the field — the decision is made on its card', (
     expect(btns).toContain("const move = _replOn() ? `<button class=\"btn btn-primary btn-sm fc-fix-btn\" ${attrs} data-swap=\"1\"");
   });
   it('the button pressed is the way: nothing is asked again in the dialog', () => {
-    expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off') ? way : '';");
+    expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off' || way === 'delete') ? way : '';");   // +delete 2026-11-07
     expect(FC).toContain("const preset = !hasChoice ? '' : (swap || _fixWay === 'keep') ? 'replace' : _fixWay === 'off' ? 'delete' : '';");
     expect(FC).toContain('if (preset) activeMode = preset;');
     expect(FC).toContain('const asks = hasChoice && !preset;');
