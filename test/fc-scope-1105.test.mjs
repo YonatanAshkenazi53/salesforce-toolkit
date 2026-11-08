@@ -83,11 +83,15 @@ describe('wiring', () => {
     expect(FC).toContain('const deps = (allDeps || []).filter(d => fcScopeKeeps(_scope, sevOf(d.MetadataComponentType || \'Unknown\')));');
     expect(FC).toContain("for (const d of (allDeps || [])) { const t = d.MetadataComponentType || 'Unknown'; (gateGroups[t] = gateGroups[t] || []).push(d); }");
     expect(FC).toContain("hidden: !fcScopeKeeps(_scope, 'blocker')");
-    expect(FC).toContain("<em>hidden by the 👀 scope</em>");   // on the gate's chip (2026-11-08)
+    // the 👀 scope hides every blocker: one sentence with the way out, no chips (user 2026-11-08: "what is the point of all this info")
+    expect(FC).toContain("const scopeHides = !fcScopeKeeps(_scope, 'blocker');");
+    expect(FC).toContain('const blockerBlock = blockerTotal > 0 && !scopeHides ? `');
+    expect(FC).toContain('the delete — this view shows only the 👀 mentions.');
+    expect(FC).toContain('class="btn btn-secondary btn-sm fc-scope-jump" data-scope="both">🔍 Everything</button> shows and fixes them — scan again after switching.');
     expect(FC).toContain(`<button class="btn btn-danger" id="fcDelFreeBtn" \${hiddenBlockers.length ? 'disabled' : ''}>`);
     // a fixable blocker the scope hides (a flow under 👀) gates the delete too
     expect(FC).toContain('const delDisabled = autoCount > 0 || blockerTotal > 0 || hiddenFixable > 0;');
-    expect(FC).toContain('hidden by the 👀 scope (flows and the like, fixable here)');
+    expect(FC).toContain('const hiddenBlock = scopeHides && hiddenTotal > 0 ? `');
   });
   it('two sections, blockers first; a scan that read less says what it left out', () => {
     expect(FC.indexOf('id="fcSectionBlockers"')).toBeLessThan(FC.indexOf('id="fcSectionMentions"'));

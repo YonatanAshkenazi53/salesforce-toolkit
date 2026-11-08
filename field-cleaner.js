@@ -2538,14 +2538,19 @@ const FieldCleaner = (() => {
     // a FIXABLE blocker the scope hides (a flow, under 👀) gates the delete too — Salesforce would refuse it
     const hiddenFixable = hiddenBlockers.filter(d => (TYPE_CFG[d.MetadataComponentType] || TYPE_CFG_DEFAULT).fixable).length;
     const delDisabled = autoCount > 0 || blockerTotal > 0 || hiddenFixable > 0;
-    const hiddenBlock = hiddenFixable > 0 ? `
-      <div class="fc-blockers">
-        <div class="fc-blockers-hdr">🔒 ${hiddenFixable} blocker${hiddenFixable === 1 ? '' : 's'} hidden by the 👀 scope (flows and the like, fixable here) — switch to 🔍 Everything to see and fix ${hiddenFixable === 1 ? 'it' : 'them'}. Salesforce refuses the delete until ${hiddenFixable === 1 ? 'it is' : 'they are'} cleared.</div>
+    // the 👀 scope hides every blocker: ONE sentence with the way out, not twelve chips saying "hidden" and a
+    // second box (user 2026-11-08: "what is the point of all this info")
+    const scopeHides = !fcScopeKeeps(_scope, 'blocker');
+    const hiddenTotal = blockerTotal + hiddenFixable;
+    const hiddenBlock = scopeHides && hiddenTotal > 0 ? `
+      <div class="fc-blockers fc-blockers-hidden">
+        <div class="fc-blockers-hdr">🔒 ${hiddenTotal} blocker${hiddenTotal === 1 ? ' stops' : 's stop'} the delete — this view shows only the 👀 mentions.</div>
+        <div class="fc-blockers-foot">${hiddenFixable ? `${hiddenFixable} of them ${hiddenFixable === 1 ? 'is a flow or the like' : 'are flows and the like'} the tool fixes; ` : ''}${blockerTotal ? `${blockerTotal} ${hiddenFixable ? 'more ' : ''}${blockerTotal === 1 ? 'is' : 'are'} rules, code and other components with ✂ ⇄ ✎ 🗑 of their own. ` : ''}<button type="button" class="btn btn-secondary btn-sm fc-scope-jump" data-scope="both">🔍 Everything</button> shows and fixes them — scan again after switching.</div>
       </div>` : '';
 
     // one header, one chip per kind (click → its group above; the tooltip says its ways), ONE sentence about the
     // ways (user 2026-11-08: "this section needs to improve. its very hard to understand and nobody will read it")
-    const blockerBlock = blockerTotal > 0 ? `
+    const blockerBlock = blockerTotal > 0 && !scopeHides ? `
       <div class="fc-blockers">
         <div class="fc-blockers-hdr">🔒 ${blockerTotal} blocker${blockerTotal === 1 ? ' stops' : 's stop'} the delete</div>
         <div class="fc-blockers-chips">${_manualBlockers.map(b => `<button type="button" class="fc-blocker-row fc-blocker-chip" data-type="${esc(b.type)}" data-group="${esc(b.type === 'ProcessBuilder' ? 'Flow' : b.type)}" title="${esc(b.label)} — ${esc(_blockerWays(b.type))}. Click to jump to ${b.count === 1 ? 'it' : 'them'} in the list.">${(TYPE_CFG[b.type] || {}).icon || '🔧'} <strong>${b.count}</strong> ${esc(b.label)}${b.hidden ? ' <em>hidden by the 👀 scope</em>' : ''}</button>`).join('')}</div>
@@ -2590,6 +2595,8 @@ const FieldCleaner = (() => {
         }
         const every = ev.target.closest?.('.fc-fix-every');
         if (every) { if (!every.disabled) fixEverything(_curFieldId, every.dataset.swap === '1'); return; }
+        const jump = ev.target.closest?.('.fc-scope-jump');
+        if (jump) { document.querySelector(`#fcScope [data-scope="${jump.dataset.scope || 'both'}"]`)?.click(); eid('fcScanBtn')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); eid('fcScanBtn')?.focus(); return; }
         const chip = ev.target.closest?.('.fc-blocker-chip');
         if (chip) {
           const g = eid(`fcGroup_${chip.dataset.group}`);
