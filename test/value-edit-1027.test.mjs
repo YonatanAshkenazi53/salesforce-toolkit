@@ -188,7 +188,7 @@ describe('the Record Type row and the columns the org refuses', () => {
   it('the Record Type row: the source\'s type by name, a pick among the target\'s, stored as RecordTypeId for every record of the dialog', () => {
     expect(VE).toContain("const hasRt = rtInfos.some(r => !r.master);");
     expect(VE).toContain("const rtCols = hasRt ? ['RecordTypeId', 'RecordType.Name', 'RecordType.DeveloperName'] : [];");
-    expect(VE).toContain('<tbody>${rtRow()}${fields.map(row).join(\'\')');
+    expect(VE).toContain('<tbody>${rtRow()}${ownerRow()}${fields.map(row).join(\'\')');
     expect(VE).toContain('data-ve-row="RecordTypeId"');
     expect(VE).toContain("for (const id of ids) { if (v) sftkValOvSet(node, p.targetOrg, id, 'RecordTypeId', v); else sftkValOvClear(node, p.targetOrg, id, 'RecordTypeId'); }");
     expect(VE).toContain("the same type in ${tgtL}: ${same.name}");

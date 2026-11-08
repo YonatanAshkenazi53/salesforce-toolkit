@@ -16,6 +16,13 @@ extensions containing root files that start with `_`).
 ## 1.1.0 — 2026-11-04
 
 ### Data Studio
+- **▸ record: the Owner row** (2026-11-08: "we need to show ownerid and to make sure user can select queues or
+  users"). Right under Record Type: the source owner by name (👤 a user, 👥 a queue), what the run would write by
+  default said in words (the owner mapping is off unless the deployment switched it on; a queue is never matched
+  by name), and a search over the target's active users and — where the object can be queue-owned — the queues
+  that take it. A pick is stored as the value OwnerId and written after the engine's own owner mapping, like any
+  typed value; ✕ forgets it. Live on npc → npc2 (scripts/dev/live/ve-owner.mjs): "Account records cannot be owned
+  by a queue — users only", a user picked and stored, cleared.
 - **⏸ The pause panel: what this run switches off in the target, per object, with a tick on every item.**
   (2026-11-08: "צריך להציג למשתמש את מה שמכבים כשעושים דיפלוי עם אפשרות לבחור לפי האובייקטים" — flows,
   duplicate rules and validation rules.) With ⏸ pause flows, ⏸ pause validation rules or Duplicate rules =
