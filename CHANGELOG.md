@@ -85,6 +85,32 @@ extensions containing root files that start with `_`).
   PII outside the fields the policy fabricates.
 
 ### Toolkit
+- **Field Cleaner: every kind has its ways, and the page reads in one glance** (2026-11-08, the owner's hand test:
+  "למה אין החלפה פה", "ועריכה של xml", "צריך להיות בכולם", "this section needs to improve… nobody will read it",
+  "we need everything to support replace all, remove all", "we need a collapsable ui there like we did for parents").
+  - **Code**: an Apex class or trigger, a Visualforce page or component, an LWC or an Aura bundle gets 🔍 with every
+    file and the field's lines marked, **⇄ Replace** as a whole-word rename of the field's API name in every file
+    (the diff of each changed file confirmed first), and **✎ Edit code** — one box per file, deployed back as the
+    whole component. ✂ is not offered on code: which line of a program goes is yours, in ✎. In a production org the
+    deploy runs the org's Apex tests when Salesforce asks for them. Restore point, History undo verified by
+    re-reading the source (line endings aside).
+  - **Duplicate rules** get ✂ / ⇄ / ✎ like every other declarative kind — your own click, the diff first, a restore
+    point. Nothing switches a duplicate rule off or edits one behind a deployment (that rule stands).
+  - **The 🔒 box under the results** is one header, one chip per kind (click → its group; the tooltip says its
+    ways) and one sentence; the count follows every fix.
+  - **⚡ Everything at once** and the group "… all N" buttons cover every kind with a way: ⇄ for all of them (code
+    too), ✂ where the kind can lose the field; a Remove walk names the Replace-only kinds it left out. The two
+    counts differ on purpose (live: Replace all 25 · Remove all 15).
+  - **The header folds** into three sections — The field's data · Look further than the index · Act on everything —
+    each with a one-line summary when folded, remembered.
+  - The Reports row says the scan itself read every custom report type (it always did).
+  Live on npc (scripts/dev/live/fc-code-edit.mjs): ⇄ on the LWC → the CLI reads the new import, 0 of the old; ⇄ on the
+  duplicate rule → the retrieve shows the new field in the filter; both undone through History, the CLI reads the
+  originals back.
+- **⏻ Flow switches: the whole chain** (2026-11-08: "we need a way to select the whole tree or just some of them"):
+  next to "↳ calls N" a dashed "⇊ whole chain down N" when the chain goes deeper than one level, and "⇈ every
+  caller up N" next to "↰ called by"; the tooltip names every flow in order, a click ticks them all; nothing is
+  switched until the button is pressed.
 - **🧭 Field Cleaner's whole-org text sweep** (2026-11-08: "מורידים דרך vcs פרויקט שלם של סילספורס ואז מחפשים
   שם api של שדה… לחלק לדברים שחייב למחוק או לשנות ודברים שטוב לדעת"). Under the scan's results, one button
   reads the org's own metadata as a whole — the Metadata API lists every kind, then retrieves them a few

@@ -2893,6 +2893,24 @@ const DependencyMap = (() => {
       return `<button type="button" class="dep-fb-sub" data-names="${escHtml(tickable.join(','))}"
         title="${escHtml(`${word} ${list.map(labelOf).join(', ')}${tickable.length ? ' — click to tick ' + (tickable.length === 1 ? 'it' : 'them') + ' too' : ''}`)}">${arrow} ${word} ${list.length}</button>`;
     };
+    // The whole chain (user 2026-11-08: "we need a way to select the whole tree or just some of them"): the
+    // direct chip ticks one level; when the chain goes deeper a second chip names every flow down (or up) it
+    // and ticks them all — nothing is switched until the button below is pressed.
+    const chainOf = (start, map) => {
+      const seen = new Set(), queue = [start];
+      while (queue.length) {
+        const n = queue.shift();
+        for (const x of (map[n] || [])) { const name = typeof x === 'string' ? x : x && (x.apiName || x.masterLabel); if (name && !seen.has(name) && name !== start) { seen.add(name); queue.push(name); } }
+      }
+      return [...seen];
+    };
+    const chainChip = (start, map, direct, arrow, word) => {
+      const all = chainOf(start, map);
+      if (all.length <= (direct || []).filter(Boolean).length) return '';
+      const tickable = all.filter(n => inList.has(n));
+      return `<button type="button" class="dep-fb-sub dep-fb-chain" data-names="${escHtml(tickable.join(','))}"
+        title="${escHtml(`${word}: ${all.map(labelOf).join(' → ')}${tickable.length ? ' — click to tick ' + (tickable.length === 1 ? 'it' : 'all ' + tickable.length) : ''}`)}">${arrow} ${word} ${all.length}</button>`;
+    };
     const scanSt = getScanStatus();
     const mapKnown = Object.keys(calledBy).length > 0;
     const subNote = !mapKnown
@@ -2964,7 +2982,7 @@ const DependencyMap = (() => {
                     ? `<span class="dep-fb-open" data-open-url="${escHtml(lu.url)}" title="${escHtml(f.apiName)} \u2014 open in Flow Builder">${escHtml(f.label)}</span>`
                     : `<span title="${escHtml(f.apiName)}">${escHtml(f.label)}</span>`; })()}
                   ${isRecordGroup(g) ? `<span class="dep-list-kind">${escHtml(f.kind)}</span>` : ''}
-                  ${subChip(calls[f.apiName], '\u21b3', 'calls')}${subChip((calledBy[f.apiName] || []).map(p => p && (p.apiName || p.masterLabel)), '\u21b0', 'called by')}
+                  ${subChip(calls[f.apiName], '\u21b3', 'calls')}${chainChip(f.apiName, calls, calls[f.apiName], '\u21ca', 'whole chain down')}${subChip((calledBy[f.apiName] || []).map(p => p && (p.apiName || p.masterLabel)), '\u21b0', 'called by')}${chainChip(f.apiName, calledBy, calledBy[f.apiName], '\u21c8', 'every caller up')}
                 </span>
                 ${st.orgs.map(o => cell(f, o)).join('')}
               </label>`).join('')}

@@ -15,7 +15,7 @@ describe('the "… all N" buttons survive a walk that stops early', () => {
   });
   it('draws the box again after the walk for what is still open, and removes it only under two', () => {
     const after = FC.slice(FC.indexOf("fixAll(t, _curFieldId, swap, all.dataset.way || '').finally(() => {"));
-    expect(after).toContain("const open = group ? group.querySelectorAll('.fc-fix-pair').length : 0;");
+    expect(after).toContain("const open = group ? _openPairs(group) : 0;");
     expect(after).toContain('if (open < 2) box.remove();');
     expect(after).toContain('else { box.dataset.n = String(open); box.innerHTML = _fixAllHtml(t, open, box.dataset.label); }');
   });

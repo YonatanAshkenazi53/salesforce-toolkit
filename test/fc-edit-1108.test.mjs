@@ -99,11 +99,14 @@ describe('every kind of the demo field, ✂ and ⇄', () => {
     expect(rp('CustomMetadataRecord', c).xml).toContain('<value xsi:type="xsd:string">SFTK_Live_Blk2__c</value>');
     expect(rp('CustomMetadataRecord', c).xml).toContain('<value xsi:type="xsd:string">Account</value>');
   });
-  it('duplicate rule: the helper can, but the tool never edits one (standing rule) — no ✂/⇄ button, no fixEdit', () => {
+  it('duplicate rule: ✂ / ⇄ / ✎ like every other kind (user 2026-11-08: "צריך להיות בכולם") — the run-time rule stays in the words', () => {
     const d = X('DuplicateRule.Account.SFTK_Live_DR');
     swapped(d, rp('DuplicateRule', d).xml);
-    expect(FC).toContain("const ways = (cfgT.sev === 'blocker' && type !== 'DuplicateRule' && typeof sftkMdEditWays === 'function') ? sftkMdEditWays(type) : null;");
-    expect(FC).toContain("if (!ways || type === 'DuplicateRule') throw new Error(");
+    expect(FC).toContain("const ways = (cfgT.sev === 'blocker' && typeof sftkMdEditWays === 'function') ? sftkMdEditWays(type) : null;");
+    expect(FC).not.toContain("type !== 'DuplicateRule'");
+    expect(FC).toContain("if (!ways) throw new Error(");
+    expect(FC).not.toContain("const dupe = type === 'DuplicateRule';");
+    expect(FC).toContain('nothing switches a rule off or edits one behind a deployment');
   });
   it('lead mapping and assignment-style rules: an entry that loses its only criterion is dropped, the last entry refuses', () => {
     const lcs = '<fullName>LeadConvertSettings</fullName><objectMapping><inputObject>Lead</inputObject><mappingFields><inputField>SFTK_Live_Blk__c</inputField><outputField>SFTK_Live_Blk__c</outputField></mappingFields><outputObject>Account</outputObject></objectMapping>';
@@ -146,7 +149,7 @@ describe('the wiring', () => {
   it('✂/⇄ buttons are on the row (data-way="edit"), never in the walks; the press goes to fixEdit', () => {
     expect(FC).toContain('fc-fix-btn fc-edit-btn" ${attrs} data-swap="1" data-way="edit"');
     expect(FC).toContain('fc-fix-btn fc-edit-btn" ${attrs} data-swap="0" data-way="edit"');
-    expect(FC).toContain("if (!cfgT.fixable) return edits + del;");
+    expect(FC).toContain("if (!cfgT.fixable) return codeEdits + edits + del;");
     expect(FC).toContain("const r = await fixEdit(type, componentId, componentName, _fixSwap === true);");
     expect(FC).toContain("results.querySelectorAll('.fc-fix-pair, .fc-del-pair').forEach(p =>");
   });
@@ -163,7 +166,7 @@ describe('the wiring', () => {
     expect(FC).toContain('const rd = await _mdReadOne(type, fullName, spec.mdType);\n    if (!rd || rd.error) throw new Error(');
   });
   it('🔍 for every kind the engine edits: the XML from the Metadata API, the field’s lines marked, the ✂ and ⇄ previews', () => {
-    expect(FC).toContain('const canInsp = Object.prototype.hasOwnProperty.call(_INSPECT_SOBJECT, type) || _inspectsByMd(type);');
+    expect(FC).toContain('const canInsp = Object.prototype.hasOwnProperty.call(_INSPECT_SOBJECT, type) || _inspectsByMd(type) || _inspectsByCode(type);');
     expect(FC).toContain('if (_inspectsByMd(type)) { await _xmlInspectMd(type, componentId, componentName, panel, inspBtn); return; }');
     expect(CSS).toContain('body.sftk-dark { --code-bg: #1A1D24; }');
   });

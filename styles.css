@@ -5945,6 +5945,38 @@ body.sftk-dark .fc-badge-del { background: #4a1b1f; color: #ffb4b0; border-color
 }
 .fc-blockers-hdr { font-size: 12px; font-weight: 700; color: var(--danger); margin-bottom: 5px; }
 .fc-blocker-row  { font-size: 12px; color: var(--text); padding: 1px 0; }
+/* the gate's kinds as chips (2026-11-08): click → the group above; the tooltip says the ways */
+.fc-blockers-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 7px 0 8px; }
+.fc-blocker-chip { font: inherit; font-size: 12px; line-height: 1.3; display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid rgba(234, 0, 30, 0.35); background: var(--card); color: var(--text); cursor: pointer; }
+.fc-blocker-chip:hover { border-color: var(--danger); background: rgba(234, 0, 30, 0.08); }
+.fc-blocker-chip strong { color: var(--danger); }
+.fc-blocker-chip em { font-style: normal; color: var(--subtext); font-size: 11px; }
+.fc-blockers-foot { font-size: 11.5px; color: var(--subtext); line-height: 1.5; }
+/* the header's folds (2026-11-08): one line when folded, the rows inside when open */
+.fc-fold { margin: 6px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.fc-fold-hd { display: flex; align-items: center; gap: 8px; padding: 7px 11px; cursor: pointer; list-style: none; font-size: 12.5px; }
+.fc-fold-hd::-webkit-details-marker { display: none; }
+.fc-fold-hd::before { content: '▸'; font-size: 11px; color: var(--subtext); width: 10px; }
+.fc-fold[open] > .fc-fold-hd::before { content: '▾'; }
+.fc-fold-ico { width: 18px; text-align: center; }
+.fc-fold-title { font-weight: 700; color: var(--text); }
+.fc-fold-hint { font-size: 11px; color: var(--subtext); }
+.fc-fold[open] > .fc-fold-hd .fc-fold-hint { display: inline; }
+.fc-fold-sum { margin-left: auto; font-size: 11px; color: var(--subtext); text-align: right; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-fold-sum:empty { display: none; }
+.fc-fold-body { padding: 0 8px 6px; border-top: 1px solid var(--border); }
+.fc-fold-body > .fc-fact, .fc-fold-body > div > .fc-fact { margin: 6px 0; }
+.fc-fact-sub { font-size: 11px; color: var(--warning); margin-top: 3px; }
+.fc-group-flash { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 8px; }
+/* code in 🔍: one block per file; the editor, one box per file */
+.fc-code-file { margin: 4px 12px 8px; }
+.fc-code-file-hd { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--subtext); margin: 6px 0 3px; }
+.fc-code-file-hd code { color: var(--text); font-weight: 600; }
+.fc-code-file-n { margin-left: auto; }
+.fc-code-ed-file { margin-bottom: 8px; }
+.fc-code-ed-file .fc-code-file-hd { margin-top: 0; }
+.fc-code-ta { min-height: 110px; }
 .fc-silent-note  { margin: 0 0 8px; font-size: 11.5px; color: var(--warning); }
 /* F1: data-usage verdict chip */
 .fc-data-verdict {
@@ -5985,8 +6017,10 @@ body.sftk-dark .fc-badge-del { background: #4a1b1f; color: #ffb4b0; border-color
 .fc-delete-zone {
   margin-top: 4px; padding: 10px 12px;
   background: rgba(194,57,52,.05); border: 1px solid rgba(194,57,52,.18);
-  border-radius: 8px; display: flex; align-items: center; gap: 10px;
+  border-radius: 8px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
+/* the blockers box and the 👀 note take the whole width; the note and the button share the last line (2026-11-08) */
+.fc-delete-zone > .fc-blockers, .fc-delete-zone > .fc-silent-note { flex: 1 1 100%; }
 .fc-delete-note { flex: 1; font-size: 11.5px; color: var(--subtext); line-height: 1.4; }
 
 .fc-clean, .fc-success {
@@ -6906,6 +6940,7 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .dep-pill-hint { cursor: help; opacity: .8; }
 .dep-fb-sub { font: inherit; font-size: 10.5px; line-height: 1.4; padding: 0 6px; margin-left: 4px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); color: var(--subtext); cursor: pointer; }
 .dep-fb-sub:hover { color: var(--text); border-color: var(--text-muted, var(--subtext)); }
+.dep-fb-chain { border-style: dashed; }
 .dep-tool-foot { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
 .dep-tool-sp { flex: 1; }
 .dep-tool-count { font-size: 11px; color: var(--subtext); }

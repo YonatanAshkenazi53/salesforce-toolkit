@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>63.0</apiVersion>
+    <description>Admin Toolkit fixture: autolaunched SUBFLOW on a packaged object, called by SFTK_Pkg_Child_Trigger and SFTK_Pkg_Auto. Looks up a Lookup Child by two filters, one of them SFTK_Pkg_Tag__c. Safe to delete.</description>
+    <interviewLabel>SFTK Pkg Sub {!$Flow.CurrentDateTime}</interviewLabel>
+    <label>SFTK Pkg Sub</label>
+    <processMetadataValues><name>BuilderType</name><value><stringValue>LightningFlowBuilder</stringValue></value></processMetadataValues>
+    <processMetadataValues><name>CanvasMode</name><value><stringValue>AUTO_LAYOUT_CANVAS</stringValue></value></processMetadataValues>
+    <processMetadataValues><name>OriginBuilderType</name><value><stringValue>LightningFlowBuilder</stringValue></value></processMetadataValues>
+    <processType>AutoLaunchedFlow</processType>
+    <start><locationX>50</locationX><locationY>0</locationY><connector><targetReference>Find_Child</targetReference></connector></start>
+    <recordLookups>
+        <name>Find_Child</name><label>Find Child</label><locationX>176</locationX><locationY>134</locationY>
+        <assignNullValuesIfNoRecordsFound>false</assignNullValuesIfNoRecordsFound>
+        <filterLogic>and</filterLogic>
+        <filters><field>Name</field><operator>StartsWith</operator><value><stringValue>SFTK Pkg</stringValue></value></filters>
+        <filters><field>SFTK_Pkg_Tag__c</field><operator>EqualTo</operator><value><stringValue>demo</stringValue></value></filters>
+        <getFirstRecordOnly>true</getFirstRecordOnly>
+        <object>dlrs__LookupChild__c</object>
+        <storeOutputAutomatically>true</storeOutputAutomatically>
+    </recordLookups>
+    <status>Active</status>
+</Flow>

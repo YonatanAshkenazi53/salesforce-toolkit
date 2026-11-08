@@ -83,7 +83,7 @@ describe('wiring', () => {
     expect(FC).toContain('const deps = (allDeps || []).filter(d => fcScopeKeeps(_scope, sevOf(d.MetadataComponentType || \'Unknown\')));');
     expect(FC).toContain("for (const d of (allDeps || [])) { const t = d.MetadataComponentType || 'Unknown'; (gateGroups[t] = gateGroups[t] || []).push(d); }");
     expect(FC).toContain("hidden: !fcScopeKeeps(_scope, 'blocker')");
-    expect(FC).toContain('hidden by the 👀 scope — switch to 🔍 Everything to see them');
+    expect(FC).toContain("<em>hidden by the 👀 scope</em>");   // on the gate's chip (2026-11-08)
     expect(FC).toContain(`<button class="btn btn-danger" id="fcDelFreeBtn" \${hiddenBlockers.length ? 'disabled' : ''}>`);
     // a fixable blocker the scope hides (a flow under 👀) gates the delete too
     expect(FC).toContain('const delDisabled = autoCount > 0 || blockerTotal > 0 || hiddenFixable > 0;');

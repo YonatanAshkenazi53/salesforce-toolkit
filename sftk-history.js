@@ -179,7 +179,9 @@ function sftkToolUndoState(entry) {
 // ── The verify spec, evaluated against a query's answer (pure) ──────────
 //   pick:    dotted path into the answer (default 'records'); numbers index arrays
 //   where:   { field, equals } — pick the array element whose field matches;
-//            or a LIST of them, all of which must match (text compared without case)
+//            or a LIST of them, all of which must match (text compared without case);
+//            `loose: true` compares text with line endings and trailing blanks ignored
+//            (a source file Salesforce stores — it may hand back LF for CRLF)
 //   then one of: absent (nothing there) · count (array length) ·
 //                field + equals / notNull / notFalse (a value on the picked object)
 //   pattern: a regular expression (source + flags) matched against the answer's
@@ -206,8 +208,10 @@ function sftkUndoVerifyEval(spec, answer) {
   let v = _sftkHistPick(answer, s.pick || 'records');
   const conds = Array.isArray(s.where) ? s.where.filter(w => w && w.field) : (s.where && s.where.field ? [s.where] : []);
   if (conds.length) {
-    const same = (a, b) => (typeof a === 'string' && typeof b === 'string' && conds.length > 1) ? a.toLowerCase() === b.toLowerCase() : a === b;
-    v = (Array.isArray(v) ? v : []).find(x => x && conds.every(w => same(x[w.field], w.equals)));
+    const loose = s => String(s).replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').trim();
+    const same = (a, b, w) => (w && w.loose && typeof a === 'string' && typeof b === 'string') ? loose(a) === loose(b)
+      : (typeof a === 'string' && typeof b === 'string' && conds.length > 1) ? a.toLowerCase() === b.toLowerCase() : a === b;
+    v = (Array.isArray(v) ? v : []).find(x => x && conds.every(w => same(x[w.field], w.equals, w)));
   }
   let ok;
   if (s.absent) ok = v === undefined || v === null || (Array.isArray(v) && v.length === 0);

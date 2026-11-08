@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>64.0</apiVersion>
+    <description>Admin Toolkit fixture: record-triggered flow on a PACKAGED object (DLRS Lookup Child). Reads SFTK_Pkg_Tag__c in a decision and calls the subflow SFTK_Pkg_Sub. Safe to delete.</description>
+    <interviewLabel>SFTK Pkg Child Trigger {!$Flow.CurrentDateTime}</interviewLabel>
+    <label>SFTK Pkg Child Trigger</label>
+    <processMetadataValues><name>BuilderType</name><value><stringValue>LightningFlowBuilder</stringValue></value></processMetadataValues>
+    <processMetadataValues><name>CanvasMode</name><value><stringValue>AUTO_LAYOUT_CANVAS</stringValue></value></processMetadataValues>
+    <processMetadataValues><name>OriginBuilderType</name><value><stringValue>LightningFlowBuilder</stringValue></value></processMetadataValues>
+    <processType>AutoLaunchedFlow</processType>
+    <start><locationX>50</locationX><locationY>0</locationY><connector><targetReference>Has_Tag</targetReference></connector><object>dlrs__LookupChild__c</object><recordTriggerType>CreateAndUpdate</recordTriggerType><triggerType>RecordAfterSave</triggerType></start>
+    <decisions>
+        <name>Has_Tag</name><label>Has Tag</label><locationX>176</locationX><locationY>134</locationY>
+        <defaultConnector><targetReference>Call_Sub</targetReference></defaultConnector>
+        <defaultConnectorLabel>No tag</defaultConnectorLabel>
+        <rules>
+            <name>Tagged</name><conditionLogic>and</conditionLogic>
+            <conditions><leftValueReference>$Record.SFTK_Pkg_Tag__c</leftValueReference><operator>IsNull</operator><rightValue><booleanValue>false</booleanValue></rightValue></conditions>
+            <connector><targetReference>Note_Tag</targetReference></connector>
+            <label>Tagged</label>
+        </rules>
+    </decisions>
+    <assignments>
+        <name>Note_Tag</name><label>Note Tag</label><locationX>50</locationX><locationY>278</locationY>
+        <assignmentItems><assignToReference>Note</assignToReference><operator>Assign</operator><value><elementReference>$Record.SFTK_Pkg_Tag__c</elementReference></value></assignmentItems>
+        <connector><targetReference>Call_Sub</targetReference></connector>
+    </assignments>
+    <subflows>
+        <name>Call_Sub</name><label>Call Sub</label><locationX>176</locationX><locationY>422</locationY>
+        <flowName>SFTK_Pkg_Sub</flowName>
+    </subflows>
+    <status>Active</status>
+    <variables><name>Note</name><dataType>String</dataType><isCollection>false</isCollection><isInput>false</isInput><isOutput>false</isOutput></variables>
+</Flow>

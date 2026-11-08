@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Admin Toolkit fixture: field access to the custom fields on the packaged Lookup Child. Safe to delete.</description>
+    <fieldPermissions><editable>true</editable><field>dlrs__LookupChild__c.SFTK_Pkg_Tag__c</field><readable>true</readable></fieldPermissions>
+    <fieldPermissions><editable>true</editable><field>dlrs__LookupChild__c.SFTK_Pkg_Tag2__c</field><readable>true</readable></fieldPermissions>
+    <hasActivationRequired>false</hasActivationRequired>
+    <label>SFTK Pkg Access</label>
+</PermissionSet>

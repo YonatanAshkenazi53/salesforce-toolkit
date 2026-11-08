@@ -127,7 +127,7 @@ describe('the demo scan of 2026-11-06 (live, npc) — two mention legs that miss
   });
   it('the bulk flow buttons count only the flows they would touch — a Process Builder card is left out', () => {
     expect(FC).toContain("const nFix = type === 'Flow' ? _flowCards.filter(c => !c.pb).length : nItems;");
-    expect(FC).toContain('${cfg.fixable && nFix > 1');
+    expect(FC).toContain("${(cfg.fixable || (typeof sftkMdEditWays === 'function' && sftkMdEditWays(type)) || (typeof sftkMdCodeWays === 'function' && sftkMdCodeWays(type))) && nFix > 1");   // every kind with a way gets the group buttons (2026-11-08)
     expect(FC).toContain('data-n="${nFix}"');
   });
 });

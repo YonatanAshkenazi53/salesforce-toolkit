@@ -501,9 +501,10 @@ function _sftkMdDeleteTable() {
   ApexComponent:           { code: 'Markup', folder: 'components', suffix: 'component', what: 'Visualforce component', tooling: 'ApexComponent', metaTag: 'ApexComponent' },
   LightningComponentBundle: { bundle: 'lwc',  what: 'Lightning web component', tooling: 'LightningComponentBundle' },
   AuraDefinitionBundle:    { bundle: 'aura', what: 'Aura component',           tooling: 'AuraDefinitionBundle' },
-  // the three the user asked for by name ("צריך את כולם", 2026-11-07): a duplicate rule is deleted only from this
-  // explicit button (the standing rule stays: nothing switches one off or edits one behind a run); the lead field
-  // mapping is EDITED (its line goes, the settings stay); a Process Builder process is every version of a Flow
+  // the three the user asked for by name ("צריך את כולם", 2026-11-07): a duplicate rule is deleted — and since
+  // 2026-11-08 ("צריך להיות בכולם") edited — only from its own explicit buttons, the diff confirmed, a restore point
+  // kept (the standing rule stays: nothing switches one off or edits one behind a run); the lead field mapping is
+  // EDITED (its line goes, the settings stay); a Process Builder process is every version of a Flow
   DuplicateRule:           { folder: 'duplicateRules',   suffix: 'duplicateRule',     what: 'duplicate rule' },
   LeadConvertSettings:     { folder: 'LeadConvertSettings', suffix: 'LeadConvertSetting', what: 'lead field mapping', edit: 'leadMapping' },
   ProcessBuilder:          { mdType: 'Flow',             folder: 'flows',             suffix: 'flow',             what: 'Process Builder process' },
@@ -955,6 +956,45 @@ function sftkMdEditWays(type) {
     CustomMetadataRecord: 'rr', LeadConvertSettings: 'rr',
   }[type];
   return t ? { remove: t === 'rr', replace: true } : null;
+}
+// ⇄ in CODE (user 2026-11-08: "צריך להיות בכולם"): the field's API name, as a whole word, in every file of an
+// Apex class or trigger, a Visualforce page or component, an LWC or an Aura bundle — "Object.Field" and the bare
+// name alike, the rest of the line as the code wrote it. Pure: sources in, sources out.
+//   sources: [{ path, source, … }] → { sources: [{ …, source, n }], n (places), files (files that changed) }
+function sftkMdCodeReplace(sources, fieldApi, newField) {
+  const f = String(fieldApi || '').trim(), nf = String(newField || '').trim();
+  const escRx = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = f ? new RegExp(`(?<![A-Za-z0-9_])${escRx(f)}(?![A-Za-z0-9_])`, 'gi') : null;
+  let n = 0, files = 0;
+  const out = (sources || []).map(s => {
+    let k = 0;
+    const src = String(s.source == null ? '' : s.source);
+    const text = re && nf ? src.replace(re, () => { k++; return nf; }) : src;
+    if (k) { n += k; files++; }
+    return { ...s, source: text, n: k };
+  });
+  return { sources: out, n, files };
+}
+// The lines of one source that name the field (whole word): [{ line (1-based), text }].
+function sftkMdCodeHits(source, fieldApi) {
+  const f = String(fieldApi || '').trim();
+  if (!f) return [];
+  const re = new RegExp(`(?<![A-Za-z0-9_])${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'i');
+  const out = [];
+  String(source == null ? '' : source).split(/\r\n?|\n/).forEach((text, i) => { if (re.test(text)) out.push({ line: i + 1, text }); });
+  return out;
+}
+// The ways code has: ⇄ (a whole-word rename of the field's API name) and ✎ (an editor, file by file). Never ✂ —
+// which line of a program goes is the owner's to decide, in ✎. null = not code.
+function sftkMdCodeWays(type) {
+  const s = sftkMdDeleteSpec(type);
+  return s && (s.code || s.bundle) ? { replace: true, edit: true, remove: false } : null;
+}
+// Two sources read as the same text when only line endings and trailing blanks differ (Salesforce may hand back
+// LF for CRLF, and trims a file's tail).
+function sftkMdCodeSame(a, b) {
+  const norm = s => String(s == null ? '' : s).replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').trim();
+  return norm(a) === norm(b);
 }
 
 // Readable XML for the inspector and the edit dialog: one element per line,

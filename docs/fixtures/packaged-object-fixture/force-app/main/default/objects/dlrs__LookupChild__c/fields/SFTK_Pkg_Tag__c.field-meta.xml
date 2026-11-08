@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>SFTK_Pkg_Tag__c</fullName>
+    <description>Admin Toolkit fixture: a custom field on a PACKAGED object (the DLRS Lookup Child). Used by a validation rule, a record-triggered flow, a subflow and a screen flow. Safe to delete.</description>
+    <externalId>false</externalId>
+    <label>SFTK Pkg Tag</label>
+    <length>80</length>
+    <required>false</required>
+    <type>Text</type>
+    <unique>false</unique>
+</CustomField>

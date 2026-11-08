@@ -30,8 +30,8 @@ describe('well-formed or nothing is sent (a pure check: the pages enforce Truste
 });
 
 describe('the wiring', () => {
-  it('✎ Edit XML in the 🔍 header (never on a duplicate rule), a textarea, Deploy off until the text changed and is well-formed', () => {
-    expect(FC).toContain("${dupe ? '' : '<button class=\"btn btn-secondary btn-sm fc-xml-edit-btn\"");
+  it('✎ Edit XML in the 🔍 header of every declarative kind (a duplicate rule too, since 2026-11-08), a textarea, Deploy off until the text changed and is well-formed', () => {
+    expect(FC).toContain('<span class="fc-xml-hdr-actions"><button class="btn btn-secondary btn-sm fc-xml-edit-btn"');
     expect(FC).toContain('function _xmlWellFormed(text) { return sftkMdWellFormed(text); }');
     expect(FC).toContain('go.disabled = ta.value === orig || !!bad;');
     expect(FC).toContain("ta.addEventListener('input', () => { out.innerHTML = ''; sync(); });");

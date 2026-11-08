@@ -530,7 +530,7 @@ describe('Field Cleaner — the choice is made per item, by the button pressed',
 describe('Field Cleaner — small truths of the two-button list', () => {
   const FC = read('field-cleaner.js');
   it('the "… all N" buttons count what is still open and go away when one or none is left', () => {
-    expect(FC).toContain("const open = item.closest('.fc-group').querySelectorAll('.fc-fix-pair').length;");
+    expect(FC).toContain("const open = _openPairs(item.closest('.fc-group'));");   // every row with a way, 🗑 alone not counted (2026-11-08)
     expect(FC).toContain('if (open < 2) box.remove();');
   });
   it('in replace mode the group note says what each of the two buttons does', () => {
@@ -542,15 +542,18 @@ describe('Field Cleaner — small truths of the two-button list', () => {
 describe('Field Cleaner — everything at once', () => {
   const FC = read('field-cleaner.js');
   it('one button per way for every fixable item, whatever its kind; Replace all only in replace mode', () => {
-    expect(FC).toContain('data-swap="1" title="${tip}">⇄ Replace all ${n}</button>` : \'\'}');
-    expect(FC).toContain('data-swap="0" title="${tip}">✂ Remove all ${n}</button>');
-    expect(FC).toContain("if (n < 2) return '<div id=\"fcFixEvery\" style=\"display:none\"></div>';");
+    expect(FC).toContain('data-swap="1" title="${tip}">⇄ Replace all ${nRp}</button>` : \'\'}');
+    expect(FC).toContain('data-swap="0" title="${tip}">✂ Remove all ${nRm}</button>');
+    expect(FC).toContain("if (n < 2 && !_everyNote) return '<div id=\"fcFixEvery\" style=\"display:none\"></div>';");
   });
   it('it walks group by group through the same per-item fix — every item still confirms', () => {
     const fn = FC.slice(FC.indexOf('async function fixEverything(fieldId, swap) {'), FC.indexOf("// An item's buttons while its fix works"));
     expect(fn).toContain('for (const type of Object.keys(_groups)) {');
-    expect(fn).toContain('if (!(TYPE_CFG[type] || TYPE_CFG_DEFAULT).fixable) continue;');
-    expect(fn).toContain("if ((await fixAll(type, fieldId, swap)) === 'cancel') break;");
+    // every kind with a way walks too (user 2026-11-08: "we need everything to support replace all, remove all")
+    expect(fn).toContain("if (swap) way = c ? 'code' : 'edit';");
+    expect(fn).toContain("else if (w && w.remove) way = 'edit';");
+    expect(fn).toContain('else { skipped.push(cfg.label || type); continue; }');
+    expect(fn).toContain("if ((await fixAll(type, fieldId, swap, way)) === 'cancel') break;");
     expect(fn).not.toContain('sftkWriteVerified');           // it writes nothing itself
   });
   it('Cancel in any dialog stops the walk instead of asking again for every item', () => {
@@ -558,7 +561,7 @@ describe('Field Cleaner — everything at once', () => {
     expect(FC).toContain("if ((await fixOne(type, it.id, it.name, fieldId, swap, way)) === 'cancel') return 'cancel';");
   });
   it('the count is what is still open, and follows every fix and every mode change', () => {
-    expect(FC).toContain("el.outerHTML = _fixEveryHtml(document.querySelectorAll('#fcResults .fc-fix-pair').length);");
+    expect(FC).toContain("el.outerHTML = _fixEveryHtml(_openPairs(root), _openPairs(root, true), _openPairs(root, false));");
     expect((FC.match(/_refreshFixEvery\(\);/g) || []).length).toBeGreaterThanOrEqual(3);
   });
 });
@@ -580,7 +583,7 @@ describe('a flow that runs on the field — the decision is made on its card', (
     expect(btns).toContain("const move = _replOn() ? `<button class=\"btn btn-primary btn-sm fc-fix-btn\" ${attrs} data-swap=\"1\"");
   });
   it('the button pressed is the way: nothing is asked again in the dialog', () => {
-    expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit') ? way : '';");   // +delete 2026-11-07, +edit 2026-11-08
+    expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit' || way === 'code') ? way : '';");   // +delete 2026-11-07, +edit and +code 2026-11-08
     expect(FC).toContain("const preset = !hasChoice ? '' : (swap || _fixWay === 'keep') ? 'replace' : _fixWay === 'off' ? 'delete' : '';");
     expect(FC).toContain('if (preset) activeMode = preset;');
     expect(FC).toContain('const asks = hasChoice && !preset;');

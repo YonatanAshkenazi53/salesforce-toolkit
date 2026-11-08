@@ -473,8 +473,10 @@ const FieldCleaner = (() => {
   const _INSPECT_SOBJECT = {
     Flow: 'Flow', Layout: 'Layout', FlexiPage: 'FlexiPage',
     ValidationRule: 'ValidationRule',
-    ApexClass: 'ApexClass', ApexTrigger: 'ApexTrigger',
   };
+  // code — Apex class / trigger, Visualforce page / component, LWC and Aura bundles — is read, shown, edited and
+  // renamed through the Tooling API (user 2026-11-08: "צריך להיות בכולם")
+  function _inspectsByCode(type) { const s = typeof sftkMdDeleteSpec === 'function' ? sftkMdDeleteSpec(type) : null; return !!(s && (s.code || s.bundle)); }
 
   // ── Public API ─────────────────────────────────────────────
   function init(container, orgUrl, sid) {
@@ -958,7 +960,7 @@ const FieldCleaner = (() => {
     _groups   = {};
     _replField = null; _replCompat = null; _replSeq++;
     _copyState = null; _copySeq++;
-    _rptScan = null; _lastScan = null; _orgSweep = null;
+    _rptScan = null; _lastScan = null; _orgSweep = null; _rtScanned = null; _everyNote = '';
     const replStep = eid('fcReplStep');
     if (replStep) replStep.style.display = 'none';
     const pill    = eid('fcPill');
@@ -1134,21 +1136,36 @@ const FieldCleaner = (() => {
     const cfgT = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
     const spec = (cfgT.sev === 'blocker' && typeof sftkMdDeleteSpec === 'function') ? (sftkMdDeleteSpec(type) || (type === 'LookupFilter' ? { what: 'lookup filter' } : null)) : null;
     // ✂ / ⇄ inside the component — the ways its kind has (user 2026-11-07: "remove, replace the field in the metadata
-    // items without breaking them. While showing XML"). A duplicate rule's criteria are never edited here (standing rule).
-    const ways = (cfgT.sev === 'blocker' && type !== 'DuplicateRule' && typeof sftkMdEditWays === 'function') ? sftkMdEditWays(type) : null;
+    // items without breaking them. While showing XML"). A duplicate rule too (user 2026-11-08: "למה אין החלפה פה…
+    // צריך להיות בכולם"): the owner's own click, the diff confirmed, a restore point kept — nothing here ever switches
+    // one off or edits one behind a deployment (the standing rule is about runs).
+    const ways = (cfgT.sev === 'blocker' && typeof sftkMdEditWays === 'function') ? sftkMdEditWays(type) : null;
+    // code: ⇄ renames the field's API name wherever the source writes it (whole word); ✎ Edit code lives in 🔍;
+    // ✂ is not offered — which line of a program goes is the owner's to decide
+    const codeWays = (cfgT.sev === 'blocker' && typeof sftkMdCodeWays === 'function') ? sftkMdCodeWays(type) : null;
+    const codeEdits = codeWays && _replOn() ? `<button class="btn btn-primary btn-sm fc-fix-btn fc-edit-btn" ${attrs} data-swap="1" data-way="code" title="Rename ${esc(_selField.api)} to ${esc(_replField.api)} in every file of this ${esc(spec ? spec.what : 'component')} — whole word, the diff shown first; a restore point is kept">⇄ Replace</button>` : '';
     const edits = ways
       ? (_replOn() && ways.replace ? `<button class="btn btn-primary btn-sm fc-fix-btn fc-edit-btn" ${attrs} data-swap="1" data-way="edit" title="Point this at ${esc(_replField.api)} instead of the field — only the field’s own places in the XML change; a restore point is kept">⇄ Replace</button>` : '')
         + (ways.remove ? `<button class="btn btn-secondary btn-sm fc-fix-btn fc-edit-btn" ${attrs} data-swap="0" data-way="edit" title="Take the field out of this — only the field’s own places in the XML change (refused, with the reason, when what is left would not work); a restore point is kept">✂ Remove</button>` : '')
       : '';
     // the lead mapping's 🗑 only ever removed the field's line — ✂ Remove is that, said plainly
     const del = (spec && !(ways && ways.remove && type === 'LeadConvertSettings')) ? `<button class="btn btn-danger btn-sm fc-fix-btn fc-del-btn" ${attrs} data-swap="0" data-way="delete" title="Delete this ${esc(spec.what)} from the org — its definition is kept as a restore point; ↩ Undo deploys it back">🗑 Delete ${esc(spec.what)}</button>` : '';
-    if (!cfgT.fixable) return edits + del;
+    if (!cfgT.fixable) return codeEdits + edits + del;
     const rm = `<button class="btn btn-secondary btn-sm fc-fix-btn" ${attrs} data-swap="0" title="Take the field’s reference out of this">✂ Remove</button>`;
     if (!_replOn()) return rm + del;
     return `<button class="btn btn-primary btn-sm fc-fix-btn" ${attrs} data-swap="1" title="Point this at ${esc(_replField.api)} instead of the field">⇄ Replace</button>${rm}${del}`;
   }
   function _fixAllHtml(type, n, label) {
     const noun = type === 'Flow' ? `flow${n === 1 ? '' : 's'}` : esc(label);
+    if (!(TYPE_CFG[type] || TYPE_CFG_DEFAULT).fixable) {
+      // a blocker kind with a way inside it (✂ / ⇄ — user 2026-11-08: "we need everything to support replace all,
+      // remove all"); code has ⇄ only. Each item still confirms on its own; a refusal is said and the walk goes on.
+      const w = typeof sftkMdEditWays === 'function' ? sftkMdEditWays(type) : null;
+      const c = typeof sftkMdCodeWays === 'function' ? sftkMdCodeWays(type) : null;
+      const rp = _replOn() && ((w && w.replace) || c) ? `<button class="btn btn-secondary btn-sm fc-fix-all" data-type="${esc(type)}" data-swap="1" data-way="${c ? 'code' : 'edit'}" title="Each one is confirmed on its own, with its diff; a refusal is said and the walk goes on">⇄ Replace in all ${n} ${noun}</button>` : '';
+      const rm = w && w.remove ? `<button class="btn btn-secondary btn-sm fc-fix-all" data-type="${esc(type)}" data-swap="0" data-way="edit" title="Each one is confirmed on its own, with its diff; one that would stop working without the field is refused, with the reason, and the walk goes on">✂ Remove from all ${n} ${noun}</button>` : '';
+      return [rp, rm].filter(Boolean).join(' ');
+    }
     // Flows: the same two ways the cards offer (user 2026-10-07: "here we have
     // remove but we dont have remove flow keep running for all") — each flow
     // is still confirmed on its own, with the way already chosen.
@@ -1166,29 +1183,85 @@ const FieldCleaner = (() => {
   // shows its own confirmation, because each is its own change (and a flow
   // needs its own choice) — and cancelling any dialog stops the walk.
   let _everyRunning = false;
-  function _fixEveryHtml(n) {
-    if (n < 2) return '<div id="fcFixEvery" style="display:none"></div>';
-    const tip = 'Goes through every fixable item below, one by one. Each still asks before it changes anything; Cancel in any dialog stops the walk.';
+  let _everyNote = '';   // what the last ⚡ walk left out, said under the row
+  // the items that have a way RIGHT NOW: a ✂ / ⇄ / keep / off button on their row (a 🗑 alone is not a fix)
+  //   swap: undefined → any way; true → a ⇄ button; false → a ✂ / keep / off button
+  function _openPairs(root, swap) {
+    const sel = swap === true ? '.fc-fix-btn[data-swap="1"]' : swap === false ? '.fc-fix-btn[data-swap="0"]:not(.fc-del-btn)' : '.fc-fix-btn:not(.fc-del-btn)';
+    return [...(root || document).querySelectorAll('.fc-fix-pair, .fc-del-pair')].filter(p => p.querySelector(sel)).length;
+  }
+  function _fixEveryHtml(n, nRp, nRm) {
+    if (nRp == null) nRp = _replOn() ? n : 0;
+    if (nRm == null) nRm = n;
+    if (n < 2 && !_everyNote) return '<div id="fcFixEvery" style="display:none"></div>';
+    const tip = 'Goes through every item below that has this way, one by one — the flows, layouts and pages, and every blocker with ✂ / ⇄ inside it. Each still asks before it changes anything; Cancel in any dialog stops the walk.';
     return `<div id="fcFixEvery" class="fc-fact fc-fact-every"><span class="fc-fact-ico">⚡</span>
-        <span class="fc-fact-text"><b>Everything at once</b> — the ${n} fixable items below, one by one; each still asks first.</span>
-        <span class="fc-fact-act">${_replOn() ? `<button class="btn btn-primary btn-sm fc-fix-every" data-swap="1" title="${tip}">⇄ Replace all ${n}</button>` : ''}
-        <button class="btn btn-secondary btn-sm fc-fix-every" data-swap="0" title="${tip}">✂ Remove all ${n}</button></span></div>`;
+        <span class="fc-fact-text"><b>Everything at once</b> — the ${n} item${n === 1 ? '' : 's'} below that ${n === 1 ? 'has' : 'have'} a way right now, one by one; each still asks first.${_everyNote ? `<div class="fc-fact-sub">${esc(_everyNote)}</div>` : ''}</span>
+        <span class="fc-fact-act">${nRp >= 2 && _replOn() ? `<button class="btn btn-primary btn-sm fc-fix-every" data-swap="1" title="${tip}">⇄ Replace all ${nRp}</button>` : ''}
+        ${nRm >= 2 ? `<button class="btn btn-secondary btn-sm fc-fix-every" data-swap="0" title="${tip}">✂ Remove all ${nRm}</button>` : ''}</span></div>`;
+  }
+  // A section of the header that folds to one line, like the Deploy page's cards (user 2026-11-08: "we need a
+  // collapsable ui there like we did for parents"). Open or folded is remembered per section; the one-line
+  // summary is read off the rows inside as they fill in.
+  function _foldOpen(key) { try { const v = localStorage.getItem(`sftk.fc.fold.${key}`); return v == null ? key !== 'further' : v === '1'; } catch (_) { return key !== 'further'; } }
+  function _foldHtml(key, ico, title, hint, body) {
+    return `<details class="fc-fold" data-fold="${esc(key)}"${_foldOpen(key) ? ' open' : ''}>
+        <summary class="fc-fold-hd"><span class="fc-fold-ico">${ico}</span><span class="fc-fold-title">${esc(title)}</span><span class="fc-fold-hint">${esc(hint)}</span><span class="fc-fold-sum"></span></summary>
+        <div class="fc-fold-body">${body}</div></details>`;
+  }
+  function _foldSummary(det) {
+    const rows = [...det.querySelectorAll('.fc-fold-body .fc-fact, .fc-fold-body .fc-rpt, .fc-fold-body .fc-sweep, .fc-fold-body .fc-fls')];
+    const bits = rows.map(r => {
+      if (r.offsetParent === null && r.style.display === 'none') return '';
+      // the row's words without its buttons ("Visible to 2 profiles" — not "…setsshow")
+      const plain = r.cloneNode(true); plain.querySelectorAll('button, .btn').forEach(x => x.remove());
+      const b = plain.querySelector('.fc-data-badge, b, strong');
+      let t = (b ? b.textContent : plain.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!t || /^[\d,.]+$/.test(t)) t = (plain.textContent || '').replace(/\s+/g, ' ').trim();
+      return t.length > 42 ? t.slice(0, 40) + '…' : t;
+    }).filter(Boolean);
+    return [...new Set(bits)].slice(0, 5).join(' · ');
+  }
+  function _wireFolds(root) {
+    root.querySelectorAll('details.fc-fold').forEach(det => {
+      const sum = det.querySelector('.fc-fold-sum');
+      const paint = () => { if (sum) sum.textContent = det.open ? '' : _foldSummary(det); };
+      det.addEventListener('toggle', () => { try { localStorage.setItem(`sftk.fc.fold.${det.dataset.fold}`, det.open ? '1' : '0'); } catch (_) { /* no storage */ } paint(); });
+      let t = null;
+      new MutationObserver(() => { clearTimeout(t); t = setTimeout(paint, 150); }).observe(det.querySelector('.fc-fold-body'), { childList: true, subtree: true, characterData: true });
+      paint();
+    });
   }
   function _refreshFixEvery() {
     const el = eid('fcFixEvery');
-    if (el && !_everyRunning) el.outerHTML = _fixEveryHtml(document.querySelectorAll('#fcResults .fc-fix-pair').length);
+    const root = eid('fcResults');
+    if (el && !_everyRunning) el.outerHTML = _fixEveryHtml(_openPairs(root), _openPairs(root, true), _openPairs(root, false));
   }
   async function fixEverything(fieldId, swap) {
     if (_everyRunning || _fixSwap !== null) return;
     _everyRunning = true;
+    _everyNote = '';
     eid('fcFixEvery')?.querySelectorAll('button').forEach(b => { b.disabled = true; });
+    const skipped = [];
     try {
       for (const type of Object.keys(_groups)) {
-        if (!(TYPE_CFG[type] || TYPE_CFG_DEFAULT).fixable) continue;
-        if ((await fixAll(type, fieldId, swap)) === 'cancel') break;
+        const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
+        let way = '';
+        if (!cfg.fixable) {
+          // a blocker with a way inside it (2026-11-08): ⇄ for every kind that has it (code too), ✂ where the kind can
+          // lose the field; a Replace-only kind on a Remove walk is left out and named
+          const w = typeof sftkMdEditWays === 'function' ? sftkMdEditWays(type) : null;
+          const c = typeof sftkMdCodeWays === 'function' ? sftkMdCodeWays(type) : null;
+          if (!w && !c) continue;
+          if (swap) way = c ? 'code' : 'edit';
+          else if (w && w.remove) way = 'edit';
+          else { skipped.push(cfg.label || type); continue; }
+        }
+        if ((await fixAll(type, fieldId, swap, way)) === 'cancel') break;
       }
     } finally {
       _everyRunning = false;
+      if (!swap && skipped.length) _everyNote = `✂ Remove all left out what can only be replaced — ${skipped.join(', ')}: pick a replacement field and press ⇄ Replace all for those, or 🗑 delete them.`;
       _refreshFixEvery();
     }
   }
@@ -1212,6 +1285,7 @@ const FieldCleaner = (() => {
     if (!results) return;
     results.querySelectorAll('.fc-fix-pair, .fc-del-pair').forEach(p => { if (!p.querySelector('.fc-fix-btn[disabled]')) p.innerHTML = _fixBtnsHtml(p.dataset.type, p.dataset.id, p.dataset.name); });
     results.querySelectorAll('.fc-fix-allbox').forEach(b => { b.innerHTML = _fixAllHtml(b.dataset.type, Number(b.dataset.n), b.dataset.label); });
+    _refreshFixEvery();
     _refreshFixEvery();
     results.querySelectorAll('.fc-flow-vers').forEach(ul => { const c = _flowCards.find(x => x.primaryId === ul.dataset.id); if (c) ul.innerHTML = _flowVersHtml(c); });
     results.querySelectorAll('.fc-group-note-text').forEach(n => { const t = n.dataset.type; n.textContent = _groupNote(t, TYPE_CFG[t] || TYPE_CFG_DEFAULT); });
@@ -1482,7 +1556,7 @@ const FieldCleaner = (() => {
         }
       }
 
-      _rptScan = null; _orgSweep = null;
+      _rptScan = null; _orgSweep = null; _rtScanned = null; _everyNote = '';
       _lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope };
       await renderResults(_lastScan.deps, fieldId);
     } catch (e) {
@@ -1574,6 +1648,7 @@ const FieldCleaner = (() => {
     const listed = await bg({ type: 'SF_MD_LIST', orgUrl: _orgUrl, sid: _sid, mdType: 'ReportType', _suppressError: true });
     if (!listed || listed.error) throw new Error(listed?.error || 'the report types could not be listed');
     const types = sftkMdExtractListed(listed.text);
+    _rtScanned = types.length;
     const known = new Set((existingDeps || [])
       .filter(d => d.MetadataComponentType === 'ReportType')
       .map(d => String(d.MetadataComponentName || '').toLowerCase()));
@@ -2098,7 +2173,7 @@ const FieldCleaner = (() => {
     SharingCriteriaRule: { icon: '🔐', label: 'Sharing Rules (criteria)', fixable: false, sev: 'blocker',
                       note: 'The rule’s criteria name the field. Edit or delete the sharing rule in Setup → Sharing Settings. Found by reading this object’s sharing rules.' },
     DuplicateRule:  { icon: '👥', label: 'Duplicate Rules',  fixable: false, sev: 'blocker',
-                      note: 'The rule’s record filter names the field — active or not, Salesforce refuses the delete. Edit the filter in Setup → Duplicate Management → Duplicate Rules. Never switched off or edited here.' },
+                      note: 'The rule’s record filter names the field — active or not, Salesforce refuses the delete. ✂ / ⇄ / ✎ edit the filter here (the diff shown first, a restore point kept), 🗑 delete the rule, or edit it in Setup → Duplicate Management. Nothing switches a duplicate rule off or edits one behind a deployment.' },
     LightningComponentBundle: { icon: '⚡', label: 'Lightning Web Components', fixable: false, sev: 'blocker',
                       note: 'The component imports the field’s schema (@salesforce/schema). Remove the import in the code and deploy. A field named only in the HTML does not block — and is not listed.' },
     CustomMetadataRecord: { icon: '🗂', label: 'Custom Metadata Records', fixable: false, sev: 'blocker',
@@ -2355,6 +2430,10 @@ const FieldCleaner = (() => {
       .filter(([t]) => { const c = TYPE_CFG[t] || TYPE_CFG_DEFAULT; return c.sev === 'blocker' && !c.fixable && typeof sftkMdDeleteSpec === 'function' && !!sftkMdDeleteSpec(t); })
       .reduce((n, [,arr]) => n + arr.length, 0);
     const manualCount = shownCount - autoCount - delCount;
+    // the ⚡ row counts every item with a way right now: the fixable kinds, and the blockers with ✂ / ⇄ (code: ⇄ only)
+    const everyCount = autoCount + Object.entries(_groups)
+      .filter(([t]) => { const c = TYPE_CFG[t] || TYPE_CFG_DEFAULT; if (c.fixable || c.sev !== 'blocker') return false; const w = typeof sftkMdEditWays === 'function' ? sftkMdEditWays(t) : null; const cd = typeof sftkMdCodeWays === 'function' ? sftkMdCodeWays(t) : null; return (w && (w.remove || _replOn())) || (cd && _replOn()); })
+      .reduce((n, [, arr]) => n + arr.length, 0);
 
     // What each kind of item gets, in words — once, in the collapsed help under
     // the status card, not as a paragraph over every group (user 2026-10-13:
@@ -2374,14 +2453,17 @@ const FieldCleaner = (() => {
             ${manualCount > 0 ? `<span class="fc-badge-manual">${manualCount} by hand</span>` : ''}
           </span>
         </div>
-        ${_replBarHtml()}
+        ${_foldHtml('data', '📈', 'The field’s data', 'how much is stored, who sees it, and what moves with a replace', `
         <div id="fcDataVerdict" class="fc-fact fc-data-verdict fc-data-loading"><span class="fc-fact-ico">📈</span><span class="fc-fact-text">${sftkCatSm('Measuring how much data is stored in this field…')}</span></div>
         <div id="fcCopyVals"></div>
-        <div id="fcFlsPanel"></div>
+        <div id="fcFlsPanel"></div>`)}
+        ${_foldHtml('further', '🔭', 'Look further than the index', 'every report, and the whole org as text — on request', `
         <div id="fcRptScan"></div>
-        <div id="fcOrgSweep"></div>
-        <div id="fcDepZone"></div>
-        ${_fixEveryHtml(autoCount)}
+        <div id="fcOrgSweep"></div>`)}
+        ${_foldHtml('act', '⚡', 'Act on everything', 'replace mode, the walk over every item, deprecate first', `
+        ${_replBarHtml()}
+        ${_fixEveryHtml(everyCount)}
+        <div id="fcDepZone"></div>`)}
         ${_mcdCapped ? `<div class="fc-fact fc-fact-warn"><span class="fc-fact-ico">⚠</span><span class="fc-fact-text"><strong>This list may be cut short.</strong> Salesforce stops its dependency index at 2,000 rows without saying so — treat the count as a floor: fix what is listed, scan again, repeat.</span></div>` : ''}
         <details class="fc-howto">
           <summary>How each item is fixed, and what the scan cannot see</summary>
@@ -2407,7 +2489,7 @@ const FieldCleaner = (() => {
               : type === 'FlexiPage'
                 ? xlinkHtml('pages', '↗ Lightning Pages', 'Inspect assignments, org defaults, and profile overrides for these pages in the Lightning Pages tool')
                 : ''}
-            ${cfg.fixable && nFix > 1
+            ${(cfg.fixable || (typeof sftkMdEditWays === 'function' && sftkMdEditWays(type)) || (typeof sftkMdCodeWays === 'function' && sftkMdCodeWays(type))) && nFix > 1
               ? `<span class="fc-fix-allbox" data-type="${esc(type)}" data-n="${nFix}" data-label="${esc(cfg.label)}">${_fixAllHtml(type, nFix, cfg.label)}</span>`
               : ''}
           </div>
@@ -2461,13 +2543,16 @@ const FieldCleaner = (() => {
         <div class="fc-blockers-hdr">🔒 ${hiddenFixable} blocker${hiddenFixable === 1 ? '' : 's'} hidden by the 👀 scope (flows and the like, fixable here) — switch to 🔍 Everything to see and fix ${hiddenFixable === 1 ? 'it' : 'them'}. Salesforce refuses the delete until ${hiddenFixable === 1 ? 'it is' : 'they are'} cleared.</div>
       </div>` : '';
 
+    // one header, one chip per kind (click → its group above; the tooltip says its ways), ONE sentence about the
+    // ways (user 2026-11-08: "this section needs to improve. its very hard to understand and nobody will read it")
     const blockerBlock = blockerTotal > 0 ? `
       <div class="fc-blockers">
-        <div class="fc-blockers-hdr">🔒 ${blockerTotal} blocker${blockerTotal === 1 ? '' : 's'} — Salesforce will refuse the delete until ${blockerTotal === 1 ? 'this is' : 'these are'} cleared:</div>
-        ${_manualBlockers.map(b => `<div class="fc-blocker-row" data-type="${esc(b.type)}">${(TYPE_CFG[b.type] || {}).icon || '🔧'} <strong>${b.count}</strong> ${esc(b.label)} — ${(typeof sftkMdDeleteSpec === 'function' && (sftkMdDeleteSpec(b.type) || b.type === 'LookupFilter')) ? `${(typeof sftkMdEditWays === 'function' && sftkMdEditWays(b.type) && b.type !== 'DuplicateRule') ? '✂ / ⇄ or 🗑' : '🗑 delete'} above, or clear in Setup, then re-scan` : 'clear in Setup, then re-scan'}${b.hidden ? ' (hidden by the 👀 scope — switch to 🔍 Everything to see them)' : ''}</div>`).join('')}
+        <div class="fc-blockers-hdr">🔒 ${blockerTotal} blocker${blockerTotal === 1 ? ' stops' : 's stop'} the delete</div>
+        <div class="fc-blockers-chips">${_manualBlockers.map(b => `<button type="button" class="fc-blocker-row fc-blocker-chip" data-type="${esc(b.type)}" data-group="${esc(b.type === 'ProcessBuilder' ? 'Flow' : b.type)}" title="${esc(b.label)} — ${esc(_blockerWays(b.type))}. Click to jump to ${b.count === 1 ? 'it' : 'them'} in the list.">${(TYPE_CFG[b.type] || {}).icon || '🔧'} <strong>${b.count}</strong> ${esc(b.label)}${b.hidden ? ' <em>hidden by the 👀 scope</em>' : ''}</button>`).join('')}</div>
+        <div class="fc-blockers-foot">Clear each one in its group above — ✂ take the field out · ⇄ point it at another field · ✎ edit it · 🗑 delete it; every change keeps a restore point. Or fix it in Setup. Then re-scan.</div>
       </div>` : '';
     const silentNote = silentManual > 0 ? `
-      <div class="fc-silent-note">⚠ ${silentManual} cosmetic reference${silentManual === 1 ? '' : 's'} (list views, quick actions…) won't block the delete but will stop working afterwards.</div>` : '';
+      <div class="fc-silent-note">👀 ${silentManual} more only break${silentManual === 1 ? 's' : ''} later — list views, quick actions and the like — ${silentManual === 1 ? 'it does' : 'they do'} not block the delete.</div>` : '';
 
     html += `
       <div class="fc-delete-zone" id="fcDeleteZone">
@@ -2489,6 +2574,8 @@ const FieldCleaner = (() => {
       </div>`;
 
     results.innerHTML = html;
+    _wireFolds(results);
+    _refreshFixEvery();   // the ⚡ row's two counts come from the rows as drawn (⇄ and ✂ differ: a formula has no ✂)
 
     // Wire buttons. The fix buttons are re-drawn when the mode changes or a fix
     // ends, so they are handled by ONE listener on the results area (the XML
@@ -2503,6 +2590,12 @@ const FieldCleaner = (() => {
         }
         const every = ev.target.closest?.('.fc-fix-every');
         if (every) { if (!every.disabled) fixEverything(_curFieldId, every.dataset.swap === '1'); return; }
+        const chip = ev.target.closest?.('.fc-blocker-chip');
+        if (chip) {
+          const g = eid(`fcGroup_${chip.dataset.group}`);
+          if (g) { g.scrollIntoView({ behavior: 'smooth', block: 'start' }); g.classList.add('fc-group-flash'); setTimeout(() => g.classList.remove('fc-group-flash'), 1800); }
+          return;
+        }
         const all = ev.target.closest?.('.fc-fix-all');
         if (all && !all.disabled) {
           const t = all.dataset.type, swap = all.dataset.swap === '1';
@@ -2518,7 +2611,7 @@ const FieldCleaner = (() => {
             _walkRunning = false;
             if (!box || !box.isConnected) return;
             const group = box.closest('.fc-group');
-            const open = group ? group.querySelectorAll('.fc-fix-pair').length : 0;
+            const open = group ? _openPairs(group) : 0;
             if (open < 2) box.remove();
             else { box.dataset.n = String(open); box.innerHTML = _fixAllHtml(t, open, box.dataset.label); }
           });
@@ -2925,6 +3018,7 @@ const FieldCleaner = (() => {
   const FC_RPT_CONCURRENCY = 4;
   let _lastScan = null;   // { deps, fieldId } — what the last scan put on screen
   let _rptScan  = null;   // { status, list, done, found[], possible[], failed, whyFailed, stop }
+  let _rtScanned = null;  // how many custom report types the scan's own leg read (every scan reads them all)
 
   function renderReportScan() {
     const el = eid('fcRptScan');
@@ -2937,7 +3031,7 @@ const FieldCleaner = (() => {
       el.innerHTML = `<div class="fc-fact fc-rpt"><span class="fc-fact-ico">📊</span><span class="fc-fact-text"><b>Reports</b> — ${listed
           ? `Salesforce’s index listed ${N(listed)} above; it does not list every report in every org.`
           : 'Salesforce’s index listed none; in some orgs it lists none at all.'}
-        To be sure, this tool can read every report’s definition itself.</span>
+        To be sure, this tool can read every report’s definition itself.${_rtScanned != null ? (() => { const rt = ((_lastScan && _lastScan.deps) || []).filter(d => d.MetadataComponentType === 'ReportType').length; return ` <b>Report types</b>: the scan itself read all ${N(_rtScanned)} custom report type${_rtScanned === 1 ? '' : 's'} of this org${rt ? ` — ${N(rt)} name${rt === 1 ? 's' : ''} the field and ${rt === 1 ? 'is' : 'are'} listed above` : ' — none names the field'}.`; })() : ''}</span>
         <span class="fc-fact-act"><button class="btn btn-secondary btn-sm" id="fcRptCount">📊 Scan the reports…</button></span></div>`;
       eid('fcRptCount').addEventListener('click', _rptCount);
       return;
@@ -3843,7 +3937,7 @@ const FieldCleaner = (() => {
     const id      = dep.MetadataComponentId;
     const rawName = dep.MetadataComponentName || id;
     const name    = esc(rawName);
-    const canInsp = Object.prototype.hasOwnProperty.call(_INSPECT_SOBJECT, type) || _inspectsByMd(type);
+    const canInsp = Object.prototype.hasOwnProperty.call(_INSPECT_SOBJECT, type) || _inspectsByMd(type) || _inspectsByCode(type);
     const inspBtn = canInsp
       ? `<button class="btn btn-sm fc-inspect-btn" title="View XML metadata"
                  data-id="${esc(id)}" data-type="${esc(type)}">🔍</button>`
@@ -3885,7 +3979,7 @@ const FieldCleaner = (() => {
     if (eid(`fcItem_${componentId}`)?.classList.contains('fc-item-fixed')) return;
     if (_fixSwap !== null) return;
     _fixSwap = !!swap && _replOn();
-    _fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit') ? way : '';
+    _fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit' || way === 'code') ? way : '';
     // 'cancel' = the user said no in the dialog (a bulk walk stops there)
     try { return await _fixOneRun(type, componentId, componentName, fieldId); }
     finally { _fixSwap = null; _fixWay = ''; }
@@ -3895,6 +3989,12 @@ const FieldCleaner = (() => {
     // ✂ / ⇄ inside the component, its XML shown (its own confirm, its own restore point)
     if (_fixWay === 'edit') {
       try { const r = await fixEdit(type, componentId, componentName, _fixSwap === true); if (r === 'cancel') return 'cancel'; if (r && r.label) markFixed(componentId, r.label, '', r.detailHtml || ''); }
+      catch (e) { _rowBusy(componentId, null); appendInlineError(componentId, e.message, e.setupUrl, '↗ Open in Setup'); }
+      return;
+    }
+    // ⇄ in code: the field's API name renamed in every file (its own confirm with the diff, its own restore point)
+    if (_fixWay === 'code') {
+      try { const r = await fixCodeReplace(type, componentId, componentName); if (r === 'cancel') return 'cancel'; if (r && r.label) markFixed(componentId, r.label, '', r.detailHtml || ''); }
       catch (e) { _rowBusy(componentId, null); appendInlineError(componentId, e.message, e.setupUrl, '↗ Open in Setup'); }
       return;
     }
@@ -4150,7 +4250,7 @@ const FieldCleaner = (() => {
     // The "… all N" buttons count what is still open: gone when one or none is left.
     const box = item.closest('.fc-group')?.querySelector('.fc-fix-allbox');
     if (box) {
-      const open = item.closest('.fc-group').querySelectorAll('.fc-fix-pair').length;
+      const open = _openPairs(item.closest('.fc-group'));
       if (open < 2) box.remove();
       else {
         box.dataset.n = String(open); box.innerHTML = _fixAllHtml(box.dataset.type, open, box.dataset.label);
@@ -5481,33 +5581,10 @@ const FieldCleaner = (() => {
         verify: { query: `SELECT Id FROM Flow WHERE Definition.DeveloperName = '${devName.replace(/'/g, "\\'")}'`, tooling: true, pick: 'records', count: 1 },
         gone: () => _goneByQuery(`SELECT Id FROM Flow WHERE DefinitionId = '${defId}'`) };
     }
-    if (spec.code) {
-      const g = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: spec.tooling, id: componentId, _suppressError: true });
-      if (!g || g.error || typeof g[spec.code] !== 'string') throw new Error(`the source of "${fullName}" could not be read (${_feText((g && g.error) || 'no answer')}) — nothing is deleted without a restore point`);
-      // only a Visualforce page or component carries a <label>; an Apex class or trigger with one is refused (live 2026-11-07: the class restore failed on it)
-      const withLabel = spec.metaTag === 'ApexPage' || spec.metaTag === 'ApexComponent';
-      const files = sftkMdCodeFiles(type, fullName, g[spec.code], g.ApiVersion, withLabel ? { label: g.MasterLabel || g.Label || fullName } : null);
-      const byName = `SELECT Id FROM ${spec.tooling} WHERE Name = '${fullName.replace(/'/g, "\\'")}'`;
-      return { files, verify: { query: byName, tooling: true, pick: 'records', count: 1 }, gone: () => _goneByQuery(byName) };
-    }
-    if (spec.bundle) {
-      const g = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: spec.tooling, id: componentId, _suppressError: true });
-      if (!g || g.error) throw new Error(`"${fullName}" could not be read (${_feText((g && g.error) || 'no answer')}) — nothing is deleted without a restore point`);
-      let resources = [];
-      if (type === 'LightningComponentBundle') {
-        const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true, query: `SELECT FilePath, Source FROM LightningComponentResource WHERE LightningComponentBundleId = '${componentId}'` });
-        if (!q || q.error) throw new Error(`the files of "${fullName}" could not be read (${_feText((q && q.error) || 'no answer')})`);
-        resources = (q.records || []).filter(r => !/-meta\.xml$/.test(String(r.FilePath || ''))).map(r => ({ path: r.FilePath, source: r.Source }));
-      } else {
-        const q = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true, query: `SELECT DefType, Source FROM AuraDefinition WHERE AuraDefinitionBundleId = '${componentId}'` });
-        if (!q || q.error) throw new Error(`the files of "${fullName}" could not be read (${_feText((q && q.error) || 'no answer')})`);
-        resources = (q.records || []).map(r => ({ path: (_AURA_FILE[r.DefType] || (n => `${n}.${String(r.DefType).toLowerCase()}`))(fullName), source: r.Source }));
-      }
-      if (!resources.length) throw new Error(`"${fullName}" came back with no files — nothing is deleted without a restore point`);
-      const m = g.Metadata || {};
-      const files = sftkMdBundleFiles(type, fullName, resources, { apiVersion: m.apiVersion || g.ApiVersion, isExposed: m.isExposed, masterLabel: m.masterLabel || g.MasterLabel, description: m.description || g.Description });
-      const byDev = `SELECT Id FROM ${spec.tooling} WHERE DeveloperName = '${fullName.replace(/'/g, "\\'")}'`;
-      return { files, verify: { query: byDev, tooling: true, pick: 'records', count: 1 }, gone: () => _goneByQuery(byDev) };
+    // code and bundles: the same read the inspector and the code editor use (one place knows the Tooling shapes)
+    if (spec.code || spec.bundle) {
+      const c = await _codeRead(type, componentId, fullName, spec);
+      return { files: c.files, verify: { query: c.byName, tooling: true, pick: 'records', count: 1 }, gone: () => _goneByQuery(c.byName) };
     }
     // an assignment / auto-response / escalation rule has no readMetadata of its own (live 2026-11-08): read through its container
     const rd = await _mdReadOne(type, fullName, spec.mdType);
@@ -5545,7 +5622,7 @@ const FieldCleaner = (() => {
         ? `✂ <strong>Only the mapping line of ${esc(obj)}.${esc(field)} is removed</strong> — the other mappings and the conversion settings stay. The settings are read first and kept as a <strong>restore point</strong>; ↩ Undo in History (and ↩ Restore points, under the results) puts the line back.`
         : spec.special === 'pb'
           ? `🗑 <strong>Every version of the process is deleted</strong> — it is switched off first if it runs. Its latest version is read first and kept as a <strong>restore point</strong>; ↩ Undo in History (and ↩ Restore points, under the results) deploys it back as a new, inactive version — activate it in Setup if you need it to run again.`
-          : `🗑 <strong>The ${esc(spec.what)} is deleted from the org</strong> — not just its reference to ${esc(obj)}.${esc(field)}. Its full definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in History (and ↩ Restore points, under the results) deploys it back.${spec.code ? ' In a production org Salesforce may run the org’s Apex tests before it deletes code.' : ''}${type === 'MatchingRule' ? ' A matching rule a duplicate rule still uses is refused by Salesforce — delete that duplicate rule first.' : ''}${type === 'DuplicateRule' ? ' <strong>A duplicate rule guards the org’s data</strong> — this tool never switches one off or edits one behind a run; deleting it is yours to decide, here, with a way back.' : ''}`;
+          : `🗑 <strong>The ${esc(spec.what)} is deleted from the org</strong> — not just its reference to ${esc(obj)}.${esc(field)}. Its full definition is read first and kept as a <strong>restore point</strong>; ↩ Undo in History (and ↩ Restore points, under the results) deploys it back.${spec.code ? ' In a production org Salesforce may run the org’s Apex tests before it deletes code.' : ''}${type === 'MatchingRule' ? ' A matching rule a duplicate rule still uses is refused by Salesforce — delete that duplicate rule first.' : ''}${type === 'DuplicateRule' ? ' <strong>A duplicate rule guards the org’s data</strong> — nothing here switches one off or edits one behind a deployment; deleting it is yours to decide, here, with a way back.' : ''}`;
     const verb = (spec.special === 'lookupFilter' || spec.edit) ? 'Remove' : 'Delete';
     const sure = await sftkConfirmDestructive({
       title: `${verb} ${spec.what} — ${cfg.label || type}`,
@@ -5655,7 +5732,7 @@ const FieldCleaner = (() => {
     const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
     const ways = typeof sftkMdEditWays === 'function' ? sftkMdEditWays(type) : null;
     const nf = swap && _replOn() ? _replField.api : null;
-    if (!ways || type === 'DuplicateRule') throw new Error(`A ${cfg.label || type} is not edited here — 🗑 delete it, or edit it in Setup.`);
+    if (!ways) throw new Error(`A ${cfg.label || type} is not edited here — 🗑 delete it, or edit it in Setup.`);
     if (!nf && !ways.remove) throw new Error(`A ${cfg.label || type} cannot lose the field and keep working — pick a replacement field above and press ⇄ Replace, or 🗑 delete it.`);
     const spec = type === 'LookupFilter' ? { type, mdType: 'CustomField', what: 'lookup filter', special: 'lookupFilter' } : sftkMdDeleteSpec(type);
     const obj = _selObj.api, field = _selField.api;
@@ -5756,14 +5833,15 @@ const FieldCleaner = (() => {
     }
     const box = document.querySelector('.fc-delete-zone .fc-blockers');
     const left = box ? [...box.querySelectorAll('.fc-blocker-row strong')].reduce((n, b) => n + (Number(b.textContent) || 0), 0) : 0;
+    const hdr = box ? box.querySelector('.fc-blockers-hdr') : null;
     if (box && !box.querySelector('.fc-blocker-row')) {
-      const hdr = box.querySelector('.fc-blockers-hdr');
       if (hdr) hdr.textContent = '✅ Every blocker listed here was fixed or deleted — press Re-scan, then delete the field.';
-    }
+      box.querySelector('.fc-blockers-foot')?.remove();
+    } else if (hdr) hdr.textContent = `🔒 ${left} blocker${left === 1 ? ' stops' : 's stop'} the delete`;   // the header counts down with the chips (live 2026-11-08: it said 24 after a fix)
     // the note under the gate said "N manual blocker(s) remain" from the scan — it follows the deletes (live 2026-11-07)
     const note = eid('fcDeleteNote');
     if (note && box) note.textContent = left > 0
-      ? `🔒 ${left} blocker${left === 1 ? '' : 's'} remain — fix (✂ / ⇄) or delete ${left === 1 ? 'it' : 'them'} above, or clear ${left === 1 ? 'it' : 'them'} in Setup, then re-scan.`
+      ? `🔒 ${left} blocker${left === 1 ? '' : 's'} remain — clear ${left === 1 ? 'it' : 'them'} above (✂ ⇄ ✎ 🗑) or in Setup, then re-scan.`
       : '✅ Every blocker listed was deleted — press Re-scan to confirm, then 🗑 Delete Field.';
   }
 
@@ -6737,15 +6815,15 @@ const FieldCleaner = (() => {
       if (ed.refused) return `<div class="fc-xml-prev"><div class="fc-xml-prev-hd">${label} is refused here — <span class="fc-xml-refused">${esc(ed.refused)}</span></div></div>`;
       return `<div class="fc-xml-prev"><div class="fc-xml-prev-hd">${label} would change: ${esc(ed.how.join('; '))}</div>${_xmlDiffHtml(xml, ed.xml)}</div>`;
     };
-    const dupe = type === 'DuplicateRule';
-    const previews = dupe ? '<div class="fc-xml-hint">A duplicate rule’s criteria are never edited here — it guards the org’s data. 🗑 Delete it (with a restore point), or edit it in Setup.</div>'
-      : (ways.remove ? prev(null, '✂ Remove') : `<div class="fc-xml-hint">✂ Remove is not offered for a ${esc(spec.what)}: ${esc(sftkMdEditField(type, xml, obj, field, null).refused || 'it cannot lose the field and keep working')}</div>`)
-        + (_replOn() ? prev(_replField.api, `⇄ Replace with ${esc(_replField.api)}`) : '<div class="fc-xml-hint">⇄ Replace: pick a replacement field above to see what it would change.</div>');
+    // a duplicate rule too (user 2026-11-08: "למה אין החלפה פה — ועריכה של xml — צריך להיות בכולם")
+    const previews = (ways.remove ? prev(null, '✂ Remove') : `<div class="fc-xml-hint">✂ Remove is not offered for a ${esc(spec.what)}: ${esc(sftkMdEditField(type, xml, obj, field, null).refused || 'it cannot lose the field and keep working')}</div>`)
+        + (_replOn() ? prev(_replField.api, `⇄ Replace with ${esc(_replField.api)}`) : '<div class="fc-xml-hint">⇄ Replace: pick a replacement field above to see what it would change.</div>')
+        + (type === 'DuplicateRule' ? '<div class="fc-xml-hint">👥 A duplicate rule guards the org’s data: an edit here is your own click, with the diff first and a restore point — nothing switches a rule off or edits one behind a deployment.</div>' : '');
     panel.innerHTML = `
       <div class="fc-xml-hdr">
         <span class="fc-xml-hdr-name">${esc(componentName)} <small class="fc-xml-src">· ${esc(spec.mdType === 'CustomField' && type === 'LookupFilter' ? 'CustomField' : spec.mdType)} ${esc(fullName)} · Metadata API</small></span>
         <span class="fc-xml-badge ${marked.n ? 'fc-xml-badge--hit' : 'fc-xml-badge--miss'}">${marked.n ? `${marked.n} line${marked.n === 1 ? ' names' : 's name'} the field` : 'no line names the field'}</span>
-        <span class="fc-xml-hdr-actions">${dupe ? '' : '<button class="btn btn-secondary btn-sm fc-xml-edit-btn" title="Edit this XML and deploy it back — like an editor; a restore point is kept">✎ Edit XML</button>'}<button class="fc-xml-close" data-panelid="${esc(componentId)}">✕</button></span>
+        <span class="fc-xml-hdr-actions"><button class="btn btn-secondary btn-sm fc-xml-edit-btn" title="Edit this XML and deploy it back — like an editor; a restore point is kept">✎ Edit XML</button><button class="fc-xml-close" data-panelid="${esc(componentId)}">✕</button></span>
       </div>
       ${note ? `<div class="fc-xml-ed-ok fc-xml-ed-done">${esc(note)}</div>` : ''}
       <div class="fc-xml-body">${marked.html}
@@ -6753,6 +6831,272 @@ const FieldCleaner = (() => {
     panel.querySelector('.fc-xml-close')?.addEventListener('click', () => { panel.style.display = 'none'; if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open'); });
     panel.querySelector('.fc-xml-edit-btn')?.addEventListener('click', ev => { ev.currentTarget.disabled = true; _xmlEditorOpen(panel, { type, componentId, componentName, fullName, spec, xml, inspBtn }); });
     panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  // ── Code — Apex class / trigger, Visualforce page / component, LWC and Aura bundles (user 2026-11-08: "צריך
+  // להיות בכולם") ──────────────────────────────────────────────────────────────────────────────────────────────
+  // One read knows the Tooling shapes: the files as the org holds them (the restore point), a builder for an
+  // edited set, and the check that one file reads as a given text — used by the 🗑 delete's restore plan, the
+  // 🔍 inspector, ⇄ Replace and the ✎ code editor.
+  //   → { sources: [{ path, file, source, … }], files, build(sources) → files, byName, verifyOf(path, source) }
+  async function _codeRead(type, componentId, fullName, spec) {
+    const q = s => String(s).replace(/'/g, "\\'");
+    const g = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: spec.tooling, id: componentId, _suppressError: true });
+    if (!g || g.error) throw new Error(`"${fullName}" could not be read (${_feText((g && g.error) || 'no answer')}) — nothing is changed without a restore point`);
+    if (spec.code) {
+      if (typeof g[spec.code] !== 'string') throw new Error(`the source of "${fullName}" could not be read — nothing is changed without a restore point`);
+      // only a Visualforce page or component carries a <label>; an Apex class or trigger with one is refused (live 2026-11-07: the class restore failed on it)
+      const withLabel = spec.metaTag === 'ApexPage' || spec.metaTag === 'ApexComponent';
+      const extra = withLabel ? { label: g.MasterLabel || g.Label || fullName } : null;
+      const file = `${fullName}.${spec.suffix}`;
+      const sources = [{ path: `${spec.folder}/${file}`, file, source: g[spec.code] }];
+      const build = srcs => sftkMdCodeFiles(type, fullName, (srcs[0] || {}).source, g.ApiVersion, extra);
+      return { sources, files: build(sources), build, byName: `SELECT Id FROM ${spec.tooling} WHERE Name = '${q(fullName)}'`,
+        verifyOf: (path, source) => ({ query: `SELECT Id, ${spec.code} FROM ${spec.tooling} WHERE Name = '${q(fullName)}'`, tooling: true, pick: 'records', where: { field: spec.code, equals: source, loose: true } }) };
+    }
+    let resources = [], verifyOf;
+    if (type === 'LightningComponentBundle') {
+      const r = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true, query: `SELECT Id, FilePath, Source FROM LightningComponentResource WHERE LightningComponentBundleId = '${componentId}'` });
+      if (!r || r.error) throw new Error(`the files of "${fullName}" could not be read (${_feText((r && r.error) || 'no answer')})`);
+      resources = (r.records || []).filter(x => !/-meta\.xml$/.test(String(x.FilePath || ''))).map(x => ({ path: x.FilePath, file: String(x.FilePath || '').split('/').pop(), source: x.Source }));
+      verifyOf = (path, source) => ({ query: `SELECT Id, Source FROM LightningComponentResource WHERE LightningComponentBundleId = '${componentId}' AND FilePath = '${q(path)}'`, tooling: true, pick: 'records', where: { field: 'Source', equals: source, loose: true } });
+    } else {
+      const r = await bg({ type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true, query: `SELECT Id, DefType, Source FROM AuraDefinition WHERE AuraDefinitionBundleId = '${componentId}'` });
+      if (!r || r.error) throw new Error(`the files of "${fullName}" could not be read (${_feText((r && r.error) || 'no answer')})`);
+      resources = (r.records || []).map(x => { const file = (_AURA_FILE[x.DefType] || (n => `${n}.${String(x.DefType).toLowerCase()}`))(fullName); return { path: file, file, source: x.Source, defType: x.DefType }; });
+      verifyOf = (path, source) => { const d = resources.find(x => x.path === path); return { query: `SELECT Id, Source FROM AuraDefinition WHERE AuraDefinitionBundleId = '${componentId}' AND DefType = '${q(d ? d.defType : 'COMPONENT')}'`, tooling: true, pick: 'records', where: { field: 'Source', equals: source, loose: true } }; };
+    }
+    if (!resources.length) throw new Error(`"${fullName}" came back with no files — nothing is changed without a restore point`);
+    const m = g.Metadata || {};
+    const meta = { apiVersion: m.apiVersion || g.ApiVersion, isExposed: m.isExposed, masterLabel: m.masterLabel || g.MasterLabel, description: m.description || g.Description };
+    const build = srcs => sftkMdBundleFiles(type, fullName, srcs.map(s => ({ path: s.path, source: s.source })), meta);
+    return { sources: resources, files: build(resources), build, byName: `SELECT Id FROM ${spec.tooling} WHERE DeveloperName = '${q(fullName)}'`, verifyOf };
+  }
+  // A text diff (code, not XML): the same fold as the XML diff, on the raw lines.
+  function _textDiffHtml(before, after) {
+    const d = sftkMdLineDiff(String(before == null ? '' : before).replace(/\r\n?/g, '\n'), String(after == null ? '' : after).replace(/\r\n?/g, '\n'));
+    const keep = new Set();
+    d.forEach((x, i) => { if (x.op !== ' ') for (let k = i - 2; k <= i + 2; k++) keep.add(k); });
+    let out = '', skipped = 0;
+    const flush = () => { if (skipped) out += `<span class="xd-line xd-fold">  … ${skipped} unchanged line${skipped === 1 ? '' : 's'}</span>`; skipped = 0; };
+    d.forEach((x, i) => {
+      if (x.op === ' ' && !keep.has(i)) { skipped++; return; }
+      flush();
+      out += `<span class="xd-line xd-${x.op === '+' ? 'add' : x.op === '-' ? 'del' : 'eq'}">${x.op === ' ' ? ' ' : x.op} ${esc(x.line)}</span>`;
+    });
+    flush();
+    return `<pre class="fc-xml-pre fc-xml-diff">${out}</pre>`;
+  }
+  // The kinds' ways in a few words, for the gate's chips.
+  function _blockerWays(type) {
+    if (type === 'ProcessBuilder') return '🗑 delete';
+    if (type === 'LookupFilter') return '✂ remove · ⇄ replace · ✎ edit XML';
+    if (typeof sftkMdCodeWays === 'function' && sftkMdCodeWays(type)) return '⇄ replace · ✎ edit code · 🗑 delete';
+    const w = typeof sftkMdEditWays === 'function' ? sftkMdEditWays(type) : null;
+    const del = (typeof sftkMdDeleteSpec === 'function' && sftkMdDeleteSpec(type)) ? ' · 🗑 delete' : '';
+    if (w) return `${w.remove ? '✂ remove · ' : ''}⇄ replace · ✎ edit XML${del}`;
+    return del ? '🗑 delete' : 'in Setup only';
+  }
+  // One deploy for ⇄ in code and for ✎: the confirm with the diff of every changed file, the restore point, the
+  // write with a re-read of each changed file as the verify, the History entry whose undo deploys the originals.
+  //   ctx: { type, componentId, componentName, fullName, spec, code (a _codeRead) }; newSources: code.sources with new text
+  //   → 'cancel' | { ok: true, stillNames }   (throws when Salesforce refuses or the re-read disagrees)
+  async function _codeDeploy(ctx, newSources, o) {
+    const { type, componentId, componentName, fullName, spec, code } = ctx;
+    const orig = p => code.sources.find(x => x.path === p);
+    const changed = newSources.filter(s => !sftkMdCodeSame(s.source, (orig(s.path) || {}).source));
+    if (!changed.length) return 'cancel';
+    const files = code.files, deployFiles = code.build(newSources);
+    const apex = spec.metaTag === 'ApexClass' || spec.metaTag === 'ApexTrigger';
+    const gate = await sftkOrgWriteGate(_orgUrl);
+    const diffs = changed.map(s => `<div class="fc-xml-diff-hd"><code>${esc(s.file)}</code> — <span class="xd-del">− as it is</span> · <span class="xd-add">+ as it will be</span></div>${_textDiffHtml((orig(s.path) || {}).source, s.source)}`).join('');
+    const sure = await sftkConfirmDestructive({
+      title: o.title,
+      icon: o.ico,
+      items: [{ label: componentName, sub: spec.what }],
+      revOverride: { html: `${o.ico} <strong>${esc(o.how)}.</strong> The ${esc(spec.what)} is deployed back with ${changed.length === 1 ? 'this file' : `these ${changed.length} files`} changed and ${code.sources.length > changed.length ? 'the rest' : 'its metadata'} exactly as the org holds ${code.sources.length > changed.length ? 'them' : 'it'}. The ${esc(spec.what)} as it is now is kept as a <strong>restore point</strong>: ↩ Undo in History (or ↩ Restore points, under the results) deploys it back.${apex && gate.production ? ' <strong>In a production org Salesforce runs the org’s Apex tests before it accepts code.</strong>' : ''}`, needsCheckbox: false, cls: 'sftk-rev-newver' },
+      undoHint: 'Undo in History',
+      extraHtml: diffs,
+      confirmLabel: o.confirmLabel,
+      production: gate.production ? { label: gate.label } : null,
+    });
+    if (!sure) return 'cancel';
+    // the way back is checked on the first changed file: it reads as it was
+    const first = changed[0];
+    const verifyBack = code.verifyOf(first.path, (orig(first.path) || {}).source);
+    await _snapshotFix('MdEdit', componentId, componentName, fullName, { type, mdType: type, what: spec.what, swapTo: o.swapTo || null, how: [o.how], files, verify: verifyBack });
+    const zipBack = _zipOf(files), zipNew = _zipOf(deployFiles);
+    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: o.histTitle, orgUrl: _orgUrl });
+    let wr, ranTests = false;
+    try {
+      // confirmed-by: the sftkConfirmDestructive right above
+      // The write discipline (sftk-write.js): the deploy of the edited source is the write; the verify reads every
+      // changed file back from the Tooling API and finds the text that was sent (line endings aside).
+      wr = await sftkWriteVerified({
+        describe: `"${componentName}" ${spec.what}`,
+        journal: j,
+        write: async () => {
+          let r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64: zipNew, _suppressError: true });
+          // a production org wants the org's Apex tests with code: run them, as the 🗑 delete does
+          if (apex && r && !r.success && /test|coverage/i.test(String(r.error || ''))) { ranTests = true; r = await bg({ type: 'SF_METADATA_DEPLOY', orgUrl: _orgUrl, sid: _sid, zipBase64: zipNew, testLevel: 'RunLocalTests', _suppressError: true }); }
+          return (r && r.success) ? r : { error: (r && r.error) || 'the deploy was not accepted' };
+        },
+        verify: async () => {
+          for (let i = 0; i < 3; i++) {
+            try {
+              const again = await _codeRead(type, componentId, fullName, spec);
+              if (changed.every(s => { const a = again.sources.find(x => x.path === s.path); return a && sftkMdCodeSame(a.source, s.source); })) return { ok: true, text: null };
+            } catch (_) { /* read again */ }
+            await new Promise(res => setTimeout(res, 1200));
+          }
+          return { ok: false, text: null };
+        },
+      });
+      if (wr.accepted && wr.ok) {
+        const stillNames = newSources.some(s => sftkMdCodeHits(s.source, _selField.api).length > 0);
+        if (!stillNames) _afterDelete(type);
+        return { ok: true, stillNames, diffs, ranTests };
+      }
+      if (wr.accepted) throw new Error(`"${componentName}" — the deploy was accepted, but on re-read the ${spec.what} does not hold the text that was sent. Open 🔍 to see what the org holds.`);
+      throw new Error(`Salesforce refused the ${spec.what} "${componentName}": ${_feText(String((wr.raw && wr.raw.error) || 'refused'))}. Nothing was changed.`);
+    } finally {
+      await sftkHistoryEnd(j, { undo: wr && wr.accepted
+        ? { steps: [{
+            describe: `Put the ${spec.what} "${componentName}" back as it was before the ${o.ico === '⇄' ? 'replace' : 'edit'}`,
+            // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the Tooling re-read in `verify`
+            msg: { type: 'SF_METADATA_DEPLOY', zipBase64: zipBack },
+            verify: { ...verifyBack, retries: 3, text: { ok: `"${componentName}": the ${spec.what} is back as it was — verified by re-reading the org`, bad: `"${componentName}": the deploy was accepted, but on re-read the ${spec.what} is not back yet` } },
+          }] }
+        : { none: 'nothing was accepted by Salesforce, so there is nothing to undo' } });
+    }
+  }
+  // ⇄ in code: the field's API name renamed, whole word, in every file of the component.
+  async function fixCodeReplace(type, componentId, componentName) {
+    const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
+    const spec = typeof sftkMdDeleteSpec === 'function' ? sftkMdDeleteSpec(type) : null;
+    if (!spec || !(spec.code || spec.bundle)) throw new Error(`A ${cfg.label || type} is not code — nothing to rename here.`);
+    if (!_replOn()) throw new Error(`Pick a replacement field above — ⇄ Replace renames ${_selField.api} to it in the code. Nothing is taken out of a program here; ✎ Edit code in 🔍 is yours for that.`);
+    const nf = _replField.api, field = _selField.api;
+    _rowBusy(componentId, '⏳ reading…');
+    let fullName, code;
+    try {
+      fullName = await _deleteFullName(type, componentId, spec);
+      code = await _codeRead(type, componentId, fullName, spec);
+    } catch (e) { _rowBusy(componentId, null); appendInlineError(componentId, e.message); return null; }
+    _rowBusy(componentId, null);
+    const r = sftkMdCodeReplace(code.sources, field, nf);
+    if (!r.n) {
+      appendInlineError(componentId, `⇄ Replace was not done on "${componentName}": no file of it writes ${field} as a word — open 🔍 to see the source. Nothing was changed.`);
+      return null;
+    }
+    const how = `${r.n} place${r.n === 1 ? '' : 's'} in ${r.files} file${r.files === 1 ? '' : 's'} now ${nf}`;
+    _rowBusy(componentId, '⏳ replacing…');
+    try {
+      const d = await _codeDeploy({ type, componentId, componentName, fullName, spec, code }, r.sources, {
+        ico: '⇄', how, swapTo: nf,
+        title: `Replace the field in the ${spec.what} — ${cfg.label || type}`,
+        confirmLabel: `⇄ Replace in the ${spec.what}`,
+        histTitle: `⇄ ${cfg.label || type} — "${componentName}" (${_selObj.api}.${field} → ${nf})`,
+      });
+      if (d === 'cancel') return 'cancel';
+      return { label: `✅ Replaced — ${how}${d.ranTests ? ' (the org’s Apex tests ran first)' : ''} — verified by re-reading the org`, detailHtml: `<details class="fc-xml-done"><summary>The source that was deployed</summary>${d.diffs}</details>` };
+    } finally { _rowBusy(componentId, null); }
+  }
+  // 🔍 on code: every file of the component with the field's lines marked; ⇄ when a replacement field is picked
+  // and the source writes the field; ✎ Edit code always.
+  async function _codeInspect(type, componentId, componentName, panel, inspBtn, note) {
+    const spec = sftkMdDeleteSpec(type);
+    if (!spec || !(spec.code || spec.bundle)) throw new Error('this kind has no source read here');
+    const fullName = await _deleteFullName(type, componentId, spec);
+    const code = await _codeRead(type, componentId, fullName, spec);
+    const field = _selField.api;
+    const apex = spec.metaTag === 'ApexClass' || spec.metaTag === 'ApexTrigger';
+    let total = 0;
+    const filesHtml = code.sources.map(s => {
+      const n = sftkMdCodeHits(s.source, field).length; total += n;
+      const h = _xiHighlightApex(s.source);
+      return `<div class="fc-code-file"><div class="fc-code-file-hd"><code>${esc(s.file)}</code><span class="fc-code-file-n">${n ? `${n} line${n === 1 ? ' names' : 's name'} the field` : 'no line names the field'}</span></div><pre class="fc-xml-pre fc-xml-pre--code"><code>${h.html}</code></pre></div>`;
+    }).join('');
+    const rp = _replOn() ? sftkMdCodeReplace(code.sources, field, _replField.api) : null;
+    const hint = `<div class="fc-xml-hint">✂ Remove is not offered for code — which line of a program goes is yours to decide, in ✎ Edit code. ⇄ Replace renames <code>${esc(field)}</code> as a whole word in every file${rp ? (rp.n ? ` — here ${rp.n} place${rp.n === 1 ? '' : 's'} in ${rp.files} file${rp.files === 1 ? '' : 's'} would become <code>${esc(_replField.api)}</code>` : ' — nothing here writes it as a word') : ' — pick a replacement field above to see what it would change'}.${apex ? ' In a production org Salesforce runs the org’s Apex tests before it accepts code.' : ''}</div>`;
+    panel.innerHTML = `
+      <div class="fc-xml-hdr">
+        <span class="fc-xml-hdr-name">${esc(componentName)} <small class="fc-xml-src">· ${esc(spec.tooling)} ${esc(fullName)} · Tooling API${code.sources.length > 1 ? ` · ${code.sources.length} files` : ''}</small></span>
+        <span class="fc-xml-badge ${total ? 'fc-xml-badge--hit' : 'fc-xml-badge--miss'}">${total ? `${total} line${total === 1 ? ' names' : 's name'} the field` : 'no line names the field'}</span>
+        <span class="fc-xml-hdr-actions">${rp && rp.n ? `<button class="btn btn-primary btn-sm fc-code-repl-btn" title="Rename ${esc(field)} to ${esc(_replField.api)} in every file — the diff is shown first; a restore point is kept">⇄ Replace</button>` : ''}<button class="btn btn-secondary btn-sm fc-xml-edit-btn" title="Edit the source file by file and deploy it back — a restore point is kept">✎ Edit code</button><button class="fc-xml-close" data-panelid="${esc(componentId)}">✕</button></span>
+      </div>
+      ${note ? `<div class="fc-xml-ed-ok fc-xml-ed-done">${esc(note)}</div>` : ''}
+      <div class="fc-xml-body">${hint}${filesHtml}</div>`;
+    panel.querySelector('.fc-xml-close')?.addEventListener('click', () => { panel.style.display = 'none'; if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open'); });
+    panel.querySelector('.fc-code-repl-btn')?.addEventListener('click', () => { panel.style.display = 'none'; if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open'); fixOne(type, componentId, componentName, _curFieldId, true, 'code'); });
+    panel.querySelector('.fc-xml-edit-btn')?.addEventListener('click', ev => { ev.currentTarget.disabled = true; _codeEditorOpen(panel, { type, componentId, componentName, fullName, spec, code, inspBtn }); });
+    _addXmlNavigation(panel);
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  // ✎ the code editor: one box per file, deployed back as a whole through _codeDeploy.
+  function _codeEditorOpen(panel, ctx) {
+    const box = panel.querySelector('.fc-xml-body');
+    if (!box) return;
+    const { code, spec } = ctx;
+    box.innerHTML = `
+      <div class="fc-xml-editor">
+        <div class="fc-xml-ed-hint">✎ Edit the source and deploy it back — exactly this text is sent (as the ${esc(spec.what)} “${esc(ctx.fullName)}”), every file of it. A restore point is kept; ↩ Undo in History deploys the originals back.${spec.metaTag === 'ApexClass' || spec.metaTag === 'ApexTrigger' ? ' In a production org Salesforce runs the org’s Apex tests before it accepts code.' : ''}</div>
+        ${code.sources.map((s, i) => `<div class="fc-code-ed-file"><div class="fc-code-file-hd"><code>${esc(s.file)}</code><span class="fc-code-file-n fc-code-ed-n" data-i="${i}">unchanged</span></div><textarea class="fc-xml-ta fc-code-ta" data-i="${i}" spellcheck="false" wrap="off" aria-label="The source of ${esc(s.file)}"></textarea></div>`).join('')}
+        <div class="fc-xml-ed-bar">
+          <span class="fc-xml-ed-state">No change yet</span>
+          <button class="btn btn-secondary btn-sm fc-xml-ed-reset" disabled>↺ Start over</button>
+          <button class="btn btn-secondary btn-sm fc-xml-ed-cancel">Cancel</button>
+          <button class="btn btn-primary btn-sm fc-xml-ed-deploy" disabled>⬆ Deploy to the org</button>
+        </div>
+        <div class="fc-xml-ed-out" role="status"></div>
+      </div>`;
+    const tas = [...box.querySelectorAll('.fc-code-ta')], state = box.querySelector('.fc-xml-ed-state');
+    const go = box.querySelector('.fc-xml-ed-deploy'), reset = box.querySelector('.fc-xml-ed-reset'), out = box.querySelector('.fc-xml-ed-out');
+    const origOf = i => String(code.sources[i].source == null ? '' : code.sources[i].source).replace(/\r\n?/g, '\n');
+    tas.forEach((ta, i) => { ta.value = origOf(i); ta.rows = Math.min(28, Math.max(6, ta.value.split('\n').length + 1)); });
+    const sync = () => {
+      let lines = 0, files = 0;
+      tas.forEach((ta, i) => {
+        const d = ta.value === origOf(i) ? 0 : sftkMdLineDiff(origOf(i), ta.value).filter(x => x.op !== ' ').length;
+        const n = box.querySelector(`.fc-code-ed-n[data-i="${i}"]`);
+        if (n) n.textContent = d ? `${d} line${d === 1 ? '' : 's'} changed` : 'unchanged';
+        if (d) { lines += d; files++; }
+      });
+      state.textContent = files ? `${lines} line${lines === 1 ? '' : 's'} changed in ${files} file${files === 1 ? '' : 's'}` : 'No change yet';
+      go.disabled = !files; reset.disabled = !files;
+    };
+    tas.forEach(ta => {
+      ta.addEventListener('input', () => { out.innerHTML = ''; sync(); });
+      ta.addEventListener('keydown', ev => {
+        if (ev.key !== 'Tab') return;
+        ev.preventDefault();
+        const s = ta.selectionStart, e = ta.selectionEnd;
+        ta.value = ta.value.slice(0, s) + '    ' + ta.value.slice(e);
+        ta.selectionStart = ta.selectionEnd = s + 4;
+        sync();
+      });
+    });
+    reset.addEventListener('click', () => { tas.forEach((ta, i) => { ta.value = origOf(i); }); out.innerHTML = ''; sync(); });
+    box.querySelector('.fc-xml-ed-cancel').addEventListener('click', () => { _codeInspect(ctx.type, ctx.componentId, ctx.componentName, panel, ctx.inspBtn); });
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      const say = (cls, html) => { out.innerHTML = `<div class="${cls}">${html}</div>`; };
+      const newSources = code.sources.map((s, i) => ({ ...s, source: tas[i].value }));
+      const files = newSources.filter((s, i) => s.source !== origOf(i)).length;
+      try {
+        const d = await _codeDeploy(ctx, newSources, {
+          ico: '⬆', how: `${files} file${files === 1 ? '' : 's'} edited by hand`,
+          title: `Deploy your code — ${spec.what} “${ctx.componentName}”`,
+          confirmLabel: '⬆ Deploy',
+          histTitle: `✎ Code edited — ${spec.what} "${ctx.componentName}"`,
+        });
+        if (d === 'cancel') { say('fc-xml-ed-note', 'Not deployed — cancelled. Your text is still in the boxes.'); sync(); return; }
+        await _codeInspect(ctx.type, ctx.componentId, ctx.componentName, panel, ctx.inspBtn, `✅ Deployed — every file you changed is in the org, verified by re-reading it.${d.stillNames ? '' : ` Nothing in the ${spec.what} names the field now.`} ↩ Undo in History puts the previous source back.`);
+      } catch (e) {
+        say('fc-xml-ed-err', `❌ ${esc(e.message)}`);
+        sync();
+      }
+    });
+    tas[0]?.focus();
   }
   // Toggle the XML inspector panel open/closed for a dependency item.
   async function toggleXmlInspector(type, componentId, componentName, fieldId) {
@@ -6776,6 +7120,7 @@ const FieldCleaner = (() => {
 
     try {
       if (_inspectsByMd(type)) { await _xmlInspectMd(type, componentId, componentName, panel, inspBtn); return; }
+      if (_inspectsByCode(type)) { await _codeInspect(type, componentId, componentName, panel, inspBtn); return; }
       const sobject = _INSPECT_SOBJECT[type];
       const res     = await bg({
         type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,

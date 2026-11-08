@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ValidationRule xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>SFTK_Pkg_Red_Needs_Tag</fullName>
+    <active>true</active>
+    <description>Admin Toolkit fixture on a packaged object: a red child needs a tag. Blocks the deployment fixture's red children in the target unless the pause panel pauses it; names SFTK_Pkg_Tag__c for Field Cleaner. Safe to delete.</description>
+    <errorConditionFormula>AND( ISPICKVAL(dlrs__Color__c, &quot;Red&quot;), ISBLANK(SFTK_Pkg_Tag__c) )</errorConditionFormula>
+    <errorMessage>A red Lookup Child needs an SFTK Pkg Tag.</errorMessage>
+</ValidationRule>
