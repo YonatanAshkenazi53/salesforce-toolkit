@@ -1,0 +1,25 @@
+[
+  {
+    "format": "sftk-profile",
+    "schema": 1,
+    "exportedBy": "fixture",
+    "exportedAt": "2026-11-08T00:00:00.000Z",
+    "profile": {
+      "name": "SFTK Pkg — Lookup tree (DLRS)",
+      "sourceOrg": "https://orgfarm-c449e108c2-dev-ed.develop.my.salesforce.com",
+      "targetOrg": "https://orgfarm-e2c4511b2b-dev-ed.develop.my.salesforce.com",
+      "tree": {
+        "objectType": "dlrs__LookupParent__c",
+        "where": "Name LIKE 'SFTK Pkg Parent%'",
+        "matchField": "Name",
+        "children": [
+          {
+            "childSObject": "dlrs__LookupChild__c",
+            "field": "dlrs__LookupParent__c",
+            "matchField": "Name"
+          }
+        ]
+      }
+    }
+  }
+]
