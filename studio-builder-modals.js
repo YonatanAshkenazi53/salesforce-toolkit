@@ -1131,10 +1131,6 @@ async function openRecordPickerModal(pathStr) {
         ${sels.join('<span style="color:var(--subtext)">+</span>')}
         <span class="ds-subtext" style="font-size:11px">ordered, up to 4 — target-side names follow the Field Mapping</span>
       </div>
-      <label class="ds-match-tiered" style="display:inline-flex;align-items:flex-start;gap:6px;cursor:pointer;font-size:12px;margin-top:6px" title="The first field must be present and equal on both sides. A later field counts when both records hold a value: equal adds to the match, different rules the pair out, empty says nothing. The best unique match wins; a tie is listed under ⚠ Needs a decision.">
-        <input type="checkbox" id="dsMatchTiered" ${matchTiered ? 'checked' : ''}>
-        <span><strong>Most specific first</strong> — a record that leaves a later field empty is matched by the fields it has</span>
-      </label>
       <div class="ds-match-readsas ds-subtext" id="dsMatchReadsAs" style="font-size:11.5px;line-height:1.5;margin-top:4px">Reads as <strong>${esc(ra.key)}</strong>. ${esc(ra.how)}</div>`;
     } else {
       body = extIdCandidates.length
@@ -1148,27 +1144,47 @@ async function openRecordPickerModal(pathStr) {
             <option>No external ID fields in this org — add one in Setup to enable</option>
           </select>`;
     }
+    // the headline: the key in one sentence, whatever the strategy
+    const head = (() => {
+      if (matchStrategy === 'composite') { const r = matchReadsAs(matchFields, matchTiered); return { key: r.key || '— pick the fields —', how: r.how }; }
+      if (matchStrategy === 'externalId') { const f = matchFields[0]; return f ? { key: matchLabelOf(f), how: 'The strongest key — a re-run can upsert on it instead of duplicating.' } : { key: 'no external ID field yet', how: 'Add one in Setup, or choose another strategy.' }; }
+      const src = matchLabelOf(displayField), tgtF = tgtMatchField && tgtMatchField !== displayField ? ` ↔ ${matchLabelOf(tgtMatchField)}` : '';
+      return { key: `${src}${tgtF}`, how: 'Two records are the same when this field is equal on both sides.' };
+    })();
+    const normOn = Object.keys(matchNormalize || {}).some(k => matchNormalize[k]);
+    const tieredHtml = matchStrategy === 'composite' ? `
+      <label class="ds-match-tiered" style="display:inline-flex;align-items:flex-start;gap:6px;cursor:pointer;font-size:12px;margin-top:6px" title="The first field must be present and equal on both sides. A later field counts when both records hold a value: equal adds to the match, different rules the pair out, empty says nothing. The best unique match wins; a tie is listed under ⚠ Needs a decision.">
+        <input type="checkbox" id="dsMatchTiered" ${matchTiered ? 'checked' : ''}>
+        <span><strong>Most specific first</strong> — a record that leaves a later field empty is matched by the fields it has</span>
+      </label>` : '';
     return `
       <div class="ds-match-cfg" style="border:1px solid var(--border,#e2e8f0);border-radius:6px;padding:8px 10px;margin-bottom:10px">
-        <div class="ds-match-strat-row" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div class="ds-match-head">
+          <span class="ds-match-head-lbl">Key</span>
+          <strong class="ds-match-head-key" id="dsMatchHeadKey">${esc(head.key)}</strong>
+          <span class="ds-match-head-how ds-subtext">${esc(head.how)}</span>
+          <span style="flex:1"></span>
+          <button class="ds-btn ds-btn-xs" id="dsMatchTestBtn" title="Grade this key against BOTH live orgs: populated% + unique% per org and a cross-org match preview">🧪 Test this key</button>
+          <button class="ds-btn ds-btn-xs" id="dsMatchSuggestBtn" title="Ranked match-key suggestions — the top 3 are graded against LIVE data in the source and EVERY target automatically (populated% + unique% per org, worst org scores, ★ best key); the rest grade on demand">💡 Suggestions</button>
+        </div>
+        <div class="ds-match-strat-row" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px">
           <span class="ds-rec-display-lbl" title="How records are recognized as 'the same' across orgs. Normalization is part of the key — the diff scan and every writer build keys identically from this config.">Matching:</span>
           ${stratRadio('field', 'Single field', false, 'One field is the identity — classic: Name. Two records with the same value are the same record. Example: Account Name.')}
           ${stratRadio('composite', 'Composite', false, 'Several fields in a sequence, up to 4 — for objects where no single field is unique. Example: Name + ID number + Email; a junction object: its two parent lookups. With "Most specific first" a record that leaves a later field empty is matched by the fields it has.')}
           ${stratRadio('externalId', 'External ID', !extIdCandidates.length, extIdCandidates.length
             ? 'A dedicated unique field, the strongest key: it survives renames and lets a re-run upsert instead of duplicating. Example: an External_Id__c that carries the same value in every org'
             : 'No external ID fields in this org — add one in Setup to enable')}
-          <span style="flex:1"></span>
-          <button class="ds-btn ds-btn-xs" id="dsMatchTestBtn" title="Grade this key against BOTH live orgs: populated% + unique% per org and a cross-org match preview">🧪 Test this key</button>
-          <button class="ds-btn ds-btn-xs" id="dsMatchSuggestBtn" title="Ranked match-key suggestions — the top 3 are graded against LIVE data in the source and EVERY target automatically (populated% + unique% per org, worst org scores, ★ best key); the rest grade on demand">💡 Suggestions</button>
-        </div>
-        <div class="ds-subtext ds-match-help" style="font-size:11.5px;line-height:1.5;margin-top:5px" title="The key decides what a scan calls missing, changed or in sync, and what a re-run updates. Hover a choice for what it means; 🧪 grades the key against live data, 💡 suggests keys.">
-          How two records are recognised as <strong>the same record</strong> across orgs — hover a choice to see what it means.
+          <span class="ds-subtext ds-match-help" style="font-size:11px" title="The key decides what a scan calls missing, changed or in sync, and what a re-run updates. Hover a choice for what it means; 🧪 grades the key against live data, 💡 suggests keys.">how two records are recognised as <strong>the same record</strong> across orgs</span>
         </div>
         <div class="ds-match-fields-row" style="margin-top:6px">${body}</div>
+        <details class="ds-match-adv"${normOn || (matchStrategy === 'composite' && matchTiered) ? ' open' : ''}>
+          <summary class="ds-subtext">Advanced — normalize${matchStrategy === 'composite' ? ' · most specific first' : ''}${normOn ? ` <span class="ds-match-adv-on">${NORM_OPTS.filter(([k]) => matchNormalize[k]).map(([, lbl]) => lbl).join(', ')}</span>` : ''}</summary>
         <div class="ds-match-norm-row" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;font-size:12px;align-items:center">
           <span class="ds-subtext" title="Applied to every key component on BOTH sides before comparing — normalization is part of the key itself.">Normalize:</span>
           ${NORM_OPTS.map(([k, lbl, ex]) => `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer" title="${esc(ex)}"><input type="checkbox" data-match-norm="${esc(k)}" ${matchNormalize[k] ? 'checked' : ''}> ${lbl}</label>`).join('')}
         </div>
+          ${tieredHtml}
+        </details>
         ${matchStrategy === 'externalId' ? `
         <div style="margin-top:7px">
           <label style="display:inline-flex;align-items:flex-start;gap:6px;cursor:pointer;font-size:12px" title="Runs use the Salesforce upsert API on this External ID: a record whose key already exists in the target is UPDATED in place; only genuinely new keys insert. Without this, every run INSERTS — re-running a deployment duplicates records. The Run page's write-mode toggle overrides this for the root object only.">
@@ -1234,17 +1250,19 @@ async function openRecordPickerModal(pathStr) {
         <span class="ds-subtext" style="font-size:11px">${matchSuggestDepth === 1 ? 'one field: how many records hold a value for it, in both orgs' : 'the name first, then the fields that tell records apart — most specific first'}</span>
       </div>`;
     if (!suggestions.length) return depthRow + `<div class="ds-subtext" style="font-size:12px">No key of ${matchSuggestDepth} field${matchSuggestDepth === 1 ? '' : 's'} can be built from this object's schema.</div>`;
-    return depthRow + `<div class="ds-match-suggest-list" style="display:flex;flex-direction:column;gap:4px">
+    // one compact row per candidate (user 2026-11-08: "זה מאוד לא ברור"): the key, its score, a short reason, the
+    // two buttons; the grade's detail under it. A reason the whole list shares (the depth sentence) is said once above.
+    const shortWhy = s => { const w = String(s.why || ''); const n = Object.keys(s.normalize || {}).some(k => s.normalize[k]); return (w.length <= 44 ? w : '') + (n ? (w.length <= 44 ? ' · ' : '') + 'normalized' : ''); };
+    return depthRow + `<table class="ds-match-sug"><thead><tr><th>Key</th><th>Score</th><th>Why</th><th></th></tr></thead><tbody>
       ${suggestions.map(s => `
-        <div class="ds-match-suggest-row" style="display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap">
-          <button class="ds-btn ds-btn-xs" data-match-adopt="${esc(s.sig)}" title="Use this as the matching config">Use</button>
-          <button class="ds-btn ds-btn-xs" data-match-grade="${esc(s.sig)}" title="Run the key-quality analysis for this candidate (queries both orgs)">Grade</button>
-          <strong>${esc(matchReadsAs(s.fields, false).key)}</strong>${s.tiered ? '<span class="ds-subtext" title="A record that leaves a later field empty is matched by the fields it has">most specific first</span>' : ''}
-          <span data-match-score="${esc(s.sig)}"></span>
-          <span class="ds-subtext">${esc(s.why)}${Object.keys(s.normalize || {}).some(k => s.normalize[k]) ? ' · normalized' : ''}</span>
-          <div data-match-grade-out="${esc(s.sig)}" style="flex-basis:100%">${gradeCache.get(s.sig) || ''}</div>
-        </div>`).join('')}
-    </div>${(() => {
+        <tr class="ds-match-suggest-row" data-sig="${esc(s.sig)}">
+          <td><strong>${esc(matchReadsAs(s.fields, false).key)}</strong>${s.tiered ? ' <span class="ds-subtext ds-match-sug-tier" title="A record that leaves a later field empty is matched by the fields it has">most specific first</span>' : ''}</td>
+          <td><span data-match-score="${esc(s.sig)}"></span></td>
+          <td class="ds-subtext">${esc(shortWhy(s))}</td>
+          <td class="ds-match-sug-acts"><button class="ds-btn ds-btn-xs" data-match-adopt="${esc(s.sig)}" title="Use this as the matching config">Use</button> <button class="ds-btn ds-btn-xs" data-match-grade="${esc(s.sig)}" title="Run the key-quality analysis for this candidate (queries both orgs)">Grade</button></td>
+        </tr>
+        <tr class="ds-match-sug-detail"><td colspan="4"><div data-match-grade-out="${esc(s.sig)}">${gradeCache.get(s.sig) || ''}</div></td></tr>`).join('')}
+    </tbody></table>${(() => {
       const tgts = (typeof profileTargets === 'function') ? (profileTargets(_editingProfile) || []).filter(Boolean) : [];
       return tgts.length > 1
         ? `<div class="ds-subtext" style="font-size:11px;margin-top:4px">Each grade covers the source + all ${tgts.length} targets — the score is the WORST org's, so one weak org drags the ★ away from a key that only looks good somewhere.</div>`
@@ -1693,7 +1711,10 @@ async function openRecordPickerModal(pathStr) {
           }
           if (weak.length && typeof s.score === 'number') s.score = Math.max(0, s.score - 30 * weak.length);
           let html = _matchAnalysisHtml(res, clone, true, extras);
-          if (weak.length) html = `<div class="ds-subtext" style="font-size:11px;color:var(--warning,#b45309)">⚠ ${esc(weak.map(w => `${w.field}: held by ${w.populated.toLocaleString()} of ${w.total.toLocaleString()} sampled records — adds almost nothing to the key`).join(' · '))}</div>` + html;
+          // one line, not one sentence per field (user 2026-11-08: "זה מאוד לא ברור")
+          if (weak.length) html = `<div class="ds-subtext ds-match-weak" style="font-size:11px;color:var(--warning,#b45309)">⚠ ${esc(weak.length === 1
+            ? `${weak[0].field}: held by ${weak[0].populated.toLocaleString()} of ${weak[0].total.toLocaleString()} sampled records — adds almost nothing to the key`
+            : `${weak.length} fields add almost nothing to the key — ${weak.map(w => w.field).join(', ')} (each held by at most ${Math.max(...weak.map(w => w.populated)).toLocaleString()} of ${weak[0].total.toLocaleString()} sampled records)`)}</div>` + html;
           if (list.length > capped.length) {
             html += `<div class="ds-subtext" style="font-size:11px">…${list.length - capped.length} more target(s) not auto-graded (cap ${GRADE_TGT_CAP}) — 🧪 Test this key grades them all.</div>`;
           }

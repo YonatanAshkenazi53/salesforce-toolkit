@@ -70,6 +70,7 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 - Limit: a closed org can't have its real type (sandbox, production, trial) re-checked until you open it again.
 
 ### Data Deployment
+- The matching section (Pick records › Matching, and the ✏ of a parent or a tree card) reads in layers: the key in one sentence on top with 🧪 / 💡, the strategy and fields, Advanced folded (normalize · most specific first), the suggestions as a table with the grade under each row (2026-11-08).
 - The ⏸ pause panel is three tabs — Flows · Validation rules · Duplicate rules — each shown only when its option is on, with a one-sentence explanation, the objects this run writes and their items, all / none per object (2026-11-08).
 - ▸ record shows the **Owner** right under Record Type (2026-11-08): the source owner by name, the default the run would write said in words, and a search over the target's active users and the queues that take the object (only where it can be queue-owned); a pick is written as OwnerId after the engine's own owner mapping.
 - Build a reusable deployment — which object and related child records to move, and which field identifies a matching record between two orgs — from a template or from scratch, and import or export it as a file to share with a teammate (no passwords or org-specific record IDs travel with it).

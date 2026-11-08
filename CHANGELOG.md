@@ -16,6 +16,12 @@ extensions containing root files that start with `_`).
 ## 1.1.0 — 2026-11-04
 
 ### Data Studio
+- **The matching section reads in layers** (2026-11-08: "זה גם צריך ui יותר טוב. זה מאוד לא ברור"): the key as one
+  sentence on top — "Key · Account Name · Two records are the same when this field is equal on both sides" — with
+  🧪 Test and 💡 Suggestions beside it; the strategy and its fields under it; Normalize and Most specific first
+  folded under "Advanced" (open only when something is set); the suggestions as a table — key · score · a short
+  reason · Use / Grade — with the grade's detail under each row, the depth sentence said once above the table,
+  and the fields that add almost nothing named in ONE line instead of one sentence each.
 - **⏸ The pause panel is three tabs** (2026-11-08: "צריך להראות רק אם מסמנים את המטאדאטה שרוצים לעצור… ולעשות 3
   טאבים עם פירוט מובן"): ⏸ Flows · ⏸ Validation rules · 🔁 Duplicate rules — a tab appears only when its option is
   on, carries its count ("2 of 3" once something is unticked), opens with one plain sentence on what the run does

@@ -4977,6 +4977,26 @@ html, body {
 .ds-match-grade-tbl thead th { font-weight: 600; color: var(--subtext); }
 .ds-match-grade-tbl tbody th { font-weight: 400; color: var(--subtext); }
 .ds-match-grade-err { color: var(--warning, #b45309); white-space: normal; }
+/* the matching section in layers (2026-11-08): the key on top, Advanced folded, the suggestions as a table */
+.ds-match-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
+.ds-match-head-lbl { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--subtext); }
+.ds-match-head-key { font-size: 13px; color: var(--text); }
+.ds-match-head-how { font-size: 11.5px; }
+.ds-match-adv { margin-top: 8px; font-size: 12px; }
+.ds-match-adv > summary { cursor: pointer; list-style: none; font-size: 11.5px; }
+.ds-match-adv > summary::-webkit-details-marker { display: none; }
+.ds-match-adv > summary::before { content: '▸ '; }
+.ds-match-adv[open] > summary::before { content: '▾ '; }
+.ds-match-adv-on { color: var(--text); }
+.ds-match-sug { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 4px; }
+.ds-match-sug th { text-align: left; font-weight: 600; color: var(--subtext); font-size: 11px; padding: 2px 8px 4px 0; border-bottom: 1px solid var(--border); }
+.ds-match-sug td { padding: 4px 8px 4px 0; vertical-align: top; }
+.ds-match-sug .ds-match-suggest-row td { border-top: 1px solid var(--border); }
+.ds-match-sug .ds-match-suggest-row:first-child td { border-top: none; }
+.ds-match-sug-acts { text-align: right; white-space: nowrap; }
+.ds-match-sug-detail td { padding-top: 0; }
+.ds-match-sug-detail td > div:empty { display: none; }
+.ds-match-sug-tier { font-size: 11px; margin-left: 6px; }
 .ds-pk-bar { flex: 1; max-width: 110px; height: 7px; background: rgba(128,128,128,.15); border-radius: 4px; overflow: hidden; }
 .ds-pk-fill { display: block; height: 100%; background: var(--brand, #0176D3); border-radius: 4px; }
 .ds-pk-count { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 11.5px; }
