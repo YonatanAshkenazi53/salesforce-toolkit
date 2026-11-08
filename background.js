@@ -1112,7 +1112,20 @@ function sftkVanillaPayloadRules(objType, payload) {
 // Duplicate rules (live run 2026-09-22: a fuzzy name rule blocked 100 of 300
 // Accounts — "Use one of these records?"). One run at a time in this worker,
 // so a run-scoped flag is enough; the writers add Salesforce's header.
-function _runDupHeaders() { return globalThis.__sftkRunDupBypass ? { 'Sforce-Duplicate-Rule-Header': 'allowSave=true' } : {}; }
+// The duplicate-rule header for one write. __sftkRunDupBypassObjs (the ⏸ panel,
+// 2026-11-08) narrows the bypass to the objects the user ticked; null = every
+// object (the choice before the panel, and when the rules could not be listed).
+function _runDupHeaders(objType) {
+  if (!globalThis.__sftkRunDupBypass) return {};
+  const objs = globalThis.__sftkRunDupBypassObjs;
+  if (objs && objType && !objs.has(objType)) return {};
+  return { 'Sforce-Duplicate-Rule-Header': 'allowSave=true' };
+}
+function _runDupBypassFor(objType) {
+  if (!globalThis.__sftkRunDupBypass) return false;
+  const objs = globalThis.__sftkRunDupBypassObjs;
+  return !objs || !objType || objs.has(objType);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 🧪 DRY RUN — a real write that Salesforce rolls back (1.1)
@@ -1306,6 +1319,7 @@ async function sfProbeComposite(orgUrl, sid, body) {
 
 async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgtSid, sharedIdMap = null, ledger = null) {
   globalThis.__sftkRunDupBypass = !!(profile && profile.duplicateRules === 'bypass');
+  globalThis.__sftkRunDupBypassObjs = (profile && Array.isArray(profile.dupBypassObjects)) ? new Set(profile.dupBypassObjects) : null;
   const startedAt    = new Date().toISOString();
   // 🧪 a dry run keeps its tokens to itself: the ledger's idMap carries REAL
   // ids between the steps of one run, and a token from an earlier step would
@@ -1434,7 +1448,11 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
   // it, whatever the header says — Salesforce offers no API way past a blocking
   // rule. The old line ("records a rule would have flagged were written") was
   // wrong for that case.
-  if (globalThis.__sftkRunDupBypass) diagnostics.push('Duplicate rules set to Alert were bypassed for this run (engine setting): records such a rule would have flagged were written. A rule set to Block still blocks — no API can pass it; relax that rule in the target for the migration.');
+  if (globalThis.__sftkRunDupBypass) {
+    const objs = globalThis.__sftkRunDupBypassObjs;   // the ⏸ panel's per-object choice (2026-11-08); null = every object
+    const where = objs ? (objs.size ? ` on ${[...objs].sort().join(', ')} (your choice in the ⏸ panel; respected everywhere else)` : ' on no object (every rule respected by your choice in the ⏸ panel)') : ' (engine setting)';
+    diagnostics.push(`Duplicate rules set to Alert were bypassed for this run${where}: records such a rule would have flagged were written. A rule set to Block still blocks — no API can pass it; relax that rule in the target for the migration.`);
+  }
   const nodeLateRefs = new Map();   // node → deferredRefs that point INTO the tree
 
   // SOURCE-org record ids defining a node's scope, used to filter its
@@ -2332,7 +2350,7 @@ async function executeProfileTransfer(profile, srcOrgUrl, srcSid, tgtOrgUrl, tgt
       // Bulk API 2.0 runs duplicate rules and has no header to bypass them
       // (huge-tree run 2026-09-22: 5,000 of 5,000 DUPLICATES_DETECTED) — a
       // bypass run stays on synchronous Collections, whatever the settings.
-      const dupBypass = !!globalThis.__sftkRunDupBypass;
+      const dupBypass = _runDupBypassFor(objType);
       const useBulk  = !dupBypass && (API_MODE === 'bulk' || (API_MODE !== 'sync' && payloads.length >= BULK_MIN));   // a dry run pins API_MODE to 'sync' above
       if (dupBypass && (API_MODE === 'bulk' || payloads.length >= BULK_MIN)) diagnostics.push(`${objType}: duplicate rules are bypassed for this run, and Bulk API 2.0 cannot bypass them — ${payloads.length} record(s) go through synchronous Collections calls instead (${Math.ceil(payloads.length / BATCH_SIZE)} call(s) of ${BATCH_SIZE}).`);
       const STEP     = useBulk ? payloads.length : (PROBE ? PL.sample : BATCH_SIZE);
@@ -4817,7 +4835,7 @@ async function sfCollectionsUpsert(orgUrl, sid, objectType, extIdField, records)
   const bodyStr = JSON.stringify({ allOrNone: false, records });
   const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url, {
     method: 'PATCH',
-    headers: _runDupHeaders(),
+    headers: _runDupHeaders(objectType),
     body: bodyStr
   });
   if (!ok) throw new Error(sfErrorMsg(status, body, url));
@@ -5465,7 +5483,7 @@ async function sfCollectionsCreate(orgUrl, sid, records) {
   const bodyStr = JSON.stringify({ allOrNone: false, records });
   const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url, {
     method: 'POST',
-    headers: _runDupHeaders(),
+    headers: _runDupHeaders(records && records[0] && records[0].attributes && records[0].attributes.type),
     body: bodyStr
   });
   if (!ok) throw new Error(sfErrorMsg(status, body, url));
@@ -5572,7 +5590,7 @@ async function sfCollectionsUpdate(orgUrl, sid, records) {
     const bodyStr = JSON.stringify({ allOrNone: false, records: chunk });
     const { ok, status, body } = await sfFetchWithProxy(orgUrl, sid, url, {
       method: 'PATCH',
-    headers: _runDupHeaders(),
+      headers: _runDupHeaders(chunk && chunk[0] && chunk[0].attributes && chunk[0].attributes.type),
       body: bodyStr
     });
     if (!ok) throw new Error(sfErrorMsg(status, body, url));

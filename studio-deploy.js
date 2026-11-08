@@ -671,8 +671,7 @@ async function renderDeploy() {
       <span id="dsDepHardNote" class="ds-dep-hardnote" style="${_recDeleteMode === 'hard' ? '' : 'display:none'}">🔥 Hard-deleted records skip the Recycle Bin — <strong>↩ Roll back cannot bring them back</strong>. Only the Recycle Bin mode can be undone.</span>
       ${(() => { const n = sftkEngineNote(p); return n ? `<span id="dsDepEngineNote" class="ds-dep-enginenote${n.kind === 'warn' ? ' ds-dep-enginenote-warn' : ''}">${esc(n.text)}</span>` : ''; })()}
     </div>
-    <div id="dsDepFlowPauseList" class="ds-dep-foot"></div>
-    <div id="dsDepRulePauseList" class="ds-dep-foot"></div>
+    <div id="dsDepPausePanel" class="ds-dep-foot"></div>
     <div id="dsRecProgress" class="ds-rec-progress"></div></div>
     ${_depLastRunLog ? `<details open class="ds-rec-card ds-dep-lastlog ds-dep-fold"><summary class="ds-rec-card-title">📜 Last run on this page — the numbers above are already refreshed; History keeps this run too</summary><div class="ds-rec-progress">${_depLastRunLog.html}</div></details>` : ''}`);
 
@@ -756,6 +755,7 @@ async function renderDeploy() {
     { missing: scan.missingInTarget || [], drift: scan.changed || [], extras: scan.onlyInTarget || [] }, { probe: true }));
   _depFlowPauseWire(p);
   _depRulePauseWire(p);
+  _depDupePauseWire(p);
   eid('dsDepJourneyBack')?.addEventListener('click', () => _depGoOrigin(p));
   // 🌳 the shape of the deployment, then ⛓ what it points at outside itself
   _depPaintTree(p, scan);
@@ -1982,6 +1982,106 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
   });
 }
 
+// ── ⏸ the pause panel: what this run switches off, per object, with a tick on
+// every item (user 2026-11-08: "צריך להציג למשתמש את מה שמכבים כשעושים דיפלוי
+// עם אפשרות לבחור לפי האובייקטים שאנחנו מעבירים אליהם" — "גם פלואים, גם
+// דופליקישן רולס, וגם ולידציות"). The three options above keep their jobs —
+// reading the target's flows, rules and duplicate rules — and this panel draws
+// their lists together under the objects the deployment writes to. Unticked
+// keys live in _depPauseSkip for the page's life (sftk-pausepanel.js).
+let _depPauseSkip = new Set();
+let _depDupePause = { on: false, key: '', list: null, error: '' };
+
+function _depPausePaint(p) {
+  const host = eid('dsDepPausePanel');
+  if (!host) return;
+  const objects = sftkDeployObjects(p.tree).map(o => o.obj);
+  const tgt = orgLabel(p.targetOrg);
+  const kinds = [
+    { kind: 'flow', st: _depFlowPause, on: _depFlowPause.on, word: 'record-triggered flows', managedWord: 'Flows' },
+    { kind: 'rule', st: _depRulePause, on: _depRulePause.on, word: 'validation rules', managedWord: 'Rules' },
+    { kind: 'dupe', st: _depDupePause, on: p.duplicateRules === 'bypass', word: 'duplicate rules', managedWord: '' },
+  ];
+  const active = kinds.filter(k => k.on);
+  if (!active.length) {
+    host.innerHTML = `<div class="ds-dep-pause-none">Nothing is switched off for this run: ${esc(tgt)} keeps every flow, validation rule and duplicate rule active while the records are written. Tick ⏸ above, or choose Bypass for duplicate rules, to see what would go off — per object, with a tick on each.</div>`;
+    return;
+  }
+  const lines = [];
+  const lists = { flows: null, rules: null, dupes: null };
+  for (const k of active) {
+    if (k.st.error) lines.push(`⚠ The ${k.word} could not be listed — ${esc(k.st.error)}. ${k.kind === 'dupe' ? 'The bypass then applies to every object this run writes.' : `Untick to deploy with the ${k.word} active, or open ${esc(tgt)} and tick again.`}`);
+    else if (!k.st.list) lines.push(`⏳ reading the ${k.word} on ${esc(objects.join(', '))} in ${esc(tgt)}…`);
+    else {
+      const l = k.st.list;
+      if (k.kind === 'flow') lists.flows = l.flows; else if (k.kind === 'rule') lists.rules = l.rules; else lists.dupes = l.rules;
+      if (l.managed && l.managed.length) lines.push(`${k.managedWord} from installed packages cannot be switched and stay on: ${esc(l.managed.join(', '))}.`);
+    }
+  }
+  const written = sftkDeployWrittenObjects(sftkDeployObjects(p.tree), _recSel, _recChildSel);
+  const rows = sftkPauseRows(objects, lists, _depPauseSkip, written);
+  const tip = kind => kind === 'dupe'
+    ? 'Ticked: the writes on this object carry the duplicate-rule header, so a rule set to Alert lets the records through (a rule set to Block still blocks). Unticked: the rule is respected and a record it flags is refused. The rule itself is never switched off.'
+    : 'Ticked: switched off before the first write and back on when the run ends. Unticked: stays on for this run.';
+  const item = (kind, x) => `<label class="ds-dep-pause-item${x.on ? '' : ' ds-dep-pause-off'}" title="${esc(tip(kind))}"><input type="checkbox" class="ds-dep-pause-cb" data-key="${esc(x.key)}" data-obj="${esc(x.object)}" ${x.on ? 'checked' : ''}> ${esc(sftkPauseItemName(kind, x))}</label>`;
+  const kindLine = (kind, label, items) => items === null ? '' : `<div class="ds-dep-pause-kind"><span class="ds-dep-pause-kindlbl">${label}</span>${items.length ? items.map(x => item(kind, x)).join('') : '<span class="ds-subtext">none active</span>'}</div>`;
+  host.innerHTML = `
+    <div class="ds-dep-pause">
+      <div class="ds-dep-pause-hd">⏸ What this run switches off in <strong>${esc(tgt)}</strong>, by the object it writes to — untick anything that should stay as it is</div>
+      ${lines.map(t => `<div class="ds-dep-pause-line">${t}</div>`).join('')}
+      ${rows.filter(r => r.total).map(r => `
+        <div class="ds-dep-pause-obj${r.written ? '' : ' ds-dep-pause-unwritten'}">
+          <div class="ds-dep-pause-objhd"><strong>${esc(r.object)}</strong>${r.written ? '' : '<span class="ds-subtext">nothing selected to write here — its automation stays on</span>'}
+            ${r.total ? `<span class="ds-dep-pause-acts"><button type="button" class="ds-dep-pause-all" data-obj="${esc(r.object)}" data-want="on" title="Tick every item on ${esc(r.object)}">all</button><button type="button" class="ds-dep-pause-all" data-obj="${esc(r.object)}" data-want="off" title="Untick every item on ${esc(r.object)} — its automation stays as it is">none</button></span>` : ''}</div>
+          ${kindLine('flow', '⏸ flows off', r.flows)}
+          ${kindLine('rule', '⏸ validation rules off', r.rules)}
+          ${kindLine('dupe', '🔁 duplicate rules bypassed', r.dupes)}
+        </div>`).join('')}
+      ${rows.some(r => !r.total) ? `<div class="ds-dep-pause-empty">Nothing active to switch on ${esc(rows.filter(r => !r.total).map(r => r.object).join(', '))}.</div>` : ''}
+      ${rows.every(r => !r.total) ? '' : `<div class="ds-dep-pause-sum">${esc(sftkPauseSummary(rows.filter(r => r.total)))}</div>`}
+    </div>`;
+  host.querySelectorAll('.ds-dep-pause-cb').forEach(cb => cb.addEventListener('change', () => {
+    if (cb.checked) _depPauseSkip.delete(cb.dataset.key); else _depPauseSkip.add(cb.dataset.key);
+    _depPausePaint(p);
+  }));
+  host.querySelectorAll('.ds-dep-pause-all').forEach(b => b.addEventListener('click', () => {
+    const want = b.dataset.want === 'on';
+    for (const cb of host.querySelectorAll(`.ds-dep-pause-cb[data-obj="${CSS.escape(b.dataset.obj)}"]`)) {
+      if (want) _depPauseSkip.delete(cb.dataset.key); else _depPauseSkip.add(cb.dataset.key);
+    }
+    _depPausePaint(p);
+  }));
+}
+
+// 🔁 duplicate rules: listed when the Duplicate rules choice is Bypass, so the
+// panel can say which rules the header passes, per object. Read only — a
+// duplicate rule is never switched here.
+async function _depDupePauseWire(p) {
+  const objects = sftkDeployObjects(p.tree).map(o => o.obj);
+  const key = `${p.targetOrg}|${objects.join(',')}`;
+  if (p.duplicateRules !== 'bypass') { _depDupePause = { on: false, key: '', list: null, error: '' }; _depPausePaint(p); return; }
+  if (_depDupePause.on && _depDupePause.key === key) { _depPausePaint(p); return; }
+  _depDupePause = { on: true, key, list: null, error: '' };
+  _depPausePaint(p);
+  try {
+    const sess = await getOrgSession(p.targetOrg);
+    if (!sess) throw new Error(`${orgLabel(p.targetOrg)} is not open in a Chrome tab`);
+    const list = await sftkDupeRuleList(sess, objects);
+    if (_depDupePause.key === key && _depDupePause.on) _depDupePause.list = list;
+  } catch (e) { if (_depDupePause.key === key) _depDupePause.error = (e && e.message) || String(e); }
+  _depPausePaint(p);
+}
+// What the run tells the engine and the confirmation about duplicate rules:
+// null = Respect (nothing to say); objects = null = bypass everywhere (the
+// list could not be read — the old behaviour, said in the confirmation).
+function _depDupePauseOpts(p, written) {
+  if (p.duplicateRules !== 'bypass') return null;
+  const l = _depDupePause.list;
+  if (!l) return { objects: null, rules: [], kept: [], unread: _depDupePause.error || 'the rules were not read yet' };
+  const { act, kept } = sftkPauseKeep('dupe', l.rules, _depPauseSkip, written);
+  return { objects: sftkPauseDupeObjects(l.rules, _depPauseSkip, written), rules: act, kept: kept.map(r => `${r.label} (${r.object})`) };
+}
+
 // ── ⏸ pause record-triggered flows during the run (user 2026-09-29) ───────
 // An option, off by default ("this or just deploy regularly with flows
 // active"). The list is read when the box is ticked, so the user sees exactly
@@ -1992,18 +2092,9 @@ let _depFlowPause = { on: false, key: '', list: null, error: '' };
 async function _depFlowPauseWire(p) {
   const objects = sftkDeployObjects(p.tree).map(o => o.obj);
   const key = `${p.targetOrg}|${objects.join(',')}`;
-  const box = eid('dsDepFlowPause'), host = eid('dsDepFlowPauseList');
-  const paint = () => {
-    if (!host) return;
-    const fp = _depFlowPause;
-    if (!fp.on) { host.innerHTML = ''; return; }
-    if (fp.error) { host.innerHTML = `⚠ The flows could not be listed — ${esc(fp.error)}. Untick to deploy with flows active, or open ${esc(orgLabel(p.targetOrg))} and tick again.`; return; }
-    if (!fp.list) { host.textContent = `⏳ reading the record-triggered flows on ${objects.join(', ')} in ${orgLabel(p.targetOrg)}…`; return; }
-    const l = fp.list;
-    host.innerHTML = !l.flows.length
-      ? `No active record-triggered flow on ${esc(objects.join(', '))} in ${esc(orgLabel(p.targetOrg))} — nothing to pause; the run writes as usual.${l.managed.length ? ` (${l.managed.length} from installed packages cannot be switched: ${esc(l.managed.join(', '))})` : ''}`
-      : `⏸ Active record-triggered flows on this deployment's objects — the run switches off ONLY the ones on objects it writes (listed in its confirmation), and back on when it ends: ${l.flows.map(f => `${esc(f.label)} <span class="ds-subtext">(${esc(f.object)})</span>`).join(', ')}.${l.managed.length ? ` Installed-package flows stay on: ${esc(l.managed.join(', '))}.` : ''}`;
-  };
+  const box = eid('dsDepFlowPause');
+  // the list is drawn by the ⏸ panel (2026-11-08) — per object, with a tick on every item
+  const paint = () => _depPausePaint(p);
   const load = async () => {
     _depFlowPause = { on: true, key, list: null, error: '' };
     paint();
@@ -2059,18 +2150,8 @@ let _depRulePause = { on: false, key: '', list: null, error: '' };
 async function _depRulePauseWire(p) {
   const objects = sftkDeployObjects(p.tree).map(o => o.obj);
   const key = `${p.targetOrg}|${objects.join(',')}`;
-  const box = eid('dsDepRulePause'), host = eid('dsDepRulePauseList');
-  const paint = () => {
-    if (!host) return;
-    const vp = _depRulePause;
-    if (!vp.on) { host.innerHTML = ''; return; }
-    if (vp.error) { host.innerHTML = `⚠ The validation rules could not be listed — ${esc(vp.error)}. Untick to deploy with the rules active, or open ${esc(orgLabel(p.targetOrg))} and tick again.`; return; }
-    if (!vp.list) { host.textContent = `⏳ reading the active validation rules on ${objects.join(', ')} in ${orgLabel(p.targetOrg)}…`; return; }
-    const l = vp.list;
-    host.innerHTML = !l.rules.length
-      ? `No active validation rule on ${esc(objects.join(', '))} in ${esc(orgLabel(p.targetOrg))} — nothing to pause; the run writes as usual.${l.managed.length ? ` (${l.managed.length} from installed packages cannot be switched: ${esc(l.managed.join(', '))}.)` : ''}`
-      : `⏸ Active validation rules on this deployment's objects — the run switches off ONLY the ones on objects it writes (decided when you press ▶ Deploy and listed in its confirmation), and back on when it ends: ${l.rules.map(r => `${esc(r.name)} <span class="ds-subtext">(${esc(r.object)})</span>`).join(', ')}. <b>While they are off they are off for every user of ${esc(orgLabel(p.targetOrg))}.</b>${l.managed.length ? ` Rules from installed packages cannot be switched and stay on: ${esc(l.managed.join(', '))}.` : ''}`;
-  };
+  const box = eid('dsDepRulePause');
+  const paint = () => _depPausePaint(p);
   const load = async () => {
     _depRulePause = { on: true, key, list: null, error: '' };
     paint();
@@ -2124,7 +2205,8 @@ async function _depReconcile(p, objType, buckets, opts) {
   const vpAll = _depRulePause.on && _depRulePause.list && _depRulePause.list.rules.length ? _depRulePause.list : null;
   // only the rules on the objects this run writes — the others stay on, and are named in the confirmation
   const written = sftkDeployWrittenObjects(sftkDeployObjects(p.tree), _recSel, _recChildSel);
-  const vp = vpAll ? { ...vpAll, rules: vpAll.rules.filter(r => written.has(r.object)), untouched: vpAll.rules.filter(r => !written.has(r.object)).map(r => `${r.name} (${r.object})`) } : null;
+  const vpKeep = vpAll ? sftkPauseKeep('rule', vpAll.rules, _depPauseSkip, written) : { act: [], kept: [] };   // the ⏸ panel's ticks (2026-11-08)
+  const vp = vpAll ? { ...vpAll, rules: vpKeep.act, kept: vpKeep.kept.map(r => `${r.name} (${r.object})`), untouched: vpAll.rules.filter(r => !written.has(r.object)).map(r => `${r.name} (${r.object})`) } : null;
   if (!vp || !vp.rules.length) return runReconcile(p, objType, buckets, opts);
   let pausedR = null, tgtSessR = null, backR = null;
   const resumeR = async () => {
@@ -2178,9 +2260,12 @@ async function _depRun(p, objType, buckets) {
   const fpAll = _depFlowPause.on && _depFlowPause.list && _depFlowPause.list.flows.length ? _depFlowPause.list : null;
   // only the flows on the objects this run writes (2026-10-03) — a flow on an object with nothing selected stays on
   const writtenF = sftkDeployWrittenObjects(sftkDeployObjects(p.tree), _recSel, _recChildSel);
-  const fpNarrow = fpAll ? { ...fpAll, flows: fpAll.flows.filter(f => writtenF.has(f.object)) } : null;
+  // …and only the ones still ticked in the ⏸ panel (2026-11-08); the rest are named as left ON
+  const fpKeep = fpAll ? sftkPauseKeep('flow', fpAll.flows, _depPauseSkip, writtenF) : { act: [], kept: [] };
+  const fpNarrow = fpAll ? { ...fpAll, flows: fpKeep.act, kept: fpKeep.kept.map(f => `${f.label} (${f.object})`) } : null;
   const fp = fpNarrow && fpNarrow.flows.length ? fpNarrow : null;
-  if (!fp) return _depReconcile(p, objType, buckets);
+  const dupePause = _depDupePauseOpts(p, writtenF);
+  if (!fp) return _depReconcile(p, objType, buckets, { dupePause });
   let paused = null, tgtSess = null, back = null;
   const resume = async () => {
     if (back || !paused || !paused.ok || !paused.off.length) return back;
@@ -2189,7 +2274,7 @@ async function _depRun(p, objType, buckets) {
     return back;
   };
   try {
-    await _depReconcile(p, objType, buckets, { flowPause: fp,
+    await _depReconcile(p, objType, buckets, { flowPause: fp, dupePause,
       beforeWrites: async (sess, log) => {
         tgtSess = sess;
         log('⏸', `Switching off ${fp.flows.length} record-triggered flow(s) in ${orgLabel(sess.orgUrl)}…`);
@@ -2223,6 +2308,8 @@ async function _depRun(p, objType, buckets) {
 
 // ── the action bar: what ▶ Deploy will do, in words ───────────────────────
 function _depSummary(p, objTypeOrNull, objByPathOrNull) {
+  // the ⏸ panel says which objects the run writes — it follows every tick (2026-11-08)
+  if (eid('dsDepPausePanel') && typeof _depPausePaint === 'function') _depPausePaint(p);
   const objType = objTypeOrNull || p.tree?.objectType || p.tree?.childSObject || '?';
   const objByPath = objByPathOrNull || Object.fromEntries(sftkDeployObjects(p.tree).map(o => [o.pathKey, o.obj]));
   const s = sftkDeploySelection(_recSel, _recChildSel, objType, objByPath);

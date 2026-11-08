@@ -2255,6 +2255,9 @@ async function runReconcile(profile, objType, buckets, opts) {
   // ⏸ validation rules (campaign 4 phase 4 — sftk-vrpause.js): opts.rulePause =
   // { rules, managed }, listed in the same confirmation, switched by the same hooks.
   const _vp = opts && opts.rulePause && (opts.rulePause.rules || []).length ? opts.rulePause : null;
+  // 🔁 duplicate rules bypassed per object (the ⏸ panel, 2026-11-08): opts.dupePause =
+  // { objects, rules, kept } — listed in the same confirmation; the engine gets the objects.
+  const _dp = opts && opts.dupePause && ((opts.dupePause.rules || []).length || (opts.dupePause.kept || []).length || opts.dupePause.objects === null) ? opts.dupePause : null;
   // 🧪 DRY RUN (1.1): the same run, but every insert goes to the engine in
   // probe mode — one composite transaction Salesforce rolls back — and the
   // other kinds of write (delete, overwrite, relink, pull) are named as not
@@ -2552,7 +2555,7 @@ async function runReconcile(profile, objType, buckets, opts) {
       production: tgtGate ? { label: tgtGate.label || orgLabel(profile.targetOrg) } : null,
     });
     if (!ok) return;
-  } else if (delIds.length || pullIds.length || updSrcIds.length || anyChildAct || capWarnLines.length || _fp || _vp) {
+  } else if (delIds.length || pullIds.length || updSrcIds.length || anyChildAct || capWarnLines.length || _fp || _vp || _dp) {
     const delBlock = delIds.length ? (isHard
       ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-left:3px solid #dc2626;border-radius:4px;font-size:12px;color:#991b1b">
            🔥 <strong>Hard-delete ${delIds.length} ${esc(objType)} record(s)</strong> from
@@ -2580,8 +2583,9 @@ async function runReconcile(profile, objType, buckets, opts) {
            ← <strong>Update ${updSrcIds.length} ${esc(objType)} record(s)</strong> in
            <strong>${esc(orgLabel(profile.sourceOrg))}</strong> (source) with the target's values — the target wins those rows.</div>`
       : '';
-    const _fpOnly = (!!_fp || !!_vp) && !delIds.length && !childDelTotal && !pullIds.length && !updSrcIds.length && !anyChildAct && !capWarnLines.length;
-    const title = _fpOnly ? (_fp && _vp ? '⏸ Confirm the run — flows and validation rules paused' : _vp ? '⏸ Confirm the run — validation rules paused' : '⏸ Confirm the run — record-triggered flows paused')
+    const _fpOnly = (!!_fp || !!_vp || !!_dp) && !delIds.length && !childDelTotal && !pullIds.length && !updSrcIds.length && !anyChildAct && !capWarnLines.length;
+    const _pauseKinds = [_fp && 'record-triggered flows', _vp && 'validation rules', _dp && 'duplicate rules'].filter(Boolean);
+    const title = _fpOnly ? `⏸ Confirm the run — ${_pauseKinds.join(', ')} ${_dp && !_fp && !_vp ? 'bypassed' : _dp ? 'paused or bypassed' : 'paused'}`
       : (delIds.length || childDelTotal)
       ? (isHard ? '🔥 Confirm HARD delete' : '⚠ Confirm reconcile actions')
       : (anyChildAct && !pullIds.length && !updSrcIds.length)
@@ -2602,6 +2606,7 @@ async function runReconcile(profile, objType, buckets, opts) {
            <strong>${esc(orgLabel(profile.targetOrg))}</strong> — ${_fpList(_fp.flows)}.<br>
            ▶ <strong>When the run ends</strong> (finished, failed or stopped): switch each back ON at the version that was active.
            Records written while they are off are <strong>never</strong> processed by these flows.
+           ${(_fp.kept || []).length ? `<br>Left ON by your choice in the ⏸ panel: ${esc(_fp.kept.join(', '))}.` : ''}
            ${(_fp.managed || []).length ? `<br>Flows from installed packages cannot be switched and stay ON: ${esc(_fp.managed.join(', '))}.` : ''}</div>`
       : '';
     const ruleBlock = _vp
@@ -2610,13 +2615,25 @@ async function runReconcile(profile, objType, buckets, opts) {
            <strong>${esc(orgLabel(profile.targetOrg))}</strong> — ${_vp.rules.map(x => `${esc(x.name)} <span class="ds-subtext">(${esc(x.object)})</span>`).join(', ')}.<br>
            ▶ <strong>When the run ends</strong> (finished, failed or stopped): switch each back ON.
            While they are off they are off for <strong>every user</strong> of that org, not only for this run, and records written meanwhile are <strong>never</strong> validated later.
+           ${(_vp.kept || []).length ? `<br>Left ON by your choice in the ⏸ panel: ${esc(_vp.kept.join(', '))}.` : ''}
            ${(_vp.untouched || []).length ? `<br>Rules on objects this run does not write stay ON: ${esc(_vp.untouched.join(', '))}.` : ''}
            ${(_vp.managed || []).length ? `<br>Rules from installed packages cannot be switched and stay ON: ${esc(_vp.managed.join(', '))}.` : ''}</div>`
+      : '';
+    const dupeBlock = _dp
+      ? `<div style="margin-top:10px;padding:10px 12px;background:#fffbeb;border-left:3px solid #d97706;border-radius:4px;font-size:12px">
+           🔁 <strong>Duplicate rules bypassed</strong> for this run's writes in <strong>${esc(orgLabel(profile.targetOrg))}</strong>${_dp.objects === null
+             ? ` on every object it writes — the rules could not be listed (${esc(_dp.unread || '')}), so the choice could not be made per object.`
+             : (_dp.objects || []).length
+               ? ` on <strong>${esc(_dp.objects.join(', '))}</strong>${(_dp.rules || []).length ? ` — ${_dp.rules.map(x => `${esc(x.label)} <span class="ds-subtext">(${esc(x.object)})</span>`).join(', ')}` : ''}.`
+               : ' on no object — every rule is respected by your choice.'}
+           A rule set to Alert lets the records through; a rule set to Block still blocks — no API can pass it. Nothing is switched off: the rules stay as they are for every other user.
+           ${(_dp.kept || []).length ? `<br>Respected by your choice in the ⏸ panel: ${esc(_dp.kept.join(', '))}.` : ''}</div>`
       : '';
     const bodyHtml = `
       Review the changes before continuing:
       ${flowBlock}
       ${ruleBlock}
+      ${dupeBlock}
       ${capWarnBlock}
       ${planBlock}
       ${pullBlock}
@@ -2959,6 +2976,8 @@ async function runReconcile(profile, objType, buckets, opts) {
       delete pushProfile.lastScan;
       pushProfile.tree.recordIds = treePushIds;
       if (PROBE) pushProfile.probe = true;
+      // 🔁 the objects whose duplicate rules this run bypasses (the ⏸ panel); absent = every object
+      if (_dp && Array.isArray(_dp.objects)) pushProfile.dupBypassObjects = _dp.objects;
       // Phase 4: every level that rides this call, at any depth — the engine
       // writes root → children → grandchildren and links each to the id its
       // parent got earlier in the same run. R2 (master-detail ⇒ parent-first)

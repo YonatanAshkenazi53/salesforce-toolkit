@@ -16,6 +16,15 @@ extensions containing root files that start with `_`).
 ## 1.1.0 — 2026-11-04
 
 ### Data Studio
+- **⏸ The pause panel: what this run switches off in the target, per object, with a tick on every item.**
+  (2026-11-08: "צריך להציג למשתמש את מה שמכבים כשעושים דיפלוי עם אפשרות לבחור לפי האובייקטים" — flows,
+  duplicate rules and validation rules.) With ⏸ pause flows, ⏸ pause validation rules or Duplicate rules =
+  Bypass chosen, the Deploy page lists under each object the deployment writes to the record-triggered flows
+  and validation rules that go off and the duplicate rules the bypass header passes; every item has a tick,
+  each object has all / none, and the unticked stay exactly as they are. The confirmation names what is left
+  on "by your choice", the duplicate-rule bypass is sent only for the objects ticked (the engine's header is
+  per write), and an object with nothing to switch is said in one line. Live npc → npc2: Account's two flows
+  off and back on, Contact's flow left on (CLI mid-run), Contact's duplicate rule respected, rollback clean.
 - **🎭 PII suggestions on the Deploy page, with the record each example comes from.** "Suggest PII
   treatment for all N to insert" reads the very records the deployment inserts and proposes a treatment per
   field, each with real examples and the record they come from ("Omer → Lior, in Omer SFTK CX Lead One").

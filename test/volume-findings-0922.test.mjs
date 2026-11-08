@@ -56,7 +56,7 @@ describe('duplicate rules: respect by default, bypass by choice', () => {
     globalThis.__sftkRunDupBypass = true;
     expect(_runDupHeaders()).toEqual({ 'Sforce-Duplicate-Rule-Header': 'allowSave=true' });
     delete globalThis.__sftkRunDupBypass;
-    expect((BG.match(/headers: _runDupHeaders\(\),/g) || []).length).toBe(3);
+    expect((BG.match(/headers: _runDupHeaders\([^)]*\),/g) || []).length).toBe(3);   // 2026-11-08: each call names its object (the ⏸ panel narrows the bypass per object)
     expect(BG).toContain("globalThis.__sftkRunDupBypass = !!(profile && profile.duplicateRules === 'bypass');");
     // QA 2026-10-06: the line also says a rule set to Block is not passed by the header
     expect(BG).toContain('Duplicate rules set to Alert were bypassed for this run');

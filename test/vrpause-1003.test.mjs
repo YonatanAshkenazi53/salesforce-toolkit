@@ -156,9 +156,11 @@ describe('only the objects in use (user 2026-10-03: "only for the used objects")
   });
   it('the run narrows rules AND flows to those objects, and the confirmation names the rules that stay on', () => {
     const DV = read('studio-deploy.js'), RC = read('studio-reconcile.js');
-    expect(DV).toContain('rules: vpAll.rules.filter(r => written.has(r.object))');
-    expect(DV).toContain('flows: fpAll.flows.filter(f => writtenF.has(f.object))');
+    expect(DV).toContain("sftkPauseKeep('rule', vpAll.rules, _depPauseSkip, written)");   // 2026-11-08: the ⏸ panel's ticks narrow it too
+    expect(DV).toContain("sftkPauseKeep('flow', fpAll.flows, _depPauseSkip, writtenF)");
     expect(RC).toContain('Rules on objects this run does not write stay ON:');
-    expect(DV).toContain('the run switches off ONLY the ones on objects it writes');
+    // 2026-11-08: the list moved into the ⏸ panel, per object with a tick on every item
+    expect(DV).toContain("const paint = () => _depPausePaint(p);");
+    expect(DV).toContain('<div id="dsDepPausePanel" class="ds-dep-foot"></div>');
   });
 });

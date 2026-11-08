@@ -10,7 +10,8 @@ const FE = readFileSync(new URL('../sftk-friendly-error.js', import.meta.url), '
 // duplicate rule at all.
 describe('duplicate rules: what Bypass can and cannot do is said as it is', () => {
   it('the run diagnostic names the limit', () => {
-    expect(BG).toContain("diagnostics.push('Duplicate rules set to Alert were bypassed for this run (engine setting): records such a rule would have flagged were written. A rule set to Block still blocks — no API can pass it; relax that rule in the target for the migration.');");
+    expect(BG).toContain("Duplicate rules set to Alert were bypassed for this run${where}: records such a rule would have flagged were written. A rule set to Block still blocks — no API can pass it; relax that rule in the target for the migration.");   // 2026-11-08: ${where} names the objects the ⏸ panel narrowed the bypass to
+    expect(BG).toContain("(your choice in the ⏸ panel; respected everywhere else)");
     expect(BG).not.toContain('records a rule would have flagged were written.\');');
   });
   it('a per-record refusal keeps the DUPLICATES_DETECTED status code whatever the rule says', () => {

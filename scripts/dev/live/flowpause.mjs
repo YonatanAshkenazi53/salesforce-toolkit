@@ -30,8 +30,8 @@ export default async function (h) {
   await waitScanned(h); await h.sleep(2000);
   // ⏸ tick the option and wait for the list
   await h.eval(`(() => { const b = document.querySelector('#dsDepFlowPause'); b.checked = true; b.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
-  await h.waitFor("/will be switched off|switches off ONLY|nothing to pause|could not be listed/.test(document.querySelector('#dsDepFlowPauseList')?.innerText || '')", 60000, 500);
-  h.log('PAUSE LIST:', await dump(h, '#dsDepFlowPauseList', 700));
+  await h.waitFor("/flows off|none active|could not be listed/.test(document.querySelector('#dsDepPausePanel')?.innerText || '')", 60000, 500);
+  h.log('PAUSE PANEL:', await dump(h, '#dsDepPausePanel', 900));
   // the root Inserts
   await h.eval(`document.querySelector('[data-dep-obj=""][data-dep-tab="ins"]')?.click()`); await h.sleep(800);
   await h.eval(`document.querySelector('[data-dep-bulk="all"]')?.click()`); await h.sleep(600);

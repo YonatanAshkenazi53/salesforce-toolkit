@@ -1416,8 +1416,8 @@ export const SECTIONS = [
         await rec.say(text, hold);
         if (await h.eval(`!!document.querySelector(${J(box)})?.checked`)) { await h.eval(`document.querySelector(${J(box)}).click()`); await h.sleep(500); }
       };
-      await show('#dsDepRulePause', '#dsDepRulePauseList', 'Pause validation rules. The page lists the active rules on these objects. They are switched off after you confirm and back on as soon as the writes end.', 7000);
-      await show('#dsDepFlowPause', '#dsDepFlowPauseList', 'Pause record-triggered flows. They are switched off before the first write and back on at their exact versions afterwards, also when a run fails or is stopped.', 7000);
+      await show('#dsDepRulePause', '#dsDepPausePanel', 'Pause validation rules. The page lists the active rules on these objects. They are switched off after you confirm and back on as soon as the writes end.', 7000);
+      await show('#dsDepFlowPause', '#dsDepPausePanel', 'Pause record-triggered flows. They are switched off before the first write and back on at their exact versions afterwards, also when a run fails or is stopped.', 7000);
       if (await c.has('#dsDepDupRules')) {
         await rec.scrollTo('#dsDepDupRules', 'center');
         await rec.point('#dsDepDupRules', 1200);
