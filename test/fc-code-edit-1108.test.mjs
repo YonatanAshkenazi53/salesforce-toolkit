@@ -162,12 +162,21 @@ describe('⏻ Flow switches: the whole chain', () => {
     expect(DEP).toContain("chainChip(f.apiName, calledBy, calledBy[f.apiName], '\\u21c8', 'every caller up')");
     expect(DEP).toContain('class="dep-fb-sub dep-fb-chain"');   // the same click handler ticks its names
     // a subflow reads as one (user 2026-11-08: "they look like a normal flow")
-    expect(DEP).toContain("!depth && (calledBy[f.apiName] || []).length ? ' dep-list-row-sub' : ''");
+    expect(DEP).toContain("!inTree && (calledBy[f.apiName] || []).length ? ' dep-list-row-sub' : ''");
     // the hierarchy (user 2026-11-08: "we need to show it as hierarchy on load … both on switchers and api versions")
     expect(DEP).toContain('const order = sftkFlowTreeOrder(st.matrix, calls, r => (r.triggered ? 0 : 1));');
     expect(DEP).toContain('const key = sftkFlowBulkGroupKey(byApi.get(e.rootApi) || e.row);');
-    expect(DEP).toContain("${sftkFlowTreeOrder([...matrix].sort((a, b) =>");
-    expect((DEP.match(/class="dep-fb-tree" aria-hidden="true"/g) || []).length).toBe(2);
+    expect(DEP).toContain("${sftkFlowTreeBlocks(sftkFlowTreeOrder([...matrix].sort((a, b) =>");
+    expect((DEP.match(/class="dep-fb-twig" aria-hidden="true"/g) || []).length).toBe(2);
+    // a tree is a card with its own tick-all, in both panels (user 2026-11-08: "לא רואים שזה עץ. פשוט צריך לעשות tick all ואפשרות לבחור")
+    expect(DEP).toContain('<div class="dep-fb-treebox" data-tree="${escHtml(bk.rootApi)}">');
+    expect(DEP).toContain('class="dep-fb-tree-all" data-tree="${escHtml(bk.rootApi)}"> tick the whole tree</label>');
+    expect(DEP).toContain('class="dep-av-tree-all" data-tree="${escHtml(bk.rootApi)}"> tick the whole tree</label>');
+    expect(DEP).toContain("t.indeterminate = on > 0 && on < mine.length;");
+    expect(CSS).toContain('.dep-fb-treebox { margin: 6px 8px; border: 1px solid var(--brand);');
+    const B = extractFunctions('sftk-flowbulk.js', ['sftkFlowTreeBlocks']);
+    const blocks = B.sftkFlowTreeBlocks([{ row: { apiName: 'A' }, depth: 0, rootApi: 'A' }, { row: { apiName: 'B' }, depth: 1, rootApi: 'A' }, { row: { apiName: 'C' }, depth: 0, rootApi: 'C' }]);
+    expect(blocks.map(b => `${b.rootApi}:${b.rows.length}:${[...b.names].join('+')}`)).toEqual(['A:2:A+B', 'C:1:C']);
     const T = extractFunctions('sftk-flowbulk.js', ['sftkFlowTreeOrder', 'sftkFlowCallsOf']);
     const rows = [{ apiName: 'Trig' }, { apiName: 'L1' }, { apiName: 'L2' }, { apiName: 'Alone' }, { apiName: 'Shared' }, { apiName: 'Trig2' }];
     const calls = T.sftkFlowCallsOf({ L1: [{ apiName: 'Trig' }], L2: [{ apiName: 'L1' }], Shared: [{ apiName: 'Trig' }, { apiName: 'Trig2' }] });

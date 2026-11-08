@@ -354,3 +354,17 @@ function sftkFlowCallsOf(dependencyMap) {
   }
   return calls;
 }
+
+// The entries of sftkFlowTreeOrder cut into blocks: a root and everything nested under it. A block of one is a
+// plain row; a block of more is a TREE — drawn as a card with its own "tick the whole tree" (user 2026-11-08:
+// "לא רואים שזה עץ. פשוט צריך לעשות tick all ואפשרות לבחור").
+//   → [{ rootApi, rows: [entry…], names: Set }]
+function sftkFlowTreeBlocks(entries) {
+  const out = [];
+  for (const e of (entries || [])) {
+    if (!e || !e.row) continue;
+    if (e.depth === 0 || !out.length) out.push({ rootApi: e.rootApi || e.row.apiName, rows: [e], names: new Set([e.row.apiName]) });
+    else { const b = out[out.length - 1]; b.rows.push(e); b.names.add(e.row.apiName); }
+  }
+  return out;
+}

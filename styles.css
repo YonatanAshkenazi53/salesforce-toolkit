@@ -6967,9 +6967,23 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .dep-list-row-sub { box-shadow: inset 3px 0 0 var(--brand); }
 .dep-list-row-sub .dep-list-name { padding-left: 4px; }
 .dep-fb-subtag { font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--brand); border: 1px solid var(--brand); border-radius: 4px; padding: 0 4px; margin-right: 6px; vertical-align: 1px; }
-/* the hierarchy (2026-11-08): a callee nested under its caller, in both panels */
-.dep-list-row-nested .dep-list-name { padding-left: calc(var(--fb-depth, 0) * 16px); }
-.dep-fb-tree { color: var(--subtext); font-family: 'SF Mono', Consolas, monospace; font-size: 11px; margin-right: 2px; white-space: pre; }
+/* the hierarchy (2026-11-08): a TREE is a card — a header with its own tick-all, the rows nested under the root with
+   a guide line and a twig per level — so it never reads as a list of single flows */
+.dep-fb-treebox { margin: 6px 8px; border: 1px solid var(--brand); border-radius: 8px; background: var(--card); overflow: hidden; }
+.dep-fb-tree-hd { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 10px; font-size: 11.5px; background: var(--brand-bg); border-bottom: 1px solid var(--border-light); }
+.dep-fb-tree-pick { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; color: var(--text); cursor: pointer; }
+.dep-fb-tree-pick input { margin: 0; }
+.dep-fb-tree-badge { font-weight: 700; color: var(--brand); white-space: nowrap; }
+.dep-fb-tree-hint { color: var(--subtext); flex: 1 1 240px; min-width: 0; }
+.dep-fb-treebox .dep-list-row { border-top: 1px solid var(--border-light); }
+.dep-fb-treebox .dep-list-row:first-of-type { border-top: 0; }
+.dep-list-row-nested .dep-list-name { padding-left: calc(var(--fb-depth, 0) * 20px); position: relative; }
+.dep-fb-twig { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -2px; border-left: 2px solid var(--brand); border-bottom: 2px solid var(--brand); border-bottom-left-radius: 4px; opacity: .7; }
+/* the Flows tab's list must shrink inside the tab, not push it (2026-11-08: "אי אפשר לעשות סקרול למטה") */
+.flow-list { min-height: 0; }
+/* the Versions view wraps the toolbar and the list: it must carry the flex column down, or the list grows past the tab and nothing scrolls (user 2026-11-08: "אי אפשר לעשות סקרול למטה") */
+#flowViewVersions:not([style*="none"]) { display: flex !important; flex-direction: column; flex: 1; min-height: 0; }
+.dep-fb-tree { display: none; }
 .dep-fb-subgrp { display: inline-flex; margin-left: 6px; }
 .dep-fb-subgrp .dep-fb-sub { margin-left: 0; border-radius: 0; }
 .dep-fb-subgrp .dep-fb-sub:first-child { border-radius: 9px 0 0 9px; }

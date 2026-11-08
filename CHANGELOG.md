@@ -150,6 +150,13 @@ extensions containing root files that start with `_`).
   Live on npc (scripts/dev/live/fc-code-edit.mjs): ⇄ on the LWC → the CLI reads the new import, 0 of the old; ⇄ on the
   duplicate rule → the retrieve shows the new field in the filter; both undone through History, the CLI reads the
   originals back.
+- **A flow tree is a card** (2026-11-08: "לא רואים שזה עץ. פשוט צריך לעשות tick all ואפשרות לבחור"): in ⏻ Switches
+  and ⚙ API versions a flow with subflows is drawn as a bordered card — a header with "tick the whole tree" (it
+  follows the rows: half-ticked when only some are), "🌳 tree · N flows · M levels deep" (API versions: the oldest
+  API in the tree), one line saying what switching the root does — and the subflows nested under the root with a
+  twig per level; inside a card the chips name only flows outside it. The **Flows › Versions list scrolls again**
+  ("אי אפשר לעשות סקרול למטה"): the view's wrapper did not carry the flex column, so the list grew past the tab and
+  the flows below the fold could not be reached.
 - **⏻ Flow switches and ⚙ API versions show the flows as a hierarchy** (2026-11-08: "we need to show it as
   hierarchy on load … both on switchers and api versions", "they look like a normal flow"). A flow that calls
   others has its callees nested under it with a connector, as soon as the dependency map knows the links; a subflow

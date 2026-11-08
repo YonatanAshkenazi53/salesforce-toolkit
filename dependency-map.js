@@ -2972,20 +2972,43 @@ const DependencyMap = (() => {
                 <button class="btn-small dep-fb-grp" data-grp="${escHtml(g)}" data-want="off" title="Tick every flow in this group that is currently OFF (what \u25b6 Switch ON acts on)">all OFF</button>
               </span>
             </div>
-            ${flows.map(({ row: f, depth }) => `
-              <label class="dep-list-row${depth ? ' dep-list-row-nested' : ''}${!depth && (calledBy[f.apiName] || []).length ? ' dep-list-row-sub' : ''}" style="--fb-depth:${depth}" data-dep-search="${escHtml(sftkFlowFilterKey(f.label, f.apiName))}">
-                <input type="checkbox" class="dep-fb-cb" value="${escHtml(f.apiName)}" data-grp="${escHtml(g)}" data-on="${fbStateOf(f)}">
+            ${sftkFlowTreeBlocks(flows).map(bk => {
+              const inTree = bk.rows.length > 1;
+              const rowHtml = ({ row: f, depth }) => {
+                // inside a tree the chips name only flows OUTSIDE it (the tree itself is the picture)
+                const outside = names => (names || []).filter(n => n && !bk.names.has(n));
+                const callsOut = outside(calls[f.apiName]);
+                const callersOut = outside((calledBy[f.apiName] || []).map(p => p && (p.apiName || p.masterLabel)));
+                const chips = inTree
+                  ? (callsOut.length ? `<span class="dep-fb-subgrp">${subChip(callsOut, '\u21b3', 'also calls')}</span>` : '') + (callersOut.length ? `<span class="dep-fb-subgrp">${subChip(callersOut, '\u21b0', 'also called by')}</span>` : '')
+                  : (() => { const a = subChip(calls[f.apiName], '\u21b3', 'calls') + chainChip(f.apiName, calls, calls[f.apiName], '\u21ca', 'whole chain down'); const b = subChip((calledBy[f.apiName] || []).map(p => p && (p.apiName || p.masterLabel)), '\u21b0', 'called by') + chainChip(f.apiName, calledBy, calledBy[f.apiName], '\u21c8', 'every caller up'); return (a ? `<span class="dep-fb-subgrp">${a}</span>` : '') + (b ? `<span class="dep-fb-subgrp">${b}</span>` : ''); })();
+                return `
+              <label class="dep-list-row${depth ? ' dep-list-row-nested' : ''}${!inTree && (calledBy[f.apiName] || []).length ? ' dep-list-row-sub' : ''}" style="--fb-depth:${depth}" data-dep-search="${escHtml(sftkFlowFilterKey(f.label, f.apiName))}">
+                <input type="checkbox" class="dep-fb-cb" value="${escHtml(f.apiName)}" data-grp="${escHtml(g)}" data-on="${fbStateOf(f)}" data-tree="${inTree ? escHtml(bk.rootApi) : ''}">
                 <span class="dep-list-name">
-                  ${depth ? `<span class="dep-fb-tree" aria-hidden="true">${'\u2502 '.repeat(depth - 1)}\u2514 </span>` : ''}
-                  ${!depth && (calledBy[f.apiName] || []).length ? `<span class="dep-fb-subtag" title="${escHtml(`A subflow — called by ${(calledBy[f.apiName] || []).map(p => labelOf(p && (p.apiName || p.masterLabel))).join(', ')}. Switched off, every caller that reaches it fails there.`)}">↳ subflow</span>` : ''}
+                  ${depth ? '<span class="dep-fb-twig" aria-hidden="true"></span>' : ''}
+                  ${!inTree && (calledBy[f.apiName] || []).length ? `<span class="dep-fb-subtag" title="${escHtml(`A subflow — called by ${(calledBy[f.apiName] || []).map(p => labelOf(p && (p.apiName || p.masterLabel))).join(', ')}. Switched off, every caller that reaches it fails there.`)}">↳ subflow</span>` : ''}
                   ${(() => { const lu = labelUrl(f); return lu
                     ? `<span class="dep-fb-open" data-open-url="${escHtml(lu.url)}" title="${escHtml(f.apiName)} \u2014 open in Flow Builder">${escHtml(f.label)}</span>`
                     : `<span title="${escHtml(f.apiName)}">${escHtml(f.label)}</span>`; })()}
-                  ${isRecordGroup(g) ? `<span class="dep-list-kind">${escHtml(f.kind)}</span>` : ''}
-                  ${(() => { const a = subChip(calls[f.apiName], '\u21b3', 'calls') + chainChip(f.apiName, calls, calls[f.apiName], '\u21ca', 'whole chain down'); const b = subChip((calledBy[f.apiName] || []).map(p => p && (p.apiName || p.masterLabel)), '\u21b0', 'called by') + chainChip(f.apiName, calledBy, calledBy[f.apiName], '\u21c8', 'every caller up'); return (a ? `<span class="dep-fb-subgrp">${a}</span>` : '') + (b ? `<span class="dep-fb-subgrp">${b}</span>` : ''); })()}
+                  ${isRecordGroup(g) || inTree ? `<span class="dep-list-kind">${escHtml(f.kind)}</span>` : ''}
+                  ${chips}
                 </span>
                 ${st.orgs.map(o => cell(f, o)).join('')}
-              </label>`).join('')}
+              </label>`;
+              };
+              if (!inTree) return rowHtml(bk.rows[0]);
+              const root = bk.rows[0].row, n = bk.rows.length, depthMax = Math.max(...bk.rows.map(e => e.depth));
+              return `
+              <div class="dep-fb-treebox" data-tree="${escHtml(bk.rootApi)}">
+                <div class="dep-fb-tree-hd">
+                  <label class="dep-fb-tree-pick" title="Tick every flow of this tree — the root and everything it calls, ${n} in all. Untick any row to leave it out."><input type="checkbox" class="dep-fb-tree-all" data-tree="${escHtml(bk.rootApi)}"> tick the whole tree</label>
+                  <span class="dep-fb-tree-badge">\ud83c\udf33 tree \u00b7 ${n} flows${depthMax > 1 ? ` \u00b7 ${depthMax} levels deep` : ''}</span>
+                  <span class="dep-fb-tree-hint">${escHtml(root.label)} and everything it calls \u2014 switched off at the root, the whole tree stops; a subflow off alone fails its callers</span>
+                </div>
+                ${bk.rows.map(rowHtml).join('')}
+              </div>`;
+            }).join('')}
           </div>`).join('')}
       </div>
       ${(st.notes.length || subNote) ? `<div class="dep-tool-note">${[...st.notes, subNote].filter(Boolean).map(n => `\u2139 ${escHtml(n)}`).join('<br>')}</div>` : ''}
@@ -3020,8 +3043,12 @@ const DependencyMap = (() => {
       if (off) { off.disabled = !nOn; off.textContent = `\u23fb Switch OFF (${nOn} ON selected)`; }
       if (on)  { on.disabled = !nOff; on.textContent = `\u25b6 Switch ON (${nOff} OFF selected)`; }
     };
-    cbs.forEach(c => c.addEventListener('change', sync));
-    const fbShown = depWireListFilter(body, { key: 'switches', rowSel: '.dep-list-row', cbSel: '.dep-fb-cb', grpSel: '.dep-list-grp', onChange: sync });
+    // a tree's "tick the whole tree" drives its rows, and follows them (indeterminate when only some are ticked)
+    const treeAlls = [...body.querySelectorAll('.dep-fb-tree-all')];
+    const treeSync = () => treeAlls.forEach(t => { const mine = cbs.filter(c => c.dataset.tree === t.dataset.tree && !c.disabled); const on = mine.filter(c => c.checked).length; t.checked = mine.length > 0 && on === mine.length; t.indeterminate = on > 0 && on < mine.length; });
+    treeAlls.forEach(t => t.addEventListener('change', () => { cbs.filter(c => c.dataset.tree === t.dataset.tree && !c.disabled).forEach(c => { c.checked = t.checked; }); sync(); }));
+    cbs.forEach(c => c.addEventListener('change', () => { treeSync(); sync(); }));
+    const fbShown = depWireListFilter(body, { key: 'switches', rowSel: '.dep-list-row', cbSel: '.dep-fb-cb', grpSel: '.dep-list-grp', onChange: () => { treeSync(); sync(); } });
     body.querySelectorAll('.dep-fb-grp').forEach(b => b.addEventListener('click', () => {
       const vis = new Set(fbShown().map(r => r.querySelector('.dep-fb-cb')));
       const mine = cbs.filter(c => vis.has(c) && c.dataset.grp === b.dataset.grp && c.dataset.on === b.dataset.want);
@@ -3537,10 +3564,12 @@ const DependencyMap = (() => {
       </div>` : ''}
       ${depListFilterRow('apiver')}
       <div class="dep-list">
-        ${sftkFlowTreeOrder([...matrix].sort((a, b) =>
+        ${sftkFlowTreeBlocks(sftkFlowTreeOrder([...matrix].sort((a, b) =>
             (lagOf(b) - lagOf(a))
             || (b.drift - a.drift)
-            || (a.label || a.apiName).localeCompare(b.label || b.apiName)), st.edges).map(({ row: r, depth }) => {
+            || (a.label || a.apiName).localeCompare(b.label || b.apiName)), st.edges)).map(bk => {
+          const inTree = bk.rows.length > 1;
+          const rowHtml = ({ row: r, depth }) => {
           const roll = sftkFlowTreeRoll(r.apiName, st.edges, n => {
             const row = r.apiName === n ? r : matrix.find(x => x.apiName === n);
             if (!row) return null;
@@ -3554,17 +3583,30 @@ const DependencyMap = (() => {
           const isBehind = lagOf(r) > 0 || r.drift;
           const can = canOf(r);
           return `<label class="dep-list-row ${isBehind ? 'dep-list-row-drift' : ''}${can.ok ? '' : ' dep-list-row-locked'}${depth ? ' dep-list-row-nested' : ''}" style="--fb-depth:${depth}" data-dep-search="${escHtml(sftkFlowFilterKey(r.label, r.apiName))}"${can.ok ? '' : ` title="Cannot be changed here: ${escHtml(can.why)}"`}>
-            <input type="checkbox" class="dep-av-pick" value="${escHtml(r.apiName)}" ${can.ok ? '' : 'disabled'}>
+            <input type="checkbox" class="dep-av-pick" value="${escHtml(r.apiName)}" data-tree="${inTree ? escHtml(bk.rootApi) : ''}" ${can.ok ? '' : 'disabled'}>
             <span class="dep-list-name">
-              ${depth ? `<span class="dep-fb-tree" aria-hidden="true">${'\u2502 '.repeat(depth - 1)}\u2514 </span>` : ''}
+              ${depth ? '<span class="dep-fb-twig" aria-hidden="true"></span>' : ''}
               ${(() => { const lu = avLabelUrl(r); return lu
                 ? `<span data-open-url="${escHtml(lu.url)}" title="Open in Flow Builder">${escHtml(r.label || r.apiName)}</span>`
                 : escHtml(r.label || r.apiName); })()}
               <span class="dep-list-api">${escHtml(r.apiName)}</span>
-              ${roll.members > 1 ? `<span class="dep-pill dep-pill-hint" title="${escHtml(treeTip)}">tree ${roll.members} \u00b7 oldest ${roll.oldest == null ? '?' : roll.oldest}</span>` : ''}
+              ${roll.members > 1 && !inTree ? `<span class="dep-pill dep-pill-hint" title="${escHtml(treeTip)}">tree ${roll.members} \u00b7 oldest ${roll.oldest == null ? '?' : roll.oldest}</span>` : ''}
             </span>
             ${orgs.map(o => cell(r, o)).join('')}
           </label>`;
+          };
+          if (!inTree) return rowHtml(bk.rows[0]);
+          const root = bk.rows[0].row, n = bk.rows.length;
+          const roll = sftkFlowTreeRoll(root.apiName, st.edges, nm => { const row = matrix.find(x => x.apiName === nm); const first = row ? orgs.map(o => row.cells[o.key]).find(c => c && c.num != null) : null; return first ? first.num : null; });
+          return `
+          <div class="dep-fb-treebox" data-tree="${escHtml(bk.rootApi)}">
+            <div class="dep-fb-tree-hd">
+              <label class="dep-fb-tree-pick" title="Tick every flow of this tree that can be changed — ${n} in all. Untick any row to leave it out."><input type="checkbox" class="dep-av-tree-all" data-tree="${escHtml(bk.rootApi)}"> tick the whole tree</label>
+              <span class="dep-fb-tree-badge">\ud83c\udf33 tree \u00b7 ${n} flows \u00b7 oldest API ${roll.oldest == null ? '?' : escHtml(String(roll.oldest))}</span>
+              <span class="dep-fb-tree-hint">${escHtml(root.label || root.apiName)} and everything it calls \u2014 a flow is only as current as the oldest thing it calls</span>
+            </div>
+            ${bk.rows.map(rowHtml).join('')}
+          </div>`;
         }).join('')}
       </div>
       ${st.notes.length ? `<div class="dep-tool-note">${st.notes.map(n => `\u2139 ${escHtml(n)}`).join('<br>')}</div>` : ''}
@@ -3594,7 +3636,10 @@ const DependencyMap = (() => {
       const el = out.querySelector('#depAvCount');
       if (el) el.textContent = `${picked.length} selected${hid ? ` \u00b7 ${hid} hidden by the filter` : ''}`;
     };
-    out.querySelectorAll('.dep-av-pick').forEach(cb => cb.addEventListener('change', avSync));
+    const avTreeAlls = [...out.querySelectorAll('.dep-av-tree-all')], avPicks = [...out.querySelectorAll('.dep-av-pick')];
+    const avTreeSync = () => avTreeAlls.forEach(t => { const mine = avPicks.filter(c => c.dataset.tree === t.dataset.tree && !c.disabled); const on = mine.filter(c => c.checked).length; t.checked = mine.length > 0 && on === mine.length; t.indeterminate = on > 0 && on < mine.length; });
+    avTreeAlls.forEach(t => t.addEventListener('change', () => { avPicks.filter(c => c.dataset.tree === t.dataset.tree && !c.disabled).forEach(c => { c.checked = t.checked; }); avSync(); }));
+    avPicks.forEach(cb => cb.addEventListener('change', () => { avTreeSync(); avSync(); }));
     const avShown = depWireListFilter(out, { key: 'apiver', rowSel: '.dep-list-row', cbSel: '.dep-av-pick', onChange: avSync });
     // onlyShown: "Select the N behind" ticks what the filter shows; the ⚙ Update all shortcut means all N
     const tickFixable = (onlyShown) => {
