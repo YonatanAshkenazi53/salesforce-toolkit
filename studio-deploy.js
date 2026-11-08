@@ -1990,6 +1990,9 @@ function _depPaintList(p, scan, cur, s, tabDef, opts) {
 // their lists together under the objects the deployment writes to. Unticked
 // keys live in _depPauseSkip for the page's life (sftk-pausepanel.js).
 let _depPauseSkip = new Set();
+// the tab the panel shows — one per kind, only the kinds whose option is on (user 2026-11-08: "להראות פלואים רק אם
+// המשתמש בחר לעצור אוטומציות… ולעשות 3 טאבים עם פירוט מובן")
+let _depPauseTab = '';
 let _depDupePause = { on: false, key: '', list: null, error: '' };
 
 function _depPausePaint(p) {
@@ -2007,15 +2010,15 @@ function _depPausePaint(p) {
     host.innerHTML = `<div class="ds-dep-pause-none">Nothing is switched off for this run: ${esc(tgt)} keeps every flow, validation rule and duplicate rule active while the records are written. Tick ⏸ above, or choose Bypass for duplicate rules, to see what would go off — per object, with a tick on each.</div>`;
     return;
   }
-  const lines = [];
+  const lines = [];   // { kind, text } — shown inside the kind's tab
   const lists = { flows: null, rules: null, dupes: null };
   for (const k of active) {
-    if (k.st.error) lines.push(`⚠ The ${k.word} could not be listed — ${esc(k.st.error)}. ${k.kind === 'dupe' ? 'The bypass then applies to every object this run writes.' : `Untick to deploy with the ${k.word} active, or open ${esc(tgt)} and tick again.`}`);
-    else if (!k.st.list) lines.push(`⏳ reading the ${k.word} on ${esc(objects.join(', '))} in ${esc(tgt)}…`);
+    if (k.st.error) lines.push({ kind: k.kind, text: `⚠ The ${k.word} could not be listed — ${esc(k.st.error)}. ${k.kind === 'dupe' ? 'The bypass then applies to every object this run writes.' : `Untick to deploy with the ${k.word} active, or open ${esc(tgt)} and tick again.`}` });
+    else if (!k.st.list) lines.push({ kind: k.kind, text: `⏳ reading the ${k.word} on ${esc(objects.join(', '))} in ${esc(tgt)}…` });
     else {
       const l = k.st.list;
       if (k.kind === 'flow') lists.flows = l.flows; else if (k.kind === 'rule') lists.rules = l.rules; else lists.dupes = l.rules;
-      if (l.managed && l.managed.length) lines.push(`${k.managedWord} from installed packages cannot be switched and stay on: ${esc(l.managed.join(', '))}.`);
+      if (l.managed && l.managed.length) lines.push({ kind: k.kind, text: `${k.managedWord} from installed packages cannot be switched and stay on: ${esc(l.managed.join(', '))}.` });
     }
   }
   const written = sftkDeployWrittenObjects(sftkDeployObjects(p.tree), _recSel, _recChildSel);
@@ -2024,29 +2027,47 @@ function _depPausePaint(p) {
     ? 'Ticked: the writes on this object carry the duplicate-rule header, so a rule set to Alert lets the records through (a rule set to Block still blocks). Unticked: the rule is respected and a record it flags is refused. The rule itself is never switched off.'
     : 'Ticked: switched off before the first write and back on when the run ends. Unticked: stays on for this run.';
   const item = (kind, x) => `<label class="ds-dep-pause-item${x.on ? '' : ' ds-dep-pause-off'}" title="${esc(tip(kind))}"><input type="checkbox" class="ds-dep-pause-cb" data-key="${esc(x.key)}" data-obj="${esc(x.object)}" ${x.on ? 'checked' : ''}> ${esc(sftkPauseItemName(kind, x))}</label>`;
-  const kindLine = (kind, label, items) => items === null ? '' : `<div class="ds-dep-pause-kind"><span class="ds-dep-pause-kindlbl">${label}</span>${items.length ? items.map(x => item(kind, x)).join('') : '<span class="ds-subtext">none active</span>'}</div>`;
+  // one tab per kind whose option is on (user 2026-11-08: "להראות רק אם מסמנים את המטאדאטה שרוצים לעצור… ולעשות
+  // 3 טאבים עם פירוט מובן"); inside a tab, the objects this run writes to, each with its items and all / none.
+  // Every tab's pane is in the DOM (hidden when not chosen) so a tick anywhere keeps its key.
+  const TAB = {
+    flow: { label: '⏸ Flows', field: 'flows', why: `These record-triggered flows on the objects this run writes are switched off before the first write and switched back on when the run ends — also when it fails or is cancelled. Untick a flow to leave it running for this run.` },
+    rule: { label: '⏸ Validation rules', field: 'rules', why: `These validation rules on the objects this run writes are switched off before the first write and switched back on when the run ends. Untick a rule to keep it enforcing for this run.` },
+    dupe: { label: '🔁 Duplicate rules', field: 'dupes', why: `The writes on these objects carry the duplicate-rule header: a rule set to Alert lets the records through, a rule set to Block still blocks. No rule is switched off or changed. Untick an object to respect its rules as they are.` },
+  };
+  const tabs = active.map(k => ({ kind: k.kind, ...TAB[k.kind], st: k.st, n: rows.reduce((s, r) => s + ((r[TAB[k.kind].field] || []).length), 0), off: rows.reduce((s, r) => s + ((r[TAB[k.kind].field] || []).filter(x => !x.on).length), 0), lines: lines.filter(t => t.kind === k.kind).map(t => t.text) }));
+  if (!tabs.some(t => t.kind === _depPauseTab)) _depPauseTab = tabs[0].kind;
+  const pane = t => {
+    const objs = rows.map(r => ({ r, items: r[t.field] }));
+    const withItems = objs.filter(o => o.items && o.items.length), without = objs.filter(o => !o.items || !o.items.length);
+    return `<div class="ds-dep-pause-pane" data-pane="${t.kind}"${t.kind === _depPauseTab ? '' : ' hidden'}>
+      <div class="ds-dep-pause-why">${esc(t.why)}</div>
+      ${t.lines.map(x => `<div class="ds-dep-pause-line">${x}</div>`).join('')}
+      ${t.st.list ? '' : (t.st.error ? '' : `<div class="ds-dep-pause-line">⏳ reading…</div>`)}
+      ${withItems.map(({ r, items }) => `
+        <div class="ds-dep-pause-obj${r.written ? '' : ' ds-dep-pause-unwritten'}">
+          <div class="ds-dep-pause-objhd"><strong>${esc(r.object)}</strong><span class="ds-subtext">${r.written ? `${items.filter(x => x.on).length} of ${items.length} ticked` : 'nothing selected to write here — its automation stays on'}</span>
+            <span class="ds-dep-pause-acts"><button type="button" class="ds-dep-pause-all" data-obj="${esc(r.object)}" data-kind="${t.kind}" data-want="on" title="Tick every ${esc(t.label.replace(/^\S+ /, '').toLowerCase())} on ${esc(r.object)}">all</button><button type="button" class="ds-dep-pause-all" data-obj="${esc(r.object)}" data-kind="${t.kind}" data-want="off" title="Untick every ${esc(t.label.replace(/^\S+ /, '').toLowerCase())} on ${esc(r.object)} — they stay as they are">none</button></span></div>
+          <div class="ds-dep-pause-kind">${items.map(x => item(t.kind, x)).join('')}</div>
+        </div>`).join('')}
+      ${t.st.list && without.length ? `<div class="ds-dep-pause-empty">None active on ${esc(without.map(o => o.r.object).join(', '))}.</div>` : ''}
+    </div>`;
+  };
   host.innerHTML = `
     <div class="ds-dep-pause">
-      <div class="ds-dep-pause-hd">⏸ What this run switches off in <strong>${esc(tgt)}</strong>, by the object it writes to — untick anything that should stay as it is</div>
-      ${lines.map(t => `<div class="ds-dep-pause-line">${t}</div>`).join('')}
-      ${rows.filter(r => r.total).map(r => `
-        <div class="ds-dep-pause-obj${r.written ? '' : ' ds-dep-pause-unwritten'}">
-          <div class="ds-dep-pause-objhd"><strong>${esc(r.object)}</strong>${r.written ? '' : '<span class="ds-subtext">nothing selected to write here — its automation stays on</span>'}
-            ${r.total ? `<span class="ds-dep-pause-acts"><button type="button" class="ds-dep-pause-all" data-obj="${esc(r.object)}" data-want="on" title="Tick every item on ${esc(r.object)}">all</button><button type="button" class="ds-dep-pause-all" data-obj="${esc(r.object)}" data-want="off" title="Untick every item on ${esc(r.object)} — its automation stays as it is">none</button></span>` : ''}</div>
-          ${kindLine('flow', '⏸ flows off', r.flows)}
-          ${kindLine('rule', '⏸ validation rules off', r.rules)}
-          ${kindLine('dupe', '🔁 duplicate rules bypassed', r.dupes)}
-        </div>`).join('')}
-      ${rows.some(r => !r.total) ? `<div class="ds-dep-pause-empty">Nothing active to switch on ${esc(rows.filter(r => !r.total).map(r => r.object).join(', '))}.</div>` : ''}
+      <div class="ds-dep-pause-hd">⏸ What this run changes in <strong>${esc(tgt)}</strong> while it writes — untick anything that should stay as it is</div>
+      <div class="ds-dep-pause-tabs" role="tablist">${tabs.map(t => `<button type="button" role="tab" class="ds-dep-pause-tab" data-tab="${t.kind}" aria-selected="${t.kind === _depPauseTab}">${t.label} <span class="ds-dep-pause-tabn">${t.st.list ? `${t.n - t.off}${t.off ? ` of ${t.n}` : ''}` : (t.st.error ? '⚠' : '…')}</span></button>`).join('')}</div>
+      ${tabs.map(pane).join('')}
       ${rows.every(r => !r.total) ? '' : `<div class="ds-dep-pause-sum">${esc(sftkPauseSummary(rows.filter(r => r.total)))}</div>`}
     </div>`;
+  host.querySelectorAll('.ds-dep-pause-tab').forEach(b => b.addEventListener('click', () => { _depPauseTab = b.dataset.tab; _depPausePaint(p); }));
   host.querySelectorAll('.ds-dep-pause-cb').forEach(cb => cb.addEventListener('change', () => {
     if (cb.checked) _depPauseSkip.delete(cb.dataset.key); else _depPauseSkip.add(cb.dataset.key);
     _depPausePaint(p);
   }));
   host.querySelectorAll('.ds-dep-pause-all').forEach(b => b.addEventListener('click', () => {
     const want = b.dataset.want === 'on';
-    for (const cb of host.querySelectorAll(`.ds-dep-pause-cb[data-obj="${CSS.escape(b.dataset.obj)}"]`)) {
+    for (const cb of host.querySelectorAll(`.ds-dep-pause-pane[data-pane="${CSS.escape(b.dataset.kind)}"] .ds-dep-pause-cb[data-obj="${CSS.escape(b.dataset.obj)}"]`)) {
       if (want) _depPauseSkip.delete(cb.dataset.key); else _depPauseSkip.add(cb.dataset.key);
     }
     _depPausePaint(p);

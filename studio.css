@@ -6468,6 +6468,15 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .ds-dep-pause-unwritten { opacity: .6; }
 .ds-dep-pause-sum { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); color: var(--subtext); }
 .ds-dep-pause-none { color: var(--subtext); }
+/* the three tabs (2026-11-08): one per kind whose option is on */
+.ds-dep-pause-tabs { display: flex; gap: 4px; margin: 6px 0 8px; border-bottom: 1px solid var(--border); }
+.ds-dep-pause-tab { font: inherit; font-size: 12px; padding: 5px 12px; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; background: transparent; color: var(--subtext); cursor: pointer; margin-bottom: -1px; }
+.ds-dep-pause-tab:hover { color: var(--text); }
+.ds-dep-pause-tab[aria-selected="true"] { color: var(--text); font-weight: 600; border-color: var(--border); background: var(--bg); }
+.ds-dep-pause-tabn { font-size: 10.5px; color: var(--subtext); margin-left: 4px; }
+.ds-dep-pause-pane[hidden] { display: none; }
+.ds-dep-pause-why { color: var(--subtext); margin: 0 0 6px; line-height: 1.5; }
+.ds-dep-pause-pane .ds-dep-pause-kind { padding-left: 10px; }
 .ds-dep-pause-empty { color: var(--subtext); padding: 6px 0 2px; border-top: 1px solid var(--border); }
 @media (max-width: 900px) { .ds-dep-row { grid-template-columns: auto 1fr; } .ds-dep-mid, .ds-dep-tail { grid-column: 2; } }
 

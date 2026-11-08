@@ -16,6 +16,11 @@ extensions containing root files that start with `_`).
 ## 1.1.0 — 2026-11-04
 
 ### Data Studio
+- **⏸ The pause panel is three tabs** (2026-11-08: "צריך להראות רק אם מסמנים את המטאדאטה שרוצים לעצור… ולעשות 3
+  טאבים עם פירוט מובן"): ⏸ Flows · ⏸ Validation rules · 🔁 Duplicate rules — a tab appears only when its option is
+  on, carries its count ("2 of 3" once something is unticked), opens with one plain sentence on what the run does
+  with that kind and when it comes back, then the objects this run writes with their items, "N of M ticked" and
+  all / none per object; the one-line summary stays under the tabs. Live on npc2 (pause-panel.mjs, light + dark).
 - **▸ record: the Owner row** (2026-11-08: "we need to show ownerid and to make sure user can select queues or
   users"). Right under Record Type: the source owner by name (👤 a user, 👥 a queue), what the run would write by
   default said in words (the owner mapping is off unless the deployment switched it on; a queue is never matched

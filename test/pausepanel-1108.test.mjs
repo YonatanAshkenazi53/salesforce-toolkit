@@ -117,6 +117,13 @@ describe('the wiring', () => {
   const DEP = read('studio-deploy.js'), REC = read('studio-reconcile.js'), BG = read('background.js');
   it('the Deploy page draws one panel for the three kinds and narrows every run by its ticks', () => {
     expect(DEP).toContain('<div id="dsDepPausePanel" class="ds-dep-foot"></div>');
+    // three tabs, one per kind whose option is on; every pane in the DOM, hidden when not chosen (2026-11-08)
+    expect(DEP).toContain("const active = kinds.filter(k => k.on);");
+    expect(DEP).toContain('class="ds-dep-pause-tab" data-tab="${t.kind}" aria-selected="${t.kind === _depPauseTab}"');
+    expect(DEP).toContain('<div class="ds-dep-pause-pane" data-pane="${t.kind}"${t.kind === _depPauseTab ? \'\' : \' hidden\'}>');
+    expect(DEP).toContain('No rule is switched off or changed. Untick an object to respect its rules as they are.');
+    expect(DEP).toContain('switched back on when the run ends — also when it fails or is cancelled.');
+    expect(DEP).not.toContain('kindLine(');
     expect(DEP).not.toContain('dsDepFlowPauseList');
     expect(DEP).not.toContain('dsDepRulePauseList');
     expect(DEP).toContain("sftkPauseKeep('flow', fpAll.flows, _depPauseSkip, writtenF)");
