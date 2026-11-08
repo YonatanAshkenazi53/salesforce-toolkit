@@ -45,8 +45,8 @@ describe('the sweep is asked for, never automatic', () => {
     expect(FC).toContain("eid('fcRptCancel')?.addEventListener('click', () => { _rptScan = null; renderReportScan(); });");
   });
   it('a new scan, or another field, forgets the sweep', () => {
-    expect(FC).toContain('_rptScan = null;\n      _lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope };');   // the scan remembers its scope (2026-11-05)
-    expect(FC).toContain('_rptScan = null; _lastScan = null;');
+    expect(FC).toContain('_rptScan = null; _orgSweep = null;\n      _lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope };');   // the scan remembers its scope (2026-11-05)
+    expect(FC).toContain('_rptScan = null; _lastScan = null; _orgSweep = null;');   // + the whole-org sweep (2026-11-08)
   });
 });
 

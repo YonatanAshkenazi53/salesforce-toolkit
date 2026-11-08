@@ -85,6 +85,18 @@ extensions containing root files that start with `_`).
   PII outside the fields the policy fabricates.
 
 ### Toolkit
+- **🧭 Field Cleaner's whole-org text sweep** (2026-11-08: "מורידים דרך vcs פרויקט שלם של סילספורס ואז מחפשים
+  שם api של שדה… לחלק לדברים שחייב למחוק או לשנות ודברים שטוב לדעת"). Under the scan's results, one button
+  reads the org's own metadata as a whole — the Metadata API lists every kind, then retrieves them a few
+  hundred components at a time — and finds every text file that names the field. Each hit is shown with its
+  component, file and line, sorted into 🔒 must go or change before the delete (the kinds Salesforce refuses
+  the delete for) and 👀 will break or lose the field (search layouts, related-list columns, record-type
+  picklist values, Aura markup, LWC HTML, templates, reports, translations, permission sets, profiles…),
+  marked "in the list above" when the scan already lists it. The cost is said before anything is read
+  (components, retrieves, API calls, a time estimate), a progress bar with the time left runs on the page,
+  and Stop keeps what was read. Nothing is written. Not read: static resources, documents, content and site
+  assets, settings, certificates, installed packages. Live on npc: 1,127 components in 5 retrieves, about a minute,
+  29 🔒 / 57 👀 (44 of them profiles' field access), 52 of them not in the scan's list.
 - **⏻ Flow switches lists every flow, not only the triggered kinds.** A colleague's first day with the tool
   (2026-11-08): scheduled, autolaunched and screen flows were missing from the list, which showed only
   record-triggered, scheduled and platform-event flows and read the org's flow list one page deep. The

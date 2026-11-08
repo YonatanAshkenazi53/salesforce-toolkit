@@ -3647,7 +3647,13 @@ async function dispatchMessage(message) {
     case 'SF_METADATA_DEPLOY':
       return sfMetadataDeploy(orgUrl, sid, message.zipBase64, message.testLevel);
     case 'SF_MD_LIST':
-      return sfMetadataList(orgUrl, sid, message.mdType);
+      return sfMetadataList(orgUrl, sid, message.mdType, message.folder);
+    case 'SF_MD_DESCRIBE':
+      return sfMetadataDescribe(orgUrl, sid);
+    case 'SF_MD_RETRIEVE_START':
+      return sfMetadataRetrieveStart(orgUrl, sid, message.types);
+    case 'SF_MD_RETRIEVE_STATUS':
+      return sfMetadataRetrieveStatus(orgUrl, sid, message.id);
     case 'SF_MD_READ':
       return sfMetadataRead(orgUrl, sid, message.mdType, message.fullNames);
     case 'SF_REST_GET':
@@ -4668,10 +4674,51 @@ async function sfMetadataSoap(orgUrl, sid, bodyXml) {
   if (!ok) return { error: 'the Metadata API answered an HTTP error without a fault' };
   return { text };
 }
-async function sfMetadataList(orgUrl, sid, mdType) {
+async function sfMetadataList(orgUrl, sid, mdType, folder) {
   const ver = API_VERSION.replace(/^v/, '');
+  // folder: Report / Dashboard / EmailTemplate / Document are listed folder by folder (the whole-org sweep, 2026-11-08)
   return sfMetadataSoap(orgUrl, sid,
-    `<met:listMetadata><met:queries><met:type>${sfMdEscape(mdType)}</met:type></met:queries><met:asOfVersion>${ver}</met:asOfVersion></met:listMetadata>`);
+    `<met:listMetadata><met:queries><met:type>${sfMdEscape(mdType)}</met:type>${folder ? `<met:folder>${sfMdEscape(folder)}</met:folder>` : ''}</met:queries><met:asOfVersion>${ver}</met:asOfVersion></met:listMetadata>`);
+}
+// ── The whole-org text sweep (Field Cleaner, 2026-11-08) ─────────────────
+// describeMetadata lists every type the org has; retrieve() packs the named
+// components into one zip, asynchronously; checkRetrieveStatus hands the zip
+// back as base64 inside the SOAP answer. Reads only: nothing here writes.
+async function sfMetadataDescribe(orgUrl, sid) {
+  const ver = API_VERSION.replace(/^v/, '');
+  return sfMetadataSoap(orgUrl, sid, `<met:describeMetadata><met:asOfVersion>${ver}</met:asOfVersion></met:describeMetadata>`);
+}
+// types: [{ name, members: ['*' | fullName, …] }] → { id } or { error }
+async function sfMetadataRetrieveStart(orgUrl, sid, types) {
+  const ver = API_VERSION.replace(/^v/, '');
+  const list = (Array.isArray(types) ? types : []).filter(t => t && t.name && Array.isArray(t.members) && t.members.length);
+  if (!list.length) return { error: 'nothing to retrieve' };
+  const typesXml = list.map(t => `<met:types>${t.members.map(m => `<met:members>${sfMdEscape(m)}</met:members>`).join('')}<met:name>${sfMdEscape(t.name)}</met:name></met:types>`).join('');
+  const r = await sfMetadataSoap(orgUrl, sid,
+    `<met:retrieve><met:retrieveRequest><met:apiVersion>${ver}</met:apiVersion><met:singlePackage>true</met:singlePackage><met:unpackaged>${typesXml}<met:version>${ver}</met:version></met:unpackaged></met:retrieveRequest></met:retrieve>`);
+  if (r.error) return r;
+  const id = r.text.match(/<(?:[A-Za-z0-9_.-]+:)?id>([^<]+)<\/(?:[A-Za-z0-9_.-]+:)?id>/);
+  if (!id) return { error: 'the Metadata API started no retrieve (no id in its answer)' };
+  return { id: id[1] };
+}
+// → { done, status, zipBase64|null, fileCount, messages: [{file, problem}] } or { error }
+async function sfMetadataRetrieveStatus(orgUrl, sid, id) {
+  const r = await sfMetadataSoap(orgUrl, sid,
+    `<met:checkRetrieveStatus><met:asyncProcessId>${sfMdEscape(id)}</met:asyncProcessId><met:includeZip>true</met:includeZip></met:checkRetrieveStatus>`);
+  if (r.error) return r;
+  const t = r.text;
+  const tag = n => { const m = t.match(new RegExp(`<(?:[A-Za-z0-9_.-]+:)?${n}>([^<]*)</(?:[A-Za-z0-9_.-]+:)?${n}>`)); return m ? m[1] : null; };
+  const done = tag('done') === 'true';
+  const status = tag('status') || (done ? 'Succeeded' : 'InProgress');
+  const zipBase64 = done ? (tag('zipFile') || null) : null;
+  const fileCount = (t.match(/<(?:[A-Za-z0-9_.-]+:)?fileProperties>/g) || []).length;
+  const messages = [];
+  for (const m of t.matchAll(/<(?:[A-Za-z0-9_.-]+:)?messages>([\s\S]*?)<\/(?:[A-Za-z0-9_.-]+:)?messages>/g)) {
+    const f = m[1].match(/<(?:[A-Za-z0-9_.-]+:)?fileName>([^<]*)</); const p = m[1].match(/<(?:[A-Za-z0-9_.-]+:)?problem>([^<]*)</);
+    messages.push({ file: f ? f[1] : '', problem: p ? p[1] : '' });
+  }
+  const errorMessage = tag('errorMessage');
+  return { done, status, zipBase64, fileCount, messages, ...(errorMessage ? { errorMessage } : {}) };
 }
 async function sfMetadataRead(orgUrl, sid, mdType, fullNames) {
   const names = (Array.isArray(fullNames) ? fullNames : []).filter(Boolean).slice(0, 10);   // Salesforce's ceiling per call

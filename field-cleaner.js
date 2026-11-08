@@ -958,7 +958,7 @@ const FieldCleaner = (() => {
     _groups   = {};
     _replField = null; _replCompat = null; _replSeq++;
     _copyState = null; _copySeq++;
-    _rptScan = null; _lastScan = null;
+    _rptScan = null; _lastScan = null; _orgSweep = null;
     const replStep = eid('fcReplStep');
     if (replStep) replStep.style.display = 'none';
     const pill    = eid('fcPill');
@@ -1482,7 +1482,7 @@ const FieldCleaner = (() => {
         }
       }
 
-      _rptScan = null;
+      _rptScan = null; _orgSweep = null;
       _lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope };
       await renderResults(_lastScan.deps, fieldId);
     } catch (e) {
@@ -2317,7 +2317,8 @@ const FieldCleaner = (() => {
         <div id="fcDepZone"></div>
         <div id="fcFlsPanel"></div>
         ${_unscannedNoteHtml()}
-        <div id="fcRptScan"></div>`;
+        <div id="fcRptScan"></div>
+        <div id="fcOrgSweep"></div>`;
       eid('fcDelFreeBtn').onclick = () => confirmDelete(fieldId);
       runDataUsage();
       renderDeprecationZone(fieldId);
@@ -2378,6 +2379,7 @@ const FieldCleaner = (() => {
         <div id="fcCopyVals"></div>
         <div id="fcFlsPanel"></div>
         <div id="fcRptScan"></div>
+        <div id="fcOrgSweep"></div>
         <div id="fcDepZone"></div>
         ${_fixEveryHtml(autoCount)}
         ${_mcdCapped ? `<div class="fc-fact fc-fact-warn"><span class="fc-fact-ico">⚠</span><span class="fc-fact-text"><strong>This list may be cut short.</strong> Salesforce stops its dependency index at 2,000 rows without saying so — treat the count as a floor: fix what is listed, scan again, repeat.</span></div>` : ''}
@@ -2544,6 +2546,7 @@ const FieldCleaner = (() => {
     renderDeprecationZone(fieldId);  // F3: stage banner / deprecate button
     renderFlsPanel();            // F5: who can see this field
     renderReportScan();          // the opt-in report sweep
+    renderOrgSweep();            // 🧭 the opt-in whole-org text sweep
   }
 
   // ── F5: FLS visibility panel — who can even see this field? ─────────────
@@ -2679,6 +2682,235 @@ const FieldCleaner = (() => {
         }
       });
     });
+  }
+
+  // ── 🧭 The whole-org text sweep (opt-in) ──────────────────────────────────
+  // User 2026-11-08: "מורידים דרך vcs פרויקט שלם של סילספורס ואז מחפשים שם api
+  // של שדה… לחלק את זה לדברים שחייב למחוק או לשנות כדי למחוק את השדה, ודברים
+  // שטוב לדעת כי הם יכולים להשבר אחר כך" — "זה חייב להיות ב-1.1" — "יהיה נחמד
+  // להראות את הסריקה בלייב על המסך עם progress bar וזמן משוער לסיום".
+  // The scan asks Salesforce's index and reads a known set of kinds; this reads
+  // the org's own metadata as a whole (Metadata API retrieve, type by type),
+  // greps every text file for the field, and classifies each hit (sftk-sweep.js):
+  // 🔒 Salesforce refuses the delete for it · 👀 the delete goes through and it
+  // breaks later. Never part of the scan: it runs on the button, after its cost
+  // is said, with a live bar, the time left and a Stop.
+  const FC_SWEEP_CHUNK = 300;           // members per retrieve: small enough for the bar to move (live npc 2026-11-08: ~11 components a second)
+  const FC_SWEEP_RATE = 11;             // components per second, the planning estimate; the live rate replaces it after the first retrieve
+  let _orgSweep = null;   // { status, types, listed, groups, done, total, startedAt, files, result, stop, error, notes, perType }
+
+  function _sweepScanItems() {
+    const deps = (_lastScan && _lastScan.deps) || [];
+    const out = [];
+    for (const d of deps) {
+      const t = d.MetadataComponentType === 'Flow' && d._pb ? 'Flow' : d.MetadataComponentType;
+      out.push({ type: t, name: d.MetadataComponentName || d.MetadataComponentId });
+      if (t === 'LookupFilter' && d._lookupFieldName) out.push({ type: 'LookupFilter', name: `${_selObj.api}.${d._lookupFieldName}` });
+    }
+    return out;
+  }
+
+  function renderOrgSweep() {
+    const el = eid('fcOrgSweep');
+    if (!el || !_selObj || !_selField) return;
+    const s = _orgSweep;
+    const N = x => Number(x).toLocaleString();
+    if (!s) {
+      el.innerHTML = `<div class="fc-fact fc-sweep-fact"><span class="fc-fact-ico">🧭</span><span class="fc-fact-text"><b>Whole-org text sweep</b> — the scan above asks Salesforce’s index and reads the kinds it knows. This reads the org’s own metadata as a whole, like a project pulled from version control, and finds every file that names <code>${esc(_selField.api)}</code>: what must go or change before the delete (🔒), and what only breaks later (👀) — search layouts, related-list columns, record-type picklist values, Aura markup, templates, translations, permission sets and the rest.</span>
+        <span class="fc-fact-act"><button class="btn btn-secondary btn-sm" id="fcSweepPlan">🧭 Read the whole org…</button></span></div>`;
+      eid('fcSweepPlan').addEventListener('click', _sweepPlan);
+      return;
+    }
+    if (s.status === 'planning') {
+      el.innerHTML = `<div class="fc-sweep">${sftkCatSm(`Listing the org’s metadata… ${s.planNote || ''}`)}
+        <div class="fc-sweep-bar"><i style="width:${s.planTotal ? Math.round(100 * (s.planDone || 0) / s.planTotal) : 0}%"></i></div>
+        <div class="fc-sweep-meta"><span>${N(s.planDone || 0)} of ${N(s.planTotal || 0)} type${s.planTotal === 1 ? '' : 's'} listed</span><span>${N(s.listedCount || 0)} component${s.listedCount === 1 ? '' : 's'} so far</span>
+        <button class="btn btn-secondary btn-sm" id="fcSweepStop"${s.stop ? ' disabled' : ''}>${s.stop ? 'Stopping…' : '⏹ Stop'}</button></div></div>`;
+      eid('fcSweepStop')?.addEventListener('click', () => { s.stop = true; renderOrgSweep(); });
+      return;
+    }
+    if (s.status === 'error') {
+      el.innerHTML = `<div class="fc-sweep fc-sweep-bad" title="${esc(s.error)}">🧭 The org could not be read: ${esc(_feText(s.error))} <button class="btn btn-secondary btn-sm" id="fcSweepPlan">↻ Try again</button></div>`;
+      eid('fcSweepPlan').addEventListener('click', _sweepPlan);
+      return;
+    }
+    if (s.status === 'ready') {
+      const calls = s.groups.length * 2 + s.listCalls;
+      const est = s.total ? Math.max(15, Math.round(s.total / FC_SWEEP_RATE) + s.groups.length * 6) * 1000 : null;
+      el.innerHTML = `<div class="fc-sweep">🧭 This org has <strong>${N(s.total)}</strong> of its own component${s.total === 1 ? '' : 's'} in <strong>${N(s.types.length)}</strong> kind${s.types.length === 1 ? '' : 's'} worth reading${s.skippedManaged ? ` (${N(s.skippedManaged)} from installed packages left out — the platform will not let you change those)` : ''}.
+        Reading them takes <strong>${N(s.groups.length)}</strong> retrieve${s.groups.length === 1 ? '' : 's'} of the Metadata API (${N(calls)} API calls in all, ${N(s.listCalls)} already spent on the listing), roughly <strong>${sftkSweepFmtMs(est)}</strong>; nothing is written.
+        <div class="fc-sweep-types">${esc(s.types.map(t => `${t.name} ${N((s.listed[t.name] || []).length)}`).join(' · '))}</div>
+        <button class="btn btn-primary btn-sm" id="fcSweepGo">▶ Read ${N(s.total)} component${s.total === 1 ? '' : 's'}</button>
+        <button class="btn btn-secondary btn-sm" id="fcSweepCancel">Cancel</button></div>`;
+      eid('fcSweepGo')?.addEventListener('click', _sweepRun);
+      eid('fcSweepCancel')?.addEventListener('click', () => { _orgSweep = null; renderOrgSweep(); });
+      return;
+    }
+    if (s.status === 'running') {
+      const g = s.groups[s.groupIdx] || [];
+      const gN = g.reduce((k, t) => k + (t.extra ? 0 : t.members.length), 0);
+      const rate = s.done && s.startedAt ? s.done / Math.max(1, (Date.now() - s.startedAt) / 1000) : FC_SWEEP_RATE;
+      const expectMs = Math.max(8000, (gN / rate) * 1000 + 6000);
+      const inGroup = s.groupStartedAt && !s.reading ? Math.min(0.9, (Date.now() - s.groupStartedAt) / expectMs) : (s.reading ? 0.95 : 0);
+      const doneLike = s.done + gN * inGroup;
+      const pct = s.total ? Math.min(99, Math.round(100 * doneLike / s.total)) : 0;
+      const planMs = (s.total / FC_SWEEP_RATE + s.groups.length * 6) * 1000;
+      const elapsed = Date.now() - (s.startedAt || Date.now());
+      let eta;
+      if (!s.done) eta = Math.max(0, planMs - elapsed);
+      else {
+        // each retrieve costs an overhead plus its members at the observed rate
+        const OVER = 6000;
+        const liveRate = Math.max(2, s.done / Math.max(1, (elapsed - s.groupIdx * OVER) / 1000));
+        let left = 0;
+        for (let i = s.groupIdx; i < s.groups.length; i++) { const m = s.groups[i].reduce((k, t) => k + (t.extra ? 0 : t.members.length), 0); left += OVER + (m / liveRate) * 1000; }
+        left -= (s.groupStartedAt ? Date.now() - s.groupStartedAt : 0);
+        eta = Math.max(0, Math.min(left, planMs * 3));
+      }
+      const cur = s.current ? `retrieving ${esc(s.current)}…` : (s.reading ? 'reading the files…' : 'waiting for Salesforce…');
+      el.innerHTML = `<div class="fc-sweep">${sftkCatSm(`Reading the org… ${cur}`)}
+        <div class="fc-sweep-bar"><i style="width:${pct}%"></i></div>
+        <div class="fc-sweep-meta"><span><b>${pct}%</b> · ${N(s.done)} of ${N(s.total)} components</span><span>retrieve ${N(Math.min(s.groupIdx + 1, s.groups.length))} of ${N(s.groups.length)}</span><span>${N(s.filesRead || 0)} files read</span><span><b>${sftkSweepFmtMs(eta)}</b> left${s.done ? '' : ' (estimated)'}</span>
+        <button class="btn btn-secondary btn-sm" id="fcSweepStop"${s.stop ? ' disabled' : ''}>${s.stop ? 'Stopping after this retrieve…' : '⏹ Stop'}</button></div></div>`;
+      eid('fcSweepStop')?.addEventListener('click', () => { s.stop = true; renderOrgSweep(); });
+      clearTimeout(s._tick); s._tick = setTimeout(() => { if (_orgSweep === s && s.status === 'running') renderOrgSweep(); }, 1000);
+      return;
+    }
+    // done / stopped
+    const r = s.result || { byType: {}, hits: [], filesRead: 0, filesWithHits: 0 };
+    const all = s.status === 'done';
+    const types = Object.entries(r.byType);
+    const lock = types.filter(([, t]) => t.sev === 'blocker'), eye = types.filter(([, t]) => t.sev !== 'blocker');
+    const count = list => list.reduce((n, [, t]) => n + t.items.length, 0);
+    const cmp = s.compare || { known: 0, fresh: 0 };
+    const took = s.finishedAt && s.startedAt ? sftkSweepFmtMs(s.finishedAt - s.startedAt) : '';
+    const item = (type, it) => {
+      const hl = t => esc(t).replace(new RegExp(`(${_selField.api.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\  // ── 📊 The report sweep (opt-in) ─────────────────────────────────────────')})`, 'gi'), '<mark>$1</mark>');
+      const lines = it.lines.slice(0, 6).map(l => `<span class="ln">${l.file ? esc(l.file) + ':' : ''}${l.line}</span>${hl(l.text)}`).join('\n') + (it.lines.length > 6 ? `\n<span class="ln"></span>… ${it.lines.length - 6} more line${it.lines.length - 6 === 1 ? '' : 's'}` : '');
+      const scanLink = it.inScan ? `<span class="fc-sweep-inscan" title="The scan above lists this component too — its buttons are there">in the list above</span>` : '';
+      return `<div class="fc-sweep-item"><div class="fc-sweep-item-hd"><code>${esc(it.component)}</code>${it.section ? `<span class="ds-subtext">${esc(it.section)}</span>` : ''}${scanLink}<span class="fc-sweep-path">${esc(it.path)}</span></div><pre class="fc-sweep-lines">${lines}</pre></div>`;
+    };
+    const compact = new Set(['Profile', 'PermissionSet']);
+    const group = (type, t) => `<div class="fc-sweep-grp"><div class="fc-sweep-grp-hd"><span>${t.sev === 'blocker' ? '🔒' : '👀'} ${esc(t.label)}</span><span class="fc-sweep-grp-n">${N(t.items.length)}</span></div>
+        ${t.why ? `<div class="fc-sweep-why">${esc(t.why)}</div>` : ''}${compact.has(type)
+          ? `<div class="fc-sweep-item"><div class="fc-sweep-item-hd">${t.items.map(it => `<code>${esc(decodeURIComponent(it.component))}</code>`).join(' ')}</div></div>`
+          : t.items.map(it => item(type, it)).join('')}</div>`;
+    el.innerHTML = `<div class="fc-sweep ${all ? 'fc-sweep-ok' : 'fc-sweep-bad'}">🧭 <strong>Whole-org sweep${all ? '' : ' — STOPPED'}:</strong> ${N(r.filesRead)} file${r.filesRead === 1 ? '' : 's'} of ${N(s.done)} component${s.done === 1 ? '' : 's'} read${all ? '' : ` (of ${N(s.total)} — the rest were NOT read)`}${took ? ` in ${took}` : ''}; <strong>${N(r.filesWithHits)}</strong> name${r.filesWithHits === 1 ? 's' : ''} <code>${esc(_selObj.api)}.${esc(_selField.api)}</code>.
+        <div class="fc-sweep-sum"><span class="fc-sweep-pill fc-sweep-pill-lock">🔒 ${N(count(lock))} must go or change before the delete</span><span class="fc-sweep-pill fc-sweep-pill-eye">👀 ${N(count(eye))} will break or lose the field</span>${cmp.fresh ? `<span class="ds-subtext">${N(cmp.fresh)} not in the scan’s list above · ${N(cmp.known)} also listed there</span>` : (types.length ? `<span class="ds-subtext">every one is also in the scan’s list above</span>` : '')}</div>
+        ${s.notes.length ? `<div class="fc-sweep-why">${s.notes.map(n => `ℹ ${esc(n)}`).join('<br>')}</div>` : ''}
+        ${lock.map(([ty, t]) => group(ty, t)).join('')}${eye.map(([ty, t]) => group(ty, t)).join('')}
+        <div class="fc-repl-sub">Kinds not read: static resources, documents, content and site assets (binary or bulky), settings, certificates, and anything installed from a managed package. <button class="fc-dd-linkbtn" id="fcSweepPlan">↻ Read again</button></div></div>`;
+    eid('fcSweepPlan')?.addEventListener('click', _sweepPlan);
+  }
+
+  // Step 1 — the plan: describeMetadata, then listMetadata per type (folder
+  // kinds folder by folder), so the cost is exact before anything is retrieved.
+  async function _sweepPlan() {
+    const s = _orgSweep = { status: 'planning', planDone: 0, planTotal: 0, listedCount: 0, stop: false, notes: [], listCalls: 0, skippedManaged: 0 };
+    renderOrgSweep();
+    const fail = why => { if (_orgSweep === s) { _orgSweep = { status: 'error', error: why }; renderOrgSweep(); } };
+    const d = await bg({ type: 'SF_MD_DESCRIBE', orgUrl: _orgUrl, sid: _sid, _suppressError: true });
+    if (_orgSweep !== s) return;
+    if (!d || d.error) return fail((d && d.error) || 'describeMetadata gave no answer');
+    s.listCalls++;
+    const types = sftkSweepTypes(sftkSweepParseDescribe(d.text));
+    s.planTotal = types.length;
+    const listed = {};
+    // standard objects are not under CustomObject's wildcard: the field's object and every customizable standard object the org describes
+    let stdObjects = [_selObj.api];
+    try {
+      const g = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true, _silentError: true, path: 'services/data/v62.0/sobjects' });
+      if (g && Array.isArray(g.sobjects)) stdObjects = [...new Set([_selObj.api, ...g.sobjects.filter(o => o && !o.custom && o.layoutable && !o.customSetting && !/__(History|Share|Feed|Tag|ChangeEvent)$/.test(o.name)).map(o => o.name)])];
+    } catch (_) {/* the field's object alone */}
+    for (const t of types) {
+      if (s.stop || _orgSweep !== s) { if (_orgSweep === s) { _orgSweep = null; renderOrgSweep(); } return; }
+      s.planNote = t.name;
+      renderOrgSweep();
+      const members = [];
+      const take = items => { for (const it of items) { if (!sftkSweepOwn(it)) { s.skippedManaged++; continue; } members.push(it.fullName); } };
+      if (t.how === 'folders') {
+        const f = await bg({ type: 'SF_MD_LIST', orgUrl: _orgUrl, sid: _sid, mdType: t.folderType, _suppressError: true });
+        s.listCalls++;
+        if (f && !f.error) {
+          const folders = sftkSweepParseList(f.text).filter(sftkSweepOwn).map(x => x.fullName);
+          members.push(...folders.map(x => x));   // the folders themselves ride along (harmless, they are tiny)
+          for (const folder of folders) {
+            if (s.stop) break;
+            const r = await bg({ type: 'SF_MD_LIST', orgUrl: _orgUrl, sid: _sid, mdType: t.name, folder, _suppressError: true });
+            s.listCalls++;
+            if (r && !r.error) take(sftkSweepParseList(r.text));
+          }
+          const r0 = await bg({ type: 'SF_MD_LIST', orgUrl: _orgUrl, sid: _sid, mdType: t.name, folder: 'unfiled$public', _suppressError: true });
+          s.listCalls++;
+          if (r0 && !r0.error) take(sftkSweepParseList(r0.text));
+        } else s.notes.push(`${t.name}: its folders could not be listed (${_feText((f && f.error) || 'no answer')}) — not read.`);
+      } else {
+        const r = await bg({ type: 'SF_MD_LIST', orgUrl: _orgUrl, sid: _sid, mdType: t.name, _suppressError: true });
+        s.listCalls++;
+        if (r && !r.error) take(sftkSweepParseList(r.text));
+        else if (r && /INVALID_TYPE|not supported|Cannot use/i.test(String(r.error))) { /* a type this org does not have: nothing to say */ }
+        else s.notes.push(`${t.name}: could not be listed (${_feText((r && r.error) || 'no answer')}) — not read.`);
+        if (t.name === 'CustomObject') for (const o of stdObjects) if (!members.includes(o)) members.push(o);
+      }
+      if (members.length) { listed[t.name] = [...new Set(members)]; s.listedCount += listed[t.name].length; }
+      s.planDone++;
+    }
+    if (_orgSweep !== s) return;
+    const groups = sftkSweepChunks(listed, FC_SWEEP_CHUNK);
+    // The Metadata API writes a profile's or permission set's field lines only for objects in the SAME
+    // retrieve (live 2026-11-08: 44 profiles found in one retrieve, 0 once Profile travelled alone) — so the
+    // field's object rides along with them; the same file twice is read once.
+    for (const g of groups) if (g.some(t => t.name === 'Profile' || t.name === 'PermissionSet') && !g.some(t => t.name === 'CustomObject' && t.members.includes(_selObj.api))) g.push({ name: 'CustomObject', members: [_selObj.api], extra: true });
+    const total = Object.values(listed).reduce((n, m) => n + m.length, 0);
+    Object.assign(s, { status: 'ready', types: types.filter(t => listed[t.name]), listed, groups, total, done: 0, groupIdx: 0, filesRead: 0, files: new Map() });
+    renderOrgSweep();
+  }
+
+  // Step 2 — the retrieves, one group at a time: start, poll, unzip, grep.
+  async function _sweepRun() {
+    const s = _orgSweep;
+    if (!s || s.status !== 'ready') return;
+    s.status = 'running'; s.startedAt = Date.now(); s.stop = false;
+    renderOrgSweep();
+    const forms = sftkSweepForms(_selObj.api, _selField.api);
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    for (s.groupIdx = 0; s.groupIdx < s.groups.length; s.groupIdx++) {
+      if (s.stop || _orgSweep !== s) break;
+      const g = s.groups[s.groupIdx];
+      const n = g.reduce((k, t) => k + (t.extra ? 0 : t.members.length), 0);
+      s.current = g.map(t => t.name).slice(0, 3).join(', ') + (g.length > 3 ? ` +${g.length - 3}` : '');
+      s.groupStartedAt = Date.now();
+      renderOrgSweep();
+      const st = await bg({ type: 'SF_MD_RETRIEVE_START', orgUrl: _orgUrl, sid: _sid, types: g, _suppressError: true });
+      if (_orgSweep !== s) return;
+      if (!st || st.error || !st.id) { s.notes.push(`${s.current}: the retrieve did not start (${_feText((st && st.error) || 'no answer')}) — those ${n} were NOT read.`); continue; }
+      let r = null;
+      for (let i = 0; i < 600; i++) {
+        await sleep(i < 5 ? 1500 : 3000);
+        if (_orgSweep !== s) return;
+        r = await bg({ type: 'SF_MD_RETRIEVE_STATUS', orgUrl: _orgUrl, sid: _sid, id: st.id, _suppressError: true });
+        if (!r || r.error) { s.notes.push(`${s.current}: the retrieve could not be checked (${_feText((r && r.error) || 'no answer')}) — ${n} NOT read.`); r = null; break; }
+        if (r.done) break;
+      }
+      if (!r) continue;
+      if (r.status !== 'Succeeded' || !r.zipBase64) { s.notes.push(`${s.current}: the retrieve ${r.status === 'Failed' ? 'failed' : 'ended without a zip'}${r.errorMessage ? ` — ${_feText(r.errorMessage)}` : ''}; ${n} NOT read.`); continue; }
+      s.reading = true; s.current = ''; renderOrgSweep();
+      try {
+        const files = await sftkUnzip(sftkBase64ToBytes(r.zipBase64));
+        for (const [p, t] of files) s.files.set(p, t);
+        s.filesRead += files.size;
+      } catch (e) { s.notes.push(`${g.map(t => t.name).join(', ')}: the zip could not be read (${_feText(e && e.message || e)}) — ${n} NOT read.`); }
+      s.reading = false;
+      s.done += n;
+      renderOrgSweep();
+    }
+    if (_orgSweep !== s) return;
+    s.result = sftkSweepRun(s.files, forms);
+    s.compare = sftkSweepCompare(s.result.byType, _sweepScanItems());
+    s.finishedAt = Date.now();
+    s.status = (s.done === s.total && !s.stop) ? 'done' : 'stopped';
+    s.files = new Map();   // the texts are in the result's lines; the whole org need not stay in memory
+    renderOrgSweep();
   }
 
   // ── 📊 The report sweep (opt-in) ─────────────────────────────────────────
