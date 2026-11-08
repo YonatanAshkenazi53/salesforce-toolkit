@@ -18,7 +18,7 @@ describe('the table', () => {
     expect(M.sftkMdDeleteSpec('Flow')).toBeNull();
     expect(FC).toContain("type === 'LookupFilter' ? { type, mdType: 'CustomField', what: 'lookup filter', special: 'lookupFilter' }");
     expect(FC).toContain("if (spec.special === 'lookupFilter') return (row && row._lookupFieldName) || id;");
-    expect(FC).toContain("(type === 'MatchingRule' || type === 'DuplicateRule') && looksLikeId");
+    expect(FC).toContain("(type === 'MatchingRule' || type === 'DuplicateRule' || type === 'ListView') && looksLikeId");   // a list view's 00B id too (2026-11-08)
   });
 });
 
