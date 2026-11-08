@@ -48,7 +48,7 @@ describe('wiring: both panels carry the box, the key on every row, and count hid
   it('⏻ Switches and ⚙ API versions draw the box above their list and key each row by label + API name', () => {
     expect(DEP).toContain("${depListFilterRow('switches')}");
     expect(DEP).toContain("${depListFilterRow('apiver')}");
-    expect(DEP).toContain('<label class="dep-list-row" data-dep-search="${escHtml(sftkFlowFilterKey(f.label, f.apiName))}">');
+    expect(DEP).toContain('style="--fb-depth:${depth}" data-dep-search="${escHtml(sftkFlowFilterKey(f.label, f.apiName))}">');   // the row carries its depth in the hierarchy (2026-11-08)
     expect(DEP).toContain('data-dep-search="${escHtml(sftkFlowFilterKey(r.label, r.apiName))}"');
   });
   it('a hidden row keeps its tick: the class only hides it, the footers count it and say so', () => {
