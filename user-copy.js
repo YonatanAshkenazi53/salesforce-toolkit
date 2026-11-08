@@ -634,6 +634,9 @@ const UserCopy = (() => {
     document.getElementById('ucLoading').style.display = '';
     document.getElementById('ucPreview').style.display = 'none';
     document.getElementById('ucResult').style.display  = 'none';
+    // the cat, one segment per step and the time left (user 2026-11-08: "every loading that might take time")
+    const prog = window.sftkProgress ? sftkProgress(document.getElementById('ucLoading'), { what: 'Reading both users — permission sets, groups, locale and user permissions…', key: 'usercopy', orgUrl: _orgUrl, small: true,
+      legs: [{ key: 'ps', label: 'permission sets', weight: 2 }, { key: 'psg', label: 'permission set groups', weight: 1 }, { key: 'locale', label: 'locale & timezone', weight: 1 }, { key: 'groups', label: 'public groups', weight: 1 }, { key: 'perms', label: 'user permissions', weight: 1 }] }) : null;
 
     try {
       // Permission sets on source
@@ -654,8 +657,10 @@ const UserCopy = (() => {
       });
       targetPermSetIds = new Set((tpsR.records || []).map(r => r.PermissionSetId));
 
+      if (prog) prog.step('psg');
       await loadPermSetGroups();
 
+      if (prog) prog.step('locale');
       // Source user locale/tz fields
       const sfR = await bg({
         type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
@@ -672,6 +677,7 @@ const UserCopy = (() => {
       });
       targetUserFields = tfR.records?.[0] || {};
 
+      if (prog) prog.step('groups');
       // Source public groups
       const sgR = await bg({
         type: 'SF_QUERY_ALL', orgUrl: _orgUrl, sid: _sid, tooling: false,
@@ -688,6 +694,7 @@ const UserCopy = (() => {
       });
       targetGroupIds = new Set((tgR.records || []).map(r => r.GroupId));
 
+      if (prog) prog.step('perms');
       // User-record permission booleans (Marketing User, Flow User, etc.)
       sourceUserPerms = {};
       targetUserPerms = {};
@@ -706,6 +713,7 @@ const UserCopy = (() => {
       }
 
     } catch (e) {
+      if (prog) prog.fail();
       document.getElementById('ucLoading').style.display = 'none';
       const fe = sftkFriendlyError(e.message || String(e));
       showResult(
@@ -716,6 +724,7 @@ const UserCopy = (() => {
       return;
     }
 
+    if (prog) prog.done();
     document.getElementById('ucLoading').style.display = 'none';
     renderPreview();
     document.getElementById('ucPreview').style.display = '';

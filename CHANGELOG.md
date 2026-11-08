@@ -150,6 +150,40 @@ extensions containing root files that start with `_`).
   Live on npc (scripts/dev/live/fc-code-edit.mjs): ⇄ on the LWC → the CLI reads the new import, 0 of the old; ⇄ on the
   duplicate rule → the retrieve shows the new field in the filter; both undone through History, the CLI reads the
   originals back.
+- **Every long load shows the cat, a bar, the step and the time left** (2026-11-08: "when we scan these on
+  enterprises it may take time. i want to show the animation and progress + estimation every loading that might
+  take time"). One widget (sftk-progress.js) for three shapes of work — a fixed order of steps (one segment each),
+  N of M items (a filling bar), or one long call (a sweeping bar, with how long it took last time in this org) —
+  on the Flows list, the Dependencies scan (with Stop, in the tab and in the strip above the Flows list), ⏻ Flow
+  switches and ⚙ API versions (the three list reads, then one versions page per 100 flows), Lightning Pages, Flow
+  Access (three steps) and Copy Permissions (five steps). Nothing is estimated before it can be: the line says
+  "estimating…", then the seconds so far, then the time left.
+- **Flows › Versions: a flow tree is a card too** (2026-11-08: "this still looks bad, should look more like the
+  other pages"): the flows the dependency map knows to call each other sit in one bordered card — the root, its
+  subflows nested with a twig per level, "tick the whole tree" in the header (half-ticked when only some are),
+  "🌳 tree · N flows · M levels deep" — in the list's own alphabetical order.
+- **The packaged fixture has a tree of every flow kind** (2026-11-08: "scheduled triggered. screen flow with child
+  screen flow, record triggered with subflows, record triggered with a scheduled path"): SFTK_Pkg_Screen →
+  SFTK_Pkg_Screen_Child (a screen flow) → SFTK_Pkg_Screen_Leaf; SFTK_Pkg_Parent_Trigger on the packaged Lookup
+  Parent with two subflows — the immediate path calls SFTK_Pkg_Path_Now_Sub, a scheduled path an hour later calls
+  SFTK_Pkg_Path_Later_Sub → SFTK_Pkg_Path_Deep_Sub; next to the record-triggered and scheduled trees already there.
+  Deployed to npc and npc2.
+- **Field Cleaner: one scan, one list** (2026-11-08: "i dont think we need 3 tabs here. one tab is enough, but
+  should be filtered by must and optional metadata references"). The 🔍 / 🔒 / 👀 scope switch is gone — every
+  scan reads everything — and the two sections became one list with a filter row: All · 🔒 Must fix · 👀 Might
+  break; each group carries its tag. The 👀 sentence in the gate says those kinds WERE read and what happens to
+  them ("do we scan them as well?"); the ⚡ row says why ⇄ counts more than ✂ ("i can replace more than i can
+  remove?": code, formulas, buttons and field updates can only swap the field, not lose it).
+- **Full metadata text scan** (the whole-org sweep, renamed — "it scans a lot more than reports", "change it to
+  full metadata text scan"): the offer says it is expensive and slow and what the cost is made of; pressing it only
+  counts, and the exact API calls and time are shown before anything is read ("say how many api calls it will
+  cost"). A hit the everyday scan already lists is not listed again ("this table should not list whats in the
+  other sheet"); a fresh hit of a kind the list fixes — Apex, Visualforce, LWC, validation rules, buttons, field
+  sets, formulas, workflow, approvals, sharing, matching and duplicate rules, Lead/Case rules, custom metadata,
+  list views, compact layouts, quick actions — JOINS the list with the ✂ ⇄ ✎ 🗑 of its kind ("Can we do a remove
+  and replace on them as well?"); the rest stay in the box, marked "by hand". ⬇ Export CSV writes every line that
+  names the field ("make sure the user can export this report as well"). A retrieve that runs long says how long
+  it has run ("stuck at 2 prcnt": Salesforce reports nothing until a retrieve lands).
 - **A flow tree is a card** (2026-11-08: "לא רואים שזה עץ. פשוט צריך לעשות tick all ואפשרות לבחור"): in ⏻ Switches
   and ⚙ API versions a flow with subflows is drawn as a bordered card — a header with "tick the whole tree" (it
   follows the rows: half-ticked when only some are), "🌳 tree · N flows · M levels deep" (API versions: the oldest

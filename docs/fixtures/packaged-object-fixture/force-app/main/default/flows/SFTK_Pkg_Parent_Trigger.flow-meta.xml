@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>64.0</apiVersion>
+    <description>Admin Toolkit fixture: record-triggered flow (after save, on create) on the packaged DLRS Lookup Parent with TWO subflows and a SCHEDULED PATH (user 2026-11-08: "record triggered with subflows, record triggered with a scheduled path"). Right away it calls SFTK_Pkg_Path_Now_Sub; an hour after the record is created it calls SFTK_Pkg_Path_Later_Sub, which calls SFTK_Pkg_Path_Deep_Sub. Safe to delete.</description>
+    <interviewLabel>SFTK Pkg Parent Trigger {!$Flow.CurrentDateTime}</interviewLabel>
+    <label>SFTK Pkg Parent Trigger</label>
+    <processMetadataValues><name>BuilderType</name><value><stringValue>LightningFlowBuilder</stringValue></value></processMetadataValues>
+    <processMetadataValues><name>CanvasMode</name><value><stringValue>AUTO_LAYOUT_CANVAS</stringValue></value></processMetadataValues>
+    <processMetadataValues><name>OriginBuilderType</name><value><stringValue>LightningFlowBuilder</stringValue></value></processMetadataValues>
+    <processType>AutoLaunchedFlow</processType>
+    <start>
+        <locationX>50</locationX><locationY>0</locationY>
+        <connector><targetReference>Call_Now</targetReference></connector>
+        <object>dlrs__LookupParent__c</object>
+        <recordTriggerType>Create</recordTriggerType>
+        <scheduledPaths>
+            <name>An_Hour_Later</name><label>An hour later</label>
+            <connector><targetReference>Call_Later</targetReference></connector>
+            <offsetNumber>1</offsetNumber>
+            <offsetUnit>Hours</offsetUnit>
+            <timeSource>RecordTriggerEvent</timeSource>
+        </scheduledPaths>
+        <triggerType>RecordAfterSave</triggerType>
+    </start>
+    <subflows><name>Call_Now</name><label>Call Now</label><locationX>50</locationX><locationY>134</locationY><flowName>SFTK_Pkg_Path_Now_Sub</flowName></subflows>
+    <subflows><name>Call_Later</name><label>Call Later</label><locationX>314</locationX><locationY>134</locationY><flowName>SFTK_Pkg_Path_Later_Sub</flowName></subflows>
+    <status>Active</status>
+</Flow>

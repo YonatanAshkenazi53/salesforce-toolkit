@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>64.0</apiVersion>
+    <description>Admin Toolkit fixture: child SCREEN flow called by SFTK_Pkg_Screen (user 2026-11-08: "screen flow with child screen flow"). Shows one screen, then calls the autolaunched SFTK_Pkg_Screen_Leaf — three levels on a packaged object. Safe to delete.</description>
+    <interviewLabel>SFTK Pkg Screen Child {!$Flow.CurrentDateTime}</interviewLabel>
+    <label>SFTK Pkg Screen Child</label>
+    <processMetadataValues><name>BuilderType</name><value><stringValue>LightningFlowBuilder</stringValue></value></processMetadataValues>
+    <processMetadataValues><name>CanvasMode</name><value><stringValue>AUTO_LAYOUT_CANVAS</stringValue></value></processMetadataValues>
+    <processMetadataValues><name>OriginBuilderType</name><value><stringValue>LightningFlowBuilder</stringValue></value></processMetadataValues>
+    <processType>Flow</processType>
+    <start><locationX>50</locationX><locationY>0</locationY><connector><targetReference>Child_Screen</targetReference></connector></start>
+    <screens>
+        <name>Child_Screen</name><label>Child Screen</label><locationX>176</locationX><locationY>134</locationY>
+        <allowBack>true</allowBack><allowFinish>true</allowFinish><allowPause>true</allowPause>
+        <connector><targetReference>Call_Leaf</targetReference></connector>
+        <fields><name>ChildTxt</name><fieldText>&lt;p&gt;This is the child screen flow of SFTK Pkg Screen.&lt;/p&gt;</fieldText><fieldType>DisplayText</fieldType></fields>
+        <showFooter>true</showFooter><showHeader>true</showHeader>
+    </screens>
+    <subflows><name>Call_Leaf</name><label>Call Leaf</label><locationX>176</locationX><locationY>278</locationY><flowName>SFTK_Pkg_Screen_Leaf</flowName></subflows>
+    <status>Active</status>
+</Flow>

@@ -1308,12 +1308,11 @@ const DependencyMap = (() => {
     // cat in the Dependencies tab container so the scan is never completely
     // invisible. Any later render of that tab repaints the container, so this
     // cleans itself up.
-    let fallbackMsgEl = null;
+    let fallbackProg = null;
     if (!progressCallback) {
       const depContainer = document.getElementById('depTreeContainer');
-      if (depContainer) {
-        depContainer.innerHTML = sftkCatSm(`Scanning flow metadata… ${already} / ${total}`);
-        fallbackMsgEl = depContainer.querySelector('.lp-robot-msg');
+      if (depContainer && window.sftkProgress) {
+        fallbackProg = sftkProgress(depContainer, { what: 'Reading every flow version for the dependency map…', key: 'depscan', orgUrl, total, done: already, unit: 'flow versions', small: true });
       }
     }
 
@@ -1385,7 +1384,7 @@ const DependencyMap = (() => {
       // the truth: those versions really did settle at the same instant.
       _scanDone = already + covered;
       if (progressCallback) progressCallback(_scanDone, total);
-      else if (fallbackMsgEl) fallbackMsgEl.textContent = `Scanning flow metadata… ${_scanDone} / ${total}`;
+      else if (fallbackProg) fallbackProg.count(_scanDone, total);
     }, {
       concurrency: DEP_SCAN_CONCURRENCY,
       shouldStop
@@ -1395,6 +1394,7 @@ const DependencyMap = (() => {
     // so don't touch fetchInProgress or the completion flag.
     if (myToken !== _runToken) return dependencyMap;
 
+    if (fallbackProg) { if (_scanAbort) fallbackProg.fail(); else fallbackProg.done(); }
     fetchInProgress = false;
     _scanCalls = callsMade;
 
@@ -2799,24 +2799,29 @@ const DependencyMap = (() => {
     if (!picked.length) { body.innerHTML = depErrBox('No org', 'Connect to an org first.'); return; }
     // No Silent Waits: three list reads per org plus one versions page per
     // 100 flows, said before spending them.
-    prog.textContent = `${picked.length} org(s): 3 read-only calls each, plus one per 100 flows…`;
+    prog.textContent = '';
+    // The cat, a bar and the time left while the org is read (user 2026-11-08: "every loading that might take
+    // time"): the three list reads, then one versions page per 100 flows — the count starts once the pages are known.
+    const wid = window.sftkProgress ? sftkProgress(body, { what: 'Reading every flow of this org — its state, its versions and its API version. 3 read-only calls, plus one per 100 flows…', key: 'switches', orgUrl: picked[0].orgUrl }) : null;
+    let widCalls = 0, widPagesDone = 0, widPages = 0;
+    const widTick = () => { if (wid && widPages) wid.count(widCalls + widPagesDone, widPages + 3); };
+    const widCall = r => { widCalls++; widTick(); return r; };
     const orgs = []; const rowsByOrg = {}; const apiVerByOrg = {}; const notes = [];
     for (const o of picked) {
       const key = depOrgKey(o.orgUrl);
-      prog.textContent = `reading ${o.label}…`;
       const [view, defs, vers] = await Promise.all([
         // EVERY flow the org lists, every page of them (user 2026-11-08: a
         // colleague "didn't see many flows" — only the triggered kinds were
         // listed). TriggerObjectOrEventId is the object's API name, the
         // fallback when a packaged object's label does not come back.
         depBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: o.orgUrl, sid: o.sid, _silentError: true,
-          query: 'SELECT ApiName, Label, NamespacePrefix, IsActive, TriggerType, TriggerObjectOrEventLabel, TriggerObjectOrEventId FROM FlowDefinitionView' }),
+          query: 'SELECT ApiName, Label, NamespacePrefix, IsActive, TriggerType, TriggerObjectOrEventLabel, TriggerObjectOrEventId FROM FlowDefinitionView' }).then(widCall),
         // PLAIN fields only — the ActiveVersion.VersionNumber traversal
         // failed live and painted every flow "not togglable"; the Flow
         // query below already knows every version number.
         depBg({ type: 'SF_QUERY_ALL', tooling: true, orgUrl: o.orgUrl, sid: o.sid, _silentError: true,
-          query: 'SELECT Id, DeveloperName, NamespacePrefix FROM FlowDefinition' }),
-        depFlowVersions(o.orgUrl, o.sid),
+          query: 'SELECT Id, DeveloperName, NamespacePrefix FROM FlowDefinition' }).then(widCall),
+        depFlowVersions(o.orgUrl, o.sid, (i, n) => { widPages = n; widPagesDone = i + 1; widTick(); }),
       ]);
       if (view?.error) {
         notes.push(`${o.label}: could not be read (${view.error}) — shown as UNREAD, never as "has no flows".`);
@@ -2850,7 +2855,7 @@ const DependencyMap = (() => {
       }
       rowsByOrg[key] = sftkFlowBulkRows(view.records || [], defs?.error ? [] : (defs.records || []), versByApi);
     }
-    prog.textContent = '';
+    if (wid) { if (orgs.length) wid.done(); else wid.fail(); }
     if (!orgs.length) { body.innerHTML = depErrBox('No org could be read', notes.join(' ')); return; }
     const matrix = sftkFlowBulkMatrix(orgs, rowsByOrg, apiVerByOrg);
     if (!matrix.length) { body.innerHTML = depErrBox('No flows', 'These orgs list no flows at all.'); return; }
@@ -3369,7 +3374,8 @@ const DependencyMap = (() => {
   let _defTriggerByApiName = {};
   function getDefinitionTriggerMap() { return _defTriggerByApiName; }
 
-  async function depFlowVersions(orgUrl, sid) {
+  // onPage(i, n): page i of n of the versions read is done (i = 0 right after the definitions came back)
+  async function depFlowVersions(orgUrl, sid, onPage) {
     const defs = await depBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl, sid, _silentError: true,
       query: 'SELECT DurableId, ApiName, Label, NamespacePrefix, ManageableState, TriggerType, TriggerObjectOrEventLabel FROM FlowDefinitionView' });
     if (defs && !defs.error) {
@@ -3385,6 +3391,8 @@ const DependencyMap = (() => {
       _defTriggerByApiName = trigByApi;
       const out = [];
       let failed = null;
+      const pages = Math.ceil(defRows.length / 100);
+      if (onPage) onPage(0, pages);
       for (let i = 0; i < defRows.length && !failed; i += 100) {
         const chunk = defRows.slice(i, i + 100);
         const inList = chunk.map(d => `'${String(d.DurableId).replace(/'/g, '')}'`).join(',');
@@ -3393,6 +3401,7 @@ const DependencyMap = (() => {
             + ' FlowDefinitionView.ApiName, FlowDefinitionView.Label, FlowDefinitionView.NamespacePrefix, FlowDefinitionView.ManageableState'
             + ` FROM FlowVersionView WHERE FlowDefinitionViewId IN (${inList})` });
         if (!vers || vers.error) { failed = (vers && vers.error) || 'no response'; break; }
+        if (onPage) onPage(i / 100 + 1, pages);
         for (const v of (vers.records || [])) {
           const d = v.FlowDefinitionView || {};
           const ns = d.NamespacePrefix || null;
@@ -3431,8 +3440,8 @@ const DependencyMap = (() => {
     return max || { error: 'the org listed no API versions' };
   }
 
-  async function avFlows(o) {
-    const r = await depFlowVersions(o.orgUrl, o.sid);
+  async function avFlows(o, onPage) {
+    const r = await depFlowVersions(o.orgUrl, o.sid, onPage);
     if (!r || r.error) return { error: String((r && r.error) || 'no response') };
     return { rows: sftkFlowVerRows(r.records || []), note: r.note || null };
   }
@@ -3447,18 +3456,21 @@ const DependencyMap = (() => {
 
     // No Silent Waits: two list reads per org plus one versions page per 100
     // flows, quoted before spending them.
-    prog.textContent = `${picked.length} org(s): 2 read-only calls each, plus one per 100 flows…`;
+    prog.textContent = '';
     _avRunning = true; _avCancel = false;
     if (btn) btn.textContent = '⏹ Stop';
+    // the cat, a bar and the time left (user 2026-11-08): the release read, the definitions, one page per 100 flows
+    const wid = window.sftkProgress ? sftkProgress(out, { what: 'Comparing every flow’s pinned API version with this org’s release. 2 read-only calls, plus one per 100 flows…', key: 'apiver', orgUrl: picked[0].orgUrl }) : null;
+    let widCalls = 0, widPagesDone = 0, widPages = 0, okRun = false;
+    const widTick = () => { if (wid && widPages) wid.count(widCalls + widPagesDone, widPages + 2); };
     const orgs = []; const rowsByOrg = {}; const notes = [];
     try {
       for (const o of picked) {
         if (_avCancel) break;
         const key = depOrgKey(o.orgUrl);
-        prog.textContent = `reading ${o.label}…`;
-        const max = await avOrgMax(o);
+        const max = await avOrgMax(o); widCalls++; widTick();
         if (max.error) notes.push(`${o.label}: could not read the org's release (${max.error}) — its lag column stays UNKNOWN.`);
-        const f = await avFlows(o);
+        const f = await avFlows(o, (i, n) => { widPages = n; widPagesDone = i + 1; widTick(); });
         if (f.error) { notes.push(`${o.label}: flows could not be read (${f.error}) — this org is shown as UNREAD, never as "has no flows".`); continue; }
         if (f.note) notes.push(`${o.label}: ${f.note}.`);
         orgs.push({ key, label: o.label, orgUrl: o.orgUrl, sid: o.sid,
@@ -3483,10 +3495,12 @@ const DependencyMap = (() => {
       }
       _avState = { orgs, matrix: sftkFlowVerMatrix(orgs, rowsByOrg), edges,
         rowsByOrg, notes, generatedAt: new Date().toISOString() };
+      okRun = true;
       renderApiVerResult(out);
     } catch (e) {
       out.innerHTML = depErrBox('API version comparison failed', (e && e.message) || e);
     } finally {
+      if (wid) { if (okRun && !_avCancel) wid.done(); else wid.fail(); }
       _avRunning = false;
       if (btn) btn.textContent = '🔍 Compare';
       prog.textContent = _avCancel ? 'stopped — partial result' : '';

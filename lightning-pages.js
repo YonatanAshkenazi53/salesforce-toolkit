@@ -360,6 +360,8 @@ const LightningPages = (() => {
   async function loadPages() {
     setLoading(true);
     setContent('');
+    // the cat, a sweeping bar, the seconds and how long this took last time here (user 2026-11-08)
+    const prog = window.sftkProgress ? sftkProgress(document.getElementById('lpLoading'), { what: 'Listing every Lightning page of this org…', key: 'lpages', orgUrl: _orgUrl }) : null;
 
     // PublishStatus is NOT a queryable SOQL field on FlexiPage in all org types
     // (fails with HTTP 400 in Developer Edition, Scratch orgs, etc.).
@@ -371,6 +373,7 @@ const LightningPages = (() => {
              `FROM FlexiPage ORDER BY MasterLabel`
     });
 
+    if (prog) { if (res.error) prog.fail(); else prog.done(); }
     setLoading(false);
 
     if (res.error) {

@@ -154,6 +154,9 @@ const FlowPermissions = (() => {
   async function loadData() {
     setLoading(true);
     hideError();
+    // the cat, one segment per step and the time left (user 2026-11-08: "every loading that might take time")
+    const prog = window.sftkProgress ? sftkProgress(document.getElementById('fpLoading'), { what: 'Reading the flows that can be granted, and who has access to them today…', key: 'flowaccess', orgUrl: _orgUrl,
+      legs: [{ key: 'flows', label: 'the flows', weight: 2 }, { key: 'defs', label: 'flow definitions', weight: 2 }, { key: 'access', label: 'permission sets and today’s access', weight: 3 }] }) : null;
     _selFlows.clear();
     _selPS.clear();
 
@@ -195,6 +198,7 @@ const FlowPermissions = (() => {
       // Query EVERY FlowDefinition (no ActiveVersionId filter — we still want
       // permission management on inactive ones) so the client-side join by
       // DeveloperName resolves as many flows as possible.
+      if (prog) prog.step('defs');
       const fdRes = await sendBg({
         type: 'SF_QUERY_ALL', tooling: true, orgUrl: _orgUrl, sid: _sid,
         query: `SELECT Id, DeveloperName FROM FlowDefinition`
@@ -242,6 +246,7 @@ const FlowPermissions = (() => {
       // though Salesforce Setup shows the access. Matching on the flow Ids
       // we already display sidesteps the type-string entirely. Chunked to
       // keep the IN() clause within SOQL limits.
+      if (prog) prog.step('access');
       const flowDefIds = _flows.map(f => f.Id).filter(Boolean);
       const accessRecsP = (async () => {
         const out = [];
@@ -300,9 +305,11 @@ const FlowPermissions = (() => {
         });
       }
 
+      if (prog) prog.done();
       setLoading(false);
       renderContent();
     } catch (e) {
+      if (prog) prog.fail();
       setLoading(false);
       const raw = e.message || String(e);
       showError(raw);   // showError translates via sftkFriendlyError (handles SESSION_EXPIRED too)

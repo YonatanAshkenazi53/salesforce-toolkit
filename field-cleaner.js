@@ -302,17 +302,6 @@ function fcScopeLegs(scope, objApi) {
     reportTypes: mentions, listViews: mentions, compactLayouts: mentions, quickActions: mentions, paths: mentions, validationRulesOff: mentions,
   };
 }
-function fcScopeLabel(scope) {
-  const sc = fcScopeNorm(scope);
-  return sc === 'blockers' ? '\ud83d\udd12 What blocks the delete' : sc === 'mentions' ? '\ud83d\udc40 Other mentions' : '\ud83d\udd0d Everything';
-}
-// The sentence under the switch — what that scope reads and what it leaves out.
-function fcScopeHelp(scope) {
-  const sc = fcScopeNorm(scope);
-  if (sc === 'blockers') return 'Reads only what makes Salesforce refuse the delete: Apex, Visualforce, formula and roll-up fields, validation rules, flows and Process Builder, workflow rules, field updates, alerts and outbound messages, matching and duplicate rules, approval processes, sharing and scoping rules, Lightning pages, Lightning web components, custom metadata records, lead field mappings, Lead/Case rules. Layouts, reports, report types, list views, compact layouts, quick actions, email templates and Paths are not read \u2014 they never block the delete, but they break or lose the field afterwards.';
-  if (sc === 'mentions') return 'Reads only the other mentions: layouts, reports, report types, list views, compact layouts, quick actions, email templates, Paths \u2014 the delete goes through with these, and they break or lose the field afterwards. What blocks the delete is still counted for the Delete button, but not listed.';
-  return 'Reads both: what makes Salesforce refuse the delete, and every other mention that breaks or loses the field afterwards. Listed apart below.';
-}
 
 // E3b — what a full dependency scan costs, stated honestly. The floor is the
 // scan's fixed legs, counted from runScan/scanFlexiPages/scanSupplemental as
@@ -632,15 +621,6 @@ const FieldCleaner = (() => {
           <div id="fcReplNote" class="fc-repl-note" style="display:none"></div>
         </div>
 
-        <!-- What to scan (2026-11-05): everything · what blocks the delete · other mentions -->
-        <div id="fcScopeWrap" style="display:none">
-          <div class="mode-toggle fc-scope" id="fcScope" role="radiogroup" aria-label="What to scan">
-            <button type="button" class="mode-btn" data-scope="both" role="radio">🔍 Everything</button>
-            <button type="button" class="mode-btn" data-scope="blockers" role="radio">🔒 What blocks the delete</button>
-            <button type="button" class="mode-btn" data-scope="mentions" role="radio">👀 Other mentions</button>
-          </div>
-          <div class="fc-repl-help" id="fcScopeHelp"></div>
-        </div>
         <!-- Scan button -->
         <button id="fcScanBtn" class="btn btn-primary fc-scan-btn" style="display:none">
           🔍 Scan Dependencies
@@ -1200,7 +1180,9 @@ const FieldCleaner = (() => {
     if (nRm == null) nRm = n;
     if (n < 2 && !_everyNote) return '<span id="fcFixEvery" class="fc-every" hidden></span>';
     const tip = 'Goes through every item below that has this way, one by one — the flows, layouts and pages, and every blocker with ✂ / ⇄ inside it, in both lists. Each still asks before it changes anything; Cancel in any dialog stops the walk.';
-    return `<span id="fcFixEvery" class="fc-every"><span class="fc-every-lbl" title="${tip}">⚡ Everything at once</span>${nRp >= 2 && _replOn() ? `<button class="btn btn-primary btn-sm fc-fix-every" data-swap="1" title="${tip}">⇄ Replace all ${nRp}</button>` : ''}${nRm >= 2 ? `<button class="btn btn-secondary btn-sm fc-fix-every" data-swap="0" title="${tip}">✂ Remove all ${nRm}</button>` : ''}${_everyNote ? `<span class="fc-every-note">${esc(_everyNote)}</span>` : ''}</span>`;
+    const onlySwap = nRp >= 2 && _replOn() && nRm >= 2 && nRp > nRm ? nRp - nRm : 0;
+    const whyTip = `${onlySwap} can only be replaced, not removed: Apex, Visualforce, LWC and Aura, formula fields, buttons and links, restriction rules, field updates and inactive validation rules. Cut the field out of one of those and it stops compiling or has nothing left to do — ⇄ swaps the field, ✎ edits by hand.`;
+    return `<span id="fcFixEvery" class="fc-every"><span class="fc-every-lbl" title="${tip}">⚡ Everything at once</span>${nRp >= 2 && _replOn() ? `<button class="btn btn-primary btn-sm fc-fix-every" data-swap="1" title="${tip}">⇄ Replace all ${nRp}</button>` : ''}${nRm >= 2 ? `<button class="btn btn-secondary btn-sm fc-fix-every" data-swap="0" title="${tip}">✂ Remove all ${nRm}</button>` : ''}${onlySwap ? `<span class="fc-every-why" title="${esc(whyTip)}">${onlySwap} only ⇄ — code, formulas, buttons, field updates</span>` : ''}${_everyNote ? `<span class="fc-every-note">${esc(_everyNote)}</span>` : ''}</span>`;
   }
   // A section of the header that folds to one line, like the Deploy page's cards (user 2026-11-08: "we need a
   // collapsable ui there like we did for parents"). Open or folded is remembered per section; the one-line
@@ -1392,31 +1374,20 @@ const FieldCleaner = (() => {
   // (window.sftkApiBudget) is loaded in this page AND answers — the popup
   // does not load studio-transfer.js today, so tolerant wiring is the
   // difference between "estimate only" and a crash.
-  // ── the scope switch (2026-11-05): kept across sessions in sftk_fc_scope ──
-  let _scope = 'both';
-  try { chrome.storage?.local?.get('sftk_fc_scope').then(d => { _scope = fcScopeNorm(d && d.sftk_fc_scope); _paintScope(); }).catch(() => {}); } catch (_) {}
-  function _paintScope() {
-    const wrap = eid('fcScopeWrap');
-    if (!wrap) return;
-    wrap.style.display = eid('fcScanBtn') && eid('fcScanBtn').style.display !== 'none' ? '' : 'none';
-    wrap.querySelectorAll('[data-scope]').forEach(b => { const on = b.dataset.scope === _scope; b.classList.toggle('active', on); b.setAttribute('aria-checked', on ? 'true' : 'false'); });
-    const help = eid('fcScopeHelp'); if (help) help.textContent = fcScopeHelp(_scope);
-    if (!wrap.dataset.wired) {
-      wrap.dataset.wired = '1';
-      wrap.querySelectorAll('[data-scope]').forEach(b => b.addEventListener('click', async () => {
-        if (b.dataset.scope === _scope) return;
-        _scope = fcScopeNorm(b.dataset.scope);
-        try { await chrome.storage.local.set({ sftk_fc_scope: _scope }); } catch (_) {}
-        _paintScope();
-        updateScanCostLine();
-        // results already on the page: shown again in the new scope when the scan read it; else the button asks for a scan
-        if (_lastScan && _lastScan.deps) {
-          const covered = (_lastScan.scope || 'both') === 'both' || _lastScan.scope === _scope;
-          if (covered) renderResults(_lastScan.deps, _lastScan.fieldId);
-          else { const btn = eid('fcScanBtn'); if (btn) btn.textContent = `🔍 Scan again — ${_scope === 'blockers' ? 'the blockers were' : _scope === 'mentions' ? 'the other mentions were' : 'this scope was'} not read by the last scan`; }
-        }
-      }));
-    }
+  // ── one scan reads everything (user 2026-11-08: "i dont think we need 3 tabs here. one tab is enough, but should be
+  // filtered by must and optional"): the scope switch of 2026-11-05 is gone; the result list has a filter instead ──
+  const _scope = 'both';
+  function _paintScope() { /* the switch is gone; the callers stay harmless */ }
+  // the list's filter: 'all' · 'must' (Salesforce refuses the delete) · 'later' (goes through, breaks afterwards)
+  let _fcFilter = 'all';
+  function _paintFilter() {
+    const root = eid('fcResults'); if (!root) return;
+    root.querySelectorAll('.fc-filter-btn').forEach(b => { const on = b.dataset.filter === _fcFilter; b.classList.toggle('active', on); b.setAttribute('aria-checked', on ? 'true' : 'false'); });
+    root.querySelectorAll('.fc-group[data-sev]').forEach(g => { g.hidden = _fcFilter !== 'all' && g.dataset.sev !== _fcFilter; });
+    const sub = eid('fcFilterSub');
+    if (sub) sub.textContent = _fcFilter === 'must' ? 'Salesforce refuses the delete while any of these still references the field.'
+      : _fcFilter === 'later' ? 'Salesforce lets the delete through with these — then each stops working or loses the field quietly. Fix them here first.'
+      : '🔒 must fix — Salesforce refuses the delete while these reference the field · 👀 might break — the delete goes through, these lose the field afterwards.';
   }
 
   let _fcBudgetSeq = 0;
@@ -2416,30 +2387,18 @@ const FieldCleaner = (() => {
   async function renderResults(allDeps, fieldId) {
     const results = eid('fcResults');
     if (!results) return;
-    // the scope (2026-11-05): what the list shows; blockers the index returned are COUNTED for the gate even when hidden
+    // one scan, every kind (2026-11-08): the list below is the whole answer; the filter row shows a part of it
     const sevOf = t => (TYPE_CFG[t] || TYPE_CFG_DEFAULT).sev;
-    const scanScope = (_lastScan && _lastScan.scope) || 'both';
-    const deps = (allDeps || []).filter(d => fcScopeKeeps(_scope, sevOf(d.MetadataComponentType || 'Unknown')));
-    const hiddenBlockers = (allDeps || []).filter(d => sevOf(d.MetadataComponentType || 'Unknown') === 'blocker' && !fcScopeKeeps(_scope, 'blocker'));
-    const unreadNote = scanScope === 'blockers'
-      ? `<div class="fc-fact fc-fact-warn"><span class="fc-fact-ico">👀</span><span class="fc-fact-text"><strong>The other mentions were not read</strong> — this scan looked only at what blocks the delete. Layouts, reports, report types, list views, compact layouts, quick actions, email templates and Paths that mention the field are unknown: they never block the delete, but they break or lose the field afterwards. Switch to 🔍 Everything and scan again to see them.</span></div>`
-      : scanScope === 'mentions'
-        ? `<div class="fc-fact fc-fact-warn"><span class="fc-fact-ico">🔒</span><span class="fc-fact-text"><strong>The blockers outside the dependency index were not read</strong> — this scan looked only at the other mentions. Workflow rules, field updates, alerts and outbound messages, matching and duplicate rules, approval processes, sharing rules, Lightning web components, custom metadata records, lead mappings and Lead/Case rules can all make Salesforce refuse the delete. Switch to 🔍 Everything and scan again before deleting.</span></div>`
-        : '';
+    const deps = (allDeps || []).slice();
 
     if (!deps.length) {
-      const nothing = _scope === 'blockers' ? 'Nothing blocks the delete' : _scope === 'mentions' ? 'No other mention found' : 'No dependencies found';
-      const sub = hiddenBlockers.length
-        ? `${hiddenBlockers.length} blocker${hiddenBlockers.length === 1 ? '' : 's'} found but hidden by the 👀 scope — switch to 🔍 Everything to see ${hiddenBlockers.length === 1 ? 'it' : 'them'}. Salesforce refuses the delete until ${hiddenBlockers.length === 1 ? 'it is' : 'they are'} cleared.`
-        : scanScope === 'blockers' ? 'Salesforce will not refuse the delete. The other mentions were not read — see below.' : 'This field can be safely deleted.';
       results.innerHTML = `
         <div class="fc-clean">
-          <div class="fc-clean-icon">${hiddenBlockers.length ? '🔒' : '✅'}</div>
-          <div class="fc-clean-title">${nothing}</div>
-          <div class="fc-clean-sub">${sub}</div>
-          <button class="btn btn-danger" id="fcDelFreeBtn" ${hiddenBlockers.length ? 'disabled' : ''}>🗑 Delete Field</button>
+          <div class="fc-clean-icon">✅</div>
+          <div class="fc-clean-title">No dependencies found</div>
+          <div class="fc-clean-sub">This field can be safely deleted.</div>
+          <button class="btn btn-danger" id="fcDelFreeBtn">🗑 Delete Field</button>
         </div>
-        ${unreadNote}
         <div id="fcDataVerdict" class="fc-data-verdict fc-data-loading">${sftkCatSm('Measuring how much data is stored in this field…')}</div>
         <div id="fcCopyVals"></div>
         <div id="fcDepZone"></div>
@@ -2503,23 +2462,24 @@ const FieldCleaner = (() => {
         <div id="fcDataVerdict" class="fc-fact fc-data-verdict fc-data-loading"><span class="fc-fact-ico">📈</span><span class="fc-fact-text">${sftkCatSm('Measuring how much data is stored in this field…')}</span></div>
         <div id="fcCopyVals"></div>
         <div id="fcFlsPanel"></div>`)}
-        ${_foldHtml('further', '🔭', 'Look further than the index', 'every report, and the whole org as text — on request', `
+        ${_foldHtml('further', '🔭', 'Look further than the index', 'every report, and a full metadata text scan — on request', `
         <div id="fcRptScan"></div>
         <div id="fcOrgSweep"></div>`)}
         <div id="fcDepZone"></div>
         ${_mcdCapped ? `<div class="fc-fact fc-fact-warn"><span class="fc-fact-ico">⚠</span><span class="fc-fact-text"><strong>This list may be cut short.</strong> Salesforce stops its dependency index at 2,000 rows without saying so — treat the count as a floor: fix what is listed, scan again, repeat.</span></div>` : ''}
       </div>`;
 
-    const groupHtml = (type, items) => {
+    const groupHtml = (type, items, sev) => {
       const cfg = TYPE_CFG[type] || { ...TYPE_CFG_DEFAULT, label: type };
       const nItems = type === 'Flow' ? _flowCards.length : items.length;
       // the bulk buttons count only what they would touch — a Process Builder card is listed but never rewritten
       const nFix = type === 'Flow' ? _flowCards.filter(c => !c.pb).length : nItems;
       return `
-        <div class="fc-group" id="fcGroup_${esc(type)}">
+        <div class="fc-group" id="fcGroup_${esc(type)}" data-sev="${sev}">
           <div class="fc-group-hdr">
             <span class="fc-group-icon">${cfg.icon}</span>
             <span class="fc-group-label">${esc(cfg.label)}</span>
+            <span class="fc-group-sev fc-group-sev-${sev}" title="${sev === 'must' ? 'Salesforce refuses the delete while any of these still references the field' : 'Salesforce lets the delete through — these lose the field or stop working afterwards'}">${sev === 'must' ? '🔒 must fix' : '👀 might break'}</span>
             <span class="fc-group-count"${type === 'Flow' ? ` title="${items.length} version${items.length === 1 ? '' : 's'} of ${nItems === 1 ? 'this flow' : 'these flows'} mention the field"` : ''}>${nItems}</span>
             <span class="fc-group-sp"></span>
             ${type === 'Flow'
@@ -2536,23 +2496,25 @@ const FieldCleaner = (() => {
           </div>
         </div>`;
     };
-    // Two sections (2026-11-05): what makes Salesforce refuse the delete, then the other mentions.
+    // ONE list (user 2026-11-08: "one tab is enough, but should be filtered by must and optional metadata references"):
+    // the blockers first, then what breaks afterwards, each group tagged; the filter row shows all, 🔒 or 👀.
     const nOf = ([t, arr]) => t === 'Flow' ? _flowCards.length : arr.length;
     const blockerGroups = Object.entries(_groups).filter(([t]) => sevOf(t) === 'blocker');
     const mentionGroups = Object.entries(_groups).filter(([t]) => sevOf(t) !== 'blocker');
     const nB = blockerGroups.reduce((n, g) => n + nOf(g), 0), nM = mentionGroups.reduce((n, g) => n + nOf(g), 0);
-    html += '<!--FC_GATE-->';   // the gate (the 🔒 box, the delete button) is drawn here, above the lists (user 2026-11-08: "maybe it should be on top?")
-    if (fcScopeKeeps(_scope, 'blocker')) html += `
-      <div class="fc-section fc-section-blockers" id="fcSectionBlockers">
-        <div class="fc-section-hdr"><span class="fc-section-title">🔒 Must be cleared before Salesforce deletes the field</span><span class="fc-section-n">${nB}</span>${nB ? _fixEveryHtml(everyCount) : ''}</div>
-        <div class="fc-section-sub">${nB ? 'Salesforce refuses the delete while any of these still references the field.' : (scanScope === 'mentions' ? 'None in the dependency index — the blockers outside it were not read in this scope.' : 'Nothing blocks the delete.')}</div>
-        ${blockerGroups.map(([t, a]) => groupHtml(t, a)).join('')}
-      </div>`;
-    if (fcScopeKeeps(_scope, 'silent')) html += `
-      <div class="fc-section fc-section-mentions" id="fcSectionMentions">
-        <div class="fc-section-hdr"><span class="fc-section-title">👀 Other mentions — the delete goes through, these break afterwards</span><span class="fc-section-n">${nM}</span>${nB ? '' : _fixEveryHtml(everyCount)}</div>
-        <div class="fc-section-sub">${nM ? 'Each of these stops working or loses the field once it is deleted. Fix them here so nothing breaks quietly.' : (scanScope === 'blockers' ? 'Not read in this scope.' : 'No other mention found.')}</div>
-        ${mentionGroups.map(([t, a]) => groupHtml(t, a)).join('')}
+    if (_fcFilter === 'must' && !nB) _fcFilter = 'all';
+    if (_fcFilter === 'later' && !nM) _fcFilter = 'all';
+    html += '<!--FC_GATE-->';   // the gate (the 🔒 box, the delete button) is drawn here, above the list (user 2026-11-08: "maybe it should be on top?")
+    html += `
+      <div class="fc-section fc-section-all" id="fcSectionAll">
+        <div class="fc-section-hdr"><span class="fc-section-title">Where the field is used</span><span class="fc-section-n">${nB + nM}</span>
+          <span class="fc-filter" id="fcFilter" role="radiogroup" aria-label="Show">
+            <button type="button" class="fc-filter-btn" data-filter="all" role="radio">All <b>${nB + nM}</b></button>
+            <button type="button" class="fc-filter-btn fc-filter-must" data-filter="must" role="radio"${nB ? '' : ' disabled'} title="Salesforce refuses the delete while any of these still references the field">🔒 Must fix <b>${nB}</b></button>
+            <button type="button" class="fc-filter-btn fc-filter-later" data-filter="later" role="radio"${nM ? '' : ' disabled'} title="Salesforce lets the delete through — these lose the field or stop working afterwards">👀 Might break <b>${nM}</b></button>
+          </span>${_fixEveryHtml(everyCount)}</div>
+        <div class="fc-section-sub" id="fcFilterSub"></div>
+        ${blockerGroups.map(([t, a]) => groupHtml(t, a, 'must')).join('')}${mentionGroups.map(([t, a]) => groupHtml(t, a, 'later')).join('')}
       </div>`;
     // ── F2: predictive blocker check ─────────────────────────────────────
     // Classify by whether Salesforce will actually REJECT the delete. Manual
@@ -2566,45 +2528,33 @@ const FieldCleaner = (() => {
         const cfg = TYPE_CFG[t] || TYPE_CFG_DEFAULT;
         return cfg.sev === 'blocker' && !cfg.fixable;
       })
-      .map(([t, arr]) => ({ type: t, label: (TYPE_CFG[t] || { label: t }).label, count: arr.length, hidden: !fcScopeKeeps(_scope, 'blocker') }));
-    if (pbCards) _manualBlockers.push({ type: 'ProcessBuilder', label: `Process Builder process${pbCards === 1 ? '' : 'es'} (listed under Flows)`, count: pbCards, hidden: !fcScopeKeeps(_scope, 'blocker') });
+      .map(([t, arr]) => ({ type: t, label: (TYPE_CFG[t] || { label: t }).label, count: arr.length }));
+    if (pbCards) _manualBlockers.push({ type: 'ProcessBuilder', label: `Process Builder process${pbCards === 1 ? '' : 'es'} (listed under Flows)`, count: pbCards });
     const blockerTotal = _manualBlockers.reduce((n, b) => n + b.count, 0);
     const silentManual = Object.entries(_groups)
       .filter(([t]) => { const c = TYPE_CFG[t] || TYPE_CFG_DEFAULT; return c.sev === 'silent' && !c.fixable; })
       .reduce((n, [, arr]) => n + arr.length, 0);
-    // a FIXABLE blocker the scope hides (a flow, under 👀) gates the delete too — Salesforce would refuse it
-    const hiddenFixable = hiddenBlockers.filter(d => (TYPE_CFG[d.MetadataComponentType] || TYPE_CFG_DEFAULT).fixable).length;
-    const delDisabled = autoCount > 0 || blockerTotal > 0 || hiddenFixable > 0;
-    // the 👀 scope hides every blocker: ONE sentence with the way out, not twelve chips saying "hidden" and a
-    // second box (user 2026-11-08: "what is the point of all this info")
-    const scopeHides = !fcScopeKeeps(_scope, 'blocker');
-    const hiddenTotal = blockerTotal + hiddenFixable;
-    const hiddenBlock = scopeHides && hiddenTotal > 0 ? `
-      <div class="fc-blockers fc-blockers-hidden">
-        <div class="fc-blockers-hdr">🔒 ${hiddenTotal} blocker${hiddenTotal === 1 ? ' stops' : 's stop'} the delete — this view shows only the 👀 mentions.</div>
-        <div class="fc-blockers-foot">${hiddenFixable ? `${hiddenFixable} of them ${hiddenFixable === 1 ? 'is a flow or the like' : 'are flows and the like'} the tool fixes; ` : ''}${blockerTotal ? `${blockerTotal} ${hiddenFixable ? 'more ' : ''}${blockerTotal === 1 ? 'is' : 'are'} rules, code and other components with ✂ ⇄ ✎ 🗑 of their own. ` : ''}<button type="button" class="btn btn-secondary btn-sm fc-scope-jump" data-scope="both">🔍 Everything</button> shows and fixes them — scan again after switching.</div>
-      </div>` : '';
+    const delDisabled = autoCount > 0 || blockerTotal > 0;
 
-    // one header, one chip per kind (click → its group above; the tooltip says its ways), ONE sentence about the
+    // one header, one chip per kind (click → its group below; the tooltip says its ways), ONE sentence about the
     // ways (user 2026-11-08: "this section needs to improve. its very hard to understand and nobody will read it")
-    const blockerBlock = blockerTotal > 0 && !scopeHides ? `
+    const blockerBlock = blockerTotal > 0 ? `
       <div class="fc-blockers">
         <div class="fc-blockers-hdr">🔒 ${blockerTotal} blocker${blockerTotal === 1 ? ' stops' : 's stop'} the delete</div>
-        <div class="fc-blockers-chips">${_manualBlockers.map(b => `<button type="button" class="fc-blocker-row fc-blocker-chip" data-type="${esc(b.type)}" data-group="${esc(b.type === 'ProcessBuilder' ? 'Flow' : b.type)}" title="${esc(b.label)} — ${esc(_blockerWays(b.type))}. Click to jump to ${b.count === 1 ? 'it' : 'them'} in the list below.">${(TYPE_CFG[b.type] || {}).icon || '🔧'} <strong>${b.count}</strong> ${esc(b.label)}${b.hidden ? ' <em>hidden by the 👀 scope</em>' : ''}</button>`).join('')}</div>
+        <div class="fc-blockers-chips">${_manualBlockers.map(b => `<button type="button" class="fc-blocker-row fc-blocker-chip" data-type="${esc(b.type)}" data-group="${esc(b.type === 'ProcessBuilder' ? 'Flow' : b.type)}" title="${esc(b.label)} — ${esc(_blockerWays(b.type))}. Click to jump to ${b.count === 1 ? 'it' : 'them'} in the list below.">${(TYPE_CFG[b.type] || {}).icon || '🔧'} <strong>${b.count}</strong> ${esc(b.label)}</button>`).join('')}</div>
         <div class="fc-blockers-foot">Clear each one in its group below — ✂ take the field out · ⇄ point it at another field · ✎ edit it · 🗑 delete it; every change keeps a restore point. Or fix it in Setup. Then re-scan.</div>
       </div>` : '';
     const silentNote = silentManual > 0 ? `
-      <div class="fc-silent-note">👀 ${silentManual} more only break${silentManual === 1 ? 's' : ''} later — list views, quick actions and the like — ${silentManual === 1 ? 'it does' : 'they do'} not block the delete.</div>` : '';
+      <div class="fc-silent-note">👀 ${silentManual} more ${silentManual === 1 ? 'was' : 'were'} read too — list views, quick actions and the like. Salesforce lets the delete through with ${silentManual === 1 ? 'it' : 'them'}, then ${silentManual === 1 ? 'it loses' : 'they lose'} the field or ${silentManual === 1 ? 'stops' : 'stop'} working. Fix ${silentManual === 1 ? 'it' : 'them'} under 👀 Might break.</div>` : '';
 
-    const gateHtml = `${unreadNote}
+    const gateHtml = `
       <div class="fc-delete-zone" id="fcDeleteZone">
         ${blockerBlock}
-        ${hiddenBlock}
         ${silentNote}
         <div class="fc-delete-note" id="fcDeleteNote">
           ${autoCount > 0
-            ? `⚠ Fix the ${autoCount} fixable item${autoCount === 1 ? '' : 's'} below first.`
-            : (blockerTotal > 0 || hiddenFixable > 0)
+            ? `⚠ Fix the <span title="the flows, layouts, Lightning pages and reports the tool rewrites itself — the blockers above have ✂ ⇄ ✎ 🗑 of their own">${autoCount} fixable item${autoCount === 1 ? '' : 's'}</span> below first.`
+            : blockerTotal > 0
               ? '🔒 Delete is blocked until the blockers below are cleared.'
               : silentManual > 0
                 ? '✅ No blockers — safe to delete (the cosmetic references below will simply vanish).'
@@ -2618,6 +2568,7 @@ const FieldCleaner = (() => {
 
     results.innerHTML = html;
     _wireFolds(results);
+    _paintFilter();
     _refreshFixEvery();   // the ⚡ row's two counts come from the rows as drawn (⇄ and ✂ differ: a formula has no ✂)
 
     // Wire buttons. The fix buttons are re-drawn when the mode changes or a fix
@@ -2633,10 +2584,11 @@ const FieldCleaner = (() => {
         }
         const every = ev.target.closest?.('.fc-fix-every');
         if (every) { if (!every.disabled) fixEverything(_curFieldId, every.dataset.swap === '1'); return; }
-        const jump = ev.target.closest?.('.fc-scope-jump');
-        if (jump) { document.querySelector(`#fcScope [data-scope="${jump.dataset.scope || 'both'}"]`)?.click(); eid('fcScanBtn')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); eid('fcScanBtn')?.focus(); return; }
+        const fb = ev.target.closest?.('.fc-filter-btn');
+        if (fb) { if (!fb.disabled) { _fcFilter = fb.dataset.filter || 'all'; _paintFilter(); } return; }
         const chip = ev.target.closest?.('.fc-blocker-chip');
         if (chip) {
+          if (_fcFilter === 'later') { _fcFilter = 'all'; _paintFilter(); }   // the chip's group is a 🔒 one
           const g = eid(`fcGroup_${chip.dataset.group}`);
           if (g) { g.scrollIntoView({ behavior: 'smooth', block: 'start' }); g.classList.add('fc-group-flash'); setTimeout(() => g.classList.remove('fc-group-flash'), 1800); }
           return;
@@ -2854,8 +2806,8 @@ const FieldCleaner = (() => {
     const s = _orgSweep;
     const N = x => Number(x).toLocaleString();
     if (!s) {
-      el.innerHTML = `<div class="fc-fact fc-sweep-fact"><span class="fc-fact-ico">🧭</span><span class="fc-fact-text"><b>Whole-org text sweep</b> — the scan above asks Salesforce’s index and reads the kinds it knows. This reads the org’s own metadata as a whole, like a project pulled from version control, and finds every file that names <code>${esc(_selField.api)}</code>: what must go or change before the delete (🔒), and what only breaks later (👀) — search layouts, related-list columns, record-type picklist values, Aura markup, templates, translations, permission sets and the rest.</span>
-        <span class="fc-fact-act"><button class="btn btn-secondary btn-sm" id="fcSweepPlan">🧭 Read the whole org…</button></span></div>`;
+      el.innerHTML = `<div class="fc-fact fc-sweep-fact"><span class="fc-fact-ico">🧭</span><span class="fc-fact-text"><b>Full metadata text scan</b> — the scan above asks Salesforce’s index and reads the kinds it knows. This retrieves the org’s own metadata as a whole, like a project pulled from version control, and finds every file that names <code>${esc(_selField.api)}</code>: what must go or change before the delete (🔒), and what only breaks later (👀) — search layouts, related-list columns, record-type picklist values, Aura markup, templates, translations, permission sets and the rest. What it finds joins the list above with ✂ ⇄ ✎ 🗑 where its kind has them. <strong>Expensive and slow:</strong> one API call per metadata type to list it, then several Metadata API retrieves — hundreds of calls and many minutes on a large org. Pressing the button only counts: the exact calls and time are shown before anything is read. Nothing is written.</span>
+        <span class="fc-fact-act"><button class="btn btn-secondary btn-sm" id="fcSweepPlan">🧭 Count the cost…</button></span></div>`;
       eid('fcSweepPlan').addEventListener('click', _sweepPlan);
       return;
     }
@@ -2868,7 +2820,7 @@ const FieldCleaner = (() => {
       return;
     }
     if (s.status === 'error') {
-      el.innerHTML = `<div class="fc-sweep fc-sweep-bad" title="${esc(s.error)}">🧭 The org could not be read: ${esc(_feText(s.error))} <button class="btn btn-secondary btn-sm" id="fcSweepPlan">↻ Try again</button></div>`;
+      el.innerHTML = `<div class="fc-sweep fc-sweep-bad" title="${esc(s.error)}">🧭 Full metadata text scan — the org could not be read: ${esc(_feText(s.error))} <button class="btn btn-secondary btn-sm" id="fcSweepPlan">↻ Try again</button></div>`;
       eid('fcSweepPlan').addEventListener('click', _sweepPlan);
       return;
     }
@@ -2876,7 +2828,7 @@ const FieldCleaner = (() => {
       const calls = s.groups.length * 2 + s.listCalls;
       const est = s.total ? Math.max(15, Math.round(s.total / FC_SWEEP_RATE) + s.groups.length * 6) * 1000 : null;
       el.innerHTML = `<div class="fc-sweep">🧭 This org has <strong>${N(s.total)}</strong> of its own component${s.total === 1 ? '' : 's'} in <strong>${N(s.types.length)}</strong> kind${s.types.length === 1 ? '' : 's'} worth reading${s.skippedManaged ? ` (${N(s.skippedManaged)} from installed packages left out — the platform will not let you change those)` : ''}.
-        Reading them takes <strong>${N(s.groups.length)}</strong> retrieve${s.groups.length === 1 ? '' : 's'} of the Metadata API (${N(calls)} API calls in all, ${N(s.listCalls)} already spent on the listing), roughly <strong>${sftkSweepFmtMs(est)}</strong>; nothing is written.
+        Reading them takes <strong>${N(s.groups.length)}</strong> retrieve${s.groups.length === 1 ? '' : 's'} of the Metadata API — <strong>${N(calls)} API calls</strong> in all (${N(s.listCalls)} already spent on the listing) and roughly <strong>${sftkSweepFmtMs(est)}</strong>${s.total > 3000 ? ' — a large org: expect many minutes, and the bar to stand still while a big retrieve runs' : ''}. Nothing is written.
         <div class="fc-sweep-types">${esc(s.types.map(t => `${t.name} ${N((s.listed[t.name] || []).length)}`).join(' · '))}</div>
         <button class="btn btn-primary btn-sm" id="fcSweepGo">▶ Read ${N(s.total)} component${s.total === 1 ? '' : 's'}</button>
         <button class="btn btn-secondary btn-sm" id="fcSweepCancel">Cancel</button></div>`;
@@ -2905,7 +2857,10 @@ const FieldCleaner = (() => {
         left -= (s.groupStartedAt ? Date.now() - s.groupStartedAt : 0);
         eta = Math.max(0, Math.min(left, planMs * 3));
       }
-      const cur = s.current ? `retrieving ${esc(s.current)}…` : (s.reading ? 'reading the files…' : 'waiting for Salesforce…');
+      // Salesforce reports nothing about a retrieve until it lands — a big one (every CustomObject) takes minutes
+      // with the bar standing still; the line says how long this one has run so it never looks stuck
+      const inRet = s.current && s.groupStartedAt ? Date.now() - s.groupStartedAt : 0;
+      const cur = s.current ? `retrieving ${esc(s.current)}…${inRet > 15000 ? ` ${sftkSweepFmtMs(inRet)} in this retrieve — Salesforce says nothing until it lands; a big one takes minutes` : ''}` : (s.reading ? 'reading the files…' : 'waiting for Salesforce…');
       el.innerHTML = `<div class="fc-sweep">${sftkCatSm(`Reading the org… ${cur}`)}
         <div class="fc-sweep-bar"><i style="width:${pct}%"></i></div>
         <div class="fc-sweep-meta"><span><b>${pct}%</b> · ${N(s.done)} of ${N(s.total)} components</span><span>retrieve ${N(Math.min(s.groupIdx + 1, s.groups.length))} of ${N(s.groups.length)}</span><span>${N(s.filesRead || 0)} files read</span><span><b>${sftkSweepFmtMs(eta)}</b> left${s.done ? '' : ' (estimated)'}</span>
@@ -2922,23 +2877,65 @@ const FieldCleaner = (() => {
     const count = list => list.reduce((n, [, t]) => n + t.items.length, 0);
     const cmp = s.compare || { known: 0, fresh: 0 };
     const took = s.finishedAt && s.startedAt ? sftkSweepFmtMs(s.finishedAt - s.startedAt) : '';
+    const shown = t => t.items.filter(it => !it.inScan && !it.joined);   // listed here: only what the list above does not carry
     const item = (type, it) => {
       const hl = t => esc(t).replace(new RegExp(`(${_selField.api.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\  // ── 📊 The report sweep (opt-in) ─────────────────────────────────────────')})`, 'gi'), '<mark>$1</mark>');
       const lines = it.lines.slice(0, 6).map(l => `<span class="ln">${l.file ? esc(l.file) + ':' : ''}${l.line}</span>${hl(l.text)}`).join('\n') + (it.lines.length > 6 ? `\n<span class="ln"></span>… ${it.lines.length - 6} more line${it.lines.length - 6 === 1 ? '' : 's'}` : '');
-      const scanLink = it.inScan ? `<span class="fc-sweep-inscan" title="The scan above lists this component too — its buttons are there">in the list above</span>` : '';
-      return `<div class="fc-sweep-item"><div class="fc-sweep-item-hd"><code>${esc(it.component)}</code>${it.section ? `<span class="ds-subtext">${esc(it.section)}</span>` : ''}${scanLink}<span class="fc-sweep-path">${esc(it.path)}</span></div><pre class="fc-sweep-lines">${lines}</pre></div>`;
+      return `<div class="fc-sweep-item"><div class="fc-sweep-item-hd"><code>${esc(it.component)}</code>${it.section ? `<span class="ds-subtext">${esc(it.section)}</span>` : ''}<span class="fc-sweep-inscan" title="No kind in the list above fixes this one — change it in Setup or in your project, then scan again">by hand</span><span class="fc-sweep-path">${esc(it.path)}</span></div><pre class="fc-sweep-lines">${lines}</pre></div>`;
     };
     const compact = new Set(['Profile', 'PermissionSet']);
-    const group = (type, t) => `<div class="fc-sweep-grp"><div class="fc-sweep-grp-hd"><span>${t.sev === 'blocker' ? '🔒' : '👀'} ${esc(t.label)}</span><span class="fc-sweep-grp-n">${N(t.items.length)}</span></div>
+    const group = (type, t) => shown(t).length ? `<div class="fc-sweep-grp"><div class="fc-sweep-grp-hd"><span>${t.sev === 'blocker' ? '🔒' : '👀'} ${esc(t.label)}</span><span class="fc-sweep-grp-n">${N(shown(t).length)}</span></div>
         ${t.why ? `<div class="fc-sweep-why">${esc(t.why)}</div>` : ''}${compact.has(type)
-          ? `<div class="fc-sweep-item"><div class="fc-sweep-item-hd">${t.items.map(it => `<code>${esc(decodeURIComponent(it.component))}</code>`).join(' ')}</div></div>`
-          : t.items.map(it => item(type, it)).join('')}</div>`;
-    el.innerHTML = `<div class="fc-sweep ${all ? 'fc-sweep-ok' : 'fc-sweep-bad'}">🧭 <strong>Whole-org sweep${all ? '' : ' — STOPPED'}:</strong> ${N(r.filesRead)} file${r.filesRead === 1 ? '' : 's'} of ${N(s.done)} component${s.done === 1 ? '' : 's'} read${all ? '' : ` (of ${N(s.total)} — the rest were NOT read)`}${took ? ` in ${took}` : ''}; <strong>${N(r.filesWithHits)}</strong> name${r.filesWithHits === 1 ? 's' : ''} <code>${esc(_selObj.api)}.${esc(_selField.api)}</code>.
-        <div class="fc-sweep-sum"><span class="fc-sweep-pill fc-sweep-pill-lock">🔒 ${N(count(lock))} must go or change before the delete</span><span class="fc-sweep-pill fc-sweep-pill-eye">👀 ${N(count(eye))} will break or lose the field</span>${cmp.fresh ? `<span class="ds-subtext">${N(cmp.fresh)} not in the scan’s list above · ${N(cmp.known)} also listed there</span>` : (types.length ? `<span class="ds-subtext">every one is also in the scan’s list above</span>` : '')}</div>
+          ? `<div class="fc-sweep-item"><div class="fc-sweep-item-hd">${shown(t).map(it => `<code>${esc(decodeURIComponent(it.component))}</code>`).join(' ')}</div></div>`
+          : shown(t).map(it => item(type, it)).join('')}</div>` : '';
+    const nJoined = s.joined || 0, nHere = types.reduce((n, [, t]) => n + shown(t).length, 0);
+    el.innerHTML = `<div class="fc-sweep ${all ? 'fc-sweep-ok' : 'fc-sweep-bad'}">🧭 <strong>Full metadata text scan${all ? '' : ' — STOPPED'}:</strong> ${N(r.filesRead)} file${r.filesRead === 1 ? '' : 's'} of ${N(s.done)} component${s.done === 1 ? '' : 's'} read${all ? '' : ` (of ${N(s.total)} — the rest were NOT read)`}${took ? ` in ${took}` : ''}; <strong>${N(r.filesWithHits)}</strong> name${r.filesWithHits === 1 ? 's' : ''} <code>${esc(_selObj.api)}.${esc(_selField.api)}</code>.
+        <div class="fc-sweep-sum"><span class="fc-sweep-pill fc-sweep-pill-lock">🔒 ${N(count(lock))} must go or change before the delete</span><span class="fc-sweep-pill fc-sweep-pill-eye">👀 ${N(count(eye))} will break or lose the field</span><span class="ds-subtext">${cmp.known ? `${N(cmp.known)} already in the list above · ` : ''}${nJoined ? `<strong>${N(nJoined)} joined the list above</strong> with the ✂ ⇄ ✎ 🗑 of their kind · ` : ''}${nHere ? `${N(nHere)} below, by hand` : (types.length ? 'nothing left for the hand' : '')}</span><button type="button" class="btn btn-secondary btn-sm" id="fcSweepCsv" title="Every line that names the field — kind, 🔒/👀, component, path, line, text — as a CSV">⬇ Export CSV</button></div>
         ${s.notes.length ? `<div class="fc-sweep-why">${s.notes.map(n => `ℹ ${esc(n)}`).join('<br>')}</div>` : ''}
         ${lock.map(([ty, t]) => group(ty, t)).join('')}${eye.map(([ty, t]) => group(ty, t)).join('')}
         <div class="fc-repl-sub">Kinds not read: static resources, documents, content and site assets (binary or bulky), settings, certificates, and anything installed from a managed package. <button class="fc-dd-linkbtn" id="fcSweepPlan">↻ Read again</button></div></div>`;
     eid('fcSweepPlan')?.addEventListener('click', _sweepPlan);
+    eid('fcSweepCsv')?.addEventListener('click', () => {
+      const csv = sftkSweepCsv(r, _selObj.api, _selField.api);
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `${_selObj.api}.${_selField.api}-metadata-text-scan-${r.hits.length}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    });
+  }
+
+  // The sweep's fresh hits JOIN the list (user 2026-11-08: "Can we do a remove and replace on them as well?" and
+  // "this table should not list whats in the other sheet"): a hit the everyday scan did not list, of a kind the
+  // list fixes by full name (or by a Tooling id a name lookup gives), becomes an ordinary row there with the ways
+  // of its kind — ✂ ⇄ ✎ 🗑, a restore point, the verify. The rest stay in the sweep's box, marked "by hand".
+  async function _sweepJoin(s) {
+    if (!s || !s.result || !_lastScan) return 0;
+    const field = `${_selObj.api}.${_selField.api}`;
+    const have = new Set((_lastScan.deps || []).filter(d => d._sweep).map(d => `${d.MetadataComponentType}|${d._fullName}`));
+    const rows = [];
+    for (const [type, t] of Object.entries(s.result.byType)) {
+      const kind = typeof sftkSweepJoinKind === 'function' ? sftkSweepJoinKind(type) : null;
+      if (!kind || !TYPE_CFG[kind]) continue;
+      for (const it of t.items) {
+        if (it.inScan || it.joined) continue;
+        if (have.has(`${kind}|${it.component}`)) { it.joined = true; continue; }
+        let id = `sweep_${kind}_${String(it.component).replace(/[^A-Za-z0-9_]/g, '_')}`;
+        const q = typeof sftkSweepIdQuery === 'function' ? sftkSweepIdQuery(kind, it.component) : null;
+        if (q) {   // a code kind is read by its Tooling id
+          const r = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: true, _suppressError: true, query: q });
+          const rec = r && !r.error ? (r.records || [])[0] : null;
+          if (!rec || !rec.Id) continue;   // not found by name: stays in the box, by hand
+          id = rec.Id;
+        }
+        it.joined = true;
+        rows.push({ MetadataComponentId: id, MetadataComponentName: it.component, MetadataComponentType: kind,
+          RefMetadataComponentId: null, RefMetadataComponentName: field, _supplemental: true, _sweep: true, _fullName: it.component, _sweepLines: it.lines });
+      }
+    }
+    if (rows.length) _lastScan.deps = [..._lastScan.deps, ...rows];
+    return rows.length;
   }
 
   // Step 1 — the plan: describeMetadata, then listMetadata per type (folder
@@ -3049,6 +3046,10 @@ const FieldCleaner = (() => {
     s.status = (s.done === s.total && !s.stop) ? 'done' : 'stopped';
     s.files = new Map();   // the texts are in the result's lines; the whole org need not stay in memory
     renderOrgSweep();
+    // the fresh hits of a fixable kind join the list above, which is drawn again (and this box with it)
+    s.joined = await _sweepJoin(s);
+    if (_orgSweep !== s) return;
+    if (s.joined) await renderResults(_lastScan.deps, _lastScan.fieldId); else renderOrgSweep();
   }
 
   // ── 📊 The report sweep (opt-in) ─────────────────────────────────────────

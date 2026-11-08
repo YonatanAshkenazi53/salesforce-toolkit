@@ -19,7 +19,10 @@ What this folder deploys on top of them:
 | `SFTK_Pkg_Sub` | autolaunched subflow | "↰ called by 2"; a Get Records with two filters, one the field |
 | `SFTK_Pkg_Auto` | autolaunched, no trigger | calls the subflow ("↳ calls 1") |
 | `SFTK_Pkg_Parent_Sched` | scheduled flow on `dlrs__LookupParent__c` | the ⏰ Scheduled group on a packaged object |
-| `SFTK_Pkg_Screen` | screen flow | the 🖥 Screen flow group; reads the packaged object filtered by the field |
+| `SFTK_Pkg_Screen` | screen flow | the 🖥 Screen flow group; reads the packaged object filtered by the field; calls the child screen flow |
+| `SFTK_Pkg_Screen_Child` → `SFTK_Pkg_Screen_Leaf` | child screen flow, then an autolaunched leaf | a three-level SCREEN tree (user 2026-11-08: "screen flow with child screen flow") |
+| `SFTK_Pkg_Parent_Trigger` | record-triggered (after save, on create) on `dlrs__LookupParent__c` with a SCHEDULED PATH an hour later | "record triggered with subflows … with a scheduled path": the immediate path calls `SFTK_Pkg_Path_Now_Sub`, the scheduled path `SFTK_Pkg_Path_Later_Sub` → `SFTK_Pkg_Path_Deep_Sub` |
+| `SFTK_Pkg_Sched_Sub` | autolaunched subflow of the scheduled flow | the ⏰ Scheduled tree |
 | `SFTK_Pkg_Access` | permission set | field access to both fields (👀) |
 
 Deploy: `cd docs/fixtures/packaged-object-fixture && sf project deploy start -o npc --source-dir force-app --test-level NoTestRun`

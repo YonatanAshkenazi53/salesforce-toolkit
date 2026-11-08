@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { extractFunctions } from './extract.mjs';
 
-const F = extractFunctions('field-cleaner.js', ['fcScopeNorm', 'fcScopeKeeps', 'fcScopeLegs', 'fcScopeLabel', 'fcScopeHelp', 'fcEstimateScanCalls']);
+const F = extractFunctions('field-cleaner.js', ['fcScopeNorm', 'fcScopeKeeps', 'fcScopeLegs', 'fcEstimateScanCalls']);
 const FC = readFileSync(new URL('../field-cleaner.js', import.meta.url), 'utf8');
 const CSS = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
@@ -52,58 +52,46 @@ describe('the scope', () => {
     expect(F.fcEstimateScanCalls(null, 'blockers', 'Account').now).toBe(14);
     expect(F.fcEstimateScanCalls(null, 'blockers', 'Lead').now).toBe(17);
   });
-  it('the words: a label per scope and a help line that says what is NOT read', () => {
-    expect(F.fcScopeLabel('both')).toBe('🔍 Everything');
-    expect(F.fcScopeLabel('blockers')).toBe('🔒 What blocks the delete');
-    expect(F.fcScopeLabel('mentions')).toBe('👀 Other mentions');
-    expect(F.fcScopeHelp('blockers')).toContain('are not read');
-    expect(F.fcScopeHelp('blockers')).toContain('never block the delete');
-    expect(F.fcScopeHelp('mentions')).toContain('still counted for the Delete button');
-    expect(F.fcScopeHelp('both')).toContain('Listed apart below');
-  });
 });
 
-describe('wiring', () => {
-  it('the switch sits above the scan button, is shown with it, and is kept in sftk_fc_scope', () => {
-    expect(FC).toContain('<div class="mode-toggle fc-scope" id="fcScope" role="radiogroup" aria-label="What to scan">');
-    expect(FC.indexOf('id="fcScopeWrap"')).toBeLessThan(FC.indexOf('<button id="fcScanBtn"'));
-    expect(FC).toContain("scanBtn.onclick       = runScan;\n    }\n    _paintScope();");
-    expect(FC).toContain("await chrome.storage.local.set({ sftk_fc_scope: _scope });");
-    expect(FC).toContain("chrome.storage?.local?.get('sftk_fc_scope')");
-  });
-  it('the scan runs the legs of its scope and remembers which scope it read', () => {
+describe('wiring (2026-11-08: one scan, one list — "i dont think we need 3 tabs here. one tab is enough, but should be filtered by must and optional metadata references")', () => {
+  it('the scope switch is gone; every scan reads everything', () => {
+    expect(FC).not.toContain('id="fcScopeWrap"');
+    expect(FC).not.toContain('sftk_fc_scope');
+    expect(FC).toContain("const _scope = 'both';");
     expect(FC).toContain('const scope = _scope, L = fcScopeLegs(scope, _selObj.api);');
-    expect(FC).toContain('if (L.flexiPages) flexiHits = await scanFlexiPages(deps);');
-    expect(FC).toContain('if (L.reportTypes) rtHits = await scanReportTypes([...deps, ...flexiHits]);');
-    expect(FC).toContain('supHits = await scanSupplemental([...deps, ...flexiHits, ...rtHits], fieldId, L);');
     expect(FC).toContain('_lastScan = { deps: [...deps, ...flexiHits, ...rtHits, ...supHits], fieldId, scope };');
     for (const leg of ['listViews', 'compactLayouts', 'quickActions', 'matchingRules', 'workflowFieldUpdates', 'workflow', 'approvals', 'sharingRules', 'duplicateRules', 'lwc', 'customMetadata', 'leadMapping', 'objectRules', 'paths']) expect(FC).toContain(`if (L.${leg}) try {`);
   });
-  it('the list is filtered by the scope; the gate counts every blocker the index returned, hidden or not', () => {
-    expect(FC).toContain('const deps = (allDeps || []).filter(d => fcScopeKeeps(_scope, sevOf(d.MetadataComponentType || \'Unknown\')));');
-    expect(FC).toContain("for (const d of (allDeps || [])) { const t = d.MetadataComponentType || 'Unknown'; (gateGroups[t] = gateGroups[t] || []).push(d); }");
-    expect(FC).toContain("hidden: !fcScopeKeeps(_scope, 'blocker')");
-    // the 👀 scope hides every blocker: one sentence with the way out, no chips (user 2026-11-08: "what is the point of all this info")
-    expect(FC).toContain("const scopeHides = !fcScopeKeeps(_scope, 'blocker');");
-    expect(FC).toContain('const blockerBlock = blockerTotal > 0 && !scopeHides ? `');
-    expect(FC).toContain('the delete — this view shows only the 👀 mentions.');
-    expect(FC).toContain('class="btn btn-secondary btn-sm fc-scope-jump" data-scope="both">🔍 Everything</button> shows and fixes them — scan again after switching.');
-    expect(FC).toContain(`<button class="btn btn-danger" id="fcDelFreeBtn" \${hiddenBlockers.length ? 'disabled' : ''}>`);
-    // a fixable blocker the scope hides (a flow under 👀) gates the delete too
-    expect(FC).toContain('const delDisabled = autoCount > 0 || blockerTotal > 0 || hiddenFixable > 0;');
-    expect(FC).toContain('const hiddenBlock = scopeHides && hiddenTotal > 0 ? `');
+  it('one list, the blockers first, each group tagged 🔒 must fix / 👀 might break; a filter row: All · Must fix · Might break', () => {
+    expect(FC).toContain('const deps = (allDeps || []).slice();');
+    expect(FC).not.toContain('id="fcSectionBlockers"');
+    expect(FC).not.toContain('id="fcSectionMentions"');
+    expect(FC).toContain('<div class="fc-section fc-section-all" id="fcSectionAll">');
+    expect(FC).toContain('<button type="button" class="fc-filter-btn" data-filter="all" role="radio">All <b>${nB + nM}</b></button>');
+    expect(FC).toContain('data-filter="must"'); expect(FC).toContain('data-filter="later"');
+    expect(FC).toContain("${blockerGroups.map(([t, a]) => groupHtml(t, a, 'must')).join('')}${mentionGroups.map(([t, a]) => groupHtml(t, a, 'later')).join('')}");
+    expect(FC).toContain('<div class="fc-group" id="fcGroup_${esc(type)}" data-sev="${sev}">');
+    expect(FC).toContain("g.hidden = _fcFilter !== 'all' && g.dataset.sev !== _fcFilter;");
+    expect(FC).toContain("if (fb) { if (!fb.disabled) { _fcFilter = fb.dataset.filter || 'all'; _paintFilter(); } return; }");
+    // a 🔒 chip jumps to a group the 👀 filter hides — the filter opens first
+    expect(FC).toContain("if (_fcFilter === 'later') { _fcFilter = 'all'; _paintFilter(); }");
+    expect(CSS).toContain('.fc-filter-must.active {'); expect(CSS).toContain('.fc-group-sev-later {');
   });
-  it('two sections, blockers first; a scan that read less says what it left out', () => {
-    expect(FC.indexOf('id="fcSectionBlockers"')).toBeLessThan(FC.indexOf('id="fcSectionMentions"'));
-    expect(FC).toContain('🔒 Must be cleared before Salesforce deletes the field');
-    expect(FC).toContain('👀 Other mentions — the delete goes through, these break afterwards');
-    expect(FC).toContain('<strong>The other mentions were not read</strong>');
-    expect(FC).toContain('<strong>The blockers outside the dependency index were not read</strong>');
-    expect(CSS).toContain('.fc-section-blockers .fc-section-hdr { border-bottom-color: var(--danger, #c0392b); }');
+  it('the gate hides nothing: no "hidden by the scope", no "not read" notes; the 👀 sentence says those WERE read', () => {
+    expect(FC).not.toContain('hidden by the 👀 scope');
+    expect(FC).not.toContain('fc-scope-jump');
+    expect(FC).not.toContain('<strong>The other mentions were not read</strong>');
+    expect(FC).toContain('const delDisabled = autoCount > 0 || blockerTotal > 0;');
+    expect(FC).toContain('read too — list views, quick actions and the like. Salesforce lets the delete through with');
+    expect(FC).toContain('⚠ Fix the <span title="the flows, layouts, Lightning pages and reports the tool rewrites itself');
   });
-  it('switching the scope after a scan: shown again when the scan read it, else the button asks for a scan', () => {
-    expect(FC).toContain("const covered = (_lastScan.scope || 'both') === 'both' || _lastScan.scope === _scope;");
-    expect(FC).toContain('if (covered) renderResults(_lastScan.deps, _lastScan.fieldId);');
-    expect(FC).toContain('not read by the last scan`');
+  it('the ⚡ row says why ⇄ counts more than ✂ (2026-11-08: "i can replace more than i can remove?")', () => {
+    expect(FC).toContain('const onlySwap = nRp >= 2 && _replOn() && nRm >= 2 && nRp > nRm ? nRp - nRm : 0;');
+    expect(FC).toContain('only ⇄ — code, formulas, buttons, field updates</span>');
+    expect(FC).toContain('can only be replaced, not removed: Apex, Visualforce, LWC and Aura, formula fields, buttons and links, restriction rules, field updates and inactive validation rules.');
+  });
+  it('the org sweep: a long retrieve says how long it has run (2026-11-08: "stuck at 2 prcnt")', () => {
+    expect(FC).toContain('in this retrieve — Salesforce says nothing until it lands; a big one takes minutes');
   });
 });

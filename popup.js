@@ -10,6 +10,8 @@ let orgFlowCount = 0;
 // 'skipped' = org too large to scan on open (P1); 'partial' = the user stopped
 // it. Neither may be treated as 'done' — see renderDependenciesTab.
 let metadataScanState = 'none'; // 'none' | 'scanning' | 'skipped' | 'partial' | 'done'
+// the Dependencies tab's progress widget while the map is being built (sftk-progress.js)
+let _depScanProg = null;
 let toolbarEventsReady = false;  // guard against duplicate listeners
 // v1.1.0 — did the Flow list really return LastModifiedDate for every version?
 // Without it nothing can be proven unchanged, so the incremental dependency
@@ -954,12 +956,14 @@ async function loadFlows() {
   // org's cache note claim a freshness field this org may not have.
   flowStampsAvailable = false;
   _lastDeleteRecheck = null;
+  let flowsProg = null;   // the cat, a sweeping bar, the seconds — and how long this took last time here
 
   try {
     // Snapshot the org context — an org switch can update the module-level
     // orgUrl/sid mid-load, which would otherwise send these flow IDs to the
     // wrong org's session (HTTP 404 on the metadata fetch).
     const loadOrgUrl = orgUrl, loadSid = sid;
+    flowsProg = window.sftkProgress ? sftkProgress(document.getElementById('loadingState'), { what: 'Reading every flow of this org…', key: 'flows', orgUrl: loadOrgUrl }) : null;
 
     // LastModifiedDate is the freshness field the incremental dependency cache
     // is built on (the Tooling Flow object is version-grained and carries the
@@ -986,9 +990,11 @@ async function loadFlows() {
       });
     }
     if (result.error) {
+      if (flowsProg) flowsProg.fail();
       handleApiError(result.error);
       return;
     }
+    if (flowsProg) flowsProg.done();
 
     allFlows = (result.records || []).map(f => ({
       ...f,
@@ -1032,6 +1038,7 @@ async function loadFlows() {
 
     setupToolbarEvents();
   } catch (e) {
+    if (flowsProg) flowsProg.fail();
     handleApiError(e.message || String(e));
   }
 }
@@ -1105,20 +1112,22 @@ async function runDependencyScan(loadOrgUrl, loadSid) {
   const stop = () => DependencyMap.cancelScan();
   const total0 = allFlows.length;
   const st0 = DependencyMap.getScanStatus();
+  // the strip's time left: a count that starts where the cache left it (sftk-progress.js)
+  const scanEta = { mode: 'count', startedAt: Date.now(), done: st0.done, base: st0.done, total: total0, unit: 'flow versions' };
 
   // Show scan progress for every org size — without it the post-scan repaint
   // (🔗 icons appearing, process types changing) looks unexplained in small orgs.
   // The starting count is whatever is already covered: with a warm cache that is
   // not zero, and starting the bar at 0 would imply work that is not happening.
-  showScanProgress(true, `🔍 Building dependency map… ${st0.done} / ${total0}`, stop);
+  showScanProgress(true, `🔍 Building dependency map · ${sftkProgLine(scanEta)}`, stop);
   if (document.getElementById('tab-dependencies').style.display !== 'none') {
     renderDependenciesTab();
   }
 
   await DependencyMap.buildDependencyMap(allFlows, loadOrgUrl, loadSid, (done, total) => {
-    showScanProgress(true, `🔍 Building dependency map… ${done} / ${total}`, stop);
-    const live = document.getElementById('depScanLive');
-    if (live) live.textContent = `Dependency map is building… ${done} / ${total} flow versions. This tab will refresh automatically when ready.`;
+    scanEta.done = done; scanEta.total = total;
+    showScanProgress(true, `🔍 Building dependency map · ${sftkProgLine(scanEta)}`, stop);
+    if (_depScanProg && _depScanProg.el.isConnected) _depScanProg.count(done, total);
   });
 
   const st = DependencyMap.getScanStatus();
@@ -1127,6 +1136,7 @@ async function runDependencyScan(loadOrgUrl, loadSid) {
   // Whichever load owns the new org owns the UI too.
   if (st.running || orgUrl !== loadOrgUrl) return;
 
+  if (_depScanProg) { if (st.complete) _depScanProg.done(); else _depScanProg.fail(); _depScanProg = null; }
   showScanProgress(false);
   metadataScanState = st.complete ? 'done' : 'partial';
   // Self-hiding — renders the resume offer, the flow-list coverage warning,
@@ -1379,13 +1389,30 @@ function renderFlowList() {
   const sortedLabels = Object.keys(flowGroups).sort((a, b) => a.localeCompare(b));
   let visibleCount = 0;
 
-  for (const label of sortedLabels) {
-    if (search && !sftkFlowFilterHit(search, sftkFlowFilterKey(label, (flowGroups[label][0] || {}).ApiName))) continue;   // label or API name (2026-11-05)
-    const versions = flowGroups[label];
-    visibleCount++;
+  // A tree is a card, like ⏻ Switches and ⚙ API versions (user 2026-11-08: "this still looks bad, should look
+  // more like the other pages"): the flows the dependency map knows to call each other sit in one bordered card —
+  // the root, its callees nested with a twig per level, "tick the whole tree" in the header. The cards keep the
+  // list's alphabetical order (by the root); a shared subflow nests under its triggered caller first.
+  const hit = label => !search || sftkFlowFilterHit(search, sftkFlowFilterKey(label, (flowGroups[label][0] || {}).ApiName));   // label or API name (2026-11-05)
+  const trigMap = (typeof DependencyMap.getDefinitionTriggerMap === 'function' && DependencyMap.getDefinitionTriggerMap()) || {};
+  const rows = sortedLabels.map(label => ({ apiName: (flowGroups[label][0] || {}).ApiName || label, label, versions: flowGroups[label] }));
+  const calls = (depMap && typeof sftkFlowCallsOf === 'function') ? sftkFlowCallsOf(depMap) : {};
+  const rank = r => (trigMap[r.apiName] ? 0 : (r.versions[0] && r.versions[0].ProcessType === 'Flow') ? 1 : 2);
+  const blocks = (typeof sftkFlowTreeBlocks === 'function' && typeof sftkFlowTreeOrder === 'function')
+    ? sftkFlowTreeBlocks(sftkFlowTreeOrder(rows, calls, rank)) : rows.map(r => ({ rootApi: r.apiName, rows: [{ row: r, depth: 0 }], names: new Set([r.apiName]) }));
+  blocks.sort((a, b) => a.rows[0].row.label.localeCompare(b.rows[0].row.label));
 
-    const groupEl = buildGroupElement(label, versions, depMap);
-    list.appendChild(groupEl);
+  for (const bk of blocks) {
+    // a tree shows whole when any of its flows matches the search — the tree is the unit
+    const shown = bk.rows.filter(e => hit(e.row.label));
+    if (!shown.length) continue;
+    if (bk.rows.length === 1) {
+      visibleCount++;
+      list.appendChild(buildGroupElement(bk.rows[0].row.label, bk.rows[0].row.versions, depMap));
+      continue;
+    }
+    visibleCount += bk.rows.length;
+    list.appendChild(buildTreeBox(bk, depMap));
   }
 
   list.style.display = visibleCount > 0 ? '' : 'none';
@@ -1398,7 +1425,68 @@ function renderFlowList() {
   }
 }
 
-function buildGroupElement(label, versions, depMap) {
+// One card for a flow tree: the header ticks every version of every flow in it (half-ticked when only some are),
+// says how many flows and how deep, and what a delete does to a tree; the rows are the usual flow groups, nested.
+function buildTreeBox(bk, depMap) {
+  const box = document.createElement('div');
+  box.className = 'flow-treebox';
+  box.dataset.tree = bk.rootApi;
+  box.dataset.names = JSON.stringify([...bk.names]);
+  const n = bk.rows.length, depthMax = Math.max(...bk.rows.map(e => e.depth));   // counted as ⏻ Switches counts: the levels under the root
+  const root = bk.rows[0].row;
+  const hd = document.createElement('div');
+  hd.className = 'flow-tree-hd';
+  const pick = document.createElement('label');
+  pick.className = 'flow-tree-pick';
+  pick.title = `Tick every version of every flow in this tree — the root and everything it calls, ${n} in all. Untick any row to leave it out.`;
+  const all = document.createElement('input');
+  all.type = 'checkbox'; all.className = 'flow-tree-all';
+  pick.appendChild(all); pick.appendChild(document.createTextNode(' tick the whole tree'));
+  const badge = document.createElement('span');
+  badge.className = 'flow-tree-badge';
+  badge.textContent = `🌳 tree · ${n} flows${depthMax > 1 ? ` · ${depthMax} levels deep` : ''}`;
+  const hint = document.createElement('span');
+  hint.className = 'flow-tree-hint';
+  hint.textContent = `${root.label} and everything it calls${currentMode === 'delete' ? ' — on delete the parents go first; a subflow another flow still calls is flagged before anything is deleted' : ''}`;
+  hd.appendChild(pick); hd.appendChild(badge); hd.appendChild(hint);
+  box.appendChild(hd);
+  all.addEventListener('change', e => {
+    e.stopPropagation();
+    const names = new Set(bk.names);
+    for (const f of allFlows) if (names.has(f.ApiName)) { if (e.target.checked) selectedIds.add(f.Id); else selectedIds.delete(f.Id); }
+    renderFlowList(); updateActionBar(); updateSelectionSummary();
+  });
+  for (const e of bk.rows) {
+    const g = buildGroupElement(e.row.label, e.row.versions, depMap, { inTree: true });
+    g.classList.add('flow-group-nested');
+    g.style.setProperty('--fb-depth', String(e.depth));
+    if (e.depth > 0) {
+      const twig = document.createElement('span');
+      twig.className = 'dep-fb-twig';
+      twig.title = `called by ${e.parent || root.apiName}`;
+      const lbl = g.querySelector('.group-label');
+      if (lbl) lbl.parentNode.insertBefore(twig, lbl);
+    }
+    box.appendChild(g);
+  }
+  updateTreeAllBox(box);
+  return box;
+}
+// the header box follows the rows: ticked when every version of every flow in the tree is, half-ticked when some
+function updateTreeAllBox(box) {
+  const all = box.querySelector('.flow-tree-all'); if (!all) return;
+  let names; try { names = new Set(JSON.parse(box.dataset.names || '[]')); } catch (_) { names = new Set(); }
+  const ids = allFlows.filter(f => names.has(f.ApiName)).map(f => f.Id);
+  const picked = ids.filter(id => selectedIds.has(id)).length;
+  all.checked = ids.length > 0 && picked === ids.length;
+  all.indeterminate = picked > 0 && picked < ids.length;
+}
+function updateTreeAllBoxes() {
+  document.querySelectorAll('#flowList .flow-treebox').forEach(updateTreeAllBox);
+}
+
+function buildGroupElement(label, versions, depMap, o) {
+  o = o || {};
   const group = document.createElement('div');
   group.className = 'flow-group';
   group.dataset.label = label;
@@ -1427,7 +1515,7 @@ function buildGroupElement(label, versions, depMap) {
       if (e.target.checked) selectedIds.add(v.Id);
       else selectedIds.delete(v.Id);
     });
-    updateGroupCheckbox(group, versions);
+    updateGroupCheckbox(group, versions); updateTreeAllBoxes();
     updateActionBar();
     updateSelectionSummary();
     renderVersionCheckboxes(group, versions);
@@ -1462,7 +1550,7 @@ function buildGroupElement(label, versions, depMap) {
   wholeBtn.addEventListener('click', e => {
     e.stopPropagation();
     versions.forEach(v => selectedIds.add(v.Id));
-    updateGroupCheckbox(group, versions); updateActionBar(); updateSelectionSummary(); renderVersionCheckboxes(group, versions);
+    updateGroupCheckbox(group, versions); updateTreeAllBoxes(); updateActionBar(); updateSelectionSummary(); renderVersionCheckboxes(group, versions);
   });
   groupInfo.appendChild(wholeBtn);
   // whole flow + the subflows it calls (user 2026-10-31: "an option to also add subflows"): every version of
@@ -1472,7 +1560,7 @@ function buildGroupElement(label, versions, depMap) {
   const scanned = typeof DependencyMap.flowScanState !== 'function' || DependencyMap.flowScanState(apiName).state === 'scanned';
   const tree = apiName && scanned && typeof DependencyMap.subflowClosure === 'function' ? DependencyMap.subflowClosure([apiName]) : null;
   const subNames = tree ? tree.names.filter(n => n !== apiName) : [];
-  if (subNames.length) {
+  if (subNames.length && !o.inTree) {   // inside a tree card the header's "tick the whole tree" does this
     const treeBtn = document.createElement('button');
     treeBtn.type = 'button';
     treeBtn.className = 'flow-whole-btn flow-tree-btn';
@@ -1574,7 +1662,7 @@ function buildVersionRow(flow, allVersions, groupEl, depMap) {
   checkbox.addEventListener('change', (e) => {
     if (e.target.checked) selectedIds.add(flow.Id);
     else selectedIds.delete(flow.Id);
-    updateGroupCheckbox(groupEl, allVersions);
+    updateGroupCheckbox(groupEl, allVersions); updateTreeAllBoxes();
     updateActionBar();
     updateSelectionSummary();
   });
@@ -3275,21 +3363,10 @@ function renderDependenciesTab() {
   if (metadataScanState === 'scanning') {
     const st = DependencyMap.getScanStatus();
     noBanner.style.display = 'none';
-    container.innerHTML = sftkCat(`Dependency map is building… ${st.done} / ${st.total} flow versions. This tab will refresh automatically when ready.`);
-    // #scanProgress (with its Stop) lives in the Flows tab, so the scan would be
-    // unstoppable from here without a second one.
-    const msg = container.querySelector('.lp-robot-msg');
-    if (msg) msg.id = 'depScanLive';
-    const stopBtn = document.createElement('button');
-    stopBtn.className = 'btn btn-secondary btn-sm';
-    stopBtn.style.cssText = 'display:block;margin:10px auto 0';
-    stopBtn.textContent = '✕ Stop scan';
-    stopBtn.addEventListener('click', () => {
-      DependencyMap.cancelScan();
-      stopBtn.disabled = true;
-      stopBtn.textContent = 'Stopping…';
-    });
-    container.appendChild(stopBtn);
+    // The cat, a filling bar, the versions read and the time left (user 2026-11-08: "progress + estimation every
+    // loading that might take time") — with Stop, since #scanProgress lives in the Flows tab.
+    _depScanProg = sftkProgress(container, { what: 'Building the dependency map — reading every flow version. This tab refreshes itself when the map is ready.',
+      key: 'depscan', orgUrl, total: st.total, done: st.done, unit: 'flow versions', onStop: () => DependencyMap.cancelScan() });
     return;
   }
 

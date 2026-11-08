@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>64.0</apiVersion>
+    <description>Admin Toolkit fixture: autolaunched subflow on the SCHEDULED PATH ("an hour later") of SFTK_Pkg_Parent_Trigger (packaged object). Looks up a Lookup Parent, then calls SFTK_Pkg_Path_Deep_Sub — three levels under the trigger. Safe to delete.</description>
+    <interviewLabel>SFTK Pkg Path Later Sub {!$Flow.CurrentDateTime}</interviewLabel>
+    <label>SFTK Pkg Path Later Sub</label>
+    <processMetadataValues><name>BuilderType</name><value><stringValue>LightningFlowBuilder</stringValue></value></processMetadataValues>
+    <processMetadataValues><name>CanvasMode</name><value><stringValue>AUTO_LAYOUT_CANVAS</stringValue></value></processMetadataValues>
+    <processMetadataValues><name>OriginBuilderType</name><value><stringValue>LightningFlowBuilder</stringValue></value></processMetadataValues>
+    <processType>AutoLaunchedFlow</processType>
+    <start><locationX>50</locationX><locationY>0</locationY><connector><targetReference>Find_Parent</targetReference></connector></start>
+    <recordLookups>
+        <name>Find_Parent</name><label>Find Parent</label><locationX>176</locationX><locationY>134</locationY>
+        <assignNullValuesIfNoRecordsFound>false</assignNullValuesIfNoRecordsFound>
+        <connector><targetReference>Call_Deep</targetReference></connector>
+        <filterLogic>and</filterLogic>
+        <filters><field>Name</field><operator>StartsWith</operator><value><stringValue>SFTK Pkg</stringValue></value></filters>
+        <getFirstRecordOnly>true</getFirstRecordOnly>
+        <object>dlrs__LookupParent__c</object>
+        <storeOutputAutomatically>true</storeOutputAutomatically>
+    </recordLookups>
+    <subflows><name>Call_Deep</name><label>Call Deep</label><locationX>176</locationX><locationY>278</locationY><flowName>SFTK_Pkg_Path_Deep_Sub</flowName></subflows>
+    <status>Active</status>
+</Flow>

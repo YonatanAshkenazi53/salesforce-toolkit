@@ -546,7 +546,8 @@ describe('Field Cleaner — everything at once', () => {
     expect(FC).toContain('data-swap="0" title="${tip}">✂ Remove all ${nRm}</button>');
     expect(FC).toContain("if (n < 2 && !_everyNote) return '<span id=\"fcFixEvery\" class=\"fc-every\" hidden></span>';");
     // on the section card's header, not in the header bar (user 2026-11-08)
-    expect(FC).toContain('<span class="fc-section-n">${nB}</span>${nB ? _fixEveryHtml(everyCount) : \'\'}</div>');
+    // one list since 2026-11-08 ("one tab is enough"): the ⚡ row sits in the single section's header, after the filter row
+    expect(FC).toContain('</span>${_fixEveryHtml(everyCount)}</div>');
   });
   it('it walks group by group through the same per-item fix — every item still confirms', () => {
     const fn = FC.slice(FC.indexOf('async function fixEverything(fieldId, swap) {'), FC.indexOf("// An item's buttons while its fix works"));

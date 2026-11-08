@@ -454,6 +454,40 @@ function sftkSweepCompare(byType, scanItems) {
   return { known, fresh };
 }
 
+// The result as CSV (user 2026-11-08: "make sure the user can export this report as well"): one row per line
+// that names the field — the kind, 🔒/👀, the component, where (path, line), the text, and whether the everyday
+// scan had listed it / the list above took it in.
+function sftkSweepCsv(result, objApi, fieldApi) {
+  const cell = v => { const s = String(v == null ? '' : v); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const rows = [['field', 'kind', 'severity', 'component', 'section', 'path', 'line', 'text', 'in the scan list', 'joined the list']];
+  for (const [type, t] of Object.entries((result && result.byType) || {})) {
+    for (const it of t.items) {
+      for (const l of it.lines) rows.push([`${objApi}.${fieldApi}`, `${t.label} (${type})`, t.sev === 'blocker' ? 'must fix before the delete' : 'breaks after the delete', it.component, it.section || '', l.file ? `${it.path} › ${l.file}` : it.path, l.line, String(l.text || '').trim(), it.inScan ? 'yes' : 'no', it.joined ? 'yes' : 'no']);
+    }
+  }
+  return rows.map(r => r.map(cell).join(',')).join('\r\n') + '\r\n';
+}
+// The kinds whose fresh hits can JOIN Field Cleaner's list with the ways of their kind (✂ ⇄ ✎ 🗑): the ones a
+// fix reaches by full name or by a Tooling id a name lookup gives. A flow, a Lightning page, a layout, a report
+// or a Path needs the index's own ids and stays in the sweep's box; so does anything with no kind in the list.
+function sftkSweepJoinKind(type) {
+  const alias = { ValidationRuleInactive: 'ValidationRule', CustomMetadataText: 'CustomMetadataRecord', LwcMarkup: 'LightningComponentBundle' };
+  const t = alias[type] || type;
+  const ok = new Set(['ApexClass', 'ApexTrigger', 'ApexPage', 'ApexComponent', 'LightningComponentBundle', 'ValidationRule', 'WebLink', 'FieldSet',
+    'CustomField', 'LookupFilter', 'WorkflowRule', 'WorkflowFieldUpdate', 'WorkflowAlert', 'WorkflowOutboundMessage', 'ApprovalProcess', 'SharingCriteriaRule',
+    'MatchingRule', 'DuplicateRule', 'AssignmentRule', 'AutoResponseRule', 'EscalationRule', 'RestrictionRule', 'CustomMetadataRecord', 'LeadConvertSettings',
+    'ListView', 'CompactLayout', 'QuickAction']);
+  return ok.has(t) ? t : null;
+}
+// a code kind's Tooling id is found by name: the sobject and the name field
+function sftkSweepIdQuery(kind, component) {
+  const q = s => String(s).replace(/'/g, "\\'");
+  const name = String(component || '').includes('/') ? component.slice(component.lastIndexOf('/') + 1) : component;
+  if (kind === 'ApexClass' || kind === 'ApexTrigger' || kind === 'ApexPage' || kind === 'ApexComponent') return `SELECT Id FROM ${kind} WHERE Name = '${q(name)}'`;
+  if (kind === 'LightningComponentBundle') return `SELECT Id FROM LightningComponentBundle WHERE DeveloperName = '${q(name)}'`;
+  return null;
+}
+
 // Time left, from what has been done so far: a plain rate, in ms. null until
 // something finished.
 function sftkSweepEta(startedAt, doneUnits, totalUnits, now) {
@@ -485,6 +519,9 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkSweepKind = sftkSweepKind;
   globalThis.sftkSweepRun = sftkSweepRun;
   globalThis.sftkSweepCompare = sftkSweepCompare;
+  globalThis.sftkSweepCsv = sftkSweepCsv;
+  globalThis.sftkSweepJoinKind = sftkSweepJoinKind;
+  globalThis.sftkSweepIdQuery = sftkSweepIdQuery;
   globalThis.sftkSweepEta = sftkSweepEta;
   globalThis.sftkSweepFmtMs = sftkSweepFmtMs;
   globalThis.sftkSweepKindTable = sftkSweepKindTable;
