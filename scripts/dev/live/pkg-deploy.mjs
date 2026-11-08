@@ -10,6 +10,7 @@
 //   4. ROLLBACK (default on): the run's rollback from History → the CLI counts 0
 //   DARK=1 shoots the panel and the editor in dark too. SCAN_ONLY=1 stops before Deploy.
 import { execSync } from 'node:child_process';
+import retryAndRollback from './retry-and-rollback.mjs';
 const NL = String.fromCharCode(10);
 const dump = async (h, sel, n = 1500) => (await h.eval(`(document.querySelector(${JSON.stringify(sel)})?.innerText || '')`)).slice(0, n).split(NL).map(x => x.trim()).filter(Boolean).join(' | ');
 const waitScanned = h => h.waitFor("!!document.querySelector('.ds-dep-plan') && !document.querySelector('#dsDepRefresh')?.disabled", 400000, 1000);
@@ -17,7 +18,7 @@ const dark = async (h, on) => { await h.eval(`(() => { if (!document.getElementB
 const shot = async (h, name) => { await h.shot(`${h.shots}/${name}.png`); if (process.env.DARK === '1') { await dark(h, true); await h.shot(`${h.shots}/${name}-dark.png`); await dark(h, false); } };
 const cli = (q, org = 'npc2') => { try { return JSON.parse(execSync(`sf data query -o ${org} --json -q "${q}"`, { encoding: 'utf8', shell: true, stdio: ['ignore', 'pipe', 'pipe'] })).result.records; } catch (e) { return [{ error: String(e.stdout || e.message).slice(0, 200) }]; } };
 const state = h => {
-  const p = cli("SELECT COUNT() c FROM dlrs__LookupParent__c WHERE Name LIKE 'SFTK Pkg Parent%'");
+  const p = cli("SELECT COUNT() FROM dlrs__LookupParent__c WHERE Name LIKE 'SFTK Pkg Parent%'");
   const c = cli("SELECT Name, dlrs__Color__c, OwnerId, Owner.Name FROM dlrs__LookupChild__c WHERE Name LIKE 'SFTK Pkg Child%' ORDER BY Name");
   const vr = cli("SELECT Active FROM ValidationRule WHERE ValidationName = 'SFTK_Pkg_Red_Needs_Tag' AND EntityDefinition.QualifiedApiName = 'dlrs__LookupChild__c'".replace(/"/g, '\\"'), 'npc2 --use-tooling-api');
   h.log('npc2 — parents:', JSON.stringify(p && p[0] && p[0].expr0 != null ? p[0].expr0 : p), '| children:', JSON.stringify((c || []).map(x => `${x.Name} ${x.dlrs__Color__c} → ${x.Owner ? x.Owner.Name : x.OwnerId}`)), '| VR active:', JSON.stringify(vr && vr[0] ? vr[0].Active : vr));
@@ -85,19 +86,10 @@ export default async function (h) {
   await shot(h, 'pkg-5-after');
   state(h);
   if (process.env.ROLLBACK === '0') return;
-  // the run's rollback
-  const entId = await h.eval(`(() => { const x = [..._history].reverse().find(e => e.kind !== 'tool'); return x ? x.id : null; })()`);
-  h.log('rollback of', entId);
-  await h.eval(`window.showPanel && window.showPanel('history')`); await h.sleep(1500);
-  const rb = await h.eval(`(() => { const b = [...document.querySelectorAll('button')].find(x => /rollback|roll back/i.test(x.textContent) && !x.disabled); if (!b) return null; b.click(); return b.textContent.trim(); })()`);
-  h.log('rollback button:', rb); await h.sleep(2000);
-  for (let i = 0; i < 4; i++) {
-    const m = await h.modalText(1500); if (!m) break;
-    h.log('ROLLBACK CONFIRM:', m.slice(0, 600));
-    await h.eval(`(() => { const a = document.querySelector('#sftkConfirmAck'); if (a && !a.checked) { a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); } const b = document.querySelector('#sftkConfirmGo'); if (b) b.click(); return true; })()`);
-    await h.sleep(2000);
-  }
-  await h.waitFor("/rolled back|Rollback .* done|deleted/i.test([...document.querySelectorAll('.ds-toast')].map(t => t.innerText).join(' ') + (document.querySelector('#dsRecProgress')?.innerText || '') + (document.body.innerText || '').slice(0, 0))", 180000, 1000).catch(() => {});
-  await h.sleep(3000);
+  // the run's rollback — the same History → ↩ Roll back walk the other live scripts use (same session: the
+  // History entry lives in this browser profile)
+  process.env.SKIP_RUN = '1'; process.env.PROFILE = 'SFTK Pkg — Lookup tree (DLRS)';
+  await retryAndRollback(h);
+  h.log('──────── rolled back ────────');
   state(h);
 }
