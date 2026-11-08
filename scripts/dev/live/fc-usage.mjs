@@ -1,6 +1,6 @@
 // Read-only: the stored-values line of Field Cleaner for several Account fields in npc, to compare with the CLI's own COUNT.
 async function pick(h, inputSel, dropSel, api) {
-  await h.eval(`(() => { const i = document.querySelector(${JSON.stringify(inputSel)}); i.focus(); i.dispatchEvent(new Event('focus')); return true; })()`);
+  await h.eval(`(() => { const i = document.querySelector(${JSON.stringify(inputSel)}); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); i.focus(); i.dispatchEvent(new Event('focus')); return true; })()`);
   await h.waitFor(`document.querySelectorAll('${dropSel} .fc-dd-item').length > 0`, 60000, 500);
   await h.eval(`(() => { const i = document.querySelector(${JSON.stringify(inputSel)}); i.value = ${JSON.stringify(api)}; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
   await h.waitFor(`!!document.querySelector('${dropSel} .fc-dd-item[data-api="${api}"]')`, 30000, 300);
