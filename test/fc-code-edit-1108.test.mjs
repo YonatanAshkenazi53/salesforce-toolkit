@@ -115,7 +115,7 @@ describe('the wiring in Field Cleaner', () => {
   it('the header folds: three sections, remembered, with a one-line summary when folded', () => {
     expect(FC).toContain("_foldHtml('data', '📈', 'The field’s data'");
     expect(FC).toContain("_foldHtml('further', '🔭', 'Look further than the index'");
-    expect(FC).toContain("_foldHtml('act', '⚡', 'Act on everything', 'replace mode, deprecate first'");
+    expect(FC).not.toContain("_foldHtml('act'");   // the fold is gone (user 2026-11-08: "i dont think we need the act on everything"); Deprecate is a plain row
     expect(FC).toContain("localStorage.getItem(`sftk.fc.fold.${key}`)");
     expect(FC).toContain('_wireFolds(results);');
     expect(CSS).toContain('.fc-fold-sum:empty { display: none; }');

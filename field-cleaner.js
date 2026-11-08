@@ -2457,9 +2457,7 @@ const FieldCleaner = (() => {
         ${_foldHtml('further', '🔭', 'Look further than the index', 'every report, and the whole org as text — on request', `
         <div id="fcRptScan"></div>
         <div id="fcOrgSweep"></div>`)}
-        ${_foldHtml('act', '⚡', 'Act on everything', 'replace mode, deprecate first', `
-        ${_replBarHtml()}
-        <div id="fcDepZone"></div>`)}
+        <div id="fcDepZone"></div>
         ${_mcdCapped ? `<div class="fc-fact fc-fact-warn"><span class="fc-fact-ico">⚠</span><span class="fc-fact-text"><strong>This list may be cut short.</strong> Salesforce stops its dependency index at 2,000 rows without saying so — treat the count as a floor: fix what is listed, scan again, repeat.</span></div>` : ''}
       </div>`;
 
