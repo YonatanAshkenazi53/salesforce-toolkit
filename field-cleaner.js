@@ -2439,13 +2439,6 @@ const FieldCleaner = (() => {
       .filter(([t]) => { const c = TYPE_CFG[t] || TYPE_CFG_DEFAULT; if (c.fixable || c.sev !== 'blocker') return false; const w = typeof sftkMdEditWays === 'function' ? sftkMdEditWays(t) : null; const cd = typeof sftkMdCodeWays === 'function' ? sftkMdCodeWays(t) : null; return (w && (w.remove || _replOn())) || (cd && _replOn()); })
       .reduce((n, [, arr]) => n + arr.length, 0);
 
-    // What each kind of item gets, in words — once, in the collapsed help under
-    // the status card, not as a paragraph over every group (user 2026-10-13:
-    // "a lot of text on the screen … hard to understand what happens there").
-    const howto = Object.keys(_groups).map(t => {
-      const c = TYPE_CFG[t] || { ...TYPE_CFG_DEFAULT, label: t };
-      return `<div class="fc-howto-row">${c.icon} <b>${esc(c.label)}</b> — <span class="fc-group-note-text" data-type="${esc(t)}">${esc(_groupNote(t, c))}</span></div>`;
-    }).join('');
     let html = `
       <div class="fc-status" id="fcStatus">
         <div class="fc-status-hd">
@@ -2468,11 +2461,6 @@ const FieldCleaner = (() => {
         ${_replBarHtml()}
         <div id="fcDepZone"></div>`)}
         ${_mcdCapped ? `<div class="fc-fact fc-fact-warn"><span class="fc-fact-ico">⚠</span><span class="fc-fact-text"><strong>This list may be cut short.</strong> Salesforce stops its dependency index at 2,000 rows without saying so — treat the count as a floor: fix what is listed, scan again, repeat.</span></div>` : ''}
-        <details class="fc-howto">
-          <summary>How each item is fixed, and what the scan cannot see</summary>
-          ${howto}
-          ${_unscannedNoteHtml()}
-        </details>
       </div>`;
 
     const groupHtml = (type, items) => {
@@ -5757,7 +5745,7 @@ const FieldCleaner = (() => {
         const changed = ta.value !== pretty;
         let bad = null;
         if (changed && o.xml) { bad = sftkMdWellFormed(ta.value); if (!bad && o.name != null && sftkMdChildText(ta.value, 'fullName') !== o.name) bad = `the <fullName> must stay “${o.name}”`; }
-        state.textContent = !changed ? 'As proposed — change anything here and the deploy sends your text instead.' : bad ? `⚠ ${bad}` : `${sftkMdLineDiff(pretty, ta.value).filter(x => x.op !== ' ').length} line(s) differ from the proposal — your text is what will be deployed.`;
+        state.textContent = !changed ? 'As proposed — change anything here and the deploy sends your text instead.' : bad ? `⚠ ${bad}` : (() => { const ops = sftkMdLineDiff(pretty, ta.value); const n = Math.max(ops.filter(x => x.op === '+').length, ops.filter(x => x.op === '-').length); return `${n} line${n === 1 ? '' : 's'} differ${n === 1 ? 's' : ''} from the proposal — your text is what will be deployed.`; })();
         state.classList.toggle('fc-cf-edit-bad', !!bad);
         if (go) go.disabled = !!bad;
       };
@@ -6998,12 +6986,12 @@ const FieldCleaner = (() => {
           return (r && r.success) ? r : { error: (r && r.error) || 'the deploy was not accepted' };
         },
         verify: async () => {
-          for (let i = 0; i < 3; i++) {
+          for (let i = 0; i < 12; i++) {
             try {
               const again = await _codeRead(type, componentId, fullName, spec);
               if (changed.every(s => { const a = again.sources.find(x => x.path === s.path); return a && sftkMdCodeSame(a.source, s.source); })) return { ok: true, text: null };
             } catch (_) { /* read again */ }
-            await new Promise(res => setTimeout(res, 1200));
+            await new Promise(res => setTimeout(res, 1500 + i * 200));
           }
           return { ok: false, text: null };
         },
@@ -7013,7 +7001,7 @@ const FieldCleaner = (() => {
         if (!stillNames) _afterDelete(type);
         return { ok: true, stillNames, diffs, ranTests };
       }
-      if (wr.accepted) throw new Error(`"${componentName}" — the deploy was accepted, but on re-read the ${spec.what} does not hold the text that was sent. Open 🔍 to see what the org holds.`);
+      if (wr.accepted) throw new Error(`"${componentName}" — Salesforce accepted the deploy, but half a minute later its API still hands back the previous source. The org may lag behind a code deploy: open 🔍 again in a moment (or read it in Setup) before deciding anything — ↩ Undo in History is there either way.`);
       throw new Error(`Salesforce refused the ${spec.what} "${componentName}": ${_feText(String((wr.raw && wr.raw.error) || 'refused'))}. Nothing was changed.`);
     } finally {
       await sftkHistoryEnd(j, { undo: wr && wr.accepted
@@ -7113,7 +7101,7 @@ const FieldCleaner = (() => {
     const sync = () => {
       let lines = 0, files = 0;
       tas.forEach((ta, i) => {
-        const d = ta.value === origOf(i) ? 0 : sftkMdLineDiff(origOf(i), ta.value).filter(x => x.op !== ' ').length;
+        const d = ta.value === origOf(i) ? 0 : (() => { const ops = sftkMdLineDiff(origOf(i), ta.value); return Math.max(ops.filter(x => x.op === '+').length, ops.filter(x => x.op === '-').length); })();
         const n = box.querySelector(`.fc-code-ed-n[data-i="${i}"]`);
         if (n) n.textContent = d ? `${d} line${d === 1 ? '' : 's'} changed` : 'unchanged';
         if (d) { lines += d; files++; }

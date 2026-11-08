@@ -88,6 +88,8 @@ describe('the wiring in Field Cleaner', () => {
     expect(fn).toContain('wr = await sftkWriteVerified({');
     expect(fn).toContain("if (apex && r && !r.success && /test|coverage/i.test(String(r.error || ''))) { ranTests = true;");
     expect(fn).toContain('return a && sftkMdCodeSame(a.source, s.source); })) return { ok: true, text: null };');
+    expect(fn).toContain('for (let i = 0; i < 12; i++) {');   // the Tooling API lags behind a code deploy (live 2026-11-08) — ~30 s of re-reads
+    expect(fn).toContain('await new Promise(res => setTimeout(res, 1500 + i * 200));');
     expect(fn).toContain("msg: { type: 'SF_METADATA_DEPLOY', zipBase64: zipBack },");
     expect(fn).toContain('if (!stillNames) _afterDelete(type);');
     expect(FC).toContain("where: { field: spec.code, equals: source, loose: true }");
