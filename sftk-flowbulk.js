@@ -313,3 +313,44 @@ if (typeof globalThis !== 'undefined') {
   globalThis.sftkFlowBulkPlan  = sftkFlowBulkPlan;
   globalThis.sftkFlowBulkMatrix = sftkFlowBulkMatrix;
 }
+
+// ── The hierarchy (user 2026-11-08: "we need to show it as hierarchy on load … both on switchers and api versions") ──
+// A flow that calls others shows its callees nested under it. `calls` is parent → [child apiName…] (the dependency
+// map inverted); a flow nobody in `rows` calls is a root, placed in its own order; each flow is placed ONCE — under
+// the first caller that reaches it — and a subflow with several callers stays reachable from the others by their
+// "↳ calls" chip. A cycle (a calls b calls a) ends where a flow is already placed.
+//   rows: [{ apiName, … }] → [{ row, depth, parent (apiName|null), rootApi }]
+//   rootRank (optional): row → number; roots with a lower rank are placed first, so a subflow two flows share
+//   nests under the one that matters more (a record-triggered flow before a plain autolaunched caller)
+function sftkFlowTreeOrder(rows, calls, rootRank) {
+  const list = (rows || []).filter(r => r && r.apiName);
+  const byApi = new Map(list.map(r => [r.apiName, r]));
+  const c = calls || {};
+  const calledIn = new Set();
+  for (const r of list) for (const k of (c[r.apiName] || [])) if (byApi.has(k)) calledIn.add(k);
+  const placed = new Set(), out = [];
+  const visit = (r, depth, parent, rootApi) => {
+    if (placed.has(r.apiName)) return;
+    placed.add(r.apiName);
+    out.push({ row: r, depth, parent, rootApi });
+    for (const k of (c[r.apiName] || [])) { const cr = byApi.get(k); if (cr) visit(cr, depth + 1, r.apiName, rootApi); }
+  };
+  const roots = list.filter(r => !calledIn.has(r.apiName));
+  if (typeof rootRank === 'function') roots.sort((a, b) => (rootRank(a) - rootRank(b)));   // a stable sort keeps the list's order within a rank
+  for (const r of roots) visit(r, 0, null, r.apiName);
+  for (const r of list) visit(r, 0, null, r.apiName);   // a cycle with no root: the first of it leads
+  return out;
+}
+// parent → [child…] from the dependency map's child → [parent…] (the map's parents are { apiName } objects or names).
+function sftkFlowCallsOf(dependencyMap) {
+  const calls = {};
+  for (const [child, parents] of Object.entries(dependencyMap || {})) {
+    for (const p of (parents || [])) {
+      const pn = typeof p === 'string' ? p : p && (p.apiName || p.masterLabel);
+      if (!pn) continue;
+      (calls[pn] = calls[pn] || []);
+      if (!calls[pn].includes(child)) calls[pn].push(child);
+    }
+  }
+  return calls;
+}

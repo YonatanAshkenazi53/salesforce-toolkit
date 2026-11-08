@@ -150,6 +150,14 @@ extensions containing root files that start with `_`).
   Live on npc (scripts/dev/live/fc-code-edit.mjs): ⇄ on the LWC → the CLI reads the new import, 0 of the old; ⇄ on the
   duplicate rule → the retrieve shows the new field in the filter; both undone through History, the CLI reads the
   originals back.
+- **⏻ Flow switches and ⚙ API versions show the flows as a hierarchy** (2026-11-08: "we need to show it as
+  hierarchy on load … both on switchers and api versions", "they look like a normal flow"). A flow that calls
+  others has its callees nested under it with a connector, as soon as the dependency map knows the links; a subflow
+  leaves its own kind-group for its caller's (so a record-triggered flow on an object shows its subflows under that
+  object), each flow placed once — a shared subflow under its triggered caller before a plain autolaunched one. A
+  subflow whose caller is not in the list carries an "↳ SUBFLOW" tag; the chips are grouped by direction. Live on
+  npc: the four dep-test levels nested under their Account trigger, the packaged SFTK_Pkg_Sub under SFTK_Pkg_Child
+  Trigger ("Lookup Child 2"), SFTK_Pkg_Sched_Sub under the scheduled flow.
 - **⏻ Flow switches: the whole chain** (2026-11-08: "we need a way to select the whole tree or just some of them"):
   next to "↳ calls N" a dashed "⇊ whole chain down N" when the chain goes deeper than one level, and "⇈ every
   caller up N" next to "↰ called by"; the tooltip names every flow in order, a click ticks them all; nothing is

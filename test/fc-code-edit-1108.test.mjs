@@ -161,6 +161,28 @@ describe('⏻ Flow switches: the whole chain', () => {
     expect(DEP).toContain("chainChip(f.apiName, calls, calls[f.apiName], '\\u21ca', 'whole chain down')");
     expect(DEP).toContain("chainChip(f.apiName, calledBy, calledBy[f.apiName], '\\u21c8', 'every caller up')");
     expect(DEP).toContain('class="dep-fb-sub dep-fb-chain"');   // the same click handler ticks its names
+    // a subflow reads as one (user 2026-11-08: "they look like a normal flow")
+    expect(DEP).toContain("!depth && (calledBy[f.apiName] || []).length ? ' dep-list-row-sub' : ''");
+    // the hierarchy (user 2026-11-08: "we need to show it as hierarchy on load … both on switchers and api versions")
+    expect(DEP).toContain('const order = sftkFlowTreeOrder(st.matrix, calls, r => (r.triggered ? 0 : 1));');
+    expect(DEP).toContain('const key = sftkFlowBulkGroupKey(byApi.get(e.rootApi) || e.row);');
+    expect(DEP).toContain("${sftkFlowTreeOrder([...matrix].sort((a, b) =>");
+    expect((DEP.match(/class="dep-fb-tree" aria-hidden="true"/g) || []).length).toBe(2);
+    const T = extractFunctions('sftk-flowbulk.js', ['sftkFlowTreeOrder', 'sftkFlowCallsOf']);
+    const rows = [{ apiName: 'Trig' }, { apiName: 'L1' }, { apiName: 'L2' }, { apiName: 'Alone' }, { apiName: 'Shared' }, { apiName: 'Trig2' }];
+    const calls = T.sftkFlowCallsOf({ L1: [{ apiName: 'Trig' }], L2: [{ apiName: 'L1' }], Shared: [{ apiName: 'Trig' }, { apiName: 'Trig2' }] });
+    expect(calls).toEqual({ Trig: ['L1', 'Shared'], L1: ['L2'], Trig2: ['Shared'] });
+    const o = T.sftkFlowTreeOrder(rows, calls).map(e => `${e.row.apiName}:${e.depth}:${e.rootApi}`);
+    expect(o).toEqual(['Trig:0:Trig', 'L1:1:Trig', 'L2:2:Trig', 'Shared:1:Trig', 'Alone:0:Alone', 'Trig2:0:Trig2']);   // Shared placed once, under its first caller
+    // a root rank: the triggered caller leads, so the shared subflow nests under it
+    const rows2 = [{ apiName: 'Auto' }, { apiName: 'Trig', triggered: true }, { apiName: 'Sub' }];
+    const o2 = T.sftkFlowTreeOrder(rows2, { Auto: ['Sub'], Trig: ['Sub'] }, r => (r.triggered ? 0 : 1)).map(e => `${e.row.apiName}:${e.depth}:${e.rootApi}`);
+    expect(o2).toEqual(['Trig:0:Trig', 'Sub:1:Trig', 'Auto:0:Auto']);
+    // a cycle ends where a flow is already placed
+    expect(T.sftkFlowTreeOrder([{ apiName: 'A' }, { apiName: 'B' }], { A: ['B'], B: ['A'] }).map(e => e.row.apiName + e.depth)).toEqual(['A0', 'B1']);
+    expect(DEP).toContain('<span class="dep-fb-subtag"');
+    expect(DEP).toContain('<span class="dep-fb-subgrp">');
+    expect(CSS).toContain('.dep-list-row-sub { box-shadow: inset 3px 0 0 var(--brand); }');
     expect(CSS).toContain('.dep-fb-chain { border-style: dashed; }');
   });
 });

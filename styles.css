@@ -6963,6 +6963,18 @@ body.sftk-dark .adbg-badge-limit-crit { background: #3A1518; }
 .dep-fb-sub { font: inherit; font-size: 10.5px; line-height: 1.4; padding: 0 6px; margin-left: 4px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); color: var(--subtext); cursor: pointer; }
 .dep-fb-sub:hover { color: var(--text); border-color: var(--text-muted, var(--subtext)); }
 .dep-fb-chain { border-style: dashed; }
+/* a subflow reads as one (2026-11-08): a tag, an inset mark, the chips grouped by direction */
+.dep-list-row-sub { box-shadow: inset 3px 0 0 var(--brand); }
+.dep-list-row-sub .dep-list-name { padding-left: 4px; }
+.dep-fb-subtag { font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--brand); border: 1px solid var(--brand); border-radius: 4px; padding: 0 4px; margin-right: 6px; vertical-align: 1px; }
+/* the hierarchy (2026-11-08): a callee nested under its caller, in both panels */
+.dep-list-row-nested .dep-list-name { padding-left: calc(var(--fb-depth, 0) * 16px); }
+.dep-fb-tree { color: var(--subtext); font-family: 'SF Mono', Consolas, monospace; font-size: 11px; margin-right: 2px; white-space: pre; }
+.dep-fb-subgrp { display: inline-flex; margin-left: 6px; }
+.dep-fb-subgrp .dep-fb-sub { margin-left: 0; border-radius: 0; }
+.dep-fb-subgrp .dep-fb-sub:first-child { border-radius: 9px 0 0 9px; }
+.dep-fb-subgrp .dep-fb-sub:last-child { border-radius: 0 9px 9px 0; }
+.dep-fb-subgrp .dep-fb-sub + .dep-fb-sub { border-left: 0; }
 .dep-tool-foot { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
 .dep-tool-sp { flex: 1; }
 .dep-tool-count { font-size: 11px; color: var(--subtext); }

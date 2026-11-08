@@ -10,6 +10,7 @@ Admin Toolkit for Salesforce runs inside your browser and works through the Sale
 - ⬇ **Backup** downloads the selected version(s) as a file you could redeploy elsewhere, optionally including every flow it calls. 📥 **Restore** uploads a backup and redeploys it as a new Draft version — never turned on automatically; you activate it yourself in Flow Builder.
 - Limit: a managed-package flow's contents can't be backed up (Salesforce hides them), and a flow another flow calls cannot be deleted until the caller is handled first.
 
+- ⏻ Flow switches and ⚙ API versions show the flows as a hierarchy (2026-11-08): a flow's callees nested under it with a connector, from the dependency map; a subflow leaves its kind-group for its caller's; a shared subflow sits under its triggered caller.
 - ⏻ Flow switches: a subflow chip ticks one level; when the chain goes deeper, "⇊ whole chain down N" / "⇈ every caller up N" name every flow in order and tick them all (2026-11-08).
 
 ### Dependencies (a view of the Flows page)

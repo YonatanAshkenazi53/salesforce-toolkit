@@ -2862,12 +2862,7 @@ const DependencyMap = (() => {
     const st = _fbState;
     // Record-triggered flows under their object, every other flow under its
     // kind (sftkFlowBulkGroupKey) — the same grouping the pure helper pins.
-    const groups = new Map();
-    for (const r of st.matrix) {
-      const key = sftkFlowBulkGroupKey(r);
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(r);
-    }
+    // the groups are built below, once the subflow links are known (the hierarchy, 2026-11-08)
     const isRecordGroup = g => sftkFlowBulkIsObjectGroup(g);
     const nTriggered = st.matrix.filter(f => f.triggered).length;
     // Subflow links (user 2026-11-08: "if a flow calls a flow we need to show
@@ -2875,14 +2870,17 @@ const DependencyMap = (() => {
     // child → parents; invert it once for "calls". A link ticks the other
     // flow. With no scan yet, one line says where the links come from.
     const calledBy = dependencyMap || {};
-    const calls = {};
-    for (const [child, parents] of Object.entries(calledBy)) {
-      for (const p of (parents || [])) {
-        const pn = p && (p.apiName || p.masterLabel);
-        if (!pn) continue;
-        (calls[pn] = calls[pn] || []);
-        if (!calls[pn].includes(child)) calls[pn].push(child);
-      }
+    const calls = sftkFlowCallsOf(calledBy);
+    // The hierarchy (user 2026-11-08: "we need to show it as hierarchy on load"): a flow that calls others has its
+    // callees nested under it; a subflow leaves its own kind-group for its caller's. Each flow is placed once.
+    const byApi = new Map(st.matrix.map(r => [r.apiName, r]));
+    // a shared subflow nests under a triggered or scheduled caller before a plain autolaunched one
+    const order = sftkFlowTreeOrder(st.matrix, calls, r => (r.triggered ? 0 : 1));
+    const groups = new Map();
+    for (const e of order) {
+      const key = sftkFlowBulkGroupKey(byApi.get(e.rootApi) || e.row);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(e);
     }
     const inList = new Set(st.matrix.map(f => f.apiName));
     const labelOf = n => (st.matrix.find(f => f.apiName === n) || {}).label || n;
@@ -2974,15 +2972,17 @@ const DependencyMap = (() => {
                 <button class="btn-small dep-fb-grp" data-grp="${escHtml(g)}" data-want="off" title="Tick every flow in this group that is currently OFF (what \u25b6 Switch ON acts on)">all OFF</button>
               </span>
             </div>
-            ${flows.map(f => `
-              <label class="dep-list-row" data-dep-search="${escHtml(sftkFlowFilterKey(f.label, f.apiName))}">
+            ${flows.map(({ row: f, depth }) => `
+              <label class="dep-list-row${depth ? ' dep-list-row-nested' : ''}${!depth && (calledBy[f.apiName] || []).length ? ' dep-list-row-sub' : ''}" style="--fb-depth:${depth}" data-dep-search="${escHtml(sftkFlowFilterKey(f.label, f.apiName))}">
                 <input type="checkbox" class="dep-fb-cb" value="${escHtml(f.apiName)}" data-grp="${escHtml(g)}" data-on="${fbStateOf(f)}">
                 <span class="dep-list-name">
+                  ${depth ? `<span class="dep-fb-tree" aria-hidden="true">${'\u2502 '.repeat(depth - 1)}\u2514 </span>` : ''}
+                  ${!depth && (calledBy[f.apiName] || []).length ? `<span class="dep-fb-subtag" title="${escHtml(`A subflow — called by ${(calledBy[f.apiName] || []).map(p => labelOf(p && (p.apiName || p.masterLabel))).join(', ')}. Switched off, every caller that reaches it fails there.`)}">↳ subflow</span>` : ''}
                   ${(() => { const lu = labelUrl(f); return lu
                     ? `<span class="dep-fb-open" data-open-url="${escHtml(lu.url)}" title="${escHtml(f.apiName)} \u2014 open in Flow Builder">${escHtml(f.label)}</span>`
                     : `<span title="${escHtml(f.apiName)}">${escHtml(f.label)}</span>`; })()}
                   ${isRecordGroup(g) ? `<span class="dep-list-kind">${escHtml(f.kind)}</span>` : ''}
-                  ${subChip(calls[f.apiName], '\u21b3', 'calls')}${chainChip(f.apiName, calls, calls[f.apiName], '\u21ca', 'whole chain down')}${subChip((calledBy[f.apiName] || []).map(p => p && (p.apiName || p.masterLabel)), '\u21b0', 'called by')}${chainChip(f.apiName, calledBy, calledBy[f.apiName], '\u21c8', 'every caller up')}
+                  ${(() => { const a = subChip(calls[f.apiName], '\u21b3', 'calls') + chainChip(f.apiName, calls, calls[f.apiName], '\u21ca', 'whole chain down'); const b = subChip((calledBy[f.apiName] || []).map(p => p && (p.apiName || p.masterLabel)), '\u21b0', 'called by') + chainChip(f.apiName, calledBy, calledBy[f.apiName], '\u21c8', 'every caller up'); return (a ? `<span class="dep-fb-subgrp">${a}</span>` : '') + (b ? `<span class="dep-fb-subgrp">${b}</span>` : ''); })()}
                 </span>
                 ${st.orgs.map(o => cell(f, o)).join('')}
               </label>`).join('')}
@@ -3537,10 +3537,10 @@ const DependencyMap = (() => {
       </div>` : ''}
       ${depListFilterRow('apiver')}
       <div class="dep-list">
-        ${[...matrix].sort((a, b) =>
+        ${sftkFlowTreeOrder([...matrix].sort((a, b) =>
             (lagOf(b) - lagOf(a))
             || (b.drift - a.drift)
-            || (a.label || a.apiName).localeCompare(b.label || b.apiName)).map(r => {
+            || (a.label || a.apiName).localeCompare(b.label || b.apiName)), st.edges).map(({ row: r, depth }) => {
           const roll = sftkFlowTreeRoll(r.apiName, st.edges, n => {
             const row = r.apiName === n ? r : matrix.find(x => x.apiName === n);
             if (!row) return null;
@@ -3553,9 +3553,10 @@ const DependencyMap = (() => {
               + (roll.unknown ? ` \u00b7 ${roll.unknown} could not be read` : '');
           const isBehind = lagOf(r) > 0 || r.drift;
           const can = canOf(r);
-          return `<label class="dep-list-row ${isBehind ? 'dep-list-row-drift' : ''}${can.ok ? '' : ' dep-list-row-locked'}" data-dep-search="${escHtml(sftkFlowFilterKey(r.label, r.apiName))}"${can.ok ? '' : ` title="Cannot be changed here: ${escHtml(can.why)}"`}>
+          return `<label class="dep-list-row ${isBehind ? 'dep-list-row-drift' : ''}${can.ok ? '' : ' dep-list-row-locked'}${depth ? ' dep-list-row-nested' : ''}" style="--fb-depth:${depth}" data-dep-search="${escHtml(sftkFlowFilterKey(r.label, r.apiName))}"${can.ok ? '' : ` title="Cannot be changed here: ${escHtml(can.why)}"`}>
             <input type="checkbox" class="dep-av-pick" value="${escHtml(r.apiName)}" ${can.ok ? '' : 'disabled'}>
             <span class="dep-list-name">
+              ${depth ? `<span class="dep-fb-tree" aria-hidden="true">${'\u2502 '.repeat(depth - 1)}\u2514 </span>` : ''}
               ${(() => { const lu = avLabelUrl(r); return lu
                 ? `<span data-open-url="${escHtml(lu.url)}" title="Open in Flow Builder">${escHtml(r.label || r.apiName)}</span>`
                 : escHtml(r.label || r.apiName); })()}

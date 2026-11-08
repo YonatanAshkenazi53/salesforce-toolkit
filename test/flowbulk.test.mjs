@@ -156,7 +156,7 @@ describe('grouping — the axis the admin works on', () => {
   it('the page reads every flow definition, every page of them, with the object API name as the label fallback', () => {
     expect(DEP).toMatch(/SF_QUERY_ALL'[^]*?TriggerObjectOrEventLabel, TriggerObjectOrEventId FROM FlowDefinitionView/);
     expect(DEP).not.toContain("depErrBox('No triggered flows'");
-    expect(DEP).toContain('sftkFlowBulkGroupKey(r)');
+    expect(DEP).toContain('sftkFlowBulkGroupKey(byApi.get(e.rootApi) || e.row)');
     expect(DEP).toContain('with a trigger');
   });
 
