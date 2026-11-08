@@ -218,7 +218,8 @@ function sftkUndoVerifyEval(spec, answer) {
   else if (typeof s.count === 'number') ok = Array.isArray(v) && v.length === s.count;
   else if (s.field) {
     const fv = v == null ? undefined : v[s.field];
-    ok = s.notNull ? (fv !== null && fv !== undefined) : s.notFalse ? fv !== false : ('equals' in s ? fv === s.equals : fv !== undefined);
+    const loose = x => String(x == null ? '' : x).replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').trim();
+    ok = s.notNull ? (fv !== null && fv !== undefined) : s.notFalse ? fv !== false : ('equals' in s ? (s.loose ? loose(fv) === loose(s.equals) : fv === s.equals) : fv !== undefined);
   } else ok = v !== undefined && v !== null;
   return { ok, text: ok ? (t.ok || '') : (t.bad || 'accepted by Salesforce, but the org still shows the old state') };
 }

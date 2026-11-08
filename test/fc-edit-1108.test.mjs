@@ -102,7 +102,7 @@ describe('every kind of the demo field, ✂ and ⇄', () => {
   it('duplicate rule: ✂ / ⇄ / ✎ like every other kind (user 2026-11-08: "צריך להיות בכולם") — the run-time rule stays in the words', () => {
     const d = X('DuplicateRule.Account.SFTK_Live_DR');
     swapped(d, rp('DuplicateRule', d).xml);
-    expect(FC).toContain("const ways = (cfgT.sev === 'blocker' && typeof sftkMdEditWays === 'function') ? sftkMdEditWays(type) : null;");
+    expect(FC).toContain("const ways = (knownKind && typeof sftkMdEditWays === 'function') ? sftkMdEditWays(type) : null;");   // blockers and the 👀 mention kinds the engine knows (2026-11-08)
     expect(FC).not.toContain("type !== 'DuplicateRule'");
     expect(FC).toContain("if (!ways) throw new Error(");
     expect(FC).not.toContain("const dupe = type === 'DuplicateRule';");
@@ -166,7 +166,7 @@ describe('the wiring', () => {
     expect(FC).toContain('const rd = await _mdReadOne(type, fullName, spec.mdType);\n    if (!rd || rd.error) throw new Error(');
   });
   it('🔍 for every kind the engine edits: the XML from the Metadata API, the field’s lines marked, the ✂ and ⇄ previews', () => {
-    expect(FC).toContain('const canInsp = Object.prototype.hasOwnProperty.call(_INSPECT_SOBJECT, type) || _inspectsByMd(type) || _inspectsByCode(type);');
+    expect(FC).toContain("const canInsp = Object.prototype.hasOwnProperty.call(_INSPECT_SOBJECT, type) || _inspectsByMd(type) || _inspectsByCode(type) || type === 'EmailTemplate';");
     expect(FC).toContain('if (_inspectsByMd(type)) { await _xmlInspectMd(type, componentId, componentName, panel, inspBtn); return; }');
     expect(CSS).toContain('body.sftk-dark { --code-bg: #1A1D24; }');
   });

@@ -544,7 +544,9 @@ describe('Field Cleaner — everything at once', () => {
   it('one button per way for every fixable item, whatever its kind; Replace all only in replace mode', () => {
     expect(FC).toContain('data-swap="1" title="${tip}">⇄ Replace all ${nRp}</button>` : \'\'}');
     expect(FC).toContain('data-swap="0" title="${tip}">✂ Remove all ${nRm}</button>');
-    expect(FC).toContain("if (n < 2 && !_everyNote) return '<div id=\"fcFixEvery\" style=\"display:none\"></div>';");
+    expect(FC).toContain("if (n < 2 && !_everyNote) return '<span id=\"fcFixEvery\" class=\"fc-every\" hidden></span>';");
+    // on the section card's header, not in the header bar (user 2026-11-08)
+    expect(FC).toContain('<span class="fc-section-n">${nB}</span>${nB ? _fixEveryHtml(everyCount) : \'\'}</div>');
   });
   it('it walks group by group through the same per-item fix — every item still confirms', () => {
     const fn = FC.slice(FC.indexOf('async function fixEverything(fieldId, swap) {'), FC.indexOf("// An item's buttons while its fix works"));

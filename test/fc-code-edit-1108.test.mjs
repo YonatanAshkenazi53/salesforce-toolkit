@@ -71,7 +71,7 @@ describe('the undo of a code edit is verified loosely (Salesforce may hand back 
 describe('the wiring in Field Cleaner', () => {
   it('code is inspected and edited through one read (_codeRead): 🔍, ⇄ (data-way="code"), ✎, and the 🗑 restore plan', () => {
     expect(FC).toContain("function _inspectsByCode(type) { const s = typeof sftkMdDeleteSpec === 'function' ? sftkMdDeleteSpec(type) : null; return !!(s && (s.code || s.bundle)); }");
-    expect(FC).toContain('const canInsp = Object.prototype.hasOwnProperty.call(_INSPECT_SOBJECT, type) || _inspectsByMd(type) || _inspectsByCode(type);');
+    expect(FC).toContain("const canInsp = Object.prototype.hasOwnProperty.call(_INSPECT_SOBJECT, type) || _inspectsByMd(type) || _inspectsByCode(type) || type === 'EmailTemplate';");
     expect(FC).not.toContain("ApexClass: 'ApexClass', ApexTrigger: 'ApexTrigger',");   // Apex goes through the code inspector now
     expect(FC).toContain('if (_inspectsByCode(type)) { await _codeInspect(type, componentId, componentName, panel, inspBtn); return; }');
     expect(FC).toContain('data-swap="1" data-way="code" title="Rename ${esc(_selField.api)} to ${esc(_replField.api)} in every file of this');
@@ -113,7 +113,7 @@ describe('the wiring in Field Cleaner', () => {
   it('the header folds: three sections, remembered, with a one-line summary when folded', () => {
     expect(FC).toContain("_foldHtml('data', '📈', 'The field’s data'");
     expect(FC).toContain("_foldHtml('further', '🔭', 'Look further than the index'");
-    expect(FC).toContain("_foldHtml('act', '⚡', 'Act on everything'");
+    expect(FC).toContain("_foldHtml('act', '⚡', 'Act on everything', 'replace mode, deprecate first'");
     expect(FC).toContain("localStorage.getItem(`sftk.fc.fold.${key}`)");
     expect(FC).toContain('_wireFolds(results);');
     expect(CSS).toContain('.fc-fold-sum:empty { display: none; }');
@@ -124,6 +124,13 @@ describe('the wiring in Field Cleaner', () => {
     expect(FC).toContain("el.outerHTML = _fixEveryHtml(_openPairs(root), _openPairs(root, true), _openPairs(root, false));");   // ⇄ and ✂ counted apart
     expect(FC).toContain("if (swap) way = c ? 'code' : 'edit';");
     expect(FC).toContain('✂ Remove all left out what can only be replaced — ${skipped.join(\', \')}');
+    // the confirm's XML (and a code file's text) can be edited before the deploy (user 2026-11-08: "we can't edit here")
+    expect(FC).toContain('function _cfEditBlock(id, proposed, opts) {');
+    expect(FC).toContain("const cfEdit = _cfEditBlock('fcCfEdit', ed.xml, { xml: true, what: 'the XML', name: inBox ? fullName.slice(fullName.indexOf('.') + 1) : fullName });");
+    expect(FC).toContain('const finalXml = handXml != null ? handXml : ed.xml;');
+    expect(FC).toContain('const deployFiles = sftkMdPackageFiles(pkgType, fullName, finalXml);');
+    expect(FC).toContain('const edits = changed.map((s, i) => _cfEditBlock(`fcCfCode${i}`, s.source, { what: s.file }));');
+    expect(FC).toContain('const zipBack = _zipOf(files), zipNew = _zipOf(deployFiles2);');
     expect(FC).toContain('data-swap="1" data-way="${c ? \'code\' : \'edit\'}" title="Each one is confirmed on its own, with its diff; a refusal is said and the walk goes on">⇄ Replace in all ${n} ${noun}</button>');
     expect(FC).toContain('data-swap="0" data-way="edit" title="Each one is confirmed on its own, with its diff; one that would stop working without the field is refused, with the reason, and the walk goes on">✂ Remove from all ${n} ${noun}</button>');
   });

@@ -103,6 +103,25 @@ extensions containing root files that start with `_`).
   PII outside the fields the policy fabricates.
 
 ### Toolkit
+- **Field Cleaner: the 👀 mentions get the ways too, the confirm is editable, the gate sits on top** (2026-11-08, the
+  owner's hand test: "why here we can't do anything? i want also email alerts, lightning email templates and classic
+  email templates", "we can't edit here", "the remove all & replace all button … on top of the card", "maybe it
+  should be on top?", "what is the point of all this info").
+  - **Email templates** — classic text and HTML, Lightning, Visualforce — get 🔍 (the subject, body, HTML and
+    markup with the field's lines marked), ✂ Remove (every merge field that names the field taken out of the
+    texts), ⇄ Replace (renamed inside them) and ✎ Edit texts, through the EmailTemplate record; a restore point
+    puts the texts back, History undo verified by re-reading. Email alerts already had ✂ / ⇄.
+  - **List views, compact layouts, quick actions and inactive validation rules** get ✂ / ⇄ / ✎ / 🗑 like the
+    blockers (a view's column and filter, a numbered filter logic refusing ✂; a compact layout's field but not its
+    last; an action's layout field and predefined value; an inactive rule's formula by ⇄).
+  - **"✎ Edit the XML before deploying"** inside every ✂ / ⇄ confirm (and a code file's text in the code ⇄): the
+    proposal in a box, well-formed or the button stays off, the name locked, and the deploy sends what the box holds.
+  - **⚡ Everything at once** sits on the 🔒 section card's header (or the 👀 card's when no blockers are listed),
+    not in the header bar; the **🔒 gate** (the chips, the Delete button) sits above the lists, and in the 👀 scope
+    it is one sentence with a 🔍 Everything button instead of twelve chips saying "hidden".
+  Live on npc: ⇄ on the three demo templates → the CLI reads the new merge field, undo → the originals; ⇄ on the
+  list view (column + filter), the compact layout, the quick action and the inactive rule → CLI, undo; ✂ on a
+  validation rule with a hand edit in the dialog → the CLI reads the edited description, undo → original.
 - **Field Cleaner: every kind has its ways, and the page reads in one glance** (2026-11-08, the owner's hand test:
   "למה אין החלפה פה", "ועריכה של xml", "צריך להיות בכולם", "this section needs to improve… nobody will read it",
   "we need everything to support replace all, remove all", "we need a collapsable ui there like we did for parents").

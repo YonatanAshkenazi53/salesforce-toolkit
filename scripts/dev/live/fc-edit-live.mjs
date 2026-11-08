@@ -59,7 +59,8 @@ export default async function (h) {
     await h.waitFor("!document.querySelector('#fcReplInput')?.disabled || !!document.querySelector('#fcReplNote .fc-repl-bad')", 60000, 500);
     await pick(h, '#fcReplInput', '#fcReplDrop', REPL);
   }
-  await h.eval(`document.querySelector('#fcScope [data-scope="blockers"]').click()`); await h.sleep(300);
+  // SCOPE=blockers|both|mentions (default blockers; the 👀 mention kinds need both or mentions)
+  await h.eval(`document.querySelector('#fcScope [data-scope="${process.env.SCOPE || 'blockers'}"]').click()`); await h.sleep(300);
   await h.eval(`document.querySelector('#fcScanBtn').click()`);
   await h.waitFor("!document.querySelector('#fcScanBtn')?.disabled", 600000, 1000); await h.sleep(1500);
   const rows = await h.eval(`[...document.querySelectorAll('.fc-del-pair, .fc-fix-pair')].map(p => ({ type: p.dataset.type, id: p.dataset.id, name: p.dataset.name, btns: [...p.querySelectorAll('button')].map(b => b.textContent.trim()) }))`);

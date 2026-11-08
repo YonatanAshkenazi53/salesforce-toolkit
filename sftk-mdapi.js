@@ -506,6 +506,12 @@ function _sftkMdDeleteTable() {
   // kept (the standing rule stays: nothing switches one off or edits one behind a run); the lead field mapping is
   // EDITED (its line goes, the settings stay); a Process Builder process is every version of a Flow
   DuplicateRule:           { folder: 'duplicateRules',   suffix: 'duplicateRule',     what: 'duplicate rule' },
+  // the 👀 mentions (user 2026-11-08: "why here we can't do anything?"): a list view, a compact layout and a quick
+  // action are edited and deleted like the blockers; an inactive validation rule is a validation rule
+  ListView:                { parent: 'CustomObject',     tag: 'listViews',            folder: 'objects',           suffix: 'object',           what: 'list view',                  tooling: 'ListView' },
+  CompactLayout:           { parent: 'CustomObject',     tag: 'compactLayouts',       folder: 'objects',           suffix: 'object',           what: 'compact layout',             tooling: 'CompactLayout' },
+  QuickAction:             { folder: 'quickActions',     suffix: 'quickAction',       what: 'quick action',               tooling: 'QuickActionDefinition' },
+  ValidationRuleInactive:  { mdType: 'ValidationRule',   parent: 'CustomObject',     tag: 'validationRules',      folder: 'objects',           suffix: 'object',           what: 'validation rule',            tooling: 'ValidationRule' },
   LeadConvertSettings:     { folder: 'LeadConvertSettings', suffix: 'LeadConvertSetting', what: 'lead field mapping', edit: 'leadMapping' },
   ProcessBuilder:          { mdType: 'Flow',             folder: 'flows',             suffix: 'flow',             what: 'Process Builder process' },
   };
@@ -742,6 +748,7 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
     return { xml: r.xml, n };
   };
   switch (type) {
+    case 'ValidationRuleInactive':
     case 'ValidationRule': {
       const f = formulas(xml, 'errorConditionFormula');
       if (!f.n) { refuse('the rule’s formula does not name the field as a whole token — edit it in Setup'); break; }
@@ -899,6 +906,34 @@ function sftkMdEditField(type, innerXml, objApi, fieldApi, newField) {
       how.push(`record filter: ${plural(r.n, 'line')} ${verb}${nf ? '' : `, ${plural(r.left, 'line')} kept`}`);
       break;
     }
+    case 'ListView': {
+      const c = texts(xml, 'columns');
+      const fl = sftkMdFindElement(c.xml, 'filters', 0);
+      const r = items(c.xml, 'filters', 'field');
+      if (!c.n && !r.n) { refuse('no column or filter of the view names the field — edit it in Setup'); break; }
+      if (!nf && r.n && _sftkMdHasLogic(xml)) { refuse('the view’s filter logic numbers its filters — ⇄ Replace, or edit it in Setup'); break; }
+      if (!nf && c.n && !c.left && !fl) { refuse('the field is the view’s only column — ⇄ Replace it, or 🗑 delete the view'); break; }
+      xml = r.xml;
+      const bits = []; if (c.n) bits.push(`${plural(c.n, 'column')} ${verb}`); if (r.n) bits.push(`${plural(r.n, 'filter')} ${verb}`);
+      how.push(bits.join(', '));
+      break;
+    }
+    case 'CompactLayout': {
+      const c = texts(xml, 'fields');
+      if (!c.n) { refuse('the compact layout does not list the field — edit it in Setup'); break; }
+      if (!nf && !c.left) { refuse('the field is the layout’s only field — ⇄ Replace it, or 🗑 delete the compact layout'); break; }
+      xml = c.xml; how.push(`${plural(c.n, 'field')} ${verb}`);
+      break;
+    }
+    case 'QuickAction': {
+      const li = items(xml, 'quickActionLayoutItems', 'field');
+      const fo = items(li.xml, 'fieldOverrides', 'field');
+      if (!li.n && !fo.n) { refuse('neither the action’s layout nor its predefined values name the field — edit it in Setup'); break; }
+      xml = fo.xml;
+      const bits = []; if (li.n) bits.push(`${plural(li.n, 'layout field')} ${verb}`); if (fo.n) bits.push(`${plural(fo.n, 'predefined value')} ${verb}`);
+      how.push(bits.join(', '));
+      break;
+    }
     case 'CustomMetadataRecord': {
       let n = 0;
       const r = _sftkMdWalk(xml, 'values', body => {
@@ -954,6 +989,7 @@ function sftkMdEditWays(type) {
     WorkflowRule: 'rr', SharingCriteriaRule: 'rr', MatchingRule: 'rr', WorkflowAlert: 'rr', WorkflowOutboundMessage: 'rr', FieldSet: 'rr',
     AssignmentRule: 'rr', AutoResponseRule: 'rr', EscalationRule: 'rr', ApprovalProcess: 'rr', DuplicateRule: 'rr',
     CustomMetadataRecord: 'rr', LeadConvertSettings: 'rr',
+    ListView: 'rr', CompactLayout: 'rr', QuickAction: 'rr', ValidationRuleInactive: 'r',
   }[type];
   return t ? { remove: t === 'rr', replace: true } : null;
 }

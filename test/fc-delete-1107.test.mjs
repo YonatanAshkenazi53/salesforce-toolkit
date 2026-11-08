@@ -80,10 +80,10 @@ describe('the packages', () => {
 
 describe('the wiring', () => {
   it('every blocker kind with a spec gets a 🗑 button, with or without Remove/Replace; the button is a third way of a fix', () => {
-    expect(FC).toContain("const spec = (cfgT.sev === 'blocker' && typeof sftkMdDeleteSpec === 'function') ? (sftkMdDeleteSpec(type) || (type === 'LookupFilter' ? { what: 'lookup filter' } : null)) : null;");
+    expect(FC).toContain("const spec = (knownKind && typeof sftkMdDeleteSpec === 'function') ? (sftkMdDeleteSpec(type) || (type === 'LookupFilter' ? { what: 'lookup filter' } : null)) : null;");   // the 👀 mention kinds too (2026-11-08)
     expect(FC).toContain('data-way="delete" title="Delete this ${esc(spec.what)} from the org');
     expect(FC).toContain('if (!cfgT.fixable) return codeEdits + edits + del;');   // ✂/⇄ inside the blocker come first; code's ⇄ before them (2026-11-08)
-    expect(FC).toContain("const canDel = !fixable && (TYPE_CFG[type] || TYPE_CFG_DEFAULT).sev === 'blocker' && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter');");
+    expect(FC).toContain("const canDel = !fixable && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter');");   // the 👀 mention kinds the engine knows get 🗑 too (2026-11-08)
     expect(FC).toContain("_fixWay = (way === 'keep' || way === 'off' || way === 'delete' || way === 'edit' || way === 'code') ? way : '';");
     expect(FC).toContain("if (_fixWay === 'delete') {");
   });
@@ -106,7 +106,10 @@ describe('the wiring', () => {
   it('the gate row says the delete is here, and counts down as deletes land', () => {
     // one chip per kind, one sentence about the ways (user 2026-11-08: "nobody will read it")
     expect(FC).toContain('class="fc-blocker-row fc-blocker-chip" data-type="${esc(b.type)}"');
-    expect(FC).toContain('Clear each one in its group above — ✂ take the field out · ⇄ point it at another field · ✎ edit it · 🗑 delete it; every change keeps a restore point. Or fix it in Setup. Then re-scan.');
+    expect(FC).toContain('Clear each one in its group below — ✂ take the field out · ⇄ point it at another field · ✎ edit it · 🗑 delete it; every change keeps a restore point. Or fix it in Setup. Then re-scan.');
+    // the gate sits ABOVE the lists (user 2026-11-08: "maybe it should be on top?")
+    expect(FC).toContain("html += '<!--FC_GATE-->';");
+    expect(FC).toContain("html = html.replace('<!--FC_GATE-->', () => gateHtml);");
     expect(FC).toContain("hdr.textContent = '✅ Every blocker listed here was fixed or deleted — press Re-scan, then delete the field.';");
   });
   it('the restore point of a delete deploys the saved files back', () => {

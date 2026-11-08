@@ -1134,15 +1134,18 @@ const FieldCleaner = (() => {
     }
     // 🗑 Delete the whole component — every blocker kind the delete engine knows (user 2026-11-07: one click for anything that must go)
     const cfgT = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
-    const spec = (cfgT.sev === 'blocker' && typeof sftkMdDeleteSpec === 'function') ? (sftkMdDeleteSpec(type) || (type === 'LookupFilter' ? { what: 'lookup filter' } : null)) : null;
+    // a blocker, or a 👀 mention the engine knows (list views, compact layouts, quick actions, inactive rules — user
+    // 2026-11-08: "why here we can't do anything?")
+    const knownKind = !cfgT.fixable && (cfgT.sev === 'blocker' || cfgT.sev === 'silent');
+    const spec = (knownKind && typeof sftkMdDeleteSpec === 'function') ? (sftkMdDeleteSpec(type) || (type === 'LookupFilter' ? { what: 'lookup filter' } : null)) : null;
     // ✂ / ⇄ inside the component — the ways its kind has (user 2026-11-07: "remove, replace the field in the metadata
     // items without breaking them. While showing XML"). A duplicate rule too (user 2026-11-08: "למה אין החלפה פה…
     // צריך להיות בכולם"): the owner's own click, the diff confirmed, a restore point kept — nothing here ever switches
     // one off or edits one behind a deployment (the standing rule is about runs).
-    const ways = (cfgT.sev === 'blocker' && typeof sftkMdEditWays === 'function') ? sftkMdEditWays(type) : null;
+    const ways = (knownKind && typeof sftkMdEditWays === 'function') ? sftkMdEditWays(type) : null;
     // code: ⇄ renames the field's API name wherever the source writes it (whole word); ✎ Edit code lives in 🔍;
     // ✂ is not offered — which line of a program goes is the owner's to decide
-    const codeWays = (cfgT.sev === 'blocker' && typeof sftkMdCodeWays === 'function') ? sftkMdCodeWays(type) : null;
+    const codeWays = (knownKind && typeof sftkMdCodeWays === 'function') ? sftkMdCodeWays(type) : null;
     const codeEdits = codeWays && _replOn() ? `<button class="btn btn-primary btn-sm fc-fix-btn fc-edit-btn" ${attrs} data-swap="1" data-way="code" title="Rename ${esc(_selField.api)} to ${esc(_replField.api)} in every file of this ${esc(spec ? spec.what : 'component')} — whole word, the diff shown first; a restore point is kept">⇄ Replace</button>` : '';
     const edits = ways
       ? (_replOn() && ways.replace ? `<button class="btn btn-primary btn-sm fc-fix-btn fc-edit-btn" ${attrs} data-swap="1" data-way="edit" title="Point this at ${esc(_replField.api)} instead of the field — only the field’s own places in the XML change; a restore point is kept">⇄ Replace</button>` : '')
@@ -1190,15 +1193,14 @@ const FieldCleaner = (() => {
     const sel = swap === true ? '.fc-fix-btn[data-swap="1"]' : swap === false ? '.fc-fix-btn[data-swap="0"]:not(.fc-del-btn)' : '.fc-fix-btn:not(.fc-del-btn)';
     return [...(root || document).querySelectorAll('.fc-fix-pair, .fc-del-pair')].filter(p => p.querySelector(sel)).length;
   }
+  // on the section card's header (user 2026-11-08: "on top of the card … instead of the bar"): the two buttons, each
+  // with its own count, and under them what the last Remove walk left out
   function _fixEveryHtml(n, nRp, nRm) {
     if (nRp == null) nRp = _replOn() ? n : 0;
     if (nRm == null) nRm = n;
-    if (n < 2 && !_everyNote) return '<div id="fcFixEvery" style="display:none"></div>';
-    const tip = 'Goes through every item below that has this way, one by one — the flows, layouts and pages, and every blocker with ✂ / ⇄ inside it. Each still asks before it changes anything; Cancel in any dialog stops the walk.';
-    return `<div id="fcFixEvery" class="fc-fact fc-fact-every"><span class="fc-fact-ico">⚡</span>
-        <span class="fc-fact-text"><b>Everything at once</b> — the ${n} item${n === 1 ? '' : 's'} below that ${n === 1 ? 'has' : 'have'} a way right now, one by one; each still asks first.${_everyNote ? `<div class="fc-fact-sub">${esc(_everyNote)}</div>` : ''}</span>
-        <span class="fc-fact-act">${nRp >= 2 && _replOn() ? `<button class="btn btn-primary btn-sm fc-fix-every" data-swap="1" title="${tip}">⇄ Replace all ${nRp}</button>` : ''}
-        ${nRm >= 2 ? `<button class="btn btn-secondary btn-sm fc-fix-every" data-swap="0" title="${tip}">✂ Remove all ${nRm}</button>` : ''}</span></div>`;
+    if (n < 2 && !_everyNote) return '<span id="fcFixEvery" class="fc-every" hidden></span>';
+    const tip = 'Goes through every item below that has this way, one by one — the flows, layouts and pages, and every blocker with ✂ / ⇄ inside it, in both lists. Each still asks before it changes anything; Cancel in any dialog stops the walk.';
+    return `<span id="fcFixEvery" class="fc-every"><span class="fc-every-lbl" title="${tip}">⚡ Everything at once</span>${nRp >= 2 && _replOn() ? `<button class="btn btn-primary btn-sm fc-fix-every" data-swap="1" title="${tip}">⇄ Replace all ${nRp}</button>` : ''}${nRm >= 2 ? `<button class="btn btn-secondary btn-sm fc-fix-every" data-swap="0" title="${tip}">✂ Remove all ${nRm}</button>` : ''}${_everyNote ? `<span class="fc-every-note">${esc(_everyNote)}</span>` : ''}</span>`;
   }
   // A section of the header that folds to one line, like the Deploy page's cards (user 2026-11-08: "we need a
   // collapsable ui there like we did for parents"). Open or folded is remembered per section; the one-line
@@ -2149,11 +2151,11 @@ const FieldCleaner = (() => {
                       doneLabel: '✅ Layout updated',
                       replNote: '{new} takes the field’s place on the layout.' },
     ListView:       { icon: '📊', label: 'List Views',       fixable: false, sev: 'silent',
-                      note: 'Open the object\'s list view and remove the column or filter.' },
+                      note: 'The view shows or filters on the field. ✂ takes the column and the filter out (a numbered filter logic refuses), ⇄ points them at another field, ✎ edits the XML, 🗑 deletes the view — or edit it in Setup.' },
     CompactLayout:  { icon: '📇', label: 'Compact Layouts',  fixable: false, sev: 'silent',
-                      note: 'Edit the compact layout in Object Manager and remove the field.' },
+                      note: 'The compact layout lists the field. ✂ takes it out (not the last field), ⇄ swaps it, ✎ edits the XML, 🗑 deletes the layout — or edit it in Object Manager.' },
     QuickAction:    { icon: '⚡', label: 'Quick Actions',    fixable: false, sev: 'silent',
-                      note: 'Edit the quick action\'s layout (Object Manager → Buttons, Links, and Actions) and remove the field.' },
+                      note: 'The action’s layout or predefined values name the field. ✂ takes them out, ⇄ swaps them, ✎ edits the XML, 🗑 deletes the action — or edit it in Object Manager → Buttons, Links, and Actions.' },
     MatchingRule:   { icon: '🧬', label: 'Matching Rules',   fixable: false, sev: 'blocker',
                       note: 'Deactivate the matching rule, remove the field from its criteria, then reactivate (Setup → Duplicate Management → Matching Rules).' },
     WorkflowFieldUpdate: { icon: '🛠', label: 'Workflow Field Updates', fixable: false, sev: 'blocker',
@@ -2202,7 +2204,7 @@ const FieldCleaner = (() => {
     FieldSet:       { icon: '🗃', label: 'Field Sets', fixable: false, sev: 'blocker',
                       note: 'The field set lists the field. Take it out in Object Manager → Field Sets.' },
     ValidationRuleInactive: { icon: '☑', label: 'Validation Rules (inactive)', fixable: false, sev: 'silent',
-                      note: 'An inactive rule does not block the delete, but its formula breaks the day it is switched on again. Fix or delete it in Object Manager → Validation Rules.' },
+                      note: 'An inactive rule does not block the delete, but its formula breaks the day it is switched on again. ⇄ points the formula at another field, ✎ edits the XML, 🗑 deletes the rule — or fix it in Object Manager → Validation Rules.' },
     ProcessBuilder: { icon: '⚙', label: 'Process Builder',  fixable: false, sev: 'blocker',
                       note: 'Open the process in Setup (Process Automation → Process Builder), take the field out of its criteria and actions or deactivate and delete the process, then re-scan. Listed under Flows; not edited here.' },
     PathAssistant:  { icon: '🛤', label: 'Paths',            fixable: false, sev: 'silent',
@@ -2224,8 +2226,10 @@ const FieldCleaner = (() => {
     // Live 2026-11-06: a text, Visualforce or Lightning template with the
     // merge field does NOT stop the delete — the merge field just stops
     // working afterwards. The index returned every fixture template.
-    EmailTemplate:  { icon: '✉️', label: 'Email Templates',  fixable: false, sev: 'silent',
-                      note: 'The delete goes through; the merge field in the template stops working. Edit the template in Setup and remove the merge field. Templates are listed when Salesforce’s dependency index reports them.' },
+    EmailTemplate:  { icon: '✉️', label: 'Email Templates',  fixable: true, sev: 'silent',
+                      note: 'The delete goes through; the merge field in the template stops working. ✂ takes every merge field that names the field out of the subject, body, HTML and Visualforce markup; ⇄ renames it inside them; ✎ edits the texts. Classic, Lightning and Visualforce templates alike. Templates are listed when Salesforce’s dependency index reports them.',
+                      doneLabel: '✅ Template updated',
+                      replNote: 'Every merge field that names the field now names {new}.' },
     // Live 2026-11-06: an approval process that names the field in its
     // criteria blocks the delete, ACTIVE OR NOT; the index returned none of
     // them, so the scan reads every approval process on the object.
@@ -2460,9 +2464,8 @@ const FieldCleaner = (() => {
         ${_foldHtml('further', '🔭', 'Look further than the index', 'every report, and the whole org as text — on request', `
         <div id="fcRptScan"></div>
         <div id="fcOrgSweep"></div>`)}
-        ${_foldHtml('act', '⚡', 'Act on everything', 'replace mode, the walk over every item, deprecate first', `
+        ${_foldHtml('act', '⚡', 'Act on everything', 'replace mode, deprecate first', `
         ${_replBarHtml()}
-        ${_fixEveryHtml(everyCount)}
         <div id="fcDepZone"></div>`)}
         ${_mcdCapped ? `<div class="fc-fact fc-fact-warn"><span class="fc-fact-ico">⚠</span><span class="fc-fact-text"><strong>This list may be cut short.</strong> Salesforce stops its dependency index at 2,000 rows without saying so — treat the count as a floor: fix what is listed, scan again, repeat.</span></div>` : ''}
         <details class="fc-howto">
@@ -2503,20 +2506,19 @@ const FieldCleaner = (() => {
     const blockerGroups = Object.entries(_groups).filter(([t]) => sevOf(t) === 'blocker');
     const mentionGroups = Object.entries(_groups).filter(([t]) => sevOf(t) !== 'blocker');
     const nB = blockerGroups.reduce((n, g) => n + nOf(g), 0), nM = mentionGroups.reduce((n, g) => n + nOf(g), 0);
+    html += '<!--FC_GATE-->';   // the gate (the 🔒 box, the delete button) is drawn here, above the lists (user 2026-11-08: "maybe it should be on top?")
     if (fcScopeKeeps(_scope, 'blocker')) html += `
       <div class="fc-section fc-section-blockers" id="fcSectionBlockers">
-        <div class="fc-section-hdr"><span class="fc-section-title">🔒 Must be cleared before Salesforce deletes the field</span><span class="fc-section-n">${nB}</span></div>
+        <div class="fc-section-hdr"><span class="fc-section-title">🔒 Must be cleared before Salesforce deletes the field</span><span class="fc-section-n">${nB}</span>${nB ? _fixEveryHtml(everyCount) : ''}</div>
         <div class="fc-section-sub">${nB ? 'Salesforce refuses the delete while any of these still references the field.' : (scanScope === 'mentions' ? 'None in the dependency index — the blockers outside it were not read in this scope.' : 'Nothing blocks the delete.')}</div>
         ${blockerGroups.map(([t, a]) => groupHtml(t, a)).join('')}
       </div>`;
     if (fcScopeKeeps(_scope, 'silent')) html += `
       <div class="fc-section fc-section-mentions" id="fcSectionMentions">
-        <div class="fc-section-hdr"><span class="fc-section-title">👀 Other mentions — the delete goes through, these break afterwards</span><span class="fc-section-n">${nM}</span></div>
+        <div class="fc-section-hdr"><span class="fc-section-title">👀 Other mentions — the delete goes through, these break afterwards</span><span class="fc-section-n">${nM}</span>${nB ? '' : _fixEveryHtml(everyCount)}</div>
         <div class="fc-section-sub">${nM ? 'Each of these stops working or loses the field once it is deleted. Fix them here so nothing breaks quietly.' : (scanScope === 'blockers' ? 'Not read in this scope.' : 'No other mention found.')}</div>
         ${mentionGroups.map(([t, a]) => groupHtml(t, a)).join('')}
       </div>`;
-    html += unreadNote;
-
     // ── F2: predictive blocker check ─────────────────────────────────────
     // Classify by whether Salesforce will actually REJECT the delete. Manual
     // blockers (Apex, validation/workflow/matching rules) can't be auto-fixed
@@ -2553,30 +2555,31 @@ const FieldCleaner = (() => {
     const blockerBlock = blockerTotal > 0 && !scopeHides ? `
       <div class="fc-blockers">
         <div class="fc-blockers-hdr">🔒 ${blockerTotal} blocker${blockerTotal === 1 ? ' stops' : 's stop'} the delete</div>
-        <div class="fc-blockers-chips">${_manualBlockers.map(b => `<button type="button" class="fc-blocker-row fc-blocker-chip" data-type="${esc(b.type)}" data-group="${esc(b.type === 'ProcessBuilder' ? 'Flow' : b.type)}" title="${esc(b.label)} — ${esc(_blockerWays(b.type))}. Click to jump to ${b.count === 1 ? 'it' : 'them'} in the list.">${(TYPE_CFG[b.type] || {}).icon || '🔧'} <strong>${b.count}</strong> ${esc(b.label)}${b.hidden ? ' <em>hidden by the 👀 scope</em>' : ''}</button>`).join('')}</div>
-        <div class="fc-blockers-foot">Clear each one in its group above — ✂ take the field out · ⇄ point it at another field · ✎ edit it · 🗑 delete it; every change keeps a restore point. Or fix it in Setup. Then re-scan.</div>
+        <div class="fc-blockers-chips">${_manualBlockers.map(b => `<button type="button" class="fc-blocker-row fc-blocker-chip" data-type="${esc(b.type)}" data-group="${esc(b.type === 'ProcessBuilder' ? 'Flow' : b.type)}" title="${esc(b.label)} — ${esc(_blockerWays(b.type))}. Click to jump to ${b.count === 1 ? 'it' : 'them'} in the list below.">${(TYPE_CFG[b.type] || {}).icon || '🔧'} <strong>${b.count}</strong> ${esc(b.label)}${b.hidden ? ' <em>hidden by the 👀 scope</em>' : ''}</button>`).join('')}</div>
+        <div class="fc-blockers-foot">Clear each one in its group below — ✂ take the field out · ⇄ point it at another field · ✎ edit it · 🗑 delete it; every change keeps a restore point. Or fix it in Setup. Then re-scan.</div>
       </div>` : '';
     const silentNote = silentManual > 0 ? `
       <div class="fc-silent-note">👀 ${silentManual} more only break${silentManual === 1 ? 's' : ''} later — list views, quick actions and the like — ${silentManual === 1 ? 'it does' : 'they do'} not block the delete.</div>` : '';
 
-    html += `
+    const gateHtml = `${unreadNote}
       <div class="fc-delete-zone" id="fcDeleteZone">
         ${blockerBlock}
         ${hiddenBlock}
         ${silentNote}
         <div class="fc-delete-note" id="fcDeleteNote">
           ${autoCount > 0
-            ? `⚠ Fix the ${autoCount} fixable item${autoCount === 1 ? '' : 's'} above first.`
+            ? `⚠ Fix the ${autoCount} fixable item${autoCount === 1 ? '' : 's'} below first.`
             : (blockerTotal > 0 || hiddenFixable > 0)
-              ? '🔒 Delete is blocked until the blockers above are cleared.'
+              ? '🔒 Delete is blocked until the blockers below are cleared.'
               : silentManual > 0
-                ? '✅ No blockers — safe to delete (the cosmetic references above will simply vanish).'
+                ? '✅ No blockers — safe to delete (the cosmetic references below will simply vanish).'
                 : '✅ Safe to delete.'}
         </div>
         <button class="btn btn-danger" id="fcDelBtn" ${delDisabled ? 'disabled' : ''}>
           🗑 Delete Field
         </button>
       </div>`;
+    html = html.replace('<!--FC_GATE-->', () => gateHtml);
 
     results.innerHTML = html;
     _wireFolds(results);
@@ -3944,7 +3947,7 @@ const FieldCleaner = (() => {
     const id      = dep.MetadataComponentId;
     const rawName = dep.MetadataComponentName || id;
     const name    = esc(rawName);
-    const canInsp = Object.prototype.hasOwnProperty.call(_INSPECT_SOBJECT, type) || _inspectsByMd(type) || _inspectsByCode(type);
+    const canInsp = Object.prototype.hasOwnProperty.call(_INSPECT_SOBJECT, type) || _inspectsByMd(type) || _inspectsByCode(type) || type === 'EmailTemplate';
     const inspBtn = canInsp
       ? `<button class="btn btn-sm fc-inspect-btn" title="View XML metadata"
                  data-id="${esc(id)}" data-type="${esc(type)}">🔍</button>`
@@ -3954,7 +3957,7 @@ const FieldCleaner = (() => {
       : '';
 
     // a blocker the delete engine knows gets its 🗑 button even when nothing else is fixable here
-    const canDel = !fixable && (TYPE_CFG[type] || TYPE_CFG_DEFAULT).sev === 'blocker' && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter');
+    const canDel = !fixable && typeof sftkMdDeleteSpec === 'function' && (!!sftkMdDeleteSpec(type) || type === 'LookupFilter');
     if (fixable || canDel) {
       return `
         <div class="fc-item" id="fcItem_${esc(id)}">
@@ -4183,6 +4186,7 @@ const FieldCleaner = (() => {
       if (type === 'FlexiPage') label = (await fixFlexiPage(componentId, componentName)) || label;
       if (type === 'Report')    label = await fixReport(componentId, componentName);
       if (type === 'ReportType') label = (await fixReportType(componentId, componentName)) || label;
+      if (type === 'EmailTemplate') label = (await fixEmailTemplate(componentId, componentName, swap)) || label;
       markFixed(componentId, label, doneLinks, doneHtml);
     } catch (e) {
       _rowBusy(componentId, null);
@@ -5512,7 +5516,7 @@ const FieldCleaner = (() => {
     if (row && row._fullName) return row._fullName;
     const id = String(componentId || '');
     const looksLikeId = /^[A-Za-z0-9]{15}([A-Za-z0-9]{3})?$/.test(id);
-    if ((type === 'MatchingRule' || type === 'DuplicateRule') && looksLikeId) {
+    if ((type === 'MatchingRule' || type === 'DuplicateRule' || type === 'ListView') && looksLikeId) {
       const q = await bg({ type: 'SF_QUERY', orgUrl: _orgUrl, sid: _sid, tooling: false, _suppressError: true, query: `SELECT DeveloperName, SobjectType FROM ${type} WHERE Id = '${id}'` });
       const r = q && !q.error ? (q.records || [])[0] : null;
       if (r) return `${r.SobjectType}.${r.DeveloperName}`;
@@ -5522,7 +5526,7 @@ const FieldCleaner = (() => {
       const g = await bg({ type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid, sobject: spec.tooling, id, _suppressError: true });
       if (g && !g.error) {
         // a child type without FullName on its Tooling record (live 2026-11-07: FieldSet) is "<Object>.<DeveloperName>"
-        const ent = g.EntityDefinitionId || g.TableEnumOrId || '';
+        const ent = g.EntityDefinitionId || g.TableEnumOrId || g.SobjectType || '';
         const fn = g.FullName || (spec.parent && ent && g.DeveloperName ? `${ent}.${g.DeveloperName}` : (g.DeveloperName || g.Name));
         if (fn) return String(fn);
       }
@@ -5735,6 +5739,35 @@ const FieldCleaner = (() => {
   }
   // Does this XML still name `f` in a place the edit engine knows? (the probe rename is never deployed)
   function _editStillNames(type, xml, f) { return !!f && !sftkMdEditField(type, xml, _selObj.api, f, '__SFTK_PROBE__').refused; }
+  // "✎ Edit before deploying" inside a confirm (user 2026-11-08: "we can't edit here"): a folded box with the proposed
+  // text; while it is open and changed, the deploy sends what the box holds. For XML the text must stay well-formed
+  // and keep its <fullName>; the Go button follows. → { html, onRender(), value() (null = untouched) }
+  function _cfEditBlock(id, proposed, opts) {
+    const o = opts || {};
+    const pretty = o.xml ? sftkMdPretty(proposed) : String(proposed == null ? '' : proposed).replace(/\r\n?/g, '\n');
+    let ta = null;
+    const html = `<details class="fc-cf-edit" id="${esc(id)}"><summary>✎ Edit ${o.what || 'the text'} before deploying</summary>
+      <textarea class="fc-xml-ta fc-cf-ta" spellcheck="false" wrap="off" aria-label="${esc(o.what || 'the text')} as it will be deployed"></textarea>
+      <div class="fc-cf-edit-state ds-subtext"></div></details>`;
+    const onRender = () => {
+      const box = document.getElementById(id); if (!box) return;
+      ta = box.querySelector('.fc-cf-ta'); const state = box.querySelector('.fc-cf-edit-state'); const go = document.getElementById('sftkConfirmGo');
+      ta.value = pretty; ta.rows = Math.min(22, Math.max(6, pretty.split('\n').length + 1));
+      const sync = () => {
+        const changed = ta.value !== pretty;
+        let bad = null;
+        if (changed && o.xml) { bad = sftkMdWellFormed(ta.value); if (!bad && o.name != null && sftkMdChildText(ta.value, 'fullName') !== o.name) bad = `the <fullName> must stay “${o.name}”`; }
+        state.textContent = !changed ? 'As proposed — change anything here and the deploy sends your text instead.' : bad ? `⚠ ${bad}` : `${sftkMdLineDiff(pretty, ta.value).filter(x => x.op !== ' ').length} line(s) differ from the proposal — your text is what will be deployed.`;
+        state.classList.toggle('fc-cf-edit-bad', !!bad);
+        if (go) go.disabled = !!bad;
+      };
+      ta.addEventListener('input', sync);
+      ta.addEventListener('keydown', ev => { if (ev.key !== 'Tab') return; ev.preventDefault(); const s = ta.selectionStart, e = ta.selectionEnd; ta.value = ta.value.slice(0, s) + '  ' + ta.value.slice(e); ta.selectionStart = ta.selectionEnd = s + 2; sync(); });
+      sync();
+    };
+    const value = () => (ta && ta.value !== pretty) ? ta.value : null;
+    return { html, onRender, value };
+  }
   async function fixEdit(type, componentId, componentName, swap) {
     const cfg = TYPE_CFG[type] || TYPE_CFG_DEFAULT;
     const ways = typeof sftkMdEditWays === 'function' ? sftkMdEditWays(type) : null;
@@ -5761,9 +5794,10 @@ const FieldCleaner = (() => {
     }
     const pkgType = type === 'LookupFilter' ? 'CustomField' : type;
     const files = sftkMdPackageFiles(pkgType, fullName, rec.innerXml);
-    const deployFiles = sftkMdPackageFiles(pkgType, fullName, ed.xml);
-    const vrOff = !nf && type === 'ValidationRule';
+    const vrOff0 = !nf && type === 'ValidationRule';
     const gate = await sftkOrgWriteGate(_orgUrl);
+    const inBox = !!_RULE_CONTAINERS[type];
+    const cfEdit = _cfEditBlock('fcCfEdit', ed.xml, { xml: true, what: 'the XML', name: inBox ? fullName.slice(fullName.indexOf('.') + 1) : fullName });
     const sure = await sftkConfirmDestructive({
       title: `${verb} the field in the ${spec.what} — ${cfg.label || type}`,
       icon: ico,
@@ -5771,11 +5805,18 @@ const FieldCleaner = (() => {
       // an edit with a restore point is not "permanent": the badge says where the way back is
       revOverride: { html: `${ico} <strong>${esc(ed.how.join('; '))}.</strong> Only the field’s own places change — everything else in the ${esc(spec.what)} is deployed back exactly as Salesforce returned it. The ${esc(spec.what)} as it is now is kept as a <strong>restore point</strong>: ↩ Undo in History (or ↩ Restore points, under the results) deploys it back.`, needsCheckbox: false, cls: 'sftk-rev-newver' },
       undoHint: 'Undo in History',
-      extraHtml: `<div class="fc-xml-diff-hd">The XML — <span class="xd-del">− as it is</span> · <span class="xd-add">+ as it will be</span></div>${_xmlDiffHtml(rec.innerXml, ed.xml)}`,
+      extraHtml: `<div class="fc-xml-diff-hd">The XML — <span class="xd-del">− as it is</span> · <span class="xd-add">+ as it will be</span></div>${_xmlDiffHtml(rec.innerXml, ed.xml)}${cfEdit.html}`,
       confirmLabel: `${ico} ${verb} in the ${spec.what}`,
       production: gate.production ? { label: gate.label } : null,
+      onRender: cfEdit.onRender,
     });
     if (!sure) return 'cancel';
+    // a hand edit in the dialog is what gets deployed (user 2026-11-08: "we can't edit here")
+    const handXml = cfEdit.value();
+    const finalXml = handXml != null ? handXml : ed.xml;
+    const handAdded = handXml != null ? sftkMdLineDiff(sftkMdPretty(rec.innerXml), sftkMdPretty(finalXml)).filter(x => x.op === '+').map(x => x.line.trim()).filter(Boolean) : null;
+    const vrOff = vrOff0 && handXml == null;
+    const deployFiles = sftkMdPackageFiles(pkgType, fullName, finalXml);
     const readMsg = _mdReadMsg(type, fullName, spec.mdType);
     const backPattern = vrOff ? '<active>true</active>' : _rxEsc(field);
     await _snapshotFix('MdEdit', componentId, componentName, fullName, { type, mdType: spec.mdType, what: spec.what, swapTo: nf, how: ed.how, files, verify: { msg: readMsg, pattern: backPattern, flags: 'i', retries: 3 } });
@@ -5800,7 +5841,8 @@ const FieldCleaner = (() => {
             const a = await _mdReadOne(type, fullName, spec.mdType);
             if (a && a.rec) {
               after = a.rec.innerXml;
-              const ok = vrOff ? /<active>false<\/active>/i.test(after)
+              const ok = handAdded ? (() => { const now = new Set(sftkMdPretty(after).split('\n').map(l => l.trim())); return handAdded.every(l => now.has(l)); })()
+                : vrOff ? /<active>false<\/active>/i.test(after)
                 : !_editStillNames(type, after, field) && (!nf || _editStillNames(type, after, nf));
               if (ok) return { ok: true, text: null };
             }
@@ -5811,10 +5853,13 @@ const FieldCleaner = (() => {
       });
       if (wr.accepted && wr.ok) {
         _afterDelete(type);
-        const label = vrOff
+        const label = handAdded
+          ? `✅ Deployed as you edited it in the dialog — every line you changed is in the org, verified by re-reading it${_editStillNames(type, after || finalXml, field) ? ' (it still names the field)' : ''}`
+          : vrOff
           ? `✅ Switched off — the rule is inactive, so it no longer blocks the delete (its formula still names the field) — verified by re-reading the org`
           : `✅ ${nf ? 'Replaced' : 'Removed'} — ${ed.how.join('; ')} — verified by re-reading the org`;
-        return { label, detailHtml: `<details class="fc-xml-done"><summary>The XML that was deployed</summary>${_xmlDiffHtml(rec.innerXml, after || ed.xml)}</details>` };
+        if (handAdded && _editStillNames(type, after || finalXml, field)) { /* the gate's count stays: the field is still named */ } else if (handAdded) _afterDelete(type);
+        return { label, detailHtml: `<details class="fc-xml-done"><summary>The XML that was deployed</summary>${_xmlDiffHtml(rec.innerXml, after || finalXml)}</details>` };
       }
       if (wr.accepted) throw new Error(`"${componentName}" — the deploy was accepted, but on re-read the ${spec.what} still names ${field}. Re-scan, and check it in Setup.`);
       throw new Error(`Salesforce refused the edited ${spec.what} "${componentName}": ${_feText(String((wr.raw && wr.raw.error) || 'refused'))}. Nothing was changed — 🗑 delete it, or edit it in Setup.`);
@@ -5848,7 +5893,7 @@ const FieldCleaner = (() => {
     // the note under the gate said "N manual blocker(s) remain" from the scan — it follows the deletes (live 2026-11-07)
     const note = eid('fcDeleteNote');
     if (note && box) note.textContent = left > 0
-      ? `🔒 ${left} blocker${left === 1 ? '' : 's'} remain — clear ${left === 1 ? 'it' : 'them'} above (✂ ⇄ ✎ 🗑) or in Setup, then re-scan.`
+      ? `🔒 ${left} blocker${left === 1 ? '' : 's'} remain — clear ${left === 1 ? 'it' : 'them'} below (✂ ⇄ ✎ 🗑) or in Setup, then re-scan.`
       : '✅ Every blocker listed was deleted — press Re-scan to confirm, then 🗑 Delete Field.';
   }
 
@@ -6915,11 +6960,13 @@ const FieldCleaner = (() => {
     const files = code.files, deployFiles = code.build(newSources);
     const apex = spec.metaTag === 'ApexClass' || spec.metaTag === 'ApexTrigger';
     const gate = await sftkOrgWriteGate(_orgUrl);
-    const diffs = changed.map(s => `<div class="fc-xml-diff-hd"><code>${esc(s.file)}</code> — <span class="xd-del">− as it is</span> · <span class="xd-add">+ as it will be</span></div>${_textDiffHtml((orig(s.path) || {}).source, s.source)}`).join('');
+    const edits = changed.map((s, i) => _cfEditBlock(`fcCfCode${i}`, s.source, { what: s.file }));
+    const diffs = changed.map((s, i) => `<div class="fc-xml-diff-hd"><code>${esc(s.file)}</code> — <span class="xd-del">− as it is</span> · <span class="xd-add">+ as it will be</span></div>${_textDiffHtml((orig(s.path) || {}).source, s.source)}${edits[i].html}`).join('');
     const sure = await sftkConfirmDestructive({
       title: o.title,
       icon: o.ico,
       items: [{ label: componentName, sub: spec.what }],
+      onRender: () => edits.forEach(e => e.onRender()),
       revOverride: { html: `${o.ico} <strong>${esc(o.how)}.</strong> The ${esc(spec.what)} is deployed back with ${changed.length === 1 ? 'this file' : `these ${changed.length} files`} changed and ${code.sources.length > changed.length ? 'the rest' : 'its metadata'} exactly as the org holds ${code.sources.length > changed.length ? 'them' : 'it'}. The ${esc(spec.what)} as it is now is kept as a <strong>restore point</strong>: ↩ Undo in History (or ↩ Restore points, under the results) deploys it back.${apex && gate.production ? ' <strong>In a production org Salesforce runs the org’s Apex tests before it accepts code.</strong>' : ''}`, needsCheckbox: false, cls: 'sftk-rev-newver' },
       undoHint: 'Undo in History',
       extraHtml: diffs,
@@ -6927,11 +6974,14 @@ const FieldCleaner = (() => {
       production: gate.production ? { label: gate.label } : null,
     });
     if (!sure) return 'cancel';
+    // a hand edit in the dialog is what gets deployed (user 2026-11-08: "we can't edit here")
+    changed.forEach((s, i) => { const v = edits[i].value(); if (v != null) { s.source = v; const t = newSources.find(x => x.path === s.path); if (t) t.source = v; } });
+    const deployFiles2 = code.build(newSources);
     // the way back is checked on the first changed file: it reads as it was
     const first = changed[0];
     const verifyBack = code.verifyOf(first.path, (orig(first.path) || {}).source);
     await _snapshotFix('MdEdit', componentId, componentName, fullName, { type, mdType: type, what: spec.what, swapTo: o.swapTo || null, how: [o.how], files, verify: verifyBack });
-    const zipBack = _zipOf(files), zipNew = _zipOf(deployFiles);
+    const zipBack = _zipOf(files), zipNew = _zipOf(deployFiles2);
     const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: o.histTitle, orgUrl: _orgUrl });
     let wr, ranTests = false;
     try {
@@ -7105,6 +7155,172 @@ const FieldCleaner = (() => {
     });
     tas[0]?.focus();
   }
+  // ── Email templates (user 2026-11-08: "i want also email alerts, lightning email templates and classic email
+  // templates") — one EmailTemplate record for every kind; its four text fields are read and written through REST
+  // (sftk-emailtpl.js has the pure parts). ✂ / ⇄ from the row, ✎ an editor per text field in 🔍, a restore point
+  // (the fields as they were, put back by a PATCH), History undo verified by re-reading the record.
+  const _TPL_PATH = id => `services/data/v62.0/sobjects/EmailTemplate/${encodeURIComponent(String(id))}`;
+  async function _tplRead(componentId) {
+    const r = await bg({ type: 'SF_REST_GET', orgUrl: _orgUrl, sid: _sid, _suppressError: true, path: `${_TPL_PATH(componentId)}?fields=Id,Name,DeveloperName,TemplateType,UiType,FolderName,Subject,Body,HtmlValue,Markup` });
+    if (!r || r.error) throw new Error(`the template could not be read (${_feText((r && r.error) || 'no answer')}) — nothing is changed without a restore point`);
+    return r;
+  }
+  // The write of a template's text fields: a confirm (unless the caller already asked) with the diff of every changed
+  // field — editable in place — a restore point, the PATCH, a re-read of each changed field, History undo.
+  //   ctx: { componentId, componentName, rec }; next: the record with the new texts; o: { confirm, ico, how, swapTo, title, confirmLabel, histTitle }
+  //   → 'cancel' | { ok: true, changed: [k…] }   (throws when Salesforce refuses or the re-read disagrees)
+  async function _tplDeploy(ctx, next, o) {
+    const { componentId, componentName, rec } = ctx;
+    const kind = sftkTplKind(rec);
+    let changed = sftkTplTextFields().filter(k => !sftkMdCodeSame(next[k], rec[k]));
+    if (!changed.length) return 'cancel';
+    if (o.confirm) {
+      const gate = await sftkOrgWriteGate(_orgUrl);
+      const edits = changed.map((k, i) => _cfEditBlock(`fcCfTpl${i}`, next[k], { what: k }));
+      const sure = await sftkConfirmDestructive({
+        title: o.title || `${o.ico} ${kind} — ${componentName}`,
+        icon: o.ico || '✉️',
+        items: [{ label: componentName, sub: kind }],
+        revOverride: { html: `${o.ico || '✉️'} <strong>${esc(o.how)}.</strong> The template's other fields are not touched. Its texts as they are now are kept as a <strong>restore point</strong>: ↩ Undo in History (or ↩ Restore points, under the results) puts them back.`, needsCheckbox: false, cls: 'sftk-rev-newver' },
+        undoHint: 'Undo in History',
+        extraHtml: changed.map((k, i) => `<div class="fc-xml-diff-hd"><code>${esc(k)}</code> — <span class="xd-del">− as it is</span> · <span class="xd-add">+ as it will be</span></div>${_textDiffHtml(rec[k], next[k])}${edits[i].html}`).join(''),
+        confirmLabel: o.confirmLabel || '⬆ Deploy',
+        production: gate.production ? { label: gate.label } : null,
+        onRender: () => edits.forEach(e => e.onRender()),
+      });
+      if (!sure) return 'cancel';
+      changed.forEach((k, i) => { const v = edits[i].value(); if (v != null) next[k] = v; });
+      changed = sftkTplTextFields().filter(k => !sftkMdCodeSame(next[k], rec[k]));
+      if (!changed.length) return 'cancel';
+    }
+    const before = {}, after = {};
+    for (const k of changed) { before[k] = rec[k] == null ? '' : rec[k]; after[k] = next[k] == null ? '' : next[k]; }
+    const path = _TPL_PATH(componentId);
+    const readMsg = { type: 'SF_REST_GET', path: `${path}?fields=${changed.join(',')}` };
+    const verifyBack = { msg: readMsg, pick: '.', field: changed[0], equals: before[changed[0]], loose: true };   // '.' = the answer itself (a record, not a list)
+    await _snapshotFix('MdEdit', componentId, componentName, rec.DeveloperName || componentName, { type: 'EmailTemplate', mdType: 'EmailTemplate', what: kind, swapTo: o.swapTo || null, how: [o.how], patch: { path, body: before }, verify: verifyBack });
+    const j = sftkHistoryBegin({ tool: 'Field Cleaner', title: o.histTitle || `${o.ico || '✉️'} Email template — "${componentName}"`, orgUrl: _orgUrl });
+    let wr;
+    try {
+      // confirmed-by: the sftkConfirmDestructive above, or fixOne's for ✂ / ⇄ from the row
+      // The write discipline (sftk-write.js): the PATCH of the changed text fields is the write; the verify re-reads
+      // them and finds the text that was sent (line endings aside).
+      wr = await sftkWriteVerified({
+        describe: `"${componentName}" ${kind}`,
+        journal: j,
+        write: async () => {
+          const r = await bg({ type: 'SF_PATCH', orgUrl: _orgUrl, sid: _sid, _suppressError: true, path, body: after });
+          return (r && !r.error) ? { success: true } : { error: (r && r.error) || 'the update was not accepted' };
+        },
+        verify: async () => {
+          for (let i = 0; i < 3; i++) {
+            const a = await bg({ ...readMsg, orgUrl: _orgUrl, sid: _sid, _suppressError: true });
+            if (a && !a.error && changed.every(k => sftkMdCodeSame(a[k], after[k]))) return { ok: true, text: null };
+            await new Promise(res => setTimeout(res, 1000));
+          }
+          return { ok: false, text: null };
+        },
+      });
+      if (wr.accepted && wr.ok) return { ok: true, changed };
+      if (wr.accepted) throw new Error(`"${componentName}" — the update was accepted, but on re-read the template does not hold the text that was sent. Open 🔍 to see what the org holds.`);
+      throw new Error(`Salesforce refused the template update for "${componentName}": ${_feText(String((wr.raw && wr.raw.error) || 'refused'))}. Nothing was changed.`);
+    } finally {
+      await sftkHistoryEnd(j, { undo: wr && wr.accepted
+        ? { steps: [{
+            describe: `Put the ${kind} "${componentName}" back as it was before the ${o.ico === '⇄' ? 'replace' : o.ico === '✂' ? 'remove' : 'edit'}`,
+            // verified-by: sftkHistoryUndo runs this step through sftkWriteVerified with the re-read in `verify`
+            msg: { type: 'SF_PATCH', path, body: before },
+            verify: { ...verifyBack, retries: 3, text: { ok: `"${componentName}": the template's texts are back as they were — verified by re-reading the org`, bad: `"${componentName}": the update was accepted, but on re-read the texts are not back yet` } },
+          }] }
+        : { none: 'nothing was accepted by Salesforce, so there is nothing to undo' } });
+    }
+  }
+  // ✂ / ⇄ from the row (fixOne's confirm already asked): every merge field that names the field, out or renamed.
+  async function fixEmailTemplate(componentId, componentName, swap) {
+    const field = _selField.api;
+    const nf = swap && _replOn() ? _replField.api : null;
+    const rec = await _tplRead(componentId);
+    const r = nf ? sftkTplReplace(rec, field, nf) : sftkTplRemove(rec, field);
+    if (!r.n) {
+      const e = new Error(nf
+        ? `"${componentName}" writes ${field} nowhere as a word in its subject, body, HTML or markup — the index lists it for a mention elsewhere (a description, a letterhead…). Open 🔍 to see the texts.`
+        : `"${componentName}" has no merge field that names ${field} in its subject, body, HTML or markup — the index lists it for a mention elsewhere. Open 🔍 to see the texts, or ⇄ Replace it.`);
+      e.setupUrl = `${_orgUrl.replace(/\/$/, '')}/lightning/o/EmailTemplate/home`;
+      throw e;
+    }
+    const how = nf ? `${r.n} merge field${r.n === 1 ? '' : 's'} in ${r.fields.join(', ')} now name${r.n === 1 ? 's' : ''} ${nf}` : `${r.n} merge field${r.n === 1 ? '' : 's'} removed from ${r.fields.join(', ')}`;
+    const d = await _tplDeploy({ componentId, componentName, rec }, { ...rec, ...r.rec }, { confirm: false, ico: nf ? '⇄' : '✂', how, swapTo: nf, histTitle: `${nf ? '⇄' : '✂'} Email template — "${componentName}" (${_selObj.api}.${field}${nf ? ` → ${nf}` : ' removed'})` });
+    if (d === 'cancel') return 'cancel';
+    return `✅ ${sftkTplKind(rec)} updated · ${how} — verified by re-reading the org`;
+  }
+  // 🔍 on a template: the kind and folder, every text field that holds something, the field's lines marked; ✎ opens the editor.
+  async function _tplInspect(componentId, componentName, panel, inspBtn, note) {
+    const rec = await _tplRead(componentId);
+    const field = _selField.api, kind = sftkTplKind(rec);
+    const hits = sftkTplHits(rec, field);
+    const shown = sftkTplTextFields().filter(k => typeof rec[k] === 'string' && rec[k]);
+    const body = shown.map(k => { const n = hits.filter(x => x.field === k).length; const h = _xiHighlightApex(rec[k]); return `<div class="fc-code-file"><div class="fc-code-file-hd"><code>${esc(k)}</code><span class="fc-code-file-n">${n ? `${n} line${n === 1 ? ' names' : 's name'} the field` : 'no line names the field'}</span></div><pre class="fc-xml-pre fc-xml-pre--code"><code>${h.html}</code></pre></div>`; }).join('');
+    const rp = _replOn() ? sftkTplReplace(rec, field, _replField.api) : null;
+    const rm = sftkTplRemove(rec, field);
+    const hint = `<div class="fc-xml-hint">✂ Remove takes every merge field that names <code>${esc(field)}</code> out of the texts${rm.n ? ` — here ${rm.n} in ${rm.fields.join(', ')}` : ' — none here'}. ⇄ Replace renames it inside them${rp ? (rp.n ? ` — here ${rp.n} place${rp.n === 1 ? '' : 's'} would name <code>${esc(_replField.api)}</code>` : ' — nothing here writes it as a word') : ' — pick a replacement field above to see what it would change'}. ✎ edits the texts as they are.</div>`;
+    panel.innerHTML = `
+      <div class="fc-xml-hdr">
+        <span class="fc-xml-hdr-name">${esc(componentName)} <small class="fc-xml-src">· ${esc(kind)}${rec.FolderName ? ` · ${esc(rec.FolderName)}` : ''} · EmailTemplate ${esc(rec.DeveloperName || componentId)} · REST</small></span>
+        <span class="fc-xml-badge ${hits.length ? 'fc-xml-badge--hit' : 'fc-xml-badge--miss'}">${hits.length ? `${hits.length} line${hits.length === 1 ? ' names' : 's name'} the field` : 'no line names the field'}</span>
+        <span class="fc-xml-hdr-actions"><button class="btn btn-secondary btn-sm fc-xml-edit-btn" title="Edit the subject, body, HTML and markup as text and save them back — a restore point is kept">✎ Edit texts</button><button class="fc-xml-close" data-panelid="${esc(componentId)}">✕</button></span>
+      </div>
+      ${note ? `<div class="fc-xml-ed-ok fc-xml-ed-done">${esc(note)}</div>` : ''}
+      <div class="fc-xml-body">${hint}${body || '<div class="fc-xml-hint">The template holds no text in its subject, body, HTML or markup.</div>'}</div>`;
+    panel.querySelector('.fc-xml-close')?.addEventListener('click', () => { panel.style.display = 'none'; if (inspBtn) inspBtn.classList.remove('fc-inspect-btn--open'); });
+    panel.querySelector('.fc-xml-edit-btn')?.addEventListener('click', ev => { ev.currentTarget.disabled = true; _tplEditorOpen(panel, { componentId, componentName, rec, inspBtn }); });
+    _addXmlNavigation(panel);
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  // ✎ the template editor: one box per text field (the empty ones too, so a subject can be added), saved as a whole.
+  function _tplEditorOpen(panel, ctx) {
+    const box = panel.querySelector('.fc-xml-body');
+    if (!box) return;
+    const { rec } = ctx, kind = sftkTplKind(rec);
+    // a Visualforce template has Markup, the others Subject + Body + HtmlValue; the fields the kind cannot take are left out
+    const fields = String(rec.TemplateType || '').toLowerCase() === 'visualforce' ? ['Subject', 'Markup'] : ['Subject', 'Body', 'HtmlValue'];
+    box.innerHTML = `
+      <div class="fc-xml-editor">
+        <div class="fc-xml-ed-hint">✎ Edit the texts and save them back — exactly this text is written to the ${esc(kind)} “${esc(ctx.componentName)}”. A restore point is kept; ↩ Undo in History puts the previous texts back.</div>
+        ${fields.map((k, i) => `<div class="fc-code-ed-file"><div class="fc-code-file-hd"><code>${esc(k)}</code><span class="fc-code-file-n fc-code-ed-n" data-i="${i}">unchanged</span></div><textarea class="fc-xml-ta fc-code-ta fc-tpl-ta" data-i="${i}" data-k="${esc(k)}" spellcheck="false" wrap="${k === 'Subject' ? 'soft' : 'off'}" aria-label="${esc(k)}"></textarea></div>`).join('')}
+        <div class="fc-xml-ed-bar">
+          <span class="fc-xml-ed-state">No change yet</span>
+          <button class="btn btn-secondary btn-sm fc-xml-ed-reset" disabled>↺ Start over</button>
+          <button class="btn btn-secondary btn-sm fc-xml-ed-cancel">Cancel</button>
+          <button class="btn btn-primary btn-sm fc-xml-ed-deploy" disabled>⬆ Save to the org</button>
+        </div>
+        <div class="fc-xml-ed-out" role="status"></div>
+      </div>`;
+    const tas = [...box.querySelectorAll('.fc-tpl-ta')], state = box.querySelector('.fc-xml-ed-state');
+    const go = box.querySelector('.fc-xml-ed-deploy'), reset = box.querySelector('.fc-xml-ed-reset'), out = box.querySelector('.fc-xml-ed-out');
+    const origOf = k => String(rec[k] == null ? '' : rec[k]).replace(/\r\n?/g, '\n');
+    tas.forEach(ta => { ta.value = origOf(ta.dataset.k); ta.rows = ta.dataset.k === 'Subject' ? 2 : Math.min(24, Math.max(5, ta.value.split('\n').length + 1)); });
+    const sync = () => {
+      let n = 0;
+      tas.forEach((ta, i) => { const d = ta.value !== origOf(ta.dataset.k); const el = box.querySelector(`.fc-code-ed-n[data-i="${i}"]`); if (el) el.textContent = d ? 'changed' : 'unchanged'; if (d) n++; });
+      state.textContent = n ? `${n} field${n === 1 ? '' : 's'} changed` : 'No change yet';
+      go.disabled = !n; reset.disabled = !n;
+    };
+    tas.forEach(ta => ta.addEventListener('input', () => { out.innerHTML = ''; sync(); }));
+    reset.addEventListener('click', () => { tas.forEach(ta => { ta.value = origOf(ta.dataset.k); }); out.innerHTML = ''; sync(); });
+    box.querySelector('.fc-xml-ed-cancel').addEventListener('click', () => { _tplInspect(ctx.componentId, ctx.componentName, panel, ctx.inspBtn); });
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      const say = (cls, html) => { out.innerHTML = `<div class="${cls}">${html}</div>`; };
+      const next = { ...rec }; tas.forEach(ta => { next[ta.dataset.k] = ta.value; });
+      const n = tas.filter(ta => ta.value !== origOf(ta.dataset.k)).length;
+      try {
+        const d = await _tplDeploy({ componentId: ctx.componentId, componentName: ctx.componentName, rec }, next, { confirm: true, ico: '⬆', how: `${n} field${n === 1 ? '' : 's'} edited by hand`, title: `Save your text — ${kind} “${ctx.componentName}”`, confirmLabel: '⬆ Save', histTitle: `✎ Email template edited — "${ctx.componentName}"` });
+        if (d === 'cancel') { say('fc-xml-ed-note', 'Not saved — cancelled. Your text is still in the boxes.'); sync(); return; }
+        await _tplInspect(ctx.componentId, ctx.componentName, panel, ctx.inspBtn, `✅ Saved — ${d.changed.join(', ')} ${d.changed.length === 1 ? 'is' : 'are'} in the org as you wrote ${d.changed.length === 1 ? 'it' : 'them'}, verified by re-reading. ↩ Undo in History puts the previous texts back.`);
+      } catch (e) { say('fc-xml-ed-err', `❌ ${esc(e.message)}`); sync(); }
+    });
+    tas[0]?.focus();
+  }
   // Toggle the XML inspector panel open/closed for a dependency item.
   async function toggleXmlInspector(type, componentId, componentName, fieldId) {
     const panel    = eid(`fcXml_${componentId}`);
@@ -7128,6 +7344,7 @@ const FieldCleaner = (() => {
     try {
       if (_inspectsByMd(type)) { await _xmlInspectMd(type, componentId, componentName, panel, inspBtn); return; }
       if (_inspectsByCode(type)) { await _codeInspect(type, componentId, componentName, panel, inspBtn); return; }
+      if (type === 'EmailTemplate') { await _tplInspect(componentId, componentName, panel, inspBtn); return; }
       const sobject = _INSPECT_SOBJECT[type];
       const res     = await bg({
         type: 'SF_TOOLING_GET', orgUrl: _orgUrl, sid: _sid,
