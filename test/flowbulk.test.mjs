@@ -11,8 +11,9 @@ import { extractFunctions } from './extract.mjs';
 const DEP = readFileSync(new URL('../dependency-map.js', import.meta.url), 'utf8');
 
 const F = extractFunctions('sftk-flowbulk.js', [
-  'sftkFlowBulkKinds', 'sftkFlowBulkRows', 'sftkFlowBulkGroup', 'sftkFlowBulkPlan',
-  'sftkFlowBulkMatrix',
+  'sftkFlowBulkKinds', 'sftkFlowKindOf', 'sftkFlowBulkRows', 'sftkFlowBulkGroup', 'sftkFlowBulkPlan',
+  'sftkFlowBulkMatrix', 'sftkFlowBulkGroupKey', 'sftkFlowBulkIsObjectGroup', 'sftkFlowBulkGroupSort',
+  'sftkFlowBulkOffWarning',
 ]);
 
 const VIEW = [
@@ -21,6 +22,8 @@ const VIEW = [
   { ApiName: 'Nightly', Label: 'Nightly Sync', IsActive: false, TriggerType: 'Scheduled', TriggerObjectOrEventLabel: '' },
   { ApiName: 'Screen1', Label: 'A screen flow', IsActive: true, TriggerType: null },
   { ApiName: 'Sub1', Label: 'A subflow', IsActive: true, TriggerType: '' },
+  // a record-triggered flow on a PACKAGED object whose label did not come back
+  { ApiName: 'PkgRt', Label: 'On a packaged object', IsActive: true, TriggerType: 'RecordAfterSave', TriggerObjectOrEventLabel: null, TriggerObjectOrEventId: 'npsp__Allocation__c' },
   { ApiName: 'Orphan', Label: 'No def', IsActive: true, TriggerType: 'RecordAfterSave', TriggerObjectOrEventLabel: 'Lead' },
 ];
 // PLAIN definition fields only — the ActiveVersion.VersionNumber Tooling
@@ -30,11 +33,17 @@ const DEFS = [
   { Id: '300A', DeveloperName: 'Route' },
   { Id: '300B', DeveloperName: 'Guard' },
   { Id: '300C', DeveloperName: 'Nightly' },
+  { Id: '300D', DeveloperName: 'Screen1' },
+  { Id: '300E', DeveloperName: 'Sub1' },
+  { Id: '300F', DeveloperName: 'PkgRt' },
 ];
 const VERS = {
   Route: { active: 3, latest: 5 },
   Guard: { active: 1, latest: 1 },
   Nightly: { active: null, latest: 7 },
+  Screen1: { active: 2, latest: 2, processType: 'Flow' },
+  Sub1: { active: 1, latest: 1, processType: 'AutoLaunchedFlow' },
+  PkgRt: { active: 1, latest: 1, processType: 'AutoLaunchedFlow' },
 };
 const ROWS = F.sftkFlowBulkRows(VIEW, DEFS, VERS);
 
@@ -45,9 +54,43 @@ describe('which flows this touches', () => {
       ['PlatformEvent', 'RecordAfterSave', 'RecordBeforeDelete', 'RecordBeforeSave', 'Scheduled']);
   });
 
-  it('excludes screen flows and subflows — they have no switch worth flipping', () => {
-    expect(ROWS.map(r => r.apiName)).not.toContain('Screen1');
-    expect(ROWS.map(r => r.apiName)).not.toContain('Sub1');
+  // 2026-11-08, a colleague's first day with ⏻ Switches: "didn't see many
+  // flows" — "it should show all the flows, not only record-triggered".
+  it('lists screen flows and subflows too — EVERY flow the org lists, named by its kind', () => {
+    const screen = ROWS.find(r => r.apiName === 'Screen1');
+    const sub = ROWS.find(r => r.apiName === 'Sub1');
+    expect(screen.kind).toBe('Screen flow');
+    expect(screen.triggered).toBe(false);
+    expect(sub.kind).toBe('Autolaunched (no trigger)');
+    expect(ROWS.find(r => r.apiName === 'Route').triggered).toBe(true);
+    expect(ROWS).toHaveLength(VIEW.length);
+  });
+
+  it('names every kind — trigger first, then process type, an unknown value read out as it came', () => {
+    expect(F.sftkFlowKindOf('RecordBeforeSave', 'AutoLaunchedFlow')).toBe('Before-save');
+    expect(F.sftkFlowKindOf('Scheduled', 'AutoLaunchedFlow')).toBe('Scheduled');
+    expect(F.sftkFlowKindOf('', 'Flow')).toBe('Screen flow');
+    expect(F.sftkFlowKindOf(null, 'Workflow')).toBe('Process Builder');
+    expect(F.sftkFlowKindOf('', 'RoutingFlow')).toBe('Omni-Channel routing');
+    expect(F.sftkFlowKindOf('', 'Appointments')).toBe('Appointments');
+    expect(F.sftkFlowKindOf('', 'SomeNewProcessType')).toBe('Some New Process Type');
+    expect(F.sftkFlowKindOf('DataCloudDataChange', 'AutoLaunchedFlow')).toBe('Data Cloud Data Change-triggered');
+    expect(F.sftkFlowKindOf('', '')).toBe('Flow');
+  });
+
+  it('a record-triggered flow on a packaged object whose label is missing groups under the object API name', () => {
+    const pkg = ROWS.find(r => r.apiName === 'PkgRt');
+    expect(pkg.object).toBe('npsp__Allocation__c');
+    expect(F.sftkFlowBulkGroupKey(pkg)).toBe('npsp__Allocation__c');
+  });
+
+  it('switching OFF a flow with no trigger says what breaks; a triggered flow adds nothing', () => {
+    expect(F.sftkFlowBulkOffWarning(ROWS.find(r => r.apiName === 'Screen1'))).toMatch(/button, page, quick action/);
+    expect(F.sftkFlowBulkOffWarning(ROWS.find(r => r.apiName === 'Sub1'))).toMatch(/Apex class/);
+    expect(F.sftkFlowBulkOffWarning(ROWS.find(r => r.apiName === 'Route'))).toBe('');
+    const plan = F.sftkFlowBulkPlan(ROWS, ['Screen1', 'Route'], 'deactivate', {});
+    expect(plan.jobs.find(j => j.apiName === 'Screen1').warn).toMatch(/screen flow/);
+    expect(plan.jobs.find(j => j.apiName === 'Route').warn).toBe('');
   });
 
   it('keeps a flow the Tooling API cannot see — visible but not togglable', () => {
@@ -96,6 +139,33 @@ describe('grouping — the axis the admin works on', () => {
     expect(names).toContain('Lead');
     expect(names.some(n => n.includes('Scheduled'))).toBe(true);
     expect(groups.find(g => g.group === 'Case').flows).toHaveLength(2);
+  });
+
+  it('flows with no trigger group by kind, AFTER the object groups', () => {
+    const names = F.sftkFlowBulkGroup(ROWS).map(g => g.group);
+    const firstKind = names.findIndex(n => !F.sftkFlowBulkIsObjectGroup(n));
+    expect(firstKind).toBeGreaterThan(0);
+    expect(names.slice(0, firstKind).every(n => F.sftkFlowBulkIsObjectGroup(n))).toBe(true);
+    expect(names.slice(firstKind).every(n => !F.sftkFlowBulkIsObjectGroup(n))).toBe(true);
+    expect(names.some(n => /Screen flow$/.test(n))).toBe(true);
+    expect(names.some(n => /Autolaunched/.test(n))).toBe(true);
+    expect(F.sftkFlowBulkIsObjectGroup('Case')).toBe(true);
+    expect(F.sftkFlowBulkIsObjectGroup('\u23f0 Scheduled')).toBe(false);
+  });
+
+  it('the page reads every flow definition, every page of them, with the object API name as the label fallback', () => {
+    expect(DEP).toMatch(/SF_QUERY_ALL'[^]*?TriggerObjectOrEventLabel, TriggerObjectOrEventId FROM FlowDefinitionView/);
+    expect(DEP).not.toContain("depErrBox('No triggered flows'");
+    expect(DEP).toContain('sftkFlowBulkGroupKey(r)');
+    expect(DEP).toContain('with a trigger');
+  });
+
+  it('the page shows which flow calls which, from the dependency map, and a chip ticks the other flow', () => {
+    // user 2026-11-08: "if a flow calls a flow we need to show it — we may want to switch the subflow off too"
+    expect(DEP).toContain("subChip(calls[f.apiName], '\\u21b3', 'calls')");
+    expect(DEP).toContain("'\\u21b0', 'called by'");
+    expect(DEP).toMatch(/dep-fb-sub'\)\.forEach\(b => b\.addEventListener\('click'/);
+    expect(DEP).toContain('come from the dependency scan');
   });
 });
 

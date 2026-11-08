@@ -76,6 +76,17 @@ extensions containing root files that start with `_`).
   PII outside the fields the policy fabricates.
 
 ### Toolkit
+- **⏻ Flow switches lists every flow, not only the triggered kinds.** A colleague's first day with the tool
+  (2026-11-08): scheduled, autolaunched and screen flows were missing from the list, which showed only
+  record-triggered, scheduled and platform-event flows and read the org's flow list one page deep. The
+  panel now reads every flow definition, every page of it: record-triggered flows stay grouped by object,
+  every other flow sits under its kind (screen flows, autolaunched subflows, Process Builder, Omni-Channel
+  routing, appointments, approvals…). A flow with no trigger can be switched too, and its line in the
+  confirmation says what switching it off breaks. After the dependency scan each row shows "↳ calls N" and
+  "↰ called by N"; a click ticks those flows as well, so a subflow goes off with its caller. A record-triggered
+  flow on a packaged object whose label is missing groups under the object's API name. Live on npc: 138 of
+  138 flows listed in ⏻ Switches and in ⚙ API versions.
+- A long line in a confirmation's item list wraps instead of crushing the item's name to a sliver.
 - **Field Cleaner's blocker list was put to the test — and fixed.** Every kind of reference a field can
   have was built in a test org and the field was deleted under it, to see what Salesforce really
   refuses. Two rows of the table were wrong: a Lightning page that holds the field *blocks* the delete

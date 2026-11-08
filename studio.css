@@ -6589,8 +6589,8 @@ details[data-fold="plan"] > .ds-dep-rec { border: none; border-top: 1px solid va
 .sftk-cf-list.sftk-confirm-items { margin: 0; padding: 0; list-style: none; max-height: 240px; overflow: auto; font-size: 12.5px; }
 .sftk-cf-row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 10px; border-top: 1px solid var(--border-light, var(--border)); }
 .sftk-cf-row:first-child { border-top: 0; }
-.sftk-cf-row-l { min-width: 0; overflow-wrap: anywhere; }
-.sftk-cf-row-s { flex: 0 0 auto; color: var(--subtext); font-size: 11.5px; white-space: nowrap; }
+.sftk-cf-row-l { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.sftk-cf-row-s { flex: 0 1 auto; max-width: 62%; text-align: right; color: var(--subtext); font-size: 11.5px; overflow-wrap: anywhere; }
 .sftk-cf-row.sftk-confirm-more { color: var(--subtext); font-style: italic; }
 .sftk-cf-extra { font-size: 12.5px; }
 .sftk-cf-undo.sftk-confirm-undo { margin: 0; font-size: 12px; color: var(--subtext); }

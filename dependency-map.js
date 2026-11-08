@@ -2776,7 +2776,7 @@ const DependencyMap = (() => {
       <div class="dep-panel" style="padding:8px 10px">
         <div style="font-weight:600;margin-bottom:2px">⏻ Flow switches — ${escHtml(depHost(orgUrl))}</div>
         <div style="font-size:11.5px;opacity:.8;margin-bottom:6px">
-          Record-triggered, scheduled and platform-event flows in this org, by object, with their
+          Every flow in this org — record-triggered flows by object, every other flow by its kind — with its
           on/off state, running flow version and pinned <strong>API version</strong>.
           <strong>Off</strong> stops that flow's automation for everyone in this org until reactivated —
           records created meanwhile are never retroactively processed.
@@ -2805,12 +2805,16 @@ const DependencyMap = (() => {
       const key = depOrgKey(o.orgUrl);
       prog.textContent = `reading ${o.label}…`;
       const [view, defs, vers] = await Promise.all([
-        depBg({ type: 'SF_QUERY', tooling: false, orgUrl: o.orgUrl, sid: o.sid, _silentError: true,
-          query: 'SELECT ApiName, Label, NamespacePrefix, IsActive, TriggerType, TriggerObjectOrEventLabel FROM FlowDefinitionView' }),
+        // EVERY flow the org lists, every page of them (user 2026-11-08: a
+        // colleague "didn't see many flows" — only the triggered kinds were
+        // listed). TriggerObjectOrEventId is the object's API name, the
+        // fallback when a packaged object's label does not come back.
+        depBg({ type: 'SF_QUERY_ALL', tooling: false, orgUrl: o.orgUrl, sid: o.sid, _silentError: true,
+          query: 'SELECT ApiName, Label, NamespacePrefix, IsActive, TriggerType, TriggerObjectOrEventLabel, TriggerObjectOrEventId FROM FlowDefinitionView' }),
         // PLAIN fields only — the ActiveVersion.VersionNumber traversal
         // failed live and painted every flow "not togglable"; the Flow
         // query below already knows every version number.
-        depBg({ type: 'SF_QUERY', tooling: true, orgUrl: o.orgUrl, sid: o.sid, _silentError: true,
+        depBg({ type: 'SF_QUERY_ALL', tooling: true, orgUrl: o.orgUrl, sid: o.sid, _silentError: true,
           query: 'SELECT Id, DeveloperName, NamespacePrefix FROM FlowDefinition' }),
         depFlowVersions(o.orgUrl, o.sid),
       ]);
@@ -2836,6 +2840,7 @@ const DependencyMap = (() => {
             latest: fr.latest ? fr.latest.versionNumber : null,
             activeId: fr.active ? fr.active.id : null,
             latestId: fr.latest ? fr.latest.id : null,
+            processType: fr.processType || '',   // names the kind of a flow with no trigger
           };
           const gov = sftkFlowGoverningVer(fr);
           if (gov && gov.apiVersion) apiVerByOrg[key][fr.apiName] = String(gov.apiVersion);
@@ -2848,22 +2853,51 @@ const DependencyMap = (() => {
     prog.textContent = '';
     if (!orgs.length) { body.innerHTML = depErrBox('No org could be read', notes.join(' ')); return; }
     const matrix = sftkFlowBulkMatrix(orgs, rowsByOrg, apiVerByOrg);
-    if (!matrix.length) { body.innerHTML = depErrBox('No triggered flows', 'These orgs have no record-triggered, scheduled or platform-event flows.'); return; }
+    if (!matrix.length) { body.innerHTML = depErrBox('No flows', 'These orgs list no flows at all.'); return; }
     _fbState = { orgs, rowsByOrg, matrix, remembered: await _fbRememberedAll(), notes };
     renderFlowBulkMatrix(body);
   }
 
   function renderFlowBulkMatrix(body) {
     const st = _fbState;
+    // Record-triggered flows under their object, every other flow under its
+    // kind (sftkFlowBulkGroupKey) — the same grouping the pure helper pins.
     const groups = new Map();
     for (const r of st.matrix) {
-      const key = /^Record/.test(r.triggerType) ? (r.object || '(unknown object)')
-        : r.triggerType === 'Scheduled' ? '\u23f0 Scheduled'
-        : '\u{1F4E1} Platform event';
+      const key = sftkFlowBulkGroupKey(r);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(r);
     }
-    const isRecordGroup = g => !/^[\u23f0\u{1F4E1}]/u.test(g);
+    const isRecordGroup = g => sftkFlowBulkIsObjectGroup(g);
+    const nTriggered = st.matrix.filter(f => f.triggered).length;
+    // Subflow links (user 2026-11-08: "if a flow calls a flow we need to show
+    // it — we may want to switch the subflow off too"). The dependency map is
+    // child → parents; invert it once for "calls". A link ticks the other
+    // flow. With no scan yet, one line says where the links come from.
+    const calledBy = dependencyMap || {};
+    const calls = {};
+    for (const [child, parents] of Object.entries(calledBy)) {
+      for (const p of (parents || [])) {
+        const pn = p && (p.apiName || p.masterLabel);
+        if (!pn) continue;
+        (calls[pn] = calls[pn] || []);
+        if (!calls[pn].includes(child)) calls[pn].push(child);
+      }
+    }
+    const inList = new Set(st.matrix.map(f => f.apiName));
+    const labelOf = n => (st.matrix.find(f => f.apiName === n) || {}).label || n;
+    const subChip = (names, arrow, word) => {
+      const list = (names || []).filter(Boolean);
+      if (!list.length) return '';
+      const tickable = list.filter(n => inList.has(n));
+      return `<button type="button" class="dep-fb-sub" data-names="${escHtml(tickable.join(','))}"
+        title="${escHtml(`${word} ${list.map(labelOf).join(', ')}${tickable.length ? ' — click to tick ' + (tickable.length === 1 ? 'it' : 'them') + ' too' : ''}`)}">${arrow} ${word} ${list.length}</button>`;
+    };
+    const scanSt = getScanStatus();
+    const mapKnown = Object.keys(calledBy).length > 0;
+    const subNote = !mapKnown
+      ? (scanSt.running ? 'Subflow links appear when the dependency scan finishes.' : 'Subflow links (which flow calls which) come from the dependency scan — run it in the Dependencies view to see them here.')
+      : (!scanSt.complete ? `Subflow links cover the ${scanSt.done} of ${scanSt.total} flow versions the dependency scan has read.` : '');
     const cell = (r, o) => {
       const c = r.cells[o.key];
       if (!c || !c.present) return '<span class="dep-list-state"><span class="dep-pill dep-pill-absent" title="This flow does not exist in this org \u2014 absence, not off.">not in this org</span></span>';
@@ -2903,7 +2937,7 @@ const DependencyMap = (() => {
     const nOffAll = st.matrix.filter(f => fbStateOf(f) === 'off').length;
     body.innerHTML = `
       <div class="dep-tool-sum">
-        <strong>${st.matrix.length}</strong> triggered flow(s)
+        <strong>${st.matrix.length}</strong> flow(s) · ${nTriggered} with a trigger
         <span class="dep-pill dep-pill-on">${nOnAll} ON</span>
         <span class="dep-pill dep-pill-off">${nOffAll} OFF</span>
         ${st.orgs.map(o => `<label class="dep-tool-apply" hidden title="${o.toolingDown ? 'Switching disabled \u2014 this org\u2019s flow definitions could not be read.' : 'Apply the switch in this org'}">
@@ -2912,7 +2946,7 @@ const DependencyMap = (() => {
       </div>
       ${depListFilterRow('switches')}
       <div class="dep-list">
-        ${[...groups.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([g, flows]) => `
+        ${[...groups.entries()].sort((a, b) => sftkFlowBulkGroupSort(a[0], b[0])).map(([g, flows]) => `
           <div class="dep-list-grp">
             <div class="dep-list-grp-hd">
               <span class="dep-list-grp-name">${escHtml(g)}</span>
@@ -2930,12 +2964,13 @@ const DependencyMap = (() => {
                     ? `<span class="dep-fb-open" data-open-url="${escHtml(lu.url)}" title="${escHtml(f.apiName)} \u2014 open in Flow Builder">${escHtml(f.label)}</span>`
                     : `<span title="${escHtml(f.apiName)}">${escHtml(f.label)}</span>`; })()}
                   ${isRecordGroup(g) ? `<span class="dep-list-kind">${escHtml(f.kind)}</span>` : ''}
+                  ${subChip(calls[f.apiName], '\u21b3', 'calls')}${subChip((calledBy[f.apiName] || []).map(p => p && (p.apiName || p.masterLabel)), '\u21b0', 'called by')}
                 </span>
                 ${st.orgs.map(o => cell(f, o)).join('')}
               </label>`).join('')}
           </div>`).join('')}
       </div>
-      ${st.notes.length ? `<div class="dep-tool-note">${st.notes.map(n => `\u2139 ${escHtml(n)}`).join('<br>')}</div>` : ''}
+      ${(st.notes.length || subNote) ? `<div class="dep-tool-note">${[...st.notes, subNote].filter(Boolean).map(n => `\u2139 ${escHtml(n)}`).join('<br>')}</div>` : ''}
       <div class="dep-tool-foot">
         <span id="depFbCount" class="dep-tool-count">0 selected</span>
         <span class="dep-tool-sp"></span>
@@ -2945,6 +2980,14 @@ const DependencyMap = (() => {
       <div id="depFbOut" class="dep-tool-out"></div>`;
     depWireOpenLinks(body);
     const cbs = [...body.querySelectorAll('.dep-fb-cb')];
+    // a subflow chip ticks the flows it names (a label click would toggle the row's own box — stop it)
+    body.querySelectorAll('.dep-fb-sub').forEach(b => b.addEventListener('click', e => {
+      e.preventDefault(); e.stopPropagation();
+      const names = String(b.dataset.names || '').split(',').filter(Boolean);
+      let first = null;
+      for (const c of cbs) if (names.includes(c.value) && !c.disabled) { if (!c.checked) { c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); } first = first || c; }
+      first?.closest('.dep-list-row')?.scrollIntoView({ block: 'nearest' });
+    }));
     // The two buttons say exactly what they would switch: only ticked flows
     // that are ON can be switched OFF, and only ticked OFF flows switched ON.
     // A ticked flow in the other state is simply not part of that action.
@@ -3019,13 +3062,16 @@ const DependencyMap = (() => {
       title: `Switch ${word} ${totalJobs} flow(s) in ${orgN === 1 ? 'this org' : `${orgN} org(s)`}?`,
       icon: '⏻',
       items: perOrg.filter(x => x.plan.jobs.length).flatMap(x => x.plan.jobs.map(j => ({
-        label: `${x.org.label}: ${j.label}`, sub: j.from,
+        label: `${x.org.label}: ${j.label}`, sub: j.warn ? `${j.from} — ⚠ ${j.warn}` : j.from,
       }))),
       revOverride: {
         html: mode === 'deactivate'
           ? 'Their automation <strong>stops for EVERYONE</strong> in this org until switched back on.' +
             '<div class="sftk-cf-plan"><ol class="sftk-cf-rows">' +
             '<li><b>Not processed</b><span>Records created while off are never retroactively processed</span></li>' +
+            (perOrg.some(x => x.plan.jobs.some(j => j.warn))
+              ? '<li><b>No trigger</b><span>A screen flow or subflow switched off fails for every button, page, flow, Apex class or integration that starts it — each one is marked ⚠ below</span></li>'
+              : '') +
             '<li><b>Undo</b><span>Active versions are remembered, so ▶ Activate restores exactly them</span></li></ol></div>'
           : 'Each flow is switched on at the version listed below, in every ticked org.',
         needsCheckbox: true,
@@ -3324,7 +3370,7 @@ const DependencyMap = (() => {
       if (!failed) return { records: out };
       // fall through to Tooling — with the note, never silently
     }
-    const tool = await depBg({ type: 'SF_QUERY', tooling: true, orgUrl, sid, _silentError: true,
+    const tool = await depBg({ type: 'SF_QUERY_ALL', tooling: true, orgUrl, sid, _silentError: true,
       query: 'SELECT Id,MasterLabel,Definition.DeveloperName,VersionNumber,Status,ApiVersion,ProcessType FROM Flow' });
     if (tool?.error) return { error: tool.error };
     return { records: tool.records || [],
